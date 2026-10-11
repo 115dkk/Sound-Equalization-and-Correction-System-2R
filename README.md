@@ -31,8 +31,8 @@ SECS 2 는 **있는 그대로(AS IS)** 제공되며, 어떤 보증도 하지 않
 
 ## 받는 법
 
-1. 이 저장소의 **Releases** 에서 `SECS_2.0.0-beta.1.0.0_….zip` 을 받아 원하는 곳에 풉니다.
-2. `SECS` 폴더의 `SECS 2 Beta 1.0.0.exe` 를 실행합니다. 설치는 필요 없습니다.
+1. 이 저장소의 **Releases** 에서 `SECS_2.0.0-beta.1.1.0_….zip` 을 받아 원하는 곳에 풉니다.
+2. `SECS` 폴더의 `SECS 2 Beta 1.1.0.exe` 를 실행합니다. 설치는 필요 없습니다.
 3. Windows 가 "알 수 없는 게시자" 경고를 띄우면 **추가 정보 → 실행** 을 누릅니다(코드 서명이 없습니다).
 
 ## 요구 사항
@@ -127,8 +127,8 @@ SECS 2 is provided **"as is", without warranty of any kind**.
 
 ## Download and run
 
-1. Download `SECS_2.0.0-beta.1.0.0_….zip` from **Releases** and unzip it anywhere.
-2. Run `SECS 2 Beta 1.0.0.exe` in the `SECS` folder. No installation needed.
+1. Download `SECS_2.0.0-beta.1.1.0_….zip` from **Releases** and unzip it anywhere.
+2. Run `SECS 2 Beta 1.1.0.exe` in the `SECS` folder. No installation needed.
 3. If Windows warns about an unknown publisher, choose **More info → Run anyway** (the exe is not code-signed).
 
 ## Requirements

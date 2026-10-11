@@ -50,7 +50,7 @@ CHANNEL_ROWS = (
     ('와이드', 'Wide', ['Lw', 'Rw'], 'FWL · FWR'),
     ('탑', 'Top', ['Ltf', 'Rtf', 'Ltm', 'Rtm', 'Ltr', 'Rtr'], 'TFL · TFR · TML · TMR · TRL · TRR'),
     ('하이트', 'Height', ['Lfh', 'Rfh', 'Lrh', 'Rrh'], 'FHL · FHR · RHL · RHR'),
-    ('서브', 'Subs', ['SW1', 'SW2', '…', 'SW8'], 'LFE 1 … LFE 8'),
+    ('서브', 'Subs', ['SW1', 'SW2', '…', 'SW8'], 'SUB · LFE · Sub2 · LFE2 …'),
 )
 
 TEXT = {
@@ -338,15 +338,17 @@ def capture_dialog(shooter):
     win = shooter.win
     plan = win.measure_page.plan()
     initial = auto_assign(list(DIALOG_TITLES), plan.roles, list(DIALOG_SUB))
-    details = [f'위치 1 · {"저역만(서브로 보임)" if sub else "전대역"}' for sub in DIALOG_SUB]
-    dialog = MdatAssignDialog(list(DIALOG_TITLES), plan.roles, initial, details, win)
+    details = ['저역만(서브로 보임)' if sub else '전대역' for sub in DIALOG_SUB]
+    # 실제 창처럼 위치 칸까지(10-11: 줄마다 위치를 고른다) — 샘플은 모두 위치 1, 배치 9곳
+    dialog = MdatAssignDialog(list(DIALOG_TITLES), plan.roles, initial, details, win,
+                              positions=[1] * len(DIALOG_TITLES), position_count=9)
     dialog.setAttribute(core.Qt.WidgetAttribute.WA_DontShowOnScreen, True)
     # 실제 창은 목록 칸 최소 높이가 8 줄 분이라 8 줄이면 아래가 비어 보인다 — 그림에서는 줄 수만큼으로 줄인다.
     scroll = dialog.findChildren(QtWidgets.QScrollArea)[0]
     scroll.setMinimumHeight(0)
     scroll.widget().adjustSize()
     scroll.setMinimumHeight(scroll.widget().sizeHint().height() + 4)
-    dialog.resize(560, dialog.sizeHint().height())
+    dialog.resize(max(680, dialog.minimumWidth()), dialog.sizeHint().height())
     dialog.show()
     shooter.settle()
     holder = dialog.findChildren(QtWidgets.QScrollArea)[0].widget()

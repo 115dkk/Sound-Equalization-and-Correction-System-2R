@@ -141,9 +141,12 @@ ROLE_ALIASES: dict[str, str] = {
     # 하이트(벽 위쪽) — Front · Rear Height. 10-10 까지는 탑에 섞여 있었다(FHL → Tfl, RHL → Tbl). 돌비 약어 Lfh · Rfh ·
     # Lrh · Rrh 는 `ROLE_CODES`, 역할 ID 꼴 HFL · HBL 은 역할 ID 가 받는다.
     'FHL': 'Hfl', 'FHR': 'Hfr', 'RHL': 'Hbl', 'RHR': 'Hbr', 'HRL': 'Hbl', 'HRR': 'Hbr',
-    'SUB': 'SW1', 'SW': 'SW1', 'LFE': 'SW1',
+    # 번호 없는 서브 = SW1(10-11 사용자: "서브우퍼 1개인 사람 많으니까 아무것도 안붙으면 SW1"). 'Subwoofer' · 한글 '서브' ·
+    # '서브우퍼' 와 붙여 쓴 번호(`Sub2` · `서브우퍼2`)도 — 전에는 못 알아봤다. 띄어 쓴 번호(`SW 2`)는 mdat 불러오기에서
+    # 위치 번호다(`step5_measure.split_position`).
+    'SUB': 'SW1', 'SW': 'SW1', 'LFE': 'SW1', 'SUBWOOFER': 'SW1', '서브': 'SW1', '서브우퍼': 'SW1',
     # 옛 화면 표기 'LFE 1' … 'LFE 8'(10-10 까지)로 지은 측정 제목도 그대로 받는다
-    **{f'LFE{i}': f'SW{i}' for i in range(1, 9)},
+    **{f'{word}{i}': f'SW{i}' for word in ('LFE', 'SUB', 'SUBWOOFER', '서브', '서브우퍼') for i in range(1, 9)},
 }
 
 

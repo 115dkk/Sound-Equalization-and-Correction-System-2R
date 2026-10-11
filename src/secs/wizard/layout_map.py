@@ -223,7 +223,7 @@ class RoomLayoutView(_BaseView):
 # ──────────────────────────── 4·5단계 측정 위치 배치도 ────────────────────────────
 def _set_view_scale(view: '_BaseView', scale: float) -> None:
     """캔버스를 `scale` 배로 줄여 보인다(그림 좌표 · 클릭 위치는 그대로). 5단계가 낮은 창에서 쓴다(10-10)."""
-    scale = max(0.3, min(1.0, float(scale)))
+    scale = max(0.3, min(1.6, float(scale)))       # 1 배 넘게는 5단계 가로 배치(10-11)
     if abs(scale - view._view_scale) < 0.01:
         return
     view._view_scale = scale
@@ -312,28 +312,32 @@ class ArrayLayoutView(_BaseView):
         super().keyPressEvent(event)
 
     def _x(self, cm: float) -> float:
-        return self.W / 2.0 + cm * self.K
+        return self.W / 2.0 + cm * self._k()
 
     def _y(self, cm: float) -> float:
-        return self.H * .56 - cm * self.K
+        return self.H * .56 - cm * self._k()
+
+    def _k(self) -> float:
+        """cm → px. 9곳 이하는 70 cm 고리가 없어 1.9 로 크게(10-11 사용자: 측정 위치 표시가 너무 작다)."""
+        return self.K if self._count >= 13 else 1.9
 
     def set_state(self, count: int, done=(), current: int = -1) -> None:
         self._count, self._done, self._current = int(count), list(done), int(current)
         self._redraw()
 
     def _redraw(self) -> None:
-        scene, W, H, k = self._scene, self.W, self.H, self.K
+        scene, W, H, k = self._scene, self.W, self.H, self._k()
         scene.clear()
         self._hits = []
         cx, cy = W / 2.0, H * .56
         scene.addRect(0, 0, W, H, _pen(COLORS['paper']),
                       QtGui.QBrush(QtGui.QColor(COLORS['paper'])))
         scene.addRect(W * .2, 8, W * .6, 6, _pen('#4f6462'), QtGui.QBrush(QtGui.QColor('#4f6462')))
-        self._text('스크린 · 프론트 스피커 방향', cx, 24, 7.0, COLORS['ink3'], mono=False)
+        self._text('스크린 · 프론트 스피커 방향', cx, 24, 8.0, COLORS['ink3'], mono=False)
         # 지름 1 m 안내 원
         scene.addEllipse(cx - 50 * k, cy - 50 * k, 100 * k, 100 * k,
                          _pen('#8fa3a1', 1.0, (3, 3)), QtGui.QBrush(QtCore.Qt.BrushStyle.NoBrush))
-        self._text('지름 1 m', cx + 50 * k + 26, cy - 6, 6.0, COLORS['ink3'], mono=False)
+        self._text('지름 1 m', min(cx + 50 * k + 26, W - 24), cy - 6, 7.5, COLORS['ink3'], mono=False)
         # 의자/소파
         pale = QtGui.QBrush(QtGui.QColor('#eef2f1'))
         dark = QtGui.QBrush(QtGui.QColor('#dfe6e4'))
@@ -352,13 +356,13 @@ class ArrayLayoutView(_BaseView):
         scene.addLine(W - 18 - 30 * k, H - 16, W - 18, H - 16, _pen(COLORS['ink2'], 1.5))
         scene.addLine(W - 18 - 30 * k, H - 20, W - 18 - 30 * k, H - 12, _pen(COLORS['ink2'], 1.5))
         scene.addLine(W - 18, H - 20, W - 18, H - 12, _pen(COLORS['ink2'], 1.5))
-        self._text('30 cm', W - 18 - 15 * k, H - 24, 6.0, COLORS['ink2'])
+        self._text('30 cm', W - 18 - 15 * k, H - 24, 7.0, COLORS['ink2'])
         # 마커
         for index, point in enumerate(arr_points(self._count)):
             x, y = self._x(point.x), self._y(point.y)
             is_done = index in self._done
             is_current = index == self._current
-            radius = 9.0 if index == 0 else 7.5
+            radius = 11.5 if index == 0 else 10.0
             fill = COLORS['ok'] if is_done else COLORS['accent'] if is_current else '#ffffff'
             if is_current:
                 scene.addEllipse(x - radius - 5, y - radius - 5, (radius + 5) * 2, (radius + 5) * 2,
@@ -378,12 +382,12 @@ class ArrayLayoutView(_BaseView):
                 half.moveTo(x - radius, y)
                 half.arcTo(rect, 180, -180 if point.h == 1 else 180)
                 half.closeSubpath()
-                tone = QtGui.QColor(255, 255, 255, 90) if (is_done or is_current) \
-                    else QtGui.QColor(COLORS['chassis'])
+                # 안 잰 마커의 반원은 옅게 — 진한 반원이 번호를 덮어 12 · 16 · 17 이 안 읽혔다(10-11, 배치도를 키우며)
+                tone = QtGui.QColor(255, 255, 255, 90) if (is_done or is_current) else _half_tone()
                 scene.addPath(half, _pen('transparent'), QtGui.QBrush(tone))
             # 목업은 흰 마커 위 숫자에 외곽선을 준다. Qt 에서는 대비되는 잉크로 대신한다.
             ink = '#ffffff' if (is_done or is_current) else COLORS['ink']
-            self._text(str(index + 1), x, y, 5.8, ink)
+            self._text(str(index + 1), x, y, 7.5, ink)
         # 범례
         for offset, (label, mark) in enumerate((('귀 높이', 0), ('+20 cm 위', 1), ('−20 cm 아래', -1))):
             y = H - 42 + offset * 14
@@ -395,9 +399,15 @@ class ArrayLayoutView(_BaseView):
                 path.moveTo(9, y)
                 path.arcTo(rect, 180, -180 if mark == 1 else 180)
                 path.closeSubpath()
-                scene.addPath(path, _pen('transparent'),
-                              QtGui.QBrush(QtGui.QColor(COLORS['chassis'])))
-            self._text(label, 24, y, 6.5, COLORS['ink2'], align='left', mono=False)
+                scene.addPath(path, _pen('transparent'), QtGui.QBrush(_half_tone()))
+            self._text(label, 24, y, 7.5, COLORS['ink2'], align='left', mono=False)
+
+
+def _half_tone() -> QtGui.QColor:
+    """위 · 아래 마커 반원 색(안 잰 마커 · 범례) — 진한 잉크 번호가 읽히는 옅은 회청."""
+    tone = QtGui.QColor(COLORS['chassis'])
+    tone.setAlpha(95)
+    return tone
 
 
 __all__ = ['MicPoint', 'Arrangement', 'ARRANGEMENTS', 'arr_points', 'ROOM_POSITIONS',

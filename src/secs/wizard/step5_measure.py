@@ -40,7 +40,7 @@ from secs.wizard.step1_devices import DEFAULT_SAMPLE_RATE, fill_sweep_combo
 from secs.wizard.step4_layout import START_DELAYS, format_estimate, position_seconds, start_delay_seconds
 from secs.wizard.strings import t
 from secs.wizard.tooltips import attach, attach_all, attach_cells, attach_header
-from secs.wizard.style import (COLORS, SUB_LINE_WIDTH, add_heading, card, channel_colors, clear_layout,
+from secs.wizard.style import (COLORS, SUB_LINE_WIDTH, ElidedLabel, add_heading, card, channel_colors, clear_layout,
                                is_sub_role, label, set_variant, two_columns)
 
 
@@ -162,8 +162,10 @@ _TRAILING_NUMBER = re.compile(r'^(.*\S)\s+(\d+)$')
 def split_position(title: str) -> tuple[str, int]:
     """mdat 측정 제목 → (채널 부분, 위치 번호). 10-09 사용자: 위치별 mdat 를 불러오게.
 
-    `L_P2`·`L P2`·`L-P2` → ('L', 2) — SECS 가 저장하는 mdat 이름. `L 2` → ('L', 2).
-    단 번호가 채널 이름의 일부면(`LFE 2` → SW2, `SW 2`) 위치 1 로 둔다. 번호가 없으면 위치 1.
+    `L_P2`·`L P2`·`L-P2` → ('L', 2) — SECS 가 저장하는 mdat 이름. `L 2` → ('L', 2). 번호가 없으면 위치 1.
+    띄어 쓴 번호는 서브도 위치다(`SW 2` → ('SW', 2) = SW1 의 위치 2) — 붙여 쓴 번호(`SW2`)만 서브 번호.
+    10-11 사용자 · 커뮤니티: 서브 1개로 `SW 2` … `SW 9` 를 잰 9점 mdat 이 SW2 로 읽혀 [건너뜀] 이 되고 위치 2~9 가
+    계속 '대기' 였다(전에는 `LFE 2` · `SW 2` 를 SW2 의 위치 1 로 읽었다).
     """
     from secs.model import role_from_title
 
@@ -174,8 +176,7 @@ def split_position(title: str) -> tuple[str, int]:
     match = _TRAILING_NUMBER.match(text)
     if match:
         base = match.group(1).strip()
-        whole, head = role_from_title(text), role_from_title(base)
-        if head is not None and whole == head:
+        if role_from_title(base) is not None:
             return base, max(1, int(match.group(2)))
     return text, 1
 
@@ -244,23 +245,37 @@ def auto_assign(titles, roles, sub_flags=None) -> list[str | None]:
 
 # ──────────────────────────── mdat 역할 배정 창 ────────────────────────────
 class MdatAssignDialog(QtWidgets.QDialog):
-    """mdat 측정 → role 배정 확인 창. 자동 배정을 보여 주고 사람이 고친다."""
+    """mdat 측정 → (위치, role) 배정 확인 창. 자동 배정을 보여 주고 사람이 고친다.
+
+    10-11 사용자: "mdat 불러온 측정치를 임의로 위치로 채널을 지정할 수 있게" — `position_count` 를 주면 줄마다
+    위치 드롭다운이 붙는다(이름의 `P2` · `_P3` 에서 읽은 값이 기본). 채널 이름은 2단계 표와 같은
+    돌비 약어 · 이름(`Ltr · …`)으로 보인다 — 내부 ID(`Tbl`)로 보여서 다른 채널로 들어간 것처럼 보였다.
+    """
 
     SKIP = '건너뜀'
 
-    def __init__(self, titles, roles, initial, details=None, parent=None) -> None:
+    def __init__(self, titles, roles, initial, details=None, parent=None,
+                 positions=None, position_count=None) -> None:
         super().__init__(parent)
         self.setWindowTitle('측정 역할 배정')
-        self.setMinimumWidth(520)
-        # 창 배경을 본문과 같은 밝은 면으로 — 어두운 바탕에서는 안내·경고가 안 읽혔다.
-        self.setStyleSheet(f'QDialog {{ background: {COLORS["panel"]}; }}')
+        titles = list(titles)
         self.roles = list(roles)
         self.combos: list[QtWidgets.QComboBox] = []
+        self.pos_combos: list[QtWidgets.QComboBox] = []
+        # 측정마다의 청취 위치. 같은 역할은 위치가 다르면 겹쳐도 된다 — 10-11 사용자: 다점 mdat
+        # (L P1 … L P9)가 전부 '두 번 배정' 으로 막혔다.
+        self._initial_positions = [int(p) for p in positions] if positions is not None else [1] * len(titles)
+        count = int(position_count or 0)
+        show_positions = count > 1 or any(p != 1 for p in self._initial_positions)
+        self.setMinimumWidth(680 if show_positions else 560)
+        # 창 배경을 본문과 같은 밝은 면으로 — 어두운 바탕에서는 안내·경고가 안 읽혔다.
+        self.setStyleSheet(f'QDialog {{ background: {COLORS["panel"]}; }}')
 
         outer = QtWidgets.QVBoxLayout(self)
         outer.setSpacing(10)
         # 09-22: 자세한 안내는 도움말(F1) 5단계 "건너뛰기: mdat 불러오기" 항목에 있다 — 여기는 짧게.
-        outer.addWidget(label('측정마다 배정할 스피커를 고르세요.', 'note', wrap=True))
+        outer.addWidget(label('측정마다 넣을 위치와 스피커를 고르세요.' if show_positions
+                              else '측정마다 배정할 스피커를 고르세요.', 'note', wrap=True))
 
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
@@ -269,20 +284,31 @@ class MdatAssignDialog(QtWidgets.QDialog):
         grid = QtWidgets.QGridLayout(holder)
         grid.setHorizontalSpacing(12)
         grid.setVerticalSpacing(6)
-        details = list(details) if details is not None else [''] * len(list(titles))
-        for row, (title, role, detail) in enumerate(zip(titles, initial, details)):
+        details = list(details) if details is not None else [''] * len(titles)
+        for row, (title, role, detail, pos) in enumerate(zip(titles, initial, details, self._initial_positions)):
             name = label(str(title) or f'{t("측정")} {row + 1}')
             name.setToolTip(str(title))
+            grid.addWidget(name, row, 0)
+            grid.addWidget(label(str(detail), 'note'), row, 1)
+            if show_positions:
+                where = QtWidgets.QComboBox()
+                for spot in range(1, count + 1):
+                    where.addItem(f'위치 {spot}', spot)
+                if where.findData(pos) < 0:          # 이름의 위치가 배치보다 크면 — 고르지 않으면 건너뛴다
+                    where.addItem(f'위치 {pos} · 배치 밖', pos)
+                where.setCurrentIndex(max(where.findData(pos), 0))
+                where.currentIndexChanged.connect(self._validate)
+                attach(where, 'mdat.pos')
+                grid.addWidget(where, row, 2)
+                self.pos_combos.append(where)
             combo = QtWidgets.QComboBox()
             combo.addItem(self.SKIP, None)
             for item in self.roles:
-                combo.addItem(item, item)
+                combo.addItem(role_text(item), item)
             combo.setCurrentIndex(max(combo.findData(role), 0))
             combo.currentIndexChanged.connect(self._validate)
             attach(combo, 'mdat.role')
-            grid.addWidget(name, row, 0)
-            grid.addWidget(label(str(detail), 'note'), row, 1)
-            grid.addWidget(combo, row, 2)
+            grid.addWidget(combo, row, 3)
             self.combos.append(combo)
         grid.setColumnStretch(0, 1)
         grid.setRowStretch(len(self.combos), 1)
@@ -307,11 +333,19 @@ class MdatAssignDialog(QtWidgets.QDialog):
     def assignment(self) -> list[str | None]:
         return [combo.currentData() for combo in self.combos]
 
+    def positions(self) -> list[int]:
+        """줄마다 고른 위치(위치 칸이 없으면 이름에서 읽은 값 그대로)."""
+        if not self.pos_combos:
+            return list(self._initial_positions)
+        return [int(combo.currentData()) for combo in self.pos_combos]
+
     def problems(self) -> str:
-        chosen = [role for role in self.assignment() if role]
-        doubles = sorted({role for role in chosen if chosen.count(role) > 1})
+        chosen = [(role, pos) for role, pos in zip(self.assignment(), self.positions()) if role]
+        doubles = sorted({item for item in chosen if chosen.count(item) > 1}, key=lambda item: (item[1], item[0]))
         if doubles:
-            return '같은 역할이 두 번 배정됐습니다: ' + ', '.join(doubles)
+            several = len({pos for _role, pos in chosen}) > 1
+            names = [f'{role_code(role)} P{pos}' if several else role_code(role) for role, pos in doubles]
+            return '같은 역할이 두 번 배정됐습니다: ' + ', '.join(names)
         if not chosen:
             return '불러올 측정이 없습니다. 하나 이상 역할을 고르세요.'
         return ''
@@ -322,6 +356,133 @@ class MdatAssignDialog(QtWidgets.QDialog):
         self.warning.setVisible(bool(text))
         ok = self.buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Ok)
         ok.setEnabled(not text)
+
+
+class MdatFilesDialog(QtWidgets.QDialog):
+    """위치별 mdat 파일 관리(10-11 사용자: "위치별 mdat 를 구분해서 넣어도 된다며, 그 기능").
+
+    위치마다 불러온 파일 · 채널 수, [불러오기…](파일 속 측정을 모두 그 위치로 — 그 파일에 든 채널만 바뀐다) ·
+    [비우기](그 위치만). 모두 지우는 버튼은 두지 않는다(10-11 사용자: "왜 모든 데이터를 지우는데").
+    """
+
+    def __init__(self, page, parent=None) -> None:
+        super().__init__(parent or page)
+        self.page = page
+        self.setWindowTitle('mdat 파일 관리')
+        self.setMinimumWidth(620)
+        self.setStyleSheet(f'QDialog {{ background: {COLORS["panel"]}; }}')
+        self.rows: dict[int, tuple] = {}
+        outer = QtWidgets.QVBoxLayout(self)
+        outer.setSpacing(10)
+        outer.addWidget(label('위치마다 mdat 파일을 따로 넣을 수 있습니다. [불러오기] 한 파일의 측정은 모두 그 위치로 들어가고, '
+                              '그 파일에 든 채널만 바뀝니다.', 'note', wrap=True))
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        holder = QtWidgets.QWidget()
+        self.grid = QtWidgets.QGridLayout(holder)
+        self.grid.setHorizontalSpacing(12)
+        self.grid.setVerticalSpacing(6)
+        scroll.setWidget(holder)
+        scroll.setMinimumHeight(min(page.position_count(), 9) * 40 + 40)
+        outer.addWidget(scroll, 1)
+        buttons = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.StandardButton.Close)
+        buttons.button(QtWidgets.QDialogButtonBox.StandardButton.Close).setText('닫기')
+        buttons.rejected.connect(self.reject)
+        outer.addWidget(buttons)
+        self.rebuild()
+
+    def rebuild(self) -> None:
+        clear_layout(self.grid)
+        self.rows.clear()
+        page = self.page
+        sources = page.mdat_sources()
+        recorded = page._recorded_roles()
+        total = len(page.plan().roles)
+        for column, head in enumerate(('위치', '파일', '채널')):
+            self.grid.addWidget(label(head, 'note'), 0, column)
+        for pos in range(1, page.position_count() + 1):
+            have = len(recorded.get(pos, []))
+            text = sources.get(pos) or ('직접 측정' if have else '—')
+            name = ElidedLabel(text)
+            name.setMinimumWidth(0)
+            name.setSizePolicy(_PlainQt.QSizePolicy.Policy.Ignored, _PlainQt.QSizePolicy.Policy.Preferred)
+            channels = label(f'{have} / {total}', 'note')
+            load = QtWidgets.QPushButton('불러오기…')
+            set_variant(load, 'skip', 'sm')
+            load.clicked.connect(lambda _c=False, spot=pos: self._load(spot))
+            attach(load, 'files.load')
+            empty = QtWidgets.QPushButton('비우기')
+            set_variant(empty, 'skip', 'sm')
+            empty.setEnabled(have > 0)
+            empty.clicked.connect(lambda _c=False, spot=pos: self._clear(spot))
+            attach(empty, 'files.clear')
+            row = pos
+            self.grid.addWidget(label(f'위치 {pos}'), row, 0)
+            self.grid.addWidget(name, row, 1)
+            self.grid.addWidget(channels, row, 2)
+            self.grid.addWidget(load, row, 3)
+            self.grid.addWidget(empty, row, 4)
+            self.rows[pos] = (name, channels, load, empty)
+        self.grid.setColumnStretch(1, 1)
+        self.grid.setRowStretch(page.position_count() + 1, 1)
+
+    def _load(self, pos: int) -> None:
+        self.page.load_mdat(position=pos)
+        self.rebuild()
+
+    def _clear(self, pos: int) -> None:
+        self.page.clear_position(pos)
+        self.rebuild()
+
+
+def role_text(item: str) -> str:
+    """배정 창의 채널 이름 — 2단계 표와 같은 꼴 'Ltr · 이름'. 멀티앰프 키(`L:LF`)는 대역을 뒤에 붙인다."""
+    from secs.model import role_label
+
+    base, _, band = str(item).partition(':')
+    text = f'{role_code(base)} · {role_label(base)}'
+    return f'{text} · {band}' if band else text
+
+
+def _record_pos(record) -> int:
+    try:
+        return int(record.get('pos', -1)) if isinstance(record, dict) else -1
+    except (TypeError, ValueError):
+        return -1
+
+
+def _record_roles(record) -> list[str]:
+    irs = record.get('ir') if isinstance(record, dict) else None
+    return [str(role) for role, path in irs.items() if path] if isinstance(irs, dict) else []
+
+
+def _role_source(record, role: str) -> str:
+    """그 측정을 불러온 mdat 파일 이름('' = 직접 잰 측정). 위치 항목의 `source` = {role: 파일 이름}."""
+    source = record.get('source')
+    if isinstance(source, dict):
+        return str(source.get(role) or '')
+    return ''
+
+
+def position_spans(numbers) -> str:
+    """[1, 2, 3, 5] → '1–3, 5'."""
+    spans: list[list[int]] = []
+    for number in sorted(set(int(n) for n in numbers)):
+        if spans and number == spans[-1][1] + 1:
+            spans[-1][1] = number
+        else:
+            spans.append([number, number])
+    return ', '.join(str(a) if a == b else f'{a}–{b}' for a, b in spans)
+
+
+def source_summary(sources: dict[int, str]) -> str:
+    """위치 → 파일 이름 → 'a.mdat (위치 1–9) · 직접 측정 (위치 10)'."""
+    groups: dict[str, list[int]] = {}
+    for pos in sorted(sources):
+        groups.setdefault(sources[pos] or '직접 측정', []).append(pos)
+    return ' · '.join(f'{name} (위치 {position_spans(spots)})' for name, spots in groups.items())
 
 
 # ──────────────────────────── 저장 경로 · 표시용 곡선 ────────────────────────────
@@ -428,16 +589,33 @@ class Step5Measure(QtWidgets.QWidget):
 
         left_card, left_box = card('')
         self.position_title = label('위치 — / —', 'h3')
-        left_box.addWidget(self.position_title)
+        # 10-11 사용자: "측정 위치 표시가 너무 작은데" → "세로 배치이되 그래프를 끌 수 있게" — 그래프 · 범례 · 위치 칩을 숨기면
+        # 배치도가 그 높이를 받아 커진다(`fit_height`). 가로 배치(배치도를 그래프 옆에)는 사용자가 거절했다.
+        self._plot_hidden = False
+        self.plot_toggle = QtWidgets.QPushButton(t('그래프 숨기기'))
+        set_variant(self.plot_toggle, 'ghost', 'sm')
+        self.plot_toggle.setCheckable(True)
+        self.plot_toggle.toggled.connect(self.set_plot_hidden)
+        attach(self.plot_toggle, 's5.plot_toggle')
         # 4단계 "위치당" 과 같은 값 — 이 위치를 재는 데 걸릴 어림 시간(09-23 사용자 지시).
         self.position_estimate = label('', 'note')
-        left_box.addWidget(self.position_estimate)
+        # 버튼은 제목 · 어림 시간 두 줄에 걸쳐 오른쪽에 — 제목 줄에만 두면 줄이 17 px 높아져 배치도가 더 줄었다.
+        header = QtWidgets.QGridLayout()
+        header.setContentsMargins(0, 0, 0, 0)
+        header.setVerticalSpacing(left_box.spacing())
+        header.addWidget(self.position_title, 0, 0)
+        header.addWidget(self.position_estimate, 1, 0)
+        header.addWidget(self.plot_toggle, 0, 1, 2, 1,
+                         QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
+        header.setColumnStretch(0, 1)
+        left_box.addLayout(header)
         self.view = ArrayLayoutView()
         # 마커를 누르면(또는 ←/→) 그 위치를 고른다 — [이 위치 측정] 이 그 위치를 잰다(09-23 사용자 지시).
         self.view.set_selectable(True)
         attach(self.view, 's5.map')
         self.view.position_clicked.connect(lambda index: self.select_position(index + 1))
-        left_box.addWidget(self.view, 0, QtCore.Qt.AlignmentFlag.AlignHCenter)
+        # 위에 붙인다 — 그래프를 숨기면 남는 높이가 배치도 위아래로 갈라져 제목과 배치도 사이가 비었다
+        left_box.addWidget(self.view, 0, QtCore.Qt.AlignmentFlag.AlignHCenter | QtCore.Qt.AlignmentFlag.AlignTop)
         self.plot = pg.PlotWidget()
         self.plot.setBackground(COLORS['plot_bg'])
         self.plot.setMinimumHeight(260)
@@ -457,10 +635,12 @@ class Step5Measure(QtWidgets.QWidget):
         axis_label(self.plot, 'bottom', 'Hz')
         left_box.addWidget(self.plot, 1)
         # 범례는 4칸 격자 — 한 줄로 늘어놓으면 1024 폭에서 카드 최소 폭을 민다(실사용 QA 09-19).
-        self.legend = QtWidgets.QGridLayout()
+        self._legend_holder = QtWidgets.QWidget()
+        self.legend = QtWidgets.QGridLayout(self._legend_holder)
+        self.legend.setContentsMargins(0, 0, 0, 0)
         self.legend.setHorizontalSpacing(12)
         self.legend.setVerticalSpacing(2)
-        left_box.addLayout(self.legend)
+        left_box.addWidget(self._legend_holder)
         # 위치 칩 — 위치별 곡선 켜고 끄기·커서로 강조(09-24 사용자: 정축(위치 1) 이 어느 선인지 모르겠다).
         self.position_chips = PositionChips()
         self.position_chips.toggled.connect(lambda *_a: self._draw())
@@ -480,6 +660,14 @@ class Step5Measure(QtWidgets.QWidget):
         self.positions.currentRowChanged.connect(self._on_row)     # 목록 줄을 눌러도 같은 선택
         attach_cells(self.positions, 's5.positions')
         right_box.addWidget(self.positions)
+        # 10-11 사용자: "불러오기 한 파일이 여러개인데 무슨 파일이 불러오기 된 건지도 모르겠어" — 위치별 mdat 이름 한 줄
+        # (넘치면 가운데를 줄이고 전체는 풍선 도움말).
+        self.source_note = ElidedLabel('')
+        self.source_note.setObjectName('note')
+        self.source_note.setMinimumWidth(0)
+        self.source_note.setSizePolicy(_PlainQt.QSizePolicy.Policy.Ignored, _PlainQt.QSizePolicy.Policy.Fixed)
+        self.source_note.setVisible(False)
+        right_box.addWidget(self.source_note)
         self.progress = QtWidgets.QProgressBar()
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
@@ -555,7 +743,17 @@ class Step5Measure(QtWidgets.QWidget):
         self.sample_button.clicked.connect(lambda: self.load_sample())   # clicked(bool) 이 positions 로 들어가면 안 된다
         attach(self.mdat_button, 's5.mdat')
         attach(self.sample_button, 's5.sample')
-        skips.addWidget(self.mdat_button, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
+        # 10-11 사용자: "위치별 mdat 를 구분해서 넣어도 된다며, 그 기능" — 위치마다 파일을 넣고 빼는 창.
+        self.files_button = QtWidgets.QPushButton(t('파일 관리'))
+        set_variant(self.files_button, 'skip', 'sm')
+        self.files_button.clicked.connect(lambda _checked=False: self.manage_files())
+        attach(self.files_button, 's5.files')
+        mdat_row = QtWidgets.QHBoxLayout()
+        mdat_row.setSpacing(6)
+        mdat_row.addWidget(self.mdat_button)
+        mdat_row.addWidget(self.files_button)
+        mdat_row.addStretch(1)
+        skips.addLayout(mdat_row)
         # 샘플 데이터는 체험 모드에서만 보인다(10-09 사용자: 평소엔 빼고, 체험은 데모 데이터 없이는 못 나아가니 체험에만) —
         # `set_trial` 이 켠다.
         skips.addWidget(self.sample_button, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
@@ -751,6 +949,9 @@ class Step5Measure(QtWidgets.QWidget):
     #: 넘친 만큼 줄일 때의 바닥(px) — 목록 2줄 · 로그 3줄 · 그래프.
     LIST_MIN, LOG_MIN, PLOT_MIN = 60, 52, 190
 
+    #: 그래프를 숨기면 FIXED_H 에서 범례 · 칩 몫(GRAPH_EXTRA px)도 빠지고, 배치도는 카드 폭 안에서 최대 MAP_MAX 배까지.
+    GRAPH_EXTRA, MAP_MAX = 110, 1.6
+
     def fit_height(self) -> None:
         """창 높이에 맞춰 배치도 배율 · 목록 · 로그 높이를 정한다(창이 크면 원래 크기).
 
@@ -764,14 +965,44 @@ class Step5Measure(QtWidgets.QWidget):
         trim = self._trim
         base = self.view.scene().sceneRect().height()
         low = height < self.FIT_BELOW
+        if self._plot_hidden:
+            # 그래프를 껐으면 배치도가 그 높이를 받는다 — 카드 폭(오른쪽 카드 · 간격을 뺀 페이지 폭) 안에서.
+            room = height - self.FIXED_H + self.GRAPH_EXTRA - trim['left']
+            card_w = self.width() - self._right_card.width() - 16 - 40
+            scene_w = self.view.scene().sceneRect().width()
+            self.view.set_view_scale(min(self.MAP_MAX, room / base if base else 1.0,
+                                         card_w / scene_w if scene_w else 1.0))
+            self._fit_right(low)
+            return
         # 페이지는 스크롤 영역이 '선호 높이'로 잡는다(줄바꿈 글자가 있어 heightForWidth) — 그래프 선호 480 px 가 그대로
         # 들어가 낮은 창에서 넘쳤다. 낮은 창이면 그래프 최대 높이를 남는 만큼으로(최소 PLOT_LOW).
         # 왼쪽이 넘치면 배치도부터 줄이고(그림), 배치도가 더 못 줄면 그래프가 나머지를 받는다
-        self.view.set_view_scale((height - self.FIXED_H - self.PLOT_LOW - trim['left']) / base if base else 1.0)
+        self.view.set_view_scale(min(1.0, (height - self.FIXED_H - self.PLOT_LOW - trim['left']) / base if base else 1.0))
         map_h = self.view.height()
         plot_low = self.PLOT_MIN if trim['left'] else self.PLOT_LOW
         self.plot.setMinimumHeight(plot_low if low else 260)
         self.plot.setMaximumHeight(max(plot_low, height - self.FIXED_H - map_h - trim['left']) if low else 16777215)
+        self._fit_right(low)
+
+    def set_plot_hidden(self, hidden: bool) -> None:
+        """[그래프 숨기기] — 그래프 · 범례 · 위치 칩을 숨기고 배치도를 키운다. 다시 누르면 되돌린다."""
+        hidden = bool(hidden)
+        if self.plot_toggle.isChecked() != hidden:
+            self.plot_toggle.setChecked(hidden)          # toggled 가 다시 여기로 온다
+            return
+        self._plot_hidden = hidden
+        for widget in (self.plot, self._legend_holder, self.position_chips):
+            widget.setVisible(not hidden)
+        self.plot_toggle.setText(t('그래프 보기') if hidden else t('그래프 숨기기'))
+        self._trim_for = None                              # 넘침을 다시 잰다
+        self.fit_height()
+
+    def plot_hidden(self) -> bool:
+        return self._plot_hidden
+
+    def _fit_right(self, low: bool) -> None:
+        """오른쪽 칸(목록 · 로그) 높이 — 낮은 창이면 줄이고 넘친 만큼 더 줄인다."""
+        trim = self._trim
         cut = trim['right']
         list_h = max(self.LIST_MIN, 112 - cut)                     # 3줄 남짓 — 나머지는 목록 스크롤
         log_h = max(self.LOG_MIN, 72 - max(0, cut - (112 - list_h)))
@@ -853,13 +1084,19 @@ class Step5Measure(QtWidgets.QWidget):
 
         self.positions.clear()
         points = arr_points(count)
+        sources = self.mdat_sources()
+        summary = source_summary(sources) if any(sources.values()) else ''
+        self.source_note.set_full_text(f'불러온 파일: {summary}' if summary else '')
+        self.source_note.setVisible(bool(summary))
         for index in range(count):
             number = index + 1
             state = '완료' if number in done else '대기' if number == current else ''
             item = QtWidgets.QListWidgetItem(f'{number:02d}  {t(points[index].text)}')
             if state:
                 item.setData(_STATE_ROLE, str(t(state)))
-            item.setToolTip(f'{number:02d}  {t(points[index].text)}' + (f' · {t(state)}' if state else ''))
+            source = sources.get(number)
+            item.setToolTip(f'{number:02d}  {t(points[index].text)}' + (f' · {t(state)}' if state else '')
+                            + (f' · {source}' if source else ''))
             if number in done:
                 item.setForeground(QtCore.Qt.GlobalColor.darkGreen)
             self.positions.addItem(item)
@@ -875,6 +1112,7 @@ class Step5Measure(QtWidgets.QWidget):
         self.cancel_button.setEnabled(running)
         self.redo_button.setEnabled(bool(done and not running))
         self.mdat_button.setEnabled(not running)
+        self.files_button.setEnabled(not running)
         self.sample_button.setEnabled(not running)
         self.poll_busy()
         if not self.log.toPlainText():
@@ -1174,7 +1412,7 @@ class Step5Measure(QtWidgets.QWidget):
         return filled
 
     def load_mdat(self, path: str | None = None, assignment=None,
-                  ask: bool | None = None) -> int:
+                  ask: bool | None = None, position: int | None = None) -> int:
         """mdat 를 읽어 위치 1 의 측정으로 기록한다. 기록한 측정 수를 돌려준다.
 
         `assignment` 는 측정 순서대로의 role 목록(None = 건너뜀). 안 주면 자동 배정
@@ -1216,6 +1454,14 @@ class Step5Measure(QtWidgets.QWidget):
         positions = [pos for _base, pos in split]
         count = self.position_count()
 
+        if position is not None:
+            # 파일 관리 창의 위치 줄 [불러오기] — 파일 속 측정은 이름의 위치와 상관없이 모두 그 위치로.
+            positions = [int(position)] * len(titles)
+        elif not any(base != title.strip() for base, title in zip(titles, raw_titles)):
+            # 이름에 위치가 없으면(`L`, `R` …) 지금 고른 위치 · 다음 안 잰 위치로 — 도움말의 '두 번 누르면 위치 1, 2 에
+            # 차례로' 대로. 전에는 늘 위치 1 이라 두 번째 파일이 첫 파일을 덮었다(10-11).
+            spot = self.current_position()
+            positions = [spot if spot > 0 else 1] * len(titles)
         if assignment is None:
             # 위치마다 따로 배정한다 — 한꺼번에 하면 '같은 역할은 처음 측정만' 규칙에 위치 2 이상이 다 빠진다.
             assignment = [None] * len(titles)
@@ -1228,12 +1474,13 @@ class Step5Measure(QtWidgets.QWidget):
                 details = ['읽을 수 없음' if ir is None
                            else ('저역만(서브로 보임)' if flag else '전대역')
                            for ir, flag in zip(irs, sub_flags)]
-                details = [f'위치 {pos} · {text}' for pos, text in zip(positions, details)]
-                dialog = MdatAssignDialog(raw_titles, plan.roles, assignment, details, self)
+                dialog = MdatAssignDialog(raw_titles, plan.roles, assignment, details, self,
+                                          positions=positions, position_count=count)
                 if dialog.exec() != QtWidgets.QDialog.DialogCode.Accepted:
                     self._append('mdat 불러오기를 취소했습니다.')
                     return 0
                 assignment = dialog.assignment()
+                positions = dialog.positions()
         assignment = list(assignment) + [None] * (len(infos) - len(list(assignment)))
 
         chosen = []
@@ -1252,6 +1499,10 @@ class Step5Measure(QtWidgets.QWidget):
             used.add((role, pos))
             chosen.append((info, title, ir, role, pos))
 
+        # 새 파일에 든 위치 · 채널만 바뀌고 나머지 측정은 그대로 둔다(10-11 사용자: "실수로 위치 1개만 다시 불러올 수
+        # 있는데 … 다 날리고 다시 하라는거야?"). 지우는 것은 파일 관리 창의 위치별 [비우기] 뿐.
+        name = Path(path).name
+
         def save() -> dict:
             curves = {}
             for info, title, (samples, rate), role, pos in chosen:
@@ -1260,8 +1511,13 @@ class Step5Measure(QtWidgets.QWidget):
                 result = MeasurementResult(role=role, pos=pos, uuid=info.uuid, ir=samples,
                                            sample_rate=int(rate), name=title or role,
                                            t0_s=t0)
-                session.record(result, plan)
+                entry = session.record(result, plan)
+                if not isinstance(entry.get('source'), dict):
+                    entry['source'] = {}
+                entry['source'][role] = name
                 curves[(role, pos)] = magnitude_db(samples, int(rate))
+            if chosen:
+                session.save()                   # 파일 이름까지 저장
             return curves
 
         curves = self._off_thread(save)          # wav 쓰기도 워커에서
@@ -1269,10 +1525,52 @@ class Step5Measure(QtWidgets.QWidget):
         saved = len(curves)
         spots = sorted({pos for _role, pos in curves})
         where = ', '.join(str(pos) for pos in spots) or '—'
-        self._append(f'mdat 에서 측정 {saved}개를 위치 {where} 로 불러왔습니다: {Path(path).name}')
+        self._append(f'mdat 에서 측정 {saved}개를 위치 {where} 로 불러왔습니다: {name}')
         self.refresh()
         self.changed.emit()
         return saved
+
+    def _recorded_roles(self) -> dict[int, list[str]]:
+        """위치 → 기록이 있는 role 목록."""
+        out: dict[int, list[str]] = {}
+        for record in self.project.measurements or []:
+            pos = _record_pos(record)
+            roles = _record_roles(record)
+            if pos > 0 and roles:
+                out.setdefault(pos, []).extend(roles)
+        return out
+
+    def mdat_sources(self) -> dict[int, str]:
+        """기록이 있는 위치 → 불러온 mdat 파일 이름('a.mdat + b.mdat', 직접 잰 채널이 섞이면 '직접 측정' 도, 모두 직접이면 '')."""
+        out: dict[int, str] = {}
+        for record in self.project.measurements or []:
+            pos = _record_pos(record)
+            roles = _record_roles(record)
+            if pos <= 0 or not roles:
+                continue
+            names: list[str] = []
+            for role in roles:
+                source = _role_source(record, role)
+                if source not in names:
+                    names.append(source)
+            out[pos] = ' + '.join(n or '직접 측정' for n in names) if any(names) else ''
+        return out
+
+    def clear_position(self, pos: int) -> None:
+        """한 위치의 측정 기록을 지운다(파일 관리 창 [비우기]). 다른 위치는 그대로."""
+        pos = int(pos)
+        self.project.measurements[:] = [m for m in (self.project.measurements or []) if _record_pos(m) != pos]
+        for key in [k for k in self._magnitudes if k[1] == pos]:
+            self._magnitudes.pop(key, None)
+        if self.session is not None:
+            self.session.save()
+        self._append(f'위치 {pos} 기록을 지웠습니다.')
+        self.refresh()
+        self.changed.emit()
+
+    def manage_files(self) -> None:
+        """[파일 관리] — 위치별 mdat 파일 창."""
+        MdatFilesDialog(self).exec()
 
     def loading_mdat(self) -> bool:
         """mdat 를 읽거나 쓰는 중인가(창의 로딩 오버레이가 본다)."""
