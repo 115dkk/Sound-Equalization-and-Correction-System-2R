@@ -1,0 +1,11 @@
+# Handwritten `unsafe` allowance per crate, counted as `unsafe` tokens in the
+# crate's Rust sources (comments, strings and char literals excluded). Every
+# crate not listed here has 0 and must carry `#![forbid(unsafe_code)]`.
+# A listed crate with a budget above 0 carries `#![deny(unsafe_code)]` and its
+# own `[lints.rust]` table instead. Raising a number requires an ADR
+# (docs/adr) first (docs/adr/0002).
+[budget]
+# The isolation crate: WASAPI through wasapi-rs's safe API, cpal, and the OS
+# probes (memory, keep-awake, thread priority) through safe wrapper crates.
+# First-party unsafe stays at 0, as in Impulcifer's impulcifer-sys-win.
+secs-sys = 0

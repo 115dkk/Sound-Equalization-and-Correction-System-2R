@@ -1,0 +1,4 @@
+# ts-rs writes the IPC bindings of secs-types here whenever its tests run; CI
+# regenerates them and fails if the committed copy differs (docs/adr/0003).
+[env]
+TS_RS_EXPORT_DIR = { value = "apps/secs2r/ui/src/ipc/bindings", relative = true }

@@ -1,0 +1,10 @@
+{
+  "app.prerelease": "사전 출시판 {version}",
+  "app.release": "{version}",
+  "app.upstream": "SECS 2 {version} 기준",
+  "app.placeholder.title": "측정·보정 기능 없음",
+  "app.placeholder.body": "이 판은 설치와 배포 경로를 시험하는 빌드입니다. 보정 엔진과 측정 화면은 이후 판에 들어갑니다.",
+  "app.platform": "{os} · {arch}",
+  "error.bootstrap": "앱 정보를 읽지 못했습니다. 앱을 다시 실행하세요.",
+  "error.details": "자세히"
+}
