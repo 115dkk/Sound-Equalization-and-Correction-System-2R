@@ -1,92 +1,87 @@
+# SECS 2R
 
-# Sound Equalization and Correction System 2
+SECS 2R은 룸 보정 설계 프로그램 [SECS 2](https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2)를 러스트 코어와 Tauri 화면으로 다시 만드는 포크입니다. 스피커 응답을 측정하거나 REW 측정을 가져와 룸 보정(RC), BA(Bass Alignment), 저역의 늦은 울림을 줄이는 MIMO 보정을 설계하고, CamillaDSP 설정과 REW mdat로 내보냅니다.
 
-SECS(Sound Equalization & Correction System) 2 는 룸 보정 설계 프로그램입니다.
-REW 로 측정한 스피커 응답으로 룸 보정(RC) · BA (Bass Alignment) · 저역 늦은 울림 보정(MIMO)을 설계하고, CamillaDSP 설정이나 REW mdat 로 내보냅니다.
-Windows 용이고 설치 없이 폴더째 실행합니다.
+## 지금 상태
 
-> 독립 프로젝트입니다. REW, CamillaDSP 등 다른 제품 이름은 각 소유자의 것이며, 이 프로젝트는 그들과 관계가 없습니다.
+개발 중입니다. 지금 나오는 0.0.x 판은 설치와 배포 경로를 시험하는 빈 셸이라 측정과 보정 기능이 없습니다. 기능은 아래 순서로 들어갑니다. 지금 보정 설계가 필요하면 업스트림 SECS 2의 [Releases](https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2/releases)를 쓰세요.
 
-## 무엇을 하나
+| 단계 | 내용 |
+|---|---|
+| M0 | 저장소 기반, CI와 릴리스, 빈 셸 |
+| M1 | 파일 형식(.secs, .irs, REW mdat, CamillaDSP)과 수치 기반 |
+| M2 | 보정 엔진(레벨·딜레이, BA, XO, RC, 성적표) |
+| M3 | MIMO와 계산 가속 |
+| M4 | 측정(자체 측정, REW API, mdat 가져오기)과 내보내기 |
+| M5 | 새 화면, 튜토리얼, 한국어·영어 |
+| M6 | 실장비 검증과 1.0.0 정식 출시 |
 
-장치·마이크 → 구성 → 레벨 체크 → 배치 → 측정 → 보정 설계 → 내보내기 순서로 진행합니다.
+## SECS 2와의 관계
 
-- **측정**: 스피커 구성(2.0 ~ 9.1.6, 직접 추가, 서브 0~8개)을 정하고 마이크를 여러 위치에 두고 잽니다. REW Pro 가 있으면 SECS 가 REW 를 조종해 자동으로 재고, 없으면 REW 에서 잰 `.mdat` 를 불러옵니다.
-- **보정 설계**:
-  - 룸 보정(RC): 타겟 커브에 맞추는 PEQ/FIR 필터와 GD(군지연) 보정
-  - 크로스오버(XO) 추천과 BA (Bass Alignment): 서브의 게인 · 딜레이 · 극성 · 올패스. DBA · 멀티서브 · 인프라 서브 지원
-  - MIMO: 여러 스피커를 함께 써서 저역의 늦은 울림을 줄이는 보정(마이크 위치 3곳 이상)
-- **내보내기**: REW `.mdat`(채널마다 보정 전 · 후), CamillaDSP v4 설정(`.yml`)과 FIR(`.wav`)
-- **튜토리얼 · 도움말**: 샘플 데이터로 따라 하는 튜토리얼, F1 도움말, 버튼마다 풍선 도움말
+- 업스트림 SECS 2의 모든 기능을 옮깁니다. 이식한 업스트림 판은 [`UPSTREAM.toml`](UPSTREAM.toml)에 있고, 앱과 내보낸 파일에도 'SECS 2 Beta 1.2.0 기준'처럼 적힙니다.
+- 업스트림 파이썬 코드는 이 저장소의 `src/`, `tests/`, `tools/`에 고치지 않은 채 남아 있습니다. 러스트 이식의 결과가 맞는지 확인하는 기준으로만 쓰고 출하하지 않습니다.
+- 업스트림의 계산 방법은 그대로 따르고, 결함은 번호를 붙여 고칩니다. 업스트림과 다르게 동작하는 자리는 [`docs/DEVIATIONS.md`](docs/DEVIATIONS.md)에 모두 적습니다.
+- 업스트림의 README와 변경 기록은 [`docs/upstream/`](docs/upstream)에 있습니다.
 
-## 책임의 한계 (면책)
+## 업스트림과 다른 점
 
-SECS 2 는 **있는 그대로(AS IS)** 제공되며, 어떤 보증도 하지 않습니다.
-**SECS 2 를 쓰거나 쓰지 못해 생긴 모든 문제에 대해 개발자와 기여자는 책임지지 않습니다.** 스피커 · 앰프 등 장비 손상, 청력 손상, 데이터 손실, 측정 · 보정 결과의 오류, 그 밖의 직접 · 간접 손해가 모두 포함됩니다. 사용에 따른 위험은 전적으로 사용하는 분에게 있습니다. 자세한 조건은 `LICENSE`(GPL v3) 15 · 16조를 보세요.
+계획된 차이입니다. 들어가는 대로 변경 기록에 적습니다.
 
-- 측정 전에 앰프 볼륨을 낮게 두고 시작하세요. 스윕 신호가 트위터와 귀를 상하게 할 수 있습니다.
-- 만든 필터를 DSP 에 올린 뒤에는 작은 소리로 먼저 들어 보세요.
+- Windows, macOS, Linux에서 돕니다. 업스트림은 Windows 전용입니다.
+- REW 없이도 측정할 수 있습니다. Windows는 WASAPI, macOS와 Linux는 CoreAudio·ALSA로 스윕을 재생하고 녹음합니다. REW Pro의 API 측정과 mdat 가져오기도 그대로 지원합니다.
+- 계산을 취소하면 실제로 멈추고, 설정을 바꿔도 이전 결과는 '낡음'으로 남습니다. 업스트림은 취소해도 계산이 계속 돌고, 다시 계산하면 MIMO 결과가 사라집니다.
+- 보정 계산과 MIMO 계산이 빨라집니다. MIMO의 IIR 서포트 맞춤은 GPU로 넘기는 선택 기능도 둡니다.
+- 화면을 새로 만듭니다. 설정마다 자리를 하나로 정하고, 자주 쓰는 항목과 고급 항목을 나눠 보여 줍니다.
+- 풀 리퀘스트와 이슈를 받습니다([`CONTRIBUTING.md`](CONTRIBUTING.md)).
 
 ## 받는 법
 
-1. 이 저장소의 **Releases** 에서 `SECS_2.0.0-beta.1.2.0_….zip` 을 받아 원하는 곳에 풉니다.
-2. `SECS` 폴더의 `SECS 2 Beta 1.2.0.exe` 를 실행합니다. 설치는 필요 없습니다.
-3. Windows 가 "알 수 없는 게시자" 경고를 띄우면 **추가 정보 → 실행** 을 누릅니다(코드 서명이 없습니다).
+[Releases](https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R/releases)에서 운영체제에 맞는 파일을 받습니다. 0.x 판은 모두 사전 출시판입니다. `SHA256SUMS.txt`로 받은 파일을 확인할 수 있습니다.
 
-## 요구 사항
+| 운영체제 | 파일 | 비고 |
+|---|---|---|
+| Windows 10/11 (64비트) | `SECS2R-<버전>-windows-x64-setup.exe` | 사용자 계정에만 설치되고 관리자 권한이 필요 없습니다. |
+| Windows 10/11 (64비트) | `SECS2R-<버전>-windows-x64-portable.zip` | 설치 없이 압축을 푼 폴더에서 실행합니다. |
+| macOS (Apple 실리콘, Intel) | `SECS2R-<버전>-macos-universal.dmg` | 한 파일이 두 종류 Mac에서 모두 돕니다. |
+| Linux (x86_64) | `SECS2R-<버전>-linux-x86_64.AppImage`, `SECS2R-<버전>-linux-amd64.deb` | AppImage는 필요한 라이브러리를 함께 담고, deb는 WebKitGTK 4.1 패키지를 씁니다. |
 
-- Windows 10 / 11 64-bit (Windows 11 에서 확인)
-- **REW(Room EQ Wizard) 5.40 이상**
-  - 자동 측정은 REW **Pro** 의 API 기능입니다. REW 를 `-api` 옵션으로 실행하세요: `"C:\Program Files\REW\roomeqwizard.exe" -api`
-  - Pro 가 없으면 REW 에서 재서 `.mdat` 로 저장한 뒤 측정 화면의 **[mdat 불러오기]** 로 가져옵니다.
-- 측정용 마이크 · 오디오 인터페이스
-- CamillaDSP 로 적용하려면 CamillaDSP 4.1.x 와 CamillaGUI 4.1.x
+코드 서명이 아직 없습니다. Windows에서 '알 수 없는 게시자' 경고가 뜨면 **추가 정보 → 실행**을 누르세요. macOS에서는 앱을 Control 키를 누른 채 클릭하고 **열기**를 고르세요.
 
-## 처음 쓰는 법
+## 책임의 한계
 
-1. 왼쪽 사이드바의 **[튜토리얼]** 을 누르면 샘플 데이터로 측정부터 내보내기까지 따라 할 수 있습니다. REW · 마이크가 필요 없고 소리도 나지 않습니다.
-2. 막히면 **F1**(도움말)을 누르세요.
-3. 실제 측정은 REW 를 `-api` 로 먼저 켠 뒤 1단계부터 순서대로 진행합니다. 프로젝트는 `.secs` 파일로 저장됩니다.
+SECS 2R은 GPL v3에 따라 **있는 그대로(AS IS)** 제공되며 어떤 보증도 하지 않습니다(`LICENSE` 15, 16조). 스피커와 앰프 같은 장비 손상, 청력 손상, 데이터 손실, 측정과 보정 결과의 오류를 포함해, 쓰거나 쓰지 못해 생긴 문제에 대해 개발자와 기여자는 책임지지 않습니다.
 
-## CamillaDSP 로 적용하기
+- 측정 전에는 앰프 볼륨을 낮게 두고 시작하세요. 스윕 신호가 트위터와 귀를 상하게 할 수 있습니다.
+- 만든 필터를 DSP에 올린 뒤에는 작은 소리로 먼저 들어 보세요.
 
-내보내기 화면에서 CamillaDSP 를 고르면 CamillaGUI 폴더와 같은 모양(`configs\*.yml`, `coeffs\*.wav`)으로 파일을 만듭니다.
-CamillaDSP · CamillaGUI 설치부터 장치 · 라우팅 설정, 파일 올리기까지는 **F1 도움말 → 내보내기 화면의 「CamillaDSP」 탭**에 그림으로 있습니다. CamillaDSP 5.x 는 지원하지 않습니다.
+## 소스에서 빌드
 
-## 알려진 제한
+필요한 것은 [rustup](https://rustup.rs)(툴체인은 `rust-toolchain.toml`이 정함), Node.js 24, 그리고 Linux에서는 Tauri용 패키지입니다.
 
-- 화면은 한국어만 지원합니다.
-- 바이앰프(스피커 하나를 대역별로 따로 재기)는 지원하지 않습니다.
-- MIMO 는 계산이 오래 걸리고(입력 · 위치가 많으면 10분 넘게), 실제 효과가 예측보다 작을 수 있습니다.
-- 내보내기 형식은 REW mdat 와 CamillaDSP 뿐입니다.
-- Windows 에서 CamillaDSP 로 12채널 이상을 입력받는 쉬운 방법은 확인하지 못했습니다(맥은 BlackHole 16ch 로 가능).
-- Windows 용 exe 만 있습니다.
+```sh
+# Linux (Ubuntu): Tauri와 ALSA 패키지
+sudo apt-get install libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev libasound2-dev patchelf
 
-## 소스에서 실행 · 빌드
-
-Python 3.13 기준입니다.
-
-```powershell
-python -m venv .venv-secs
-.venv-secs\Scripts\python.exe -m pip install -r requirements.txt
-.venv-secs\Scripts\python.exe run_secs.py --fake-rew     # REW 없이 샘플 데이터로 실행
-.venv-secs\Scripts\python.exe run_secs.py                # REW 연동으로 실행
-
-.venv-secs\Scripts\python.exe -m pip install -r requirements-dev.txt
-powershell -NoProfile -ExecutionPolicy Bypass -File build_exe.ps1   # exe 빌드(dist\SECS\)
+cargo test --workspace                       # 러스트 테스트와 정책 게이트
+cd apps/secs2r/ui && npm ci && npm test      # 화면 의존성과 테스트
+cd .. && node ui/node_modules/@tauri-apps/cli/tauri.js dev     # 개발 모드로 실행
+node ui/node_modules/@tauri-apps/cli/tauri.js build            # 설치본 만들기
 ```
+
+화면 없이 쓰는 CLI는 `cargo run -p secs2r-cli -- --help`로 볼 수 있습니다. 구조는 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), 결정의 근거는 [`docs/adr/`](docs/adr)에 있습니다.
 
 ## 라이선스
 
-SECS 2 는 **GNU General Public License v3(GPL-3.0)** 자유 소프트웨어입니다. 전문은 [`LICENSE`](LICENSE), 제3자 패키지 고지는 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) 에 있습니다.
-**Pull Request 는 받지 않습니다.** 고치고 싶은 곳이 있으면 자유롭게 포크해서 쓰세요.
+SECS 2R은 업스트림을 따라 **GNU General Public License v3**(GPL-3.0-only)입니다. 전문은 [`LICENSE`](LICENSE)에 있습니다. 다른 저장소에서 가져온 코드와 그 라이선스는 [`docs/THIRD_PARTY.md`](docs/THIRD_PARTY.md)에 있습니다.
 
 ## 도움 주신 분들
 
-이 프로젝트는 한국의 오디오 커뮤니티 스피커 갤러리의 Sound Equalization and Correction System 프로젝트에서 시작한 시스템입니다. SECS 2의 모든 소스는 공개되어 있으며 자유로운 수정이 가능합니다(GPL v3). SECS 2가 골방의 구원이 되길 바랍니다.
+SECS 2는 한국 오디오 커뮤니티 스피커 갤러리의 Sound Equalization and Correction System 프로젝트에서 시작한 시스템이고, 그 소스를 GPL v3로 공개해 주신 덕분에 이 포크가 있습니다. 업스트림 저작자와 스피커 갤러리 여러분께 감사드립니다.
 
-— 스피커 갤러리 일동
+---
 
-## 문의
+## English
 
-**문의 · 버그 신고는 받지 않습니다.** 취미로 만든 프로그램이라 답변이나 수정을 약속할 수 없습니다.
+SECS 2R is a fork of [SECS 2](https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2), a room correction designer, rewritten with a Rust core and a Tauri user interface. It designs room correction (RC), bass alignment (BA) and MIMO bass-decay correction from speaker measurements and exports CamillaDSP configurations and REW mdat files.
+
+It is under development. The current 0.0.x builds only test the release path and have no measurement or correction features yet. Every upstream feature is being ported; the upstream Python tree stays untouched in this repository as the reference the port is checked against, and deliberate differences are listed in [`docs/DEVIATIONS.md`](docs/DEVIATIONS.md). Pull requests and issues are welcome. License: GPL-3.0-only.
