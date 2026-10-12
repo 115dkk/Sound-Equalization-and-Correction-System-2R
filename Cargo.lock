@@ -2813,10 +2813,22 @@ version = "0.0.1"
 [[package]]
 name = "secs-jos"
 version = "0.0.1"
+dependencies = [
+ "secs-oracle",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "secs-mdat"
 version = "0.0.1"
+dependencies = [
+ "secs-dsp",
+ "secs-jos",
+ "secs-oracle",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "secs-oracle"

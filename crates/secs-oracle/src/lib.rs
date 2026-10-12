@@ -132,6 +132,53 @@ impl Fixture {
             .collect()
     }
 
+    /// Whether `v` is a digest descriptor (`{"digest", "length", "first",
+    /// "last"}`): an array frozen by its SHA-256 instead of a sidecar.
+    pub fn is_digest(v: &Value) -> bool {
+        v.get("digest").is_some() && v.get("length").is_some()
+    }
+
+    /// Asserts `got` has the digest descriptor's length, first and last values
+    /// (bit for bit) and SHA-256 of its little-endian float64 bytes.
+    pub fn assert_digest(&self, name: &str, v: &Value, got: &[f64]) {
+        assert_eq!(
+            got.len() as u64,
+            integer(&v["length"]),
+            "{}: {name} length",
+            self.id
+        );
+        let first = self.f64s(&v["first"]);
+        let last = self.f64s(&v["last"]);
+        let bits = |x: &[f64]| x.iter().map(|v| v.to_bits()).collect::<Vec<_>>();
+        assert_eq!(
+            bits(&got[..first.len()]),
+            bits(&first),
+            "{}: {name} first",
+            self.id
+        );
+        assert_eq!(
+            bits(&got[got.len() - last.len()..]),
+            bits(&last),
+            "{}: {name} last",
+            self.id
+        );
+        let mut hasher = Sha256::new();
+        for value in got {
+            hasher.update(value.to_le_bytes());
+        }
+        let hex: String = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        assert_eq!(
+            Some(hex.as_str()),
+            v["digest"].as_str(),
+            "{}: {name} sha256",
+            self.id
+        );
+    }
+
     /// The bytes of a blob descriptor (`{"blob", "length", "sha256"}`), checked.
     pub fn blob(&self, v: &Value) -> Vec<u8> {
         let name = v["blob"]
@@ -364,6 +411,29 @@ mod tests {
         }
         println!("{fixtures} fixtures, {sidecars} sidecars and blobs checked");
         assert!(fixtures > 0);
+    }
+
+    #[test]
+    fn digest_descriptor_checks_length_ends_and_hash() {
+        let values = [1.5, -0.0, f64::NAN, 3.25];
+        let mut hasher = Sha256::new();
+        values.iter().for_each(|v| hasher.update(v.to_le_bytes()));
+        let hex: String = hasher
+            .finalize()
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        let v = serde_json::json!({"digest": hex, "length": 4,
+            "first": [1.5, -0.0, "nan", 3.25], "last": [1.5, -0.0, "nan", 3.25]});
+        let fx = Fixture {
+            id: "test".into(),
+            dir: goldens(),
+            value: Value::Null,
+        };
+        assert!(Fixture::is_digest(&v));
+        fx.assert_digest("values", &v, &values);
+        let changed = [1.5, 0.0, f64::NAN, 3.25];
+        assert!(std::panic::catch_unwind(|| fx.assert_digest("changed", &v, &changed)).is_err());
     }
 
     #[test]

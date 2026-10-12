@@ -115,6 +115,7 @@ status = "implemented"
 tests = [
   "secs-oracle::every_sidecar_and_blob_matches_its_descriptor",
   "secs-oracle::libm_probe_reads_and_reports",
+  "secs-oracle::digest_descriptor_checks_length_ends_and_hash",
 ]
 note = "oracle/README.md; fixtures regenerate with oracle/run.py from the in-repo upstream tree"
 
@@ -150,25 +151,28 @@ upstream = "rewapi/session.py"
 id = "format.jos_round_trip"
 kind = "format"
 milestone = "M1"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-jos::template_and_build_roundtrip", "secs-jos::modified_utf8_matches_oracle", "secs-jos::errors_match_oracle"]
 upstream = "rew_mdat/serialization"
+note = "템플릿과 다섯 빌드 골든의 바이트 동일 왕복, Modified UTF-8, 오류 종류·메시지·오프셋을 검증합니다."
 
 [[feature]]
 id = "format.mdat_read"
 kind = "format"
 milestone = "M1"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-mdat::template_schema_matches_every_field", "secs-mdat::built_schema_matches_every_field", "secs-mdat::built_ir_converts_back_in_float32_precision"]
 upstream = "rew_mdat, mdat_loader.py"
+note = "REW 스키마의 저장 값·배열·필드 의미·미지 필드 이름과 역할 추측을 제외한 IR 추출을 검증합니다."
 
 [[feature]]
 id = "format.mdat_build"
 kind = "format"
 milestone = "M1"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-mdat::builds_match_bytes_except_nine_one_ulp_caches"]
 upstream = "rew_mdat/builder.py"
+note = "UUID를 주입한 1·3개 측정 빌드(돌비룸 실측 IR 셋 포함)입니다. 아홉 float32 캐시 배열은 1 ULP 이내, 나머지 바이트는 정확히 일치합니다."
 
 [[feature]]
 id = "format.camilladsp_v4"

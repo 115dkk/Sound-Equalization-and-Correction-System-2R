@@ -51,6 +51,10 @@ versions.
   32 values, for reading diffs) pointing at headerless little-endian float64;
   above 24000 values it is a list of such descriptors in order.
 - Raw bytes are `{"blob", "length", "sha256"}`.
+- An array whose values another fixture already pins (a model adapted from
+  a blob) may be a digest `{"digest", "length", "first", "last"}`: the
+  SHA-256 of its little-endian float64 bytes, without a sidecar
+  (`Family.f64_digest`, `Fixture::assert_digest`).
 - Matrices are row-major.
 
 `secs-oracle` checks every sidecar's length and SHA-256 when it reads it, and
@@ -70,3 +74,4 @@ relative elsewhere (`oracle_libm()` decides from `goldens/libm/probe.json`).
 | Family | Exporter | What is frozen |
 |---|---|---|
 | `libm` | `export_libm.py` | float64 `ln`, `log10`, `log2`, `exp`, `sin`, `cos`, `tan`, `atan`, `tanh`, `atan2`, `pow` at fixed points |
+| `mdat` | `export_mdat.py` | bounded Java serialization parsing, Modified UTF-8, full REW model adaptation, byte-identical round trips, and deterministic 1- and 3-measurement builds (one from three real Dolby-room IRs); built models are frozen as digests |
