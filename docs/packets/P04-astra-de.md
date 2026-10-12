@@ -51,6 +51,8 @@ constraints, no integrality, `vectorized=False`.
 - `features.toml`: add `dsp.random_state` and `dsp.differential_evolution`
   (kind `"dsp"`, milestone `"M1"`)
 - `oracle/README.md`: rows for the `dsp_de` family
+- `Cargo.lock`, only as cargo rewrites it (never by hand); Claude regenerates
+  it when merging worker branches
 
 ## Goldens (`oracle/export_dsp_de.py`, family `dsp_de`)
 
