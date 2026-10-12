@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""10-10 기능 이름 정리(저역 감쇠 → MIMO, 서브 정렬 → BA) 뒤에도 옛 파일이 그대로 열린다.
+"""10-10 기능 이름 정리(저역 감쇠 → MIMO, BA → BA) 뒤에도 옛 파일이 그대로 열린다.
 
 1. `.secs` 판 1 · 2(판 번호 없음 포함)의 보정 설계 설정 `art_on` · `art_low` · `art_max_supports` 와 서브마다 `art_support` 는
    불러올 때 `mimo_*` 로 옮겨지고(`Project._migrate_legacy` 5번), 저장하면 판 3 — 다시 열어도 값이 같다.
@@ -169,8 +169,8 @@ def test_old_run_cache_opens_with_new_names(engine, tmp_path):
     s = run.settings
     assert not any(k.startswith('art_') for k in s.__dict__)
     assert (s.mimo_on, s.mimo_low, s.mimo_max_supports) == (True, 30.0, 4)
-    assert s.excluded_supports() == ('SW2',) and s.mimo_key() == (s.fsiso, 30.0, ('SW2',), 4)
-    assert mimo_run.key() == (120.0, 30.0, ('SW2',), 4)
+    assert s.excluded_supports() == ('SW2',) and s.mimo_key() == (s.fsiso, 30.0, ('SW2',), 4, False)
+    assert mimo_run.key() == (120.0, 30.0, ('SW2',), 4, False)
     assert run.engine.sub_manual['SW2']['mimo_support'] is False and 'art_support' not in run.engine.sub_manual['SW2']
 
     # 다시 저장하면 새 판(키 mimo_run) — 그대로 다시 열린다

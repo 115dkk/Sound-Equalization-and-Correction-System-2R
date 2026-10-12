@@ -3,7 +3,7 @@
 
 부르는 곳: 5단계 측정 그래프(`step5_measure`, `freq_ticks`·`octave_smoothing_sigma`)와 보정 설계 그래프
 (`step_calibration`, 눈금 + 색).
-옛 6단계 그래프(`DesignPlot`·`XoStrip`, 커튼·XO·타깃 제어점 끌기)는 2026-10-10 슬림화로 6단계 화면과 함께 지웠다
+옛 6단계 그래프(`DesignPlot`·`XoStrip`, 커튼·XO·타겟 제어점 끌기)는 2026-10-10 슬림화로 6단계 화면과 함께 지웠다
 (되살릴 기준: git 태그 slim-before-2026-10-10).
 """
 from __future__ import annotations

@@ -44,14 +44,37 @@ def _per(K, A=A_BANDS):
     return 2 + 3 * K + 2 * A
 
 
-def _bounds(K, A=A_BANDS):
+def _knobs() -> dict:
+    """서포트 PEQ 밴드 제한(10-11 외부 의견: 서포트 PEQ 가 +25 / −25 dB — 14채널에서 밴드 30 % 가 ±20 dB 넘고 상쇄 쌍 130,
+    대역 밖 11 %). 환경변수로 맞춤마다 바꿀 수 있다(워커가 뜰 때 읽는다):
+    SECS_MIMO_BAND_DB 밴드 게인 한도 · SECS_MIMO_Q_MAX Q 상한 · SECS_MIMO_IN_BAND 1 = 중심 주파수를 서포트 대역(하한 … Fsiso) 안으로 ·
+    SECS_MIMO_BAND_REG 밴드 게인 벌점(상쇄 쌍 퇴화 해를 막는다).
+    기본값 = 10-12 비교의 V2(±15 dB · Q≤10 · 대역 안 · 벌점 0.05): mmio님 14채널에서 늦은 에너지 −1.85 → −1.28 dB(청취 위치
+    −0.75 → −0.67), 상쇄 쌍 177 → 1, 대역 밖 118 → 0, 최대 30 → 13.8 dB. 옛 값(30 · 40 · 0 · 0)은 환경변수로 되살린다."""
+    import os
+    return {'band_db': float(os.environ.get('SECS_MIMO_BAND_DB', '15')), 'q_max': float(os.environ.get('SECS_MIMO_Q_MAX', '10')),
+            'in_band': os.environ.get('SECS_MIMO_IN_BAND', '1') == '1', 'reg': float(os.environ.get('SECS_MIMO_BAND_REG', '0.05'))}
+
+
+def _band_of(lo: float, hi: float, fsiso: float) -> tuple[float, float]:
+    """서포트 경로 하나의 PEQ · 올패스 중심 주파수 범위. 끄면 예전 그대로 15–300 Hz."""
+    if not _knobs()['in_band']:
+        return 15.0, 300.0
+    f_lo = max(15.0, float(lo) * 0.9)
+    f_hi = min(300.0, float(min(hi, fsiso)) * 1.1)
+    return (f_lo, f_hi) if f_hi > f_lo * 1.5 else (15.0, 300.0)
+
+
+def _bounds(K, A=A_BANDS, f_lo: float = 15.0, f_hi: float = 300.0):
     # 갈래 게인 상한(dB) — SECS_MIMO_GAIN_MAX_DB(기본 20). 10-05 테시라 예산 시험: 0 dB 로 묶으면 갈래 게인을 매트릭스
     # 크로스포인트 레벨(−100–0 dB)로 넣을 수 있어 Level 블록이 필요 없다. 워커가 뜰 때 환경변수를 읽으므로 맞춤마다 바꿀 수 있다.
     gain_max = float(__import__('os').environ.get('SECS_MIMO_GAIN_MAX_DB', '20'))
-    lb = [-80.0, 0.0] + [v for _ in range(K) for v in (np.log(15.0), np.log(0.5), -30.0)] + \
-        [v for _ in range(A) for v in (np.log(15.0), np.log(0.3))]
-    ub = [gain_max, 250.0] + [v for _ in range(K) for v in (np.log(300.0), np.log(40.0), 30.0)] + \
-        [v for _ in range(A) for v in (np.log(300.0), np.log(20.0))]
+    kn = _knobs()
+    band, q_max = kn['band_db'], kn['q_max']
+    lb = [-80.0, 0.0] + [v for _ in range(K) for v in (np.log(f_lo), np.log(0.5), -band)] + \
+        [v for _ in range(A) for v in (np.log(f_lo), np.log(0.3))]
+    ub = [gain_max, 250.0] + [v for _ in range(K) for v in (np.log(f_hi), np.log(q_max), band)] + \
+        [v for _ in range(A) for v in (np.log(f_hi), np.log(20.0))]
     return np.array(lb), np.array(ub)
 
 
@@ -85,7 +108,8 @@ def late_modes(xs: list, n_modes: int, lo: float, hi: float) -> list:
     return [float(fr[i]) for i in idx]
 
 
-def _fit_one(s_fir: np.ndarray, lo: float, hi: float, K: int, modes: list | None = None, A: int = A_BANDS) -> tuple[np.ndarray, int]:
+def _fit_one(s_fir: np.ndarray, lo: float, hi: float, K: int, modes: list | None = None, A: int = A_BANDS,
+             band: tuple[float, float] = (15.0, 300.0)) -> tuple[np.ndarray, int]:
     """이상적 저속 FIR 하나 → 직렬 IIR 시작값(복소 응답 맞춤)."""
     from scipy.optimize import least_squares
 
@@ -96,15 +120,15 @@ def _fit_one(s_fir: np.ndarray, lo: float, hi: float, K: int, modes: list | None
     k = int(np.argmax(np.abs(s_fir)))
     pol = 1 if s_fir[k] >= 0 else -1
     base_db = float(np.median(20 * np.log10(np.abs(T) + 1e-12)))
-    peq = fit_peq(fl, 20 * np.log10(np.abs(T) + 1e-12) - base_db, K, lo=fl[0], hi=fl[-1], boost=30.0)
+    peq = fit_peq(fl, 20 * np.log10(np.abs(T) + 1e-12) - base_db, K, lo=fl[0], hi=fl[-1], boost=_knobs()['band_db'])
     while len(peq) < K:
         peq.append((float(np.sqrt(fl[0] * fl[-1])), 1.0, 0.0))
     ap0 = list(modes or [])[:A]
     while len(ap0) < A:
         ap0.append(float(np.sqrt(fl[0] * fl[-1])))
     x0 = [base_db, 1000.0 * k / FS_LOW] + [v for f0, q, g in peq for v in (np.log(f0), np.log(q), g)] + \
-        [v for f0 in ap0 for v in (np.log(np.clip(f0, 15.5, 290.0)), np.log(2.0))]
-    lb, ub = _bounds(K, A)
+        [v for f0 in ap0 for v in (np.log(np.clip(f0, band[0] * 1.03, band[1] * 0.97)), np.log(2.0))]
+    lb, ub = _bounds(K, A, *band)
     x0 = np.clip(np.array(x0, float), lb + 1e-6, ub - 1e-6)
 
     def res(x):
@@ -186,15 +210,20 @@ def _solve_problem(pb: dict) -> tuple:
     X, WL, WE, G = pb['X'], pb['WL'], pb['WE'], pb['G']          # (P,n) (P,n) (P,n) (P,R,nf/2+1)
     roles = pb['roles']
     R, P = len(roles), X.shape[0]
-    starts, pols = [], []
+    starts, pols, lbs, ubs = [], [], [], []
     for j in roles:
         lo, hi = pb['ranges'][j]
+        band_j = _band_of(lo, hi, pb['fsiso'])
         x0, pol = _fit_one(pb['fir'][j], lo, min(hi, pb['fsiso']), K,
-                           [m for m in pb['modes'] if lo <= m <= hi] or pb['modes'], A)
+                           [m for m in pb['modes'] if lo <= m <= hi] or pb['modes'], A, band_j)
         starts.append(x0)
         pols.append(pol)
-    lb1, ub1 = _bounds(K, A)
-    lb, ub = np.tile(lb1, R), np.tile(ub1, R)
+        lb_j, ub_j = _bounds(K, A, *band_j)
+        lbs.append(lb_j)
+        ubs.append(ub_j)
+    lb, ub = np.concatenate(lbs), np.concatenate(ubs)
+    kn = _knobs()
+    reg = kn['reg']
     x0 = np.clip(np.concatenate(starts), lb + 1e-6, ub - 1e-6)
     per = _per(K, A)
     sq_mu = np.sqrt(MU_EARLY)
@@ -259,12 +288,14 @@ def _solve_problem(pb: dict) -> tuple:
             e = weff[r] * pr[r][0]
             out.append(e.real)
             out.append(e.imag)
+        if reg > 0:                                   # 밴드 게인 벌점: reg × scale × (g / 30 dB)
+            out.append(np.array([reg * scale * x[r * per + 4 + 3 * k] / 30.0 for r in range(R) for k in range(K)]))
         return np.concatenate(out)
 
     def jac(x):
         pr = evaluate(x)
         nfl = fl.size
-        J = np.zeros((2 * P * n + 1 + 2 * R * nfl, R * per))
+        J = np.zeros((2 * P * n + 1 + 2 * R * nfl + (R * K if reg > 0 else 0), R * per))
         st = [np.fft.irfft(pr[r][0] * LP, nf)[:n] for r in range(R)]
         lvl = sum(float(np.sum(s ** 2)) for s in st) / max(direct, 1e-30)
         over = 10 * np.log10(lvl + 1e-30) - pb['level_db']
@@ -283,6 +314,11 @@ def _solve_problem(pb: dict) -> tuple:
                 ct = np.fft.irfft(dS * LP[None, :], nf, axis=1)[:, :n]
                 dlvl = 2 * (ct @ st[r]) / max(direct, 1e-30)
                 J[2 * P * n, cols] = scale * 10 / (np.log(10) * max(lvl, 1e-30)) * dlvl   # 레벨 한도 줄(벌점 줄들 앞)
+        if reg > 0:
+            row0 = 2 * P * n + 1 + 2 * R * nfl
+            for r in range(R):
+                for k in range(K):
+                    J[row0 + r * K + k, r * per + 4 + 3 * k] = reg * scale / 30.0
         return J
 
     try:

@@ -10,7 +10,7 @@
 최소화  Σ_p ‖W_late y_p‖² + μ Σ_p ‖W_early (Σ_j g_jp * s_j)‖² + λ Σ_j ‖u_j‖² — 선형 최소제곱.
 λ 는 서포트 출력 레벨(입력 대비, 대역 안 RMS)이 Support Level 이하가 되게 이분 탐색.
 누가 부르나: `secs.calibration.compute_mimo`(보정 설계 화면의 [MIMO 계산]). 결과 서포트 FIR 은 저속(fs_low) — DSP 에
-올리는 IIR 근사는 `secs.mimo_iir`.
+올리는 IIR 근사는 `secs.mimo_iir`, FIR 그대로 올릴 때(10-12 'FIR 사용')는 `FirSupport`.
 """
 from __future__ import annotations
 
@@ -29,6 +29,10 @@ MAIN_FLOOR_HZ = 50.0            # 서브가 아닌 스피커의 서포트 하한
 SUB_FLOOR_HZ = 20.0
 RANGE_DROP_DB = 10.0            # 서포트 하한 = 대역 기준 레벨보다 10 dB 낮아지는 곳
 LEVEL_DB = -12.0                 # 서포트 세기 기본값(09-26 맥 시뮬 4차·가드 수정 뒤: −18 → 2.9 dB, −12 → 4.2 dB 감소, 과적합 없음)
+#: FIR 서포트(10-12 사용자: 'FIR 사용' 체크, 서포트당 8,000탭 상한) — 48 kHz 8,000탭 = 저속 100 표본. 그중 Fsiso 저역 통과
+#: (`lowpass_fir` 31탭)가 30 을 먹으므로 풀 길이는 70(117 ms). IIR 은 180(300 ms)을 풀어 근사한다.
+FIR_TAPS_48K = 8000
+FIR_TAPS_LOW = FIR_TAPS_48K * FS_LOW // SR - 30
 
 
 @dataclass
@@ -38,6 +42,28 @@ class MimoResult:
     fs_low: int = FS_LOW
     ranges: dict = field(default_factory=dict)      # 스피커 → (F-support Low, High) Hz, None 이면 제외
     notes: list = field(default_factory=list)
+
+
+@dataclass
+class FirSupport:
+    """FIR 서포트 경로 하나 — 저속 FIR(`MimoResult.supports` 의 것, Fsiso 저역 통과 포함). `IirSupport` 와 같은 자리에 들어가
+    `response(f)` 로 응답을 준다. DSP 에는 `export_camilladsp.fir_to_48k` 로 48 kHz Conv 가 된다(`taps_48k` 탭)."""
+    taps: np.ndarray
+    fs_low: int = FS_LOW
+
+    def response(self, f: np.ndarray) -> np.ndarray:
+        """48 kHz 격자 f(Hz)의 복소 응답 — `fir_to_48k` 와 같게 fs_low/2 아래만(가장자리 10 % 코사인), 위는 0."""
+        f = np.asarray(f, float)
+        edge = self.fs_low / 2
+        out = np.zeros(f.size, complex)
+        m = f < edge
+        out[m] = np.exp(-2j * np.pi * np.outer(f[m], np.arange(self.taps.size)) / self.fs_low) @ self.taps
+        out[m] *= np.clip((edge - f[m]) / (0.1 * edge), 0, 1)
+        return out
+
+    @property
+    def taps_48k(self) -> int:
+        return int(np.ceil(self.taps.size * SR / self.fs_low))
 
 
 def to_low(H: np.ndarray, f: np.ndarray, n: int) -> np.ndarray:
@@ -118,10 +144,12 @@ def support_path(engine, design: 'MimoResult', j: str, H: dict, pos: int) -> np.
 
 def design_mimo(engine, fsiso: float = 150.0, level_db: float = LEVEL_DB, positions: list | None = None,
                inputs: list | None = None, groups: set | None = None, max_supports: int | None = None,
-               f_low: float | None = None, exclude=()) -> MimoResult:
+               f_low: float | None = None, exclude=(), taps_low: int | None = None) -> MimoResult:
     """fsiso = 서포트 상한, f_low = 서포트 하한(None = 자동). groups: 서포트에 참여할 그룹(None = 전부). max_supports: 입력당 서포트 수 상한(DSP 자원) —
     넘으면 하나씩 따로 풀어 늦은 에너지를 가장 많이 줄이는 순서로 고른다. exclude: 서포트로 쓰지 않을 스피커(10-05 R27 — 서브별
-    'MIMO 서포트로 쓰기' 체크를 끈 것. DBA 처럼 배치로 감쇠를 만든 서브를 그대로 두고 싶을 때)."""
+    'MIMO 서포트로 쓰기' 체크를 끈 것. DBA 처럼 배치로 감쇠를 만든 서브를 그대로 두고 싶을 때). taps_low: 풀 서포트 FIR 길이
+    (저속, None = `TAPS_LOW` — FIR 서포트로 DSP 에 올릴 때는 `FIR_TAPS_LOW`)."""
+    taps = int(taps_low or TAPS_LOW)
     out = MimoResult()
     positions = positions or engine.positions
     if len(positions) < 3:
@@ -145,7 +173,7 @@ def design_mimo(engine, fsiso: float = 150.0, level_db: float = LEVEL_DB, positi
     for i in (inputs or list(engine.chain)):
         cands = [r for r in usable if r != i]
         if max_supports and len(cands) > max_supports:
-            cands = _rank_supports(engine, out, i, cands, H, positions, n, lp)[:max_supports]
+            cands = _rank_supports(engine, out, i, cands, H, positions, n, lp, taps)[:max_supports]
         blocks, early_blocks, xs, lates = [], [], [], []
         for p in positions:
             x = to_low(engine.input_response(i, H, p), f, n)
@@ -157,7 +185,7 @@ def design_mimo(engine, fsiso: float = 150.0, level_db: float = LEVEL_DB, positi
             cols = []
             for j in cands:
                 g = np.convolve(to_low(support_path(engine, out, j, H, p), f, n), lp)[:n]
-                cols.append(conv_matrix(g, TAPS_LOW, n))
+                cols.append(conv_matrix(g, taps, n))
             A = np.hstack(cols)
             blocks.append(wl[:, None] * A)
             early_blocks.append(np.sqrt(MU_EARLY) * we[:, None] * A)
@@ -172,7 +200,7 @@ def design_mimo(engine, fsiso: float = 150.0, level_db: float = LEVEL_DB, positi
         def solve(lam):
             u = np.linalg.solve(AtA + lam * np.eye(AtA.shape[0]), Atb)
             # 서포트 레벨: 서포트 출력(대역 제한 뒤) 에너지 합 / 입력 자체 응답 에너지(위치 평균, 음향)
-            sup = sum(float(np.sum(np.convolve(lp, u[k * TAPS_LOW:(k + 1) * TAPS_LOW]) ** 2)) for k in range(len(cands)))
+            sup = sum(float(np.sum(np.convolve(lp, u[k * taps:(k + 1) * taps]) ** 2)) for k in range(len(cands)))
             direct = float(np.sum(to_low(engine.chain[i]['F'], f, n) ** 2))
             return u, sup / max(direct, 1e-30)
 
@@ -186,7 +214,7 @@ def design_mimo(engine, fsiso: float = 150.0, level_db: float = LEVEL_DB, positi
                 lo = mid
             else:
                 hi, u, ratio = mid, u_m, r_m
-        sup = {j: np.convolve(lp, u[k * TAPS_LOW:(k + 1) * TAPS_LOW]) for k, j in enumerate(cands)}
+        sup = {j: np.convolve(lp, u[k * taps:(k + 1) * taps]) for k, j in enumerate(cands)}
         # 안 나빠지게(09-26: 167 ms 서포트가 64–68 Hz T60 을 0.8 → 1.6 s 로 늘림): 설계 위치들의 1/3 oct 대역 늦은
         # 에너지가 한 대역이라도 1 dB 넘게 늘면 서포트를 3 dB 씩 낮춘다(최대 12 dB, 그래도 나쁘면 이 입력 MIMO 끔).
         xs = [to_low(engine.input_response(i, H, p), f, n) for p in positions]
@@ -317,7 +345,7 @@ def apply_mimo(engine, design: MimoResult, role: str, H: dict, pos: int, n: int)
     return x, y
 
 
-def _rank_supports(engine, design, i, cands, H, positions, n, lp) -> list:
+def _rank_supports(engine, design, i, cands, H, positions, n, lp, taps: int = TAPS_LOW) -> list:
     """후보마다 혼자 서포트할 때 늦은 에너지를 얼마나 줄이는지(같은 비례 규제)로 줄 세운다."""
     f = engine.f
     scores = {}
@@ -329,7 +357,7 @@ def _rank_supports(engine, design, i, cands, H, positions, n, lp) -> list:
             wl = np.zeros(n)
             wl[onset + int(EARLY_MS / 1000 * FS_LOW):] = 1.0
             g = np.convolve(to_low(support_path(engine, design, j, H, p), f, n), lp)[:n]
-            A = conv_matrix(g, TAPS_LOW, n)
+            A = conv_matrix(g, taps, n)
             rows.append(wl[:, None] * A)
             rhs.append(-wl * x)
         A, b = np.vstack(rows), np.concatenate(rhs)

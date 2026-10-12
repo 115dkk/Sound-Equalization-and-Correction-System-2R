@@ -79,7 +79,7 @@ PAIRS: tuple[tuple[str, str], ...] = (
      'XO 와 XO PEQ 를 고릅니다.',
      'Mains and subs must add up smoothly around the XO, or the bass dips or bulges there. This tab sets the XO '
      'and XO PEQ per channel group.'),
-    ('서브 정렬 탭도 열어 볼까요?', 'Open the sub alignment tab too.'),
+    ('BA 탭도 열어 볼까요?', 'Open the BA tab too.'),
     ('서브가 여럿이면 자리마다 저역이 서로 더해지거나 지워집니다. 엔진이 서브마다 레벨 · 딜레이 · 극성을 찾아 '
      '여러 위치에서 고르게 맞춥니다.',
      'With several subs the bass adds or cancels differently at each seat. The engine finds level, delay and polarity '
@@ -108,7 +108,7 @@ PAIRS: tuple[tuple[str, str], ...] = (
     ('계산을 시작해 두었습니다 — 뒤에서 이어 돕니다.', 'Started the calculation — it keeps running in the background.'),
     ('XO 탭을 열어 두었습니다. 곡선은 계산이 끝나야 보입니다.',
      'Opened the XO tab. The curves appear when the calculation is done.'),
-    ('서브 정렬 탭을 열어 두었습니다.', 'Opened the sub alignment tab.'),
+    ('BA 탭을 열어 두었습니다.', 'Opened the BA tab.'),
     ('마지막 서브를 인프라로 정해 두었습니다 — 25 Hz LR24.',
      'Set the last sub as the infra — 25 Hz LR24.'),
     # 용어 풀이(tutorial_quests.GLOSSARY)
@@ -139,7 +139,7 @@ PAIRS: tuple[tuple[str, str], ...] = (
      'RC — room correction: evens out the peaks and dips the room adds at different pitches.'),
     ('SPL — 소리 크기를 음의 높낮이(주파수)별로 본 그래프. 마이크로 잰 상대 크기라 값이 음수일 수 있습니다.',
      'SPL — loudness plotted against pitch (frequency). It is a relative mic level, so values can be negative.'),
-    ('타깃 — 보정 뒤에 목표로 삼는 곡선.', 'Target — the curve the correction aims for.'),
+    ('타겟 — 보정 뒤에 목표로 삼는 곡선.', 'Target — the curve the correction aims for.'),
     ('GD — 음 높이별로 소리가 늦게 도착하는 정도. 낮은 소리가 방에서 오래 울리면 커집니다.',
      'Group delay — how late each pitch arrives. It grows when low sounds keep ringing in the room.'),
     ('XO — 크로스오버. 메인과 서브가 소리를 나눠 맡는 주파수.', 'XO — crossover: the frequency where mains hand over to subs.'),
@@ -164,9 +164,9 @@ PAIRS: tuple[tuple[str, str], ...] = (
     ('XO 부근에서 메인과 서브가 위상까지 맞게 합쳐져야 상쇄로 인한 딥이나 험프가 생기지 않습니다. 이 탭에서 채널 그룹마다 XO 와 XO PEQ 를 고릅니다.',
      'Mains and subs must sum in phase around the XO, or cancellation leaves a dip or a hump. This tab '
      'sets the XO and XO PEQ per channel group.'),
-    ('서브가 여럿이면 자리마다 서로 보강되거나 상쇄됩니다. 서브 정렬은 서브마다 값을 찾아 서브 합이 고르고, '
+    ('서브가 여럿이면 자리마다 서로 보강되거나 상쇄됩니다. BA (Bass Alignment) 는 서브마다 값을 찾아 서브 합이 고르고, '
      '서로 지우지 않고 크게 더해지게 맞춥니다. 그래서 이 탭은 서브가 둘 이상일 때만 보입니다.',
-     'Several subs reinforce or cancel each other differently at each seat. Sub alignment finds values for each sub '
+     'Several subs reinforce or cancel each other differently at each seat. BA (Bass Alignment) finds values for each sub '
      'so the sub sum is even and the subs add up instead of cancelling — which is why this tab appears only with two '
      'or more subs.'),
     ('인프라 서브는 초저역만 맡고 나머지 서브는 그 위 대역을 맡습니다. 인프라에는 LP, 나머지 서브에는 같은 HP 가 자동으로 걸리고 인프라 대역 레벨을 위 대역에 맞춥니다.',
@@ -189,7 +189,7 @@ PAIRS: tuple[tuple[str, str], ...] = (
      'mdat — a REW file holding several measurements.'),
     ('RC — Room Correction, 룸 보정. 방 때문에 생긴 주파수 응답의 피크 · 딥을 잡습니다.',
      'RC — room correction: tames the peaks and dips the room adds to the frequency response.'),
-    ('타깃 — 보정 목표 커브.',
+    ('타겟 — 보정 목표 커브.',
      'Target — the target curve the correction aims for.'),
     ('GD — Group Delay, 군지연. 주파수별 도착 지연으로, 룸 모드 링잉이 길면 커집니다.',
      'GD — group delay: arrival delay per frequency; it grows with long room-mode ringing.'),
@@ -252,21 +252,21 @@ PAIRS: tuple[tuple[str, str], ...] = (
      'Correction mode and [Calculate] — turns the measurements into correction filters. The mode caps the delay the '
      'filters may add: Minimum latency corrects magnitude only, while Low latency and Standard spend more delay to '
      'correct the bass phase too.'),
-    ('탭 SPL · GD · XO 와 그래프 — 계산 전에는 SPL 탭에 측정과 타깃만 보이고, 계산하면 보정 후 곡선과 GD · XO 곡선이 나옵니다.',
+    ('탭 SPL · GD · XO 와 그래프 — 계산 전에는 SPL 탭에 측정과 타겟만 보이고, 계산하면 보정 후 곡선과 GD · XO 곡선이 나옵니다.',
      'Tabs SPL, GD, XO and the graph — before calculating the SPL tab shows only the measurement and target; '
      'after it you also get the corrected curve and the GD and XO curves.'),
-    ('오른쪽 카드는 탭에 맞춰 바뀝니다 — SPL · GD 탭에서는 RC 범위 카드, XO 탭에서는 XO 카드, 서브 정렬 탭에서는 '
-     '서브 정렬 설정 카드가 나옵니다. 탭을 한 번씩 넘겨 보여 드립니다.',
+    ('오른쪽 카드는 탭에 맞춰 바뀝니다 — SPL · GD 탭에서는 RC 범위 카드, XO 탭에서는 XO 카드, BA 탭에서는 '
+     'BA 설정 카드가 나옵니다. 탭을 한 번씩 넘겨 보여 드립니다.',
      'The card on the right follows the tab — the SPL and GD tabs show the RC range card, the XO tab the XO card, '
-     'and the sub alignment tab the sub alignment setup card. Watch the tabs step through once.'),
-    ('측정만으로는 소리가 바뀌지 않습니다 — 계산해야 DSP 에 넣을 필터가 나옵니다. 룸 보정 RC 와 서브 정렬을 계산하고, 진행은 '
+     'and the BA tab the BA setup card. Watch the tabs step through once.'),
+    ('측정만으로는 소리가 바뀌지 않습니다 — 계산해야 DSP 에 넣을 필터가 나옵니다. 룸 보정 RC 와 BA 를 계산하고, 진행은 '
      '[계산] 아래 줄과 오른쪽 아래 알림에 나옵니다.',
      'Measuring alone changes nothing — calculating makes the filters for the DSP. It works out RC room correction '
-     'and sub alignment; progress shows on the line under [Calculate] and in the notice at the bottom right.'),
+     'and BA; progress shows on the line under [Calculate] and in the notice at the bottom right.'),
     ('계산 중입니다 — 진행은 [계산] 아래 줄과 오른쪽 아래 알림에 나오고, 끝나면 저절로 다음으로 넘어갑니다.',
      'Calculating — progress shows on the line under [Calculate] and in the notice at the bottom right; the '
      'tutorial moves on by itself when done.'),
-    ('결과 줄 — "±1 dB 안" 은 20–200 Hz 가 타깃 ±1 dB 안에 든 비율로, 보정 전 → 후로 커질수록 좋습니다. "GD 폭" 은 '
+    ('결과 줄 — "±1 dB 안" 은 20–200 Hz 가 타겟 ±1 dB 안에 든 비율로, 보정 전 → 후로 커질수록 좋습니다. "GD 폭" 은 '
      '20–100 Hz 에서 GD 가 퍼진 폭이라 작을수록 저역이 고르게 도착합니다. 다음 줄은 이 채널의 PEQ · FIR 필터 수, '
      '"전체 지연" 은 보정 필터가 더하는 지연입니다.',
      'Result lines — "Within ±1 dB" is the share of 20–200 Hz within ±1 dB of the target; the more it grows from '
@@ -284,13 +284,13 @@ PAIRS: tuple[tuple[str, str], ...] = (
      'polarity cancels the low end.'),
     ('IIR — 파라메트릭 EQ(PEQ) 밴드 같은 짧은 필터. 밴드 단위로 셉니다.',
      'IIR — short filters such as parametric EQ (PEQ) bands, counted in bands.'),
-    ('SPL — 주파수 응답 그래프. 보정 설계에서는 타깃 레벨을 0 dB 로 두고 그립니다.',
+    ('SPL — 주파수 응답 그래프. 보정 설계에서는 타겟 레벨을 0 dB 로 두고 그립니다.',
      'SPL — the frequency-response graph. In Room correction it is drawn with the target level at 0 dB.'),
     ('DSP — 보정 필터를 거는 프로세서. CamillaDSP · Tesira · miniDSP 등.',
      'DSP — the processor that runs the correction filters, such as CamillaDSP, Tesira or miniDSP.'),
-    # 10-11 사용자: 보정 설계 · 서브 정렬을 탭마다 자세히
-    ('SPL 탭 — 보정 전 · 보정 후 곡선과 타깃 점선을 겹쳐 봅니다. 회색으로 가린 바깥은 RC 가 손대지 않는 대역이고, '
-     '그 안에서 보정 후 곡선이 타깃을 고르게 따라가면 잘된 보정입니다. 좁고 깊은 딥은 일부러 다 채우지 않습니다.',
+    # 10-11 사용자: 보정 설계 · BA 를 탭마다 자세히
+    ('SPL 탭 — 보정 전 · 보정 후 곡선과 타겟 점선을 겹쳐 봅니다. 회색으로 가린 바깥은 RC 가 손대지 않는 대역이고, '
+     '그 안에서 보정 후 곡선이 타겟을 고르게 따라가면 잘된 보정입니다. 좁고 깊은 딥은 일부러 다 채우지 않습니다.',
      'SPL tab — the before and after curves over the dashed target. The grey-shaded outside is the band RC leaves '
      'alone; inside it, a good correction has the after curve following the target evenly. Narrow, deep dips are '
      'deliberately not filled all the way.'),
@@ -298,15 +298,15 @@ PAIRS: tuple[tuple[str, str], ...] = (
      'RC 범위 안에서 보정 후 봉우리가 낮아지고 곡선이 평평해질수록 좋습니다.',
      'GD tab — how late each frequency arrives, in ms. Peaks in the bass are room modes that keep ringing; within the '
      'RC range, the lower the peaks and the flatter the curve after correction, the better.'),
-    ('XO 탭 — 고른 채널의 메인 · 서브와 둘의 합을 타깃과 겹쳐 봅니다. 합이 XO 둘레에서 움푹 꺼지거나 솟지 않고 타깃을 '
+    ('XO 탭 — 고른 채널의 메인 · 서브와 둘의 합을 타겟과 겹쳐 봅니다. 합이 XO 둘레에서 움푹 꺼지거나 솟지 않고 타겟을 '
      '따라가면 좋은 XO 입니다. 세로선을 끌거나 XO 카드에서 주파수를 바꾸고, [XO 추천 계산] 은 후보마다 끝까지 계산해 '
      '그룹별로 가장 좋은 값을 고릅니다.',
      'XO tab — the chosen channel’s main, sub and their sum over the target. A good XO has the sum following the '
      'target with no dip or bump around the crossover. Drag the vertical line or change the frequency on the XO card; '
      '[Recommend XO] runs every candidate through and picks the best value per group.'),
-    ('서브 정렬 그래프 — 색 하나가 서브 하나이고, 점선은 정렬 전 · 실선은 정렬 후입니다. 검은 굵은 선은 모든 서브를 '
-     '더한 서브 합, 검은 점선은 정렬 전의 합, 갈색 점선은 타깃입니다. 정렬 후 합이 움푹 꺼진 곳 없이 타깃을 따라갈수록 좋습니다.',
-     'Sub alignment graph — one color per sub; dashed is before alignment, solid is after. The thick black line is '
+    ('BA 그래프 — 색 하나가 서브 하나이고, 점선은 정렬 전 · 실선은 정렬 후입니다. 검은 굵은 선은 모든 서브를 '
+     '더한 서브 합, 검은 점선은 정렬 전의 합, 갈색 점선은 타겟입니다. 정렬 후 합이 움푹 꺼진 곳 없이 타겟을 따라갈수록 좋습니다.',
+     'BA graph — one color per sub; dashed is before alignment, solid is after. The thick black line is '
      'the sum of all subs, the black dashed line the sum before alignment, the brown dashed line the target. The '
      'closer the aligned sum follows the target, with no dips, the better.'),
     ('결과 줄과 값 표 — "서브 합 평탄도" 는 서브 합이 출렁이는 폭이라 정렬 전 → 후로 작아질수록 좋고, "좌석 편차" 는 '
@@ -315,13 +315,13 @@ PAIRS: tuple[tuple[str, str], ...] = (
      'Result line and value table — "Sub sum flatness" is how much the sub sum ripples, so smaller from before → '
      'after is better; "Seat-to-seat spread" is the difference between measurement positions. The table holds the '
      'gain, delay, polarity and all-pass to enter in the DSP for each sub; each sub name has its curve color.'),
-    ('서브 정렬이 노리는 것이 이 두 숫자입니다 — 청취 위치의 서브 합은 고르게, 자리 사이 차이는 작게. 튜토리얼 '
+    ('BA 가 노리는 것이 이 두 숫자입니다 — 청취 위치의 서브 합은 고르게, 자리 사이 차이는 작게. 튜토리얼 '
      '데모는 위치가 1곳이라 좌석 편차가 비어 있습니다.',
-     'These two numbers are what sub alignment aims for — an even sub sum at the listening position and a small '
+     'These two numbers are what BA aims for — an even sub sum at the listening position and a small '
      'difference between seats. The tutorial demo has one position, so the seat spread is empty.'),
-    ('서브 정렬 설정 — 서브를 하나 골라 방식을 정합니다. 자동은 엔진이 게인 · 딜레이 · 극성을 찾고, 고정은 아래 칸에 '
+    ('BA 설정 — 서브를 하나 골라 방식을 정합니다. 자동은 엔진이 게인 · 딜레이 · 극성을 찾고, 고정은 아래 칸에 '
      '넣은 값을 그대로 DSP 에 넣습니다. Group 은 묶은 서브끼리의 상대값을 지키고 묶음 전체의 값만 엔진이 맞춥니다.',
-     'Sub alignment setup — pick a sub and choose its mode. Auto lets the engine find gain, delay and polarity; '
+     'BA setup — pick a sub and choose its mode. Auto lets the engine find gain, delay and polarity; '
      'Fixed puts the values in the fields below into the DSP as they are. Group keeps the relative values between '
      'grouped subs and lets the engine set only the group’s common values.'),
     ('DBA 처럼 배치로 이미 맞춘 서브는 고정이나 Group 으로 그 값을 지키고, 나머지는 자동에 맡깁니다. '
@@ -335,22 +335,22 @@ PAIRS: tuple[tuple[str, str], ...] = (
      'filters in place.'),
     ('설정이 바뀌었습니다. [서브만 계산] 으로 이 탭을 다시 계산해 볼까요?',
      'The settings changed. Recalculate this tab with [Subs only].'),
-    ('설정을 바꾸면 결과가 낡습니다. [서브만 계산] 은 서브 정렬만 실제로 다시 풀어 이 탭의 그래프와 표를 바꾸고, '
+    ('설정을 바꾸면 결과가 낡습니다. [서브만 계산] 은 BA 만 실제로 다시 풀어 이 탭의 그래프와 표를 바꾸고, '
      '몇 초 걸립니다.',
-     'Changing a setting makes the result out of date. [Subs only] really re-solves just the sub alignment and '
+     'Changing a setting makes the result out of date. [Subs only] really re-solves just the BA and '
      'redraws this tab’s graph and table; it takes a few seconds.'),
     ('[서브만 계산] 뒤의 결과 — 인프라 서브는 인프라 XO 아래만, 나머지 서브는 그 위만 맡아 서브 합이 둘을 이어 붙인 '
-     '모양이 되고, 값 표도 새로 찾은 값으로 바뀝니다. 이 결과는 서브 정렬 탭에만 보이니, SPL · XO 탭과 내보내기에 '
+     '모양이 되고, 값 표도 새로 찾은 값으로 바뀝니다. 이 결과는 BA 탭에만 보이니, SPL · XO 탭과 내보내기에 '
      '쓰려면 [계산] 을 다시 누릅니다.',
      'After [Subs only] — the infra sub plays only below the infra XO and the other subs only above it, so the sub sum '
-     'joins the two, and the value table shows the newly found values. This result shows only on the Sub alignment '
+     'joins the two, and the value table shows the newly found values. This result shows only on the BA '
      'tab; to use it in the SPL and XO tabs and the export, press [Calculate] again.'),
     ('[서브만 계산] 은 건너뛰었습니다.', 'Skipped [Subs only].'),
-    ('서브 정렬을 다시 계산하는 중입니다 — 끝나면 그래프와 표가 바뀌고 저절로 다음으로 넘어갑니다.',
-     'Recalculating the sub alignment — the graph and table change when it is done, and the tutorial moves on by '
+    ('BA 를 다시 계산하는 중입니다 — 끝나면 그래프와 표가 바뀌고 저절로 다음으로 넘어갑니다.',
+     'Recalculating the BA — the graph and table change when it is done, and the tutorial moves on by '
      'itself.'),
-    ('서브 정렬을 다시 계산했습니다 — 그래프와 표가 새 결과입니다 ✓',
-     'Sub alignment recalculated — the graph and table show the new result ✓'),
+    ('BA 를 다시 계산했습니다 — 그래프와 표가 새 결과입니다 ✓',
+     'BA recalculated — the graph and table show the new result ✓'),
     ('게인 — 레벨을 올리거나 내리는 값, dB.', 'Gain — how much the level is raised or lowered, in dB.'),
     ('딜레이 — 신호를 일부러 늦추는 값, ms. 서브마다 도착 시각을 맞춥니다.',
      'Delay — holding a signal back on purpose, in ms, to line up each sub’s arrival time.'),

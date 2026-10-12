@@ -13,12 +13,12 @@ PAIRS: tuple[tuple[str, str], ...] = (
     ('보정 설계', 'Room correction'),
     # 결과
     ('GD', 'GD'),
-    ('타깃', 'Target'),
+    ('타겟', 'Target'),
     ('MIMO 적용', 'MIMO applied'),
-    # 서브 정렬(BA) 보기(10-04, 요구 대장 R9)
-    ('서브 정렬', 'Sub alignment'),
-    # 서브 정렬 설정(10-05, 요구 대장 R27)
-    ('서브 정렬 설정', 'Sub alignment setup'),
+    # BA 보기(10-04, 요구 대장 R9)
+    ('BA', 'BA'),
+    # BA 설정(10-05, 요구 대장 R27)
+    ('BA (Bass Alignment) 설정', 'BA (Bass Alignment) setup'),
     # 계산 전 미리보기(10-09)
     ('계산 전 — 청취 위치 측정만 보입니다. [계산]을 누르면 보정 결과가 나옵니다.', 'Not calculated yet — showing the listening-position measurement only. Press [Calculate] for the corrected result.'),
     ('계산 전 — [계산] 을 누르면 GD 가 나옵니다.', 'Not calculated yet — press [Calculate] to see the GD.'),
@@ -43,6 +43,10 @@ PAIRS: tuple[tuple[str, str], ...] = (
     ('튜토리얼에서는 내보내지 않습니다', 'The tutorial does not export'),
     ('서브만 계산', 'Subs only'),
     ('서브 계산 중…', 'Calculating subs…'),
+    ('BA 계산 중…', 'Calculating BA…'),
+    ('{0}: HP {1} Hz, LP {2} Hz — 통과 대역이 거의 없습니다', '{0}: HP {1} Hz, LP {2} Hz — almost no passband'),
+    ('{0} 게인 {1} dB — 너무 큽니다. 서브 필터(HP, LP) 설정을 확인하세요',
+     '{0} gain {1} dB — too high. Check the sub filters (HP, LP)'),
     ('인프라 서브', 'Infra sub'),
     ('인프라 XO', 'Infra XO'),
     ('인프라 최대 부스트', 'Infra max boost'),
@@ -72,7 +76,7 @@ PAIRS: tuple[tuple[str, str], ...] = (
     ('제한 없음', 'No limit'),
     (' 서포트', ' supports'),
     ('입력당 서포트 ≤ {0}', 'Supports per input ≤ {0}'),
-    ('정렬 전', 'Unaligned'),          # 서브 정렬 범례 — 타깃이 더해져(10-11) 1024 영어에서 넘쳐 줄임
+    ('정렬 전', 'Unaligned'),          # BA 범례 — 타겟이 더해져(10-11) 1024 영어에서 넘쳐 줄임
     ('정렬 후', 'Aligned'),
     ('서브 합', 'Sub sum'),
     ('서브 합 평탄도({0}–{1} Hz) {2} → {3} dB', 'Sub sum flatness ({0}–{1} Hz) {2} → {3} dB'),
@@ -103,7 +107,7 @@ PAIRS: tuple[tuple[str, str], ...] = (
     ('최고사양 모드', 'High-spec mode'),
     ('저지연 모드', 'Low-latency mode'),
     ('표준 모드', 'Standard mode'),
-    ('dB (타깃 기준)', 'dB (re target)'),
+    ('dB (타겟 기준)', 'dB (re target)'),
     ('초고지연 모드', 'Ultra-latency mode'),
     ('초고지연 모드 {0} ms', 'Ultra-latency mode {0} ms'),
     ('지연 한도', 'Latency limit'),
@@ -143,6 +147,11 @@ PAIRS: tuple[tuple[str, str], ...] = (
     ('MIMO 설정이 바뀌었습니다 — [MIMO 계산]을 누르세요', 'MIMO settings changed — press [Calculate MIMO]'),
     ('MIMO 계산 완료', 'MIMO calculated'),
     ('서포트 {0}개', '{0} supports'),
+    ('{0} 서포트 {1}개', '{1} {0} supports'),
+    ('FIR 서포트 총 {0}탭 — DSP FIR 예산 {1}탭 안', 'FIR supports {0} taps in total — within the DSP FIR budget of {1}'),
+    ('FIR 서포트 총 {0}탭 — DSP FIR 예산 {1}탭 초과', 'FIR supports {0} taps in total — over the DSP FIR budget of {1}'),
+    ('서포트 필터', 'Support filter'),
+    ('FIR 사용', 'Use FIR'),
     ('MIMO 실패: {0}', 'MIMO failed: {0}'),
     # 상태
     ('보정 계산 중… 예상 약 {0} s', 'Calculating correction… about {0} s expected'),
@@ -173,7 +182,7 @@ PAIRS: tuple[tuple[str, str], ...] = (
     ('서브 {0}개는 측정 그대로', '{0} subs as measured'),
     ('서브 1개는 측정 그대로', '1 sub as measured'),
     ('MIMO 적용 {0}개', 'MIMO applied to {0}'),
-    # SPL 그래프 우클릭 타깃 메뉴 · RC 범위 선(10-09)
+    # SPL 그래프 우클릭 타겟 메뉴 · RC 범위 선(10-09)
     ('사용자 지정', 'Custom'),
     ('RC 하한 {0} Hz', 'RC low {0} Hz'),
     ('RC 상한 {0} Hz', 'RC high {0} Hz'),

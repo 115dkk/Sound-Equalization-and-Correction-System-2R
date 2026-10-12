@@ -1,11 +1,11 @@
-"""보정 설계 '서브 정렬'(BA) 보기(2026-10-04 — 요구 대장 R9, 사용자 "서브가 여러 개면 서브끼리 합치는 것도 보여 줘").
+"""보정 설계 'BA'(BA) 보기(2026-10-04 — 요구 대장 R9, 사용자 "서브가 여러 개면 서브끼리 합치는 것도 보여 줘").
 
 '동작 → 변화' 로 본다(곡선이 있다류는 근거가 아니다):
 - `calibration.sub_combine` 의 숫자 = 엔진 값: 정렬 값은 `CorrectionResult.subs` 그대로, 정렬 후 서브 합은 엔진의 합
   (`CorrectionEngine._sub_sum` + 최종 매개변수)을 같은 스무딩으로 편 것과 같고, 서브마다 출력의 합 = 엔진의 합.
-- 화면: 서브가 2개 이상이면 [서브 정렬] 탭이 보이고, 누르면 그래프 곡선이 그 보기의 배열 그대로 바뀌고, 숫자 줄 ·
+- 화면: 서브가 2개 이상이면 [BA] 탭이 보이고, 누르면 그래프 곡선이 그 보기의 배열 그대로 바뀌고, 숫자 줄 ·
   정렬 값 표가 엔진 값과 같은 글자다. 다른 탭으로 가면 표가 숨는다. 서브가 1개면 탭이 없다.
-서브 정렬 DE(수십 초)는 결정적인 고정 정렬로 바꿔 끼운다 — 엔진 수학이 아니라 보기가 엔진 값을 그대로 옮기는지를 본다.
+BA DE(수십 초)는 결정적인 고정 정렬로 바꿔 끼운다 — 엔진 수학이 아니라 보기가 엔진 값을 그대로 옮기는지를 본다.
 """
 from __future__ import annotations
 
@@ -185,20 +185,20 @@ def test_sub_tab_shows_the_engine_values(qapp, fast_engine, fast_ba, two_subs, t
         run = _compute(page, qapp)
         page.tab_buttons['subs'].click()
         assert page.tab == 'subs' and page.sub_values.isVisibleTo(page) and not page.channel_combo.isEnabled()
-        for key in ('sub_before', 'sub_after', 'sub_sum', 'target'):     # 타깃도 그린다(10-11 사용자)
+        for key in ('sub_before', 'sub_after', 'sub_sum', 'target'):     # 타겟도 그린다(10-11 사용자)
             assert page.legend_items[key].isVisibleTo(page)
         for key in ('before', 'after', 'xo_sum'):
             assert not page.legend_items[key].isVisibleTo(page)
         view = cal.sub_combine(run)
         # 그래프 = 보기 배열 그대로(서브마다 전·후 + 합 전·후)
         drawn = [item.getData()[1] for item in page.plot.getPlotItem().items if isinstance(item, pg.PlotDataItem)]
-        # 맨 앞은 타깃 커브(10-11 사용자: "서브정렬에도 타겟 커브") — 지금 프로젝트 타깃 그대로
+        # 맨 앞은 타겟 커브(10-11 사용자: "서브정렬에도 타겟 커브") — 지금 프로젝트 타겟 그대로
         assert np.allclose(drawn[0], page.project.target.sample(view['grid']))
         drawn = drawn[1:]
         expected = [view[s][r] for r in view['subs'] for s in ('before', 'after')] + [view['sum_before'], view['sum_after']]
         assert len(drawn) == len(expected)
         for got, want in zip(drawn, expected):
-            # 10-10: 서브 정렬 탭도 SPL 탭처럼 타깃 기준으로 옮겨 그린다(결정 1A · 3차 시험) — 모양은 엔진 값 그대로, 차이는 상수
+            # 10-10: BA 탭도 SPL 탭처럼 타겟 기준으로 옮겨 그린다(결정 1A · 3차 시험) — 모양은 엔진 값 그대로, 차이는 상수
             assert np.ptp(np.asarray(got) - np.asarray(want)) < 1e-6
         # 숫자 줄 · 정렬 값 표 = 엔진 값의 글자
         lo, hi = view['band']
@@ -254,7 +254,7 @@ def test_sub_tab_is_english_without_korean_left(qapp, fast_engine, fast_ba, two_
                 if isinstance(w, (QtWidgets.QLabel, QtWidgets.QAbstractButton)) and w.isVisibleTo(page)
                 and hangul.search(w.text())]
         assert not left, left
-        assert page.tab_buttons['subs'].text() == 'Sub alignment'
+        assert page.tab_buttons['subs'].text() == 'BA'
         assert 'Sub sum flatness' in page.metrics_label.text()
     finally:
         language_manager().set_language('ko', persist=False)

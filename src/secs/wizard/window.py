@@ -208,6 +208,7 @@ class WizardWindow(QtWidgets.QMainWindow):
         self._busy_jobs = [
             ('측정 중…', lambda: self.step5._thread is not None, measure_estimate),
             ('보정 설계 계산 중…', page.running, page.compute_total_seconds),
+            ('BA 계산 중…', page.subs_running, page.subs_estimate_seconds),
             ('MIMO 계산 중…', page.mimo_running, page.mimo_estimate_seconds),
             ('XO 추천 계산 중…', page.xo_running, page.xo_estimate_seconds),
             ('파일을 내보내는 중…', page.exporting, lambda: 0.0),

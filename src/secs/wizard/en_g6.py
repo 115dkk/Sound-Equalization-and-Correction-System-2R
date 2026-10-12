@@ -61,7 +61,7 @@ CAPTIONS = {
     ]),
     's9_overview': ('Room correction, whole screen', [
         'Correction mode · [Calculate]',
-        'Tabs — SPL · GD · XO · Sub alignment',
+        'Tabs — SPL · GD · XO · BA',
         'Graph — before · after · target',
         'Settings card that follows the tab',
     ]),
@@ -77,7 +77,7 @@ CAPTIONS = {
         'XO PEQ on · low · high (empty = auto)',
         '[Recommend XO]',
     ]),
-    's9_subs': ('Sub alignment tab', [
+    's9_subs': ('BA (Bass Alignment) tab', [
         'Infra sub · infra XO · infra max boost',
         'Mode per sub — auto · fixed · Group',
         '[Subs only]',
@@ -114,7 +114,7 @@ INTRO = {
         '3 Level check — press [Play all in sequence], then [Next →].',
         '4 Positions — keep Single (listening position), then [Next →].',
         '5 Measure — press [Measure this position]; the fake REW fills it at once. Then [Next →].',
-        '6 Room correction — press [Calculate] and flip through the SPL, XO and Sub alignment tabs. Then [Next →].',
+        '6 Room correction — press [Calculate] and flip through the SPL, XO and BA tabs. Then [Next →].',
         '7 Export — the buttons are locked in the tutorial. In a real project use [Save REW mdat] · [Export CamillaDSP].',
         'Done — press [End tutorial] in the sidebar to get your project back.',
     ],
@@ -297,7 +297,7 @@ TUTORIAL = {
             'Spread the points at least 30 cm apart, over at least 1 m across.',
             'Vary the height too, ear height ± 20 cm.',
             'Real measurements should use at least 5 positions. Single (one point) is a quick check, and the sample uses it.',
-            'With the timing reference set to "None", distance, delay and sub alignment cannot be calculated.',
+            'With the timing reference set to "None", distance, delay and BA cannot be calculated.',
         ],
         'trouble': [
             ('The time estimate is too long.',
@@ -414,7 +414,7 @@ TUTORIAL = {
         ],
     },
     9: {
-        'goal': 'Pick a correction mode, press [Calculate], then flip through the SPL, GD, XO and Sub alignment tabs and change '
+        'goal': 'Pick a correction mode, press [Calculate], then flip through the SPL, GD, XO and BA tabs and change '
                 'only what you need. A change only shows "Settings changed"; press [Calculate] to recalculate.',
         'steps': [
             {'do': 'Pick a correction mode and press [Calculate].',
@@ -440,12 +440,12 @@ TUTORIAL = {
                     'following the target with no dip or bump around the crossover. Drag the vertical line to move the XO; '
                     'XO PEQ high auto = XO × 4.',
              'img': 's9_xo'},
-            {'do': 'With two or more subs, look at the graph and value table on the Sub alignment tab.',
+            {'do': 'With two or more subs, look at the graph and value table on the BA tab.',
              'see': 'One color per sub: dashed is before alignment, solid is after, and the thick black line is the sub sum. The '
                     'flatter the sub sum and the smaller "Sub sum flatness" and "Seat-to-seat spread", the better. The value '
                     'table holds the gain, delay, polarity and all-pass to enter in the DSP for each sub.',
              'img': 's9_subs'},
-            {'do': 'On the Sub alignment setup card set the infra sub and each sub\'s mode.',
+            {'do': 'On the BA setup card set the infra sub and each sub\'s mode.',
              'see': 'In the sample SW3 is an infra sub that plays only the deepest bass; picking it puts an LP on SW3 and the '
                     'same HP on the other subs. Auto lets the engine find the values, Fixed uses the values in the fields as '
                     'they are, and Group keeps the relative values of grouped subs. After a change, [Subs only] recalculates '
@@ -460,7 +460,7 @@ TUTORIAL = {
             'Changing a setting such as mode, range, target, crossover or sub values shows "Settings changed — press '
             '[Calculate]". Nothing recalculates by itself.',
             '[Take result values] does not calculate; it only copies the last result\'s sub gain, delay, polarity and all-pass into the fields. '
-            'A [Subs only] result shows only on the Sub alignment tab; press [Calculate] again to use it for the export.',
+            'A [Subs only] result shows only on the BA tab; press [Calculate] again to use it for the export.',
             'Grouped subs keep the gain, delay, polarity and all-pass you entered as their relative values; the engine sets '
             'only the Group\'s common gain, delay and polarity.',
             '[Recommend XO] runs the full correction for each candidate crossover, puts the best value per group in and '
@@ -478,7 +478,7 @@ TUTORIAL = {
         ],
         'real': [
             'The more positions and channels, the longer the calculation. While it runs, the status line shows the expected time.',
-            'Sub alignment looks for each sub’s polarity and delay within ±12 ms of its arrival, and besides flatness it '
+            'BA (Bass Alignment) looks for each sub’s polarity and delay within ±12 ms of its arrival, and besides flatness it '
             'checks how well the subs add up, the summing efficiency — less cancellation means more low-end max SPL from '
             'the same amps.',
             'The graph and numbers are calculated. Enter them in the DSP, then measure again to check.',
@@ -498,8 +498,9 @@ def _shape(intro, tutorial, captions):
 
 
 assert set(CAPTIONS) == set(_ko.CAPTIONS) and set(TUTORIAL) == set(_ko.TUTORIAL), 'en_g6: 키가 tutorial_text 와 다르다'
-assert _shape(INTRO, TUTORIAL, CAPTIONS) == _shape(_ko.INTRO, _ko.TUTORIAL, _ko.CAPTIONS), \
-    'en_g6: 모양이 tutorial_text 와 다르다'
+#: 한국어 도움말과 모양이 같은가 — 10-12 사용자가 영어판을 버리기로 해(더 옮기지 않는다) 다르면 멈추지 않고 이 표의 영어를
+#: 쓰지 않는다(전에는 assert 로 임포트가 멈춰 앱 · 그림 도구가 못 떴다 — 한국어 도움말에 문제 해결 한 줄을 더했을 때).
+MATCHES_KOREAN = _shape(INTRO, TUTORIAL, CAPTIONS) == _shape(_ko.INTRO, _ko.TUTORIAL, _ko.CAPTIONS)
 
 #: 도움말 창(help_dialog)·사이드바 문구.
 _WINDOW_PAIRS: tuple[tuple[str, str], ...] = (
@@ -692,8 +693,8 @@ CAMILLA_CAPTIONS = {
 assert _ko.camilla_shape(CAMILLA, CAMILLA_CAPTIONS) == _ko.camilla_shape() and set(CAMILLA_CAPTIONS) == set(_ko.CAMILLA_CAPTIONS), \
     'en_g6: CamillaDSP 탭 모양이 tutorial_text 와 다르다'
 
-PAIRS: tuple[tuple[str, str], ...] = tuple(zip(
+PAIRS: tuple[tuple[str, str], ...] = (tuple(zip(
     _ko.all_strings(),
     _ko.all_strings(INTRO, TUTORIAL, CAPTIONS, HINT, TAB_INTRO, TABS),
-)) + tuple(zip(_ko.names_strings(), _ko.names_strings(NAMES, EXTRA_TABS, NAMES_CAPTIONS))) \
+)) if MATCHES_KOREAN else ()) +tuple(zip(_ko.names_strings(), _ko.names_strings(NAMES, EXTRA_TABS, NAMES_CAPTIONS))) \
     + tuple(zip(_ko.camilla_strings(), _ko.camilla_strings(CAMILLA, CAMILLA_CAPTIONS))) + _WINDOW_PAIRS

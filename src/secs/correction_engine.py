@@ -1,18 +1,18 @@
 # -*- coding: utf-8 -*-
-"""보정 엔진(2026-09-25 새로 — 6·7단계 통합, `문서/요구 대장.md` 최상위 결정): 측정 → 레벨 · 딜레이 → 서브 정렬 →
+"""보정 엔진(2026-09-25 새로 — 6·7단계 통합, `문서/요구 대장.md` 최상위 결정): 측정 → 레벨 · 딜레이 → BA →
 채널 보정 필터 순서로 푼다.
 
 순서:
   1. 기준 위치(첫 측정 = 청취 위치)의 도착 시각으로 **딜레이**, 대역 레벨로 **레벨 트림**을 맞춘다.
-  2. **서브 정렬(BA, Bass Alignment)**: 서브마다 게인 1 + 올패스 2 + (도착 보정 뒤 미세) 지연·극성으로 서브끼리 결합하고,
-     서브 버스 전체 지연·극성을 골라 메인(HP)·서브(LP)가 XO 에서 합쳐지게 한다(저역 타깃은 모든 채널 공통).
+  2. **BA (Bass Alignment)**: 서브마다 게인 1 + 올패스 2 + (도착 보정 뒤 미세) 지연·극성으로 서브끼리 결합하고,
+     서브 버스 전체 지연·극성을 골라 메인(HP)·서브(LP)가 XO 에서 합쳐지게 한다(저역 타겟은 모든 채널 공통).
      서브마다 수동 설정(10-05 요구 대장 R27, `sub_manual`): 고정 = 사람이 넣은 값 그대로, 묶음 = 안의 상대값은 그대로
      두고 묶음 전체의 게인·지연·극성만 찾는다(요구 대장 R27 설계 문서, 10-05). 서브마다 고정 대역 필터
      (HP·LP, 종류 LR 24 기본)·고정 PEQ(예: INFRA 로우패스 25 Hz)는 그 서브 스피커 응답에 처음부터 곱해 둔다(결합·버스 PEQ·MIMO 가
      모두 그 응답을 본다). 묶음 레이아웃(10-09 R30, `bundle_layouts`): DBA·멀티서브 묶음은 2단 합성 — 묶음 안을 먼저
      합치고(같은 필터 + 서브별 레벨, DBA 뒤 줄 반전·전파 지연, 묶음 PEQ) 그 덩어리를 한 서브처럼 BA 에 넣는다(`_layout_stage`).
   3. **채널 보정 필터는 베이스 매니지먼트 앞(입력 쪽)**에 둔다 — 메인+서브를 합친 응답을 한 필터로 고친다.
-     크기: 위치 평균(기준 위치 가중)을 저역은 촘촘히(1/24 oct), 고역은 성기게(1/6 oct) 편 뒤 타깃과의 차를
+     크기: 위치 평균(기준 위치 가중)을 저역은 촘촘히(1/24 oct), 고역은 성기게(1/6 oct) 편 뒤 타겟과의 차를
      최소위상 FIR 로(부스트 ≤ 10 dB, 컷 ≤ 25 dB). 위상: 합의 초과위상(1/6 oct 복소 스무딩, 고역 3–6 kHz 기준 0)을
      ≤ 1 kHz 에서 되돌리고 4 kHz 까지 페이드(지연 `lift_ms` 200 ms — 60·120 ms 는 45 Hz 에서 FIR 밖으로 잘려
      크기가 무너졌다). 만든 FIR 크기가 설계와 어긋나면(RMS 0.5·최대 2 dB) 위상 보정 세기를 줄인다.
@@ -53,19 +53,19 @@ FIR_TOUCHUP_ROUNDS = 2          # 3차 맞춤(2차 PEQ 뒤 남은 넓은 오차�
 #: 보정 PEQ 밴드의 울림 상한(ms, 10-05 감쇠 악화). RBJ 피킹의 극 Q = Q·A(A = 10^(게인/40)) — 밴드는 시간 상수 Q·A/(π f) 로
 #: 운다: 돌비 C 94 Hz +9.5 dB·Q 15.8(극 Q 27, 92 ms)은 같은 자리 넓은 컷이 크기로는 상쇄해도 울림이 남아 93 Hz 늦은 에너지
 #: +28 dB, 125 Hz 대역 T20 0.38 → 0.44 s(채널 평균). 얕고 좁은 컷도 운다(Tbr 100 Hz −6.5 dB·Q 20 → 44 ms) — 깊은 노치는 A 가
-#: 작아 괜찮다(모달 EQ). XO 타깃 PEQ 에는 걸지 않는다(서브 버스까지 걸면 50 Hz T20 0.42 → 0.53 s). 기본 30 ms(10-05 사용자
+#: 작아 괜찮다(모달 EQ). XO 타겟 PEQ 에는 걸지 않는다(서브 버스까지 걸면 50 Hz T20 0.42 → 0.53 s). 기본 30 ms(10-05 사용자
 #: 결정 — 돌비 3서브 최소 지연·저사양·최고사양): 늦은 에너지 증가(버터워스, 보정 전 대비) +1.50/+1.44/+1.48 → +1.27/+1.14/+1.03 dB,
 #: 125 Hz T20 0.44/0.42/0.45 → 0.39/0.39/0.40 s, 1/6 oct ±1 dB 최저 89.6/93.5/93.2 → 89.8/93.7/92.7 %, 1/24 평균 −1.8 %p.
 #: 20 ms 는 늦은 에너지 +0.6–0.8 dB 까지 줄지만 최고사양 Tfr 1/6 88.6 %·1/24 −4~5 %p 라 버렸다. 'none' = 끔(비교용).
 BOOST_RING_MS = (lambda v: None if v in ('', 'none') else float(v))(__import__('os').environ.get('SECS_BOOST_RING_MS', '30'))
-#: 서브 정렬 지연 탐색 폭(±ms, 도착 정렬 기준)과 합산 효율 가중(10-09 사용자: UM18 반전 +9.5 ms 처럼 더 잘 더해지는 값을
+#: BA 지연 탐색 폭(±ms, 도착 정렬 기준)과 합산 효율 가중(10-09 사용자: UM18 반전 +9.5 ms 처럼 더 잘 더해지는 값을
 #: 엔진이 스스로 찾게) — 효율 = 서브 합 에너지 ÷ 개별 에너지 합(dB, 20 Hz–상한 평균, 높을수록 상쇄가 적어 최대음압이 크다).
 #: 4.12.0 기본 12 ms · 1(돌비룸 실측 9점: ±3 ms · 0 대비 서브 합 평탄 0.66 → 0.32 dB, 합산 효율 1.4 → 2.5 dB, 같은 헤드룸
 #: 최대음압 +4.0 dB, 채널 ±1 dB 비율 71.4 → 75.3 %, GD 최대 190 → 174 — 계산 시간 같음). 예전 답 = 3 · 0.
 BA_DELAY_MS = float(__import__('os').environ.get('SECS_BA_DELAY_MS', '12'))
 BA_EFF_WEIGHT = float(__import__('os').environ.get('SECS_BA_EFF', '1'))
-DECAY_WEIGHT = 0.5              # 서브 정렬: 늦은 에너지가 결합 전보다 늘면 (dB)² 벌점
-SUB_MODES = ('auto', 'fixed', 'bundle')   # 서브 정렬 방식(R27): 자동 · 고정(값 그대로) · 묶음(상대값 그대로, 공통 지연·극성만)
+DECAY_WEIGHT = 0.5              # BA: 늦은 에너지가 결합 전보다 늘면 (dB)² 벌점
+SUB_MODES = ('auto', 'fixed', 'bundle')   # BA 방식(R27): 자동 · 고정(값 그대로) · 묶음(상대값 그대로, 공통 지연·극성만)
 #: 묶음 레이아웃(10-09 사용자 R30 "서브우퍼 레이아웃에 DBA와 위치기반 멀티서브우퍼 2개의 레이아웃 선택지"): 2단 합성 — 묶음 안을
 #: 먼저 합치고(필터 완전히 같음 + 레벨만 서브별 자동, DBA 뒤 줄은 반전 + 앞→뒤 전파 지연) 그 덩어리를 한 서브처럼 BA 에 넣는다.
 #: 'values' = R27 그대로(넣은 상대값 고정) — 엔진에는 오지 않는다.
@@ -73,7 +73,7 @@ BUNDLE_LAYOUTS = ('dba', 'multi')
 DBA_MAX_MS = 60.0               # DBA 뒤 줄 전파 지연 탐색 상한(≈ 20 m 방)
 DBA_LATE_WEIGHT = 0.2           # 전파 지연 탐색 비용에서 늦은 에너지(dB) 가중 — DBA 의 목적이 뒷벽 반사(길이 모드) 지우기
 BUNDLE_PEQ_BANDS = 6            # 묶음 합에 한 번 설계해 묶음 서브 전부에 똑같이 거는 PEQ 밴드 수(부스트 ≤ 6 dB, 서브 버스 PEQ 와 같은 한도)
-GD_WEIGHT = 0.02                # 서브 정렬 비용에서 GD 분산(ms²) 가중
+GD_WEIGHT = 0.02                # BA 비용에서 GD 분산(ms²) 가중
 #: 서브 버스 PEQ 맞춤 상한 = 가장 높은 메인 XO × 이 값(10-09 돌비룸 실측: 상한이 평균 XO × 2(≈ 240 Hz)라 XO 위에 197 Hz +6 ·
 #: 229 Hz −6 dB 밴드가 생겼고, 서브 경로가 438 Hz 에서도 탑보다 −24 dB 로 남아 L 의 438 Hz GD 봉우리를 +26 ms 키웠다).
 #: 1.25 × XO 에서 LR24 LP 가 이미 −10.7 dB 라 그 위는 메인이 합을 정한다 — 서브 버스가 고칠 몫이 아니다(그 위는 채널 FIR 몫).
@@ -472,7 +472,7 @@ class CorrectionEngine:
         self.gd_cuts = bool(gd_cuts)
         self.phase_frac = float(phase_frac)       # 초과위상을 볼 스무딩(옥타브 분수) — 클수록 좁은 GD 봉우리까지 따라간다
         self.sub_allpass = sub_allpass            # BA 올패스: 'full'(Q ≤ 3) · 'lowq'(Q ≤ 1) · 'none'
-        self.xo_stage = bool(xo_stage)        # 1차: 스피커별 음향 XO 타깃 보정(출력 쪽 PEQ, 09-25 사용자 제안)
+        self.xo_stage = bool(xo_stage)        # 1차: 스피커별 음향 XO 타겟 보정(출력 쪽 PEQ, 09-25 사용자 제안)
         self.top_peq: dict[str, list] = {}
         self.chain: dict[str, dict] = {}          # MIMO 가 긴 창으로 다시 합성할 때 쓰는 채널 체인
         self.sub_bus_peq: list = []
@@ -635,7 +635,7 @@ class CorrectionEngine:
 
     def _match_two_way(self, params, manual):
         """2-way 서브의 대역 레벨 맞춤(10-09 사용자: SW1·SW2 묶음은 둘이 합쳐 +6 dB 인데 인프라 SW3 는 한 대라 인프라
-        대역이 낮게 남는다). 정렬 뒤 서브 합에서 XO 아래(저역)와 위(고역) 의 타깃 대비 레벨(청취 위치, 1/3 oct 중앙값)을
+        대역이 낮게 남는다). 정렬 뒤 서브 합에서 XO 아래(저역)와 위(고역) 의 타겟 대비 레벨(청취 위치, 1/3 oct 중앙값)을
         재고, 저역 서브 게인에 그 차이를 더한다(올림은 `infra_boost_max_db` 까지, 고정 게인 서브는 건드리지 않는다)."""
         split = self.two_way_split()
         if split is None:
@@ -670,13 +670,13 @@ class CorrectionEngine:
         return [tuple(p) for p in params]
 
     def _ba_setup(self, hi_hz: float) -> dict:
-        """서브 정렬 비용의 재료(자동·수동 경로가 같이 쓴다): 로그 격자 · 모든 서브를 잰 위치 · 위치 가중 · 늦은 에너지 잣대와
+        """BA 비용의 재료(자동·수동 경로가 같이 쓴다): 로그 격자 · 모든 서브를 잰 위치 · 위치 가중 · 늦은 에너지 잣대와
         결합 전(같은 레벨 단순 합, 도착 정렬) 늦은 에너지."""
         base = {r: self.align_delay_ms[r] for r in self.subs}
         idx = np.nonzero((self.f >= 20) & (self.f <= hi_hz))[0]
         grid = np.unique(np.round(np.geomspace(idx[0], idx[-1], 160)).astype(int))
         positions = [p for p in self.positions if all(r in self.H[p] for r in self.subs)]
-        # 울림(09-25 사용자: XO 타깃 서브의 디케이가 40 Hz 아래에서 뭉친다) — 게인을 벌리면 마주 보는 서브끼리의
+        # 울림(09-25 사용자: XO 타겟 서브의 디케이가 40 Hz 아래에서 뭉친다) — 게인을 벌리면 마주 보는 서브끼리의
         # 모드 상쇄가 깨져 22–40 Hz 가 97 → 403 ms 울렸다. 선형 격자로 시간 응답을 만들어 늦은 에너지를 본다.
         lin = np.arange(int(np.searchsorted(self.f, 200.0)))
         band = np.clip((self.f[lin] - 15.0) / 5.0, 0, 1) * np.clip((hi_hz * 1.3 - self.f[lin]) / (hi_hz * 0.3), 0, 1)
@@ -751,7 +751,7 @@ class CorrectionEngine:
         indiv = {pos: sum(np.abs(self.H[pos][r][grid]) ** 2 for r in self.subs) for pos in s['positions']}
         res = differential_evolution(lambda x: self._ba_cost(unpack(x), s, indiv), bounds, maxiter=60, popsize=12,
                                      tol=1e-6, seed=1, polish=False)
-        self.notes.append(f'서브 정렬 비용 {res.fun:.2f}')
+        self.notes.append(f'BA 비용 {res.fun:.2f}')
         return unpack(self._ba_bus_pass(unpack, bounds, s, indiv, res.x))
 
     # ── 3‴. BA 가 서브 버스 PEQ 를 알게(10-09) ──
@@ -775,7 +775,7 @@ class CorrectionEngine:
         return peq_response(self.f, peq) if peq else None
 
     def _bus_peq_fit(self, by_pos: dict) -> list:
-        """서브 버스 PEQ: 버스 게인을 건 서브 합(위치별)을 20 Hz – `BUS_PEQ_XO_RATIO` × 가장 높은 메인 XO 에서 타깃에."""
+        """서브 버스 PEQ: 버스 게인을 건 서브 합(위치별)을 20 Hz – `BUS_PEQ_XO_RATIO` × 가장 높은 메인 XO 에서 타겟에."""
         if not SUB_BUS_FIX:                       # 10-09 전 그대로: 20 Hz – 메인 XO 평균 × 2, 밴드 중심 제한 없음
             return self._xo_target_peq(by_pos, self._bus_ctx['ref'], 20.0, 2.0 * self._bus_ctx['xo_mean'], 10,
                                        min(6.0, self.max_boost_db))
@@ -803,7 +803,7 @@ class CorrectionEngine:
             return self._ba_cost(unpack(x), s, indiv, self._bus_peq_of(unpack(x)))
 
         c1, c2 = exact(x1), exact(res.x)
-        self.notes.append(f'서브 정렬 버스 PEQ 반영 비용 {c1:.2f} → {min(c1, c2):.2f}' + ('' if c2 < c1 else ' (1차 답 유지)'))
+        self.notes.append(f'BA 버스 PEQ 반영 비용 {c1:.2f} → {min(c1, c2):.2f}' + ('' if c2 < c1 else ' (1차 답 유지)'))
         return res.x if c2 < c1 else x1
 
     # ── 3′. 서브 수동 설정(R27): 고정 · 묶음 ──
@@ -862,7 +862,7 @@ class CorrectionEngine:
           (DBA 의 목적 = 앞 파면이 뒷벽에 닿을 때 지워 길이 방향 모드를 없애기). 도착 차 자체를 쓰면 뒤 서브가 청취 위치에서
           앞 직접음과 같은 때에 반전으로 와 직접음을 지운다 — 그래서 하한으로만 쓴다. 사람 보정 `rear_trim_ms` 를 더한다.
           앞이나 뒤 줄이 비면 멀티서브처럼 한다(노트).
-        * 묶음 PEQ: 위 상대값을 건 묶음 합(위치별)을 타깃에 맞춘 PEQ `BUNDLE_PEQ_BANDS` 개 — 멤버 전부에 똑같이.
+        * 묶음 PEQ: 위 상대값을 건 묶음 합(위치별)을 타겟에 맞춘 PEQ `BUNDLE_PEQ_BANDS` 개 — 멤버 전부에 똑같이.
         올패스는 2단에서 묶음 공통 변수로 찾는다(`sub_allpass` 가 켜졌을 때만)."""
         if not self.layouts:
             return
@@ -932,7 +932,7 @@ class CorrectionEngine:
                 P = max(0.0, auto + trim)
                 rel = {r: (gains[r], P if r in rear else 0.0, -1 if r in rear else 1, []) for r in members}
                 info.update(rear=rear, rear_ms=P, auto_ms=auto, trim_ms=trim, min_ms=float(gap))
-            # 묶음 PEQ: 묶음 합(위치별)을 타깃에 — 레벨은 30–80 Hz 중앙값(모양만 고친다)
+            # 묶음 PEQ: 묶음 합(위치별)을 타겟에 — 레벨은 30–80 Hz 중앙값(모양만 고친다)
             by_pos = {p: sum(_term(self.H[p][r], f, *rel[r]) for r in members) for p in positions}
             m = (f >= 30) & (f <= 80)
             lvl = float(np.median(20 * np.log10(np.abs(by_pos[self.main_position if self.main_position in by_pos
@@ -958,7 +958,7 @@ class CorrectionEngine:
             self.notes.append(text + f' · 묶음 PEQ {len(peq)}')
 
     def _align_subs_manual(self, hi_hz: float, plan: dict):
-        """고정·묶음이 섞인 서브 정렬. 돌려주는 값은 `_align_subs` 와 같은 꼴(서브 순서, 메인 추가 지연 전 내부 시간축).
+        """고정·묶음이 섞인 BA. 돌려주는 값은 `_align_subs` 와 같은 꼴(서브 순서, 메인 추가 지연 전 내부 시간축).
 
         단위: 자동 서브 = 변수 7개(지금과 같다), 묶음 = 공통 지연·극성(+ `bundle_gain='auto'` 이면 공통 게인), 고정 = 상수.
         고정이 있으면 내부 시간축 = 출력 딜레이 − 메인 추가 지연이고, 자동·묶음은 출력이 0 아래로 가지 않게 지연 범위를 자른다.
@@ -1044,7 +1044,7 @@ class CorrectionEngine:
             return [out[r] for r in self.subs]
 
         names = [f"{r} 고정" for r in plan['fixed']] + [f"{'·'.join(rs)} 묶음 {b}" for b, rs in plan['bundles'].items()]
-        self.notes.append('서브 정렬 수동: ' + ', '.join(names))
+        self.notes.append('BA 수동: ' + ', '.join(names))
         if not units or (len(units) == 1 and not plan['fixed']):
             # 고정뿐이거나 묶음 하나뿐(자동·고정 없음) — 공통 지연·게인·극성은 합의 모양을 안 바꿔 BA 가 정할 것이 없다
             # (서브 1개일 때와 같은 이유). 묶음은 기준 지연 · 정상 극성 그대로, 메인 XO 맞춤은 버스 단계가 한다.
@@ -1056,7 +1056,7 @@ class CorrectionEngine:
             indiv = {pos: sum(np.abs(self.H[pos][r][grid]) ** 2 for r in self.subs) for pos in s['positions']}
         res = differential_evolution(lambda x: self._ba_cost(unpack(x), s, indiv), bounds, maxiter=60, popsize=12,
                                      tol=1e-6, seed=1, polish=False)
-        self.notes.append(f'서브 정렬 비용 {res.fun:.2f}')
+        self.notes.append(f'BA 비용 {res.fun:.2f}')
         return unpack(self._ba_bus_pass(unpack, bounds, s, indiv, res.x))
 
     # ── 4. 메인·서브 XO 결합: 서브 버스 전체 지연·극성 ──
@@ -1287,7 +1287,7 @@ class CorrectionEngine:
                 h, F, M = h2, F2, M2
         return h, F * P_peq
 
-    # ── 1차: 음향 XO 타깃 보정(출력 쪽 PEQ) ──
+    # ── 1차: 음향 XO 타겟 보정(출력 쪽 PEQ) ──
     def xo_peq_band(self, xo: float) -> tuple[float, float]:
         """메인 탑 XO PEQ 를 맞출 대역(Hz). 10-09 사용자: RC 를 185 Hz 까지만 했는데 XO PEQ 가 XO × 4(480 Hz)까지 걸렸다 →
         상한을 사람이 정하게 했다 — 자동 = XO ½ … XO × 4(전과 같음 — 실측: RC 상한으로 자르면 GD 최대 177 → 148 대신
@@ -1300,8 +1300,8 @@ class CorrectionEngine:
 
     def _xo_target_peq(self, by_pos: dict, level_db: float, lo: float, hi: float, bands: int, boost: float,
                        f_max: float | None = None) -> list:
-        """by_pos(위치 → 복소 응답, 전기 XO 전)를 lo–hi 에서 타깃 + level 에 맞추는 PEQ. 전기 LR4 는 양쪽에 같이
-        곱해지므로 '음향 = 타깃 × LR4' 를 맞추는 것과 같다. 구간 밖은 0 dB(다음 단계 몫)."""
+        """by_pos(위치 → 복소 응답, 전기 XO 전)를 lo–hi 에서 타겟 + level 에 맞추는 PEQ. 전기 LR4 는 양쪽에 같이
+        곱해지므로 '음향 = 타겟 × LR4' 를 맞추는 것과 같다. 구간 밖은 0 dB(다음 단계 몫)."""
         f = self.f
         w = self._weights()
         power = sum(w[p] * np.abs(by_pos[p]) ** 2 for p in by_pos) / sum(w[p] for p in by_pos)
@@ -1339,7 +1339,7 @@ class CorrectionEngine:
         return float(2000.0 * np.sqrt(np.median(t60s) / float(self.room_volume_m3)))
 
     def _step(self, done: int) -> None:
-        """진행 알림(10-09 사용자: 계산 중 얼마나 됐는지 안 나온다) — 1 = 서브 정렬, 그다음 메인 채널마다 하나."""
+        """진행 알림(10-09 사용자: 계산 중 얼마나 됐는지 안 나온다) — 1 = BA, 그다음 메인 채널마다 하나."""
         cb = getattr(self, 'progress', None)
         if cb is not None:
             try:
@@ -1348,7 +1348,7 @@ class CorrectionEngine:
                 pass
 
     def compute(self, subs_only: bool = False) -> CorrectionResult:
-        """subs_only = 서브 정렬(정렬·버스 게인·버스 PEQ·버스 지연)까지만 — 메인 RC 를 건너뛴다(10-09 사용자: 서브만 보는데
+        """subs_only = BA(정렬·버스 게인·버스 PEQ·버스 지연)까지만 — 메인 RC 를 건너뛴다(10-09 사용자: 서브만 보는데
         매번 전부 다시 계산하는 게 불편). 결과의 channels 는 비어 있다."""
         self._prepare()
         if self.sub_filters:
@@ -1388,7 +1388,7 @@ class CorrectionEngine:
             for pos in self.positions:
                 if all(r in self.H[pos] for r in self.subs):
                     sub_sum_by_pos[pos] = self._sub_sum(sub_params, np.arange(self.f.size), [pos])[pos]
-            # 서브 버스 레벨: 30–80 Hz 가 타깃 + 기준 레벨이 되게
+            # 서브 버스 레벨: 30–80 Hz 가 타겟 + 기준 레벨이 되게
             m = (self.f >= 30) & (self.f <= 80)
             sub_lvl = float(np.median(20 * np.log10(np.abs(sub_sum_by_pos[self.main_position][m]) + 1e-20)
                                       - self.target_db_fn(self.f[m])))

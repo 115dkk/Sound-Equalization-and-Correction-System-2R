@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""SECS 2.0 데이터 모델 — 스피커 구성 · DSP 프로파일 · 타깃 커브 · 프로젝트(.secs).
+"""SECS 2.0 데이터 모델 — 스피커 구성 · DSP 프로파일 · 타겟 커브 · 프로젝트(.secs).
 
 `P1 인터페이스 계약 2026-09-16.md` 의 A1 절이 규격이고, 수치·규칙은
 `UI 목업/secs-ui-mockup.html` 의 상태 모델(CHINFO·PRESETS·defaultBands·
@@ -490,7 +490,7 @@ class DspProfile:
             # 10-09 사용자: 실측 연구값으로 다시(`테시라 vs 데논 DSP 비교/근거.md`). Tesira SERVER(DSP-2 3장) = FIR 블록 최대
             # 2,048탭, 2,048 × 25ch = 51,200탭이 실측 최대. Q-SYS Core 8 Flex / 110f = FIR 블록 최대 16,384탭, 실사용 최대
             # 2,048 × 32ch = 65,536탭(110f 실측, 고정 FIR 풀). miniDSP = 채널당 2,048탭, 합계 4,096탭.
-            ('camilla', 'PC · CamillaDSP', 65536, 65536 * 16, 64, 64, 64),
+            ('camilla', 'PC · CamillaDSP', 65536, 65536 * 32, 64, 64, 64),   # 총 예산 2,097,152(10-12 사용자: 2배로)
             ('tesira', 'Biamp Tesira SERVER (DSP-2 ×3)', 2048, 51200, 16, 16, 16),
             ('qsys', 'Q-SYS Core 8 Flex / 110f', 16384, 65536, 24, 16, 16),
             ('minidsp', 'miniDSP Flex / 2x4 HD', 2048, 4096, 10, 0, 0),
@@ -623,7 +623,7 @@ class DspProfile:
         )
 
 
-# ──────────────────────────── 타깃 커브 ────────────────────────────
+# ──────────────────────────── 타겟 커브 ────────────────────────────
 #: 목업 S.tgt 초기값.
 DEFAULT_TARGET_POINTS: tuple[tuple[float, float], ...] = (
     (25.0, 2.0), (80.0, 2.0), (200.0, 0.0), (1000.0, 0.0), (16000.0, -2.0),
@@ -632,7 +632,7 @@ DEFAULT_TARGET_POINTS: tuple[tuple[float, float], ...] = (
 
 @dataclass
 class TargetCurve:
-    """제어점 사이를 로그 주파수 스무스스텝으로 잇는 타깃(목업 targetAt)."""
+    """제어점 사이를 로그 주파수 스무스스텝으로 잇는 타겟(목업 targetAt)."""
 
     points: list[tuple[float, float]] = field(
         default_factory=lambda: [tuple(p) for p in DEFAULT_TARGET_POINTS]
@@ -664,7 +664,7 @@ class TargetCurve:
         return 0.0
 
     def sample(self, freqs: np.ndarray) -> np.ndarray:
-        """주파수 배열에 대한 타깃 dB 배열."""
+        """주파수 배열에 대한 타겟 dB 배열."""
         arr = np.asarray(freqs, dtype=float)
         return np.array([self.at(float(x)) for x in arr.ravel()], dtype=float).reshape(arr.shape)
 

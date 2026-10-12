@@ -94,8 +94,8 @@ _PAIRS: tuple[tuple[str, str], ...] = (
     ('Cancel Calculation', '계산 취소'),
     ('Save', '저장'),
     ('Load', '불러오기'),
-    ('Save target curve', '타깃 커브 저장'),
-    ('Open target curve', '타깃 커브 불러오기'),
+    ('Save target curve', '타겟 커브 저장'),
+    ('Open target curve', '타겟 커브 불러오기'),
     # 상태
     ('Not connected', '미연결'),
     ('Not saved', '저장 안 됨'),

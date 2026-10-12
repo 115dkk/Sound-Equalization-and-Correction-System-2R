@@ -25,8 +25,8 @@ PAIRS: tuple[tuple[str, str], ...] = (
     ('{0} 초 뒤 시작…', 'Starting in {0} s…'),
     ('시작 전에 취소했습니다.', 'Cancelled before starting.'),
     # 6단계 그래프 우클릭 메뉴
-    ('타깃 저장…', 'Save target…'),
-    ('타깃 불러오기…', 'Load target…'),
+    ('타겟 저장…', 'Save target…'),
+    ('타겟 불러오기…', 'Load target…'),
     # 6단계 오른쪽 열 · 닫을 때 저장 확인
     # 8단계 시트 주석 · 6단계 경고(계약 개정 5·6·7)
     ('위상 올패스 {0}밴드', 'Phase all-pass {0} bands'),
@@ -144,7 +144,7 @@ PAIRS: tuple[tuple[str, str], ...] = (
     ('직접', 'Manual'),
     # '{0}탭' → '{0} taps' 는 8단계 묶음에 이미 있다(중복 등록하지 않음).
     ('그 밖', 'Other'),
-    ('타깃 프리셋', 'Target presets'),
+    ('타겟 프리셋', 'Target presets'),
     ('계산 취소', 'Cancel calculation'),
     # ──────────────── 7단계 ────────────────
     ('입력', 'Input'),

@@ -2,7 +2,7 @@
 
 '동작 → 변화' 로 본다(요구 대장 규칙 — 곡선이 있다류는 근거가 아니다):
 - 모드를 바꾸고 [계산] → 채널 필터(FIR 탭)·전체 지연·화면 숫자가 바뀐다.
-- RC 상한을 수동으로 올리고 [계산] → 풀린 RC 상한이 바뀌고, 옛 상한 위(800 Hz 봉우리)의 보정 후 곡선이 타깃으로 온다.
+- RC 상한을 수동으로 올리고 [계산] → 풀린 RC 상한이 바뀌고, 옛 상한 위(800 Hz 봉우리)의 보정 후 곡선이 타겟으로 온다.
 - 측정 위치 1곳이면 MIMO 칸이 꺼지고 이유가 보이며, 3곳이 되면 켜진다. [MIMO 계산] → MIMO 곡선·mdat 단계가 생긴다.
 - 내보내기: REW 가 읽는 mdat(이름에 '측정' 없음) · 카밀라 `-c` 를 통과하는 ASCII 설정.
 - 창 흐름: 5 → 보정 설계 → 내보내기, 진행바 7칸.
@@ -65,7 +65,7 @@ def _bump(ir: np.ndarray, rate: int) -> np.ndarray:
 
 @pytest.fixture(scope='module')
 def synth(engine):  # noqa: F811
-    """합성 방(`room_model_decay`) 2.2 에서 서브 하나만(서브 정렬 DE 를 건너뛰게), 위치 3곳, 메인에 800 Hz 봉우리."""
+    """합성 방(`room_model_decay`) 2.2 에서 서브 하나만(BA DE 를 건너뛰게), 위치 3곳, 메인에 800 Hz 봉우리."""
     import room_model_decay as rmd
 
     case = rmd.build_case('2.2', positions=3)
@@ -288,7 +288,7 @@ def test_manual_rc_upper_changes_resolved_limit_and_after_curve(qapp, fast_engin
             dev = run.curves['L']['spl_after'] - run.target
             return float(dev[at] - np.median(dev[ref]))
 
-        # 자동(500 Hz)은 800 Hz 봉우리를 그대로 두고, 수동 1200 Hz 는 타깃 쪽으로 끌어내린다.
+        # 자동(500 Hz)은 800 Hz 봉우리를 그대로 두고, 수동 1200 Hz 는 타겟 쪽으로 끌어내린다.
         assert bump(auto) > 4.0
         assert bump(manual) < bump(auto) - 3.0
     finally:
@@ -431,7 +431,7 @@ def test_mimo_button_adds_mimo_curve_and_mdat_stage(qapp, fast_engine, synth, fa
         assert fake_mimo['design_mimo'][:2] == (150.0, 30.0) and fake_mimo['design_mimo_iir'][1] == cal.MIMO_WORKERS
         assert '서포트 1개' in page.mimo_status.text()
         assert not page.legend_items['mimo'].isHidden()
-        assert len(page.plot.getPlotItem().listDataItems()) == 4          # 전·후·타깃·MIMO
+        assert len(page.plot.getPlotItem().listDataItems()) == 4          # 전·후·타겟·MIMO
         mimo = page.mimo_run
         f = page.run.engine.f
         base, applied = cal.spl_db(mimo.final['L'], f), cal.spl_db(mimo.applied['L'], f)
@@ -472,7 +472,7 @@ def test_export_writes_rew_mdat_and_valid_camilla_config(qapp, fast_engine, synt
         names = [m.name for m in loaded.measurements]
         for role in ('L', 'R'):
             seq = '01' if role == 'L' else '02'
-            for stage in ('1 보정 전 메인', '1 보정 전 서브', '2 XO 타깃 메인', '2 XO 타깃 서브', '3 합 후 보정'):
+            for stage in ('1 보정 전 메인', '1 보정 전 서브', '2 XO 타겟 메인', '2 XO 타겟 서브', '3 합 후 보정'):
                 assert f'{seq}_{role}_{stage}' in names, (role, stage, names)
         assert not any('측정' in n for n in names)                           # 계산값을 '측정' 이라 부르지 않는다
         assert all('계산값' in m.notes for m in loaded.measurements)

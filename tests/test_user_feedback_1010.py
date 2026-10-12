@@ -69,7 +69,7 @@ def test_right_card_quest_cycles_tabs_and_restores(qapp, fake):  # noqa: F811
             tut._place()
             seen.append(win.calibration_page.tab)
             assert tut.coach.pos() == spot                 # 탭이 바뀌어도 카드는 그 자리(3차 시험: y 600 ↔ 428)
-        # 데모 방은 서브 3(10-11) — 서브 정렬 탭까지 돌고, [계속] 을 누를 때까지 반복(10-11 사용자), 간격 3.6 s
+        # 데모 방은 서브 3(10-11) — BA 탭까지 돌고, [계속] 을 누를 때까지 반복(10-11 사용자), 간격 3.6 s
         assert seen[:6] == ['spl', 'gd', 'xo', 'subs', 'spl', 'gd'] and tut._anim_timer.isActive()
         assert tut._anim_timer.interval() == 3600
         assert len(tut.overlay.rings()) == 2                 # 탭 줄 · 오른쪽 카드 따로
@@ -78,7 +78,7 @@ def test_right_card_quest_cycles_tabs_and_restores(qapp, fake):  # noqa: F811
         assert win.calibration_page.tab == 'spl'
         q = tut.quests[index]
         # 3차 시험: 강조는 RC 범위 카드인데 글은 탭 이야기였다 — 이제 글이 나오는 카드를 이름으로 말한다
-        assert 'RC 범위' in q.text and 'XO 카드' in q.text and '서브 정렬 설정 카드' in q.text and '부스트' not in q.text
+        assert 'RC 범위' in q.text and 'XO 카드' in q.text and 'BA 설정 카드' in q.text and '부스트' not in q.text
     finally:
         win.tutorial.stop()
         win.close()

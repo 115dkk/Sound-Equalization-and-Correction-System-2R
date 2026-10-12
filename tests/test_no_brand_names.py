@@ -14,12 +14,12 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-#: (이름, 패턴) — 상호 둘(영문 · 한글, 대소문자 무시), 서브 정렬 옛 약어(대소문자 무시), 저역 감쇠 옛 약어(대문자 낱말만 —
+#: (이름, 패턴) — 상호 둘(영문 · 한글, 대소문자 무시), BA 옛 약어(대소문자 무시), 저역 감쇠 옛 약어(대문자 낱말만 —
 #: 'part' · 'START' · 'Artifact' 는 아님).
 PATTERNS = (
     ('상호(영문)', re.compile(r'[Dd][Ii][Rr][Aa][Cc]')),
     ('상호(한글)', re.compile(chr(0xB514) + chr(0xB77D))),
-    ('서브 정렬 옛 약어', re.compile(r'[Dd][Ll][Bb][Cc]')),
+    ('BA 옛 약어', re.compile(r'[Dd][Ll][Bb][Cc]')),
     ('저역 감쇠 옛 약어', re.compile(r'(?<![A-Za-z0-9])A[R]T(?![A-Za-z0-9])')),
 )
 BINARY_SUFFIXES = {'.png', '.ico', '.npz', '.mdat', '.wav', '.zip', '.pyc', '.dll', '.exe', '.gif', '.jpg'}

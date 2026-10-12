@@ -93,7 +93,7 @@ MOCKUP_DSP_PROFILES: dict[str, tuple[str, int, int, int]] = {
     "tesira": ("Biamp Tesira SERVER (DSP-2 ×3)", 2048, 51200, 16),
     "minidsp": ("miniDSP Flex / 2x4 HD", 2048, 4096, 10),
     "qsys": ("Q-SYS Core 8 Flex / 110f", 16384, 65536, 24),
-    "camilla": ("PC · CamillaDSP", 65536, 65536 * 16, 64),
+    "camilla": ("PC · CamillaDSP", 65536, 65536 * 32, 64),
     "custom": ("사용자 정의", 2048, 32768, 16),
 }
 

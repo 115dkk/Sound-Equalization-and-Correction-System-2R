@@ -3,7 +3,7 @@
 
 누가 부르나: 위저드 '보정 설계' 화면(`secs.wizard.step_calibration`, 워커 스레드에서), 내보내기 화면
 (`secs.wizard.step8_mdat`), `tests/test_calibration_step.py`·`tests/test_step8_mdat.py`.
-입력: `Project`(구성·타깃·XO·`extra['calibration']` 설정) + 위치별 IR(`rewapi.session.load_project_irs` 모양: pos → role →
+입력: `Project`(구성·타겟·XO·`extra['calibration']` 설정) + 위치별 IR(`rewapi.session.load_project_irs` 모양: pos → role →
 (ir, sr) 또는 (ir, sr, t0) — `CorrectionEngine` 이 둘 다 받는다). 출력:
   * `compute()` → `CalibrationRun`: `CorrectionEngine`(계산 끝난 것)·`CorrectionResult`·채널별 지표(`secs.scorecard.metrics`,
     보정 전·후)·표시 곡선(1/24 oct SPL·GD, 로그 격자)·풀린 RC 상한·전체 지연.
@@ -12,8 +12,8 @@
   * `export_mdat()`(REW 단계별 mdat — 이름에 '측정' 을 쓰지 않는다, 모두 계산값) · `export_camilladsp()`.
   * `export_before_after_mdat()`(내보내기 단계 — 채널마다 보정 전 = 원 측정, 보정 후 = 선택한 모드의 최종 응답).
   * `rc_pieces()` — RC 상한이 어떻게 정해졌는지(엔진 노트 + 룸 볼륨), 보정 설계·내보내기 화면이 같이 쓴다.
-  * `sub_combine()` — 서브 정렬(BA) 보기: 서브별 정렬 전·후, 서브 합, 평탄도·좌석 편차, 정렬 값(서브 2개 이상).
-  * 서브 정렬 수동 설정(10-05 요구 대장 R27): `CalibrationSettings.subs_manual`(서브마다 자동/고정/묶음 · 값 · MIMO 서포트)
+  * `sub_combine()` — BA 보기: 서브별 정렬 전·후, 서브 합, 평탄도·좌석 편차, 정렬 값(서브 2개 이상).
+  * BA 수동 설정(10-05 요구 대장 R27): `CalibrationSettings.subs_manual`(서브마다 자동/고정/묶음 · 값 · MIMO 서포트)
     → 엔진 `sub_manual`, `take_sub_values()`(마지막 결과 값을 수동 칸으로), 내보내기 노트의 서브 값(`sub_values_text`).
 엔진 수학은 여기서 바꾸지 않는다 — 엔진에 넘길 값을 모으고, 결과를 화면이 바로 그릴 모양으로 편다.
 """
@@ -65,7 +65,7 @@ SPL_GRID = np.geomspace(5.0, 20000.0, 1390)      # 화면 곡선(10-09 사용자
 GD_GRID = np.geomspace(5.0, 5000.0, 1070)
 DISPLAY_FRAC = 24.0                     # 1/24 oct(REW 로 볼 때와 같게 — 09-26 사용자가 1/24 로 본다)
 
-#: 서브 정렬 수동 설정(R27) — 방식 · 묶음 이름 · 값 범위. 고정 딜레이는 DSP 출력 값이라 0 이상.
+#: BA 수동 설정(R27) — 방식 · 묶음 이름 · 값 범위. 고정 딜레이는 DSP 출력 값이라 0 이상.
 SUB_MODES: tuple[str, ...] = ('auto', 'fixed', 'bundle')
 SUB_BUNDLES: tuple[str, ...] = ('A', 'B')
 SUB_GAIN_RANGE = (-60.0, 20.0)
@@ -119,13 +119,15 @@ class CalibrationSettings:
     fsiso: float = FSISO_DEFAULT
     mimo_low: float | None = None           # None = 자동(스피커마다 서포트 대역 판정)
     mimo_max_supports: int = 0              # 입력당 서포트 상한(0 = 제한 없음, `MIMO_MAX_SUPPORTS_RANGE`)
+    #: 서포트를 FIR 로(10-12 사용자: 'FIR 사용' 체크, 서포트당 `mimo.FIR_TAPS_48K` 탭). 끄면 IIR 맞춤(PEQ 9 + 올패스 3).
+    mimo_fir: bool = False
     #: 그룹 → XO(Hz). 비어 있는 그룹은 `project.xo` → 80 Hz. [XO 추천 계산] 이 채우고 사용자가 고칠 수 있다(09-27).
     xo: dict = field(default_factory=dict)
     #: 마지막 추천 결과(그룹 → Hz) — 화면이 '추천 90 Hz' 로 보여 준다. 엔진은 쓰지 않는다.
     xo_rec: dict = field(default_factory=dict)
     #: 초고지연 모드의 전체 지연 한도(ms, `ULTRA_MS_RANGE`). 다른 모드에서는 쓰지 않는다.
     ultra_ms: float = ULTRA_MS_DEFAULT
-    #: 서브 정렬 수동 설정(10-05 요구 대장 R27): 역할 → `sub_entry()` 모양 {'mode': 자동/고정/묶음, 'bundle', 'gain_db',
+    #: BA 수동 설정(10-05 요구 대장 R27): 역할 → `sub_entry()` 모양 {'mode': 자동/고정/묶음, 'bundle', 'gain_db',
     #: 'delay_ms', 'polarity', 'allpass': [[f, q]] ≤ 2, 'mimo_support', 'hp_hz', 'hp_type', 'lp_hz', 'lp_type',
     #: 'peq': [[f, q, dB]] ≤ 3}.
     #: 고정 출력 필터(hp·lp·peq)는 방식과 상관없이 걸린다. 없는 역할 = 자동·MIMO 서포트 씀·필터 없음(옛 .secs 그대로).
@@ -172,6 +174,7 @@ class CalibrationSettings:
         out.fsiso = num('fsiso', *FSISO_RANGE) or FSISO_DEFAULT
         out.mimo_low = num('mimo_low', 15.0, FSISO_RANGE[1])
         out.mimo_max_supports = int(round(num('mimo_max_supports', *MIMO_MAX_SUPPORTS_RANGE) or 0))
+        out.mimo_fir = bool(raw.get('mimo_fir', False))
         out.xo = _xo_map(raw.get('xo'))
         out.xo_rec = _xo_map(raw.get('xo_rec'))
         out.ultra_ms = num('ultra_ms', *ULTRA_MS_RANGE) or ULTRA_MS_DEFAULT
@@ -297,7 +300,7 @@ class CalibrationSettings:
         return mode_label(self.mode, self.ultra_ms)
 
     def mimo_key(self) -> tuple:
-        return (float(self.fsiso), self.mimo_low, self.excluded_supports(), int(self.mimo_max_supports))
+        return (float(self.fsiso), self.mimo_low, self.excluded_supports(), int(self.mimo_max_supports), bool(self.mimo_fir))
 
 
 def sub_entry(value: dict) -> dict:
@@ -496,12 +499,12 @@ def engine_inputs(project, irs: dict, xo: dict | None = None) -> dict:
 
 
 def target_key(project) -> tuple:
-    """타깃 커브의 지문(제어점) — 보정 설계 화면에서 타깃을 바꾸면 결과가 낡았다고 보이게(10-09, 자동 계산은 안 한다)."""
+    """타겟 커브의 지문(제어점) — 보정 설계 화면에서 타겟을 바꾸면 결과가 낡았다고 보이게(10-09, 자동 계산은 안 한다)."""
     return tuple((float(f), float(db)) for f, db in sorted(project.target.points))
 
 
 class _TargetFn:
-    """타깃(dB) 함수 — 피클되게 람다 대신 클래스(10-09: 계산 결과를 파일로 남긴다)."""
+    """타겟(dB) 함수 — 피클되게 람다 대신 클래스(10-09: 계산 결과를 파일로 남긴다)."""
 
     def __init__(self, target) -> None:
         self.target = target
@@ -511,7 +514,7 @@ class _TargetFn:
 
 
 def target_fn(project):
-    """타깃(dB) 함수 — 계산 도중 화면에서 타깃을 바꿔도 이 계산은 시작할 때 값으로 끝나게 복사해 둔다."""
+    """타겟(dB) 함수 — 계산 도중 화면에서 타겟을 바꿔도 이 계산은 시작할 때 값으로 끝나게 복사해 둔다."""
     return _TargetFn(copy.deepcopy(project.target))
 
 
@@ -535,7 +538,7 @@ class CalibrationRun:
     result: object                      # CorrectionResult
     metrics: dict                       # role → {'before': 지표, 'after': 지표}
     curves: dict                        # role → {'spl_before', 'spl_after', 'gd_before', 'gd_after'}
-    target: np.ndarray                  # SPL_GRID 위 타깃(레벨 기준 포함)
+    target: np.ndarray                  # SPL_GRID 위 타겟(레벨 기준 포함)
     rc_hi: float
     rc_auto: bool
     schroeder_hz: float | None
@@ -544,7 +547,7 @@ class CalibrationRun:
     notes: list = field(default_factory=list)
     signature: tuple = ()               # 계산에 쓴 측정의 지문(`measurement_signature`)
     rc_note: str = ''                   # 엔진 노트의 'RC 상한 … Hz (…)' 한 줄(상한이 어떻게 정해졌나)
-    target_key: tuple | None = None     # 계산에 쓴 타깃 제어점(`target_key`) — 다르면 결과가 낡았다(None = 비교 안 함)
+    target_key: tuple | None = None     # 계산에 쓴 타겟 제어점(`target_key`) — 다르면 결과가 낡았다(None = 비교 안 함)
 
     @property
     def roles(self) -> list[str]:
@@ -579,7 +582,7 @@ def make_engine(project, irs: dict, settings: CalibrationSettings) -> tuple[Corr
 
 
 def compute(project, irs: dict, settings: CalibrationSettings, progress=None, subs_only: bool = False) -> CalibrationRun:
-    """보정 한 번(수십 초~수 분 — 화면은 워커 스레드에서 부른다). progress(끝난 단계, 전체) = 서브 정렬 + 메인 채널마다."""
+    """보정 한 번(수십 초~수 분 — 화면은 워커 스레드에서 부른다). progress(끝난 단계, 전체) = BA + 메인 채널마다."""
     started = time.perf_counter()
     engine, inputs = make_engine(project, irs, settings)
     engine.progress = progress
@@ -769,7 +772,7 @@ def recommend_xo(project, irs: dict, settings: CalibrationSettings, candidates=X
 
 def xo_preview(run: CalibrationRun, group: str, fc: float, corrected: bool = True, role: str | None = None) -> dict:
     """XO 보기 곡선(청취 위치, `XO_GRID`, 1/12 oct dB): 'main' = 그룹 메인 평균(전기 HP), 'sub' = 서브 버스(BA 정렬·버스
-    지연·극성, 전기 LP), 'sum' = 채널마다 둘의 합의 평균, 'target' = 타깃(레벨 기준 포함). 마지막 보정 계산의 서브 정렬을
+    지연·극성, 전기 LP), 'sum' = 채널마다 둘의 합의 평균, 'target' = 타겟(레벨 기준 포함). 마지막 보정 계산의 BA 를
     그대로 쓰고 XO 만 바꾼다(끌 때마다 0.2 s 안 — 요구 대장 R7). 버스 지연 재탐색·1차 XO PEQ 는 [계산] 때.
 
     `corrected`(기본, 10-09 사용자: "XO 가 아무 보정도 없는 상태에서 되는 것 같다 — 보이는 건 보정이 적용된 게 보였으면"):
@@ -819,8 +822,8 @@ def xo_preview(run: CalibrationRun, group: str, fc: float, corrected: bool = Tru
             'target': engine.target_db_fn(XO_GRID) + float(getattr(engine, 'ref_level', 0.0))}
 
 
-# ──────────────────────────── 서브 정렬(BA) 보기 ────────────────────────────
-#: 서브 정렬 보기 격자(로그 15–300 Hz)·곡선 스무딩(XO 보기와 같은 1/12 oct)·숫자 스무딩(1/6 oct — 좁은 노치가
+# ──────────────────────────── BA 보기 ────────────────────────────
+#: BA 보기 격자(로그 15–300 Hz)·곡선 스무딩(XO 보기와 같은 1/12 oct)·숫자 스무딩(1/6 oct — 좁은 노치가
 #: 평탄도를 혼자 정하지 않게).
 SUB_GRID = np.geomspace(5.0, 300.0, 540)
 SUB_METRIC_FRAC = 6.0
@@ -838,15 +841,15 @@ def _sub_out(engine: CorrectionEngine, role: str, param, H: np.ndarray) -> np.nd
 
 
 def sub_band(engine: CorrectionEngine) -> tuple[float, float]:
-    """서브 정렬을 맞춘 대역 — 엔진 `compute()` 가 `_align_subs` 에 주는 상한(메인 XO 최댓값 × 1.5, XO 없으면 100 Hz × 1.5)."""
+    """BA 를 맞춘 대역 — 엔진 `compute()` 가 `_align_subs` 에 주는 상한(메인 XO 최댓값 × 1.5, XO 없으면 100 Hz × 1.5)."""
     xos = [float(v) for g, v in engine.xo.items() if g != 'sub' and v]
     return 20.0, max(xos, default=100.0) * 1.5
 
 
 def sub_combine(run: CalibrationRun) -> dict | None:
-    """서브 정렬(BA) 보기(요구 대장 R9) — 서브가 2개 이상일 때만, 아니면 None.
+    """BA 보기(요구 대장 R9) — 서브가 2개 이상일 때만, 아니면 None.
 
-    마지막 보정 계산의 서브 정렬을 그대로 쓴다(엔진 수학은 다시 풀지 않는다): 정렬 값 = `CorrectionResult.subs`(시트·내보내기와
+    마지막 보정 계산의 BA 를 그대로 쓴다(엔진 수학은 다시 풀지 않는다): 정렬 값 = `CorrectionResult.subs`(시트·내보내기와
     같은 값), 곡선 = 엔진이 합에 쓴 매개변수 `engine.sub_state['params']`(서브 버스 게인·지연·극성까지 든 최종값) 를
     원 측정 `engine.H0` 에 건 것 × 서브 버스 PEQ(`sub_state['bus_P']`, 10-09). 정렬 전 = 같은 측정을 DSP 없이 그대로 더한 것(`SUB_RAW`).
     서브 수동 설정(R27)의 고정·묶음 서브도 같은 매개변수 자리로 들어오니 그대로 그린다 — 'mode' = `SubAlign.mode`.
@@ -910,7 +913,7 @@ class MimoRun:
     fsiso: float
     f_low: float | None
     design: object                      # mimo.MimoResult — 서포트 고르기 · 대역 · 이상 FIR
-    iir: dict                           # input → {support role: IirSupport}
+    iir: dict                           # input → {support role: IirSupport, FIR 이면 mimo.FirSupport}
     final: dict                         # role → 기준 위치 최종 응답(긴 창, MIMO 전)
     applied: dict                       # role → 같은 것 + IIR 서포트(MIMO 적용)
     curves: dict                        # role → {'spl_mimo': SPL_GRID}
@@ -918,19 +921,21 @@ class MimoRun:
     notes: list = field(default_factory=list)
     exclude: tuple = ()                 # 서포트로 안 쓴 서브(R27 — 서브별 'MIMO 서포트로 쓰기' 끔)
     max_supports: int = 0               # 입력당 서포트 상한(0 = 제한 없음, R28)
+    fir: bool = False                   # 서포트가 FIR(10-12) — 옛 캐시에는 없다(`mimo_kind` 가 getattr 로)
 
     def supports(self, role: str) -> int:
         return len(self.iir.get(role) or {})
 
     def key(self) -> tuple:
         """이 MIMO 를 계산한 설정(`CalibrationSettings.mimo_key` 와 견준다)."""
-        return (self.fsiso, self.f_low, tuple(self.exclude), int(self.max_supports))
+        return (self.fsiso, self.f_low, tuple(self.exclude), int(self.max_supports), bool(getattr(self, 'fir', False)))
 
 
 def compute_mimo(run: CalibrationRun, fsiso: float = FSISO_DEFAULT, f_low: float | None = None,
-                workers: int = MIMO_WORKERS, exclude=(), max_supports: int = 0, progress=None) -> MimoRun:
+                workers: int = MIMO_WORKERS, exclude=(), max_supports: int = 0, progress=None, fir: bool = False) -> MimoRun:
     """MIMO(무겁다 — 명시적 버튼으로만). 위치 3곳 미만이면 `CalibrationError`. exclude = 서포트로 안 쓸 서브,
-    max_supports = 입력당 서포트 상한(0 = 제한 없음 — 엔진에 None 을 넘겨 전과 같다)."""
+    max_supports = 입력당 서포트 상한(0 = 제한 없음 — 엔진에 None 을 넘겨 전과 같다). fir = 서포트를 FIR 그대로(10-12):
+    `mimo.FIR_TAPS_LOW` 길이로 풀고 IIR 맞춤을 건너뛴다 — Fsiso 저역 통과가 FIR 안에 있어 LR4 LP 를 따로 곱하지 않는다."""
     started = time.perf_counter()
     engine = run.engine
     ok, reason = mimo_availability(len(engine.positions))
@@ -939,16 +944,24 @@ def compute_mimo(run: CalibrationRun, fsiso: float = FSISO_DEFAULT, f_low: float
     exclude = tuple(sorted(exclude or ()))
     max_supports = int(max_supports or 0)
     design = mimo.design_mimo(engine, fsiso=float(fsiso), positions=list(engine.positions), f_low=f_low, exclude=exclude,
-                               max_supports=max_supports or None)
+                               max_supports=max_supports or None, taps_low=mimo.FIR_TAPS_LOW if fir else None)
     if max_supports:
         design.notes.append(f'입력당 서포트 ≤ {max_supports}')
-    iir = (mimo_iir.design_mimo_iir(engine, design, list(engine.positions), fsiso=float(fsiso), workers=workers,
-                                         progress=progress)
-           if design.supports else {})
+    if fir:
+        iir = {i: {j: mimo.FirSupport(np.asarray(s, float), design.fs_low) for j, s in sups.items()}
+               for i, sups in design.supports.items() if sups}
+        total = sum(sp.taps_48k for sups in iir.values() for sp in sups.values())
+        design.notes.append(f'FIR 서포트 {sum(len(v) for v in iir.values())}개 · 총 {total:,}탭(48 kHz)')
+        if progress is not None:
+            progress(1, 1)
+    else:
+        iir = (mimo_iir.design_mimo_iir(engine, design, list(engine.positions), fsiso=float(fsiso), workers=workers,
+                                        progress=progress)
+               if design.supports else {})
     H = engine.long_spectra()
     f = engine.f
     pos = engine.main_position
-    lp = lr4(f, float(fsiso), 'LP')
+    lp = 1.0 if fir else lr4(f, float(fsiso), 'LP')     # FIR 은 저역 통과가 안에 있다
     final, applied, curves = {}, {}, {}
     for role in engine.chain:
         base = engine.stage_responses(role, H, pos)['final']
@@ -960,7 +973,20 @@ def compute_mimo(run: CalibrationRun, fsiso: float = FSISO_DEFAULT, f_low: float
         curves[role] = {'spl_mimo': spl_db(applied[role], f)}
     return MimoRun(fsiso=float(fsiso), f_low=f_low, design=design, iir=iir, final=final, applied=applied, curves=curves,
                   elapsed_s=time.perf_counter() - started, notes=list(getattr(design, 'notes', []) or []), exclude=exclude,
-                  max_supports=max_supports)
+                  max_supports=max_supports, fir=bool(fir))
+
+
+def mimo_kind(mimo_run: MimoRun) -> str:
+    """서포트 필터 종류 글자 — 'FIR' 또는 'IIR'(옛 캐시는 IIR)."""
+    return 'FIR' if getattr(mimo_run, 'fir', False) else 'IIR'
+
+
+def mimo_fir_budget_text(mimo_run: MimoRun, budget: int) -> str:
+    """FIR 서포트 총 탭과 DSP FIR 예산(`DspProfile.fir_budget`) 비교 한 줄 — IIR 이거나 예산을 모르면 ''."""
+    if mimo_kind(mimo_run) != 'FIR' or not budget:
+        return ''
+    total = sum(sp.taps_48k for sups in mimo_run.iir.values() for sp in sups.values())
+    return f'FIR 서포트 총 {total:,}탭 — DSP FIR 예산 {int(budget):,}탭 ' + ('안' if total <= budget else '초과')
 
 
 def mimo_cap_text(mimo_run: MimoRun) -> str:
@@ -998,6 +1024,27 @@ def band_type_text(typ: str) -> str:
     return f'{typ[:2]} {typ[2:]}'
 
 
+#: 서브 출력 게인이 이보다 크면 경고(10-12: 묶음 서브에 LP 25 Hz 가 잘못 남아 BA 가 막힌 대역을 +51 dB 로 채웠다).
+SUB_GAIN_WARN_DB = 12.0
+
+
+def sub_filter_warnings(settings: 'CalibrationSettings', roles) -> list[str]:
+    """설정만 보고 내는 경고 — 서브의 고정 LP 가 HP 의 2 배보다 낮으면(통과 대역이 한 옥타브도 안 됨) 그 서브는 거의 소리를
+    못 낸다. 화면이 BA 설정 카드와 BA 결과에 빨간 글자로 보인다(10-12 사용자: 경고 기능)."""
+    out = []
+    for r in roles:
+        e = settings.sub(r)
+        if e['hp_hz'] and e['lp_hz'] and e['lp_hz'] < 2.0 * e['hp_hz']:
+            out.append(f"{r}: HP {e['hp_hz']:g} Hz, LP {e['lp_hz']:g} Hz — 통과 대역이 거의 없습니다")
+    return out
+
+
+def sub_gain_warnings(run: 'CalibrationRun') -> list[str]:
+    """계산 결과의 서브 출력 게인이 `SUB_GAIN_WARN_DB` 를 넘으면 경고 — 막힌 대역을 게인으로 채운 것일 수 있다."""
+    return [f'{r} 게인 {s.gain_db:+.1f} dB — 너무 큽니다. 서브 필터(HP, LP) 설정을 확인하세요'
+            for r, s in run.result.subs.items() if s.gain_db > SUB_GAIN_WARN_DB]
+
+
 def sub_filter_text(s) -> str:
     """서브 하나의 대역 필터·고정 PEQ 글자('HP 15 Hz BW 12 LP 25 Hz LR 24 PEQ 30 Hz Q 2.00 -3.0 dB', 없으면 '') — 화면 표 아래 줄·노트."""
     return ' '.join([f'HP {s.hp_hz:g} Hz {band_type_text(s.hp_type)}'] * bool(s.hp_hz)
@@ -1021,7 +1068,7 @@ def sub_values_text(run: CalibrationRun) -> str:
 
 def layout_lines(run: CalibrationRun) -> list[str]:
     """레이아웃 묶음(R30) 한 줄씩 — '묶음 A DBA: 앞 SW1·SW2, 뒤 SW3 반전 +12.25 ms(자동 12.25 보정 +0.00), 같은 필터 PEQ 6'.
-    화면 서브 정렬 탭·mdat 노트가 같이 쓴다. 레이아웃 묶음이 없으면 []. 한 줄 안에는 ' · ' 를 쓰지 않는다(번역 조각 경계)."""
+    화면 BA 탭·mdat 노트가 같이 쓴다. 레이아웃 묶음이 없으면 []. 한 줄 안에는 ' · ' 를 쓰지 않는다(번역 조각 경계)."""
     out = []
     for name, info in sorted((getattr(run.engine, 'layout_info', None) or {}).items()):
         if info['kind'] == 'dba':
@@ -1034,7 +1081,7 @@ def layout_lines(run: CalibrationRun) -> list[str]:
 
 def stage_items(run: CalibrationRun, mimo_run: MimoRun | None = None, label: str = '') -> list:
     """채널마다 단계별 응답(청취 위치 = 기준 위치, 2 s 창, 모두 계산값) — `tools/export_stages_mdat.py` 의 순서:
-    1 보정 전 메인 · 1 보정 전 서브 · 2 XO 타깃 메인 · 2 XO 타깃 서브 · 3 합 후 보정 · 4 MIMO 적용(IIR, 계산했으면).
+    1 보정 전 메인 · 1 보정 전 서브 · 2 XO 타겟 메인 · 2 XO 타겟 서브 · 3 합 후 보정 · 4 MIMO 적용(IIR, 계산했으면).
     이름에 '측정' 을 쓰지 않는다(요구 대장 R18 — 계산값을 측정으로 부르지 않는다)."""
     from secs.rew_mdat.builder import MeasurementInput
 
@@ -1066,18 +1113,22 @@ def stage_items(run: CalibrationRun, mimo_run: MimoRun | None = None, label: str
             add(1, '보정 전 서브', sum(H[pos][s] for s in subs),
                 '서브 원 응답의 단순 합(정렬 없음' + (' — 서브 고정 출력 필터만)' if engine.sub_filters else '·필터 없음)'))
         if xo:
-            add(2, 'XO 타깃 메인', st['top_xo'], f'1차: 게인·딜레이·출력 PEQ(음향 XO 타깃)·전기 HP {xo:g} Hz')
+            add(2, 'XO 타겟 메인', st['top_xo'], f'1차: 게인·딜레이·출력 PEQ(음향 XO 타겟)·전기 HP {xo:g} Hz')
         if 'sub_xo' in st and xo:
-            add(2, 'XO 타깃 서브', st['sub_xo'], '1차: 서브 정렬(게인·지연·극성)·서브 버스 PEQ·전기 LP — '
+            add(2, 'XO 타겟 서브', st['sub_xo'], '1차: BA(게인·지연·극성)·서브 버스 PEQ·전기 LP — '
                 + sub_values_text(run))
         add(3, '합 후 보정', st['final'],
             f'2차: 탑+서브 합에 입력 보정({_chain_text(run)}) · 전체 지연 {run.latency_ms:.1f} ms(시작 시각에서 뺌) · RC 상한 {run.rc_hi:.0f} Hz',
             shifted)
         if mimo_run is not None and mimo_run.iir.get(role):
-            desc = '; '.join(f'{j} {sp.gain_db:.1f} dB {sp.delay_ms:.1f} ms {"+" if sp.polarity > 0 else "-"} '
-                             f'PEQ {len(sp.peq)} AP {len(sp.allpass)}' for j, sp in mimo_run.iir[role].items())
-            add(4, 'MIMO 적용(IIR)', mimo_run.applied[role],
-                f'MIMO IIR 서포트 {len(mimo_run.iir[role])}개(Fsiso {mimo_run.fsiso:g} Hz{mimo_cap_text(mimo_run)}) — {desc}', shifted)
+            kind = mimo_kind(mimo_run)
+            if kind == 'FIR':
+                desc = '; '.join(f'{j} FIR {sp.taps_48k:,}탭' for j, sp in mimo_run.iir[role].items())
+            else:
+                desc = '; '.join(f'{j} {sp.gain_db:.1f} dB {sp.delay_ms:.1f} ms {"+" if sp.polarity > 0 else "-"} '
+                                 f'PEQ {len(sp.peq)} AP {len(sp.allpass)}' for j, sp in mimo_run.iir[role].items())
+            add(4, f'MIMO 적용({kind})', mimo_run.applied[role],
+                f'MIMO {kind} 서포트 {len(mimo_run.iir[role])}개(Fsiso {mimo_run.fsiso:g} Hz{mimo_cap_text(mimo_run)}) — {desc}', shifted)
     return items
 
 
@@ -1161,7 +1212,7 @@ def _load_demo() -> dict:
 
 
 def load_demo_subs_run():
-    """튜토리얼 [서브만 계산] 이 보여 줄 결과 — 인프라 서브 퀘스트대로 SW3 을 인프라로 정한 뒤의 서브 정렬(`subs_only`)."""
+    """튜토리얼 [서브만 계산] 이 보여 줄 결과 — 인프라 서브 퀘스트대로 SW3 을 인프라로 정한 뒤의 BA(`subs_only`)."""
     return _load_demo().get('subs_run')
 
 
@@ -1293,8 +1344,8 @@ def before_after_items(run: CalibrationRun, mimo_run: MimoRun | None = None) -> 
             SR, np.fft.irfft(final, N_FFT).astype(np.float32), shifted))
         if mimo_run is not None and mimo_run.iir.get(role) and role in mimo_run.applied:
             items.append(MeasurementInput(
-                f'{seq:02d}_{role}_3 보정 후 + MIMO(IIR)',
-                f'SECS 보정 설계 · {label} · 청취 위치 {pos} · 계산값 — MIMO IIR 서포트 {len(mimo_run.iir[role])}개 '
+                f'{seq:02d}_{role}_3 보정 후 + MIMO({mimo_kind(mimo_run)})',
+                f'SECS 보정 설계 · {label} · 청취 위치 {pos} · 계산값 — MIMO {mimo_kind(mimo_run)} 서포트 {len(mimo_run.iir[role])}개 '
                 f'(Fsiso {mimo_run.fsiso:g} Hz{mimo_cap_text(mimo_run)})', SR, np.fft.irfft(mimo_run.applied[role], N_FFT).astype(np.float32), shifted))
     for role in engine.subs:
         if role in raw:
@@ -1318,12 +1369,14 @@ def export_camilladsp(run: CalibrationRun, folder, mimo_run: MimoRun | None = No
     MIMO(IIR)를 계산했으면 서포트 경로도 넣는다(09-26 — 카밀라로 돌린 출력을 엔진 체인과 대조해 확인했다)."""
     from secs.export_camilladsp import mimo_paths, write_config
 
-    n_mimo = len(mimo_paths(run.engine, mimo_run.design, mimo_run.iir)) if mimo_run is not None and mimo_run.iir else 0
+    fir = mimo_run is not None and mimo_kind(mimo_run) == 'FIR'
+    iir = None if fir else (mimo_run.iir if mimo_run is not None else None)    # FIR 은 `design.supports` 로 Conv wav(이미 있는 길)
+    n_mimo = len(mimo_paths(run.engine, mimo_run.design, iir)) if mimo_run is not None and mimo_run.iir else 0
     # 장치 · 라우팅 · 지연 안내는 내보내기가 머리 주석 끝에 따로 쓴다(`export_camilladsp.howto_lines`, 10-10).
     note = (f'mode {run.settings.mode}, total latency {run.latency_ms:.1f} ms, RC upper {run.rc_hi:.0f} Hz; '
-            + (f'MIMO IIR support paths {n_mimo} (Fsiso {mimo_run.fsiso:g} Hz'
+            + (f'MIMO {mimo_kind(mimo_run)} support paths {n_mimo} (Fsiso {mimo_run.fsiso:g} Hz'
                + (f', max {mimo_run.max_supports} per input' if getattr(mimo_run, 'max_supports', 0) else '') + ')' if n_mimo else 'no MIMO'))
-    kw = {'mimo': mimo_run.design, 'iir': mimo_run.iir, 'fsiso': mimo_run.fsiso} if n_mimo else {}
+    kw = {'mimo': mimo_run.design, 'iir': iir, 'fsiso': mimo_run.fsiso} if n_mimo else {}
     mode = run.settings.mode + (f'{run.settings.ultra_ms:g}' if run.settings.mode == ULTRA_MODE else '')
     return write_config(run.engine, run.result, Path(folder), name=f'secs_{mode}', note=note,
                         latency_ms=float(run.latency_ms), mode=mode, **kw)
@@ -1331,7 +1384,7 @@ def export_camilladsp(run: CalibrationRun, folder, mimo_run: MimoRun | None = No
 
 def estimate_seconds(project, mode: str = DEFAULT_MODE) -> float:
     """보정 계산 예상 초(구성으로 어림) — 09-26 합성 2.1(메인 2·서브 1) 최소 지연 42 s·저사양 70 s(단일 스레드,
-    대부분 입력 PEQ 맞춤), 서브가 둘 이상이면 서브 정렬 DE 가 수십 초 더."""
+    대부분 입력 PEQ 맞춤), 서브가 둘 이상이면 BA DE 가 수십 초 더."""
     try:
         roles = [s.role for s in project.config.speakers]
     except Exception:  # noqa: BLE001 - 구성이 비면 기본값
@@ -1351,6 +1404,25 @@ def estimate_seconds(project, mode: str = DEFAULT_MODE) -> float:
     return max(5.0, per * max(mains, 1) + (10.0 if subs > 1 else 0.0))
 
 
+def estimate_subs_seconds(project) -> float:
+    """[서브만 계산](BA 까지만) 예상 초 — 10-12 맥 실측(돌비룸 2026-10-09 · 서브 3 · 9위치) 11.8 s × 이 PC 1.5 배 ≈ 18 s.
+    위치 수에 비례로 어림(보정 계산 어림과 같은 꼴), 서브가 하나면 정렬할 것이 없어 짧다."""
+    from secs.model import role_kind
+    try:
+        subs = sum(1 for s in project.config.speakers if role_kind(s.role) == 'sub')
+    except Exception:  # noqa: BLE001 - 구성이 비면 기본값
+        subs = 2
+    try:
+        positions = max(1, len(measured_positions(project)))
+    except Exception:  # noqa: BLE001
+        positions = 9
+    return max(3.0, SUBS_ONLY_S * (0.4 + 0.6 * min(positions, 9) / 9) * (1.0 if subs > 1 else 0.3))
+
+
+#: [서브만 계산] 어림의 기준(9위치 · 서브 둘 이상, 이 PC) — 위 독스트링.
+SUBS_ONLY_S = 18.0
+
+
 def estimate_xo_seconds(project, mode: str = DEFAULT_MODE, candidates: int = len(XO_CANDIDATES)) -> float:
     """XO 추천 예상 초 — 후보마다 보정 한 번을 워커(코어 절반)로 나눠 돈다. 동시에 돌면 한 후보가 조금 느려진다:
     10-09 맥미니 실측(돌비룸 14ch·9위치·mixed, 후보 4) 직렬 138.5 s(후보당 34 s) vs 병렬 38.5 s(후보당 37 s, 1.1 배) —
@@ -1361,8 +1433,9 @@ def estimate_xo_seconds(project, mode: str = DEFAULT_MODE, candidates: int = len
     return estimate_seconds(project, mode) * rounds * (1.1 if rounds < candidates else 1.0)
 
 
-def estimate_mimo_seconds(project, positions: int | None = None) -> float:
+def estimate_mimo_seconds(project, positions: int | None = None, fir: bool = False) -> float:
     """MIMO 계산 예상 초 = 서포트 고르기 + 입력(메인 채널)마다 IIR 맞춤 ÷ 워커 `MIMO_WORKERS` 개(라운드 단위).
+    FIR 서포트(`fir`)는 IIR 맞춤이 없어 고르기만.
     10-09 맥 실측(돌비룸 2026-10-09 · 입력 11 · 9위치 · 워커 2): 고르기 25 s + IIR 1,299 s → 입력 하나 ≈ 236 s(맥).
     이 PC 는 맥보다 약 1.5배 느리다(CLAUDE.md) → 입력 하나 MIMO_INPUT_S. 위치 수에 비례로 어림."""
     import math
@@ -1377,7 +1450,7 @@ def estimate_mimo_seconds(project, positions: int | None = None) -> float:
         except Exception:  # noqa: BLE001
             positions = 9
     scale = max(positions, 3) / 9
-    rounds = math.ceil(max(inputs, 1) / max(MIMO_WORKERS, 1))
+    rounds = 0 if fir else math.ceil(max(inputs, 1) / max(MIMO_WORKERS, 1))
     return max(10.0, (MIMO_PICK_S + rounds * MIMO_INPUT_S) * scale)
 
 
@@ -1388,9 +1461,9 @@ MIMO_INPUT_S = 355.0
 
 __all__ = ['MODE_KEYS', 'DEFAULT_MODE', 'ULTRA_MODE', 'ULTRA_MS_RANGE', 'ultra_params', 'mode_params', 'CalibrationSettings', 'CalibrationRun', 'MimoRun', 'CalibrationError',
            'mode_spec', 'mode_label', 'measured_positions', 'mimo_availability', 'engine_inputs', 'compute',
-           'compute_mimo', 'stage_items', 'export_mdat', 'export_camilladsp', 'estimate_seconds', 'estimate_xo_seconds', 'estimate_mimo_seconds',
+           'compute_mimo', 'mimo_kind', 'mimo_fir_budget_text', 'stage_items', 'export_mdat', 'export_camilladsp', 'estimate_seconds', 'estimate_subs_seconds', 'estimate_xo_seconds', 'estimate_mimo_seconds',
            'before_after_items', 'export_before_after_mdat', 'rc_pieces', 'room_dims', 'room_volume',
            'SPL_GRID', 'GD_GRID', 'MIMO_MIN_POSITIONS', 'FSISO_RANGE', 'RC_HI_RANGE', 'ROOM_DIM_RANGE',
            'XO_RANGE', 'XO_CANDIDATES', 'XO_GRID', 'XoRecommendation', 'xo_groups', 'xo_scores', 'pick_xo',
-           'recommend_xo', 'xo_preview', 'SUB_MODES', 'SUB_BUNDLES', 'sub_entry', 'sub_has_filters', 'MIMO_MAX_SUPPORTS_RANGE', 'mimo_cap_text', 'SUB_BAND_TYPES', 'band_type_text', 'sub_filter_text', 'sub_mode_text', 'sub_value_text',
+           'recommend_xo', 'xo_preview', 'SUB_MODES', 'SUB_BUNDLES', 'sub_entry', 'sub_has_filters', 'MIMO_MAX_SUPPORTS_RANGE', 'mimo_cap_text', 'SUB_GAIN_WARN_DB', 'sub_filter_warnings', 'sub_gain_warnings', 'SUB_BAND_TYPES', 'band_type_text', 'sub_filter_text', 'sub_mode_text', 'sub_value_text',
            'sub_values_text', 'SUB_LAYOUTS', 'DBA_ROWS', 'bundle_layout_entry', 'layout_lines']

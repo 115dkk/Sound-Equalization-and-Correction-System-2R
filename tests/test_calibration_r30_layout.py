@@ -143,7 +143,7 @@ def test_dolby_copy(kind):
 
 @pytest.mark.parametrize('lang', ['ko', 'en'])
 def test_layout_card_fits_1024x640(qapp, fast_engine, fast_ba, two_subs, tmp_path, lang):  # noqa: F811
-    """1024×640 에서 DBA 묶음 카드·서브 정렬 탭이 잘리지 않는다(실제 글꼴 — `QT_QPA_PLATFORM=windows`).
+    """1024×640 에서 DBA 묶음 카드·BA 탭이 잘리지 않는다(실제 글꼴 — `QT_QPA_PLATFORM=windows`).
     `SECS_CAPTURE_DIR` 를 주면 창·카드 캡처를 남긴다(눈 확인용)."""
     if qapp.platformName() == 'offscreen':
         pytest.skip('실제 글꼴 폭 검사: QT_QPA_PLATFORM=windows 로 실행')

@@ -86,8 +86,8 @@ def test_tutorial_quests_are_translated_and_targets_resolve(qapp, fake):  # noqa
 
 
 def test_next_twice_always_reaches_the_end(qapp, tmp_path, monkeypatch):  # noqa: F811
-    """10-10 AI 시험 10명이 모두 막힌 것: 서브 1개 샘플에서 '서브 정렬 탭' 퀘스트 · 계산 중 [다음으로]. [다음으로 →] 만
-    눌러도(두 번씩) 끝까지 가야 한다(10-11 부터 샘플은 서브 3 — 서브 정렬 · 인프라 서브 퀘스트도 지난다)."""
+    """10-10 AI 시험 10명이 모두 막힌 것: 서브 1개 샘플에서 'BA 탭' 퀘스트 · 계산 중 [다음으로]. [다음으로 →] 만
+    눌러도(두 번씩) 끝까지 가야 한다(10-11 부터 샘플은 서브 3 — BA · 인프라 서브 퀘스트도 지난다)."""
     import time
     from PyQt6 import QtWidgets
     from secs.wizard import build_backend, new_project
@@ -118,7 +118,7 @@ def test_next_twice_always_reaches_the_end(qapp, tmp_path, monkeypatch):  # noqa
 
 def test_three_sub_demo_prepares_and_fills_the_sub_alignment_tab(qapp, monkeypatch):  # noqa: F811
     """10-11 사용자 결정(데모 방 = 실측 서브 3개 SW1 DBA L · SW2 DBA R · SW3 INFRA): 튜토리얼 미리 계산(`prepare_in_background`)이
-    예외 없이 끝나고, [계산] 이 그 결과를 넘겨 서브 정렬 탭에 결과가 그려지며, 서브 정렬 · 인프라 서브 퀘스트가 나온다."""
+    예외 없이 끝나고, [계산] 이 그 결과를 넘겨 BA 탭에 결과가 그려지며, BA · 인프라 서브 퀘스트가 나온다."""
     import time
 
     from PyQt6 import QtWidgets
@@ -157,7 +157,7 @@ def test_three_sub_demo_prepares_and_fills_the_sub_alignment_tab(qapp, monkeypat
         win.go(CAL_STEP)
         qapp.processEvents()
         assert page.tab_buttons['subs'].isVisible()
-        assert all(q.when(win) for q in tq.QUESTS if q.when is not None)      # 서브 정렬 · 인프라 서브 퀘스트가 나온다
+        assert all(q.when(win) for q in tq.QUESTS if q.when is not None)      # BA · 인프라 서브 퀘스트가 나온다
         assert page.compute_clicked()             # 튜토리얼 [계산] = 미리 계산한 결과를 짧게 보여 주기
         end = time.time() + 60
         while page.run is None and time.time() < end:

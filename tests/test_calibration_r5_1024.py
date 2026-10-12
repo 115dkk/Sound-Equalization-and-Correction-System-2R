@@ -1,4 +1,4 @@
-"""요구 대장 R5(2026-10-05): 1024×640 창에서 지금 흐름(`strings.FLOW`)의 화면 전부 — 특히 보정 설계(SPL·XO·서브 정렬 탭)와
+"""요구 대장 R5(2026-10-05): 1024×640 창에서 지금 흐름(`strings.FLOW`)의 화면 전부 — 특히 보정 설계(SPL·XO·BA 탭)와
 내보내기 — 에 가로 스크롤·글자 잘림이 없고, 창이 정말 1024×640 이다. 한국어·영어.
 
 고치기 전: 사이드바(칸 사이 고정 14 px)가 창 최소 높이를 707 px 로 끌어올려 1024×640 이 1024×707 로 열렸고, 보정 설계의
@@ -106,7 +106,15 @@ def test_result_tabs_wrap_only_when_the_column_is_narrow(flow, qapp):  # noqa: F
     tool.capture(win, qapp, CAL_STEP, (1920, 1080), tmp, 'r5_wide')
     assert page.result_bar.one_line()                             # 넓으면 탭이 채널 옆(전과 같은 모양)
     tool.capture(win, qapp, CAL_STEP, SIZE, tmp, 'r5_narrow')
-    assert not page.result_bar.one_line()                         # 1024 영어: 한 줄이면 118 px 넘쳤다 → 아랫줄
+    bar = page.result_bar
+    need = bar.left.sizeHint().width() + bar.row.spacing() + bar.right.sizeHint().width()
+    # 1024 영어: 'Sub alignment' 탭일 때는 118 px 넘쳐 아랫줄이었다. 10-12 탭 이름이 'BA' 로 짧아져 한 줄에 들 수 있다 —
+    # 폭이 모자랄 때만 내리는지는 줄을 일부러 좁혀 본다.
+    assert bar.one_line() == (bar.width() >= need)
+    bar.resize(need - 40, bar.height())
+    bar.fit()                                       # 부모 레이아웃이 폭을 되돌리기 전에 판단만 본다
+    assert not bar.one_line()
+    bar.row.setGeometry(bar.rect())                 # 아랫줄 배치를 지금 폭으로 바로 그린다
     tabs = page.tab_buttons
     assert tabs['spl'].y() > page.channel_combo.y()
     assert tabs['spl'].x() < tabs['subs'].x()                     # 아랫줄은 왼쪽부터(늘어나 퍼지지 않는다)

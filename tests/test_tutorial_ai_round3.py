@@ -5,7 +5,7 @@
 - 단계 끝 알림 · 목록 제목은 업무 말(사용자 결정 1A — '클리어 ★' · '퀘스트' 없음), 틀린 곳 알림은 '카드의 [계속 →]'.
 - 레벨 체크: 못 잰 채널이 4개 넘으면 '외 n개', 재생 중 배지는 숨겨도 자리를 지킨다.
 - 측정 그래프: 모든 채널을 서로 다른 색으로(전엔 앞 6채널만 · 8색), 축 이름은 눈금 글자 진하기, 튜토리얼 로그에 임시 경로 없음.
-- 보정 설계: XO 탭도 SPL 탭과 같은 타깃 기준, 결과 줄 '6 % → 100 %', 계산 전 GD · XO 탭 안내, SPL 가로축 20k 눈금.
+- 보정 설계: XO 탭도 SPL 탭과 같은 타겟 기준, 결과 줄 '6 % → 100 %', 계산 전 GD · XO 탭 안내, SPL 가로축 20k 눈금.
 - 장치 화면: 'Demo ASIO 16ch · 16ch' 처럼 채널 수를 두 번 붙이지 않는다.
 """
 from __future__ import annotations
@@ -164,7 +164,7 @@ def test_calibration_tabs_share_the_target_level(qapp, fast_engine, synth, tmp_p
         assert re.search(r'\d+ % → \d+ %', page.metrics_label.text()), page.metrics_label.text()
         assert page.plot.getViewBox().viewRange()[0][1] > np.log10(20000.0)       # 20k 눈금이 보이게 끝에 여유
         assert page.plot.getAxis('left').labelStyle.get('color') == COLORS['ink2']
-        # XO 탭: 타깃이 SPL 탭처럼 제 값(프로젝트 타깃)에, 곡선은 같은 만큼만 옮겨 그린다
+        # XO 탭: 타겟이 SPL 탭처럼 제 값(프로젝트 타겟)에, 곡선은 같은 만큼만 옮겨 그린다
         page.set_tab('xo')
         group = page.xo_group
         x, target = page._xo_curves['target'].getData()
@@ -173,6 +173,6 @@ def test_calibration_tabs_share_the_target_level(qapp, fast_engine, synth, tmp_p
         view = cal.xo_preview(run, group, page.xo_of(group), role=page.channel)
         _x, main = page._xo_curves['main'].getData()
         assert np.allclose(main, view['main'] - page._level_offset(run))
-        assert '타깃 기준' in page.plot.getAxis('left').labelString()
+        assert '타겟 기준' in page.plot.getAxis('left').labelString()
     finally:
         page.deleteLater()

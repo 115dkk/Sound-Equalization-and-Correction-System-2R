@@ -1,8 +1,8 @@
 """보정 설계 화면 정리(2026-10-09 사용자 요청 5가지).
 
 '동작 → 변화' 로 본다:
-- 탭을 바꾸면 오른쪽 설정 카드가 탭에 맞춰 바뀐다(SPL·GD = RC, XO = XO, 서브 정렬 = 서브 정렬 설정). 값은 그대로.
-- SPL 그래프 빈 곳 우클릭 메뉴의 프리셋을 누르면 타깃이 바뀌고 체크 표시가 따라온다.
+- 탭을 바꾸면 오른쪽 설정 카드가 탭에 맞춰 바뀐다(SPL·GD = RC, XO = XO, BA = BA 설정). 값은 그대로.
+- SPL 그래프 빈 곳 우클릭 메뉴의 프리셋을 누르면 타겟이 바뀌고 체크 표시가 따라온다.
 - XO 추천을 한 번도 안 한 프로젝트에서 [계산] 을 누르면 XO 추천부터 돌고(취소 가능), 끝나면 추천 XO 로 보정이 계산된다.
 - SPL·GD 탭에 RC 하한·상한 세로선이 계산이 쓴 값(자동 상한 포함) 자리에 선다.
 - XO 탭 곡선은 보정 필터가 걸린 응답이다(보정 전과 다르고, XO 를 옮겨도 0.2 s 안).
@@ -129,7 +129,7 @@ def test_xo_view_shows_corrected_response_and_stays_fast(qapp, fast_engine, synt
         cal.xo_preview(run, group, hz * 1.3)
         assert time.perf_counter() - started < 0.2
         page.tab_buttons['xo'].click()
-        # 화면은 SPL 탭과 같은 타깃 기준으로 옮겨 그린다(10-10 3차 시험) — 곡선 모양은 그대로, 높이만 offset 만큼
+        # 화면은 SPL 탭과 같은 타겟 기준으로 옮겨 그린다(10-10 3차 시험) — 곡선 모양은 그대로, 높이만 offset 만큼
         assert np.allclose(page._xo_curves['main'].yData, corr['main'] - page._level_offset(run))
     finally:
         page.deleteLater()

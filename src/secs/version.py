@@ -15,7 +15,7 @@ from __future__ import annotations
 
 APP_NAME = 'SECS 2'
 STAGE = 'Beta'
-BUILD = '1.1.0'
+BUILD = '1.2.0'
 
 #: 사람이 읽는 꼴 — 'Alpha 1.1.2'(사이드바 두 번째 줄)
 VERSION_LABEL = f'{STAGE} {BUILD}'

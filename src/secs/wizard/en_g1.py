@@ -199,7 +199,7 @@ PAIRS: tuple[tuple[str, str], ...] = (
     # ──────────────── plot.py ────────────────
     ('보정 범위 {0} ~ {1} Hz', 'Correction range {0} ~ {1} Hz'),
     ('XO {0} Hz · {1} 그룹', 'XO {0} Hz · {1} group'),
-    ('타깃 제어점 {0} Hz · {1}{2} dB', 'Target point {0} Hz · {1}{2} dB'),
+    ('타겟 제어점 {0} Hz · {1}{2} dB', 'Target point {0} Hz · {1}{2} dB'),
 )
 
 # SKIPPED:

@@ -67,7 +67,7 @@ PAIRS: tuple[tuple[str, str], ...] = (
     ('시네마', 'Cinema'),
     ('플랫', 'Flat'),
     ('하만', 'Harman'),
-    ('타깃 커브', 'Target curve'),
+    ('타겟 커브', 'Target curve'),
     ('서브', 'Sub'),
     ('게인', 'Gain'),
     ('극성', 'Polarity'),
@@ -191,7 +191,7 @@ PAIRS: tuple[tuple[str, str], ...] = (
 # SKIPPED:
 #   step5_measure.py '샘플' — 자동 생성 파일 이름 앞머리(SAMPLE_PREFIX). 파일 이름이라 번역하지 않음.
 #   step5_measure.py '측정 {0}' — NOTES 참고(과매칭 위험이라 패턴으로 넣지 않음).
-#   step6_design.py  '타깃.json' — 저장 창의 기본 파일 이름.
+#   step6_design.py  '타겟.json' — 저장 창의 기본 파일 이름.
 #   step7_bass.py    ' 개' — 스핀박스 접미사. `t(suffix)` 로 걸려 있고 카탈로그에도 등록돼 있다(해결됨).
 #   step7_bass.py    '경로 ' — 조립 문구. '경로 {0} → {1}' 패턴으로 대신 넣음(NOTES).
 #   design.py        'invalidate 인자는 …' — 개발자용 ValueError.

@@ -760,7 +760,7 @@ class Tutorial(QtCore.QObject):
         box.setText(t('샘플 데이터로 측정부터 내보내기까지 한 바퀴 돌았습니다. 실제로는 REW 를 API 모드로 띄우고 '
                       '여러 위치(싱글 9곳 이상)를 잽니다.'))
         again = box.addButton(t('처음부터 다시'), QtWidgets.QMessageBox.ButtonRole.RejectRole)
-        real = box.addButton(t('실제 측정 시작'), QtWidgets.QMessageBox.ButtonRole.AcceptRole)
+        real = box.addButton(t('튜토리얼 종료'), QtWidgets.QMessageBox.ButtonRole.AcceptRole)
         self._finish_box = box
         box.finished.connect(lambda _r: self._after_finish(box.clickedButton() is real, box.clickedButton() is again))
         box.open()

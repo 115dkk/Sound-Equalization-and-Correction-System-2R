@@ -27,7 +27,7 @@
   (10-10 사용자: '오른쪽 카드는 탭에 맞춰 바뀝니다' 를 탭이 저절로 넘어가며 한 번에 이해되게). False 를 돌려주면 거기서 멈춘다
   (3차 시험: 끝없이 돌아 읽기 · 누르기 어려웠다 — 한 바퀴만). 도는 동안 안내 카드 자리는 고정이다(`Tutorial._place`).
 - apart: 대상 위젯이 여럿일 때 합친 칸 대신 위젯마다 따로 테두리친다(떨어진 탭 줄과 오른쪽 카드 — 3차 시험).
-- when(win): False 면 이 퀘스트를 건너뛴다(예: 서브가 하나면 서브 정렬 · 인프라 서브 퀘스트 없음).
+- when(win): False 면 이 퀘스트를 건너뛴다(예: 서브가 하나면 BA · 인프라 서브 퀘스트 없음).
 
 `GLOSSARY` 는 약어 · 용어 풀이 — 그 말이 처음 나오는 카드에 한 줄씩 붙는다(10-10 AI 시험: 비전문가가 XO · FIR · REW ·
 스윕 · 극성 … 을 몰랐다). 본문에 나온 말은 본문 아래, [왜?] 에만 나온 말은 [왜?] 를 펼쳤을 때 그 아래(2차 시험: [단일] 카드에
@@ -201,7 +201,7 @@ def _level_busy(w) -> bool:
 
 
 def _cycle_tabs(w, k: int) -> bool:
-    """보정 설계 탭을 SPL → GD → XO(→ 서브 정렬, 보일 때만) → SPL … 로 [계속] 을 누를 때까지 돌린다(10-11 사용자:
+    """보정 설계 탭을 SPL → GD → XO(→ BA, 보일 때만) → SPL … 로 [계속] 을 누를 때까지 돌린다(10-11 사용자:
     "계속하기 안누르면 루프되게" — 10-10 3차 시험 때는 한 바퀴만 돌았다. 대신 넘기는 간격을 3.6 s 로 늘렸다)."""
     page = w.calibration_page
     tabs = ['spl', 'gd', 'xo'] + (['subs'] if page.tab_buttons['subs'].isVisible() else [])
@@ -217,7 +217,7 @@ def _tab_cards(w) -> list:
 
 
 def _on_tab(w, key: str, targets):
-    """보정 설계 탭 하나를 펴 두고 그 안을 가리키는 대상(10-11 사용자: 보정 설계 · 서브 정렬을 탭마다 자세히). 안내 카드가
+    """보정 설계 탭 하나를 펴 두고 그 안을 가리키는 대상(10-11 사용자: 보정 설계 · BA 를 탭마다 자세히). 안내 카드가
     0.15 s 마다 대상을 다시 찾으니 탭이 다를 때만 바꾼다(그래프를 매번 다시 그리지 않게)."""
     page = w.calibration_page
     if page.tab != key:
@@ -249,7 +249,7 @@ def _row_name(widget):
 
 
 def _sub_fields(w) -> list:
-    """서브 정렬 설정 카드의 서브 · 방식 · 값 칸(게인 · 딜레이 · 극성 · 올패스)과 줄 이름."""
+    """BA 설정 카드의 서브 · 방식 · 값 칸(게인 · 딜레이 · 극성 · 올패스)과 줄 이름."""
     page = w.calibration_page
     fields = [page.sub_pick, page.sub_mode_combo, page.sub_gain_spin, page.sub_delay_spin, page.sub_pol_combo,
               *[s for pair in page.sub_ap_spins for s in pair]]
@@ -258,7 +258,7 @@ def _sub_fields(w) -> list:
 
 
 def _sub_filters(w) -> list:
-    """서브 정렬 설정 카드의 고정 필터 칸(HP · LP · PEQ)과 줄 이름."""
+    """BA 설정 카드의 고정 필터 칸(HP · LP · PEQ)과 줄 이름."""
     page = w.calibration_page
     fields = [page.sub_hp_spin, page.sub_band_combos['hp'], page.sub_lp_spin, page.sub_band_combos['lp'],
               *[s for row in page.sub_peq_spins for s in row]]
@@ -342,19 +342,19 @@ QUESTS: tuple[Quest, ...] = (
           'REW Pro 가 없으면 여기서 시작합니다 — REW 에서 채널마다 측정해 이름을 L · R · SW1 … 로 붙여 저장한 .mdat 를 '
           '[mdat 불러오기] 로 가져옵니다. 위치 2부터는 L_P2 처럼 붙이고, 자세한 건 [도움말] 의 "mdat 불러오기" 탭에 있습니다.'),
     _next_to(5),
-    # ── 보정 설계 ── (10-11 사용자: 보정 설계를 더 자세히, 서브 정렬 설명이 부실 — 탭마다 무엇을 보고 어떤 모양이 좋은지)
+    # ── 보정 설계 ── (10-11 사용자: 보정 설계를 더 자세히, BA 설명이 부실 — 탭마다 무엇을 보고 어떤 모양이 좋은지)
     Quest(CAL_STEP, 'look', lambda w: card_of(w.calibration_page.compute_button),
           '보정 모드와 [계산] — 측정으로 보정 필터를 만듭니다. 모드는 보정 필터가 더할 지연의 한도로, 최소 지연은 크기만 '
           '고치고 저지연 · 표준은 지연을 더 써서 저역 위상까지 고칩니다.'),
     Quest(CAL_STEP, 'look', lambda w: [w.calibration_page.result_bar, w.calibration_page.plot],
-          '탭 SPL · GD · XO 와 그래프 — 계산 전에는 SPL 탭에 측정과 타깃만 보이고, 계산하면 보정 후 곡선과 GD · XO 곡선이 나옵니다.'),
+          '탭 SPL · GD · XO 와 그래프 — 계산 전에는 SPL 탭에 측정과 타겟만 보이고, 계산하면 보정 후 곡선과 GD · XO 곡선이 나옵니다.'),
     # 강조 = 탭 줄 + 오른쪽 카드(따로따로), 글은 실제로 나오는 카드 이름(10-10 3차 시험: 강조는 RC 범위 카드인데 글은 탭 이야기)
     Quest(CAL_STEP, 'look', _tab_cards,
-          '오른쪽 카드는 탭에 맞춰 바뀝니다 — SPL · GD 탭에서는 RC 범위 카드, XO 탭에서는 XO 카드, 서브 정렬 탭에서는 '
-          '서브 정렬 설정 카드가 나옵니다. 탭을 한 번씩 넘겨 보여 드립니다.',
+          '오른쪽 카드는 탭에 맞춰 바뀝니다 — SPL · GD 탭에서는 RC 범위 카드, XO 탭에서는 XO 카드, BA 탭에서는 '
+          'BA 설정 카드가 나옵니다. 탭을 한 번씩 넘겨 보여 드립니다.',
           animate=_cycle_tabs, animate_end=lambda w: w.calibration_page.set_tab('spl'), apart=True),
     Quest(CAL_STEP, 'act', lambda w: w.calibration_page.compute_button, '[계산] 을 눌러 볼까요?',
-          why='측정만으로는 소리가 바뀌지 않습니다 — 계산해야 DSP 에 넣을 필터가 나옵니다. 룸 보정 RC 와 서브 정렬을 계산하고, 진행은 '
+          why='측정만으로는 소리가 바뀌지 않습니다 — 계산해야 DSP 에 넣을 필터가 나옵니다. 룸 보정 RC 와 BA 를 계산하고, 진행은 '
               '[계산] 아래 줄과 오른쪽 아래 알림에 나옵니다.',
           done=lambda w: w.calibration_page.run is not None, auto=_compute,
           note='계산을 시작해 두었습니다 — 뒤에서 이어 돕니다.',
@@ -364,12 +364,12 @@ QUESTS: tuple[Quest, ...] = (
           keep=lambda w: [w.calibration_page.status]),
     Quest(CAL_STEP, 'look', lambda w: _on_tab(w, 'spl', [w.calibration_page.plot, *(
         w.calibration_page.legend_items[k] for k in ('before', 'after', 'target'))]),
-          'SPL 탭 — 보정 전 · 보정 후 곡선과 타깃 점선을 겹쳐 봅니다. 회색으로 가린 바깥은 RC 가 손대지 않는 대역이고, '
-          '그 안에서 보정 후 곡선이 타깃을 고르게 따라가면 잘된 보정입니다. 좁고 깊은 딥은 일부러 다 채우지 않습니다.'),
+          'SPL 탭 — 보정 전 · 보정 후 곡선과 타겟 점선을 겹쳐 봅니다. 회색으로 가린 바깥은 RC 가 손대지 않는 대역이고, '
+          '그 안에서 보정 후 곡선이 타겟을 고르게 따라가면 잘된 보정입니다. 좁고 깊은 딥은 일부러 다 채우지 않습니다.'),
     # 계산 뒤 결과 줄을 한 줄씩 짚는다(10-10 3차 시험: '±1 dB 안' · 'GD 폭' · '전체 지연' 이 무슨 숫자인지 몰랐다)
     Quest(CAL_STEP, 'look', lambda w: _on_tab(w, 'spl', [w.calibration_page.metrics_label, w.calibration_page.filters_label,
                                                          w.calibration_page.summary_label]),
-          '결과 줄 — "±1 dB 안" 은 20–200 Hz 가 타깃 ±1 dB 안에 든 비율로, 보정 전 → 후로 커질수록 좋습니다. "GD 폭" 은 '
+          '결과 줄 — "±1 dB 안" 은 20–200 Hz 가 타겟 ±1 dB 안에 든 비율로, 보정 전 → 후로 커질수록 좋습니다. "GD 폭" 은 '
           '20–100 Hz 에서 GD 가 퍼진 폭이라 작을수록 저역이 고르게 도착합니다. 다음 줄은 이 채널의 PEQ · FIR 필터 수, '
           '"전체 지연" 은 보정 필터가 더하는 지연입니다.'),
     Quest(CAL_STEP, 'look', lambda w: _on_tab(w, 'gd', [w.calibration_page.plot, *(
@@ -383,30 +383,30 @@ QUESTS: tuple[Quest, ...] = (
     # 그래프(왼쪽)와 XO 카드(오른쪽)를 따로 테두리친다 — 사이 빈칸은 배경일 뿐
     Quest(CAL_STEP, 'look', lambda w: _on_tab(w, 'xo', [[w.calibration_page.plot, *(
         w.calibration_page.legend_items[k] for k in ('xo_main', 'xo_sub', 'xo_sum', 'target'))], w.calibration_page.xo_card]),
-          'XO 탭 — 고른 채널의 메인 · 서브와 둘의 합을 타깃과 겹쳐 봅니다. 합이 XO 둘레에서 움푹 꺼지거나 솟지 않고 타깃을 '
+          'XO 탭 — 고른 채널의 메인 · 서브와 둘의 합을 타겟과 겹쳐 봅니다. 합이 XO 둘레에서 움푹 꺼지거나 솟지 않고 타겟을 '
           '따라가면 좋은 XO 입니다. 세로선을 끌거나 XO 카드에서 주파수를 바꾸고, [XO 추천 계산] 은 후보마다 끝까지 계산해 '
           '그룹별로 가장 좋은 값을 고릅니다.', apart=True),
-    Quest(CAL_STEP, 'act', lambda w: w.calibration_page.tab_buttons['subs'], '서브 정렬 탭도 열어 볼까요?',
-          why='서브가 여럿이면 자리마다 서로 보강되거나 상쇄됩니다. 서브 정렬은 서브마다 값을 찾아 서브 합이 고르고, '
+    Quest(CAL_STEP, 'act', lambda w: w.calibration_page.tab_buttons['subs'], 'BA 탭도 열어 볼까요?',
+          why='서브가 여럿이면 자리마다 서로 보강되거나 상쇄됩니다. BA (Bass Alignment) 는 서브마다 값을 찾아 서브 합이 고르고, '
               '서로 지우지 않고 크게 더해지게 맞춥니다. 그래서 이 탭은 서브가 둘 이상일 때만 보입니다.',
           done=lambda w: w.calibration_page.tab == 'subs', auto=lambda w: w.calibration_page.set_tab('subs'),
-          when=lambda w: _subs(w) >= 2, note='서브 정렬 탭을 열어 두었습니다.'),
-    # 서브 정렬 탭을 한 부분씩(10-11 사용자: "서브정렬 쪽 설명이 많이 부실") — 그래프 → 결과 줄 · 값 표 → 설정 카드
+          when=lambda w: _subs(w) >= 2, note='BA 탭을 열어 두었습니다.'),
+    # BA 탭을 한 부분씩(10-11 사용자: "서브정렬 쪽 설명이 많이 부실") — 그래프 → 결과 줄 · 값 표 → 설정 카드
     Quest(CAL_STEP, 'look', lambda w: _on_tab(w, 'subs', [w.calibration_page.plot, *(
         w.calibration_page.legend_items[k] for k in ('sub_before', 'sub_after', 'sub_sum', 'target'))]),
-          '서브 정렬 그래프 — 색 하나가 서브 하나이고, 점선은 정렬 전 · 실선은 정렬 후입니다. 검은 굵은 선은 모든 서브를 '
-          '더한 서브 합, 검은 점선은 정렬 전의 합, 갈색 점선은 타깃입니다. 정렬 후 합이 움푹 꺼진 곳 없이 타깃을 따라갈수록 좋습니다.',
+          'BA 그래프 — 색 하나가 서브 하나이고, 점선은 정렬 전 · 실선은 정렬 후입니다. 검은 굵은 선은 모든 서브를 '
+          '더한 서브 합, 검은 점선은 정렬 전의 합, 갈색 점선은 타겟입니다. 정렬 후 합이 움푹 꺼진 곳 없이 타겟을 따라갈수록 좋습니다.',
           when=lambda w: _subs(w) >= 2),
     Quest(CAL_STEP, 'look', lambda w: _on_tab(w, 'subs', [w.calibration_page.metrics_label, w.calibration_page.sub_values,
                                                           w.calibration_page.sub_filters_label]),
           '결과 줄과 값 표 — "서브 합 평탄도" 는 서브 합이 출렁이는 폭이라 정렬 전 → 후로 작아질수록 좋고, "좌석 편차" 는 '
           '측정 위치 사이의 차이입니다. 표는 서브마다 DSP 에 넣을 게인 · 딜레이 · 극성 · 올패스이고, 서브 이름 색이 그래프 '
           '곡선 색입니다.',
-          why='서브 정렬이 노리는 것이 이 두 숫자입니다 — 청취 위치의 서브 합은 고르게, 자리 사이 차이는 작게. 튜토리얼 '
+          why='BA 가 노리는 것이 이 두 숫자입니다 — 청취 위치의 서브 합은 고르게, 자리 사이 차이는 작게. 튜토리얼 '
               '데모는 위치가 1곳이라 좌석 편차가 비어 있습니다.',
           when=lambda w: _subs(w) >= 2),
     Quest(CAL_STEP, 'look', lambda w: _on_tab(w, 'subs', _sub_fields(w)),
-          '서브 정렬 설정 — 서브를 하나 골라 방식을 정합니다. 자동은 엔진이 게인 · 딜레이 · 극성을 찾고, 고정은 아래 칸에 '
+          'BA 설정 — 서브를 하나 골라 방식을 정합니다. 자동은 엔진이 게인 · 딜레이 · 극성을 찾고, 고정은 아래 칸에 '
           '넣은 값을 그대로 DSP 에 넣습니다. Group 은 묶은 서브끼리의 상대값을 지키고 묶음 전체의 값만 엔진이 맞춥니다.',
           why='DBA 처럼 배치로 이미 맞춘 서브는 고정이나 Group 으로 그 값을 지키고, 나머지는 자동에 맡깁니다. '
               '[결과 값 가져오기] 는 마지막 계산 값을 칸에 옮겨 고정의 시작점으로 씁니다.',
@@ -429,21 +429,21 @@ QUESTS: tuple[Quest, ...] = (
     # 저장해 둔 것(`calibration.load_demo_subs_run`)을 짧게 보여 준다(10-11 사용자: "연산하는 척만").
     Quest(CAL_STEP, 'act', lambda w: _on_tab(w, 'subs', w.calibration_page.sub_compute_button),
           '설정이 바뀌었습니다. [서브만 계산] 으로 이 탭을 다시 계산해 볼까요?',
-          why='설정을 바꾸면 결과가 낡습니다. [서브만 계산] 은 서브 정렬만 실제로 다시 풀어 이 탭의 그래프와 표를 바꾸고, '
+          why='설정을 바꾸면 결과가 낡습니다. [서브만 계산] 은 BA 만 실제로 다시 풀어 이 탭의 그래프와 표를 바꾸고, '
               '몇 초 걸립니다.',
           base=lambda w: w.calibration_page.sub_run,
           done=lambda w, before: w.calibration_page.sub_run is not None and w.calibration_page.sub_run is not before,
           auto=lambda w: None, note='[서브만 계산] 은 건너뛰었습니다.',
           busy=_subs_running,
-          busy_text='서브 정렬을 다시 계산하는 중입니다 — 끝나면 그래프와 표가 바뀌고 저절로 다음으로 넘어갑니다.',
-          ok='서브 정렬을 다시 계산했습니다 — 그래프와 표가 새 결과입니다 ✓',
+          busy_text='BA 를 다시 계산하는 중입니다 — 끝나면 그래프와 표가 바뀌고 저절로 다음으로 넘어갑니다.',
+          ok='BA 를 다시 계산했습니다 — 그래프와 표가 새 결과입니다 ✓',
           when=lambda w: _subs(w) >= 2),
     # 버튼이 오른쪽 칸 맨 아래라 그래프가 밀려 올라간다 — 끝난 뒤 그래프 · 표로 돌아와 바뀐 결과를 본다(10-11 캡처)
     Quest(CAL_STEP, 'look', lambda w: _on_tab(w, 'subs', [w.calibration_page.plot, *(
         w.calibration_page.legend_items[k] for k in ('sub_before', 'sub_after', 'sub_sum')),
         w.calibration_page.metrics_label, w.calibration_page.sub_values]),
           '[서브만 계산] 뒤의 결과 — 인프라 서브는 인프라 XO 아래만, 나머지 서브는 그 위만 맡아 서브 합이 둘을 이어 붙인 '
-          '모양이 되고, 값 표도 새로 찾은 값으로 바뀝니다. 이 결과는 서브 정렬 탭에만 보이니, SPL · XO 탭과 내보내기에 '
+          '모양이 되고, 값 표도 새로 찾은 값으로 바뀝니다. 이 결과는 BA 탭에만 보이니, SPL · XO 탭과 내보내기에 '
           '쓰려면 [계산] 을 다시 누릅니다.',
           when=lambda w: _subs(w) >= 2),
     _next_to(CAL_STEP),
@@ -473,16 +473,16 @@ GLOSSARY: tuple[tuple[str, str], ...] = (
     ('MIMO', 'MIMO — Multi-Input Multi-Output, 다입력 다출력 저역 감쇠. 여러 스피커로 저역 룸 모드의 링잉 · 디케이를 줄이는 보정입니다.'),
     ('mdat', 'mdat — REW 측정 묶음 파일.'),
     ('RC', 'RC — Room Correction, 룸 보정. 방 때문에 생긴 주파수 응답의 피크 · 딥을 잡습니다.'),
-    # 10-10 사용자 결정(1A): 보정 설계 SPL 탭은 타깃 기준(타깃 레벨 = 0 dB) — 옛 'dBFS 라 음수' 풀이는 화면과 어긋났다(3차 시험)
-    ('SPL', 'SPL — 주파수 응답 그래프. 보정 설계에서는 타깃 레벨을 0 dB 로 두고 그립니다.'),
-    ('타깃', '타깃 — 보정 목표 커브.'),
+    # 10-10 사용자 결정(1A): 보정 설계 SPL 탭은 타겟 기준(타겟 레벨 = 0 dB) — 옛 'dBFS 라 음수' 풀이는 화면과 어긋났다(3차 시험)
+    ('SPL', 'SPL — 주파수 응답 그래프. 보정 설계에서는 타겟 레벨을 0 dB 로 두고 그립니다.'),
+    ('타겟', '타겟 — 보정 목표 커브.'),
     ('GD', 'GD — Group Delay, 군지연. 주파수별 도착 지연으로, 룸 모드 링잉이 길면 커집니다.'),
     ('XO', 'XO — 크로스오버. 메인과 서브가 대역을 나누는 주파수.'),
     ('PEQ', 'PEQ — 주파수 · 게인 · Q 로 정하는 파라메트릭 EQ 밴드.'),
     ('부스트', '부스트 상한 — 보정이 올릴 수 있는 최대 레벨. 헤드룸과 드라이버를 지킵니다.'),
     ('프리셋', '프리셋 — 7.1.4 같은 채널 구성 프리셋.'),
     ('LP', 'LP · HP — 로우패스는 고역을, 하이패스는 저역을 컷하는 필터.'),
-    # 서브 정렬 퀘스트(10-11)에 처음 나오는 말('서브 정렬' 은 [서브 정렬 탭] 퀘스트의 [왜?] 가 풀이한다)
+    # BA 퀘스트(10-11)에 처음 나오는 말('BA' 는 [BA 탭] 퀘스트의 [왜?] 가 풀이한다)
     ('게인', '게인 — 레벨을 올리거나 내리는 값, dB.'),
     ('딜레이', '딜레이 — 신호를 일부러 늦추는 값, ms. 서브마다 도착 시각을 맞춥니다.'),
     ('올패스', '올패스 — 크기는 그대로 두고 한 주파수 둘레의 위상만 돌리는 필터.'),

@@ -1,10 +1,8 @@
 
 # Sound Equalization and Correction System 2
 
-**한국어** | [English](#english)
-
 SECS(Sound Equalization & Correction System) 2 는 룸 보정 설계 프로그램입니다.
-REW 로 측정한 스피커 응답으로 룸 보정(RC) · 서브 정렬(BA) · 저역 늦은 울림 보정(MIMO)을 설계하고, CamillaDSP 설정이나 REW mdat 로 내보냅니다.
+REW 로 측정한 스피커 응답으로 룸 보정(RC) · BA (Bass Alignment) · 저역 늦은 울림 보정(MIMO)을 설계하고, CamillaDSP 설정이나 REW mdat 로 내보냅니다.
 Windows 용이고 설치 없이 폴더째 실행합니다.
 
 > 독립 프로젝트입니다. REW, CamillaDSP 등 다른 제품 이름은 각 소유자의 것이며, 이 프로젝트는 그들과 관계가 없습니다.
@@ -15,8 +13,8 @@ Windows 용이고 설치 없이 폴더째 실행합니다.
 
 - **측정**: 스피커 구성(2.0 ~ 9.1.6, 직접 추가, 서브 0~8개)을 정하고 마이크를 여러 위치에 두고 잽니다. REW Pro 가 있으면 SECS 가 REW 를 조종해 자동으로 재고, 없으면 REW 에서 잰 `.mdat` 를 불러옵니다.
 - **보정 설계**:
-  - 룸 보정(RC): 타깃 커브에 맞추는 PEQ/FIR 필터와 GD(군지연) 보정
-  - 크로스오버(XO) 추천과 서브 정렬(BA): 서브의 게인 · 딜레이 · 극성 · 올패스. DBA · 멀티서브 · 인프라 서브 지원
+  - 룸 보정(RC): 타겟 커브에 맞추는 PEQ/FIR 필터와 GD(군지연) 보정
+  - 크로스오버(XO) 추천과 BA (Bass Alignment): 서브의 게인 · 딜레이 · 극성 · 올패스. DBA · 멀티서브 · 인프라 서브 지원
   - MIMO: 여러 스피커를 함께 써서 저역의 늦은 울림을 줄이는 보정(마이크 위치 3곳 이상)
 - **내보내기**: REW `.mdat`(채널마다 보정 전 · 후), CamillaDSP v4 설정(`.yml`)과 FIR(`.wav`)
 - **튜토리얼 · 도움말**: 샘플 데이터로 따라 하는 튜토리얼, F1 도움말, 버튼마다 풍선 도움말
@@ -31,8 +29,8 @@ SECS 2 는 **있는 그대로(AS IS)** 제공되며, 어떤 보증도 하지 않
 
 ## 받는 법
 
-1. 이 저장소의 **Releases** 에서 `SECS_2.0.0-beta.1.1.0_….zip` 을 받아 원하는 곳에 풉니다.
-2. `SECS` 폴더의 `SECS 2 Beta 1.1.0.exe` 를 실행합니다. 설치는 필요 없습니다.
+1. 이 저장소의 **Releases** 에서 `SECS_2.0.0-beta.1.2.0_….zip` 을 받아 원하는 곳에 풉니다.
+2. `SECS` 폴더의 `SECS 2 Beta 1.2.0.exe` 를 실행합니다. 설치는 필요 없습니다.
 3. Windows 가 "알 수 없는 게시자" 경고를 띄우면 **추가 정보 → 실행** 을 누릅니다(코드 서명이 없습니다).
 
 ## 요구 사항
@@ -92,76 +90,3 @@ SECS 2 는 **GNU General Public License v3(GPL-3.0)** 자유 소프트웨어입�
 ## 문의
 
 **문의 · 버그 신고는 받지 않습니다.** 취미로 만든 프로그램이라 답변이나 수정을 약속할 수 없습니다.
-
----
-
-<a id="english"></a>
-
-# Sound Equalization and Correction System 2 (English)
-
-SECS (Sound Equalization & Correction System) 2 is a room correction design program. From speaker measurements taken with REW, it designs room correction (RC), subwoofer alignment (BA) and low-frequency late-decay correction (MIMO), and exports the result as a CamillaDSP configuration or REW `.mdat` files. Windows only; no installer.
-
-> An independent project. REW, CamillaDSP and other product names belong to their owners; this project is not affiliated with them.
-
-**The program's interface is Korean only.**
-
-## What it does
-
-Devices/Mic → Setup → Level Check → Positions → Measure → Calibration → Export.
-
-- **Measure**: speaker layouts from 2.0 to 9.1.6 or custom, 0-8 subwoofers, several microphone positions. With REW Pro, SECS drives REW and measures automatically; without it, load `.mdat` files measured in REW.
-- **Calibration**:
-  - Room correction (RC): PEQ/FIR filters toward a target curve, plus group-delay correction
-  - Crossover (XO) suggestion and subwoofer alignment (BA): gain, delay, polarity, all-pass; DBA, multi-sub and infra-sub layouts
-  - MIMO: uses several speakers together to reduce low-frequency late decay (3 or more mic positions)
-- **Export**: REW `.mdat` (before/after per channel), CamillaDSP v4 configuration (`.yml`) and FIR `.wav` files
-- **Tutorial and help**: a tutorial with sample data, F1 help, tooltips
-
-## Disclaimer
-
-SECS 2 is provided **"as is", without warranty of any kind**.
-**The developers and contributors accept no liability for any problem arising from the use of, or inability to use, SECS 2**, including damage to loudspeakers, amplifiers or other equipment, hearing damage, data loss, errors in measurement or correction results, and any other direct or indirect damages. You use it entirely at your own risk. See sections 15 and 16 of `LICENSE` (GPL v3).
-
-- Turn the amplifier volume down before you start measuring; sweep signals can damage tweeters and hearing.
-- After loading new filters into your DSP, listen at a low level first.
-
-## Download and run
-
-1. Download `SECS_2.0.0-beta.1.1.0_….zip` from **Releases** and unzip it anywhere.
-2. Run `SECS 2 Beta 1.1.0.exe` in the `SECS` folder. No installation needed.
-3. If Windows warns about an unknown publisher, choose **More info → Run anyway** (the exe is not code-signed).
-
-## Requirements
-
-- Windows 10 / 11, 64-bit (tested on Windows 11)
-- **REW (Room EQ Wizard) 5.40 or later**. Automatic measurement uses the REW **Pro** API (start REW with `-api`); without Pro, load `.mdat` files measured in REW.
-- A measurement microphone and audio interface
-- For CamillaDSP: CamillaDSP 4.1.x and CamillaGUI 4.1.x (5.x is not supported)
-
-## Known limitations
-
-- Korean interface only.
-- Bi-amping (measuring one speaker per band) is not supported.
-- MIMO is slow (over 10 minutes with many inputs and positions) and its real-world effect can be smaller than predicted.
-- Export formats are REW mdat and CamillaDSP only.
-- No easy way was found to feed 12 or more channels into CamillaDSP on Windows (on macOS, BlackHole 16ch works).
-- Windows exe only.
-
-## Running and building from source
-
-Python 3.13. See the commands in the Korean section above (`requirements.txt`, `run_secs.py --fake-rew`, `build_exe.ps1`).
-
-## License
-
-SECS 2 is free software under the **GNU GPL v3**. See [`LICENSE`](LICENSE) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
-**Pull requests are not accepted.** Feel free to fork it.
-
-## Credits
-
-This project grew out of the Sound Equalization and Correction System project of Speaker Gallery, a Korean audio community. All SECS 2 source code is open and free to modify (GPL v3). May SECS 2 be the salvation of every small listening room.
-
-— The Speaker Gallery team
-
-## Contact
-
-**Questions and bug reports are not accepted.** This is a hobby project, so no replies or fixes can be promised.

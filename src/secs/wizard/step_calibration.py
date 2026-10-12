@@ -3,13 +3,13 @@
 
 누가 부르나: `WizardWindow` 가 만들어 스택에 넣는다(화면 번호 `CAL_STEP` = 9, 진행바 6번째 = 측정 다음·내보내기 앞).
 창이 `set_context(프로젝트 경로, IR 공급 함수)` 로 측정 IR 을 대 주고, 측정이 끝나면(자동 보정) `compute()` 를 부른다.
-입력: `project`(구성·타깃·XO·`extra['calibration']` 설정 — `secs.calibration.CalibrationSettings`) + 측정 IR.
+입력: `project`(구성·타겟·XO·`extra['calibration']` 설정 — `secs.calibration.CalibrationSettings`) + 측정 IR.
 출력: `self.run`(`calibration.CalibrationRun` — 새 엔진 `CorrectionEngine` 결과·지표·곡선), `self.mimo_run`(MIMO), 내보낸 파일
 (REW 단계별 mdat · 카밀라 DSP 설정). 설정은 `project.extra['calibration']` 에 바로 쓴다(.secs 에 남는다).
 
 화면: 왼쪽 = 결과(채널 · SPL/GD 탭 · 채널 지표 줄 · 지연·RC 상한 요약) + 내보내기, 오른쪽 = 보정 모드(최소 지연 ·
 저사양 · 최고사양, 엔진 `MODES` — 최고사양에서 사양 줄을 5번 누르면 숨은 초고지연 모드, 지연 30–200 ms) · RC 범위(하한 · 상한 자동/수동 · 룸 볼륨 또는 가로×세로×높이 — 자동 상한 = 슈뢰더) ·
-MIMO(위치 3곳 이상, Fsiso · 하한, 명시 버튼) · 서브 정렬 설정(10-05 요구 대장 R27, 서브 2개 이상: 서브마다 자동/고정/묶음 ·
+MIMO(위치 3곳 이상, Fsiso · 하한, 명시 버튼) · BA 설정(10-05 요구 대장 R27, 서브 2개 이상: 서브마다 자동/고정/묶음 ·
 값 · MIMO 서포트). 결과는 내보내기 단계(`step8_mdat`)가 `self.run`·`self.mimo_run` 으로 읽는다.
 계산은 워커 스레드(보통 이하 우선순위)에서만 — 화면 스레드는 기다리지 않는다. 엔진은 끊을 수 없어 [취소] 는 결과를 버린다.
 """
@@ -39,20 +39,20 @@ from secs.wizard.style import (COLORS, add_heading, card, clear_layout, label, p
 from secs.wizard.tooltips import attach
 
 #: 결과 탭 — (키, 문구).
-TABS: tuple[tuple[str, str], ...] = (('spl', 'SPL'), ('gd', 'GD'), ('xo', 'XO'), ('subs', '서브 정렬'))
-#: MIMO 적용 곡선 색(보정 전·후·타깃과 겹치지 않는 파랑 — 6단계 XO 막대 색).
+TABS: tuple[tuple[str, str], ...] = (('spl', 'SPL'), ('gd', 'GD'), ('xo', 'XO'), ('subs', 'BA'))
+#: MIMO 적용 곡선 색(보정 전·후·타겟과 겹치지 않는 파랑 — 6단계 XO 막대 색).
 C_MIMO = '#3b86c8'
 #: 결과 그래프 x 범위(Hz).
 SPL_RANGE = (5.0, 20000.0)          # 10-09 사용자: X축 5 Hz 까지
 GD_RANGE = (5.0, 5000.0)
 GD_TICKS = (5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000)
 #: XO 보기(09-27, 요구 대장 R7·R8): 메인 = 측정 자홍, 서브 = MIMO 파랑, 합 = 잉크, XO 선 = 강조색(메인을 보정 후 올리브로
-#: 그렸더니 타깃 점선과 구분이 안 됐다 — 09-27 QA 캡처).
+#: 그렸더니 타겟 점선과 구분이 안 됐다 — 09-27 QA 캡처).
 XO_RANGE_X = (5.0, 500.0)
 XO_TICKS = (5, 10, 20, 30, 50, 80, 100, 150, 200, 300, 500)
 C_XO_SUM = COLORS['ink']
 C_XO_MAIN = C_MEASURED
-#: 서브 정렬 보기(10-04, 요구 대장 R9): 서브마다 색 하나(정렬 전 = 점선, 정렬 후 = 실선), 서브 합 = 잉크.
+#: BA 보기(10-04, 요구 대장 R9): 서브마다 색 하나(정렬 전 = 점선, 정렬 후 = 실선), 서브 합 = 잉크.
 #: 색 범례는 정렬 값 표의 서브 이름 칸이 맡는다(범례 줄에 서브를 늘어놓으면 1024 폭에서 넘친다).
 SUB_RANGE_X = (5.0, 300.0)
 SUB_TICKS = (5, 10, 20, 30, 50, 80, 100, 150, 200, 300)
@@ -60,7 +60,7 @@ SUB_COLORS = (COLORS['measured'], COLORS['xo'], COLORS['corrected'], COLORS['war
               COLORS['bad'], COLORS['ink2'])
 
 
-#: 서브 정렬 방식 고르기(R27) — (데이터, 문구). 묶음은 'bundle:<이름>'.
+#: BA 방식 고르기(R27) — (데이터, 문구). 묶음은 'bundle:<이름>'.
 SUB_MODE_ITEMS: tuple[tuple[str, str], ...] = (('auto', '자동'), ('fixed', '고정')) + tuple(
     (f'bundle:{b}', f'Group {b}') for b in cal.SUB_BUNDLES)
 #: 묶음 레이아웃(10-09 R30) — (데이터, 문구).
@@ -84,7 +84,7 @@ def _remaining_text(seconds: float) -> str:
 
 
 def _legend_swatch(color: str, dashed: bool) -> _PlainQt.QLabel:
-    """범례 선 견본 — 그래프 선과 같은 색 · 굵기(2 px)로 그린 22×10 그림. 점선이면 타깃처럼 끊어 그린다."""
+    """범례 선 견본 — 그래프 선과 같은 색 · 굵기(2 px)로 그린 22×10 그림. 점선이면 타겟처럼 끊어 그린다."""
     ratio = 2.0
     pix = QtGui.QPixmap(int(22 * ratio), int(10 * ratio))
     pix.setDevicePixelRatio(ratio)
@@ -137,7 +137,7 @@ class _ResultBar(QtWidgets.QWidget):
     """결과 카드 맨 위 줄 — 왼쪽 채널 고르기 + 오른쪽 결과 탭. 본문 칸이 한 줄을 못 담으면 탭을 아랫줄(왼쪽 붙임)로 내린다.
 
     10-05 요구 대장 R5: 1024 폭에서 이 한 줄의 최소 폭이 본문 칸(~410 px)을 넘어 가로 스크롤이 났다(한국어 25 px,
-    영어 118 px — 탭 4개 'SPL · Group delay · XO · Sub alignment'). 최소 폭은 두 줄일 때 값(넓은 쪽 줄)으로 둬서
+    영어 118 px — 탭 4개 'SPL · Group delay · XO · BA'). 최소 폭은 두 줄일 때 값(넓은 쪽 줄)으로 둬서
     본문 칸을 넓히지 않는다."""
 
     def __init__(self, left: QtWidgets.QHBoxLayout, right: QtWidgets.QHBoxLayout, parent=None) -> None:
@@ -188,7 +188,7 @@ class StepCalibration(QtWidgets.QWidget):
         self.irs_provider = None                  # () → pos → role → (ir, sr[, t0])
         self.run: cal.CalibrationRun | None = None
         self.mimo_run: cal.MimoRun | None = None
-        self.sub_run: cal.CalibrationRun | None = None   # [서브만 계산] 결과 — 서브 정렬 탭만 이걸로 그린다(10-09)
+        self.sub_run: cal.CalibrationRun | None = None   # [서브만 계산] 결과 — BA 탭만 이걸로 그린다(10-09)
         self._job: dict | None = None             # {'kind', 'token', 'thread', 'started'}
         self._error = ''
         self._mimo_error = ''
@@ -206,7 +206,7 @@ class StepCalibration(QtWidgets.QWidget):
         self._bridge.failed.connect(self._on_failed)
         self._bridge.progress.connect(self._on_progress)
         self.xo_group = ''
-        self.sub_role = ''                 # 서브 정렬 설정 카드에서 고친 서브
+        self.sub_role = ''                 # BA 설정 카드에서 고친 서브
         self._xo_error = ''
         self._xo_progress = (0, 0)
         self._xo_done_at = 0.0             # 마지막 후보가 끝난 시각(perf_counter) — 남은 시간 어림에 쓴다
@@ -237,8 +237,8 @@ class StepCalibration(QtWidgets.QWidget):
         # 오른쪽 칸(카드 4장)이 더 길면 본문 칸이 그 높이로 늘어나는데, 남는 높이가 결과 카드의 줄들 사이로 퍼져
         # 숫자 줄과 표 사이가 크게 비었다(10-05 R5 1024×640 캡처) — 남는 높이는 카드 아래 빈칸으로.
         main.addStretch(1)
-        # 오른쪽 카드는 탭에 맞춰 하나만(10-09 사용자: "SPL 탭에서는 RC, XO 탭에서는 XO, 서브 정렬에서 서브 정렬") —
-        # 보정 모드·MIMO 는 늘 보인다(`_show_tab_cards`). 타깃 커브 카드는 없앴다 — SPL 그래프 빈 곳 우클릭 메뉴(`_show_target_menu`).
+        # 오른쪽 카드는 탭에 맞춰 하나만(10-09 사용자: "SPL 탭에서는 RC, XO 탭에서는 XO, BA 에서 BA") —
+        # 보정 모드·MIMO 는 늘 보인다(`_show_tab_cards`). 타겟 커브 카드는 없앴다 — SPL 그래프 빈 곳 우클릭 메뉴(`_show_target_menu`).
         side.box.addWidget(self._mode_card())
         self.rc_card = self._rc_card()
         side.box.addWidget(self.rc_card)
@@ -303,7 +303,7 @@ class StepCalibration(QtWidgets.QWidget):
         legend.setSpacing(14)
         self.legend_items: dict[str, QtWidgets.QWidget] = {}
         for key, color, text, dashed in (('before', C_MEASURED, '보정 전', False), ('after', C_CORRECTED, '보정 후', False),
-                                         ('target', C_TARGET, '타깃', True), ('mimo', C_MIMO, 'MIMO 적용', False),
+                                         ('target', C_TARGET, '타겟', True), ('mimo', C_MIMO, 'MIMO 적용', False),
                                          ('xo_main', C_XO_MAIN, '메인', False), ('xo_sub', C_MIMO, '서브', False),
                                          ('xo_sum', C_XO_SUM, '합', False),
                                          ('sub_before', COLORS['ink3'], '정렬 전', True),
@@ -326,7 +326,7 @@ class StepCalibration(QtWidgets.QWidget):
         box.addWidget(self.metrics_label)
         self.filters_label = label('', 'spec', wrap=True)
         box.addWidget(self.filters_label)
-        # 서브 정렬 탭의 정렬 값 표(서브 | 게인 | 딜레이 | 극성 | 올패스) — 서브 이름 칸의 색이 곡선 색 범례.
+        # BA 탭의 정렬 값 표(서브 | 게인 | 딜레이 | 극성 | 올패스) — 서브 이름 칸의 색이 곡선 색 범례.
         self.sub_values = QtWidgets.QWidget()
         self.sub_grid = QtWidgets.QGridLayout(self.sub_values)
         self.sub_grid.setContentsMargins(0, 0, 0, 0)
@@ -337,9 +337,14 @@ class StepCalibration(QtWidgets.QWidget):
         attach(self.sub_values, 'cal.sub_values')
         self.sub_values.setVisible(False)
         box.addWidget(self.sub_values)
-        self.sub_filters_label = label('', 'spec', wrap=True)     # 서브별 대역 필터·고정 PEQ(R27, 서브 정렬 탭)
+        self.sub_filters_label = label('', 'spec', wrap=True)     # 서브별 대역 필터·고정 PEQ(R27, BA 탭)
         self.sub_filters_label.setVisible(False)
         box.addWidget(self.sub_filters_label)
+        # BA 경고(10-12 사용자: 경고 기능) — 서브 필터가 대역을 막았거나 게인이 비정상으로 클 때 빨간 글자
+        self.sub_warn_result = label('', 'spec', wrap=True)
+        self.sub_warn_result.setStyleSheet('color: %s; font-weight: 600;' % COLORS['bad'])
+        self.sub_warn_result.setVisible(False)
+        box.addWidget(self.sub_warn_result)
         self.summary_label = label('', 'spec', wrap=True)
         box.addWidget(self.summary_label)
         return frame
@@ -551,11 +556,11 @@ class StepCalibration(QtWidgets.QWidget):
         return frame
 
     def _sub_card(self) -> QtWidgets.QFrame:
-        """서브 정렬 설정(10-05 요구 대장 R27 — DBA 처럼 배치로 감쇠를 만든 사람이 BA 값을 직접 정하게). 오른쪽 칸(300 px)에
+        """BA 설정(10-05 요구 대장 R27 — DBA 처럼 배치로 감쇠를 만든 사람이 BA 값을 직접 정하게). 오른쪽 칸(300 px)에
         서브 8개 줄을 펼 수 없어 서브를 하나 골라 고치고, 아래 요약 줄이 모든 서브의 방식을 보인다. 자동이면 값 칸은 꺼진다
         (넣어 둔 값은 남는다). 메인 추가 지연은 고정 서브가 있을 때만 보인다(`CalibrationSettings.sub_main_delay_ms`).
         고정 대역 필터(HP·LP 주파수 + 종류, LR 24 기본)·고정 PEQ 3(10-05 R27 추가 — INFRA 로우패스 등)는 방식과 상관없이 늘 켜져 있다."""
-        frame, box = card('서브 정렬 설정')
+        frame, box = card('BA (Bass Alignment) 설정')
         self.sub_card = frame
         self._infra_rows(box)
         grid = QtWidgets.QGridLayout()
@@ -677,6 +682,10 @@ class StepCalibration(QtWidgets.QWidget):
         box.addLayout(row)
         self.sub_summary = label('', 'spec', wrap=True)
         box.addWidget(self.sub_summary)
+        self.sub_warn_label = label('', 'spec', wrap=True)          # 설정 경고(계산 전에도) — `cal.sub_filter_warnings`
+        self.sub_warn_label.setStyleSheet('color: %s; font-weight: 600;' % COLORS['bad'])
+        self.sub_warn_label.setVisible(False)
+        box.addWidget(self.sub_warn_label)
         return frame
 
     def _infra_rows(self, box: QtWidgets.QVBoxLayout) -> None:
@@ -717,10 +726,10 @@ class StepCalibration(QtWidgets.QWidget):
         """지금 설정에서 읽은 인프라 XO — (인프라 서브, Hz, 종류). 인프라 = LP 만 있고 다른 서브는 모두 HP 가 있는 서브 하나.
         없으면 ('', 0, 기본 종류)."""
         roles = self.sub_roles()
-        for r in roles:
-            e = self.settings.sub(r)
-            if e['lp_hz'] and not e['hp_hz'] and all(self.settings.sub(o)['hp_hz'] for o in roles if o != r):
-                return r, float(e['lp_hz']), str(e['lp_type'])
+        lows = [r for r in roles if (e := self.settings.sub(r))['lp_hz'] and not e['hp_hz']]
+        if lows and all(self.settings.sub(o)['hp_hz'] for o in roles if o not in lows):
+            e = self.settings.sub(lows[0])                # 필터를 나눠 쓰는 묶음이면 묶음째 인프라(10-12)
+            return lows[0], float(e['lp_hz']), str(e['lp_type'])
         return '', 0.0, cal.SUB_BAND_TYPES[0]
 
     def set_infra(self, role: str, hz: float = 25.0, typ: str = 'LR24') -> None:
@@ -737,11 +746,19 @@ class StepCalibration(QtWidgets.QWidget):
                 self._changed_setting()
             return
         hz = float(min(max(hz, cal.SUB_FILTER_RANGE[0]), cal.SUB_FILTER_RANGE[1]))
+        # 인프라가 필터를 나눠 쓰는 묶음의 서브면 묶음째 인프라 — 한 서브씩 고치면 묶음 공유가 LP · HP 를 서로 옮겨 적어
+        # 둘 다 HP + LP 가 됐고, 인프라를 다른 서브로 옮겨도 그 LP 가 남았다(10-12 돌비룸: 묶음 SW1 · SW2 에 LP 25 Hz → BA +51 dB).
+        e = self.settings.sub(role)
+        group = set(self.settings.bundle_members(e['bundle'])) if e['mode'] == 'bundle' else set()
+        group = (group if self.settings.layout(e['bundle']) != 'values' else set()) | {role}
         for r in roles:
-            if r == role:
+            if r in group:
                 self.settings.set_sub(r, lp_hz=hz, lp_type=typ, hp_hz=0.0)
             else:
-                self.settings.set_sub(r, hp_hz=hz, hp_type=typ, **({'lp_hz': 0.0} if r == before else {}))
+                # 인프라 XO 아래 · 근처의 LP 는 위 대역을 막는다 — 전에 인프라로 넣은 LP 로 보고 지운다
+                lp = self.settings.sub(r)['lp_hz']
+                clear = r == before or (lp and lp < 2.0 * max(hz, old_hz or hz))
+                self.settings.set_sub(r, hp_hz=hz, hp_type=typ, **({'lp_hz': 0.0} if clear else {}))
         self._changed_setting()
 
     def _on_boost(self, value: float) -> None:
@@ -843,7 +860,7 @@ class StepCalibration(QtWidgets.QWidget):
     @staticmethod
     def _small_spin(lo: float, hi: float, decimals: int, suffix: str, key: str, zero_text: bool = False,
                     prefix: str = '') -> QtWidgets.QDoubleSpinBox:
-        """서브 정렬 설정 카드의 좁은 칸(단추 없음) — 올패스·고정 필터. zero_text 면 주파수 칸이라 0 에 '— Hz'(비었지만 주파수 칸인 것이
+        """BA 설정 카드의 좁은 칸(단추 없음) — 올패스·고정 필터. zero_text 면 주파수 칸이라 0 에 '— Hz'(비었지만 주파수 칸인 것이
         보이게 — 10-05 리드: '없음' 만 보여 무슨 칸인지 몰랐다)."""
         spin = QtWidgets.QDoubleSpinBox()
         spin.setRange(lo, hi)
@@ -894,6 +911,12 @@ class StepCalibration(QtWidgets.QWidget):
         self.mimo_max_spin.valueChanged.connect(self._on_mimo_max)
         attach(self.mimo_max_spin, 'cal.mimo_max')
         grid.addWidget(self.mimo_max_spin, 2, 2)
+        # 서포트 필터(10-12 사용자: 체크박스 'FIR 사용', 서포트당 8,000탭). 끄면 IIR(PEQ 9 + 올패스 3).
+        grid.addWidget(label('서포트 필터', 'note'), 3, 0)
+        self.mimo_fir_check = QtWidgets.QCheckBox(t('FIR 사용'))
+        self.mimo_fir_check.toggled.connect(self._on_mimo_fir)
+        attach(self.mimo_fir_check, 'cal.mimo_fir')
+        grid.addWidget(self.mimo_fir_check, 3, 1, 1, 2)
         grid.setColumnStretch(1, 1)
         box.addLayout(grid)
         self.mimo_reason = label('', 'note', wrap=True)
@@ -962,15 +985,15 @@ class StepCalibration(QtWidgets.QWidget):
         self.changed.emit()
 
     def set_target_preset(self, key: str) -> None:
-        """타깃 프리셋(플랫·하만·시네마)을 넣는다 — 결과가 낡았다고만 보이고 계산은 하지 않는다(10-09 사용자 결정)."""
+        """타겟 프리셋(플랫·하만·시네마)을 넣는다 — 결과가 낡았다고만 보이고 계산은 하지 않는다(10-09 사용자 결정)."""
         if apply_preset(self.project, key):
             self._target_edited()
 
-    # ──────────────────────────── 타깃 커브: SPL 그래프 위 편집(10-09) ────────────────────────────
+    # ──────────────────────────── 타겟 커브: SPL 그래프 위 편집(10-09) ────────────────────────────
     def save_target(self, path: str | None = None) -> str | None:
-        """타깃 커브를 JSON 으로 저장(옛 6단계와 같은 꼴)."""
+        """타겟 커브를 JSON 으로 저장(옛 6단계와 같은 꼴)."""
         if path is None:
-            path, _ = QtWidgets.QFileDialog.getSaveFileName(self, t('타깃 커브 저장'), '타깃.json', 'JSON (*.json)')
+            path, _ = QtWidgets.QFileDialog.getSaveFileName(self, t('타겟 커브 저장'), '타겟.json', 'JSON (*.json)')
         if not path:
             return None
         Path(path).write_text(json.dumps(self.project.target.to_dict(), ensure_ascii=False, indent=2), encoding='utf-8')
@@ -978,21 +1001,21 @@ class StepCalibration(QtWidgets.QWidget):
 
     def load_target(self, path: str | None = None) -> bool:
         if path is None:
-            path, _ = QtWidgets.QFileDialog.getOpenFileName(self, t('타깃 커브 불러오기'), '', 'JSON (*.json)')
+            path, _ = QtWidgets.QFileDialog.getOpenFileName(self, t('타겟 커브 불러오기'), '', 'JSON (*.json)')
         if not path:
             return False
         try:
             points = TargetCurve.from_dict(json.loads(Path(path).read_text(encoding='utf-8'))).points
             if len(points) < 2:
                 raise ValueError('points < 2')
-        except Exception:  # noqa: BLE001 - 잘못된 파일은 무시(타깃 그대로)
+        except Exception:  # noqa: BLE001 - 잘못된 파일은 무시(타겟 그대로)
             return False
         self.project.target.points = list(points)
         self._target_edited()
         return True
 
     def set_target_point(self, index: int, freq: float, db: float) -> None:
-        """제어점 하나를 옮긴다(Hz · 타깃 dB). 순서가 바뀌면 주파수로 다시 정렬한다."""
+        """제어점 하나를 옮긴다(Hz · 타겟 dB). 순서가 바뀌면 주파수로 다시 정렬한다."""
         points = [list(p) for p in self.project.target.points]
         if not 0 <= index < len(points):
             return
@@ -1010,14 +1033,14 @@ class StepCalibration(QtWidgets.QWidget):
     def remove_target_point(self, index: int) -> None:
         points = list(self.project.target.points)
         if len(points) <= 2 or not 0 <= index < len(points):
-            return                                       # 타깃은 점 2개 이상
+            return                                       # 타겟은 점 2개 이상
         del points[index]
         self.project.target.points = points
         self.project.bc['target_preset'] = ''          # 손으로 고쳤다 = 사용자 지정
         self._target_edited()
 
     def _draw_target_handles(self, offset: float) -> None:
-        """SPL 탭: 타깃 제어점을 끌 수 있는 손잡이로 올린다. `offset` = 화면 곡선 − 타깃(dB, 레벨 기준)."""
+        """SPL 탭: 타겟 제어점을 끌 수 있는 손잡이로 올린다. `offset` = 화면 곡선 − 타겟(dB, 레벨 기준)."""
         self._target_offset = float(offset)
         self._target_handles = []
         for index, (freq, db) in enumerate(sorted(self.project.target.points)):
@@ -1040,10 +1063,10 @@ class StepCalibration(QtWidgets.QWidget):
             self.remove_target_point(index)
 
     def target_menu(self) -> QtWidgets.QMenu:
-        """SPL 그래프 빈 곳 우클릭 메뉴(10-09 사용자: 타깃 커브 카드를 없애고 우클릭으로) — 프리셋 3개(지금 것에 체크, 손으로
+        """SPL 그래프 빈 곳 우클릭 메뉴(10-09 사용자: 타겟 커브 카드를 없애고 우클릭으로) — 프리셋 3개(지금 것에 체크, 손으로
         고쳤으면 '사용자 지정' 에 체크) · 저장… · 불러오기…. 테스트가 띄우지 않고 항목을 누를 수 있게 메뉴만 만들어 돌려준다."""
         menu = _PlainQt.QMenu(self)
-        head = menu.addAction(str(t('타깃 커브')))
+        head = menu.addAction(str(t('타겟 커브')))
         head.setEnabled(False)
         preset = preset_of(self.project)
         for key, text in TARGET_PRESETS:
@@ -1058,12 +1081,12 @@ class StepCalibration(QtWidgets.QWidget):
         custom.setData('custom')
         custom.setEnabled(False)                     # 표시만 — 점을 끌거나 불러오면 켜진다
         menu.addSeparator()
-        menu.addAction(str(t('타깃 저장…')), lambda: self.save_target())
-        menu.addAction(str(t('타깃 불러오기…')), lambda: self.load_target())
+        menu.addAction(str(t('타겟 저장…')), lambda: self.save_target())
+        menu.addAction(str(t('타겟 불러오기…')), lambda: self.load_target())
         return menu
 
     def _on_plot_click(self, ev) -> None:
-        """그래프 클릭 — 빈 곳 우클릭 = 타깃 메뉴, 빈 곳 더블클릭 = 점 추가(SPL 탭만). 점 우클릭은 손잡이가 먼저 받아 지운다."""
+        """그래프 클릭 — 빈 곳 우클릭 = 타겟 메뉴, 빈 곳 더블클릭 = 점 추가(SPL 탭만). 점 우클릭은 손잡이가 먼저 받아 지운다."""
         if self.tab != 'spl':
             return
         if ev.button() == QtCore.Qt.MouseButton.RightButton:
@@ -1197,7 +1220,13 @@ class StepCalibration(QtWidgets.QWidget):
         self.settings.mimo_max_supports = int(value)
         self._changed_setting()
 
-    # ──────────────────────────── 서브 정렬 설정(R27) ────────────────────────────
+    def _on_mimo_fir(self, on: bool) -> None:
+        if self._syncing:
+            return
+        self.settings.mimo_fir = bool(on)
+        self._changed_setting()
+
+    # ──────────────────────────── BA 설정(R27) ────────────────────────────
     def sub_roles(self) -> list[str]:
         """구성의 서브 역할(측정 전에도 고를 수 있게 구성 기준)."""
         return [str(getattr(s, 'role', s)) for s in self.project.config.groups().get('sub', [])]
@@ -1289,7 +1318,7 @@ class StepCalibration(QtWidgets.QWidget):
         return True
 
     def _refresh_sub_controls(self) -> None:
-        """서브 정렬 설정 카드(`_refresh_controls` 안 — 이미 `_syncing`)."""
+        """BA 설정 카드(`_refresh_controls` 안 — 이미 `_syncing`)."""
         roles = self.sub_roles()
         self.sub_card.setVisible(len(roles) >= 2 and self.tab == 'subs')   # 탭에 맞춰(`_show_tab_cards`)
         # 서브는 측정 이름(SW1·SW2…)으로 — LFE 1·2·3 은 측정 파일·REW 이름과 달라 헷갈린다(10-09 사용자).
@@ -1346,8 +1375,11 @@ class StepCalibration(QtWidgets.QWidget):
         self.sub_main_spin.setValue(float(self.settings.sub_main_delay_ms))
         self.sub_take_button.setEnabled(self.run is not None and bool(self.run.result.subs) and self._job is None)
         self.sub_compute_button.setEnabled(self._job is None and self.irs_provider is not None and bool(self.positions()))
+        warns = cal.sub_filter_warnings(self.settings, roles)
+        self.sub_warn_label.setText('\n'.join(warns))
+        self.sub_warn_label.setVisible(bool(warns))
         if self._job is not None and self._job['kind'] == 'subs':
-            self.sub_summary.setText(t('서브 계산 중…'))
+            self.sub_summary.setText(_join(['BA 계산 중…', _remaining_text(self.subs_estimate_seconds() - self.elapsed_seconds())]))
             return
         words = dict(SUB_MODE_ITEMS)
         self.sub_summary.setText(_join(
@@ -1490,9 +1522,11 @@ class StepCalibration(QtWidgets.QWidget):
             import math
             per_round = (self._mimo_done_at - self._job['started']) / max(1, math.ceil(done / max(cal.MIMO_WORKERS, 1)))
             return per_round * math.ceil(total / max(cal.MIMO_WORKERS, 1))
-        if self.mimo_run is not None and getattr(self.mimo_run, 'elapsed_s', 0.0):
+        fir = bool(self.settings.mimo_fir)
+        if (self.mimo_run is not None and getattr(self.mimo_run, 'elapsed_s', 0.0)
+                and (cal.mimo_kind(self.mimo_run) == 'FIR') == fir):
             return float(self.mimo_run.elapsed_s)
-        return cal.estimate_mimo_seconds(self.project, len(self.positions()))
+        return cal.estimate_mimo_seconds(self.project, len(self.positions()), fir=fir)
 
     def xo_remaining_seconds(self) -> float:
         """XO 추천 남은 초 — 후보가 하나라도 끝났으면 실제 속도(경과 ÷ 끝난 후보)로, 아니면 구성 어림에서 경과를 뺀다.
@@ -1557,6 +1591,16 @@ class StepCalibration(QtWidgets.QWidget):
         """보정 계산이 도는 중(MIMO 는 `mimo_running`)."""
         return self._job is not None and self._job['kind'] == 'compute'
 
+    def subs_running(self) -> bool:
+        """[서브만 계산] 이 도는 중(10-12 사용자: 꽤 걸리는데 구석에 예상 시간이 안 뜬다 — 구석 알림 목록에 없었다)."""
+        return self._job is not None and self._job['kind'] == 'subs'
+
+    def subs_estimate_seconds(self) -> float:
+        """[서브만 계산] 전체 예상 초 — 전에 잰 값(`sub_run.elapsed_s`), 없으면 구성 어림."""
+        if self.sub_run is not None and getattr(self.sub_run, 'elapsed_s', 0.0):
+            return float(self.sub_run.elapsed_s)
+        return cal.estimate_subs_seconds(self.project)
+
     def mimo_running(self) -> bool:
         return self._job is not None and self._job['kind'] == 'mimo'
 
@@ -1613,9 +1657,9 @@ class StepCalibration(QtWidgets.QWidget):
         return bool(groups) and not any(self.settings.xo_rec.get(g) for g in groups)
 
     def compute_subs(self) -> bool:
-        """[서브만 계산] — 서브 정렬까지만 다시 풀어 서브 정렬 탭을 바로 그린다(메인 RC·MIMO·내보내기 결과는 그대로)."""
+        """[서브만 계산] — BA까지만 다시 풀어 BA 탭을 바로 그린다(메인 RC·MIMO·내보내기 결과는 그대로)."""
         if self._job is None and self._demo_mode():
-            return self._fake_compute('subs')              # 튜토리얼은 저장해 둔 서브 정렬 결과를 보여 주기만(10-11)
+            return self._fake_compute('subs')              # 튜토리얼은 저장해 둔 BA 결과를 보여 주기만(10-11)
         if self._job is not None or self.irs_provider is None or not self.positions():
             return False
         project = copy.deepcopy(self.project)
@@ -1637,7 +1681,7 @@ class StepCalibration(QtWidgets.QWidget):
         self._prepared, self._prepared_key = (key, copy.deepcopy(cal.load_demo_run())), key
 
     def _prepare_key(self) -> tuple:
-        """미리 계산이 아직 맞는지 가르는 키 — 설정 · 측정 · 타깃(10-10 코드 리뷰: 설정만 보면 타깃을 끈 뒤에도 옛 결과를 넘겼다)."""
+        """미리 계산이 아직 맞는지 가르는 키 — 설정 · 측정 · 타겟(10-10 코드 리뷰: 설정만 보면 타겟을 끈 뒤에도 옛 결과를 넘겼다)."""
         return (self.settings.engine_key(), cal.measurement_signature(self.project), cal.target_key(self.project))
 
     def prepare_in_background(self) -> bool:
@@ -1743,11 +1787,12 @@ class StepCalibration(QtWidgets.QWidget):
         fsiso, low = float(self.settings.fsiso), self.settings.mimo_low
         exclude = self.settings.excluded_supports()
         cap = int(self.settings.mimo_max_supports)
+        fir = bool(self.settings.mimo_fir)
         bridge = self._bridge
         holder: dict = {}
         self._mimo_progress = (0, 0)
         started = self._start('mimo', lambda: cal.compute_mimo(
-            run, fsiso, low, workers=cal.MIMO_WORKERS, exclude=exclude, max_supports=cap,
+            run, fsiso, low, workers=cal.MIMO_WORKERS, exclude=exclude, max_supports=cap, fir=fir,
             progress=lambda k, n: bridge.progress.emit('mimo', holder.get('token'), k, n)))
         if started:
             holder['token'] = self._job['token']
@@ -1932,6 +1977,8 @@ class StepCalibration(QtWidgets.QWidget):
             self.mimo_max_spin.setSuffix(str(t(' 서포트')))
             self.mimo_max_spin.setValue(int(s.mimo_max_supports))
             self.mimo_max_spin.setEnabled(on)
+            self.mimo_fir_check.setChecked(bool(s.mimo_fir))
+            self.mimo_fir_check.setEnabled(on)
             self.mimo_reason.setText(reason)
             self.mimo_reason.setVisible(not ok)
             self.mimo_button.setEnabled(on and self.run is not None and self._job is None)
@@ -2012,7 +2059,9 @@ class StepCalibration(QtWidgets.QWidget):
         else:
             total = sum(self.mimo_run.supports(r) for r in self.mimo_run.iir)
             cap = int(self.mimo_run.max_supports)
-            mimo = _join(('MIMO 계산 완료', f'서포트 {total}개') + ((f'입력당 서포트 ≤ {cap}',) if cap else ()))
+            budget = cal.mimo_fir_budget_text(self.mimo_run, int(getattr(self.project.dsp, 'fir_budget', 0) or 0))
+            mimo = _join(('MIMO 계산 완료', f'{cal.mimo_kind(self.mimo_run)} 서포트 {total}개')
+                         + ((f'입력당 서포트 ≤ {cap}',) if cap else ()) + ((budget,) if budget else ()))
         self.mimo_status.setText(mimo)
         self.mimo_status.setVisible(bool(mimo))
         # XO 줄
@@ -2086,7 +2135,7 @@ class StepCalibration(QtWidgets.QWidget):
         return len(self.project.config.groups().get('sub', []))
 
     def _show_tab_cards(self) -> None:
-        """오른쪽 설정 카드를 탭에 맞춘다(10-09 사용자): SPL·GD = RC 범위, XO = XO, 서브 정렬 = 서브 정렬 설정. 보정 모드·MIMO
+        """오른쪽 설정 카드를 탭에 맞춘다(10-09 사용자): SPL·GD = RC 범위, XO = XO, BA = BA 설정. 보정 모드·MIMO
         카드와 내보내기는 늘 보인다. 숨기기만 하니 값·계산 상태는 그대로다."""
         self.rc_card.setVisible(self.tab in ('spl', 'gd'))
         self.xo_card.setVisible(self.tab == 'xo')
@@ -2128,7 +2177,7 @@ class StepCalibration(QtWidgets.QWidget):
             self.rc_lines[key] = (hz, line)
 
     def _refresh_result(self) -> None:
-        # 서브 정렬 탭은 서브가 2개 이상일 때만(1개면 결합할 것이 없다 — R9).
+        # BA 탭은 서브가 2개 이상일 때만(1개면 결합할 것이 없다 — R9).
         multi = self.sub_count() >= 2
         self.tab_buttons['subs'].setVisible(multi)
         if self.tab == 'subs' and not multi:
@@ -2141,11 +2190,12 @@ class StepCalibration(QtWidgets.QWidget):
         self.rc_lines: dict = {}                                # 키 → (Hz, 선) — SPL·GD 탭에서 `_draw_rc_band` 가 채운다
         self.sub_values.setVisible(False)
         self.sub_filters_label.setVisible(False)
-        self.filters_label.setVisible(self.tab != 'subs')      # 서브 정렬에선 비는 줄 — 숫자 줄과 표 사이 빈칸이 됐다
+        self.sub_warn_result.setVisible(False)
+        self.filters_label.setVisible(self.tab != 'subs')      # BA 에선 비는 줄 — 숫자 줄과 표 사이 빈칸이 됐다
         run = self.run
         role = self.channel
         has = run is not None and role in run.curves
-        self.channel_combo.setEnabled(self.tab != 'subs')      # 서브 정렬은 채널과 상관없다
+        self.channel_combo.setEnabled(self.tab != 'subs')      # BA 는 채널과 상관없다
         self.legend_items['mimo'].setVisible(has and self.tab == 'spl' and self.show_mimo()
                                             and role in self.mimo_run.curves)
         self.legend_items['target'].setVisible(self.tab in ('spl', 'xo', 'subs'))
@@ -2156,19 +2206,19 @@ class StepCalibration(QtWidgets.QWidget):
         for key in ('sub_before', 'sub_after', 'sub_sum'):
             self.legend_items[key].setVisible(self.tab == 'subs')
         self._xo_curves = {}
-        # 10-10 사용자 결정(1A): 마이크 상대 레벨(−35 ~ −75 dB)이 dB SPL 처럼 읽혔다 → SPL 은 타깃 기준으로 옮겨 그린다.
-        # XO · 서브 정렬 탭도 같은 기준(10-10 3차 시험: 두 탭만 마이크 절대값 −40 ~ −75 라 SPL 탭과 기준이 달랐다).
+        # 10-10 사용자 결정(1A): 마이크 상대 레벨(−35 ~ −75 dB)이 dB SPL 처럼 읽혔다 → SPL 은 타겟 기준으로 옮겨 그린다.
+        # XO · BA 탭도 같은 기준(10-10 3차 시험: 두 탭만 마이크 절대값 −40 ~ −75 라 SPL 탭과 기준이 달랐다).
         if self.tab == 'subs':
-            axis_label(self.plot, 'left', t('dB (타깃 기준)'))
+            axis_label(self.plot, 'left', t('dB (타겟 기준)'))
             self.plot.getAxis('bottom').setTicks(freq_ticks(SUB_TICKS))
             set_freq_range(self.plot, SUB_RANGE_X)
         elif self.tab == 'xo':
-            axis_label(self.plot, 'left', t('dB (타깃 기준)'))
+            axis_label(self.plot, 'left', t('dB (타겟 기준)'))
             self.plot.getAxis('bottom').setTicks(freq_ticks(XO_TICKS))
             set_freq_range(self.plot, XO_RANGE_X)
             self._draw_xo()
         elif self.tab == 'spl':
-            axis_label(self.plot, 'left', t('dB (타깃 기준)'))
+            axis_label(self.plot, 'left', t('dB (타겟 기준)'))
             self.plot.getAxis('bottom').setTicks(freq_ticks())
             set_freq_range(self.plot, SPL_RANGE)
             self._draw_rc_band(SPL_RANGE)
@@ -2185,7 +2235,7 @@ class StepCalibration(QtWidgets.QWidget):
             self.rc_note.setVisible(False)
             if run is None and self.tab == 'spl':
                 curve = self._preview().get(role)
-                if curve is not None:                      # 계산 전: 청취 위치 측정 + 타깃만
+                if curve is not None:                      # 계산 전: 청취 위치 측정 + 타겟만
                     x = cal.SPL_GRID
                     target = np.asarray(self.project.target.sample(x), float)
                     level = float(np.median(curve[(x >= 200) & (x <= 2000)]) - np.median(target[(x >= 200) & (x <= 2000)]))
@@ -2208,8 +2258,8 @@ class StepCalibration(QtWidgets.QWidget):
             pass
         elif self.tab == 'spl':
             x = cal.SPL_GRID
-            # 곡선은 계산 때의 레벨(타깃 + offset)에 있다 — offset 을 빼 타깃이 제 값에 오게 그린다(1A)
-            # 타깃은 지금 프로젝트 값으로 그린다(끌어 고치면 바로 따라온다) — 레벨 기준은 계산 때의 것.
+            # 곡선은 계산 때의 레벨(타겟 + offset)에 있다 — offset 을 빼 타겟이 제 값에 오게 그린다(1A)
+            # 타겟은 지금 프로젝트 값으로 그린다(끌어 고치면 바로 따라온다) — 레벨 기준은 계산 때의 것.
             shown = np.asarray(self.project.target.sample(x), float)
             offset = self._level_offset(run)
             self.plot.plot(x, curves['spl_before'] - offset, pen=pg.mkPen(C_MEASURED, width=2))
@@ -2254,9 +2304,9 @@ class StepCalibration(QtWidgets.QWidget):
         self.rc_note.setVisible(True)
 
     def _level_offset(self, run) -> float:
-        """계산 곡선의 레벨 − 타깃(dB) — 이만큼 빼서 그리면 타깃이 제 값(타깃 레벨 = 0 dB)에 온다(10-10 사용자 결정 1A).
-        SPL · XO · 서브 정렬 탭이 같은 값을 쓴다(3차 시험: XO · 서브 정렬 탭만 마이크 절대값이었다). 타깃은 지금 프로젝트
-        값과 견준다 — 계산 뒤 타깃을 끌어 고치면 SPL 탭 타깃이 바로 따라오는 것과 같은 기준."""
+        """계산 곡선의 레벨 − 타겟(dB) — 이만큼 빼서 그리면 타겟이 제 값(타겟 레벨 = 0 dB)에 온다(10-10 사용자 결정 1A).
+        SPL · XO · BA 탭이 같은 값을 쓴다(3차 시험: XO · BA 탭만 마이크 절대값이었다). 타겟은 지금 프로젝트
+        값과 견준다 — 계산 뒤 타겟을 끌어 고치면 SPL 탭 타겟이 바로 따라오는 것과 같은 기준."""
         if run is None:
             return 0.0
         if getattr(run, 'settings_target', None) is not None:
@@ -2265,7 +2315,7 @@ class StepCalibration(QtWidgets.QWidget):
         return float(np.median(run.target - shown))
 
     def _draw_subs(self) -> None:
-        """서브 정렬(BA) 보기: 서브마다 정렬 전(점선)·후(실선), 서브 합 전·후(잉크), 평탄도·좌석 편차 줄, 정렬 값 표.
+        """BA 보기: 서브마다 정렬 전(점선)·후(실선), 서브 합 전·후(잉크), 평탄도·좌석 편차 줄, 정렬 값 표.
         값은 마지막 보정 계산 그대로(`calibration.sub_combine`) — 시트·내보내기에 나가는 값과 같다."""
         source = self.sub_run if self.sub_run is not None else self.run
         view = cal.sub_combine(source) if source is not None else None
@@ -2273,8 +2323,8 @@ class StepCalibration(QtWidgets.QWidget):
             return
         x = view['grid']
         dash = QtCore.Qt.PenStyle.DashLine
-        offset = self._level_offset(source)          # SPL 탭과 같은 타깃 기준(보이는 높이만 — 정렬 값 · 점수는 그대로)
-        # 타깃 커브(10-11 사용자: "서브정렬에도 타겟 커브를 넣어줘") — SPL 탭처럼 지금 프로젝트 타깃을 그대로(곡선이 그 기준으로 옮겨짐)
+        offset = self._level_offset(source)          # SPL 탭과 같은 타겟 기준(보이는 높이만 — 정렬 값 · 점수는 그대로)
+        # 타겟 커브(10-11 사용자: "서브정렬에도 타겟 커브를 넣어줘") — SPL 탭처럼 지금 프로젝트 타겟을 그대로(곡선이 그 기준으로 옮겨짐)
         self.plot.plot(x, np.asarray(self.project.target.sample(x), float),
                        pen=pg.mkPen(C_TARGET, width=2, style=QtCore.Qt.PenStyle.DashLine))
         for k, role in enumerate(view['subs']):
@@ -2316,17 +2366,20 @@ class StepCalibration(QtWidgets.QWidget):
         text = '\n'.join(lines + ([text] if text else []))
         self.sub_filters_label.setText(text)
         self.sub_filters_label.setVisible(bool(text))
+        warns = cal.sub_filter_warnings(source.settings, view['subs']) + cal.sub_gain_warnings(source)
+        self.sub_warn_result.setText('\n'.join(warns))
+        self.sub_warn_result.setVisible(bool(warns))
         self.sub_values.setVisible(True)
 
     def _draw_xo(self, hz: float | None = None, update: bool = False) -> None:
-        """XO 보기: 고른 그룹의 메인 평균·서브·합·타깃(청취 위치) + XO 선. `update` 면 곡선 데이터만 바꾼다(끄는 중)."""
+        """XO 보기: 고른 그룹의 메인 평균·서브·합·타겟(청취 위치) + XO 선. `update` 면 곡선 데이터만 바꾼다(끄는 중)."""
         run, group = self.run, self.xo_group
         if run is None or not group or group not in run.engine.groups or not run.engine.subs:
             return
         hz = float(hz if hz is not None else self.xo_of(group))
         view = cal.xo_preview(run, group, hz, role=self.channel)
         x = view['grid']
-        offset = self._level_offset(run)            # SPL 탭과 같은 타깃 기준 — 곡선 모양 · XO · 점수는 그대로, 보이는 높이만
+        offset = self._level_offset(run)            # SPL 탭과 같은 타겟 기준 — 곡선 모양 · XO · 점수는 그대로, 보이는 높이만
         if update and self._xo_curves:
             for key in ('main', 'sub', 'sum'):
                 self._xo_curves[key].setData(x, view[key] - offset)

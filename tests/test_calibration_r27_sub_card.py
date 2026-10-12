@@ -1,4 +1,4 @@
-"""요구 대장 R27(2026-10-05) 화면: 보정 설계의 '서브 정렬 설정' 카드(서브 2개 이상)와 서브 정렬 탭의 '방식' 열.
+"""요구 대장 R27(2026-10-05) 화면: 보정 설계의 'BA 설정' 카드(서브 2개 이상)와 BA 탭의 '방식' 열.
 
 '동작 → 변화' 로 본다: 방식 고르기·값 칸·MIMO 체크가 설정(`project.extra['calibration']['subs_manual']`)에 들어가고 결과가
 낡는다, 자동이면 값 칸이 꺼진다, [결과 값 가져오기]가 결과 값을 반올림 없이 옮긴다, 다시 계산하면 표의 방식·값이 바뀐다,
@@ -48,7 +48,7 @@ def test_sub_card_sets_modes_and_values_and_takes_result_values(qapp, fast_engin
     project, irs = two_subs
     page = _page(copy.deepcopy(project), irs, tmp_path)
     try:
-        page.set_tab('subs')                                    # 서브 정렬 설정 카드는 서브 정렬 탭에서만(10-09)
+        page.set_tab('subs')                                    # BA 설정 카드는 BA 탭에서만(10-09)
         assert page.sub_card.isVisibleTo(page)
         assert [page.sub_pick.itemData(i) for i in range(page.sub_pick.count())] == list(SUBS)
         assert _combo_texts(page.sub_mode_combo) == ['자동', '고정', 'Group A', 'Group B']
