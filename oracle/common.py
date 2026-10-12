@@ -138,6 +138,17 @@ class Family:
         return {"file": f"{key}.f64", "length": int(arr.size),
                 "sha256": hashlib.sha256(data).hexdigest(), "first": arr[:32], "last": arr[-32:]}
 
+    def f64_digest(self, values: Any) -> dict:
+        """A float64 array frozen by length and SHA-256 only (no sidecar).
+
+        For outputs whose values another fixture already pins (for example a
+        model adapted from bytes that are themselves a blob): the port's array
+        must hash to the same little-endian float64 bytes.
+        """
+        arr = np.ascontiguousarray(np.asarray(values, dtype="<f8").ravel())
+        return {"digest": hashlib.sha256(arr.tobytes()).hexdigest(), "length": int(arr.size),
+                "first": arr[:32], "last": arr[-32:]}
+
     def c128(self, key: str, values: Any) -> Any:
         """A complex array as {"re", "im"} float64 arrays."""
         arr = np.asarray(values, dtype=np.complex128).ravel()

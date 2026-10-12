@@ -1,0 +1,1 @@
+{"inputs":{"text":"A\u0000B"},"outputs":{"bytes":{"blob":"utf8_0_bytes.bin","length":4,"sha256":"7555c2b71c42cb8a900ea9dee62c797656648bcf5a7d36afacb22e63dd7f3e49"},"decode":"A\u0000B"},"meta":{"oracle":"SECS 2 Beta 1.2.0 (60ac53a)","python":"3.13.16","numpy":"2.5.3","scipy":"1.18.1","numpy_dispatch":"baseline (C library transcendental functions)"}}
