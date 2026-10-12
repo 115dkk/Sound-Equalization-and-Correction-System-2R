@@ -20,12 +20,12 @@ unsafe-budget.toml        크레이트별 unsafe 허용량 (secs-sys = 0)
 deny.toml                 GPL 호환 라이선스, 권고, 출처
 UPSTREAM.toml             이식을 마친 업스트림 커밋
 crates/
-  secs-types/             도메인 어휘, 오류 코드, IPC 타입 (ts-rs 바인딩 생성)
+  secs-types/             도메인 어휘(역할 포함), 오류 코드, IPC 타입 (ts-rs 바인딩 생성)
   secs-dsp/               f64 프리미티브, TRF·차분 진화·RandomState 이식
   secs-compute/           스레드, 메모리 예산, 캐시, 취소, 진행
   secs-engine/            보정 설계 전 단계 (깊은 모듈)
   secs-gpu/               MIMO 서포트 맞춤의 wgpu 어댑터 (선택)
-  secs-project/           .secs, 이주, 역할 어휘, 측정 계획, .irs 저장소
+  secs-project/           .secs, 이주, 구성·DSP 프로파일·타겟, 측정 계획, .irs 저장소
   secs-jos/               자바 직렬화 그래프 (바이트 동일 왕복)
   secs-mdat/              REW mdat 읽기·만들기
   secs-rew/               REW API (Real, Fake)
@@ -34,12 +34,13 @@ crates/
   secs-service/           애플리케이션 서비스 (깊은 모듈)
   secs-sys/               격리 크레이트: WASAPI, cpal, 운영체제 조회
   secs-policy/            게이트 테스트
+  secs-oracle/            골든 읽기 (테스트 전용, 출하하지 않음)
 apps/
   secs2r/                 Tauri 2 셸 (커맨드 하나)
   secs2r/ui/              React 19 + TypeScript + Vite 화면
   secs2r-cli/             헤드리스 CLI
 src/, tests/, tools/      업스트림 SECS 2 (파이썬, 오라클, 고치지 않음)
-tests/oracle/             (M1) 골든 내보내기 스크립트와 골든
+oracle/                   골든 내보내기 스크립트와 골든 (oracle/README.md)
 ```
 
 ## 3. 의존 방향
@@ -119,8 +120,8 @@ secs-policy ────────> (파일 시스템만 읽음; IPC 메서드
 | 단계 | 내용 | 끝나는 조건 |
 |---|---|---|
 | M0 | 워크스페이스 뼈대, 정책 게이트, 기능 등록부, CI, 릴리스, 업스트림 감시, 빈 셸 | PR에서 모든 검증 잡 통과, main 머지로 세 OS 설치본이 담긴 0.0.x 사전 출시가 실제로 나옴 |
-| M1 | 오라클 골든, 형식(jos·mdat, .secs 이주, .irs, CamillaDSP), 역할 어휘, DSP 프리미티브 1차, Miri·fuzz | 형식 골든 바이트 일치, 프리미티브 골든 통과 |
-| M2 | 엔진: 레벨·딜레이, BA, XO, RC, 성적표, 신호 사슬. 성능 감사 1차 | 데모 방 끝단이 SECS 2 편차 범위 안, 모든 연산에서 파이썬보다 빠름, 취소가 1초 안에 멈춤 |
+| M1 | 오라클 골든, 형식(jos·mdat, .secs 이주, .irs), 역할 어휘, DSP 프리미티브 1차, Miri·fuzz | 형식 골든 바이트 일치, 프리미티브 골든 통과 |
+| M2 | 엔진: 레벨·딜레이, BA, XO, RC, 성적표, 신호 사슬과 CamillaDSP 작성기(사슬 값을 읽으므로 사슬과 함께). 성능 감사 1차 | 데모 방 끝단이 SECS 2 편차 범위 안, 모든 연산에서 파이썬보다 빠름, 취소가 1초 안에 멈춤 |
 | M3 | MIMO(이상 FIR, IIR 맞춤, FIR 서포트), 메모리 예산, GPU 실험과 어댑터 | MIMO 골든 통과, 입력당 5배 이상, 최대 메모리 1 GB 이하 |
 | M4 | 서비스, 잡, 자체 측정, REW, mdat 가져오기, 내보내기 셋, CLI, 무결성 잡 | CLI만으로 샘플 프로젝트 설계·내보내기, 모의 측정으로 흐름 전체 테스트, 하드웨어 프로브 실측 |
 | M5 | 새 화면, 디자인 토큰, 성적표, 작업 트레이, 튜토리얼, 한국어·영어 | 업스트림 기능 목록 전부 화면에서 닿음, 화면 리뷰에서 HIGH 없음 |

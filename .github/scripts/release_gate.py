@@ -64,6 +64,7 @@ SHIP_ALWAYS: tuple[str, ...] = ()
 NOT_SHIPPED = (
     "*.md",
     "crates/secs-policy/*",
+    "crates/secs-oracle/*",
     "*.test.ts",
     "*.test.tsx",
 )

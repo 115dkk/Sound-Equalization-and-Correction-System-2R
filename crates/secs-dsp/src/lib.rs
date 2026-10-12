@@ -19,3 +19,6 @@
 //! - Rounding is half-to-even (`f64::round_ties_even`) wherever NumPy rounds.
 //!
 //! Hot loops use `pulp` runtime SIMD; there is no handwritten `std::arch`.
+
+pub mod fft;
+pub use fft::Complex64;

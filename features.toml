@@ -7,8 +7,8 @@
 #   * an IPC method of secs-types has no "ipc.<method>" entry.
 # Marking a feature implemented without a verification test is a CI failure by
 # design; .github/scripts/check_feature_tests.py also asks Cargo that every
-# referenced test is compiled and run. Statuses: planned, partial, implemented. Milestones: M0 to M6
-# (docs/ARCHITECTURE.md). `upstream` names the SECS 2 source a feature ports;
+# referenced test is compiled and run. Statuses: planned, partial,
+# implemented. Milestones: M0 to M6 (docs/ARCHITECTURE.md). `upstream` names the SECS 2 source a feature ports;
 # "new" marks what SECS 2 does not have.
 
 # ---- Policy (M0) ----
@@ -105,6 +105,28 @@ tests = [
   "secs2r::missing_request_argument_is_an_envelope",
 ]
 
+# ---- Oracle (M1) ----
+
+[[feature]]
+id = "oracle.goldens"
+kind = "test"
+milestone = "M1"
+status = "implemented"
+tests = [
+  "secs-oracle::every_sidecar_and_blob_matches_its_descriptor",
+  "secs-oracle::libm_probe_reads_and_reports",
+]
+note = "oracle/README.md; fixtures regenerate with oracle/run.py from the in-repo upstream tree"
+
+[[feature]]
+id = "dsp.fft"
+kind = "dsp"
+milestone = "M1"
+status = "partial"
+tests = ["secs-dsp::rfft_irfft_round_trip_even_and_odd"]
+upstream = "numpy.fft (rfft, irfft)"
+note = "from Impulcifer's fft.rs; oracle parity comes with the dsp golden family"
+
 # ---- Formats (M1) ----
 
 [[feature]]
@@ -151,7 +173,7 @@ upstream = "rew_mdat/builder.py"
 [[feature]]
 id = "format.camilladsp_v4"
 kind = "format"
-milestone = "M1"
+milestone = "M2"
 status = "planned"
 tests = []
 upstream = "export_camilladsp.py"

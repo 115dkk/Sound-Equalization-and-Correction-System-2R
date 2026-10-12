@@ -12,3 +12,5 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+rustfft.workspace = true
+realfft.workspace = true
