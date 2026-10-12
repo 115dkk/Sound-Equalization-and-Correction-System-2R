@@ -13,6 +13,7 @@ SECS 2 Beta 1.2.0 기준. 설치와 배포 경로를 시험하는 첫 사전 출
 - CI: 포맷, clippy(Windows 대상 포함), 정책 게이트, Linux·Windows·macOS 테스트, 화면 타입 검사·테스트·빌드와 IPC 바인딩 일치, 세 운영체제 설치본, rustdoc, cargo-deny(GPL 호환 라이선스).
 - 릴리스: main에 머지하면 Windows 설치본·포터블 zip, macOS dmg, Linux AppImage·deb를 사전 출시판으로 냅니다.
 - 업스트림 감시: 업스트림에 새 커밋이 생기면 바뀐 파일과 닿는 크레이트를 적은 이식 이슈를 엽니다.
+- 오라클 골든: 저장소의 업스트림 트리를 오라클로 돌려 골든을 남기는 도구(`oracle/`)와 그것을 읽는 테스트 전용 크레이트(`secs-oracle`), 수치 크레이트의 FFT 모듈.
 
 ### 새 기능
 
