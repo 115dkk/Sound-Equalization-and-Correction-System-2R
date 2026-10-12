@@ -10,7 +10,7 @@
 //! guards also bound repeated signature/name copies reached through references.
 //! Nodes have arena identity: clone a [`Value`] to retain a reference, or use
 //! [`Stream::clone_values`] to deep-copy a graph, including its descriptors.
-//! [`write`] serializes valid, caller-edited graphs in descriptor field order.
+//! [`write()`] serializes valid, caller-edited graphs in descriptor field order.
 //! Use [`try_write`] when constructing graphs that may be invalid. `End` and
 //! `Reset` are parser sentinels; upstream's writer rejects them as content.
 //!
