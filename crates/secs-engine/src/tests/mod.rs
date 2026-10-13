@@ -7,5 +7,6 @@ mod calibration;
 mod cases;
 mod chain;
 mod decay;
+pub(crate) mod fit;
 mod prep;
 mod scorecard;
