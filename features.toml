@@ -127,6 +127,72 @@ tests = ["secs-dsp::rfft_irfft_round_trip_even_and_odd"]
 upstream = "numpy.fft (rfft, irfft)"
 note = "from Impulcifer's fft.rs; oracle parity comes with the dsp golden family"
 
+[[feature]]
+id = "dsp.smoothing"
+kind = "dsp"
+milestone = "M1"
+status = "implemented"
+tests = ["secs-dsp::golden_grid", "secs-dsp::golden_smoothing"]
+upstream = "correction_engine.py:126-150"
+
+[[feature]]
+id = "dsp.minimum_phase"
+kind = "dsp"
+milestone = "M1"
+status = "implemented"
+tests = ["secs-dsp::golden_minimum_phase"]
+upstream = "correction_engine.py:153-162"
+
+[[feature]]
+id = "dsp.responses"
+kind = "dsp"
+milestone = "M1"
+status = "implemented"
+tests = ["secs-dsp::golden_responses"]
+upstream = "correction_engine.py:165-218,309-314; mimo.py:90-92"
+
+[[feature]]
+id = "dsp.iir"
+kind = "dsp"
+milestone = "M1"
+status = "implemented"
+tests = ["secs-dsp::golden_iir"]
+upstream = "scipy.signal.butter/sosfilt/sosfreqz; calibration.py:654"
+
+[[feature]]
+id = "dsp.firwin"
+kind = "dsp"
+milestone = "M1"
+status = "implemented"
+tests = ["secs-dsp::golden_firwin"]
+upstream = "mimo.py:85-87; scipy.signal.firwin"
+
+[[feature]]
+id = "dsp.find_peaks"
+kind = "dsp"
+milestone = "M1"
+status = "implemented"
+tests = ["secs-dsp::golden_find_peaks"]
+upstream = "scipy.signal.find_peaks; mimo.py:334"
+
+[[feature]]
+id = "dsp.lowrate"
+kind = "dsp"
+milestone = "M1"
+status = "implemented"
+tests = ["secs-dsp::golden_lowrate"]
+upstream = "mimo.py:69-82"
+note = "D3 interpolation/taper preserved"
+
+[[feature]]
+id = "dsp.least_squares_trf"
+kind = "dsp"
+milestone = "M1"
+status = "implemented"
+tests = ["secs-dsp::trf_one_step_replay", "secs-dsp::trf_converging_results", "secs-dsp::trf_capped_results"]
+upstream = "scipy.optimize.least_squares bounded exact TRF"
+note = "Gated by one-step replay along the oracle's whole path (x_new, step, reductions, radius within 1e-9; actual_reduction net of the cost difference our x_new explains) and exact results for converging fits. Capped fits follow a chaotic path (a one-ulp step difference moves the next finite-difference Jacobian), so their global trace and njev are reported, not gated (oracle/README.md). Unbounded problems are not supported (upstream always passes bounds)."
+
 # ---- Formats (M1) ----
 
 [[feature]]
