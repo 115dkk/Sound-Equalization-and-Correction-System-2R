@@ -51,7 +51,7 @@ pub fn spectrum(x: &[f64]) -> Vec<C> {
 /// The phase NumPy computes for `-2j * np.pi * f * t`: the imaginary part of
 /// two complex multiplications, `0.0 + (-2π·f)·t` (the `0.0 +` is the real
 /// part's contribution and turns a zero product into +0).
-fn ramp_phase(f: f64, t: f64) -> f64 {
+pub(crate) fn ramp_phase(f: f64, t: f64) -> f64 {
     0.0 + (-2.0 * PI * f) * t
 }
 

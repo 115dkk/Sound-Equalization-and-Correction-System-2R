@@ -140,7 +140,7 @@ normal float64 sidecars. It is data storage only, not an additional case.
 so **all** H0 cells initially alias H, including filtered subs. Long 500 ms
 spectra differ from preparation: their taper is 10%, not 20%.
 
-Budgets: `engine_inputs` ≤9,000,000 bytes; `engine_prep` ≤3,000,000 bytes,
+Budgets: `engine_inputs` ≤9,000,000 bytes; `engine_prep` ≤3,200,000 bytes,
 asserted by the exporters. Spectrum parity measured max error / sampled peak
 5.368509846704912e-16; 1.5× is below the 1e-12 floor. Levels, arrivals,
 weights, target and Schroeder use `PLATFORM_RTOL`; indices are exact.
@@ -153,7 +153,7 @@ weights, target and Schroeder use `PLATFORM_RTOL`; indices are exact.
 | `dsp_de` (`rs_*`) | `export_dsp_de.py` | NumPy 2.5.3 legacy RandomState seeds 0, 1, 2, 12345, 2**32−1: 5000 raw uint32 draws as little-endian byte blobs, 5000 53-bit samples; mixed scalar randint (DE dimensions and rejection/width edges), uniform, permutation and repeated in-place shuffle. Random streams always compare bit-for-bit, including on foreign libm. |
 | `dsp_de` (`de_*`) | `export_dsp_de.py` | SciPy 1.18.1 unpolished immediate best1bin: BA-shaped nonsmooth costs at every dimension 2–12, seeds 1/2, with/without x0; Rosenbrock and plateaus at dimensions 2/7/12; tol convergence and maxiter exhaustion, zero iterations, constant/equal/reversed bounds, minimum population, one dimension, NaN/infinity. Every cost-call vector and cost (full values up to 4096, longer traces as digests), final x/fun/nit/nfev/success/message; traces are bit-exact on the oracle libm (digests checked whole), elsewhere `rtol(0)` on the values and the digests' first/last 32. Counts and messages are always exact. |
 | `engine_inputs` | `export_engine_inputs.py` | Ten shared engine cases, float32 IRs stored once, observed make_engine constructor/configuration values, raw settings and project summary |
-| `engine_prep` | `export_engine_prep.py` | Constructor normalisation, exact onsets/window starts, arrival/alignment/base, sampled H/H0 and long 2000/500 ms spectra, position/frequency weights, main levels/reference, Schroeder and target samples |
+| `engine_prep` | `export_engine_prep.py` | Constructor normalisation, exact onsets/window starts, arrival/alignment/base, sampled H/H0 and long 2000/500 ms spectra, position/frequency weights, main levels/reference, Schroeder and target samples; `_delay` and `_sub_sum`/`_term` bit for bit on synthetic spectra, sampled on real ones |
 | `libm` | `export_libm.py` | float64 `ln`, `log10`, `log2`, `exp`, `sin`, `cos`, `tan`, `atan`, `tanh`, `atan2`, `pow` at fixed points |
 | `mdat` | `export_mdat.py` | bounded Java serialization parsing, Modified UTF-8, full REW model adaptation, byte-identical round trips, and deterministic 1- and 3-measurement builds (one from three real Dolby-room IRs); built models are frozen as digests |
 | `project` | `export_project.py` | role vocabulary, `.secs` presets and migrations, Python JSON bytes, tap allocation, target curves, float32 WAV bytes and readers |
