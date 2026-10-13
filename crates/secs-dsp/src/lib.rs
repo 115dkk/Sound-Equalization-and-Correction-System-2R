@@ -11,14 +11,39 @@
 //! - RBJ biquads, analog LR/BW prototypes, all-pass, minimum phase (cepstrum),
 //!   fractional-octave smoothing, group delay, `butter`/`sosfilt`/`firwin`,
 //!   `find_peaks` with the plateau-midpoint rule.
-//! - `least_squares` (bounded TRF, exact trust-region solver, two-point and
-//!   caller-supplied Jacobians; `max_nfev` counts residual calls only), ported
+//! - `least_squares` (bounded TRF, exact trust-region solver, two-point
+//!   Jacobians; `max_nfev` counts residual calls only), ported
 //!   from SciPy 1.18.1 by way of Impulcifer's `optimize.rs` (MIT).
-//! - `differential_evolution` with NumPy's legacy `RandomState` (MT19937),
-//!   consuming random numbers in SciPy's order, so BA reproduces upstream.
+//! - Differential evolution and RandomState are future packets, not implemented here.
 //! - Rounding is half-to-even (`f64::round_ties_even`) wherever NumPy rounds.
 //!
-//! Hot loops use `pulp` runtime SIMD; there is no handwritten `std::arch`.
+//! There is no handwritten `std::arch`; faer SIMD dispatch is provided by pulp.
+//!
+//! New primitive APIs return `Result` for data-dependent upstream failures.
+//! Allocation failure or unrepresentable array/order sizes are programmer errors.
+//! FFT APIs retain their documented panic contract. TRF parity is partial;
+//! see `tests/golden.rs` and the feature registry before using it in an engine.
 
 pub mod fft;
 pub use fft::Complex64;
+pub mod fir;
+pub mod grid;
+pub mod iir;
+pub mod lowrate;
+pub mod minphase;
+mod numeric;
+pub mod optimize;
+pub mod peaks;
+pub mod response;
+pub mod smooth;
+
+/// Data-dependent errors corresponding to upstream invalid inputs.
+#[derive(Debug, thiserror::Error)]
+pub enum DspError {
+    #[error("{0}")]
+    InvalidArgument(String),
+}
+
+pub(crate) fn invalid(message: &str) -> DspError {
+    DspError::InvalidArgument(message.to_owned())
+}
