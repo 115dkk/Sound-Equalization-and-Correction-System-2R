@@ -4,7 +4,7 @@
 use crate::{DspError, fft::Complex64, invalid, numeric::divide};
 use std::f64::consts::PI;
 
-/// Rows are [b0,b1,b2,a0,a1,a2], with a0 exactly one.
+/// Rows are `[b0, b1, b2, a0, a1, a2]`, with `a0` exactly one.
 #[derive(Debug, Clone)]
 pub struct Sos(pub Vec<[f64; 6]>);
 #[derive(Debug, Clone, Copy)]
@@ -15,7 +15,7 @@ pub enum BType {
 }
 
 /// Analog Butterworth prototype -> LP/HP -> prewarped bilinear -> nearest SOS.
-/// https://raw.githubusercontent.com/scipy/scipy/v1.16.0/scipy/signal/_filter_design.py
+/// <https://raw.githubusercontent.com/scipy/scipy/v1.16.0/scipy/signal/_filter_design.py>
 /// Verified with SciPy 1.18.0. Nearest pairing consumes the poles nearest the
 /// unit circle first, writes rows backwards, and puts gain in the first row.
 /// Odd orders add origin roots; their zero and pole need not share a section.

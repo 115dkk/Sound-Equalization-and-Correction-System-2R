@@ -3,7 +3,7 @@
 //! Height-only peak selection and the 2.x impulse onset rule.
 
 /// Mirrors scipy.signal.find_peaks(x, height=height), pinned by p05_peaks_*.json.
-/// https://docs.scipy.org/doc/scipy-1.16.1/reference/generated/scipy.signal.find_peaks.html
+/// <https://docs.scipy.org/doc/scipy-1.16.1/reference/generated/scipy.signal.find_peaks.html>
 /// Returns ascending indices, inclusive height, floor midpoint for plateaus,
 /// and excludes endpoints. NaN comparisons are false, so NaNs break candidates;
 /// an NaN height excludes all peaks. Infinities retain ordinary comparison rules.
