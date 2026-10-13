@@ -55,11 +55,13 @@ fn xo_scores_replayed_designs() {
                 "MEASURE xo_scores/{name}/{group} max_abs={:e} max_rel={:e} Rust={actual:?} reference={expected:?}",
                 error.0, error.1
             );
-            // `room`'s BA differential evolution diverges from the oracle at
-            // evaluation 3713 (P10), and every score depends on the BA rows, so
-            // room is reported, as the replayed design test does after BA.
-            if name == "room" {
-                eprintln!("XO_REPORT_ROOM xo_scores/{group} max_rel={:e}", error.1);
+            // Every score depends on the BA rows. `room`'s BA differential
+            // evolution diverges from the oracle at evaluation 3713 (P10), and
+            // off the oracle libm it can diverge on any case (macOS:
+            // room_filters), so those are reported, as the replayed design
+            // test does after BA.
+            if name == "room" || !secs_oracle::oracle_libm() {
+                eprintln!("XO_REPORT xo_scores/{name}/{group} max_rel={:e}", error.1);
                 continue;
             }
             secs_oracle::assert_close(
@@ -161,11 +163,14 @@ fn xo_parallel_order_progress_and_cancellation() {
             .iter()
             .all(|(_, rows)| rows.iter().map(|r| r.fc).eq([120.0, 60.0]))
     );
+    // StageProgress throttles reports that come close together (two
+    // candidates can finish within its interval), so check the endpoints and
+    // monotonicity, not every intermediate count.
     let reports = sink.0.lock().unwrap();
-    assert_eq!(
-        reports.iter().map(|p| p.done).collect::<Vec<_>>(),
-        [0, 1, 2, 3]
-    );
+    let done: Vec<_> = reports.iter().map(|p| p.done).collect();
+    assert_eq!(done.first(), Some(&0), "{done:?}");
+    assert_eq!(done.last(), Some(&3), "{done:?}");
+    assert!(done.windows(2).all(|w| w[0] <= w[1]), "{done:?}");
     assert!(
         reports
             .iter()
