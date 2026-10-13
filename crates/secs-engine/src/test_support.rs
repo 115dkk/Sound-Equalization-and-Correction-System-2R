@@ -253,8 +253,16 @@ pub fn replay_case(name: &str) -> ReplayCase {
             FitStage::Top(role) => format!("Top:{role}"),
             FitStage::Rc(role) => format!("Rc:{role}"),
         };
-        let mut fitter =
-            replay_fitter(stages.get(&key).cloned().unwrap_or_default(), PLATFORM_RTOL);
+        // Off the oracle libm BA's differential evolution can diverge (macOS:
+        // room_filters), so the recorded requests no longer match; inject the
+        // recorded results without checking them, as the engine's own replayed
+        // design test does, and let the caller report what follows BA.
+        let rtol = if secs_oracle::oracle_libm() {
+            PLATFORM_RTOL
+        } else {
+            f64::INFINITY
+        };
+        let mut fitter = replay_fitter(stages.get(&key).cloned().unwrap_or_default(), rtol);
         Box::new(move |request: &FitRequest<'_>| fitter(request))
     });
     let design = design(
