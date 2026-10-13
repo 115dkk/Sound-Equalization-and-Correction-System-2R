@@ -274,3 +274,27 @@ Do, in this order:
 
 Allowed files: as before. Also delete stale build metadata only with
 `cargo clean -p <crate>` inside `target-p14` if a build needs it.
+
+## Amendment (Claude, 2026-10-13): why `room` does not match, and the rule
+
+The mismatch on `room` is not in the oracle. Replaying `engine_design`'s fits
+in Python reproduces the recorded input filters exactly, but Rust's
+`design::replay("room")` does not: its RC requests already differ by 2–9 %.
+That is the known M2 behaviour: BA's differential evolution diverges on
+`room` even on the oracle libm (see `tests/design.rs`, `tests/xo.rs`,
+`tests/preview.rs`: `name == "room" || !oracle_libm()`), so everything
+downstream of BA on `room` is a different, equally valid design. Apply the
+same rule here: for every MIMO case built on the `room` design (`room`,
+`room_cap2`, `room_fir`, `room_low40`, `room_exclude`, `room_two_positions`)
+and for every case off the oracle libm, whole-path values and the
+whole-path input check (`xs`, `direct`, `X`, `G`) are reported, not
+asserted. Cases whose BA matches on the oracle libm (`room_dba`,
+`room_filters`, `room_multi`) are asserted. The stage-boundary tests, which
+feed recorded inputs, stay asserted on every case.
+
+So that the settings variants are also checked on an asserted whole path,
+add the same variants on `room_dba` to the oracle (`room_dba_cap2`,
+`room_dba_fir`, `room_dba_low40`, `room_dba_exclude`; pick a sub `room_dba`
+has) and regenerate. If cleaning stale build metadata is needed (a renamed
+target directory leaves Tauri permission paths behind), run
+`cargo clean -p secs2r -p secs2r-cli` in your own target directory.
