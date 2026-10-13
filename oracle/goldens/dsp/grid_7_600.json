@@ -1,0 +1,1 @@
+{"inputs":{"n":7,"sr":600},"outputs":{"value":[0.0,85.71428571428571,171.42857142857142,257.1428571428571]},"meta":{"oracle":"SECS 2 Beta 1.2.0 (60ac53a)","python":"3.13.16","numpy":"2.5.3","scipy":"1.18.1","numpy_dispatch":"baseline (C library transcendental functions)"}}

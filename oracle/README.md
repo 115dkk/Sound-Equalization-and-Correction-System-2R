@@ -11,7 +11,7 @@ read them through `crates/secs-oracle`.
 ```sh
 python3.13 -m venv ~/.venvs/secs-oracle
 ~/.venvs/secs-oracle/bin/pip install -r oracle/requirements.txt
-~/.venvs/secs-oracle/bin/python oracle/run.py libm mdat project dsp
+~/.venvs/secs-oracle/bin/python oracle/run.py libm mdat project dsp dsp_de
 ```
 
 `run.py` runs `export_<family>.py` for each family named, with NumPy's SIMD
@@ -50,7 +50,13 @@ versions.
   descriptor `{"file", "length", "sha256", "first", "last"}` (first and last
   32 values, for reading diffs) pointing at headerless little-endian float64;
   above 24000 values it is a list of such descriptors in order.
+  Sidecars are content-addressed within a family: an array whose bytes
+  equal an earlier sidecar's points at that file.
 - Raw bytes are `{"blob", "length", "sha256"}`.
+- An array whose values another fixture already pins (a model adapted from
+  a blob) may be a digest `{"digest", "length", "first", "last"}`: the
+  SHA-256 of its little-endian float64 bytes, without a sidecar
+  (`Family.f64_digest`, `Fixture::assert_digest`).
 - Matrices are row-major.
 
 `secs-oracle` checks every sidecar's length and SHA-256 when it reads it, and
@@ -65,9 +71,37 @@ it as `MEASURE <name> n=… max_abs=… max_rel=…`. Stages that are exact on t
 oracle's libm compare bit for bit there (`assert_same`) and within `1e-9`
 relative elsewhere (`oracle_libm()` decides from `goldens/libm/probe.json`).
 
+TRF is gated by one-step replay at every trial of the oracle's own path:
+Rust recomputes the residual and bounded two-point Jacobian at the recorded
+`x`, using the recorded trust radius and carried `alpha`. Steps, `x_new`,
+the predicted reduction and the updated radius must agree within `1e-9`
+relative to `max(1, |expected|)`. The actual reduction is `cost(x) -
+cost(x_new)`, so it inherits the (gated) difference between our `x_new` and
+the oracle's, amplified by the residual's slope; since the residual is
+bit-exact at a given point, the test subtracts the cost difference between
+the two `x_new` values and holds only the remainder to `1e-9`; acceptance and post-trial Jacobian recomputation must
+match exactly, except reported oracle ratios within `1e-9` of 0, 0.25 or
+0.75. Only converging fits gate global x/cost (1.5× the measured error,
+`1e-10` relative floor) and exact nfev/njev/status; capped fits gate nfev
+and status, and report njev and trajectory differences. P03b established
+that a one-ulp step change amplifies into a 5e-4 Jacobian change even in
+SciPy itself, while OpenBLAS Haswell/SandyBridge/Nehalem/Prescott runs agree
+to 1e-16: a variant-derived global trace horizon cannot gate this port.
+The full trace and the first three intermediate trials remain reports.
+The replay's premise, a bit-exact residual at the oracle's `x`, holds only
+on the oracle's libm (`oracle_libm()`); elsewhere the replay reports its
+mismatches without failing, and the converging-fit results remain the gate.
+On the room fits, trial 81's actual reduction differs by 8.579e-9, of which
+8.578e-9 is the cost difference of a one-ulp `x_new` difference; the largest
+unexplained remainder over all trials is 2.7e-12.
+
 ## Families
 
 | Family | Exporter | What is frozen |
 |---|---|---|
+| `dsp` | `export_dsp.py` | P03 grid, smoothing, cepstral minimum phase, analog/RBJ responses, GD, digital Butterworth SOS, FIR, peaks, low-rate projection; N=131072 sr=48000 room L spectrum from sample_dolby_714.npz. Smoothing outputs keep bins 0–1799, every 127th higher bin and Nyquist (computed on the full grid); all other outputs are complete. TRF includes caps150/400, real-room 3-band fits that exhaust both caps, all residual/probe calls and Jacobian bases. Every oracle trial records x/Delta/carried alpha, step, x_new, reductions, ratio, updated radius and accept/Jacobian-update decisions for local replay. Trials 0–2 of peq150/room150 keep full intermediates; global traces are reports. |
+| `dsp_de` (`rs_*`) | `export_dsp_de.py` | NumPy 2.5.3 legacy RandomState seeds 0, 1, 2, 12345, 2**32−1: 5000 raw uint32 draws as little-endian byte blobs, 5000 53-bit samples; mixed scalar randint (DE dimensions and rejection/width edges), uniform, permutation and repeated in-place shuffle. Random streams always compare bit-for-bit, including on foreign libm. |
+| `dsp_de` (`de_*`) | `export_dsp_de.py` | SciPy 1.18.1 unpolished immediate best1bin: BA-shaped nonsmooth costs at every dimension 2–12, seeds 1/2, with/without x0; Rosenbrock and plateaus at dimensions 2/7/12; tol convergence and maxiter exhaustion, zero iterations, constant/equal/reversed bounds, minimum population, one dimension, NaN/infinity. Every cost-call vector and cost (full values up to 4096, longer traces as digests), final x/fun/nit/nfev/success/message; traces are bit-exact on the oracle libm (digests checked whole), elsewhere `rtol(0)` on the values and the digests' first/last 32. Counts and messages are always exact. |
 | `libm` | `export_libm.py` | float64 `ln`, `log10`, `log2`, `exp`, `sin`, `cos`, `tan`, `atan`, `tanh`, `atan2`, `pow` at fixed points |
+| `mdat` | `export_mdat.py` | bounded Java serialization parsing, Modified UTF-8, full REW model adaptation, byte-identical round trips, and deterministic 1- and 3-measurement builds (one from three real Dolby-room IRs); built models are frozen as digests |
 | `project` | `export_project.py` | role vocabulary, `.secs` presets and migrations, Python JSON bytes, tap allocation, target curves, float32 WAV bytes and readers |

@@ -14,3 +14,13 @@ workspace = true
 [dependencies]
 rustfft.workspace = true
 realfft.workspace = true
+faer.workspace = true
+pulp.workspace = true
+gemm.workspace = true
+faer-traits.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+secs-oracle = { path = "../secs-oracle" }
+serde_json.workspace = true
