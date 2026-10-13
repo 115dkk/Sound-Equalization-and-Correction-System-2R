@@ -186,6 +186,36 @@ fn recorded(fixture: &Fixture, input: &Value, result: &Value) -> RecordedFit {
     }
 }
 
+/// Runs a shared oracle input with production fitters for release benchmarks.
+/// Unlike replay, this supports cases whose BA path diverges from the oracle.
+pub fn production_case(name: &str, threads: usize) -> ReplayCase {
+    let (measurements, config, settings) = inputs(name);
+    let ctx = Context::new(
+        threads,
+        secs_compute::MemoryBudget::new(u64::MAX),
+        std::sync::Arc::new(secs_compute::NoProgress),
+        secs_compute::CancelToken::new(),
+    );
+    let design = design(
+        &DesignRequest {
+            measurements: &measurements,
+            config: &config,
+            tuning: &Tuning::default(),
+            subs_only: false,
+            adapter_notes: &[],
+        },
+        &ctx,
+        &*crate::production_fitters(ctx.cancel()),
+    )
+    .expect("benchmark design");
+    ReplayCase {
+        design,
+        measurements,
+        config,
+        settings,
+    }
+}
+
 /// Replays the recorded fitter decisions for a shared oracle case.
 pub fn replay_case(name: &str) -> ReplayCase {
     let (measurements, config, settings) = inputs(name);

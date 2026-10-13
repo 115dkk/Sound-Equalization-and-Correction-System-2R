@@ -29,6 +29,51 @@ fn flat(bands: &[(f64, f64, f64)]) -> Vec<f64> {
 }
 
 #[test]
+fn peq_cached_residual_is_bit_equal() {
+    for fx in Fixture::all_calls("engine_fit", "fit_") {
+        let call = recorded(&fx);
+        let req = call.request();
+        let seed = seed(&req);
+        let mut cache = ResidualCache::new(req.g, seed.bands.len());
+        let mut probes = vec![seed.x0.clone()];
+        for column in 0..seed.x0.len() {
+            let mut probe = seed.x0.clone();
+            probe[column] += f64::EPSILON.sqrt() * probe[column].abs().max(1.0);
+            probes.push(probe);
+        }
+        probes.push(seed.x0);
+        probes.push(fx.f64s(&fx.outputs()["x"]));
+        for x in probes {
+            let bands: Vec<_> = x
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|b| (b[0].exp(), b[1].exp(), b[2]))
+                .collect();
+            let expected: Vec<_> = secs_dsp::response::peq_response(req.g, &bands)
+                .into_iter()
+                .enumerate()
+                .map(|(i, h)| {
+                    let w = if req.g[i] >= req.lo && req.g[i] <= req.hi {
+                        1.0
+                    } else {
+                        0.15
+                    };
+                    w * (20.0 * (secs_dsp::response::magnitude(h) + 1e-12).log10() - req.corr_db[i])
+                })
+                .collect();
+            let got = cache.evaluate(&req, &x);
+            assert_eq!(
+                got.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                expected.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                "{}",
+                fx.id
+            );
+        }
+    }
+}
+
+#[test]
 fn peq_greedy_and_ring_oracle() {
     for fx in Fixture::all_calls("engine_fit", "fit_") {
         let call = recorded(&fx);

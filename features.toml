@@ -54,6 +54,15 @@ upstream = "calibration.compute on the demo room"
 tests = ["secs-engine::engine_e2e_spread"]
 note = "ADR 0004 per-value 3*max(spread, quantum) cap and exact binomial 99.9% CDF gates pass on oracle and forced-foreign libm paths. Four 1.25-spread exceedances remain reports. Neutral descriptors and chain scalars use two-sided caps and do not enter directional rank counts."
 
+[[feature]]
+id = "perf.engine"
+kind = "perf"
+milestone = "M2"
+status = "partial"
+upstream = "calibration.compute, recommend_xo, previews and exports"
+tests = ["secs-engine::design_matches_recorded_stages", "secs-engine::engine_e2e_spread", "secs-engine::peq_cached_residual_is_bit_equal", "secs-engine::design_parallel_progress_counts_completed_channels", "secs-engine::preview_sub_combine_replayed_designs", "secs-dsp::cached_bounds_match_smoothing_bits_and_errors"]
+note = "docs/perf/engine.md records the paired release audit; timing is not a CI gate. Partial until every operation is faster in both configurations."
+
 # ---- Policy (M0) ----
 
 [[feature]]

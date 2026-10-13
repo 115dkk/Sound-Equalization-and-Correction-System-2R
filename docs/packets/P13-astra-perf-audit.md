@@ -90,6 +90,36 @@ both). Rust must not use more.
   existing design and e2e tests (they prove the fixes kept the results) and
   put `docs/perf/engine.md` in the entry's `note`.
 
+## Continuation (Claude, after the first run hit the two-hour limit)
+
+Your first run was stopped at the session's two-hour limit. Its work is
+still uncommitted in this worktree (examples, `oracle/bench_engine.py`,
+`docs/perf/engine.md` with the dolby rows, `smooth.rs`, `design.rs`,
+`fit.rs`). `fit.rs` was edited at 15:08, after your last test run (14:38):
+start by finishing or reverting that edit and re-running the full engine
+suite on both libm paths and in release mode. Results must stay bit-equal
+where the goldens require it.
+
+This run also has a hard two-hour limit. Budget it: stop starting new
+measurements at 90 minutes, then write the report.
+
+1. **Comparable rows.** In the shipped configuration a single channel's RC
+   time overlaps the other channels' tasks, so `rc:<role>` is compared in
+   the one-thread table only; the shipped table compares `rc_all` and
+   `design`. Say so in `docs/perf/engine.md`.
+2. **Fix what is slower**, in this order: `fit_bus` (1.23), `sub_combine`
+   (1.13), `camilla` (1.13), `fit_rc1` (1.03). For each, find where the time
+   goes (timers around the hot loops) and fix it within the packet's rules.
+   If a row cannot be made faster without changing arithmetic, write why
+   and stop on that row.
+3. **Fill the tables** for `dolby`, `room`, `room_dba` in both
+   configurations (the other dolby modes only for `design`). Use three
+   timed runs instead of five for operations over 10 s (`design`,
+   `recommend`), five otherwise. Skip a cell rather than run past the
+   budget, and mark it `not measured`.
+4. Do not register `perf.engine` as implemented unless every measured row
+   is faster; leave it `partial` with the table path in its note otherwise.
+
 ## Files you may change
 
 - `crates/secs-engine/src/**` (performance changes only), `crates/secs-dsp/src/**`

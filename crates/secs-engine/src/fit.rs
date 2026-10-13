@@ -118,8 +118,11 @@ pub(crate) fn residual(req: &FitRequest<'_>, x: &[f64]) -> Vec<f64> {
         .iter()
         .map(|b| (b[0].exp(), b[1].exp(), b[2]))
         .collect();
-    response::peq_response(req.g, &bands)
-        .into_iter()
+    weighted_residual(req, response::peq_response(req.g, &bands))
+}
+
+fn weighted_residual(req: &FitRequest<'_>, h: Vec<C>) -> Vec<f64> {
+    h.into_iter()
         .enumerate()
         .map(|(i, h)| {
             let w = if req.g[i] >= req.lo && req.g[i] <= req.hi {
@@ -130,6 +133,41 @@ pub(crate) fn residual(req: &FitRequest<'_>, x: &[f64]) -> Vec<f64> {
             w * (20.0 * (response::magnitude(h) + 1e-12).log10() - req.corr_db[i])
         })
         .collect()
+}
+
+/// Two-point Jacobian probes change only one band. Reuse the other bands'
+/// responses, but always multiply the complete cascade in its original order.
+pub(crate) struct ResidualCache {
+    z: Vec<C>,
+    bands: Vec<Option<([u64; 3], Vec<C>)>>,
+}
+
+impl ResidualCache {
+    pub(crate) fn new(g: &[f64], bands: usize) -> Self {
+        Self {
+            z: g.iter()
+                .map(|&f| C::from_polar(1.0, (-2.0 * PI * f) * (1.0 / 48000.0)))
+                .collect(),
+            bands: vec![None; bands],
+        }
+    }
+
+    pub(crate) fn evaluate(&mut self, req: &FitRequest<'_>, x: &[f64]) -> Vec<f64> {
+        let mut h = vec![C::new(1.0, 0.0); self.z.len()];
+        for (cached, b) in self.bands.iter_mut().zip(x.as_chunks::<3>().0) {
+            let key = b.map(f64::to_bits);
+            if cached.as_ref().is_none_or(|(old, _)| *old != key) {
+                *cached = Some((
+                    key,
+                    response::peaking_response_z(&self.z, b[0].exp(), b[1].exp(), b[2], 48000.0),
+                ));
+            }
+            for (h, p) in h.iter_mut().zip(&cached.as_ref().unwrap().1) {
+                *h *= p;
+            }
+        }
+        weighted_residual(req, h)
+    }
 }
 
 pub(crate) fn result_bands(req: &FitRequest<'_>, x: &[f64]) -> Vec<Peq> {
@@ -162,12 +200,13 @@ pub fn fit_peq_until(req: &FitRequest<'_>, cancelled: &dyn Fn() -> bool) -> Vec<
     if seed.bands.is_empty() {
         return Vec::new();
     }
+    let mut cache = ResidualCache::new(req.g, seed.bands.len());
     let sol = optimize::least_squares(
         |x| {
             if cancelled() {
                 vec![0.0; req.g.len()]
             } else {
-                residual(req, x)
+                cache.evaluate(req, x)
             }
         },
         &seed.x0,

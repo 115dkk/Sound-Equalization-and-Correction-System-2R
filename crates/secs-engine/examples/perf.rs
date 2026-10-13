@@ -1,0 +1,363 @@
+//! Release-only audit harness; fixture loading and warm-up are outside timings.
+#![forbid(unsafe_code)]
+#![allow(dead_code)]
+
+// Compile the same private stages without making benchmark APIs part of the library.
+#[path = "../src/ba.rs"]
+mod ba;
+#[path = "../src/calibration.rs"]
+mod calibration;
+#[path = "../src/tests/cases.rs"]
+mod cases;
+#[path = "../src/chain.rs"]
+mod chain;
+#[path = "../src/decay.rs"]
+mod decay;
+#[path = "../src/design.rs"]
+mod design;
+#[path = "../src/error.rs"]
+mod error;
+#[path = "../src/export_view.rs"]
+mod export_view;
+#[path = "../src/fit.rs"]
+mod fit;
+#[path = "../src/grid.rs"]
+mod grid;
+#[path = "../src/input.rs"]
+mod input;
+#[path = "../src/levels.rs"]
+mod levels;
+#[path = "../src/measurement.rs"]
+mod measurement;
+#[path = "../src/notes.rs"]
+mod notes;
+#[path = "../src/preview.rs"]
+mod preview;
+#[path = "../src/rc.rs"]
+mod rc;
+#[path = "../src/scorecard.rs"]
+mod scorecard;
+#[path = "../src/setup.rs"]
+mod setup;
+#[cfg(test)]
+#[path = "../src/tests/mod.rs"]
+mod tests;
+#[path = "../src/xo.rs"]
+mod xo;
+
+pub use ba::{LayoutInfo, ManualPlan};
+pub use calibration::{EngineInputs, ProjectView, engine_inputs};
+pub use chain::{BaRow, StageResponses, input_response, stage_responses};
+pub use design::{
+    Design, DesignRequest, DesignSpectra, FitStage, FitterFactory, MainDesign, SubDesign, design,
+    production_fitters,
+};
+pub use error::EngineError;
+pub use input::{EngineConfig, Measurement, MeasurementSet, Samples, Tuning};
+pub use measurement::{Spectra, long_spectra};
+pub use setup::SubFilter;
+pub type C = secs_dsp::Complex64;
+
+use secs_compute::{CancelToken, Context, MemoryBudget, NoProgress};
+use std::{hint::black_box, sync::Arc, time::Instant};
+
+fn measure<T>(op: &str, case: &str, threads: usize, mut call: impl FnMut() -> T) {
+    let warm_started = Instant::now();
+    let warm = black_box(call());
+    let warm_seconds = warm_started.elapsed().as_secs_f64();
+    drop(warm);
+    let mut samples = Vec::new();
+    let runs = if matches!(op, "design" | "recommend") && warm_seconds > 10.0 {
+        3
+    } else {
+        5
+    };
+    for _ in 0..runs {
+        let start = Instant::now();
+        let result = black_box(call());
+        samples.push(start.elapsed().as_secs_f64());
+        drop(result);
+    }
+    let mut sorted = samples.clone();
+    sorted.sort_by(f64::total_cmp);
+    println!(
+        "{}",
+        serde_json::json!({"implementation":"rust", "op":op, "case":case, "threads":threads, "samples_s":samples, "median_s":sorted[sorted.len() / 2]})
+    );
+}
+
+fn main() {
+    if cfg!(debug_assertions) {
+        panic!("run with --release");
+    }
+    let args: Vec<_> = std::env::args().collect();
+    let op = args.get(1).map(String::as_str).unwrap_or("design");
+    let name = args.get(2).map(String::as_str).unwrap_or("dolby");
+    let threads = std::env::var("SECS_PERF_THREADS")
+        .ok()
+        .map(|v| v.parse().unwrap())
+        .unwrap_or_else(|| std::thread::available_parallelism().unwrap().get());
+    let ctx = Context::new(
+        threads,
+        MemoryBudget::new(u64::MAX),
+        Arc::new(NoProgress),
+        CancelToken::new(),
+    );
+    let case = cases::load(name);
+    let request = DesignRequest {
+        measurements: &case.measurements,
+        config: &case.config,
+        tuning: &case.tuning,
+        subs_only: false,
+        adapter_notes: &[],
+    };
+    let run = || design(&request, &ctx, &*production_fitters(ctx.cancel())).unwrap();
+    match op {
+        "design" => measure(op, name, threads, run),
+        "stages" => {
+            use std::{collections::BTreeMap, sync::Mutex};
+            let collected = Mutex::new(BTreeMap::<String, Vec<f64>>::new());
+            for iteration in 0..6 {
+                let started = Instant::now();
+                let result = design::design_observed(
+                    &request,
+                    &ctx,
+                    &*production_fitters(ctx.cancel()),
+                    &|stage, elapsed| {
+                        if iteration > 0 {
+                            collected
+                                .lock()
+                                .unwrap()
+                                .entry(stage.into())
+                                .or_default()
+                                .push(elapsed.as_secs_f64());
+                        }
+                    },
+                )
+                .unwrap();
+                if iteration > 0 {
+                    collected
+                        .lock()
+                        .unwrap()
+                        .entry("design".into())
+                        .or_default()
+                        .push(started.elapsed().as_secs_f64());
+                }
+                drop(result);
+            }
+            for (stage, samples) in collected.into_inner().unwrap() {
+                let mut sorted = samples.clone();
+                sorted.sort_by(f64::total_cmp);
+                println!(
+                    "{}",
+                    serde_json::json!({"implementation":"rust", "op":stage, "case":name, "threads":threads, "samples_s":samples, "median_s":sorted[sorted.len() / 2]})
+                );
+            }
+        }
+        "fit_rc1" | "fit_rc2" | "fit_bus" | "fit_xo" | "profile_fit" => {
+            let kind = match op {
+                "fit_bus" => "bus",
+                "fit_xo" => "xo",
+                "profile_fit" => args.get(3).map(String::as_str).unwrap_or("bus"),
+                _ => "rc",
+            };
+            let calls = if name == "dolby_ultra" {
+                Vec::new()
+            } else {
+                secs_oracle::Fixture::all_calls("engine_fit", &format!("fit_{name}_{kind}_"))
+            };
+            let index = usize::from(op == "fit_rc2");
+            let (fx, i) = if let Some(fx) = calls.get(index) {
+                (fx.clone(), fx.inputs().clone())
+            } else {
+                let stage = match kind {
+                    "bus" => "Ba",
+                    "xo" => "Top:L",
+                    _ => "Rc:L",
+                };
+                let selected =
+                    secs_oracle::Fixture::all_calls("engine_design", &format!("{name}_fits_"))
+                        .into_iter()
+                        .filter(|c| c.inputs()["stage"] == stage)
+                        .nth(index)
+                        .expect("recorded design fit");
+                if let Some(r) = selected.inputs().get("reference") {
+                    let source = secs_oracle::Fixture::load(
+                        r["family"].as_str().unwrap(),
+                        r["fixture"].as_str().unwrap(),
+                    );
+                    let input = if let Some(index) = r["call"].as_u64() {
+                        source.calls()[index as usize].inputs().clone()
+                    } else {
+                        let candidate = r["candidate"].as_u64().unwrap() as usize;
+                        let fit = r["fit"].as_u64().unwrap() as usize;
+                        source.outputs()["candidates"][candidate]["fits"][fit]["inputs"].clone()
+                    };
+                    (source, input)
+                } else {
+                    let input = selected.inputs().clone();
+                    (selected, input)
+                }
+            };
+            let g = fx.f64s(&i["g"]);
+            let corr = fx.f64s(&i["corr_db"]);
+            let optional = |v: &serde_json::Value| (!v.is_null()).then(|| secs_oracle::number(v));
+            let request = fit::FitRequest {
+                g: &g,
+                corr_db: &corr,
+                n: i["n"].as_u64().unwrap() as usize,
+                lo: secs_oracle::number(&i["lo"]),
+                hi: secs_oracle::number(&i["hi"]),
+                boost: secs_oracle::number(&i["boost"]),
+                ring_ms: optional(&i["ring_ms"]),
+                f_max: optional(&i["f_max"]),
+            };
+            if op == "profile_fit" {
+                let seed = fit::seed(&request);
+                for _ in 0..6 {
+                    let mut cache = fit::ResidualCache::new(&g, seed.bands.len());
+                    let residual_time = std::cell::Cell::new(std::time::Duration::ZERO);
+                    let calls = std::cell::Cell::new(0_u64);
+                    let started = Instant::now();
+                    let solution = secs_dsp::optimize::least_squares(
+                        |x| {
+                            let t = Instant::now();
+                            let out = cache.evaluate(&request, x);
+                            residual_time.set(residual_time.get() + t.elapsed());
+                            calls.set(calls.get() + 1);
+                            out
+                        },
+                        &seed.x0,
+                        &seed.lb,
+                        &seed.ub,
+                        if request.ring_ms.is_some() { 150 } else { 400 },
+                    )
+                    .unwrap();
+                    println!(
+                        "{}",
+                        serde_json::json!({"op":"profile_fit", "case":name, "total_s":started.elapsed().as_secs_f64(), "residual_s":residual_time.get().as_secs_f64(), "calls":calls.get(), "nfev":solution.nfev, "njev":solution.njev})
+                    );
+                }
+            } else {
+                measure(op, name, threads, || fit::fit_peq(&request));
+            }
+        }
+        "gd" => {
+            let bytes = std::fs::read(
+                std::env::var("SECS_PERF_GD_INPUT").expect("recorded complex128 spectrum"),
+            )
+            .unwrap();
+            let spectrum: Vec<_> = bytes
+                .as_chunks::<16>()
+                .0
+                .iter()
+                .map(|b| {
+                    C::new(
+                        f64::from_le_bytes(b[..8].try_into().unwrap()),
+                        f64::from_le_bytes(b[8..].try_into().unwrap()),
+                    )
+                })
+                .collect();
+            assert_eq!(bytes.len() % 16, 0);
+            assert_eq!(spectrum.len(), grid::design_freqs().len());
+            measure(op, name, threads, || {
+                fit::fit_gd_cuts(grid::design_freqs(), &spectrum, 20.0, 500.0, 6, 3.0)
+            });
+        }
+        "prepare" => measure(op, name, threads, || {
+            measurement::prepare(
+                &case.measurements,
+                &case.config,
+                &setup::Setup::new(&case.config),
+            )
+            .unwrap()
+        }),
+        "recommend" => {
+            let settings = serde_json::from_value(case.settings.clone()).unwrap();
+            let view = ProjectView {
+                groups: &case.config.groups,
+                project_xo: &case.config.xo,
+                target: &case.config.target,
+            };
+            measure(op, name, threads, || {
+                xo::recommend_xo(
+                    &view,
+                    &case.measurements,
+                    &settings,
+                    &case.tuning,
+                    &xo::XO_CANDIDATES,
+                    &ctx,
+                )
+                .unwrap()
+            });
+        }
+        "profile_scores" => {
+            let result = run();
+            let f = grid::design_freqs();
+            let h = &result.mains[0].after;
+            let target = case
+                .config
+                .target
+                .sample(&f.iter().map(|f| f.max(1.0)).collect::<Vec<_>>());
+            measure("score_metrics", name, threads, || {
+                scorecard::metrics(h, f, &target, (100.0, 400.0))
+            });
+            measure("score_ifft", name, threads, || {
+                secs_dsp::fft::irfft(h, grid::N_FFT)
+            });
+            measure("score_gd", name, threads, || {
+                secs_dsp::response::gd_curve(
+                    h,
+                    f,
+                    &[20.0, 40.0, 80.0, 160.0, 320.0, 640.0],
+                    secs_dsp::smooth::Fraction::Scalar(24.0),
+                )
+                .unwrap()
+            });
+        }
+        "profile_sub" => {
+            let result = run();
+            let sub = result.subs.as_ref().unwrap();
+            let f = grid::design_freqs();
+            let (role, row) = &sub.rows[0];
+            let h = result
+                .spectra
+                .used
+                .get(result.spectra.main_position, role)
+                .unwrap();
+            measure("sub_term", name, threads, || chain::term(h, f, row));
+            let power: Vec<_> = h
+                .iter()
+                .map(|h| {
+                    let a = h.re.hypot(h.im);
+                    a * a
+                })
+                .collect();
+            measure("sub_smooth", name, threads, || {
+                secs_dsp::smooth::smooth_power(f, &power, secs_dsp::smooth::Fraction::Scalar(12.0))
+                    .unwrap()
+            });
+            let smoothed =
+                secs_dsp::smooth::smooth_power(f, &power, secs_dsp::smooth::Fraction::Scalar(12.0))
+                    .unwrap();
+            measure("sub_log", name, threads, || {
+                smoothed
+                    .iter()
+                    .map(|p| 10.0 * (p + 1e-30).log10())
+                    .collect::<Vec<_>>()
+            });
+        }
+        "preview" | "cache" | "sub_combine" => {
+            let result = run();
+            let cache = preview::XoPreview::new(&result);
+            match op {
+                "cache" => measure(op, name, threads, || preview::XoPreview::new(&result)),
+                "preview" => measure(op, name, threads, || {
+                    cache.curves(&result, "front", 80.0, true, None)
+                }),
+                _ => measure(op, name, threads, || preview::sub_combine(&result)),
+            }
+        }
+        _ => panic!("unknown operation: {op}"),
+    }
+}

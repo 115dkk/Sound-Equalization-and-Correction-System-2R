@@ -162,10 +162,22 @@ pub fn design(
     ctx: &Context,
     fitters: &FitterFactory<'_>,
 ) -> Result<Design, EngineError> {
+    design_observed(req, ctx, fitters, &|_, _| {})
+}
+
+/// Stage wall times for the release audit example; not part of the public API.
+pub(crate) fn design_observed(
+    req: &DesignRequest<'_>,
+    ctx: &Context,
+    fitters: &FitterFactory<'_>,
+    observed: &(dyn Fn(&str, std::time::Duration) + Sync),
+) -> Result<Design, EngineError> {
     check(ctx)?;
+    let prep_started = std::time::Instant::now();
     let config = req.config;
     let mut setup = Setup::new(config);
     let prepared = measurement::prepare(req.measurements, config, &setup)?;
+    observed("prepare", prep_started.elapsed());
     check(ctx)?;
     let positions = prepared.h.positions().to_vec();
     let progress = ctx.stage("engine.design", 1 + config.mains.len() as u64);
@@ -233,7 +245,6 @@ pub fn design(
         ref_level,
         cancel: ctx.cancel(),
     };
-    #[cfg(test)]
     let ba_started = std::time::Instant::now();
     let mut ba_fitter = fitters(FitStage::Ba);
     let alignment = ba::align(&input, &mut *ba_fitter)?;
@@ -242,11 +253,11 @@ pub fn design(
     let mut timings = vec![("BA".into(), ba_started.elapsed())];
     notes.extend(alignment.notes.clone());
     progress.advance(1);
+    let ba_elapsed = ba_started.elapsed();
     let mut used = prepared.h.clone();
     for (p, r, h) in &alignment.h_subs {
         used.set(*p, r, h.clone());
     }
-    #[cfg(test)]
     let top_started = std::time::Instant::now();
     let mut top_peq = Vec::new();
     let mut top_responses = Vec::new();
@@ -309,6 +320,8 @@ pub fn design(
     }
     #[cfg(test)]
     timings.push(("top PEQ".into(), top_started.elapsed()));
+    observed("top", top_started.elapsed());
+    let bus_started = std::time::Instant::now();
     let (bus_delay_ms, bus_polarity) = if config.subs.is_empty() {
         (0.0, 1)
     } else {
@@ -347,6 +360,7 @@ pub fn design(
         bus_delay_ms,
         bus_polarity,
     );
+    observed("ba", ba_elapsed + bus_started.elapsed());
     let shift = if alignment.plan.as_ref().is_some_and(|p| !p.fixed.is_empty()) {
         config.sub_main_delay_ms
     } else {
@@ -362,6 +376,7 @@ pub fn design(
     } else {
         config.mains.iter().collect()
     };
+    let rc_all_started = std::time::Instant::now();
     let outputs = ctx
         .try_map(roles, |role| {
             check(ctx)?;
@@ -369,7 +384,6 @@ pub fn design(
                 progress.advance(1);
                 return Ok(None);
             };
-            #[cfg(test)]
             let rc_started = std::time::Instant::now();
             let gain_db = ref_level - levels.iter().find(|(r, _)| r == role).unwrap().1;
             let xo_hz = xo_of.iter().find(|(r, _)| r == role).map(|(_, x)| *x);
@@ -463,6 +477,7 @@ pub fn design(
                 combined,
                 after,
             };
+            observed(&format!("rc:{role}"), rc_started.elapsed());
             progress.advance(1);
             #[cfg(test)]
             let elapsed = rc_started.elapsed();
@@ -474,6 +489,7 @@ pub fn design(
             MapError::Cancelled => EngineError::Cancelled,
             MapError::Item { error, .. } => error,
         })?;
+    observed("rc_all", rc_all_started.elapsed());
     let mut channels = Vec::new();
     let mut mains = Vec::new();
     for (channel, main, channel_notes, _elapsed) in outputs.into_iter().flatten() {
@@ -554,21 +570,25 @@ pub fn design(
     let target_db: Arc<[f64]> = target.iter().map(|v| v + ref_level).collect();
     let spl_grid = geomspace(5.0, 20000.0, 1390);
     let gd_grid = geomspace(5.0, 5000.0, 1070);
-    #[cfg(test)]
     let scores_started = std::time::Instant::now();
-    let mut scores = Vec::new();
-    for main in &mains {
-        check(ctx)?;
-        scores.push(RoleScores {
-            role: main.role.clone(),
-            before: scorecard::metrics(&main.before, f, &target, (100.0, 400.0)),
-            after: scorecard::metrics(&main.after, f, &target, (100.0, 400.0)),
-            spl_before: spl_db(&main.before, &spl_grid),
-            spl_after: spl_db(&main.after, &spl_grid),
-            gd_before: response::gd_curve(&main.before, f, &gd_grid, Fraction::Scalar(24.0))?,
-            gd_after: response::gd_curve(&main.after, f, &gd_grid, Fraction::Scalar(24.0))?,
-        });
-    }
+    let scores = ctx
+        .try_map(mains.iter().collect(), |main| {
+            check(ctx)?;
+            Ok(RoleScores {
+                role: main.role.clone(),
+                before: scorecard::metrics(&main.before, f, &target, (100.0, 400.0)),
+                after: scorecard::metrics(&main.after, f, &target, (100.0, 400.0)),
+                spl_before: spl_db(&main.before, &spl_grid),
+                spl_after: spl_db(&main.after, &spl_grid),
+                gd_before: response::gd_curve(&main.before, f, &gd_grid, Fraction::Scalar(24.0))?,
+                gd_after: response::gd_curve(&main.after, f, &gd_grid, Fraction::Scalar(24.0))?,
+            })
+        })
+        .map_err(|e| match e {
+            MapError::Cancelled => EngineError::Cancelled,
+            MapError::Item { error, .. } => error,
+        })?;
+    observed("scores", scores_started.elapsed());
     #[cfg(test)]
     timings.push(("scores".into(), scores_started.elapsed()));
     notes.push(Note::PhaseStrength(
