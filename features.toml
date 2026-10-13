@@ -331,9 +331,17 @@ upstream = "correction_engine.py _correction, MODES"
 id = "engine.scorecard"
 kind = "engine"
 milestone = "M2"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-engine::metrics_match_oracle"]
 upstream = "scorecard.py"
+
+[[feature]]
+id = "engine.decay"
+kind = "engine"
+milestone = "M2"
+status = "implemented"
+tests = ["secs-engine::ba_late_matches_oracle", "secs-engine::calibration_late_matches_oracle", "secs-engine::mode_t60_matches_oracle", "secs-engine::late_peaks_match_oracle"]
+upstream = "correction_engine._ba_setup late_db, calibration._late_db, mimo.mode_t60, mimo._late_peaks"
 
 [[feature]]
 id = "engine.chain"

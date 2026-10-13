@@ -33,6 +33,8 @@ pub mod iir;
 pub mod lowrate;
 pub mod minphase;
 mod numeric;
+pub use numeric::interp;
+pub use numeric::sum as pairwise_sum;
 pub mod optimize;
 pub mod peaks;
 pub mod random;
