@@ -109,6 +109,14 @@ status = "implemented"
 tests = ["secs-policy::no_assembly_kernels_that_leave_avx_state_dirty"]
 
 [[feature]]
+id = "policy.unique_target_names"
+kind = "policy"
+milestone = "M2"
+status = "implemented"
+tests = ["secs-policy::example_and_binary_names_are_unique"]
+note = "Cargo writes all examples and binaries of the workspace to one directory; duplicate names overwrite each other and broke the 0.7.3 Windows release link."
+
+[[feature]]
 id = "policy.subprocess_allowlist"
 kind = "policy"
 milestone = "M0"
