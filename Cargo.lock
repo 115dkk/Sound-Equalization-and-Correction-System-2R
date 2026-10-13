@@ -3209,6 +3209,13 @@ dependencies = [
 [[package]]
 name = "secs-engine"
 version = "0.1.0"
+dependencies = [
+ "secs-dsp",
+ "secs-oracle",
+ "secs-types",
+ "serde_json",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "secs-gpu"

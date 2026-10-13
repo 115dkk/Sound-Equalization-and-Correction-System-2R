@@ -22,4 +22,4 @@ pub use project::{
     rename_keys, snap_focus,
 };
 pub use pyjson::{PyJson, PyJsonError, dumps, loads};
-pub use target::TargetCurve;
+pub use target::{TargetCurve, TargetJson};
