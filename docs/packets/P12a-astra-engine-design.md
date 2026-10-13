@@ -3,7 +3,7 @@
 Worktree: `/home/user/wt/p12a` (branch `m2/p12a`). Work only there. Do not
 commit; Claude reviews the diff and commits. Do not spawn sub-agents. Use the
 shared build directory: `export CARGO_TARGET_DIR=/home/user/wt/target-shared`
-in every shell (another worker may build there; cargo waits for its lock).
+in every shell (it is yours alone this time; it starts empty).
 Remove nothing outside your worktree.
 
 Read first: `docs/ENGINE.md` (all of it: the two time axes in §2 and the
@@ -47,7 +47,7 @@ Upstream:
 
 /// Which stage a `fit_peq` call belongs to, so tests can replay per stage and
 /// production can run channels in parallel, each with its own fitter.
-pub enum FitStage<'a> { Ba, Bus, Top(&'a str), Rc(&'a str) }
+pub enum FitStage<'a> { Ba, Top(&'a str), Rc(&'a str) }   // Ba: every fit inside ba::align
 pub type FitterFactory<'f> = dyn Fn(FitStage<'_>) -> Box<Fitter<'f>> + Sync + 'f;
 pub fn production_fitters() -> Box<FitterFactory<'static>>;   // fit_peq everywhere
 
@@ -151,10 +151,12 @@ For every case in `engine_cases` (all ten), run `calibration.compute` with
 interposition:
 
 - Tag each `fit_peq` call with its stage by wrapping the stage entry points
-  (`_layout_stage`, `_align_subs`, `_align_subs_manual`, `_match_two_way`
-  → `Ba`; `_bus_peq_fit` → `Bus`; `_xo_target_peq` → `Top(role)`, the role
-  from the per-role loop; `_correction` → `Rc(role)`) and record each
-  stage's calls in the recorded-fit form (P07), in call order.
+  (everything `ba::align` covers — `_layout_stage`, `_align_subs`,
+  `_align_subs_manual`, `_match_two_way`, `_bus_peq_fit` and the second bus
+  pass — → `Ba`, since `align` takes one fitter; `_xo_target_peq` →
+  `Top(role)`, the role from the per-role loop; `_correction` → `Rc(role)`)
+  and record each stage's calls in the recorded-fit form (P07), in call
+  order.
 - Record the result: every `ChannelOut` field (FIR digest plus samples),
   every `SubAlign` field, bus delay and polarity, lift, latency,
   `main_extra_ms`, `ref_level`, `sub_level_db`, the notes as strings and as

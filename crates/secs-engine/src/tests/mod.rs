@@ -7,6 +7,8 @@ mod calibration;
 pub(crate) mod cases;
 mod chain;
 mod decay;
+mod design;
+mod e2e;
 pub(crate) mod fit;
 mod prep;
 mod rc;
