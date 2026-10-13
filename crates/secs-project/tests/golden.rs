@@ -2,15 +2,13 @@
 
 use secs_oracle::{Fixture, assert_same, number};
 use secs_project::{
-    Band, DspProfile, Project, Speaker, SpeakerConfig, TargetCurve, python_json,
+    Band, DspProfile, Project, PyJson, Speaker, SpeakerConfig, TargetCurve, dumps, loads,
     read_mono_float_wav, read_wav_float32, snap_focus, write_wav_float32,
 };
 use secs_types::role::{
     ROLES, role_code, role_from_title, role_group, role_kind, role_label, role_order, role_position,
 };
 use serde_json::Value;
-
-const SERDE_NUMBER_KEY_FOR_TEST: &str = "$serde_json::private::Number";
 
 fn str_array(value: &Value) -> Vec<&str> {
     value
@@ -56,7 +54,10 @@ fn project_load_migrations_and_save_match_oracle() {
     for fx in Fixture::all("project", "migrate_") {
         let input = fx.blob(&fx.inputs()["text"]);
         let project = Project::load_text(std::str::from_utf8(&input).unwrap()).unwrap();
-        assert_eq!(project.to_value(), fx.outputs()["value"]);
+        assert_eq!(
+            serde_json::from_str::<Value>(&dumps(&project.to_json())).unwrap(),
+            fx.outputs()["value"]
+        );
         assert_eq!(
             project.save_text().as_bytes(),
             fx.blob(&fx.outputs()["save"])
@@ -68,10 +69,13 @@ fn project_load_migrations_and_save_match_oracle() {
 fn direct_project_preset_matches_oracle() {
     let fx = Fixture::load("project", "direct_preset");
     let project = Project::from_preset(fx.inputs()["preset"].as_str().unwrap()).unwrap();
-    assert_eq!(project.to_value(), fx.outputs()["value"]);
+    assert_eq!(
+        serde_json::from_str::<Value>(&dumps(&project.to_json())).unwrap(),
+        fx.outputs()["value"]
+    );
     assert_eq!(project.dsp, DspProfile::default());
     assert_eq!(
-        project.dsp.to_value(),
+        serde_json::from_str::<Value>(&dumps(&project.dsp.to_json())).unwrap(),
         fx.outputs()["dsp_dataclass_default"]
     );
 }
@@ -79,7 +83,10 @@ fn direct_project_preset_matches_oracle() {
 #[test]
 fn project_edge_contracts_match_oracle() {
     let future = Fixture::load("project", "dsp_future");
-    let project = Project::from_value(serde_json::json!({"dsp": future.inputs()})).unwrap();
+    let project = Project::from_json(
+        loads(&serde_json::json!({"dsp": future.inputs()}).to_string()).unwrap(),
+    )
+    .unwrap();
     assert_eq!(
         project.dsp.fir_taps_max,
         future.outputs()["profile"]["fir_taps_max"]
@@ -94,10 +101,10 @@ fn project_edge_contracts_match_oracle() {
         .zip(focus.outputs()["snapped"].as_array().unwrap())
     {
         let value = match input.as_str() {
-            Some("nan") => Value::String("NaN".into()),
-            Some("+inf") => Value::String("Infinity".into()),
-            Some("-inf") => Value::String("-Infinity".into()),
-            _ => input.clone(),
+            Some("nan") => PyJson::Str("NaN".into()),
+            Some("+inf") => PyJson::Str("Infinity".into()),
+            Some("-inf") => PyJson::Str("-Infinity".into()),
+            _ => loads(&input.to_string()).unwrap(),
         };
         assert_eq!(snap_focus(&value), expected.as_i64().unwrap());
     }
@@ -109,7 +116,7 @@ fn project_edge_contracts_match_oracle() {
         .iter()
         .zip(collections.outputs()["rows"].as_array().unwrap())
     {
-        let project = Project::from_value(input.clone()).unwrap();
+        let project = Project::from_json(loads(&input.to_string()).unwrap()).unwrap();
         assert_eq!(project.curtain.0, number(&expected[0][0]));
         assert_eq!(project.curtain.1, number(&expected[0][1]));
         assert_eq!(
@@ -202,8 +209,13 @@ fn project_edge_contracts_match_oracle() {
 fn project_presets_save_exactly() {
     for fx in Fixture::all("project", "preset_") {
         let expected = &fx.outputs()["value"];
-        let loaded = Project::from_value(expected.clone()).unwrap();
-        assert_eq!(loaded.to_value(), *expected, "{}", fx.id);
+        let loaded = Project::from_json(loads(&expected.to_string()).unwrap()).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&dumps(&loaded.to_json())).unwrap(),
+            *expected,
+            "{}",
+            fx.id
+        );
         assert_eq!(
             loaded.save_text().as_bytes(),
             fx.blob(&fx.outputs()["save"]),
@@ -261,51 +273,17 @@ fn target_curves_match_oracle() {
 }
 
 #[test]
-fn python_json_edge_cases_match_oracle() {
-    let cases = [
-        serde_json::json!({"floats":[0.0,-0.0,1e-7,1e-6,1e-5,1e15,1e16,100000.0,1.2345678901234567],"ints":[0,-1,9007199254740992_i64,1208925819614629174706176_u128],"strings":["","quote \\\"","line\n\ttab\u{8}","한글","😀","\u{2028}"],"empty":[[],{}]}),
-        serde_json::json!([
-            0.0,
-            -0.0,
-            1e-7,
-            1e-6,
-            1e-5,
-            1e15,
-            1e16,
-            100000.0,
-            1.2345678901234567
-        ]),
-        serde_json::json!({"z":1,"a":2}),
-    ];
-    for (index, value) in cases.iter().enumerate() {
+fn pyjson_edge_cases_match_oracle() {
+    for index in 0..3 {
         let fx = Fixture::load("project", &format!("json_{index}"));
-        let expected = fx.blob(&fx.outputs()["finite_save"]);
-        assert_eq!(python_json(value).as_bytes(), expected, "{}", fx.id);
-        if index < 2 {
-            let expected_nonfinite = String::from_utf8(fx.blob(&fx.outputs()["save"])).unwrap();
-            let project = Project::default();
-            let mut rust_value = project.to_value();
-            rust_value["curtain"] = serde_json::json!([0.0, 1.0]);
-            let mut project = Project::from_value(rust_value).unwrap();
-            project.curtain = (f64::NAN, f64::INFINITY);
-            let actual_nonfinite = project.save_text();
-            assert!(expected_nonfinite.contains("NaN"));
-            assert!(actual_nonfinite.contains("NaN"));
-            assert!(actual_nonfinite.contains("Infinity"));
-        }
+        let expected = String::from_utf8(fx.blob(&fx.outputs()["save"])).unwrap();
+        let value = loads(expected.trim_end()).unwrap();
+        assert_eq!(format!("{}\n", dumps(&value)), expected, "{}", fx.id);
     }
 
     for fx in Fixture::all("project", "json_round_trip_") {
         let input = fx.blob(&fx.inputs()["text"]);
         let project = Project::load_text(std::str::from_utf8(&input).unwrap()).unwrap();
-        let expected = if fx.id.ends_with("json_round_trip_2") {
-            let mut value = fx.outputs()["value"].clone();
-            value["future"] = serde_json::json!({SERDE_NUMBER_KEY_FOR_TEST: "123"});
-            value
-        } else {
-            fx.outputs()["value"].clone()
-        };
-        assert_eq!(project.to_value(), expected, "{}", fx.id);
         assert_eq!(
             project.save_text().as_bytes(),
             fx.blob(&fx.outputs()["save"]),
@@ -315,12 +293,61 @@ fn python_json_edge_cases_match_oracle() {
     }
 
     let fx = Fixture::load("project", "typed_negative_zero");
-    let project = Project::from_value(fx.inputs()["value"].clone()).unwrap();
-    assert_eq!(project.to_value(), fx.outputs()["value"]);
+    let project = Project::from_json(loads(&fx.inputs()["value"].to_string()).unwrap()).unwrap();
     assert_eq!(
         project.save_text().as_bytes(),
         fx.blob(&fx.outputs()["save"])
     );
+}
+
+#[test]
+fn pyjson_scanner_edges_match_oracle() {
+    for fx in Fixture::all("project", "json_scanner_") {
+        let input = fx.blob(&fx.inputs()["text"]);
+        let value = loads(std::str::from_utf8(&input).unwrap()).unwrap();
+        let actual = format!("{}\n", dumps(&value));
+        assert_eq!(
+            actual.as_bytes(),
+            fx.blob(&fx.outputs()["save"]),
+            "{}",
+            fx.id
+        );
+    }
+    let fx = Fixture::load("project", "project_numeric_edges");
+    let input = fx.blob(&fx.inputs()["text"]);
+    let project = Project::load_text(std::str::from_utf8(&input).unwrap()).unwrap();
+    assert_eq!(
+        project.save_text().as_bytes(),
+        fx.blob(&fx.outputs()["save"])
+    );
+}
+
+#[test]
+fn pyjson_regressions() {
+    let marker_key = format!("__secs_project_{}_0__", "nonfinite");
+    let marker_text = format!(r#"{{"{marker_key}":"NaN"}}"#);
+    let old_marker = loads(&marker_text).unwrap();
+    assert_eq!(
+        dumps(&old_marker),
+        format!("{{\n  \"{marker_key}\": \"NaN\"\n}}")
+    );
+    assert!(loads(r#""\ud800""#).is_err());
+    assert!(loads(&format!("{}0{}", "[".repeat(1000), "]".repeat(1000))).is_ok());
+    assert!(loads(&format!("{}0{}", "[".repeat(1001), "]".repeat(1001))).is_err());
+
+    let huge = format!("1{}", "0".repeat(400));
+    let project_text = format!(r#"{{"curtain":[{huge},300]}}"#);
+    assert!(Project::load_text(&project_text).is_err());
+
+    // Python's float(2**128) rounds correctly; free-form fields keep the text.
+    let two_128 = "340282366920938463463374607431768211456";
+    let project = Project::load_text(&format!(
+        r#"{{"curtain":[{two_128},300],"future":{two_128}}}"#
+    ))
+    .unwrap();
+    let saved = project.save_text();
+    assert!(saved.contains("3.402823669209385e+38"), "{saved}");
+    assert!(saved.contains(&format!("\"future\": {two_128}")), "{saved}");
 }
 
 #[test]

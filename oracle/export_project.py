@@ -184,6 +184,28 @@ for index, value in enumerate(json_round_trips):
         "save": fam.blob(f"json_round_trip_{index}_save", saved.encode()),
     })
 
+json_scanner_cases = [
+    '{"integer":-0,"float":-0.0,"overflow":1e400,"big":340282366920938463463374607431768211456}',
+    '{"duplicate":1,"duplicate":2,"escaped":"quote \\\" slash \\\\ control \\b\\f\\n\\r\\t","unicode":"한글 😀 \\ud83d\\ude00"}',
+    '{"old_marker":{"__secs_project_nonfinite_0__":"NaN"},"values":[NaN,Infinity,-Infinity]}',
+]
+for index, text in enumerate(json_scanner_cases):
+    value = json.loads(text)
+    encoded = json.dumps(value, ensure_ascii=False, indent=2) + "\n"
+    fam.save(f"json_scanner_{index}", {"text": fam.blob(f"json_scanner_{index}_input", text.encode())}, {
+        "save": fam.blob(f"json_scanner_{index}_save", encoded.encode()),
+    })
+
+project_numeric = {
+    "curtain": [340282366920938463463374607431768211456, 1e400],
+    "future": {"big": 340282366920938463463374607431768211456, "values": [float("nan"), float("inf"), float("-inf")]},
+}
+project_numeric_text = json.dumps(project_numeric, ensure_ascii=False, indent=2) + "\n"
+project_numeric_saved = json.dumps(model.Project.from_dict(json.loads(project_numeric_text)).to_dict(), ensure_ascii=False, indent=2) + "\n"
+fam.save("project_numeric_edges", {"text": fam.blob("project_numeric_edges_input", project_numeric_text.encode())}, {
+    "save": fam.blob("project_numeric_edges_save", project_numeric_saved.encode()),
+})
+
 zero_routes = {
     "version": 3,
     "curtain": [-0, -0.0],

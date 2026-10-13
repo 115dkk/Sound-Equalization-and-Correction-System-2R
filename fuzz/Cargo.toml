@@ -16,6 +16,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4.13"
 secs-jos = { path = "../crates/secs-jos" }
 secs-mdat = { path = "../crates/secs-mdat" }
+secs-project = { path = "../crates/secs-project" }
 
 [[bin]]
 name = "jos_parse"
@@ -34,6 +35,13 @@ bench = false
 [[bin]]
 name = "mdat_build_template"
 path = "fuzz_targets/mdat_build_template.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "project_load_text"
+path = "fuzz_targets/project_load_text.rs"
 test = false
 doc = false
 bench = false

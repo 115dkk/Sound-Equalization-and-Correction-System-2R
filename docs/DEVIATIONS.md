@@ -41,6 +41,7 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 | F6 | CamillaDSP 내보내기가 WAV를 쓴 뒤에야 ASCII 검사에서 실패하고, NaN을 그대로 YAML에 씁니다. | 모든 검사를 첫 파일을 쓰기 전에 합니다. | `export_camilladsp.py:364-365, 402` | 계획 |
 | F7 | mdat 파서의 상한이 배열·문자열 하나씩만 셉니다. 같은 배열·서명을 참조로 여러 번 가리키거나 상위 클래스가 순환하면 메모리를 계속 씁니다. | 해석한 메모리 전체를 `max_file_bytes` 예산으로 세고, 상위 클래스 순환을 거부합니다. 정상 파일과 오라클의 오류 사례는 그대로입니다. `secs-jos::shared_signature_copies_obey_aggregate_allocation_budget`, `secs-jos::declared_array_sizes_do_not_allocate_before_truncation_checks`. | `rew_mdat/serialization/parser.py`, `rew_mdat/limits.py` | 적용 |
 | F8 | 파이썬 문자열은 짝 없는 UTF-16 서러게이트를 담습니다. | 러스트 문자열에는 담을 수 없어 글자 API는 U+FFFD로 보여 주고, 해석한 스트림은 원래 바이트를 지녀 고치지 않은 글자는 그대로 왕복합니다. UTF-16 단위 API로 잃지 않고 읽고 쓸 수 있습니다. `secs-jos::utf8_and_lone_surrogates`. | `rew_mdat/serialization/modified_utf8.py` | 적용 |
+| F9 | `.secs`의 `\uD800` 같은 짝 없는 서러게이트 이스케이프를 읽어 파이썬 문자열에 그대로 담습니다(저장할 때 UTF-8 인코딩에서 실패합니다). | 러스트 문자열에는 담을 수 없어 읽을 때 `ProjectError`로 거부합니다. SECS 2 자신이 이런 파일을 저장할 수 없으므로 손으로 고친 파일에서만 생깁니다. `secs-project::pyjson_regressions`. | `model.py:934-937` | 적용 |
 
 ## REW
 
