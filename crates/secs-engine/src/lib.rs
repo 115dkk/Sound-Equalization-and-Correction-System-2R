@@ -31,3 +31,41 @@
 //! Engine knobs that SECS 2 hid in environment variables are fields of an
 //! explicit tuning value. Defects fixed on the way are listed in
 //! docs/DEVIATIONS.md.
+
+pub mod grid;
+pub mod input;
+
+// The stages are private: `design` (P12) is the one entry point. Until it
+// wires them, only their oracle tests call them, hence the dead-code allowance.
+#[allow(dead_code)]
+mod ba;
+#[allow(dead_code)]
+mod chain;
+#[allow(dead_code)]
+mod decay;
+#[allow(dead_code)]
+mod design;
+#[allow(dead_code)]
+mod fit;
+#[allow(dead_code)]
+mod levels;
+#[allow(dead_code)]
+mod measurement;
+#[allow(dead_code)]
+mod rc;
+#[allow(dead_code)]
+mod scorecard;
+#[allow(dead_code)]
+mod setup;
+#[allow(dead_code)]
+mod xo;
+
+mod error;
+#[cfg(test)]
+mod tests;
+
+pub use error::EngineError;
+pub use input::{EngineConfig, Measurement, MeasurementSet, Samples, Tuning};
+
+/// Complex spectrum value.
+pub type C = secs_dsp::Complex64;

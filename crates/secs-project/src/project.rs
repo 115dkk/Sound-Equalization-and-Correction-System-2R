@@ -1,4 +1,6 @@
-use crate::{DspProfile, ProjectError, PyJson, SpeakerConfig, TargetCurve, dumps, loads};
+use crate::{
+    DspProfile, ProjectError, PyJson, SpeakerConfig, TargetCurve, TargetJson, dumps, loads,
+};
 
 pub const PROJECT_VERSION: i64 = 3;
 pub const FOCUS_STEPS: [i64; 5] = [0, 25, 50, 75, 100];

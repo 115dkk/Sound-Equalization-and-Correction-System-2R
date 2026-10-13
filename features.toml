@@ -282,8 +282,8 @@ note = "known roles, labels, groups, positions, Dolby codes and Unicode-aware ex
 id = "engine.levels_delays"
 kind = "engine"
 milestone = "M2"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-engine::setup_matches_oracle", "secs-engine::preparation_and_levels_match_oracle", "secs-engine::rejects_invalid_measurements_at_every_position_d2", "secs-engine::setup_caps_lift_and_preserves_dictionary_order", "secs-engine::onset_windows_delay_and_spectra_edges", "secs-engine::delay_matches_numpy_bit_for_bit"]
 upstream = "correction_engine.py _prepare, _band_level"
 
 [[feature]]
@@ -377,11 +377,43 @@ tests = []
 note = "new: optional wgpu adapter, ships only if 3x faster than the CPU path (docs/adr/0007)"
 
 [[feature]]
+id = "compute.cancellation"
+kind = "compute"
+milestone = "M2"
+status = "implemented"
+tests = ["secs-compute::cancellation_stops_map_quickly_and_skips_remaining"]
+note = "new"
+
+[[feature]]
+id = "compute.parallel_map"
+kind = "compute"
+milestone = "M2"
+status = "implemented"
+tests = [
+  "secs-compute::parallel_map_is_ordered_and_thread_count_independent",
+  "secs-compute::try_map_reports_lowest_failing_index",
+]
+note = "new"
+
+[[feature]]
+id = "compute.progress"
+kind = "compute"
+milestone = "M2"
+status = "implemented"
+tests = ["secs-compute::progress_reports_endpoints_monotonically_and_throttles"]
+note = "new"
+
+[[feature]]
 id = "compute.memory_budget"
 kind = "compute"
-milestone = "M3"
-status = "planned"
-tests = []
+milestone = "M2"
+status = "implemented"
+tests = [
+  "secs-compute::memory_budget_bounds_concurrent_acquirers",
+  "secs-compute::memory_budget_rejects_oversized_requests",
+  "secs-compute::memory_budget_waiter_observes_cancellation",
+  "secs-compute::memory_permit_releases_after_panic",
+]
 note = "new"
 
 # ---- Measurement and service (M4) ----
