@@ -145,6 +145,57 @@ asserted by the exporters. Spectrum parity measured max error / sampled peak
 5.368509846704912e-16; 1.5× is below the 1e-12 floor. Levels, arrivals,
 weights, target and Schroeder use `PLATFORM_RTOL`; indices are exact.
 
+## Recorded engine fits (P07)
+
+`engine_fit/fit_<case>_<stage>_<call>.json` is the shared recorded-call form.
+Stages are `rc`, `xo` (main acoustic XO), `bus` and `bundle`. `meta` carries
+`case`, `stage`, `role`, and the zero-based per-case/per-stage `call`. The
+selection keeps every Dolby/room call, the first three per stage elsewhere,
+and every main-role XO call (97 PEQ calls total).
+
+A later family's recorded call uses the same `inputs` object:
+`{g, corr_db, n, lo, hi, boost, ring_ms, f_max}`. Both arrays use normal
+Family float64 descriptors relative to that family's folder; the two optional
+scalars are JSON null when absent. The result is an array of `[Hz, Q, dB]`
+triples, in `outputs.result`. The shared Rust reader is
+`tests::fit::read_recorded_fit(fixture, inputs, result)`. `replay_fitter`
+compares n and optional presence exactly and all continuous arguments using
+`abs(actual-expected)/max(1,abs(expected))`; its panic identifies the call and
+worst field/index. Callers must also check their expected call count.
+
+Additional P07 outputs are `seed` (greedy triples), `x0`, `lb`, `ub`, `cap`,
+TRF `x`, `cost`, `nfev`, `njev`, `status`; and `trace` digests of all residual
+call points/costs, Jacobian base points, and the initial residual/Jacobian.
+The matrices are row-major. Empty fits have only an empty seed/result.
+
+`one_step` preserves **every** trial, losslessly: `initial_x`, the per-trial
+`step`, `Delta`, carried `alpha`, reductions, ratio, `Delta_new`, accepted and
+Jacobian-recomputed flags. Reconstruct `x_new = x + step`, move any value on
+a bound one ULP inward, and set the next x to x_new only when accepted.
+The exporter proves this against SciPy's actual arrays, and the Rust test
+checks the complete reconstructed `x_new_digest`. This removes two redundant
+matrix columns to keep the family below 6,000,000 bytes. Long diagnostic
+traces remain digests, not truncated optimizer paths.
+
+`xo_*` names the shared input case, role, ordered positions, applied gain and
+scalar arguments, and the corresponding `fit_*` record. Its test rebuilds
+responses from P05 prepare and cuts the fitter with recorded decisions.
+`gd_*` records **sampled corrected combined spectra plus full real/imag
+SHA-256 digests**, not reconstructable full spectra. It also keeps every
+inner least-squares x0/bounds/result/count/status. These inputs depend on
+RC/BA decisions: a full GD result gate is pending their reconstruction;
+interpolating the samples would not reproduce the original GD computation.
+
+Current P07 blocker: seeds, boxes, initial residuals and Jacobians are exact
+on oracle libm, but the existing secs-dsp TRF diverges globally on these
+6–16-band converging engine fits (including evaluation counts). The local
+1e-9 replay also fails some ill-conditioned RC trials. These are retained
+as failing tests, not waived or turned into capped-fit reports. The feature
+remains partial until the solver limitation is resolved. `secs-dsp` is not
+changed by P07. XO request tolerance is 1e-9 (measured errors below the floor);
+1e-10 final-fit and 1e-9 local-replay floors remain diagnostic failing gates,
+not claimed measured parity budgets.
+
 ## Families
 
 | Family | Exporter | What is frozen |
@@ -152,6 +203,7 @@ weights, target and Schroeder use `PLATFORM_RTOL`; indices are exact.
 | `dsp` | `export_dsp.py` | P03 grid, smoothing, cepstral minimum phase, analog/RBJ responses, GD, digital Butterworth SOS, FIR, peaks, low-rate projection; N=131072 sr=48000 room L spectrum from sample_dolby_714.npz. Smoothing outputs keep bins 0–1799, every 127th higher bin and Nyquist (computed on the full grid); all other outputs are complete. TRF includes caps150/400, real-room 3-band fits that exhaust both caps, all residual/probe calls and Jacobian bases. Every oracle trial records x/Delta/carried alpha, step, x_new, reductions, ratio, updated radius and accept/Jacobian-update decisions for local replay. Trials 0–2 of peq150/room150 keep full intermediates; global traces are reports. |
 | `dsp_de` (`rs_*`) | `export_dsp_de.py` | NumPy 2.5.3 legacy RandomState seeds 0, 1, 2, 12345, 2**32−1: 5000 raw uint32 draws as little-endian byte blobs, 5000 53-bit samples; mixed scalar randint (DE dimensions and rejection/width edges), uniform, permutation and repeated in-place shuffle. Random streams always compare bit-for-bit, including on foreign libm. |
 | `dsp_de` (`de_*`) | `export_dsp_de.py` | SciPy 1.18.1 unpolished immediate best1bin: BA-shaped nonsmooth costs at every dimension 2–12, seeds 1/2, with/without x0; Rosenbrock and plateaus at dimensions 2/7/12; tol convergence and maxiter exhaustion, zero iterations, constant/equal/reversed bounds, minimum population, one dimension, NaN/infinity. Every cost-call vector and cost (full values up to 4096, longer traces as digests), final x/fun/nit/nfev/success/message; traces are bit-exact on the oracle libm (digests checked whole), elsewhere `rtol(0)` on the values and the digests' first/last 32. Counts and messages are always exact. |
+| `engine_fit` | `export_engine_fit.py` | Actual calibration PEQ calls, exact greedy seeds and ring boxes, lossless per-trial replay, long trace digests; main XO reconstruction identities; GD sampled inputs and inner solver results. ≤6 MB; solver/GD gates still partial (see above). |
 | `engine_inputs` | `export_engine_inputs.py` | Ten shared engine cases, float32 IRs stored once, observed make_engine constructor/configuration values, raw settings and project summary |
 | `engine_prep` | `export_engine_prep.py` | Constructor normalisation, exact onsets/window starts, arrival/alignment/base, sampled H/H0 and long 2000/500 ms spectra, position/frequency weights, main levels/reference, Schroeder and target samples |
 | `libm` | `export_libm.py` | float64 `ln`, `log10`, `log2`, `exp`, `sin`, `cos`, `tan`, `atan`, `tanh`, `atan2`, `pow` at fixed points |
