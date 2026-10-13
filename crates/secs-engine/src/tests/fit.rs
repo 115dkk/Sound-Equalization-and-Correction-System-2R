@@ -329,12 +329,23 @@ fn peq_results_within_secs2_spread() {
         // to be the worst run: the twelve runs are draws from the same
         // last-bit distribution, and Rust is a thirteenth draw (it exceeds
         // all twelve on about 1/13 of the calls, which `SPREAD_RANK` shows).
-        let limit = c0 + 1.25 * (cmax - cmin) + 1e-12 * c0;
-        let pass = cost.is_finite() && cost <= limit;
+        // Twelve runs cannot resolve a spread far below the typical one
+        // (median 1.7e-5 of the cost over these calls, as small as 2e-8 on
+        // some): floor it at 1e-6 of the cost. Without the floor macOS's
+        // libm failed `fit_dolby_rc_015` at 1.30 times a 1.1e-7 range.
+        let limit = c0 + 1.25 * (cmax - cmin).max(1e-6 * c0);
+        // A fit that stops at its evaluation cap ends wherever its trajectory
+        // is at the cap. The twelve runs share the oracle's libm, so on another
+        // libm (Windows, macOS) a capped fit is one more trajectory they did not
+        // sample; it is reported there and the design's end result is gated by
+        // `engine_e2e` (docs/ENGINE.md §3). Converging fits are gated everywhere.
+        let capped = integer(&o["status"]) == 0;
+        let gated = !capped || oracle_libm();
+        let pass = cost.is_finite() && (cost <= limit || !gated);
         above_all += usize::from(cost > cmax);
         calls += 1;
         println!(
-            "SPREAD {} stage={} case={} rust_c0={:.17e} spread={:.17e} cmax_run={cmax_run} rust_cost={cost:.17e} nearest={} bands_abs={:.17e} bands_rel={:.17e} counts=({},{},{}) {} pass={pass}",
+            "SPREAD {} stage={} case={} rust_c0={:.17e} spread={:.17e} cmax_run={cmax_run} rust_cost={cost:.17e} nearest={} bands_abs={:.17e} bands_rel={:.17e} counts=({},{},{}) {} within={} pass={pass}",
             fx.inputs()["id"].as_str().unwrap(),
             fx.meta()["stage"],
             fx.meta()["case"],
@@ -346,7 +357,8 @@ fn peq_results_within_secs2_spread() {
             result.nfev,
             result.njev,
             result.status,
-            counts
+            counts,
+            cost <= limit
         );
         if !pass {
             println!(
@@ -367,6 +379,16 @@ fn peq_results_within_secs2_spread() {
     println!(
         "SPREAD_RANK rust above all twelve runs on {above_all} of {calls} calls (exchangeable: about {:.1})",
         calls as f64 / 13.0
+    );
+    // As a thirteenth draw Rust exceeds all twelve runs with probability 1/13
+    // per call. More than the binomial 99.9 % quantile means Rust is
+    // systematically worse, on any libm.
+    let p = 1.0 / 13.0;
+    let mean = calls as f64 * p;
+    let bound = (mean + 3.1 * (mean * (1.0 - p)).sqrt()).ceil() as usize;
+    assert!(
+        above_all <= bound,
+        "rust above all twelve runs on {above_all} of {calls} calls (bound {bound})"
     );
     assert!(
         failures.is_empty(),
