@@ -109,6 +109,12 @@ jobs:
           fi
 
       - name: Test (release mode)
+        # This job builds on older runners on purpose (ubuntu-22.04 keeps the
+        # AppImage's glibc floor low), whose libm can differ from the oracle's
+        # in the last bit where the probe does not look. Oracle parity is
+        # gated in ci.yml; here every oracle test takes its foreign-libm path.
+        env:
+          SECS_ORACLE_FOREIGN_LIBM: "1"
         run: cargo test --workspace --release --locked
 
       - uses: actions/setup-node@v7

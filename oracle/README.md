@@ -58,6 +58,10 @@ versions.
   SHA-256 of its little-endian float64 bytes, without a sidecar
   (`Family.f64_digest`, `Fixture::assert_digest`).
 - Matrices are row-major.
+- A fixture recording many calls of one function bundles them:
+  `{"inputs": {"calls": [...]}, "outputs": {"calls": [...]}}`, one entry per
+  call in call order, so a family does not grow one file per call
+  (`Fixture::calls`, `Fixture::all_calls`).
 
 `secs-oracle` checks every sidecar's length and SHA-256 when it reads it, and
 its test `every_sidecar_and_blob_matches_its_descriptor` checks all of them.
@@ -140,7 +144,7 @@ normal float64 sidecars. It is data storage only, not an additional case.
 so **all** H0 cells initially alias H, including filtered subs. Long 500 ms
 spectra differ from preparation: their taper is 10%, not 20%.
 
-Budgets: `engine_inputs` ≤9,000,000 bytes; `engine_prep` ≤3,000,000 bytes,
+Budgets: `engine_inputs` ≤9,000,000 bytes; `engine_prep` ≤3,200,000 bytes,
 asserted by the exporters. Spectrum parity measured max error / sampled peak
 5.368509846704912e-16; 1.5× is below the 1e-12 floor. Levels, arrivals,
 weights, target and Schroeder use `PLATFORM_RTOL`; indices are exact.
@@ -205,7 +209,9 @@ not claimed measured parity budgets.
 | `dsp_de` (`de_*`) | `export_dsp_de.py` | SciPy 1.18.1 unpolished immediate best1bin: BA-shaped nonsmooth costs at every dimension 2–12, seeds 1/2, with/without x0; Rosenbrock and plateaus at dimensions 2/7/12; tol convergence and maxiter exhaustion, zero iterations, constant/equal/reversed bounds, minimum population, one dimension, NaN/infinity. Every cost-call vector and cost (full values up to 4096, longer traces as digests), final x/fun/nit/nfev/success/message; traces are bit-exact on the oracle libm (digests checked whole), elsewhere `rtol(0)` on the values and the digests' first/last 32. Counts and messages are always exact. |
 | `engine_fit` | `export_engine_fit.py` | Actual calibration PEQ calls, exact greedy seeds and ring boxes, lossless per-trial replay, long trace digests; main XO reconstruction identities; GD sampled inputs and inner solver results. ≤6 MB; solver/GD gates still partial (see above). |
 | `engine_inputs` | `export_engine_inputs.py` | Ten shared engine cases, float32 IRs stored once, observed make_engine constructor/configuration values, raw settings and project summary |
-| `engine_prep` | `export_engine_prep.py` | Constructor normalisation, exact onsets/window starts, arrival/alignment/base, sampled H/H0 and long 2000/500 ms spectra, position/frequency weights, main levels/reference, Schroeder and target samples |
+| `engine_prep` | `export_engine_prep.py` | Constructor normalisation, exact onsets/window starts, arrival/alignment/base, sampled H/H0 and long 2000/500 ms spectra, position/frequency weights, main levels/reference, Schroeder and target samples; `_delay` and `_sub_sum`/`_term` bit for bit on synthetic spectra, sampled on real ones |
+| `engine_decay` | `export_engine_decay.py` | P08: all ten actual calibration runs, 742 mode-T60 calls (including 15 edges), 101 late-peak calls (including 9 edges); four BA setups with raw and three seeded random-row sums (40 short spectra); 34 rebuilt long spectra and four delay×PEQ recipes for XO late energy; 17 rebuilt H0 scorecards and eight recipe/norm variants, all 17 metrics. 1,969,077 bytes in 163 files, calls bundled per kind and case (≤3 MB). Percentages, peak frequencies and peak lists are exact on oracle libm. Continuous budgets are 1.5× measured, floored at PLATFORM_RTOL; pre_db below −250 dB has a separate 1.5×1.4484069100264113e−5 relative budget because FFT roundoff dominates its energy. Foreign-libm flat-response GD argmax and single-spike late-peak ties are report-only. |
+| `camilla` | `export_camilla.py` | CamillaDSP v4 YAML and float32 FIR WAV bytes from seven computed chains plus direct no-sub/LFE/device/rounding cases; Python float repr, half-even rounding, `g` and fixed formats on edge values |
 | `libm` | `export_libm.py` | float64 `ln`, `log10`, `log2`, `exp`, `sin`, `cos`, `tan`, `atan`, `tanh`, `atan2`, `pow` at fixed points |
 | `mdat` | `export_mdat.py` | bounded Java serialization parsing, Modified UTF-8, full REW model adaptation, byte-identical round trips, and deterministic 1- and 3-measurement builds (one from three real Dolby-room IRs); built models are frozen as digests |
 | `project` | `export_project.py` | role vocabulary, `.secs` presets and migrations, Python JSON bytes, tap allocation, target curves, float32 WAV bytes and readers |

@@ -61,10 +61,44 @@ def main():
         delays.append({'ms': ms, 'digest': fam.f64_digest(d.view(np.float64)),
                        'sampled': fam.c128(f'delay_{len(delays)}', d[bins])})
     fam.save('delay', inputs={'bins': fam.f64('bins', bins)}, outputs={'delays': delays})
+    # `_sub_sum` and `_term`: the BA signal path every later stage replays
+    # (chain::sub_sum, chain::term). On synthetic spectra both sides build
+    # exactly (re = 1 + r/4, im = k*1e-6 - 0.5) the arithmetic is pinned bit
+    # for bit; on the `room` case's real spectra (whose FFTs differ in the
+    # last bits) it is sampled.
+    room = next(c for c in cases() if c.name == 'room').engine()
+    room._prepare()
+    full = np.arange(f.size)
+    log = np.unique(np.round(np.geomspace(55, 400, 160)).astype(int))
+    few = bins[::4]
+    rows_sets = [
+        [(-3.5, 1.234, 1, []), (0.0, -2.5, -1, [(45.0, 0.7), (80.0, 2.2)])],
+        [(0.0, 0.0, 1, []), (-8.0, 12.0, -1, [(20.0, 0.3)])],
+    ]
+    real_h = room.H
+    synthetic = {p: {r: (1.0 + 0.25 * i) + 1j * (np.arange(f.size) * 1e-6 - 0.5)
+                     for i, r in enumerate(room.subs)} for p in room.positions}
+    sums = []
+    for rows in rows_sets:
+        for grid_name, grid in (('full', full), ('log', log)):
+            room.H = synthetic
+            exact = room._sub_sum(rows, grid, room.positions)
+            room.H = real_h
+            real = room._sub_sum(rows, grid, room.positions)
+            pick = few if grid_name == 'full' else np.arange(grid.size)
+            sums.append({'rows': rows, 'grid': grid_name,
+                         'synthetic': [[p, fam.f64_digest(v.view(np.float64))] for p, v in exact.items()],
+                         'real': [[p, fam.c128(f'sub_sum_{len(sums)}_{p}', v[pick])] for p, v in real.items()]})
+    term_row = (-1.75, 3.5, -1, [(60.0, 1.1)])
+    term = ce._term(synthetic[2]['SW2'], f, *term_row)
+    fam.save('sub_sum', inputs={'case': 'room', 'subs': room.subs, 'log_grid': fam.f64('sub_sum_log', log),
+                                'few': fam.f64('sub_sum_few', few)},
+             outputs={'sums': sums, 'term': {'position': 2, 'role': 'SW2', 'row': term_row,
+                                             'digest': fam.f64_digest(term.view(np.float64))}})
     fam.save('spectra', inputs={'bins_per_spectrum': len(bins), 'spectra': len(bank)},
              outputs={'values': fam.c128('spectra', np.concatenate(bank))})
     fam.finish()
-    assert sum(fam.written.values()) <= 3_000_000
+    assert sum(fam.written.values()) <= 3_200_000
 
 
 if __name__ == '__main__':

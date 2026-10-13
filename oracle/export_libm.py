@@ -26,5 +26,13 @@ cases = {
     "atan2": [(y, x, np.arctan2(y, x)) for y, x in zip(rng.uniform(-5, 5, 200), rng.uniform(-5, 5, 200))],
     "pow": [(b, e, np.power(b, e)) for b, e in zip(rng.uniform(1e-3, 50, 200), rng.uniform(-8, 8, 200))],
 }
-fam.save("probe", inputs={"seed": 20261013}, outputs={"cases": cases})
+# sin/cos over the phases the engine evaluates on the design grid
+# (secs-engine measurement::ramp_phase, delay_response): glibc versions agree on
+# the fixed points above yet differ in the last bit on some of these.
+f = np.fft.rfftfreq(1 << 17, 1 / 48000)
+grid = []
+for ms in (-12.0, 7.123456, 199.99):
+    theta = (0.0 + (-2.0 * np.pi * f) * ms) * 0.001
+    grid.append({"ms": ms, "digest": fam.f64_digest(np.stack([np.cos(theta), np.sin(theta)], axis=1).ravel())})
+fam.save("probe", inputs={"seed": 20261013}, outputs={"cases": cases, "design_phases": grid})
 fam.finish()
