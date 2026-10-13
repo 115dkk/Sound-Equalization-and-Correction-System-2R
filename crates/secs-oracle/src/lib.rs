@@ -256,6 +256,33 @@ pub const PLATFORM_RTOL: f64 = 1e-9;
 /// (`oracle/goldens/libm/probe.json`). Exact gates hold only there; elsewhere
 /// they widen to [`PLATFORM_RTOL`]. `SECS_ORACLE_FOREIGN_LIBM=1` forces the
 /// foreign path so it can be exercised on the oracle's own libm.
+/// sin/cos over the phases the engine evaluates on its design grid
+/// (`secs-engine` `measurement::ramp_phase`): glibc versions that agree on the
+/// probe's fixed points can still differ in the last bit on some of these.
+fn design_phases_match(probe: &Fixture) -> bool {
+    let n = 1usize << 17;
+    let step = 1.0 / (n as f64 * (1.0 / 48000.0));
+    probe.outputs()["design_phases"]
+        .as_array()
+        .unwrap_or_else(|| panic!("libm probe has no design_phases"))
+        .iter()
+        .all(|case| {
+            let ms = number(&case["ms"]);
+            let mut hasher = Sha256::new();
+            for k in 0..=n / 2 {
+                let theta = (0.0 + (-2.0 * std::f64::consts::PI * (k as f64 * step)) * ms) * 0.001;
+                hasher.update(theta.cos().to_le_bytes());
+                hasher.update(theta.sin().to_le_bytes());
+            }
+            let hex: String = hasher
+                .finalize()
+                .iter()
+                .map(|b| format!("{b:02x}"))
+                .collect();
+            Some(hex.as_str()) == case["digest"]["digest"].as_str()
+        })
+}
+
 pub fn oracle_libm() -> bool {
     static SAME: OnceLock<bool> = OnceLock::new();
     *SAME.get_or_init(|| {
@@ -289,7 +316,8 @@ pub fn oracle_libm() -> bool {
             && unary("atan", f64::atan)
             && unary("tanh", f64::tanh)
             && binary("atan2", f64::atan2)
-            && binary("pow", f64::powf);
+            && binary("pow", f64::powf)
+            && design_phases_match(&probe);
         if !same {
             println!(
                 "PLATFORM libm differs from the oracle's: exact gates widen to {PLATFORM_RTOL:e}"
