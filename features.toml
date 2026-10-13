@@ -349,7 +349,7 @@ id = "engine.rc"
 kind = "engine"
 milestone = "M2"
 status = "implemented"
-tests = ["secs-engine::tests::rc::rc_recorded_candidates_and_channel"]
+tests = ["secs-engine::rc_recorded_candidates_and_channel"]
 upstream = "correction_engine.py _correction, MODES"
 
 [[feature]]
