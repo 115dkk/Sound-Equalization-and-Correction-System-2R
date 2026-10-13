@@ -153,3 +153,16 @@ it took), each gate's numbers (largest relative errors, seed and joint cost
 margins, binomial counts), the Rust and Python time per input for the joint
 fit (one input, one thread, informational), anything reported rather than
 asserted and why, and anything you could not do.
+
+## Amendment (Claude, 2026-10-13): the oracle's reference design
+
+P14 found that its exporter's `cal.compute(case.project, case.irs,
+case.settings)` produced a different correction from the one
+`engine_design` recorded and `design::replay` rebuilds (input filters 0.6 %
+apart), so its whole-path test compared different problems. Your exporter
+must not repeat that: its **reference** run must start from exactly the
+design `engine_design` recorded (if a fresh `cal.compute` does not give it
+bit for bit, replay `engine_design`'s recorded fit results inside the
+reference run). The other labels stay free runs. Add a test that the
+problem arrays Rust builds from its replayed design (`X`, `G`, `direct`)
+equal the recorded reference problem to relative 1e-9 on the oracle libm.
