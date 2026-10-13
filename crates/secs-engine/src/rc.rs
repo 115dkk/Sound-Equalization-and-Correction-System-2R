@@ -11,7 +11,7 @@ use crate::{
     setup::Setup,
 };
 use secs_dsp::{
-    fft, interp, lowrate,
+    complex_div as divide, fft, interp, lowrate,
     minphase::minimum_phase,
     pairwise_sum,
     response::{self, magnitude},
@@ -85,22 +85,6 @@ fn rms(v: &[f64]) -> f64 {
     (pairwise_sum(&v.iter().map(|v| v * v).collect::<Vec<_>>()) / v.len() as f64).sqrt()
 }
 
-// NumPy complex division (including division by a real scalar). The DSP
-// helper is private; keep the same scaled formula at this boundary.
-fn divide(a: C, b: C) -> C {
-    if b.re.abs() >= b.im.abs() {
-        if b.re == 0.0 && b.im == 0.0 {
-            return C::new(a.re / b.re.abs(), a.im / b.re.abs());
-        }
-        let r = b.im / b.re;
-        let d = 1.0 / (b.re + b.im * r);
-        C::new((a.re + a.im * r) * d, (a.im - a.re * r) * d)
-    } else {
-        let r = b.re / b.im;
-        let d = 1.0 / (b.re * r + b.im);
-        C::new((a.re * r + a.im) * d, (a.im * r - a.re) * d)
-    }
-}
 fn no_boost_mask(input: &RcInput<'_>) -> Vec<bool> {
     let f = design_freqs();
     let g = geomspace(input.setup.rc_lo.max(20.0), input.setup.rc_hi, 1200);
