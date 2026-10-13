@@ -149,12 +149,27 @@ pub(crate) fn result_bands(req: &FitRequest<'_>, x: &[f64]) -> Vec<Peq> {
 /// Fits the requested region, retaining upstream's out-of-region weight 0.15,
 /// default TRF tolerances, and 400/150 residual-evaluation caps.
 pub fn fit_peq(req: &FitRequest<'_>) -> Vec<Peq> {
+    fit_peq_until(req, &|| false)
+}
+
+/// `fit_peq` that gives up once `cancelled()` turns true. From then on the
+/// residual reads zero, so the trust-region solver stops at its next gradient
+/// test instead of running to its evaluation cap; the bands it returns are
+/// meaningless and the caller discards them. Until then the arithmetic is
+/// exactly `fit_peq`'s.
+pub fn fit_peq_until(req: &FitRequest<'_>, cancelled: &dyn Fn() -> bool) -> Vec<Peq> {
     let seed = seed(req);
     if seed.bands.is_empty() {
         return Vec::new();
     }
     let sol = optimize::least_squares(
-        |x| residual(req, x),
+        |x| {
+            if cancelled() {
+                vec![0.0; req.g.len()]
+            } else {
+                residual(req, x)
+            }
+        },
         &seed.x0,
         &seed.lb,
         &seed.ub,

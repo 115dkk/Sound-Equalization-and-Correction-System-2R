@@ -28,6 +28,32 @@ tests = [
 ]
 note = "End results gated on SECS 2's own spread (twelve runs, ADR 0004); bound-stride replay errors are SciPy select_step's own sensitivity (P07c). P09 checks GD-cut inputs and application."
 
+[[feature]]
+id = "engine.design"
+kind = "engine"
+milestone = "M2"
+status = "implemented"
+upstream = "CorrectionEngine.compute and calibration.compute"
+tests = ["secs-engine::design_matches_recorded_stages", "secs-engine::design_cancellation_returns_within_one_second"]
+note = "Replayed design matches the recorded stages (room after BA reported, its DE diverges); cancellation returns within 1 s at five points of the dolby design (the fitter stops at its next gradient test)."
+
+[[feature]]
+id = "engine.simulator"
+kind = "engine"
+milestone = "M2"
+status = "implemented"
+upstream = "CorrectionEngine.stage_responses and input_response"
+tests = ["secs-engine::simulator_matches_recorded_stages"]
+
+[[feature]]
+id = "engine.e2e_demo"
+kind = "engine"
+milestone = "M2"
+status = "implemented"
+upstream = "calibration.compute on the demo room"
+tests = ["secs-engine::engine_e2e_spread"]
+note = "ADR 0004 per-value 3*max(spread, quantum) cap and exact binomial 99.9% CDF gates pass on oracle and forced-foreign libm paths. Four 1.25-spread exceedances remain reports. Neutral descriptors and chain scalars use two-sided caps and do not enter directional rank counts."
+
 # ---- Policy (M0) ----
 
 [[feature]]
