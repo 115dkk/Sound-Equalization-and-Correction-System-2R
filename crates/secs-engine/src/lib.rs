@@ -35,19 +35,34 @@
 pub mod grid;
 pub mod input;
 
-pub mod ba;
-pub mod chain;
-pub mod decay;
-pub mod design;
-pub mod fit;
-pub mod levels;
-pub mod measurement;
-pub mod rc;
-pub mod scorecard;
-pub mod setup;
-pub mod xo;
+// The stages are private: `design` (P12) is the one entry point. Until it
+// wires them, only their oracle tests call them, hence the dead-code allowance.
+#[allow(dead_code)]
+mod ba;
+#[allow(dead_code)]
+mod chain;
+#[allow(dead_code)]
+mod decay;
+#[allow(dead_code)]
+mod design;
+#[allow(dead_code)]
+mod fit;
+#[allow(dead_code)]
+mod levels;
+#[allow(dead_code)]
+mod measurement;
+#[allow(dead_code)]
+mod rc;
+#[allow(dead_code)]
+mod scorecard;
+#[allow(dead_code)]
+mod setup;
+#[allow(dead_code)]
+mod xo;
 
 mod error;
+#[cfg(test)]
+mod tests;
 
 pub use error::EngineError;
 pub use input::{EngineConfig, Measurement, MeasurementSet, Samples, Tuning};

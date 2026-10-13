@@ -12,9 +12,9 @@ use std::sync::Arc;
 
 /// Impulse-response samples in the precision they were stored with.
 ///
-/// Upstream arithmetic before the windowed copy (the onset threshold) runs in
-/// the array's own dtype, so float32 sources and float64 sources must stay
-/// distinct to reproduce it.
+/// Upstream widens every IR to float64 (`np.asarray(ir, float)`) before any
+/// arithmetic, which [`Samples::at`] reproduces exactly; keeping float32
+/// sources as float32 halves their memory.
 #[derive(Debug, Clone)]
 pub enum Samples {
     /// WAV, REW and mdat measurements.
