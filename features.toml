@@ -348,8 +348,8 @@ upstream = "calibration.py recommend_xo, xo_scores"
 id = "engine.rc"
 kind = "engine"
 milestone = "M2"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-engine::tests::rc::rc_recorded_candidates_and_channel"]
 upstream = "correction_engine.py _correction, MODES"
 
 [[feature]]
