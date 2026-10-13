@@ -9,6 +9,14 @@ Read first: `docs/ENGINE.md`, `docs/adr/0004-parity-and-deviations.md`,
 `replay_fitter` and the recorded-fit fixture form (P07), `decay.rs` (P08),
 `chain.rs` (`term`, `sub_sum`). All of those are read-only for you.
 
+**Base and build.** Your worktree starts from `m2/p07`: P07's `fit.rs`
+(`fit_peq`, `xo_target_peq`, `Fitter`, `replay_fitter`, the recorded-fit
+reader in `src/tests/fit.rs`) is there; its own oracle gate is being
+finalised in P07c, but the API will not change. Use the shared build
+directory to save disk: `export CARGO_TARGET_DIR=/home/user/wt/target-shared`
+in every shell (another worker builds there too; cargo waits for its lock,
+which is fine). Do not delete anything outside your worktree.
+
 ## Goal
 
 Port the RC stage: for one main channel, from its combined (main + sub)
