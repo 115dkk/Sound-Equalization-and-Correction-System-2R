@@ -8,6 +8,7 @@ M1(형식과 수치 프리미티브)의 나머지입니다. 아직 화면에 연
 
 ### 새 기능
 
+- 프로젝트 파일(`secs-project`): SECS 2의 `.secs`(판 1–3 이주 포함)를 읽고, SECS 2와 바이트 단위로 같은 텍스트로 저장합니다. 모르는 키와 `NaN`·`Infinity`·큰 정수도 그대로 보존합니다. `.irs` 측정 폴더의 WAV 읽기·쓰기와 역할 어휘(`secs-types`)도 들어 있습니다.
 - 차분 진화와 NumPy 레거시 `RandomState`(`secs-dsp`): SECS 2의 BA가 정수 시드로 부르는 `scipy.optimize.differential_evolution`과 그 난수원(MT19937)을 옮겼습니다. 난수열은 모든 플랫폼에서, 진화 과정은 오라클과 같은 수학 라이브러리에서 비트 단위로 같습니다.
 
 ## 0.0.1 - 2026-10-13
