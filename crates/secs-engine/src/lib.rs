@@ -52,6 +52,8 @@ mod levels;
 #[allow(dead_code)]
 mod measurement;
 #[allow(dead_code)]
+mod notes;
+#[allow(dead_code)]
 mod rc;
 #[allow(dead_code)]
 mod scorecard;

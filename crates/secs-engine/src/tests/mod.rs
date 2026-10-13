@@ -8,4 +8,5 @@ mod chain;
 mod decay;
 pub(crate) mod fit;
 mod prep;
+mod rc;
 mod scorecard;
