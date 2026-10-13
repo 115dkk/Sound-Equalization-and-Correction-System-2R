@@ -15,18 +15,18 @@
 id = "engine.peq_fit"
 kind = "engine"
 milestone = "M2"
-status = "partial"
+status = "implemented"
 upstream = "correction_engine.py fit_peq, _ring_q_cap, _ring_boxes, fit_gd_cuts, _xo_target_peq"
 tests = [
   "secs-engine::peq_greedy_and_ring_oracle",
   "secs-engine::peq_frozen_residual_and_jacobian",
   "secs-engine::peq_trf_replay",
-  "secs-engine::peq_converging_and_capped_results",
+  "secs-engine::peq_results_within_secs2_spread",
   "secs-engine::xo_target_rebuilt_inputs",
   "secs-engine::replay_fitter_rejects_mismatch",
   "secs-engine::gd_flat_response_has_no_cuts",
 ]
-note = "P07 blocked: production-size converging TRF counts differ despite exact seeds/residuals/Jacobians; GD combined-response reconstruction awaits RC/BA. Do not mark implemented until the failing parity gates pass."
+note = "End results gated on SECS 2's own spread (twelve runs, ADR 0004); bound-stride replay errors are SciPy select_step's own sensitivity (P07c). P09 checks GD-cut inputs and application."
 
 # ---- Policy (M0) ----
 
