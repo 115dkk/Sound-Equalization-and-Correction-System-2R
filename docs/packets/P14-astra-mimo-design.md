@@ -169,3 +169,12 @@ What you ported and where, every accessor you added, the oracle family
 (cases, size), the test results with the largest per-value deviations and the
 binomial counts per case, anything reported rather than asserted and why,
 and anything you could not do.
+
+## Amendment (Claude, 2026-10-13, answering the worker's question)
+
+`crates/secs-engine/Cargo.toml` may take `faer.workspace = true` under
+`[dependencies]`. This is the existing workspace dependency with its pinned
+version and features, not a new package, so it does not break the "no new
+dependencies" rule. Use it for the Cholesky and LU solves only, always with
+`Par::Seq`. Do not touch `secs-dsp` (P15 is editing it). Add
+`crates/secs-engine/Cargo.toml` to your allowed files for this one line.
