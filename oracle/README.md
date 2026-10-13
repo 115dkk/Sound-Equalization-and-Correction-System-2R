@@ -88,6 +88,9 @@ that a one-ulp step change amplifies into a 5e-4 Jacobian change even in
 SciPy itself, while OpenBLAS Haswell/SandyBridge/Nehalem/Prescott runs agree
 to 1e-16: a variant-derived global trace horizon cannot gate this port.
 The full trace and the first three intermediate trials remain reports.
+The replay's premise, a bit-exact residual at the oracle's `x`, holds only
+on the oracle's libm (`oracle_libm()`); elsewhere the replay reports its
+mismatches without failing, and the converging-fit results remain the gate.
 On the room fits, trial 81's actual reduction differs by 8.579e-9, of which
 8.578e-9 is the cost difference of a one-ulp `x_new` difference; the largest
 unexplained remainder over all trials is 2.7e-12.
