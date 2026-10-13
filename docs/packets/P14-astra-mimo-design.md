@@ -230,3 +230,47 @@ What remains, in this order:
 
 Allowed files: as above, plus `crates/secs-engine/examples/perf.rs`. The
 verification block above is unchanged.
+
+## Continuation 2 (Claude, 2026-10-13)
+
+Claude changed two things in your tests (uncommitted in this worktree; keep
+them): λ steps are compared only while every run sits at the same midpoint,
+then reported as `MIMO_LAMBDA_DIVERGED` (the final λ and ratio carry the
+judgement); and a diagnostic test `zz_tmp_whole_path_inputs_vs_recorded`.
+
+That diagnostic found the cause of the whole-path binomial failure
+(`whole/room` worse than all runs 7/6): **the oracle's design is not the
+design Rust replays.** On `room`, the support paths Rust builds from its
+design equal the recorded `stage.paths` to 4e-16, but the input responses
+`stage.inputs.<role>.xs` differ by 1.3–1.9 % and the input filters
+`stage.inputs.<role>.direct` (`to_low(chain[i]['F'])`) by 0.6–0.75 %. So
+`export_engine_mimo.py`'s `cal.compute(case.project, case.irs, case.settings)`
+produces a different correction (`F`, and with it `x`) from the one
+`engine_design` recorded and `design::replay` rebuilds, although both run
+under `oracle/run.py` with one BLAS thread. Until both sides start from the
+same design, the whole-path test compares different problems.
+
+Do, in this order:
+
+1. Find out why the MIMO exporter's reference design differs from
+   `engine_design`'s (shared mutable case state across the loop, a different
+   case or settings object, call order, interposition side effects; check by
+   computing `chain['L']['F']` both ways in the oracle venv). Fix the
+   exporter so its **reference** run uses exactly the recorded design (if
+   the cause cannot be removed, replay `engine_design`'s recorded fit results
+   inside the exporter's reference run). The other seven labels stay free
+   runs; they are the spread.
+2. Regenerate `engine_mimo` (all nine cases, eight labels).
+3. Turn the diagnostic into a permanent test
+   `mimo_whole_path_inputs_match_recorded`: on every case, the `xs`,
+   `direct` and paths Rust builds from its replayed design equal the
+   recorded reference stage inputs to relative 1e-9 (oracle libm; reported
+   elsewhere). Delete `zz_tmp_whole_path_inputs_vs_recorded`.
+4. Rerun the whole-path and stage-boundary tests; finish the remaining items
+   of the first Continuation (ranges and notes for every case; cap 4 is
+   done) and set `engine.mimo_design` to `implemented` when every gate
+   passes. If a whole-path binomial check still fails with matching inputs,
+   report the numbers; do not change the rule.
+
+Allowed files: as before. Also delete stale build metadata only with
+`cargo clean -p <crate>` inside `target-p14` if a build needs it.
