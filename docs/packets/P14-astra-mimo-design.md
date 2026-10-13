@@ -200,3 +200,33 @@ means for a linear solve, on the same golden input's final system
 
 Print both measured values and the bound. If either assertion fails, report
 the numbers; do not loosen the constants.
+
+## Continuation (Claude, 2026-10-13)
+
+The first run is committed (`97f161b`): module, solver, oracle family,
+stage-boundary statistical tests, determinism, the upstream behaviours.
+Claude rewrote the Cholesky-versus-LU assertion to Amendment 2 (it passes:
+backward errors 1e-17 against 2.6e-12, difference 4.7e-9 against 1.3e-3)
+and added the `mimo` module and root re-exports to
+`crates/secs-engine/examples/perf.rs` (that example re-includes the engine
+sources; keep it compiling whenever you add a root item).
+
+What remains, in this order:
+
+1. **Whole-path golden.** For every case of `engine_mimo`, call the public
+   `design_mimo` on the Rust replayed design of that case (the same replay
+   the other engine tests use) and judge its outputs against the eight runs
+   with the same rules as the stage-boundary test: ranges equal after 0.1 Hz
+   rounding, candidates and rank order equal on the oracle libm (reported
+   elsewhere), taps / levels / λ / guard values by the ADR 0004 statistical
+   rule, guard decisions and notes equal where all eight runs agree. Today's
+   statistical test feeds recorded low-rate inputs; keep it, and add this
+   one beside it.
+2. **Ranges and notes for every case** (not only `room`), as above.
+3. **Cap 4** on `room_dba` or `room_multi` (six candidates): exactly four
+   supports per input, a subset of the uncapped set.
+4. Set `engine.mimo_design` to `implemented` with the tests that now cover
+   it (format `secs-engine::test_fn`).
+
+Allowed files: as above, plus `crates/secs-engine/examples/perf.rs`. The
+verification block above is unchanged.
