@@ -9,6 +9,7 @@
 //! whenever this crate's tests run, and CI fails when the committed copy
 //! differs (docs/adr/0003).
 
+pub mod calibration;
 pub mod chain;
 pub mod ipc;
 pub mod role;

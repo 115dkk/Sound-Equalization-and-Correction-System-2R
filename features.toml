@@ -279,6 +279,14 @@ note = "known roles, labels, groups, positions, Dolby codes and Unicode-aware ex
 # ---- Engine (M2, M3) ----
 
 [[feature]]
+id = "engine.calibration_settings"
+kind = "engine"
+milestone = "M2"
+status = "implemented"
+tests = ["secs-types::mode_params_match_upstream", "secs-types::keys_have_upstream_exclusions", "secs-project::calibration_parse_store_and_saved_bytes_match_oracle", "secs-engine::engine_inputs_match_constructor_goldens", "secs-engine::excludes_biamp_and_non_reference_only_roles"]
+upstream = "calibration.py CalibrationSettings, sub_entry, engine_inputs, make_engine"
+
+[[feature]]
 id = "engine.levels_delays"
 kind = "engine"
 milestone = "M2"

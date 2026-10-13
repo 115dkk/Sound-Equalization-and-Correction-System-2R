@@ -119,6 +119,10 @@ make a new synthetic room in each exporter. Construction calls the real
 | `room_manual` | Same room plus SW3; 4 positions | SW1 fixed −2.5 dB / 6 ms / inverted / AP 65 Hz Q0.8; SW2/SW3 bundle A `values`; main delay 8 ms |
 | `room_filters` | Same IRs as `room` | SW1 BW12 HP18 / LR48 LP160 / two PEQs; SW2 LR12 HP22 / BW24 LP180 / one PEQ; XO PEQ 35–270 Hz; boost 4 dB, infra boost 8 dB |
 
+`calibration` freezes settings normalization and byte-identical project storage,
+key equivalence classes, every mode's resolved parameters, the settings used by
+each shared engine case, and biamp/non-reference-role adapter edges.
+
 Synthetic IRs convolve upstream `tests/synth.py` excitation (seed 20260915 +
 role index) with `tests/room_model.py` modal transfers, 1 second at 48 kHz,
 then cast to float32. All variants are subsets of one four-position,
@@ -157,6 +161,7 @@ weights, target and Schroeder use `PLATFORM_RTOL`; indices are exact.
 | `dsp_de` (`rs_*`) | `export_dsp_de.py` | NumPy 2.5.3 legacy RandomState seeds 0, 1, 2, 12345, 2**32−1: 5000 raw uint32 draws as little-endian byte blobs, 5000 53-bit samples; mixed scalar randint (DE dimensions and rejection/width edges), uniform, permutation and repeated in-place shuffle. Random streams always compare bit-for-bit, including on foreign libm. |
 | `dsp_de` (`de_*`) | `export_dsp_de.py` | SciPy 1.18.1 unpolished immediate best1bin: BA-shaped nonsmooth costs at every dimension 2–12, seeds 1/2, with/without x0; Rosenbrock and plateaus at dimensions 2/7/12; tol convergence and maxiter exhaustion, zero iterations, constant/equal/reversed bounds, minimum population, one dimension, NaN/infinity. Every cost-call vector and cost (full values up to 4096, longer traces as digests), final x/fun/nit/nfev/success/message; traces are bit-exact on the oracle libm (digests checked whole), elsewhere `rtol(0)` on the values and the digests' first/last 32. Counts and messages are always exact. |
 | `engine_inputs` | `export_engine_inputs.py` | Ten shared engine cases, float32 IRs stored once, observed make_engine constructor/configuration values, raw settings and project summary |
+| `calibration` | `export_calibration.py` | Settings normalization and storage bytes, key equivalence classes, mode parameters, shared-case settings/notes and adapter edge cases |
 | `engine_prep` | `export_engine_prep.py` | Constructor normalisation, exact onsets/window starts, arrival/alignment/base, sampled H/H0 and long 2000/500 ms spectra, position/frequency weights, main levels/reference, Schroeder and target samples; `_delay` and `_sub_sum`/`_term` bit for bit on synthetic spectra, sampled on real ones |
 | `engine_decay` | `export_engine_decay.py` | P08: all ten actual calibration runs, 742 mode-T60 calls (including 15 edges), 101 late-peak calls (including 9 edges); four BA setups with raw and three seeded random-row sums (40 short spectra); 34 rebuilt long spectra and four delay×PEQ recipes for XO late energy; 17 rebuilt H0 scorecards and eight recipe/norm variants, all 17 metrics. 1,969,077 bytes in 163 files, calls bundled per kind and case (≤3 MB). Percentages, peak frequencies and peak lists are exact on oracle libm. Continuous budgets are 1.5× measured, floored at PLATFORM_RTOL; pre_db below −250 dB has a separate 1.5×1.4484069100264113e−5 relative budget because FFT roundoff dominates its energy. Foreign-libm flat-response GD argmax and single-spike late-peak ties are report-only. |
 | `camilla` | `export_camilla.py` | CamillaDSP v4 YAML and float32 FIR WAV bytes from seven computed chains plus direct no-sub/LFE/device/rounding cases; Python float repr, half-even rounding, `g` and fixed formats on edge values |
