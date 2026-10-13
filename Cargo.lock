@@ -2358,6 +2358,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
 
 [[package]]
+name = "num-bigint"
+version = "0.4.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c89e69e7e0f03bea5ef08013795c25018e101932225a656383bd384495ecc367"
+dependencies = [
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
 name = "num-complex"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3230,6 +3240,16 @@ version = "0.1.0"
 [[package]]
 name = "secs-camilla"
 version = "0.1.0"
+dependencies = [
+ "num-bigint",
+ "num-integer",
+ "num-traits",
+ "ryu",
+ "secs-oracle",
+ "secs-types",
+ "serde_json",
+ "thiserror 2.0.21",
+]
 
 [[package]]
 name = "secs-compute"

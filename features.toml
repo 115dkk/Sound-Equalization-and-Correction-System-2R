@@ -263,8 +263,8 @@ note = "UUID를 주입한 1·3개 측정 빌드(돌비룸 실측 IR 셋 포함)�
 id = "format.camilladsp_v4"
 kind = "format"
 milestone = "M2"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-camilla::make_config_matches_oracle", "secs-camilla::pyfmt_matches_oracle_edges"]
 upstream = "export_camilladsp.py"
 
 [[feature]]
@@ -470,8 +470,8 @@ upstream = "calibration.py export_mdat (hidden in SECS 2's screen)"
 id = "export.camilladsp"
 kind = "export"
 milestone = "M4"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-camilla::export_camilladsp_matches_oracle", "secs-camilla::invalid_values_write_nothing"]
 upstream = "calibration.py export_camilladsp"
 
 # ---- Screens (M5) ----
