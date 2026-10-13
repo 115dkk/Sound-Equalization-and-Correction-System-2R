@@ -247,6 +247,15 @@ upstream = "scipy.optimize.least_squares bounded exact TRF"
 note = "Gated by one-step replay along the oracle's whole path (x_new, step, reductions, radius within 1e-9; actual_reduction net of the cost difference our x_new explains) and exact results for converging fits. Capped fits follow a chaotic path (a one-ulp step difference moves the next finite-difference Jacobian), so their global trace and njev are reported, not gated (oracle/README.md). Unbounded problems are not supported (upstream always passes bounds)."
 
 [[feature]]
+id = "dsp.trf_normal"
+kind = "dsp"
+milestone = "M3"
+status = "implemented"
+tests = ["secs-dsp::trf_normal_one_step_replay", "secs-dsp::trf_normal_whole_runs", "secs-dsp::trf_normal_dense_analytic_equivalence", "secs-dsp::trf_normal_nonfinite_normal_returns_error"]
+upstream = "scipy.optimize.least_squares trf_bounds (exact) via normal equations"
+note = "JᵀJ and Jᵀf instead of the Jacobian; the augmented SVD becomes a symmetric eigendecomposition (docs/MIMO.md §3). Used by the MIMO IIR fit."
+
+[[feature]]
 id = "dsp.random_state"
 kind = "dsp"
 milestone = "M1"
