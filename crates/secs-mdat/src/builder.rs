@@ -382,11 +382,13 @@ pub fn build(
     }
     let mut allocation = 0usize;
     for item in measurements {
-        // Includes padded FFT work, caches, serialized arrays and text expansion.
+        // Retained output per sample is the IR float plus six float cache arrays.
+        // FFT work and serialized bytes are transient and must not be charged as
+        // if they all remained allocated for every measurement.
         allocation = item
             .samples
             .len()
-            .checked_mul(128)
+            .checked_mul(28)
             .and_then(|n| {
                 item.title
                     .len()

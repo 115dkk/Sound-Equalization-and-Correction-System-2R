@@ -11,10 +11,15 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[features]
+test-support = ["dep:secs-oracle", "dep:serde_json"]
+
 [dependencies]
 secs-types.workspace = true
 secs-compute = { path = "../secs-compute" }
 secs-dsp = { path = "../secs-dsp" }
+secs-oracle = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 thiserror.workspace = true
 
 [dev-dependencies]

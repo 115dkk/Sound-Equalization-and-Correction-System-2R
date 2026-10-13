@@ -529,16 +529,16 @@ note = "one job model, cooperative cancellation, stale instead of discarded resu
 id = "export.before_after_mdat"
 kind = "export"
 milestone = "M4"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-export::export_items_match_oracle", "secs-export::built_projects_match_oracle_structure_and_size", "secs-export::public_exports_use_oracle_filenames_and_replace_existing_files"]
 upstream = "calibration.py export_before_after_mdat"
 
 [[feature]]
 id = "export.staged_mdat"
 kind = "export"
 milestone = "M4"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-export::export_items_match_oracle", "secs-export::built_projects_match_oracle_structure_and_size", "secs-export::public_exports_use_oracle_filenames_and_replace_existing_files"]
 upstream = "calibration.py export_mdat (hidden in SECS 2's screen)"
 
 [[feature]]

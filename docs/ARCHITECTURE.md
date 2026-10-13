@@ -28,6 +28,7 @@ crates/
   secs-project/           .secs, 이주, 구성·DSP 프로파일·타겟, 측정 계획, .irs 저장소
   secs-jos/               자바 직렬화 그래프 (바이트 동일 왕복)
   secs-mdat/              REW mdat 읽기·만들기
+  secs-export/            보정 단계·전후 REW mdat 내보내기
   secs-rew/               REW API (Real, Fake)
   secs-audio/             자체 측정 (스윕, 세션, 디컨볼루션, 레벨 체크)
   secs-camilla/           CamillaDSP v4 설정과 FIR
@@ -55,6 +56,7 @@ ui ──IPC──> secs2r ─┬─> secs-service ─┬─> secs-engine ─┬
                     │                 ├─> secs-rew ──────> secs-types
                     │                 ├─> secs-audio ────> secs-dsp, secs-types
                     │                 ├─> secs-mdat ─────> secs-jos, secs-dsp
+                    │                 ├─> secs-export ───> secs-engine, secs-mdat, secs-types
                     │                 └─> secs-camilla ──> secs-dsp, secs-types
                     ├─> secs-gpu ─────> secs-engine (SupportFitBackend seam)
                     └─> secs-sys ─────> wasapi, cpal, OS 조회 크레이트
