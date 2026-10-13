@@ -22,6 +22,19 @@ change `secs-dsp`.
    inherent to SciPy's algorithm (SECS 2 on another machine would do the
    same), but it must be shown, not assumed.
 
+## Decision after your first run (Claude)
+
+Your diagnosis settles item 1: in all seven trials the Gauss–Newton step
+agrees to ~1e-14, the amplification is the bound stride `(bound − x)/p` of a
+component one ulp from its bound, and SciPy's own unmodified `select_step`
+reproduces Rust's selected step bit for bit from Rust's `p_h`. That is
+SciPy's TRF's own sensitivity at a bound, not a mistranslation: accepted.
+Write that diagnosis (the table and the countercheck) into
+`oracle/README.md` under the `engine_fit` family and as a comment at the
+one-step replay test, then do items 2–4 (the eight perturbed runs, the
+twelve-run envelope gate, registration). The stop rule of item 1 is
+satisfied; apply item 4's rule for anything that still fails.
+
 ## Work
 
 1. **Diagnose the seven calls whose one-step error exceeds 1e-9.** For the
