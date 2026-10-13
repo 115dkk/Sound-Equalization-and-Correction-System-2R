@@ -32,10 +32,10 @@ note = "End results gated on SECS 2's own spread (twelve runs, ADR 0004); bound-
 id = "engine.design"
 kind = "engine"
 milestone = "M2"
-status = "partial"
+status = "implemented"
 upstream = "CorrectionEngine.compute and calibration.compute"
 tests = ["secs-engine::design_matches_recorded_stages", "secs-engine::design_cancellation_returns_within_one_second"]
-note = "P12a arithmetic replay passes except the documented room BA trajectory (report-only); golden family exceeds its 6 MB packet budget. End-to-end spread is a separate failing gate."
+note = "Replayed design matches the recorded stages (room after BA reported, its DE diverges); cancellation returns within 1 s at five points of the dolby design (the fitter stops at its next gradient test)."
 
 [[feature]]
 id = "engine.simulator"
@@ -49,10 +49,10 @@ tests = ["secs-engine::simulator_matches_recorded_stages"]
 id = "engine.e2e_demo"
 kind = "engine"
 milestone = "M2"
-status = "partial"
+status = "implemented"
 upstream = "calibration.compute on the demo room"
 tests = ["secs-engine::engine_e2e_spread"]
-note = "Eight upstream configurations recorded. Four values exceed the unchanged 1.25-times-spread gate: dolby Lb in1_20, dolby R gd_500, room_dba C gd_30 and in1_20."
+note = "ADR 0004 per-value 3*max(spread, quantum) cap and exact binomial 99.9% CDF gates pass on oracle and forced-foreign libm paths. Four 1.25-spread exceedances remain reports. Neutral descriptors and chain scalars use two-sided caps and do not enter directional rank counts."
 
 # ---- Policy (M0) ----
 

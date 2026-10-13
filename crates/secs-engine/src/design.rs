@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use secs_compute::{Context, MapError};
+use secs_compute::{CancelToken, Context, MapError};
 use secs_dsp::{
     interp, response,
     smooth::{self, Fraction},
@@ -31,9 +31,20 @@ pub enum FitStage<'a> {
     Rc(&'a str),
 }
 pub type FitterFactory<'f> = dyn Fn(FitStage<'_>) -> Box<Fitter<'f>> + Sync + 'f;
-pub fn production_fitters() -> Box<FitterFactory<'static>> {
-    Box::new(|_| Box::new(fit::fit_peq))
+pub fn production_fitters(cancel: &CancelToken) -> Box<FitterFactory<'_>> {
+    Box::new(move |_| {
+        Box::new(move |request| {
+            if cancel.is_cancelled() {
+                Vec::new()
+            } else {
+                fit::fit_peq_until(request, &|| cancel.is_cancelled())
+            }
+        })
+    })
 }
+
+/// `correction_engine.py:34`, automatic RC ceiling.
+const RC_AUTO_MAX_HZ: f64 = 500.0;
 
 pub struct DesignRequest<'a> {
     pub measurements: &'a MeasurementSet,
@@ -56,6 +67,8 @@ pub struct Design {
     pub notes: Vec<Note>,
     pub adapter_notes: Vec<String>,
     pub scores: Vec<RoleScores>,
+    #[cfg(test)]
+    pub timings: Vec<(String, std::time::Duration)>,
 }
 pub struct DesignSpectra {
     pub raw: Arc<Spectra>,
@@ -156,7 +169,7 @@ pub fn design(
         .then(|| levels::schroeder_hz(req.measurements, config))
         .flatten();
     if rc_auto {
-        setup.rc_hi = schroeder_hz.map_or(500.0, |f| f.clamp(100.0, 500.0));
+        setup.rc_hi = schroeder_hz.map_or(RC_AUTO_MAX_HZ, |f| f.clamp(100.0, RC_AUTO_MAX_HZ));
     }
     notes.push(Note::RcLimit {
         hz: setup.rc_hi,
@@ -204,24 +217,21 @@ pub fn design(
         ref_level,
         cancel: ctx.cancel(),
     };
+    #[cfg(test)]
+    let ba_started = std::time::Instant::now();
     let mut ba_fitter = fitters(FitStage::Ba);
-    let mut guarded_ba = |r: &fit::FitRequest<'_>| {
-        if ctx.cancel().is_cancelled() {
-            vec![]
-        } else {
-            ba_fitter(r)
-        }
-    };
-    let alignment = ba::align(&input, &mut guarded_ba)?;
+    let alignment = ba::align(&input, &mut *ba_fitter)?;
     check(ctx)?;
+    #[cfg(test)]
+    let mut timings = vec![("BA".into(), ba_started.elapsed())];
     notes.extend(alignment.notes.clone());
-    if !config.subs.is_empty() {
-        progress.set(1);
-    }
+    progress.advance(1);
     let mut used = prepared.h.clone();
     for (p, r, h) in &alignment.h_subs {
         used.set(*p, r, h.clone());
     }
+    #[cfg(test)]
+    let top_started = std::time::Instant::now();
     let mut top_peq = Vec::new();
     let mut top_responses = Vec::new();
     if !config.subs.is_empty() && req.tuning.xo_stage {
@@ -248,13 +258,10 @@ pub fn design(
             let gain = C::new(10f64.powf((ref_level - level) / 20.0), 0.0);
             let by_pos: Vec<_> = positions
                 .iter()
-                .filter_map(|&p| {
-                    used.get(p, role).map(|h| {
-                        (
-                            if p == config.main_position { 5.0 } else { 1.0 },
-                            h.iter().map(|v| v * gain).collect::<Vec<_>>(),
-                        )
-                    })
+                .zip(&weights)
+                .filter_map(|(&p, &w)| {
+                    used.get(p, role)
+                        .map(|h| (w, h.iter().map(|v| v * gain).collect::<Vec<_>>()))
                 })
                 .collect();
             let weighted: Vec<_> = by_pos.iter().map(|(w, h)| (*w, h.as_slice())).collect();
@@ -284,6 +291,8 @@ pub fn design(
             top_peq.push((role.clone(), peq));
         }
     }
+    #[cfg(test)]
+    timings.push(("top PEQ".into(), top_started.elapsed()));
     let (bus_delay_ms, bus_polarity) = if config.subs.is_empty() {
         (0.0, 1)
     } else {
@@ -335,15 +344,17 @@ pub fn design(
     let roles = if req.subs_only {
         vec![]
     } else {
-        config.mains.iter().enumerate().collect()
+        config.mains.iter().collect()
     };
     let outputs = ctx
-        .try_map(roles, |(index, role)| {
+        .try_map(roles, |role| {
             check(ctx)?;
-            progress.set(1 + index as u64);
             let Some(before) = prepared.h0.get(config.main_position, role) else {
+                progress.advance(1);
                 return Ok(None);
             };
+            #[cfg(test)]
+            let rc_started = std::time::Instant::now();
             let gain_db = ref_level - levels.iter().find(|(r, _)| r == role).unwrap().1;
             let xo_hz = xo_of.iter().find(|(r, _)| r == role).map(|(_, x)| *x);
             let align_delay_ms = prepared
@@ -378,13 +389,6 @@ pub fn design(
                 })
                 .collect();
             let mut fitter = fitters(FitStage::Rc(role));
-            let mut guarded = |r: &fit::FitRequest<'_>| {
-                if ctx.cancel().is_cancelled() {
-                    vec![]
-                } else {
-                    fitter(r)
-                }
-            };
             let result = rc::channel(
                 &RcInput {
                     role,
@@ -396,7 +400,7 @@ pub fn design(
                     tuning: req.tuning,
                     positions: &positions,
                 },
-                &mut guarded,
+                &mut *fitter,
             );
             check(ctx)?;
             let combined = comb
@@ -443,7 +447,12 @@ pub fn design(
                 combined,
                 after,
             };
-            Ok(Some((channel, main, result.out.notes)))
+            progress.advance(1);
+            #[cfg(test)]
+            let elapsed = rc_started.elapsed();
+            #[cfg(not(test))]
+            let elapsed = ();
+            Ok(Some((channel, main, result.out.notes, elapsed)))
         })
         .map_err(|e| match e {
             MapError::Cancelled => EngineError::Cancelled,
@@ -451,7 +460,9 @@ pub fn design(
         })?;
     let mut channels = Vec::new();
     let mut mains = Vec::new();
-    for (channel, main, channel_notes) in outputs.into_iter().flatten() {
+    for (channel, main, channel_notes, _elapsed) in outputs.into_iter().flatten() {
+        #[cfg(test)]
+        timings.push((format!("RC {}", main.role), _elapsed));
         channels.push(channel);
         mains.push(main);
         notes.extend(channel_notes);
@@ -527,6 +538,8 @@ pub fn design(
     let target_db: Arc<[f64]> = target.iter().map(|v| v + ref_level).collect();
     let spl_grid = geomspace(5.0, 20000.0, 1390);
     let gd_grid = geomspace(5.0, 5000.0, 1070);
+    #[cfg(test)]
+    let scores_started = std::time::Instant::now();
     let mut scores = Vec::new();
     for main in &mains {
         check(ctx)?;
@@ -540,6 +553,8 @@ pub fn design(
             gd_after: response::gd_curve(&main.after, f, &gd_grid, Fraction::Scalar(24.0))?,
         });
     }
+    #[cfg(test)]
+    timings.push(("scores".into(), scores_started.elapsed()));
     notes.push(Note::PhaseStrength(
         mains
             .iter()
@@ -580,5 +595,7 @@ pub fn design(
         notes,
         adapter_notes: req.adapter_notes.to_vec(),
         scores,
+        #[cfg(test)]
+        timings,
     })
 }

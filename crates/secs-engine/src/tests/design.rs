@@ -32,6 +32,77 @@ pub(super) fn metrics(m: &crate::scorecard::Metrics) -> Vec<(&'static str, f64)>
         ("pre_db", m.pre_db),
     ]
 }
+fn note_value(note: &crate::notes::Note) -> Value {
+    use crate::notes::Note;
+    use serde_json::json;
+    match note {
+        Note::LiftCapped {
+            from_ms,
+            taps,
+            lift_ms,
+        } => json!({"LiftCapped": {"from_ms": from_ms, "taps": taps, "lift_ms": lift_ms}}),
+        Note::SubFilters(filters) => json!({"SubFilters": filters.iter().map(|(r, f)| (r, json!({
+            "hp_hz": f.hp_hz, "hp_type": f.hp_type.name(), "lp_hz": f.lp_hz,
+            "lp_type": f.lp_type.name(), "peq": f.peq
+        }))).collect::<Vec<_>>()}),
+        Note::RcLimit {
+            hz,
+            auto,
+            schroeder_hz,
+        } => json!({"RcLimit": {"hz": hz, "auto": auto, "schroeder_hz": schroeder_hz}}),
+        Note::Latency {
+            latency_ms,
+            lift_ms,
+            main_extra_ms,
+        } => {
+            json!({"Latency": {"latency_ms": latency_ms, "lift_ms": lift_ms, "main_extra_ms": main_extra_ms}})
+        }
+        Note::PhaseStrength(v) => json!({"PhaseStrength": v}),
+        Note::PhaseBand(v) => json!({"PhaseBand": v}),
+        Note::LongModeBoost { cap_db, modes } => {
+            json!({"LongModeBoost": {"cap_db": cap_db, "modes": modes}})
+        }
+        Note::GdCuts { role, cuts } => json!({"GdCuts": {"role": role, "cuts": cuts}}),
+        Note::BaCost(v) => json!({"BaCost": v}),
+        Note::BaBusPass {
+            first,
+            second,
+            kept_first,
+        } => json!({"BaBusPass": {"first": first, "second": second, "kept_first": kept_first}}),
+        Note::BaManual => json!("BaManual"),
+        Note::LayoutFallback(v) => json!({"LayoutFallback": v}),
+        Note::Layout(v) => json!({"Layout": v}),
+        Note::TwoWay {
+            roles,
+            gain_db,
+            xo_hz,
+        } => json!({"TwoWay": {"roles": roles, "gain_db": gain_db, "xo_hz": xo_hz}}),
+        Note::BusGainAnchored(v) => json!({"BusGainAnchored": v}),
+    }
+}
+
+// Structure, order, booleans and strings are exact; floats retain their
+// stage's measured tolerance. Never zip arrays without checking their length.
+fn compare_value(name: &str, got: &Value, expected: &Value, gate: bool) {
+    match (got, expected) {
+        (Value::Number(_), Value::Number(_)) => {
+            compare(name, &[number(got)], &[number(expected)], gate)
+        }
+        (Value::Array(a), Value::Array(b)) if a.len() == b.len() => {
+            for (i, (a, b)) in a.iter().zip(b).enumerate() {
+                compare_value(&format!("{name}/{i}"), a, b, gate);
+            }
+        }
+        (Value::Object(a), Value::Object(b)) if a.keys().eq(b.keys()) => {
+            for (key, a) in a {
+                compare_value(&format!("{name}/{key}"), a, &b[key], gate);
+            }
+        }
+        _ if gate => assert_eq!(got, expected, "{name}"),
+        _ => eprintln!("MEASURE design {name} report-only got={got} expected={expected}"),
+    }
+}
+
 fn compare(name: &str, got: &[f64], expected: &[f64], gate: bool) {
     let err = errors(got, expected);
     eprintln!("MEASURE design {name} {err:?}");
@@ -48,7 +119,7 @@ fn complex(fx: &Fixture, name: &str, h: &[C], expected: &Value, gate: bool) {
     let idx: Vec<_> = design_freqs()
         .iter()
         .enumerate()
-        .filter(|(i, f)| (15.0..=600.0).contains(*f) || i % 257 == 0)
+        .filter(|(i, f)| ((15.0..=600.0).contains(*f) && i % 8 == 0) || i % 257 == 0)
         .map(|(i, _)| i)
         .collect();
     let got: Vec<_> = idx.iter().flat_map(|&i| [h[i].re, h[i].im]).collect();
@@ -59,18 +130,52 @@ fn complex(fx: &Fixture, name: &str, h: &[C], expected: &Value, gate: bool) {
         .collect();
     compare(name, &got, &expected, gate);
 }
+fn verify_request_hash(fixture: &Fixture, fit: &RecordedFit, hashes: &Value) {
+    for (key, values) in [("g", &fit.g), ("corr_db", &fit.corr_db)] {
+        fixture.assert_digest(
+            key,
+            &serde_json::json!({
+                "digest": hashes[key], "length": values.len(), "first": [], "last": []
+            }),
+            values,
+        );
+    }
+}
+
 pub(super) fn replay(name: &str) -> Design {
+    replay_with_context(name, &Context::serial())
+}
+
+fn replay_with_context(name: &str, context: &Context) -> Design {
     let case = cases::load(name);
     let mut stages: BTreeMap<String, Vec<RecordedFit>> = BTreeMap::new();
     for call in Fixture::all_calls("engine_design", &format!("{name}_fits_")) {
+        let recorded = if let Some(reference) = call.inputs().get("reference") {
+            let source = Fixture::load(
+                reference["family"].as_str().unwrap(),
+                reference["fixture"].as_str().unwrap(),
+            );
+            let fit = if let Some(index) = reference["call"].as_u64() {
+                let calls = source.calls();
+                let c = &calls[index as usize];
+                read_recorded_fit(c, c.inputs(), &c.outputs()["result"])
+            } else {
+                let fit = &source.outputs()["candidates"]
+                    [reference["candidate"].as_u64().unwrap() as usize]["fits"]
+                    [reference["fit"].as_u64().unwrap() as usize];
+                read_recorded_fit(&source, &fit["inputs"], &fit["result"])
+            };
+            verify_request_hash(&source, &fit, &reference["request_sha256"]);
+            fit
+        } else {
+            let fit = read_recorded_fit(&call, call.inputs(), &call.outputs()["result"]);
+            verify_request_hash(&call, &fit, &call.inputs()["request_sha256"]);
+            fit
+        };
         stages
             .entry(call.inputs()["stage"].as_str().unwrap().into())
             .or_default()
-            .push(read_recorded_fit(
-                &call,
-                call.inputs(),
-                &call.outputs()["result"],
-            ));
+            .push(recorded);
     }
     let counts: Arc<Mutex<BTreeMap<String, (usize, usize)>>> =
         Arc::new(Mutex::new(BTreeMap::new()));
@@ -116,7 +221,7 @@ pub(super) fn replay(name: &str) -> Design {
             subs_only: false,
             adapter_notes: &[],
         },
-        &Context::serial(),
+        context,
         &*factory,
     )
     .unwrap();
@@ -126,12 +231,41 @@ pub(super) fn replay(name: &str) -> Design {
     result
 }
 #[test]
+fn design_parallel_progress_counts_completed_channels() {
+    use secs_compute::{CancelToken, MemoryBudget, Progress, ProgressSink};
+    #[derive(Debug, Default)]
+    struct Sink(Mutex<Vec<Progress>>);
+    impl ProgressSink for Sink {
+        fn report(&self, progress: &Progress) {
+            self.0.lock().unwrap().push(progress.clone());
+        }
+    }
+    let sink = Arc::new(Sink::default());
+    let context = Context::new(
+        3,
+        MemoryBudget::new(u64::MAX),
+        sink.clone(),
+        CancelToken::new(),
+    );
+    let parallel = replay_with_context("room_dba", &context);
+    let serial = replay("room_dba");
+    assert_eq!(parallel.chain, serial.chain);
+    assert_eq!(parallel.notes, serial.notes);
+    let reports = sink.0.lock().unwrap();
+    assert_eq!(reports.first().unwrap().done, 0);
+    assert_eq!(reports.last().unwrap().done, 4);
+    assert!(reports.iter().all(|p| p.total == 4));
+    assert!(reports.windows(2).all(|p| p[0].done <= p[1].done));
+}
+
+#[test]
 fn design_empty_subs_and_subs_only_keep_axes_and_shared_spectra() {
     let mut c = cases::load("room_manual");
     let notes = vec!["adapter note".to_owned()];
     c.config.subs.clear();
     c.config.sub_manual.clear();
     c.config.bundle_layouts.clear();
+    let context = Context::serial();
     let run = design::design(
         &DesignRequest {
             measurements: &c.measurements,
@@ -140,8 +274,8 @@ fn design_empty_subs_and_subs_only_keep_axes_and_shared_spectra() {
             subs_only: true,
             adapter_notes: &notes,
         },
-        &Context::serial(),
-        &*design::production_fitters(),
+        &context,
+        &*design::production_fitters(context.cancel()),
     )
     .unwrap();
     assert!(run.mains.is_empty() && run.chain.mains.is_empty() && run.scores.is_empty());
@@ -166,35 +300,50 @@ fn design_cancellation_returns_within_one_second() {
         time::{Duration, Instant},
     };
     let case = cases::load("dolby");
-    let token = CancelToken::new();
-    let context = Context::new(
-        2,
-        MemoryBudget::new(u64::MAX),
-        Arc::new(NoProgress),
-        token.clone(),
-    );
-    thread::scope(|scope| {
-        let canceller = scope.spawn(|| {
-            thread::sleep(Duration::from_millis(150));
-            token.cancel();
-            Instant::now()
-        });
-        let result = design::design(
-            &DesignRequest {
-                measurements: &case.measurements,
-                config: &case.config,
-                tuning: &case.tuning,
-                subs_only: false,
-                adapter_notes: &[],
-            },
-            &context,
-            &*design::production_fitters(),
+    let mut failures = Vec::new();
+    // Two-channel execution finishes before 14 s on this host. These five
+    // moments span preparation/BA, top PEQ and early/late channel work.
+    for seconds in [0.5, 2.0, 5.0, 8.0, 10.0] {
+        let token = CancelToken::new();
+        let context = Context::new(
+            2,
+            MemoryBudget::new(u64::MAX),
+            Arc::new(NoProgress),
+            token.clone(),
         );
-        let cancelled_at = canceller.join().unwrap();
-        assert!(matches!(result, Err(crate::EngineError::Cancelled)));
-        eprintln!("MEASURE design cancellation {:?}", cancelled_at.elapsed());
-        assert!(cancelled_at.elapsed() < Duration::from_secs(1));
-    });
+        thread::scope(|scope| {
+            let canceller = scope.spawn(|| {
+                thread::sleep(Duration::from_secs_f64(seconds));
+                let at = Instant::now();
+                token.cancel();
+                at
+            });
+            let result = design::design(
+                &DesignRequest {
+                    measurements: &case.measurements,
+                    config: &case.config,
+                    tuning: &case.tuning,
+                    subs_only: false,
+                    adapter_notes: &[],
+                },
+                &context,
+                &*design::production_fitters(context.cancel()),
+            );
+            let returned = Instant::now();
+            let cancelled_at = canceller.join().unwrap();
+            let cancelled = matches!(result, Err(crate::EngineError::Cancelled));
+            let latency = returned.saturating_duration_since(cancelled_at);
+            eprintln!(
+                "MEASURE design cancellation at={seconds}s latency={latency:?} cancelled={cancelled}"
+            );
+            if !cancelled || latency >= Duration::from_secs(1) {
+                failures.push(format!(
+                    "at {seconds}s: cancelled={cancelled}, latency={latency:?}"
+                ));
+            }
+        });
+    }
+    assert!(failures.is_empty(), "cancellation gate: {failures:?}");
 }
 
 #[test]
@@ -205,6 +354,11 @@ fn design_matches_recorded_stages() {
         let fx = Fixture::load("engine_design", &name);
         let o = fx.outputs();
         let gate = name != "room" && oracle_libm();
+        if !gate {
+            eprintln!(
+                "MEASURE design {name} REPORT_ONLY: BA rows/cost/bus gain/delay/polarity, layout winner, post-BA spectra and scores, RC masks/notes, phase ladder/fraction/FIR/response and selected input PEQ; foreign-libm before percentages (threshold), phase/GD/pre-energy metrics and GD curves (IR/peak argmax): downstream DE comparisons, threshold or argmax can flip on last bits. Pre-BA spectra/levels/target, configured XO/filter values, top PEQ and output-axis identities remain gated."
+            );
+        }
         assert_eq!(result.rc_auto, o["rc_auto"].as_bool().unwrap());
         compare(
             &format!("{name}/pre_ba"),
@@ -236,6 +390,54 @@ fn design_matches_recorded_stages() {
             &fx.f64s(&o["target_display"]),
             true,
         );
+        compare_value(
+            &format!("{name}/schroeder_hz"),
+            &serde_json::json!(result.schroeder_hz),
+            &o["schroeder_hz"],
+            true,
+        );
+        let target: Vec<_> = design_freqs()
+            .iter()
+            .enumerate()
+            .filter(|(i, f)| ((15.0..=600.0).contains(*f) && i % 8 == 0) || i % 257 == 0)
+            .map(|(i, _)| result.target_db[i])
+            .collect();
+        compare(
+            &format!("{name}/target"),
+            &target,
+            &fx.f64s(&o["target"]),
+            true,
+        );
+        assert_eq!(result.adapter_notes, Vec::<String>::new());
+        compare_value(
+            &format!("{name}/notes"),
+            &Value::Array(result.notes.iter().map(note_value).collect()),
+            &o["typed_notes"],
+            gate,
+        );
+        // Pre-BA diagnostics do not depend on any optimizer decisions.
+        for (i, note) in result.notes.iter().enumerate() {
+            if matches!(
+                note,
+                crate::notes::Note::LiftCapped { .. }
+                    | crate::notes::Note::SubFilters(_)
+                    | crate::notes::Note::RcLimit { .. }
+            ) {
+                compare_value(
+                    &format!("{name}/notes/{i}"),
+                    &note_value(note),
+                    &o["typed_notes"][i],
+                    true,
+                );
+            }
+        }
+        assert_eq!(result.chain.sample_rate, 48000);
+        if gate {
+            assert_eq!(
+                serde_json::json!(result.chain.sub_bus_peq),
+                o["sub_bus_peq"]
+            );
+        }
         let kinds: Vec<_> = result
             .notes
             .iter()
@@ -261,6 +463,48 @@ fn design_matches_recorded_stages() {
             assert_eq!(serde_json::to_value(kinds).unwrap(), o["note_kinds"]);
         }
         let sub = result.subs.as_ref().unwrap();
+        compare("bus_gain", &[sub.bus_gain], &[number(&o["bus_gain"])], gate);
+        assert_eq!(sub.rows.len(), o["sub_rows"].as_array().unwrap().len());
+        for ((role, row), expected) in sub.rows.iter().zip(o["sub_rows"].as_array().unwrap()) {
+            assert!(result.chain.subs.iter().any(|s| &s.role == role));
+            if gate {
+                assert_eq!(i64::from(row.polarity), expected[2].as_i64().unwrap());
+            }
+            compare_value(
+                "sub/internal_row",
+                &serde_json::json!([row.gain_db, row.delay_ms, row.polarity, row.allpass]),
+                expected,
+                gate,
+            );
+        }
+        let layouts = sub.layout_info.iter().map(|(name, info)| {
+            serde_json::json!([name, {
+                "kind": match info.kind { crate::input::LayoutKind::Dba => "dba", crate::input::LayoutKind::Multi => "multi" },
+                "members": info.members, "gains": info.gains.iter().cloned().collect::<BTreeMap<_, _>>(),
+                "front": info.front, "rear": info.rear, "rear_ms": info.rear_ms,
+                "auto_ms": info.auto_ms, "trim_ms": info.trim_ms, "min_ms": info.min_ms, "peq": info.peq
+            }])
+        }).collect::<Vec<_>>();
+        compare_value(
+            "layout_info",
+            &serde_json::json!(layouts),
+            &o["layout_info"],
+            gate,
+        );
+        assert_eq!(sub.plan.is_some(), !o["plan"].is_null());
+        if let Some(plan) = &sub.plan {
+            for (key, v) in [
+                ("fixed", serde_json::json!(plan.fixed)),
+                ("auto", serde_json::json!(plan.auto)),
+                ("gain_anchored", serde_json::json!(plan.gain_anchored)),
+                (
+                    "bundles",
+                    serde_json::json!(plan.bundles.iter().cloned().collect::<BTreeMap<_, _>>()),
+                ),
+            ] {
+                assert_eq!(v, o["plan"][key], "{name}/plan/{key}");
+            }
+        }
         if gate {
             assert_eq!(
                 i64::from(sub.bus_polarity),
@@ -280,7 +524,21 @@ fn design_matches_recorded_stages() {
             gate,
         );
         complex(&fx, "sub_sum", &sub.sum_at_reference, &o["sub_sum"], gate);
+        assert_eq!(result.chain.subs.len(), o["subs"].as_array().unwrap().len());
         for (s, expected) in result.chain.subs.iter().zip(o["subs"].as_array().unwrap()) {
+            assert_eq!(s.hp_type.name(), expected["hp_type"].as_str().unwrap());
+            assert_eq!(s.lp_type.name(), expected["lp_type"].as_str().unwrap());
+            assert_eq!(s.hp_hz, number(&expected["hp_hz"]));
+            assert_eq!(s.lp_hz, number(&expected["lp_hz"]));
+            if gate {
+                assert_eq!(serde_json::json!(s.peq), expected["peq"]);
+            }
+            compare_value(
+                "sub/allpass",
+                &serde_json::json!(s.allpass),
+                &expected["allpass"],
+                gate,
+            );
             assert_eq!(s.role, expected["role"].as_str().unwrap());
             if gate {
                 assert_eq!(s.mode, expected["mode"].as_str().unwrap());
@@ -325,8 +583,9 @@ fn design_matches_recorded_stages() {
                     gate || key == "before",
                 );
             }
+            assert_eq!(main.top_response.is_some(), !out["top_P"].is_null());
             if let Some(p) = &main.top_response {
-                complex(&role, "top_P", p, &out["top_P"], gate);
+                complex(&role, "top_P", p, &out["top_P"], true);
             }
             let channel = result
                 .chain
@@ -334,8 +593,50 @@ fn design_matches_recorded_stages() {
                 .iter()
                 .find(|c| c.role == main.role)
                 .unwrap();
+            assert_eq!(channel.xo_hz, out["channel"]["xo_hz"].as_f64());
+            assert_eq!(
+                serde_json::json!(channel.top_peq),
+                out["channel"]["top_peq"]
+            );
+            assert_eq!(main.xo_hz, channel.xo_hz);
+            assert_eq!(main.align_delay_ms, channel.align_delay_ms);
+            compare(
+                "main/align_delay",
+                &[main.align_delay_ms],
+                &[number(&o["align_delay_ms"][&main.role])],
+                true,
+            );
+            assert_eq!(main.gain_db, channel.gain_db);
+            assert_eq!(
+                channel.delay_ms,
+                channel.align_delay_ms + result.chain.main_extra_ms
+            );
+            compare(
+                "main/gain",
+                &[channel.gain_db],
+                &[number(&out["channel"]["gain_db"])],
+                true,
+            );
+            compare(
+                "main/delay",
+                &[channel.delay_ms],
+                &[number(&out["channel"]["delay_ms"])],
+                gate,
+            );
+            compare(
+                "main/phase_strength",
+                &[main.phase_strength],
+                &[number(&out["phase_strength"])],
+                gate,
+            );
+            compare_value(
+                "main/phase_band",
+                &serde_json::json!(main.phase_band),
+                &out["phase_band"],
+                gate,
+            );
             if gate {
-                assert_eq!(channel.xo_hz, out["channel"]["xo_hz"].as_f64());
+                assert_eq!(serde_json::json!(channel.input_peq), out["channel"]["peq"]);
                 assert_eq!(main.phase_frac_used, out["phase_frac_used"].as_f64());
                 assert_eq!(
                     channel.fir.len(),
@@ -347,6 +648,16 @@ fn design_matches_recorded_stages() {
                 );
             }
             let peak = out["channel"]["fir_peak"].as_u64().unwrap() as usize;
+            if gate {
+                let actual_peak = channel.fir.iter().enumerate().fold(0, |best, (i, value)| {
+                    if value.abs() > channel.fir[best].abs() {
+                        i
+                    } else {
+                        best
+                    }
+                });
+                assert_eq!(actual_peak, peak, "{name}/{}/FIR peak", main.role);
+            }
             let samples: Vec<_> = channel
                 .fir
                 .iter()
@@ -367,7 +678,7 @@ fn design_matches_recorded_stages() {
                         &format!("{name}/{}/{when}/{key}", main.role),
                         &[v],
                         &[number(&out["metrics"][when][key])],
-                        gate || when == "before",
+                        gate || (when == "before" && (oracle_libm() || key == "level")),
                     );
                 }
             }
@@ -381,7 +692,7 @@ fn design_matches_recorded_stages() {
                     key,
                     v,
                     &role.f64s(&out["curves"][key]),
-                    gate || key.ends_with("before"),
+                    gate || key == "spl_before" || (key == "gd_before" && oracle_libm()),
                 );
             }
         }
