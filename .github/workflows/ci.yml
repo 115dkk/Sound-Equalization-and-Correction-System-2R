@@ -5,8 +5,10 @@ name: CI
 #   lint      fmt, clippy -D warnings (also for the Windows target, so
 #             cfg(windows) code is linted from Linux), the secs-policy gates,
 #             the CI scripts' unit tests, and the upstream Python tree check
-#   test      cargo test on Linux, Windows and macOS; on Linux also that every
-#             test features.toml names is one Cargo compiles and runs
+#   test      cargo test on Linux, Windows and macOS (the engine also in
+#             release mode on the foreign-libm path, as release.yml tests it);
+#             on Linux also that every test features.toml names is one Cargo
+#             compiles and runs
 #   frontend  typecheck, unit tests and build of the screen, and the IPC
 #             bindings regenerated from secs-types must match the committed copy
 #   bundle    the installers of every OS built as on release day, kept as run
@@ -120,6 +122,15 @@ jobs:
 
       - name: cargo test --doc
         run: cargo test --workspace --doc --locked
+
+      # release.yml tests in release mode with every oracle test on its
+      # foreign-libm path. The engine's timing- and libm-dependent tests behave
+      # differently there (0.6.0's cancellation test passed here and failed
+      # the release twice), so run them the same way before a merge.
+      - name: cargo test -p secs-engine (release mode, foreign libm)
+        env:
+          SECS_ORACLE_FOREIGN_LIBM: "1"
+        run: cargo test -p secs-engine --release --locked
 
       # secs-policy only sees `#[test] fn` in source; this asks Cargo that each
       # test features.toml names is compiled and run (an orphan file is not).

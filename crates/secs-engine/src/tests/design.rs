@@ -296,6 +296,10 @@ fn design_empty_subs_and_subs_only_keep_axes_and_shared_spectra() {
 fn design_cancellation_returns_within_one_second() {
     use secs_compute::{CancelToken, MemoryBudget, NoProgress};
     use std::{
+        sync::{
+            atomic::{AtomicUsize, Ordering},
+            mpsc,
+        },
         thread,
         time::{Duration, Instant},
     };
@@ -311,48 +315,69 @@ fn design_cancellation_returns_within_one_second() {
     let two = |token: CancelToken| {
         Context::new(2, MemoryBudget::new(u64::MAX), Arc::new(NoProgress), token)
     };
-    // Cancel at fixed fractions of an uncancelled run on this machine, so the
-    // five moments span preparation/BA, top PEQ and early/late channel work
-    // whatever the build profile (the release profile finished the dolby
-    // design before an absolute 10 s mark).
-    let full = {
+    // Cancel inside the fit that starts as the n-th PEQ fit of the run. The
+    // fit count does not depend on machine speed or load (wall-clock marks
+    // did: a loaded runner measured a slow reference run and a later run had
+    // finished before its last mark), and cancelling 20 ms into a fit
+    // exercises the in-flight path.
+    fn counting<'c>(
+        cancel: &'c CancelToken,
+        calls: &'c AtomicUsize,
+        signal: Option<(usize, mpsc::Sender<()>)>,
+    ) -> Box<design::FitterFactory<'c>> {
+        let production = design::production_fitters(cancel);
+        let signal = Arc::new(std::sync::Mutex::new(signal));
+        Box::new(move |stage| {
+            let mut fitter = production(stage);
+            let signal = Arc::clone(&signal);
+            Box::new(move |request| {
+                let n = calls.fetch_add(1, Ordering::SeqCst) + 1;
+                if let Some((target, tx)) = signal.lock().unwrap().as_ref()
+                    && n == *target
+                {
+                    let _ = tx.send(());
+                }
+                fitter(request)
+            })
+        })
+    }
+    let calls = AtomicUsize::new(0);
+    let total = {
         let context = two(CancelToken::new());
+        let factory = counting(context.cancel(), &calls, None);
         let start = Instant::now();
-        design::design(
-            &request,
-            &context,
-            &*design::production_fitters(context.cancel()),
-        )
-        .expect("uncancelled design");
-        start.elapsed()
+        design::design(&request, &context, &*factory).expect("uncancelled design");
+        eprintln!("MEASURE design uncancelled={:?}", start.elapsed());
+        calls.swap(0, Ordering::SeqCst)
     };
-    eprintln!("MEASURE design uncancelled={full:?}");
+    eprintln!("MEASURE design fit calls={total}");
+    assert!(total > 10, "too few fits to place cancellations: {total}");
     for fraction in [0.03, 0.15, 0.35, 0.6, 0.85] {
-        let seconds = full.as_secs_f64() * fraction;
+        let target = ((total as f64 * fraction).ceil() as usize).max(1);
+        calls.store(0, Ordering::SeqCst);
         let token = CancelToken::new();
         let context = two(token.clone());
+        let (tx, rx) = mpsc::channel();
+        let factory = counting(context.cancel(), &calls, Some((target, tx)));
         thread::scope(|scope| {
-            let canceller = scope.spawn(|| {
-                thread::sleep(Duration::from_secs_f64(seconds));
+            let canceller = scope.spawn(move || {
+                rx.recv_timeout(Duration::from_secs(600)).ok()?;
+                thread::sleep(Duration::from_millis(20));
                 let at = Instant::now();
                 token.cancel();
-                at
+                Some(at)
             });
-            let result = design::design(
-                &request,
-                &context,
-                &*design::production_fitters(context.cancel()),
-            );
+            let result = design::design(&request, &context, &*factory);
             let returned = Instant::now();
             let cancelled_at = canceller.join().unwrap();
             let cancelled = matches!(result, Err(crate::EngineError::Cancelled));
-            let latency = returned.saturating_duration_since(cancelled_at);
+            let latency = cancelled_at.map(|at| returned.saturating_duration_since(at));
             eprintln!(
-                "MEASURE design cancellation at={seconds:.2}s ({fraction}) latency={latency:?} cancelled={cancelled}"
+                "MEASURE design cancellation fit={target}/{total} latency={latency:?} cancelled={cancelled}"
             );
-            if !cancelled || latency >= Duration::from_secs(1) {
+            if !cancelled || latency.is_none_or(|l| l >= Duration::from_secs(1)) {
                 failures.push(format!(
-                    "at {seconds:.2}s ({fraction}): cancelled={cancelled}, latency={latency:?}"
+                    "fit {target}/{total}: cancelled={cancelled}, latency={latency:?}"
                 ));
             }
         });
