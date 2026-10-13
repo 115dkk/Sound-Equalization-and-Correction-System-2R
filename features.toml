@@ -11,6 +11,23 @@
 # implemented. Milestones: M0 to M6 (docs/ARCHITECTURE.md). `upstream` names the SECS 2 source a feature ports;
 # "new" marks what SECS 2 does not have.
 
+[[feature]]
+id = "engine.peq_fit"
+kind = "engine"
+milestone = "M2"
+status = "implemented"
+upstream = "correction_engine.py fit_peq, _ring_q_cap, _ring_boxes, fit_gd_cuts, _xo_target_peq"
+tests = [
+  "secs-engine::peq_greedy_and_ring_oracle",
+  "secs-engine::peq_frozen_residual_and_jacobian",
+  "secs-engine::peq_trf_replay",
+  "secs-engine::peq_results_within_secs2_spread",
+  "secs-engine::xo_target_rebuilt_inputs",
+  "secs-engine::replay_fitter_rejects_mismatch",
+  "secs-engine::gd_flat_response_has_no_cuts",
+]
+note = "End results gated on SECS 2's own spread (twelve runs, ADR 0004); bound-stride replay errors are SciPy select_step's own sensitivity (P07c). P09 checks GD-cut inputs and application."
+
 # ---- Policy (M0) ----
 
 [[feature]]
@@ -298,26 +315,26 @@ upstream = "correction_engine.py _prepare, _band_level"
 id = "engine.ba_auto"
 kind = "engine"
 milestone = "M2"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-engine::ba_oracle_auto_manual_bus", "secs-engine::ba_cancelled_before_work"]
 upstream = "correction_engine.py _align_subs"
 
 [[feature]]
 id = "engine.ba_manual_bundles"
 kind = "engine"
 milestone = "M2"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-engine::ba_oracle_auto_manual_bus", "secs-engine::ba_cancelled_before_work"]
 upstream = "correction_engine.py _align_subs_manual, _layout_stage"
 
 [[feature]]
 id = "engine.ba_bus"
 kind = "engine"
 milestone = "M2"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-engine::ba_oracle_auto_manual_bus", "secs-engine::ba_cancelled_before_work"]
 upstream = "correction_engine.py _match_two_way, _bus_peq_fit, _bus_delay"
-note = "bus delay objective fixed per docs/DEVIATIONS.md D1"
+note = "upstream bus delay objective ported first (golden); the D1 fix in docs/DEVIATIONS.md follows as a deviation"
 
 [[feature]]
 id = "engine.xo_recommendation"
@@ -331,8 +348,8 @@ upstream = "calibration.py recommend_xo, xo_scores"
 id = "engine.rc"
 kind = "engine"
 milestone = "M2"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-engine::rc_recorded_candidates_and_channel"]
 upstream = "correction_engine.py _correction, MODES"
 
 [[feature]]

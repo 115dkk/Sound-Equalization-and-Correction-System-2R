@@ -29,7 +29,9 @@ pub fn sum(x: &[f64]) -> f64 {
 
 // Adapted from Impulcifer-py313 crates/impulcifer-dsp/src/stages/room_tuning2/peq.rs
 // (MIT, Copyright (c) 2024- 115dkk); see docs/THIRD_PARTY.md.
-pub(crate) fn divide(a: Complex64, b: Complex64) -> Complex64 {
+/// NumPy's complex division (Smith's scaled formula, including a division by
+/// zero), so quotients match NumPy to the last bit.
+pub fn divide(a: Complex64, b: Complex64) -> Complex64 {
     if b.re.abs() >= b.im.abs() {
         if b.re == 0.0 && b.im == 0.0 {
             return Complex64::new(a.re / b.re.abs(), a.im / b.re.abs());

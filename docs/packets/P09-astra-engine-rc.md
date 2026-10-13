@@ -128,6 +128,37 @@ where a ladder threshold or argmax could flip; say which.
 
 Also `combine` against the sampled `comb`.
 
+## Second run (Claude, after your first report)
+
+Your numbers pass; what is left is the 5 MB budget (you are at 10.07 MB:
+FIR 3.5 MB, JSON 2.3 MB, responses 2.1 MB). Do not raise the budget and do
+not lower any tolerance. Store less of what does not add evidence:
+
+- **FIR.** Keep the full FIR only for the chosen candidate of `L` in
+  `dolby`, `dolby_linear` and `dolby_ultra`. Everywhere else store the taps
+  in a window of ±512 around the largest-magnitude tap, every 64th tap
+  elsewhere, and the FIR's sum and sum of squares (pairwise, as recorded by
+  NumPy). Check all three in Rust with the same measured tolerance.
+- **Losing candidate.** Keep its ladder, its GD score (record the scalar
+  upstream compares), its fits (the replay needs them), its notes and its
+  sparse FIR; drop its sampled `response` and `design_db` arrays.
+- **Sample indices.** Do not store index arrays (`inputs/indices` is 10 kB
+  per file). Write the sampling rule once in `oracle/README.md` and rebuild
+  the indices in Rust from it.
+
+Keep everything else. If you are still above 5 MB after this, report the
+breakdown by array kind instead of cutting further.
+
+The two P07 failures (`peq_converging_and_capped_results`,
+`peq_trf_replay`) are P07's and are being fixed in its own worktree; ignore
+them.
+
+The GD-cut seam is accepted: `fit_gd_cuts` is P07's (its inner fits are
+gated on SECS 2's spread there); here you check its input and its
+application. Say so in a comment at the test and in `oracle/README.md`.
+
+When the budget passes, set `engine.rc` to `implemented` with your tests.
+
 ## Files you may change
 
 - `crates/secs-engine/src/rc.rs`, `crates/secs-engine/src/notes.rs` (new or

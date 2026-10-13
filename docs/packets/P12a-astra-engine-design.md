@@ -207,15 +207,20 @@ bus delay, bus polarity, latency, `main_extra_ms`, `ref_level`, `rc_hi`;
 elapsed seconds.
 
 Test (`src/tests/e2e.rs`): run `design` with `production_fitters()` from the
-raw IRs. Per value, with `c0` the reference and `[cmin, cmax]` the eight runs:
+raw IRs. Per value, with `c0` the reference and `w = cmax − cmin` the range
+of the eight runs (SECS 2's own spread; P07 settled this reading of ADR 0004:
+Rust is one more draw from the same distribution, so its distance from the
+reference is bounded by the spread, not by how far the other runs happen to
+sit above the reference):
 
-- metrics where higher is better (`in*`): Rust ≥ `c0 − 1.25·(c0 − cmin)`;
+- metrics where higher is better (`in*`): Rust ≥ `c0 − 1.25·w`;
   where lower is better (`turns`, `gd_*`, `gd24_abs`, `gd24_max`,
-  `gd24_span`, `pre_db`): Rust ≤ `c0 + 1.25·(cmax − c0)`; neutral
-  descriptors (`level`, `gd24_abs_hz`) and chain scalars: within
-  `[c0 − 1.25·(c0 − cmin), c0 + 1.25·(cmax − c0)]`. Read upstream
-  `scorecard.py` to confirm each direction before you fix it; if one is not
-  obvious, make it two-sided and say so.
+  `gd24_span`, `pre_db`): Rust ≤ `c0 + 1.25·w`; neutral descriptors
+  (`level`, `gd24_abs_hz`) and chain scalars: `|Rust − c0| ≤ 1.25·w`. Read
+  upstream `scorecard.py` to confirm each direction before you fix it; if one
+  is not obvious, make it two-sided and say so.
+- Print, per case, on how many values Rust lies outside `[cmin, cmax]`
+  (exchangeable draws: about 2/9 of them).
 - Every bound has an absolute floor `1e-9·max(1, |c0|)` so a zero spread
   does not demand bits.
 - Discrete values (polarities, modes, band counts, XO) must equal one of the
