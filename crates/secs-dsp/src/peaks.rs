@@ -1,9 +1,10 @@
 //! Adapted from Impulcifer-py313 `crates/impulcifer-dsp/src/peaks.rs` (MIT, Copyright (c) 2024- 115dkk).
 //! See docs/THIRD_PARTY.md for attribution and licenses.
-//! Height-only peak selection and the 2.x impulse onset rule.
+//! Height-only peak selection (`scipy.signal.find_peaks` as SECS 2's `mimo` and
+//! `mimo_iir` call it).
 
-/// Mirrors scipy.signal.find_peaks(x, height=height), pinned by p05_peaks_*.json.
-/// <https://docs.scipy.org/doc/scipy-1.16.1/reference/generated/scipy.signal.find_peaks.html>
+/// Mirrors `scipy.signal.find_peaks(x, height=height)` of SciPy 1.18.1,
+/// pinned by the `dsp` golden family's peak cases.
 /// Returns ascending indices, inclusive height, floor midpoint for plateaus,
 /// and excludes endpoints. NaN comparisons are false, so NaNs break candidates;
 /// an NaN height excludes all peaks. Infinities retain ordinary comparison rules.

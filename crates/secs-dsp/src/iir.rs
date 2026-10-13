@@ -15,7 +15,7 @@ pub enum BType {
 }
 
 /// Analog Butterworth prototype -> LP/HP -> prewarped bilinear -> nearest SOS.
-/// <https://raw.githubusercontent.com/scipy/scipy/v1.16.0/scipy/signal/_filter_design.py>
+/// SciPy 1.18.1 `scipy/signal/_filter_design.py`.
 /// Verified with SciPy 1.18.0. Nearest pairing consumes the poles nearest the
 /// unit circle first, writes rows backwards, and puts gain in the first row.
 /// Odd orders add origin roots; their zero and pole need not share a section.
