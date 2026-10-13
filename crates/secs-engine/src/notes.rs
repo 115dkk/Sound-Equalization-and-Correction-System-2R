@@ -4,6 +4,24 @@ use crate::input::Peq;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Note {
+    LiftCapped {
+        from_ms: f64,
+        taps: usize,
+        lift_ms: f64,
+    },
+    SubFilters(Vec<(String, crate::setup::SubFilter)>),
+    RcLimit {
+        hz: f64,
+        auto: bool,
+        schroeder_hz: Option<f64>,
+    },
+    Latency {
+        latency_ms: f64,
+        lift_ms: f64,
+        main_extra_ms: f64,
+    },
+    PhaseStrength(Vec<(String, f64)>),
+    PhaseBand(Vec<(String, Option<f64>)>),
     // RC (P09)
     LongModeBoost {
         cap_db: f64,
