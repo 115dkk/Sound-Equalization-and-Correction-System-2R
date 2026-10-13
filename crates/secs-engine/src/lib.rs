@@ -31,3 +31,26 @@
 //! Engine knobs that SECS 2 hid in environment variables are fields of an
 //! explicit tuning value. Defects fixed on the way are listed in
 //! docs/DEVIATIONS.md.
+
+pub mod grid;
+pub mod input;
+
+pub mod ba;
+pub mod chain;
+pub mod decay;
+pub mod design;
+pub mod fit;
+pub mod levels;
+pub mod measurement;
+pub mod rc;
+pub mod scorecard;
+pub mod setup;
+pub mod xo;
+
+mod error;
+
+pub use error::EngineError;
+pub use input::{EngineConfig, Measurement, MeasurementSet, Samples, Tuning};
+
+/// Complex spectrum value.
+pub type C = secs_dsp::Complex64;
