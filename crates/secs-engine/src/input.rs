@@ -79,49 +79,7 @@ impl MeasurementSet {
     }
 }
 
-/// One peaking band `(frequency Hz, Q, gain dB)`, upstream's PEQ tuple.
-pub type Peq = (f64, f64, f64);
-/// One second-order all-pass `(frequency Hz, Q)`.
-pub type Allpass = (f64, f64);
-
-/// Crossover filter family (`BAND_TYPES`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BandType {
-    /// Linkwitz–Riley 12 dB/oct.
-    Lr12,
-    /// Linkwitz–Riley 24 dB/oct (the default).
-    Lr24,
-    /// Linkwitz–Riley 48 dB/oct.
-    Lr48,
-    /// Butterworth 12 dB/oct.
-    Bw12,
-    /// Butterworth 24 dB/oct.
-    Bw24,
-}
-
-impl BandType {
-    /// Upstream name (`'LR24'` …), as `secs_dsp::response::band_filter` takes it.
-    pub fn name(self) -> &'static str {
-        match self {
-            Self::Lr12 => "LR12",
-            Self::Lr24 => "LR24",
-            Self::Lr48 => "LR48",
-            Self::Bw12 => "BW12",
-            Self::Bw24 => "BW24",
-        }
-    }
-
-    /// The type named `name`, or `LR24` for anything else (upstream's fallback).
-    pub fn from_name(name: &str) -> Self {
-        match name {
-            "LR12" => Self::Lr12,
-            "LR48" => Self::Lr48,
-            "BW12" => Self::Bw12,
-            "BW24" => Self::Bw24,
-            _ => Self::Lr24,
-        }
-    }
-}
+pub use secs_types::chain::{Allpass, BandType, Peq};
 
 /// How BA treats a sub (R27).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

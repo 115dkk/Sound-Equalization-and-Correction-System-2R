@@ -20,7 +20,7 @@ unsafe-budget.toml        크레이트별 unsafe 허용량 (secs-sys = 0)
 deny.toml                 GPL 호환 라이선스, 권고, 출처
 UPSTREAM.toml             이식을 마친 업스트림 커밋
 crates/
-  secs-types/             도메인 어휘(역할 포함), 오류 코드, IPC 타입 (ts-rs 바인딩 생성)
+  secs-types/             도메인 어휘(역할, 타겟 곡선, 신호 사슬 값), 오류 코드, IPC 타입 (ts-rs 바인딩 생성)
   secs-dsp/               f64 프리미티브, TRF·차분 진화·RandomState 이식
   secs-compute/           스레드, 메모리 예산, 캐시, 취소, 진행
   secs-engine/            보정 설계 전 단계 (깊은 모듈)
