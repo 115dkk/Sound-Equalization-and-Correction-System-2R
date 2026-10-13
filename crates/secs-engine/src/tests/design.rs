@@ -78,6 +78,7 @@ fn note_value(note: &crate::notes::Note) -> Value {
             xo_hz,
         } => json!({"TwoWay": {"roles": roles, "gain_db": gain_db, "xo_hz": xo_hz}}),
         Note::BusGainAnchored(v) => json!({"BusGainAnchored": v}),
+        Note::Mimo(v) => json!({"Mimo": v}),
     }
 }
 
@@ -523,6 +524,7 @@ fn design_matches_recorded_stages() {
                 crate::notes::Note::Layout(_) => "Layout",
                 crate::notes::Note::TwoWay { .. } => "TwoWay",
                 crate::notes::Note::BusGainAnchored(_) => "BusGainAnchored",
+                crate::notes::Note::Mimo(_) => "Mimo",
             })
             .collect();
         if gate {

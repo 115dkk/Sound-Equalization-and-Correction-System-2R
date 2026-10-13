@@ -301,7 +301,7 @@ fn quantum(key: &str, reference: f64) -> f64 {
 
 // Exact binomial CDF recurrence, not a Gaussian approximation. These cases
 // have n <= 330, so the initial probability is comfortably representable.
-fn binomial_quantile(n: usize, p: f64) -> usize {
+pub(super) fn binomial_quantile(n: usize, p: f64) -> usize {
     let mut probability = (1.0 - p).powi(n as i32);
     let mut cdf = probability;
     for k in 0..n {

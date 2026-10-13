@@ -15,6 +15,7 @@ workspace = true
 test-support = ["dep:secs-oracle", "dep:serde_json"]
 
 [dependencies]
+faer.workspace = true
 secs-types.workspace = true
 secs-compute = { path = "../secs-compute" }
 secs-dsp = { path = "../secs-dsp" }

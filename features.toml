@@ -255,6 +255,15 @@ upstream = "scipy.optimize.least_squares bounded exact TRF"
 note = "Gated by one-step replay along the oracle's whole path (x_new, step, reductions, radius within 1e-9; actual_reduction net of the cost difference our x_new explains) and exact results for converging fits. Capped fits follow a chaotic path (a one-ulp step difference moves the next finite-difference Jacobian), so their global trace and njev are reported, not gated (oracle/README.md). Unbounded problems are not supported (upstream always passes bounds)."
 
 [[feature]]
+id = "dsp.trf_normal"
+kind = "dsp"
+milestone = "M3"
+status = "implemented"
+tests = ["secs-dsp::trf_normal_one_step_replay", "secs-dsp::trf_normal_whole_runs", "secs-dsp::trf_normal_dense_analytic_equivalence", "secs-dsp::trf_normal_nonfinite_normal_returns_error"]
+upstream = "scipy.optimize.least_squares trf_bounds (exact) via normal equations"
+note = "JᵀJ and Jᵀf instead of the Jacobian; the augmented SVD becomes a symmetric eigendecomposition (docs/MIMO.md §3). Used by the MIMO IIR fit."
+
+[[feature]]
 id = "dsp.random_state"
 kind = "dsp"
 milestone = "M1"
@@ -440,9 +449,10 @@ note = "new: one signal-chain value read by the simulator and the CamillaDSP wri
 id = "engine.mimo_design"
 kind = "engine"
 milestone = "M3"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-engine::mimo_stage_boundary_goldens", "secs-engine::mimo_whole_path_goldens", "secs-engine::mimo_whole_path_inputs_match_recorded", "secs-engine::mimo_toeplitz_normal_equations_match_dense", "secs-engine::mimo_cholesky_matches_lu_on_golden_system", "secs-engine::mimo_ranges_and_upstream_behaviors", "secs-engine::mimo_cap_four_is_subset_of_six_candidates", "secs-engine::mimo_deterministic_threads"]
 upstream = "mimo.py"
+note = "Ideal FIR supports, ranges, ranking and guard (docs/MIMO.md, P14). Stage-boundary goldens on all nine cases; whole path asserted where BA matches (room_dba, room_filters, room_multi), reported on the room design (BA diverges, docs/ENGINE.md §3). The settings variants run on room only; their room_dba twins are a follow-up."
 
 [[feature]]
 id = "engine.mimo_iir"

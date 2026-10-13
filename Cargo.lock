@@ -3279,6 +3279,7 @@ dependencies = [
 name = "secs-engine"
 version = "0.7.3"
 dependencies = [
+ "faer",
  "secs-compute",
  "secs-dsp",
  "secs-oracle",

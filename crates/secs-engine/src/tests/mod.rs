@@ -10,6 +10,7 @@ mod decay;
 mod design;
 mod e2e;
 pub(crate) mod fit;
+mod mimo;
 mod prep;
 mod preview;
 mod rc;
