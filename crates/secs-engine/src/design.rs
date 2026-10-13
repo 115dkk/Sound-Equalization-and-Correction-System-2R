@@ -25,6 +25,7 @@ use crate::{
     setup::Setup,
 };
 
+#[derive(Debug)]
 pub enum FitStage<'a> {
     Ba,
     Top(&'a str),
@@ -46,6 +47,7 @@ pub fn production_fitters(cancel: &CancelToken) -> Box<FitterFactory<'_>> {
 /// `correction_engine.py:34`, automatic RC ceiling.
 const RC_AUTO_MAX_HZ: f64 = 500.0;
 
+#[derive(Debug)]
 pub struct DesignRequest<'a> {
     pub measurements: &'a MeasurementSet,
     pub config: &'a EngineConfig,
@@ -53,6 +55,7 @@ pub struct DesignRequest<'a> {
     pub subs_only: bool,
     pub adapter_notes: &'a [String],
 }
+#[derive(Debug)]
 pub struct Design {
     pub chain: SignalChain,
     pub mains: Vec<MainDesign>,
@@ -70,12 +73,14 @@ pub struct Design {
     #[cfg(test)]
     pub timings: Vec<(String, std::time::Duration)>,
 }
+#[derive(Debug)]
 pub struct DesignSpectra {
     pub raw: Arc<Spectra>,
     pub used: Arc<Spectra>,
     pub main_position: u32,
     pub positions: Vec<u32>,
 }
+#[derive(Debug)]
 pub struct MainDesign {
     pub role: String,
     pub gain_db: f64,
@@ -90,6 +95,7 @@ pub struct MainDesign {
     pub combined: Arc<[C]>,
     pub after: Arc<[C]>,
 }
+#[derive(Debug)]
 pub struct SubDesign {
     pub rows: Vec<(String, BaRow)>,
     pub bus_gain: f64,
@@ -101,6 +107,7 @@ pub struct SubDesign {
     pub layout_info: Vec<(String, LayoutInfo)>,
     pub plan: Option<ManualPlan>,
 }
+#[derive(Debug)]
 pub struct RoleScores {
     pub role: String,
     pub before: Metrics,

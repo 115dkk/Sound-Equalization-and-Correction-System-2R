@@ -35,8 +35,9 @@
 pub mod grid;
 pub mod input;
 
-// The stages are private: `design` (P12) is the one entry point. Until it
-// wires them, only their oracle tests call them, hence the dead-code allowance.
+// The stages are private: `design` is the one entry point and the values it
+// returns are re-exported below. Helpers only the oracle tests call yet keep
+// the dead-code allowance.
 #[allow(dead_code)]
 mod ba;
 #[allow(dead_code)]
@@ -68,8 +69,20 @@ mod error;
 #[cfg(test)]
 mod tests;
 
+pub use ba::{LayoutInfo, ManualPlan};
+pub use calibration::{EngineInputs, ProjectView, engine_inputs};
+pub use chain::{BaRow, StageResponses, input_response, stage_responses};
+pub use design::{
+    Design, DesignRequest, DesignSpectra, FitStage, FitterFactory, MainDesign, RoleScores,
+    SubDesign, design, production_fitters,
+};
 pub use error::EngineError;
+pub use fit::{FitRequest, Fitter};
 pub use input::{EngineConfig, Measurement, MeasurementSet, Samples, Tuning};
+pub use measurement::{Spectra, long_spectra};
+pub use notes::Note;
+pub use scorecard::Metrics;
+pub use setup::SubFilter;
 
 /// Complex spectrum value.
 pub type C = secs_dsp::Complex64;

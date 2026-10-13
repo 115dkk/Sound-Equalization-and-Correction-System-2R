@@ -13,12 +13,14 @@ use crate::{
     input::{BundleLayout, DbaRow, EngineConfig, LayoutKind, MeasurementSet, SubManual, SubMode},
 };
 
+#[derive(Debug)]
 pub struct ProjectView<'a> {
     pub groups: &'a [(String, Vec<String>)],
     pub project_xo: &'a [(String, f64)],
     pub target: &'a TargetCurve,
 }
 
+#[derive(Debug)]
 pub struct EngineInputs {
     pub measurements: MeasurementSet,
     pub config: EngineConfig,
