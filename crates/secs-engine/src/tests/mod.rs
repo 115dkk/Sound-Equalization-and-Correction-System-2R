@@ -11,5 +11,7 @@ mod design;
 mod e2e;
 pub(crate) mod fit;
 mod prep;
+mod preview;
 mod rc;
 mod scorecard;
+mod xo;
