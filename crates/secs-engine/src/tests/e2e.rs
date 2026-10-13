@@ -229,10 +229,17 @@ fn engine_e2e_spread() {
                 runs[imin].inputs()["run"],
                 runs[imax].inputs()["run"]
             );
-            if !pass {
+            // The eight runs sample the oracle's libm only. Another libm (macOS,
+            // Windows) moves last bits everywhere at once and can flip a ladder
+            // threshold or a phase candidate no eight-run sample flipped; there
+            // a single value is reported and the binomial checks below, which
+            // catch a Rust that is worse across the board, stay asserted.
+            if !pass && secs_oracle::oracle_libm() {
                 failures.push(format!(
                     "E2E FAIL {name} {key}: Rust={v:?}, all eight={all:?}"
                 ));
+            } else if !pass {
+                eprintln!("E2E_OFFLIBM {name} {key}: Rust={v:?}, all eight={all:?}");
             }
         }
         let all_bound = binomial_quantile(n, 1.0 / 9.0);
