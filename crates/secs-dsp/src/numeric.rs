@@ -5,7 +5,7 @@
 use crate::Complex64;
 
 /// NumPy's contiguous float64 pairwise reduction (128-element blocks).
-pub(crate) fn sum(x: &[f64]) -> f64 {
+pub fn sum(x: &[f64]) -> f64 {
     if x.len() < 8 {
         x.iter().fold(-0.0, |a, b| a + b)
     } else if x.len() <= 128 {
@@ -44,7 +44,8 @@ pub(crate) fn divide(a: Complex64, b: Complex64) -> Complex64 {
     }
 }
 
-pub(crate) fn interp(x: f64, g: &[f64], v: &[f64]) -> f64 {
+/// NumPy linear interpolation with endpoint clamping (nonempty sorted grid).
+pub fn interp(x: f64, g: &[f64], v: &[f64]) -> f64 {
     if x.is_nan() {
         return f64::NAN;
     }

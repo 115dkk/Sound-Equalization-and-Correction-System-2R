@@ -263,8 +263,8 @@ note = "UUID를 주입한 1·3개 측정 빌드(돌비룸 실측 IR 셋 포함)�
 id = "format.camilladsp_v4"
 kind = "format"
 milestone = "M2"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-camilla::make_config_matches_oracle", "secs-camilla::pyfmt_matches_oracle_edges"]
 upstream = "export_camilladsp.py"
 
 [[feature]]
@@ -331,9 +331,17 @@ upstream = "correction_engine.py _correction, MODES"
 id = "engine.scorecard"
 kind = "engine"
 milestone = "M2"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-engine::metrics_match_oracle"]
 upstream = "scorecard.py"
+
+[[feature]]
+id = "engine.decay"
+kind = "engine"
+milestone = "M2"
+status = "implemented"
+tests = ["secs-engine::ba_late_matches_oracle", "secs-engine::calibration_late_matches_oracle", "secs-engine::mode_t60_matches_oracle", "secs-engine::late_peaks_match_oracle"]
+upstream = "correction_engine._ba_setup late_db, calibration._late_db, mimo.mode_t60, mimo._late_peaks"
 
 [[feature]]
 id = "engine.chain"
@@ -470,8 +478,8 @@ upstream = "calibration.py export_mdat (hidden in SECS 2's screen)"
 id = "export.camilladsp"
 kind = "export"
 milestone = "M4"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-camilla::export_camilladsp_matches_oracle", "secs-camilla::invalid_values_write_nothing"]
 upstream = "calibration.py export_camilladsp"
 
 # ---- Screens (M5) ----

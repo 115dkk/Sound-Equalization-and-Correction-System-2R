@@ -82,6 +82,41 @@ impl Fixture {
             .collect()
     }
 
+    /// The calls a bundled fixture holds, each as a fixture of its own.
+    ///
+    /// A fixture that records many calls of one function keeps them in one
+    /// file as `{"inputs": {"calls": [..]}, "outputs": {"calls": [..]}}`
+    /// (oracle/README.md); call `n` reads as a fixture with id `<id>#n`
+    /// whose sidecars resolve in the same family. Any other fixture is its
+    /// own single call.
+    pub fn calls(&self) -> Vec<Fixture> {
+        let (Some(inputs), Some(outputs)) = (
+            self.inputs()["calls"].as_array(),
+            self.outputs()["calls"].as_array(),
+        ) else {
+            return vec![self.clone()];
+        };
+        assert_eq!(inputs.len(), outputs.len(), "{}: calls", self.id);
+        inputs
+            .iter()
+            .zip(outputs)
+            .enumerate()
+            .map(|(n, (i, o))| Fixture {
+                id: format!("{}#{n}", self.id),
+                dir: self.dir.clone(),
+                value: serde_json::json!({"inputs": i, "outputs": o, "meta": self.meta()}),
+            })
+            .collect()
+    }
+
+    /// [`Fixture::all`], with bundled fixtures expanded into their calls.
+    pub fn all_calls(family: &str, prefix: &str) -> Vec<Fixture> {
+        Fixture::all(family, prefix)
+            .iter()
+            .flat_map(Fixture::calls)
+            .collect()
+    }
+
     /// The whole fixture.
     pub fn value(&self) -> &Value {
         &self.value

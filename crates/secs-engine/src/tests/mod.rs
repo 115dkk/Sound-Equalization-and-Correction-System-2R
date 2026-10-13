@@ -5,4 +5,6 @@
 
 mod cases;
 mod chain;
+mod decay;
 mod prep;
+mod scorecard;
