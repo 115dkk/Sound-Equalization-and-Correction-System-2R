@@ -366,9 +366,25 @@ note = "upstream bus delay objective ported first (golden); the D1 fix in docs/D
 id = "engine.xo_recommendation"
 kind = "engine"
 milestone = "M2"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-engine::xo_scores_replayed_designs", "secs-engine::xo_pick_recorded_tables", "secs-engine::xo_recommendation_production_envelope"]
 upstream = "calibration.py recommend_xo, xo_scores"
+
+[[feature]]
+id = "engine.xo_preview"
+kind = "engine"
+milestone = "M2"
+status = "implemented"
+tests = ["secs-engine::preview_xo_cached_curves"]
+upstream = "calibration.py xo_preview"
+
+[[feature]]
+id = "engine.sub_combine"
+kind = "engine"
+milestone = "M2"
+status = "implemented"
+tests = ["secs-engine::preview_sub_combine_replayed_designs"]
+upstream = "calibration.py sub_combine, sub_band, _sub_out"
 
 [[feature]]
 id = "engine.rc"

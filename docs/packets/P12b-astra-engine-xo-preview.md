@@ -104,6 +104,21 @@ Register `engine.xo_recommendation` (`implemented` with these tests) and
 `engine.sub_combine` (kind `"engine"`, milestone `"M2"`, upstream names) as
 `implemented`.
 
+## Decisions during the run (Claude)
+
+- `Design` carries `groups`, `target` and `xo` (Claude added them in
+  `design.rs`).
+- On `room`, everything downstream of BA is reported, not asserted (its DE
+  diverges at evaluation 3713, P10): all of `xo_scores`, and in
+  `sub_combine` the aligned sum and curves, the 'after' flatness and seat
+  spread and the sub values. What precedes BA stays asserted. Claude made
+  these two test edits in `tests/xo.rs` and `tests/preview.rs`
+  (`XO_REPORT_ROOM` lines).
+- For the production recommendation gate, the per-value `3 × max(w, q)`
+  cap is asserted on the oracle libm only and reported elsewhere; the two
+  binomial checks and the winner rule are asserted everywhere (ADR 0004,
+  "다른 libm").
+
 ## Files you may change
 
 - `crates/secs-engine/src/{xo,preview}.rs`, `crates/secs-engine/src/lib.rs`

@@ -9,7 +9,10 @@ use secs_dsp::{
     interp, response,
     smooth::{self, Fraction},
 };
-use secs_types::chain::{BandType, MainChannel, SignalChain, SubChannel};
+use secs_types::{
+    chain::{BandType, MainChannel, SignalChain, SubChannel},
+    target::TargetCurve,
+};
 
 use crate::{
     C, EngineConfig, EngineError, MeasurementSet, Tuning,
@@ -70,6 +73,12 @@ pub struct Design {
     pub notes: Vec<Note>,
     pub adapter_notes: Vec<String>,
     pub scores: Vec<RoleScores>,
+    /// The speaker groups the design was made for (`engine.groups`), in order.
+    pub groups: Vec<(String, Vec<String>)>,
+    /// The target curve the design was made for (`engine.target_db_fn`).
+    pub target: TargetCurve,
+    /// The crossover per group as configured (`engine.xo`).
+    pub xo: Vec<(String, f64)>,
     #[cfg(test)]
     pub timings: Vec<(String, std::time::Duration)>,
 }
@@ -601,6 +610,9 @@ pub fn design(
         },
         notes,
         adapter_notes: req.adapter_notes.to_vec(),
+        groups: config.groups.clone(),
+        target: config.target.clone(),
+        xo: config.xo.clone(),
         scores,
         #[cfg(test)]
         timings,

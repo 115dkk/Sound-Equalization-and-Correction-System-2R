@@ -56,6 +56,7 @@ mod levels;
 mod measurement;
 #[allow(dead_code)]
 mod notes;
+pub mod preview;
 #[allow(dead_code)]
 mod rc;
 #[allow(dead_code)]
@@ -63,7 +64,7 @@ mod scorecard;
 #[allow(dead_code)]
 mod setup;
 #[allow(dead_code)]
-mod xo;
+pub mod xo;
 
 mod error;
 #[cfg(test)]
