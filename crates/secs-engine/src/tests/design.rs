@@ -251,6 +251,33 @@ fn design_parallel_progress_counts_completed_channels() {
     let serial = replay("room_dba");
     assert_eq!(parallel.chain, serial.chain);
     assert_eq!(parallel.notes, serial.notes);
+    assert_eq!(parallel.scores.len(), serial.scores.len());
+    for (parallel, serial) in parallel.scores.iter().zip(&serial.scores) {
+        assert_eq!(parallel.role, serial.role);
+        for (a, b) in metrics(&parallel.before)
+            .into_iter()
+            .zip(metrics(&serial.before))
+        {
+            assert_eq!(a.0, b.0);
+            assert_eq!(a.1.to_bits(), b.1.to_bits());
+        }
+        for (a, b) in metrics(&parallel.after)
+            .into_iter()
+            .zip(metrics(&serial.after))
+        {
+            assert_eq!(a.0, b.0);
+            assert_eq!(a.1.to_bits(), b.1.to_bits());
+        }
+        for (a, b) in [
+            (&parallel.spl_before, &serial.spl_before),
+            (&parallel.spl_after, &serial.spl_after),
+            (&parallel.gd_before, &serial.gd_before),
+            (&parallel.gd_after, &serial.gd_after),
+        ] {
+            assert_eq!(a.len(), b.len());
+            assert!(a.iter().zip(b).all(|(a, b)| a.to_bits() == b.to_bits()));
+        }
+    }
     let reports = sink.0.lock().unwrap();
     assert_eq!(reports.first().unwrap().done, 0);
     assert_eq!(reports.last().unwrap().done, 4);

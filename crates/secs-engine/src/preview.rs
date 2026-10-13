@@ -7,7 +7,7 @@ use crate::{
 };
 use secs_dsp::{
     interp, pairwise_sum,
-    smooth::{Fraction, smooth_power},
+    smooth::{Fraction, PowerSmoother},
 };
 use secs_types::chain::{Allpass, Peq};
 
@@ -42,6 +42,7 @@ pub struct XoPreview {
     mains: Vec<CachedMain>,
     grid: Vec<f64>,
     target: Vec<f64>,
+    smoother: PowerSmoother,
 }
 
 impl XoPreview {
@@ -112,6 +113,7 @@ impl XoPreview {
             mains,
             grid,
             target,
+            smoother: PowerSmoother::new(f, Fraction::Scalar(12.0)).expect("design grid"),
         }
     }
 
@@ -180,9 +182,9 @@ impl XoPreview {
         }
         XoCurves {
             grid: self.grid.clone(),
-            main: db(&main_power, &self.grid, 12.0),
-            sub: db(&sub_power, &self.grid, 12.0),
-            sum: db(&sum_power, &self.grid, 12.0),
+            main: db(&main_power, &self.grid, &self.smoother),
+            sub: db(&sub_power, &self.grid, &self.smoother),
+            sum: db(&sum_power, &self.grid, &self.smoother),
             target: self.target.clone(),
         }
     }
@@ -253,26 +255,25 @@ fn std(v: &[f64]) -> f64 {
     let m = mean(v);
     mean(&v.iter().map(|x| (x - m) * (x - m)).collect::<Vec<_>>()).sqrt()
 }
-fn db(power: &[f64], grid: &[f64], fraction: f64) -> Vec<f64> {
+fn db(power: &[f64], grid: &[f64], smoother: &PowerSmoother) -> Vec<f64> {
     let f = design_freqs();
-    let values: Vec<_> = smooth_power(f, power, Fraction::Scalar(fraction))
+    let values: Vec<_> = smoother
+        .apply(power)
         .expect("design grid")
         .iter()
         .map(|p| 10.0 * (p + 1e-30).log10())
         .collect();
     grid.iter().map(|&g| interp(g, f, &values)).collect()
 }
-fn curve(h: &[C], grid: &[f64], fraction: f64) -> Vec<f64> {
-    db(
-        &h.iter()
-            .map(|h| {
-                let a = h.re.hypot(h.im);
-                a * a
-            })
-            .collect::<Vec<_>>(),
-        grid,
-        fraction,
-    )
+fn curve(h: &[C], grid: &[f64], smoother: &PowerSmoother) -> Vec<f64> {
+    let power = &h
+        .iter()
+        .map(|h| {
+            let a = h.re.hypot(h.im);
+            a * a
+        })
+        .collect::<Vec<_>>();
+    db(power, grid, smoother)
 }
 
 /// Replays before/after sub responses, returning `None` for fewer than two subs.
@@ -307,6 +308,10 @@ pub fn sub_combine(design: &Design) -> Option<SubCombine> {
         polarity: 1,
         allpass: vec![],
     };
+    let display_smoother =
+        PowerSmoother::new(design_freqs(), Fraction::Scalar(12.0)).expect("design grid");
+    let metric_smoother =
+        PowerSmoother::new(design_freqs(), Fraction::Scalar(6.0)).expect("design grid");
     let mut each = [Vec::new(), Vec::new()];
     let mut sums = [Vec::new(), Vec::new()];
     let mut flat = [0.0; 2];
@@ -334,13 +339,13 @@ pub fn sub_combine(design: &Design) -> Option<SubCombine> {
                     *s += h;
                 }
                 if p == design.spectra.main_position {
-                    each[state].push((role.clone(), curve(&out, &grid, 12.0)));
+                    each[state].push((role.clone(), curve(&out, &grid, &display_smoother)));
                 }
             }
-            let level = curve(&sum, &metric_grid, 6.0);
+            let level = curve(&sum, &metric_grid, &metric_smoother);
             if p == design.spectra.main_position {
                 flat[state] = std(&level);
-                sums[state] = curve(&sum, &grid, 12.0);
+                sums[state] = curve(&sum, &grid, &display_smoother);
             }
             levels.push(level);
         }
