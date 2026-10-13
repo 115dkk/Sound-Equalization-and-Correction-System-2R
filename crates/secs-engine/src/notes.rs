@@ -47,4 +47,6 @@ pub enum Note {
         xo_hz: f64,
     },
     BusGainAnchored(f64),
+    /// Upstream MIMO diagnostics, including the ordered range summary.
+    Mimo(String),
 }

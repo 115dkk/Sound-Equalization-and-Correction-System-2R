@@ -56,6 +56,8 @@ mod levels;
 #[allow(dead_code)]
 mod measurement;
 #[allow(dead_code)]
+pub mod mimo;
+#[allow(dead_code)]
 mod notes;
 pub mod preview;
 #[allow(dead_code)]
@@ -85,6 +87,7 @@ pub use export_view::{ExportView, export_view};
 pub use fit::{FitRequest, Fitter};
 pub use input::{EngineConfig, Measurement, MeasurementSet, Samples, Tuning};
 pub use measurement::{Spectra, long_spectra};
+pub use mimo::{MimoDesign, MimoRequest, design_mimo};
 pub use notes::Note;
 pub use scorecard::Metrics;
 pub use setup::SubFilter;

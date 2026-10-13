@@ -29,6 +29,10 @@ mod input;
 mod levels;
 #[path = "../src/measurement.rs"]
 mod measurement;
+// The example re-includes the engine sources; it uses only part of the MIMO surface.
+#[allow(unused_imports)]
+#[path = "../src/mimo/mod.rs"]
+mod mimo;
 #[path = "../src/notes.rs"]
 mod notes;
 #[path = "../src/preview.rs"]
@@ -54,7 +58,10 @@ pub use design::{
 };
 pub use error::EngineError;
 pub use input::{EngineConfig, Measurement, MeasurementSet, Samples, Tuning};
+pub use export_view::{ExportView, export_view};
 pub use measurement::{Spectra, long_spectra};
+pub use mimo::{MimoDesign, MimoRequest, design_mimo};
+pub use notes::Note;
 pub use setup::SubFilter;
 pub type C = secs_dsp::Complex64;
 

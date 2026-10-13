@@ -169,3 +169,34 @@ What you ported and where, every accessor you added, the oracle family
 (cases, size), the test results with the largest per-value deviations and the
 binomial counts per case, anything reported rather than asserted and why,
 and anything you could not do.
+
+## Amendment (Claude, 2026-10-13, answering the worker's question)
+
+`crates/secs-engine/Cargo.toml` may take `faer.workspace = true` under
+`[dependencies]`. This is the existing workspace dependency with its pinned
+version and features, not a new package, so it does not break the "no new
+dependencies" rule. Use it for the Cholesky and LU solves only, always with
+`Par::Seq`. Do not touch `secs-dsp` (P15 is editing it). Add
+`crates/secs-engine/Cargo.toml` to your allowed files for this one line.
+
+## Amendment 2 (Claude, 2026-10-13): the Cholesky-versus-LU test
+
+The fixed 1e-9 relative tolerance in that test was a wrong specification:
+two backward-stable solvers of the same system agree only to about
+`κ(M)·ε`, and the final MIMO systems sit at a small λ where `κ(M)` is large
+(the worker measured 3.98e-9 on room/L). Do not add iterative refinement or
+change the solver; upstream solves once with LU and the parity gates already
+judge the outcome. Replace the test's assertion with what "same mathematics"
+means for a linear solve, on the same golden input's final system
+`M = AᵀA + λI`:
+
+- each solution's normwise backward error
+  `‖M x − b‖ / (‖M‖·‖x‖ + ‖b‖)` (infinity norms, residual computed in f64 in
+  index order) is at most `16·N·ε`, `N` the system size; and
+- the relative difference `‖x_chol − x_lu‖ / ‖x_lu‖` is at most
+  `16·N·κ·ε`, with `κ` the 2-norm condition number of `M` from its
+  eigenvalues (compute it in the test with faer's self-adjoint
+  eigendecomposition).
+
+Print both measured values and the bound. If either assertion fails, report
+the numbers; do not loosen the constants.
