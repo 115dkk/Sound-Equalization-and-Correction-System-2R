@@ -1,6 +1,6 @@
 # P04 (ASTRA): differential evolution and NumPy's legacy RandomState
 
-Worktree: `/home/user/wt/p04` (branch `m1/p04`, starts after P03 lands).
+Worktree: `/home/user/wt/p04` (branch `m1/p04`). P03 has landed: `secs_dsp::optimize` holds the TRF port; add DE beside it without changing TRF behaviour.
 Work only there. Do not commit; Claude reviews the diff and commits.
 
 ## Goal
@@ -78,6 +78,8 @@ same evaluation sequence (every vector bit-equal) and result; elsewhere
 
 ```sh
 cd /home/user/wt/p04
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps -p secs-dsp
+python3 .github/scripts/check_feature_tests.py
 <venv>/bin/python oracle/run.py dsp_de
 cargo fmt --all -- --check
 cargo clippy -p secs-dsp --all-targets -- -D warnings

@@ -14,7 +14,8 @@
 //! - `least_squares` (bounded TRF, exact trust-region solver, two-point
 //!   Jacobians; `max_nfev` counts residual calls only), ported
 //!   from SciPy 1.18.1 by way of Impulcifer's `optimize.rs` (MIT).
-//! - Differential evolution and RandomState are future packets, not implemented here.
+//! - Differential evolution uses legacy RandomState (MT19937) with SciPy's
+//!   immediate best1bin draw order and Latin-hypercube initialization.
 //! - Rounding is half-to-even (`f64::round_ties_even`) wherever NumPy rounds.
 //!
 //! There is no handwritten `std::arch`; faer SIMD dispatch is provided by pulp.
@@ -34,6 +35,7 @@ pub mod minphase;
 mod numeric;
 pub mod optimize;
 pub mod peaks;
+pub mod random;
 pub mod response;
 pub mod smooth;
 

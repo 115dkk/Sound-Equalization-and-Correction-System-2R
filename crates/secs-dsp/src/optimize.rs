@@ -7,6 +7,9 @@
 //! Only x_scale=1, linear loss and at least one finite bound are supported.
 //! Default ftol=xtol=gtol=1e-8; custom/disabled tolerances are explicit options. Jacobian evaluations
 //! are deliberately excluded from nfev, as in scipy.optimize.least_squares.
+mod de;
+pub use de::{DifferentialEvolutionOptions, DifferentialEvolutionResult, differential_evolution};
+
 use crate::DspError;
 use faer::Mat;
 
