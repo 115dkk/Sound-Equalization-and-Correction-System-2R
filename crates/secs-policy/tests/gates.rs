@@ -1343,3 +1343,76 @@ fn test_detector_ignores_comments_and_strings() {
     "##;
     assert!(!source_has_test_fn(source, "imaginary"));
 }
+
+/// Cargo writes every example and binary of the workspace to one directory
+/// (`target/<profile>/examples`, `target/<profile>`). Two targets with the
+/// same name overwrite each other's outputs; on Windows the MSVC linker then
+/// fails with unresolved externals (the 0.7.3 release run broke this way when
+/// three crates each had an `examples/perf.rs`).
+#[test]
+fn example_and_binary_names_are_unique() {
+    let mut examples: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut binaries: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for krate in first_party_crates() {
+        let manifest = read_toml(&krate.manifest);
+        let declared = |key: &str| -> Vec<String> {
+            manifest
+                .get(key)
+                .and_then(toml::Value::as_array)
+                .map(|targets| {
+                    targets
+                        .iter()
+                        .filter_map(|t| t.get("name").and_then(toml::Value::as_str))
+                        .map(str::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let mut own_examples: BTreeSet<String> = declared("example").into_iter().collect();
+        if let Ok(entries) = fs::read_dir(krate.dir.join("examples")) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = if path.extension().is_some_and(|e| e == "rs") {
+                    path.file_stem()
+                } else if path.join("main.rs").is_file() {
+                    path.file_name()
+                } else {
+                    None
+                };
+                if let Some(name) = name {
+                    own_examples.insert(name.to_string_lossy().into_owned());
+                }
+            }
+        }
+        for name in own_examples {
+            examples.entry(name).or_default().push(krate.name.clone());
+        }
+        let mut own_binaries: BTreeSet<String> = declared("bin").into_iter().collect();
+        if krate.dir.join("src/main.rs").is_file() && own_binaries.is_empty() {
+            own_binaries.insert(krate.name.clone());
+        }
+        if let Ok(entries) = fs::read_dir(krate.dir.join("src/bin")) {
+            for entry in entries.flatten() {
+                if let Some(stem) = entry.path().file_stem() {
+                    own_binaries.insert(stem.to_string_lossy().into_owned());
+                }
+            }
+        }
+        for name in own_binaries {
+            binaries.entry(name).or_default().push(krate.name.clone());
+        }
+    }
+    let clashes: Vec<String> = [("example", &examples), ("binary", &binaries)]
+        .into_iter()
+        .flat_map(|(kind, names)| {
+            names
+                .iter()
+                .filter(|(_, owners)| owners.len() > 1)
+                .map(move |(name, owners)| format!("{kind} `{name}` in {}", owners.join(", ")))
+        })
+        .collect();
+    assert!(
+        clashes.is_empty(),
+        "target names must be unique across the workspace: {clashes:#?}"
+    );
+}
