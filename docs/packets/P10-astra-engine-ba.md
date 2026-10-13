@@ -39,6 +39,16 @@ closure, which is not P08's), `_align_subs_manual` 960–1060, `_bus_delay`
 1063–1095, `_term` 358–363; the BA part of `compute()` 1371–1428.
 Constants 49–93.
 
+**Approved contract changes (Claude, after your first run).** Add
+`pub measurements: &'a MeasurementSet` to `BaInput`: the DBA search bound
+uses every position's raw onsets and `t0` (`correction_engine.py:885–910`),
+which `Prepared` does not keep. You found that `room_dba`'s bound is 2.75 ms
+from all positions against 1.50 ms from the reference only; test that
+case. For any further *additive* change to the `ba.rs` contract that
+upstream parity needs, make it and list it in your report; do not stop to
+ask. Stop and ask only if a landed module (`measurement.rs`, `fit.rs`,
+`decay.rs`, `chain.rs`) would have to change.
+
 ## Contract (`crates/secs-engine/src/ba.rs`)
 
 ```rust
