@@ -314,6 +314,8 @@ jobs:
   fuzz:
     name: fuzz (parsers, 60 s per target)
     runs-on: ubuntu-latest
+    env:
+      FUZZ_TARGET: x86_64-unknown-linux-gnu
     defaults:
       run:
         working-directory: fuzz
@@ -332,8 +334,10 @@ jobs:
           shared-key: fuzz
           workspaces: fuzz
 
+      # The prebuilt cargo-fuzz is a musl binary and would default to the musl
+      # target, where AddressSanitizer cannot link; name the gnu target.
       - name: Build the fuzz targets
-        run: cargo "+$NIGHTLY" fuzz build
+        run: cargo "+$NIGHTLY" fuzz build --target "$FUZZ_TARGET"
 
       # Seeds: the bundled REW template and the mdat golden blobs.
       - name: Run every target
@@ -343,7 +347,7 @@ jobs:
             cp ../src/secs/rew_mdat/template_1.mdat "corpus/$target/template"
             cp ../oracle/goldens/mdat/*.bin "corpus/$target/"
             echo "::group::$target"
-            cargo "+$NIGHTLY" fuzz run "$target" "corpus/$target" -- \
+            cargo "+$NIGHTLY" fuzz run --target "$FUZZ_TARGET" "$target" "corpus/$target" -- \
               -max_total_time=60 -rss_limit_mb=2048 -max_len=262144
             echo "::endgroup::"
           done
