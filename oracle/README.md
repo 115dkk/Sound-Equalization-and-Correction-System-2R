@@ -70,3 +70,4 @@ relative elsewhere (`oracle_libm()` decides from `goldens/libm/probe.json`).
 | Family | Exporter | What is frozen |
 |---|---|---|
 | `libm` | `export_libm.py` | float64 `ln`, `log10`, `log2`, `exp`, `sin`, `cos`, `tan`, `atan`, `tanh`, `atan2`, `pow` at fixed points |
+| `project` | `export_project.py` | role vocabulary, `.secs` presets and migrations, Python JSON bytes, tap allocation, target curves, float32 WAV bytes and readers |
