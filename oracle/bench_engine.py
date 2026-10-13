@@ -30,6 +30,7 @@ def main():
         'design', 'stages', 'prepare', 'recommend', 'preview', 'cache',
         'sub_combine', 'fit_rc1', 'fit_rc2', 'fit_bus', 'fit_xo', 'profile_fit',
         'camilla', 'mdat_staged', 'mdat_before_after', 'gd', 'record_gd',
+        'project_setup', 'project_open', 'project_save',
     ])
     parser.add_argument('case')
     parser.add_argument('--config', choices=['shipped', 'one'], default='shipped')
@@ -51,6 +52,9 @@ def main():
     case = next(c for c in cases() if c.name == args.case)
     design = lambda: cal.compute(case.project, case.irs, case.settings)
     before_each = lambda: None
+    if args.op.startswith('project_'):
+        project_bench(args, case)
+        return
     if args.op.startswith('fit_') or args.op == 'profile_fit':
         import common
         import numpy as np
@@ -231,6 +235,79 @@ def main():
         start = time.perf_counter()
         result = call()
         samples.append(time.perf_counter() - start)
+        del result
+    print(json.dumps(dict(implementation='python', op=args.op, case=args.case,
+                          config=args.config, samples_s=samples,
+                          median_s=statistics.median(samples))))
+
+
+def project_bench(args, case):
+    """Build once, then time the non-GUI open/save bodies used by SECS 2."""
+    import copy
+    from pathlib import Path
+
+    import numpy as np
+    from secs.rew_mdat.builder import MeasurementInput, build_mdat
+    from secs.rewapi.session import IrSaver, load_project_irs
+    from secs.wizard import open_project
+
+    root = Path(os.environ['SECS_PERF_PROJECT'])
+    path = root / 'demo.secs'
+    if args.op == 'project_setup':
+        root.mkdir(parents=True, exist_ok=True)
+        project = copy.deepcopy(case.project)
+        saver = IrSaver(path, use_soundfile=False)
+        records = []
+        for pos in sorted(case.irs):
+            record = dict(pos=int(pos), label=f'Position {pos}', uuid={}, mdat=None,
+                          ir={}, spl_db={}, t0={}, done=True, sample_rate=None)
+            for role, stored in case.irs[pos].items():
+                samples, rate, *rest = stored
+                wav = saver.save(role, pos, np.asarray(samples, dtype=np.float32), int(rate))
+                record['ir'][role] = str(wav.relative_to(path.parent)).replace('\\', '/')
+                record['t0'][role] = float(rest[0]) if rest else 0.0
+                record['spl_offset'] = record.get('spl_offset', {})
+                record['sample_rate'] = int(rate)
+            records.append(record)
+        project.measurements = records
+        project.save(path)
+        print(json.dumps(dict(op=args.op, path=str(path), records=len(records),
+                              irs=sum(len(r['ir']) for r in records))))
+        return
+
+    def loaded():
+        project = open_project(path)
+        irs = load_project_irs(project, path)
+        return project, irs
+
+    if args.op == 'project_open':
+        call = loaded
+    else:
+        project, _ = loaded()
+        target = root / 'saved.secs'
+        order = [speaker.role for speaker in project.config.speakers]
+
+        def call():
+            project.save(target)
+            irs = load_project_irs(project, target)
+            items = []
+            for pos in sorted(irs):
+                roles = sorted(irs[pos], key=lambda role: order.index(role)
+                               if role in order else len(order))
+                for role in roles:
+                    samples, rate, *rest = irs[pos][role]
+                    items.append(MeasurementInput(
+                        f'{role}_P{pos}', f'SECS · 위치 {pos} · 원 측정',
+                        int(rate), np.asarray(samples, dtype=np.float32),
+                        float(rest[0]) if rest else 0.0, None))
+            return build_mdat(items, target.with_suffix('.mdat'))
+
+    call()
+    samples = []
+    for _ in range(args.runs or 5):
+        started = time.perf_counter()
+        result = call()
+        samples.append(time.perf_counter() - started)
         del result
     print(json.dumps(dict(implementation='python', op=args.op, case=args.case,
                           config=args.config, samples_s=samples,

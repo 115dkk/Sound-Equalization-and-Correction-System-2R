@@ -18,5 +18,6 @@ thiserror.workspace = true
 ryu = "=1.0.20"
 
 [dev-dependencies]
+secs-mdat = { path = "../secs-mdat" }
 secs-oracle.workspace = true
 serde_json.workspace = true

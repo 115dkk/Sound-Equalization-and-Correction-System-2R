@@ -58,10 +58,10 @@ note = "ADR 0004 per-value 3*max(spread, quantum) cap and exact binomial 99.9% C
 id = "perf.engine"
 kind = "perf"
 milestone = "M2"
-status = "partial"
+status = "implemented"
 upstream = "calibration.compute, recommend_xo, previews and exports"
 tests = ["secs-engine::design_matches_recorded_stages", "secs-engine::engine_e2e_spread", "secs-engine::peq_cached_residual_is_bit_equal", "secs-engine::design_parallel_progress_counts_completed_channels", "secs-engine::preview_sub_combine_replayed_designs", "secs-dsp::cached_bounds_match_smoothing_bits_and_errors", "secs-engine::xo_preparation_is_candidate_independent", "secs-engine::xo_shared_preparation_preserves_candidate_bits", "secs-engine::xo_shared_windows_preserve_filtered_bits", "secs-camilla::streaming_json_matches_recursive_bytes"]
-note = "docs/perf/engine.md records the paired release audit; timing is not a CI gate. Partial until every operation is faster in both configurations."
+note = "docs/perf/engine.md records the paired release audit (P13, P13b, P13c): every operation is faster than SECS 2 in both configurations and Rust uses less aggregate memory. Timing is not a CI gate; the tests prove the speed-ups kept the results."
 
 # ---- Policy (M0) ----
 
@@ -175,10 +175,10 @@ note = "oracle/README.md; fixtures regenerate with oracle/run.py from the in-rep
 id = "dsp.fft"
 kind = "dsp"
 milestone = "M1"
-status = "partial"
-tests = ["secs-dsp::rfft_irfft_round_trip_even_and_odd"]
+status = "implemented"
+tests = ["secs-dsp::rfft_irfft_round_trip_even_and_odd", "secs-dsp::golden_minimum_phase"]
 upstream = "numpy.fft (rfft, irfft)"
-note = "from Impulcifer's fft.rs; oracle parity comes with the dsp golden family"
+note = "from Impulcifer's fft.rs; oracle parity through the minimum-phase golden (rfft/irfft against NumPy, power-of-two and other lengths)"
 
 [[feature]]
 id = "dsp.smoothing"
@@ -423,8 +423,8 @@ upstream = "correction_engine._ba_setup late_db, calibration._late_db, mimo.mode
 id = "engine.chain"
 kind = "engine"
 milestone = "M2"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-engine::simulator_matches_recorded_stages", "secs-camilla::make_config_matches_oracle"]
 upstream = "correction_engine.py stage_responses"
 note = "new: one signal-chain value read by the simulator and the CamillaDSP writer"
 
@@ -590,9 +590,9 @@ upstream = "i18n.py, translations.py, wizard/en_g*.py"
 id = "release.prerelease_pipeline"
 kind = "release"
 milestone = "M0"
-status = "planned"
+status = "partial"
 tests = []
-note = "release.yml: Windows NSIS + portable zip, macOS dmg, Linux AppImage + deb; marked implemented after the first release run"
+note = "release.yml: Windows NSIS + portable zip, macOS dmg, Linux AppImage + deb, shipping every prerelease since 0.0.1. The gate is tested by .github/scripts/test_release_gate.py, which this registry cannot reference (it lists cargo tests), so the entry stays partial."
 
 [[feature]]
 id = "release.updater"
