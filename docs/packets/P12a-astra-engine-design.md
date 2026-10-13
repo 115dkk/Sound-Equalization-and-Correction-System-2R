@@ -246,10 +246,81 @@ test run instead (say so; Claude wires CI).
 `stage_responses` against the recorded responses (on the replayed design):
 exact on structure, measured tolerance on values.
 
+## Second run (Claude, after your first report)
+
+Your first run is committed as `wip` on `m2/p12a`, and the dev branch is
+merged in (it brings the P07 gate fix and v0.5.0). Continue from there. Read
+the new section of `docs/adr/0004-parity-and-deviations.md`, "끝단 판정의
+통계 규칙": it replaces the per-value 1.25 rule of the e2e test. Your four
+failures are what that rule predicts for a peer draw (about 0.6 % of 645
+values), and Rust sat outside the eight-run range less often than a peer
+would (9 % against 22 %).
+
+1. **e2e gate (`src/tests/e2e.rs`).** Implement the ADR rule exactly:
+   - per value, worse-side cap `3 × max(w, q)`: `q` is one grid step for the
+     `in*` percentages (read the band's point count from `scorecard.rs`; the
+     values are k·100/N), 1 for integer-valued metrics (`turns` if it is an
+     integer; check), else `1e-9 × max(1, |c0|)`; chain scalars use the
+     same `q` floor as non-quantised values, discrete values must equal one
+     of the eight runs;
+   - per case, two binomial checks at the 99.9 % quantile (compute the
+     quantile exactly from the binomial CDF, not a normal approximation):
+     values worse than all eight runs, p = 1/9; among values with `w > 0`,
+     values worse than the median of the eight, p = 1/2;
+   - print the per-value 1.25 exceedances as `E2E_125` lines (report only)
+     and one `E2E_SUMMARY` line per case with n, both counts and bounds.
+   Register `engine.e2e_demo` as `implemented` if all of it passes on both
+   libm paths.
+
+2. **Golden budget (`engine_design` ≤ 6 MB, you are at 13.4 MB).**
+   - Fit calls: `engine_fit` and `engine_rc` already store recorded fits of
+     the same cases. Do not store a call again when another family has it:
+     reference it by family and fixture id, and check a SHA-256 of the
+     request arrays (as recorded by NumPy, float64 little-endian) so a
+     changed exporter cannot silently pair the wrong call. Store only calls
+     no other family has.
+   - Sampled arrays at design level check orchestration, not the stage
+     arithmetic (RC and BA are gated in their own families): sample
+     15–600 Hz every 8th bin plus every 257th bin, and write the rule in
+     `oracle/README.md` (Rust rebuilds the indices).
+   If you are still above 6 MB, report the breakdown by kind; do not drop
+   checks to fit.
+
+3. **Cancellation.** `production_fitters` takes the `CancelToken` and checks
+   it before every fit (return an empty band list once cancelled, as your
+   guards do now; then move the guard into the factory so `design` has one
+   path). Measure the longest single `fit_peq` call in `dolby` (test profile)
+   and print it. Add a test that cancels the `dolby` design at five moments
+   (e.g. 0.5, 2, 5, 9, 14 s after start, or spread over its measured length)
+   and asserts each returns `Cancelled` within 1 s of the cancel.
+
+4. **Completeness of the replayed design test.** On the oracle libm assert
+   every note's kind, order and every numeric and discrete field, every PEQ
+   band (exact: they come from the replay), and the rest within the
+   measured tolerances. Off the oracle libm, assert everything that no
+   threshold, argmax or DE comparison downstream of a last-bit difference
+   can flip, and print the list of what you leave report-only and why.
+
+5. **Code.**
+   - Use `levels::weights` (or `MAIN_WEIGHT`) instead of the literal `5.0`
+     in the top-PEQ weighting, and a named constant for the 500 Hz automatic
+     RC ceiling (`RC_AUTO_MAX_HZ`, with its upstream line).
+   - Progress must not go backwards under the parallel map: count finished
+     channels instead of setting the channel index.
+
+6. **Timing.** Your e2e times were in the test profile (opt-level 2), with
+   Python running two at a time. Do not optimise now; P13 audits performance.
+   Just print Rust's per-stage wall time (BA, top PEQ, RC per channel,
+   scores) once for `room_dba` so P13 starts from it.
+
+Verification: as above, plus
+`cargo test -p secs-engine design` and `cargo test -p secs-engine e2e`
+separately (cargo takes one filter).
+
 ## Files you may change
 
 - `crates/secs-engine/src/{design,chain}.rs`, `crates/secs-engine/src/lib.rs`
-  (module lines), `crates/secs-engine/src/notes.rs` (new variants only),
+  (module lines), `crates/secs-engine/src/levels.rs` (constants only), `crates/secs-engine/src/notes.rs` (new variants only),
   `crates/secs-engine/src/tests/{mod,design,e2e}.rs`
 - `oracle/export_engine_design.py`, `oracle/export_engine_e2e.py`,
   `oracle/goldens/engine_{design,e2e}/**`, `oracle/README.md` (family rows)
