@@ -377,11 +377,43 @@ tests = []
 note = "new: optional wgpu adapter, ships only if 3x faster than the CPU path (docs/adr/0007)"
 
 [[feature]]
+id = "compute.cancellation"
+kind = "compute"
+milestone = "M2"
+status = "implemented"
+tests = ["secs-compute::cancellation_stops_map_quickly_and_skips_remaining"]
+note = "new"
+
+[[feature]]
+id = "compute.parallel_map"
+kind = "compute"
+milestone = "M2"
+status = "implemented"
+tests = [
+  "secs-compute::parallel_map_is_ordered_and_thread_count_independent",
+  "secs-compute::try_map_reports_lowest_failing_index",
+]
+note = "new"
+
+[[feature]]
+id = "compute.progress"
+kind = "compute"
+milestone = "M2"
+status = "implemented"
+tests = ["secs-compute::progress_reports_endpoints_monotonically_and_throttles"]
+note = "new"
+
+[[feature]]
 id = "compute.memory_budget"
 kind = "compute"
-milestone = "M3"
-status = "planned"
-tests = []
+milestone = "M2"
+status = "implemented"
+tests = [
+  "secs-compute::memory_budget_bounds_concurrent_acquirers",
+  "secs-compute::memory_budget_rejects_oversized_requests",
+  "secs-compute::memory_budget_waiter_observes_cancellation",
+  "secs-compute::memory_permit_releases_after_panic",
+]
 note = "new"
 
 # ---- Measurement and service (M4) ----
