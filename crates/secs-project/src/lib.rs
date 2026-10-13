@@ -2,6 +2,7 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 //! SECS 2 compatible `.secs` project files and `.irs` WAV storage.
 
+mod calibration;
 mod config;
 mod dsp_profile;
 mod error;
@@ -10,6 +11,7 @@ mod project;
 pub mod pyjson;
 mod target;
 
+pub use calibration::{calibration_from_project, store_calibration};
 pub use config::{Band, Speaker, SpeakerConfig, default_bands, ordered_speakers};
 pub use dsp_profile::DspProfile;
 pub use error::ProjectError;

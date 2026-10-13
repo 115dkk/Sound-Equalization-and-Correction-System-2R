@@ -40,6 +40,8 @@ pub mod input;
 #[allow(dead_code)]
 mod ba;
 #[allow(dead_code)]
+mod calibration;
+#[allow(dead_code)]
 mod chain;
 #[allow(dead_code)]
 mod decay;
