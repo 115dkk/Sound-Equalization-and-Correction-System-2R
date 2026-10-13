@@ -175,10 +175,27 @@ pub(crate) fn design_observed(
     check(ctx)?;
     let prep_started = std::time::Instant::now();
     let config = req.config;
-    let mut setup = Setup::new(config);
+    let setup = Setup::new(config);
     let prepared = measurement::prepare(req.measurements, config, &setup)?;
     observed("prepare", prep_started.elapsed());
+    design_prepared(req, ctx, fitters, &prepared, observed)
+}
+
+/// The caller must prepare these measurements with this config's non-XO fields.
+/// Recommendation varies only XO: preparation reads the reference position,
+/// main/sub membership and fixed sub filters, never XO or BA-derived filters.
+/// Candidates borrow the spectra; all candidate-dependent work stays below.
+/// Cloning Spectra at the output boundary copies Arc handles, not sample buffers.
+pub(crate) fn design_prepared(
+    req: &DesignRequest<'_>,
+    ctx: &Context,
+    fitters: &FitterFactory<'_>,
+    prepared: &measurement::Prepared,
+    observed: &(dyn Fn(&str, std::time::Duration) + Sync),
+) -> Result<Design, EngineError> {
     check(ctx)?;
+    let config = req.config;
+    let mut setup = Setup::new(config);
     let positions = prepared.h.positions().to_vec();
     let progress = ctx.stage("engine.design", 1 + config.mains.len() as u64);
     let mut notes = Vec::new();
@@ -237,7 +254,7 @@ pub(crate) fn design_observed(
         .ok_or_else(|| EngineError::Input("no measured main".into()))?;
     let input = BaInput {
         measurements: req.measurements,
-        prepared: &prepared,
+        prepared,
         setup: &setup,
         config,
         tuning: req.tuning,
@@ -623,7 +640,7 @@ pub(crate) fn design_observed(
         target_display: spl_grid.iter().map(|&g| interp(g, f, &target_db)).collect(),
         target_db,
         spectra: DesignSpectra {
-            raw: Arc::new(prepared.h0),
+            raw: Arc::new(prepared.h0.clone()),
             used: Arc::new(used),
             main_position: config.main_position,
             positions,

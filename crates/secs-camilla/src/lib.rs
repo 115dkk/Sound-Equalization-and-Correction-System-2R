@@ -140,8 +140,15 @@ fn int(value: usize) -> Json {
     Json::Int(i64::try_from(value).expect("channel counts fit i64"))
 }
 
+#[cfg(test)]
 fn json_string(value: &str) -> String {
-    let mut out = String::from("\"");
+    let mut out = String::new();
+    json_string_into(value, &mut out);
+    out
+}
+
+fn json_string_into(value: &str, out: &mut String) {
+    out.push('"');
     for ch in value.chars() {
         match ch {
             '"' => out.push_str("\\\""),
@@ -169,27 +176,42 @@ fn json_string(value: &str) -> String {
         }
     }
     out.push('"');
-    out
 }
 
 fn json(value: &Json) -> String {
+    let mut out = String::new();
+    json_into(value, &mut out);
+    out
+}
+
+fn json_into(value: &Json, out: &mut String) {
     match value {
-        Json::Bool(value) => value.to_string(),
-        Json::Int(value) => value.to_string(),
-        Json::Float(value) => repr_f64(*value),
-        Json::Str(value) => json_string(value),
-        Json::Array(values) => format!(
-            "[{}]",
-            values.iter().map(json).collect::<Vec<_>>().join(", ")
-        ),
-        Json::Object(values) => format!(
-            "{{{}}}",
-            values
-                .iter()
-                .map(|(key, value)| format!("{}: {}", json_string(key), json(value)))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+        Json::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
+        Json::Int(value) => write!(out, "{value}").expect("String write"),
+        Json::Float(value) => out.push_str(&repr_f64(*value)),
+        Json::Str(value) => json_string_into(value, out),
+        Json::Array(values) => {
+            out.push('[');
+            for (i, value) in values.iter().enumerate() {
+                if i != 0 {
+                    out.push_str(", ");
+                }
+                json_into(value, out);
+            }
+            out.push(']');
+        }
+        Json::Object(values) => {
+            out.push('{');
+            for (i, (key, value)) in values.iter().enumerate() {
+                if i != 0 {
+                    out.push_str(", ");
+                }
+                json_string_into(key, out);
+                out.push_str(": ");
+                json_into(value, out);
+            }
+            out.push('}');
+        }
     }
 }
 
@@ -632,6 +654,19 @@ pub fn make_config(
     fir_prefix: &str,
     options: &Options,
 ) -> Result<Config, CamillaError> {
+    make_config_observed(chain, out, config_dir, fir_prefix, options, &|_| {})
+}
+
+/// Audit-only stage boundaries; callbacks run after construction and serialization.
+#[doc(hidden)]
+pub fn make_config_observed(
+    chain: &SignalChain,
+    out: &Path,
+    config_dir: &Path,
+    fir_prefix: &str,
+    options: &Options,
+    boundary: &dyn Fn(&str),
+) -> Result<Config, CamillaError> {
     validate(chain, options)?;
     let mains = &chain.mains;
     let subs = &chain.subs;
@@ -952,6 +987,7 @@ pub fn make_config(
             .collect::<Vec<_>>()
             .join(", ")
     );
+    boundary("build");
     lines.extend([
         format!("title: {}", json(&Json::Str(title))),
         format!("description: {}", json(&Json::Str(description))),
@@ -976,10 +1012,12 @@ pub fn make_config(
     for stage in pipeline {
         lines.push(format!("  - {}", json(&stage)));
     }
-    Ok(Config {
+    let config = Config {
         yaml: lines.join("\n") + "\n",
         coeffs,
-    })
+    };
+    boundary("serialize");
+    Ok(config)
 }
 
 fn safe_name(name: &str) -> String {
@@ -1069,4 +1107,50 @@ pub fn export(
         ..Options::default()
     };
     write_config(chain, folder, &format!("secs_{mode}"), &options)
+}
+
+#[cfg(test)]
+mod perf_tests {
+    use super::*;
+
+    #[test]
+    fn streaming_json_matches_recursive_bytes() {
+        fn old(value: &Json) -> String {
+            match value {
+                Json::Bool(v) => v.to_string(),
+                Json::Int(v) => v.to_string(),
+                Json::Float(v) => repr_f64(*v),
+                Json::Str(v) => json_string(v),
+                Json::Array(v) => format!("[{}]", v.iter().map(old).collect::<Vec<_>>().join(", ")),
+                Json::Object(v) => format!(
+                    "{{{}}}",
+                    v.iter()
+                        .map(|(k, v)| format!("{}: {}", json_string(k), old(v)))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            }
+        }
+        let values = [
+            Json::Array(vec![]),
+            Json::Object(vec![]),
+            object([
+                ("quote\"\\\n", Json::Str("한글\t\u{0}😀".into())),
+                (
+                    "values",
+                    Json::Array(vec![
+                        Json::Bool(true),
+                        Json::Bool(false),
+                        Json::Int(i64::MIN),
+                        Json::Float(-0.0),
+                        Json::Float(1e-9),
+                        object([("nested", Json::Array(vec![Json::Int(42)]))]),
+                    ]),
+                ),
+            ]),
+        ];
+        for value in values {
+            assert_eq!(json(&value).as_bytes(), old(&value).as_bytes());
+        }
+    }
 }

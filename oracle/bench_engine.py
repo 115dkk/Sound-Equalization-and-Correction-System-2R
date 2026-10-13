@@ -2,6 +2,8 @@
 
 Run a fresh process for each op/case/configuration. SIMD stays enabled.
 Configuration is applied before NumPy imports, including spawned XO workers.
+fit_* requires SECS_PERF_FIT_INPUTS and writes the nine recorded/ULP inputs
+for the Rust example. Short rows use --runs 31 in interleaved language batches.
 """
 from __future__ import annotations
 
@@ -10,6 +12,16 @@ import json
 import os
 import statistics
 import time
+
+
+def perturb(values, rng):
+    """One independently signed ULP per nonzero target, preserving signed zeros.
+
+    Copied from export_engine_fit.py; importing it would run the exporter.
+    """
+    import numpy as np
+    directions = np.where(rng.integers(0, 2, size=values.shape), np.inf, -np.inf)
+    return np.where(values == 0., values, np.nextafter(values, directions))
 
 
 def main():
@@ -21,8 +33,10 @@ def main():
     ])
     parser.add_argument('case')
     parser.add_argument('--config', choices=['shipped', 'one'], default='shipped')
-    parser.add_argument('--runs', type=int, choices=[3, 5], default=None,
-                        help='override samples; three only for calls over ten seconds')
+    parser.add_argument('--runs', type=int, choices=[3, 5, 31], default=None,
+                        help='override samples; 31 for interleaved short batches')
+    parser.add_argument('--memory-once', action='store_true',
+                        help='one call, no warm-up, for process-tree memory')
     args = parser.parse_args()
     os.environ.pop('NPY_DISABLE_CPU_FEATURES', None)
     os.environ.pop('OPENBLAS_CORETYPE', None)
@@ -69,6 +83,45 @@ def main():
         kw = {key: inputs[key] for key in ('n', 'lo', 'hi', 'boost', 'ring_ms', 'f_max')}
         kw.update(g=array(inputs['g']), corr_db=array(inputs['corr_db']))
         call = lambda: ce.fit_peq(**kw)
+        if args.op.startswith('fit_'):
+            import hashlib
+            from pathlib import Path
+            import scipy.optimize
+            corr = kw['corr_db']
+            envelope = [corr] + [perturb(corr, np.random.default_rng(k)) for k in range(8)]
+            data = np.asarray(envelope, dtype='<f8').tobytes()
+            Path(os.environ['SECS_PERF_FIT_INPUTS']).write_bytes(data)
+            original = scipy.optimize.least_squares
+            stats = []
+            def counted(fun, *a, **kwargs):
+                sol = original(fun, *a, **kwargs)
+                stats.append((sol.nfev, sol.njev))
+                return sol
+            scipy.optimize.least_squares = counted
+            rows = []
+            try:
+                for index, corr in enumerate(envelope):
+                    kw['corr_db'] = corr
+                    call()
+                    samples = []
+                    counts = []
+                    for _ in range(5):
+                        stats.clear()
+                        started = time.perf_counter()
+                        call()
+                        samples.append(time.perf_counter() - started)
+                        counts.append(stats[0] if stats else (0, 0))
+                    assert all(c == counts[0] for c in counts)
+                    rows.append(dict(input=index, samples_s=samples,
+                                     median_s=statistics.median(samples),
+                                     nfev=counts[0][0], njev=counts[0][1]))
+            finally:
+                scipy.optimize.least_squares = original
+            print(json.dumps(dict(implementation='python', op=args.op, case=args.case,
+                                  config=args.config, input_count=9, runs_per_input=5, inputs=rows,
+                                  input_sha256=hashlib.sha256(data).hexdigest(),
+                                  median_s=statistics.median(r['median_s'] for r in rows))))
+            return
         if args.op == 'profile_fit':
             import scipy.optimize
             original = scipy.optimize.least_squares
@@ -160,6 +213,13 @@ def main():
                 call = lambda: build_cache(run, 'front', 80.0)
             else:
                 call = preview
+    if args.memory_once:
+        before_each()
+        result = call()
+        print(json.dumps(dict(implementation='python', op=args.op, case=args.case,
+                              config=args.config, memory_once=True)))
+        del result
+        return
     before_each()
     warm_started = time.perf_counter()
     call()
