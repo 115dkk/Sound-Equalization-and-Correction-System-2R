@@ -1,0 +1,5 @@
+{
+  "future": {
+    "$serde_json::private::Number": "123"
+  }
+}

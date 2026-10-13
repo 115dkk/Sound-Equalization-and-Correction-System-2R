@@ -10,3 +10,4 @@
 //! differs (docs/adr/0003).
 
 pub mod ipc;
+pub mod role;
