@@ -1,6 +1,6 @@
 # 엔진 이식 계획 (M2)
 
-`secs-engine`을 업스트림 `correction_engine.py`와 `calibration.py`의 계산 절반, `scorecard.py`에서 옮기는 방법입니다. 모듈 경계는 [`ARCHITECTURE.md`](ARCHITECTURE.md) 5절, 등가와 편차의 원칙은 [ADR 0004](adr/0004-parity-and-deviations.md)를 따릅니다. MIMO(`mimo.py`, `mimo_iir.py`)는 M3입니다.
+`secs-engine`을 업스트림 `correction_engine.py`와 `calibration.py`의 계산 절반, `scorecard.py`에서 옮기는 방법입니다. 모듈 경계는 [`ARCHITECTURE.md`](ARCHITECTURE.md) 5절, 등가와 편차의 원칙은 [ADR 0004](adr/0004-parity-and-deviations.md)를 따릅니다. MIMO(`mimo.py`, `mimo_iir.py`)는 M3이고 [`MIMO.md`](MIMO.md)에 있습니다.
 
 ## 1. 모양
 
