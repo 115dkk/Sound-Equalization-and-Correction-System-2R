@@ -301,16 +301,36 @@ fn design_cancellation_returns_within_one_second() {
     };
     let case = cases::load("dolby");
     let mut failures = Vec::new();
-    // Two-channel execution finishes before 14 s on this host. These five
-    // moments span preparation/BA, top PEQ and early/late channel work.
-    for seconds in [0.5, 2.0, 5.0, 8.0, 10.0] {
+    let request = DesignRequest {
+        measurements: &case.measurements,
+        config: &case.config,
+        tuning: &case.tuning,
+        subs_only: false,
+        adapter_notes: &[],
+    };
+    let two = |token: CancelToken| {
+        Context::new(2, MemoryBudget::new(u64::MAX), Arc::new(NoProgress), token)
+    };
+    // Cancel at fixed fractions of an uncancelled run on this machine, so the
+    // five moments span preparation/BA, top PEQ and early/late channel work
+    // whatever the build profile (the release profile finished the dolby
+    // design before an absolute 10 s mark).
+    let full = {
+        let context = two(CancelToken::new());
+        let start = Instant::now();
+        design::design(
+            &request,
+            &context,
+            &*design::production_fitters(context.cancel()),
+        )
+        .expect("uncancelled design");
+        start.elapsed()
+    };
+    eprintln!("MEASURE design uncancelled={full:?}");
+    for fraction in [0.03, 0.15, 0.35, 0.6, 0.85] {
+        let seconds = full.as_secs_f64() * fraction;
         let token = CancelToken::new();
-        let context = Context::new(
-            2,
-            MemoryBudget::new(u64::MAX),
-            Arc::new(NoProgress),
-            token.clone(),
-        );
+        let context = two(token.clone());
         thread::scope(|scope| {
             let canceller = scope.spawn(|| {
                 thread::sleep(Duration::from_secs_f64(seconds));
@@ -319,13 +339,7 @@ fn design_cancellation_returns_within_one_second() {
                 at
             });
             let result = design::design(
-                &DesignRequest {
-                    measurements: &case.measurements,
-                    config: &case.config,
-                    tuning: &case.tuning,
-                    subs_only: false,
-                    adapter_notes: &[],
-                },
+                &request,
                 &context,
                 &*design::production_fitters(context.cancel()),
             );
@@ -334,11 +348,11 @@ fn design_cancellation_returns_within_one_second() {
             let cancelled = matches!(result, Err(crate::EngineError::Cancelled));
             let latency = returned.saturating_duration_since(cancelled_at);
             eprintln!(
-                "MEASURE design cancellation at={seconds}s latency={latency:?} cancelled={cancelled}"
+                "MEASURE design cancellation at={seconds:.2}s ({fraction}) latency={latency:?} cancelled={cancelled}"
             );
             if !cancelled || latency >= Duration::from_secs(1) {
                 failures.push(format!(
-                    "at {seconds}s: cancelled={cancelled}, latency={latency:?}"
+                    "at {seconds:.2}s ({fraction}): cancelled={cancelled}, latency={latency:?}"
                 ));
             }
         });
