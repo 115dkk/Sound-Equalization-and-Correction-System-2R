@@ -4,11 +4,17 @@
 //!
 //! Port of SciPy 1.18.1 optimize/_lsq/{trf,common}.py and _numdiff.py,
 //! Copyright SciPy Developers, BSD-3-Clause (see docs/THIRD_PARTY.md).
-//! Only x_scale=1, linear loss and at least one finite bound are supported.
+//! The dense solver supports x_scale=1; the normal-equation solver also supports
+//! x_scale='jac'. Both require linear loss and at least one finite bound.
 //! Default ftol=xtol=gtol=1e-8; custom/disabled tolerances are explicit options. Jacobian evaluations
 //! are deliberately excluded from nfev, as in scipy.optimize.least_squares.
 mod de;
+mod normal;
 pub use de::{DifferentialEvolutionOptions, DifferentialEvolutionResult, differential_evolution};
+pub use normal::{
+    NormalEquations, NormalOptions, NormalTrace, NormalTrial, XScale, least_squares_normal,
+    least_squares_normal_with_trace, trf_normal_one_step,
+};
 
 use crate::DspError;
 use faer::Mat;
@@ -276,10 +282,46 @@ fn minimize((a, b, c): (f64, f64, f64), lo: f64, hi: f64) -> (f64, f64) {
     }
     best
 }
+enum QuadraticModel<'a> {
+    Dense(&'a Mat<f64>),
+    Normal(&'a Mat<f64>),
+}
+impl QuadraticModel<'_> {
+    fn value(&self, g: &[f64], diag: &[f64], s: &[f64]) -> f64 {
+        match self {
+            Self::Dense(j) => quadratic(j, g, diag, s),
+            // common.py:evaluate_quadratic: ||J_h s||² = sᵀ H s.
+            Self::Normal(h) => {
+                0.5 * (dot(s, &mv(h, s)) + (0..s.len()).map(|i| s[i] * diag[i] * s[i]).sum::<f64>())
+                    + dot(s, g)
+            }
+        }
+    }
+    fn line(&self, g: &[f64], diag: &[f64], s: &[f64], s0: Option<&[f64]>) -> (f64, f64, f64) {
+        match self {
+            Self::Dense(j) => quadratic_line(j, g, diag, s, s0),
+            // common.py:build_quadratic_1d: (J_h s0)ᵀ(J_h s) = s0ᵀ H s.
+            Self::Normal(h) => {
+                let hs = mv(h, s);
+                let a =
+                    0.5 * (dot(s, &hs) + (0..s.len()).map(|i| s[i] * diag[i] * s[i]).sum::<f64>());
+                let mut b = dot(g, s);
+                let mut c = 0.;
+                if let Some(s0) = s0 {
+                    b += dot(s0, &hs);
+                    c = 0.5 * dot(s0, &mv(h, s0)) + dot(g, s0);
+                    b += (0..s.len()).map(|i| s0[i] * diag[i] * s[i]).sum::<f64>();
+                    c += 0.5 * (0..s.len()).map(|i| s0[i] * diag[i] * s0[i]).sum::<f64>();
+                }
+                (a, b, c)
+            }
+        }
+    }
+}
 #[allow(clippy::too_many_arguments)]
 fn select(
     x: &[f64],
-    j: &Mat<f64>,
+    model: QuadraticModel<'_>,
     diag: &[f64],
     g: &[f64],
     mut p: Vec<f64>,
@@ -292,7 +334,7 @@ fn select(
     mut trace: Option<&mut SelectTrace>,
 ) -> (Vec<f64>, Vec<f64>, f64) {
     if (0..x.len()).all(|i| x[i] + p[i] >= lb[i] && x[i] + p[i] <= ub[i]) {
-        let q = quadratic(j, g, diag, &ph);
+        let q = model.value(g, diag, &ph);
         if let Some(t) = trace {
             t.branch = "p";
             t.p_value = Some(q);
@@ -337,7 +379,7 @@ fn select(
     }
     let mut rv = f64::INFINITY;
     if lo <= hi {
-        let (t, v) = minimize(quadratic_line(j, g, diag, &rh, Some(&ph)), lo, hi);
+        let (t, v) = minimize(model.line(g, diag, &rh, Some(&ph)), lo, hi);
         rv = v;
         if let Some(trace) = trace.as_deref_mut() {
             trace.r_stride = Some(t);
@@ -352,13 +394,13 @@ fn select(
     for v in &mut ph {
         *v *= theta;
     }
-    let pv = quadratic(j, g, diag, &ph);
+    let pv = model.value(g, diag, &ph);
     let mut ah: Vec<_> = g.iter().map(|v| -v).collect();
     let mut ag: Vec<_> = ah.iter().zip(d).map(|(a, b)| a * b).collect();
     let tr = delta / norm(&ah);
     let (bound, _) = bound_step(x, &ag, lb, ub);
     let upper = if bound < tr { theta * bound } else { tr };
-    let (stride, av) = minimize(quadratic_line(j, g, diag, &ah, None), 0., upper);
+    let (stride, av) = minimize(model.line(g, diag, &ah, None), 0., upper);
     for v in &mut ah {
         *v *= stride;
     }
@@ -386,6 +428,24 @@ fn select(
         (rh.iter().zip(d).map(|(a, b)| a * b).collect(), rh, -rv)
     } else {
         (ag, ah, -av)
+    }
+}
+fn termination(
+    actual: f64,
+    cost: f64,
+    step: &[f64],
+    x: &[f64],
+    ratio: f64,
+    ftol: f64,
+    xtol: f64,
+) -> i32 {
+    let ft = actual < ftol * cost && ratio > 0.25;
+    let xt = norm(step) < xtol * (xtol + norm(x));
+    match (ft, xt) {
+        (true, true) => 4,
+        (true, false) => 2,
+        (false, true) => 3,
+        _ => 0,
     }
 }
 fn phi_and_derivative(suf: &[f64], s: &[f64], alpha: f64, delta: f64) -> (f64, f64) {
@@ -510,7 +570,25 @@ pub fn least_squares_with_options<F: FnMut(&[f64]) -> Vec<f64>>(
     options: Options,
     trace: Option<&mut LeastSquaresTrace>,
 ) -> Result<LeastSquaresResult, DspError> {
-    solve(residual, x0, lb, ub, options, trace, None)
+    solve(residual, x0, lb, ub, options, trace, None, None)
+}
+
+/// Dense analytic-Jacobian reference path, sharing the original exact-SVD loop.
+#[doc(hidden)]
+pub fn least_squares_analytic<F, J>(
+    residual: F,
+    mut jac: J,
+    x0: &[f64],
+    lb: &[f64],
+    ub: &[f64],
+    options: Options,
+    trace: Option<&mut LeastSquaresTrace>,
+) -> Result<LeastSquaresResult, DspError>
+where
+    F: FnMut(&[f64]) -> Vec<f64>,
+    J: FnMut(&[f64]) -> Mat<f64>,
+{
+    solve(residual, x0, lb, ub, options, trace, None, Some(&mut jac))
 }
 
 /// Replay one trial of the production loop at an oracle base point. Recomputes
@@ -544,12 +622,15 @@ pub fn trf_one_step<F: FnMut(&[f64]) -> Vec<f64>>(
         },
         Some(&mut trace),
         Some((delta, alpha)),
+        None,
     )?;
     trace
         .trials
         .pop()
         .ok_or_else(|| DspError::InvalidArgument("no replay trial".into()))
 }
+
+type AnalyticJacobian<'a> = dyn FnMut(&[f64]) -> Mat<f64> + 'a;
 
 #[allow(clippy::too_many_arguments)]
 fn solve<F: FnMut(&[f64]) -> Vec<f64>>(
@@ -560,6 +641,7 @@ fn solve<F: FnMut(&[f64]) -> Vec<f64>>(
     options: Options,
     mut trace: Option<&mut LeastSquaresTrace>,
     replay: Option<(f64, f64)>,
+    mut analytic: Option<&mut AnalyticJacobian<'_>>,
 ) -> Result<LeastSquaresResult, DspError> {
     let max_nfev = options.max_nfev;
     let ftol = options.ftol.unwrap_or(0.);
@@ -620,7 +702,23 @@ fn solve<F: FnMut(&[f64]) -> Vec<f64>>(
     if m == 0 || f.iter().any(|v| !v.is_finite()) {
         return Err(DspError::InvalidArgument("invalid initial residual".into()));
     }
-    let mut j = jacobian(&mut fun, &x, &f, lb, ub)?;
+    let mut get_jacobian = |x: &[f64], f: &[f64], fun: &mut _| {
+        if let Some(jac) = analytic.as_mut() {
+            let j = jac(x);
+            if j.nrows() != f.len()
+                || j.ncols() != x.len()
+                || row_major(&j).iter().any(|v| !v.is_finite())
+            {
+                return Err(DspError::InvalidArgument(
+                    "invalid analytic Jacobian".into(),
+                ));
+            }
+            Ok(j)
+        } else {
+            jacobian(fun, x, f, lb, ub)
+        }
+    };
+    let mut j = get_jacobian(&x, &f, &mut fun)?;
     let mut cost = 0.5 * dot(&f, &f);
     let mut njev = 1;
     if let Some(t) = trace.as_deref_mut() {
@@ -745,7 +843,7 @@ fn solve<F: FnMut(&[f64]) -> Vec<f64>>(
             let p = ph.iter().zip(&d).map(|(a, b)| a * b).collect();
             let (step, sh, pred) = select(
                 &x,
-                &jh,
+                QuadraticModel::Dense(&jh),
                 &diag,
                 &gh,
                 p,
@@ -810,14 +908,7 @@ fn solve<F: FnMut(&[f64]) -> Vec<f64>>(
                 trial.accepted = actual > 0.;
                 t.trials.push(trial);
             }
-            let ft = actual < ftol * cost && ratio > 0.25;
-            let xt = norm(&step) < xtol * (xtol + norm(&x));
-            status = match (ft, xt) {
-                (true, true) => 4,
-                (true, false) => 2,
-                (false, true) => 3,
-                _ => 0,
-            };
+            status = termination(actual, cost, &step, &x, ratio, ftol, xtol);
             if status != 0 {
                 break;
             }
@@ -828,7 +919,7 @@ fn solve<F: FnMut(&[f64]) -> Vec<f64>>(
             x = xn;
             f = fnn;
             cost = cn;
-            j = jacobian(&mut fun, &x, &f, lb, ub)?;
+            j = get_jacobian(&x, &f, &mut fun)?;
             njev += 1;
             if let Some(t) = trace.as_deref_mut() {
                 t.jac_x.push(x.clone());
