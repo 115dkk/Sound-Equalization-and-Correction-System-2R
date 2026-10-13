@@ -194,6 +194,24 @@ tests = ["secs-dsp::trf_one_step_replay", "secs-dsp::trf_converging_results", "s
 upstream = "scipy.optimize.least_squares bounded exact TRF"
 note = "Gated by one-step replay along the oracle's whole path (x_new, step, reductions, radius within 1e-9; actual_reduction net of the cost difference our x_new explains) and exact results for converging fits. Capped fits follow a chaotic path (a one-ulp step difference moves the next finite-difference Jacobian), so their global trace and njev are reported, not gated (oracle/README.md). Unbounded problems are not supported (upstream always passes bounds)."
 
+[[feature]]
+id = "dsp.random_state"
+kind = "dsp"
+milestone = "M1"
+status = "implemented"
+tests = ["secs-dsp::golden_random_state", "secs-dsp::de_invalid_arguments_do_not_evaluate_cost"]
+upstream = "numpy 2.5.3 RandomState: integer-seeded MT19937, random_sample, uniform, masked randint, shuffle/permutation"
+note = "All random outputs are bit-exact on every platform; five seeds, 5000 raw uint32 outputs each, individual and interleaved draws. randint exposes the nonnegative index domain used by DE; choice is not used by this path."
+
+[[feature]]
+id = "dsp.differential_evolution"
+kind = "dsp"
+milestone = "M1"
+status = "implemented"
+tests = ["secs-dsp::golden_differential_evolution", "secs-dsp::de_invalid_arguments_do_not_evaluate_cost"]
+upstream = "correction_engine.py:751,799,1057; scipy 1.18.1 optimize._differentialevolution"
+note = "Serial unconstrained best1bin, immediate updating, LHS, per-generation (0.5,1) dithering, recombination 0.7, atol=0, integer seed, optional x0, no polishing/integrality. Every evaluated vector and result is bit-exact on oracle libm (secs-oracle rtol elsewhere); integer decisions and messages always exact."
+
 # ---- Formats (M1) ----
 
 [[feature]]
