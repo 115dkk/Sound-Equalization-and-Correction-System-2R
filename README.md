@@ -4,17 +4,17 @@ SECS 2R은 룸 보정 설계 프로그램 [SECS 2](https://github.com/Kim-O-O/So
 
 ## 지금 상태
 
-개발 중입니다. 지금 나오는 0.0.x 판은 설치와 배포 경로를 시험하는 빈 셸이라 측정과 보정 기능이 없습니다. 기능은 아래 순서로 들어갑니다. 지금 보정 설계가 필요하면 업스트림 SECS 2의 [Releases](https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2/releases)를 쓰세요.
+개발 중입니다. M2까지 끝났습니다. 지금 나오는 0.x 판에는 SECS 2의 보정 엔진(레벨·딜레이, BA, XO, RC, 성적표, REW·CamillaDSP 내보내기)이 들어 있고 같은 기계에서 SECS 2보다 빠르지만([`docs/perf/engine.md`](docs/perf/engine.md)), 아직 측정과 화면에 연결되지 않아 앱에서는 쓸 수 없습니다. 기능은 아래 순서로 들어갑니다. 지금 보정 설계가 필요하면 업스트림 SECS 2의 [Releases](https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2/releases)를 쓰세요.
 
-| 단계 | 내용 |
-|---|---|
-| M0 | 저장소 기반, CI와 릴리스, 빈 셸 |
-| M1 | 파일 형식(.secs, .irs, REW mdat, CamillaDSP)과 수치 기반 |
-| M2 | 보정 엔진(레벨·딜레이, BA, XO, RC, 성적표) |
-| M3 | MIMO와 계산 가속 |
-| M4 | 측정(자체 측정, REW API, mdat 가져오기)과 내보내기 |
-| M5 | 새 화면, 튜토리얼, 한국어·영어 |
-| M6 | 실장비 검증과 1.0.0 정식 출시 |
+| 단계 | 내용 | 상태 |
+|---|---|---|
+| M0 | 저장소 기반, CI와 릴리스, 빈 셸 | 완료 |
+| M1 | 파일 형식(.secs, .irs, REW mdat, CamillaDSP)과 수치 기반 | 완료 |
+| M2 | 보정 엔진(레벨·딜레이, BA, XO, RC, 성적표) | 완료 |
+| M3 | MIMO와 계산 가속 | 다음 |
+| M4 | 측정(자체 측정, REW API, mdat 가져오기)과 내보내기 | 예정 |
+| M5 | 새 화면, 튜토리얼, 한국어·영어 | 예정 |
+| M6 | 실장비 검증과 1.0.0 정식 출시 | 예정 |
 
 ## SECS 2와의 관계
 

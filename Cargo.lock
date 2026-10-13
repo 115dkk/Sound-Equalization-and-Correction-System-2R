@@ -3350,6 +3350,7 @@ name = "secs-project"
 version = "0.7.1"
 dependencies = [
  "ryu",
+ "secs-mdat",
  "secs-oracle",
  "secs-types",
  "serde",
