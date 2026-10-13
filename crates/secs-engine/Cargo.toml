@@ -13,6 +13,7 @@ workspace = true
 
 [dependencies]
 secs-types.workspace = true
+secs-compute = { path = "../secs-compute" }
 secs-dsp = { path = "../secs-dsp" }
 thiserror.workspace = true
 

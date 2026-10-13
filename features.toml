@@ -307,26 +307,26 @@ upstream = "correction_engine.py _prepare, _band_level"
 id = "engine.ba_auto"
 kind = "engine"
 milestone = "M2"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-engine::ba_oracle_auto_manual_bus", "secs-engine::ba_cancelled_before_work"]
 upstream = "correction_engine.py _align_subs"
 
 [[feature]]
 id = "engine.ba_manual_bundles"
 kind = "engine"
 milestone = "M2"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-engine::ba_oracle_auto_manual_bus", "secs-engine::ba_cancelled_before_work"]
 upstream = "correction_engine.py _align_subs_manual, _layout_stage"
 
 [[feature]]
 id = "engine.ba_bus"
 kind = "engine"
 milestone = "M2"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-engine::ba_oracle_auto_manual_bus", "secs-engine::ba_cancelled_before_work"]
 upstream = "correction_engine.py _match_two_way, _bus_peq_fit, _bus_delay"
-note = "bus delay objective fixed per docs/DEVIATIONS.md D1"
+note = "upstream bus delay objective ported first (golden); the D1 fix in docs/DEVIATIONS.md follows as a deviation"
 
 [[feature]]
 id = "engine.xo_recommendation"
