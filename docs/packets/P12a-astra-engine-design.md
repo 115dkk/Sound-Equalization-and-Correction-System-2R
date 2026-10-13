@@ -177,9 +177,12 @@ floor `PLATFORM_RTOL`) on the oracle libm: everything continuous. Off the
 oracle libm, assert what does not depend on a threshold that last bits can
 flip; report the rest and say which.
 
-BA inside `design` runs for real (P10 showed whether DE matches the oracle
-end to end). If it does not on some case, do not inject BA; report the case,
-and gate that case's downstream values on the `engine_e2e` envelope instead.
+BA inside `design` runs for real. P10 found the DE evaluation sequence and
+result equal to the oracle's on every engine case except `room`, where it
+diverges at evaluation 3713 after 41 near-ties (cost differences within the
+measured 1e-13 objective budget). So on `room` assert only what precedes the
+BA result and report the rest; that case's end result is gated by
+`engine_e2e`. Do not inject BA.
 
 ### `engine_e2e` (`oracle/export_engine_e2e.py`): SECS 2's own spread
 
