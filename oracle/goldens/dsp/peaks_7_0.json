@@ -1,0 +1,1 @@
+{"inputs":{"x":[0,"+inf","+inf",0],"height":null},"outputs":{"value":[1.0]},"meta":{"oracle":"SECS 2 Beta 1.2.0 (60ac53a)","python":"3.13.16","numpy":"2.5.3","scipy":"1.18.1","numpy_dispatch":"baseline (C library transcendental functions)"}}

@@ -1,0 +1,19 @@
+name: 기능 제안 / Feature request
+description: 새 기능이나 바꿨으면 하는 동작 / A new feature or a change in behaviour
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: need
+    attributes:
+      label: 하려는 일 / What you are trying to do
+      description: 어떤 상황에서 무엇을 하려는지 적어 주세요. 해결책보다 상황이 먼저입니다.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 제안 / Proposal
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 지금 쓰는 방법 / Current workaround

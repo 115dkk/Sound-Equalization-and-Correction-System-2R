@@ -9,3 +9,10 @@ release/
 # 파이썬
 __pycache__/
 *.pyc
+
+# SECS 2R (Rust, Tauri, Node)
+/target/
+node_modules/
+apps/secs2r/ui/dist/
+apps/secs2r/gen/schemas/
+*.tsbuildinfo

@@ -1,0 +1,63 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*"]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-only"
+repository = "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R"
+publish = false
+
+# Every crate opts in with `[lints] workspace = true`. An isolation crate
+# (`-sys`, listed in unsafe-budget.toml with a budget above 0) carries its own
+# table instead, since a workspace-level `forbid` cannot be relaxed per module
+# (docs/adr/0002).
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+multiple_unsafe_ops_per_block = "deny"
+missing_safety_doc = "deny"
+dbg_macro = "deny"
+
+[workspace.dependencies]
+secs-types = { path = "crates/secs-types" }
+secs-service = { path = "crates/secs-service" }
+secs-oracle = { path = "crates/secs-oracle" }
+
+serde = { version = "1.0.229", features = ["derive"] }
+# preserve_order: .secs files keep the key order SECS 2 wrote (docs/adr/0004).
+serde_json = { version = "1.0.152", features = ["preserve_order", "float_roundtrip"] }
+thiserror = "2.0.21"
+toml = "1.1.8"
+ts-rs = { version = "12.0.1", features = ["serde-compat", "no-serde-warnings"] }
+clap = { version = "4.6.7", features = ["derive"] }
+strum = { version = "0.28.0", features = ["derive"] }
+sha2 = "0.11.1"
+rustfft = "6.4"
+realfft = "3.5"
+rayon = "1.11"
+# faer without `std`: its `std` pulls private-gemm-x86, whose assembly leaves
+# the AVX upper state dirty (secs-policy:
+# no_assembly_kernels_that_leave_avx_state_dirty). pulp, gemm and faer-traits
+# get `std` here only so faer keeps runtime SIMD detection (docs/adr/0007).
+faer = { version = "0.24.4", default-features = false, features = ["linalg"] }
+pulp = { version = "0.22.3", default-features = false, features = ["std", "x86-v3"] }
+gemm = { version = "0.19.0", default-features = false, features = ["std"] }
+faer-traits = { version = "0.24.0", default-features = false, features = ["std"] }
+
+# Tests run optimized: the oracle-parity tests of the DSP crates replay
+# upstream optimizer traces and outlast CI timeouts at opt-level 0.
+# Optimization does not relax float semantics in Rust (no fast-math);
+# overflow checks and debug assertions stay on.
+[profile.test]
+opt-level = 2
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

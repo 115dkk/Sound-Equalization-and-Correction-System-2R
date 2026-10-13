@@ -1,0 +1,26 @@
+[package]
+name = "secs-dsp"
+description = "f64 DSP primitives and optimizers shared by the engine, the mdat builder, the CamillaDSP writer and the measurement path."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rustfft.workspace = true
+realfft.workspace = true
+faer.workspace = true
+pulp.workspace = true
+gemm.workspace = true
+faer-traits.workspace = true
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+secs-oracle = { path = "../secs-oracle" }
+serde_json.workspace = true

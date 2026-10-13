@@ -1,0 +1,10 @@
+{
+  "app.prerelease": "Prerelease {version}",
+  "app.release": "{version}",
+  "app.upstream": "Based on SECS 2 {version}",
+  "app.placeholder.title": "No measurement or correction yet",
+  "app.placeholder.body": "This build tests the install and release path. The correction engine and the measurement screens arrive in later builds.",
+  "app.platform": "{os} · {arch}",
+  "error.bootstrap": "Could not read the app information. Restart the app.",
+  "error.details": "Details"
+}
