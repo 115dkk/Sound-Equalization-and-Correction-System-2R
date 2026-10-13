@@ -137,6 +137,11 @@ impl Default for CalibrationSettings {
 }
 
 impl CalibrationSettings {
+    /// Korean user-visible name of the selected calibration mode.
+    pub fn label(&self) -> String {
+        mode_label(self.mode, Some(self.ultra_ms))
+    }
+
     /// Stable staleness fingerprint with the same inclusions and exclusions as upstream.
     pub fn engine_key(&self) -> String {
         let mut out = String::new();
@@ -270,6 +275,68 @@ pub struct ModeParams {
     pub peq_bands: Option<usize>,
     pub phase_frac: f64,
     pub max_latency_ms: f64,
+}
+
+/// Korean user-visible mode name, including the clamped ultra latency when supplied.
+pub fn mode_label(mode: Mode, ultra_ms: Option<f64>) -> String {
+    let name = match mode {
+        Mode::Zero => "최소 지연 모드",
+        Mode::Mixed => "저지연 모드",
+        Mode::Linear => "표준 모드",
+        Mode::Ultra => "초고지연 모드",
+    };
+    if mode == Mode::Ultra
+        && let Some(ms) = ultra_ms
+    {
+        format!("{name} {} ms", python_g(ms.clamp(30.0, 200.0)))
+    } else {
+        name.into()
+    }
+}
+
+fn python_g(value: f64) -> String {
+    if value == 0.0 {
+        return if value.is_sign_negative() { "-0" } else { "0" }.into();
+    }
+    let mut exponent = value.abs().log10().floor() as i32;
+    let places = 5 - exponent;
+    let scale = 10_f64.powi(places);
+    let rounded = if places >= 0 {
+        (value * scale).round_ties_even() / scale
+    } else {
+        (value / scale.recip()).round_ties_even() * scale.recip()
+    };
+    if rounded != 0.0 {
+        exponent = rounded.abs().log10().floor() as i32;
+    }
+    if !(-4..6).contains(&exponent) {
+        let mut text = format!("{rounded:.5e}");
+        let e = text.find('e').expect("scientific format");
+        while text[..e].ends_with('0') {
+            text.remove(e - 1);
+        }
+        if text[..text.find('e').unwrap()].ends_with('.') {
+            text.remove(text.find('e').unwrap() - 1);
+        }
+        let e = text.find('e').unwrap();
+        let power = text[e + 1..].parse::<i32>().expect("scientific exponent");
+        format!(
+            "{}e{}{:02}",
+            &text[..e],
+            if power >= 0 { '+' } else { '-' },
+            power.abs()
+        )
+    } else {
+        let places = (5 - exponent).max(0) as usize;
+        let mut text = format!("{rounded:.places$}");
+        while text.contains('.') && text.ends_with('0') {
+            text.pop();
+        }
+        if text.ends_with('.') {
+            text.pop();
+        }
+        text
+    }
 }
 
 pub fn mode_params(mode: Mode, ultra_ms: f64) -> ModeParams {
@@ -408,6 +475,27 @@ ordered_map!(ordered_layout_map, super::BundleLayoutEntry);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mode_labels_match_upstream() {
+        assert_eq!(mode_label(Mode::Zero, None), "최소 지연 모드");
+        assert_eq!(mode_label(Mode::Mixed, Some(120.0)), "저지연 모드");
+        assert_eq!(mode_label(Mode::Linear, None), "표준 모드");
+        assert_eq!(mode_label(Mode::Ultra, None), "초고지연 모드");
+        assert_eq!(mode_label(Mode::Ultra, Some(20.0)), "초고지연 모드 30 ms");
+        assert_eq!(
+            mode_label(Mode::Ultra, Some(123.456_789)),
+            "초고지연 모드 123.457 ms"
+        );
+        assert_eq!(mode_label(Mode::Ultra, Some(250.0)), "초고지연 모드 200 ms");
+
+        let settings = CalibrationSettings {
+            mode: Mode::Ultra,
+            ultra_ms: 30.123_456_7,
+            ..CalibrationSettings::default()
+        };
+        assert_eq!(settings.label(), "초고지연 모드 30.1235 ms");
+    }
 
     #[test]
     fn mode_params_match_upstream() {

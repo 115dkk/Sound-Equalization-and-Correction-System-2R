@@ -57,6 +57,7 @@ pub fn sub_sum(terms: &[(&[C], &BaRow)], f: &[f64]) -> Vec<C> {
     sum
 }
 
+#[derive(Debug)]
 pub struct StageResponses {
     pub top_xo: Vec<C>,
     pub sub_xo: Option<Vec<C>>,
