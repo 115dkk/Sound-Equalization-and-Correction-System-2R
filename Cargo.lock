@@ -3288,6 +3288,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "secs-export"
+version = "0.5.0"
+dependencies = [
+ "getrandom 0.3.4",
+ "secs-camilla",
+ "secs-dsp",
+ "secs-engine",
+ "secs-jos",
+ "secs-mdat",
+ "secs-oracle",
+ "secs-types",
+ "serde_json",
+ "sha2 0.11.1",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "secs-gpu"
 version = "0.5.0"
 

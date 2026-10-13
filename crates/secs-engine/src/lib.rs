@@ -48,6 +48,7 @@ mod chain;
 mod decay;
 #[allow(dead_code)]
 mod design;
+pub mod export_view;
 #[allow(dead_code)]
 mod fit;
 #[allow(dead_code)]
@@ -66,6 +67,8 @@ mod setup;
 mod xo;
 
 mod error;
+#[cfg(feature = "test-support")]
+pub mod test_support;
 #[cfg(test)]
 mod tests;
 
@@ -77,6 +80,7 @@ pub use design::{
     SubDesign, design, production_fitters,
 };
 pub use error::EngineError;
+pub use export_view::{ExportView, export_view};
 pub use fit::{FitRequest, Fitter};
 pub use input::{EngineConfig, Measurement, MeasurementSet, Samples, Tuning};
 pub use measurement::{Spectra, long_spectra};

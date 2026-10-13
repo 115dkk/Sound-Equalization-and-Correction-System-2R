@@ -366,7 +366,7 @@ pub fn xo_target_peq(
     })
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 #[derive(Clone)]
 pub(crate) struct RecordedFit {
     pub g: Vec<f64>,
@@ -379,7 +379,7 @@ pub(crate) struct RecordedFit {
     pub f_max: Option<f64>,
     pub result: Vec<Peq>,
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 impl RecordedFit {
     pub fn request(&self) -> FitRequest<'_> {
         FitRequest {
@@ -394,7 +394,7 @@ impl RecordedFit {
         }
     }
 }
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn replay_fitter(
     calls: Vec<RecordedFit>,
     rtol: f64,
