@@ -1,0 +1,18 @@
+{
+  "version": 2,
+  "xo": {
+    "하이트": 70
+  },
+  "extra": {
+    "calibration": {
+      "art_on": false,
+      "mimo_on": true,
+      "subs_manual": {
+        "SW1": {
+          "art_support": "R",
+          "mimo_support": "L"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,53 @@
+# Fuzz targets for the parsers of untrusted files (docs/ARCHITECTURE.md M1).
+# A separate workspace run with a pinned nightly through cargo-fuzz; ci.yml's
+# `fuzz` job runs every target for a fixed time on each pull request:
+#   cargo +nightly-2026-10-01 fuzz run <target> -- -max_total_time=60
+[package]
+name = "secs2r-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "GPL-3.0-only"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4.13"
+secs-jos = { path = "../crates/secs-jos" }
+secs-mdat = { path = "../crates/secs-mdat" }
+secs-project = { path = "../crates/secs-project" }
+
+[[bin]]
+name = "jos_parse"
+path = "fuzz_targets/jos_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mdat_load"
+path = "fuzz_targets/mdat_load.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mdat_build_template"
+path = "fuzz_targets/mdat_build_template.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "project_load_text"
+path = "fuzz_targets/project_load_text.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1

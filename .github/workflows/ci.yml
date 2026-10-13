@@ -13,6 +13,8 @@ name: CI
 #             artifacts so a pull request can be installed and tried
 #   docs      rustdoc with warnings denied
 #   deny      cargo-deny: advisories, GPL-compatible licenses, bans, sources
+#   miri      the parsers of untrusted files (secs-jos, secs-mdat) under Miri
+#   fuzz      every fuzz target (fuzz/) for a fixed time from a seed corpus
 
 on:
   pull_request:
@@ -31,6 +33,9 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: "0"
   RUST_BACKTRACE: "1"
+  # Miri and cargo-fuzz need nightly; pinned so a nightly regression cannot
+  # turn CI red on an unrelated change. Bump deliberately.
+  NIGHTLY: nightly-2026-10-01
   # Tauri's Linux stack (WebKitGTK 4.1) and ALSA for cpal.
   LINUX_DEPS: >-
     libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev
@@ -285,3 +290,73 @@ jobs:
 
       - name: cargo deny check
         run: cargo deny --all-features check
+
+  miri:
+    name: Miri (secs-jos, secs-mdat)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the pinned nightly with Miri
+        run: |
+          rustup toolchain install "$NIGHTLY" --profile minimal --component miri,rust-src
+          cargo "+$NIGHTLY" miri setup
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: miri
+
+      # Tests that parse the 218 kB template are ignored under Miri (too slow);
+      # they run natively in the test job.
+      - name: cargo miri test
+        run: cargo "+$NIGHTLY" miri test --locked -p secs-jos -p secs-mdat
+
+  fuzz:
+    name: fuzz (parsers, 60 s per target)
+    runs-on: ubuntu-latest
+    env:
+      FUZZ_TARGET: x86_64-unknown-linux-gnu
+    defaults:
+      run:
+        working-directory: fuzz
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the pinned nightly
+        run: rustup toolchain install "$NIGHTLY" --profile minimal
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz@0.13.1
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: fuzz
+          workspaces: fuzz
+
+      # The prebuilt cargo-fuzz is a musl binary and would default to the musl
+      # target, where AddressSanitizer cannot link; name the gnu target.
+      - name: Build the fuzz targets
+        run: cargo "+$NIGHTLY" fuzz build --target "$FUZZ_TARGET"
+
+      # Seeds: the bundled REW template and the mdat golden blobs.
+      - name: Run every target
+        run: |
+          for target in $(cargo "+$NIGHTLY" fuzz list); do
+            mkdir -p "corpus/$target"
+            cp ../src/secs/rew_mdat/template_1.mdat "corpus/$target/template"
+            cp ../oracle/goldens/mdat/*.bin "corpus/$target/"
+            echo "::group::$target"
+            cargo "+$NIGHTLY" fuzz run --target "$FUZZ_TARGET" "$target" "corpus/$target" -- \
+              -max_total_time=60 -rss_limit_mb=2048 -max_len=262144
+            echo "::endgroup::"
+          done
+
+      - name: Keep crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts
+          if-no-files-found: ignore
+          retention-days: 14

@@ -19,6 +19,10 @@ fn template_graph() -> (Stream, usize) {
 }
 
 #[test]
+#[cfg_attr(
+    miri,
+    ignore = "parses the 218 kB template; too slow under Miri, runs natively"
+)]
 fn missing_required_fields_are_schema_errors() {
     let (mut s, id) = template_graph();
     assert!(s.set(id, "splValues", Value::Null));
@@ -30,6 +34,10 @@ fn missing_required_fields_are_schema_errors() {
 }
 
 #[test]
+#[cfg_attr(
+    miri,
+    ignore = "parses the 218 kB template; too slow under Miri, runs natively"
+)]
 fn cyclic_boxed_enum_is_rejected_without_recursing() {
     let (mut s, id) = template_graph();
     let desc = match &s.nodes[id] {
@@ -52,6 +60,10 @@ fn cyclic_boxed_enum_is_rejected_without_recursing() {
 }
 
 #[test]
+#[cfg_attr(
+    miri,
+    ignore = "parses the 218 kB template; too slow under Miri, runs natively"
+)]
 fn signed_byte_arrays_keep_their_signed_values() {
     let (mut s, id) = template_graph();
     let array = match s.get(id, "splValues").unwrap() {
@@ -80,6 +92,10 @@ fn signed_byte_arrays_keep_their_signed_values() {
 }
 
 #[test]
+#[cfg_attr(
+    miri,
+    ignore = "parses the 218 kB template; too slow under Miri, runs natively"
+)]
 fn unsupported_template_sentinel_is_a_build_error_not_a_panic() {
     let (mut s, _) = template_graph();
     s.values[0] = Value::Null;

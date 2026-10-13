@@ -1,0 +1,4 @@
+# Golden fixtures and fuzz seeds are byte-exact: a checkout must never convert
+# their line endings (Windows' core.autocrlf would turn LF into CRLF in the
+# text-like blobs and break their SHA-256 descriptors).
+oracle/goldens/** -text

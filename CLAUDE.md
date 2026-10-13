@@ -36,6 +36,13 @@ python3 .github/scripts/check_feature_tests.py
 
 화면 의존성은 Node 24(npm 11)로 설치합니다. npm 10은 이 의존성 묶음에서 피어 해석이 실패합니다.
 
+신뢰할 수 없는 파일을 읽는 크레이트(`secs-jos`, `secs-mdat`, 앞으로 `secs-project`)를 고치면 CI의 `miri`·`fuzz` 잡과 같은 것을 돌립니다. nightly는 `ci.yml`의 `NIGHTLY`로 고정합니다.
+
+```sh
+cargo +nightly-2026-10-01 miri test --locked -p secs-jos -p secs-mdat
+(cd fuzz && cargo +nightly-2026-10-01 fuzz run jos_parse -- -max_total_time=60)
+```
+
 ## 브랜치와 릴리스
 
 - 기본 브랜치는 `main`입니다. 작업은 브랜치에서 하고 PR로 머지합니다.

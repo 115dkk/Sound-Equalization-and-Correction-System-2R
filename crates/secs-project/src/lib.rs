@@ -1,18 +1,25 @@
 #![forbid(unsafe_code)]
 #![deny(unsafe_op_in_unsafe_fn)]
-//! The single owner of project files and measurement records.
-//!
-//! Upstream sources: `model.py`, `rewapi/session.py`, the `extra` keys written
-//! by the wizard pages, `mdat_loader.suggest_assignment`, the title parsing in
-//! `wizard/step5_measure.py`.
-//!
-//! - `.secs` versions 1, 2 and 3 read and migrated; written with the key order
-//!   and number format SECS 2 writes, so SECS 2 can open the file again.
-//! - The free-form `extra` map becomes typed sections (devices, positions,
-//!   calibration settings, export); unknown keys survive in order.
-//! - Role vocabulary and every title rule (`L_P2`, `SW 2`, `서브우퍼2`) and the
-//!   measurement plan live here once.
-//! - `.irs/` IR store: reads only inside the project's own folder; writes are
-//!   atomic (temporary file and rename) and have a single writer; each channel
-//!   is recorded as soon as it is measured.
-//! - The calculation cache is a versioned data format, never a pickle.
+//! SECS 2 compatible `.secs` project files and `.irs` WAV storage.
+
+mod config;
+mod dsp_profile;
+mod error;
+mod irs;
+mod project;
+pub mod pyjson;
+mod target;
+
+pub use config::{Band, Speaker, SpeakerConfig, default_bands, ordered_speakers};
+pub use dsp_profile::DspProfile;
+pub use error::ProjectError;
+pub use irs::{
+    ir_directory, ir_file, load_ir, read_mono_float_wav, read_wav_float32, save_ir,
+    try_write_wav_float32, write_wav_float32,
+};
+pub use project::{
+    FOCUS_STEPS, PROJECT_VERSION, Project, migrate_calibration_keys, migrate_group_keys,
+    rename_keys, snap_focus,
+};
+pub use pyjson::{PyJson, PyJsonError, dumps, loads};
+pub use target::TargetCurve;

@@ -194,24 +194,43 @@ tests = ["secs-dsp::trf_one_step_replay", "secs-dsp::trf_converging_results", "s
 upstream = "scipy.optimize.least_squares bounded exact TRF"
 note = "Gated by one-step replay along the oracle's whole path (x_new, step, reductions, radius within 1e-9; actual_reduction net of the cost difference our x_new explains) and exact results for converging fits. Capped fits follow a chaotic path (a one-ulp step difference moves the next finite-difference Jacobian), so their global trace and njev are reported, not gated (oracle/README.md). Unbounded problems are not supported (upstream always passes bounds)."
 
+[[feature]]
+id = "dsp.random_state"
+kind = "dsp"
+milestone = "M1"
+status = "implemented"
+tests = ["secs-dsp::golden_random_state", "secs-dsp::de_invalid_arguments_do_not_evaluate_cost"]
+upstream = "numpy 2.5.3 RandomState: integer-seeded MT19937, random_sample, uniform, masked randint, shuffle/permutation"
+note = "All random outputs are bit-exact on every platform; five seeds, 5000 raw uint32 outputs each, individual and interleaved draws. randint exposes the nonnegative index domain used by DE; choice is not used by this path."
+
+[[feature]]
+id = "dsp.differential_evolution"
+kind = "dsp"
+milestone = "M1"
+status = "implemented"
+tests = ["secs-dsp::golden_differential_evolution", "secs-dsp::de_invalid_arguments_do_not_evaluate_cost"]
+upstream = "correction_engine.py:751,799,1057; scipy 1.18.1 optimize._differentialevolution"
+note = "Serial unconstrained best1bin, immediate updating, LHS, per-generation (0.5,1) dithering, recombination 0.7, atol=0, integer seed, optional x0, no polishing/integrality. Every evaluated vector and result is bit-exact on oracle libm (secs-oracle rtol elsewhere); integer decisions and messages always exact."
+
 # ---- Formats (M1) ----
 
 [[feature]]
 id = "format.secs_project"
 kind = "format"
 milestone = "M1"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-project::project_load_migrations_and_save_match_oracle", "secs-project::direct_project_preset_matches_oracle", "secs-project::project_edge_contracts_match_oracle", "secs-project::project_presets_save_exactly", "secs-project::pyjson_edge_cases_match_oracle", "secs-project::pyjson_scanner_edges_match_oracle", "secs-project::pyjson_regressions", "secs-project::dsp_tap_allocation_matches_oracle", "secs-project::target_curves_match_oracle"]
 upstream = "model.py"
-note = ".secs versions 1-3 read and migrated, written in SECS 2's key order and number format"
+note = ".secs versions 1-3 read and migrated while forward versions are preserved; written in SECS 2's key order and number format"
 
 [[feature]]
 id = "format.irs_store"
 kind = "format"
 milestone = "M1"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-project::wav_writer_and_readers_match_oracle"]
 upstream = "rewapi/session.py"
+note = "float32 writer bytes match upstream; reader also supports mono PCM 16/24/32, float 32/64 and WAVE_FORMAT_EXTENSIBLE; PCM8 and non-left-aligned valid-bit/container combinations are unsupported"
 
 [[feature]]
 id = "format.jos_round_trip"
@@ -252,9 +271,10 @@ upstream = "export_camilladsp.py"
 id = "format.role_vocabulary"
 kind = "format"
 milestone = "M1"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-types::known_vocabulary_is_complete", "secs-project::role_vocabulary_matches_oracle"]
 upstream = "model.py role_from_title, step5_measure.split_position"
+note = "known roles, labels, groups, positions, Dolby codes and Unicode-aware exact-title matching"
 
 # ---- Engine (M2, M3) ----
 
