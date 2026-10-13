@@ -92,25 +92,7 @@ pub fn engine_inputs(
         roles.retain(|(role, _)| keep.contains(role.as_str()));
     }
 
-    let xo = groups
-        .iter()
-        .filter(|(group, _)| group != "sub")
-        .map(|(group, _)| {
-            let selected = settings
-                .xo
-                .iter()
-                .find(|(name, value)| name == group && *value != 0.0)
-                .map(|(_, value)| *value)
-                .or_else(|| {
-                    view.project_xo
-                        .iter()
-                        .find(|(name, value)| name == group && *value != 0.0)
-                        .map(|(_, value)| *value)
-                })
-                .unwrap_or(80.0);
-            (group.clone(), selected)
-        })
-        .collect();
+    let xo = resolve_xo(&groups, &settings.xo, view.project_xo);
     let mode = mode_params(settings.mode, settings.ultra_ms);
     let sub_manual = settings
         .subs_manual
@@ -172,6 +154,29 @@ pub fn engine_inputs(
         },
         notes,
     })
+}
+
+pub(crate) fn resolve_xo(
+    groups: &[(String, Vec<String>)],
+    selected: &[(String, f64)],
+    project: &[(String, f64)],
+) -> Vec<(String, f64)> {
+    groups
+        .iter()
+        .filter(|(group, _)| group != "sub")
+        .map(|(group, _)| {
+            let value = selected
+                .iter()
+                .find(|(name, value)| name == group && *value != 0.0)
+                .or_else(|| {
+                    project
+                        .iter()
+                        .find(|(name, value)| name == group && *value != 0.0)
+                })
+                .map_or(80.0, |(_, value)| *value);
+            (group.clone(), value)
+        })
+        .collect()
 }
 
 fn sub_has_filters(entry: &SubEntry) -> bool {

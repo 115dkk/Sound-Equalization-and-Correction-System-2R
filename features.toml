@@ -60,7 +60,7 @@ kind = "perf"
 milestone = "M2"
 status = "partial"
 upstream = "calibration.compute, recommend_xo, previews and exports"
-tests = ["secs-engine::design_matches_recorded_stages", "secs-engine::engine_e2e_spread", "secs-engine::peq_cached_residual_is_bit_equal", "secs-engine::design_parallel_progress_counts_completed_channels", "secs-engine::preview_sub_combine_replayed_designs", "secs-dsp::cached_bounds_match_smoothing_bits_and_errors"]
+tests = ["secs-engine::design_matches_recorded_stages", "secs-engine::engine_e2e_spread", "secs-engine::peq_cached_residual_is_bit_equal", "secs-engine::design_parallel_progress_counts_completed_channels", "secs-engine::preview_sub_combine_replayed_designs", "secs-dsp::cached_bounds_match_smoothing_bits_and_errors", "secs-engine::xo_preparation_is_candidate_independent", "secs-engine::xo_shared_preparation_preserves_candidate_bits", "secs-engine::xo_shared_windows_preserve_filtered_bits", "secs-camilla::streaming_json_matches_recursive_bytes"]
 note = "docs/perf/engine.md records the paired release audit; timing is not a CI gate. Partial until every operation is faster in both configurations."
 
 # ---- Policy (M0) ----

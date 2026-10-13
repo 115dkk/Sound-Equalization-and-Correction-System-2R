@@ -62,16 +62,24 @@ use secs_compute::{CancelToken, Context, MemoryBudget, NoProgress};
 use std::{hint::black_box, sync::Arc, time::Instant};
 
 fn measure<T>(op: &str, case: &str, threads: usize, mut call: impl FnMut() -> T) {
+    if std::env::var_os("SECS_PERF_MEMORY_ONCE").is_some() {
+        black_box(call());
+        return;
+    }
     let warm_started = Instant::now();
     let warm = black_box(call());
     let warm_seconds = warm_started.elapsed().as_secs_f64();
     drop(warm);
     let mut samples = Vec::new();
-    let runs = if matches!(op, "design" | "recommend") && warm_seconds > 10.0 {
-        3
-    } else {
-        5
-    };
+    let runs = std::env::var("SECS_PERF_RUNS")
+        .map(|s| s.parse::<usize>().unwrap())
+        .unwrap_or_else(|_| {
+            if matches!(op, "design" | "recommend") && warm_seconds > 10.0 {
+                3
+            } else {
+                5
+            }
+        });
     for _ in 0..runs {
         let start = Instant::now();
         let result = black_box(call());
@@ -154,11 +162,11 @@ fn main() {
                 );
             }
         }
-        "fit_rc1" | "fit_rc2" | "fit_bus" | "fit_xo" | "profile_fit" => {
+        "fit_rc1" | "fit_rc2" | "fit_bus" | "fit_xo" | "profile_fit" | "trace_fit" => {
             let kind = match op {
                 "fit_bus" => "bus",
                 "fit_xo" => "xo",
-                "profile_fit" => args.get(3).map(String::as_str).unwrap_or("bus"),
+                "profile_fit" | "trace_fit" => args.get(3).map(String::as_str).unwrap_or("bus"),
                 _ => "rc",
             };
             let calls = if name == "dolby_ultra" {
@@ -238,8 +246,91 @@ fn main() {
                         serde_json::json!({"op":"profile_fit", "case":name, "total_s":started.elapsed().as_secs_f64(), "residual_s":residual_time.get().as_secs_f64(), "calls":calls.get(), "nfev":solution.nfev, "njev":solution.njev})
                     );
                 }
+            } else if op == "trace_fit" {
+                let seed = fit::seed(&request);
+                let mut cache = fit::ResidualCache::new(&g, seed.bands.len());
+                let mut trace = secs_dsp::optimize::LeastSquaresTrace::default();
+                let sol = secs_dsp::optimize::least_squares_with_trace(
+                    |x| cache.evaluate(&request, x),
+                    &seed.x0,
+                    &seed.lb,
+                    &seed.ub,
+                    if request.ring_ms.is_some() { 150 } else { 400 },
+                    Some(&mut trace),
+                )
+                .unwrap();
+                println!(
+                    "{}",
+                    serde_json::json!({"nfev":sol.nfev, "njev":sol.njev,
+                    "x0":seed.x0, "initial_cost":trace.initial_cost,
+                    "main_x":trace.main_x,"main_cost":trace.main_cost,
+                    "trials":trace.trials})
+                );
             } else {
-                measure(op, name, threads, || fit::fit_peq(&request));
+                let bytes = std::fs::read(
+                    std::env::var("SECS_PERF_FIT_INPUTS").expect("nine shared f64 input arrays"),
+                )
+                .unwrap();
+                assert_eq!(bytes.len(), 9 * corr.len() * 8);
+                let inputs: Vec<_> = bytes
+                    .as_chunks::<8>()
+                    .0
+                    .iter()
+                    .map(|b| f64::from_le_bytes(*b))
+                    .collect();
+                assert_eq!(
+                    &bytes[..corr.len() * 8],
+                    corr.iter()
+                        .flat_map(|x| x.to_le_bytes())
+                        .collect::<Vec<_>>()
+                );
+                let mut rows = Vec::new();
+                let mut medians = Vec::new();
+                for (index, corr) in inputs.chunks_exact(corr.len()).enumerate() {
+                    let request = fit::FitRequest {
+                        corr_db: corr,
+                        ..request
+                    };
+                    // The production fit body, including seed and result conversion.
+                    // No timers or counters inside the residual hot loop.
+                    let call = || {
+                        let seed = fit::seed(&request);
+                        if seed.bands.is_empty() {
+                            return (Vec::new(), 0, 0);
+                        }
+                        let mut cache = fit::ResidualCache::new(&g, seed.bands.len());
+                        let sol = secs_dsp::optimize::least_squares(
+                            |x| cache.evaluate(&request, x),
+                            &seed.x0,
+                            &seed.lb,
+                            &seed.ub,
+                            if request.ring_ms.is_some() { 150 } else { 400 },
+                        )
+                        .unwrap();
+                        (fit::result_bands(&request, &sol.x), sol.nfev, sol.njev)
+                    };
+                    black_box(call());
+                    let mut samples = Vec::new();
+                    let mut counts = Vec::new();
+                    for _ in 0..5 {
+                        let started = Instant::now();
+                        let result = black_box(call());
+                        samples.push(started.elapsed().as_secs_f64());
+                        counts.push((result.1, result.2));
+                    }
+                    assert!(counts.iter().all(|c| *c == counts[0]));
+                    let mut sorted = samples.clone();
+                    sorted.sort_by(f64::total_cmp);
+                    medians.push(sorted[2]);
+                    rows.push(serde_json::json!({"input":index,"samples_s":samples,
+                        "median_s":sorted[2],"nfev":counts[0].0,"njev":counts[0].1}));
+                }
+                medians.sort_by(f64::total_cmp);
+                println!(
+                    "{}",
+                    serde_json::json!({"implementation":"rust","op":op,
+                    "case":name,"threads":threads,"inputs":rows,"median_s":medians[4]})
+                );
             }
         }
         "gd" => {

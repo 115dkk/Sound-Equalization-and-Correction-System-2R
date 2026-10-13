@@ -256,6 +256,29 @@ pub fn prepare(
     })
 }
 
+/// Apply the same last multiplication as build_spectra, sharing untouched cells.
+/// `raw` must be built without filters on the requested window and time axis.
+pub(crate) fn filtered_spectra(raw: &Spectra, filters: &[(String, SubFilter)]) -> Spectra {
+    let filters: Vec<_> = filters
+        .iter()
+        .map(|(r, f)| (r, sub_filter_response(f)))
+        .collect();
+    let mut out = raw.clone();
+    for &position in raw.positions() {
+        for role in raw.roles_at(position) {
+            if let Some((_, filter)) = filters.iter().find(|(r, _)| r.as_str() == role) {
+                let h = raw.get(position, role).expect("existing cell");
+                out.set(
+                    position,
+                    role,
+                    h.iter().zip(filter).map(|(h, f)| h * f).collect(),
+                );
+            }
+        }
+    }
+    out
+}
+
 pub fn long_spectra(
     set: &MeasurementSet,
     prepared: &Prepared,

@@ -11,10 +11,10 @@ use secs_types::calibration::CalibrationSettings;
 use crate::{
     Design, DesignRequest, EngineConfig, EngineError, MeasurementSet, ProjectView, SubFilter,
     Tuning,
-    calibration::engine_inputs,
+    calibration::{engine_inputs, resolve_xo},
     chain::stage_responses,
     decay::late_db_20_150,
-    design::{design, production_fitters},
+    design::{design_prepared, production_fitters},
     grid::design_freqs,
     levels, measurement, scorecard,
     setup::Setup,
@@ -78,6 +78,33 @@ pub fn xo_scores(
 ) -> Vec<(String, XoScores)> {
     let prepared = measurement::prepare(measurements, config, &Setup::new(config))
         .expect("measurements belonging to the design");
+    xo_scores_prepared(design, measurements, config, &prepared, None)
+}
+
+struct ScoreWindows {
+    short: measurement::Spectra,
+    long: measurement::Spectra,
+}
+
+impl ScoreWindows {
+    fn new(
+        measurements: &MeasurementSet,
+        prepared: &measurement::Prepared,
+    ) -> Result<Self, EngineError> {
+        Ok(Self {
+            short: measurement::long_spectra(measurements, prepared, &[], 500.0)?,
+            long: measurement::long_spectra(measurements, prepared, &[], 2000.0)?,
+        })
+    }
+}
+
+fn xo_scores_prepared(
+    design: &Design,
+    measurements: &MeasurementSet,
+    config: &EngineConfig,
+    prepared: &measurement::Prepared,
+    windows: Option<&ScoreWindows>,
+) -> Vec<(String, XoScores)> {
     let filters: Vec<_> = design
         .chain
         .subs
@@ -95,10 +122,19 @@ pub fn xo_scores(
             )
         })
         .collect();
-    let short = measurement::long_spectra(measurements, &prepared, &filters, 500.0)
-        .expect("valid design measurements");
-    let long = measurement::long_spectra(measurements, &prepared, &filters, 2000.0)
-        .expect("valid design measurements");
+    let (short, long) = if let Some(windows) = windows {
+        (
+            measurement::filtered_spectra(&windows.short, &filters),
+            measurement::filtered_spectra(&windows.long, &filters),
+        )
+    } else {
+        (
+            measurement::long_spectra(measurements, prepared, &filters, 500.0)
+                .expect("valid design measurements"),
+            measurement::long_spectra(measurements, prepared, &filters, 2000.0)
+                .expect("valid design measurements"),
+        )
+    };
     let f = design_freqs();
     let target = config
         .target
@@ -189,29 +225,62 @@ pub fn recommend_xo(
         ));
     }
     let progress = ctx.stage("engine.xo_recommendation", candidates.len() as u64);
+    // Empty candidate lists retain their old no-preparation behaviour.
+    let prepared = if candidates.is_empty() {
+        None
+    } else {
+        Some(measurement::prepare(
+            &inputs.measurements,
+            &inputs.config,
+            &Setup::new(&inputs.config),
+        )?)
+    };
+    // Window lengths, taper, onset and time origin are all XO-independent.
+    // Applying final sub filters here would not be: BA can change them.
+    let windows = prepared
+        .as_ref()
+        .map(|prepared| {
+            ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
+            ScoreWindows::new(&inputs.measurements, prepared)
+        })
+        .transpose()?;
+    ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
     let trials = ctx
         .try_map(candidates.to_vec(), |fc| {
-            let mut trial = settings.clone();
-            trial.xo = groups.iter().map(|g| (g.clone(), fc)).collect();
-            let inputs = engine_inputs(view, irs, &trial)?;
+            // engine_inputs depends on the trial only through settings.xo.
+            // Keep its zero-value fallback and ordering in the same helper.
+            let mut config = inputs.config.clone();
+            let selected: Vec<_> = groups.iter().map(|g| (g.clone(), fc)).collect();
+            config.xo = resolve_xo(&config.groups, &selected, view.project_xo);
+            let prepared = prepared.as_ref().expect("nonempty candidates");
             let inner = Context::new(
                 1,
                 MemoryBudget::new(ctx.budget().total()),
                 Arc::new(NoProgress),
                 ctx.cancel().clone(),
             );
-            let result = design(
+            let result = design_prepared(
                 &DesignRequest {
                     measurements: &inputs.measurements,
-                    config: &inputs.config,
+                    config: &config,
                     tuning,
                     subs_only: false,
                     adapter_notes: &inputs.notes,
                 },
                 &inner,
                 &*production_fitters(inner.cancel()),
+                prepared,
+                &|_, _| {},
             )?;
-            let scores = xo_scores(&result, &inputs.measurements, &inputs.config);
+            // Only the unfiltered windows are shared. The final multiplication
+            // by BA-derived sub filters still happens per candidate, in order.
+            let scores = xo_scores_prepared(
+                &result,
+                &inputs.measurements,
+                &config,
+                prepared,
+                windows.as_ref(),
+            );
             ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
             progress.advance(1);
             Ok(scores)
@@ -251,4 +320,184 @@ pub fn recommend_xo(
         table,
         best,
     })
+}
+
+#[cfg(test)]
+mod perf_tests {
+    use super::*;
+    use crate::tests::cases;
+
+    #[test]
+    fn xo_preparation_is_candidate_independent() {
+        for name in ["dolby", "room", "room_dba", "room_filters"] {
+            let case = cases::load(name);
+            let settings: CalibrationSettings = serde_json::from_value(case.settings).unwrap();
+            let view = ProjectView {
+                groups: &case.config.groups,
+                project_xo: &case.config.xo,
+                target: &case.config.target,
+            };
+            let base = engine_inputs(&view, &case.measurements, &settings).unwrap();
+            let prepared =
+                measurement::prepare(&base.measurements, &base.config, &Setup::new(&base.config))
+                    .unwrap();
+            for fc in [0.0, 60.0, 80.0, 100.0, 120.0] {
+                let mut trial = settings.clone();
+                trial.xo = xo_groups(&base.config)
+                    .into_iter()
+                    .map(|g| (g, fc))
+                    .collect();
+                let inputs = engine_inputs(&view, &case.measurements, &trial).unwrap();
+                assert_eq!(
+                    inputs.config.xo,
+                    resolve_xo(&base.config.groups, &trial.xo, view.project_xo)
+                );
+                assert_eq!(inputs.notes, base.notes);
+                let other = measurement::prepare(
+                    &inputs.measurements,
+                    &inputs.config,
+                    &Setup::new(&inputs.config),
+                )
+                .unwrap();
+                assert_eq!(prepared.base_s.to_bits(), other.base_s.to_bits());
+                assert_eq!(prepared.arrival_s, other.arrival_s);
+                assert_eq!(prepared.align_delay_ms, other.align_delay_ms);
+                for &p in prepared.h.positions() {
+                    for r in prepared.h.roles_at(p) {
+                        let bits = |h: &Arc<[crate::C]>| {
+                            h.iter()
+                                .map(|z| (z.re.to_bits(), z.im.to_bits()))
+                                .collect::<Vec<_>>()
+                        };
+                        assert_eq!(
+                            bits(prepared.h.get(p, r).unwrap()),
+                            bits(other.h.get(p, r).unwrap())
+                        );
+                        assert_eq!(
+                            bits(prepared.h0.get(p, r).unwrap()),
+                            bits(other.h0.get(p, r).unwrap())
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn xo_shared_windows_preserve_filtered_bits() {
+        for name in ["dolby", "room_dba", "room_filters"] {
+            let case = cases::load(name);
+            let setup = Setup::new(&case.config);
+            let prepared = measurement::prepare(&case.measurements, &case.config, &setup).unwrap();
+            let mut filters = setup.sub_filters.clone();
+            filters.retain(|(r, _)| r != &case.config.subs[0]);
+            filters.push((
+                case.config.subs[0].clone(),
+                SubFilter {
+                    hp_hz: 23.0,
+                    hp_type: secs_types::chain::BandType::Lr24,
+                    lp_hz: 157.0,
+                    lp_type: secs_types::chain::BandType::Bw12,
+                    peq: vec![(71.0, 2.5, -3.0)],
+                },
+            ));
+            for window in [500.0, 2000.0] {
+                let raw =
+                    measurement::long_spectra(&case.measurements, &prepared, &[], window).unwrap();
+                let shared = measurement::filtered_spectra(&raw, &filters);
+                let own =
+                    measurement::long_spectra(&case.measurements, &prepared, &filters, window)
+                        .unwrap();
+                for &p in own.positions() {
+                    for role in own.roles_at(p) {
+                        let a = own.get(p, role).unwrap();
+                        let b = shared.get(p, role).unwrap();
+                        for (a, b) in a.iter().zip(b.iter()) {
+                            assert_eq!(
+                                (a.re.to_bits(), a.im.to_bits()),
+                                (b.re.to_bits(), b.im.to_bits())
+                            );
+                        }
+                        if !filters.iter().any(|(r, _)| r == role) {
+                            assert!(Arc::ptr_eq(raw.get(p, role).unwrap(), b));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn xo_shared_preparation_preserves_candidate_bits() {
+        let case = cases::load("room_dba");
+        let prepared =
+            measurement::prepare(&case.measurements, &case.config, &Setup::new(&case.config))
+                .unwrap();
+        let ctx = Context::serial();
+        for fc in [60.0, 120.0] {
+            let mut config = case.config.clone();
+            for (_, xo) in &mut config.xo {
+                *xo = fc;
+            }
+            let req = DesignRequest {
+                measurements: &case.measurements,
+                config: &config,
+                tuning: &case.tuning,
+                subs_only: false,
+                adapter_notes: &[],
+            };
+            let fitters = production_fitters(ctx.cancel());
+            let own = crate::design::design(&req, &ctx, &*fitters).unwrap();
+            let shared = design_prepared(&req, &ctx, &*fitters, &prepared, &|_, _| {}).unwrap();
+            assert_eq!(
+                serde_json::to_vec(&own.chain).unwrap(),
+                serde_json::to_vec(&shared.chain).unwrap()
+            );
+            for (a, b) in own.mains.iter().zip(&shared.mains) {
+                for (x, y) in a.after.iter().zip(b.after.iter()) {
+                    assert_eq!(
+                        (x.re.to_bits(), x.im.to_bits()),
+                        (y.re.to_bits(), y.im.to_bits())
+                    );
+                }
+                assert!(Arc::ptr_eq(
+                    shared
+                        .spectra
+                        .raw
+                        .get(config.main_position, &b.role)
+                        .unwrap(),
+                    prepared.h0.get(config.main_position, &b.role).unwrap()
+                ));
+            }
+            for (a, b) in own.scores.iter().zip(&shared.scores) {
+                for (x, y) in [
+                    (&a.spl_before, &b.spl_before),
+                    (&a.spl_after, &b.spl_after),
+                    (&a.gd_before, &b.gd_before),
+                    (&a.gd_after, &b.gd_after),
+                ] {
+                    assert_eq!(
+                        x.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                        y.iter().map(|v| v.to_bits()).collect::<Vec<_>>()
+                    );
+                }
+            }
+            let own_scores = xo_scores(&own, &case.measurements, &config);
+            let windows = ScoreWindows::new(&case.measurements, &prepared).unwrap();
+            let shared_scores = xo_scores_prepared(
+                &shared,
+                &case.measurements,
+                &config,
+                &prepared,
+                Some(&windows),
+            );
+            for ((ga, a), (gb, b)) in own_scores.iter().zip(shared_scores) {
+                assert_eq!(ga, &gb);
+                assert_eq!(
+                    [a.flat, a.gd, a.late].map(f64::to_bits),
+                    [b.flat, b.gd, b.late].map(f64::to_bits)
+                );
+            }
+        }
+    }
 }
