@@ -12,6 +12,14 @@ has landed: case set and loader, `measurement.rs`, `levels.rs`, `setup.rs`
 with `BaLateGrid` / `ba_late_db` (P08), `chain.rs` with `term` / `sub_sum`
 and `BaRow`, `secs-compute` (`CancelToken`). All read-only for you.
 
+**Base and build.** Your worktree starts from `m2/p07`: P07's `fit.rs`
+(`fit_peq`, `xo_target_peq`, `Fitter`, `replay_fitter`, the recorded-fit
+reader in `src/tests/fit.rs`) is there; its own oracle gate is being
+finalised in P07c, but the API will not change. Use the shared build
+directory to save disk: `export CARGO_TARGET_DIR=/home/user/wt/target-shared`
+in every shell (another worker builds there too; cargo waits for its lock,
+which is fine). Do not delete anything outside your worktree.
+
 ## Goal
 
 Port the whole BA stage of `compute()` (lines 1371–1428 except the
@@ -126,7 +134,9 @@ a decision could flip; say which.
 ## Files you may change
 
 - `crates/secs-engine/src/ba.rs`, `crates/secs-engine/src/notes.rs`
-  (additions), `crates/secs-engine/src/tests/{mod,ba}.rs`
+  (create it if missing; additions), `crates/secs-engine/src/lib.rs` (module
+  lines), `crates/secs-engine/Cargo.toml` (add `secs-compute` for
+  `CancelToken`), `crates/secs-engine/src/tests/{mod,ba}.rs`
 - `oracle/export_engine_ba.py` (new), `oracle/goldens/engine_ba/**`,
   `oracle/README.md` (family row)
 - `features.toml`: set `engine.ba_auto`, `engine.ba_manual_bundles`,
