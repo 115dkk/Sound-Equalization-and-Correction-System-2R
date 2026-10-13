@@ -3235,11 +3235,11 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "secs-audio"
-version = "0.2.0"
+version = "0.3.0"
 
 [[package]]
 name = "secs-camilla"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "num-bigint",
  "num-integer",
@@ -3253,7 +3253,7 @@ dependencies = [
 
 [[package]]
 name = "secs-compute"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "rayon",
  "thiserror 2.0.21",
@@ -3261,7 +3261,7 @@ dependencies = [
 
 [[package]]
 name = "secs-dsp"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "faer",
  "faer-traits",
@@ -3277,7 +3277,7 @@ dependencies = [
 
 [[package]]
 name = "secs-engine"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "secs-dsp",
  "secs-oracle",
@@ -3288,11 +3288,11 @@ dependencies = [
 
 [[package]]
 name = "secs-gpu"
-version = "0.2.0"
+version = "0.3.0"
 
 [[package]]
 name = "secs-jos"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "secs-oracle",
  "thiserror 2.0.21",
@@ -3300,7 +3300,7 @@ dependencies = [
 
 [[package]]
 name = "secs-mdat"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "secs-dsp",
  "secs-jos",
@@ -3312,7 +3312,7 @@ dependencies = [
 
 [[package]]
 name = "secs-oracle"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde_json",
  "sha2 0.11.1",
@@ -3320,7 +3320,7 @@ dependencies = [
 
 [[package]]
 name = "secs-policy"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "secs-types",
  "serde",
@@ -3329,7 +3329,7 @@ dependencies = [
 
 [[package]]
 name = "secs-project"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "ryu",
  "secs-oracle",
@@ -3341,11 +3341,11 @@ dependencies = [
 
 [[package]]
 name = "secs-rew"
-version = "0.2.0"
+version = "0.3.0"
 
 [[package]]
 name = "secs-service"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "secs-types",
  "serde",
@@ -3355,11 +3355,11 @@ dependencies = [
 
 [[package]]
 name = "secs-sys"
-version = "0.2.0"
+version = "0.3.0"
 
 [[package]]
 name = "secs-types"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -3369,7 +3369,7 @@ dependencies = [
 
 [[package]]
 name = "secs2r"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "secs-service",
  "secs-types",
@@ -3380,7 +3380,7 @@ dependencies = [
 
 [[package]]
 name = "secs2r-cli"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "clap",
  "secs-service",
