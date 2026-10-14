@@ -69,7 +69,7 @@ kind = "perf"
 milestone = "M3"
 status = "partial"
 upstream = "mimo.design_mimo, mimo_iir.design_mimo_iir, calibration.compute_mimo and MIMO exports"
-tests = ["secs-engine::mimo_input_selection_preserves_all_input_result", "secs-engine::mimo_stage_boundary_goldens", "secs-engine::mimo_whole_path_goldens", "secs-engine::mimo_iir_whole_path_within_spread_and_deterministic", "secs-engine::mimo_ridge_sweep_recorded_systems_and_trajectories", "secs-engine::mimo_ridge_sweep_falls_back", "secs-engine::mimo_deterministic_threads"]
+tests = ["secs-engine::mimo_input_selection_preserves_all_input_result", "secs-engine::mimo_stage_boundary_goldens", "secs-engine::mimo_whole_path_goldens", "secs-engine::mimo_iir_whole_path_within_spread_and_deterministic", "secs-engine::mimo_ridge_sweep_recorded_systems_and_trajectories", "secs-engine::mimo_ridge_sweep_falls_back", "secs-engine::mimo_deterministic_threads", "secs-engine::mimo_shared_preparation_bit_identical", "secs-engine::mimo_compute_shared_preparation_bit_identical", "secs-engine::mimo_shared_paths_reject_combined_budget"]
 note = "P18/P18b measurements in docs/perf/mimo.md. One sequential tridiagonal reduction with fixed residual refinement serves the lambda sweep; block-pair maps preserve accumulation bits. Recorded-system error bounds, trajectories and unchanged goldens are tested. Whole big-case runs, memory and exports await a later pass; no 5x verdict in P18b."
 
 # ---- Policy (M0) ----

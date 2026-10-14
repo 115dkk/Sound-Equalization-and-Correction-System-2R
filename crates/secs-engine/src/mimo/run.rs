@@ -8,10 +8,9 @@ use secs_types::{
     chain::{MimoFilter, MimoPath, MimoPaths},
 };
 
-use super::{IirSupport, MimoDesign, MimoRequest, design_mimo, design_mimo_iir, support_path};
+use super::{IirSupport, MimoDesign, MimoRequest, support_path};
 use crate::{
     C, Design, EngineConfig, EngineError, MeasurementSet, Note, Tuning, grid::design_freqs,
-    measurement, setup::Setup,
 };
 
 /// Low-rate taps a FIR support solves for (upstream `mimo.FIR_TAPS_LOW`):
@@ -228,6 +227,27 @@ pub fn compute(
     tuning: &Tuning,
     ctx: &Context,
 ) -> Result<MimoRun, EngineError> {
+    compute_observed(
+        design,
+        measurements,
+        config,
+        settings,
+        tuning,
+        ctx,
+        &|_, _| {},
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn compute_observed(
+    design: &Design,
+    measurements: &MeasurementSet,
+    config: &EngineConfig,
+    settings: &CalibrationSettings,
+    tuning: &Tuning,
+    ctx: &Context,
+    observe: &(dyn Fn(&str, std::time::Duration) + Sync),
+) -> Result<MimoRun, EngineError> {
     check(ctx)?;
     if !settings.mimo_on {
         return Err(EngineError::Input("MIMO is disabled".into()));
@@ -239,15 +259,21 @@ pub fn compute(
     let key = MimoKey::from_settings(settings);
     let req = key.request();
     let progress = ctx.stage("engine.mimo", 2);
-    let ideal = design_mimo(design, measurements, config, &req, ctx)?;
+    let started = std::time::Instant::now();
+    let prepared = super::prepared::Prepared::new(design, measurements, config)?;
+    observe("preparation", started.elapsed());
+    let started = std::time::Instant::now();
+    let ideal = super::design::design_mimo_prepared(design, &prepared, &req, ctx, None, observe)?.0;
+    observe("design_wall", started.elapsed());
     progress.advance(1);
     check(ctx)?;
+    let started = std::time::Instant::now();
     let supports = if key.fir {
         fir_supports(&ideal)
     } else if ideal.supports.is_empty() {
         Vec::new()
     } else {
-        design_mimo_iir(design, measurements, config, &ideal, &req, tuning, ctx)?
+        super::iir::design_mimo_iir_prepared(design, &prepared, &ideal, &req, tuning, ctx)?
             .supports
             .into_iter()
             .map(|(r, s)| {
@@ -258,11 +284,15 @@ pub fn compute(
             })
             .collect()
     };
-    let run = assemble(design, measurements, config, &ideal, supports, key, ctx)?;
+    observe("realization", started.elapsed());
+    let started = std::time::Instant::now();
+    let run = assemble_prepared(design, &prepared, &ideal, supports, key, ctx)?;
+    observe("assemble", started.elapsed());
     progress.advance(1);
     Ok(run)
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn assemble(
     design: &Design,
@@ -274,8 +304,20 @@ pub(crate) fn assemble(
     ctx: &Context,
 ) -> Result<MimoRun, EngineError> {
     check(ctx)?;
-    let spectra = crate::export_view(design, measurements, config)?.spectra;
-    let prepared = measurement::prepare(measurements, config, &Setup::new(config))?;
+    let prepared = super::prepared::Prepared::before(design, measurements, config)?;
+    assemble_prepared(design, &prepared, ideal, supports, key, ctx)
+}
+
+pub(crate) fn assemble_prepared(
+    design: &Design,
+    prepared: &super::prepared::Prepared,
+    ideal: &MimoDesign,
+    supports: Supports,
+    key: MimoKey,
+    ctx: &Context,
+) -> Result<MimoRun, EngineError> {
+    check(ctx)?;
+    let spectra = &prepared.spectra;
     let f = design_freqs();
     let mut paths = Vec::new();
     for (input, sups) in &supports {
@@ -346,7 +388,7 @@ pub(crate) fn assemble(
     for main in &design.chain.mains {
         check(ctx)?;
         let role = &main.role;
-        let base = crate::stage_responses(design, role, &spectra, design.spectra.main_position)
+        let base = crate::stage_responses(design, role, spectra, design.spectra.main_position)
             .ok_or_else(|| EngineError::Input(format!("missing MIMO final response {role}")))?
             .output;
         let mut extra = vec![C::new(0.0, 0.0); f.len()];
@@ -356,7 +398,7 @@ pub(crate) fn assemble(
                 let path = support_path(
                     &ideal,
                     support,
-                    &spectra,
+                    spectra,
                     design.spectra.main_position,
                     &prepared.align_delay_ms,
                 )?;

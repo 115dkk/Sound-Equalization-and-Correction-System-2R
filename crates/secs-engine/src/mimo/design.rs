@@ -18,7 +18,7 @@ const FS_LOW: f64 = 600.0;
 const EARLY: usize = 36;
 
 use super::solve::solve;
-use crate::{EngineConfig, MeasurementSet, measurement, setup::Setup};
+use crate::{EngineConfig, MeasurementSet};
 use secs_compute::{Context, MapError, MemoryError};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -752,6 +752,272 @@ pub(crate) fn design_mimo_inputs(
     ctx: &Context,
     input: Option<&str>,
 ) -> Result<(MimoDesign, Vec<(String, InputTrace)>), EngineError> {
+    design_mimo_inputs_observed(design, measurements, config, req, ctx, input, &|_, _| {})
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn design_mimo_inputs_observed(
+    design: &Design,
+    measurements: &MeasurementSet,
+    config: &EngineConfig,
+    req: &MimoRequest,
+    ctx: &Context,
+    input: Option<&str>,
+    observe: &(dyn Fn(&str, std::time::Duration) + Sync),
+) -> Result<(MimoDesign, Vec<(String, InputTrace)>), EngineError> {
+    check(ctx)?;
+    let mut out = MimoDesign::default();
+    let positions = &design.spectra.positions;
+    if positions.len() < 3 {
+        out.notes.push(Note::Mimo(format!(
+            "측정 위치 {}곳 — MIMO 는 3곳 이상일 때만",
+            positions.len()
+        )));
+        return Ok((out, Vec::new()));
+    }
+    validate_request(req)?;
+    let started = std::time::Instant::now();
+    let prepared = super::prepared::Prepared::new(design, measurements, config)?;
+    observe("preparation", started.elapsed());
+    design_mimo_prepared(design, &prepared, req, ctx, input, observe)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn design_mimo_prepared(
+    design: &Design,
+    prepared: &super::prepared::Prepared,
+    req: &MimoRequest,
+    ctx: &Context,
+    input: Option<&str>,
+    observe: &(dyn Fn(&str, std::time::Duration) + Sync),
+) -> Result<(MimoDesign, Vec<(String, InputTrace)>), EngineError> {
+    check(ctx)?;
+    let mut out = MimoDesign::default();
+    let positions = &design.spectra.positions;
+    if positions.len() < 3 {
+        out.notes.push(Note::Mimo(format!(
+            "측정 위치 {}곳 — MIMO 는 3곳 이상일 때만",
+            positions.len()
+        )));
+        return Ok((out, Vec::new()));
+    }
+    validate_request(req)?;
+    let spectra = &prepared.spectra;
+    let started = std::time::Instant::now();
+    out.ranges = support_ranges(design, spectra, req.fsiso, positions)?;
+    if let Some(low) = req.f_low.filter(|v| *v != 0.0) {
+        for (_, range) in &mut out.ranges {
+            *range =
+                range.and_then(|(lo, hi)| (lo.max(low) < hi * 0.8).then_some((lo.max(low), hi)));
+        }
+    }
+    let usable: Vec<_> = out
+        .ranges
+        .iter()
+        .filter(|(r, range)| {
+            range.is_some()
+                && !req.exclude.contains(r)
+                && req.groups.as_ref().is_none_or(|groups| {
+                    design
+                        .groups
+                        .iter()
+                        .any(|(g, roles)| groups.contains(g) && roles.contains(r))
+                })
+        })
+        .map(|(r, _)| r.clone())
+        .collect();
+    if !req.exclude.is_empty() {
+        let mut excluded = req.exclude.clone();
+        excluded.sort();
+        out.notes.push(Note::Mimo(format!(
+            "서포트 제외(사용자): {}",
+            excluded.join(", ")
+        )));
+    }
+    out.notes.push(Note::Mimo(format!(
+        "서포트 대역 {}",
+        out.ranges
+            .iter()
+            .map(|(r, range)| match range {
+                Some((lo, hi)) => format!("{r} {lo:.0}–{hi:.0}"),
+                None => format!("{r} 제외"),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    )));
+    observe("ranges", started.elapsed());
+    let started = std::time::Instant::now();
+    let mains: Vec<_> = design
+        .mains
+        .iter()
+        .filter(|m| input.is_none_or(|r| r == m.role))
+        .collect();
+    let roles: Vec<_> = usable
+        .iter()
+        .filter(|r| mains.iter().any(|m| m.role != **r))
+        .collect();
+    let pairs: Vec<_> = positions
+        .iter()
+        .flat_map(|&p| roles.iter().map(move |r| (p, *r)))
+        .collect();
+    let shared_bytes = (pairs.len()
+        * (720 * 8 + std::mem::size_of::<Vec<f64>>() + 2 * std::mem::size_of::<(u32, &String)>()))
+        as u64;
+    let scratch_bytes = (32 * design_freqs().len() * 8) as u64;
+    let largest_input = mains
+        .iter()
+        .map(|m| {
+            input_bytes(
+                positions.len(),
+                usable.iter().filter(|r| **r != m.role).count(),
+                req.taps_low,
+            ) as u64
+        })
+        .max()
+        .unwrap_or(0);
+    // A retained reservation must not leave a worker waiting for bytes that
+    // this same invocation cannot release until the worker has finished.
+    let needed = shared_bytes.saturating_add(largest_input.max(scratch_bytes));
+    if needed > ctx.budget().total() {
+        return Err(EngineError::Input(
+            MemoryError::TooLarge {
+                requested: needed,
+                total: ctx.budget().total(),
+            }
+            .to_string(),
+        ));
+    }
+    let _shared_permit = ctx
+        .budget()
+        .acquire(shared_bytes, ctx.cancel())
+        .map_err(memory_error)?;
+    let low_paths = ctx
+        .try_map(pairs.clone(), |(p, r)| {
+            let _scratch = ctx
+                .budget()
+                .acquire(scratch_bytes, ctx.cancel())
+                .map_err(memory_error)?;
+            let h = support_path(&out, r, spectra, p, &prepared.align_delay_ms)?;
+            Ok::<_, EngineError>(secs_dsp::lowrate::to_low(&h, design_freqs(), 720)?)
+        })
+        .map_err(|e| match e {
+            MapError::Cancelled => EngineError::Cancelled,
+            MapError::Item { error, .. } => error,
+        })?;
+    observe("shared_paths", started.elapsed());
+    let started = std::time::Instant::now();
+    let results = ctx
+        .try_map(mains, |main| {
+            let candidates: Vec<_> = usable
+                .iter()
+                .filter(|r| **r != main.role)
+                .cloned()
+                .collect();
+            // Normal equations, Householder reduction, possible fallback factor,
+            // and scratch (also covers the mapped blocks during construction),
+            // plus path/guard/design-grid buffers. Reserve before allocating.
+            let bytes = input_bytes(positions.len(), candidates.len(), req.taps_low);
+            let _permit =
+                ctx.budget()
+                    .acquire(bytes as u64, ctx.cancel())
+                    .map_err(|e| match e {
+                        MemoryError::Cancelled => EngineError::Cancelled,
+                        other => EngineError::Input(other.to_string()),
+                    })?;
+            let started = std::time::Instant::now();
+            let mut xs = Vec::new();
+            let mut paths = Vec::new();
+            for &p in positions {
+                check(ctx)?;
+                let response =
+                    crate::input_response(design, &main.role, spectra, p).ok_or_else(|| {
+                        EngineError::Input(format!("missing MIMO input {p}/{}", main.role))
+                    })?;
+                xs.push(secs_dsp::lowrate::to_low(&response, design_freqs(), 720)?);
+                paths.push(
+                    candidates
+                        .iter()
+                        .map(|r| {
+                            let index = pairs
+                                .iter()
+                                .position(|(pos, role)| *pos == p && *role == r)
+                                .unwrap();
+                            low_paths[index].clone()
+                        })
+                        .collect(),
+                );
+            }
+            let direct = secs_dsp::lowrate::to_low(&main.response, design_freqs(), 720)?;
+            observe("input_preparation", started.elapsed());
+            let result =
+                design_input_observed(&xs, &paths, &direct, &candidates, req, ctx, observe)?;
+            Ok((main.role.clone(), result))
+        })
+        .map_err(|e| match e {
+            MapError::Cancelled => EngineError::Cancelled,
+            MapError::Item { error, .. } => error,
+        })?;
+    observe("inputs_wall", started.elapsed());
+    let mut traces = Vec::new();
+    for (role, result) in results {
+        let scale = result.trace.guard_scale;
+        if scale < 1.0 {
+            out.notes.push(Note::Mimo(if scale > 0.0 {
+                format!(
+                    "{role}: 대역 늦은 에너지 악화로 서포트 {:.0} dB",
+                    20.0 * scale.max(1e-9).log10()
+                )
+            } else {
+                format!("{role}: MIMO 끔(악화)")
+            }));
+        }
+        out.supports.push((role.clone(), result.supports));
+        out.level_db.push((role.clone(), result.level_db));
+        traces.push((role, result.trace));
+    }
+    Ok((out, traces))
+}
+
+fn validate_request(req: &MimoRequest) -> Result<(), EngineError> {
+    if !(0.0..300.0).contains(&req.fsiso)
+        || req.fsiso == 0.0
+        || !req.level_db.is_finite()
+        || req.taps_low == 0
+        || req.taps_low > 720
+        || req.f_low.is_some_and(|f| !f.is_finite())
+    {
+        return Err(EngineError::Input("invalid MIMO request".into()));
+    }
+    Ok(())
+}
+
+fn memory_error(error: MemoryError) -> EngineError {
+    match error {
+        MemoryError::Cancelled => EngineError::Cancelled,
+        other => EngineError::Input(other.to_string()),
+    }
+}
+
+fn input_bytes(positions: usize, candidates: usize, taps: usize) -> usize {
+    let dim = candidates * taps;
+    8 * (4 * dim * dim
+        + taps * taps
+        + positions * 720 * (4 * candidates + 8)
+        + 32 * design_freqs().len()
+        + 16 * dim
+        + 16384)
+}
+
+// Pre-P18c per-input preparation, retained only as an independent bitwise oracle.
+#[cfg(test)]
+pub(crate) fn design_mimo_before(
+    design: &Design,
+    measurements: &MeasurementSet,
+    config: &EngineConfig,
+    req: &MimoRequest,
+    ctx: &Context,
+    input: Option<&str>,
+) -> Result<(MimoDesign, Vec<(String, InputTrace)>), EngineError> {
     check(ctx)?;
     let mut out = MimoDesign::default();
     let positions = &design.spectra.positions;
@@ -772,7 +1038,8 @@ pub(crate) fn design_mimo_inputs(
         return Err(EngineError::Input("invalid MIMO request".into()));
     }
     let spectra = crate::export_view(design, measurements, config)?.spectra;
-    let prepared = measurement::prepare(measurements, config, &Setup::new(config))?;
+    let prepared =
+        crate::measurement::prepare(measurements, config, &crate::setup::Setup::new(config))?;
     out.ranges = support_ranges(design, &spectra, req.fsiso, positions)?;
     if let Some(low) = req.f_low.filter(|v| *v != 0.0) {
         for (_, range) in &mut out.ranges {

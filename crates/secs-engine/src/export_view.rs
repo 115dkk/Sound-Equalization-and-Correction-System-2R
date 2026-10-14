@@ -19,8 +19,16 @@ pub fn export_view(
     measurements: &MeasurementSet,
     config: &EngineConfig,
 ) -> Result<ExportView, EngineError> {
-    let setup = Setup::new(config);
-    let prepared = measurement::prepare(measurements, config, &setup)?;
+    let prepared = measurement::prepare(measurements, config, &Setup::new(config))?;
+    export_view_prepared(design, measurements, &prepared)
+}
+
+/// [`export_view`] on measurements already prepared with the same config.
+pub(crate) fn export_view_prepared(
+    design: &crate::Design,
+    measurements: &MeasurementSet,
+    prepared: &measurement::Prepared,
+) -> Result<ExportView, EngineError> {
     let sub_filters: Vec<_> = design
         .chain
         .subs
@@ -39,7 +47,7 @@ pub fn export_view(
             )
         })
         .collect();
-    let spectra = measurement::long_spectra(measurements, &prepared, &sub_filters, 2000.0)?;
+    let spectra = measurement::long_spectra(measurements, prepared, &sub_filters, 2000.0)?;
     Ok(ExportView {
         spectra,
         base_s: prepared.base_s,

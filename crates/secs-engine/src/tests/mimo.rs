@@ -1181,3 +1181,133 @@ fn mimo_whole_path_inputs_match_recorded() {
         "MIMO reference inputs differ: {failures:#?}"
     );
 }
+
+#[test]
+fn mimo_shared_preparation_bit_identical() {
+    for name in CASES {
+        let base = match name {
+            "room_dba" | "room_filters" | "room_multi" => name,
+            _ => "room",
+        };
+        let case = cases::load(base);
+        let mut d = design::replay(base);
+        let fx = Fixture::load("engine_mimo", name);
+        if let Some(positions) = fx.inputs()["settings"]["positions"].as_array() {
+            d.spectra.positions = positions
+                .iter()
+                .map(|p| p.as_u64().unwrap() as u32)
+                .collect();
+        }
+        let req = request(&fx);
+        let ctx = Context::serial();
+        let before = crate::mimo::design::design_mimo_before(
+            &d,
+            &case.measurements,
+            &case.config,
+            &req,
+            &ctx,
+            None,
+        )
+        .unwrap();
+        for threads in [1, 4] {
+            let ctx = Context::new(
+                threads,
+                MemoryBudget::new(512 * 1024 * 1024),
+                Arc::new(NoProgress),
+                CancelToken::new(),
+            );
+            let after =
+                design_mimo_traced(&d, &case.measurements, &case.config, &req, &ctx).unwrap();
+            assert_eq!(before, after, "{name}/{threads}");
+            assert_eq!(
+                design_bits(&before.0),
+                design_bits(&after.0),
+                "{name}/{threads} design bits"
+            );
+            let trace_bits = |traces: &[(String, crate::mimo::design::InputTrace)]| {
+                let mut values = Vec::new();
+                for (_, t) in traces {
+                    values.extend([t.log_lambda, t.ratio, t.guard_scale]);
+                    values.extend(t.ranking.iter().map(|(_, v)| *v));
+                    for step in &t.trajectory {
+                        values.extend([step.mid, step.ratio]);
+                    }
+                    for step in &t.guards {
+                        values.extend([step.scale, step.band_db, step.t60_change]);
+                    }
+                }
+                values.into_iter().map(f64::to_bits).collect::<Vec<_>>()
+            };
+            assert_eq!(
+                trace_bits(&before.1),
+                trace_bits(&after.1),
+                "{name}/{threads} trace bits"
+            );
+        }
+    }
+}
+
+#[test]
+fn mimo_shared_paths_reject_combined_budget() {
+    let case = cases::load("room");
+    let d = design::replay("room");
+    let req = MimoRequest::default();
+    let prepared =
+        crate::mimo::prepared::Prepared::new(&d, &case.measurements, &case.config).unwrap();
+    let ranges =
+        crate::mimo::support_ranges(&d, &prepared.spectra, req.fsiso, &d.spectra.positions)
+            .unwrap();
+    let candidates = d
+        .mains
+        .iter()
+        .map(|main| {
+            ranges
+                .iter()
+                .filter(|(r, range)| range.is_some() && *r != main.role)
+                .count()
+        })
+        .max()
+        .unwrap();
+    let dim = candidates * req.taps_low;
+    // Every old per-input permit fits, but the retained shared table plus
+    // that permit does not. Reject rather than waiting on our own reservation.
+    let input_bytes = 8
+        * (4 * dim * dim
+            + req.taps_low * req.taps_low
+            + d.spectra.positions.len() * 720 * (4 * candidates + 8)
+            + 32 * crate::grid::design_freqs().len()
+            + 16 * dim
+            + 16384);
+    let ctx = Context::new(
+        1,
+        MemoryBudget::new(input_bytes as u64),
+        Arc::new(NoProgress),
+        CancelToken::new(),
+    );
+    assert!(matches!(
+        design_mimo_traced(
+            &d,
+            &case.measurements,
+            &case.config,
+            &MimoRequest::default(),
+            &ctx
+        ),
+        Err(crate::EngineError::Input(_))
+    ));
+}
+
+pub(super) fn design_bits(d: &MimoDesign) -> Vec<u64> {
+    let mut values = vec![d.fs_low];
+    for (_, range) in &d.ranges {
+        if let Some((lo, hi)) = range {
+            values.extend([*lo, *hi]);
+        }
+    }
+    values.extend(d.level_db.iter().map(|(_, v)| *v));
+    for (_, supports) in &d.supports {
+        for (_, taps) in supports {
+            values.extend(taps);
+        }
+    }
+    values.into_iter().map(f64::to_bits).collect()
+}

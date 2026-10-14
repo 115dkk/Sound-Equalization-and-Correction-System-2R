@@ -16,8 +16,6 @@ use crate::{
     C, Design, EngineConfig, EngineError, MeasurementSet, Note, Tuning, decay,
     fit::{FitRequest, fit_peq_until},
     grid::design_freqs,
-    measurement,
-    setup::Setup,
 };
 
 const FS: f64 = 600.0;
@@ -758,17 +756,7 @@ pub(crate) fn build_problem(
     Ok(pb)
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn design_mimo_iir(
-    design: &Design,
-    measurements: &MeasurementSet,
-    config: &EngineConfig,
-    ideal: &MimoDesign,
-    req: &MimoRequest,
-    t: &Tuning,
-    ctx: &Context,
-) -> Result<MimoIir, EngineError> {
-    check(ctx)?;
+fn validate_request(req: &MimoRequest, t: &Tuning) -> Result<(), EngineError> {
     if !(0.0..300.0).contains(&req.fsiso)
         || req.fsiso == 0.0
         || !req.level_db.is_finite()
@@ -785,6 +773,39 @@ pub fn design_mimo_iir(
     {
         return Err(EngineError::Input("invalid MIMO IIR tuning".into()));
     }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn design_mimo_iir(
+    design: &Design,
+    measurements: &MeasurementSet,
+    config: &EngineConfig,
+    ideal: &MimoDesign,
+    req: &MimoRequest,
+    t: &Tuning,
+    ctx: &Context,
+) -> Result<MimoIir, EngineError> {
+    check(ctx)?;
+    validate_request(req, t)?;
+    if ideal.supports.iter().all(|(_, s)| s.is_empty()) {
+        let _progress = ctx.stage("engine.mimo_iir", 0);
+        return Ok(MimoIir::default());
+    }
+    let prepared = super::prepared::Prepared::new(design, measurements, config)?;
+    design_mimo_iir_prepared(design, &prepared, ideal, req, t, ctx)
+}
+
+pub(crate) fn design_mimo_iir_prepared(
+    design: &Design,
+    prepared: &super::prepared::Prepared,
+    ideal: &MimoDesign,
+    req: &MimoRequest,
+    t: &Tuning,
+    ctx: &Context,
+) -> Result<MimoIir, EngineError> {
+    check(ctx)?;
+    validate_request(req, t)?;
     let inputs: Vec<_> = ideal
         .supports
         .iter()
@@ -794,8 +815,7 @@ pub fn design_mimo_iir(
     if inputs.is_empty() {
         return Ok(MimoIir::default());
     }
-    let spectra = crate::export_view(design, measurements, config)?.spectra;
-    let prepared = measurement::prepare(measurements, config, &Setup::new(config))?;
+    let spectra = &prepared.spectra;
     let positions = &design.spectra.positions;
     let results = ctx
         .try_map(inputs, |(input, supports)| {
@@ -821,7 +841,7 @@ pub fn design_mimo_iir(
                     })?;
             let pb = build_problem(
                 design,
-                &spectra,
+                spectra,
                 &prepared.align_delay_ms,
                 ideal,
                 input,

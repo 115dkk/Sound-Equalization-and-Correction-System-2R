@@ -2,6 +2,7 @@
 
 pub(crate) mod design;
 pub(crate) mod iir;
+pub(crate) mod prepared;
 pub(crate) mod run;
 pub(crate) mod solve;
 pub use iir::{IirSupport, MimoIir, design_mimo_iir};
