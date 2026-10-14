@@ -20,7 +20,19 @@ pub(crate) struct OpenProject {
     pub dirty: bool,
     pub cached: Option<crate::cache::CachedResults>,
     pub identity: u64,
-    pub undo: std::collections::VecDeque<(String, Vec<(usize, PyJson)>)>,
+    pub undo: std::collections::VecDeque<UndoEntry>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct UndoEntry {
+    pub token: String,
+    pub payload: UndoPayload,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum UndoPayload {
+    Position(Vec<(usize, PyJson)>),
+    Measurements(PyJson),
 }
 
 impl Session {
@@ -134,6 +146,31 @@ impl Session {
 fn next_identity() -> u64 {
     static NEXT: AtomicU64 = AtomicU64::new(1);
     NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
+pub(crate) fn push_position_undo(open: &mut OpenProject, removed: Vec<(usize, PyJson)>) -> String {
+    push_undo(open, UndoPayload::Position(removed))
+}
+
+pub(crate) fn push_measurements_undo(open: &mut OpenProject, measurements: PyJson) -> String {
+    push_undo(open, UndoPayload::Measurements(measurements))
+}
+
+fn push_undo(open: &mut OpenProject, payload: UndoPayload) -> String {
+    static TOKEN: AtomicU64 = AtomicU64::new(1);
+    let token = format!(
+        "{}-{}",
+        open.identity,
+        TOKEN.fetch_add(1, Ordering::Relaxed)
+    );
+    open.undo.push_back(UndoEntry {
+        token: token.clone(),
+        payload,
+    });
+    if open.undo.len() > 16 {
+        open.undo.pop_front();
+    }
+    token
 }
 
 pub(crate) fn info(open: &OpenProject) -> ProjectInfo {

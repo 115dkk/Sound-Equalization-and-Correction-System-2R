@@ -14,9 +14,11 @@ mod jobs;
 pub mod mdat_import;
 pub mod measure;
 mod measurement;
+mod project_edit;
 mod session;
 
 use std::fmt::Debug;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use secs_compute::MemoryProbe;
@@ -102,6 +104,8 @@ pub struct Deps {
     pub host: Arc<dyn Host>,
     /// Generates one UUID for each mdat measurement.
     pub uuid: UuidSource,
+    /// Versioned application-settings file, or in-memory storage when absent.
+    pub app_settings_path: Option<PathBuf>,
 }
 
 impl Debug for Deps {
@@ -113,6 +117,7 @@ impl Debug for Deps {
             .field("memory", &self.memory)
             .field("host", &self.host)
             .field("uuid", &"source")
+            .field("app_settings_path", &self.app_settings_path)
             .finish()
     }
 }
@@ -160,6 +165,7 @@ impl Default for Deps {
             memory: Arc::new(secs_compute::FixedMemory(1024 * 1024 * 1024)),
             host: Arc::new(NullHost),
             uuid: Arc::new(Mutex::new(Box::new(random_uuid))),
+            app_settings_path: None,
         }
     }
 }
@@ -199,16 +205,19 @@ pub struct Service {
     deps: Deps,
     session: Arc<Mutex<Session>>,
     results_state: Arc<Mutex<Results>>,
+    app_settings: Arc<Mutex<secs_types::ipc::AppSettings>>,
     jobs: JobRegistry,
 }
 
 impl Service {
     /// Creates a service from platform dependency factories.
     pub fn new(deps: Deps) -> Self {
+        let app_settings = project_edit::load_app_settings(deps.app_settings_path.as_deref());
         Self {
             deps,
             session: Arc::new(Mutex::new(Session::default())),
             results_state: Arc::new(Mutex::new(Results::default())),
+            app_settings: Arc::new(Mutex::new(app_settings)),
             jobs: JobRegistry::default(),
         }
     }
