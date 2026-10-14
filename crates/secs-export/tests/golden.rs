@@ -9,12 +9,16 @@ use std::{
 
 use secs_engine::test_support::replay_case;
 use secs_export::{
-    ExportRun, before_after_items, export_before_after_mdat, export_mdat, layout_lines, rc_pieces,
-    stage_items, sub_values_text,
+    ExportRun, MimoKind, MimoResponses, before_after_items, before_after_items_mimo,
+    export_before_after_mdat, export_mdat, layout_lines, rc_pieces, stage_items, stage_items_mimo,
+    sub_values_text,
 };
 use secs_mdat::{MdatError, MeasurementInput, TEMPLATE};
 use secs_oracle::{Fixture, number};
-use secs_types::calibration::CalibrationSettings;
+use secs_types::{
+    calibration::CalibrationSettings,
+    chain::{MimoFilter, MimoPath, MimoPaths},
+};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -55,6 +59,122 @@ fn check<T: PartialEq + std::fmt::Debug>(id: &str, what: &str, actual: T, expect
         assert_eq!(actual, expected, "{id} {what}");
     } else if actual != expected {
         eprintln!("EXPORT_OFFLIBM {id} {what}: got {actual:?}, expected {expected:?}");
+    }
+}
+
+fn peqs(value: &Value) -> Vec<(f64, f64, f64)> {
+    value
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|band| {
+            let band = band.as_array().unwrap();
+            (number(&band[0]), number(&band[1]), number(&band[2]))
+        })
+        .collect()
+}
+
+fn allpasses(value: &Value) -> Vec<(f64, f64)> {
+    value
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|band| {
+            let band = band.as_array().unwrap();
+            (number(&band[0]), number(&band[1]))
+        })
+        .collect()
+}
+
+fn packed_f32s(fixture: &Fixture, descriptor: &Value) -> Vec<f64> {
+    let packed = fixture.blob(descriptor);
+    let length = descriptor["samples_len"].as_u64().unwrap() as usize;
+    let mut planes = Vec::with_capacity(4 * length);
+    let mut at = 0;
+    while at < packed.len() {
+        let control = packed[at];
+        at += 1;
+        let count = usize::from(control & 0x7f) + 1;
+        if control & 0x80 == 0 {
+            planes.extend_from_slice(&packed[at..at + count]);
+            at += count;
+        } else {
+            planes.extend(std::iter::repeat_n(packed[at], count));
+            at += 1;
+        }
+    }
+    assert_eq!(planes.len(), 4 * length);
+    for plane in planes.chunks_exact_mut(length) {
+        for index in 1..length {
+            plane[index] ^= plane[index - 1];
+        }
+    }
+    (0..length)
+        .map(|index| {
+            f64::from(f32::from_le_bytes([
+                planes[index],
+                planes[length + index],
+                planes[2 * length + index],
+                planes[3 * length + index],
+            ]))
+        })
+        .collect()
+}
+
+fn mimo_responses(fixture: &Fixture) -> MimoResponses {
+    let output = fixture.outputs();
+    let paths = &output["paths"];
+    let paths = MimoPaths {
+        fsiso: number(&paths["fsiso"]),
+        paths: paths["paths"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|path| {
+                let filter = &path["filter"];
+                let filter = if let Some(value) = filter.get("Iir") {
+                    MimoFilter::Iir {
+                        gain_db: number(&value["gain_db"]),
+                        delay_ms: number(&value["delay_ms"]),
+                        polarity: value["polarity"].as_i64().unwrap() as i8,
+                        peq: peqs(&value["peq"]),
+                        allpass: allpasses(&value["allpass"]),
+                    }
+                } else {
+                    MimoFilter::Fir {
+                        taps_48k: fixture.f64s(&filter["Fir"]["taps_48k"]),
+                    }
+                };
+                MimoPath {
+                    input: path["input"].as_str().unwrap().into(),
+                    support: path["support"].as_str().unwrap().into(),
+                    filter,
+                    low_hz: number(&path["low_hz"]),
+                    delay_ms: number(&path["delay_ms"]),
+                }
+            })
+            .collect(),
+    };
+    let applied = output["applied"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|response| {
+            let ir = packed_f32s(fixture, &response["ir_f32"]);
+            let spectrum = secs_dsp::fft::rfft(&ir);
+            (response["role"].as_str().unwrap().into(), spectrum)
+        })
+        .collect();
+    MimoResponses {
+        kind: match output["kind"].as_str().unwrap() {
+            "IIR" => MimoKind::Iir,
+            "FIR" => MimoKind::Fir,
+            value => panic!("unknown MIMO kind {value}"),
+        },
+        fsiso: number(&output["fsiso"]),
+        cap_text: output["cap_text"].as_str().unwrap().into(),
+        paths,
+        applied,
     }
 }
 
@@ -148,6 +268,70 @@ fn export_items_match_oracle() {
             &format!("{name}/before_after"),
             &before_after_items(&run),
             &output["before_after"],
+        );
+    }
+}
+
+#[test]
+fn mimo_items_match_four_oracles() {
+    for fixture in Fixture::all("export_mimo", "") {
+        let case_name = fixture
+            .id
+            .strip_prefix("export_mimo/")
+            .unwrap()
+            .strip_suffix("_iir")
+            .or_else(|| {
+                fixture
+                    .id
+                    .strip_prefix("export_mimo/")
+                    .unwrap()
+                    .strip_suffix("_fir")
+            })
+            .unwrap();
+        let case = replay_case(case_name);
+        let settings: CalibrationSettings = serde_json::from_value(case.settings).unwrap();
+        let run = ExportRun {
+            design: &case.design,
+            measurements: &case.measurements,
+            config: &case.config,
+            settings: &settings,
+        };
+        let mimo = mimo_responses(&fixture);
+        let staged: Vec<_> = stage_items_mimo(&run, &mimo, None)
+            .unwrap()
+            .into_iter()
+            .filter(|item| item.title.contains("MIMO 적용"))
+            .collect();
+        let before_after: Vec<_> = before_after_items_mimo(&run, &mimo)
+            .unwrap()
+            .into_iter()
+            .filter(|item| item.title.contains("+ MIMO"))
+            .collect();
+        verify_items(
+            &format!("{}/staged", fixture.id),
+            &staged,
+            &fixture.outputs()["staged"],
+        );
+        verify_items(
+            &format!("{}/before_after", fixture.id),
+            &before_after,
+            &fixture.outputs()["before_after"],
+        );
+        let roles: Vec<_> = mimo
+            .paths
+            .paths
+            .iter()
+            .map(|path| path.input.as_str())
+            .collect();
+        assert!(
+            staged
+                .iter()
+                .all(|item| roles.iter().any(|role| item.title.contains(role)))
+        );
+        assert!(
+            before_after
+                .iter()
+                .all(|item| roles.iter().any(|role| item.title.contains(role)))
         );
     }
 }

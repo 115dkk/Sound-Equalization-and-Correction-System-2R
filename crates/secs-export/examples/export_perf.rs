@@ -32,6 +32,7 @@ fn main() {
         ultra_ms: settings.ultra_ms,
         latency_ms: case.design.chain.latency_ms,
         rc_hi_hz: case.design.rc_hi,
+        mimo_max_supports: 0,
     };
     if op == "profile_camilla" {
         use sha2::{Digest, Sha256};
@@ -63,6 +64,7 @@ fn main() {
                 &folder.join("configs"),
                 "secs_mixed_",
                 &options,
+                None,
                 &|name| {
                     let now = Instant::now();
                     stages.borrow_mut().push((
@@ -88,7 +90,7 @@ fn main() {
             );
         }
         "camilla" => {
-            black_box(secs_camilla::export(&case.design.chain, &folder, &labels).unwrap());
+            black_box(secs_camilla::export(&case.design.chain, &folder, &labels, None).unwrap());
         }
         "mdat_staged" => {
             black_box(secs_export::export_mdat(&run, &folder, None).unwrap());

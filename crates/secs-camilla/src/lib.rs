@@ -13,14 +13,18 @@
 pub mod pyfmt;
 
 use pyfmt::{format_fixed, format_g, format_i3, format_s30, repr_f64, round_ndigits};
-use secs_types::chain::{BandType, MainChannel, Peq, SignalChain, SubChannel};
+use secs_types::chain::{
+    BandType, MainChannel, MimoFilter, MimoPath, MimoPaths, Peq, SignalChain, SubChannel,
+};
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const SAMPLE_RATE: u32 = 48_000;
 const CONFIG_DIR: &str = "configs";
 const COEFF_DIR: &str = "coeffs";
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// A device map as CamillaDSP takes it, keys in insertion order.
 #[derive(Debug, Clone, PartialEq)]
@@ -98,6 +102,9 @@ pub struct RunLabels {
     pub latency_ms: f64,
     /// Room-correction upper bound.
     pub rc_hi_hz: f64,
+    /// Per-input MIMO support cap the run used, 0 for none
+    /// (upstream `MimoRun.max_supports`).
+    pub mimo_max_supports: usize,
 }
 
 /// CamillaDSP export failure.
@@ -423,7 +430,67 @@ fn validate_peq(prefix: &str, bands: &[Peq]) -> Result<(), CamillaError> {
     Ok(())
 }
 
-fn validate(chain: &SignalChain, options: &Options) -> Result<(), CamillaError> {
+fn validate_mimo(chain: &SignalChain, mimo: Option<&MimoPaths>) -> Result<(), CamillaError> {
+    let Some(mimo) = mimo else { return Ok(()) };
+    finite("mimo.fsiso", mimo.fsiso)?;
+    for (index, path) in mimo.paths.iter().enumerate() {
+        check_ascii_identifier(&path.input)?;
+        check_ascii_identifier(&path.support)?;
+        if !chain.mains.iter().any(|main| main.role == path.input) {
+            return Err(CamillaError::Invalid(format!(
+                "MIMO path {index} input {} is not a main channel",
+                path.input
+            )));
+        }
+        if !chain.mains.iter().any(|main| main.role == path.support)
+            && !chain.subs.iter().any(|sub| sub.role == path.support)
+        {
+            return Err(CamillaError::Invalid(format!(
+                "MIMO path {index} support {} is not an output",
+                path.support
+            )));
+        }
+        finite(&format!("mimo.paths[{index}].low_hz"), path.low_hz)?;
+        finite(&format!("mimo.paths[{index}].delay_ms"), path.delay_ms)?;
+        match &path.filter {
+            MimoFilter::Iir {
+                gain_db,
+                delay_ms,
+                polarity,
+                peq,
+                allpass,
+            } => {
+                finite(&format!("mimo.paths[{index}].gain_db"), *gain_db)?;
+                finite(&format!("mimo.paths[{index}].filter_delay_ms"), *delay_ms)?;
+                if !matches!(polarity, -1 | 1) {
+                    return Err(CamillaError::Invalid(format!(
+                        "MIMO path {index} polarity {polarity}"
+                    )));
+                }
+                validate_peq(&format!("mimo.paths[{index}].peq"), peq)?;
+                for (band, &(frequency, q)) in allpass.iter().enumerate() {
+                    finite(
+                        &format!("mimo.paths[{index}].allpass[{band}].frequency"),
+                        frequency,
+                    )?;
+                    finite(&format!("mimo.paths[{index}].allpass[{band}].q"), q)?;
+                }
+            }
+            MimoFilter::Fir { taps_48k } => {
+                for (tap, value) in taps_48k.iter().enumerate() {
+                    finite(&format!("mimo.paths[{index}].taps_48k[{tap}]"), *value)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate(
+    chain: &SignalChain,
+    options: &Options,
+    mimo: Option<&MimoPaths>,
+) -> Result<(), CamillaError> {
     if chain.sample_rate != SAMPLE_RATE {
         return Err(CamillaError::Invalid(format!(
             "sample rate {} (expected {SAMPLE_RATE})",
@@ -519,7 +586,8 @@ fn validate(chain: &SignalChain, options: &Options) -> Result<(), CamillaError> 
         }
         validate_peq(&format!("sub.{role}.peq"), peq)?;
     }
-    validate_peq("sub_bus_peq", &chain.sub_bus_peq)
+    validate_peq("sub_bus_peq", &chain.sub_bus_peq)?;
+    validate_mimo(chain, mimo)
 }
 
 fn band_name(kind: BandType, highpass: bool) -> (&'static str, i64) {
@@ -588,6 +656,41 @@ fn pipeline_filter(channel: usize, names: Vec<String>) -> Json {
     ])
 }
 
+fn allpass(frequency: f64, q: f64) -> Json {
+    filter_spec(
+        "Biquad",
+        object([
+            ("type", Json::Str("Allpass".into())),
+            ("freq", Json::Float(round_ndigits(frequency, 4))),
+            ("q", Json::Float(round_ndigits(q, 5))),
+        ]),
+    )
+}
+
+fn fixed_filter_names(support: &str, subs: &[SubChannel]) -> Vec<String> {
+    let Some(sub) = subs.iter().find(|sub| sub.role == support) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    if sub.hp_hz != 0.0 {
+        names.push(format!("sub_{support}_fixed_hp"));
+    }
+    if sub.lp_hz != 0.0 {
+        names.push(format!("sub_{support}_fixed_lp"));
+    }
+    names.extend(
+        sub.peq
+            .iter()
+            .enumerate()
+            .map(|(index, _)| format!("sub_{support}_fixed_peq{index}")),
+    );
+    names
+}
+
+fn path_tag(path: &MimoPath) -> String {
+    format!("mimo_{}_{}", path.input, path.support)
+}
+
 fn order_table(inputs: &[String], outputs: &[String]) -> Vec<String> {
     let mut rows =
         vec!["#    ch  input (capture -> route_in)   output (route_out -> playback)".into()];
@@ -653,8 +756,9 @@ pub fn make_config(
     config_dir: &Path,
     fir_prefix: &str,
     options: &Options,
+    mimo: Option<&MimoPaths>,
 ) -> Result<Config, CamillaError> {
-    make_config_observed(chain, out, config_dir, fir_prefix, options, &|_| {})
+    make_config_observed(chain, out, config_dir, fir_prefix, options, mimo, &|_| {})
 }
 
 /// Audit-only stage boundaries; callbacks run after construction and serialization.
@@ -665,9 +769,10 @@ pub fn make_config_observed(
     config_dir: &Path,
     fir_prefix: &str,
     options: &Options,
+    mimo: Option<&MimoPaths>,
     boundary: &dyn Fn(&str),
 ) -> Result<Config, CamillaError> {
-    validate(chain, options)?;
+    validate(chain, options, mimo)?;
     let mains = &chain.mains;
     let subs = &chain.subs;
     let lfe = !subs.is_empty() && options.lfe_gain_db.is_some();
@@ -675,6 +780,8 @@ pub fn make_config_observed(
     let n_sub = subs.len();
     let n_in = n_main + usize::from(lfe);
     let n_out = n_main + n_sub;
+    let paths = mimo.map_or(&[][..], |value| value.paths.as_slice());
+    let n_paths = paths.len();
     let (default_capture, default_playback) = file_devices(out, n_in, n_out)?;
     let capture = options.capture.as_ref().unwrap_or(&default_capture);
     let playback = options.playback.as_ref().unwrap_or(&default_playback);
@@ -683,6 +790,25 @@ pub fn make_config_observed(
     let mut pipeline = vec![pipeline_mixer("route_in")];
     let mut coeffs = Vec::new();
     let coeff_dir = out.join(COEFF_DIR);
+    let fork = if paths.is_empty() {
+        None
+    } else {
+        let mapping = (0..n_in)
+            .map(|channel| one(channel, channel, false))
+            .chain(paths.iter().enumerate().map(|(index, path)| {
+                let input = mains
+                    .iter()
+                    .position(|main| main.role == path.input)
+                    .expect("validated MIMO input");
+                one(n_in + index, input, false)
+            }))
+            .collect();
+        pipeline.push(pipeline_mixer("mimo_fork"));
+        Some(object([
+            ("channels", channels(n_in, n_in + n_paths)),
+            ("mapping", Json::Array(mapping)),
+        ]))
+    };
 
     for (channel, main) in mains.iter().enumerate() {
         let mut names = Vec::new();
@@ -734,13 +860,14 @@ pub fn make_config_observed(
     }
 
     let split = object([
-        ("channels", channels(n_in, 2 * n_in)),
+        ("channels", channels(n_in + n_paths, 2 * n_in + n_paths)),
         (
             "mapping",
             Json::Array(
                 (0..n_in)
                     .map(|k| one(k, k, false))
                     .chain((0..n_in).map(|k| one(n_in + k, k, false)))
+                    .chain((0..n_paths).map(|p| one(2 * n_in + p, n_in + p, false)))
                     .collect(),
             ),
         ),
@@ -804,8 +931,9 @@ pub fn make_config_observed(
             ]));
         }
     }
+    bus_mapping.extend((0..n_paths).map(|path| one(n_out + path, 2 * n_in + path, false)));
     let bus = object([
-        ("channels", channels(2 * n_in, n_out)),
+        ("channels", channels(2 * n_in + n_paths, n_out + n_paths)),
         ("mapping", Json::Array(bus_mapping)),
     ]);
     pipeline.push(pipeline_mixer("bus"));
@@ -819,17 +947,7 @@ pub fn make_config_observed(
         names.extend(fixed_filters(&sub.role, sub, &mut filters));
         for (index, (frequency, q)) in sub.allpass.iter().enumerate() {
             let name = format!("sub_{}_ap{index}", sub.role);
-            filters.push((
-                name.clone(),
-                filter_spec(
-                    "Biquad",
-                    object([
-                        ("type", Json::Str("Allpass".into())),
-                        ("freq", Json::Float(round_ndigits(*frequency, 4))),
-                        ("q", Json::Float(round_ndigits(*q, 5))),
-                    ]),
-                ),
-            ));
+            filters.push((name.clone(), allpass(*frequency, *q)));
             names.push(name);
         }
         let name = format!("sub_{}_delay", sub.role);
@@ -837,6 +955,130 @@ pub fn make_config_observed(
         names.push(name);
         pipeline.push(pipeline_filter(n_main + sub_index, names));
     }
+
+    for (index, path) in paths.iter().enumerate() {
+        let tag = path_tag(path);
+        let mut names = Vec::new();
+        match &path.filter {
+            MimoFilter::Fir { taps_48k } => {
+                let delay_name = format!("{tag}_delay");
+                filters.push((delay_name.clone(), delay(path.delay_ms)));
+                names.push(delay_name);
+                let hp_name = format!("{tag}_hp");
+                filters.push((
+                    hp_name.clone(),
+                    combo("LinkwitzRileyHighpass", round_ndigits(path.low_hz, 3), 4),
+                ));
+                names.push(hp_name);
+                let file = coeff_dir.join(format!("{fir_prefix}{tag}.wav"));
+                let filename = posix(&relative(&file, config_dir)?);
+                coeffs.push((file, wav(taps_48k, SAMPLE_RATE)));
+                let fir_name = format!("{tag}_fir");
+                filters.push((
+                    fir_name.clone(),
+                    filter_spec(
+                        "Conv",
+                        object([
+                            ("type", Json::Str("Wav".into())),
+                            ("filename", Json::Str(filename)),
+                        ]),
+                    ),
+                ));
+                names.push(fir_name);
+            }
+            MimoFilter::Iir {
+                gain_db,
+                delay_ms,
+                polarity,
+                peq,
+                allpass: path_allpass,
+            } => {
+                let gain_name = format!("{tag}_gain");
+                filters.push((
+                    gain_name.clone(),
+                    filter_spec(
+                        "Gain",
+                        object([
+                            ("gain", Json::Float(round_ndigits(*gain_db, 4))),
+                            ("inverted", Json::Bool(*polarity < 0)),
+                        ]),
+                    ),
+                ));
+                names.push(gain_name);
+                let delay_name = format!("{tag}_delay");
+                filters.push((delay_name.clone(), delay(path.delay_ms + *delay_ms)));
+                names.push(delay_name);
+                for (band, &(frequency, q, gain)) in peq.iter().enumerate() {
+                    let name = format!("{tag}_peq{band}");
+                    filters.push((name.clone(), peaking(frequency, q, gain)));
+                    names.push(name);
+                }
+                for (band, &(frequency, q)) in path_allpass.iter().enumerate() {
+                    let name = format!("{tag}_ap{band}");
+                    filters.push((name.clone(), allpass(frequency, q)));
+                    names.push(name);
+                }
+                let hp_name = format!("{tag}_hp");
+                filters.push((
+                    hp_name.clone(),
+                    combo("LinkwitzRileyHighpass", round_ndigits(path.low_hz, 3), 4),
+                ));
+                names.push(hp_name);
+                let lp_name = format!("{tag}_lp");
+                filters.push((
+                    lp_name.clone(),
+                    combo(
+                        "LinkwitzRileyLowpass",
+                        mimo.expect("MIMO path has container").fsiso,
+                        4,
+                    ),
+                ));
+                names.push(lp_name);
+            }
+        }
+        names.extend(fixed_filter_names(&path.support, subs));
+        pipeline.push(pipeline_filter(n_out + index, names));
+    }
+    let merge = if paths.is_empty() {
+        None
+    } else {
+        let outputs = mains
+            .iter()
+            .map(|main| main.role.as_str())
+            .chain(subs.iter().map(|sub| sub.role.as_str()))
+            .collect::<Vec<_>>();
+        let mapping = outputs
+            .iter()
+            .enumerate()
+            .map(|(output, role)| {
+                let sources = std::iter::once(object([
+                    ("channel", int(output)),
+                    ("gain", Json::Int(0)),
+                    ("inverted", Json::Bool(false)),
+                ]))
+                .chain(
+                    paths
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, path)| path.support == *role)
+                        .map(|(path_index, _)| {
+                            object([
+                                ("channel", int(n_out + path_index)),
+                                ("gain", Json::Int(0)),
+                                ("inverted", Json::Bool(false)),
+                            ])
+                        }),
+                )
+                .collect();
+                object([("dest", int(output)), ("sources", Json::Array(sources))])
+            })
+            .collect();
+        pipeline.push(pipeline_mixer("mimo_merge"));
+        Some(object([
+            ("channels", channels(n_out + n_paths, n_out)),
+            ("mapping", Json::Array(mapping)),
+        ]))
+    };
     pipeline.push(pipeline_mixer("route_out"));
 
     let route_in = object([
@@ -1007,8 +1249,14 @@ pub fn make_config_observed(
         format!("  route_out: {}", json(&route_out)),
         format!("  split: {}", json(&split)),
         format!("  bus: {}", json(&bus)),
-        "pipeline:".into(),
     ]);
+    if let Some(fork) = fork {
+        lines.push(format!("  mimo_fork: {}", json(&fork)));
+    }
+    if let Some(merge) = merge {
+        lines.push(format!("  mimo_merge: {}", json(&merge)));
+    }
+    lines.push("pipeline:".into());
     for stage in pipeline {
         lines.push(format!("  - {}", json(&stage)));
     }
@@ -1038,12 +1286,56 @@ fn safe_name(name: &str) -> String {
     }
 }
 
+fn atomic_write(destination: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    let filename = destination
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("export");
+    let mut temporary = None;
+    for _ in 0..100 {
+        let serial = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(".{filename}.{}.{}.tmp", std::process::id(), serial));
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(file) => {
+                temporary = Some((candidate, file));
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+    let Some((path, mut file)) = temporary else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "could not create export temporary file",
+        ));
+    };
+    use std::io::Write as _;
+    let result = (|| {
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        // std's rename replaces an existing destination on every platform.
+        fs::rename(&path, destination)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&path);
+    }
+    result
+}
+
 /// Write `configs/<name>.yml`, coefficient WAVs, and a placeholder `in.raw` when needed.
 pub fn write_config(
     chain: &SignalChain,
     out: &Path,
     name: &str,
     options: &Options,
+    mimo: Option<&MimoPaths>,
 ) -> Result<Vec<PathBuf>, CamillaError> {
     let safe = safe_name(name);
     if safe == "." || safe == ".." {
@@ -1052,7 +1344,7 @@ pub fn write_config(
         )));
     }
     let config_dir = out.join(CONFIG_DIR);
-    let config = make_config(chain, out, &config_dir, &format!("{safe}_"), options)?;
+    let config = make_config(chain, out, &config_dir, &format!("{safe}_"), options, mimo)?;
     let n_in =
         chain.mains.len() + usize::from(!chain.subs.is_empty() && options.lfe_gain_db.is_some());
 
@@ -1068,11 +1360,11 @@ pub fn write_config(
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::write(path, bytes)?;
+        atomic_write(path, bytes)?;
     }
     fs::create_dir_all(&config_dir)?;
     let config_path = config_dir.join(format!("{safe}.yml"));
-    fs::write(&config_path, config.yaml.as_bytes())?;
+    atomic_write(&config_path, config.yaml.as_bytes())?;
     let mut written = vec![config_path];
     let mut coeff_paths: Vec<_> = config.coeffs.into_iter().map(|(path, _)| path).collect();
     coeff_paths.sort();
@@ -1080,17 +1372,42 @@ pub fn write_config(
     Ok(written)
 }
 
-/// Calibration-level export wrapper, without MIMO.
+/// Calibration-level export wrapper.
 pub fn export(
     chain: &SignalChain,
     folder: &Path,
     labels: &RunLabels,
+    mimo: Option<&MimoPaths>,
 ) -> Result<Vec<PathBuf>, CamillaError> {
     finite("labels.ultra_ms", labels.ultra_ms)?;
     finite("labels.latency_ms", labels.latency_ms)?;
     finite("labels.rc_hi_hz", labels.rc_hi_hz)?;
+    let mimo_note = mimo.filter(|paths| !paths.paths.is_empty()).map_or_else(
+        || "no MIMO".to_owned(),
+        |paths| {
+            let kind = if paths
+                .paths
+                .iter()
+                .any(|path| matches!(path.filter, MimoFilter::Fir { .. }))
+            {
+                "FIR"
+            } else {
+                "IIR"
+            };
+            let cap = if labels.mimo_max_supports == 0 {
+                String::new()
+            } else {
+                format!(", max {} per input", labels.mimo_max_supports)
+            };
+            format!(
+                "MIMO {kind} support paths {} (Fsiso {} Hz{cap})",
+                paths.paths.len(),
+                format_g(paths.fsiso, false)
+            )
+        },
+    );
     let note = format!(
-        "mode {}, total latency {} ms, RC upper {} Hz; no MIMO",
+        "mode {}, total latency {} ms, RC upper {} Hz; {mimo_note}",
         labels.mode,
         format_fixed(labels.latency_ms, 1, false),
         format_fixed(labels.rc_hi_hz, 0, false)
@@ -1106,7 +1423,7 @@ pub fn export(
         mode: mode.clone(),
         ..Options::default()
     };
-    write_config(chain, folder, &format!("secs_{mode}"), &options)
+    write_config(chain, folder, &format!("secs_{mode}"), &options, mimo)
 }
 
 #[cfg(test)]

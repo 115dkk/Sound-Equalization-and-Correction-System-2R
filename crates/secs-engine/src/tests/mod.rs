@@ -12,6 +12,7 @@ mod e2e;
 pub(crate) mod fit;
 mod mimo;
 mod mimo_iir;
+mod mimo_run;
 mod prep;
 mod preview;
 mod rc;

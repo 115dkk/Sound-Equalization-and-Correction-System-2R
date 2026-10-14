@@ -15,7 +15,10 @@ use secs_engine::{
     input::LayoutKind, stage_responses,
 };
 use secs_mdat::{MdatError, MeasurementInput, TEMPLATE};
-use secs_types::{calibration::CalibrationSettings, chain::SubChannel};
+use secs_types::{
+    calibration::CalibrationSettings,
+    chain::{MimoPaths, SubChannel},
+};
 
 const N_FFT: usize = 1 << 17;
 const SR: u32 = 48_000;
@@ -31,11 +34,30 @@ pub struct ExportRun<'a> {
     pub settings: &'a CalibrationSettings,
 }
 
-/// M3 will replace this opaque value with its typed response export view.
+/// MIMO support-filter realization used in exported labels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MimoKind {
+    Iir,
+    Fir,
+}
+
+impl MimoKind {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Iir => "IIR",
+            Self::Fir => "FIR",
+        }
+    }
+}
+
+/// MIMO paths and already-applied design-grid responses.
 #[derive(Debug)]
-#[non_exhaustive]
 pub struct MimoResponses {
-    _private: (),
+    pub kind: MimoKind,
+    pub fsiso: f64,
+    pub cap_text: String,
+    pub paths: MimoPaths,
+    pub applied: Vec<(String, Vec<secs_engine::C>)>,
 }
 
 /// Typed future seam for M3 MIMO stage responses.
@@ -76,8 +98,6 @@ pub enum ExportError {
     Random(String),
     #[error("missing export response for {0}")]
     MissingResponse(String),
-    #[error("the M3 MIMO export hook is not implemented")]
-    MimoNotImplemented,
 }
 
 fn chain_text(run: &ExportRun<'_>) -> String {
@@ -300,9 +320,6 @@ fn stage_items_with_mimo(
     mimo: MimoExport<'_>,
     label: Option<&str>,
 ) -> Result<Vec<MeasurementInput>, ExportError> {
-    if matches!(mimo, MimoExport::Responses(_)) {
-        return Err(ExportError::MimoNotImplemented);
-    }
     let view = export_view(run.design, run.measurements, run.config)?;
     let position = run.config.main_position;
     let subs: Vec<_> = run
@@ -368,6 +385,58 @@ fn stage_items_with_mimo(
             &stages.output,
             shifted,
         ));
+        if let MimoExport::Responses(mimo) = mimo {
+            let supports: Vec<_> = mimo
+                .paths
+                .paths
+                .iter()
+                .filter(|path| path.input == main.role)
+                .collect();
+            if !supports.is_empty() {
+                let response = mimo
+                    .applied
+                    .iter()
+                    .find(|(role, _)| role == &main.role)
+                    .map(|(_, response)| response.as_slice())
+                    .ok_or_else(|| ExportError::MissingResponse(main.role.clone()))?;
+                let description = supports
+                    .iter()
+                    .map(|path| match &path.filter {
+                        secs_types::chain::MimoFilter::Fir { taps_48k } => {
+                            format!("{} FIR {}탭", path.support, grouped(taps_48k.len()))
+                        }
+                        secs_types::chain::MimoFilter::Iir {
+                            gain_db,
+                            delay_ms,
+                            polarity,
+                            peq,
+                            allpass,
+                        } => format!(
+                            "{} {} dB {} ms {} PEQ {} AP {}",
+                            path.support,
+                            format_fixed(*gain_db, 1, false),
+                            format_fixed(*delay_ms, 1, false),
+                            if *polarity > 0 { "+" } else { "-" },
+                            peq.len(),
+                            allpass.len()
+                        ),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                items.push(item(
+                    format!("{seq:02}_{}_4 MIMO 적용({})", main.role, mimo.kind.name()),
+                    format!(
+                        "{prefix}MIMO {} 서포트 {}개(Fsiso {} Hz{}) — {description}",
+                        mimo.kind.name(),
+                        supports.len(),
+                        format_g(mimo.fsiso, false),
+                        mimo.cap_text
+                    ),
+                    response,
+                    shifted,
+                ));
+            }
+        }
     }
     Ok(items)
 }
@@ -418,13 +487,18 @@ pub fn stage_items(run: &ExportRun<'_>, label: Option<&str>) -> Vec<MeasurementI
     stage_items_with_mimo(run, MimoExport::None, label).expect("validated engine export inputs")
 }
 
+pub fn stage_items_mimo(
+    run: &ExportRun<'_>,
+    mimo: &MimoResponses,
+    label: Option<&str>,
+) -> Result<Vec<MeasurementInput>, ExportError> {
+    stage_items_with_mimo(run, MimoExport::Responses(mimo), label)
+}
+
 fn before_after_items_with_mimo(
     run: &ExportRun<'_>,
     mimo: MimoExport<'_>,
 ) -> Result<Vec<MeasurementInput>, ExportError> {
-    if matches!(mimo, MimoExport::Responses(_)) {
-        return Err(ExportError::MimoNotImplemented);
-    }
     let view = export_view(run.design, run.measurements, run.config)?;
     let position = run.config.main_position;
     let label = run.settings.label();
@@ -460,6 +534,37 @@ fn before_after_items_with_mimo(
             &final_response,
             shifted,
         ));
+        if let MimoExport::Responses(mimo) = mimo {
+            let support_count = mimo
+                .paths
+                .paths
+                .iter()
+                .filter(|path| path.input == main.role)
+                .count();
+            if support_count != 0 {
+                let response = mimo
+                    .applied
+                    .iter()
+                    .find(|(role, _)| role == &main.role)
+                    .map(|(_, response)| response.as_slice())
+                    .ok_or_else(|| ExportError::MissingResponse(main.role.clone()))?;
+                items.push(item(
+                    format!(
+                        "{seq:02}_{}_3 보정 후 + MIMO({})",
+                        main.role,
+                        mimo.kind.name()
+                    ),
+                    format!(
+                        "SECS 보정 설계 · {label} · 청취 위치 {position} · 계산값 — MIMO {} 서포트 {support_count}개 (Fsiso {} Hz{})",
+                        mimo.kind.name(),
+                        format_g(mimo.fsiso, false),
+                        mimo.cap_text
+                    ),
+                    response,
+                    shifted,
+                ));
+            }
+        }
     }
     for sub in &run.design.chain.subs {
         if let Some(measured) = run.measurements.get(position, &sub.role) {
@@ -499,6 +604,13 @@ pub fn before_after_items(run: &ExportRun<'_>) -> Vec<MeasurementInput> {
     before_after_items_with_mimo(run, MimoExport::None).expect("validated engine export inputs")
 }
 
+pub fn before_after_items_mimo(
+    run: &ExportRun<'_>,
+    mimo: &MimoResponses,
+) -> Result<Vec<MeasurementInput>, ExportError> {
+    before_after_items_with_mimo(run, MimoExport::Responses(mimo))
+}
+
 pub fn project_spl_offset(measurement_records: &[MeasurementRecord]) -> Option<f64> {
     let mut values: Vec<_> = measurement_records
         .iter()
@@ -521,8 +633,21 @@ pub fn export_mdat(
     folder: &Path,
     spl_offset_db: Option<f64>,
 ) -> Result<PathBuf, ExportError> {
+    export_mdat_with_mimo(run, folder, None, spl_offset_db)
+}
+
+pub fn export_mdat_with_mimo(
+    run: &ExportRun<'_>,
+    folder: &Path,
+    mimo: Option<&MimoResponses>,
+    spl_offset_db: Option<f64>,
+) -> Result<PathBuf, ExportError> {
     let label = run.settings.label();
-    let items = stage_items_with_mimo(run, MimoExport::None, Some(&label))?;
+    let items = stage_items_with_mimo(
+        run,
+        mimo.map_or(MimoExport::None, MimoExport::Responses),
+        Some(&label),
+    )?;
     export_items(
         folder,
         &format!("SECS 보정 설계 {label}.mdat"),
@@ -536,8 +661,18 @@ pub fn export_before_after_mdat(
     folder: &Path,
     spl_offset_db: Option<f64>,
 ) -> Result<PathBuf, ExportError> {
+    export_before_after_mdat_with_mimo(run, folder, None, spl_offset_db)
+}
+
+pub fn export_before_after_mdat_with_mimo(
+    run: &ExportRun<'_>,
+    folder: &Path,
+    mimo: Option<&MimoResponses>,
+    spl_offset_db: Option<f64>,
+) -> Result<PathBuf, ExportError> {
     let label = run.settings.label();
-    let items = before_after_items_with_mimo(run, MimoExport::None)?;
+    let items =
+        before_after_items_with_mimo(run, mimo.map_or(MimoExport::None, MimoExport::Responses))?;
     export_items(
         folder,
         &format!("SECS 보정 전후 {label}.mdat"),
