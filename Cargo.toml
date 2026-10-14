@@ -34,6 +34,8 @@ serde = { version = "1.0.229", features = ["derive"] }
 # preserve_order: .secs files keep the key order SECS 2 wrote (docs/adr/0004).
 serde_json = { version = "1.0.152", features = ["preserve_order", "float_roundtrip"] }
 thiserror = "2.0.21"
+ureq = { version = "3.4.2", default-features = false }
+base64 = "0.22.1"
 toml = "1.1.8"
 ts-rs = { version = "12.0.1", features = ["serde-compat", "no-serde-warnings"] }
 clap = { version = "4.6.7", features = ["derive"] }

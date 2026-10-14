@@ -1,0 +1,18 @@
+{
+  "source": "tests/test_rewapi_real.py:52-173 StubSession; REW 5.40 Beta 124 API 0.9.4 recorded protocol data",
+  "version": {"message":"5.40 Beta 124 API 0.9.4"},
+  "asio_driver": {"driver":"ASIO"},
+  "java_driver": {"driver":"Java"},
+  "asio_outputs": ["1: Main Out 1","2: Main Out 2","3: Line Out 3","4: Line Out 4"],
+  "inputs": ["1: In 1","2: In 2"],
+  "devices": ["MOTU Gen 5"],
+  "java_inputs": ["UMIK-1"],
+  "spl": {"meterNumber":1,"weighting":"C","filter":"Slow","spl":78.5,"leq":77.0,"sel":70.0,"elapsedTime":3.0},
+  "levels": {"unit":"dBFS","rms":[-22.0],"peak":[-4.0],"timeSpanSeconds":0.25},
+  "measure_level": {"value":-24.0,"unit":"dBFS"},
+  "input_cal": {"currentInputSelection":"MOTU Gen 5","separateCalFileForEachInput":false,"inputDeviceIsCWeighted":false,"calDataAllInputs":{"calFilePath":"","dBFSAt94dBSPL":-19.29323546142578,"fullScaleSineVrms":1.0}},
+  "ir": {"message":"Completed","unit":"percent","sampleInterval":0.000020833333333333333,"sampleRate":48000.0,"timingReference":"Acoustic","timingRefTime":0.0,"delay":0.0,"data":"P4AAAL6AAAA+AAAA","startTime":-0.125},
+  "starting": {"message":"Starting measurement"},
+  "completed": {"message":"Completed"},
+  "ok": {"message":"ok"}
+}
