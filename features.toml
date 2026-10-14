@@ -551,8 +551,8 @@ note = "new: sweep measurement through WASAPI (Windows) and cpal (macOS, Linux) 
 id = "measure.rew_api"
 kind = "measure"
 milestone = "M4"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-rew::test_run_position_sequence_and_ir", "secs-rew::test_rew_progress_strings_reach_the_progress_callback", "secs-rew::test_r1_pro_required_uses_only_status_and_measure_command_path", "secs-rew::test_r2_full_position_ignores_offline_hold_including_device_lookups", "secs-rew::test_r3_random_token_wrong_path_404_and_oversized_body_drained", "secs-rew::test_r4_fake_two_position_plan_uses_only_supplied_ir_source"]
 upstream = "rewapi/rew.py, rewapi/callback.py"
 
 [[feature]]
