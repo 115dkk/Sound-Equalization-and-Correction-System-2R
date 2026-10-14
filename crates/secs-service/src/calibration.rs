@@ -41,6 +41,9 @@ pub(crate) struct MimoResult {
 pub(crate) struct Results {
     pub calibration: Option<CalibrationRun>,
     pub mimo: Option<MimoResult>,
+    /// The last subs-only run; the BA tab shows it, a full run clears it
+    /// (`step_calibration.py:1868-1876`).
+    pub subs: Option<CalibrationRun>,
 }
 
 #[derive(Debug)]
@@ -61,6 +64,7 @@ impl Service {
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
         let prepared = self.prepare(params.settings)?;
+        let subs_only = params.subs_only;
         let results = self.results_state.clone();
         let session = self.session.clone();
         let memory = self.deps.memory.available_bytes();
@@ -70,7 +74,7 @@ impl Service {
                 measurements: &prepared.measurements,
                 config: &prepared.config,
                 tuning: &Tuning::default(),
-                subs_only: false,
+                subs_only,
                 adapter_notes: &prepared.notes,
             };
             let fitters = production_fitters(job.cancel());
@@ -88,7 +92,12 @@ impl Service {
             };
             {
                 let mut state = lock(&results);
-                state.calibration = Some(run);
+                if subs_only {
+                    state.subs = Some(run);
+                } else {
+                    state.calibration = Some(run);
+                    state.subs = None;
+                }
             }
             {
                 let mut session = lock(&session);

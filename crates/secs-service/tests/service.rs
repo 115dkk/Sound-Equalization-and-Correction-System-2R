@@ -140,6 +140,7 @@ fn start_calibration(
         service,
         Request::Calibrate(CalibrateParams {
             settings: Some(settings),
+            ..Default::default()
         }),
         events,
     ) else {

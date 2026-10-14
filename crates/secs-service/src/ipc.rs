@@ -118,6 +118,10 @@ pub(crate) fn dispatch(
         Request::AppSettingsSet(params) => service
             .app_settings_set(params)
             .map(Response::AppSettingsSet),
+        request @ (Request::MeasurementCurves(_)
+        | Request::ResultCurves(_)
+        | Request::ResultLines
+        | Request::SubTakeValues) => crate::curves::dispatch(service, request),
     };
     match response {
         Ok(response) => Envelope::Ok(Box::new(response)),

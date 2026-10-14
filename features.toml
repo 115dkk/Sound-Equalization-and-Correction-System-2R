@@ -1104,3 +1104,41 @@ milestone = "M5"
 status = "implemented"
 tests = ["secs-service::app_settings_are_versioned_bounded_and_capped"]
 note = "versioned bounded data-only JSON, injected path or in-memory storage"
+id = "ipc.measurement_curves"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+upstream = "step5_measure.py magnitude_db"
+tests = ["secs-service::measurement_curves_match_oracle_and_selection"]
+
+[[feature]]
+id = "ipc.result_curves"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+upstream = "step_calibration.py _refresh_result, _draw_xo, _draw_subs"
+tests = ["secs-service::result_display_matches_replayed_oracle", "secs-service::result_curves_lines_take_values_and_staleness"]
+
+[[feature]]
+id = "ipc.result_lines"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+upstream = "step_calibration.py metrics, filters and BA table"
+tests = ["secs-service::result_display_matches_replayed_oracle", "secs-service::result_curves_lines_take_values_and_staleness"]
+
+[[feature]]
+id = "ipc.sub_take_values"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+upstream = "calibration.py CalibrationSettings.take_sub_values"
+tests = ["secs-service::result_curves_lines_take_values_and_staleness"]
+
+[[feature]]
+id = "service.curves"
+kind = "service"
+milestone = "M5"
+status = "implemented"
+upstream = "step5_measure.py and step_calibration.py display curves and result lines"
+tests = ["secs-service::measurement_curves_match_oracle_and_selection", "secs-service::result_display_matches_replayed_oracle", "secs-service::result_curves_lines_take_values_and_staleness", "secs-service::curve_requests_validate_and_require_project", "secs-service::subs_only_run_feeds_the_ba_tab_until_the_next_full_run"]

@@ -8,6 +8,7 @@
 
 mod cache;
 mod calibration;
+mod curves;
 mod export;
 mod ipc;
 mod jobs;

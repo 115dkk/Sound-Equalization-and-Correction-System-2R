@@ -124,6 +124,14 @@ pub enum Request {
     AppSettingsGet,
     /// Stores application-local settings.
     AppSettingsSet(AppSettingsParams),
+    /// Smoothed, normalized measurement curves and their shared frequency grid.
+    MeasurementCurves(MeasurementCurvesParams),
+    /// Ready-to-draw calibration curves and axis limits for one result tab.
+    ResultCurves(ResultCurvesParams),
+    /// Numeric metrics, filter counts, BA rows and coded result notices.
+    ResultLines,
+    /// Copies the last BA output alignment into the manual sub settings.
+    SubTakeValues,
 }
 
 impl Request {
@@ -237,6 +245,227 @@ pub enum Response {
     AppSettingsGet(AppSettings),
     /// The `AppSettingsSet` Response variant.
     AppSettingsSet(AppSettings),
+    /// Measurement curves on the common display grid.
+    MeasurementCurves(MeasurementCurvesResult),
+    /// Calibration tab curves, ranges and staleness.
+    ResultCurves(ResultCurvesResult),
+    /// Numeric summary lines and BA table.
+    ResultLines(ResultLinesResult),
+    /// Stored settings after taking the last sub alignment.
+    SubTakeValues(CalibrationSettings),
+}
+
+/// Optional measurement selection; an absent selection includes every recorded pair.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct MeasurementCurvesParams {
+    /// Position numbers to include.
+    #[ts(type = "number[] | null")]
+    pub positions: Option<Vec<i64>>,
+    /// Speaker roles to include.
+    pub roles: Option<Vec<String>>,
+}
+/// A measurement curve, already smoothed and normalized to the mid-band mean.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MeasurementCurve {
+    /// Speaker role.
+    pub role: String,
+    /// Measurement position.
+    #[ts(type = "number")]
+    pub position: i64,
+    /// Configuration kind: main, sub or top.
+    pub kind: String,
+    /// Levels in dB on the shared grid.
+    pub values: Vec<f64>,
+}
+/// Display limits; both endpoints are data values, not logarithms.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CurveAxes {
+    /// Frequency bounds in Hz.
+    pub frequency_hz: [f64; 2],
+    /// Level or delay bounds.
+    pub value: [f64; 2],
+    /// Vertical unit: db or ms.
+    pub unit: String,
+}
+/// Measurement graph data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MeasurementCurvesResult {
+    /// Shared 280-point logarithmic frequency grid in Hz.
+    pub grid: Vec<f64>,
+    /// One curve per recorded role and position.
+    pub curves: Vec<MeasurementCurve>,
+    /// Upstream default axis bounds.
+    pub axes: CurveAxes,
+}
+/// The calibration graph to display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ResultTab {
+    /// Sound pressure level relative to the target reference.
+    Spl,
+    /// Group delay in milliseconds.
+    Gd,
+    /// Crossover preview.
+    Xo,
+    /// Bass alignment.
+    Ba,
+}
+/// Selection for one ready-to-draw result graph.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ResultCurvesParams {
+    /// Graph tab.
+    pub tab: ResultTab,
+    /// Selected main role; absent selects the first available channel.
+    pub channel: Option<String>,
+    /// Crossover group; absent selects the selected channel's group.
+    pub group: Option<String>,
+    /// Dragged crossover in Hz; absent uses the configured value.
+    pub xo_hz: Option<f64>,
+    /// Apply input correction to the XO preview; defaults to true.
+    pub corrected: Option<bool>,
+}
+/// One named series on a result graph.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ResultCurve {
+    /// Series identity: before, after, target, mimo, main, sub, sum_before or sum_after.
+    pub kind: String,
+    /// Speaker role for per-sub curves, otherwise absent.
+    pub role: Option<String>,
+    /// Values on the response's shared grid.
+    pub values: Vec<f64>,
+}
+/// A result graph whose calculations are entirely owned by the service.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ResultCurvesResult {
+    /// Requested tab.
+    pub tab: ResultTab,
+    /// Shared frequency grid in Hz.
+    pub grid: Vec<f64>,
+    /// Ordered drawable series.
+    pub curves: Vec<ResultCurve>,
+    /// Upstream default axis bounds.
+    pub axes: CurveAxes,
+    /// Whether the retained result no longer matches current inputs.
+    pub stale: bool,
+    /// Whether the graph comes from a dedicated subs-only result.
+    pub subs_only: bool,
+    /// RC lower and upper bounds, with an unknown auto upper bound represented as null.
+    pub rc_band_hz: Option<(f64, Option<f64>)>,
+    /// Selected crossover frequency for the draggable line.
+    pub xo_hz: Option<f64>,
+}
+/// Values behind one channel's metrics and filters lines.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChannelResultLine {
+    /// Main role.
+    pub role: String,
+    /// Before and after percentage within one dB, 20–200 Hz.
+    pub within_1db_pct: [f64; 2],
+    /// Before and after group-delay spread, 20–100 Hz, in ms.
+    pub gd_spread_ms: [f64; 2],
+    /// Number of input PEQs.
+    pub peq_count: usize,
+    /// FIR taps, absent when no FIR is used.
+    pub fir_taps: Option<usize>,
+    /// Crossover frequency, absent without bass management.
+    pub xo_hz: Option<f64>,
+    /// Fresh, enabled MIMO support path count, absent when not shown.
+    pub mimo_support_count: Option<usize>,
+}
+/// One sub's output alignment and fixed filters.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SubResultRow {
+    /// Sub role.
+    pub role: String,
+    /// Alignment mode code.
+    pub mode: String,
+    /// Output gain in dB.
+    pub gain_db: f64,
+    /// Output delay in ms.
+    pub delay_ms: f64,
+    /// Output polarity, plus or minus one.
+    pub polarity: i8,
+    /// Ordered all-pass frequency and Q pairs.
+    pub allpass: Vec<(f64, f64)>,
+    /// High-pass frequency and filter type.
+    pub high_pass: (f64, String),
+    /// Low-pass frequency and filter type.
+    pub low_pass: (f64, String),
+    /// Fixed and generated peaking filters as frequency, Q and gain.
+    pub peq: Vec<(f64, f64, f64)>,
+}
+/// A typed BA layout summary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SubLayoutLine {
+    /// Bundle name.
+    pub bundle: String,
+    /// Layout code, dba or multi.
+    pub kind: String,
+    /// All members.
+    pub members: Vec<String>,
+    /// Front row roles.
+    pub front: Vec<String>,
+    /// Rear row roles.
+    pub rear: Vec<String>,
+    /// Rear delay in ms.
+    pub rear_ms: f64,
+    /// Automatic rear delay in ms, when available.
+    pub auto_ms: Option<f64>,
+    /// Manual rear trim in ms.
+    pub trim_ms: f64,
+    /// Shared peaking filters.
+    pub peq: Vec<(f64, f64, f64)>,
+}
+/// BA metrics and table, independent of the selected main channel.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SubResultLines {
+    /// Whether this BA result is stale.
+    pub stale: bool,
+    /// Whether a dedicated subs-only run supplies these values.
+    pub subs_only: bool,
+    /// Metric band in Hz.
+    pub band_hz: [f64; 2],
+    /// Before and after flatness in dB.
+    pub flatness_db: [f64; 2],
+    /// Before and after across-seat spread, absent for a single seat.
+    pub seat_spread_db: Option<[f64; 2]>,
+    /// Number of complete sub positions.
+    pub positions: usize,
+    /// Output rows in configuration order.
+    pub rows: Vec<SubResultRow>,
+    /// Bundle layouts.
+    pub layouts: Vec<SubLayoutLine>,
+    /// Filter and gain warning codes and their arguments.
+    pub warnings: Vec<Notice>,
+}
+/// Numeric calibration summary lines; no localized sentences cross IPC.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ResultLinesResult {
+    /// Whether the full calibration result is stale.
+    pub stale: bool,
+    /// Per-main metrics and filter counts.
+    pub channels: Vec<ChannelResultLine>,
+    /// Total delay in milliseconds, absent before calibration.
+    pub total_delay_ms: Option<f64>,
+    /// Engine notes as codes and arguments.
+    pub notes: Vec<Notice>,
+    /// RC ceiling provenance and room-volume notices.
+    pub rc: Vec<Notice>,
+    /// BA metrics, table, layouts and warnings when at least two subs are available.
+    pub ba: Option<SubResultLines>,
 }
 
 /// What the screen needs before it draws anything.
@@ -346,6 +575,10 @@ pub struct MigrationWarning {
 pub struct CalibrateParams {
     /// Settings override; absent uses the open project.
     pub settings: Option<CalibrationSettings>,
+    /// Designs the subwoofers only (upstream [서브만 계산]); the result is
+    /// kept apart and shown by the BA tab until the next full run.
+    #[serde(default)]
+    pub subs_only: bool,
 }
 /// Optional settings for a MIMO run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
@@ -1447,6 +1680,16 @@ mod tests {
             Request::AppSettingsSet(AppSettingsParams {
                 settings: AppSettings::default(),
             }),
+            Request::MeasurementCurves(MeasurementCurvesParams::default()),
+            Request::ResultCurves(ResultCurvesParams {
+                tab: ResultTab::Spl,
+                channel: None,
+                group: None,
+                xo_hz: None,
+                corrected: None,
+            }),
+            Request::ResultLines,
+            Request::SubTakeValues,
         ]
     }
     #[test]
