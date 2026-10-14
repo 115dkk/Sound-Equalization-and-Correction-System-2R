@@ -21,4 +21,8 @@ prerelease: boolean,
 /**
  * The SECS 2 release this build follows.
  */
-upstream: UpstreamBase, platform: Platform, };
+upstream: UpstreamBase, 
+/**
+ * The operating-system platform running this build.
+ */
+platform: Platform, };

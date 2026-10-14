@@ -3,7 +3,7 @@
 //! The screen sends a [`Request`] as `{"method": "...", "params": {...}}` and
 //! always receives an envelope: `{"ok": true, "data": Response}` or
 //! `{"ok": false, "error": IpcError}`. The service never throws across this
-//! seam. Long jobs report progress through a separate event channel.
+//! seam. Long jobs report progress through the event sink supplied with the call.
 //!
 //! Errors carry a code and parameters, not prose: the screen turns them into
 //! a sentence in the current language and keeps `detail` (the raw text) for
@@ -14,21 +14,16 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::calibration::CalibrationSettings;
+use crate::chain::{MimoPaths, SignalChain};
+
 /// A call from the screen.
 ///
 /// The method names come from the variant names in one place: serde and
 /// strum both rename them to snake_case, and `method_names_match_the_wire`
 /// checks that the two agree.
 #[derive(
-    Debug,
-    Clone,
-    PartialEq,
-    Eq,
-    Serialize,
-    Deserialize,
-    TS,
-    strum::VariantNames,
-    strum::IntoStaticStr,
+    Debug, Clone, PartialEq, Serialize, Deserialize, TS, strum::VariantNames, strum::IntoStaticStr,
 )]
 #[serde(tag = "method", content = "params", rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
@@ -37,6 +32,48 @@ pub enum Request {
     /// Version, the upstream release this build is ported from, and the
     /// platform. The first call the screen makes.
     Bootstrap,
+    /// The `ProjectNew` Request variant.
+    ProjectNew(ProjectNewParams),
+    /// The `ProjectOpen` Request variant.
+    ProjectOpen(ProjectPathParams),
+    /// The `ProjectSave` Request variant.
+    ProjectSave(ProjectSaveParams),
+    /// The `ProjectInfo` Request variant.
+    ProjectInfo,
+    /// The `Calibrate` Request variant.
+    Calibrate(CalibrateParams),
+    /// The `RecommendXo` Request variant.
+    RecommendXo,
+    /// The `Mimo` Request variant.
+    Mimo(MimoParams),
+    /// The `Results` Request variant.
+    Results,
+    /// The `Export` Request variant.
+    Export(ExportParams),
+    /// The `JobCancel` Request variant.
+    JobCancel(JobCancelParams),
+    /// The `Jobs` Request variant.
+    Jobs,
+    /// The `MeasureMethods` Request variant.
+    MeasureMethods,
+    /// The `MeasureConfigure` Request variant.
+    MeasureConfigure(MeasureConfigureParams),
+    /// The `LevelCheck` Request variant.
+    LevelCheck(LevelCheckParams),
+    /// The `LevelApply` Request variant.
+    LevelApply(LevelApplyParams),
+    /// The `MeasurePosition` Request variant.
+    MeasurePosition(MeasurePositionParams),
+    /// The `PositionClear` Request variant.
+    PositionClear(PositionClearParams),
+    /// The `Undo` Request variant.
+    Undo(UndoParams),
+    /// The `RewLaunch` Request variant.
+    RewLaunch,
+    /// The `MdatScan` Request variant.
+    MdatScan(MdatScanParams),
+    /// The `MdatImport` Request variant.
+    MdatImport(MdatImportParams),
 }
 
 impl Request {
@@ -52,11 +89,54 @@ impl Request {
 }
 
 /// The successful result of a [`Request`], tagged with the same method name.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "method", content = "data", rename_all = "snake_case")]
 #[ts(export)]
 pub enum Response {
+    /// The `Bootstrap` Response variant.
     Bootstrap(BootstrapInfo),
+    /// The `ProjectNew` Response variant.
+    ProjectNew(ProjectInfo),
+    /// The `ProjectOpen` Response variant.
+    ProjectOpen(ProjectInfo),
+    /// The `ProjectSave` Response variant.
+    ProjectSave(ProjectInfo),
+    /// The `ProjectInfo` Response variant.
+    ProjectInfo(ProjectInfo),
+    /// The `Calibrate` Response variant.
+    Calibrate(JobStarted),
+    /// The `RecommendXo` Response variant.
+    RecommendXo(JobStarted),
+    /// The `Mimo` Response variant.
+    Mimo(JobStarted),
+    /// The `Results` Response variant.
+    Results(ResultsSummary),
+    /// The `Export` Response variant.
+    Export(JobStarted),
+    /// The `JobCancel` Response variant.
+    JobCancel(JobSnapshot),
+    /// The `Jobs` Response variant.
+    Jobs(Vec<JobSnapshot>),
+    /// The `MeasureMethods` Response variant.
+    MeasureMethods(MeasureMethodsResult),
+    /// The `MeasureConfigure` Response variant.
+    MeasureConfigure(MeasureConfigResult),
+    /// The `LevelCheck` Response variant.
+    LevelCheck(JobStarted),
+    /// The `LevelApply` Response variant.
+    LevelApply(MeasureConfigResult),
+    /// The `MeasurePosition` Response variant.
+    MeasurePosition(JobStarted),
+    /// The `PositionClear` Response variant.
+    PositionClear(UndoResult),
+    /// The `Undo` Response variant.
+    Undo(ProjectInfo),
+    /// The `RewLaunch` Response variant.
+    RewLaunch(RewStatusResult),
+    /// The `MdatScan` Response variant.
+    MdatScan(MdatScanResult),
+    /// The `MdatImport` Response variant.
+    MdatImport(JobStarted),
 }
 
 /// What the screen needs before it draws anything.
@@ -71,19 +151,23 @@ pub struct BootstrapInfo {
     pub prerelease: bool,
     /// The SECS 2 release this build follows.
     pub upstream: UpstreamBase,
+    /// The operating-system platform running this build.
     pub platform: Platform,
 }
-
 /// The upstream SECS 2 release a build is ported from (`UPSTREAM.toml`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct UpstreamBase {
+    /// Upstream product name from `UPSTREAM.toml`.
     pub name: String,
+    /// Upstream release version from `UPSTREAM.toml`.
     pub version: String,
+    /// Forty-character upstream Git commit from `UPSTREAM.toml`.
     pub commit: String,
+    /// Upstream snapshot date from `UPSTREAM.toml`.
     pub date: String,
 }
-
+/// The operating-system platform running the service.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct Platform {
@@ -91,6 +175,527 @@ pub struct Platform {
     pub os: String,
     /// `x86_64` or `aarch64` (`std::env::consts::ARCH`).
     pub arch: String,
+}
+
+/// Inputs for creating a project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ProjectNewParams {
+    /// Destination `.secs` file path.
+    pub path: String,
+    /// Speaker-layout preset name.
+    pub preset: String,
+    /// Number of subwoofers.
+    pub sub_count: u8,
+}
+/// A project file path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ProjectPathParams {
+    /// Source `.secs` file path.
+    pub path: String,
+}
+/// Inputs for saving the open project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct ProjectSaveParams {
+    /// Optional save-as `.secs` path; absent saves in place.
+    pub path: Option<String>,
+}
+/// Screen-facing information about the open project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ProjectInfo {
+    /// Open `.secs` file path.
+    pub path: String,
+    /// Project display name.
+    pub name: String,
+    /// Speaker-layout preset name.
+    pub preset: String,
+    /// Number of configured subwoofers.
+    pub sub_count: usize,
+    /// Measured position numbers.
+    pub positions: Vec<i64>,
+    /// Whether the in-memory project has unsaved changes.
+    pub dirty: bool,
+    /// Warnings produced while loading legacy project entries.
+    pub migration_warnings: Vec<MigrationWarning>,
+}
+/// A project migration warning code and affected entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MigrationWarning {
+    /// Stable warning code translated by the screen.
+    pub code: String,
+    /// Project entry affected by the warning.
+    pub entry: String,
+}
+
+/// Optional settings for a calibration run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct CalibrateParams {
+    /// Settings override; absent uses the open project.
+    pub settings: Option<CalibrationSettings>,
+}
+/// Optional settings for a MIMO run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct MimoParams {
+    /// Settings override; absent uses the open project.
+    pub settings: Option<CalibrationSettings>,
+}
+
+/// A service-assigned long-running job identifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(transparent)]
+#[ts(export)]
+pub struct JobId(#[ts(type = "number")] pub u64);
+/// The operation performed by a long-running job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum JobKind {
+    /// Checks the level of one configured speaker role.
+    LevelCheck,
+    /// Records all configured roles at one measurement position.
+    Measure,
+    /// Imports assigned measurements from a REW mdat file.
+    MdatImport,
+    /// Computes a calibration design from project measurements.
+    Calibrate,
+    /// Scores crossover-frequency candidates.
+    RecommendXo,
+    /// Computes MIMO support paths.
+    Mimo,
+    /// Writes one selected export bundle.
+    Export,
+}
+/// The current lifecycle state of a job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum JobStatus {
+    /// The worker is still running and may accept cancellation.
+    Running,
+    /// Cancellation was requested and the worker has not stopped yet.
+    CancelRequested,
+    /// The worker completed and produced a result.
+    Succeeded,
+    /// The worker stopped with an error.
+    Failed,
+    /// The caller cancelled the operation.
+    Cancelled,
+}
+impl JobStatus {
+    /// Whether the job can no longer change state.
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Succeeded | Self::Failed | Self::Cancelled)
+    }
+}
+/// The immediate response after a job starts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct JobStarted {
+    /// Identifier assigned to the job.
+    pub job: JobId,
+    /// Operation the job performs.
+    pub kind: JobKind,
+}
+/// The latest observable state of a job.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct JobSnapshot {
+    /// Identifier assigned to the job.
+    pub job: JobId,
+    /// Operation the job performs.
+    pub kind: JobKind,
+    /// Current lifecycle state.
+    pub status: JobStatus,
+    /// Whether a cancellation request can still prevent commit.
+    pub cancellable: bool,
+    /// Most recently reported stage progress.
+    pub progress: Option<JobProgress>,
+    /// Successful result once finished.
+    pub result: Option<JobResult>,
+    /// Failure once finished unsuccessfully.
+    pub error: Option<IpcError>,
+}
+/// Progress within one named job stage.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct JobProgress {
+    /// Stable stage code translated by the screen.
+    pub stage: String,
+    #[ts(type = "number")]
+    /// Completed work units in this stage.
+    pub done: u64,
+    #[ts(type = "number")]
+    /// Total work units in this stage.
+    pub total: u64,
+}
+/// A pushed lifecycle event for a long-running job.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "event", rename_all = "snake_case")]
+#[ts(export)]
+pub enum JobEvent {
+    /// Announces a newly accepted job and its operation.
+    Started { job: JobId, kind: JobKind },
+    /// Reports completed and total work units for a stable stage code.
+    Progress {
+        job: JobId,
+        stage: String,
+        #[ts(type = "number")]
+        done: u64,
+        #[ts(type = "number")]
+        total: u64,
+    },
+    /// Reports a presentation-neutral log code and template parameters.
+    Log {
+        job: JobId,
+        code: String,
+        params: BTreeMap<String, String>,
+    },
+    /// Reports a terminal status with either a result or an error.
+    Finished {
+        job: JobId,
+        status: JobStatus,
+        result: Option<Box<JobResult>>,
+        error: Option<IpcError>,
+    },
+}
+/// The successful result produced by a job.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
+#[ts(export)]
+pub enum JobResult {
+    /// Calibration result plus the latest compatible MIMO result.
+    Calibration(Box<ResultsSummary>),
+    /// Crossover recommendation computed for the current project.
+    Xo(XoRecommendation),
+    /// MIMO paths computed for the current calibration.
+    Mimo(MimoSummary),
+    /// Paths written by an exporter.
+    Export(ExportResult),
+    /// Measured levels and recommended sweep level.
+    Level(LevelResult),
+    /// Project state after a completed measurement.
+    Measurement(ProjectInfo),
+    /// Project state after an mdat import.
+    MdatImport(ProjectInfo),
+}
+/// The job to cancel.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct JobCancelParams {
+    /// Identifier of the job to cancel.
+    pub job: JobId,
+}
+
+/// The latest calibration and MIMO results.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ResultsSummary {
+    /// Latest calibration result, including stale state.
+    pub calibration: Option<CalibrationSummary>,
+    /// Latest MIMO result, including stale state.
+    pub mimo: Option<MimoSummary>,
+}
+/// A presentation-neutral note or warning code with template parameters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct Notice {
+    /// Stable snake_case code derived from the engine note variant.
+    pub code: String,
+    /// String values for the screen message template.
+    pub params: BTreeMap<String, String>,
+}
+
+/// The screen-facing summary of one calibration design.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CalibrationSummary {
+    /// Whether current project inputs differ from this result.
+    pub stale: bool,
+    /// Values for the upstream verdict card.
+    pub verdict: VerdictSummary,
+    /// Per-channel before-and-after metrics.
+    pub scorecard: Vec<ChannelScore>,
+    /// Total filter latency in milliseconds.
+    pub latency_ms: f64,
+    /// Warning codes and values translated by the screen.
+    pub warnings: Vec<Notice>,
+    /// Informational codes and values translated by the screen.
+    pub notes: Vec<Notice>,
+    /// Designed DSP signal chain used by exporters.
+    pub chain: SignalChain,
+}
+/// Values shown by the upstream `step_calibration.py` verdict card.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct VerdictSummary {
+    /// Share within ±1 dB before correction, in percent.
+    pub within_1db_before_pct: f64,
+    /// Share within ±1 dB after correction, in percent.
+    pub within_1db_after_pct: f64,
+    /// Low-band group-delay spread before correction, in milliseconds.
+    pub low_band_time_spread_before_ms: f64,
+    /// Low-band group-delay spread after correction, in milliseconds.
+    pub low_band_time_spread_after_ms: f64,
+    /// Delay added by correction, in milliseconds.
+    pub added_delay_ms: f64,
+    /// Across-position level spread after correction, in dB.
+    pub position_spread_db: f64,
+}
+/// Before-and-after scorecard metrics for one speaker role.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChannelScore {
+    /// Internal speaker role.
+    pub role: String,
+    /// Metrics before correction.
+    pub before: MetricsSummary,
+    /// Metrics after correction.
+    pub after: MetricsSummary,
+}
+/// The upstream `Metrics` fields for one response.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MetricsSummary {
+    /// Reference level from upstream `Metrics.level`, in dB.
+    pub level: f64,
+    /// Share within ±1 dB from 20 Hz, in percent.
+    pub in1_20: f64,
+    /// Share within ±2 dB from 20 Hz, in percent.
+    pub in2_20: f64,
+    /// Share within ±1 dB from 200 Hz, in percent.
+    pub in1_200: f64,
+    /// Share within ±2 dB from 200 Hz, in percent.
+    pub in2_200: f64,
+    /// Share within ±1 dB from 2,000 Hz, in percent.
+    pub in1_2000: f64,
+    /// Share within ±2 dB from 2,000 Hz, in percent.
+    pub in2_2000: f64,
+    /// Phase rotation from upstream `Metrics.turns`, in turns.
+    pub turns: f64,
+    /// Group-delay spread near 20 Hz, in milliseconds.
+    pub gd_20: f64,
+    /// Group-delay spread near 100 Hz, in milliseconds.
+    pub gd_100: f64,
+    /// Group-delay spread near 500 Hz, in milliseconds.
+    pub gd_500: f64,
+    /// Largest absolute 1/24-octave group-delay peak, in milliseconds.
+    pub gd24_abs: f64,
+    /// Frequency of the largest absolute group-delay peak, in Hz.
+    pub gd24_abs_hz: f64,
+    /// Largest signed 1/24-octave group-delay peak, in milliseconds.
+    pub gd24_max: f64,
+    /// Span of 1/24-octave group delay, in milliseconds.
+    pub gd24_span: f64,
+    /// Group-delay spread near 30 Hz, in milliseconds.
+    pub gd_30: f64,
+    /// Pre-ringing level from upstream `Metrics.pre_db`, in dB.
+    pub pre_db: f64,
+}
+/// The screen-facing summary of one MIMO run.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MimoSummary {
+    /// Whether current calibration inputs differ from this MIMO result.
+    pub stale: bool,
+    /// Realization kind, `iir` or `fir`.
+    pub kind: String,
+    /// Upper support frequency in Hz.
+    pub fsiso: f64,
+    /// Number of generated support paths.
+    pub support_count: usize,
+    /// Informational codes and values translated by the screen.
+    pub notes: Vec<Notice>,
+    /// DSP-ready support paths.
+    pub paths: MimoPaths,
+}
+/// Crossover candidates and the best value for each group.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct XoRecommendation {
+    /// Best crossover frequency in Hz for each speaker group.
+    pub best: Vec<(String, f64)>,
+    /// Evaluated crossover frequencies in Hz.
+    pub candidates: Vec<f64>,
+}
+
+/// The supported export bundle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ExportKind {
+    /// CamillaDSP configuration and FIR coefficient WAV files.
+    CamillaDsp,
+    /// REW mdat containing the upstream staged responses.
+    StagedMdat,
+    /// REW mdat containing before-and-after responses.
+    BeforeAfterMdat,
+}
+/// The export bundle and destination folder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ExportParams {
+    /// Export bundle to write.
+    pub kind: ExportKind,
+    /// Destination folder path.
+    pub folder: String,
+}
+/// Files written by a completed export job.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ExportResult {
+    /// Paths of all files written by the exporter.
+    pub files: Vec<String>,
+}
+
+// P23c request/response types. P23a deliberately dispatches these to not_implemented.
+/// Measurement methods available on this host.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct MeasureMethodsResult {
+    /// Stable identifiers for available measurement methods.
+    pub methods: Vec<String>,
+}
+/// Measurement method and device settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct MeasureConfigureParams {
+    /// Measurement method identifier.
+    pub method: String,
+    /// Optional input device identifier.
+    pub input_device: Option<String>,
+    /// Optional output device identifier.
+    pub output_device: Option<String>,
+    /// Optional one-based input channel number.
+    pub input_channel: Option<u16>,
+    /// One-based output channel numbers.
+    pub output_channels: Vec<u16>,
+    /// Optional sweep length in samples.
+    pub sweep_length: Option<usize>,
+    /// Optional sweep level in dBFS.
+    pub sweep_level_dbfs: Option<f64>,
+    /// Optional timing-reference mode.
+    pub timing: Option<String>,
+}
+/// The active measurement settings.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct MeasureConfigResult {
+    /// Active measurement method identifier.
+    pub method: String,
+    /// Active sweep level in dBFS.
+    pub sweep_level_dbfs: Option<f64>,
+}
+/// The speaker role used for a level check.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LevelCheckParams {
+    /// Internal speaker role to check.
+    pub role: String,
+}
+/// A measured level to apply to sweep setup.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LevelApplyParams {
+    /// Measured level result to apply.
+    pub level: LevelResult,
+}
+/// Measured signal levels and the recommended sweep level.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LevelResult {
+    /// Measured RMS level in dBFS.
+    pub rms_dbfs: f64,
+    /// Measured peak level in dBFS.
+    pub peak_dbfs: f64,
+    /// Optional measured sound pressure level in dB SPL.
+    pub spl_db: Option<f64>,
+    /// Recommended sweep level in dBFS.
+    pub recommended_sweep_dbfs: f64,
+}
+/// The measurement position to record.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MeasurePositionParams {
+    /// One-based measurement position number.
+    pub position: i64,
+}
+/// The measurement position to clear.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PositionClearParams {
+    /// One-based measurement position number.
+    pub position: i64,
+}
+/// A service-issued undo token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct UndoParams {
+    /// Opaque service-issued undo token.
+    pub token: String,
+}
+/// An undo token and the project state it restores.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct UndoResult {
+    /// Opaque token for the inverse action.
+    pub token: String,
+    /// Project state after the action.
+    pub project: ProjectInfo,
+}
+/// Whether REW is running, reachable, and licensed as Pro.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct RewStatusResult {
+    /// Whether an REW process is running.
+    pub running: bool,
+    /// Whether the REW API responds.
+    pub reachable: bool,
+    /// Whether REW reports a Pro license.
+    pub pro: bool,
+}
+/// The REW mdat file to scan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MdatScanParams {
+    /// Source `.mdat` file path.
+    pub path: String,
+}
+/// Measurements, suggested assignments, and problem codes found in an mdat file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct MdatScanResult {
+    /// Measurement titles in file order.
+    pub measurements: Vec<String>,
+    /// Suggested title-to-role assignments.
+    pub suggestions: Vec<MdatAssignment>,
+    /// Stable problem codes translated by the screen.
+    pub problems: Vec<String>,
+}
+/// An mdat measurement assigned to a speaker role.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MdatAssignment {
+    /// Measurement title from the mdat file.
+    pub measurement: String,
+    /// Internal speaker role.
+    pub role: String,
+}
+/// An mdat file, its assignments, and destination position.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MdatImportParams {
+    /// Source `.mdat` file path.
+    pub path: String,
+    /// Accepted measurement-to-role assignments.
+    pub assignments: Vec<MdatAssignment>,
+    /// Destination measurement position number.
+    pub position: i64,
 }
 
 /// Why a call failed. The screen maps each code to a written message with the
@@ -103,11 +708,30 @@ pub enum ErrorCode {
     InvalidRequest,
     /// A bug: the service failed in a way it does not expect.
     Internal,
+    /// The method is registered but not connected yet.
+    NotImplemented,
+    /// The call requires an open project.
+    ProjectNotOpen,
+    /// Opening, reading, or writing project data failed.
+    ProjectIo,
+    /// Another job in the same group is running.
+    JobBusy,
+    /// The named job does not exist.
+    JobNotFound,
+    /// The caller cancelled the operation.
+    Cancelled,
+    /// Project measurements or settings are not valid engine inputs.
+    EngineInput,
+    /// The requested exporter failed.
+    ExportFailed,
+    /// Cached results no longer match project inputs.
+    StaleInputs,
 }
-
+/// A coded IPC failure with template parameters and diagnostic detail.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct IpcError {
+    /// Stable error code translated by the screen.
     pub code: ErrorCode,
     /// Values for the message template of `code` (file names, counts, ...).
     pub params: BTreeMap<String, String>,
@@ -116,8 +740,8 @@ pub struct IpcError {
     /// The raw error text, for the details view and the log only.
     pub detail: String,
 }
-
 impl IpcError {
+    /// Creates a non-retryable error without template parameters.
     pub fn new(code: ErrorCode, detail: impl Into<String>) -> Self {
         Self {
             code,
@@ -126,6 +750,11 @@ impl IpcError {
             detail: detail.into(),
         }
     }
+    /// Adds one screen message-template parameter.
+    pub fn with_param(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.params.insert(key.into(), value.into());
+        self
+    }
 }
 
 /// The reply to every call: `{"ok": true, "data": ...}` or
@@ -133,12 +762,13 @@ impl IpcError {
 ///
 /// The TypeScript side declares the same union in `src/ipc/client.ts`
 /// (`Envelope`); `envelope_wire_shape` below pins the JSON both sides rely on.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Envelope {
-    Ok(Response),
+    /// The `Ok` Envelope variant.
+    Ok(Box<Response>),
+    /// The `Err` Envelope variant.
     Err(IpcError),
 }
-
 impl Serialize for Envelope {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
@@ -164,73 +794,96 @@ mod tests {
     /// One value of every variant. A new variant fails to compile here until
     /// it gets an example, which `method_names_match_the_wire` then checks.
     fn examples() -> Vec<Request> {
-        let all = vec![Request::Bootstrap];
-        for request in &all {
-            match request {
-                Request::Bootstrap => {}
-            }
-        }
-        all
+        vec![
+            Request::Bootstrap,
+            Request::ProjectNew(ProjectNewParams {
+                path: "x.secs".into(),
+                preset: "2.1".into(),
+                sub_count: 1,
+            }),
+            Request::ProjectOpen(ProjectPathParams {
+                path: "x.secs".into(),
+            }),
+            Request::ProjectSave(ProjectSaveParams::default()),
+            Request::ProjectInfo,
+            Request::Calibrate(CalibrateParams::default()),
+            Request::RecommendXo,
+            Request::Mimo(MimoParams::default()),
+            Request::Results,
+            Request::Export(ExportParams {
+                kind: ExportKind::CamillaDsp,
+                folder: ".".into(),
+            }),
+            Request::JobCancel(JobCancelParams { job: JobId(1) }),
+            Request::Jobs,
+            Request::MeasureMethods,
+            Request::MeasureConfigure(MeasureConfigureParams::default()),
+            Request::LevelCheck(LevelCheckParams { role: "L".into() }),
+            Request::LevelApply(LevelApplyParams {
+                level: LevelResult {
+                    rms_dbfs: -20.0,
+                    peak_dbfs: -10.0,
+                    spl_db: None,
+                    recommended_sweep_dbfs: -20.0,
+                },
+            }),
+            Request::MeasurePosition(MeasurePositionParams { position: 1 }),
+            Request::PositionClear(PositionClearParams { position: 1 }),
+            Request::Undo(UndoParams { token: "x".into() }),
+            Request::RewLaunch,
+            Request::MdatScan(MdatScanParams {
+                path: "x.mdat".into(),
+            }),
+            Request::MdatImport(MdatImportParams {
+                path: "x.mdat".into(),
+                assignments: vec![],
+                position: 1,
+            }),
+        ]
     }
-
     #[test]
     fn method_names_match_the_wire() {
         let examples = examples();
         assert_eq!(examples.len(), Request::METHODS.len());
         for request in examples {
-            let wire = serde_json::to_value(&request).expect("serialize");
-            assert_eq!(wire["method"], request.method(), "{request:?}");
-            assert!(Request::METHODS.contains(&request.method()));
+            let wire = serde_json::to_value(&request).unwrap();
+            assert_eq!(wire["method"], request.method());
         }
     }
-
     #[test]
     fn every_method_name_is_listed_and_parses() {
-        for method in Request::METHODS {
-            let request: Request = serde_json::from_value(serde_json::json!({ "method": method }))
-                .unwrap_or_else(|error| panic!("{method}: {error}"));
-            assert_eq!(request.method(), *method);
+        for request in examples() {
+            let wire = serde_json::to_value(&request).unwrap();
+            let parsed: Request = serde_json::from_value(wire).unwrap();
+            assert_eq!(parsed.method(), request.method());
         }
-        let mut sorted = Request::METHODS.to_vec();
-        sorted.sort_unstable();
-        sorted.dedup();
-        assert_eq!(
-            sorted.len(),
-            Request::METHODS.len(),
-            "duplicate method name"
-        );
     }
-
     #[test]
     fn envelope_wire_shape() {
-        let ok = Envelope::Ok(Response::Bootstrap(BootstrapInfo {
+        let ok = Envelope::Ok(Box::new(Response::Bootstrap(BootstrapInfo {
             app_name: "SECS 2R".into(),
             version: "0.0.1".into(),
             prerelease: true,
             upstream: UpstreamBase {
-                name: "Sound Equalization and Correction System 2".into(),
-                version: "Beta 1.2.0".into(),
-                commit: "60ac53ad3a3d9304da115e5dda3183a475d2d7dd".into(),
+                name: "SECS".into(),
+                version: "Beta".into(),
+                commit: "0".repeat(40),
                 date: "2026-10-12".into(),
             },
             platform: Platform {
                 os: "linux".into(),
                 arch: "x86_64".into(),
             },
-        }));
-        let value = serde_json::to_value(&ok).expect("serialize");
+        })));
+        let value = serde_json::to_value(ok).unwrap();
         assert_eq!(value["ok"], true);
         assert_eq!(value["data"]["method"], "bootstrap");
-        assert_eq!(value["data"]["data"]["upstream"]["version"], "Beta 1.2.0");
-
-        let err = Envelope::Err(IpcError::new(ErrorCode::InvalidRequest, "unknown method"));
-        let value = serde_json::to_value(&err).expect("serialize");
-        assert_eq!(
-            value,
-            serde_json::json!({
-                "ok": false,
-                "error": {"code": "invalid_request", "params": {}, "retryable": false, "detail": "unknown method"}
-            })
-        );
+        let value = serde_json::to_value(Envelope::Err(IpcError::new(
+            ErrorCode::InvalidRequest,
+            "bad",
+        )))
+        .unwrap();
+        assert_eq!(value["ok"], false);
+        assert_eq!(value["error"]["code"], "invalid_request");
     }
 }

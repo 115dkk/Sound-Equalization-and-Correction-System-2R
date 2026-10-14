@@ -12,7 +12,21 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+secs-camilla = { path = "../secs-camilla" }
+secs-compute = { path = "../secs-compute" }
+secs-engine = { path = "../secs-engine" }
+secs-export = { path = "../secs-export" }
+secs-mdat = { path = "../secs-mdat" }
+secs-project = { path = "../secs-project" }
+secs-audio = { path = "../secs-audio" }
+getrandom = "0.3"
+secs-rew = { path = "../secs-rew" }
 secs-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+thiserror.workspace = true
 toml.workspace = true
+
+[dev-dependencies]
+secs-engine = { path = "../secs-engine", features = ["test-support"] }
+secs-jos = { path = "../secs-jos" }
