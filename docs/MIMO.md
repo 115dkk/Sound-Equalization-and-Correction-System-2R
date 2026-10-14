@@ -21,9 +21,9 @@ MIMO는 서브와 메인을 서로의 "서포트"로 써서 방의 늦은 에너
 | 서포트 범위·순위·이상 FIR·가드 | `secs-engine/src/mimo/design.rs` | `support_ranges`, `support_path`, `design_mimo`, `_rank_supports`, `_worst_band_db`, `worst_t60_change` | P14 |
 | 정규 방정식 TRF | `secs-dsp/src/optimize.rs` | SciPy `trf_bounds`(exact) | P15 |
 | IIR 실현 | `secs-engine/src/mimo/iir.rs` | `IirSupport`, `_fit_one`, `_solve_problem`, `design_mimo_iir` | P16 |
-| 실행과 적용 곡선 | `secs-engine/src/mimo/run.rs` | `compute_mimo`, `MimoRun`, `mimo_availability`, `mimo_kind`, `mimo_*_text` | P17 |
+| 실행과 적용 곡선 | `secs-engine/src/mimo/run.rs` | `compute_mimo`, `MimoRun`, `mimo_availability`, `mimo_kind`, `mimo_*_text`, `fir_to_48k`(FIR 서포트는 여기서 한 번 48 kHz로 올립니다) | P17 |
 | 경로 값 | `secs-types::chain` | `mimo_paths`, `FirSupport`, `IirSupport` | P17 |
-| 내보내기 | `secs-camilla`, `secs-export` | `make_config`의 MIMO 부분, `fir_to_48k`, mdat MIMO 항목 | P17 |
+| 내보내기 | `secs-camilla`, `secs-export` | `make_config`의 MIMO 부분, `calibration.export_camilladsp`의 메모, mdat MIMO 항목 | P17 |
 | 성능·메모리 감사 | `docs/perf/mimo.md` | — | P18 |
 | GPU 실험 | `secs-gpu` | — | P19 |
 
