@@ -172,8 +172,12 @@ jobs:
         with:
           python-version: "3.13"
 
+      # Two builds: with `--example` Cargo builds only that example, not the
+      # package binaries.
       - name: Build the CLI and the oracle-case example (release)
-        run: cargo build --release --locked -p secs2r-cli -p secs-service --example case_project
+        run: |
+          cargo build --release --locked -p secs2r-cli
+          cargo build --release --locked -p secs-service --example case_project
 
       # Each run writes to the same folder, because the CamillaDSP files name
       # their own absolute paths; the export is moved aside before the next.
