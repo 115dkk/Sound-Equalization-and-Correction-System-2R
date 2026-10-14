@@ -273,8 +273,37 @@ export function createMockService(options: MockOptions = {}): MockService {
         return { method: "measure_position", data: start("measure") };
       case "mdat_import":
         return { method: "mdat_import", data: start("mdat_import") };
+      // The step screens add fixtures for these as they reach them (P30–P33).
       case "mdat_scan":
-        throw new MockError(ipcError("not_implemented", "mdat_scan has no fixture yet"));
+      case "config_get":
+      case "config_apply_preset":
+      case "config_set_sub_count":
+      case "config_set_speaker":
+      case "config_add_speaker":
+      case "config_remove_speaker":
+      case "config_renumber":
+      case "config_validate":
+      case "patch_sheet_csv":
+      case "dsp_get":
+      case "dsp_set":
+      case "layout_get":
+      case "layout_set":
+      case "position_estimate":
+      case "target_get":
+      case "target_set_points":
+      case "target_apply_preset":
+      case "target_save":
+      case "target_load":
+      case "calibration_settings_get":
+      case "calibration_settings_set":
+      case "mode_spec":
+      case "app_settings_get":
+      case "app_settings_set":
+      case "measurement_curves":
+      case "result_curves":
+      case "result_lines":
+      case "sub_take_values":
+        throw new MockError(ipcError("not_implemented", `${req.method} has no fixture yet`));
     }
   };
 

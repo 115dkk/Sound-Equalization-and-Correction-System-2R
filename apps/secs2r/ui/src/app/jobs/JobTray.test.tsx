@@ -26,7 +26,7 @@ describe("job tray", () => {
   it("draws a job from its pushed events: name, stage, progress, then the result", async () => {
     setup();
     await act(async () => {
-      await mock.request({ method: "calibrate", params: { settings: null } });
+      await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } });
     });
     expect(tray().textContent).toContain("보정 계산");
     act(() => mock.tick());
@@ -45,7 +45,7 @@ describe("job tray", () => {
     setup();
     let job = 0;
     await act(async () => {
-      job = (await mock.request({ method: "calibrate", params: { settings: null } })).job;
+      job = (await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } })).job;
     });
     act(() => mock.tick());
     await act(async () => {

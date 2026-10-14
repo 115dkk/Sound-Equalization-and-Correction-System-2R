@@ -157,6 +157,8 @@
   "error.rew_failed.next": "Check the error in the REW window, then try again.",
   "error.measurement_input": "The measurement input does not fit.",
   "error.measurement_input.next": "Check the mic input channel and the output channels.",
+  "error.confirm_required": "This change clears measurements and needs confirmation.",
+  "error.confirm_required.next": "Review the change and apply it again.",
   "ui.advanced": "Advanced",
   "ui.advanced.count": "{count}",
   "ui.close": "Close",

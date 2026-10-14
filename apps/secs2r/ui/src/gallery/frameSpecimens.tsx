@@ -174,7 +174,7 @@ function LiveFrame() {
   const ipc = useMemo(() => ({ request: mock.request, events: mock.events }), [mock]);
   return (
     <IpcProvider value={ipc}>
-      <LiveFrameInner start={() => void mock.request({ method: "calibrate", params: { settings: null } }).catch(() => {})} label={t(STEP_PRIMARY.calibrate)} />
+      <LiveFrameInner start={() => void mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }).catch(() => {})} label={t(STEP_PRIMARY.calibrate)} />
     </IpcProvider>
   );
 }

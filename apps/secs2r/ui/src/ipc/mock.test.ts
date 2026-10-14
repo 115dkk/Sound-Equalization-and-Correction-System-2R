@@ -32,11 +32,11 @@ describe("mock service", () => {
       return { job: -1 };
     });
     expect(job).toBe(-1);
-    const started = await mock.request({ method: "calibrate", params: { settings: null } });
+    const started = await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } });
     expect(events[0]).toEqual({ event: "started", job: started.job, kind: "calibrate" });
     mock.tick();
     expect(events[1]).toMatchObject({ event: "progress", stage: "engine.design", done: 1 });
-    await expect(mock.request({ method: "calibrate", params: { settings: null } })).rejects.toMatchObject({ error: { code: "job_busy" } });
+    await expect(mock.request({ method: "calibrate", params: { settings: null, subs_only: false } })).rejects.toMatchObject({ error: { code: "job_busy" } });
     const snapshot = await mock.request({ method: "job_cancel", params: { job: started.job } });
     expect(snapshot.status).toBe("cancel_requested");
     mock.tick();
@@ -48,7 +48,7 @@ describe("mock service", () => {
     const mock = createMockService({ tickMs: 0 });
     const events: JobEvent[] = [];
     mock.events.subscribe((event) => events.push(event));
-    await mock.request({ method: "calibrate", params: { settings: null } });
+    await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } });
     mock.drain();
     const last = events.at(-1);
     expect(last).toMatchObject({ event: "finished", status: "succeeded", result: { kind: "calibration" } });
