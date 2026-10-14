@@ -1104,6 +1104,8 @@ milestone = "M5"
 status = "implemented"
 tests = ["secs-service::app_settings_are_versioned_bounded_and_capped"]
 note = "versioned bounded data-only JSON, injected path or in-memory storage"
+
+[[feature]]
 id = "ipc.measurement_curves"
 kind = "ipc"
 milestone = "M5"
