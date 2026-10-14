@@ -1,0 +1,5 @@
+"Sens Factor = -18.25 dB, SERNO: SYNTHETIC"
+; synthetic response, not a vendor file
+20, 0.0, 10
+1000, 2.0, 0
+20000, -1.0, -20

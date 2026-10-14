@@ -56,7 +56,7 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 
 | 번호 | 업스트림 동작 | 바꾸는 동작 | 출처 | 상태 |
 |---|---|---|---|---|
-| U1 | 레벨 체크의 출력 슬라이더가 측정 스윕 레벨과 이어져 있지 않고, 레벨 결과는 튜토리얼 밖에서 쓰이지 않습니다. 건너뛰면 그럴듯한 가짜 값을 씁니다. | 레벨 체크 결과로 스윕 레벨을 정합니다. | `wizard/step3_level.py`, `rewapi/rew.py configure` | 계획 |
+| U1 | 레벨 체크의 출력 슬라이더가 측정 스윕 레벨과 이어져 있지 않고, 레벨 결과는 튜토리얼 밖에서 쓰이지 않습니다. 건너뛰면 그럴듯한 가짜 값을 씁니다. | 레벨 체크 결과로 스윕 레벨을 정합니다. | `wizard/step3_level.py`, `rewapi/rew.py configure` | 부분: `secs-audio::recommend_sweep_level`과 `level_known_signals_clip_and_recommendation`, `level_check_uses_simulated_capture_and_calibration`으로 −30~−15 dBFS 권고를 검증. 서비스 연결 P23·화면 M5 대기 |
 | U2 | DSP 프로필 칸 여섯 개를 엔진이 읽지 않습니다(MIMO FIR 예산 문구만 씀). | '내보낼 DSP'로 바꾸고 예산 경고에만 쓴다고 화면에 적습니다. | `wizard/step2_config.py:1090-1125` | 계획 |
 | U3 | 단계별 REW mdat 내보내기가 숨겨져 닿을 수 없습니다. | 내보내기의 고급에 되살립니다. | `wizard/step_calibration.py` 내보내기 카드 | 계획 |
 | U4 | 마지막 단계의 '완료'가 아무 일도 하지 않습니다. | 없앱니다. | `wizard/window.py advance` | 계획 |
