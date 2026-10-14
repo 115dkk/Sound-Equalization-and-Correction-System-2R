@@ -64,6 +64,9 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 | U4 | 마지막 단계의 '완료'가 아무 일도 하지 않습니다. | 없앱니다. | `wizard/window.py advance` | 계획 |
 | U5 | 측정을 지우는 동작(프리셋·서브 수·배치 변경, 마지막 위치 다시)이 확인 없이 측정을 지웁니다. | `position_clear`는 IR 파일을 남기고 기록을 지우며, 프로젝트별 최근 16개 단일 사용 토큰으로 원래 순서에 복원합니다. `secs-service::position_clear_undo_is_byte_exact_and_single_use`가 `.secs` 바이트 복원과 토큰 재사용·프로젝트 재열기 거절을 확인합니다. 확인 화면은 M5입니다. | `wizard/step2_config.py`, `step4_layout.py`, `step5_measure.py` | 적용 |
 | U6 | SNR 경고 문턱이 코드는 20 dB, 도움말은 40 dB입니다. | 업스트림 의도를 확인한 뒤 하나로 맞춥니다. | `wizard/step5_measure.py`, `tutorial_text.py` | 보류 |
+| U7 | 영어 화면이 꺼져 있습니다(`ENGLISH_UI=False`). | 한국어와 영어 카탈로그를 처음부터 함께 냅니다. | `i18n.py:25`, `window.py:564-570` | 계획(M5) |
+| U8 | 기다림 표시가 작업 패널, 로딩 카드, 물방울 셋이고, 로딩 카드의 [취소]는 이어져 있지 않습니다. | 작업 트레이 하나에 잡마다 진행과 실제로 멈추는 취소를 둡니다. | `busy.py`, `loading.py:218-338`, `window.py:181-252` | 계획(M5) |
+| U9 | 초고지연 모드가 설명 줄을 3초 안에 다섯 번 눌러야 열립니다. | '전문가 표시'에서 고릅니다. | `step_calibration.py:1111-1145` | 계획(M5) |
 
 ## 보안
 
