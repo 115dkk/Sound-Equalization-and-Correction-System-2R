@@ -187,6 +187,10 @@ fn line(reader: &mut BufReader<TcpStream>, budget: &mut usize) -> std::io::Resul
     String::from_utf8(raw).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 fn serve(stream: TcpStream, state: Arc<Mutex<State>>, stop: CancelToken) -> std::io::Result<()> {
+    // The listener is non-blocking so `stop` is seen between accepts. On macOS
+    // and other BSDs an accepted socket inherits that flag, and a non-blocking
+    // socket ignores the read timeout below; make the connection blocking.
+    stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(1)))?;
     stream.set_write_timeout(Some(Duration::from_secs(1)))?;
     let mut reader = BufReader::new(stream);
