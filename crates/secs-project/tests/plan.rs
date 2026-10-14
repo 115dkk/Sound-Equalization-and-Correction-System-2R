@@ -3,9 +3,9 @@
 use secs_oracle::{Fixture, number};
 use secs_project::{
     MeasurementPlan, Project, TimingReference, default_ref_role, estimate_seconds,
-    estimate_subs_seconds, estimate_xo_seconds, measured_positions, measurement_roles,
-    measurement_signature, plan_from_project, position_seconds, split_role, start_delay_seconds,
-    sweep_length_samples, sweep_seconds, target_key, timing_settings,
+    estimate_subs_seconds, estimate_xo_seconds, estimate_xo_seconds_on, measured_positions,
+    measurement_roles, measurement_signature, plan_from_project, position_seconds, split_role,
+    start_delay_seconds, sweep_length_samples, sweep_seconds, target_key, timing_settings,
 };
 use serde_json::Value;
 
@@ -110,9 +110,11 @@ fn service_plan_matches_upstream() {
             estimate_subs_seconds(&project),
             number(&fx.outputs()["estimate_subs_seconds"]),
         );
+        // The exporter pins the core count; the estimate depends on it.
+        let cpu_count = fx.outputs()["cpu_count"].as_u64().unwrap() as usize;
         for mode in ["zero", "mixed"] {
             close(
-                estimate_xo_seconds(&project, mode, 4),
+                estimate_xo_seconds_on(&project, mode, 4, cpu_count),
                 number(&fx.outputs()["estimate_xo_seconds"][mode]),
             );
         }
@@ -302,4 +304,29 @@ fn ints(value: &Value) -> Vec<i64> {
         .iter()
         .map(|value| value.as_i64().unwrap())
         .collect()
+}
+
+#[test]
+fn xo_estimate_splits_candidates_over_half_the_cores() {
+    // mimo_iir._workers: max(1, min(candidates, cpu_count // 2)). Candidates
+    // that share the machine run 1.1 times slower; one worker runs them in turn.
+    let fx = Fixture::load("service_plan", "engine_dolby");
+    let project = project(&fx.inputs()["project"]);
+    let one = estimate_seconds(&project, "mixed");
+    for (cpu_count, rounds, slowdown) in [
+        (1, 4.0, 1.0),
+        (2, 4.0, 1.0),
+        (3, 4.0, 1.0),
+        (4, 2.0, 1.1),
+        (6, 2.0, 1.1),
+        (8, 1.0, 1.1),
+        (64, 1.0, 1.1),
+    ] {
+        close(
+            estimate_xo_seconds_on(&project, "mixed", 4, cpu_count),
+            one * rounds * slowdown,
+        );
+    }
+    let here = estimate_xo_seconds(&project, "mixed", 4);
+    assert!(here >= one && here <= one * 4.0, "{here}");
 }

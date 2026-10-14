@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -44,6 +45,12 @@ measurement_roles, default_ref_role, timing_settings = load_functions(
 )
 
 fam = common.Family("service_plan")
+
+# estimate_xo_seconds splits the candidates over half the cores
+# (mimo_iir._workers reads os.cpu_count()). Pin the count so the goldens do not
+# depend on the machine that exports them; the Rust test reads it back.
+ORACLE_CPU_COUNT = 4
+os.cpu_count = lambda: ORACLE_CPU_COUNT
 
 
 def normalize(value):
@@ -91,6 +98,7 @@ def record(name, project, positions):
         "estimate_seconds": {mode: cal.estimate_seconds(project, mode) for mode in ("zero", "mixed", "linear")},
         "estimate_subs_seconds": cal.estimate_subs_seconds(project),
         "estimate_xo_seconds": {mode: cal.estimate_xo_seconds(project, mode) for mode in ("zero", "mixed")},
+        "cpu_count": os.cpu_count(),
     }
     fam.save(name, {"project": project.to_dict(), "positions": list(positions)}, normalize(outputs))
 

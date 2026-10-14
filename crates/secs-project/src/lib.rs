@@ -38,6 +38,7 @@ pub use record::{
 };
 pub use signature::{
     FloatKey, MeasurementSignatureEntry, estimate_seconds, estimate_subs_seconds,
-    estimate_xo_seconds, measured_positions, measurement_signature, target_key,
+    estimate_xo_seconds, estimate_xo_seconds_on, measured_positions, measurement_signature,
+    target_key,
 };
 pub use target::{TargetCurve, TargetJson};

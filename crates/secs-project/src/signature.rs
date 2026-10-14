@@ -102,9 +102,19 @@ pub fn estimate_subs_seconds(project: &Project) -> f64 {
 }
 
 pub fn estimate_xo_seconds(project: &Project, mode: &str, candidates: usize) -> f64 {
-    let workers = candidates
-        .min(std::thread::available_parallelism().map_or(1, |value| value.get() / 2))
-        .max(1);
+    let cpu_count = std::thread::available_parallelism().map_or(2, std::num::NonZero::get);
+    estimate_xo_seconds_on(project, mode, candidates, cpu_count)
+}
+
+/// [`estimate_xo_seconds`] on a machine with `cpu_count` logical cores. The
+/// candidates run on half the cores, as upstream's `mimo_iir._workers` does.
+pub fn estimate_xo_seconds_on(
+    project: &Project,
+    mode: &str,
+    candidates: usize,
+    cpu_count: usize,
+) -> f64 {
+    let workers = candidates.min(cpu_count / 2).max(1);
     let rounds = candidates.div_ceil(workers);
     estimate_seconds(project, mode) * rounds as f64 * if rounds < candidates { 1.1 } else { 1.0 }
 }
