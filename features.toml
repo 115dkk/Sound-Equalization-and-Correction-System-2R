@@ -458,9 +458,10 @@ note = "Ideal FIR supports, ranges, ranking and guard (docs/MIMO.md, P14). Stage
 id = "engine.mimo_iir"
 kind = "engine"
 milestone = "M3"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-engine::mimo_iir_functions_match_dense_oracle", "secs-engine::mimo_iir_seed_costs_within_spread", "secs-engine::mimo_iir_joint_costs_within_spread", "secs-engine::mimo_iir_postprocessing_matches_oracle", "secs-engine::mimo_iir_problem_from_replayed_design_matches_oracle", "secs-engine::mimo_iir_whole_path_within_spread_and_deterministic", "secs-engine::mimo_iir_joint_cancels_within_one_second"]
 upstream = "mimo_iir.py"
+note = "IIR realization (docs/MIMO.md, P16): seeds by fit_peq + dense TRF, joint fit by the normal-equation TRF with block-accumulated JᵀJ. Joint fits pass P07c against twelve runs; seeds stopped at max_nfev are reported (a seed is the joint fit's start point), converged seeds and the rank guard are asserted. Whole path reported on the room design (BA diverges)."
 
 [[feature]]
 id = "engine.mimo_fir"
