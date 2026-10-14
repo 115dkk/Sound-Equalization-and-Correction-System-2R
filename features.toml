@@ -467,9 +467,18 @@ note = "IIR realization (docs/MIMO.md, P16): seeds by fit_peq + dense TRF, joint
 id = "engine.mimo_fir"
 kind = "engine"
 milestone = "M3"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-engine::mimo_run_fir_to_48k_and_response_match_oracle", "secs-engine::mimo_run_compute_fir_and_iir_end_to_end"]
 upstream = "mimo.py FirSupport"
+
+[[feature]]
+id = "engine.mimo_run"
+kind = "engine"
+milestone = "M3"
+status = "implemented"
+tests = ["secs-engine::mimo_run_assemble_recorded_supports_matches_oracle", "secs-engine::mimo_run_compute_fir_and_iir_end_to_end", "secs-engine::mimo_run_helpers_settings_and_cancellation", "secs-engine::mimo_run_empty_supports_preserve_final_and_fallback_paths"]
+upstream = "calibration.py compute_mimo, MimoRun; export_camilladsp.py mimo_paths"
+note = "P17a: one MIMO run, 48 kHz exporter paths and applied curves; recorded IIR supports isolate the P16 fit gate. Reference-only room_dba and room_filters goldens; BA-dependent curves and whole-path choices are reported off the oracle libm (docs/ENGINE.md §3)."
 
 [[feature]]
 id = "compute.gpu_support_fit"

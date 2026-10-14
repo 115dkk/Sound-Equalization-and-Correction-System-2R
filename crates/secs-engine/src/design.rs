@@ -129,7 +129,7 @@ pub struct RoleScores {
 fn check(ctx: &Context) -> Result<(), EngineError> {
     ctx.cancel().check().map_err(|_| EngineError::Cancelled)
 }
-fn geomspace(lo: f64, hi: f64, n: usize) -> Vec<f64> {
+pub(crate) fn geomspace(lo: f64, hi: f64, n: usize) -> Vec<f64> {
     let start = lo.log10();
     let step = (hi.log10() - start) / (n - 1) as f64;
     let mut out: Vec<_> = (0..n)
@@ -139,7 +139,7 @@ fn geomspace(lo: f64, hi: f64, n: usize) -> Vec<f64> {
     out[n - 1] = hi;
     out
 }
-fn spl_db(h: &[C], grid: &[f64]) -> Vec<f64> {
+pub(crate) fn spl_db(h: &[C], grid: &[f64]) -> Vec<f64> {
     let p: Vec<_> = h
         .iter()
         .map(|v| {
