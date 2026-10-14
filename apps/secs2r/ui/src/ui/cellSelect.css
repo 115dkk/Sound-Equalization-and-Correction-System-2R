@@ -1,0 +1,77 @@
+/* CellSelect: a 32 px select box for table cells. Tokens only. */
+.ui-cell-select {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  height: var(--control-h-sm);
+  padding: 0 calc(var(--space-2) + 18px) 0 var(--space-2-5);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 var(--border-w) var(--border-control);
+  transition: box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.ui-cell-select:hover {
+  box-shadow: inset 0 0 0 var(--border-w) var(--text-muted);
+}
+
+.ui-cell-select:focus-within {
+  outline: var(--focus-w) solid var(--focus-color);
+  outline-offset: 1px;
+}
+
+.ui-cell-select--invalid,
+.ui-cell-select--invalid:hover {
+  box-shadow: inset 0 0 0 1.5px var(--danger);
+}
+
+.ui-cell-select--disabled,
+.ui-cell-select--disabled:hover {
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 var(--border-w) var(--border);
+  color: var(--text-faint);
+}
+
+.ui-cell-select__display {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  font-size: var(--text-ui);
+  line-height: var(--leading-tight);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ui-cell-select__chevron {
+  position: absolute;
+  right: var(--space-1-5);
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+/* The native select covers the box (and 4 px above and below, for a 40 px
+   hit area) without being seen. */
+.ui-cell-select__native {
+  position: absolute;
+  top: min(0px, calc((100% - var(--hit-min)) / 2));
+  bottom: min(0px, calc((100% - var(--hit-min)) / 2));
+  left: 0;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  appearance: none;
+  font-size: var(--text-ui);
+  cursor: pointer;
+}
+
+.ui-cell-select__native:disabled {
+  cursor: default;
+}
+
+.ui-cell-select__native:focus-visible {
+  outline: none;
+}

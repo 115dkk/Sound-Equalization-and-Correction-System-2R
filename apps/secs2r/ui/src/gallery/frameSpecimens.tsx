@@ -12,6 +12,7 @@ import { useT } from "../i18n/react";
 import { IpcProvider, useIpc } from "../ipc/context";
 import { createMockService, ipcError } from "../ipc/mock";
 import { SAMPLE_ROLES } from "../ipc/fixtures";
+import type { PrimaryAction } from "../app/StepHeader";
 import { ArrangementMap, Card, EmptyState, ErrorNotice, Graph, StatusPill } from "../ui";
 import { isSubRole, roleCode } from "../ui/maps/geometry";
 import { logGrid, measurementCurves } from "./data";
@@ -128,6 +129,7 @@ export function FrameBox({
   trayOpen,
   primaryBusy,
   noPrimary,
+  header,
   headerStatus,
   children,
 }: {
@@ -138,6 +140,9 @@ export function FrameBox({
   primaryBusy?: boolean;
   /** No primary action (the empty project's next action belongs to the P30 screen). */
   noPrimary?: boolean;
+  /** A screen's own header (`<step>Header(view, actions, t)`): its primary
+   * action, or none when it returns none, and its status. */
+  header?: { primary?: PrimaryAction; status?: ReactNode };
   headerStatus?: ReactNode;
   children: ReactNode;
 }) {
@@ -149,8 +154,8 @@ export function FrameBox({
     <AppFrame
       model={step}
       onNavigate={setCurrent}
-      primary={noPrimary ? undefined : { id: `${current}.primary`, label: t(STEP_PRIMARY[current]), onClick: () => {}, busy: primaryBusy && !blocked }}
-      headerStatus={headerStatus}
+      primary={header ? header.primary : noPrimary ? undefined : { id: `${current}.primary`, label: t(STEP_PRIMARY[current]), onClick: () => {}, busy: primaryBusy && !blocked }}
+      headerStatus={header ? header.status : headerStatus}
       projectActions={{ onNew: () => {}, onOpen: () => {}, onSave: () => {}, onSaveAs: () => {} }}
       onHelp={() => {}}
       version={{ version: "0.13.0", prerelease: true }}

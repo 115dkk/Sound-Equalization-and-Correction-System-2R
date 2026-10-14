@@ -31,3 +31,5 @@ export * as target from "./plot/targetEdit";
 export { RoomMap, type RoomSpeaker } from "./maps/RoomMap";
 export { ArrangementMap, ArrangementThumb, nextPosition } from "./maps/ArrangementMap";
 export * as geometry from "./maps/geometry";
+
+export { CellSelect } from "./CellSelect";
