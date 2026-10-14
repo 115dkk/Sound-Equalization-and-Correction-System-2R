@@ -74,6 +74,10 @@ pub(crate) fn dispatch(
         Request::RewLaunch => service.rew_launch().map(Response::RewLaunch),
         Request::MdatScan(params) => service.mdat_scan(params).map(Response::MdatScan),
         Request::MdatImport(params) => service.start_mdat(params, events).map(Response::MdatImport),
+        request @ (Request::MeasurementCurves(_)
+        | Request::ResultCurves(_)
+        | Request::ResultLines
+        | Request::SubTakeValues) => crate::curves::dispatch(service, request),
     };
     match response {
         Ok(response) => Envelope::Ok(Box::new(response)),

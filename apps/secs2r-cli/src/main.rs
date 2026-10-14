@@ -262,7 +262,10 @@ impl Runner {
     }
 
     fn calibrate(&mut self, settings: Option<secs_types::calibration::CalibrationSettings>) {
-        self.call(Request::Calibrate(CalibrateParams { settings }));
+        self.call(Request::Calibrate(CalibrateParams {
+            settings,
+            ..Default::default()
+        }));
     }
 
     fn export(&mut self, kind: ExportKind, folder: &Path) {

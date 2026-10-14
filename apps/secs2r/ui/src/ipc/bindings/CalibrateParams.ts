@@ -8,4 +8,9 @@ export type CalibrateParams = {
 /**
  * Settings override; absent uses the open project.
  */
-settings: CalibrationSettings | null, };
+settings: CalibrationSettings | null, 
+/**
+ * Designs the subwoofers only (upstream [서브만 계산]); the result is
+ * kept apart and shown by the BA tab until the next full run.
+ */
+subs_only: boolean, };

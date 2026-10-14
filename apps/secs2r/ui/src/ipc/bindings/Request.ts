@@ -8,11 +8,13 @@ import type { MdatImportParams } from "./MdatImportParams";
 import type { MdatScanParams } from "./MdatScanParams";
 import type { MeasureConfigureParams } from "./MeasureConfigureParams";
 import type { MeasurePositionParams } from "./MeasurePositionParams";
+import type { MeasurementCurvesParams } from "./MeasurementCurvesParams";
 import type { MimoParams } from "./MimoParams";
 import type { PositionClearParams } from "./PositionClearParams";
 import type { ProjectNewParams } from "./ProjectNewParams";
 import type { ProjectPathParams } from "./ProjectPathParams";
 import type { ProjectSaveParams } from "./ProjectSaveParams";
+import type { ResultCurvesParams } from "./ResultCurvesParams";
 import type { SampleLoadParams } from "./SampleLoadParams";
 import type { UndoParams } from "./UndoParams";
 
@@ -23,4 +25,4 @@ import type { UndoParams } from "./UndoParams";
  * strum both rename them to snake_case, and `method_names_match_the_wire`
  * checks that the two agree.
  */
-export type Request = { "method": "bootstrap" } | { "method": "project_new", "params": ProjectNewParams } | { "method": "project_open", "params": ProjectPathParams } | { "method": "project_save", "params": ProjectSaveParams } | { "method": "project_info" } | { "method": "sample_load", "params": SampleLoadParams } | { "method": "calibrate", "params": CalibrateParams } | { "method": "recommend_xo" } | { "method": "mimo", "params": MimoParams } | { "method": "results" } | { "method": "export", "params": ExportParams } | { "method": "job_cancel", "params": JobCancelParams } | { "method": "jobs" } | { "method": "measure_methods" } | { "method": "measure_configure", "params": MeasureConfigureParams } | { "method": "level_check", "params": LevelCheckParams } | { "method": "level_apply", "params": LevelApplyParams } | { "method": "measure_position", "params": MeasurePositionParams } | { "method": "position_clear", "params": PositionClearParams } | { "method": "undo", "params": UndoParams } | { "method": "rew_launch" } | { "method": "mdat_scan", "params": MdatScanParams } | { "method": "mdat_import", "params": MdatImportParams };
+export type Request = { "method": "bootstrap" } | { "method": "project_new", "params": ProjectNewParams } | { "method": "project_open", "params": ProjectPathParams } | { "method": "project_save", "params": ProjectSaveParams } | { "method": "project_info" } | { "method": "sample_load", "params": SampleLoadParams } | { "method": "calibrate", "params": CalibrateParams } | { "method": "recommend_xo" } | { "method": "mimo", "params": MimoParams } | { "method": "results" } | { "method": "export", "params": ExportParams } | { "method": "job_cancel", "params": JobCancelParams } | { "method": "jobs" } | { "method": "measure_methods" } | { "method": "measure_configure", "params": MeasureConfigureParams } | { "method": "level_check", "params": LevelCheckParams } | { "method": "level_apply", "params": LevelApplyParams } | { "method": "measure_position", "params": MeasurePositionParams } | { "method": "position_clear", "params": PositionClearParams } | { "method": "undo", "params": UndoParams } | { "method": "rew_launch" } | { "method": "mdat_scan", "params": MdatScanParams } | { "method": "mdat_import", "params": MdatImportParams } | { "method": "measurement_curves", "params": MeasurementCurvesParams } | { "method": "result_curves", "params": ResultCurvesParams } | { "method": "result_lines" } | { "method": "sub_take_values" };
