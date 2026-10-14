@@ -1,72 +1,87 @@
-// M0 placeholder: shows that the shell, the IPC envelope and the catalogs
-// work end to end. The real screens arrive in M5 (docs/ARCHITECTURE.md).
-import { useEffect, useState } from "react";
+// The app: preferences, the IPC and the frame. Step screens arrive in
+// P30–P32 and the calls behind them in P33; until then each step shows a
+// placeholder and project commands say they are not in this build.
+import { useEffect, useMemo, useState } from "react";
+import { AppFrame } from "./app/AppFrame";
+import { ConnectedJobTray } from "./app/jobs/JobTray";
+import type { FrameModel, StepId } from "./app/model";
+import { PrefsScope, type Prefs } from "./app/prefs";
+import { pickLocale } from "./i18n";
+import { useT } from "./i18n/react";
 import type { BootstrapInfo } from "./ipc/bindings/BootstrapInfo";
 import { IpcFailure, request } from "./ipc/client";
-import { pickLocale, translate, type MessageKey } from "./i18n";
+import { IpcProvider, type Ipc } from "./ipc/context";
+import { createEventBus } from "./ipc/events";
+import { EmptyState, ErrorNotice, useToast } from "./ui";
 
-const locale = pickLocale(navigator.languages);
-const t = (key: MessageKey, params?: Record<string, string>) => translate(locale, key, params);
+const initialModel: FrameModel = {
+  current: "system",
+  steps: {
+    system: { status: "ready" },
+    connect: { status: "ready" },
+    measure: { status: "ready" },
+    calibrate: { status: "blocked", reason: "no_measurements" },
+    export: { status: "blocked", reason: "no_result" },
+  },
+  project: {
+    preset: null,
+    subCount: 0,
+    outputs: 0,
+    positionsDone: 0,
+    positionsTotal: 0,
+    calibration: "none",
+    path: { kind: "none", state: "warning" },
+    fileName: null,
+    dirty: false,
+  },
+};
 
-// std::env::consts values as people name them.
-const OS_NAMES: Record<string, string> = { windows: "Windows", macos: "macOS", linux: "Linux" };
-const ARCH_NAMES: Record<string, string> = { x86_64: "x64", aarch64: "ARM64" };
-
-type State =
-  | { kind: "loading" }
-  | { kind: "ready"; info: BootstrapInfo }
-  | { kind: "failed"; detail: string };
-
-export function App() {
-  const [state, setState] = useState<State>({ kind: "loading" });
+function Shell() {
+  const t = useT();
+  const toast = useToast();
+  const [model, setModel] = useState(initialModel);
+  const [info, setInfo] = useState<BootstrapInfo | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
     request({ method: "bootstrap" })
-      .then((info) => alive && setState({ kind: "ready", info }))
-      .catch((error: unknown) => {
-        const detail = error instanceof IpcFailure ? error.error.detail : String(error);
-        if (alive) setState({ kind: "failed", detail });
-      });
+      .then((value) => alive && setInfo(value))
+      .catch((error: unknown) => alive && setFailure(error instanceof IpcFailure ? error.error.detail : String(error)));
     return () => {
       alive = false;
     };
   }, []);
 
+  const unavailable = () => toast.show({ message: t("frame.unavailable"), tone: "neutral" });
+  const navigate = (step: StepId) => setModel((m) => ({ ...m, current: step }));
+
   return (
-    <main className="shell" lang={locale}>
-      <header className="brand">
-        <h1>SECS 2R</h1>
-        {state.kind === "ready" && (
-          <p className="meta">
-            <span className="version">
-              {t(state.info.prerelease ? "app.prerelease" : "app.release", { version: state.info.version })}
-            </span>
-            <span>{t("app.upstream", { version: state.info.upstream.version })}</span>
-            <span>{t("app.platform", {
-                os: OS_NAMES[state.info.platform.os] ?? state.info.platform.os,
-                arch: ARCH_NAMES[state.info.platform.arch] ?? state.info.platform.arch,
-              })}</span>
-          </p>
-        )}
-      </header>
-
-      {state.kind === "ready" && (
-        <section className="notice">
-          <h2>{t("app.placeholder.title")}</h2>
-          <p>{t("app.placeholder.body")}</p>
-        </section>
+    <AppFrame
+      model={model}
+      onNavigate={navigate}
+      projectActions={{ onNew: unavailable, onOpen: unavailable, onSave: unavailable, onSaveAs: unavailable }}
+      onHelp={unavailable}
+      version={info ? { version: info.version, prerelease: info.prerelease } : null}
+      tray={<ConnectedJobTray />}
+    >
+      {failure ? (
+        <ErrorNotice cause={t("error.bootstrap")} detail={failure} id="app.bootstrap.error" />
+      ) : (
+        <EmptyState title={t("frame.placeholder.title")} description={t("frame.placeholder.body")} id="frame.placeholder" />
       )}
+    </AppFrame>
+  );
+}
 
-      {state.kind === "failed" && (
-        <section className="notice notice-error" role="alert">
-          <h2>{t("error.bootstrap")}</h2>
-          <details>
-            <summary>{t("error.details")}</summary>
-            <pre>{state.detail}</pre>
-          </details>
-        </section>
-      )}
-    </main>
+export function App() {
+  const prefs = useMemo<Prefs>(() => ({ locale: pickLocale(navigator.languages), theme: "system", expert: false, accent: "default" }), []);
+  const ipc = useMemo<Ipc>(() => ({ request, events: createEventBus() }), []);
+  return (
+    <IpcProvider value={ipc}>
+      <PrefsScope initial={prefs} root>
+        <Shell />
+      </PrefsScope>
+    </IpcProvider>
   );
 }

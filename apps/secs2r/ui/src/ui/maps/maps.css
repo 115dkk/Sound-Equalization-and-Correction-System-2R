@@ -1,0 +1,272 @@
+/* Hand-drawn SVG maps. Maps render at their natural size (420 px room,
+   360 × 300 arrangement) so the labels stay at the type floor; a narrower
+   container scrolls instead of shrinking the text. */
+
+.map {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.map__frame {
+  width: fit-content;
+  max-width: 100%;
+  overflow: auto;
+  border-radius: var(--radius-md);
+  background: var(--map-bg);
+  box-shadow: inset 0 0 0 var(--border-w) var(--border);
+}
+
+.map__svg {
+  display: block;
+  font-family: var(--font-ui);
+}
+
+.map__screen {
+  fill: var(--map-ink);
+}
+
+.map__caption {
+  fill: var(--text-muted);
+  font-size: var(--text-caption);
+}
+
+.map__guide {
+  fill: none;
+  stroke: var(--map-guide);
+  stroke-dasharray: 3 3;
+}
+
+.map__furniture rect {
+  fill: var(--map-furniture);
+  stroke: var(--map-furniture-edge);
+  stroke-width: 1.2;
+}
+
+.map__furniture .map__furniture-dark {
+  fill: var(--map-furniture-edge);
+  fill-opacity: 0.45;
+}
+
+.map__head {
+  fill: var(--map-furniture-edge);
+}
+
+.map__scale line {
+  stroke: var(--text-muted);
+  stroke-width: 1.5;
+}
+
+/* ── Arrangement markers ───────────────────────────────────────────────── */
+.map-marker__hit {
+  fill: transparent;
+}
+
+[role="listbox"] .map-marker {
+  cursor: pointer;
+}
+
+.map-marker__body {
+  fill: var(--map-marker-fill);
+  stroke: var(--map-marker);
+  stroke-width: 1.2;
+}
+
+.map-marker--main .map-marker__body {
+  stroke-width: 2;
+}
+
+.map-marker__half {
+  fill: var(--map-half);
+}
+
+.map-marker__number {
+  fill: var(--map-ink);
+  font-size: var(--text-ui);
+  font-weight: var(--weight-semibold);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.map-marker--is-done .map-marker__body {
+  fill: var(--success);
+  stroke: var(--success);
+}
+
+.map-marker--current .map-marker__body {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+
+.map-marker--is-done .map-marker__number {
+  fill: var(--on-success);
+}
+
+.map-marker--current .map-marker__number {
+  fill: var(--on-accent);
+}
+
+.map-marker--is-done .map-marker__half,
+.map-marker--current .map-marker__half {
+  fill: var(--surface);
+  fill-opacity: 0.35;
+}
+
+.map-marker__halo {
+  fill: var(--accent);
+  fill-opacity: 0.2;
+}
+
+.map-marker--current.map-marker--is-done .map-marker__halo {
+  fill-opacity: 0.2;
+  stroke: var(--success);
+  stroke-width: 2;
+}
+
+.map-marker:hover .map-marker__body {
+  stroke-width: 2.5;
+}
+
+.map__frame:focus-visible {
+  outline-offset: 2px;
+}
+
+.map__frame:focus-visible .map-marker--current .map-marker__halo,
+.map__frame:focus-visible .map-speaker--selected .map-speaker__halo {
+  stroke: var(--focus-color);
+  stroke-width: 2;
+}
+
+/* ── Room markers ──────────────────────────────────────────────────────── */
+.map-speaker__hit {
+  fill: transparent;
+}
+
+[role="listbox"] .map-speaker {
+  cursor: pointer;
+}
+
+.map-speaker__body {
+  fill: var(--map-marker);
+  stroke: var(--map-marker);
+  stroke-width: 1.2;
+}
+
+.map-speaker--top .map-speaker__body,
+.map-speaker--height .map-speaker__body {
+  fill: var(--map-marker-fill);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 2;
+}
+
+.map-speaker--selected .map-speaker__body {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+
+.map-speaker--selected.map-speaker--top .map-speaker__body,
+.map-speaker--selected.map-speaker--height .map-speaker__body {
+  fill: var(--accent-soft);
+}
+
+.map-speaker__halo {
+  fill: var(--accent);
+  fill-opacity: 0.2;
+}
+
+.map-speaker:hover .map-speaker__body {
+  stroke-width: 2.5;
+}
+
+.map-speaker__code {
+  fill: var(--map-ink);
+  font-size: var(--text-caption);
+  font-weight: var(--weight-semibold);
+  pointer-events: none;
+}
+
+.map-speaker__outputs {
+  fill: var(--text-muted);
+  font-weight: var(--weight-regular);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Legend and unassigned row ─────────────────────────────────────────── */
+.map__legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  padding: 0;
+  color: var(--text-muted);
+  list-style: none;
+}
+
+.map__legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+}
+
+.map__legend-mark {
+  flex: none;
+}
+
+.map__legend-mark .map-marker__body {
+  stroke-width: 1.2;
+}
+
+.map__unassigned {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1-5);
+}
+
+.map__unassigned-label {
+  margin-right: var(--space-1);
+  color: var(--text-muted);
+}
+
+.map__unassigned-chip {
+  min-height: var(--control-h-sm);
+  padding: 0 var(--space-2-5);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  box-shadow: var(--shadow-control);
+  font-size: var(--text-ui);
+  transition: box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.map__unassigned-chip:hover {
+  box-shadow: var(--shadow-control-hover);
+}
+
+.map__unassigned-chip[aria-pressed="true"] {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+/* ── Thumbnail ─────────────────────────────────────────────────────────── */
+.map-thumb {
+  display: block;
+}
+
+.map-thumb .map__screen {
+  fill: var(--text-muted);
+}
+
+.map-thumb__seat {
+  fill: var(--map-furniture);
+  stroke: var(--map-furniture-edge);
+}
+
+.map-thumb__dot {
+  fill: var(--text-muted);
+}
+
+.map-thumb__dot--main {
+  fill: var(--text);
+}

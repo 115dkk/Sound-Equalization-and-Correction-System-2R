@@ -1,0 +1,446 @@
+// LogPlot: frequency response graphs on uPlot (MIT). Log-frequency x axis
+// with fixed ticks 5 … 20k, colours and line rules from the tokens, an
+// optional shaded band outside a range (the RC band), a cursor readout, and
+// an overlay slot for editable things (target points, the XO line) that gets
+// the scale mapping. Dozens of curves of a few thousand points draw in one
+// pass; hover highlight and theme changes restyle the same instance.
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import uPlot from "uplot";
+import "uplot/dist/uPlot.min.css";
+import { useNumber, useT } from "../../i18n/react";
+import { readColor, readNumber, rgbaString, type Rgba } from "./color";
+import { DEFAULT_RULES, colorTokens, lineStyle, type Curve, type Highlight, type LineRules } from "./series";
+import { FREQ_RANGE, formatHz, freqTicksIn } from "./ticks";
+
+export type PlotScale = {
+  xToPx: (hz: number) => number;
+  pxToX: (px: number) => number;
+  yToPx: (value: number) => number;
+  pxToY: (px: number) => number;
+  /** Plot area size in CSS pixels. */
+  width: number;
+  height: number;
+  x: readonly [number, number];
+  y: readonly [number, number];
+};
+
+export type LogPlotProps = {
+  id: string;
+  /** Accessible name of the graph. */
+  label: string;
+  freqs: ArrayLike<number>;
+  curves: readonly Curve[];
+  /** Every role of the project in order, so colours never move. */
+  roleOrder: readonly string[];
+  isSub: (role: string) => boolean;
+  hiddenRoles?: ReadonlySet<string> | undefined;
+  hiddenPositions?: ReadonlySet<number> | undefined;
+  highlight?: Highlight | undefined;
+  xRange?: readonly [number, number] | undefined;
+  /** Fixed level range; null fits the visible curves. */
+  yRange?: readonly [number, number] | null | undefined;
+  yUnit?: string | undefined;
+  height?: number | undefined;
+  /** Shade outside [lo, hi] (the RC band) and mark its edges. */
+  band?: { lo: number; hi: number } | null | undefined;
+  onDoubleClick?: ((point: { hz: number; value: number }) => void) | undefined;
+  overlay?: ((scale: PlotScale) => ReactNode) | undefined;
+  /** Controls in the top-right corner (axis range button). */
+  toolbar?: ReactNode | undefined;
+  /** Results that no longer match the inputs: curves drawn faint. */
+  stale?: boolean | undefined;
+};
+
+type Palette = {
+  colors: Map<string, Rgba>;
+  target: Rgba;
+  grid: Rgba;
+  axis: Rgba;
+  text: Rgba;
+  shade: Rgba;
+  rules: LineRules;
+  font: string;
+};
+
+const EMPTY_ROLES: ReadonlySet<string> = new Set();
+const EMPTY_POSITIONS: ReadonlySet<number> = new Set();
+
+function readPalette(element: Element, roleOrder: readonly string[], isSub: (role: string) => boolean): Palette {
+  const tokens = colorTokens(roleOrder, isSub);
+  const colors = new Map<string, Rgba>();
+  for (const [role, token] of tokens) colors.set(role, readColor(element, token));
+  const style = getComputedStyle(element);
+  const dash = (token: string, fallback: number[]) => {
+    const parts = style.getPropertyValue(token).trim().split(/\s+/).map(Number).filter(Number.isFinite);
+    return parts.length ? parts : fallback;
+  };
+  const caption = readNumber(element, "--text-caption", 13);
+  const family = style.getPropertyValue("--font-ui").trim() || "system-ui, sans-serif";
+  return {
+    colors,
+    target: readColor(element, "--plot-target"),
+    grid: readColor(element, "--plot-grid"),
+    axis: readColor(element, "--plot-axis"),
+    text: readColor(element, "--plot-text"),
+    shade: readColor(element, "--plot-shade"),
+    rules: {
+      pos1: readNumber(element, "--plot-w-pos1", DEFAULT_RULES.pos1),
+      other: readNumber(element, "--plot-w-other", DEFAULT_RULES.other),
+      otherAlpha: readNumber(element, "--plot-alpha-other", DEFAULT_RULES.otherAlpha),
+      dimAlpha: readNumber(element, "--plot-alpha-dim", DEFAULT_RULES.dimAlpha),
+      sub: readNumber(element, "--plot-w-sub", DEFAULT_RULES.sub),
+      target: readNumber(element, "--plot-w-target", DEFAULT_RULES.target),
+      dashTarget: dash("--plot-dash-target", DEFAULT_RULES.dashTarget),
+      dashBefore: dash("--plot-dash-before", DEFAULT_RULES.dashBefore),
+    },
+    font: `${caption}px ${family}`,
+  };
+}
+
+/** Calls `onChange` when the theme or accent around `element` may have changed. */
+function useThemeChange(element: HTMLElement | null, onChange: () => void) {
+  const callback = useRef(onChange);
+  callback.current = onChange;
+  useEffect(() => {
+    if (!element) return;
+    const fire = () => callback.current();
+    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+    media?.addEventListener?.("change", fire);
+    const observer = new MutationObserver(fire);
+    // Watch every ancestor: the gallery scopes themes to subtrees.
+    for (let node: HTMLElement | null = element; node; node = node.parentElement) {
+      observer.observe(node, { attributes: true, attributeFilter: ["data-theme", "data-accent"] });
+    }
+    return () => {
+      media?.removeEventListener?.("change", fire);
+      observer.disconnect();
+    };
+  }, [element]);
+}
+
+function niceRange(curves: readonly Curve[], hiddenRoles: ReadonlySet<string>, hiddenPositions: ReadonlySet<number>): [number, number] {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const curve of curves) {
+    if (hiddenRoles.has(curve.role) || hiddenPositions.has(curve.position ?? 1)) continue;
+    for (let i = 0; i < curve.values.length; i++) {
+      const v = curve.values[i];
+      if (v === null || v === undefined || !Number.isFinite(v)) continue;
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+  }
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [-30, 10];
+  const pad = Math.max(2, (hi - lo) * 0.08);
+  return [Math.floor((lo - pad) / 5) * 5, Math.ceil((hi + pad) / 5) * 5];
+}
+
+export function LogPlot({
+  id,
+  label,
+  freqs,
+  curves,
+  roleOrder,
+  isSub,
+  hiddenRoles = EMPTY_ROLES,
+  hiddenPositions = EMPTY_POSITIONS,
+  highlight = null,
+  xRange = FREQ_RANGE,
+  yRange = null,
+  yUnit = "dB",
+  height = 320,
+  band = null,
+  onDoubleClick,
+  overlay,
+  toolbar,
+  stale,
+}: LogPlotProps) {
+  const t = useT();
+  const number = useNumber();
+  const descriptionId = useId();
+  const wrap = useRef<HTMLDivElement>(null);
+  const host = useRef<HTMLDivElement>(null);
+  const plot = useRef<uPlot | null>(null);
+  const [over, setOver] = useState<HTMLDivElement | null>(null);
+  const [version, setVersion] = useState(0);
+  const [cursor, setCursor] = useState<{ hz: number; value: number } | null>(null);
+
+  // Everything the draw callbacks read lives in one ref, so a prop change
+  // restyles without rebuilding the chart.
+  const live = useRef({
+    curves,
+    highlight,
+    hiddenRoles,
+    hiddenPositions,
+    band,
+    yRange,
+    xRange,
+    stale: !!stale,
+    palette: null as Palette | null,
+    onDoubleClick,
+  });
+  live.current = { ...live.current, curves, highlight, hiddenRoles, hiddenPositions, band, yRange, xRange, stale: !!stale, onDoubleClick };
+
+  // The level range: fixed when given, otherwise fitted to the visible curves.
+  const currentY = (): readonly [number, number] =>
+    live.current.yRange ?? niceRange(live.current.curves, live.current.hiddenRoles, live.current.hiddenPositions);
+
+  const structure = useMemo(() => `${freqs.length}:${curves.map((curve) => `${curve.id}/${curve.kind}`).join("|")}`, [freqs, curves]);
+  const roleKey = roleOrder.join("|");
+
+  /** Restyles in place; `reread` reads the tokens again (theme or accent changed). */
+  const applyStyles = (reread = false) => {
+    const u = plot.current;
+    const element = wrap.current;
+    if (!u || !element) return;
+    if (reread || !live.current.palette) live.current.palette = readPalette(element, roleOrder, isSub);
+    const { palette } = live.current;
+    live.current.curves.forEach((curve, index) => {
+      const series = u.series[index + 1];
+      if (!series) return;
+      const style = lineStyle(curve, live.current.highlight, palette.rules);
+      series.width = style.width;
+      series.dash = style.dash ?? [];
+    });
+    u.redraw(false, false);
+  };
+
+  // Build (or rebuild when the set of curves changes).
+  useLayoutEffect(() => {
+    const element = host.current;
+    const outer = wrap.current;
+    if (!element || !outer) return;
+    live.current.palette = readPalette(outer, roleOrder, isSub);
+    const color = (curve: Curve): Rgba =>
+      curve.kind === "target" ? live.current.palette!.target : (live.current.palette!.colors.get(curve.role) ?? live.current.palette!.text);
+    const stroke = (curve: Curve) => () => {
+      const style = lineStyle(curve, live.current.highlight, live.current.palette!.rules);
+      return rgbaString(color(curve), style.alpha * (live.current.stale && curve.kind !== "target" ? 0.45 : 1));
+    };
+    const paletteColor = (key: "grid" | "axis" | "text") => () => rgbaString(live.current.palette![key]);
+    const series: uPlot.Series[] = [
+      {},
+      ...curves.map((curve) => {
+        const style = lineStyle(curve, highlight, live.current.palette!.rules);
+        return {
+          label: curve.id,
+          stroke: stroke(curve),
+          width: style.width,
+          ...(style.dash ? { dash: style.dash } : {}),
+          points: { show: false },
+          spanGaps: false,
+          show: curve.kind === "target" || (!hiddenRoles.has(curve.role) && !hiddenPositions.has(curve.position ?? 1)),
+        } satisfies uPlot.Series;
+      }),
+    ];
+    const options: uPlot.Options = {
+      width: Math.max(200, outer.clientWidth),
+      height,
+      legend: { show: false },
+      cursor: {
+        drag: { x: false, y: false, setScale: false },
+        points: { show: false },
+        focus: { prox: -1 },
+        y: true,
+      },
+      select: { show: false, left: 0, top: 0, width: 0, height: 0 },
+      scales: {
+        x: {
+          time: false,
+          distr: 3,
+          log: 10,
+          range: () => [live.current.xRange[0], live.current.xRange[1]],
+        },
+        y: {
+          range: () => {
+            const [lo, hi] = currentY();
+            return [lo, hi];
+          },
+        },
+      },
+      axes: [
+        {
+          scale: "x",
+          stroke: paletteColor("text"),
+          font: live.current.palette.font,
+          size: 30,
+          gap: 4,
+          splits: (u, _axis, min, max) => freqTicksIn(min, max, u.bbox.width / devicePixelRatio),
+          // Keep every fixed tick (uPlot's log filter would drop some).
+          filter: (_u, splits) => splits,
+          values: (_u, splits) => splits.map((value) => (value === null || value === undefined ? "" : formatHz(value))),
+          grid: { stroke: paletteColor("grid"), width: 1 },
+          ticks: { stroke: paletteColor("axis"), width: 1, size: 4 },
+          border: { show: true, stroke: paletteColor("axis"), width: 1 },
+        },
+        {
+          scale: "y",
+          stroke: paletteColor("text"),
+          font: live.current.palette.font,
+          size: 46,
+          gap: 6,
+          values: (_u, splits) => splits.map((value) => (value === null || value === undefined ? "" : number(value, Number.isInteger(value) ? 0 : 1))),
+          grid: { stroke: paletteColor("grid"), width: 1 },
+          ticks: { stroke: paletteColor("axis"), width: 1, size: 4 },
+          border: { show: true, stroke: paletteColor("axis"), width: 1 },
+        },
+      ],
+      series,
+      hooks: {
+        drawAxes: [
+          (u) => {
+            const range = live.current.band;
+            const palette = live.current.palette;
+            if (!range || !palette) return;
+            const { ctx } = u;
+            const { left, top, width, height: h } = u.bbox;
+            const xLo = Math.max(left, Math.min(left + width, u.valToPos(range.lo, "x", true)));
+            const xHi = Math.max(left, Math.min(left + width, u.valToPos(range.hi, "x", true)));
+            ctx.save();
+            ctx.fillStyle = rgbaString(palette.shade);
+            ctx.fillRect(left, top, xLo - left, h);
+            ctx.fillRect(xHi, top, left + width - xHi, h);
+            ctx.strokeStyle = rgbaString(palette.axis);
+            ctx.lineWidth = Math.max(1, devicePixelRatio);
+            ctx.setLineDash([4 * devicePixelRatio, 3 * devicePixelRatio]);
+            for (const x of [xLo, xHi]) {
+              ctx.beginPath();
+              ctx.moveTo(Math.round(x) + 0.5, top);
+              ctx.lineTo(Math.round(x) + 0.5, top + h);
+              ctx.stroke();
+            }
+            ctx.restore();
+          },
+        ],
+        setScale: [() => setVersion((v) => v + 1)],
+        setSize: [() => setVersion((v) => v + 1)],
+        setCursor: [
+          (u) => {
+            const { left, top } = u.cursor;
+            if (left === undefined || top === undefined || left < 0 || top < 0) setCursor(null);
+            else setCursor({ hz: u.posToVal(left, "x"), value: u.posToVal(top, "y") });
+          },
+        ],
+      },
+    };
+    const data: uPlot.AlignedData = [freqs as number[], ...curves.map((curve) => curve.values as (number | null)[])];
+    const u = new uPlot(options, data, element);
+    plot.current = u;
+    const overEl = u.over as HTMLDivElement;
+    const onDbl = (event: MouseEvent) => {
+      const handler = live.current.onDoubleClick;
+      if (!handler) return;
+      const rect = overEl.getBoundingClientRect();
+      handler({ hz: u.posToVal(event.clientX - rect.left, "x"), value: u.posToVal(event.clientY - rect.top, "y") });
+    };
+    overEl.addEventListener("dblclick", onDbl);
+    setOver(overEl);
+    setVersion((v) => v + 1);
+    return () => {
+      overEl.removeEventListener("dblclick", onDbl);
+      u.destroy();
+      plot.current = null;
+      setOver(null);
+    };
+    // Rebuild only when the set of curves, the grid or the role order changes.
+  }, [structure, roleKey, height]);
+
+  // New values on the same curves: swap the data, keep the instance.
+  const firstData = useRef(true);
+  useEffect(() => {
+    if (firstData.current) {
+      firstData.current = false;
+      return;
+    }
+    plot.current?.setData([freqs as number[], ...curves.map((curve) => curve.values as (number | null)[])], true);
+  }, [curves, freqs]);
+
+  // Visibility toggles.
+  useEffect(() => {
+    const u = plot.current;
+    if (!u) return;
+    u.batch(() => {
+      curves.forEach((curve, index) => {
+        const show = curve.kind === "target" || (!hiddenRoles.has(curve.role) && !hiddenPositions.has(curve.position ?? 1));
+        if (u.series[index + 1]?.show !== show) u.setSeries(index + 1, { show });
+      });
+      if (!yRange) {
+        const [min, max] = currentY();
+        u.setScale("y", { min, max });
+      }
+    });
+  }, [curves, hiddenRoles, hiddenPositions, yRange, structure]);
+
+  // Ranges. An explicit setScale bypasses the scale's range function, so
+  // pass the computed limits.
+  useEffect(() => {
+    const u = plot.current;
+    if (!u) return;
+    const [min, max] = currentY();
+    u.batch(() => {
+      u.setScale("x", { min: xRange[0], max: xRange[1] });
+      u.setScale("y", { min, max });
+    });
+  }, [xRange[0], xRange[1], yRange?.[0], yRange?.[1]]);
+
+  // Highlight, staleness and band: restyle in place.
+  useEffect(() => applyStyles(), [highlight, stale, band?.lo, band?.hi]);
+
+  // Theme or accent changes: re-read the tokens, redraw.
+  useThemeChange(wrap.current, () => applyStyles(true));
+
+  // Width follows the container.
+  useEffect(() => {
+    const outer = wrap.current;
+    if (!outer || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      const u = plot.current;
+      if (u && outer.clientWidth > 0 && Math.abs(u.width - outer.clientWidth) > 0.5) u.setSize({ width: outer.clientWidth, height });
+    });
+    observer.observe(outer);
+    return () => observer.disconnect();
+  }, [height]);
+
+  const scale = useMemo<PlotScale | null>(() => {
+    const u = plot.current;
+    if (!u || !over) return null;
+    const xs = u.scales.x;
+    const ys = u.scales.y;
+    return {
+      xToPx: (hz) => u.valToPos(hz, "x"),
+      pxToX: (px) => u.posToVal(px, "x"),
+      yToPx: (value) => u.valToPos(value, "y"),
+      pxToY: (px) => u.posToVal(px, "y"),
+      width: over.clientWidth,
+      height: over.clientHeight,
+      x: [xs?.min ?? xRange[0], xs?.max ?? xRange[1]],
+      y: [ys?.min ?? 0, ys?.max ?? 1],
+    };
+  }, [version, over]);
+
+  const visibleCount = curves.filter(
+    (curve) => curve.kind === "target" || (!hiddenRoles.has(curve.role) && !hiddenPositions.has(curve.position ?? 1)),
+  ).length;
+
+  return (
+    <figure className={["plot", stale && "plot--stale"].filter(Boolean).join(" ")} data-ui={id} id={id} aria-label={label} aria-describedby={descriptionId}>
+      <p id={descriptionId} className="visually-hidden">
+        {t("plot.summary", { count: visibleCount, lo: formatHz(xRange[0]), hi: formatHz(xRange[1]) })}
+      </p>
+      <div className="plot__frame" ref={wrap}>
+        <span className="plot__unit" aria-hidden="true">
+          {yUnit}
+        </span>
+        {toolbar && <div className="plot__toolbar">{toolbar}</div>}
+        <div className="plot__canvas" ref={host} />
+        <div className="plot__readout tabular" aria-hidden="true">
+          {cursor && Number.isFinite(cursor.hz)
+            ? t("plot.readout", { hz: formatHz(cursor.hz), value: number(cursor.value, 1), unit: yUnit })
+            : ""}
+        </div>
+      </div>
+      {over && scale && overlay && createPortal(<div className="plot__overlay">{overlay(scale)}</div>, over)}
+    </figure>
+  );
+}
