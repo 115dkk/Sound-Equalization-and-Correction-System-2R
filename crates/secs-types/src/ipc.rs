@@ -132,6 +132,34 @@ pub enum Request {
     ResultLines,
     /// Copies the last BA output alignment into the manual sub settings.
     SubTakeValues,
+    /// Opens a project-file picker through the application host.
+    DialogOpenProject,
+    /// Opens a project save-file picker through the application host.
+    DialogSaveProject(DialogSuggestedParams),
+    /// Opens an mdat-file picker through the application host.
+    DialogPickMdat,
+    /// Opens a folder picker through the application host.
+    DialogPickFolder(DialogPickFolderParams),
+    /// Opens a typed save-file picker through the application host.
+    DialogSaveFile(DialogSaveFileParams),
+    /// Opens a typed file picker through the application host.
+    DialogOpenFile(DialogOpenFileParams),
+    /// Opens a folder in the operating-system file manager.
+    OpenFolder(OpenFolderParams),
+    /// Starts the live input level monitor.
+    LevelMonitorStart(LevelMonitorStartParams),
+    /// Stops the live input level monitor.
+    LevelMonitorStop,
+    /// Plays a role's level-check signal for 2.5 seconds.
+    LevelPlay(LevelPlayParams),
+    /// Starts watching measurement-method status.
+    StatusWatchStart,
+    /// Stops watching measurement-method status.
+    StatusWatchStop,
+    /// Returns the stored or derived export base folder.
+    ExportFolderGet,
+    /// Stores the export base folder in the open project.
+    ExportFolderSet(ExportFolderSetParams),
 }
 
 impl Request {
@@ -253,6 +281,34 @@ pub enum Response {
     ResultLines(ResultLinesResult),
     /// Stored settings after taking the last sub alignment.
     SubTakeValues(CalibrationSettings),
+    /// The chosen project path, or null when cancelled.
+    DialogOpenProject(Option<String>),
+    /// The chosen project destination, or null when cancelled.
+    DialogSaveProject(Option<String>),
+    /// The chosen mdat path, or null when cancelled.
+    DialogPickMdat(Option<String>),
+    /// The chosen folder, or null when cancelled.
+    DialogPickFolder(Option<String>),
+    /// The chosen save destination, or null when cancelled.
+    DialogSaveFile(Option<String>),
+    /// The chosen source path, or null when cancelled.
+    DialogOpenFile(Option<String>),
+    /// Confirms that the folder-open request reached the host.
+    OpenFolder(()),
+    /// The live level-monitor job.
+    LevelMonitorStart(JobStarted),
+    /// The stopped live level-monitor job, when one was running.
+    LevelMonitorStop(Option<JobSnapshot>),
+    /// Confirms that role playback was accepted.
+    LevelPlay(()),
+    /// The measurement-status watch job.
+    StatusWatchStart(JobStarted),
+    /// The stopped status-watch job, when one was running.
+    StatusWatchStop(Option<JobSnapshot>),
+    /// The current export base folder.
+    ExportFolderGet(ExportFolderResult),
+    /// The stored export base folder.
+    ExportFolderSet(ExportFolderResult),
 }
 
 /// Optional measurement selection; an absent selection includes every recorded pair.
@@ -614,6 +670,10 @@ pub enum JobKind {
     Mimo,
     /// Writes one selected export bundle.
     Export,
+    /// Streams microphone levels and controls level-check playback.
+    LevelMonitor,
+    /// Watches measurement-method status changes.
+    StatusWatch,
 }
 /// The current lifecycle state of a job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -707,6 +767,19 @@ pub enum JobEvent {
         result: Option<Box<JobResult>>,
         error: Option<IpcError>,
     },
+    /// Reports a live input level at the monitor cadence.
+    Meter {
+        job: JobId,
+        rms_dbfs: f64,
+        peak_dbfs: f64,
+        spl_db: Option<f64>,
+        clipping: bool,
+    },
+    /// Reports a changed measurement-method status snapshot.
+    MeasureStatus {
+        job: JobId,
+        status: MeasureMethodsResult,
+    },
 }
 /// The successful result produced by a job.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -727,6 +800,8 @@ pub enum JobResult {
     Measurement(ProjectInfo),
     /// Project state after an mdat import.
     MdatImport(ProjectInfo),
+    /// A long-lived monitor or watcher stopped without a payload.
+    Stopped,
 }
 /// The job to cancel.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -886,7 +961,8 @@ pub enum ExportKind {
 pub struct ExportParams {
     /// Export bundle to write.
     pub kind: ExportKind,
-    /// Destination folder path.
+    /// Destination folder path. An empty path uses the project's export folder
+    /// and applies the upstream timestamped subfolder convention.
     pub folder: String,
 }
 /// Files written by a completed export job.
@@ -895,6 +971,96 @@ pub struct ExportParams {
 pub struct ExportResult {
     /// Paths of all files written by the exporter.
     pub files: Vec<String>,
+}
+
+// P28 host, live-monitor, watch and export-folder types. Keep this block
+// contiguous so the parallel M5 IPC additions merge without interleaving.
+/// Optional suggested name for a save dialog.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct DialogSuggestedParams {
+    /// Suggested file name.
+    pub suggested: String,
+}
+/// Optional starting folder for a folder picker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct DialogPickFolderParams {
+    /// Starting folder, when known.
+    pub start: Option<String>,
+}
+/// The kind of file a host save dialog accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum SaveFileKind {
+    /// UTF-8 patch-sheet CSV.
+    PatchSheet,
+    /// Target-curve JSON.
+    Target,
+}
+/// Typed save-file dialog parameters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DialogSaveFileParams {
+    /// File type and filter.
+    pub kind: SaveFileKind,
+    /// Suggested file name.
+    pub suggested: String,
+}
+/// The kind of file a host open dialog accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum OpenFileKind {
+    /// Target-curve JSON.
+    Target,
+}
+/// Typed open-file dialog parameters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DialogOpenFileParams {
+    /// File type and filter.
+    pub kind: OpenFileKind,
+}
+/// Folder to reveal in the operating-system file manager.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct OpenFolderParams {
+    /// Folder path.
+    pub path: String,
+}
+/// Optional role to associate with a level-monitor start.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct LevelMonitorStartParams {
+    /// Speaker role initially selected for playback.
+    pub role: Option<String>,
+}
+/// Role and output level for one 2.5-second level-check burst.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LevelPlayParams {
+    /// Internal speaker role.
+    pub role: String,
+    /// Master output level in dBFS.
+    pub master_dbfs: f64,
+}
+/// Export base-folder update.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ExportFolderSetParams {
+    /// Folder path to store in the open project.
+    pub folder: String,
+}
+/// Current export base folder and whether it came from project storage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ExportFolderResult {
+    /// Export base folder.
+    pub folder: String,
+    /// True when `extra.export.folder` supplied this value.
+    pub stored: bool,
 }
 
 // Measurement request and response types.
@@ -1690,6 +1856,30 @@ mod tests {
             }),
             Request::ResultLines,
             Request::SubTakeValues,
+            Request::DialogOpenProject,
+            Request::DialogSaveProject(DialogSuggestedParams {
+                suggested: "x.secs".into(),
+            }),
+            Request::DialogPickMdat,
+            Request::DialogPickFolder(DialogPickFolderParams { start: None }),
+            Request::DialogSaveFile(DialogSaveFileParams {
+                kind: SaveFileKind::PatchSheet,
+                suggested: "x.csv".into(),
+            }),
+            Request::DialogOpenFile(DialogOpenFileParams {
+                kind: OpenFileKind::Target,
+            }),
+            Request::OpenFolder(OpenFolderParams { path: ".".into() }),
+            Request::LevelMonitorStart(LevelMonitorStartParams::default()),
+            Request::LevelMonitorStop,
+            Request::LevelPlay(LevelPlayParams {
+                role: "L".into(),
+                master_dbfs: -20.0,
+            }),
+            Request::StatusWatchStart,
+            Request::StatusWatchStop,
+            Request::ExportFolderGet,
+            Request::ExportFolderSet(ExportFolderSetParams { folder: ".".into() }),
         ]
     }
     #[test]

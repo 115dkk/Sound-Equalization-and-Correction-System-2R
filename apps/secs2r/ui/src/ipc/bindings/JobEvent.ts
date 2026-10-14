@@ -4,8 +4,9 @@ import type { JobId } from "./JobId";
 import type { JobKind } from "./JobKind";
 import type { JobResult } from "./JobResult";
 import type { JobStatus } from "./JobStatus";
+import type { MeasureMethodsResult } from "./MeasureMethodsResult";
 
 /**
  * A pushed lifecycle event for a long-running job.
  */
-export type JobEvent = { "event": "started", job: JobId, kind: JobKind, } | { "event": "progress", job: JobId, stage: string, done: number, total: number, } | { "event": "log", job: JobId, code: string, params: { [key in string]: string }, } | { "event": "finished", job: JobId, status: JobStatus, result: JobResult | null, error: IpcError | null, };
+export type JobEvent = { "event": "started", job: JobId, kind: JobKind, } | { "event": "progress", job: JobId, stage: string, done: number, total: number, } | { "event": "log", job: JobId, code: string, params: { [key in string]: string }, } | { "event": "finished", job: JobId, status: JobStatus, result: JobResult | null, error: IpcError | null, } | { "event": "meter", job: JobId, rms_dbfs: number, peak_dbfs: number, spl_db: number | null, clipping: boolean, } | { "event": "measure_status", job: JobId, status: MeasureMethodsResult, };

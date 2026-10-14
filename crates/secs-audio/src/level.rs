@@ -152,6 +152,27 @@ pub fn level_check_cancellable(
     seconds: f64,
     cancel: &CancelToken,
 ) -> Result<LevelReport, AudioError> {
+    level_check_streaming(
+        backend,
+        output,
+        input,
+        level_dbfs,
+        seconds,
+        cancel,
+        &mut |_| {},
+    )
+}
+
+#[doc(hidden)]
+pub fn level_check_streaming(
+    backend: &dyn AudioBackend,
+    output: &LevelOutput,
+    input: &LevelInput,
+    level_dbfs: f64,
+    seconds: f64,
+    cancel: &CancelToken,
+    on_level: &mut dyn FnMut(LevelReport),
+) -> Result<LevelReport, AudioError> {
     crate::check_cancel(cancel)?;
     if output.channel == 0
         || output.channel > output.endpoint.max_output_channels
@@ -189,14 +210,15 @@ pub fn level_check_cancellable(
     // Include a latency margin, then select the loudest burst-sized window;
     // leading capture/output skew must not dilute the RMS of a short burst.
     request.tail_seconds = 1.0;
+    let input_channel = usize::from(input.channel);
     let recording = play_and_record(backend, request, cancel, &mut |_| {})?;
     if recording.capture.discontinuity || recording.playback.underruns > 0 {
         return Err(AudioError::Backend("discontinuous level recording".into()));
     }
     let samples: Vec<_> = recording
         .interleaved
-        .chunks_exact(usize::from(input.channel))
-        .map(|f| f64::from(f[usize::from(input.channel - 1)]))
+        .chunks_exact(input_channel)
+        .map(|f| f64::from(f[input_channel - 1]))
         .collect();
     let n = signal.len();
     let mut energy = samples[..n].iter().map(|x| x * x).sum::<f64>();
@@ -207,8 +229,22 @@ pub fn level_check_cancellable(
             best = (energy, i + 1 - n);
         }
     }
+    let settled = &samples[best.1..best.1 + n];
+    let window = usize::try_from(output.sample_rate / 10)
+        .map_err(|_| invalid("level window exceeds usize"))?
+        .max(1);
+    for samples in settled.chunks(window) {
+        if samples.len() == window {
+            on_level(analyse_level(
+                samples,
+                output.sample_rate,
+                input.calibration.as_ref(),
+                input.spl_reference,
+            )?);
+        }
+    }
     analyse_level(
-        &samples[best.1..best.1 + n],
+        settled,
         output.sample_rate,
         input.calibration.as_ref(),
         input.spl_reference,

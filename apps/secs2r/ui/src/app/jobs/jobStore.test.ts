@@ -58,4 +58,21 @@ describe("job store", () => {
     const state = jobsReducer(initialJobs, { type: "event", at: 0, event: { event: "progress", job: 5, stage: "x", done: 1, total: 2 } });
     expect(state).toBe(initialJobs);
   });
+
+  it("keeps the level monitor, the status watch and meter readings out of the tray", () => {
+    const state = run([
+      { type: "event", at: 0, event: { event: "started", job: 1, kind: "level_monitor" } },
+      { type: "event", at: 0, event: { event: "started", job: 2, kind: "status_watch" } },
+      { type: "event", at: 0, event: { event: "started", job: 3, kind: "measure" } },
+      { type: "event", at: 1, event: { event: "meter", job: 3, rms_dbfs: -22, peak_dbfs: -10, spl_db: null, clipping: false } },
+      { type: "event", at: 2, event: { event: "finished", job: 1, status: "cancelled", result: null, error: null } },
+      {
+        type: "snapshots",
+        at: 3,
+        jobs: [{ job: 4, kind: "status_watch", status: "running", cancellable: true, progress: null, result: null, error: null }],
+      },
+    ]);
+    expect(state.jobs.map((job) => job.id)).toEqual([3]);
+    expect(state.history).toEqual([]);
+  });
 });

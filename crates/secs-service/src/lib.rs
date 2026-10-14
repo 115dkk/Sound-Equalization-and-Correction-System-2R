@@ -8,19 +8,25 @@
 
 mod cache;
 mod calibration;
+mod clock;
 mod curves;
 mod export;
+pub mod export_folder;
+mod host;
 mod ipc;
 mod jobs;
 pub mod mdat_import;
 pub mod measure;
 mod measurement;
+mod monitor;
 mod project_edit;
 mod session;
+mod watch;
 
 use std::fmt::Debug;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
+use std::time::SystemTime;
 
 use secs_compute::MemoryProbe;
 use secs_types::ipc::{
@@ -28,6 +34,7 @@ use secs_types::ipc::{
 };
 
 use calibration::Results;
+pub use clock::LocalTime;
 use jobs::JobRegistry;
 use session::Session;
 
@@ -66,15 +73,58 @@ impl EventSink for NoEvents {
     fn send(&self, _event: JobEvent) {}
 }
 
-/// Host facilities reserved for M5 dialogs, notifications, and folder opening.
+/// Host facilities for dialogs, folder opening, paths, and REW launch.
 pub trait Host: Send + Sync + Debug {
-    /// Starts REW in API mode without inheriting application bundle paths.
-    fn launch_rew(&self) -> Result<(), IpcError> {
-        Err(IpcError::new(
-            ErrorCode::NotImplemented,
-            "host REW launch is not implemented",
-        ))
+    /// Opens a project file picker.
+    fn dialog_open_project(&self) -> Result<Option<String>, IpcError> {
+        not_implemented("open-project dialog")
     }
+    /// Opens a project save picker.
+    fn dialog_save_project(&self, _suggested: &str) -> Result<Option<String>, IpcError> {
+        not_implemented("save-project dialog")
+    }
+    /// Opens an mdat file picker.
+    fn dialog_pick_mdat(&self) -> Result<Option<String>, IpcError> {
+        not_implemented("mdat dialog")
+    }
+    /// Opens a folder picker.
+    fn dialog_pick_folder(&self, _start: Option<&Path>) -> Result<Option<String>, IpcError> {
+        not_implemented("folder dialog")
+    }
+    /// Opens a typed save-file picker.
+    fn dialog_save_file(
+        &self,
+        _kind: secs_types::ipc::SaveFileKind,
+        _suggested: &str,
+    ) -> Result<Option<String>, IpcError> {
+        not_implemented("save-file dialog")
+    }
+    /// Opens a typed file picker.
+    fn dialog_open_file(
+        &self,
+        _kind: secs_types::ipc::OpenFileKind,
+    ) -> Result<Option<String>, IpcError> {
+        not_implemented("open-file dialog")
+    }
+    /// Reveals a folder in the operating-system file manager.
+    fn open_folder(&self, _path: &Path) -> Result<(), IpcError> {
+        not_implemented("open folder")
+    }
+    /// Returns the user's home directory for default export paths.
+    fn home_dir(&self) -> Result<std::path::PathBuf, IpcError> {
+        not_implemented("home directory")
+    }
+    /// Starts REW in API mode without a shell.
+    fn launch_rew(&self) -> Result<(), IpcError> {
+        not_implemented("host REW launch")
+    }
+}
+
+fn not_implemented<T>(operation: &str) -> Result<T, IpcError> {
+    Err(IpcError::new(
+        ErrorCode::NotImplemented,
+        format!("{operation} is not implemented"),
+    ))
 }
 /// Host implementation used by headless callers.
 #[derive(Debug, Default)]
@@ -107,6 +157,9 @@ pub struct Deps {
     pub uuid: UuidSource,
     /// Versioned application-settings file, or in-memory storage when absent.
     pub app_settings_path: Option<PathBuf>,
+    /// The user's wall clock, for export folder names. The default reads UTC;
+    /// the apps add the UTC offset `secs-sys` reports.
+    pub clock: Arc<dyn Fn() -> LocalTime + Send + Sync>,
 }
 
 impl Debug for Deps {
@@ -119,6 +172,7 @@ impl Debug for Deps {
             .field("host", &self.host)
             .field("uuid", &"source")
             .field("app_settings_path", &self.app_settings_path)
+            .field("clock", &"source")
             .finish()
     }
 }
@@ -167,6 +221,7 @@ impl Default for Deps {
             host: Arc::new(NullHost),
             uuid: Arc::new(Mutex::new(Box::new(random_uuid))),
             app_settings_path: None,
+            clock: Arc::new(|| LocalTime::from_system(SystemTime::now(), 0)),
         }
     }
 }
@@ -208,6 +263,8 @@ pub struct Service {
     results_state: Arc<Mutex<Results>>,
     app_settings: Arc<Mutex<secs_types::ipc::AppSettings>>,
     jobs: JobRegistry,
+    level: monitor::LevelState,
+    status_watch: watch::WatchState,
 }
 
 impl Service {
@@ -220,12 +277,20 @@ impl Service {
             results_state: Arc::new(Mutex::new(Results::default())),
             app_settings: Arc::new(Mutex::new(app_settings)),
             jobs: JobRegistry::default(),
+            level: monitor::LevelState::default(),
+            status_watch: watch::WatchState::default(),
         }
     }
 
     /// Handles one parsed request. Long work starts a job and pushes events.
     pub fn call(&self, request: Request, events: Arc<dyn EventSink>) -> Envelope {
         ipc::dispatch(self, request, events)
+    }
+
+    /// Cancels every cancellable job and waits at most `timeout` for device access to stop.
+    pub fn shutdown(&self, timeout: std::time::Duration) -> bool {
+        self.jobs.cancel_all();
+        self.jobs.wait_for_device(timeout)
     }
 
     /// Parses and handles an untyped request. Malformed input cannot cross the seam.

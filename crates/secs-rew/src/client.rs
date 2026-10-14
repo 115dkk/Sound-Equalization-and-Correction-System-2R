@@ -92,6 +92,7 @@ pub fn level_payload(payload: &Value, index: usize) -> Level {
     }
     Level {
         input_dbfs: rms.or(peak).unwrap_or(-120.0),
+        peak_dbfs: peak.or(rms).unwrap_or(-120.0),
         spl_db: spl.filter(|n| *n > -179.0),
         clip: peak.is_some_and(|n| n > -1.0),
     }
@@ -772,19 +773,6 @@ impl<T: Transport> RewClient<T> {
         self.unsubscribe_progress();
         self.stop();
         self.callback.take();
-    }
-    pub fn launch(&mut self, wait: Duration) -> bool {
-        if launch::launch().is_err() {
-            return false;
-        }
-        let start = Instant::now();
-        while start.elapsed() < wait {
-            if self.probe() {
-                return true;
-            }
-            std::thread::sleep(Duration::from_millis(500));
-        }
-        false
     }
     pub fn run_position(
         &mut self,

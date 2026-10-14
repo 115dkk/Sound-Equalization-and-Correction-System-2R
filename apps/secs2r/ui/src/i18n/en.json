@@ -103,6 +103,8 @@
   "jobs.kind.recommend_xo": "XO recommendation",
   "jobs.kind.mimo": "MIMO",
   "jobs.kind.export": "Export",
+  "jobs.kind.level_monitor": "Level monitor",
+  "jobs.kind.status_watch": "Measurement path watch",
   "jobs.status.running": "Running",
   "jobs.status.cancel_requested": "Cancelling",
   "jobs.status.succeeded": "Done",

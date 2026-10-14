@@ -161,55 +161,60 @@ fn rew_status(deps: &Deps) -> RewStatusResult {
     }
 }
 
+pub(crate) fn measure_methods_for(deps: &Deps) -> MeasureMethodsResult {
+    let mut native =
+        measure::NativeMeasurer::from_backend((deps.audio_backend)(), Default::default());
+    let (native_devices, native_error) = match native.devices() {
+        Ok(devices) => (
+            devices
+                .into_iter()
+                .map(|d| MeasureDevice {
+                    id: d.id,
+                    name: d.name,
+                    input_channels: d.input_channels,
+                    output_channels: d.output_channels,
+                })
+                .collect::<Vec<_>>(),
+            None,
+        ),
+        Err(e) => (
+            vec![],
+            Some(measure_error(
+                e,
+                "devices",
+                secs_audio::SharePreference::Auto,
+            )),
+        ),
+    };
+    let rew = rew_status(deps);
+    let mut methods = vec!["mock".into()];
+    if native_devices.iter().any(|d| d.input_channels > 0)
+        && native_devices.iter().any(|d| d.output_channels > 0)
+    {
+        methods.push("native".into());
+    }
+    if rew.reachable && rew.pro {
+        methods.push("rew".into());
+    }
+    MeasureMethodsResult {
+        methods,
+        native_devices,
+        native_error,
+        rew,
+        mock_positions: measure::sample::index().positions.clone(),
+        mock_roles: measure::sample::index()
+            .entries
+            .iter()
+            .map(|e| e.role.clone())
+            .collect(),
+    }
+}
+
 impl Service {
     pub(crate) fn measure_methods(&self) -> MeasureMethodsResult {
-        let mut native =
-            measure::NativeMeasurer::from_backend((self.deps.audio_backend)(), Default::default());
-        let (native_devices, native_error) = match native.devices() {
-            Ok(devices) => (
-                devices
-                    .into_iter()
-                    .map(|d| MeasureDevice {
-                        id: d.id,
-                        name: d.name,
-                        input_channels: d.input_channels,
-                        output_channels: d.output_channels,
-                    })
-                    .collect::<Vec<_>>(),
-                None,
-            ),
-            Err(e) => (
-                vec![],
-                Some(measure_error(
-                    e,
-                    "devices",
-                    secs_audio::SharePreference::Auto,
-                )),
-            ),
-        };
-        let rew = rew_status(&self.deps);
-        let mut methods = vec!["mock".into()];
-        if native_devices.iter().any(|d| d.input_channels > 0)
-            && native_devices.iter().any(|d| d.output_channels > 0)
-        {
-            methods.push("native".into());
-        }
-        if rew.reachable && rew.pro {
-            methods.push("rew".into());
-        }
-        MeasureMethodsResult {
-            methods,
-            native_devices,
-            native_error,
-            rew,
-            mock_positions: measure::sample::index().positions.clone(),
-            mock_roles: measure::sample::index()
-                .entries
-                .iter()
-                .map(|e| e.role.clone())
-                .collect(),
-        }
+        measure_methods_for(&self.deps)
     }
+
     pub(crate) fn measure_configure(
         &self,
         params: MeasureConfigureParams,

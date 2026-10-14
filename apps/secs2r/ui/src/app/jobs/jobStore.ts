@@ -43,6 +43,10 @@ export const HISTORY_LIMIT = 200;
 
 export const initialJobs: JobsState = { jobs: [], history: [], seq: 0 };
 
+/** Background jobs the tray does not list: the level monitor shows on its
+ * screen as the meter, and the status watch runs whenever the app does. */
+export const TRAY_HIDDEN: readonly JobKind[] = ["level_monitor", "status_watch"];
+
 export const isActive = (status: JobStatus) => status === "running" || status === "cancel_requested";
 
 const blank = (id: JobId, kind: JobKind, at: number): JobView => ({
@@ -78,10 +82,11 @@ export function jobsReducer(state: JobsState, action: JobsAction): JobsState {
       const { event, at } = action;
       const known = state.jobs.find((job) => job.id === event.job);
       if (event.event === "started") {
-        if (known) return state;
+        if (known || TRAY_HIDDEN.includes(event.kind)) return state;
         return { ...state, jobs: [...state.jobs, blank(event.job, event.kind, at)] };
       }
-      if (!known) return state;
+      // Meter readings and path status are screen data, not job history.
+      if (!known || event.event === "meter" || event.event === "measure_status") return state;
       if (event.event === "progress") {
         return update(state, event.job, (job) => {
           // A new stage restarts its count (engine stages) or changes its size;
@@ -107,6 +112,7 @@ export function jobsReducer(state: JobsState, action: JobsAction): JobsState {
     case "snapshots": {
       let next = state;
       for (const snap of action.jobs) {
+        if (TRAY_HIDDEN.includes(snap.kind)) continue;
         const known = next.jobs.find((job) => job.id === snap.job);
         const progress = snap.progress;
         if (!known) {

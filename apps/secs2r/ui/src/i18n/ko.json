@@ -103,6 +103,8 @@
   "jobs.kind.recommend_xo": "XO 추천",
   "jobs.kind.mimo": "MIMO 계산",
   "jobs.kind.export": "내보내기",
+  "jobs.kind.level_monitor": "레벨 모니터",
+  "jobs.kind.status_watch": "측정 경로 감시",
   "jobs.status.running": "진행 중",
   "jobs.status.cancel_requested": "취소하는 중",
   "jobs.status.succeeded": "완료",

@@ -16,6 +16,7 @@ secs-audio.workspace = true
 secs-rew.workspace = true
 secs-compute.workspace = true
 sysinfo.workspace = true
+chrono.workspace = true
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 cpal = "0.18"

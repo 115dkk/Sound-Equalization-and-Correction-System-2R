@@ -122,6 +122,36 @@ pub(crate) fn dispatch(
         | Request::ResultCurves(_)
         | Request::ResultLines
         | Request::SubTakeValues) => crate::curves::dispatch(service, request),
+        Request::DialogOpenProject => service
+            .dialog_open_project()
+            .map(Response::DialogOpenProject),
+        Request::DialogSaveProject(params) => service
+            .dialog_save_project(params)
+            .map(Response::DialogSaveProject),
+        Request::DialogPickMdat => service.dialog_pick_mdat().map(Response::DialogPickMdat),
+        Request::DialogPickFolder(params) => service
+            .dialog_pick_folder(params)
+            .map(Response::DialogPickFolder),
+        Request::DialogSaveFile(params) => service
+            .dialog_save_file(params)
+            .map(Response::DialogSaveFile),
+        Request::DialogOpenFile(params) => service
+            .dialog_open_file(params)
+            .map(Response::DialogOpenFile),
+        Request::OpenFolder(params) => service.open_folder(params).map(Response::OpenFolder),
+        Request::LevelMonitorStart(params) => service
+            .start_level_monitor(params, events)
+            .map(Response::LevelMonitorStart),
+        Request::LevelMonitorStop => service.stop_level_monitor().map(Response::LevelMonitorStop),
+        Request::LevelPlay(params) => service.level_play(params).map(Response::LevelPlay),
+        Request::StatusWatchStart => service
+            .start_status_watch(events)
+            .map(Response::StatusWatchStart),
+        Request::StatusWatchStop => service.stop_status_watch().map(Response::StatusWatchStop),
+        Request::ExportFolderGet => service.export_folder_get().map(Response::ExportFolderGet),
+        Request::ExportFolderSet(params) => service
+            .export_folder_set(params)
+            .map(Response::ExportFolderSet),
     };
     match response {
         Ok(response) => Envelope::Ok(Box::new(response)),

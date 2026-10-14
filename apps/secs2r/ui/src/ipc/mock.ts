@@ -106,6 +106,9 @@ export function createMockService(options: MockOptions = {}): MockService {
         return { stages: [{ stage: "mdat_import", total: 1 }], logs: [] };
       case "level_check":
         return { stages: [{ stage: role ?? "L", total: 1 }], logs: [] };
+      case "level_monitor":
+      case "status_watch":
+        return { stages: [{ stage: null, total: 0, ticks: 1 }], logs: [] };
       case "measure":
         return {
           stages: fx.SAMPLE_ROLES.map((r) => ({ stage: r, total: fx.SAMPLE_ROLES.length })),
@@ -138,6 +141,9 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "mdat_import":
         project = { ...(project ?? fx.projectInfo), dirty: true };
         return { kind: "mdat_import", data: project };
+      case "level_monitor":
+      case "status_watch":
+        return { kind: "stopped" };
     }
   };
 
@@ -303,6 +309,20 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "result_curves":
       case "result_lines":
       case "sub_take_values":
+      case "dialog_open_project":
+      case "dialog_save_project":
+      case "dialog_pick_mdat":
+      case "dialog_pick_folder":
+      case "dialog_save_file":
+      case "dialog_open_file":
+      case "open_folder":
+      case "level_monitor_start":
+      case "level_monitor_stop":
+      case "level_play":
+      case "status_watch_start":
+      case "status_watch_stop":
+      case "export_folder_get":
+      case "export_folder_set":
         throw new MockError(ipcError("not_implemented", `${req.method} has no fixture yet`));
     }
   };

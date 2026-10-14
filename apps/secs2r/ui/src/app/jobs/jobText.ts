@@ -17,6 +17,8 @@ export const JOB_NAME: Record<JobKind, MessageKey> = {
   recommend_xo: "jobs.kind.recommend_xo",
   mimo: "jobs.kind.mimo",
   export: "jobs.kind.export",
+  level_monitor: "jobs.kind.level_monitor",
+  status_watch: "jobs.kind.status_watch",
 };
 
 export const JOB_STATUS: Record<JobStatus, MessageKey> = {

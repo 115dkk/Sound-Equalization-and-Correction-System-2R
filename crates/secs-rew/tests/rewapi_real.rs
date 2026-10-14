@@ -479,6 +479,7 @@ fn test_level_payload_reads_input_levels_arrays() {
         level_payload(&body, 0),
         Level {
             input_dbfs: -30.0,
+            peak_dbfs: -0.5,
             spl_db: None,
             clip: true
         }
@@ -487,6 +488,7 @@ fn test_level_payload_reads_input_levels_arrays() {
         level_payload(&body, 1),
         Level {
             input_dbfs: -12.0,
+            peak_dbfs: -6.0,
             spl_db: None,
             clip: false
         }
