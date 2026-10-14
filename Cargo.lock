@@ -3600,6 +3600,7 @@ dependencies = [
  "secs-export",
  "secs-jos",
  "secs-mdat",
+ "secs-oracle",
  "secs-project",
  "secs-rew",
  "secs-types",
@@ -3648,8 +3649,13 @@ name = "secs2r-cli"
 version = "0.11.0"
 dependencies = [
  "clap",
+ "rayon",
+ "secs-compute",
+ "secs-rew",
  "secs-service",
+ "secs-sys",
  "secs-types",
+ "serde",
  "serde_json",
 ]
 

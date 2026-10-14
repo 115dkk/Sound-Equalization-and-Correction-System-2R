@@ -63,6 +63,7 @@ fn new(service: &Service, path: &std::path::Path) {
             path: path.to_string_lossy().into(),
             preset: "2.0".into(),
             sub_count: 0,
+            sample: false,
         }),
     );
 }
@@ -100,6 +101,121 @@ fn succeeded(events: &Events, job: JobId) -> JobResult {
         other => panic!("{other:?}"),
     }
 }
+fn sample_load(service: &Service, positions: Option<u32>, events: Arc<Events>) -> JobResult {
+    let Response::SampleLoad(job) = ok(
+        service,
+        Request::SampleLoad(SampleLoadParams { positions }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    succeeded(&events, job.job)
+}
+
+#[test]
+fn sample_load_embedded_keeps_only_position_one() {
+    let root = root("sample-load-embedded");
+    let path = root.join("sample.secs");
+    let service = Service::new(Deps::default());
+    call(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: path.to_string_lossy().into_owned(),
+            preset: "ignored".into(),
+            sub_count: 0,
+            sample: true,
+        }),
+    );
+    let JobResult::Measurement(first) = sample_load(&service, Some(3), Arc::new(Events::default()))
+    else {
+        panic!()
+    };
+    assert_eq!(first.positions, [1, 2, 3]);
+    let JobResult::Measurement(embedded) = sample_load(&service, None, Arc::new(Events::default()))
+    else {
+        panic!()
+    };
+    assert_eq!(embedded.positions, [1]);
+    let project = secs_project::MeasurementStore::open(&path).unwrap();
+    let record = project.entry_for(1).unwrap();
+    assert_eq!(record.ir.len(), 14);
+    for entry in measure::sample::index().entries.iter() {
+        let (actual, rate) = secs_project::load_ir(&path, &entry.role, 1).unwrap();
+        let (expected, expected_rate, expected_t0) = measure::sample::ir(&entry.role, 1).unwrap();
+        assert_eq!(rate, expected_rate, "{}", entry.role);
+        assert_eq!(actual, expected, "{}", entry.role);
+        assert_eq!(
+            record.t0.get(&entry.role),
+            Some(&expected_t0),
+            "{}",
+            entry.role
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn sample_load_synthetic_structure_and_determinism() {
+    let root = root("sample-load-synthetic");
+    let first = root.join("first.secs");
+    let second = root.join("second.secs");
+    let service = Service::new(Deps::default());
+    for path in [&first, &second] {
+        new(&service, path);
+        let error = service.call(
+            Request::SampleLoad(SampleLoadParams { positions: Some(1) }),
+            Arc::new(NoEvents),
+        );
+        assert!(matches!(
+            error,
+            Envelope::Err(IpcError {
+                code: ErrorCode::MeasurementInput,
+                ..
+            })
+        ));
+        let JobResult::Measurement(info) =
+            sample_load(&service, Some(3), Arc::new(Events::default()))
+        else {
+            panic!()
+        };
+        assert_eq!(info.positions, [1, 2, 3]);
+    }
+    for role in ["L", "R"] {
+        for position in 1..=3 {
+            let a = fs::read(
+                first
+                    .with_extension("irs")
+                    .join(format!("{role}_P{position}.wav")),
+            )
+            .unwrap();
+            let b = fs::read(
+                second
+                    .with_extension("irs")
+                    .join(format!("{role}_P{position}.wav")),
+            )
+            .unwrap();
+            assert_eq!(a, b, "{role} position {position}");
+            let (values, rate) = secs_project::read_wav_float32(&a).unwrap();
+            assert_eq!(rate, 48_000);
+            assert_eq!(values.len(), 48_000);
+            let direct = 144 + ((position - 1) as f64 * 0.35e-3 * 48_000.0).round() as usize;
+            assert!(values[direct].abs() > 0.8, "{role} position {position}");
+        }
+    }
+    let main = measure::sample::fallback_ir("L");
+    let sub = measure::sample::fallback_ir("SW4");
+    assert_eq!(main, measure::sample::fallback_ir("L"));
+    assert_eq!(sub, measure::sample::fallback_ir("SW4"));
+    let high_energy = |values: &[f32]| {
+        values
+            .windows(2)
+            .map(|pair| f64::from(pair[1] - pair[0]).powi(2))
+            .sum::<f64>()
+    };
+    assert!(high_energy(&sub) < high_energy(&main));
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn calibration(service: &Service) -> CalibrationSummary {
     let events = Arc::new(Events::default());
     let Response::Calibrate(job) = ok(

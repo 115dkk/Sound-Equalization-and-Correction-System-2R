@@ -40,6 +40,8 @@ pub enum Request {
     ProjectSave(ProjectSaveParams),
     /// The `ProjectInfo` Request variant.
     ProjectInfo,
+    /// The `SampleLoad` Request variant.
+    SampleLoad(SampleLoadParams),
     /// The `Calibrate` Request variant.
     Calibrate(CalibrateParams),
     /// The `RecommendXo` Request variant.
@@ -103,6 +105,8 @@ pub enum Response {
     ProjectSave(ProjectInfo),
     /// The `ProjectInfo` Response variant.
     ProjectInfo(ProjectInfo),
+    /// The `SampleLoad` Response variant.
+    SampleLoad(JobStarted),
     /// The `Calibrate` Response variant.
     Calibrate(JobStarted),
     /// The `RecommendXo` Response variant.
@@ -187,6 +191,15 @@ pub struct ProjectNewParams {
     pub preset: String,
     /// Number of subwoofers.
     pub sub_count: u8,
+    /// Whether to create the fixed 7.1.4 sample-room project.
+    pub sample: bool,
+}
+/// Inputs for loading embedded or synthetic sample measurements.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct SampleLoadParams {
+    /// Synthetic position count; absent loads the one-position embedded room.
+    pub positions: Option<u32>,
 }
 /// A project file path.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -260,6 +273,8 @@ pub enum JobKind {
     LevelCheck,
     /// Records all configured roles at one measurement position.
     Measure,
+    /// Loads embedded or deterministic synthetic sample measurements.
+    SampleLoad,
     /// Imports assigned measurements from a REW mdat file.
     MdatImport,
     /// Computes a calibration design from project measurements.
@@ -881,12 +896,14 @@ mod tests {
                 path: "x.secs".into(),
                 preset: "2.1".into(),
                 sub_count: 1,
+                sample: false,
             }),
             Request::ProjectOpen(ProjectPathParams {
                 path: "x.secs".into(),
             }),
             Request::ProjectSave(ProjectSaveParams::default()),
             Request::ProjectInfo,
+            Request::SampleLoad(SampleLoadParams::default()),
             Request::Calibrate(CalibrateParams::default()),
             Request::RecommendXo,
             Request::Mimo(MimoParams::default()),

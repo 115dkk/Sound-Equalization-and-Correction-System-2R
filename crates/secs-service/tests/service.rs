@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
-use std::collections::BTreeSet;
+#[path = "../examples/support/case_project.rs"]
+mod case_project;
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -8,15 +10,14 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
 use secs_service::{Deps, EventSink, NoEvents, Service, VERSION};
-use secs_types::ipc::{Envelope, ErrorCode, JobEvent, Request};
+use secs_types::ipc::{Envelope, ErrorCode, JobEvent, ProjectNewParams, Request};
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
-use secs_engine::Samples;
-use secs_project::{Band, MeasurementResult, Project, Speaker, SpeakerConfig};
+use secs_project::MeasurementResult;
 use secs_types::calibration::CalibrationSettings;
 use secs_types::ipc::{
     CalibrateParams, ExportKind, ExportParams, JobCancelParams, JobId, JobResult, JobStatus,
@@ -81,81 +82,40 @@ fn call_ok(service: &Service, request: Request, events: Arc<dyn EventSink>) -> R
     *response
 }
 
-fn write_case(root: &Path, name: &str) -> (PathBuf, CalibrationSettings) {
-    let case = secs_engine::test_support::replay_case(name);
-    let settings: CalibrationSettings = serde_json::from_value(case.settings).unwrap();
-    let roles: Vec<_> = case
-        .config
-        .mains
-        .iter()
-        .chain(&case.config.subs)
-        .cloned()
-        .collect();
-    let role_set: BTreeSet<_> = roles.iter().map(String::as_str).collect();
-    let speakers = roles
-        .iter()
-        .enumerate()
-        .map(|(index, role)| Speaker {
-            role: role.clone(),
-            size: if case.config.subs.contains(role) {
-                "sub"
-            } else {
-                "small"
-            }
-            .into(),
-            bands: vec![Band {
-                band: String::new(),
-                out: index as i64 + 1,
-                pol: "+".into(),
-            }],
-        })
-        .collect();
-    let path = root.join(format!("{name}.secs"));
-    let mut project = Project {
-        name: name.into(),
-        config: SpeakerConfig {
-            speakers,
-            device: String::new(),
-            preset: "custom".into(),
-            biamp_default: false,
-        },
-        target: case.config.target.clone(),
-        xo: case.config.xo.clone(),
-        ..Project::default()
-    };
-    secs_project::store_calibration(&mut project, &settings);
-    let mut store = secs_project::MeasurementStore::new(&path, project);
-    for (position, measurements) in case.measurements.positions {
-        store.start_position(i64::from(position));
-        for (role, measurement) in measurements {
-            if !role_set.contains(role.as_str()) {
-                continue;
-            }
-            let samples = match measurement.samples {
-                Samples::F32(samples) => samples.to_vec(),
-                Samples::F64(samples) => samples.iter().map(|&value| value as f32).collect(),
-            };
-            store
-                .record(
-                    MeasurementResult {
-                        role: role.clone(),
-                        pos: i64::from(position),
-                        ir: samples,
-                        sample_rate: measurement.sample_rate,
-                        t0_s: measurement.t0,
-                        spl_db: None,
-                        spl_offset_db: None,
-                        snr_db: None,
-                        uuid: Some(format!("{name}-{position}-{role}")),
-                        source: Some("oracle".into()),
-                    },
-                    Some(&roles),
-                )
-                .unwrap();
-        }
+#[test]
+fn new_projects_match_upstream_bytes() {
+    let root = temp_root("new-projects");
+    fs::create_dir_all(&root).unwrap();
+    for fixture in secs_oracle::Fixture::all("service_new", "") {
+        let inputs = fixture.inputs();
+        let path = root.join("project.secs");
+        let response = call_ok(
+            &service(),
+            Request::ProjectNew(ProjectNewParams {
+                path: path.to_string_lossy().into_owned(),
+                preset: inputs["preset"].as_str().unwrap().into(),
+                sub_count: inputs["sub_count"].as_u64().unwrap() as u8,
+                sample: inputs["sample"].as_bool().unwrap(),
+            }),
+            Arc::new(NoEvents),
+        );
+        assert!(
+            matches!(response, Response::ProjectNew(_)),
+            "{}",
+            fixture.id
+        );
+        assert_eq!(
+            fs::read(&path).unwrap(),
+            fixture.blob(&fixture.outputs()["project"]),
+            "{}",
+            fixture.id
+        );
     }
-    store.save().unwrap();
-    (path, settings)
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn write_case(root: &Path, name: &str) -> (PathBuf, CalibrationSettings) {
+    case_project::write(root, name)
 }
 
 fn open(service: &Service, path: &Path) {

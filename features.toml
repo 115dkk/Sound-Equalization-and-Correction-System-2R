@@ -639,6 +639,21 @@ upstream = "rewapi/fake.py sample_dolby_714.npz"
 note = "Native sweep through SimRoom; real sample has 14 roles at position 1 only, explicit injected rooms support multi-position tests."
 
 [[feature]]
+id = "measure.sample"
+kind = "measure"
+milestone = "M4"
+status = "implemented"
+tests = ["secs-service::sample_load_embedded_keeps_only_position_one", "secs-service::sample_load_synthetic_structure_and_determinism"]
+upstream = "wizard/step5_measure.py load_sample, rewapi/fake.py"
+
+[[feature]]
+id = "cli.commands"
+kind = "cli"
+milestone = "M4"
+status = "implemented"
+tests = ["secs2r-cli::bootstrap_and_check_are_json_lines", "secs2r-cli::deterministic_run_and_sample_flow", "secs2r-cli::errors_exit_one_and_quiet_omits_events"]
+
+[[feature]]
 id = "service.jobs"
 kind = "service"
 milestone = "M4"
@@ -758,6 +773,13 @@ kind = "ipc"
 milestone = "M4"
 status = "implemented"
 tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+
+[[feature]]
+id = "ipc.sample_load"
+kind = "ipc"
+milestone = "M4"
+status = "implemented"
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::sample_load_embedded_keeps_only_position_one", "secs-service::sample_load_synthetic_structure_and_determinism"]
 
 [[feature]]
 id = "ipc.project_open"

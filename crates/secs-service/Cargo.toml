@@ -30,3 +30,4 @@ toml.workspace = true
 [dev-dependencies]
 secs-engine = { path = "../secs-engine", features = ["test-support"] }
 secs-jos = { path = "../secs-jos" }
+secs-oracle = { path = "../secs-oracle" }

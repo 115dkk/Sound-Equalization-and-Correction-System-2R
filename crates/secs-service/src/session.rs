@@ -3,10 +3,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use secs_project::{MeasurementStore, Project, PyJson, SpeakerConfig, measured_positions};
+use secs_project::{DspProfile, MeasurementStore, Project, PyJson, measured_positions};
 use secs_types::ipc::{MigrationWarning, ProjectInfo};
 
-use crate::ServiceError;
+use crate::{ServiceError, UuidSource, lock};
 
 #[derive(Debug, Default)]
 pub(crate) struct Session {
@@ -29,17 +29,47 @@ impl Session {
         path: PathBuf,
         preset: &str,
         sub_count: u8,
+        sample: bool,
     ) -> Result<ProjectInfo, ServiceError> {
-        let mut project = Project {
-            name: path
-                .file_stem()
-                .and_then(|v| v.to_str())
-                .unwrap_or("프로젝트")
-                .to_owned(),
-            config: SpeakerConfig::from_preset(preset, "", false)?,
-            ..Project::default()
-        };
-        project.config.set_sub_count(i64::from(sub_count));
+        let selected_preset = if sample { "7.1.4" } else { preset };
+        let mut project = Project::from_preset(selected_preset)?;
+        project.name = path
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .unwrap_or("프로젝트")
+            .to_owned();
+        project.dsp = DspProfile::presets()
+            .remove("camilla")
+            .expect("the built-in CamillaDSP profile exists");
+        let requested_subs = if sample { 3 } else { sub_count };
+        if project.config.sub_count() != usize::from(requested_subs) {
+            project.config.set_sub_count(i64::from(requested_subs));
+        }
+        if sample {
+            let (subs, mut rest): (Vec<_>, Vec<_>) = project
+                .config
+                .speakers
+                .drain(..)
+                .partition(|speaker| speaker.role.starts_with("SW"));
+            let at = rest
+                .iter()
+                .position(|speaker| matches!(speaker.role.as_str(), "Ls" | "Lb" | "Tfl"))
+                .unwrap_or(rest.len());
+            rest.splice(at..at, subs);
+            project.config.speakers = rest;
+            project.config.renumber();
+            project.config.preset = "7.1.4".into();
+            project
+                .extra
+                .push(("array".into(), PyJson::Int("1".into())));
+        }
+        project.curtain = (20.0, 20_000.0);
+        if project.dsp.fir_taps_max > 0
+            && let PyJson::Object(settings) = &mut project.bc
+            && let Some((_, phase)) = settings.iter_mut().find(|(key, _)| key == "phase")
+        {
+            *phase = PyJson::Str("mixed".into());
+        }
         let mut store = MeasurementStore::new(&path, project);
         store.save()?;
         self.open = Some(OpenProject {
@@ -67,7 +97,11 @@ impl Session {
         self.info()
     }
 
-    pub fn save(&mut self, path: Option<PathBuf>) -> Result<ProjectInfo, ServiceError> {
+    pub fn save(
+        &mut self,
+        path: Option<PathBuf>,
+        uuid: &UuidSource,
+    ) -> Result<ProjectInfo, ServiceError> {
         let open = self.require_mut()?;
         if let Some(path) = path
             && path != open.path
@@ -79,7 +113,7 @@ impl Session {
             open.cached = None;
         }
         open.store.save()?;
-        write_side_mdat(open)?;
+        write_side_mdat(open, uuid)?;
         open.dirty = false;
         self.info()
     }
@@ -146,7 +180,7 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-fn write_side_mdat(open: &mut OpenProject) -> Result<(), ServiceError> {
+fn write_side_mdat(open: &mut OpenProject, uuid: &UuidSource) -> Result<(), ServiceError> {
     let records = open.store.records();
     let mut inputs = Vec::new();
     for record in records {
@@ -171,10 +205,13 @@ fn write_side_mdat(open: &mut OpenProject) -> Result<(), ServiceError> {
         }
         return Ok(());
     }
-    let uuids = (0..inputs.len())
-        .map(|_| random_uuid())
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| ServiceError::Project(error.to_string()))?;
+    let uuids = {
+        let mut uuid = lock(uuid);
+        (0..inputs.len())
+            .map(|_| uuid.as_mut()())
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|error| ServiceError::Project(error.to_string()))?
+    };
     let mut uuids = uuids.into_iter();
     // `secs_mdat::build` consumes exactly one UUID for each validated input.
     let bytes = secs_mdat::build(&inputs, secs_mdat::TEMPLATE, None, &mut || {
@@ -183,17 +220,6 @@ fn write_side_mdat(open: &mut OpenProject) -> Result<(), ServiceError> {
     .map_err(|error| ServiceError::Project(error.to_string()))?;
     atomic_replace(&destination, &bytes)?;
     Ok(())
-}
-
-fn random_uuid() -> Result<u128, getrandom::Error> {
-    let mut bytes = [0_u8; 16];
-    getrandom::fill(&mut bytes)?;
-    let mut value = u128::from_be_bytes(bytes);
-    value &= !(0xf_u128 << 76);
-    value |= 4_u128 << 76;
-    value &= !(0x3_u128 << 62);
-    value |= 0x2_u128 << 62;
-    Ok(value)
 }
 
 fn atomic_replace(destination: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
@@ -282,7 +308,7 @@ mod tests {
         let target = root.join("saved-as.secs");
         fs::create_dir_all(&root).unwrap();
         let mut session = Session::default();
-        let created = session.create(source.clone(), "2.1", 1).unwrap();
+        let created = session.create(source.clone(), "2.1", 1, false).unwrap();
         assert_eq!(created.path, source.to_string_lossy());
         assert_eq!(created.sub_count, 1);
 
@@ -318,7 +344,8 @@ mod tests {
                 .unwrap();
         }
         open.dirty = true;
-        let saved = session.save(Some(target.clone())).unwrap();
+        let uuid = crate::Deps::default().uuid;
+        let saved = session.save(Some(target.clone()), &uuid).unwrap();
         assert_eq!(saved.path, target.to_string_lossy());
         assert!(!saved.dirty);
         assert!(target.exists());
@@ -329,7 +356,7 @@ mod tests {
         assert_eq!(reopened.positions, vec![1]);
 
         session.require_mut().unwrap().store.clear_position(1);
-        session.save(None).unwrap();
+        session.save(None, &uuid).unwrap();
         assert!(!target.with_extension("mdat").exists());
         fs::remove_dir_all(root).unwrap();
     }
