@@ -68,6 +68,40 @@ pub fn measurement_signature(project: &Project) -> Vec<MeasurementSignatureEntry
     out
 }
 
+/// Median REW SPL offset in dB across every project measurement entry.
+pub fn project_spl_offset(project: &Project) -> Option<f64> {
+    let mut values: Vec<_> = project
+        .measurements
+        .array()
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(PyJson::object)
+        .filter_map(|record| {
+            record
+                .iter()
+                .find(|(key, _)| key == "spl_offset")
+                .and_then(|(_, value)| value.object())
+        })
+        .flat_map(|offsets| {
+            offsets.iter().filter_map(|(_, value)| match value {
+                PyJson::Float(value) => Some(*value),
+                PyJson::Int(value) => value.parse().ok(),
+                _ => None,
+            })
+        })
+        .collect();
+    if values.is_empty() {
+        return None;
+    }
+    values.sort_by(f64::total_cmp);
+    let middle = values.len() / 2;
+    Some(if values.len().is_multiple_of(2) {
+        (values[middle - 1] + values[middle]) / 2.0
+    } else {
+        values[middle]
+    })
+}
+
 pub fn target_key(project: &Project) -> Vec<(FloatKey, FloatKey)> {
     let mut points = project.target.points.clone();
     points.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
@@ -162,5 +196,36 @@ fn python_float(value: f64) -> String {
             }
         }
         text
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn project(values: &[f64]) -> Project {
+        Project {
+            measurements: PyJson::Array(
+                values
+                    .iter()
+                    .enumerate()
+                    .map(|(index, value)| {
+                        PyJson::Object(vec![(
+                            "spl_offset".into(),
+                            PyJson::Object(vec![(format!("R{index}"), PyJson::Float(*value))]),
+                        )])
+                    })
+                    .collect(),
+            ),
+            ..Project::default()
+        }
+    }
+
+    #[test]
+    fn project_spl_offset_matches_numpy_median() {
+        assert_eq!(project_spl_offset(&project(&[4.0])), Some(4.0));
+        assert_eq!(project_spl_offset(&project(&[8.0, 2.0])), Some(5.0));
+        assert_eq!(project_spl_offset(&project(&[8.0, 2.0, 4.0])), Some(4.0));
+        assert_eq!(project_spl_offset(&project(&[])), None);
     }
 }

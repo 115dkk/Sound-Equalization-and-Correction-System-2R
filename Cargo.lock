@@ -3592,13 +3592,20 @@ dependencies = [
 name = "secs-service"
 version = "0.11.0"
 dependencies = [
+ "getrandom 0.3.4",
  "secs-audio",
+ "secs-camilla",
+ "secs-compute",
+ "secs-engine",
+ "secs-export",
+ "secs-jos",
  "secs-mdat",
  "secs-project",
  "secs-rew",
  "secs-types",
  "serde",
  "serde_json",
+ "thiserror 2.0.21",
  "toml 1.1.8+spec-1.1.0",
 ]
 

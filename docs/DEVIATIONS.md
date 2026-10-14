@@ -23,7 +23,7 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 | D11 | BA 차분 진화의 변수 7개 가운데 올패스 4개가 쓰이지 않아 평가를 2.3배 낭비합니다. 고치면 난수 흐름이 바뀝니다. | 쓰이지 않는 변수를 뺍니다. | `calibration.py:567-576`, `correction_engine.py:738-747` | 계획 |
 | D12 | MIMO 위반 함수가 dB와 꼬리 에너지 비율을 섞어 경로 제거 순서를 정합니다. | 단위를 맞춘 위반 척도. 골든으로 영향을 먼저 잽니다. | `mimo_iir.py:413` | 보류 |
 | D13 | FIR MIMO 서포트(167 ms)에 공통 지연이 없어 표준 모드에서 쓸 수 있는 구간이 약 50 ms, 초고지연에서는 거의 없습니다. | 실험으로 확인한 뒤 공통 지연을 더합니다. | `export_camilladsp.py:142, 295-299` | 보류 |
-| D17 | 계산 취소가 결과만 버리고 계산 스레드는 계속 돕니다. 다시 누르면 계산이 겹치고, 다시 계산하면 MIMO 결과가 사라집니다. 프로세스 종료는 비공개 속성에 기댑니다. | 협조적 취소, 종류마다 잡 하나, 낡음 표시. | `wizard/step_calibration.py:1836-1846`, `mimo_iir.py:180-195` | 계획 |
+| D17 | 계산 취소가 결과만 버리고 계산 스레드는 계속 돕니다. 다시 누르면 계산이 겹치고, 다시 계산하면 MIMO 결과가 사라집니다. 프로세스 종료는 비공개 속성에 기댑니다. | 협조적 취소, 무리마다 잡 하나, 이전 결과 보존과 서명 기반 낡음 표시. `secs-service::{jobs_push_ordered_events_and_exclude_the_same_group,cancellation_finishes_within_one_second,cancelled_calibration_preserves_previous_results,room_dba_mimo_runs_and_becomes_stale_after_recalibration}`가 잡 경계, 취소, 이전 결과 보존, MIMO 낡음을 지킵니다. | `wizard/step_calibration.py:1836-1846`, `mimo_iir.py:180-195` | 적용 |
 | D22 | 엔진 값 15개 안팎을 환경 변수로만 바꿀 수 있고, 워커가 호출마다 다시 읽습니다. | 명시적 튜닝 값, 화면의 전문가 표시. | `correction_engine.py`, `mimo.py`, `mimo_iir.py` 머리 | 계획 |
 | D24 | mdat 내보내기의 시간 원점이 `final` 응답과 시프트만큼 어긋납니다. | 신호 사슬 값 하나에서 시뮬레이터와 내보내기가 같은 원점을 씁니다. | `calibration.py:1101, 1321` | 계획 |
 | D27 | 퇴화한 IR에서 `long_spectra`가 0으로 나눕니다. | 측정 모듈이 입력을 확인합니다. | `correction_engine.py:558-559` | 계획 |
@@ -67,4 +67,4 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 
 | 번호 | 업스트림 동작 | 바꾸는 동작 | 출처 | 상태 |
 |---|---|---|---|---|
-| S1 | 프로젝트를 열면 `.irs/calibration_cache.pkl`을 제한 없이 역직렬화합니다. 남이 보낸 프로젝트 폴더로 코드를 실행할 수 있습니다. | 버전 붙은 데이터 형식. 옛 피클 캐시는 읽지 않고 다시 계산합니다. | `calibration.py:1144-1187, 1226-1236` | 계획 |
+| S1 | 프로젝트를 열면 `.irs/calibration_cache.pkl`을 제한 없이 역직렬화합니다. 남이 보낸 프로젝트 폴더로 코드를 실행할 수 있습니다. | 8 MiB로 제한한 버전 2 JSON 데이터 캐시(`secs_run_cache.json`)를 원자 교체합니다. 옛 피클은 열지 않습니다. 캐시는 CamillaDSP에 필요한 사슬·실행 라벨·MIMO 경로를 보관하고, 스펙트럼이 필요한 mdat는 다시 연 프로젝트에서 취소 가능한 `design` 단계를 먼저 계산합니다. `secs-service::{round_trip_and_ignore_pickle,corrupt_and_oversized_files_are_ignored,unknown_cache_version_is_ignored,exports_after_reopening_match_pre_close_bytes}`가 지킵니다. | `calibration.py:1144-1187, 1226-1236` | 적용 |

@@ -8,9 +8,10 @@
 //! integrity job and the performance audits run them.
 
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
-use secs_service::Service;
+use secs_service::{Deps, NoEvents, Service};
 use secs_types::ipc::{Envelope, Request};
 
 #[derive(Debug, Parser)]
@@ -28,9 +29,9 @@ enum Action {
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let service = Service::new();
+    let service = Service::new(Deps::default());
     let envelope = match cli.action {
-        Action::Bootstrap => service.call(Request::Bootstrap),
+        Action::Bootstrap => service.call(Request::Bootstrap, Arc::new(NoEvents)),
     };
     match serde_json::to_string_pretty(&envelope) {
         Ok(text) => println!("{text}"),

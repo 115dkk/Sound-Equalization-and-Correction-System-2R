@@ -10,6 +10,7 @@
 //! (spectral) axis plus [`SignalChain::main_extra_ms`].
 
 use serde::{Deserialize, Serialize};
+use ts_rs::TS;
 
 /// One peaking band `(frequency Hz, Q, gain dB)`, upstream's PEQ tuple.
 pub type Peq = (f64, f64, f64);
@@ -17,7 +18,8 @@ pub type Peq = (f64, f64, f64);
 pub type Allpass = (f64, f64);
 
 /// Crossover filter family (upstream `BAND_TYPES`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum BandType {
     /// Linkwitz–Riley 12 dB/oct.
     #[serde(rename = "LR12")]
@@ -62,7 +64,8 @@ impl BandType {
 
 /// A main channel: input correction before bass management, then the main
 /// output path.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct MainChannel {
     /// Speaker role.
     pub role: String,
@@ -84,7 +87,8 @@ pub struct MainChannel {
 }
 
 /// A sub output fed by the sub bus.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct SubChannel {
     /// Speaker role.
     pub role: String,
@@ -112,7 +116,8 @@ pub struct SubChannel {
 }
 
 /// The whole designed DSP.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct SignalChain {
     /// Sample rate the coefficients are for (48 kHz).
     pub sample_rate: u32,
@@ -132,7 +137,8 @@ pub struct SignalChain {
 }
 
 /// What a MIMO support path filters with (upstream `mimo_paths`' filter slot).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub enum MimoFilter {
     /// IIR support (`mimo_iir.IirSupport`): gain, polarity, integer-sample
     /// delay, peaking bands and all-passes, then the path's LR4 high-pass at
@@ -158,7 +164,8 @@ pub enum MimoFilter {
 }
 
 /// One MIMO support path: input `input` also drives speaker `support`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct MimoPath {
     /// Input role (the channel whose raw signal the path copies).
     pub input: String,
@@ -175,7 +182,8 @@ pub struct MimoPath {
 }
 
 /// Every MIMO support path, in upstream order (input, then support).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
 pub struct MimoPaths {
     /// Isolation frequency in Hz (the IIR paths' LR4 low-pass).
     pub fsiso: f64,
