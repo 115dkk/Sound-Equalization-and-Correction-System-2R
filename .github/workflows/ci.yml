@@ -11,6 +11,9 @@ name: CI
 #             compiles and runs
 #   frontend  typecheck, unit tests and build of the screen, and the IPC
 #             bindings regenerated from secs-types must match the committed copy
+#   gallery   every gallery specimen in Chromium, light and dark, Korean and
+#             English and the tutorial accent: no page error, no text under
+#             the 13 px floor, one PNG per data-gallery-id kept as an artifact
 #   bundle    the installers of every OS built as on release day, kept as run
 #             artifacts so a pull request can be installed and tried
 #   docs      rustdoc with warnings denied
@@ -258,6 +261,42 @@ jobs:
             echo "::error::apps/secs2r/ui/src/ipc/bindings differs from what secs-types generates; run 'cargo test -p secs-types' and commit the result"
             exit 1
           fi
+
+  gallery:
+    name: screen gallery (Chromium screenshots)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/secs2r/ui
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/secs2r/ui/package-lock.json
+
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+
+      # The Chromium build that matches the pinned playwright in package.json.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build the app and the gallery
+        run: npm run build:gallery
+
+      - name: Screenshot every specimen
+        run: npm run gallery:shots
+
+      - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
+        with:
+          name: gallery-shots
+          path: apps/secs2r/ui/gallery-shots/
+          if-no-files-found: ignore
+          retention-days: 14
 
   bundle:
     name: installers (${{ matrix.name }})
