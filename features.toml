@@ -545,7 +545,30 @@ kind = "measure"
 milestone = "M4"
 status = "partial"
 tests = ["secs-audio::sim_round_trip_rates_lengths_latencies_and_relative_arrivals", "secs-audio::dolby_golden_ir_round_trip", "secs-audio::loopback_recovers_absolute_latency", "secs-audio::snr_matches_known_white_noise_within_one_db", "secs-audio::cancellation_during_position_returns_no_roles", "secs-audio::session_starts_input_before_output"]
-note = "new: platform-independent sweep/session/IR core and SimRoom; OS adapters and hardware probe follow in P24 (docs/adr/0005)"
+note = "new: sweep/session/IR core, simulated room and native OS adapters; maintainer hardware run remains (docs/adr/0005, docs/HARDWARE.md)"
+
+[[feature]]
+id = "sys.audio_backends"
+kind = "sys"
+milestone = "M4"
+status = "implemented"
+tests = ["secs-sys::default_backend_enumeration_is_recoverable", "secs-sys::shared_mode_rejects_more_channels_than_mix_format", "secs-sys::callback_native_sample_conversion"]
+note = "WASAPI on Windows; cpal on macOS and Linux. Auto policy is tested in secs-audio."
+
+[[feature]]
+id = "sys.os_probes"
+kind = "sys"
+milestone = "M4"
+status = "implemented"
+tests = ["secs-sys::memory_probe_reports_available_memory", "secs-sys::process_probe_contains_the_test_process"]
+
+[[feature]]
+id = "sys.hardware_probe"
+kind = "sys"
+milestone = "M4"
+status = "partial"
+tests = ["secs-sys::default_backend_enumeration_is_recoverable"]
+note = "the example builds and lists/probes without opening streams; maintainer hardware run remains (docs/HARDWARE.md)"
 
 [[feature]]
 id = "measure.level_check"
