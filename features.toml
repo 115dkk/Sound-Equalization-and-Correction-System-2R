@@ -586,6 +586,22 @@ status = "implemented"
 tests = ["secs-camilla::export_camilladsp_matches_oracle", "secs-camilla::invalid_values_write_nothing"]
 upstream = "calibration.py export_camilladsp"
 
+[[feature]]
+id = "export.camilla_mimo"
+kind = "export"
+milestone = "M3"
+status = "implemented"
+tests = ["secs-camilla::mimo_camilladsp_matches_four_oracles", "secs-camilla::empty_mimo_is_byte_identical_to_none", "secs-camilla::mimo_yaml_preserves_delay_filter_order_and_fir_shape", "secs-camilla::mimo_delay_is_filter_plus_support_alignment_plus_main_extra"]
+upstream = "calibration.py export_camilladsp; export_camilladsp.py mimo_paths"
+
+[[feature]]
+id = "export.mimo_mdat"
+kind = "export"
+milestone = "M3"
+status = "implemented"
+tests = ["secs-export::mimo_items_match_four_oracles"]
+upstream = "calibration.py stage_items, before_after_items"
+
 # ---- Screens (M5) ----
 
 [[feature]]
