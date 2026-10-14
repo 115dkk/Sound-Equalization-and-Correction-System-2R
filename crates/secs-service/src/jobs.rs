@@ -3,7 +3,8 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 
 use secs_compute::{CancelToken, Progress, ProgressSink};
 use secs_types::ipc::{
@@ -18,20 +19,25 @@ enum JobGroup {
     Device,
     Compute,
     Export,
+    StatusWatch,
 }
 fn group(kind: JobKind) -> JobGroup {
     match kind {
-        JobKind::LevelCheck | JobKind::Measure | JobKind::SampleLoad | JobKind::MdatImport => {
-            JobGroup::Device
-        }
+        JobKind::LevelCheck
+        | JobKind::Measure
+        | JobKind::SampleLoad
+        | JobKind::MdatImport
+        | JobKind::LevelMonitor => JobGroup::Device,
         JobKind::Calibrate | JobKind::RecommendXo | JobKind::Mimo => JobGroup::Compute,
         JobKind::Export => JobGroup::Export,
+        JobKind::StatusWatch => JobGroup::StatusWatch,
     }
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct JobRegistry {
     inner: Arc<Mutex<Inner>>,
+    changed: Arc<Condvar>,
     next_id: Arc<AtomicU64>,
 }
 #[derive(Debug, Default)]
@@ -50,6 +56,7 @@ impl Default for JobRegistry {
     fn default() -> Self {
         Self {
             inner: Arc::new(Mutex::new(Inner::default())),
+            changed: Arc::new(Condvar::new()),
             next_id: Arc::new(AtomicU64::new(1)),
         }
     }
@@ -105,6 +112,14 @@ impl JobContext {
             code: notice.code,
             params: notice.params,
         });
+    }
+
+    pub fn send(&self, event: JobEvent) {
+        self.events.send(event);
+    }
+
+    pub fn id(&self) -> JobId {
+        self.id
     }
 
     pub fn begin_commit(&self) -> Result<(), IpcError> {
@@ -241,6 +256,45 @@ impl JobRegistry {
             .collect()
     }
 
+    pub fn running_in_device_group(&self) -> bool {
+        lock(&self.inner)
+            .jobs
+            .iter()
+            .any(|job| job.group == JobGroup::Device && !job.snapshot.status.is_terminal())
+    }
+
+    pub fn cancel_all(&self) {
+        let mut inner = lock(&self.inner);
+        for job in &mut inner.jobs {
+            if !job.snapshot.status.is_terminal() && job.snapshot.cancellable {
+                job.snapshot.status = JobStatus::CancelRequested;
+                job.cancel.cancel();
+                job.measurement_cancel.cancel();
+            }
+        }
+    }
+
+    pub fn wait_for_device(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut inner = lock(&self.inner);
+        while inner
+            .jobs
+            .iter()
+            .any(|job| job.group == JobGroup::Device && !job.snapshot.status.is_terminal())
+        {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            let (next, wait) = self.changed.wait_timeout(inner, remaining).unwrap();
+            inner = next;
+            if wait.timed_out() {
+                return false;
+            }
+        }
+        true
+    }
+
     fn progress(&self, id: JobId, progress: JobProgress) {
         if let Some(job) = lock(&self.inner)
             .jobs
@@ -281,6 +335,7 @@ impl JobRegistry {
                 job.snapshot.error.clone(),
             )
         };
+        self.changed.notify_all();
         events.send(JobEvent::Finished {
             job: id,
             status,

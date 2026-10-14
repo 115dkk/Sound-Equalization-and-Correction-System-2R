@@ -240,6 +240,7 @@ fn test_level_monitor_subscribes_with_callback_url_and_unsubscribes_on_close() {
         rx.recv_timeout(Duration::from_secs(2)).unwrap(),
         Level {
             input_dbfs: -22.0,
+            peak_dbfs: -4.0,
             spl_db: None,
             clip: false
         }

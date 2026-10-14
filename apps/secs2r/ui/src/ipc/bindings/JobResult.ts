@@ -9,4 +9,4 @@ import type { XoRecommendation } from "./XoRecommendation";
 /**
  * The successful result produced by a job.
  */
-export type JobResult = { "kind": "calibration", "data": ResultsSummary } | { "kind": "xo", "data": XoRecommendation } | { "kind": "mimo", "data": MimoSummary } | { "kind": "export", "data": ExportResult } | { "kind": "level", "data": LevelResult } | { "kind": "measurement", "data": ProjectInfo } | { "kind": "mdat_import", "data": ProjectInfo };
+export type JobResult = { "kind": "calibration", "data": ResultsSummary } | { "kind": "xo", "data": XoRecommendation } | { "kind": "mimo", "data": MimoSummary } | { "kind": "export", "data": ExportResult } | { "kind": "level", "data": LevelResult } | { "kind": "measurement", "data": ProjectInfo } | { "kind": "mdat_import", "data": ProjectInfo } | { "kind": "stopped" };

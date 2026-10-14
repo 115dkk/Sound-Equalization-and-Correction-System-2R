@@ -29,6 +29,62 @@ impl NativeMeasurer {
     pub fn from_backend(backend: Box<dyn AudioBackend>, settings: MeasurementSettings) -> Self {
         Self { backend, settings }
     }
+
+    pub(crate) fn level_check_streaming(
+        &mut self,
+        plan: &MeasurementPlan,
+        role: &str,
+        seconds: f64,
+        cancel: &CancelToken,
+        on_level: &mut dyn FnMut(secs_audio::LevelReport),
+    ) -> Result<secs_audio::LevelReport, MeasureError> {
+        let (output, input) = self.level_io(plan, role)?;
+        Ok(secs_audio::level::level_check_streaming(
+            self.backend.as_ref(),
+            &output,
+            &input,
+            plan.sweep_level_db,
+            seconds,
+            &cancel.audio,
+            on_level,
+        )?)
+    }
+
+    fn level_io(
+        &self,
+        plan: &MeasurementPlan,
+        role: &str,
+    ) -> Result<(LevelOutput, LevelInput), MeasureError> {
+        if !plan.roles.iter().any(|candidate| candidate == role) {
+            return Err(MeasureError::Input("unknown measurement role".into()));
+        }
+        let audio = to_audio_plan(plan, &self.backend.enumerate()?, &self.settings)?;
+        let channel = audio
+            .roles
+            .iter()
+            .find(|candidate| candidate.role == role)
+            .ok_or_else(|| MeasureError::Input("unknown measurement role".into()))?
+            .channel;
+        Ok((
+            LevelOutput {
+                endpoint: audio.output,
+                channel,
+                sample_rate: audio.sample_rate,
+                signal: if role.to_ascii_uppercase().starts_with("SW") {
+                    LevelSignal::SubSine { frequency: 50.0 }
+                } else {
+                    LevelSignal::Pink
+                },
+                share: audio.share,
+            },
+            LevelInput {
+                endpoint: audio.input,
+                channel: audio.input_channel,
+                calibration: self.settings.calibration.clone(),
+                spl_reference: self.settings.spl_reference,
+            },
+        ))
+    }
 }
 impl Measurer for NativeMeasurer {
     fn devices(&mut self) -> Result<Vec<Device>, MeasureError> {
@@ -58,33 +114,7 @@ impl Measurer for NativeMeasurer {
         seconds: f64,
         cancel: &CancelToken,
     ) -> Result<secs_audio::LevelReport, MeasureError> {
-        if !plan.roles.iter().any(|r| r == role) {
-            return Err(MeasureError::Input("unknown measurement role".into()));
-        }
-        let p = to_audio_plan(plan, &self.backend.enumerate()?, &self.settings)?;
-        let channel = p
-            .roles
-            .iter()
-            .find(|r| r.role == role)
-            .ok_or_else(|| MeasureError::Input("unknown measurement role".into()))?
-            .channel;
-        let output = LevelOutput {
-            endpoint: p.output,
-            channel,
-            sample_rate: p.sample_rate,
-            signal: if role.to_ascii_uppercase().starts_with("SW") {
-                LevelSignal::SubSine { frequency: 50.0 }
-            } else {
-                LevelSignal::Pink
-            },
-            share: p.share,
-        };
-        let input = LevelInput {
-            endpoint: p.input,
-            channel: p.input_channel,
-            calibration: self.settings.calibration.clone(),
-            spl_reference: self.settings.spl_reference,
-        };
+        let (output, input) = self.level_io(plan, role)?;
         Ok(secs_audio::level::level_check_cancellable(
             self.backend.as_ref(),
             &output,

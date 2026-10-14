@@ -1118,7 +1118,7 @@ fn no_assembly_kernels_that_leave_avx_state_dirty() {
 }
 
 /// Files that may start other processes: the REW launcher only.
-const SUBPROCESS_ALLOWLIST: [&str; 1] = ["crates/secs-rew/src/launch.rs"];
+const SUBPROCESS_ALLOWLIST: [&str; 1] = ["crates/secs-sys/src/rew.rs"];
 
 fn contains_command_constructor(source: &str) -> bool {
     source.match_indices("Command").any(|(index, _)| {

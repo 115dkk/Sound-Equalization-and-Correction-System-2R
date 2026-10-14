@@ -75,6 +75,10 @@ impl Service {
         let uuid = self.deps.uuid.clone();
         let session_for_design = self.session.clone();
         let memory = self.deps.memory.available_bytes();
+        let mode_name = live
+            .map(|calibration| mode_name(calibration.settings.mode).to_owned())
+            .or_else(|| cached.map(|cache| cache.labels.mode.clone()))
+            .unwrap_or_else(|| "mixed".into());
         let mimo = live.and_then(|calibration| {
             state.mimo.as_ref().and_then(|result| {
                 let fresh = result.settings_key == calibration.settings.mimo_key()
@@ -96,13 +100,28 @@ impl Service {
                 })
             })
         });
+        let destination = if params.folder.is_empty() {
+            let base = self.resolved_export_base()?;
+            match params.kind {
+                ExportKind::CamillaDsp => crate::export_folder::camilladsp_folder(&base),
+                ExportKind::BeforeAfterMdat => crate::export_folder::before_after_folder(
+                    &base,
+                    mimo.is_some(),
+                    &mode_name,
+                    (self.deps.clock)(),
+                ),
+                ExportKind::StagedMdat => base,
+            }
+        } else {
+            Path::new(&params.folder).to_path_buf()
+        };
         drop(session);
         drop(state);
         self.jobs.start(JobKind::Export, events, move |job| {
             job.cancel()
                 .check()
                 .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
-            let folder = Path::new(&params.folder);
+            let folder = destination.as_path();
             let paths = match params.kind {
                 ExportKind::CamillaDsp => {
                     let (chain, labels, paths) =
@@ -203,17 +222,20 @@ fn labels(
     design: &secs_engine::Design,
 ) -> RunLabels {
     RunLabels {
-        mode: match settings.mode {
-            Mode::Zero => "zero",
-            Mode::Mixed => "mixed",
-            Mode::Linear => "linear",
-            Mode::Ultra => "ultra",
-        }
-        .into(),
+        mode: mode_name(settings.mode).into(),
         ultra_ms: settings.ultra_ms,
         latency_ms: design.chain.latency_ms,
         rc_hi_hz: design.rc_hi,
         mimo_max_supports: settings.mimo_max_supports.max(0) as usize,
+    }
+}
+
+fn mode_name(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Zero => "zero",
+        Mode::Mixed => "mixed",
+        Mode::Linear => "linear",
+        Mode::Ultra => "ultra",
     }
 }
 

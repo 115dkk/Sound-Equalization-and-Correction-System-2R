@@ -258,6 +258,25 @@ impl MockMeasurer {
         self.delay = delay;
         self
     }
+    pub(crate) fn level_check_streaming(
+        &mut self,
+        plan: &MeasurementPlan,
+        role: &str,
+        seconds: f64,
+        cancel: &CancelToken,
+        on_level: &mut dyn FnMut(secs_audio::LevelReport),
+    ) -> Result<secs_audio::LevelReport, MeasureError> {
+        let (mut native, plan, _) = self.native(plan, 1)?;
+        let mut next = std::time::Instant::now();
+        native.level_check_streaming(&plan, role, seconds, cancel, &mut |report| {
+            let wait = next.saturating_duration_since(std::time::Instant::now());
+            if !wait.is_zero() {
+                std::thread::sleep(wait);
+            }
+            on_level(report);
+            next += std::time::Duration::from_millis(100);
+        })
+    }
     fn native(
         &self,
         plan: &MeasurementPlan,

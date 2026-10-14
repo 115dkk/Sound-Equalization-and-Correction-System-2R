@@ -683,6 +683,35 @@ status = "implemented"
 tests = ["secs-service::project_session_create_open_save_and_save_as", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::stale_calibration_refuses_export_and_cache_survives_reopen"]
 
 [[feature]]
+id = "service.host"
+kind = "service"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::host_requests_forward_parameters_and_cancellation", "secs-service::null_host_reports_not_implemented"]
+
+[[feature]]
+id = "service.level_monitor"
+kind = "service"
+milestone = "M5"
+status = "partial"
+tests = ["secs-service::mock_monitor_emits_stores_excludes_and_stops", "secs-service::generic_cancel_ends_monitor"]
+note = "mock readings arrive about ten times a second and REW readings at its callback rate (about six) while a role plays; the native path reads real samples but sends them after the capture ends, and no path meters the idle mic before level_play. A streaming input session in secs-audio/secs-sys finishes it."
+
+[[feature]]
+id = "service.status_watch"
+kind = "service"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::watch_reports_transitions_deduplicates_and_pauses_for_device_jobs"]
+
+[[feature]]
+id = "service.export_folders"
+kind = "service"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::export_folder_defaults_with_and_without_project", "secs-service::stored_export_folder_survives_save_and_open"]
+
+[[feature]]
 id = "export.before_after_mdat"
 kind = "export"
 milestone = "M4"
@@ -920,3 +949,103 @@ kind = "ipc"
 milestone = "M4"
 status = "implemented"
 tests = ["secs-service::mdat_scan_and_import_match_direct_oracle_bytes"]
+
+# ---- Host and live service IPC (M5) ----
+
+[[feature]]
+id = "ipc.dialog_open_project"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::host_requests_forward_parameters_and_cancellation"]
+
+[[feature]]
+id = "ipc.dialog_save_project"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::host_requests_forward_parameters_and_cancellation"]
+
+[[feature]]
+id = "ipc.dialog_pick_mdat"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::host_requests_forward_parameters_and_cancellation"]
+
+[[feature]]
+id = "ipc.dialog_pick_folder"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::host_requests_forward_parameters_and_cancellation"]
+
+[[feature]]
+id = "ipc.dialog_save_file"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::host_requests_forward_parameters_and_cancellation"]
+
+[[feature]]
+id = "ipc.dialog_open_file"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::host_requests_forward_parameters_and_cancellation"]
+
+[[feature]]
+id = "ipc.open_folder"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::host_requests_forward_parameters_and_cancellation"]
+
+[[feature]]
+id = "ipc.level_monitor_start"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::mock_monitor_emits_stores_excludes_and_stops"]
+
+[[feature]]
+id = "ipc.level_monitor_stop"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::mock_monitor_emits_stores_excludes_and_stops"]
+
+[[feature]]
+id = "ipc.level_play"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::mock_monitor_emits_stores_excludes_and_stops"]
+
+[[feature]]
+id = "ipc.status_watch_start"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::watch_reports_transitions_deduplicates_and_pauses_for_device_jobs"]
+
+[[feature]]
+id = "ipc.status_watch_stop"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::watch_reports_transitions_deduplicates_and_pauses_for_device_jobs"]
+
+[[feature]]
+id = "ipc.export_folder_get"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::export_folder_defaults_with_and_without_project"]
+
+[[feature]]
+id = "ipc.export_folder_set"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::stored_export_folder_survives_save_and_open"]
