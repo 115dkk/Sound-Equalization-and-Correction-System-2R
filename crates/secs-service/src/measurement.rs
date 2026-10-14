@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use secs_project::{Project, PyJson};
 use secs_types::ipc::SampleLoadParams;
@@ -614,16 +613,7 @@ impl Service {
                 secs_audio::SharePreference::Auto,
             ));
         }
-        static TOKEN: AtomicU64 = AtomicU64::new(1);
-        let token = format!(
-            "{}-{}",
-            open.identity,
-            TOKEN.fetch_add(1, Ordering::Relaxed)
-        );
-        open.undo.push_back((token.clone(), removed));
-        if open.undo.len() > 16 {
-            open.undo.pop_front();
-        }
+        let token = session::push_position_undo(open, removed);
         open.dirty = false;
         Ok(UndoResult {
             token,
@@ -636,40 +626,54 @@ impl Service {
         let index = open
             .undo
             .iter()
-            .position(|(token, _)| *token == params.token)
+            .position(|entry| entry.token == params.token)
             .ok_or_else(|| {
                 IpcError::new(ErrorCode::InvalidRequest, "unknown or used undo token")
             })?;
-        let removed = open.undo[index].1.clone();
-        let before = open.store.project().measurements.clone();
-        let PyJson::Array(entries) = &mut open.store.project_mut().measurements else {
-            return Err(IpcError::new(
-                ErrorCode::InvalidRequest,
-                "measurement list changed",
-            ));
-        };
-        if removed
-            .iter()
-            .any(|(_, v)| entries.iter().any(|e| position_of(e) == position_of(v)))
-        {
-            return Err(IpcError::new(
-                ErrorCode::InvalidRequest,
-                "position was recorded again",
-            ));
-        }
-        for (index, entry) in removed {
-            entries.insert(index.min(entries.len()), entry);
-        }
-        if let Err(error) = open.store.save() {
-            open.store.project_mut().measurements = before;
-            return Err(measure_error(
-                error.into(),
-                "undo",
-                secs_audio::SharePreference::Auto,
-            ));
+        let payload = open.undo[index].payload.clone();
+        match payload {
+            session::UndoPayload::Position(removed) => {
+                let before = open.store.project().measurements.clone();
+                let PyJson::Array(entries) = &mut open.store.project_mut().measurements else {
+                    return Err(IpcError::new(
+                        ErrorCode::InvalidRequest,
+                        "measurement list changed",
+                    ));
+                };
+                if removed
+                    .iter()
+                    .any(|(_, v)| entries.iter().any(|e| position_of(e) == position_of(v)))
+                {
+                    return Err(IpcError::new(
+                        ErrorCode::InvalidRequest,
+                        "position was recorded again",
+                    ));
+                }
+                for (index, entry) in removed {
+                    entries.insert(index.min(entries.len()), entry);
+                }
+                if let Err(error) = open.store.save() {
+                    open.store.project_mut().measurements = before;
+                    return Err(measure_error(
+                        error.into(),
+                        "undo",
+                        secs_audio::SharePreference::Auto,
+                    ));
+                }
+                open.dirty = false;
+            }
+            session::UndoPayload::Measurements(measurements) => {
+                if !measurement_entries(open.store.project()).is_empty() {
+                    return Err(IpcError::new(
+                        ErrorCode::InvalidRequest,
+                        "measurements changed after destructive edit",
+                    ));
+                }
+                open.store.project_mut().measurements = measurements;
+                open.dirty = true;
+            }
         }
         open.undo.remove(index);
-        open.dirty = false;
         Ok(session::info(open))
     }
     pub(crate) fn rew_launch(&self) -> Result<RewStatusResult, IpcError> {
@@ -817,6 +821,13 @@ impl Service {
         })
     }
 }
+fn measurement_entries(project: &Project) -> &[PyJson] {
+    match &project.measurements {
+        PyJson::Array(entries) => entries,
+        _ => &[],
+    }
+}
+
 fn position_of(value: &PyJson) -> Option<i64> {
     match value.get("pos") {
         Some(PyJson::Int(v) | PyJson::Str(v)) => v.parse().ok(),

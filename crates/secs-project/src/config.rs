@@ -1,5 +1,6 @@
 use crate::ProjectError;
-use secs_types::role::{RoleKind, SUB_ROLES, role_group, role_kind, role_order};
+use secs_types::ipc::Notice;
+use secs_types::role::{ROLES, RoleKind, SUB_ROLES, role_group, role_kind, role_order};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -332,13 +333,117 @@ impl SpeakerConfig {
         for (out, band) in (1_i64..).zip(self.speakers.iter_mut().flat_map(|s| &mut s.bands)) {
             band.out = out;
         }
+        self.preset = "custom".into();
+    }
+    pub fn set_speaker(
+        &mut self,
+        index: usize,
+        role: Option<String>,
+        size: Option<String>,
+        band_index: Option<usize>,
+        out: Option<i64>,
+        pol: Option<String>,
+    ) -> Result<(), ProjectError> {
+        let speaker = self
+            .speakers
+            .get_mut(index)
+            .ok_or_else(|| ProjectError::Invalid("speaker index out of range".into()))?;
+        if let Some(role) = role {
+            let was_sub = role_kind(&speaker.role) == RoleKind::Sub;
+            let is_sub = role_kind(&role) == RoleKind::Sub;
+            speaker.role = role;
+            if is_sub && !was_sub {
+                let output = speaker.bands.first().map_or(1, |band| band.out);
+                speaker.size = "sub".into();
+                speaker.bands = default_bands(&speaker.role, output, false);
+            } else if was_sub && !is_sub {
+                for band in &mut speaker.bands {
+                    if band.band == "SUB" {
+                        band.band = "FULL".into();
+                    }
+                }
+                if speaker.size == "sub" {
+                    speaker.size = "small".into();
+                }
+            }
+        }
+        if let Some(size) = size {
+            speaker.size = size;
+        }
+        if out.is_some() || pol.is_some() {
+            let band_index = band_index.ok_or_else(|| {
+                ProjectError::Invalid("band index is required for band fields".into())
+            })?;
+            let band = speaker
+                .bands
+                .get_mut(band_index)
+                .ok_or_else(|| ProjectError::Invalid("band index out of range".into()))?;
+            if let Some(out) = out {
+                band.out = out;
+            }
+            if let Some(pol) = pol {
+                band.pol = pol;
+            }
+        } else if band_index.is_some() {
+            return Err(ProjectError::Invalid(
+                "band index without a band field".into(),
+            ));
+        }
+        self.preset = "custom".into();
+        Ok(())
+    }
+    pub fn add_speaker(&mut self) -> Result<(), ProjectError> {
+        let role = ROLES
+            .into_iter()
+            .find(|role| !self.speakers.iter().any(|speaker| speaker.role == *role))
+            .unwrap_or("custom");
+        self.speakers.push(Speaker {
+            role: role.into(),
+            size: if role_kind(role) == RoleKind::Sub {
+                "sub"
+            } else {
+                "small"
+            }
+            .into(),
+            bands: default_bands(role, self.next_free_out(), false),
+        });
+        self.preset = "custom".into();
+        Ok(())
+    }
+    pub fn remove_speaker(&mut self, index: usize) -> Result<(), ProjectError> {
+        if index >= self.speakers.len() {
+            return Err(ProjectError::Invalid("speaker index out of range".into()));
+        }
+        self.speakers.remove(index);
+        self.preset = "custom".into();
+        Ok(())
+    }
+    pub fn validation_notices(&self) -> Vec<Notice> {
+        self.validation_rows()
+            .into_iter()
+            .map(|row| Notice {
+                code: row.code.into(),
+                params: row.params,
+            })
+            .collect()
     }
     pub fn validate(&self) -> Vec<String> {
-        let mut msgs = vec![];
+        self.validation_rows()
+            .into_iter()
+            .map(|row| row.message)
+            .collect()
+    }
+
+    fn validation_rows(&self) -> Vec<ValidationRow> {
+        let mut rows = vec![];
         let mut roles = BTreeSet::new();
         for role in self.roles() {
             if !roles.insert(role) {
-                msgs.push(format!("역할 중복: {role}"));
+                rows.push(validation_row(
+                    "role_duplicate",
+                    [("role", role)],
+                    format!("역할 중복: {role}"),
+                ));
             }
         }
 
@@ -346,16 +451,30 @@ impl SpeakerConfig {
         for speaker in &self.speakers {
             for band in &speaker.bands {
                 if band.out < 1 {
-                    msgs.push(format!(
-                        "{}: 출력 채널 번호가 잘못되었습니다({}, 1 이상 정수)",
-                        speaker.role, band.out
+                    let out = band.out.to_string();
+                    rows.push(validation_row(
+                        "out_invalid",
+                        [("role", speaker.role.as_str()), ("out", out.as_str())],
+                        format!(
+                            "{}: 출력 채널 번호가 잘못되었습니다({}, 1 이상 정수)",
+                            speaker.role, band.out
+                        ),
                     ));
                     continue;
                 }
                 if let Some(first_role) = outs.get(&band.out) {
-                    msgs.push(format!(
-                        "출력 채널 중복: {} ({} ↔ {})",
-                        band.out, first_role, speaker.role
+                    let out = band.out.to_string();
+                    rows.push(validation_row(
+                        "out_duplicate",
+                        [
+                            ("out", out.as_str()),
+                            ("first_role", *first_role),
+                            ("role", speaker.role.as_str()),
+                        ],
+                        format!(
+                            "출력 채널 중복: {} ({} ↔ {})",
+                            band.out, first_role, speaker.role
+                        ),
                     ));
                 } else {
                     outs.insert(band.out, speaker.role.as_str());
@@ -371,44 +490,97 @@ impl SpeakerConfig {
                 .collect();
             for band in &speaker.bands {
                 if !["FULL", "LF", "MF", "HF", "SUB"].contains(&band.band.as_str()) {
-                    msgs.push(format!(
-                        "{}: 알 수 없는 대역 {}",
-                        speaker.role,
-                        python_repr(&band.band)
+                    rows.push(validation_row(
+                        "band_unknown",
+                        [
+                            ("role", speaker.role.as_str()),
+                            ("band", band.band.as_str()),
+                        ],
+                        format!(
+                            "{}: 알 수 없는 대역 {}",
+                            speaker.role,
+                            python_repr(&band.band)
+                        ),
                     ));
                 }
                 if !["+", "-"].contains(&band.pol.as_str()) {
-                    msgs.push(format!(
-                        "{}: 극성은 + 또는 - 여야 합니다({})",
-                        speaker.role,
-                        python_repr(&band.pol)
+                    rows.push(validation_row(
+                        "pol_invalid",
+                        [("role", speaker.role.as_str()), ("pol", band.pol.as_str())],
+                        format!(
+                            "{}: 극성은 + 또는 - 여야 합니다({})",
+                            speaker.role,
+                            python_repr(&band.pol)
+                        ),
                     ));
                 }
             }
+            let combination = names.join("/");
             if names.is_empty() {
-                msgs.push(format!("{}: 대역이 없습니다", speaker.role));
+                rows.push(validation_row(
+                    "bands_empty",
+                    [("role", speaker.role.as_str())],
+                    format!("{}: 대역이 없습니다", speaker.role),
+                ));
             } else if role_kind(&speaker.role) == RoleKind::Sub && names != ["SUB"] {
-                msgs.push(format!(
-                    "{}: 서브우퍼는 SUB 대역 하나만 가질 수 있습니다({})",
-                    speaker.role,
-                    names.join("/")
+                rows.push(validation_row(
+                    "sub_bands",
+                    [
+                        ("role", speaker.role.as_str()),
+                        ("bands", combination.as_str()),
+                    ],
+                    format!(
+                        "{}: 서브우퍼는 SUB 대역 하나만 가질 수 있습니다({combination})",
+                        speaker.role
+                    ),
                 ));
             } else if role_kind(&speaker.role) != RoleKind::Sub && names.contains(&"SUB") {
-                msgs.push(format!(
-                    "{}: 메인/탑/하이트 스피커에는 SUB 대역을 쓸 수 없습니다",
-                    speaker.role
+                rows.push(validation_row(
+                    "main_with_sub_band",
+                    [("role", speaker.role.as_str())],
+                    format!(
+                        "{}: 메인/탑/하이트 스피커에는 SUB 대역을 쓸 수 없습니다",
+                        speaker.role
+                    ),
                 ));
             } else if role_kind(&speaker.role) != RoleKind::Sub
                 && ![vec!["FULL"], vec!["LF", "HF"], vec!["LF", "MF", "HF"]].contains(&names)
             {
-                msgs.push(format!(
-                    "{}: 대역 조합 오류 {} (가능: FULL · LF/HF · LF/MF/HF)",
-                    speaker.role,
-                    names.join("/")
+                rows.push(validation_row(
+                    "band_combination",
+                    [
+                        ("role", speaker.role.as_str()),
+                        ("bands", combination.as_str()),
+                    ],
+                    format!(
+                        "{}: 대역 조합 오류 {combination} (가능: FULL · LF/HF · LF/MF/HF)",
+                        speaker.role
+                    ),
                 ));
             }
         }
-        msgs
+        rows
+    }
+}
+
+struct ValidationRow {
+    code: &'static str,
+    params: BTreeMap<String, String>,
+    message: String,
+}
+
+fn validation_row<const N: usize>(
+    code: &'static str,
+    params: [(&str, &str); N],
+    message: String,
+) -> ValidationRow {
+    ValidationRow {
+        code,
+        params: params
+            .into_iter()
+            .map(|(key, value)| (key.into(), value.into()))
+            .collect(),
+        message,
     }
 }
 

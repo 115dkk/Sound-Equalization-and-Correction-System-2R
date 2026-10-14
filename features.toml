@@ -920,3 +920,187 @@ kind = "ipc"
 milestone = "M4"
 status = "implemented"
 tests = ["secs-service::mdat_scan_and_import_match_direct_oracle_bytes"]
+
+[[feature]]
+id = "ipc.config_get"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::config_edit_methods_mark_dirty_and_emit_upstream_patch_sheet"]
+
+[[feature]]
+id = "ipc.config_apply_preset"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::destructive_config_and_layout_edits_require_confirmation_and_undo_once"]
+
+[[feature]]
+id = "ipc.config_set_sub_count"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::service_config_oracle_replays_values_and_saved_project_bytes"]
+
+[[feature]]
+id = "ipc.config_set_speaker"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::config_edit_methods_mark_dirty_and_emit_upstream_patch_sheet"]
+
+[[feature]]
+id = "ipc.config_add_speaker"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::config_edit_methods_mark_dirty_and_emit_upstream_patch_sheet"]
+
+[[feature]]
+id = "ipc.config_remove_speaker"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::config_edit_methods_mark_dirty_and_emit_upstream_patch_sheet"]
+
+[[feature]]
+id = "ipc.config_renumber"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::config_edit_methods_mark_dirty_and_emit_upstream_patch_sheet"]
+
+[[feature]]
+id = "ipc.config_validate"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-project::project_edge_contracts_match_oracle", "secs-service::service_config_oracle_replays_values_and_saved_project_bytes"]
+
+[[feature]]
+id = "ipc.patch_sheet_csv"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::service_config_oracle_replays_values_and_saved_project_bytes"]
+
+[[feature]]
+id = "ipc.dsp_get"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::project_edit_surface_round_trips_dsp_layout_target_and_calibration"]
+
+[[feature]]
+id = "ipc.dsp_set"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::service_config_oracle_replays_values_and_saved_project_bytes"]
+
+[[feature]]
+id = "ipc.layout_get"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::project_edit_surface_round_trips_dsp_layout_target_and_calibration"]
+
+[[feature]]
+id = "ipc.layout_set"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::service_config_oracle_replays_values_and_saved_project_bytes"]
+
+[[feature]]
+id = "ipc.position_estimate"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::service_config_oracle_replays_values_and_saved_project_bytes"]
+
+[[feature]]
+id = "ipc.target_get"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::project_edit_surface_round_trips_dsp_layout_target_and_calibration"]
+
+[[feature]]
+id = "ipc.target_set_points"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::service_config_oracle_replays_values_and_saved_project_bytes"]
+
+[[feature]]
+id = "ipc.target_apply_preset"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::service_config_oracle_replays_values_and_saved_project_bytes"]
+
+[[feature]]
+id = "ipc.target_save"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::project_edit_surface_round_trips_dsp_layout_target_and_calibration"]
+
+[[feature]]
+id = "ipc.target_load"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::custom_preset_is_empty_and_target_load_is_bounded"]
+
+[[feature]]
+id = "ipc.calibration_settings_get"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::project_edit_surface_round_trips_dsp_layout_target_and_calibration"]
+
+[[feature]]
+id = "ipc.calibration_settings_set"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::service_config_oracle_replays_values_and_saved_project_bytes"]
+
+[[feature]]
+id = "ipc.mode_spec"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::project_edit_surface_round_trips_dsp_layout_target_and_calibration"]
+
+[[feature]]
+id = "ipc.app_settings_get"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::app_settings_are_versioned_bounded_and_capped"]
+
+[[feature]]
+id = "ipc.app_settings_set"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::app_settings_are_versioned_bounded_and_capped"]
+
+[[feature]]
+id = "service.config_edit"
+kind = "service"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::service_config_oracle_replays_values_and_saved_project_bytes", "secs-service::destructive_config_and_layout_edits_require_confirmation_and_undo_once"]
+note = "project editors stay dirty until project_save; destructive configuration and arrangement changes require confirmation and issue project-local single-use undo tokens"
+
+[[feature]]
+id = "service.app_settings"
+kind = "service"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::app_settings_are_versioned_bounded_and_capped"]
+note = "versioned bounded data-only JSON, injected path or in-memory storage"

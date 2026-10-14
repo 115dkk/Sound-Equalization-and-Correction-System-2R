@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::calibration::CalibrationSettings;
+use crate::calibration::{CalibrationSettings, Mode};
 use crate::chain::{MimoPaths, SignalChain};
 
 /// A call from the screen.
@@ -76,6 +76,54 @@ pub enum Request {
     MdatScan(MdatScanParams),
     /// The `MdatImport` Request variant.
     MdatImport(MdatImportParams),
+    /// Returns the editable speaker configuration.
+    ConfigGet,
+    /// Replaces the speaker configuration with a built-in preset.
+    ConfigApplyPreset(ConfigPresetParams),
+    /// Changes the number of configured subwoofers.
+    ConfigSetSubCount(ConfigSubCountParams),
+    /// Changes one speaker or one of its bands.
+    ConfigSetSpeaker(ConfigSetSpeakerParams),
+    /// Adds the first unused upstream speaker role.
+    ConfigAddSpeaker,
+    /// Removes one configured speaker.
+    ConfigRemoveSpeaker(ConfigIndexParams),
+    /// Renumbers outputs in configuration order.
+    ConfigRenumber,
+    /// Returns structured configuration validation notices.
+    ConfigValidate,
+    /// Writes the upstream patch-sheet CSV.
+    PatchSheetCsv(PathParams),
+    /// Returns the editable DSP profile.
+    DspGet,
+    /// Applies a DSP preset or manual fields.
+    DspSet(DspSetParams),
+    /// Returns measurement arrangement and timing options.
+    LayoutGet,
+    /// Changes measurement arrangement or timing options.
+    LayoutSet(LayoutSetParams),
+    /// Returns the current per-position and total estimate.
+    PositionEstimate,
+    /// Returns the target curve and presets.
+    TargetGet,
+    /// Replaces target control points.
+    TargetSetPoints(TargetPointsParams),
+    /// Applies a built-in target preset.
+    TargetApplyPreset(TargetPresetParams),
+    /// Saves the target curve as upstream JSON.
+    TargetSave(PathParams),
+    /// Loads the target curve from upstream JSON.
+    TargetLoad(PathParams),
+    /// Returns calibration settings stored in the project.
+    CalibrationSettingsGet,
+    /// Stores calibration settings in the project.
+    CalibrationSettingsSet(CalibrationSettingsParams),
+    /// Returns numeric capabilities for one calibration mode.
+    ModeSpec(ModeSpecParams),
+    /// Returns application-local settings.
+    AppSettingsGet,
+    /// Stores application-local settings.
+    AppSettingsSet(AppSettingsParams),
 }
 
 impl Request {
@@ -141,6 +189,54 @@ pub enum Response {
     MdatScan(MdatScanResult),
     /// The `MdatImport` Response variant.
     MdatImport(JobStarted),
+    /// The `ConfigGet` Response variant.
+    ConfigGet(ConfigResult),
+    /// The `ConfigApplyPreset` Response variant.
+    ConfigApplyPreset(ConfigMutationResult),
+    /// The `ConfigSetSubCount` Response variant.
+    ConfigSetSubCount(ConfigMutationResult),
+    /// The `ConfigSetSpeaker` Response variant.
+    ConfigSetSpeaker(ConfigResult),
+    /// The `ConfigAddSpeaker` Response variant.
+    ConfigAddSpeaker(ConfigResult),
+    /// The `ConfigRemoveSpeaker` Response variant.
+    ConfigRemoveSpeaker(ConfigResult),
+    /// The `ConfigRenumber` Response variant.
+    ConfigRenumber(ConfigResult),
+    /// The `ConfigValidate` Response variant.
+    ConfigValidate(Vec<Notice>),
+    /// The `PatchSheetCsv` Response variant.
+    PatchSheetCsv(PathResult),
+    /// The `DspGet` Response variant.
+    DspGet(DspResult),
+    /// The `DspSet` Response variant.
+    DspSet(DspResult),
+    /// The `LayoutGet` Response variant.
+    LayoutGet(LayoutResult),
+    /// The `LayoutSet` Response variant.
+    LayoutSet(LayoutMutationResult),
+    /// The `PositionEstimate` Response variant.
+    PositionEstimate(PositionEstimateResult),
+    /// The `TargetGet` Response variant.
+    TargetGet(TargetResult),
+    /// The `TargetSetPoints` Response variant.
+    TargetSetPoints(TargetResult),
+    /// The `TargetApplyPreset` Response variant.
+    TargetApplyPreset(TargetResult),
+    /// The `TargetSave` Response variant.
+    TargetSave(PathResult),
+    /// The `TargetLoad` Response variant.
+    TargetLoad(TargetResult),
+    /// The `CalibrationSettingsGet` Response variant.
+    CalibrationSettingsGet(CalibrationSettings),
+    /// The `CalibrationSettingsSet` Response variant.
+    CalibrationSettingsSet(CalibrationSettings),
+    /// The `ModeSpec` Response variant.
+    ModeSpec(ModeSpecResult),
+    /// The `AppSettingsGet` Response variant.
+    AppSettingsGet(AppSettings),
+    /// The `AppSettingsSet` Response variant.
+    AppSettingsSet(AppSettings),
 }
 
 /// What the screen needs before it draws anything.
@@ -782,6 +878,358 @@ pub struct MdatImportParams {
     pub position: i64,
 }
 
+// Project editing request and response types.
+/// A filesystem path used by a project editor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PathParams {
+    /// File system path chosen by the user.
+    pub path: String,
+}
+/// A path written by an editor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PathResult {
+    /// File system path that was written.
+    pub path: String,
+}
+/// A preset change which may need measurement-clearing confirmation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigPresetParams {
+    /// Preset name (`2.0`, `2.1`, `2.2`, `5.1`, `7.1.4`, `9.1.6`, or `custom` for an empty layout).
+    pub preset: String,
+    /// Clears existing measurements; without it a project with measurements answers `confirm_required` (U5).
+    #[serde(default)]
+    pub confirm: bool,
+}
+/// A sub-count change which may need measurement-clearing confirmation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigSubCountParams {
+    /// Number of subwoofers, 0 to 8.
+    pub count: i64,
+    /// Clears existing measurements; without it a project with measurements answers `confirm_required` (U5).
+    #[serde(default)]
+    pub confirm: bool,
+}
+/// One speaker index.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigIndexParams {
+    /// Speaker index in `ConfigResult.speakers`.
+    pub index: usize,
+}
+/// Optional edits to one speaker or one of its bands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigSetSpeakerParams {
+    /// Speaker index in `ConfigResult.speakers`.
+    pub index: usize,
+    /// New role code; a sub role forces a single SUB band (`step2_config.py:988-1002`).
+    pub role: Option<String>,
+    /// New size: `small` (crossover applied) or `large` (full range).
+    pub size: Option<String>,
+    /// Band the output and polarity edits apply to; absent means the first band.
+    pub band_index: Option<usize>,
+    /// New measurement output channel (1-based).
+    pub out: Option<i64>,
+    /// New polarity: `+` normal or `-` inverted.
+    pub pol: Option<String>,
+}
+/// One configured output band.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigBand {
+    /// Band name: `FULL`, `LF`, `MF`, `HF` or `SUB`.
+    pub band: String,
+    /// Measurement output channel (1-based).
+    pub out: i64,
+    /// Polarity: `+` normal or `-` inverted.
+    pub pol: String,
+}
+/// One configured speaker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigSpeaker {
+    /// Role code (`L`, `C`, `SW1`, `Tfl`, ...).
+    pub role: String,
+    /// `small` (crossover applied) or `large` (full range); subs are `sub`.
+    pub size: String,
+    /// Bands in order; one band unless bi-amped.
+    pub bands: Vec<ConfigBand>,
+}
+/// One upstream speaker group in upstream order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigGroup {
+    /// Group key in upstream order: front, center, sub, surround, back, wide, top, height, other.
+    pub key: String,
+    /// Indices into `ConfigResult.speakers` that belong to this group.
+    pub speaker_indices: Vec<usize>,
+}
+/// Values derived from the complete speaker configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigSummary {
+    /// Number of speakers.
+    pub speaker_count: usize,
+    /// Number of measurement outputs in use.
+    pub outputs: Vec<i64>,
+    /// Highest output channel in use.
+    pub max_channel: i64,
+    /// Number of output channels used twice or more.
+    pub duplicate_outputs: Vec<i64>,
+    /// Number of subwoofers.
+    pub sub_count: usize,
+}
+/// Screen-facing editable speaker configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigResult {
+    /// Speakers in table order.
+    pub speakers: Vec<ConfigSpeaker>,
+    /// Preset name, or `custom` after any manual edit.
+    pub preset: String,
+    /// Measurement output device name (`config.device`).
+    pub device: String,
+    /// Table group header rows in upstream order.
+    pub groups: Vec<ConfigGroup>,
+    /// Counts the summary line shows.
+    pub summary: ConfigSummary,
+}
+/// Configuration after a destructive edit and its optional inverse token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigMutationResult {
+    /// The configuration after the edit.
+    pub config: ConfigResult,
+    /// Token for `undo` when the edit cleared measurements (U5).
+    pub undo_token: Option<String>,
+}
+/// The five manually editable DSP profile fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DspFields {
+    /// FIR taps per channel.
+    pub fir_taps: i64,
+    /// Total FIR taps the DSP can run across channels.
+    pub fir_budget: i64,
+    /// IIR (PEQ) bands per channel.
+    pub iir_bands: i64,
+    /// All-pass bands per channel.
+    pub allpass_bands: i64,
+    /// Bass-management path delays the DSP offers.
+    pub bm_path_delays: i64,
+}
+/// One DSP preset in the built-in table.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DspPreset {
+    /// Preset key (`camilla`, `tesira`, `qsys`, `minidsp`, `custom`).
+    pub key: String,
+    /// Device name shown in the device list.
+    pub name: String,
+    /// The preset's filter resources.
+    pub fields: DspFields,
+}
+/// A preset selection or a complete manual edit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct DspSetParams {
+    /// Selects a preset; absent with `fields` set means a manual edit.
+    pub preset: Option<String>,
+    /// Manual values; any manual edit makes the profile `custom`.
+    pub fields: Option<DspFields>,
+}
+/// Editable DSP state and derived resolution values.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DspResult {
+    /// Current profile key.
+    pub profile: String,
+    /// Current device name.
+    pub name: String,
+    /// Current filter resources.
+    pub fields: DspFields,
+    /// Every preset, for the device list.
+    pub presets: Vec<DspPreset>,
+    /// FIR window length the taps give, in ms (note line).
+    pub window_ms: f64,
+    /// Frequency resolution the taps give, in Hz (note line).
+    pub resolution_hz: f64,
+}
+/// Measurement timing-reference settings stored under `extra.devices`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LayoutTiming {
+    /// Timing reference: `acoustic`, `loopback` or `none`.
+    pub reference: String,
+    /// Reference speaker role for the acoustic reference (default `R`).
+    pub role: String,
+    /// Reference output channel for the loopback reference (1-based).
+    pub output: i64,
+}
+/// One measurement microphone point in centimetres.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LayoutPoint {
+    /// Position number; 1 is the listening position.
+    pub position: usize,
+    /// Left-right offset from the centre seat, in cm (`layout_map.py`).
+    pub x_cm: f64,
+    /// Front-back offset from the centre seat, in cm (`layout_map.py`).
+    pub y_cm: f64,
+    /// Height step: 0 at ear height, +1 or -1 for ±20 cm.
+    pub height: i8,
+}
+/// One supported measurement arrangement.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LayoutArrangement {
+    /// Number of positions: 1, 9, 13 or 17.
+    pub count: usize,
+    /// Microphone points of this arrangement.
+    pub points: Vec<LayoutPoint>,
+}
+/// Editable arrangement and measurement options.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LayoutResult {
+    /// Chosen arrangement (`extra['array']`).
+    pub count: usize,
+    /// Start delay before each position: `off`, `5`, `10` or `15` seconds.
+    pub start_delay: String,
+    /// Timing reference and its reference speaker or output.
+    pub timing: LayoutTiming,
+    /// Every arrangement with its geometry, for the cards and maps.
+    pub arrangements: Vec<LayoutArrangement>,
+}
+/// Optional arrangement and timing edits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct LayoutSetParams {
+    /// New arrangement; changing it clears measurements (U5).
+    pub count: Option<usize>,
+    /// New start delay.
+    pub start_delay: Option<String>,
+    /// New timing reference.
+    pub timing: Option<LayoutTiming>,
+    /// Clears existing measurements; without it a project with measurements answers `confirm_required` (U5).
+    #[serde(default)]
+    pub confirm: bool,
+}
+/// Arrangement after editing and its optional inverse token.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LayoutMutationResult {
+    /// The arrangement and options after the edit.
+    pub layout: LayoutResult,
+    /// Token for `undo` when the edit cleared measurements (U5).
+    pub undo_token: Option<String>,
+}
+/// Position-duration estimate from upstream step 4 semantics.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PositionEstimateResult {
+    /// Number of positions in the arrangement.
+    pub positions: usize,
+    /// Estimated time per position, in seconds (`step4_layout.position_seconds`).
+    pub per_position_seconds: f64,
+    /// Estimated time for every position, without moving the microphone, in seconds.
+    pub total_seconds: f64,
+}
+/// Target control points.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TargetPointsParams {
+    /// Target points as (Hz, dB); clamped to 10–24000 Hz and ±30 dB, at least two.
+    pub points: Vec<(f64, f64)>,
+}
+/// One built-in target preset selection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TargetPresetParams {
+    /// Target preset: `flat`, `harman` or `cinema`.
+    pub preset: String,
+}
+/// Target curve, selected preset, and built-in preset table.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TargetResult {
+    /// Target points as (Hz, dB).
+    pub points: Vec<(f64, f64)>,
+    /// Preset name, or absent when the points were edited (custom).
+    pub preset: Option<String>,
+    /// Preset names the target menu offers.
+    pub presets: Vec<(String, Vec<(f64, f64)>)>,
+}
+/// Complete calibration settings replacement.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CalibrationSettingsParams {
+    /// The complete calibration settings to store.
+    pub settings: CalibrationSettings,
+}
+/// Mode whose numeric specification should be returned.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ModeSpecParams {
+    /// Correction mode: `zero`, `mixed`, `linear` or `ultra`.
+    pub mode: Mode,
+    /// Latency limit for the ultra mode, in ms.
+    pub ultra_ms: Option<f64>,
+}
+/// Presentation-neutral values underlying the upstream mode specification line.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ModeSpecResult {
+    /// Room-correction filters: `iir` (IIR only) or `iir_fir` (IIR plus FIR).
+    pub rc_filter: String,
+    /// FIR taps the mode uses (0 without FIR).
+    pub fir_taps: usize,
+    /// PEQ bands per channel, when the mode uses IIR.
+    pub peq_bands: Option<usize>,
+    /// MIMO support filter kind (`iir` in every user mode).
+    pub mimo_filter: String,
+    /// Delay the FIR may add ahead of the main arrival (`lift_ms`), in ms.
+    pub lift_ms: f64,
+    /// Octave fraction of the excess-phase smoothing (6, or 24 in linear and ultra modes).
+    pub phase_frac: f64,
+    /// Upper latency bound of the mode, in ms.
+    pub max_latency_ms: f64,
+}
+/// Application-local settings, independent of an open project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AppSettings {
+    /// Screen language: `ko` or `en`.
+    pub language: String,
+    /// Shows expert-only settings (U9).
+    pub expert_display: bool,
+    /// Recently opened project paths, newest first (at most 10).
+    pub recent_projects: Vec<String>,
+    /// Last window size in logical pixels.
+    pub last_window_size: Option<(u32, u32)>,
+}
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            language: "ko".into(),
+            expert_display: false,
+            recent_projects: Vec::new(),
+            last_window_size: None,
+        }
+    }
+}
+/// Complete application-local settings replacement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AppSettingsParams {
+    /// The complete app settings to store.
+    pub settings: AppSettings,
+}
+
 /// Why a call failed. The screen maps each code to a written message with the
 /// cause and the next action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -822,6 +1270,8 @@ pub enum ErrorCode {
     RewFailed,
     /// A measurement setting or plan field is invalid.
     MeasurementInput,
+    /// A destructive edit needs explicit confirmation while measurements exist.
+    ConfirmRequired,
 }
 /// A coded IPC failure with template parameters and diagnostic detail.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -936,6 +1386,66 @@ mod tests {
                 path: "x.mdat".into(),
                 assignments: vec![],
                 position: 1,
+            }),
+            Request::ConfigGet,
+            Request::ConfigApplyPreset(ConfigPresetParams {
+                preset: "2.1".into(),
+                confirm: false,
+            }),
+            Request::ConfigSetSubCount(ConfigSubCountParams {
+                count: 2,
+                confirm: false,
+            }),
+            Request::ConfigSetSpeaker(ConfigSetSpeakerParams {
+                index: 0,
+                role: Some("L".into()),
+                size: None,
+                band_index: Some(0),
+                out: Some(1),
+                pol: Some("+".into()),
+            }),
+            Request::ConfigAddSpeaker,
+            Request::ConfigRemoveSpeaker(ConfigIndexParams { index: 0 }),
+            Request::ConfigRenumber,
+            Request::ConfigValidate,
+            Request::PatchSheetCsv(PathParams {
+                path: "patch.csv".into(),
+            }),
+            Request::DspGet,
+            Request::DspSet(DspSetParams {
+                preset: Some("tesira".into()),
+                fields: None,
+            }),
+            Request::LayoutGet,
+            Request::LayoutSet(LayoutSetParams {
+                count: Some(9),
+                ..Default::default()
+            }),
+            Request::PositionEstimate,
+            Request::TargetGet,
+            Request::TargetSetPoints(TargetPointsParams {
+                points: vec![(20.0, 0.0), (20_000.0, 0.0)],
+            }),
+            Request::TargetApplyPreset(TargetPresetParams {
+                preset: "flat".into(),
+            }),
+            Request::TargetSave(PathParams {
+                path: "target.json".into(),
+            }),
+            Request::TargetLoad(PathParams {
+                path: "target.json".into(),
+            }),
+            Request::CalibrationSettingsGet,
+            Request::CalibrationSettingsSet(CalibrationSettingsParams {
+                settings: CalibrationSettings::default(),
+            }),
+            Request::ModeSpec(ModeSpecParams {
+                mode: Mode::Mixed,
+                ultra_ms: None,
+            }),
+            Request::AppSettingsGet,
+            Request::AppSettingsSet(AppSettingsParams {
+                settings: AppSettings::default(),
             }),
         ]
     }
