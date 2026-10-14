@@ -186,7 +186,7 @@ jobs:
           exe=""
           if [ "$RUNNER_OS" = Windows ]; then exe=.exe; fi
           mkdir -p integrity
-          "$bin/examples/case_project$exe" room_dba integrity/case/project.secs
+          "$bin/examples/case_project$exe" --mimo-on room_dba integrity/case/project.secs
           for threads in 1 default 7; do
             if [ "$threads" = default ]; then unset RAYON_NUM_THREADS; else export RAYON_NUM_THREADS=$threads; fi
             rm -rf integrity/run
