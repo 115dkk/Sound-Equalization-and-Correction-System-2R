@@ -94,5 +94,20 @@ class Compare(unittest.TestCase):
             self.assertIn("no files", text)
 
 
+class Main(unittest.TestCase):
+    def test_korean_names_print_through_a_cp1252_stdout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            one, two = Path(tmp, "1"), Path(tmp, "2")
+            for root in (one, two):
+                write(root, "SECS 보정 설계.mdat", b"same")
+            raw = io.BytesIO()
+            stdout = io.TextIOWrapper(raw, encoding="cp1252")
+            with redirect_stdout(stdout):
+                code = integrity.main(["compare", str(one), str(two)])
+                stdout.flush()
+            self.assertEqual(code, 0)
+            self.assertIn("SECS 보정 설계.mdat", raw.getvalue().decode("utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()

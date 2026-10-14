@@ -73,7 +73,16 @@ def compare(reference: Path, others: list[Path]) -> int:
     return 1 if failed else 0
 
 
+def utf8_stdout() -> None:
+    """Export names are Korean; Windows runners default to cp1252 for stdout."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(encoding="utf-8", errors="replace")
+
+
 def main(argv: list[str] | None = None) -> int:
+    utf8_stdout()
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
     compare_parser = commands.add_parser("compare", help="compare folders byte for byte")
