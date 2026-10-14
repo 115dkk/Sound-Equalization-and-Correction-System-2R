@@ -109,6 +109,14 @@ status = "implemented"
 tests = ["secs-policy::no_assembly_kernels_that_leave_avx_state_dirty"]
 
 [[feature]]
+id = "policy.unique_target_names"
+kind = "policy"
+milestone = "M2"
+status = "implemented"
+tests = ["secs-policy::example_and_binary_names_are_unique"]
+note = "Cargo writes all examples and binaries of the workspace to one directory; duplicate names overwrite each other and broke the 0.7.3 Windows release link."
+
+[[feature]]
 id = "policy.subprocess_allowlist"
 kind = "policy"
 milestone = "M0"
@@ -441,9 +449,10 @@ note = "new: one signal-chain value read by the simulator and the CamillaDSP wri
 id = "engine.mimo_design"
 kind = "engine"
 milestone = "M3"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-engine::mimo_stage_boundary_goldens", "secs-engine::mimo_whole_path_goldens", "secs-engine::mimo_whole_path_inputs_match_recorded", "secs-engine::mimo_toeplitz_normal_equations_match_dense", "secs-engine::mimo_cholesky_matches_lu_on_golden_system", "secs-engine::mimo_ranges_and_upstream_behaviors", "secs-engine::mimo_cap_four_is_subset_of_six_candidates", "secs-engine::mimo_deterministic_threads"]
 upstream = "mimo.py"
+note = "Ideal FIR supports, ranges, ranking and guard (docs/MIMO.md, P14). Stage-boundary goldens on all nine cases; whole path asserted where BA matches (room_dba, room_filters, room_multi), reported on the room design (BA diverges, docs/ENGINE.md §3). The settings variants run on room only; their room_dba twins are a follow-up."
 
 [[feature]]
 id = "engine.mimo_iir"

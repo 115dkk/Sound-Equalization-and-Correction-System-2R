@@ -33,11 +33,11 @@ only the explicitly replaced rows and memory conclusions.
 
 ```sh
 export CARGO_INCREMENTAL=0 CARGO_TARGET_DIR=/home/user/wt/target-p13
-cargo run -p secs-engine --release --example perf -- stages dolby
-SECS_PERF_THREADS=1 cargo run -p secs-engine --release --example perf -- recommend room
+cargo run -p secs-engine --release --example engine_perf -- stages dolby
+SECS_PERF_THREADS=1 cargo run -p secs-engine --release --example engine_perf -- recommend room
 <oracle-venv>/bin/python oracle/bench_engine.py stages dolby --config shipped
 <oracle-venv>/bin/python oracle/bench_engine.py stages dolby --config one
-SECS_PERF_OUTPUT=<scratch>/exports cargo run -p secs-export --release --example perf -- camilla dolby
+SECS_PERF_OUTPUT=<scratch>/exports cargo run -p secs-export --release --example export_perf -- camilla dolby
 # Same export example: mdat_staged, mdat_before_after, profile_camilla.
 # Engine operations: design, stages, prepare, recommend, fit_rc1, fit_rc2,
 # fit_bus, fit_xo, cache, preview, sub_combine, profile_fit, profile_sub.
@@ -45,7 +45,7 @@ SECS_PERF_OUTPUT=<scratch>/exports cargo run -p secs-export --release --example 
 SECS_PERF_GD_INPUT=<scratch>/gd.bin <oracle-venv>/bin/python oracle/bench_engine.py record_gd dolby --config one
 # With the same SECS_PERF_GD_INPUT, run gd in both implementations.
 SECS_PERF_FIT_INPUTS=<scratch>/fit.bin <oracle-venv>/bin/python oracle/bench_engine.py fit_bus room --config one
-SECS_PERF_FIT_INPUTS=<scratch>/fit.bin SECS_PERF_THREADS=1 cargo run -p secs-engine --release --example perf -- fit_bus room
+SECS_PERF_FIT_INPUTS=<scratch>/fit.bin SECS_PERF_THREADS=1 cargo run -p secs-engine --release --example engine_perf -- fit_bus room
 # Short comparisons: repeat Python --runs 31 / Rust SECS_PERF_RUNS=31 twice, in that order.
 # Memory: use the built binary, never include cargo in the measured process tree.
 /usr/bin/time -v python3 oracle/peak_memory.py -- <oracle-venv>/bin/python oracle/bench_engine.py recommend dolby --config shipped --memory-once

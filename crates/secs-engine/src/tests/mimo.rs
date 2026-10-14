@@ -1,7 +1,7 @@
 use super::{cases, design};
 use crate::{
     MimoDesign, MimoRequest, Note,
-    mimo::design::{convolve, design_input, design_mimo_traced, normal_equations},
+    mimo::design::{InputResult, convolve, design_input, design_mimo_traced, normal_equations},
 };
 use secs_compute::{CancelToken, Context, MemoryBudget, NoProgress};
 use secs_oracle::{Fixture, number, oracle_libm};
@@ -240,10 +240,30 @@ fn compare_input(
         }
     } else {
         eprintln!(
-            "MIMO_OFFLIBM {name} candidates={:?}, reference={}",
-            trace.candidates, expected["candidates"]
+            "MIMO_OFFLIBM {name} candidates={:?}, reference={}; ranking={:?}, reference={}",
+            trace.candidates,
+            expected["candidates"],
+            trace.ranking.iter().map(|(r, _)| r).collect::<Vec<_>>(),
+            expected["ranking"]["order"]
         );
     }
+    consensus(
+        &format!("{name}/support_roles"),
+        serde_json::json!(result.supports.iter().map(|(r, _)| r).collect::<Vec<_>>()),
+        outputs
+            .iter()
+            .map(|o| {
+                serde_json::json!(
+                    o["supports"][role]
+                        .as_object()
+                        .unwrap()
+                        .keys()
+                        .collect::<Vec<_>>()
+                )
+            })
+            .collect(),
+    );
+    assert_eq!(trace.trajectory.len(), 19, "{name}/lambda steps");
     for (j, taps) in &result.supports {
         let all: Option<Vec<_>> = runs
             .iter()
@@ -297,15 +317,25 @@ fn compare_input(
             false,
         );
     }
+    // Bisection steps are comparable only while every run is at the same
+    // midpoint: once a ratio lands on the other side of the target in some
+    // run, later midpoints differ and their acceptance and ratio describe
+    // different λ. From the first differing midpoint on, the steps are
+    // reported, and the final λ and ratio (above) carry the judgement.
+    let mut same_path = true;
     for (k, step) in trace.trajectory.iter().enumerate() {
-        consensus(
-            &format!("{name}/lambda{k}/mid"),
-            serde_json::json!(step.mid),
-            outputs
-                .iter()
-                .map(|o| o["inputs"][role]["trajectory"][k]["mid"].clone())
-                .collect(),
-        );
+        let mids: Vec<Value> = outputs
+            .iter()
+            .map(|o| o["inputs"][role]["trajectory"][k]["mid"].clone())
+            .collect();
+        same_path &= mids.iter().all(|m| m == &serde_json::json!(step.mid));
+        if !same_path {
+            eprintln!(
+                "MIMO_LAMBDA_DIVERGED {name}/lambda{k}: Rust mid={} accepted={} ratio={:e}; runs mid={mids:?}",
+                step.mid, step.accepted, step.ratio
+            );
+            continue;
+        }
         consensus(
             &format!("{name}/lambda{k}/accepted"),
             serde_json::json!(step.accepted),
@@ -404,6 +434,163 @@ fn mimo_stage_boundary_goldens() {
             compare_input(case, role, &result, &runs, &mut stats);
         }
         stats.finish(case);
+    }
+}
+
+/// BA's differential evolution diverges on `room` even on the oracle libm,
+/// and on any case off it (docs/ENGINE.md §3; the M2 tests use the same
+/// rule). Everything downstream of BA, including MIMO's inputs and results on
+/// the Rust path, is then a different valid design: reported, not asserted.
+/// The stage-boundary tests, which feed recorded inputs, stay asserted.
+fn ba_diverges(base: &str) -> bool {
+    base == "room" || !oracle_libm()
+}
+
+#[test]
+fn mimo_whole_path_goldens() {
+    // Replay only the preceding engine's optimizer decisions. MIMO receives
+    // Rust spectra, chain responses and alignment, never recorded low-rate data.
+    for base in ["room", "room_dba", "room_filters", "room_multi"] {
+        let case = cases::load(base);
+        let mut d = design::replay(base);
+        for name in CASES.into_iter().filter(|name| {
+            *name == base
+                || (base == "room" && !["room_dba", "room_filters", "room_multi"].contains(name))
+        }) {
+            let fx = Fixture::load("engine_mimo", name);
+            let req = request(&fx);
+            if let Some(positions) = fx.inputs()["settings"]["positions"].as_array() {
+                // Upstream's positions override is represented by the design's
+                // position selection; this note-only case is last for room.
+                d.spectra.positions = positions
+                    .iter()
+                    .map(|p| p.as_u64().unwrap() as u32)
+                    .collect();
+            }
+            let ctx = Context::serial();
+            let public =
+                crate::design_mimo(&d, &case.measurements, &case.config, &req, &ctx).unwrap();
+            let (traced, traces) =
+                design_mimo_traced(&d, &case.measurements, &case.config, &req, &ctx).unwrap();
+            assert_eq!(public, traced, "{name}/public and traced entry points");
+            let runs: Vec<_> = LABELS
+                .iter()
+                .map(|label| Fixture::load("engine_mimo", &format!("{name}_{label}")))
+                .collect();
+            let reference = runs[0].outputs();
+            assert_eq!(public.fs_low, 600.0, "{name}/sample rate");
+            let ranges: Vec<_> = public
+                .ranges
+                .iter()
+                .map(|(r, band)| {
+                    (
+                        r,
+                        band.map(|(lo, hi)| {
+                            (
+                                (lo * 10.0).round_ties_even() / 10.0,
+                                (hi * 10.0).round_ties_even() / 10.0,
+                            )
+                        }),
+                    )
+                })
+                .collect();
+            assert_eq!(
+                serde_json::json!(ranges),
+                reference["ranges"],
+                "{name}/ranges"
+            );
+            if ba_diverges(base) {
+                for (role, level_db) in &public.level_db {
+                    eprintln!(
+                        "MIMO_BA_DIVERGED whole/{name}/{role}: level_db Rust={level_db:.6} reference={:.6}",
+                        number(&reference["level_db"][role])
+                    );
+                }
+                continue;
+            }
+            let notes: Vec<_> = public
+                .notes
+                .iter()
+                .map(|n| match n {
+                    Note::Mimo(text) => text,
+                    other => panic!("unexpected MIMO note: {other:?}"),
+                })
+                .collect();
+            consensus(
+                &format!("{name}/notes"),
+                serde_json::json!(notes),
+                runs.iter().map(|r| r.outputs()["notes"].clone()).collect(),
+            );
+            let expected_roles: Vec<_> = reference["inputs"].as_object().unwrap().keys().collect();
+            assert_eq!(
+                public.supports.iter().map(|(r, _)| r).collect::<Vec<_>>(),
+                expected_roles
+            );
+            assert_eq!(
+                public.level_db.iter().map(|(r, _)| r).collect::<Vec<_>>(),
+                expected_roles
+            );
+            assert_eq!(
+                traces.iter().map(|(r, _)| r).collect::<Vec<_>>(),
+                expected_roles
+            );
+            let mut stats = Statistics::default();
+            for (((role, supports), (_, level_db)), (_, trace)) in
+                public.supports.into_iter().zip(public.level_db).zip(traces)
+            {
+                compare_input(
+                    &format!("whole/{name}"),
+                    &role,
+                    &InputResult {
+                        supports,
+                        level_db,
+                        trace,
+                    },
+                    &runs,
+                    &mut stats,
+                );
+            }
+            stats.finish(&format!("whole/{name}"));
+        }
+    }
+}
+
+#[test]
+fn mimo_cap_four_is_subset_of_six_candidates() {
+    let case = cases::load("room_dba");
+    let d = design::replay("room_dba");
+    let ctx = Context::serial();
+    let uncapped = crate::design_mimo(
+        &d,
+        &case.measurements,
+        &case.config,
+        &MimoRequest::default(),
+        &ctx,
+    )
+    .unwrap();
+    let capped = crate::design_mimo(
+        &d,
+        &case.measurements,
+        &case.config,
+        &MimoRequest {
+            max_supports: Some(4),
+            ..MimoRequest::default()
+        },
+        &ctx,
+    )
+    .unwrap();
+    assert_eq!(uncapped.supports.len(), d.mains.len());
+    assert_eq!(capped.supports.len(), uncapped.supports.len());
+    for ((role, all), (selected_role, selected)) in uncapped.supports.iter().zip(&capped.supports) {
+        assert_eq!(role, selected_role);
+        assert_eq!(all.len(), 6, "{role}/uncapped supports");
+        assert_eq!(selected.len(), 4, "{role}/capped supports");
+        assert!(
+            selected
+                .iter()
+                .all(|(r, _)| all.iter().any(|(a, _)| a == r)),
+            "{role}/subset"
+        );
     }
 }
 
@@ -613,4 +800,118 @@ fn mimo_deterministic_threads() {
             assert!(a.iter().zip(b).all(|(a, b)| a.to_bits() == b.to_bits()));
         }
     }
+}
+
+#[test]
+fn mimo_whole_path_inputs_match_recorded() {
+    let mut failures = Vec::new();
+    for base in ["room", "room_dba", "room_filters", "room_multi"] {
+        let case = cases::load(base);
+        let mut d = design::replay(base);
+        let spectra = crate::export_view(&d, &case.measurements, &case.config)
+            .unwrap()
+            .spectra;
+        let prepared = crate::measurement::prepare(
+            &case.measurements,
+            &case.config,
+            &crate::setup::Setup::new(&case.config),
+        )
+        .unwrap();
+        for name in CASES.into_iter().filter(|name| {
+            *name == base
+                || (base == "room" && !["room_dba", "room_filters", "room_multi"].contains(name))
+        }) {
+            let fx = Fixture::load("engine_mimo", name);
+            let stage = &fx.inputs()["stage"];
+            if let Some(positions) = fx.inputs()["settings"]["positions"].as_array() {
+                d.spectra.positions = positions
+                    .iter()
+                    .map(|p| p.as_u64().unwrap() as u32)
+                    .collect();
+            }
+            let m = crate::design_mimo(
+                &d,
+                &case.measurements,
+                &case.config,
+                &request(&fx),
+                &Context::serial(),
+            )
+            .unwrap();
+            if d.spectra.positions.len() < 3 {
+                assert!(stage.is_null(), "{name}/note-only stage");
+                assert!(m.ranges.is_empty() && m.supports.is_empty());
+                continue;
+            }
+            assert_eq!(serde_json::json!(d.spectra.positions), stage["positions"]);
+            let mut compare = |label: &str, got: &[f64], recorded: &Value| {
+                let expected = fx.f64s(recorded);
+                assert_eq!(got.len(), expected.len(), "{name}/{label}");
+                let norm = expected.iter().map(|v| v * v).sum::<f64>().sqrt();
+                let error = got
+                    .iter()
+                    .zip(&expected)
+                    .map(|(a, b)| (a - b) * (a - b))
+                    .sum::<f64>()
+                    .sqrt();
+                let relative = error / norm.max(f64::MIN_POSITIVE);
+                eprintln!("MEASURE MIMO_INPUT {name}/{label} relative={relative:.12e}");
+                if !relative.is_finite() || relative > 1e-9 {
+                    if !ba_diverges(base) {
+                        failures.push(format!("{name}/{label}: relative={relative:.12e} > 1e-9"));
+                    } else {
+                        eprintln!("MIMO_BA_DIVERGED {name}/{label} relative={relative:.12e}");
+                    }
+                }
+            };
+            assert_eq!(stage["inputs"].as_object().unwrap().len(), d.mains.len());
+            for main in &d.mains {
+                let direct =
+                    secs_dsp::lowrate::to_low(&main.response, crate::grid::design_freqs(), 720)
+                        .unwrap();
+                compare(
+                    &format!("{}/direct", main.role),
+                    &direct,
+                    &stage["inputs"][&main.role]["direct"],
+                );
+                assert_eq!(
+                    stage["inputs"][&main.role]["xs"].as_array().unwrap().len(),
+                    d.spectra.positions.len()
+                );
+            }
+            for (i, &p) in d.spectra.positions.iter().enumerate() {
+                for main in &d.mains {
+                    let response = crate::input_response(&d, &main.role, &spectra, p).unwrap();
+                    let x = secs_dsp::lowrate::to_low(&response, crate::grid::design_freqs(), 720)
+                        .unwrap();
+                    compare(
+                        &format!("{}/xs/{p}", main.role),
+                        &x,
+                        &stage["inputs"][&main.role]["xs"][i],
+                    );
+                }
+                for (role, recorded) in stage["paths"].as_object().unwrap() {
+                    assert_eq!(
+                        recorded.as_array().unwrap().len(),
+                        d.spectra.positions.len()
+                    );
+                    let response = crate::mimo::design::support_path(
+                        &m,
+                        role,
+                        &spectra,
+                        p,
+                        &prepared.align_delay_ms,
+                    )
+                    .unwrap();
+                    let path =
+                        secs_dsp::lowrate::to_low(&response, crate::grid::design_freqs(), 720)
+                            .unwrap();
+                    compare(&format!("{role}/path/{p}"), &path, &recorded[i]);
+                }
+            }
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "MIMO reference inputs differ: {failures:#?}"
+    );
 }
