@@ -19,7 +19,7 @@ role: string | null,
 /**
  * Guessed one-based measurement position.
  */
-position: bigint, 
+position: number, 
 /**
  * Low-band classifier result, absent when no IR is available.
  */

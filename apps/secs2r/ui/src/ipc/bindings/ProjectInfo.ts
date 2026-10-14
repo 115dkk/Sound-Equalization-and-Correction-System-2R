@@ -24,7 +24,7 @@ sub_count: number,
 /**
  * Measured position numbers.
  */
-positions: Array<bigint>, 
+positions: Array<number>, 
 /**
  * Whether the in-memory project has unsaved changes.
  */

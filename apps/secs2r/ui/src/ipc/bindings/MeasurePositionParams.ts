@@ -7,4 +7,4 @@ export type MeasurePositionParams = {
 /**
  * One-based measurement position number.
  */
-position: bigint, };
+position: number, };

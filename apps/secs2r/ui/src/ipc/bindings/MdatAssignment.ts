@@ -19,4 +19,4 @@ index: number | null,
 /**
  * Optional per-row position overriding the import destination.
  */
-position: bigint | null, };
+position: number | null, };

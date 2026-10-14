@@ -11,15 +11,15 @@ speaker_count: number,
 /**
  * Number of measurement outputs in use.
  */
-outputs: Array<bigint>, 
+outputs: Array<number>, 
 /**
  * Highest output channel in use.
  */
-max_channel: bigint, 
+max_channel: number, 
 /**
  * Number of output channels used twice or more.
  */
-duplicate_outputs: Array<bigint>, 
+duplicate_outputs: Array<number>, 
 /**
  * Number of subwoofers.
  */

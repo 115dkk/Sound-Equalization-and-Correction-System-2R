@@ -38,7 +38,7 @@ export const projectInfo: ProjectInfo = {
   name: "거실 7.1.4",
   preset: "7.1.4",
   sub_count: 2,
-  positions: [1n, 2n, 3n],
+  positions: [1, 2, 3],
   dirty: true,
   migration_warnings: [],
 };
@@ -64,7 +64,7 @@ export const measureMethods: MeasureMethodsResult = {
   ],
   native_error: null,
   rew: rewStatus,
-  mock_positions: [1n, 2n, 3n, 4n, 5n, 6n, 7n, 8n, 9n],
+  mock_positions: [1, 2, 3, 4, 5, 6, 7, 8, 9],
   mock_roles: [...SAMPLE_ROLES],
 };
 

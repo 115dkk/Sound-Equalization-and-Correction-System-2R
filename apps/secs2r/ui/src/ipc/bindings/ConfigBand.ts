@@ -11,7 +11,7 @@ band: string,
 /**
  * Measurement output channel (1-based).
  */
-out: bigint, 
+out: number, 
 /**
  * Polarity: `+` normal or `-` inverted.
  */

@@ -23,7 +23,7 @@ band_index: number | null,
 /**
  * New measurement output channel (1-based).
  */
-out: bigint | null, 
+out: number | null, 
 /**
  * New polarity: `+` normal or `-` inverted.
  */

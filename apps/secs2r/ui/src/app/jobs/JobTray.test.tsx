@@ -63,7 +63,7 @@ describe("job tray", () => {
     setup();
     mock.failJobs("measure", "rew_unreachable", "connection refused (os error 10061)");
     await act(async () => {
-      await mock.request({ method: "measure_position", params: { position: 4n } });
+      await mock.request({ method: "measure_position", params: { position: 4 } });
     });
     act(() => mock.drain());
     const toggle = screen.getByRole("button", { name: /기록/ });

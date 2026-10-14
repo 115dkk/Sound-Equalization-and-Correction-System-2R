@@ -15,4 +15,4 @@ role: string,
 /**
  * Reference output channel for the loopback reference (1-based).
  */
-output: bigint, };
+output: number, };

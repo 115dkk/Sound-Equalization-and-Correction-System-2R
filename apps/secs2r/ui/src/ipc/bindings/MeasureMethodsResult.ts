@@ -26,7 +26,7 @@ rew: RewStatusResult,
 /**
  * Positions present in the unmodified sample room.
  */
-mock_positions: Array<bigint>, 
+mock_positions: Array<number>, 
 /**
  * Roles present in the unmodified sample room.
  */

@@ -17,14 +17,14 @@ import { isSubRole, roleCode } from "../ui/maps/geometry";
 import { logGrid, measurementCurves } from "./data";
 import type { SpecimenDef } from "./Specimen";
 
-const T0 = Date.UTC(2026, 9, 14, 5, 12, 0);
+export const T0 = Date.UTC(2026, 9, 14, 5, 12, 0);
 
 /** A tray state built by replaying events at fixed times (deterministic screenshots). */
 export function replay(actions: JobsAction[]): JobsState {
   return actions.reduce(jobsReducer, initialJobs);
 }
 
-const staticApi = (state: JobsState, now: number): JobsApi => ({ state, now, cancel: () => {}, clearHistory: () => {} });
+export const staticApi = (state: JobsState, now: number): JobsApi => ({ state, now, cancel: () => {}, clearHistory: () => {} });
 
 const busyJobs = replay([
   { type: "event", at: T0, event: { event: "started", job: 7, kind: "calibrate" } },
@@ -120,7 +120,8 @@ function MeasureContent({ stale = false }: { stale?: boolean }) {
   );
 }
 
-function FrameBox({
+/** A frame drawn from fixed data, for screen specimens (src/screens/<step>/specimens.tsx). */
+export function FrameBox({
   frame,
   jobs,
   now = T0 + 16000,

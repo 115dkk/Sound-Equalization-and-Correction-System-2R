@@ -7,20 +7,20 @@ export type DspFields = {
 /**
  * FIR taps per channel.
  */
-fir_taps: bigint, 
+fir_taps: number, 
 /**
  * Total FIR taps the DSP can run across channels.
  */
-fir_budget: bigint, 
+fir_budget: number, 
 /**
  * IIR (PEQ) bands per channel.
  */
-iir_bands: bigint, 
+iir_bands: number, 
 /**
  * All-pass bands per channel.
  */
-allpass_bands: bigint, 
+allpass_bands: number, 
 /**
  * Bass-management path delays the DSP offers.
  */
-bm_path_delays: bigint, };
+bm_path_delays: number, };

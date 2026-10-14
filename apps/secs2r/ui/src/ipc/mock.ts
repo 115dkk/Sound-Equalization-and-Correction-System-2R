@@ -131,8 +131,8 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "measure":
       case "sample_load": {
         const base = project ?? fx.projectInfo;
-        const next = BigInt(base.positions.length + 1);
-        project = { ...base, positions: kind === "measure" ? [...base.positions, next] : [1n], dirty: true };
+        const next = base.positions.length + 1;
+        project = { ...base, positions: kind === "measure" ? [...base.positions, next] : [1], dirty: true };
         return { kind: "measurement", data: project };
       }
       case "mdat_import":

@@ -10,6 +10,7 @@ import { Segmented } from "../ui/controls";
 import { frameSpecimens, trayAndMenuSpecimens } from "./frameSpecimens";
 import { kitSpecimens } from "./kitSpecimens";
 import { mapSpecimens, plotSpecimens } from "./plotSpecimens";
+import { screenSections } from "../screens/specimens";
 import { Specimen, type SectionDef } from "./Specimen";
 
 const SECTIONS: SectionDef[] = [
@@ -18,6 +19,7 @@ const SECTIONS: SectionDef[] = [
   { id: "kit", title: "Component kit", specimens: kitSpecimens },
   { id: "plot", title: "Graphs", specimens: plotSpecimens },
   { id: "maps", title: "Maps", specimens: mapSpecimens },
+  ...screenSections,
 ];
 
 function readParams(): { prefs: Prefs; only: string[] } {

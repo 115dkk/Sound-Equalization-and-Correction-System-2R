@@ -51,6 +51,11 @@ const TYPES = {
 // rooted at dist is all the gallery needs.
 const server = createServer((request, response) => {
   const path = normalize(decodeURIComponent(new URL(request.url ?? "/", "http://x").pathname));
+  // Chromium asks for a favicon the app does not have.
+  if (path === "/favicon.ico") {
+    response.writeHead(204).end();
+    return;
+  }
   const file = join(dist, path === "/" ? "gallery.html" : path);
   if (!file.startsWith(dist) || !existsSync(file) || !statSync(file).isFile()) {
     response.writeHead(404).end();
@@ -79,7 +84,7 @@ try {
     const page = await context.newPage();
     page.on("pageerror", (error) => problems.push(`${label}: page error: ${error.message}`));
     page.on("console", (message) => {
-      if (message.type() === "error") problems.push(`${label}: console error: ${message.text()}`);
+      if (message.type() === "error") problems.push(`${label}: console error: ${message.text()} (${message.location().url})`);
     });
     await page.goto(`${origin}/gallery.html?theme=${theme}&lang=${lang}&accent=${accent}`, { waitUntil: "networkidle" });
     await page.evaluate(() => document.fonts.ready);

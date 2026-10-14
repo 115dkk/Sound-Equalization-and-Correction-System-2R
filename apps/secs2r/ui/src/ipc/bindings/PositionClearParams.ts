@@ -7,4 +7,4 @@ export type PositionClearParams = {
 /**
  * One-based measurement position number.
  */
-position: bigint, };
+position: number, };

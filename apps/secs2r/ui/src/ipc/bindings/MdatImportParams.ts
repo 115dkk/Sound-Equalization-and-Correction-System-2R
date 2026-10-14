@@ -16,4 +16,4 @@ assignments: Array<MdatAssignment>,
 /**
  * Destination measurement position number.
  */
-position: bigint, };
+position: number, };

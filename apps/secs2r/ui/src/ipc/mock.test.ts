@@ -9,7 +9,7 @@ describe("mock service", () => {
     const info = await mock.request({ method: "bootstrap" });
     expect(info.app_name).toBe("SECS 2R");
     const project = await mock.request({ method: "project_info" });
-    expect(project.positions).toEqual([1n, 2n, 3n]);
+    expect(project.positions).toEqual([1, 2, 3]);
     expect(mock.calls.map((c) => c.method)).toEqual(["bootstrap", "project_info"]);
   });
 

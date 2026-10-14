@@ -7,7 +7,7 @@ export type ConfigSubCountParams = {
 /**
  * Number of subwoofers, 0 to 8.
  */
-count: bigint, 
+count: number, 
 /**
  * Clears existing measurements; without it a project with measurements answers `confirm_required` (U5).
  */
