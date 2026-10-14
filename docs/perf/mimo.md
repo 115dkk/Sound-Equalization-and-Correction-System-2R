@@ -1,5 +1,37 @@
 # MIMO performance audit (P18 / P18b / P18c)
 
+## Verdict (Claude, 2026-10-14)
+
+M3's performance and memory conditions, as amended in `docs/MIMO.md` §6, are
+met. `perf.mimo` is `implemented`. Big case (six positions, 7.1.4 + two subs),
+same machine, SECS 2 / Rust:
+
+| Operation | One thread | Shipped |
+|---|---:|---:|
+| whole MIMO, IIR (default) | 3,168.8 / 277.0 s = **11.4×** | > 5,280 / 79.6 s = **> 66×** |
+| `mimo_iir_one` (input L) | 275.9 / 23.25 s = **11.9×** | — |
+| whole MIMO, FIR mode | 14.36 / 4.21 s = 3.4× | 13.47 / 1.95 s = **6.9×** |
+| `mimo_design_one` (input L, 180 taps) | 5.18 / 2.22 s = 2.3× | 3.13 / 2.03 s = 1.5× |
+| peak PSS, whole IIR | ≥ 1,152,868 / 483,028 KiB | ≥ 1,901,543 / 808,083 KiB |
+
+- **MIMO run ≥ 5×**: met in both configurations (11.4× and over 66×). The
+  shipped SECS 2 run did not finish in 88 minutes, so that ratio is a lower
+  bound; its two pool workers each run multi-threaded BLAS on four cores.
+- **Memory**: Rust's peak is 0.79 GiB shipped and 0.46 GiB one thread, under
+  1 GB, and below SECS 2's peaks observed within the first 25 and 10 minutes
+  (lower bounds for SECS 2).
+- **Known shortfall, recorded rather than hidden**: the ideal FIR design step
+  alone (2.3× / 1.5×) and FIR mode with one thread (3.4×). The step is dense
+  factorization. SECS 2 runs it in multi-threaded LAPACK; this port keeps it
+  sequential so results do not depend on the thread count (ADR 0007). P18b
+  replaced 19 Cholesky factorizations with one tridiagonal reduction (2.4×
+  on the sweep). P18c computed the shared preparation and support paths once
+  (bit-identical). The blocked reduction (P18c Part B) and the GPU experiment
+  (P19, moved to M6) are the follow-ups.
+- **Not measured**: the MIMO exports (CamillaDSP and mdat items) and the
+  `room_dba` whole runs. Neither is in the M3 conditions.
+
+
 ## P18c: request-local preparation and shared low-rate paths
 
 ### Supplied quiet-machine observations (2026-10-14)

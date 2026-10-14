@@ -547,3 +547,73 @@ fn mimo_iir_joint_cancels_within_one_second() {
         assert!(start.elapsed().as_secs_f64() < 1.0);
     });
 }
+
+// Upstream tests/test_mimo_band_limit_1012.py: the v2 knobs, the band edges,
+// the parameter bounds, and a seed that stays inside them.
+#[test]
+fn mimo_iir_band_limits_match_upstream_1012() {
+    let t = Tuning::default();
+    assert_eq!(
+        (
+            t.mimo_band_db,
+            t.mimo_q_max,
+            t.mimo_in_band,
+            t.mimo_band_reg
+        ),
+        (15.0, 10.0, true, 0.05)
+    );
+    let old = Tuning {
+        mimo_band_db: 30.0,
+        mimo_q_max: 40.0,
+        mimo_in_band: false,
+        mimo_band_reg: 0.0,
+        ..Tuning::default()
+    };
+    assert_eq!(band_of(40.0, 120.0, 150.0, &old), (15.0, 300.0));
+
+    let (lo, hi) = band_of(40.0, 200.0, 150.0, &t);
+    assert!((lo - 36.0).abs() < 1e-9 && (hi - 165.0).abs() < 1e-9);
+    let small = Tuning {
+        mimo_k_bands: 3,
+        mimo_a_bands: 2,
+        ..Tuning::default()
+    };
+    let (lb, ub) = bounds((lo, hi), &small);
+    for k in 0..3 {
+        let i = 2 + 3 * k;
+        assert!((lb[i].exp() - lo).abs() < 1e-9 && (ub[i].exp() - hi).abs() < 1e-9);
+        assert!((ub[i + 1].exp() - 10.0).abs() < 1e-9);
+        assert_eq!((lb[i + 2], ub[i + 2]), (-15.0, 15.0));
+    }
+
+    // Deep dips and tall peaks: three resonances at the 600 Hz low rate plus a
+    // little noise (upstream draws it from NumPy's PCG64; any small noise does).
+    let mut x = vec![0.0; 180];
+    x[3] = 1.0;
+    for (f0, r) in [(28.0, 0.995), (47.0, 0.99), (71.0, 0.985)] {
+        let w = 2.0 * std::f64::consts::PI * f0 / 600.0;
+        let mut y = vec![0.0; x.len()];
+        for n in 0..x.len() {
+            let y1 = if n >= 1 { y[n - 1] } else { 0.0 };
+            let y2 = if n >= 2 { y[n - 2] } else { 0.0 };
+            y[n] = x[n] + 2.0 * r * w.cos() * y1 - r * r * y2;
+        }
+        x = y;
+    }
+    let mut state = 1012u64;
+    for v in &mut x {
+        state = state
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        *v += 0.01 * ((state >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0);
+    }
+    let band = band_of(30.0, 150.0, 150.0, &t);
+    let seed = fit_one(&x, 30.0, 150.0, &[47.0], band, &t, &context(1)).unwrap();
+    let support = &unpack(&seed.x, &[seed.polarity], &t)[0];
+    assert_eq!(support.peq.len(), t.mimo_k_bands);
+    for &(f0, q, g) in &support.peq {
+        assert!(g.abs() <= 15.0 + 1e-6, "gain {g}");
+        assert!(q <= 10.0 + 1e-6, "q {q}");
+        assert!(band.0 - 1e-6 <= f0 && f0 <= band.1 + 1e-6, "f0 {f0}");
+    }
+}
