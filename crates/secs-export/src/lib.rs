@@ -67,12 +67,6 @@ pub enum MimoExport<'a> {
     Responses(&'a MimoResponses),
 }
 
-/// One `.secs` measurement record's role SPL offsets.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct MeasurementRecord {
-    pub spl_offsets: Vec<(String, Option<f64>)>,
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum SubWarning {
     NarrowBand {
@@ -611,23 +605,8 @@ pub fn before_after_items_mimo(
     before_after_items_with_mimo(run, MimoExport::Responses(mimo))
 }
 
-pub fn project_spl_offset(measurement_records: &[MeasurementRecord]) -> Option<f64> {
-    let mut values: Vec<_> = measurement_records
-        .iter()
-        .flat_map(|record| record.spl_offsets.iter().filter_map(|(_, value)| *value))
-        .collect();
-    if values.is_empty() {
-        return None;
-    }
-    values.sort_by(f64::total_cmp);
-    let middle = values.len() / 2;
-    Some(if values.len().is_multiple_of(2) {
-        (values[middle - 1] + values[middle]) / 2.0
-    } else {
-        values[middle]
-    })
-}
-
+/// `spl_offset_db` is the project's median REW SPL offset
+/// (`secs_project::project_spl_offset`).
 pub fn export_mdat(
     run: &ExportRun<'_>,
     folder: &Path,
@@ -831,18 +810,7 @@ mod tests {
     }
 
     #[test]
-    fn offset_and_warning_edges() {
-        let records = [
-            MeasurementRecord {
-                spl_offsets: vec![("L".into(), Some(2.0)), ("R".into(), None)],
-            },
-            MeasurementRecord {
-                spl_offsets: vec![("C".into(), Some(4.0))],
-            },
-        ];
-        assert_eq!(project_spl_offset(&records), Some(3.0));
-        assert_eq!(project_spl_offset(&[]), None);
-
+    fn warning_edges() {
         let mut settings = CalibrationSettings::default();
         let entry = secs_types::calibration::SubEntry {
             hp_hz: 30.0,
