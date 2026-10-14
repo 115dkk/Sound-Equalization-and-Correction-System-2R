@@ -13,6 +13,10 @@ workspace = true
 
 [dependencies]
 secs-types.workspace = true
+secs-audio = { path = "../secs-audio" }
+secs-rew = { path = "../secs-rew" }
+secs-project = { path = "../secs-project" }
+secs-mdat = { path = "../secs-mdat" }
 serde.workspace = true
 serde_json.workspace = true
 toml.workspace = true

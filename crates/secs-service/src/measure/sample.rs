@@ -1,0 +1,208 @@
+//! SECS 2 sample_dolby_714.npz, exported by oracle/export_sample_room.py.
+//! Data provenance: tools/make_sample_dolby.py, SECS 2 (GPL-3.0-only).
+//! Only position 1 has real data. No synthetic positions or missing-role fallback
+//! are presented as measured room data.
+use super::*;
+use secs_project::{MeasurementPlan, MeasurementResult};
+use std::{collections::BTreeMap, sync::OnceLock};
+
+#[derive(Debug, serde::Deserialize)]
+pub struct SampleIndex {
+    pub sample_rate: u32,
+    pub positions: Vec<i64>,
+    pub source: String,
+    pub entries: Vec<SampleEntry>,
+}
+#[derive(Debug, serde::Deserialize)]
+pub struct SampleEntry {
+    pub role: String,
+    pub offset: usize,
+    pub samples: usize,
+    pub t0_s: f64,
+    pub source: serde_json::Value,
+}
+pub const SAMPLE_BYTES: &[u8] = include_bytes!("../../data/sample_room.f32");
+pub fn index() -> &'static SampleIndex {
+    static INDEX: OnceLock<SampleIndex> = OnceLock::new();
+    INDEX.get_or_init(|| {
+        serde_json::from_str(include_str!("../../data/sample_room.json"))
+            .expect("generated sample index")
+    })
+}
+pub fn ir(role: &str, pos: i64) -> Result<(Vec<f32>, u32, f64), MeasureError> {
+    if pos != 1 {
+        return Err(MeasureError::Input("sample.single_position".into()));
+    }
+    let entry = index()
+        .entries
+        .iter()
+        .find(|e| e.role == role)
+        .ok_or_else(|| MeasureError::Input(format!("sample.role_unavailable: {role}")))?;
+    let values = SAMPLE_BYTES[entry.offset..entry.offset + entry.samples * 4]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|v| f32::from_le_bytes(*v))
+        .collect();
+    Ok((values, index().sample_rate, entry.t0_s))
+}
+/// Exact, unmodified sample source for the REW adapter's FakeRew.
+#[derive(Debug, Clone, Copy)]
+pub struct SampleSource;
+impl secs_rew::IrSource for SampleSource {
+    fn impulse_response(
+        &self,
+        role: &str,
+        pos: u32,
+        sample_rate: u32,
+    ) -> Result<secs_rew::ImpulseResponse, secs_rew::RewError> {
+        let (ir, rate, t0_s) =
+            ir(role, i64::from(pos)).map_err(|e| secs_rew::RewError::Schema {
+                path: "sample".into(),
+                message: e.to_string(),
+            })?;
+        if rate != sample_rate {
+            return Err(secs_rew::RewError::Schema {
+                path: "sample".into(),
+                message: "sample.rate_unavailable".into(),
+            });
+        }
+        Ok(secs_rew::ImpulseResponse {
+            ir,
+            sample_rate: rate,
+            t0_s,
+        })
+    }
+}
+
+/// Embed all original samples in causal paths using a common origin. Round each
+/// path offset to a sample, retaining inter-channel arrival within one sample.
+pub fn room(plan: &MeasurementPlan, pos: i64) -> Result<(secs_audio::SimRoom, f64), MeasureError> {
+    if pos != 1 {
+        return Err(MeasureError::Input("sample.single_position".into()));
+    }
+    if plan.sample_rate != i64::from(index().sample_rate) {
+        return Err(MeasureError::Input("sample.rate_unavailable".into()));
+    }
+    let origin_samples = index()
+        .entries
+        .iter()
+        .map(|e| e.t0_s * f64::from(index().sample_rate))
+        .fold(f64::INFINITY, f64::min)
+        .floor();
+    let outputs = plan
+        .roles
+        .iter()
+        .map(|r| positive(plan.output_for(r), "output"))
+        .collect::<Result<Vec<_>, _>>()?;
+    let count = outputs.iter().copied().max().unwrap_or(0) as usize;
+    if count == 0
+        || count > 64
+        || outputs
+            .iter()
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            != outputs.len()
+    {
+        return Err(MeasureError::Input(
+            "sample outputs must be distinct channels in 1..64".into(),
+        ));
+    }
+    let mut paths = vec![vec![vec![0.0]]; count];
+    for (role, output) in plan.roles.iter().zip(outputs) {
+        let (samples, rate, t0) = ir(role, pos)?;
+        let offset = (t0 * f64::from(rate) - origin_samples).round() as usize;
+        let mut path = vec![0.0; offset];
+        path.extend(samples.into_iter().map(f64::from));
+        paths[output as usize - 1] = vec![path];
+    }
+    Ok((
+        secs_audio::SimRoom::new(index().sample_rate, paths, 0, f64::NEG_INFINITY, 1)?,
+        origin_samples / f64::from(index().sample_rate),
+    ))
+}
+
+/// Default is the real single-position sample. Explicit test rooms may contain
+/// multiple positions; they are never synthesized from the real sample silently.
+#[derive(Debug, Default)]
+pub struct MockMeasurer {
+    rooms: Option<BTreeMap<i64, secs_audio::SimRoom>>,
+}
+impl MockMeasurer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn with_rooms(rooms: BTreeMap<i64, secs_audio::SimRoom>) -> Self {
+        Self { rooms: Some(rooms) }
+    }
+    fn native(
+        &self,
+        plan: &MeasurementPlan,
+        pos: i64,
+    ) -> Result<(NativeMeasurer, MeasurementPlan, f64), MeasureError> {
+        let (room, origin) = match &self.rooms {
+            Some(rooms) => (
+                rooms
+                    .get(&pos)
+                    .cloned()
+                    .ok_or_else(|| MeasureError::Input("mock.position_unavailable".into()))?,
+                0.0,
+            ),
+            None => room(plan, pos)?,
+        };
+        let mut p = plan.clone();
+        p.output_device = room.endpoint().id.clone();
+        p.input_device = room.endpoint().id;
+        let mut settings = MeasurementSettings::default();
+        // Preserve the sample's 200 ms pre-onset material, not just its peak.
+        settings.window.pre_roll_seconds = 0.25;
+        settings.window.noise_seconds = 0.5;
+        settings.window.max_latency_seconds = 0.75;
+        Ok((
+            NativeMeasurer::from_backend(Box::new(room), settings),
+            p,
+            origin,
+        ))
+    }
+}
+impl Measurer for MockMeasurer {
+    fn devices(&mut self) -> Result<Vec<Device>, MeasureError> {
+        Ok(vec![Device {
+            id: "sim-room".into(),
+            name: "SECS sample room".into(),
+            input_channels: 1,
+            output_channels: 14,
+        }])
+    }
+    fn status(&mut self) -> Result<Status, MeasureError> {
+        Ok(Status {
+            available: true,
+            version: None,
+            pro: None,
+        })
+    }
+    fn level_check(
+        &mut self,
+        plan: &MeasurementPlan,
+        role: &str,
+        seconds: f64,
+        cancel: &CancelToken,
+    ) -> Result<secs_audio::LevelReport, MeasureError> {
+        let (mut native, plan, _) = self.native(plan, 1)?;
+        native.level_check(&plan, role, seconds, cancel)
+    }
+    fn measure_position(
+        &mut self,
+        plan: &MeasurementPlan,
+        pos: i64,
+        progress: Option<ProgressSink>,
+        cancel: &CancelToken,
+    ) -> Result<Vec<MeasurementResult>, MeasureError> {
+        let (mut native, plan, origin) = self.native(plan, pos)?;
+        let mut results = native.measure_position(&plan, pos, progress, cancel)?;
+        for result in &mut results {
+            result.t0_s += origin;
+        }
+        Ok(results)
+    }
+}

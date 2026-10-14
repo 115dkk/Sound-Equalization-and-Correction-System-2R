@@ -3380,6 +3380,10 @@ dependencies = [
 name = "secs-service"
 version = "0.10.2"
 dependencies = [
+ "secs-audio",
+ "secs-mdat",
+ "secs-project",
+ "secs-rew",
  "secs-types",
  "serde",
  "serde_json",
