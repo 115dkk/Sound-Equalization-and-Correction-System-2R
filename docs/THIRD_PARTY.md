@@ -12,6 +12,7 @@ SECS 2R(GPL-3.0-only)에 원래 라이선스를 지닌 채 들어온 코드입�
 | [SciPy 1.18.1](https://github.com/scipy/scipy) | BSD-3-Clause | `crates/secs-dsp/src/optimize/de.rs`: `optimize/_differentialevolution.py`의 best1bin·LHS·즉시 갱신·`x0` 경로 | 원문 고지: `crates/secs-dsp/THIRD_PARTY_LICENSES.txt` |
 | [SECS 2](https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2) | GPL-3.0 | 저장소 전체의 기반, `apps/secs2r/icons/`(업스트림 로고 `logo_b6.svg`에서 생성) | 업스트림 |
 | [Impulcifer-py313](https://github.com/115dkk/Impulcifer-pip313) | MIT | `oracle/common.py`(골든 인코딩·libm 확인·끼어들기, `tests/migration/export_goldens_secs2.py`에서), `crates/secs-oracle`(골든 읽기·libm 탐침, `crates/impulcifer-dsp/tests/golden_secs2_helpers.rs`에서) | 테스트 도구, 출하하지 않음 |
+| [Impulcifer-pip313](https://github.com/115dkk/Impulcifer-pip313/tree/cac2217) | MIT | `crates/secs-audio/src/{audio,session,policy,null_backend,cached_backend}.rs`: `impulcifer-types/src/audio.rs`, `impulcifer-audio-io/src`의 동명 파일; `estimator.rs`: `impulcifer-dsp/src/estimator.rs`의 지수 스윕·Farina 역필터를 고정 샘플 수·대역·레벨에 맞춤; `tests/{session_fake,null_backend,estimator}.rs` | 커밋 `cac2217`. 원문 고지: `crates/secs-audio/THIRD_PARTY_LICENSES.txt`. OS 어댑터는 이식하지 않음 |
 
 M1에서 더 들어올 예정인 것: 임펄사이퍼 3.x의 `optimize.rs`(MIT, SciPy 1.18.1 `least_squares` TRF 이식, SciPy 부분은 BSD-3-Clause)와 SECS 2 이식 코드 일부(MIT).
 

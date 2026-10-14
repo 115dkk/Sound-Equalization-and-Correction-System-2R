@@ -12,3 +12,9 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+secs-dsp = { path = "../secs-dsp" }
+serde.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+secs-oracle.workspace = true

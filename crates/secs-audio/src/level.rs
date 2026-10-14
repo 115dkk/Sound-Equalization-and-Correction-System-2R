@@ -1,0 +1,238 @@
+//! Deterministic pink-noise / subwoofer sine level checks and U1 recommendation.
+use crate::audio::*;
+use crate::calibration::{MicCalibration, SplReference};
+use crate::invalid;
+use crate::measurement::power;
+use crate::session::{PlaybackBuffer, SessionRequest, play_and_record};
+use crate::sim_room::Noise;
+use secs_dsp::fft;
+use std::f64::consts::PI;
+
+pub const TARGET_WINDOW: (f64, f64) = (-30.0, -15.0);
+
+#[derive(Clone, Copy, Debug)]
+pub enum LevelSignal {
+    Pink,
+    SubSine { frequency: f64 },
+}
+#[derive(Clone, Debug)]
+pub struct LevelOutput {
+    pub endpoint: Endpoint,
+    pub channel: u16,
+    pub sample_rate: u32,
+    pub signal: LevelSignal,
+    pub share: SharePreference,
+}
+#[derive(Clone, Debug)]
+pub struct LevelInput {
+    pub endpoint: Endpoint,
+    pub channel: u16,
+    pub calibration: Option<MicCalibration>,
+    pub spl_reference: Option<SplReference>,
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LevelReport {
+    pub input_dbfs: f64,
+    pub peak_dbfs: f64,
+    pub clip: bool,
+    pub spl_db: Option<f64>,
+}
+
+/// Signal RMS equals `level_dbfs`; reject levels whose deterministic peak
+/// would exceed full scale. Pink has 1/f power from 20 Hz to min(20 kHz, .45 fs).
+pub fn level_signal(
+    signal: LevelSignal,
+    sample_rate: u32,
+    level_dbfs: f64,
+    seconds: f64,
+) -> Result<Vec<f64>, AudioError> {
+    if !(1000..=384_000).contains(&sample_rate)
+        || !seconds.is_finite()
+        || !(0.05..=30.0).contains(&seconds)
+        || !level_dbfs.is_finite()
+        || !(-120.0..=0.0).contains(&level_dbfs)
+    {
+        return Err(invalid("invalid level burst"));
+    }
+    let n = (seconds * f64::from(sample_rate)).round() as usize;
+    let mut samples = match signal {
+        LevelSignal::SubSine { frequency } => {
+            if !frequency.is_finite()
+                || frequency <= 0.0
+                || frequency >= f64::from(sample_rate) / 2.0
+            {
+                return Err(invalid("invalid sine frequency"));
+            }
+            (0..n)
+                .map(|i| (2.0 * PI * frequency * i as f64 / f64::from(sample_rate)).sin())
+                .collect::<Vec<_>>()
+        }
+        LevelSignal::Pink => {
+            let mut rng = Noise::new(0x53454353);
+            let mut spectrum = vec![fft::Complex64::default(); n / 2 + 1];
+            for (i, x) in spectrum.iter_mut().enumerate().skip(1) {
+                let f = i as f64 * f64::from(sample_rate) / n as f64;
+                if (20.0..=20_000.0_f64.min(f64::from(sample_rate) * 0.45)).contains(&f) {
+                    *x = fft::Complex64::from_polar(
+                        1.0 / f.sqrt(),
+                        rng.sample() / 3_f64.sqrt() * PI,
+                    );
+                }
+            }
+            fft::irfft(&spectrum, n)
+        }
+    };
+    let gain = 10_f64.powf(level_dbfs / 20.0) / power(&samples).sqrt();
+    samples.iter_mut().for_each(|x| *x *= gain);
+    if samples.iter().any(|x| x.abs() > 1.0) {
+        return Err(invalid("level burst would clip output"));
+    }
+    Ok(samples)
+}
+
+pub fn analyse_level(
+    samples: &[f64],
+    sample_rate: u32,
+    calibration: Option<&MicCalibration>,
+    reference: Option<SplReference>,
+) -> Result<LevelReport, AudioError> {
+    if samples.is_empty() || sample_rate == 0 || !samples.iter().all(|x| x.is_finite()) {
+        return Err(invalid("invalid level samples"));
+    }
+    let input_dbfs = 10.0 * power(samples).log10();
+    let peak_dbfs = 20.0
+        * samples
+            .iter()
+            .map(|x| x.abs())
+            .fold(0.0_f64, f64::max)
+            .log10();
+    let reference = reference.or_else(|| calibration.and_then(MicCalibration::spl_reference));
+    let spl_db = if let Some(reference) = reference {
+        if !reference.offset_db.is_finite() {
+            return Err(invalid("invalid SPL offset"));
+        }
+        let corrected = match calibration {
+            Some(c) => c.corrected_rms_dbfs(samples, sample_rate)?,
+            None => input_dbfs,
+        };
+        Some(corrected + reference.offset_db)
+    } else {
+        None
+    };
+    Ok(LevelReport {
+        input_dbfs,
+        peak_dbfs,
+        clip: samples.iter().any(|x| x.abs() > 10_f64.powf(-1.0 / 20.0)),
+        spl_db,
+    })
+}
+
+pub fn level_check(
+    backend: &dyn AudioBackend,
+    output: &LevelOutput,
+    input: &LevelInput,
+    level_dbfs: f64,
+    seconds: f64,
+) -> Result<LevelReport, AudioError> {
+    level_check_cancellable(
+        backend,
+        output,
+        input,
+        level_dbfs,
+        seconds,
+        &CancelToken::new(),
+    )
+}
+
+pub fn level_check_cancellable(
+    backend: &dyn AudioBackend,
+    output: &LevelOutput,
+    input: &LevelInput,
+    level_dbfs: f64,
+    seconds: f64,
+    cancel: &CancelToken,
+) -> Result<LevelReport, AudioError> {
+    crate::check_cancel(cancel)?;
+    if output.channel == 0
+        || output.channel > output.endpoint.max_output_channels
+        || input.channel == 0
+        || input.channel > input.endpoint.max_input_channels
+    {
+        return Err(invalid("invalid level channel"));
+    }
+    let signal = level_signal(output.signal, output.sample_rate, level_dbfs, seconds)?;
+    let count = signal
+        .len()
+        .checked_mul(usize::from(output.channel))
+        .ok_or_else(|| invalid("level buffer overflow"))?;
+    if count > 134_217_728 || input.channel > 64 {
+        return Err(invalid("level buffer exceeds budget"));
+    }
+    let mut interleaved = vec![0.0; count];
+    for (frame, &sample) in interleaved
+        .chunks_exact_mut(usize::from(output.channel))
+        .zip(&signal)
+    {
+        frame[usize::from(output.channel - 1)] = sample as f32;
+    }
+    let mut request = SessionRequest::new(
+        output.endpoint.clone(),
+        input.endpoint.clone(),
+        PlaybackBuffer {
+            sample_rate: output.sample_rate,
+            channels: output.channel,
+            interleaved,
+        },
+        input.channel,
+    );
+    request.share = output.share;
+    // Include a latency margin, then select the loudest burst-sized window;
+    // leading capture/output skew must not dilute the RMS of a short burst.
+    request.tail_seconds = 1.0;
+    let recording = play_and_record(backend, request, cancel, &mut |_| {})?;
+    if recording.capture.discontinuity || recording.playback.underruns > 0 {
+        return Err(AudioError::Backend("discontinuous level recording".into()));
+    }
+    let samples: Vec<_> = recording
+        .interleaved
+        .chunks_exact(usize::from(input.channel))
+        .map(|f| f64::from(f[usize::from(input.channel - 1)]))
+        .collect();
+    let n = signal.len();
+    let mut energy = samples[..n].iter().map(|x| x * x).sum::<f64>();
+    let mut best = (energy, 0);
+    for i in n..samples.len() {
+        energy += samples[i] * samples[i] - samples[i - n] * samples[i - n];
+        if energy > best.0 {
+            best = (energy, i + 1 - n);
+        }
+    }
+    analyse_level(
+        &samples[best.1..best.1 + n],
+        output.sample_rate,
+        input.calibration.as_ref(),
+        input.spl_reference,
+    )
+}
+
+/// Aim at the midpoint; reject impossible (>0 or <-120 dBFS) requests instead
+/// of returning a clamped level that silently misses the requested window.
+pub fn recommend_sweep_level(
+    measured: f64,
+    played: f64,
+    target_window: (f64, f64),
+) -> Result<f64, AudioError> {
+    let (low, high) = target_window;
+    if ![measured, played, low, high].iter().all(|x| x.is_finite())
+        || low >= high
+        || high > 0.0
+        || !(-120.0..=0.0).contains(&played)
+    {
+        return Err(invalid("invalid level recommendation"));
+    }
+    let suggested = played + (low + high) / 2.0 - measured;
+    if !(-120.0..=0.0).contains(&suggested) {
+        return Err(invalid("target requires unavailable output level"));
+    }
+    Ok(suggested)
+}
