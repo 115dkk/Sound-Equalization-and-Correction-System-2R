@@ -195,6 +195,7 @@ WCAG 대비는 추정하지 않고 계산했습니다(OKLCH → sRGB, 상대 휘
 | `StatusPill` | neutral, success, warning, danger, info, busy | 채운 점 + 명사구 |
 | `NumberField` | 단위, 범위, 단계, 잘못된 값(범위를 문장으로), 비활성, 범위 표시 | `role="spinbutton"`, `aria-valuemin/max/now`, `aria-invalid`, 오류를 `aria-describedby`로 연결. ↑/↓ 단계(Shift ×10), Enter 확정, Esc 되돌림 |
 | `Select` | 보통, 오류 | 기본 `select`, 라벨 연결 |
+| `CellSelect` | 보통, 오류, 비활성; 닫힌 상태에 굵은 코드와 흐린 이름 같은 풍부한 표시 | 표 칸용, 열 머리가 보이는 라벨이고 `aria-label`로 이름을 줌, 오류 설명을 `aria-describedby`로 연결. 상자는 32px, 누름 영역은 40px |
 | `Stepper` | 하한·상한에서 단추 끔 | `role="spinbutton"` 탭 하나, ↑/↓/Home/End |
 | `Toggle` | 켬, 끔, 비활성, 설명 | `role="switch"`, 라벨은 켠 상태를 말함 |
 | `Segmented` | 고름, 비활성, 작음 | `radiogroup`, 탭 하나, 화살표로 이동하며 고름 |

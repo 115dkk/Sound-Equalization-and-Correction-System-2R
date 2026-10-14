@@ -157,7 +157,7 @@ export const calibrationSummary: CalibrationSummary = {
   scorecard,
   latency_ms: 9.8,
   warnings: [],
-  notes: [{ code: "rc_upper_schroeder", params: { hz: "310" } }],
+  notes: [{ code: "rc_limit", params: { hz: "310", auto: "true", schroeder_hz: "310" } }],
   chain: signalChain,
 };
 
