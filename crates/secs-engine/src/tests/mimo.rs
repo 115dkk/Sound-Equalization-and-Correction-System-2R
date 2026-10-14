@@ -705,6 +705,239 @@ fn mimo_cholesky_matches_lu_on_golden_system() {
 }
 
 #[test]
+fn mimo_ridge_sweep_falls_back() {
+    use crate::mimo::solve::{RidgeSweep, solve};
+    // A PSD system with a zero shifted pivot; LU is required for the second,
+    // deliberately indefinite system. Neither pivot is clamped or repaired.
+    for (a, b, lambda) in [
+        (vec![0.0, 0.0, 0.0, 1.0], vec![1.0, 2.0], 0.0),
+        (vec![0.0, 1.0, 1.0, 0.0], vec![1.0, 2.0], 0.0),
+        (vec![1.0], vec![f64::INFINITY], 1.0),
+        (vec![1.0], vec![1.0], f64::NAN),
+    ] {
+        let sweep = RidgeSweep::new(&a, &b);
+        assert!(sweep.shifted(lambda).is_none());
+        match (sweep.solve(lambda), solve(&a, &b, lambda, false)) {
+            (Ok(got), Ok(expected)) => assert_eq!(got, expected),
+            (Err(_), Err(_)) => {}
+            _ => panic!("fallback did not preserve the original solve"),
+        }
+    }
+}
+
+#[test]
+fn mimo_ridge_sweep_recorded_systems_and_trajectories() {
+    use crate::mimo::solve::{RidgeSweep, solve};
+    use faer::{
+        Par,
+        dyn_stack::{MemBuffer, MemStack},
+        linalg::evd,
+    };
+    for case in CASES.into_iter().filter(|c| *c != "room_two_positions") {
+        let fx = Fixture::load("engine_mimo", case);
+        let reference = Fixture::load("engine_mimo", &format!("{case}_reference"));
+        let req = request(&fx);
+        let stage = &fx.inputs()["stage"];
+        let lp = crate::mimo::lowpass_fir(req.fsiso, 31).unwrap();
+        for (role, data) in stage["inputs"].as_object().unwrap() {
+            let recorded = &reference.outputs()["inputs"][role];
+            let candidates: Vec<_> = recorded["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|r| r.as_str().unwrap().to_owned())
+                .collect();
+            let xs: Vec<_> = data["xs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| fx.f64s(v))
+                .collect();
+            let direct = fx.f64s(&data["direct"]);
+            let raw: Vec<Vec<Vec<_>>> = (0..xs.len())
+                .map(|p| {
+                    candidates
+                        .iter()
+                        .map(|r| fx.f64s(&stage["paths"][r][p]))
+                        .collect()
+                })
+                .collect();
+            // The capped case records the selected system; no ranking is needed
+            // to rebuild that exact system a second time.
+            let mut selected_req = req.clone();
+            selected_req.max_supports = None;
+            let result = design_input(
+                &xs,
+                &raw,
+                &direct,
+                &candidates,
+                &selected_req,
+                &Context::serial(),
+            )
+            .unwrap();
+            let paths: Vec<Vec<Vec<_>>> = raw
+                .iter()
+                .map(|gs| {
+                    gs.iter()
+                        .map(|g| {
+                            let mut h = convolve(g, &lp);
+                            h.truncate(xs[0].len());
+                            h
+                        })
+                        .collect()
+                })
+                .collect();
+            let (ata, atb) = normal_equations(&xs, &paths, req.taps_low, 10.0);
+            for threads in [1, 4] {
+                let ctx = Context::new(
+                    threads,
+                    MemoryBudget::new(u64::MAX),
+                    Arc::new(NoProgress),
+                    CancelToken::new(),
+                );
+                let (mapped_a, mapped_b) = crate::mimo::design::normal_equations_mapped(
+                    &xs,
+                    &paths,
+                    req.taps_low,
+                    10.0,
+                    &ctx,
+                )
+                .unwrap();
+                assert!(
+                    ata.iter()
+                        .zip(mapped_a)
+                        .all(|(a, b)| a.to_bits() == b.to_bits()),
+                    "{case}/{role} mapped matrix"
+                );
+                assert!(
+                    atb.iter()
+                        .zip(mapped_b)
+                        .all(|(a, b)| a.to_bits() == b.to_bits()),
+                    "{case}/{role} mapped RHS"
+                );
+            }
+            let n = atb.len();
+            let norm = secs_dsp::pairwise_sum(&(0..n).map(|i| ata[i * n + i]).collect::<Vec<_>>())
+                / n as f64;
+            let sweep = RidgeSweep::new(&ata, &atb);
+            let a = faer::Mat::from_fn(n, n, |i, j| ata[i * n + j]);
+            let mut eigenvalues = faer::diag::Diag::zeros(n);
+            let mut memory = MemBuffer::new(evd::self_adjoint_evd_scratch::<f64>(
+                n,
+                evd::ComputeEigenvectors::No,
+                Par::Seq,
+                Default::default(),
+            ));
+            evd::self_adjoint_evd(
+                a.as_ref(),
+                eigenvalues.as_mut(),
+                None,
+                Par::Seq,
+                MemStack::new(&mut memory),
+                Default::default(),
+            )
+            .unwrap();
+            let maxnorm = |x: &[f64]| x.iter().map(|v| v.abs()).fold(0.0, f64::max);
+            let bound = 16.0 * n as f64 * f64::EPSILON;
+            let prove = |log: f64| {
+                let lambda = norm * 10f64.powf(log);
+                let got = sweep.solve(lambda).unwrap();
+                let expected = solve(&ata, &atb, lambda, false).unwrap();
+                let matrix_norm = ata
+                    .chunks_exact(n)
+                    .enumerate()
+                    .map(|(i, row)| {
+                        row.iter()
+                            .enumerate()
+                            .map(|(j, a)| (a + if i == j { lambda } else { 0.0 }).abs())
+                            .sum::<f64>()
+                    })
+                    .fold(0.0, f64::max);
+                for x in [&got, &expected] {
+                    let residual = ata
+                        .chunks_exact(n)
+                        .enumerate()
+                        .map(|(i, row)| {
+                            let mut dot = 0.0;
+                            for j in 0..n {
+                                dot += (row[j] + if i == j { lambda } else { 0.0 }) * x[j];
+                            }
+                            (dot - atb[i]).abs()
+                        })
+                        .fold(0.0, f64::max);
+                    let error = residual / (matrix_norm * maxnorm(x) + maxnorm(&atb));
+                    assert!(
+                        error <= bound,
+                        "{case}/{role} log={log} backward={error:e} bound={bound:e}"
+                    );
+                }
+                let condition = (eigenvalues[n - 1] + lambda) / (eigenvalues[0] + lambda);
+                assert!(condition.is_finite() && condition > 0.0);
+                let difference = got
+                    .iter()
+                    .zip(&expected)
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0.0, f64::max)
+                    / maxnorm(&expected);
+                assert!(
+                    difference <= bound * condition,
+                    "{case}/{role} log={log} relative={difference:e} bound={:e}",
+                    bound * condition
+                );
+            };
+            for step in recorded["trajectory"].as_array().unwrap() {
+                prove(number(&step["mid"]));
+            }
+            let trajectory = |use_sweep: bool| {
+                let (mut lo, mut hi) = (-8.0, 4.0);
+                let mut out = Vec::new();
+                for k in 0..19 {
+                    let mid = if k == 0 { hi } else { (lo + hi) / 2.0 };
+                    let lambda = norm * 10f64.powf(mid);
+                    let u = if use_sweep {
+                        sweep.solve(lambda)
+                    } else {
+                        solve(&ata, &atb, lambda, false)
+                    }
+                    .unwrap();
+                    let mut energy = 0.0;
+                    for s in u.chunks_exact(req.taps_low) {
+                        energy += crate::decay::energy(&convolve(&lp, s));
+                    }
+                    let accepted = energy / crate::decay::energy(&direct).max(1e-30)
+                        <= 10f64.powf(req.level_db / 10.0);
+                    out.push((mid, accepted));
+                    if k > 0 {
+                        if accepted {
+                            hi = mid;
+                        } else {
+                            lo = mid;
+                        }
+                    }
+                }
+                (out, hi)
+            };
+            let expected = trajectory(false);
+            assert_eq!(trajectory(true), expected, "{case}/{role}");
+            assert_eq!(
+                result
+                    .trace
+                    .trajectory
+                    .iter()
+                    .map(|s| (s.mid, s.accepted))
+                    .collect::<Vec<_>>(),
+                expected.0
+            );
+            assert_eq!(result.trace.log_lambda, expected.1);
+            for (mid, _) in expected.0 {
+                prove(mid);
+            }
+            eprintln!("RIDGE_PROOF {case}/{role} N={n} recorded and computed trajectories pass");
+        }
+    }
+}
+
+#[test]
 fn mimo_ranges_and_upstream_behaviors() {
     let case = cases::load("room");
     let mut d = design::replay("room");
@@ -776,6 +1009,39 @@ fn mimo_ranges_and_upstream_behaviors() {
         }
     );
     assert!(traces.is_empty());
+}
+
+#[test]
+fn mimo_input_selection_preserves_all_input_result() {
+    let case = cases::load("room");
+    let d = design::replay("room");
+    let ctx = Context::new(
+        1,
+        MemoryBudget::new(512 * 1024 * 1024),
+        Arc::new(NoProgress),
+        CancelToken::new(),
+    );
+    let req = MimoRequest::default();
+    let (all, traces) =
+        design_mimo_traced(&d, &case.measurements, &case.config, &req, &ctx).unwrap();
+    for (index, main) in d.mains.iter().enumerate() {
+        let (one, trace) = crate::mimo::design::design_mimo_inputs(
+            &d,
+            &case.measurements,
+            &case.config,
+            &req,
+            &ctx,
+            Some(&main.role),
+        )
+        .unwrap();
+        assert_eq!(one.ranges, all.ranges);
+        assert_eq!(one.supports, vec![all.supports[index].clone()]);
+        assert_eq!(one.level_db, vec![all.level_db[index].clone()]);
+        assert_eq!(trace, vec![traces[index].clone()]);
+        for ((_, a), (_, b)) in one.supports[0].1.iter().zip(&all.supports[index].1) {
+            assert!(a.iter().zip(b).all(|(a, b)| a.to_bits() == b.to_bits()));
+        }
+    }
 }
 
 #[test]

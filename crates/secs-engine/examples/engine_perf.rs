@@ -81,7 +81,9 @@ fn measure<T>(op: &str, case: &str, threads: usize, mut call: impl FnMut() -> T)
     let runs = std::env::var("SECS_PERF_RUNS")
         .map(|s| s.parse::<usize>().unwrap())
         .unwrap_or_else(|_| {
-            if matches!(op, "design" | "recommend") && warm_seconds > 10.0 {
+            if (op.starts_with("mimo_") && warm_seconds > 60.0)
+                || (matches!(op, "design" | "recommend") && warm_seconds > 10.0)
+            {
                 3
             } else {
                 5
@@ -101,6 +103,262 @@ fn measure<T>(op: &str, case: &str, threads: usize, mut call: impl FnMut() -> T)
     );
 }
 
+// Full IR storage would be 14.3 MiB. Recreate the modal room from the recorded
+// upstream excitation (including its NumPy random noise), before any timer.
+fn big_case() -> cases::Case {
+    use secs_oracle::{Fixture, number};
+    use std::f64::consts::PI;
+    let fx = Fixture::load("perf_mimo", "big");
+    let mut case = cases::load_fixture(&fx);
+    let r = &fx.inputs()["recipe"];
+    let xyz = |v: &serde_json::Value| [number(&v[0]), number(&v[1]), number(&v[2])];
+    let dims = xyz(&r["dims"]);
+    let q = number(&r["q"]);
+    let scale = number(&r["scale"]);
+    let excitations: Vec<_> = cases::pairs(&r["excitations"])
+        .map(|(_, v)| {
+            let data = fx.blob(v);
+            let (chunks, rest) = data.as_chunks::<8>();
+            assert!(rest.is_empty());
+            let samples: Vec<_> = chunks.iter().map(|b| f64::from_le_bytes(*b)).collect();
+            secs_dsp::fft::rfft(&samples)
+        })
+        .collect();
+    for (pos, receiver) in r["receivers"].as_array().unwrap().iter().enumerate() {
+        let receiver = xyz(receiver);
+        let mut measurements = Vec::new();
+        for (i, role) in r["roles"].as_array().unwrap().iter().enumerate() {
+            let source = xyz(&r["sources"][i]);
+            let distance = source
+                .iter()
+                .zip(receiver)
+                .map(|(s, r)| (s - r).powi(2))
+                .sum::<f64>()
+                .sqrt();
+            let mut transfer = vec![C::new(0.0, 0.0); 24001];
+            for mode in r["modes"].as_array().unwrap() {
+                let ns = xyz(mode);
+                let mut shape = 1.0;
+                for k in 0..3 {
+                    shape *= (ns[k] * PI * source[k] / dims[k]).cos()
+                        * (ns[k] * PI * receiver[k] / dims[k]).cos();
+                }
+                let weight = ns
+                    .iter()
+                    .map(|&n| if n == 0.0 { 1.0 } else { 2.0 })
+                    .product::<f64>();
+                let mw = 2.0 * PI * number(&mode[3]);
+                for (k, h) in transfer.iter_mut().enumerate() {
+                    let w = 2.0 * PI * k as f64;
+                    *h += secs_dsp::complex_div(
+                        C::new(weight * shape, 0.0),
+                        C::new(mw * mw - w * w, w * mw / q),
+                    );
+                }
+            }
+            for (k, h) in transfer.iter_mut().enumerate() {
+                let direct = C::from_polar(1.0, -2.0 * PI * k as f64 * distance / 343.0) / distance;
+                *h = excitations[i][k] * (*h * scale + direct);
+            }
+            let samples: Vec<_> = secs_dsp::fft::irfft(&transfer, 48000)
+                .into_iter()
+                .map(|v| v as f32)
+                .collect();
+            if let Ok(folder) = std::env::var("SECS_PERF_IR_DUMP") {
+                std::fs::create_dir_all(&folder).unwrap();
+                let data: Vec<_> = samples.iter().flat_map(|v| v.to_le_bytes()).collect();
+                std::fs::write(
+                    std::path::Path::new(&folder).join(format!(
+                        "{}_{}.f32",
+                        pos + 1,
+                        role.as_str().unwrap()
+                    )),
+                    data,
+                )
+                .unwrap();
+            }
+            measurements.push((
+                role.as_str().unwrap().to_owned(),
+                Measurement {
+                    samples: Samples::F32(samples.into()),
+                    sample_rate: 48000,
+                    t0: pos as f64 * 0.00013 + i as f64 * 0.00107 - 0.0002,
+                },
+            ));
+        }
+        case.measurements
+            .positions
+            .push((pos as u32 + 1, measurements));
+    }
+    case
+}
+
+// Candidate-only implementations: production keeps just the selected solver.
+struct SpectralSweep {
+    q: faer::Mat<f64>,
+    eigenvalues: faer::diag::Diag<f64>,
+    c: Vec<f64>,
+}
+impl SpectralSweep {
+    fn new(ata: &[f64], atb: &[f64]) -> Self {
+        use faer::{
+            Par,
+            dyn_stack::{MemBuffer, MemStack},
+            linalg::evd,
+        };
+        let n = atb.len();
+        let a = faer::Mat::from_fn(n, n, |i, j| ata[i * n + j]);
+        let mut q = faer::Mat::zeros(n, n);
+        let mut eigenvalues = faer::diag::Diag::zeros(n);
+        let mut memory = MemBuffer::new(evd::self_adjoint_evd_scratch::<f64>(
+            n,
+            evd::ComputeEigenvectors::Yes,
+            Par::Seq,
+            Default::default(),
+        ));
+        evd::self_adjoint_evd(
+            a.as_ref(),
+            eigenvalues.as_mut(),
+            Some(q.as_mut()),
+            Par::Seq,
+            MemStack::new(&mut memory),
+            Default::default(),
+        )
+        .unwrap();
+        let c = (0..n)
+            .map(|j| (0..n).map(|i| q[(i, j)] * atb[i]).sum())
+            .collect();
+        Self { q, eigenvalues, c }
+    }
+    fn solve(&self, lambda: f64) -> Vec<f64> {
+        let n = self.c.len();
+        let mut out = vec![0.0; n];
+        for j in 0..n {
+            assert!(self.eigenvalues[j] + lambda > 0.0);
+            let y = self.c[j] / (self.eigenvalues[j] + lambda);
+            for (i, v) in out.iter_mut().enumerate() {
+                *v += self.q[(i, j)] * y;
+            }
+        }
+        out
+    }
+}
+
+struct ReusedCholesky<'a> {
+    ata: &'a [f64],
+    atb: &'a [f64],
+    factor: Option<faer::Mat<f64>>,
+    lambda: f64,
+    factorizations: usize,
+    iterations: usize,
+}
+impl<'a> ReusedCholesky<'a> {
+    fn new(ata: &'a [f64], atb: &'a [f64]) -> Self {
+        Self {
+            ata,
+            atb,
+            factor: None,
+            lambda: 0.0,
+            factorizations: 0,
+            iterations: 0,
+        }
+    }
+    fn precondition(&self, rhs: &[f64]) -> Vec<f64> {
+        use faer::{
+            Par,
+            dyn_stack::{MemBuffer, MemStack},
+            linalg::cholesky::llt,
+        };
+        let n = rhs.len();
+        let mut rhs = faer::Mat::from_fn(n, 1, |i, _| rhs[i]);
+        let mut memory = MemBuffer::new(llt::solve::solve_in_place_scratch::<f64>(n, 1, Par::Seq));
+        llt::solve::solve_in_place(
+            self.factor.as_ref().unwrap().as_ref(),
+            rhs.as_mut(),
+            Par::Seq,
+            MemStack::new(&mut memory),
+        );
+        (0..n).map(|i| rhs[(i, 0)]).collect()
+    }
+    fn multiply(&self, x: &[f64], lambda: f64) -> Vec<f64> {
+        self.ata
+            .chunks_exact(x.len())
+            .enumerate()
+            .map(|(i, row)| row.iter().zip(x).map(|(a, x)| a * x).sum::<f64>() + lambda * x[i])
+            .collect()
+    }
+    fn solve(&mut self, lambda: f64) -> Vec<f64> {
+        use faer::{
+            Par,
+            dyn_stack::{MemBuffer, MemStack},
+            linalg::cholesky::llt,
+        };
+        let dot = |a: &[f64], b: &[f64]| a.iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
+        let n = self.atb.len();
+        if self.factor.is_some() && (lambda.log10() - self.lambda.log10()).abs() <= 1.5f64.log10() {
+            let mut x = self.precondition(self.atb);
+            let residual = |x: &[f64]| {
+                self.atb
+                    .iter()
+                    .zip(self.multiply(x, lambda))
+                    .map(|(b, a)| b - a)
+                    .collect::<Vec<_>>()
+            };
+            let mut r = residual(&x);
+            let mut z = self.precondition(&r);
+            let mut p = z.clone();
+            let mut rz = dot(&r, &z);
+            let threshold = 1e-28 * dot(self.atb, self.atb);
+            for iteration in 0..=30 {
+                if dot(&r, &r) <= threshold {
+                    let true_residual = residual(&x);
+                    if dot(&true_residual, &true_residual) <= threshold {
+                        self.iterations += iteration;
+                        return x;
+                    }
+                }
+                if iteration == 30 {
+                    break;
+                }
+                let ap = self.multiply(&p, lambda);
+                let alpha = rz / dot(&p, &ap);
+                for i in 0..n {
+                    x[i] += alpha * p[i];
+                    r[i] -= alpha * ap[i];
+                }
+                z = self.precondition(&r);
+                let next = dot(&r, &z);
+                let beta = next / rz;
+                for i in 0..n {
+                    p[i] = z[i] + beta * p[i];
+                }
+                rz = next;
+            }
+            self.iterations += 30;
+        }
+        let mut a = faer::Mat::from_fn(n, n, |i, j| {
+            self.ata[i * n + j] + if i == j { lambda } else { 0.0 }
+        });
+        let mut memory = MemBuffer::new(llt::factor::cholesky_in_place_scratch::<f64>(
+            n,
+            Par::Seq,
+            Default::default(),
+        ));
+        llt::factor::cholesky_in_place(
+            a.as_mut(),
+            Default::default(),
+            Par::Seq,
+            MemStack::new(&mut memory),
+            Default::default(),
+        )
+        .unwrap();
+        self.factor = Some(a);
+        self.lambda = lambda;
+        self.factorizations += 1;
+        self.precondition(self.atb)
+    }
+}
+
 fn main() {
     if cfg!(debug_assertions) {
         panic!("run with --release");
@@ -118,7 +376,18 @@ fn main() {
         Arc::new(NoProgress),
         CancelToken::new(),
     );
-    let case = cases::load(name);
+    let case = if name == "big" {
+        big_case()
+    } else {
+        cases::load(name)
+    };
+    if op == "mimo_case" {
+        println!(
+            "{}",
+            serde_json::json!({"positions":case.measurements.positions.len(),"mains":case.config.mains,"subs":case.config.subs})
+        );
+        return;
+    }
     let request = DesignRequest {
         measurements: &case.measurements,
         config: &case.config,
@@ -128,6 +397,211 @@ fn main() {
     };
     let run = || design(&request, &ctx, &*production_fitters(ctx.cancel())).unwrap();
     match op {
+        "mimo_profile_design" | "mimo_sweep_candidates" => {
+            let d = run();
+            let req = MimoRequest::default();
+            let spectra = export_view(&d, &case.measurements, &case.config)
+                .unwrap()
+                .spectra;
+            let prepared = measurement::prepare(
+                &case.measurements,
+                &case.config,
+                &setup::Setup::new(&case.config),
+            )
+            .unwrap();
+            let ideal = MimoDesign {
+                ranges: mimo::support_ranges(&d, &spectra, req.fsiso, &d.spectra.positions)
+                    .unwrap(),
+                ..MimoDesign::default()
+            };
+            let roles: Vec<_> = ideal
+                .ranges
+                .iter()
+                .filter(|(r, v)| v.is_some() && *r != d.mains[0].role)
+                .map(|(r, _)| r.clone())
+                .collect();
+            let mut xs = Vec::new();
+            let mut paths = Vec::new();
+            for &p in &d.spectra.positions {
+                xs.push(
+                    secs_dsp::lowrate::to_low(
+                        &input_response(&d, &d.mains[0].role, &spectra, p).unwrap(),
+                        grid::design_freqs(),
+                        720,
+                    )
+                    .unwrap(),
+                );
+                paths.push(
+                    roles
+                        .iter()
+                        .map(|r| {
+                            secs_dsp::lowrate::to_low(
+                                &mimo::support_path(
+                                    &ideal,
+                                    r,
+                                    &spectra,
+                                    p,
+                                    &prepared.align_delay_ms,
+                                )
+                                .unwrap(),
+                                grid::design_freqs(),
+                                720,
+                            )
+                            .unwrap()
+                        })
+                        .collect::<Vec<_>>(),
+                );
+            }
+            let lp = mimo::lowpass_fir(req.fsiso, 31).unwrap();
+            let filtered: Vec<Vec<Vec<f64>>> = paths
+                .iter()
+                .map(|gs| {
+                    gs.iter()
+                        .map(|g| {
+                            let mut h = mimo::design::convolve(g, &lp);
+                            h.truncate(720);
+                            h
+                        })
+                        .collect()
+                })
+                .collect();
+            let direct =
+                secs_dsp::lowrate::to_low(&d.mains[0].response, grid::design_freqs(), 720).unwrap();
+            measure("mimo_profile_normal", name, threads, || {
+                mimo::design::normal_equations(&xs, &filtered, req.taps_low, 10.0)
+            });
+            let (ata, atb) = mimo::design::normal_equations(&xs, &filtered, req.taps_low, 10.0);
+            let n = atb.len();
+            let norm = secs_dsp::pairwise_sum(&(0..n).map(|k| ata[k * n + k]).collect::<Vec<_>>())
+                / n as f64;
+            if op == "mimo_sweep_candidates" {
+                let result =
+                    mimo::design::design_input(&xs, &paths, &direct, &roles, &req, &ctx).unwrap();
+                let lambdas: Vec<_> = result
+                    .trace
+                    .trajectory
+                    .iter()
+                    .map(|s| norm * 10f64.powf(s.mid))
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::json!({"dimension": n, "lambdas": lambdas})
+                );
+                measure("sweep_cholesky", name, threads, || {
+                    lambdas
+                        .iter()
+                        .map(|&l| mimo::solve::solve(&ata, &atb, l, false).unwrap())
+                        .collect::<Vec<_>>()
+                });
+                measure("sweep_spectral", name, threads, || {
+                    let sweep = SpectralSweep::new(&ata, &atb);
+                    lambdas.iter().map(|&l| sweep.solve(l)).collect::<Vec<_>>()
+                });
+                measure("sweep_tridiagonal", name, threads, || {
+                    let sweep = mimo::solve::RidgeSweep::new(&ata, &atb);
+                    lambdas
+                        .iter()
+                        .map(|&l| sweep.solve(l).unwrap())
+                        .collect::<Vec<_>>()
+                });
+                measure("sweep_reuse", name, threads, || {
+                    let mut sweep = ReusedCholesky::new(&ata, &atb);
+                    let answers: Vec<_> = lambdas.iter().map(|&l| sweep.solve(l)).collect();
+                    eprintln!(
+                        "reuse: factors={} iterations={}",
+                        sweep.factorizations, sweep.iterations
+                    );
+                    answers
+                });
+                return;
+            }
+            let samples = std::cell::RefCell::new(Vec::new());
+            measure("mimo_profile_input", name, threads, || {
+                let stages = std::cell::RefCell::new(std::collections::BTreeMap::new());
+                let start = Instant::now();
+                let result = mimo::design::design_input_observed(
+                    &xs,
+                    &paths,
+                    &direct,
+                    &roles,
+                    &req,
+                    &ctx,
+                    &|stage, elapsed| {
+                        stages
+                            .borrow_mut()
+                            .insert(stage.to_owned(), elapsed.as_secs_f64());
+                    },
+                )
+                .unwrap();
+                let total = start.elapsed().as_secs_f64();
+                let mut stages = stages.into_inner();
+                stages.insert("other".into(), total - stages.values().sum::<f64>());
+                samples.borrow_mut().push(stages);
+                result
+            });
+            println!(
+                "{}",
+                serde_json::json!({"profile_samples": &samples.borrow()[1..]})
+            );
+            println!("{}", serde_json::json!({"roles":roles,"dimension":n}));
+        }
+        "mimo_design_one" | "mimo_design_all" | "mimo_iir_one" | "mimo_iir_all" | "mimo_iir"
+        | "mimo_fir" => {
+            let design = run();
+            let req = MimoRequest::default();
+            if op.starts_with("mimo_design_") {
+                let input = (op == "mimo_design_one").then_some(design.mains[0].role.as_str());
+                measure(op, name, threads, || {
+                    mimo::design::design_mimo_inputs(
+                        &design,
+                        &case.measurements,
+                        &case.config,
+                        &req,
+                        &ctx,
+                        input,
+                    )
+                    .unwrap()
+                });
+            } else if matches!(op, "mimo_iir_one" | "mimo_iir_all") {
+                let mut ideal =
+                    design_mimo(&design, &case.measurements, &case.config, &req, &ctx).unwrap();
+                if op == "mimo_iir_one" {
+                    ideal.supports.retain(|(r, _)| *r == design.mains[0].role);
+                    assert!(
+                        !ideal.supports[0].1.is_empty(),
+                        "first input has no ideal supports"
+                    );
+                }
+                measure(op, name, threads, || {
+                    design_mimo_iir(
+                        &design,
+                        &case.measurements,
+                        &case.config,
+                        &ideal,
+                        &req,
+                        &case.tuning,
+                        &ctx,
+                    )
+                    .unwrap()
+                });
+            } else {
+                let mut settings: secs_types::calibration::CalibrationSettings =
+                    serde_json::from_value(case.settings.clone()).unwrap();
+                settings.mimo_on = true;
+                settings.mimo_fir = op == "mimo_fir";
+                measure(op, name, threads, || {
+                    mimo::compute(
+                        &design,
+                        &case.measurements,
+                        &case.config,
+                        &settings,
+                        &case.tuning,
+                        &ctx,
+                    )
+                    .unwrap()
+                });
+            }
+        }
         "design" => measure(op, name, threads, run),
         "stages" => {
             use std::{collections::BTreeMap, sync::Mutex};

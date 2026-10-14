@@ -31,11 +31,16 @@ def main():
         'sub_combine', 'fit_rc1', 'fit_rc2', 'fit_bus', 'fit_xo', 'profile_fit',
         'camilla', 'mdat_staged', 'mdat_before_after', 'gd', 'record_gd',
         'project_setup', 'project_open', 'project_save',
+        'record_mimo_case', 'mimo_design_one', 'mimo_design_all',
+        'mimo_iir_one', 'mimo_iir_all', 'mimo_iir', 'mimo_fir',
+        'mimo_camilla', 'mimo_mdat_staged', 'mimo_mdat_before_after',
     ])
     parser.add_argument('case')
     parser.add_argument('--config', choices=['shipped', 'one'], default='shipped')
     parser.add_argument('--runs', type=int, choices=[3, 5, 31], default=None,
                         help='override samples; 31 for interleaved short batches')
+    parser.add_argument('--time-budget', type=float, default=None,
+                        help='MIMO long-row seconds; no warm-up, retain every completed sample')
     parser.add_argument('--memory-once', action='store_true',
                         help='one call, no warm-up, for process-tree memory')
     args = parser.parse_args()
@@ -46,10 +51,13 @@ def main():
     else:
         os.environ.pop('OPENBLAS_NUM_THREADS', None)
 
-    from engine_cases import cases
+    from engine_cases import big_case, cases
     from secs import calibration as cal
 
-    case = next(c for c in cases() if c.name == args.case)
+    case = big_case() if args.case == 'big' else next(c for c in cases() if c.name == args.case)
+    if args.op == 'record_mimo_case':
+        record_mimo_case(case)
+        return
     design = lambda: cal.compute(case.project, case.irs, case.settings)
     before_each = lambda: None
     if args.op.startswith('project_'):
@@ -147,6 +155,33 @@ def main():
                                       nfev=sol.nfev, njev=sol.njev)))
                 return sol
             scipy.optimize.least_squares = profiled
+    elif args.op.startswith('mimo_'):
+        from secs import mimo, mimo_iir
+        run = design()
+        engine = run.engine
+        workers = 1 if args.config == 'one' else cal.MIMO_WORKERS
+        if args.op.startswith('mimo_design_'):
+            inputs = [next(iter(engine.chain))] if args.op.endswith('_one') else None
+            call = lambda: mimo.design_mimo(engine, inputs=inputs)
+        elif args.op in ('mimo_iir_one', 'mimo_iir_all'):
+            ideal = mimo.design_mimo(engine)
+            if args.op.endswith('_one'):
+                role = next(iter(engine.chain))
+                ideal.supports = {role: ideal.supports[role]}
+                if not ideal.supports[role]:
+                    raise RuntimeError('first input has no ideal supports: not a fit benchmark')
+            call = lambda: mimo_iir.design_mimo_iir(engine, ideal, list(engine.positions), workers=workers)
+        elif args.op in ('mimo_iir', 'mimo_fir'):
+            call = lambda: cal.compute_mimo(run, workers=workers, fir=args.op == 'mimo_fir')
+        else:
+            mimo_run = cal.compute_mimo(run, workers=workers)
+            folder = os.environ['SECS_PERF_OUTPUT']
+            export = {'mimo_camilla': cal.export_camilladsp,
+                      'mimo_mdat_staged': cal.export_mdat,
+                      'mimo_mdat_before_after': cal.export_before_after_mdat}[args.op]
+            call = lambda: export(run, folder, mimo_run=mimo_run)
+        print(json.dumps(dict(event='ready', op=args.op, case=args.case,
+                              inputs=list(engine.chain), workers=workers)), flush=True)
     elif args.op == 'record_gd':
         import hashlib
         import numpy as np
@@ -224,11 +259,30 @@ def main():
                               config=args.config, memory_once=True)))
         del result
         return
+    if args.time_budget is not None:
+        if not args.op.startswith('mimo_') or args.time_budget <= 0:
+            parser.error('--time-budget requires a MIMO operation and positive seconds')
+        samples = []
+        deadline = time.perf_counter() + args.time_budget
+        while not samples or time.perf_counter() + max(samples) <= deadline:
+            before_each()
+            start = time.perf_counter()
+            result = call()
+            samples.append(time.perf_counter() - start)
+            del result
+            print(json.dumps(dict(event='sample', op=args.op, case=args.case,
+                                  config=args.config, sample=len(samples), seconds=samples[-1])), flush=True)
+        print(json.dumps(dict(implementation='python', op=args.op, case=args.case,
+                              config=args.config, samples_s=samples,
+                              median_s=statistics.median(samples), warmup=False,
+                              time_budget_s=args.time_budget)), flush=True)
+        return
     before_each()
     warm_started = time.perf_counter()
     call()
     warm_seconds = time.perf_counter() - warm_started
-    runs = args.runs or (3 if args.op in ('design', 'recommend') and warm_seconds > 10 else 5)
+    runs = args.runs or (3 if (args.op.startswith('mimo_') and warm_seconds > 60)
+                        or (args.op in ('design', 'recommend') and warm_seconds > 10) else 5)
     samples = []
     for _ in range(runs):
         before_each()
@@ -236,9 +290,77 @@ def main():
         result = call()
         samples.append(time.perf_counter() - start)
         del result
+        if args.op.startswith('mimo_'):
+            print(json.dumps(dict(event='sample', op=args.op, case=args.case,
+                                  config=args.config, sample=len(samples), seconds=samples[-1])), flush=True)
     print(json.dumps(dict(implementation='python', op=args.op, case=args.case,
                           config=args.config, samples_s=samples,
                           median_s=statistics.median(samples))))
+
+
+def record_mimo_case(case):
+    """Store excitation plus the modal recipe: full float32 IRs exceed 8 MiB."""
+    import dataclasses
+    import hashlib
+    import inspect
+    from pathlib import Path
+    from unittest.mock import patch
+    import common
+    import numpy as np
+    import synth
+    from room_model import ModalRoom, POSITIONS
+    from secs.correction_engine import CorrectionEngine
+
+    if case.name != 'big':
+        raise ValueError('only the separate big performance case may be recorded')
+    folder = common.GOLDENS / 'perf_mimo'
+    folder.mkdir(exist_ok=True)
+    captured = {}
+    original = CorrectionEngine.__init__
+    signature = inspect.signature(original)
+    def record(*args, **kwargs):
+        bound = signature.bind(*args, **kwargs)
+        bound.apply_defaults()
+        captured.update(bound.arguments)
+        original(*args, **kwargs)
+    with patch.object(CorrectionEngine, '__init__', record):
+        engine = case.engine()
+    config = {k: v for k, v in captured.items() if k not in
+              ('self', 'irs', 'target_db_fn', 'xo_stage', 'sub_allpass', 'gd_cuts', 'bundle_gain')}
+    config['target'] = captured['target_db_fn'].target.points
+    for name in ('max_boost_db', 'infra_boost_max_db', 'xo_peq_on', 'xo_peq_lo', 'xo_peq_hi'):
+        config[name] = getattr(engine, name)
+    config['xo_peq_lo_hz'] = config.pop('xo_peq_lo')
+    config['xo_peq_hi_hz'] = config.pop('xo_peq_hi')
+    for name in ('groups', 'xo', 'sub_manual', 'bundle_layouts'):
+        config[name] = list((config[name] or {}).items())
+    roles = list(case.irs[1])
+    sources = [(1.6, 3.9, 1.), (4.6, 3.9, 1.), (3.1, 3.9, 1.),
+               (0.4, 2.2, 1.), (5.8, 2.2, 1.), (1.6, 0.5, 1.), (4.6, 0.5, 1.),
+               (1.6, 3.4, 2.5), (4.6, 3.4, 2.5), (1.6, 0.9, 2.5), (4.6, 0.9, 2.5),
+               (1.2, 0.5, 0.4), (5., 0.5, 0.4)]
+    assert roles == ['L', 'R', 'C', 'Ls', 'Rs', 'Lb', 'Rb', 'Tfl', 'Tfr', 'Tbl', 'Tbr', 'SW1', 'SW2']
+    excitations = []
+    for i, role in enumerate(roles):
+        values = (synth.sub_ir(seed=synth.SEED + i) if role.startswith('SW')
+                  else synth.main_ir(seed=synth.SEED + i))
+        data = np.asarray(values, dtype='<f8').tobytes()
+        filename = f'excitation_{role}.f64'
+        (folder / filename).write_bytes(data)
+        excitations.append([role, dict(blob=filename, length=len(data), sha256=hashlib.sha256(data).hexdigest())])
+    room = ModalRoom(sample_rate=48000, n_fft=48000)
+    payload = dict(inputs=dict(config=config, measurements=[],
+                              settings=dataclasses.asdict(case.settings), project={},
+                              recipe=dict(roles=roles, sources=sources,
+                                          receivers=[*POSITIONS, (2.6, 2.4, 1.15)],
+                                          dims=room.dims, q=room.q, scale=room.room_scale,
+                                          modes=room.modes, excitations=excitations)),
+                   outputs={}, meta={**common.META, 'numpy_dispatch': 'SIMD enabled',
+                                     'purpose': 'performance input only; not a result golden'})
+    (folder / 'big.json').write_text(json.dumps(common.plain(payload), separators=(',', ':')) + '\n')
+    size = sum(p.stat().st_size for p in folder.iterdir())
+    assert size < 8 * 1024 ** 2
+    print(json.dumps(dict(op='record_mimo_case', bytes=size, ir_bytes=78 * 48000 * 4)))
 
 
 def project_bench(args, case):
