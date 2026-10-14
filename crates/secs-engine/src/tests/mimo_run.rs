@@ -327,9 +327,23 @@ fn mimo_run_compute_fir_and_iir_end_to_end() {
                     .iter()
                     .map(|p| (&p.input, &p.support))
                     .collect();
+                // IIR post-processing drops paths by fitted values, which match
+                // SECS 2 within its spread (P16's gate), not bit for bit, so the
+                // set is reported. Asserted: every path is one of its input's
+                // ideal supports, in the ideal design's order.
                 eprintln!("MEASURE MIMO_RUN {name} IIR paths got={got:?} reference={want:?}");
-                if oracle_libm() {
-                    assert_eq!(got, want);
+                let ideal: Vec<_> = run
+                    .ideal
+                    .supports
+                    .iter()
+                    .flat_map(|(i, s)| s.iter().map(move |(j, _)| (i, j)))
+                    .collect();
+                let mut rest = ideal.iter();
+                for path in &got {
+                    assert!(
+                        rest.any(|p| p == path),
+                        "{name}: IIR path {path:?} is not an ideal support in order {ideal:?}"
+                    );
                 }
             }
             assert_eq!(
