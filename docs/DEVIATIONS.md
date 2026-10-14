@@ -33,11 +33,11 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 
 | 번호 | 업스트림 동작 | 바꾸는 동작 | 출처 | 상태 |
 |---|---|---|---|---|
-| F1 | `.secs` 저장이 원자적이지 않고 측정 스레드와 화면 스레드가 잠금 없이 함께 씁니다. | 임시 파일과 이름 바꾸기, 쓰는 쪽 하나. | `model.py:926-931`, `rewapi/session.py:332` | 계획 |
-| F2 | 위치 측정 중 오류가 나면 그 위치에서 이미 잰 IR까지 버립니다. | 채널마다 바로 기록하고, 다시 재면 그 위치를 바꿉니다. | `rewapi/session.py:418-427` | 계획 |
+| F1 | `.secs` 저장이 원자적이지 않고 측정 스레드와 화면 스레드가 잠금 없이 함께 씁니다. | 임시 파일과 이름 바꾸기, 쓰는 쪽 하나. `secs-project::interrupted_save_leaves_old_secs_intact_f1`이 지킵니다. | `model.py:926-931`, `rewapi/session.py:332` | 적용 |
+| F2 | 위치 측정 중 오류가 나면 그 위치에서 이미 잰 IR까지 버립니다. | 채널마다 바로 기록하고, 다시 재면 그 위치를 바꿉니다. `secs-project::test_cancel_then_resume_skips_done_positions_and_partial_position_is_not_done_f2`, `secs-project::test_remeasure_replaces_entry`가 지킵니다. | `rewapi/session.py:418-427` | 적용 |
 | F3 | mdat 파서가 깊이 200 근처에서 RecursionError를 냅니다. | 명시적 작업 스택과 깊이 상한(상위 클래스 사슬도 깊이를 씁니다). `secs-jos::class_hierarchy_obeys_depth_limit`, 변형 입력 3000개 시험. | `rew_mdat/serialization/parser.py:46-55` | 적용 |
 | F4 | mdat 빌더의 UUID가 무작위라 같은 입력에서 다른 바이트가 나옵니다. | UUID 출처를 주입합니다(`secs_mdat::build`의 `uuid`). 앱은 무작위, 테스트는 고정. `secs-mdat::builds_match_bytes_except_nine_one_ulp_caches`. | `rew_mdat/builder.py:143` | 적용 |
-| F5 | `.secs`의 IR 경로를 절대 경로와 `..`까지 그대로 따릅니다. | 프로젝트의 `.irs` 안으로 제한하고, 벗어나면 이주 경고를 띄웁니다. | `rewapi/session.py:361-381` | 계획 |
+| F5 | `.secs`의 IR 경로를 절대 경로와 `..`까지 그대로 따릅니다. | 프로젝트의 `.irs` 안으로 제한하고, 벗어나면 이주 경고를 띄웁니다. 절대 경로·`..`·심볼릭 링크 탈출과 정상 경로를 `secs-project::f5_absolute_parent_and_symlink_escapes_are_rejected_but_in_tree_reads`가 지킵니다. | `rewapi/session.py:361-381` | 적용 |
 | F6 | CamillaDSP 내보내기가 WAV를 쓴 뒤에야 ASCII 검사에서 실패하고, NaN을 그대로 YAML에 씁니다. | 모든 검사를 첫 파일을 쓰기 전에 합니다. | `export_camilladsp.py:364-365, 402` | 계획 |
 | F7 | mdat 파서의 상한이 배열·문자열 하나씩만 셉니다. 같은 배열·서명을 참조로 여러 번 가리키거나 상위 클래스가 순환하면 메모리를 계속 씁니다. | 해석한 메모리 전체를 `max_file_bytes` 예산으로 세고, 상위 클래스 순환을 거부합니다. 정상 파일과 오라클의 오류 사례는 그대로입니다. `secs-jos::shared_signature_copies_obey_aggregate_allocation_budget`, `secs-jos::declared_array_sizes_do_not_allocate_before_truncation_checks`. | `rew_mdat/serialization/parser.py`, `rew_mdat/limits.py` | 적용 |
 | F8 | 파이썬 문자열은 짝 없는 UTF-16 서러게이트를 담습니다. | 러스트 문자열에는 담을 수 없어 글자 API는 U+FFFD로 보여 주고, 해석한 스트림은 원래 바이트를 지녀 고치지 않은 글자는 그대로 왕복합니다. UTF-16 단위 API로 잃지 않고 읽고 쓸 수 있습니다. `secs-jos::utf8_and_lone_surrogates`. | `rew_mdat/serialization/modified_utf8.py` | 적용 |
