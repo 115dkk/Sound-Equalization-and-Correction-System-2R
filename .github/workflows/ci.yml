@@ -17,6 +17,9 @@ name: CI
 #   deny      cargo-deny: advisories, GPL-compatible licenses, bans, sources
 #   miri      the parsers of untrusted files (secs-jos, secs-mdat) under Miri
 #   fuzz      every fuzz target (fuzz/) for a fixed time from a seed corpus
+#   integrity the CLI's mock flow and a four-position MIMO flow at 1, the
+#             default and 7 threads on every OS; the exports must be
+#             byte-identical (docs/adr/0007)
 
 on:
   pull_request:
@@ -137,6 +140,76 @@ jobs:
       - name: features.toml names tests Cargo runs
         if: runner.os == 'Linux'
         run: python3 .github/scripts/check_feature_tests.py
+
+  integrity:
+    name: integrity (${{ matrix.os }}, 1 / default / 7 threads)
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: ALSA for cpal (the CLI links secs-sys)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libasound2-dev
+
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: integrity
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      # Two builds: with `--example` Cargo builds only that example, not the
+      # package binaries.
+      - name: Build the CLI and the oracle-case example (release)
+        run: |
+          cargo build --release --locked -p secs2r-cli
+          cargo build --release --locked -p secs-service --example case_project
+
+      # Each run writes to the same folder, because the CamillaDSP files name
+      # their own absolute paths; the export is moved aside before the next.
+      # The sample flow measures through the simulated room (one position, no
+      # MIMO); room_dba has four positions, so its flow runs MIMO too.
+      - name: Run both flows at three thread counts
+        run: |
+          set -euo pipefail
+          bin=target/release
+          exe=""
+          if [ "$RUNNER_OS" = Windows ]; then exe=.exe; fi
+          mkdir -p integrity
+          "$bin/examples/case_project$exe" --mimo-on room_dba integrity/case/project.secs
+          for threads in 1 default 7; do
+            if [ "$threads" = default ]; then unset RAYON_NUM_THREADS; else export RAYON_NUM_THREADS=$threads; fi
+            rm -rf integrity/run
+            start=$SECONDS
+            "$bin/secs2r-cli$exe" --quiet --deterministic-uuids run --fill mock --out integrity/run
+            echo "sample flow, $threads threads: $((SECONDS - start)) s"
+            mv integrity/run/export "integrity/sample-$threads"
+            rm -rf integrity/run
+            cp -R integrity/case integrity/run
+            start=$SECONDS
+            "$bin/secs2r-cli$exe" --quiet --deterministic-uuids run --project integrity/run/project.secs --mimo --out integrity/run
+            echo "room_dba flow with MIMO, $threads threads: $((SECONDS - start)) s"
+            mv integrity/run/export "integrity/case-$threads"
+          done
+
+      - name: Compare the exports byte for byte
+        run: |
+          python .github/scripts/integrity.py compare integrity/sample-default integrity/sample-1 integrity/sample-7
+          python .github/scripts/integrity.py compare integrity/case-default integrity/case-1 integrity/case-7
 
   frontend:
     name: screen (typecheck, tests, build, IPC bindings)

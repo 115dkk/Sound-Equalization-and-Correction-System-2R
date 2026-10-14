@@ -3,4 +3,20 @@
 /**
  * The upstream SECS 2 release a build is ported from (`UPSTREAM.toml`).
  */
-export type UpstreamBase = { name: string, version: string, commit: string, date: string, };
+export type UpstreamBase = { 
+/**
+ * Upstream product name from `UPSTREAM.toml`.
+ */
+name: string, 
+/**
+ * Upstream release version from `UPSTREAM.toml`.
+ */
+version: string, 
+/**
+ * Forty-character upstream Git commit from `UPSTREAM.toml`.
+ */
+commit: string, 
+/**
+ * Upstream snapshot date from `UPSTREAM.toml`.
+ */
+date: string, };

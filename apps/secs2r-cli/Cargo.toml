@@ -18,5 +18,10 @@ path = "src/main.rs"
 [dependencies]
 secs-service.workspace = true
 secs-types.workspace = true
+secs-compute.workspace = true
+secs-rew = { path = "../../crates/secs-rew" }
+secs-sys = { path = "../../crates/secs-sys" }
 clap.workspace = true
+rayon.workspace = true
+serde.workspace = true
 serde_json.workspace = true

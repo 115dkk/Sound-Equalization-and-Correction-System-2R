@@ -1,0 +1,149 @@
+{
+  "sample_rate": 48000,
+  "positions": [
+    1
+  ],
+  "source": "250310 돌비룸 보정.mdat",
+  "entries": [
+    {
+      "role": "L",
+      "offset": 0,
+      "samples": 48000,
+      "t0_s": -0.19432657877604165,
+      "source": {
+        "title": "L",
+        "index": 10
+      }
+    },
+    {
+      "role": "C",
+      "offset": 192000,
+      "samples": 48000,
+      "t0_s": -0.19451192220052083,
+      "source": {
+        "title": "C",
+        "index": 16
+      }
+    },
+    {
+      "role": "R",
+      "offset": 384000,
+      "samples": 48000,
+      "t0_s": -0.1944241943359375,
+      "source": {
+        "title": "R",
+        "index": 23
+      }
+    },
+    {
+      "role": "Ls",
+      "offset": 576000,
+      "samples": 48000,
+      "t0_s": -0.1964735921223958,
+      "source": {
+        "title": "LS",
+        "index": 27
+      }
+    },
+    {
+      "role": "Rs",
+      "offset": 768000,
+      "samples": 48000,
+      "t0_s": -0.19630501302083325,
+      "source": {
+        "title": "RS",
+        "index": 33
+      }
+    },
+    {
+      "role": "Lb",
+      "offset": 960000,
+      "samples": 48000,
+      "t0_s": -0.19708365885416668,
+      "source": {
+        "title": "LRS",
+        "index": 39
+      }
+    },
+    {
+      "role": "Rb",
+      "offset": 1152000,
+      "samples": 48000,
+      "t0_s": -0.1970302734374999,
+      "source": {
+        "title": "RRS",
+        "index": 45
+      }
+    },
+    {
+      "role": "Tfl",
+      "offset": 1344000,
+      "samples": 48000,
+      "t0_s": -0.1964425862630208,
+      "source": {
+        "title": "LTF",
+        "index": 50
+      }
+    },
+    {
+      "role": "Tfr",
+      "offset": 1536000,
+      "samples": 48000,
+      "t0_s": -0.19695833333333324,
+      "source": {
+        "title": "RTF",
+        "index": 56
+      }
+    },
+    {
+      "role": "Tbl",
+      "offset": 1728000,
+      "samples": 48000,
+      "t0_s": -0.19637813313802077,
+      "source": {
+        "title": "LTR",
+        "index": 62
+      }
+    },
+    {
+      "role": "Tbr",
+      "offset": 1920000,
+      "samples": 48000,
+      "t0_s": -0.19643050130208328,
+      "source": {
+        "title": "RTR",
+        "index": 69
+      }
+    },
+    {
+      "role": "SW1",
+      "offset": 2112000,
+      "samples": 48000,
+      "t0_s": -0.1706851399739583,
+      "source": {
+        "title": "DBA L",
+        "index": 0
+      }
+    },
+    {
+      "role": "SW2",
+      "offset": 2304000,
+      "samples": 48000,
+      "t0_s": -0.19424173990885407,
+      "source": {
+        "title": "DBA R",
+        "index": 1
+      }
+    },
+    {
+      "role": "SW3",
+      "offset": 2496000,
+      "samples": 48000,
+      "t0_s": -0.19179728190104162,
+      "source": {
+        "title": "INFRA",
+        "index": 2
+      }
+    }
+  ]
+}

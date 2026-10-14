@@ -642,17 +642,31 @@ pub fn export_mdat_with_mimo(
     mimo: Option<&MimoResponses>,
     spl_offset_db: Option<f64>,
 ) -> Result<PathBuf, ExportError> {
+    export_mdat_with_mimo_using(run, folder, mimo, spl_offset_db, &mut || {
+        random_uuid().map_err(|error| ExportError::Random(error.to_string()))
+    })
+}
+
+/// Writes the staged mdat using an injected UUID source.
+pub fn export_mdat_with_mimo_using(
+    run: &ExportRun<'_>,
+    folder: &Path,
+    mimo: Option<&MimoResponses>,
+    spl_offset_db: Option<f64>,
+    uuid: &mut dyn FnMut() -> Result<u128, ExportError>,
+) -> Result<PathBuf, ExportError> {
     let label = run.settings.label();
     let items = stage_items_with_mimo(
         run,
         mimo.map_or(MimoExport::None, MimoExport::Responses),
         Some(&label),
     )?;
-    export_items(
+    export_items_using(
         folder,
         &format!("SECS 보정 설계 {label}.mdat"),
         &items,
         spl_offset_db,
+        uuid,
     )
 }
 
@@ -670,27 +684,41 @@ pub fn export_before_after_mdat_with_mimo(
     mimo: Option<&MimoResponses>,
     spl_offset_db: Option<f64>,
 ) -> Result<PathBuf, ExportError> {
+    export_before_after_mdat_with_mimo_using(run, folder, mimo, spl_offset_db, &mut || {
+        random_uuid().map_err(|error| ExportError::Random(error.to_string()))
+    })
+}
+
+/// Writes the before/after mdat using an injected UUID source.
+pub fn export_before_after_mdat_with_mimo_using(
+    run: &ExportRun<'_>,
+    folder: &Path,
+    mimo: Option<&MimoResponses>,
+    spl_offset_db: Option<f64>,
+    uuid: &mut dyn FnMut() -> Result<u128, ExportError>,
+) -> Result<PathBuf, ExportError> {
     let label = run.settings.label();
     let items =
         before_after_items_with_mimo(run, mimo.map_or(MimoExport::None, MimoExport::Responses))?;
-    export_items(
+    export_items_using(
         folder,
         &format!("SECS 보정 전후 {label}.mdat"),
         &items,
         spl_offset_db,
+        uuid,
     )
 }
 
-fn export_items(
+fn export_items_using(
     folder: &Path,
     filename: &str,
     items: &[MeasurementInput],
     spl_offset_db: Option<f64>,
+    uuid: &mut dyn FnMut() -> Result<u128, ExportError>,
 ) -> Result<PathBuf, ExportError> {
     let uuids = (0..items.len())
-        .map(|_| random_uuid())
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| ExportError::Random(error.to_string()))?;
+        .map(|_| uuid())
+        .collect::<Result<Vec<_>, _>>()?;
     let mut uuids = uuids.into_iter();
     let bytes = secs_mdat::build(items, TEMPLATE, spl_offset_db, &mut || {
         uuids
