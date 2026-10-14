@@ -130,3 +130,55 @@ pub struct SignalChain {
     /// Total filter latency in ms: lift plus `main_extra_ms`.
     pub latency_ms: f64,
 }
+
+/// What a MIMO support path filters with (upstream `mimo_paths`' filter slot).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum MimoFilter {
+    /// IIR support (`mimo_iir.IirSupport`): gain, polarity, integer-sample
+    /// delay, peaking bands and all-passes, then the path's LR4 high-pass at
+    /// [`MimoPath::low_hz`] and LR4 low-pass at [`MimoPaths::fsiso`].
+    Iir {
+        /// Path gain in dB.
+        gain_db: f64,
+        /// Path delay in ms, added to [`MimoPath::delay_ms`].
+        delay_ms: f64,
+        /// Polarity, `1` or `-1`.
+        polarity: i8,
+        /// Peaking bands, in order.
+        peq: Vec<Peq>,
+        /// All-passes, in order.
+        allpass: Vec<Allpass>,
+    },
+    /// FIR support: the low-rate ideal FIR raised to 48 kHz
+    /// (`export_camilladsp.fir_to_48k`); the Fsiso low-pass is inside it.
+    Fir {
+        /// Taps at 48 kHz.
+        taps_48k: Vec<f64>,
+    },
+}
+
+/// One MIMO support path: input `input` also drives speaker `support`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MimoPath {
+    /// Input role (the channel whose raw signal the path copies).
+    pub input: String,
+    /// Support speaker role (the output the path adds to).
+    pub support: String,
+    /// The path filter.
+    pub filter: MimoFilter,
+    /// Protective LR4 high-pass in Hz: the support's F-support low edge,
+    /// 50 Hz when the speaker has no range (upstream fallback).
+    pub low_hz: f64,
+    /// The support speaker's delay in ms, output axis: its alignment delay
+    /// plus [`SignalChain::main_extra_ms`].
+    pub delay_ms: f64,
+}
+
+/// Every MIMO support path, in upstream order (input, then support).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MimoPaths {
+    /// Isolation frequency in Hz (the IIR paths' LR4 low-pass).
+    pub fsiso: f64,
+    /// The paths.
+    pub paths: Vec<MimoPath>,
+}
