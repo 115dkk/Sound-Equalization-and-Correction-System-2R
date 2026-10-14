@@ -728,9 +728,9 @@ upstream = "calibration.py stage_items, before_after_items"
 id = "ui.screens"
 kind = "ui"
 milestone = "M5"
-status = "planned"
+status = "partial"
 tests = []
-note = "five-stage flow, results first, three disclosure levels (docs/ARCHITECTURE.md, Screens)"
+note = "five-stage flow, results first, three disclosure levels (docs/ARCHITECTURE.md, Screens). P29 landed the foundation: tokens, the frame with the step rail and status, the job tray, the component kit, the uPlot graphs, the SVG maps, the mock service and the gallery (docs/DESIGN.md). Its vitest tests live in apps/secs2r/ui, which this registry cannot reference (it lists cargo tests). The step screens follow in P30-P32."
 
 [[feature]]
 id = "ui.tutorial_help"

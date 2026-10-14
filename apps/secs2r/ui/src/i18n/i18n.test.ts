@@ -16,6 +16,20 @@ describe("catalogs", () => {
     }
   });
 
+  it("keeps the Korean register: 합니다체 sentences, no 해요체 statements", () => {
+    // -세요 instructions are allowed; statements ending in -어요/-아요/-해요/-예요 are not.
+    const friendly = /(?:어요|아요|해요|여요|예요|에요|래요|네요|군요|지요|죠)[.!?]?$/;
+    const offenders = Object.entries(catalogs.ko).filter(([, text]) => text.split(/(?<=[.!?])\s+/).some((sentence) => friendly.test(sentence.trim())));
+    expect(offenders).toEqual([]);
+  });
+
+  it("has no exclamation marks", () => {
+    for (const [locale, catalog] of Object.entries(catalogs)) {
+      const offenders = Object.entries(catalog).filter(([, text]) => /!/.test(text));
+      expect(offenders, locale).toEqual([]);
+    }
+  });
+
   it("fills placeholders and picks a supported locale", () => {
     expect(translate("ko", "app.upstream", { version: "Beta 1.2.0" })).toBe("SECS 2 Beta 1.2.0 기준");
     expect(pickLocale(["en-US", "ko-KR"])).toBe("en");
