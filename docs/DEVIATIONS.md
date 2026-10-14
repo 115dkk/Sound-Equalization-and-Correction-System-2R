@@ -47,10 +47,10 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 
 | 번호 | 업스트림 동작 | 바꾸는 동작 | 출처 | 상태 |
 |---|---|---|---|---|
-| R1 | `/measure` 4xx 본문에 'pro'가 들어가면(process, problem) Pro 없음으로 판정하고, 401·402·403은 어느 경로든 Pro 없음입니다. | 상태 코드와 경로로만 판정합니다. | `rewapi/rew.py:286-292` | 계획 |
-| R2 | 상태 확인의 차단기가 측정 스레드의 요청까지 6초 막습니다. | 측정 세션에는 차단기를 걸지 않습니다. | `rewapi/rew.py:273-284, 317-329` | 계획 |
-| R3 | 콜백 서버의 경로를 예측할 수 있고, 4 MB를 넘는 본문을 일부만 읽습니다. | 무작위 경로 토큰, 본문을 끝까지 읽어 버림. | `rewapi/callback.py:18, 47-59` | 계획 |
-| R4 | FakeREW가 상위 폴더의 `tests/synth.py`를 불러옵니다. | 제품은 테스트 코드를 불러오지 않습니다. | `rewapi/fake.py:54-81` | 계획 |
+| R1 | `/measure` 4xx 본문에 'pro'가 들어가면(process, problem) Pro 없음으로 판정하고, 401·402·403은 어느 경로든 Pro 없음입니다. | `/measure/command`의 401·402·403만 Pro 필요로 판정하고 본문은 보지 않습니다. `secs-rew::test_r1_pro_required_uses_only_status_and_measure_command_path`. | `rewapi/rew.py:286-292` | 적용 |
+| R2 | 상태 확인의 차단기가 측정 스레드의 요청까지 6초 막습니다. | 상태·장치 조회에만 차단기를 적용하고, 측정 세션과 취소 요청에는 적용하지 않습니다. `secs-rew::test_r2_probe_circuit_breaker_does_not_block_measurement_requests`, `test_r2_full_position_ignores_offline_hold_including_device_lookups`. | `rewapi/rew.py:273-284, 317-329` | 적용 |
+| R3 | 콜백 서버의 경로를 예측할 수 있고, 4 MB를 넘는 본문을 일부만 읽습니다. | 서버별 무작위 경로 토큰, 미등록 경로 404, 4 MB 초과 본문을 끝까지 버린 뒤 413. `secs-rew::test_r3_random_token_wrong_path_404_and_oversized_body_drained`는 같은 연결의 다음 요청까지 확인합니다. | `rewapi/callback.py:18, 47-59` | 적용 |
+| R4 | FakeREW가 상위 폴더의 `tests/synth.py`를 불러옵니다. | `IrSource`로 IR·t0·SNR을 주입하며 제품에는 테스트 코드·샘플 데이터를 넣지 않습니다. `secs-rew::test_r4_fake_two_position_plan_uses_only_supplied_ir_source`. | `rewapi/fake.py:54-81` | 적용 |
 
 ## 화면
 
