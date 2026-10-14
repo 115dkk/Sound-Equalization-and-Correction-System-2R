@@ -1,0 +1,1 @@
+{"inputs":{"assignment":["Tbl","Tbl","R"],"positions":[2,2,1]},"outputs":"같은 역할이 두 번 배정됐습니다: Ltr P2","meta":{"oracle":"SECS 2 Beta 1.2.0 (60ac53a)","python":"3.13.16","numpy":"2.5.3","scipy":"1.18.1","numpy_dispatch":"baseline (C library transcendental functions)"}}

@@ -9,6 +9,9 @@
 //! staleness of results, and the assembly of exports. The Tauri app and the
 //! CLI are thin adapters over this crate; tests drive it directly.
 
+pub mod mdat_import;
+pub mod measure;
+
 use std::sync::OnceLock;
 
 use secs_types::ipc::{
