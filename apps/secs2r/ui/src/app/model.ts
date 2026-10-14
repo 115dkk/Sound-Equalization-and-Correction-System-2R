@@ -8,7 +8,7 @@ export type StepId = (typeof STEPS)[number];
 /** done: finished; ready: can be worked on; blocked: needs an earlier step; skipped: not on this path (mdat import skips 연결·점검). */
 export type StepStatus = "done" | "ready" | "blocked" | "skipped";
 
-export const BLOCKED_REASONS = ["no_speakers", "config_invalid", "no_path", "no_measurements", "measuring", "no_result", "computing"] as const;
+export const BLOCKED_REASONS = ["no_speakers", "config_invalid", "no_path", "no_measurements", "measuring", "no_result", "computing", "stale_result"] as const;
 export type BlockedReason = (typeof BLOCKED_REASONS)[number];
 
 export type StepState = { status: StepStatus; reason?: BlockedReason; count?: number };
@@ -67,6 +67,7 @@ export const BLOCKED_TEXT: Record<BlockedReason, { full: MessageKey; short: Mess
   measuring: { full: "frame.blocked.measuring", short: "frame.blocked.measuring.short" },
   no_result: { full: "frame.blocked.no_result", short: "frame.blocked.no_result.short" },
   computing: { full: "frame.blocked.computing", short: "frame.blocked.computing.short" },
+  stale_result: { full: "frame.blocked.stale_result", short: "frame.blocked.stale_result.short" },
 };
 
 /** The step reached by moving `delta` from `from`, skipping steps that are not on this path. */
