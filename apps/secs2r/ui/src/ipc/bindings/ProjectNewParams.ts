@@ -15,4 +15,8 @@ preset: string,
 /**
  * Number of subwoofers.
  */
-sub_count: number, };
+sub_count: number, 
+/**
+ * Whether to create the fixed 7.1.4 sample-room project.
+ */
+sample: boolean, };

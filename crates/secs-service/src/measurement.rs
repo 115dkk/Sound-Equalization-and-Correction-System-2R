@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use secs_project::{Project, PyJson};
+use secs_types::ipc::SampleLoadParams;
 use secs_types::ipc::*;
 
 use crate::measure::json::JsonExt;
@@ -386,6 +387,101 @@ impl Service {
             }))
         })
     }
+    pub(crate) fn start_sample_load(
+        &self,
+        params: SampleLoadParams,
+        events: Arc<dyn EventSink>,
+    ) -> Result<JobStarted, IpcError> {
+        let (roles, identity) = {
+            let session = lock(&self.session);
+            let open = session.require()?;
+            let roles = plan_for(open.store.project(), &Default::default()).roles;
+            (roles, open.identity)
+        };
+        let positions = match params.positions {
+            None => vec![1],
+            Some(count) if count >= 2 => (1..=count).map(i64::from).collect(),
+            Some(_) => return Err(input("positions", "positions must be at least 2")),
+        };
+        let embedded = params.positions.is_none();
+        let session = self.session.clone();
+        self.jobs.start(JobKind::SampleLoad, events, move |ctx| {
+            ctx.begin_commit()?;
+            let total = (roles.len() * positions.len()) as u64;
+            let mut done = 0;
+            let mut session = lock(&session);
+            let open = session.require_mut()?;
+            if open.identity != identity {
+                return Err(IpcError::new(
+                    ErrorCode::StaleInputs,
+                    "open project changed",
+                ));
+            }
+            if embedded {
+                let existing = secs_project::measured_positions(open.store.project());
+                for position in existing {
+                    if position != 1 {
+                        open.store.clear_position(position);
+                    }
+                }
+            } else {
+                let existing = secs_project::measured_positions(open.store.project());
+                for position in existing {
+                    open.store.clear_position(position);
+                }
+            }
+            for position in positions {
+                open.store.start_position(position);
+                for role in &roles {
+                    if ctx.cancel().is_cancelled() {
+                        return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
+                    }
+                    let (ir, sample_rate, t0_s, source) = if embedded {
+                        match measure::sample::ir(role, 1) {
+                            Ok((ir, rate, t0)) => (ir, rate, t0, "sample"),
+                            Err(_) => {
+                                (measure::sample::fallback_ir(role), 48_000, 0.0, "synthetic")
+                            }
+                        }
+                    } else {
+                        (
+                            measure::sample::position_variation(
+                                &measure::sample::fallback_ir(role),
+                                u32::try_from(position).unwrap_or(u32::MAX),
+                            ),
+                            48_000,
+                            0.0,
+                            "synthetic",
+                        )
+                    };
+                    open.store
+                        .record(
+                            secs_project::MeasurementResult {
+                                role: role.clone(),
+                                pos: position,
+                                ir,
+                                sample_rate,
+                                t0_s,
+                                spl_db: None,
+                                spl_offset_db: None,
+                                snr_db: None,
+                                uuid: Some(format!("sample-{role}-{position}")),
+                                source: Some(source.into()),
+                            },
+                            Some(&roles),
+                        )
+                        .map_err(|error| {
+                            measure_error(error.into(), "record", secs_audio::SharePreference::Auto)
+                        })?;
+                    done += 1;
+                    ctx.role_progress(role, done, total);
+                }
+            }
+            open.dirty = false;
+            Ok(JobResult::Measurement(session::info(open)))
+        })
+    }
+
     pub(crate) fn start_measure(
         &self,
         params: MeasurePositionParams,
@@ -409,6 +505,7 @@ impl Service {
         let share = s.share;
         let mut m = measurer(&self.deps, method(&project), s)?;
         let session = self.session.clone();
+        let uuid = self.deps.uuid.clone();
         let atomic_position = method(&project) != "rew";
         self.jobs.start(JobKind::Measure, events, move |ctx| {
             let mut count = 0;
@@ -422,7 +519,7 @@ impl Service {
                         if result.uuid.is_none() {
                             result.uuid = Some(format!(
                                 "{:032x}",
-                                crate::random_uuid().map_err(|e| IpcError::new(
+                                lock(&uuid).as_mut()().map_err(|e| IpcError::new(
                                     ErrorCode::Internal,
                                     e.to_string()
                                 ))?

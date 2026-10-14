@@ -46,6 +46,120 @@ pub fn ir(role: &str, pos: i64) -> Result<(Vec<f32>, u32, f64), MeasureError> {
         .collect();
     Ok((values, index().sample_rate, entry.t0_s))
 }
+
+const SYNTHETIC_RATE: u32 = 48_000;
+const SYNTHETIC_SECONDS: u32 = 1;
+
+/// Builds the deterministic deployment fallback used for roles without embedded data.
+pub fn fallback_ir(role: &str) -> Vec<f32> {
+    let rate = SYNTHETIC_RATE as usize;
+    let length = rate * SYNTHETIC_SECONDS as usize;
+    let direct = (0.003 * SYNTHETIC_RATE as f64).round() as usize;
+    let mut random = Pcg32::new(20_260_916 + fnv1a(role.as_bytes()) % 100_000);
+    let mut values = vec![0.0_f64; length];
+    values[direct] = 1.0;
+    let reflection_end = (0.08 * SYNTHETIC_RATE as f64) as usize;
+    for _ in 0..12 {
+        let index = direct + random.range(20, reflection_end);
+        if index < length {
+            values[index] += random.normal() * 0.18;
+        }
+    }
+    for (index, value) in values.iter_mut().enumerate() {
+        *value += 0.04 * random.normal() * (-(index as f64) / (0.12 * SYNTHETIC_RATE as f64)).exp();
+    }
+    let is_sub = role.to_ascii_uppercase().starts_with("SW");
+    let modes = if is_sub {
+        [28.0, 43.0, 67.0]
+    } else {
+        [52.0, 118.0, 240.0]
+    };
+    for (mode, frequency) in modes.into_iter().enumerate() {
+        for (index, value) in values.iter_mut().enumerate() {
+            let time = index as f64 / SYNTHETIC_RATE as f64;
+            *value += 0.05 / (mode + 1) as f64
+                * (std::f64::consts::TAU * frequency * time).sin()
+                * (-time / 0.25).exp();
+        }
+    }
+    if is_sub {
+        let alpha = 1.0 - (-std::f64::consts::TAU * 120.0 / SYNTHETIC_RATE as f64).exp();
+        for _ in 0..2 {
+            let mut accumulator = 0.0;
+            for value in &mut values {
+                accumulator += alpha * (*value - accumulator);
+                *value = accumulator;
+            }
+        }
+    }
+    values.into_iter().map(|value| value as f32).collect()
+}
+
+/// Applies the upstream per-position delay and attenuation to a synthetic IR.
+pub fn position_variation(values: &[f32], position: u32) -> Vec<f32> {
+    let step = position.saturating_sub(1);
+    if step == 0 {
+        return values.to_vec();
+    }
+    let delay = (f64::from(step) * 0.35e-3 * f64::from(SYNTHETIC_RATE)).round() as usize;
+    let gain = 10.0_f32.powf(-0.4 * step as f32 / 20.0);
+    let mut output = vec![0.0; values.len()];
+    if delay < values.len() {
+        for (target, value) in output[delay..].iter_mut().zip(values) {
+            *target = *value * gain;
+        }
+    }
+    output
+}
+
+fn fnv1a(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+    })
+}
+
+struct Pcg32 {
+    state: u64,
+    spare: Option<f64>,
+}
+
+impl Pcg32 {
+    fn new(seed: u64) -> Self {
+        let mut random = Self {
+            state: seed.wrapping_add(0x853c_49e6_748f_ea9b),
+            spare: None,
+        };
+        let _ = random.next();
+        random
+    }
+
+    fn next(&mut self) -> u32 {
+        let old = self.state;
+        self.state = old
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        let shifted = (((old >> 18) ^ old) >> 27) as u32;
+        shifted.rotate_right((old >> 59) as u32)
+    }
+
+    fn uniform(&mut self) -> f64 {
+        (f64::from(self.next()) + 0.5) / (f64::from(u32::MAX) + 1.0)
+    }
+
+    fn range(&mut self, start: usize, end: usize) -> usize {
+        start + (self.next() as usize % (end - start))
+    }
+
+    fn normal(&mut self) -> f64 {
+        if let Some(value) = self.spare.take() {
+            return value;
+        }
+        let radius = (-2.0 * self.uniform().ln()).sqrt();
+        let angle = std::f64::consts::TAU * self.uniform();
+        self.spare = Some(radius * angle.sin());
+        radius * angle.cos()
+    }
+}
 /// Exact, unmodified sample source for the REW adapter's FakeRew.
 #[derive(Debug, Clone, Copy)]
 pub struct SampleSource;

@@ -13,7 +13,12 @@ pub(crate) fn dispatch(
         Request::Bootstrap => Ok(Response::Bootstrap(service.bootstrap())),
         Request::ProjectNew(params) => {
             let response = lock(&service.session)
-                .create(params.path.into(), &params.preset, params.sub_count)
+                .create(
+                    params.path.into(),
+                    &params.preset,
+                    params.sub_count,
+                    params.sample,
+                )
                 .map(Response::ProjectNew)
                 .map_err(IpcError::from);
             if response.is_ok() {
@@ -32,13 +37,16 @@ pub(crate) fn dispatch(
             response
         }
         Request::ProjectSave(params) => lock(&service.session)
-            .save(params.path.map(Into::into))
+            .save(params.path.map(Into::into), &service.deps.uuid)
             .map(Response::ProjectSave)
             .map_err(IpcError::from),
         Request::ProjectInfo => lock(&service.session)
             .info()
             .map(Response::ProjectInfo)
             .map_err(IpcError::from),
+        Request::SampleLoad(params) => service
+            .start_sample_load(params, events)
+            .map(Response::SampleLoad),
         Request::JobCancel(params) => service.jobs.cancel(params.job).map(Response::JobCancel),
         Request::Jobs => Ok(Response::Jobs(service.jobs.snapshots())),
         Request::Calibrate(params) => service
