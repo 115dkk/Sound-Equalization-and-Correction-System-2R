@@ -833,68 +833,68 @@ tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::ma
 id = "ipc.measure_methods"
 kind = "ipc"
 milestone = "M4"
-status = "planned"
-tests = ["secs-types::every_method_name_is_listed_and_parses"]
+status = "implemented"
+tests = ["secs-service::rew_recorded_transport_records_each_role_and_warning"]
 
 [[feature]]
 id = "ipc.measure_configure"
 kind = "ipc"
 milestone = "M4"
-status = "planned"
-tests = ["secs-types::every_method_name_is_listed_and_parses"]
+status = "implemented"
+tests = ["secs-service::configure_validates_fields_and_host_stub_reports_its_error"]
 
 [[feature]]
 id = "ipc.level_check"
 kind = "ipc"
 milestone = "M4"
-status = "planned"
-tests = ["secs-types::every_method_name_is_listed_and_parses"]
+status = "implemented"
+tests = ["secs-service::mock_flow_level_apply_and_calibration"]
 
 [[feature]]
 id = "ipc.level_apply"
 kind = "ipc"
 milestone = "M4"
-status = "planned"
-tests = ["secs-types::every_method_name_is_listed_and_parses"]
+status = "implemented"
+tests = ["secs-service::mock_flow_level_apply_and_calibration"]
 
 [[feature]]
 id = "ipc.measure_position"
 kind = "ipc"
 milestone = "M4"
-status = "planned"
-tests = ["secs-types::every_method_name_is_listed_and_parses"]
+status = "implemented"
+tests = ["secs-service::device_group_exclusion_and_cancel_preserve_project"]
 
 [[feature]]
 id = "ipc.position_clear"
 kind = "ipc"
 milestone = "M4"
-status = "planned"
-tests = ["secs-types::every_method_name_is_listed_and_parses"]
+status = "implemented"
+tests = ["secs-service::position_clear_undo_is_byte_exact_and_single_use"]
 
 [[feature]]
 id = "ipc.undo"
 kind = "ipc"
 milestone = "M4"
-status = "planned"
-tests = ["secs-types::every_method_name_is_listed_and_parses"]
+status = "implemented"
+tests = ["secs-service::position_clear_undo_is_byte_exact_and_single_use"]
 
 [[feature]]
 id = "ipc.rew_launch"
 kind = "ipc"
 milestone = "M4"
-status = "planned"
-tests = ["secs-types::every_method_name_is_listed_and_parses"]
+status = "implemented"
+tests = ["secs-service::configure_validates_fields_and_host_stub_reports_its_error"]
 
 [[feature]]
 id = "ipc.mdat_scan"
 kind = "ipc"
 milestone = "M4"
-status = "planned"
-tests = ["secs-types::every_method_name_is_listed_and_parses"]
+status = "implemented"
+tests = ["secs-service::mdat_scan_and_import_match_direct_oracle_bytes"]
 
 [[feature]]
 id = "ipc.mdat_import"
 kind = "ipc"
 milestone = "M4"
-status = "planned"
-tests = ["secs-types::every_method_name_is_listed_and_parses"]
+status = "implemented"
+tests = ["secs-service::mdat_scan_and_import_match_direct_oracle_bytes"]

@@ -589,7 +589,22 @@ pub(crate) fn calibration_stale(run: &CalibrationRun, project: &Project) -> bool
 }
 
 pub(crate) fn signature_key(project: &Project) -> String {
-    format!("{:?}", measurement_signature(project))
+    // The upstream signature omits UUIDs, so replacing a waveform at the same
+    // role, position and t0 otherwise leaves a completed design looking current.
+    let identities = match &project.measurements {
+        secs_project::PyJson::Array(entries) => entries
+            .iter()
+            .map(|entry| match entry {
+                secs_project::PyJson::Object(fields) => fields
+                    .iter()
+                    .find(|(key, _)| key == "uuid")
+                    .map(|(_, value)| value),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        _ => vec![],
+    };
+    format!("{:?}:{identities:?}", measurement_signature(project))
 }
 pub(crate) fn target_key_string(project: &Project) -> String {
     format!("{:?}", target_key(project))

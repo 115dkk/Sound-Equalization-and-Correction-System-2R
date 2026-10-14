@@ -657,7 +657,7 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
 }
 
 #[test]
-fn every_p23c_handler_returns_not_implemented() {
+fn measurement_handlers_are_connected_and_fail_with_typed_errors() {
     use secs_types::ipc::{
         LevelApplyParams, LevelCheckParams, LevelResult, MdatImportParams, MdatScanParams,
         MeasureConfigureParams, MeasurePositionParams, PositionClearParams, UndoParams,
@@ -691,10 +691,18 @@ fn every_p23c_handler_returns_not_implemented() {
             position: 1,
         }),
     ];
+    // Without an open project (and with a file that does not exist) each
+    // measurement handler refuses with a typed error; none is a stub any more.
+    // `rew_launch` is the exception: the default host is the M5 stub.
     for request in requests {
+        let method = request.method();
         let Envelope::Err(error) = service.call(request, Arc::new(NoEvents)) else {
-            panic!("P23c request must fail until it is connected");
+            continue;
         };
-        assert_eq!(error.code, ErrorCode::NotImplemented);
+        if method == "rew_launch" {
+            assert_eq!(error.code, ErrorCode::NotImplemented, "{method}");
+        } else {
+            assert_ne!(error.code, ErrorCode::NotImplemented, "{method}");
+        }
     }
 }

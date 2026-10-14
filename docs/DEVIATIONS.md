@@ -24,6 +24,7 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 | D12 | MIMO 위반 함수가 dB와 꼬리 에너지 비율을 섞어 경로 제거 순서를 정합니다. | 단위를 맞춘 위반 척도. 골든으로 영향을 먼저 잽니다. | `mimo_iir.py:413` | 보류 |
 | D13 | FIR MIMO 서포트(167 ms)에 공통 지연이 없어 표준 모드에서 쓸 수 있는 구간이 약 50 ms, 초고지연에서는 거의 없습니다. | 실험으로 확인한 뒤 공통 지연을 더합니다. | `export_camilladsp.py:142, 295-299` | 보류 |
 | D17 | 계산 취소가 결과만 버리고 계산 스레드는 계속 돕니다. 다시 누르면 계산이 겹치고, 다시 계산하면 MIMO 결과가 사라집니다. 프로세스 종료는 비공개 속성에 기댑니다. | 협조적 취소, 무리마다 잡 하나, 이전 결과 보존과 서명 기반 낡음 표시. `secs-service::{jobs_push_ordered_events_and_exclude_the_same_group,cancellation_finishes_within_one_second,cancelled_calibration_preserves_previous_results,room_dba_mimo_runs_and_becomes_stale_after_recalibration}`가 잡 경계, 취소, 이전 결과 보존, MIMO 낡음을 지킵니다. | `wizard/step_calibration.py:1836-1846`, `mimo_iir.py:180-195` | 적용 |
+| D37 | 보정 결과의 낡음을 정하는 측정 서명이 위치, 역할, t0만 봅니다. 같은 위치를 다시 재어 t0가 같으면(자체·모의 측정, 같은 시간 원점의 mdat) 파형이 바뀌어도 결과가 최신으로 보입니다. | 서명에 측정마다의 UUID를 더하고, 자체·모의 측정에도 UUID를 매깁니다. `secs-service::measuring_another_position_marks_calibration_stale`가 같은 위치 재측정과 다른 위치 측정이 모두 결과를 낡게 하는지 확인합니다. | `calibration.py measurement_signature` | 적용 |
 | D22 | 엔진 값 15개 안팎을 환경 변수로만 바꿀 수 있고, 워커가 호출마다 다시 읽습니다. | 명시적 튜닝 값, 화면의 전문가 표시. | `correction_engine.py`, `mimo.py`, `mimo_iir.py` 머리 | 계획 |
 | D24 | mdat 내보내기의 시간 원점이 `final` 응답과 시프트만큼 어긋납니다. | 신호 사슬 값 하나에서 시뮬레이터와 내보내기가 같은 원점을 씁니다. | `calibration.py:1101, 1321` | 계획 |
 | D27 | 퇴화한 IR에서 `long_spectra`가 0으로 나눕니다. | 측정 모듈이 입력을 확인합니다. | `correction_engine.py:558-559` | 계획 |
@@ -56,11 +57,11 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 
 | 번호 | 업스트림 동작 | 바꾸는 동작 | 출처 | 상태 |
 |---|---|---|---|---|
-| U1 | 레벨 체크의 출력 슬라이더가 측정 스윕 레벨과 이어져 있지 않고, 레벨 결과는 튜토리얼 밖에서 쓰이지 않습니다. 건너뛰면 그럴듯한 가짜 값을 씁니다. | 레벨 체크 결과로 스윕 레벨을 정합니다. | `wizard/step3_level.py`, `rewapi/rew.py configure` | 부분: `secs-audio::recommend_sweep_level`과 `level_known_signals_clip_and_recommendation`, `level_check_uses_simulated_capture_and_calibration`으로 −30~−15 dBFS 권고를 검증. 서비스 연결 P23·화면 M5 대기 |
+| U1 | 레벨 체크의 출력 슬라이더가 측정 스윕 레벨과 이어져 있지 않고, 레벨 결과는 튜토리얼 밖에서 쓰이지 않습니다. 건너뛰면 그럴듯한 가짜 값을 씁니다. | 서비스의 `level_check` 권고를 `level_apply`로 스윕 설정에 저장합니다. `secs-service::mock_flow_level_apply_and_calibration`이 실제 모의 레벨, 권고 적용·반복 적용, 측정과 보정을 확인합니다. 화면 연결은 M5입니다. | `wizard/step3_level.py`, `rewapi/rew.py configure` | 적용 |
 | U2 | DSP 프로필 칸 여섯 개를 엔진이 읽지 않습니다(MIMO FIR 예산 문구만 씀). | '내보낼 DSP'로 바꾸고 예산 경고에만 쓴다고 화면에 적습니다. | `wizard/step2_config.py:1090-1125` | 계획 |
 | U3 | 단계별 REW mdat 내보내기가 숨겨져 닿을 수 없습니다. | 내보내기의 고급에 되살립니다. | `wizard/step_calibration.py` 내보내기 카드 | 계획 |
 | U4 | 마지막 단계의 '완료'가 아무 일도 하지 않습니다. | 없앱니다. | `wizard/window.py advance` | 계획 |
-| U5 | 측정을 지우는 동작(프리셋·서브 수·배치 변경, 마지막 위치 다시)이 확인 없이 측정을 지웁니다. | 확인과 되돌리기. | `wizard/step2_config.py`, `step4_layout.py`, `step5_measure.py` | 계획 |
+| U5 | 측정을 지우는 동작(프리셋·서브 수·배치 변경, 마지막 위치 다시)이 확인 없이 측정을 지웁니다. | `position_clear`는 IR 파일을 남기고 기록을 지우며, 프로젝트별 최근 16개 단일 사용 토큰으로 원래 순서에 복원합니다. `secs-service::position_clear_undo_is_byte_exact_and_single_use`가 `.secs` 바이트 복원과 토큰 재사용·프로젝트 재열기 거절을 확인합니다. 확인 화면은 M5입니다. | `wizard/step2_config.py`, `step4_layout.py`, `step5_measure.py` | 적용 |
 | U6 | SNR 경고 문턱이 코드는 20 dB, 도움말은 40 dB입니다. | 업스트림 의도를 확인한 뒤 하나로 맞춥니다. | `wizard/step5_measure.py`, `tutorial_text.py` | 보류 |
 
 ## 보안

@@ -108,6 +108,20 @@ pub trait Measurer: Send {
         progress: Option<ProgressSink>,
         cancel: &CancelToken,
     ) -> Result<Vec<MeasurementResult>, MeasureError>;
+
+    /// Delivers completed roles before starting the next REW role; native remains atomic.
+    fn measure_recording(
+        &mut self,
+        plan: &MeasurementPlan,
+        pos: i64,
+        cancel: &CancelToken,
+        record: &mut dyn FnMut(MeasurementResult) -> Result<(), MeasureError>,
+    ) -> Result<(), MeasureError> {
+        for result in self.measure_position(plan, pos, None, cancel)? {
+            record(result)?;
+        }
+        Ok(())
+    }
 }
 
 pub(crate) fn positive(value: i64, name: &str) -> Result<u32, MeasureError> {

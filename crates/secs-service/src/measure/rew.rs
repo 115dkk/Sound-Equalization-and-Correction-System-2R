@@ -99,6 +99,25 @@ where
         self.client.stop();
         result
     }
+    fn measure_recording(
+        &mut self,
+        plan: &MeasurementPlan,
+        pos: i64,
+        cancel: &CancelToken,
+        record: &mut dyn FnMut(MeasurementResult) -> Result<(), MeasureError>,
+    ) -> Result<(), MeasureError> {
+        for role in &plan.roles {
+            if cancel.is_cancelled() {
+                break;
+            }
+            let mut single = plan.clone();
+            single.roles = vec![role.clone()];
+            for result in self.measure_position(&single, pos, None, cancel)? {
+                record(result)?;
+            }
+        }
+        Ok(())
+    }
     fn measure_position(
         &mut self,
         plan: &MeasurementPlan,

@@ -127,13 +127,22 @@ pub fn room(plan: &MeasurementPlan, pos: i64) -> Result<(secs_audio::SimRoom, f6
 #[derive(Debug, Default)]
 pub struct MockMeasurer {
     rooms: Option<BTreeMap<i64, secs_audio::SimRoom>>,
+    delay: std::time::Duration,
 }
 impl MockMeasurer {
     pub fn new() -> Self {
         Self::default()
     }
     pub fn with_rooms(rooms: BTreeMap<i64, secs_audio::SimRoom>) -> Self {
-        Self { rooms: Some(rooms) }
+        Self {
+            rooms: Some(rooms),
+            delay: std::time::Duration::ZERO,
+        }
+    }
+    /// Adds a cancellable simulated device wait, without changing room samples.
+    pub fn with_delay(mut self, delay: std::time::Duration) -> Self {
+        self.delay = delay;
+        self
     }
     fn native(
         &self,
@@ -198,6 +207,16 @@ impl Measurer for MockMeasurer {
         progress: Option<ProgressSink>,
         cancel: &CancelToken,
     ) -> Result<Vec<MeasurementResult>, MeasureError> {
+        let start = std::time::Instant::now();
+        while start.elapsed() < self.delay {
+            if cancel.is_cancelled() {
+                return Ok(vec![]);
+            }
+            std::thread::sleep(
+                (self.delay - start.elapsed().min(self.delay))
+                    .min(std::time::Duration::from_millis(5)),
+            );
+        }
         let (mut native, plan, origin) = self.native(plan, pos)?;
         let mut results = native.measure_position(&plan, pos, progress, cancel)?;
         for result in &mut results {

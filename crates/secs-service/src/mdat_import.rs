@@ -223,6 +223,39 @@ pub fn problems(assignment: &[Option<String>], positions: &[i64]) -> String {
     }
     String::new()
 }
+/// Presentation-neutral twin of the upstream assignment-dialog validation.
+pub fn problem_notices(
+    assignment: &[Option<String>],
+    positions: &[i64],
+) -> Vec<secs_types::ipc::Notice> {
+    let mut seen = BTreeSet::new();
+    let mut doubles = BTreeSet::new();
+    for (role, pos) in assignment.iter().zip(positions) {
+        if let Some(role) = role.as_ref().filter(|r| !r.is_empty())
+            && !seen.insert((*pos, role.clone()))
+        {
+            doubles.insert((*pos, role.clone()));
+        }
+    }
+    if !doubles.is_empty() {
+        return vec![secs_types::ipc::Notice {
+            code: "mdat_duplicate_roles".into(),
+            params: [(
+                "roles".into(),
+                serde_json::to_string(&doubles).expect("role pairs serialize"),
+            )]
+            .into(),
+        }];
+    }
+    if seen.is_empty() {
+        return vec![secs_types::ipc::Notice {
+            code: "mdat_nothing_selected".into(),
+            params: Default::default(),
+        }];
+    }
+    vec![]
+}
+
 #[derive(Debug, Clone)]
 pub struct MdatMeasurement {
     pub info: secs_mdat::MeasurementInfo,

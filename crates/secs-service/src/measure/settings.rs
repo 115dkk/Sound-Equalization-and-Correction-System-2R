@@ -251,7 +251,7 @@ pub fn to_audio_plan(
                             })
             })
             .cloned()
-            .ok_or_else(|| MeasureError::Input(format!("audio endpoint not found: {id}")))
+            .ok_or_else(|| MeasureError::Audio(secs_audio::AudioError::DeviceNotFound(id.into())))
     };
     let channel = |v, name| {
         u16::try_from(positive(v, name)?)

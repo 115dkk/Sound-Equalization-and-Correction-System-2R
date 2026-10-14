@@ -21,7 +21,7 @@ output_device: string | null,
  */
 input_channel: number | null, 
 /**
- * One-based output channel numbers.
+ * One-based output channels in measurement-plan role order; empty preserves wiring.
  */
 output_channels: Array<number>, 
 /**
@@ -35,4 +35,16 @@ sweep_level_dbfs: number | null,
 /**
  * Optional timing-reference mode.
  */
-timing: string | null, };
+timing: string | null, 
+/**
+ * Optional one-based loopback input channel.
+ */
+loopback_input_channel: number | null, 
+/**
+ * Optional acoustic timing-reference output channel.
+ */
+timing_ref_output: number | null, 
+/**
+ * Optional share preference: auto, exclusive, or shared.
+ */
+share_mode: string | null, };

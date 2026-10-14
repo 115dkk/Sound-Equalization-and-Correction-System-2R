@@ -11,4 +11,12 @@ measurement: string,
 /**
  * Internal speaker role.
  */
-role: string, };
+role: string, 
+/**
+ * Optional zero-based row index to disambiguate repeated titles.
+ */
+index: number | null, 
+/**
+ * Optional per-row position overriding the import destination.
+ */
+position: bigint | null, };

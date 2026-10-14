@@ -19,6 +19,8 @@ pub(crate) struct OpenProject {
     pub store: MeasurementStore,
     pub dirty: bool,
     pub cached: Option<crate::cache::CachedResults>,
+    pub identity: u64,
+    pub undo: std::collections::VecDeque<(String, Vec<(usize, PyJson)>)>,
 }
 
 impl Session {
@@ -45,6 +47,8 @@ impl Session {
             store,
             dirty: false,
             cached: None,
+            identity: next_identity(),
+            undo: Default::default(),
         });
         self.info()
     }
@@ -57,6 +61,8 @@ impl Session {
             store,
             dirty: false,
             cached,
+            identity: next_identity(),
+            undo: Default::default(),
         });
         self.info()
     }
@@ -89,6 +95,11 @@ impl Session {
     pub fn require_mut(&mut self) -> Result<&mut OpenProject, ServiceError> {
         self.open.as_mut().ok_or(ServiceError::ProjectNotOpen)
     }
+}
+
+fn next_identity() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 pub(crate) fn info(open: &OpenProject) -> ProjectInfo {

@@ -41,6 +41,7 @@ struct JobRecord {
     snapshot: JobSnapshot,
     group: JobGroup,
     cancel: CancelToken,
+    measurement_cancel: crate::measure::CancelToken,
 }
 
 impl Default for JobRegistry {
@@ -58,6 +59,7 @@ pub(crate) struct JobContext {
     registry: JobRegistry,
     events: Arc<dyn EventSink>,
     cancel: CancelToken,
+    measurement_cancel: crate::measure::CancelToken,
 }
 impl JobContext {
     pub fn cancel(&self) -> &CancelToken {
@@ -73,6 +75,33 @@ impl JobContext {
             done,
             total,
             eta: None,
+        });
+    }
+
+    pub fn measurement_cancel(&self) -> &crate::measure::CancelToken {
+        &self.measurement_cancel
+    }
+
+    pub fn role_progress(&self, stage: &str, done: u64, total: u64) {
+        let value = JobProgress {
+            stage: stage.into(),
+            done,
+            total,
+        };
+        self.registry.progress(self.id, value.clone());
+        self.events.send(JobEvent::Progress {
+            job: self.id,
+            stage: value.stage,
+            done,
+            total,
+        });
+    }
+
+    pub fn log(&self, notice: secs_types::ipc::Notice) {
+        self.events.send(JobEvent::Log {
+            job: self.id,
+            code: notice.code,
+            params: notice.params,
         });
     }
 
@@ -123,6 +152,7 @@ impl JobRegistry {
         let job_group = group(kind);
         let id = JobId(self.next_id.fetch_add(1, Ordering::Relaxed));
         let cancel = CancelToken::new();
+        let measurement_cancel = crate::measure::CancelToken::default();
         {
             let mut inner = lock(&self.inner);
             if inner
@@ -148,6 +178,7 @@ impl JobRegistry {
                 },
                 group: job_group,
                 cancel: cancel.clone(),
+                measurement_cancel: measurement_cancel.clone(),
             });
         }
         events.send(JobEvent::Started { job: id, kind });
@@ -156,6 +187,7 @@ impl JobRegistry {
             registry: self.clone(),
             events: events.clone(),
             cancel,
+            measurement_cancel,
         };
         let registry = self.clone();
         let worker_events = events.clone();
@@ -194,6 +226,7 @@ impl JobRegistry {
         if !job.snapshot.status.is_terminal() && job.snapshot.cancellable {
             job.snapshot.status = JobStatus::CancelRequested;
             job.cancel.cancel();
+            job.measurement_cancel.cancel();
         }
         Ok(job.snapshot.clone())
     }

@@ -13,6 +13,7 @@ mod ipc;
 mod jobs;
 pub mod mdat_import;
 pub mod measure;
+mod measurement;
 mod session;
 
 use std::fmt::Debug;
@@ -63,7 +64,15 @@ impl EventSink for NoEvents {
 }
 
 /// Host facilities reserved for M5 dialogs, notifications, and folder opening.
-pub trait Host: Send + Sync + Debug {}
+pub trait Host: Send + Sync + Debug {
+    /// Starts REW in API mode without inheriting application bundle paths.
+    fn launch_rew(&self) -> Result<(), IpcError> {
+        Err(IpcError::new(
+            ErrorCode::NotImplemented,
+            "host REW launch is not implemented",
+        ))
+    }
+}
 /// Host implementation used by headless callers.
 #[derive(Debug, Default)]
 pub struct NullHost;
@@ -81,6 +90,8 @@ pub type UuidSource = Arc<Mutex<Box<dyn FnMut() -> Result<u128, secs_export::Exp
 pub struct Deps {
     /// Creates an audio backend adapter for one measurement operation.
     pub audio_backend: Arc<dyn Fn() -> Box<dyn secs_audio::AudioBackend> + Send + Sync>,
+    /// Creates the sample-room measurer; tests may inject explicit delayed rooms.
+    pub mock_measurer: Arc<dyn Fn() -> measure::MockMeasurer + Send + Sync>,
     /// Creates a REW transport adapter for one operation.
     pub rew_transport: Arc<dyn Fn() -> Box<dyn secs_rew::Transport> + Send + Sync>,
     /// Reports running processes without shelling out.
@@ -114,6 +125,19 @@ impl secs_rew::launch::ProcessProbe for NoProcesses {
     }
 }
 
+struct OfflineRew;
+impl secs_rew::Transport for OfflineRew {
+    fn request(
+        &self,
+        request: &secs_rew::Request,
+    ) -> Result<secs_rew::Response, secs_rew::RewError> {
+        Err(secs_rew::RewError::Connection {
+            path: request.path.clone(),
+            message: "no REW transport injected".into(),
+        })
+    }
+}
+
 fn random_uuid() -> Result<u128, secs_export::ExportError> {
     let mut bytes = [0_u8; 16];
     getrandom::fill(&mut bytes)
@@ -130,7 +154,8 @@ impl Default for Deps {
     fn default() -> Self {
         Self {
             audio_backend: Arc::new(|| Box::new(secs_audio::NullBackend)),
-            rew_transport: Arc::new(|| Box::new(secs_rew::RecordedTransport::new([]))),
+            mock_measurer: Arc::new(measure::MockMeasurer::new),
+            rew_transport: Arc::new(|| Box::new(OfflineRew)),
             process: Arc::new(NoProcesses),
             memory: Arc::new(secs_compute::FixedMemory(1024 * 1024 * 1024)),
             host: Arc::new(NullHost),

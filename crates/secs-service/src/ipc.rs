@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use secs_types::ipc::{Envelope, ErrorCode, IpcError, Request, Response};
+use secs_types::ipc::{Envelope, IpcError, Request, Response};
 
 use crate::{EventSink, Service, lock};
 
@@ -48,19 +48,24 @@ pub(crate) fn dispatch(
         Request::Mimo(params) => service.start_mimo(params, events).map(Response::Mimo),
         Request::Results => service.results().map(Response::Results),
         Request::Export(params) => service.start_export(params, events).map(Response::Export),
-        Request::MeasureMethods
-        | Request::MeasureConfigure(_)
-        | Request::LevelCheck(_)
-        | Request::LevelApply(_)
-        | Request::MeasurePosition(_)
-        | Request::PositionClear(_)
-        | Request::Undo(_)
-        | Request::RewLaunch
-        | Request::MdatScan(_)
-        | Request::MdatImport(_) => Err(IpcError::new(
-            ErrorCode::NotImplemented,
-            "measurement IPC is implemented by P23c",
-        )),
+        Request::MeasureMethods => Ok(Response::MeasureMethods(service.measure_methods())),
+        Request::MeasureConfigure(params) => service
+            .measure_configure(params)
+            .map(Response::MeasureConfigure),
+        Request::LevelCheck(params) => service
+            .start_level(params, events)
+            .map(Response::LevelCheck),
+        Request::LevelApply(params) => service.level_apply(params).map(Response::LevelApply),
+        Request::MeasurePosition(params) => service
+            .start_measure(params, events)
+            .map(Response::MeasurePosition),
+        Request::PositionClear(params) => {
+            service.position_clear(params).map(Response::PositionClear)
+        }
+        Request::Undo(params) => service.undo(params).map(Response::Undo),
+        Request::RewLaunch => service.rew_launch().map(Response::RewLaunch),
+        Request::MdatScan(params) => service.mdat_scan(params).map(Response::MdatScan),
+        Request::MdatImport(params) => service.start_mdat(params, events).map(Response::MdatImport),
     };
     match response {
         Ok(response) => Envelope::Ok(Box::new(response)),

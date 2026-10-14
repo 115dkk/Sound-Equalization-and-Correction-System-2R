@@ -553,13 +553,36 @@ pub struct ExportResult {
     pub files: Vec<String>,
 }
 
-// P23c request/response types. P23a deliberately dispatches these to not_implemented.
+// Measurement request and response types.
 /// Measurement methods available on this host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
 #[ts(export)]
 pub struct MeasureMethodsResult {
     /// Stable identifiers for available measurement methods.
     pub methods: Vec<String>,
+    /// Native endpoints with their channel counts.
+    pub native_devices: Vec<MeasureDevice>,
+    /// Native enumeration failure, without hiding the other methods.
+    pub native_error: Option<IpcError>,
+    /// REW process, API, and license status.
+    pub rew: RewStatusResult,
+    /// Positions present in the unmodified sample room.
+    pub mock_positions: Vec<i64>,
+    /// Roles present in the unmodified sample room.
+    pub mock_roles: Vec<String>,
+}
+/// An enumerated native audio endpoint.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MeasureDevice {
+    /// Backend endpoint identifier.
+    pub id: String,
+    /// Backend endpoint display name.
+    pub name: String,
+    /// Maximum number of input channels.
+    pub input_channels: usize,
+    /// Maximum number of output channels.
+    pub output_channels: usize,
 }
 /// Measurement method and device settings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
@@ -573,7 +596,8 @@ pub struct MeasureConfigureParams {
     pub output_device: Option<String>,
     /// Optional one-based input channel number.
     pub input_channel: Option<u16>,
-    /// One-based output channel numbers.
+    /// One-based output channels in measurement-plan role order; empty preserves wiring.
+    #[serde(default)]
     pub output_channels: Vec<u16>,
     /// Optional sweep length in samples.
     pub sweep_length: Option<usize>,
@@ -581,6 +605,12 @@ pub struct MeasureConfigureParams {
     pub sweep_level_dbfs: Option<f64>,
     /// Optional timing-reference mode.
     pub timing: Option<String>,
+    /// Optional one-based loopback input channel.
+    pub loopback_input_channel: Option<u16>,
+    /// Optional acoustic timing-reference output channel.
+    pub timing_ref_output: Option<u16>,
+    /// Optional share preference: auto, exclusive, or shared.
+    pub share_mode: Option<String>,
 }
 /// The active measurement settings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
@@ -590,6 +620,26 @@ pub struct MeasureConfigResult {
     pub method: String,
     /// Active sweep level in dBFS.
     pub sweep_level_dbfs: Option<f64>,
+    /// Active input endpoint identifier; empty selects the default.
+    pub input_device: String,
+    /// Active output endpoint identifier; empty selects the default.
+    pub output_device: String,
+    /// One-based microphone input channel.
+    pub input_channel: u16,
+    /// Roles in the same order as output_channels.
+    pub roles: Vec<String>,
+    /// One-based output channels in measurement-plan role order.
+    pub output_channels: Vec<u16>,
+    /// Sweep length in samples.
+    pub sweep_length: usize,
+    /// Timing-reference mode.
+    pub timing: String,
+    /// Optional one-based loopback input channel.
+    pub loopback_input_channel: Option<u16>,
+    /// Optional acoustic timing-reference output channel.
+    pub timing_ref_output: Option<u16>,
+    /// Share preference: auto, exclusive, or shared.
+    pub share_mode: String,
 }
 /// The speaker role used for a level check.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -670,12 +720,27 @@ pub struct MdatScanParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
 #[ts(export)]
 pub struct MdatScanResult {
-    /// Measurement titles in file order.
-    pub measurements: Vec<String>,
-    /// Suggested title-to-role assignments.
+    /// Measurements in file order, including assignment guesses.
+    pub measurements: Vec<MdatScanMeasurement>,
+    /// Suggested measurement-to-role assignments.
     pub suggestions: Vec<MdatAssignment>,
-    /// Stable problem codes translated by the screen.
-    pub problems: Vec<String>,
+    /// Stable problem codes and template parameters.
+    pub problems: Vec<Notice>,
+}
+/// One scanned measurement with an unambiguous row identifier.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MdatScanMeasurement {
+    /// Zero-based row index, also usable when titles repeat.
+    pub index: usize,
+    /// Original measurement title.
+    pub title: String,
+    /// Suggested internal role, or no assignment.
+    pub role: Option<String>,
+    /// Guessed one-based measurement position.
+    pub position: i64,
+    /// Low-band classifier result, absent when no IR is available.
+    pub looks_like_sub: Option<bool>,
 }
 /// An mdat measurement assigned to a speaker role.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -685,6 +750,10 @@ pub struct MdatAssignment {
     pub measurement: String,
     /// Internal speaker role.
     pub role: String,
+    /// Optional zero-based row index to disambiguate repeated titles.
+    pub index: Option<usize>,
+    /// Optional per-row position overriding the import destination.
+    pub position: Option<i64>,
 }
 /// An mdat file, its assignments, and destination position.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -726,6 +795,18 @@ pub enum ErrorCode {
     ExportFailed,
     /// Cached results no longer match project inputs.
     StaleInputs,
+    /// The audio backend or selected endpoint is unavailable.
+    DeviceUnavailable,
+    /// The backend refused a pinned audio share mode.
+    ShareModeRefused,
+    /// The REW API cannot be reached.
+    RewUnreachable,
+    /// REW requires a Pro license for this operation.
+    RewProRequired,
+    /// REW returned an HTTP or schema failure.
+    RewFailed,
+    /// A measurement setting or plan field is invalid.
+    MeasurementInput,
 }
 /// A coded IPC failure with template parameters and diagnostic detail.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

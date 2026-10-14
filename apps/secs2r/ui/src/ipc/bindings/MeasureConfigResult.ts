@@ -11,4 +11,44 @@ method: string,
 /**
  * Active sweep level in dBFS.
  */
-sweep_level_dbfs: number | null, };
+sweep_level_dbfs: number | null, 
+/**
+ * Active input endpoint identifier; empty selects the default.
+ */
+input_device: string, 
+/**
+ * Active output endpoint identifier; empty selects the default.
+ */
+output_device: string, 
+/**
+ * One-based microphone input channel.
+ */
+input_channel: number, 
+/**
+ * Roles in the same order as output_channels.
+ */
+roles: Array<string>, 
+/**
+ * One-based output channels in measurement-plan role order.
+ */
+output_channels: Array<number>, 
+/**
+ * Sweep length in samples.
+ */
+sweep_length: number, 
+/**
+ * Timing-reference mode.
+ */
+timing: string, 
+/**
+ * Optional one-based loopback input channel.
+ */
+loopback_input_channel: number | null, 
+/**
+ * Optional acoustic timing-reference output channel.
+ */
+timing_ref_output: number | null, 
+/**
+ * Share preference: auto, exclusive, or shared.
+ */
+share_mode: string, };
