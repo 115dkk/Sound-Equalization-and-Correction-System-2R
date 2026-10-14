@@ -1,4 +1,93 @@
-# MIMO performance audit (P18)
+# MIMO performance audit (P18 / P18b)
+
+## P18b: one reduction per input
+
+P18b keeps the first-pass observations below as **before**. This pass reports
+measurements, not a verdict on the 5× target. The big whole run, new memory
+measurements and exports are **not measured**; they are reserved for a later pass.
+
+### Candidate benchmark and choice
+
+Release, actual big/L matrix (2160 × 2160), `Par::Seq`, one thread, one warm-up
+then five samples. All 19 λ values are taken from the actual design trajectory,
+not a repeated representative λ. Timings include decomposition, RHS projection
+and all shifted solves. `uptime` was recorded before each batch; no other
+benchmark, build or test ran concurrently.
+
+| Candidate | Initial median s | Final recheck s |
+|---|---:|---:|
+| Fresh Cholesky for every λ | 3.092588 | 3.053423 |
+| Self-adjoint spectral decomposition | 2.310761 | 2.345390 |
+| Householder tridiagonal reduction | 1.095407 | 1.250375¹ |
+| Cholesky-preconditioned CG reuse | 7.620776 | 7.174154 |
+
+¹ The selected production version includes one fixed residual-refinement step
+per λ, reusing the tridiagonal reduction. Its final whole-sweep speed-up over
+fresh Cholesky is **2.442×**. Spectral does not clear 2×. CG attempted reuse for
+12 shifts, exhausted 30 iterations each (360 total), and factored all 19 shifts:
+the true relative residual did not reach 1e-14. The non-iterative tridiagonal
+choice is also faster than reuse, so the 20% preference rule is unambiguous.
+
+`RidgeSweep` in `solve.rs` retains M and b, reduces M once, projects b once,
+solves each shifted tridiagonal system by LDLᵀ, and applies the Householder
+sequence. Non-positive/non-finite pivots or non-finite output route that λ to
+the original Cholesky/LU solver. One original-coordinate residual correction
+is necessary: the unrefined candidate passed normwise proofs but one unchanged
+end-to-end ideal-FIR check measured 3.670419e-9 against its 3e-9 limit. Refinement
+passed that test without changing its tolerance. Bisection midpoints, comparisons,
+accepted-result handling and all guard calculations are unchanged.
+
+### Proofs
+
+- `mimo_ridge_sweep_recorded_systems_and_trajectories` rebuilds all 24 systems
+  from the eight stage-boundary cases (including room/L from the old
+  Cholesky/LU proof, capped supports and FIR taps). At every reference-recorded
+  λ and every locally computed midpoint it checks both solutions' infinity-norm
+  backward error ≤16·N·ε and sweep/Cholesky relative difference ≤16·N·κ·ε, using
+  sequential eigenvalues for κ as in the existing test.
+- The same test computes both complete trajectories independently, requires
+  exact midpoint/accepted-flag/final-log equality, and compares the production
+  trace. It also checks the mapped M and b **bit for bit** against the old
+  sequential builder with Context(1) and Context(4) on every system.
+- `mimo_ridge_sweep_falls_back` exercises zero/non-positive pivots, a successful
+  LU fallback and non-finite input/shift errors. No pivot is clamped.
+- Existing MIMO tests and tolerances are unchanged, including
+  `mimo_deterministic_threads`.
+
+### Input profile
+
+Boundary timers on actual big/L low-rate `design_input`, median of five after
+warm-up. “Path building” is its common low-pass convolution; shared range,
+full-rate preparation and low-rate projection precede this boundary and are
+included only in the complete `mimo_design_one` timing rows. Ranking is not
+invoked for uncapped big/L. “Other” is measured total minus timed sections per
+sample. Component medians need not add to the median total.
+
+| Section | Part A one s | Part A shipped s | Final one s | Final shipped s |
+|---|---:|---:|---:|---:|
+| Normal equations | 0.415920 | 0.411489 | 0.355669 | 0.118982 |
+| Sweep incl. evaluation | 1.074408 | 1.026861 | 1.268833 | 1.230700 |
+| Ranking | 0.000000261 | 0.000000225 | 0.000000359 | 0.000000238 |
+| Path building | 0.001168 | 0.001074 | 0.001209 | 0.001070 |
+| Guard steps | 0.017414 | 0.017470 | 0.017548 | 0.016544 |
+| Other | 0.003912 | 0.003602 | 0.003962 | 0.003659 |
+| Total | 1.505186 | 1.469199 | 1.643164 | 1.385211 |
+
+The initial Part A profile (before the fixed refinement) attributed 27.6% /
+28.0% to normal equations. Therefore P18b maps independent block pairs through
+`ctx`; each block accumulates positions and times in exactly the old order,
+then is placed without a reduction. No faer parallelism or parallel reduction
+was introduced. The input memory reservation now covers mapped block storage,
+the retained reduction, and a possible concurrent fallback factor; it is not a
+new process-memory observation.
+
+### New timing rows
+
+Measurements in progress; completed rows and verification are added below.
+
+---
+
+## Before: P18 first pass
 
 Status: **partial / target missed**. M3 is not closed. The large-case ideal
 FIR design is only 1.271× faster with one thread and is slower than SECS 2

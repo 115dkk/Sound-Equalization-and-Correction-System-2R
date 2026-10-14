@@ -233,10 +233,90 @@ pub(crate) fn convolve(a: &[f64], b: &[f64]) -> Vec<f64> {
         .collect()
 }
 
+/// One block pair `(j, jj)` of the weighted normal equations, summed over
+/// positions in order, and the right-hand side of `j` when `j == jj`.
+/// The first row/column are direct time sums; the diagonal recurrence handles
+/// the truncated last sample and the weight step at `onset + 36`.
+fn block_pair(
+    xs: &[Vec<f64>],
+    paths: &[Vec<Vec<f64>>],
+    (j, jj): (usize, usize),
+    taps: usize,
+    early_weight: f64,
+) -> (Vec<f64>, Vec<f64>) {
+    let mut total = vec![0.0; taps * taps];
+    let mut rhs = vec![0.0; if j == jj { taps } else { 0 }];
+    for (x, gs) in xs.iter().zip(paths) {
+        let n = x.len();
+        let e = (onset(x) + EARLY).min(n);
+        let c = |t: usize| if t < e { early_weight } else { 1.0 };
+        let (g, h) = (&gs[j], &gs[jj]);
+        for (k, b) in rhs.iter_mut().enumerate() {
+            for t in e.max(k)..n {
+                *b -= x[t] * g[t - k];
+            }
+        }
+        let mut block = vec![0.0; taps * taps];
+        for k in 0..taps {
+            for t in k..n {
+                block[k * taps] += c(t) * g[t - k] * h[t];
+            }
+        }
+        for l in 1..taps {
+            for t in l..n {
+                block[l] += c(t) * g[t] * h[t - l];
+            }
+        }
+        for k in 0..taps - 1 {
+            for l in 0..taps - 1 {
+                let mut v = block[k * taps + l] - c(n - 1) * g[n - 1 - k] * h[n - 1 - l];
+                if e < n && e > k.max(l) {
+                    v += (1.0 - early_weight) * g[e - 1 - k] * h[e - 1 - l];
+                }
+                block[(k + 1) * taps + l + 1] = v;
+            }
+        }
+        for (sum, v) in total.iter_mut().zip(block) {
+            *sum += v;
+        }
+    }
+    (total, rhs)
+}
+
+/// A block pair's index and its `(block, rhs)`.
+type PairBlock = ((usize, usize), (Vec<f64>, Vec<f64>));
+
+fn block_pairs(candidates: usize) -> Vec<(usize, usize)> {
+    (0..candidates)
+        .flat_map(|j| (j..candidates).map(move |jj| (j, jj)))
+        .collect()
+}
+
+/// Place the upper-triangle blocks; AᵀA is symmetric, and the opposite
+/// triangle reuses the same value instead of a second accumulation.
+fn place(blocks: Vec<PairBlock>, candidates: usize, taps: usize) -> (Vec<f64>, Vec<f64>) {
+    let dim = candidates * taps;
+    let mut ata = vec![0.0; dim * dim];
+    let mut atb = vec![0.0; dim];
+    for ((j, jj), (block, rhs)) in blocks {
+        if j == jj {
+            atb[j * taps..(j + 1) * taps].copy_from_slice(&rhs);
+        }
+        for k in 0..taps {
+            for l in 0..taps {
+                if j != jj || k <= l {
+                    let (row, col) = (j * taps + k, jj * taps + l);
+                    ata[row * dim + col] = block[k * taps + l];
+                    ata[col * dim + row] = block[k * taps + l];
+                }
+            }
+        }
+    }
+    (ata, atb)
+}
+
 /// Weighted normal equations, position-major paths, row-major output.
 /// `early_weight=10` is the design system, `0` is candidate ranking.
-/// The first row/column are direct time sums; diagonal recurrence handles
-/// the truncated last sample and the weight step at `onset + 36`.
 pub(crate) fn normal_equations(
     xs: &[Vec<f64>],
     paths: &[Vec<Vec<f64>>],
@@ -244,59 +324,30 @@ pub(crate) fn normal_equations(
     early_weight: f64,
 ) -> (Vec<f64>, Vec<f64>) {
     let candidates = paths[0].len();
-    let dim = candidates * taps;
-    let mut ata = vec![0.0; dim * dim];
-    let mut atb = vec![0.0; dim];
-    for (x, gs) in xs.iter().zip(paths) {
-        let n = x.len();
-        let e = (onset(x) + EARLY).min(n);
-        let c = |t: usize| if t < e { early_weight } else { 1.0 };
-        for (j, g) in gs.iter().enumerate() {
-            for k in 0..taps {
-                for t in e.max(k)..n {
-                    atb[j * taps + k] -= x[t] * g[t - k];
-                }
-            }
-            for (jj, h) in gs.iter().enumerate().skip(j) {
-                let mut block = vec![0.0; taps * taps];
-                for k in 0..taps {
-                    for t in k..n {
-                        block[k * taps] += c(t) * g[t - k] * h[t];
-                    }
-                }
-                for l in 1..taps {
-                    for t in l..n {
-                        block[l] += c(t) * g[t] * h[t - l];
-                    }
-                }
-                for k in 0..taps - 1 {
-                    for l in 0..taps - 1 {
-                        let mut v = block[k * taps + l] - c(n - 1) * g[n - 1 - k] * h[n - 1 - l];
-                        if e < n && e > k.max(l) {
-                            v += (1.0 - early_weight) * g[e - 1 - k] * h[e - 1 - l];
-                        }
-                        block[(k + 1) * taps + l + 1] = v;
-                    }
-                }
-                for k in 0..taps {
-                    for l in 0..taps {
-                        let row = j * taps + k;
-                        let col = jj * taps + l;
-                        // AᵀA is symmetric. Reuse the same accumulation for the
-                        // opposite triangle instead of introducing last-bit
-                        // asymmetry into an ill-conditioned regularized solve.
-                        if j != jj || k <= l {
-                            ata[row * dim + col] += block[k * taps + l];
-                            if row != col {
-                                ata[col * dim + row] += block[k * taps + l];
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-    (ata, atb)
+    let blocks = block_pairs(candidates)
+        .into_iter()
+        .map(|pair| (pair, block_pair(xs, paths, pair, taps, early_weight)))
+        .collect();
+    place(blocks, candidates, taps)
+}
+
+/// [`normal_equations`] with the block pairs as a map over `ctx`. Each block
+/// keeps the position order of its sums, and placement adds nothing, so the
+/// result has the same bits for any thread count.
+pub(crate) fn normal_equations_mapped(
+    xs: &[Vec<f64>],
+    paths: &[Vec<Vec<f64>>],
+    taps: usize,
+    early_weight: f64,
+    ctx: &Context,
+) -> Result<(Vec<f64>, Vec<f64>), EngineError> {
+    let candidates = paths[0].len();
+    let blocks = ctx
+        .map(block_pairs(candidates), |pair| {
+            (pair, block_pair(xs, paths, pair, taps, early_weight))
+        })
+        .map_err(|_| EngineError::Cancelled)?;
+    Ok(place(blocks, candidates, taps))
 }
 
 pub(crate) fn worst_band_db(
@@ -472,6 +523,19 @@ pub(crate) fn design_input(
     req: &MimoRequest,
     ctx: &Context,
 ) -> Result<InputResult, EngineError> {
+    design_input_observed(xs, raw_paths, direct, candidates, req, ctx, &|_, _| {})
+}
+
+pub(crate) fn design_input_observed(
+    xs: &[Vec<f64>],
+    raw_paths: &[Vec<Vec<f64>>],
+    direct: &[f64],
+    candidates: &[String],
+    req: &MimoRequest,
+    ctx: &Context,
+    observe: &dyn Fn(&str, std::time::Duration),
+) -> Result<InputResult, EngineError> {
+    let started = std::time::Instant::now();
     let taps = req.taps_low;
     let lp = lowpass_fir(req.fsiso, 31)?;
     let n = xs[0].len();
@@ -487,6 +551,8 @@ pub(crate) fn design_input(
                 .collect()
         })
         .collect();
+    observe("path_building", started.elapsed());
+    let started = std::time::Instant::now();
     let ranking = if req
         .max_supports
         .is_some_and(|cap| cap > 0 && candidates.len() > cap)
@@ -495,6 +561,7 @@ pub(crate) fn design_input(
     } else {
         Vec::new()
     };
+    observe("ranking", started.elapsed());
     let selected: Vec<_> = if ranking.is_empty() {
         candidates.to_vec()
     } else {
@@ -523,6 +590,7 @@ pub(crate) fn design_input(
         &ranking,
         req,
         ctx,
+        observe,
     )
 }
 
@@ -536,11 +604,15 @@ fn design_selected(
     ranking: &[(String, f64)],
     req: &MimoRequest,
     ctx: &Context,
+    observe: &dyn Fn(&str, std::time::Duration),
 ) -> Result<InputResult, EngineError> {
     let taps = req.taps_low;
     let lp = lowpass_fir(req.fsiso, 31)?;
     let n = xs[0].len();
-    let (ata, atb) = normal_equations(xs, paths, taps, 10.0);
+    let started = std::time::Instant::now();
+    let (ata, atb) = normal_equations_mapped(xs, paths, taps, 10.0, ctx)?;
+    observe("normal_equations", started.elapsed());
+    let started = std::time::Instant::now();
     let dim = atb.len();
     if dim == 0 {
         return Err(EngineError::Input("no MIMO support candidates".into()));
@@ -549,9 +621,10 @@ fn design_selected(
     let normalization = pairwise_sum(&diagonal) / dim as f64;
     let target = 10f64.powf(req.level_db / 10.0);
     let direct_energy = decay::energy(direct).max(1e-30);
+    let sweep = super::solve::RidgeSweep::new(&ata, &atb);
     let evaluate = |log: f64| -> Result<(Vec<f64>, f64), EngineError> {
         check(ctx)?;
-        let u = solve(&ata, &atb, normalization * 10f64.powf(log), false)?;
+        let u = sweep.solve(normalization * 10f64.powf(log))?;
         let mut support_energy = 0.0;
         for k in 0..candidates.len() {
             support_energy += decay::energy(&convolve(&lp, &u[k * taps..(k + 1) * taps]));
@@ -581,6 +654,8 @@ fn design_selected(
             ratio = r;
         }
     }
+    observe("sweep", started.elapsed());
+    let started = std::time::Instant::now();
     let supports: Vec<_> = (0..candidates.len())
         .map(|k| convolve(&lp, &u[k * taps..(k + 1) * taps]))
         .collect();
@@ -621,6 +696,7 @@ fn design_selected(
             scale * 10f64.powf(-3.0 / 20.0)
         };
     }
+    observe("guard_steps", started.elapsed());
     Ok(InputResult {
         supports: if scale > 0.0 {
             candidates
@@ -752,11 +828,11 @@ pub(crate) fn design_mimo_inputs(
                     .cloned()
                     .collect();
                 let dim = candidates.len() * req.taps_low;
-                // Normal equations + a factorization + one block, raw/LP/selected path
-                // copies, per-position target and guard buffers, design-grid temporaries,
-                // and solver scratch. Reserve before allocating any input-owned arrays.
+                // Normal equations, Householder reduction, possible fallback factor,
+                // and scratch (also covers the mapped blocks during construction),
+                // plus path/guard/design-grid buffers. Reserve before allocating.
                 let bytes = 8
-                    * (2 * dim * dim
+                    * (4 * dim * dim
                         + req.taps_low * req.taps_low
                         + positions.len() * 720 * (4 * candidates.len() + 8)
                         + 32 * design_freqs().len()

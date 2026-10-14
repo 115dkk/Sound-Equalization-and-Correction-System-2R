@@ -39,6 +39,8 @@ def main():
     parser.add_argument('--config', choices=['shipped', 'one'], default='shipped')
     parser.add_argument('--runs', type=int, choices=[3, 5, 31], default=None,
                         help='override samples; 31 for interleaved short batches')
+    parser.add_argument('--time-budget', type=float, default=None,
+                        help='MIMO long-row seconds; no warm-up, retain every completed sample')
     parser.add_argument('--memory-once', action='store_true',
                         help='one call, no warm-up, for process-tree memory')
     args = parser.parse_args()
@@ -256,6 +258,24 @@ def main():
         print(json.dumps(dict(implementation='python', op=args.op, case=args.case,
                               config=args.config, memory_once=True)))
         del result
+        return
+    if args.time_budget is not None:
+        if not args.op.startswith('mimo_') or args.time_budget <= 0:
+            parser.error('--time-budget requires a MIMO operation and positive seconds')
+        samples = []
+        deadline = time.perf_counter() + args.time_budget
+        while not samples or time.perf_counter() + max(samples) <= deadline:
+            before_each()
+            start = time.perf_counter()
+            result = call()
+            samples.append(time.perf_counter() - start)
+            del result
+            print(json.dumps(dict(event='sample', op=args.op, case=args.case,
+                                  config=args.config, sample=len(samples), seconds=samples[-1])), flush=True)
+        print(json.dumps(dict(implementation='python', op=args.op, case=args.case,
+                              config=args.config, samples_s=samples,
+                              median_s=statistics.median(samples), warmup=False,
+                              time_budget_s=args.time_budget)), flush=True)
         return
     before_each()
     warm_started = time.perf_counter()

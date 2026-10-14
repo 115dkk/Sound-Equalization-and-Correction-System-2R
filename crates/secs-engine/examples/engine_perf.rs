@@ -193,6 +193,172 @@ fn big_case() -> cases::Case {
     case
 }
 
+// Candidate-only implementations: production keeps just the selected solver.
+struct SpectralSweep {
+    q: faer::Mat<f64>,
+    eigenvalues: faer::diag::Diag<f64>,
+    c: Vec<f64>,
+}
+impl SpectralSweep {
+    fn new(ata: &[f64], atb: &[f64]) -> Self {
+        use faer::{
+            Par,
+            dyn_stack::{MemBuffer, MemStack},
+            linalg::evd,
+        };
+        let n = atb.len();
+        let a = faer::Mat::from_fn(n, n, |i, j| ata[i * n + j]);
+        let mut q = faer::Mat::zeros(n, n);
+        let mut eigenvalues = faer::diag::Diag::zeros(n);
+        let mut memory = MemBuffer::new(evd::self_adjoint_evd_scratch::<f64>(
+            n,
+            evd::ComputeEigenvectors::Yes,
+            Par::Seq,
+            Default::default(),
+        ));
+        evd::self_adjoint_evd(
+            a.as_ref(),
+            eigenvalues.as_mut(),
+            Some(q.as_mut()),
+            Par::Seq,
+            MemStack::new(&mut memory),
+            Default::default(),
+        )
+        .unwrap();
+        let c = (0..n)
+            .map(|j| (0..n).map(|i| q[(i, j)] * atb[i]).sum())
+            .collect();
+        Self { q, eigenvalues, c }
+    }
+    fn solve(&self, lambda: f64) -> Vec<f64> {
+        let n = self.c.len();
+        let mut out = vec![0.0; n];
+        for j in 0..n {
+            assert!(self.eigenvalues[j] + lambda > 0.0);
+            let y = self.c[j] / (self.eigenvalues[j] + lambda);
+            for (i, v) in out.iter_mut().enumerate() {
+                *v += self.q[(i, j)] * y;
+            }
+        }
+        out
+    }
+}
+
+struct ReusedCholesky<'a> {
+    ata: &'a [f64],
+    atb: &'a [f64],
+    factor: Option<faer::Mat<f64>>,
+    lambda: f64,
+    factorizations: usize,
+    iterations: usize,
+}
+impl<'a> ReusedCholesky<'a> {
+    fn new(ata: &'a [f64], atb: &'a [f64]) -> Self {
+        Self {
+            ata,
+            atb,
+            factor: None,
+            lambda: 0.0,
+            factorizations: 0,
+            iterations: 0,
+        }
+    }
+    fn precondition(&self, rhs: &[f64]) -> Vec<f64> {
+        use faer::{
+            Par,
+            dyn_stack::{MemBuffer, MemStack},
+            linalg::cholesky::llt,
+        };
+        let n = rhs.len();
+        let mut rhs = faer::Mat::from_fn(n, 1, |i, _| rhs[i]);
+        let mut memory = MemBuffer::new(llt::solve::solve_in_place_scratch::<f64>(n, 1, Par::Seq));
+        llt::solve::solve_in_place(
+            self.factor.as_ref().unwrap().as_ref(),
+            rhs.as_mut(),
+            Par::Seq,
+            MemStack::new(&mut memory),
+        );
+        (0..n).map(|i| rhs[(i, 0)]).collect()
+    }
+    fn multiply(&self, x: &[f64], lambda: f64) -> Vec<f64> {
+        self.ata
+            .chunks_exact(x.len())
+            .enumerate()
+            .map(|(i, row)| row.iter().zip(x).map(|(a, x)| a * x).sum::<f64>() + lambda * x[i])
+            .collect()
+    }
+    fn solve(&mut self, lambda: f64) -> Vec<f64> {
+        use faer::{
+            Par,
+            dyn_stack::{MemBuffer, MemStack},
+            linalg::cholesky::llt,
+        };
+        let dot = |a: &[f64], b: &[f64]| a.iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
+        let n = self.atb.len();
+        if self.factor.is_some() && (lambda.log10() - self.lambda.log10()).abs() <= 1.5f64.log10() {
+            let mut x = self.precondition(self.atb);
+            let residual = |x: &[f64]| {
+                self.atb
+                    .iter()
+                    .zip(self.multiply(x, lambda))
+                    .map(|(b, a)| b - a)
+                    .collect::<Vec<_>>()
+            };
+            let mut r = residual(&x);
+            let mut z = self.precondition(&r);
+            let mut p = z.clone();
+            let mut rz = dot(&r, &z);
+            let threshold = 1e-28 * dot(self.atb, self.atb);
+            for iteration in 0..=30 {
+                if dot(&r, &r) <= threshold {
+                    let true_residual = residual(&x);
+                    if dot(&true_residual, &true_residual) <= threshold {
+                        self.iterations += iteration;
+                        return x;
+                    }
+                }
+                if iteration == 30 {
+                    break;
+                }
+                let ap = self.multiply(&p, lambda);
+                let alpha = rz / dot(&p, &ap);
+                for i in 0..n {
+                    x[i] += alpha * p[i];
+                    r[i] -= alpha * ap[i];
+                }
+                z = self.precondition(&r);
+                let next = dot(&r, &z);
+                let beta = next / rz;
+                for i in 0..n {
+                    p[i] = z[i] + beta * p[i];
+                }
+                rz = next;
+            }
+            self.iterations += 30;
+        }
+        let mut a = faer::Mat::from_fn(n, n, |i, j| {
+            self.ata[i * n + j] + if i == j { lambda } else { 0.0 }
+        });
+        let mut memory = MemBuffer::new(llt::factor::cholesky_in_place_scratch::<f64>(
+            n,
+            Par::Seq,
+            Default::default(),
+        ));
+        llt::factor::cholesky_in_place(
+            a.as_mut(),
+            Default::default(),
+            Par::Seq,
+            MemStack::new(&mut memory),
+            Default::default(),
+        )
+        .unwrap();
+        self.factor = Some(a);
+        self.lambda = lambda;
+        self.factorizations += 1;
+        self.precondition(self.atb)
+    }
+}
+
 fn main() {
     if cfg!(debug_assertions) {
         panic!("run with --release");
@@ -231,7 +397,7 @@ fn main() {
     };
     let run = || design(&request, &ctx, &*production_fitters(ctx.cancel())).unwrap();
     match op {
-        "mimo_profile_design" => {
+        "mimo_profile_design" | "mimo_sweep_candidates" => {
             let d = run();
             let req = MimoRequest::default();
             let spectra = export_view(&d, &case.measurements, &case.config)
@@ -308,14 +474,75 @@ fn main() {
             let n = atb.len();
             let norm = secs_dsp::pairwise_sum(&(0..n).map(|k| ata[k * n + k]).collect::<Vec<_>>())
                 / n as f64;
-            measure("mimo_profile_19_solves", name, threads, || {
-                (0..19)
-                    .map(|_| mimo::solve::solve(&ata, &atb, norm, false).unwrap())
-                    .collect::<Vec<_>>()
-            });
+            if op == "mimo_sweep_candidates" {
+                let result =
+                    mimo::design::design_input(&xs, &paths, &direct, &roles, &req, &ctx).unwrap();
+                let lambdas: Vec<_> = result
+                    .trace
+                    .trajectory
+                    .iter()
+                    .map(|s| norm * 10f64.powf(s.mid))
+                    .collect();
+                println!(
+                    "{}",
+                    serde_json::json!({"dimension": n, "lambdas": lambdas})
+                );
+                measure("sweep_cholesky", name, threads, || {
+                    lambdas
+                        .iter()
+                        .map(|&l| mimo::solve::solve(&ata, &atb, l, false).unwrap())
+                        .collect::<Vec<_>>()
+                });
+                measure("sweep_spectral", name, threads, || {
+                    let sweep = SpectralSweep::new(&ata, &atb);
+                    lambdas.iter().map(|&l| sweep.solve(l)).collect::<Vec<_>>()
+                });
+                measure("sweep_tridiagonal", name, threads, || {
+                    let sweep = mimo::solve::RidgeSweep::new(&ata, &atb);
+                    lambdas
+                        .iter()
+                        .map(|&l| sweep.solve(l).unwrap())
+                        .collect::<Vec<_>>()
+                });
+                measure("sweep_reuse", name, threads, || {
+                    let mut sweep = ReusedCholesky::new(&ata, &atb);
+                    let answers: Vec<_> = lambdas.iter().map(|&l| sweep.solve(l)).collect();
+                    eprintln!(
+                        "reuse: factors={} iterations={}",
+                        sweep.factorizations, sweep.iterations
+                    );
+                    answers
+                });
+                return;
+            }
+            let samples = std::cell::RefCell::new(Vec::new());
             measure("mimo_profile_input", name, threads, || {
-                mimo::design::design_input(&xs, &paths, &direct, &roles, &req, &ctx).unwrap()
+                let stages = std::cell::RefCell::new(std::collections::BTreeMap::new());
+                let start = Instant::now();
+                let result = mimo::design::design_input_observed(
+                    &xs,
+                    &paths,
+                    &direct,
+                    &roles,
+                    &req,
+                    &ctx,
+                    &|stage, elapsed| {
+                        stages
+                            .borrow_mut()
+                            .insert(stage.to_owned(), elapsed.as_secs_f64());
+                    },
+                )
+                .unwrap();
+                let total = start.elapsed().as_secs_f64();
+                let mut stages = stages.into_inner();
+                stages.insert("other".into(), total - stages.values().sum::<f64>());
+                samples.borrow_mut().push(stages);
+                result
             });
+            println!(
+                "{}",
+                serde_json::json!({"profile_samples": &samples.borrow()[1..]})
+            );
             println!("{}", serde_json::json!({"roles":roles,"dimension":n}));
         }
         "mimo_design_one" | "mimo_design_all" | "mimo_iir_one" | "mimo_iir_all" | "mimo_iir"
