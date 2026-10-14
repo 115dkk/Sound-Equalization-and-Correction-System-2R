@@ -1,15 +1,24 @@
 #![forbid(unsafe_code)]
 #![deny(unsafe_op_in_unsafe_fn)]
-//! REW integration.
+//! REW HTTP API and a caller-supplied-IR tutorial backend.
 //!
-//! Upstream sources: `rewapi/*`, `proc.py`.
-//!
-//! - `RealRew`: HTTP to REW's API (port 4735), the local callback listener
-//!   (random path token, replies before dispatch), measurement sequencing,
-//!   launching REW with `-api`.
-//! - `FakeRew`: the upstream sample IRs (Dolby room 7.1.4) and deterministic
-//!   synthetic IRs. No test code is loaded by the product.
-//!
-//! Both adapters implement the service's measurement seam, next to native
-//! measurement in `secs-audio`. The HTTP transport is an internal seam tested
-//! with recorded transcripts.
+//! Protocol parity: `src/secs/rewapi/{rew,interfaces,callback,fake}.py` (GPL-3.0-only).
+//! The service owns project plans; [`MeasurementPlan`] is the REW adapter's input,
+//! not an IPC type. No operating-system process enumeration lives here.
+
+mod callback;
+mod client;
+mod fake;
+mod interfaces;
+pub mod launch;
+mod transport;
+mod types;
+
+pub use callback::{CallbackServer, MAX_CALLBACK_BODY};
+pub use client::{RewClient, b64_be_f32, channel_name_for, level_payload, parse_progress};
+pub use fake::{FakeOptions, FakeRew, IrSource, fake_plan};
+pub use interfaces::{DeviceLister, IRProvider, LevelMonitor, Measurer, RewStatus};
+pub use transport::{
+    HttpTransport, RecordedExchange, RecordedTransport, Request, Response, Transport,
+};
+pub use types::*;

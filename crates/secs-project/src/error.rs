@@ -12,4 +12,9 @@ pub enum ProjectError {
     Io(#[from] io::Error),
     #[error("invalid WAV: {0}")]
     Wav(String),
+    #[error("measurement IR path for {entry} escapes the project .irs directory: {path}")]
+    IrPath {
+        entry: String,
+        path: std::path::PathBuf,
+    },
 }

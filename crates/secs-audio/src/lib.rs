@@ -9,3 +9,38 @@
 //! `AudioBackend` seam: WASAPI and cpal adapters live in `secs-sys` and are
 //! injected by the app; tests use a simulated room that convolves the sweep
 //! with known impulse responses.
+
+pub mod audio;
+pub mod cached_backend;
+pub mod calibration;
+pub mod estimator;
+pub mod level;
+pub mod measurement;
+pub mod null_backend;
+pub mod policy;
+pub mod session;
+pub mod sim_room;
+
+pub use audio::*;
+pub use cached_backend::CachedBackend;
+pub use calibration::{MicCalibration, SplReference};
+pub use level::{
+    LevelInput, LevelOutput, LevelReport, LevelSignal, level_check, recommend_sweep_level,
+};
+pub use measurement::{
+    MeasuredRole, MeasurementPlan, MeasurementWindow, PositionMeasurement, RoleOutput,
+    measure_position,
+};
+pub use null_backend::NullBackend;
+pub use sim_room::SimRoom;
+
+fn invalid(message: &str) -> AudioError {
+    AudioError::UnsupportedFormat(message.into())
+}
+fn check_cancel(cancel: &CancelToken) -> Result<(), AudioError> {
+    if cancel.is_cancelled() {
+        Err(AudioError::Cancelled)
+    } else {
+        Ok(())
+    }
+}

@@ -33,11 +33,11 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 
 | 번호 | 업스트림 동작 | 바꾸는 동작 | 출처 | 상태 |
 |---|---|---|---|---|
-| F1 | `.secs` 저장이 원자적이지 않고 측정 스레드와 화면 스레드가 잠금 없이 함께 씁니다. | 임시 파일과 이름 바꾸기, 쓰는 쪽 하나. | `model.py:926-931`, `rewapi/session.py:332` | 계획 |
-| F2 | 위치 측정 중 오류가 나면 그 위치에서 이미 잰 IR까지 버립니다. | 채널마다 바로 기록하고, 다시 재면 그 위치를 바꿉니다. | `rewapi/session.py:418-427` | 계획 |
+| F1 | `.secs` 저장이 원자적이지 않고 측정 스레드와 화면 스레드가 잠금 없이 함께 씁니다. | 임시 파일과 이름 바꾸기, 쓰는 쪽 하나. `secs-project::interrupted_save_leaves_old_secs_intact_f1`이 지킵니다. | `model.py:926-931`, `rewapi/session.py:332` | 적용 |
+| F2 | 위치 측정 중 오류가 나면 그 위치에서 이미 잰 IR까지 버립니다. | 채널마다 바로 기록하고, 다시 재면 그 위치를 바꿉니다. `secs-project::test_cancel_then_resume_skips_done_positions_and_partial_position_is_not_done_f2`, `secs-project::test_remeasure_replaces_entry`가 지킵니다. | `rewapi/session.py:418-427` | 적용 |
 | F3 | mdat 파서가 깊이 200 근처에서 RecursionError를 냅니다. | 명시적 작업 스택과 깊이 상한(상위 클래스 사슬도 깊이를 씁니다). `secs-jos::class_hierarchy_obeys_depth_limit`, 변형 입력 3000개 시험. | `rew_mdat/serialization/parser.py:46-55` | 적용 |
 | F4 | mdat 빌더의 UUID가 무작위라 같은 입력에서 다른 바이트가 나옵니다. | UUID 출처를 주입합니다(`secs_mdat::build`의 `uuid`). 앱은 무작위, 테스트는 고정. `secs-mdat::builds_match_bytes_except_nine_one_ulp_caches`. | `rew_mdat/builder.py:143` | 적용 |
-| F5 | `.secs`의 IR 경로를 절대 경로와 `..`까지 그대로 따릅니다. | 프로젝트의 `.irs` 안으로 제한하고, 벗어나면 이주 경고를 띄웁니다. | `rewapi/session.py:361-381` | 계획 |
+| F5 | `.secs`의 IR 경로를 절대 경로와 `..`까지 그대로 따릅니다. | 프로젝트의 `.irs` 안으로 제한하고, 벗어나면 이주 경고를 띄웁니다. 절대 경로·`..`·심볼릭 링크 탈출과 정상 경로를 `secs-project::f5_absolute_parent_and_symlink_escapes_are_rejected_but_in_tree_reads`가 지킵니다. | `rewapi/session.py:361-381` | 적용 |
 | F6 | CamillaDSP 내보내기가 WAV를 쓴 뒤에야 ASCII 검사에서 실패하고, NaN을 그대로 YAML에 씁니다. | 모든 검사를 첫 파일을 쓰기 전에 합니다. | `export_camilladsp.py:364-365, 402` | 계획 |
 | F7 | mdat 파서의 상한이 배열·문자열 하나씩만 셉니다. 같은 배열·서명을 참조로 여러 번 가리키거나 상위 클래스가 순환하면 메모리를 계속 씁니다. | 해석한 메모리 전체를 `max_file_bytes` 예산으로 세고, 상위 클래스 순환을 거부합니다. 정상 파일과 오라클의 오류 사례는 그대로입니다. `secs-jos::shared_signature_copies_obey_aggregate_allocation_budget`, `secs-jos::declared_array_sizes_do_not_allocate_before_truncation_checks`. | `rew_mdat/serialization/parser.py`, `rew_mdat/limits.py` | 적용 |
 | F8 | 파이썬 문자열은 짝 없는 UTF-16 서러게이트를 담습니다. | 러스트 문자열에는 담을 수 없어 글자 API는 U+FFFD로 보여 주고, 해석한 스트림은 원래 바이트를 지녀 고치지 않은 글자는 그대로 왕복합니다. UTF-16 단위 API로 잃지 않고 읽고 쓸 수 있습니다. `secs-jos::utf8_and_lone_surrogates`. | `rew_mdat/serialization/modified_utf8.py` | 적용 |
@@ -47,16 +47,16 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 
 | 번호 | 업스트림 동작 | 바꾸는 동작 | 출처 | 상태 |
 |---|---|---|---|---|
-| R1 | `/measure` 4xx 본문에 'pro'가 들어가면(process, problem) Pro 없음으로 판정하고, 401·402·403은 어느 경로든 Pro 없음입니다. | 상태 코드와 경로로만 판정합니다. | `rewapi/rew.py:286-292` | 계획 |
-| R2 | 상태 확인의 차단기가 측정 스레드의 요청까지 6초 막습니다. | 측정 세션에는 차단기를 걸지 않습니다. | `rewapi/rew.py:273-284, 317-329` | 계획 |
-| R3 | 콜백 서버의 경로를 예측할 수 있고, 4 MB를 넘는 본문을 일부만 읽습니다. | 무작위 경로 토큰, 본문을 끝까지 읽어 버림. | `rewapi/callback.py:18, 47-59` | 계획 |
-| R4 | FakeREW가 상위 폴더의 `tests/synth.py`를 불러옵니다. | 제품은 테스트 코드를 불러오지 않습니다. | `rewapi/fake.py:54-81` | 계획 |
+| R1 | `/measure` 4xx 본문에 'pro'가 들어가면(process, problem) Pro 없음으로 판정하고, 401·402·403은 어느 경로든 Pro 없음입니다. | `/measure/command`의 401·402·403만 Pro 필요로 판정하고 본문은 보지 않습니다. `secs-rew::test_r1_pro_required_uses_only_status_and_measure_command_path`. | `rewapi/rew.py:286-292` | 적용 |
+| R2 | 상태 확인의 차단기가 측정 스레드의 요청까지 6초 막습니다. | 상태·장치 조회에만 차단기를 적용하고, 측정 세션과 취소 요청에는 적용하지 않습니다. `secs-rew::test_r2_probe_circuit_breaker_does_not_block_measurement_requests`, `test_r2_full_position_ignores_offline_hold_including_device_lookups`. | `rewapi/rew.py:273-284, 317-329` | 적용 |
+| R3 | 콜백 서버의 경로를 예측할 수 있고, 4 MB를 넘는 본문을 일부만 읽습니다. | 서버별 무작위 경로 토큰, 미등록 경로 404, 4 MB 초과 본문을 끝까지 버린 뒤 413. `secs-rew::test_r3_random_token_wrong_path_404_and_oversized_body_drained`는 같은 연결의 다음 요청까지 확인합니다. | `rewapi/callback.py:18, 47-59` | 적용 |
+| R4 | FakeREW가 상위 폴더의 `tests/synth.py`를 불러옵니다. | `IrSource`로 IR·t0·SNR을 주입하며 제품에는 테스트 코드·샘플 데이터를 넣지 않습니다. `secs-rew::test_r4_fake_two_position_plan_uses_only_supplied_ir_source`. | `rewapi/fake.py:54-81` | 적용 |
 
 ## 화면
 
 | 번호 | 업스트림 동작 | 바꾸는 동작 | 출처 | 상태 |
 |---|---|---|---|---|
-| U1 | 레벨 체크의 출력 슬라이더가 측정 스윕 레벨과 이어져 있지 않고, 레벨 결과는 튜토리얼 밖에서 쓰이지 않습니다. 건너뛰면 그럴듯한 가짜 값을 씁니다. | 레벨 체크 결과로 스윕 레벨을 정합니다. | `wizard/step3_level.py`, `rewapi/rew.py configure` | 계획 |
+| U1 | 레벨 체크의 출력 슬라이더가 측정 스윕 레벨과 이어져 있지 않고, 레벨 결과는 튜토리얼 밖에서 쓰이지 않습니다. 건너뛰면 그럴듯한 가짜 값을 씁니다. | 레벨 체크 결과로 스윕 레벨을 정합니다. | `wizard/step3_level.py`, `rewapi/rew.py configure` | 부분: `secs-audio::recommend_sweep_level`과 `level_known_signals_clip_and_recommendation`, `level_check_uses_simulated_capture_and_calibration`으로 −30~−15 dBFS 권고를 검증. 서비스 연결 P23·화면 M5 대기 |
 | U2 | DSP 프로필 칸 여섯 개를 엔진이 읽지 않습니다(MIMO FIR 예산 문구만 씀). | '내보낼 DSP'로 바꾸고 예산 경고에만 쓴다고 화면에 적습니다. | `wizard/step2_config.py:1090-1125` | 계획 |
 | U3 | 단계별 REW mdat 내보내기가 숨겨져 닿을 수 없습니다. | 내보내기의 고급에 되살립니다. | `wizard/step_calibration.py` 내보내기 카드 | 계획 |
 | U4 | 마지막 단계의 '완료'가 아무 일도 하지 않습니다. | 없앱니다. | `wizard/window.py advance` | 계획 |

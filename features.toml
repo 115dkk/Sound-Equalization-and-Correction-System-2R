@@ -354,6 +354,32 @@ tests = ["secs-types::known_vocabulary_is_complete", "secs-project::role_vocabul
 upstream = "model.py role_from_title, step5_measure.split_position"
 note = "known roles, labels, groups, positions, Dolby codes and Unicode-aware exact-title matching"
 
+# ---- Project service inputs (M4) ----
+
+[[feature]]
+id = "project.measurement_plan"
+kind = "project"
+milestone = "M4"
+status = "implemented"
+tests = ["secs-project::service_plan_matches_upstream", "secs-project::pure_measurement_helpers_match_upstream"]
+upstream = "rewapi/interfaces.py MeasurementPlan, plan_from_project; wizard/timing.py; wizard/step4_layout.py"
+
+[[feature]]
+id = "project.measurement_store"
+kind = "project"
+milestone = "M4"
+status = "implemented"
+tests = ["secs-project::test_run_plan_writes_secs_and_ir_files", "secs-project::test_reload_project_restores_irs_by_role_and_load_project_irs_roundtrip", "secs-project::interrupted_save_leaves_old_secs_intact_f1", "secs-project::test_cancel_then_resume_skips_done_positions_and_partial_position_is_not_done_f2", "secs-project::f5_absolute_parent_and_symlink_escapes_are_rejected_but_in_tree_reads", "secs-project::ir_cache_rereads_changed_file_and_evicts_to_cap"]
+upstream = "rewapi/session.py MeasurementSession, IrSaver, load_project_irs"
+
+[[feature]]
+id = "project.signatures"
+kind = "project"
+milestone = "M4"
+status = "implemented"
+tests = ["secs-project::service_plan_matches_upstream"]
+upstream = "calibration.py measured_positions, measurement_signature, target_key, estimate_seconds, estimate_subs_seconds, estimate_xo_seconds"
+
 # ---- Engine (M2, M3) ----
 
 [[feature]]
@@ -543,16 +569,33 @@ note = "new"
 id = "measure.native"
 kind = "measure"
 milestone = "M4"
-status = "planned"
-tests = []
-note = "new: sweep measurement through WASAPI (Windows) and cpal (macOS, Linux) without REW (docs/adr/0005)"
+status = "partial"
+tests = ["secs-audio::sim_round_trip_rates_lengths_latencies_and_relative_arrivals", "secs-audio::dolby_golden_ir_round_trip", "secs-audio::loopback_recovers_absolute_latency", "secs-audio::snr_matches_known_white_noise_within_one_db", "secs-audio::cancellation_during_position_returns_no_roles", "secs-audio::session_starts_input_before_output"]
+note = "new: platform-independent sweep/session/IR core and SimRoom; OS adapters and hardware probe follow in P24 (docs/adr/0005)"
+
+[[feature]]
+id = "measure.level_check"
+kind = "measure"
+milestone = "M4"
+status = "implemented"
+tests = ["secs-audio::level_known_signals_clip_and_recommendation", "secs-audio::level_check_uses_simulated_capture_and_calibration"]
+upstream = "wizard/step3_level.py, wizard/mic_meter.py"
+note = "native pink/sine RMS, peak, clip and calibrated SPL; U1 sweep-level recommendation"
+
+[[feature]]
+id = "measure.mic_calibration"
+kind = "measure"
+milestone = "M4"
+status = "implemented"
+tests = ["secs-audio::calibration_files_and_rew_spl_reference", "secs-audio::malformed_calibrations_return_errors_without_panics"]
+note = "REW/miniDSP response and sensitivity parser; REW-default unmodified IR; USB SPL requires known device gain"
 
 [[feature]]
 id = "measure.rew_api"
 kind = "measure"
 milestone = "M4"
-status = "planned"
-tests = []
+status = "implemented"
+tests = ["secs-rew::test_run_position_sequence_and_ir", "secs-rew::test_rew_progress_strings_reach_the_progress_callback", "secs-rew::test_r1_pro_required_uses_only_status_and_measure_command_path", "secs-rew::test_r2_full_position_ignores_offline_hold_including_device_lookups", "secs-rew::test_r3_random_token_wrong_path_404_and_oversized_body_drained", "secs-rew::test_r4_fake_two_position_plan_uses_only_supplied_ir_source"]
 upstream = "rewapi/rew.py, rewapi/callback.py"
 
 [[feature]]
