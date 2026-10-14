@@ -78,7 +78,10 @@ pub(crate) fn peq(v: &Value) -> Vec<Peq> {
 }
 
 pub(crate) fn load(case: &str) -> Case {
-    let fx = Fixture::load("engine_inputs", case);
+    load_fixture(&Fixture::load("engine_inputs", case))
+}
+
+pub(crate) fn load_fixture(fx: &Fixture) -> Case {
     let i = fx.inputs();
     let v = &i["config"];
     let config = EngineConfig {

@@ -63,6 +63,15 @@ upstream = "calibration.compute, recommend_xo, previews and exports"
 tests = ["secs-engine::design_matches_recorded_stages", "secs-engine::engine_e2e_spread", "secs-engine::peq_cached_residual_is_bit_equal", "secs-engine::design_parallel_progress_counts_completed_channels", "secs-engine::preview_sub_combine_replayed_designs", "secs-dsp::cached_bounds_match_smoothing_bits_and_errors", "secs-engine::xo_preparation_is_candidate_independent", "secs-engine::xo_shared_preparation_preserves_candidate_bits", "secs-engine::xo_shared_windows_preserve_filtered_bits", "secs-camilla::streaming_json_matches_recursive_bytes"]
 note = "docs/perf/engine.md records the paired release audit (P13, P13b, P13c): every operation is faster than SECS 2 in both configurations and Rust uses less aggregate memory. Timing is not a CI gate; the tests prove the speed-ups kept the results."
 
+[[feature]]
+id = "perf.mimo"
+kind = "perf"
+milestone = "M3"
+status = "partial"
+upstream = "mimo.design_mimo, mimo_iir.design_mimo_iir, calibration.compute_mimo and MIMO exports"
+tests = ["secs-engine::mimo_input_selection_preserves_all_input_result", "secs-engine::mimo_stage_boundary_goldens", "secs-engine::mimo_whole_path_goldens", "secs-engine::mimo_iir_whole_path_within_spread_and_deterministic"]
+note = "P18 audit in docs/perf/mimo.md. Large-case ideal FIR per-input performance misses the 5x target; unmeasured rows are not passes. No optimizer or parity gate was changed."
+
 # ---- Policy (M0) ----
 
 [[feature]]

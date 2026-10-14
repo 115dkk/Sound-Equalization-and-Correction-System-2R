@@ -779,6 +779,39 @@ fn mimo_ranges_and_upstream_behaviors() {
 }
 
 #[test]
+fn mimo_input_selection_preserves_all_input_result() {
+    let case = cases::load("room");
+    let d = design::replay("room");
+    let ctx = Context::new(
+        1,
+        MemoryBudget::new(512 * 1024 * 1024),
+        Arc::new(NoProgress),
+        CancelToken::new(),
+    );
+    let req = MimoRequest::default();
+    let (all, traces) =
+        design_mimo_traced(&d, &case.measurements, &case.config, &req, &ctx).unwrap();
+    for (index, main) in d.mains.iter().enumerate() {
+        let (one, trace) = crate::mimo::design::design_mimo_inputs(
+            &d,
+            &case.measurements,
+            &case.config,
+            &req,
+            &ctx,
+            Some(&main.role),
+        )
+        .unwrap();
+        assert_eq!(one.ranges, all.ranges);
+        assert_eq!(one.supports, vec![all.supports[index].clone()]);
+        assert_eq!(one.level_db, vec![all.level_db[index].clone()]);
+        assert_eq!(trace, vec![traces[index].clone()]);
+        for ((_, a), (_, b)) in one.supports[0].1.iter().zip(&all.supports[index].1) {
+            assert!(a.iter().zip(b).all(|(a, b)| a.to_bits() == b.to_bits()));
+        }
+    }
+}
+
+#[test]
 fn mimo_deterministic_threads() {
     let case = cases::load("room");
     let d = design::replay("room");

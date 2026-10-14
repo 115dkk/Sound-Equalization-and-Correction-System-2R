@@ -121,6 +121,40 @@ def _cases():
     return out
 
 
+def big_case() -> Case:
+    """P18 only: six seats, the upstream 7.1.4 roles and two subwoofers.
+
+    Kept outside cases(): existing golden exporters must not gain a case.
+    The sixth seat extends the upstream five-seat cross towards the rear left.
+    """
+    project = _project('7.1.4', 2)
+    project.extra['array'] = 6
+    room = ModalRoom(sample_rate=48000, n_fft=48000)
+    sources = {
+        'L': (1.6, 3.9, 1.0), 'R': (4.6, 3.9, 1.0), 'C': (3.1, 3.9, 1.0),
+        'Ls': (0.4, 2.2, 1.0), 'Rs': (5.8, 2.2, 1.0),
+        'Lb': (1.6, 0.5, 1.0), 'Rb': (4.6, 0.5, 1.0),
+        'Tfl': (1.6, 3.4, 2.5), 'Tfr': (4.6, 3.4, 2.5),
+        'Tbl': (1.6, 0.9, 2.5), 'Tbr': (4.6, 0.9, 2.5),
+        'SW1': (1.2, 0.5, 0.4), 'SW2': (5.0, 0.5, 0.4),
+    }
+    roles = [s.role for s in ordered_speakers(project.config.speakers, subs_last=True)]
+    assert set(roles) == set(sources)
+    receivers = (*POSITIONS, (2.6, 2.4, 1.15))
+    irs = {}
+    for pos, receiver in enumerate(receivers, 1):
+        irs[pos] = {}
+        for i, role in enumerate(roles):
+            excitation = (synth.sub_ir(seed=synth.SEED + i) if role.startswith('SW')
+                          else synth.main_ir(seed=synth.SEED + i))
+            response = np.fft.irfft(np.fft.rfft(excitation)
+                                    * room.transfer(sources[role], receiver), 48000)
+            irs[pos][role] = (response.astype(np.float32), 48000,
+                             (pos - 1) * 0.00013 + i * 0.00107 - 0.0002)
+    return Case('big', project, irs,
+                cal.CalibrationSettings(room_volume_m3=float(np.prod(room.dims)), mimo_on=True))
+
+
 def cases() -> list[Case]:
     # Exporters/optimisers may mutate settings and engines, never the shared set.
     return copy.deepcopy(_cases())

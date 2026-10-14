@@ -665,6 +665,17 @@ pub(crate) fn design_mimo_traced(
     req: &MimoRequest,
     ctx: &Context,
 ) -> Result<(MimoDesign, Vec<(String, InputTrace)>), EngineError> {
+    design_mimo_inputs(design, measurements, config, req, ctx, None)
+}
+
+pub(crate) fn design_mimo_inputs(
+    design: &Design,
+    measurements: &MeasurementSet,
+    config: &EngineConfig,
+    req: &MimoRequest,
+    ctx: &Context,
+    input: Option<&str>,
+) -> Result<(MimoDesign, Vec<(String, InputTrace)>), EngineError> {
     check(ctx)?;
     let mut out = MimoDesign::default();
     let positions = &design.spectra.positions;
@@ -728,52 +739,59 @@ pub(crate) fn design_mimo_traced(
             .join(", ")
     )));
     let results = ctx
-        .try_map(design.mains.iter().collect(), |main| {
-            let candidates: Vec<_> = usable
+        .try_map(
+            design
+                .mains
                 .iter()
-                .filter(|r| **r != main.role)
-                .cloned()
-                .collect();
-            let dim = candidates.len() * req.taps_low;
-            // Normal equations + a factorization + one block, raw/LP/selected path
-            // copies, per-position target and guard buffers, design-grid temporaries,
-            // and solver scratch. Reserve before allocating any input-owned arrays.
-            let bytes = 8
-                * (2 * dim * dim
-                    + req.taps_low * req.taps_low
-                    + positions.len() * 720 * (4 * candidates.len() + 8)
-                    + 32 * design_freqs().len()
-                    + 16 * dim
-                    + 16384);
-            let _permit =
-                ctx.budget()
-                    .acquire(bytes as u64, ctx.cancel())
-                    .map_err(|e| match e {
-                        MemoryError::Cancelled => EngineError::Cancelled,
-                        other => EngineError::Input(other.to_string()),
-                    })?;
-            let mut xs = Vec::new();
-            let mut paths = Vec::new();
-            for &p in positions {
-                check(ctx)?;
-                let response =
-                    crate::input_response(design, &main.role, &spectra, p).ok_or_else(|| {
-                        EngineError::Input(format!("missing MIMO input {p}/{}", main.role))
-                    })?;
-                xs.push(secs_dsp::lowrate::to_low(&response, design_freqs(), 720)?);
-                let gs: Result<Vec<_>, EngineError> = candidates
+                .filter(|m| input.is_none_or(|r| r == m.role))
+                .collect(),
+            |main| {
+                let candidates: Vec<_> = usable
                     .iter()
-                    .map(|r| {
-                        let h = support_path(&out, r, &spectra, p, &prepared.align_delay_ms)?;
-                        Ok(secs_dsp::lowrate::to_low(&h, design_freqs(), 720)?)
-                    })
+                    .filter(|r| **r != main.role)
+                    .cloned()
                     .collect();
-                paths.push(gs?);
-            }
-            let direct = secs_dsp::lowrate::to_low(&main.response, design_freqs(), 720)?;
-            let result = design_input(&xs, &paths, &direct, &candidates, req, ctx)?;
-            Ok((main.role.clone(), result))
-        })
+                let dim = candidates.len() * req.taps_low;
+                // Normal equations + a factorization + one block, raw/LP/selected path
+                // copies, per-position target and guard buffers, design-grid temporaries,
+                // and solver scratch. Reserve before allocating any input-owned arrays.
+                let bytes = 8
+                    * (2 * dim * dim
+                        + req.taps_low * req.taps_low
+                        + positions.len() * 720 * (4 * candidates.len() + 8)
+                        + 32 * design_freqs().len()
+                        + 16 * dim
+                        + 16384);
+                let _permit =
+                    ctx.budget()
+                        .acquire(bytes as u64, ctx.cancel())
+                        .map_err(|e| match e {
+                            MemoryError::Cancelled => EngineError::Cancelled,
+                            other => EngineError::Input(other.to_string()),
+                        })?;
+                let mut xs = Vec::new();
+                let mut paths = Vec::new();
+                for &p in positions {
+                    check(ctx)?;
+                    let response = crate::input_response(design, &main.role, &spectra, p)
+                        .ok_or_else(|| {
+                            EngineError::Input(format!("missing MIMO input {p}/{}", main.role))
+                        })?;
+                    xs.push(secs_dsp::lowrate::to_low(&response, design_freqs(), 720)?);
+                    let gs: Result<Vec<_>, EngineError> = candidates
+                        .iter()
+                        .map(|r| {
+                            let h = support_path(&out, r, &spectra, p, &prepared.align_delay_ms)?;
+                            Ok(secs_dsp::lowrate::to_low(&h, design_freqs(), 720)?)
+                        })
+                        .collect();
+                    paths.push(gs?);
+                }
+                let direct = secs_dsp::lowrate::to_low(&main.response, design_freqs(), 720)?;
+                let result = design_input(&xs, &paths, &direct, &candidates, req, ctx)?;
+                Ok((main.role.clone(), result))
+            },
+        )
         .map_err(|e| match e {
             MapError::Cancelled => EngineError::Cancelled,
             MapError::Item { error, .. } => error,
