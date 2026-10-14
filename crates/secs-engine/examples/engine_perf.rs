@@ -549,18 +549,27 @@ fn main() {
         | "mimo_fir" => {
             let design = run();
             let req = MimoRequest::default();
+            let profiles = std::sync::Mutex::new(Vec::new());
             if op.starts_with("mimo_design_") {
                 let input = (op == "mimo_design_one").then_some(design.mains[0].role.as_str());
                 measure(op, name, threads, || {
-                    mimo::design::design_mimo_inputs(
+                    let stages =
+                        std::sync::Mutex::new(std::collections::BTreeMap::<String, f64>::new());
+                    let result = mimo::design::design_mimo_inputs_observed(
                         &design,
                         &case.measurements,
                         &case.config,
                         &req,
                         &ctx,
                         input,
+                        &|stage, elapsed| {
+                            *stages.lock().unwrap().entry(stage.to_owned()).or_default() +=
+                                elapsed.as_secs_f64();
+                        },
                     )
-                    .unwrap()
+                    .unwrap();
+                    profiles.lock().unwrap().push(stages.into_inner().unwrap());
+                    result
                 });
             } else if matches!(op, "mimo_iir_one" | "mimo_iir_all") {
                 let mut ideal =
@@ -590,16 +599,28 @@ fn main() {
                 settings.mimo_on = true;
                 settings.mimo_fir = op == "mimo_fir";
                 measure(op, name, threads, || {
-                    mimo::compute(
+                    let stages =
+                        std::sync::Mutex::new(std::collections::BTreeMap::<String, f64>::new());
+                    let result = mimo::run::compute_observed(
                         &design,
                         &case.measurements,
                         &case.config,
                         &settings,
                         &case.tuning,
                         &ctx,
+                        &|stage, elapsed| {
+                            *stages.lock().unwrap().entry(stage.to_owned()).or_default() +=
+                                elapsed.as_secs_f64();
+                        },
                     )
-                    .unwrap()
+                    .unwrap();
+                    profiles.lock().unwrap().push(stages.into_inner().unwrap());
+                    result
                 });
+            }
+            let profiles = profiles.into_inner().unwrap();
+            if profiles.len() > 1 {
+                println!("{}", serde_json::json!({"profile_samples": &profiles[1..]}));
             }
         }
         "design" => measure(op, name, threads, run),

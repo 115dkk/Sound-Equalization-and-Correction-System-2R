@@ -1,4 +1,227 @@
-# MIMO performance audit (P18 / P18b)
+# MIMO performance audit (P18 / P18b / P18c)
+
+## Verdict (Claude, 2026-10-14)
+
+M3's performance and memory conditions, as amended in `docs/MIMO.md` §6, are
+met. `perf.mimo` is `implemented`. Big case (six positions, 7.1.4 + two subs),
+same machine, SECS 2 / Rust:
+
+| Operation | One thread | Shipped |
+|---|---:|---:|
+| whole MIMO, IIR (default) | 3,168.8 / 277.0 s = **11.4×** | > 5,280 / 79.6 s = **> 66×** |
+| `mimo_iir_one` (input L) | 275.9 / 23.25 s = **11.9×** | — |
+| whole MIMO, FIR mode | 14.36 / 4.21 s = 3.4× | 13.47 / 1.95 s = **6.9×** |
+| `mimo_design_one` (input L, 180 taps) | 5.18 / 2.22 s = 2.3× | 3.13 / 2.03 s = 1.5× |
+| peak PSS, whole IIR | ≥ 1,152,868 / 483,028 KiB | ≥ 1,901,543 / 808,083 KiB |
+
+- **MIMO run ≥ 5×**: met in both configurations (11.4× and over 66×). The
+  shipped SECS 2 run did not finish in 88 minutes, so that ratio is a lower
+  bound; its two pool workers each run multi-threaded BLAS on four cores.
+- **Memory**: Rust's peak is 0.79 GiB shipped and 0.46 GiB one thread, under
+  1 GB, and below SECS 2's peaks observed within the first 25 and 10 minutes
+  (lower bounds for SECS 2).
+- **Known shortfall, recorded rather than hidden**: the ideal FIR design step
+  alone (2.3× / 1.5×) and FIR mode with one thread (3.4×). The step is dense
+  factorization. SECS 2 runs it in multi-threaded LAPACK; this port keeps it
+  sequential so results do not depend on the thread count (ADR 0007). P18b
+  replaced 19 Cholesky factorizations with one tridiagonal reduction (2.4×
+  on the sweep). P18c computed the shared preparation and support paths once
+  (bit-identical). The blocked reduction (P18c Part B) and the GPU experiment
+  (P19, moved to M6) are the follow-ups.
+- **Not measured**: the MIMO exports (CamillaDSP and mdat items) and the
+  `room_dba` whole runs. Neither is in the M3 conditions.
+
+
+## P18c: request-local preparation and shared low-rate paths
+
+### Supplied quiet-machine observations (2026-10-14)
+
+These are the observations supplied with P18c, reproduced without replacing
+incomplete runs with estimates. Ratios in this table are SECS 2 / Rust.
+
+| Operation | Config | SECS 2 s | Rust s | Ratio |
+|---|---|---:|---:|---:|
+| whole MIMO, IIR | shipped | > 5,280 (not finished in 88 min) | 81.8 | > 64× |
+| whole MIMO, IIR | one | 3,168.8 | 286.5 | 11.1× |
+| whole MIMO, FIR mode | shipped | 13.47 | 2.98 | 4.5× |
+| whole MIMO, FIR mode | one | 14.36 | 5.94 | 2.4× |
+| `mimo_design_one` (L, 180 taps) | shipped | 3.13 | 2.22 | 1.4× |
+| `mimo_design_one` (L, 180 taps) | one | 5.18 | 2.46 | 2.1× |
+| `mimo_iir_one` (L) | one | 275.9 | 23.25 | 11.9× |
+| peak PSS, whole IIR | shipped | ≥ 1,901,543 KiB (25 min cap) | 808,083 KiB | |
+| peak PSS, whole IIR | one | ≥ 1,152,868 KiB (10 min cap) | 483,028 KiB | |
+
+Source method: the originating session's `measure_{a,b,c,d}.sh` scripts.
+Rust used `engine_perf` defaults, except `SECS_PERF_RUNS=3` for whole IIR.
+Python whole IIR used `--time-budget 1` (one sample); FIR used `--runs 3`.
+PSS used `oracle/peak_memory.py`; the timed-out Python observations are lower
+bounds. Python was **not rerun** in P18c. These rows have mixed sampling
+protocols, not a claim of paired equal-sample medians.
+
+### Shared work and proofs
+
+`mimo::prepared::Prepared` holds long spectra and alignment for one request.
+It calls measurement preparation once, then the same `long_spectra` operation
+and sub-filter selection as `export_view`. `compute` lends this value to the
+ideal design, IIR fit and assembly; standalone design/fit prepare their own.
+The measurement preparation's large `h`/`h0` buffers are dropped after long
+spectra are built. Public signatures and arithmetic order are unchanged.
+
+The ideal design maps each needed `(position, candidate)` once to its 720-sample
+protected/aligned low-rate path. Inputs select candidate paths in their old
+order. The table has one retained budget permit; temporary full-rate path
+buffers have per-task permits and input-local copies remain in the existing
+input budget. The combined shared-plus-largest-input reservation is checked
+before acquiring the retained permit, preventing a self-wait under a small
+budget. This is allocation accounting, **not** a new peak-PSS observation.
+
+- `mimo_shared_preparation_bit_identical` compares every stage-boundary case
+  (eight computational cases plus the two-position note-only case) against a
+  test-only copy of the pre-P18c per-input preparation. It uses Context(1) and
+  Context(4), structural equality and explicit `f64::to_bits` vectors for all
+  design and trace numbers. No result golden was added.
+- `mimo_compute_shared_preparation_bit_identical` compares whole room_dba IIR
+  and FIR runs with the old separately prepared design, fit and assembly,
+  including every ideal tap, exported filter, final/applied response and SPL
+  value, with structural equality and explicit bits.
+- `mimo_shared_paths_reject_combined_budget` uses a budget that fits each old
+  input permit alone but not that permit plus the shared table; it must return
+  an error, not wait indefinitely.
+- Existing MIMO tests and tolerances, including both P18b ridge-sweep proofs,
+  are unchanged. No solver or reduction arithmetic changed.
+
+### Before/after profiles
+
+Release, big case, one warm-up then five samples per operation/configuration,
+`engine_perf` default sampling. Context(1) and Context(4); the latter is this
+machine's shipped configuration. Calibration/reconstruction precede timing.
+Measurements ran sequentially with no concurrent build, test or benchmark.
+`uptime` was recorded at each start. Baseline batches started 09:30–09:35 UTC;
+after batches 09:41–09:46 UTC. First batches followed release builds (one-minute
+loads 1.10 and 1.35 respectively); loads include the preceding sequential job.
+
+The complete-operation timers include the section callbacks on both sides.
+Section values are medians across samples. Input sections are **summed elapsed
+worker seconds**, not additive wall-time partitions in shipped mode. The
+`inputs_wall` interval encloses the entire input map. In whole FIR, before
+`design_wall` includes preparation; after it excludes the now-shared preparation.
+`assemble` before includes its repeated preparation and after does not.
+
+| Operation | Config | Before s | After s | Before/after |
+|---|---|---:|---:|---:|
+| `mimo_design_one` | one | 2.252487 | 2.222060 | 1.014× |
+| `mimo_design_one` | shipped | 2.170595 | 2.030304 | 1.069× |
+| `mimo_design_all` | one | 21.031620 | 20.017563 | 1.051× |
+| `mimo_design_all` | shipped | 6.185466 | 6.372843 | 0.971× |
+| `mimo_fir` | one | 5.677796 | 4.207428 | 1.349× |
+| `mimo_fir` | shipped | 2.868605 | 1.952964 | 1.469× |
+
+#### `mimo_design_one` section medians (seconds)
+
+| Section | Before one | After one | Before shipped | After shipped |
+|---|---:|---:|---:|---:|
+| `preparation` | 0.488748 | 0.366484 | 0.539406 | 0.372024 |
+| `ranges` | 0.069552 | 0.068904 | 0.071777 | 0.074277 |
+| `shared_paths` | 0.000000 | 0.111672 | 0.000000 | 0.032387 |
+| `input_preparation` | 0.144615 | 0.030026 | 0.157909 | 0.045972 |
+| `normal_equations` | 0.382698 | 0.369589 | 0.124355 | 0.131544 |
+| `sweep` | 1.153490 | 1.151714 | 1.222616 | 1.296123 |
+| `path_building` | 0.001211 | 0.001105 | 0.002003 | 0.002223 |
+| `ranking` | 0.000000 | 0.000000 | 0.000000 | 0.000000 |
+| `guard_steps` | 0.017619 | 0.017747 | 0.018052 | 0.026866 |
+| `inputs_wall` | 1.698041 | 1.622636 | 1.531409 | 1.508446 |
+
+#### `mimo_design_all` section medians (seconds)
+
+| Section | Before one | After one | Before shipped | After shipped |
+|---|---:|---:|---:|---:|
+| `preparation` | 0.546804 | 0.408792 | 0.523108 | 0.386790 |
+| `ranges` | 0.073500 | 0.069470 | 0.066833 | 0.067852 |
+| `shared_paths` | 0.000000 | 0.116394 | 0.000000 | 0.033552 |
+| `input_preparation` | 1.680791 | 0.379079 | 1.789229 | 0.396395 |
+| `normal_equations` | 4.275043 | 4.308505 | 4.086276 | 5.124021 |
+| `sweep` | 14.038525 | 14.391486 | 13.983411 | 14.688784 |
+| `path_building` | 0.014456 | 0.015196 | 0.013811 | 0.014953 |
+| `ranking` | 0.000004 | 0.000003 | 0.000003 | 0.000003 |
+| `guard_steps` | 0.356790 | 0.378126 | 0.359243 | 0.401822 |
+| `inputs_wall` | 20.365590 | 19.403759 | 5.591588 | 5.864693 |
+
+#### `mimo_fir` section medians (seconds)
+
+| Section | Before one | After one | Before shipped | After shipped |
+|---|---:|---:|---:|---:|
+| `preparation` | 0.456071 | 0.385848 | 0.510846 | 0.371744 |
+| `ranges` | 0.068720 | 0.070860 | 0.070014 | 0.066852 |
+| `shared_paths` | 0.000000 | 0.116409 | 0.000000 | 0.031592 |
+| `input_preparation` | 1.634598 | 0.381137 | 1.796387 | 0.371744 |
+| `normal_equations` | 1.543076 | 1.552145 | 1.456021 | 1.478298 |
+| `sweep` | 0.843441 | 0.933917 | 0.949336 | 0.900400 |
+| `path_building` | 0.014188 | 0.014679 | 0.015877 | 0.014700 |
+| `ranking` | 0.000004 | 0.000003 | 0.000003 | 0.000003 |
+| `guard_steps` | 0.136786 | 0.149581 | 0.157292 | 0.145514 |
+| `inputs_wall` | 4.172819 | 3.036623 | 1.212036 | 0.774956 |
+| `design_wall` | 4.682119 | 3.226707 | 1.815266 | 0.872960 |
+| `realization` | 0.000039 | 0.000052 | 0.000063 | 0.000067 |
+| `assemble` | 0.995587 | 0.599842 | 1.099254 | 0.619917 |
+
+Remaining time: the 180-tap per-input λ sweep still takes about 1.15–1.30 s;
+normal equations take about 0.37 s one-thread / 0.13 s shipped for L. The shared
+preparation itself takes about 0.37–0.41 s. The shipped all-input design did not
+improve in this batch (6.185 → 6.373 s); its summed normal-equation and sweep
+intervals increased despite reduced input preparation. In FIR mode the solve
+is smaller (70 taps), so removing repeated preparation is a larger share:
+5.678 → 4.207 s one-thread and 2.869 → 1.953 s shipped. Afterward the FIR
+assembly is about 0.60–0.62 s, and the one-thread normal equations about 1.55 s
+summed across inputs. These are section observations, not a target verdict.
+
+### P18c Rust-only rows
+
+SECS 2 values below are the supplied table above, not new measurements.
+Rust `mimo_iir` uses one warm-up and exactly three samples; other rows use five.
+No Python all-input ideal-design time was supplied, so that ratio is left blank.
+The shipped IIR comparison uses the incomplete 5,280 s lower bound.
+
+| Operation | Config | SECS 2 s | Rust median s | Rust/SECS 2 | SECS 2/Rust |
+|---|---|---:|---:|---:|---:|
+| `mimo_design_one` | one | 5.18 | 2.222060 | 0.4290 | 2.331× |
+| `mimo_design_one` | shipped | 3.13 | 2.030304 | 0.6487 | 1.542× |
+| `mimo_design_all` | one | — | 20.017563 | — | — |
+| `mimo_design_all` | shipped | — | 6.372843 | — | — |
+| `mimo_fir` | one | 14.36 | 4.207428 | 0.2930 | 3.413× |
+| `mimo_fir` | shipped | 13.47 | 1.952964 | 0.1450 | 6.897× |
+| `mimo_iir` | one | 3168.8 | 277.020135 | 0.0874 | 11.439× |
+| `mimo_iir` | shipped | > 5280 | 79.638093 | < 0.0151 | > 66.300× |
+
+### Part B
+
+Not attempted: the time box was spent on A/C, independent parity proofs and
+foreground gates. faer's sequential `tridiag_in_place` and `RidgeSweep` are
+unchanged. There is **no blocked-reduction benchmark**, no claimed 1.5× result,
+and no new reduction accepted. The P18b candidate measurements below remain
+historical measurements, not P18c blocked-reduction evidence.
+
+### Verification
+
+All requested gates finished in the foreground after benchmarking stopped:
+
+| Gate | Result |
+|---|---|
+| `cargo fmt --all -- --check` | pass |
+| `cargo clippy -p secs-engine --all-targets --locked -- -D warnings` | pass |
+| `cargo test -p secs-engine --locked` | 69 passed; 0 failed; doc tests pass |
+| `SECS_ORACLE_FOREIGN_LIBM=1 cargo test -p secs-engine --release --locked` | 69 passed; 0 failed; doc tests pass |
+| `python3 .github/scripts/check_feature_tests.py` | all 148 referenced tests compiled/listed |
+| `python3 .github/scripts/upstream.py check-tree` | 12 protected paths match `60ac53ad3a3d` |
+| `git diff --check` | pass |
+
+Raw samples and gate logs are in the P18c session scratchpad (`before_*`,
+`after_*`, `gate-*`). Early instrumentation build errors were corrected before
+the baseline measurement; the final gates above passed. The post-measurement
+cleanup only factors validation, preserves empty-fit progress, adjusts table
+metadata accounting and strengthens tests; it does not change numerical work.
+No new memory measurement or export timing was run. No commit or push.
+
+---
 
 ## P18b: one reduction per input
 

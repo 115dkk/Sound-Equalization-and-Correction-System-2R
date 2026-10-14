@@ -67,10 +67,10 @@ note = "docs/perf/engine.md records the paired release audit (P13, P13b, P13c): 
 id = "perf.mimo"
 kind = "perf"
 milestone = "M3"
-status = "partial"
+status = "implemented"
 upstream = "mimo.design_mimo, mimo_iir.design_mimo_iir, calibration.compute_mimo and MIMO exports"
-tests = ["secs-engine::mimo_input_selection_preserves_all_input_result", "secs-engine::mimo_stage_boundary_goldens", "secs-engine::mimo_whole_path_goldens", "secs-engine::mimo_iir_whole_path_within_spread_and_deterministic", "secs-engine::mimo_ridge_sweep_recorded_systems_and_trajectories", "secs-engine::mimo_ridge_sweep_falls_back", "secs-engine::mimo_deterministic_threads"]
-note = "P18/P18b measurements in docs/perf/mimo.md. One sequential tridiagonal reduction with fixed residual refinement serves the lambda sweep; block-pair maps preserve accumulation bits. Recorded-system error bounds, trajectories and unchanged goldens are tested. Whole big-case runs, memory and exports await a later pass; no 5x verdict in P18b."
+tests = ["secs-engine::mimo_input_selection_preserves_all_input_result", "secs-engine::mimo_stage_boundary_goldens", "secs-engine::mimo_whole_path_goldens", "secs-engine::mimo_iir_whole_path_within_spread_and_deterministic", "secs-engine::mimo_ridge_sweep_recorded_systems_and_trajectories", "secs-engine::mimo_ridge_sweep_falls_back", "secs-engine::mimo_deterministic_threads", "secs-engine::mimo_shared_preparation_bit_identical", "secs-engine::mimo_compute_shared_preparation_bit_identical", "secs-engine::mimo_shared_paths_reject_combined_budget"]
+note = "docs/perf/mimo.md (P18, P18b, P18c): on the big case the default MIMO run is 11x (one thread) and over 64x (shipped) faster than SECS 2, with peak PSS 0.79 GB against at least 1.86 GB. The ideal FIR design step alone and FIR mode with one thread stay below 5x (docs/MIMO.md section 6). Timing is not a CI gate; the tests prove the speed-ups kept the results."
 
 # ---- Policy (M0) ----
 
@@ -468,7 +468,7 @@ id = "engine.mimo_iir"
 kind = "engine"
 milestone = "M3"
 status = "implemented"
-tests = ["secs-engine::mimo_iir_functions_match_dense_oracle", "secs-engine::mimo_iir_seed_costs_within_spread", "secs-engine::mimo_iir_joint_costs_within_spread", "secs-engine::mimo_iir_postprocessing_matches_oracle", "secs-engine::mimo_iir_problem_from_replayed_design_matches_oracle", "secs-engine::mimo_iir_whole_path_within_spread_and_deterministic", "secs-engine::mimo_iir_joint_cancels_within_one_second"]
+tests = ["secs-engine::mimo_iir_functions_match_dense_oracle", "secs-engine::mimo_iir_seed_costs_within_spread", "secs-engine::mimo_iir_joint_costs_within_spread", "secs-engine::mimo_iir_postprocessing_matches_oracle", "secs-engine::mimo_iir_problem_from_replayed_design_matches_oracle", "secs-engine::mimo_iir_whole_path_within_spread_and_deterministic", "secs-engine::mimo_iir_joint_cancels_within_one_second", "secs-engine::mimo_iir_band_limits_match_upstream_1012"]
 upstream = "mimo_iir.py"
 note = "IIR realization (docs/MIMO.md, P16): seeds by fit_peq + dense TRF, joint fit by the normal-equation TRF with block-accumulated JᵀJ. Joint fits pass P07c against twelve runs; seeds stopped at max_nfev are reported (a seed is the joint fit's start point), converged seeds and the rank guard are asserted. Whole path reported on the room design (BA diverges)."
 
@@ -492,10 +492,10 @@ note = "P17a: one MIMO run, 48 kHz exporter paths and applied curves; recorded I
 [[feature]]
 id = "compute.gpu_support_fit"
 kind = "compute"
-milestone = "M3"
+milestone = "M6"
 status = "planned"
 tests = []
-note = "new: optional wgpu adapter, ships only if 3x faster than the CPU path (docs/adr/0007)"
+note = "new: optional wgpu adapter, ships only if 3x faster than the CPU path (docs/adr/0007). Moved from M3 with the ideal FIR design shortfall (docs/MIMO.md section 6)."
 
 [[feature]]
 id = "compute.cancellation"

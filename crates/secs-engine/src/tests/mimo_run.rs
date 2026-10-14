@@ -598,3 +598,100 @@ fn mimo_run_empty_supports_preserve_final_and_fallback_paths() {
         }
     }
 }
+
+#[test]
+fn mimo_compute_shared_preparation_bit_identical() {
+    let case = cases::load("room_dba");
+    let d = design::replay("room_dba");
+    let ctx = Context::serial();
+    for fir in [false, true] {
+        let settings = settings(fir);
+        let key = mimo::MimoKey::from_settings(&settings);
+        let req = key.request();
+        let ideal = mimo::design::design_mimo_before(
+            &d,
+            &case.measurements,
+            &case.config,
+            &req,
+            &ctx,
+            None,
+        )
+        .unwrap()
+        .0;
+        let supports = if fir {
+            run::fir_supports(&ideal)
+        } else {
+            let prepared =
+                mimo::prepared::Prepared::before(&d, &case.measurements, &case.config).unwrap();
+            mimo::iir::design_mimo_iir_prepared(&d, &prepared, &ideal, &req, &case.tuning, &ctx)
+                .unwrap()
+                .supports
+                .into_iter()
+                .map(|(r, s)| {
+                    (
+                        r,
+                        s.into_iter().map(|(r, s)| (r, Support::Iir(s))).collect(),
+                    )
+                })
+                .collect()
+        };
+        let before = run::assemble(
+            &d,
+            &case.measurements,
+            &case.config,
+            &ideal,
+            supports,
+            key,
+            &ctx,
+        )
+        .unwrap();
+        let after = mimo::compute(
+            &d,
+            &case.measurements,
+            &case.config,
+            &settings,
+            &case.tuning,
+            &ctx,
+        )
+        .unwrap();
+        assert_eq!(before, after, "fir={fir}");
+        assert_eq!(run_bits(&before), run_bits(&after), "fir={fir} bits");
+    }
+}
+
+fn run_bits(run: &mimo::MimoRun) -> Vec<u64> {
+    let mut bits = super::mimo::design_bits(&run.ideal);
+    let mut values = vec![run.key.fsiso, run.paths.fsiso];
+    values.extend(run.key.f_low);
+    for path in &run.paths.paths {
+        values.extend([path.low_hz, path.delay_ms]);
+        match &path.filter {
+            MimoFilter::Fir { taps_48k } => values.extend(taps_48k),
+            MimoFilter::Iir {
+                gain_db,
+                delay_ms,
+                peq,
+                allpass,
+                ..
+            } => {
+                values.extend([*gain_db, *delay_ms]);
+                for &(f, q, g) in peq {
+                    values.extend([f, q, g]);
+                }
+                for &(f, q) in allpass {
+                    values.extend([f, q]);
+                }
+            }
+        }
+    }
+    for (_, response) in run.final_resp.iter().chain(&run.applied) {
+        for v in response {
+            values.extend([v.re, v.im]);
+        }
+    }
+    for (_, spl) in &run.spl_mimo {
+        values.extend(spl);
+    }
+    bits.extend(values.into_iter().map(f64::to_bits));
+    bits
+}
