@@ -257,6 +257,26 @@ pub struct Tuning {
     pub gd_cuts: bool,
     /// Constructor `bundle_gain`.
     pub bundle_gain: BundleGain,
+    /// `SECS_MIMO_BAND_DB`: MIMO path PEQ gain limit (dB).
+    pub mimo_band_db: f64,
+    /// `SECS_MIMO_Q_MAX`: MIMO path PEQ Q upper bound.
+    pub mimo_q_max: f64,
+    /// `SECS_MIMO_IN_BAND`: keep MIMO path PEQ and all-pass centres inside the support band.
+    pub mimo_in_band: bool,
+    /// `SECS_MIMO_BAND_REG`: MIMO path band-gain penalty weight.
+    pub mimo_band_reg: f64,
+    /// `SECS_MIMO_EFFORT`: MIMO support output penalty, larger where coupling is weak.
+    pub mimo_effort: f64,
+    /// `SECS_MIMO_WORSE_DB`: band late-energy worsening that lowers MIMO support gain (dB).
+    pub mimo_worse_db: f64,
+    /// `SECS_MIMO_GAIN_MAX_DB`: MIMO path gain upper bound (dB).
+    pub mimo_gain_max_db: f64,
+    /// `K_BANDS`: peaking biquads per MIMO path.
+    pub mimo_k_bands: usize,
+    /// `A_BANDS`: all-pass sections per MIMO path.
+    pub mimo_a_bands: usize,
+    /// `MAX_NFEV`: residual evaluations of the joint MIMO IIR fit.
+    pub mimo_max_nfev: usize,
 }
 
 impl Default for Tuning {
@@ -274,6 +294,16 @@ impl Default for Tuning {
             sub_allpass: SubAllpass::None,
             gd_cuts: false,
             bundle_gain: BundleGain::Auto,
+            mimo_band_db: 15.0,
+            mimo_q_max: 10.0,
+            mimo_in_band: true,
+            mimo_band_reg: 0.05,
+            mimo_effort: 0.05,
+            mimo_worse_db: 1.0,
+            mimo_gain_max_db: 20.0,
+            mimo_k_bands: 9,
+            mimo_a_bands: 3,
+            mimo_max_nfev: 150,
         }
     }
 }

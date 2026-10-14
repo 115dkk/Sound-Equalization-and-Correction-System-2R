@@ -504,7 +504,10 @@ fn mimo_cholesky_matches_lu_on_golden_system() {
         bound * condition
     );
     for (solver, error) in backward {
-        assert!(error <= bound, "{solver} backward error {error:e} > {bound:e}");
+        assert!(
+            error <= bound,
+            "{solver} backward error {error:e} > {bound:e}"
+        );
     }
     assert!(
         error <= bound * condition * scale,

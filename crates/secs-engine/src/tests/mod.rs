@@ -11,6 +11,7 @@ mod design;
 mod e2e;
 pub(crate) mod fit;
 mod mimo;
+mod mimo_iir;
 mod prep;
 mod preview;
 mod rc;

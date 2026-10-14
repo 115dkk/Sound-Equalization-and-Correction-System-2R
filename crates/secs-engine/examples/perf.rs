@@ -57,10 +57,10 @@ pub use design::{
     production_fitters,
 };
 pub use error::EngineError;
-pub use input::{EngineConfig, Measurement, MeasurementSet, Samples, Tuning};
 pub use export_view::{ExportView, export_view};
+pub use input::{EngineConfig, Measurement, MeasurementSet, Samples, Tuning};
 pub use measurement::{Spectra, long_spectra};
-pub use mimo::{MimoDesign, MimoRequest, design_mimo};
+pub use mimo::{IirSupport, MimoDesign, MimoIir, MimoRequest, design_mimo, design_mimo_iir};
 pub use notes::Note;
 pub use setup::SubFilter;
 pub type C = secs_dsp::Complex64;
