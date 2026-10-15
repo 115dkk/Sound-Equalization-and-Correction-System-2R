@@ -1,7 +1,8 @@
 // The five-step rail. Each step shows whether it is done, the current one,
 // or blocked (with the short reason under the name; the full sentence is in
 // the step header and the tooltip). Blocked steps can still be opened to
-// read what they need; skipped steps (not on this path) cannot.
+// read what they need, and skipped steps (not on this path) to change the
+// method; only Alt+←/→ step over a skipped one.
 import { useT } from "../i18n/react";
 import { Icon } from "../ui/Icon";
 import { Tooltip } from "../ui/Tooltip";
@@ -23,7 +24,6 @@ export function StepRail({ model, onNavigate }: { model: FrameModel; onNavigate:
               type="button"
               className={`rail-step rail-step--${step.status}${current ? " rail-step--current" : ""}`}
               aria-current={current ? "step" : undefined}
-              disabled={step.status === "skipped"}
               data-ui={`frame.rail.${id}`}
               id={`frame.rail.${id}`}
               onClick={() => onNavigate(id)}

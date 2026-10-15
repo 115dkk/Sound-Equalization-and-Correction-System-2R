@@ -71,7 +71,7 @@ describe("app frame", () => {
     expect(railButton("measure").getAttribute("aria-current")).toBe("step");
     expect(railButton("measure").className).toContain("rail-step--current");
 
-    expect(railButton("connect").disabled).toBe(true);
+    expect(railButton("connect").disabled).toBe(false);
     expect(railButton("connect").textContent).toContain("건너뜀");
 
     expect(railButton("calibrate").className).toContain("rail-step--blocked");
@@ -149,12 +149,30 @@ describe("app frame", () => {
     expect(body.nextElementSibling?.getAttribute("data-ui")).toBe("jobs.tray");
   });
 
-  it("navigates from the rail and does not open skipped steps", () => {
+  it("navigates from the rail, a skipped step included (to change the method)", () => {
     const handlers = setup("measure");
     fireEvent.click(railButton("calibrate"));
     expect(handlers.onNavigate).toHaveBeenCalledWith("calibrate");
     fireEvent.click(railButton("connect"));
-    expect(handlers.onNavigate).not.toHaveBeenCalledWith("connect");
+    expect(handlers.onNavigate).toHaveBeenCalledWith("connect");
+  });
+
+  it("leaves the keyboard to an open modal dialog", () => {
+    const handlers = setup("measure");
+    const modal = document.createElement("div");
+    modal.setAttribute("role", "dialog");
+    modal.setAttribute("aria-modal", "true");
+    document.body.appendChild(modal);
+    try {
+      fireEvent.keyDown(window, { key: "1", code: "Digit1", ctrlKey: true });
+      fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+      expect(handlers.onNavigate).not.toHaveBeenCalled();
+      expect(handlers.onSave).not.toHaveBeenCalled();
+    } finally {
+      modal.remove();
+    }
+    fireEvent.keyDown(window, { key: "1", code: "Digit1", ctrlKey: true });
+    expect(handlers.onNavigate).toHaveBeenLastCalledWith("system");
   });
 
   it("answers the shortcut registry", () => {
@@ -165,8 +183,9 @@ describe("app frame", () => {
     expect(handlers.onNavigate).toHaveBeenLastCalledWith("system");
     fireEvent.keyDown(window, { key: "ArrowRight", altKey: true });
     expect(handlers.onNavigate).toHaveBeenLastCalledWith("calibrate");
+    // Alt+← stepped over the skipped 연결·점검 above; asking for it directly opens it.
     fireEvent.keyDown(window, { key: "2", code: "Digit2", ctrlKey: true });
-    expect(handlers.onNavigate).not.toHaveBeenCalledWith("connect");
+    expect(handlers.onNavigate).toHaveBeenLastCalledWith("connect");
     fireEvent.keyDown(window, { key: "s", ctrlKey: true });
     expect(handlers.onSave).toHaveBeenCalledOnce();
     fireEvent.keyDown(window, { key: "S", ctrlKey: true, shiftKey: true });

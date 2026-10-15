@@ -75,4 +75,14 @@ describe("job store", () => {
     expect(state.jobs.map((job) => job.id)).toEqual([3]);
     expect(state.history).toEqual([]);
   });
+
+  it("offers cancel again when job_cancel is refused", () => {
+    const state = run([
+      { type: "event", at: 0, event: { event: "started", job: 1, kind: "calibrate" } },
+      { type: "cancel_requested", job: 1 },
+      { type: "request_failed", job: 1, error: { code: "internal", params: {}, retryable: false, detail: "lost" }, at: 1 },
+    ]);
+    expect(state.jobs[0]!.status).toBe("running");
+    expect(state.history.map((entry) => entry.type)).toEqual(["request_failed"]);
+  });
 });

@@ -79,7 +79,8 @@ export function MdatAssignDialog({
   const [rows, setRows] = useState<Row[]>(() =>
     measurements.map((m) => ({
       role: m.looks_like_sub !== null && m.role && roles.includes(m.role) ? m.role : SKIP,
-      position: pending.position ?? m.position,
+      // The scan guesses position 1 for a title that names none; those rows go where the hint says (the screen's current position).
+      position: pending.position ?? (m.position_tagged ? m.position : fallbackPosition),
     })),
   );
   const showPositions = count > 1 || pending.position !== null || measurements.some((m) => m.position !== 1);

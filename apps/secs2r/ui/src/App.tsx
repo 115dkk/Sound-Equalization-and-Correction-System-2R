@@ -109,12 +109,14 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
     <AppFrame model={model} onNavigate={navigate} primary={header.primary} headerStatus={header.status}
       projectActions={dialogs.menu} onHelp={() => setHelpOpen((open) => !open)}
       version={info ? { version: info.version, prerelease: info.prerelease } : null} tray={<JobTray api={jobs} />}
-      aside={helpOpen ? <HelpPanel view={{ step: host.current, tutorial: project?.tutorial ?? false }} actions={{ close: () => setHelpOpen(false), startTutorial: dialogs.offerTutorial }} /> : null}>
+      aside={helpOpen || meterOpen ? <>
+        {helpOpen && <HelpPanel view={{ step: host.current, tutorial: project?.tutorial ?? false }} actions={{ close: () => setHelpOpen(false), startTutorial: dialogs.offerTutorial }} />}
+        {meterOpen && <div className="app-mic"><MicMeterPanel id="app.mic" floating view={{ input: connect.view?.settings?.input_device || null, monitor: host.monitor, reading: host.meter }} onClose={() => setMeterOpen(false)} /></div>}
+      </> : null}>
       {error && failure && <ErrorNotice id="app.error" cause={error.cause} next={error.next} detail={failure.error.detail} code={failure.error.code} />}
       {content ?? (ready && !project ? <EmptyState id="app.project.empty" title={t("project.new.title")} description={t("project.new.where")} action={<Button variant="primary" onClick={dialogs.menu.onNew}>{t("frame.project.new")}</Button>} /> : host.current === "measure" && project ? <EmptyState id="app.measure.path" title={t("frame.blocked.no_path.short")} description={t("frame.blocked.no_path")} action={<Button variant="primary" onClick={() => navigate("connect")}>{t("frame.step.system.primary")}</Button>} /> : null)}
     </AppFrame>
     <ProjectDialogs view={dialogs.view} actions={dialogs.actions} />
-    {meterOpen && <MicMeterPanel id="app.mic" floating view={{ input: connect.view?.settings?.input_device || null, monitor: host.monitor, reading: host.meter }} onClose={() => setMeterOpen(false)} />}
   </>;
   const kept = tutorialView ? quests.filter((q) => !q.when || q.when(tutorialView)) : [];
   return project?.tutorial && tutorialReady && tutorialView ? <TutorialLayer quests={quests} view={tutorialView} step={host.current}

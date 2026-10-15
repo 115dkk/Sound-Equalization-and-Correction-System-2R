@@ -498,7 +498,7 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "recommend_xo":
         needProject();
         return { method: req.method, data: start("recommend_xo", () => {
-          const best: [string, number][] = config.groups.filter((g) => g.key !== "sub").map((g) => [g.key, g.key === "center" || g.key === "top" ? 100 : 80]);
+          const best: [string, number][] = config.groups.filter((g) => g.id !== "sub").map((g) => [g.key, g.id === "center" || g.id === "top" ? 100 : 80]);
           settings.xo_rec = Object.fromEntries(best); settings.xo = { ...settings.xo, ...settings.xo_rec };
           dirty(); return { kind: "xo", data: { best, candidates: [60, 80, 100, 120] } };
         }) };

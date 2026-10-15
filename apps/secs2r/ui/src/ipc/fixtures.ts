@@ -224,6 +224,8 @@ export const presetRoles: Record<string, readonly string[]> = {
   "5.1": ["L", "R", "C", "Ls", "Rs"], "7.1.4": SAMPLE_MAINS,
   "9.1.6": [...SAMPLE_MAINS, "Lw", "Rw", "Tml", "Tmr"], custom: [],
 };
+/** Presentation group id → upstream group name (`ConfigGroup.key`). */
+export const GROUP_KEYS: Readonly<Record<string, string>> = { front: "프론트", center: "센터", sub: "서브", surround: "서라운드", back: "백", wide: "와이드", top: "탑", height: "하이트", other: "기타" };
 export const groupOf = (role: string): string => {
   if (role.startsWith("SW")) return "sub";
   if (["L", "R"].includes(role)) return "front";
@@ -241,8 +243,9 @@ export function configOf(preset: string, speakers: ConfigSpeaker[], device = "")
   const outputs = speakers.flatMap((s) => s.bands.map((b) => b.out));
   return {
     preset, speakers, device,
-    groups: ["front", "center", "sub", "surround", "back", "wide", "top", "height", "other"].map((key) => ({
-      id: key, key, speaker_indices: speakers.flatMap((s, i) => groupOf(s.role) === key ? [i] : []),
+    // As the service sends them: `id` is the presentation group, `key` the upstream (Korean) name the XO map uses.
+    groups: Object.entries(GROUP_KEYS).map(([id, key]) => ({
+      id, key, speaker_indices: speakers.flatMap((s, i) => groupOf(s.role) === id ? [i] : []),
     })).filter((g) => g.speaker_indices.length > 0),
     summary: {
       speaker_count: speakers.length, outputs: [...new Set(outputs)].sort((a, b) => a - b),

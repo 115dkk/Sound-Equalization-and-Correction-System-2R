@@ -81,6 +81,8 @@ export function useShortcuts(handlers: Partial<Record<ShortcutId, () => void>>, 
     if (!enabled) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
+      // A modal dialog owns the keyboard (upstream's QDialog): no step or project shortcut under it.
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return;
       const id = matchShortcut(event);
       const handler = id ? current.current[id] : undefined;
       if (id && handler) {

@@ -14,6 +14,8 @@ import { ARRANGEMENT_COUNTS, arrangementPoints, roleKind } from "../../ui/maps/g
 import type { SystemView } from "./types";
 
 const GROUP_ORDER = ["front", "center", "sub", "surround", "back", "wide", "top", "height", "other"] as const;
+/** The upstream group names the service sends as `ConfigGroup.key`. */
+const GROUP_KEYS: Record<(typeof GROUP_ORDER)[number], string> = { front: "프론트", center: "센터", sub: "서브", surround: "서라운드", back: "백", wide: "와이드", top: "탑", height: "하이트", other: "기타" };
 
 function groupOf(role: string): (typeof GROUP_ORDER)[number] {
   if (role === "L" || role === "R") return "front";
@@ -41,10 +43,10 @@ export function speaker(role: string, out: number, options: { pol?: string; size
 
 /** A ConfigResult with the groups and summary the service derives. */
 export function configOf(preset: string, speakers: ConfigSpeaker[], device: string): ConfigResult {
-  const groups = GROUP_ORDER.map((key) => ({
-    id: key,
-    key,
-    speaker_indices: speakers.map((s, i) => ({ s, i })).filter(({ s }) => groupOf(s.role) === key).map(({ i }) => i),
+  const groups = GROUP_ORDER.map((id) => ({
+    id,
+    key: GROUP_KEYS[id],
+    speaker_indices: speakers.map((s, i) => ({ s, i })).filter(({ s }) => groupOf(s.role) === id).map(({ i }) => i),
   })).filter((group) => group.speaker_indices.length > 0);
   const outs = speakers.flatMap((s) => s.bands.map((b) => b.out));
   const seen = new Map<number, number>();

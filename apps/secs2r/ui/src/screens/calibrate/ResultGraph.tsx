@@ -363,6 +363,7 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
         value={range}
         defaults={{ x: xRange, y: yRange }}
         yUnit={unit}
+        yLimits={unit === "ms" ? [-1000, 1000] : [-120, 60]}
         onChange={(value) => setRanges((r) => ({ ...r, [tab]: value }))}
       />
     </>

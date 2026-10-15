@@ -39,7 +39,8 @@ export function useSystemScreen(): { view: SystemView | null; actions: SystemAct
       setStartDelay: (start_delay) => session.run(() => session.call({ method: "layout_set", params: { count: null, start_delay, timing: null, confirm: false } })),
       setTiming: (timing) => session.run(() => session.call({ method: "layout_set", params: { count: null, start_delay: null, timing, confirm: false } })),
       undo: async (token) => { await session.call({ method: "undo", params: { token } }); },
-      next: () => session.navigate(session.host.getSnapshot().path === "mdat" ? "measure" : "connect"),
+      // The label says 연결·점검; on the mdat path that screen shows the skipped note and leads on to 측정·가져오기.
+      next: () => session.navigate("connect"),
     };
   }, [session]);
   const output = settings?.output_device || config?.device;

@@ -457,9 +457,10 @@ function PatchTable({
     },
   ];
 
+  // `id` is the presentation group (front, center, …); `key` is the upstream name (프론트, …) the XO map uses.
   const groups: RowGroup<Row>[] = config.groups.map((group) => ({
-    id: group.key,
-    label: t("system.group.label", { name: t(GROUP_NAME[group.key] ?? "system.group.other"), count: group.speaker_indices.length }),
+    id: group.id,
+    label: t("system.group.label", { name: t(GROUP_NAME[group.id] ?? "system.group.other"), count: group.speaker_indices.length }),
     rows: group.speaker_indices.flatMap((index) => {
       const speaker = config.speakers[index];
       return speaker ? [{ index, speaker }] : [];

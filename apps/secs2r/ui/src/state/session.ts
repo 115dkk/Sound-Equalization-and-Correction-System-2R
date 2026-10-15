@@ -74,6 +74,7 @@ export function createSession(ipc: Ipc) {
   }
   const earlyFinishes = new Map<number, Extract<JobEvent, { event: "finished" }>>();
   const call: RequestFn = async (request) => {
+    const methodBefore = stores.measurementSettings.getSnapshot()?.method;
     try {
       const data = await ipc.request(request);
       errors.set(null);
@@ -90,8 +91,20 @@ export function createSession(ipc: Ipc) {
       }
       if (request.method === "project_new" || request.method === "project_open") {
         stores.measurementSettings.set(null);
-        host.set({ path: null, selected: null, mdat: null, warnings: [], runs: {}, channel: null, xoGroup: null, xoRecommendation: null, failure: null });
+        host.set({ path: null, selected: null, mdat: null, warnings: [], runs: {}, channel: null, xoGroup: null, xoRecommendation: null, failure: null, sweepResult: null, sweepRole: null });
       }
+      // The recommended sweep level was measured with one method, device and channel; another makes it stale.
+      if (request.method === "measure_configure") {
+        const params = (request as Extract<Request, { method: "measure_configure" }>).params;
+        if (params.method !== methodBefore || params.input_device !== null || params.input_channel !== null) host.set({ sweepResult: null, sweepRole: null });
+      }
+      // Low-SNR warnings belong to one run of a position (upstream lists them per run): a new run, a clear or an import replaces them.
+      if (request.method === "measure_position" || request.method === "position_clear" || request.method === "mdat_import") {
+        const params = (request as Extract<Request, { method: "measure_position" | "position_clear" | "mdat_import" }>).params;
+        const positions = new Set<number>([params.position, ...("assignments" in params ? params.assignments.flatMap((a) => (a.position === null ? [] : [a.position])) : [])]);
+        host.set({ warnings: host.getSnapshot().warnings.filter((w) => !positions.has(w.position)) });
+      }
+      if (request.method === "sample_load") host.set({ warnings: [] });
       await reload(triggeredBy({ mutation: request.method }));
       if ((HOST_TRIGGERS.measurementSettings.mutations as readonly string[]).includes(request.method) && stores.measurementSettings.getSnapshot()) await call({ method: "measure_config_get" });
       if (request.method === "project_new" && (request as Extract<Request, { method: "project_new" }>).params.tutorial) await configure({ method: "mock" });
@@ -186,7 +199,8 @@ export function createSession(ipc: Ipc) {
     if (!request && !["level_monitor", "status_watch"].includes(job.kind)) earlyFinishes.set(event.job, event);
     host.set({ jobs: h.jobs.map((j) => j === job ? { ...j, status: event.status, result: event.result, error: event.error } : j) });
     if (job.kind === "level_monitor") { monitoring = false; host.set({ monitor: event.status === "failed" ? "offline" : "off" }); }
-    if (event.error && ["calibrate", "mimo", "recommend_xo"].includes(job.kind)) {
+    // A cancelled job also carries an error (code `cancelled`); only a failure is one.
+    if (event.status === "failed" && event.error && ["calibrate", "mimo", "recommend_xo"].includes(job.kind)) {
       host.set({ failure: { job: request?.method === "calibrate" && request.params.subs_only ? "calibrate_subs" : job.kind as "calibrate" | "mimo" | "recommend_xo", error: event.error } });
     }
     if (job.kind === "measure") host.set({ selected: null });
@@ -198,7 +212,7 @@ export function createSession(ipc: Ipc) {
         const result = event.result.data;
         host.set({ runs: { ...h.runs, [request.params.kind]: { status: "done", files: result.files, folder: result.folder } } });
         run(() => call({ method: "open_folder", params: { path: result.folder } }));
-      } else if (event.error) host.set({ runs: { ...h.runs, [request.params.kind]: { status: "failed", error: event.error } } });
+      } else if (event.status === "failed" && event.error) host.set({ runs: { ...h.runs, [request.params.kind]: { status: "failed", error: event.error } } });
     }
     // A failed/cancelled job may already have committed some measurements.
     void reload(triggeredBy({ finished: job.kind }));
