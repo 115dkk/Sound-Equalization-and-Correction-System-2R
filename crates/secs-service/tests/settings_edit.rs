@@ -30,6 +30,7 @@ fn settings_edits_and_sub_warnings_replay_upstream_oracle() {
                 preset: "2.1".into(),
                 sub_count: 4,
                 sample: false,
+                tutorial: false,
             }),
         );
         for (index, (edit, expected)) in fixture["inputs"]["edits"]
