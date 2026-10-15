@@ -30,6 +30,10 @@ positions: Array<number>,
  */
 dirty: boolean, 
 /**
+ * Whether this open project is a non-writable tutorial session.
+ */
+tutorial: boolean, 
+/**
  * Warnings produced while loading legacy project entries.
  */
 migration_warnings: Array<MigrationWarning>, };

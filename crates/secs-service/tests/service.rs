@@ -96,6 +96,7 @@ fn new_projects_match_upstream_bytes() {
                 preset: inputs["preset"].as_str().unwrap().into(),
                 sub_count: inputs["sub_count"].as_u64().unwrap() as u8,
                 sample: inputs["sample"].as_bool().unwrap(),
+                tutorial: false,
             }),
             Arc::new(NoEvents),
         );
@@ -104,13 +105,101 @@ fn new_projects_match_upstream_bytes() {
             "{}",
             fixture.id
         );
+        let mut created =
+            secs_project::Project::load_text(&fs::read_to_string(&path).unwrap()).unwrap();
+        created.extra.retain(|(key, _)| key != "devices");
         assert_eq!(
-            fs::read(&path).unwrap(),
+            created.save_text().into_bytes(),
             fixture.blob(&fixture.outputs()["project"]),
             "{}",
             fixture.id
         );
     }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn new_projects_store_none_measurement_method() {
+    let root = temp_root("measurement-method-default");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("new.secs");
+    let service = service();
+    call_ok(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: path.to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    let project = secs_project::Project::load_text(&fs::read_to_string(&path).unwrap()).unwrap();
+    let devices = project
+        .extra
+        .iter()
+        .find(|(key, _)| key == "devices")
+        .map(|(_, value)| value)
+        .unwrap();
+    let secs_project::PyJson::Object(devices) = devices else {
+        panic!("devices must be an object");
+    };
+    assert_eq!(
+        devices
+            .iter()
+            .find(|(key, _)| key == "method")
+            .map(|(_, value)| value),
+        Some(&secs_project::PyJson::Str("none".into()))
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn tutorial_projects_block_save_without_writing() {
+    let root = temp_root("tutorial");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("tutorial.secs");
+    let save_as = root.join("saved.secs");
+    let service = service();
+    let Response::ProjectNew(info) = call_ok(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: path.to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: true,
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("tutorial must be created");
+    };
+    assert!(info.tutorial);
+    assert!(!path.exists());
+    let Envelope::Err(error) = service.call(
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams {
+            path: Some(save_as.to_string_lossy().into_owned()),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("tutorial save must fail");
+    };
+    assert_eq!(error.code, ErrorCode::TutorialBlocked);
+    let export_folder = root.join("export");
+    let Envelope::Err(error) = service.call(
+        Request::Export(ExportParams {
+            kind: ExportKind::CamillaDsp,
+            folder: export_folder.to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("tutorial export must fail");
+    };
+    assert_eq!(error.code, ErrorCode::TutorialBlocked);
+    assert!(!path.exists());
+    assert!(!save_as.exists());
+    assert!(!export_folder.exists());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -443,7 +532,7 @@ fn exports_after_reopening_match_pre_close_bytes() {
 }
 
 #[test]
-fn stale_calibration_refuses_export_and_cache_survives_reopen() {
+fn stale_calibration_exports_with_flag_and_cache_survives_reopen() {
     let root = temp_root("stale-cache");
     fs::create_dir_all(&root).unwrap();
     let (path, settings) = write_case(&root, "dolby");
@@ -494,20 +583,20 @@ fn stale_calibration_refuses_export_and_cache_survives_reopen() {
     }
     open(&running_service, &path);
     let stale = match call_ok(&running_service, Request::Results, Arc::new(NoEvents)) {
-        Response::Results(results) => results.calibration.unwrap().stale,
+        Response::Results(results) => results.calibration.unwrap(),
         other => panic!("unexpected results response: {other:?}"),
     };
-    assert!(stale);
-    let Envelope::Err(error) = running_service.call(
-        Request::Export(ExportParams {
-            kind: ExportKind::StagedMdat,
-            folder: root.join("stale-export").to_string_lossy().into_owned(),
-        }),
-        Arc::new(NoEvents),
-    ) else {
-        panic!("stale export must fail before starting a job");
-    };
-    assert_eq!(error.code, ErrorCode::StaleInputs);
+    assert!(stale.stale);
+    assert_eq!(stale.stale_reason.as_deref(), Some("measurements"));
+    let export_events = Arc::new(Events::default());
+    let export = export_and_wait(
+        &running_service,
+        ExportKind::StagedMdat,
+        &root.join("stale-export"),
+        export_events,
+    );
+    assert!(export.stale);
+    assert_eq!(Path::new(&export.folder), root.join("stale-export"));
 
     let changed_reopen = service();
     open(&changed_reopen, &path);
@@ -516,6 +605,7 @@ fn stale_calibration_refuses_export_and_cache_survives_reopen() {
         other => panic!("unexpected results response: {other:?}"),
     };
     assert!(changed.stale);
+    assert_eq!(changed.stale_reason.as_deref(), Some("measurements"));
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -604,6 +694,101 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
     )
     .unwrap();
     assert_eq!(summary.paths, direct_mimo.paths);
+    assert!(!summary.paths.paths.is_empty());
+
+    // The same live/cached result must produce identical explicit-folder bytes.
+    let folder = root.join("explicit-mimo");
+    let live = export_and_wait(
+        &service,
+        ExportKind::CamillaDsp,
+        &folder,
+        Arc::new(Events::default()),
+    );
+    assert_eq!(Path::new(&live.folder), folder);
+    let live_bytes = snapshot_relative_files(&folder, &live.files);
+    call_ok(
+        &service,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+        Arc::new(NoEvents),
+    );
+    let reopened = Service::new(Deps::default());
+    open(&reopened, &path);
+    let cached = export_and_wait(
+        &reopened,
+        ExportKind::CamillaDsp,
+        &folder,
+        Arc::new(Events::default()),
+    );
+    assert_eq!(live_bytes, snapshot_relative_files(&folder, &cached.files));
+
+    for current in [&service, &reopened] {
+        call_ok(
+            current,
+            Request::ExportFolderSet(secs_types::ipc::ExportFolderSetParams {
+                folder: root.join("automatic").to_string_lossy().into_owned(),
+            }),
+            Arc::new(NoEvents),
+        );
+        let export_auto = |current: &Service| {
+            let events = Arc::new(Events::default());
+            let Response::Export(started) = call_ok(
+                current,
+                Request::Export(ExportParams {
+                    kind: ExportKind::CamillaDsp,
+                    folder: String::new(),
+                }),
+                events.clone(),
+            ) else {
+                panic!("export must start");
+            };
+            let JobResult::Export(result) =
+                finished_result(events.wait(started.job, Duration::from_secs(120)))
+            else {
+                panic!("export result");
+            };
+            result
+        };
+        assert!(export_auto(current).folder.contains("_MIMO_"));
+        let mut disabled = settings.clone();
+        disabled.mimo_on = false;
+        call_ok(
+            current,
+            Request::CalibrationSettingsSet(secs_types::ipc::CalibrationSettingsParams {
+                settings: disabled,
+            }),
+            Arc::new(NoEvents),
+        );
+        let no_mimo = export_auto(current);
+        assert!(!no_mimo.folder.contains("_MIMO_"));
+        let yaml = no_mimo
+            .files
+            .iter()
+            .find(|file| file.ends_with(".yml") || file.ends_with(".yaml"))
+            .unwrap();
+        assert!(!fs::read_to_string(yaml).unwrap().contains("mimo_"));
+        let mut changed = settings.clone();
+        changed.fsiso -= 1.0;
+        call_ok(
+            current,
+            Request::CalibrationSettingsSet(secs_types::ipc::CalibrationSettingsParams {
+                settings: changed,
+            }),
+            Arc::new(NoEvents),
+        );
+        assert!(!export_auto(current).folder.contains("_MIMO_"));
+        let mut stale = settings.clone();
+        stale.rc_lo += 1.0;
+        call_ok(
+            current,
+            Request::CalibrationSettingsSet(secs_types::ipc::CalibrationSettingsParams {
+                settings: stale,
+            }),
+            Arc::new(NoEvents),
+        );
+        let stale = export_auto(current);
+        assert!(stale.stale);
+        assert!(!stale.folder.contains("_MIMO_"));
+    }
 
     settings.rc_lo += 1.0;
     let recalibration_events = Arc::new(Events::default());
@@ -654,16 +839,16 @@ fn measurement_handlers_are_connected_and_fail_with_typed_errors() {
     ];
     // Without an open project (and with a file that does not exist) each
     // measurement handler refuses with a typed error; none is a stub any more.
-    // `rew_launch` is the exception: the default host is the M5 stub.
+    // `rew_launch` reports the headless host's structured launch failure.
     for request in requests {
         let method = request.method();
         let Envelope::Err(error) = service.call(request, Arc::new(NoEvents)) else {
             continue;
         };
+        assert_ne!(error.code, ErrorCode::NotImplemented, "{method}");
         if method == "rew_launch" {
-            assert_eq!(error.code, ErrorCode::NotImplemented, "{method}");
-        } else {
-            assert_ne!(error.code, ErrorCode::NotImplemented, "{method}");
+            assert_eq!(error.code, ErrorCode::RewFailed, "{method}");
+            assert_eq!(error.params["reason"], "cannot_launch");
         }
     }
 }

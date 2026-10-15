@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
-use secs_service::{EventSink, NoEvents, Service};
+use secs_service::{Deps, EventSink, NoEvents, Service};
 use secs_types::ipc::*;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -82,7 +82,7 @@ fn call(service: &Service, request: Request, events: Arc<dyn EventSink>) -> Resp
     }
 }
 
-fn configure_mock(service: &Service, path: &std::path::Path) {
+fn configure(service: &Service, path: &std::path::Path, method: &str) {
     call(
         service,
         Request::ProjectNew(ProjectNewParams {
@@ -90,17 +90,22 @@ fn configure_mock(service: &Service, path: &std::path::Path) {
             preset: "2.0".into(),
             sub_count: 0,
             sample: false,
+            tutorial: false,
         }),
         Arc::new(NoEvents),
     );
     call(
         service,
         Request::MeasureConfigure(MeasureConfigureParams {
-            method: "mock".into(),
+            method: method.into(),
             ..Default::default()
         }),
         Arc::new(NoEvents),
     );
+}
+
+fn configure_mock(service: &Service, path: &std::path::Path) {
+    configure(service, path, "mock");
 }
 
 #[test]
@@ -138,7 +143,19 @@ fn mock_monitor_emits_stores_excludes_and_stops() {
         }),
         Arc::new(NoEvents),
     );
-    events.wait_meters(started.job, 20, Duration::from_secs(10));
+    events.wait_meters(started.job, 26, Duration::from_secs(10));
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        let Response::LevelsGet(levels) = call(&service, Request::LevelsGet, Arc::new(NoEvents))
+        else {
+            panic!()
+        };
+        if levels.levels.contains_key("L") {
+            break;
+        }
+        assert!(Instant::now() < deadline, "completed burst was not stored");
+        std::thread::sleep(Duration::from_millis(5));
+    }
     call(&service, Request::LevelMonitorStop, Arc::new(NoEvents));
     assert_eq!(
         events.wait_finished(started.job, Duration::from_secs(1)),
@@ -156,7 +173,7 @@ fn mock_monitor_emits_stores_excludes_and_stops() {
 }
 
 #[test]
-fn generic_cancel_ends_monitor() {
+fn level_stop_cancels_only_the_active_burst_and_is_idempotent() {
     let root = root();
     let service = Service::new(Default::default());
     configure_mock(&service, &root.join("room.secs"));
@@ -168,6 +185,208 @@ fn generic_cancel_ends_monitor() {
     ) else {
         panic!()
     };
+    call(
+        &service,
+        Request::LevelPlay(LevelPlayParams {
+            role: "L".into(),
+            master_dbfs: -30.0,
+        }),
+        Arc::new(NoEvents),
+    );
+    std::thread::sleep(Duration::from_millis(50));
+    call(&service, Request::LevelStop, Arc::new(NoEvents));
+    call(&service, Request::LevelStop, Arc::new(NoEvents));
+    std::thread::sleep(Duration::from_millis(50));
+    assert!(
+        !events.values.lock().unwrap().iter().any(|event| {
+            matches!(event, JobEvent::Finished { job, .. } if *job == started.job)
+        })
+    );
+    call(
+        &service,
+        Request::LevelPlay(LevelPlayParams {
+            role: "R".into(),
+            master_dbfs: -30.0,
+        }),
+        Arc::new(NoEvents),
+    );
+    events.wait_meters(started.job, 1, Duration::from_secs(5));
+    call(&service, Request::LevelMonitorStop, Arc::new(NoEvents));
+    assert_eq!(
+        events.wait_finished(started.job, Duration::from_secs(1)),
+        JobStatus::Cancelled
+    );
+    assert!(matches!(
+        service.call(Request::LevelStop, Arc::new(NoEvents)),
+        Envelope::Ok(response) if *response == Response::LevelStop(())
+    ));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[derive(Debug, Clone, Default)]
+struct RecordingRew {
+    calls: Arc<Mutex<Vec<secs_rew::Request>>>,
+}
+
+impl RecordingRew {
+    fn calls(&self) -> Vec<secs_rew::Request> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+impl secs_rew::Transport for RecordingRew {
+    fn request(
+        &self,
+        request: &secs_rew::Request,
+    ) -> Result<secs_rew::Response, secs_rew::RewError> {
+        self.calls.lock().unwrap().push(request.clone());
+        let body = match request.path.as_str() {
+            "/audio/driver" => serde_json::json!({"driver":"Java"}),
+            "/audio/java/outputs" => serde_json::json!(["L", "R"]),
+            _ => serde_json::json!({"message":"ok"}),
+        };
+        Ok(secs_rew::Response::ok(body))
+    }
+}
+
+#[test]
+fn rew_level_stop_stops_generator_but_keeps_subscription_alive() {
+    let root = root();
+    let transport = RecordingRew::default();
+    let injected = transport.clone();
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(move || Box::new(injected.clone())),
+        ..Default::default()
+    });
+    configure(&service, &root.join("room.secs"), "rew");
+    let events = Arc::new(Events::default());
+    let Response::LevelMonitorStart(started) = call(
+        &service,
+        Request::LevelMonitorStart(LevelMonitorStartParams::default()),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    call(
+        &service,
+        Request::LevelPlay(LevelPlayParams {
+            role: "L".into(),
+            master_dbfs: -30.0,
+        }),
+        Arc::new(NoEvents),
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while transport
+        .calls()
+        .iter()
+        .filter(|call| {
+            call.path == "/generator/command"
+                && call
+                    .body
+                    .as_ref()
+                    .is_some_and(|body| body["command"] == "Play")
+        })
+        .count()
+        < 1
+    {
+        assert!(Instant::now() < deadline, "REW generator did not start");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    call(&service, Request::LevelStop, Arc::new(NoEvents));
+    let deadline = Instant::now() + Duration::from_secs(1);
+    while transport
+        .calls()
+        .iter()
+        .filter(|call| {
+            call.path == "/generator/command"
+                && call
+                    .body
+                    .as_ref()
+                    .is_some_and(|body| body["command"] == "Stop")
+        })
+        .count()
+        < 1
+    {
+        assert!(
+            Instant::now() < deadline,
+            "REW generator did not stop promptly"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(
+        !events.values.lock().unwrap().iter().any(|event| {
+            matches!(event, JobEvent::Finished { job, .. } if *job == started.job)
+        })
+    );
+    call(&service, Request::LevelMonitorStop, Arc::new(NoEvents));
+    assert_eq!(
+        events.wait_finished(started.job, Duration::from_secs(1)),
+        JobStatus::Cancelled
+    );
+    let calls = transport.calls();
+    let unsubscribe = calls
+        .iter()
+        .position(|call| call.path == "/input-levels/unsubscribe")
+        .unwrap();
+    let first_stop = calls
+        .iter()
+        .position(|call| {
+            call.path == "/generator/command"
+                && call
+                    .body
+                    .as_ref()
+                    .is_some_and(|body| body["command"] == "Stop")
+        })
+        .unwrap();
+    assert!(first_stop < unsubscribe);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn levels_methods_fill_only_missing_defaults() {
+    let root = root();
+    let service = Service::new(Default::default());
+    configure_mock(&service, &root.join("room.secs"));
+    let Response::LevelsGet(empty) = call(&service, Request::LevelsGet, Arc::new(NoEvents)) else {
+        panic!()
+    };
+    assert!(empty.levels.is_empty());
+    let Response::LevelsFillDefaults(defaults) =
+        call(&service, Request::LevelsFillDefaults, Arc::new(NoEvents))
+    else {
+        panic!()
+    };
+    assert_eq!(defaults.levels.len(), 2);
+    assert!(defaults.levels.contains_key("L") && defaults.levels.contains_key("R"));
+    assert_eq!(
+        call(&service, Request::LevelsFillDefaults, Arc::new(NoEvents)),
+        Response::LevelsFillDefaults(defaults)
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn generic_cancel_ends_monitor_during_an_active_burst() {
+    let root = root();
+    let service = Service::new(Default::default());
+    configure_mock(&service, &root.join("room.secs"));
+    let events = Arc::new(Events::default());
+    let Response::LevelMonitorStart(started) = call(
+        &service,
+        Request::LevelMonitorStart(LevelMonitorStartParams::default()),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    call(
+        &service,
+        Request::LevelPlay(LevelPlayParams {
+            role: "L".into(),
+            master_dbfs: -30.0,
+        }),
+        Arc::new(NoEvents),
+    );
+    events.wait_meters(started.job, 1, Duration::from_secs(1));
     call(
         &service,
         Request::JobCancel(JobCancelParams { job: started.job }),

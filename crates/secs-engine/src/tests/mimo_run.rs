@@ -54,7 +54,42 @@ fn ideal(fx: &Fixture) -> MimoDesign {
             .iter()
             .map(|v| v.as_str().unwrap())
             .filter(|n| !n.starts_with("FIR 서포트") && !n.starts_with("입력당 서포트"))
-            .map(|v| Note::Mimo(v.into()))
+            .map(|text| {
+                let note = if text.starts_with("서포트 대역 ") {
+                    crate::MimoNote::SupportRanges(
+                        pairs(&v["ranges"])
+                            .map(|(role, range)| {
+                                (
+                                    role.into(),
+                                    (!range.is_null())
+                                        .then(|| (number(&range[0]), number(&range[1]))),
+                                )
+                            })
+                            .collect(),
+                    )
+                } else {
+                    // The recorded-support fixture carries only rounded legacy
+                    // guard text; this adapter is test-only, never service code.
+                    let (role, text) = text.split_once(": ").unwrap();
+                    if text == "MIMO 끔(악화)" {
+                        crate::MimoNote::GuardDisabled { role: role.into() }
+                    } else {
+                        let gain_db = text
+                            .strip_prefix("대역 늦은 에너지 악화로 서포트 ")
+                            .unwrap()
+                            .strip_suffix(" dB")
+                            .unwrap()
+                            .parse()
+                            .unwrap();
+                        crate::MimoNote::GuardReduced {
+                            role: role.into(),
+                            gain_db,
+                        }
+                    }
+                };
+                assert_eq!(note.oracle_text(), text);
+                Note::Mimo(note)
+            })
             .collect(),
     }
 }
@@ -234,7 +269,7 @@ fn mimo_run_assemble_recorded_supports_matches_oracle() {
                 .notes
                 .iter()
                 .map(|n| match n {
-                    Note::Mimo(s) => s.as_str(),
+                    Note::Mimo(note) => note.oracle_text(),
                     _ => panic!("unexpected note"),
                 })
                 .collect();

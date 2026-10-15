@@ -347,6 +347,7 @@ fn run(action: Action, runner: &mut Runner) {
                     preset,
                     sub_count: subs,
                     sample,
+                    tutorial: false,
                 }));
             }
             ProjectAction::Info { path } => {
@@ -472,6 +473,7 @@ fn full_run(runner: &mut Runner, out: &Path, project: Option<&Path>, fill: FillC
             preset: "7.1.4".into(),
             sub_count: 3,
             sample: true,
+            tutorial: false,
         }));
         match fill {
             FillChoice::Sample => {

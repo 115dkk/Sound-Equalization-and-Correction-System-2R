@@ -18,6 +18,7 @@ pub(crate) struct OpenProject {
     pub path: PathBuf,
     pub store: MeasurementStore,
     pub dirty: bool,
+    pub tutorial: bool,
     pub cached: Option<crate::cache::CachedResults>,
     pub identity: u64,
     pub undo: std::collections::VecDeque<UndoEntry>,
@@ -42,7 +43,9 @@ impl Session {
         preset: &str,
         sub_count: u8,
         sample: bool,
+        tutorial: bool,
     ) -> Result<ProjectInfo, ServiceError> {
+        let sample = sample || tutorial;
         let selected_preset = if sample { "7.1.4" } else { preset };
         let mut project = Project::from_preset(selected_preset)?;
         project.name = path
@@ -82,12 +85,19 @@ impl Session {
         {
             *phase = PyJson::Str("mixed".into());
         }
+        crate::measure::store_devices(
+            &mut project,
+            vec![("method".into(), PyJson::Str("none".into()))],
+        );
         let mut store = MeasurementStore::new(&path, project);
-        store.save()?;
+        if !tutorial {
+            store.save()?;
+        }
         self.open = Some(OpenProject {
             path,
             store,
             dirty: false,
+            tutorial,
             cached: None,
             identity: next_identity(),
             undo: Default::default(),
@@ -102,6 +112,7 @@ impl Session {
             path,
             store,
             dirty: false,
+            tutorial: false,
             cached,
             identity: next_identity(),
             undo: Default::default(),
@@ -115,6 +126,9 @@ impl Session {
         uuid: &UuidSource,
     ) -> Result<ProjectInfo, ServiceError> {
         let open = self.require_mut()?;
+        if open.tutorial {
+            return Err(ServiceError::TutorialBlocked);
+        }
         if let Some(path) = path
             && path != open.path
         {
@@ -182,6 +196,7 @@ pub(crate) fn info(open: &OpenProject) -> ProjectInfo {
         sub_count: project.config.sub_count(),
         positions: measured_positions(project),
         dirty: open.dirty,
+        tutorial: open.tutorial,
         migration_warnings: open
             .store
             .warnings()
@@ -345,7 +360,9 @@ mod tests {
         let target = root.join("saved-as.secs");
         fs::create_dir_all(&root).unwrap();
         let mut session = Session::default();
-        let created = session.create(source.clone(), "2.1", 1, false).unwrap();
+        let created = session
+            .create(source.clone(), "2.1", 1, false, false)
+            .unwrap();
         assert_eq!(created.path, source.to_string_lossy());
         assert_eq!(created.sub_count, 1);
 

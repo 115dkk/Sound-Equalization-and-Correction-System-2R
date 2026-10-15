@@ -268,14 +268,24 @@ impl MockMeasurer {
     ) -> Result<secs_audio::LevelReport, MeasureError> {
         let (mut native, plan, _) = self.native(plan, 1)?;
         let mut next = std::time::Instant::now();
-        native.level_check_streaming(&plan, role, seconds, cancel, &mut |report| {
+        let report = native.level_check_streaming(&plan, role, seconds, cancel, &mut |report| {
+            if cancel.is_cancelled() {
+                return;
+            }
             let wait = next.saturating_duration_since(std::time::Instant::now());
             if !wait.is_zero() {
                 std::thread::sleep(wait);
             }
-            on_level(report);
+            if !cancel.is_cancelled() {
+                on_level(report);
+            }
             next += std::time::Duration::from_millis(100);
-        })
+        })?;
+        if cancel.is_cancelled() {
+            Err(secs_audio::AudioError::Cancelled.into())
+        } else {
+            Ok(report)
+        }
     }
     fn native(
         &self,

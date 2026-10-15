@@ -4,7 +4,7 @@ use std::time::Duration;
 use secs_project::{Project, PyJson};
 use secs_types::ipc::{
     ErrorCode, IpcError, JobEvent, JobId, JobKind, JobResult, JobSnapshot, JobStarted,
-    LevelMonitorStartParams, LevelPlayParams,
+    LevelMonitorStartParams, LevelPlayParams, LevelsResult,
 };
 
 use crate::measure::json::JsonExt;
@@ -20,6 +20,7 @@ pub(crate) struct LevelState {
 struct LevelInner {
     job: Option<JobId>,
     play: Option<PlayRequest>,
+    next_generation: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -27,6 +28,7 @@ struct PlayRequest {
     role: String,
     master_dbfs: f64,
     generation: u64,
+    cancel: crate::measure::CancelToken,
 }
 
 fn method(project: &Project) -> &str {
@@ -82,8 +84,58 @@ impl Service {
     }
 
     pub(crate) fn stop_level_monitor(&self) -> Result<Option<JobSnapshot>, IpcError> {
-        let job = lock(&self.level.inner).job;
+        let (job, play) = {
+            let state = lock(&self.level.inner);
+            (state.job, state.play.clone())
+        };
+        if let Some(play) = play {
+            play.cancel.cancel();
+        }
         job.map(|job| self.jobs.cancel(job)).transpose()
+    }
+
+    pub(crate) fn cancel_level_monitor_job(&self, job: JobId) {
+        let play = {
+            let state = lock(&self.level.inner);
+            (state.job == Some(job))
+                .then(|| state.play.clone())
+                .flatten()
+        };
+        if let Some(play) = play {
+            play.cancel.cancel();
+        }
+    }
+
+    pub(crate) fn level_stop(&self) -> Result<(), IpcError> {
+        if let Some(play) = lock(&self.level.inner).play.take() {
+            play.cancel.cancel();
+        }
+        Ok(())
+    }
+
+    pub(crate) fn levels_get(&self) -> Result<LevelsResult, IpcError> {
+        let session = lock(&self.session);
+        let project = session.require()?.store.project();
+        Ok(levels_result(project))
+    }
+
+    pub(crate) fn levels_fill_defaults(&self) -> Result<LevelsResult, IpcError> {
+        let mut session = lock(&self.session);
+        let open = session.require_mut()?;
+        let roles = plan_for(open.store.project(), &Default::default()).roles;
+        let existing = levels_result(open.store.project()).levels;
+        let mut changed = false;
+        for role in roles {
+            if !existing.contains_key(&role) {
+                let default = -22.0 - f64::from(((role.len() * 7) % 6) as u8);
+                put_extra_map(open.store.project_mut(), "levels", &role, default);
+                changed = true;
+            }
+        }
+        if changed {
+            open.dirty = true;
+        }
+        Ok(levels_result(open.store.project()))
     }
 
     pub(crate) fn level_play(&self, params: LevelPlayParams) -> Result<(), IpcError> {
@@ -97,11 +149,16 @@ impl Service {
                 "level monitor is not running",
             ));
         }
-        let generation = state.play.as_ref().map_or(1, |play| play.generation + 1);
+        state.next_generation = state.next_generation.wrapping_add(1);
+        let generation = state.next_generation;
+        if let Some(play) = state.play.take() {
+            play.cancel.cancel();
+        }
         state.play = Some(PlayRequest {
             role: params.role,
             master_dbfs: params.master_dbfs,
             generation,
+            cancel: Default::default(),
         });
         Ok(())
     }
@@ -153,22 +210,17 @@ fn sampled_loop(
             &play_plan,
             &play.role,
             2.5,
-            job.measurement_cancel(),
+            &play.cancel,
             &mut |report| send_meter(job, report),
         ) {
             Ok(report) => Some(report),
-            Err(crate::measure::MeasureError::Audio(secs_audio::AudioError::Cancelled))
-                if job.cancel().is_cancelled() =>
-            {
-                None
-            }
+            Err(crate::measure::MeasureError::Audio(secs_audio::AudioError::Cancelled)) => None,
             Err(error) => return Err(level_error(error)),
         };
-        let Some(report) = report else {
-            break;
-        };
-        send_meter(job, report);
-        store_level(session, &play.role, report.input_dbfs, report.spl_db)?;
+        if let Some(report) = report {
+            send_meter(job, report);
+            store_level(session, &play.role, report.input_dbfs, report.spl_db)?;
+        }
         handled_generation = play.generation;
     }
     Ok(JobResult::Stopped)
@@ -237,6 +289,16 @@ fn rew_loop(
     let mut active: Option<(PlayRequest, std::time::Instant, Option<secs_rew::Level>)> = None;
     while !job.cancel().is_cancelled() {
         let requested = lock(state).play.clone();
+        if active.as_ref().is_some_and(|(play, _, _)| {
+            requested
+                .as_ref()
+                .is_none_or(|requested| requested.generation != play.generation)
+        }) {
+            secs_rew::LevelMonitor::stop_generator(&mut rew);
+            if let Some((play, _, _)) = active.take() {
+                handled_generation = play.generation;
+            }
+        }
         if let Some(play) = requested.filter(|play| play.generation != handled_generation) {
             let output = u32::try_from(plan.output_for(&play.role))
                 .ok()
@@ -291,6 +353,30 @@ fn store_level(
     }
     open.dirty = true;
     Ok(())
+}
+
+fn levels_result(project: &Project) -> LevelsResult {
+    let read = |key: &str| {
+        project
+            .extra
+            .iter()
+            .find(|(name, _)| name == key)
+            .and_then(|(_, value)| value.object())
+            .into_iter()
+            .flatten()
+            .filter_map(|(role, value)| match value {
+                PyJson::Float(number) => Some((role.clone(), *number)),
+                PyJson::Int(number) | PyJson::Str(number) => {
+                    number.parse().ok().map(|number| (role.clone(), number))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    LevelsResult {
+        levels: read("levels"),
+        spl: read("spl"),
+    }
 }
 
 fn put_extra_map(project: &mut Project, key: &str, role: &str, value: f64) {

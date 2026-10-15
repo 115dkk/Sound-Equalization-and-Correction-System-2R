@@ -673,14 +673,14 @@ id = "service.run_cache"
 kind = "service"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::round_trip_and_ignore_pickle", "secs-service::corrupt_and_oversized_files_are_ignored", "secs-service::unknown_cache_version_is_ignored", "secs-service::stale_calibration_refuses_export_and_cache_survives_reopen"]
+tests = ["secs-service::round_trip_and_ignore_pickle", "secs-service::corrupt_and_oversized_files_are_ignored", "secs-service::unknown_cache_version_is_ignored", "secs-service::stale_calibration_exports_with_flag_and_cache_survives_reopen"]
 
 [[feature]]
 id = "service.exports"
 kind = "service"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::project_session_create_open_save_and_save_as", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::stale_calibration_refuses_export_and_cache_survives_reopen"]
+tests = ["secs-service::project_session_create_open_save_and_save_as", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::stale_calibration_exports_with_flag_and_cache_survives_reopen"]
 
 [[feature]]
 id = "service.host"
@@ -694,7 +694,7 @@ id = "service.level_monitor"
 kind = "service"
 milestone = "M5"
 status = "partial"
-tests = ["secs-service::mock_monitor_emits_stores_excludes_and_stops", "secs-service::generic_cancel_ends_monitor"]
+tests = ["secs-service::mock_monitor_emits_stores_excludes_and_stops", "secs-service::generic_cancel_ends_monitor_during_an_active_burst"]
 note = "mock readings arrive about ten times a second and REW readings at its callback rate (about six) while a role plays; the native path reads real samples but sends them after the capture ends, and no path meters the idle mic before level_play. A streaming input session in secs-audio/secs-sys finishes it."
 
 [[feature]]
@@ -893,6 +893,34 @@ kind = "ipc"
 milestone = "M4"
 status = "implemented"
 tests = ["secs-service::configure_validates_fields_and_host_stub_reports_its_error"]
+
+[[feature]]
+id = "ipc.measurement_records"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::measurement_records_report_planned_positions_and_sources"]
+
+[[feature]]
+id = "ipc.levels_get"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::levels_methods_fill_only_missing_defaults"]
+
+[[feature]]
+id = "ipc.levels_fill_defaults"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::levels_methods_fill_only_missing_defaults"]
+
+[[feature]]
+id = "ipc.level_stop"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::level_stop_cancels_only_the_active_burst_and_is_idempotent", "secs-service::rew_level_stop_stops_generator_but_keeps_subscription_alive"]
 
 [[feature]]
 id = "ipc.level_check"

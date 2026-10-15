@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use secs_service::Host;
+use secs_service::{Host, RewLaunchError};
 use secs_types::ipc::{ErrorCode, IpcError, OpenFileKind, SaveFileKind};
 use tauri::{AppHandle, Manager, Wry};
 use tauri_plugin_dialog::{DialogExt, FileDialogBuilder, FilePath};
@@ -120,8 +120,18 @@ impl Host for TauriHost {
         self.app.path().home_dir().map_err(host_error)
     }
 
-    fn launch_rew(&self) -> Result<(), IpcError> {
-        secs_sys::rew::launch().map_err(host_error)
+    fn launch_rew(&self) -> Result<(), RewLaunchError> {
+        secs_sys::rew::launch().map_err(|error| match error {
+            secs_sys::rew::RewLaunchError::ExeNotFound => {
+                RewLaunchError::ExeNotFound(error.to_string())
+            }
+            secs_sys::rew::RewLaunchError::CannotLaunch(_) => {
+                RewLaunchError::CannotLaunch(error.to_string())
+            }
+            secs_sys::rew::RewLaunchError::LaunchFailed(_) => {
+                RewLaunchError::LaunchFailed(error.to_string())
+            }
+        })
     }
 }
 

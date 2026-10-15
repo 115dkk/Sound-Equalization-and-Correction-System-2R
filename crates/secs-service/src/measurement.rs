@@ -73,6 +73,16 @@ fn share_name(share: secs_audio::SharePreference) -> &'static str {
         secs_audio::SharePreference::Shared => "shared",
     }
 }
+fn start_delay(project: &Project) -> u64 {
+    project
+        .extra
+        .iter()
+        .find(|(key, _)| key == "start_delay")
+        .and_then(|(_, value)| value.str())
+        .and_then(|value| u64::try_from(secs_project::start_delay_seconds(value)).ok())
+        .unwrap_or(0)
+}
+
 fn method(project: &Project) -> &str {
     project
         .extra
@@ -118,6 +128,11 @@ fn settings(project: &Project) -> Result<MeasureConfigResult, IpcError> {
             .find(|(_, name)| *name == p.sweep_length)
             .map(|(n, _)| *n)
             .ok_or_else(|| input("sweep_length", "unknown sweep length"))?,
+        repetitions: u8::try_from(p.repetitions)
+            .map_err(|_| input("repetitions", "invalid repetition count"))?,
+        sample_rate: u32::try_from(p.sample_rate)
+            .map_err(|_| input("sample_rate", "invalid sample rate"))?,
+        sweep_lengths: LENGTHS.iter().map(|(n, _)| *n).collect(),
         timing: p.timing_reference.as_disk_str().into(),
         loopback_input_channel: s.loopback_input_channel,
         timing_ref_output: p.timing_ref_output.map(channel).transpose()?,
@@ -219,7 +234,7 @@ impl Service {
         &self,
         params: MeasureConfigureParams,
     ) -> Result<MeasureConfigResult, IpcError> {
-        if !["native", "rew", "mock"].contains(&params.method.as_str()) {
+        if !["none", "native", "rew", "mock", "mdat"].contains(&params.method.as_str()) {
             return Err(input("method", "unknown measurement method"));
         }
         let mut session = lock(&self.session);
@@ -259,6 +274,12 @@ impl Service {
                 ),
             ));
         }
+        if let Some(repetitions) = params.repetitions {
+            if ![1, 2, 4, 8].contains(&repetitions) {
+                return Err(input("repetitions", "unsupported repetition count"));
+            }
+            values.push(("repetitions".into(), PyJson::Int(repetitions.to_string())));
+        }
         if let Some(level) = params.sweep_level_dbfs {
             if !level.is_finite() || !(-120.0..=0.0).contains(&level) {
                 return Err(input("sweep_level_dbfs", "level outside -120..0 dBFS"));
@@ -278,6 +299,14 @@ impl Service {
             values.push(("share".into(), PyJson::Str(share)));
         }
         store_devices(&mut project, values);
+        if plan_for(&project, &Default::default()).timing_reference
+            == secs_project::TimingReference::Acoustic
+        {
+            store_devices(
+                &mut project,
+                vec![("repetitions".into(), PyJson::Int("1".into()))],
+            );
+        }
         if !params.output_channels.is_empty() {
             let plan = plan_for(&project, &Default::default());
             if params.output_channels.len() != plan.roles.len()
@@ -319,6 +348,43 @@ impl Service {
         open.dirty = true;
         Ok(result)
     }
+    pub(crate) fn measurement_records(&self) -> Result<MeasurementRecordsResult, IpcError> {
+        let session = lock(&self.session);
+        let open = session.require()?;
+        let project = open.store.project();
+        let planned = plan_for(project, &Default::default()).roles;
+        let records = open.store.records();
+        Ok(MeasurementRecordsResult {
+            records: (1..=measure::position_count(project))
+                .map(|position| {
+                    let record = records.iter().find(|record| record.pos == position);
+                    let roles = planned
+                        .iter()
+                        .filter(|role| record.is_some_and(|r| r.ir.contains_key(*role)))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    let sources = roles
+                        .iter()
+                        .map(|role| {
+                            let value = record
+                                .and_then(|r| r.source.get(role))
+                                .filter(|value| !value.is_empty())
+                                .cloned()
+                                .unwrap_or_else(|| "measured".into());
+                            (role.clone(), value)
+                        })
+                        .collect();
+                    PositionRecord {
+                        position,
+                        done: roles.len() == planned.len() && !planned.is_empty(),
+                        roles,
+                        sources,
+                    }
+                })
+                .collect(),
+        })
+    }
+
     pub(crate) fn level_apply(
         &self,
         params: LevelApplyParams,
@@ -496,6 +562,10 @@ impl Service {
             let open = session.require()?;
             (open.store.project().clone(), open.identity)
         };
+        let active_method = method(&project);
+        if matches!(active_method, "none" | "mdat") {
+            return Err(input("method", "selected method cannot run a measurement"));
+        }
         let mut s = MeasurementSettings::from_project(&project)
             .map_err(|e| measure_error(e, "settings", secs_audio::SharePreference::Auto))?;
         if params.position < 1 || params.position > measure::position_count(&project) {
@@ -507,11 +577,30 @@ impl Service {
             return Err(input("plan", format!("{error:?}")));
         }
         let share = s.share;
+        let delay = start_delay(&project);
         let mut m = measurer(&self.deps, method(&project), s)?;
         let session = self.session.clone();
         let uuid = self.deps.uuid.clone();
         let atomic_position = method(&project) != "rew";
         self.jobs.start(JobKind::Measure, events, move |ctx| {
+            let countdown_started = std::time::Instant::now();
+            let mut seconds_passed = 0;
+            while seconds_passed < delay {
+                if ctx.cancel().is_cancelled() {
+                    return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
+                }
+                let next = std::time::Duration::from_secs(seconds_passed + 1);
+                let remaining = next.saturating_sub(countdown_started.elapsed());
+                if !remaining.is_zero() {
+                    std::thread::sleep(remaining.min(std::time::Duration::from_millis(10)));
+                    continue;
+                }
+                seconds_passed += 1;
+                ctx.report_progress("countdown", seconds_passed, delay);
+            }
+            if ctx.cancel().is_cancelled() {
+                return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
+            }
             let mut count = 0;
             let mut failure = None;
             m.measure_recording(
@@ -686,8 +775,19 @@ impl Service {
         if status.running {
             return Ok(status);
         }
-        self.deps.host.launch_rew()?;
-        Ok(rew_status(&self.deps))
+        self.deps.host.launch_rew().map_err(|error| {
+            let reason = match &error {
+                crate::RewLaunchError::ExeNotFound(_) => "exe_not_found",
+                crate::RewLaunchError::CannotLaunch(_) => "cannot_launch",
+                crate::RewLaunchError::LaunchFailed(_) => "launch_failed",
+            };
+            IpcError::new(ErrorCode::RewFailed, error.to_string()).with_param("reason", reason)
+        })?;
+        Ok(RewStatusResult {
+            running: true,
+            reachable: false,
+            pro: false,
+        })
     }
     pub(crate) fn mdat_scan(&self, params: MdatScanParams) -> Result<MdatScanResult, IpcError> {
         let scan = mdat_import::scan(Path::new(&params.path))

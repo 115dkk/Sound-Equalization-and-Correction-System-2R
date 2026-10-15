@@ -23,6 +23,16 @@ impl EventSink for Events {
     }
 }
 impl Events {
+    fn wait_until(&self, timeout: Duration, predicate: impl Fn(&[JobEvent]) -> bool) {
+        let deadline = Instant::now() + timeout;
+        let mut values = self.values.lock().unwrap();
+        while !predicate(&values) {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "event timeout: {values:?}");
+            values = self.changed.wait_timeout(values, remaining).unwrap().0;
+        }
+    }
+
     fn wait(&self, job: JobId, timeout: Duration) -> JobEvent {
         let deadline = Instant::now() + timeout;
         let mut values = self.values.lock().unwrap();
@@ -64,6 +74,7 @@ fn new(service: &Service, path: &std::path::Path) {
             preset: "2.0".into(),
             sub_count: 0,
             sample: false,
+            tutorial: false,
         }),
     );
 }
@@ -81,6 +92,16 @@ fn configure(service: &Service, method: &str) -> MeasureConfigResult {
     };
     result
 }
+fn set_start_delay(path: &std::path::Path, seconds: u64) {
+    let mut project = secs_project::Project::load_text(&fs::read_to_string(path).unwrap()).unwrap();
+    project.extra.retain(|(key, _)| key != "start_delay");
+    project.extra.push((
+        "start_delay".into(),
+        secs_project::PyJson::Str(format!("{seconds} seconds")),
+    ));
+    fs::write(path, project.save_text()).unwrap();
+}
+
 fn measure(service: &Service, position: i64, events: Arc<Events>) -> JobId {
     let Response::MeasurePosition(job) = ok(
         service,
@@ -124,6 +145,7 @@ fn sample_load_embedded_keeps_only_position_one() {
             preset: "ignored".into(),
             sub_count: 0,
             sample: true,
+            tutorial: false,
         }),
     );
     let JobResult::Measurement(first) = sample_load(&service, Some(3), Arc::new(Events::default()))
@@ -288,6 +310,167 @@ fn mock_flow_level_apply_and_calibration() {
     assert!(!calibration(&service).stale);
     fs::remove_dir_all(root).unwrap();
 }
+#[test]
+fn measurement_records_report_planned_positions_and_sources() {
+    let root = root("records");
+    let path = root.join("room.secs");
+    let service = Service::new(Deps::default());
+    new(&service, &path);
+    configure(&service, "mock");
+    let Response::MeasurementRecords(empty) = call(&service, Request::MeasurementRecords) else {
+        panic!()
+    };
+    assert_eq!(empty.records.len(), 9);
+    assert_eq!(
+        empty
+            .records
+            .iter()
+            .map(|record| record.position)
+            .collect::<Vec<_>>(),
+        (1..=9).collect::<Vec<_>>()
+    );
+    assert!(empty.records.iter().all(|record| !record.done));
+    assert!(empty.records.iter().all(|record| record.roles.is_empty()));
+    assert!(empty.records.iter().all(|record| record.sources.is_empty()));
+    let events = Arc::new(Events::default());
+    let job = measure(&service, 1, events.clone());
+    succeeded(&events, job);
+    let Response::MeasurementRecords(records) = call(&service, Request::MeasurementRecords) else {
+        panic!()
+    };
+    assert_eq!(records.records.len(), 9);
+    assert!(records.records[0].done);
+    assert_eq!(records.records[0].roles, ["L", "R"]);
+    assert_eq!(records.records[0].sources["L"], "measured");
+    assert_eq!(records.records[0].sources["R"], "measured");
+    assert!(records.records[1..].iter().all(|record| !record.done));
+    assert!(
+        records.records[1..]
+            .iter()
+            .all(|record| record.roles.is_empty())
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn countdown_reports_seconds_and_cancel_writes_nothing() {
+    let root = root("countdown");
+    let path = root.join("room.secs");
+    let service = Service::new(Deps::default());
+    new(&service, &path);
+    set_start_delay(&path, 2);
+    call(
+        &service,
+        Request::ProjectOpen(ProjectPathParams {
+            path: path.to_string_lossy().into_owned(),
+        }),
+    );
+    configure(&service, "mock");
+    let before = fs::read(&path).unwrap();
+    let events = Arc::new(Events::default());
+    let job = measure(&service, 1, events.clone());
+    events.wait_until(Duration::from_millis(1200), |values| {
+        values.iter().any(|event| {
+            matches!(event, JobEvent::Progress { job: id, stage, done: 1, total: 2 } if *id == job && stage == "countdown")
+        })
+    });
+    call(&service, Request::JobCancel(JobCancelParams { job }));
+    assert!(matches!(
+        events.wait(job, Duration::from_secs(1)),
+        JobEvent::Finished {
+            status: JobStatus::Cancelled,
+            error: Some(IpcError {
+                code: ErrorCode::Cancelled,
+                ..
+            }),
+            ..
+        }
+    ));
+    let values = events.values.lock().unwrap();
+    assert!(!values.iter().any(|event| {
+        matches!(event, JobEvent::Progress { stage, .. } if stage == "L" || stage == "R")
+    }));
+    drop(values);
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert!(!path.with_extension("irs").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn repetitions_accept_supported_values_and_acoustic_forces_one() {
+    let root = root("repetitions");
+    let path = root.join("room.secs");
+    let service = Service::new(Deps::default());
+    new(&service, &path);
+    for repetitions in [1, 2, 4, 8] {
+        let Response::MeasureConfigure(config) = call(
+            &service,
+            Request::MeasureConfigure(MeasureConfigureParams {
+                method: "rew".into(),
+                repetitions: Some(repetitions),
+                timing: Some("none".into()),
+                ..Default::default()
+            }),
+        ) else {
+            panic!()
+        };
+        assert_eq!(config.repetitions, repetitions);
+        call(
+            &service,
+            Request::ProjectSave(ProjectSaveParams { path: None }),
+        );
+        let project =
+            secs_project::Project::load_text(&fs::read_to_string(&path).unwrap()).unwrap();
+        let secs_project::PyJson::Object(devices) = &project
+            .extra
+            .iter()
+            .find(|(key, _)| key == "devices")
+            .unwrap()
+            .1
+        else {
+            panic!()
+        };
+        assert!(devices.iter().any(|(key, value)| {
+            key == "repetitions"
+                && matches!(value, secs_project::PyJson::Int(stored) if stored == &repetitions.to_string())
+        }));
+    }
+    let Envelope::Err(error) = service.call(
+        Request::MeasureConfigure(MeasureConfigureParams {
+            method: "rew".into(),
+            repetitions: Some(3),
+            ..Default::default()
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!()
+    };
+    assert_eq!(error.code, ErrorCode::MeasurementInput);
+    assert_eq!(error.params["field"], "repetitions");
+    let Response::MeasureConfigure(config) = call(
+        &service,
+        Request::MeasureConfigure(MeasureConfigureParams {
+            method: "rew".into(),
+            repetitions: Some(8),
+            timing: Some("acoustic".into()),
+            ..Default::default()
+        }),
+    ) else {
+        panic!()
+    };
+    assert_eq!(config.repetitions, 1);
+    call(
+        &service,
+        Request::ProjectSave(ProjectSaveParams { path: None }),
+    );
+    let project = secs_project::Project::load_text(&fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(
+        measure::plan_for(&project, &Default::default()).repetitions,
+        1
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn position_clear_undo_is_byte_exact_and_single_use() {
     let root = root("undo");
@@ -752,6 +935,61 @@ fn undo_retains_only_last_sixteen_tokens_and_original_order() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[derive(Debug)]
+struct LaunchHost(Result<(), secs_service::RewLaunchError>);
+
+impl secs_service::Host for LaunchHost {
+    fn launch_rew(&self) -> Result<(), secs_service::RewLaunchError> {
+        self.0.clone()
+    }
+}
+
+#[test]
+fn rew_launch_classifies_reasons_and_returns_after_spawn() {
+    let cases = [
+        (
+            secs_service::RewLaunchError::ExeNotFound("missing".into()),
+            "exe_not_found",
+        ),
+        (
+            secs_service::RewLaunchError::CannotLaunch("blocked".into()),
+            "cannot_launch",
+        ),
+        (
+            secs_service::RewLaunchError::LaunchFailed("failed".into()),
+            "launch_failed",
+        ),
+    ];
+    for (failure, reason) in cases {
+        let service = Service::new(Deps {
+            host: Arc::new(LaunchHost(Err(failure))),
+            ..Default::default()
+        });
+        let Envelope::Err(error) = service.call(Request::RewLaunch, Arc::new(NoEvents)) else {
+            panic!()
+        };
+        assert_eq!(error.code, ErrorCode::RewFailed);
+        assert_eq!(error.params["reason"], reason);
+    }
+    let service = Service::new(Deps {
+        host: Arc::new(LaunchHost(Ok(()))),
+        ..Default::default()
+    });
+    let started = Instant::now();
+    let Response::RewLaunch(status) = call(&service, Request::RewLaunch) else {
+        panic!()
+    };
+    assert!(started.elapsed() < Duration::from_millis(100));
+    assert_eq!(
+        status,
+        RewStatusResult {
+            running: true,
+            reachable: false,
+            pro: false,
+        }
+    );
+}
+
 #[test]
 fn configure_validates_fields_and_host_stub_reports_its_error() {
     let root = root("config");
@@ -780,12 +1018,10 @@ fn configure_validates_fields_and_host_stub_reports_its_error() {
         assert_eq!(error.code, ErrorCode::MeasurementInput);
         assert_eq!(error.params["field"], field);
     }
-    assert!(matches!(
-        service.call(Request::RewLaunch, Arc::new(NoEvents)),
-        Envelope::Err(IpcError {
-            code: ErrorCode::NotImplemented,
-            ..
-        })
-    ));
+    let Envelope::Err(error) = service.call(Request::RewLaunch, Arc::new(NoEvents)) else {
+        panic!()
+    };
+    assert_eq!(error.code, ErrorCode::RewFailed);
+    assert_eq!(error.params["reason"], "cannot_launch");
     fs::remove_dir_all(root).unwrap();
 }

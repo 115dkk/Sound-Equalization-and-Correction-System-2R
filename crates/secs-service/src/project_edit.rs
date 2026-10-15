@@ -32,6 +32,20 @@ const CONFIG_GROUP_ORDER: [&str; 9] = [
     "기타",
 ];
 
+fn group_id(key: &str) -> &'static str {
+    match key {
+        "프론트" => "front",
+        "센터" => "center",
+        "서브" => "sub",
+        "서라운드" => "surround",
+        "백" => "back",
+        "와이드" => "wide",
+        "탑" => "top",
+        "하이트" => "height",
+        _ => "other",
+    }
+}
+
 fn invalid(field: &str, detail: impl Into<String>) -> IpcError {
     IpcError::new(ErrorCode::InvalidRequest, detail).with_param("field", field)
 }
@@ -104,6 +118,7 @@ fn config_result(project: &Project) -> ConfigResult {
     for key in CONFIG_GROUP_ORDER {
         if let Some((_, speaker_indices)) = grouped.iter().find(|(name, _)| name == key) {
             groups.push(ConfigGroup {
+                id: group_id(key).into(),
                 key: key.to_owned(),
                 speaker_indices: speaker_indices.clone(),
             });
@@ -112,6 +127,7 @@ fn config_result(project: &Project) -> ConfigResult {
     for (key, speaker_indices) in grouped {
         if !CONFIG_GROUP_ORDER.contains(&key.as_str()) {
             groups.push(ConfigGroup {
+                id: "other".into(),
                 key,
                 speaker_indices,
             });
@@ -252,6 +268,13 @@ fn layout_result(project: &Project) -> LayoutResult {
         })
     };
     let count = integer(extra(project, "array"), 9) as usize;
+    let stored_role = string(get("timing_ref_role"), "");
+    let roles = secs_project::measurement_roles(project);
+    let role = if roles.iter().any(|(role, _)| role == &stored_role) {
+        stored_role
+    } else {
+        secs_project::default_ref_role(project)
+    };
     LayoutResult {
         count: if ARRANGEMENTS.contains(&count) {
             count
@@ -261,7 +284,7 @@ fn layout_result(project: &Project) -> LayoutResult {
         start_delay: string(extra(project, "start_delay"), "끄기"),
         timing: LayoutTiming {
             reference: string(get("timing_reference"), "acoustic"),
-            role: string(get("timing_ref_role"), ""),
+            role,
             output: integer(get("timing_ref_output"), 1),
         },
         arrangements: ARRANGEMENTS

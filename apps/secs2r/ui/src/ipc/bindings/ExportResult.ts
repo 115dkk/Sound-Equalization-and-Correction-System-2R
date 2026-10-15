@@ -7,4 +7,12 @@ export type ExportResult = {
 /**
  * Paths of all files written by the exporter.
  */
-files: Array<string>, };
+files: Array<string>, 
+/**
+ * Actual export folder written by the job.
+ */
+folder: string, 
+/**
+ * Whether the exported calibration differed from current project inputs.
+ */
+stale: boolean, };

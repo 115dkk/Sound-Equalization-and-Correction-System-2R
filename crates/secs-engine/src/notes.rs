@@ -47,6 +47,75 @@ pub enum Note {
         xo_hz: f64,
     },
     BusGainAnchored(f64),
-    /// Upstream MIMO diagnostics, including the ordered range summary.
-    Mimo(String),
+    Mimo(MimoNote),
+}
+
+/// Semantic diagnostics in producer order; never translated presentation text.
+#[derive(Debug, Clone, PartialEq)]
+pub enum MimoNote {
+    InsufficientPositions {
+        measured: usize,
+    },
+    ExcludedSupports(Vec<String>),
+    SupportRanges(Vec<(String, Option<(f64, f64)>)>),
+    GuardReduced {
+        role: String,
+        gain_db: f64,
+    },
+    GuardDisabled {
+        role: String,
+    },
+    SupportLimit {
+        max_supports: usize,
+    },
+    FirBudget {
+        support_count: usize,
+        taps_total: usize,
+    },
+}
+
+#[cfg(test)]
+impl MimoNote {
+    // Only the oracle adapter renders the legacy diagnostic strings.
+    pub(crate) fn oracle_text(&self) -> String {
+        match self {
+            Self::InsufficientPositions { measured } => {
+                format!("측정 위치 {measured}곳 — MIMO 는 3곳 이상일 때만")
+            }
+            Self::ExcludedSupports(roles) => format!("서포트 제외(사용자): {}", roles.join(", ")),
+            Self::SupportRanges(ranges) => format!(
+                "서포트 대역 {}",
+                ranges
+                    .iter()
+                    .map(|(role, range)| match range {
+                        Some((lo, hi)) => format!("{role} {lo:.0}–{hi:.0}"),
+                        None => format!("{role} 제외"),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Self::GuardReduced { role, gain_db } => {
+                format!("{role}: 대역 늦은 에너지 악화로 서포트 {gain_db:.0} dB")
+            }
+            Self::GuardDisabled { role } => format!("{role}: MIMO 끔(악화)"),
+            Self::SupportLimit { max_supports } => format!("입력당 서포트 ≤ {max_supports}"),
+            Self::FirBudget {
+                support_count,
+                taps_total,
+            } => {
+                let digits = taps_total.to_string();
+                let grouped = digits
+                    .chars()
+                    .enumerate()
+                    .fold(String::new(), |mut out, (i, ch)| {
+                        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+                            out.push(',');
+                        }
+                        out.push(ch);
+                        out
+                    });
+                format!("FIR 서포트 {support_count}개 · 총 {grouped}탭(48 kHz)")
+            }
+        }
+    }
 }

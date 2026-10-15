@@ -37,6 +37,18 @@ output_channels: Array<number>,
  */
 sweep_length: number, 
 /**
+ * Active repetition count after timing-reference normalization.
+ */
+repetitions: number, 
+/**
+ * Sweep sample rate in Hz.
+ */
+sample_rate: number, 
+/**
+ * Supported sweep lengths in samples.
+ */
+sweep_lengths: Array<number>, 
+/**
  * Timing-reference mode.
  */
 timing: string, 

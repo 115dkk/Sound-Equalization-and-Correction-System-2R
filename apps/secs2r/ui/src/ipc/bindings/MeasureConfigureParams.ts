@@ -29,6 +29,10 @@ output_channels: Array<number>,
  */
 sweep_length: number | null, 
 /**
+ * Optional sweep repetition count; allowed values are 1, 2, 4 and 8.
+ */
+repetitions: number | null, 
+/**
  * Optional sweep level in dBFS.
  */
 sweep_level_dbfs: number | null, 
