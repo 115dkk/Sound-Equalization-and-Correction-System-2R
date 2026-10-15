@@ -27,7 +27,7 @@
   "frame.blocked.no_path": "No measurement method is chosen. Choose one in Connect & check.",
   "frame.blocked.no_path.short": "Needs a method",
   "frame.blocked.no_measurements": "No position is measured yet. Measure, or import mdat files, in Measure & import.",
-  "frame.blocked.no_measurements.short": "Needs measurements",
+  "frame.blocked.no_measurements.short": "Not measured",
   "frame.blocked.measuring": "A measurement is running. You can calculate once it ends or is canceled.",
   "frame.blocked.measuring.short": "Measuring",
   "frame.blocked.no_result": "There is no correction yet. Calculate it in Correction.",
