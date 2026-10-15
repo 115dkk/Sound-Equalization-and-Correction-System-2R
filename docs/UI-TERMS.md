@@ -52,7 +52,7 @@
 | CamillaDSP 설정 | CamillaDSP configuration | 내보내는 설정 파일. 화면의 설정(settings)과 영어에서 구분 |
 | 단계별 mdat | staged mdat | 내보내기의 고급 |
 | 작업, 작업 트레이 | job, job tray | 긴 작업의 진행·취소·기록 |
-| 계산 메모 | calculation notes | 전문가 표시의 판정 카드 |
+| 계산 메모 | calculation notes | 판정 카드의 접힌 목록(업스트림처럼 전문가 표시와 상관없이 보임) |
 | 튜토리얼 | tutorial | 튜토리얼 목록, 코치 카드 |
 
 ## 쓰는 법

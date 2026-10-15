@@ -8,6 +8,7 @@ import type { CalibrationSummary } from "../../ipc/bindings/CalibrationSummary";
 import type { ChannelResultLine } from "../../ipc/bindings/ChannelResultLine";
 import type { ConfigResult } from "../../ipc/bindings/ConfigResult";
 import type { ModeSpecResult } from "../../ipc/bindings/ModeSpecResult";
+import type { Notice } from "../../ipc/bindings/Notice";
 import type { ResultCurve } from "../../ipc/bindings/ResultCurve";
 import type { ResultCurvesResult } from "../../ipc/bindings/ResultCurvesResult";
 import type { ResultLinesResult } from "../../ipc/bindings/ResultLinesResult";
@@ -281,15 +282,29 @@ export const baDbaLines: SubResultLines = {
   layouts: [{ bundle: "A", kind: "dba", members: ["SW1", "SW2"], front: ["SW1"], rear: ["SW2"], rear_ms: 12.25, auto_ms: 11.75, trim_ms: 0.5, peq: [[42, 4.5, -3.5]] }],
 };
 
-const summary = (stale = false): CalibrationSummary => ({
+/** The calculation notes as secs-service sends them: one record per role, filter or room mode, scalar params. */
+const NOTES: Notice[] = [
+  { code: "lift_capped", params: { from_ms: "8", taps: "2048", lift_ms: "7.5" } },
+  { code: "rc_limit", params: { hz: "310.42", auto: "true", schroeder_hz: "310.42" } },
+  ...fx.SAMPLE_MAINS.map((role) => ({ code: "phase_strength", params: { role, strength: role.startsWith("T") ? "0.5" : "0.9" } })),
+  // The engine's phase_band is the same fraction as the strength (rc.rs), named `hz`.
+  ...fx.SAMPLE_MAINS.map((role) => ({ code: "phase_band", params: { role, enabled: "true", hz: role.startsWith("T") ? "0.5" : "0.9" } })),
+  { code: "long_mode_boost", params: { cap_db: "4", hz: "34.2", t60_s: "0.61" } },
+  { code: "long_mode_boost", params: { cap_db: "4", hz: "51.8", t60_s: "0.44" } },
+  { code: "ba_cost", params: { value: "0.8417" } },
+  { code: "ba_bus_pass", params: { first: "0.8417", second: "0.7952", kept_first: "false" } },
+];
+
+/** SW2's fixed filters (the BA view's fixed sub), as the engine notes them first. */
+const SW2_FILTERS: Notice[] = [
+  { code: "sub_filters", params: { role: "SW2", hp_hz: "40", hp_type: "LR24", lp_hz: "60", lp_type: "LR24", peq_count: "1" } },
+  { code: "sub_filter_peq", params: { role: "SW2", index: "0", hz: "38", q: "5", gain_db: "-4" } },
+];
+
+const summary = (stale = false, notes: readonly Notice[] = NOTES): CalibrationSummary => ({
   ...fx.calibrationSummary,
   stale,
-  notes: [
-    { code: "rc_limit", params: { hz: "310.42", auto: "true", schroeder_hz: "310.42" } },
-    { code: "lift_capped", params: { from_ms: "8", taps: "2048", lift_ms: "7.5" } },
-    { code: "long_mode_boost", params: { cap_db: "4", modes: "[[34.2,6.1],[51.8,4.4]]" } },
-    { code: "phase_band", params: { values: '[["L",48.5],["R",52.0]]' } },
-  ],
+  notes: [...notes],
 });
 
 function lines({ roles = fx.SAMPLE_MAINS, mimo = false, stale = false, ba = baLines as SubResultLines | null }: { roles?: readonly string[]; mimo?: boolean; stale?: boolean; ba?: SubResultLines | null } = {}): ResultLinesResult {
@@ -348,6 +363,7 @@ export const baView: CalibrateView = {
   curves: baResult(),
   lines: lines({ ba: baWarnLines }),
   settings: { ...baseSettings, subs_manual: { SW2: { ...defaultSub(), mode: "fixed", gain_db: 13.4, delay_ms: 1.2, polarity: -1, hp_hz: 40, lp_hz: 60 } }, sub_main_delay_ms: 0.4 },
+  results: { calibration: summary(false, [NOTES[0]!, ...SW2_FILTERS, ...NOTES.slice(1)]), mimo: null },
   // What sub_warnings answers for these settings: SW2's LP is below twice its HP.
   subWarnings: [{ code: "sub_narrow_band", params: { role: "SW2", hp_hz: "40", lp_hz: "60" } }],
 };

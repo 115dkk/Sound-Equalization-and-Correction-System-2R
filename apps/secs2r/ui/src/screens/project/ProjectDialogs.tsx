@@ -91,6 +91,7 @@ function NewProjectDialog({
         <div className="project-form__field">
           <Segmented
             id="project.new.start"
+            data-autofocus
             label={t("project.new.start")}
             value={start}
             options={[
@@ -238,6 +239,8 @@ function OpenProjectDialog({
   inline?: boolean | undefined;
 }) {
   const t = useT();
+  // Focus starts on the first choice: the first recent project that can open, or 찾아보기 when there is none.
+  const firstRecent = dialog.recent.findIndex((path) => path !== dialog.current);
   return (
     <Dialog
       open
@@ -250,7 +253,14 @@ function OpenProjectDialog({
           <Button variant="quiet" data-ui="project.open.cancel" onClick={actions.cancel}>
             {t("ui.dialog.cancel")}
           </Button>
-          <Button variant="secondary" icon="folder" data-ui="project.open.browse" disabled={view.busy} onClick={actions.browseProject}>
+          <Button
+            variant="secondary"
+            icon="folder"
+            data-ui="project.open.browse"
+            data-autofocus={(!view.busy && firstRecent < 0) || undefined}
+            disabled={view.busy}
+            onClick={actions.browseProject}
+          >
             {t("project.open.browse")}
           </Button>
         </>
@@ -277,6 +287,7 @@ function OpenProjectDialog({
                       type="button"
                       className="project-recent__item"
                       data-ui={`project.open.recent.${index + 1}`}
+                      data-autofocus={(!view.busy && index === firstRecent) || undefined}
                       aria-label={t("project.open.recent.item", { name, folder })}
                       disabled={current || view.busy}
                       onClick={() => actions.openRecent(path)}

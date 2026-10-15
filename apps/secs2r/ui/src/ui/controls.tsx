@@ -201,6 +201,7 @@ export function Segmented<V extends string>({
   onChange,
   hideLabel,
   size = "md",
+  "data-autofocus": autofocus,
 }: {
   id: string;
   label: ReactNode;
@@ -210,6 +211,8 @@ export function Segmented<V extends string>({
   /** Keep the label for screen readers only (the context already names it). */
   hideLabel?: boolean;
   size?: "md" | "sm";
+  /** A dialog around this group focuses the chosen option when it opens (Dialog reads `data-autofocus`). */
+  "data-autofocus"?: boolean;
 }) {
   const labelId = useId();
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
@@ -256,6 +259,7 @@ export function Segmented<V extends string>({
               aria-checked={selected}
               data-ui={`${id}.${option.value}`}
               tabIndex={selected ? 0 : -1}
+              data-autofocus={(autofocus && selected) || undefined}
               disabled={option.disabled}
               className="ui-segmented__option"
               onClick={() => onChange(option.value)}

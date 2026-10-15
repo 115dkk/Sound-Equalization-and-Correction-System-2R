@@ -99,20 +99,57 @@ export function groupOf(config: ConfigResult, role: string): string | null {
 
 const num = (value: string | undefined) => (value === undefined ? Number.NaN : Number(value));
 
-function list(value: string | undefined): unknown[] {
-  try {
-    const parsed: unknown = JSON.parse(value ?? "[]");
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
+/**
+ * The service sends collection notes as one record per role, filter or mode
+ * (secs-service `notices`, scalar params only). Records of one note that
+ * follow each other read as one line, as upstream prints them: the phase
+ * correction of every main, the long room modes, a channel's GD cuts, the
+ * two-way subs, and a sub's fixed filters with their PEQs.
+ *
+ * phase_band carries the same value as phase_strength (upstream
+ * correction_engine.py sets both from one `frac`, and the engine's rc.rs
+ * `phase_band: Some(strength)`; the `hz` param is a fraction despite its
+ * name), so its records join the strength line and only say where there is
+ * no phase correction.
+ */
+function runKey(notice: Notice): string | null {
+  switch (notice.code) {
+    case "phase_strength":
+    case "phase_band":
+      return "phase";
+    case "long_mode_boost":
+    case "two_way":
+      return notice.code;
+    case "gd_cuts":
+      return `gd_cuts:${notice.params.role ?? ""}`;
+    case "sub_filters":
+    case "sub_filter_peq":
+      return `sub_filters:${notice.params.role ?? ""}`;
+    default:
+      return null;
   }
+}
+
+/** Calculation notes as lines: runs of one collection note joined (`runKey`), every line a catalog sentence. */
+export function noteLines(t: Translate, number: FormatNumber, notices: readonly Notice[]): string[] {
+  const lines: string[] = [];
+  for (let i = 0; i < notices.length; ) {
+    const first = notices[i]!;
+    const key = runKey(first);
+    let end = i + 1;
+    while (key !== null && end < notices.length && runKey(notices[end]!) === key && notices[end]!.code !== "sub_filters") end += 1;
+    lines.push(noticeText(t, number, first, notices.slice(i, end)) ?? t("jobs.log.unknown"));
+    i = end;
+  }
+  return lines;
 }
 
 /**
  * A service notice as a sentence in the current language, or null when the
- * screen has no sentence for it (the expert view shows those raw).
+ * screen has no sentence for its code. `run` is the notice with the records
+ * of the same note that follow it (`noteLines`); a single notice reads alone.
  */
-export function noticeText(t: Translate, number: FormatNumber, notice: Notice): string | null {
+export function noticeText(t: Translate, number: FormatNumber, notice: Notice, run: readonly Notice[] = [notice]): string | null {
   const p = notice.params;
   const f = (key: string, digits = 0) => {
     const value = num(p[key]);
@@ -124,6 +161,7 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice): 
     return `${value > 0 ? "+" : ""}${number(value, digits)}`;
   };
   const code = (key = "role") => roleCode(p[key] ?? "");
+  const hz = (value: string | undefined) => `${number(num(value))} Hz`;
   const params: MessageParams = {};
   let key: string = `notice.${notice.code}`;
   switch (notice.code) {
@@ -152,19 +190,54 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice): 
     case "latency":
       Object.assign(params, { latency_ms: f("latency_ms", 1), lift_ms: f("lift_ms", 1), main_extra_ms: f("main_extra_ms", 1) });
       break;
-    case "long_mode_boost": {
-      const modes = list(p.modes)
-        .map((m) => (Array.isArray(m) && typeof m[0] === "number" ? `${number(m[0])} Hz` : null))
-        .filter(Boolean);
-      Object.assign(params, { cap_db: f("cap_db", 1), modes: modes.join(", "), count: modes.length });
+    case "phase_strength":
+    case "phase_band": {
+      // Per main, in the order the records name them: its strength, or 끔 where the band record says there is none.
+      key = "notice.phase_strength";
+      const roles = [...new Set(run.map((n) => n.params.role ?? ""))];
+      params.values = roles
+        .map((role) => {
+          const strength = run.find((n) => n.code === "phase_strength" && n.params.role === role);
+          const band = run.find((n) => n.code === "phase_band" && n.params.role === role);
+          const off = band?.params.enabled === "false";
+          const value = strength ? strength.params.strength : band?.params.hz;
+          return `${roleCode(role)} ${off ? t("notice.phase_strength.off") : number(num(value), 2)}`;
+        })
+        .join(", ");
       break;
     }
-    case "gd_cuts":
-      Object.assign(params, { code: code(), count: list(p.cuts).length });
+    case "long_mode_boost":
+      Object.assign(params, { cap_db: f("cap_db", 1), modes: run.map((n) => hz(n.params.hz)).join(", "), count: run.length });
       break;
-    case "two_way": {
-      const roles = list(p.roles).map((r) => roleCode(String(r)));
-      Object.assign(params, { roles: roles.join("·"), gain_db: signed("gain_db"), xo_hz: f("xo_hz") });
+    case "gd_cuts":
+      Object.assign(params, { code: code(), count: run.length });
+      break;
+    case "two_way":
+      Object.assign(params, { roles: run.map((n) => roleCode(n.params.role ?? "")).join("·"), gain_db: signed("gain_db"), xo_hz: f("xo_hz") });
+      break;
+    case "sub_filters":
+    case "sub_filter_peq": {
+      // One line per sub: its HP and LP, then each fixed PEQ (or their count when the PEQ records are not at hand).
+      key = "notice.sub_filters";
+      const peq = run
+        .filter((n) => n.code === "sub_filter_peq")
+        .map((n) => [num(n.params.hz), num(n.params.q), num(n.params.gain_db)] as const);
+      const high: [number, string] = notice.code === "sub_filters" ? [num(p.hp_hz), p.hp_type ?? ""] : [0, ""];
+      const low: [number, string] = notice.code === "sub_filters" ? [num(p.lp_hz), p.lp_type ?? ""] : [0, ""];
+      const parts = [filterSpec(t, number, high, low, peq)].filter(Boolean);
+      const count = num(p.peq_count);
+      if (peq.length === 0 && count > 0) parts.push(t("calibrate.filters.peq", { count: number(count) }));
+      Object.assign(params, { code: code(), filters: parts.join(" · ") });
+      break;
+    }
+    case "ba_cost":
+      params.value = f("value", 2);
+      break;
+    case "ba_bus_pass": {
+      // Upstream prints the cost it ends with: the second pass's when it is lower, the first's when that is kept.
+      const kept = p.kept_first === "true";
+      if (kept) key = "notice.ba_bus_pass.kept_first";
+      Object.assign(params, { first: f("first", 2), second: kept ? f("first", 2) : f("second", 2) });
       break;
     }
     case "bus_gain_anchored":

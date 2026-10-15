@@ -13,10 +13,15 @@
 }
 
 /* ── Verdict ───────────────────────────────────────────────────────────── */
+/* Every stat has one form, on three rows it shares with the other stats of
+   its row (subgrid): the label line, the band line (empty when the stat has
+   no band), then the value. A label that wraps in a narrow tile moves the
+   whole row's bands and values down together, so the values keep one
+   baseline. */
 .calibrate-stats {
   display: grid;
   grid-template-columns: minmax(170px, 1.3fr) minmax(130px, 1.1fr) repeat(3, minmax(90px, 1fr));
-  gap: var(--space-4);
+  gap: 0 var(--space-4);
   margin: 0;
 }
 
@@ -24,33 +29,45 @@
   .calibrate-stats {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
+
+  /* The second row of stats. */
+  .calibrate-stat:nth-child(n + 4) {
+    margin-top: var(--space-4);
+  }
 }
 
 .calibrate-stat {
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  gap: var(--space-1);
+  display: grid;
+  grid-row: span 3;
+  grid-template-rows: subgrid;
   min-width: 0;
 }
 
 .calibrate-stat__label {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 0 var(--space-1-5);
+  display: grid;
+  grid-row: span 2;
+  grid-template-rows: subgrid;
   color: var(--text-muted);
 }
 
 .calibrate-stat__detail {
+  grid-row: 2;
   font-size: var(--text-caption);
 }
 
 .calibrate-stat__value {
-  margin: 0;
+  margin: var(--space-1) 0 0;
   font-size: var(--text-title-s);
   font-weight: var(--weight-semibold);
   line-height: var(--leading-tight);
+}
+
+/* A display-size strut: every value's first line box is as tall as the lead
+   stat's large figure, so values that start on the same row share its
+   baseline whatever their own size. */
+.calibrate-stat__value::before {
+  content: "";
+  font-size: var(--text-display);
 }
 
 .calibrate-change {
@@ -82,17 +99,25 @@
   max-width: 72ch;
 }
 
+/* The figures and their notes are one block; the collapsed notes sit close
+   under the values so the card grows by one short line. */
+.calibrate-figures {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.ui-details.calibrate-notes summary {
+  margin-top: 0;
+}
+
 .calibrate-notes ul {
   display: flex;
   flex-direction: column;
   gap: var(--space-1);
   margin: var(--space-2) 0 0;
   padding-left: var(--space-5);
-}
-
-.calibrate-notes__raw {
-  font-family: var(--font-mono);
-  font-size: var(--text-caption);
 }
 
 /* ── Scorecard and graph ───────────────────────────────────────────────── */

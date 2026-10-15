@@ -2,7 +2,7 @@
 // correction state, measurement path and file. Each state is a noun
 // phrase; the dot's hue repeats the word, never replaces it.
 import type { ReactNode } from "react";
-import { useT } from "../i18n/react";
+import { useT, type Translate } from "../i18n/react";
 import type { MessageKey } from "../i18n";
 import { Spinner } from "../ui/Icon";
 import type { CalibrationState, PathKind, PathState, ProjectSummary } from "./model";
@@ -30,6 +30,11 @@ const PATH_STATE: Record<PathState, { key: MessageKey; tone: Tone }> = {
   error: { key: "frame.status.path.error", tone: "danger" },
 };
 
+/** "7.1.4" as is; an edited setup (the service's `custom`) in the word 시스템 uses for it. */
+function presetName(t: Translate, preset: string): string {
+  return preset === "custom" ? t("system.preset.custom") : preset;
+}
+
 function Value({ tone, children }: { tone?: Tone | undefined; children: ReactNode }) {
   return (
     <dd className="status-row__value">
@@ -53,7 +58,7 @@ export function ProjectStatus({ project }: { project: ProjectSummary }) {
         <dt>{t("frame.status.config")}</dt>
         <Value>
           {project.preset
-            ? t("frame.status.config.value", { preset: project.preset, subs: project.subCount, outputs: project.outputs })
+            ? t("frame.status.config.value", { preset: presetName(t, project.preset), subs: project.subCount, outputs: project.outputs })
             : t("frame.status.config.none")}
         </Value>
       </div>
