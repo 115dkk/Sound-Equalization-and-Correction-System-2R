@@ -326,6 +326,7 @@ const base: CalibrateView = {
   positions: [1, 2, 3],
   measuredRoles: [...fx.SAMPLE_ROLES],
   subWarnings: [],
+  curvesLoading: false,
   firBudget: 2097152,
   xoRecommendation: fx.xoRecommendation,
   running: null,
