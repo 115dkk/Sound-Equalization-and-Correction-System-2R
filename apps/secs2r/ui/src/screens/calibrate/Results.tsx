@@ -3,14 +3,13 @@
 // the channel the graph shows.
 import { useState } from "react";
 import { errorText } from "../../app/jobs/jobText";
-import { usePrefs } from "../../app/prefs";
 import { useNumber, useT } from "../../i18n/react";
 import type { ChannelResultLine } from "../../ipc/bindings/ChannelResultLine";
 import { Button, Card, DataTable, ErrorNotice, StatusPill, type Column } from "../../ui";
 import { roleCode } from "../../ui/maps/geometry";
 import { Stat } from "./controls";
 import { availableTabs } from "./ResultGraph";
-import { FAILED_TEXT, groupOf, modeName, modeSpecText, noticeText, subRoles, xoGroups } from "./text";
+import { FAILED_TEXT, groupOf, modeName, modeSpecText, noteLines, subRoles, xoGroups } from "./text";
 import type { CalibrateActions, CalibrateView, StaleReason } from "./types";
 
 const STALE_TEXT: Record<StaleReason | "unknown", "calibrate.stale.settings" | "calibrate.stale.target" | "calibrate.stale.measurements" | "calibrate.stale.unknown"> = {
@@ -41,7 +40,6 @@ function Change({ before, after }: { before: string; after: string }) {
 export function Verdict({ view }: { view: CalibrateView }) {
   const t = useT();
   const number = useNumber();
-  const { expert } = usePrefs();
   const result = view.results.calibration;
   const mimo = view.results.mimo;
   const failure = view.failure?.job === "calibrate" ? view.failure : null;
@@ -104,7 +102,8 @@ export function Verdict({ view }: { view: CalibrateView }) {
       : mimo.stale
         ? t("frame.status.calibration.stale")
         : t("calibrate.verdict.mimo.done", { kind: mimo.kind.toUpperCase(), count: mimo.support_count });
-  const notes = result.notes.filter((n) => n.code !== "rc_limit");
+  // The engine notes as sentences, for everyone, as upstream shows them; rc_limit is the RC card's line.
+  const notes = noteLines(t, number, result.notes.filter((note) => note.code !== "rc_limit"));
 
   return (
     <Card
@@ -124,38 +123,36 @@ export function Verdict({ view }: { view: CalibrateView }) {
           next={t("calibrate.stale.next")}
         />
       )}
-      <dl className="calibrate-stats">
-        <Stat id="calibrate.verdict.within" lead label={t("calibrate.verdict.within")} detail={t("calibrate.verdict.within.band")}>
-          <Change before={pct(v.within_1db_before_pct)} after={pct(v.within_1db_after_pct)} />
-        </Stat>
-        <Stat id="calibrate.verdict.gd" label={t("calibrate.verdict.gd")} detail={t("calibrate.verdict.gd.band")}>
-          <Change before={number(v.low_band_time_spread_before_ms, 1)} after={ms(v.low_band_time_spread_after_ms)} />
-        </Stat>
-        <Stat id="calibrate.verdict.spread" label={t("calibrate.verdict.spread")}>
-          {view.positions.length > 1 ? t("calibrate.unit.db", { value: number(v.position_spread_db, 1) }) : t("calibrate.verdict.spread.one")}
-        </Stat>
-        <Stat id="calibrate.verdict.delay" label={t("calibrate.verdict.delay")}>
-          {ms(result.latency_ms)}
-        </Stat>
-        <Stat id="calibrate.verdict.mimo" label={t("calibrate.verdict.mimo")}>
-          {mimoText}
-        </Stat>
-      </dl>
-      {expert && notes.length > 0 && (
-        <details className="ui-details calibrate-notes" data-ui="calibrate.verdict.notes">
-          <summary>{t("calibrate.verdict.notes", { count: notes.length })}</summary>
-          <ul>
-            {notes.map((note, i) => {
-              const text = noticeText(t, number, note);
-              return (
-                <li key={`${note.code}-${i}`} className={text ? undefined : "calibrate-notes__raw"}>
-                  {text ?? `${note.code} ${JSON.stringify(note.params)}`}
-                </li>
-              );
-            })}
-          </ul>
-        </details>
-      )}
+      <div className="calibrate-figures">
+        <dl className="calibrate-stats">
+          <Stat id="calibrate.verdict.within" lead label={t("calibrate.verdict.within")} detail={t("calibrate.verdict.within.band")}>
+            <Change before={pct(v.within_1db_before_pct)} after={pct(v.within_1db_after_pct)} />
+          </Stat>
+          <Stat id="calibrate.verdict.gd" label={t("calibrate.verdict.gd")} detail={t("calibrate.verdict.gd.band")}>
+            <Change before={number(v.low_band_time_spread_before_ms, 1)} after={ms(v.low_band_time_spread_after_ms)} />
+          </Stat>
+          <Stat id="calibrate.verdict.spread" label={t("calibrate.verdict.spread")}>
+            {view.positions.length > 1 ? t("calibrate.unit.db", { value: number(v.position_spread_db, 1) }) : t("calibrate.verdict.spread.one")}
+          </Stat>
+          <Stat id="calibrate.verdict.delay" label={t("calibrate.verdict.delay")}>
+            {ms(result.latency_ms)}
+          </Stat>
+          <Stat id="calibrate.verdict.mimo" label={t("calibrate.verdict.mimo")}>
+            {mimoText}
+          </Stat>
+        </dl>
+        {/* With the figures, as upstream shows them beside the total latency; collapsed. */}
+        {notes.length > 0 && (
+          <details className="ui-details calibrate-notes" data-ui="calibrate.verdict.notes">
+            <summary>{t("calibrate.verdict.notes", { count: notes.length })}</summary>
+            <ul>
+              {notes.map((line, i) => (
+                <li key={i}>{line}</li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </div>
     </Card>
   );
 }

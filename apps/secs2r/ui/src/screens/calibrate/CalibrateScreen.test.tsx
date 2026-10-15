@@ -145,6 +145,26 @@ describe("보정 screen", () => {
     expect(ui("calibrate.scorecard.card")).toBeNull();
   });
 
+  it("shows every engine note as a sentence, without 전문가 표시 and collapsed, as upstream does", () => {
+    setup(fx.splView);
+    const notes = must("calibrate.verdict.notes") as HTMLDetailsElement;
+    expect(notes.tagName).toBe("DETAILS");
+    expect(notes.open).toBe(false);
+    expect(must("calibrate.verdict.delay").compareDocumentPosition(notes) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // rc_limit is the RC card's line; the per-main phase records and the room modes read as one line each.
+    const lines = [...notes.querySelectorAll("li")].map((li) => li.textContent ?? "");
+    expect(notes.querySelector("summary")?.textContent).toBe("계산 메모 5개");
+    expect(lines).toEqual([
+      "FIR 2,048탭에 맞춰 위상 보정 여유를 8.0 ms에서 7.5 ms로 줄였습니다.",
+      "위상 보정 세기: L 0.90, R 0.90, C 0.90, Ls 0.90, Rs 0.90, Lrs 0.90, Rrs 0.90, Ltf 0.50, Rtf 0.50, Ltr 0.50, Rtr 0.50",
+      "오래 우는 룸 모드 2곳(34 Hz, 52 Hz)의 부스트를 4.0 dB로 제한했습니다.",
+      "BA 비용 0.84",
+      "BA 버스 PEQ 반영 비용 0.84 → 0.80",
+    ]);
+    // No raw code or parameter list reaches the screen.
+    for (const line of lines) expect(line).not.toMatch(/[a-z]+_[a-z]+|[{}[\]]/);
+  });
+
   it("says why a result is stale and why a run failed", () => {
     setup(fx.staleView);
     expect(must("calibrate.verdict.stale").textContent).toContain("보정 설정이 바뀌었습니다");

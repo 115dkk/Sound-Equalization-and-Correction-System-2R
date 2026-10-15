@@ -5,6 +5,7 @@ import { renderWith } from "../test/render";
 import { AppFrame } from "./AppFrame";
 import type { FrameModel, StepId } from "./model";
 import { neighbourStep } from "./model";
+import { ProjectStatus } from "./ProjectStatus";
 
 const model = (current: StepId, overrides: Partial<FrameModel["steps"]> = {}): FrameModel => ({
   current,
@@ -185,6 +186,19 @@ describe("app frame", () => {
     expect(status.textContent).toContain("REW · 연결됨");
     expect(status.textContent).toContain("거실.secs");
     expect(status.textContent).toContain("저장 안 한 변경");
+  });
+
+  it("names an edited setup with the word 시스템 uses, not the raw preset value", () => {
+    for (const [locale, text] of [
+      ["ko", "사용자 지정 · 서브 2 · 출력 13"],
+      ["en", "Custom · Subs: 2 · Outputs: 13"],
+    ] as const) {
+      const { unmount } = renderWith(<ProjectStatus project={{ ...model("system").project, preset: "custom" }} />, { locale });
+      const config = document.querySelector('[data-ui="frame.status.config"]')!;
+      expect(config.textContent).toContain(text);
+      expect(config.textContent).not.toContain("custom");
+      unmount();
+    }
   });
 
   it("speaks English when asked", () => {

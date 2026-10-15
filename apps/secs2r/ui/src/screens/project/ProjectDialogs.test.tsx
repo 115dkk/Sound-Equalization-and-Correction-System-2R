@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { PrefsScope } from "../../app/prefs";
 import { renderWith } from "../../test/render";
 import { ProjectDialogs } from "./ProjectDialogs";
 import { splitProjectPath, type ProjectDialog, type ProjectDialogsActions, type ProjectDialogsView, type UnsavedReason } from "./types";
@@ -113,6 +114,32 @@ describe("프로젝트 대화상자", () => {
     expect(act.openRecent).toHaveBeenCalledWith("D:/b/스튜디오.secs");
     expect(act.browseProject).toHaveBeenCalledTimes(1);
     expect(splitProjectPath("D:\\b\\스튜디오.secs")).toEqual({ name: "스튜디오", folder: "D:\\b" });
+  });
+
+  it("puts focus on the first choice of a form and on the safe action of a confirmation", () => {
+    // The dialog opens in a frame that is already up (its layer exists), as in the app.
+    const prefs = { locale: "ko", theme: "light", expert: false, accent: "default" } as const;
+    const tree = (dialog: ProjectDialog | null) => (
+      <PrefsScope initial={prefs}>
+        <ProjectDialogs view={{ dialog, busy: false, error: null }} actions={actions()} />
+      </PrefsScope>
+    );
+    const focused = (dialog: ProjectDialog) => {
+      const { rerender, unmount } = render(tree(null));
+      rerender(tree(dialog));
+      const id = document.activeElement?.getAttribute("data-ui") ?? null;
+      unmount();
+      return id;
+    };
+    // 새 프로젝트: the start choice (its chosen option, 빈 프로젝트 by default), not the close button.
+    expect(focused({ kind: "new" })).toBe("project.new.start.empty");
+    // 프로젝트 열기: the first recent project that can open (the open one is off), or 찾아보기 with none.
+    expect(focused({ kind: "open", recent: ["C:/a/거실.secs", "D:/b/스튜디오.secs"], current: "C:/a/거실.secs" })).toBe("project.open.recent.2");
+    expect(focused({ kind: "open", recent: ["C:/a/거실.secs"], current: null })).toBe("project.open.recent.1");
+    expect(focused({ kind: "open", recent: [], current: null })).toBe("project.open.browse");
+    // Confirmations: the action that keeps the work (저장하고 …) and the one the menu asked for (튜토리얼 시작).
+    expect(focused({ kind: "unsaved", reason: "close", fileName: "거실.secs" })).toBe("project.unsaved.save");
+    expect(focused({ kind: "tutorial", dirty: true })).toBe("project.tutorial.start");
   });
 
   it("shows a failed save with its cause and next step", () => {
