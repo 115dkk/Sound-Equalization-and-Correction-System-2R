@@ -895,6 +895,13 @@ status = "implemented"
 tests = ["secs-service::configure_validates_fields_and_host_stub_reports_its_error"]
 
 [[feature]]
+id = "ipc.measure_config_get"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::measure_config_get_reads_stored_settings_without_dirtying_the_project"]
+
+[[feature]]
 id = "ipc.measurement_records"
 kind = "ipc"
 milestone = "M5"

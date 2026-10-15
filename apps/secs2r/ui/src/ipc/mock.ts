@@ -202,7 +202,12 @@ export function createMockService(options: MockOptions = {}): MockService {
       if (job.kind === "status_watch") events.emit({ event: "measure_status", job: job.id, status: methods() });
       else {
         events.emit({ event: "meter", job: job.id, rms_dbfs: playing ? playing.master - 10 : -62, peak_dbfs: playing ? playing.master : -49, spl_db: playing ? 78.5 : 32, clipping: false });
-        if (playing && --playing.ticks <= 0) playing = null;
+        if (playing && --playing.ticks <= 0) {
+          levels.levels[playing.role] = playing.master; levels.spl[playing.role] = 78.5;
+          project = { ...needProject(), dirty: true };
+          events.emit({ event: "log", job: job.id, code: "level_play_end", params: { role: playing.role, outcome: "done" } });
+          playing = null;
+        }
       }
       return;
     }
@@ -233,7 +238,10 @@ export function createMockService(options: MockOptions = {}): MockService {
   };
   const stopMonitor = (kind: JobKind) => {
     const job = [...jobs.values()].find((j) => j.kind === kind);
-    if (kind === "level_monitor") playing = null;
+    if (kind === "level_monitor" && playing) {
+      if (job) events.emit({ event: "log", job: job.id, code: "level_play_end", params: { role: playing.role, outcome: "stopped" } });
+      playing = null;
+    }
     return job ? finish(job, "succeeded", null) : null;
   };
 
@@ -388,6 +396,7 @@ export function createMockService(options: MockOptions = {}): MockService {
         return { method: req.method, data: snapshot(job) };
       }
       case "measure_methods": return { method: req.method, data: methods() };
+      case "measure_config_get": needProject(); return { method: req.method, data: measureConfig };
       case "measure_configure": {
         needProject();
         const p = req.params;
@@ -423,16 +432,27 @@ export function createMockService(options: MockOptions = {}): MockService {
         for (const role of measureConfig.roles) levels.levels[role] ??= -12;
         project = { ...needProject(), dirty: true };
         return { method: req.method, data: levels };
-      case "level_stop": playing = null; return { method: req.method, data: null };
+      case "level_stop": {
+        const active = playing; playing = null;
+        if (active) {
+          const monitorJob = [...jobs.values()].find((job) => job.kind === "level_monitor");
+          if (monitorJob) events.emit({ event: "log", job: monitorJob.id, code: "level_play_end", params: { role: active.role, outcome: "stopped" } });
+        }
+        return { method: req.method, data: null };
+      }
       case "level_apply":
         measureConfig.sweep_level_dbfs = req.params.level.recommended_sweep_dbfs;
         project = { ...needProject(), dirty: true };
         return { method: req.method, data: measureConfig };
-      case "level_play":
-        needProject(); playing = { role: req.params.role, master: req.params.master_dbfs, ticks: 5 };
-        levels.levels[req.params.role] = req.params.master_dbfs; levels.spl[req.params.role] = 78.5;
-        project = { ...needProject(), dirty: true };
+      case "level_play": {
+        needProject();
+        if (playing) {
+          const monitorJob = [...jobs.values()].find((job) => job.kind === "level_monitor");
+          if (monitorJob) events.emit({ event: "log", job: monitorJob.id, code: "level_play_end", params: { role: playing.role, outcome: "stopped" } });
+        }
+        playing = { role: req.params.role, master: req.params.master_dbfs, ticks: 5 };
         return { method: req.method, data: null };
+      }
       case "rew_launch": return { method: req.method, data: fx.rewStatus };
       case "rew_info": return { method: req.method, data: fx.rewInfo };
       case "position_clear": {

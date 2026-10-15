@@ -31,8 +31,14 @@ describe("P33 mock wiring", () => {
     const second = await mock.request({ method: "measure_configure", params: { ...configure, sweep_length: 65536 } });
     expect(second).toMatchObject({ input_device: "mic", output_device: "hdmi", repetitions: 4, sweep_length: 65536, output_channels: first.output_channels });
     expect((await mock.request({ method: "config_get" })).speakers[0]?.bands[0]?.out).toBe(16);
+    const monitor = await mock.request({ method: "level_monitor_start", params: { role: null } });
+    const events: JobEvent[] = []; mock.events.subscribe((event) => events.push(event));
     await mock.request({ method: "level_play", params: { role: "L", master_dbfs: -20 } });
+    for (let i = 0; i < 5; i++) mock.tick();
     expect((await mock.request({ method: "levels_fill_defaults" })).levels).toMatchObject({ L: -20, R: -12 });
+    const ended = events.findIndex((event) => event.event === "log" && event.job === monitor.job && event.code === "level_play_end");
+    const lastMeter = events.reduce((index, event, current) => event.event === "meter" && event.job === monitor.job ? current : index, -1);
+    expect(ended).toBeGreaterThan(lastMeter);
     expect(await mock.request({ method: "level_apply", params: { level: { ...fx.levelResult, recommended_sweep_dbfs: -18 } } })).toMatchObject({ sweep_level_dbfs: -18, repetitions: 4 });
     await expect(mock.request({ method: "measure_configure", params: { ...configure, repetitions: 3 } })).rejects.toMatchObject({ error: { code: "invalid_request" } });
   });
@@ -139,7 +145,7 @@ describe("P33 mock wiring", () => {
       project_open: { method: "project_open", params: { path: "/saved.secs" } }, project_save: { method: "project_save", params: { path: null } },
       sample_load: { method: "sample_load", params: { positions: 1 } }, calibrate: { method: "calibrate", params: { settings: null, subs_only: false } }, recommend_xo: { method: "recommend_xo" },
       mimo: { method: "mimo", params: { settings: null } }, results: { method: "results" }, export: { method: "export", params: { kind: "before_after_mdat", folder: "" } },
-      job_cancel: { method: "job_cancel", params: { job: 1 } }, jobs: { method: "jobs" }, measure_methods: { method: "measure_methods" }, measure_configure: { method: "measure_configure", params: configure },
+      job_cancel: { method: "job_cancel", params: { job: 1 } }, jobs: { method: "jobs" }, measure_methods: { method: "measure_methods" }, measure_config_get: { method: "measure_config_get" }, measure_configure: { method: "measure_configure", params: configure },
       measurement_records: { method: "measurement_records" }, levels_get: { method: "levels_get" }, levels_fill_defaults: { method: "levels_fill_defaults" }, level_stop: { method: "level_stop" },
       level_check: { method: "level_check", params: { role: "L" } }, level_apply: { method: "level_apply", params: { level: fx.levelResult } },
       measure_position: { method: "measure_position", params: { position: 4 } }, position_clear: { method: "position_clear", params: { position: 1 } }, undo: { method: "undo", params: { token: "undo-1" } },

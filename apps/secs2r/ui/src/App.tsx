@@ -111,11 +111,11 @@ function Preferences({ root, initialPrefs }: { root: boolean; initialPrefs?: Pre
   const settings = useResource("appSettings");
   useEffect(() => { void session.start(); return () => session.dispose(); }, [session]);
   if (!settings) return null;
-  const initial: Prefs = initialPrefs ?? { locale: settings.language === "en" ? "en" : settings.language === "ko" ? "ko" : pickLocale(navigator.languages), expert: settings.expert_display, theme: "system", accent: "default" };
+  const initial: Prefs = initialPrefs ?? { locale: settings.language === "en" ? "en" : settings.language === "ko" ? "ko" : pickLocale(navigator.languages), expert: settings.expert_display, theme: settings.theme, accent: "default" };
   return <PrefsScope initial={initial} root={root} onChange={(prefs) => {
     const current = session.stores.appSettings.getSnapshot();
-    if (current && (current.language !== prefs.locale || current.expert_display !== prefs.expert)) {
-      session.run(() => session.call({ method: "app_settings_set", params: { settings: { ...current, language: prefs.locale, expert_display: prefs.expert } } }));
+    if (current && (current.language !== prefs.locale || current.expert_display !== prefs.expert || current.theme !== prefs.theme)) {
+      session.run(() => session.call({ method: "app_settings_set", params: { settings: { ...current, language: prefs.locale, expert_display: prefs.expert, theme: prefs.theme } } }));
     }
   }}><Shell /></PrefsScope>;
 }

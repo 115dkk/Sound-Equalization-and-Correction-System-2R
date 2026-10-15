@@ -11,6 +11,7 @@ import { useConnectScreen } from "./useConnectScreen";
 let mock: ReturnType<typeof createMockService>;
 let session: ReturnType<typeof createSession>;
 let pending: Promise<unknown>[];
+const ticks = (count: number) => { for (let i = 0; i < count; i++) mock.tick(); };
 const wrapper = ({ children }: { children: ReactNode }) => <SessionProvider value={session}>{children}</SessionProvider>;
 async function perform(work: () => unknown) {
   await act(async () => { await work(); while (pending.length) await Promise.all(pending.splice(0)); });
@@ -119,18 +120,24 @@ describe("useConnectScreen", () => {
     await session.configure({ method: "mock" });
     const { result } = renderHook(() => useConnectScreen(false), { wrapper });
     const a = result.current.actions;
-    vi.useFakeTimers();
+    const plays = () => mock.calls.filter((call) => call.method === "level_play");
     act(() => a.playLevel("L"));
-    await act(async () => { await vi.advanceTimersByTimeAsync(2650); });
+    await waitFor(() => expect(mock.calls).toContainEqual({ method: "level_play", params: { role: "L", master_dbfs: -20 } }));
+    // The mock burst ends after five monitor ticks with level_play_end.
+    await act(async () => { ticks(5); });
     await perform(() => {});
-    expect(mock.calls).toContainEqual({ method: "level_play", params: { role: "L", master_dbfs: -20 } });
+    expect(result.current.view?.level).toMatchObject({ playing: null, playingAll: false });
     await perform(a.stopLevel);
     expect(mock.calls).toContainEqual({ method: "level_stop" });
     mock.calls.length = 0;
     act(a.playAllLevels);
-    await act(async () => { await vi.advanceTimersByTimeAsync(2650 * levelRoles(result.current.view!).length); });
+    const roles = levelRoles(result.current.view!);
+    for (let i = 0; i < roles.length; i++) {
+      await waitFor(() => expect(plays()).toHaveLength(i + 1));
+      await act(async () => { ticks(5); });
+    }
     await perform(() => {});
-    expect(mock.calls.filter((call) => call.method === "level_play").map((call) => call.params.role)).toEqual(levelRoles(result.current.view!));
+    expect(plays().map((call) => call.params.role)).toEqual(roles);
     expect(mock.calls).toContainEqual({ method: "project_info" });
     expect(result.current.view?.level).toMatchObject({ playing: null, playingAll: false });
     await perform(a.skipLevels);
@@ -148,19 +155,34 @@ describe("useConnectScreen", () => {
     expect(result.current.view?.settings?.sweep_level_dbfs).toBe(level.recommended_sweep_dbfs);
   });
 
-  it("waits for the real nonblocking service burst and stop cancels its timer promptly", async () => {
+  it("moves on when the monitor reports the burst ended, and stop ends the wait", async () => {
     await session.configure({ method: "mock" });
-    vi.useFakeTimers();
+    const plays = () => mock.calls.filter((call) => call.method === "level_play");
     const { result } = renderHook(() => useConnectScreen(false), { wrapper });
     act(result.current.actions.playAllLevels);
-    await act(async () => { await vi.advanceTimersByTimeAsync(2649); });
-    expect(mock.calls.filter((call) => call.method === "level_play")).toHaveLength(1);
+    await waitFor(() => expect(plays()).toHaveLength(1));
+    await act(async () => { ticks(4); });
+    expect(plays()).toHaveLength(1);
+    await act(async () => { ticks(1); });
+    await waitFor(() => expect(plays()).toHaveLength(2));
+    await perform(result.current.actions.stopLevel);
+    expect(result.current.view?.level).toMatchObject({ playing: null, playingAll: false });
+    await act(async () => { ticks(10); });
+    expect(plays()).toHaveLength(2);
+  });
+
+  it("gives up on a lost end event after 8 s, and stop cancels that timer", async () => {
+    await session.configure({ method: "mock" });
+    vi.useFakeTimers();
+    const plays = () => mock.calls.filter((call) => call.method === "level_play");
+    const { result } = renderHook(() => useConnectScreen(false), { wrapper });
+    act(result.current.actions.playAllLevels);
+    await act(async () => { await vi.advanceTimersByTimeAsync(7999); });
+    expect(plays()).toHaveLength(1);
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
-    expect(mock.calls.filter((call) => call.method === "level_play")).toHaveLength(2);
+    expect(plays()).toHaveLength(2);
     await perform(result.current.actions.stopLevel);
     expect(vi.getTimerCount()).toBe(0);
-    await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
-    expect(mock.calls.filter((call) => call.method === "level_play")).toHaveLength(2);
     expect(result.current.view?.level).toMatchObject({ playing: null, playingAll: false });
   });
 
