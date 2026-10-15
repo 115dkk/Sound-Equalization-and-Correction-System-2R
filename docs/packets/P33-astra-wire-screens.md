@@ -18,11 +18,13 @@ channel), and the generated bindings.
 
 ## What you build
 
-1. **The Tauri bridge** (`src/ipc/tauri.ts`): one long-lived
-   `Channel<JobEvent>` (from `@tauri-apps/api/core`) whose messages go to the
-   event bus, passed as `events` with every `secs_call`; `createTauriIpc():
-   Ipc`. Check how `Channel` is passed and reused in `@tauri-apps/api` 2.12
-   before you rely on it.
+1. **The Tauri bridge** (`src/ipc/tauri.ts`): a **new**
+   `Channel<JobEvent>` (from `@tauri-apps/api/core`) for every `secs_call`,
+   passed as `events`, whose messages go to the one event bus;
+   `createTauriIpc(): Ipc`. One long-lived channel does not work: the Rust
+   side builds a channel per request and ends it when the request's last
+   clone drops (`src/ipc/channelReuse.test.ts` shows it). A job keeps its
+   channel until it finishes, so its events arrive on it.
 2. **State** (`src/state/`, new; React `useSyncExternalStore`, no library):
    small stores for what the service owns (project info, configuration,
    layout and estimate, DSP, measurement methods, settings, records, curves
@@ -38,9 +40,10 @@ channel), and the generated bindings.
    builds the screen's `View` from the stores plus the host state the types
    name (selected tab, channel, graph hidden, plot range, pending mdat scan,
    …) and returns its `Actions`, each calling the IPC method its JSDoc
-   names. Destructive actions resolve to the undo token. Replace P31b's
-   `settingsEdit.ts`: `changeSetting(edit)` calls `calibration_settings_edit`;
-   delete the file and its test.
+   names. Destructive actions resolve to the undo token.
+   `changeSetting(edit)` calls `calibration_settings_edit` (the edit rules
+   left the screen; `settingsView.ts` keeps only the read-side helpers), and
+   the view's `subWarnings` comes from `sub_warnings`.
 4. **The frame model** (`src/app/useFrameModel.ts`): the rail's step states
    from each `<step>StepState(view)`, the project summary from the stores,
    the current step, navigation.
@@ -59,7 +62,9 @@ channel), and the generated bindings.
 7. **Closing and the tutorial.** Closing the window with unsaved changes
    asks first (`getCurrentWindow().onCloseRequested`, prevent, then close
    after the answer); add only the window permission this needs to
-   `apps/secs2r/capabilities/default.json`. Starting the tutorial creates
+   `apps/secs2r/capabilities/default.json`. The app stops the service's
+   jobs when the window is destroyed (`apps/secs2r/src/main.rs`), not on the
+   close request, so a cancelled close keeps them running. Starting the tutorial creates
    `project_new { sample: true, tutorial: true }` and switches the accent;
    `tutorial_blocked` errors show as the screens' notes.
 8. **The mock answers everything.** `src/ipc/mock.ts` answers every
@@ -72,6 +77,14 @@ channel), and the generated bindings.
    CamillaDSP, asserting the IPC calls in order and what each screen shows
    at the end. Add tests for the trigger table and for each hook's actions
    (the IPC method and params each one sends).
+
+## Already done before this packet ran
+
+A first run stopped on three blockers; Claude fixed them on this branch: a
+channel per call (item 1), the edit rules removed from the screen
+(`settingsEdit.ts` → `settingsView.ts`, `subWarnings` in the view), and the
+job shutdown moved to window destruction. Keep
+`src/ipc/channelReuse.test.ts`.
 
 ## Rules
 
