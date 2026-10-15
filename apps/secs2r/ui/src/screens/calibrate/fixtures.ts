@@ -310,6 +310,7 @@ const base: CalibrateView = {
   config: sampleConfig,
   positions: [1, 2, 3],
   measuredRoles: [...fx.SAMPLE_ROLES],
+  subWarnings: [],
   firBudget: 2097152,
   xoRecommendation: fx.xoRecommendation,
   running: null,
@@ -347,6 +348,8 @@ export const baView: CalibrateView = {
   curves: baResult(),
   lines: lines({ ba: baWarnLines }),
   settings: { ...baseSettings, subs_manual: { SW2: { ...defaultSub(), mode: "fixed", gain_db: 13.4, delay_ms: 1.2, polarity: -1, hp_hz: 40, lp_hz: 60 } }, sub_main_delay_ms: 0.4 },
+  // What sub_warnings answers for these settings: SW2's LP is below twice its HP.
+  subWarnings: [{ code: "sub_narrow_band", params: { role: "SW2", hp_hz: "40", lp_hz: "60" } }],
 };
 
 export const staleView: CalibrateView = {

@@ -22,11 +22,10 @@ import {
   infraState,
   layoutOf,
   roomVolume,
-  subFilterWarnings,
   subModeChoice,
   subOf,
   subValuesApply,
-} from "./settingsEdit";
+} from "./settingsView";
 import { FAILED_TEXT, MODES, MODE_EFFECT, MODE_NAME, bandTypeText, filterSpec, groupName, modeSpecText, noticeText, subRoles, xoGroups } from "./text";
 import type { BandTypeChoice, CalibrateActions, CalibrateJob, CalibrateView, SettingEdit, SubLayout, SubModeChoice } from "./types";
 
@@ -534,7 +533,7 @@ function BaSection({ view, actions, editSub }: Props & { editSub?: string | unde
   const tokens = colorTokens(subs, () => true);
   const role = editing && subs.includes(editing) ? editing : subs[0]!;
   const infra = infraState(s, subs);
-  const warnings = subFilterWarnings(s, subs);
+  const warnings = view.subWarnings;
   const result = view.results.calibration;
   const canTake = !!result && result.chain.subs.length > 0;
   const busy = view.running !== null;
@@ -578,9 +577,9 @@ function BaSection({ view, actions, editSub }: Props & { editSub?: string | unde
       {warnings.length > 0 && (
         <ul className="calibrate-warnings" data-ui="calibrate.ba.settings_warnings">
           {warnings.map((w) => (
-            <li key={w.role}>
+            <li key={`${w.code}.${w.params.role ?? ""}`}>
               <Icon name="warning" size={16} />
-              <span>{noticeText(t, number, { code: "sub_narrow_band", params: { role: w.role, hp_hz: String(w.hp_hz), lp_hz: String(w.lp_hz) } })}</span>
+              <span>{noticeText(t, number, w)}</span>
             </li>
           ))}
         </ul>

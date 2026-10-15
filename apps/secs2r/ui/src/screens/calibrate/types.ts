@@ -12,6 +12,8 @@ import type { ModeSpecResult } from "../../ipc/bindings/ModeSpecResult";
 import type { ResultCurvesResult } from "../../ipc/bindings/ResultCurvesResult";
 import type { ResultLinesResult } from "../../ipc/bindings/ResultLinesResult";
 import type { ResultTab } from "../../ipc/bindings/ResultTab";
+import type { Notice } from "../../ipc/bindings/Notice";
+import type { SettingEdit } from "../../ipc/bindings/SettingEdit";
 import type { ResultsSummary } from "../../ipc/bindings/ResultsSummary";
 import type { SubEntry } from "../../ipc/bindings/SubEntry";
 import type { TargetResult } from "../../ipc/bindings/TargetResult";
@@ -78,50 +80,22 @@ export type CalibrateView = {
   channel: string | null;
   /** Selected XO group (configuration group key, `프론트` …); null before one exists. */
   xoGroup: string | null;
+  /** sub_warnings: the subs' filter warnings for the current settings (upstream `sub_filter_warnings`, shown before a run). */
+  subWarnings: Notice[];
 };
 
-/** A sub's BA mode as the screen offers it: 자동, 고정, 묶음 A, 묶음 B. */
-export type SubModeChoice = "auto" | "fixed" | "bundle:A" | "bundle:B";
-export type SubLayout = "values" | "dba" | "multi";
-export type BandTypeChoice = BandType | "off";
-
 /**
- * One change to the calibration settings. Every one is stored with
- * `calibration_settings_set { settings: applySettingEdit(view.settings, edit) }`
- * (settingsEdit.ts ports upstream `CalibrationSettings.set_sub`,
- * `set_layout`, `StepCalibration.set_infra` and the room volume rules) and
- * marks the result stale; nothing recomputes on its own.
+ * One change to the calibration settings, as the service takes it
+ * (`calibration_settings_edit`, which applies upstream's rules: joining a
+ * group, sharing filters, the infra sub, the room volume, the limits). Every
+ * edit marks the result stale; nothing recomputes on its own.
+ * `SubModeChoice` is a sub's BA mode as the screen offers it (자동, 고정,
+ * 묶음 A, 묶음 B); `BandTypeChoice` adds "off" to the filter types.
  */
-export type SettingEdit =
-  | { kind: "mode"; mode: Mode }
-  | { kind: "ultra_ms"; ms: number }
-  | { kind: "rc_lo"; hz: number }
-  /** null = automatic upper limit (Schroeder, at most 500 Hz). */
-  | { kind: "rc_hi"; hz: number | null }
-  /** 0 = no room volume; clears dimensions that no longer match it. */
-  | { kind: "room_volume"; m3: number }
-  /** Width, depth, height in m; all three set the volume. */
-  | { kind: "room_dims"; dims: [number, number, number] }
-  | { kind: "boost_max"; db: number }
-  | { kind: "xo"; group: string; hz: number }
-  | { kind: "xo_peq"; on?: boolean; lo?: number; hi?: number }
-  /** The infra sub (null: none) with its crossover; `subs` are the configured sub roles. */
-  | { kind: "infra"; role: string | null; hz: number; type: BandType; subs: readonly string[] }
-  | { kind: "infra_boost"; db: number }
-  | { kind: "sub_mode"; role: string; mode: SubModeChoice }
-  | { kind: "sub_layout"; bundle: string; layout: SubLayout }
-  | { kind: "rear_trim"; bundle: string; ms: number }
-  /** Values, filters, DBA row or MIMO support of one sub. */
-  | { kind: "sub"; role: string; patch: Partial<Omit<SubEntry, "mode" | "bundle">> }
-  /** Picking a type turns the filter on (HP 20 Hz, LP 80 Hz when empty); "off" turns it off. */
-  | { kind: "sub_band_type"; role: string; band: "hp" | "lp"; type: BandTypeChoice }
-  | { kind: "main_delay"; ms: number }
-  | { kind: "mimo_on"; on: boolean }
-  | { kind: "fsiso"; hz: number }
-  /** null = automatic lower limit. */
-  | { kind: "mimo_low"; hz: number | null }
-  | { kind: "mimo_max"; count: number }
-  | { kind: "mimo_fir"; on: boolean };
+export type { BandTypeChoice } from "../../ipc/bindings/BandTypeChoice";
+export type { SettingEdit } from "../../ipc/bindings/SettingEdit";
+export type { SubLayout } from "../../ipc/bindings/SubLayout";
+export type { SubModeChoice } from "../../ipc/bindings/SubModeChoice";
 
 export type CalibrateActions = {
   /** calibrate { settings: null, subs_only: false } (a first run without an XO recommendation recommends first: the service's business) */
@@ -140,7 +114,7 @@ export type CalibrateActions = {
   selectXoGroup: (group: string) => void;
   /** result_curves { tab: "xo", channel, group, xo_hz: hz } while the XO line is dragged; stores nothing */
   previewXo: (group: string, hz: number) => void;
-  /** calibration_settings_set { settings: applySettingEdit(view.settings, edit) } */
+  /** calibration_settings_edit { edit } */
   changeSetting: (edit: SettingEdit) => void;
   /** sub_take_values */
   takeSubValues: () => void;
