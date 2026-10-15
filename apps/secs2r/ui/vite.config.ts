@@ -23,6 +23,17 @@ export default defineConfig(({ mode }) => ({
         mode === "app"
           ? { main: resolve(import.meta.dirname, "index.html") }
           : { main: resolve(import.meta.dirname, "index.html"), gallery: resolve(import.meta.dirname, "gallery.html") },
+      // The libraries and the two catalogs go in their own chunks so no chunk
+      // passes the 500 kB warning. All are static imports: the app still
+      // loads at once, with nothing lazy to wait for.
+      output: {
+        codeSplitting: {
+          groups: [
+            { name: "vendor", test: /node_modules/ },
+            { name: "catalogs", test: /src[\\/]i18n[\\/][a-z]+\.json$/ },
+          ],
+        },
+      },
     },
   },
   test: {
