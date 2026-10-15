@@ -112,9 +112,8 @@ function CalibrateFrame({
   fileName?: string | undefined;
 }) {
   const t = useT();
-  const header = calibrateHeader(view, noActions, t);
   return (
-    <FrameBox frame={frameOf(view, fileName)} jobs={jobs} primaryBusy={header.primary?.busy ?? false} noPrimary={!header.primary} headerStatus={header.status}>
+    <FrameBox frame={frameOf(view, fileName)} jobs={jobs} header={calibrateHeader(view, noActions, t)}>
       <CalibrateScreen view={view} actions={noActions} initial={initial} />
       {scrollTo && <ScrollTo target={scrollTo} />}
     </FrameBox>
@@ -147,7 +146,7 @@ export const calibrateSpecimens: SpecimenDef[] = [
   frame("subs-only", "subs-only result on BA (DBA group)", () => <CalibrateFrame view={fx.subsOnlyView} />),
   frame("mimo", "MIMO computed: SPL with the MIMO curve", () => <CalibrateFrame view={fx.mimoView} />),
   frame("mimo-settings", "MIMO section after a run", () => <CalibrateFrame view={fx.mimoView} scrollTo="calibrate.settings.mimo" />),
-  frame("mimo-running", "MIMO computing: the other jobs are disabled", () => (
+  frame("mimo-running", "MIMO computing: 보정 계산 and the other jobs are off", () => (
     <CalibrateFrame view={fx.runningMimoView} jobs={runningJobs("mimo", "engine.mimo_iir", 11)} scrollTo="calibrate.settings.ba" />
   )),
   frame("settings", "settings: mode and correction range", () => <CalibrateFrame view={fx.splView} scrollTo="calibrate.settings" />),

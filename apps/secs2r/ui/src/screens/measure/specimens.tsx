@@ -2,12 +2,10 @@
 // of the packet in a 1280 × 800 frame, the densest one again at 1024 × 700,
 // and the two mdat dialogs drawn in place over their frame.
 import type { ReactNode } from "react";
-import { AppFrame } from "../../app/AppFrame";
-import { JobTray } from "../../app/jobs/JobTray";
 import { initialJobs, type JobsState } from "../../app/jobs/jobStore";
 import type { FrameModel, PathKind, StepState } from "../../app/model";
 import { PrefsScope, usePrefs } from "../../app/prefs";
-import { replay, staticApi, T0 } from "../../gallery/frameSpecimens";
+import { FrameBox, replay, T0 } from "../../gallery/frameSpecimens";
 import type { SectionDef, SpecimenDef } from "../../gallery/Specimen";
 import { useT } from "../../i18n/react";
 import { baseName } from "./format";
@@ -38,6 +36,7 @@ export const noopActions: MeasureActions = {
   undo: () => Promise.resolve(),
   selectPosition: noop,
   setGraphHidden: noop,
+  setPlotRange: noop,
   setStartDelay: noop,
   setSweepLength: noop,
   setRepetitions: noop,
@@ -84,21 +83,10 @@ function frameModel(view: MeasureView): FrameModel {
 
 function MeasureFrame({ view, jobs = initialJobs, now = T0 + 16000 }: { view: MeasureView; jobs?: JobsState; now?: number }) {
   const t = useT();
-  const header = measureHeader(view, noopActions, t);
   return (
-    <AppFrame
-      model={frameModel(view)}
-      onNavigate={noop}
-      primary={header.primary}
-      headerStatus={header.status}
-      projectActions={{ onNew: noop, onOpen: noop, onSave: noop, onSaveAs: noop }}
-      onHelp={noop}
-      version={{ version: "0.13.0", prerelease: true }}
-      tray={<JobTray api={staticApi(jobs, now)} />}
-      shortcuts={false}
-    >
+    <FrameBox frame={frameModel(view)} jobs={jobs} now={now} header={measureHeader(view, noopActions, t)}>
       <MeasureScreen view={view} actions={noopActions} />
-    </AppFrame>
+    </FrameBox>
   );
 }
 

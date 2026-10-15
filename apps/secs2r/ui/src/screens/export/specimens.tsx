@@ -69,11 +69,10 @@ export function ExportSpecimen({
   children?: ReactNode;
 }) {
   const t = useT();
-  const header = exportHeader(view, noopExportActions, t);
   const screen = <ExportScreen view={view} actions={noopExportActions} initialAdvanced={initialAdvanced ?? false} />;
   return (
     <>
-      <FrameBox frame={exportFrame(view, fileName)} jobs={jobs} primaryBusy={view.exporting !== null} headerStatus={header.status}>
+      <FrameBox frame={exportFrame(view, fileName)} jobs={jobs} header={exportHeader(view, noopExportActions, t)}>
         {scrolled ? <ScrolledToEnd>{screen}</ScrolledToEnd> : screen}
       </FrameBox>
       {children}

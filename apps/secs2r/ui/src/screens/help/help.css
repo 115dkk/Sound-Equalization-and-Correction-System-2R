@@ -1,4 +1,6 @@
-/* 도움말 panel. Tokens only. Long text is body size (16 px). */
+/* 도움말 panel. Tokens only. Long text is body size (16 px). It is placed
+   against the frame's aside slot (the box between the step header and the
+   job tray) and leaves the left of the content in view. */
 
 .help-panel {
   position: absolute;
@@ -8,7 +10,7 @@
   z-index: var(--z-popover);
   display: flex;
   flex-direction: column;
-  width: min(540px, calc(100% - var(--rail-w) - var(--space-12)));
+  width: min(540px, calc(100% - var(--space-12)));
   border-radius: var(--radius-lg);
   background: var(--surface-raised);
   box-shadow: var(--shadow-dialog);

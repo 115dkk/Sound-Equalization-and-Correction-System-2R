@@ -6,6 +6,7 @@ import { PrefsScope } from "../../app/prefs";
 import { StepHeader } from "../../app/StepHeader";
 import { translate } from "../../i18n";
 import type { Translate } from "../../i18n/react";
+import { installFakeCanvas } from "../../test/canvas";
 import { renderWith } from "../../test/render";
 import {
   MEASURE_FIXTURES,
@@ -76,40 +77,9 @@ export const REACH_IDS = [
 
 const t: Translate = (key, params) => translate("ko", key, params);
 
-/**
- * happy-dom has no 2D canvas; uPlot draws the measurement graph on one. A
- * context that accepts every call keeps the real graph and legend in the
- * tests (their ids are part of the reach table).
- */
-function fakeContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
-  const fixed: Record<PropertyKey, unknown> = {
-    canvas,
-    measureText: () => ({ width: 0, actualBoundingBoxAscent: 0, actualBoundingBoxDescent: 0 }),
-    getImageData: () => ({ data: new Uint8ClampedArray(4) }),
-    createLinearGradient: () => ({ addColorStop: () => {} }),
-    getLineDash: () => [],
-  };
-  return new Proxy(fixed, {
-    get: (target, key) => (key in target ? target[key] : () => {}),
-    set: (target, key, value) => {
-      target[key] = value;
-      return true;
-    },
-  }) as unknown as CanvasRenderingContext2D;
-}
-
-/** Path2D likewise (uPlot builds its series paths with it). */
-class FakePath2D {
-  constructor() {
-    return new Proxy(this, { get: (target, key) => (key in target ? (target as Record<PropertyKey, unknown>)[key] : () => {}) });
-  }
-}
-
+// The real graph and legend draw on a fake canvas (their ids are part of the reach table).
 beforeAll(() => {
-  vi.stubGlobal("Path2D", FakePath2D);
-  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function (this: HTMLCanvasElement) {
-    return fakeContext(this);
-  } as never);
+  installFakeCanvas();
 });
 
 function makeActions(): MeasureActions & { [K in keyof MeasureActions]: ReturnType<typeof vi.fn> } {
@@ -120,6 +90,7 @@ function makeActions(): MeasureActions & { [K in keyof MeasureActions]: ReturnTy
     undo: vi.fn(() => Promise.resolve()),
     selectPosition: vi.fn(),
     setGraphHidden: vi.fn(),
+    setPlotRange: vi.fn(),
     setStartDelay: vi.fn(),
     setSweepLength: vi.fn(),
     setRepetitions: vi.fn(),
@@ -235,6 +206,15 @@ describe("측정·가져오기 screen", () => {
     expect(ui("measure.graph.toggle").textContent).toBe("그래프 보기");
     fireEvent.click(ui("measure.graph.toggle"));
     expect(actions.setGraphHidden).toHaveBeenCalledWith(false);
+  });
+
+  it("draws the axis range P33 keeps for the run and reports the user's pick", () => {
+    const actions = renderStep({ ...partialView, plotRange: { x: [20, 2000], y: null } });
+    const plot = ui("measure.plot");
+    expect(document.getElementById(plot.getAttribute("aria-describedby") ?? "")?.textContent).toContain("20–2k Hz");
+    fireEvent.click(ui("measure.plot.axes"));
+    fireEvent.click(ui("measure.plot.axes.auto"));
+    expect(actions.setPlotRange).toHaveBeenCalledWith({ x: null, y: null });
   });
 
   it("shows the running position's progress and cancels its job", () => {

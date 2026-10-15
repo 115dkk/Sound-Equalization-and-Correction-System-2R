@@ -187,10 +187,16 @@ describe("보정 screen", () => {
 
   it("edits the target on SPL: keys move a point, a double-click adds one, the menu applies presets, saves and loads", () => {
     const actions = setup(fx.splView);
+    // Two nudges and the key's release store the target once.
+    const point = must("calibrate.target.point.2");
+    fireEvent.keyDown(point, { key: "ArrowUp" });
     fireEvent.keyDown(must("calibrate.target.point.2"), { key: "ArrowUp" });
+    expect(actions.setTargetPoints).not.toHaveBeenCalled();
+    fireEvent.keyUp(must("calibrate.target.point.2"), { key: "ArrowUp" });
+    expect(actions.setTargetPoints).toHaveBeenCalledTimes(1);
     expect(actions.setTargetPoints).toHaveBeenLastCalledWith([
       [25, 6],
-      [60, 5.5],
+      [60, 6],
       [120, 1],
       [1000, 0],
       [16000, -3],
@@ -199,7 +205,10 @@ describe("보정 screen", () => {
     expect(actions.setTargetPoints.mock.lastCall?.[0]).toContainEqual([300, 2]);
     fireEvent.click(must("calibrate.target.menu"));
     const menu = must("calibrate.target.menu.list");
-    expect(within(menu).getByText("하만").closest("button")?.querySelector("svg")).not.toBeNull();
+    // The current preset is the checked choice; 사용자 지정 is a state, not a command.
+    expect(within(menu).getByRole("menuitemradio", { name: "하만" }).getAttribute("aria-checked")).toBe("true");
+    expect(within(menu).getByRole("menuitemradio", { name: "플랫" }).getAttribute("aria-checked")).toBe("false");
+    expect(must("calibrate.target.custom").getAttribute("aria-checked")).toBe("false");
     expect((must("calibrate.target.custom") as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(must("calibrate.target.preset.flat"));
     expect(actions.applyTargetPreset).toHaveBeenCalledWith("flat");
@@ -331,8 +340,11 @@ describe("보정 screen", () => {
     idle.primary?.onClick();
     expect(actions.calibrate).toHaveBeenCalled();
     expect(calibrateHeader(fx.computingView, actions, t).primary?.busy).toBe(true);
+    expect(idle.primary?.disabled).toBe(false);
+    // Another job of this screen runs: 보정 계산 stays in place, off, and the pill says why.
     const mimo = calibrateHeader(fx.runningMimoView, actions, t);
-    expect(mimo.primary).toBeUndefined();
+    expect(mimo.primary?.disabled).toBe(true);
+    expect(mimo.primary?.busy).toBe(false);
     renderWith(<>{mimo.status}</>);
     expect(must("calibrate.running").textContent).toBe("MIMO 계산 중");
     cleanupAll();

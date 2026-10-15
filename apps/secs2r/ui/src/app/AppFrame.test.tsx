@@ -96,6 +96,58 @@ describe("app frame", () => {
     expect(document.querySelector('[data-ui="frame.header.blocked"]')).toBeNull();
   });
 
+  it("turns the primary off when the screen says so and names the status beside the title as the reason", () => {
+    const onClick = vi.fn();
+    renderWith(
+      <AppFrame
+        model={model("measure")}
+        onNavigate={() => {}}
+        primary={{ id: "step.primary", label: "Go", onClick, disabled: true }}
+        headerStatus={<span>MIMO 계산 중</span>}
+        projectActions={{ onNew: () => {}, onOpen: () => {}, onSave: () => {}, onSaveAs: () => {} }}
+        onHelp={() => {}}
+        version={null}
+        tray={<div />}
+        shortcuts={false}
+      >
+        <p>content</p>
+      </AppFrame>,
+    );
+    const primary = screen.getByRole("button", { name: "Go" }) as HTMLButtonElement;
+    expect(primary.disabled).toBe(true);
+    expect(primary.getAttribute("aria-busy")).toBeNull();
+    expect(document.getElementById(primary.getAttribute("aria-describedby") ?? "")?.textContent).toBe("MIMO 계산 중");
+    fireEvent.click(primary);
+    expect(onClick).not.toHaveBeenCalled();
+    expect(document.querySelector('[data-ui="frame.header.blocked"]')).toBeNull();
+  });
+
+  it("places the aside between the step header and the job tray, beside the content", () => {
+    renderWith(
+      <AppFrame
+        model={model("measure")}
+        onNavigate={() => {}}
+        projectActions={{ onNew: () => {}, onOpen: () => {}, onSave: () => {}, onSaveAs: () => {} }}
+        onHelp={() => {}}
+        version={null}
+        tray={<div data-ui="jobs.tray" />}
+        aside={<aside data-ui="help">help</aside>}
+        shortcuts={false}
+      >
+        <p>content</p>
+      </AppFrame>,
+    );
+    const aside = document.querySelector('[data-ui="help"]')!;
+    const content = document.querySelector('[data-ui="frame.content"]')!;
+    // Its positioned parent is the box that holds the content: below the header, above the tray.
+    expect(aside.parentElement).toBe(content.parentElement);
+    expect(content.contains(aside)).toBe(false);
+    const body = aside.parentElement!;
+    expect(body.className).toBe("app-body");
+    expect(body.previousElementSibling?.getAttribute("data-ui")).toBe("frame.header");
+    expect(body.nextElementSibling?.getAttribute("data-ui")).toBe("jobs.tray");
+  });
+
   it("navigates from the rail and does not open skipped steps", () => {
     const handlers = setup("measure");
     fireEvent.click(railButton("calibrate"));

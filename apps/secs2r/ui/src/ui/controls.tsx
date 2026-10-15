@@ -18,6 +18,7 @@ export function Select<V extends string>({
   hint,
   error,
   disabled,
+  inline,
 }: {
   id: string;
   label: ReactNode;
@@ -27,10 +28,13 @@ export function Select<V extends string>({
   hint?: ReactNode;
   error?: ReactNode;
   disabled?: boolean;
+  /** The label on the left of a narrower box, for tool bars and dense rows (a graph's channel). */
+  inline?: boolean;
 }) {
+  const box = ["ui-select", error && "ui-select--invalid", disabled && "ui-select--disabled"].filter(Boolean).join(" ");
   return (
-    <Field id={id} label={label} hint={hint} error={error}>
-      <div className={["ui-select", error && "ui-select--invalid"].filter(Boolean).join(" ")}>
+    <Field id={id} label={label} hint={hint} error={error} {...(inline ? { inline: true, className: "ui-select-field--inline" } : {})}>
+      <div className={box}>
         <select
           id={id}
           data-ui={id}

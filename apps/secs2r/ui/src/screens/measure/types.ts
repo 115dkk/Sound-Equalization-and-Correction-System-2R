@@ -15,6 +15,7 @@ import type { MeasurementCurvesResult } from "../../ipc/bindings/MeasurementCurv
 import type { Notice } from "../../ipc/bindings/Notice";
 import type { PositionEstimateResult } from "../../ipc/bindings/PositionEstimateResult";
 import type { ProjectInfo } from "../../ipc/bindings/ProjectInfo";
+import type { AxisRangeValue } from "../../ui/plot/AxisRange";
 
 /**
  * How this project gets its measurements. `measure`: a measurement method is
@@ -120,6 +121,8 @@ export type MeasureView = {
   selected: number | null;
   /** The graph is hidden and the map drawn larger. P33 keeps it across visits. */
   graphHidden: boolean;
+  /** The measurement graph's axis range from its popover (null limits: the graph's own). P33 keeps it for the run, as upstream does. */
+  plotRange: AxisRangeValue;
   /** An mdat file waiting in the assignment dialog; null when the dialog is closed. */
   mdat: MdatPending | null;
 };
@@ -142,6 +145,8 @@ export type MeasureActions = {
   selectPosition: (position: number) => void;
   /** Host: sets `view.graphHidden`. */
   setGraphHidden: (hidden: boolean) => void;
+  /** Host: sets `view.plotRange` (the axis popover's 적용, or 자동 for a limit). */
+  setPlotRange: (range: AxisRangeValue) => void;
   /** `layout_set { count: null, start_delay, timing: null, confirm: false }`. */
   setStartDelay: (delay: StartDelay) => void | Promise<void>;
   /** `measure_configure { method: view.config.method, sweep_length, output_channels: [], every other field null }`. */

@@ -41,9 +41,9 @@ export function CalibrateScreen({ view, actions, initial }: CalibrateScreenProps
 /**
  * The step header: 보정 계산 (one primary action) and, beside the title, the
  * job of this screen that runs or the stale result. The primary is busy
- * while the correction runs; while another of this screen's jobs runs it is
- * left out, so a second job cannot start (the frame's PrimaryAction has no
- * disabled state, and a spinner on 보정 계산 would name the wrong job).
+ * while the correction runs and off while another of this screen's jobs
+ * runs (XO 추천, 서브만, MIMO), so a second job cannot start; the pill
+ * beside the title names the job that runs.
  */
 export function calibrateHeader(view: CalibrateView, actions: CalibrateActions, t: Translate): { primary?: PrimaryAction; status?: ReactNode } {
   const running = view.running;
@@ -56,9 +56,14 @@ export function calibrateHeader(view: CalibrateView, actions: CalibrateActions, 
       {t("frame.status.calibration.stale")}
     </StatusPill>
   ) : undefined;
-  if (running !== null && running !== "calibrate") return { status };
   return {
-    primary: { id: "calibrate.compute", label: t("frame.step.calibrate.primary"), onClick: actions.calibrate, busy: running === "calibrate" },
+    primary: {
+      id: "calibrate.compute",
+      label: t("frame.step.calibrate.primary"),
+      onClick: actions.calibrate,
+      busy: running === "calibrate",
+      disabled: running !== null && running !== "calibrate",
+    },
     status,
   };
 }

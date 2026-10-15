@@ -1,7 +1,8 @@
 // The app frame: the rail on the left (project menu, five steps, project
 // status, settings and help), the step on the right (header with the one
-// primary action, the step's content, the job tray at the bottom). The
-// frame draws what it is given; screens and the IPC wiring decide the model.
+// primary action, the step's content, the job tray at the bottom) and a
+// slot for a panel over the content's right side (도움말). The frame draws
+// what it is given; screens and the IPC wiring decide the model.
 import type { ReactNode } from "react";
 import { useT } from "../i18n/react";
 import { Icon } from "../ui/Icon";
@@ -24,6 +25,12 @@ export type AppFrameProps = {
   onHelp: () => void;
   version: { version: string; prerelease: boolean } | null;
   tray: ReactNode;
+  /**
+   * A panel beside the step's content (the help panel): it is placed in the
+   * area between the step header and the job tray, which is its positioned
+   * parent, so it never covers the primary action or the tray's cancel.
+   */
+  aside?: ReactNode;
   children: ReactNode;
   /** Listen for the keyboard shortcuts (off for all but one frame in the gallery). */
   shortcuts?: boolean;
@@ -38,6 +45,7 @@ export function AppFrame({
   onHelp,
   version,
   tray,
+  aside,
   children,
   shortcuts = true,
 }: AppFrameProps) {
@@ -99,8 +107,11 @@ export function AppFrame({
       </aside>
       <main className="app-main" aria-labelledby="frame.header.title">
         <StepHeader step={model.current} state={model.steps[model.current]} primary={primary} status={headerStatus} />
-        <div className="app-content" id="frame.content" data-ui="frame.content">
-          {children}
+        <div className="app-body">
+          <div className="app-content" id="frame.content" data-ui="frame.content">
+            {children}
+          </div>
+          {aside}
         </div>
         {tray}
       </main>

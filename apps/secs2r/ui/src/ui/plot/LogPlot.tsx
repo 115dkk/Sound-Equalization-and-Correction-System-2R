@@ -1,8 +1,8 @@
 // LogPlot: frequency response graphs on uPlot (MIT). Log-frequency x axis
 // with fixed ticks 5 … 20k, colours and line rules from the tokens, an
-// optional shaded band outside a range (the RC band), a cursor readout, and
-// an overlay slot for editable things (target points, the XO line) that gets
-// the scale mapping. Dozens of curves of a few thousand points draw in one
+// optional shaded band outside a range (the RC band; the upper edge may be
+// open), a cursor readout, and an overlay slot for editable things (target
+// points, the XO line) that gets the scale mapping. Dozens of curves of a few thousand points draw in one
 // pass; hover highlight and theme changes restyle the same instance.
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -42,8 +42,13 @@ export type LogPlotProps = {
   yRange?: readonly [number, number] | null | undefined;
   yUnit?: string | undefined;
   height?: number | undefined;
-  /** Shade outside [lo, hi] (the RC band) and mark its edges. */
-  band?: { lo: number; hi: number } | null | undefined;
+  /**
+   * Shade outside [lo, hi] (the RC band) and mark its edges. Without `hi`
+   * (the automatic upper limit is not known yet) only the part below `lo`
+   * is shaded and only that edge is marked.
+   */
+  band?: { lo: number; hi?: number | null | undefined } | null | undefined;
+  /** A double click on empty graph space (not on an overlay control such as a target point). */
   onDoubleClick?: ((point: { hz: number; value: number }) => void) | undefined;
   overlay?: ((scale: PlotScale) => ReactNode) | undefined;
   /** Controls in the top-right corner (axis range button). */
@@ -295,16 +300,17 @@ export function LogPlot({
             if (!range || !palette) return;
             const { ctx } = u;
             const { left, top, width, height: h } = u.bbox;
-            const xLo = Math.max(left, Math.min(left + width, u.valToPos(range.lo, "x", true)));
-            const xHi = Math.max(left, Math.min(left + width, u.valToPos(range.hi, "x", true)));
+            const clampX = (hz: number) => Math.max(left, Math.min(left + width, u.valToPos(hz, "x", true)));
+            const xLo = clampX(range.lo);
+            const xHi = range.hi === null || range.hi === undefined ? null : clampX(range.hi);
             ctx.save();
             ctx.fillStyle = rgbaString(palette.shade);
             ctx.fillRect(left, top, xLo - left, h);
-            ctx.fillRect(xHi, top, left + width - xHi, h);
+            if (xHi !== null) ctx.fillRect(xHi, top, left + width - xHi, h);
             ctx.strokeStyle = rgbaString(palette.axis);
             ctx.lineWidth = Math.max(1, devicePixelRatio);
             ctx.setLineDash([4 * devicePixelRatio, 3 * devicePixelRatio]);
-            for (const x of [xLo, xHi]) {
+            for (const x of xHi === null ? [xLo] : [xLo, xHi]) {
               ctx.beginPath();
               ctx.moveTo(Math.round(x) + 0.5, top);
               ctx.lineTo(Math.round(x) + 0.5, top + h);
@@ -331,6 +337,10 @@ export function LogPlot({
     const onDbl = (event: MouseEvent) => {
       const handler = live.current.onDoubleClick;
       if (!handler) return;
+      // The overlay lets pointer events through only to its controls (target
+      // points, the XO handle); their double clicks are theirs. The listener
+      // is native, so a React stopPropagation on the control comes too late.
+      if (event.target instanceof Element && event.target.closest(".plot__overlay")) return;
       const rect = overEl.getBoundingClientRect();
       handler({ hz: u.posToVal(event.clientX - rect.left, "x"), value: u.posToVal(event.clientY - rect.top, "y") });
     };
