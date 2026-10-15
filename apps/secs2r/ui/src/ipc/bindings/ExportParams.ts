@@ -10,6 +10,7 @@ export type ExportParams = {
  */
 kind: ExportKind, 
 /**
- * Destination folder path.
+ * Destination folder path. An empty path uses the project's export folder
+ * and applies the upstream timestamped subfolder convention.
  */
 folder: string, };

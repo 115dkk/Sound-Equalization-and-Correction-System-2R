@@ -332,6 +332,7 @@ fn level_sample(running: bool, level_db: f64, tick: u64) -> Level {
     };
     Level {
         input_dbfs: dbfs,
+        peak_dbfs: dbfs + 3.0,
         spl_db: running.then_some(75.0 + dbfs - level_db),
         clip: dbfs > -1.0,
     }

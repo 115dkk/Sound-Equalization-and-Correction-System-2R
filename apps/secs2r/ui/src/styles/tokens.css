@@ -1,0 +1,418 @@
+/* SECS 2R design tokens (docs/DESIGN.md is the reference; ADR 0003).
+ *
+ * CSS custom properties only: no second style system. Light and dark come
+ * from the same names; the default follows the system and `data-theme`
+ * overrides it on <html> or on any subtree (the gallery shows both side by
+ * side). The tutorial is the same palette with another accent hue
+ * (`data-accent="tutorial"`).
+ *
+ * Colours are OKLCH. Neutrals keep one cool cast (hue 200–210); every other
+ * non-semantic colour is derived from them by lightness, chroma or alpha.
+ * Contrast pairs are measured, not estimated: see DESIGN.md §2.
+ *
+ * The dark block appears twice (system preference and explicit attribute);
+ * tokens.test.ts checks that the two copies stay identical.
+ */
+
+/* ── Theme-independent tokens ──────────────────────────────────────────── */
+:root {
+  /* Type. UI text never goes below 14 px, captions never below 13 px
+     (tokens.test.ts). Korean fallbacks after the Latin-capable faces. */
+  --font-ui: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "D2Coding", "Pretendard", "Malgun Gothic",
+    "Noto Sans KR", monospace;
+
+  --text-caption: 13px; /* axis ticks, units beside a value, shortcut hints, metadata */
+  --text-ui: 14px; /* labels, controls, table rows, menus, errors, tooltips */
+  --text-body: 16px; /* long-form help text */
+  --text-title-s: 16px; /* card and dialog titles */
+  --text-title: 20px; /* step title */
+  --text-display: 28px; /* one headline number per card at most */
+
+  --leading-tight: 1.3;
+  --leading-ui: 1.45;
+  --leading-body: 1.6;
+
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* Space: a 4 px grid. */
+  --space-0-5: 2px;
+  --space-1: 4px;
+  --space-1-5: 6px;
+  --space-2: 8px;
+  --space-2-5: 10px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* Sizes. Dense desktop: controls 36 px, hit areas at least 40 px. */
+  --control-h: 36px;
+  --control-h-sm: 32px;
+  --hit-min: 40px;
+  --rail-w: 252px;
+  --tooltip-max-w: 420px;
+  --popover-w: 320px;
+  --dialog-w: 480px;
+
+  /* Radius. Nested surfaces closer than 24 px follow outer = inner + gap. */
+  --radius-xs: 4px; /* chips, swatches, meter */
+  --radius-sm: 6px; /* buttons, inputs, segments */
+  --radius-md: 10px; /* cards, popovers (6 + 4 inset) */
+  --radius-lg: 14px; /* dialogs */
+  --radius-pill: 999px;
+
+  --border-w: 1px;
+
+  /* Focus. Always visible on keyboard focus; never removed without a replacement. */
+  --focus-w: 2px;
+  --focus-offset: 2px;
+
+  /* Motion: short, restrained, ease-out; zero under reduced motion. */
+  --dur-fast: 100ms;
+  --dur-base: 150ms;
+  --dur-slow: 220ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --press-scale: 0.96;
+
+  /* Graph line rules (uPlot widths are CSS px; alphas multiply the colour). */
+  --plot-w-pos1: 2.25; /* position 1 (listening position): bold */
+  --plot-w-other: 1; /* other positions: thin */
+  --plot-alpha-other: 0.38; /* other positions: faint */
+  --plot-alpha-dim: 0.12; /* everything but the highlighted chip */
+  --plot-w-sub: 3; /* subwoofers: thicker than any main */
+  --plot-w-target: 2; /* target: dashed */
+  --plot-dash-target: 6 4;
+  --plot-dash-before: 2 3;
+
+  /* Layers. */
+  --z-sticky: 10;
+  --z-tray: 20;
+  --z-popover: 40;
+  --z-dialog: 60;
+  --z-toast: 70;
+  --z-tooltip: 80;
+
+  /* Accent: hue and chroma per accent, lightness per theme. */
+  --accent-hue: 195;
+  --accent-chroma: 0.088;
+}
+
+[data-accent="tutorial"] {
+  --accent-hue: 345;
+  --accent-chroma: 0.165;
+}
+
+/* ── Light ─────────────────────────────────────────────────────────────── */
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+  --theme-chroma: 1;
+
+  --bg: oklch(0.968 0.004 200);
+  --surface: oklch(0.993 0.002 200);
+  --surface-sunken: oklch(0.952 0.005 200);
+  --surface-raised: oklch(0.995 0.002 200);
+  --surface-hover: oklch(0.935 0.006 200);
+  --surface-pressed: oklch(0.915 0.007 200);
+  --rail-bg: oklch(0.948 0.006 200);
+  --scrim: oklch(0.25 0.015 200 / 0.32);
+
+  --text: oklch(0.25 0.015 200);
+  --text-muted: oklch(0.47 0.014 200);
+  --text-faint: oklch(0.62 0.01 200);
+
+  --border: oklch(0.88 0.006 200);
+  --border-subtle: oklch(0.92 0.005 200);
+  --border-control: oklch(0.62 0.01 200);
+
+  --accent-l: 0.5;
+  --accent-hover-l: 0.45;
+  --accent-soft-l: 0.945;
+  --accent-soft-c: 0.03;
+  --on-accent: oklch(0.99 0.003 195);
+
+  --success: oklch(0.5 0.12 150);
+  --success-soft: oklch(0.955 0.035 150);
+  --warning: oklch(0.52 0.116 65);
+  --warning-soft: oklch(0.955 0.04 75);
+  --danger: oklch(0.52 0.17 27);
+  --danger-hover: oklch(0.47 0.17 27);
+  --danger-soft: oklch(0.955 0.03 27);
+  --on-danger: oklch(0.99 0.003 27);
+  --on-success: oklch(0.99 0.003 150);
+  --info: oklch(0.5 0.11 255);
+  --info-soft: oklch(0.955 0.025 255);
+
+  --shadow-card: 0 0 0 1px oklch(0 0 0 / 0.07), 0 1px 2px -1px oklch(0 0 0 / 0.06), 0 2px 4px 0 oklch(0 0 0 / 0.03);
+  --shadow-control: 0 0 0 1px oklch(0 0 0 / 0.1), 0 1px 2px -1px oklch(0 0 0 / 0.08);
+  --shadow-control-hover: 0 0 0 1px oklch(0 0 0 / 0.16), 0 1px 2px -1px oklch(0 0 0 / 0.1);
+  --shadow-thumb: 0 1px 2px oklch(0 0 0 / 0.25);
+  --shadow-raised: 0 0 0 1px oklch(0 0 0 / 0.08), 0 4px 12px -2px oklch(0 0 0 / 0.12), 0 2px 4px -2px oklch(0 0 0 / 0.06);
+  --shadow-dialog: 0 0 0 1px oklch(0 0 0 / 0.08), 0 16px 40px -8px oklch(0 0 0 / 0.22);
+
+  /* Graphs: 16 mains, 8 subs (validated: DESIGN.md §3). */
+  --plot-bg: var(--surface);
+  --plot-grid: oklch(0.25 0.015 200 / 0.09);
+  --plot-axis: oklch(0.25 0.015 200 / 0.28);
+  --plot-text: var(--text-muted);
+  --plot-target: oklch(0.3 0.015 200);
+  --plot-shade: oklch(0.25 0.015 200 / 0.06);
+  --ch-1: oklch(0.58 0.15 250);
+  --ch-2: oklch(0.64 0.144 65);
+  --ch-3: oklch(0.48 0.15 280);
+  --ch-4: oklch(0.64 0.15 145);
+  --ch-5: oklch(0.48 0.15 5);
+  --ch-6: oklch(0.64 0.11 210);
+  --ch-7: oklch(0.48 0.128 50);
+  --ch-8: oklch(0.64 0.15 255);
+  --ch-9: oklch(0.48 0.15 140);
+  --ch-10: oklch(0.64 0.15 340);
+  --ch-11: oklch(0.58 0.15 140);
+  --ch-12: oklch(0.48 0.15 320);
+  --ch-13: oklch(0.64 0.136 105);
+  --ch-14: oklch(0.58 0.15 300);
+  --ch-15: oklch(0.58 0.118 95);
+  --ch-16: oklch(0.64 0.15 295);
+  --sub-1: oklch(0.42 0.14 265);
+  --sub-2: oklch(0.48 0.138 45);
+  --sub-3: oklch(0.42 0.088 165);
+  --sub-4: oklch(0.36 0.14 345);
+  --sub-5: oklch(0.48 0.13 130);
+  --sub-6: oklch(0.36 0.14 305);
+  --sub-7: oklch(0.46 0.088 225);
+  --sub-8: oklch(0.48 0.098 85);
+
+  /* Level meter (−60…0 dBFS; the −30…−15 band is the target). */
+  --meter-track: var(--surface-sunken);
+  --meter-band: oklch(0.5 0.12 150 / 0.16);
+  --meter-fill: oklch(0.47 0.014 200);
+  --meter-fill-ok: var(--success);
+  --meter-fill-clip: var(--danger);
+
+  /* Maps. */
+  --map-bg: var(--surface);
+  --map-ink: oklch(0.36 0.014 200);
+  --map-furniture: oklch(0.9 0.008 200);
+  --map-furniture-edge: oklch(0.72 0.012 200);
+  --map-guide: oklch(0.62 0.01 200);
+  --map-marker: oklch(0.36 0.014 200);
+  --map-marker-fill: var(--surface);
+  --map-half: oklch(0.36 0.014 200 / 0.3);
+}
+
+/* ── Dark (system preference) ──────────────────────────────────────────── */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --theme-chroma: 0.82;
+
+    --bg: oklch(0.185 0.008 210);
+    --surface: oklch(0.225 0.009 210);
+    --surface-sunken: oklch(0.2 0.008 210);
+    --surface-raised: oklch(0.26 0.01 210);
+    --surface-hover: oklch(0.275 0.01 210);
+    --surface-pressed: oklch(0.3 0.011 210);
+    --rail-bg: oklch(0.2 0.008 210);
+    --scrim: oklch(0.1 0.006 210 / 0.6);
+
+    --text: oklch(0.93 0.006 210);
+    --text-muted: oklch(0.75 0.012 210);
+    --text-faint: oklch(0.56 0.01 210);
+
+    --border: oklch(0.33 0.01 210);
+    --border-subtle: oklch(0.29 0.009 210);
+    --border-control: oklch(0.54 0.012 210);
+
+    --accent-l: 0.76;
+    --accent-hover-l: 0.81;
+    --accent-soft-l: 0.31;
+    --accent-soft-c: 0.04;
+    --on-accent: oklch(0.18 0.01 210);
+
+    --success: oklch(0.76 0.12 150);
+    --success-soft: oklch(0.29 0.045 150);
+    --warning: oklch(0.8 0.12 80);
+    --warning-soft: oklch(0.29 0.045 75);
+    --danger: oklch(0.72 0.14 25);
+    --danger-hover: oklch(0.77 0.13 25);
+    --danger-soft: oklch(0.28 0.04 27);
+    --on-danger: oklch(0.18 0.01 210);
+    --on-success: oklch(0.18 0.01 210);
+    --info: oklch(0.75 0.09 255);
+    --info-soft: oklch(0.29 0.04 255);
+
+    --shadow-card: 0 0 0 1px oklch(1 0 0 / 0.08);
+    --shadow-control: 0 0 0 1px oklch(1 0 0 / 0.12);
+    --shadow-control-hover: 0 0 0 1px oklch(1 0 0 / 0.2);
+    --shadow-thumb: 0 1px 2px oklch(0 0 0 / 0.5);
+    --shadow-raised: 0 0 0 1px oklch(1 0 0 / 0.1), 0 8px 24px -4px oklch(0 0 0 / 0.5);
+    --shadow-dialog: 0 0 0 1px oklch(1 0 0 / 0.1), 0 20px 48px -8px oklch(0 0 0 / 0.6);
+
+    --plot-bg: var(--surface);
+    --plot-grid: oklch(0.93 0.006 210 / 0.08);
+    --plot-axis: oklch(0.93 0.006 210 / 0.26);
+    --plot-text: var(--text-muted);
+    --plot-target: oklch(0.9 0.006 210);
+    --plot-shade: oklch(0.93 0.006 210 / 0.05);
+    --ch-1: oklch(0.61 0.13 250);
+    --ch-2: oklch(0.665 0.13 65);
+    --ch-3: oklch(0.55 0.13 280);
+    --ch-4: oklch(0.665 0.13 145);
+    --ch-5: oklch(0.55 0.13 5);
+    --ch-6: oklch(0.665 0.116 210);
+    --ch-7: oklch(0.55 0.13 50);
+    --ch-8: oklch(0.665 0.13 255);
+    --ch-9: oklch(0.55 0.13 140);
+    --ch-10: oklch(0.665 0.13 340);
+    --ch-11: oklch(0.61 0.13 140);
+    --ch-12: oklch(0.55 0.13 320);
+    --ch-13: oklch(0.665 0.13 105);
+    --ch-14: oklch(0.61 0.13 300);
+    --ch-15: oklch(0.61 0.126 95);
+    --ch-16: oklch(0.665 0.13 295);
+    --sub-1: oklch(0.78 0.11 265);
+    --sub-2: oklch(0.86 0.084 50);
+    --sub-3: oklch(0.72 0.12 175);
+    --sub-4: oklch(0.86 0.094 345);
+    --sub-5: oklch(0.8 0.12 130);
+    --sub-6: oklch(0.76 0.12 305);
+    --sub-7: oklch(0.88 0.078 225);
+    --sub-8: oklch(0.82 0.12 85);
+
+    --meter-track: var(--surface-sunken);
+    --meter-band: oklch(0.76 0.12 150 / 0.16);
+    --meter-fill: oklch(0.75 0.012 210);
+    --meter-fill-ok: var(--success);
+    --meter-fill-clip: var(--danger);
+
+    --map-bg: var(--surface);
+    --map-ink: oklch(0.85 0.008 210);
+    --map-furniture: oklch(0.29 0.01 210);
+    --map-furniture-edge: oklch(0.45 0.012 210);
+    --map-guide: oklch(0.56 0.01 210);
+    --map-marker: oklch(0.85 0.008 210);
+    --map-marker-fill: var(--surface);
+    --map-half: oklch(0.85 0.008 210 / 0.3);
+  }
+}
+
+/* ── Dark (explicit) ───────────────────────────────────────────────────── */
+[data-theme="dark"] {
+  color-scheme: dark;
+  --theme-chroma: 0.82;
+
+  --bg: oklch(0.185 0.008 210);
+  --surface: oklch(0.225 0.009 210);
+  --surface-sunken: oklch(0.2 0.008 210);
+  --surface-raised: oklch(0.26 0.01 210);
+  --surface-hover: oklch(0.275 0.01 210);
+  --surface-pressed: oklch(0.3 0.011 210);
+  --rail-bg: oklch(0.2 0.008 210);
+  --scrim: oklch(0.1 0.006 210 / 0.6);
+
+  --text: oklch(0.93 0.006 210);
+  --text-muted: oklch(0.75 0.012 210);
+  --text-faint: oklch(0.56 0.01 210);
+
+  --border: oklch(0.33 0.01 210);
+  --border-subtle: oklch(0.29 0.009 210);
+  --border-control: oklch(0.54 0.012 210);
+
+  --accent-l: 0.76;
+  --accent-hover-l: 0.81;
+  --accent-soft-l: 0.31;
+  --accent-soft-c: 0.04;
+  --on-accent: oklch(0.18 0.01 210);
+
+  --success: oklch(0.76 0.12 150);
+  --success-soft: oklch(0.29 0.045 150);
+  --warning: oklch(0.8 0.12 80);
+  --warning-soft: oklch(0.29 0.045 75);
+  --danger: oklch(0.72 0.14 25);
+  --danger-hover: oklch(0.77 0.13 25);
+  --danger-soft: oklch(0.28 0.04 27);
+  --on-danger: oklch(0.18 0.01 210);
+  --on-success: oklch(0.18 0.01 210);
+  --info: oklch(0.75 0.09 255);
+  --info-soft: oklch(0.29 0.04 255);
+
+  --shadow-card: 0 0 0 1px oklch(1 0 0 / 0.08);
+  --shadow-control: 0 0 0 1px oklch(1 0 0 / 0.12);
+  --shadow-control-hover: 0 0 0 1px oklch(1 0 0 / 0.2);
+  --shadow-thumb: 0 1px 2px oklch(0 0 0 / 0.5);
+  --shadow-raised: 0 0 0 1px oklch(1 0 0 / 0.1), 0 8px 24px -4px oklch(0 0 0 / 0.5);
+  --shadow-dialog: 0 0 0 1px oklch(1 0 0 / 0.1), 0 20px 48px -8px oklch(0 0 0 / 0.6);
+
+  --plot-bg: var(--surface);
+  --plot-grid: oklch(0.93 0.006 210 / 0.08);
+  --plot-axis: oklch(0.93 0.006 210 / 0.26);
+  --plot-text: var(--text-muted);
+  --plot-target: oklch(0.9 0.006 210);
+  --plot-shade: oklch(0.93 0.006 210 / 0.05);
+  --ch-1: oklch(0.61 0.13 250);
+  --ch-2: oklch(0.665 0.13 65);
+  --ch-3: oklch(0.55 0.13 280);
+  --ch-4: oklch(0.665 0.13 145);
+  --ch-5: oklch(0.55 0.13 5);
+  --ch-6: oklch(0.665 0.116 210);
+  --ch-7: oklch(0.55 0.13 50);
+  --ch-8: oklch(0.665 0.13 255);
+  --ch-9: oklch(0.55 0.13 140);
+  --ch-10: oklch(0.665 0.13 340);
+  --ch-11: oklch(0.61 0.13 140);
+  --ch-12: oklch(0.55 0.13 320);
+  --ch-13: oklch(0.665 0.13 105);
+  --ch-14: oklch(0.61 0.13 300);
+  --ch-15: oklch(0.61 0.126 95);
+  --ch-16: oklch(0.665 0.13 295);
+  --sub-1: oklch(0.78 0.11 265);
+  --sub-2: oklch(0.86 0.084 50);
+  --sub-3: oklch(0.72 0.12 175);
+  --sub-4: oklch(0.86 0.094 345);
+  --sub-5: oklch(0.8 0.12 130);
+  --sub-6: oklch(0.76 0.12 305);
+  --sub-7: oklch(0.88 0.078 225);
+  --sub-8: oklch(0.82 0.12 85);
+
+  --meter-track: var(--surface-sunken);
+  --meter-band: oklch(0.76 0.12 150 / 0.16);
+  --meter-fill: oklch(0.75 0.012 210);
+  --meter-fill-ok: var(--success);
+  --meter-fill-clip: var(--danger);
+
+  --map-bg: var(--surface);
+  --map-ink: oklch(0.85 0.008 210);
+  --map-furniture: oklch(0.29 0.01 210);
+  --map-furniture-edge: oklch(0.45 0.012 210);
+  --map-guide: oklch(0.56 0.01 210);
+  --map-marker: oklch(0.85 0.008 210);
+  --map-marker-fill: var(--surface);
+  --map-half: oklch(0.85 0.008 210 / 0.3);
+}
+
+/* ── Accent family, recomposed wherever theme or accent changes ───────── */
+:root,
+[data-theme],
+[data-accent] {
+  --accent: oklch(var(--accent-l) calc(var(--accent-chroma) * var(--theme-chroma)) var(--accent-hue));
+  --accent-hover: oklch(var(--accent-hover-l) calc(var(--accent-chroma) * var(--theme-chroma)) var(--accent-hue));
+  --accent-soft: oklch(var(--accent-soft-l) var(--accent-soft-c) var(--accent-hue));
+  --focus-color: var(--accent);
+}
+
+/* ── Reduced motion: keep the static cue, drop the movement ───────────── */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+    --dur-slow: 0ms;
+    --press-scale: 1;
+  }
+}

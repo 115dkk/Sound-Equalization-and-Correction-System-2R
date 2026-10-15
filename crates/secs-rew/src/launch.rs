@@ -4,7 +4,6 @@ use std::{
     collections::BTreeMap,
     ffi::OsString,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
 };
 
 pub const WINDOWS_PATHS: [&str; 4] = [
@@ -124,34 +123,4 @@ pub fn launch_command(exe: &Path, platform: Platform) -> LaunchCommand {
                 .flatten(),
         }
     }
-}
-pub fn launch_external(exe: &Path, platform: Platform) -> Result<Child, RewError> {
-    let spec = launch_command(exe, platform);
-    let mut command = Command::new(&spec.program);
-    command
-        .args(&spec.args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    if let Some(cwd) = spec.cwd {
-        command.current_dir(cwd);
-    }
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000);
-    }
-    command
-        .spawn()
-        .map_err(|e| RewError::connection("launch", e))
-}
-pub fn launch() -> Result<(), RewError> {
-    let exe = find_rew_exe()
-        .ok_or_else(|| RewError::connection("launch", "REW installation not found"))?;
-    let mut child = launch_external(&exe, Platform::current())?;
-    // Reap the launcher without holding up the service or killing REW on Drop.
-    std::thread::spawn(move || {
-        let _ = child.wait();
-    });
-    Ok(())
 }

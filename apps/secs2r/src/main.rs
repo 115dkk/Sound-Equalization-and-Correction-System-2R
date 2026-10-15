@@ -11,10 +11,13 @@
 
 use std::fmt;
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
-use secs_service::{Deps, EventSink, NoEvents, Service};
+mod host;
+
+use secs_service::{Deps, EventSink, LocalTime, NoEvents, Service};
 use secs_types::ipc::{Envelope, ErrorCode, IpcError, JobEvent};
-use tauri::{State, Webview, ipc::JavaScriptChannelId};
+use tauri::{AppHandle, Manager, Webview, ipc::JavaScriptChannelId};
 
 #[derive(Clone)]
 struct EventChannel(tauri::ipc::Channel<JobEvent>);
@@ -34,9 +37,13 @@ impl EventSink for EventChannel {
 /// The one IPC command. `request` stays unparsed (and optional) JSON here so
 /// a malformed or missing request still yields an envelope instead of a
 /// rejected promise.
+///
+/// A command without `async` runs on the main thread, where a blocking file
+/// dialog (the host methods) would freeze the event loop; the call runs on
+/// the blocking pool instead.
 #[tauri::command]
-fn secs_call(
-    service: State<'_, Service>,
+async fn secs_call(
+    app: AppHandle,
     webview: Webview,
     request: Option<serde_json::Value>,
     events: Option<JavaScriptChannelId>,
@@ -44,7 +51,11 @@ fn secs_call(
     let events: Arc<dyn EventSink> = events
         .map(|id| Arc::new(EventChannel(id.channel_on(webview))) as Arc<dyn EventSink>)
         .unwrap_or_else(|| Arc::new(NoEvents));
-    handle(&service, request, events)
+    tauri::async_runtime::spawn_blocking(move || handle(&app.state::<Service>(), request, events))
+        .await
+        .unwrap_or_else(|error| {
+            Envelope::Err(IpcError::new(ErrorCode::Internal, error.to_string()))
+        })
 }
 
 fn handle(
@@ -63,7 +74,35 @@ fn handle(
 
 fn main() {
     tauri::Builder::default()
-        .manage(Service::new(Deps::default()))
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
+        .setup(|app| {
+            let handle = app.handle().clone();
+            let config_dir = app.path().app_config_dir()?;
+            app.manage(Service::new(Deps {
+                audio_backend: Arc::new(secs_sys::audio::default_backend),
+                rew_transport: Arc::new(|| Box::new(secs_rew::HttpTransport::default())),
+                process: Arc::new(secs_sys::process::OsProcessProbe),
+                memory: Arc::new(secs_sys::memory::OsMemoryProbe),
+                host: Arc::new(host::TauriHost::new(handle)),
+                clock: Arc::new(|| {
+                    let now = SystemTime::now();
+                    LocalTime::from_system(now, secs_sys::clock::utc_offset_seconds(now))
+                }),
+                app_settings_path: Some(config_dir.join("settings.json")),
+                ..Deps::default()
+            }));
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                let _ = window.state::<Service>().shutdown(Duration::from_secs(3));
+            }
+        })
         .invoke_handler(tauri::generate_handler![secs_call])
         .run(tauri::generate_context!())
         .unwrap_or_else(|error| {

@@ -5,12 +5,13 @@
 //! Commands call the application service and write JSON Lines to standard output.
 
 use clap::{Parser, Subcommand, ValueEnum};
-use secs_service::{Deps, EventSink, Service};
+use secs_service::{Deps, EventSink, LocalTime, Service};
 use secs_types::ipc::*;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::SystemTime;
 
 #[derive(Debug, Parser)]
 #[command(name = "secs2r-cli", version, about = "SECS 2R without a screen")]
@@ -262,7 +263,10 @@ impl Runner {
     }
 
     fn calibrate(&mut self, settings: Option<secs_types::calibration::CalibrationSettings>) {
-        self.call(Request::Calibrate(CalibrateParams { settings }));
+        self.call(Request::Calibrate(CalibrateParams {
+            settings,
+            ..Default::default()
+        }));
     }
 
     fn export(&mut self, kind: ExportKind, folder: &Path) {
@@ -293,6 +297,10 @@ fn deps(deterministic: bool) -> Deps {
         rew_transport: Arc::new(|| Box::new(secs_rew::HttpTransport::default())),
         process: Arc::new(secs_sys::process::OsProcessProbe),
         memory: Arc::new(secs_sys::memory::OsMemoryProbe),
+        clock: Arc::new(|| {
+            let now = SystemTime::now();
+            LocalTime::from_system(now, secs_sys::clock::utc_offset_seconds(now))
+        }),
         ..Deps::default()
     };
     if deterministic {

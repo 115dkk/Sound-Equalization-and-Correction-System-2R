@@ -163,12 +163,31 @@ fn project_edge_contracts_match_oracle() {
         ],
         ..SpeakerConfig::default()
     };
+    let sentences = config.validate();
     assert_eq!(
-        config.validate(),
+        sentences,
         str_array(&validation.outputs()["messages"])
             .into_iter()
             .map(str::to_owned)
             .collect::<Vec<_>>()
+    );
+    let notices = config.validation_notices();
+    assert_eq!(sentences.len(), notices.len());
+    assert_eq!(
+        notices
+            .iter()
+            .map(|notice| notice.code.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "role_duplicate",
+            "out_duplicate",
+            "out_duplicate",
+            "band_unknown",
+            "pol_invalid",
+            "band_combination",
+            "main_with_sub_band",
+            "bands_empty",
+        ]
     );
     assert_eq!(
         config

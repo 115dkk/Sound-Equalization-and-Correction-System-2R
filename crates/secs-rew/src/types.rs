@@ -255,6 +255,7 @@ pub struct DeviceInfo {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Level {
     pub input_dbfs: f64,
+    pub peak_dbfs: f64,
     pub spl_db: Option<f64>,
     pub clip: bool,
 }

@@ -18,8 +18,10 @@
 //! Only crates under `apps/` may depend on this crate; they inject its
 //! adapters into the seams of `secs-audio` and `secs-compute`.
 
+pub mod clock;
 pub mod memory;
 pub mod process;
+pub mod rew;
 
 #[cfg(not(target_os = "windows"))]
 pub mod cpal;

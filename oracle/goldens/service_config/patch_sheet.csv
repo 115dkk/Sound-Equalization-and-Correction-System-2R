@@ -1,0 +1,4 @@
+﻿역할,이름,크기,대역,측정 출력,극성
+L,Left,small,FULL,1,+
+R,Right,small,FULL,2,+
+SW1,Subwoofer 1,sub,SUB,3,+

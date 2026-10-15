@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::calibration::CalibrationSettings;
+use crate::calibration::{CalibrationSettings, Mode};
 use crate::chain::{MimoPaths, SignalChain};
 
 /// A call from the screen.
@@ -76,6 +76,90 @@ pub enum Request {
     MdatScan(MdatScanParams),
     /// The `MdatImport` Request variant.
     MdatImport(MdatImportParams),
+    /// Returns the editable speaker configuration.
+    ConfigGet,
+    /// Replaces the speaker configuration with a built-in preset.
+    ConfigApplyPreset(ConfigPresetParams),
+    /// Changes the number of configured subwoofers.
+    ConfigSetSubCount(ConfigSubCountParams),
+    /// Changes one speaker or one of its bands.
+    ConfigSetSpeaker(ConfigSetSpeakerParams),
+    /// Adds the first unused upstream speaker role.
+    ConfigAddSpeaker,
+    /// Removes one configured speaker.
+    ConfigRemoveSpeaker(ConfigIndexParams),
+    /// Renumbers outputs in configuration order.
+    ConfigRenumber,
+    /// Returns structured configuration validation notices.
+    ConfigValidate,
+    /// Writes the upstream patch-sheet CSV.
+    PatchSheetCsv(PathParams),
+    /// Returns the editable DSP profile.
+    DspGet,
+    /// Applies a DSP preset or manual fields.
+    DspSet(DspSetParams),
+    /// Returns measurement arrangement and timing options.
+    LayoutGet,
+    /// Changes measurement arrangement or timing options.
+    LayoutSet(LayoutSetParams),
+    /// Returns the current per-position and total estimate.
+    PositionEstimate,
+    /// Returns the target curve and presets.
+    TargetGet,
+    /// Replaces target control points.
+    TargetSetPoints(TargetPointsParams),
+    /// Applies a built-in target preset.
+    TargetApplyPreset(TargetPresetParams),
+    /// Saves the target curve as upstream JSON.
+    TargetSave(PathParams),
+    /// Loads the target curve from upstream JSON.
+    TargetLoad(PathParams),
+    /// Returns calibration settings stored in the project.
+    CalibrationSettingsGet,
+    /// Stores calibration settings in the project.
+    CalibrationSettingsSet(CalibrationSettingsParams),
+    /// Returns numeric capabilities for one calibration mode.
+    ModeSpec(ModeSpecParams),
+    /// Returns application-local settings.
+    AppSettingsGet,
+    /// Stores application-local settings.
+    AppSettingsSet(AppSettingsParams),
+    /// Smoothed, normalized measurement curves and their shared frequency grid.
+    MeasurementCurves(MeasurementCurvesParams),
+    /// Ready-to-draw calibration curves and axis limits for one result tab.
+    ResultCurves(ResultCurvesParams),
+    /// Numeric metrics, filter counts, BA rows and coded result notices.
+    ResultLines,
+    /// Copies the last BA output alignment into the manual sub settings.
+    SubTakeValues,
+    /// Opens a project-file picker through the application host.
+    DialogOpenProject,
+    /// Opens a project save-file picker through the application host.
+    DialogSaveProject(DialogSuggestedParams),
+    /// Opens an mdat-file picker through the application host.
+    DialogPickMdat,
+    /// Opens a folder picker through the application host.
+    DialogPickFolder(DialogPickFolderParams),
+    /// Opens a typed save-file picker through the application host.
+    DialogSaveFile(DialogSaveFileParams),
+    /// Opens a typed file picker through the application host.
+    DialogOpenFile(DialogOpenFileParams),
+    /// Opens a folder in the operating-system file manager.
+    OpenFolder(OpenFolderParams),
+    /// Starts the live input level monitor.
+    LevelMonitorStart(LevelMonitorStartParams),
+    /// Stops the live input level monitor.
+    LevelMonitorStop,
+    /// Plays a role's level-check signal for 2.5 seconds.
+    LevelPlay(LevelPlayParams),
+    /// Starts watching measurement-method status.
+    StatusWatchStart,
+    /// Stops watching measurement-method status.
+    StatusWatchStop,
+    /// Returns the stored or derived export base folder.
+    ExportFolderGet,
+    /// Stores the export base folder in the open project.
+    ExportFolderSet(ExportFolderSetParams),
 }
 
 impl Request {
@@ -141,6 +225,303 @@ pub enum Response {
     MdatScan(MdatScanResult),
     /// The `MdatImport` Response variant.
     MdatImport(JobStarted),
+    /// The `ConfigGet` Response variant.
+    ConfigGet(ConfigResult),
+    /// The `ConfigApplyPreset` Response variant.
+    ConfigApplyPreset(ConfigMutationResult),
+    /// The `ConfigSetSubCount` Response variant.
+    ConfigSetSubCount(ConfigMutationResult),
+    /// The `ConfigSetSpeaker` Response variant.
+    ConfigSetSpeaker(ConfigResult),
+    /// The `ConfigAddSpeaker` Response variant.
+    ConfigAddSpeaker(ConfigResult),
+    /// The `ConfigRemoveSpeaker` Response variant.
+    ConfigRemoveSpeaker(ConfigResult),
+    /// The `ConfigRenumber` Response variant.
+    ConfigRenumber(ConfigResult),
+    /// The `ConfigValidate` Response variant.
+    ConfigValidate(Vec<Notice>),
+    /// The `PatchSheetCsv` Response variant.
+    PatchSheetCsv(PathResult),
+    /// The `DspGet` Response variant.
+    DspGet(DspResult),
+    /// The `DspSet` Response variant.
+    DspSet(DspResult),
+    /// The `LayoutGet` Response variant.
+    LayoutGet(LayoutResult),
+    /// The `LayoutSet` Response variant.
+    LayoutSet(LayoutMutationResult),
+    /// The `PositionEstimate` Response variant.
+    PositionEstimate(PositionEstimateResult),
+    /// The `TargetGet` Response variant.
+    TargetGet(TargetResult),
+    /// The `TargetSetPoints` Response variant.
+    TargetSetPoints(TargetResult),
+    /// The `TargetApplyPreset` Response variant.
+    TargetApplyPreset(TargetResult),
+    /// The `TargetSave` Response variant.
+    TargetSave(PathResult),
+    /// The `TargetLoad` Response variant.
+    TargetLoad(TargetResult),
+    /// The `CalibrationSettingsGet` Response variant.
+    CalibrationSettingsGet(CalibrationSettings),
+    /// The `CalibrationSettingsSet` Response variant.
+    CalibrationSettingsSet(CalibrationSettings),
+    /// The `ModeSpec` Response variant.
+    ModeSpec(ModeSpecResult),
+    /// The `AppSettingsGet` Response variant.
+    AppSettingsGet(AppSettings),
+    /// The `AppSettingsSet` Response variant.
+    AppSettingsSet(AppSettings),
+    /// Measurement curves on the common display grid.
+    MeasurementCurves(MeasurementCurvesResult),
+    /// Calibration tab curves, ranges and staleness.
+    ResultCurves(ResultCurvesResult),
+    /// Numeric summary lines and BA table.
+    ResultLines(ResultLinesResult),
+    /// Stored settings after taking the last sub alignment.
+    SubTakeValues(CalibrationSettings),
+    /// The chosen project path, or null when cancelled.
+    DialogOpenProject(Option<String>),
+    /// The chosen project destination, or null when cancelled.
+    DialogSaveProject(Option<String>),
+    /// The chosen mdat path, or null when cancelled.
+    DialogPickMdat(Option<String>),
+    /// The chosen folder, or null when cancelled.
+    DialogPickFolder(Option<String>),
+    /// The chosen save destination, or null when cancelled.
+    DialogSaveFile(Option<String>),
+    /// The chosen source path, or null when cancelled.
+    DialogOpenFile(Option<String>),
+    /// Confirms that the folder-open request reached the host.
+    OpenFolder(()),
+    /// The live level-monitor job.
+    LevelMonitorStart(JobStarted),
+    /// The stopped live level-monitor job, when one was running.
+    LevelMonitorStop(Option<JobSnapshot>),
+    /// Confirms that role playback was accepted.
+    LevelPlay(()),
+    /// The measurement-status watch job.
+    StatusWatchStart(JobStarted),
+    /// The stopped status-watch job, when one was running.
+    StatusWatchStop(Option<JobSnapshot>),
+    /// The current export base folder.
+    ExportFolderGet(ExportFolderResult),
+    /// The stored export base folder.
+    ExportFolderSet(ExportFolderResult),
+}
+
+/// Optional measurement selection; an absent selection includes every recorded pair.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct MeasurementCurvesParams {
+    /// Position numbers to include.
+    #[ts(type = "number[] | null")]
+    pub positions: Option<Vec<i64>>,
+    /// Speaker roles to include.
+    pub roles: Option<Vec<String>>,
+}
+/// A measurement curve, already smoothed and normalized to the mid-band mean.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MeasurementCurve {
+    /// Speaker role.
+    pub role: String,
+    /// Measurement position.
+    #[ts(type = "number")]
+    pub position: i64,
+    /// Configuration kind: main, sub or top.
+    pub kind: String,
+    /// Levels in dB on the shared grid.
+    pub values: Vec<f64>,
+}
+/// Display limits; both endpoints are data values, not logarithms.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CurveAxes {
+    /// Frequency bounds in Hz.
+    pub frequency_hz: [f64; 2],
+    /// Level or delay bounds.
+    pub value: [f64; 2],
+    /// Vertical unit: db or ms.
+    pub unit: String,
+}
+/// Measurement graph data.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MeasurementCurvesResult {
+    /// Shared 280-point logarithmic frequency grid in Hz.
+    pub grid: Vec<f64>,
+    /// One curve per recorded role and position.
+    pub curves: Vec<MeasurementCurve>,
+    /// Upstream default axis bounds.
+    pub axes: CurveAxes,
+}
+/// The calibration graph to display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ResultTab {
+    /// Sound pressure level relative to the target reference.
+    Spl,
+    /// Group delay in milliseconds.
+    Gd,
+    /// Crossover preview.
+    Xo,
+    /// Bass alignment.
+    Ba,
+}
+/// Selection for one ready-to-draw result graph.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ResultCurvesParams {
+    /// Graph tab.
+    pub tab: ResultTab,
+    /// Selected main role; absent selects the first available channel.
+    pub channel: Option<String>,
+    /// Crossover group; absent selects the selected channel's group.
+    pub group: Option<String>,
+    /// Dragged crossover in Hz; absent uses the configured value.
+    pub xo_hz: Option<f64>,
+    /// Apply input correction to the XO preview; defaults to true.
+    pub corrected: Option<bool>,
+}
+/// One named series on a result graph.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ResultCurve {
+    /// Series identity: before, after, target, mimo, main, sub, sum_before or sum_after.
+    pub kind: String,
+    /// Speaker role for per-sub curves, otherwise absent.
+    pub role: Option<String>,
+    /// Values on the response's shared grid.
+    pub values: Vec<f64>,
+}
+/// A result graph whose calculations are entirely owned by the service.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ResultCurvesResult {
+    /// Requested tab.
+    pub tab: ResultTab,
+    /// Shared frequency grid in Hz.
+    pub grid: Vec<f64>,
+    /// Ordered drawable series.
+    pub curves: Vec<ResultCurve>,
+    /// Upstream default axis bounds.
+    pub axes: CurveAxes,
+    /// Whether the retained result no longer matches current inputs.
+    pub stale: bool,
+    /// Whether the graph comes from a dedicated subs-only result.
+    pub subs_only: bool,
+    /// RC lower and upper bounds, with an unknown auto upper bound represented as null.
+    pub rc_band_hz: Option<(f64, Option<f64>)>,
+    /// Selected crossover frequency for the draggable line.
+    pub xo_hz: Option<f64>,
+}
+/// Values behind one channel's metrics and filters lines.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChannelResultLine {
+    /// Main role.
+    pub role: String,
+    /// Before and after percentage within one dB, 20–200 Hz.
+    pub within_1db_pct: [f64; 2],
+    /// Before and after group-delay spread, 20–100 Hz, in ms.
+    pub gd_spread_ms: [f64; 2],
+    /// Number of input PEQs.
+    pub peq_count: usize,
+    /// FIR taps, absent when no FIR is used.
+    pub fir_taps: Option<usize>,
+    /// Crossover frequency, absent without bass management.
+    pub xo_hz: Option<f64>,
+    /// Fresh, enabled MIMO support path count, absent when not shown.
+    pub mimo_support_count: Option<usize>,
+}
+/// One sub's output alignment and fixed filters.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SubResultRow {
+    /// Sub role.
+    pub role: String,
+    /// Alignment mode code.
+    pub mode: String,
+    /// Output gain in dB.
+    pub gain_db: f64,
+    /// Output delay in ms.
+    pub delay_ms: f64,
+    /// Output polarity, plus or minus one.
+    pub polarity: i8,
+    /// Ordered all-pass frequency and Q pairs.
+    pub allpass: Vec<(f64, f64)>,
+    /// High-pass frequency and filter type.
+    pub high_pass: (f64, String),
+    /// Low-pass frequency and filter type.
+    pub low_pass: (f64, String),
+    /// Fixed and generated peaking filters as frequency, Q and gain.
+    pub peq: Vec<(f64, f64, f64)>,
+}
+/// A typed BA layout summary.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SubLayoutLine {
+    /// Bundle name.
+    pub bundle: String,
+    /// Layout code, dba or multi.
+    pub kind: String,
+    /// All members.
+    pub members: Vec<String>,
+    /// Front row roles.
+    pub front: Vec<String>,
+    /// Rear row roles.
+    pub rear: Vec<String>,
+    /// Rear delay in ms.
+    pub rear_ms: f64,
+    /// Automatic rear delay in ms, when available.
+    pub auto_ms: Option<f64>,
+    /// Manual rear trim in ms.
+    pub trim_ms: f64,
+    /// Shared peaking filters.
+    pub peq: Vec<(f64, f64, f64)>,
+}
+/// BA metrics and table, independent of the selected main channel.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SubResultLines {
+    /// Whether this BA result is stale.
+    pub stale: bool,
+    /// Whether a dedicated subs-only run supplies these values.
+    pub subs_only: bool,
+    /// Metric band in Hz.
+    pub band_hz: [f64; 2],
+    /// Before and after flatness in dB.
+    pub flatness_db: [f64; 2],
+    /// Before and after across-seat spread, absent for a single seat.
+    pub seat_spread_db: Option<[f64; 2]>,
+    /// Number of complete sub positions.
+    pub positions: usize,
+    /// Output rows in configuration order.
+    pub rows: Vec<SubResultRow>,
+    /// Bundle layouts.
+    pub layouts: Vec<SubLayoutLine>,
+    /// Filter and gain warning codes and their arguments.
+    pub warnings: Vec<Notice>,
+}
+/// Numeric calibration summary lines; no localized sentences cross IPC.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ResultLinesResult {
+    /// Whether the full calibration result is stale.
+    pub stale: bool,
+    /// Per-main metrics and filter counts.
+    pub channels: Vec<ChannelResultLine>,
+    /// Total delay in milliseconds, absent before calibration.
+    pub total_delay_ms: Option<f64>,
+    /// Engine notes as codes and arguments.
+    pub notes: Vec<Notice>,
+    /// RC ceiling provenance and room-volume notices.
+    pub rc: Vec<Notice>,
+    /// BA metrics, table, layouts and warnings when at least two subs are available.
+    pub ba: Option<SubResultLines>,
 }
 
 /// What the screen needs before it draws anything.
@@ -250,6 +631,10 @@ pub struct MigrationWarning {
 pub struct CalibrateParams {
     /// Settings override; absent uses the open project.
     pub settings: Option<CalibrationSettings>,
+    /// Designs the subwoofers only (upstream [서브만 계산]); the result is
+    /// kept apart and shown by the BA tab until the next full run.
+    #[serde(default)]
+    pub subs_only: bool,
 }
 /// Optional settings for a MIMO run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
@@ -285,6 +670,10 @@ pub enum JobKind {
     Mimo,
     /// Writes one selected export bundle.
     Export,
+    /// Streams microphone levels and controls level-check playback.
+    LevelMonitor,
+    /// Watches measurement-method status changes.
+    StatusWatch,
 }
 /// The current lifecycle state of a job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -378,6 +767,19 @@ pub enum JobEvent {
         result: Option<Box<JobResult>>,
         error: Option<IpcError>,
     },
+    /// Reports a live input level at the monitor cadence.
+    Meter {
+        job: JobId,
+        rms_dbfs: f64,
+        peak_dbfs: f64,
+        spl_db: Option<f64>,
+        clipping: bool,
+    },
+    /// Reports a changed measurement-method status snapshot.
+    MeasureStatus {
+        job: JobId,
+        status: MeasureMethodsResult,
+    },
 }
 /// The successful result produced by a job.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -398,6 +800,8 @@ pub enum JobResult {
     Measurement(ProjectInfo),
     /// Project state after an mdat import.
     MdatImport(ProjectInfo),
+    /// A long-lived monitor or watcher stopped without a payload.
+    Stopped,
 }
 /// The job to cancel.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -557,7 +961,8 @@ pub enum ExportKind {
 pub struct ExportParams {
     /// Export bundle to write.
     pub kind: ExportKind,
-    /// Destination folder path.
+    /// Destination folder path. An empty path uses the project's export folder
+    /// and applies the upstream timestamped subfolder convention.
     pub folder: String,
 }
 /// Files written by a completed export job.
@@ -566,6 +971,96 @@ pub struct ExportParams {
 pub struct ExportResult {
     /// Paths of all files written by the exporter.
     pub files: Vec<String>,
+}
+
+// P28 host, live-monitor, watch and export-folder types. Keep this block
+// contiguous so the parallel M5 IPC additions merge without interleaving.
+/// Optional suggested name for a save dialog.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct DialogSuggestedParams {
+    /// Suggested file name.
+    pub suggested: String,
+}
+/// Optional starting folder for a folder picker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct DialogPickFolderParams {
+    /// Starting folder, when known.
+    pub start: Option<String>,
+}
+/// The kind of file a host save dialog accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum SaveFileKind {
+    /// UTF-8 patch-sheet CSV.
+    PatchSheet,
+    /// Target-curve JSON.
+    Target,
+}
+/// Typed save-file dialog parameters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DialogSaveFileParams {
+    /// File type and filter.
+    pub kind: SaveFileKind,
+    /// Suggested file name.
+    pub suggested: String,
+}
+/// The kind of file a host open dialog accepts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum OpenFileKind {
+    /// Target-curve JSON.
+    Target,
+}
+/// Typed open-file dialog parameters.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DialogOpenFileParams {
+    /// File type and filter.
+    pub kind: OpenFileKind,
+}
+/// Folder to reveal in the operating-system file manager.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct OpenFolderParams {
+    /// Folder path.
+    pub path: String,
+}
+/// Optional role to associate with a level-monitor start.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct LevelMonitorStartParams {
+    /// Speaker role initially selected for playback.
+    pub role: Option<String>,
+}
+/// Role and output level for one 2.5-second level-check burst.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LevelPlayParams {
+    /// Internal speaker role.
+    pub role: String,
+    /// Master output level in dBFS.
+    pub master_dbfs: f64,
+}
+/// Export base-folder update.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ExportFolderSetParams {
+    /// Folder path to store in the open project.
+    pub folder: String,
+}
+/// Current export base folder and whether it came from project storage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ExportFolderResult {
+    /// Export base folder.
+    pub folder: String,
+    /// True when `extra.export.folder` supplied this value.
+    pub stored: bool,
 }
 
 // Measurement request and response types.
@@ -782,6 +1277,358 @@ pub struct MdatImportParams {
     pub position: i64,
 }
 
+// Project editing request and response types.
+/// A filesystem path used by a project editor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PathParams {
+    /// File system path chosen by the user.
+    pub path: String,
+}
+/// A path written by an editor.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PathResult {
+    /// File system path that was written.
+    pub path: String,
+}
+/// A preset change which may need measurement-clearing confirmation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigPresetParams {
+    /// Preset name (`2.0`, `2.1`, `2.2`, `5.1`, `7.1.4`, `9.1.6`, or `custom` for an empty layout).
+    pub preset: String,
+    /// Clears existing measurements; without it a project with measurements answers `confirm_required` (U5).
+    #[serde(default)]
+    pub confirm: bool,
+}
+/// A sub-count change which may need measurement-clearing confirmation.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigSubCountParams {
+    /// Number of subwoofers, 0 to 8.
+    pub count: i64,
+    /// Clears existing measurements; without it a project with measurements answers `confirm_required` (U5).
+    #[serde(default)]
+    pub confirm: bool,
+}
+/// One speaker index.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigIndexParams {
+    /// Speaker index in `ConfigResult.speakers`.
+    pub index: usize,
+}
+/// Optional edits to one speaker or one of its bands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigSetSpeakerParams {
+    /// Speaker index in `ConfigResult.speakers`.
+    pub index: usize,
+    /// New role code; a sub role forces a single SUB band (`step2_config.py:988-1002`).
+    pub role: Option<String>,
+    /// New size: `small` (crossover applied) or `large` (full range).
+    pub size: Option<String>,
+    /// Band the output and polarity edits apply to; absent means the first band.
+    pub band_index: Option<usize>,
+    /// New measurement output channel (1-based).
+    pub out: Option<i64>,
+    /// New polarity: `+` normal or `-` inverted.
+    pub pol: Option<String>,
+}
+/// One configured output band.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigBand {
+    /// Band name: `FULL`, `LF`, `MF`, `HF` or `SUB`.
+    pub band: String,
+    /// Measurement output channel (1-based).
+    pub out: i64,
+    /// Polarity: `+` normal or `-` inverted.
+    pub pol: String,
+}
+/// One configured speaker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigSpeaker {
+    /// Role code (`L`, `C`, `SW1`, `Tfl`, ...).
+    pub role: String,
+    /// `small` (crossover applied) or `large` (full range); subs are `sub`.
+    pub size: String,
+    /// Bands in order; one band unless bi-amped.
+    pub bands: Vec<ConfigBand>,
+}
+/// One upstream speaker group in upstream order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigGroup {
+    /// Group key in upstream order: front, center, sub, surround, back, wide, top, height, other.
+    pub key: String,
+    /// Indices into `ConfigResult.speakers` that belong to this group.
+    pub speaker_indices: Vec<usize>,
+}
+/// Values derived from the complete speaker configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigSummary {
+    /// Number of speakers.
+    pub speaker_count: usize,
+    /// Number of measurement outputs in use.
+    pub outputs: Vec<i64>,
+    /// Highest output channel in use.
+    pub max_channel: i64,
+    /// Number of output channels used twice or more.
+    pub duplicate_outputs: Vec<i64>,
+    /// Number of subwoofers.
+    pub sub_count: usize,
+}
+/// Screen-facing editable speaker configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigResult {
+    /// Speakers in table order.
+    pub speakers: Vec<ConfigSpeaker>,
+    /// Preset name, or `custom` after any manual edit.
+    pub preset: String,
+    /// Measurement output device name (`config.device`).
+    pub device: String,
+    /// Table group header rows in upstream order.
+    pub groups: Vec<ConfigGroup>,
+    /// Counts the summary line shows.
+    pub summary: ConfigSummary,
+}
+/// Configuration after a destructive edit and its optional inverse token.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ConfigMutationResult {
+    /// The configuration after the edit.
+    pub config: ConfigResult,
+    /// Token for `undo` when the edit cleared measurements (U5).
+    pub undo_token: Option<String>,
+}
+/// The five manually editable DSP profile fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DspFields {
+    /// FIR taps per channel.
+    pub fir_taps: i64,
+    /// Total FIR taps the DSP can run across channels.
+    pub fir_budget: i64,
+    /// IIR (PEQ) bands per channel.
+    pub iir_bands: i64,
+    /// All-pass bands per channel.
+    pub allpass_bands: i64,
+    /// Bass-management path delays the DSP offers.
+    pub bm_path_delays: i64,
+}
+/// One DSP preset in the built-in table.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DspPreset {
+    /// Preset key (`camilla`, `tesira`, `qsys`, `minidsp`, `custom`).
+    pub key: String,
+    /// Device name shown in the device list.
+    pub name: String,
+    /// The preset's filter resources.
+    pub fields: DspFields,
+}
+/// A preset selection or a complete manual edit.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct DspSetParams {
+    /// Selects a preset; absent with `fields` set means a manual edit.
+    pub preset: Option<String>,
+    /// Manual values; any manual edit makes the profile `custom`.
+    pub fields: Option<DspFields>,
+}
+/// Editable DSP state and derived resolution values.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct DspResult {
+    /// Current profile key.
+    pub profile: String,
+    /// Current device name.
+    pub name: String,
+    /// Current filter resources.
+    pub fields: DspFields,
+    /// Every preset, for the device list.
+    pub presets: Vec<DspPreset>,
+    /// FIR window length the taps give, in ms (note line).
+    pub window_ms: f64,
+    /// Frequency resolution the taps give, in Hz (note line).
+    pub resolution_hz: f64,
+}
+/// Measurement timing-reference settings stored under `extra.devices`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LayoutTiming {
+    /// Timing reference: `acoustic`, `loopback` or `none`.
+    pub reference: String,
+    /// Reference speaker role for the acoustic reference (default `R`).
+    pub role: String,
+    /// Reference output channel for the loopback reference (1-based).
+    pub output: i64,
+}
+/// One measurement microphone point in centimetres.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LayoutPoint {
+    /// Position number; 1 is the listening position.
+    pub position: usize,
+    /// Left-right offset from the centre seat, in cm (`layout_map.py`).
+    pub x_cm: f64,
+    /// Front-back offset from the centre seat, in cm (`layout_map.py`).
+    pub y_cm: f64,
+    /// Height step: 0 at ear height, +1 or -1 for ±20 cm.
+    pub height: i8,
+}
+/// One supported measurement arrangement.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LayoutArrangement {
+    /// Number of positions: 1, 9, 13 or 17.
+    pub count: usize,
+    /// Microphone points of this arrangement.
+    pub points: Vec<LayoutPoint>,
+}
+/// Editable arrangement and measurement options.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LayoutResult {
+    /// Chosen arrangement (`extra['array']`).
+    pub count: usize,
+    /// Start delay before each position: `off`, `5`, `10` or `15` seconds.
+    pub start_delay: String,
+    /// Timing reference and its reference speaker or output.
+    pub timing: LayoutTiming,
+    /// Every arrangement with its geometry, for the cards and maps.
+    pub arrangements: Vec<LayoutArrangement>,
+}
+/// Optional arrangement and timing edits.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct LayoutSetParams {
+    /// New arrangement; changing it clears measurements (U5).
+    pub count: Option<usize>,
+    /// New start delay.
+    pub start_delay: Option<String>,
+    /// New timing reference.
+    pub timing: Option<LayoutTiming>,
+    /// Clears existing measurements; without it a project with measurements answers `confirm_required` (U5).
+    #[serde(default)]
+    pub confirm: bool,
+}
+/// Arrangement after editing and its optional inverse token.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LayoutMutationResult {
+    /// The arrangement and options after the edit.
+    pub layout: LayoutResult,
+    /// Token for `undo` when the edit cleared measurements (U5).
+    pub undo_token: Option<String>,
+}
+/// Position-duration estimate from upstream step 4 semantics.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PositionEstimateResult {
+    /// Number of positions in the arrangement.
+    pub positions: usize,
+    /// Estimated time per position, in seconds (`step4_layout.position_seconds`).
+    pub per_position_seconds: f64,
+    /// Estimated time for every position, without moving the microphone, in seconds.
+    pub total_seconds: f64,
+}
+/// Target control points.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TargetPointsParams {
+    /// Target points as (Hz, dB); clamped to 10–24000 Hz and ±30 dB, at least two.
+    pub points: Vec<(f64, f64)>,
+}
+/// One built-in target preset selection.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TargetPresetParams {
+    /// Target preset: `flat`, `harman` or `cinema`.
+    pub preset: String,
+}
+/// Target curve, selected preset, and built-in preset table.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TargetResult {
+    /// Target points as (Hz, dB).
+    pub points: Vec<(f64, f64)>,
+    /// Preset name, or absent when the points were edited (custom).
+    pub preset: Option<String>,
+    /// Preset names the target menu offers.
+    pub presets: Vec<(String, Vec<(f64, f64)>)>,
+}
+/// Complete calibration settings replacement.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CalibrationSettingsParams {
+    /// The complete calibration settings to store.
+    pub settings: CalibrationSettings,
+}
+/// Mode whose numeric specification should be returned.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ModeSpecParams {
+    /// Correction mode: `zero`, `mixed`, `linear` or `ultra`.
+    pub mode: Mode,
+    /// Latency limit for the ultra mode, in ms.
+    pub ultra_ms: Option<f64>,
+}
+/// Presentation-neutral values underlying the upstream mode specification line.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ModeSpecResult {
+    /// Room-correction filters: `iir` (IIR only) or `iir_fir` (IIR plus FIR).
+    pub rc_filter: String,
+    /// FIR taps the mode uses (0 without FIR).
+    pub fir_taps: usize,
+    /// PEQ bands per channel, when the mode uses IIR.
+    pub peq_bands: Option<usize>,
+    /// MIMO support filter kind (`iir` in every user mode).
+    pub mimo_filter: String,
+    /// Delay the FIR may add ahead of the main arrival (`lift_ms`), in ms.
+    pub lift_ms: f64,
+    /// Octave fraction of the excess-phase smoothing (6, or 24 in linear and ultra modes).
+    pub phase_frac: f64,
+    /// Upper latency bound of the mode, in ms.
+    pub max_latency_ms: f64,
+}
+/// Application-local settings, independent of an open project.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AppSettings {
+    /// Screen language: `ko` or `en`.
+    pub language: String,
+    /// Shows expert-only settings (U9).
+    pub expert_display: bool,
+    /// Recently opened project paths, newest first (at most 10).
+    pub recent_projects: Vec<String>,
+    /// Last window size in logical pixels.
+    pub last_window_size: Option<(u32, u32)>,
+}
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            language: "ko".into(),
+            expert_display: false,
+            recent_projects: Vec::new(),
+            last_window_size: None,
+        }
+    }
+}
+/// Complete application-local settings replacement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct AppSettingsParams {
+    /// The complete app settings to store.
+    pub settings: AppSettings,
+}
+
 /// Why a call failed. The screen maps each code to a written message with the
 /// cause and the next action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -822,6 +1669,8 @@ pub enum ErrorCode {
     RewFailed,
     /// A measurement setting or plan field is invalid.
     MeasurementInput,
+    /// A destructive edit needs explicit confirmation while measurements exist.
+    ConfirmRequired,
 }
 /// A coded IPC failure with template parameters and diagnostic detail.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -937,6 +1786,100 @@ mod tests {
                 assignments: vec![],
                 position: 1,
             }),
+            Request::ConfigGet,
+            Request::ConfigApplyPreset(ConfigPresetParams {
+                preset: "2.1".into(),
+                confirm: false,
+            }),
+            Request::ConfigSetSubCount(ConfigSubCountParams {
+                count: 2,
+                confirm: false,
+            }),
+            Request::ConfigSetSpeaker(ConfigSetSpeakerParams {
+                index: 0,
+                role: Some("L".into()),
+                size: None,
+                band_index: Some(0),
+                out: Some(1),
+                pol: Some("+".into()),
+            }),
+            Request::ConfigAddSpeaker,
+            Request::ConfigRemoveSpeaker(ConfigIndexParams { index: 0 }),
+            Request::ConfigRenumber,
+            Request::ConfigValidate,
+            Request::PatchSheetCsv(PathParams {
+                path: "patch.csv".into(),
+            }),
+            Request::DspGet,
+            Request::DspSet(DspSetParams {
+                preset: Some("tesira".into()),
+                fields: None,
+            }),
+            Request::LayoutGet,
+            Request::LayoutSet(LayoutSetParams {
+                count: Some(9),
+                ..Default::default()
+            }),
+            Request::PositionEstimate,
+            Request::TargetGet,
+            Request::TargetSetPoints(TargetPointsParams {
+                points: vec![(20.0, 0.0), (20_000.0, 0.0)],
+            }),
+            Request::TargetApplyPreset(TargetPresetParams {
+                preset: "flat".into(),
+            }),
+            Request::TargetSave(PathParams {
+                path: "target.json".into(),
+            }),
+            Request::TargetLoad(PathParams {
+                path: "target.json".into(),
+            }),
+            Request::CalibrationSettingsGet,
+            Request::CalibrationSettingsSet(CalibrationSettingsParams {
+                settings: CalibrationSettings::default(),
+            }),
+            Request::ModeSpec(ModeSpecParams {
+                mode: Mode::Mixed,
+                ultra_ms: None,
+            }),
+            Request::AppSettingsGet,
+            Request::AppSettingsSet(AppSettingsParams {
+                settings: AppSettings::default(),
+            }),
+            Request::MeasurementCurves(MeasurementCurvesParams::default()),
+            Request::ResultCurves(ResultCurvesParams {
+                tab: ResultTab::Spl,
+                channel: None,
+                group: None,
+                xo_hz: None,
+                corrected: None,
+            }),
+            Request::ResultLines,
+            Request::SubTakeValues,
+            Request::DialogOpenProject,
+            Request::DialogSaveProject(DialogSuggestedParams {
+                suggested: "x.secs".into(),
+            }),
+            Request::DialogPickMdat,
+            Request::DialogPickFolder(DialogPickFolderParams { start: None }),
+            Request::DialogSaveFile(DialogSaveFileParams {
+                kind: SaveFileKind::PatchSheet,
+                suggested: "x.csv".into(),
+            }),
+            Request::DialogOpenFile(DialogOpenFileParams {
+                kind: OpenFileKind::Target,
+            }),
+            Request::OpenFolder(OpenFolderParams { path: ".".into() }),
+            Request::LevelMonitorStart(LevelMonitorStartParams::default()),
+            Request::LevelMonitorStop,
+            Request::LevelPlay(LevelPlayParams {
+                role: "L".into(),
+                master_dbfs: -20.0,
+            }),
+            Request::StatusWatchStart,
+            Request::StatusWatchStop,
+            Request::ExportFolderGet,
+            Request::ExportFolderSet(ExportFolderSetParams { folder: ".".into() }),
         ]
     }
     #[test]

@@ -21,5 +21,9 @@ tauri-build = { version = "2.7", features = [] }
 [dependencies]
 secs-service.workspace = true
 secs-types.workspace = true
+secs-rew.workspace = true
+secs-sys = { path = "../../crates/secs-sys" }
 serde_json.workspace = true
 tauri = { version = "2.12", features = [] }
+tauri-plugin-dialog = "=2.6.0"
+tauri-plugin-opener = "=2.5.0"

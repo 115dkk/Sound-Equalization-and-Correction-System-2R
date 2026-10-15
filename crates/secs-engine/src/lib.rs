@@ -48,6 +48,7 @@ mod chain;
 mod decay;
 #[allow(dead_code)]
 mod design;
+pub mod display;
 pub mod export_view;
 #[allow(dead_code)]
 mod fit;
