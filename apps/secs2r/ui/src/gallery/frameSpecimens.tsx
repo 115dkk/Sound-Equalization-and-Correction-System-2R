@@ -11,7 +11,9 @@ import { PrefsScope, usePrefs } from "../app/prefs";
 import { useT } from "../i18n/react";
 import { IpcProvider, useIpc } from "../ipc/context";
 import { createMockService, ipcError } from "../ipc/mock";
+import { HelpPanel } from "../screens/help/HelpPanel";
 import { SAMPLE_ROLES } from "../ipc/fixtures";
+import type { PrimaryAction } from "../app/StepHeader";
 import { ArrangementMap, Card, EmptyState, ErrorNotice, Graph, StatusPill } from "../ui";
 import { isSubRole, roleCode } from "../ui/maps/geometry";
 import { logGrid, measurementCurves } from "./data";
@@ -128,7 +130,9 @@ export function FrameBox({
   trayOpen,
   primaryBusy,
   noPrimary,
+  header,
   headerStatus,
+  aside,
   children,
 }: {
   frame: FrameModel;
@@ -138,7 +142,12 @@ export function FrameBox({
   primaryBusy?: boolean;
   /** No primary action (the empty project's next action belongs to the P30 screen). */
   noPrimary?: boolean;
+  /** A screen's own header (`<step>Header(view, actions, t)`): its primary
+   * action, or none when it returns none, and its status. */
+  header?: { primary?: PrimaryAction; status?: ReactNode };
   headerStatus?: ReactNode;
+  /** The frame's aside slot (the help panel). */
+  aside?: ReactNode;
   children: ReactNode;
 }) {
   const t = useT();
@@ -149,12 +158,13 @@ export function FrameBox({
     <AppFrame
       model={step}
       onNavigate={setCurrent}
-      primary={noPrimary ? undefined : { id: `${current}.primary`, label: t(STEP_PRIMARY[current]), onClick: () => {}, busy: primaryBusy && !blocked }}
-      headerStatus={headerStatus}
+      primary={header ? header.primary : noPrimary ? undefined : { id: `${current}.primary`, label: t(STEP_PRIMARY[current]), onClick: () => {}, busy: primaryBusy && !blocked }}
+      headerStatus={header ? header.status : headerStatus}
       projectActions={{ onNew: () => {}, onOpen: () => {}, onSave: () => {}, onSaveAs: () => {} }}
       onHelp={() => {}}
       version={{ version: "0.13.0", prerelease: true }}
       tray={<JobTray api={staticApi(jobs, now)} defaultOpen={trayOpen} />}
+      aside={aside}
       shortcuts={false}
     >
       {children}
@@ -294,6 +304,23 @@ export const frameSpecimens: SpecimenDef[] = [
     height: 800,
     render: () => (
       <FrameBox frame={model("measure", { ...filledProject, path: { kind: "none", state: "warning" } }, { connect: { status: "skipped" } })} jobs={initialJobs}>
+        <MeasureContent />
+      </FrameBox>
+    ),
+  },
+  {
+    id: "frame.aside",
+    title: "Frame · aside slot: the help panel between the header and the open job history",
+    width: 1280,
+    height: 800,
+    render: () => (
+      <FrameBox
+        frame={model("measure", { ...filledProject, path: { kind: "rew", state: "error" } })}
+        jobs={historyJobs}
+        now={T0 + 30000}
+        trayOpen
+        aside={<HelpPanel view={{ step: "measure", tutorial: false }} actions={{ close: () => {}, startTutorial: () => {} }} initialTab="trouble" />}
+      >
         <MeasureContent />
       </FrameBox>
     ),

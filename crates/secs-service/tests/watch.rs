@@ -122,6 +122,7 @@ fn configure_mock(service: &Service, path: &std::path::Path) {
             preset: "2.0".into(),
             sub_count: 0,
             sample: false,
+            tutorial: false,
         }),
         Arc::new(NoEvents),
     );

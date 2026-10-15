@@ -673,14 +673,14 @@ id = "service.run_cache"
 kind = "service"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::round_trip_and_ignore_pickle", "secs-service::corrupt_and_oversized_files_are_ignored", "secs-service::unknown_cache_version_is_ignored", "secs-service::stale_calibration_refuses_export_and_cache_survives_reopen"]
+tests = ["secs-service::round_trip_and_ignore_pickle", "secs-service::corrupt_and_oversized_files_are_ignored", "secs-service::unknown_cache_version_is_ignored", "secs-service::stale_calibration_exports_with_flag_and_cache_survives_reopen"]
 
 [[feature]]
 id = "service.exports"
 kind = "service"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::project_session_create_open_save_and_save_as", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::stale_calibration_refuses_export_and_cache_survives_reopen"]
+tests = ["secs-service::project_session_create_open_save_and_save_as", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::stale_calibration_exports_with_flag_and_cache_survives_reopen"]
 
 [[feature]]
 id = "service.host"
@@ -694,7 +694,7 @@ id = "service.level_monitor"
 kind = "service"
 milestone = "M5"
 status = "partial"
-tests = ["secs-service::mock_monitor_emits_stores_excludes_and_stops", "secs-service::generic_cancel_ends_monitor"]
+tests = ["secs-service::mock_monitor_emits_stores_excludes_and_stops", "secs-service::generic_cancel_ends_monitor_during_an_active_burst"]
 note = "mock readings arrive about ten times a second and REW readings at its callback rate (about six) while a role plays; the native path reads real samples but sends them after the capture ends, and no path meters the idle mic before level_play. A streaming input session in secs-audio/secs-sys finishes it."
 
 [[feature]]
@@ -759,7 +759,7 @@ kind = "ui"
 milestone = "M5"
 status = "partial"
 tests = []
-note = "five-stage flow, results first, three disclosure levels (docs/ARCHITECTURE.md, Screens). P29 landed the foundation: tokens, the frame with the step rail and status, the job tray, the component kit, the uPlot graphs, the SVG maps, the mock service and the gallery (docs/DESIGN.md). Its vitest tests live in apps/secs2r/ui, which this registry cannot reference (it lists cargo tests). The step screens follow in P30-P32."
+note = "five-stage flow, results first, three disclosure levels (docs/ARCHITECTURE.md, Screens). P29 landed the foundation: tokens, the frame with the step rail and status, the job tray, the component kit, the uPlot graphs, the SVG maps, the mock service and the gallery (docs/DESIGN.md). Its vitest tests live in apps/secs2r/ui, which this registry cannot reference (it lists cargo tests). P33 connects the P30-P32 screens through typed stores, explicit mutation/job invalidation, per-call Tauri channels, project/close dialogs and lifecycle hooks. src/state/flow.test.tsx walks a non-tutorial sample project through mock measure_position jobs, calibration and CamillaDSP export; per-screen hook tests pin action IPC params. app.live exercises the full mock app. P35 supplies the complete tutorial quests."
 
 [[feature]]
 id = "ui.tutorial_help"
@@ -893,6 +893,34 @@ kind = "ipc"
 milestone = "M4"
 status = "implemented"
 tests = ["secs-service::configure_validates_fields_and_host_stub_reports_its_error"]
+
+[[feature]]
+id = "ipc.measurement_records"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::measurement_records_report_planned_positions_and_sources"]
+
+[[feature]]
+id = "ipc.levels_get"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::levels_methods_fill_only_missing_defaults"]
+
+[[feature]]
+id = "ipc.levels_fill_defaults"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::levels_methods_fill_only_missing_defaults"]
+
+[[feature]]
+id = "ipc.level_stop"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-service::level_stop_cancels_only_the_active_burst_and_is_idempotent", "secs-service::rew_level_stop_stops_generator_but_keeps_subscription_alive"]
 
 [[feature]]
 id = "ipc.level_check"
@@ -1096,6 +1124,30 @@ kind = "ipc"
 milestone = "M5"
 status = "implemented"
 tests = ["secs-service::service_config_oracle_replays_values_and_saved_project_bytes"]
+
+[[feature]]
+id = "ipc.calibration_settings_edit"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+upstream = "calibration.py CalibrationSettings; wizard/step_calibration.py edit handlers"
+tests = ["secs-service::settings_edits_and_sub_warnings_replay_upstream_oracle"]
+
+[[feature]]
+id = "ipc.sub_warnings"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+upstream = "calibration.py sub_filter_warnings"
+tests = ["secs-service::settings_edits_and_sub_warnings_replay_upstream_oracle"]
+
+[[feature]]
+id = "ipc.rew_info"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+upstream = "rewapi/rew.py; wizard/step1_devices.py"
+tests = ["secs-service::rew_info_uses_injected_transport_and_preserves_unknown_facts", "secs-rew::rew_info_reads_recorded_api_shapes_without_writes", "secs-rew::fake_rew_info_covers_running_no_api_and_no_pro"]
 
 [[feature]]
 id = "ipc.mode_spec"

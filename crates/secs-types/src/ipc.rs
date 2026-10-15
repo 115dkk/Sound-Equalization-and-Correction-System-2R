@@ -16,6 +16,7 @@ use ts_rs::TS;
 
 use crate::calibration::{CalibrationSettings, Mode};
 use crate::chain::{MimoPaths, SignalChain};
+pub use crate::settings_edit::CalibrationSettingsEditParams;
 
 /// A call from the screen.
 ///
@@ -60,6 +61,14 @@ pub enum Request {
     MeasureMethods,
     /// The `MeasureConfigure` Request variant.
     MeasureConfigure(MeasureConfigureParams),
+    /// Returns one recording-status entry per arranged position.
+    MeasurementRecords,
+    /// Returns stored per-role level and SPL values.
+    LevelsGet,
+    /// Fills only missing per-role level values with upstream defaults.
+    LevelsFillDefaults,
+    /// Stops the current 2.5-second level burst without stopping its monitor.
+    LevelStop,
     /// The `LevelCheck` Request variant.
     LevelCheck(LevelCheckParams),
     /// The `LevelApply` Request variant.
@@ -118,6 +127,12 @@ pub enum Request {
     CalibrationSettingsGet,
     /// Stores calibration settings in the project.
     CalibrationSettingsSet(CalibrationSettingsParams),
+    /// Applies one upstream calibration-screen edit and stores the settings.
+    CalibrationSettingsEdit(CalibrationSettingsEditParams),
+    /// Filter warnings from current settings (gain warnings require a run).
+    SubWarnings,
+    /// Optional REW facts read through the injected transport.
+    RewInfo,
     /// Returns numeric capabilities for one calibration mode.
     ModeSpec(ModeSpecParams),
     /// Returns application-local settings.
@@ -209,6 +224,14 @@ pub enum Response {
     MeasureMethods(MeasureMethodsResult),
     /// The `MeasureConfigure` Response variant.
     MeasureConfigure(MeasureConfigResult),
+    /// Recording status for every arranged position.
+    MeasurementRecords(MeasurementRecordsResult),
+    /// Stored per-role level and SPL values.
+    LevelsGet(LevelsResult),
+    /// Stored values after filling missing level defaults.
+    LevelsFillDefaults(LevelsResult),
+    /// Confirms that the current level burst was stopped.
+    LevelStop(()),
     /// The `LevelCheck` Response variant.
     LevelCheck(JobStarted),
     /// The `LevelApply` Response variant.
@@ -267,6 +290,12 @@ pub enum Response {
     CalibrationSettingsGet(CalibrationSettings),
     /// The `CalibrationSettingsSet` Response variant.
     CalibrationSettingsSet(CalibrationSettings),
+    /// Settings after one edit.
+    CalibrationSettingsEdit(CalibrationSettings),
+    /// Current settings-only filter warnings.
+    SubWarnings(Vec<Notice>),
+    /// Current REW facts; unavailable fields are null.
+    RewInfo(RewInfoResult),
     /// The `ModeSpec` Response variant.
     ModeSpec(ModeSpecResult),
     /// The `AppSettingsGet` Response variant.
@@ -574,6 +603,9 @@ pub struct ProjectNewParams {
     pub sub_count: u8,
     /// Whether to create the fixed 7.1.4 sample-room project.
     pub sample: bool,
+    /// Whether this is a non-writable tutorial session using the sample room.
+    #[serde(default)]
+    pub tutorial: bool,
 }
 /// Inputs for loading embedded or synthetic sample measurements.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
@@ -612,6 +644,8 @@ pub struct ProjectInfo {
     pub positions: Vec<i64>,
     /// Whether the in-memory project has unsaved changes.
     pub dirty: bool,
+    /// Whether this open project is a non-writable tutorial session.
+    pub tutorial: bool,
     /// Warnings produced while loading legacy project entries.
     pub migration_warnings: Vec<MigrationWarning>,
 }
@@ -836,6 +870,12 @@ pub struct Notice {
 pub struct CalibrationSummary {
     /// Whether current project inputs differ from this result.
     pub stale: bool,
+    /// Which input first differs: measurements, settings or target.
+    pub stale_reason: Option<String>,
+    /// Calibration mode used to compute this result.
+    pub mode: Mode,
+    /// Ultra-mode latency limit used to compute this result, in milliseconds.
+    pub ultra_ms: f64,
     /// Values for the upstream verdict card.
     pub verdict: VerdictSummary,
     /// Per-channel before-and-after metrics.
@@ -928,6 +968,8 @@ pub struct MimoSummary {
     pub fsiso: f64,
     /// Number of generated support paths.
     pub support_count: usize,
+    /// Total FIR-tap budget across all generated paths.
+    pub fir_taps_total: usize,
     /// Informational codes and values translated by the screen.
     pub notes: Vec<Notice>,
     /// DSP-ready support paths.
@@ -971,6 +1013,10 @@ pub struct ExportParams {
 pub struct ExportResult {
     /// Paths of all files written by the exporter.
     pub files: Vec<String>,
+    /// Actual export folder written by the job.
+    pub folder: String,
+    /// Whether the exported calibration differed from current project inputs.
+    pub stale: bool,
 }
 
 // P28 host, live-monitor, watch and export-folder types. Keep this block
@@ -1111,6 +1157,8 @@ pub struct MeasureConfigureParams {
     pub output_channels: Vec<u16>,
     /// Optional sweep length in samples.
     pub sweep_length: Option<usize>,
+    /// Optional sweep repetition count; allowed values are 1, 2, 4 and 8.
+    pub repetitions: Option<u8>,
     /// Optional sweep level in dBFS.
     pub sweep_level_dbfs: Option<f64>,
     /// Optional timing-reference mode.
@@ -1142,6 +1190,12 @@ pub struct MeasureConfigResult {
     pub output_channels: Vec<u16>,
     /// Sweep length in samples.
     pub sweep_length: usize,
+    /// Active repetition count after timing-reference normalization.
+    pub repetitions: u8,
+    /// Sweep sample rate in Hz.
+    pub sample_rate: u32,
+    /// Supported sweep lengths in samples.
+    pub sweep_lengths: Vec<usize>,
     /// Timing-reference mode.
     pub timing: String,
     /// Optional one-based loopback input channel.
@@ -1150,6 +1204,36 @@ pub struct MeasureConfigResult {
     pub timing_ref_output: Option<u16>,
     /// Share preference: auto, exclusive, or shared.
     pub share_mode: String,
+}
+/// Recording status and upstream source values for one arranged position.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PositionRecord {
+    /// One-based arranged position number.
+    #[ts(type = "number")]
+    pub position: i64,
+    /// Whether every planned role is recorded at this position.
+    pub done: bool,
+    /// Planned roles that have a recording at this position.
+    pub roles: Vec<String>,
+    /// Source file/value by recorded role; native and REW sweeps use `measured`.
+    pub sources: BTreeMap<String, String>,
+}
+/// Recording status for the complete measurement arrangement.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MeasurementRecordsResult {
+    /// One entry per arranged position.
+    pub records: Vec<PositionRecord>,
+}
+/// Stored level settings, keyed by measurement role.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LevelsResult {
+    /// Played level in dBFS by role.
+    pub levels: BTreeMap<String, f64>,
+    /// Measured sound-pressure level in dB SPL by role.
+    pub spl: BTreeMap<String, f64>,
 }
 /// The speaker role used for a level check.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1219,6 +1303,43 @@ pub struct RewStatusResult {
     /// Whether REW reports a Pro license.
     pub pro: bool,
 }
+/// Facts from REW, distinct from project-stored measurement preferences.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct RewInfoResult {
+    pub executable_path: Option<String>,
+    pub running: bool,
+    pub reachable: bool,
+    pub version: Option<String>,
+    /// User-confirmed license hint; the API has no license endpoint.
+    pub pro: Option<bool>,
+    pub blocking: Option<bool>,
+    /// Empty means no file loaded; null means unknown or per-input calibration.
+    pub input_calibration_file: Option<String>,
+    pub input_devices: Option<Vec<RewDeviceInfo>>,
+    pub output_devices: Option<Vec<RewDeviceInfo>>,
+    pub input_channel_names: Option<Vec<String>>,
+    pub sample_rate: Option<f64>,
+    pub sweep: Option<RewSweepInfo>,
+    pub level_dbfs: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RewDeviceInfo {
+    pub id: String,
+    pub name: String,
+    pub channels: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RewSweepInfo {
+    pub start_hz: Option<f64>,
+    pub end_hz: Option<f64>,
+    pub length: Option<String>,
+}
+
 /// The REW mdat file to scan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -1249,6 +1370,8 @@ pub struct MdatScanMeasurement {
     pub role: Option<String>,
     /// Guessed one-based measurement position.
     pub position: i64,
+    /// Whether the title explicitly names a position, including position 1.
+    pub position_tagged: bool,
     /// Low-band classifier result, absent when no IR is available.
     pub looks_like_sub: Option<bool>,
 }
@@ -1362,7 +1485,9 @@ pub struct ConfigSpeaker {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ConfigGroup {
-    /// Group key in upstream order: front, center, sub, surround, back, wide, top, height, other.
+    /// Stable presentation group id: front, center, sub, surround, back, wide, top, height or other.
+    pub id: String,
+    /// Upstream group name used as the project and crossover-map key.
     pub key: String,
     /// Indices into `ConfigResult.speakers` that belong to this group.
     pub speaker_indices: Vec<usize>,
@@ -1669,6 +1794,8 @@ pub enum ErrorCode {
     RewFailed,
     /// A measurement setting or plan field is invalid.
     MeasurementInput,
+    /// Tutorial sessions cannot save or export project data.
+    TutorialBlocked,
     /// A destructive edit needs explicit confirmation while measurements exist.
     ConfirmRequired,
 }
@@ -1746,6 +1873,7 @@ mod tests {
                 preset: "2.1".into(),
                 sub_count: 1,
                 sample: false,
+                tutorial: false,
             }),
             Request::ProjectOpen(ProjectPathParams {
                 path: "x.secs".into(),
@@ -1765,6 +1893,10 @@ mod tests {
             Request::Jobs,
             Request::MeasureMethods,
             Request::MeasureConfigure(MeasureConfigureParams::default()),
+            Request::MeasurementRecords,
+            Request::LevelsGet,
+            Request::LevelsFillDefaults,
+            Request::LevelStop,
             Request::LevelCheck(LevelCheckParams { role: "L".into() }),
             Request::LevelApply(LevelApplyParams {
                 level: LevelResult {
@@ -1835,6 +1967,11 @@ mod tests {
                 path: "target.json".into(),
             }),
             Request::CalibrationSettingsGet,
+            Request::CalibrationSettingsEdit(CalibrationSettingsEditParams {
+                edit: crate::settings_edit::SettingEdit::MimoOn { on: true },
+            }),
+            Request::SubWarnings,
+            Request::RewInfo,
             Request::CalibrationSettingsSet(CalibrationSettingsParams {
                 settings: CalibrationSettings::default(),
             }),

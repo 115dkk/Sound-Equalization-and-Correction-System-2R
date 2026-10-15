@@ -74,15 +74,19 @@ pub(crate) fn default_export_folder(
     }
 }
 
-/// Derives the timestamped before/after mdat destination below an export base.
-pub fn before_after_folder(base: &Path, mimo: bool, mode: &str, now: LocalTime) -> PathBuf {
-    let what = if mimo { "RC_BA_MIMO" } else { "RC_BA" };
-    base.join(format!("SECS_mdat_{what}_{mode}_{}", now.stamp()))
+/// Derives the timestamped mdat destination below an export base.
+pub fn mdat_folder(base: &Path, mimo: bool, mode: &str, now: LocalTime) -> PathBuf {
+    timestamped_folder(base, "mdat", mimo, mode, now)
 }
 
-/// Derives the CamillaDSP destination below an export base.
-pub fn camilladsp_folder(base: &Path) -> PathBuf {
-    base.join("camilladsp")
+/// Derives the timestamped CamillaDSP destination below an export base.
+pub fn camilladsp_folder(base: &Path, mimo: bool, mode: &str, now: LocalTime) -> PathBuf {
+    timestamped_folder(base, "camilla", mimo, mode, now).join("camilladsp")
+}
+
+fn timestamped_folder(base: &Path, kind: &str, mimo: bool, mode: &str, now: LocalTime) -> PathBuf {
+    let what = if mimo { "RC_BA_MIMO" } else { "RC_BA" };
+    base.join(format!("SECS_{kind}_{what}_{mode}_{}", now.stamp()))
 }
 
 fn stored_folder(project: &secs_project::Project) -> Option<&str> {

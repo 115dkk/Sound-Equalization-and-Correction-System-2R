@@ -53,8 +53,23 @@ pub(crate) fn load(project_path: &Path) -> Option<CachedResults> {
     if bytes.len() as u64 > MAX_CACHE_BYTES {
         return None;
     }
-    let cache: CacheFile = serde_json::from_slice(&bytes).ok()?;
-    (cache.version == VERSION).then_some(cache.results)
+    let mut value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    if value.get("version")?.as_u64()? != u64::from(VERSION) {
+        return None;
+    }
+    // Version 2 already stored the run's mode and budget in labels. Restore
+    // missing summary fields from that source, never from today's settings.
+    let results = value.get_mut("results")?;
+    let mode = results.get("labels")?.get("mode")?.clone();
+    let ultra_ms = results.get("labels")?.get("ultra_ms")?.clone();
+    let summary = results.get_mut("calibration")?.as_object_mut()?;
+    summary.entry("mode").or_insert(mode);
+    summary.entry("ultra_ms").or_insert(ultra_ms);
+    summary
+        .entry("stale_reason")
+        .or_insert(serde_json::Value::Null);
+    let cache: CacheFile = serde_json::from_value(value).ok()?;
+    Some(cache.results)
 }
 
 pub(crate) fn save(project_path: &Path, results: &CachedResults) -> Result<(), std::io::Error> {
@@ -122,6 +137,9 @@ mod tests {
         CachedResults {
             calibration: CalibrationSummary {
                 stale: false,
+                stale_reason: None,
+                mode: secs_types::calibration::Mode::Mixed,
+                ultra_ms: 100.0,
                 verdict: VerdictSummary {
                     within_1db_before_pct: 0.0,
                     within_1db_after_pct: 1.0,
@@ -191,6 +209,33 @@ mod tests {
         let file = fs::File::create(&path).unwrap();
         file.set_len(MAX_CACHE_BYTES + 1).unwrap();
         assert!(load(&project).is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn version_two_missing_summary_fields_restore_run_labels() {
+        let root =
+            std::env::temp_dir().join(format!("secs-cache-migration-{}", std::process::id()));
+        let project = root.join("project.secs");
+        fs::create_dir_all(project.with_extension("irs")).unwrap();
+        for mode in ["zero", "mixed", "linear", "ultra"] {
+            let mut value = serde_json::to_value(CacheFile {
+                version: VERSION,
+                results: sample(),
+            })
+            .unwrap();
+            value["results"]["labels"]["mode"] = mode.into();
+            value["results"]["labels"]["ultra_ms"] = 175.0.into();
+            let summary = value["results"]["calibration"].as_object_mut().unwrap();
+            for field in ["stale_reason", "mode", "ultra_ms"] {
+                summary.remove(field);
+            }
+            fs::write(path(&project), serde_json::to_vec(&value).unwrap()).unwrap();
+            let restored = load(&project).unwrap().calibration;
+            assert_eq!(serde_json::to_value(restored.mode).unwrap(), mode);
+            assert_eq!(restored.ultra_ms, 175.0);
+            assert_eq!(restored.stale_reason, None);
+        }
         fs::remove_dir_all(root).unwrap();
     }
 

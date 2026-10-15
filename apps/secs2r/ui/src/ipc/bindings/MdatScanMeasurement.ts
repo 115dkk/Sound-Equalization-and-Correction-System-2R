@@ -21,6 +21,10 @@ role: string | null,
  */
 position: number, 
 /**
+ * Whether the title explicitly names a position, including position 1.
+ */
+position_tagged: boolean, 
+/**
  * Low-band classifier result, absent when no IR is available.
  */
 looks_like_sub: boolean | null, };

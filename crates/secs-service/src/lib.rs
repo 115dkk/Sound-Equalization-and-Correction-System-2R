@@ -21,6 +21,7 @@ mod measurement;
 mod monitor;
 mod project_edit;
 mod session;
+mod settings_edit;
 mod watch;
 
 use std::fmt::Debug;
@@ -73,6 +74,20 @@ impl EventSink for NoEvents {
     fn send(&self, _event: JobEvent) {}
 }
 
+/// Structured failures from starting the REW process.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum RewLaunchError {
+    /// No installed REW executable could be found.
+    #[error("REW executable was not found: {0}")]
+    ExeNotFound(String),
+    /// The discovered executable cannot be started on this host.
+    #[error("REW cannot be launched: {0}")]
+    CannotLaunch(String),
+    /// Starting the discovered executable failed unexpectedly.
+    #[error("REW launch failed: {0}")]
+    LaunchFailed(String),
+}
+
 /// Host facilities for dialogs, folder opening, paths, and REW launch.
 pub trait Host: Send + Sync + Debug {
     /// Opens a project file picker.
@@ -115,8 +130,10 @@ pub trait Host: Send + Sync + Debug {
         not_implemented("home directory")
     }
     /// Starts REW in API mode without a shell.
-    fn launch_rew(&self) -> Result<(), IpcError> {
-        not_implemented("host REW launch")
+    fn launch_rew(&self) -> Result<(), RewLaunchError> {
+        Err(RewLaunchError::CannotLaunch(
+            "host REW launch is not implemented".into(),
+        ))
     }
 }
 
@@ -230,6 +247,8 @@ impl Default for Deps {
 pub(crate) enum ServiceError {
     #[error("project is not open")]
     ProjectNotOpen,
+    #[error("tutorial sessions cannot write project data")]
+    TutorialBlocked,
     #[error("project I/O: {0}")]
     Project(String),
 }
@@ -249,6 +268,9 @@ impl From<ServiceError> for IpcError {
         match value {
             ServiceError::ProjectNotOpen => {
                 IpcError::new(ErrorCode::ProjectNotOpen, value.to_string())
+            }
+            ServiceError::TutorialBlocked => {
+                IpcError::new(ErrorCode::TutorialBlocked, value.to_string())
             }
             ServiceError::Project(_) => IpcError::new(ErrorCode::ProjectIo, value.to_string()),
         }

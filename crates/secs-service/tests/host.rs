@@ -127,13 +127,18 @@ fn host_requests_forward_parameters_and_cancellation() {
         .unwrap(),
         Response::DialogOpenFile(None)
     );
+    // open_folder makes a missing folder first (upstream `_open_folder`).
+    let exports = std::env::temp_dir().join(format!("secs-host-{}/exports", std::process::id()));
+    let _ = std::fs::remove_dir_all(exports.parent().unwrap());
     call(
         &service,
         Request::OpenFolder(OpenFolderParams {
-            path: "/exports".into(),
+            path: exports.to_string_lossy().into_owned(),
         }),
     )
     .unwrap();
+    assert!(exports.is_dir());
+    std::fs::remove_dir_all(exports.parent().unwrap()).unwrap();
     assert_eq!(
         *host.calls.lock().unwrap(),
         [
@@ -143,7 +148,7 @@ fn host_requests_forward_parameters_and_cancellation() {
             "pick_folder:/start",
             "save_file:PatchSheet:sheet.csv",
             "open_file:Target",
-            "open_folder:/exports",
+            format!("open_folder:{}", exports.display()).as_str(),
         ]
     );
 }

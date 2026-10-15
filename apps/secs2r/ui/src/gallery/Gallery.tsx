@@ -12,8 +12,10 @@ import { kitSpecimens } from "./kitSpecimens";
 import { mapSpecimens, plotSpecimens } from "./plotSpecimens";
 import { screenSections } from "../screens/specimens";
 import { Specimen, type SectionDef } from "./Specimen";
+import { appSpecimens } from "./appSpecimen";
 
 const SECTIONS: SectionDef[] = [
+  { id: "app", title: "Application", specimens: appSpecimens },
   { id: "frame", title: "App frame", specimens: frameSpecimens },
   { id: "jobs", title: "Job tray and frame menus", specimens: trayAndMenuSpecimens },
   { id: "kit", title: "Component kit", specimens: kitSpecimens },

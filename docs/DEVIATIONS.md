@@ -67,6 +67,7 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 | U7 | 영어 화면이 꺼져 있습니다(`ENGLISH_UI=False`). | 한국어와 영어 카탈로그를 처음부터 함께 냅니다. | `i18n.py:25`, `window.py:564-570` | 계획(M5) |
 | U8 | 기다림 표시가 작업 패널, 로딩 카드, 물방울 셋이고, 로딩 카드의 [취소]는 이어져 있지 않습니다. | 작업 트레이 하나에 잡마다 진행과 실제로 멈추는 취소를 둡니다. | `busy.py`, `loading.py:218-338`, `window.py:181-252` | 계획(M5) |
 | U9 | 초고지연 모드가 설명 줄을 3초 안에 다섯 번 눌러야 열립니다. | '전문가 표시'에서 고릅니다. | `step_calibration.py:1111-1145` | 계획(M5) |
+| U10 | 새 프로젝트가 측정 방법을 저장하지 않아 서비스의 옛 프로젝트 호환 기본값(`native`)으로 즉시 측정할 수 있습니다. | 새 프로젝트만 `devices.method = "none"`을 저장해 장치를 고르기 전 측정을 막습니다. 방법이 없는 기존 프로젝트는 계속 `native`로 읽습니다. `secs-service::new_projects_store_none_measurement_method`가 새 프로젝트의 명시값을 지킵니다. | `wizard/step1_devices.py`, `wizard/model.py` | 적용 |
 
 ## 보안
 

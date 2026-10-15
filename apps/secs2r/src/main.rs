@@ -98,8 +98,12 @@ fn main() {
             }));
             Ok(())
         })
+        // The screen may answer a close request with "save first?" and keep
+        // the window, so jobs stop only once the window is really gone (as
+        // upstream stops monitors, measurement and computation on close,
+        // waiting up to 3 s for the device).
         .on_window_event(|window, event| {
-            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+            if matches!(event, tauri::WindowEvent::Destroyed) {
                 let _ = window.state::<Service>().shutdown(Duration::from_secs(3));
             }
         })

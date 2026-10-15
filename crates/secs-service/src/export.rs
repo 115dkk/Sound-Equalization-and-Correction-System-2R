@@ -20,6 +20,12 @@ impl Service {
         let session = lock(&self.session);
         let open = session.require().map_err(IpcError::from)?;
         let project = open.store.project();
+        if open.tutorial {
+            return Err(IpcError::new(
+                ErrorCode::TutorialBlocked,
+                "tutorial sessions cannot export",
+            ));
+        }
         let live = state.calibration.as_ref();
         let cached = open.cached.as_ref();
         if live.is_none() && cached.is_none() {
@@ -28,27 +34,28 @@ impl Service {
                 "calibration must run before export",
             ));
         }
-        if let Some(calibration) = live
-            && calibration_stale(calibration, project)
-        {
-            return Err(IpcError::new(
-                ErrorCode::StaleInputs,
-                "calibration result is stale",
-            ));
-        }
-        if live.is_none()
-            && cached.is_some_and(|cache| {
-                cache.measurement_signature != super::calibration::signature_key(project)
-                    || cache.target_key != super::calibration::target_key_string(project)
-                    || cache.engine_key
-                        != secs_project::calibration_from_project(project).engine_key()
+        let stale = live.map_or_else(
+            || {
+                cached.is_some_and(|cache| {
+                    super::calibration::cached_stale_reason(cache, project).is_some()
+                })
+            },
+            |calibration| calibration_stale(calibration, project),
+        );
+        let settings = secs_project::calibration_from_project(project);
+        let cached_mimo = cached
+            .filter(|cache| {
+                mimo_eligible(
+                    &settings,
+                    stale,
+                    secs_project::measured_positions(project).len(),
+                    cache.mimo_key.as_deref(),
+                    cache.mimo_calibration_key.as_deref(),
+                    &cache.engine_key,
+                )
             })
-        {
-            return Err(IpcError::new(
-                ErrorCode::StaleInputs,
-                "calibration result is stale",
-            ));
-        }
+            .and_then(|cache| cache.mimo_paths.clone())
+            .filter(|paths| !paths.paths.is_empty());
         let cached_camilla = cached.map(|cache| {
             let labels = RunLabels {
                 mode: cache.labels.mode.clone(),
@@ -57,11 +64,7 @@ impl Service {
                 rc_hi_hz: cache.labels.rc_hi_hz,
                 mimo_max_supports: cache.labels.mimo_max_supports,
             };
-            (
-                cache.calibration.chain.clone(),
-                labels,
-                cache.mimo_paths.clone(),
-            )
+            (cache.calibration.chain.clone(), labels, cached_mimo.clone())
         });
         let live_values = live.map(|calibration| {
             (
@@ -81,8 +84,14 @@ impl Service {
             .unwrap_or_else(|| "mixed".into());
         let mimo = live.and_then(|calibration| {
             state.mimo.as_ref().and_then(|result| {
-                let fresh = result.settings_key == calibration.settings.mimo_key()
-                    && result.calibration_key == calibration.settings.engine_key();
+                let fresh = mimo_eligible(
+                    &settings,
+                    stale,
+                    calibration.design.spectra.positions.len(),
+                    Some(&result.settings_key),
+                    Some(&result.calibration_key),
+                    &calibration.settings.engine_key(),
+                ) && !result.run.paths.paths.is_empty();
                 fresh.then(|| MimoResponses {
                     kind: if result.run.fir {
                         MimoKind::Fir
@@ -100,23 +109,25 @@ impl Service {
                 })
             })
         });
+        // Cached mdat exports rebuild calibration only, not MIMO responses.
+        let includes_mimo = mimo.is_some()
+            || (live.is_none() && params.kind == ExportKind::CamillaDsp && cached_mimo.is_some());
+        drop(session);
+        drop(state);
         let destination = if params.folder.is_empty() {
             let base = self.resolved_export_base()?;
+            let now = (self.deps.clock)();
             match params.kind {
-                ExportKind::CamillaDsp => crate::export_folder::camilladsp_folder(&base),
-                ExportKind::BeforeAfterMdat => crate::export_folder::before_after_folder(
-                    &base,
-                    mimo.is_some(),
-                    &mode_name,
-                    (self.deps.clock)(),
-                ),
-                ExportKind::StagedMdat => base,
+                ExportKind::CamillaDsp => {
+                    crate::export_folder::camilladsp_folder(&base, includes_mimo, &mode_name, now)
+                }
+                ExportKind::BeforeAfterMdat | ExportKind::StagedMdat => {
+                    crate::export_folder::mdat_folder(&base, includes_mimo, &mode_name, now)
+                }
             }
         } else {
             Path::new(&params.folder).to_path_buf()
         };
-        drop(session);
-        drop(state);
         self.jobs.start(JobKind::Export, events, move |job| {
             job.cancel()
                 .check()
@@ -212,9 +223,26 @@ impl Service {
                     .into_iter()
                     .map(|path| path.to_string_lossy().into_owned())
                     .collect(),
+                folder: folder.to_string_lossy().into_owned(),
+                stale,
             }))
         })
     }
+}
+
+fn mimo_eligible(
+    settings: &secs_types::calibration::CalibrationSettings,
+    stale: bool,
+    measured_positions: usize,
+    mimo_key: Option<&str>,
+    mimo_calibration_key: Option<&str>,
+    engine_key: &str,
+) -> bool {
+    settings.mimo_on
+        && !stale
+        && measured_positions >= 3
+        && mimo_key == Some(settings.mimo_key().as_str())
+        && mimo_calibration_key == Some(engine_key)
 }
 
 fn labels(
@@ -241,4 +269,78 @@ fn mode_name(mode: Mode) -> &'static str {
 
 fn export_error(error: impl std::fmt::Display) -> IpcError {
     IpcError::new(ErrorCode::ExportFailed, error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mimo_requires_enabled_current_calibration_and_three_measured_positions() {
+        let mut settings = secs_types::calibration::CalibrationSettings {
+            mimo_on: true,
+            ..Default::default()
+        };
+        let engine = settings.engine_key();
+        let mimo = settings.mimo_key();
+        assert!(mimo_eligible(
+            &settings,
+            false,
+            3,
+            Some(&mimo),
+            Some(&engine),
+            &engine
+        ));
+        for count in [0, 1, 2] {
+            assert!(!mimo_eligible(
+                &settings,
+                false,
+                count,
+                Some(&mimo),
+                Some(&engine),
+                &engine
+            ));
+        }
+        assert!(!mimo_eligible(
+            &settings,
+            true,
+            3,
+            Some(&mimo),
+            Some(&engine),
+            &engine
+        ));
+        assert!(!mimo_eligible(
+            &settings,
+            false,
+            3,
+            None,
+            Some(&engine),
+            &engine
+        ));
+        assert!(!mimo_eligible(
+            &settings,
+            false,
+            3,
+            Some("old"),
+            Some(&engine),
+            &engine
+        ));
+        assert!(!mimo_eligible(
+            &settings,
+            false,
+            3,
+            Some(&mimo),
+            Some("old"),
+            &engine
+        ));
+        settings.mimo_on = false;
+        assert!(!mimo_eligible(
+            &settings,
+            false,
+            3,
+            Some(&mimo),
+            Some(&engine),
+            &engine
+        ));
+    }
 }

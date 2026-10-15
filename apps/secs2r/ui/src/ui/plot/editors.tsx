@@ -2,6 +2,13 @@
 // drawn in the plot's overlay with the scale LogPlot hands over, both work
 // with the pointer and the keyboard, and both use the accent because they
 // are the interactive parts of the graph.
+//
+// Both report twice: `onChange` with every step of a gesture (the parent
+// holds that value and passes it back, so the graph follows the pointer),
+// and `onCommit` once when the gesture ends: the pointer is released after a
+// drag, the key is released after nudges (a held key repeats), or focus
+// leaves. A removal is a gesture of its own and commits at once. Screens
+// store the value in `onCommit`, so one drag is one change.
 import { useRef, useState, type KeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { useNumber, useT } from "../../i18n/react";
 import type { PlotScale } from "./LogPlot";
@@ -14,12 +21,16 @@ export function TargetHandles({
   id,
   points,
   onChange,
+  onCommit,
   scale,
   disabled,
 }: {
   id: string;
   points: readonly TargetPoint[];
+  /** Every step of a drag or a nudge, and removals. */
   onChange: (points: TargetPoint[]) => void;
+  /** Once per gesture, with the points it ended on. */
+  onCommit?: ((points: TargetPoint[]) => void) | undefined;
   scale: PlotScale;
   disabled?: boolean;
 }) {
@@ -27,6 +38,23 @@ export function TargetHandles({
   const number = useNumber();
   const [dragging, setDragging] = useState<number | null>(null);
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
+  // The points the running gesture last reported; committed when it ends.
+  const pending = useRef<TargetPoint[] | null>(null);
+  const report = (next: TargetPoint[]) => {
+    pending.current = next;
+    onChange(next);
+  };
+  const commit = () => {
+    const next = pending.current;
+    pending.current = null;
+    if (next) onCommit?.(next);
+  };
+  const remove = (index: number) => {
+    const next = removePoint(points, index);
+    pending.current = null;
+    onChange(next);
+    onCommit?.(next);
+  };
 
   // The dashed target line, linear in log-frequency between points.
   const steps = 96;
@@ -40,7 +68,12 @@ export function TargetHandles({
   const move = (index: number, event: ReactPointerEvent<HTMLButtonElement>) => {
     const rect = (event.currentTarget.offsetParent as HTMLElement | null)?.getBoundingClientRect();
     if (!rect) return;
-    onChange(movePoint(points, index, { hz: scale.pxToX(event.clientX - rect.left), db: scale.pxToY(event.clientY - rect.top) }));
+    report(movePoint(points, index, { hz: scale.pxToX(event.clientX - rect.left), db: scale.pxToY(event.clientY - rect.top) }));
+  };
+  const endDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    setDragging(null);
+    commit();
   };
 
   const onKey = (index: number, event: KeyboardEvent<HTMLButtonElement>) => {
@@ -54,10 +87,10 @@ export function TargetHandles({
     const delta = map[event.key];
     if (delta) {
       event.preventDefault();
-      onChange(nudgePoint(points, index, delta[0], delta[1]));
+      report(nudgePoint(points, index, delta[0], delta[1]));
     } else if ((event.key === "Delete" || event.key === "Backspace") && canRemove(points)) {
       event.preventDefault();
-      onChange(removePoint(points, index));
+      remove(index);
       refs.current[Math.max(0, index - 1)]?.focus();
     }
   };
@@ -83,20 +116,21 @@ export function TargetHandles({
           onPointerDown={(event) => {
             if (event.button !== 0) return;
             event.stopPropagation();
-            event.currentTarget.setPointerCapture(event.pointerId);
+            event.currentTarget.setPointerCapture?.(event.pointerId);
+            pending.current = null;
             setDragging(index);
           }}
           onPointerMove={(event) => dragging === index && move(index, event)}
-          onPointerUp={(event) => {
-            event.currentTarget.releasePointerCapture(event.pointerId);
-            setDragging(null);
-          }}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
           onDoubleClick={(event) => event.stopPropagation()}
           onContextMenu={(event) => {
             event.preventDefault();
-            if (canRemove(points)) onChange(removePoint(points, index));
+            if (canRemove(points)) remove(index);
           }}
           onKeyDown={(event) => onKey(index, event)}
+          onKeyUp={commit}
+          onBlur={commit}
         />
       ))}
       <p id={`${id}-help`} className="visually-hidden">
@@ -112,6 +146,7 @@ export function XoLine({
   id,
   hz,
   onChange,
+  onCommit,
   scale,
   min = 40,
   max = 200,
@@ -120,7 +155,10 @@ export function XoLine({
 }: {
   id: string;
   hz: number;
+  /** Every snapped step of a drag or a key. */
   onChange: (hz: number) => void;
+  /** Once per gesture, with the frequency it ended on. */
+  onCommit?: ((hz: number) => void) | undefined;
   scale: PlotScale;
   min?: number;
   max?: number;
@@ -129,11 +167,24 @@ export function XoLine({
 }) {
   const t = useT();
   const [dragging, setDragging] = useState(false);
+  const pending = useRef<number | null>(null);
   const snap = (value: number) => Math.min(max, Math.max(min, Math.round(value / step) * step));
   const x = scale.xToPx(hz);
   const set = (value: number) => {
     const next = snap(value);
-    if (next !== hz) onChange(next);
+    if (next === hz) return;
+    pending.current = next;
+    onChange(next);
+  };
+  const commit = () => {
+    const next = pending.current;
+    pending.current = null;
+    if (next !== null) onCommit?.(next);
+  };
+  const endDrag = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    setDragging(false);
+    commit();
   };
   return (
     <div
@@ -157,7 +208,8 @@ export function XoLine({
         onPointerDown={(event) => {
           if (event.button !== 0) return;
           event.stopPropagation();
-          event.currentTarget.setPointerCapture(event.pointerId);
+          event.currentTarget.setPointerCapture?.(event.pointerId);
+          pending.current = null;
           setDragging(true);
         }}
         onPointerMove={(event) => {
@@ -165,10 +217,11 @@ export function XoLine({
           const parent = (event.currentTarget.parentElement?.offsetParent as HTMLElement | null)?.getBoundingClientRect();
           if (parent) set(scale.pxToX(event.clientX - parent.left));
         }}
-        onPointerUp={(event) => {
-          event.currentTarget.releasePointerCapture(event.pointerId);
-          setDragging(false);
-        }}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+        onDoubleClick={(event) => event.stopPropagation()}
+        onKeyUp={commit}
+        onBlur={commit}
         onKeyDown={(event) => {
           const keys: Record<string, number> = {
             ArrowLeft: hz - step,

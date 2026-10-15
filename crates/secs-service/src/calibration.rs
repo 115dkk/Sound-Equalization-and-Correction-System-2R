@@ -80,7 +80,7 @@ impl Service {
             let fitters = production_fitters(job.cancel());
             let design = design(&request, &ctx, fitters.as_ref()).map_err(engine_error)?;
             job.begin_commit()?;
-            let summary = summarize(&design);
+            let summary = summarize(&design, &prepared.settings);
             let run = CalibrationRun {
                 summary: summary.clone(),
                 settings: prepared.settings.clone(),
@@ -198,7 +198,16 @@ impl Service {
                 kind: if run.fir { "fir" } else { "iir" }.into(),
                 fsiso: run.paths.fsiso,
                 support_count: run.paths.paths.len(),
-                notes: run.notes.iter().map(notice).collect(),
+                fir_taps_total: run
+                    .paths
+                    .paths
+                    .iter()
+                    .map(|path| match &path.filter {
+                        secs_types::chain::MimoFilter::Fir { taps_48k } => taps_48k.len(),
+                        secs_types::chain::MimoFilter::Iir { .. } => 0,
+                    })
+                    .sum(),
+                notes: run.notes.iter().flat_map(notices).collect(),
                 paths: run.paths.clone(),
             };
             lock(&results).mimo = Some(MimoResult {
@@ -301,7 +310,7 @@ pub(crate) fn load_measurements(
     Ok(MeasurementSet { positions })
 }
 
-fn summarize(design: &Design) -> CalibrationSummary {
+fn summarize(design: &Design, settings: &CalibrationSettings) -> CalibrationSummary {
     let scorecard: Vec<_> = design
         .scores
         .iter()
@@ -321,6 +330,9 @@ fn summarize(design: &Design) -> CalibrationSummary {
     };
     CalibrationSummary {
         stale: false,
+        stale_reason: None,
+        mode: settings.mode,
+        ultra_ms: settings.ultra_ms,
         verdict: VerdictSummary {
             within_1db_before_pct: average(|value| value.in1_20, false),
             within_1db_after_pct: average(|value| value.in1_20, true),
@@ -334,12 +346,174 @@ fn summarize(design: &Design) -> CalibrationSummary {
         scorecard,
         latency_ms: design.chain.latency_ms,
         warnings: Vec::new(),
-        notes: design.notes.iter().map(notice).collect(),
+        notes: design.notes.iter().flat_map(notices).collect(),
         chain: design.chain.clone(),
     }
 }
 
-fn notice(note: &secs_engine::Note) -> Notice {
+// Collection notes expand in producer order: one record per role/filter/mode.
+// Every parameter is a scalar string; no JSON or translated prose crosses IPC.
+fn notices(note: &secs_engine::Note) -> Vec<Notice> {
+    use secs_engine::{MimoNote, Note};
+    let record = |code: &str, values: Vec<(&str, String)>| Notice {
+        code: code.into(),
+        params: values
+            .into_iter()
+            .map(|(key, value)| (key.into(), value))
+            .collect(),
+    };
+    match note {
+        Note::SubFilters(filters) => {
+            filters
+                .iter()
+                .flat_map(|(role, filter)| {
+                    let mut records = vec![record(
+                        "sub_filters",
+                        vec![
+                            ("role", role.clone()),
+                            ("hp_hz", filter.hp_hz.to_string()),
+                            ("hp_type", filter.hp_type.name().into()),
+                            ("lp_hz", filter.lp_hz.to_string()),
+                            ("lp_type", filter.lp_type.name().into()),
+                            ("peq_count", filter.peq.len().to_string()),
+                        ],
+                    )];
+                    records.extend(filter.peq.iter().enumerate().map(
+                        |(index, (hz, q, gain_db))| {
+                            record(
+                                "sub_filter_peq",
+                                vec![
+                                    ("role", role.clone()),
+                                    ("index", index.to_string()),
+                                    ("hz", hz.to_string()),
+                                    ("q", q.to_string()),
+                                    ("gain_db", gain_db.to_string()),
+                                ],
+                            )
+                        },
+                    ));
+                    records
+                })
+                .collect()
+        }
+        Note::PhaseStrength(values) => values
+            .iter()
+            .map(|(role, strength)| {
+                record(
+                    "phase_strength",
+                    vec![("role", role.clone()), ("strength", strength.to_string())],
+                )
+            })
+            .collect(),
+        Note::PhaseBand(values) => values
+            .iter()
+            .map(|(role, hz)| {
+                let mut params = vec![
+                    ("role", role.clone()),
+                    ("enabled", hz.is_some().to_string()),
+                ];
+                if let Some(hz) = hz {
+                    params.push(("hz", hz.to_string()));
+                }
+                record("phase_band", params)
+            })
+            .collect(),
+        Note::LongModeBoost { cap_db, modes } => modes
+            .iter()
+            .map(|(hz, t60_s)| {
+                record(
+                    "long_mode_boost",
+                    vec![
+                        ("cap_db", cap_db.to_string()),
+                        ("hz", hz.to_string()),
+                        ("t60_s", t60_s.to_string()),
+                    ],
+                )
+            })
+            .collect(),
+        Note::GdCuts { role, cuts } => cuts
+            .iter()
+            .enumerate()
+            .map(|(index, (hz, q, gain_db))| {
+                record(
+                    "gd_cuts",
+                    vec![
+                        ("role", role.clone()),
+                        ("index", index.to_string()),
+                        ("hz", hz.to_string()),
+                        ("q", q.to_string()),
+                        ("gain_db", gain_db.to_string()),
+                    ],
+                )
+            })
+            .collect(),
+        Note::TwoWay {
+            roles,
+            gain_db,
+            xo_hz,
+        } => roles
+            .iter()
+            .map(|role| {
+                record(
+                    "two_way",
+                    vec![
+                        ("role", role.clone()),
+                        ("gain_db", gain_db.to_string()),
+                        ("xo_hz", xo_hz.to_string()),
+                    ],
+                )
+            })
+            .collect(),
+        Note::Mimo(note) => match note {
+            MimoNote::InsufficientPositions { measured } => vec![record(
+                "mimo_insufficient_positions",
+                vec![("measured", measured.to_string()), ("required", "3".into())],
+            )],
+            MimoNote::ExcludedSupports(roles) => roles
+                .iter()
+                .map(|role| record("mimo_support_excluded", vec![("role", role.clone())]))
+                .collect(),
+            MimoNote::SupportRanges(ranges) => ranges
+                .iter()
+                .map(|(role, range)| {
+                    let mut params = vec![
+                        ("role", role.clone()),
+                        ("enabled", range.is_some().to_string()),
+                    ];
+                    if let Some((lo, hi)) = range {
+                        params.extend([("lo_hz", lo.to_string()), ("hi_hz", hi.to_string())]);
+                    }
+                    record("mimo_support_range", params)
+                })
+                .collect(),
+            MimoNote::GuardReduced { role, gain_db } => vec![record(
+                "mimo_guard_reduced",
+                vec![("role", role.clone()), ("gain_db", gain_db.to_string())],
+            )],
+            MimoNote::GuardDisabled { role } => {
+                vec![record("mimo_guard_disabled", vec![("role", role.clone())])]
+            }
+            MimoNote::SupportLimit { max_supports } => vec![record(
+                "mimo_support_limit",
+                vec![("max_supports", max_supports.to_string())],
+            )],
+            MimoNote::FirBudget {
+                support_count,
+                taps_total,
+            } => vec![record(
+                "mimo_fir_budget",
+                vec![
+                    ("support_count", support_count.to_string()),
+                    ("taps_total", taps_total.to_string()),
+                    ("sample_rate_hz", "48000".into()),
+                ],
+            )],
+        },
+        _ => vec![scalar_notice(note)],
+    }
+}
+
+fn scalar_notice(note: &secs_engine::Note) -> Notice {
     use secs_engine::Note;
 
     let mut params = std::collections::BTreeMap::new();
@@ -353,26 +527,6 @@ fn notice(note: &secs_engine::Note) -> Notice {
             params.insert("taps".into(), taps.to_string());
             params.insert("lift_ms".into(), lift_ms.to_string());
             "lift_capped"
-        }
-        Note::SubFilters(filters) => {
-            let values: Vec<_> = filters
-                .iter()
-                .map(|(role, filter)| {
-                    serde_json::json!({
-                        "role": role,
-                        "hp_hz": filter.hp_hz,
-                        "hp_type": filter.hp_type.name(),
-                        "lp_hz": filter.lp_hz,
-                        "lp_type": filter.lp_type.name(),
-                        "peq": filter.peq,
-                    })
-                })
-                .collect();
-            params.insert(
-                "filters".into(),
-                serde_json::to_string(&values).unwrap_or_default(),
-            );
-            "sub_filters"
         }
         Note::RcLimit {
             hz,
@@ -395,36 +549,6 @@ fn notice(note: &secs_engine::Note) -> Notice {
             params.insert("lift_ms".into(), lift_ms.to_string());
             params.insert("main_extra_ms".into(), main_extra_ms.to_string());
             "latency"
-        }
-        Note::PhaseStrength(values) => {
-            params.insert(
-                "values".into(),
-                serde_json::to_string(values).unwrap_or_default(),
-            );
-            "phase_strength"
-        }
-        Note::PhaseBand(values) => {
-            params.insert(
-                "values".into(),
-                serde_json::to_string(values).unwrap_or_default(),
-            );
-            "phase_band"
-        }
-        Note::LongModeBoost { cap_db, modes } => {
-            params.insert("cap_db".into(), cap_db.to_string());
-            params.insert(
-                "modes".into(),
-                serde_json::to_string(modes).unwrap_or_default(),
-            );
-            "long_mode_boost"
-        }
-        Note::GdCuts { role, cuts } => {
-            params.insert("role".into(), role.clone());
-            params.insert(
-                "cuts".into(),
-                serde_json::to_string(cuts).unwrap_or_default(),
-            );
-            "gd_cuts"
         }
         Note::BaCost(value) => {
             params.insert("value".into(), value.to_string());
@@ -449,27 +573,17 @@ fn notice(note: &secs_engine::Note) -> Notice {
             params.insert("value".into(), value.clone());
             "layout"
         }
-        Note::TwoWay {
-            roles,
-            gain_db,
-            xo_hz,
-        } => {
-            params.insert(
-                "roles".into(),
-                serde_json::to_string(roles).unwrap_or_default(),
-            );
-            params.insert("gain_db".into(), gain_db.to_string());
-            params.insert("xo_hz".into(), xo_hz.to_string());
-            "two_way"
-        }
         Note::BusGainAnchored(value) => {
             params.insert("value".into(), value.to_string());
             "bus_gain_anchored"
         }
-        Note::Mimo(value) => {
-            params.insert("value".into(), value.clone());
-            "mimo"
-        }
+        Note::SubFilters(_)
+        | Note::PhaseStrength(_)
+        | Note::PhaseBand(_)
+        | Note::LongModeBoost { .. }
+        | Note::GdCuts { .. }
+        | Note::TwoWay { .. }
+        | Note::Mimo(_) => unreachable!("collection notes expand in notices"),
     };
     Notice {
         code: code.into(),
@@ -508,16 +622,16 @@ fn summaries(
     let state = lock(results);
     let live_calibration = state.calibration.as_ref().map(|run| {
         let mut summary = run.summary.clone();
-        summary.stale = calibration_stale(run, project);
+        summary.stale_reason = calibration_stale_reason(run, project).map(str::to_owned);
+        summary.stale = summary.stale_reason.is_some();
         summary
     });
     let cached = session.require().map_err(IpcError::from)?.cached.as_ref();
     let calibration = live_calibration.or_else(|| {
         cached.map(|cached| {
             let mut summary = cached.calibration.clone();
-            summary.stale = cached.measurement_signature != signature_key(project)
-                || cached.target_key != target_key_string(project)
-                || cached.engine_key != calibration_from_project(project).engine_key();
+            summary.stale_reason = cached_stale_reason(cached, project).map(str::to_owned);
+            summary.stale = summary.stale_reason.is_some();
             summary
         })
     });
@@ -592,9 +706,45 @@ fn persist_cache(
 }
 
 pub(crate) fn calibration_stale(run: &CalibrationRun, project: &Project) -> bool {
-    run.signature != signature_key(project)
-        || run.target_key != target_key_string(project)
-        || run.settings.engine_key() != calibration_from_project(project).engine_key()
+    calibration_stale_reason(run, project).is_some()
+}
+
+fn calibration_stale_reason(run: &CalibrationRun, project: &Project) -> Option<&'static str> {
+    stale_reason(
+        &run.signature,
+        &run.settings.engine_key(),
+        &run.target_key,
+        project,
+    )
+}
+
+pub(crate) fn cached_stale_reason(
+    cached: &crate::cache::CachedResults,
+    project: &Project,
+) -> Option<&'static str> {
+    stale_reason(
+        &cached.measurement_signature,
+        &cached.engine_key,
+        &cached.target_key,
+        project,
+    )
+}
+
+fn stale_reason(
+    signature: &str,
+    engine_key: &str,
+    target_key: &str,
+    project: &Project,
+) -> Option<&'static str> {
+    if signature != signature_key(project) {
+        Some("measurements")
+    } else if engine_key != calibration_from_project(project).engine_key() {
+        Some("settings")
+    } else if target_key != target_key_string(project) {
+        Some("target")
+    } else {
+        None
+    }
 }
 
 pub(crate) fn signature_key(project: &Project) -> String {
@@ -632,6 +782,99 @@ mod tests {
     use secs_engine::Note;
     use secs_engine::SubFilter;
     use secs_types::chain::BandType;
+
+    #[test]
+    fn stale_reasons_prioritize_measurements_then_settings_then_target() {
+        let project = Project::default();
+        let signature = signature_key(&project);
+        let engine = calibration_from_project(&project).engine_key();
+        let target = target_key_string(&project);
+        assert_eq!(
+            stale_reason("changed", "changed", "changed", &project),
+            Some("measurements")
+        );
+        assert_eq!(
+            stale_reason(&signature, "changed", "changed", &project),
+            Some("settings")
+        );
+        assert_eq!(
+            stale_reason(&signature, &engine, "changed", &project),
+            Some("target")
+        );
+        assert_eq!(stale_reason(&signature, &engine, &target, &project), None);
+    }
+
+    #[test]
+    fn flat_notice_schemas_preserve_scalar_values_and_order() {
+        use secs_engine::MimoNote;
+        use serde_json::json;
+        let input = [
+            Note::PhaseStrength(vec![("L".into(), 0.5), ("R".into(), 1.0)]),
+            Note::PhaseBand(vec![("L".into(), Some(100.0)), ("R".into(), None)]),
+            Note::SubFilters(vec![(
+                "SW1".into(),
+                SubFilter {
+                    hp_hz: 10.0,
+                    hp_type: BandType::Lr12,
+                    lp_hz: 80.0,
+                    lp_type: BandType::Lr24,
+                    peq: vec![(40.0, 1.0, -2.0)],
+                },
+            )]),
+            Note::LongModeBoost {
+                cap_db: 3.0,
+                modes: vec![(40.0, 2.0)],
+            },
+            Note::GdCuts {
+                role: "L".into(),
+                cuts: vec![(50.0, 2.0, -3.0)],
+            },
+            Note::TwoWay {
+                roles: vec!["SW1".into(), "SW2".into()],
+                gain_db: -1.0,
+                xo_hz: 50.0,
+            },
+            Note::Mimo(MimoNote::InsufficientPositions { measured: 2 }),
+            Note::Mimo(MimoNote::ExcludedSupports(vec!["SW2".into()])),
+            Note::Mimo(MimoNote::SupportRanges(vec![
+                ("L".into(), Some((50.25, 150.0))),
+                ("R".into(), None),
+            ])),
+            Note::Mimo(MimoNote::GuardReduced {
+                role: "L".into(),
+                gain_db: -6.25,
+            }),
+            Note::Mimo(MimoNote::GuardDisabled { role: "R".into() }),
+            Note::Mimo(MimoNote::SupportLimit { max_supports: 2 }),
+            Note::Mimo(MimoNote::FirBudget {
+                support_count: 2,
+                taps_total: 16000,
+            }),
+        ];
+        assert_eq!(
+            serde_json::to_value(input.iter().flat_map(notices).collect::<Vec<_>>()).unwrap(),
+            json!([
+                {"code":"phase_strength","params":{"role":"L","strength":"0.5"}},
+                {"code":"phase_strength","params":{"role":"R","strength":"1"}},
+                {"code":"phase_band","params":{"role":"L","enabled":"true","hz":"100"}},
+                {"code":"phase_band","params":{"role":"R","enabled":"false"}},
+                {"code":"sub_filters","params":{"role":"SW1","hp_hz":"10","hp_type":"LR12","lp_hz":"80","lp_type":"LR24","peq_count":"1"}},
+                {"code":"sub_filter_peq","params":{"role":"SW1","index":"0","hz":"40","q":"1","gain_db":"-2"}},
+                {"code":"long_mode_boost","params":{"cap_db":"3","hz":"40","t60_s":"2"}},
+                {"code":"gd_cuts","params":{"role":"L","index":"0","hz":"50","q":"2","gain_db":"-3"}},
+                {"code":"two_way","params":{"role":"SW1","gain_db":"-1","xo_hz":"50"}},
+                {"code":"two_way","params":{"role":"SW2","gain_db":"-1","xo_hz":"50"}},
+                {"code":"mimo_insufficient_positions","params":{"measured":"2","required":"3"}},
+                {"code":"mimo_support_excluded","params":{"role":"SW2"}},
+                {"code":"mimo_support_range","params":{"role":"L","enabled":"true","lo_hz":"50.25","hi_hz":"150"}},
+                {"code":"mimo_support_range","params":{"role":"R","enabled":"false"}},
+                {"code":"mimo_guard_reduced","params":{"role":"L","gain_db":"-6.25"}},
+                {"code":"mimo_guard_disabled","params":{"role":"R"}},
+                {"code":"mimo_support_limit","params":{"max_supports":"2"}},
+                {"code":"mimo_fir_budget","params":{"support_count":"2","taps_total":"16000","sample_rate_hz":"48000"}}
+            ])
+        );
+    }
 
     #[test]
     fn every_engine_note_maps_to_a_notice_code_and_params() {
@@ -686,14 +929,19 @@ mod tests {
                 xo_hz: 50.0,
             },
             Note::BusGainAnchored(-2.0),
-            Note::Mimo("range".into()),
+            Note::Mimo(secs_engine::MimoNote::SupportLimit { max_supports: 2 }),
         ];
-        let codes: Vec<_> = notes.iter().map(notice).map(|value| value.code).collect();
+        let codes: Vec<_> = notes
+            .iter()
+            .flat_map(notices)
+            .map(|value| value.code)
+            .collect();
         assert_eq!(
             codes,
             [
                 "lift_capped",
                 "sub_filters",
+                "sub_filter_peq",
                 "rc_limit",
                 "latency",
                 "phase_strength",
@@ -706,11 +954,12 @@ mod tests {
                 "layout_fallback",
                 "layout",
                 "two_way",
+                "two_way",
                 "bus_gain_anchored",
-                "mimo",
+                "mimo_support_limit",
             ]
         );
-        assert_eq!(notice(&notes[0]).params["from_ms"], "2");
-        assert_eq!(notice(&notes[13]).params["roles"], r#"["SW1","SW2"]"#);
+        assert_eq!(notices(&notes[0])[0].params["from_ms"], "2");
+        assert_eq!(notices(&notes[13])[0].params["role"], "SW1");
     }
 }

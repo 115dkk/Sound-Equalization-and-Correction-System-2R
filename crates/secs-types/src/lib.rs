@@ -13,4 +13,5 @@ pub mod calibration;
 pub mod chain;
 pub mod ipc;
 pub mod role;
+pub mod settings_edit;
 pub mod target;

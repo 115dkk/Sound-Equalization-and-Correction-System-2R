@@ -512,7 +512,7 @@ fn mimo_whole_path_goldens() {
                 .notes
                 .iter()
                 .map(|n| match n {
-                    Note::Mimo(text) => text,
+                    Note::Mimo(note) => note.oracle_text(),
                     other => panic!("unexpected MIMO note: {other:?}"),
                 })
                 .collect();
@@ -985,7 +985,9 @@ fn mimo_ranges_and_upstream_behaviors() {
     assert!(
         excluded
             .notes
-            .contains(&Note::Mimo("서포트 제외(사용자): SW2".into()))
+            .contains(&Note::Mimo(crate::MimoNote::ExcludedSupports(vec![
+                "SW2".into()
+            ])))
     );
     let view = crate::export_view(&d, &case.measurements, &case.config).unwrap();
     let baseline =
@@ -1004,7 +1006,9 @@ fn mimo_ranges_and_upstream_behaviors() {
     assert_eq!(
         short,
         MimoDesign {
-            notes: vec![Note::Mimo("측정 위치 2곳 — MIMO 는 3곳 이상일 때만".into())],
+            notes: vec![Note::Mimo(crate::MimoNote::InsufficientPositions {
+                measured: 2
+            })],
             ..MimoDesign::default()
         }
     );

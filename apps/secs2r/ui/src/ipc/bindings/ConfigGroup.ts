@@ -5,7 +5,11 @@
  */
 export type ConfigGroup = { 
 /**
- * Group key in upstream order: front, center, sub, surround, back, wide, top, height, other.
+ * Stable presentation group id: front, center, sub, surround, back, wide, top, height or other.
+ */
+id: string, 
+/**
+ * Upstream group name used as the project and crossover-map key.
  */
 key: string, 
 /**

@@ -23,6 +23,10 @@ fsiso: number,
  */
 support_count: number, 
 /**
+ * Total FIR-tap budget across all generated paths.
+ */
+fir_taps_total: number, 
+/**
  * Informational codes and values translated by the screen.
  */
 notes: Array<Notice>, 
