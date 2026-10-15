@@ -51,8 +51,10 @@ export function AppFrame({
 }: AppFrameProps) {
   const t = useT();
   const prefs = usePrefs();
+  // A skipped step (연결·점검 on the mdat path) still opens when asked for, so
+  // the method can be changed; only the neighbour shortcuts step over it.
   const go = (step: StepId | null | undefined) => {
-    if (step && model.steps[step].status !== "skipped") onNavigate(step);
+    if (step) onNavigate(step);
   };
 
   useShortcuts(

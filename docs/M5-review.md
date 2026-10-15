@@ -50,4 +50,64 @@ M5 판정(`docs/M5.md` §6)의 화면 리뷰 기록입니다. 화면을 그린 �
 
 ## ASTRA 감사 (읽기 전용)
 
-대기 중: GPT 토큰 오류(401 "Could not parse your authentication token")로 아직 돌리지 못했습니다.
+- **범위:** `main`의 0.15.1 커밋 `7d38df9`, `apps/secs2r/ui/src/` 전체(테스트와 생성 바인딩 제외, 약 21,500줄)와 두 카탈로그, CSS. 작업서는 [`packets/P41-astra-m5-audit.md`](packets/P41-astra-m5-audit.md), 도구는 Read·Grep·Glob만(쓰기 없음). ASTRA(gpt-6-astra, high)가 돌렸고, 보고 원문의 판정은 HIGH 10, MEDIUM 10, LOW 2입니다.
+- **대조:** 워커의 자기 보고는 게이트가 아니므로 Claude가 항목마다 화면 코드와 서비스(`crates/secs-service`, `crates/secs-types`), 업스트림(`src/secs/wizard/`)을 읽어 다시 판정했습니다. 전제가 틀린 항목은 기각하고, 성립하지만 사용자가 알아볼 수 있거나 경로가 좁은 항목은 격하했습니다. 아래 표의 "처리"가 0.15.2면 이 기록과 같은 PR에서 고친 것입니다.
+
+### 찾은 것 (대조 뒤)
+
+| 보고 | 판정 | Location | Path | 처리 |
+| --- | --- | --- | --- | --- |
+| HIGH | **HIGH 성립** | `screens/connect/state.ts:39`, `app/AppFrame.tsx:55`, `app/StepRail.tsx:26`, `screens/system/useSystemScreen.ts:42` | 'mdat 파일만 가져오기'를 고르면 `measure_configure`로 서비스에 저장되고 연결·점검이 `skipped`가 되는데, 레일(disabled)·Ctrl+2·`go()`가 건너뛴 단계를 열지 않습니다. 프로젝트를 다시 열어도 방식이 남아 있어 새 프로젝트 말고는 측정 방식을 바꿀 길이 없습니다. 시스템의 '연결·점검으로'는 이때 측정·가져오기로 보냈습니다. | 0.15.2: 건너뛴 단계도 레일과 Ctrl+N으로 엽니다(Alt+←/→만 건너뜁니다). 시스템의 단추는 라벨대로 연결·점검으로 갑니다. |
+| HIGH | **HIGH 성립** | `state/session.ts:179` | 낮은 SNR 경고가 위치별로 누적만 되고 지워지지 않습니다. 같은 위치를 고쳐 다시 재도 이전 경고가 현재 측정의 경고처럼 남고, 새 경고는 겹쳐 쌓입니다. 업스트림(`step5_measure.py:1313`)은 실행마다 새로 셉니다. | 0.15.2: `measure_position`·`position_clear`·`mdat_import`가 그 위치의 경고를, `sample_load`가 전부를 지웁니다. |
+| HIGH | MEDIUM(격하) | `screens/measure/MdatDialogs.tsx:82` | `mdat_scan`은 위치 표기가 없는 측정에 1을 추정하고(`mdat_import.rs:288`, current=1), 대화상자가 그 값으로 행을 채우며 배정마다 위치를 명시하므로 `fallbackPosition`이 효력이 없습니다. 안내문("지금 고른 위치로 가져옵니다")과 다릅니다. 위치 열이 보여 알아볼 수는 있습니다. | 0.15.2: `position_tagged`가 아닌 행은 화면의 현재 위치로 채웁니다. |
+| HIGH | MEDIUM(격하) | `state/session.ts:91`, `screens/connect/ConnectScreen.tsx:544` | 권장 스윕 레벨 결과가 프로젝트 교체와 입력 장치·채널·방식 변경 뒤에도 남고 적용 단추도 살아 있습니다(고급 아래). | 0.15.2: 프로젝트 교체와 그런 `measure_configure`에서 지웁니다. |
+| HIGH | MEDIUM(격하) | `app/jobs/jobStore.ts:150` | `job_cancel`이 거절되면 상태가 `cancel_requested`에 머물러 작업이 스스로 끝날 때까지 취소를 다시 누를 수 없습니다. | 0.15.2: 요청 실패 시 `running`으로 되돌립니다. |
+| HIGH | MEDIUM(격하) | `app/shortcuts.ts:82`, `ui/Dialog.tsx:56` | 모달 대화상자 위에서 Ctrl+N·Alt+←/→·Ctrl+O가 그대로 동작해 단계가 바뀌고, 측정 화면 안에서 그리는 mdat 배정 대화상자의 편집이 사라집니다. 업스트림의 QDialog는 키를 가집니다. | 0.15.2: `aria-modal` 대화상자가 열려 있으면 앱 단축키를 무시합니다. |
+| HIGH | MEDIUM(격하) | `state/session.ts:118`, `screens/calibrate/ResultGraph.tsx:267` | 채널을 바꾸는 동안 이전 채널의 곡선이 잠깐 남고, 요청이 실패하면 그대로 남습니다. 프로젝트 전환 경쟁은 서비스가 세션 잠금 아래 순서대로 답하므로 실제로는 좁습니다. | 후속(P42): 곡선에 요청한 채널을 함께 두고 불러오는 중 상태를 그립니다. |
+| HIGH | 기각 | `screens/connect/ConnectScreen.tsx:454` | `levels_get`의 `levels`는 "재생 레벨"이 아니라 그 채널을 재생할 때 잰 입력 RMS입니다(`monitor.rs:223,370`, 업스트림 `step3_level.py:401`과 같음). 바인딩의 주석("Played level")이 틀려 감사를 오도했습니다. | 0.15.2: `secs-types`의 주석을 고치고 바인딩을 다시 생성했습니다. |
+| HIGH | 기각 | `state/triggers.ts:24` | `recommend_xo`는 추천값만 돌려주고 설정을 쓰지 않습니다(`calibration.rs:114`). 사용자가 XO 칸에 넣을 때 `calibration_settings_edit`가 결과·프로젝트를 다시 읽습니다. | — |
+| HIGH | 기각 | `App.tsx:141`, `state/session.ts:214` | `app_settings_get`은 서비스가 늘 `Ok`로 답합니다(`ipc.rs:135`). IPC 전송 자체가 죽은 경우만 남고, 그때는 어느 화면도 뜨지 않습니다. | — |
+| MEDIUM | **MEDIUM 성립(눈에 띔)** | `screens/system/SystemScreen.tsx:462` | 서비스의 `ConfigGroup.key`는 업스트림 이름(프론트·센터·…)이고 `id`가 표시용(front·center·…)인데 화면이 `key`로 이름을 찾아, 실제 앱에서 모든 그룹이 "기타"로 보입니다. 모의 서비스와 견본이 `id == key`로 만들어 갤러리에서 가려졌습니다. | 0.15.2: `id`로 찾습니다. 모의 서비스·견본도 실제 계약대로 한국어 `key`를 냅니다. |
+| MEDIUM | MEDIUM 성립 | `state/session.ts:189` | 취소된 보정·MIMO·XO 추천도 `error.code: cancelled`를 달고 오므로(`jobs.rs:323`) 실패로 표시됩니다. 내보내기도 같습니다. | 0.15.2: `status === "failed"`일 때만 실패입니다. |
+| MEDIUM | MEDIUM 성립 | `App.tsx:117`, `screens/connect/connect.css:355` | Ctrl+M의 마이크 미터가 위치 지정 없이 앱 틀 뒤 문서 흐름에 붙어 첫 화면 밖으로 밀립니다. | 0.15.2: 도움말과 같은 aside 자리의 오른쪽 아래에 띄웁니다(주 동작과 트레이를 덮지 않음). Esc·포커스는 후속. |
+| MEDIUM | MEDIUM 성립 | `ui/plot/AxisRange.tsx:26`, `screens/calibrate/ResultGraph.tsx:361` | GD 탭에도 dB용 상한(60)이 적용되어 90 ms를 넣을 수 없습니다. | 0.15.2: ms 축은 ±1000(업스트림 `axis_range.py:162`은 ±100000). |
+| MEDIUM | MEDIUM 성립 | `screens/tutorial/Tutorial.tsx:199,627` | 코치·완료 카드에 포커스 이동이 없고 완료 상태(`engaged` 거짓)에서 Esc 리스너가 빠집니다. | 후속(P42, Opus). |
+| MEDIUM | MEDIUM 성립 | `App.tsx:120`, `screens/tutorial/engine.ts:125` | `stepOpen`을 넘기지 않아 이어 하기가 막힌 단계로 되감지 않습니다. | 후속(P42, Opus). |
+| MEDIUM | MEDIUM 성립 | `state/session.ts:166`, `screens/connect/types.ts:17` | 미터 `stalled` 상태로 가는 코드가 없어 정의만 있는 상태입니다. | 후속(P42): 마지막 읽기 시각으로 판단하고 재시작을 잇습니다. |
+| MEDIUM | 기각 | `screens/measure/MeasureScreen.tsx:179` | 두 대화상자는 같은 레이어(`ui/layer.tsx`)에 마운트 순서대로 붙으므로 나중에 열리는 배정 창이 위에 옵니다. | — |
+| MEDIUM | 기각 | `screens/calibrate/Results.tsx:105` | `CalibrationSummary.warnings`는 서비스가 늘 비워 보냅니다(`calibration.rs:348`). 죽은 필드입니다. | 후속: 서비스가 채우면 화면에 붙입니다. |
+| MEDIUM | LOW(격하) | `styles/tokens.css:25`, `app/app.css:242`, `screens/export/export.css:44`, `ui/maps/maps.css:182` | 13 px 캡션 토큰이 막힌 이유·내보내기 항목명·지도 채널 코드에 쓰입니다. 규칙(typography.md)은 캡션과 메타데이터에 13 px를 허용합니다. | 후속 손질에서 라벨(`export-fact dt`)만 14 px로. |
+| LOW | LOW 성립 | `i18n/ko.json:76`, `i18n/en.json:76` | 전문가 표시 설명이 계산 메모를 말합니다(P40 뒤에는 늘 보임). | 0.15.2: 초고지연 모드, 장치 공유 방식, 프로젝트 파일의 역할 이름. |
+| LOW | LOW(모호성) | `i18n/ko.json:785` | "끄는"은 끌다의 활용으로 맞지만 끄다와 겹칩니다. | 0.15.2: "끌어 옮기는 동안". |
+
+### 확신하지 못한 것
+
+| Location | Suspicion | What would confirm it |
+| --- | --- | --- |
+| `apps/secs2r/ui/src/screens/calibrate/ResultGraph.tsx:67`, `apps/secs2r/ui/src/screens/calibrate/ResultGraph.tsx:329` | SPL에서 서비스가 보낸 `target` 곡선을 버리고 현재 타겟 점을 직접 보간합니다. 서비스의 레벨 이동이나 오래된 결과의 타겟 기준과 달라질 가능성이 있습니다. | 서비스의 `result_curves` 타겟 생성·레벨 이동 규칙과 현재 점의 좌표계를 대조하고, 타겟 변경 전후의 실제 응답을 비교해야 합니다. |
+| `apps/secs2r/ui/src/screens/calibrate/Results.tsx:128`, `apps/secs2r/ui/src/screens/calibrate/Results.tsx:131` | 판정·성적표의 대역을 카탈로그의 20–200 Hz와 20–100 Hz로 고정합니다. 생성 타입의 설명만으로는 서비스 지표가 이 대역을 항상 사용하는지 확정할 수 없습니다. | 서비스가 `VerdictSummary`와 `ChannelResultLine`을 만드는 곳에서 사용하는 지표·대역을 확인해야 합니다. |
+| `apps/secs2r/ui/src/screens/calibrate/Settings.tsx:538` | 전체 보정 없이 `서브만 계산`을 마친 경우 BA 결과가 있어도 `결과 값 가져오기`는 전체 `calibration.chain.subs`가 없다는 이유로 꺼집니다. | `sub_take_values`가 독립된 서브 전용 결과를 지원하는지 서비스 계약을 확인해야 합니다. |
+| `apps/secs2r/ui/src/screens/connect/ConnectScreen.tsx:120`, `apps/secs2r/ui/src/screens/calibrate/Settings.tsx:274`, `apps/secs2r/ui/src/screens/export/useExportScreen.ts:32` | 스윕 레벨 점검 중 전 채널 재생, 측정 중 XO·서브·MIMO 계산, MIMO 중 내보내기처럼 화면 간 작업 잠금이 일관되지 않습니다. | 실제 서비스의 작업 그룹 상호 배제와 각 요청의 거부·허용 정책을 확인해야 합니다. 버튼이 켜져 있다는 사실만으로 두 작업이 실제 병행되거나 결과가 손상된다고 단정하지 않습니다. |
+| `apps/secs2r/ui/src/screens/system/SystemScreen.tsx:696` | DSP 필드 하나를 고칠 때 전체 `dsp.fields`를 보냅니다. 앞선 수정 응답 전에 다른 필드를 고치면 오래된 나머지 필드가 함께 전송될 수 있습니다. | 지연된 IPC 응답에서 연속 편집 순서와 서비스의 전체 필드 교체 정책을 확인해야 합니다. |
+| `apps/secs2r/ui/src/screens/calibrate/ResultGraph.tsx:205` | 알려지지 않은 BA 경고는 코드와 JSON이 본문에 그대로 나옵니다. | 실제 서비스가 현재 카탈로그에 없는 BA 경고를 보내는 경로가 확인되면 결함으로 확정할 수 있습니다. |
+| `apps/secs2r/ui/src/screens/project/project.css:61`, `apps/secs2r/ui/src/ui/ui.css:1118` | 최근 프로젝트 목록과 공통 대화상자에 높이 제한·본문 스크롤이 없습니다. 최근 파일이 많거나 오류 자세히를 펼치면 버튼이 창 밖으로 나갈 가능성이 있습니다. | 실제 창 1024×700에서 긴 최근 목록과 오류 자세히를 함께 렌더링해 버튼 접근성을 확인해야 합니다. |
+
+(ASTRA가 적은 대로 둡니다. 서비스 계약을 함께 봐야 하는 것이라 P42에서 다룹니다.)
+
+### 보고 문제없던 것
+
+- 실제 화면의 IPC 호출은 생성된 `Request`·응답 타입을 사용하는 공통 호출기를 통합니다. 화면에서 `as any`로 타입 검사를 우회한 호출은 발견하지 못했습니다.
+- 일반 리소스 읽기에는 세대 검사가 있습니다. 다만 별도로 구현된 결과 곡선 읽기는 위에서 보고한 예외입니다.
+- 일반 이벤트 버스, 화면 키보드 리스너, 타이머, ResizeObserver, MutationObserver와 uPlot 인스턴스에는 해제 코드가 있습니다.
+- 공통 대화상자에는 보이는 닫기·취소와 Esc 처리가 있습니다. 파괴적 구성 변경과 위치 측정 삭제는 결과를 설명한 확인 및 되돌리기로 연결되어 있습니다.
+- 공통 숫자 입력은 범위 검증·단위·화살표 증감·Esc 복원을 제공합니다. 성적표와 BA 표의 주요 수치 열에는 tabular figures가 적용됩니다.
+- 시스템의 빈 구성·검증 오류, 연결 방식 미선택·REW 오류, 측정 곡선 없음·진행, 보정 결과 없음·낡음·계산 실패, 내보내기 결과 없음·낡음·실패·튜토리얼에는 명시적인 표현이 있습니다. 초기 설정 로딩 실패와 미터 읽기 중단 등 누락 경로는 위에 따로 적었습니다.
+- 일반 IPC 오류는 번역된 원인과 다음 행동으로 표시하고 원문은 자세히에 둡니다. 한국어·영어의 주요 작업 라벨, 단위 자리표시자, 오류 안내에서 광범위한 의미 불일치나 해요체 혼용은 발견하지 못했습니다.
+- 기본 단계 화면의 주 동작은 채운 버튼 하나로 구분됩니다. 채널 곡선 색은 데이터 구분 용도이고, 일반 상태색은 상태 의미에 사용됩니다. 실제 대비·확대 배율·움직임은 실행하지 않아 판정하지 않았습니다.
+
+### 검증과 판정
+
+- 검증: 고친 자리마다 회귀 테스트(`AppFrame.test.tsx`, `jobStore.test.ts`, `session.test.ts`, `MeasureScreen.test.tsx`, `useSystemScreen.test.tsx`)와 `npm run typecheck`, `npm test`, `npm run build`, `cargo test -p secs-types`(바인딩 재생성).
+- **판정(ASTRA 원문):** HIGH 10, MEDIUM 10, LOW 2.
+- **판정(대조 뒤):** HIGH 2, MEDIUM 12, LOW 3, 기각 5. HIGH 2건과 MEDIUM 8건, LOW 2건은 0.15.2에서 고쳤고, MEDIUM 4건과 LOW 1건은 [`packets/P42-m5-followups.md`](packets/P42-m5-followups.md)로 넘깁니다.
+- **M5 §6 화면 리뷰 조건:** 두 리뷰(Claude 갤러리, ASTRA 코드) 모두 남은 HIGH가 없습니다. 충족.

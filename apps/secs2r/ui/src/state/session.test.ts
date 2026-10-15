@@ -77,3 +77,52 @@ describe("measurement settings", () => {
     } finally { session.dispose(); mock.dispose(); }
   });
 });
+
+describe("host state after jobs and switches", () => {
+  it("treats a cancelled calibration as no failure", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    const session = createSession(mock);
+    try {
+      await session.start(); await settle();
+      const started = await session.call({ method: "calibrate", params: { settings: null, subs_only: false } });
+      await session.call({ method: "job_cancel", params: { job: started.job } });
+      mock.drain(); await settle();
+      expect(session.host.getSnapshot().jobs.find((job) => job.job === started.job)?.status).toBe("cancelled");
+      expect(session.host.getSnapshot().failure).toBeNull();
+    } finally { session.dispose(); await settle(); mock.dispose(); }
+  });
+
+  it("keeps low-SNR warnings per run of a position and drops them with the position", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    const session = createSession(mock);
+    try {
+      await session.start(); await settle();
+      await session.configure({ method: "mock" });
+      await session.call({ method: "measure_position", params: { position: 4 } }); mock.drain(); await settle();
+      expect(session.host.getSnapshot().warnings).toEqual([{ position: 4, notices: [expect.objectContaining({ code: "measurement_low_snr" })] }]);
+      await session.call({ method: "measure_position", params: { position: 4 } });
+      expect(session.host.getSnapshot().warnings).toEqual([]);
+      mock.drain(); await settle();
+      expect(session.host.getSnapshot().warnings[0]?.notices).toHaveLength(1);
+      await session.call({ method: "position_clear", params: { position: 4 } });
+      expect(session.host.getSnapshot().warnings).toEqual([]);
+    } finally { session.dispose(); await settle(); mock.dispose(); }
+  });
+
+  it("forgets the recommended sweep level with the input and the project", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    const session = createSession(mock);
+    try {
+      await session.start(); await settle();
+      await session.configure({ method: "mock" });
+      await session.call({ method: "level_check", params: { role: "L" } }); mock.drain(); await settle();
+      expect(session.host.getSnapshot().sweepResult).not.toBeNull();
+      await session.configure({ input_channel: 2 });
+      expect(session.host.getSnapshot().sweepResult).toBeNull();
+      await session.call({ method: "level_check", params: { role: "L" } }); mock.drain(); await settle();
+      expect(session.host.getSnapshot().sweepResult).not.toBeNull();
+      await session.call({ method: "project_new", params: { path: "", preset: "2.0", sub_count: 0, sample: false, tutorial: false } });
+      expect(session.host.getSnapshot().sweepResult).toBeNull();
+    } finally { session.dispose(); await settle(); mock.dispose(); }
+  });
+});

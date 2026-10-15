@@ -463,6 +463,15 @@
   overflow: auto;
 }
 
+/* The floating mic meter (Ctrl+M) sits in the aside slot at the bottom right,
+   so it covers neither the step header's primary action nor the tray. */
+.app-mic {
+  position: absolute;
+  right: var(--space-6);
+  bottom: var(--space-6);
+  z-index: var(--z-popover);
+}
+
 /* ── Job tray ──────────────────────────────────────────────────────────── */
 .job-tray {
   border-top: var(--border-w) solid var(--border);

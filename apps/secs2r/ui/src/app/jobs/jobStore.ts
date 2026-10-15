@@ -149,7 +149,9 @@ export function jobsReducer(state: JobsState, action: JobsAction): JobsState {
       return update(state, action.job, (job) => (job.status === "running" ? { ...job, status: "cancel_requested" } : job));
     case "request_failed": {
       const kind = action.job === null ? null : (state.jobs.find((job) => job.id === action.job)?.kind ?? null);
-      return push(state, { at: action.at, job: action.job, kind, type: "request_failed", error: action.error });
+      // A refused job_cancel leaves the job running; the button must offer cancel again.
+      const reverted = action.job === null ? state : update(state, action.job, (job) => (job.status === "cancel_requested" ? { ...job, status: "running" } : job));
+      return push(reverted, { at: action.at, job: action.job, kind, type: "request_failed", error: action.error });
     }
     case "clear_history":
       return { ...state, history: [] };

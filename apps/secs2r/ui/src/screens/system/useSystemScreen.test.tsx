@@ -69,8 +69,9 @@ describe("useSystemScreen", () => {
     expect(mock.calls).toContainEqual({ method: "layout_set", params: { count: null, start_delay: "10 초", timing: null, confirm: false } });
     expect(mock.calls).toContainEqual({ method: "layout_set", params: { count: null, start_delay: null, timing, confirm: false } });
     await perform(a.next); expect(session.host.getSnapshot().current).toBe("connect");
-    await perform(() => { session.host.set({ path: "mdat" }); a.next(); });
-    expect(session.host.getSnapshot().current).toBe("measure");
+    // The button says 연결·점검으로 on the mdat path too; that screen leads on to 측정·가져오기.
+    await perform(() => { session.host.set({ path: "mdat" }); session.navigate("system"); a.next(); });
+    expect(session.host.getSnapshot().current).toBe("connect");
   });
 
   it("does not write a cancelled patch sheet; reports and rejects destructive failures", async () => {

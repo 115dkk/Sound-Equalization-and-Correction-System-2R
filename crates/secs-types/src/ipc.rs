@@ -1230,11 +1230,11 @@ pub struct MeasurementRecordsResult {
     /// One entry per arranged position.
     pub records: Vec<PositionRecord>,
 }
-/// Stored level settings, keyed by measurement role.
+/// Stored level-check readings, keyed by measurement role (upstream `extra['levels']`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct LevelsResult {
-    /// Played level in dBFS by role.
+    /// Measured input level in dBFS by role: the meter reading while that channel played.
     pub levels: BTreeMap<String, f64>,
     /// Measured sound-pressure level in dB SPL by role.
     pub spl: BTreeMap<String, f64>,

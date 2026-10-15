@@ -171,6 +171,19 @@ describe("측정·가져오기 screen", () => {
     expect(byUi("measure.options")).toBeNull();
   });
 
+  it("sends untagged mdat rows to the screen's current position, as the hint says", () => {
+    const scan = mdatAssignView.mdat!.scan;
+    // A file whose titles name no position: the scan guesses 1 for every row.
+    const untagged = scan.measurements.slice(0, 2).map((m) => ({ ...m, title: m.title.replace(" P4", ""), position: 1, position_tagged: false }));
+    const view: MeasureView = { ...mdatAssignView, mdat: { ...mdatAssignView.mdat!, scan: { ...scan, measurements: untagged } } };
+    renderStep(view);
+    const current = currentPosition(view) ?? 1;
+    const node = ui("measure.mdat.row.1.position");
+    const select = node instanceof HTMLSelectElement ? node : node.querySelector("select")!;
+    expect(select.value).toBe(String(current));
+    expect(current).not.toBe(1);
+  });
+
   it("says when the project has no path yet and that the step needs a method", () => {
     renderStep(emptyView);
     expect(ui("measure.path.note").textContent).toContain("저장할 위치");

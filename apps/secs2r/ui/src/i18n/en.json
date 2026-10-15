@@ -73,7 +73,7 @@
   "frame.settings.theme.light": "Light",
   "frame.settings.theme.dark": "Dark",
   "frame.settings.expert": "Show expert options",
-  "frame.settings.expert.hint": "Shows the ultra latency mode, the device sharing mode and the calculation notes.",
+  "frame.settings.expert.hint": "Shows the ultra latency mode, the device sharing mode and the role names in the project file.",
   "frame.help": "Help",
   "frame.tutorial": "Tutorial",
   "frame.placeholder.title": "No screen for this step",
