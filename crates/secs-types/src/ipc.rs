@@ -61,6 +61,8 @@ pub enum Request {
     MeasureMethods,
     /// The `MeasureConfigure` Request variant.
     MeasureConfigure(MeasureConfigureParams),
+    /// Returns the measurement settings stored in the open project.
+    MeasureConfigGet,
     /// Returns one recording-status entry per arranged position.
     MeasurementRecords,
     /// Returns stored per-role level and SPL values.
@@ -224,6 +226,8 @@ pub enum Response {
     MeasureMethods(MeasureMethodsResult),
     /// The `MeasureConfigure` Response variant.
     MeasureConfigure(MeasureConfigResult),
+    /// Measurement settings stored in the open project.
+    MeasureConfigGet(MeasureConfigResult),
     /// Recording status for every arranged position.
     MeasurementRecords(MeasurementRecordsResult),
     /// Stored per-role level and SPL values.
@@ -1723,12 +1727,28 @@ pub struct ModeSpecResult {
     /// Upper latency bound of the mode, in ms.
     pub max_latency_ms: f64,
 }
+/// Application theme preference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum AppTheme {
+    /// Follow the operating-system preference.
+    #[default]
+    System,
+    /// Always use the light theme.
+    Light,
+    /// Always use the dark theme.
+    Dark,
+}
 /// Application-local settings, independent of an open project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct AppSettings {
     /// Screen language: `ko` or `en`.
     pub language: String,
+    /// Application theme preference.
+    #[serde(default)]
+    pub theme: AppTheme,
     /// Shows expert-only settings (U9).
     pub expert_display: bool,
     /// Recently opened project paths, newest first (at most 10).
@@ -1740,6 +1760,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             language: "ko".into(),
+            theme: AppTheme::System,
             expert_display: false,
             recent_projects: Vec::new(),
             last_window_size: None,
@@ -1893,6 +1914,7 @@ mod tests {
             Request::Jobs,
             Request::MeasureMethods,
             Request::MeasureConfigure(MeasureConfigureParams::default()),
+            Request::MeasureConfigGet,
             Request::MeasurementRecords,
             Request::LevelsGet,
             Request::LevelsFillDefaults,

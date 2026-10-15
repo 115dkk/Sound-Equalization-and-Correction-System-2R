@@ -991,6 +991,54 @@ fn rew_launch_classifies_reasons_and_returns_after_spawn() {
 }
 
 #[test]
+fn measure_config_get_reads_stored_settings_without_dirtying_the_project() {
+    let root = root("config-get");
+    let path = root.join("room.secs");
+    let service = Service::new(Deps::default());
+    assert!(matches!(
+        service.call(Request::MeasureConfigGet, Arc::new(NoEvents)),
+        Envelope::Err(IpcError {
+            code: ErrorCode::ProjectNotOpen,
+            ..
+        })
+    ));
+    new(&service, &path);
+    let Response::MeasureConfigGet(initial) = call(&service, Request::MeasureConfigGet) else {
+        panic!()
+    };
+    assert_eq!(initial.method, "none");
+    let configured = configure(&service, "mock");
+    call(
+        &service,
+        Request::ProjectSave(ProjectSaveParams { path: None }),
+    );
+    let Response::MeasureConfigGet(stored) = call(&service, Request::MeasureConfigGet) else {
+        panic!()
+    };
+    assert_eq!(stored, configured);
+    let Response::ProjectInfo(info) = call(&service, Request::ProjectInfo) else {
+        panic!()
+    };
+    assert!(!info.dirty);
+
+    let mut old = secs_project::Project::load_text(&fs::read_to_string(&path).unwrap()).unwrap();
+    old.extra.retain(|(key, _)| key != "devices");
+    fs::write(&path, old.save_text()).unwrap();
+    call(
+        &service,
+        Request::ProjectOpen(ProjectPathParams {
+            path: path.to_string_lossy().into_owned(),
+        }),
+    );
+    let Response::MeasureConfigGet(compatibility) = call(&service, Request::MeasureConfigGet)
+    else {
+        panic!()
+    };
+    assert_eq!(compatibility.method, "native");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn configure_validates_fields_and_host_stub_reports_its_error() {
     let root = root("config");
     let path = root.join("room.secs");

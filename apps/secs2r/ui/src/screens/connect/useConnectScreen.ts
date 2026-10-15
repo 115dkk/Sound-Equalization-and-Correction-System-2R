@@ -55,15 +55,22 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
           for (const role of roles) {
             if (epoch !== queue.current) break;
             session.host.set({ playing: role });
-            await session.call({ method: "level_play", params: { role, master_dbfs: session.host.getSnapshot().masterDbfs } });
-            if (epoch !== queue.current) break;
-            // level_play only enqueues the burst. The service samples for 2.5 s;
-            // leave 150 ms for its 50 ms queue loop and the final level write.
-            await new Promise<void>((resolve) => {
-              const finish = () => { clearTimeout(timer); cancelWait.current = null; resolve(); };
-              const timer = setTimeout(finish, 2650);
+            // level_play only enqueues the 2.5 s burst; the monitor job says
+            // when it ended (level_play_end), after storing the level. Listen
+            // before asking, and give up after 8 s so a lost event cannot stall the queue.
+            const ended = new Promise<void>((resolve) => {
+              let timer: ReturnType<typeof setTimeout> | undefined;
+              let off = () => {};
+              const finish = () => { off(); clearTimeout(timer); cancelWait.current = null; resolve(); };
+              off = session.ipc.events.subscribe((event) => {
+                if (event.event === "log" && event.code === "level_play_end" && event.params.role === role) finish();
+              });
+              timer = setTimeout(finish, 8000);
               cancelWait.current = finish;
             });
+            await session.call({ method: "level_play", params: { role, master_dbfs: session.host.getSnapshot().masterDbfs } });
+            if (epoch !== queue.current) break;
+            await ended;
             if (epoch !== queue.current) break;
             await Promise.all([session.stores.levels.load(), session.stores.project.load()]);
           }

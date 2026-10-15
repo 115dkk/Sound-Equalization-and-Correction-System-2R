@@ -122,6 +122,7 @@
   "jobs.finished.cancelled": "{job} 취소됨",
   "jobs.finished.failed": "{job} 실패: {cause}",
   "jobs.log.measurement_low_snr": "{code} 신호 대 잡음비 {snr_db} dB: 기준 {threshold_db} dB보다 낮습니다. 주변 소음을 줄이거나 레벨을 올린 뒤 다시 측정하세요.",
+  "jobs.log.level_play_end": "레벨 재생 끝",
   "jobs.log.mdat_duplicate_roles": "한 채널에 측정이 둘 이상 배정됐습니다. 채널마다 하나만 남기세요.",
   "jobs.log.mdat_nothing_selected": "가져올 측정이 없습니다. 측정을 하나 이상 고르세요.",
   "jobs.log.unknown": "알 수 없는 알림",

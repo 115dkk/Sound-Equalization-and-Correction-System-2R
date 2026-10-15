@@ -77,7 +77,7 @@ export function createSession(ipc: Ipc) {
     try {
       const data = await ipc.request(request);
       errors.set(null);
-      if (request.method === "measure_configure" || request.method === "level_apply") {
+      if (request.method === "measure_configure" || request.method === "measure_config_get" || request.method === "level_apply") {
         stores.measurementSettings.set(data as import("../ipc/bindings/MeasureConfigResult").MeasureConfigResult);
         const method = stores.measurementSettings.getSnapshot()!.method;
         host.set({ path: method === "none" ? null : method as ConnectPath });
@@ -93,11 +93,10 @@ export function createSession(ipc: Ipc) {
         host.set({ path: null, selected: null, mdat: null, warnings: [], runs: {}, channel: null, xoGroup: null, xoRecommendation: null, failure: null });
       }
       await reload(triggeredBy({ mutation: request.method }));
-      if ((HOST_TRIGGERS.measurementSettings.mutations as readonly string[]).includes(request.method) && stores.measurementSettings.getSnapshot()) await configure({});
-      if (request.method === "project_new") {
-        const created = request as Extract<Request, { method: "project_new" }>;
-        await configure({ method: created.params.tutorial ? "mock" : "none" });
-      }
+      if ((HOST_TRIGGERS.measurementSettings.mutations as readonly string[]).includes(request.method) && stores.measurementSettings.getSnapshot()) await call({ method: "measure_config_get" });
+      if (request.method === "project_new" && (request as Extract<Request, { method: "project_new" }>).params.tutorial) await configure({ method: "mock" });
+      // A new project stores "none"; a reopened one keeps its method and devices.
+      else if (request.method === "project_new" || request.method === "project_open") await call({ method: "measure_config_get" });
       return data;
     } catch (error) { report(error); throw error; }
   };

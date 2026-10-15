@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -220,6 +221,9 @@ fn sampled_loop(
         if let Some(report) = report {
             send_meter(job, report);
             store_level(session, &play.role, report.input_dbfs, report.spl_db)?;
+            send_play_end(job, &play.role, "done");
+        } else {
+            send_play_end(job, &play.role, "stopped");
         }
         handled_generation = play.generation;
     }
@@ -261,6 +265,17 @@ fn send_meter(job: &crate::jobs::JobContext, report: secs_audio::LevelReport) {
     });
 }
 
+fn send_play_end(job: &crate::jobs::JobContext, role: &str, outcome: &str) {
+    job.send(JobEvent::Log {
+        job: job.id(),
+        code: "level_play_end".into(),
+        params: BTreeMap::from([
+            ("role".into(), role.into()),
+            ("outcome".into(), outcome.into()),
+        ]),
+    });
+}
+
 fn rew_loop(
     deps: &crate::Deps,
     session: &Arc<Mutex<crate::session::Session>>,
@@ -296,6 +311,7 @@ fn rew_loop(
         }) {
             secs_rew::LevelMonitor::stop_generator(&mut rew);
             if let Some((play, _, _)) = active.take() {
+                send_play_end(job, &play.role, "stopped");
                 handled_generation = play.generation;
             }
         }
@@ -329,12 +345,16 @@ fn rew_loop(
                 if let Some(level) = settled {
                     store_level(session, &play.role, level.input_dbfs, level.spl_db)?;
                 }
+                send_play_end(job, &play.role, "done");
                 handled_generation = play.generation;
             }
         }
         std::thread::sleep(Duration::from_millis(100));
     }
     secs_rew::LevelMonitor::stop_generator(&mut rew);
+    if let Some((play, _, _)) = active.take() {
+        send_play_end(job, &play.role, "stopped");
+    }
     secs_rew::LevelMonitor::stop(&mut rew);
     Ok(JobResult::Stopped)
 }

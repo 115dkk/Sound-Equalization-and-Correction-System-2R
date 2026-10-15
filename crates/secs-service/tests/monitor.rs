@@ -35,6 +35,18 @@ impl Events {
         });
     }
 
+    fn wait_play_end(&self, job: JobId, role: &str, outcome: &str, timeout: Duration) {
+        self.wait_until(timeout, |events| {
+            events.iter().any(|event| {
+                matches!(event, JobEvent::Log { job: id, code, params }
+                    if *id == job
+                        && code == "level_play_end"
+                        && params.get("role").is_some_and(|value| value == role)
+                        && params.get("outcome").is_some_and(|value| value == outcome))
+            })
+        });
+    }
+
     fn wait_finished(&self, job: JobId, timeout: Duration) -> JobStatus {
         self.wait_until(timeout, |events| {
             events
@@ -143,19 +155,27 @@ fn mock_monitor_emits_stores_excludes_and_stops() {
         }),
         Arc::new(NoEvents),
     );
-    events.wait_meters(started.job, 26, Duration::from_secs(10));
-    let deadline = Instant::now() + Duration::from_secs(1);
-    loop {
-        let Response::LevelsGet(levels) = call(&service, Request::LevelsGet, Arc::new(NoEvents))
-        else {
-            panic!()
-        };
-        if levels.levels.contains_key("L") {
-            break;
-        }
-        assert!(Instant::now() < deadline, "completed burst was not stored");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    events.wait_play_end(started.job, "L", "done", Duration::from_secs(10));
+    let values = events.values.lock().unwrap();
+    let last_meter = values
+        .iter()
+        .rposition(|event| matches!(event, JobEvent::Meter { job, .. } if *job == started.job))
+        .unwrap();
+    let ended = values
+        .iter()
+        .position(|event| {
+            matches!(event, JobEvent::Log { job, code, params }
+            if *job == started.job && code == "level_play_end"
+                && params.get("role").is_some_and(|value| value == "L")
+                && params.get("outcome").is_some_and(|value| value == "done"))
+        })
+        .unwrap();
+    assert!(last_meter < ended, "{values:?}");
+    drop(values);
+    let Response::LevelsGet(levels) = call(&service, Request::LevelsGet, Arc::new(NoEvents)) else {
+        panic!()
+    };
+    assert!(levels.levels.contains_key("L"));
     call(&service, Request::LevelMonitorStop, Arc::new(NoEvents));
     assert_eq!(
         events.wait_finished(started.job, Duration::from_secs(1)),
@@ -196,7 +216,7 @@ fn level_stop_cancels_only_the_active_burst_and_is_idempotent() {
     std::thread::sleep(Duration::from_millis(50));
     call(&service, Request::LevelStop, Arc::new(NoEvents));
     call(&service, Request::LevelStop, Arc::new(NoEvents));
-    std::thread::sleep(Duration::from_millis(50));
+    events.wait_play_end(started.job, "L", "stopped", Duration::from_secs(1));
     assert!(
         !events.values.lock().unwrap().iter().any(|event| {
             matches!(event, JobEvent::Finished { job, .. } if *job == started.job)
@@ -220,6 +240,46 @@ fn level_stop_cancels_only_the_active_burst_and_is_idempotent() {
         service.call(Request::LevelStop, Arc::new(NoEvents)),
         Envelope::Ok(response) if *response == Response::LevelStop(())
     ));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn a_new_level_play_stops_the_active_burst() {
+    let root = root();
+    let service = Service::new(Default::default());
+    configure_mock(&service, &root.join("room.secs"));
+    let events = Arc::new(Events::default());
+    let Response::LevelMonitorStart(started) = call(
+        &service,
+        Request::LevelMonitorStart(LevelMonitorStartParams::default()),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    call(
+        &service,
+        Request::LevelPlay(LevelPlayParams {
+            role: "L".into(),
+            master_dbfs: -30.0,
+        }),
+        Arc::new(NoEvents),
+    );
+    events.wait_meters(started.job, 1, Duration::from_secs(1));
+    call(
+        &service,
+        Request::LevelPlay(LevelPlayParams {
+            role: "R".into(),
+            master_dbfs: -30.0,
+        }),
+        Arc::new(NoEvents),
+    );
+    events.wait_play_end(started.job, "L", "stopped", Duration::from_secs(1));
+    events.wait_play_end(started.job, "R", "done", Duration::from_secs(10));
+    call(&service, Request::LevelMonitorStop, Arc::new(NoEvents));
+    assert_eq!(
+        events.wait_finished(started.job, Duration::from_secs(1)),
+        JobStatus::Cancelled
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -293,6 +353,7 @@ fn rew_level_stop_stops_generator_but_keeps_subscription_alive() {
         std::thread::sleep(Duration::from_millis(5));
     }
     call(&service, Request::LevelStop, Arc::new(NoEvents));
+    events.wait_play_end(started.job, "L", "stopped", Duration::from_secs(1));
     let deadline = Instant::now() + Duration::from_secs(1);
     while transport
         .calls()

@@ -59,3 +59,21 @@ it("records an export that finishes before its start reply arrives", async () =>
     expect(mock.calls.some((r) => r.method === "open_folder")).toBe(true);
   } finally { session.dispose(); await settle(); mock.dispose(); }
 });
+
+describe("measurement settings", () => {
+  it("reads a reopened project's stored method instead of asking again", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    const session = createSession(mock); await session.start();
+    try {
+      await session.configure({ method: "mock" });
+      await session.call({ method: "project_save", params: { path: "C:/rooms/kept.secs" } });
+      await session.call({ method: "project_new", params: { path: "", preset: "2.0", sub_count: 0, sample: false, tutorial: false } });
+      expect(session.host.getSnapshot().path).toBeNull();
+      mock.calls.length = 0;
+      await session.call({ method: "project_open", params: { path: "C:/rooms/kept.secs" } });
+      expect(mock.calls).toContainEqual({ method: "measure_config_get" });
+      expect(mock.calls.some((call) => call.method === "measure_configure")).toBe(false);
+      expect(session.host.getSnapshot().path).toBe("mock");
+    } finally { session.dispose(); mock.dispose(); }
+  });
+});

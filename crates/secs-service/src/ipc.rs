@@ -64,6 +64,7 @@ pub(crate) fn dispatch(
         Request::MeasureConfigure(params) => service
             .measure_configure(params)
             .map(Response::MeasureConfigure),
+        Request::MeasureConfigGet => service.measure_config_get().map(Response::MeasureConfigGet),
         Request::MeasurementRecords => service
             .measurement_records()
             .map(Response::MeasurementRecords),

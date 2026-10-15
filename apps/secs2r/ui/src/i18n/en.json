@@ -122,6 +122,7 @@
   "jobs.finished.cancelled": "{job} cancelled",
   "jobs.finished.failed": "{job} failed: {cause}",
   "jobs.log.measurement_low_snr": "{code} signal-to-noise ratio {snr_db} dB is below {threshold_db} dB. Reduce the noise in the room or raise the level, then measure again.",
+  "jobs.log.level_play_end": "Level burst ended",
   "jobs.log.mdat_duplicate_roles": "More than one measurement is assigned to a channel. Keep one per channel.",
   "jobs.log.mdat_nothing_selected": "Nothing is selected to import. Choose at least one measurement.",
   "jobs.log.unknown": "Unknown notice",
