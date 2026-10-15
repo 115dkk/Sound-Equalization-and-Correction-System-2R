@@ -302,6 +302,9 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "target_load":
       case "calibration_settings_get":
       case "calibration_settings_set":
+      case "calibration_settings_edit":
+      case "sub_warnings":
+      case "rew_info":
       case "mode_spec":
       case "app_settings_get":
       case "app_settings_set":

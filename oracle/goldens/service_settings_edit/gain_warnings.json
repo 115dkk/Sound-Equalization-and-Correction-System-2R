@@ -1,0 +1,1 @@
+{"inputs":{"gains":[-60,12,12.0,12.01,51]},"outputs":{"warnings":["SW4 게인 +12.0 dB — 너무 큽니다. 서브 필터(HP, LP) 설정을 확인하세요","SW5 게인 +51.0 dB — 너무 큽니다. 서브 필터(HP, LP) 설정을 확인하세요"]},"meta":{"oracle":"SECS 2 Beta 1.2.0 (60ac53a)","python":"3.13.16","numpy":"2.5.3","scipy":"1.18.1","numpy_dispatch":"baseline (C library transcendental functions)"}}

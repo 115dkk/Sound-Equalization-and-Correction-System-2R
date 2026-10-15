@@ -21,6 +21,7 @@ mod measurement;
 mod monitor;
 mod project_edit;
 mod session;
+mod settings_edit;
 mod watch;
 
 use std::fmt::Debug;

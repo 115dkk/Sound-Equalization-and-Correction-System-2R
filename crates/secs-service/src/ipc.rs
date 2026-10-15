@@ -113,6 +113,11 @@ pub(crate) fn dispatch(
         Request::CalibrationSettingsSet(params) => service
             .calibration_settings_set(params)
             .map(Response::CalibrationSettingsSet),
+        Request::CalibrationSettingsEdit(params) => service
+            .calibration_settings_edit(params)
+            .map(Response::CalibrationSettingsEdit),
+        Request::SubWarnings => service.sub_warnings().map(Response::SubWarnings),
+        Request::RewInfo => Ok(Response::RewInfo(service.rew_info())),
         Request::ModeSpec(params) => Ok(Response::ModeSpec(service.mode_spec(params))),
         Request::AppSettingsGet => Ok(Response::AppSettingsGet(service.app_settings_get())),
         Request::AppSettingsSet(params) => service

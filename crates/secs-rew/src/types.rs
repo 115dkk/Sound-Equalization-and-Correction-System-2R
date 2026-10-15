@@ -9,6 +9,30 @@ use std::{
     time::Duration,
 };
 
+/// Transport-level read snapshot, adapted to the IPC vocabulary by the service.
+#[derive(Debug, Clone, Default)]
+pub struct InfoSnapshot {
+    pub running: bool,
+    pub reachable: bool,
+    pub version: Option<String>,
+    pub pro: Option<bool>,
+    pub blocking: Option<bool>,
+    pub input_calibration_file: Option<String>,
+    pub input_devices: Option<Vec<DeviceInfo>>,
+    pub output_devices: Option<Vec<DeviceInfo>>,
+    pub input_channel_names: Option<Vec<String>>,
+    pub sample_rate: Option<f64>,
+    pub sweep: Option<SweepSnapshot>,
+    pub level_dbfs: Option<f64>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SweepSnapshot {
+    pub start_hz: Option<f64>,
+    pub end_hz: Option<f64>,
+    pub length: Option<String>,
+}
+
 pub const REW_API_PORT: u16 = 4735;
 pub const CONNECT_TIMEOUT: Duration = Duration::from_millis(600);
 pub const READ_TIMEOUT: Duration = Duration::from_secs(5);

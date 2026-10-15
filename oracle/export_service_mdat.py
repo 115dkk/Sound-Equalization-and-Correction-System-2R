@@ -39,6 +39,7 @@ for i, roles in enumerate(rolesets):
     for j, flags in enumerate(([None]*len(titles), [False]*len(titles), [k%3==0 for k in range(len(titles))])):
         fam.save(f'titles_{i}_{j}', {'titles':titles, 'roles':roles, 'flags':flags}, {
             'split': [ns['split_position'](t) for t in titles],
+            'position_tagged': [ns['split_position'](t)[0] != t.strip() for t in titles],
             'match': [ns['match_role'](t,roles) for t in titles],
             'match_used': [ns['match_role'](t,roles,set(roles[:1])) for t in titles],
             'suggest': suggest_assignment(titles,roles), 'auto': ns['auto_assign'](titles,roles,flags)})
@@ -78,6 +79,7 @@ for i, path in enumerate(paths):
     fam.save(f'file_{i}', {'path':str(path.relative_to(common.ROOT)), 'roles':roles,
                           'project':model.Project.from_preset('7.1.4').to_dict()},
              {'titles':titles,'flags':flags,'split':split,'assignment':assignment,
+              'position_tagged':[base != title.strip() for (base,_),title in zip(split,titles)],
               'import_count':count,'secs':text})
 fam.finish()
 assert sum(p.stat().st_size for p in fam.dir.iterdir()) < 2*1024*1024

@@ -16,6 +16,7 @@ use ts_rs::TS;
 
 use crate::calibration::{CalibrationSettings, Mode};
 use crate::chain::{MimoPaths, SignalChain};
+pub use crate::settings_edit::CalibrationSettingsEditParams;
 
 /// A call from the screen.
 ///
@@ -118,6 +119,12 @@ pub enum Request {
     CalibrationSettingsGet,
     /// Stores calibration settings in the project.
     CalibrationSettingsSet(CalibrationSettingsParams),
+    /// Applies one upstream calibration-screen edit and stores the settings.
+    CalibrationSettingsEdit(CalibrationSettingsEditParams),
+    /// Filter warnings from current settings (gain warnings require a run).
+    SubWarnings,
+    /// Optional REW facts read through the injected transport.
+    RewInfo,
     /// Returns numeric capabilities for one calibration mode.
     ModeSpec(ModeSpecParams),
     /// Returns application-local settings.
@@ -267,6 +274,12 @@ pub enum Response {
     CalibrationSettingsGet(CalibrationSettings),
     /// The `CalibrationSettingsSet` Response variant.
     CalibrationSettingsSet(CalibrationSettings),
+    /// Settings after one edit.
+    CalibrationSettingsEdit(CalibrationSettings),
+    /// Current settings-only filter warnings.
+    SubWarnings(Vec<Notice>),
+    /// Current REW facts; unavailable fields are null.
+    RewInfo(RewInfoResult),
     /// The `ModeSpec` Response variant.
     ModeSpec(ModeSpecResult),
     /// The `AppSettingsGet` Response variant.
@@ -1219,6 +1232,43 @@ pub struct RewStatusResult {
     /// Whether REW reports a Pro license.
     pub pro: bool,
 }
+/// Facts from REW, distinct from project-stored measurement preferences.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct RewInfoResult {
+    pub executable_path: Option<String>,
+    pub running: bool,
+    pub reachable: bool,
+    pub version: Option<String>,
+    /// User-confirmed license hint; the API has no license endpoint.
+    pub pro: Option<bool>,
+    pub blocking: Option<bool>,
+    /// Empty means no file loaded; null means unknown or per-input calibration.
+    pub input_calibration_file: Option<String>,
+    pub input_devices: Option<Vec<RewDeviceInfo>>,
+    pub output_devices: Option<Vec<RewDeviceInfo>>,
+    pub input_channel_names: Option<Vec<String>>,
+    pub sample_rate: Option<f64>,
+    pub sweep: Option<RewSweepInfo>,
+    pub level_dbfs: Option<f64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RewDeviceInfo {
+    pub id: String,
+    pub name: String,
+    pub channels: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RewSweepInfo {
+    pub start_hz: Option<f64>,
+    pub end_hz: Option<f64>,
+    pub length: Option<String>,
+}
+
 /// The REW mdat file to scan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -1249,6 +1299,8 @@ pub struct MdatScanMeasurement {
     pub role: Option<String>,
     /// Guessed one-based measurement position.
     pub position: i64,
+    /// Whether the title explicitly names a position, including position 1.
+    pub position_tagged: bool,
     /// Low-band classifier result, absent when no IR is available.
     pub looks_like_sub: Option<bool>,
 }
@@ -1835,6 +1887,11 @@ mod tests {
                 path: "target.json".into(),
             }),
             Request::CalibrationSettingsGet,
+            Request::CalibrationSettingsEdit(CalibrationSettingsEditParams {
+                edit: crate::settings_edit::SettingEdit::MimoOn { on: true },
+            }),
+            Request::SubWarnings,
+            Request::RewInfo,
             Request::CalibrationSettingsSet(CalibrationSettingsParams {
                 settings: CalibrationSettings::default(),
             }),
