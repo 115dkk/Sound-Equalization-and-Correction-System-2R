@@ -9,7 +9,8 @@
     보정 전·후)·표시 곡선(1/24 oct SPL·GD, 로그 격자)·풀린 RC 상한·전체 지연.
   * `compute_mimo()` → `MimoRun`: MIMO 서포트(`mimo.design_mimo` → `mimo_iir.design_mimo_iir`, 모든 모드 IIR —
     09-26 사용자: 저사양은 IIR 만, 최소 지연도 IIR, 최고사양은 IIR 이 기본)와 적용 곡선.
-  * `export_mdat()`(REW 단계별 mdat — 이름에 '측정' 을 쓰지 않는다, 모두 계산값) · `export_camilladsp()`.
+  * `export_mdat()`(REW 단계별 mdat — 이름에 '측정' 을 쓰지 않는다, 모두 계산값) · `export_camilladsp()` ·
+    `export_filter_text()`(필터 값 텍스트) · `export_eqapo()`(EqAPO 설정째로 — `secs.export_filters`, 10-15).
   * `export_before_after_mdat()`(내보내기 단계 — 채널마다 보정 전 = 원 측정, 보정 후 = 선택한 모드의 최종 응답).
   * `rc_pieces()` — RC 상한이 어떻게 정해졌는지(엔진 노트 + 룸 볼륨), 보정 설계·내보내기 화면이 같이 쓴다.
   * `sub_combine()` — BA 보기: 서브별 정렬 전·후, 서브 합, 평탄도·좌석 편차, 정렬 값(서브 2개 이상).
@@ -120,7 +121,7 @@ class CalibrationSettings:
     mimo_low: float | None = None           # None = 자동(스피커마다 서포트 대역 판정)
     mimo_max_supports: int = 0              # 입력당 서포트 상한(0 = 제한 없음, `MIMO_MAX_SUPPORTS_RANGE`)
     #: 서포트를 FIR 로(10-12 사용자: 'FIR 사용' 체크, 서포트당 `mimo.FIR_TAPS_48K` 탭). 끄면 IIR 맞춤(PEQ 9 + 올패스 3).
-    mimo_fir: bool = False
+    mimo_fir: bool = True                # 10-15 사용자: MIMO 는 FIR 기본(새 프로젝트)
     #: 그룹 → XO(Hz). 비어 있는 그룹은 `project.xo` → 80 Hz. [XO 추천 계산] 이 채우고 사용자가 고칠 수 있다(09-27).
     xo: dict = field(default_factory=dict)
     #: 마지막 추천 결과(그룹 → Hz) — 화면이 '추천 90 Hz' 로 보여 준다. 엔진은 쓰지 않는다.
@@ -149,6 +150,11 @@ class CalibrationSettings:
     xo_peq_lo: float = 0.0
     xo_peq_hi: float = 0.0
 
+    def __setstate__(self, state: dict) -> None:
+        """옛 계산 캐시(pickle)의 설정 — 1.2.0 전에는 `mimo_fir` 가 없었고 그때 MIMO 는 IIR 뿐 → 끔(10-15 기본 FIR 과 구별)."""
+        self.__dict__.update(state)
+        self.__dict__.setdefault('mimo_fir', False)
+
     @classmethod
     def from_project(cls, project) -> 'CalibrationSettings':
         raw = (getattr(project, 'extra', None) or {}).get('calibration') or {}
@@ -174,7 +180,8 @@ class CalibrationSettings:
         out.fsiso = num('fsiso', *FSISO_RANGE) or FSISO_DEFAULT
         out.mimo_low = num('mimo_low', 15.0, FSISO_RANGE[1])
         out.mimo_max_supports = int(round(num('mimo_max_supports', *MIMO_MAX_SUPPORTS_RANGE) or 0))
-        out.mimo_fir = bool(raw.get('mimo_fir', False))
+        # 키가 없는 보정 설정 = 1.2.0 전 파일(그때는 IIR 뿐) → 끔. 보정 설정이 아예 없는 새 프로젝트는 기본값(FIR).
+        out.mimo_fir = bool(raw.get('mimo_fir', False if raw else cls.mimo_fir))
         out.xo = _xo_map(raw.get('xo'))
         out.xo_rec = _xo_map(raw.get('xo_rec'))
         out.ultra_ms = num('ultra_ms', *ULTRA_MS_RANGE) or ULTRA_MS_DEFAULT
@@ -1382,6 +1389,64 @@ def export_camilladsp(run: CalibrationRun, folder, mimo_run: MimoRun | None = No
                         latency_ms=float(run.latency_ms), mode=mode, **kw)
 
 
+#: 필터 내보내기 범위(10-15 사용자): 텍스트 = RC 만(BA · MIMO 없음 — 사람이 옮겨 넣는 값), EqAPO = RC · BA(MIMO 는 경로가
+#: 수십~백여 개라 윈도우 오디오 엔진 안에서 돌기에 무겁다), 카밀라 = 전부.
+FILTER_EXPORT_SCOPE = {'camilla': 'RC · BA · MIMO', 'text': 'RC', 'eqapo': 'RC · BA'}
+
+
+def filter_export_block(run: CalibrationRun, mimo_run: MimoRun | None, kind: str) -> str:
+    """이 결과를 `kind` 로 낼 수 없으면 그 이유(화면 문구), 되면 ''."""
+    if kind == 'text':
+        if run.result.subs:
+            return '텍스트는 RC 만 적용한 결과에서만 — 서브(BA)가 있습니다'
+        if mimo_run is not None:
+            return '텍스트는 RC 만 적용한 결과에서만 — MIMO 를 끄면 낼 수 있습니다'
+    if kind == 'eqapo' and mimo_run is not None:
+        return 'EqAPO 는 RC · BA 까지 — MIMO 를 끄면 낼 수 있습니다'
+    return ''
+
+
+def _filter_plan(run: CalibrationRun, mimo_run: MimoRun | None):
+    """(필터 계획, 모드 이름(ASCII), MIMO 갈래 수) — 텍스트 · EqAPO 내보내기가 같이 쓴다(카밀라와 같은 MIMO 규칙)."""
+    from secs.export_filters import make_plan
+
+    fir = mimo_run is not None and mimo_kind(mimo_run) == 'FIR'
+    iir = None if fir else (mimo_run.iir if mimo_run is not None else None)
+    kw = {'mimo': mimo_run.design, 'iir': iir, 'fsiso': mimo_run.fsiso} if mimo_run is not None and mimo_run.iir else {}
+    plan = make_plan(run.engine, run.result, **kw)
+    mode = run.settings.mode + (f'{run.settings.ultra_ms:g}' if run.settings.mode == ULTRA_MODE else '')
+    return plan, mode, len(plan.mimo)
+
+
+def export_filter_text(run: CalibrationRun, folder, mimo_run: MimoRun | None = None) -> list[Path]:
+    """필터 값 텍스트(`SECS 필터 <모드>.txt`, 한국어 — DSP 에 직접 입력할 값) + FIR wav(10-15). RC 만(`filter_export_block`)."""
+    from secs.export_filters import stamp, write_text
+
+    if block := filter_export_block(run, mimo_run, 'text'):
+        raise CalibrationError(block)
+
+    plan, mode, n_mimo = _filter_plan(run, mimo_run)
+    info = [f'만든 때 {stamp()} · 전체 지연 {run.latency_ms:.1f} ms · ' + ' · '.join(rc_pieces(run)),
+            '샘플레이트 48000 Hz(FIR wav · 딜레이 샘플 수 기준)'
+            + (f' · MIMO {mimo_kind(mimo_run)} 서포트 {n_mimo}개(Fsiso {mimo_run.fsiso:g} Hz)' if n_mimo else '')]
+    return write_text(plan, Path(folder), f'SECS 필터 {run.settings.label()}.txt', f'secs_{mode}',
+                      f'SECS 2 보정 필터 — {run.settings.label()}', info)
+
+
+def export_eqapo(run: CalibrationRun, folder, mimo_run: MimoRun | None = None) -> list[Path]:
+    """Equalizer APO 설정째로(10-15 사용자: "입출력만 설정하면 바로 쓸 수 있게") — `config.txt`(입출력 번호 · Include)
+    + `secs_<모드>/`(필터 본체 · FIR wav) + 한국어 안내. 폴더 안의 것을 EqAPO config 폴더에 복사하면 된다."""
+    from secs.export_filters import write_eqapo
+
+    if block := filter_export_block(run, mimo_run, 'eqapo'):
+        raise CalibrationError(block)
+    plan, mode, n_mimo = _filter_plan(run, mimo_run)
+    note = (f'mode {mode}, total latency {run.latency_ms:.1f} ms, RC upper {run.rc_hi:.0f} Hz; '
+            + (f'MIMO {mimo_kind(mimo_run)} support paths {n_mimo} (Fsiso {mimo_run.fsiso:g} Hz)' if n_mimo else 'no MIMO'))
+    return write_eqapo(plan, Path(folder), f'secs_{mode}', mode_label=run.settings.label(), note=note,
+                       latency_ms=float(run.latency_ms))
+
+
 def estimate_seconds(project, mode: str = DEFAULT_MODE) -> float:
     """보정 계산 예상 초(구성으로 어림) — 09-26 합성 2.1(메인 2·서브 1) 최소 지연 42 s·저사양 70 s(단일 스레드,
     대부분 입력 PEQ 맞춤), 서브가 둘 이상이면 BA DE 가 수십 초 더."""
@@ -1461,7 +1526,7 @@ MIMO_INPUT_S = 355.0
 
 __all__ = ['MODE_KEYS', 'DEFAULT_MODE', 'ULTRA_MODE', 'ULTRA_MS_RANGE', 'ultra_params', 'mode_params', 'CalibrationSettings', 'CalibrationRun', 'MimoRun', 'CalibrationError',
            'mode_spec', 'mode_label', 'measured_positions', 'mimo_availability', 'engine_inputs', 'compute',
-           'compute_mimo', 'mimo_kind', 'mimo_fir_budget_text', 'stage_items', 'export_mdat', 'export_camilladsp', 'estimate_seconds', 'estimate_subs_seconds', 'estimate_xo_seconds', 'estimate_mimo_seconds',
+           'compute_mimo', 'mimo_kind', 'mimo_fir_budget_text', 'stage_items', 'export_mdat', 'export_camilladsp', 'export_filter_text', 'export_eqapo', 'filter_export_block', 'FILTER_EXPORT_SCOPE', 'estimate_seconds', 'estimate_subs_seconds', 'estimate_xo_seconds', 'estimate_mimo_seconds',
            'before_after_items', 'export_before_after_mdat', 'rc_pieces', 'room_dims', 'room_volume',
            'SPL_GRID', 'GD_GRID', 'MIMO_MIN_POSITIONS', 'FSISO_RANGE', 'RC_HI_RANGE', 'ROOM_DIM_RANGE',
            'XO_RANGE', 'XO_CANDIDATES', 'XO_GRID', 'XoRecommendation', 'xo_groups', 'xo_scores', 'pick_xo',
