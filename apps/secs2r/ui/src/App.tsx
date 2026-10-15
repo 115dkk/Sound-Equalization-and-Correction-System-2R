@@ -29,9 +29,10 @@ import { ProjectDialogs } from "./screens/project/ProjectDialogs";
 import { HelpPanel } from "./screens/help/HelpPanel";
 import { MicMeterPanel } from "./screens/connect/MicMeterPanel";
 import { TutorialLayer } from "./screens/tutorial/Tutorial";
-import { sampleQuests } from "./screens/tutorial/sampleQuests";
+import { tutorialQuests, type TutorialView } from "./screens/tutorial/quests";
+import { wrongOutput } from "./screens/tutorial/questHost";
 
-function Shell() {
+function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
   const session = useSession();
   const t = useT();
   const prefs = usePrefs();
@@ -72,22 +73,35 @@ function Shell() {
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, []);
-  const quests = useMemo(() => sampleQuests({ openHelp: () => setHelpOpen(true), compute: () => session.run(async () => {
-    if (!(session.stores.project.getSnapshot()?.positions.length)) {
-      await session.monitor(false);
-      const started = await session.call({ method: "sample_load", params: { positions: null } });
-      await session.waitForJob(started.job);
-    }
-    calibrate.actions.calibrate();
-  }) })
-    .map((quest) => quest.id === "sample.compute" ? { ...quest, targets: ["calibrate.compute"] } : quest), [calibrate.actions]);
+  const [tutorialReady, setTutorialReady] = useState(false);
+  const preparing = useRef(false);
+  useEffect(() => {
+    if (!project?.tutorial) { setTutorialReady(false); preparing.current = false; return; }
+    if (!ready || !system.view || !connect.view || !calibrate.view || !exporting.view || preparing.current || tutorialReady) return;
+    preparing.current = true;
+    session.run(async () => {
+      const index = tutorialStart && !tutorialStart.startsWith("system.") ? null : wrongOutput(session.stores.config.getSnapshot()!);
+      if (index !== null) {
+        await session.call({ method: "config_set_speaker", params: { index, role: null, size: null, band_index: 0, out: 16, pol: null } });
+      }
+      // The retry quest asks the user to choose the silent mock path. No real
+      // device or REW is opened as a side effect of a tutorial card.
+      await session.configure({ method: tutorialStart && !tutorialStart.startsWith("system.") && tutorialStart !== "connect.retry" ? "mock" : "none" });
+      setTutorialReady(true);
+    });
+  }, [project?.tutorial, ready, system.view, connect.view, measure.view, calibrate.view, exporting.view, tutorialReady, tutorialStart, session]);
+  const quests = useMemo(() => tutorialQuests({ system: system.actions, connect: connect.actions, measure: measure.actions, calibrate: calibrate.actions, goTo: navigate }),
+    [system.actions, connect.actions, measure.actions, calibrate.actions, navigate]);
+  const tutorialView: TutorialView | null = system.view && connect.view && measure.view && calibrate.view && exporting.view ? {
+    step: host.current, system: system.view, connect: connect.view, measure: measure.view, calibrate: calibrate.view, export: exporting.view,
+  } : null;
   let content: ReactNode = null;
   let header: ReturnType<typeof systemHeader> = {};
   switch (host.current) {
     case "system": if (system.view) { content = <SystemScreen view={system.view} actions={system.actions} />; header = systemHeader(system.view, system.actions, t); } break;
     case "connect": if (connect.view) { content = <ConnectScreen view={connect.view} actions={connect.actions} />; header = connectHeader(connect.view, connect.actions, t); } break;
     case "measure": if (measure.view) { content = <MeasureScreen view={measure.view} actions={measure.actions} />; header = measureHeader(measure.view, measure.actions, t); } break;
-    case "calibrate": if (calibrate.view) { content = <CalibrateScreen view={calibrate.view} actions={calibrate.actions} />; header = calibrateHeader(calibrate.view, calibrate.actions, t); } break;
+    case "calibrate": if (calibrate.view) { content = <CalibrateScreen view={calibrate.view} actions={calibrate.actions} initial={project?.tutorial ? { editSub: "SW3" } : undefined} />; header = calibrateHeader(calibrate.view, calibrate.actions, t); } break;
     case "export": if (exporting.view) { content = <ExportScreen view={exporting.view} actions={exporting.actions} />; header = exportHeader(exporting.view, exporting.actions, t); } break;
   }
   const error = failure ? errorText(t, failure.error) : null;
@@ -102,11 +116,25 @@ function Shell() {
     <ProjectDialogs view={dialogs.view} actions={dialogs.actions} />
     {meterOpen && <MicMeterPanel id="app.mic" floating view={{ input: connect.view?.settings?.input_device || null, monitor: host.monitor, reading: host.meter }} onClose={() => setMeterOpen(false)} />}
   </>;
-  return project?.tutorial ? <TutorialLayer quests={quests} view={{ helpOpen, computing: calibrate.view?.running !== null, computed: !!calibrate.view?.results.calibration }} step={host.current}
-    actions={{ goTo: navigate, finish: dialogs.finishTutorial, restart: dialogs.restartTutorial }}>{body}</TutorialLayer> : body;
+  const kept = tutorialView ? quests.filter((q) => !q.when || q.when(tutorialView)) : [];
+  return project?.tutorial && tutorialReady && tutorialView ? <TutorialLayer quests={quests} view={tutorialView} step={host.current}
+    initial={tutorialStart ? { index: Math.max(0, kept.findIndex((q) => q.id === tutorialStart)) } : undefined}
+    actions={{ goTo: navigate, finish: dialogs.finishTutorial, restart: () => {
+      setTutorialReady(false);
+      preparing.current = true;
+      session.run(async () => {
+        await session.monitor(false);
+        await session.call({ method: "project_new", params: { path: "", preset: "7.1.4", sub_count: 3, sample: true, tutorial: true } });
+        await session.configure({ method: "none" });
+        const index = wrongOutput(session.stores.config.getSnapshot()!);
+        if (index !== null) await session.call({ method: "config_set_speaker", params: { index, role: null, size: null, band_index: 0, out: 16, pol: null } });
+        session.navigate("system");
+        setTutorialReady(true);
+      });
+    } }}>{body}</TutorialLayer> : body;
 }
 
-function Preferences({ root, initialPrefs }: { root: boolean; initialPrefs?: Prefs | undefined }) {
+function Preferences({ root, initialPrefs, tutorialStart }: { root: boolean; initialPrefs?: Prefs | undefined; tutorialStart?: string | undefined }) {
   const session = useSession();
   const settings = useResource("appSettings");
   useEffect(() => { void session.start(); return () => session.dispose(); }, [session]);
@@ -117,11 +145,11 @@ function Preferences({ root, initialPrefs }: { root: boolean; initialPrefs?: Pre
     if (current && (current.language !== prefs.locale || current.expert_display !== prefs.expert || current.theme !== prefs.theme)) {
       session.run(() => session.call({ method: "app_settings_set", params: { settings: { ...current, language: prefs.locale, expert_display: prefs.expert, theme: prefs.theme } } }));
     }
-  }}><Shell /></PrefsScope>;
+  }}><Shell tutorialStart={tutorialStart} /></PrefsScope>;
 }
 
-export function App({ ipc: supplied, root = true, initialPrefs }: { ipc?: Ipc; root?: boolean; initialPrefs?: Prefs } = {}) {
+export function App({ ipc: supplied, root = true, initialPrefs, tutorialStart }: { ipc?: Ipc; root?: boolean; initialPrefs?: Prefs; /** Gallery: first quest to show after preparing the tutorial project. */ tutorialStart?: string } = {}) {
   const ipc = useMemo(() => supplied ?? createTauriIpc(), [supplied]);
   const session = useMemo(() => createSession(ipc), [ipc]);
-  return <IpcProvider value={ipc}><SessionProvider value={session}><Preferences root={root} initialPrefs={initialPrefs} /></SessionProvider></IpcProvider>;
+  return <IpcProvider value={ipc}><SessionProvider value={session}><Preferences root={root} initialPrefs={initialPrefs} tutorialStart={tutorialStart} /></SessionProvider></IpcProvider>;
 }

@@ -94,6 +94,28 @@ body {
   height: 100%;
 }
 
+/* The live App specimens mount the whole App (root=false), whose dialogs,
+   toasts and tutorial layer are position: fixed. Containment makes the
+   stage their containing block, so they stay inside their own 1280 × 800
+   stage instead of covering the specimens scrolled past them. */
+.gal-specimen:is(
+    [data-gallery-id="app.live"],
+    [data-gallery-id^="tutorial.live."]
+  )
+  > .gal-specimen__stage {
+  contain: layout paint;
+  padding: 0;
+}
+
+.gal-specimen:is(
+    [data-gallery-id="app.live"],
+    [data-gallery-id^="tutorial.live."]
+  )
+  > .gal-specimen__stage
+  > .prefs-scope {
+  height: 100%;
+}
+
 .gal-stack {
   display: flex;
   flex-direction: column;

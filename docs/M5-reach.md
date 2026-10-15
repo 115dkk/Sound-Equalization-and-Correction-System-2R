@@ -275,7 +275,63 @@
 
 ## 11. 튜토리얼 (inventory §3) — P32, P35
 
-엔진의 줄입니다. 퀘스트 목록의 줄(장치부터 내보내기까지의 퀘스트, `plant_wrong_out`)은 P35가 더합니다.
+엔진은 P32, 실제 퀘스트는 P35의 [`quests.ts`](../apps/secs2r/ui/src/screens/tutorial/quests.ts)에 있습니다. 현재 업스트림 `tutorial_quests.py`의 목록은 38개가 아니라 43개입니다. 전부 대응시키고 새 레일 순서로 정렬했습니다. 아래 줄 번호는 업스트림 파일의 퀘스트 시작 줄입니다.
+
+- 시스템(구성 2 → 배치 4)을 연결·점검(장치 1 → 레벨 3)보다 먼저 둡니다. 각 단계 안에서는 업스트림 순서를 지킵니다.
+- `system.layout_next`와 `connect.level_next`는 같은 단계 안의 영역 소개이므로 `act`에서 `look`으로 바꿉니다. 없는 다음 화면 단추를 만들지 않습니다.
+- `connect.retry`는 실제 REW를 켜는 대신 화면의 모의 측정을 선택합니다. 장치·마이크 소개는 모의 경로에 없는 REW 카드 대신 `connect.method`를 가리킵니다.
+- `plant_wrong_out`은 App의 튜토리얼 준비와 재시작에서 수행합니다. SW3 출력이 6이고 16이 비었을 때만 16으로 바꿉니다. 퀘스트는 실제 `setOutput` 액션으로 고칩니다.
+- 보정 탭은 호스트의 `selectTab`으로 엽니다. BA 고급은 기존 `CalibrateScreen.initial.editSub`로 SW3을 선택하여 엽니다. 마크업과 스타일은 바꾸지 않습니다.
+- 모의 경로에서 없는 REW 연결·오디오 카드는 측정 방식 영역으로, 아직 생기지 않은 결과별 범례·필터 줄은 그래프 카드로 가리킵니다. 별도 id 추가는 필요하지 않습니다.
+- `tutorial.live.<step>` 다섯 갤러리 표본은 실제 App을 모의 서비스에서 실행합니다. 내보내기에는 업스트림 행동 퀘스트가 없으므로 첫 보기 퀘스트를 찍습니다.
+
+| 퀘스트 id | 단계 | 종류 | 표적 `data-ui` | 업스트림 줄 |
+|---|---|---|---|---|
+| system.presets | system | look | system.preset, system.subs | 304 |
+| system.patch | system | look | system.patch | 306 |
+| system.dsp | system | look | system.dsp | 307 |
+| system.output | system | act | system.patch.SW3.out | 308 |
+| system.layout_next | system | look | system.layout | 314 |
+| system.layout | system | look | system.arrangement.map | 326 |
+| system.timing | system | look | system.timing, system.start_delay | 327 |
+| system.single | system | look | system.arrangement.1 | 329 |
+| system.next | system | act | system.next | 332 |
+| connect.sidebar | connect | look | frame.status, frame.help, frame.project | 288 |
+| connect.rail | connect | look | frame.rail | 289 |
+| connect.connection | connect | look | connect.method | 293 |
+| connect.audio | connect | look | connect.method | 296 |
+| connect.retry | connect | act | connect.method.mock | 297 |
+| connect.level_next | connect | look | connect.level | 302 |
+| connect.master | connect | look | connect.level.master, connect.level.play_all | 316 |
+| connect.levels | connect | act | connect.level.play_all, connect.level.skip | 317 |
+| connect.next | connect | act | frame.rail.measure | 324 |
+| measure.positions | measure | look | measure.positions | 334 |
+| measure.sample | measure | act | measure.sample.load | 335 |
+| measure.graph | measure | look | measure.plot | 339 |
+| measure.mdat | measure | look | measure.mdat.load | 341 |
+| measure.next | measure | act | frame.rail.calibrate | 344 |
+| calibrate.mode | calibrate | look | calibrate.settings.mode, calibrate.compute | 346 |
+| calibrate.graph | calibrate | look | calibrate.graph | 349 |
+| calibrate.tabs | calibrate | look | calibrate.tab.spl, calibrate.tab.gd, calibrate.tab.xo, calibrate.settings | 352 |
+| calibrate.compute | calibrate | act | calibrate.compute | 356 |
+| calibrate.spl | calibrate | look | calibrate.graph | 365 |
+| calibrate.metrics | calibrate | look | calibrate.verdict, calibrate.plot.filters | 370 |
+| calibrate.gd | calibrate | look | calibrate.graph | 375 |
+| calibrate.xo_open | calibrate | act | calibrate.tab.xo | 379 |
+| calibrate.xo | calibrate | look | calibrate.graph, calibrate.settings.xo | 384 |
+| calibrate.ba_open | calibrate | act | calibrate.tab.ba | 389 |
+| calibrate.ba_graph | calibrate | look | calibrate.graph | 395 |
+| calibrate.ba_metrics | calibrate | look | calibrate.ba.metrics, calibrate.ba.table | 400 |
+| calibrate.ba_settings | calibrate | look | calibrate.ba.subs, calibrate.ba.edit, calibrate.ba.editor | 408 |
+| calibrate.infra | calibrate | act | calibrate.ba.infra | 415 |
+| calibrate.ba_filters | calibrate | look | calibrate.ba.fixed | 424 |
+| calibrate.subs | calibrate | act | calibrate.ba.compute_subs | 430 |
+| calibrate.ba_after | calibrate | look | calibrate.graph | 442 |
+| calibrate.next | calibrate | act | frame.rail.export | 449 |
+| export.mdat | export | look | export.run.before_after_mdat | 451 |
+| export.camilla | export | look | export.run.camilla_dsp | 453 |
+
+검증: `screens/tutorial/quests.test.tsx`가 업스트림 전체 줄 목록과 순서, 모든 표적의 실제 App DOM, 모든 행동의 화면 훅·자동 실행·막힘 판정, 두 카탈로그의 키·자리표시자, 계속 단추로 끝 카드까지의 진행을 확인합니다.
 
 | 항목 | id | 편차 | 작업서 |
 |---|---|---|---|
