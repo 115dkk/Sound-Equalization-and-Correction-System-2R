@@ -489,6 +489,29 @@ impl Service {
         })
     }
 
+    pub(crate) fn sub_warnings(&self) -> Result<Vec<Notice>, IpcError> {
+        let session = lock(&self.session);
+        let project = session.require()?.store.project();
+        let settings = calibration_from_project(project);
+        let roles = project
+            .config
+            .groups()
+            .into_iter()
+            .find(|(group, _)| *group == "sub")
+            .map(|(_, speakers)| {
+                speakers
+                    .into_iter()
+                    .map(|s| s.role.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        // Upstream sub_gain_warnings needs a completed run, not manual settings.
+        Ok(secs_export::sub_filter_warnings(&settings, &roles)
+            .into_iter()
+            .map(warning)
+            .collect())
+    }
+
     fn sub_take_values(&self) -> Result<CalibrationSettings, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut().map_err(IpcError::from)?;

@@ -320,10 +320,11 @@ impl<T: Transport> RewClient<T> {
         self.channel_names("input").unwrap_or_default()
     }
     fn devices(&mut self, kind: &str) -> Vec<DeviceInfo> {
+        self.devices_result(kind).unwrap_or_default()
+    }
+    fn devices_result(&mut self, kind: &str) -> Result<Vec<DeviceInfo>, RewError> {
         let path = self.audio_path(&format!("{kind}_devices"));
-        let Ok(mut data) = self.cached_get(&format!("devices:{kind}"), &path) else {
-            return vec![];
-        };
+        let mut data = self.cached_get(&format!("devices:{kind}"), &path)?;
         if data.is_object() {
             data = data
                 .get("device")
@@ -332,13 +333,13 @@ impl<T: Transport> RewClient<T> {
                 .unwrap_or(json!([]));
         }
         let Some(items) = data.as_array() else {
-            return vec![];
+            return Err(RewError::schema(&path, "expected device list"));
         };
         let count = self
             .channel_names(kind)
             .map(|n| n.len().max(2))
             .unwrap_or(2);
-        items
+        Ok(items
             .iter()
             .enumerate()
             .filter_map(|(index, item)| {
@@ -375,7 +376,51 @@ impl<T: Transport> RewClient<T> {
                     None
                 }
             })
-            .collect()
+            .collect())
+    }
+    /// Read-only connection facts. Unknown fields stay unknown; in particular
+    /// API 0.9.4 has no Pro endpoint and must not be probed by starting a sweep.
+    pub fn info(&mut self) -> InfoSnapshot {
+        let version = self.version();
+        if version.is_none() {
+            return InfoSnapshot::default();
+        }
+        let blocking = self
+            .get_timeout("/application/blocking", self.timeout, true)
+            .ok()
+            .and_then(|v| v.as_bool());
+        let input_calibration_file = self.input_calibration_file();
+        let input_channel_names = self.channel_names("input").ok();
+        let input_devices = self.devices_result("input").ok();
+        let output_devices = self.devices_result("output").ok();
+        let sample_rate = self
+            .get_timeout("/audio/samplerate", self.timeout, true)
+            .ok()
+            .and_then(|v| number(&v["value"]));
+        let sweep = self
+            .get_timeout("/measure/sweep/configuration", self.timeout, true)
+            .ok()
+            .filter(Value::is_object)
+            .map(|v| SweepSnapshot {
+                start_hz: number(&v["startFrequency"]),
+                end_hz: number(&v["endFrequency"]),
+                length: v["length"].as_str().map(str::to_owned),
+            });
+        let level_dbfs = self.measure_level_dbfs();
+        InfoSnapshot {
+            version,
+            reachable: true,
+            running: true,
+            pro: self.pro_state(),
+            blocking,
+            input_calibration_file,
+            input_devices,
+            output_devices,
+            input_channel_names,
+            sample_rate,
+            sweep,
+            level_dbfs,
+        }
     }
     pub fn output_devices(&mut self) -> Vec<DeviceInfo> {
         self.devices("output")

@@ -129,6 +129,8 @@ const scanRow = (index: number, title: string, role: string | null, position: nu
   title,
   role,
   position,
+  // The titles name their position ("L P4").
+  position_tagged: true,
   looks_like_sub: sub,
 });
 

@@ -8,6 +8,41 @@ fn compare(label: &str, actual: &[f64], expected: &[f64]) {
 }
 
 #[test]
+fn sub_gain_warning_codes_match_settings_edit_oracle() {
+    let fx = Fixture::load("service_settings_edit", "gain_warnings");
+    let mut case = secs_engine::test_support::replay_case("dolby");
+    let template = case.design.chain.subs[0].clone();
+    case.design.chain.subs = fx.inputs()["gains"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .enumerate()
+        .map(|(i, gain)| {
+            let mut sub = template.clone();
+            sub.role = format!("SW{}", i + 1);
+            sub.gain_db = number(gain);
+            sub
+        })
+        .collect();
+    let rendered: Vec<_> = secs_export::sub_gain_warnings(&case.design)
+        .into_iter()
+        .map(warning)
+        .map(|notice| {
+            assert_eq!(notice.code, "sub_high_gain");
+            let gain: f64 = notice.params["gain_db"].parse().unwrap();
+            format!(
+                "{} 게인 {gain:+.1} dB — 너무 큽니다. 서브 필터(HP, LP) 설정을 확인하세요",
+                notice.params["role"]
+            )
+        })
+        .collect();
+    assert_eq!(
+        serde_json::to_value(rendered).unwrap(),
+        fx.outputs()["warnings"]
+    );
+}
+
+#[test]
 fn result_display_matches_replayed_oracle() {
     for name in ["dolby", "room_dba"] {
         let case = secs_engine::test_support::replay_case(name);

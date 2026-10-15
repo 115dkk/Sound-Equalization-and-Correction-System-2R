@@ -1098,6 +1098,30 @@ status = "implemented"
 tests = ["secs-service::service_config_oracle_replays_values_and_saved_project_bytes"]
 
 [[feature]]
+id = "ipc.calibration_settings_edit"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+upstream = "calibration.py CalibrationSettings; wizard/step_calibration.py edit handlers"
+tests = ["secs-service::settings_edits_and_sub_warnings_replay_upstream_oracle"]
+
+[[feature]]
+id = "ipc.sub_warnings"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+upstream = "calibration.py sub_filter_warnings"
+tests = ["secs-service::settings_edits_and_sub_warnings_replay_upstream_oracle"]
+
+[[feature]]
+id = "ipc.rew_info"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+upstream = "rewapi/rew.py; wizard/step1_devices.py"
+tests = ["secs-service::rew_info_uses_injected_transport_and_preserves_unknown_facts", "secs-rew::rew_info_reads_recorded_api_shapes_without_writes", "secs-rew::fake_rew_info_covers_running_no_api_and_no_pro"]
+
+[[feature]]
 id = "ipc.mode_spec"
 kind = "ipc"
 milestone = "M5"

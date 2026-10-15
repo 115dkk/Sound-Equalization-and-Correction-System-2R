@@ -681,6 +681,53 @@ impl Service {
         open.undo.remove(index);
         Ok(session::info(open))
     }
+    pub(crate) fn rew_info(&self) -> RewInfoResult {
+        let mut client = secs_rew::RewClient::new(Transport((self.deps.rew_transport)()));
+        let mut info = client.info();
+        let executable_path =
+            secs_rew::launch::find_rew_exe().map(|p| p.to_string_lossy().into_owned());
+        info.running |= self
+            .deps
+            .process
+            .process_names()
+            .unwrap_or_default()
+            .iter()
+            .any(|name| {
+                secs_rew::launch::REW_PROCESS_NAMES
+                    .iter()
+                    .any(|rew| name.eq_ignore_ascii_case(rew))
+            });
+        let devices = |items: Vec<secs_rew::DeviceInfo>| {
+            items
+                .into_iter()
+                .map(|d| RewDeviceInfo {
+                    id: d.id,
+                    name: d.name,
+                    channels: d.channels,
+                })
+                .collect()
+        };
+        RewInfoResult {
+            executable_path,
+            running: info.running,
+            reachable: info.reachable,
+            version: info.version,
+            pro: info.pro,
+            blocking: info.blocking,
+            input_calibration_file: info.input_calibration_file,
+            input_devices: info.input_devices.map(devices),
+            output_devices: info.output_devices.map(devices),
+            input_channel_names: info.input_channel_names,
+            sample_rate: info.sample_rate,
+            sweep: info.sweep.map(|s| RewSweepInfo {
+                start_hz: s.start_hz,
+                end_hz: s.end_hz,
+                length: s.length,
+            }),
+            level_dbfs: info.level_dbfs,
+        }
+    }
+
     pub(crate) fn rew_launch(&self) -> Result<RewStatusResult, IpcError> {
         let status = rew_status(&self.deps);
         if status.running {
@@ -723,6 +770,8 @@ impl Service {
                 .enumerate()
                 .map(|(index, m)| MdatScanMeasurement {
                     index,
+                    position_tagged: mdat_import::split_position(&m.info.title).0
+                        != m.info.title.trim(),
                     title: m.info.title,
                     role: m.role,
                     position: m.position,

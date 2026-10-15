@@ -53,6 +53,15 @@ fn service_mdat_every_oracle_value_and_imported_secs_bytes() {
                 out["match"],
                 "{name}"
             );
+            assert_eq!(
+                json!(
+                    titles
+                        .iter()
+                        .map(|t| split_position(t).0 != t.trim())
+                        .collect::<Vec<_>>()
+                ),
+                out["position_tagged"]
+            );
             let used = roles.iter().take(1).cloned().collect();
             assert_eq!(
                 json!(
@@ -88,6 +97,28 @@ fn service_mdat_every_oracle_value_and_imported_secs_bytes() {
         } else {
             let source = root().join(input["path"].as_str().unwrap());
             let scan = scan_for(&source, &strings(&input["roles"]), None, 1).unwrap();
+            let service = secs_service::Service::new(secs_service::Deps::default());
+            let secs_types::ipc::Envelope::Ok(response) = service.call(
+                secs_types::ipc::Request::MdatScan(secs_types::ipc::MdatScanParams {
+                    path: source.to_string_lossy().into_owned(),
+                }),
+                std::sync::Arc::new(secs_service::NoEvents),
+            ) else {
+                panic!("scan IPC failed")
+            };
+            let secs_types::ipc::Response::MdatScan(result) = *response else {
+                panic!()
+            };
+            assert_eq!(
+                json!(
+                    result
+                        .measurements
+                        .iter()
+                        .map(|m| m.position_tagged)
+                        .collect::<Vec<_>>()
+                ),
+                out["position_tagged"]
+            );
             assert_eq!(
                 json!(
                     scan.measurements

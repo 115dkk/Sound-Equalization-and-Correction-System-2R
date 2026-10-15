@@ -25,6 +25,9 @@ pub struct FakeOptions {
     pub delay: Duration,
     pub sample_rate: u32,
     pub running: bool,
+    pub api_enabled: bool,
+    pub blocking: bool,
+    pub sweep_length: String,
     pub version: String,
     pub pro: bool,
     pub level_interval: Duration,
@@ -48,6 +51,9 @@ impl Default for FakeOptions {
             delay: Duration::from_millis(50),
             sample_rate: 48000,
             running: true,
+            api_enabled: true,
+            blocking: true,
+            sweep_length: "256k".into(),
             version: "5.40 beta 135 (demo)".into(),
             pro: true,
             level_interval: Duration::from_millis(20),
@@ -103,25 +109,49 @@ impl<S: IrSource> FakeRew<S> {
             calls: vec![],
         }
     }
+    pub fn info(&self) -> InfoSnapshot {
+        if !self.is_running() {
+            return InfoSnapshot {
+                running: self.options.running,
+                ..Default::default()
+            };
+        }
+        InfoSnapshot {
+            running: true,
+            reachable: true,
+            version: self.version(),
+            pro: Some(self.options.pro),
+            blocking: Some(self.options.blocking),
+            input_calibration_file: self.input_calibration_file(),
+            input_devices: Some(self.options.input_devices.clone()),
+            output_devices: Some(self.options.output_devices.clone()),
+            input_channel_names: Some(self.input_channel_names()),
+            sample_rate: Some(f64::from(self.options.sample_rate)),
+            sweep: Some(SweepSnapshot {
+                start_hz: Some(20.0),
+                end_hz: Some(20000.0),
+                length: Some(self.options.sweep_length.clone()),
+            }),
+            level_dbfs: self.measure_level_dbfs(),
+        }
+    }
     pub fn is_running(&self) -> bool {
-        self.options.running
+        self.options.running && self.options.api_enabled
     }
     pub fn version(&self) -> Option<String> {
-        self.options.running.then(|| self.options.version.clone())
+        self.is_running().then(|| self.options.version.clone())
     }
     pub fn is_pro(&self) -> bool {
-        self.options.running && self.options.pro
+        self.is_running() && self.options.pro
     }
     pub fn set_running(&mut self, value: bool) {
         self.options.running = value;
     }
     pub fn measure_level_dbfs(&self) -> Option<f64> {
-        self.options
-            .running
-            .then_some(self.options.measure_level_dbfs)
+        self.is_running().then_some(self.options.measure_level_dbfs)
     }
     pub fn input_calibration_file(&self) -> Option<String> {
-        self.options.running.then(|| self.options.cal_file.clone())
+        self.is_running().then(|| self.options.cal_file.clone())
     }
     pub fn output_devices(&self) -> Vec<DeviceInfo> {
         self.options.output_devices.clone()
