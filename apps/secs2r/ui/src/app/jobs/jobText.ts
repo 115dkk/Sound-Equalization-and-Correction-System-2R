@@ -48,6 +48,7 @@ export const ERROR_TEXT: Record<ErrorCode, { cause: MessageKey; next: MessageKey
   rew_failed: { cause: "error.rew_failed", next: "error.rew_failed.next" },
   measurement_input: { cause: "error.measurement_input", next: "error.measurement_input.next" },
   confirm_required: { cause: "error.confirm_required", next: "error.confirm_required.next" },
+  tutorial_blocked: { cause: "error.tutorial_blocked", next: "error.tutorial_blocked.next" },
 };
 
 /** Cause and next step for an IPC error, in the current language. */

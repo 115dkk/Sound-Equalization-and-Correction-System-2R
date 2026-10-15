@@ -91,7 +91,7 @@ pub use measurement::{Spectra, long_spectra};
 pub use mimo::{
     IirSupport, MimoDesign, MimoIir, MimoKey, MimoRequest, MimoRun, design_mimo, design_mimo_iir,
 };
-pub use notes::Note;
+pub use notes::{MimoNote, Note};
 pub use scorecard::Metrics;
 pub use setup::SubFilter;
 

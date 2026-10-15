@@ -26,6 +26,8 @@ export const exportMimo: MimoSummary = {
   kind: "iir",
   fsiso: 150,
   support_count: paths.length,
+  // IIR supports carry no FIR taps.
+  fir_taps_total: 0,
   notes: [],
   paths: { fsiso: 150, paths },
 };

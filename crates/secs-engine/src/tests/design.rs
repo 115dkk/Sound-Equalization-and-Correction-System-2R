@@ -78,7 +78,7 @@ fn note_value(note: &crate::notes::Note) -> Value {
             xo_hz,
         } => json!({"TwoWay": {"roles": roles, "gain_db": gain_db, "xo_hz": xo_hz}}),
         Note::BusGainAnchored(v) => json!({"BusGainAnchored": v}),
-        Note::Mimo(v) => json!({"Mimo": v}),
+        Note::Mimo(v) => json!({"Mimo": v.oracle_text()}),
     }
 }
 

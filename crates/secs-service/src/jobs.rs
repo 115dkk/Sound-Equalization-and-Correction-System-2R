@@ -408,7 +408,11 @@ mod tests {
                 while !*open {
                     open = changed.wait(open).unwrap();
                 }
-                Ok(JobResult::Export(ExportResult { files: vec![] }))
+                Ok(JobResult::Export(ExportResult {
+                    files: vec![],
+                    folder: String::new(),
+                    stale: false,
+                }))
             })
             .unwrap();
         let error = registry

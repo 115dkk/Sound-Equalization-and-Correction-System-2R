@@ -2,7 +2,7 @@ use std::path::Path;
 
 use secs_types::ipc::{
     DialogOpenFileParams, DialogPickFolderParams, DialogSaveFileParams, DialogSuggestedParams,
-    IpcError, OpenFolderParams,
+    ErrorCode, IpcError, OpenFolderParams,
 };
 
 use crate::Service;
@@ -49,6 +49,9 @@ impl Service {
     }
 
     pub(crate) fn open_folder(&self, params: OpenFolderParams) -> Result<(), IpcError> {
-        self.deps.host.open_folder(Path::new(&params.path))
+        let path = Path::new(&params.path);
+        std::fs::create_dir_all(path)
+            .map_err(|error| IpcError::new(ErrorCode::ProjectIo, error.to_string()))?;
+        self.deps.host.open_folder(path)
     }
 }

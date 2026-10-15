@@ -19,4 +19,8 @@ sub_count: number,
 /**
  * Whether to create the fixed 7.1.4 sample-room project.
  */
-sample: boolean, };
+sample: boolean, 
+/**
+ * Whether this is a non-writable tutorial session using the sample room.
+ */
+tutorial: boolean, };

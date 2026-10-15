@@ -61,7 +61,7 @@ pub use export_view::{ExportView, export_view};
 pub use input::{EngineConfig, Measurement, MeasurementSet, Samples, Tuning};
 pub use measurement::{Spectra, long_spectra};
 pub use mimo::{IirSupport, MimoDesign, MimoIir, MimoRequest, design_mimo, design_mimo_iir};
-pub use notes::Note;
+pub use notes::{MimoNote, Note};
 pub use setup::SubFilter;
 pub type C = secs_dsp::Complex64;
 

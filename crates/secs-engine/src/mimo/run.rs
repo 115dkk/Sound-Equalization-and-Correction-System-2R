@@ -360,7 +360,9 @@ pub(crate) fn assemble_prepared(
     if key.max_supports != 0 {
         ideal
             .notes
-            .push(Note::Mimo(format!("입력당 서포트 ≤ {}", key.max_supports)));
+            .push(Note::Mimo(crate::notes::MimoNote::SupportLimit {
+                max_supports: key.max_supports,
+            }));
     }
     if key.fir {
         let total: usize = paths
@@ -370,11 +372,12 @@ pub(crate) fn assemble_prepared(
                 _ => 0,
             })
             .sum();
-        ideal.notes.push(Note::Mimo(format!(
-            "FIR 서포트 {}개 · 총 {}탭(48 kHz)",
-            paths.len(),
-            grouped(total)
-        )));
+        ideal
+            .notes
+            .push(Note::Mimo(crate::notes::MimoNote::FirBudget {
+                support_count: paths.len(),
+                taps_total: total,
+            }));
     }
     let lp = if key.fir {
         vec![C::new(1.0, 0.0); f.len()]

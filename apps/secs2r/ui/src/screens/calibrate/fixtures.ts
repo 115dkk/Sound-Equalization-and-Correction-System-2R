@@ -25,7 +25,7 @@ const GROUP_ORDER = ["프론트", "센터", "서브", "서라운드", "백", "�
 
 function config(roles: readonly string[], preset: string): ConfigResult {
   const speakers = roles.map((role, i) => ({ role, size: role.startsWith("SW") ? "sub" : roles.some((r) => r.startsWith("SW")) ? "small" : "large", bands: [{ band: role.startsWith("SW") ? "SUB" : "FULL", out: i + 1, pol: "+" }] }));
-  const groups = GROUP_ORDER.map((key) => ({ key, speaker_indices: roles.map((r, i) => (GROUP_OF[r] === key ? i : -1)).filter((i) => i >= 0) })).filter((g) => g.speaker_indices.length);
+  const groups = GROUP_ORDER.map((key) => ({ id: key, key, speaker_indices: roles.map((r, i) => (GROUP_OF[r] === key ? i : -1)).filter((i) => i >= 0) })).filter((g) => g.speaker_indices.length);
   const subs = roles.filter((r) => r.startsWith("SW")).length;
   return { speakers, preset, device: "MOTU M4", groups, summary: { speaker_count: roles.length, outputs: roles.map((_, i) => i + 1), max_channel: roles.length, duplicate_outputs: [], sub_count: subs } };
 }

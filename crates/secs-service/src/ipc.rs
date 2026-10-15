@@ -18,6 +18,7 @@ pub(crate) fn dispatch(
                     &params.preset,
                     params.sub_count,
                     params.sample,
+                    params.tutorial,
                 )
                 .map(Response::ProjectNew)
                 .map_err(IpcError::from);
@@ -47,7 +48,10 @@ pub(crate) fn dispatch(
         Request::SampleLoad(params) => service
             .start_sample_load(params, events)
             .map(Response::SampleLoad),
-        Request::JobCancel(params) => service.jobs.cancel(params.job).map(Response::JobCancel),
+        Request::JobCancel(params) => {
+            service.cancel_level_monitor_job(params.job);
+            service.jobs.cancel(params.job).map(Response::JobCancel)
+        }
         Request::Jobs => Ok(Response::Jobs(service.jobs.snapshots())),
         Request::Calibrate(params) => service
             .start_calibration(params, events)
@@ -60,6 +64,14 @@ pub(crate) fn dispatch(
         Request::MeasureConfigure(params) => service
             .measure_configure(params)
             .map(Response::MeasureConfigure),
+        Request::MeasurementRecords => service
+            .measurement_records()
+            .map(Response::MeasurementRecords),
+        Request::LevelsGet => service.levels_get().map(Response::LevelsGet),
+        Request::LevelsFillDefaults => service
+            .levels_fill_defaults()
+            .map(Response::LevelsFillDefaults),
+        Request::LevelStop => service.level_stop().map(Response::LevelStop),
         Request::LevelCheck(params) => service
             .start_level(params, events)
             .map(Response::LevelCheck),

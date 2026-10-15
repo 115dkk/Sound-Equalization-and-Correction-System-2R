@@ -42,6 +42,7 @@ export function speaker(role: string, out: number, options: { pol?: string; size
 /** A ConfigResult with the groups and summary the service derives. */
 export function configOf(preset: string, speakers: ConfigSpeaker[], device: string): ConfigResult {
   const groups = GROUP_ORDER.map((key) => ({
+    id: key,
     key,
     speaker_indices: speakers.map((s, i) => ({ s, i })).filter(({ s }) => groupOf(s.role) === key).map(({ i }) => i),
   })).filter((group) => group.speaker_indices.length > 0);

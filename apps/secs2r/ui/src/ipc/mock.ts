@@ -246,6 +246,13 @@ export function createMockService(options: MockOptions = {}): MockService {
         return { method: "measure_methods", data: fx.measureMethods };
       case "measure_configure":
         return { method: "measure_configure", data: { ...fx.measureConfig, method: req.params.method } };
+      case "measurement_records":
+        return { method: "measurement_records", data: { records: [] } };
+      case "levels_get":
+      case "levels_fill_defaults":
+        return { method: req.method, data: { levels: {}, spl: {} } };
+      case "level_stop":
+        return { method: "level_stop", data: null };
       case "level_apply":
         return { method: "level_apply", data: fx.measureConfig };
       case "rew_launch":

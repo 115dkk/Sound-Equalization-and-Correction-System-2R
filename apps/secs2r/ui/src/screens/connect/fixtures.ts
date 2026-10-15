@@ -32,6 +32,9 @@ const rewOff = { running: false, reachable: false, pro: false };
 
 const settingsFor = (method: string, patch: Partial<MeasureConfigResult> = {}): MeasureConfigResult => ({
   method,
+  repetitions: 1,
+  sample_rate: 48000,
+  sweep_lengths: [65536, 131072, 262144, 524288, 1048576, 2097152, 4194304],
   sweep_level_dbfs: -12,
   input_device: method === "native" ? MIC : "",
   output_device: method === "native" ? INTERFACE_OUT : "",

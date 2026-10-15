@@ -161,6 +161,8 @@
   "error.measurement_input.next": "마이크 입력 채널과 출력 채널 설정을 확인하세요.",
   "error.confirm_required": "측정을 지우는 변경이라 확인이 필요합니다.",
   "error.confirm_required.next": "바뀌는 내용을 확인한 뒤 다시 적용하세요.",
+  "error.tutorial_blocked": "튜토리얼에서는 저장하거나 내보내지 않습니다.",
+  "error.tutorial_blocked.next": "튜토리얼을 마친 뒤 내 프로젝트에서 하세요.",
   "ui.advanced": "고급",
   "ui.advanced.count": "{count}개",
   "ui.close": "닫기",

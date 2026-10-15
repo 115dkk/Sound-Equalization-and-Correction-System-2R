@@ -40,6 +40,7 @@ export const projectInfo: ProjectInfo = {
   sub_count: 2,
   positions: [1, 2, 3],
   dirty: true,
+  tutorial: false,
   migration_warnings: [],
 };
 
@@ -50,6 +51,7 @@ export const emptyProject: ProjectInfo = {
   sub_count: 0,
   positions: [],
   dirty: false,
+  tutorial: false,
   migration_warnings: [],
 };
 
@@ -77,6 +79,9 @@ export const measureConfig: MeasureConfigResult = {
   roles: [...SAMPLE_ROLES],
   output_channels: SAMPLE_ROLES.map((_, index) => index + 1),
   sweep_length: 262144,
+  repetitions: 1,
+  sample_rate: 48000,
+  sweep_lengths: [65536, 131072, 262144, 524288, 1048576, 2097152, 4194304],
   timing: "acoustic",
   loopback_input_channel: null,
   timing_ref_output: 2,
@@ -146,6 +151,9 @@ export const signalChain: SignalChain = {
 
 export const calibrationSummary: CalibrationSummary = {
   stale: false,
+  stale_reason: null,
+  mode: "mixed",
+  ultra_ms: 100,
   verdict: {
     within_1db_before_pct: 34.2,
     within_1db_after_pct: 81.6,
@@ -166,6 +174,7 @@ export const mimoSummary: MimoSummary = {
   kind: "iir",
   fsiso: 150,
   support_count: 24,
+  fir_taps_total: 0,
   notes: [],
   paths: { fsiso: 150, paths: [] },
 };
@@ -193,4 +202,6 @@ export const exportResult: ExportResult = {
     "C:/Users/demo/Documents/SECS_export/2026-10-14 거실 7.1.4/camilladsp/secs_camilladsp.yml",
     "C:/Users/demo/Documents/SECS_export/2026-10-14 거실 7.1.4/camilladsp/fir_L.wav",
   ],
+  folder: "C:/Users/demo/Documents/SECS_export/2026-10-14 거실 7.1.4/camilladsp",
+  stale: false,
 };

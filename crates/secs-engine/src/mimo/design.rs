@@ -769,10 +769,10 @@ pub(crate) fn design_mimo_inputs_observed(
     let mut out = MimoDesign::default();
     let positions = &design.spectra.positions;
     if positions.len() < 3 {
-        out.notes.push(Note::Mimo(format!(
-            "측정 위치 {}곳 — MIMO 는 3곳 이상일 때만",
-            positions.len()
-        )));
+        out.notes
+            .push(Note::Mimo(crate::notes::MimoNote::InsufficientPositions {
+                measured: positions.len(),
+            }));
         return Ok((out, Vec::new()));
     }
     validate_request(req)?;
@@ -795,10 +795,10 @@ pub(crate) fn design_mimo_prepared(
     let mut out = MimoDesign::default();
     let positions = &design.spectra.positions;
     if positions.len() < 3 {
-        out.notes.push(Note::Mimo(format!(
-            "측정 위치 {}곳 — MIMO 는 3곳 이상일 때만",
-            positions.len()
-        )));
+        out.notes
+            .push(Note::Mimo(crate::notes::MimoNote::InsufficientPositions {
+                measured: positions.len(),
+            }));
         return Ok((out, Vec::new()));
     }
     validate_request(req)?;
@@ -829,22 +829,15 @@ pub(crate) fn design_mimo_prepared(
     if !req.exclude.is_empty() {
         let mut excluded = req.exclude.clone();
         excluded.sort();
-        out.notes.push(Note::Mimo(format!(
-            "서포트 제외(사용자): {}",
-            excluded.join(", ")
-        )));
+        out.notes
+            .push(Note::Mimo(crate::notes::MimoNote::ExcludedSupports(
+                excluded,
+            )));
     }
-    out.notes.push(Note::Mimo(format!(
-        "서포트 대역 {}",
-        out.ranges
-            .iter()
-            .map(|(r, range)| match range {
-                Some((lo, hi)) => format!("{r} {lo:.0}–{hi:.0}"),
-                None => format!("{r} 제외"),
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
-    )));
+    out.notes
+        .push(Note::Mimo(crate::notes::MimoNote::SupportRanges(
+            out.ranges.clone(),
+        )));
     observe("ranges", started.elapsed());
     let started = std::time::Instant::now();
     let mains: Vec<_> = design
@@ -963,12 +956,12 @@ pub(crate) fn design_mimo_prepared(
         let scale = result.trace.guard_scale;
         if scale < 1.0 {
             out.notes.push(Note::Mimo(if scale > 0.0 {
-                format!(
-                    "{role}: 대역 늦은 에너지 악화로 서포트 {:.0} dB",
-                    20.0 * scale.max(1e-9).log10()
-                )
+                crate::notes::MimoNote::GuardReduced {
+                    role: role.clone(),
+                    gain_db: 20.0 * scale.max(1e-9).log10(),
+                }
             } else {
-                format!("{role}: MIMO 끔(악화)")
+                crate::notes::MimoNote::GuardDisabled { role: role.clone() }
             }));
         }
         out.supports.push((role.clone(), result.supports));
@@ -1022,10 +1015,10 @@ pub(crate) fn design_mimo_before(
     let mut out = MimoDesign::default();
     let positions = &design.spectra.positions;
     if positions.len() < 3 {
-        out.notes.push(Note::Mimo(format!(
-            "측정 위치 {}곳 — MIMO 는 3곳 이상일 때만",
-            positions.len()
-        )));
+        out.notes
+            .push(Note::Mimo(crate::notes::MimoNote::InsufficientPositions {
+                measured: positions.len(),
+            }));
         return Ok((out, Vec::new()));
     }
     if !(0.0..300.0).contains(&req.fsiso)
@@ -1065,22 +1058,15 @@ pub(crate) fn design_mimo_before(
     if !req.exclude.is_empty() {
         let mut excluded = req.exclude.clone();
         excluded.sort();
-        out.notes.push(Note::Mimo(format!(
-            "서포트 제외(사용자): {}",
-            excluded.join(", ")
-        )));
+        out.notes
+            .push(Note::Mimo(crate::notes::MimoNote::ExcludedSupports(
+                excluded,
+            )));
     }
-    out.notes.push(Note::Mimo(format!(
-        "서포트 대역 {}",
-        out.ranges
-            .iter()
-            .map(|(r, range)| match range {
-                Some((lo, hi)) => format!("{r} {lo:.0}–{hi:.0}"),
-                None => format!("{r} 제외"),
-            })
-            .collect::<Vec<_>>()
-            .join(", ")
-    )));
+    out.notes
+        .push(Note::Mimo(crate::notes::MimoNote::SupportRanges(
+            out.ranges.clone(),
+        )));
     let results = ctx
         .try_map(
             design
@@ -1144,12 +1130,12 @@ pub(crate) fn design_mimo_before(
         let scale = result.trace.guard_scale;
         if scale < 1.0 {
             out.notes.push(Note::Mimo(if scale > 0.0 {
-                format!(
-                    "{role}: 대역 늦은 에너지 악화로 서포트 {:.0} dB",
-                    20.0 * scale.max(1e-9).log10()
-                )
+                crate::notes::MimoNote::GuardReduced {
+                    role: role.clone(),
+                    gain_db: 20.0 * scale.max(1e-9).log10(),
+                }
             } else {
-                format!("{role}: MIMO 끔(악화)")
+                crate::notes::MimoNote::GuardDisabled { role: role.clone() }
             }));
         }
         out.supports.push((role.clone(), result.supports));

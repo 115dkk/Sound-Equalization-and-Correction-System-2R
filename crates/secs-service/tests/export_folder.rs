@@ -69,6 +69,7 @@ fn export_folder_defaults_with_and_without_project() {
             preset: "2.0".into(),
             sub_count: 0,
             sample: false,
+            tutorial: false,
         }),
     )
     .unwrap();
@@ -88,16 +89,16 @@ fn derived_export_subfolders_use_the_fixed_clock() {
     let now = fixed_clock();
     let base = Path::new("exports");
     assert_eq!(
-        secs_service::export_folder::before_after_folder(base, false, "mixed", now),
+        secs_service::export_folder::mdat_folder(base, false, "mixed", now),
         base.join("SECS_mdat_RC_BA_mixed_20240102-030405")
     );
     assert_eq!(
-        secs_service::export_folder::before_after_folder(base, true, "linear", now),
+        secs_service::export_folder::mdat_folder(base, true, "linear", now),
         base.join("SECS_mdat_RC_BA_MIMO_linear_20240102-030405")
     );
     assert_eq!(
-        secs_service::export_folder::camilladsp_folder(base),
-        PathBuf::from("exports/camilladsp")
+        secs_service::export_folder::camilladsp_folder(base, false, "mixed", now),
+        PathBuf::from("exports/SECS_camilla_RC_BA_mixed_20240102-030405/camilladsp")
     );
 }
 
@@ -114,6 +115,7 @@ fn stored_export_folder_survives_save_and_open() {
             preset: "2.0".into(),
             sub_count: 0,
             sample: false,
+            tutorial: false,
         }),
     )
     .unwrap();

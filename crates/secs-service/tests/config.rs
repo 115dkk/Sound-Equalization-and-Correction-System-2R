@@ -44,6 +44,7 @@ fn new_project(service: &Service, path: &Path, preset: &str) {
                 preset: preset.into(),
                 sub_count: 0,
                 sample: false,
+                tutorial: false,
             })
         ),
         Response::ProjectNew(_)
@@ -70,7 +71,13 @@ fn config_edit_methods_mark_dirty_and_emit_upstream_patch_sheet() {
             .collect::<Vec<_>>(),
         ["프론트"]
     );
+    assert_eq!(initial.groups[0].id, "front");
     assert_eq!(initial.summary.outputs, [1, 2]);
+
+    let Response::LayoutGet(layout) = call(&service, Request::LayoutGet) else {
+        panic!()
+    };
+    assert_eq!(layout.timing.role, "R");
 
     let Response::ConfigSetSpeaker(edited) = call(
         &service,
