@@ -71,11 +71,15 @@ channel), and the generated bindings.
    method the hooks call, from typed fixtures, and emits job events, so the
    whole app runs in vitest and in the gallery without Tauri. Add one
    gallery specimen `app.live` that runs `App` on the mock.
-9. **The flow test** (M5 §6): a vitest that renders `App` on the mock and
-   walks the sample project: new sample project → 연결·점검 with the mock
-   method → 측정·가져오기 with the demo data → 보정 계산 → 내보내기
-   CamillaDSP, asserting the IPC calls in order and what each screen shows
-   at the end. Add tests for the trigger table and for each hook's actions
+9. **The flow test** (M5 §6: "샘플 프로젝트로 화면에서 측정(모의)부터
+   내보내기까지"): a vitest that renders `App` on the mock and walks: new
+   project from the sample room (not a tutorial) → 연결·점검: choose the
+   mock method (모의 측정) → 측정·가져오기: press 이 위치 측정 for the
+   positions the mock room has (`measure_position` jobs on the mock) → 보정:
+   보정 계산 → 내보내기: CamillaDSP 설정 내보내기 (a real `export` call; the
+   project is not a tutorial). Assert the IPC calls in order and what each
+   screen shows at the end. The demo-data button belongs to the tutorial
+   and is not part of this flow. Add tests for the trigger table and for each hook's actions
    (the IPC method and params each one sends).
 
 ## Already done before this packet ran
@@ -85,6 +89,15 @@ channel per call (item 1), the edit rules removed from the screen
 (`settingsEdit.ts` → `settingsView.ts`, `subWarnings` in the view), and the
 job shutdown moved to window destruction. Keep
 `src/ipc/channelReuse.test.ts`.
+
+## How to handle gaps
+
+Do not stop the packet for a mismatch between this packet, a screen's
+contract and the service. Resolve what you can inside the stores and hooks
+(the screen contract wins over this packet's wording), keep going with
+everything else, and list each mismatch and what you did about it in the
+report. Stop only for something that makes the whole app impossible to
+wire, and say exactly what it is.
 
 ## Rules
 
