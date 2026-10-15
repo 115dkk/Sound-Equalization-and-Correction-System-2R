@@ -190,7 +190,7 @@ describe("app frame", () => {
   it("speaks English when asked", () => {
     setup("calibrate", "en");
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Correction");
-    expect(railButton("calibrate").textContent).toContain("Needs measurements");
+    expect(railButton("calibrate").textContent).toContain("Not measured");
   });
 
   it("skips steps that are not on this path when moving by one", () => {

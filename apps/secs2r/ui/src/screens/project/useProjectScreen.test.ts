@@ -32,6 +32,8 @@ it("does not close when save picker is cancelled and starts tutorial with both f
   const mock = createMockService({ project: null, tickMs: 0 });
   const session = createSession(mock); await session.start();
   await session.call({ method: "project_new", params: { path: "", preset: "2.0", sub_count: 0, sample: false, tutorial: false } });
+  // One edit, so closing asks first.
+  await session.configure({ method: "mock" });
   const close = vi.fn(async () => {});
   const hook = renderHook(() => useProjectScreen(close), { wrapper: ({ children }: { children: ReactNode }) => createElement(SessionProvider, { value: session, children }) });
   try {

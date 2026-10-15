@@ -720,6 +720,7 @@ fn app_settings_are_versioned_bounded_and_capped() {
     });
     let settings = AppSettings {
         language: "en".into(),
+        theme: AppTheme::Dark,
         expert_display: true,
         recent_projects: (0..12).map(|index| format!("{index}.secs")).collect(),
         last_window_size: Some((1280, 720)),
@@ -739,6 +740,20 @@ fn app_settings_are_versioned_bounded_and_capped() {
         panic!()
     };
     assert_eq!(loaded, saved);
+
+    fs::write(
+        &path,
+        br#"{"version":1,"settings":{"language":"en","expert_display":true,"recent_projects":[],"last_window_size":null}}"#,
+    )
+    .unwrap();
+    let old_file = Service::new(Deps {
+        app_settings_path: Some(path.clone()),
+        ..Deps::default()
+    });
+    let Response::AppSettingsGet(old_settings) = call(&old_file, Request::AppSettingsGet) else {
+        panic!()
+    };
+    assert_eq!(old_settings.theme, AppTheme::System);
 
     fs::write(&path, b"not json").unwrap();
     let broken = Service::new(Deps {
