@@ -35,6 +35,7 @@ import { isSubRole, orderRoles, roleCode } from "../../ui/maps/geometry";
 import { baseName, estimateText, micPoints, pad2, pointText, recordSources, sourceSummary, sweepName } from "./format";
 import { MdatAssignDialog, MdatFilesDialog } from "./MdatDialogs";
 import {
+  OWN_JOBS,
   REPETITIONS,
   START_DELAYS,
   currentPosition,
@@ -63,17 +64,20 @@ function jobLine(t: Translate, job: DeviceJob): string {
 /**
  * The step header: the one primary action and, while a device job runs, a
  * pill naming it. On the import path the primary imports; once every
- * position is measured (and none is picked) it opens 보정.
+ * position is measured (and none is picked) it opens 보정. The primary is
+ * busy while one of this screen's own jobs runs; another step's device job
+ * blocks the step instead (the frame turns the primary off and says why).
  */
 export function measureHeader(view: MeasureView, actions: MeasureActions, t: Translate): { primary?: PrimaryAction; status?: ReactNode } {
   const job = isRunning(view.job) ? view.job : null;
+  const own = job !== null && OWN_JOBS.includes(job.kind);
   const status = job ? (
     <StatusPill tone="busy" data-ui="measure.status">
       {jobLine(t, job)}
     </StatusPill>
   ) : undefined;
   if (view.path === "import") {
-    return { primary: { id: "measure.mdat.load", label: t("measure.mdat.load"), onClick: () => void actions.pickMdat(null), busy: job !== null }, status };
+    return { primary: { id: "measure.mdat.load", label: t("measure.mdat.load"), onClick: () => void actions.pickMdat(null), busy: own }, status };
   }
   const current = currentPosition(view);
   if (current === null) return { primary: { id: "measure.next", label: t("measure.primary.next"), onClick: actions.openCalibrate }, status };
@@ -83,7 +87,7 @@ export function measureHeader(view: MeasureView, actions: MeasureActions, t: Tra
       id: "measure.position.start",
       label: t(again ? "measure.primary.remeasure" : "frame.step.measure.primary"),
       onClick: () => void actions.measurePosition(current),
-      busy: job !== null,
+      busy: own,
     },
     status,
   };
@@ -145,7 +149,7 @@ export function MeasureScreen({ view, actions }: { view: MeasureView; actions: M
           />
         </div>
         <div className="measure-stack measure-stack--side">
-          <GraphCard view={view} />
+          <GraphCard view={view} actions={actions} />
           <Card dense className="measure-import" data-ui="measure.import" title={t("measure.import.title")} description={t("measure.import.description")}>
             <div className="measure-buttons">
               {view.path !== "import" && (
@@ -442,7 +446,7 @@ function PositionsCard({
 
 /* ── What was measured ──────────────────────────────────────────────────── */
 
-function GraphCard({ view }: { view: MeasureView }) {
+function GraphCard({ view, actions }: { view: MeasureView; actions: MeasureActions }) {
   const t = useT();
   const data = view.curves;
   const roleOrder = useMemo(() => {
@@ -483,6 +487,8 @@ function GraphCard({ view }: { view: MeasureView }) {
           positions={positions}
           xRange={data.axes.frequency_hz}
           yRange={data.axes.value}
+          range={view.plotRange}
+          onRangeChange={actions.setPlotRange}
           height={300}
         />
       ) : (

@@ -1,7 +1,8 @@
 // Anchored floating panels: a popover holds a small form (axis range,
-// settings); a menu holds commands (project menu). Both close on Escape and
-// on a click outside, and hand focus back to the button that opened them.
-import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
+// settings); a menu holds commands (project menu) and choices (target
+// presets, one of them checked). Both close on Escape and on a click
+// outside, and hand focus back to the button that opened them.
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { Icon, type IconName } from "./Icon";
 import { Portal, placeNear } from "./layer";
 
@@ -94,9 +95,19 @@ export function Popover({
 export type MenuItem = {
   id: string;
   label: string;
+  /** A command's icon; a choice (`checked` set) shows its check mark there instead. */
   icon?: IconName;
   shortcut?: string;
   disabled?: boolean;
+  /**
+   * Makes the item one choice of a set (a menu radio item): true marks the
+   * current one with a check. A choice that only reports a state, reached
+   * another way (사용자 지정, reached by editing the target), is also
+   * `disabled`; it keeps its full colour while it is the checked one.
+   */
+  checked?: boolean;
+  /** Draws a line above the item (between the choices and the commands). */
+  separator?: boolean;
   onSelect: () => void;
 };
 
@@ -157,29 +168,37 @@ export function Menu({
       style={inline ? undefined : pos ? { left: pos.left, top: pos.top } : { left: -9999, top: -9999 }}
       onKeyDown={onKeyDown}
     >
-      {items.map((item, index) => (
-        <button
-          key={item.id}
-          ref={(node) => {
-            refs.current[index] = node;
-          }}
-          type="button"
-          role="menuitem"
-          id={item.id}
-          data-ui={item.id}
-          tabIndex={-1}
-          disabled={item.disabled}
-          className="ui-menu__item"
-          onClick={() => {
-            onClose();
-            item.onSelect();
-          }}
-        >
-          <span className="ui-menu__icon">{item.icon && <Icon name={item.icon} size={18} />}</span>
-          <span className="ui-menu__label">{item.label}</span>
-          {item.shortcut && <kbd className="ui-menu__shortcut">{item.shortcut}</kbd>}
-        </button>
-      ))}
+      {items.map((item, index) => {
+        const choice = item.checked !== undefined;
+        return (
+          <Fragment key={item.id}>
+            {item.separator && <div role="separator" className="ui-menu__separator" />}
+            <button
+              ref={(node) => {
+                refs.current[index] = node;
+              }}
+              type="button"
+              role={choice ? "menuitemradio" : "menuitem"}
+              aria-checked={choice ? item.checked : undefined}
+              id={item.id}
+              data-ui={item.id}
+              tabIndex={-1}
+              disabled={item.disabled}
+              className={["ui-menu__item", item.checked && "ui-menu__item--checked"].filter(Boolean).join(" ")}
+              onClick={() => {
+                onClose();
+                item.onSelect();
+              }}
+            >
+              <span className="ui-menu__icon">
+                {choice ? item.checked && <Icon name="check" size={18} className="ui-menu__check" /> : item.icon && <Icon name={item.icon} size={18} />}
+              </span>
+              <span className="ui-menu__label">{item.label}</span>
+              {item.shortcut && <kbd className="ui-menu__shortcut">{item.shortcut}</kbd>}
+            </button>
+          </Fragment>
+        );
+      })}
     </div>
   );
   return inline ? body : <Portal>{body}</Portal>;

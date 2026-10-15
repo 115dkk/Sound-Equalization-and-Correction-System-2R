@@ -63,6 +63,7 @@ const base: MeasureView = {
   warnings: [],
   selected: null,
   graphHidden: false,
+  plotRange: { x: null, y: null },
   mdat: null,
 };
 

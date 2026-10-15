@@ -101,10 +101,11 @@ WCAG 대비는 추정하지 않고 계산했습니다(OKLCH → sRGB, 상대 휘
 ### 3.3 축과 상호작용
 
 - **주파수 축**은 로그이고 눈금은 5, 10, 20, 50, 100, 200, 500, 1k, 2k, 5k, 10k, 20k로 고정입니다(업스트림 `plot.py`). 기본 범위는 5–22000 Hz입니다.
-- **축 범위 팝오버**는 주파수와 레벨의 하한·상한, 자동, 적용을 둡니다. 하한이 상한보다 낮지 않으면 "주파수 하한은 상한보다 낮아야 합니다."를 보이고 닫히지 않습니다. Enter는 적용입니다. 직접 정한 범위가 있으면 단추에 강조색 점이 붙습니다.
-- **타겟 점**은 10–24000 Hz, ±30 dB 안에 있고 언제나 두 개 이상입니다. 끌기로 옮기고(이웃 점을 넘지 않음), 빈 곳을 두 번 누르면 더하고, 점에서 오른쪽 클릭하거나 Delete를 누르면 뺍니다. 초점이 있는 점은 ←/→로 1/24옥타브(Shift 1/3옥타브), ↑/↓로 0.5 dB(Shift 3 dB) 움직입니다.
+- **축 범위 팝오버**는 주파수와 레벨의 하한·상한, 자동, 적용을 둡니다. 하한이 상한보다 낮지 않으면 "주파수 하한은 상한보다 낮아야 합니다."를 보이고 닫히지 않습니다. Enter는 적용입니다. 직접 정한 범위가 있으면 단추에 강조색 점이 붙습니다. `Graph`는 고른 범위를 스스로 쥐고, 화면이 실행 동안 남겨야 하면 `range`와 `onRangeChange`로 쥡니다(측정 그래프).
+- **타겟 점**은 10–24000 Hz, ±30 dB 안에 있고 언제나 두 개 이상입니다. 끌기로 옮기고(이웃 점을 넘지 않음), 빈 곳을 두 번 누르면 더하고, 점에서 오른쪽 클릭하거나 Delete를 누르면 뺍니다. 점을 두 번 누르면 그 점에 머물고 점을 더하지 않습니다. 초점이 있는 점은 ←/→로 1/24옥타브(Shift 1/3옥타브), ↑/↓로 0.5 dB(Shift 3 dB) 움직입니다.
 - **XO 선**은 40–200 Hz 안에서 5 Hz 단위로 끕니다. 손잡이는 `role="slider"`이고 화살표, PageUp/PageDown, Home/End가 움직입니다.
-- **RC 대역**은 범위 밖을 `--plot-shade`로 칠하고 경계에 점선과 "RC 하한 20 Hz" 같은 라벨을 둡니다.
+- **한 동작에 한 번 저장.** 타겟 점과 XO 선은 움직이는 동안 `onChange`로 값을 알리고(화면이 그 값을 쥐고 다시 넘김), 동작이 끝날 때 `onCommit`을 한 번 부릅니다: 끌고 놓았을 때, 키를 누르다 놓았을 때(누르고 있으면 반복), 초점이 떠날 때. 점 빼기는 그 자체로 한 동작이라 바로 저장합니다. 화면은 `onCommit`에서 저장합니다.
+- **RC 대역**은 범위 밖을 `--plot-shade`로 칠하고 경계에 점선과 "RC 하한 20 Hz" 같은 라벨을 둡니다. 자동 상한을 아직 모르면(계산 전) 하한 아래만 칠하고 하한 선만 둡니다(`band.hi` 없음).
 - **커서 값**은 그래프 위 왼쪽에 "1.25k Hz · −3.2 dB"처럼 보입니다.
 - 끌 수 있는 것(타겟 점, XO 선)만 강조색입니다.
 
@@ -169,7 +170,8 @@ WCAG 대비는 추정하지 않고 계산했습니다(OKLCH → sRGB, 상대 휘
 ```
 
 - **레일**: 다섯 단계와 상태(완료 ✓, 지금 단계, 막힘(자물쇠 아이콘, 그림의 ⓛ)과 짧은 이유, 건너뜀). 막힌 단계도 열어서 무엇이 필요한지 볼 수 있습니다. 건너뛴 단계(mdat 가져오기 경로의 연결·점검)는 열리지 않습니다. 막힌 이유의 전체 문장은 툴팁과 단계 머리에 있습니다.
-- **단계 머리**: 제목, 한 줄 목적, 주 동작 하나. 막혔으면 이유와 갈 곳을 적고 주 동작을 끕니다(`aria-describedby`로 이유를 잇습니다).
+- **단계 머리**: 제목, 한 줄 목적, 주 동작 하나. 막혔으면 이유와 갈 곳을 적고 주 동작을 끕니다(`aria-describedby`로 이유를 잇습니다). 화면이 주 동작을 끌 수도 있습니다(`PrimaryAction.disabled`, 같은 화면의 다른 잡이 돌 때). 이때는 제목 옆 상태 알약이 이유이고 `aria-describedby`가 알약을 가리킵니다. 진행 중(`busy`)은 주 동작 자신의 잡에만 씁니다.
+- **곁 패널 자리**(`AppFrame aside`): 단계 머리와 작업 트레이 사이의 상자(`.app-body`)가 패널의 기준 상자입니다. 도움말 패널은 그 오른쪽에 놓여 주 동작과 트레이의 취소를 가리지 않고, 트레이 기록을 펴면 함께 줄어듭니다.
 - **프로젝트 상태**: 구성("7.1.4 · 서브 2 · 출력 13"), 측정 위치(k/N), 보정(결과 없음, 계산 중, 완료, 다시 계산 필요, 실패), 측정 경로(REW·자체 측정·모의 측정과 연결 상태), 파일(이름 또는 저장 안 됨, 저장 안 한 변경).
 - **프로젝트 메뉴**: 새로 만들기, 열기…, 저장, 다른 이름으로 저장…. **설정**: 언어, 테마(시스템·밝게·어둡게), 전문가 항목 표시.
 - **단축키**는 `app/shortcuts.ts` 한 곳에 있고 메뉴의 힌트도 여기서 읽습니다. macOS에서는 Ctrl 대신 ⌘입니다. 한글 자판에서도 물리 키(`code`)로 맞춥니다.
@@ -194,7 +196,7 @@ WCAG 대비는 추정하지 않고 계산했습니다(OKLCH → sRGB, 상대 휘
 | `Card`, `Section`, `Advanced` | 제목·설명·동작; 낡음(왼쪽 경고색 띠); 촘촘함; '고급' 접힘·펼침(접힌 항목 수) | `section` + 제목, 펼침 단추 `aria-expanded`, 접힌 내용은 없앰 |
 | `StatusPill` | neutral, success, warning, danger, info, busy | 채운 점 + 명사구 |
 | `NumberField` | 단위, 범위, 단계, 잘못된 값(범위를 문장으로), 비활성, 범위 표시 | `role="spinbutton"`, `aria-valuemin/max/now`, `aria-invalid`, 오류를 `aria-describedby`로 연결. ↑/↓ 단계(Shift ×10), Enter 확정, Esc 되돌림 |
-| `Select` | 보통, 오류 | 기본 `select`, 라벨 연결 |
+| `Select` | 보통, 오류, 비활성; 라벨 왼쪽(`inline`, 그래프 막대 같은 좁은 줄) | 기본 `select`, 라벨 연결 |
 | `CellSelect` | 보통, 오류, 비활성; 닫힌 상태에 굵은 코드와 흐린 이름 같은 풍부한 표시 | 표 칸용, 열 머리가 보이는 라벨이고 `aria-label`로 이름을 줌, 오류 설명을 `aria-describedby`로 연결. 상자는 32px, 누름 영역은 40px |
 | `Stepper` | 하한·상한에서 단추 끔 | `role="spinbutton"` 탭 하나, ↑/↓/Home/End |
 | `Toggle` | 켬, 끔, 비활성, 설명 | `role="switch"`, 라벨은 켠 상태를 말함 |
@@ -205,7 +207,7 @@ WCAG 대비는 추정하지 않고 계산했습니다(OKLCH → sRGB, 상대 휘
 | `ToastProvider`, `useToast` | neutral, success, warning, danger; 동작 하나(되돌리기) | `aria-live="polite"`, 커서·초점이 있는 동안 멈춤 |
 | `Dialog`, `ConfirmDialog`, `useConfirmAndUndo` | 확인, 위험 동작 | `role="dialog"`, 초점 가둠, Esc와 닫기 단추, 연 단추로 초점 복귀 |
 | `Tooltip` | 800 ms 뒤 열림, 폭 420px 제한 | `role="tooltip"`, `aria-describedby`, 키보드 초점에도 열림, Esc |
-| `Popover`, `Menu` | 열림, 닫힘 | `dialog` / `menu`, 화살표·Home·End, Esc와 바깥 클릭으로 닫힘 |
+| `Popover`, `Menu` | 열림, 닫힘; 메뉴 항목의 고름(`checked`, 강조색 확인 표시), 상태만 알리는 고름(`checked` + `disabled`, 글자색 유지), 구분선(`separator`) | `dialog` / `menu`, 고름은 `menuitemradio` + `aria-checked`, 화살표·Home·End(끈 항목은 건너뜀), Esc와 바깥 클릭으로 닫힘 |
 | `EmptyState`, `ErrorNotice` | 빈 곳(이름, 채우는 법, 동작 하나); 오류·경고(원인, 다음 행동, 자세히) | 오류는 `role="alert"` |
 | `LogPlot`, `Graph`, `Legend`, `AxisRangeButton`, `TargetHandles`, `XoLine` | 3절 | 그래프는 `figure` + 요약 문장, 칩은 `aria-pressed`, 타겟 점과 XO 손잡이는 키보드로 움직임 |
 | `RoomMap`, `ArrangementMap`, `ArrangementThumb` | 9절 | `listbox` 탭 하나 + `aria-activedescendant` |
@@ -247,7 +249,7 @@ WCAG 대비는 추정하지 않고 계산했습니다(OKLCH → sRGB, 상대 휘
 
 - `gallery.html`은 두 번째 Vite 입구입니다. `vite build`는 앱과 갤러리를 함께 짓고, `npm run build`(Tauri가 부름)는 `--mode app`으로 앱만 지어 갤러리와 고정값이 설치본에 들어가지 않습니다. 갤러리만 지으려면 `npm run build:gallery`입니다.
 - 주소 인자: `gallery.html?theme=light|dark&lang=ko|en&accent=default|tutorial&only=<id 접두어,…>`. 견본마다 `data-gallery-id`가 있어 CI가 하나씩 찍을 수 있습니다. 상자 크기와 시각·진행 값이 고정이라 찍을 때마다 같습니다. 예외는 불확정 진행 막대의 움직이는 띠(CI는 `prefers-reduced-motion: reduce`로 찍으면 멈춥니다), `frame.live`, `plot.dense`의 시간 표시입니다.
-- 견본: `frame.empty`, `frame.normal`, `frame.busy`, `frame.stale`, `frame.error`, `frame.blocked`, `frame.tutorial`, `frame.skipped`, `frame.live`(모의 서비스에서 실제로 돌고 취소됨), `jobs.idle`, `jobs.running`, `jobs.history`, `frame.project-menu`, `frame.settings`, `ui.button`, `ui.card`, `ui.pill`, `ui.number`, `ui.choice`, `ui.table`, `ui.table.empty`, `ui.meter`, `ui.toast`, `ui.dialog`, `ui.tooltip`, `ui.states`, `plot.measure`, `plot.highlight`, `plot.target`, `plot.xo`, `plot.axes`, `plot.stale`, `plot.dense`, `map.room`, `map.room.unassigned`, `map.arrangement.9`, `map.arrangement.17`, `map.arrangement.13`, `map.thumbs`.
+- 견본: `frame.empty`, `frame.normal`, `frame.busy`, `frame.stale`, `frame.error`, `frame.blocked`, `frame.tutorial`, `frame.skipped`, `frame.aside`(곁 패널 자리의 도움말, 트레이 기록 펼침), `frame.live`(모의 서비스에서 실제로 돌고 취소됨), `jobs.idle`, `jobs.running`, `jobs.history`, `frame.project-menu`, `frame.settings`, `ui.button`, `ui.card`, `ui.pill`, `ui.number`, `ui.choice`, `ui.table`, `ui.table.empty`, `ui.meter`, `ui.toast`, `ui.dialog`, `ui.tooltip`, `ui.states`, `plot.measure`, `plot.highlight`, `plot.target`, `plot.xo`, `plot.axes`, `plot.stale`, `plot.dense`, `map.room`, `map.room.unassigned`, `map.arrangement.9`, `map.arrangement.17`, `map.arrangement.13`, `map.thumbs`.
 - 찍기: `npm run build:gallery && npm run gallery:shots`가 `gallery-shots/`에 견본마다 PNG를 남깁니다. 이 컨테이너처럼 Chromium이 이미 있으면 `CHROMIUM_PATH`로 가리키고, 없으면 `npx playwright install chromium`으로 받습니다(`playwright`는 개발 의존성으로 고정).
 - Playwright에는 `locale`을 주어야 합니다. 브라우저 언어 태그가 잘못되면(`en-US@posix`처럼) uPlot이 `Intl.NumberFormat`에서 멈춥니다.
 - **모의 서비스**(`ipc/mock.ts`): `createMockService({ tickMs, project, results })`는 `makeClient`에 넘길 `invoke`와 그 클라이언트, 잡 이벤트 버스를 줍니다. 생성된 바인딩으로 타입을 맞춘 고정값(`ipc/fixtures.ts`)으로 답하고, 잡은 타이머(또는 `tick()`, `drain()`)로 진행·로그·완료 이벤트를 보냅니다. `failNext`, `failAlways`, `failJobs`로 실패시킬 수 있고, 받은 요청은 `calls`에 남습니다. 같은 종류의 잡이 돌면 `job_busy`, 없는 잡을 취소하면 `job_not_found`입니다.
@@ -258,10 +260,12 @@ WCAG 대비는 추정하지 않고 계산했습니다(OKLCH → sRGB, 상대 휘
 |---|---|
 | 14px 하한(캡션 13px), 모든 `font-size`가 토큰, `transition: all` 없음, 어두운 테마 두 벌 일치, 밝게·어둡게 같은 토큰 집합, 줄인 움직임에서 시간 0, 구성 요소 CSS에 색 값 없음 | `styles/tokens.test.ts` |
 | 카탈로그 키와 자리표시자 일치, 해요체 문장과 느낌표 없음 | `i18n/i18n.test.ts` |
-| 레일 상태와 막힌 이유, 주 동작 끄기, 단축키, 상태 요약, 영어 | `app/AppFrame.test.tsx` |
+| 레일 상태와 막힌 이유, 주 동작 끄기(막힘, 화면이 끔), 곁 패널 자리, 단축키, 상태 요약, 영어 | `app/AppFrame.test.tsx` |
 | 이벤트로 그리는 잡, `job_cancel`, 기록의 원인·다음 행동·자세히 | `app/jobs/JobTray.test.tsx`, `jobStore.test.ts` |
 | 숫자 칸 범위·단계·확정 | `ui/NumberField.test.tsx` |
 | 타겟 점 한계(10–24000 Hz, ±30 dB, 두 점 이상) | `ui/plot/targetEdit.test.ts` |
+| 타겟 점과 XO 선의 한 동작 한 저장(`onCommit`), 점 두 번 누르기, 하한만 있는 RC 대역, `Graph`의 쥔 범위 | `ui/plot/plot.test.tsx` |
+| 메뉴의 고름과 상태만 알리는 고름, 라벨 왼쪽 `Select` | `ui/Popover.test.tsx`, `ui/controls.test.tsx` |
 | 선 규칙, 색은 역할을 따름, 고정 눈금 | `ui/plot/series.test.ts` |
 | 배치도 키보드 선택, 역할 미지정 | `ui/maps/ArrangementMap.test.tsx` |
 | 모의 서비스 계약 | `ipc/mock.test.ts` |

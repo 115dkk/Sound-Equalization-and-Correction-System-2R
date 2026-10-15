@@ -1,12 +1,16 @@
 // A graph with its legend and axis-range control wired together: LogPlot +
 // Legend + AxisRangeButton, holding the toggles, the hover highlight and the
-// chosen range. Screens give it curves and, for editing, an overlay.
+// chosen range. Screens give it curves and, for editing, an overlay. The
+// chosen range is the graph's own unless the screen holds it (`range` and
+// `onRangeChange`), for example to keep it for the run across visits.
 import { useMemo, useState, type ReactNode } from "react";
 import { AxisRangeButton, type AxisRangeValue } from "./AxisRange";
 import { Legend, toggled, type LegendChannel } from "./Legend";
-import { LogPlot, type PlotScale } from "./LogPlot";
+import { LogPlot, type LogPlotProps, type PlotScale } from "./LogPlot";
 import type { Curve, Highlight } from "./series";
 import { FREQ_RANGE } from "./ticks";
+
+const UNSET: AxisRangeValue = { x: null, y: null };
 
 export type GraphProps = {
   id: string;
@@ -22,11 +26,18 @@ export type GraphProps = {
   yRange?: readonly [number, number] | null | undefined;
   yUnit?: string | undefined;
   height?: number | undefined;
-  band?: { lo: number; hi: number } | null | undefined;
+  band?: LogPlotProps["band"];
   stale?: boolean | undefined;
   target?: boolean | undefined;
   onDoubleClick?: ((point: { hz: number; value: number }) => void) | undefined;
   overlay?: ((scale: PlotScale) => ReactNode) | undefined;
+  /**
+   * The range picked in the axis popover, held by the screen. Without it the
+   * graph keeps the pick itself for as long as it is mounted.
+   */
+  range?: AxisRangeValue | undefined;
+  /** Called with each new pick (자동 sets the limits back to null); with `range` the screen stores it. */
+  onRangeChange?: ((range: AxisRangeValue) => void) | undefined;
   /** Gallery: start with these toggles. */
   initialHiddenRoles?: readonly string[] | undefined;
   initialHighlight?: Highlight | undefined;
@@ -49,13 +60,20 @@ export function Graph({
   target,
   onDoubleClick,
   overlay,
+  range: heldRange,
+  onRangeChange,
   initialHiddenRoles = [],
   initialHighlight = null,
 }: GraphProps) {
   const [hiddenRoles, setHiddenRoles] = useState<ReadonlySet<string>>(() => new Set(initialHiddenRoles));
   const [hiddenPositions, setHiddenPositions] = useState<ReadonlySet<number>>(() => new Set());
   const [highlight, setHighlight] = useState<Highlight>(initialHighlight);
-  const [range, setRange] = useState<AxisRangeValue>({ x: null, y: null });
+  const [ownRange, setOwnRange] = useState<AxisRangeValue>(UNSET);
+  const range = heldRange ?? ownRange;
+  const setRange = (next: AxisRangeValue) => {
+    if (!heldRange) setOwnRange(next);
+    onRangeChange?.(next);
+  };
   const subs = useMemo(() => new Set(channels.filter((c) => c.sub).map((c) => c.role)), [channels]);
   const isSub = useMemo(() => (role: string) => subs.has(role), [subs]);
   const fallbackY: readonly [number, number] = yRange ?? [-35, 20];

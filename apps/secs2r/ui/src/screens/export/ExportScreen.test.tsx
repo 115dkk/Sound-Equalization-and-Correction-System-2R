@@ -5,7 +5,7 @@ import { AppFrame } from "../../app/AppFrame";
 import { JobTray } from "../../app/jobs/JobTray";
 import { initialJobs, jobsReducer } from "../../app/jobs/jobStore";
 import { ProjectMenu, SettingsButton } from "../../app/menus";
-import { useT } from "../../i18n/react";
+import { useT, type Translate } from "../../i18n/react";
 import { renderWith } from "../../test/render";
 import { ExportScreen, exportHeader, rcText } from "./ExportScreen";
 import {
@@ -30,6 +30,7 @@ const REACH_IDS = [
   "export.result.rc",
   "export.result.roles",
   "export.result.stale",
+  "export.status.stale",
   "export.result.empty",
   "export.go_calibrate",
   "export.folder.path",
@@ -114,6 +115,7 @@ function Mounted({ view, act, advanced = false }: { view: ExportView; act: Expor
 }
 
 const ui = (id: string) => document.querySelector<HTMLElement>(`[data-ui="${id}"]`);
+const t: Translate = (key, params) => translate("ko", key, params);
 
 describe("내보내기", () => {
   it("renders every state in both languages", () => {
@@ -146,8 +148,8 @@ describe("내보내기", () => {
     expect(screen.getByText(/파일 12개 저장/)).toBeTruthy();
   });
 
-  it("disables the exports without a current result, while computing and while exporting", () => {
-    for (const view of [exportNoResult, exportComputingFirst, exportStale, exportExporting]) {
+  it("disables the exports without a result, while computing and while exporting", () => {
+    for (const view of [exportNoResult, exportComputingFirst, exportExporting]) {
       const { unmount } = renderWith(<Mounted view={view} act={actions()} advanced />);
       expect((ui("export.run.staged_mdat") as HTMLButtonElement).disabled).toBe(true);
       expect((ui("export.run.camilla_dsp") as HTMLButtonElement).disabled).toBe(true);
@@ -155,6 +157,36 @@ describe("내보내기", () => {
     }
     expect(canExport(exportReady)).toBe(true);
     expect(canExport(exportTutorial)).toBe(true);
+  });
+
+  it("shows the header's primary busy only for its own export, and off while another export runs", () => {
+    const other = exportHeader(exportExporting, actions(), t);
+    expect(other.primary?.busy).toBe(false);
+    expect(other.primary?.disabled).toBe(true);
+    const own = exportHeader({ ...exportReady, exporting: "camilla_dsp" }, actions(), t);
+    expect(own.primary?.busy).toBe(true);
+    expect(own.primary?.disabled).toBe(false);
+    const idle = exportHeader(exportReady, actions(), t);
+    expect(idle.primary?.busy).toBe(false);
+    expect(idle.primary?.disabled).toBe(false);
+    // In the frame: the primary is off (not spinning) and names the running export as the reason.
+    renderWith(<Mounted view={exportExporting} act={actions()} />);
+    const primary = ui("export.run.camilla_dsp") as HTMLButtonElement;
+    expect(primary.disabled).toBe(true);
+    expect(primary.getAttribute("aria-busy")).toBeNull();
+    expect(document.getElementById(primary.getAttribute("aria-describedby") ?? "")?.textContent).toContain("REW mdat");
+  });
+
+  it("exports a stale result as upstream does, with a warning on the card and in the header", () => {
+    const act = actions();
+    renderWith(<Mounted view={exportStale} act={act} advanced />);
+    expect(ui("frame.header.blocked")).toBeNull();
+    expect(ui("export.result.stale")?.textContent).toContain("마지막으로 계산한 결과가 저장됩니다");
+    expect(ui("export.status.stale")?.textContent).toBe("다시 계산 필요");
+    expect(canExport(exportStale)).toBe(true);
+    fireEvent.click(ui("export.run.camilla_dsp")!);
+    fireEvent.click(ui("export.run.before_after_mdat")!);
+    expect(act.exportFiles.mock.calls).toEqual([["camilla_dsp"], ["before_after_mdat"]]);
   });
 
   it("sends the way to 보정 when there is nothing current to export", () => {
@@ -180,11 +212,11 @@ describe("내보내기", () => {
     expect(ui("export.folder.change")).toBeNull();
   });
 
-  it("computes the step state: blocked without a current result, done after an export", () => {
+  it("computes the step state: blocked without a result or while computing, done after an export", () => {
     expect(exportStepState(exportNoResult)).toEqual({ status: "blocked", reason: "no_result" });
     expect(exportStepState(exportComputingFirst)).toEqual({ status: "blocked", reason: "computing" });
     expect(exportStepState({ ...exportReady, computing: true })).toEqual({ status: "blocked", reason: "computing" });
-    expect(exportStepState(exportStale)).toEqual({ status: "blocked", reason: "stale_result" });
+    expect(exportStepState(exportStale)).toEqual({ status: "ready" });
     expect(exportStepState(exportReady)).toEqual({ status: "ready" });
     expect(exportStepState(exportFailed)).toEqual({ status: "ready" });
     expect(exportStepState(exportTutorial)).toEqual({ status: "ready" });

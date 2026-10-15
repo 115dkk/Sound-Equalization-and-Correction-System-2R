@@ -194,7 +194,7 @@
 |---|---|---|---|
 | 측정 그래프: 로그 x 5–22000 Hz와 고정 눈금, y −35…+20 dB, 이동·확대 없음, (역할, 위치)마다 곡선, 280점 1/12 옥타브, 200–2000 Hz 평균 정규화 | `measure.plot` | 평활과 정규화는 서비스(`measurement_curves`)가 하고 화면은 그리기만 | P31a |
 | 측정 곡선의 선 규칙: 채널 색, 서브 굵게, 위치 1 굵게, 다른 위치 가늘고 옅게, 칩에 커서를 대면 강조 | `measure.plot.legend.role.<role>`, `measure.plot.legend.position.<n>` | — | P31a |
-| 측정 그래프의 축 범위 팝오버: 주파수·레벨 하한과 상한, [자동], [적용], "하한은 상한보다 낮아야", 실행 동안 기억 | `measure.plot.axes` | 범위는 화면이 열려 있는 동안 기억(그래프를 숨겨도 유지). 단계를 옮겨도 남기려면 P33이 범위를 보관해야 함 | P31a |
+| 측정 그래프의 축 범위 팝오버: 주파수·레벨 하한과 상한, [자동], [적용], "하한은 상한보다 낮아야", 실행 동안 기억 | `measure.plot.axes` | 범위는 `view.plotRange`이고 바꾸면 `setPlotRange`로 알림. P33이 실행 동안 보관(그래프를 숨기거나 단계를 옮겨도 유지) | P31a, P38 |
 | 배치도 ArrayLayoutView (5단계) | `measure.map` | — | P31a |
 | 보정 그래프(300–380 px 높이, 로그 x, 팬·줌 없음) | `calibrate.plot` | | P31b |
 | SPL: 5–20000 Hz, 타겟 기준 dB(타겟 중앙 −30/+15), 보정 전, 보정 후, 타겟(점선), MIMO 적용 | `calibrate.tab.spl`, `calibrate.plot.legend.before`, `calibrate.plot.legend.after`, `calibrate.plot.legend.target`, `calibrate.plot.legend.mimo` | | P31b |
@@ -210,7 +210,7 @@
 | 항목 | id | 편차 | 작업서 |
 |---|---|---|---|
 | 결과 줄: 모드 · 총 지연 · 채널 N개 전후 · 서브 N개 측정 그대로 · MIMO 적용 N | `export.result.summary`, `export.result.mimo` | — | P32 |
-| 낡은 결과 알림 | `export.result.stale`, `frame.header.blocked` | — | P32 |
+| 낡은 결과 알림(업스트림처럼 그래도 내보냄) | `export.result.stale`, `export.status.stale` | — | P32, P38 |
 | 내보낼 것이 없는 이유(보정으로 가는 길) | `export.result.empty`, `export.go_calibrate`, `frame.header.blocked` | — | P32 |
 | 역할 코드 | `export.result.roles` | — | P32 |
 | RC 요약 | `export.result.rc` | — | P32 |

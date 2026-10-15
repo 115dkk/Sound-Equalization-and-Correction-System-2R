@@ -80,18 +80,20 @@ export function mimoInclusion(view: ExportView): MimoInclusion {
   return { included: true, kind: mimo.kind, supports: mimo.support_count, channels };
 }
 
-/** Whether the export buttons can start an export now (upstream `ready()` plus the service's stale check). */
+/**
+ * Whether the export buttons can start an export now (upstream `ready()`:
+ * a result and no correction running). A stale result exports as it is, as
+ * upstream does; the screen warns about it.
+ */
 export function canExport(view: ExportView): boolean {
-  const result = view.results.calibration;
-  return !!result && !result.stale && !view.computing && view.exporting === null;
+  return !!view.results.calibration && !view.computing && view.exporting === null;
 }
 
-/** The rail state of 내보내기: blocked while there is nothing current to export, done after an export of the current result. */
+/** The rail state of 내보내기: blocked while there is no result or one is being computed, done after an export of the result. */
 export function exportStepState(view: ExportView): StepState {
   const result = view.results.calibration;
   if (view.computing) return { status: "blocked", reason: "computing" };
   if (!result) return { status: "blocked", reason: "no_result" };
-  if (result.stale) return { status: "blocked", reason: "stale_result" };
   if (Object.values(view.runs).some((run) => run?.status === "done")) return { status: "done" };
   return { status: "ready" };
 }

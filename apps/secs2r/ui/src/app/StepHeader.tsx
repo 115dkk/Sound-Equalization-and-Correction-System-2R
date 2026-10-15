@@ -11,7 +11,14 @@ export type PrimaryAction = {
   id: string;
   label: string;
   onClick: () => void;
+  /** This action's own job runs: a spinner, the label kept, clicks blocked. */
   busy?: boolean | undefined;
+  /**
+   * Off for a reason of the screen's own (another of its jobs runs). The
+   * header status beside the title says why; a blocked step turns it off
+   * without this.
+   */
+  disabled?: boolean | undefined;
 };
 
 export function StepHeader({
@@ -29,6 +36,9 @@ export function StepHeader({
   const t = useT();
   const blocked = state.status === "blocked" && state.reason ? BLOCKED_TEXT[state.reason] : null;
   const reasonId = `frame.header.${step}.blocked`;
+  const statusId = `frame.header.${step}.status`;
+  // The primary names why it is off: the blocked reason, or the status pill.
+  const describedBy = blocked ? reasonId : primary?.disabled && status ? statusId : undefined;
   return (
     <header className="step-header" data-ui="frame.header">
       <div className="step-header__text">
@@ -36,7 +46,11 @@ export function StepHeader({
           <h1 className="step-header__title" id="frame.header.title">
             {t(STEP_TITLE[step])}
           </h1>
-          {status}
+          {status && (
+            <div className="step-header__status" id={statusId}>
+              {status}
+            </div>
+          )}
         </div>
         <p className="step-header__purpose">{t(STEP_PURPOSE[step])}</p>
         {blocked && (
@@ -53,8 +67,8 @@ export function StepHeader({
             id={primary.id}
             data-ui={primary.id}
             busy={primary.busy}
-            disabled={!!blocked}
-            aria-describedby={blocked ? reasonId : undefined}
+            disabled={!!blocked || !!primary.disabled}
+            aria-describedby={describedBy}
             onClick={primary.onClick}
           >
             {primary.label}

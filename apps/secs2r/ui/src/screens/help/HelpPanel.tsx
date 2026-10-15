@@ -2,8 +2,9 @@
 // help_dialog.py was a non-modal 640×720 window). It follows the frame's
 // step: title "도움말 · <단계>", the step chip "k / 5", search (Ctrl+F;
 // Enter next match, Shift+Enter previous; Esc closes), the step's tabs and
-// the text. The parent places it: it fills the right side of the nearest
-// positioned ancestor (the app root, or a gallery stage).
+// the text. It goes in the frame's aside slot (`AppFrame aside`): it fills
+// the right side of that slot, between the step header and the job tray, so
+// the step's primary action and the tray's cancel stay in reach.
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { STEPS, STEP_TITLE } from "../../app/model";
 import { isMac } from "../../app/shortcuts";
@@ -93,7 +94,6 @@ export function HelpPanel({
   const tab = tabs.find((x) => x.id === active) ?? tabs[0];
   const [query, setQuery] = useState(initialQuery);
   const [match, setMatch] = useState(initialMatch);
-  const [frameGap, setFrameGap] = useState<{ top: number; bottom: number } | null>(null);
 
   const hits = useMemo(() => {
     const out: Partial<Record<HelpTabId, number>> = {};
@@ -109,29 +109,6 @@ export function HelpPanel({
     setMatch(0);
     bodyRef.current?.scrollTo({ top: 0 });
   };
-
-  // Beside a frame, the panel sits between the step header and the job tray,
-  // so the step's primary action and the tray's cancel stay in reach.
-  useLayoutEffect(() => {
-    const panel = panelRef.current;
-    const parent = panel?.offsetParent;
-    if (!panel || !(parent instanceof HTMLElement)) return;
-    const header = parent.querySelector<HTMLElement>('[data-ui="frame.header"]');
-    const tray = parent.querySelector<HTMLElement>('[data-ui="jobs.tray"]');
-    if (!header) return;
-    const update = () => {
-      const box = parent.getBoundingClientRect();
-      const top = Math.round(header.getBoundingClientRect().bottom - box.top + 8);
-      const bottom = tray ? Math.round(box.bottom - tray.getBoundingClientRect().top + 8) : 12;
-      setFrameGap((prev) => (prev && prev.top === top && prev.bottom === bottom ? prev : { top, bottom }));
-    };
-    update();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(update);
-    observer.observe(header);
-    if (tray) observer.observe(tray);
-    return () => observer.disconnect();
-  }, []);
 
   // Focus moves into the panel when it opens and back when it closes.
   useEffect(() => {
@@ -213,7 +190,7 @@ export function HelpPanel({
         : t("help.search.none");
 
   return (
-    <aside ref={panelRef} className="help-panel" style={frameGap ?? undefined} data-ui="help" aria-labelledby={titleId} tabIndex={-1} onKeyDown={onPanelKey}>
+    <aside ref={panelRef} className="help-panel" data-ui="help" aria-labelledby={titleId} tabIndex={-1} onKeyDown={onPanelKey}>
       <header className="help-panel__head">
         <div className="help-panel__titles">
           <h2 className="help-panel__title" id={titleId}>

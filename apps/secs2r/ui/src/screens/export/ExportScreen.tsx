@@ -107,16 +107,25 @@ function revealInside(el: HTMLElement) {
   }
 }
 
-/** The step header: the primary exports the CamillaDSP configuration; the pill says what runs or that the step is done. */
+/**
+ * The step header: the primary exports the CamillaDSP configuration; the
+ * pill says what runs, that an export failed, that the result is stale, or
+ * that the step is done.
+ */
 export function exportHeader(view: ExportView, actions: ExportActions, t: Translate): { primary?: PrimaryAction; status?: ReactNode } {
   const state = exportStepState(view);
   // A blocked step already says why under the title; the pill adds what runs,
-  // that an export failed (its row may be below the fold), or that the current result is exported.
+  // that an export failed (its row may be below the fold), that the result
+  // no longer matches the inputs (it still exports), or that it is exported.
   const failed = EXPORT_KINDS.some((kind) => view.runs[kind]?.status === "failed");
   const status = view.exporting ? (
     <StatusPill tone="busy">{t(KIND_TEXT[view.exporting].exporting)}</StatusPill>
   ) : failed ? (
     <StatusPill tone="danger">{t("export.status.failed")}</StatusPill>
+  ) : view.results.calibration?.stale ? (
+    <StatusPill tone="warning" data-ui="export.status.stale">
+      {t("frame.status.calibration.stale")}
+    </StatusPill>
   ) : state.status === "done" ? (
     <StatusPill tone="success">{t("export.status.done")}</StatusPill>
   ) : undefined;
@@ -125,9 +134,9 @@ export function exportHeader(view: ExportView, actions: ExportActions, t: Transl
       id: "export.run.camilla_dsp",
       label: t("frame.step.export.primary"),
       onClick: () => actions.exportFiles("camilla_dsp"),
-      // Export jobs run one at a time; the frame's primary has no plain
-      // disabled state, so it shows busy while any export runs.
-      busy: view.exporting !== null,
+      // Export jobs run one at a time: busy while this one runs, off while another does.
+      busy: view.exporting === "camilla_dsp",
+      disabled: view.exporting !== null && view.exporting !== "camilla_dsp",
     },
     status,
   };

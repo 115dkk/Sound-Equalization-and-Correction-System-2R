@@ -9,11 +9,10 @@ import { useNumber, useT, type Translate } from "../../i18n/react";
 import type { ResultCurvesResult } from "../../ipc/bindings/ResultCurvesResult";
 import type { ResultTab } from "../../ipc/bindings/ResultTab";
 import type { SubResultLines } from "../../ipc/bindings/SubResultLines";
-import { AxisRangeButton, Button, Card, DataTable, LogPlot, Menu, Segmented, StatusPill, TargetHandles, XoLine, formatHz, target as targetEdit, type AxisRangeValue, type Column, type Curve, type MenuItem, type PlotScale } from "../../ui";
+import { AxisRangeButton, Button, Card, DataTable, LogPlot, Menu, Segmented, Select, StatusPill, TargetHandles, XoLine, formatHz, target as targetEdit, type AxisRangeValue, type Column, type Curve, type MenuItem, type PlotScale } from "../../ui";
 import { Icon } from "../../ui/Icon";
 import { roleCode } from "../../ui/maps/geometry";
 import { colorTokens } from "../../ui/plot/series";
-import { InlineSelect } from "./controls";
 import { filterSpec, groupName, groupOf, noticeText, signedNumber, subModeText, subRoles, xoGroups, type FormatNumber } from "./text";
 import type { CalibrateActions, CalibrateView } from "./types";
 
@@ -143,18 +142,19 @@ export function presetName(t: Translate, preset: string | null): string {
   return key ? t(key) : preset;
 }
 
+/** Presets to choose, 사용자 지정 checked when the points were edited (upstream `target_menu`), then save and load. */
 export function targetMenuItems(t: Translate, view: Pick<CalibrateView, "target">, actions: Pick<CalibrateActions, "applyTargetPreset" | "saveTarget" | "loadTarget">): MenuItem[] {
   const current = view.target.preset;
   return [
     ...view.target.presets.map(([name]) => ({
       id: `calibrate.target.preset.${name}`,
       label: presetName(t, name),
-      ...(current === name ? { icon: "check" as const } : {}),
+      checked: current === name,
       onSelect: () => actions.applyTargetPreset(name),
     })),
-    // An indicator, not a command: the target becomes 사용자 지정 by editing it.
-    { id: "calibrate.target.custom", label: t("calibrate.target.custom"), ...(current === null ? { icon: "check" as const } : {}), disabled: true, onSelect: () => {} },
-    { id: "calibrate.target.save", label: t("calibrate.target.save"), icon: "save", onSelect: actions.saveTarget },
+    // A state, not a command: the target becomes 사용자 지정 by editing or loading it.
+    { id: "calibrate.target.custom", label: t("calibrate.target.custom"), checked: current === null, disabled: true, onSelect: () => {} },
+    { id: "calibrate.target.save", label: t("calibrate.target.save"), icon: "save", separator: true, onSelect: actions.saveTarget },
     { id: "calibrate.target.load", label: t("calibrate.target.load"), icon: "folder", onSelect: actions.loadTarget },
   ];
 }
@@ -279,9 +279,8 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
   const yRange = curves?.axes.value ?? ([-30, 15] as [number, number]);
   const unit = curves?.axes.unit === "ms" ? "ms" : "dB";
 
-  // Target points while dragging stay local; a release (or a key, a removal, a double-click) stores them.
+  // Target points while dragging stay local; the end of a gesture (or a removal, a double-click) stores them.
   const [draft, setDraft] = useState<TargetPoint[] | null>(null);
-  const dragging = useRef(false);
   useEffect(() => setDraft(null), [view.target]);
   const points: TargetPoint[] = draft ?? view.target.points.map(([hz, db]) => ({ hz, db }));
   const commit = (next: TargetPoint[]) => {
@@ -289,7 +288,7 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
     actions.setTargetPoints(next.map((p) => [p.hz, p.db]));
   };
 
-  // The XO line follows the pointer; curves follow through previewXo; release stores the value.
+  // The XO line follows the pointer; curves follow through previewXo; the end of the gesture stores the value.
   const [dragHz, setDragHz] = useState<number | null>(null);
   const xoHz = dragHz ?? curves?.xo_hz ?? (xoGroup ? (view.settings.xo[xoGroup] ?? null) : null);
   useEffect(() => setDragHz(null), [view.settings.xo]);
@@ -317,9 +316,6 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
     <>
       {band && (tab === "spl" || tab === "gd") && (
         <>
-          {band[1] === null && (
-            <span className="calibrate-band-shade" style={{ width: Math.max(0, scale.xToPx(band[0])) }} aria-hidden="true" />
-          )}
           <span className="plot-band-label" data-ui="calibrate.plot.band.lower" style={{ left: scale.xToPx(band[0]) + 4 }}>
             {t("plot.band.lower", { hz: formatHz(band[0]) })}
           </span>
@@ -330,46 +326,18 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
           )}
         </>
       )}
-      {tab === "spl" && (
-        <div
-          className="calibrate-layer"
-          onPointerDownCapture={(event) => {
-            if (event.button === 0 && (event.target as Element).closest(".plot-handle")) dragging.current = true;
-          }}
-          onPointerUp={() => {
-            if (!dragging.current) return;
-            dragging.current = false;
-            if (draft) commit(draft);
-          }}
-        >
-          <TargetHandles
-            id="calibrate.target"
-            points={points}
-            scale={scale}
-            onChange={(next) => (dragging.current ? setDraft(next) : commit(next))}
-          />
-        </div>
-      )}
+      {tab === "spl" && <TargetHandles id="calibrate.target" points={points} scale={scale} onChange={setDraft} onCommit={commit} />}
       {tab === "xo" && xoGroup && xoHz !== null && curves && curves.curves.length > 0 && (
-        <div
-          className="calibrate-layer"
-          onPointerUp={() => {
-            if (dragHz !== null) actions.changeSetting({ kind: "xo", group: xoGroup, hz: dragHz });
+        <XoLine
+          id="calibrate.xo.line"
+          hz={xoHz}
+          scale={scale}
+          onChange={(hz) => {
+            setDragHz(hz);
+            actions.previewXo(xoGroup, hz);
           }}
-          onKeyUp={() => {
-            if (dragHz !== null) actions.changeSetting({ kind: "xo", group: xoGroup, hz: dragHz });
-          }}
-        >
-          <XoLine
-            id="calibrate.xo.line"
-            hz={xoHz}
-            scale={scale}
-            onChange={(hz) => {
-              setDragHz(hz);
-              actions.previewXo(xoGroup, hz);
-            }}
-          />
-        </div>
+          onCommit={(hz) => actions.changeSetting({ kind: "xo", group: xoGroup, hz })}
+        />
       )}
     </>
   );
@@ -417,8 +385,9 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
           options={tabs.map((value) => ({ value, label: t(TAB_LABEL[value]) }))}
           onChange={actions.selectTab}
         />
-        <InlineSelect
+        <Select
           id="calibrate.channel"
+          inline
           label={t("calibrate.graph.channel")}
           value={channel ?? ""}
           disabled={tab === "ba" || channels.length === 0}
@@ -449,7 +418,7 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
             yRange={range.y ?? yRange}
             yUnit={unit}
             height={PLOT_HEIGHT}
-            band={band && band[1] !== null && (tab === "spl" || tab === "gd") ? { lo: band[0], hi: band[1] } : null}
+            band={band && (tab === "spl" || tab === "gd") ? { lo: band[0], hi: band[1] } : null}
             stale={curves.stale}
             onDoubleClick={tab === "spl" ? ({ hz, value }) => commit(targetEdit.addPoint(points, { hz, db: value }).points) : undefined}
             overlay={overlay}

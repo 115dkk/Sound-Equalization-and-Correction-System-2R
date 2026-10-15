@@ -1,12 +1,12 @@
 // 도움말 over each step (a different tab on each), a search hit, and the
-// smallest window.
+// smallest window. The panel sits in the frame's aside slot.
 import type { FrameModel, StepId } from "../../app/model";
 import { initialJobs } from "../../app/jobs/jobStore";
 import { FrameBox } from "../../gallery/frameSpecimens";
 import type { SpecimenDef } from "../../gallery/Specimen";
 import { useLocale, useT } from "../../i18n/react";
 import { EmptyState } from "../../ui";
-import { ExportScreen } from "../export/ExportScreen";
+import { ExportScreen, exportHeader } from "../export/ExportScreen";
 import { exportFrame, exportReady } from "../export/fixtures";
 import { noopExportActions } from "../export/specimens";
 import { HelpPanel } from "./HelpPanel";
@@ -46,18 +46,19 @@ function Behind({ step }: { step: StepId }) {
 
 function HelpSpecimen({ step, tab, search }: { step: StepId; tab?: HelpTabId; search?: { ko: string; en: string; match?: number } }) {
   const locale = useLocale();
+  const t = useT();
+  const panel = (
+    <HelpPanel
+      view={{ step, tutorial: false }}
+      actions={{ close: () => {}, startTutorial: () => {} }}
+      {...(tab ? { initialTab: tab } : {})}
+      {...(search ? { initialQuery: search[locale], initialMatch: search.match ?? 0 } : {})}
+    />
+  );
   return (
-    <>
-      <FrameBox frame={helpFrame(step)} jobs={initialJobs}>
-        <Behind step={step} />
-      </FrameBox>
-      <HelpPanel
-        view={{ step, tutorial: false }}
-        actions={{ close: () => {}, startTutorial: () => {} }}
-        {...(tab ? { initialTab: tab } : {})}
-        {...(search ? { initialQuery: search[locale], initialMatch: search.match ?? 0 } : {})}
-      />
-    </>
+    <FrameBox frame={helpFrame(step)} jobs={initialJobs} aside={panel} {...(step === "export" ? { header: exportHeader(exportReady, noopExportActions, t) } : {})}>
+      <Behind step={step} />
+    </FrameBox>
   );
 }
 

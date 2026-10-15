@@ -470,6 +470,30 @@
   pointer-events: none;
 }
 
+.ui-select--disabled,
+.ui-select--disabled:hover {
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 var(--border-w) var(--border);
+}
+
+.ui-select--disabled .ui-select__native {
+  color: var(--text-faint);
+  cursor: default;
+}
+
+.ui-select--disabled .ui-select__chevron {
+  color: var(--text-faint);
+}
+
+/* Inline: the label reads as the box's caption, beside a narrower box. */
+.ui-select-field--inline > .ui-field__label {
+  color: var(--text-muted);
+}
+
+.ui-select-field--inline .ui-select__native {
+  min-width: 6.5rem;
+}
+
 /* ── Stepper ───────────────────────────────────────────────────────────── */
 .ui-stepper {
   display: inline-flex;
@@ -957,6 +981,23 @@
 
 .ui-menu__item:disabled {
   color: var(--text-faint);
+}
+
+/* The current choice: an accent check; a checked choice that only reports a
+   state (disabled) keeps the text colour so it reads as the current one. */
+.ui-menu__item--checked:disabled {
+  color: var(--text);
+  cursor: default;
+}
+
+.ui-menu__item--checked .ui-menu__check {
+  color: var(--accent);
+}
+
+.ui-menu__separator {
+  height: var(--border-w);
+  margin: var(--space-1) var(--space-2);
+  background: var(--border-subtle);
 }
 
 .ui-menu__icon {
