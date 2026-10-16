@@ -122,11 +122,44 @@
   margin-top: 1px;
 }
 
-/* The exports. */
-.export-items {
+/* The exports, in two groups: the filters for the DSP, the responses for REW. */
+.export-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.export-group {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+}
+
+/*
+ * A small group heading, one step under the card title and one over the row
+ * titles: quiet words on a structural rule that runs to the card's edge. The
+ * rule takes the place of the first row's own line, and the heading sits
+ * nearer its rows than the group above.
+ */
+.export-group__title {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: calc(var(--space-1) * -1);
+  color: var(--text-muted);
+  font-size: var(--text-ui);
+  font-weight: var(--weight-semibold);
+}
+
+.export-group__title::after {
+  content: "";
+  flex: 1;
+  border-top: var(--border-w) solid var(--border);
+}
+
+.export-group__title + .export-item {
+  padding-top: 0;
+  border-top: 0;
 }
 
 .export-item {
@@ -182,6 +215,23 @@
   grid-column: 1 / -1;
 }
 
+/* A format that cannot carry this result: why, and what to change. Its scope, not a fault. */
+.export-item__blocked {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+
+.export-item__blocked .ui-icon {
+  flex: none;
+  margin-top: 1px;
+}
+
 .export-outcome {
   display: flex;
   align-items: center;
@@ -200,6 +250,20 @@
   flex: 1;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* A finished export: the files and the folder, then (Equalizer APO) where they go next. */
+.export-done {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+}
+
+/* Lines up with the outcome's words, after the check. */
+.export-done__hint {
+  max-width: 72ch;
+  padding-left: calc(var(--space-3) + 18px + var(--space-2));
+  color: var(--text-muted);
 }
 
 .export-outcome--muted {

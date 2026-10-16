@@ -12,10 +12,13 @@ import {
   exportFrame,
   exportComputingFirst,
   exportDone,
+  exportEqapoDone,
   exportExporting,
   exportFailed,
+  exportMimoNoSubs,
   exportNoMimo,
   exportNoResult,
+  exportRcOnly,
   exportReady,
   exportStale,
   exportTutorial,
@@ -23,7 +26,7 @@ import {
 import { canExport, exportStepState, mimoInclusion, type ExportActions, type ExportView } from "./types";
 import { translate } from "../../i18n";
 
-/** Every id docs/M5-reach.md §9 and §10 cite for this screen and the frame around it. */
+/** Every id docs/M5-reach.md §9 and §10 cite for this screen and the frame around it, and the filter formats' rows (P47). */
 const REACH_IDS = [
   "export.result.summary",
   "export.result.mimo",
@@ -39,9 +42,21 @@ const REACH_IDS = [
   "export.run.camilla_dsp",
   "export.run.before_after_mdat",
   "export.run.staged_mdat",
+  "export.run.filter_text",
+  "export.run.equalizer_apo",
+  "export.kind.camilla_dsp",
+  "export.kind.filter_text",
+  "export.kind.equalizer_apo",
+  "export.kind.before_after_mdat",
+  "export.kind.staged_mdat",
+  "export.kind.filter_text.blocked",
+  "export.kind.equalizer_apo.blocked",
   "export.advanced",
   "export.outcome.camilla_dsp",
   "export.outcome.camilla_dsp.open",
+  "export.outcome.equalizer_apo",
+  "export.outcome.equalizer_apo.open",
+  "export.outcome.equalizer_apo.hint",
   "export.tutorial",
   "frame",
   "frame.rail",
@@ -81,6 +96,9 @@ const STATES: Record<string, ExportView> = {
   done: exportDone,
   failed: exportFailed,
   noMimo: exportNoMimo,
+  rcOnly: exportRcOnly,
+  mimoNoSubs: exportMimoNoSubs,
+  eqapoDone: exportEqapoDone,
   tutorial: exportTutorial,
 };
 
@@ -130,11 +148,81 @@ describe("내보내기", () => {
 
   it("exports each kind through its button; the header primary exports CamillaDSP", () => {
     const act = actions();
-    renderWith(<Mounted view={exportReady} act={act} advanced />);
-    fireEvent.click(ui("export.run.camilla_dsp")!);
-    fireEvent.click(ui("export.run.before_after_mdat")!);
-    fireEvent.click(ui("export.run.staged_mdat")!);
-    expect(act.exportFiles.mock.calls).toEqual([["camilla_dsp"], ["before_after_mdat"], ["staged_mdat"]]);
+    renderWith(<Mounted view={exportRcOnly} act={act} advanced />);
+    for (const kind of ["camilla_dsp", "filter_text", "equalizer_apo", "before_after_mdat", "staged_mdat"]) fireEvent.click(ui(`export.run.${kind}`)!);
+    expect(act.exportFiles.mock.calls).toEqual([["camilla_dsp"], ["filter_text"], ["equalizer_apo"], ["before_after_mdat"], ["staged_mdat"]]);
+  });
+
+  it("draws the filters for the DSP and the responses for REW as two titled groups between the card title and the rows", () => {
+    renderWith(<Mounted view={exportRcOnly} act={actions()} advanced />);
+    const files = ui("export.files")!;
+    const groups = [...files.querySelectorAll<HTMLElement>("section.export-group")];
+    expect(groups.map((group) => document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent)).toEqual(["DSP에 넣을 필터", "REW에서 볼 응답"]);
+    expect(groups.map((group) => [...group.querySelectorAll("[data-ui^='export.kind.']")].map((row) => row.getAttribute("data-ui")))).toEqual([
+      ["export.kind.camilla_dsp", "export.kind.filter_text", "export.kind.equalizer_apo"],
+      ["export.kind.before_after_mdat", "export.kind.staged_mdat"],
+    ]);
+    // h2 card, h3 group, h4 row.
+    expect(files.querySelector("h2")?.textContent).toBe("내보낼 파일");
+    expect([...groups[0]!.querySelectorAll("h3")].map((h) => h.textContent)).toEqual(["DSP에 넣을 필터"]);
+    expect([...groups[0]!.querySelectorAll("h4")].map((h) => h.textContent)).toEqual(["CamillaDSP 설정", "필터 값 텍스트", "Equalizer APO 설정"]);
+    expect(ui("export.kind.camilla_dsp")?.textContent).toContain("RC, BA, MIMO를 모두 담습니다.");
+  });
+
+  it("turns off a filter format that cannot carry the result and says why in its row", () => {
+    const cases: [ExportView, Record<"filter_text" | "equalizer_apo", string | null>][] = [
+      // Subs and MIMO (the sample): text blocked by the subs first, Equalizer APO by MIMO.
+      [exportReady, { filter_text: "서브(BA)가 있는 결과는 텍스트로 낼 수 없습니다. 텍스트는 RC만 적용한 결과에서 냅니다.", equalizer_apo: "MIMO를 넣은 결과는 Equalizer APO로 낼 수 없습니다. 보정에서 MIMO를 끄면 낼 수 있습니다." }],
+      // Subs, MIMO left out: only the text.
+      [exportNoMimo, { filter_text: "서브(BA)가 있는 결과는 텍스트로 낼 수 없습니다. 텍스트는 RC만 적용한 결과에서 냅니다.", equalizer_apo: null }],
+      // MIMO without subs: both by MIMO.
+      [exportMimoNoSubs, { filter_text: "MIMO를 넣은 결과는 텍스트로 낼 수 없습니다. 보정에서 MIMO를 끄면 낼 수 있습니다.", equalizer_apo: "MIMO를 넣은 결과는 Equalizer APO로 낼 수 없습니다. 보정에서 MIMO를 끄면 낼 수 있습니다." }],
+      // RC alone: everything on.
+      [exportRcOnly, { filter_text: null, equalizer_apo: null }],
+    ];
+    for (const [view, reasons] of cases) {
+      const act = actions();
+      const { unmount } = renderWith(<Mounted view={view} act={act} advanced />);
+      for (const kind of ["filter_text", "equalizer_apo"] as const) {
+        const button = ui(`export.run.${kind}`) as HTMLButtonElement;
+        const reason = ui(`export.kind.${kind}.blocked`);
+        expect(button.disabled, kind).toBe(reasons[kind] !== null);
+        expect(reason?.textContent ?? null, kind).toBe(reasons[kind]);
+        // The disabled button names its reason; the reason is no alert.
+        expect(button.getAttribute("aria-describedby") ? document.getElementById(button.getAttribute("aria-describedby")!) : null).toBe(reason);
+        expect(reason?.getAttribute("role") ?? null).toBeNull();
+        fireEvent.click(button);
+      }
+      // CamillaDSP and the mdat exports carry every result.
+      for (const kind of ["camilla_dsp", "before_after_mdat", "staged_mdat"]) {
+        expect((ui(`export.run.${kind}`) as HTMLButtonElement).disabled, kind).toBe(false);
+        expect(ui(`export.kind.${kind}.blocked`), kind).toBeNull();
+      }
+      expect(act.exportFiles.mock.calls).toEqual((["filter_text", "equalizer_apo"] as const).filter((kind) => reasons[kind] === null).map((kind) => [kind]));
+      unmount();
+    }
+  });
+
+  it("says where the Equalizer APO files go after they are saved, with the filter files' mode", () => {
+    const act = actions();
+    const { unmount } = renderWith(<Mounted view={exportEqapoDone} act={act} />);
+    expect(ui("export.outcome.equalizer_apo")?.textContent).toContain("파일 14개 저장 → D:/Audio/거실 보정/SECS_eqapo_RC_BA_mixed_20261014-142233");
+    expect(ui("export.outcome.equalizer_apo.hint")?.textContent).toBe(
+      "config.txt와 secs_mixed 폴더를 Equalizer APO의 config 폴더에 복사합니다. 순서와 채널 번호는 같은 폴더의 'EqAPO 적용 방법.txt'에 있습니다.",
+    );
+    fireEvent.click(ui("export.outcome.equalizer_apo.open")!);
+    expect(act.openFolder.mock.calls).toEqual([["D:/Audio/거실 보정/SECS_eqapo_RC_BA_mixed_20261014-142233"]]);
+    unmount();
+    // 초고지연: the files carry the limit (upstream `ultra200`); the folder keeps the bare mode.
+    renderWith(<Mounted view={{ ...exportEqapoDone, settings: { ...exportEqapoDone.settings, mode: "ultra", ultra_ms: 200 } }} act={actions()} />, { locale: "en" });
+    expect(ui("export.outcome.equalizer_apo.hint")?.textContent).toContain("the secs_ultra200 folder");
+    expect(ui("export.kind.equalizer_apo")?.textContent).toContain("SECS_eqapo_RC_BA_ultra_<save time> folder");
+  });
+
+  it("adds the hint only to the Equalizer APO outcome", () => {
+    renderWith(<Mounted view={exportDone} act={actions()} />);
+    expect(ui("export.outcome.camilla_dsp")).not.toBeNull();
+    expect(document.querySelector("[data-ui$='.hint']")).toBeNull();
   });
 
   it("changes and opens the folder, and opens what a run wrote", () => {
@@ -149,14 +237,29 @@ describe("내보내기", () => {
   });
 
   it("disables the exports without a result, while computing and while exporting", () => {
-    for (const view of [exportNoResult, exportComputingFirst, exportExporting]) {
+    for (const view of [exportNoResult, exportComputingFirst, exportExporting, { ...exportRcOnly, computing: true }]) {
       const { unmount } = renderWith(<Mounted view={view} act={actions()} advanced />);
-      expect((ui("export.run.staged_mdat") as HTMLButtonElement).disabled).toBe(true);
-      expect((ui("export.run.camilla_dsp") as HTMLButtonElement).disabled).toBe(true);
+      for (const kind of ["camilla_dsp", "filter_text", "equalizer_apo", "before_after_mdat", "staged_mdat"]) {
+        expect((ui(`export.run.${kind}`) as HTMLButtonElement).disabled, kind).toBe(true);
+      }
       unmount();
     }
     expect(canExport(exportReady)).toBe(true);
     expect(canExport(exportTutorial)).toBe(true);
+  });
+
+  it("runs one export at a time: the running row is busy, every other button is off", () => {
+    for (const running of ["filter_text", "equalizer_apo"] as const) {
+      const { unmount } = renderWith(<Mounted view={{ ...exportRcOnly, exporting: running }} act={actions()} advanced />);
+      for (const kind of ["camilla_dsp", "filter_text", "equalizer_apo", "before_after_mdat", "staged_mdat"]) {
+        const button = ui(`export.run.${kind}`) as HTMLButtonElement;
+        expect(button.disabled, kind).toBe(true);
+        // The header's primary is off, not spinning, while another export runs.
+        expect(button.getAttribute("aria-busy"), kind).toBe(kind === running ? "true" : null);
+      }
+      expect(screen.getByText(running === "filter_text" ? "필터 값 텍스트 저장 중" : "Equalizer APO 설정 저장 중")).toBeTruthy();
+      unmount();
+    }
   });
 
   it("shows the header's primary busy only for its own export, and off while another export runs", () => {

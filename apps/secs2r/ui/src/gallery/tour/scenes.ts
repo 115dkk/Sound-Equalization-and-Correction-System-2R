@@ -133,6 +133,12 @@ async function calibrated(mock: MockService) {
   mock.drain();
 }
 
+/** MIMO calculated on top of the current correction; it goes into the export when switched on, from three positions. */
+async function mimo(mock: MockService) {
+  await mock.request({ method: "mimo", params: { settings: null } });
+  mock.drain();
+}
+
 /** A project in progress: devices picked, levels checked, the demo room measured. */
 async function inProgress(mock: MockService) {
   await devices(mock);
@@ -515,6 +521,54 @@ export const TOUR_SCENES: TourScene[] = [
       await calibrated(mock);
     },
     ops: [...choosePath("native", "export"), click(`.step-header ${ui("export.run.camilla_dsp")}`), drain],
+  },
+  {
+    id: "export.filters",
+    step: "export",
+    title: { ko: "DSP에 넣을 필터", en: "Filters for the DSP" },
+    note: {
+      ko: "서브가 있는 결과라 필터 값 텍스트는 꺼지고 그 이유가 줄 안에 보입니다.",
+      en: "The result has subs, so the filter text is off and its row says why.",
+    },
+    setup: async (mock) => {
+      await inProgress(mock);
+      await calibrated(mock);
+    },
+    ops: [...choosePath("native", "export"), reveal(ui("export.files"))],
+  },
+  {
+    id: "export.eqapo-done",
+    step: "export",
+    title: { ko: "Equalizer APO 설정 저장 완료", en: "Equalizer APO configuration saved" },
+    note: {
+      ko: "결과 줄의 파일 이름은 모의 서비스의 자리표시이고, 그 아래가 복사 안내입니다.",
+      en: "The outcome's file names are the mock service's placeholders; where to copy the files sits under it.",
+    },
+    setup: async (mock) => {
+      await inProgress(mock);
+      await calibrated(mock);
+    },
+    ops: [...choosePath("native", "export"), reveal(ui("export.kind.filter_text")), click(ui("export.run.equalizer_apo")), drain],
+  },
+  {
+    id: "export.mimo-blocked",
+    step: "export",
+    title: { ko: "MIMO를 넣은 결과의 필터", en: "Filters for a result with MIMO" },
+    note: {
+      ko: "세 위치를 측정하고 MIMO를 계산한 결과라 필터 값 텍스트와 Equalizer APO가 꺼집니다.",
+      en: "With three positions measured and MIMO calculated, the filter text and Equalizer APO are off.",
+    },
+    setup: async (mock) => {
+      await devices(mock);
+      await levels(mock);
+      await chair(mock);
+      await measured(mock, 3);
+      // Switched on before the correction: a settings edit afterwards would make the result stale.
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+      await calibrated(mock);
+      await mimo(mock);
+    },
+    ops: [...choosePath("native", "export"), reveal(ui("export.files"))],
   },
   {
     id: "export.failed",

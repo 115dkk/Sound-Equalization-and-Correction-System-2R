@@ -154,6 +154,9 @@ const RECTS: Record<string, [number, number, number, number]> = {
   "frame.content": [252, 120, 1028, 620],
   other: [400, 300, 120, 36],
   primary: [1100, 40, 160, 36],
+  // Late targets (the export step's rows): one far below the content's fold, one inside it.
+  "late.far": [400, 1500, 160, 36],
+  "late.near": [400, 300, 160, 36],
 };
 
 beforeEach(() => {
@@ -428,5 +431,90 @@ describe("tutorial layer", () => {
       unmount();
     }
     expect(REACH_IDS.filter((id) => !seen.has(id))).toEqual([]);
+  });
+});
+
+/* ── A target that appears after the quest starts ─────────────────────── */
+
+/**
+ * One quest on 내보내기 whose target the step screen draws late (after goTo,
+ * or once its data arrives), inside a scrolling content area 600 px tall
+ * holding 2000 px. happy-dom does no layout: the rects come from RECTS and
+ * the content's heights from the spies below.
+ */
+function LateHarness({ target }: { target: "late.far" | "late.near" }) {
+  const [step, setStep] = useState<StepId>("system");
+  const [drawn, setDrawn] = useState(false);
+  const quest: Quest<View> = { id: "late", step: "export", kind: "look", targets: [target], title: "tutorial.sample.rail.title", text: "tutorial.sample.rail" };
+  return (
+    <>
+      {/* The screen's data arriving (or going): outside the layer, like the IPC. */}
+      <button type="button" data-ui="late.toggle" onClick={() => setDrawn((value) => !value)}>
+        toggle
+      </button>
+      <TutorialLayer quests={[quest]} view={{ helpOpen: false, computing: false, computed: false, blocked: false }} step={step} actions={{ ...host(), goTo: setStep }}>
+        <div data-ui="frame.content" style={{ overflowY: "auto" }}>
+          {step === "export" && drawn && (
+            <button type="button" data-ui={target}>
+              target
+            </button>
+          )}
+        </div>
+      </TutorialLayer>
+    </>
+  );
+}
+
+describe("tutorial layer: a target that appears late", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    const content = (el: Element) => el.getAttribute("data-ui") === "frame.content";
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(function (this: Element) {
+      return content(this) ? 2000 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return content(this) ? 600 : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute("data-ui")?.startsWith("late.") ? 36 : 0;
+    });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const contentEl = () => ui("frame.content")!;
+
+  it("scrolls it into the content once, the first time it appears, and not again after the user scrolls", async () => {
+    renderWith(<LateHarness target="late.far" />);
+    await tick();
+    // The quest went to its step, but the screen has not drawn the target yet.
+    expect(ui("tutorial.coach")).not.toBeNull();
+    expect(ui("late.far")).toBeNull();
+    expect(contentEl().scrollTop).toBe(0);
+    fireEvent.click(ui("late.toggle")!);
+    await tick();
+    // 1500 − 120 (the content's top) + 36 − 600 + 20: its bottom 20 px above the content's.
+    expect(contentEl().scrollTop).toBe(836);
+    // The user scrolls back up; the screen draws the target again (new data): no pull.
+    contentEl().scrollTop = 0;
+    fireEvent.click(ui("late.toggle")!);
+    await tick();
+    expect(ui("late.far")).toBeNull();
+    fireEvent.click(ui("late.toggle")!);
+    await tick();
+    await tick();
+    expect(ui("late.far")).not.toBeNull();
+    expect(contentEl().scrollTop).toBe(0);
+  });
+
+  it("leaves a target that appears already in view where it is", async () => {
+    renderWith(<LateHarness target="late.near" />);
+    await tick();
+    contentEl().scrollTop = 40;
+    fireEvent.click(ui("late.toggle")!);
+    await tick();
+    expect(ui("late.near")).not.toBeNull();
+    expect(contentEl().scrollTop).toBe(40);
   });
 });

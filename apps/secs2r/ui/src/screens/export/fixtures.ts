@@ -1,5 +1,6 @@
 // Export views for every state the specimens and tests draw: the sample
-// 7.1.4 room (src/ipc/fixtures.ts) with two subs, nine positions measured.
+// 7.1.4 room (src/ipc/fixtures.ts) with two subs, nine positions measured,
+// and the same room without subs for the filter formats' scope.
 import type { FrameModel } from "../../app/model";
 import type { IpcError } from "../../ipc/bindings/IpcError";
 import type { MimoPath } from "../../ipc/bindings/MimoPath";
@@ -90,6 +91,63 @@ export const exportDone: ExportView = {
 
 export const exportFailed: ExportView = { ...exportReady, runs: { camilla_dsp: { status: "failed", error: exportError } } };
 
+/** The sample result without its subs: RC alone, so every filter format can carry it. */
+const rcOnlySummary = { ...calibrationSummary, chain: { ...calibrationSummary.chain, subs: [] } };
+
+/** No subs, MIMO off: all three filter formats are on. */
+export const exportRcOnly: ExportView = {
+  ...exportReady,
+  results: { calibration: rcOnlySummary, mimo: null },
+  settings: { mode: "mixed", ultra_ms: 200, mimo_on: false },
+};
+
+/** No subs, the mains supporting their neighbours: MIMO goes in, so the text and Equalizer APO cannot carry it. */
+export const exportMimoNoSubs: ExportView = {
+  ...exportRcOnly,
+  results: {
+    calibration: rcOnlySummary,
+    mimo: {
+      ...exportMimo,
+      support_count: SAMPLE_MAINS.length * 2,
+      paths: {
+        fsiso: 150,
+        paths: SAMPLE_MAINS.flatMap((input, i) =>
+          [1, SAMPLE_MAINS.length - 1].map((step, j) => ({
+            input,
+            support: SAMPLE_MAINS[(i + step) % SAMPLE_MAINS.length]!,
+            filter: { Iir: { gain_db: -8 - j * 2, delay_ms: 3.5 + i * 0.2, polarity: 1, peq: [[64 + j * 8, 3, -2]], allpass: [] } },
+            low_hz: 30,
+            delay_ms: 2.1 + i * 0.1,
+          })),
+        ),
+      },
+    },
+  },
+  settings: { mode: "mixed", ultra_ms: 200, mimo_on: true },
+};
+
+const EQAPO = "D:/Audio/거실 보정/SECS_eqapo_RC_BA_mixed_20261014-142233";
+
+/** Subs, no MIMO: the Equalizer APO configuration was saved (the files as the service lists them: config.txt first). */
+export const exportEqapoDone: ExportView = {
+  ...exportReady,
+  results: { calibration: calibrationSummary, mimo: null },
+  settings: { mode: "mixed", ultra_ms: 200, mimo_on: false },
+  folder: { folder: "D:/Audio/거실 보정", stored: true },
+  runs: {
+    equalizer_apo: {
+      status: "done",
+      folder: EQAPO,
+      files: [
+        `${EQAPO}/config.txt`,
+        `${EQAPO}/secs_mixed/secs_mixed.txt`,
+        `${EQAPO}/EqAPO 적용 방법.txt`,
+        ...SAMPLE_MAINS.map((role) => `${EQAPO}/secs_mixed/secs_mixed_${role}_fir.wav`),
+      ],
+    },
+  },
+};
+
 /** Fewer than three positions: MIMO is left out and the mdat folder says RC_BA. */
 export const exportNoMimo: ExportView = { ...exportReady, positions: 1, results: { calibration: calibrationSummary, mimo: null }, settings: { mode: "linear", ultra_ms: 200, mimo_on: false } };
 
@@ -106,12 +164,14 @@ export function exportFrame(view: ExportView, fileName = "거실 7.1.4.secs"): F
   const result = view.results.calibration;
   const calibration = view.computing ? "computing" : !result ? "none" : result.stale ? "stale" : "done";
   const total = view.positions >= 9 ? 9 : view.positions;
+  // The room the result came from: the sample's two subs, or none for the RC-only results.
+  const subs = result ? result.chain.subs.length : SAMPLE_SUBS.length;
   return {
     current: "export",
     project: {
-      preset: "7.1.4",
-      subCount: 2,
-      outputs: 13,
+      preset: subs > 0 ? "7.1.4" : "7.0.4",
+      subCount: subs,
+      outputs: SAMPLE_MAINS.length + subs,
       positionsDone: view.positions,
       positionsTotal: total,
       calibration,

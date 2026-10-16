@@ -1,5 +1,6 @@
 // 내보내기 in each state, 1280×800 through FrameBox, plus the densest state
-// at 1024×700.
+// at 1024×700. The filter formats' scope (text: RC only; Equalizer APO: RC
+// and BA) shows on the results with subs, with MIMO, and with RC alone.
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { PrefsScope, usePrefs } from "../../app/prefs";
 import { initialJobs, type JobsState } from "../../app/jobs/jobStore";
@@ -11,10 +12,13 @@ import {
   exportComputingFirst,
   exportFrame,
   exportDone,
+  exportEqapoDone,
   exportExporting,
   exportFailed,
+  exportMimoNoSubs,
   exportNoMimo,
   exportNoResult,
+  exportRcOnly,
   exportReady,
   exportStale,
   exportTutorial,
@@ -35,7 +39,6 @@ const exportHistory = replay([
   { type: "event", at: T0 + 3000, event: { event: "finished", job: 12, status: "succeeded", result: null, error: null } },
 ]);
 
-/** Gallery: shows the bottom of the step's content (where 고급 opens). */
 /** Draws `from`, then `to`, the way a run ends in the app (the screen brings the new outcome into view). */
 function AfterRun({ from, to }: { from: ExportView; to: ExportView }) {
   const [view, setView] = useState(from);
@@ -43,12 +46,15 @@ function AfterRun({ from, to }: { from: ExportView; to: ExportView }) {
   return <ExportSpecimen view={view} />;
 }
 
-function ScrolledToEnd({ children }: { children: ReactNode }) {
+/** Gallery: scrolls the step's content to its end (`"end"`, where 고급 opens) or to the element with the `data-ui` `to`, as a user scrolling there would. */
+function Scrolled({ to, children }: { to: string; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
     const content = ref.current?.closest<HTMLElement>('[data-ui="frame.content"]');
-    if (content) content.scrollTop = content.scrollHeight;
-  }, []);
+    if (!content) return;
+    const el = to === "end" ? null : ref.current?.querySelector<HTMLElement>(`[data-ui="${to}"]`);
+    content.scrollTop = el ? el.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop - 16 : content.scrollHeight;
+  }, [to]);
   return <div ref={ref}>{children}</div>;
 }
 
@@ -63,8 +69,8 @@ export function ExportSpecimen({
   view: ExportView;
   jobs?: JobsState;
   initialAdvanced?: boolean;
-  /** Draw the content scrolled to its end. */
-  scrolled?: boolean;
+  /** Draw the content scrolled to its end, or to the element with this `data-ui`. */
+  scrolled?: true | string;
   fileName?: string;
   children?: ReactNode;
 }) {
@@ -73,7 +79,7 @@ export function ExportSpecimen({
   return (
     <>
       <FrameBox frame={exportFrame(view, fileName)} jobs={jobs} header={exportHeader(view, noopExportActions, t)}>
-        {scrolled ? <ScrolledToEnd>{screen}</ScrolledToEnd> : screen}
+        {scrolled ? <Scrolled to={scrolled === true ? "end" : scrolled}>{screen}</Scrolled> : screen}
       </FrameBox>
       {children}
     </>
@@ -97,6 +103,16 @@ export const exportSpecimens: SpecimenDef[] = [
   frame("screen.export.computing", "Export · first correction computing", () => <ExportSpecimen view={exportComputingFirst} jobs={calibrateJob} />),
   frame("screen.export.stale", "Export · stale result (settings changed)", () => <ExportSpecimen view={exportStale} />),
   frame("screen.export.ready", "Export · ready, MIMO included", () => <ExportSpecimen view={exportReady} />),
+  frame("screen.export.filters", "Export · subs and MIMO: the text and Equalizer APO rows say why they are off", () => (
+    <ExportSpecimen view={exportReady} scrolled="export.files" />
+  )),
+  frame("screen.export.rc-only", "Export · RC only (no subs, no MIMO): all three filter formats on", () => <ExportSpecimen view={exportRcOnly} scrolled="export.files" />),
+  frame("screen.export.mimo", "Export · MIMO included, no subs: the text and Equalizer APO rows blocked by MIMO", () => (
+    <ExportSpecimen view={exportMimoNoSubs} scrolled="export.files" />
+  )),
+  frame("screen.export.eqapo-done", "Export · Equalizer APO configuration saved, with where to copy it", () => (
+    <ExportSpecimen view={exportEqapoDone} jobs={exportHistory} scrolled="export.kind.equalizer_apo" />
+  )),
   frame("screen.export.exporting", "Export · REW mdat being saved", () => <ExportSpecimen view={exportExporting} jobs={exportJob} />),
   frame("screen.export.done", "Export · done, files written", () => <ExportSpecimen view={exportDone} jobs={exportHistory} fileName="거실 7.1.4.secs" />),
   frame("screen.export.failed", "Export · CamillaDSP export failed", () => <ExportSpecimen view={exportFailed} />),

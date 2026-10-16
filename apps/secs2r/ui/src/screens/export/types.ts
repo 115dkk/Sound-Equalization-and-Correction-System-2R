@@ -3,14 +3,19 @@
 // of step_calibration.py (staged mdat, U3).
 import type { StepState } from "../../app/model";
 import type { CalibrationSettings } from "../../ipc/bindings/CalibrationSettings";
+import type { ExportBlock } from "../../ipc/bindings/ExportBlock";
 import type { ExportFolderResult } from "../../ipc/bindings/ExportFolderResult";
 import type { ExportKind } from "../../ipc/bindings/ExportKind";
 import type { IpcError } from "../../ipc/bindings/IpcError";
 import type { Notice } from "../../ipc/bindings/Notice";
 import type { ResultsSummary } from "../../ipc/bindings/ResultsSummary";
 
-/** The order the export kinds appear in: the primary first, the staged mdat under 고급. */
-export const EXPORT_KINDS = ["camilla_dsp", "before_after_mdat", "staged_mdat"] as const satisfies readonly ExportKind[];
+/**
+ * The order the export kinds appear in: the filters for the DSP (the
+ * primary's CamillaDSP first, then the filter text and Equalizer APO), then
+ * the responses for REW (the staged mdat under 고급).
+ */
+export const EXPORT_KINDS = ["camilla_dsp", "filter_text", "equalizer_apo", "before_after_mdat", "staged_mdat"] as const satisfies readonly ExportKind[];
 
 /** Upstream `MIMO_MIN_POSITIONS`: MIMO needs three measured positions. */
 export const MIMO_MIN_POSITIONS = 3;
@@ -78,6 +83,35 @@ export function mimoInclusion(view: ExportView): MimoInclusion {
   if (mimo.stale) return { included: false, reason: "stale" };
   const channels = new Set(mimo.paths.paths.map((path) => path.input)).size;
   return { included: true, kind: mimo.kind, supports: mimo.support_count, channels };
+}
+
+/**
+ * Why `kind` cannot carry the current result, or null when it can (and when
+ * there is no result). Follows the service's `filter_export_block`
+ * (crates/secs-types/src/ipc.rs, upstream `calibration.filter_export_block`):
+ * the filter text carries RC only, so subs block it first and MIMO next;
+ * Equalizer APO carries RC and BA, so MIMO blocks it; CamillaDSP and the
+ * mdat exports carry everything. MIMO counts only when it goes into the
+ * export (`mimoInclusion`).
+ */
+export function exportBlock(view: ExportView, kind: ExportKind): ExportBlock | null {
+  const result = view.results.calibration;
+  if (!result) return null;
+  const subs = result.chain.subs.length > 0;
+  const mimo = mimoInclusion(view).included;
+  if (kind === "filter_text" && subs) return "subs";
+  if ((kind === "filter_text" || kind === "equalizer_apo") && mimo) return "mimo";
+  return null;
+}
+
+/**
+ * The mode in the filter files' names (upstream `_filter_plan`): the mode,
+ * and for 초고지연 its limit in ms as Python's `:g` writes it (`ultra200`,
+ * `ultra62.5`; six significant digits cover the 30–200 ms the limit takes).
+ * Folder names keep the bare mode (`SECS_<kind>_<what>_ultra_…`).
+ */
+export function filterModeName(settings: Pick<CalibrationSettings, "mode" | "ultra_ms">): string {
+  return settings.mode === "ultra" ? `ultra${Number(settings.ultra_ms.toPrecision(6))}` : settings.mode;
 }
 
 /**
