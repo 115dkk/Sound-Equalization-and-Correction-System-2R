@@ -16,6 +16,7 @@ secs-camilla = { path = "../secs-camilla" }
 secs-compute = { path = "../secs-compute" }
 secs-engine = { path = "../secs-engine" }
 secs-export = { path = "../secs-export" }
+secs-filters.workspace = true
 secs-mdat = { path = "../secs-mdat" }
 secs-project = { path = "../secs-project" }
 secs-audio = { path = "../secs-audio" }

@@ -3953,6 +3953,7 @@ dependencies = [
  "secs-compute",
  "secs-engine",
  "secs-export",
+ "secs-filters",
  "secs-jos",
  "secs-mdat",
  "secs-oracle",

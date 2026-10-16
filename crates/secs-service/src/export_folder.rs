@@ -84,6 +84,16 @@ pub fn camilladsp_folder(base: &Path, mimo: bool, mode: &str, now: LocalTime) ->
     timestamped_folder(base, "camilla", mimo, mode, now).join("camilladsp")
 }
 
+/// Derives the timestamped filter-text destination below an export base.
+pub fn text_folder(base: &Path, mimo: bool, mode: &str, now: LocalTime) -> PathBuf {
+    timestamped_folder(base, "text", mimo, mode, now)
+}
+
+/// Derives the timestamped Equalizer APO destination below an export base.
+pub fn eqapo_folder(base: &Path, mimo: bool, mode: &str, now: LocalTime) -> PathBuf {
+    timestamped_folder(base, "eqapo", mimo, mode, now)
+}
+
 fn timestamped_folder(base: &Path, kind: &str, mimo: bool, mode: &str, now: LocalTime) -> PathBuf {
     let what = if mimo { "RC_BA_MIMO" } else { "RC_BA" };
     base.join(format!("SECS_{kind}_{what}_{mode}_{}", now.stamp()))

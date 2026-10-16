@@ -94,6 +94,27 @@ fn bootstrap_and_check_are_json_lines() {
 }
 
 #[test]
+fn export_accepts_filter_kinds() {
+    for kind in ["filter-text", "equalizer-apo"] {
+        let root = root(kind);
+        let missing = root.join("missing.secs");
+        let output = root.join("export");
+        let (result, _) = run(&[
+            "export",
+            &missing.to_string_lossy(),
+            "--kind",
+            kind,
+            "--out",
+            &output.to_string_lossy(),
+        ]);
+        assert_eq!(result.status.code(), Some(1));
+        assert!(!String::from_utf8_lossy(&result.stderr).contains("invalid value"));
+        assert_eq!(lines(&result)[0]["reply"]["error"]["code"], "project_io");
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
 fn deterministic_run_and_sample_flow() {
     let root = root("deterministic");
     let run_root = root.join("run");
@@ -106,7 +127,13 @@ fn deterministic_run_and_sample_flow() {
         "--fill",
         "sample",
     ]);
-    assert_success(&first_run);
+    let first_lines = assert_success(&first_run);
+    assert!(first_lines.iter().any(|value| {
+        value["reply"]["data"]["skipped"] == "filter-text"
+            && value["reply"]["data"]["reason"] == "subs"
+    }));
+    assert!(!run_root.join("export/filter-text").exists());
+    assert!(run_root.join("export/equalizer-apo").exists());
     let expected = files(&run_root);
     fs::remove_dir_all(&run_root).unwrap();
     let (second_run, second_time) = run(&[

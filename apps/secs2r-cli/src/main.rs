@@ -19,7 +19,7 @@ struct Cli {
     /// Omit job-event lines while retaining every reply.
     #[arg(long, global = true)]
     quiet: bool,
-    /// Use a UUID counter beginning at one for reproducible output.
+    /// Use a fixed clock and UUID counter beginning at one for reproducible output.
     #[arg(long, global = true)]
     deterministic_uuids: bool,
     #[command(subcommand)]
@@ -128,6 +128,8 @@ enum ExportChoice {
     CamillaDsp,
     StagedMdat,
     BeforeAfterMdat,
+    FilterText,
+    EqualizerApo,
 }
 impl From<ExportChoice> for ExportKind {
     fn from(value: ExportChoice) -> Self {
@@ -135,6 +137,8 @@ impl From<ExportChoice> for ExportKind {
             ExportChoice::CamillaDsp => Self::CamillaDsp,
             ExportChoice::StagedMdat => Self::StagedMdat,
             ExportChoice::BeforeAfterMdat => Self::BeforeAfterMdat,
+            ExportChoice::FilterText => Self::FilterText,
+            ExportChoice::EqualizerApo => Self::EqualizerApo,
         }
     }
 }
@@ -310,6 +314,14 @@ fn deps(deterministic: bool) -> Deps {
             next = next.wrapping_add(1);
             Ok(value)
         })));
+        deps.clock = Arc::new(|| LocalTime {
+            year: 2024,
+            month: 1,
+            day: 2,
+            hour: 3,
+            minute: 4,
+            second: 5,
+        });
     }
     deps
 }
@@ -493,12 +505,46 @@ fn full_run(runner: &mut Runner, out: &Path, project: Option<&Path>, fill: FillC
     if mimo {
         runner.call(Request::Mimo(MimoParams { settings: None }));
     }
+    let results = match runner.call(Request::Results) {
+        Some(Response::Results(results)) => Some(results),
+        _ => None,
+    };
+    let has_subs = results
+        .as_ref()
+        .and_then(|results| results.calibration.as_ref())
+        .is_some_and(|calibration| !calibration.chain.subs.is_empty());
+    let has_mimo = results
+        .as_ref()
+        .and_then(|results| results.mimo.as_ref())
+        .is_some_and(|mimo| !mimo.stale && !mimo.paths.paths.is_empty());
     for (kind, folder) in [
         (ExportKind::CamillaDsp, "camilla-dsp"),
         (ExportKind::StagedMdat, "staged-mdat"),
         (ExportKind::BeforeAfterMdat, "before-after-mdat"),
+        (ExportKind::FilterText, "filter-text"),
+        (ExportKind::EqualizerApo, "equalizer-apo"),
     ] {
+        if let Some(block) = secs_types::ipc::filter_export_block(kind, has_subs, has_mimo) {
+            print_json(&serde_json::json!({"reply": {
+                "ok": true,
+                "data": {
+                    "skipped": export_kind_name(kind),
+                    "reason": block.name(),
+                },
+            }}));
+            continue;
+        }
         runner.export(kind, &out.join("export").join(folder));
+    }
+}
+
+fn export_kind_name(kind: ExportKind) -> &'static str {
+    match kind {
+        ExportKind::CamillaDsp => "camilla-dsp",
+        ExportKind::StagedMdat => "staged-mdat",
+        ExportKind::BeforeAfterMdat => "before-after-mdat",
+        ExportKind::FilterText => "filter-text",
+        ExportKind::EqualizerApo => "equalizer-apo",
     }
 }
 

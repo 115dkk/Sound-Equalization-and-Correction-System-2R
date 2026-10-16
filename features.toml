@@ -680,7 +680,8 @@ id = "service.exports"
 kind = "service"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::project_session_create_open_save_and_save_as", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::stale_calibration_exports_with_flag_and_cache_survives_reopen"]
+tests = ["secs-service::project_session_create_open_save_and_save_as", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::filter_text_export_matches_direct_and_reopened_bytes_without_redesign", "secs-service::exports_after_reopening_match_pre_close_bytes", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::stale_calibration_exports_with_flag_and_cache_survives_reopen"]
+note = "Exports include CamillaDSP, staged and before/after mdat, filter text, and Equalizer APO; filter formats enforce subs/MIMO scope synchronously and reuse cached designs after reopening."
 
 [[feature]]
 id = "service.host"
@@ -880,7 +881,8 @@ id = "ipc.export"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration"]
+note = "Export IPC covers CamillaDSP, mdat, filter text, and Equalizer APO, including typed export_scope reasons."
 
 [[feature]]
 id = "ipc.job_cancel"

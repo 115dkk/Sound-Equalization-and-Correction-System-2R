@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use secs_service::{Deps, EventSink, NoEvents, Service, VERSION};
+use secs_service::{Deps, EventSink, LocalTime, NoEvents, Service, VERSION};
 use secs_types::ipc::{Envelope, ErrorCode, JobEvent, ProjectNewParams, Request};
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -33,6 +33,14 @@ fn service() -> Service {
 fn deterministic_service() -> Service {
     Service::new(Deps {
         uuid: Arc::new(Mutex::new(Box::new(|| Ok(0x1234_5678_9abc_def0)))),
+        clock: Arc::new(|| LocalTime {
+            year: 2024,
+            month: 1,
+            day: 2,
+            hour: 3,
+            minute: 4,
+            second: 5,
+        }),
         ..Deps::default()
     })
 }
@@ -360,6 +368,19 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
         results.calibration.as_ref().unwrap().chain,
         direct.design.chain
     );
+    let blocked_folder = root.join("blocked-filter-text-subs");
+    let Envelope::Err(error) = service.call(
+        Request::Export(ExportParams {
+            kind: ExportKind::FilterText,
+            folder: blocked_folder.to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("filter text with subs must fail synchronously");
+    };
+    assert_eq!(error.code, ErrorCode::ExportScope);
+    assert_eq!(error.params.get("reason").map(String::as_str), Some("subs"));
+    assert!(!blocked_folder.exists());
 
     let xo_events = Arc::new(Events::default());
     let Response::RecommendXo(xo_started) =
@@ -399,6 +420,7 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
         ExportKind::CamillaDsp,
         ExportKind::StagedMdat,
         ExportKind::BeforeAfterMdat,
+        ExportKind::EqualizerApo,
     ] {
         let folder = root.join(format!("export-{kind:?}"));
         let events = Arc::new(Events::default());
@@ -474,9 +496,156 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                     fs::read(direct_file).unwrap()
                 );
             }
-            ExportKind::FilterText | ExportKind::EqualizerApo => unreachable!(),
+            ExportKind::EqualizerApo => {
+                let snapshot = snapshot_relative_files(&folder, &export.files);
+                let direct_folder = folder.clone();
+                let export_run = secs_export::ExportRun {
+                    design: &direct.design,
+                    measurements: &direct.measurements,
+                    config: &direct.config,
+                    settings: &settings,
+                };
+                let rc_pieces = secs_export::rc_pieces(&export_run);
+                let label = settings.label();
+                let filter_run = secs_filters::FilterRun {
+                    chain: &direct.design.chain,
+                    mimo: None,
+                    mode: match settings.mode {
+                        secs_types::calibration::Mode::Zero => "zero",
+                        secs_types::calibration::Mode::Mixed => "mixed",
+                        secs_types::calibration::Mode::Linear => "linear",
+                        secs_types::calibration::Mode::Ultra => "ultra",
+                    },
+                    ultra_ms: settings.ultra_ms,
+                    label: &label,
+                    latency_ms: direct.design.chain.latency_ms,
+                    rc_hi_hz: direct.design.rc_hi,
+                    rc_pieces: &rc_pieces,
+                    stamp: "2024-01-02 03:04",
+                };
+                let direct_files = secs_filters::export_eqapo(&filter_run, &direct_folder).unwrap();
+                let mut direct_snapshot: Vec<_> = direct_files
+                    .iter()
+                    .map(|file| {
+                        (
+                            file.strip_prefix(&direct_folder).unwrap().to_owned(),
+                            fs::read(file).unwrap(),
+                        )
+                    })
+                    .collect();
+                direct_snapshot.sort_by(|left, right| left.0.cmp(&right.0));
+                assert_eq!(snapshot, direct_snapshot);
+            }
+            ExportKind::FilterText => unreachable!(),
         }
     }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn filter_text_export_matches_direct_and_reopened_bytes_without_redesign() {
+    let root = temp_root("filter-text");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("stereo.secs");
+    let service = deterministic_service();
+    call_ok(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: path.to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    call_ok(
+        &service,
+        Request::MeasureConfigure(secs_types::ipc::MeasureConfigureParams {
+            method: "mock".into(),
+            ..Default::default()
+        }),
+        Arc::new(NoEvents),
+    );
+    let measure_events = Arc::new(Events::default());
+    let Response::MeasurePosition(measure) = call_ok(
+        &service,
+        Request::MeasurePosition(secs_types::ipc::MeasurePositionParams { position: 1 }),
+        measure_events.clone(),
+    ) else {
+        panic!("measurement must start");
+    };
+    finished_result(measure_events.wait(measure.job, Duration::from_secs(120)));
+    let settings = CalibrationSettings::default();
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&service, calibration_events.clone(), settings.clone());
+    let JobResult::Calibration(results) =
+        finished_result(calibration_events.wait(calibration, Duration::from_secs(120)))
+    else {
+        panic!("calibration result must be returned");
+    };
+    let summary = results.calibration.unwrap();
+    assert!(summary.chain.subs.is_empty());
+
+    let folder = root.join("filter-text-export");
+    let live = export_and_wait(
+        &service,
+        ExportKind::FilterText,
+        &folder,
+        Arc::new(Events::default()),
+    );
+    let live_snapshot = snapshot_relative_files(&folder, &live.files);
+    let rc_note = summary
+        .notes
+        .iter()
+        .find(|notice| notice.code == "rc_limit")
+        .unwrap();
+    let rc_hi_hz = rc_note.params["hz"].parse().unwrap();
+    let rc_auto = rc_note.params["auto"].parse().unwrap();
+    let schroeder_hz = rc_note
+        .params
+        .get("schroeder_hz")
+        .map(|value| value.parse().unwrap());
+    let rc_pieces = secs_export::rc_pieces_from_values(
+        rc_hi_hz,
+        rc_auto,
+        schroeder_hz,
+        settings.room_volume_m3,
+        false,
+    );
+    let label = settings.label();
+    let direct_run = secs_filters::FilterRun {
+        chain: &summary.chain,
+        mimo: None,
+        mode: "mixed",
+        ultra_ms: settings.ultra_ms,
+        label: &label,
+        latency_ms: summary.latency_ms,
+        rc_hi_hz,
+        rc_pieces: &rc_pieces,
+        stamp: "2024-01-02 03:04",
+    };
+    let direct_files = secs_filters::export_filter_text(&direct_run, &folder).unwrap();
+    compare_snapshot(&folder, &live_snapshot, &direct_files);
+
+    let reopened = deterministic_service();
+    open(&reopened, &path);
+    let reopened_events = Arc::new(Events::default());
+    let cached = export_and_wait(
+        &reopened,
+        ExportKind::FilterText,
+        &folder,
+        reopened_events.clone(),
+    );
+    assert_eq!(
+        live_snapshot,
+        snapshot_relative_files(&folder, &cached.files)
+    );
+    assert!(
+        !lock(&reopened_events.values).iter().any(|event| {
+            matches!(event, JobEvent::Progress { stage, .. } if stage == "design")
+        })
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -491,7 +660,11 @@ fn exports_after_reopening_match_pre_close_bytes() {
     let calibration = start_calibration(&running, calibration_events.clone(), settings);
     finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
 
-    for kind in [ExportKind::CamillaDsp, ExportKind::StagedMdat] {
+    for kind in [
+        ExportKind::CamillaDsp,
+        ExportKind::StagedMdat,
+        ExportKind::EqualizerApo,
+    ] {
         let folder = root.join(format!("reopen-{kind:?}"));
         let before_events = Arc::new(Events::default());
         let before = export_and_wait(&running, kind, &folder, before_events);
@@ -696,6 +869,25 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
     .unwrap();
     assert_eq!(summary.paths, direct_mimo.paths);
     assert!(!summary.paths.paths.is_empty());
+
+    for (kind, reason) in [
+        (ExportKind::FilterText, "subs"),
+        (ExportKind::EqualizerApo, "mimo"),
+    ] {
+        let blocked_folder = root.join(format!("blocked-mimo-{kind:?}"));
+        let Envelope::Err(error) = service.call(
+            Request::Export(ExportParams {
+                kind,
+                folder: blocked_folder.to_string_lossy().into_owned(),
+            }),
+            Arc::new(NoEvents),
+        ) else {
+            panic!("MIMO filter export must fail synchronously");
+        };
+        assert_eq!(error.code, ErrorCode::ExportScope);
+        assert_eq!(error.params.get("reason").map(String::as_str), Some(reason));
+        assert!(!blocked_folder.exists());
+    }
 
     // The same live/cached result must produce identical explicit-folder bytes.
     let folder = root.join("explicit-mimo");
