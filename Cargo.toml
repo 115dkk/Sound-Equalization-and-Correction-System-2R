@@ -32,6 +32,9 @@ secs-oracle = { path = "crates/secs-oracle" }
 secs-audio = { path = "crates/secs-audio" }
 secs-rew = { path = "crates/secs-rew" }
 secs-compute = { path = "crates/secs-compute" }
+secs-dsp = { path = "crates/secs-dsp" }
+secs-camilla = { path = "crates/secs-camilla" }
+secs-filters = { path = "crates/secs-filters" }
 
 serde = { version = "1.0.229", features = ["derive"] }
 # preserve_order: .secs files keep the key order SECS 2 wrote (docs/adr/0004).

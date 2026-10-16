@@ -1,0 +1,63 @@
+# SECS 2 calibration - Equalizer APO config (generated)
+# Copy everything in this folder into the Equalizer APO config folder
+# (C:\Program Files\EqualizerAPO\config) - keep the old config.txt somewhere first.
+# Device format: 48000 Hz (the FIR wav files are 48 kHz). Speaker setup: enough channels for the numbers below.
+#
+# Default channel numbers (1 = first channel of the device, Windows order FL FR FC LFE BL BR SL SR ...):
+#   L      input  1   output  1
+#   Tml    input  3   output  3
+#   LFE    input  2
+#   SW1               output  2
+#   SW2               output  4
+#   SW3               output  5
+# Latency of the filters: 12.2 ms (video: delay the picture or set the player audio offset).
+
+# ==== EDIT ONLY THESE TWO LINES: device channel number of each SECS input / output (0 = not used) ====
+Eval: inL = 1; inTml = 3; inLFE = 2
+Eval: outL = 1; outTml = 3; outSW1 = 2; outSW2 = 4; outSW3 = 5
+# ==== do not edit below ====
+
+# Headroom for the largest boost of the correction (avoids clipping).
+Channel: all
+Preamp: 0.0 dB
+
+# Inputs: start silent, then copy each device channel that exists (a missing channel stays silent).
+Copy: VML=0.0 VMTML=0.0 VLFE=0.0
+If: inL >= 1 && inL <= inputChannelCount
+  Copy: VML=`inL`
+EndIf:
+If: inTml >= 1 && inTml <= inputChannelCount
+  Copy: VMTML=`inTml`
+EndIf:
+If: inLFE >= 1 && inLFE <= inputChannelCount
+  Copy: VLFE=`inLFE`
+EndIf:
+
+Include: secs_mixed\secs_mixed.txt
+
+# Outputs: clear the input channels first (no raw signal leaks), then write each SECS output.
+If: inL >= 1 && inL <= outputChannelCount
+  Copy: `inL`=0.0
+EndIf:
+If: inTml >= 1 && inTml <= outputChannelCount
+  Copy: `inTml`=0.0
+EndIf:
+If: inLFE >= 1 && inLFE <= outputChannelCount
+  Copy: `inLFE`=0.0
+EndIf:
+If: outL >= 1 && outL <= outputChannelCount
+  Copy: `outL`=VML
+EndIf:
+If: outTml >= 1 && outTml <= outputChannelCount
+  Copy: `outTml`=VMTML
+EndIf:
+If: outSW1 >= 1 && outSW1 <= outputChannelCount
+  Copy: `outSW1`=VBSW1
+EndIf:
+If: outSW2 >= 1 && outSW2 <= outputChannelCount
+  Copy: `outSW2`=VBSW2
+EndIf:
+If: outSW3 >= 1 && outSW3 <= outputChannelCount
+  Copy: `outSW3`=VBSW3
+EndIf:
+Channel: all

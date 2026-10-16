@@ -122,10 +122,30 @@ class Family:
         self.written[filename] = len(data)
 
     def save(self, case: str, inputs: Any, outputs: Any, meta: dict | None = None) -> None:
-        """One fixture: {"inputs", "outputs", "meta"} as compact JSON."""
+        """One fixture: {"inputs", "outputs", "meta"} as compact JSON.
+
+        A fixture that differs from the file on disk only in ``meta.oracle``
+        keeps that file: ``meta.oracle`` names the upstream release that first
+        produced these values, and a re-export after an upstream merge
+        rewrites only what the new release changed (oracle/README.md).
+        """
         payload = plain({"inputs": inputs, "outputs": outputs, "meta": {**META, **(meta or {})}})
-        text = json.dumps(payload, allow_nan=False, ensure_ascii=False, separators=(",", ":")) + "\n"
-        self._write(f"{case}.json", text.encode("utf-8"))
+        filename = f"{case}.json"
+        path = self.dir / filename
+        if path.exists() and filename not in self.written:
+            try:
+                before = json.loads(path.read_bytes())["meta"]["oracle"]
+            except (ValueError, KeyError, TypeError):
+                before = None
+            if isinstance(before, str) and before != payload["meta"]["oracle"]:
+                kept = {**payload, "meta": {**payload["meta"], "oracle": before}}
+                if path.read_bytes() == self._text(kept):
+                    payload = kept
+        self._write(filename, self._text(payload))
+
+    @staticmethod
+    def _text(payload: Any) -> bytes:
+        return (json.dumps(payload, allow_nan=False, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
 
     # -- sidecars ---------------------------------------------------------
     def f64(self, key: str, values: Any) -> Any:

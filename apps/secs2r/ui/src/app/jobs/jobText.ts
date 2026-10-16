@@ -40,6 +40,7 @@ export const ERROR_TEXT: Record<ErrorCode, { cause: MessageKey; next: MessageKey
   cancelled: { cause: "error.cancelled", next: "error.cancelled.next" },
   engine_input: { cause: "error.engine_input", next: "error.engine_input.next" },
   export_failed: { cause: "error.export_failed", next: "error.export_failed.next" },
+  export_scope: { cause: "error.export_scope", next: "error.export_scope.next" },
   stale_inputs: { cause: "error.stale_inputs", next: "error.stale_inputs.next" },
   device_unavailable: { cause: "error.device_unavailable", next: "error.device_unavailable.next" },
   share_mode_refused: { cause: "error.share_mode_refused", next: "error.share_mode_refused.next" },

@@ -3,4 +3,4 @@
 /**
  * The supported export bundle.
  */
-export type ExportKind = "camilla_dsp" | "staged_mdat" | "before_after_mdat";
+export type ExportKind = "camilla_dsp" | "staged_mdat" | "before_after_mdat" | "filter_text" | "equalizer_apo";

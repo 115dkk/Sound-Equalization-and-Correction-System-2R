@@ -92,6 +92,9 @@ def _project(case, positions: int):
 def _page(project, irs, tmp_path):
     from secs.wizard.step_calibration import StepCalibration
 
+    # 이 파일의 MIMO 시험은 IIR 서포트(가짜 `design_mimo_iir`)를 본다 — 10-15 부터 새 프로젝트 기본은 FIR
+    # (`test_export_filters.test_mimo_default_is_fir_for_new_projects` · FIR 경로는 test_calibration_mimo_fir_1012).
+    project.extra.setdefault('calibration', {}).setdefault('mimo_fir', False)
     page = StepCalibration(project)
     page.set_context(tmp_path / 'c.secs', lambda: irs)
     # 첫 [계산] 은 XO 추천부터 돈다(10-09) — 이 파일의 테스트는 보정 계산만 보므로 '추천을 이미 했다' 로 둔다

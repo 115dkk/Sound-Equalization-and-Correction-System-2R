@@ -6,7 +6,10 @@ mod support;
 fn main() {
     let mut args = std::env::args_os().skip(1).peekable();
     // `--mimo-on` stores the case's settings with MIMO enabled, so the CLI's
-    // `run --mimo` computes MIMO with the case's own settings otherwise.
+    // `run --mimo` computes MIMO with the case's own settings otherwise. The
+    // supports stay IIR: ci.yml's integrity job checks that the parallel IIR
+    // fits give the same bytes at every thread count, and new projects start
+    // with FIR supports since upstream 1.3.0.
     let mimo_on = args.next_if(|value| value == "--mimo-on").is_some();
     let name = args
         .next()
@@ -24,7 +27,10 @@ fn main() {
         std::fs::create_dir_all(parent).unwrap();
     }
     let (path, _) = if mimo_on {
-        support::write_with(&path, &name, |settings| settings.mimo_on = true)
+        support::write_with(&path, &name, |settings| {
+            settings.mimo_on = true;
+            settings.mimo_fir = false;
+        })
     } else {
         support::write(&path, &name)
     };

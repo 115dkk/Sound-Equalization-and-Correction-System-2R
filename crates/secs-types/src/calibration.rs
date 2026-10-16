@@ -120,7 +120,8 @@ impl Default for CalibrationSettings {
             fsiso: 150.0,
             mimo_low: None,
             mimo_max_supports: 0,
-            mimo_fir: false,
+            // Beta 1.3.0: MIMO supports start as FIR in a new project.
+            mimo_fir: true,
             xo: Vec::new(),
             xo_rec: Vec::new(),
             ultra_ms: 200.0,

@@ -3,6 +3,19 @@
 
 번호는 A.B.C 입니다. A = 이전 판과 호환되지 않는 변경, B = 기능 추가, C = 버그 수정.
 
+## SECS 2 Beta 1.3.0 — 2026-10-15
+
+내보내기
+
+- 내보내기 화면의 REW mdat 아래에 '필터 내보내기' 를 새로 만들었습니다: CamillaDSP · 텍스트 · EqAPO.
+- 텍스트로 내보내기: 채널마다 PEQ · FIR · 게인 · 딜레이 값을 표로(+ FIR wav). RC 만 적용한 결과에서 씁니다.
+- EqAPO 내보내기: Equalizer APO 설정째로 냅니다. config 폴더에 복사하고 입출력 번호만 맞추면 됩니다. RC · BA 까지 지원합니다.
+- CamillaDSP 는 RC · BA · MIMO 모두 지원합니다.
+
+MIMO
+
+- 새 프로젝트는 서포트 필터를 FIR 로 시작합니다([FIR 사용] 켜짐).
+
 ## SECS 2 Beta 1.2.0 — 2026-10-12
 
 MIMO

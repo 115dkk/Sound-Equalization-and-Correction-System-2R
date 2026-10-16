@@ -1,0 +1,419 @@
+# SECS 2 calibration filters for Equalizer APO (generated - do not edit).
+# Included by config.txt between the input Copy and the output Copy.
+# mode mixed, total latency 8.0 ms, RC upper 500 Hz; no MIMO
+
+# 1) input correction (PEQ -> FIR)
+Channel: VML
+Filter: ON PK Fc 107.81 Hz Gain 9.53 dB Q 3.6190
+Filter: ON PK Fc 238.30 Hz Gain 3.85 dB Q 11.0933
+Filter: ON PK Fc 454.97 Hz Gain -5.91 dB Q 5.5594
+Filter: ON PK Fc 285.07 Hz Gain -6.51 dB Q 19.9911
+Filter: ON PK Fc 392.02 Hz Gain 5.39 dB Q 11.6863
+Filter: ON PK Fc 221.51 Hz Gain -6.04 dB Q 13.0785
+Filter: ON PK Fc 100.80 Hz Gain -9.68 dB Q 6.5790
+Filter: ON PK Fc 151.42 Hz Gain 3.92 dB Q 8.1324
+Filter: ON PK Fc 156.64 Hz Gain -5.91 dB Q 13.6848
+Filter: ON PK Fc 311.29 Hz Gain -3.96 dB Q 16.8200
+Filter: ON PK Fc 174.49 Hz Gain 6.07 dB Q 9.7229
+Filter: ON PK Fc 184.61 Hz Gain -8.59 dB Q 8.1533
+Filter: ON PK Fc 268.42 Hz Gain 4.55 dB Q 5.6793
+Filter: ON PK Fc 429.38 Hz Gain 4.12 dB Q 19.9931
+Filter: ON PK Fc 192.59 Hz Gain 5.60 dB Q 11.0770
+Filter: ON PK Fc 226.66 Hz Gain 5.42 dB Q 13.0587
+Convolution: secs_mixed_L_fir.wav
+Channel: VMR
+Filter: ON PK Fc 108.53 Hz Gain 8.83 dB Q 5.1765
+Filter: ON PK Fc 441.57 Hz Gain -5.08 dB Q 9.3422
+Filter: ON PK Fc 326.13 Hz Gain -2.19 dB Q 20.0000
+Filter: ON PK Fc 143.78 Hz Gain 7.18 dB Q 7.5788
+Filter: ON PK Fc 138.87 Hz Gain -7.69 dB Q 12.1677
+Filter: ON PK Fc 101.14 Hz Gain -14.01 dB Q 6.6713
+Filter: ON PK Fc 383.20 Hz Gain 4.50 dB Q 10.3711
+Filter: ON PK Fc 100.36 Hz Gain 6.25 dB Q 5.8134
+Filter: ON PK Fc 242.85 Hz Gain 6.14 dB Q 9.7145
+Filter: ON PK Fc 233.70 Hz Gain -12.28 dB Q 16.4971
+Filter: ON PK Fc 230.18 Hz Gain 7.06 dB Q 11.8826
+Filter: ON PK Fc 288.95 Hz Gain -4.17 dB Q 3.1180
+Filter: ON PK Fc 271.73 Hz Gain 5.84 dB Q 11.7432
+Filter: ON PK Fc 259.06 Hz Gain -3.61 dB Q 20.0000
+Filter: ON PK Fc 62.78 Hz Gain 2.73 dB Q 3.5367
+Filter: ON PK Fc 189.22 Hz Gain 1.31 dB Q 3.1125
+Convolution: secs_mixed_R_fir.wav
+Channel: VMC
+Filter: ON PK Fc 110.26 Hz Gain 4.92 dB Q 4.9821
+Filter: ON PK Fc 365.37 Hz Gain -5.78 dB Q 14.4299
+Filter: ON PK Fc 196.90 Hz Gain 4.61 dB Q 9.2499
+Filter: ON PK Fc 115.13 Hz Gain -4.86 dB Q 10.2844
+Filter: ON PK Fc 113.63 Hz Gain 4.85 dB Q 5.7815
+Filter: ON PK Fc 271.54 Hz Gain 3.37 dB Q 13.6417
+Filter: ON PK Fc 104.95 Hz Gain -5.00 dB Q 10.0269
+Filter: ON PK Fc 228.49 Hz Gain -7.99 dB Q 10.5771
+Filter: ON PK Fc 236.53 Hz Gain 6.95 dB Q 11.9670
+Filter: ON PK Fc 97.37 Hz Gain 5.89 dB Q 5.9334
+Filter: ON PK Fc 91.69 Hz Gain -8.34 dB Q 7.8634
+Filter: ON PK Fc 339.69 Hz Gain -5.60 dB Q 19.9217
+Filter: ON PK Fc 400.12 Hz Gain 3.83 dB Q 19.9703
+Filter: ON PK Fc 414.49 Hz Gain -7.00 dB Q 12.7111
+Filter: ON PK Fc 435.69 Hz Gain 4.34 dB Q 8.6940
+Filter: ON PK Fc 74.65 Hz Gain 3.37 dB Q 1.9310
+Convolution: secs_mixed_C_fir.wav
+Channel: VMLS
+Filter: ON PK Fc 405.62 Hz Gain 10.00 dB Q 7.5292
+Filter: ON PK Fc 128.31 Hz Gain 9.68 dB Q 4.5342
+Filter: ON PK Fc 494.05 Hz Gain 5.11 dB Q 19.9992
+Filter: ON PK Fc 372.11 Hz Gain 7.57 dB Q 10.7466
+Filter: ON PK Fc 386.50 Hz Gain -10.35 dB Q 12.6738
+Filter: ON PK Fc 166.92 Hz Gain 7.32 dB Q 8.6846
+Filter: ON PK Fc 58.45 Hz Gain 4.23 dB Q 2.8761
+Filter: ON PK Fc 426.89 Hz Gain 0.99 dB Q 20.0000
+Filter: ON PK Fc 152.33 Hz Gain -6.84 dB Q 12.8317
+Filter: ON PK Fc 144.60 Hz Gain 6.86 dB Q 7.6425
+Filter: ON PK Fc 192.68 Hz Gain -6.85 dB Q 2.0612
+Filter: ON PK Fc 199.52 Hz Gain 6.18 dB Q 11.1647
+Filter: ON PK Fc 250.69 Hz Gain 5.36 dB Q 11.1117
+Filter: ON PK Fc 135.12 Hz Gain -7.13 dB Q 8.9405
+Filter: ON PK Fc 187.50 Hz Gain 5.44 dB Q 10.6171
+Filter: ON PK Fc 191.54 Hz Gain -4.08 dB Q 16.6415
+Convolution: secs_mixed_Ls_fir.wav
+Channel: VMRS
+Filter: ON PK Fc 129.25 Hz Gain 2.39 dB Q 6.1995
+Filter: ON PK Fc 187.10 Hz Gain 3.43 dB Q 9.2405
+Filter: ON PK Fc 135.17 Hz Gain -9.16 dB Q 11.2864
+Filter: ON PK Fc 372.04 Hz Gain 6.64 dB Q 9.9555
+Filter: ON PK Fc 59.05 Hz Gain 4.16 dB Q 2.8885
+Filter: ON PK Fc 414.50 Hz Gain 5.26 dB Q 10.6958
+Filter: ON PK Fc 390.45 Hz Gain -6.48 dB Q 10.4771
+Filter: ON PK Fc 143.61 Hz Gain 5.42 dB Q 7.8124
+Filter: ON PK Fc 156.74 Hz Gain -4.95 dB Q 10.7459
+Filter: ON PK Fc 277.32 Hz Gain -7.30 dB Q 6.2278
+Filter: ON PK Fc 257.68 Hz Gain 6.06 dB Q 8.4203
+Filter: ON PK Fc 207.24 Hz Gain 4.46 dB Q 11.5122
+Filter: ON PK Fc 488.46 Hz Gain -2.88 dB Q 9.4453
+Filter: ON PK Fc 289.57 Hz Gain 5.80 dB Q 16.1901
+Filter: ON PK Fc 213.65 Hz Gain -4.45 dB Q 14.6449
+Filter: ON PK Fc 128.16 Hz Gain 5.46 dB Q 7.0215
+Convolution: secs_mixed_Rs_fir.wav
+Channel: VMLB
+Filter: ON PK Fc 100.20 Hz Gain 2.80 dB Q 4.9286
+Filter: ON PK Fc 360.42 Hz Gain -5.29 dB Q 20.0000
+Filter: ON PK Fc 57.83 Hz Gain 4.52 dB Q 2.5964
+Filter: ON PK Fc 412.45 Hz Gain -4.84 dB Q 15.1435
+Filter: ON PK Fc 313.49 Hz Gain -8.89 dB Q 10.9271
+Filter: ON PK Fc 238.43 Hz Gain 3.97 dB Q 12.2938
+Filter: ON PK Fc 131.79 Hz Gain 6.52 dB Q 6.9566
+Filter: ON PK Fc 137.44 Hz Gain -12.31 dB Q 12.8720
+Filter: ON PK Fc 145.60 Hz Gain 7.12 dB Q 7.5303
+Filter: ON PK Fc 151.36 Hz Gain -8.07 dB Q 13.3998
+Filter: ON PK Fc 298.15 Hz Gain 5.57 dB Q 4.1060
+Filter: ON PK Fc 175.36 Hz Gain -6.75 dB Q 15.1887
+Filter: ON PK Fc 166.76 Hz Gain 4.36 dB Q 6.4163
+Filter: ON PK Fc 252.94 Hz Gain -6.49 dB Q 13.0231
+Filter: ON PK Fc 263.82 Hz Gain 5.77 dB Q 14.7850
+Filter: ON PK Fc 269.49 Hz Gain -5.03 dB Q 20.0000
+Convolution: secs_mixed_Lb_fir.wav
+Channel: VMRB
+Filter: ON PK Fc 126.78 Hz Gain 4.30 dB Q 5.7875
+Filter: ON PK Fc 215.66 Hz Gain 4.29 dB Q 10.5667
+Filter: ON PK Fc 261.21 Hz Gain -4.79 dB Q 13.4478
+Filter: ON PK Fc 240.38 Hz Gain 4.02 dB Q 12.4952
+Filter: ON PK Fc 55.68 Hz Gain 4.08 dB Q 2.3608
+Filter: ON PK Fc 210.98 Hz Gain -3.76 dB Q 17.5995
+Filter: ON PK Fc 366.87 Hz Gain -4.06 dB Q 18.9395
+Filter: ON PK Fc 136.67 Hz Gain -5.24 dB Q 11.9292
+Filter: ON PK Fc 139.68 Hz Gain 3.71 dB Q 7.6952
+Filter: ON PK Fc 301.29 Hz Gain 2.87 dB Q 16.2813
+Filter: ON PK Fc 164.18 Hz Gain 0.83 dB Q 9.1251
+Filter: ON PK Fc 130.81 Hz Gain 2.96 dB Q 7.4034
+Filter: ON PK Fc 136.52 Hz Gain -4.77 dB Q 11.7505
+Filter: ON PK Fc 409.76 Hz Gain -3.81 dB Q 10.3965
+Filter: ON PK Fc 387.19 Hz Gain 3.69 dB Q 12.1064
+Filter: ON PK Fc 339.46 Hz Gain -2.66 dB Q 13.9232
+Convolution: secs_mixed_Rb_fir.wav
+Channel: VMTFL
+Filter: ON PK Fc 94.80 Hz Gain 8.69 dB Q 4.1778
+Filter: ON PK Fc 92.18 Hz Gain -6.50 dB Q 8.9005
+Filter: ON PK Fc 94.66 Hz Gain 6.02 dB Q 4.3215
+Filter: ON PK Fc 91.75 Hz Gain -5.87 dB Q 8.7169
+Filter: ON PK Fc 94.02 Hz Gain 5.67 dB Q 4.4695
+Filter: ON PK Fc 91.86 Hz Gain -7.13 dB Q 8.0327
+Filter: ON PK Fc 69.19 Hz Gain 4.59 dB Q 1.4603
+Filter: ON PK Fc 92.65 Hz Gain -6.39 dB Q 1.7175
+Filter: ON PK Fc 93.93 Hz Gain 5.59 dB Q 4.4951
+Filter: ON PK Fc 91.89 Hz Gain -4.04 dB Q 8.4857
+Filter: ON PK Fc 93.27 Hz Gain 5.02 dB Q 4.6977
+Filter: ON PK Fc 102.77 Hz Gain -6.49 dB Q 4.3651
+Filter: ON PK Fc 93.56 Hz Gain 5.28 dB Q 4.6051
+Filter: ON PK Fc 91.89 Hz Gain -4.07 dB Q 8.4943
+Filter: ON PK Fc 93.27 Hz Gain 5.02 dB Q 4.6955
+Filter: ON PK Fc 97.97 Hz Gain -4.56 dB Q 8.1697
+Convolution: secs_mixed_Tfl_fir.wav
+Channel: VMTFR
+Filter: ON PK Fc 94.87 Hz Gain 9.16 dB Q 4.2255
+Filter: ON PK Fc 339.50 Hz Gain -8.98 dB Q 8.7240
+Filter: ON PK Fc 93.17 Hz Gain -9.67 dB Q 8.9187
+Filter: ON PK Fc 235.94 Hz Gain 5.34 dB Q 5.3803
+Filter: ON PK Fc 93.88 Hz Gain 5.89 dB Q 4.5001
+Filter: ON PK Fc 92.32 Hz Gain -5.26 dB Q 8.2771
+Filter: ON PK Fc 162.30 Hz Gain -4.66 dB Q 14.6827
+Filter: ON PK Fc 89.63 Hz Gain 4.91 dB Q 4.1477
+Filter: ON PK Fc 444.47 Hz Gain -4.59 dB Q 8.1809
+Filter: ON PK Fc 90.63 Hz Gain -3.18 dB Q 7.8393
+Filter: ON PK Fc 93.63 Hz Gain 5.13 dB Q 4.7392
+Filter: ON PK Fc 102.90 Hz Gain -7.02 dB Q 3.8666
+Filter: ON PK Fc 93.64 Hz Gain 4.04 dB Q 5.0689
+Filter: ON PK Fc 92.20 Hz Gain -4.21 dB Q 8.4492
+Filter: ON PK Fc 93.62 Hz Gain 5.07 dB Q 4.7608
+Filter: ON PK Fc 91.74 Hz Gain -4.65 dB Q 7.5739
+Convolution: secs_mixed_Tfr_fir.wav
+Channel: VMTBL
+Filter: ON PK Fc 439.95 Hz Gain -8.41 dB Q 11.0257
+Filter: ON PK Fc 231.67 Hz Gain 5.77 dB Q 3.8938
+Filter: ON PK Fc 344.87 Hz Gain -5.28 dB Q 15.9794
+Filter: ON PK Fc 56.40 Hz Gain 3.34 dB Q 3.0951
+Filter: ON PK Fc 141.48 Hz Gain 6.66 dB Q 7.6514
+Filter: ON PK Fc 137.45 Hz Gain -6.80 dB Q 11.9595
+Filter: ON PK Fc 91.28 Hz Gain -7.06 dB Q 7.8317
+Filter: ON PK Fc 177.92 Hz Gain -7.93 dB Q 5.9522
+Filter: ON PK Fc 184.05 Hz Gain 6.52 dB Q 9.9791
+Filter: ON PK Fc 248.06 Hz Gain 5.73 dB Q 13.9274
+Filter: ON PK Fc 253.80 Hz Gain -8.07 dB Q 6.0370
+Filter: ON PK Fc 273.24 Hz Gain 5.76 dB Q 15.5682
+Filter: ON PK Fc 90.51 Hz Gain 5.49 dB Q 2.3804
+Filter: ON PK Fc 428.13 Hz Gain 5.01 dB Q 20.0000
+Filter: ON PK Fc 467.95 Hz Gain -3.28 dB Q 19.4797
+Filter: ON PK Fc 268.85 Hz Gain -3.81 dB Q 20.0000
+Convolution: secs_mixed_Tbl_fir.wav
+Channel: VMTBR
+Filter: ON PK Fc 408.73 Hz Gain -7.28 dB Q 18.5677
+Filter: ON PK Fc 476.77 Hz Gain -6.30 dB Q 10.6217
+Filter: ON PK Fc 100.50 Hz Gain 5.03 dB Q 4.1185
+Filter: ON PK Fc 342.18 Hz Gain -5.67 dB Q 19.0752
+Filter: ON PK Fc 215.74 Hz Gain 4.86 dB Q 10.8660
+Filter: ON PK Fc 144.53 Hz Gain 5.43 dB Q 7.4914
+Filter: ON PK Fc 90.91 Hz Gain -5.63 dB Q 7.9178
+Filter: ON PK Fc 55.08 Hz Gain 3.45 dB Q 2.1131
+Filter: ON PK Fc 248.97 Hz Gain 3.63 dB Q 13.4386
+Filter: ON PK Fc 160.07 Hz Gain 3.08 dB Q 9.0112
+Filter: ON PK Fc 155.31 Hz Gain -7.11 dB Q 11.2921
+Filter: ON PK Fc 225.89 Hz Gain -3.97 dB Q 12.8319
+Filter: ON PK Fc 136.31 Hz Gain -3.63 dB Q 11.2307
+Filter: ON PK Fc 160.68 Hz Gain 2.21 dB Q 9.3978
+Filter: ON PK Fc 237.13 Hz Gain 2.46 dB Q 13.7974
+Filter: ON PK Fc 258.15 Hz Gain -2.49 dB Q 15.1242
+Convolution: secs_mixed_Tbr_fir.wav
+
+# 2) sub sends (LR4 lowpass at each crossover)
+Copy: VSL=VML VSR=VMR VSC=VMC VSLS=VMLS VSRS=VMRS VSLB=VMLB VSRB=VMRB VSTFL=VMTFL VSTFR=VMTFR VSTBL=VMTBL VSTBR=VMTBR
+Channel: VSL
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Channel: VSR
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Channel: VSC
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Channel: VSLS
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Channel: VSRS
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Channel: VSLB
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Channel: VSRB
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Channel: VSTFL
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Channel: VSTFR
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Channel: VSTBL
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Channel: VSTBR
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+
+# 3) main paths (gain -> XO PEQ -> LR4 highpass -> delay)
+Channel: VML
+Preamp: -0.40 dB
+Filter: ON PK Fc 172.33 Hz Gain -5.90 dB Q 2.4111
+Filter: ON PK Fc 45.26 Hz Gain -11.35 dB Q 9.4632
+Filter: ON PK Fc 135.23 Hz Gain -6.12 dB Q 19.9995
+Filter: ON PK Fc 60.36 Hz Gain 6.00 dB Q 2.5037
+Filter: ON PK Fc 212.22 Hz Gain -6.71 dB Q 19.9428
+Filter: ON PK Fc 250.27 Hz Gain 6.00 dB Q 5.5998
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Delay: 1.946 ms
+Channel: VMR
+Filter: ON PK Fc 44.38 Hz Gain -11.03 dB Q 8.4138
+Filter: ON PK Fc 182.75 Hz Gain -7.84 dB Q 13.6920
+Filter: ON PK Fc 130.75 Hz Gain -8.14 dB Q 8.1771
+Filter: ON PK Fc 60.95 Hz Gain 6.00 dB Q 2.2716
+Filter: ON PK Fc 209.46 Hz Gain -7.61 dB Q 15.7487
+Filter: ON PK Fc 248.28 Hz Gain 6.00 dB Q 10.3307
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Delay: 2.023 ms
+Channel: VMC
+Preamp: -2.29 dB
+Filter: ON PK Fc 148.10 Hz Gain -15.69 dB Q 3.6759
+Filter: ON PK Fc 116.65 Hz Gain 5.62 dB Q 11.8004
+Filter: ON PK Fc 311.30 Hz Gain -10.16 dB Q 12.2656
+Filter: ON PK Fc 67.70 Hz Gain 6.00 dB Q 0.3000
+Filter: ON PK Fc 97.17 Hz Gain -11.19 dB Q 5.7851
+Filter: ON PK Fc 178.28 Hz Gain -10.36 dB Q 8.2722
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Delay: 2.131 ms
+Channel: VMLS
+Preamp: -2.12 dB
+Filter: ON PK Fc 139.44 Hz Gain -13.54 dB Q 4.2442
+Filter: ON PK Fc 96.66 Hz Gain -8.68 dB Q 7.6981
+Filter: ON PK Fc 185.02 Hz Gain 6.00 dB Q 5.8271
+Filter: ON PK Fc 275.49 Hz Gain -3.41 dB Q 1.0742
+Filter: ON PK Fc 116.14 Hz Gain 5.90 dB Q 11.2829
+Filter: ON PK Fc 73.62 Hz Gain 5.14 dB Q 2.7770
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Delay: 4.093 ms
+Channel: VMRS
+Preamp: -1.55 dB
+Filter: ON PK Fc 142.91 Hz Gain -10.85 dB Q 4.6180
+Filter: ON PK Fc 97.84 Hz Gain -9.95 dB Q 8.8889
+Filter: ON PK Fc 228.33 Hz Gain -8.16 dB Q 16.0482
+Filter: ON PK Fc 295.85 Hz Gain -3.99 dB Q 4.3810
+Filter: ON PK Fc 118.39 Hz Gain 3.67 dB Q 17.5785
+Filter: ON PK Fc 46.27 Hz Gain -6.47 dB Q 18.5227
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Delay: 3.924 ms
+Channel: VMLB
+Preamp: -1.85 dB
+Filter: ON PK Fc 46.23 Hz Gain -10.40 dB Q 5.5770
+Filter: ON PK Fc 184.30 Hz Gain -8.10 dB Q 6.6762
+Filter: ON PK Fc 266.25 Hz Gain 5.22 dB Q 4.4574
+Filter: ON PK Fc 78.39 Hz Gain 6.00 dB Q 0.5593
+Filter: ON PK Fc 147.12 Hz Gain -6.87 dB Q 8.2745
+Filter: ON PK Fc 100.05 Hz Gain -11.15 dB Q 5.5139
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Delay: 4.703 ms
+Channel: VMRB
+Preamp: -3.60 dB
+Filter: ON PK Fc 154.59 Hz Gain -11.09 dB Q 15.2879
+Filter: ON PK Fc 179.02 Hz Gain -8.51 dB Q 15.7270
+Filter: ON PK Fc 46.07 Hz Gain -7.38 dB Q 11.1726
+Filter: ON PK Fc 210.76 Hz Gain 6.00 dB Q 2.4121
+Filter: ON PK Fc 197.63 Hz Gain -10.47 dB Q 12.3382
+Filter: ON PK Fc 69.29 Hz Gain 4.64 dB Q 3.4473
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Delay: 4.650 ms
+Channel: VMTFL
+Preamp: -3.04 dB
+Filter: ON PK Fc 201.57 Hz Gain -8.44 dB Q 11.6861
+Filter: ON PK Fc 78.65 Hz Gain 5.84 dB Q 1.7062
+Filter: ON PK Fc 89.98 Hz Gain -8.20 dB Q 9.5170
+Filter: ON PK Fc 45.06 Hz Gain 4.91 dB Q 1.3519
+Filter: ON PK Fc 101.19 Hz Gain -8.73 dB Q 7.1144
+Filter: ON PK Fc 233.69 Hz Gain 4.14 dB Q 15.5699
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Delay: 4.020 ms
+Channel: VMTFR
+Preamp: -1.85 dB
+Filter: ON PK Fc 102.50 Hz Gain -11.08 dB Q 9.7303
+Filter: ON PK Fc 201.54 Hz Gain -7.34 dB Q 4.7331
+Filter: ON PK Fc 244.58 Hz Gain 6.00 dB Q 5.8480
+Filter: ON PK Fc 65.12 Hz Gain 6.00 dB Q 0.8477
+Filter: ON PK Fc 90.57 Hz Gain -6.58 dB Q 19.9993
+Filter: ON PK Fc 132.67 Hz Gain -7.78 dB Q 13.6465
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Delay: 4.578 ms
+Channel: VMTBL
+Preamp: -1.29 dB
+Filter: ON PK Fc 46.18 Hz Gain -8.18 dB Q 7.5326
+Filter: ON PK Fc 289.02 Hz Gain -8.39 dB Q 9.8665
+Filter: ON PK Fc 193.42 Hz Gain -8.14 dB Q 13.3137
+Filter: ON PK Fc 229.44 Hz Gain 6.00 dB Q 5.7024
+Filter: ON PK Fc 131.88 Hz Gain -5.66 dB Q 3.3041
+Filter: ON PK Fc 148.27 Hz Gain 6.00 dB Q 9.5321
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Delay: 3.998 ms
+Channel: VMTBR
+Preamp: -1.03 dB
+Filter: ON PK Fc 193.15 Hz Gain -11.34 dB Q 12.9910
+Filter: ON PK Fc 46.55 Hz Gain -8.68 dB Q 5.7632
+Filter: ON PK Fc 238.23 Hz Gain 6.00 dB Q 5.6176
+Filter: ON PK Fc 283.50 Hz Gain -7.47 dB Q 15.6468
+Filter: ON PK Fc 107.18 Hz Gain 4.89 dB Q 7.5399
+Filter: ON PK Fc 135.34 Hz Gain -3.63 dB Q 20.0000
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Delay: 4.154 ms
+
+# 4) LFE input (+10 dB, LR4 lowpass) -> every sub bus
+Channel: VLFE
+Preamp: 10.00 dB
+Filter: ON LPQ Fc 120.00 Hz Q 0.7071
+Filter: ON LPQ Fc 120.00 Hz Q 0.7071
+
+# 5) sub buses: sum of sends x gain/polarity -> bus PEQ -> fixed filters -> allpass -> delay
+# sub SW1: gain -9.25 dB, polarity inverted
+Copy: VBSW1=-0.344731*VSL+-0.344731*VSR+-0.344731*VSC+-0.344731*VSLS+-0.344731*VSRS+-0.344731*VSLB+-0.344731*VSRB+-0.344731*VSTFL+-0.344731*VSTFR+-0.344731*VSTBL+-0.344731*VSTBR+-0.344731*VLFE
+Channel: VBSW1
+Filter: ON PK Fc 95.76 Hz Gain -7.29 dB Q 6.9480
+Filter: ON PK Fc 118.59 Hz Gain 2.58 dB Q 7.1799
+Filter: ON PK Fc 154.33 Hz Gain 6.00 dB Q 11.7678
+Filter: ON PK Fc 99.87 Hz Gain -6.88 dB Q 5.4276
+Filter: ON PK Fc 75.51 Hz Gain -5.56 dB Q 0.7431
+Filter: ON PK Fc 52.12 Hz Gain 6.00 dB Q 0.7601
+Filter: ON PK Fc 44.23 Hz Gain -3.52 dB Q 5.4604
+Filter: ON PK Fc 138.85 Hz Gain 3.51 dB Q 20.0000
+Filter: ON PK Fc 148.10 Hz Gain -3.32 dB Q 20.0000
+Filter: ON PK Fc 144.51 Hz Gain 6.00 dB Q 10.2468
+Filter: ON HPQ Fc 25.00 Hz Q 0.7071
+Filter: ON HPQ Fc 25.00 Hz Q 0.7071
+Delay: 21.652 ms
+# sub SW2: gain -9.23 dB, polarity inverted
+Copy: VBSW2=-0.345521*VSL+-0.345521*VSR+-0.345521*VSC+-0.345521*VSLS+-0.345521*VSRS+-0.345521*VSLB+-0.345521*VSRB+-0.345521*VSTFL+-0.345521*VSTFR+-0.345521*VSTBL+-0.345521*VSTBR+-0.345521*VLFE
+Channel: VBSW2
+Filter: ON PK Fc 95.76 Hz Gain -7.29 dB Q 6.9480
+Filter: ON PK Fc 118.59 Hz Gain 2.58 dB Q 7.1799
+Filter: ON PK Fc 154.33 Hz Gain 6.00 dB Q 11.7678
+Filter: ON PK Fc 99.87 Hz Gain -6.88 dB Q 5.4276
+Filter: ON PK Fc 75.51 Hz Gain -5.56 dB Q 0.7431
+Filter: ON PK Fc 52.12 Hz Gain 6.00 dB Q 0.7601
+Filter: ON PK Fc 44.23 Hz Gain -3.52 dB Q 5.4604
+Filter: ON PK Fc 138.85 Hz Gain 3.51 dB Q 20.0000
+Filter: ON PK Fc 148.10 Hz Gain -3.32 dB Q 20.0000
+Filter: ON PK Fc 144.51 Hz Gain 6.00 dB Q 10.2468
+Filter: ON HPQ Fc 25.00 Hz Q 0.7071
+Filter: ON HPQ Fc 25.00 Hz Q 0.7071
+Delay: 21.615 ms
+# sub SW3: gain -9.36 dB, polarity normal
+Copy: VBSW3=0.340304*VSL+0.340304*VSR+0.340304*VSC+0.340304*VSLS+0.340304*VSRS+0.340304*VSLB+0.340304*VSRB+0.340304*VSTFL+0.340304*VSTFR+0.340304*VSTBL+0.340304*VSTBR+0.340304*VLFE
+Channel: VBSW3
+Filter: ON PK Fc 95.76 Hz Gain -7.29 dB Q 6.9480
+Filter: ON PK Fc 118.59 Hz Gain 2.58 dB Q 7.1799
+Filter: ON PK Fc 154.33 Hz Gain 6.00 dB Q 11.7678
+Filter: ON PK Fc 99.87 Hz Gain -6.88 dB Q 5.4276
+Filter: ON PK Fc 75.51 Hz Gain -5.56 dB Q 0.7431
+Filter: ON PK Fc 52.12 Hz Gain 6.00 dB Q 0.7601
+Filter: ON PK Fc 44.23 Hz Gain -3.52 dB Q 5.4604
+Filter: ON PK Fc 138.85 Hz Gain 3.51 dB Q 20.0000
+Filter: ON PK Fc 148.10 Hz Gain -3.32 dB Q 20.0000
+Filter: ON PK Fc 144.51 Hz Gain 6.00 dB Q 10.2468
+Filter: ON LPQ Fc 25.00 Hz Q 0.7071
+Filter: ON LPQ Fc 25.00 Hz Q 0.7071
+Delay: 1.984 ms
+
+Channel: all

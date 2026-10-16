@@ -1,0 +1,34 @@
+# SECS 2 calibration - Equalizer APO config (generated)
+# Copy everything in this folder into the Equalizer APO config folder
+# (C:\Program Files\EqualizerAPO\config) - keep the old config.txt somewhere first.
+# Device format: 48000 Hz (the FIR wav files are 48 kHz). Speaker setup: enough channels for the numbers below.
+#
+# Default channel numbers (1 = first channel of the device, Windows order FL FR FC LFE BL BR SL SR ...):
+#   L      input  1   output  1
+# Latency of the filters: 12.2 ms (video: delay the picture or set the player audio offset).
+
+# ==== EDIT ONLY THESE TWO LINES: device channel number of each SECS input / output (0 = not used) ====
+Eval: inL = 1
+Eval: outL = 1
+# ==== do not edit below ====
+
+# Headroom for the largest boost of the correction (avoids clipping).
+Channel: all
+Preamp: 0.0 dB
+
+# Inputs: start silent, then copy each device channel that exists (a missing channel stays silent).
+Copy: VML=0.0
+If: inL >= 1 && inL <= inputChannelCount
+  Copy: VML=`inL`
+EndIf:
+
+Include: secs_ultra120\secs_ultra120.txt
+
+# Outputs: clear the input channels first (no raw signal leaks), then write each SECS output.
+If: inL >= 1 && inL <= outputChannelCount
+  Copy: `inL`=0.0
+EndIf:
+If: outL >= 1 && outL <= outputChannelCount
+  Copy: `outL`=VML
+EndIf:
+Channel: all

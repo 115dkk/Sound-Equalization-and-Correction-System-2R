@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
-"""내보내기 단계(화면 번호 8, 진행바 7번째) — 보정 설계(9)의 새 엔진 결과를 REW 로 열 .mdat 하나로 저장한다(2026-09-26).
+"""내보내기 단계(화면 번호 8, 진행바 7번째) — 보정 설계(9)의 새 엔진 결과를 REW 로 열 .mdat 하나로 저장하고(2026-09-26),
+그 아래 '필터 내보내기' 카드(10-15 사용자)에서 DSP 에 넣을 필터를 CamillaDSP 설정 · 텍스트 · Equalizer APO 설정으로 낸다.
 
 2026-09-26 사용자 결정: 옛 8단계(DSP 시트 · Tesira · 검증 A/B)를 걷어내고 새로 만든다 — **우선 mdat 내보내기만**.
 옛 화면(`step8_export`)은 흐름 밖에 남아 있다가 2026-10-10 슬림화로 지웠다(되살릴 기준: git 태그 slim-before-2026-10-10).
@@ -8,6 +9,7 @@
 입력: 보정 설계 화면(`StepCalibration`)의 `run`(`calibration.CalibrationRun`)과, MIMO 를 켜고 계산했으면 `mimo_run`.
 출력: `<내보낼 폴더>/SECS_export_<모드>_<날짜시간>/SECS 보정 전후 <모드>.mdat`
 (`calibration.export_before_after_mdat` — 채널마다 보정 전 = 원 측정, 보정 후 = 선택한 모드의 최종 응답, MIMO 적용).
+필터: `SECS_<camilla|text|eqapo>_…/` — `calibration.export_camilladsp` · `export_filter_text` · `export_eqapo`.
 내보낼 폴더는 보정 설계와 같은 값(`project.extra['export']['folder']`, 없으면 프로젝트 파일 옆).
 파일 쓰기는 워커 스레드(`run_off_thread`) — 화면 스레드는 기다리는 동안에도 돈다.
 """
@@ -57,6 +59,7 @@ class Step8Mdat(QtWidgets.QWidget):
         _body, main, _side = two_columns(outer, side=False)
         main.addWidget(self._source_card())
         main.addWidget(self._mdat_card())
+        main.addWidget(self._filter_card())
         outer.addStretch(1)
 
     def _source_card(self) -> QtWidgets.QFrame:
@@ -99,17 +102,54 @@ class Step8Mdat(QtWidgets.QWidget):
         self.export_button.clicked.connect(lambda: self.export(open_after=True))
         attach(self.export_button, 's8.export_before_after')
         row.addWidget(self.export_button)
-        # 카밀라 내보내기도 여기에(10-09 사용자: 내보내기 탭에 카밀라 버튼이 없다) — 보정 설계 화면의 것과 같은 일.
-        self.camilla_button = QtWidgets.QPushButton(t('CamillaDSP 내보내기'))
-        set_variant(self.camilla_button, 'ghost', 'sm')
-        self.camilla_button.clicked.connect(lambda: self.export(kind='camilla', open_after=True))
-        attach(self.camilla_button, 'cal.export_camilla')
-        row.addWidget(self.camilla_button)
         row.addStretch(1)
         box.addLayout(row)
         self.export_note = label('', 'note', wrap=True)
         box.addWidget(self.export_note)
         return frame
+
+    def _filter_card(self) -> QtWidgets.QFrame:
+        """DSP 에 넣을 필터(10-15 사용자: REW mdat 아래에 '필터 내보내기' — 카밀라 버튼도 여기로, 텍스트 · EqAPO).
+        폴더는 위 카드의 '내보낼 폴더' 를 같이 쓴다."""
+        frame, box = card('필터 내보내기')
+        row = QtWidgets.QHBoxLayout()
+        row.setSpacing(8)
+        self.filter_buttons: dict[str, QtWidgets.QPushButton] = {}
+        for kind, text in (('camilla', 'CamillaDSP 내보내기'), ('text', '텍스트로 내보내기'), ('eqapo', 'EqAPO 내보내기')):
+            button = QtWidgets.QPushButton(t(text))
+            set_variant(button, 'ghost', 'sm')
+            button.clicked.connect(lambda _=False, k=kind: self.export(kind=k, open_after=True))
+            attach(button, f'cal.export_{kind}')
+            row.addWidget(button)
+            self.filter_buttons[kind] = button
+        self.camilla_button = self.filter_buttons['camilla']      # 튜토리얼 퀘스트 · 테스트가 이 이름으로 찾는다
+        row.addStretch(1)
+        box.addLayout(row)
+        # 지원 범위(10-15 사용자): 카밀라 = 전부, EqAPO = RC · BA, 텍스트 = RC 만 — 막힌 버튼의 이유를 이 줄에
+        self.filter_scope = label('', 'note', wrap=True)
+        box.addWidget(self.filter_scope)
+        self.filter_note = label('', 'note', wrap=True)
+        box.addWidget(self.filter_note)
+        return frame
+
+    def _buttons(self) -> list:
+        return [self.export_button, *self.filter_buttons.values()]
+
+    def blocks(self) -> dict:
+        """종류 → 이 결과로 낼 수 없는 이유('' = 된다)."""
+        run = self.run()
+        if run is None:
+            return {k: '' for k in self.filter_buttons}
+        mimo = self.mimo_run()
+        return {k: cal.filter_export_block(run, mimo, k) for k in self.filter_buttons}
+
+    def _sync_buttons(self) -> None:
+        ok = self.ready()[0] and not self._exporting
+        blocks = self.blocks()
+        self.export_button.setEnabled(ok)
+        for kind, button in self.filter_buttons.items():
+            button.setEnabled(ok and not blocks[kind])
+        self.filter_scope.setText(_join(v for v in blocks.values() if v) if ok else '')
 
     # ──────────────────────────── 문맥 ────────────────────────────
     def set_context(self, project_path=None) -> None:
@@ -140,8 +180,7 @@ class Step8Mdat(QtWidgets.QWidget):
         self.export_path_label.set_full_text(str(self.export_base_dir()))
         ok, reason = self.ready()
         run = self.run()
-        self.export_button.setEnabled(ok and not self._exporting)
-        self.camilla_button.setEnabled(ok and not self._exporting)
+        self._sync_buttons()
         if run is None:
             self.source_label.setText(t(reason))
             self.roles_label.setText('')
@@ -198,14 +237,18 @@ class Step8Mdat(QtWidgets.QWidget):
         return self._exporting
 
     def export(self, folder=None, open_after: bool = False, kind: str = 'mdat') -> list[str]:
-        """`<folder 또는 내보낼 폴더>/SECS_export_<모드>_<날짜시간>/` 에 보정 전·후 mdat 을 쓰고 쓴 파일을 돌려준다.
-        버튼으로 내보내면 그 폴더를 연다(pytest 에서는 안 연다)."""
+        """`<folder 또는 내보낼 폴더>/SECS_<kind>_<내용>_<모드>_<날짜시간>/` 에 쓰고 쓴 파일을 돌려준다.
+        `kind` = 'mdat'(보정 전·후) | 'camilla' | 'text' | 'eqapo'. 버튼으로 내보내면 그 폴더를 연다(pytest 에서는 안 연다)."""
+        note = self.export_note if kind == 'mdat' else self.filter_note
         if getattr(self.calibration, 'trial', False):    # 튜토리얼는 파일을 쓰지 않는다(10-09 — 보정 설계와 같게)
-            self.export_note.setText(t('튜토리얼에서는 내보내지 않습니다'))
+            note.setText(t('튜토리얼에서는 내보내지 않습니다'))
             return []
         ok, reason = self.ready()
+        if ok and kind in self.filter_buttons:
+            reason = self.blocks()[kind]
+            ok = not reason
         if not ok:
-            self.export_note.setText(t(reason))
+            note.setText(t(reason))
             return []
         run, mimo = self.run(), self.mimo_run()
         base = Path(folder) if folder else self.export_base_dir()
@@ -213,25 +256,28 @@ class Step8Mdat(QtWidgets.QWidget):
         what = 'RC_BA_MIMO' if mimo is not None else 'RC_BA'
         target = base / f'SECS_{kind}_{what}_{run.settings.mode}_{time.strftime("%Y%m%d-%H%M%S")}'
         self._exporting = True
-        self.export_button.setEnabled(False)
-        self.camilla_button.setEnabled(False)
+        for button in self._buttons():
+            button.setEnabled(False)
         offset = cal.project_spl_offset(self.project)
 
         def work() -> list[str]:
             if kind == 'camilla':
                 return [str(p) for p in cal.export_camilladsp(run, target / 'camilladsp', mimo)]
+            if kind == 'text':
+                return [str(p) for p in cal.export_filter_text(run, target, mimo)]
+            if kind == 'eqapo':
+                return [str(p) for p in cal.export_eqapo(run, target, mimo)]
             return [str(cal.export_before_after_mdat(run, target, mimo, offset))]
         try:
             files = run_off_thread(work, name='secs-export-mdat')
         except Exception as error:  # noqa: BLE001 - 파일 오류는 문구로
-            self.export_note.setText(t(f'내보내기 실패: {error}'))
+            note.setText(t(f'내보내기 실패: {error}'))
             return []
         finally:
             self._exporting = False
-            self.export_button.setEnabled(self.ready()[0])
-            self.camilla_button.setEnabled(self.ready()[0])
+            self._sync_buttons()
         self.last_files = files
-        self.export_note.setText(t(f'{len(files)}개 파일을 저장했습니다 → {target}'))
+        note.setText(t(f'{len(files)}개 파일을 저장했습니다 → {target}'))
         if open_after and files and not os.environ.get('PYTEST_CURRENT_TEST'):
             QtGui.QDesktopServices.openUrl(QtCore.QUrl.fromLocalFile(str(target)))
         return files

@@ -1,0 +1,11 @@
+# SECS 2 calibration filters for Equalizer APO (generated - do not edit).
+# Included by config.txt between the input Copy and the output Copy.
+# mode zero, total latency 0.0 ms, RC upper 321 Hz; no MIMO
+
+# 1) input correction (PEQ -> FIR)
+Channel: VML
+Filter: ON PK Fc 63.00 Hz Gain -4.00 dB Q 1.2000
+
+# 3) main paths (gain -> XO PEQ -> LR4 highpass -> delay)
+
+Channel: all

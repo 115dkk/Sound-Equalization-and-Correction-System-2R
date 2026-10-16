@@ -100,6 +100,14 @@ fn derived_export_subfolders_use_the_fixed_clock() {
         secs_service::export_folder::camilladsp_folder(base, false, "mixed", now),
         PathBuf::from("exports/SECS_camilla_RC_BA_mixed_20240102-030405/camilladsp")
     );
+    assert_eq!(
+        secs_service::export_folder::text_folder(base, false, "ultra", now),
+        base.join("SECS_text_RC_BA_ultra_20240102-030405")
+    );
+    assert_eq!(
+        secs_service::export_folder::eqapo_folder(base, true, "linear", now),
+        base.join("SECS_eqapo_RC_BA_MIMO_linear_20240102-030405")
+    );
 }
 
 #[test]

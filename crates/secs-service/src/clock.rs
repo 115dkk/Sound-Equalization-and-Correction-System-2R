@@ -47,6 +47,14 @@ impl LocalTime {
         format!("{:04}-{:02}-{:02}", self.year, self.month, self.day)
     }
 
+    /// `2024-01-02 03:04`, the stamp embedded in filter text.
+    pub fn minute_stamp(&self) -> String {
+        format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}",
+            self.year, self.month, self.day, self.hour, self.minute
+        )
+    }
+
     /// `20240102-030405`, the stamp of a before/after mdat folder.
     pub fn stamp(&self) -> String {
         format!(
@@ -90,8 +98,12 @@ mod tests {
     fn local_time_matches_known_dates_and_offsets() {
         let utc = at(1_704_164_645, 0);
         assert_eq!(
-            (utc.date(), utc.stamp()),
-            ("2024-01-02".into(), "20240102-030405".into())
+            (utc.date(), utc.minute_stamp(), utc.stamp()),
+            (
+                "2024-01-02".into(),
+                "2024-01-02 03:04".into(),
+                "20240102-030405".into()
+            )
         );
         // Seoul is nine hours ahead; Los Angeles eight behind crosses midnight.
         assert_eq!(at(1_704_164_645, 9 * 3600).stamp(), "20240102-120405");

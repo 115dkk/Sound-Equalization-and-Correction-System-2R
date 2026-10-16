@@ -1,20 +1,35 @@
 // 내보내기: write what the DSP and REW need. What the correction is (mode,
-// delay, channels, MIMO, RC range), where the files go, and the three
-// exports: the CamillaDSP configuration (the step's primary action, in the
-// header), the before/after REW mdat, and the staged mdat under 고급 (U3).
+// delay, channels, MIMO, RC range), where the files go, and the exports in
+// two groups: the filters for the DSP (the CamillaDSP configuration, the
+// step's primary action in the header; the filter values as text; the
+// Equalizer APO configuration) and the responses for REW (the before/after
+// mdat, and the staged mdat under 고급, U3). A filter format that cannot
+// carry the result says why in its row (upstream 1.3.0 `_filter_card`).
 // No 완료 button (U4): the step is done once the current result is exported.
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
 import type { PrimaryAction } from "../../app/StepHeader";
 import { errorText } from "../../app/jobs/jobText";
 import type { MessageKey } from "../../i18n";
 import { useNumber, useT, type Translate } from "../../i18n/react";
 import type { CalibrationSummary } from "../../ipc/bindings/CalibrationSummary";
+import type { ExportBlock } from "../../ipc/bindings/ExportBlock";
 import type { ExportKind } from "../../ipc/bindings/ExportKind";
 import type { Mode } from "../../ipc/bindings/Mode";
 import type { Notice } from "../../ipc/bindings/Notice";
 import { Advanced, Button, Card, EmptyState, ErrorNotice, Icon, StatusPill } from "../../ui";
 import { roleCode } from "../../ui/maps/geometry";
-import { EXPORT_KINDS, canExport, exportStepState, mimoInclusion, type ExportActions, type ExportRun, type ExportView, type MimoInclusion } from "./types";
+import {
+  EXPORT_KINDS,
+  canExport,
+  exportBlock,
+  exportStepState,
+  filterModeName,
+  mimoInclusion,
+  type ExportActions,
+  type ExportRun,
+  type ExportView,
+  type MimoInclusion,
+} from "./types";
 import "./export.css";
 
 const MODE_TEXT: Record<Exclude<Mode, "ultra">, MessageKey> = {
@@ -32,6 +47,19 @@ const KIND_TEXT: Record<ExportKind, { title: MessageKey; body: MessageKey; run?:
     exporting: "export.status.exporting.before_after_mdat",
   },
   staged_mdat: { title: "export.kind.staged_mdat", body: "export.kind.staged_mdat.body", run: "export.kind.staged_mdat.run", exporting: "export.status.exporting.staged_mdat" },
+  filter_text: { title: "export.kind.filter_text", body: "export.kind.filter_text.body", run: "export.kind.filter_text.run", exporting: "export.status.exporting.filter_text" },
+  equalizer_apo: {
+    title: "export.kind.equalizer_apo",
+    body: "export.kind.equalizer_apo.body",
+    run: "export.kind.equalizer_apo.run",
+    exporting: "export.status.exporting.equalizer_apo",
+  },
+};
+
+/** Why a filter format cannot carry this result: only these pairs occur (`exportBlock`). */
+const BLOCK_TEXT: Partial<Record<ExportKind, Partial<Record<ExportBlock, MessageKey>>>> = {
+  filter_text: { subs: "export.blocked.filter_text.subs", mimo: "export.blocked.filter_text.mimo" },
+  equalizer_apo: { mimo: "export.blocked.equalizer_apo.mimo" },
 };
 
 const MIMO_REASON: Record<Extract<MimoInclusion, { included: false }>["reason"], MessageKey> = {
@@ -267,14 +295,33 @@ function FilesCard({ view, actions, initialAdvanced }: { view: ExportView; actio
   return (
     <Card title={t("export.files.title")} data-ui="export.files">
       <FolderRow view={view} actions={actions} />
-      <div className="export-items">
-        <ExportItem kind="camilla_dsp" view={view} actions={actions} />
-        <ExportItem kind="before_after_mdat" view={view} actions={actions} />
-        <Advanced id="export.advanced" count={1} defaultOpen={initialAdvanced}>
-          <ExportItem kind="staged_mdat" view={view} actions={actions} />
-        </Advanced>
+      <div className="export-groups">
+        <ExportGroup title={t("export.group.filters")}>
+          <ExportItem kind="camilla_dsp" view={view} actions={actions} />
+          <ExportItem kind="filter_text" view={view} actions={actions} />
+          <ExportItem kind="equalizer_apo" view={view} actions={actions} />
+        </ExportGroup>
+        <ExportGroup title={t("export.group.rew")}>
+          <ExportItem kind="before_after_mdat" view={view} actions={actions} />
+          <Advanced id="export.advanced" count={1} defaultOpen={initialAdvanced}>
+            <ExportItem kind="staged_mdat" view={view} actions={actions} />
+          </Advanced>
+        </ExportGroup>
       </div>
     </Card>
+  );
+}
+
+/** One group of exports: its heading sits between the card's title (h2) and the rows' titles (h4). */
+function ExportGroup({ title, children }: { title: string; children: ReactNode }) {
+  const titleId = useId();
+  return (
+    <section className="export-group" aria-labelledby={titleId}>
+      <h3 className="export-group__title" id={titleId}>
+        {title}
+      </h3>
+      {children}
+    </section>
   );
 }
 
@@ -319,6 +366,8 @@ function FolderRow({ view, actions }: { view: ExportView; actions: ExportActions
 function whereText(t: Translate, kind: ExportKind, view: ExportView): string {
   if (kind === "camilla_dsp") return t("export.kind.camilla_dsp.where");
   if (kind === "staged_mdat") return t("export.kind.staged_mdat.where");
+  if (kind === "filter_text") return t("export.kind.filter_text.where", { mode: view.settings.mode });
+  if (kind === "equalizer_apo") return t("export.kind.equalizer_apo.where", { mode: view.settings.mode });
   return t("export.kind.before_after_mdat.where", { what: mimoInclusion(view).included ? "RC_BA_MIMO" : "RC_BA", mode: view.settings.mode });
 }
 
@@ -328,12 +377,15 @@ function ExportItem({ kind, view, actions }: { kind: ExportKind; view: ExportVie
   const run = view.runs[kind];
   const running = view.exporting === kind;
   const titleId = `export.kind.${kind}.title`;
+  const block = exportBlock(view, kind);
+  const blocked = block ? BLOCK_TEXT[kind]?.[block] : undefined;
+  const blockedId = useId();
   return (
     <section className="export-item" data-ui={`export.kind.${kind}`} aria-labelledby={titleId}>
       <div className="export-item__text">
-        <h3 className="export-item__title" id={titleId}>
+        <h4 className="export-item__title" id={titleId}>
           {t(text.title)}
-        </h3>
+        </h4>
         <p className="export-item__body">{t(text.body)}</p>
         <p className="export-item__where">
           <Icon name="folder" size={16} />
@@ -342,19 +394,32 @@ function ExportItem({ kind, view, actions }: { kind: ExportKind; view: ExportVie
       </div>
       <div className="export-item__action">
         {text.run ? (
-          <Button data-ui={`export.run.${kind}`} busy={running} disabled={!canExport(view)} onClick={() => actions.exportFiles(kind)}>
+          <Button
+            data-ui={`export.run.${kind}`}
+            busy={running}
+            disabled={!canExport(view) || block !== null}
+            aria-describedby={blocked ? blockedId : undefined}
+            onClick={() => actions.exportFiles(kind)}
+          >
             {t(text.run)}
           </Button>
         ) : running ? (
           <StatusPill tone="busy">{t("export.run.busy")}</StatusPill>
         ) : null}
       </div>
-      {run && <Outcome kind={kind} run={run} actions={actions} />}
+      {blocked && (
+        // The format's scope, not a fault: the info icon and the muted text, never the warning hue.
+        <p className="export-item__blocked" id={blockedId} data-ui={`export.kind.${kind}.blocked`}>
+          <Icon name="info" size={18} />
+          <span>{t(blocked)}</span>
+        </p>
+      )}
+      {run && <Outcome kind={kind} run={run} view={view} actions={actions} />}
     </section>
   );
 }
 
-function Outcome({ kind, run, actions }: { kind: ExportKind; run: ExportRun; actions: ExportActions }) {
+function Outcome({ kind, run, view, actions }: { kind: ExportKind; run: ExportRun; view: ExportView; actions: ExportActions }) {
   const t = useT();
   const id = `export.outcome.${kind}`;
   if (run.status === "failed") {
@@ -374,14 +439,22 @@ function Outcome({ kind, run, actions }: { kind: ExportKind; run: ExportRun; act
     );
   }
   return (
-    <div className="export-item__outcome export-outcome" data-ui={id} role="status">
-      <Icon name="check" size={18} weight="semibold" className="export-outcome__icon" />
-      <p className="export-outcome__text">
-        <span className="tabular">{t("export.run.done", { count: run.files.length, path: run.folder })}</span>
-      </p>
-      <Button size="sm" variant="quiet" icon="folder" data-ui={`${id}.open`} onClick={() => actions.openFolder(run.folder)}>
-        {t("export.folder.open")}
-      </Button>
+    <div className="export-item__outcome export-done" data-ui={id} role="status">
+      <div className="export-outcome">
+        <Icon name="check" size={18} weight="semibold" className="export-outcome__icon" />
+        <p className="export-outcome__text">
+          <span className="tabular">{t("export.run.done", { count: run.files.length, path: run.folder })}</span>
+        </p>
+        <Button size="sm" variant="quiet" icon="folder" data-ui={`${id}.open`} onClick={() => actions.openFolder(run.folder)}>
+          {t("export.folder.open")}
+        </Button>
+      </div>
+      {kind === "equalizer_apo" && (
+        // What to do with the folder: the files go into Equalizer APO's own config folder.
+        <p className="export-done__hint" data-ui={`${id}.hint`}>
+          {t("export.outcome.equalizer_apo.hint", { mode: filterModeName(view.settings) })}
+        </p>
+      )}
     </div>
   );
 }

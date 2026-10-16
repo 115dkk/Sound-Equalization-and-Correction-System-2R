@@ -3867,6 +3867,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "secs-filters"
+version = "0.15.3"
+dependencies = [
+ "secs-camilla",
+ "secs-dsp",
+ "secs-oracle",
+ "secs-types",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "secs-gpu"
 version = "0.15.3"
 
@@ -3941,6 +3953,7 @@ dependencies = [
  "secs-compute",
  "secs-engine",
  "secs-export",
+ "secs-filters",
  "secs-jos",
  "secs-mdat",
  "secs-oracle",

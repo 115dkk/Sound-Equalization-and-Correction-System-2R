@@ -1,10 +1,10 @@
 # SECS 2R
 
-SECS 2R은 룸 보정 설계 프로그램 [SECS 2](https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2)를 러스트 코어와 Tauri 화면으로 다시 만드는 포크입니다. 스피커 응답을 측정하거나 REW 측정을 가져와 룸 보정(RC), BA(Bass Alignment), 저역의 늦은 울림을 줄이는 MIMO 보정을 설계하고, CamillaDSP 설정과 REW mdat로 내보냅니다.
+SECS 2R은 룸 보정 설계 프로그램 [SECS 2](https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2)를 러스트 코어와 Tauri 화면으로 다시 만드는 포크입니다. 스피커 응답을 측정하거나 REW 측정을 가져와 룸 보정(RC), BA(Bass Alignment), 저역의 늦은 울림을 줄이는 MIMO 보정을 설계하고, CamillaDSP·Equalizer APO 설정, 필터 값 텍스트, REW mdat로 내보냅니다.
 
 ## 지금 상태
 
-개발 중입니다. M2까지 끝났습니다. 지금 나오는 0.x 판에는 SECS 2의 보정 엔진(레벨·딜레이, BA, XO, RC, 성적표, REW·CamillaDSP 내보내기)이 들어 있고 같은 기계에서 SECS 2보다 빠르지만([`docs/perf/engine.md`](docs/perf/engine.md)), 아직 측정과 화면에 연결되지 않아 앱에서는 쓸 수 없습니다. 기능은 아래 순서로 들어갑니다. 지금 보정 설계가 필요하면 업스트림 SECS 2의 [Releases](https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2/releases)를 쓰세요.
+개발 중입니다. M5까지 끝났습니다. 지금 나오는 0.x 판에는 SECS 2의 보정 엔진(레벨·딜레이, BA, XO, RC, MIMO, 성적표), 자체 측정과 REW 측정, mdat 가져오기, 내보내기, 새 화면과 튜토리얼이 들어 있고, 같은 기계에서 SECS 2보다 빠릅니다([`docs/perf/engine.md`](docs/perf/engine.md)). 실제 방에서 측정부터 적용까지 확인하는 일(M6)은 남았습니다. 그 전에 실제 방에 적용할 보정이 필요하면 업스트림 SECS 2의 [Releases](https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2/releases)를 쓰세요.
 
 | 단계 | 내용 | 상태 |
 |---|---|---|
@@ -18,7 +18,7 @@ SECS 2R은 룸 보정 설계 프로그램 [SECS 2](https://github.com/Kim-O-O/So
 
 ## SECS 2와의 관계
 
-- 업스트림 SECS 2의 모든 기능을 옮깁니다. 이식한 업스트림 판은 [`UPSTREAM.toml`](UPSTREAM.toml)에 있고, 앱과 내보낸 파일에도 'SECS 2 Beta 1.2.0 기준'처럼 적힙니다.
+- 업스트림 SECS 2의 모든 기능을 옮깁니다. 이식한 업스트림 판은 [`UPSTREAM.toml`](UPSTREAM.toml)에 있고, 앱과 내보낸 파일에도 'SECS 2 Beta 1.3.0 기준'처럼 적힙니다.
 - 업스트림 파이썬 코드는 이 저장소의 `src/`, `tests/`, `tools/`에 고치지 않은 채 남아 있습니다. 러스트 이식의 결과가 맞는지 확인하는 기준으로만 쓰고 출하하지 않습니다.
 - 업스트림의 계산 방법은 그대로 따르고, 결함은 번호를 붙여 고칩니다. 업스트림과 다르게 동작하는 자리는 [`docs/DEVIATIONS.md`](docs/DEVIATIONS.md)에 모두 적습니다.
 - 업스트림의 README와 변경 기록은 [`docs/upstream/`](docs/upstream)에 있습니다.
@@ -82,6 +82,6 @@ SECS 2는 한국 오디오 커뮤니티 스피커 갤러리의 Sound Equalizatio
 
 ## English
 
-SECS 2R is a fork of [SECS 2](https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2), a room correction designer, rewritten with a Rust core and a Tauri user interface. It designs room correction (RC), bass alignment (BA) and MIMO bass-decay correction from speaker measurements and exports CamillaDSP configurations and REW mdat files.
+SECS 2R is a fork of [SECS 2](https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2), a room correction designer, rewritten with a Rust core and a Tauri user interface. It designs room correction (RC), bass alignment (BA) and MIMO bass-decay correction from speaker measurements and exports CamillaDSP and Equalizer APO configurations, filter values as text, and REW mdat files.
 
-It is under development. The current 0.0.x builds only test the release path and have no measurement or correction features yet. Every upstream feature is being ported; the upstream Python tree stays untouched in this repository as the reference the port is checked against, and deliberate differences are listed in [`docs/DEVIATIONS.md`](docs/DEVIATIONS.md). Pull requests and issues are welcome. License: GPL-3.0-only.
+It is under development: milestones M0 to M5 are done. The 0.x prereleases carry the SECS 2 correction engine (levels and delays, BA, XO, RC, MIMO, scorecard), native and REW measurement, mdat import, the exports, the new screens and the tutorial; checking the whole path on real hardware (M6) is still ahead. Every upstream feature is being ported; the upstream Python tree stays untouched in this repository as the reference the port is checked against, and deliberate differences are listed in [`docs/DEVIATIONS.md`](docs/DEVIATIONS.md). Pull requests and issues are welcome. License: GPL-3.0-only.

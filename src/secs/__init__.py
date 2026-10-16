@@ -24,6 +24,7 @@ SOURCE_MODULES = (
     'mimo_iir',
     'scorecard',
     'export_camilladsp',
+    'export_filters',
     'mdat_loader',
     'rew_mdat',
     'rew_mdat.builder',

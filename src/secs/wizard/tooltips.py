@@ -187,7 +187,9 @@ TIPS: dict[str, str] = {
     'cal.folder_change': '내보낼 폴더 변경(프로젝트에 저장).',
     'cal.folder_open': '내보낼 폴더 열기.',
     'cal.export_mdat': 'REW mdat 1개: 채널마다 보정 전 · 보정 후(· MIMO). 보정 후는 계산값.',
-    'cal.export_camilla': 'CamillaDSP v4 설정(.yml) + 채널 FIR(wav). 장치는 파일 입출력 — 실사용 시 변경.',
+    'cal.export_camilla': 'CamillaDSP v4 설정(.yml) + 채널 FIR(wav). RC · BA · MIMO 모두. 장치는 파일 입출력 — 실사용 시 변경.',
+    'cal.export_text': '채널별 필터 값 표(.txt: PEQ · 게인 · 딜레이) + FIR(wav). DSP 에 직접 입력할 때. RC 만 적용한 결과에서만(BA · MIMO 없음).',
+    'cal.export_eqapo': 'Equalizer APO 설정째로: config.txt + 필터 + FIR(wav). EqAPO config 폴더에 복사, 입출력 번호만 맞춤. RC · BA 까지(MIMO 제외).',
 }
 
 

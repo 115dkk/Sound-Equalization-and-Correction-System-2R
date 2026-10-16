@@ -157,7 +157,9 @@ EN: dict[str, str] = {
     'cal.folder_change': 'Change the export folder (saved in the project).',
     'cal.folder_open': 'Open the export folder.',
     'cal.export_mdat': 'One REW mdat: per channel before, after (and MIMO). "After" is calculated.',
-    'cal.export_camilla': 'CamillaDSP v4 config (.yml) + channel FIRs (wav). Devices are file I/O — change for real use.',
+    'cal.export_camilla': 'CamillaDSP v4 config (.yml) + channel FIRs (wav). RC, BA and MIMO. Devices are file I/O — change for real use.',
+    'cal.export_text': 'Per-channel filter table (.txt: PEQ, gain, delay) + FIRs (wav). For entering into a DSP by hand. RC-only results (no BA, no MIMO).',
+    'cal.export_eqapo': 'Complete Equalizer APO config: config.txt + filters + FIRs (wav). Copy to the EqAPO config folder, set only the channel numbers. RC and BA (no MIMO).',
 }
 
 #: 숫자 칸 단위·이름(2026-09-24) — 2단계 DSP 카드, 7단계 입력당 서포트 수.

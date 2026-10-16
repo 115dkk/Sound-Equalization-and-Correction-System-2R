@@ -998,6 +998,51 @@ pub enum ExportKind {
     StagedMdat,
     /// REW mdat containing before-and-after responses.
     BeforeAfterMdat,
+    /// Per-channel filter values as text plus FIR WAV files (upstream
+    /// `calibration.export_filter_text`). Results with RC only.
+    FilterText,
+    /// A complete Equalizer APO configuration: `config.txt`, the filter file
+    /// and FIR WAV files (upstream `calibration.export_eqapo`). RC and BA.
+    EqualizerApo,
+}
+
+/// Why a filter export cannot carry the current result (upstream
+/// `calibration.filter_export_block`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ExportBlock {
+    /// The result has subs (BA); filter text carries RC only.
+    Subs,
+    /// The result includes MIMO; filter text and Equalizer APO do not carry it.
+    Mimo,
+}
+
+impl ExportBlock {
+    /// The `params.reason` value of an [`ErrorCode::ExportScope`] error.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Subs => "subs",
+            Self::Mimo => "mimo",
+        }
+    }
+}
+
+/// Upstream `filter_export_block`: whether `kind` can carry a result with
+/// subs (`has_subs`) and MIMO support paths (`has_mimo`). CamillaDSP and the
+/// mdat exports carry everything; filter text carries RC only (subs are
+/// checked first, as upstream); Equalizer APO carries RC and BA. The screen
+/// mirrors this rule (`screens/export/types.ts`).
+pub fn filter_export_block(
+    kind: ExportKind,
+    has_subs: bool,
+    has_mimo: bool,
+) -> Option<ExportBlock> {
+    match kind {
+        ExportKind::FilterText if has_subs => Some(ExportBlock::Subs),
+        ExportKind::FilterText | ExportKind::EqualizerApo if has_mimo => Some(ExportBlock::Mimo),
+        _ => None,
+    }
 }
 /// The export bundle and destination folder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1799,6 +1844,9 @@ pub enum ErrorCode {
     EngineInput,
     /// The requested exporter failed.
     ExportFailed,
+    /// The chosen export cannot carry the result (upstream
+    /// `filter_export_block`); `params.reason` is an [`ExportBlock`] name.
+    ExportScope,
     /// Cached results no longer match project inputs.
     StaleInputs,
     /// The audio backend or selected endpoint is unavailable.
@@ -2083,5 +2131,51 @@ mod tests {
         .unwrap();
         assert_eq!(value["ok"], false);
         assert_eq!(value["error"]["code"], "invalid_request");
+    }
+
+    #[test]
+    fn filter_export_scope_follows_upstream() {
+        use ExportKind::*;
+        for kind in [CamillaDsp, StagedMdat, BeforeAfterMdat] {
+            for (subs, mimo) in [(false, false), (true, false), (false, true), (true, true)] {
+                assert_eq!(filter_export_block(kind, subs, mimo), None, "{kind:?}");
+            }
+        }
+        assert_eq!(filter_export_block(FilterText, false, false), None);
+        assert_eq!(
+            filter_export_block(FilterText, true, false),
+            Some(ExportBlock::Subs)
+        );
+        assert_eq!(
+            filter_export_block(FilterText, true, true),
+            Some(ExportBlock::Subs)
+        );
+        assert_eq!(
+            filter_export_block(FilterText, false, true),
+            Some(ExportBlock::Mimo)
+        );
+        assert_eq!(filter_export_block(EqualizerApo, true, false), None);
+        assert_eq!(
+            filter_export_block(EqualizerApo, false, true),
+            Some(ExportBlock::Mimo)
+        );
+        assert_eq!(
+            filter_export_block(EqualizerApo, true, true),
+            Some(ExportBlock::Mimo)
+        );
+        assert_eq!(serde_json::to_value(FilterText).unwrap(), "filter_text");
+        assert_eq!(serde_json::to_value(EqualizerApo).unwrap(), "equalizer_apo");
+        assert_eq!(
+            serde_json::to_value(ExportBlock::Subs).unwrap(),
+            ExportBlock::Subs.name()
+        );
+        assert_eq!(
+            serde_json::to_value(ExportBlock::Mimo).unwrap(),
+            ExportBlock::Mimo.name()
+        );
+        assert_eq!(
+            serde_json::to_value(ErrorCode::ExportScope).unwrap(),
+            "export_scope"
+        );
     }
 }

@@ -268,6 +268,7 @@ def test_mimo_skips_unchecked_subs(fast_engine, fast_ba, two_subs, monkeypatch):
 
     project, irs = two_subs
     s = _settings(SW2={'mimo_support': False})
+    s.mimo_fir = False                                   # IIR 서포트 시험(10-15 부터 기본은 FIR)
     run = cal.compute(project, irs, s)
     original = mimo.design_mimo
     got = {}

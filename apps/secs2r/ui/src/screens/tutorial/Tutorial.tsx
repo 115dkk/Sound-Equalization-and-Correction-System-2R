@@ -148,10 +148,27 @@ export function TutorialLayer<V>({
     missingRef.current = 0;
     setDragged(null);
     setSpot(null);
-    // Scroll the first target into view inside its own scroll area (never the page).
+    // Scroll the first target into view inside its own scroll area (never the
+    // page), once per quest: now when it is there, else the first time it
+    // appears (a step screen draws after goTo, or once its data arrives).
+    // Never again in the same quest, so a user who scrolls away is not pulled back.
     const first = typeof quest.targets[0] === "string" ? quest.targets[0] : quest.targets[0]?.[0];
-    const el = first ? elementsOf([first])[0] : undefined;
-    if (el) revealInside(el, layerRef.current);
+    if (!first) return;
+    const el = elementsOf([first])[0];
+    if (el) {
+      revealInside(el, layerRef.current);
+      return;
+    }
+    const layer = layerRef.current;
+    if (!layer) return;
+    const observer = new MutationObserver(() => {
+      const late = elementsOf([first])[0];
+      if (!late) return;
+      observer.disconnect();
+      revealInside(late, layerRef.current);
+    });
+    observer.observe(layer, { childList: true, subtree: true });
+    return () => observer.disconnect();
     // Only when the quest changes or the tutorial comes back.
   }, [state.index, state.paused, state.finished, quests]);
 
@@ -471,7 +488,12 @@ function targetStops(el: HTMLElement | null | undefined): HTMLElement[] {
   return el.matches(FOCUSABLE) ? (enabled(el) ? [el] : []) : tabStops(el);
 }
 
-/** Scrolls `el` into view inside its nearest scrolling ancestor below `stop`. */
+/**
+ * Scrolls `el` into view inside its nearest scrolling ancestor below `stop`;
+ * a target already in view stays where it is. A jump, never an animated
+ * scroll: the coach card is placed again on every scroll frame and would
+ * hop along a smooth scroll, and reduced motion asks for no motion at all.
+ */
 function revealInside(el: HTMLElement, stop: HTMLElement | null) {
   for (let node = el.parentElement; node && node !== stop; node = node.parentElement) {
     const style = getComputedStyle(node);

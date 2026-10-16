@@ -9,7 +9,7 @@
     "fsiso": 150.0,
     "mimo_low": null,
     "mimo_max_supports": 0,
-    "mimo_fir": false,
+    "mimo_fir": true,
     "xo": {},
     "xo_rec": {},
     "ultra_ms": 180.0,

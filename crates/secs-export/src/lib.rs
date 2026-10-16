@@ -225,34 +225,49 @@ pub fn sub_values_text(run: &ExportRun<'_>) -> String {
 }
 
 pub fn rc_pieces(run: &ExportRun<'_>) -> Vec<String> {
-    let hz = format_fixed(run.design.rc_hi, 0, false);
-    let head = if run.design.rc_auto {
-        if let Some(schroeder) = run.design.schroeder_hz {
+    rc_pieces_from_values(
+        run.design.rc_hi,
+        run.design.rc_auto,
+        run.design.schroeder_hz,
+        run.settings.room_volume_m3,
+        false,
+    )
+}
+
+/// Builds the upstream RC note fragments from cached scalar values.
+pub fn rc_pieces_from_values(
+    rc_hi: f64,
+    rc_auto: bool,
+    schroeder_hz: Option<f64>,
+    room_volume_m3: Option<f64>,
+    legacy_fallback: bool,
+) -> Vec<String> {
+    let hz = format_fixed(rc_hi, 0, false);
+    let head = if rc_auto {
+        if let Some(schroeder) = schroeder_hz {
             format!(
                 "RC 상한 {hz} Hz (슈뢰더 {} Hz)",
                 format_fixed(schroeder, 0, false)
             )
+        } else if legacy_fallback {
+            format!("RC 상한 {hz} Hz (자동)")
         } else {
             format!("RC 상한 {hz} Hz (기본값)")
         }
     } else {
         format!("RC 상한 {hz} Hz (수동)")
     };
-    if !run.design.rc_auto {
+    if !rc_auto {
         return vec![head];
     }
-    let Some(volume) = run.settings.room_volume_m3.filter(|v| *v != 0.0) else {
+    let Some(volume) = room_volume_m3.filter(|v| *v != 0.0) else {
         return vec![head, "자동: 룸 볼륨 없음".into()];
     };
     let mut out = vec![
         head,
         format!("자동: 룸 볼륨 {} m³", format_fixed(volume, 0, false)),
     ];
-    if run
-        .design
-        .schroeder_hz
-        .is_some_and(|v| v > run.design.rc_hi + 0.5)
-    {
+    if schroeder_hz.is_some_and(|v| v > rc_hi + 0.5) {
         out.push(format!("자동 상한 최대 {hz} Hz"));
     }
     out
@@ -765,6 +780,30 @@ fn atomic_replace(destination: &Path, bytes: &[u8]) -> Result<(), std::io::Error
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rc_pieces_from_values_preserves_live_and_legacy_wording() {
+        assert_eq!(
+            rc_pieces_from_values(300.0, true, None, None, false),
+            ["RC 상한 300 Hz (기본값)", "자동: 룸 볼륨 없음"]
+        );
+        assert_eq!(
+            rc_pieces_from_values(300.0, true, None, None, true),
+            ["RC 상한 300 Hz (자동)", "자동: 룸 볼륨 없음"]
+        );
+        assert_eq!(
+            rc_pieces_from_values(300.0, false, None, Some(80.0), true),
+            ["RC 상한 300 Hz (수동)"]
+        );
+        assert_eq!(
+            rc_pieces_from_values(300.0, true, Some(420.0), Some(80.0), false),
+            [
+                "RC 상한 300 Hz (슈뢰더 420 Hz)",
+                "자동: 룸 볼륨 80 m³",
+                "자동 상한 최대 300 Hz",
+            ]
+        );
+    }
 
     #[test]
     fn atomic_replace_overwrites_and_cleans_temporary_file() {
