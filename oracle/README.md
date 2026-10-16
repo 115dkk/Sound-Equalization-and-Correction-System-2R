@@ -27,6 +27,11 @@ An exporter rewrites only files whose bytes changed and refuses to finish when
 its folder holds a file it did not write (delete stale files by hand). Commit
 the goldens with the change that needs them.
 
+After an upstream merge, every family is exported again from the new release
+(the porting PR says so). A fixture whose inputs and outputs are unchanged
+keeps its file, so `meta.oracle` names the release that first produced its
+values and a merge rewrites only what the new release changed.
+
 ## Layout and encoding
 
 ```

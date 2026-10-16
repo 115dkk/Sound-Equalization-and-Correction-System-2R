@@ -466,7 +466,7 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                             &mut uuid,
                         )
                     }
-                    ExportKind::CamillaDsp => unreachable!(),
+                    _ => unreachable!(),
                 }
                 .unwrap();
                 assert_eq!(
@@ -474,6 +474,7 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                     fs::read(direct_file).unwrap()
                 );
             }
+            ExportKind::FilterText | ExportKind::EqualizerApo => unreachable!(),
         }
     }
     fs::remove_dir_all(root).unwrap();

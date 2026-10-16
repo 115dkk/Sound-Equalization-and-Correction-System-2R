@@ -26,6 +26,15 @@ impl Service {
                 "tutorial sessions cannot export",
             ));
         }
+        if matches!(
+            params.kind,
+            ExportKind::FilterText | ExportKind::EqualizerApo
+        ) {
+            return Err(IpcError::new(
+                ErrorCode::NotImplemented,
+                "filter text and Equalizer APO exports are not connected yet",
+            ));
+        }
         let live = state.calibration.as_ref();
         let cached = open.cached.as_ref();
         if live.is_none() && cached.is_none() {
@@ -121,7 +130,10 @@ impl Service {
                 ExportKind::CamillaDsp => {
                     crate::export_folder::camilladsp_folder(&base, includes_mimo, &mode_name, now)
                 }
-                ExportKind::BeforeAfterMdat | ExportKind::StagedMdat => {
+                ExportKind::BeforeAfterMdat
+                | ExportKind::StagedMdat
+                | ExportKind::FilterText
+                | ExportKind::EqualizerApo => {
                     crate::export_folder::mdat_folder(&base, includes_mimo, &mode_name, now)
                 }
             }

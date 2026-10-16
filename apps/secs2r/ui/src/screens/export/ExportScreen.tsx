@@ -32,6 +32,13 @@ const KIND_TEXT: Record<ExportKind, { title: MessageKey; body: MessageKey; run?:
     exporting: "export.status.exporting.before_after_mdat",
   },
   staged_mdat: { title: "export.kind.staged_mdat", body: "export.kind.staged_mdat.body", run: "export.kind.staged_mdat.run", exporting: "export.status.exporting.staged_mdat" },
+  filter_text: { title: "export.kind.filter_text", body: "export.kind.filter_text.body", run: "export.kind.filter_text.run", exporting: "export.status.exporting.filter_text" },
+  equalizer_apo: {
+    title: "export.kind.equalizer_apo",
+    body: "export.kind.equalizer_apo.body",
+    run: "export.kind.equalizer_apo.run",
+    exporting: "export.status.exporting.equalizer_apo",
+  },
 };
 
 const MIMO_REASON: Record<Extract<MimoInclusion, { included: false }>["reason"], MessageKey> = {
@@ -319,6 +326,8 @@ function FolderRow({ view, actions }: { view: ExportView; actions: ExportActions
 function whereText(t: Translate, kind: ExportKind, view: ExportView): string {
   if (kind === "camilla_dsp") return t("export.kind.camilla_dsp.where");
   if (kind === "staged_mdat") return t("export.kind.staged_mdat.where");
+  if (kind === "filter_text") return t("export.kind.filter_text.where", { mode: view.settings.mode });
+  if (kind === "equalizer_apo") return t("export.kind.equalizer_apo.where", { mode: view.settings.mode });
   return t("export.kind.before_after_mdat.where", { what: mimoInclusion(view).included ? "RC_BA_MIMO" : "RC_BA", mode: view.settings.mode });
 }
 
