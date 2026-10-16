@@ -1,8 +1,121 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { IpcFailure } from "./client";
 import type { JobEvent } from "./bindings/JobEvent";
 import { createMockService } from "./mock";
-import { resultsSummary } from "./fixtures";
+import { calibrationSettings, modeLabel, projectInfo, resultsSummary } from "./fixtures";
+import type { ExportKind } from "./bindings/ExportKind";
+import type { Mode } from "./bindings/Mode";
+
+describe("mock filter exports", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  function resultWithoutSubs() {
+    const results = structuredClone(resultsSummary);
+    results.calibration!.chain.subs = [];
+    results.calibration!.chain.mains = results.calibration!.chain.mains.slice(0, 2);
+    results.mimo = null;
+    return results;
+  }
+
+  async function exported(mock: ReturnType<typeof createMockService>, kind: ExportKind, folder = "") {
+    const events: JobEvent[] = [];
+    const unsubscribe = mock.events.subscribe((event) => events.push(event));
+    await mock.request({ method: "export", params: { kind, folder } });
+    mock.drain();
+    unsubscribe();
+    const last = events.at(-1);
+    if (last?.event !== "finished" || last.result?.kind !== "export") throw new Error("Missing export result");
+    return last.result.data;
+  }
+
+  it("rejects text for result subs before MIMO, without starting a job", async () => {
+    const mock = createMockService({ tickMs: 0, project: { ...projectInfo, sub_count: 0 }, results: resultsSummary });
+    await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+    mock.setResults(resultsSummary);
+    const events: JobEvent[] = [];
+    mock.events.subscribe((event) => events.push(event));
+    await expect(mock.request({ method: "export", params: { kind: "filter_text", folder: "" } })).rejects.toMatchObject({ error: { code: "export_scope", params: { reason: "subs" } } });
+    expect(events).toEqual([]);
+    expect(await mock.request({ method: "jobs" })).toEqual([]);
+    mock.dispose();
+  });
+
+  it.each(["filter_text", "equalizer_apo"] as const)("rejects %s when current MIMO is included, without starting a job", async (kind) => {
+    const results = resultWithoutSubs();
+    results.mimo = structuredClone(resultsSummary.mimo);
+    const mock = createMockService({ tickMs: 0, results });
+    await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+    mock.setResults(results);
+    const events: JobEvent[] = [];
+    mock.events.subscribe((event) => events.push(event));
+    await expect(mock.request({ method: "export", params: { kind, folder: "" } })).rejects.toMatchObject({ error: { code: "export_scope", params: { reason: "mimo" } } });
+    expect(events).toEqual([]);
+    expect(await mock.request({ method: "jobs" })).toEqual([]);
+    mock.dispose();
+  });
+
+  it.each(["off", "positions", "none", "stale"] as const)("does not block either format when MIMO is excluded: %s", async (reason) => {
+    const results = resultWithoutSubs();
+    results.mimo = reason === "none" ? null : { ...structuredClone(resultsSummary.mimo!), stale: reason === "stale" };
+    const mock = createMockService({ tickMs: 0, project: { ...projectInfo, positions: reason === "positions" ? [1, 2] : [1, 2, 3] } });
+    await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: reason !== "off" } } });
+    mock.setResults(results);
+    for (const kind of ["filter_text", "equalizer_apo"] as const) expect((await exported(mock, kind, "C:/exports")).folder).toBe("C:/exports");
+    mock.dispose();
+  });
+
+  it.each(["filter_text", "equalizer_apo"] as const)("preserves tutorial and missing-result errors for %s", async (kind) => {
+    const mock = createMockService({ tickMs: 0, project: { ...projectInfo, tutorial: true } });
+    await expect(mock.request({ method: "export", params: { kind, folder: "" } })).rejects.toMatchObject({ error: { code: "tutorial_blocked" } });
+    mock.dispose();
+    const empty = createMockService({ tickMs: 0 });
+    await expect(empty.request({ method: "export", params: { kind, folder: "" } })).rejects.toMatchObject({ error: { code: "engine_input" } });
+    expect(await empty.request({ method: "jobs" })).toEqual([]);
+    empty.dispose();
+  });
+
+  it.each([
+    ["zero", "zero", "최소 지연 모드"],
+    ["mixed", "mixed", "저지연 모드"],
+    ["linear", "linear", "표준 모드"],
+    ["ultra", "ultra200", "초고지연 모드 200 ms"],
+  ] as const)("uses service folders and ordered file lists in %s mode", async (mode: Mode, fileMode, label) => {
+    vi.spyOn(Date, "now").mockReturnValue(new Date(2026, 9, 15, 9, 41, 7).getTime());
+    const mock = createMockService({ tickMs: 0, results: resultWithoutSubs() });
+    await mock.request({ method: "calibration_settings_set", params: { settings: { ...calibrationSettings, mode, ultra_ms: 200, mimo_on: false } } });
+    mock.setResults(resultWithoutSubs());
+    await mock.request({ method: "export_folder_set", params: { folder: "C:/exports/" } });
+    for (const kind of ["filter_text", "equalizer_apo"] as const) {
+      const folder = `C:/exports/SECS_${kind === "filter_text" ? "text" : "eqapo"}_RC_BA_${mode}_20261015-094107`;
+      const prefix = `secs_${fileMode}`;
+      const firFolder = kind === "filter_text" ? folder : `${folder}/${prefix}`;
+      const files = kind === "filter_text" ? [`${folder}/SECS 필터 ${label}.txt`] : [
+        `${folder}/config.txt`, `${folder}/${prefix}/${prefix}.txt`, `${folder}/EqAPO 적용 방법.txt`,
+      ];
+      if (mode !== "zero") files.push(`${firFolder}/${prefix}_L_fir.wav`, `${firFolder}/${prefix}_R_fir.wav`);
+      expect(await exported(mock, kind)).toEqual({ folder, files, stale: false });
+    }
+    mock.dispose();
+  });
+
+  it("allows BA in EqAPO and writes directly into an explicit folder", async () => {
+    const results = structuredClone(resultsSummary);
+    results.mimo = null;
+    const mock = createMockService({ tickMs: 0, results });
+    const folder = "C:/exports/chosen";
+    expect(await exported(mock, "equalizer_apo", folder)).toEqual({ folder, stale: false, files: [
+      `${folder}/config.txt`, `${folder}/secs_mixed/secs_mixed.txt`, `${folder}/EqAPO 적용 방법.txt`,
+      ...results.calibration!.chain.mains.map(({ role }) => `${folder}/secs_mixed/secs_mixed_${role}_fir.wav`),
+    ] });
+    mock.dispose();
+  });
+
+  it("matches the service's clamped, six-significant-digit ultra labels", () => {
+    expect(modeLabel("ultra", 20)).toBe("초고지연 모드 30 ms");
+    expect(modeLabel("ultra", 123.456789)).toBe("초고지연 모드 123.457 ms");
+    expect(modeLabel("ultra", 250)).toBe("초고지연 모드 200 ms");
+  });
+});
 
 describe("mock service", () => {
   it("includes both roles for each conflicting output like config validation", async () => {
@@ -59,6 +172,7 @@ describe("mock service", () => {
     const mock = createMockService({ tickMs: 0 });
     const info = await mock.request({ method: "bootstrap" });
     expect(info.app_name).toBe("SECS 2R");
+    expect(info.upstream).toMatchObject({ version: "Beta 1.3.0", commit: "5acb5a0c786469f41bdeb51e5e5c9d06ce12b4e2", date: "2026-10-15" });
     const project = await mock.request({ method: "project_info" });
     expect(project.positions).toEqual([1, 2, 3]);
     expect(mock.calls.map((c) => c.method)).toEqual(["bootstrap", "project_info"]);

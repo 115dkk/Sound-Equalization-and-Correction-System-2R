@@ -39,9 +39,9 @@ export const bootstrapInfo: BootstrapInfo = {
   prerelease: true,
   upstream: {
     name: "Sound Equalization and Correction System 2",
-    version: "Beta 1.2.0",
-    commit: "60ac53ad3a3d9304da115e5dda3183a475d2d7dd",
-    date: "2026-10-12",
+    version: "Beta 1.3.0",
+    commit: "5acb5a0c786469f41bdeb51e5e5c9d06ce12b4e2",
+    date: "2026-10-15",
   },
   platform: { os: "windows", arch: "x86_64" },
 };
@@ -301,6 +301,12 @@ export const rewInfo: RewInfoResult = {
   output_devices: [{ id: "hdmi", name: "AVR (HDMI)", channels: 16 }], input_channel_names: ["Input 1", "Input 2"],
   sample_rate: 48000, sweep: { start_hz: 10, end_hz: 20000, length: "256k" }, level_dbfs: -12,
 };
+/** File label from secs_types::mode_label, not the localized screen label. */
+export function modeLabel(mode: Mode, ultra: number): string {
+  if (mode === "ultra") return `초고지연 모드 ${Number(Math.min(200, Math.max(30, ultra)).toPrecision(6))} ms`;
+  return { zero: "최소 지연 모드", mixed: "저지연 모드", linear: "표준 모드" }[mode];
+}
+
 export function modeSpec(mode: Mode, ultra: number): ModeSpecResult {
   const max = mode === "zero" ? 0 : mode === "mixed" ? 10 : mode === "linear" ? 30 : Math.min(200, Math.max(30, ultra));
   return { rc_filter: mode === "zero" ? "iir" : "iir_fir", fir_taps: mode === "zero" ? 0 : mode === "ultra" ? 8192 : 2048,

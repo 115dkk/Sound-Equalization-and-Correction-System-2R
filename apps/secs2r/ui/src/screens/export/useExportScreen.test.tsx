@@ -40,6 +40,17 @@ describe("useExportScreen", () => {
     mock.drain(); await session.stores.results.load();
     const { result } = renderHook(useExportScreen, { wrapper });
     for (const kind of EXPORT_KINDS) {
+      if (kind === "filter_text") {
+        // The sample result has subs: the service refuses the text before any
+        // job starts (the screen keeps the button off; this is the backstop).
+        mock.calls.length = 0;
+        await perform(() => result.current.actions.exportFiles(kind));
+        expect(session.errors.getSnapshot()?.error).toMatchObject({ code: "export_scope", params: { reason: "subs" } });
+        expect(result.current.view?.runs[kind]).toBeUndefined();
+        expect(result.current.view?.exporting).toBeNull();
+        expect(mock.calls.some((call) => call.method === "open_folder")).toBe(false);
+        continue;
+      }
       await perform(() => result.current.actions.exportFiles(kind));
       expect(mock.calls).toContainEqual({ method: "export", params: { kind, folder: "" } });
       expect(result.current.view?.exporting).toBe(kind);

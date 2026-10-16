@@ -23,6 +23,7 @@ import type { ExportFolderResult } from "./bindings/ExportFolderResult";
 import type { ResultCurvesResult } from "./bindings/ResultCurvesResult";
 import type { ResultLinesResult } from "./bindings/ResultLinesResult";
 import type { Notice } from "./bindings/Notice";
+import { filterModeName, MIMO_MIN_POSITIONS } from "../screens/export/types";
 
 export type Method = Request["method"];
 type DialogMethod = Extract<Method, `dialog_${string}`>;
@@ -519,6 +520,27 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "export": {
         if (needProject().tutorial) throw new MockError(ipcError("tutorial_blocked"));
         if (!results.calibration) throw new MockError(ipcError("engine_input", "no calibration result to export"));
+        const kind = req.params.kind;
+        if (kind === "filter_text" || kind === "equalizer_apo") {
+          const calibration = results.calibration;
+          const hasMimo = settings.mimo_on && needProject().positions.length >= MIMO_MIN_POSITIONS && results.mimo !== null && !results.mimo.stale;
+          const reason = kind === "filter_text" && calibration.chain.subs.length > 0 ? "subs" : hasMimo ? "mimo" : null;
+          if (reason) throw new MockError(ipcError("export_scope", `${kind} cannot export a result with ${reason}`, { reason }));
+          // Date.now also follows the tour's mock clock; service folder stamps use local time.
+          const date = new Date(Date.now());
+          const pad = (value: number) => String(value).padStart(2, "0");
+          const stamp = `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
+          const what = hasMimo ? "RC_BA_MIMO" : "RC_BA";
+          const folder = req.params.folder || `${exportFolder.folder.replace(/[\\/]+$/, "")}/SECS_${kind === "filter_text" ? "text" : "eqapo"}_${what}_${settings.mode}_${stamp}`;
+          const mode = filterModeName(settings);
+          const prefix = `secs_${mode}`;
+          const firFolder = kind === "filter_text" ? folder : `${folder}/${prefix}`;
+          const files = kind === "filter_text"
+            ? [`${folder}/SECS 필터 ${fx.modeLabel(settings.mode, settings.ultra_ms)}.txt`]
+            : [`${folder}/config.txt`, `${folder}/${prefix}/${prefix}.txt`, `${folder}/EqAPO 적용 방법.txt`];
+          if (settings.mode !== "zero") files.push(...calibration.chain.mains.map((main) => `${firFolder}/${prefix}_${main.role}_fir.wav`));
+          return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: calibration.stale } })) };
+        }
         const folder = `${(req.params.folder || exportFolder.folder).replace(/[\\/]+$/, "")}/${req.params.kind === "camilla_dsp" ? "camilladsp" : req.params.kind}`;
         return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, stale: results.calibration?.stale ?? false,
           files: req.params.kind === "camilla_dsp" ? [`${folder}/secs_camilladsp.yml`, `${folder}/fir_L.wav`] : [`${folder}/${req.params.kind}.mdat`] } })) };

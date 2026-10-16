@@ -166,15 +166,15 @@ describe("내보내기", () => {
     expect(files.querySelector("h2")?.textContent).toBe("내보낼 파일");
     expect([...groups[0]!.querySelectorAll("h3")].map((h) => h.textContent)).toEqual(["DSP에 넣을 필터"]);
     expect([...groups[0]!.querySelectorAll("h4")].map((h) => h.textContent)).toEqual(["CamillaDSP 설정", "필터 값 텍스트", "Equalizer APO 설정"]);
-    expect(ui("export.kind.camilla_dsp")?.textContent).toContain("RC, BA, MIMO를 모두 담습니다.");
+    expect(ui("export.kind.camilla_dsp")?.textContent).toContain("RC, BA, MIMO를 지원하는");
   });
 
   it("turns off a filter format that cannot carry the result and says why in its row", () => {
     const cases: [ExportView, Record<"filter_text" | "equalizer_apo", string | null>][] = [
       // Subs and MIMO (the sample): text blocked by the subs first, Equalizer APO by MIMO.
-      [exportReady, { filter_text: "서브(BA)가 있는 결과는 텍스트로 낼 수 없습니다. 텍스트는 RC만 적용한 결과에서 냅니다.", equalizer_apo: "MIMO를 넣은 결과는 Equalizer APO로 낼 수 없습니다. 보정에서 MIMO를 끄면 낼 수 있습니다." }],
+      [exportReady, { filter_text: "서브(BA)가 있는 결과는 텍스트로 내보낼 수 없습니다. CamillaDSP나 Equalizer APO 설정으로 내보내세요.", equalizer_apo: "MIMO를 넣은 결과는 Equalizer APO로 낼 수 없습니다. 보정에서 MIMO를 끄면 낼 수 있습니다." }],
       // Subs, MIMO left out: only the text.
-      [exportNoMimo, { filter_text: "서브(BA)가 있는 결과는 텍스트로 낼 수 없습니다. 텍스트는 RC만 적용한 결과에서 냅니다.", equalizer_apo: null }],
+      [exportNoMimo, { filter_text: "서브(BA)가 있는 결과는 텍스트로 내보낼 수 없습니다. CamillaDSP나 Equalizer APO 설정으로 내보내세요.", equalizer_apo: null }],
       // MIMO without subs: both by MIMO.
       [exportMimoNoSubs, { filter_text: "MIMO를 넣은 결과는 텍스트로 낼 수 없습니다. 보정에서 MIMO를 끄면 낼 수 있습니다.", equalizer_apo: "MIMO를 넣은 결과는 Equalizer APO로 낼 수 없습니다. 보정에서 MIMO를 끄면 낼 수 있습니다." }],
       // RC alone: everything on.
@@ -208,14 +208,14 @@ describe("내보내기", () => {
     const { unmount } = renderWith(<Mounted view={exportEqapoDone} act={act} />);
     expect(ui("export.outcome.equalizer_apo")?.textContent).toContain("파일 14개 저장 → D:/Audio/거실 보정/SECS_eqapo_RC_BA_mixed_20261014-142233");
     expect(ui("export.outcome.equalizer_apo.hint")?.textContent).toBe(
-      "config.txt와 secs_mixed 폴더를 Equalizer APO의 config 폴더에 복사합니다. 순서와 채널 번호는 같은 폴더의 'EqAPO 적용 방법.txt'에 있습니다.",
+      "Equalizer APO의 기존 config.txt를 다른 이름으로 보관한 뒤, 내보낸 config.txt와 secs_mixed 폴더를 config 폴더에 복사하세요. 적용 순서는 'EqAPO 적용 방법.txt'를 확인하세요.",
     );
     fireEvent.click(ui("export.outcome.equalizer_apo.open")!);
     expect(act.openFolder.mock.calls).toEqual([["D:/Audio/거실 보정/SECS_eqapo_RC_BA_mixed_20261014-142233"]]);
     unmount();
     // 초고지연: the files carry the limit (upstream `ultra200`); the folder keeps the bare mode.
     renderWith(<Mounted view={{ ...exportEqapoDone, settings: { ...exportEqapoDone.settings, mode: "ultra", ultra_ms: 200 } }} act={actions()} />, { locale: "en" });
-    expect(ui("export.outcome.equalizer_apo.hint")?.textContent).toContain("the secs_ultra200 folder");
+    expect(ui("export.outcome.equalizer_apo.hint")?.textContent).toContain("config.txt and secs_ultra200 folder");
     expect(ui("export.kind.equalizer_apo")?.textContent).toContain("SECS_eqapo_RC_BA_ultra_<save time> folder");
   });
 

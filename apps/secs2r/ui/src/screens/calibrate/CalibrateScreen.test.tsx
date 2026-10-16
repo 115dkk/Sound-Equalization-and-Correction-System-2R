@@ -126,7 +126,8 @@ describe("보정 screen", () => {
         unmount();
       }
     }
-  });
+    // Every fixture twice: about 3 s alone, past the 5 s default on a loaded runner.
+  }, 30_000);
 
   it("puts results first: verdict, then the scorecard beside the graph, then the five settings sections in order", () => {
     setup(fx.splView);
@@ -585,5 +586,6 @@ describe("reach table", () => {
     add(idsOf(<JobTray api={staticApi(replay(jobs), T0 + 5000)} defaultOpen />));
     const missing = REACH_IDS.filter((id) => !seen.has(id));
     expect(missing).toEqual([]);
-  });
+    // Every fixture and the extra states: past the 5 s default on a loaded runner.
+  }, 30_000);
 });
