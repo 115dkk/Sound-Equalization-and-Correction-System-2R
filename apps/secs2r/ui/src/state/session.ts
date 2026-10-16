@@ -309,6 +309,9 @@ export function createSession(ipc: Ipc) {
       catch (error) { report(error); }
       if (stores.project.getSnapshot()) {
         await reload(Object.keys(stores).filter((key) => !["bootstrap", "measurementSettings", "appSettings", "methods", "rew"].includes(key)) as (keyof typeof stores)[]);
+        // A window reloaded over a project the service still holds reads its
+        // stored method, as opening it does; call() reports a failure.
+        await call({ method: "measure_config_get" }).catch(() => {});
       }
       ready.set(true);
       run(() => call({ method: "status_watch_start" }));

@@ -110,12 +110,14 @@ export function HelpPanel({
     bodyRef.current?.scrollTo({ top: 0 });
   };
 
-  // Focus moves into the panel when it opens and back when it closes.
-  useEffect(() => {
+  // Focus moves into the panel when it opens and back when it closes. A
+  // layout effect keeps the node: by a passive cleanup the ref is already null.
+  useLayoutEffect(() => {
     const before = document.activeElement;
-    panelRef.current?.focus({ preventScroll: true });
+    const panel = panelRef.current;
+    panel?.focus({ preventScroll: true });
     return () => {
-      if (before instanceof HTMLElement && panelRef.current?.contains(document.activeElement)) before.focus({ preventScroll: true });
+      if (before instanceof HTMLElement && panel?.contains(document.activeElement)) before.focus({ preventScroll: true });
     };
   }, []);
 

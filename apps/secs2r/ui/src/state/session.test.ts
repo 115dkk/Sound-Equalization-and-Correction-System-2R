@@ -181,6 +181,20 @@ describe("measurement settings", () => {
       expect(session.host.getSnapshot().path).toBe("mock");
     } finally { session.dispose(); mock.dispose(); }
   });
+
+  it("reads the stored method when the window starts over a project the service already holds", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    await mock.request({ method: "measure_configure", params: {
+      method: "rew", input_device: null, output_device: null, input_channel: null, output_channels: [], sweep_length: null, repetitions: null,
+      sweep_level_dbfs: null, timing: null, loopback_input_channel: null, timing_ref_output: null, share_mode: null,
+    } });
+    const session = createSession(mock);
+    try {
+      await session.start();
+      expect(session.stores.measurementSettings.getSnapshot()?.method).toBe("rew");
+      expect(session.host.getSnapshot().path).toBe("rew");
+    } finally { session.dispose(); await settle(); mock.dispose(); }
+  });
 });
 
 describe("host state after jobs and switches", () => {
