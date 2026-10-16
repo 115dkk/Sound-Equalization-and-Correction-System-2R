@@ -6,6 +6,7 @@ import type { JobSnapshot } from "../ipc/bindings/JobSnapshot";
 import type { JobEvent } from "../ipc/bindings/JobEvent";
 import type { MeasureConfigureParams } from "../ipc/bindings/MeasureConfigureParams";
 import type { ResultCurvesParams } from "../ipc/bindings/ResultCurvesParams";
+import type { ResultCurvesResult } from "../ipc/bindings/ResultCurvesResult";
 import type { ExportKind } from "../ipc/bindings/ExportKind";
 import type { LevelResult } from "../ipc/bindings/LevelResult";
 import type { XoRecommendation } from "../ipc/bindings/XoRecommendation";
@@ -44,6 +45,9 @@ export function createSession(ipc: Ipc) {
     if (value.code !== "project_not_open") errors.set({ id: ++errorId, error: value });
   };
   const read = <M extends Request["method"]>(request: Extract<Request, { method: M }>) => createResource(() => ipc.request(request), report);
+  const curveState = createStore<{ params: ResultCurvesParams; curves: ResultCurvesResult | null; pending: ResultCurvesParams | null } | null>(null);
+  let curveVersion = 0;
+  const resultCurves = { ...curveState, load: () => refreshCurves(curveParams()) };
   const stores = {
     bootstrap: read({ method: "bootstrap" }), project: read({ method: "project_info" }),
     config: read({ method: "config_get" }), notices: read({ method: "config_validate" }), dsp: read({ method: "dsp_get" }),
@@ -57,7 +61,7 @@ export function createSession(ipc: Ipc) {
       return ipc.request({ method: "mode_spec", params: { mode: settings.mode, ultra_ms: settings.ultra_ms } });
     }, report),
     target: read({ method: "target_get" }), results: read({ method: "results" }),
-    resultCurves: createResource(() => ipc.request({ method: "result_curves", params: curveParams() }), report),
+    resultCurves,
     lines: read({ method: "result_lines" }), subWarnings: read({ method: "sub_warnings" }), rew: read({ method: "rew_info" }),
     folder: read({ method: "export_folder_get" }), appSettings: read({ method: "app_settings_get" }),
   };
@@ -76,6 +80,8 @@ export function createSession(ipc: Ipc) {
   const call: RequestFn = async (request) => {
     const methodBefore = stores.measurementSettings.getSnapshot()?.method;
     try {
+      // A monitor that cannot be stopped must not keep the next project from opening.
+      if (request.method === "project_new" || request.method === "project_open") await monitor(false).catch(() => {});
       const data = await ipc.request(request);
       errors.set(null);
       if (request.method === "measure_configure" || request.method === "measure_config_get" || request.method === "level_apply") {
@@ -90,6 +96,8 @@ export function createSession(ipc: Ipc) {
         if (early) { earlyFinishes.delete(started.job); event(early); }
       }
       if (request.method === "project_new" || request.method === "project_open") {
+        curveVersion++;
+        curveState.set(null);
         stores.measurementSettings.set(null);
         host.set({ path: null, selected: null, mdat: null, warnings: [], runs: {}, channel: null, xoGroup: null, xoRecommendation: null, failure: null, sweepResult: null, sweepRole: null });
       }
@@ -127,12 +135,19 @@ export function createSession(ipc: Ipc) {
     if (!path) return false;
     await call({ method: "project_save", params: { path } }); return true;
   }
-  let curveVersion = 0;
   async function refreshCurves(params: ResultCurvesParams) {
     const ticket = ++curveVersion;
-    stores.resultCurves.invalidate();
-    const value = await call({ method: "result_curves", params });
-    if (ticket === curveVersion) stores.resultCurves.set(value);
+    const previous = curveState.getSnapshot();
+    curveState.set({ params: previous?.params ?? params, curves: previous?.curves ?? null, pending: params });
+    try {
+      const curves = await ipc.request({ method: "result_curves", params });
+      if (ticket === curveVersion) curveState.set({ params, curves, pending: null });
+    } catch (error) {
+      if (ticket === curveVersion) {
+        curveState.set({ params, curves: null, pending: null });
+        report(error);
+      }
+    }
   }
   async function waitForJob(id: number) {
     const existing = host.getSnapshot().jobs.find((job) => job.job === id);
@@ -150,24 +165,72 @@ export function createSession(ipc: Ipc) {
   }
   let monitorQueue = Promise.resolve();
   let monitoring = false;
+  let monitorWanted = false;
+  let monitorEpoch = 0;
+  let monitorJob: number | null = null;
+  let restartingMonitor = false;
+  let meterTimer: ReturnType<typeof setTimeout> | undefined;
+  // upstream wizard/mic_meter.py: POLL_S (0.25) * STALE_POLLS (4). Only REW
+  // streams readings while idle (monitor.rs rew_loop forwards its 0.25 s
+  // level callbacks); the native and mock monitors read only during a play,
+  // so silence there is normal and never restarts them.
+  const staleMeterMs = 1000;
+  function clearMeterTimer() { clearTimeout(meterTimer); meterTimer = undefined; }
+  function armMeterTimer() {
+    clearMeterTimer();
+    if (!monitorWanted || stores.measurementSettings.getSnapshot()?.method !== "rew") return;
+    const epoch = monitorEpoch;
+    meterTimer = setTimeout(() => {
+      meterTimer = undefined;
+      if (!monitorWanted || epoch !== monitorEpoch) return;
+      host.set({ monitor: "stalled" });
+      restartingMonitor = true;
+      monitorQueue = monitorQueue.catch(() => {}).then(async () => {
+        if (!monitorWanted || epoch !== monitorEpoch) return;
+        await stopMonitor();
+        if (monitorWanted && epoch === monitorEpoch) await startMonitor();
+      }).catch((error) => {
+        if (monitorWanted && epoch === monitorEpoch) host.set({ monitor: "offline" });
+        throw error;
+      }).finally(() => { restartingMonitor = false; });
+      run(() => monitorQueue);
+    }, staleMeterMs);
+  }
+  async function startMonitor() {
+    const started = await call({ method: "level_monitor_start", params: { role: null } });
+    monitorJob = started.job;
+    monitoring = !host.getSnapshot().jobs.some((job) => job.job === started.job && !["running", "cancel_requested"].includes(job.status));
+    if (monitoring) armMeterTimer();
+  }
+  async function stopMonitor() {
+    clearMeterTimer();
+    if (monitoring) {
+      const stopped = await call({ method: "level_monitor_stop" });
+      if (stopped && ["running", "cancel_requested"].includes(stopped.status)
+          && !host.getSnapshot().jobs.some((job) => job.job === stopped.job && !["running", "cancel_requested"].includes(job.status))) {
+        await new Promise<void>((resolve) => {
+          const off = ipc.events.subscribe((event) => {
+            if (event.event === "finished" && event.job === stopped.job) { off(); resolve(); }
+          });
+        });
+      }
+    }
+    monitoring = false;
+    monitorJob = null;
+  }
   function monitor(active: boolean) {
+    if (active !== monitorWanted) { monitorEpoch++; monitorWanted = active; }
+    if (!active) clearMeterTimer();
+    const epoch = monitorEpoch;
     monitorQueue = monitorQueue.catch(() => {}).then(async () => {
-      if (active === monitoring) return;
+      if (active && (!monitorWanted || epoch !== monitorEpoch)) return;
+      if (active && monitoring) return;
       if (active) {
         host.set({ monitor: "starting" });
-        try { await call({ method: "level_monitor_start", params: { role: null } }); monitoring = true; }
+        try { await startMonitor(); }
         catch (error) { host.set({ monitor: "offline" }); throw error; }
       } else {
-        const stopped = await call({ method: "level_monitor_stop" });
-        if (stopped && ["running", "cancel_requested"].includes(stopped.status)
-            && !host.getSnapshot().jobs.some((job) => job.job === stopped.job && !["running", "cancel_requested"].includes(job.status))) {
-          await new Promise<void>((resolve) => {
-            const off = ipc.events.subscribe((event) => {
-              if (event.event === "finished" && event.job === stopped.job) { off(); resolve(); }
-            });
-          });
-        }
-        monitoring = false;
+        await stopMonitor();
         host.set({ monitor: "off", meter: null, playing: null, playingAll: false });
       }
     });
@@ -176,8 +239,15 @@ export function createSession(ipc: Ipc) {
   function event(event: JobEvent) {
     const h = host.getSnapshot();
     if (event.event === "measure_status") { stores.methods.set(event.status); return; }
-    if (event.event === "meter") { host.set({ meter: event, monitor: "receiving" }); return; }
+    if (event.event === "meter") {
+      if (monitorWanted && event.job === monitorJob) {
+        host.set({ meter: event, monitor: "receiving" });
+        armMeterTimer();
+      }
+      return;
+    }
     if (event.event === "started") {
+      if (event.kind === "level_monitor" && monitorWanted) monitorJob = event.job;
       host.set({ jobs: [...h.jobs.filter((j) => j.job !== event.job), { job: event.job, kind: event.kind, status: "running", cancellable: true, progress: null, result: null, error: null }],
         ...(["calibrate", "mimo", "recommend_xo"].includes(event.kind) ? { failure: null } : {}) });
       return;
@@ -198,7 +268,11 @@ export function createSession(ipc: Ipc) {
     }
     if (!request && !["level_monitor", "status_watch"].includes(job.kind)) earlyFinishes.set(event.job, event);
     host.set({ jobs: h.jobs.map((j) => j === job ? { ...j, status: event.status, result: event.result, error: event.error } : j) });
-    if (job.kind === "level_monitor") { monitoring = false; host.set({ monitor: event.status === "failed" ? "offline" : "off" }); }
+    if (job.kind === "level_monitor" && event.job === monitorJob) {
+      monitoring = false;
+      clearMeterTimer();
+      if (!restartingMonitor) host.set({ monitor: event.status === "failed" ? "offline" : "off" });
+    }
     // A cancelled job also carries an error (code `cancelled`); only a failure is one.
     if (event.status === "failed" && event.error && ["calibrate", "mimo", "recommend_xo"].includes(job.kind)) {
       host.set({ failure: { job: request?.method === "calibrate" && request.params.subs_only ? "calibrate_subs" : job.kind as "calibrate" | "mimo" | "recommend_xo", error: event.error } });
@@ -235,6 +309,9 @@ export function createSession(ipc: Ipc) {
       catch (error) { report(error); }
       if (stores.project.getSnapshot()) {
         await reload(Object.keys(stores).filter((key) => !["bootstrap", "measurementSettings", "appSettings", "methods", "rew"].includes(key)) as (keyof typeof stores)[]);
+        // A window reloaded over a project the service still holds reads its
+        // stored method, as opening it does; call() reports a failure.
+        await call({ method: "measure_config_get" }).catch(() => {});
       }
       ready.set(true);
       run(() => call({ method: "status_watch_start" }));

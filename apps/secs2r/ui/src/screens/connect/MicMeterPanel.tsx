@@ -2,8 +2,10 @@
 // line, whether readings arrive, and a control that clears the peak. It sits
 // in the level check, and the frame can float it as a small panel (upstream
 // Ctrl+M; P33 wires the shortcut). The held peak is the highest Meter peak
-// since the panel appeared or since 피크 지우기.
-import { useEffect, useState } from "react";
+// since the panel appeared or since 피크 지우기. The floating panel is not
+// modal: it takes the focus when it opens (its close button, or its title),
+// Esc inside it closes it, and the focus goes back where it was.
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { useNumber, useT } from "../../i18n/react";
 import { Button, IconButton, LevelMeter, StatusPill, type PillTone } from "../../ui";
 import type { MeterReading, MonitorState } from "./types";
@@ -43,7 +45,23 @@ export function MicMeterPanel({
   const t = useT();
   const number = useNumber();
   const [peak, setPeak] = useState<number | null>(null);
+  const panelRef = useRef<HTMLElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
   const reading = view.reading;
+  // Floating: focus in on opening, and back on closing unless the user has moved on.
+  // A layout effect, so the cleanup runs while the panel still holds the focus.
+  useLayoutEffect(() => {
+    const panel = panelRef.current;
+    if (!floating || !panel) return;
+    const before = document.activeElement;
+    (closeRef.current ?? titleRef.current)?.focus({ preventScroll: true });
+    return () => {
+      const active = document.activeElement;
+      const inside = !active || active === document.body || panel.contains(active);
+      if (inside && before instanceof HTMLElement && before !== document.body && before.isConnected) before.focus({ preventScroll: true });
+    };
+  }, [floating]);
   useEffect(() => {
     if (reading && Number.isFinite(reading.peak_dbfs) && reading.peak_dbfs > -200) setPeak((held) => (held === null ? reading.peak_dbfs : Math.max(held, reading.peak_dbfs)));
   }, [reading]);
@@ -76,13 +94,20 @@ export function MicMeterPanel({
     </div>
   );
   if (!floating) return body;
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.key !== "Escape" || !onClose) return;
+    // Ours: the tutorial and the app do not see it.
+    event.preventDefault();
+    event.stopPropagation();
+    onClose();
+  };
   return (
-    <section className="connect-mic-panel" aria-labelledby={`${id}.title`}>
+    <section ref={panelRef} className="connect-mic-panel" aria-labelledby={`${id}.title`} onKeyDown={onKeyDown}>
       <header className="connect-mic-panel__head">
-        <h2 className="connect-mic-panel__title" id={`${id}.title`}>
+        <h2 ref={titleRef} className="connect-mic-panel__title" id={`${id}.title`} tabIndex={-1}>
           {t("connect.mic.title")}
         </h2>
-        {onClose && <IconButton icon="close" size="sm" label={t("connect.mic.close")} data-ui={`${id}.close`} onClick={onClose} />}
+        {onClose && <IconButton ref={closeRef} icon="close" size="sm" label={t("connect.mic.close")} data-ui={`${id}.close`} onClick={onClose} />}
       </header>
       {body}
     </section>

@@ -1,10 +1,10 @@
 /* 내보내기. Tokens only (styles/tokens.css). */
 
+/* Cards span the content width like every other step; long text keeps its own measure (.export-item__body). */
 .export-screen {
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
-  max-width: 920px;
 }
 
 .export-computing {
@@ -41,10 +41,11 @@
   min-width: 0;
 }
 
+/* Labels take the UI size; the caption size is for units, ticks and hints (DESIGN.md §4). */
 .export-fact dt,
 .export-line dt {
   color: var(--text-muted);
-  font-size: var(--text-caption);
+  font-size: var(--text-ui);
 }
 
 .export-fact dd {

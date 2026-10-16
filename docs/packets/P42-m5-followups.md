@@ -1,5 +1,7 @@
 # P42: M5 감사 후속 (ASTRA 연결 · Opus 화면)
 
+작업서로 나눠 0.15.3에서 끝냈습니다: 연결 [`P42a`](P42a-astra-wiring.md), 화면 [`P42b`](P42b-opus-screens.md), 투어가 찾은 결함 [`P42c`](P42c-astra-tour-findings.md). 남은 것은 [`P44`](P44-tour-followups.md)입니다.
+
 `docs/M5-review.md`의 ASTRA 감사에서 성립했지만 0.15.2에 넣지 않은 것입니다. M5 종료 조건(HIGH 없음)과는 무관하고, 다음 화면 묶음에서 다룹니다. 모두 `apps/secs2r/ui/src/` 안이며, 커밋은 Claude가 합니다.
 
 ## Opus 5.5 (화면)

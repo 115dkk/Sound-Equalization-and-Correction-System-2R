@@ -1,0 +1,188 @@
+# Screen gallery review.
+#
+#   shots    the screen tour (scripts/screen-tour.mjs: every step and state
+#            of the real app on the mock service, light and dark, Korean and
+#            English) and the specimen gallery (scripts/gallery-shots.mjs),
+#            kept as a run artifact
+#   publish  the PNGs on the ui-gallery branch and a review issue that shows
+#            them, one per pull request, updated by comment on later runs
+#
+# The issue lets the screens be reviewed without running the app, including
+# states that need hardware to reach. It never blocks a merge; ci.yml's
+# gallery job is the gate for the specimens.
+#
+# The ui-gallery branch is one orphan commit holding the last KEEP runs: every
+# scene of the tour and the specimens in Korean and light (what the issue
+# shows, about 40 MB a run). The other specimen variants stay in the run
+# artifact. Each publish rewrites the branch, so a clone of the repository
+# does not collect every screenshot ever taken; issues of older runs lose
+# their images.
+#
+# Pull requests from forks are skipped: their token can neither push the
+# branch nor open the issue.
+name: ui-gallery
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - apps/secs2r/ui/**
+      - .github/workflows/ui-gallery.yml
+      - .github/scripts/gallery_issue.py
+
+concurrency:
+  group: ui-gallery-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  BRANCH: ui-gallery
+  KEEP: "4"
+
+jobs:
+  shots:
+    name: screen tour and specimens
+    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/secs2r/ui
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/secs2r/ui/package-lock.json
+
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+
+      # The Chromium build that matches the pinned playwright in package.json.
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build the app and the gallery
+        run: npm run build:gallery
+
+      - name: Screen tour
+        run: node scripts/screen-tour.mjs --out "$GITHUB_WORKSPACE/shots/screens"
+
+      - name: Specimens
+        run: node scripts/gallery-shots.mjs --out "$GITHUB_WORKSPACE/shots/specimens"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ui-gallery
+          path: shots/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: branch and review issue
+    needs: shots
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+    # One writer at a time: each publish rewrites the branch from its tip.
+    concurrency:
+      group: ui-gallery-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          name: ui-gallery
+          path: shots
+
+      - name: Publish on the ui-gallery branch
+        id: branch
+        run: |
+          set -euo pipefail
+          run_dir="runs/${GITHUB_RUN_NUMBER}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          lease="refs/heads/${BRANCH}:"
+          work="$(mktemp -d)"
+          git worktree add --detach "$work"
+          cd "$work"
+          git checkout -q --orphan "publish-${GITHUB_RUN_ID:-0}-${GITHUB_RUN_ATTEMPT:-0}-$RANDOM"
+          git rm -rfq . 2>/dev/null || true
+          if git fetch -q --depth=1 origin "$BRANCH"; then
+            lease="refs/heads/${BRANCH}:$(git rev-parse FETCH_HEAD)"
+            if git cat-file -e FETCH_HEAD:runs 2>/dev/null; then
+              git checkout -q FETCH_HEAD -- runs
+            fi
+          fi
+          # A re-run attempt replaces its own run; then the newest KEEP-1
+          # earlier runs stay beside it.
+          rm -rf "$run_dir"
+          if [ -d runs ]; then
+            ls -1 runs | sort -n | head -n "-$((KEEP - 1))" | while read -r old; do rm -rf "runs/$old"; done
+          fi
+          mkdir -p "$run_dir"
+          cp -r "$GITHUB_WORKSPACE/shots/screens" "$run_dir/"
+          mkdir "$run_dir/specimens"
+          cp "$GITHUB_WORKSPACE"/shots/specimens/*.light.ko.png "$run_dir/specimens/"
+          {
+            echo "# ui-gallery"
+            echo
+            echo "Screenshots published by \`.github/workflows/ui-gallery.yml\`: the last ${KEEP} runs,"
+            echo "one directory per run number. This branch is rewritten on every publish; never base work on it."
+          } > README.md
+          git add -A
+          git commit -qm "gallery: run ${GITHUB_RUN_NUMBER} (${GITHUB_SHA})"
+          git push --force-with-lease="$lease" origin "HEAD:refs/heads/${BRANCH}"
+          echo "run_dir=$run_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Issue text
+        env:
+          RUN_DIR: ${{ steps.branch.outputs.run_dir }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          HEAD_REF: ${{ github.head_ref || github.ref_name }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PR" ]; then context="PR #${PR}"; else context="수동 실행 (${HEAD_REF})"; fi
+          echo "CONTEXT=$context" >> "$GITHUB_ENV"
+          python3 .github/scripts/gallery_issue.py \
+            --screens shots/screens --specimens shots/specimens \
+            --raw-base "https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${BRANCH}/${RUN_DIR}" \
+            --tree-url "https://github.com/${GITHUB_REPOSITORY}/tree/${BRANCH}/${RUN_DIR}" \
+            --context "$context" --sha "$HEAD_SHA" --ref "$HEAD_REF" \
+            --run-url "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --keep "$KEEP" --out parts
+
+      - name: Open or update the review issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          retry() {
+            for attempt in 1 2 3; do
+              if "$@"; then return 0; fi
+              [ "$attempt" -lt 3 ] && sleep $((attempt * 5))
+            done
+            return 1
+          }
+          title="화면 갤러리 리뷰: ${CONTEXT}"
+          gh label create ui-gallery --color 5319e7 --description "화면 갤러리 리뷰 (ui-gallery.yml)" --force >/dev/null 2>&1 || true
+          number="$(retry gh issue list --state open --label ui-gallery --limit 100 --json number,title \
+            --jq "[.[] | select(.title == \"${title}\")][0].number // empty")"
+          first=1
+          if [ -z "$number" ]; then
+            url="$(retry gh issue create --title "$title" --label ui-gallery --body-file parts/part-1.md)"
+            number="${url##*/}"
+            first=2
+          fi
+          for part in $(ls parts | sort -V | tail -n "+$first"); do
+            retry gh issue comment "$number" --body-file "parts/$part" >/dev/null
+          done
+          link="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/issues/${number}"
+          echo "Review issue: $link"
+          echo "Screen gallery review: [#${number}](${link})" >> "$GITHUB_STEP_SUMMARY"

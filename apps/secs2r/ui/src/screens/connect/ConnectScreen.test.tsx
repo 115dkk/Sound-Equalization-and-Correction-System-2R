@@ -320,6 +320,28 @@ describe("ConnectScreen", () => {
     expect(connectHeader(emptyView, actions, t).status).toBeUndefined();
   });
 
+  it("turns every level play off while the sweep level is being found, and says why", () => {
+    const t = (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) => translate("ko", key, params);
+    const checking: ConnectView = { ...levelHalfView, level: { ...levelHalfView.level, playing: null, playingAll: false }, sweepCheck: { running: true, result: null, role: "L" } };
+    const header = connectHeader(checking, actionsMock(), t);
+    expect(header.primary).toMatchObject({ id: "connect.level.play_all", disabled: true, busy: false });
+    render(
+      <PrefsScope initial={{ locale: "ko", theme: "light", expert: false, accent: "default" }}>
+        <StepHeader step="connect" state={connectStepState(checking)} primary={header.primary} status={header.status} />
+        <ConnectScreen view={checking} actions={actionsMock()} />
+      </PrefsScope>,
+    );
+    // The header's play-all is off and described by the pill beside the title.
+    const playAll = must("connect.level.play_all") as HTMLButtonElement;
+    expect(playAll.disabled).toBe(true);
+    expect(document.getElementById(playAll.getAttribute("aria-describedby")!)?.textContent).toBe(ko("connect.status.sweep_check"));
+    // Every channel's play is off too, and the card's play state says why.
+    for (const button of document.querySelectorAll<HTMLButtonElement>('[data-ui^="connect.level.play."]')) expect(button.disabled, button.dataset.ui).toBe(true);
+    expect(must("connect.level.playing").textContent).toBe(ko("connect.status.sweep_check"));
+    // Without the check the same view plays.
+    expect(connectHeader({ ...checking, sweepCheck: { running: false, result: null, role: null } }, actionsMock(), t).primary?.disabled).toBe(false);
+  });
+
   it("draws every reach id in at least one state", () => {
     const seen = new Set<string>();
     const collect = () => document.querySelectorAll("[data-ui]").forEach((node) => seen.add(node.getAttribute("data-ui") ?? ""));

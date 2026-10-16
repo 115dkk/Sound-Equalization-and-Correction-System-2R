@@ -51,6 +51,7 @@ export function useMeasureScreen(): { view: MeasureView | null; actions: Measure
     records: records?.records ?? [], curves,
     sweepOptions: config.sweep_lengths.map((samples) => ({ samples, seconds: samples / config.sample_rate })),
     repetitions: config.repetitions,
+    playing: host.playing !== null || host.playingAll,
     job: running ? { job: running.job, kind: running.kind, status: running.status, progress: running.progress, position: request?.method === "measure_position" ? request.params.position : null } : null,
     warnings: host.warnings, selected: host.selected, graphHidden: host.graphHidden, plotRange: host.plotRange, mdat: host.mdat,
   } : null, actions };

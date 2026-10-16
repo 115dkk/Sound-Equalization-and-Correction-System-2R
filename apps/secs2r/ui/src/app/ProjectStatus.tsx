@@ -21,6 +21,7 @@ const PATH_KIND: Record<PathKind, MessageKey> = {
   rew: "frame.status.path.rew",
   native: "frame.status.path.native",
   mock: "frame.status.path.mock",
+  mdat: "frame.status.path.mdat",
   none: "frame.status.path.none",
 };
 

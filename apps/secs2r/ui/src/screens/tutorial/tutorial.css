@@ -73,6 +73,15 @@
   pointer-events: auto;
 }
 
+/* An act card takes the focus itself when it opens (Tutorial.tsx); the card
+   is its own frame, so no ring (as the help panel). Its buttons keep theirs. */
+.tutorial-coach:focus,
+.tutorial-coach:focus-visible,
+.tutorial-end:focus,
+.tutorial-end:focus-visible {
+  outline: none;
+}
+
 .tutorial-coach--shake-0 {
   animation: tutorial-shake-a 220ms var(--ease-out);
 }
@@ -286,7 +295,9 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-2-5);
-  width: 268px;
+  /* Wide enough for the two footer actions side by side in Korean
+     ('처음부터 다시', '튜토리얼 끝내기'); they wrap rather than overflow. */
+  width: 296px;
   padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
   background: var(--surface-raised);
@@ -308,6 +319,11 @@
 
 .tutorial-panel .ui-progress {
   margin-right: var(--space-2);
+}
+
+/* The tutorial's own progress takes its accent (data-accent="tutorial"), not the job tray's info blue. */
+.tutorial-panel .ui-progress__fill {
+  background: var(--accent);
 }
 
 .tutorial-panel__items {
@@ -348,8 +364,9 @@
 
 .tutorial-panel__foot {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
-  gap: var(--space-2);
+  gap: var(--space-1) var(--space-2);
   padding-top: var(--space-1-5);
   border-top: var(--border-w) solid var(--border-subtle);
 }

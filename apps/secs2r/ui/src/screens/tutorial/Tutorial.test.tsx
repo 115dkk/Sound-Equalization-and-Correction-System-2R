@@ -2,7 +2,7 @@
 import { act, fireEvent, screen } from "@testing-library/react";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { StepId } from "../../app/model";
+import { STEPS, canLeave, type FrameModel, type StepId } from "../../app/model";
 import { renderWith } from "../../test/render";
 import { INITIAL, glossaryFor, placeCoach, resumeIndex, tutorialReducer } from "./engine";
 import { GLOSSARY } from "./glossary";
@@ -92,6 +92,28 @@ describe("tutorial flow", () => {
     expect(resumeIndex(qs, 2, view, (_v, step) => step !== "system")).toBe(1);
     expect(resumeIndex(qs, 2, view, () => true)).toBe(2);
     expect(resumeIndex(qs, 2, { ...view, helpOpen: true }, (_v, step) => step !== "system")).toBe(0);
+  });
+
+  it("reads from the rail whether a step can be left (App's stepOpen, upstream can_advance)", () => {
+    const steps = (patch: Partial<FrameModel["steps"]>): FrameModel["steps"] => ({
+      system: { status: "done" },
+      connect: { status: "done" },
+      measure: { status: "ready" },
+      calibrate: { status: "ready" },
+      export: { status: "blocked", reason: "no_result" },
+      ...patch,
+    });
+    const open = (s: FrameModel["steps"]) => STEPS.filter((step) => canLeave(s, step));
+    // Partly measured, no result yet: every step can be left (보정 never holds; upstream opens 내보내기 without a result).
+    expect(open(steps({}))).toEqual([...STEPS]);
+    expect(open(steps({ system: { status: "blocked", reason: "config_invalid", count: 1 } }))).not.toContain("system");
+    expect(open(steps({ connect: { status: "ready", reason: "no_levels", count: 3 } }))).not.toContain("connect");
+    expect(open(steps({ connect: { status: "skipped" } }))).toContain("connect");
+    // 측정·가져오기 is held by the step after it: no measurement, or one running.
+    expect(open(steps({ calibrate: { status: "blocked", reason: "no_measurements" } }))).toEqual(["system", "connect", "calibrate", "export"]);
+    expect(open(steps({ measure: { status: "done" }, calibrate: { status: "blocked", reason: "measuring" } }))).not.toContain("measure");
+    // A level check running ends by itself; it holds nothing.
+    expect(open(steps({ measure: { status: "blocked", reason: "device_busy" } }))).toEqual([...STEPS]);
   });
 
   it("puts each glossary term under the first quest that names it", () => {
@@ -314,6 +336,63 @@ describe("tutorial layer", () => {
     fireEvent.click(ui("tutorial.panel.end")!);
     expect(h.restart).toHaveBeenCalledTimes(1);
     expect(h.finish).toHaveBeenCalledTimes(1);
+  });
+
+  it("moves the focus into each card: an alert card on 계속, an act card on itself, then Tab goes round its buttons, the target and the list", async () => {
+    const h = host();
+    renderWith(<Harness actions={h} />);
+    await tick();
+    // An alert card: only 계속 to press.
+    expect(document.activeElement).toBe(ui("tutorial.coach.next"));
+    fireEvent.click(ui("tutorial.coach.next")!);
+    await tick();
+    // An act card: the card itself, named by its step line and the quest title, described by its text.
+    const coach = ui("tutorial.coach")!;
+    expect(document.activeElement).toBe(coach);
+    expect(coach.tabIndex).toBe(-1);
+    const name = (coach.getAttribute("aria-labelledby") ?? "").split(" ").map((id) => document.getElementById(id)?.textContent).join(" ");
+    expect(name).toBe("시스템 · 2 / 2 도움말 열기");
+    expect(document.getElementById(coach.getAttribute("aria-describedby")!)?.textContent).toContain("도움말을 여세요.");
+    const tab = (shiftKey = false) => fireEvent.keyDown(document.activeElement!, { key: "Tab", shiftKey });
+    const order = ["tutorial.coach.pause", "tutorial.coach.prev", "tutorial.coach.next", "frame.help", "tutorial.panel.fold", "tutorial.panel.restart", "tutorial.panel.end"];
+    for (const id of order) {
+      tab();
+      expect(document.activeElement, id).toBe(ui(id));
+    }
+    // Round again; the rest of the app (it does not answer now) is never a stop.
+    tab();
+    expect(document.activeElement).toBe(ui("tutorial.coach.pause"));
+    tab(true);
+    expect(document.activeElement).toBe(ui("tutorial.panel.end"));
+    ui("tutorial.coach.next")!.focus();
+    tab();
+    expect(document.activeElement).toBe(ui("frame.help"));
+    tab(true);
+    expect(document.activeElement).toBe(ui("tutorial.coach.next"));
+    // The target answers: the next card (on 보정) takes the focus.
+    ui("frame.help")!.focus();
+    fireEvent.click(ui("frame.help")!);
+    await tick();
+    expect(h.goTo).toHaveBeenCalledWith("calibrate");
+    expect(document.activeElement).toBe(ui("tutorial.coach"));
+  });
+
+  it("focuses 튜토리얼 끝내기 on the end card, and Esc there ends the tutorial; hidden, Esc does nothing", async () => {
+    const h = host();
+    const { unmount } = renderWith(<Harness actions={h} initial={{ finished: true, index: 2, completed: [0, 1, 2] }} />);
+    await tick();
+    expect(document.activeElement).toBe(ui("tutorial.end.finish"));
+    expect(ui("tutorial.end.finish")?.getAttribute("aria-keyshortcuts")).toBe("Escape");
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(h.finish).toHaveBeenCalledTimes(1);
+    unmount();
+    // Hidden: Esc leaves the app alone (the resume button stays).
+    const paused = host();
+    renderWith(<Harness actions={paused} initial={{ paused: true, index: 1, completed: [0] }} />);
+    await tick();
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(paused.finish).not.toHaveBeenCalled();
+    expect(ui("tutorial.resume")).not.toBeNull();
   });
 
   it("offers start over or end at the end", async () => {

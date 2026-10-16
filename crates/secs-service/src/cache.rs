@@ -150,7 +150,6 @@ mod tests {
                 },
                 scorecard: Vec::<ChannelScore>::new(),
                 latency_ms: 4.0,
-                warnings: vec![],
                 notes: vec![],
                 chain: SignalChain {
                     sample_rate: 48_000,

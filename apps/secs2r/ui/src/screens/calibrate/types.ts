@@ -35,8 +35,19 @@ export type CalibrateView = {
   results: ResultsSummary;
   /** `result_lines`: per-channel lines, RC notes and the BA lines. */
   lines: ResultLinesResult;
-  /** `result_curves { tab, channel, group: xoGroup, xo_hz: null, corrected: null }` for the open tab; null while it loads. */
+  /**
+   * `result_curves { tab, channel, group: xoGroup, xo_hz: null, corrected: null }`:
+   * the last curves received. While `curvesLoading` they may still belong to
+   * the previous tab, channel or group; null before the first reply and after
+   * a failed request.
+   */
   curves: ResultCurvesResult | null;
+  /**
+   * The curves for the current tab, channel and group are being fetched
+   * (selection change, or a refresh after a run or an edit). The graph keeps
+   * `curves` dimmed meanwhile instead of showing them as the new selection.
+   */
+  curvesLoading: boolean;
   /** `calibration_settings_get`, and the reply of every `calibration_settings_set`. */
   settings: CalibrationSettings;
   /** `mode_spec { mode: settings.mode, ultra_ms: settings.ultra_ms }`. */

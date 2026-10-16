@@ -67,6 +67,13 @@ NOT_SHIPPED = (
     "crates/secs-oracle/*",
     "*.test.ts",
     "*.test.tsx",
+    ".gitignore",
+    # The screen gallery, its screen tour and their screenshot scripts:
+    # `npm run build`, which Tauri runs, builds index.html alone (vite --mode
+    # app), so none of these reach an installer (docs/DESIGN.md §7).
+    "apps/secs2r/ui/gallery.html",
+    "apps/secs2r/ui/src/gallery/*",
+    "apps/secs2r/ui/scripts/*",
 )
 NOT_SHIPPED_DIRS = ("tests", "benches", "fuzz", "node_modules")
 

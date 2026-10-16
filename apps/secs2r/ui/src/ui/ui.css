@@ -1115,11 +1115,15 @@
   animation: ui-fade-in var(--dur-base) var(--ease-out);
 }
 
+/* Never taller than the window less the backdrop's margin: the head and the
+   buttons stay put and the body scrolls (Dialog.tsx). */
 .ui-dialog {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
   width: min(var(--dialog-w), 100%);
+  max-height: calc(100vh - 2 * var(--space-6));
+  max-height: calc(100dvh - 2 * var(--space-6));
   padding: var(--space-5) var(--space-6) var(--space-5);
   border-radius: var(--radius-lg);
   background: var(--surface-raised);
@@ -1133,6 +1137,7 @@
 
 .ui-dialog__header {
   display: flex;
+  flex: none;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-3);
@@ -1163,12 +1168,27 @@
   color: var(--text);
 }
 
+/* The padding keeps focus rings and rows that bleed into the margin (the
+   recent projects) inside the scroll box; the negative margin keeps the
+   text where it was. */
 .ui-dialog__body {
+  flex: 0 1 auto;
+  min-height: 0;
+  margin: calc((var(--space-1) + var(--border-w)) * -1) calc(var(--space-3) * -1);
+  padding: var(--space-1) var(--space-3);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-block: var(--border-w) solid transparent;
   color: var(--text);
+}
+
+.ui-dialog--scrolls .ui-dialog__body {
+  border-block-color: var(--border-subtle);
 }
 
 .ui-dialog__footer {
   display: flex;
+  flex: none;
   justify-content: flex-end;
   gap: var(--space-2);
   margin-top: var(--space-2);

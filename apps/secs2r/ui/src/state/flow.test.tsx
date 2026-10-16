@@ -57,4 +57,6 @@ it("walks a non-tutorial sample project through mock measurements, calibration a
     expect(mock.calls.some((r) => r.method === "sample_load")).toBe(false);
     expect(mock.calls.find((r) => r.method === "export")).toEqual({ method: "export", params: { kind: "camilla_dsp", folder: "" } });
   } finally { rendered.unmount(); mock.dispose(); }
-});
+  // The whole flow renders the App through four steps; on a loaded runner it
+  // can exceed the default 5 s, so it gets a wider bound rather than a retry.
+}, 30_000);

@@ -106,8 +106,14 @@ export function connectHeader(view: ConnectView, actions: ConnectActions, t: Tra
   if (view.path === null || !pathReady(view)) return {};
   const roles = levelRoles(view);
   const missing = missingLevels(view).length;
-  const status =
-    roles.length === 0 ? undefined : missing === 0 ? (
+  // The sweep-level check holds the device (the service refuses a level play
+  // meanwhile): the primary is off and the pill beside the title says why.
+  const checking = view.sweepCheck.running;
+  const status = checking ? (
+    <StatusPill tone="busy" data-ui="connect.status">
+      {t("connect.status.sweep_check")}
+    </StatusPill>
+  ) : roles.length === 0 ? undefined : missing === 0 ? (
       <StatusPill tone="success" data-ui="connect.status">
         {t("connect.status.levels_done")}
       </StatusPill>
@@ -117,7 +123,7 @@ export function connectHeader(view: ConnectView, actions: ConnectActions, t: Tra
       </StatusPill>
     );
   return {
-    primary: { id: "connect.level.play_all", label: t("frame.step.connect.primary"), onClick: actions.playAllLevels, busy: view.level.playingAll },
+    primary: { id: "connect.level.play_all", label: t("frame.step.connect.primary"), onClick: actions.playAllLevels, busy: view.level.playingAll, disabled: checking },
     status,
   };
 }
@@ -501,6 +507,11 @@ function LevelCard({ view, actions }: { view: ConnectView; actions: ConnectActio
               {level.playing ? (
                 <StatusPill tone="busy" data-ui="connect.level.playing">
                   {t("connect.level.playing", { code: roleCode(level.playing) })}
+                </StatusPill>
+              ) : sweepCheck.running ? (
+                // Why the play buttons are off.
+                <StatusPill tone="busy" data-ui="connect.level.playing">
+                  {t("connect.status.sweep_check")}
                 </StatusPill>
               ) : (
                 <StatusPill data-ui="connect.level.playing">{t("connect.level.idle")}</StatusPill>

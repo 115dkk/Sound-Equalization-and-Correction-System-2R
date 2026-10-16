@@ -134,6 +134,24 @@ for (const route of ["action", "auto"] as const) it(`finishes every act through 
   } finally { hook.unmount(); session.dispose(); mock.dispose(); }
 });
 
+it("resumes at a step that can no longer be left: without measurements, 보정 goes back to the demo data quest", async () => {
+  // Levels filled, so 연결·점검 can be left; no measurement, so 측정·가져오기 cannot (보정 is blocked with no_measurements).
+  const mock = createMockService({ project: null, tickMs: 0 });
+  await mock.request({ method: "project_new", params: { path: "", preset: "7.1.4", sub_count: 3, sample: true, tutorial: true } });
+  await mock.request({ method: "levels_fill_defaults" });
+  const rendered = render(<App ipc={mock} tutorialStart="calibrate.graph" />);
+  try {
+    // The app starts and prepares the tutorial first (slow under a full parallel run).
+    await waitFor(() => expect(ui("tutorial.coach")?.textContent).toContain(ko["tutorial.q.calibrate.graph.text"]), { timeout: 8000 });
+    fireEvent.click(ui("tutorial.coach.pause")!);
+    await waitFor(() => expect(ui("tutorial.resume")).not.toBeNull());
+    fireEvent.click(ui("tutorial.resume")!);
+    await waitFor(() => expect(ui("tutorial.coach")?.textContent).toContain(ko["tutorial.q.measure.sample.text"]));
+    expect(ui("tutorial.toast")?.textContent).toBe(ko["tutorial.toast.rewound"].replace("{step}", ko["frame.step.measure"]));
+    expect(ui("frame.rail.measure")?.getAttribute("aria-current")).toBe("step");
+  } finally { rendered.unmount(); mock.dispose(); }
+}, 15000);
+
 it("walks every quest on the real App hooks, checks every target, and reaches the end via Continue", async () => {
   const mock = createMockService({ project: null, tickMs: 0 });
   await mock.request({ method: "project_new", params: { path: "", preset: "7.1.4", sub_count: 3, sample: true, tutorial: true } });

@@ -22,6 +22,19 @@ beforeEach(async () => {
 afterEach(async () => { cleanup(); await session.monitor(false); session.dispose(); mock.dispose(); vi.restoreAllMocks(); });
 
 describe("useCalibrateScreen", () => {
+  it("keeps the preview channel list empty without position-one measurements", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    await perform(() => session.call({ method: "project_new", params: { path: "", preset: "2.1", sub_count: 1, sample: false, tutorial: false } }));
+    expect(result.current.view).toMatchObject({ positions: [], measuredRoles: [], channel: null });
+    await perform(() => session.configure({ method: "mock" }));
+    await perform(() => session.call({ method: "measure_position", params: { position: 2 } }));
+    await perform(mock.drain);
+    expect(result.current.view?.measuredRoles).toEqual([]);
+    await perform(() => session.call({ method: "measure_position", params: { position: 1 } }));
+    await perform(mock.drain);
+    expect(result.current.view?.measuredRoles).toEqual(session.stores.config.getSnapshot()!.speakers.map((speaker) => speaker.role));
+  });
+
   it("uses service settings, warnings and result metadata without manufacturing them", async () => {
     const { result } = renderHook(useCalibrateScreen, { wrapper });
     expect(result.current.view?.settings).toBe(session.stores.settings.getSnapshot());
@@ -76,6 +89,36 @@ describe("useCalibrateScreen", () => {
     expect(mock.calls).toContainEqual({ method: "sub_warnings" });
     await perform(a.takeSubValues);
     expect(mock.calls).toContainEqual({ method: "sub_take_values" });
+  });
+
+  it("keeps previous curves while loading, ignores late reads, and clears a failed selection", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    const original = mock.request;
+    const replies: { resolve: () => void; reject: () => void }[] = [];
+    vi.spyOn(mock, "request").mockImplementation(async (request) => {
+      const value = await original(request);
+      if (request.method === "result_curves") await new Promise<void>((resolve, reject) => {
+        replies.push({ resolve, reject: () => reject(new Error("curve transport failed")) });
+      });
+      return value;
+    });
+    const previous = result.current.view!.curves;
+    await act(async () => { result.current.actions.selectChannel("L", "front"); });
+    expect(result.current.view).toMatchObject({ curvesLoading: true, curves: previous });
+    await act(async () => { result.current.actions.selectChannel("R", "front"); });
+    await act(async () => { replies[1]!.resolve(); });
+    expect(result.current.view?.curvesLoading).toBe(false);
+    expect(session.stores.resultCurves.getSnapshot()?.params.channel).toBe("R");
+    const latest = result.current.view!.curves;
+    await act(async () => { replies[0]!.resolve(); });
+    expect(result.current.view?.curves).toBe(latest);
+    expect(session.stores.resultCurves.getSnapshot()?.params.channel).toBe("R");
+    await act(async () => { result.current.actions.selectChannel("C", "center"); });
+    expect(result.current.view?.curvesLoading).toBe(true);
+    await act(async () => { replies[2]!.reject(); });
+    expect(result.current.view).toMatchObject({ curves: null, curvesLoading: false });
+    expect(session.errors.getSnapshot()?.error.detail).toContain("curve transport failed");
+    await perform(() => {});
   });
 
   it("edits target points and preset, and honors both file dialog cancellations", async () => {

@@ -164,3 +164,20 @@ describe("도움말", () => {
     expect(REACH_IDS.filter((id) => !seen.has(id))).toEqual([]);
   });
 });
+
+it("gives focus back to where it was when the panel closes", () => {
+  function Host() {
+    const [open, setOpen] = useState(false);
+    return <>
+      <button type="button" onClick={() => setOpen(true)}>open help</button>
+      {open && <HelpPanel view={{ step: "system", tutorial: false }} actions={{ close: () => setOpen(false), startTutorial: () => {} }} />}
+    </>;
+  }
+  renderWith(<Host />);
+  const opener = screen.getByText("open help");
+  opener.focus();
+  fireEvent.click(opener);
+  expect(document.activeElement?.getAttribute("data-ui")).toBe("help");
+  fireEvent.click(document.querySelector('[data-ui="help.close"]')!);
+  expect(document.activeElement).toBe(opener);
+});

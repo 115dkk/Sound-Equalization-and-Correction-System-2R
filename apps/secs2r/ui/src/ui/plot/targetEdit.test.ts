@@ -47,5 +47,18 @@ describe("target editing", () => {
     expect(targetAt(points, 10)).toBe(4);
     expect(targetAt(points, 63.2455532)).toBeCloseTo(2, 5);
     expect(targetAt(points, 20000)).toBe(-2);
+    expect(targetAt([], 100)).toBe(0);
+  });
+
+  it("joins points with the service's smoothstep (secs-types TargetCurve::at), not a straight line", () => {
+    // At 1/4 and 3/4 of a segment (in log frequency) the weight is 5/32 and 27/32; a line would give 1/4 and 3/4.
+    const at = (a: TargetPoint, b: TargetPoint, t: number) => targetAt(points, a.hz * (b.hz / a.hz) ** t);
+    const [p20, p200, p2000] = points as [TargetPoint, TargetPoint, TargetPoint];
+    expect(at(p20, p200, 0.25)).toBeCloseTo(4 - 4 * (5 / 32), 10);
+    expect(at(p20, p200, 0.75)).toBeCloseTo(4 - 4 * (27 / 32), 10);
+    expect(at(p200, p2000, 0.25)).toBeCloseTo(-2 * (5 / 32), 10);
+    expect(at(p200, p2000, 0.75)).toBeCloseTo(-2 * (27 / 32), 10);
+    // The points themselves are hit exactly.
+    expect(targetAt(points, 200)).toBe(0);
   });
 });

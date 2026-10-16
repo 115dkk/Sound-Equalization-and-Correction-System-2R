@@ -4,7 +4,10 @@
 // pulsing ring, clickable), the coach card, the quest list (folds into a
 // pill), the toast, and the resume button while paused. Clicks outside an
 // act target shake the card and say what to do; the wheel always scrolls.
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref, type SyntheticEvent } from "react";
+// A card that opens takes the focus; Tab moves between the tutorial's own
+// controls and the act target (the rest of the app does not answer), and
+// Esc leaves: it hides the cards, and on the end card it ends the tutorial.
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref, type SyntheticEvent } from "react";
 import { STEP_TITLE, type StepId } from "../../app/model";
 import type { MessageKey } from "../../i18n";
 import { useT, type Translate } from "../../i18n/react";
@@ -17,6 +20,7 @@ import "./tutorial.css";
 
 const HOLE = 6;
 const TICK_MS = 150;
+const FOCUSABLE = "button, [href], input, select, textarea, [tabindex]";
 
 type Geo = {
   /** One box per outlined group (apart), or one around all. Layer coordinates, padded. */
@@ -69,6 +73,7 @@ export function TutorialLayer<V>({
   const coachRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLElement>(null);
   const pillRef = useRef<HTMLButtonElement>(null);
+  const endRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<unknown>(undefined);
   const missingRef = useRef(0);
   const viewRef = useRef(view);
@@ -194,16 +199,43 @@ export function TutorialLayer<V>({
     };
   }, [state.paused, state.finished, measure, quest, done, elementsOf, quests]);
 
-  // Esc hides the tutorial for now (the card's eye button does the same); a
-  // dialog or panel that handles Esc itself stops it before it gets here.
+  // Esc is the way out of whatever the tutorial shows: it hides the coach
+  // card for now (the card's eye button does the same), and on the end card
+  // it ends the tutorial (the card's 튜토리얼 끝내기, through the host's flow).
+  // While hidden it does nothing. A dialog or panel that handles Esc itself
+  // stops it before it gets here.
+  const finishRef = useRef(actions.finish);
+  finishRef.current = actions.finish;
   useEffect(() => {
-    if (!engaged) return;
+    if (!engaged && !(state.finished && !state.paused)) return;
+    const finished = state.finished;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !event.defaultPrevented) dispatch({ type: "pause" });
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      if (finished) finishRef.current();
+      else dispatch({ type: "pause" });
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [engaged]);
+  }, [engaged, state.finished, state.paused]);
+
+  // A card that opens takes the focus once: an alert card (a look quest, or
+  // an act quest already done) on its 계속; an act card on itself, so Tab
+  // goes on to its buttons and the target; the end card on 튜토리얼 끝내기.
+  // The coach card is placed after measuring, so this waits until it shows.
+  const opened = state.paused ? null : state.finished ? "end" : engaged ? `quest.${state.index}` : null;
+  const focusedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (opened === null) {
+      focusedRef.current = null;
+      return;
+    }
+    if (focusedRef.current === opened) return;
+    const card = opened === "end" ? endRef.current : coachRef.current;
+    if (!card || card.style.visibility === "hidden") return;
+    const into = opened === "end" ? card.querySelector<HTMLElement>('[data-ui="tutorial.end.finish"]') : pending ? card : card.querySelector<HTMLElement>('[data-ui="tutorial.coach.next"]');
+    (into ?? card).focus({ preventScroll: true });
+    focusedRef.current = opened;
+  });
 
   // Toasts leave on their own.
   useEffect(() => {
@@ -273,6 +305,33 @@ export function TutorialLayer<V>({
     dispatch({ type: "restart" });
   };
 
+  /* ── Tab order ── */
+
+  // Not a modal trap: the act target lives in the app. While the focus is on
+  // a card, its buttons, the act target or the quest list, Tab goes round
+  // those in that order; the rest of the app does not answer clicks then, so
+  // it is skipped. Focus elsewhere moves as the browser moves it.
+  const tabRing = (): { home: HTMLElement | null; ring: HTMLElement[] } => {
+    if (state.paused) return { home: null, ring: [] };
+    if (state.finished) return { home: endRef.current, ring: tabStops(endRef.current) };
+    if (!engaged || !quest) return { home: null, ring: [] };
+    const targets = pending ? elementsOf(quest.targets.flatMap((g) => (typeof g === "string" ? [g] : [...g]))).flatMap(targetStops) : [];
+    const list = panelRef.current ?? pillRef.current;
+    return { home: coachRef.current, ring: [...tabStops(coachRef.current), ...targets, ...(list === pillRef.current ? targetStops(list) : tabStops(list))] };
+  };
+
+  const onKeyDownCapture = (event: ReactKeyboardEvent) => {
+    if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
+    const { home, ring } = tabRing();
+    if (ring.length === 0) return;
+    const active = document.activeElement;
+    const at = ring.findIndex((el) => el === active);
+    if (at < 0 && (!home || active !== home)) return;
+    event.preventDefault();
+    const next = at < 0 ? (event.shiftKey ? ring.length - 1 : 0) : (at + (event.shiftKey ? -1 : 1) + ring.length) % ring.length;
+    ring[next]?.focus();
+  };
+
   /* ── Click guard ── */
 
   const guard = (event: SyntheticEvent) => {
@@ -306,6 +365,7 @@ export function TutorialLayer<V>({
       onPointerDownCapture={guard}
       onMouseDownCapture={guard}
       onClickCapture={guard}
+      onKeyDownCapture={onKeyDownCapture}
     >
       {children}
       {!state.paused && (state.finished || quest) && (
@@ -370,7 +430,7 @@ export function TutorialLayer<V>({
         </button>
       )}
 
-      {state.finished && !state.paused && <EndCard at={centre(geo)} onRestart={onRestart} onFinish={actions.finish} />}
+      {state.finished && !state.paused && <EndCard cardRef={endRef} at={centre(geo)} onRestart={onRestart} onFinish={actions.finish} />}
 
       {state.toast && !state.paused && (
         <div className="tutorial-toast" style={toastAt(geo)} data-tutorial-ui data-ui="tutorial.toast" role="status" aria-live="polite">
@@ -396,6 +456,19 @@ function toastAt(geo: Geo): { left: number } | undefined {
 function pillCovers(geo: Geo): boolean {
   const pill = { x: geo.layer.w - 12 - 280, y: geo.bounds.y, w: 280, h: 36 };
   return geo.rings.some((ring) => overlap(pill, pad(ring, 14)) > 0);
+}
+
+const enabled = (el: HTMLElement) => !(el as HTMLButtonElement).disabled && !el.closest("[hidden], [inert]");
+
+/** The Tab stops inside `root`, in document order. */
+function tabStops(root: Element | null | undefined): HTMLElement[] {
+  return root ? [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((el) => el.tabIndex >= 0 && enabled(el)) : [];
+}
+
+/** An act target: itself when it is a control (a segment that is not chosen too), else the Tab stops inside it. */
+function targetStops(el: HTMLElement | null | undefined): HTMLElement[] {
+  if (!el) return [];
+  return el.matches(FOCUSABLE) ? (enabled(el) ? [el] : []) : tabStops(el);
 }
 
 /** Scrolls `el` into view inside its nearest scrolling ancestor below `stop`. */
@@ -456,6 +529,8 @@ type CoachProps<V> = {
 function Coach<V>({ cardRef, at, quest, head, state, pending, busy, blocked, terms, first, bounds, onWhy, onPrev, onNext, onPause, onDrag }: CoachProps<V>) {
   const t = useT();
   const headId = useId();
+  const titleId = useId();
+  const textId = useId();
   const whyId = useId();
   const drag = useRef<{ dx: number; dy: number } | null>(null);
   const node = useRef<HTMLDivElement | null>(null);
@@ -489,12 +564,17 @@ function Coach<V>({ cardRef, at, quest, head, state, pending, busy, blocked, ter
       data-tutorial-ui
       data-ui="tutorial.coach"
       role="dialog"
-      aria-labelledby={headId}
+      aria-labelledby={`${headId} ${titleId}`}
+      aria-describedby={textId}
+      tabIndex={-1}
       style={at ? { left: at.x, top: at.y } : { visibility: "hidden" }}
     >
       <div className="tutorial-coach__head" title={t("tutorial.coach.drag")} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
         <span className="tutorial-coach__step tabular" id={headId}>
           {head}
+        </span>
+        <span className="visually-hidden" id={titleId}>
+          {t(quest.title)}
         </span>
         <kbd className="ui-kbd tutorial-coach__key" aria-hidden="true">
           Esc
@@ -503,7 +583,7 @@ function Coach<V>({ cardRef, at, quest, head, state, pending, busy, blocked, ter
           <EyeIcon hidden />
         </button>
       </div>
-      <p className="tutorial-coach__text" aria-live="polite">
+      <p className="tutorial-coach__text" id={textId} aria-live="polite">
         {busy && quest.busy ? (
           <>
             <Spinner size={16} className="tutorial-coach__spinner" />
@@ -624,20 +704,21 @@ function QuestPanel({
   );
 }
 
-function EndCard({ at, onRestart, onFinish }: { at: { left: number; top: number } | undefined; onRestart: () => void; onFinish: () => void }) {
+function EndCard({ cardRef, at, onRestart, onFinish }: { cardRef: Ref<HTMLDivElement>; at: { left: number; top: number } | undefined; onRestart: () => void; onFinish: () => void }) {
   const t = useT();
   const titleId = useId();
+  const bodyId = useId();
   return (
-    <div className="tutorial-end" style={at} data-tutorial-ui data-ui="tutorial.end" role="dialog" aria-labelledby={titleId}>
+    <div ref={cardRef} className="tutorial-end" style={at} data-tutorial-ui data-ui="tutorial.end" role="dialog" aria-labelledby={titleId} aria-describedby={bodyId} tabIndex={-1}>
       <h2 className="tutorial-end__title" id={titleId}>
         {t("tutorial.end.title")}
       </h2>
-      <p>{t("tutorial.end.body")}</p>
+      <p id={bodyId}>{t("tutorial.end.body")}</p>
       <div className="tutorial-end__buttons">
         <Button variant="secondary" icon="undo" data-ui="tutorial.end.restart" onClick={onRestart}>
           {t("tutorial.end.restart")}
         </Button>
-        <Button variant="primary" data-ui="tutorial.end.finish" onClick={onFinish}>
+        <Button variant="primary" data-ui="tutorial.end.finish" aria-keyshortcuts="Escape" onClick={onFinish}>
           {t("tutorial.end.finish")}
         </Button>
       </div>

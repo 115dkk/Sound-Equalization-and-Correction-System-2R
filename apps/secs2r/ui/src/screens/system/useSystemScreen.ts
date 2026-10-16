@@ -1,4 +1,5 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
+import type { DspFields } from "../../ipc/bindings/DspFields";
 import type { ConfigSetSpeakerParams } from "../../ipc/bindings/ConfigSetSpeakerParams";
 import { useHost, useResource, useSession } from "../../state/react";
 import type { SystemActions, SystemView } from "./types";
@@ -15,7 +16,12 @@ export function useSystemScreen(): { view: SystemView | null; actions: SystemAct
   const settings = useResource("measurementSettings");
   const methods = useResource("methods");
   const rew = useResource("rew");
+  const dspQueue = useRef(Promise.resolve());
   const actions = useMemo<SystemActions>(() => {
+    const editDsp = (work: () => Promise<unknown>) => session.run(() => {
+      dspQueue.current = dspQueue.current.catch(() => {}).then(async () => { await work(); });
+      return dspQueue.current;
+    });
     const speaker = (index: number, patch: Partial<ConfigSetSpeakerParams>) => session.run(() => session.call({
       method: "config_set_speaker", params: { index, role: null, size: null, band_index: null, out: null, pol: null, ...patch },
     }));
@@ -33,8 +39,16 @@ export function useSystemScreen(): { view: SystemView | null; actions: SystemAct
         const path = await session.call({ method: "dialog_save_file", params: { kind: "patch_sheet", suggested: "secs_patch_sheet.csv" } });
         if (path !== null) await session.call({ method: "patch_sheet_csv", params: { path } });
       }),
-      setDspPreset: (preset) => session.run(() => session.call({ method: "dsp_set", params: { preset, fields: null } })),
-      setDspFields: (fields) => session.run(() => session.call({ method: "dsp_set", params: { preset: null, fields } })),
+      setDspPreset: (preset) => editDsp(() => session.call({ method: "dsp_set", params: { preset, fields: null } })),
+      setDspFields: (fields) => {
+        // Controls submit a complete copy of this render's fields. Preserve only
+        // its edits, then rebase them on the previous queued write's result.
+        const patch: Partial<DspFields> = {};
+        for (const key of Object.keys(fields) as (keyof DspFields)[]) {
+          if (fields[key] !== dsp?.fields[key]) patch[key] = fields[key];
+        }
+        editDsp(() => session.call({ method: "dsp_set", params: { preset: null, fields: { ...(session.stores.dsp.getSnapshot()?.fields ?? fields), ...patch } } }));
+      },
       setArrangement: async (count) => (await session.call({ method: "layout_set", params: { count, start_delay: null, timing: null, confirm: true } })).undo_token,
       setStartDelay: (start_delay) => session.run(() => session.call({ method: "layout_set", params: { count: null, start_delay, timing: null, confirm: false } })),
       setTiming: (timing) => session.run(() => session.call({ method: "layout_set", params: { count: null, start_delay: null, timing, confirm: false } })),
@@ -42,7 +56,7 @@ export function useSystemScreen(): { view: SystemView | null; actions: SystemAct
       // The label says 연결·점검; on the mdat path that screen shows the skipped note and leads on to 측정·가져오기.
       next: () => session.navigate("connect"),
     };
-  }, [session]);
+  }, [session, dsp]);
   const output = settings?.output_device || config?.device;
   const nativeDevice = methods?.native_devices.find((device) => device.id === output || device.name === output);
   const rewDevice = rew?.output_devices?.find((device) => device.id === output || device.name === output);
@@ -50,6 +64,7 @@ export function useSystemScreen(): { view: SystemView | null; actions: SystemAct
   return {
     view: config && dsp && layout && project ? {
       config, dsp, layout, notices: notices ?? [], estimate,
+      outputDeviceName: (host.path === "rew" ? rewDevice?.name : nativeDevice?.name) ?? output ?? "",
       outputChannels: outputChannels ?? null, outputNames: [], positionsDone: project.positions,
     } : null,
     actions,

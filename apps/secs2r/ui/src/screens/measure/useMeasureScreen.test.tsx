@@ -6,6 +6,8 @@ import { createMockService } from "../../ipc/mock";
 import { SessionProvider } from "../../state/react";
 import { createSession } from "../../state/session";
 import { useMeasureScreen } from "./useMeasureScreen";
+import { measureStepState } from "./types";
+import type { JobKind } from "../../ipc/bindings/JobKind";
 
 let mock: ReturnType<typeof createMockService>;
 let session: ReturnType<typeof createSession>;
@@ -22,7 +24,28 @@ beforeEach(async () => {
 afterEach(async () => { cleanup(); await session.monitor(false); session.dispose(); mock.dispose(); vi.restoreAllMocks(); });
 
 describe("useMeasureScreen", () => {
+  it("ignores passive watches but blocks finite device checks and active monitor playback", async () => {
+    await session.configure({ method: "mock" });
+    const { result } = renderHook(useMeasureScreen, { wrapper });
+    for (const kind of ["level_monitor", "status_watch", "calibrate", "recommend_xo", "mimo", "export", "level_check", "measure", "sample_load", "mdat_import"] as JobKind[]) {
+      await perform(() => session.host.set({ jobs: [{ job: 99, kind, status: "running", cancellable: true, progress: null, result: null, error: null }] }));
+      const view = result.current.view!;
+      const expected = kind === "level_check" ? { status: "blocked", reason: "device_busy" } : { status: "ready" };
+      expect(measureStepState(view)).toEqual(expected);
+      // The state function also accepts passive snapshots independently of hook filtering.
+      expect(measureStepState({ ...view, job: { job: 99, kind, status: "cancel_requested", progress: null, position: null } })).toEqual(expected);
+    }
+    await perform(() => session.host.set({ jobs: [], playing: "L" }));
+    expect(measureStepState(result.current.view!)).toEqual({ status: "blocked", reason: "device_busy" });
+    await perform(() => session.host.set({ playing: null, playingAll: true }));
+    expect(measureStepState(result.current.view!).reason).toBe("device_busy");
+    await perform(() => session.host.set({ playingAll: false }));
+    expect(measureStepState(result.current.view!).status).toBe("ready");
+  });
+
   it("has no manufactured settings, and keeps host-only choices", async () => {
+    // Before the session has read the stored settings the hook invents none.
+    session.stores.measurementSettings.set(null);
     const { result } = renderHook(useMeasureScreen, { wrapper });
     expect(result.current.view).toBeNull();
     await perform(() => session.configure({ method: "mdat" }));

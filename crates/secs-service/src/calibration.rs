@@ -345,7 +345,6 @@ fn summarize(design: &Design, settings: &CalibrationSettings) -> CalibrationSumm
         },
         scorecard,
         latency_ms: design.chain.latency_ms,
-        warnings: Vec::new(),
         notes: design.notes.iter().flat_map(notices).collect(),
         chain: design.chain.clone(),
     }

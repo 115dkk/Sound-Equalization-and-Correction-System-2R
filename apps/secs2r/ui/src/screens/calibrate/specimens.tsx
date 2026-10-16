@@ -142,6 +142,8 @@ export const calibrateSpecimens: SpecimenDef[] = [
   frame("xo", "current result, XO with the draggable line", () => <CalibrateFrame view={fx.xoView} />),
   frame("ba", "BA with the table and warnings", () => <CalibrateFrame view={fx.baView} />),
   frame("stale", "stale after a mode change", () => <CalibrateFrame view={fx.staleView} />),
+  frame("no-position-1", "before a run, position 1 not measured: the channel's place says so", () => <CalibrateFrame view={fx.noPosition1View} />),
+  frame("loading", "curves loading after a channel change: the last curves dimmed, the status over them", () => <CalibrateFrame view={fx.loadingView} />),
   frame("failed", "failed run: cause, next step, 자세히", () => <CalibrateFrame view={fx.failedView} jobs={failedJobs} />),
   frame("subs-only", "subs-only result on BA (DBA group)", () => <CalibrateFrame view={fx.subsOnlyView} />),
   frame("mimo", "MIMO computed: SPL with the MIMO curve", () => <CalibrateFrame view={fx.mimoView} />),

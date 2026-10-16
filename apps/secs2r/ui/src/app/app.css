@@ -457,10 +457,21 @@
   min-height: 0;
 }
 
+/* The scroll box is the containing block of what is positioned inside it
+   (visually hidden labels, hit areas): otherwise those take .app-body's
+   coordinates, stay put while the content scrolls, and make the whole
+   window scroll. */
 .app-content {
+  position: relative;
   min-height: 0;
   padding: var(--space-6) var(--space-8) var(--space-8);
   overflow: auto;
+}
+
+/* A notice the frame puts above the step's screen (app.error) keeps the
+   steps' card gap from what follows. */
+.app-content > .ui-error {
+  margin-bottom: var(--space-5);
 }
 
 /* The floating mic meter (Ctrl+M) sits in the aside slot at the bottom right,

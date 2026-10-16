@@ -56,7 +56,7 @@ export function TargetHandles({
     onCommit?.(next);
   };
 
-  // The dashed target line, linear in log-frequency between points.
+  // The dashed target line, sampled like the service samples it (targetAt).
   const steps = 96;
   const [x0, x1] = scale.x;
   const path: string[] = [];

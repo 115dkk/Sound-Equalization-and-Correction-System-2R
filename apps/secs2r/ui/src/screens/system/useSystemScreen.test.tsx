@@ -22,12 +22,25 @@ beforeEach(async () => {
 afterEach(async () => { cleanup(); await session.monitor(false); session.dispose(); mock.dispose(); vi.restoreAllMocks(); });
 
 describe("useSystemScreen", () => {
+  it("resolves REW output names by ID or name and preserves unknown IDs", async () => {
+    const { result } = renderHook(useSystemScreen, { wrapper });
+    await perform(() => session.configure({ method: "rew", output_device: "hdmi" }));
+    await perform(() => session.stores.rew.set({ ...session.stores.rew.getSnapshot()!, output_devices: [{ id: "hdmi", name: "AVR (HDMI)", channels: 8 }] }));
+    expect(result.current.view?.outputDeviceName).toBe("AVR (HDMI)");
+    expect(result.current.view?.outputChannels).toBe(8);
+    await perform(() => session.configure({ output_device: "AVR (HDMI)" }));
+    expect(result.current.view?.outputDeviceName).toBe("AVR (HDMI)");
+    await perform(() => session.configure({ output_device: "missing-device" }));
+    expect(result.current.view?.outputDeviceName).toBe("missing-device");
+  });
+
   it("waits for real core resources and projects output capability", async () => {
     const { result } = renderHook(useSystemScreen, { wrapper });
     expect(result.current.view?.config).toBe(session.stores.config.getSnapshot());
     await perform(() => session.configure({ method: "native", output_device: "device-output" }));
     await perform(() => session.stores.methods.set({ ...session.stores.methods.getSnapshot()!, native_devices: [{ id: "device-output", name: "Interface", input_channels: 2, output_channels: 12 }] }));
     expect(result.current.view?.outputChannels).toBe(12);
+    expect(result.current.view?.outputDeviceName).toBe("Interface");
     await perform(() => session.stores.dsp.set(null));
     expect(result.current.view).toBeNull();
   });
@@ -72,6 +85,27 @@ describe("useSystemScreen", () => {
     // The button says 연결·점검으로 on the mdat path too; that screen leads on to 측정·가져오기.
     await perform(() => { session.host.set({ path: "mdat" }); session.navigate("system"); a.next(); });
     expect(session.host.getSnapshot().current).toBe("connect");
+  });
+
+  it("rebases rapid DSP field edits after a delayed full replacement", async () => {
+    const { result } = renderHook(useSystemScreen, { wrapper });
+    const actions = result.current.actions;
+    const fields = result.current.view!.dsp.fields;
+    const original = mock.request;
+    let release!: () => void;
+    let writes = 0;
+    vi.spyOn(mock, "request").mockImplementation(async (request) => {
+      if (request.method === "dsp_set" && ++writes === 1) await new Promise<void>((resolve) => { release = resolve; });
+      return original(request);
+    });
+    await act(async () => {
+      actions.setDspFields({ ...fields, fir_taps: fields.fir_taps + 1 });
+      actions.setDspFields({ ...fields, fir_budget: fields.fir_budget + 1 });
+    });
+    expect(writes).toBe(1);
+    await perform(() => release());
+    expect(session.stores.dsp.getSnapshot()?.fields).toEqual({ ...fields, fir_taps: fields.fir_taps + 1, fir_budget: fields.fir_budget + 1 });
+    expect(writes).toBe(2);
   });
 
   it("does not write a cancelled patch sheet; reports and rejects destructive failures", async () => {

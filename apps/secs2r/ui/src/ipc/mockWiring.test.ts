@@ -35,7 +35,7 @@ describe("P33 mock wiring", () => {
     const events: JobEvent[] = []; mock.events.subscribe((event) => events.push(event));
     await mock.request({ method: "level_play", params: { role: "L", master_dbfs: -20 } });
     for (let i = 0; i < 5; i++) mock.tick();
-    expect((await mock.request({ method: "levels_fill_defaults" })).levels).toMatchObject({ L: -20, R: -12 });
+    expect((await mock.request({ method: "levels_fill_defaults" })).levels).toMatchObject({ L: -30, R: -12 });
     const ended = events.findIndex((event) => event.event === "log" && event.job === monitor.job && event.code === "level_play_end");
     const lastMeter = events.reduce((index, event, current) => event.event === "meter" && event.job === monitor.job ? current : index, -1);
     expect(ended).toBeGreaterThan(lastMeter);

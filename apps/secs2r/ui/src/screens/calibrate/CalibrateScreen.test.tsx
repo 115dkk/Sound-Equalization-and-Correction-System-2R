@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
+import { act } from "react";
 import { describe, expect, it, vi, type Mock } from "vitest";
 import { JobTray } from "../../app/jobs/JobTray";
 import { PrefsScope } from "../../app/prefs";
@@ -10,6 +11,7 @@ import type { Translate } from "../../i18n/react";
 import { renderWith } from "../../test/render";
 import type { PlotScale } from "../../ui";
 import { CalibrateScreen, calibrateHeader } from "./CalibrateScreen";
+import { LOADING_DELAY_MS } from "./ResultGraph";
 import * as fx from "./fixtures";
 import { calibrateStepState, type CalibrateActions, type CalibrateView } from "./types";
 
@@ -23,6 +25,7 @@ vi.mock("../../ui/plot/LogPlot", () => ({
     curves: readonly { id: string }[];
     overlay?: (scale: PlotScale) => ReactNode;
     toolbar?: ReactNode;
+    stale?: boolean;
     onDoubleClick?: (point: { hz: number; value: number }) => void;
   }) => {
     const scale: PlotScale = {
@@ -36,7 +39,7 @@ vi.mock("../../ui/plot/LogPlot", () => ({
       y: [-30, 15],
     };
     return (
-      <figure data-ui={props.id} aria-label={props.label} data-curves={props.curves.map((c) => c.id).join(",")}>
+      <figure data-ui={props.id} aria-label={props.label} className={props.stale ? "plot plot--stale" : "plot"} data-curves={props.curves.map((c) => c.id).join(",")}>
         {props.toolbar}
         <div className="u-over" data-testid="plot-area" onDoubleClick={() => props.onDoubleClick?.({ hz: 300, value: 2 })}>
           {props.overlay?.(scale)}
@@ -107,6 +110,9 @@ const STATES: Record<string, CalibrateView> = {
   noSubs: fx.noSubsView,
   ultra: fx.ultraView,
   runningMimo: fx.runningMimoView,
+  loading: fx.loadingView,
+  loadingEmpty: fx.loadingEmptyView,
+  noPosition1: fx.noPosition1View,
 };
 
 describe("보정 screen", () => {
@@ -163,6 +169,60 @@ describe("보정 screen", () => {
     ]);
     // No raw code or parameter list reaches the screen.
     for (const line of lines) expect(line).not.toMatch(/[a-z]+_[a-z]+|[{}[\]]/);
+  });
+
+  it("says position 1 is not measured where the channel would be chosen before a run, and that there is nothing to preview", () => {
+    setup(fx.noPosition1View);
+    expect(ui("calibrate.channel")).toBeNull();
+    expect(must("calibrate.channel.none").textContent).toBe("채널위치 1 측정 없음");
+    expect(must("calibrate.plot.preview").textContent).toBe("위치 1의 측정이 없어 미리 볼 곡선이 없습니다.");
+    cleanupAll();
+    // With position 1 measured the box is there and the preview hint says what is shown.
+    setup(fx.emptyView);
+    expect(ui("calibrate.channel.none")).toBeNull();
+    expect((must("calibrate.channel") as HTMLSelectElement).value).toBe("L");
+    expect(must("calibrate.plot.preview").textContent).toContain("위치 1");
+    expect(must("calibrate.plot.preview").textContent).not.toBe("위치 1의 측정이 없어 미리 볼 곡선이 없습니다.");
+  });
+
+  it("keeps the last curves while new ones load: busy at once, dimmed with a status only after the delay", () => {
+    vi.useFakeTimers();
+    try {
+      const actions = mockActions();
+      const screenOf = (view: CalibrateView) => (
+        <PrefsScope initial={{ locale: "ko", theme: "light", expert: false, accent: "default" }}>
+          <CalibrateScreen view={view} actions={actions} />
+        </PrefsScope>
+      );
+      const { rerender } = render(screenOf(fx.loadingView));
+      const box = must("calibrate.graph.plot");
+      const status = must("calibrate.graph.loading");
+      // At once: busy for readers, the previous channel's curves as they were (a quick reply never flashes).
+      expect(box.getAttribute("aria-busy")).toBe("true");
+      expect(must("calibrate.plot").className).not.toContain("plot--stale");
+      expect(status.textContent).toBe("");
+      act(() => vi.advanceTimersByTime(LOADING_DELAY_MS - 1));
+      expect(must("calibrate.plot").className).not.toContain("plot--stale");
+      act(() => vi.advanceTimersByTime(1));
+      // Slow: dimmed like a stale result, and the status says so (outside the busy box, so it is heard).
+      expect(must("calibrate.plot").className).toContain("plot--stale");
+      expect(status.getAttribute("role")).toBe("status");
+      expect(status.textContent).toBe("곡선 불러오는 중");
+      expect(box.contains(status)).toBe(false);
+      // The curves arrive.
+      rerender(screenOf({ ...fx.loadingView, curvesLoading: false }));
+      expect(must("calibrate.graph.plot").hasAttribute("aria-busy")).toBe(false);
+      expect(must("calibrate.plot").className).not.toContain("plot--stale");
+      expect(must("calibrate.graph.loading").textContent).toBe("");
+      // Nothing yet to keep: the empty slot, with the status once slow.
+      rerender(screenOf(fx.loadingEmptyView));
+      expect(ui("calibrate.plot")).toBeNull();
+      expect(document.querySelector(".calibrate-graph__loading")).not.toBeNull();
+      act(() => vi.advanceTimersByTime(LOADING_DELAY_MS));
+      expect(must("calibrate.graph.loading").textContent).toBe("곡선 불러오는 중");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("says why a result is stale and why a run failed", () => {
