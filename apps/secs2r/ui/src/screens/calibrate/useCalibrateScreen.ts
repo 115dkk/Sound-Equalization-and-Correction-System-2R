@@ -56,7 +56,7 @@ export function useCalibrateScreen(): { view: CalibrateView | null; actions: Cal
   const running: CalibrateJob | null = runningJob ? request?.method === "calibrate" && request.params.subs_only ? "calibrate_subs" : runningJob.kind as CalibrateJob : null;
   const measuredRoles = new Set(measurements?.curves.filter((curve) => curve.position === 1).map((curve) => curve.role));
   return { view: results && lines && settings && modeSpec && target && config && project ? {
-    results, lines, curves, settings, modeSpec, target, config, positions: project.positions,
+    results, lines, curves: curves?.curves ?? null, settings, modeSpec, target, config, positions: project.positions,
     measuredRoles: config.speakers.map((speaker) => speaker.role).filter((role) => measuredRoles.has(role)),
     firBudget: dsp?.fields.fir_budget ?? 0, xoRecommendation: host.xoRecommendation, running,
     measuring: jobs.some((job) => ["measure", "sample_load", "mdat_import"].includes(job.kind)),
@@ -64,6 +64,6 @@ export function useCalibrateScreen(): { view: CalibrateView | null; actions: Cal
     staleReason: results.calibration?.stale_reason === "settings" || results.calibration?.stale_reason === "target" || results.calibration?.stale_reason === "measurements" ? results.calibration.stale_reason : null,
     resultMode: results.calibration ? { mode: results.calibration.mode, ultra_ms: results.calibration.ultra_ms } : null,
     tab: host.tab, channel: host.channel, xoGroup: host.xoGroup, subWarnings: subWarnings ?? [],
-    curvesLoading: false,
+    curvesLoading: curves?.pending != null && curves.pending.tab === host.tab && curves.pending.channel === host.channel && curves.pending.group === host.xoGroup,
   } : null, actions };
 }

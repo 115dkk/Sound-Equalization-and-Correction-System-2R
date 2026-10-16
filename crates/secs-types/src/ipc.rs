@@ -886,8 +886,6 @@ pub struct CalibrationSummary {
     pub scorecard: Vec<ChannelScore>,
     /// Total filter latency in milliseconds.
     pub latency_ms: f64,
-    /// Warning codes and values translated by the screen.
-    pub warnings: Vec<Notice>,
     /// Informational codes and values translated by the screen.
     pub notes: Vec<Notice>,
     /// Designed DSP signal chain used by exporters.

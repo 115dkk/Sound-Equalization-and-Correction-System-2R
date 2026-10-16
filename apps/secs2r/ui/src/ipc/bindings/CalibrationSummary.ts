@@ -38,10 +38,6 @@ scorecard: Array<ChannelScore>,
  */
 latency_ms: number, 
 /**
- * Warning codes and values translated by the screen.
- */
-warnings: Array<Notice>, 
-/**
  * Informational codes and values translated by the screen.
  */
 notes: Array<Notice>, 
