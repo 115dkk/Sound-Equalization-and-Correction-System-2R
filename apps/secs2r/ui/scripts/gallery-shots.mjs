@@ -9,11 +9,11 @@
 //
 // CHROMIUM_PATH points Playwright at an installed Chromium instead of the
 // one `npx playwright install chromium` downloads.
-import { createReadStream, existsSync, mkdirSync, statSync } from "node:fs";
-import { createServer } from "node:http";
-import { extname, join, normalize, resolve } from "node:path";
+import { existsSync, mkdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { argv, env, exit } from "node:process";
 import { chromium } from "playwright";
+import { serveStatic } from "./static-server.mjs";
 
 const arg = (name, fallback) => {
   const i = argv.indexOf(name);
@@ -37,36 +37,10 @@ const VARIANTS = [
 const BROWSER_LOCALE = { ko: "ko-KR", en: "en-US" };
 const FLOOR_PX = 13;
 
-const TYPES = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript",
-  ".css": "text/css",
-  ".svg": "image/svg+xml",
-  ".png": "image/png",
-  ".woff2": "font/woff2",
-  ".json": "application/json",
-};
-
 // The build is static and uses root-absolute asset paths, so a file server
 // rooted at dist is all the gallery needs.
-const server = createServer((request, response) => {
-  const path = normalize(decodeURIComponent(new URL(request.url ?? "/", "http://x").pathname));
-  // Chromium asks for a favicon the app does not have.
-  if (path === "/favicon.ico") {
-    response.writeHead(204).end();
-    return;
-  }
-  const file = join(dist, path === "/" ? "gallery.html" : path);
-  if (!file.startsWith(dist) || !existsSync(file) || !statSync(file).isFile()) {
-    response.writeHead(404).end();
-    return;
-  }
-  response.writeHead(200, { "content-type": TYPES[extname(file)] ?? "application/octet-stream" });
-  createReadStream(file).pipe(response);
-});
-await new Promise((ready) => server.listen(0, "127.0.0.1", ready));
-const address = server.address();
-const origin = `http://127.0.0.1:${typeof address === "object" && address ? address.port : 0}`;
+const server = await serveStatic(dist, "gallery.html");
+const origin = server.origin;
 
 const browser = await chromium.launch(env.CHROMIUM_PATH ? { executablePath: env.CHROMIUM_PATH } : {});
 const problems = [];

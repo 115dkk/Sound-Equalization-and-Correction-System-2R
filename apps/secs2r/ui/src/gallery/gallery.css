@@ -1,5 +1,7 @@
-/* Gallery page chrome. Specimens use only the kit's own styles. */
-body {
+/* Gallery page chrome. Specimens use only the kit's own styles. Page-wide
+   rules apply in gallery mode only (main.tsx marks <html>), so the screen
+   tour (gallery.html?tour=…) draws the App exactly as the app window does. */
+html[data-gallery-page] body {
   min-width: 1344px;
 }
 
