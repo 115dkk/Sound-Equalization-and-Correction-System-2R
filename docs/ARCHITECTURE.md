@@ -32,6 +32,7 @@ crates/
   secs-rew/               REW API (Real, Fake)
   secs-audio/             자체 측정 (스윕, 세션, 디컨볼루션, 레벨 체크)
   secs-camilla/           CamillaDSP v4 설정과 FIR
+  secs-filters/           필터 값 텍스트와 Equalizer APO 설정
   secs-service/           애플리케이션 서비스 (깊은 모듈)
   secs-sys/               격리 크레이트: WASAPI, cpal, 운영체제 조회
   secs-policy/            게이트 테스트
@@ -57,7 +58,8 @@ ui ──IPC──> secs2r ─┬─> secs-service ─┬─> secs-engine ─┬
                     │                 ├─> secs-audio ────> secs-dsp, secs-types
                     │                 ├─> secs-mdat ─────> secs-jos, secs-dsp
                     │                 ├─> secs-export ───> secs-engine, secs-mdat, secs-types
-                    │                 └─> secs-camilla ──> secs-dsp, secs-types
+                    │                 ├─> secs-camilla ──> secs-dsp, secs-types
+                    │                 └─> secs-filters ──> secs-camilla, secs-dsp, secs-types
                     ├─> secs-gpu ─────> secs-engine (SupportFitBackend seam)
                     └─> secs-sys ─────> wasapi, cpal, OS 조회 크레이트
 secs2r-cli ─────────> secs-service, secs-sys
@@ -74,7 +76,7 @@ secs-policy ────────> (파일 시스템만 읽음; IPC 메서드
 | 오디오 장치 `AudioBackend` | `secs-audio` | WASAPI(`secs-sys`), cpal(`secs-sys`), 시뮬레이션 방(테스트) |
 | REW 전송 | `secs-rew` 안쪽 | HTTP, 기록된 대화(테스트) |
 | 서포트 맞춤 `SupportFitBackend` | `secs-engine` | CPU(기준), GPU(`secs-gpu`) |
-| 신호 사슬 소비자 | `secs-types`의 사슬 값 | 응답 시뮬레이터(`secs-engine`), CamillaDSP 작성기(`secs-camilla`) |
+| 신호 사슬 소비자 | `secs-types`의 사슬 값 | 응답 시뮬레이터(`secs-engine`), CamillaDSP 작성기(`secs-camilla`), 필터 텍스트·Equalizer APO 작성기(`secs-filters`) |
 | 메모리 조회 `MemoryProbe` | `secs-compute` | 운영체제(`secs-sys`), 고정값(테스트) |
 | 호스트 기능 `Host` | `secs-service` | Tauri(대화상자, 폴더 열기, 알림), 기록(테스트) |
 
@@ -135,7 +137,7 @@ secs-policy ────────> (파일 시스템만 읽음; IPC 메서드
 |---|---|
 | Claude | 설계, ADR, 작업서, `secs-types`의 시그니처, 게이트, CI 설계, 디프 검토, 게이트 재실행, 커밋과 PR |
 | ASTRA (`gpt-6-astra`) | 수치와 외부 규격이 드는 구현: `secs-dsp`, `secs-engine`, `secs-gpu`, `secs-jos`, `secs-mdat`, `secs-rew`; 화면 연결(호출 코드와 상태), 번역 카탈로그, 감사와 성능 감사 |
-| Daybreak Blue (`gpt-daybreak-blue`) | `secs-project`, `secs-camilla`, `secs-compute`, `secs-service`, `secs2r-cli`, `secs-sys`, 오라클 내보내기 스크립트, CI 보조 스크립트 |
+| Daybreak Blue (`gpt-daybreak-blue`) | `secs-project`, `secs-camilla`, `secs-filters`, `secs-compute`, `secs-service`, `secs2r-cli`, `secs-sys`, 오라클 내보내기 스크립트, CI 보조 스크립트 |
 | Opus 5.5 | 화면 전부: 디자인 토큰, 뷰, 컴포넌트, 레이아웃, 튜토리얼 화면 |
 
 작업서는 `docs/packets/`에 둡니다. 워커의 자기 보고는 게이트가 아니며, 모든 결과는 Claude가 포맷·린트·테스트를 다시 돌린 뒤 커밋합니다.

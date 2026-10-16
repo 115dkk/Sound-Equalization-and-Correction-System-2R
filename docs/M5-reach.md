@@ -219,6 +219,9 @@
 | [폴더 열기] | `export.folder.open` | — | P32 |
 | [REW mdat 저장] → 보정 전후 mdat, `SECS_mdat_<RC_BA\|RC_BA_MIMO>_<모드>_<시각>/` | `export.run.before_after_mdat` | — | P32 |
 | [CamillaDSP 내보내기] | `export.run.camilla_dsp`(단계 머리의 주 동작) | — | P32 |
+| 필터 내보내기 카드(1.3.0): [텍스트로 내보내기] → `SECS_text_<RC_BA\|RC_BA_MIMO>_<모드>_<시각>/` | `export.group.filters`, `export.run.filter_text` | — | P47 |
+| 필터 내보내기 카드(1.3.0): [EqAPO 내보내기] → `SECS_eqapo_<RC_BA\|RC_BA_MIMO>_<모드>_<시각>/` | `export.run.equalizer_apo`, `export.outcome.equalizer_apo.hint` | — | P47 |
+| 지원 범위: 텍스트 = RC만, EqAPO = RC · BA, 카밀라 = 전부; 막힌 단추는 끄고 이유를 보임 | `export.kind.filter_text.blocked`, `export.kind.equalizer_apo.blocked` | — | P47 |
 | 보정 화면의 숨은 내보내기 카드(단계별 mdat) | `export.advanced`, `export.run.staged_mdat` | U3 | P32 |
 | 결과가 없거나 계산·내보내기 중이면 단추 끔 | `export.run.camilla_dsp`, `export.run.before_after_mdat`, `export.run.staged_mdat` | — | P32 |
 | 메모: N개 파일 저장 → 경로 / 실패 / 튜토리얼에서는 저장 안 함 | `export.outcome.<kind>`, `export.outcome.<kind>.open`, `export.tutorial` | — | P32 |

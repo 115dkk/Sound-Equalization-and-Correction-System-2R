@@ -59,6 +59,7 @@ REACH = (
     ("src/secs/rewapi/session.py", "secs-project (.irs 저장소), secs-rew"),
     ("src/secs/rewapi/", "secs-rew"),
     ("src/secs/export_camilladsp.py", "secs-camilla"),
+    ("src/secs/export_filters.py", "secs-filters (필터 값 텍스트, Equalizer APO)"),
     ("src/secs/proc.py", "secs-rew (REW 실행)"),
     ("src/secs/version.py", "UPSTREAM.toml"),
     ("src/secs/i18n.py", "화면 카탈로그 (apps/secs2r/ui)"),

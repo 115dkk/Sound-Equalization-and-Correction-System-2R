@@ -14,6 +14,7 @@ class ReachTest(unittest.TestCase):
         self.assertEqual(u.reach("src/secs/wizard/step2_config.py"), "화면 (apps/secs2r/ui)")
         self.assertEqual(u.reach("src/secs/mimo_iir.py"), "secs-engine (MIMO IIR 맞춤), secs-gpu")
         self.assertEqual(u.reach("src/secs/mimo.py"), "secs-engine (MIMO)")
+        self.assertEqual(u.reach("src/secs/export_filters.py"), "secs-filters (필터 값 텍스트, Equalizer APO)")
 
     def test_unknown_paths_ask_for_review(self):
         self.assertEqual(u.reach("src/secs/new_module.py"), "검토 필요")
