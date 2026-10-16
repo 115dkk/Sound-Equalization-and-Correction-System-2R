@@ -22,6 +22,19 @@ beforeEach(async () => {
 afterEach(async () => { cleanup(); await session.monitor(false); session.dispose(); mock.dispose(); vi.restoreAllMocks(); });
 
 describe("useCalibrateScreen", () => {
+  it("keeps the preview channel list empty without position-one measurements", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    await perform(() => session.call({ method: "project_new", params: { path: "", preset: "2.1", sub_count: 1, sample: false, tutorial: false } }));
+    expect(result.current.view).toMatchObject({ positions: [], measuredRoles: [], channel: null });
+    await perform(() => session.configure({ method: "mock" }));
+    await perform(() => session.call({ method: "measure_position", params: { position: 2 } }));
+    await perform(mock.drain);
+    expect(result.current.view?.measuredRoles).toEqual([]);
+    await perform(() => session.call({ method: "measure_position", params: { position: 1 } }));
+    await perform(mock.drain);
+    expect(result.current.view?.measuredRoles).toEqual(session.stores.config.getSnapshot()!.speakers.map((speaker) => speaker.role));
+  });
+
   it("uses service settings, warnings and result metadata without manufacturing them", async () => {
     const { result } = renderHook(useCalibrateScreen, { wrapper });
     expect(result.current.view?.settings).toBe(session.stores.settings.getSnapshot());

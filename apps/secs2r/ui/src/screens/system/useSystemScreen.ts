@@ -64,6 +64,7 @@ export function useSystemScreen(): { view: SystemView | null; actions: SystemAct
   return {
     view: config && dsp && layout && project ? {
       config, dsp, layout, notices: notices ?? [], estimate,
+      outputDeviceName: (host.path === "rew" ? rewDevice?.name : nativeDevice?.name) ?? output ?? "",
       outputChannels: outputChannels ?? null, outputNames: [], positionsDone: project.positions,
     } : null,
     actions,

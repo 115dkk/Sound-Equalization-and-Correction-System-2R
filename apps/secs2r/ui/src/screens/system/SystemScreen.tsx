@@ -255,7 +255,7 @@ function DeviceLine({ view }: { view: SystemView }) {
     <div className="system-device" data-ui="system.device">
       <span className="system-device__label">{t("system.device.label")}</span>
       <span className={view.config.device ? "system-device__name" : "system-device__name system-device__name--none"}>
-        {view.config.device || t("system.device.none")}
+        {(view.outputDeviceName ?? view.config.device) || t("system.device.none")}
       </span>
       {pill}
     </div>

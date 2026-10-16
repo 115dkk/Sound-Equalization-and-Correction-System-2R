@@ -278,10 +278,16 @@ describe("SystemScreen", () => {
     expect(must("system.speaker").textContent).toContain(translate("ko", "system.speaker.internal", { role: "L" }));
   });
 
-  it("decides the step state like upstream can_advance()", () => {
+  it("shows the resolved measurement output name instead of its ID", () => {
+    setup({ ...sampleView, config: { ...sampleView.config, device: "wasapi:{0.0.0.00000000}.{hdmi}" }, outputDeviceName: "AVR (HDMI)" });
+    expect(must("system.device").textContent).toContain("AVR (HDMI)");
+    expect(must("system.device").textContent).not.toContain("wasapi:");
+  });
+
+  it("keeps incomplete setup editable and marks valid setup done", () => {
     expect(systemStepState(sampleView)).toEqual({ status: "done" });
-    expect(systemStepState(invalidView)).toEqual({ status: "blocked", reason: "config_invalid", count: 5 });
-    expect(systemStepState({ ...newProjectView, config: configOf("custom", [], "") })).toEqual({ status: "blocked", reason: "no_speakers" });
+    expect(systemStepState(invalidView)).toEqual({ status: "ready" });
+    expect(systemStepState({ ...newProjectView, config: configOf("custom", [], "") })).toEqual({ status: "ready" });
   });
 
   it("puts the next step in the header", () => {
@@ -315,6 +321,10 @@ describe("SystemScreen", () => {
       collect();
       unmount();
     }
+    // Only the missing project blocks 시스템 itself; invalid configuration stays editable.
+    const empty = render(<PrefsScope initial={{ locale: "ko", theme: "light", expert: false, accent: "default" }}><StepHeader step="system" state={{ status: "blocked", reason: "no_project" }} /></PrefsScope>);
+    collect();
+    empty.unmount();
     expect(REACH_IDS.filter((id) => !seen.has(id))).toEqual([]);
   });
 });

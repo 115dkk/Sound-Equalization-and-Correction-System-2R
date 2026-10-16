@@ -1,4 +1,4 @@
-import type { FrameModel, StepState } from "./model";
+import { STEPS, type FrameModel, type StepState } from "./model";
 import { useHost, useResource, useSession } from "../state/react";
 import type { SystemView } from "../screens/system/types";
 import type { ConnectView } from "../screens/connect/types";
@@ -35,9 +35,19 @@ export function useFrameModel(views: { system: SystemView | null; connect: Conne
       outputs: config?.summary.outputs.length ?? 0, positionsDone: records?.records.filter((r) => r.done).length ?? 0,
       positionsTotal: layout?.count ?? 0,
       calibration: computing ? "computing" : host.failure ? "failed" : result ? result.stale ? "stale" : "done" : "none",
-      path: { kind: host.path === "mdat" ? "none" : host.path ?? "none", state: views.connect && pathReady(views.connect) ? "ok" : "warning" },
+      path: { kind: host.path ?? "none", state: pathReady({ path: host.path, methods: views.connect?.methods ?? null }) ? "ok" : "warning" },
       fileName: project?.path ? project.name : null, dirty: project?.dirty ?? false,
     },
   };
+  if (!project) {
+    for (const step of STEPS) model.steps[step] = { status: "blocked", reason: "no_project" };
+  } else if (views.system) {
+    // The system remains editable; its prerequisites gate every later step.
+    const { config, notices } = views.system;
+    const blocked: StepState | null = config.speakers.length === 0
+      ? { status: "blocked", reason: "no_speakers" }
+      : notices.length > 0 ? { status: "blocked", reason: "config_invalid", count: notices.length } : null;
+    if (blocked) for (const step of STEPS) if (step !== "system" && model.steps[step].status !== "skipped") model.steps[step] = blocked;
+  }
   return { model, navigate: session.navigate };
 }

@@ -115,6 +115,8 @@ export type MeasureView = {
   repetitions: number;
   /** The running device-group job, or null. */
   job: DeviceJob | null;
+  /** A finite level playback running inside the continuous level monitor. */
+  playing?: boolean;
   /** Low S/N notices per position, from the measure job's `log` events (P33 keeps the last measurement's). */
   warnings: PositionWarnings[];
   /** The position picked on the map or the list (null: the next one not measured). P33 keeps it across visits and clears it after a measurement, as upstream does. */
@@ -192,8 +194,8 @@ export function currentPosition(view: MeasureView): number | null {
 
 /**
  * The rail state of 측정·가져오기 (upstream `can_advance()` plus the path):
- * blocked while a measurement runs (`measuring`) or another device job does
- * (`device_busy`), done once every position is measured, blocked without a
+ * blocked while another step plays a level burst or runs a finite device
+ * check (`device_busy`), done once every position is measured, blocked without a
  * measurement method unless on the import path (`no_path`), ready otherwise.
  */
 /** Device jobs this screen starts: while one runs the step is still the
@@ -204,7 +206,7 @@ export function measureStepState(view: MeasureView): StepState {
   const blocked = (reason: BlockedReason): StepState => ({ status: "blocked", reason });
   // Blocked means another step must act first: here, a device job another
   // step started (a level check). This step's own jobs keep it ready.
-  if (isRunning(view.job) && !OWN_JOBS.includes(view.job.kind)) return blocked("device_busy");
+  if (view.playing || (isRunning(view.job) && view.job.kind === "level_check")) return blocked("device_busy");
   const done = new Set(donePositions(view));
   let complete = view.layout.count > 0;
   for (let position = 1; position <= view.layout.count; position++) if (!done.has(position)) complete = false;

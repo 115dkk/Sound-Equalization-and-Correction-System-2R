@@ -203,7 +203,7 @@ export function createMockService(options: MockOptions = {}): MockService {
       else {
         events.emit({ event: "meter", job: job.id, rms_dbfs: playing ? playing.master - 10 : -62, peak_dbfs: playing ? playing.master : -49, spl_db: playing ? 78.5 : 32, clipping: false });
         if (playing && --playing.ticks <= 0) {
-          levels.levels[playing.role] = playing.master; levels.spl[playing.role] = 78.5;
+          levels.levels[playing.role] = playing.master - 10; levels.spl[playing.role] = 78.5;
           project = { ...needProject(), dirty: true };
           events.emit({ event: "log", job: job.id, code: "level_play_end", params: { role: playing.role, outcome: "done" } });
           playing = null;
@@ -350,8 +350,9 @@ export function createMockService(options: MockOptions = {}): MockService {
     if (params.tab === "ba") {
       curves.splice(0, curves.length);
       for (const s of config.speakers.filter((s) => s.role.startsWith("SW"))) {
-        if (records.some((r) => r.roles.includes(s.role))) curves.push({ kind: "before", role: s.role, values: fx.curveValues(2) });
-        if (results.calibration) curves.push({ kind: "after", role: s.role, values: fx.curveValues(2, 0.3) });
+        const seed = 2 + Number(s.role.slice(2)) / 4;
+        if (records.some((r) => r.roles.includes(s.role))) curves.push({ kind: "before", role: s.role, values: fx.curveValues(seed) });
+        if (results.calibration) curves.push({ kind: "after", role: s.role, values: fx.curveValues(seed, 0.3) });
       }
       if (curves.length) curves.push({ kind: "sum_before", role: null, values: fx.curveValues(1) }, { kind: "sum_after", role: null, values: fx.curveValues(1, 0.2) });
     }
@@ -524,7 +525,7 @@ export function createMockService(options: MockOptions = {}): MockService {
       }
       case "level_check":
         return { method: req.method, data: start("level_check", () => {
-          levels.levels[req.params.role] = fx.levelResult.recommended_sweep_dbfs;
+          levels.levels[req.params.role] = fx.levelResult.rms_dbfs;
           if (fx.levelResult.spl_db !== null) levels.spl[req.params.role] = fx.levelResult.spl_db;
           return { kind: "level", data: fx.levelResult };
         }, req.params.role) };
@@ -580,7 +581,14 @@ export function createMockService(options: MockOptions = {}): MockService {
         return { method: req.method, data: updateConfig(fx.configOf("custom", config.speakers.map((s) => ({ ...s, bands: s.bands.map((b) => ({ ...b, out: ++out })) })), config.device)) };
       }
       case "config_validate": {
-        const notices: Notice[] = config.summary.duplicate_outputs.map((out) => ({ code: "out_duplicate", params: { out: String(out) } }));
+        const notices: Notice[] = [];
+        const outputs = new Map<number, string>();
+        for (const speaker of config.speakers) for (const band of speaker.bands) {
+          if (band.out < 1) continue;
+          const firstRole = outputs.get(band.out);
+          if (firstRole !== undefined) notices.push({ code: "out_duplicate", params: { out: String(band.out), first_role: firstRole, role: speaker.role } });
+          else outputs.set(band.out, speaker.role);
+        }
         for (const [i, s] of config.speakers.entries()) if (config.speakers.findIndex((other) => other.role === s.role) !== i) notices.push({ code: "role_duplicate", params: { role: s.role } });
         return { method: req.method, data: notices };
       }

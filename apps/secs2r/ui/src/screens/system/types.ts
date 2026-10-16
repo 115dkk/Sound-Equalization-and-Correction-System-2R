@@ -26,6 +26,8 @@ export type SystemView = {
    * REW's output count; null while unknown.
    */
   outputChannels: number | null;
+  /** Resolved measurement output name; falls back to the selected device ID. */
+  outputDeviceName?: string;
   /** That device's output names, index 0 = output 1 (REW reports names); empty when only numbers are known. */
   outputNames: readonly string[];
   /** Positions with measurements (`ProjectInfo.positions`); non-empty means preset, sub-count and arrangement changes clear them (U5). */

@@ -60,6 +60,18 @@ function setup(current: StepId, locale: "ko" | "en" = "ko", overrides: Partial<F
 const railButton = (id: StepId) => document.querySelector<HTMLButtonElement>(`[data-ui="frame.rail.${id}"]`)!;
 
 describe("app frame", () => {
+  it.each(["ko", "en"] as const)("names mdat import in project status (%s)", (locale) => {
+    renderWith(<ProjectStatus project={{ ...model("system").project, path: { kind: "mdat", state: "ok" } }} />, { locale });
+    expect(document.querySelector('[data-ui="frame.status.path"]')?.textContent).toContain(locale === "ko" ? "mdat 가져오기" : "mdat import");
+  });
+
+  it.each(["ko", "en"] as const)("explains that every step needs a project (%s)", (locale) => {
+    const blocked = { status: "blocked", reason: "no_project" } as const;
+    setup("system", locale, { system: blocked, connect: blocked, measure: blocked, calibrate: blocked, export: blocked });
+    for (const step of ["system", "connect", "measure", "calibrate", "export"] as const) expect(railButton(step).textContent).toContain(locale === "ko" ? "프로젝트 필요" : "Needs a project");
+    expect(document.querySelector('[data-ui="frame.header.blocked"]')?.textContent).toContain(locale === "ko" ? "새 프로젝트를 만들거나" : "Create a new project");
+  });
+
   it("draws each rail state: done, current, skipped and blocked with its reason", () => {
     setup("measure");
     const rail = screen.getByRole("navigation", { name: "단계" });

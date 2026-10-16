@@ -8,13 +8,13 @@ export type StepId = (typeof STEPS)[number];
 /** done: finished; ready: can be worked on; blocked: needs an earlier step; skipped: not on this path (mdat import skips 연결·점검). */
 export type StepStatus = "done" | "ready" | "blocked" | "skipped";
 
-export const BLOCKED_REASONS = ["no_speakers", "config_invalid", "no_path", "no_measurements", "measuring", "no_result", "computing", "device_busy", "path_not_ready", "no_levels"] as const;
+export const BLOCKED_REASONS = ["no_project", "no_speakers", "config_invalid", "no_path", "no_measurements", "measuring", "no_result", "computing", "device_busy", "path_not_ready", "no_levels"] as const;
 export type BlockedReason = (typeof BLOCKED_REASONS)[number];
 
 export type StepState = { status: StepStatus; reason?: BlockedReason; count?: number };
 
 export type CalibrationState = "none" | "computing" | "done" | "stale" | "failed";
-export type PathKind = "rew" | "native" | "mock" | "none";
+export type PathKind = "rew" | "native" | "mock" | "mdat" | "none";
 export type PathState = "ok" | "warning" | "error";
 
 export type ProjectSummary = {
@@ -60,6 +60,7 @@ export const STEP_PRIMARY: Record<StepId, MessageKey> = {
 };
 
 export const BLOCKED_TEXT: Record<BlockedReason, { full: MessageKey; short: MessageKey }> = {
+  no_project: { full: "frame.blocked.no_project", short: "frame.blocked.no_project.short" },
   no_speakers: { full: "frame.blocked.no_speakers", short: "frame.blocked.no_speakers.short" },
   config_invalid: { full: "frame.blocked.config_invalid", short: "frame.blocked.config_invalid.short" },
   no_path: { full: "frame.blocked.no_path", short: "frame.blocked.no_path.short" },
