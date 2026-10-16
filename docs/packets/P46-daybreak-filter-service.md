@@ -6,7 +6,8 @@ P45가 `crates/secs-filters`(업스트림 `export_filters.py`와 `calibration.ex
 
 - 워크트리 `/home/user/wt/p46`(브랜치 `p46`)에서만 일합니다. 다른 경로는 읽기만 합니다.
 - 커밋하지 않습니다. git으로 인덱스나 작업 트리를 바꾸지 않습니다. 하위 에이전트를 띄우지 않습니다.
-- cargo는 `CARGO_TARGET_DIR=/home/user/wt/target-p45 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0`로 돌립니다(P45의 빌드를 이어 씁니다).
+- cargo는 `CARGO_TARGET_DIR=/home/user/wt/target-p46 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0`로 돌립니다.
+- 브랜치 맨 위 커밋 `wip: P45 snapshot`은 P45의 크레이트(`crates/secs-filters`)를 옮겨 둔 것입니다. 같은 시각에 다른 작업자가 `/home/user/wt/p45`에서 그 골든과 테스트를 늘리고 있으므로, 여기서는 `crates/secs-filters`를 읽기만 하고 공개 표면(`FilterRun`, `export_filter_text`, `export_eqapo`, `FiltersError`)만 씁니다.
 
 ## 먼저 읽을 것
 
@@ -53,7 +54,7 @@ P45가 `crates/secs-filters`(업스트림 `export_filters.py`와 `calibration.ex
 
 ```sh
 cd /home/user/wt/p46
-export CARGO_TARGET_DIR=/home/user/wt/target-p45 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+export CARGO_TARGET_DIR=/home/user/wt/target-p46 CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo clippy --workspace --exclude secs2r --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
