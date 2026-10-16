@@ -12,11 +12,18 @@ SECS 2R의 변경 기록입니다. 번호는 major.minor.patch이고, 0.x는 모
   - 필터 값 텍스트: 채널마다 PEQ · FIR · 게인 · 딜레이 값을 적은 텍스트와 FIR wav. DSP에 값을 손으로 옮겨 넣을 때 씁니다. RC만 적용한 결과에서 냅니다.
   - Equalizer APO 설정: Equalizer APO의 config 폴더에 그대로 복사하는 `config.txt`, 필터 파일, FIR wav, 적용 안내. 배선이 다르면 `config.txt` 맨 위 두 줄의 채널 번호만 고칩니다. RC와 BA까지 담고 MIMO는 담지 않습니다.
   - 고른 형식이 결과를 담지 못하면(텍스트에 서브, 텍스트·EqAPO에 MIMO) 단추가 꺼지고 이유가 그 줄에 나옵니다. CamillaDSP는 RC · BA · MIMO를 모두 담습니다.
-- CLI의 `export --kind`에 `filter-text`와 `equalizer-apo`를 더했습니다.
+- 다시 연 프로젝트에서도 보정을 다시 계산하지 않고 저장된 결과로 두 형식을 내보냅니다.
+- CLI의 `export --kind`에 `filter-text`와 `equalizer-apo`를 더했습니다. `run`은 결과를 담지 못하는 형식을 건너뛰고 그 이유를 한 줄 남깁니다.
 
 ### 바뀐 것
 
 - 새 프로젝트의 MIMO 서포트는 FIR로 시작합니다('FIR 사용' 켜짐). 보정 설정을 저장한 1.2.0 이전 파일은 그때처럼 IIR입니다.
+- 내보내기 단계의 설명과 CamillaDSP 설명이 네 가지 내보내기를 모두 말합니다.
+- CLI의 `--deterministic-uuids`가 시계도 고정합니다. 텍스트 파일에 만든 시각이 들어가므로, 같은 입력이면 같은 파일이 나오게 하려는 것입니다.
+
+### 고친 것
+
+- 튜토리얼의 내보내기 퀘스트에서 대상 단추가 창 아래에 있으면, 대상이 나타날 때 한 번 스크롤해 보이게 합니다.
 
 ## 0.15.3 - 2026-10-16
 
