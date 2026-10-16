@@ -5,6 +5,7 @@ import { JobTray } from "./app/jobs/JobTray";
 import { errorText } from "./app/jobs/jobText";
 import { useJobs } from "./app/jobs/useJobs";
 import { PrefsScope, usePrefs, type Prefs } from "./app/prefs";
+import { canLeave } from "./app/model";
 import { useFrameModel } from "./app/useFrameModel";
 import { pickLocale } from "./i18n";
 import { useT } from "./i18n/react";
@@ -15,7 +16,7 @@ import { SessionProvider, useHost, useResource, useSession } from "./state/react
 import { useWindowClose } from "./state/closing";
 import { Button, EmptyState, ErrorNotice } from "./ui";
 import { SystemScreen, systemHeader } from "./screens/system/SystemScreen";
-import { ConnectScreen, connectHeader } from "./screens/connect/ConnectScreen";
+import { ConnectScreen, connectHeader, micInput } from "./screens/connect/ConnectScreen";
 import { MeasureScreen, measureHeader } from "./screens/measure/MeasureScreen";
 import { CalibrateScreen, calibrateHeader } from "./screens/calibrate/CalibrateScreen";
 import { ExportScreen, exportHeader } from "./screens/export/ExportScreen";
@@ -111,7 +112,7 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
       version={info ? { version: info.version, prerelease: info.prerelease } : null} tray={<JobTray api={jobs} />}
       aside={helpOpen || meterOpen ? <>
         {helpOpen && <HelpPanel view={{ step: host.current, tutorial: project?.tutorial ?? false }} actions={{ close: () => setHelpOpen(false), startTutorial: dialogs.offerTutorial }} />}
-        {meterOpen && <div className="app-mic"><MicMeterPanel id="app.mic" floating view={{ input: connect.view?.settings?.input_device || null, monitor: host.monitor, reading: host.meter }} onClose={() => setMeterOpen(false)} /></div>}
+        {meterOpen && <div className="app-mic"><MicMeterPanel id="app.mic" floating view={{ input: connect.view ? micInput(t, connect.view) : null, monitor: host.monitor, reading: host.meter }} onClose={() => setMeterOpen(false)} /></div>}
       </> : null}>
       {error && failure && <ErrorNotice id="app.error" cause={error.cause} next={error.next} detail={failure.error.detail} code={failure.error.code} />}
       {content ?? (ready && !project ? <EmptyState id="app.project.empty" title={t("project.new.title")} description={t("project.new.where")} action={<Button variant="primary" onClick={dialogs.menu.onNew}>{t("frame.project.new")}</Button>} /> : host.current === "measure" && project ? <EmptyState id="app.measure.path" title={t("frame.blocked.no_path.short")} description={t("frame.blocked.no_path")} action={<Button variant="primary" onClick={() => navigate("connect")}>{t("frame.step.system.primary")}</Button>} /> : null)}
@@ -120,6 +121,7 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
   </>;
   const kept = tutorialView ? quests.filter((q) => !q.when || q.when(tutorialView)) : [];
   return project?.tutorial && tutorialReady && tutorialView ? <TutorialLayer quests={quests} view={tutorialView} step={host.current}
+    stepOpen={(_view, step) => canLeave(model.steps, step)}
     initial={tutorialStart ? { index: Math.max(0, kept.findIndex((q) => q.id === tutorialStart)) } : undefined}
     actions={{ goTo: navigate, finish: dialogs.finishTutorial, restart: () => {
       setTutorialReady(false);

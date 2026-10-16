@@ -198,14 +198,49 @@
   white-space: nowrap;
 }
 
+/* In place of the channel box when position 1 has nothing to preview: the
+   same label and height, the reason as plain text. */
+.calibrate-graph__no-channel {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--control-h);
+  color: var(--text-muted);
+}
+
+.calibrate-graph__no-channel-label {
+  font-weight: var(--weight-medium);
+}
+
 .calibrate-graph__stage {
   position: relative;
+  min-width: 0;
+}
+
+.calibrate-graph__plot {
   min-width: 0;
 }
 
 .calibrate-graph__loading {
   border-radius: var(--radius-sm);
   background: var(--surface-sunken);
+}
+
+/* Curves loading for longer than ResultGraph's LOADING_DELAY_MS: the status
+   floats over the middle of the graph (the dimmed curves or the empty slot),
+   so nothing moves when it comes and goes. */
+.calibrate-graph__status {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: var(--z-sticky);
+  translate: -50% -50%;
+  pointer-events: none;
+}
+
+.calibrate-graph__status .ui-pill {
+  box-shadow: var(--shadow-raised);
+  animation: ui-fade-in var(--dur-base) var(--ease-out);
 }
 
 .calibrate-context-anchor {

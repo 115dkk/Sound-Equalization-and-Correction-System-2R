@@ -425,6 +425,21 @@ export const ultraView: CalibrateView = {
 
 export const runningMimoView: CalibrateView = { ...mimoView, results: { calibration: summary(), mimo: { ...fx.mimoSummary, stale: true } }, running: "mimo" };
 
+/** R was chosen and its curves are on their way: L's curves are still the ones received. */
+export const loadingView: CalibrateView = { ...base, channel: "R", curvesLoading: true };
+
+/** Positions 2 and 3 measured, position 1 not: no channel to preview, only the target. */
+export const noPosition1View: CalibrateView = {
+  ...emptyView,
+  positions: [2, 3],
+  measuredRoles: [],
+  channel: null,
+  curves: { ...previewResult(), curves: previewResult().curves.filter((c) => c.kind === "target") },
+};
+
+/** The first tab's curves are on their way and none are here yet. */
+export const loadingEmptyView: CalibrateView = { ...base, curves: null, curvesLoading: true };
+
 function defaultSub() {
   return { mode: "auto", bundle: "A", gain_db: 0, delay_ms: 0, polarity: 1, allpass: [] as [number, number][], mimo_support: true, hp_hz: 0, lp_hz: 0, peq: [] as [number, number, number][], hp_type: "LR24", lp_type: "LR24", dba_row: "front" };
 }

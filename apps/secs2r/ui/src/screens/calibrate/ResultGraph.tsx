@@ -3,7 +3,8 @@
 // them, a legend per tab, the RC band on SPL and GD, target editing on SPL
 // (drag, double-click adds, right-click or Delete removes, right-click on
 // empty space opens the target menu) and the XO line on XO. The BA tab adds
-// the alignment lines and table under the graph.
+// the alignment lines and table under the graph. While new curves load, the
+// last ones stay, dimmed like a stale result, with a short status.
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { useNumber, useT, type Translate } from "../../i18n/react";
 import type { ResultCurvesResult } from "../../ipc/bindings/ResultCurvesResult";
@@ -17,6 +18,8 @@ import { filterSpec, groupName, groupOf, noticeText, signedNumber, subModeText, 
 import type { CalibrateActions, CalibrateView } from "./types";
 
 const PLOT_HEIGHT = 300;
+/** A reply quicker than this never shows the loading look (no flash). */
+export const LOADING_DELAY_MS = 150;
 export const TAB_LABEL: Record<ResultTab, "calibrate.tab.spl" | "calibrate.tab.gd" | "calibrate.tab.xo" | "calibrate.tab.ba"> = {
   spl: "calibrate.tab.spl",
   gd: "calibrate.tab.gd",
@@ -254,6 +257,20 @@ function BaLines({ ba, subs, number }: { ba: SubResultLines; subs: readonly stri
 
 /* ── The graph card ─────────────────────────────────────────────────────── */
 
+/** True once `on` has held for `ms`; false as soon as it ends. */
+function useHeld(on: boolean, ms: number): boolean {
+  const [held, setHeld] = useState(false);
+  useEffect(() => {
+    if (!on) {
+      setHeld(false);
+      return;
+    }
+    const timer = window.setTimeout(() => setHeld(true), ms);
+    return () => window.clearTimeout(timer);
+  }, [on, ms]);
+  return on && held;
+}
+
 type TargetPoint = targetEdit.TargetPoint;
 
 export function ResultGraph({ view, actions, menuOpen = false }: { view: CalibrateView; actions: CalibrateActions; menuOpen?: boolean | undefined }) {
@@ -264,11 +281,15 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
   const computed = view.results.calibration !== null;
   const subs = useMemo(() => subRoles(view.config), [view.config]);
   const groups = useMemo(() => xoGroups(view.config), [view.config]);
+  // Curves of another tab are not drawn (other axes); the empty slot waits instead.
   const curves = view.curves && view.curves.tab === tab ? view.curves : null;
   const drawn = useMemo(() => (curves ? drawCurves(curves, tab, computed, subs) : null), [curves, tab, computed, subs]);
 
   // Channel list: the result's channels, or before a run the roles measured at position 1.
   const channels = computed ? view.lines.channels.map((c) => c.role) : view.measuredRoles;
+  // Before a run with nothing measured at position 1 there is no channel to preview
+  // (other positions may be measured): say so where the channel would be chosen.
+  const noPreview = !computed && channels.length === 0;
   const channel = view.channel && channels.includes(view.channel) ? view.channel : (channels[0] ?? null);
   const xoGroup = view.xoGroup && groups.includes(view.xoGroup) ? view.xoGroup : (groups[0] ?? null);
 
@@ -292,6 +313,13 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
   const [dragHz, setDragHz] = useState<number | null>(null);
   const xoHz = dragHz ?? curves?.xo_hz ?? (xoGroup ? (view.settings.xo[xoGroup] ?? null) : null);
   useEffect(() => setDragHz(null), [view.settings.xo]);
+
+  // Loading (the curves for this selection are on their way): busy for
+  // readers at once; dimmed with a status only once it takes longer than
+  // LOADING_DELAY_MS. Previews while the XO line is dragged are not a new
+  // selection and never dim.
+  const loading = view.curvesLoading && dragHz === null;
+  const slow = useHeld(loading, LOADING_DELAY_MS);
 
   // Target menu: from the toolbar button or a right-click on empty graph space (SPL only).
   const [menu, setMenu] = useState<"button" | "context" | null>(menuOpen ? "button" : null);
@@ -371,7 +399,8 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
 
   const hint = (): string | null => {
     if (computed || !curves) return null;
-    if (tab === "spl") return curves.curves.length ? t("calibrate.plot.preview") : t("calibrate.plot.preview.none");
+    // The target comes with the curves; only a measured curve makes a preview.
+    if (tab === "spl") return curves.curves.some((c) => c.kind !== "target") ? t("calibrate.plot.preview") : t("calibrate.plot.preview.none");
     return t(tab === "gd" ? "calibrate.plot.pending.gd" : tab === "xo" ? "calibrate.plot.pending.xo" : "calibrate.plot.pending.ba");
   };
 
@@ -386,15 +415,22 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
           options={tabs.map((value) => ({ value, label: t(TAB_LABEL[value]) }))}
           onChange={actions.selectTab}
         />
-        <Select
-          id="calibrate.channel"
-          inline
-          label={t("calibrate.graph.channel")}
-          value={channel ?? ""}
-          disabled={tab === "ba" || channels.length === 0}
-          options={channels.map((role) => ({ value: role, label: roleCode(role) }))}
-          onChange={(role) => actions.selectChannel(role, tab === "xo" ? groupOf(view.config, role) : null)}
-        />
+        {noPreview ? (
+          <span className="calibrate-graph__no-channel" data-ui="calibrate.channel.none">
+            <span className="calibrate-graph__no-channel-label">{t("calibrate.graph.channel")}</span>
+            <span>{t("calibrate.graph.channel.none")}</span>
+          </span>
+        ) : (
+          <Select
+            id="calibrate.channel"
+            inline
+            label={t("calibrate.graph.channel")}
+            value={channel ?? ""}
+            disabled={tab === "ba" || channels.length === 0}
+            options={channels.map((role) => ({ value: role, label: roleCode(role) }))}
+            onChange={(role) => actions.selectChannel(role, tab === "xo" ? groupOf(view.config, role) : null)}
+          />
+        )}
         {tab === "xo" && xoGroup && (
           <span className="calibrate-graph__group muted" data-ui="calibrate.graph.group">
             {t("calibrate.graph.group", { group: groupName(t, xoGroup) })}
@@ -407,27 +443,33 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
         )}
       </div>
       <div className="calibrate-graph__stage" ref={stageRef} onContextMenu={onContextMenu}>
-        {curves && drawn ? (
-          <LogPlot
-            id="calibrate.plot"
-            label={t("calibrate.graph.plot", { tab: t(TAB_LABEL[tab]) })}
-            freqs={curves.grid}
-            curves={drawn.curves}
-            roleOrder={drawn.roleOrder}
-            isSub={drawn.isSub}
-            xRange={range.x ?? xRange}
-            yRange={range.y ?? yRange}
-            yUnit={unit}
-            height={PLOT_HEIGHT}
-            band={band && (tab === "spl" || tab === "gd") ? { lo: band[0], hi: band[1] } : null}
-            stale={curves.stale}
-            onDoubleClick={tab === "spl" ? ({ hz, value }) => commit(targetEdit.addPoint(points, { hz, db: value }).points) : undefined}
-            overlay={overlay}
-            toolbar={toolbar}
-          />
-        ) : (
-          <div className="calibrate-graph__loading" style={{ height: PLOT_HEIGHT + 28 }} aria-hidden="true" />
-        )}
+        <div className="calibrate-graph__plot" aria-busy={loading || undefined} data-ui="calibrate.graph.plot">
+          {curves && drawn ? (
+            <LogPlot
+              id="calibrate.plot"
+              label={t("calibrate.graph.plot", { tab: t(TAB_LABEL[tab]) })}
+              freqs={curves.grid}
+              curves={drawn.curves}
+              roleOrder={drawn.roleOrder}
+              isSub={drawn.isSub}
+              xRange={range.x ?? xRange}
+              yRange={range.y ?? yRange}
+              yUnit={unit}
+              height={PLOT_HEIGHT}
+              band={band && (tab === "spl" || tab === "gd") ? { lo: band[0], hi: band[1] } : null}
+              stale={curves.stale || slow}
+              onDoubleClick={tab === "spl" ? ({ hz, value }) => commit(targetEdit.addPoint(points, { hz, db: value }).points) : undefined}
+              overlay={overlay}
+              toolbar={toolbar}
+            />
+          ) : (
+            <div className="calibrate-graph__loading" style={{ height: PLOT_HEIGHT + 28 }} aria-hidden="true" />
+          )}
+        </div>
+        {/* Outside the busy box, so readers hear it; empty while nothing is slow. */}
+        <div className="calibrate-graph__status" role="status" data-ui="calibrate.graph.loading">
+          {slow && <StatusPill tone="busy">{t("calibrate.graph.loading")}</StatusPill>}
+        </div>
         <span ref={contextRef} className="calibrate-context-anchor" style={{ left: at.x, top: at.y }} aria-hidden="true" />
         <div className={menuOpen ? "calibrate-menu-inline" : undefined}>
           <Menu

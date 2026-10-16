@@ -142,6 +142,27 @@ describe("프로젝트 대화상자", () => {
     expect(focused({ kind: "tutorial", dirty: true })).toBe("project.tutorial.start");
   });
 
+  it("keeps the head and the buttons out of the scrolling body, and marks the body's edges while it overflows", () => {
+    // Ten recent projects and an opened 자세히 (the window's size is the CSS's business: ui.css .ui-dialog).
+    const recent = Array.from({ length: 10 }, (_, i) => `C:/Users/demo/Documents/SECS/방 ${i + 1}.secs`);
+    const error = { code: "project_io" as const, params: {}, retryable: true, detail: "failed to read C:/Users/demo/Documents/SECS/방 3.secs: permission denied" };
+    const tall = vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(900);
+    const box = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(420);
+    try {
+      renderWith(<ProjectDialogs view={view({ kind: "open", recent, current: null }, { error })} actions={actions()} />);
+      const dialog = ui("project.open")!;
+      const body = dialog.querySelector(".ui-dialog__body")!;
+      expect(body.querySelectorAll(".project-recent__item")).toHaveLength(10);
+      expect(body.contains(ui("project.error"))).toBe(true);
+      expect(body.contains(ui("project.open.browse"))).toBe(false);
+      expect(body.contains(dialog.querySelector(".ui-dialog__close"))).toBe(false);
+      expect(dialog.className).toContain("ui-dialog--scrolls");
+    } finally {
+      tall.mockRestore();
+      box.mockRestore();
+    }
+  });
+
   it("shows a failed save with its cause and next step", () => {
     renderWith(
       <ProjectDialogs

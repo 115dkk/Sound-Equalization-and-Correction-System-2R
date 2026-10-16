@@ -66,7 +66,13 @@ export function nudgePoint(points: readonly TargetPoint[], index: number, octave
   return movePoint(points, index, { hz: point.hz * 2 ** octaves, db: point.db + db });
 }
 
-/** Target level at `hz`, linear in log-frequency between points, flat outside. */
+/**
+ * Target level at `hz` as the service samples it (secs-types target.rs
+ * `TargetCurve::at`, upstream model.TargetCurve): a smoothstep in
+ * log-frequency between neighbouring points, flat outside the first and
+ * last point, 0 without points. Same steps, so the drawn target is the one
+ * the correction aims at.
+ */
 export function targetAt(points: readonly TargetPoint[], hz: number): number {
   const first = points[0];
   const last = points[points.length - 1];
@@ -74,12 +80,13 @@ export function targetAt(points: readonly TargetPoint[], hz: number): number {
   if (hz <= first.hz) return first.db;
   if (hz >= last.hz) return last.db;
   for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1];
-    const b = points[i];
-    if (a && b && hz <= b.hz) {
-      const t = Math.log(hz / a.hz) / Math.log(b.hz / a.hz);
-      return a.db + t * (b.db - a.db);
+    const a = points[i - 1]!;
+    const b = points[i]!;
+    if (a.hz <= hz && hz <= b.hz) {
+      const t = (Math.log(hz) - Math.log(a.hz)) / (Math.log(b.hz) - Math.log(a.hz));
+      const w = t * t * (3 - 2 * t);
+      return a.db + (b.db - a.db) * w;
     }
   }
-  return last.db;
+  return 0;
 }

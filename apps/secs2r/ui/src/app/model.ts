@@ -73,6 +73,38 @@ export const BLOCKED_TEXT: Record<BlockedReason, { full: MessageKey; short: Mess
   no_levels: { full: "frame.blocked.no_levels", short: "frame.blocked.no_levels.short" },
 };
 
+/**
+ * The step whose own work clears each reason (upstream `can_advance` of that
+ * page): 시스템 needs speakers and a valid configuration; 연결·점검 a ready
+ * method and a level for every channel; 측정·가져오기 a measurement and no
+ * measurement running. 보정 is never held (upstream: 내보내기 opens without a
+ * result), and a level check that runs (`device_busy`) ends by itself.
+ */
+const HELD_BY: Partial<Record<BlockedReason, StepId>> = {
+  no_speakers: "system",
+  config_invalid: "system",
+  no_path: "connect",
+  path_not_ready: "connect",
+  no_levels: "connect",
+  no_measurements: "measure",
+  measuring: "measure",
+};
+
+/**
+ * Whether `step` can be left now (upstream window.can_advance_step), read
+ * from the rail: it cannot while a step that is not done carries a reason
+ * this step must clear, on itself (연결·점검 `ready` with `no_levels`) or on
+ * a later step (보정 `blocked` with `no_measurements`). A skipped step can
+ * always be left.
+ */
+export function canLeave(steps: FrameModel["steps"], step: StepId): boolean {
+  if (steps[step].status === "skipped") return true;
+  return !STEPS.some((id) => {
+    const { status, reason } = steps[id];
+    return status !== "done" && status !== "skipped" && reason !== undefined && HELD_BY[reason] === step;
+  });
+}
+
 /** The step reached by moving `delta` from `from`, skipping steps that are not on this path. */
 export function neighbourStep(steps: FrameModel["steps"], from: StepId, delta: -1 | 1): StepId | null {
   let index = STEPS.indexOf(from) + delta;

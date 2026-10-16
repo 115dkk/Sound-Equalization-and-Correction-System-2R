@@ -1,11 +1,13 @@
 // Modal dialog. The title names the action, the body is one factual line
 // about the consequence, and the buttons repeat the action ("측정 지우기" /
 // "취소"), never a bare yes/no. Escape and the close button always leave.
+// The dialog never grows past the window: the head and the buttons stay,
+// and only the body scrolls (lines mark its edges while it does).
 //
 // Actions that clear measurements use confirm-and-undo (U5): the dialog
 // confirms, the action runs, and a toast offers 되돌리기 with the undo token
 // the service returned.
-import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useT } from "../i18n/react";
 import { Button } from "./Button";
 import { Icon } from "./Icon";
@@ -38,7 +40,9 @@ export function Dialog({
   const titleId = useId();
   const bodyId = useId();
   const panel = useRef<HTMLDivElement>(null);
+  const body = useRef<HTMLDivElement>(null);
   const returnTo = useRef<Element | null>(null);
+  const [scrolls, setScrolls] = useState(false);
 
   useEffect(() => {
     if (!open || inline) return;
@@ -50,6 +54,18 @@ export function Dialog({
       if (returnTo.current instanceof HTMLElement) returnTo.current.focus();
     };
   }, [open, inline]);
+
+  // Whether the body overflows its box (a long list, an opened 자세히, a short window).
+  useLayoutEffect(() => {
+    const node = body.current;
+    if (!open || !node || typeof ResizeObserver === "undefined") return;
+    const check = () => setScrolls(node.scrollHeight > node.clientHeight + 1);
+    const observer = new ResizeObserver(check);
+    observer.observe(node);
+    for (const child of node.children) observer.observe(child);
+    check();
+    return () => observer.disconnect();
+  }, [open, children]);
 
   if (!open) return null;
 
@@ -82,7 +98,7 @@ export function Dialog({
       aria-modal={inline ? undefined : true}
       aria-labelledby={titleId}
       aria-describedby={children ? bodyId : undefined}
-      className={["ui-dialog", tone === "danger" && "ui-dialog--danger"].filter(Boolean).join(" ")}
+      className={["ui-dialog", tone === "danger" && "ui-dialog--danger", scrolls && "ui-dialog--scrolls"].filter(Boolean).join(" ")}
       onKeyDown={onKeyDown}
     >
       <header className="ui-dialog__header">
@@ -94,7 +110,7 @@ export function Dialog({
         </button>
       </header>
       {children && (
-        <div id={bodyId} className="ui-dialog__body">
+        <div ref={body} id={bodyId} className="ui-dialog__body">
           {children}
         </div>
       )}
