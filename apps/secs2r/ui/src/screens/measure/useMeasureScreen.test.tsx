@@ -44,6 +44,8 @@ describe("useMeasureScreen", () => {
   });
 
   it("has no manufactured settings, and keeps host-only choices", async () => {
+    // Before the session has read the stored settings the hook invents none.
+    session.stores.measurementSettings.set(null);
     const { result } = renderHook(useMeasureScreen, { wrapper });
     expect(result.current.view).toBeNull();
     await perform(() => session.configure({ method: "mdat" }));
