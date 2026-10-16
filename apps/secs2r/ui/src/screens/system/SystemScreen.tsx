@@ -151,8 +151,14 @@ export function SystemScreen({ view, actions }: { view: SystemView; actions: Sys
 }
 
 /** The step header: the primary action opens 연결·점검 (disabled by the frame while the step is blocked). */
-export function systemHeader(_view: SystemView, actions: SystemActions, t: Translate): { primary?: PrimaryAction; status?: ReactNode } {
-  return { primary: { id: "system.next", label: t("frame.step.system.primary"), onClick: actions.next } };
+export function systemHeader(view: SystemView, actions: SystemActions, t: Translate): { primary?: PrimaryAction; status?: ReactNode } {
+  // Upstream can_advance(): the step stays open to fix the setup, but the way
+  // on waits for speakers and a valid configuration; the pill says why.
+  const reason = view.config.speakers.length === 0 ? "frame.blocked.no_speakers.short" : view.notices.length > 0 ? "frame.blocked.config_invalid.short" : null;
+  return {
+    primary: { id: "system.next", label: t("frame.step.system.primary"), onClick: actions.next, disabled: reason !== null },
+    ...(reason ? { status: <StatusPill tone="warning" data-ui="system.status">{t(reason)}</StatusPill> } : {}),
+  };
 }
 
 /* ── 구성 ──────────────────────────────────────────────────────────────── */

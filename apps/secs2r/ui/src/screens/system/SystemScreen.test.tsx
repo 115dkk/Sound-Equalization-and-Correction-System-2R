@@ -297,6 +297,18 @@ describe("SystemScreen", () => {
     expect(header.primary?.label).toBe(translate("ko", "frame.step.system.primary"));
     header.primary?.onClick();
     expect(actions.next).toHaveBeenCalled();
+    expect(header.primary?.disabled).toBe(false);
+    expect(header.status).toBeUndefined();
+  });
+
+  it("keeps the way on closed while the setup needs fixing", () => {
+    const t = (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) => translate("ko", key, params);
+    const invalid = systemHeader(invalidView, actionsMock(), t);
+    expect(invalid.primary?.disabled).toBe(true);
+    render(<>{invalid.status}</>);
+    expect(must("system.status").textContent).toContain(translate("ko", "frame.blocked.config_invalid.short"));
+    const empty = systemHeader({ ...newProjectView, config: configOf("custom", [], "") }, actionsMock(), t);
+    expect(empty.primary?.disabled).toBe(true);
   });
 
   it("draws every reach id in at least one state", () => {
