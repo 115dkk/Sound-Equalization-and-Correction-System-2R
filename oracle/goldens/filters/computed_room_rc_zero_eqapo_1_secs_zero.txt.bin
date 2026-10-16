@@ -1,0 +1,67 @@
+# SECS 2 calibration filters for Equalizer APO (generated - do not edit).
+# Included by config.txt between the input Copy and the output Copy.
+# mode zero, total latency 0.0 ms, RC upper 100 Hz; no MIMO
+
+# 1) input correction (PEQ -> FIR)
+Channel: VML
+Filter: ON PK Fc 108.37 Hz Gain -11.00 dB Q 6.4123
+Filter: ON PK Fc 44.98 Hz Gain -12.90 dB Q 4.3881
+Filter: ON PK Fc 75.86 Hz Gain -8.37 dB Q 4.1254
+Filter: ON PK Fc 84.59 Hz Gain 5.00 dB Q 4.4403
+Filter: ON PK Fc 27.79 Hz Gain -6.36 dB Q 2.4267
+Filter: ON PK Fc 44.59 Hz Gain 5.22 dB Q 0.7932
+Filter: ON PK Fc 44.83 Hz Gain -2.10 dB Q 3.7956
+Filter: ON PK Fc 42.63 Hz Gain 4.62 dB Q 2.3982
+Filter: ON PK Fc 44.84 Hz Gain -2.08 dB Q 3.7911
+Filter: ON PK Fc 43.35 Hz Gain 3.65 dB Q 2.0559
+Filter: ON PK Fc 36.99 Hz Gain -5.99 dB Q 3.1760
+Filter: ON PK Fc 59.37 Hz Gain -5.65 dB Q 2.5793
+Filter: ON PK Fc 47.48 Hz Gain 3.25 dB Q 2.8056
+Filter: ON PK Fc 44.86 Hz Gain -1.66 dB Q 3.7692
+Filter: ON PK Fc 43.35 Hz Gain 3.68 dB Q 2.0440
+Filter: ON PK Fc 44.87 Hz Gain -1.49 dB Q 3.7180
+Channel: VMR
+Filter: ON PK Fc 108.37 Hz Gain -10.98 dB Q 6.3993
+Filter: ON PK Fc 44.95 Hz Gain -15.47 dB Q 4.3900
+Filter: ON PK Fc 76.35 Hz Gain -7.86 dB Q 4.6045
+Filter: ON PK Fc 84.18 Hz Gain 5.24 dB Q 4.4354
+Filter: ON PK Fc 27.71 Hz Gain -6.15 dB Q 2.4323
+Filter: ON PK Fc 44.71 Hz Gain 5.61 dB Q 0.7962
+Filter: ON PK Fc 44.59 Hz Gain -1.97 dB Q 3.7999
+Filter: ON PK Fc 42.81 Hz Gain 5.01 dB Q 2.5133
+Filter: ON PK Fc 44.61 Hz Gain -1.91 dB Q 3.7930
+Filter: ON PK Fc 43.25 Hz Gain 4.02 dB Q 2.3214
+Filter: ON PK Fc 37.22 Hz Gain -5.82 dB Q 3.1420
+Filter: ON PK Fc 61.00 Hz Gain -5.74 dB Q 2.2621
+Filter: ON PK Fc 46.90 Hz Gain 3.44 dB Q 2.8728
+Filter: ON PK Fc 44.69 Hz Gain -1.53 dB Q 3.7731
+Filter: ON PK Fc 43.24 Hz Gain 3.96 dB Q 2.3586
+Filter: ON PK Fc 44.69 Hz Gain -1.30 dB Q 3.7105
+Channel: VMC
+Filter: ON PK Fc 44.63 Hz Gain -15.09 dB Q 2.2041
+Filter: ON PK Fc 45.17 Hz Gain 9.56 dB Q 1.6630
+Filter: ON PK Fc 56.07 Hz Gain -7.81 dB Q 4.0041
+Filter: ON PK Fc 94.07 Hz Gain -6.73 dB Q 5.3143
+Filter: ON PK Fc 45.05 Hz Gain -5.46 dB Q 3.9723
+Filter: ON PK Fc 48.74 Hz Gain 6.26 dB Q 2.3591
+Filter: ON PK Fc 44.86 Hz Gain -5.44 dB Q 3.9708
+Filter: ON PK Fc 83.39 Hz Gain 4.59 dB Q 4.5298
+Filter: ON PK Fc 40.80 Hz Gain 3.80 dB Q 2.3763
+Filter: ON PK Fc 69.09 Hz Gain -5.12 dB Q 2.6420
+Filter: ON PK Fc 44.75 Hz Gain -2.34 dB Q 2.6228
+Filter: ON PK Fc 123.32 Hz Gain 2.11 dB Q 7.0549
+Filter: ON PK Fc 40.35 Hz Gain 3.19 dB Q 2.4727
+Filter: ON PK Fc 44.91 Hz Gain -3.26 dB Q 3.8426
+Filter: ON PK Fc 48.83 Hz Gain 3.63 dB Q 2.6863
+Filter: ON PK Fc 54.56 Hz Gain -5.37 dB Q 4.6484
+
+# 3) main paths (gain -> XO PEQ -> LR4 highpass -> delay)
+Channel: VML
+Delay: 1.070 ms
+Channel: VMR
+Preamp: -0.01 dB
+Channel: VMC
+Preamp: -2.03 dB
+Delay: 0.347 ms
+
+Channel: all

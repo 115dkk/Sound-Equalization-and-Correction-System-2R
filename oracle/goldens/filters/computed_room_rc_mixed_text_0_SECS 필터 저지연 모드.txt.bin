@@ -1,0 +1,73 @@
+﻿SECS 2 보정 필터 — 저지연 모드
+만든 때 2026-10-16 12:34 · 전체 지연 8.0 ms · RC 상한 100 Hz (슈뢰더 28 Hz) · 자동: 룸 볼륨 74 m³
+샘플레이트 48000 Hz(FIR wav · 딜레이 샘플 수 기준)
+
+필터는 위에서 아래 순서로 겁니다.
+· PEQ = 피킹(RBJ 바이쿼드): 중심 주파수 · Q · 게인
+· FIR = 같은 폴더의 wav(48 kHz, 32비트 float 모노)
+
+[신호 흐름]
+  채널마다: 입력 → PEQ → FIR → 게인 → 딜레이 → 출력
+
+== L ==
+  PEQ 1       100.00 Hz   Q   2.340    -10.96 dB
+  PEQ 2        44.91 Hz   Q   4.302    -12.71 dB
+  PEQ 3        27.53 Hz   Q   2.450     -7.53 dB
+  PEQ 4        74.58 Hz   Q   6.472     -4.84 dB
+  PEQ 5        43.20 Hz   Q   2.179     +5.60 dB
+  PEQ 6        89.34 Hz   Q   4.608     +5.98 dB
+  PEQ 7        44.64 Hz   Q   3.866     -3.62 dB
+  PEQ 8        48.63 Hz   Q   0.499     +5.26 dB
+  PEQ 9        44.68 Hz   Q   3.817     -2.53 dB
+  PEQ 10       43.28 Hz   Q   2.303     +4.75 dB
+  PEQ 11       36.96 Hz   Q   3.158     -6.81 dB
+  PEQ 12       60.83 Hz   Q   2.718     -6.44 dB
+  PEQ 13       46.97 Hz   Q   2.713     +3.26 dB
+  PEQ 14       44.68 Hz   Q   3.791     -1.85 dB
+  PEQ 15       42.97 Hz   Q   2.383     +5.19 dB
+  PEQ 16       44.62 Hz   Q   3.311     -1.56 dB
+  FIR      secs_mixed_L_fir.wav (2,048 탭, 48 kHz)
+  게인     +0.00 dB
+  딜레이   1.070 ms (51 샘플 @ 48 kHz)
+
+== R ==
+  PEQ 1       100.00 Hz   Q   2.368     -7.39 dB
+  PEQ 2        44.83 Hz   Q   4.308    -15.64 dB
+  PEQ 3        27.52 Hz   Q   2.456     -7.26 dB
+  PEQ 4        74.90 Hz   Q   6.702     -4.74 dB
+  PEQ 5        42.83 Hz   Q   2.361     +5.83 dB
+  PEQ 6        44.78 Hz   Q   3.860     -2.70 dB
+  PEQ 7        49.88 Hz   Q   0.554     +6.01 dB
+  PEQ 8        44.74 Hz   Q   3.822     -2.64 dB
+  PEQ 9        89.39 Hz   Q   4.711     +5.69 dB
+  PEQ 10       43.04 Hz   Q   2.468     +4.31 dB
+  PEQ 11       37.14 Hz   Q   3.148     -6.41 dB
+  PEQ 12       61.41 Hz   Q   2.641     -6.42 dB
+  PEQ 13      100.00 Hz   Q   2.467     -3.54 dB
+  PEQ 14       46.62 Hz   Q   2.861     +3.69 dB
+  PEQ 15       44.66 Hz   Q   3.790     -1.77 dB
+  PEQ 16       43.05 Hz   Q   2.475     +4.23 dB
+  FIR      secs_mixed_R_fir.wav (2,048 탭, 48 kHz)
+  게인     -0.01 dB
+  딜레이   0.000 ms (0 샘플 @ 48 kHz)
+
+== C ==
+  PEQ 1        45.02 Hz   Q   3.671    -10.54 dB
+  PEQ 2        45.45 Hz   Q   0.955     +8.44 dB
+  PEQ 3        62.46 Hz   Q   2.685     -8.63 dB
+  PEQ 4        93.55 Hz   Q   4.970     -7.88 dB
+  PEQ 5        45.15 Hz   Q   3.979    -14.33 dB
+  PEQ 6        46.06 Hz   Q   2.404     +6.29 dB
+  PEQ 7        44.49 Hz   Q   3.931     -3.29 dB
+  PEQ 8        45.87 Hz   Q   2.338     +5.13 dB
+  PEQ 9        33.24 Hz   Q   1.342     -5.20 dB
+  PEQ 10       80.83 Hz   Q   4.562     +3.61 dB
+  PEQ 11       76.21 Hz   Q   6.090     -5.58 dB
+  PEQ 12       37.74 Hz   Q   2.464     +3.84 dB
+  PEQ 13       40.63 Hz   Q   3.482     -2.18 dB
+  PEQ 14       46.30 Hz   Q   2.696     +3.64 dB
+  PEQ 15       54.62 Hz   Q   4.655    -11.99 dB
+  PEQ 16       80.84 Hz   Q   4.639     +2.81 dB
+  FIR      secs_mixed_C_fir.wav (2,048 탭, 48 kHz)
+  게인     -2.03 dB
+  딜레이   0.347 ms (17 샘플 @ 48 kHz)

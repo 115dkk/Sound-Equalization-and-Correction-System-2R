@@ -21,7 +21,12 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const SAMPLE_RATE: u32 = 48_000;
+/// Sample rate used by every exported FIR and delay.
+pub const SAMPLE_RATE: u32 = 48_000;
+/// Upstream Dolby LFE playback gain.
+pub const LFE_GAIN_DB: f64 = 10.0;
+/// Upstream Dolby LFE content low-pass frequency.
+pub const LFE_LP_HZ: f64 = 120.0;
 const CONFIG_DIR: &str = "configs";
 const COEFF_DIR: &str = "coeffs";
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -301,7 +306,8 @@ fn delay(milliseconds: f64) -> Json {
     )
 }
 
-fn round_ties_even_i64(value: f64) -> i64 {
+/// Python/NumPy half-even rounding to an integer.
+pub fn round_ties_even_i64(value: f64) -> i64 {
     let floor = value.floor();
     let fraction = value - floor;
     let rounded = if fraction < 0.5 {
@@ -316,7 +322,8 @@ fn round_ties_even_i64(value: f64) -> i64 {
     rounded as i64
 }
 
-fn wav(data: &[f64], rate: u32) -> Vec<u8> {
+/// Serialize an IEEE-float, mono, 32-bit WAV exactly like upstream `write_wav`.
+pub fn wav_bytes(data: &[f64], rate: u32) -> Vec<u8> {
     let data_len = u32::try_from(data.len() * 4).expect("FIR WAV fits u32");
     let mut out = Vec::with_capacity(44 + data.len() * 4);
     out.extend_from_slice(b"RIFF");
@@ -820,7 +827,7 @@ pub fn make_config_observed(
         if main.fir.len() > 1 {
             let file = coeff_dir.join(format!("{fir_prefix}{}_fir.wav", main.role));
             let filename = posix(&relative(&file, config_dir)?);
-            coeffs.push((file, wav(&main.fir, SAMPLE_RATE)));
+            coeffs.push((file, wav_bytes(&main.fir, SAMPLE_RATE)));
             let name = format!("in_{}_fir", main.role);
             filters.push((
                 name.clone(),
@@ -972,7 +979,7 @@ pub fn make_config_observed(
                 names.push(hp_name);
                 let file = coeff_dir.join(format!("{fir_prefix}{tag}.wav"));
                 let filename = posix(&relative(&file, config_dir)?);
-                coeffs.push((file, wav(taps_48k, SAMPLE_RATE)));
+                coeffs.push((file, wav_bytes(taps_48k, SAMPLE_RATE)));
                 let fir_name = format!("{tag}_fir");
                 filters.push((
                     fir_name.clone(),
@@ -1268,7 +1275,8 @@ pub fn make_config_observed(
     Ok(config)
 }
 
-fn safe_name(name: &str) -> String {
+/// Replace filename-unsafe or non-ASCII characters as upstream does.
+pub fn safe_name(name: &str) -> String {
     let safe: String = name
         .chars()
         .map(|ch| {
@@ -1286,7 +1294,8 @@ fn safe_name(name: &str) -> String {
     }
 }
 
-fn atomic_write(destination: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
+/// Atomically replace one export file through a sibling temporary file.
+pub fn atomic_write(destination: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
     let parent = destination.parent().unwrap_or_else(|| Path::new("."));
     let filename = destination
         .file_name()

@@ -736,6 +736,22 @@ tests = ["secs-camilla::export_camilladsp_matches_oracle", "secs-camilla::invali
 upstream = "calibration.py export_camilladsp"
 
 [[feature]]
+id = "export.filter_text"
+kind = "export"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-filters::filter_text_files_match_oracle_bytes", "secs-filters::public_wrappers_match_oracle_and_enforce_scope", "secs-filters::computed_public_wrappers_match_oracle_files", "secs-filters::computed_subwoofer_text_scope_matches_oracle"]
+upstream = "calibration.py export_filter_text; export_filters.py"
+
+[[feature]]
+id = "export.eqapo"
+kind = "export"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-filters::equalizer_apo_files_match_oracle_bytes", "secs-filters::public_wrappers_match_oracle_and_enforce_scope", "secs-filters::computed_public_wrappers_match_oracle_files"]
+upstream = "calibration.py export_eqapo; export_filters.py"
+
+[[feature]]
 id = "export.camilla_mimo"
 kind = "export"
 milestone = "M3"

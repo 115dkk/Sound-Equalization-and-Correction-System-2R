@@ -1,0 +1,52 @@
+# SECS 2 calibration filters for Equalizer APO (generated - do not edit).
+# Included by config.txt between the input Copy and the output Copy.
+# mode mixed, total latency 12.2 ms, RC upper 321 Hz; no MIMO
+
+# 1) input correction (PEQ -> FIR)
+Channel: VML
+Filter: ON PK Fc 1.23 Hz Gain -0.00 dB Q 0.1235
+Convolution: secs_mixed_L_fir.wav
+
+# 2) sub sends (LR4 lowpass at each crossover)
+Copy: VSL=VML
+Channel: VSL
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+Filter: ON LPQ Fc 80.00 Hz Q 0.7071
+
+# 3) main paths (gain -> XO PEQ -> LR4 highpass -> delay)
+Channel: VML
+Filter: ON PK Fc 10000000000000000.00 Hz Gain -2.67 dB Q 2.6750
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+Filter: ON HPQ Fc 80.00 Hz Q 0.7071
+
+# 4) LFE input (+10 dB, LR4 lowpass) -> every sub bus
+Channel: VLFE
+Preamp: 10.00 dB
+Filter: ON LPQ Fc 120.00 Hz Q 0.7071
+Filter: ON LPQ Fc 120.00 Hz Q 0.7071
+
+# 5) sub buses: sum of sends x gain/polarity -> bus PEQ -> fixed filters -> allpass -> delay
+# sub SW1: gain -0.00 dB, polarity inverted
+Copy: VBSW1=-1.000000*VSL+-1.000000*VLFE
+Channel: VBSW1
+Filter: ON PK Fc 80.00 Hz Gain -0.00 dB Q 0.7071
+Filter: ON HPQ Fc 0.00 Hz Q 0.7071
+Filter: ON LPQ Fc 10000000000000000.00 Hz Q 0.5412
+Filter: ON LPQ Fc 10000000000000000.00 Hz Q 1.3066
+Filter: ON LPQ Fc 10000000000000000.00 Hz Q 0.5412
+Filter: ON LPQ Fc 10000000000000000.00 Hz Q 1.3066
+Filter: ON PK Fc 10.00 Hz Gain -1.23 dB Q 1.0001
+Filter: ON AP Fc 2.67 Hz Q 1.2346
+# sub SW2: gain +0.00 dB, polarity normal
+Copy: VBSW2=1.000000*VSL+1.000000*VLFE
+Channel: VBSW2
+Filter: ON PK Fc 80.00 Hz Gain -0.00 dB Q 0.7071
+Filter: ON HPQ Fc 22.00 Hz Q 0.5000
+Filter: ON LPQ Fc 180.00 Hz Q 0.5412
+Filter: ON LPQ Fc 180.00 Hz Q 1.3066
+# sub SW3: gain +0.00 dB, polarity normal
+Copy: VBSW3=1.000000*VSL+1.000000*VLFE
+Channel: VBSW3
+Filter: ON PK Fc 80.00 Hz Gain -0.00 dB Q 0.7071
+
+Channel: all

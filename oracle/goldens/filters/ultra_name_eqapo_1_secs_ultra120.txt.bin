@@ -1,0 +1,11 @@
+# SECS 2 calibration filters for Equalizer APO (generated - do not edit).
+# Included by config.txt between the input Copy and the output Copy.
+# mode ultra120, total latency 12.2 ms, RC upper 321 Hz; no MIMO
+
+# 1) input correction (PEQ -> FIR)
+Channel: VML
+Convolution: secs_ultra120_L_fir.wav
+
+# 3) main paths (gain -> XO PEQ -> LR4 highpass -> delay)
+
+Channel: all
