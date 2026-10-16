@@ -36,7 +36,9 @@ pub fn calibration_from_project(project: &Project) -> CalibrationSettings {
     out.mimo_low = num(get("mimo_low"), 15.0, 150.0);
     out.mimo_max_supports =
         num(get("mimo_max_supports"), 0.0, 12.0).map_or(0, |value| value.round_ties_even() as i64);
-    out.mimo_fir = get("mimo_fir").is_some_and(truthy);
+    // Upstream 1.3.0: a stored calibration without the key predates FIR
+    // supports (1.2.0) and stays IIR; an empty one keeps the FIR default.
+    out.mimo_fir = get("mimo_fir").map_or(raw.is_empty(), truthy);
     out.xo = xo_map(get("xo"));
     out.xo_rec = xo_map(get("xo_rec"));
     out.ultra_ms = num(get("ultra_ms"), 30.0, 200.0).unwrap_or(200.0);
