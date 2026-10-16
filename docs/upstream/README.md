@@ -2,10 +2,10 @@
 # Sound Equalization and Correction System 2
 
 SECS(Sound Equalization & Correction System) 2 는 룸 보정 설계 프로그램입니다.
-REW 로 측정한 스피커 응답으로 룸 보정(RC) · BA (Bass Alignment) · 저역 늦은 울림 보정(MIMO)을 설계하고, CamillaDSP 설정이나 REW mdat 로 내보냅니다.
+REW 로 측정한 스피커 응답으로 룸 보정(RC) · BA (Bass Alignment) · 저역 늦은 울림 보정(MIMO)을 설계하고, CamillaDSP · Equalizer APO 설정, 필터 값 텍스트, REW mdat 로 내보냅니다.
 Windows 용이고 설치 없이 폴더째 실행합니다.
 
-> 독립 프로젝트입니다. REW, CamillaDSP 등 다른 제품 이름은 각 소유자의 것이며, 이 프로젝트는 그들과 관계가 없습니다.
+> 독립 프로젝트입니다. REW, CamillaDSP, Equalizer APO 등 다른 제품 이름은 각 소유자의 것이며, 이 프로젝트는 그들과 관계가 없습니다.
 
 ## 무엇을 하나
 
@@ -16,7 +16,10 @@ Windows 용이고 설치 없이 폴더째 실행합니다.
   - 룸 보정(RC): 타겟 커브에 맞추는 PEQ/FIR 필터와 GD(군지연) 보정
   - 크로스오버(XO) 추천과 BA (Bass Alignment): 서브의 게인 · 딜레이 · 극성 · 올패스. DBA · 멀티서브 · 인프라 서브 지원
   - MIMO: 여러 스피커를 함께 써서 저역의 늦은 울림을 줄이는 보정(마이크 위치 3곳 이상)
-- **내보내기**: REW `.mdat`(채널마다 보정 전 · 후), CamillaDSP v4 설정(`.yml`)과 FIR(`.wav`)
+- **내보내기**: REW `.mdat`(채널마다 보정 전 · 후), 필터:
+  - CamillaDSP v4 설정(`.yml`)과 FIR(`.wav`) — RC · BA · MIMO
+  - Equalizer APO 설정(`config.txt` + 필터 + FIR) — RC · BA
+  - 필터 값 텍스트(채널별 PEQ · 게인 · 딜레이 + FIR) — RC 만
 - **튜토리얼 · 도움말**: 샘플 데이터로 따라 하는 튜토리얼, F1 도움말, 버튼마다 풍선 도움말
 
 ## 책임의 한계 (면책)
@@ -29,8 +32,8 @@ SECS 2 는 **있는 그대로(AS IS)** 제공되며, 어떤 보증도 하지 않
 
 ## 받는 법
 
-1. 이 저장소의 **Releases** 에서 `SECS_2.0.0-beta.1.2.0_….zip` 을 받아 원하는 곳에 풉니다.
-2. `SECS` 폴더의 `SECS 2 Beta 1.2.0.exe` 를 실행합니다. 설치는 필요 없습니다.
+1. 이 저장소의 **Releases** 에서 `SECS_2.0.0-beta.1.3.0_….zip` 을 받아 원하는 곳에 풉니다.
+2. `SECS` 폴더의 `SECS 2 Beta 1.3.0.exe` 를 실행합니다. 설치는 필요 없습니다.
 3. Windows 가 "알 수 없는 게시자" 경고를 띄우면 **추가 정보 → 실행** 을 누릅니다(코드 서명이 없습니다).
 
 ## 요구 사항
@@ -53,12 +56,17 @@ SECS 2 는 **있는 그대로(AS IS)** 제공되며, 어떤 보증도 하지 않
 내보내기 화면에서 CamillaDSP 를 고르면 CamillaGUI 폴더와 같은 모양(`configs\*.yml`, `coeffs\*.wav`)으로 파일을 만듭니다.
 CamillaDSP · CamillaGUI 설치부터 장치 · 라우팅 설정, 파일 올리기까지는 **F1 도움말 → 내보내기 화면의 「CamillaDSP」 탭**에 그림으로 있습니다. CamillaDSP 5.x 는 지원하지 않습니다.
 
+## Equalizer APO 로 적용하기
+
+내보낸 폴더 안의 `config.txt` 와 `secs_<모드>` 폴더를 Equalizer APO 의 config 폴더(`C:\Program Files\EqualizerAPO\config`)에 복사합니다. 기존 `config.txt` 는 먼저 다른 이름으로 보관하세요.
+배선이 다르면 `config.txt` 맨 위 `Eval:` 두 줄(입력 · 출력 장치 채널 번호, 0 = 안 씀)만 고칩니다. 순서와 번호표는 같은 폴더의 `EqAPO 적용 방법.txt` 에 있습니다. FIR 이 48 kHz 라 장치 형식을 48000 Hz 로 맞춰야 합니다.
+
 ## 알려진 제한
 
 - 화면은 한국어만 지원합니다.
 - 바이앰프(스피커 하나를 대역별로 따로 재기)는 지원하지 않습니다.
 - MIMO 는 계산이 오래 걸리고(입력 · 위치가 많으면 10분 넘게), 실제 효과가 예측보다 작을 수 있습니다.
-- 내보내기 형식은 REW mdat 와 CamillaDSP 뿐입니다.
+- MIMO 는 CamillaDSP 로만 내보냅니다(Equalizer APO 에서는 경로가 많아 무겁습니다).
 - Windows 에서 CamillaDSP 로 12채널 이상을 입력받는 쉬운 방법은 확인하지 못했습니다(맥은 BlackHole 16ch 로 가능).
 - Windows 용 exe 만 있습니다.
 

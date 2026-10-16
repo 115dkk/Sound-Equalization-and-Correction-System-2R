@@ -157,3 +157,57 @@ def test_window_step8_is_the_new_export(qapp, fake, tmp_path):  # noqa: F811
         language_manager().set_language('ko', persist=False)
         win.close()
         qapp.processEvents()
+
+
+def test_filter_card_exports_camilla_text_and_eqapo(qapp, fast_engine, synth, tmp_path):  # noqa: F811
+    """REW mdat 아래 '필터 내보내기' 카드(10-15): 카밀라 · 텍스트 · EqAPO 버튼, 결과는 카드 자기 안내 줄에."""
+    case, irs = synth
+    calibration = _page(_project(case, 1), {1: irs[1]}, tmp_path)
+    page = _export_page(calibration)
+    try:
+        assert list(page.filter_buttons) == ['camilla', 'text', 'eqapo']
+        assert page.camilla_button is page.filter_buttons['camilla']
+        assert not any(b.isEnabled() for b in page.filter_buttons.values())          # 결과 없으면 꺼짐
+        assert page.export(folder=tmp_path / 'none', kind='eqapo') == []
+        assert '보정 결과가 없습니다' in page.filter_note.text() and page.export_note.text() == ''
+
+        calibration.mode_buttons['zero'].click()
+        _compute(calibration, qapp)
+        page.refresh()
+        assert page.filter_buttons['camilla'].isEnabled() and page.filter_buttons['eqapo'].isEnabled()
+        out = tmp_path / 'out'
+        eq = page.export(folder=out, kind='eqapo')
+        assert Path(eq[0]).name == 'config.txt' and Path(eq[0]).parent.name.startswith('SECS_eqapo_RC_BA_zero_')
+        assert (Path(eq[0]).parent / 'secs_zero' / 'secs_zero.txt').exists()
+        assert '파일을 저장했습니다' in page.filter_note.text() and page.export_note.text() == ''
+        # 서브(BA)가 있는 결과 — 텍스트는 RC 만이라 꺼지고 이유가 카드에(10-15 사용자)
+        assert not page.filter_buttons['text'].isEnabled() and '서브(BA)' in page.filter_scope.text()
+        assert page.export(folder=out, kind='text') == [] and '서브(BA)' in page.filter_note.text()
+        cam = page.export(folder=out, kind='camilla')
+        assert Path(cam[0]).suffix == '.yml'
+    finally:
+        page.deleteLater()
+        calibration.deleteLater()
+
+
+def test_eqapo_is_off_with_mimo(qapp, fast_engine, synth, fake_mimo, tmp_path):  # noqa: F811
+    """EqAPO 는 RC · BA 까지(10-15 사용자: MIMO 는 경로가 많아 EqAPO 에서 무겁다) — MIMO 를 켜면 꺼지고, 끄면 켜진다."""
+    case, irs = synth
+    calibration = _page(_project(case, 3), irs, tmp_path)
+    page = _export_page(calibration)
+    try:
+        calibration.mode_buttons['zero'].click()
+        _compute(calibration, qapp)
+        calibration.mimo_check.click()
+        calibration.mimo_button.click()
+        assert calibration.wait(120000) and calibration.mimo_run is not None
+        page.refresh()
+        assert not page.filter_buttons['eqapo'].isEnabled() and page.filter_buttons['camilla'].isEnabled()
+        assert 'EqAPO 는 RC · BA 까지' in page.filter_scope.text()
+        assert page.export(folder=tmp_path / 'm', kind='eqapo') == [] and not (tmp_path / 'm').exists()
+        calibration.mimo_check.click()
+        page.refresh()
+        assert page.filter_buttons['eqapo'].isEnabled() and 'EqAPO' not in page.filter_scope.text()
+    finally:
+        page.deleteLater()
+        calibration.deleteLater()

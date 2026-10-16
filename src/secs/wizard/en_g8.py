@@ -169,6 +169,12 @@ PAIRS: tuple[tuple[str, str], ...] = (
     # 내보내기
     ('CamillaDSP 설정', 'CamillaDSP config'),
     ('CamillaDSP 내보내기', 'Export CamillaDSP'),
+    ('필터 내보내기', 'Export filters'),
+    ('텍스트로 내보내기', 'Export as text'),
+    ('EqAPO 내보내기', 'Export EqAPO'),
+    ('텍스트는 RC 만 적용한 결과에서만 — 서브(BA)가 있습니다', 'Text is for RC-only results — there are subs (BA)'),
+    ('텍스트는 RC 만 적용한 결과에서만 — MIMO 를 끄면 낼 수 있습니다', 'Text is for RC-only results — turn MIMO off to export'),
+    ('EqAPO 는 RC · BA 까지 — MIMO 를 끄면 낼 수 있습니다', 'EqAPO supports RC and BA — turn MIMO off to export'),
     ('계산 결과가 없습니다 — 먼저 [계산]을 누르세요', 'No calculation result — press [Calculate] first'),
     # 내보내기 단계(8, `step8_mdat` — 2026-09-26 새로)
     ('7 · 내보내기', '7 · Export'),

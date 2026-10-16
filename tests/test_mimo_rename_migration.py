@@ -140,6 +140,7 @@ def _write_legacy_cache(path, run, mimo_run):
             if isinstance(state.get(key), dict):
                 state[key] = {r: {('art_support' if k == 'mimo_support' else k): v for k, v in e.items()}
                               for r, e in state[key].items()}
+    run.settings.__dict__.pop('mimo_fir', None)            # 판 1(10-10) 캐시에는 없던 칸(10-12 추가) — 불러오면 IIR(끔)
     mimo_run.__dict__['art'] = mimo_run.__dict__.pop('design')
     mimo_run.curves = {r: {'spl_art': c['spl_mimo']} for r, c in mimo_run.curves.items()}
     data = pickle.dumps({'version': 1, 'run': run, 'art_run': mimo_run}, protocol=2)
