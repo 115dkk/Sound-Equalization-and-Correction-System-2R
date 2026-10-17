@@ -1,16 +1,17 @@
-// The two upstream logos the rail and the window may show (docs/DEVIATIONS.md
-// U12). They come straight from the upstream tree, so a new drawing there
-// reaches the screen without a copy; apps/secs2r/icons/render_icons.py makes
-// the program icons from the same files.
-import bubble from "../../../../../src/secs/wizard/assets/logo_b6.svg";
-import bubbleSmall from "../../../../../src/secs/wizard/assets/logo_b6_small.svg";
-import drip from "../../../../../src/secs/wizard/assets/logo_b8.svg";
-import dripSmall from "../../../../../src/secs/wizard/assets/logo_b8_small.svg";
+// The two logos the rail and the window may show (docs/DEVIATIONS.md U12).
+// "전문가 모드" is upstream's confirmed logo, read straight from the upstream
+// tree so a new drawing there reaches the screen without a copy; "킹반인
+// 모드" is SECS 2R's own (apps/secs2r/icons/logo). icons/render_icons.py
+// makes the program and window icons from the same files.
+import expert from "../../../../../src/secs/wizard/assets/logo_b8.svg";
+import expertSmall from "../../../../../src/secs/wizard/assets/logo_b8_small.svg";
+import civilian from "../../../icons/logo/civilian.svg";
+import civilianSmall from "../../../icons/logo/civilian_small.svg";
 import type { AppIcon } from "../ipc/bindings/AppIcon";
 
-export const LOGOS: Record<AppIcon, string> = { drip, bubble };
+export const LOGOS: Record<AppIcon, string> = { expert, civilian };
 
-/** Upstream's simplified drawings for 32 px and smaller. */
-export const SMALL_LOGOS: Record<AppIcon, string> = { drip: dripSmall, bubble: bubbleSmall };
+/** The simplified drawings for 32 px and smaller. */
+export const SMALL_LOGOS: Record<AppIcon, string> = { expert: expertSmall, civilian: civilianSmall };
 
-export const DEFAULT_LOGO: AppIcon = "drip";
+export const DEFAULT_LOGO: AppIcon = "expert";

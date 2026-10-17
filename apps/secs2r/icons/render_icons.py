@@ -7,9 +7,10 @@ bundles need are rendered here with upstream's renderer
 (`tools/render_logo.py`, Qt SVG), which draws 32 px and smaller from the
 simplified `logo_b8_small.svg` as upstream does.
 
-`window/` holds the other choice in the app settings, upstream's sixth draft
-`logo_b6.svg`. The shell sets it as the window icon when the user picks it;
-the bundle icons stay `logo_b8`.
+`window/` holds the other choice in the app settings, SECS 2R's own
+"킹반인 모드" logo (`logo/civilian.svg`, `logo/civilian_small.svg`). The shell
+sets it as the window icon when the user picks it; the bundle icons stay
+`logo_b8`.
 
 Run again when upstream changes its logo (`upstream.py` names this file):
 
@@ -35,10 +36,10 @@ from render_logo import png_bytes, render  # noqa: E402
 PNG = b"\x89PNG\r\n\x1a\n"
 
 
-def draw(name: str, size: int) -> QImage:
+def draw(name: str, size: int, folder: Path = ASSETS) -> QImage:
     """Upstream's rule: 32 px and smaller come from the simplified drawing."""
-    small = ASSETS / f"{name}_small.svg"
-    return render(small if size <= 32 and small.is_file() else ASSETS / f"{name}.svg", size)
+    small = folder / f"{name}_small.svg"
+    return render(small if size <= 32 and small.is_file() else folder / f"{name}.svg", size)
 
 
 def ico_entries(path: Path) -> dict[int, bytes]:
@@ -131,7 +132,7 @@ def main() -> None:
     window = HERE / "window"
     window.mkdir(exist_ok=True)
     for size in (32, 48, 64, 256):
-        (window / f"bubble-{size}.png").write_bytes(png_bytes(draw("logo_b6", size)))
+        (window / f"civilian-{size}.png").write_bytes(png_bytes(draw("civilian", size, HERE / "logo")))
     del app
     print("icons written to", HERE)
 

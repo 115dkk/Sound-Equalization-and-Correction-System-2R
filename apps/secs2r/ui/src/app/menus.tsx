@@ -122,7 +122,7 @@ export function SettingsButton({ initiallyOpen = false, inline = false }: { init
           id="frame.settings.logo"
           label={t("frame.settings.logo")}
           value={prefs.icon ?? DEFAULT_LOGO}
-          options={(["drip", "bubble"] as const).map((icon) => ({
+          options={(["expert", "civilian"] as const).map((icon) => ({
             value: icon,
             label: t(`frame.settings.logo.${icon}`),
             media: <img className="settings__logo" src={SMALL_LOGOS[icon]} alt="" width={20} height={20} draggable={false} />,

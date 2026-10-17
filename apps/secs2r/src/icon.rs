@@ -1,7 +1,7 @@
 //! The window icon follows the logo chosen in the app settings
 //! (docs/DEVIATIONS.md U12). The bundle icon is upstream's confirmed logo and
 //! Tauri already sets it as the default window icon; the other choice is
-//! upstream's sixth draft, rendered by `icons/render_icons.py`.
+//! SECS 2R's own logo, rendered by `icons/render_icons.py`.
 
 use std::sync::{Mutex, PoisonError};
 
@@ -27,8 +27,8 @@ pub(crate) fn show(app: &AppHandle, icon: AppIcon) {
         return;
     };
     let image = match icon {
-        AppIcon::Drip => app.default_window_icon().cloned(),
-        AppIcon::Bubble => Some(bubble(window.scale_factor().unwrap_or(1.0))),
+        AppIcon::Expert => app.default_window_icon().cloned(),
+        AppIcon::Civilian => Some(civilian(window.scale_factor().unwrap_or(1.0))),
     };
     if let Some(image) = image
         && window.set_icon(image).is_ok()
@@ -41,19 +41,19 @@ pub(crate) fn show(app: &AppHandle, icon: AppIcon) {
 /// display scale, so it gets the nearest picture at or above that size (as
 /// Tauri's default icon picks its entry from the icon resource). The other
 /// systems scale one large picture, as they do the bundle's 512 px icon.
-fn bubble(scale: f64) -> Image<'static> {
+fn civilian(scale: f64) -> Image<'static> {
     if !cfg!(windows) {
-        return tauri::include_image!("icons/window/bubble-256.png");
+        return tauri::include_image!("icons/window/civilian-256.png");
     }
-    match bubble_size(scale) {
-        32 => tauri::include_image!("icons/window/bubble-32.png"),
-        48 => tauri::include_image!("icons/window/bubble-48.png"),
-        _ => tauri::include_image!("icons/window/bubble-64.png"),
+    match window_icon_size(scale) {
+        32 => tauri::include_image!("icons/window/civilian-32.png"),
+        48 => tauri::include_image!("icons/window/civilian-48.png"),
+        _ => tauri::include_image!("icons/window/civilian-64.png"),
     }
 }
 
 /// The smallest of 32, 48 and 64 px that is at least 32 px times `scale`.
-fn bubble_size(scale: f64) -> u32 {
+fn window_icon_size(scale: f64) -> u32 {
     let wanted = 32.0 * scale;
     [32, 48, 64]
         .into_iter()
@@ -67,17 +67,17 @@ mod tests {
 
     #[test]
     fn windows_icon_size_follows_the_display_scale() {
-        assert_eq!(bubble_size(1.0), 32);
-        assert_eq!(bubble_size(1.25), 48);
-        assert_eq!(bubble_size(1.5), 48);
-        assert_eq!(bubble_size(1.75), 64);
-        assert_eq!(bubble_size(3.0), 64);
+        assert_eq!(window_icon_size(1.0), 32);
+        assert_eq!(window_icon_size(1.25), 48);
+        assert_eq!(window_icon_size(1.5), 48);
+        assert_eq!(window_icon_size(1.75), 64);
+        assert_eq!(window_icon_size(3.0), 64);
     }
 
     #[test]
-    fn bubble_pictures_are_square_and_match_their_names() {
+    fn civilian_pictures_are_square_and_match_their_names() {
         for (scale, size) in [(1.0, 32), (1.5, 48), (2.0, 64)] {
-            let image = bubble(scale);
+            let image = civilian(scale);
             let expected = if cfg!(windows) { size } else { 256 };
             assert_eq!((image.width(), image.height()), (expected, expected));
             assert_eq!(image.rgba().len(), (expected * expected * 4) as usize);

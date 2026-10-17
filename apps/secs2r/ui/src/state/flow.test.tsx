@@ -68,16 +68,16 @@ it("keeps the chosen logo in the app settings and shows it again on the next sta
   const first = render(<App ipc={mock} />);
   try {
     await waitFor(() => expect(document.querySelector('[data-ui="frame.logo"]')).not.toBeNull());
-    expect(logo()).toBe(LOGOS.drip);
+    expect(logo()).toBe(LOGOS.expert);
     fireEvent.click(ui("frame.settings"));
-    expect(ui("frame.settings.logo.drip").getAttribute("aria-checked")).toBe("true");
-    fireEvent.click(ui("frame.settings.logo.bubble"));
-    await waitFor(() => expect(mock.calls.some((r) => r.method === "app_settings_set" && r.params.settings.icon === "bubble")).toBe(true));
-    expect(logo()).toBe(LOGOS.bubble);
+    expect(ui("frame.settings.logo.expert").getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(ui("frame.settings.logo.civilian"));
+    await waitFor(() => expect(mock.calls.some((r) => r.method === "app_settings_set" && r.params.settings.icon === "civilian")).toBe(true));
+    expect(logo()).toBe(LOGOS.civilian);
   } finally { first.unmount(); }
   const second = render(<App ipc={mock} />);
   try {
     await waitFor(() => expect(document.querySelector('[data-ui="frame.logo"]')).not.toBeNull());
-    expect(logo()).toBe(LOGOS.bubble);
+    expect(logo()).toBe(LOGOS.civilian);
   } finally { second.unmount(); mock.dispose(); }
 });

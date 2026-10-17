@@ -1783,17 +1783,18 @@ pub enum AppTheme {
     /// Always use the dark theme.
     Dark,
 }
-/// The logo on the rail and the window (docs/DEVIATIONS.md U12). Both are
-/// upstream drawings; the installed program's own icon is always `Drip`.
+/// The logo on the rail and the window (docs/DEVIATIONS.md U12). The
+/// installed program's own icon is always `Expert`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum AppIcon {
-    /// Upstream's confirmed logo (`logo_b8.svg`): drips run down the bar.
+    /// "전문가 모드": upstream's confirmed logo (`logo_b8.svg`).
     #[default]
-    Drip,
-    /// Upstream's sixth draft (`logo_b6.svg`): bubbles rise off the bar.
-    Bubble,
+    Expert,
+    /// "킹반인 모드": SECS 2R's own logo (`apps/secs2r/icons/logo/civilian.svg`),
+    /// a measured response and its correction on the target.
+    Civilian,
 }
 /// Application-local settings, independent of an open project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1819,7 +1820,7 @@ impl Default for AppSettings {
         Self {
             language: "ko".into(),
             theme: AppTheme::System,
-            icon: AppIcon::Drip,
+            icon: AppIcon::Expert,
             expert_display: false,
             recent_projects: Vec::new(),
             last_window_size: None,
