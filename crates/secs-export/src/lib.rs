@@ -3,6 +3,7 @@
 //! SECS 2's user-visible REW `.mdat` exports.
 
 use std::{
+    collections::BTreeMap,
     fs::{self, OpenOptions},
     io::Write,
     path::{Path, PathBuf},
@@ -14,7 +15,7 @@ use secs_engine::{
     Design, EngineConfig, EngineError, MeasurementSet, StageResponses, export_view,
     input::LayoutKind, stage_responses,
 };
-use secs_mdat::{MdatError, MeasurementInput, TEMPLATE};
+use secs_mdat::{MdatError, MeasurementInput, SourceInfo, TEMPLATE};
 use secs_types::{
     calibration::CalibrationSettings,
     chain::{MimoPaths, SubChannel},
@@ -24,6 +25,8 @@ const N_FFT: usize = 1 << 17;
 const SR: u32 = 48_000;
 const SUB_GAIN_WARN_DB: f64 = 12.0;
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+pub type Sources = BTreeMap<u32, BTreeMap<String, SourceInfo>>;
 
 /// Inputs already computed by the correction engine.
 #[derive(Debug)]
@@ -321,6 +324,8 @@ fn item(title: String, notes: String, spectrum: &[secs_engine::C], t0: f64) -> M
         samples: ir(spectrum),
         start_time_s: t0,
         spl_offset_db: None,
+        source_info: None,
+        computed: false,
     }
 }
 
@@ -507,17 +512,26 @@ pub fn stage_items_mimo(
 fn before_after_items_with_mimo(
     run: &ExportRun<'_>,
     mimo: MimoExport<'_>,
+    sources: Option<&Sources>,
 ) -> Result<Vec<MeasurementInput>, ExportError> {
     let view = export_view(run.design, run.measurements, run.config)?;
     let position = run.config.main_position;
     let label = run.settings.label();
     let shifted = view.base_s - run.design.chain.latency_ms / 1000.0;
+    let source_env = sources.and_then(|sources| sources.get(&position));
     let mut items = Vec::new();
     let mut seq = 0;
     for main in &run.design.chain.mains {
         seq += 1;
         if let Some(measured) = run.measurements.get(position, &main.role) {
-            items.push(measured_item(seq, &main.role, position, measured, ""));
+            items.push(measured_item(
+                seq,
+                &main.role,
+                position,
+                measured,
+                "",
+                source_env.and_then(|sources| sources.get(&main.role)),
+            ));
         }
         let final_response = stage_responses(run.design, &main.role, &view.spectra, position)
             .ok_or_else(|| ExportError::MissingResponse(main.role.clone()))?
@@ -537,12 +551,17 @@ fn before_after_items_with_mimo(
             notes.push_str(" · 서브: ");
             notes.push_str(&sub_values_text(run));
         }
-        items.push(item(
+        let mut corrected = item(
             format!("{seq:02}_{}_2 보정 후 {label}", main.role),
             notes,
             &final_response,
             shifted,
-        ));
+        );
+        corrected.source_info = source_env
+            .and_then(|sources| sources.get(&main.role))
+            .cloned();
+        corrected.computed = true;
+        items.push(corrected);
         if let MimoExport::Responses(mimo) = mimo {
             let support_count = mimo
                 .paths
@@ -584,6 +603,7 @@ fn before_after_items_with_mimo(
                 position,
                 measured,
                 &format!(" · DSP 값: {}", sub_value_text(sub)),
+                source_env.and_then(|sources| sources.get(&sub.role)),
             ));
         }
     }
@@ -596,6 +616,7 @@ fn measured_item(
     position: u32,
     measured: &secs_engine::Measurement,
     note: &str,
+    source_info: Option<&SourceInfo>,
 ) -> MeasurementInput {
     MeasurementInput {
         title: format!("{seq:02}_{role}_1 보정 전(원 측정)"),
@@ -606,18 +627,22 @@ fn measured_item(
             .collect(),
         start_time_s: measured.t0,
         spl_offset_db: None,
+        source_info: source_info.cloned(),
+        computed: false,
     }
 }
 
-pub fn before_after_items(run: &ExportRun<'_>) -> Vec<MeasurementInput> {
-    before_after_items_with_mimo(run, MimoExport::None).expect("validated engine export inputs")
+pub fn before_after_items(run: &ExportRun<'_>, sources: Option<&Sources>) -> Vec<MeasurementInput> {
+    before_after_items_with_mimo(run, MimoExport::None, sources)
+        .expect("validated engine export inputs")
 }
 
 pub fn before_after_items_mimo(
     run: &ExportRun<'_>,
     mimo: &MimoResponses,
+    sources: Option<&Sources>,
 ) -> Result<Vec<MeasurementInput>, ExportError> {
-    before_after_items_with_mimo(run, MimoExport::Responses(mimo))
+    before_after_items_with_mimo(run, MimoExport::Responses(mimo), sources)
 }
 
 /// `spl_offset_db` is the project's median REW SPL offset
@@ -626,8 +651,9 @@ pub fn export_mdat(
     run: &ExportRun<'_>,
     folder: &Path,
     spl_offset_db: Option<f64>,
+    now_ms: i64,
 ) -> Result<PathBuf, ExportError> {
-    export_mdat_with_mimo(run, folder, None, spl_offset_db)
+    export_mdat_with_mimo(run, folder, None, spl_offset_db, now_ms)
 }
 
 pub fn export_mdat_with_mimo(
@@ -635,8 +661,9 @@ pub fn export_mdat_with_mimo(
     folder: &Path,
     mimo: Option<&MimoResponses>,
     spl_offset_db: Option<f64>,
+    now_ms: i64,
 ) -> Result<PathBuf, ExportError> {
-    export_mdat_with_mimo_using(run, folder, mimo, spl_offset_db, &mut || {
+    export_mdat_with_mimo_using(run, folder, mimo, spl_offset_db, now_ms, &mut || {
         random_uuid().map_err(|error| ExportError::Random(error.to_string()))
     })
 }
@@ -647,6 +674,7 @@ pub fn export_mdat_with_mimo_using(
     folder: &Path,
     mimo: Option<&MimoResponses>,
     spl_offset_db: Option<f64>,
+    now_ms: i64,
     uuid: &mut dyn FnMut() -> Result<u128, ExportError>,
 ) -> Result<PathBuf, ExportError> {
     let label = run.settings.label();
@@ -660,6 +688,7 @@ pub fn export_mdat_with_mimo_using(
         &format!("SECS 보정 설계 {label}.mdat"),
         &items,
         spl_offset_db,
+        now_ms,
         uuid,
     )
 }
@@ -667,20 +696,30 @@ pub fn export_mdat_with_mimo_using(
 pub fn export_before_after_mdat(
     run: &ExportRun<'_>,
     folder: &Path,
+    sources: Option<&Sources>,
     spl_offset_db: Option<f64>,
+    now_ms: i64,
 ) -> Result<PathBuf, ExportError> {
-    export_before_after_mdat_with_mimo(run, folder, None, spl_offset_db)
+    export_before_after_mdat_with_mimo(run, folder, None, sources, spl_offset_db, now_ms)
 }
 
 pub fn export_before_after_mdat_with_mimo(
     run: &ExportRun<'_>,
     folder: &Path,
     mimo: Option<&MimoResponses>,
+    sources: Option<&Sources>,
     spl_offset_db: Option<f64>,
+    now_ms: i64,
 ) -> Result<PathBuf, ExportError> {
-    export_before_after_mdat_with_mimo_using(run, folder, mimo, spl_offset_db, &mut || {
-        random_uuid().map_err(|error| ExportError::Random(error.to_string()))
-    })
+    export_before_after_mdat_with_mimo_using(
+        run,
+        folder,
+        mimo,
+        sources,
+        spl_offset_db,
+        now_ms,
+        &mut || random_uuid().map_err(|error| ExportError::Random(error.to_string())),
+    )
 }
 
 /// Writes the before/after mdat using an injected UUID source.
@@ -688,17 +727,23 @@ pub fn export_before_after_mdat_with_mimo_using(
     run: &ExportRun<'_>,
     folder: &Path,
     mimo: Option<&MimoResponses>,
+    sources: Option<&Sources>,
     spl_offset_db: Option<f64>,
+    now_ms: i64,
     uuid: &mut dyn FnMut() -> Result<u128, ExportError>,
 ) -> Result<PathBuf, ExportError> {
     let label = run.settings.label();
-    let items =
-        before_after_items_with_mimo(run, mimo.map_or(MimoExport::None, MimoExport::Responses))?;
+    let items = before_after_items_with_mimo(
+        run,
+        mimo.map_or(MimoExport::None, MimoExport::Responses),
+        sources,
+    )?;
     export_items_using(
         folder,
         &format!("SECS 보정 전후 {label}.mdat"),
         &items,
         spl_offset_db,
+        now_ms,
         uuid,
     )
 }
@@ -708,13 +753,14 @@ fn export_items_using(
     filename: &str,
     items: &[MeasurementInput],
     spl_offset_db: Option<f64>,
+    now_ms: i64,
     uuid: &mut dyn FnMut() -> Result<u128, ExportError>,
 ) -> Result<PathBuf, ExportError> {
     let uuids = (0..items.len())
         .map(|_| uuid())
         .collect::<Result<Vec<_>, _>>()?;
     let mut uuids = uuids.into_iter();
-    let bytes = secs_mdat::build(items, TEMPLATE, spl_offset_db, &mut || {
+    let bytes = secs_mdat::build(items, TEMPLATE, spl_offset_db, now_ms, &mut || {
         uuids
             .next()
             .expect("one pre-generated UUID per validated measurement")

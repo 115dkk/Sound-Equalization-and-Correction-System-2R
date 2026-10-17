@@ -35,14 +35,9 @@ export const SAMPLE_SUBS = SAMPLE_ROLES.filter((role) => role.startsWith("SW"));
 
 export const bootstrapInfo: BootstrapInfo = {
   app_name: "SECS 2R",
-  version: "0.13.0",
+  version: __BUILD_INFO__.version,
   prerelease: true,
-  upstream: {
-    name: "Sound Equalization and Correction System 2",
-    version: "Beta 1.3.0",
-    commit: "5acb5a0c786469f41bdeb51e5e5c9d06ce12b4e2",
-    date: "2026-10-15",
-  },
+  upstream: { ...__BUILD_INFO__.upstream },
   platform: { os: "windows", arch: "x86_64" },
 };
 

@@ -166,6 +166,7 @@ fn destructive_config_and_layout_edits_require_confirmation_and_undo_once() {
                     snr_db: Some(30.0),
                     uuid: Some(format!("{role}-1")),
                     source: Some("test".into()),
+                    source_info: None,
                 },
                 Some(&roles),
             )

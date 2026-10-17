@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { IpcFailure } from "./client";
 import type { JobEvent } from "./bindings/JobEvent";
@@ -172,7 +174,12 @@ describe("mock service", () => {
     const mock = createMockService({ tickMs: 0 });
     const info = await mock.request({ method: "bootstrap" });
     expect(info.app_name).toBe("SECS 2R");
-    expect(info.upstream).toMatchObject({ version: "Beta 1.3.0", commit: "5acb5a0c786469f41bdeb51e5e5c9d06ce12b4e2", date: "2026-10-15" });
+    // The build reads both files; the mock answers with what they say now.
+    const root = resolve(import.meta.dirname, "../../../../..");
+    const cargo = readFileSync(resolve(root, "Cargo.toml"), "utf8");
+    const pinned = readFileSync(resolve(root, "UPSTREAM.toml"), "utf8");
+    expect(cargo).toContain(`[workspace.package]\nversion = "${info.version}"`);
+    for (const key of ["name", "version", "commit", "date"] as const) expect(pinned).toContain(`\n${key} = "${info.upstream[key]}"`);
     const project = await mock.request({ method: "project_info" });
     expect(project.positions).toEqual([1, 2, 3]);
     expect(mock.calls.map((c) => c.method)).toEqual(["bootstrap", "project_info"]);

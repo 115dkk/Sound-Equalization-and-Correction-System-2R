@@ -70,6 +70,8 @@ export type Quest<V> = {
   auto?: { run: (view: V) => void | false; note: MessageKey };
   /** Act: why it cannot be done now (null when it can); the card shows the reason. */
   blocked?: (view: V) => MessageKey | null;
+  /** Act: the step's 다음 quest (upstream `_next_to`). Resuming into a step that cannot be left lands here when no other act quest is left to do. */
+  gate?: boolean;
   /** Act: a long action runs; the card shows `text` and waits. */
   busy?: { when: (view: V) => boolean; text: MessageKey };
   /** Toast when the user did it (default 확인됨). */

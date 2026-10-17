@@ -77,6 +77,7 @@ impl Service {
             )
         });
         let spl_offset = secs_project::project_spl_offset(project);
+        let sources = secs_project::load_project_sources(project, &open.path);
         let uuid = self.deps.uuid.clone();
         let session_for_design = self.session.clone();
         let memory = self.deps.memory.available_bytes();
@@ -169,6 +170,8 @@ impl Service {
             }
             _ => None,
         };
+        // One export reads the clock once; every mdat it builds gets that date.
+        let now_ms = (self.deps.unix_ms)();
         drop(session);
         drop(state);
         let destination = if params.folder.is_empty() {
@@ -281,6 +284,7 @@ impl Service {
                             folder,
                             mimo.as_ref(),
                             spl_offset,
+                            now_ms,
                             uuid.as_mut(),
                         )
                     } else {
@@ -288,7 +292,9 @@ impl Service {
                             &run,
                             folder,
                             mimo.as_ref(),
+                            Some(&sources),
                             spl_offset,
+                            now_ms,
                             uuid.as_mut(),
                         )
                     }

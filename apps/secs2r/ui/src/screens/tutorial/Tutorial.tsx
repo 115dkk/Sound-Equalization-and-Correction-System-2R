@@ -7,7 +7,7 @@
 // A card that opens takes the focus; Tab moves between the tutorial's own
 // controls and the act target (the rest of the app does not answer), and
 // Esc leaves: it hides the cards, and on the end card it ends the tutorial.
-import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref, type SyntheticEvent } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useReducer, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type Ref, type SyntheticEvent } from "react";
 import { STEP_TITLE, type StepId } from "../../app/model";
 import type { MessageKey } from "../../i18n";
 import { useT, type Translate } from "../../i18n/react";
@@ -30,10 +30,18 @@ type Geo = {
   layer: { w: number; h: number };
   /** Boxes the card must not cover (quest.keep). */
   keep: Box[];
+  /**
+   * The corner the quest list, its pill and the resume button share: the
+   * step header's bottom edge (`line`, from the layer's top) and the end of
+   * the header's content, where its primary action ends (`inset`, from the
+   * layer's right). tutorial.css centres the pill on the line, so it sits in
+   * the header's bottom padding and the content's top padding, over no card.
+   */
+  corner: { line: number; inset: number };
   missing: boolean;
 };
 
-const EMPTY_GEO: Geo = { rings: [], bounds: { x: 0, y: 0, w: 0, h: 0 }, layer: { w: 0, h: 0 }, keep: [], missing: false };
+const EMPTY_GEO: Geo = { rings: [], bounds: { x: 0, y: 0, w: 0, h: 0 }, layer: { w: 0, h: 0 }, keep: [], corner: { line: 0, inset: 0 }, missing: false };
 
 function said(t: Translate, value: Said): string {
   const params = { ...value.params };
@@ -81,6 +89,7 @@ export function TutorialLayer<V>({
   const [geo, setGeo] = useState<Geo>(EMPTY_GEO);
   const [spot, setSpot] = useState<{ x: number; y: number; key: string } | null>(null);
   const [dragged, setDragged] = useState<{ x: number; y: number } | null>(null);
+  const [pillHidden, setPillHidden] = useState(false);
 
   const quest = state.finished ? undefined : quests[state.index];
   const engaged = !state.paused && !state.finished && !!quest;
@@ -129,13 +138,20 @@ export function TutorialLayer<V>({
     const rings = quest?.apart ? groups : groups.length ? [union(groups)!] : [];
     const keep = elementsOf(quest?.keep ?? []).map((el) => rel(el.getBoundingClientRect()));
     const bounds = content ? { x: content.x + 16, y: content.y + 12, w: content.w - 32, h: content.h - 24 } : { x: 16, y: 16, w: lr.width - 32, h: lr.height - 32 };
+    // Without a step header (a bare layer), the corner falls back to the top right of the bounds.
+    const headerEl = layer.querySelector<HTMLElement>('[data-ui="frame.header"]');
+    const header = headerEl ? rel(headerEl.getBoundingClientRect()) : null;
+    const corner =
+      headerEl && header && header.h > 0
+        ? { line: header.y + header.h, inset: lr.width - (header.x + header.w) + (parseFloat(getComputedStyle(headerEl).paddingRight) || 0) }
+        : { line: bounds.y + 16, inset: 12 };
     // Outlines stay inside the layer (a target at the edge, like the job tray, keeps its whole outline in view).
     const inLayer = (r: Box): Box => {
       const x = Math.max(2, r.x);
       const y = Math.max(2, r.y);
       return { x, y, w: Math.min(r.x + r.w, lr.width - 2) - x, h: Math.min(r.y + r.h, lr.height - 2) - y };
     };
-    const next: Geo = { rings: rings.map((r) => inLayer(pad(r, HOLE))), bounds, layer: { w: lr.width, h: lr.height }, keep, missing: (quest?.targets.length ?? 0) > 0 && found === 0 };
+    const next: Geo = { rings: rings.map((r) => inLayer(pad(r, HOLE))), bounds, layer: { w: lr.width, h: lr.height }, keep, corner, missing: (quest?.targets.length ?? 0) > 0 && found === 0 };
     setGeo((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
   }, [quest, elementsOf]);
 
@@ -270,8 +286,9 @@ export function TutorialLayer<V>({
     const card = { w: coach.offsetWidth, h: coach.offsetHeight };
     const avoid = [...geo.keep];
     // The quest list (or its pill) keeps its corner; the card goes elsewhere.
-    for (const el of [panelRef.current, pillRef.current]) if (el) avoid.push({ x: el.offsetLeft, y: el.offsetTop, w: el.offsetWidth, h: el.offsetHeight });
-    const key = JSON.stringify([state.index, geo.rings, geo.bounds, geo.keep, state.folded]);
+    // A pill hidden over an outline keeps nothing clear.
+    for (const el of [panelRef.current, pillHidden ? null : pillRef.current]) if (el) avoid.push(boxIn(el, layerRef.current));
+    const key = JSON.stringify([state.index, geo.rings, geo.bounds, geo.keep, geo.corner, state.folded, pillHidden]);
     const prefer = spot && spot.key === key ? spot : undefined;
     const next = placeCoach(geo.rings, card, geo.bounds, avoid, prefer);
     if (!spot || spot.key !== key || next.x !== spot.x || next.y !== spot.y) setSpot({ ...next, key });
@@ -286,6 +303,15 @@ export function TutorialLayer<V>({
     const onTarget = geo.rings.some((ring) => overlap(box, pad(ring, 24)) > 0);
     const onCard = !state.userOpened && coach && overlap(box, { x: coach.offsetLeft, y: coach.offsetTop, w: coach.offsetWidth, h: coach.offsetHeight }) > 0;
     if (onTarget || onCard) dispatch({ type: "fold", folded: true });
+  });
+
+  // The folded pill hides while it would cover an outline (upstream: it hid
+  // over the ring's corner; the step and number are on the card's head too).
+  // Judged on the pill's own box, which keeps its size while hidden.
+  useLayoutEffect(() => {
+    const pill = pillRef.current;
+    const hide = !!pill && pillCovers(boxIn(pill, layerRef.current), geo.rings);
+    if (hide !== pillHidden) setPillHidden(hide);
   });
 
   /* ── Moves ── */
@@ -374,10 +400,14 @@ export function TutorialLayer<V>({
   const glossary = gloss.get(state.index);
   const coachAt = dragged ?? spot;
 
+  // The shared corner, for tutorial.css (the list, the pill and the resume button); its own fallback until measured.
+  const cornerStyle = geo.layer.w ? ({ "--tutorial-line": `${geo.corner.line}px`, "--tutorial-inset": `${geo.corner.inset}px` } as CSSProperties) : undefined;
+
   return (
     <div
       ref={layerRef}
       className="tutorial-layer"
+      style={cornerStyle}
       data-ui="tutorial"
       onPointerDownCapture={guard}
       onMouseDownCapture={guard}
@@ -424,7 +454,6 @@ export function TutorialLayer<V>({
       {engaged && quest && !state.folded && (
         <QuestPanel
           panelRef={panelRef}
-          top={geo.bounds.y}
           stepName={stepName}
           items={stepQuests.map((q) => ({ id: q.id, title: t(q.title), state: quests.indexOf(q) < state.index ? "done" : q === quest ? "current" : "pending" }))}
           current={k}
@@ -433,15 +462,24 @@ export function TutorialLayer<V>({
           onEnd={actions.finish}
         />
       )}
-      {engaged && quest && state.folded && !pillCovers(geo) && (
-        <button ref={pillRef} type="button" className="tutorial-pill" style={{ top: geo.bounds.y }} data-tutorial-ui data-ui="tutorial.panel.pill" aria-label={t("tutorial.panel.unfold")} onClick={() => dispatch({ type: "fold", folded: false, byUser: true })}>
+      {engaged && quest && state.folded && (
+        <button
+          ref={pillRef}
+          type="button"
+          className={["tutorial-pill", pillHidden && "tutorial-pill--hidden"].filter(Boolean).join(" ")}
+          inert={pillHidden}
+          data-tutorial-ui
+          data-ui="tutorial.panel.pill"
+          aria-label={t("tutorial.panel.unfold")}
+          onClick={() => dispatch({ type: "fold", folded: false, byUser: true })}
+        >
           <span className="tabular">{t("tutorial.panel.pill", { step: stepName, n: k + 1, total: stepQuests.length })}</span>
           <Icon name="chevronDown" size={16} />
         </button>
       )}
 
       {state.paused && (
-        <button type="button" className="tutorial-resume" style={{ top: geo.bounds.y }} data-tutorial-ui data-ui="tutorial.resume" onClick={onResume}>
+        <button type="button" className="tutorial-resume" data-tutorial-ui data-ui="tutorial.resume" onClick={onResume}>
           <EyeIcon />
           <span>{t("tutorial.resume")}</span>
         </button>
@@ -469,10 +507,16 @@ function toastAt(geo: Geo): { left: number } | undefined {
   return at ? { left: at.left } : undefined;
 }
 
-/** A folded pill at the top right hides while it would cover an outline (upstream: the pill covered the ring's corner). */
-function pillCovers(geo: Geo): boolean {
-  const pill = { x: geo.layer.w - 12 - 280, y: geo.bounds.y, w: 280, h: 36 };
-  return geo.rings.some((ring) => overlap(pill, pad(ring, 14)) > 0);
+/** Whether the folded pill (its box in layer coordinates) would cover an outline, the act ring's pulse included. */
+function pillCovers(pill: Box, rings: readonly Box[]): boolean {
+  return pill.w > 0 && pill.h > 0 && rings.some((ring) => overlap(pill, pad(ring, 14)) > 0);
+}
+
+/** An element's box in the layer's coordinates (the rings' and the card's), as drawn. */
+function boxIn(el: HTMLElement, layer: HTMLElement | null): Box {
+  const r = el.getBoundingClientRect();
+  const lr = layer?.getBoundingClientRect();
+  return { x: r.left - (lr?.left ?? 0), y: r.top - (lr?.top ?? 0), w: r.width, h: r.height };
 }
 
 const enabled = (el: HTMLElement) => !(el as HTMLButtonElement).disabled && !el.closest("[hidden], [inert]");
@@ -674,7 +718,6 @@ function Terms({ terms }: { terms: readonly GlossaryTerm[] }) {
 
 function QuestPanel({
   panelRef,
-  top,
   stepName,
   items,
   current,
@@ -683,7 +726,6 @@ function QuestPanel({
   onEnd,
 }: {
     panelRef: Ref<HTMLElement>;
-    top: number;
     stepName: string;
     items: { id: string; title: string; state: "done" | "current" | "pending" }[];
     current: number;
@@ -695,7 +737,7 @@ function QuestPanel({
   const titleId = useId();
   const mark: Record<"done" | "current" | "pending", MessageKey> = { done: "tutorial.panel.item.done", current: "tutorial.panel.item.current", pending: "tutorial.panel.item.pending" };
   return (
-    <section ref={panelRef} className="tutorial-panel" data-tutorial-ui data-ui="tutorial.panel" aria-labelledby={titleId} style={{ top }}>
+    <section ref={panelRef} className="tutorial-panel" data-tutorial-ui data-ui="tutorial.panel" aria-labelledby={titleId}>
       <header className="tutorial-panel__head">
         <h2 className="tutorial-panel__title" id={titleId}>
           {t("tutorial.panel.title", { step: stepName })}

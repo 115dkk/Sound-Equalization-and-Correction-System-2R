@@ -832,9 +832,20 @@ class RealREW:
             results.append(MeasurementResult(role=role, pos=int(pos), uuid=uuid, ir=ir,
                                              sample_rate=rate, name=name, spl_db=self.spl(),
                                              t0_s=t0, snr_db=self.snr_db(uuid),
-                                             spl_offset_db=self.spl_offset_db(uuid)))
+                                             spl_offset_db=self.spl_offset_db(uuid),
+                                             source_info=self._source_info(plan, role)))
             emit(on_progress, progress(role, pos, 'done', 100.0, f'{role} 완료'))
         return results
+
+    def _source_info(self, plan: MeasurementPlan, role: str) -> dict | None:
+        """이 측정의 환경(그때 REW 에 걸린 마이크 캘 · 장치 이름) — mdat 로 내보낼 때 넣는다(10-17). 실패하면 None."""
+        from secs.rew_mdat.source_info import from_rew_measurement
+        try:
+            cal = self.input_calibration_file() or None
+        except Exception:  # noqa: BLE001 - 캘을 못 물어도 측정은 그대로
+            cal = None
+        return from_rew_measurement(cal, str(plan.output_device or ''), str(plan.input_device or ''),
+                                    f'out {plan.output_for(role)}')
 
     # ──────────────────────── 스윕 완료 대기 ────────────────────────
     @staticmethod

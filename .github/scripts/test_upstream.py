@@ -10,6 +10,7 @@ class ReachTest(unittest.TestCase):
         self.assertEqual(u.reach("src/secs/rewapi/rew.py"), "secs-rew")
         self.assertEqual(u.reach("src/secs/rew_mdat/serialization/parser.py"), "secs-jos")
         self.assertEqual(u.reach("src/secs/rew_mdat/builder.py"), "secs-mdat")
+        self.assertEqual(u.reach("src/secs/rew_mdat/source_info.py"), "secs-mdat (원 측정 환경), secs-project (.src.json)")
         self.assertEqual(u.reach("src/secs/wizard/en_g8.py"), "화면 카탈로그 (apps/secs2r/ui)")
         self.assertEqual(u.reach("src/secs/wizard/step2_config.py"), "화면 (apps/secs2r/ui)")
         self.assertEqual(u.reach("src/secs/mimo_iir.py"), "secs-engine (MIMO IIR 맞춤), secs-gpu")

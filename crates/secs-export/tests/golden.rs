@@ -9,11 +9,11 @@ use std::{
 
 use secs_engine::test_support::replay_case;
 use secs_export::{
-    ExportRun, MimoKind, MimoResponses, before_after_items, before_after_items_mimo,
+    ExportRun, MimoKind, MimoResponses, Sources, before_after_items, before_after_items_mimo,
     export_before_after_mdat, export_mdat, layout_lines, rc_pieces, stage_items, stage_items_mimo,
     sub_values_text,
 };
-use secs_mdat::{MdatError, MeasurementInput, TEMPLATE};
+use secs_mdat::{MdatError, MeasurementInput, SourceInfo, TEMPLATE};
 use secs_oracle::{Fixture, number};
 use secs_types::{
     calibration::CalibrationSettings,
@@ -178,6 +178,51 @@ fn mimo_responses(fixture: &Fixture) -> MimoResponses {
     }
 }
 
+fn sources(value: &Value) -> Option<Sources> {
+    let positions = value.as_object()?;
+    Some(
+        positions
+            .iter()
+            .map(|(position, roles)| {
+                (
+                    position.parse().unwrap(),
+                    roles
+                        .as_object()
+                        .unwrap()
+                        .iter()
+                        .map(|(role, info)| {
+                            (
+                                role.clone(),
+                                SourceInfo {
+                                    strings: info["strings"]
+                                        .as_object()
+                                        .unwrap()
+                                        .iter()
+                                        .map(|(name, value)| {
+                                            (name.clone(), value.as_str().unwrap().into())
+                                        })
+                                        .collect(),
+                                    boxed: Vec::new(),
+                                    cal: Vec::new(),
+                                    date: info["date"].as_i64().map(secs_mdat::SourceDate::Int),
+                                    notes: info
+                                        .get("notes")
+                                        .and_then(Value::as_str)
+                                        .map(Into::into),
+                                    format: info
+                                        .get("format")
+                                        .and_then(Value::as_str)
+                                        .map(Into::into),
+                                },
+                            )
+                        })
+                        .collect(),
+                )
+            })
+            .collect(),
+    )
+}
+
 fn verify_items(name: &str, actual: &[MeasurementInput], expected: &Value) {
     let expected = expected.as_array().expect("items");
     assert_eq!(actual.len(), expected.len(), "{name} count");
@@ -230,7 +275,7 @@ fn verify_items(name: &str, actual: &[MeasurementInput], expected: &Value) {
 }
 
 #[test]
-fn export_items_match_oracle() {
+fn export_items_and_source_environments_match_oracle() {
     for name in CASES {
         let case = replay_case(name);
         let settings: CalibrationSettings = serde_json::from_value(case.settings).unwrap();
@@ -264,11 +309,31 @@ fn export_items_match_oracle() {
             &stage_items(&run, None),
             &output["staged"],
         );
+        let sources = sources(&fixture.inputs()["sources"]);
+        let before_after = before_after_items(&run, sources.as_ref());
         verify_items(
             &format!("{name}/before_after"),
-            &before_after_items(&run),
+            &before_after,
             &output["before_after"],
         );
+        if let Some(sources) = sources {
+            let role_sources = &sources[&run.config.main_position];
+            assert!(before_after.iter().any(|item| item.source_info.is_some()));
+            for (role, source) in role_sources {
+                let measured = before_after
+                    .iter()
+                    .find(|item| item.title.contains(role) && item.title.contains("_1 "))
+                    .unwrap();
+                assert_eq!(measured.source_info.as_ref(), Some(source));
+                assert!(!measured.computed);
+                let computed = before_after
+                    .iter()
+                    .find(|item| item.title.contains(role) && item.title.contains("_2 "))
+                    .unwrap();
+                assert_eq!(computed.source_info.as_ref(), Some(source));
+                assert!(computed.computed);
+            }
+        }
     }
 }
 
@@ -302,7 +367,7 @@ fn mimo_items_match_four_oracles() {
             .into_iter()
             .filter(|item| item.title.contains("MIMO 적용"))
             .collect();
-        let before_after: Vec<_> = before_after_items_mimo(&run, &mimo)
+        let before_after: Vec<_> = before_after_items_mimo(&run, &mimo, None)
             .unwrap()
             .into_iter()
             .filter(|item| item.title.contains("+ MIMO"))
@@ -354,9 +419,9 @@ fn public_exports_use_oracle_filenames_and_replace_existing_files() {
     fs::write(&staged, b"old").unwrap();
     fs::write(&before_after, b"old").unwrap();
 
-    assert_eq!(export_mdat(&run, &folder, None).unwrap(), staged);
+    assert_eq!(export_mdat(&run, &folder, None, 0).unwrap(), staged);
     assert_eq!(
-        export_before_after_mdat(&run, &folder, None).unwrap(),
+        export_before_after_mdat(&run, &folder, None, None, 0).unwrap(),
         before_after
     );
     assert!(fs::metadata(&staged).unwrap().len() > 1_000_000);
@@ -380,7 +445,7 @@ fn invalid_export_does_not_create_destination_folder() {
     let folder = root.join("missing");
 
     assert!(matches!(
-        export_mdat(&run, &folder, None),
+        export_mdat(&run, &folder, None, 0),
         Err(secs_export::ExportError::Engine(_))
     ));
     assert!(!folder.exists());
@@ -402,7 +467,7 @@ fn invalid_build_does_not_create_destination_folder() {
     let folder = root.join("missing");
 
     assert!(matches!(
-        export_mdat(&run, &folder, None),
+        export_mdat(&run, &folder, None, 0),
         Err(secs_export::ExportError::Mdat(MdatError::Input(_)))
     ));
     assert!(!folder.exists());
@@ -424,14 +489,23 @@ fn built_projects_match_oracle_structure_and_size() {
         let output = fixture.outputs();
         for (kind, items) in [
             ("staged", stage_items(&run, None)),
-            ("before_after", before_after_items(&run)),
+            (
+                "before_after",
+                before_after_items(&run, sources(&fixture.inputs()["sources"]).as_ref()),
+            ),
         ] {
             let mut next = 1_u128;
-            let bytes = secs_mdat::build(&items, TEMPLATE, None, &mut || {
-                let value = next;
-                next += 1;
-                value
-            })
+            let bytes = secs_mdat::build(
+                &items,
+                TEMPLATE,
+                None,
+                fixture.inputs()["now_ms"].as_i64().unwrap(),
+                &mut || {
+                    let value = next;
+                    next += 1;
+                    value
+                },
+            )
             .unwrap();
             check(
                 &format!("{name}/{kind}"),

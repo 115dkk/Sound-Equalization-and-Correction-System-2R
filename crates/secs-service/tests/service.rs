@@ -41,9 +41,12 @@ fn deterministic_service() -> Service {
             minute: 4,
             second: 5,
         }),
+        unix_ms: Arc::new(|| FIXED_MS),
         ..Deps::default()
     })
 }
+
+const FIXED_MS: i64 = 1_704_164_645_000;
 
 #[derive(Debug, Default)]
 struct Events {
@@ -477,6 +480,7 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                         &direct_folder,
                         None,
                         None,
+                        FIXED_MS,
                         &mut uuid,
                     ),
                     ExportKind::BeforeAfterMdat => {
@@ -485,6 +489,8 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                             &direct_folder,
                             None,
                             None,
+                            None,
+                            FIXED_MS,
                             &mut uuid,
                         )
                     }
@@ -654,6 +660,22 @@ fn exports_after_reopening_match_pre_close_bytes() {
     let root = temp_root("reopened-exports");
     fs::create_dir_all(&root).unwrap();
     let (path, settings) = write_case(&root, "dolby");
+    let measured = secs_project::MeasurementStore::open(&path).unwrap();
+    let first = measured.records().into_iter().next().unwrap();
+    let pos = u32::try_from(first.pos).unwrap();
+    let role = first.ir.keys().next().unwrap().clone();
+    let wav = path
+        .with_extension("irs")
+        .join(format!("{role}_P{pos}.wav"));
+    secs_project::save_source(
+        &wav,
+        Some(&secs_mdat::SourceInfo {
+            strings: vec![("outputName".into(), "원 측정 장치".into())],
+            date: Some(secs_mdat::SourceDate::Int(FIXED_MS)),
+            ..Default::default()
+        }),
+    )
+    .unwrap();
     let running = deterministic_service();
     open(&running, &path);
     let calibration_events = Arc::new(Events::default());
@@ -663,6 +685,7 @@ fn exports_after_reopening_match_pre_close_bytes() {
     for kind in [
         ExportKind::CamillaDsp,
         ExportKind::StagedMdat,
+        ExportKind::BeforeAfterMdat,
         ExportKind::EqualizerApo,
     ] {
         let folder = root.join(format!("reopen-{kind:?}"));
@@ -700,7 +723,51 @@ fn exports_after_reopening_match_pre_close_bytes() {
                 } if stage == "design"
             )
         });
-        assert_eq!(has_design, kind == ExportKind::StagedMdat);
+        assert_eq!(
+            has_design,
+            matches!(kind, ExportKind::StagedMdat | ExportKind::BeforeAfterMdat)
+        );
+        if kind == ExportKind::BeforeAfterMdat {
+            let loaded = secs_mdat::load_mdat_project(
+                &fs::read(&after.files[0]).unwrap(),
+                &secs_jos::Limits::default(),
+            )
+            .unwrap();
+            let before = loaded
+                .measurements
+                .iter()
+                .find(|measurement| {
+                    measurement.title.contains(&format!("_{role}_1 "))
+                        && measurement.title.contains("보정 전")
+                })
+                .unwrap();
+            assert_eq!(
+                before
+                    .source_info
+                    .strings
+                    .iter()
+                    .find(|(key, _)| key == "outputName")
+                    .map(|(_, value)| value.as_str()),
+                Some("원 측정 장치")
+            );
+            let after = loaded
+                .measurements
+                .iter()
+                .find(|measurement| {
+                    measurement.title.contains(&format!("_{role}_2 "))
+                        && measurement.title.contains("보정 후")
+                })
+                .unwrap();
+            assert_eq!(
+                after
+                    .source_info
+                    .strings
+                    .iter()
+                    .find(|(key, _)| key == "outputName")
+                    .map(|(_, value)| value.as_str()),
+                Some("원 측정 장치")
+            );
+        }
     }
     fs::remove_dir_all(root).unwrap();
 }
@@ -749,6 +816,7 @@ fn stale_calibration_exports_with_flag_and_cache_survives_reopen() {
                     snr_db: None,
                     uuid: Some("changed".into()),
                     source: Some("test".into()),
+                    source_info: None,
                 },
                 None,
             )

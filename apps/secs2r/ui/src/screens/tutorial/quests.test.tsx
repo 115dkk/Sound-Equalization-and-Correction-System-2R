@@ -152,6 +152,21 @@ it("resumes at a step that can no longer be left: without measurements, 보정 g
   } finally { rendered.unmount(); mock.dispose(); }
 }, 15000);
 
+it("resumes past finished quests: without levels, 보정 goes back to the 연결·점검 levels quest, not the finished mock-path one", async () => {
+  // The tutorial project is on the mock path (connect.retry done) but has no levels, so 연결·점검 cannot be left.
+  const mock = createMockService({ project: null, tickMs: 0 });
+  await mock.request({ method: "project_new", params: { path: "", preset: "7.1.4", sub_count: 3, sample: true, tutorial: true } });
+  const rendered = render(<App ipc={mock} tutorialStart="calibrate.graph" />);
+  try {
+    await waitFor(() => expect(ui("tutorial.coach")?.textContent).toContain(ko["tutorial.q.calibrate.graph.text"]), { timeout: 8000 });
+    fireEvent.click(ui("tutorial.coach.pause")!);
+    await waitFor(() => expect(ui("tutorial.resume")).not.toBeNull());
+    fireEvent.click(ui("tutorial.resume")!);
+    await waitFor(() => expect(ui("tutorial.coach")?.textContent).toContain(ko["tutorial.q.connect.levels.text"]));
+    expect(ui("tutorial.toast")?.textContent).toBe(ko["tutorial.toast.rewound"].replace("{step}", ko["frame.step.connect"]));
+  } finally { rendered.unmount(); mock.dispose(); }
+}, 15000);
+
 it("walks every quest on the real App hooks, checks every target, and reaches the end via Continue", async () => {
   const mock = createMockService({ project: null, tickMs: 0 });
   await mock.request({ method: "project_new", params: { path: "", preset: "7.1.4", sub_count: 3, sample: true, tutorial: true } });

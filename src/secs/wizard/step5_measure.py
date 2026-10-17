@@ -1510,7 +1510,7 @@ class Step5Measure(QtWidgets.QWidget):
                 t0 = float(getattr(info, 'start_time_s', 0.0) or 0.0)
                 result = MeasurementResult(role=role, pos=pos, uuid=info.uuid, ir=samples,
                                            sample_rate=int(rate), name=title or role,
-                                           t0_s=t0)
+                                           t0_s=t0, source_info=getattr(info, 'source_info', None))
                 entry = session.record(result, plan)
                 if not isinstance(entry.get('source'), dict):
                     entry['source'] = {}

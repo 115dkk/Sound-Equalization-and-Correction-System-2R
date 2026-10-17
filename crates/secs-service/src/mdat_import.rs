@@ -429,6 +429,7 @@ pub fn import(
                 snr_db: None,
                 uuid: Some(m.info.uuid.clone()),
                 source: Some(name.clone()),
+                source_info: Some(m.info.source_info.clone()),
             },
             Some(&plan.roles),
         )?;

@@ -16,6 +16,9 @@ pub trait LevelMonitor {
     fn play_pink(&mut self, role: &str, output: u32, level_db: f64) -> Result<(), RewError>;
     fn stop_generator(&mut self);
 }
+pub trait MeasurementEnvironment {
+    fn input_calibration_file(&mut self) -> Result<Option<String>, RewError>;
+}
 pub trait Measurer {
     /// Cancel returns completed channels; the terminal progress phase is cancelled.
     fn run_position(
@@ -61,6 +64,11 @@ impl<T: Transport> LevelMonitor for RewClient<T> {
     }
     fn stop_generator(&mut self) {
         RewClient::stop_generator(self);
+    }
+}
+impl<T: Transport> MeasurementEnvironment for RewClient<T> {
+    fn input_calibration_file(&mut self) -> Result<Option<String>, RewError> {
+        Ok(RewClient::input_calibration_file(self))
     }
 }
 impl<T: Transport> Measurer for RewClient<T> {
@@ -112,6 +120,11 @@ impl<S: IrSource> LevelMonitor for FakeRew<S> {
     }
     fn stop_generator(&mut self) {
         FakeRew::stop_generator(self);
+    }
+}
+impl<S: IrSource> MeasurementEnvironment for FakeRew<S> {
+    fn input_calibration_file(&mut self) -> Result<Option<String>, RewError> {
+        Ok(FakeRew::input_calibration_file(self))
     }
 }
 impl<S: IrSource> Measurer for FakeRew<S> {

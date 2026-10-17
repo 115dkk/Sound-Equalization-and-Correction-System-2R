@@ -1,9 +1,11 @@
 #![forbid(unsafe_code)]
 
+use secs_mdat::{Boxed, CalInfo, SourceDate, SourceInfo};
 use secs_oracle::Fixture;
 use secs_project::{
     IrCache, LoadedIr, MeasurementResult, MeasurementStore, Project, ProjectError, PyJson,
-    load_project_irs, save_ir, write_wav_float32,
+    load_project_irs, load_project_sources, load_source, save_ir, save_source, source_path,
+    write_wav_float32,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -59,6 +61,7 @@ fn result(role: &str, pos: i64, uuid: &str) -> MeasurementResult {
         snr_db: Some(24.0),
         uuid: Some(uuid.into()),
         source: Some("native".into()),
+        source_info: None,
     }
 }
 
@@ -74,6 +77,7 @@ fn oracle_result(role: &str, pos: i64, uuid: &str, offset: Option<f64>) -> Measu
         snr_db: Some(31.0),
         uuid: Some(uuid.into()),
         source: Some("must-not-be-written".into()),
+        source_info: None,
     }
 }
 
@@ -188,6 +192,169 @@ fn test_saved_ir_matches_measured_ir_and_ir_saver_paths_and_round_trip() {
     );
     assert!(path.with_extension("irs").join("L_LF_P3.wav").is_file());
     assert_eq!(roles.len(), 3);
+}
+
+#[test]
+fn measurement_source_writes_exact_bytes_reads_and_deletes_stale_file() {
+    let (_directory, path, mut store, roles) = setup();
+    let info = SourceInfo {
+        strings: vec![("outputName".into(), "장치, out 1".into())],
+        boxed: vec![
+            ("inputVolume".into(), Boxed::Double(-12.5)),
+            ("usesEmbeddedCalData".into(), Boxed::Boolean(true)),
+        ],
+        cal: vec![(
+            "meterCal".into(),
+            CalInfo {
+                inverse_c_selected: false,
+                source_name: "마이크.cal".into(),
+                source_path: "/캘/마이크.cal".into(),
+                freq: Some(vec![20.0, 1000.0]),
+                gain: Some(vec![-1.25, 0.5]),
+                phase: None,
+                boxed: vec![("serialNum".into(), Boxed::Integer(7))],
+            },
+        )],
+        date: Some(SourceDate::Int(1_704_164_645_000)),
+        notes: Some("원 측정".into()),
+        format: Some("REW".into()),
+    };
+    let mut measured = result("L", 1, "one");
+    measured.source_info = Some(info.clone());
+    store.record(measured, Some(&roles)).unwrap();
+    let wav = path.with_extension("irs").join("L_P1.wav");
+    let source = source_path(&wav);
+    let expected = concat!(
+        "{\"strings\": {\"outputName\": \"장치, out 1\"}, ",
+        "\"boxed\": {\"inputVolume\": {\"type\": \"java.lang.Double\", \"value\": -12.5}, ",
+        "\"usesEmbeddedCalData\": {\"type\": \"java.lang.Boolean\", \"value\": true}}, ",
+        "\"cal\": {\"meterCal\": {\"inverseCSelected\": false, \"sourceName\": \"마이크.cal\", ",
+        "\"sourcePath\": \"/캘/마이크.cal\", \"freqArray\": [20.0, 1000.0], ",
+        "\"gainArray\": [-1.25, 0.5], \"phaseArray\": null, ",
+        "\"serialNum\": {\"type\": \"java.lang.Integer\", \"value\": 7}}}, ",
+        "\"date\": 1704164645000, \"notes\": \"원 측정\", \"format\": \"REW\"}"
+    );
+    assert_eq!(fs::read_to_string(&source).unwrap(), expected);
+    assert_eq!(load_source(&wav), Some(info.clone()));
+    assert_eq!(load_project_sources(store.project(), &path)[&1]["L"], info);
+
+    store.record(result("L", 1, "two"), Some(&roles)).unwrap();
+    assert!(!source.exists());
+}
+
+#[test]
+fn measurement_source_tolerates_partial_values_and_rejects_unsafe_narrowing() {
+    let directory = TempDir::new();
+    let wav = directory.0.join("L_P1.wav");
+    fs::write(
+        source_path(&wav),
+        r#"{"strings":{"outputName":7,"osName":null},"boxed":{"inputVolume":{"type":"java.lang.Double","value":"1.5"},"bad":{"type":"java.lang.Boolean","value":1},"splCalOffset":{"type":"java.lang.Integer","value":2147483648}},"cal":{"meterCal":{"inverseCSelected":1,"sourceName":false,"sourcePath":null,"freqArray":[20,true,"30"],"gainArray":"bad","serialNum":{"type":"java.lang.Integer","value":"42"}}},"date":NaN,"notes":0,"format":true}"#,
+    )
+    .unwrap();
+    let info = load_source(&wav).unwrap();
+    assert_eq!(info.strings, vec![("outputName".into(), "7".into())]);
+    assert_eq!(info.boxed, vec![("inputVolume".into(), Boxed::Double(1.5))]);
+    assert_eq!(info.date, None);
+    assert_eq!(info.notes, None);
+    assert_eq!(info.format.as_deref(), Some("True"));
+    let cal = &info.cal[0].1;
+    assert!(cal.inverse_c_selected);
+    assert_eq!(cal.source_name, "");
+    assert_eq!(cal.source_path, "");
+    assert_eq!(cal.freq, Some(vec![20.0, 1.0, 30.0]));
+    assert_eq!(cal.gain, None);
+    assert_eq!(cal.boxed, vec![("serialNum".into(), Boxed::Integer(42))]);
+
+    let unsafe_values = SourceInfo {
+        boxed: vec![
+            (
+                "splCalOffset".into(),
+                Boxed::Integer(i64::from(i32::MAX) + 1),
+            ),
+            ("inputVolume".into(), Boxed::Double(f64::INFINITY)),
+        ],
+        cal: vec![(
+            "meterCal".into(),
+            CalInfo {
+                inverse_c_selected: false,
+                source_name: String::new(),
+                source_path: String::new(),
+                freq: None,
+                gain: None,
+                phase: None,
+                boxed: vec![("serialNum".into(), Boxed::Integer(i64::MIN))],
+            },
+        )],
+        date: Some(SourceDate::Float(f64::NAN)),
+        ..SourceInfo::default()
+    };
+    save_source(&wav, Some(&unsafe_values)).unwrap();
+    let saved = fs::read_to_string(source_path(&wav)).unwrap();
+    assert_eq!(
+        saved,
+        concat!(
+            "{\"strings\": {}, \"boxed\": {}, \"cal\": {\"meterCal\": {",
+            "\"inverseCSelected\": false, \"sourceName\": \"\", \"sourcePath\": \"\", ",
+            "\"freqArray\": null, \"gainArray\": null, \"phaseArray\": null}}}"
+        )
+    );
+    assert_eq!(load_source(&wav).unwrap().date, None);
+
+    fs::write(source_path(&wav), "[]").unwrap();
+    assert_eq!(load_source(&wav), None);
+    fs::write(source_path(&wav), "not json").unwrap();
+    assert_eq!(load_source(&wav), None);
+    save_source(&wav, None).unwrap();
+}
+
+#[test]
+fn measurement_source_builds_upstream_mdat_bytes_and_skips_upstream_exceptions_f10() {
+    let directory = TempDir::new();
+    let wav = directory.0.join("L_P1.wav");
+    let mut checked = 0;
+    for fixture in Fixture::all("service_mdat", "source_") {
+        if fixture.id.ends_with("source_generated") {
+            continue;
+        }
+        fs::write(
+            source_path(&wav),
+            fixture.inputs()["text"].as_str().unwrap(),
+        )
+        .unwrap();
+        let info = load_source(&wav);
+        assert_eq!(
+            info.is_some(),
+            fixture.outputs()["loaded"].as_bool().unwrap(),
+            "{}",
+            fixture.id
+        );
+        let item = secs_mdat::MeasurementInput {
+            title: "L_P1".into(),
+            notes: "SECS · 위치 1 · 원 측정".into(),
+            sample_rate_hz: 48_000,
+            samples: vec![1.0, -0.5, 0.25],
+            start_time_s: -0.001,
+            spl_offset_db: Some(116.25),
+            source_info: info,
+            computed: false,
+        };
+        let mut uuid = || 1;
+        let bytes = secs_mdat::build(
+            &[item],
+            secs_mdat::TEMPLATE,
+            None,
+            1_704_164_645_000,
+            &mut uuid,
+        )
+        .unwrap();
+        if let Some(expected) = fixture.outputs().get("bytes") {
+            assert_eq!(bytes, fixture.blob(expected), "{}", fixture.id);
+        } else {
+            assert!(fixture.outputs()["exception"].is_string(), "{}", fixture.id);
+        }
+        checked += 1;
+    }
+    assert_eq!(checked, 18);
 }
 
 #[test]

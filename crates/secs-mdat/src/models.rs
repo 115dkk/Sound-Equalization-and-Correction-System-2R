@@ -134,6 +134,8 @@ pub struct DistortionDataset {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Measurement {
+    #[serde(skip)]
+    pub source_object: secs_jos::NodeId,
     pub name: String,
     pub sample_rate_hz: i64,
     pub rew_version: RewVersion,

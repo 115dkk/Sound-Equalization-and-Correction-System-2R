@@ -322,6 +322,8 @@ fn deps(deterministic: bool) -> Deps {
             minute: 4,
             second: 5,
         });
+        // 2024-01-02 03:04:05 UTC, the same instant as the fixed clock above.
+        deps.unix_ms = Arc::new(|| 1_704_164_645_000);
     }
     deps
 }

@@ -19,6 +19,7 @@ from secs.rew_mdat.serialization.writer import dumps, encode_modified_utf8
 fam = common.Family("mdat")
 TEMPLATE = Path(rew_mdat.__file__).with_name("template_1.mdat")
 REAL_IRS = common.ROOT / "src" / "secs" / "rewapi" / "sample_dolby_714.npz"
+NOW_MS = 1792195538802
 
 
 def adapted(value: Any, key: str, digest: bool = False) -> Any:
@@ -87,12 +88,15 @@ class FixedUuid:
 def build_case(case: str, items: list[builder.MeasurementInput], uuids: list[int],
                spl_offset_db: float | None, *, split: bool = False) -> None:
     iterator = iter(uuids)
-    original = builder.uuid.uuid4
+    original_uuid = builder.uuid.uuid4
+    original_time = builder.time.time
     builder.uuid.uuid4 = lambda: FixedUuid(next(iterator))
+    builder.time.time = lambda: NOW_MS / 1000.0
     try:
         data = builder.build_mdat_bytes(items, spl_offset_db=spl_offset_db)
     finally:
-        builder.uuid.uuid4 = original
+        builder.uuid.uuid4 = original_uuid
+        builder.time.time = original_time
     inputs = {
         "measurements": [{
             "title": item.title,
@@ -101,8 +105,11 @@ def build_case(case: str, items: list[builder.MeasurementInput], uuids: list[int
             "samples": fam.f64(f"{case}_input_{index}_samples", item.samples),
             "start_time_s": item.start_time_s,
             "spl_offset_db": item.spl_offset_db,
+            "source_info": item.source_info,
+            "computed": item.computed,
         } for index, item in enumerate(items)],
         "spl_offset_db": spl_offset_db,
+        "now_ms": NOW_MS,
         # Decimal strings avoid loss in JSON consumers whose integer is an f64.
         "uuid": [str(value) for value in uuids],
     }
@@ -153,6 +160,117 @@ with np.load(REAL_IRS) as sample:
 assert [item.title for item in real_items] == list(REAL_ROLES)
 build_case("build_3_real_48000", real_items,
            [uuid_base + 5 + index for index in range(len(real_items))], None, split=True)
+
+
+# Measurement-source environment: scrubbed template, boxed descriptor creation,
+# calibration arrays, computed markers, and import/rebuild round-trip.
+from secs.rew_mdat import source_info
+
+info_full = {
+    "strings": {"outputName": "BlackHole 16ch, L", "sourceFileName": "Umik-1  Gain: 18dB",
+                "osName": "mac os x"},
+    "boxed": {"micSensitivity": {"type": "java.lang.Double", "value": -1.337},
+              "usesEmbeddedCalData": {"type": "java.lang.Boolean", "value": True}},
+    "cal": {"meterCal": {"inverseCSelected": False, "sourceName": "7135539_90deg.txt",
+                           "sourcePath": "/Users/someone/7135539_90deg.txt",
+                           "freqArray": [10.0, 100.0, 1000.0],
+                           "gainArray": [-1.5, 0.25, 0.0], "phaseArray": [0.0, 0.0, 0.0],
+                           "serialNum": {"type": "java.lang.Integer", "value": 7135539},
+                           "sensitivitydB": {"type": "java.lang.Double", "value": -1.337}}},
+    "notes": "  Acoustic reference played from L  ",
+    "format": "256k Log Swept Sine, 1 sweep at -14.0 dBFS",
+    "date": NOW_MS,
+}
+info_sc = {
+    "strings": {"timingRefName": "Center"},
+    "boxed": {},
+    "cal": {"scCal": {"inverseCSelected": True, "sourceName": "meter.cal",
+                        "sourcePath": "/cal/meter.cal", "freqArray": None,
+                        "gainArray": None, "phaseArray": None,
+                        "revision": {"type": "java.lang.Integer", "value": 7}}},
+    "notes": "", "format": "", "date": 0,
+}
+source_ir = np.zeros(257, dtype=np.float64)
+source_ir[12] = 1.0
+source_items = [
+    builder.MeasurementInput("before", "SECS", 48000, source_ir, source_info=info_full),
+    builder.MeasurementInput("after", "SECS", 48000, source_ir, source_info=info_full, computed=True),
+    builder.MeasurementInput("partial", "SECS", 48000, source_ir, source_info=info_sc),
+]
+build_case("source_info_build", source_items,
+           [uuid_base + 20 + index for index in range(len(source_items))], None)
+source_iterator = iter(uuid_base + 20 + index for index in range(len(source_items)))
+original_uuid, original_time = builder.uuid.uuid4, builder.time.time
+builder.uuid.uuid4 = lambda: FixedUuid(next(source_iterator))
+builder.time.time = lambda: NOW_MS / 1000.0
+try:
+    source_fixture_data = builder.build_mdat_bytes(source_items)
+finally:
+    builder.uuid.uuid4, builder.time.time = original_uuid, original_time
+loaded_model = rew_mdat.loads(source_fixture_data)
+extracted_sources = [source_info.extract({**m.unknown_fields,
+                                          "measNotes": source_info.JavaString(m.notes)})
+                     for m in loaded_model.measurements]
+fam.save("source_info_extract", inputs={"bytes": fam.blob("source_info_extract_bytes", source_fixture_data)},
+         outputs={"source_info": extracted_sources})
+rebuilt_items = [builder.MeasurementInput(m.name, m.notes, m.sample_rate_hz,
+                                         np.asarray(m.impulse_response.samples, dtype=np.float32) /
+                                         builder.REW_MDAT_IR_SCALE,
+                                         float(m.impulse_response.start_time_s), source_info=info)
+                 for m, info in zip(loaded_model.measurements, extracted_sources)]
+iterator = iter(uuid_base + 30 + index for index in range(len(rebuilt_items)))
+original_uuid, original_time = builder.uuid.uuid4, builder.time.time
+builder.uuid.uuid4 = lambda: FixedUuid(next(iterator))
+builder.time.time = lambda: NOW_MS / 1000.0
+try:
+    rebuilt_data = builder.build_mdat_bytes(rebuilt_items)
+finally:
+    builder.uuid.uuid4, builder.time.time = original_uuid, original_time
+rebuilt_model = rew_mdat.loads(rebuilt_data)
+fam.save("source_info_round_trip", inputs={"source_info": extracted_sources, "now_ms": NOW_MS,
+                                           "uuid": [str(uuid_base + 30 + i) for i in range(len(rebuilt_items))]},
+         outputs={"bytes": fam.blob("source_info_round_trip_bytes", rebuilt_data),
+                  "source_info": [source_info.extract({**m.unknown_fields,
+                                                        "measNotes": source_info.JavaString(m.notes)})
+                                  for m in rebuilt_model.measurements]})
+
+# ``from_rew_measurement`` text-mode and Python-float edges. Patch open/time so
+# every case is hermetic and carries the same measurement timestamp.
+import builtins
+import io
+import time as time_module
+
+def source_from_case(case, path, raw, output="", input_="", channel=""):
+    original_open, original_time = builtins.open, time_module.time
+    def fake_open(name, *args, **kwargs):
+        if name != path or raw is None:
+            raise OSError(name)
+        return io.TextIOWrapper(io.BytesIO(raw), encoding="utf-8", errors="replace", newline=None)
+    builtins.open = fake_open
+    time_module.time = lambda: NOW_MS / 1000.0
+    try:
+        try:
+            result = source_info.from_rew_measurement(path, output, input_, channel)
+        except Exception as exc:
+            outputs = {"kind": type(exc).__name__, "message": str(exc)}
+        else:
+            outputs = {"source_info": result}
+    finally:
+        builtins.open, time_module.time = original_open, original_time
+    fam.save("source_info_from_" + case,
+             inputs={"path": path, "text": None if raw is None else fam.blob("source_info_from_" + case + "_text", raw),
+                     "output_device": output, "input_device": input_, "output_channel": channel,
+                     "now_ms": NOW_MS}, outputs=outputs)
+
+source_from_case("full", "/cal/mic.txt",
+                 b'"Sens Factor =-1.337dB"\r\n10.0,-1.5;0\r100\t0.25\n1000 0.0 3.0\n',
+                 "Out dev", "In dev", "out 1")
+source_from_case("unicode_edges", "/cal/edge.txt",
+                 b'\xef\xbb\xbfheader\n1_0 2\n0 4 5\n-1 4 5\n20 inf nan\n30 infinity 1\ninvalid\xff row\n')
+source_from_case("missing", "/gone/mic.txt", None, "Out", "", "")
+source_from_case("empty", "/cal/empty.txt", b"")
+source_from_case("bad_sensitivity", "/cal/bad.txt", b"Sens Factor = 1.2.3\n10 0\n")
+source_from_case("none", "", None)
 
 
 # Modified UTF-8 differs from UTF-8 for NUL and supplementary characters.

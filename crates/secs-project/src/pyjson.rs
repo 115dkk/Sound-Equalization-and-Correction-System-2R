@@ -378,6 +378,45 @@ pub fn dumps(value: &PyJson) -> String {
     out
 }
 
+/// Formats like `json.dumps(value, ensure_ascii=False)`.
+pub fn dumps_compact(value: &PyJson) -> String {
+    let mut out = String::new();
+    write_compact(value, &mut out);
+    out
+}
+
+fn write_compact(value: &PyJson, out: &mut String) {
+    match value {
+        PyJson::Null => out.push_str("null"),
+        PyJson::Bool(value) => out.push_str(if *value { "true" } else { "false" }),
+        PyJson::Int(value) => out.push_str(value),
+        PyJson::Float(value) => out.push_str(&python_float(*value)),
+        PyJson::Str(value) => write_string(value, out),
+        PyJson::Array(values) => {
+            out.push('[');
+            for (index, value) in values.iter().enumerate() {
+                if index != 0 {
+                    out.push_str(", ");
+                }
+                write_compact(value, out);
+            }
+            out.push(']');
+        }
+        PyJson::Object(values) => {
+            out.push('{');
+            for (index, (key, value)) in values.iter().enumerate() {
+                if index != 0 {
+                    out.push_str(", ");
+                }
+                write_string(key, out);
+                out.push_str(": ");
+                write_compact(value, out);
+            }
+            out.push('}');
+        }
+    }
+}
+
 fn write_value(value: &PyJson, depth: usize, out: &mut String) {
     match value {
         PyJson::Null => out.push_str("null"),

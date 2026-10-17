@@ -17,6 +17,7 @@ from secs import export_camilladsp as cam
 
 NAMES = {"room_dba", "room_filters"}
 N_FFT = 1 << 17
+NOW_MS = 1792195538802
 FOLDER = "{OUT}"
 
 
@@ -235,6 +236,9 @@ def export_value(family, key, run, mimo_run):
 
 
 def main():
+    import time
+    original_time = time.time
+    time.time = lambda: NOW_MS / 1000.0
     common.check_libm()
     family = common.Family("export_mimo")
     for case in cases():
@@ -268,6 +272,7 @@ def main():
                 outputs=export_value(family, key, run, mimo_run),
             )
     family.finish()
+    time.time = original_time
     assert sum(family.written.values()) <= 8 * 1024 * 1024
 
 

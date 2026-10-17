@@ -207,7 +207,7 @@ fn test_measurements_follow_contract_shape() {
     let p = plan();
     let mut fake = secs_rew::FakeRew::new(sample::SampleSource);
     fake.options.delay = Duration::ZERO;
-    let mut rew = RewMeasurer::new(fake);
+    let mut rew = RewMeasurer::new(fake, Arc::new(|| 1_704_164_645_000));
     assert!(rew.status().unwrap().available);
     assert!(!rew.devices().unwrap().is_empty());
     let dir = temp("rew");
@@ -230,6 +230,79 @@ fn test_measurements_follow_contract_shape() {
     assert_eq!(records[0].uuid.len(), p.roles.len());
     std::fs::remove_dir_all(dir).unwrap();
 }
+#[test]
+fn rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements() {
+    let mut p = plan();
+    p.output_device = "출력 장치".into();
+    p.input_device = "입력 장치".into();
+    let dir = temp("rew-source");
+    let cal = dir.join("마이크.cal");
+    std::fs::write(&cal, b"Sens Factor = -1.337 dB\n20 -1.25 0.5\n1000 0.25\n").unwrap();
+    let mut fake = secs_rew::FakeRew::new(sample::SampleSource);
+    fake.options.delay = Duration::ZERO;
+    fake.options.cal_file = cal.to_string_lossy().into_owned();
+    let clock_calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let clock_copy = clock_calls.clone();
+    let mut rew = RewMeasurer::new(
+        fake,
+        Arc::new(move || {
+            clock_copy.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            1_704_164_645_000
+        }),
+    );
+    let results = rew
+        .measure_position(&p, 1, None, &CancelToken::default())
+        .unwrap();
+    assert_eq!(
+        clock_calls.load(std::sync::atomic::Ordering::Relaxed),
+        results.len()
+    );
+    let source = results[0].source_info.as_ref().unwrap();
+    assert_eq!(
+        source.date,
+        Some(secs_mdat::SourceDate::Int(1_704_164_645_000))
+    );
+    assert_eq!(
+        source.strings,
+        vec![
+            (
+                "outputName".into(),
+                format!(
+                    "{}, out {}",
+                    p.output_device,
+                    p.output_for(&results[0].role)
+                )
+            ),
+            ("sourceFileName".into(), p.input_device.clone()),
+        ]
+    );
+    assert_eq!(
+        source.boxed,
+        vec![(
+            "usesEmbeddedCalData".into(),
+            secs_mdat::Boxed::Boolean(true)
+        )]
+    );
+    let meter = &source.cal[0].1;
+    assert_eq!(meter.source_name, "마이크.cal");
+    assert_eq!(meter.source_path, cal.to_string_lossy());
+    assert_eq!(meter.freq, Some(vec![20.0, 1000.0]));
+    assert_eq!(meter.gain, Some(vec![-1.25, 0.25]));
+    assert_eq!(meter.phase, Some(vec![0.5, 0.0]));
+    assert_eq!(
+        meter.boxed,
+        vec![("sensitivitydB".into(), secs_mdat::Boxed::Double(-1.337))]
+    );
+
+    std::fs::write(&cal, b"Sens Factor = 1.2.3 dB\n20 -1.0\n").unwrap();
+    let bad = rew
+        .measure_position(&p, 1, None, &CancelToken::default())
+        .unwrap();
+    assert_eq!(bad.len(), p.roles.len());
+    assert!(bad.iter().all(|result| result.source_info.is_none()));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 #[test]
 fn test_cancel_before_start_measures_nothing() {
     let cancel = CancelToken::default();

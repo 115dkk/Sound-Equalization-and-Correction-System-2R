@@ -119,8 +119,9 @@ export function tutorialReducer(state: TutorialState, action: TutorialAction): T
 
 /**
  * Where to go back to on resume (upstream _resume_index): if an earlier step
- * can no longer be left (`stepOpen` false), its first unfinished act quest,
- * else its gate quest (one with `blocked`), else its first quest.
+ * can no longer be left (`stepOpen` false), its first unfinished act quest
+ * that is not the gate, else its gate quest (`gate`, upstream `_next_to`:
+ * there every quest with `blocked` is one), else its first quest.
  */
 export function resumeIndex<V>(quests: readonly Quest<V>[], index: number, view: V, stepOpen?: (view: V, step: StepId) => boolean): number {
   const here = quests[index];
@@ -129,9 +130,9 @@ export function resumeIndex<V>(quests: readonly Quest<V>[], index: number, view:
     if (stepOpen(view, step)) continue;
     const same = quests.map((quest, i) => ({ quest, i })).filter(({ quest, i }) => i < index && quest.step === step);
     if (same.length === 0) continue;
-    const todo = same.find(({ quest }) => quest.kind === "act" && quest.done && !quest.base && !quest.blocked && !quest.done(view, undefined));
+    const todo = same.find(({ quest }) => quest.kind === "act" && quest.done && !quest.base && !quest.gate && !quest.done(view, undefined));
     if (todo) return todo.i;
-    const gate = same.find(({ quest }) => quest.blocked);
+    const gate = same.find(({ quest }) => quest.gate);
     return (gate ?? same[0])!.i;
   }
   return index;

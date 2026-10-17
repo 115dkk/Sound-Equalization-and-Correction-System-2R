@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use crate::{MdatError, MdatFile, REW_MDAT_IR_SCALE};
+use crate::{MdatError, MdatFile, REW_MDAT_IR_SCALE, SourceInfo, source_info};
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct MeasurementInfo {
@@ -18,6 +18,8 @@ pub struct MeasurementInfo {
     pub start_time_s: f64,
     pub measurement_delay_s: f64,
     pub timing_reference: String,
+    #[serde(skip)]
+    pub source_info: SourceInfo,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -68,6 +70,11 @@ pub fn extract_ir(mdat: MdatFile) -> LoadedMdatProject {
             start_time_s: measurement.impulse_response.start_time_s,
             measurement_delay_s: measurement.impulse_response.measurement_delay_s,
             timing_reference: timing_reference(&measurement.notes),
+            source_info: source_info::extract(
+                &mdat.stream,
+                measurement.source_object,
+                &measurement.notes,
+            ),
         });
         // NumPy 2 scalar promotion keeps this division in float32, not f64 x100.
         let samples = measurement

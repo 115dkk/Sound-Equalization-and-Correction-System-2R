@@ -1,5 +1,7 @@
 // @vitest-environment happy-dom
 import { act, fireEvent, screen } from "@testing-library/react";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { STEPS, canLeave, type FrameModel, type StepId } from "../../app/model";
@@ -94,6 +96,21 @@ describe("tutorial flow", () => {
     expect(resumeIndex(qs, 2, { ...view, helpOpen: true }, (_v, step) => step !== "system")).toBe(0);
   });
 
+  it("resumes at the first unfinished act quest even when act quests carry `blocked`, else at the gate", () => {
+    const blocked = () => null;
+    const qs: Quest<View>[] = [
+      { id: "a", step: "system", kind: "look", targets: [], title: "tutorial.sample.rail.title", text: "tutorial.sample.rail" },
+      { id: "b", step: "system", kind: "act", targets: [], title: "tutorial.sample.help.title", text: "tutorial.sample.help", done: (v) => v.helpOpen, blocked },
+      { id: "c", step: "system", kind: "act", targets: [], title: "tutorial.sample.help.title", text: "tutorial.sample.help", done: (v) => v.computed, blocked },
+      { id: "d", step: "system", kind: "act", targets: [], title: "tutorial.sample.help.title", text: "tutorial.sample.help", done: () => false, blocked, gate: true },
+      { id: "e", step: "calibrate", kind: "act", targets: [], title: "tutorial.sample.compute.title", text: "tutorial.sample.compute" },
+    ];
+    const view: View = { helpOpen: true, computing: false, computed: false, blocked: false };
+    const closed = (_v: View, step: StepId) => step !== "system";
+    expect(resumeIndex(qs, 4, view, closed)).toBe(2);
+    expect(resumeIndex(qs, 4, { ...view, computed: true }, closed)).toBe(3);
+  });
+
   it("reads from the rail whether a step can be left (App's stepOpen, upstream can_advance)", () => {
     const steps = (patch: Partial<FrameModel["steps"]>): FrameModel["steps"] => ({
       system: { status: "done" },
@@ -151,9 +168,13 @@ describe("tutorial flow", () => {
 const RECTS: Record<string, [number, number, number, number]> = {
   "frame.rail": [0, 0, 252, 800],
   "frame.help": [20, 760, 200, 40],
+  // The step header ends where the content begins; its primary action sits at its right end.
+  "frame.header": [252, 0, 1028, 120],
   "frame.content": [252, 120, 1028, 620],
+  // The folded pill where tutorial.css puts it: 32 px tall, centred on the header's bottom edge, ending 32 px from the right.
+  "tutorial.panel.pill": [1040, 104, 208, 32],
   other: [400, 300, 120, 36],
-  primary: [1100, 40, 160, 36],
+  primary: [1100, 60, 160, 36],
   // Late targets (the export step's rows): one far below the content's fold, one inside it.
   "late.far": [400, 1500, 160, 36],
   "late.near": [400, 300, 160, 36],
@@ -224,12 +245,14 @@ function Harness({ initial, start = {}, actions }: { initial?: Partial<TutorialS
       }}
     >
       <div data-ui="frame.rail">rail</div>
+      <header data-ui="frame.header" style={{ paddingRight: "32px" }}>
+        <button type="button" data-ui="primary" onClick={() => setView((v) => ({ ...v, computing: true }))}>
+          primary
+        </button>
+      </header>
       <div data-ui="frame.content">
         <button type="button" data-ui="other" onClick={actions.other}>
           other
-        </button>
-        <button type="button" data-ui="primary" onClick={() => setView((v) => ({ ...v, computing: true }))}>
-          primary
         </button>
       </div>
       <button type="button" data-ui="frame.help" onClick={() => setView((v) => ({ ...v, helpOpen: true }))}>
@@ -339,6 +362,93 @@ describe("tutorial layer", () => {
     fireEvent.click(ui("tutorial.panel.end")!);
     expect(h.restart).toHaveBeenCalledTimes(1);
     expect(h.finish).toHaveBeenCalledTimes(1);
+  });
+
+  it("hangs the list, its pill and the resume button from the step header's bottom edge, at the end of its primary action", async () => {
+    const { unmount } = renderWith(<Harness actions={host()} />);
+    await tick();
+    // The shared corner comes from the header: its bottom edge, and its right end less its padding.
+    const layer = ui("tutorial")!;
+    expect(layer.style.getPropertyValue("--tutorial-line")).toBe("120px");
+    expect(layer.style.getPropertyValue("--tutorial-inset")).toBe("32px");
+    // None of the three places itself; each takes the corner (and so the same top right).
+    expect(ui("tutorial.panel")!.style.top).toBe("");
+    fireEvent.click(ui("tutorial.panel.fold")!);
+    await tick();
+    expect(ui("tutorial.panel.pill")!.style.top).toBe("");
+    fireEvent.click(ui("tutorial.coach.pause")!);
+    expect(ui("tutorial.resume")!.style.top).toBe("");
+    unmount();
+    // tutorial.css: one rule for the three, centred on the edge, so the 32 px pill sits half in
+    // the header's 16 px bottom padding and half in the content's 24 px top padding (over no card).
+    const css = readFileSync(join(import.meta.dirname, "tutorial.css"), "utf8");
+    const corner = /\.tutorial-panel,\s*\.tutorial-pill,\s*\.tutorial-resume\s*\{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(corner).toMatch(/top:\s*calc\(var\(--tutorial-line[^;]*\)\s*-\s*var\(--control-h-sm\)\s*\/\s*2\);/);
+    expect(corner).toMatch(/right:\s*var\(--tutorial-inset[^;]*\);/);
+    const pill = [...css.matchAll(/\.tutorial-pill,\s*\.tutorial-resume\s*\{([^}]*)\}/g)].map((m) => m[1]).join("");
+    expect(pill).toMatch(/\bheight:\s*var\(--control-h-sm\);/);
+    const app = readFileSync(join(import.meta.dirname, "../../app/app.css"), "utf8");
+    expect(/\.step-header\s*\{[^}]*padding:[^;]*var\(--space-4\)[^;]*;/.exec(app)?.[0]).toMatch(/padding:\s*\S+\s+\S+\s+var\(--space-4\)/);
+    expect(/\.app-content\s*\{[^}]*\}/.exec(app)?.[0]).toMatch(/padding:\s*var\(--space-6\)/);
+  });
+
+  it("hides the folded pill while its own box would cover an outline, and shows it again when it would not", async () => {
+    // A look quest on the rail: the pill is far from it.
+    const first = renderWith(<Harness actions={host()} initial={{ folded: true }} />);
+    await tick();
+    expect(ui("tutorial.panel.pill")!.className).not.toContain("tutorial-pill--hidden");
+    expect(ui("tutorial.panel.pill")!.hasAttribute("inert")).toBe(false);
+    first.unmount();
+    // The act quest on the header's primary action: its ring (and pulse) reaches the pill's box.
+    const second = renderWith(<Harness actions={host()} initial={{ index: 2, completed: [0, 1], folded: true }} />);
+    await tick();
+    const pill = ui("tutorial.panel.pill")!;
+    expect(pill.className).toContain("tutorial-pill--hidden");
+    // Hidden, it is no Tab stop and nothing to click; it keeps its box to be measured.
+    expect(pill.hasAttribute("inert")).toBe(true);
+    second.unmount();
+    // The same quest with the pill lower (its own box, not a guess): it shows.
+    const kept = RECTS["tutorial.panel.pill"]!;
+    RECTS["tutorial.panel.pill"] = [1040, 140, 208, 32];
+    try {
+      renderWith(<Harness actions={host()} initial={{ index: 2, completed: [0, 1], folded: true }} />);
+      await tick();
+      expect(ui("tutorial.panel.pill")!.className).not.toContain("tutorial-pill--hidden");
+    } finally {
+      RECTS["tutorial.panel.pill"] = kept;
+    }
+  });
+
+  it("keeps the coach card off the pill's own box, and off nothing while the pill hides", async () => {
+    const card = { w: 340, h: 200 };
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute("data-ui") === "tutorial.coach" ? card.w : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (this: HTMLElement) {
+      return this.getAttribute("data-ui") === "tutorial.coach" ? card.h : 0;
+    });
+    const coachBox = () => {
+      const el = ui("tutorial.coach")!;
+      return { x: parseFloat(el.style.left), y: parseFloat(el.style.top), ...card };
+    };
+    const hits = (a: { x: number; y: number; w: number; h: number }, [x, y, w, h]: [number, number, number, number]) => a.x < x + w && x < a.x + a.w && a.y < y + h && y < a.y + a.h;
+    const kept = RECTS["tutorial.panel.pill"]!;
+    // A pill that shows beside the outlined primary action, reaching into the card's bounds.
+    RECTS["tutorial.panel.pill"] = [1040, 140, 208, 32];
+    try {
+      const shown = renderWith(<Harness actions={host()} initial={{ index: 2, completed: [0, 1], folded: true }} />);
+      await tick();
+      expect(ui("tutorial.panel.pill")!.className).not.toContain("tutorial-pill--hidden");
+      expect(hits(coachBox(), RECTS["tutorial.panel.pill"])).toBe(false);
+      shown.unmount();
+    } finally {
+      RECTS["tutorial.panel.pill"] = kept;
+    }
+    // Hidden over the outline, the pill keeps nothing clear: the card goes right under its target (the bounds' top).
+    renderWith(<Harness actions={host()} initial={{ index: 2, completed: [0, 1], folded: true }} />);
+    await tick();
+    expect(ui("tutorial.panel.pill")!.className).toContain("tutorial-pill--hidden");
+    expect(coachBox()).toMatchObject({ x: 268 + 996 - card.w, y: 132 });
   });
 
   it("moves the focus into each card: an alert card on 계속, an act card on itself, then Tab goes round its buttons, the target and the list", async () => {

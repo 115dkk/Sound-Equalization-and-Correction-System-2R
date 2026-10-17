@@ -177,6 +177,9 @@ pub struct Deps {
     /// The user's wall clock, for export folder names. The default reads UTC;
     /// the apps add the UTC offset `secs-sys` reports.
     pub clock: Arc<dyn Fn() -> LocalTime + Send + Sync>,
+    /// Milliseconds since the Unix epoch, for the measurement date REW reads
+    /// from an mdat (upstream `time.time()`).
+    pub unix_ms: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
 
 impl Debug for Deps {
@@ -190,6 +193,7 @@ impl Debug for Deps {
             .field("uuid", &"source")
             .field("app_settings_path", &self.app_settings_path)
             .field("clock", &"source")
+            .field("unix_ms", &"source")
             .finish()
     }
 }
@@ -213,6 +217,13 @@ impl secs_rew::Transport for OfflineRew {
             message: "no REW transport injected".into(),
         })
     }
+}
+
+fn unix_ms(time: SystemTime) -> i64 {
+    time.duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |after| {
+            i64::try_from(after.as_millis()).unwrap_or(i64::MAX)
+        })
 }
 
 fn random_uuid() -> Result<u128, secs_export::ExportError> {
@@ -239,6 +250,7 @@ impl Default for Deps {
             uuid: Arc::new(Mutex::new(Box::new(random_uuid))),
             app_settings_path: None,
             clock: Arc::new(|| LocalTime::from_system(SystemTime::now(), 0)),
+            unix_ms: Arc::new(|| unix_ms(SystemTime::now())),
         }
     }
 }
