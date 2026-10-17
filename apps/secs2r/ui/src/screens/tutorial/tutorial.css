@@ -287,10 +287,22 @@
   margin-top: var(--space-0-5);
 }
 
-/* Quest list and its pill, top right of the content area. */
+/* Quest list, its pill and the resume button share one corner: hung from
+   the step header's bottom edge, their right edge on the end of the
+   header's primary action (--tutorial-line and --tutorial-inset, measured
+   by Tutorial.tsx). The pill is centred on that edge: half of it lies in
+   the header's bottom padding (--space-4), half in the content's top
+   padding (--space-6), so it covers neither the header's text and primary
+   action nor the first card. The list opens down from the same top right. */
+.tutorial-panel,
+.tutorial-pill,
+.tutorial-resume {
+  top: calc(var(--tutorial-line, var(--space-8)) - var(--control-h-sm) / 2);
+  right: var(--tutorial-inset, var(--space-3));
+}
+
 .tutorial-panel {
   position: absolute;
-  right: var(--space-3);
   z-index: calc(var(--z-popover) + 1);
   display: flex;
   flex-direction: column;
@@ -374,12 +386,11 @@
 .tutorial-pill,
 .tutorial-resume {
   position: absolute;
-  right: var(--space-3);
   z-index: calc(var(--z-popover) + 1);
   display: inline-flex;
   align-items: center;
   gap: var(--space-1-5);
-  min-height: var(--control-h);
+  height: var(--control-h-sm);
   padding: 0 var(--space-3) 0 var(--space-3);
   border: 0;
   border-radius: var(--radius-pill);
@@ -388,12 +399,26 @@
   color: var(--text);
   font-size: var(--text-ui);
   font-weight: var(--weight-medium);
+  white-space: nowrap;
   pointer-events: auto;
   transition: box-shadow var(--dur-fast) var(--ease-out);
 }
 
+/* 32 px tall; the hit area reaches 40 px. */
+.tutorial-pill::after,
+.tutorial-resume::after {
+  content: "";
+  position: absolute;
+  inset: min(0px, calc((100% - var(--hit-min)) / 2));
+}
+
 .tutorial-pill .ui-icon {
   color: var(--text-muted);
+}
+
+/* Over an outline it hides but keeps its box, which Tutorial.tsx measures. */
+.tutorial-pill--hidden {
+  visibility: hidden;
 }
 
 .tutorial-resume {
