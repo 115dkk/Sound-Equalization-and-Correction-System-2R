@@ -17,6 +17,7 @@ IR 파일만으로는 복원할 수 없으므로 `.secs` 의 이 값이 진실�
 """
 from __future__ import annotations
 
+import json
 import struct
 import threading
 from pathlib import Path
@@ -171,6 +172,28 @@ class IrSaver:
         return self.load_path(self.file_for(role, pos))
 
     @staticmethod
+    def source_path(wav: str | Path) -> Path:
+        """IR wav 옆의 측정 환경 파일 — `L_P1.wav` → `L_P1.src.json`."""
+        p = Path(wav)
+        return p.with_name(p.stem + '.src.json')
+
+    def save_source(self, role: str, pos: int, info: dict | None) -> None:
+        """원 측정 환경(`rew_mdat.source_info`)을 남긴다. 없으면 옛 파일을 지운다 — 다시 잰 측정에 옛 캘이 붙지 않게."""
+        target = self.source_path(self.file_for(role, pos))
+        if not isinstance(info, dict):
+            target.unlink(missing_ok=True)
+            return
+        target.write_text(json.dumps(info, ensure_ascii=False), encoding='utf-8')
+
+    @classmethod
+    def load_source(cls, wav: str | Path) -> dict | None:
+        try:
+            data = json.loads(cls.source_path(wav).read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    @staticmethod
     def load_path(path: str | Path) -> tuple[np.ndarray, int]:
         p = Path(path)
         recent = _recall(p)
@@ -303,6 +326,8 @@ class MeasurementSession:
         `sample_rate` 는 위치 하나에 한 값(마지막 결과의 값으로 덮어쓴다).
         """
         path = self.ir_saver.save(result.role, result.pos, result.ir, result.sample_rate)
+        if hasattr(self.ir_saver, 'save_source'):
+            self.ir_saver.save_source(result.role, result.pos, getattr(result, 'source_info', None))
         role = str(result.role)
         with self._lock:
             existing = getattr(self.project, 'measurements', None)
@@ -518,4 +543,25 @@ def load_project_irs(project: Any,
     return {pos: out[pos] for pos in sorted(out)}
 
 
-__all__ = ['MeasurementSession', 'IrSaver', 'load_project_irs']
+def load_project_sources(project: Any, project_path: str | Path | None = None) -> dict[int, dict[str, dict]]:
+    """위치 → role → 원 측정 환경(`IrSaver.save_source` 가 IR wav 옆에 남긴 것). 없는 측정은 빠진다."""
+    base = Path(project_path).parent if project_path is not None else Path('.')
+    out: dict[int, dict[str, dict]] = {}
+    for record in list(getattr(project, 'measurements', []) or []):
+        if not isinstance(record, dict) or not isinstance(record.get('ir'), dict):
+            continue
+        try:
+            pos = int(record.get('pos'))
+        except (TypeError, ValueError):
+            continue
+        for role, raw in record['ir'].items():
+            if not raw:
+                continue
+            path = Path(raw) if Path(raw).is_absolute() else base / raw
+            info = IrSaver.load_source(path)
+            if info is not None:
+                out.setdefault(pos, {})[str(role)] = info
+    return out
+
+
+__all__ = ['MeasurementSession', 'IrSaver', 'load_project_irs', 'load_project_sources']

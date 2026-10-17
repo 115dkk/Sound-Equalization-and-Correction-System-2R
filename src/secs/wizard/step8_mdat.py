@@ -259,6 +259,8 @@ class Step8Mdat(QtWidgets.QWidget):
         for button in self._buttons():
             button.setEnabled(False)
         offset = cal.project_spl_offset(self.project)
+        from secs.rewapi.session import load_project_sources
+        sources = load_project_sources(self.project, getattr(self.calibration, 'project_path', None))
 
         def work() -> list[str]:
             if kind == 'camilla':
@@ -267,7 +269,7 @@ class Step8Mdat(QtWidgets.QWidget):
                 return [str(p) for p in cal.export_filter_text(run, target, mimo)]
             if kind == 'eqapo':
                 return [str(p) for p in cal.export_eqapo(run, target, mimo)]
-            return [str(cal.export_before_after_mdat(run, target, mimo, offset))]
+            return [str(cal.export_before_after_mdat(run, target, mimo, offset, sources))]
         try:
             files = run_off_thread(work, name='secs-export-mdat')
         except Exception as error:  # noqa: BLE001 - 파일 오류는 문구로

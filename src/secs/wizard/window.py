@@ -916,9 +916,10 @@ class WizardWindow(QtWidgets.QMainWindow):
         """저장할 때 측정을 `<이름>.mdat` 로도 남긴다 — 파일 하나로 옮기고 REW 로 바로 열게(10-09 사용자 요청).
         `.irs/` 는 그대로 둔다(위치마다 바로 저장돼 측정 중 꺼져도 남는다). 실패해도 저장은 막지 않는다."""
         try:
-            from secs.rewapi.session import load_project_irs
+            from secs.rewapi.session import load_project_irs, load_project_sources
             from secs.rew_mdat.builder import MeasurementInput, build_mdat
             irs = load_project_irs(self.project, target)
+            sources = load_project_sources(self.project, target)
             order = list(self.step5.plan().roles)
             offsets = self._spl_offsets()
             items = []
@@ -929,7 +930,8 @@ class WizardWindow(QtWidgets.QMainWindow):
                     items.append(MeasurementInput(f'{role}_P{pos}', f'SECS · 위치 {pos} · 원 측정',
                                                   int(rate), np.asarray(ir, np.float32),
                                                   float(rest[0]) if rest else 0.0,
-                                                  offsets.get((role, int(pos)))))
+                                                  offsets.get((role, int(pos))),
+                                                  sources.get(pos, {}).get(role)))
             if not items:
                 return None
             return build_mdat(items, target.with_suffix('.mdat'))
