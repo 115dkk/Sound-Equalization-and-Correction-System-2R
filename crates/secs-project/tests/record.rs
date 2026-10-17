@@ -261,7 +261,7 @@ fn measurement_source_tolerates_partial_values_and_rejects_unsafe_narrowing() {
     assert!(cal.inverse_c_selected);
     assert_eq!(cal.source_name, "");
     assert_eq!(cal.source_path, "");
-    assert_eq!(cal.freq, None);
+    assert_eq!(cal.freq, Some(vec![20.0, 1.0, 30.0]));
     assert_eq!(cal.gain, None);
     assert_eq!(cal.boxed, vec![("serialNum".into(), Boxed::Integer(42))]);
 
@@ -305,6 +305,56 @@ fn measurement_source_tolerates_partial_values_and_rejects_unsafe_narrowing() {
     fs::write(source_path(&wav), "not json").unwrap();
     assert_eq!(load_source(&wav), None);
     save_source(&wav, None).unwrap();
+}
+
+#[test]
+fn measurement_source_builds_upstream_mdat_bytes_and_skips_upstream_exceptions_f10() {
+    let directory = TempDir::new();
+    let wav = directory.0.join("L_P1.wav");
+    let mut checked = 0;
+    for fixture in Fixture::all("service_mdat", "source_") {
+        if fixture.id.ends_with("source_generated") {
+            continue;
+        }
+        fs::write(
+            source_path(&wav),
+            fixture.inputs()["text"].as_str().unwrap(),
+        )
+        .unwrap();
+        let info = load_source(&wav);
+        assert_eq!(
+            info.is_some(),
+            fixture.outputs()["loaded"].as_bool().unwrap(),
+            "{}",
+            fixture.id
+        );
+        let item = secs_mdat::MeasurementInput {
+            title: "L_P1".into(),
+            notes: "SECS · 위치 1 · 원 측정".into(),
+            sample_rate_hz: 48_000,
+            samples: vec![1.0, -0.5, 0.25],
+            start_time_s: -0.001,
+            spl_offset_db: Some(116.25),
+            source_info: info,
+            computed: false,
+        };
+        let mut uuid = || 1;
+        let bytes = secs_mdat::build(
+            &[item],
+            secs_mdat::TEMPLATE,
+            None,
+            1_704_164_645_000,
+            &mut uuid,
+        )
+        .unwrap();
+        if let Some(expected) = fixture.outputs().get("bytes") {
+            assert_eq!(bytes, fixture.blob(expected), "{}", fixture.id);
+        } else {
+            assert!(fixture.outputs()["exception"].is_string(), "{}", fixture.id);
+        }
+        checked += 1;
+    }
+    assert_eq!(checked, 18);
 }
 
 #[test]

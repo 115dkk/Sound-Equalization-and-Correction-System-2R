@@ -386,7 +386,7 @@ id = "project.measurement_source"
 kind = "project"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-project::measurement_source_writes_exact_bytes_reads_and_deletes_stale_file", "secs-project::measurement_source_tolerates_partial_values_and_rejects_unsafe_narrowing", "secs-service::project_session_create_open_save_and_save_as", "secs-service::mdat_scan_and_import_match_direct_oracle_bytes", "secs-service::rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements", "secs-service::exports_after_reopening_match_pre_close_bytes"]
+tests = ["secs-project::measurement_source_writes_exact_bytes_reads_and_deletes_stale_file", "secs-project::measurement_source_tolerates_partial_values_and_rejects_unsafe_narrowing", "secs-project::measurement_source_builds_upstream_mdat_bytes_and_skips_upstream_exceptions_f10", "secs-service::project_session_create_open_save_and_save_as", "secs-service::mdat_scan_and_import_match_direct_oracle_bytes", "secs-service::rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements", "secs-service::exports_after_reopening_match_pre_close_bytes"]
 upstream = "rewapi/session.py IrSaver.save_source, IrSaver.load_source, load_project_sources"
 
 [[feature]]
@@ -683,7 +683,7 @@ id = "service.session"
 kind = "service"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::project_session_create_open_save_and_save_as"]
+tests = ["secs-service::project_session_create_open_save_and_save_as", "secs-service::side_mdat_bytes_match_upstream_for_every_import_case", "secs-service::side_mdat_orders_multiple_positions_and_unplanned_roles_like_upstream"]
 
 [[feature]]
 id = "service.run_cache"

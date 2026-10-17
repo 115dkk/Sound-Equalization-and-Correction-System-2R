@@ -1,9 +1,35 @@
 #![forbid(unsafe_code)]
 use secs_mdat::{Boxed, SourceDate};
-use secs_project::{MeasurementStore, Project, PyJson, load_source, save_source, source_path};
+use secs_project::{
+    MeasurementResult, MeasurementStore, Project, PyJson, load_source, save_source, source_path,
+};
 use secs_service::mdat_import::*;
 use serde_json::{Value, json};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::{collections::BTreeSet, path::PathBuf};
+
+static NEXT: AtomicU64 = AtomicU64::new(0);
+
+struct TempDir(PathBuf);
+
+impl TempDir {
+    fn new(label: &str) -> Self {
+        let path = std::env::temp_dir().join(format!(
+            "secs-service-{label}-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        Self(path)
+    }
+}
+
+impl Drop for TempDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -27,6 +53,9 @@ fn service_mdat_every_oracle_value_and_imported_secs_bytes() {
     let mut count = 0;
     for file in std::fs::read_dir(dir).unwrap() {
         let path = file.unwrap().path();
+        if path.extension().and_then(|value| value.to_str()) != Some("json") {
+            continue;
+        }
         let v: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         let (input, out) = (&v["inputs"], &v["outputs"]);
         let name = path.file_stem().unwrap().to_str().unwrap();
@@ -95,12 +124,10 @@ fn service_mdat_every_oracle_value_and_imported_secs_bytes() {
                 json!(problems(&optional(&input["assignment"]), &positions)),
                 *out
             );
-        } else if name == "source_cases" {
-            let directory =
-                root().join(format!("target/service-mdat-source-{}", std::process::id()));
-            std::fs::create_dir_all(&directory).unwrap();
-            let wav = directory.join("L_P1.wav");
-            for case in ["rew", "missing_cal", "partial"] {
+        } else if name == "source_generated" {
+            let directory = TempDir::new("mdat-source");
+            let wav = directory.0.join("L_P1.wav");
+            for case in ["rew", "missing_cal"] {
                 std::fs::write(source_path(&wav), out["json"][case].as_str().unwrap()).unwrap();
                 let info = load_source(&wav).unwrap();
                 match case {
@@ -130,22 +157,10 @@ fn service_mdat_every_oracle_value_and_imported_secs_bytes() {
                         assert_eq!(cal.gain, None);
                         assert_eq!(cal.phase, None);
                     }
-                    "partial" => {
-                        assert_eq!(info.strings, vec![("outputName".into(), "7".into())]);
-                        assert_eq!(info.boxed, vec![("inputVolume".into(), Boxed::Double(1.5))]);
-                        assert_eq!(info.date, None);
-                        assert_eq!(info.notes, None);
-                        assert_eq!(info.format.as_deref(), Some("True"));
-                        let cal = &info.cal[0].1;
-                        assert_eq!(cal.freq, None);
-                        assert_eq!(cal.gain, None);
-                        assert_eq!(cal.boxed, vec![("serialNum".into(), Boxed::Integer(42))]);
-                    }
                     _ => unreachable!(),
                 }
                 save_source(&wav, Some(&info)).unwrap();
             }
-            std::fs::remove_dir_all(directory).unwrap();
         } else if name.starts_with("file_") {
             let source = root().join(input["path"].as_str().unwrap());
             let scan = scan_for(&source, &strings(&input["roles"]), None, 1).unwrap();
@@ -207,9 +222,8 @@ fn service_mdat_every_oracle_value_and_imported_secs_bytes() {
                 ),
                 out["assignment"]
             );
-            let temp = root().join(format!("target/service-mdat-{}-{name}", std::process::id()));
-            std::fs::create_dir_all(&temp).unwrap();
-            let target = temp.join("import.secs");
+            let temp = TempDir::new(&format!("mdat-{name}"));
+            let target = temp.0.join("import.secs");
             let mut project = Project::load_text(&input["project"].to_string()).unwrap();
             project
                 .extra
@@ -222,17 +236,143 @@ fn service_mdat_every_oracle_value_and_imported_secs_bytes() {
             if let Some(text) = out["secs"].as_str() {
                 assert_eq!(std::fs::read_to_string(&target).unwrap(), text, "{name}");
             }
-            std::fs::remove_dir_all(temp).unwrap();
         }
         count += 1;
     }
-    assert_eq!(count, 24);
+    assert_eq!(count, 43);
+}
+
+#[test]
+fn side_mdat_bytes_match_upstream_for_every_import_case() {
+    for fixture in secs_oracle::Fixture::all("service_mdat", "file_") {
+        let directory = TempDir::new(&format!("side-mdat-{}", fixture.id.replace('/', "-")));
+        let source = root().join(fixture.inputs()["path"].as_str().unwrap());
+        let target = directory.0.join("import.secs");
+        std::fs::write(&target, fixture.outputs()["secs"].as_str().unwrap()).unwrap();
+        for (relative, text) in fixture.outputs()["source_sidecars"].as_object().unwrap() {
+            let path = directory.0.join(relative);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text.as_str().unwrap()).unwrap();
+        }
+        // Import once through Rust as the product path does, then save with the
+        // oracle's fixed UUID sequence and clock.
+        let mut project = Project::load_text(&fixture.inputs()["project"].to_string()).unwrap();
+        project
+            .extra
+            .push(("array".into(), PyJson::Int("9".into())));
+        let mut store = MeasurementStore::new(&target, project);
+        assert_eq!(
+            import(&mut store, &source, None, None).unwrap() as u64,
+            fixture.outputs()["import_count"].as_u64().unwrap()
+        );
+        let mut next = 1_u128;
+        let deps = secs_service::Deps {
+            uuid: std::sync::Arc::new(std::sync::Mutex::new(Box::new(move || {
+                let value = next;
+                next += 1;
+                Ok(value)
+            }))),
+            unix_ms: std::sync::Arc::new(|| 1_704_164_645_000),
+            ..Default::default()
+        };
+        let service = secs_service::Service::new(deps);
+        let secs_types::ipc::Envelope::Ok(_) = service.call(
+            secs_types::ipc::Request::ProjectOpen(secs_types::ipc::ProjectPathParams {
+                path: target.to_string_lossy().into_owned(),
+            }),
+            std::sync::Arc::new(secs_service::NoEvents),
+        ) else {
+            panic!("{} open", fixture.id)
+        };
+        let secs_types::ipc::Envelope::Ok(_) = service.call(
+            secs_types::ipc::Request::ProjectSave(Default::default()),
+            std::sync::Arc::new(secs_service::NoEvents),
+        ) else {
+            panic!("{} save", fixture.id)
+        };
+        assert_eq!(
+            std::fs::read(target.with_extension("mdat")).unwrap(),
+            fixture.blob(&fixture.outputs()["side_mdat"]),
+            "{}",
+            fixture.id
+        );
+    }
+}
+
+#[test]
+fn side_mdat_orders_multiple_positions_and_unplanned_roles_like_upstream() {
+    let fixture = secs_oracle::Fixture::load("service_mdat", "side_multi_unplanned");
+    let directory = TempDir::new("side-multi");
+    let target = directory.0.join("multi.secs");
+    let project = Project::from_preset("7.1.4").unwrap();
+    let mut store = MeasurementStore::new(&target, project);
+    for (pos, role, samples, rate, t0, offset) in [
+        (2, "Z", vec![0.25, -0.5, 1.0], 44_100, 0.002, None),
+        (
+            1,
+            "SW1",
+            vec![1.0, 0.0, -0.25],
+            48_000,
+            -0.001,
+            Some(116.25),
+        ),
+        (1, "Tfl", vec![0.5, 0.25, 0.0], 48_000, 0.0, Some(117.5)),
+    ] {
+        store
+            .record(
+                MeasurementResult {
+                    role: role.into(),
+                    pos,
+                    ir: samples,
+                    sample_rate: rate,
+                    t0_s: t0,
+                    spl_db: None,
+                    spl_offset_db: offset,
+                    snr_db: None,
+                    uuid: Some(format!("{role}-{pos}")),
+                    source: None,
+                    source_info: None,
+                },
+                Some(&["Tfl".into(), "SW1".into()]),
+            )
+            .unwrap();
+    }
+    let mut next = 1_u128;
+    let deps = secs_service::Deps {
+        uuid: std::sync::Arc::new(std::sync::Mutex::new(Box::new(move || {
+            let value = next;
+            next += 1;
+            Ok(value)
+        }))),
+        unix_ms: std::sync::Arc::new(|| 1_704_164_645_000),
+        ..Default::default()
+    };
+    let service = secs_service::Service::new(deps);
+    assert!(matches!(
+        service.call(
+            secs_types::ipc::Request::ProjectOpen(secs_types::ipc::ProjectPathParams {
+                path: target.to_string_lossy().into_owned()
+            }),
+            std::sync::Arc::new(secs_service::NoEvents)
+        ),
+        secs_types::ipc::Envelope::Ok(_)
+    ));
+    assert!(matches!(
+        service.call(
+            secs_types::ipc::Request::ProjectSave(Default::default()),
+            std::sync::Arc::new(secs_service::NoEvents)
+        ),
+        secs_types::ipc::Envelope::Ok(_)
+    ));
+    assert_eq!(
+        std::fs::read(target.with_extension("mdat")).unwrap(),
+        fixture.blob(&fixture.outputs()["side_mdat"])
+    );
 }
 #[test]
 fn test_load_mdat_assigns_roles_by_title_and_preserves_other_positions() {
-    let dir = root().join(format!("target/mdat-merge-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let path = dir.join("merge.secs");
+    let dir = TempDir::new("mdat-merge");
+    let path = dir.0.join("merge.secs");
     let mut store = MeasurementStore::new(&path, Project::from_preset("2.1").unwrap());
     let source = root().join("oracle/goldens/mdat/build_3_96000_bytes.bin");
     let picks = [
@@ -266,7 +406,6 @@ fn test_load_mdat_assigns_roles_by_title_and_preserves_other_positions() {
     assert!(store.clear_position(1));
     store.save().unwrap();
     assert_eq!(store.records().len(), 1);
-    std::fs::remove_dir_all(dir).unwrap();
 }
 #[test]
 fn test_mdat_titles_match_biamp_roles() {
@@ -286,8 +425,9 @@ fn test_mdat_titles_match_biamp_roles() {
 }
 #[test]
 fn test_mdat_cancel_and_missing_file_leave_measurements_unchanged() {
+    let directory = TempDir::new("mdat-missing");
     let mut store = MeasurementStore::new(
-        root().join("target/missing.secs"),
+        directory.0.join("missing.secs"),
         Project::from_preset("2.1").unwrap(),
     );
     let before = store.project().save_text();

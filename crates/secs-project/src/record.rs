@@ -790,6 +790,7 @@ fn float_array_from_json(value: &PyJson) -> Option<Vec<f32>> {
             PyJson::Bool(value) => Some(if *value { 1.0 } else { 0.0 }),
             PyJson::Int(value) => value.parse().ok(),
             PyJson::Float(value) => Some(*value),
+            PyJson::Str(value) => value.trim().parse().ok(),
             _ => None,
         })
         .map(|value: Option<f64>| {
