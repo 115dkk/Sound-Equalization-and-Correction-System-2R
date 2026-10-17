@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import copy
 import struct
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,7 @@ from typing import Iterable
 
 import numpy as np
 
+from secs.rew_mdat import source_info
 from secs.rew_mdat.errors import SchemaError
 from secs.rew_mdat.serialization.nodes import BlockData, JavaArray, JavaObject, JavaString
 from secs.rew_mdat.serialization.parser import JavaSerializationParser
@@ -41,6 +43,11 @@ class MeasurementInput:
     start_time_s: float = 0.0
     #: dB SPL 오프셋(REW `splOffsetdB`). None = 템플릿 값(120 dB) 그대로 — 실측 IR 은 꼭 넘길 것(10-09 레벨 어긋남).
     spl_offset_db: float | None = None
+    #: 원 측정의 REW 측정 환경(`source_info.extract()` 결과 — 마이크 캘 · 장치 · 볼륨). None = 비운 채로 쓴다.
+    #: 템플릿의 제작자 환경이 남의 파일에 들어가던 버그(10-17) 때문에 템플릿 값은 절대 남기지 않는다.
+    source_info: dict | None = None
+    #: True = SECS2 가 계산한 응답(보정 후 · MIMO) — REW '형식' 칸과 메모에 계산값이라고 남긴다(10-17 사용자).
+    computed: bool = False
 
 
 def _field_owner(obj: JavaObject, name: str) -> dict:
@@ -120,7 +127,7 @@ def _preview_pair(values: list) -> tuple[object, object]:
     return values[4], values[5]
 
 
-def _replace_measurement(obj: JavaObject, item: MeasurementInput) -> None:
+def _replace_measurement(obj: JavaObject, item: MeasurementInput, boxes=None, float_desc=None) -> None:
     # mdat 의 IR 은 REW API(`normalised=false`) 값의 1/100 이다 — 같은 측정을 REW 가 저장한 mdat 과 비교해 정확히 100배(10-09).
     # 이걸 안 하면 SECS 가 쓴 mdat 이 REW 에서 40 dB 높게 보였다(사용자: spl 오프셋도 개판).
     samples = np.ascontiguousarray(np.asarray(item.samples, dtype=np.float64) * REW_MDAT_IR_SCALE,
@@ -131,13 +138,26 @@ def _replace_measurement(obj: JavaObject, item: MeasurementInput) -> None:
     if rate <= 0:
         raise ValueError(f'{item.title}: sample rate must be positive')
 
+    info = item.source_info if isinstance(item.source_info, dict) else None
+    source_info.apply(obj, info, boxes=boxes, float_desc=float_desc)
+    notes = str(item.notes)
+    original = str((info or {}).get('notes') or '').strip()
+    if original and not item.computed:
+        notes = notes + '\n\n[원 측정 메모]\n' + original      # 보정 전 = 원 측정 그대로(10-17 사용자)
     _set(obj, 'shortDesc', JavaString(str(item.title)))
-    _set(obj, 'measNotes', JavaString(str(item.notes)))
+    _set(obj, 'measNotes', JavaString(notes))
     _set(obj, 'sampleRate', rate)
-    _set(obj, 'sourceFileDate', 0)
-    source_format = obj.get('sourceFileFormat')
-    if isinstance(source_format, JavaString):
-        _set(obj, 'sourceFileFormat', JavaString('SECS predicted impulse response'))
+    # 측정 시각(ms, 유닉스 기준) — 0 이면 REW 에 1970년으로 보였다(10-17). 보정 전 = 원 측정 시각, 그 밖 = 내보낸 시각.
+    date = (info or {}).get('date')
+    if item.computed or not isinstance(date, (int, float)) or date <= 0:
+        date = int(time.time() * 1000)
+    _set(obj, 'sourceFileDate', int(date))
+    if isinstance(obj.get('sourceFileFormat'), JavaString):
+        if item.computed:
+            fmt = 'SECS2 correction result (computed, not measured)'
+        else:
+            fmt = str((info or {}).get('format') or 'SECS2 measurement')
+        _set(obj, 'sourceFileFormat', JavaString(fmt))
 
     # 복제 측정마다 UUID가 같으면 REW 내부 선택/덮어쓰기에서 충돌할 수 있다.
     uid = uuid.uuid4().int
@@ -234,6 +254,7 @@ def build_mdat_bytes(measurements: Iterable[MeasurementInput], *,
     parsed = JavaSerializationParser(template.read_bytes()).parse()
     prototype = _measurement_object(parsed.values)
     preview = _preview_pair(parsed.values)
+    boxes, float_desc = source_info.boxes_for([prototype])   # 비우기 전에 박스 · float[] 서술자를 모은다
 
     values = copy.deepcopy(parsed.values[:3])
     values.append(BlockData(struct.pack('>i', len(items))))
@@ -244,7 +265,7 @@ def build_mdat_bytes(measurements: Iterable[MeasurementInput], *,
     values.append(BlockData(struct.pack('>i', 3)))
     for index, item in enumerate(items):
         measurement = copy.deepcopy(prototype)
-        _replace_measurement(measurement, item)
+        _replace_measurement(measurement, item, boxes, float_desc)
         values.append(measurement)
         values.append(BlockData(struct.pack('>i', 0 if index == len(items) - 1 else 3)))
     return dumps(values)

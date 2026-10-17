@@ -1312,7 +1312,7 @@ def export_mdat(run: CalibrationRun, folder, mimo_run: MimoRun | None = None, sp
                       spl_offset_db=spl_offset_db)
 
 
-def before_after_items(run: CalibrationRun, mimo_run: MimoRun | None = None) -> list:
+def before_after_items(run: CalibrationRun, mimo_run: MimoRun | None = None, sources: dict | None = None) -> list:
     """내보내기 단계(8)의 REW 항목 — 입력 채널마다 `<순번>_<역할>_1 보정 전(원 측정)`(기준 위치 실측 IR 그대로, 시간
     원점 = 측정 t0) · `_2 보정 후 <모드>`(`stage_responses(...)['final']`: 채널 보정 필터 + 서브 합, 2 s 창, 계산값) ·
     MIMO 를 계산했으면 `_3 보정 후 + MIMO(IIR)`. 서브는 원 측정만 채널 뒤에 잇는다(서브 혼자의 '보정 후' 는 없다 —
@@ -1328,12 +1328,15 @@ def before_after_items(run: CalibrationRun, mimo_run: MimoRun | None = None) -> 
     shifted = base - float(run.latency_ms) / 1000.0      # 필터 지연을 시작 시각에서 뺀다(stage_items 와 같은 이유)
     label = run.settings.label()
     items = []
+    # 원 측정 환경(마이크 캘 · 장치) — 보정 전은 그대로, 보정 후는 같은 환경 + 'SECS2 계산값' 표시(10-17 사용자).
+    env = (sources or {}).get(pos, {})
 
     def measured(seq: int, role: str, note: str = '') -> None:
         ir, sr, *rest = raw[role]
         items.append(MeasurementInput(f'{seq:02d}_{role}_1 보정 전(원 측정)',
                                       f'SECS · 청취 위치 {pos} · 원 측정 그대로(필터 없음)' + note, int(sr),
-                                      np.asarray(ir, np.float32), float(rest[0]) if rest else 0.0))
+                                      np.asarray(ir, np.float32), float(rest[0]) if rest else 0.0,
+                                      source_info=env.get(role)))
 
     seq = 0
     for role in engine.chain:
@@ -1348,7 +1351,7 @@ def before_after_items(run: CalibrationRun, mimo_run: MimoRun | None = None) -> 
             f'SECS 보정 설계 · {label} · 청취 위치 {pos} · 계산값 — 채널 보정(PEQ {info["peq"]}개 · {fir}) + 서브 합, '
             f'전체 지연 {run.latency_ms:.1f} ms(시작 시각에서 뺌) · ' + ' · '.join(rc_pieces(run))
             + (f' · 서브: {sub_values_text(run)}' if run.result.subs and run.result.channels[role].xo_hz else ''),
-            SR, np.fft.irfft(final, N_FFT).astype(np.float32), shifted))
+            SR, np.fft.irfft(final, N_FFT).astype(np.float32), shifted, source_info=env.get(role), computed=True))
         if mimo_run is not None and mimo_run.iir.get(role) and role in mimo_run.applied:
             items.append(MeasurementInput(
                 f'{seq:02d}_{role}_3 보정 후 + MIMO({mimo_kind(mimo_run)})',
@@ -1363,11 +1366,11 @@ def before_after_items(run: CalibrationRun, mimo_run: MimoRun | None = None) -> 
 
 
 def export_before_after_mdat(run: CalibrationRun, folder, mimo_run: MimoRun | None = None,
-                             spl_offset_db: float | None = None) -> Path:
+                             spl_offset_db: float | None = None, sources: dict | None = None) -> Path:
     """보정 전·후 mdat 하나(`<folder>/SECS 보정 전후 <모드>.mdat`) — 내보내기 단계가 부른다."""
     from secs.rew_mdat.builder import build_mdat
 
-    return build_mdat(before_after_items(run, mimo_run), Path(folder) / f'SECS 보정 전후 {run.settings.label()}.mdat',
+    return build_mdat(before_after_items(run, mimo_run, sources), Path(folder) / f'SECS 보정 전후 {run.settings.label()}.mdat',
                       spl_offset_db=spl_offset_db)
 
 

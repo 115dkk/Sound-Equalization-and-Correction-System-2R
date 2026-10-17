@@ -145,6 +145,8 @@ class MeasurementResult:
     #: REW 가 잰 신호 대 잡음(dB, MeasurementSummary.signalToNoisedB). 모르면 None.
     #: 실스윕(09-18)에서 −24 dBFS 로 12.9 dB 가 나왔다 — `LOW_SNR_DB` 아래면 경고한다.
     snr_db: float | None = None
+    #: 원 측정의 REW 측정 환경(마이크 캘 · 장치, `rew_mdat.source_info`) — mdat 로 다시 쓸 때 그대로 넣는다(10-17).
+    source_info: dict | None = None
 
 
 @dataclass

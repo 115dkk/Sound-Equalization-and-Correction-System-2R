@@ -25,6 +25,8 @@ class MeasurementInfo:
     start_time_s: float = 0.0
     measurement_delay_s: float = 0.0
     timing_reference: str = ''
+    #: 원 측정의 REW 측정 환경(`rew_mdat.source_info.extract`) — 내보낼 때 그대로 넣는다(10-17).
+    source_info: dict | None = None
 class MdatIRProvider:
     """Read-only IR provider compatible with the existing grouping helper."""
     def __init__(self, impulse_responses: dict[str, tuple[np.ndarray, int]]) -> None:
@@ -66,13 +68,16 @@ def suggest_assignment(titles, roles) -> list[str | None]:
 
 def load_mdat_project(path: str | Path) -> LoadedMdatProject:
     """Parse an MDAT locally and expose its measurements to the existing UI."""
+    from secs.rew_mdat.serialization.nodes import JavaString
+    from secs.rew_mdat.source_info import extract
     mdat = load(path)
     measurements = []
     impulse_responses = {}
     for index, measurement in enumerate(mdat.measurements):
         measurement_id = f'mdat:{index}'
         reference_match = re.search('Acoustic reference played from (.+?) with (?:no |a )?timing offset', measurement.notes or '', flags=re.IGNORECASE)
-        measurements.append(MeasurementInfo(uuid=measurement_id, title=measurement.name or f'Measurement {index + 1}', notes=measurement.notes, sample_rate=measurement.sample_rate_hz, start_freq=measurement.frequency_response.spacing.valid_start_hz, end_freq=measurement.frequency_response.spacing.valid_end_hz, start_time_s=float(measurement.impulse_response.start_time_s), measurement_delay_s=float(measurement.impulse_response.measurement_delay_s), timing_reference=reference_match.group(1).strip() if reference_match is not None else ''))
+        measurements.append(MeasurementInfo(uuid=measurement_id, title=measurement.name or f'Measurement {index + 1}', notes=measurement.notes, sample_rate=measurement.sample_rate_hz, start_freq=measurement.frequency_response.spacing.valid_start_hz, end_freq=measurement.frequency_response.spacing.valid_end_hz, start_time_s=float(measurement.impulse_response.start_time_s), measurement_delay_s=float(measurement.impulse_response.measurement_delay_s), timing_reference=reference_match.group(1).strip() if reference_match is not None else '',
+                                            source_info=extract({**measurement.unknown_fields, 'measNotes': JavaString(measurement.notes or '')})))
         # mdat IR 은 REW API 단위의 1/100 — API 로 잰 측정과 같은 단위가 되게 되돌린다(10-09, `rew_mdat.builder.REW_MDAT_IR_SCALE`).
         from secs.rew_mdat.builder import REW_MDAT_IR_SCALE
         impulse_responses[measurement_id] = (np.asarray(measurement.impulse_response.samples, dtype=np.float32) / REW_MDAT_IR_SCALE,
