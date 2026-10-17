@@ -289,7 +289,7 @@ export const subEntry: SubEntry = {
   mode: "auto", bundle: "A", gain_db: 0, delay_ms: 0, polarity: 1, allpass: [], mimo_support: true,
   hp_hz: 0, lp_hz: 0, peq: [], hp_type: "LR24", lp_type: "LR24", dba_row: "front",
 };
-export const appSettings: AppSettings = { language: "ko", theme: "system", expert_display: false, recent_projects: [], last_window_size: null };
+export const appSettings: AppSettings = { language: "ko", theme: "system", icon: "drip", expert_display: false, recent_projects: [], last_window_size: null };
 export const rewInfo: RewInfoResult = {
   executable_path: "C:/Program Files/REW/roomeqwizard.exe", ...rewStatus, version: "5.40", blocking: false,
   input_calibration_file: "UMIK-1.txt", input_devices: [{ id: "mic", name: "UMIK-1", channels: 2 }],

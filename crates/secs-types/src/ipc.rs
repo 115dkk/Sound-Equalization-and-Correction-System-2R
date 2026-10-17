@@ -1783,6 +1783,18 @@ pub enum AppTheme {
     /// Always use the dark theme.
     Dark,
 }
+/// The logo on the rail and the window (docs/DEVIATIONS.md U12). Both are
+/// upstream drawings; the installed program's own icon is always `Drip`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum AppIcon {
+    /// Upstream's confirmed logo (`logo_b8.svg`): drips run down the bar.
+    #[default]
+    Drip,
+    /// Upstream's sixth draft (`logo_b6.svg`): bubbles rise off the bar.
+    Bubble,
+}
 /// Application-local settings, independent of an open project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -1792,6 +1804,9 @@ pub struct AppSettings {
     /// Application theme preference.
     #[serde(default)]
     pub theme: AppTheme,
+    /// Logo on the rail and the window.
+    #[serde(default)]
+    pub icon: AppIcon,
     /// Shows expert-only settings (U9).
     pub expert_display: bool,
     /// Recently opened project paths, newest first (at most 10).
@@ -1804,6 +1819,7 @@ impl Default for AppSettings {
         Self {
             language: "ko".into(),
             theme: AppTheme::System,
+            icon: AppIcon::Drip,
             expert_display: false,
             recent_projects: Vec::new(),
             last_window_size: None,

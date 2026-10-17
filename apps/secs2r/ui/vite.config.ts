@@ -35,7 +35,9 @@ export default defineConfig(({ mode }) => ({
   plugins: [react()],
   define: { __BUILD_INFO__: JSON.stringify(buildInfo) },
   clearScreen: false,
-  server: { host: "127.0.0.1", port: 1420, strictPort: true },
+  // The rail shows the upstream logo straight from the upstream tree
+  // (src/app/logo.ts), outside this package.
+  server: { host: "127.0.0.1", port: 1420, strictPort: true, fs: { allow: [import.meta.dirname, resolve(root, "src/secs/wizard/assets")] } },
   build: {
     target: "es2022",
     outDir: "dist",

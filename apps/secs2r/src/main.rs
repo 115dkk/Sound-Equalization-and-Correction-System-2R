@@ -14,9 +14,10 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 mod host;
+mod icon;
 
 use secs_service::{Deps, EventSink, LocalTime, NoEvents, Service};
-use secs_types::ipc::{Envelope, ErrorCode, IpcError, JobEvent};
+use secs_types::ipc::{Envelope, ErrorCode, IpcError, JobEvent, Request, Response};
 use tauri::{AppHandle, Manager, Webview, ipc::JavaScriptChannelId};
 
 #[derive(Clone)]
@@ -51,11 +52,17 @@ async fn secs_call(
     let events: Arc<dyn EventSink> = events
         .map(|id| Arc::new(EventChannel(id.channel_on(webview))) as Arc<dyn EventSink>)
         .unwrap_or_else(|| Arc::new(NoEvents));
-    tauri::async_runtime::spawn_blocking(move || handle(&app.state::<Service>(), request, events))
-        .await
-        .unwrap_or_else(|error| {
-            Envelope::Err(IpcError::new(ErrorCode::Internal, error.to_string()))
-        })
+    tauri::async_runtime::spawn_blocking(move || {
+        let envelope = handle(&app.state::<Service>(), request, events);
+        if let Envelope::Ok(response) = &envelope
+            && let Response::AppSettingsSet(settings) = response.as_ref()
+        {
+            icon::show(&app, settings.icon);
+        }
+        envelope
+    })
+    .await
+    .unwrap_or_else(|error| Envelope::Err(IpcError::new(ErrorCode::Internal, error.to_string())))
 }
 
 fn handle(
@@ -96,6 +103,14 @@ fn main() {
                 app_settings_path: Some(config_dir.join("settings.json")),
                 ..Deps::default()
             }));
+            app.manage(icon::Shown::default());
+            let service = app.state::<Service>();
+            if let Envelope::Ok(response) =
+                service.call(Request::AppSettingsGet, Arc::new(NoEvents))
+                && let Response::AppSettingsGet(settings) = *response
+            {
+                icon::show(app.handle(), settings.icon);
+            }
             Ok(())
         })
         // The screen may answer a close request with "save first?" and keep

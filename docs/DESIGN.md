@@ -28,6 +28,7 @@ SECS 2R의 사용자는 그래프와 숫자를 읽는 애호가와 설치 기사
 | `--surface-raised` | 팝오버, 메뉴, 대화상자, 토스트 | `oklch(0.995 0.002 200)` | `oklch(0.26 0.01 210)` |
 | `--surface-hover`, `--surface-pressed` | 줄과 조용한 단추의 hover, 눌림·비활성 바탕 | 0.935, 0.915 | 0.275, 0.3 |
 | `--rail-bg` | 단계 레일 | `oklch(0.948 0.006 200)` | `oklch(0.2 0.008 210)` |
+| `--image-outline` | 자기 타일이 있는 그림(로고)의 안쪽 1px 선 | `oklch(0 0 0 / 0.1)` | `oklch(1 0 0 / 0.1)` |
 | `--text` | 본문 | `oklch(0.25 0.015 200)` | `oklch(0.93 0.006 210)` |
 | `--text-muted` | 설명, 캡션, 축 글자 | `oklch(0.47 0.014 200)` | `oklch(0.75 0.012 210)` |
 | `--text-faint` | 비활성, 힌트 | `oklch(0.62 0.01 200)` | `oklch(0.56 0.01 210)` |
@@ -155,7 +156,7 @@ WCAG 대비는 추정하지 않고 계산했습니다(OKLCH → sRGB, 상대 휘
 
 ```text
 ┌ 레일 252px ───────────┬ 단계 ─────────────────────────────────────────┐
-│ SECS 2R  사전 출시판   │ 단계 제목  [상태 알약]          [주 동작]     │
+│ [L] SECS 2R 사전 출시판│ 단계 제목  [상태 알약]          [주 동작]     │
 │ [프로젝트 ▾ 파일 이름] │ 한 줄 목적 / 막힌 이유                         │
 │ ① 시스템          ✓   ├───────────────────────────────────────────────┤
 │ ② 연결·점검       ✓   │                                               │
@@ -169,6 +170,7 @@ WCAG 대비는 추정하지 않고 계산했습니다(OKLCH → sRGB, 상대 휘
 └───────────────────────┴───────────────────────────────────────────────┘
 ```
 
+- **로고**(그림의 [L]): 레일 맨 위, 이름과 판 줄 왼쪽의 36px 마크입니다. 업스트림 사이드바처럼 로고 자신의 짙은 타일이 두 테마 모두에서 색을 지니고, `--image-outline` 1px 선이 어두운 레일에서 타일 가장자리를 남깁니다. 그림은 업스트림 트리의 SVG를 그대로 읽고(`app/logo.ts`), 설정에서 고른 로고를 따릅니다(편차 U12). 32px 이하로 그릴 때는 업스트림의 작은 크기용 단순판을 씁니다.
 - **레일**: 다섯 단계와 상태(완료 ✓, 지금 단계, 막힘(자물쇠 아이콘, 그림의 ⓛ)과 짧은 이유, 건너뜀). 막힌 단계도 열어서 무엇이 필요한지 볼 수 있습니다. 건너뛴 단계(mdat 가져오기 경로의 연결·점검)는 열리지 않습니다. 막힌 이유의 전체 문장은 툴팁과 단계 머리에 있습니다.
 - **단계 머리**: 제목, 한 줄 목적, 주 동작 하나. 막혔으면 이유와 갈 곳을 적고 주 동작을 끕니다(`aria-describedby`로 이유를 잇습니다). 화면이 주 동작을 끌 수도 있습니다(`PrimaryAction.disabled`, 같은 화면의 다른 잡이 돌 때). 이때는 제목 옆 상태 알약이 이유이고 `aria-describedby`가 알약을 가리킵니다. 진행 중(`busy`)은 주 동작 자신의 잡에만 씁니다.
 - **곁 패널 자리**(`AppFrame aside`): 단계 머리와 작업 트레이 사이의 상자(`.app-body`)가 패널의 기준 상자입니다. 도움말 패널은 그 오른쪽에 놓여 주 동작과 트레이의 취소를 가리지 않고, 트레이 기록을 펴면 함께 줄어듭니다.
@@ -236,7 +238,7 @@ WCAG 대비는 추정하지 않고 계산했습니다(OKLCH → sRGB, 상대 휘
 
 | 자리 | id |
 |---|---|
-| 틀 | `frame`, `frame.rail`, `frame.rail.<step>`, `frame.header`, `frame.header.blocked`, `frame.content`, `frame.status`, `frame.status.<config\|positions\|calibration\|path\|file>` |
+| 틀 | `frame`, `frame.logo`, `frame.rail`, `frame.rail.<step>`, `frame.header`, `frame.header.blocked`, `frame.content`, `frame.status`, `frame.status.<config\|positions\|calibration\|path\|file>` |
 | 메뉴·설정 | `frame.project`, `frame.project.<new\|open\|save\|save_as>`, `frame.settings`, `frame.settings.<language\|theme\|expert>`, `frame.help` |
 | 주 동작 | 화면이 정합니다(예: `measure.position.start`). 갤러리는 `<step>.primary` |
 | 작업 트레이 | `jobs.tray`, `jobs.job.<kind>`, `jobs.cancel.<kind>`, `jobs.history`, `jobs.history.toggle`, `jobs.history.clear` |
