@@ -722,6 +722,7 @@ fn app_settings_are_versioned_bounded_and_capped() {
     let settings = AppSettings {
         language: "en".into(),
         theme: AppTheme::Dark,
+        icon: AppIcon::Civilian,
         expert_display: true,
         recent_projects: (0..12).map(|index| format!("{index}.secs")).collect(),
         last_window_size: Some((1280, 720)),
@@ -755,6 +756,7 @@ fn app_settings_are_versioned_bounded_and_capped() {
         panic!()
     };
     assert_eq!(old_settings.theme, AppTheme::System);
+    assert_eq!(old_settings.icon, AppIcon::Expert);
 
     fs::write(&path, b"not json").unwrap();
     let broken = Service::new(Deps {

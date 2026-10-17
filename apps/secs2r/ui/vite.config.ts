@@ -35,7 +35,9 @@ export default defineConfig(({ mode }) => ({
   plugins: [react()],
   define: { __BUILD_INFO__: JSON.stringify(buildInfo) },
   clearScreen: false,
-  server: { host: "127.0.0.1", port: 1420, strictPort: true },
+  // The rail reads its logos from outside this package (src/app/logo.ts):
+  // upstream's from the upstream tree, SECS 2R's own from the icons folder.
+  server: { host: "127.0.0.1", port: 1420, strictPort: true, fs: { allow: [import.meta.dirname, resolve(root, "src/secs/wizard/assets"), resolve(import.meta.dirname, "../icons/logo")] } },
   build: {
     target: "es2022",
     outDir: "dist",

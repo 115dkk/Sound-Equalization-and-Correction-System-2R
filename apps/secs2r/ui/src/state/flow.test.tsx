@@ -2,6 +2,7 @@
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeAll, expect, it } from "vitest";
 import { App } from "../App";
+import { LOGOS } from "../app/logo";
 import { createMockService } from "../ipc/mock";
 import { installFakeCanvas } from "../test/canvas";
 
@@ -60,3 +61,23 @@ it("walks a non-tutorial sample project through mock measurements, calibration a
   // The whole flow renders the App through four steps; on a loaded runner it
   // can exceed the default 5 s, so it gets a wider bound rather than a retry.
 }, 30_000);
+
+it("keeps the chosen logo in the app settings and shows it again on the next start", async () => {
+  const mock = createMockService({ project: null, tickMs: 0 });
+  const logo = () => ui("frame.logo").getAttribute("src");
+  const first = render(<App ipc={mock} />);
+  try {
+    await waitFor(() => expect(document.querySelector('[data-ui="frame.logo"]')).not.toBeNull());
+    expect(logo()).toBe(LOGOS.expert);
+    fireEvent.click(ui("frame.settings"));
+    expect(ui("frame.settings.logo.expert").getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(ui("frame.settings.logo.civilian"));
+    await waitFor(() => expect(mock.calls.some((r) => r.method === "app_settings_set" && r.params.settings.icon === "civilian")).toBe(true));
+    expect(logo()).toBe(LOGOS.civilian);
+  } finally { first.unmount(); }
+  const second = render(<App ipc={mock} />);
+  try {
+    await waitFor(() => expect(document.querySelector('[data-ui="frame.logo"]')).not.toBeNull());
+    expect(logo()).toBe(LOGOS.civilian);
+  } finally { second.unmount(); mock.dispose(); }
+});

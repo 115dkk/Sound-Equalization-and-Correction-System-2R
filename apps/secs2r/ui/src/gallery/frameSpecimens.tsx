@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AppFrame } from "../app/AppFrame";
 import { JobTray } from "../app/jobs/JobTray";
 import { initialJobs, jobsReducer, type JobsAction, type JobsState } from "../app/jobs/jobStore";
+import { LOGOS, SMALL_LOGOS } from "../app/logo";
 import { useJobs, type JobsApi } from "../app/jobs/useJobs";
 import { ProjectMenu, SettingsButton } from "../app/menus";
 import { STEP_PRIMARY, type FrameModel, type ProjectSummary, type StepId } from "../app/model";
@@ -410,4 +411,21 @@ export const trayAndMenuSpecimens: SpecimenDef[] = [
       </div>
     ),
   },
+  { id: "frame.logos", title: "Logos · the program icon size, the rail mark and the settings thumbnail", width: 520, render: () => <LogoSheet /> },
 ];
+
+function LogoSheet() {
+  const t = useT();
+  return (
+    <div className="gal-logos">
+      {(["expert", "civilian"] as const).map((icon) => (
+        <figure key={icon} className="gal-logos__row">
+          <img src={LOGOS[icon]} width={128} height={128} alt="" />
+          <img src={LOGOS[icon]} width={36} height={36} alt="" />
+          <img src={SMALL_LOGOS[icon]} width={20} height={20} alt="" />
+          <figcaption>{t(`frame.settings.logo.${icon}`)}</figcaption>
+        </figure>
+      ))}
+    </div>
+  );
+}

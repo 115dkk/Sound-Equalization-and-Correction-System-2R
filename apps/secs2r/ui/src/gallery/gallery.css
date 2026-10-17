@@ -192,6 +192,30 @@ html[data-gallery-page] body {
   color: var(--text-muted);
 }
 
+.gal-logos {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.gal-logos__row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-4);
+  margin: 0;
+}
+
+.gal-logos__row img {
+  border-radius: 19%;
+  outline: var(--border-w) solid var(--image-outline);
+  outline-offset: calc(-1 * var(--border-w));
+}
+
+.gal-logos__row figcaption {
+  color: var(--text-muted);
+  font-size: var(--text-ui);
+}
+
 .gal-thumbs {
   display: flex;
   gap: var(--space-3);

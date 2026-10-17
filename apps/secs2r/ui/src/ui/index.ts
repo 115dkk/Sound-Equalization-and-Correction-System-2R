@@ -8,7 +8,7 @@ export { Card, Section, Advanced } from "./Card";
 export { StatusPill, type PillTone } from "./StatusPill";
 export { Field } from "./Field";
 export { NumberField, checkNumber, stepNumber, type NumberFieldProps } from "./NumberField";
-export { Select, Stepper, Toggle, Segmented, type Option } from "./controls";
+export { Select, Stepper, Toggle, Segmented, type Option, type SegmentedOption } from "./controls";
 export { DataTable, type Column, type RowGroup } from "./Table";
 export { LevelMeter, ProgressBar, levelState, METER_BAND } from "./meters";
 export { ToastProvider, ToastView, useToast, type ToastInput } from "./Toast";

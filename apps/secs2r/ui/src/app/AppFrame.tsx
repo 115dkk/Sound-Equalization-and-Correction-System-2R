@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 import { useT } from "../i18n/react";
 import { Icon } from "../ui/Icon";
 import { StatusPill } from "../ui/StatusPill";
+import { DEFAULT_LOGO, LOGOS } from "./logo";
 import { ProjectMenu, SettingsButton, type ProjectActions } from "./menus";
 import { STEPS, neighbourStep, type FrameModel, type StepId } from "./model";
 import { usePrefs } from "./prefs";
@@ -79,13 +80,16 @@ export function AppFrame({
       <aside className="app-rail">
         <div className="app-rail__top">
           <div className="app-rail__brand">
+            <img className="app-rail__mark" src={LOGOS[prefs.icon ?? DEFAULT_LOGO]} alt="" width={36} height={36} draggable={false} data-ui="frame.logo" />
             <span className="app-rail__name">SECS 2R</span>
-            {version && (
-              <span className="app-rail__version tabular">
-                {t(version.prerelease ? "app.prerelease" : "app.release", { version: version.version })}
-              </span>
-            )}
-            {prefs.accent === "tutorial" && <StatusPill className="app-rail__mode">{t("frame.tutorial")}</StatusPill>}
+            <span className="app-rail__meta">
+              {version && (
+                <span className="app-rail__version tabular">
+                  {t(version.prerelease ? "app.prerelease" : "app.release", { version: version.version })}
+                </span>
+              )}
+              {prefs.accent === "tutorial" && <StatusPill className="app-rail__mode">{t("frame.tutorial")}</StatusPill>}
+            </span>
           </div>
           <ProjectMenu name={model.project.fileName} dirty={model.project.dirty} actions={projectActions} />
         </div>

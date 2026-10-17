@@ -74,6 +74,8 @@ NOT_SHIPPED = (
     "apps/secs2r/ui/gallery.html",
     "apps/secs2r/ui/src/gallery/*",
     "apps/secs2r/ui/scripts/*",
+    # Makes the icons next to it; the icons ship, the script does not.
+    "apps/secs2r/icons/*.py",
 )
 NOT_SHIPPED_DIRS = ("tests", "benches", "fuzz", "node_modules")
 

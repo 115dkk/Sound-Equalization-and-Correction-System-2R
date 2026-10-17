@@ -8,6 +8,8 @@ import { Icon } from "./Icon";
 /* ── Select ─────────────────────────────────────────────────────────────── */
 
 export type Option<V extends string> = { value: V; label: string; disabled?: boolean };
+/** A segment may show a small picture before its label (the logo choice in Settings). */
+export type SegmentedOption<V extends string> = Option<V> & { media?: ReactNode };
 
 export function Select<V extends string>({
   id,
@@ -199,6 +201,7 @@ export function Segmented<V extends string>({
   value,
   options,
   onChange,
+  hint,
   hideLabel,
   size = "md",
   "data-autofocus": autofocus,
@@ -206,8 +209,9 @@ export function Segmented<V extends string>({
   id: string;
   label: ReactNode;
   value: V;
-  options: readonly Option<V>[];
+  options: readonly SegmentedOption<V>[];
   onChange: (value: V) => void;
+  hint?: ReactNode;
   /** Keep the label for screen readers only (the context already names it). */
   hideLabel?: boolean;
   size?: "md" | "sm";
@@ -235,6 +239,7 @@ export function Segmented<V extends string>({
         data-ui={id}
         role="radiogroup"
         aria-labelledby={labelId}
+        aria-describedby={hint ? `${id}-hint` : undefined}
         className={["ui-segmented", size === "sm" && "ui-segmented--sm"].filter(Boolean).join(" ")}
         onKeyDown={(event) => {
           if (event.key === "ArrowRight" || event.key === "ArrowDown") {
@@ -261,14 +266,20 @@ export function Segmented<V extends string>({
               tabIndex={selected ? 0 : -1}
               data-autofocus={(autofocus && selected) || undefined}
               disabled={option.disabled}
-              className="ui-segmented__option"
+              className={["ui-segmented__option", option.media !== undefined && "ui-segmented__option--media"].filter(Boolean).join(" ")}
               onClick={() => onChange(option.value)}
             >
+              {option.media}
               {option.label}
             </button>
           );
         })}
       </div>
+      {hint && (
+        <p className="ui-field__hint" id={`${id}-hint`}>
+          {hint}
+        </p>
+      )}
     </div>
   );
 }

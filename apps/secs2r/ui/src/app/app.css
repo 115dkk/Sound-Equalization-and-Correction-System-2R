@@ -43,12 +43,33 @@
   overflow-y: auto;
 }
 
+/* Upstream's sidebar: the logo, then the name. The logo spans the name and
+   the version line beside it. Its own dark tile carries its colours on both
+   themes; the image hairline keeps the tile's edge on the dark rail. */
 .app-rail__brand {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0 var(--space-2-5);
+  padding: var(--space-1) var(--space-2) 0;
+}
+
+.app-rail__mark {
+  grid-row: span 2;
+  width: 36px;
+  height: 36px;
+  border-radius: 7px;
+  outline: var(--border-w) solid var(--image-outline);
+  outline-offset: calc(-1 * var(--border-w));
+  user-select: none;
+}
+
+.app-rail__meta {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   gap: var(--space-1) var(--space-2);
-  padding: var(--space-1) var(--space-2) 0;
+  min-width: 0;
 }
 
 .app-rail__name {
@@ -382,6 +403,14 @@
 
 .settings__title {
   font-size: var(--text-title-s);
+}
+
+.settings__logo {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  outline: var(--border-w) solid var(--image-outline);
+  outline-offset: calc(-1 * var(--border-w));
 }
 
 /* ── Main column ───────────────────────────────────────────────────────── */

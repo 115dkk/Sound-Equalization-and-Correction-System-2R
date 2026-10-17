@@ -131,6 +131,8 @@
   --border: oklch(0.88 0.006 200);
   --border-subtle: oklch(0.92 0.005 200);
   --border-control: oklch(0.62 0.01 200);
+  /* A hairline inside pictures that carry their own tile (the rail logo). */
+  --image-outline: oklch(0 0 0 / 0.1);
 
   --accent-l: 0.5;
   --accent-hover-l: 0.45;
@@ -229,6 +231,7 @@
     --border: oklch(0.33 0.01 210);
     --border-subtle: oklch(0.29 0.009 210);
     --border-control: oklch(0.54 0.012 210);
+    --image-outline: oklch(1 0 0 / 0.1);
 
     --accent-l: 0.76;
     --accent-hover-l: 0.81;
@@ -324,6 +327,7 @@
   --border: oklch(0.33 0.01 210);
   --border-subtle: oklch(0.29 0.009 210);
   --border-control: oklch(0.54 0.012 210);
+  --image-outline: oklch(1 0 0 / 0.1);
 
   --accent-l: 0.76;
   --accent-hover-l: 0.81;

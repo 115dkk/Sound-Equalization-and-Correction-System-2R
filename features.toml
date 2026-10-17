@@ -174,6 +174,19 @@ tests = [
   "secs2r::missing_request_argument_is_an_envelope",
 ]
 
+[[feature]]
+id = "app.logo"
+kind = "app"
+milestone = "M5"
+status = "implemented"
+tests = [
+  "secs-service::app_settings_are_versioned_bounded_and_capped",
+  "secs2r::windows_icon_size_follows_the_display_scale",
+  "secs2r::civilian_pictures_are_square_and_match_their_names",
+]
+upstream = "wizard/branding.py, window.py _sidebar, SECS.spec icon="
+note = "upstream's confirmed logo (logo_b8, 'expert mode') is the program icon and the default rail mark; the app settings may pick SECS 2R's own 'civilian mode' logo (apps/secs2r/icons/logo) for the rail and the window icon (docs/DEVIATIONS.md U12). apps/secs2r/ui src/state/flow.test.tsx and src/app/logo.test.ts pin the rail and the choice."
+
 # ---- Oracle (M1) ----
 
 [[feature]]

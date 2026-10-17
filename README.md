@@ -1,5 +1,7 @@
 # SECS 2R
 
+<img src="apps/secs2r/icons/128x128@2x.png" alt="SECS 2R 로고" width="112" align="right">
+
 SECS 2R은 룸 보정 설계 프로그램 [SECS 2](https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2)를 러스트 코어와 Tauri 화면으로 다시 만드는 포크입니다. 스피커 응답을 측정하거나 REW 측정을 가져와 룸 보정(RC), BA(Bass Alignment), 저역의 늦은 울림을 줄이는 MIMO 보정을 설계하고, CamillaDSP·Equalizer APO 설정, 필터 값 텍스트, REW mdat로 내보냅니다.
 
 ## 지금 상태

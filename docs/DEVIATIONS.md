@@ -71,6 +71,7 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 | U9 | 초고지연 모드가 설명 줄을 3초 안에 다섯 번 눌러야 열립니다. | '전문가 표시'에서 고릅니다. | `step_calibration.py:1111-1145` | 계획(M5) |
 | U10 | 새 프로젝트가 측정 방법을 저장하지 않아 서비스의 옛 프로젝트 호환 기본값(`native`)으로 즉시 측정할 수 있습니다. | 새 프로젝트만 `devices.method = "none"`을 저장해 장치를 고르기 전 측정을 막습니다. 방법이 없는 기존 프로젝트는 계속 `native`로 읽습니다. `secs-service::new_projects_store_none_measurement_method`가 새 프로젝트의 명시값을 지킵니다. | `wizard/step1_devices.py`, `wizard/model.py` | 적용 |
 | U11 | 업스트림은 화면 테마 하나만 제공합니다. | 시스템 설정, 밝게, 어둡게 가운데 고른 테마를 앱 설정에 저장합니다. `secs-service::app_settings_are_versioned_bounded_and_capped`가 왕복과 이전 설정 파일의 시스템 기본값을 확인합니다. | `wizard/` 화면 전체 | 적용 |
+| U12 | 로고는 확정안(`logo_b8.svg`) 하나이고 사이드바 마크, 창·작업 표시줄 아이콘, exe 아이콘에 씁니다. | 실행 파일·설치본 아이콘과 기본 로고는 같은 확정안('전문가 모드')입니다. 앱 설정에서 SECS 2R이 따로 그린 '킹반인 모드' 로고(`apps/secs2r/icons/logo/civilian.svg`: 측정 응답과 목표선 위의 보정 응답, PEQ 손잡이)를 고르면 레일 로고와 창 아이콘만 바뀝니다. macOS의 Dock 아이콘과 설치한 파일·바로 가기의 아이콘은 그대로입니다. `secs-service::app_settings_are_versioned_bounded_and_capped`가 저장과 이전 설정 파일의 기본값을, `secs2r::{windows_icon_size_follows_the_display_scale,civilian_pictures_are_square_and_match_their_names}`가 창 아이콘 그림을, 화면의 `src/state/flow.test.tsx`가 고른 로고가 다시 켠 뒤에도 남는지 확인합니다. | `wizard/branding.py`, `window.py _sidebar`, `SECS.spec icon=` | 적용 |
 
 ## 보안
 
