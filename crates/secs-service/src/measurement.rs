@@ -152,6 +152,7 @@ fn measurer(
         "mock" => Ok(Box::new((deps.mock_measurer)())),
         "rew" => Ok(Box::new(measure::RewMeasurer::new(
             secs_rew::RewClient::new(Transport((deps.rew_transport)())),
+            deps.unix_ms.clone(),
         ))),
         _ => Err(input("method", "unknown measurement method")),
     }
@@ -542,6 +543,7 @@ impl Service {
                                 snr_db: None,
                                 uuid: Some(format!("sample-{role}-{position}")),
                                 source: Some(source.into()),
+                                source_info: None,
                             },
                             Some(&roles),
                         )

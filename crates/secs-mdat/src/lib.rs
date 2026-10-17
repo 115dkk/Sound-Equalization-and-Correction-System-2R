@@ -16,7 +16,7 @@ pub mod source_info;
 pub use builder::{MeasurementInput, build};
 pub use ir::{LoadedMdatProject, MdatIRProvider, MeasurementInfo, extract_ir, load_mdat_project};
 pub use models::*;
-pub use source_info::{Boxed, CalFile, CalInfo, SourceDate, SourceInfo};
+pub use source_info::{Boxed, CalFile, CalInfo, SourceDate, SourceInfo, from_rew_measurement};
 
 pub const TEMPLATE: &[u8] = include_bytes!("../../../src/secs/rew_mdat/template_1.mdat");
 pub const REW_MDAT_IR_SCALE: f64 = 0.01;

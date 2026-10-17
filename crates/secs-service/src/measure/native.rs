@@ -175,6 +175,7 @@ impl Measurer for NativeMeasurer {
                     snr_db: Some(r.snr_db),
                     uuid: None,
                     source: None,
+                    source_info: None,
                 }
             })
             .collect())

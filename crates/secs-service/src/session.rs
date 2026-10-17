@@ -3,7 +3,10 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use secs_project::{DspProfile, MeasurementStore, Project, PyJson, measured_positions};
+use secs_project::{
+    DspProfile, MeasurementStore, Project, PyJson, load_project_sources, measured_positions,
+    plan_from_project,
+};
 use secs_types::ipc::{MigrationWarning, ProjectInfo};
 
 use crate::{ServiceError, UuidSource, lock};
@@ -140,7 +143,9 @@ impl Session {
             open.cached = None;
         }
         open.store.save()?;
-        write_side_mdat(open, uuid, now_ms)?;
+        if let Err(error) = write_side_mdat(open, uuid, now_ms) {
+            eprintln!("곁 mdat을 저장하지 못했습니다: {error}");
+        }
         open.dirty = false;
         self.info()
     }
@@ -238,19 +243,35 @@ fn write_side_mdat(
     uuid: &UuidSource,
     now_ms: i64,
 ) -> Result<(), ServiceError> {
-    let records = open.store.records();
+    let mut records = open.store.records();
+    records.sort_by_key(|record| record.pos);
+    let project = open.store.project().clone();
+    let plan_roles = plan_from_project(&project, std::iter::empty()).roles;
+    let sources = load_project_sources(&project, &open.path);
     let mut inputs = Vec::new();
     for record in records {
-        for role in record.ir.keys() {
-            let (samples, sample_rate) = open.store.ir_of(role, record.pos)?;
+        let mut roles = record.ir.keys().cloned().collect::<Vec<_>>();
+        roles.sort_by_key(|role| {
+            plan_roles
+                .iter()
+                .position(|planned| planned == role)
+                .unwrap_or(plan_roles.len())
+        });
+        for role in roles {
+            let (samples, sample_rate) = open.store.ir_of(&role, record.pos)?;
+            let source_info = u32::try_from(record.pos)
+                .ok()
+                .and_then(|pos| sources.get(&pos))
+                .and_then(|by_role| by_role.get(&role))
+                .cloned();
             inputs.push(secs_mdat::MeasurementInput {
-                title: format!("{role} P{}", record.pos),
-                notes: String::new(),
+                title: format!("{role}_P{}", record.pos),
+                notes: format!("SECS · 위치 {} · 원 측정", record.pos),
                 sample_rate_hz: sample_rate,
                 samples: samples.into_iter().map(f64::from).collect(),
-                start_time_s: record.t0.get(role).copied().unwrap_or(0.0),
-                spl_offset_db: record.spl_offset.get(role).copied(),
-                source_info: None,
+                start_time_s: record.t0.get(&role).copied().unwrap_or(0.0),
+                spl_offset_db: record.spl_offset.get(&role).copied(),
+                source_info,
                 computed: false,
             });
         }
@@ -354,6 +375,7 @@ fn rewrite_ir_directory(project: &mut Project, old: &Path, new: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use secs_mdat::{Boxed, SourceDate, SourceInfo};
     use secs_project::MeasurementResult;
 
     fn root(name: &str) -> PathBuf {
@@ -373,7 +395,7 @@ mod tests {
         assert_eq!(created.path, source.to_string_lossy());
         assert_eq!(created.sub_count, 1);
 
-        let roles: Vec<_> = session
+        let mut roles: Vec<_> = session
             .require()
             .unwrap()
             .store
@@ -383,26 +405,36 @@ mod tests {
             .iter()
             .map(|speaker| speaker.role.clone())
             .collect();
+        roles.push("Z".into());
         let open = session.require_mut().unwrap();
         open.store.start_position(1);
-        for role in &roles {
-            open.store
-                .record(
-                    MeasurementResult {
-                        role: role.clone(),
-                        pos: 1,
-                        ir: vec![0.0, 1.0, 0.0],
-                        sample_rate: 48_000,
-                        t0_s: 0.0,
-                        spl_db: None,
-                        spl_offset_db: None,
-                        snr_db: Some(30.0),
-                        uuid: Some(format!("{role}-1")),
-                        source: Some("test".into()),
-                    },
-                    Some(&roles),
-                )
-                .unwrap();
+        for pos in [2, 1] {
+            open.store.start_position(pos);
+            for role in roles.iter().rev() {
+                open.store
+                    .record(
+                        MeasurementResult {
+                            role: role.clone(),
+                            pos,
+                            ir: vec![0.0, 1.0, 0.0],
+                            sample_rate: 48_000,
+                            t0_s: -(pos as f64) / 1000.0,
+                            spl_db: None,
+                            spl_offset_db: (role == "L").then_some(116.25),
+                            snr_db: Some(30.0),
+                            uuid: Some(format!("{role}-{pos}")),
+                            source: Some("test".into()),
+                            source_info: (pos == 1 && role == "L").then(|| SourceInfo {
+                                strings: vec![("outputName".into(), "장치, out 1".into())],
+                                boxed: vec![("usesEmbeddedCalData".into(), Boxed::Boolean(true))],
+                                date: Some(SourceDate::Int(1_704_164_645_000)),
+                                ..SourceInfo::default()
+                            }),
+                        },
+                        Some(&roles),
+                    )
+                    .unwrap();
+            }
         }
         open.dirty = true;
         let uuid = crate::Deps::default().uuid;
@@ -412,11 +444,52 @@ mod tests {
         assert!(target.exists());
         assert!(target.with_extension("irs").is_dir());
         assert!(target.with_extension("mdat").exists());
+        assert!(target.with_extension("irs").join("L_P1.src.json").exists());
+        assert!(!target.with_extension("irs").join("R_P1.src.json").exists());
+        let side = secs_mdat::load_mdat_project(
+            &fs::read(target.with_extension("mdat")).unwrap(),
+            &secs_jos::Limits::default(),
+        )
+        .unwrap();
+        let titles = side
+            .measurements
+            .iter()
+            .map(|measurement| measurement.title.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            titles,
+            [
+                "L_P1", "R_P1", "SW1_P1", "Z_P1", "L_P2", "R_P2", "SW1_P2", "Z_P2"
+            ]
+        );
+        assert_eq!(side.measurements[0].start_time_s, -0.001);
+        assert_eq!(
+            side.mdat.measurements[0].impulse_response.spl_offset_db,
+            116.25
+        );
+        assert_eq!(
+            side.measurements[0]
+                .source_info
+                .strings
+                .iter()
+                .find(|(key, _)| key == "outputName"),
+            Some(&("outputName".into(), "장치, out 1".into()))
+        );
+        assert_eq!(
+            side.measurements[1]
+                .source_info
+                .strings
+                .iter()
+                .find(|(key, _)| key == "outputName")
+                .map(|(_, value)| value.as_str()),
+            Some("")
+        );
 
         let reopened = session.open(target.clone()).unwrap();
-        assert_eq!(reopened.positions, vec![1]);
+        assert_eq!(reopened.positions, vec![1, 2]);
 
         session.require_mut().unwrap().store.clear_position(1);
+        session.require_mut().unwrap().store.clear_position(2);
         session.save(None, &uuid, 0).unwrap();
         assert!(!target.with_extension("mdat").exists());
         fs::remove_dir_all(root).unwrap();

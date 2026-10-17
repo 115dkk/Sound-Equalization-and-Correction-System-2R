@@ -77,6 +77,7 @@ impl Service {
             )
         });
         let spl_offset = secs_project::project_spl_offset(project);
+        let sources = secs_project::load_project_sources(project, &open.path);
         let uuid = self.deps.uuid.clone();
         let session_for_design = self.session.clone();
         let memory = self.deps.memory.available_bytes();
@@ -276,7 +277,6 @@ impl Service {
                         config: &config,
                         settings: &settings,
                     };
-                    // P50: 보정 전후 mdat의 원 측정 환경(.src.json).
                     let mut uuid = lock(&uuid);
                     let destination = if kind == ExportKind::StagedMdat {
                         secs_export::export_mdat_with_mimo_using(
@@ -292,7 +292,7 @@ impl Service {
                             &run,
                             folder,
                             mimo.as_ref(),
-                            None,
+                            Some(&sources),
                             spl_offset,
                             now_ms,
                             uuid.as_mut(),

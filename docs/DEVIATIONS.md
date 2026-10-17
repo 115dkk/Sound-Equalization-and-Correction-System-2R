@@ -25,6 +25,7 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 | D13 | FIR MIMO 서포트(167 ms)에 공통 지연이 없어 표준 모드에서 쓸 수 있는 구간이 약 50 ms, 초고지연에서는 거의 없습니다. | 실험으로 확인한 뒤 공통 지연을 더합니다. | `export_camilladsp.py:142, 295-299` | 보류 |
 | D17 | 계산 취소가 결과만 버리고 계산 스레드는 계속 돕니다. 다시 누르면 계산이 겹치고, 다시 계산하면 MIMO 결과가 사라집니다. 프로세스 종료는 비공개 속성에 기댑니다. | 협조적 취소, 무리마다 잡 하나, 이전 결과 보존과 서명 기반 낡음 표시. `secs-service::{jobs_push_ordered_events_and_exclude_the_same_group,cancellation_finishes_within_one_second,cancelled_calibration_preserves_previous_results,room_dba_mimo_runs_and_becomes_stale_after_recalibration}`가 잡 경계, 취소, 이전 결과 보존, MIMO 낡음을 지킵니다. | `wizard/step_calibration.py:1836-1846`, `mimo_iir.py:180-195` | 적용 |
 | D37 | 보정 결과의 낡음을 정하는 측정 서명이 위치, 역할, t0만 봅니다. 같은 위치를 다시 재어 t0가 같으면(자체·모의 측정, 같은 시간 원점의 mdat) 파형이 바뀌어도 결과가 최신으로 보입니다. | 서명에 측정마다의 UUID를 더하고, 자체·모의 측정에도 UUID를 매깁니다. `secs-service::measuring_another_position_marks_calibration_stale`가 같은 위치 재측정과 다른 위치 측정이 모두 결과를 낡게 하는지 확인합니다. | `calibration.py measurement_signature` | 적용 |
+| D38 | REW 캘 파일의 `Sens Factor`가 숫자로 바뀌지 않으면 환경 수집 예외가 측정 전체를 실패시킵니다. | 측정은 남기고 그 측정의 환경만 생략합니다. | `rew_mdat/source_info.py from_rew_measurement`, `rewapi/rew.py _source_info` | 적용 |
 | D22 | 엔진 값 15개 안팎을 환경 변수로만 바꿀 수 있고, 워커가 호출마다 다시 읽습니다. | 명시적 튜닝 값, 화면의 전문가 표시. | `correction_engine.py`, `mimo.py`, `mimo_iir.py` 머리 | 계획 |
 | D24 | mdat 내보내기의 시간 원점이 `final` 응답과 시프트만큼 어긋납니다. | 신호 사슬 값 하나에서 시뮬레이터와 내보내기가 같은 원점을 씁니다. | `calibration.py:1101, 1321` | 계획 |
 | D27 | 퇴화한 IR에서 `long_spectra`가 0으로 나눕니다. | 측정 모듈이 입력을 확인합니다. | `correction_engine.py:558-559` | 계획 |
@@ -43,6 +44,7 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 | F7 | mdat 파서의 상한이 배열·문자열 하나씩만 셉니다. 같은 배열·서명을 참조로 여러 번 가리키거나 상위 클래스가 순환하면 메모리를 계속 씁니다. | 해석한 메모리 전체를 `max_file_bytes` 예산으로 세고, 상위 클래스 순환을 거부합니다. 정상 파일과 오라클의 오류 사례는 그대로입니다. `secs-jos::shared_signature_copies_obey_aggregate_allocation_budget`, `secs-jos::declared_array_sizes_do_not_allocate_before_truncation_checks`. | `rew_mdat/serialization/parser.py`, `rew_mdat/limits.py` | 적용 |
 | F8 | 파이썬 문자열은 짝 없는 UTF-16 서러게이트를 담습니다. | 러스트 문자열에는 담을 수 없어 글자 API는 U+FFFD로 보여 주고, 해석한 스트림은 원래 바이트를 지녀 고치지 않은 글자는 그대로 왕복합니다. UTF-16 단위 API로 잃지 않고 읽고 쓸 수 있습니다. `secs-jos::utf8_and_lone_surrogates`. | `rew_mdat/serialization/modified_utf8.py` | 적용 |
 | F9 | `.secs`의 `\uD800` 같은 짝 없는 서러게이트 이스케이프를 읽어 파이썬 문자열에 그대로 담습니다(저장할 때 UTF-8 인코딩에서 실패합니다). | 러스트 문자열에는 담을 수 없어 읽을 때 `ProjectError`로 거부합니다. SECS 2 자신이 이런 파일을 저장할 수 없으므로 손으로 고친 파일에서만 생깁니다. `secs-project::pyjson_regressions`. | `model.py:934-937` | 적용 |
+| F10 | 손으로 고친 `.src.json`의 부분 변환 오류가 `apply`에서 내보내기 전체를 실패시키거나 Java `Integer` 범위를 넘는 값과 유한하지 않은 날짜를 뒤 단계까지 넘깁니다. | 잘못된 부분만 생략해 내보내기를 계속하며, i32 범위 밖 `Integer`와 NaN·무한대 날짜도 생략합니다. `secs-project::measurement_source_tolerates_partial_values_and_rejects_unsafe_narrowing`. | `rew_mdat/source_info.py apply` | 적용 |
 
 ## REW
 

@@ -92,6 +92,7 @@ pub fn write_with(
                         snr_db: None,
                         uuid: Some(format!("{name}-{position}-{role}")),
                         source: Some("oracle".into()),
+                        source_info: None,
                     },
                     Some(&roles),
                 )

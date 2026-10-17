@@ -686,6 +686,24 @@ fn mdat_scan_and_import_match_direct_oracle_bytes() {
     };
     succeeded(&events, job.job);
     assert_eq!(fs::read(&path).unwrap(), expected);
+    for (role, notes) in [("L", "global SPL"), ("R", "item SPL")] {
+        let direct_source = root
+            .join("direct/import.irs")
+            .join(format!("{role}_P1.src.json"));
+        let service_source = path
+            .with_extension("irs")
+            .join(format!("{role}_P1.src.json"));
+        assert!(service_source.is_file());
+        assert_eq!(
+            fs::read(service_source).unwrap(),
+            fs::read(direct_source).unwrap()
+        );
+        let info =
+            secs_project::load_source(&path.with_extension("irs").join(format!("{role}_P1.wav")))
+                .unwrap();
+        assert_eq!(info.notes.as_deref(), Some(notes));
+        assert_eq!(info.format.as_deref(), Some("SECS2 measurement"));
+    }
     let problems =
         secs_service::mdat_import::problem_notices(&[Some("L".into()), Some("L".into())], &[1, 1]);
     assert_eq!(problems[0].code, "mdat_duplicate_roles");
@@ -760,6 +778,11 @@ fn rew_script() -> Vec<secs_rew::RecordedExchange> {
                 &format!("/measurements/{role}"),
                 json!({"splOffsetdB":116.12}),
                 5,
+            ),
+            get(
+                "/audio/input-cal",
+                json!({"separateCalFileForEachInput":false,"calDataAllInputs":{"calFilePath":""}}),
+                3,
             ),
         ]);
     }

@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
-use secs_project::{MeasurementStore, Project, PyJson};
+use secs_mdat::{Boxed, SourceDate};
+use secs_project::{MeasurementStore, Project, PyJson, load_source, save_source, source_path};
 use secs_service::mdat_import::*;
 use serde_json::{Value, json};
 use std::{collections::BTreeSet, path::PathBuf};
@@ -94,7 +95,58 @@ fn service_mdat_every_oracle_value_and_imported_secs_bytes() {
                 json!(problems(&optional(&input["assignment"]), &positions)),
                 *out
             );
-        } else {
+        } else if name == "source_cases" {
+            let directory =
+                root().join(format!("target/service-mdat-source-{}", std::process::id()));
+            std::fs::create_dir_all(&directory).unwrap();
+            let wav = directory.join("L_P1.wav");
+            for case in ["rew", "missing_cal", "partial"] {
+                std::fs::write(source_path(&wav), out["json"][case].as_str().unwrap()).unwrap();
+                let info = load_source(&wav).unwrap();
+                match case {
+                    "rew" => {
+                        assert_eq!(
+                            info.strings,
+                            vec![
+                                ("outputName".into(), "출력 장치, out 1".into()),
+                                ("sourceFileName".into(), "입력 장치".into()),
+                            ]
+                        );
+                        assert_eq!(info.date, Some(SourceDate::Int(1_704_164_645_000)));
+                        assert_eq!(
+                            info.boxed,
+                            vec![("usesEmbeddedCalData".into(), Boxed::Boolean(true))]
+                        );
+                        let cal = &info.cal[0].1;
+                        assert_eq!(cal.source_name, "마이크.cal");
+                        assert_eq!(cal.freq, Some(vec![20.0, 1000.0]));
+                        assert_eq!(cal.gain, Some(vec![-1.25, 0.25]));
+                        assert_eq!(cal.phase, Some(vec![0.5, 0.0]));
+                    }
+                    "missing_cal" => {
+                        let cal = &info.cal[0].1;
+                        assert_eq!(cal.source_name, "없음.cal");
+                        assert_eq!(cal.freq, None);
+                        assert_eq!(cal.gain, None);
+                        assert_eq!(cal.phase, None);
+                    }
+                    "partial" => {
+                        assert_eq!(info.strings, vec![("outputName".into(), "7".into())]);
+                        assert_eq!(info.boxed, vec![("inputVolume".into(), Boxed::Double(1.5))]);
+                        assert_eq!(info.date, None);
+                        assert_eq!(info.notes, None);
+                        assert_eq!(info.format.as_deref(), Some("True"));
+                        let cal = &info.cal[0].1;
+                        assert_eq!(cal.freq, None);
+                        assert_eq!(cal.gain, None);
+                        assert_eq!(cal.boxed, vec![("serialNum".into(), Boxed::Integer(42))]);
+                    }
+                    _ => unreachable!(),
+                }
+                save_source(&wav, Some(&info)).unwrap();
+            }
+            std::fs::remove_dir_all(directory).unwrap();
+        } else if name.starts_with("file_") {
             let source = root().join(input["path"].as_str().unwrap());
             let scan = scan_for(&source, &strings(&input["roles"]), None, 1).unwrap();
             let service = secs_service::Service::new(secs_service::Deps::default());
@@ -174,7 +226,7 @@ fn service_mdat_every_oracle_value_and_imported_secs_bytes() {
         }
         count += 1;
     }
-    assert_eq!(count, 23);
+    assert_eq!(count, 24);
 }
 #[test]
 fn test_load_mdat_assigns_roles_by_title_and_preserves_other_positions() {

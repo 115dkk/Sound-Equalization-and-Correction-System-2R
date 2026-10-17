@@ -31,10 +31,11 @@ pub use project::{
     FOCUS_STEPS, PROJECT_VERSION, Project, migrate_calibration_keys, migrate_group_keys,
     rename_keys, snap_focus,
 };
-pub use pyjson::{PyJson, PyJsonError, dumps, loads};
+pub use pyjson::{PyJson, PyJsonError, dumps, dumps_compact, loads};
 pub use record::{
     IR_CACHE_LIMIT_BYTES, IrCache, LoadedIr, MeasurementRecord, MeasurementResult,
-    MeasurementStore, MigrationWarning, load_project_irs,
+    MeasurementStore, MigrationWarning, load_project_irs, load_project_sources, load_source,
+    save_source, source_path,
 };
 pub use signature::{
     FloatKey, MeasurementSignatureEntry, estimate_seconds, estimate_subs_seconds,

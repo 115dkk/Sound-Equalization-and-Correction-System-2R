@@ -1,18 +1,27 @@
 use super::*;
 use secs_project::{MeasurementPlan, MeasurementResult};
 use std::{
-    sync::mpsc,
+    fs,
+    sync::{Arc as SyncArc, mpsc},
     time::{Duration, Instant},
 };
 
 /// Accepts `RewClient<T>` in production and `FakeRew<S>` in device-free tests.
-#[derive(Debug)]
 pub struct RewMeasurer<R> {
     pub client: R,
+    unix_ms: SyncArc<dyn Fn() -> i64 + Send + Sync>,
+}
+impl<R: std::fmt::Debug> std::fmt::Debug for RewMeasurer<R> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("RewMeasurer")
+            .field("client", &self.client)
+            .finish_non_exhaustive()
+    }
 }
 impl<R> RewMeasurer<R> {
-    pub fn new(client: R) -> Self {
-        Self { client }
+    pub fn new(client: R, unix_ms: SyncArc<dyn Fn() -> i64 + Send + Sync>) -> Self {
+        Self { client, unix_ms }
     }
 }
 impl<R> Measurer for RewMeasurer<R>
@@ -20,6 +29,7 @@ where
     R: secs_rew::RewStatus
         + secs_rew::DeviceLister
         + secs_rew::LevelMonitor
+        + secs_rew::MeasurementEnvironment
         + secs_rew::Measurer
         + Send,
 {
@@ -135,26 +145,48 @@ where
                 })
             }) as secs_rew::ProgressCallback
         });
-        Ok(self
+        let results = self.client.run_position(
+            &to_rew_plan(plan)?,
+            positive(pos, "position")?,
+            progress,
+            &cancel.rew,
+        )?;
+        let cal = self
             .client
-            .run_position(
-                &to_rew_plan(plan)?,
-                positive(pos, "position")?,
-                progress,
-                &cancel.rew,
-            )?
+            .input_calibration_file()
+            .ok()
+            .flatten()
+            .filter(|path| !path.is_empty())
+            .map(|path| secs_mdat::CalFile {
+                text: fs::read(&path).ok(),
+                path,
+            });
+        Ok(results
             .into_iter()
-            .map(|r| MeasurementResult {
-                role: r.role,
-                pos: i64::from(r.pos),
-                ir: r.ir,
-                sample_rate: r.sample_rate,
-                t0_s: r.t0_s,
-                spl_db: r.spl_db,
-                spl_offset_db: r.spl_offset_db,
-                snr_db: r.snr_db,
-                uuid: r.uuid,
-                source: None,
+            .map(|r| {
+                let output_channel = format!("out {}", plan.output_for(&r.role));
+                let source_info = secs_mdat::from_rew_measurement(
+                    cal.as_ref(),
+                    &plan.output_device,
+                    &plan.input_device,
+                    &output_channel,
+                    (self.unix_ms)(),
+                )
+                .ok()
+                .flatten();
+                MeasurementResult {
+                    role: r.role,
+                    pos: i64::from(r.pos),
+                    ir: r.ir,
+                    sample_rate: r.sample_rate,
+                    t0_s: r.t0_s,
+                    spl_db: r.spl_db,
+                    spl_offset_db: r.spl_offset_db,
+                    snr_db: r.snr_db,
+                    uuid: r.uuid,
+                    source: None,
+                    source_info,
+                }
             })
             .collect())
     }

@@ -2,6 +2,7 @@
 """Run upstream pure assignment functions and load_mdat without importing Qt."""
 from __future__ import annotations
 import ast
+from io import StringIO
 import json
 import re
 import tempfile
@@ -76,10 +77,49 @@ for i, path in enumerate(paths):
             refresh=lambda:None,changed=SimpleNamespace(emit=lambda:None))
         count = ns['load_mdat'](page,str(path),ask=False)
         text = target.read_text(encoding='utf-8') if target.exists() else None
+        sidecars = {}
+        irs = target.with_suffix('.irs')
+        if irs.is_dir():
+            for sidecar in sorted(irs.glob('*.src.json')):
+                sidecars[sidecar.relative_to(Path(temp)).as_posix()] = sidecar.read_bytes().decode('utf-8')
     fam.save(f'file_{i}', {'path':str(path.relative_to(common.ROOT)), 'roles':roles,
                           'project':model.Project.from_preset('7.1.4').to_dict()},
              {'titles':titles,'flags':flags,'split':split,'assignment':assignment,
               'position_tagged':[base != title.strip() for (base,_),title in zip(split,titles)],
-              'import_count':count,'secs':text})
+              'import_count':count,'secs':text,'source_sidecars':sidecars,
+              'source_info':[m.source_info for m in loaded.measurements]})
+from unittest.mock import patch
+from secs.rew_mdat.source_info import from_rew_measurement
+
+cal_text = 'Sens Factor = -1.337 dB\n20 -1.25 0.5\n1000 0.25\n'
+def open_cal(path, *args, **kwargs):
+    if str(path) == '마이크.cal':
+        return StringIO(cal_text)
+    raise OSError('missing calibration fixture')
+
+with patch('time.time', return_value=1704164645.0), patch(
+        'builtins.open', side_effect=open_cal):
+    source_cases = {
+        'rew': from_rew_measurement('마이크.cal', '출력 장치', '입력 장치', 'out 1'),
+        'missing_cal': from_rew_measurement('없음.cal', '출력', '입력', 'out 2'),
+        'partial': {
+            'strings': {'outputName': 7, 'osName': None},
+            'boxed': {
+                'inputVolume': {'type': 'java.lang.Double', 'value': '1.5'},
+                'bad': {'type': 'java.lang.Boolean', 'value': 1},
+                'splCalOffset': {'type': 'java.lang.Integer', 'value': 2147483648},
+            },
+            'cal': {'meterCal': {'inverseCSelected': 1, 'sourceName': False,
+                                  'sourcePath': None, 'freqArray': [20, True, '30'],
+                                  'gainArray': 'bad',
+                                  'serialNum': {'type': 'java.lang.Integer', 'value': '42'}}},
+            'date': float('nan'), 'notes': 0, 'format': True,
+        },
+    }
+    fam.save('source_cases', {}, {
+        'json': {name: json.dumps(info, ensure_ascii=False) for name, info in source_cases.items()},
+        'values': source_cases,
+    })
+
 fam.finish()
 assert sum(p.stat().st_size for p in fam.dir.iterdir()) < 2*1024*1024
