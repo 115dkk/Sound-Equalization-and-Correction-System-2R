@@ -3,7 +3,7 @@
 //! In-memory schema probes, separate from the upstream golden comparisons.
 
 use secs_jos::{ArrayData, Limits, Node, Stream, Value};
-use secs_mdat::{MdatError, TEMPLATE, load};
+use secs_mdat::{CalInfo, MdatError, SourceInfo, TEMPLATE, load};
 
 fn template_graph() -> (Stream, usize) {
     let s = secs_jos::parse(TEMPLATE, &Limits::default()).unwrap();
@@ -110,8 +110,49 @@ fn unsupported_template_sentinel_is_a_build_error_not_a_panic() {
         samples: vec![1.0],
         start_time_s: 0.0,
         spl_offset_db: None,
+        source_info: None,
+        computed: false,
     };
-    assert!(secs_mdat::build(&[input], &bytes, None, &mut || 0).is_err());
+    assert!(secs_mdat::build(&[input], &bytes, None, 0, &mut || 0).is_err());
+}
+
+#[test]
+#[cfg_attr(
+    miri,
+    ignore = "builds a 512 MB calibration array against the template; too slow under Miri, runs natively"
+)]
+fn source_info_allocation_is_bounded() {
+    let count = secs_jos::Limits::default().max_file_bytes / 4;
+    let source_info = SourceInfo {
+        strings: vec![("outputName".into(), "x".repeat(1_000_000))],
+        cal: vec![(
+            "meterCal".into(),
+            CalInfo {
+                inverse_c_selected: false,
+                source_name: "mic.cal".into(),
+                source_path: "/cal/mic.cal".into(),
+                freq: Some(vec![1.0; count]),
+                gain: None,
+                phase: None,
+                boxed: Vec::new(),
+            },
+        )],
+        ..SourceInfo::default()
+    };
+    let input = secs_mdat::MeasurementInput {
+        title: "IR".into(),
+        notes: String::new(),
+        sample_rate_hz: 48000,
+        samples: vec![1.0],
+        start_time_s: 0.0,
+        spl_offset_db: None,
+        source_info: Some(source_info),
+        computed: false,
+    };
+    assert!(matches!(
+        secs_mdat::build(&[input], TEMPLATE, None, 0, &mut || 0),
+        Err(MdatError::Input(ref message)) if message == "IR samples exceed allocation limit"
+    ));
 }
 
 #[test]

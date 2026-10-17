@@ -11,10 +11,12 @@ mod adapter;
 mod builder;
 mod ir;
 mod models;
+pub mod source_info;
 
 pub use builder::{MeasurementInput, build};
 pub use ir::{LoadedMdatProject, MdatIRProvider, MeasurementInfo, extract_ir, load_mdat_project};
 pub use models::*;
+pub use source_info::{Boxed, CalFile, CalInfo, SourceDate, SourceInfo};
 
 pub const TEMPLATE: &[u8] = include_bytes!("../../../src/secs/rew_mdat/template_1.mdat");
 pub const REW_MDAT_IR_SCALE: f64 = 0.01;
@@ -50,7 +52,7 @@ mod tests {
     #[test]
     fn invalid_build_inputs_do_not_consume_uuid() {
         let mut uuid = || panic!("invalid input must not consume UUID");
-        assert!(build(&[], &[], None, &mut uuid).is_err());
+        assert!(build(&[], &[], None, 0, &mut uuid).is_err());
         let item = MeasurementInput {
             title: "invalid".into(),
             notes: String::new(),
@@ -58,7 +60,9 @@ mod tests {
             samples: vec![],
             start_time_s: 0.0,
             spl_offset_db: None,
+            source_info: None,
+            computed: false,
         };
-        assert!(build(&[item], &[], None, &mut uuid).is_err());
+        assert!(build(&[item], &[], None, 0, &mut uuid).is_err());
     }
 }

@@ -41,9 +41,12 @@ fn deterministic_service() -> Service {
             minute: 4,
             second: 5,
         }),
+        unix_ms: Arc::new(|| FIXED_MS),
         ..Deps::default()
     })
 }
+
+const FIXED_MS: i64 = 1_704_164_645_000;
 
 #[derive(Debug, Default)]
 struct Events {
@@ -477,6 +480,7 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                         &direct_folder,
                         None,
                         None,
+                        FIXED_MS,
                         &mut uuid,
                     ),
                     ExportKind::BeforeAfterMdat => {
@@ -485,6 +489,8 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                             &direct_folder,
                             None,
                             None,
+                            None,
+                            FIXED_MS,
                             &mut uuid,
                         )
                     }

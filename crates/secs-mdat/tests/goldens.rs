@@ -97,6 +97,105 @@ fn template_schema_matches_every_field() {
     assert_eq!(secs_jos::write(&model.stream), TEMPLATE);
 }
 
+fn boxed(value: &Json) -> secs_mdat::Boxed {
+    match value["type"].as_str().unwrap() {
+        "java.lang.Double" => secs_mdat::Boxed::Double(number(&value["value"])),
+        "java.lang.Integer" => secs_mdat::Boxed::Integer(value["value"].as_i64().unwrap()),
+        "java.lang.Boolean" => secs_mdat::Boxed::Boolean(value["value"].as_bool().unwrap()),
+        kind => panic!("unknown boxed kind {kind}"),
+    }
+}
+
+fn pairs<T>(value: &Json, mut convert: impl FnMut(&Json) -> T) -> Vec<(String, T)> {
+    value
+        .as_object()
+        .into_iter()
+        .flat_map(|fields| fields.iter())
+        .map(|(name, value)| (name.clone(), convert(value)))
+        .collect()
+}
+
+fn fixture_f32s(value: Option<&Json>) -> Option<Vec<f32>> {
+    let values = value?.as_array()?;
+    Some(
+        values
+            .iter()
+            .map(|value| match value {
+                Json::String(value) if value == "nan" => f32::NAN,
+                Json::String(value) if value == "+inf" => f32::INFINITY,
+                Json::String(value) if value == "-inf" => f32::NEG_INFINITY,
+                value => number(value) as f32,
+            })
+            .collect(),
+    )
+}
+
+fn source_info(value: &Json) -> Option<secs_mdat::SourceInfo> {
+    let fields = value.as_object()?;
+    Some(secs_mdat::SourceInfo {
+        strings: pairs(&value["strings"], |value| value.as_str().unwrap().into()),
+        boxed: pairs(&value["boxed"], boxed),
+        cal: pairs(&value["cal"], |value| secs_mdat::CalInfo {
+            inverse_c_selected: value["inverseCSelected"].as_bool().unwrap_or(false),
+            source_name: value["sourceName"].as_str().unwrap_or_default().into(),
+            source_path: value["sourcePath"].as_str().unwrap_or_default().into(),
+            freq: fixture_f32s(value.get("freqArray")),
+            gain: fixture_f32s(value.get("gainArray")),
+            phase: fixture_f32s(value.get("phaseArray")),
+            boxed: value
+                .as_object()
+                .into_iter()
+                .flat_map(|fields| fields.iter())
+                .filter(|(name, _)| {
+                    ["sensitivitydB", "sensitivitydBFS", "serialNum", "revision"]
+                        .contains(&name.as_str())
+                })
+                .map(|(name, value)| (name.clone(), boxed(value)))
+                .collect(),
+        }),
+        date: fields.get("date").and_then(|value| {
+            value
+                .as_i64()
+                .map(secs_mdat::SourceDate::Int)
+                .or_else(|| value.as_f64().map(secs_mdat::SourceDate::Float))
+        }),
+        notes: fields.get("notes").and_then(Json::as_str).map(Into::into),
+        format: fields.get("format").and_then(Json::as_str).map(Into::into),
+    })
+}
+
+fn assert_f32s(actual: &Option<Vec<f32>>, expected: &Option<Vec<f32>>) {
+    match (actual, expected) {
+        (Some(actual), Some(expected)) => {
+            assert_eq!(actual.len(), expected.len());
+            for (actual, expected) in actual.iter().zip(expected) {
+                assert_eq!(actual.to_bits(), expected.to_bits());
+            }
+        }
+        (None, None) => {}
+        _ => panic!("array presence differs"),
+    }
+}
+
+fn assert_source_eq(actual: &secs_mdat::SourceInfo, expected: &secs_mdat::SourceInfo) {
+    assert_eq!(actual.strings, expected.strings);
+    assert_eq!(actual.boxed, expected.boxed);
+    assert_eq!(actual.date, expected.date);
+    assert_eq!(actual.notes, expected.notes);
+    assert_eq!(actual.format, expected.format);
+    assert_eq!(actual.cal.len(), expected.cal.len());
+    for ((actual_name, actual), (expected_name, expected)) in actual.cal.iter().zip(&expected.cal) {
+        assert_eq!(actual_name, expected_name);
+        assert_eq!(actual.inverse_c_selected, expected.inverse_c_selected);
+        assert_eq!(actual.source_name, expected.source_name);
+        assert_eq!(actual.source_path, expected.source_path);
+        assert_f32s(&actual.freq, &expected.freq);
+        assert_f32s(&actual.gain, &expected.gain);
+        assert_f32s(&actual.phase, &expected.phase);
+        assert_eq!(actual.boxed, expected.boxed);
+    }
+}
+
 fn inputs(fx: &Fixture) -> Vec<MeasurementInput> {
     fx.inputs()["measurements"]
         .as_array()
@@ -109,6 +208,8 @@ fn inputs(fx: &Fixture) -> Vec<MeasurementInput> {
             samples: fx.f64s(&m["samples"]),
             start_time_s: number(&m["start_time_s"]),
             spl_offset_db: m["spl_offset_db"].as_f64(),
+            source_info: source_info(&m["source_info"]),
+            computed: m["computed"].as_bool().unwrap_or(false),
         })
         .collect()
 }
@@ -152,7 +253,10 @@ fn ordered(value: f32) -> u32 {
 #[test]
 fn builds_match_bytes_except_nine_one_ulp_caches() {
     let mut failures = Vec::new();
-    for fx in Fixture::all("mdat", "build_") {
+    for fx in Fixture::all("mdat", "build_")
+        .into_iter()
+        .chain([Fixture::load("mdat", "source_info_build")])
+    {
         let input = inputs(&fx);
         let uuids: Vec<u128> = fx.inputs()["uuid"]
             .as_array()
@@ -165,6 +269,7 @@ fn builds_match_bytes_except_nine_one_ulp_caches() {
             &input,
             TEMPLATE,
             fx.inputs()["spl_offset_db"].as_f64(),
+            fx.inputs()["now_ms"].as_i64().unwrap(),
             &mut || {
                 let id = uuids[consumed];
                 consumed += 1;
@@ -230,8 +335,67 @@ fn builds_match_bytes_except_nine_one_ulp_caches() {
 }
 
 #[test]
+fn source_info_extracts_and_round_trips_oracle_values() {
+    let fixture = Fixture::load("mdat", "source_info_extract");
+    let bytes = fixture.blob(&fixture.inputs()["bytes"]);
+    let project = load_mdat_project(&bytes, &secs_jos::Limits::default()).unwrap();
+    let expected = fixture.outputs()["source_info"].as_array().unwrap();
+    assert_eq!(project.measurements.len(), expected.len());
+    for (actual, expected) in project.measurements.iter().zip(expected) {
+        let expected = source_info(expected).unwrap();
+        assert_source_eq(&actual.source_info, &expected);
+    }
+
+    let round_trip = Fixture::load("mdat", "source_info_round_trip");
+    let bytes = round_trip.blob(&round_trip.outputs()["bytes"]);
+    let project = load_mdat_project(&bytes, &secs_jos::Limits::default()).unwrap();
+    for (actual, expected) in project
+        .measurements
+        .iter()
+        .zip(round_trip.outputs()["source_info"].as_array().unwrap())
+    {
+        let expected = source_info(expected).unwrap();
+        assert_source_eq(&actual.source_info, &expected);
+    }
+}
+
+#[test]
+fn source_info_from_rew_measurement_matches_oracle() {
+    for fixture in Fixture::all("mdat", "source_info_from_") {
+        let input = fixture.inputs();
+        let cal = (!input["path"].as_str().unwrap().is_empty()).then(|| secs_mdat::CalFile {
+            path: input["path"].as_str().unwrap().into(),
+            text: input["text"]
+                .as_object()
+                .map(|descriptor| fixture.blob(&Json::Object(descriptor.clone()))),
+        });
+        let result = secs_mdat::source_info::from_rew_measurement(
+            cal.as_ref(),
+            input["output_device"].as_str().unwrap(),
+            input["input_device"].as_str().unwrap(),
+            input["output_channel"].as_str().unwrap(),
+            input["now_ms"].as_i64().unwrap(),
+        );
+        if let Some(expected) = fixture.outputs().get("source_info") {
+            let expected = source_info(expected);
+            let actual = result.unwrap();
+            match (actual, expected) {
+                (Some(actual), Some(expected)) => assert_source_eq(&actual, &expected),
+                (None, None) => {}
+                values => panic!("{} source presence differs: {values:?}", fixture.id),
+            }
+        } else {
+            assert!(result.is_err(), "{} should be an error", fixture.id);
+        }
+    }
+}
+
+#[test]
 fn built_schema_matches_every_field() {
-    for fx in Fixture::all("mdat", "build_") {
+    for fx in Fixture::all("mdat", "build_")
+        .into_iter()
+        .chain([Fixture::load("mdat", "source_info_build")])
+    {
         let expected = fx.blob(&fx.outputs()["bytes"]);
         let model = load(&expected, &secs_jos::Limits::default()).unwrap();
         assert_eq!(
@@ -249,14 +413,29 @@ fn built_schema_matches_every_field() {
 
 #[test]
 fn built_ir_converts_back_in_float32_precision() {
-    for fx in Fixture::all("mdat", "build_") {
+    for fx in Fixture::all("mdat", "build_")
+        .into_iter()
+        .chain([Fixture::load("mdat", "source_info_build")])
+    {
         let input = inputs(&fx);
         let expected = fx.blob(&fx.outputs()["bytes"]);
         let project = load_mdat_project(&expected, &secs_jos::Limits::default()).unwrap();
         for (index, (info, input)) in project.measurements.iter().zip(input).enumerate() {
             assert_eq!(info.uuid, format!("mdat:{index}"));
             assert_eq!(info.title, input.title);
-            assert_eq!(info.notes, input.notes);
+            let mut expected_notes = input.notes.clone();
+            if !input.computed
+                && let Some(original) = input
+                    .source_info
+                    .as_ref()
+                    .and_then(|source| source.notes.as_deref())
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+            {
+                expected_notes.push_str("\n\n[원 측정 메모]\n");
+                expected_notes.push_str(original);
+            }
+            assert_eq!(info.notes, expected_notes);
             assert_eq!(info.sample_rate, i64::from(input.sample_rate_hz));
             assert_eq!(info.start_time_s.to_bits(), input.start_time_s.to_bits());
             let (samples, rate) = project.ir_provider.get_ir(&info.uuid).unwrap();

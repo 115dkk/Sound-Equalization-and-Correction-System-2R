@@ -7,6 +7,7 @@ use secs_jos::{ArrayData, Limits, Node, NodeId, Stream, Value};
 use crate::{
     MdatError, REW_MDAT_IR_SCALE,
     adapter::{int_block, node_id, number, object},
+    source_info::{self, Boxes, SourceDate, SourceInfo},
 };
 
 #[derive(Clone, Debug)]
@@ -17,6 +18,8 @@ pub struct MeasurementInput {
     pub samples: Vec<f64>,
     pub start_time_s: f64,
     pub spl_offset_db: Option<f64>,
+    pub source_info: Option<SourceInfo>,
+    pub computed: bool,
 }
 
 fn set(s: &mut Stream, obj: NodeId, name: &str, value: Value) -> Result<(), MdatError> {
@@ -216,6 +219,8 @@ fn replace(
     obj: NodeId,
     item: &MeasurementInput,
     fallback_offset: Option<f64>,
+    now_ms: i64,
+    boxes: &mut Boxes,
     uuid: &mut dyn FnMut() -> u128,
 ) -> Result<(), MdatError> {
     let samples: Vec<f32> = item
@@ -224,20 +229,48 @@ fn replace(
         .map(|v| (v * REW_MDAT_IR_SCALE) as f32)
         .collect();
     let rate = item.sample_rate_hz;
+    source_info::apply(s, obj, item.source_info.as_ref(), boxes)?;
+    let mut notes = item.notes.clone();
+    if !item.computed
+        && let Some(original) = item
+            .source_info
+            .as_ref()
+            .and_then(|info| info.notes.as_deref())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    {
+        notes.push_str("\n\n[원 측정 메모]\n");
+        notes.push_str(original);
+    }
     set_string(s, obj, "shortDesc", &item.title)?;
-    set_string(s, obj, "measNotes", &item.notes)?;
+    set_string(s, obj, "measNotes", &notes)?;
     set_number(s, obj, "sampleRate", f64::from(rate))?;
-    set_number(s, obj, "sourceFileDate", 0.0)?;
+    // Upstream `int(date)`: an integer stays exact, a float truncates.
+    let original_date = match item.source_info.as_ref().and_then(|info| info.date) {
+        Some(SourceDate::Int(date)) if date > 0 => Some(date),
+        Some(SourceDate::Float(date)) if date > 0.0 => Some(date as i64),
+        _ => None,
+    };
+    let date = if item.computed {
+        now_ms
+    } else {
+        original_date.unwrap_or(now_ms)
+    };
+    set_number(s, obj, "sourceFileDate", date as f64)?;
     if matches!(
         node_id(s.get(obj, "sourceFileFormat")).and_then(|id| s.nodes.get(id)),
         Some(Node::String { .. })
     ) {
-        set_string(
-            s,
-            obj,
-            "sourceFileFormat",
-            "SECS predicted impulse response",
-        )?;
+        let format = if item.computed {
+            "SECS2 correction result (computed, not measured)"
+        } else {
+            item.source_info
+                .as_ref()
+                .and_then(|info| info.format.as_deref())
+                .filter(|value| !value.is_empty())
+                .unwrap_or("SECS2 measurement")
+        };
+        set_string(s, obj, "sourceFileFormat", format)?;
     }
     let uid = uuid();
     if let Some(id) = object(s, s.get(obj, "uuid")) {
@@ -361,12 +394,47 @@ fn replace(
     Ok(())
 }
 
+fn add_text_allocation(bytes: &mut usize, value: &str) -> Option<()> {
+    *bytes = bytes.checked_add(value.len().checked_mul(3)?)?;
+    Some(())
+}
+
+fn source_allocation(info: &SourceInfo) -> Option<usize> {
+    let mut bytes = 0usize;
+    for (name, value) in &info.strings {
+        add_text_allocation(&mut bytes, name)?;
+        add_text_allocation(&mut bytes, value)?;
+    }
+    for (name, _) in &info.boxed {
+        add_text_allocation(&mut bytes, name)?;
+    }
+    for (name, cal) in &info.cal {
+        add_text_allocation(&mut bytes, name)?;
+        add_text_allocation(&mut bytes, &cal.source_name)?;
+        add_text_allocation(&mut bytes, &cal.source_path)?;
+        for values in [&cal.freq, &cal.gain, &cal.phase].into_iter().flatten() {
+            bytes = bytes.checked_add(values.len().checked_mul(4)?)?;
+        }
+        for (name, _) in &cal.boxed {
+            add_text_allocation(&mut bytes, name)?;
+        }
+    }
+    for value in [info.notes.as_deref(), info.format.as_deref()]
+        .into_iter()
+        .flatten()
+    {
+        add_text_allocation(&mut bytes, value)?;
+    }
+    Some(bytes)
+}
+
 /// Builds the upstream graph, with a separate deepcopy memo for each preview
 /// pair and each measurement. UUIDs are consumed exactly once per measurement.
 pub fn build(
     measurements: &[MeasurementInput],
     template: &[u8],
     spl_offset_db: Option<f64>,
+    now_ms: i64,
     uuid: &mut dyn FnMut() -> u128,
 ) -> Result<Vec<u8>, MdatError> {
     let limits = Limits::default();
@@ -400,6 +468,12 @@ pub fn build(
                     .len()
                     .checked_mul(3)
                     .and_then(|s| n.checked_add(s))
+            })
+            .and_then(|n| {
+                item.source_info
+                    .as_ref()
+                    .map_or(Some(0), source_allocation)
+                    .and_then(|source| n.checked_add(source))
             })
             .and_then(|n| n.checked_add(128 * 1024))
             .and_then(|n| allocation.checked_add(n))
@@ -446,6 +520,7 @@ pub fn build(
     if int_block(&s, s.values.get(3), "template preview header")? < 1 || s.values.len() < 6 {
         return Err(MdatError::Schema("template needs one preview entry".into()));
     }
+    let mut boxes = source_info::boxes_for(&s, prototype);
     // Bound the aggregate clone arena even for attacker-supplied templates.
     let clones = measurements
         .len()
@@ -478,7 +553,7 @@ pub fn build(
         let copied = s.clone_values(&[Value::Node(prototype)]);
         let id = object(&s, copied.first())
             .ok_or_else(|| MdatError::Schema("cannot clone measurement".into()))?;
-        replace(&mut s, id, item, spl_offset_db, uuid)?;
+        replace(&mut s, id, item, spl_offset_db, now_ms, &mut boxes, uuid)?;
         values.push(Value::Node(id));
         values.push(block(
             &mut s,

@@ -38,7 +38,11 @@ pub(crate) fn dispatch(
             response
         }
         Request::ProjectSave(params) => lock(&service.session)
-            .save(params.path.map(Into::into), &service.deps.uuid)
+            .save(
+                params.path.map(Into::into),
+                &service.deps.uuid,
+                (service.deps.unix_ms)(),
+            )
             .map(Response::ProjectSave)
             .map_err(IpcError::from),
         Request::ProjectInfo => lock(&service.session)

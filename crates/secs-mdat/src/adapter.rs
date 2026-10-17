@@ -336,6 +336,7 @@ impl<'a> Adapter<'a> {
             None
         };
         Ok(Measurement {
+            source_object: obj,
             name: string(s, get("shortDesc")),
             sample_rate_hz: int("sampleRate")?,
             rew_version: RewVersion {

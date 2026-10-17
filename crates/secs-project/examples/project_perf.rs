@@ -134,11 +134,13 @@ fn main() {
                         samples: samples.into_iter().map(f64::from).collect(),
                         start_time_s: t0,
                         spl_offset_db: offset,
+                        source_info: None,
+                        computed: false,
                     }
                 })
                 .collect();
             let mut next = 0_u128;
-            let bytes = secs_mdat::build(&items, secs_mdat::TEMPLATE, None, &mut || {
+            let bytes = secs_mdat::build(&items, secs_mdat::TEMPLATE, None, 0, &mut || {
                 next += 1;
                 next
             })

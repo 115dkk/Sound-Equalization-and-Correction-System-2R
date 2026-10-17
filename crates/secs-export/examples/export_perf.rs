@@ -93,10 +93,10 @@ fn main() {
             black_box(secs_camilla::export(&case.design.chain, &folder, &labels, None).unwrap());
         }
         "mdat_staged" => {
-            black_box(secs_export::export_mdat(&run, &folder, None).unwrap());
+            black_box(secs_export::export_mdat(&run, &folder, None, 0).unwrap());
         }
         "mdat_before_after" => {
-            black_box(secs_export::export_before_after_mdat(&run, &folder, None).unwrap());
+            black_box(secs_export::export_before_after_mdat(&run, &folder, None, None, 0).unwrap());
         }
         _ => panic!("unknown export"),
     };

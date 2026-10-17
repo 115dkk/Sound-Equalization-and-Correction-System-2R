@@ -124,6 +124,7 @@ impl Session {
         &mut self,
         path: Option<PathBuf>,
         uuid: &UuidSource,
+        now_ms: i64,
     ) -> Result<ProjectInfo, ServiceError> {
         let open = self.require_mut()?;
         if open.tutorial {
@@ -139,7 +140,7 @@ impl Session {
             open.cached = None;
         }
         open.store.save()?;
-        write_side_mdat(open, uuid)?;
+        write_side_mdat(open, uuid, now_ms)?;
         open.dirty = false;
         self.info()
     }
@@ -232,7 +233,11 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-fn write_side_mdat(open: &mut OpenProject, uuid: &UuidSource) -> Result<(), ServiceError> {
+fn write_side_mdat(
+    open: &mut OpenProject,
+    uuid: &UuidSource,
+    now_ms: i64,
+) -> Result<(), ServiceError> {
     let records = open.store.records();
     let mut inputs = Vec::new();
     for record in records {
@@ -245,6 +250,8 @@ fn write_side_mdat(open: &mut OpenProject, uuid: &UuidSource) -> Result<(), Serv
                 samples: samples.into_iter().map(f64::from).collect(),
                 start_time_s: record.t0.get(role).copied().unwrap_or(0.0),
                 spl_offset_db: record.spl_offset.get(role).copied(),
+                source_info: None,
+                computed: false,
             });
         }
     }
@@ -266,7 +273,7 @@ fn write_side_mdat(open: &mut OpenProject, uuid: &UuidSource) -> Result<(), Serv
     };
     let mut uuids = uuids.into_iter();
     // `secs_mdat::build` consumes exactly one UUID for each validated input.
-    let bytes = secs_mdat::build(&inputs, secs_mdat::TEMPLATE, None, &mut || {
+    let bytes = secs_mdat::build(&inputs, secs_mdat::TEMPLATE, None, now_ms, &mut || {
         uuids.next().unwrap_or_default()
     })
     .map_err(|error| ServiceError::Project(error.to_string()))?;
@@ -399,7 +406,7 @@ mod tests {
         }
         open.dirty = true;
         let uuid = crate::Deps::default().uuid;
-        let saved = session.save(Some(target.clone()), &uuid).unwrap();
+        let saved = session.save(Some(target.clone()), &uuid, 0).unwrap();
         assert_eq!(saved.path, target.to_string_lossy());
         assert!(!saved.dirty);
         assert!(target.exists());
@@ -410,7 +417,7 @@ mod tests {
         assert_eq!(reopened.positions, vec![1]);
 
         session.require_mut().unwrap().store.clear_position(1);
-        session.save(None, &uuid).unwrap();
+        session.save(None, &uuid, 0).unwrap();
         assert!(!target.with_extension("mdat").exists());
         fs::remove_dir_all(root).unwrap();
     }

@@ -169,6 +169,8 @@ impl Service {
             }
             _ => None,
         };
+        // One export reads the clock once; every mdat it builds gets that date.
+        let now_ms = (self.deps.unix_ms)();
         drop(session);
         drop(state);
         let destination = if params.folder.is_empty() {
@@ -274,6 +276,7 @@ impl Service {
                         config: &config,
                         settings: &settings,
                     };
+                    // P50: 보정 전후 mdat의 원 측정 환경(.src.json).
                     let mut uuid = lock(&uuid);
                     let destination = if kind == ExportKind::StagedMdat {
                         secs_export::export_mdat_with_mimo_using(
@@ -281,6 +284,7 @@ impl Service {
                             folder,
                             mimo.as_ref(),
                             spl_offset,
+                            now_ms,
                             uuid.as_mut(),
                         )
                     } else {
@@ -288,7 +292,9 @@ impl Service {
                             &run,
                             folder,
                             mimo.as_ref(),
+                            None,
                             spl_offset,
+                            now_ms,
                             uuid.as_mut(),
                         )
                     }
