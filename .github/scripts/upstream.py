@@ -55,6 +55,7 @@ REACH = (
     ("src/secs/model.py", "secs-project (.secs, 역할 어휘)"),
     ("src/secs/mdat_loader.py", "secs-mdat, secs-project (제목 해석)"),
     ("src/secs/rew_mdat/serialization/", "secs-jos"),
+    ("src/secs/rew_mdat/source_info.py", "secs-mdat (원 측정 환경), secs-project (.src.json)"),
     ("src/secs/rew_mdat/", "secs-mdat"),
     ("src/secs/rewapi/session.py", "secs-project (.irs 저장소), secs-rew"),
     ("src/secs/rewapi/", "secs-rew"),
