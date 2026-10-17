@@ -1,6 +1,28 @@
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
+
+// The mock service's bootstrap (gallery, screen tour, tests) answers with the
+// workspace version and the upstream release this tree is ported from, read
+// here so neither is copied by hand into the fixtures.
+const root = resolve(import.meta.dirname, "../../..");
+function field(text: string, name: string): string {
+  const found = new RegExp(`^${name} = "([^"]*)"`, "m").exec(text);
+  if (!found?.[1]) throw new Error(`build info: ${name} is missing`);
+  return found[1];
+}
+const cargo = readFileSync(resolve(root, "Cargo.toml"), "utf8");
+const upstream = readFileSync(resolve(root, "UPSTREAM.toml"), "utf8");
+const buildInfo = {
+  version: field(cargo.slice(cargo.indexOf("[workspace.package]")), "version"),
+  upstream: {
+    name: field(upstream, "name"),
+    version: field(upstream, "version"),
+    commit: field(upstream, "commit"),
+    date: field(upstream, "date"),
+  },
+};
 
 // Tauri serves the built files from ui/dist; the dev server must sit on the
 // port tauri.conf.json's devUrl names.
@@ -11,6 +33,7 @@ import react from "@vitejs/plugin-react";
 // its fixtures never ship in the installer.
 export default defineConfig(({ mode }) => ({
   plugins: [react()],
+  define: { __BUILD_INFO__: JSON.stringify(buildInfo) },
   clearScreen: false,
   server: { host: "127.0.0.1", port: 1420, strictPort: true },
   build: {

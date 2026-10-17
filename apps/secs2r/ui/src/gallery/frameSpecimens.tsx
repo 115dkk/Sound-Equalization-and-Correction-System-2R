@@ -12,7 +12,7 @@ import { useT } from "../i18n/react";
 import { IpcProvider, useIpc } from "../ipc/context";
 import { createMockService, ipcError } from "../ipc/mock";
 import { HelpPanel } from "../screens/help/HelpPanel";
-import { SAMPLE_ROLES } from "../ipc/fixtures";
+import { SAMPLE_ROLES, bootstrapInfo } from "../ipc/fixtures";
 import type { PrimaryAction } from "../app/StepHeader";
 import { ArrangementMap, Card, EmptyState, ErrorNotice, Graph, StatusPill } from "../ui";
 import { isSubRole, roleCode } from "../ui/maps/geometry";
@@ -162,7 +162,7 @@ export function FrameBox({
       headerStatus={header ? header.status : headerStatus}
       projectActions={{ onNew: () => {}, onOpen: () => {}, onSave: () => {}, onSaveAs: () => {} }}
       onHelp={() => {}}
-      version={{ version: "0.13.0", prerelease: true }}
+      version={{ version: bootstrapInfo.version, prerelease: true }}
       tray={<JobTray api={staticApi(jobs, now)} defaultOpen={trayOpen} />}
       aside={aside}
       shortcuts={false}
@@ -201,7 +201,7 @@ function LiveFrameInner({ start, label }: { start: () => void; label: string }) 
       primary={{ id: "calibrate.compute", label, onClick: start, busy: running }}
       projectActions={{ onNew: () => {}, onOpen: () => {}, onSave: () => {}, onSaveAs: () => {} }}
       onHelp={() => {}}
-      version={{ version: "0.13.0", prerelease: true }}
+      version={{ version: bootstrapInfo.version, prerelease: true }}
       tray={<JobTray api={api} />}
       shortcuts={false}
     >
