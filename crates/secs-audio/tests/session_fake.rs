@@ -454,14 +454,18 @@ fn session_cancel_stops_both_sides() {
         ..Fake::default()
     };
     let token = CancelToken::new();
-    let start = Instant::now();
+    // Time the cancel itself: opening both sides and the first progress event
+    // come before it, and a loaded runner can spend most of a second there.
+    let mut cancelled_at = None;
     let result = play_and_record(&fake, request(), &token, &mut |event| {
-        if matches!(event, SessionEvent::Progress { .. }) {
+        if matches!(event, SessionEvent::Progress { .. }) && cancelled_at.is_none() {
+            cancelled_at = Some(Instant::now());
             token.cancel();
         }
     });
     assert!(matches!(result, Err(AudioError::Cancelled)));
-    assert!(start.elapsed() < Duration::from_millis(500));
+    let cancelled_at = cancelled_at.expect("a progress event before the 1 s playback ends");
+    assert!(cancelled_at.elapsed() < Duration::from_millis(500));
     let state = fake.state.lock().unwrap();
     assert!(state.history.contains(&"input stop"));
     assert!(state.history.contains(&"output cancelled"));
