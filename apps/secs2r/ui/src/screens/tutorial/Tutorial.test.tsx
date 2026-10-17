@@ -94,6 +94,21 @@ describe("tutorial flow", () => {
     expect(resumeIndex(qs, 2, { ...view, helpOpen: true }, (_v, step) => step !== "system")).toBe(0);
   });
 
+  it("resumes at the first unfinished act quest even when act quests carry `blocked`, else at the gate", () => {
+    const blocked = () => null;
+    const qs: Quest<View>[] = [
+      { id: "a", step: "system", kind: "look", targets: [], title: "tutorial.sample.rail.title", text: "tutorial.sample.rail" },
+      { id: "b", step: "system", kind: "act", targets: [], title: "tutorial.sample.help.title", text: "tutorial.sample.help", done: (v) => v.helpOpen, blocked },
+      { id: "c", step: "system", kind: "act", targets: [], title: "tutorial.sample.help.title", text: "tutorial.sample.help", done: (v) => v.computed, blocked },
+      { id: "d", step: "system", kind: "act", targets: [], title: "tutorial.sample.help.title", text: "tutorial.sample.help", done: () => false, blocked, gate: true },
+      { id: "e", step: "calibrate", kind: "act", targets: [], title: "tutorial.sample.compute.title", text: "tutorial.sample.compute" },
+    ];
+    const view: View = { helpOpen: true, computing: false, computed: false, blocked: false };
+    const closed = (_v: View, step: StepId) => step !== "system";
+    expect(resumeIndex(qs, 4, view, closed)).toBe(2);
+    expect(resumeIndex(qs, 4, { ...view, computed: true }, closed)).toBe(3);
+  });
+
   it("reads from the rail whether a step can be left (App's stepOpen, upstream can_advance)", () => {
     const steps = (patch: Partial<FrameModel["steps"]>): FrameModel["steps"] => ({
       system: { status: "done" },
