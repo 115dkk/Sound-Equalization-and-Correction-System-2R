@@ -1,0 +1,498 @@
+{
+  "viewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "variants": [
+    "light.ko",
+    "dark.ko",
+    "light.en",
+    "dark.en"
+  ],
+  "scenes": [
+    {
+      "id": "start.new",
+      "step": "start",
+      "title": {
+        "ko": "새 프로젝트 대화상자",
+        "en": "New project dialog"
+      },
+      "note": {
+        "ko": "프로젝트 없이 켜면 이 대화상자가 저절로 뜹니다.",
+        "en": "It opens by itself when the app starts without a project."
+      }
+    },
+    {
+      "id": "start.empty",
+      "step": "start",
+      "title": {
+        "ko": "프로젝트 없는 빈 화면",
+        "en": "Empty window without a project"
+      }
+    },
+    {
+      "id": "start.tutorial-offer",
+      "step": "start",
+      "title": {
+        "ko": "튜토리얼 시작 대화상자",
+        "en": "Start tutorial dialog"
+      },
+      "note": {
+        "ko": "도움말 패널의 튜토리얼 단추로 엽니다.",
+        "en": "Opened from the tutorial button in the help panel."
+      }
+    },
+    {
+      "id": "start.unsaved",
+      "step": "start",
+      "title": {
+        "ko": "저장하지 않은 변경 확인",
+        "en": "Unsaved changes prompt"
+      },
+      "note": {
+        "ko": "변경이 있는 프로젝트에서 새로 만들기를 고른 경우입니다.",
+        "en": "Shown when choosing New while the project has unsaved changes."
+      }
+    },
+    {
+      "id": "start.open",
+      "step": "start",
+      "title": {
+        "ko": "프로젝트 열기 대화상자",
+        "en": "Open project dialog"
+      }
+    },
+    {
+      "id": "system.stereo",
+      "step": "system",
+      "title": {
+        "ko": "2.0 새 프로젝트의 시스템",
+        "en": "System for a new 2.0 project"
+      }
+    },
+    {
+      "id": "system.sample",
+      "step": "system",
+      "title": {
+        "ko": "7.1.4 · 서브우퍼 3, 측정 방식 고르기 전",
+        "en": "7.1.4 with 3 subwoofers, no measurement method yet"
+      }
+    },
+    {
+      "id": "system.invalid",
+      "step": "system",
+      "title": {
+        "ko": "구성 오류와 막힌 단계",
+        "en": "Setup problems and blocked steps"
+      },
+      "note": {
+        "ko": "R이 L과 같은 출력을 쓰고 Rs의 역할이 Ls와 겹칩니다.",
+        "en": "R uses the same output as L, and Rs repeats the role of Ls."
+      }
+    },
+    {
+      "id": "system.path-native",
+      "step": "system",
+      "title": {
+        "ko": "측정 방식: 자체 측정",
+        "en": "Measurement method: built-in"
+      }
+    },
+    {
+      "id": "system.path-rew",
+      "step": "system",
+      "title": {
+        "ko": "측정 방식: REW",
+        "en": "Measurement method: REW"
+      }
+    },
+    {
+      "id": "system.path-mdat",
+      "step": "system",
+      "title": {
+        "ko": "측정 방식: mdat 파일만 가져오기",
+        "en": "Measurement method: mdat import only"
+      },
+      "note": {
+        "ko": "연결·점검을 건너뛰는 방식이라 레일에 건너뜀이 보입니다.",
+        "en": "This method skips Connect & check, so the rail marks it skipped."
+      }
+    },
+    {
+      "id": "system.expert",
+      "step": "system",
+      "title": {
+        "ko": "전문가 항목을 켠 시스템",
+        "en": "System with expert options shown"
+      }
+    },
+    {
+      "id": "connect.ready",
+      "step": "connect",
+      "title": {
+        "ko": "장치를 고른 연결·점검",
+        "en": "Connect & check with devices chosen"
+      }
+    },
+    {
+      "id": "connect.level-running",
+      "step": "connect",
+      "title": {
+        "ko": "레벨 점검 진행 중",
+        "en": "Level check in progress"
+      },
+      "note": {
+        "ko": "L을 마치고 R을 재는 중입니다.",
+        "en": "L is done and R is playing."
+      }
+    },
+    {
+      "id": "connect.level-done",
+      "step": "connect",
+      "title": {
+        "ko": "레벨 점검 완료",
+        "en": "Level check complete"
+      }
+    },
+    {
+      "id": "connect.rew",
+      "step": "connect",
+      "title": {
+        "ko": "REW 연결",
+        "en": "REW connection"
+      }
+    },
+    {
+      "id": "connect.device-error",
+      "step": "connect",
+      "title": {
+        "ko": "장치 열기 실패",
+        "en": "Device failed to open"
+      }
+    },
+    {
+      "id": "connect.meter",
+      "step": "connect",
+      "title": {
+        "ko": "떠 있는 마이크 미터",
+        "en": "Floating mic meter"
+      },
+      "note": {
+        "ko": "Ctrl+M으로 띄운 미터에 L의 분홍 잡음이 들어오는 중입니다.",
+        "en": "Opened with Ctrl+M while L plays pink noise."
+      }
+    },
+    {
+      "id": "measure.empty",
+      "step": "measure",
+      "title": {
+        "ko": "측정한 위치 없음",
+        "en": "No positions measured"
+      }
+    },
+    {
+      "id": "measure.running",
+      "step": "measure",
+      "title": {
+        "ko": "위치 측정 진행 중",
+        "en": "Measuring a position"
+      },
+      "note": {
+        "ko": "작업 트레이에도 같은 진행이 보입니다.",
+        "en": "The job tray shows the same progress."
+      }
+    },
+    {
+      "id": "measure.partial",
+      "step": "measure",
+      "title": {
+        "ko": "일부 위치만 측정됨",
+        "en": "Some positions measured"
+      }
+    },
+    {
+      "id": "measure.complete",
+      "step": "measure",
+      "title": {
+        "ko": "모든 위치 측정 완료",
+        "en": "All positions measured"
+      },
+      "note": {
+        "ko": "데모 데이터를 불러온 청취 위치 하나의 배치입니다.",
+        "en": "The demo data for the main seat arrangement is loaded."
+      }
+    },
+    {
+      "id": "measure.low-snr",
+      "step": "measure",
+      "title": {
+        "ko": "낮은 S/N 경고",
+        "en": "Low S/N warning"
+      },
+      "note": {
+        "ko": "위치 1을 잰 뒤 다시 골라 그 위치의 경고를 봅니다.",
+        "en": "Position 1 was measured and picked again to show its warning."
+      }
+    },
+    {
+      "id": "measure.mdat",
+      "step": "measure",
+      "title": {
+        "ko": "mdat 가져오기 대화상자",
+        "en": "mdat import dialog"
+      },
+      "note": {
+        "ko": "위치가 이름에 적힌 측정은 그 위치로, 적히지 않은 측정은 지금 위치(2)로 갑니다.",
+        "en": "Measurements named with a position go there; the others go to the current position (2)."
+      }
+    },
+    {
+      "id": "measure.no-path",
+      "step": "measure",
+      "title": {
+        "ko": "측정 방식이 없어 막힌 측정",
+        "en": "Measuring blocked without a method"
+      },
+      "note": {
+        "ko": "새 프로젝트 대화상자에서 데모 방을 만든 직후입니다.",
+        "en": "Right after creating the demo room in the new project dialog."
+      }
+    },
+    {
+      "id": "calibrate.blocked",
+      "step": "calibrate",
+      "title": {
+        "ko": "측정이 없어 막힌 보정",
+        "en": "Correction blocked without measurements"
+      }
+    },
+    {
+      "id": "calibrate.ready",
+      "step": "calibrate",
+      "title": {
+        "ko": "계산 전 보정 설정",
+        "en": "Correction settings before calculating"
+      }
+    },
+    {
+      "id": "calibrate.running",
+      "step": "calibrate",
+      "title": {
+        "ko": "보정 계산 진행 중",
+        "en": "Calculating correction"
+      }
+    },
+    {
+      "id": "calibrate.result",
+      "step": "calibrate",
+      "title": {
+        "ko": "보정 결과",
+        "en": "Correction result"
+      }
+    },
+    {
+      "id": "calibrate.result-alt",
+      "step": "calibrate",
+      "title": {
+        "ko": "보정 결과: BA 탭",
+        "en": "Correction result: BA tab"
+      },
+      "note": {
+        "ko": "서브 합 그래프와 서브마다의 정렬 값입니다.",
+        "en": "The sub sum graph and each subwoofer's alignment values."
+      }
+    },
+    {
+      "id": "calibrate.sub",
+      "step": "calibrate",
+      "title": {
+        "ko": "서브우퍼 설정 편집",
+        "en": "Editing subwoofer settings"
+      },
+      "note": {
+        "ko": "서브 정렬의 고급을 펴고 고정 방식으로 바꾼 SW2를 고른 상태입니다.",
+        "en": "BA advanced is open on SW2, switched to the fixed method."
+      }
+    },
+    {
+      "id": "calibrate.xo",
+      "step": "calibrate",
+      "title": {
+        "ko": "XO 추천 받음",
+        "en": "XO recommendation received"
+      }
+    },
+    {
+      "id": "calibrate.stale",
+      "step": "calibrate",
+      "title": {
+        "ko": "다시 계산 필요",
+        "en": "Recalculation needed"
+      },
+      "note": {
+        "ko": "결과를 낸 뒤 부스트 상한을 바꿨습니다.",
+        "en": "The boost limit changed after the result was calculated."
+      }
+    },
+    {
+      "id": "calibrate.failed",
+      "step": "calibrate",
+      "title": {
+        "ko": "보정 계산 실패",
+        "en": "Correction calculation failed"
+      }
+    },
+    {
+      "id": "export.blocked",
+      "step": "export",
+      "title": {
+        "ko": "결과가 없어 막힌 내보내기",
+        "en": "Export blocked without a result"
+      }
+    },
+    {
+      "id": "export.ready",
+      "step": "export",
+      "title": {
+        "ko": "내보내기 전",
+        "en": "Before exporting"
+      }
+    },
+    {
+      "id": "export.running",
+      "step": "export",
+      "title": {
+        "ko": "내보내기 진행 중",
+        "en": "Exporting"
+      }
+    },
+    {
+      "id": "export.done",
+      "step": "export",
+      "title": {
+        "ko": "내보내기 완료",
+        "en": "Export complete"
+      }
+    },
+    {
+      "id": "export.filters",
+      "step": "export",
+      "title": {
+        "ko": "DSP에 넣을 필터",
+        "en": "Filters for the DSP"
+      },
+      "note": {
+        "ko": "서브가 있는 결과라 필터 값 텍스트는 꺼지고 그 이유가 줄 안에 보입니다.",
+        "en": "The result has subs, so the filter text is off and its row says why."
+      }
+    },
+    {
+      "id": "export.eqapo-done",
+      "step": "export",
+      "title": {
+        "ko": "Equalizer APO 설정 저장 완료",
+        "en": "Equalizer APO configuration saved"
+      },
+      "note": {
+        "ko": "결과 줄의 파일 이름은 모의 서비스의 자리표시이고, 그 아래가 복사 안내입니다.",
+        "en": "The outcome's file names are the mock service's placeholders; where to copy the files sits under it."
+      }
+    },
+    {
+      "id": "export.mimo-blocked",
+      "step": "export",
+      "title": {
+        "ko": "MIMO를 넣은 결과의 필터",
+        "en": "Filters for a result with MIMO"
+      },
+      "note": {
+        "ko": "세 위치를 측정하고 MIMO를 계산한 결과라 필터 값 텍스트와 Equalizer APO가 꺼집니다.",
+        "en": "With three positions measured and MIMO calculated, the filter text and Equalizer APO are off."
+      }
+    },
+    {
+      "id": "export.failed",
+      "step": "export",
+      "title": {
+        "ko": "내보내기 실패",
+        "en": "Export failed"
+      }
+    },
+    {
+      "id": "frame.help",
+      "step": "frame",
+      "title": {
+        "ko": "도움말 패널",
+        "en": "Help panel"
+      }
+    },
+    {
+      "id": "frame.jobs",
+      "step": "frame",
+      "title": {
+        "ko": "펼친 작업 트레이",
+        "en": "Expanded job tray"
+      },
+      "note": {
+        "ko": "진행 중인 보정 계산 하나와 완료·실패·취소 기록입니다.",
+        "en": "One correction running, with completed, failed and canceled entries."
+      }
+    },
+    {
+      "id": "frame.project-menu",
+      "step": "frame",
+      "title": {
+        "ko": "프로젝트 메뉴",
+        "en": "Project menu"
+      }
+    },
+    {
+      "id": "frame.settings",
+      "step": "frame",
+      "title": {
+        "ko": "설정 패널",
+        "en": "Settings panel"
+      }
+    },
+    {
+      "id": "tutorial.system",
+      "step": "tutorial",
+      "title": {
+        "ko": "튜토리얼: 시스템",
+        "en": "Tutorial: System"
+      }
+    },
+    {
+      "id": "tutorial.connect",
+      "step": "tutorial",
+      "title": {
+        "ko": "튜토리얼: 연결·점검",
+        "en": "Tutorial: Connect & check"
+      }
+    },
+    {
+      "id": "tutorial.measure",
+      "step": "tutorial",
+      "title": {
+        "ko": "튜토리얼: 측정·가져오기",
+        "en": "Tutorial: Measure & import"
+      }
+    },
+    {
+      "id": "tutorial.calibrate",
+      "step": "tutorial",
+      "title": {
+        "ko": "튜토리얼: 보정",
+        "en": "Tutorial: Correction"
+      }
+    },
+    {
+      "id": "tutorial.export",
+      "step": "tutorial",
+      "title": {
+        "ko": "튜토리얼: 내보내기",
+        "en": "Tutorial: Export"
+      }
+    }
+  ]
+}
