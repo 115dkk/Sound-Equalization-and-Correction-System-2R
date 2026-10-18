@@ -20,7 +20,7 @@ SECS 2R은 룸 보정 설계 프로그램 [SECS 2](https://github.com/Kim-O-O/So
 
 ## SECS 2와의 관계
 
-- 업스트림 SECS 2의 모든 기능을 옮깁니다. 이식한 업스트림 판은 [`UPSTREAM.toml`](UPSTREAM.toml)에 있고, 앱과 내보낸 파일에도 'SECS 2 Beta 1.3.1 기준'처럼 적힙니다.
+- 업스트림 SECS 2의 모든 기능을 옮깁니다. 이식한 업스트림 판은 [`UPSTREAM.toml`](UPSTREAM.toml)에 있고, 앱과 내보낸 파일에도 'SECS 2 Beta 1.3.3 기준'처럼 적힙니다.
 - 업스트림 파이썬 코드는 이 저장소의 `src/`, `tests/`, `tools/`에 고치지 않은 채 남아 있습니다. 러스트 이식의 결과가 맞는지 확인하는 기준으로만 쓰고 출하하지 않습니다.
 - 업스트림의 계산 방법은 그대로 따르고, 결함은 번호를 붙여 고칩니다. 업스트림과 다르게 동작하는 자리는 [`docs/DEVIATIONS.md`](docs/DEVIATIONS.md)에 모두 적습니다.
 - 업스트림의 README와 변경 기록은 [`docs/upstream/`](docs/upstream)에 있습니다.

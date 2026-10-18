@@ -422,10 +422,11 @@ def mode_params(mode: str, ultra_ms: float = ULTRA_MS_DEFAULT) -> dict:
     return ultra_params(ultra_ms) if mode == ULTRA_MODE else MODES[mode]
 
 
-def mode_spec(mode: str, ultra_ms: float = ULTRA_MS_DEFAULT) -> str:
-    """모드 한 줄 사양(엔진 `MODES` 에서 — 탭·지연을 바꾸면 따라온다)."""
+def mode_spec(mode: str, ultra_ms: float = ULTRA_MS_DEFAULT, mimo_fir: bool = False) -> str:
+    """모드 한 줄 사양(엔진 `MODES` 에서 — 탭·지연을 바꾸면 따라온다). MIMO 는 [FIR 사용] 체크를 따른다
+    (10-18 사용자: 기본이 FIR 인데 모드 표의 'iir' 를 읽어 늘 'MIMO IIR' 로 나왔다)."""
     m = mode_params(mode, ultra_ms)
-    mimo = 'IIR' if m.get('mimo') == 'iir' else 'IIR/FIR'
+    mimo = 'FIR' if mimo_fir else 'IIR'
     if int(m.get('taps', 0)) <= 0:
         return f'RC IIR 전용 · MIMO {mimo} · 필터 지연 {float(m["max_latency_ms"]):g} ms'
     return f'RC IIR + FIR {int(m["taps"]):,} · MIMO {mimo} · 지연 {float(m["max_latency_ms"]):g} ms 이내'

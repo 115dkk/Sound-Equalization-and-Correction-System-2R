@@ -41,6 +41,8 @@ class RewSnapshot:
     running: bool | None = None
     version: str | None = None
     pro: bool = False
+    #: REW 오디오 드라이버('ASIO'·'Java'). None = 모름(10-17).
+    driver: str | None = None
     outputs: tuple = ()
     inputs: tuple = ()
     output_names: tuple = ()
@@ -94,6 +96,42 @@ class RewCache(QtCore.QObject):
 
     def is_pro(self) -> bool:
         return bool(_call(self.backend, 'is_pro', False)) if self.live else self._snap.pro
+
+    def driver(self) -> str | None:
+        return _call(self.backend, 'driver', None) if self.live else self._snap.driver
+
+    def can_set_driver(self) -> bool:
+        return hasattr(self.backend, 'set_driver')
+
+    def set_driver(self, name: str) -> None:
+        """REW 드라이버를 바꾼다 — 원격이면 **워커 스레드에서만** 부른다(장치 단계가 그렇게 한다)."""
+        self.backend.set_driver(name)
+
+    def send_device(self, kind: str, name: str, then: Callable[[RewSnapshot], None] | None = None) -> bool:
+        """화면에서 고른 장치를 REW 에 연다(10-17) — REW 가 이미 그 장치면 보내지 않는다.
+
+        원격이면 워커 스레드에서 보내고 새로 읽은 뒤 `then` 을 화면 스레드에서 부른다. 보냈으면 True.
+        """
+        setter = getattr(self.backend, 'set_device', None)
+        if setter is None or not name:
+            return False
+
+        def work() -> bool:
+            # 지금 장치 묻기도 HTTP 라 원격이면 이 함수째 워커 스레드에서 돈다
+            if _call_args(self.backend, 'current_device', None, kind) == name:
+                return False
+            try:
+                setter(kind, name)
+            except Exception:  # noqa: BLE001 - 보내기 실패는 다음 새로 읽기가 드러낸다
+                pass
+            self.request_refresh(then=then)
+            return True
+
+        if self.live:
+            return work()
+
+        threading.Thread(target=work, name='secs-rew-device', daemon=True).start()
+        return True
 
     def output_devices(self) -> list:
         return list(_call(self.devices, 'output_devices', []) or []) if self.live else list(self._snap.outputs)
@@ -155,6 +193,7 @@ class RewCache(QtCore.QObject):
             running=True,
             version=_call(backend, 'version', None),
             pro=bool(_call(backend, 'is_pro', False)),
+            driver=_call(backend, 'driver', None),
             outputs=tuple(_call(devices, 'output_devices', []) or ()),
             inputs=tuple(_call(devices, 'input_devices', []) or ()),
             output_names=tuple(str(n) for n in (_call(devices, 'output_channel_names', []) or ())),
@@ -274,6 +313,17 @@ def _call(target: Any, name: str, default):
     try:
         return method()
     except Exception:  # noqa: BLE001 - REW 가 답하지 않으면 모른다고 본다
+        return default
+
+
+def _call_args(target: Any, name: str, default, *args):
+    """`_call` 의 인자 있는 판."""
+    method = getattr(target, name, None) if target is not None else None
+    if method is None:
+        return default
+    try:
+        return method(*args)
+    except Exception:  # noqa: BLE001
         return default
 
 

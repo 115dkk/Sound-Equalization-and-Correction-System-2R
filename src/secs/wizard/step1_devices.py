@@ -78,6 +78,15 @@ def fill_sweep_combo(combo: QtWidgets.QComboBox, sample_rate: int = DEFAULT_SAMP
     combo.blockSignals(False)
 
 
+def device_text(device) -> str:
+    """장치 칸 글자 '이름 · 8ch'. 이름에 채널 수가 있으면 덧붙이지 않고('Demo ASIO 16ch · 16ch' — 10-10 3차 시험),
+    REW 가 아직 열지 않은 Java 장치는 채널 수를 모르니 이름만(10-17)."""
+    if (getattr(device, 'extra', None) or {}).get('channels_unknown'):
+        return device.name
+    tag = f'{device.channels}ch'
+    return device.name if tag.lower() in device.name.lower() else f'{device.name} · {tag}'
+
+
 class ChannelCombo(QtWidgets.QComboBox):
     """채널 번호를 고르는 콤보 — 항목은 REW 의 풀 네임("3: Mic/Line/Inst In 1"), 값은 1-기준 번호.
 
@@ -123,6 +132,11 @@ class Step1Devices(QtWidgets.QWidget):
     changed = QtCore.pyqtSignal()
     #: REW 실행 스레드가 끝났다(성공 여부, 안내 문구). 화면 스레드에서 받는다.
     launchFinished = QtCore.pyqtSignal(bool, str)
+    #: 드라이버 바꾸기 스레드가 끝났다(실패 문구, 성공이면 '').
+    driverFinished = QtCore.pyqtSignal(str)
+
+    #: REW 드라이버 선택지(`POST /audio/driver` 값).
+    DRIVERS = ('ASIO', 'Java')
 
     #: REW 가 뜨고 API 가 응답할 때까지 기다리는 최대 시간(초). REW 는 보통 10~20 초.
     LAUNCH_WAIT_S = 40.0
@@ -140,6 +154,8 @@ class Step1Devices(QtWidgets.QWidget):
         self._launching = False
         self._checking = False
         self.launchFinished.connect(self._on_launch_finished)
+        self._switching = False
+        self.driverFinished.connect(self._on_driver_finished)
         # REW 가 막 뜨면 /version 은 답해도 오디오 장치 목록은 잠깐 비어 있다 → 채워질 때까지 2 초마다 다시 읽는다
         # (09-22 사용자: REW 를 열어도 [다시 확인] 을 누르기 전엔 마이크·오디오가 안 뜬다).
         self._device_retry = QtCore.QTimer(self)
@@ -234,12 +250,19 @@ class Step1Devices(QtWidgets.QWidget):
         mic_grid.setVerticalSpacing(6)
         self.input_combo = QtWidgets.QComboBox()
         self.input_combo.currentIndexChanged.connect(self._store)
+        self.input_combo.currentIndexChanged.connect(lambda _i: self._device_picked('input', self.input_combo))
         self.input_channel = ChannelCombo()          # 항목 = REW 입력 이름, 값 = 번호
         self.input_channel.valueChanged.connect(self._store)
         # 값은 refresh() 가 REW 의 GET /audio/input-cal 로 다시 읽는다(09-23) — 못 읽으면 '알 수 없음'.
         self.cal_pill = pill(t('알 수 없음'), 'na')
+        # REW 드라이버 — 일반 사운드카드(Java)와 오디오 인터페이스(ASIO)를 SECS 에서 바로 바꾼다(10-17 사용자)
+        self.driver_combo = QtWidgets.QComboBox()
+        for name in self.DRIVERS:
+            self.driver_combo.addItem(name, name)
+        self.driver_combo.currentIndexChanged.connect(self._driver_picked)
         self.output_combo = QtWidgets.QComboBox()
         self.output_combo.currentIndexChanged.connect(self._store)
+        self.output_combo.currentIndexChanged.connect(lambda _i: self._device_picked('output', self.output_combo))
         self.rate_label = label(f'{self.sample_rate} Hz', 'num')
         self.sweep_combo = QtWidgets.QComboBox()
         self._fill_sweep_combo()
@@ -248,10 +271,11 @@ class Step1Devices(QtWidgets.QWidget):
 
         attach(self.input_combo, 's1.input_device')
         attach(self.input_channel, 's1.input_channel')
+        attach(self.driver_combo, 's1.driver')
         attach(self.output_combo, 's1.output_driver')
         attach(self.sweep_combo, 's1.sweep')
         # 긴 항목(장치 이름)이 카드 최소 폭을 밀지 않게 — 좁은 창에서 가로 스크롤 방지.
-        for combo in (self.input_combo, self.output_combo, self.sweep_combo):
+        for combo in (self.driver_combo, self.input_combo, self.output_combo, self.sweep_combo):
             combo.setSizeAdjustPolicy(
                 QtWidgets.QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
             combo.setMinimumContentsLength(14)
@@ -260,8 +284,9 @@ class Step1Devices(QtWidgets.QWidget):
         self.input_channel.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
 
         for row, (name, widget) in enumerate((
+                ('드라이버', self.driver_combo),
                 ('입력 장치', self.input_combo), ('입력 채널', self.input_channel),
-                ('캘리브레이션', self.cal_pill), ('출력 드라이버', self.output_combo),
+                ('캘리브레이션', self.cal_pill), ('출력 장치', self.output_combo),
                 ('샘플레이트', self.rate_label), ('스윕 길이', self.sweep_combo))):
             mic_grid.addWidget(label(name), row, 0)
             mic_grid.addWidget(widget, row, 1)
@@ -310,7 +335,7 @@ class Step1Devices(QtWidgets.QWidget):
     def working(self) -> bool:
         """REW 에 묻거나 REW 를 띄우는 중인가(상태 배지 옆 방울 — 창의 250 ms 점검이 본다)."""
         busy = getattr(self.rew, 'busy', None)
-        return bool(self._checking or self._launching
+        return bool(self._checking or self._launching or self._switching
                     or (callable(busy) and busy()) or not self.read_button.isEnabled())
 
     def poll_busy(self) -> None:
@@ -356,6 +381,65 @@ class Step1Devices(QtWidgets.QWidget):
         if not ok and message:
             self._show_hint(message, bad=True)
         self.changed.emit()
+
+    # ──────────────────────────── 드라이버 ────────────────────────────
+    def _refresh_driver(self, running: bool) -> None:
+        """드라이버 칸 = REW 의 지금 드라이버. 바꾸는 중에는 손대지 않는다."""
+        if self._switching:
+            return
+        current = self.rew.driver() if running else None
+        self.driver_combo.blockSignals(True)
+        index = self.driver_combo.findData(current) if current else -1
+        if current and index < 0:                  # 모르는 이름(맥 Core Audio 등)도 그대로 보인다
+            self.driver_combo.addItem(current, current)
+            index = self.driver_combo.findData(current)
+        self.driver_combo.setCurrentIndex(max(0, index))
+        self.driver_combo.blockSignals(False)
+        self.driver_combo.setEnabled(bool(running and current and self.rew.can_set_driver()))
+
+    def _driver_picked(self, *_args) -> None:
+        """드라이버를 고르면 REW 에 보낸다 — REW 가 장치를 다시 여는 동안 화면이 멈추지 않게 스레드에서."""
+        name = str(self.driver_combo.currentData() or '')
+        if self._building or self._switching or not name or name == self.rew.driver():
+            return
+        self._switching = True
+        self.driver_combo.setEnabled(False)
+        self._show_hint(f'REW 드라이버를 {name} 로 바꾸는 중입니다…', bad=False)
+        self.poll_busy()
+
+        def work() -> None:
+            try:
+                self.rew.set_driver(name)
+            except Exception as error:  # noqa: BLE001 - 실패 이유를 화면에 보여 준다
+                self.driverFinished.emit(f'드라이버를 바꾸지 못했습니다: {error}')
+                return
+            self.driverFinished.emit('')
+
+        if self.rew.live:
+            work()
+        else:
+            threading.Thread(target=work, name='secs-rew-driver', daemon=True).start()
+
+    @QtCore.pyqtSlot(str)
+    def _on_driver_finished(self, message: str) -> None:
+        def after(_snap) -> None:
+            self._switching = False
+            self.refresh()
+            if message:
+                self._show_hint(message, bad=True)
+            else:
+                self.rew_hint.setVisible(False)
+                # REW 가 새 드라이버의 장치를 여는 동안 목록이 잠깐 비면 `_refresh_devices` 의 재시도가 채운다
+            self.changed.emit()
+
+        self.rew.request_refresh(then=after)
+
+    def _device_picked(self, kind: str, combo) -> None:
+        """장치를 고르면 REW 에도 연다 — Java 는 연 장치의 채널 목록만 주므로 채널 수가 그때 맞아진다(10-17)."""
+        name = str(combo.currentData() or '')
+        if self._building or not name:
+            return
+        self.rew.send_device(kind, name, then=lambda _snap: (self.refresh(), self.changed.emit()))
 
     def _retry_devices(self) -> None:
         """장치 목록이 빈 동안 다시 읽는다. 채워지거나 횟수가 다하면 멈춘다."""
@@ -429,6 +513,7 @@ class Step1Devices(QtWidgets.QWidget):
         outputs = list(self.devices.output_devices())
         inputs = list(self.devices.input_devices())
         running = self._status()[0]
+        self._refresh_driver(running)
         if running and (not outputs or not inputs):
             if not self._device_retry.isActive():
                 self._device_retry_left = 15          # 최대 30 초
@@ -445,8 +530,7 @@ class Step1Devices(QtWidgets.QWidget):
             if items:
                 for device in items:
                     # 이름에 이미 채널 수가 있으면 덧붙이지 않는다('Demo ASIO 16ch · 16ch' 가 칸에서 잘렸다 — 10-10 3차 시험)
-                    tag = f'{device.channels}ch'
-                    text = device.name if tag.lower() in device.name.lower() else f'{device.name} · {tag}'
+                    text = device_text(device)
                     combo.addItem(text, device.name)
                     combo.setItemData(combo.count() - 1, text, QtCore.Qt.ItemDataRole.ToolTipRole)
                 index = combo.findData(wanted)
