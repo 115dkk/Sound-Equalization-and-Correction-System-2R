@@ -19,6 +19,7 @@ import {
   rewNoApiView,
   rewNotProView,
   rewOffView,
+  rewUntestedView,
 } from "./fixtures";
 import { MicMeterPanel } from "./MicMeterPanel";
 import { connectStepState } from "./state";
@@ -190,6 +191,32 @@ describe("ConnectScreen", () => {
     expect(must("connect.rew.settings").textContent).toContain("256k");
     fireEvent.click(must("connect.rew.read_settings"));
     expect(actions.readRewSettings).toHaveBeenCalled();
+  });
+
+  it("keeps the licence unknown until REW answers a sweep, and still offers REW (R6)", () => {
+    setup(rewUntestedView);
+    expect(must("connect.rew.pro").textContent).toBe(ko("connect.rew.pro.untested"));
+    expect(ui("connect.rew.hint")).toBeNull();
+    expect(must("connect.method.rew").textContent).toContain(ko("connect.method.rew.ready"));
+  });
+
+  it("shows the devices REW measures with instead of choices it would not apply (R7)", () => {
+    setup(rewUntestedView);
+    expect(must("connect.devices.rew_owned").textContent).toBe(ko("connect.device.rew_owned"));
+    for (const id of ["connect.input_device", "connect.input_channel", "connect.output_device"]) {
+      expect(must(id).querySelector("select")).toBeNull();
+    }
+    expect(must("connect.input_device").textContent).toContain("ASIO: MOTU Pro Audio");
+    expect(must("connect.input_channel").textContent).toContain("Mic/Line 1");
+    expect(must("connect.output_device").textContent).toContain("ASIO: MOTU Pro Audio");
+    // The project still holds the native WASAPI ids; REW mode does not show them.
+    expect(must("connect.devices").textContent).not.toContain("wasapi:");
+  });
+
+  it("says when REW's own devices could not be read", () => {
+    const unread = { ...rewUntestedView, rew: { ...rewUntestedView.rew, details: { ...rewUntestedView.rew.details, current: { inputDevice: null, outputDevice: null, input: null } } } };
+    setup(unread);
+    expect(must("connect.input_device").textContent).toBe(ko("connect.input_device") + ko("connect.rew.unknown"));
   });
 
   it("explains a failed launch and while REW starts", () => {
