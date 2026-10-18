@@ -18,7 +18,6 @@ fn rew_info_uses_injected_transport_and_preserves_unknown_facts() {
         ("/audio/samplerate", 5),
         ("/measure/sweep/configuration", 5),
         ("/measure/level", 3),
-        ("/audio/driver", 5),
         ("/audio/java/input-device", 5),
         ("/audio/java/output-device", 5),
         ("/audio/java/input", 5),
@@ -54,6 +53,7 @@ fn rew_info_uses_injected_transport_and_preserves_unknown_facts() {
     assert!(info.running && info.reachable);
     assert_eq!(info.version.as_deref(), Some("5.40 Beta 124 API 0.9.4"));
     assert!(info.pro.is_none() && info.blocking.is_none() && info.input_calibration_file.is_none());
+    assert!(info.input_device.is_none() && info.output_device.is_none() && info.input.is_none());
     assert!(
         info.input_devices.is_none()
             && info.output_devices.is_none()

@@ -156,9 +156,12 @@ struct PacketContinuity {
     /// The packet's DATA_DISCONTINUITY flag on the first packet of the stream:
     /// the start transition, not lost audio.
     start_flag: bool,
-    /// Audio was lost before this packet.
+    /// Audio was lost before this packet: the driver flagged a later packet.
     gap: bool,
-    /// The device position jumped forward (frames lost without a flag).
+    /// The device position ran ahead of the frames delivered so far. Kept for
+    /// the trace and stats only: a shared-mode stream behind a sample-rate
+    /// converter may count positions at another rate, and treating that as lost
+    /// audio would reject every recording on such a device.
     position_jump: bool,
 }
 
@@ -167,12 +170,10 @@ fn packet_continuity(
     header: &PacketHeader,
     expected_position: Option<u64>,
 ) -> PacketContinuity {
-    let start_flag = ordinal == 0 && header.flags.discontinuity;
-    let position_jump = expected_position.is_some_and(|expected| header.index > expected);
     PacketContinuity {
-        start_flag,
-        gap: (ordinal > 0 && header.flags.discontinuity) || position_jump,
-        position_jump,
+        start_flag: ordinal == 0 && header.flags.discontinuity,
+        gap: ordinal > 0 && header.flags.discontinuity,
+        position_jump: expected_position.is_some_and(|expected| header.index > expected),
     }
 }
 
@@ -1881,16 +1882,11 @@ mod windows_backend {
                     self.spec.channels,
                     self.trace.is_some(),
                 )?;
-                let continuity = packet_continuity(
-                    self.packet_ordinal,
-                    &packet.header,
-                    self.expected_position,
-                );
+                let continuity =
+                    packet_continuity(self.packet_ordinal, &packet.header, self.expected_position);
                 self.queue.mark_gap(continuity.gap);
-                self.expected_position = packet
-                    .header
-                    .index
-                    .checked_add(packet.header.frames as u64);
+                self.expected_position =
+                    packet.header.index.checked_add(packet.header.frames as u64);
                 let frame_start = self.captured_frames;
                 self.captured_frames += packet.header.frames as u64;
                 if let Some(trace) = &self.trace {
@@ -2282,14 +2278,14 @@ mod tests {
     }
 
     #[test]
-    fn only_forward_position_jump_is_gap() {
+    fn position_jump_is_traced_but_not_a_gap() {
         let header = |index| PacketHeader {
             frames: 480,
             index,
             ..PacketHeader::default()
         };
         let jumped = packet_continuity(2, &header(1_440), Some(960));
-        assert!(jumped.gap && jumped.position_jump);
+        assert!(jumped.position_jump && !jumped.gap);
         assert_eq!(
             packet_continuity(2, &header(0), Some(960)),
             PacketContinuity::default()

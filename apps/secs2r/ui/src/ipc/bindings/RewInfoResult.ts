@@ -7,9 +7,21 @@ import type { RewSweepInfo } from "./RewSweepInfo";
  */
 export type RewInfoResult = { executable_path: string | null, running: boolean, reachable: boolean, version: string | null, 
 /**
- * User-confirmed license hint; the API has no license endpoint.
+ * Observed automatic-sweep license state: unknown until success or rejection.
  */
-pro: boolean | null, blocking: boolean | null, 
+pro: boolean | null, 
+/**
+ * REW's current input device, read from its own audio preferences.
+ */
+input_device: string | null, 
+/**
+ * REW's current output device, read from its own audio preferences.
+ */
+output_device: string | null, 
+/**
+ * REW's current input channel name.
+ */
+input: string | null, blocking: boolean | null, 
 /**
  * Empty means no file loaded; null means unknown or per-input calibration.
  */

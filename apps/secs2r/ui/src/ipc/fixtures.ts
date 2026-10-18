@@ -300,6 +300,7 @@ export const subEntry: SubEntry = {
 export const appSettings: AppSettings = { language: "ko", theme: "system", icon: "expert", expert_display: false, recent_projects: [], last_window_size: null };
 export const rewInfo: RewInfoResult = {
   executable_path: "C:/Program Files/REW/roomeqwizard.exe", ...rewStatus, version: "5.40", blocking: false,
+  input_device: "UMIK-1", output_device: "AVR (HDMI)", input: "Input 1",
   input_calibration_file: "UMIK-1.txt", input_devices: [{ id: "mic", name: "UMIK-1", channels: 2 }],
   output_devices: [{ id: "hdmi", name: "AVR (HDMI)", channels: 16 }], input_channel_names: ["Input 1", "Input 2"],
   sample_rate: 48000, sweep: { start_hz: 10, end_hz: 20000, length: "256k" }, level_dbfs: -12,

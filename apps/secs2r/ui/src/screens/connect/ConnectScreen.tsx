@@ -63,7 +63,7 @@ function pathStatus(t: Translate, view: ConnectView, path: ConnectPath): { tone:
     case "rew": {
       if (!methods || view.rew.launch !== "idle") return { tone: "busy", text: t("connect.method.checking") };
       const rew = methods.rew;
-      if (rew.reachable && rew.pro) return { tone: "success", text: t("connect.method.rew.ready") };
+      if (rew.reachable && rew.pro !== false) return { tone: "success", text: t("connect.method.rew.ready") };
       if (rew.reachable) return { tone: "warning", text: t("connect.method.rew.not_pro") };
       if (rew.running) return { tone: "warning", text: t("connect.method.rew.no_api") };
       return { tone: "neutral", text: t("connect.method.rew.off") };
@@ -195,7 +195,7 @@ function MockCard({ view }: { view: ConnectView }) {
 function RewCard({ view, actions }: { view: ConnectView; actions: ConnectActions }) {
   const t = useT();
   const number = useNumber();
-  const status = view.methods?.rew ?? { running: false, reachable: false, pro: false };
+  const status = view.methods?.rew ?? { running: false, reachable: false, pro: null };
   const { launch, problem, details } = view.rew;
   const pill =
     launch === "checking" ? (
@@ -209,12 +209,15 @@ function RewCard({ view, actions }: { view: ConnectView; actions: ConnectActions
     ) : (
       <StatusPill tone="warning">{t("connect.rew.off")}</StatusPill>
     );
-  const pro = status.pro ? (
+  // REW has no license endpoint: unknown until a sweep succeeds or REW refuses one (R6).
+  const pro = !status.reachable ? (
+    <StatusPill>{t("connect.rew.pro.unknown")}</StatusPill>
+  ) : status.pro === true ? (
     <StatusPill tone="success">{t("connect.rew.pro.ok")}</StatusPill>
-  ) : status.reachable ? (
+  ) : status.pro === false ? (
     <StatusPill tone="warning">{t("connect.rew.pro.no")}</StatusPill>
   ) : (
-    <StatusPill>{t("connect.rew.pro.unknown")}</StatusPill>
+    <StatusPill>{t("connect.rew.pro.untested")}</StatusPill>
   );
   const unknown = t("connect.rew.unknown");
   const hint: { cause: string; next?: string; detail?: string; tone: "danger" | "warning" } | null =
@@ -222,7 +225,7 @@ function RewCard({ view, actions }: { view: ConnectView; actions: ConnectActions
       ? null
       : problem
         ? { cause: t(PROBLEM_TEXT[problem].cause), next: t(PROBLEM_TEXT[problem].next), tone: "danger", ...(view.rew.problemDetail ? { detail: view.rew.problemDetail } : {}) }
-        : status.reachable && !status.pro
+        : status.reachable && status.pro === false
           ? { cause: t("connect.rew.hint.not_pro"), next: t("connect.rew.hint.not_pro.next"), tone: "warning" }
           : status.running && !status.reachable
             ? { cause: t("connect.rew.hint.no_api"), next: t("connect.rew.hint.no_api.next"), tone: "warning" }
@@ -323,6 +326,23 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
   }));
   const loopback = settings?.timing === "loopback" && !rew;
   const cal = view.rew.details.micCalibration;
+  // REW measures with its own audio preferences; the screen shows them instead of a choice it could not apply (R7).
+  const current = view.rew.details.current;
+  const rewReadout = (id: string, label: string, value: string | null | undefined, hint?: string) => (
+    <div className="ui-field" data-ui={id}>
+      <span className="ui-field__label">{label}</span>
+      {value ? (
+        <span className="connect-readout connect-readout--name" title={value}>
+          {value}
+        </span>
+      ) : (
+        <span className="connect-readout">
+          <StatusPill>{methods?.rew.reachable ? t("connect.rew.unknown") : t("connect.device.after_rew")}</StatusPill>
+        </span>
+      )}
+      {hint && <span className="ui-field__hint">{hint}</span>}
+    </div>
+  );
   return (
     <Card title={t("connect.devices.title")} data-ui="connect.devices">
       {nativeError && (
@@ -339,24 +359,38 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
           }
         />
       )}
+      {rew && (
+        <p className="connect-note" data-ui="connect.devices.rew_owned">
+          <Icon name="info" size={18} className="connect-note__icon" />
+          <span>{t("connect.device.rew_owned")}</span>
+        </p>
+      )}
       <div className="connect-fields">
-        <Select
-          id="connect.input_device"
-          label={t("connect.input_device")}
-          value={inputId}
-          options={listOf(inputs, "input", inputId)}
-          disabled={inputs.length === 0}
-          onChange={actions.setInputDevice}
-        />
-        <Select
-          id="connect.input_channel"
-          label={t("connect.input_channel")}
-          value={String(settings?.input_channel ?? 1)}
-          options={channelOptions}
-          hint={t("connect.input_channel.hint")}
-          disabled={inputs.length === 0}
-          onChange={(v) => actions.setInputChannel(Number(v))}
-        />
+        {rew ? (
+          rewReadout("connect.input_device", t("connect.input_device"), current?.inputDevice)
+        ) : (
+          <Select
+            id="connect.input_device"
+            label={t("connect.input_device")}
+            value={inputId}
+            options={listOf(inputs, "input", inputId)}
+            disabled={inputs.length === 0}
+            onChange={actions.setInputDevice}
+          />
+        )}
+        {rew ? (
+          rewReadout("connect.input_channel", t("connect.input_channel"), current?.input, t("connect.input_channel.hint"))
+        ) : (
+          <Select
+            id="connect.input_channel"
+            label={t("connect.input_channel")}
+            value={String(settings?.input_channel ?? 1)}
+            options={channelOptions}
+            hint={t("connect.input_channel.hint")}
+            disabled={inputs.length === 0}
+            onChange={(v) => actions.setInputChannel(Number(v))}
+          />
+        )}
         {rew && (
           <div className="ui-field" data-ui="connect.mic_cal">
             <span className="ui-field__label">{t("connect.mic_cal")}</span>
@@ -373,15 +407,19 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
             </span>
           </div>
         )}
-        <Select
-          id="connect.output_device"
-          label={t("connect.output_device")}
-          value={outputId}
-          options={listOf(outputs, "output", outputId)}
-          hint={t("connect.output_device.hint")}
-          disabled={outputs.length === 0}
-          onChange={actions.setOutputDevice}
-        />
+        {rew ? (
+          rewReadout("connect.output_device", t("connect.output_device"), current?.outputDevice, t("connect.output_device.hint"))
+        ) : (
+          <Select
+            id="connect.output_device"
+            label={t("connect.output_device")}
+            value={outputId}
+            options={listOf(outputs, "output", outputId)}
+            hint={t("connect.output_device.hint")}
+            disabled={outputs.length === 0}
+            onChange={actions.setOutputDevice}
+          />
+        )}
         <div className="ui-field" data-ui="connect.sample_rate">
           <span className="ui-field__label">{t("connect.sample_rate")}</span>
           <span className="connect-readout tabular">{t("connect.sample_rate.value", { rate: number(view.sampleRate) })}</span>

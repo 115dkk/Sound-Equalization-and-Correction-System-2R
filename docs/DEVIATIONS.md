@@ -50,11 +50,13 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 
 | 번호 | 업스트림 동작 | 바꾸는 동작 | 출처 | 상태 |
 |---|---|---|---|---|
-| R1 | `/measure` 4xx 본문에 'pro'가 들어가면(process, problem) Pro 없음으로 판정하고, 401·402·403은 어느 경로든 Pro 없음입니다. | `/measure/command`의 401·402·403만 Pro 필요로 판정하고 본문은 보지 않습니다. `secs-rew::test_r1_pro_required_uses_only_status_and_measure_command_path`. | `rewapi/rew.py:286-292` | 적용 |
+| R1 | `/measure` 4xx 본문에 'pro'가 들어가면(process, problem) Pro 없음으로 판정하고, 401·402·403은 어느 경로든 Pro 없음입니다. | 401·402·403은 업스트림처럼 경로와 무관하게 Pro 필요로 판정하고, 본문 문구로는 판정하지 않습니다. 0.19.0까지는 `/measure/command`의 상태만 보았는데, REW 5.40은 스윕 설정(`/measure/sweep/configuration`)에서 401을 주어 Pro 안내 대신 일반 REW 오류가 났습니다(2026-10-18 Windows 실기 검증). `secs-rew::test_r1_pro_required_uses_only_status`. | `rewapi/rew.py:286-292` | 적용 |
 | R2 | 상태 확인의 차단기가 측정 스레드의 요청까지 6초 막습니다. | 상태·장치 조회에만 차단기를 적용하고, 측정 세션과 취소 요청에는 적용하지 않습니다. `secs-rew::test_r2_probe_circuit_breaker_does_not_block_measurement_requests`, `test_r2_full_position_ignores_offline_hold_including_device_lookups`. | `rewapi/rew.py:273-284, 317-329` | 적용 |
 | R3 | 콜백 서버의 경로를 예측할 수 있고, 4 MB를 넘는 본문을 일부만 읽습니다. | 서버별 무작위 경로 토큰, 미등록 경로 404, 4 MB 초과 본문을 끝까지 버린 뒤 413. `secs-rew::test_r3_random_token_wrong_path_404_and_oversized_body_drained`는 같은 연결의 다음 요청까지 확인합니다. | `rewapi/callback.py:18, 47-59` | 적용 |
 | R4 | FakeREW가 상위 폴더의 `tests/synth.py`를 불러옵니다. | `IrSource`로 IR·t0·SNR을 주입하며 제품에는 테스트 코드·샘플 데이터를 넣지 않습니다. `secs-rew::test_r4_fake_two_position_plan_uses_only_supplied_ir_source`. | `rewapi/fake.py:54-81` | 적용 |
 | R5 | 합성 IR의 역할별 시드가 프로세스마다 달라지는 Python `hash(role)`에 기대어 실행 사이 바이트가 달라집니다. | UTF-8 역할 이름의 FNV-1a 64비트 값을 100000으로 나눈 나머지와 기준 시드 20260916을 작은 PCG 생성기에 넣어 어느 프로세스와 스레드 수에서도 같은 합성 IR을 만듭니다. `secs-service::sample_load_synthetic_structure_and_determinism`이 지킵니다. | `rewapi/fake.py:127-174` | 적용 |
+| R6 | REW API에 라이선스를 알려 주는 곳이 없어 Pro를 모를 때도 Pro로 보고 '확인됨 · 자동 측정 가능'으로 표시합니다. | 연결 직후에는 '아직 모름'으로 두고, REW가 Pro 필요로 거절하면 'Pro 아님', 자동 스윕이 성공하면 '확인됨'으로 바꿉니다. 거절한 뒤에는 REW 방식을 고를 수 없고, REW가 꺼지거나 '다시 확인'을 누르면 '아직 모름'으로 돌아갑니다. `secs-service::rew_license_observation_tracks_rejection_success_and_launch_reset`. | `rewapi/rew.py pro_state·is_pro`, `wizard/step1_devices.py` Pro 배지 | 적용 |
+| R7 | REW 방식에서도 입력·출력 장치와 입력 채널을 고르게 하지만 REW에 보내지 않습니다. REW는 자기 환경설정의 장치로 재고, 원 측정 환경에는 고른 이름이 들어갑니다. | REW 방식에서는 REW가 쓰는 입력 장치·입력 채널·출력 장치를 읽어 보여 주고, 바꾸는 곳이 REW 환경설정이라고 적습니다. REW API 도움말이 장치 지정 본문을 밝히지 않아 지정은 하지 않습니다. 원 측정 환경에는 REW가 쓴 장치 이름을 넣고, 읽지 못하면 REW 장치 목록에 있는 저장 이름만 씁니다. 저장된 값은 옛 프로젝트와 SECS 2 호환을 위해 그대로 둡니다. `secs-rew::{test_current_audio_reads_java_string_and_object_values,test_current_audio_reads_asio_device_once_for_both_directions,test_current_audio_tolerates_errors_empty_and_unknown_values}`, `secs-service::rew_source_devices_fall_back_only_to_names_in_rew_lists`. | `wizard/step1_devices.py` 장치 칸, `rewapi/rew.py` | 적용 |
 
 ## 화면
 

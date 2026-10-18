@@ -139,11 +139,14 @@ where
         let output_devices = self.client.output_devices();
         let input_devices = self.client.input_devices();
         let fallback = |stored: &str, devices: &[secs_rew::DeviceInfo]| {
-            devices
+            if devices
                 .iter()
                 .any(|device| device.id == stored || device.name == stored)
-                .then(|| stored.to_owned())
-                .unwrap_or_default()
+            {
+                stored.to_owned()
+            } else {
+                String::new()
+            }
         };
         let output_device = current_audio
             .output_device

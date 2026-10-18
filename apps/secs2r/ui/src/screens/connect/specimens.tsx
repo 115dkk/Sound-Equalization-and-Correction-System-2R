@@ -19,6 +19,7 @@ import {
   rewNoApiView,
   rewNotProView,
   rewOffView,
+  rewUntestedView,
 } from "./fixtures";
 import { MicMeterPanel } from "./MicMeterPanel";
 import { connectStepState, pathReady } from "./state";
@@ -113,7 +114,8 @@ export const connectSpecimens: SpecimenDef[] = [
   frame("screen.connect.empty", "Connect · nothing chosen yet", emptyView),
   frame("screen.connect.rew_off", "Connect · REW chosen, not running", rewOffView, { path: { kind: "rew", state: "warning" } }),
   frame("screen.connect.rew_no_api", "Connect · REW running without the API", rewNoApiView),
-  frame("screen.connect.rew_not_pro", "Connect · REW connected, not Pro (settings read)", rewNotProView),
+  frame("screen.connect.rew_untested", "Connect · REW connected, licence not known yet; devices read from REW", rewUntestedView),
+  frame("screen.connect.rew_not_pro", "Connect · REW refused a sweep for want of Pro (settings read)", rewNotProView),
   frame("screen.connect.native", "Connect · native measurement with devices", nativeView),
   frame("screen.connect.native_error", "Connect · native device list could not be read", nativeErrorView),
   frame("screen.connect.level_half", "Connect · level check half done, Rs playing in turn", levelHalfView),

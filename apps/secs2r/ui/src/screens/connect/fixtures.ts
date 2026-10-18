@@ -20,7 +20,7 @@ const nativeDevices: MeasureMethodsResult["native_devices"] = [
 ];
 
 const methodsWith = (rew: MeasureMethodsResult["rew"], native = true): MeasureMethodsResult => ({
-  methods: ["mock", ...(native ? ["native"] : []), ...(rew.reachable && rew.pro ? ["rew"] : [])],
+  methods: ["mock", ...(native ? ["native"] : []), ...(rew.reachable && rew.pro !== false ? ["rew"] : [])],
   native_devices: native ? nativeDevices : [],
   native_error: null,
   rew,
@@ -28,7 +28,7 @@ const methodsWith = (rew: MeasureMethodsResult["rew"], native = true): MeasureMe
   mock_roles: [...SAMPLE_ROLES],
 });
 
-const rewOff = { running: false, reachable: false, pro: false };
+const rewOff = { running: false, reachable: false, pro: null };
 
 const settingsFor = (method: string, patch: Partial<MeasureConfigResult> = {}): MeasureConfigResult => ({
   method,
@@ -62,6 +62,7 @@ const rewConnected: RewDetails = {
   ],
   outputs: [{ id: "ASIO: MOTU Pro Audio", name: "ASIO: MOTU Pro Audio", input_channels: 0, output_channels: 16 }],
   inputChannelNames: ["Mic/Line 1", "Mic/Line 2", "Line 3", "Line 4", "Line 5", "Line 6", "Line 7", "Line 8"],
+  current: { inputDevice: "ASIO: MOTU Pro Audio", outputDevice: "ASIO: MOTU Pro Audio", input: "Mic/Line 1" },
 };
 
 /** Levels stored for the first six channels of the sample room. */
@@ -105,10 +106,18 @@ export const rewOffView: ConnectView = {
 /** REW running without the API (started by hand without -api). */
 export const rewNoApiView: ConnectView = {
   ...rewOffView,
-  methods: methodsWith({ running: true, reachable: false, pro: false }),
+  methods: methodsWith({ running: true, reachable: false, pro: null }),
 };
 
-/** REW answering, but without a Pro licence: devices and mic calibration are read, measuring is manual. */
+/** REW answering, licence not known yet (REW has no licence endpoint; the first sweep tells, R6). */
+export const rewUntestedView: ConnectView = {
+  ...rewOffView,
+  methods: methodsWith({ running: true, reachable: true, pro: null }),
+  settings: settingsFor("rew", { input_device: "wasapi:{0.0.1.00000000}.{mic}", output_device: "wasapi:{0.0.0.00000000}.{out}" }),
+  rew: { ...base.rew, details: { ...rewConnected, settings: { sample_rate: 48000, sweep_length: "256k", level_dbfs: -12 } } },
+};
+
+/** REW refused a sweep for want of Pro: devices and mic calibration are read, measuring is manual. */
 export const rewNotProView: ConnectView = {
   ...rewOffView,
   methods: methodsWith({ running: true, reachable: true, pro: false }),

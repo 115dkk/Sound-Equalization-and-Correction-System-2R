@@ -733,6 +733,28 @@ fn rew_script() -> Vec<secs_rew::RecordedExchange> {
         2,
     )];
     for (i, role) in ["L", "R"].iter().enumerate() {
+        if i == 0 {
+            script.extend([
+                get("/audio/driver", json!({"driver":"Java"}), 5),
+                get("/audio/java/input-device", json!("Demo USB Mic"), 5),
+                get("/audio/java/output-device", json!("Demo Speakers (2ch)"), 5),
+                get("/audio/java/input", json!("1: Demo In 1"), 5),
+                get(
+                    "/audio/java/output-devices",
+                    json!(["Demo Speakers (2ch)"]),
+                    5,
+                ),
+                get("/audio/java/outputs", json!(["L", "R"]), 5),
+                get("/audio/java/input-devices", json!(["Demo USB Mic"]), 5),
+                get("/audio/java/inputs", json!(["1: Demo In 1"]), 5),
+            ]);
+        } else {
+            script.extend([
+                get("/audio/java/input-device", json!("Demo USB Mic"), 5),
+                get("/audio/java/output-device", json!("Demo Speakers (2ch)"), 5),
+                get("/audio/java/input", json!("1: Demo In 1"), 5),
+            ]);
+        }
         script.extend([
             post("/application/blocking", json!(true)),
             post("/audio/samplerate", json!({"value":48000.0,"unit":"Hz"})),
@@ -744,12 +766,6 @@ fn rew_script() -> Vec<secs_rew::RecordedExchange> {
             get("/measure/sweep/repetitions", json!(1), 5),
             post("/measure/timing/reference", json!("None")),
         ]);
-        if i == 0 {
-            script.extend([
-                get("/audio/driver", json!({"driver":"Java"}), 5),
-                get("/audio/java/outputs", json!(["L", "R"]), 5),
-            ]);
-        }
         script.extend([
             post("/audio/java/output",json!({"output":role})),
             post("/measure/naming",json!({"title":format!("{role} P1"),"namingOption":"Use as entered","prefixMeasNameWithOutput":false})),
@@ -792,7 +808,13 @@ fn rew_script() -> Vec<secs_rew::RecordedExchange> {
 fn rew_recorded_transport_records_each_role_and_warning() {
     let root = root("rew");
     let path = root.join("room.secs");
-    let transport = secs_rew::RecordedTransport::new(rew_script());
+    let mut script = rew_script();
+    script.push(get(
+        "/version",
+        json!({"message":"5.40 Beta 124 API 0.9.4"}),
+        2,
+    ));
+    let transport = secs_rew::RecordedTransport::new(script);
     let copy = transport.clone();
     let service = Service::new(Deps {
         rew_transport: Arc::new(move || Box::new(copy.clone())),
@@ -808,6 +830,10 @@ fn rew_recorded_transport_records_each_role_and_warning() {
     let events = Arc::new(Events::default());
     let job = measure(&service, 1, events.clone());
     succeeded(&events, job);
+    let Response::MeasureMethods(methods) = call(&service, Request::MeasureMethods) else {
+        panic!()
+    };
+    assert_eq!(methods.rew.pro, Some(true));
     transport.assert_finished();
     let mut store = secs_project::MeasurementStore::open(&path).unwrap();
     for role in ["L", "R"] {
@@ -822,6 +848,67 @@ fn rew_recorded_transport_records_each_role_and_warning() {
     assert!(
         matches!(&values[2],JobEvent::Log{code,params,..} if code=="measurement_low_snr" && params["role"]=="L")
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn rew_license_observation_tracks_rejection_success_and_launch_reset() {
+    let root = root("rew-license");
+    let path = root.join("room.secs");
+    let mut script = rew_script();
+    let denied = script
+        .iter()
+        .position(|exchange| exchange.request.path == "/measure/sweep/configuration")
+        .unwrap();
+    script.truncate(denied + 1);
+    script[denied].response = Ok(secs_rew::Response {
+        status: 401,
+        body: json!({"message":"A Pro upgrade license is required for this action"}),
+    });
+    script.extend([
+        get("/version", json!({"message":"5.40 Beta 124 API 0.9.4"}), 2),
+        get("/version", json!({"message":"5.40 Beta 124 API 0.9.4"}), 2),
+    ]);
+    let transport = secs_rew::RecordedTransport::new(script);
+    let copy = transport.clone();
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(move || Box::new(copy.clone())),
+        ..Default::default()
+    });
+    new(&service, &path);
+    configure(&service, "rew");
+
+    let Response::MeasureMethods(methods) = call(&service, Request::MeasureMethods) else {
+        panic!()
+    };
+    assert_eq!(methods.rew.pro, None);
+    assert!(methods.methods.iter().any(|method| method == "rew"));
+
+    let events = Arc::new(Events::default());
+    let job = measure(&service, 1, events.clone());
+    assert!(matches!(
+        events.wait(job, Duration::from_secs(1)),
+        JobEvent::Finished {
+            status: JobStatus::Failed,
+            error: Some(IpcError {
+                code: ErrorCode::RewProRequired,
+                ..
+            }),
+            ..
+        }
+    ));
+
+    let Response::MeasureMethods(methods) = call(&service, Request::MeasureMethods) else {
+        panic!()
+    };
+    assert_eq!(methods.rew.pro, Some(false));
+    assert!(!methods.methods.iter().any(|method| method == "rew"));
+
+    let Response::RewLaunch(status) = call(&service, Request::RewLaunch) else {
+        panic!()
+    };
+    assert_eq!(status.pro, None);
+    transport.assert_finished();
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -853,7 +940,7 @@ fn rew_cancel_keeps_already_recorded_role() {
     let second = script
         .iter()
         .enumerate()
-        .filter(|(_, e)| e.request.path == "/application/blocking")
+        .filter(|(_, e)| e.request.path == "/audio/java/input-device")
         .nth(1)
         .unwrap()
         .0;

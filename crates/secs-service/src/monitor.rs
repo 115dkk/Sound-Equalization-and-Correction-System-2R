@@ -50,10 +50,7 @@ fn level_error(error: impl std::fmt::Display) -> IpcError {
     IpcError::new(ErrorCode::DeviceUnavailable, error.to_string())
 }
 
-fn rew_error(
-    error: secs_rew::RewError,
-    rew_license: &Arc<Mutex<Option<bool>>>,
-) -> IpcError {
+fn rew_error(error: secs_rew::RewError, rew_license: &Arc<Mutex<Option<bool>>>) -> IpcError {
     super::measurement::measure_error(
         error.into(),
         "level",
@@ -187,6 +184,7 @@ impl Service {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn monitor_loop(
     deps: &crate::Deps,
     session: &Arc<Mutex<crate::session::Session>>,

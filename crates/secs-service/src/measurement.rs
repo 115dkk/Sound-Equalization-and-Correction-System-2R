@@ -41,14 +41,22 @@ pub(crate) fn measure_error(
             IpcError::new(ErrorCode::Cancelled, detail)
         }
         MeasureError::Audio(A::DeviceNotFound(device)) => {
-            IpcError::new(ErrorCode::DeviceUnavailable, detail).with_param("device", device)
+            let mut error =
+                IpcError::new(ErrorCode::DeviceUnavailable, detail).with_param("device", device);
+            error.retryable = true;
+            error
         }
         MeasureError::Audio(A::Backend(_)) => {
-            IpcError::new(ErrorCode::DeviceUnavailable, detail).with_param("device", "backend")
+            let mut error =
+                IpcError::new(ErrorCode::DeviceUnavailable, detail).with_param("device", "backend");
+            error.retryable = true;
+            error
         }
         MeasureError::Audio(A::Recording { issue, .. }) => {
-            IpcError::new(ErrorCode::RecordingFailed, detail)
-                .with_param("reason", issue.to_string())
+            let mut error = IpcError::new(ErrorCode::RecordingFailed, detail)
+                .with_param("reason", issue.to_string());
+            error.retryable = true;
+            error
         }
         MeasureError::Audio(A::UnsupportedFormat(_))
             if share != secs_audio::SharePreference::Auto =>
@@ -456,9 +464,8 @@ impl Service {
             let open = session.require()?;
             (open.store.project().clone(), open.identity)
         };
-        let s = MeasurementSettings::from_project(&project).map_err(|e| {
-            measure_error(e, "settings", secs_audio::SharePreference::Auto, None)
-        })?;
+        let s = MeasurementSettings::from_project(&project)
+            .map_err(|e| measure_error(e, "settings", secs_audio::SharePreference::Auto, None))?;
         let p = plan_for(&project, &s);
         if !p.roles.contains(&params.role) {
             return Err(input("role", "unknown measurement role"));
@@ -471,9 +478,7 @@ impl Service {
             ctx.role_progress(&params.role, 0, 1);
             let report = m
                 .level_check(&p, &params.role, 0.5, ctx.measurement_cancel())
-                .map_err(|e| {
-                    measure_error(e, "level", share, rew.then_some(&rew_license))
-                })?;
+                .map_err(|e| measure_error(e, "level", share, rew.then_some(&rew_license)))?;
             let recommended = secs_audio::recommend_sweep_level(
                 report.input_dbfs,
                 p.sweep_level_db,
@@ -604,9 +609,8 @@ impl Service {
         if matches!(active_method, "none" | "mdat") {
             return Err(input("method", "selected method cannot run a measurement"));
         }
-        let mut s = MeasurementSettings::from_project(&project).map_err(|e| {
-            measure_error(e, "settings", secs_audio::SharePreference::Auto, None)
-        })?;
+        let mut s = MeasurementSettings::from_project(&project)
+            .map_err(|e| measure_error(e, "settings", secs_audio::SharePreference::Auto, None))?;
         if params.position < 1 || params.position > measure::position_count(&project) {
             return Err(input("position", "position outside layout"));
         }
@@ -703,9 +707,8 @@ impl Service {
                 },
             )
             .map_err(|e| {
-                failure.unwrap_or_else(|| {
-                    measure_error(e, "plan", share, rew.then_some(&rew_license))
-                })
+                failure
+                    .unwrap_or_else(|| measure_error(e, "plan", share, rew.then_some(&rew_license)))
             })?;
             if rew {
                 *lock(&rew_license) = Some(true);
@@ -823,7 +826,11 @@ impl Service {
     pub(crate) fn rew_info(&self) -> RewInfoResult {
         let mut client = secs_rew::RewClient::new(Transport((self.deps.rew_transport)()));
         let mut info = client.info();
-        let current_audio = info.reachable.then(|| client.current_audio()).unwrap_or_default();
+        let current_audio = if info.reachable {
+            client.current_audio()
+        } else {
+            Default::default()
+        };
         if !info.reachable {
             *lock(&self.rew_license) = None;
         }
@@ -1180,6 +1187,13 @@ mod tests {
             let got = measure_error(error, "plan", share, None);
             assert_eq!(got.code, code);
             assert_eq!(got.params[key], value);
+            assert_eq!(
+                got.retryable,
+                matches!(
+                    code,
+                    ErrorCode::DeviceUnavailable | ErrorCode::RecordingFailed
+                )
+            );
         }
         for error in [
             MeasureError::Audio(A::Cancelled),
