@@ -240,6 +240,8 @@ class FakeREW:
         self.generator_running = False
         self.level_running = False
 
+        self._driver_name = 'ASIO'
+
         # 테스트가 들여다볼 호출 기록
         self.calls: list[tuple[str, dict]] = []
 
@@ -265,6 +267,22 @@ class FakeREW:
         """`GET /audio/input-cal` 흉내. 꺼져 있으면 None(알 수 없음), 켜져 있으면
         빈 문자열(파일 없음) 또는 경로."""
         return self._cal_file if self._running else None
+
+    def driver(self) -> str:
+        return self._driver_name
+
+    def set_driver(self, name: str) -> None:
+        """`POST /audio/driver` 흉내 — 이름만 바꾼다(장치 목록은 그대로)."""
+        self.calls.append(('set_driver', {'driver': str(name)}))
+        self._driver_name = str(name)
+
+    def current_device(self, kind: str = 'output') -> str | None:
+        return getattr(self, f'_current_{kind}', None)
+
+    def set_device(self, kind: str, name: str) -> None:
+        """`POST /audio/*/…device` 흉내 — 연 장치 이름만 기억한다."""
+        self.calls.append(('set_device', {'kind': kind, 'device': str(name)}))
+        setattr(self, f'_current_{kind}', str(name))
 
     # ── DeviceLister ──
     def output_devices(self) -> list[DeviceInfo]:
