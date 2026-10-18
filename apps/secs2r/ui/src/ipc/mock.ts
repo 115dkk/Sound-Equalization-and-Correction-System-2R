@@ -582,7 +582,8 @@ export function createMockService(options: MockOptions = {}): MockService {
         const speakers = config.speakers.filter((s) => !s.role.startsWith("SW"));
         const oldSubs = config.speakers.filter((s) => s.role.startsWith("SW"));
         const subs = Array.from({ length: req.params.count }, (_, i) => oldSubs[i] ?? fx.speaker(`SW${i + 1}`, config.summary.max_channel + i + 1));
-        return { method: req.method, data: { config: updateConfig(fx.configOf(config.preset, [...speakers.slice(0, 3), ...subs, ...speakers.slice(3)], config.device)), undo_token: token } };
+        const at = fx.subsAt(speakers.map((s) => s.role));
+        return { method: req.method, data: { config: updateConfig(fx.configOf(config.preset, [...speakers.slice(0, at), ...subs, ...speakers.slice(at)], config.device)), undo_token: token } };
       }
       case "config_set_speaker": {
         const p = req.params; const speakers = clone(config.speakers); const s = speakers[p.index];

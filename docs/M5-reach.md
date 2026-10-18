@@ -36,7 +36,7 @@
 
 | 항목 | id | 편차 | 작업서 |
 |---|---|---|---|
-| 프리셋 2.0 / 2.1 / 2.2 / 5.1 / 7.1.4 / 9.1.6, 지금 프리셋 강조, 측정 지움 | `system.preset`, `system.preset.<name>`, `system.confirm` | U5 | P30 |
+| 프리셋 2.0 / 2.1 / 2.2 / 5.1 / 7.1.4 / 9.1.6(SECS 2R은 4.0 / 4.1 / 4.2 / 7.1을 더함), 지금 프리셋 강조, 측정 지움 | `system.preset`, `system.preset.<name>`, `system.confirm` | U5, U13 | P30 |
 | 빈 구성 / 사용자 정의 | `system.preset.empty`, `system.preset.custom` | U5 | P30 |
 | 서브 증감기 0–8, 측정 지움 | `system.subs`, `system.confirm` | U5 | P30 |
 | 바이앰프 시작 체크박스(업스트림 `BIAMP_UI=False`) | — | 숨김 유지(`M5.md` 5절) | P30 |

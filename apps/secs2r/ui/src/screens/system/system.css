@@ -104,16 +104,23 @@ button.system-choice:active:not([aria-pressed="true"]) {
   min-width: 0;
 }
 
+/* Ten presets fit one line at the default 1280 px window. A narrower row wraps
+   between the groups (stereo, quad, surround, immersive), never inside one. */
 .system-presets__list {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-2);
+  gap: var(--space-1-5) var(--space-3);
+}
+
+.system-presets__group {
+  display: flex;
+  gap: var(--space-1-5);
 }
 
 .system-preset {
   gap: var(--space-0-5);
   min-width: 76px;
-  padding: var(--space-2) var(--space-3);
+  padding: var(--space-2);
 }
 
 .system-preset__name {

@@ -1466,7 +1466,7 @@ pub struct PathResult {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct ConfigPresetParams {
-    /// Preset name (`2.0`, `2.1`, `2.2`, `5.1`, `7.1.4`, `9.1.6`, or `custom` for an empty layout).
+    /// Preset name (`2.0`, `2.1`, `2.2`, `4.0`, `4.1`, `4.2`, `5.1`, `7.1`, `7.1.4`, `9.1.6`, or `custom` for an empty layout).
     pub preset: String,
     /// Clears existing measurements; without it a project with measurements answers `confirm_required` (U5).
     #[serde(default)]
