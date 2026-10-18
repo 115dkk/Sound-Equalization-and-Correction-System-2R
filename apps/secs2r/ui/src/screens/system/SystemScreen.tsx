@@ -39,8 +39,15 @@ import { DSP_NAME, GROUP_NAME, durationText, isKnownRole, noticeText, outputLabe
 import type { SystemActions, SystemView } from "./types";
 import "./system.css";
 
-/** Upstream preset buttons (model.PRESETS) with the quadraphonic presets SECS 2R adds (U13), in order. */
-export const PRESETS = ["2.0", "2.1", "2.2", "4.0", "4.1", "4.2", "5.1", "7.1.4", "9.1.6"] as const;
+/** Upstream preset buttons (model.PRESETS) with the 4.0, 4.1, 4.2 and 7.1 presets SECS 2R adds (U13), in order.
+ * Grouped as stereo, quad, surround and immersive; a narrow row wraps between groups. */
+export const PRESET_GROUPS = [
+  ["2.0", "2.1", "2.2"],
+  ["4.0", "4.1", "4.2"],
+  ["5.1", "7.1"],
+  ["7.1.4", "9.1.6"],
+] as const;
+export const PRESETS = PRESET_GROUPS.flat();
 
 /** Upstream FIR_TAP_CHOICES (step2_config.py). */
 export const FIR_TAP_CHOICES = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536] as const;
@@ -180,7 +187,7 @@ function ConfigCard({
 }) {
   const t = useT();
   const { config } = view;
-  const custom = !PRESETS.includes(config.preset as (typeof PRESETS)[number]);
+  const custom = !(PRESETS as readonly string[]).includes(config.preset);
   return (
     <Card className="system-config" title={t("system.config.title")} data-ui="system.config">
       <div className="system-config__top">
@@ -189,22 +196,26 @@ function ConfigCard({
             {t("system.preset.label")}
           </span>
           <div className="system-presets__list">
-            {PRESETS.map((preset) => {
-              const current = config.preset === preset;
-              return (
-                <button
-                  key={preset}
-                  type="button"
-                  className="system-choice system-preset"
-                  aria-pressed={current}
-                  data-ui={`system.preset.${preset}`}
-                  onClick={() => !current && ask({ kind: "preset", preset })}
-                >
-                  <span className="system-preset__name tabular">{preset}</span>
-                  <span className="system-preset__count tabular">{t("system.preset.count", { count: PRESET_ROLES[preset]?.length ?? 0 })}</span>
-                </button>
-              );
-            })}
+            {PRESET_GROUPS.map((group) => (
+              <div key={group[0]} className="system-presets__group">
+                {group.map((preset) => {
+                  const current = config.preset === preset;
+                  return (
+                    <button
+                      key={preset}
+                      type="button"
+                      className="system-choice system-preset"
+                      aria-pressed={current}
+                      data-ui={`system.preset.${preset}`}
+                      onClick={() => !current && ask({ kind: "preset", preset })}
+                    >
+                      <span className="system-preset__name tabular">{preset}</span>
+                      <span className="system-preset__count tabular">{t("system.preset.count", { count: PRESET_ROLES[preset]?.length ?? 0 })}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            ))}
             {custom && (
               <span className="system-choice system-preset system-preset--custom" aria-current="true" data-ui="system.preset.custom">
                 <span className="system-preset__name">{t("system.preset.custom")}</span>

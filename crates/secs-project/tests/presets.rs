@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 
 //! Speaker presets SECS 2R adds to upstream's `model.PRESETS` (docs/DEVIATIONS.md U13).
-//! Upstream has no golden for them; they follow its 5.1 preset and `default_bands`.
+//! Upstream has no golden for them; they follow its 5.1 and 7.1.4 presets and `default_bands`.
 
 use secs_project::{Project, SpeakerConfig, loads};
 
@@ -80,8 +80,29 @@ fn quad_presets_are_5_1_without_the_centre() {
 }
 
 #[test]
-fn quad_presets_survive_save_and_reopen() {
-    for name in ["4.0", "4.1", "4.2"] {
+fn seven_one_is_7_1_4_without_the_heights() {
+    let atmos = SpeakerConfig::from_preset("7.1.4", "", false).unwrap();
+    let flat = SpeakerConfig::from_preset("7.1", "", false).unwrap();
+    assert_eq!(flat.preset, "7.1");
+    assert_eq!(flat.sub_count(), 1);
+    assert_eq!(
+        flat.roles(),
+        atmos
+            .roles()
+            .into_iter()
+            .filter(|role| !role.starts_with('T'))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(flat.roles(), ["L", "R", "C", "SW1", "Ls", "Rs", "Lb", "Rb"]);
+    assert_eq!(
+        flat.used_outs().into_iter().collect::<Vec<_>>(),
+        (1..=8).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn added_presets_survive_save_and_reopen() {
+    for name in ["4.0", "4.1", "4.2", "7.1"] {
         let project = Project::from_preset(name).unwrap();
         assert!(project.config.validate().is_empty(), "{name}");
         let reopened = Project::from_json(loads(&project.save_text()).unwrap()).unwrap();
@@ -89,4 +110,5 @@ fn quad_presets_survive_save_and_reopen() {
         assert_eq!(reopened.save_text(), project.save_text(), "{name}");
     }
     assert!(SpeakerConfig::from_preset("4.3", "", false).is_err());
+    assert!(SpeakerConfig::from_preset("7.2", "", false).is_err());
 }

@@ -95,7 +95,7 @@ export function orderRoles(roles: readonly string[]): string[] {
   return roles.map((role, i) => ({ role, i })).sort((a, b) => index(a.role) - index(b.role) || a.i - b.i).map((x) => x.role);
 }
 
-/** Speaker presets used by fixtures (upstream model.PRESETS, plus SECS 2R's 4.0, 4.1 and 4.2; U13). */
+/** Speaker presets used by fixtures (upstream model.PRESETS, plus SECS 2R's 4.0, 4.1, 4.2 and 7.1; U13). */
 export const PRESET_ROLES: Readonly<Record<string, readonly string[]>> = {
   "2.0": ["L", "R"],
   "2.1": ["L", "R", "SW1"],
@@ -104,6 +104,7 @@ export const PRESET_ROLES: Readonly<Record<string, readonly string[]>> = {
   "4.1": ["L", "R", "SW1", "Ls", "Rs"],
   "4.2": ["L", "R", "SW1", "SW2", "Ls", "Rs"],
   "5.1": ["L", "R", "C", "SW1", "Ls", "Rs"],
+  "7.1": ["L", "R", "C", "SW1", "Ls", "Rs", "Lb", "Rb"],
   "7.1.4": ["L", "R", "C", "SW1", "Ls", "Rs", "Lb", "Rb", "Tfl", "Tfr", "Tbl", "Tbr"],
   "9.1.6": ["L", "R", "C", "SW1", "Ls", "Rs", "Lb", "Rb", "Lw", "Rw", "Tfl", "Tfr", "Tml", "Tmr", "Tbl", "Tbr"],
 };

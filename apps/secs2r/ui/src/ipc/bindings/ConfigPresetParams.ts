@@ -5,7 +5,7 @@
  */
 export type ConfigPresetParams = { 
 /**
- * Preset name (`2.0`, `2.1`, `2.2`, `4.0`, `4.1`, `4.2`, `5.1`, `7.1.4`, `9.1.6`, or `custom` for an empty layout).
+ * Preset name (`2.0`, `2.1`, `2.2`, `4.0`, `4.1`, `4.2`, `5.1`, `7.1`, `7.1.4`, `9.1.6`, or `custom` for an empty layout).
  */
 preset: string, 
 /**

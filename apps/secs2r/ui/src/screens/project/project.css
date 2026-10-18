@@ -1,5 +1,10 @@
 /* Project dialogs. Tokens only. */
 
+/* New project: the ten presets stay on one line. */
+[data-ui="project.new"] {
+  --dialog-w: 560px;
+}
+
 .project-form {
   display: flex;
   flex-direction: column;

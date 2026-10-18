@@ -216,7 +216,7 @@ export const exportResult: ExportResult = {
 export const presetRoles: Record<string, readonly string[]> = {
   "2.0": ["L", "R"], "2.1": ["L", "R"], "2.2": ["L", "R"],
   "4.0": ["L", "R", "Ls", "Rs"], "4.1": ["L", "R", "Ls", "Rs"], "4.2": ["L", "R", "Ls", "Rs"],
-  "5.1": ["L", "R", "C", "Ls", "Rs"], "7.1.4": SAMPLE_MAINS,
+  "5.1": ["L", "R", "C", "Ls", "Rs"], "7.1": ["L", "R", "C", "Ls", "Rs", "Lb", "Rb"], "7.1.4": SAMPLE_MAINS,
   "9.1.6": [...SAMPLE_MAINS, "Lw", "Rw", "Tml", "Tmr"], custom: [],
 };
 /** Presentation group id → upstream group name (`ConfigGroup.key`). */
