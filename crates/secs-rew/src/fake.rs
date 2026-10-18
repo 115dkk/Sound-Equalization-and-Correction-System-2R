@@ -35,6 +35,7 @@ pub struct FakeOptions {
     pub cal_file: String,
     pub output_devices: Vec<DeviceInfo>,
     pub input_devices: Vec<DeviceInfo>,
+    pub current_audio: CurrentAudio,
 }
 fn device(id: &str, name: &str, channels: usize, kind: &str) -> DeviceInfo {
     DeviceInfo {
@@ -67,6 +68,11 @@ impl Default for FakeOptions {
                 device("fake-in-0", "Demo USB Mic", 1, "input"),
                 device("fake-in-1", "Demo Interface In", 8, "input"),
             ],
+            current_audio: CurrentAudio {
+                input_device: Some("Demo USB Mic".into()),
+                output_device: Some("Demo Speakers (2ch)".into()),
+                input: Some("1: Demo In 1".into()),
+            },
         }
     }
 }
@@ -158,6 +164,9 @@ impl<S: IrSource> FakeRew<S> {
     }
     pub fn input_devices(&self) -> Vec<DeviceInfo> {
         self.options.input_devices.clone()
+    }
+    pub fn current_audio(&self) -> CurrentAudio {
+        self.options.current_audio.clone()
     }
     pub fn output_channel_names(&self) -> Vec<String> {
         (1..=self

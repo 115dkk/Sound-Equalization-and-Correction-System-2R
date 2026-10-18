@@ -39,6 +39,8 @@ impl WasapiBackend {
 pub struct CaptureStats {
     pub discontinuity_packets: u64,
     pub silent_packets: u64,
+    pub position_jumps: u64,
+    pub start_discontinuity: bool,
 }
 
 fn validate_spec(spec: StreamSpec) -> Result<(), AudioError> {
@@ -146,6 +148,33 @@ struct PacketHeader {
     flags: PacketFlags,
     index: u64,
     timestamp: u64,
+}
+
+/// What one capture packet says about the continuity of the recording.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PacketContinuity {
+    /// The packet's DATA_DISCONTINUITY flag on the first packet of the stream:
+    /// the start transition, not lost audio.
+    start_flag: bool,
+    /// Audio was lost before this packet: the driver flagged a later packet.
+    gap: bool,
+    /// The device position ran ahead of the frames delivered so far. Kept for
+    /// the trace and stats only: a shared-mode stream behind a sample-rate
+    /// converter may count positions at another rate, and treating that as lost
+    /// audio would reject every recording on such a device.
+    position_jump: bool,
+}
+
+fn packet_continuity(
+    ordinal: u64,
+    header: &PacketHeader,
+    expected_position: Option<u64>,
+) -> PacketContinuity {
+    PacketContinuity {
+        start_flag: ordinal == 0 && header.flags.discontinuity,
+        gap: ordinal > 0 && header.flags.discontinuity,
+        position_jump: expected_position.is_some_and(|expected| header.index > expected),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -270,8 +299,11 @@ impl CaptureQueue {
     ) -> Result<AppendedPacket, AudioError> {
         let packet = append_packet(source, scratch, &mut self.pending, channels, diagnose_zeros)?;
         self.flags.silent |= packet.header.flags.silent;
-        self.flags.discontinuity |= packet.header.flags.discontinuity;
         Ok(packet)
+    }
+
+    fn mark_gap(&mut self, gap: bool) {
+        self.flags.discontinuity |= gap;
     }
 }
 
@@ -1496,7 +1528,7 @@ mod windows_backend {
                 packet_ordinal: 0,
                 captured_frames: 0,
                 delivered_frames: 0,
-                saw_discontinuity: false,
+                expected_position: None,
                 trace,
                 _enumerator: enumerator,
                 _com: com,
@@ -1737,7 +1769,7 @@ mod windows_backend {
         packet_ordinal: u64,
         captured_frames: u64,
         delivered_frames: u64,
-        saw_discontinuity: bool,
+        expected_position: Option<u64>,
         trace: Option<TraceHandle>,
         _enumerator: EnumeratorLease,
         _com: ComGuard,
@@ -1850,10 +1882,11 @@ mod windows_backend {
                     self.spec.channels,
                     self.trace.is_some(),
                 )?;
-                let initial_discontinuity = packet.header.flags.discontinuity
-                    && !self.saw_discontinuity
-                    && self.packet_ordinal == 0;
-                self.saw_discontinuity |= packet.header.flags.discontinuity;
+                let continuity =
+                    packet_continuity(self.packet_ordinal, &packet.header, self.expected_position);
+                self.queue.mark_gap(continuity.gap);
+                self.expected_position =
+                    packet.header.index.checked_add(packet.header.frames as u64);
                 let frame_start = self.captured_frames;
                 self.captured_frames += packet.header.frames as u64;
                 if let Some(trace) = &self.trace {
@@ -1868,13 +1901,18 @@ mod windows_backend {
                         buffer_timestamp: Some(packet.header.timestamp),
                         silent: Some(packet.header.flags.silent),
                         discontinuity: Some(packet.header.flags.discontinuity),
-                        initial_discontinuity: Some(initial_discontinuity),
+                        initial_discontinuity: Some(continuity.start_flag),
                         raw_zero_runs: Some(packet.raw_zero_runs),
                         raw_zero_frames: Some(packet.raw_zero_frames),
                         silent_fill_frames: Some(packet.silent_fill_frames),
                         queue_before: Some(queue_before),
                         queue_after: Some(self.queue.pending.len()),
-                        detail: "device_to_queue".into(),
+                        detail: if continuity.position_jump {
+                            "device_to_queue;position_jump"
+                        } else {
+                            "device_to_queue"
+                        }
+                        .into(),
                         ..TraceRecord::default()
                     });
                 }
@@ -1886,6 +1924,10 @@ mod windows_backend {
                     self.stats.discontinuity_packets =
                         self.stats.discontinuity_packets.saturating_add(1);
                 }
+                if continuity.position_jump {
+                    self.stats.position_jumps = self.stats.position_jumps.saturating_add(1);
+                }
+                self.stats.start_discontinuity |= continuity.start_flag;
             }
             Ok(CaptureRead {
                 frames: written / usize::from(self.spec.channels),
@@ -2178,6 +2220,83 @@ mod tests {
     }
 
     #[test]
+    fn first_packet_discontinuity_is_start_transition_not_gap() {
+        let first = PacketHeader {
+            frames: 480,
+            flags: PacketFlags {
+                discontinuity: true,
+                silent: false,
+            },
+            index: 0,
+            timestamp: 0,
+        };
+        let continuity = packet_continuity(0, &first, None);
+        assert_eq!(
+            continuity,
+            PacketContinuity {
+                start_flag: true,
+                gap: false,
+                position_jump: false,
+            }
+        );
+        let second = PacketHeader {
+            frames: 480,
+            index: 480,
+            ..PacketHeader::default()
+        };
+        assert_eq!(
+            packet_continuity(1, &second, Some(480)),
+            PacketContinuity::default()
+        );
+
+        let mut queue = CaptureQueue {
+            pending: VecDeque::from([0.0; 960]),
+            ..CaptureQueue::default()
+        };
+        queue.mark_gap(continuity.gap);
+        queue.mark_gap(packet_continuity(1, &second, Some(480)).gap);
+        let mut dst = [0.0; 960];
+        let mut written = 0;
+        assert!(!queue.drain_into(&mut dst, &mut written).discontinuity);
+    }
+
+    #[test]
+    fn later_discontinuity_flag_is_gap() {
+        let header = PacketHeader {
+            frames: 480,
+            flags: PacketFlags {
+                discontinuity: true,
+                silent: false,
+            },
+            index: 480,
+            timestamp: 0,
+        };
+        let continuity = packet_continuity(1, &header, Some(480));
+        assert!(!continuity.start_flag);
+        assert!(continuity.gap);
+        assert!(!continuity.position_jump);
+    }
+
+    #[test]
+    fn position_jump_is_traced_but_not_a_gap() {
+        let header = |index| PacketHeader {
+            frames: 480,
+            index,
+            ..PacketHeader::default()
+        };
+        let jumped = packet_continuity(2, &header(1_440), Some(960));
+        assert!(jumped.position_jump && !jumped.gap);
+        assert_eq!(
+            packet_continuity(2, &header(0), Some(960)),
+            PacketContinuity::default()
+        );
+        assert_eq!(
+            packet_continuity(2, &header(479), Some(960)),
+            PacketContinuity::default()
+        );
+    }
+
+    #[test]
     fn pending_packet_keeps_silent_flag_across_reads() {
         let mut source = FakePacket {
             bytes: f32_to_bytes(&[0.1, 0.2, 0.3, 0.4]),
@@ -2210,6 +2329,31 @@ mod tests {
         let mut written = 0;
         let third = queue.drain_into(&mut dst, &mut written);
         assert!(!third.silent, "flags reset once the queue is empty");
+        assert_eq!(written, 0);
+    }
+
+    #[test]
+    fn pending_packet_keeps_gap_flag_across_reads() {
+        let mut queue = CaptureQueue {
+            pending: VecDeque::from([0.1, 0.2, 0.3, 0.4]),
+            ..CaptureQueue::default()
+        };
+        queue.mark_gap(true);
+
+        let mut dst = [0.0; 2];
+        let mut written = 0;
+        assert!(queue.drain_into(&mut dst, &mut written).discontinuity);
+        assert_eq!(written, 2);
+
+        let mut written = 0;
+        assert!(
+            queue.drain_into(&mut dst, &mut written).discontinuity,
+            "gap must survive while samples remain queued"
+        );
+        assert_eq!(written, 2);
+
+        let mut written = 0;
+        assert!(!queue.drain_into(&mut dst, &mut written).discontinuity);
         assert_eq!(written, 0);
     }
 

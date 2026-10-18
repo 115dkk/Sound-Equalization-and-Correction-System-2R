@@ -43,6 +43,16 @@
   min-height: var(--control-h);
 }
 
+/* A device name REW reports; long names end in an ellipsis, the full name is the title. */
+.connect-readout--name {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  line-height: var(--control-h);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ── 측정 방식 ─────────────────────────────────────────────────────────── */
 .connect-methods {
   display: grid;

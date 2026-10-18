@@ -609,7 +609,7 @@ id = "measure.native"
 kind = "measure"
 milestone = "M4"
 status = "partial"
-tests = ["secs-audio::sim_round_trip_rates_lengths_latencies_and_relative_arrivals", "secs-audio::dolby_golden_ir_round_trip", "secs-audio::loopback_recovers_absolute_latency", "secs-audio::snr_matches_known_white_noise_within_one_db", "secs-audio::cancellation_during_position_returns_no_roles", "secs-audio::session_starts_input_before_output", "secs-service::test_measure_two_positions_then_redo_last", "secs-service::level_check_mock_and_apply_recommended_level_u1"]
+tests = ["secs-audio::sim_round_trip_rates_lengths_latencies_and_relative_arrivals", "secs-audio::dolby_golden_ir_round_trip", "secs-audio::loopback_recovers_absolute_latency", "secs-audio::snr_matches_known_white_noise_within_one_db", "secs-audio::cancellation_during_position_returns_no_roles", "secs-audio::session_starts_input_before_output", "secs-audio::measurement_rejects_recording_issues_in_priority_order", "secs-service::test_measure_two_positions_then_redo_last", "secs-service::level_check_mock_and_apply_recommended_level_u1"]
 note = "new: sweep/session/IR core, simulated room and native OS adapters; maintainer hardware run remains (docs/adr/0005, docs/HARDWARE.md)"
 
 [[feature]]
@@ -617,7 +617,7 @@ id = "sys.audio_backends"
 kind = "sys"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-sys::default_backend_enumeration_is_recoverable", "secs-sys::shared_mode_rejects_more_channels_than_mix_format", "secs-sys::callback_native_sample_conversion"]
+tests = ["secs-sys::default_backend_enumeration_is_recoverable", "secs-sys::shared_mode_rejects_more_channels_than_mix_format", "secs-sys::callback_native_sample_conversion", "secs-sys::first_packet_discontinuity_is_start_transition_not_gap", "secs-sys::later_discontinuity_flag_is_gap", "secs-sys::position_jump_is_traced_but_not_a_gap", "secs-sys::pending_packet_keeps_gap_flag_across_reads"]
 note = "WASAPI on Windows; cpal on macOS and Linux. Auto policy is tested in secs-audio."
 
 [[feature]]
@@ -640,7 +640,7 @@ id = "measure.level_check"
 kind = "measure"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-audio::level_known_signals_clip_and_recommendation", "secs-audio::level_check_uses_simulated_capture_and_calibration"]
+tests = ["secs-audio::level_known_signals_clip_and_recommendation", "secs-audio::level_check_uses_simulated_capture_and_calibration", "secs-audio::level_check_rejects_each_recording_issue"]
 upstream = "wizard/step3_level.py, wizard/mic_meter.py"
 note = "native pink/sine RMS, peak, clip and calibrated SPL; U1 sweep-level recommendation"
 
@@ -657,7 +657,7 @@ id = "measure.rew_api"
 kind = "measure"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-rew::test_run_position_sequence_and_ir", "secs-rew::test_rew_progress_strings_reach_the_progress_callback", "secs-rew::test_r1_pro_required_uses_only_status_and_measure_command_path", "secs-rew::test_r2_full_position_ignores_offline_hold_including_device_lookups", "secs-rew::test_r3_random_token_wrong_path_404_and_oversized_body_drained", "secs-rew::test_r4_fake_two_position_plan_uses_only_supplied_ir_source", "secs-service::test_measurements_follow_contract_shape", "secs-service::rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements"]
+tests = ["secs-rew::test_run_position_sequence_and_ir", "secs-rew::test_rew_progress_strings_reach_the_progress_callback", "secs-rew::test_r1_pro_required_uses_only_status", "secs-rew::test_r2_full_position_ignores_offline_hold_including_device_lookups", "secs-rew::test_r3_random_token_wrong_path_404_and_oversized_body_drained", "secs-rew::test_r4_fake_two_position_plan_uses_only_supplied_ir_source", "secs-rew::test_current_audio_reads_java_string_and_object_values", "secs-rew::test_current_audio_reads_asio_device_once_for_both_directions", "secs-rew::test_current_audio_tolerates_errors_empty_and_unknown_values", "secs-service::test_measurements_follow_contract_shape", "secs-service::rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements", "secs-service::rew_source_devices_fall_back_only_to_names_in_rew_lists"]
 upstream = "rewapi/rew.py, rewapi/callback.py"
 
 [[feature]]
@@ -942,7 +942,7 @@ id = "ipc.measure_methods"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::rew_recorded_transport_records_each_role_and_warning"]
+tests = ["secs-service::rew_recorded_transport_records_each_role_and_warning", "secs-service::rew_license_observation_tracks_rejection_success_and_launch_reset"]
 
 [[feature]]
 id = "ipc.measure_configure"

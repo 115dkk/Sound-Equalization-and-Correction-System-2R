@@ -13,6 +13,6 @@ running: boolean,
  */
 reachable: boolean, 
 /**
- * Whether REW reports a Pro license.
+ * Observed automatic-sweep license state: unknown until success or rejection.
  */
-pro: boolean, };
+pro: boolean | null, };

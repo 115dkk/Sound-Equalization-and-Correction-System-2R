@@ -4,11 +4,11 @@ use crate::*;
 pub trait RewStatus {
     fn is_running(&mut self) -> bool;
     fn version(&mut self) -> Option<String>;
-    fn is_pro(&self) -> bool;
 }
 pub trait DeviceLister {
     fn output_devices(&mut self) -> Vec<DeviceInfo>;
     fn input_devices(&mut self) -> Vec<DeviceInfo>;
+    fn current_audio(&mut self) -> CurrentAudio;
 }
 pub trait LevelMonitor {
     fn start(&mut self, on_level: LevelCallback) -> Result<(), RewError>;
@@ -40,9 +40,6 @@ impl<T: Transport> RewStatus for RewClient<T> {
     fn version(&mut self) -> Option<String> {
         RewClient::version(self)
     }
-    fn is_pro(&self) -> bool {
-        RewClient::is_pro(self)
-    }
 }
 impl<T: Transport> DeviceLister for RewClient<T> {
     fn output_devices(&mut self) -> Vec<DeviceInfo> {
@@ -50,6 +47,9 @@ impl<T: Transport> DeviceLister for RewClient<T> {
     }
     fn input_devices(&mut self) -> Vec<DeviceInfo> {
         RewClient::input_devices(self)
+    }
+    fn current_audio(&mut self) -> CurrentAudio {
+        RewClient::current_audio(self)
     }
 }
 impl<T: Transport> LevelMonitor for RewClient<T> {
@@ -94,9 +94,6 @@ impl<S: IrSource> RewStatus for FakeRew<S> {
     fn version(&mut self) -> Option<String> {
         FakeRew::version(self)
     }
-    fn is_pro(&self) -> bool {
-        FakeRew::is_pro(self)
-    }
 }
 impl<S: IrSource> DeviceLister for FakeRew<S> {
     fn output_devices(&mut self) -> Vec<DeviceInfo> {
@@ -104,6 +101,9 @@ impl<S: IrSource> DeviceLister for FakeRew<S> {
     }
     fn input_devices(&mut self) -> Vec<DeviceInfo> {
         FakeRew::input_devices(self)
+    }
+    fn current_audio(&mut self) -> CurrentAudio {
+        FakeRew::current_audio(self)
     }
 }
 impl<S: IrSource> LevelMonitor for FakeRew<S> {

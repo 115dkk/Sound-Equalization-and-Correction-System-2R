@@ -134,6 +134,7 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
     inputs: rew.input_devices?.map((device) => ({ id: device.id, name: device.name, input_channels: device.channels, output_channels: 0 })),
     outputs: rew.output_devices?.map((device) => ({ id: device.id, name: device.name, input_channels: 0, output_channels: device.channels })),
     inputChannelNames: rew.input_channel_names ?? undefined,
+    current: rew.reachable ? { inputDevice: rew.input_device, outputDevice: rew.output_device, input: rew.input } : undefined,
     settings: rew.sample_rate !== null && rew.sweep?.length != null ? { sample_rate: rew.sample_rate, sweep_length: rew.sweep.length, level_dbfs: rew.level_dbfs } : null,
   } : {};
   return { view: config ? {

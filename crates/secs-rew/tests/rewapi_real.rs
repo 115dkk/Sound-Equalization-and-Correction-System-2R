@@ -175,6 +175,61 @@ fn test_devices_are_plain_string_lists() {
     t.assert_finished();
 }
 #[test]
+fn test_current_audio_reads_java_string_and_object_values() {
+    let (mut c, t) = client(vec![
+        get("/audio/driver", data("java_driver"), 5),
+        get("/audio/java/input-device", json!("CABLE Output"), 5),
+        get(
+            "/audio/java/output-device",
+            json!({"device":"CABLE Input"}),
+            5,
+        ),
+        get("/audio/java/input", json!({"channel":"Input 1"}), 5),
+    ]);
+    assert_eq!(
+        c.current_audio(),
+        CurrentAudio {
+            input_device: Some("CABLE Output".into()),
+            output_device: Some("CABLE Input".into()),
+            input: Some("Input 1".into()),
+        }
+    );
+    t.assert_finished();
+}
+
+#[test]
+fn test_current_audio_reads_asio_device_once_for_both_directions() {
+    let (mut c, t) = client(vec![
+        get("/audio/driver", data("asio_driver"), 5),
+        get("/audio/asio/device", json!({"name":"MOTU Gen 5"}), 5),
+        get("/audio/asio/input", json!("3: Mic"), 5),
+    ]);
+    assert_eq!(
+        c.current_audio(),
+        CurrentAudio {
+            input_device: Some("MOTU Gen 5".into()),
+            output_device: Some("MOTU Gen 5".into()),
+            input: Some("3: Mic".into()),
+        }
+    );
+    t.assert_finished();
+}
+
+#[test]
+fn test_current_audio_tolerates_errors_empty_and_unknown_values() {
+    let mut failed = get("/audio/java/input-device", json!("bad"), 5);
+    failed.response.as_mut().unwrap().status = 400;
+    let (mut c, t) = client(vec![
+        get("/audio/driver", data("java_driver"), 5),
+        failed,
+        get("/audio/java/output-device", json!("  "), 5),
+        get("/audio/java/input", json!({"unexpected":1}), 5),
+    ]);
+    assert_eq!(c.current_audio(), CurrentAudio::default());
+    t.assert_finished();
+}
+
+#[test]
 fn test_sequential_channels_uses_channel_list_object() {
     let (mut c, t) = client(vec![post(
         "/measure/sequential-channels",
@@ -223,14 +278,14 @@ fn test_timing_ref_output_uses_driver_specific_body() {
     }
 }
 #[test]
-fn test_r1_pro_required_uses_only_status_and_measure_command_path() {
+fn test_r1_pro_required_uses_only_status() {
     for (status, path, pro) in [
         (403, "/measure/command", true),
-        (401, "/measure/command", true),
+        (401, "/measure/sweep/configuration", true),
         (402, "/measure/command", true),
         (400, "/measure/command", false),
-        (403, "/version", false),
-        (403, "/measurements", false),
+        (403, "/version", true),
+        (403, "/measurements", true),
         (500, "/measure/command", false),
     ] {
         let mut e = post(path, json!({"command":"SPL"}));

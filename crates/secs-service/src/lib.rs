@@ -299,6 +299,7 @@ pub struct Service {
     jobs: JobRegistry,
     level: monitor::LevelState,
     status_watch: watch::WatchState,
+    rew_license: Arc<Mutex<Option<bool>>>,
 }
 
 impl Service {
@@ -313,6 +314,7 @@ impl Service {
             jobs: JobRegistry::default(),
             level: monitor::LevelState::default(),
             status_watch: watch::WatchState::default(),
+            rew_license: Arc::new(Mutex::new(None)),
         }
     }
 

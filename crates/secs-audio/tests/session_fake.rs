@@ -9,6 +9,8 @@ use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant};
 
 use secs_audio::audio::*;
+use secs_audio::level::{LevelInput, LevelOutput, LevelSignal, level_check_streaming};
+use secs_audio::measurement::{MeasurementPlan, RoleOutput, measure_position};
 use secs_audio::policy::{
     open_input_with_policy, open_output_with_policy, open_output_with_preference,
 };
@@ -31,6 +33,8 @@ enum Fault {
     OpenPanic,
     Count,
     Report,
+    Underrun,
+    NonFinite,
 }
 
 #[derive(Default)]
@@ -201,7 +205,7 @@ impl OutputSession for Output {
                 frames
             },
             mode: self.mode,
-            underruns: 0,
+            underruns: u32::from(self.fault == Fault::Underrun),
             cancelled: false,
         })
     }
@@ -262,6 +266,9 @@ impl InputSession for Input {
                     (self.cursor + frame - 3) as f32 + channel as f32 / 10.0
                 };
             }
+        }
+        if self.fault == Fault::NonFinite && !dst.is_empty() {
+            dst[0] = f32::NAN;
         }
         let silent = self.cursor == 0;
         self.cursor += frames;
@@ -375,6 +382,213 @@ fn session_request_carries_the_share_preference() {
         play_and_record(&fake, req, &CancelToken::new(), &mut |_| {}),
         Err(AudioError::UnsupportedFormat(reason)) if reason == "exclusive"
     ));
+}
+
+fn measurement_plan() -> MeasurementPlan {
+    let mut plan = MeasurementPlan::new(
+        endpoint(),
+        endpoint(),
+        vec![RoleOutput {
+            role: "L".into(),
+            channel: 1,
+        }],
+    );
+    plan.sample_rate = 1_000;
+    plan.sweep_length = "64k".into();
+    plan.start_frequency = 20.0;
+    plan.end_frequency = 450.0;
+    plan.window.gap_seconds = 0.05;
+    plan.window.noise_seconds = 0.1;
+    plan.window.pre_roll_seconds = 0.01;
+    plan.window.post_onset_seconds = 2.0;
+    plan.window.max_latency_seconds = 0.01;
+    plan
+}
+
+fn level_io() -> (LevelOutput, LevelInput) {
+    (
+        LevelOutput {
+            endpoint: endpoint(),
+            channel: 1,
+            sample_rate: 1_000,
+            signal: LevelSignal::Pink,
+            share: SharePreference::Auto,
+        },
+        LevelInput {
+            endpoint: endpoint(),
+            channel: 1,
+            calibration: None,
+            spl_reference: None,
+        },
+    )
+}
+
+#[test]
+fn measurement_rejects_recording_issues_in_priority_order() {
+    for (fault, expected) in [
+        (Fault::None, RecordingIssue::Gap),
+        (Fault::Underrun, RecordingIssue::Gap),
+        (Fault::NonFinite, RecordingIssue::Gap),
+    ] {
+        let error = measure_position(
+            &Fake {
+                fault,
+                ..Fake::default()
+            },
+            &measurement_plan(),
+            1,
+            &CancelToken::new(),
+            &mut |_| {},
+        )
+        .unwrap_err();
+        assert!(
+            matches!(error, AudioError::Recording { issue, .. } if issue == expected),
+            "{fault:?}: {error:?}"
+        );
+    }
+
+    let error = measure_position(
+        &NoGapFake(Fake {
+            fault: Fault::Underrun,
+            ..Fake::default()
+        }),
+        &measurement_plan(),
+        1,
+        &CancelToken::new(),
+        &mut |_| {},
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        AudioError::Recording {
+            issue: RecordingIssue::Underrun,
+            ..
+        }
+    ));
+
+    let error = measure_position(
+        &NoGapFake(Fake {
+            fault: Fault::NonFinite,
+            ..Fake::default()
+        }),
+        &measurement_plan(),
+        1,
+        &CancelToken::new(),
+        &mut |_| {},
+    )
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        AudioError::Recording {
+            issue: RecordingIssue::NonFinite,
+            ..
+        }
+    ));
+}
+
+#[derive(Default)]
+struct NoGapFake(Fake);
+impl AudioBackend for NoGapFake {
+    fn name(&self) -> &'static str {
+        self.0.name()
+    }
+    fn enumerate(&self) -> Result<Vec<Endpoint>, AudioError> {
+        self.0.enumerate()
+    }
+    fn probe(
+        &self,
+        endpoint: &Endpoint,
+        direction: Direction,
+        spec: StreamSpec,
+        mode: ShareMode,
+    ) -> Result<ProbeResult, AudioError> {
+        self.0.probe(endpoint, direction, spec, mode)
+    }
+    fn open_output(
+        &self,
+        endpoint: &Endpoint,
+        spec: StreamSpec,
+        mode: ShareMode,
+    ) -> Result<Box<dyn OutputSession>, AudioError> {
+        self.0.open_output(endpoint, spec, mode)
+    }
+    fn open_input(
+        &self,
+        _endpoint: &Endpoint,
+        spec: StreamSpec,
+        mode: ShareMode,
+    ) -> Result<Box<dyn InputSession>, AudioError> {
+        self.0.attempt(Direction::Input, mode)?;
+        Ok(Box::new(NoGapInput(Input {
+            state: self.0.state.clone(),
+            fault: self.0.fault,
+            spec,
+            cursor: 0,
+            affinity: Affinity::new(),
+        })))
+    }
+}
+struct NoGapInput(Input);
+impl InputSession for NoGapInput {
+    fn start(&mut self) -> Result<(), AudioError> {
+        self.0.start()
+    }
+    fn read_into(
+        &mut self,
+        dst: &mut [f32],
+        cancel: &CancelToken,
+    ) -> Result<CaptureRead, AudioError> {
+        let mut read = self.0.read_into(dst, cancel)?;
+        read.discontinuity = false;
+        Ok(read)
+    }
+    fn stop(&mut self) -> Result<(), AudioError> {
+        self.0.stop()
+    }
+}
+
+#[test]
+fn level_check_rejects_each_recording_issue() {
+    let (output, input) = level_io();
+    for (fault, expected) in [
+        (Fault::None, RecordingIssue::Gap),
+        (Fault::Underrun, RecordingIssue::Gap),
+        (Fault::NonFinite, RecordingIssue::Gap),
+    ] {
+        let error = level_check_streaming(
+            &Fake {
+                fault,
+                ..Fake::default()
+            },
+            &output,
+            &input,
+            -20.0,
+            0.05,
+            &CancelToken::new(),
+            &mut |_| {},
+        )
+        .unwrap_err();
+        assert!(matches!(error, AudioError::Recording { issue, .. } if issue == expected));
+    }
+    for (fault, expected) in [
+        (Fault::Underrun, RecordingIssue::Underrun),
+        (Fault::NonFinite, RecordingIssue::NonFinite),
+    ] {
+        let error = level_check_streaming(
+            &NoGapFake(Fake {
+                fault,
+                ..Fake::default()
+            }),
+            &output,
+            &input,
+            -20.0,
+            0.05,
+            &CancelToken::new(),
+            &mut |_| {},
+        )
+        .unwrap_err();
+        assert!(matches!(error, AudioError::Recording { issue, .. } if issue == expected));
+    }
 }
 
 #[test]

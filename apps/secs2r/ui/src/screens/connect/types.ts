@@ -36,6 +36,8 @@ export type RewDetails = {
   outputs?: readonly MeasureDevice[] | undefined;
   /** REW's input channel names, index 0 = channel 1. */
   inputChannelNames?: readonly string[] | undefined;
+  /** What REW will measure with, read from its own audio preferences (R7); null = unreadable. */
+  current?: { inputDevice: string | null; outputDevice: string | null; input: string | null } | undefined;
   /** REW's measurement settings, read on request (rate, sweep length, level). */
   settings?: { sample_rate: number; sweep_length: string; level_dbfs: number | null } | null | undefined;
 };

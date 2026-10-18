@@ -50,6 +50,15 @@ fn level_error(error: impl std::fmt::Display) -> IpcError {
     IpcError::new(ErrorCode::DeviceUnavailable, error.to_string())
 }
 
+fn rew_error(error: secs_rew::RewError, rew_license: &Arc<Mutex<Option<bool>>>) -> IpcError {
+    super::measurement::measure_error(
+        error.into(),
+        "level",
+        secs_audio::SharePreference::Auto,
+        Some(rew_license),
+    )
+}
+
 impl Service {
     pub(crate) fn start_level_monitor(
         &self,
@@ -70,9 +79,19 @@ impl Service {
         let deps = self.deps.clone();
         let state = self.level.inner.clone();
         let session = self.session.clone();
+        let rew_license = self.rew_license.clone();
         let started = self.jobs.start(JobKind::LevelMonitor, events, move |job| {
             lock(&state).job = Some(job.id());
-            let outcome = monitor_loop(&deps, &session, &state, &project, settings, plan, &job);
+            let outcome = monitor_loop(
+                &deps,
+                &session,
+                &state,
+                &project,
+                settings,
+                plan,
+                &job,
+                &rew_license,
+            );
             let mut state = lock(&state);
             if state.job == Some(job.id()) {
                 state.job = None;
@@ -165,6 +184,7 @@ impl Service {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn monitor_loop(
     deps: &crate::Deps,
     session: &Arc<Mutex<crate::session::Session>>,
@@ -173,9 +193,10 @@ fn monitor_loop(
     settings: MeasurementSettings,
     plan: secs_project::MeasurementPlan,
     job: &crate::jobs::JobContext,
+    rew_license: &Arc<Mutex<Option<bool>>>,
 ) -> Result<JobResult, IpcError> {
     match method(project) {
-        "rew" => rew_loop(deps, session, state, &plan, job),
+        "rew" => rew_loop(deps, session, state, &plan, job, rew_license),
         "native" | "mock" => sampled_loop(deps, session, state, settings, plan, job),
         _ => Err(input("method", "unknown measurement method")),
     }
@@ -282,6 +303,7 @@ fn rew_loop(
     state: &Arc<Mutex<LevelInner>>,
     plan: &secs_project::MeasurementPlan,
     job: &crate::jobs::JobContext,
+    rew_license: &Arc<Mutex<Option<bool>>>,
 ) -> Result<JobResult, IpcError> {
     struct Transport(Box<dyn secs_rew::Transport>);
     impl secs_rew::Transport for Transport {
@@ -299,7 +321,7 @@ fn rew_loop(
         &mut rew,
         Arc::new(move |level| lock(&callback_pending).push(level)),
     )
-    .map_err(level_error)?;
+    .map_err(|error| rew_error(error, rew_license))?;
     let mut handled_generation = 0;
     let mut active: Option<(PlayRequest, std::time::Instant, Option<secs_rew::Level>)> = None;
     while !job.cancel().is_cancelled() {
@@ -321,7 +343,7 @@ fn rew_loop(
                 .filter(|value| *value > 0)
                 .ok_or_else(|| input("role", "role has no output"))?;
             secs_rew::LevelMonitor::play_pink(&mut rew, &play.role, output, play.master_dbfs)
-                .map_err(level_error)?;
+                .map_err(|error| rew_error(error, rew_license))?;
             active = Some((play, std::time::Instant::now(), None));
         }
         for level in std::mem::take(&mut *lock(&pending)) {

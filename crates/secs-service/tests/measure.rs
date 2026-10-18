@@ -269,11 +269,24 @@ fn rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements() 
                 "outputName".into(),
                 format!(
                     "{}, out {}",
-                    p.output_device,
+                    rew.client
+                        .options
+                        .current_audio
+                        .output_device
+                        .as_deref()
+                        .unwrap(),
                     p.output_for(&results[0].role)
                 )
             ),
-            ("sourceFileName".into(), p.input_device.clone()),
+            (
+                "sourceFileName".into(),
+                rew.client
+                    .options
+                    .current_audio
+                    .input_device
+                    .clone()
+                    .unwrap(),
+            ),
         ]
     );
     assert_eq!(
@@ -301,6 +314,38 @@ fn rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements() 
     assert_eq!(bad.len(), p.roles.len());
     assert!(bad.iter().all(|result| result.source_info.is_none()));
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn rew_source_devices_fall_back_only_to_names_in_rew_lists() {
+    let mut p = plan();
+    p.roles.truncate(1);
+    p.output_device = "Demo Speakers (2ch)".into();
+    p.input_device = "Demo USB Mic".into();
+    let mut fake = secs_rew::FakeRew::new(sample::SampleSource);
+    fake.options.delay = Duration::ZERO;
+    fake.options.current_audio = secs_rew::CurrentAudio::default();
+    let mut rew = RewMeasurer::new(fake, Arc::new(|| 0));
+    let result = rew
+        .measure_position(&p, 1, None, &CancelToken::default())
+        .unwrap();
+    let source = result[0].source_info.as_ref().unwrap();
+    assert!(source.strings.iter().any(|(key, value)| {
+        key == "outputName" && value.starts_with("Demo Speakers (2ch), out ")
+    }));
+    assert!(
+        source
+            .strings
+            .iter()
+            .any(|(key, value)| key == "sourceFileName" && value == "Demo USB Mic")
+    );
+
+    p.output_device = "wasapi:{not-rew-output}".into();
+    p.input_device = "wasapi:{not-rew-input}".into();
+    let result = rew
+        .measure_position(&p, 1, None, &CancelToken::default())
+        .unwrap();
+    assert!(result[0].source_info.is_none());
 }
 
 #[test]

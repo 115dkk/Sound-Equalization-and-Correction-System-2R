@@ -156,9 +156,9 @@ impl<T: Transport> RewClient<T> {
         if guarded {
             self.down_until = None;
         }
-        // R1: only the measurement command's authorization/payment statuses
-        // indicate the Pro gate. Never infer licensing from human-readable text.
-        if request.path == "/measure/command" && matches!(response.status, 401..=403) {
+        // R1: authorization/payment statuses indicate the Pro gate regardless
+        // of path. Never infer licensing from human-readable text.
+        if matches!(response.status, 401..=403) {
             return Err(RewError::ProRequired {
                 status: response.status,
                 path: request.path,
@@ -230,6 +230,7 @@ impl<T: Transport> RewClient<T> {
             )
         }
     }
+    /// Legacy per-client hint. Service code keeps the authoritative observation.
     pub fn pro_state(&self) -> Option<bool> {
         self.pro_hint
     }
@@ -258,6 +259,34 @@ impl<T: Transport> RewClient<T> {
     }
     fn asio(&mut self) -> bool {
         self.driver().trim().eq_ignore_ascii_case("asio")
+    }
+    fn audio_value(value: Value) -> Option<String> {
+        let text = value.as_str().or_else(|| {
+            ["device", "name", "input", "output", "channel", "value"]
+                .into_iter()
+                .find_map(|key| value.get(key).and_then(Value::as_str))
+        })?;
+        let text = text.trim();
+        (!text.is_empty()).then(|| text.to_owned())
+    }
+    fn current_audio_value(&mut self, path: &str) -> Option<String> {
+        Self::audio_value(self.get_timeout(path, self.timeout, true).ok()?)
+    }
+    pub fn current_audio(&mut self) -> CurrentAudio {
+        if self.asio() {
+            let device = self.current_audio_value("/audio/asio/device");
+            CurrentAudio {
+                input_device: device.clone(),
+                output_device: device,
+                input: self.current_audio_value("/audio/asio/input"),
+            }
+        } else {
+            CurrentAudio {
+                input_device: self.current_audio_value("/audio/java/input-device"),
+                output_device: self.current_audio_value("/audio/java/output-device"),
+                input: self.current_audio_value("/audio/java/input"),
+            }
+        }
     }
     fn audio_path(&mut self, kind: &str) -> String {
         let asio = self.asio();
