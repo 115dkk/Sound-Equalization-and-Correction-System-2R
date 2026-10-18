@@ -1,5 +1,0 @@
-{
-  "duplicate": 2,
-  "escaped": "quote \" slash \\ control \b\f\n\r\t",
-  "unicode": "한글 😀 😀"
-}

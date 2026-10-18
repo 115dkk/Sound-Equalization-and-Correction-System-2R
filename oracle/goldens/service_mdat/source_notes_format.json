@@ -1,1 +1,0 @@
-{"inputs":{"text":"{\"notes\":42,\"format\":7}"},"outputs":{"loaded":true,"bytes":{"blob":"source_notes_format_mdat.bin","length":206727,"sha256":"b38fc0d2c24fd8e09906e469d287465951693f999d0834a578ff93d9f5a093cf"}},"meta":{"oracle":"SECS 2 Beta 1.3.1 (587159e)","python":"3.13.16","numpy":"2.5.3","scipy":"1.18.1","numpy_dispatch":"baseline (C library transcendental functions)"}}

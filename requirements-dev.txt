@@ -1,7 +1,0 @@
-# exe 를 만들거나(PyInstaller) 시험(pytest)을 돌릴 때 필요한 것. 실행에는 필요 없다.
-#   .venv-secs\Scripts\python.exe -m pip install -r requirements-dev.txt
-#   powershell -NoProfile -ExecutionPolicy Bypass -File build_exe.ps1
-#   set QT_QPA_PLATFORM=windows & .venv-secs\Scripts\python.exe -m pytest tests -q
--r requirements.txt
-pyinstaller==6.22.3
-pytest==9.1.1

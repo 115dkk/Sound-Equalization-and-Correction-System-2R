@@ -1,1 +1,0 @@
-{"inputs":{"sample":false,"preset":"7.1.4","sub_count":3},"outputs":{"project":{"blob":"preset_7_1_4_subs_3_project.secs","length":4023,"sha256":"2e3e93590403ee4695294cf28ba7b6defe5422d8c85f12c6b73aae4a5171c7e5"}},"meta":{"oracle":"SECS 2 Beta 1.2.0 (60ac53a)","python":"3.13.16","numpy":"2.5.3","scipy":"1.18.1","numpy_dispatch":"baseline (C library transcendental functions)"}}

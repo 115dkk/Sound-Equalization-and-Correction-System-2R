@@ -1,9 +1,0 @@
-# The oracle's runtime: the versions upstream SECS 2 Beta 1.3.0 pins in
-# requirements.txt, without the GUI stack (the exporters never import PyQt).
-# Python 3.13. Install into a virtual environment outside the repository:
-#   python3.13 -m venv ~/.venvs/secs-oracle
-#   ~/.venvs/secs-oracle/bin/pip install -r oracle/requirements.txt
-numpy==2.5.3
-scipy==1.18.1
-soundfile==0.14.0
-requests==2.34.2

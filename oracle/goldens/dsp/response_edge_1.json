@@ -1,1 +1,0 @@
-{"inputs":{"fn":"peaking","f":["nan","+inf","-inf",-0.0],"f0":80.0,"q":2.0,"gain":-6.0,"sr":48000},"outputs":{"value":{"re":["nan","nan","nan",1.0000000000010123],"im":["nan","nan","nan",0.0]}},"meta":{"oracle":"SECS 2 Beta 1.2.0 (60ac53a)","python":"3.13.16","numpy":"2.5.3","scipy":"1.18.1","numpy_dispatch":"baseline (C library transcendental functions)"}}
