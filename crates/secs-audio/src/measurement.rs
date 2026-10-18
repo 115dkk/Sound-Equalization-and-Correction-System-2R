@@ -217,13 +217,26 @@ pub fn measure_position(
     request.share = plan.share;
     let recording = play_and_record(backend, request, cancel, on_event)?;
     check_cancel(cancel)?;
-    if recording.capture.discontinuity
-        || recording.playback.underruns > 0
-        || !recording.interleaved.iter().all(|x| x.is_finite())
-    {
-        return Err(AudioError::Backend(
-            "discontinuous or nonfinite measurement recording".into(),
-        ));
+    if recording.capture.discontinuity {
+        return Err(AudioError::Recording {
+            issue: RecordingIssue::Gap,
+            detail: "capture reported a discontinuity".into(),
+        });
+    }
+    if recording.playback.underruns > 0 {
+        return Err(AudioError::Recording {
+            issue: RecordingIssue::Underrun,
+            detail: format!(
+                "playback reported {} underrun(s)",
+                recording.playback.underruns
+            ),
+        });
+    }
+    if !recording.interleaved.iter().all(|x| x.is_finite()) {
+        return Err(AudioError::Recording {
+            issue: RecordingIssue::NonFinite,
+            detail: "capture contained non-finite samples".into(),
+        });
     }
     let channel = |c: u16| -> Vec<f64> {
         recording

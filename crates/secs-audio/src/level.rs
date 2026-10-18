@@ -212,8 +212,26 @@ pub fn level_check_streaming(
     request.tail_seconds = 1.0;
     let input_channel = usize::from(input.channel);
     let recording = play_and_record(backend, request, cancel, &mut |_| {})?;
-    if recording.capture.discontinuity || recording.playback.underruns > 0 {
-        return Err(AudioError::Backend("discontinuous level recording".into()));
+    if recording.capture.discontinuity {
+        return Err(AudioError::Recording {
+            issue: RecordingIssue::Gap,
+            detail: "capture reported a discontinuity".into(),
+        });
+    }
+    if recording.playback.underruns > 0 {
+        return Err(AudioError::Recording {
+            issue: RecordingIssue::Underrun,
+            detail: format!(
+                "playback reported {} underrun(s)",
+                recording.playback.underruns
+            ),
+        });
+    }
+    if !recording.interleaved.iter().all(|x| x.is_finite()) {
+        return Err(AudioError::Recording {
+            issue: RecordingIssue::NonFinite,
+            detail: "capture contained non-finite samples".into(),
+        });
     }
     let samples: Vec<_> = recording
         .interleaved

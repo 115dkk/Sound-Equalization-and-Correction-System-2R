@@ -57,7 +57,7 @@ where
         Ok(Status {
             available: self.client.is_running(),
             version: self.client.version(),
-            pro: Some(self.client.is_pro()),
+            pro: None,
         })
     }
     fn level_check(
@@ -135,6 +135,22 @@ where
         progress: Option<ProgressSink>,
         cancel: &CancelToken,
     ) -> Result<Vec<MeasurementResult>, MeasureError> {
+        let current_audio = self.client.current_audio();
+        let output_devices = self.client.output_devices();
+        let input_devices = self.client.input_devices();
+        let fallback = |stored: &str, devices: &[secs_rew::DeviceInfo]| {
+            devices
+                .iter()
+                .any(|device| device.id == stored || device.name == stored)
+                .then(|| stored.to_owned())
+                .unwrap_or_default()
+        };
+        let output_device = current_audio
+            .output_device
+            .unwrap_or_else(|| fallback(&plan.output_device, &output_devices));
+        let input_device = current_audio
+            .input_device
+            .unwrap_or_else(|| fallback(&plan.input_device, &input_devices));
         let progress = progress.map(|sink| {
             Arc::new(move |p: secs_rew::Progress| {
                 sink(Progress {
@@ -167,8 +183,8 @@ where
                 let output_channel = format!("out {}", plan.output_for(&r.role));
                 let source_info = secs_mdat::from_rew_measurement(
                     cal.as_ref(),
-                    &plan.output_device,
-                    &plan.input_device,
+                    &output_device,
+                    &input_device,
                     &output_channel,
                     (self.unix_ms)(),
                 )

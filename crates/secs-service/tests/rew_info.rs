@@ -18,6 +18,10 @@ fn rew_info_uses_injected_transport_and_preserves_unknown_facts() {
         ("/audio/samplerate", 5),
         ("/measure/sweep/configuration", 5),
         ("/measure/level", 3),
+        ("/audio/driver", 5),
+        ("/audio/java/input-device", 5),
+        ("/audio/java/output-device", 5),
+        ("/audio/java/input", 5),
     ];
     let transport =
         RecordedTransport::new(paths.into_iter().map(|(path, seconds)| RecordedExchange {

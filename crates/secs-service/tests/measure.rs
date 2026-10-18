@@ -269,11 +269,14 @@ fn rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements() 
                 "outputName".into(),
                 format!(
                     "{}, out {}",
-                    p.output_device,
+                    rew.client.options.current_audio.output_device.as_deref().unwrap(),
                     p.output_for(&results[0].role)
                 )
             ),
-            ("sourceFileName".into(), p.input_device.clone()),
+            (
+                "sourceFileName".into(),
+                rew.client.options.current_audio.input_device.clone().unwrap(),
+            ),
         ]
     );
     assert_eq!(

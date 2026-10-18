@@ -1347,8 +1347,8 @@ pub struct RewStatusResult {
     pub running: bool,
     /// Whether the REW API responds.
     pub reachable: bool,
-    /// Whether REW reports a Pro license.
-    pub pro: bool,
+    /// Observed automatic-sweep license state: unknown until success or rejection.
+    pub pro: Option<bool>,
 }
 /// Facts from REW, distinct from project-stored measurement preferences.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
@@ -1358,8 +1358,14 @@ pub struct RewInfoResult {
     pub running: bool,
     pub reachable: bool,
     pub version: Option<String>,
-    /// User-confirmed license hint; the API has no license endpoint.
+    /// Observed automatic-sweep license state: unknown until success or rejection.
     pub pro: Option<bool>,
+    /// REW's current input device, read from its own audio preferences.
+    pub input_device: Option<String>,
+    /// REW's current output device, read from its own audio preferences.
+    pub output_device: Option<String>,
+    /// REW's current input channel name.
+    pub input: Option<String>,
     pub blocking: Option<bool>,
     /// Empty means no file loaded; null means unknown or per-input calibration.
     pub input_calibration_file: Option<String>,
@@ -1868,6 +1874,8 @@ pub enum ErrorCode {
     StaleInputs,
     /// The audio backend or selected endpoint is unavailable.
     DeviceUnavailable,
+    /// Recording completed but was discarded because it had a gap or corrupt samples.
+    RecordingFailed,
     /// The backend refused a pinned audio share mode.
     ShareModeRefused,
     /// The REW API cannot be reached.

@@ -803,7 +803,8 @@ fn rew_recorded_transport_records_each_role_and_warning() {
     let Response::MeasureMethods(methods) = call(&service, Request::MeasureMethods) else {
         panic!()
     };
-    assert!(methods.rew.reachable && methods.rew.pro);
+    assert!(methods.rew.reachable);
+    assert_eq!(methods.rew.pro, None);
     let events = Arc::new(Events::default());
     let job = measure(&service, 1, events.clone());
     succeeded(&events, job);
@@ -1008,7 +1009,7 @@ fn rew_launch_classifies_reasons_and_returns_after_spawn() {
         RewStatusResult {
             running: true,
             reachable: false,
-            pro: false,
+            pro: None,
         }
     );
 }

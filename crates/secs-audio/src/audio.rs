@@ -109,6 +109,24 @@ pub struct CaptureRead {
     pub silent: bool,
 }
 
+/// Why a finished recording was rejected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecordingIssue {
+    Gap,
+    Underrun,
+    NonFinite,
+}
+
+impl std::fmt::Display for RecordingIssue {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Gap => "gap",
+            Self::Underrun => "underrun",
+            Self::NonFinite => "nonfinite",
+        })
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum AudioError {
     #[error("device not found: {0}")]
@@ -117,6 +135,11 @@ pub enum AudioError {
     UnsupportedFormat(String),
     #[error("backend error: {0}")]
     Backend(String),
+    #[error("recording rejected ({issue}): {detail}")]
+    Recording {
+        issue: RecordingIssue,
+        detail: String,
+    },
     #[error("cancelled")]
     Cancelled,
 }

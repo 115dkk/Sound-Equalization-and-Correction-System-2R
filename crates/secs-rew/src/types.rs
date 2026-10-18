@@ -9,6 +9,14 @@ use std::{
     time::Duration,
 };
 
+/// REW's own current audio selection (what a sweep will use).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CurrentAudio {
+    pub input_device: Option<String>,
+    pub output_device: Option<String>,
+    pub input: Option<String>,
+}
+
 /// Transport-level read snapshot, adapted to the IPC vocabulary by the service.
 #[derive(Debug, Clone, Default)]
 pub struct InfoSnapshot {
