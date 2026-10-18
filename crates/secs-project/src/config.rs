@@ -80,10 +80,15 @@ pub fn default_bands(role: &str, start: i64, biamp: bool) -> Vec<Band> {
     }
 }
 
-const PRESETS: [(&str, &[&str]); 6] = [
+/// Upstream `model.PRESETS` plus the quadraphonic layouts (`4.0`, `4.1`, `4.2`) that
+/// SECS 2 does not have: 5.1 without the centre, in the same order (docs/DEVIATIONS.md U13).
+const PRESETS: [(&str, &[&str]); 9] = [
     ("2.0", &["L", "R"]),
     ("2.1", &["L", "R", "SW1"]),
     ("2.2", &["L", "R", "SW1", "SW2"]),
+    ("4.0", &["L", "R", "Ls", "Rs"]),
+    ("4.1", &["L", "R", "SW1", "Ls", "Rs"]),
+    ("4.2", &["L", "R", "SW1", "SW2", "Ls", "Rs"]),
     ("5.1", &["L", "R", "C", "SW1", "Ls", "Rs"]),
     (
         "7.1.4",

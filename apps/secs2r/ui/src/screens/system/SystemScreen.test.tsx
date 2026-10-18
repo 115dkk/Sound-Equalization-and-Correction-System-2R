@@ -135,6 +135,16 @@ describe("SystemScreen", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
+  it("offers the quadraphonic presets between 2.2 and 5.1 (U13)", async () => {
+    const actions = setup(newProjectView);
+    const names = [...document.querySelectorAll(".system-presets__list .system-preset__name")].map((node) => node.textContent);
+    expect(names).toEqual(["2.0", "2.1", "2.2", "4.0", "4.1", "4.2", "5.1", "7.1.4", "9.1.6"]);
+    expect(must("system.preset.4.2").textContent).toContain(translate("ko", "system.preset.count", { count: 6 }));
+    fireEvent.click(must("system.preset.4.1"));
+    await flush();
+    expect(actions.applyPreset).toHaveBeenCalledWith("4.1");
+  });
+
   it("asks before a preset change that clears measurements, then offers undo (U5)", async () => {
     const actions = setup(sampleView);
     fireEvent.click(must("system.preset.5.1"));

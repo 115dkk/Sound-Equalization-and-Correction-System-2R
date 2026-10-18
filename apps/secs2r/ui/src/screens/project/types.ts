@@ -4,7 +4,7 @@
 import type { IpcError } from "../../ipc/bindings/IpcError";
 
 /** Presets `project_new` accepts (secs-project PRESETS; an empty layout is not one). */
-export const NEW_PROJECT_PRESETS = ["2.0", "2.1", "2.2", "5.1", "7.1.4", "9.1.6"] as const;
+export const NEW_PROJECT_PRESETS = ["2.0", "2.1", "2.2", "4.0", "4.1", "4.2", "5.1", "7.1.4", "9.1.6"] as const;
 export type NewProjectPreset = (typeof NEW_PROJECT_PRESETS)[number];
 
 /** What waits behind the unsaved-changes question. */

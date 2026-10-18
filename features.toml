@@ -410,6 +410,15 @@ status = "implemented"
 tests = ["secs-project::service_plan_matches_upstream"]
 upstream = "calibration.py measured_positions, measurement_signature, target_key, estimate_seconds, estimate_subs_seconds, estimate_xo_seconds"
 
+[[feature]]
+id = "project.quad_presets"
+kind = "project"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-project::quad_presets_are_5_1_without_the_centre", "secs-project::quad_presets_survive_save_and_reopen"]
+upstream = "model.py PRESETS, SpeakerConfig.from_preset; wizard/step2_config.py"
+note = "4.0, 4.1 and 4.2 are SECS 2R's own presets (docs/DEVIATIONS.md U13): 5.1 without C, with 0-2 subs in upstream's order. SECS 2 opens and resaves these projects byte for byte. apps/secs2r/ui src/screens/system/SystemScreen.test.tsx pins the buttons."
+
 # ---- Engine (M2, M3) ----
 
 [[feature]]

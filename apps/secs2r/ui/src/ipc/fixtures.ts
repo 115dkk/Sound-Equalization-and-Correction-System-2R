@@ -215,6 +215,7 @@ export const exportResult: ExportResult = {
 
 export const presetRoles: Record<string, readonly string[]> = {
   "2.0": ["L", "R"], "2.1": ["L", "R"], "2.2": ["L", "R"],
+  "4.0": ["L", "R", "Ls", "Rs"], "4.1": ["L", "R", "Ls", "Rs"], "4.2": ["L", "R", "Ls", "Rs"],
   "5.1": ["L", "R", "C", "Ls", "Rs"], "7.1.4": SAMPLE_MAINS,
   "9.1.6": [...SAMPLE_MAINS, "Lw", "Rw", "Tml", "Tmr"], custom: [],
 };
@@ -248,9 +249,16 @@ export function configOf(preset: string, speakers: ConfigSpeaker[], device = "")
     },
   };
 }
+/** Where subwoofers go among a layout's mains: after L, R and C, as in upstream model.PRESETS. */
+export function subsAt(roles: readonly string[]): number {
+  const at = roles.findIndex((role) => role !== "L" && role !== "R" && role !== "C");
+  return at < 0 ? roles.length : at;
+}
+
 export function configPreset(preset: string, subs: number): ConfigResult {
   const mains = presetRoles[preset] ?? presetRoles["2.0"]!;
-  const roles = [...mains.slice(0, 3), ...Array.from({ length: subs }, (_, i) => `SW${i + 1}`), ...mains.slice(3)];
+  const at = subsAt(mains);
+  const roles = [...mains.slice(0, at), ...Array.from({ length: subs }, (_, i) => `SW${i + 1}`), ...mains.slice(at)];
   return configOf(preset, roles.map((role, i) => speaker(role, i + 1)));
 }
 

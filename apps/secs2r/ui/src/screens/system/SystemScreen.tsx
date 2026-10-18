@@ -39,8 +39,8 @@ import { DSP_NAME, GROUP_NAME, durationText, isKnownRole, noticeText, outputLabe
 import type { SystemActions, SystemView } from "./types";
 import "./system.css";
 
-/** Upstream preset buttons (model.PRESETS), in order. */
-export const PRESETS = ["2.0", "2.1", "2.2", "5.1", "7.1.4", "9.1.6"] as const;
+/** Upstream preset buttons (model.PRESETS) with the quadraphonic presets SECS 2R adds (U13), in order. */
+export const PRESETS = ["2.0", "2.1", "2.2", "4.0", "4.1", "4.2", "5.1", "7.1.4", "9.1.6"] as const;
 
 /** Upstream FIR_TAP_CHOICES (step2_config.py). */
 export const FIR_TAP_CHOICES = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536] as const;
