@@ -3,6 +3,7 @@
 import { useId, useRef, type KeyboardEvent, type ReactNode } from "react";
 import { useT } from "../i18n/react";
 import { Field, describedBy } from "./Field";
+import { HelpTip } from "./HelpTip";
 import { Icon } from "./Icon";
 
 /* ── Select ─────────────────────────────────────────────────────────────── */
@@ -18,6 +19,7 @@ export function Select<V extends string>({
   options,
   onChange,
   hint,
+  help,
   error,
   disabled,
   inline,
@@ -28,6 +30,7 @@ export function Select<V extends string>({
   options: readonly Option<V>[];
   onChange: (value: V) => void;
   hint?: ReactNode;
+  help?: ReactNode;
   error?: ReactNode;
   disabled?: boolean;
   /** The label on the left of a narrower box, for tool bars and dense rows (a graph's channel). */
@@ -35,7 +38,7 @@ export function Select<V extends string>({
 }) {
   const box = ["ui-select", error && "ui-select--invalid", disabled && "ui-select--disabled"].filter(Boolean).join(" ");
   return (
-    <Field id={id} label={label} hint={hint} error={error} {...(inline ? { inline: true, className: "ui-select-field--inline" } : {})}>
+    <Field id={id} label={label} hint={hint} help={help} error={error} {...(inline ? { inline: true, className: "ui-select-field--inline" } : {})}>
       <div className={box}>
         <select
           id={id}
@@ -44,7 +47,7 @@ export function Select<V extends string>({
           value={value}
           disabled={disabled}
           aria-invalid={error ? true : undefined}
-          aria-describedby={describedBy(id, hint, error)}
+          aria-describedby={describedBy(id, hint, error, help)}
           onChange={(event) => onChange(event.target.value as V)}
         >
           {options.map((option) => (
@@ -71,6 +74,7 @@ export function Stepper({
   onChange,
   format,
   hint,
+  help,
   disabled,
 }: {
   id: string;
@@ -81,6 +85,7 @@ export function Stepper({
   onChange: (value: number) => void;
   format?: (value: number) => string;
   hint?: ReactNode;
+  help?: ReactNode;
   disabled?: boolean;
 }) {
   const t = useT();
@@ -103,6 +108,7 @@ export function Stepper({
       <span className="ui-field__label" id={labelId}>
         {label}
       </span>
+      <div className="ui-control-help-row">
       <div className={["ui-stepper", disabled && "ui-stepper--disabled"].filter(Boolean).join(" ")}>
         <button
           type="button"
@@ -121,6 +127,7 @@ export function Stepper({
           role="spinbutton"
           tabIndex={disabled ? -1 : 0}
           aria-labelledby={labelId}
+          aria-describedby={describedBy(id, hint, null, help)}
           aria-valuemin={min}
           aria-valuemax={max}
           aria-valuenow={value}
@@ -141,7 +148,9 @@ export function Stepper({
           <Icon name="plus" size={16} />
         </button>
       </div>
-      {hint && <p className="ui-field__hint">{hint}</p>}
+      {help && <HelpTip id={`${id}.help`} labelledBy={labelId} content={help} />}
+      </div>
+      {hint && <p className="ui-field__hint" id={`${id}-hint`}>{hint}</p>}
     </div>
   );
 }
@@ -154,6 +163,7 @@ export function Toggle({
   checked,
   onChange,
   hint,
+  help,
   disabled,
 }: {
   id: string;
@@ -162,18 +172,20 @@ export function Toggle({
   checked: boolean;
   onChange: (checked: boolean) => void;
   hint?: ReactNode;
+  help?: ReactNode;
   disabled?: boolean;
 }) {
   const hid = `${id}-hint`;
   return (
     <div className="ui-toggle-row">
+      <div className="ui-control-help-row">
       <button
         id={id}
         data-ui={id}
         type="button"
         role="switch"
         aria-checked={checked}
-        aria-describedby={hint ? hid : undefined}
+        aria-describedby={describedBy(id, hint, null, help)}
         disabled={disabled}
         className="ui-toggle"
         onClick={() => onChange(!checked)}
@@ -181,8 +193,10 @@ export function Toggle({
         <span className="ui-toggle__track" aria-hidden="true">
           <span className="ui-toggle__thumb" />
         </span>
-        <span className="ui-toggle__label">{label}</span>
+        <span className="ui-toggle__label" id={`${id}-label`}>{label}</span>
       </button>
+      {help && <HelpTip id={`${id}.help`} labelledBy={`${id}-label`} content={help} />}
+      </div>
       {hint && (
         <p className="ui-field__hint ui-toggle__hint" id={hid}>
           {hint}
@@ -202,6 +216,7 @@ export function Segmented<V extends string>({
   options,
   onChange,
   hint,
+  help,
   hideLabel,
   size = "md",
   "data-autofocus": autofocus,
@@ -212,6 +227,7 @@ export function Segmented<V extends string>({
   options: readonly SegmentedOption<V>[];
   onChange: (value: V) => void;
   hint?: ReactNode;
+  help?: ReactNode;
   /** Keep the label for screen readers only (the context already names it). */
   hideLabel?: boolean;
   size?: "md" | "sm";
@@ -234,12 +250,13 @@ export function Segmented<V extends string>({
       <span id={labelId} className={hideLabel ? "visually-hidden" : "ui-field__label"}>
         {label}
       </span>
+      <div className="ui-control-help-row">
       <div
         id={id}
         data-ui={id}
         role="radiogroup"
         aria-labelledby={labelId}
-        aria-describedby={hint ? `${id}-hint` : undefined}
+        aria-describedby={describedBy(id, hint, null, help)}
         className={["ui-segmented", size === "sm" && "ui-segmented--sm"].filter(Boolean).join(" ")}
         onKeyDown={(event) => {
           if (event.key === "ArrowRight" || event.key === "ArrowDown") {
@@ -274,6 +291,8 @@ export function Segmented<V extends string>({
             </button>
           );
         })}
+      </div>
+      {help && <HelpTip id={`${id}.help`} labelledBy={labelId} content={help} />}
       </div>
       {hint && (
         <p className="ui-field__hint" id={`${id}-hint`}>

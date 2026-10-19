@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { useT } from "../i18n/react";
 import { Button } from "../ui/Button";
+import { HelpTip } from "../ui/HelpTip";
 import { Icon } from "../ui/Icon";
 import { BLOCKED_TEXT, STEP_PURPOSE, STEP_TITLE, type StepId, type StepState } from "./model";
 
@@ -46,13 +47,13 @@ export function StepHeader({
           <h1 className="step-header__title" id="frame.header.title">
             {t(STEP_TITLE[step])}
           </h1>
+          <HelpTip id={`frame.header.${step}.help`} labelledBy="frame.header.title" content={t(STEP_PURPOSE[step])} />
           {status && (
             <div className="step-header__status" id={statusId}>
               {status}
             </div>
           )}
         </div>
-        <p className="step-header__purpose">{t(STEP_PURPOSE[step])}</p>
         {blocked && (
           <p className="step-header__blocked" id={reasonId} data-ui="frame.header.blocked">
             <Icon name="lock" size={16} />

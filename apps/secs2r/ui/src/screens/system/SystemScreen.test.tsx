@@ -289,7 +289,8 @@ describe("SystemScreen", () => {
   it("shows the band column and the file's role names in the expert view", () => {
     setup(sampleView, { expert: true });
     expect(must("system.patch.SW1.band").textContent).toBe("SUB");
-    expect(must("system.speaker").textContent).toContain(translate("ko", "system.speaker.internal", { role: "L" }));
+    fireEvent.click(must("system.speaker.help"));
+    expect(screen.getByRole("tooltip").textContent).toContain(translate("ko", "system.speaker.internal", { role: "L" }));
   });
 
   it("shows the resolved measurement output name instead of its ID", () => {

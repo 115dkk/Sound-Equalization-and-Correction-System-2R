@@ -40,6 +40,7 @@ export type NumberFieldProps = {
   /** Decimals shown and kept. */
   digits?: number;
   hint?: ReactNode;
+  help?: ReactNode;
   /** Show "range min–max unit" under the field even while valid. */
   showRange?: boolean;
   disabled?: boolean;
@@ -58,6 +59,7 @@ export function NumberField({
   unit,
   digits = 0,
   hint,
+  help,
   showRange,
   disabled,
   size = 7,
@@ -76,7 +78,7 @@ export function NumberField({
   const check = checkNumber(draft, min, max);
   const range = t("ui.number.range", { min: shown(min), max: shown(max), unit: unit ?? "" }).trim();
   const error = touched && !check.ok ? (check.reason === "nan" || check.reason === "empty" ? t("ui.number.nan", { range }) : t("ui.number.out_of_range", { range })) : null;
-  const help = hint ?? (showRange ? range : undefined);
+  const inlineHint = hint ?? (showRange ? range : undefined);
 
   const commit = () => {
     if (check.ok) {
@@ -107,7 +109,7 @@ export function NumberField({
   };
 
   return (
-    <Field id={id} label={label} hint={help} error={error}>
+    <Field id={id} label={label} hint={inlineHint} help={help} error={error}>
       <div className={["ui-number", error && "ui-number--invalid", disabled && "ui-number--disabled"].filter(Boolean).join(" ")}>
         <input
           id={id}
@@ -123,7 +125,7 @@ export function NumberField({
           aria-valuenow={value}
           aria-valuetext={unit ? `${shown(value)} ${unit}` : shown(value)}
           aria-invalid={error ? true : undefined}
-          aria-describedby={describedBy(id, help, error)}
+          aria-describedby={describedBy(id, inlineHint, error, help)}
           size={size}
           value={draft}
           disabled={disabled}

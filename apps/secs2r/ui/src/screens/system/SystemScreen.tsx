@@ -1,3 +1,4 @@
+import { HelpTip } from "../../ui/HelpTip";
 // 시스템: speakers, outputs, the export DSP and the measurement arrangement,
 // decided together before anything is connected (upstream steps 2 and 4).
 //
@@ -562,7 +563,8 @@ function SpeakerDetail({ view, index }: { view: SystemView; index: number | null
   return (
     <div className="system-speaker" data-ui="system.speaker" aria-live="polite">
       <div className="system-speaker__head">
-        <span className="system-speaker__name">{roleName(t, speaker.role)}</span>
+        <span className="system-speaker__name" id="system.speaker.name">{roleName(t, speaker.role)}</span>
+        <HelpTip id="system.speaker.help" labelledBy="system.speaker.name" content={<>{t(note)}{expert && <p>{t("system.speaker.internal", { role: speaker.role })}</p>}</>} />
         <span className="system-chip">{roleCode(speaker.role)}</span>
         <StatusPill>{t(KIND_NAME[kind])}</StatusPill>
       </div>
@@ -581,8 +583,6 @@ function SpeakerDetail({ view, index }: { view: SystemView; index: number | null
           ))}
         </ul>
       )}
-      <p className="system-speaker__note">{t(note)}</p>
-      {expert && <p className="system-speaker__note tabular">{t("system.speaker.internal", { role: speaker.role })}</p>}
     </div>
   );
 }
@@ -596,7 +596,7 @@ function ArrangementCard({ view, actions, ask }: { view: SystemView; actions: Sy
   const points: MicPoint[] | undefined = arrangement?.points.map((p) => ({ x: p.x_cm, y: p.y_cm, h: p.height > 0 ? 1 : p.height < 0 ? -1 : 0 }));
   const counts = layout.arrangements.length > 0 ? layout.arrangements.map((a) => a.count) : [...ARRANGEMENT_COUNTS];
   return (
-    <Card className="system-layout" title={t("system.layout.title")} description={t("system.layout.description")} data-ui="system.layout">
+    <Card className="system-layout" title={t("system.layout.title")} help={t("system.layout.description")} data-ui="system.layout">
       <div className="system-arrangements" role="group" aria-label={t("system.layout.title")} data-ui="system.arrangement">
         {counts.map((count) => {
           const current = count === layout.count;
@@ -660,7 +660,8 @@ function MeasureOptions({ view, actions }: { view: SystemView; actions: SystemAc
           { value: "loopback", label: t("system.timing.loopback") },
           { value: "none", label: t("system.timing.none") },
         ]}
-        hint={t(timingHint[timing.reference === "loopback" || timing.reference === "none" ? timing.reference : "acoustic"])}
+        help={t(timingHint[timing.reference === "loopback" || timing.reference === "none" ? timing.reference : "acoustic"])}
+        hint={timing.reference === "acoustic" ? t("measure.options.repeats.acoustic") : undefined}
         onChange={(reference) => actions.setTiming({ ...timing, reference, role: refRole })}
       />
       {timing.reference === "loopback" ? (
@@ -716,15 +717,15 @@ function DspCard({ view, actions }: { view: SystemView; actions: SystemActions }
   // Upstream fir_tap_label: the linear-phase delay of N taps at 48 kHz, (N − 1) / 2 samples.
   const tapLabel = (n: number) => t("system.dsp.taps.option", { taps: number(n), ms: number(((n - 1) / 48000 / 2) * 1000, 1) });
   return (
-    <Card className="system-dsp" title={t("system.dsp.title")} description={t("system.dsp.description")} data-ui="system.dsp">
+    <Card className="system-dsp" title={t("system.dsp.title")} help={<>{t("system.dsp.description")}<p>{t("system.dsp.use")}</p></>} data-ui="system.dsp">
       <Select
         id="system.dsp.device"
         label={t("system.dsp.device")}
+        help={t("system.dsp.custom_hint")}
         value={dsp.profile}
         options={keys.map((key) => ({ value: key, label: presetName(key) }))}
         onChange={(key) => actions.setDspPreset(key)}
       />
-      <p className="system-dsp__use">{t("system.dsp.use")}</p>
       <Advanced id="system.dsp.advanced" count={5}>
         <div className="system-dsp__fields">
           <Select id="system.dsp.fir_taps" label={t("system.dsp.fir_taps")} value={String(dsp.fields.fir_taps)} options={taps.map((n) => ({ value: String(n), label: tapLabel(n) }))} onChange={(v) => edit({ fir_taps: Number(v) })} />
@@ -736,7 +737,6 @@ function DspCard({ view, actions }: { view: SystemView; actions: SystemActions }
         <p className="system-dsp__note tabular" data-ui="system.dsp.note">
           {t("system.dsp.note", { window: number(dsp.window_ms, 0), resolution: number(dsp.resolution_hz, 1) })}
         </p>
-        <p className="system-dsp__note">{t("system.dsp.custom_hint")}</p>
       </Advanced>
     </Card>
   );

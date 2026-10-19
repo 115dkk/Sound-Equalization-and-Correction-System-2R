@@ -127,13 +127,13 @@ export function SettingsButton({ initiallyOpen = false, inline = false }: { init
             label: t(`frame.settings.logo.${icon}`),
             media: <img className="settings__logo" src={SMALL_LOGOS[icon]} alt="" width={20} height={20} draggable={false} />,
           }))}
-          hint={t("frame.settings.logo.hint")}
+          help={t("frame.settings.logo.hint")}
           onChange={(icon) => prefs.set({ icon })}
         />
         <Toggle
           id="frame.settings.expert"
           label={t("frame.settings.expert")}
-          hint={t("frame.settings.expert.hint")}
+          help={t("frame.settings.expert.hint")}
           checked={prefs.expert}
           onChange={(expert) => prefs.set({ expert })}
         />

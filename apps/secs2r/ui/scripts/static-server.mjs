@@ -20,7 +20,7 @@ export async function serveStatic(root, index = "gallery.html") {
   const server = createServer((request, response) => {
     const path = normalize(decodeURIComponent(new URL(request.url ?? "/", "http://x").pathname));
     // Chromium asks for a favicon the app does not have.
-    if (path === "/favicon.ico") {
+    if (path === normalize("/favicon.ico")) {
       response.writeHead(204).end();
       return;
     }

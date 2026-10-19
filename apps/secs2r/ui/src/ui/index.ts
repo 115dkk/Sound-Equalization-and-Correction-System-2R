@@ -14,6 +14,7 @@ export { LevelMeter, ProgressBar, levelState, METER_BAND } from "./meters";
 export { ToastProvider, ToastView, useToast, type ToastInput } from "./Toast";
 export { Dialog, ConfirmDialog, useConfirmAndUndo } from "./Dialog";
 export { Tooltip, TOOLTIP_DELAY_MS } from "./Tooltip";
+export { HelpTip } from "./HelpTip";
 export { Popover, Menu, type MenuItem } from "./Popover";
 export { EmptyState, ErrorNotice } from "./states";
 export { Icon, Spinner, type IconName } from "./Icon";

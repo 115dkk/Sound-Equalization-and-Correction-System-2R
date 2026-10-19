@@ -158,7 +158,7 @@ describe("내보내기", () => {
     const files = ui("export.files")!;
     const groups = [...files.querySelectorAll<HTMLElement>("section.export-group")];
     expect(groups.map((group) => document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent)).toEqual(["DSP에 넣을 필터", "REW에서 볼 응답"]);
-    expect(groups.map((group) => [...group.querySelectorAll("[data-ui^='export.kind.']")].map((row) => row.getAttribute("data-ui")))).toEqual([
+    expect(groups.map((group) => [...group.querySelectorAll("section[data-ui^='export.kind.']")].map((row) => row.getAttribute("data-ui")))).toEqual([
       ["export.kind.camilla_dsp", "export.kind.filter_text", "export.kind.equalizer_apo"],
       ["export.kind.before_after_mdat", "export.kind.staged_mdat"],
     ]);
@@ -166,7 +166,8 @@ describe("내보내기", () => {
     expect(files.querySelector("h2")?.textContent).toBe("내보낼 파일");
     expect([...groups[0]!.querySelectorAll("h3")].map((h) => h.textContent)).toEqual(["DSP에 넣을 필터"]);
     expect([...groups[0]!.querySelectorAll("h4")].map((h) => h.textContent)).toEqual(["CamillaDSP 설정", "필터 값 텍스트", "Equalizer APO 설정"]);
-    expect(ui("export.kind.camilla_dsp")?.textContent).toContain("RC, BA, MIMO를 지원하는");
+    fireEvent.click(ui("export.kind.camilla_dsp.help")!);
+    expect(screen.getByRole("tooltip").textContent).toBe(t("export.kind.camilla_dsp.body"));
   });
 
   it("turns off a filter format that cannot carry the result and says why in its row", () => {
