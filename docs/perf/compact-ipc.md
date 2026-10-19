@@ -98,3 +98,16 @@ RSS·전체 Rust 서비스 메모리는 측정하지 않습니다. 작은 힙 �
 `secs-sys::callback_native_sample_conversion` 한 항목 때문에 로컬에서는
 통과하지 않습니다. 새로 등록한 테스트들은 모두 목록에 있으며, 전체 검사는
 Linux CI에서 확인합니다.
+
+## macOS CI 실행기
+
+2026-10-19 UTC의 앞선 main CI와 릴리스는 GitHub 호스팅 arm64 실행기
+용량 부족으로 작업을 배정받지 못했습니다. PR #52에서도 같은 macOS 작업이
+대기해 CI와 릴리스의 실행기를 공식 지원되는 `macos-15-intel`로 고정했습니다.
+전체 테스트와 스레드 수별 내보내기 무결성 검사를 Intel macOS에서 실행하고,
+설치본은 기존 `universal-apple-darwin` 대상으로 두 아키텍처를 모두 빌드합니다.
+이 실행의 Apple Silicon 검증 범위는 교차 컴파일이며 네이티브 실행은 포함하지 않습니다.
+
+- [GitHub 실행기 사양](https://docs.github.com/en/actions/reference/runners/github-hosted-runners)
+- [앞선 main CI의 배정 실패](https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R/actions/runs/39273351188)
+- [앞선 릴리스의 배정 실패](https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R/actions/runs/39273350774)
