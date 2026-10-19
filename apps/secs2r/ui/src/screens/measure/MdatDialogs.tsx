@@ -165,6 +165,7 @@ export function MdatAssignDialog({
       open
       inline={inline}
       id="measure.mdat.dialog"
+      help={t(showPositions ? "measure.mdat.dialog.intro.positions" : "measure.mdat.dialog.intro")}
       title={t("measure.mdat.dialog.title", { file })}
       onClose={onClose}
       footer={
@@ -185,7 +186,6 @@ export function MdatAssignDialog({
       }
     >
       <div className="measure-dialog">
-        <p className="measure-dialog__intro">{t(showPositions ? "measure.mdat.dialog.intro.positions" : "measure.mdat.dialog.intro")}</p>
         <div className="measure-dialog__table">
           <DataTable
             id="measure.mdat.rows"
@@ -326,6 +326,7 @@ export function MdatFilesDialog({
       open={open}
       inline={inline}
       id="measure.files"
+      help={t("measure.files.intro")}
       title={t("measure.files.title")}
       onClose={onClose}
       footer={
@@ -335,7 +336,6 @@ export function MdatFilesDialog({
       }
     >
       <div className="measure-dialog">
-        <p className="measure-dialog__intro">{t("measure.files.intro")}</p>
         <div className="measure-dialog__table">
           <DataTable
             id="measure.files.rows"

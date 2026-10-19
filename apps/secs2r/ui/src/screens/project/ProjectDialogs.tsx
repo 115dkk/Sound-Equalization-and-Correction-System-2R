@@ -68,6 +68,7 @@ function NewProjectDialog({
       open
       inline={inline}
       id="project.new"
+      help={t("project.new.where")}
       onClose={actions.cancel}
       title={t("project.new.title")}
       footer={
@@ -93,6 +94,7 @@ function NewProjectDialog({
             id="project.new.start"
             data-autofocus
             label={t("project.new.start")}
+            help={t(sample ? "project.new.start.sample.hint" : "project.new.start.empty.hint")}
             value={start}
             options={[
               { value: "empty", label: t("project.new.start.empty") },
@@ -100,7 +102,6 @@ function NewProjectDialog({
             ]}
             onChange={setStart}
           />
-          <p className="ui-field__hint">{t(sample ? "project.new.start.sample.hint" : "project.new.start.empty.hint")}</p>
         </div>
         <div className="project-form__row">
           <Segmented
@@ -116,7 +117,6 @@ function NewProjectDialog({
           <Stepper id="project.new.subs" label={t("project.new.subs")} value={sample ? SAMPLE.subCount : subs} min={0} max={8} disabled={sample} onChange={setSubs} />
         </div>
         {sample && <p className="ui-field__hint">{t("project.new.fixed")}</p>}
-        <p className="project-form__note">{t("project.new.where")}</p>
         <Problem view={view} />
       </div>
     </Dialog>

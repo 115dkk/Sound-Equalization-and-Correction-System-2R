@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { fireEvent, render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { StepState } from "../../app/model";
 import { PrefsScope } from "../../app/prefs";
@@ -160,7 +160,8 @@ describe("ConnectScreen", () => {
 
   it("says what each method needs while nothing is chosen, and whether it is available", () => {
     setup(emptyView);
-    expect(must("connect.method.native").textContent).toContain(ko("connect.method.native.needs"));
+    fireEvent.click(must("connect.method.card.help"));
+    expect(screen.getByRole("tooltip").textContent).toContain(ko("connect.method.native.needs"));
     expect(must("connect.method.native").textContent).toContain(ko("connect.method.native.ready", { count: 4 }));
     expect(must("connect.method.rew").textContent).toContain(ko("connect.method.rew.off"));
     expect(ui("connect.level")).toBeNull();

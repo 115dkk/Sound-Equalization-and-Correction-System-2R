@@ -1,3 +1,4 @@
+import { HelpTip } from "../../ui/HelpTip";
 // 내보내기: write what the DSP and REW need. What the correction is (mode,
 // delay, channels, MIMO, RC range), where the files go, and the exports in
 // two groups: the filters for the DSP (the CamillaDSP configuration, the
@@ -382,10 +383,10 @@ function ExportItem({ kind, view, actions }: { kind: ExportKind; view: ExportVie
   return (
     <section className="export-item" data-ui={`export.kind.${kind}`} aria-labelledby={titleId}>
       <div className="export-item__text">
-        <h4 className="export-item__title" id={titleId}>
-          {t(text.title)}
-        </h4>
-        <p className="export-item__body">{t(text.body)}</p>
+        <div className="ui-heading-help">
+          <h4 className="export-item__title" id={titleId}>{t(text.title)}</h4>
+          <HelpTip id={`export.kind.${kind}.help`} labelledBy={titleId} content={t(text.body)} />
+        </div>
         <p className="export-item__where">
           <Icon name="folder" size={16} />
           <span>{whereText(t, kind, view)}</span>

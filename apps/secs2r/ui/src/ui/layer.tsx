@@ -60,3 +60,14 @@ export function placeNear(
   top = Math.min(Math.max(margin, top), Math.max(margin, vh - margin - box.height));
   return { left, top, side: placed };
 }
+
+/** A tooltip is portalled outside its owning panel. Match its id back to a
+ * trigger in that panel rather than treating every floating tooltip as inside. */
+export function isOwnedTooltipTarget(target: Node, owners: readonly (HTMLElement | null)[]): boolean {
+  const element = target instanceof Element ? target : target.parentElement;
+  const tooltip = element?.closest<HTMLElement>('[role="tooltip"]');
+  if (!tooltip?.id) return false;
+  return owners.some((owner) => owner && [owner, ...owner.querySelectorAll<HTMLElement>("[aria-describedby], [aria-controls]")].some((trigger) =>
+    [trigger.getAttribute("aria-describedby"), trigger.getAttribute("aria-controls")].some((value) => value?.split(/\s+/).includes(tooltip.id)),
+  ));
+}

@@ -11,6 +11,7 @@ import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type 
 import { useT } from "../i18n/react";
 import { Button } from "./Button";
 import { Icon } from "./Icon";
+import { HelpTip } from "./HelpTip";
 import { Portal } from "./layer";
 import { useToast } from "./Toast";
 
@@ -20,6 +21,7 @@ export function Dialog({
   open,
   onClose,
   title,
+  help,
   children,
   footer,
   id,
@@ -29,6 +31,7 @@ export function Dialog({
   open: boolean;
   onClose: () => void;
   title: ReactNode;
+  help?: ReactNode;
   children?: ReactNode;
   footer?: ReactNode;
   id?: string | undefined;
@@ -48,7 +51,7 @@ export function Dialog({
     if (!open || inline) return;
     returnTo.current = document.activeElement;
     const node = panel.current;
-    const first = node?.querySelector<HTMLElement>("[data-autofocus]") ?? node?.querySelector<HTMLElement>(FOCUSABLE);
+    const first = node?.querySelector<HTMLElement>("[data-autofocus]") ?? [...(node?.querySelectorAll<HTMLElement>(FOCUSABLE) ?? [])].find((element) => !element.hasAttribute("data-help-trigger"));
     first?.focus();
     return () => {
       if (returnTo.current instanceof HTMLElement) returnTo.current.focus();
@@ -102,9 +105,10 @@ export function Dialog({
       onKeyDown={onKeyDown}
     >
       <header className="ui-dialog__header">
-        <h2 id={titleId} className="ui-dialog__title">
-          {title}
-        </h2>
+        <div className="ui-heading-help">
+          <h2 id={titleId} className="ui-dialog__title">{title}</h2>
+          {help && <HelpTip id={`${id ?? titleId}.help`} labelledBy={titleId} content={help} />}
+        </div>
         <button type="button" className="ui-dialog__close" aria-label={t("ui.close")} onClick={onClose}>
           <Icon name="close" size={18} />
         </button>

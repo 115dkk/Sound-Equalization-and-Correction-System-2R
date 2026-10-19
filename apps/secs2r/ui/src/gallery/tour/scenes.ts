@@ -452,7 +452,7 @@ export const TOUR_SCENES: TourScene[] = [
       await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "sub_mode", role: "SW2", mode: "fixed" } } });
       await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "sub", role: "SW2", patch: { gain_db: -2.5, delay_ms: 3.2, lp_hz: 90 } } } });
     },
-    ops: [...choosePath("native", "calibrate"), click(ui("calibrate.ba.advanced")), click(ui("calibrate.ba.edit.SW2")), reveal(`.ui-segmented-field:has(> ${ui("calibrate.ba.edit")})`)],
+    ops: [...choosePath("native", "calibrate"), click(ui("calibrate.ba.advanced")), click(ui("calibrate.ba.edit.SW2")), reveal(`.ui-segmented-field:has(${ui("calibrate.ba.edit")})`)],
   },
   {
     id: "calibrate.xo",

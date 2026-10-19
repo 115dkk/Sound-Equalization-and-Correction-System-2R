@@ -68,6 +68,7 @@ export function Verdict({ view }: { view: CalibrateView }) {
     return (
       <Card
         title={t("calibrate.verdict.title")}
+        help={t("calibrate.verdict.plan.help")}
         actions={pill}
         className="calibrate-verdict"
         data-ui="calibrate.verdict"
@@ -78,7 +79,7 @@ export function Verdict({ view }: { view: CalibrateView }) {
             {view.positions.length > 0
               ? t("calibrate.verdict.plan", { count: view.positions.length })
               : t("calibrate.verdict.plan.no_measurements")}
-            {subs.length > 0 && ` ${subs.length > 1 ? t("calibrate.verdict.plan.subs", { count: subs.length }) : t("calibrate.verdict.plan.sub")}`}
+            {subs.length > 0 && ` · ${subs.length > 1 ? t("calibrate.verdict.plan.subs", { count: subs.length }) : t("calibrate.verdict.plan.sub")}`}
           </p>
           {needsXo && view.positions.length > 0 && <p>{t("calibrate.verdict.plan.xo_first")}</p>}
           <p className="calibrate-line tabular">

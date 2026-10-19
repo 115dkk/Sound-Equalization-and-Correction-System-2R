@@ -27,7 +27,7 @@ export function ComputeControl({ view, actions }: { view: CalibrateView; actions
       <Select id="calibrate.compute.preference" label={t("compute.label")} value={preference}
         options={[{ value: "auto", label: t("compute.auto") }, { value: "cpu", label: "CPU" },
           { value: "gpu", label: "GPU", disabled: !status?.gpu_available }]}
-        disabled={disabled} onChange={actions.changeCompute} hint={t("compute.hint")} />
+        disabled={disabled} onChange={actions.changeCompute} help={t("compute.hint")} />
       <div className="calibrate-compute__state" role="status" aria-live="polite">
         {loading ? <p>{t("compute.loading")}</p> : saving ? <p>{t("compute.saving")}</p> : !error && status ? <>
           <p className="calibrate-compute__device">{requestedGpuUnavailable ? t("compute.selected.unavailable") : !iirReference && status.selected === "cuda"

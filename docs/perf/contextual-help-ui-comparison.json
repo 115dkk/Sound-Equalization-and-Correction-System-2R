@@ -1,0 +1,1436 @@
+{
+  "change": "P55 contextual help",
+  "baseline": "25018cd8a041df014a201c9bd22e3f2f3b5c5c21",
+  "environment": {
+    "browser": "141.0.7390.37",
+    "node": "v24.1.0"
+  },
+  "sourceSha256": {
+    "apps/secs2r/ui/src/ui/Tooltip.tsx": "3ce8c6bbc135f472e4a435f9ed8ebe1acc2549bdb64fedeea52580648ca65a7c",
+    "apps/secs2r/ui/src/ui/HelpTip.tsx": "e9f8913b592f84e9b54f250143a455f874af7fb1505336e9c459f1cc75cd04cd",
+    "apps/secs2r/ui/src/ui/Popover.tsx": "4c0b4b75beda24c672ef6b40b48cb947399129930b6d0f0dc775a436f9335c06",
+    "apps/secs2r/ui/src/ui/layer.tsx": "739f361bfcc4485a14a91534bada30db025ef493829abbb3cb60ef964bcac628",
+    "apps/secs2r/ui/src/ui/ui.css": "c7c27dd94811cf46ec4af49eade80c713f5c9f58021f9ff22ac43739519d73da",
+    "apps/secs2r/ui/src/i18n/ko.json": "897c636247972bfe803c61dbd2bab43698bcab5203f8b9901b18511975ab62f9",
+    "apps/secs2r/ui/src/i18n/en.json": "c35ac36bf7a5b8fdfb0def22ff576b01ec15cede941399767ae621f06962e725",
+    "apps/secs2r/ui/src/gallery/kitSpecimens.tsx": "55870167a895196ca13fd9a319b1f74a1ddc95038dbabff9fa3e0efd6c8294a5"
+  },
+  "narrowViewport": {
+    "width": 1024,
+    "height": 700
+  },
+  "comparisonViewport": {
+    "width": 1280,
+    "height": 800
+  },
+  "matrix": [
+    {
+      "scene": "system.sample",
+      "theme": "light",
+      "lang": "ko",
+      "horizontalOverflow": false,
+      "helpTargetCount": 6,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "여러 자리에서 측정하면 그 자리를 함께 고려해 보정합니다. MIMO에는 위치 3곳 이상이 필요합니다.",
+        "font": "14px",
+        "contrast": 14.493791752675431,
+        "box": {
+          "x": 177.109375,
+          "y": 36.25,
+          "width": 420,
+          "height": 56.59375
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "68dbc98b644754467a348242f39c029d5348e153291c6a3e7dbd4a31a9d0a8b8",
+        "help": "d53b7edd2c9c4df6994a544f9b03899e2a8898b6e4c1905a7205de8a34ecb82c"
+      }
+    },
+    {
+      "scene": "system.expert",
+      "theme": "light",
+      "lang": "ko",
+      "horizontalOverflow": false,
+      "helpTargetCount": 6,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "출력 하나로 전대역을 재생합니다.프로젝트 파일의 역할 이름 L",
+        "font": "14px",
+        "contrast": 14.493791752675431,
+        "box": {
+          "x": 693.46875,
+          "y": 36.265625,
+          "width": 207.5,
+          "height": 56.59375
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "e5b5221b351c985944d92bb0ef5717caa72f068c8787b93f30ff8a40587b87fe",
+        "help": "b11c11e13816d94f8a08be702cd16b0dd55541e9492a1d5f7a208ee6384040ae"
+      }
+    },
+    {
+      "scene": "connect.ready",
+      "theme": "light",
+      "lang": "ko",
+      "horizontalOverflow": false,
+      "helpTargetCount": 6,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "측정 방식별 준비 사항입니다.자체 측정: 스윕 재생·녹음용 입출력 오디오 장치 필요REW: 자동 측정에 REW Pro와 API 모드 실행 필요모의 측정: 데모 측정으로 연습 · 장치와 소리 재생 없음mdat 파일만 가져오기: 기존 REW .mdat 가져오기 · 연결·점검 건너뜀",
+        "font": "14px",
+        "contrast": 14.493791752675431,
+        "box": {
+          "x": 177.109375,
+          "y": 169,
+          "width": 420,
+          "height": 137.78125
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "c371537d0797457413cf8e0c5655c1af6866cde52d2bcd88d6de82dcc0c8b1fa",
+        "help": "85bbad0c54522a0ffa54136b1c1e303c72cb0cde9b5b62872d47288bbf1e98b4"
+      }
+    },
+    {
+      "scene": "measure.empty",
+      "theme": "light",
+      "lang": "ko",
+      "horizontalOverflow": false,
+      "helpTargetCount": 3,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "측정을 시작한 뒤 첫 스윕까지 기다리는 시간입니다. 마이크에서 떨어질 시간이 필요하면 늘리세요.",
+        "font": "14px",
+        "contrast": 14.493791752675431,
+        "box": {
+          "x": 596,
+          "y": 446.21875,
+          "width": 420,
+          "height": 56.59375
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "bbd6f7074ecd81506eecd46980e304f8dcb82e2ae48cba93aa30f700457cf48a",
+        "help": "06b6f7995038b8c735ab7f8667facea3c7ad0410f7fc5d830c3ab0f646603e08"
+      }
+    },
+    {
+      "scene": "calibrate.ready",
+      "theme": "light",
+      "lang": "ko",
+      "horizontalOverflow": false,
+      "helpTargetCount": 12,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "위상 보정 범위와 허용할 지연을 정합니다.기본 모드로, 10 ms 이내의 지연으로 저역 위상, 주로 크로스오버 부근을 보정합니다.",
+        "font": "14px",
+        "contrast": 14.493791752675431,
+        "box": {
+          "x": 177.109375,
+          "y": 16.59375,
+          "width": 420,
+          "height": 76.890625
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "dd0cfba7879e428755002e2eb96ed09c52bc159946e3896d2a08fbe41b06d89e",
+        "help": "d574a3d5c0de0e4228736efb9389a61e1c6d7d060f350e4a23dbeb0ff2e6e0a5"
+      }
+    },
+    {
+      "scene": "calibrate.sub",
+      "theme": "light",
+      "lang": "ko",
+      "horizontalOverflow": false,
+      "helpTargetCount": 16,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "자동·고정·묶음 중 어떤 정렬 방식을 쓰더라도 이 서브 출력에 적용합니다.",
+        "font": "14px",
+        "contrast": 14.493791752675431,
+        "box": {
+          "x": 185.140625,
+          "y": 404.09375,
+          "width": 417.1875,
+          "height": 36.296875
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "a6e0cabcf90b22779a7cfc00115dfa0fe2772cc925ad999033e9ffd9a04fa32c",
+        "help": "d456cef23a86a1c84ea33069f88d187915a6ab78d5aa29690195f566ac4216d0"
+      }
+    },
+    {
+      "scene": "export.ready",
+      "theme": "light",
+      "lang": "ko",
+      "horizontalOverflow": false,
+      "helpTargetCount": 5,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "RC, BA, MIMO를 적용할 CamillaDSP v4 설정과 48 kHz FIR wav 파일을 저장합니다. 적용 전에 입출력 장치를 실제 장치에 맞추세요.",
+        "font": "14px",
+        "contrast": 14.493791752675431,
+        "box": {
+          "x": 220.359375,
+          "y": 452.453125,
+          "width": 420,
+          "height": 56.59375
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "e82066a3e401591ab27776632d346361745e600f840438f25ca517005ba68bb7",
+        "help": "21f8b2b85adf10a9d472b03963a3fe636471bce597b6baad4a872526fec061e6"
+      }
+    },
+    {
+      "scene": "frame.settings",
+      "theme": "light",
+      "lang": "ko",
+      "horizontalOverflow": false,
+      "helpTargetCount": 8,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "초고지연 모드와 장치 공유 방식 등 세부 설정을 표시합니다.",
+        "font": "14px",
+        "contrast": 14.493791752675431,
+        "box": {
+          "x": 140.015625,
+          "y": 591.703125,
+          "width": 346.0625,
+          "height": 36.296875
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "b7391dfe0d3167d2e35895ba4acba2617087eb98471f100f637c925783a89fa7",
+        "help": "cc862542f4e38b24e42b5dcfe9f29f0e06501be4349b63dfad2b266d399d87e8"
+      }
+    },
+    {
+      "scene": "start.new",
+      "theme": "light",
+      "lang": "ko",
+      "horizontalOverflow": false,
+      "helpTargetCount": 3,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "측정 데이터 없이 선택한 스피커 구성으로 시작합니다.",
+        "font": "14px",
+        "contrast": 14.493791752675431,
+        "box": {
+          "x": 280.125,
+          "y": 218.546875,
+          "width": 314.828125,
+          "height": 36.296875
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "9e8a315f080ab3c4f4d821428c0c161659ad26af12a7a0aae1ca9fe646839632",
+        "help": "faec61a44557747a4af830abec87c7560d4b109345a9783cf2467ed6a7789423"
+      }
+    },
+    {
+      "scene": "system.sample",
+      "theme": "light",
+      "lang": "en",
+      "horizontalOverflow": false,
+      "helpTargetCount": 6,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "Measures multiple seats so correction can account for them together. MIMO requires at least 3 positions.",
+        "font": "14px",
+        "contrast": 14.493791752675431,
+        "box": {
+          "x": 319.703125,
+          "y": 36.84375,
+          "width": 420,
+          "height": 56.59375
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "e6d482ad774950f446fcc7a416653f01400865c84624e6565ecebbcfd075eae5",
+        "help": "a348c5f20226e868c4ca94320a05144931abdf699cdac46d2ccc2996a7a20ac4"
+      }
+    },
+    {
+      "scene": "system.expert",
+      "theme": "light",
+      "lang": "en",
+      "horizontalOverflow": false,
+      "helpTargetCount": 6,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "Plays full range from one output.Role name in the project file: L",
+        "font": "14px",
+        "contrast": 14.493791752675431,
+        "box": {
+          "x": 684.0625,
+          "y": 36.078125,
+          "width": 226.296875,
+          "height": 56.59375
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "de20ed39accbecc3a19c672ca2c761f6b48de10688ba379353e4e626f3cc444b",
+        "help": "247ebc2f9f6bb1039150e89e3ecb15eed007cc4557d4d92abf738297a91ef1d3"
+      }
+    },
+    {
+      "scene": "connect.ready",
+      "theme": "light",
+      "lang": "en",
+      "horizontalOverflow": false,
+      "helpTargetCount": 6,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "Requirements for each measurement method.Built-in: Input and output audio devices for sweep playback and recordingREW: REW Pro running in API mode for automatic measurementsSimulated: Practice with demo measurements; no devices or sound playbackImport mdat files only: Import existing REW .mdat files; skips connection and level checks",
+        "font": "14px",
+        "contrast": 14.493791752675431,
+        "box": {
+          "x": 281.40625,
+          "y": 169,
+          "width": 420,
+          "height": 198.671875
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "c74f2e52b1cea77ce93a45a9c75492b626dd5154ffeb6feef771fe12f6657055",
+        "help": "b17107b00f0bd46430580d18af8992cb70fda5bdb3193ef3c9989cac0ad9771f"
+      }
+    },
+    {
+      "scene": "measure.empty",
+      "theme": "light",
+      "lang": "en",
+      "horizontalOverflow": false,
+      "helpTargetCount": 3,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "Sets the wait before the first sweep starts. Increase it if you need time to move away from the microphone.",
+        "font": "14px",
+        "contrast": 14.493791752675431,
+        "box": {
+          "x": 596,
+          "y": 446.21875,
+          "width": 420,
+          "height": 56.59375
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "09e1f2402b45071e5e9b1b048c5ace0705c3ab02b46f8616eaa42111aab102f6",
+        "help": "a8f34d8905a42e51a4a24af3071895f8852c72dd5ac4abce59319f379b21e7a6"
+      }
+    },
+    {
+      "scene": "calibrate.ready",
+      "theme": "light",
+      "lang": "en",
+      "horizontalOverflow": false,
+      "helpTargetCount": 12,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "Sets the scope of phase correction and the allowed latency.The default mode corrects low-frequency phase, mainly around the crossover, with up to 10 ms latency.",
+        "font": "14px",
+        "contrast": 14.493791752675431,
+        "box": {
+          "x": 242.46875,
+          "y": 15.890625,
+          "width": 420,
+          "height": 76.890625
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "f73badfbd065868bb80768ec70142d4e2351d17394b0560834b2defdf1f0068b",
+        "help": "cbba490a872d8bbeee4c1a01e059ba182012978e4b279605495fc5d07f720224"
+      }
+    },
+    {
+      "scene": "calibrate.sub",
+      "theme": "light",
+      "lang": "en",
+      "horizontalOverflow": false,
+      "helpTargetCount": 16,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "Applies to this sub output with any alignment method: Automatic, Fixed or a bundle.",
+        "font": "14px",
+        "contrast": 14.493791752675431,
+        "box": {
+          "x": 207.625,
+          "y": 384.09375,
+          "width": 420,
+          "height": 56.59375
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "e49da0f7d0a9351afe48ad4ee36c0789cf73482a1ac7bd512dddedba87cbf5c2",
+        "help": "e703ba663a9824a181c8dcc2e5c737262213a6af0a9704fad760553667c4fc0a"
+      }
+    },
+    {
+      "scene": "export.ready",
+      "theme": "light",
+      "lang": "en",
+      "horizontalOverflow": false,
+      "helpTargetCount": 5,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "Saves CamillaDSP v4 settings and 48 kHz FIR WAV files for RC, BA and MIMO. Match the input and output devices before applying them.",
+        "font": "14px",
+        "contrast": 14.493791752675431,
+        "box": {
+          "x": 282.796875,
+          "y": 472.75,
+          "width": 420,
+          "height": 76.890625
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "bdcd82f99691073365c828e540231c36ed91bb67876c74228204b47dc3d4e203",
+        "help": "a94832ef43cb1dd5e1d9db3b4b350c67e18f5c47da722cd5f1ee0659d67044b1"
+      }
+    },
+    {
+      "scene": "frame.settings",
+      "theme": "light",
+      "lang": "en",
+      "horizontalOverflow": false,
+      "helpTargetCount": 8,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "Shows additional settings, including ultra latency and device sharing.",
+        "font": "14px",
+        "contrast": 14.493791752675431,
+        "box": {
+          "x": 142.984375,
+          "y": 571.40625,
+          "width": 420,
+          "height": 56.59375
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "fbca06e1e20c3eb37b44f9051a2d6ab96b75e662000ecd1f2538fd897b78ee57",
+        "help": "71c9db460c8650b60d2f56d761a431b0b8094aed7ffba471cbab78f3aacd0593"
+      }
+    },
+    {
+      "scene": "start.new",
+      "theme": "light",
+      "lang": "en",
+      "horizontalOverflow": false,
+      "helpTargetCount": 3,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "Starts with the selected speaker layout and no measurements.",
+        "font": "14px",
+        "contrast": 14.493791752675431,
+        "box": {
+          "x": 291.15625,
+          "y": 218.546875,
+          "width": 413.90625,
+          "height": 36.296875
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "1d9f4d5986e20fadb18894a51af1529d29cfb336fe37a151acc8f65570c1716a",
+        "help": "da9710659857ce37eaa55cbdc059a397b10aa2a2abb7adb44dcc4d543fcdecc0"
+      }
+    },
+    {
+      "scene": "system.sample",
+      "theme": "dark",
+      "lang": "ko",
+      "horizontalOverflow": false,
+      "helpTargetCount": 6,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "여러 자리에서 측정하면 그 자리를 함께 고려해 보정합니다. MIMO에는 위치 3곳 이상이 필요합니다.",
+        "font": "14px",
+        "contrast": 15.125360695892567,
+        "box": {
+          "x": 177.109375,
+          "y": 36.25,
+          "width": 420,
+          "height": 56.59375
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "a31155d12018041863a5f74dc20cb21487157e2960d6887bdcdef26f21165b66",
+        "help": "3a7f50f7a2afc382486fb213a93ebeeb6188411ad17b917be6142f0364d97b6d"
+      }
+    },
+    {
+      "scene": "system.expert",
+      "theme": "dark",
+      "lang": "ko",
+      "horizontalOverflow": false,
+      "helpTargetCount": 6,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "출력 하나로 전대역을 재생합니다.프로젝트 파일의 역할 이름 L",
+        "font": "14px",
+        "contrast": 15.125360695892567,
+        "box": {
+          "x": 693.46875,
+          "y": 36.265625,
+          "width": 207.5,
+          "height": 56.59375
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "26b64b9ad1700e8a2f06341de5fe1fd4bacc9643fb9714fdd4383dee278aabb1",
+        "help": "1838432d44bf29eecbc91fc83ab89ef2299822c0e7dc396b6fb245d4f162f458"
+      }
+    },
+    {
+      "scene": "connect.ready",
+      "theme": "dark",
+      "lang": "ko",
+      "horizontalOverflow": false,
+      "helpTargetCount": 6,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "측정 방식별 준비 사항입니다.자체 측정: 스윕 재생·녹음용 입출력 오디오 장치 필요REW: 자동 측정에 REW Pro와 API 모드 실행 필요모의 측정: 데모 측정으로 연습 · 장치와 소리 재생 없음mdat 파일만 가져오기: 기존 REW .mdat 가져오기 · 연결·점검 건너뜀",
+        "font": "14px",
+        "contrast": 15.125360695892567,
+        "box": {
+          "x": 177.109375,
+          "y": 169,
+          "width": 420,
+          "height": 137.78125
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "cc279685e0e4cc320f6621db9001650efd9bc11f3ac75eab8017f848718b00ec",
+        "help": "f80e051ddb2fdb4790ebd52fef5cd044788ef7686db84921087f39f2d3721870"
+      }
+    },
+    {
+      "scene": "measure.empty",
+      "theme": "dark",
+      "lang": "ko",
+      "horizontalOverflow": false,
+      "helpTargetCount": 3,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "측정을 시작한 뒤 첫 스윕까지 기다리는 시간입니다. 마이크에서 떨어질 시간이 필요하면 늘리세요.",
+        "font": "14px",
+        "contrast": 15.125360695892567,
+        "box": {
+          "x": 596,
+          "y": 446.21875,
+          "width": 420,
+          "height": 56.59375
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "525b01ab39c2f872bf5011752e92382498e930e68c777da80a00768c52694c20",
+        "help": "289e5fbf57a6a09fa20ea66571252c1cf2aa4012d45bc5f2cb2a32f9a9ecb5b7"
+      }
+    },
+    {
+      "scene": "calibrate.ready",
+      "theme": "dark",
+      "lang": "ko",
+      "horizontalOverflow": false,
+      "helpTargetCount": 12,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "위상 보정 범위와 허용할 지연을 정합니다.기본 모드로, 10 ms 이내의 지연으로 저역 위상, 주로 크로스오버 부근을 보정합니다.",
+        "font": "14px",
+        "contrast": 15.125360695892567,
+        "box": {
+          "x": 177.109375,
+          "y": 16.59375,
+          "width": 420,
+          "height": 76.890625
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "ff0a3877811f1a32c25b3b62245acaf695672370e5b007ad9b04c924b7e20fa4",
+        "help": "a69046a1ee1fc7149642458bf8081e7bc75163dbeee95d5a3f015753a9a7a59d"
+      }
+    },
+    {
+      "scene": "calibrate.sub",
+      "theme": "dark",
+      "lang": "ko",
+      "horizontalOverflow": false,
+      "helpTargetCount": 16,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "자동·고정·묶음 중 어떤 정렬 방식을 쓰더라도 이 서브 출력에 적용합니다.",
+        "font": "14px",
+        "contrast": 15.125360695892567,
+        "box": {
+          "x": 185.140625,
+          "y": 404.09375,
+          "width": 417.1875,
+          "height": 36.296875
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "94079b72711a55c1ca1d13eb53f0c3daa4eeda8b568a23fb7ef1358075fcd597",
+        "help": "c0ec9d030894871616b8facad5fc6f34e49f960bda19c7f1a0033e3b7b8bb2b9"
+      }
+    },
+    {
+      "scene": "export.ready",
+      "theme": "dark",
+      "lang": "ko",
+      "horizontalOverflow": false,
+      "helpTargetCount": 5,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "RC, BA, MIMO를 적용할 CamillaDSP v4 설정과 48 kHz FIR wav 파일을 저장합니다. 적용 전에 입출력 장치를 실제 장치에 맞추세요.",
+        "font": "14px",
+        "contrast": 15.125360695892567,
+        "box": {
+          "x": 220.359375,
+          "y": 452.453125,
+          "width": 420,
+          "height": 56.59375
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "aeb26374581bff14ceac903c44607f752af3ca7bf67bd96e739e043890f21334",
+        "help": "9d2cfb198a678a4d64d01594af9f999efbaab824479b6612ce6c1d19d73cb22e"
+      }
+    },
+    {
+      "scene": "frame.settings",
+      "theme": "dark",
+      "lang": "ko",
+      "horizontalOverflow": false,
+      "helpTargetCount": 8,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "초고지연 모드와 장치 공유 방식 등 세부 설정을 표시합니다.",
+        "font": "14px",
+        "contrast": 15.125360695892567,
+        "box": {
+          "x": 140.015625,
+          "y": 591.703125,
+          "width": 346.0625,
+          "height": 36.296875
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "3349730727ea80c517975b5be753a59e3e0eae430f036e6298be9e38a04471dc",
+        "help": "59fcf782317660f19c55cb1bb7e43daf0ca79c875af54706623351f0c4278cf4"
+      }
+    },
+    {
+      "scene": "start.new",
+      "theme": "dark",
+      "lang": "ko",
+      "horizontalOverflow": false,
+      "helpTargetCount": 3,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "측정 데이터 없이 선택한 스피커 구성으로 시작합니다.",
+        "font": "14px",
+        "contrast": 15.125360695892567,
+        "box": {
+          "x": 280.125,
+          "y": 218.546875,
+          "width": 314.828125,
+          "height": 36.296875
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "fc0c54bb4705759dcbfc93dc127b0d4b3046728de9ee6c6316eabf3b5fde4c7a",
+        "help": "df0b17b99770870ad6bb044b6c89041859482e526ed7a27210a06eb1ac4f4c61"
+      }
+    },
+    {
+      "scene": "system.sample",
+      "theme": "dark",
+      "lang": "en",
+      "horizontalOverflow": false,
+      "helpTargetCount": 6,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "Measures multiple seats so correction can account for them together. MIMO requires at least 3 positions.",
+        "font": "14px",
+        "contrast": 15.125360695892567,
+        "box": {
+          "x": 319.703125,
+          "y": 36.84375,
+          "width": 420,
+          "height": 56.59375
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "bf78df44371ac2ced0b4c8be137f61c40170600a45188b575702f5b70ccbec91",
+        "help": "44c6bc962eb01bad273790b5070ca08850aecb331c9cbe327a1ef9090c7d49de"
+      }
+    },
+    {
+      "scene": "system.expert",
+      "theme": "dark",
+      "lang": "en",
+      "horizontalOverflow": false,
+      "helpTargetCount": 6,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "Plays full range from one output.Role name in the project file: L",
+        "font": "14px",
+        "contrast": 15.125360695892567,
+        "box": {
+          "x": 684.0625,
+          "y": 36.078125,
+          "width": 226.296875,
+          "height": 56.59375
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "7b983e1dacf264651b05cb6c8b4d4dab85446e1753b9f365a6a96d702d6659ff",
+        "help": "0cf8d76f78606f022628d61a7d608929754bafb196c04f872537f52231f95ec4"
+      }
+    },
+    {
+      "scene": "connect.ready",
+      "theme": "dark",
+      "lang": "en",
+      "horizontalOverflow": false,
+      "helpTargetCount": 6,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "Requirements for each measurement method.Built-in: Input and output audio devices for sweep playback and recordingREW: REW Pro running in API mode for automatic measurementsSimulated: Practice with demo measurements; no devices or sound playbackImport mdat files only: Import existing REW .mdat files; skips connection and level checks",
+        "font": "14px",
+        "contrast": 15.125360695892567,
+        "box": {
+          "x": 281.40625,
+          "y": 169,
+          "width": 420,
+          "height": 198.671875
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "34fadfb842a06af588d5cfdc1040ca724f4cf50695c68ddee115992080886fb1",
+        "help": "02f57106d3fedbfb87cd632c52fb36292bf233e6450c5eac590f2476c8adea8c"
+      }
+    },
+    {
+      "scene": "measure.empty",
+      "theme": "dark",
+      "lang": "en",
+      "horizontalOverflow": false,
+      "helpTargetCount": 3,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "Sets the wait before the first sweep starts. Increase it if you need time to move away from the microphone.",
+        "font": "14px",
+        "contrast": 15.125360695892567,
+        "box": {
+          "x": 596,
+          "y": 446.21875,
+          "width": 420,
+          "height": 56.59375
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "cfdd8021c12330d8d62eac06cfd9d08b02dc275feb212e65f901cf0fcd14dc3f",
+        "help": "6099c1a17fb73fbc87d0d0970d52c75cba5c8136b175c142b4ae634c6bcb9d08"
+      }
+    },
+    {
+      "scene": "calibrate.ready",
+      "theme": "dark",
+      "lang": "en",
+      "horizontalOverflow": false,
+      "helpTargetCount": 12,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "Sets the scope of phase correction and the allowed latency.The default mode corrects low-frequency phase, mainly around the crossover, with up to 10 ms latency.",
+        "font": "14px",
+        "contrast": 15.125360695892567,
+        "box": {
+          "x": 242.46875,
+          "y": 15.890625,
+          "width": 420,
+          "height": 76.890625
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "9524bd865b50686021684ca8c0dfa728fecaf10dca05923f514b79103a58348e",
+        "help": "bb24e2095b659fb638080b074c974e27cae1c9bcbaa4e974cba036649d7ee469"
+      }
+    },
+    {
+      "scene": "calibrate.sub",
+      "theme": "dark",
+      "lang": "en",
+      "horizontalOverflow": false,
+      "helpTargetCount": 16,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "Applies to this sub output with any alignment method: Automatic, Fixed or a bundle.",
+        "font": "14px",
+        "contrast": 15.125360695892567,
+        "box": {
+          "x": 207.625,
+          "y": 384.09375,
+          "width": 420,
+          "height": 56.59375
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "083ef9fef2d5d64d240428cb63df93122c37e152e52c28536ddea8dda6cfcddf",
+        "help": "cc11e4b2e64df0b635ebaa6772d09cdcd4b01a3a60b9aa6d0498164ee7a7d957"
+      }
+    },
+    {
+      "scene": "export.ready",
+      "theme": "dark",
+      "lang": "en",
+      "horizontalOverflow": false,
+      "helpTargetCount": 5,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "Saves CamillaDSP v4 settings and 48 kHz FIR WAV files for RC, BA and MIMO. Match the input and output devices before applying them.",
+        "font": "14px",
+        "contrast": 15.125360695892567,
+        "box": {
+          "x": 282.796875,
+          "y": 472.75,
+          "width": 420,
+          "height": 76.890625
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "dc0b8143640cfcd6c92fea9caa1b845d3ee3aa44af2df6fb8791edb3b5539d03",
+        "help": "cb05d349cd5e0cb5950c21c5e73a1bfd68462d37803501f642107c90c330e689"
+      }
+    },
+    {
+      "scene": "frame.settings",
+      "theme": "dark",
+      "lang": "en",
+      "horizontalOverflow": false,
+      "helpTargetCount": 8,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "Shows additional settings, including ultra latency and device sharing.",
+        "font": "14px",
+        "contrast": 15.125360695892567,
+        "box": {
+          "x": 142.984375,
+          "y": 571.40625,
+          "width": 420,
+          "height": 56.59375
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "1a4aba9fd6348874af8b1e35b5dcd54703bbf4d549bf42689620b18364a84751",
+        "help": "b169acef8997689f5e1ced9c364ff0b8150195d83fc69babf1b74b5b27754d88"
+      }
+    },
+    {
+      "scene": "start.new",
+      "theme": "dark",
+      "lang": "en",
+      "horizontalOverflow": false,
+      "helpTargetCount": 3,
+      "minimumHelpTargetPx": {
+        "width": 40,
+        "height": 40
+      },
+      "tooltip": {
+        "text": "Starts with the selected speaker layout and no measurements.",
+        "font": "14px",
+        "contrast": 15.125360695892567,
+        "box": {
+          "x": 291.15625,
+          "y": 218.546875,
+          "width": 413.90625,
+          "height": 36.296875
+        },
+        "within": true
+      },
+      "pngSha256": {
+        "1024": "e75bb7cfc926831274787ddab55f2b53a33ac55ac730f7db3f26f1005b96a9cc",
+        "help": "2fddfe26551f99604d1f6219698c0b872842d620f8790e31cd3cc6812113cc02"
+      }
+    }
+  ],
+  "density": [
+    {
+      "scene": "system.sample",
+      "lang": "ko",
+      "before": {
+        "scrollHeight": 2280,
+        "visibleParagraphs": 6
+      },
+      "after": {
+        "scrollHeight": 2259,
+        "visibleParagraphs": 1
+      }
+    },
+    {
+      "scene": "connect.ready",
+      "lang": "ko",
+      "before": {
+        "scrollHeight": 1441,
+        "visibleParagraphs": 8
+      },
+      "after": {
+        "scrollHeight": 1415,
+        "visibleParagraphs": 3
+      }
+    },
+    {
+      "scene": "measure.empty",
+      "lang": "ko",
+      "before": {
+        "scrollHeight": 954,
+        "visibleParagraphs": 6
+      },
+      "after": {
+        "scrollHeight": 954,
+        "visibleParagraphs": 3
+      }
+    },
+    {
+      "scene": "calibrate.ready",
+      "lang": "ko",
+      "before": {
+        "scrollHeight": 2302,
+        "visibleParagraphs": 20
+      },
+      "after": {
+        "scrollHeight": 2212,
+        "visibleParagraphs": 9
+      }
+    },
+    {
+      "scene": "export.ready",
+      "lang": "ko",
+      "before": {
+        "scrollHeight": 1053,
+        "visibleParagraphs": 13
+      },
+      "after": {
+        "scrollHeight": 962,
+        "visibleParagraphs": 8
+      }
+    },
+    {
+      "scene": "system.sample",
+      "lang": "en",
+      "before": {
+        "scrollHeight": 2343,
+        "visibleParagraphs": 6
+      },
+      "after": {
+        "scrollHeight": 2322,
+        "visibleParagraphs": 1
+      }
+    },
+    {
+      "scene": "connect.ready",
+      "lang": "en",
+      "before": {
+        "scrollHeight": 1482,
+        "visibleParagraphs": 8
+      },
+      "after": {
+        "scrollHeight": 1415,
+        "visibleParagraphs": 3
+      }
+    },
+    {
+      "scene": "measure.empty",
+      "lang": "en",
+      "before": {
+        "scrollHeight": 979,
+        "visibleParagraphs": 6
+      },
+      "after": {
+        "scrollHeight": 979,
+        "visibleParagraphs": 3
+      }
+    },
+    {
+      "scene": "calibrate.ready",
+      "lang": "en",
+      "before": {
+        "scrollHeight": 2302,
+        "visibleParagraphs": 20
+      },
+      "after": {
+        "scrollHeight": 2212,
+        "visibleParagraphs": 9
+      }
+    },
+    {
+      "scene": "export.ready",
+      "lang": "en",
+      "before": {
+        "scrollHeight": 1093,
+        "visibleParagraphs": 13
+      },
+      "after": {
+        "scrollHeight": 982,
+        "visibleParagraphs": 8
+      }
+    }
+  ],
+  "interactions": [
+    "400ms hover delay; crossing gap and hovering tooltip retains it",
+    "click pins; second click closes; first Escape preserves dialog",
+    "keyboard focus opens; successive Escape closes tooltip then dialog",
+    "Disabled MIMO help opens independently; mode help stays in viewport on resize and scroll while its trigger is visible",
+    "touch tap opens, body tap preserves text, second trigger tap closes, setting value unchanged",
+    "10% browser animation playback: hover colors settle without target movement"
+  ],
+  "consoleErrors": [],
+  "sourceEncoding": "UTF-8 with LF line endings",
+  "componentBrowserChecks": {
+    "browser": "Installed Google Chrome on Windows",
+    "checks": [
+      {
+        "variant": "1280.light.ko",
+        "hit": {
+          "x": 236,
+          "y": 442.03125,
+          "width": 40,
+          "height": 40
+        },
+        "tooltip": {
+          "x": 46,
+          "y": 377.4375,
+          "width": 420,
+          "height": 56.59375
+        },
+        "edge": {
+          "x": 852,
+          "y": 687.40625,
+          "width": 420,
+          "height": 56.59375
+        },
+        "font": "14px",
+        "overlap": [],
+        "actualOverlap": [],
+        "valueUnchanged": true,
+        "hoverPersistent": true,
+        "keyboardImmediate": true,
+        "staleHoverPrevented": true,
+        "touchToggle": true,
+        "bodyTouchPersistent": true,
+        "dialogEscapePriority": true,
+        "selectedCharacters": 68,
+        "touchScrollTop": 9,
+        "popoverOwnership": true
+      },
+      {
+        "variant": "1280.dark.ko",
+        "hit": {
+          "x": 236,
+          "y": 442.03125,
+          "width": 40,
+          "height": 40
+        },
+        "tooltip": {
+          "x": 46,
+          "y": 377.4375,
+          "width": 420,
+          "height": 56.59375
+        },
+        "edge": {
+          "x": 852,
+          "y": 687.40625,
+          "width": 420,
+          "height": 56.59375
+        },
+        "font": "14px",
+        "overlap": [],
+        "actualOverlap": [],
+        "valueUnchanged": true,
+        "hoverPersistent": true,
+        "keyboardImmediate": true,
+        "staleHoverPrevented": true,
+        "touchToggle": true,
+        "bodyTouchPersistent": true,
+        "dialogEscapePriority": true,
+        "selectedCharacters": 68,
+        "touchScrollTop": 9,
+        "popoverOwnership": true
+      },
+      {
+        "variant": "1280.light.en",
+        "hit": {
+          "x": 236,
+          "y": 442.03125,
+          "width": 40,
+          "height": 40
+        },
+        "tooltip": {
+          "x": 46,
+          "y": 377.4375,
+          "width": 420,
+          "height": 56.59375
+        },
+        "edge": {
+          "x": 852,
+          "y": 667.109375,
+          "width": 420,
+          "height": 76.890625
+        },
+        "font": "14px",
+        "overlap": [],
+        "actualOverlap": [],
+        "valueUnchanged": true,
+        "hoverPersistent": true,
+        "keyboardImmediate": true,
+        "staleHoverPrevented": true,
+        "touchToggle": true,
+        "bodyTouchPersistent": true,
+        "dialogEscapePriority": true,
+        "selectedCharacters": 110,
+        "touchScrollTop": 9,
+        "popoverOwnership": true
+      },
+      {
+        "variant": "1280.dark.en",
+        "hit": {
+          "x": 236,
+          "y": 442.03125,
+          "width": 40,
+          "height": 40
+        },
+        "tooltip": {
+          "x": 46,
+          "y": 377.4375,
+          "width": 420,
+          "height": 56.59375
+        },
+        "edge": {
+          "x": 852,
+          "y": 667.109375,
+          "width": 420,
+          "height": 76.890625
+        },
+        "font": "14px",
+        "overlap": [],
+        "actualOverlap": [],
+        "valueUnchanged": true,
+        "hoverPersistent": true,
+        "keyboardImmediate": true,
+        "staleHoverPrevented": true,
+        "touchToggle": true,
+        "bodyTouchPersistent": true,
+        "dialogEscapePriority": true,
+        "selectedCharacters": 110,
+        "touchScrollTop": 9,
+        "popoverOwnership": true
+      },
+      {
+        "variant": "1024.light.ko",
+        "hit": {
+          "x": 236,
+          "y": 442.03125,
+          "width": 40,
+          "height": 40
+        },
+        "tooltip": {
+          "x": 46,
+          "y": 377.4375,
+          "width": 420,
+          "height": 56.59375
+        },
+        "edge": {
+          "x": 596,
+          "y": 587.40625,
+          "width": 420,
+          "height": 56.59375
+        },
+        "font": "14px",
+        "overlap": [],
+        "actualOverlap": [],
+        "valueUnchanged": true,
+        "hoverPersistent": true,
+        "keyboardImmediate": true,
+        "staleHoverPrevented": true,
+        "touchToggle": true,
+        "bodyTouchPersistent": true,
+        "dialogEscapePriority": true,
+        "selectedCharacters": 68,
+        "touchScrollTop": 9,
+        "popoverOwnership": true
+      },
+      {
+        "variant": "1024.dark.ko",
+        "hit": {
+          "x": 236,
+          "y": 442.03125,
+          "width": 40,
+          "height": 40
+        },
+        "tooltip": {
+          "x": 46,
+          "y": 377.4375,
+          "width": 420,
+          "height": 56.59375
+        },
+        "edge": {
+          "x": 596,
+          "y": 587.40625,
+          "width": 420,
+          "height": 56.59375
+        },
+        "font": "14px",
+        "overlap": [],
+        "actualOverlap": [],
+        "valueUnchanged": true,
+        "hoverPersistent": true,
+        "keyboardImmediate": true,
+        "staleHoverPrevented": true,
+        "touchToggle": true,
+        "bodyTouchPersistent": true,
+        "dialogEscapePriority": true,
+        "selectedCharacters": 68,
+        "touchScrollTop": 9,
+        "popoverOwnership": true
+      },
+      {
+        "variant": "1024.light.en",
+        "hit": {
+          "x": 236,
+          "y": 442.03125,
+          "width": 40,
+          "height": 40
+        },
+        "tooltip": {
+          "x": 46,
+          "y": 377.4375,
+          "width": 420,
+          "height": 56.59375
+        },
+        "edge": {
+          "x": 596,
+          "y": 567.109375,
+          "width": 420,
+          "height": 76.890625
+        },
+        "font": "14px",
+        "overlap": [],
+        "actualOverlap": [],
+        "valueUnchanged": true,
+        "hoverPersistent": true,
+        "keyboardImmediate": true,
+        "staleHoverPrevented": true,
+        "touchToggle": true,
+        "bodyTouchPersistent": true,
+        "dialogEscapePriority": true,
+        "selectedCharacters": 110,
+        "touchScrollTop": 9,
+        "popoverOwnership": true
+      },
+      {
+        "variant": "1024.dark.en",
+        "hit": {
+          "x": 236,
+          "y": 442.03125,
+          "width": 40,
+          "height": 40
+        },
+        "tooltip": {
+          "x": 46,
+          "y": 377.4375,
+          "width": 420,
+          "height": 56.59375
+        },
+        "edge": {
+          "x": 596,
+          "y": 567.109375,
+          "width": 420,
+          "height": 76.890625
+        },
+        "font": "14px",
+        "overlap": [],
+        "actualOverlap": [],
+        "valueUnchanged": true,
+        "hoverPersistent": true,
+        "keyboardImmediate": true,
+        "staleHoverPrevented": true,
+        "touchToggle": true,
+        "bodyTouchPersistent": true,
+        "dialogEscapePriority": true,
+        "selectedCharacters": 110,
+        "touchScrollTop": 9,
+        "popoverOwnership": true
+      }
+    ],
+    "failures": []
+  },
+  "contrastChecks": [
+    {
+      "theme": "light",
+      "state": "normal",
+      "button": 6.665393772028565,
+      "tooltip": null
+    },
+    {
+      "theme": "light",
+      "state": "open",
+      "button": 3.0861383882550064,
+      "tooltip": 14.493791752675431
+    },
+    {
+      "theme": "dark",
+      "state": "normal",
+      "button": 7.69697713574741,
+      "tooltip": null
+    },
+    {
+      "theme": "dark",
+      "state": "open",
+      "button": 9.474402337336159,
+      "tooltip": 15.125360695892567
+    }
+  ]
+}

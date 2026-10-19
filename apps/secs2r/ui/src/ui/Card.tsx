@@ -3,12 +3,14 @@
 // (ARCHITECTURE §7: main path, folded advanced, expert display).
 import { useId, useState, type HTMLAttributes, type ReactNode } from "react";
 import { useT } from "../i18n/react";
+import { HelpTip } from "./HelpTip";
 import { Icon } from "./Icon";
 
 type CardProps = Omit<HTMLAttributes<HTMLElement>, "title"> & {
   title?: ReactNode;
   /** One line under the title; omit when the title says enough. */
   description?: ReactNode;
+  help?: ReactNode;
   /** Controls at the right end of the header (quiet buttons, a pill). */
   actions?: ReactNode;
   /** Results that no longer match the inputs: dimmed body and a marker. */
@@ -18,8 +20,9 @@ type CardProps = Omit<HTMLAttributes<HTMLElement>, "title"> & {
   children?: ReactNode;
 };
 
-export function Card({ title, description, actions, stale, dense, className, children, ...rest }: CardProps) {
+export function Card({ title, description, help, actions, stale, dense, className, children, ...rest }: CardProps) {
   const titleId = useId();
+  const helpId = `${rest.id ?? (rest as { "data-ui"?: string })["data-ui"] ?? titleId}.help`;
   return (
     <section
       className={["ui-card", dense && "ui-card--dense", stale && "ui-card--stale", className].filter(Boolean).join(" ")}
@@ -29,11 +32,10 @@ export function Card({ title, description, actions, stale, dense, className, chi
       {(title || actions) && (
         <header className="ui-card__header">
           <div className="ui-card__heading">
-            {title && (
-              <h2 id={titleId} className="ui-card__title">
-                {title}
-              </h2>
-            )}
+            {title && <div className="ui-heading-help">
+              <h2 id={titleId} className="ui-card__title">{title}</h2>
+              {help && <HelpTip id={helpId} labelledBy={titleId} content={help} />}
+            </div>}
             {description && <p className="ui-card__description">{description}</p>}
           </div>
           {actions && <div className="ui-card__actions">{actions}</div>}
@@ -47,16 +49,18 @@ export function Card({ title, description, actions, stale, dense, className, chi
 export function Section({
   title,
   description,
+  help,
   children,
   className,
   ...rest
-}: Omit<HTMLAttributes<HTMLElement>, "title"> & { title: ReactNode; description?: ReactNode; children: ReactNode }) {
+}: Omit<HTMLAttributes<HTMLElement>, "title"> & { title: ReactNode; description?: ReactNode; help?: ReactNode; children: ReactNode }) {
   const titleId = useId();
   return (
     <section className={["ui-section", className].filter(Boolean).join(" ")} aria-labelledby={titleId} {...rest}>
-      <h3 id={titleId} className="ui-section__title">
-        {title}
-      </h3>
+      <div className="ui-heading-help">
+        <h3 id={titleId} className="ui-section__title">{title}</h3>
+        {help && <HelpTip id={`${rest.id ?? (rest as { "data-ui"?: string })["data-ui"] ?? titleId}.help`} labelledBy={titleId} content={help} />}
+      </div>
       {description && <p className="ui-section__description">{description}</p>}
       <div className="ui-section__body">{children}</div>
     </section>

@@ -1,3 +1,4 @@
+import { HelpTip } from "../../ui/HelpTip";
 // 측정·가져오기 (P31a; upstream step 5, src/secs/wizard/step5_measure.py).
 //
 // One position at a time: the map says where the mic goes, the step's
@@ -150,7 +151,7 @@ export function MeasureScreen({ view, actions }: { view: MeasureView; actions: M
         </div>
         <div className="measure-stack measure-stack--side">
           <GraphCard view={view} actions={actions} />
-          <Card dense className="measure-import" data-ui="measure.import" title={t("measure.import.title")} description={t("measure.import.description")}>
+          <Card dense className="measure-import" data-ui="measure.import" title={t("measure.import.title")} help={t("measure.import.description")}>
             <div className="measure-buttons">
               {view.path !== "import" && (
                 <Button id="measure.mdat.load" data-ui="measure.mdat.load" icon="file" disabled={busy} onClick={() => void actions.pickMdat(null)}>
@@ -163,12 +164,10 @@ export function MeasureScreen({ view, actions }: { view: MeasureView; actions: M
             </div>
             {tutorial && (
               <div className="measure-sample">
-                <Button id="measure.sample.load" data-ui="measure.sample.load" icon="play" disabled={busy} onClick={() => void actions.loadSample()} aria-describedby="measure.sample.hint">
+                <Button id="measure.sample.load" data-ui="measure.sample.load" icon="play" disabled={busy} onClick={() => void actions.loadSample()} aria-describedby="measure.sample.help-content">
                   {t("measure.sample.load")}
                 </Button>
-                <p className="measure-hint" id="measure.sample.hint">
-                  {t("measure.sample.hint")}
-                </p>
+                <HelpTip id="measure.sample.help" label={t("measure.sample.load")} content={t("measure.sample.hint")} />
               </div>
             )}
           </Card>
@@ -474,7 +473,7 @@ function GraphCard({ view, actions }: { view: MeasureView; actions: MeasureActio
       data-ui="measure.graph"
       hidden={view.graphHidden}
       title={t("plot.measurement.title")}
-      description={curves.length > 0 ? t("measure.graph.description") : undefined}
+      help={curves.length > 0 ? t("measure.graph.description") : undefined}
     >
       {data && curves.length > 0 ? (
         <Graph
@@ -530,7 +529,7 @@ export function MeasureOptions({
         value={delay}
         options={START_DELAYS.map((value) => ({ value, label: delayLabel(value) }))}
         onChange={(value) => void actions.setStartDelay(value)}
-        hint={t("measure.options.delay.hint")}
+        help={t("measure.options.delay.hint")}
         disabled={busy}
       />
       <Advanced id="measure.options.advanced" count={2} defaultOpen={advancedOpen}>
@@ -544,21 +543,20 @@ export function MeasureOptions({
               label: t("measure.options.sweep.option", { length: sweepName(option.samples), seconds: number(option.seconds, 1) }),
             }))}
             onChange={(value) => void actions.setSweepLength(Number(value))}
-            hint={t("measure.options.sweep.hint")}
+            help={t("measure.options.sweep.hint")}
             disabled={busy}
           />
           <div className="ui-field">
             <Segmented
               id="measure.options.repeats"
               label={t("measure.options.repeats")}
+              help={t("measure.options.repeats.hint")}
               size="sm"
               value={String(repetitions)}
               options={REPETITIONS.map((n) => ({ value: String(n), label: t("measure.options.repeats.option", { n }), disabled: busy || (acoustic && n !== 1) }))}
               onChange={(value) => void actions.setRepetitions(Number(value))}
             />
-            <p className="ui-field__hint" data-ui={acoustic ? "measure.options.repeats.acoustic" : undefined}>
-              {t(acoustic ? "measure.options.repeats.acoustic" : "measure.options.repeats.hint")}
-            </p>
+            {acoustic && <p className="ui-field__hint" data-ui="measure.options.repeats.acoustic">{t("measure.options.repeats.acoustic")}</p>}
           </div>
         </div>
       </Advanced>
