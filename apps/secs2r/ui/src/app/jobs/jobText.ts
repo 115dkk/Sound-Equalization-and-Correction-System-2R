@@ -42,6 +42,7 @@ export const ERROR_TEXT: Record<ErrorCode, { cause: MessageKey; next: MessageKey
   export_failed: { cause: "error.export_failed", next: "error.export_failed.next" },
   export_scope: { cause: "error.export_scope", next: "error.export_scope.next" },
   stale_inputs: { cause: "error.stale_inputs", next: "error.stale_inputs.next" },
+  compute_unavailable: { cause: "error.compute_unavailable", next: "error.compute_unavailable.next" },
   device_unavailable: { cause: "error.device_unavailable", next: "error.device_unavailable.next" },
   recording_failed: { cause: "error.recording_failed", next: "error.recording_failed.next" },
   share_mode_refused: { cause: "error.share_mode_refused", next: "error.share_mode_refused.next" },

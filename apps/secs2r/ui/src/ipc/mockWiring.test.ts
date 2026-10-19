@@ -140,6 +140,8 @@ describe("P33 mock wiring", () => {
   it("answers every generated Request variant with its tagged typed response", async () => {
     // This mapped type makes newly generated methods a compile-time test gap.
     const requests = {
+      compute_status: { method: "compute_status" },
+      open_gpu_help: { method: "open_gpu_help" },
       bootstrap: { method: "bootstrap" }, project_info: { method: "project_info" },
       project_new: { method: "project_new", params: { path: "/new.secs", preset: "2.0", sub_count: 0, sample: true, tutorial: false } },
       project_open: { method: "project_open", params: { path: "/saved.secs" } }, project_save: { method: "project_save", params: { path: null } },

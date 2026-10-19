@@ -22,12 +22,17 @@ struct Cli {
     /// Use a fixed clock and UUID counter beginning at one for reproducible output.
     #[arg(long, global = true)]
     deterministic_uuids: bool,
+    /// Choose MIMO computation for this process without changing desktop preferences.
+    #[arg(long, global = true, value_enum)]
+    compute: Option<ComputeChoice>,
     #[command(subcommand)]
     action: Action,
 }
 
 #[derive(Debug, Subcommand)]
 enum Action {
+    /// Print compute preference, selected device, and availability.
+    ComputeInfo,
     /// Print the version, upstream base, and platform.
     Bootstrap,
     /// Check platform and deterministic parallel-map operation.
@@ -99,6 +104,22 @@ enum ProjectAction {
     },
     /// Open a project and print its information.
     Info { path: PathBuf },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ComputeChoice {
+    Auto,
+    Cpu,
+    Gpu,
+}
+impl From<ComputeChoice> for secs_types::compute::ComputePreference {
+    fn from(value: ComputeChoice) -> Self {
+        match value {
+            ComputeChoice::Auto => Self::Auto,
+            ComputeChoice::Cpu => Self::Cpu,
+            ComputeChoice::Gpu => Self::Gpu,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -295,8 +316,10 @@ fn response_job(response: &Response) -> Option<JobStarted> {
     }
 }
 
-fn deps(deterministic: bool) -> Deps {
+fn deps(deterministic: bool, compute: Option<ComputeChoice>) -> Deps {
     let mut deps = Deps {
+        acceleration: Arc::new(secs_gpu::select),
+        compute_override: compute.map(Into::into),
         audio_backend: Arc::new(secs_sys::audio::default_backend),
         rew_transport: Arc::new(|| Box::new(secs_rew::HttpTransport::default())),
         process: Arc::new(secs_sys::process::OsProcessProbe),
@@ -331,7 +354,7 @@ fn deps(deterministic: bool) -> Deps {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let mut runner = Runner {
-        service: Service::new(deps(cli.deterministic_uuids)),
+        service: Service::new(deps(cli.deterministic_uuids, cli.compute)),
         quiet: cli.quiet,
         ok: true,
     };
@@ -345,6 +368,9 @@ fn main() -> ExitCode {
 
 fn run(action: Action, runner: &mut Runner) {
     match action {
+        Action::ComputeInfo => {
+            runner.call(Request::ComputeStatus);
+        }
         Action::Bootstrap => {
             runner.call(Request::Bootstrap);
         }

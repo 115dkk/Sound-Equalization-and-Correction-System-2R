@@ -316,6 +316,7 @@ const noLines: ResultLinesResult = { stale: false, channels: [], total_delay_ms:
 /* ── Views ──────────────────────────────────────────────────────────────── */
 
 const base: CalibrateView = {
+  compute: { preference: "auto", status: fx.computeStatus, loading: false, saving: false, error: null, locked: false },
   results: { calibration: summary(), mimo: null },
   lines: lines(),
   curves: splResult(),
@@ -443,3 +444,43 @@ export const loadingEmptyView: CalibrateView = { ...base, curves: null, curvesLo
 function defaultSub() {
   return { mode: "auto", bundle: "A", gain_db: 0, delay_ms: 0, polarity: 1, allpass: [] as [number, number][], mimo_support: true, hp_hz: 0, lp_hz: 0, peq: [] as [number, number, number][], hp_type: "LR24", lp_type: "LR24", dba_row: "front" };
 }
+
+const firMimoSummary: import("../../ipc/bindings/MimoSummary").MimoSummary = {
+  ...fx.mimoSummary, kind: "fir", support_count: 2, fir_taps_total: 16000,
+  paths: { fsiso: 150, paths: ["SW1", "SW2"].map((support) => ({
+    input: "L", support, low_hz: 20, delay_ms: 2,
+    filter: { Fir: { taps_48k: Array.from({ length: 8000 }, (_, i) => i === 0 ? 0.1 : 0) } },
+  })) },
+};
+export const gpuView: CalibrateView = {
+  ...mimoView, settings: { ...mimoView.settings, mimo_fir: true }, compute: { ...base.compute, status: fx.gpuComputeStatus },
+  results: { ...mimoView.results, mimo: { ...firMimoSummary, compute: {
+    ...fx.cpuComputeReport, backend: "cuda", device: fx.gpuDevice.name, stage: "ideal_fir_sweep", accelerated_systems: 11, cpu_systems: 0, reason: "recommended",
+  } } },
+};
+export const cpuSelectedView: CalibrateView = { ...gpuView, compute: { ...gpuView.compute, preference: "cpu", status: {
+  ...fx.gpuComputeStatus, preference: "cpu", selected: "cpu", reason: "user_cpu",
+} } };
+export const runtimeMissingView: CalibrateView = { ...mimoView, compute: { ...base.compute, status: { ...fx.computeStatus, reason: "runtime_unavailable" } } };
+export const computeLoadingView: CalibrateView = { ...mimoView, compute: { ...base.compute, status: null, loading: true } };
+export const computeErrorView: CalibrateView = { ...mimoView, compute: { ...base.compute, status: null, error: ipcError("internal", "device probe failed") } };
+export const gpuFallbackView: CalibrateView = { ...gpuView, results: { ...gpuView.results, mimo: { ...firMimoSummary, compute: {
+  ...fx.cpuComputeReport, reason: "device_failure", fallbacks: 1,
+} } } };
+
+export const gpuSelectedView: CalibrateView = { ...gpuView, compute: { ...gpuView.compute, preference: "gpu", status: {
+  ...fx.gpuComputeStatus, preference: "gpu", reason: "user_gpu",
+} } };
+
+/** A saved explicit GPU choice survives moving to a host without its runtime. */
+export const requestedGpuUnavailableView: CalibrateView = { ...runtimeMissingView, compute: {
+  ...runtimeMissingView.compute, preference: "gpu", status: { ...fx.computeStatus, preference: "gpu", reason: "runtime_unavailable" },
+} };
+
+/** The saved GPU preference does not change the CPU reference used for IIR. */
+export const gpuIirReferenceView: CalibrateView = {
+  ...mimoView, compute: gpuSelectedView.compute,
+  results: { ...mimoView.results, mimo: { ...fx.mimoSummary, compute: {
+    ...fx.cpuComputeReport, requested: "gpu", reason: "iir_reference",
+  } } },
+};

@@ -513,7 +513,7 @@ pub(crate) fn solve_problem(
     Ok((solve_joint(pb, t, ctx, &starts, &pols)?.x, pols))
 }
 
-fn applied(pb: &Problem, supports: &[(usize, IirSupport)]) -> Vec<Vec<f64>> {
+pub(crate) fn applied(pb: &Problem, supports: &[(usize, IirSupport)]) -> Vec<Vec<f64>> {
     let ss: Vec<_> = supports.iter().map(|(_, s)| s.response(&pb.f)).collect();
     pb.xs
         .iter()

@@ -25,7 +25,7 @@ MIMO는 서브와 메인을 서로의 "서포트"로 써서 방의 늦은 에너
 | 경로 값 | `secs-types::chain` | `mimo_paths`, `FirSupport`, `IirSupport` | P17 |
 | 내보내기 | `secs-camilla`, `secs-export` | `make_config`의 MIMO 부분, `calibration.export_camilladsp`의 메모, mdat MIMO 항목 | P17 |
 | 성능·메모리 감사 | `docs/perf/mimo.md` | — | P18 |
-| GPU 실험 | `secs-gpu` | — | P19 |
+| GPU 이상 FIR 정칙화 탐색 | `secs-gpu`, `secs-cuda-sys` | — | P53 / ADR 0008 |
 
 엔진 바깥 인터페이스는 `mimo::compute(설계, 측정, 설정, 튜닝, 계산 환경) -> MimoRun` 하나입니다. MIMO는 보정 설계가 끝난 뒤 따로 돌고(업스트림도 별도 버튼), 설계 값을 바꾸지 않습니다. 업스트림이 엔진 객체에서 읽던 것(`long_spectra`, `input_response`, `stage_responses()['final']`, `align_delay_ms`, `chain[i]['F']`, `sub_passband`, 그룹)은 모두 `Design`과 측정 준비에서 얻습니다.
 
@@ -62,6 +62,12 @@ P15 정규 방정식 TRF ─────┘                               └─
 ```
 
 P14와 P15는 바로 나란히 돌고, P16은 둘이 들어온 뒤 돕니다. P17의 경로 값과 CamillaDSP 부분은 기록한 결과로 확인하므로 P16과 나란히 시작할 수 있습니다. P19(GPU)는 P16의 CPU 경로를 기준으로 재며, ADR 0007대로 3배 이상 빠를 때만 들어갑니다.
+
+2026-10-19의 [ADR 0008](adr/0008-native-gpu-acceleration.md)과 P53은 P19의
+초기 범위를 대체합니다. 실측 결과에 따라 이상 FIR의 큰 f64 선형계부터
+GPU로 옮기며, CPU λ 선택과 음향 가드를 유지합니다. 최종 검증에서 IIR의
+비선형 맞춤이 작은 목표 차이를 증폭해, 출하 GPU 적용은 FIR 모드로
+한정합니다. IIR 모드는 목표 설계부터 CPU 기준 계산을 유지합니다.
 
 ## 6. 끝나는 조건
 

@@ -91,6 +91,7 @@ fn main() {
             let handle = app.handle().clone();
             let config_dir = app.path().app_config_dir()?;
             app.manage(Service::new(Deps {
+                acceleration: Arc::new(secs_gpu::select),
                 audio_backend: Arc::new(secs_sys::audio::default_backend),
                 rew_transport: Arc::new(|| Box::new(secs_rew::HttpTransport::default())),
                 process: Arc::new(secs_sys::process::OsProcessProbe),

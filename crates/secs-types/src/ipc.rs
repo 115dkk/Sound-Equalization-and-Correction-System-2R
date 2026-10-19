@@ -16,6 +16,7 @@ use ts_rs::TS;
 
 use crate::calibration::{CalibrationSettings, Mode};
 use crate::chain::{MimoPaths, SignalChain};
+use crate::compute::{ComputePreference, ComputeReport, ComputeStatus};
 pub use crate::settings_edit::CalibrationSettingsEditParams;
 
 /// A call from the screen.
@@ -141,6 +142,10 @@ pub enum Request {
     AppSettingsGet,
     /// Stores application-local settings.
     AppSettingsSet(AppSettingsParams),
+    /// Available compute devices and the effective application preference.
+    ComputeStatus,
+    /// Opens the official GPU runtime installation guide for this platform.
+    OpenGpuHelp,
     /// Smoothed, normalized measurement curves and their shared frequency grid.
     MeasurementCurves(MeasurementCurvesParams),
     /// Ready-to-draw calibration curves and axis limits for one result tab.
@@ -306,6 +311,10 @@ pub enum Response {
     AppSettingsGet(AppSettings),
     /// The `AppSettingsSet` Response variant.
     AppSettingsSet(AppSettings),
+    /// Device capability and automatic-selection result.
+    ComputeStatus(ComputeStatus),
+    /// GPU installation documentation opened by the application host.
+    OpenGpuHelp(()),
     /// Measurement curves on the common display grid.
     MeasurementCurves(MeasurementCurvesResult),
     /// Calibration tab curves, ranges and staleness.
@@ -962,6 +971,9 @@ pub struct MetricsSummary {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct MimoSummary {
+    /// Actual computation backend, retained with the result.
+    #[serde(default)]
+    pub compute: ComputeReport,
     /// Whether current calibration inputs differ from this MIMO result.
     pub stale: bool,
     /// Realization kind, `iir` or `fir`.
@@ -1806,6 +1818,9 @@ pub enum AppIcon {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct AppSettings {
+    /// Application-local compute preference; never stored in an upstream project.
+    #[serde(default)]
+    pub compute: ComputePreference,
     /// Screen language: `ko` or `en`.
     pub language: String,
     /// Application theme preference.
@@ -1825,6 +1840,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             language: "ko".into(),
+            compute: ComputePreference::Auto,
             theme: AppTheme::System,
             icon: AppIcon::Expert,
             expert_display: false,
@@ -1865,6 +1881,8 @@ pub enum ErrorCode {
     Cancelled,
     /// Project measurements or settings are not valid engine inputs.
     EngineInput,
+    /// Explicit GPU execution was requested but no usable GPU backend is available.
+    ComputeUnavailable,
     /// The requested exporter failed.
     ExportFailed,
     /// The chosen export cannot carry the result (upstream
@@ -2076,6 +2094,8 @@ mod tests {
             Request::AppSettingsSet(AppSettingsParams {
                 settings: AppSettings::default(),
             }),
+            Request::ComputeStatus,
+            Request::OpenGpuHelp,
             Request::MeasurementCurves(MeasurementCurvesParams::default()),
             Request::ResultCurves(ResultCurvesParams {
                 tab: ResultTab::Spl,

@@ -535,6 +535,20 @@ pub(crate) fn design_input_observed(
     ctx: &Context,
     observe: &dyn Fn(&str, std::time::Duration),
 ) -> Result<InputResult, EngineError> {
+    design_input_accelerated(xs, raw_paths, direct, candidates, req, ctx, observe, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn design_input_accelerated(
+    xs: &[Vec<f64>],
+    raw_paths: &[Vec<Vec<f64>>],
+    direct: &[f64],
+    candidates: &[String],
+    req: &MimoRequest,
+    ctx: &Context,
+    observe: &dyn Fn(&str, std::time::Duration),
+    acceleration: Option<&super::acceleration::RunAcceleration<'_>>,
+) -> Result<InputResult, EngineError> {
     let started = std::time::Instant::now();
     let taps = req.taps_low;
     let lp = lowpass_fir(req.fsiso, 31)?;
@@ -591,6 +605,7 @@ pub(crate) fn design_input_observed(
         req,
         ctx,
         observe,
+        acceleration,
     )
 }
 
@@ -605,6 +620,7 @@ fn design_selected(
     req: &MimoRequest,
     ctx: &Context,
     observe: &dyn Fn(&str, std::time::Duration),
+    acceleration: Option<&super::acceleration::RunAcceleration<'_>>,
 ) -> Result<InputResult, EngineError> {
     let taps = req.taps_low;
     let lp = lowpass_fir(req.fsiso, 31)?;
@@ -621,39 +637,20 @@ fn design_selected(
     let normalization = pairwise_sum(&diagonal) / dim as f64;
     let target = 10f64.powf(req.level_db / 10.0);
     let direct_energy = decay::energy(direct).max(1e-30);
-    let sweep = super::solve::RidgeSweep::new(&ata, &atb);
-    let evaluate = |log: f64| -> Result<(Vec<f64>, f64), EngineError> {
-        check(ctx)?;
-        let u = sweep.solve(normalization * 10f64.powf(log))?;
-        let mut support_energy = 0.0;
-        for k in 0..candidates.len() {
-            support_energy += decay::energy(&convolve(&lp, &u[k * taps..(k + 1) * taps]));
-        }
-        Ok((u, support_energy / direct_energy))
-    };
-    let (mut lo, mut hi) = (-8.0, 4.0);
-    let (mut u, mut ratio) = evaluate(hi)?;
-    let mut trajectory = vec![LambdaStep {
-        mid: hi,
-        ratio,
-        accepted: ratio <= target,
-    }];
-    for _ in 0..18 {
-        let mid = (lo + hi) / 2.0;
-        let (trial, r) = evaluate(mid)?;
-        trajectory.push(LambdaStep {
-            mid,
-            ratio: r,
-            accepted: r <= target,
-        });
-        if r > target {
-            lo = mid;
-        } else {
-            hi = mid;
-            u = trial;
-            ratio = r;
-        }
-    }
+    let result = super::acceleration::run_sweep(
+        super::acceleration::RidgeProblem {
+            ata: &ata,
+            atb: &atb,
+            lp: &lp,
+            taps,
+            normalization,
+            target,
+            direct_energy,
+        },
+        ctx.cancel(),
+        acceleration,
+    )?;
+    let (u, ratio, hi, trajectory) = (result.u, result.ratio, result.log_lambda, result.trajectory);
     observe("sweep", started.elapsed());
     let started = std::time::Instant::now();
     let supports: Vec<_> = (0..candidates.len())
@@ -790,6 +787,19 @@ pub(crate) fn design_mimo_prepared(
     ctx: &Context,
     input: Option<&str>,
     observe: &(dyn Fn(&str, std::time::Duration) + Sync),
+) -> Result<(MimoDesign, Vec<(String, InputTrace)>), EngineError> {
+    design_mimo_prepared_accelerated(design, prepared, req, ctx, input, observe, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn design_mimo_prepared_accelerated(
+    design: &Design,
+    prepared: &super::prepared::Prepared,
+    req: &MimoRequest,
+    ctx: &Context,
+    input: Option<&str>,
+    observe: &(dyn Fn(&str, std::time::Duration) + Sync),
+    acceleration: Option<&super::acceleration::RunAcceleration<'_>>,
 ) -> Result<(MimoDesign, Vec<(String, InputTrace)>), EngineError> {
     check(ctx)?;
     let mut out = MimoDesign::default();
@@ -942,8 +952,16 @@ pub(crate) fn design_mimo_prepared(
             }
             let direct = secs_dsp::lowrate::to_low(&main.response, design_freqs(), 720)?;
             observe("input_preparation", started.elapsed());
-            let result =
-                design_input_observed(&xs, &paths, &direct, &candidates, req, ctx, observe)?;
+            let result = design_input_accelerated(
+                &xs,
+                &paths,
+                &direct,
+                &candidates,
+                req,
+                ctx,
+                observe,
+                acceleration,
+            )?;
             Ok((main.role.clone(), result))
         })
         .map_err(|e| match e {

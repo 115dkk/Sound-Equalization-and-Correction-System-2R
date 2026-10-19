@@ -1,0 +1,3398 @@
+{
+  "date": "2026-10-19",
+  "host": {
+    "os": "Windows 11 Education 10.0.26300",
+    "cpu": "Intel Core i5-12600KF",
+    "logical_threads": 16,
+    "gpu": "NVIDIA GeForce RTX 2080 SUPER",
+    "cuda": "13.4"
+  },
+  "phases": {
+    "refined-solver": {
+      "native-refined-ridge-1024.log": [
+        {
+          "status": {
+            "preference": "gpu",
+            "selected": "cuda",
+            "reason": "user_gpu",
+            "gpu_available": true,
+            "device": {
+              "id": 0,
+              "name": "NVIDIA GeForce RTX 2080 SUPER",
+              "compute_major": 7,
+              "compute_minor": 5,
+              "multiprocessors": 48,
+              "memory_bytes": 8589606912,
+              "integrated": false,
+              "supported": true,
+              "recommended": true,
+              "reason": "recommended"
+            },
+            "devices": [
+              {
+                "id": 0,
+                "name": "NVIDIA GeForce RTX 2080 SUPER",
+                "compute_major": 7,
+                "compute_minor": 5,
+                "multiprocessors": 48,
+                "memory_bytes": 8589606912,
+                "integrated": false,
+                "supported": true,
+                "recommended": true,
+                "reason": "recommended"
+              }
+            ]
+          }
+        },
+        {
+          "backend": "cpu",
+          "sample": 0,
+          "warmup": true,
+          "elapsed_s": 0.165636,
+          "selected_log_lambda": -1.98590087890625,
+          "selected_ratio": 0.06309210268293113,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 1,
+          "warmup": false,
+          "elapsed_s": 0.1246669,
+          "selected_log_lambda": -1.98590087890625,
+          "selected_ratio": 0.06309210268293113,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 2,
+          "warmup": false,
+          "elapsed_s": 0.1098735,
+          "selected_log_lambda": -1.98590087890625,
+          "selected_ratio": 0.06309210268293113,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 3,
+          "warmup": false,
+          "elapsed_s": 0.1096384,
+          "selected_log_lambda": -1.98590087890625,
+          "selected_ratio": 0.06309210268293113,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 4,
+          "warmup": false,
+          "elapsed_s": 0.1224087,
+          "selected_log_lambda": -1.98590087890625,
+          "selected_ratio": 0.06309210268293113,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 5,
+          "warmup": false,
+          "elapsed_s": 0.1093085,
+          "selected_log_lambda": -1.98590087890625,
+          "selected_ratio": 0.06309210268293113,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "dimension": 1024,
+          "roles": 8,
+          "taps": 128,
+          "samples_s": [
+            0.1246669,
+            0.1098735,
+            0.1096384,
+            0.1224087,
+            0.1093085
+          ],
+          "median_s": 0.1098735
+        },
+        {
+          "backend": "cuda",
+          "sample": 0,
+          "warmup": true,
+          "elapsed_s": 0.3325383,
+          "selected_log_lambda": -1.98590087890625,
+          "selected_ratio": 0.06309210268293104,
+          "selected_u_relative_l2": 1.248411016370952e-13,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 9.992007221626409e-16
+        },
+        {
+          "backend": "cuda",
+          "sample": 1,
+          "warmup": false,
+          "elapsed_s": 0.0719802,
+          "selected_log_lambda": -1.98590087890625,
+          "selected_ratio": 0.06309210268293104,
+          "selected_u_relative_l2": 1.248411016370952e-13,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 9.992007221626409e-16
+        },
+        {
+          "backend": "cuda",
+          "sample": 2,
+          "warmup": false,
+          "elapsed_s": 0.0764961,
+          "selected_log_lambda": -1.98590087890625,
+          "selected_ratio": 0.06309210268293104,
+          "selected_u_relative_l2": 1.248411016370952e-13,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 9.992007221626409e-16
+        },
+        {
+          "backend": "cuda",
+          "sample": 3,
+          "warmup": false,
+          "elapsed_s": 0.0823876,
+          "selected_log_lambda": -1.98590087890625,
+          "selected_ratio": 0.06309210268293104,
+          "selected_u_relative_l2": 1.248411016370952e-13,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 9.992007221626409e-16
+        },
+        {
+          "backend": "cuda",
+          "sample": 4,
+          "warmup": false,
+          "elapsed_s": 0.0807416,
+          "selected_log_lambda": -1.98590087890625,
+          "selected_ratio": 0.06309210268293104,
+          "selected_u_relative_l2": 1.248411016370952e-13,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 9.992007221626409e-16
+        },
+        {
+          "backend": "cuda",
+          "sample": 5,
+          "warmup": false,
+          "elapsed_s": 0.0719535,
+          "selected_log_lambda": -1.98590087890625,
+          "selected_ratio": 0.06309210268293104,
+          "selected_u_relative_l2": 1.248411016370952e-13,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 9.992007221626409e-16
+        },
+        {
+          "backend": "cuda",
+          "dimension": 1024,
+          "roles": 8,
+          "taps": 128,
+          "samples_s": [
+            0.0719802,
+            0.0764961,
+            0.0823876,
+            0.0807416,
+            0.0719535
+          ],
+          "median_s": 0.0764961
+        }
+      ],
+      "native-refined-ridge-2160.log": [
+        {
+          "status": {
+            "preference": "gpu",
+            "selected": "cuda",
+            "reason": "user_gpu",
+            "gpu_available": true,
+            "device": {
+              "id": 0,
+              "name": "NVIDIA GeForce RTX 2080 SUPER",
+              "compute_major": 7,
+              "compute_minor": 5,
+              "multiprocessors": 48,
+              "memory_bytes": 8589606912,
+              "integrated": false,
+              "supported": true,
+              "recommended": true,
+              "reason": "recommended"
+            },
+            "devices": [
+              {
+                "id": 0,
+                "name": "NVIDIA GeForce RTX 2080 SUPER",
+                "compute_major": 7,
+                "compute_minor": 5,
+                "multiprocessors": 48,
+                "memory_bytes": 8589606912,
+                "integrated": false,
+                "supported": true,
+                "recommended": true,
+                "reason": "recommended"
+              }
+            ]
+          }
+        },
+        {
+          "backend": "cpu",
+          "sample": 0,
+          "warmup": true,
+          "elapsed_s": 1.1919802,
+          "selected_log_lambda": -6.49615478515625,
+          "selected_ratio": 0.06308820484210834,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 1,
+          "warmup": false,
+          "elapsed_s": 1.2152351000000001,
+          "selected_log_lambda": -6.49615478515625,
+          "selected_ratio": 0.06308820484210834,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 2,
+          "warmup": false,
+          "elapsed_s": 1.0802679,
+          "selected_log_lambda": -6.49615478515625,
+          "selected_ratio": 0.06308820484210834,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 3,
+          "warmup": false,
+          "elapsed_s": 1.2098317,
+          "selected_log_lambda": -6.49615478515625,
+          "selected_ratio": 0.06308820484210834,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 4,
+          "warmup": false,
+          "elapsed_s": 1.1757657,
+          "selected_log_lambda": -6.49615478515625,
+          "selected_ratio": 0.06308820484210834,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 5,
+          "warmup": false,
+          "elapsed_s": 1.1254764,
+          "selected_log_lambda": -6.49615478515625,
+          "selected_ratio": 0.06308820484210834,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "dimension": 2160,
+          "roles": 12,
+          "taps": 180,
+          "samples_s": [
+            1.2152351000000001,
+            1.0802679,
+            1.2098317,
+            1.1757657,
+            1.1254764
+          ],
+          "median_s": 1.1757657
+        },
+        {
+          "backend": "cuda",
+          "sample": 0,
+          "warmup": true,
+          "elapsed_s": 0.4789566,
+          "selected_log_lambda": -6.49615478515625,
+          "selected_ratio": 0.06308820484220405,
+          "selected_u_relative_l2": 1.1156699405232204e-09,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 2.9774238630153604e-12
+        },
+        {
+          "backend": "cuda",
+          "sample": 1,
+          "warmup": false,
+          "elapsed_s": 0.3328594,
+          "selected_log_lambda": -6.49615478515625,
+          "selected_ratio": 0.06308820484220405,
+          "selected_u_relative_l2": 1.1156699405232204e-09,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 2.9774238630153604e-12
+        },
+        {
+          "backend": "cuda",
+          "sample": 2,
+          "warmup": false,
+          "elapsed_s": 0.3374527,
+          "selected_log_lambda": -6.49615478515625,
+          "selected_ratio": 0.06308820484220405,
+          "selected_u_relative_l2": 1.1156699405232204e-09,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 2.9774238630153604e-12
+        },
+        {
+          "backend": "cuda",
+          "sample": 3,
+          "warmup": false,
+          "elapsed_s": 0.3335221,
+          "selected_log_lambda": -6.49615478515625,
+          "selected_ratio": 0.06308820484220405,
+          "selected_u_relative_l2": 1.1156699405232204e-09,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 2.9774238630153604e-12
+        },
+        {
+          "backend": "cuda",
+          "sample": 4,
+          "warmup": false,
+          "elapsed_s": 0.3232544,
+          "selected_log_lambda": -6.49615478515625,
+          "selected_ratio": 0.06308820484220405,
+          "selected_u_relative_l2": 1.1156699405232204e-09,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 2.9774238630153604e-12
+        },
+        {
+          "backend": "cuda",
+          "sample": 5,
+          "warmup": false,
+          "elapsed_s": 0.3200448,
+          "selected_log_lambda": -6.49615478515625,
+          "selected_ratio": 0.06308820484220405,
+          "selected_u_relative_l2": 1.1156699405232204e-09,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 2.9774238630153604e-12
+        },
+        {
+          "backend": "cuda",
+          "dimension": 2160,
+          "roles": 12,
+          "taps": 180,
+          "samples_s": [
+            0.3328594,
+            0.3374527,
+            0.3335221,
+            0.3232544,
+            0.3200448
+          ],
+          "median_s": 0.3328594
+        }
+      ],
+      "native-refined-ridge-512.log": [
+        {
+          "status": {
+            "preference": "gpu",
+            "selected": "cuda",
+            "reason": "user_gpu",
+            "gpu_available": true,
+            "device": {
+              "id": 0,
+              "name": "NVIDIA GeForce RTX 2080 SUPER",
+              "compute_major": 7,
+              "compute_minor": 5,
+              "multiprocessors": 48,
+              "memory_bytes": 8589606912,
+              "integrated": false,
+              "supported": true,
+              "recommended": true,
+              "reason": "recommended"
+            },
+            "devices": [
+              {
+                "id": 0,
+                "name": "NVIDIA GeForce RTX 2080 SUPER",
+                "compute_major": 7,
+                "compute_minor": 5,
+                "multiprocessors": 48,
+                "memory_bytes": 8589606912,
+                "integrated": false,
+                "supported": true,
+                "recommended": true,
+                "reason": "recommended"
+              }
+            ]
+          }
+        },
+        {
+          "backend": "cpu",
+          "sample": 0,
+          "warmup": true,
+          "elapsed_s": 0.015093,
+          "selected_log_lambda": -2.2072296142578125,
+          "selected_ratio": 0.06308945452135364,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 1,
+          "warmup": false,
+          "elapsed_s": 0.0198671,
+          "selected_log_lambda": -2.2072296142578125,
+          "selected_ratio": 0.06308945452135364,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 2,
+          "warmup": false,
+          "elapsed_s": 0.0155824,
+          "selected_log_lambda": -2.2072296142578125,
+          "selected_ratio": 0.06308945452135364,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 3,
+          "warmup": false,
+          "elapsed_s": 0.0230306,
+          "selected_log_lambda": -2.2072296142578125,
+          "selected_ratio": 0.06308945452135364,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 4,
+          "warmup": false,
+          "elapsed_s": 0.017312,
+          "selected_log_lambda": -2.2072296142578125,
+          "selected_ratio": 0.06308945452135364,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 5,
+          "warmup": false,
+          "elapsed_s": 0.0139636,
+          "selected_log_lambda": -2.2072296142578125,
+          "selected_ratio": 0.06308945452135364,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "dimension": 512,
+          "roles": 8,
+          "taps": 64,
+          "samples_s": [
+            0.0198671,
+            0.0155824,
+            0.0230306,
+            0.017312,
+            0.0139636
+          ],
+          "median_s": 0.017312
+        },
+        {
+          "backend": "cuda",
+          "sample": 0,
+          "warmup": true,
+          "elapsed_s": 0.2386923,
+          "selected_log_lambda": -2.2072296142578125,
+          "selected_ratio": 0.06308945452135413,
+          "selected_u_relative_l2": 1.0915559145212338e-13,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 1.717381792332162e-11
+        },
+        {
+          "backend": "cuda",
+          "sample": 1,
+          "warmup": false,
+          "elapsed_s": 0.0370765,
+          "selected_log_lambda": -2.2072296142578125,
+          "selected_ratio": 0.06308945452135413,
+          "selected_u_relative_l2": 1.0915559145212338e-13,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 1.717381792332162e-11
+        },
+        {
+          "backend": "cuda",
+          "sample": 2,
+          "warmup": false,
+          "elapsed_s": 0.0396625,
+          "selected_log_lambda": -2.2072296142578125,
+          "selected_ratio": 0.06308945452135413,
+          "selected_u_relative_l2": 1.0915559145212338e-13,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 1.717381792332162e-11
+        },
+        {
+          "backend": "cuda",
+          "sample": 3,
+          "warmup": false,
+          "elapsed_s": 0.0444312,
+          "selected_log_lambda": -2.2072296142578125,
+          "selected_ratio": 0.06308945452135413,
+          "selected_u_relative_l2": 1.0915559145212338e-13,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 1.717381792332162e-11
+        },
+        {
+          "backend": "cuda",
+          "sample": 4,
+          "warmup": false,
+          "elapsed_s": 0.0380558,
+          "selected_log_lambda": -2.2072296142578125,
+          "selected_ratio": 0.06308945452135413,
+          "selected_u_relative_l2": 1.0915559145212338e-13,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 1.717381792332162e-11
+        },
+        {
+          "backend": "cuda",
+          "sample": 5,
+          "warmup": false,
+          "elapsed_s": 0.0467477,
+          "selected_log_lambda": -2.2072296142578125,
+          "selected_ratio": 0.06308945452135413,
+          "selected_u_relative_l2": 1.0915559145212338e-13,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 1.717381792332162e-11
+        },
+        {
+          "backend": "cuda",
+          "dimension": 512,
+          "roles": 8,
+          "taps": 64,
+          "samples_s": [
+            0.0370765,
+            0.0396625,
+            0.0444312,
+            0.0380558,
+            0.0467477
+          ],
+          "median_s": 0.0396625
+        }
+      ],
+      "native-refined-ridge-720.log": [
+        {
+          "status": {
+            "preference": "gpu",
+            "selected": "cuda",
+            "reason": "user_gpu",
+            "gpu_available": true,
+            "device": {
+              "id": 0,
+              "name": "NVIDIA GeForce RTX 2080 SUPER",
+              "compute_major": 7,
+              "compute_minor": 5,
+              "multiprocessors": 48,
+              "memory_bytes": 8589606912,
+              "integrated": false,
+              "supported": true,
+              "recommended": true,
+              "reason": "recommended"
+            },
+            "devices": [
+              {
+                "id": 0,
+                "name": "NVIDIA GeForce RTX 2080 SUPER",
+                "compute_major": 7,
+                "compute_minor": 5,
+                "multiprocessors": 48,
+                "memory_bytes": 8589606912,
+                "integrated": false,
+                "supported": true,
+                "recommended": true,
+                "reason": "recommended"
+              }
+            ]
+          }
+        },
+        {
+          "backend": "cpu",
+          "sample": 0,
+          "warmup": true,
+          "elapsed_s": 0.0359607,
+          "selected_log_lambda": -1.9710235595703125,
+          "selected_ratio": 0.063092183776288,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 1,
+          "warmup": false,
+          "elapsed_s": 0.0740392,
+          "selected_log_lambda": -1.9710235595703125,
+          "selected_ratio": 0.063092183776288,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 2,
+          "warmup": false,
+          "elapsed_s": 0.0374677,
+          "selected_log_lambda": -1.9710235595703125,
+          "selected_ratio": 0.063092183776288,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 3,
+          "warmup": false,
+          "elapsed_s": 0.0375438,
+          "selected_log_lambda": -1.9710235595703125,
+          "selected_ratio": 0.063092183776288,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 4,
+          "warmup": false,
+          "elapsed_s": 0.0337298,
+          "selected_log_lambda": -1.9710235595703125,
+          "selected_ratio": 0.063092183776288,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 5,
+          "warmup": false,
+          "elapsed_s": 0.0445411,
+          "selected_log_lambda": -1.9710235595703125,
+          "selected_ratio": 0.063092183776288,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "dimension": 720,
+          "roles": 4,
+          "taps": 180,
+          "samples_s": [
+            0.0740392,
+            0.0374677,
+            0.0375438,
+            0.0337298,
+            0.0445411
+          ],
+          "median_s": 0.0375438
+        },
+        {
+          "backend": "cuda",
+          "sample": 0,
+          "warmup": true,
+          "elapsed_s": 0.3068443,
+          "selected_log_lambda": -1.9710235595703125,
+          "selected_ratio": 0.06309218377628946,
+          "selected_u_relative_l2": 9.623381924720454e-14,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 1.457167719820518e-15
+        },
+        {
+          "backend": "cuda",
+          "sample": 1,
+          "warmup": false,
+          "elapsed_s": 0.057932,
+          "selected_log_lambda": -1.9710235595703125,
+          "selected_ratio": 0.06309218377628946,
+          "selected_u_relative_l2": 9.623381924720454e-14,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 1.457167719820518e-15
+        },
+        {
+          "backend": "cuda",
+          "sample": 2,
+          "warmup": false,
+          "elapsed_s": 0.0486233,
+          "selected_log_lambda": -1.9710235595703125,
+          "selected_ratio": 0.06309218377628946,
+          "selected_u_relative_l2": 9.623381924720454e-14,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 1.457167719820518e-15
+        },
+        {
+          "backend": "cuda",
+          "sample": 3,
+          "warmup": false,
+          "elapsed_s": 0.063701,
+          "selected_log_lambda": -1.9710235595703125,
+          "selected_ratio": 0.06309218377628946,
+          "selected_u_relative_l2": 9.623381924720454e-14,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 1.457167719820518e-15
+        },
+        {
+          "backend": "cuda",
+          "sample": 4,
+          "warmup": false,
+          "elapsed_s": 0.0581867,
+          "selected_log_lambda": -1.9710235595703125,
+          "selected_ratio": 0.06309218377628946,
+          "selected_u_relative_l2": 9.623381924720454e-14,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 1.457167719820518e-15
+        },
+        {
+          "backend": "cuda",
+          "sample": 5,
+          "warmup": false,
+          "elapsed_s": 0.0572208,
+          "selected_log_lambda": -1.9710235595703125,
+          "selected_ratio": 0.06309218377628946,
+          "selected_u_relative_l2": 9.623381924720454e-14,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 1.457167719820518e-15
+        },
+        {
+          "backend": "cuda",
+          "dimension": 720,
+          "roles": 4,
+          "taps": 180,
+          "samples_s": [
+            0.057932,
+            0.0486233,
+            0.063701,
+            0.0581867,
+            0.0572208
+          ],
+          "median_s": 0.057932
+        }
+      ],
+      "native-refined-ridge-840.log": [
+        {
+          "status": {
+            "preference": "gpu",
+            "selected": "cuda",
+            "reason": "user_gpu",
+            "gpu_available": true,
+            "device": {
+              "id": 0,
+              "name": "NVIDIA GeForce RTX 2080 SUPER",
+              "compute_major": 7,
+              "compute_minor": 5,
+              "multiprocessors": 48,
+              "memory_bytes": 8589606912,
+              "integrated": false,
+              "supported": true,
+              "recommended": true,
+              "reason": "recommended"
+            },
+            "devices": [
+              {
+                "id": 0,
+                "name": "NVIDIA GeForce RTX 2080 SUPER",
+                "compute_major": 7,
+                "compute_minor": 5,
+                "multiprocessors": 48,
+                "memory_bytes": 8589606912,
+                "integrated": false,
+                "supported": true,
+                "recommended": true,
+                "reason": "recommended"
+              }
+            ]
+          }
+        },
+        {
+          "backend": "cpu",
+          "sample": 0,
+          "warmup": true,
+          "elapsed_s": 0.0686884,
+          "selected_log_lambda": -6.6404876708984375,
+          "selected_ratio": 0.06309098492513736,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 1,
+          "warmup": false,
+          "elapsed_s": 0.0992609,
+          "selected_log_lambda": -6.6404876708984375,
+          "selected_ratio": 0.06309098492513736,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 2,
+          "warmup": false,
+          "elapsed_s": 0.072675,
+          "selected_log_lambda": -6.6404876708984375,
+          "selected_ratio": 0.06309098492513736,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 3,
+          "warmup": false,
+          "elapsed_s": 0.0604826,
+          "selected_log_lambda": -6.6404876708984375,
+          "selected_ratio": 0.06309098492513736,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 4,
+          "warmup": false,
+          "elapsed_s": 0.0538975,
+          "selected_log_lambda": -6.6404876708984375,
+          "selected_ratio": 0.06309098492513736,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "sample": 5,
+          "warmup": false,
+          "elapsed_s": 0.0662355,
+          "selected_log_lambda": -6.6404876708984375,
+          "selected_ratio": 0.06309098492513736,
+          "selected_u_relative_l2": 0.0,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 0.0
+        },
+        {
+          "backend": "cpu",
+          "dimension": 840,
+          "roles": 12,
+          "taps": 70,
+          "samples_s": [
+            0.0992609,
+            0.072675,
+            0.0604826,
+            0.0538975,
+            0.0662355
+          ],
+          "median_s": 0.0662355
+        },
+        {
+          "backend": "cuda",
+          "sample": 0,
+          "warmup": true,
+          "elapsed_s": 0.3310041,
+          "selected_log_lambda": -6.6404876708984375,
+          "selected_ratio": 0.0630909849250939,
+          "selected_u_relative_l2": 3.359696874937296e-10,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 1.5587531265737198e-12
+        },
+        {
+          "backend": "cuda",
+          "sample": 1,
+          "warmup": false,
+          "elapsed_s": 0.0588197,
+          "selected_log_lambda": -6.6404876708984375,
+          "selected_ratio": 0.0630909849250939,
+          "selected_u_relative_l2": 3.359696874937296e-10,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 1.5587531265737198e-12
+        },
+        {
+          "backend": "cuda",
+          "sample": 2,
+          "warmup": false,
+          "elapsed_s": 0.0684357,
+          "selected_log_lambda": -6.6404876708984375,
+          "selected_ratio": 0.0630909849250939,
+          "selected_u_relative_l2": 3.359696874937296e-10,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 1.5587531265737198e-12
+        },
+        {
+          "backend": "cuda",
+          "sample": 3,
+          "warmup": false,
+          "elapsed_s": 0.0869345,
+          "selected_log_lambda": -6.6404876708984375,
+          "selected_ratio": 0.0630909849250939,
+          "selected_u_relative_l2": 3.359696874937296e-10,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 1.5587531265737198e-12
+        },
+        {
+          "backend": "cuda",
+          "sample": 4,
+          "warmup": false,
+          "elapsed_s": 0.0603001,
+          "selected_log_lambda": -6.6404876708984375,
+          "selected_ratio": 0.0630909849250939,
+          "selected_u_relative_l2": 3.359696874937296e-10,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 1.5587531265737198e-12
+        },
+        {
+          "backend": "cuda",
+          "sample": 5,
+          "warmup": false,
+          "elapsed_s": 0.0733008,
+          "selected_log_lambda": -6.6404876708984375,
+          "selected_ratio": 0.0630909849250939,
+          "selected_u_relative_l2": 3.359696874937296e-10,
+          "branches_equal": true,
+          "max_ratio_absolute_error": 1.5587531265737198e-12
+        },
+        {
+          "backend": "cuda",
+          "dimension": 840,
+          "roles": 12,
+          "taps": 70,
+          "samples_s": [
+            0.0588197,
+            0.0684357,
+            0.0869345,
+            0.0603001,
+            0.0733008
+          ],
+          "median_s": 0.0684357
+        }
+      ]
+    },
+    "pre-IIR-restriction-audit": {
+      "mimo-big-fir.log": [
+        {
+          "case": "big",
+          "fir": true,
+          "threads": 16,
+          "seconds": 1.4495954,
+          "compute": {
+            "requested": "cpu",
+            "backend": "cpu",
+            "device": null,
+            "stage": null,
+            "accelerated_systems": 0,
+            "cpu_systems": 11,
+            "fallbacks": 0,
+            "reason": "user_cpu"
+          }
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "L",
+          "late_energy_db": -6.721538242305972,
+          "worst_band_db": -2.3729455670344985,
+          "modal_tail_guard": 0.12630948262594702,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "R",
+          "late_energy_db": -5.246815455656498,
+          "worst_band_db": -3.714477572902472,
+          "modal_tail_guard": 0.024410647694291167,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "C",
+          "late_energy_db": -6.882469602688649,
+          "worst_band_db": -3.6425359319571875,
+          "modal_tail_guard": 0.08170919983782902,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Ls",
+          "late_energy_db": -8.131878328952382,
+          "worst_band_db": -6.8726507977952425,
+          "modal_tail_guard": 0.05742343952864529,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Rs",
+          "late_energy_db": -7.947028670789399,
+          "worst_band_db": -6.731194840648193,
+          "modal_tail_guard": 0.043871591110813235,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Lb",
+          "late_energy_db": -7.362120633039293,
+          "worst_band_db": -8.043367573904149,
+          "modal_tail_guard": 0.041930430993875896,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Rb",
+          "late_energy_db": -7.571875045954197,
+          "worst_band_db": -7.472097139988918,
+          "modal_tail_guard": 0.07494090178096091,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tfl",
+          "late_energy_db": -6.790503806386602,
+          "worst_band_db": -3.149231690755295,
+          "modal_tail_guard": 0.060290236343708316,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tfr",
+          "late_energy_db": -5.092195272502953,
+          "worst_band_db": -4.83638170482902,
+          "modal_tail_guard": 0.006944774416935443,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tbl",
+          "late_energy_db": -5.3104815102387075,
+          "worst_band_db": -4.1765765141259035,
+          "modal_tail_guard": 0.09065271979440886,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tbr",
+          "late_energy_db": -5.54340380423864,
+          "worst_band_db": -5.042370165253169,
+          "modal_tail_guard": 0.02670134840792066,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "threads": 16,
+          "seconds": 2.1108752,
+          "compute": {
+            "requested": "gpu",
+            "backend": "cuda",
+            "device": "NVIDIA GeForce RTX 2080 SUPER",
+            "stage": "ideal_fir_sweep",
+            "accelerated_systems": 11,
+            "cpu_systems": 0,
+            "fallbacks": 0,
+            "reason": null
+          }
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "gpu",
+          "input": "L",
+          "late_energy_db": -6.721538242310453,
+          "worst_band_db": -2.372945567052372,
+          "modal_tail_guard": 0.12630948262578864,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "gpu",
+          "input": "R",
+          "late_energy_db": -5.246815455649795,
+          "worst_band_db": -3.714477572901605,
+          "modal_tail_guard": 0.024410647694198796,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "gpu",
+          "input": "C",
+          "late_energy_db": -6.882469602684949,
+          "worst_band_db": -3.642535931959816,
+          "modal_tail_guard": 0.08170919983789816,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "gpu",
+          "input": "Ls",
+          "late_energy_db": -8.13187832895077,
+          "worst_band_db": -6.872650797795371,
+          "modal_tail_guard": 0.057423439529113336,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "gpu",
+          "input": "Rs",
+          "late_energy_db": -7.947028670796477,
+          "worst_band_db": -6.731194840697969,
+          "modal_tail_guard": 0.0438715911106469,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "gpu",
+          "input": "Lb",
+          "late_energy_db": -7.362120633004134,
+          "worst_band_db": -8.043367573917564,
+          "modal_tail_guard": 0.041930430992147674,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "gpu",
+          "input": "Rb",
+          "late_energy_db": -7.571875046063337,
+          "worst_band_db": -7.4720971400037115,
+          "modal_tail_guard": 0.0749409017799345,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "gpu",
+          "input": "Tfl",
+          "late_energy_db": -6.790503806386017,
+          "worst_band_db": -3.149231690749553,
+          "modal_tail_guard": 0.06029023634365175,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "gpu",
+          "input": "Tfr",
+          "late_energy_db": -5.092195272496774,
+          "worst_band_db": -4.836381704828099,
+          "modal_tail_guard": 0.006944774417052941,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "gpu",
+          "input": "Tbl",
+          "late_energy_db": -5.310481510248203,
+          "worst_band_db": -4.176576514109859,
+          "modal_tail_guard": 0.09065271979410931,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "gpu",
+          "input": "Tbr",
+          "late_energy_db": -5.543403804222182,
+          "worst_band_db": -5.042370165246882,
+          "modal_tail_guard": 0.02670134840801507,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "ideal_structure_equal": true,
+          "ideal_support_relative_l2": 9.845144595007187e-11,
+          "spl_max_absolute_db": 9.029719194586505e-10,
+          "spl_rms_db": 4.712154770244366e-11,
+          "cpu_path_count": 132,
+          "gpu_path_count": 132
+        }
+      ],
+      "mimo-big-iir.log": [
+        {
+          "case": "big",
+          "fir": false,
+          "threads": 16,
+          "seconds": 41.737528,
+          "compute": {
+            "requested": "cpu",
+            "backend": "cpu",
+            "device": null,
+            "stage": null,
+            "accelerated_systems": 0,
+            "cpu_systems": 11,
+            "fallbacks": 0,
+            "reason": "user_cpu"
+          }
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "cpu",
+          "input": "L",
+          "late_energy_db": -1.7203546955998315,
+          "worst_band_db": -0.18100163032680877,
+          "modal_tail_guard": 0.08645093785644249,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "cpu",
+          "input": "R",
+          "late_energy_db": -1.0427728124394813,
+          "worst_band_db": -0.2630985859561548,
+          "modal_tail_guard": 0.06668918330419023,
+          "paths": 8
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "cpu",
+          "input": "C",
+          "late_energy_db": -1.8011037075756018,
+          "worst_band_db": 0.12007780322198372,
+          "modal_tail_guard": 0.03832942349286166,
+          "paths": 10
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "cpu",
+          "input": "Ls",
+          "late_energy_db": -3.001852054867729,
+          "worst_band_db": -0.5606590203065802,
+          "modal_tail_guard": 0.11110574175220078,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "cpu",
+          "input": "Rs",
+          "late_energy_db": -2.070106634990267,
+          "worst_band_db": 0.6397143068860831,
+          "modal_tail_guard": 0.04879253902531368,
+          "paths": 11
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "cpu",
+          "input": "Lb",
+          "late_energy_db": -1.6020895113583864,
+          "worst_band_db": 0.6216515759034992,
+          "modal_tail_guard": 0.14095058743122077,
+          "paths": 11
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "cpu",
+          "input": "Rb",
+          "late_energy_db": -1.5503702042125511,
+          "worst_band_db": 0.3602324068802093,
+          "modal_tail_guard": 0.14031063835880728,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "cpu",
+          "input": "Tfl",
+          "late_energy_db": -1.3309332078948024,
+          "worst_band_db": -0.3769923151345238,
+          "modal_tail_guard": 0.042620921567341576,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "cpu",
+          "input": "Tfr",
+          "late_energy_db": -1.7354548582050833,
+          "worst_band_db": -0.3816551275990993,
+          "modal_tail_guard": 0.024506563748578108,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "cpu",
+          "input": "Tbl",
+          "late_energy_db": -1.0709261830099208,
+          "worst_band_db": -0.05430473622989977,
+          "modal_tail_guard": 0.1273552386295865,
+          "paths": 8
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "cpu",
+          "input": "Tbr",
+          "late_energy_db": -1.600209795116938,
+          "worst_band_db": -0.22406878228885876,
+          "modal_tail_guard": 0.060470968086475015,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "threads": 16,
+          "seconds": 36.3888419,
+          "compute": {
+            "requested": "gpu",
+            "backend": "cuda",
+            "device": "NVIDIA GeForce RTX 2080 SUPER",
+            "stage": "ideal_fir_sweep",
+            "accelerated_systems": 11,
+            "cpu_systems": 0,
+            "fallbacks": 0,
+            "reason": null
+          }
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "gpu",
+          "input": "L",
+          "late_energy_db": -1.361319965491231,
+          "worst_band_db": -0.06309710499471916,
+          "modal_tail_guard": 0.05710899323585955,
+          "paths": 10
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "gpu",
+          "input": "R",
+          "late_energy_db": -0.8243616733560654,
+          "worst_band_db": -0.25719788573761326,
+          "modal_tail_guard": 0.11024851494420737,
+          "paths": 8
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "gpu",
+          "input": "C",
+          "late_energy_db": -2.675334607540794,
+          "worst_band_db": 0.9091759000866307,
+          "modal_tail_guard": 0.10027381418121481,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "gpu",
+          "input": "Ls",
+          "late_energy_db": -3.4079521013110483,
+          "worst_band_db": -1.0121304773779463,
+          "modal_tail_guard": 0.12286018068836393,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "gpu",
+          "input": "Rs",
+          "late_energy_db": -3.121084071748121,
+          "worst_band_db": -0.8130761806400978,
+          "modal_tail_guard": 0.13874358146567023,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "gpu",
+          "input": "Lb",
+          "late_energy_db": -1.8898065280182974,
+          "worst_band_db": 0.354349027870757,
+          "modal_tail_guard": 0.09135308065120791,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "gpu",
+          "input": "Rb",
+          "late_energy_db": -1.7768380706484561,
+          "worst_band_db": -0.03430615702471786,
+          "modal_tail_guard": 0.0940455800727826,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "gpu",
+          "input": "Tfl",
+          "late_energy_db": -0.9697008110979898,
+          "worst_band_db": -0.03560185458651667,
+          "modal_tail_guard": 0.12703227057349467,
+          "paths": 11
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "gpu",
+          "input": "Tfr",
+          "late_energy_db": -1.7657170476471673,
+          "worst_band_db": -0.6680382469174795,
+          "modal_tail_guard": -0.05699393260890062,
+          "paths": 11
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "gpu",
+          "input": "Tbl",
+          "late_energy_db": -1.419645479216346,
+          "worst_band_db": -0.2708624756680198,
+          "modal_tail_guard": 0.13979746727663303,
+          "paths": 9
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "preference": "gpu",
+          "input": "Tbr",
+          "late_energy_db": -1.4551599482020876,
+          "worst_band_db": -0.4739636003754055,
+          "modal_tail_guard": 0.07598293197313619,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": false,
+          "ideal_structure_equal": true,
+          "ideal_support_relative_l2": 1.362922117029987e-10,
+          "spl_max_absolute_db": 1.9794195090163171,
+          "spl_rms_db": 0.20319149315174015,
+          "cpu_path_count": 120,
+          "gpu_path_count": 121
+        }
+      ],
+      "mimo-room-fir.log": [
+        {
+          "case": "room",
+          "fir": true,
+          "threads": 16,
+          "seconds": 0.1779285,
+          "compute": {
+            "requested": "cpu",
+            "backend": "cpu",
+            "device": null,
+            "stage": null,
+            "accelerated_systems": 0,
+            "cpu_systems": 3,
+            "fallbacks": 0,
+            "reason": "user_cpu"
+          }
+        },
+        {
+          "case": "room",
+          "fir": true,
+          "preference": "cpu",
+          "input": "L",
+          "late_energy_db": -3.440669291852741,
+          "worst_band_db": -2.3646666655755904,
+          "modal_tail_guard": 0.036504073851716654,
+          "paths": 4
+        },
+        {
+          "case": "room",
+          "fir": true,
+          "preference": "cpu",
+          "input": "R",
+          "late_energy_db": -3.440975282388385,
+          "worst_band_db": -2.3306264699154857,
+          "modal_tail_guard": 0.0520816738123596,
+          "paths": 4
+        },
+        {
+          "case": "room",
+          "fir": true,
+          "preference": "cpu",
+          "input": "C",
+          "late_energy_db": -2.3194750611867994,
+          "worst_band_db": -1.4052964258681055,
+          "modal_tail_guard": 0.07993981118195113,
+          "paths": 4
+        },
+        {
+          "case": "room",
+          "fir": true,
+          "threads": 16,
+          "seconds": 0.3327044,
+          "compute": {
+            "requested": "gpu",
+            "backend": "cuda",
+            "device": "NVIDIA GeForce RTX 2080 SUPER",
+            "stage": "ideal_fir_sweep",
+            "accelerated_systems": 3,
+            "cpu_systems": 0,
+            "fallbacks": 0,
+            "reason": null
+          }
+        },
+        {
+          "case": "room",
+          "fir": true,
+          "preference": "gpu",
+          "input": "L",
+          "late_energy_db": -3.440669291838758,
+          "worst_band_db": -2.3646666655568263,
+          "modal_tail_guard": 0.0365040738526386,
+          "paths": 4
+        },
+        {
+          "case": "room",
+          "fir": true,
+          "preference": "gpu",
+          "input": "R",
+          "late_energy_db": -3.440975282407144,
+          "worst_band_db": -2.3306264699298422,
+          "modal_tail_guard": 0.05208167381141605,
+          "paths": 4
+        },
+        {
+          "case": "room",
+          "fir": true,
+          "preference": "gpu",
+          "input": "C",
+          "late_energy_db": -2.3194750611825437,
+          "worst_band_db": -1.4052964258625207,
+          "modal_tail_guard": 0.0799398111823438,
+          "paths": 4
+        },
+        {
+          "case": "room",
+          "fir": true,
+          "ideal_structure_equal": true,
+          "ideal_support_relative_l2": 3.390346213022031e-11,
+          "spl_max_absolute_db": 3.523794589455065e-10,
+          "spl_rms_db": 2.960237049450224e-11,
+          "cpu_path_count": 12,
+          "gpu_path_count": 12
+        }
+      ],
+      "mimo-room-iir.log": [
+        {
+          "case": "room",
+          "fir": false,
+          "threads": 16,
+          "seconds": 3.3270942,
+          "compute": {
+            "requested": "cpu",
+            "backend": "cpu",
+            "device": null,
+            "stage": null,
+            "accelerated_systems": 0,
+            "cpu_systems": 3,
+            "fallbacks": 0,
+            "reason": "user_cpu"
+          }
+        },
+        {
+          "case": "room",
+          "fir": false,
+          "preference": "cpu",
+          "input": "L",
+          "late_energy_db": 0.023521237530254098,
+          "worst_band_db": 0.7866582164915091,
+          "modal_tail_guard": 0.10769200967135623,
+          "paths": 2
+        },
+        {
+          "case": "room",
+          "fir": false,
+          "preference": "cpu",
+          "input": "R",
+          "late_energy_db": -0.9005226796781001,
+          "worst_band_db": 0.10391770627606566,
+          "modal_tail_guard": 0.11818102856809222,
+          "paths": 3
+        },
+        {
+          "case": "room",
+          "fir": false,
+          "preference": "cpu",
+          "input": "C",
+          "late_energy_db": -0.17099040748851238,
+          "worst_band_db": 0.7517375708780639,
+          "modal_tail_guard": 0.06581003472079912,
+          "paths": 3
+        },
+        {
+          "case": "room",
+          "fir": false,
+          "threads": 16,
+          "seconds": 4.150296,
+          "compute": {
+            "requested": "gpu",
+            "backend": "cuda",
+            "device": "NVIDIA GeForce RTX 2080 SUPER",
+            "stage": "ideal_fir_sweep",
+            "accelerated_systems": 3,
+            "cpu_systems": 0,
+            "fallbacks": 0,
+            "reason": null
+          }
+        },
+        {
+          "case": "room",
+          "fir": false,
+          "preference": "gpu",
+          "input": "L",
+          "late_energy_db": -0.032768769975933386,
+          "worst_band_db": 0.7298760314687379,
+          "modal_tail_guard": 0.02733455442175223,
+          "paths": 2
+        },
+        {
+          "case": "room",
+          "fir": false,
+          "preference": "gpu",
+          "input": "R",
+          "late_energy_db": -0.899649598390825,
+          "worst_band_db": 0.0905584301164511,
+          "modal_tail_guard": 0.11525480581715183,
+          "paths": 3
+        },
+        {
+          "case": "room",
+          "fir": false,
+          "preference": "gpu",
+          "input": "C",
+          "late_energy_db": 0.005910118152808627,
+          "worst_band_db": 0.8669716186514993,
+          "modal_tail_guard": 0.04906469801610713,
+          "paths": 2
+        },
+        {
+          "case": "room",
+          "fir": false,
+          "ideal_structure_equal": true,
+          "ideal_support_relative_l2": 5.872180179195491e-11,
+          "spl_max_absolute_db": 0.557151642905473,
+          "spl_rms_db": 0.08271021782937552,
+          "cpu_path_count": 8,
+          "gpu_path_count": 7
+        }
+      ],
+      "mimo-room_dba-fir.log": [
+        {
+          "case": "room_dba",
+          "fir": true,
+          "threads": 16,
+          "seconds": 0.2462244,
+          "compute": {
+            "requested": "cpu",
+            "backend": "cpu",
+            "device": null,
+            "stage": null,
+            "accelerated_systems": 0,
+            "cpu_systems": 3,
+            "fallbacks": 0,
+            "reason": "user_cpu"
+          }
+        },
+        {
+          "case": "room_dba",
+          "fir": true,
+          "preference": "cpu",
+          "input": "L",
+          "late_energy_db": -12.411194241704298,
+          "worst_band_db": -8.577830061163608,
+          "modal_tail_guard": -0.09358987408598189,
+          "paths": 6
+        },
+        {
+          "case": "room_dba",
+          "fir": true,
+          "preference": "cpu",
+          "input": "R",
+          "late_energy_db": -12.663528901061913,
+          "worst_band_db": -8.416162335000676,
+          "modal_tail_guard": -0.04643850342753184,
+          "paths": 6
+        },
+        {
+          "case": "room_dba",
+          "fir": true,
+          "preference": "cpu",
+          "input": "C",
+          "late_energy_db": -11.713783334045262,
+          "worst_band_db": -8.418662048815321,
+          "modal_tail_guard": -0.1686711996750315,
+          "paths": 6
+        },
+        {
+          "case": "room_dba",
+          "fir": true,
+          "threads": 16,
+          "seconds": 0.4161435,
+          "compute": {
+            "requested": "gpu",
+            "backend": "cuda",
+            "device": "NVIDIA GeForce RTX 2080 SUPER",
+            "stage": "ideal_fir_sweep",
+            "accelerated_systems": 3,
+            "cpu_systems": 0,
+            "fallbacks": 0,
+            "reason": null
+          }
+        },
+        {
+          "case": "room_dba",
+          "fir": true,
+          "preference": "gpu",
+          "input": "L",
+          "late_energy_db": -12.411194240679222,
+          "worst_band_db": -8.577830059625823,
+          "modal_tail_guard": -0.093589874086756,
+          "paths": 6
+        },
+        {
+          "case": "room_dba",
+          "fir": true,
+          "preference": "gpu",
+          "input": "R",
+          "late_energy_db": -12.663528901215358,
+          "worst_band_db": -8.416162334407817,
+          "modal_tail_guard": -0.04643850339693629,
+          "paths": 6
+        },
+        {
+          "case": "room_dba",
+          "fir": true,
+          "preference": "gpu",
+          "input": "C",
+          "late_energy_db": -11.713783333761995,
+          "worst_band_db": -8.418662047776039,
+          "modal_tail_guard": -0.16867119962168783,
+          "paths": 6
+        },
+        {
+          "case": "room_dba",
+          "fir": true,
+          "ideal_structure_equal": true,
+          "ideal_support_relative_l2": 4.5248096423840006e-09,
+          "spl_max_absolute_db": 4.212040494167013e-09,
+          "spl_rms_db": 5.542328871717682e-10,
+          "cpu_path_count": 18,
+          "gpu_path_count": 18
+        }
+      ],
+      "mimo-room_dba-iir.log": [
+        {
+          "case": "room_dba",
+          "fir": false,
+          "threads": 16,
+          "seconds": 8.2630126,
+          "compute": {
+            "requested": "cpu",
+            "backend": "cpu",
+            "device": null,
+            "stage": null,
+            "accelerated_systems": 0,
+            "cpu_systems": 3,
+            "fallbacks": 0,
+            "reason": "user_cpu"
+          }
+        },
+        {
+          "case": "room_dba",
+          "fir": false,
+          "preference": "cpu",
+          "input": "L",
+          "late_energy_db": -3.7021418957115775,
+          "worst_band_db": 0.5307761446812442,
+          "modal_tail_guard": -0.10344421379726355,
+          "paths": 6
+        },
+        {
+          "case": "room_dba",
+          "fir": false,
+          "preference": "cpu",
+          "input": "R",
+          "late_energy_db": -2.179004828570668,
+          "worst_band_db": 0.7618544483444306,
+          "modal_tail_guard": 0.10808926271284086,
+          "paths": 6
+        },
+        {
+          "case": "room_dba",
+          "fir": false,
+          "preference": "cpu",
+          "input": "C",
+          "late_energy_db": -2.0361686980763065,
+          "worst_band_db": -0.5095096650112733,
+          "modal_tail_guard": 0.1296102389645456,
+          "paths": 5
+        },
+        {
+          "case": "room_dba",
+          "fir": false,
+          "threads": 16,
+          "seconds": 8.5355721,
+          "compute": {
+            "requested": "gpu",
+            "backend": "cuda",
+            "device": "NVIDIA GeForce RTX 2080 SUPER",
+            "stage": "ideal_fir_sweep",
+            "accelerated_systems": 3,
+            "cpu_systems": 0,
+            "fallbacks": 0,
+            "reason": null
+          }
+        },
+        {
+          "case": "room_dba",
+          "fir": false,
+          "preference": "gpu",
+          "input": "L",
+          "late_energy_db": -4.914673607163343,
+          "worst_band_db": 0.5149090162953054,
+          "modal_tail_guard": 0.056735842851371024,
+          "paths": 6
+        },
+        {
+          "case": "room_dba",
+          "fir": false,
+          "preference": "gpu",
+          "input": "R",
+          "late_energy_db": -3.6134936923279204,
+          "worst_band_db": 0.8511201402941394,
+          "modal_tail_guard": 0.1147937895249259,
+          "paths": 6
+        },
+        {
+          "case": "room_dba",
+          "fir": false,
+          "preference": "gpu",
+          "input": "C",
+          "late_energy_db": -2.935363045960389,
+          "worst_band_db": -1.198456591193794,
+          "modal_tail_guard": 0.09268062733334316,
+          "paths": 6
+        },
+        {
+          "case": "room_dba",
+          "fir": false,
+          "ideal_structure_equal": true,
+          "ideal_support_relative_l2": 1.0518177805933296e-08,
+          "spl_max_absolute_db": 3.351182743515409,
+          "spl_rms_db": 0.4432920304371782,
+          "cpu_path_count": 17,
+          "gpu_path_count": 18
+        }
+      ]
+    },
+    "post-IIR-restriction-functional": {
+      "validated-big-fir.log": [
+        {
+          "case": "big",
+          "fir": true,
+          "threads": 16,
+          "seconds": 1.3724847,
+          "compute": {
+            "requested": "cpu",
+            "backend": "cpu",
+            "device": null,
+            "stage": null,
+            "accelerated_systems": 0,
+            "cpu_systems": 11,
+            "fallbacks": 0,
+            "reason": "user_cpu"
+          }
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "L",
+          "late_energy_db": -6.721538242305972,
+          "worst_band_db": -2.3729455670344985,
+          "modal_tail_guard": 0.12630948262594702,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "R",
+          "late_energy_db": -5.246815455656498,
+          "worst_band_db": -3.714477572902472,
+          "modal_tail_guard": 0.024410647694291167,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "C",
+          "late_energy_db": -6.882469602688649,
+          "worst_band_db": -3.6425359319571875,
+          "modal_tail_guard": 0.08170919983782902,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Ls",
+          "late_energy_db": -8.131878328952382,
+          "worst_band_db": -6.8726507977952425,
+          "modal_tail_guard": 0.05742343952864529,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Rs",
+          "late_energy_db": -7.947028670789399,
+          "worst_band_db": -6.731194840648193,
+          "modal_tail_guard": 0.043871591110813235,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Lb",
+          "late_energy_db": -7.362120633039293,
+          "worst_band_db": -8.043367573904149,
+          "modal_tail_guard": 0.041930430993875896,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Rb",
+          "late_energy_db": -7.571875045954197,
+          "worst_band_db": -7.472097139988918,
+          "modal_tail_guard": 0.07494090178096091,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tfl",
+          "late_energy_db": -6.790503806386602,
+          "worst_band_db": -3.149231690755295,
+          "modal_tail_guard": 0.060290236343708316,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tfr",
+          "late_energy_db": -5.092195272502953,
+          "worst_band_db": -4.83638170482902,
+          "modal_tail_guard": 0.006944774416935443,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tbl",
+          "late_energy_db": -5.3104815102387075,
+          "worst_band_db": -4.1765765141259035,
+          "modal_tail_guard": 0.09065271979440886,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tbr",
+          "late_energy_db": -5.54340380423864,
+          "worst_band_db": -5.042370165253169,
+          "modal_tail_guard": 0.02670134840792066,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "threads": 16,
+          "seconds": 1.3979271,
+          "compute": {
+            "requested": "auto",
+            "backend": "cpu",
+            "device": null,
+            "stage": null,
+            "accelerated_systems": 0,
+            "cpu_systems": 11,
+            "fallbacks": 0,
+            "reason": "small_problem"
+          }
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "auto",
+          "input": "L",
+          "late_energy_db": -6.721538242305972,
+          "worst_band_db": -2.3729455670344985,
+          "modal_tail_guard": 0.12630948262594702,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "auto",
+          "input": "R",
+          "late_energy_db": -5.246815455656498,
+          "worst_band_db": -3.714477572902472,
+          "modal_tail_guard": 0.024410647694291167,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "auto",
+          "input": "C",
+          "late_energy_db": -6.882469602688649,
+          "worst_band_db": -3.6425359319571875,
+          "modal_tail_guard": 0.08170919983782902,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "auto",
+          "input": "Ls",
+          "late_energy_db": -8.131878328952382,
+          "worst_band_db": -6.8726507977952425,
+          "modal_tail_guard": 0.05742343952864529,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "auto",
+          "input": "Rs",
+          "late_energy_db": -7.947028670789399,
+          "worst_band_db": -6.731194840648193,
+          "modal_tail_guard": 0.043871591110813235,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "auto",
+          "input": "Lb",
+          "late_energy_db": -7.362120633039293,
+          "worst_band_db": -8.043367573904149,
+          "modal_tail_guard": 0.041930430993875896,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "auto",
+          "input": "Rb",
+          "late_energy_db": -7.571875045954197,
+          "worst_band_db": -7.472097139988918,
+          "modal_tail_guard": 0.07494090178096091,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "auto",
+          "input": "Tfl",
+          "late_energy_db": -6.790503806386602,
+          "worst_band_db": -3.149231690755295,
+          "modal_tail_guard": 0.060290236343708316,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "auto",
+          "input": "Tfr",
+          "late_energy_db": -5.092195272502953,
+          "worst_band_db": -4.83638170482902,
+          "modal_tail_guard": 0.006944774416935443,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "auto",
+          "input": "Tbl",
+          "late_energy_db": -5.3104815102387075,
+          "worst_band_db": -4.1765765141259035,
+          "modal_tail_guard": 0.09065271979440886,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "preference": "auto",
+          "input": "Tbr",
+          "late_energy_db": -5.54340380423864,
+          "worst_band_db": -5.042370165253169,
+          "modal_tail_guard": 0.02670134840792066,
+          "paths": 12
+        },
+        {
+          "case": "big",
+          "fir": true,
+          "ideal_structure_equal": true,
+          "ideal_support_relative_l2": 0.0,
+          "spl_max_absolute_db": 0.0,
+          "spl_rms_db": 0.0,
+          "cpu_path_count": 132,
+          "gpu_path_count": 132
+        }
+      ],
+      "validated-big_fir-fir.log": [
+        {
+          "case": "big_fir",
+          "fir": true,
+          "threads": 16,
+          "seconds": 11.284452,
+          "compute": {
+            "requested": "cpu",
+            "backend": "cpu",
+            "device": null,
+            "stage": null,
+            "accelerated_systems": 0,
+            "cpu_systems": 19,
+            "fallbacks": 0,
+            "reason": "user_cpu"
+          }
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "L",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "R",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "C",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Ls",
+          "late_energy_db": -3.5104175414997876,
+          "worst_band_db": -3.601035089464544,
+          "modal_tail_guard": -0.8988989228190631,
+          "paths": 26
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Rs",
+          "late_energy_db": -3.6439960487939507,
+          "worst_band_db": -4.041796187585763,
+          "modal_tail_guard": -1.2361666087352265,
+          "paths": 26
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Lb",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Rb",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Lw",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Rw",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tfl",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tfr",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tml",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tmr",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tbl",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tbr",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Hfl",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Hfr",
+          "late_energy_db": -2.840642416488764,
+          "worst_band_db": -4.0468656036378405,
+          "modal_tail_guard": -0.8874103954305759,
+          "paths": 26
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Hbl",
+          "late_energy_db": -0.630803598970785,
+          "worst_band_db": -0.9722665037585899,
+          "modal_tail_guard": -0.09723197948580391,
+          "paths": 26
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Hbr",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "threads": 16,
+          "seconds": 6.7504099,
+          "compute": {
+            "requested": "auto",
+            "backend": "cuda",
+            "device": "NVIDIA GeForce RTX 2080 SUPER",
+            "stage": "ideal_fir_sweep",
+            "accelerated_systems": 19,
+            "cpu_systems": 0,
+            "fallbacks": 0,
+            "reason": null
+          }
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "L",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "R",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "C",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Ls",
+          "late_energy_db": -3.5104175414988226,
+          "worst_band_db": -3.6010350894417016,
+          "modal_tail_guard": -0.8988989228113856,
+          "paths": 26
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Rs",
+          "late_energy_db": -3.643996048793541,
+          "worst_band_db": -4.041796187595283,
+          "modal_tail_guard": -1.2361666087326955,
+          "paths": 26
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Lb",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Rb",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Lw",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Rw",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Tfl",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Tfr",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Tml",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Tmr",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Tbl",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Tbr",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Hfl",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Hfr",
+          "late_energy_db": -2.8406424164887314,
+          "worst_band_db": -4.046865603640047,
+          "modal_tail_guard": -0.8874103954303968,
+          "paths": 26
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Hbl",
+          "late_energy_db": -0.6308035989708218,
+          "worst_band_db": -0.9722665037588427,
+          "modal_tail_guard": -0.09723197948683485,
+          "paths": 26
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Hbr",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "ideal_structure_equal": true,
+          "ideal_support_relative_l2": 3.731239365796727e-11,
+          "spl_max_absolute_db": 1.6326850982295582e-10,
+          "spl_rms_db": 3.8223672000340485e-12,
+          "cpu_path_count": 104,
+          "gpu_path_count": 104
+        }
+      ],
+      "validated-room-iir.log": [
+        {
+          "case": "room",
+          "fir": false,
+          "threads": 16,
+          "seconds": 3.2271766,
+          "compute": {
+            "requested": "cpu",
+            "backend": "cpu",
+            "device": null,
+            "stage": null,
+            "accelerated_systems": 0,
+            "cpu_systems": 3,
+            "fallbacks": 0,
+            "reason": "user_cpu"
+          }
+        },
+        {
+          "case": "room",
+          "fir": false,
+          "preference": "cpu",
+          "input": "L",
+          "late_energy_db": 0.023521237530254098,
+          "worst_band_db": 0.7866582164915091,
+          "modal_tail_guard": 0.10769200967135623,
+          "paths": 2
+        },
+        {
+          "case": "room",
+          "fir": false,
+          "preference": "cpu",
+          "input": "R",
+          "late_energy_db": -0.9005226796781001,
+          "worst_band_db": 0.10391770627606566,
+          "modal_tail_guard": 0.11818102856809222,
+          "paths": 3
+        },
+        {
+          "case": "room",
+          "fir": false,
+          "preference": "cpu",
+          "input": "C",
+          "late_energy_db": -0.17099040748851238,
+          "worst_band_db": 0.7517375708780639,
+          "modal_tail_guard": 0.06581003472079912,
+          "paths": 3
+        },
+        {
+          "case": "room",
+          "fir": false,
+          "threads": 16,
+          "seconds": 3.6688935000000003,
+          "compute": {
+            "requested": "gpu",
+            "backend": "cpu",
+            "device": null,
+            "stage": null,
+            "accelerated_systems": 0,
+            "cpu_systems": 3,
+            "fallbacks": 0,
+            "reason": "iir_reference"
+          }
+        },
+        {
+          "case": "room",
+          "fir": false,
+          "preference": "gpu",
+          "input": "L",
+          "late_energy_db": 0.023521237530254098,
+          "worst_band_db": 0.7866582164915091,
+          "modal_tail_guard": 0.10769200967135623,
+          "paths": 2
+        },
+        {
+          "case": "room",
+          "fir": false,
+          "preference": "gpu",
+          "input": "R",
+          "late_energy_db": -0.9005226796781001,
+          "worst_band_db": 0.10391770627606566,
+          "modal_tail_guard": 0.11818102856809222,
+          "paths": 3
+        },
+        {
+          "case": "room",
+          "fir": false,
+          "preference": "gpu",
+          "input": "C",
+          "late_energy_db": -0.17099040748851238,
+          "worst_band_db": 0.7517375708780639,
+          "modal_tail_guard": 0.06581003472079912,
+          "paths": 3
+        },
+        {
+          "case": "room",
+          "fir": false,
+          "ideal_structure_equal": true,
+          "ideal_support_relative_l2": 0.0,
+          "spl_max_absolute_db": 0.0,
+          "spl_rms_db": 0.0,
+          "cpu_path_count": 8,
+          "gpu_path_count": 8
+        }
+      ],
+      "validated-room_dba-iir.log": [
+        {
+          "case": "room_dba",
+          "fir": false,
+          "threads": 16,
+          "seconds": 6.6044901,
+          "compute": {
+            "requested": "cpu",
+            "backend": "cpu",
+            "device": null,
+            "stage": null,
+            "accelerated_systems": 0,
+            "cpu_systems": 3,
+            "fallbacks": 0,
+            "reason": "user_cpu"
+          }
+        },
+        {
+          "case": "room_dba",
+          "fir": false,
+          "preference": "cpu",
+          "input": "L",
+          "late_energy_db": -3.7021418957115775,
+          "worst_band_db": 0.5307761446812442,
+          "modal_tail_guard": -0.10344421379726355,
+          "paths": 6
+        },
+        {
+          "case": "room_dba",
+          "fir": false,
+          "preference": "cpu",
+          "input": "R",
+          "late_energy_db": -2.179004828570668,
+          "worst_band_db": 0.7618544483444306,
+          "modal_tail_guard": 0.10808926271284086,
+          "paths": 6
+        },
+        {
+          "case": "room_dba",
+          "fir": false,
+          "preference": "cpu",
+          "input": "C",
+          "late_energy_db": -2.0361686980763065,
+          "worst_band_db": -0.5095096650112733,
+          "modal_tail_guard": 0.1296102389645456,
+          "paths": 5
+        },
+        {
+          "case": "room_dba",
+          "fir": false,
+          "threads": 16,
+          "seconds": 7.7505087,
+          "compute": {
+            "requested": "gpu",
+            "backend": "cpu",
+            "device": null,
+            "stage": null,
+            "accelerated_systems": 0,
+            "cpu_systems": 3,
+            "fallbacks": 0,
+            "reason": "iir_reference"
+          }
+        },
+        {
+          "case": "room_dba",
+          "fir": false,
+          "preference": "gpu",
+          "input": "L",
+          "late_energy_db": -3.7021418957115775,
+          "worst_band_db": 0.5307761446812442,
+          "modal_tail_guard": -0.10344421379726355,
+          "paths": 6
+        },
+        {
+          "case": "room_dba",
+          "fir": false,
+          "preference": "gpu",
+          "input": "R",
+          "late_energy_db": -2.179004828570668,
+          "worst_band_db": 0.7618544483444306,
+          "modal_tail_guard": 0.10808926271284086,
+          "paths": 6
+        },
+        {
+          "case": "room_dba",
+          "fir": false,
+          "preference": "gpu",
+          "input": "C",
+          "late_energy_db": -2.0361686980763065,
+          "worst_band_db": -0.5095096650112733,
+          "modal_tail_guard": 0.1296102389645456,
+          "paths": 5
+        },
+        {
+          "case": "room_dba",
+          "fir": false,
+          "ideal_structure_equal": true,
+          "ideal_support_relative_l2": 0.0,
+          "spl_max_absolute_db": 0.0,
+          "spl_rms_db": 0.0,
+          "cpu_path_count": 17,
+          "gpu_path_count": 17
+        }
+      ]
+    },
+    "uncontended-large-FIR-warmup-plus-three": {
+      "final-big-fir-warm3.log": [
+        {
+          "case": "big_fir",
+          "fir": true,
+          "threads": 16,
+          "sample": 0,
+          "warmup": true,
+          "seconds": 11.9212581,
+          "compute": {
+            "requested": "cpu",
+            "backend": "cpu",
+            "device": null,
+            "stage": null,
+            "accelerated_systems": 0,
+            "cpu_systems": 19,
+            "fallbacks": 0,
+            "reason": "user_cpu"
+          }
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "threads": 16,
+          "sample": 1,
+          "warmup": false,
+          "seconds": 11.0951125,
+          "compute": {
+            "requested": "cpu",
+            "backend": "cpu",
+            "device": null,
+            "stage": null,
+            "accelerated_systems": 0,
+            "cpu_systems": 19,
+            "fallbacks": 0,
+            "reason": "user_cpu"
+          }
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "threads": 16,
+          "sample": 2,
+          "warmup": false,
+          "seconds": 11.1597047,
+          "compute": {
+            "requested": "cpu",
+            "backend": "cpu",
+            "device": null,
+            "stage": null,
+            "accelerated_systems": 0,
+            "cpu_systems": 19,
+            "fallbacks": 0,
+            "reason": "user_cpu"
+          }
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "threads": 16,
+          "sample": 3,
+          "warmup": false,
+          "seconds": 11.3360017,
+          "compute": {
+            "requested": "cpu",
+            "backend": "cpu",
+            "device": null,
+            "stage": null,
+            "accelerated_systems": 0,
+            "cpu_systems": 19,
+            "fallbacks": 0,
+            "reason": "user_cpu"
+          }
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "samples_s": [
+            11.0951125,
+            11.1597047,
+            11.3360017
+          ],
+          "median_s": 11.1597047
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "L",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "R",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "C",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Ls",
+          "late_energy_db": -3.5104175414997876,
+          "worst_band_db": -3.601035089464544,
+          "modal_tail_guard": -0.8988989228190631,
+          "paths": 26
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Rs",
+          "late_energy_db": -3.6439960487939507,
+          "worst_band_db": -4.041796187585763,
+          "modal_tail_guard": -1.2361666087352265,
+          "paths": 26
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Lb",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Rb",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Lw",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Rw",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tfl",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tfr",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tml",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tmr",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tbl",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Tbr",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Hfl",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Hfr",
+          "late_energy_db": -2.840642416488764,
+          "worst_band_db": -4.0468656036378405,
+          "modal_tail_guard": -0.8874103954305759,
+          "paths": 26
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Hbl",
+          "late_energy_db": -0.630803598970785,
+          "worst_band_db": -0.9722665037585899,
+          "modal_tail_guard": -0.09723197948580391,
+          "paths": 26
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "cpu",
+          "input": "Hbr",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "threads": 16,
+          "sample": 0,
+          "warmup": true,
+          "seconds": 6.8348624000000004,
+          "compute": {
+            "requested": "auto",
+            "backend": "cuda",
+            "device": "NVIDIA GeForce RTX 2080 SUPER",
+            "stage": "ideal_fir_sweep",
+            "accelerated_systems": 19,
+            "cpu_systems": 0,
+            "fallbacks": 0,
+            "reason": null
+          }
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "threads": 16,
+          "sample": 1,
+          "warmup": false,
+          "seconds": 6.6316372999999995,
+          "compute": {
+            "requested": "auto",
+            "backend": "cuda",
+            "device": "NVIDIA GeForce RTX 2080 SUPER",
+            "stage": "ideal_fir_sweep",
+            "accelerated_systems": 19,
+            "cpu_systems": 0,
+            "fallbacks": 0,
+            "reason": null
+          }
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "threads": 16,
+          "sample": 2,
+          "warmup": false,
+          "seconds": 6.8763488,
+          "compute": {
+            "requested": "auto",
+            "backend": "cuda",
+            "device": "NVIDIA GeForce RTX 2080 SUPER",
+            "stage": "ideal_fir_sweep",
+            "accelerated_systems": 19,
+            "cpu_systems": 0,
+            "fallbacks": 0,
+            "reason": null
+          }
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "threads": 16,
+          "sample": 3,
+          "warmup": false,
+          "seconds": 6.9052277,
+          "compute": {
+            "requested": "auto",
+            "backend": "cuda",
+            "device": "NVIDIA GeForce RTX 2080 SUPER",
+            "stage": "ideal_fir_sweep",
+            "accelerated_systems": 19,
+            "cpu_systems": 0,
+            "fallbacks": 0,
+            "reason": null
+          }
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "samples_s": [
+            6.6316372999999995,
+            6.8763488,
+            6.9052277
+          ],
+          "median_s": 6.8763488
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "L",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "R",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "C",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Ls",
+          "late_energy_db": -3.5104175414988226,
+          "worst_band_db": -3.6010350894417016,
+          "modal_tail_guard": -0.8988989228113856,
+          "paths": 26
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Rs",
+          "late_energy_db": -3.643996048793541,
+          "worst_band_db": -4.041796187595283,
+          "modal_tail_guard": -1.2361666087326955,
+          "paths": 26
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Lb",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Rb",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Lw",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Rw",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Tfl",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Tfr",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Tml",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Tmr",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Tbl",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Tbr",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Hfl",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Hfr",
+          "late_energy_db": -2.8406424164887314,
+          "worst_band_db": -4.046865603640047,
+          "modal_tail_guard": -0.8874103954303968,
+          "paths": 26
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Hbl",
+          "late_energy_db": -0.6308035989708218,
+          "worst_band_db": -0.9722665037588427,
+          "modal_tail_guard": -0.09723197948683485,
+          "paths": 26
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "preference": "auto",
+          "input": "Hbr",
+          "late_energy_db": 0.0,
+          "worst_band_db": -99.0,
+          "modal_tail_guard": 0.0,
+          "paths": 0
+        },
+        {
+          "case": "big_fir",
+          "fir": true,
+          "ideal_structure_equal": true,
+          "ideal_support_relative_l2": 3.731239365796727e-11,
+          "spl_max_absolute_db": 1.6326850982295582e-10,
+          "spl_rms_db": 3.8223672000340485e-12,
+          "cpu_path_count": 104,
+          "gpu_path_count": 104
+        }
+      ]
+    }
+  }
+}

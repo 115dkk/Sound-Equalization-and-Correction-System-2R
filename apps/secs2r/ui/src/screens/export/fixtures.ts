@@ -6,7 +6,7 @@ import type { IpcError } from "../../ipc/bindings/IpcError";
 import type { MimoPath } from "../../ipc/bindings/MimoPath";
 import type { MimoSummary } from "../../ipc/bindings/MimoSummary";
 import type { Notice } from "../../ipc/bindings/Notice";
-import { SAMPLE_MAINS, SAMPLE_SUBS, calibrationSummary, noResults } from "../../ipc/fixtures";
+import { SAMPLE_MAINS, SAMPLE_SUBS, calibrationSummary, cpuComputeReport, noResults } from "../../ipc/fixtures";
 import { exportStepState, type ExportView } from "./types";
 
 const BASE = "C:/Users/demo/Documents/SECS/SECS_export/2026-10-14 거실 7.1.4";
@@ -23,6 +23,7 @@ const paths: MimoPath[] = SAMPLE_MAINS.flatMap((input, i) =>
 );
 
 export const exportMimo: MimoSummary = {
+  compute: cpuComputeReport,
   stale: false,
   kind: "iir",
   fsiso: 150,

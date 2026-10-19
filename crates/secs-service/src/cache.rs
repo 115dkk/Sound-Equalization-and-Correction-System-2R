@@ -7,7 +7,7 @@ use secs_types::chain::MimoPaths;
 use secs_types::ipc::{CalibrationSummary, MimoSummary};
 use serde::{Deserialize, Serialize};
 
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct CachedRunLabels {
@@ -31,6 +31,8 @@ pub(crate) struct CachedResults {
     pub mimo_calibration_key: Option<String>,
     pub labels: CachedRunLabels,
     pub mimo_paths: Option<MimoPaths>,
+    #[serde(default)]
+    pub mimo_compute_key: crate::compute::ComputeIdentity,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -54,7 +56,8 @@ pub(crate) fn load(project_path: &Path) -> Option<CachedResults> {
         return None;
     }
     let mut value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    if value.get("version")?.as_u64()? != u64::from(VERSION) {
+    let version = value.get("version")?.as_u64()?;
+    if version != 2 && version != u64::from(VERSION) {
         return None;
     }
     // Version 2 already stored the run's mode and budget in labels. Restore
@@ -68,6 +71,18 @@ pub(crate) fn load(project_path: &Path) -> Option<CachedResults> {
     summary
         .entry("stale_reason")
         .or_insert(serde_json::Value::Null);
+    if let Some(mimo) = results
+        .get_mut("mimo")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        mimo.entry("compute").or_insert(
+            serde_json::to_value(secs_types::compute::ComputeReport {
+                requested: secs_types::compute::ComputePreference::Cpu,
+                ..Default::default()
+            })
+            .ok()?,
+        );
+    }
     let cache: CacheFile = serde_json::from_value(value).ok()?;
     Some(cache.results)
 }
@@ -175,6 +190,7 @@ mod tests {
                 mimo_max_supports: 0,
             },
             mimo_paths: None,
+            mimo_compute_key: Default::default(),
         }
     }
 
@@ -219,7 +235,7 @@ mod tests {
         fs::create_dir_all(project.with_extension("irs")).unwrap();
         for mode in ["zero", "mixed", "linear", "ultra"] {
             let mut value = serde_json::to_value(CacheFile {
-                version: VERSION,
+                version: 2,
                 results: sample(),
             })
             .unwrap();
@@ -235,6 +251,63 @@ mod tests {
             assert_eq!(restored.ultra_ms, 175.0);
             assert_eq!(restored.stale_reason, None);
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn compute_provenance_round_trips_and_legacy_mimo_defaults_to_cpu() {
+        use secs_types::compute::*;
+        let root = std::env::temp_dir().join(format!("secs-cache-compute-{}", std::process::id()));
+        let project = root.join("project.secs");
+        let mut run = sample();
+        run.mimo = Some(MimoSummary {
+            stale: false,
+            kind: "fir".into(),
+            fsiso: 120.0,
+            support_count: 0,
+            fir_taps_total: 0,
+            notes: vec![],
+            paths: MimoPaths {
+                fsiso: 120.0,
+                paths: vec![],
+            },
+            compute: ComputeReport {
+                requested: ComputePreference::Gpu,
+                backend: ComputeBackend::Cuda,
+                device: Some("Test GPU".into()),
+                stage: Some(ComputeStage::IdealFirSweep),
+                accelerated_systems: 2,
+                cpu_systems: 1,
+                fallbacks: 1,
+                reason: Some(ComputeReason::DeviceFailure),
+            },
+        });
+        save(&project, &run).unwrap();
+        assert_eq!(load(&project).unwrap().mimo, run.mimo);
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(path(&project)).unwrap()).unwrap();
+        value["version"] = 2.into();
+        value["results"]
+            .as_object_mut()
+            .unwrap()
+            .remove("mimo_compute_key");
+        value["results"]["mimo"]
+            .as_object_mut()
+            .unwrap()
+            .remove("compute");
+        fs::write(path(&project), serde_json::to_vec(&value).unwrap()).unwrap();
+        let legacy = load(&project).unwrap();
+        assert_eq!(
+            legacy.mimo_compute_key,
+            crate::compute::ComputeIdentity::default()
+        );
+        assert_eq!(
+            legacy.mimo.unwrap().compute,
+            ComputeReport {
+                requested: ComputePreference::Cpu,
+                ..Default::default()
+            }
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

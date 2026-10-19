@@ -720,6 +720,7 @@ fn app_settings_are_versioned_bounded_and_capped() {
         ..Deps::default()
     });
     let settings = AppSettings {
+        compute: secs_types::compute::ComputePreference::Cpu,
         language: "en".into(),
         theme: AppTheme::Dark,
         icon: AppIcon::Civilian,
@@ -755,6 +756,10 @@ fn app_settings_are_versioned_bounded_and_capped() {
     let Response::AppSettingsGet(old_settings) = call(&old_file, Request::AppSettingsGet) else {
         panic!()
     };
+    assert_eq!(
+        old_settings.compute,
+        secs_types::compute::ComputePreference::Auto
+    );
     assert_eq!(old_settings.theme, AppTheme::System);
     assert_eq!(old_settings.icon, AppIcon::Expert);
 

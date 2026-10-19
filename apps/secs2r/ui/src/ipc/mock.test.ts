@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { IpcFailure } from "./client";
 import type { JobEvent } from "./bindings/JobEvent";
 import { createMockService } from "./mock";
-import { calibrationSettings, modeLabel, projectInfo, resultsSummary } from "./fixtures";
+import { calibrationSettings, gpuComputeStatus, modeLabel, projectInfo, resultsSummary } from "./fixtures";
 import type { ExportKind } from "./bindings/ExportKind";
 import type { Mode } from "./bindings/Mode";
 
@@ -120,6 +120,24 @@ describe("mock filter exports", () => {
 });
 
 describe("mock service", () => {
+  it("preserves GPU preference while IIR uses CPU and FIR uses GPU", async () => {
+    const mock = createMockService({ tickMs: 0, computeStatus: gpuComputeStatus, results: resultsSummary });
+    try {
+      const settings = await mock.request({ method: "app_settings_get" });
+      await mock.request({ method: "app_settings_set", params: { settings: { ...settings, compute: "gpu" } } });
+      await mock.request({ method: "mimo", params: { settings: null } }); mock.drain();
+      expect((await mock.request({ method: "results" })).mimo?.compute).toMatchObject({
+        requested: "gpu", backend: "cpu", stage: null, reason: "iir_reference", accelerated_systems: 0,
+      });
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_fir", on: true } } });
+      await mock.request({ method: "mimo", params: { settings: null } }); mock.drain();
+      expect((await mock.request({ method: "results" })).mimo?.compute).toMatchObject({
+        requested: "gpu", backend: "cuda", stage: "ideal_fir_sweep", reason: "user_gpu",
+      });
+      expect((await mock.request({ method: "app_settings_get" })).compute).toBe("gpu");
+    } finally { mock.dispose(); }
+  });
+
   it("includes both roles for each conflicting output like config validation", async () => {
     const mock = createMockService({ tickMs: 0 });
     for (const index of [1, 2]) await mock.request({ method: "config_set_speaker", params: { index, role: null, size: null, band_index: 0, out: 1, pol: null } });
@@ -176,7 +194,7 @@ describe("mock service", () => {
     expect(info.app_name).toBe("SECS 2R");
     // The build reads both files; the mock answers with what they say now.
     const root = resolve(import.meta.dirname, "../../../../..");
-    const cargo = readFileSync(resolve(root, "Cargo.toml"), "utf8");
+    const cargo = readFileSync(resolve(root, "Cargo.toml"), "utf8").replace(/\r\n/g, "\n");
     const pinned = readFileSync(resolve(root, "UPSTREAM.toml"), "utf8");
     expect(cargo).toContain(`[workspace.package]\nversion = "${info.version}"`);
     for (const key of ["name", "version", "commit", "date"] as const) expect(pinned).toContain(`\n${key} = "${info.upstream[key]}"`);

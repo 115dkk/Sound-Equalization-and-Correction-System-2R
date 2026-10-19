@@ -555,12 +555,26 @@ upstream = "calibration.py compute_mimo, MimoRun; export_camilladsp.py mimo_path
 note = "P17a: one MIMO run, 48 kHz exporter paths and applied curves; recorded IIR supports isolate the P16 fit gate. Reference-only room_dba and room_filters goldens; BA-dependent curves and whole-path choices are reported off the oracle libm (docs/ENGINE.md §3)."
 
 [[feature]]
-id = "compute.gpu_support_fit"
+id = "compute.gpu_ideal_fir"
 kind = "compute"
 milestone = "M6"
-status = "planned"
-tests = []
-note = "new: optional wgpu adapter, ships only if 3x faster than the CPU path (docs/adr/0007). Moved from M3 with the ideal FIR design shortfall (docs/MIMO.md section 6)."
+status = "implemented"
+tests = ["secs-gpu::device_policy_rejects_integrated_legacy_and_small_devices", "secs-gpu::preference_preserves_cpu_and_selects_recommended_before_unusable_hardware", "secs-gpu::explicit_gpu_can_select_supported_hardware_below_auto_performance_floor", "secs-engine::middle_failure_restarts_all_nineteen_cpu_steps_and_retains_provenance", "secs-engine::cancellation_during_shift_never_falls_back", "secs-engine::auto_size_floor_and_explicit_gpu_have_distinct_actual_reports", "secs-engine::iir_acceleration_request_keeps_cpu_target_and_outputs_bit_identical", "secs2r-cli::compute_info_and_process_overrides_are_json_and_missing_gpu_is_typed"]
+note = "ADR 0008 / P53: native CUDA f64 ideal-FIR shifted systems in FIR mode; replaces the earlier IIR-only wgpu plan. IIR retains its CPU target. CPU reference and whole-input fallback remain available."
+
+[[feature]]
+id = "ipc.compute_status"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+tests = ["secs-service::supported_gpu_defaults_to_auto_and_explicit_cpu_survives_reload", "secs-service::unsupported_auto_is_normal_cpu_and_explicit_gpu_has_typed_error"]
+
+[[feature]]
+id = "ipc.open_gpu_help"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+tests = ["secs-service::gpu_help_uses_the_host_operation_without_accepting_a_url"]
 
 [[feature]]
 id = "compute.cancellation"

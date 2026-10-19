@@ -176,7 +176,22 @@ export const calibrationSummary: CalibrationSummary = {
   chain: signalChain,
 };
 
+export const computeStatus: import("./bindings/ComputeStatus").ComputeStatus = {
+  preference: "auto", selected: "cpu", reason: "no_device", gpu_available: false, device: null, devices: [],
+};
+export const gpuDevice: import("./bindings/GpuDeviceInfo").GpuDeviceInfo = {
+  id: 0, name: "NVIDIA GeForce RTX 2080 SUPER", compute_major: 7, compute_minor: 5, multiprocessors: 48,
+  memory_bytes: 8589934592, integrated: false, supported: true, recommended: true, reason: "recommended",
+};
+export const gpuComputeStatus: import("./bindings/ComputeStatus").ComputeStatus = {
+  preference: "auto", selected: "cuda", reason: "recommended", gpu_available: true, device: gpuDevice, devices: [gpuDevice],
+};
+export const cpuComputeReport: import("./bindings/ComputeReport").ComputeReport = {
+  requested: "auto", backend: "cpu", device: null, stage: null, accelerated_systems: 0, cpu_systems: 11, fallbacks: 0, reason: "no_device",
+};
+
 export const mimoSummary: MimoSummary = {
+  compute: cpuComputeReport,
   stale: false,
   kind: "iir",
   fsiso: 150,
@@ -297,7 +312,7 @@ export const subEntry: SubEntry = {
   mode: "auto", bundle: "A", gain_db: 0, delay_ms: 0, polarity: 1, allpass: [], mimo_support: true,
   hp_hz: 0, lp_hz: 0, peq: [], hp_type: "LR24", lp_type: "LR24", dba_row: "front",
 };
-export const appSettings: AppSettings = { language: "ko", theme: "system", icon: "expert", expert_display: false, recent_projects: [], last_window_size: null };
+export const appSettings: AppSettings = { compute: "auto", language: "ko", theme: "system", icon: "expert", expert_display: false, recent_projects: [], last_window_size: null };
 export const rewInfo: RewInfoResult = {
   executable_path: "C:/Program Files/REW/roomeqwizard.exe", ...rewStatus, version: "5.40", blocking: false,
   input_device: "UMIK-1", output_device: "AVR (HDMI)", input: "Input 1",

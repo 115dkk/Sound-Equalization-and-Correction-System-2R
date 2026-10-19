@@ -51,7 +51,7 @@ export type MockService = {
   setResults: (results: ResultsSummary) => void;
   dispose: () => void;
 };
-export type MockOptions = { tickMs?: number; project?: ProjectInfo | null; results?: ResultsSummary };
+export type MockOptions = { computeStatus?: import("./bindings/ComputeStatus").ComputeStatus; tickMs?: number; project?: ProjectInfo | null; results?: ResultsSummary };
 export const ipcError = (code: ErrorCode, detail = "", params: Record<string, string> = {}): IpcError => ({
   code, params, retryable: code === "job_busy" || code === "rew_unreachable" || code === "device_unavailable", detail,
 });
@@ -79,6 +79,10 @@ export function createMockService(options: MockOptions = {}): MockService {
   let settings = clone(fx.calibrationSettings);
   let target = clone(fx.target);
   let appSettings = clone(fx.appSettings);
+  const availableCompute = clone(options.computeStatus ?? fx.computeStatus);
+  const computeStatus = () => ({ ...availableCompute, preference: appSettings.compute,
+    ...(appSettings.compute === "cpu" ? { selected: "cpu" as const, reason: "user_cpu" as const } :
+      appSettings.compute === "gpu" && availableCompute.gpu_available ? { selected: "cuda" as const, reason: "user_gpu" as const } : {}) });
   let measureConfig = clone(fx.measureConfig);
   let levels: LevelsResult = { levels: {}, spl: {} };
   let exportFolder: ExportFolderResult = { folder: "C:/Users/demo/Documents/SECS_export", stored: false };
@@ -513,7 +517,13 @@ export function createMockService(options: MockOptions = {}): MockService {
               filter: settings.mimo_fir ? { Fir: { taps_48k: [0.1, 0.2, 0.1] } } : { Iir: { gain_db: -12, delay_ms: 1, polarity: 1, peq: [], allpass: [] } },
               low_hz: settings.mimo_low ?? 20, delay_ms: 2,
             })));
-          results = { ...results, mimo: { ...clone(fx.mimoSummary), fsiso: settings.fsiso, kind: settings.mimo_fir ? "fir" : "iir",
+          const selected = computeStatus();
+          const gpu = settings.mimo_fir && selected.selected === "cuda";
+          const compute: import("./bindings/ComputeReport").ComputeReport = {
+            requested: appSettings.compute, backend: gpu ? "cuda" : "cpu", device: gpu ? selected.device?.name ?? null : null,
+            stage: gpu ? "ideal_fir_sweep" : null, accelerated_systems: gpu ? 11 : 0, cpu_systems: gpu ? 0 : 11, fallbacks: 0, reason: settings.mimo_fir ? selected.reason : "iir_reference",
+          };
+          results = { ...results, mimo: { ...clone(fx.mimoSummary), compute, fsiso: settings.fsiso, kind: settings.mimo_fir ? "fir" : "iir",
             support_count: paths.length, fir_taps_total: settings.mimo_fir ? 3 * paths.length : 0, paths: { fsiso: settings.fsiso, paths } } };
           return { kind: "mimo", data: results.mimo! };
         }) };
@@ -653,8 +663,16 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "calibration_settings_edit": needProject(); return { method: req.method, data: editSettings(req.params.edit) };
       case "sub_warnings": return { method: req.method, data: warnings() };
       case "mode_spec": return { method: req.method, data: fx.modeSpec(req.params.mode, req.params.ultra_ms ?? settings.ultra_ms) };
+      case "open_gpu_help": return { method: req.method, data: null };
+      case "compute_status": return { method: req.method, data: computeStatus() };
       case "app_settings_get": return { method: req.method, data: appSettings };
-      case "app_settings_set": appSettings = clone(req.params.settings); appSettings.recent_projects = [...new Set(appSettings.recent_projects)].slice(0, 10); return { method: req.method, data: appSettings };
+      case "app_settings_set": {
+        if (req.params.settings.compute === "gpu" && !availableCompute.gpu_available) throw new MockError(ipcError("compute_unavailable"));
+        if (req.params.settings.compute !== appSettings.compute && results.mimo) results = { ...results, mimo: { ...results.mimo, stale: true } };
+        appSettings = clone(req.params.settings);
+        appSettings.recent_projects = [...new Set(appSettings.recent_projects)].slice(0, 10);
+        return { method: req.method, data: appSettings };
+      }
       case "result_curves": return { method: req.method, data: resultCurves(req.params) };
       case "result_lines": return { method: req.method, data: resultLines() };
       case "sub_take_values":

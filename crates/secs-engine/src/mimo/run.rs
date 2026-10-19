@@ -80,6 +80,7 @@ pub struct MimoRun {
     pub spl_mimo: Vec<(String, Vec<f64>)>,
     pub notes: Vec<Note>,
     pub fir: bool,
+    pub compute: secs_types::compute::ComputeReport,
 }
 
 #[derive(Debug, Clone)]
@@ -248,6 +249,58 @@ pub(crate) fn compute_observed(
     ctx: &Context,
     observe: &(dyn Fn(&str, std::time::Duration) + Sync),
 ) -> Result<MimoRun, EngineError> {
+    compute_observed_accelerated(
+        design,
+        measurements,
+        config,
+        settings,
+        tuning,
+        ctx,
+        observe,
+        None,
+    )
+}
+
+/// Application entry point with an explicitly selected optional accelerator.
+#[allow(clippy::too_many_arguments)]
+pub fn compute_with_acceleration(
+    design: &Design,
+    measurements: &MeasurementSet,
+    config: &EngineConfig,
+    settings: &CalibrationSettings,
+    tuning: &Tuning,
+    ctx: &Context,
+    acceleration: &super::AccelerationSelection,
+) -> Result<MimoRun, EngineError> {
+    if acceleration.status.preference == secs_types::compute::ComputePreference::Gpu
+        && (acceleration.backend.is_none()
+            || acceleration.status.selected != secs_types::compute::ComputeBackend::Cuda)
+    {
+        return Err(EngineError::Input("requested GPU is unavailable".into()));
+    }
+    compute_observed_accelerated(
+        design,
+        measurements,
+        config,
+        settings,
+        tuning,
+        ctx,
+        &|_, _| {},
+        Some(acceleration),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_observed_accelerated(
+    design: &Design,
+    measurements: &MeasurementSet,
+    config: &EngineConfig,
+    settings: &CalibrationSettings,
+    tuning: &Tuning,
+    ctx: &Context,
+    observe: &(dyn Fn(&str, std::time::Duration) + Sync),
+    acceleration: Option<&super::AccelerationSelection>,
+) -> Result<MimoRun, EngineError> {
     check(ctx)?;
     if !settings.mimo_on {
         return Err(EngineError::Input("MIMO is disabled".into()));
@@ -257,13 +310,32 @@ pub(crate) fn compute_observed(
         return Err(EngineError::Input(reason));
     }
     let key = MimoKey::from_settings(settings);
+    // Capped IIR fitting amplifies even tiny changes in its ideal target.
+    // Retain the exact reference target for IIR, including explicit GPU requests.
+    let iir_reference = acceleration.filter(|_| !key.fir).map(|selection| {
+        let mut selection = selection.clone();
+        selection.backend = None;
+        selection.status.reason = secs_types::compute::ComputeReason::IirReference;
+        selection
+    });
+    let acceleration = iir_reference.as_ref().or(acceleration);
     let req = key.request();
     let progress = ctx.stage("engine.mimo", 2);
     let started = std::time::Instant::now();
     let prepared = super::prepared::Prepared::new(design, measurements, config)?;
     observe("preparation", started.elapsed());
     let started = std::time::Instant::now();
-    let ideal = super::design::design_mimo_prepared(design, &prepared, &req, ctx, None, observe)?.0;
+    let acceleration = acceleration.map(super::acceleration::RunAcceleration::new);
+    let ideal = super::design::design_mimo_prepared_accelerated(
+        design,
+        &prepared,
+        &req,
+        ctx,
+        None,
+        observe,
+        acceleration.as_ref(),
+    )?
+    .0;
     observe("design_wall", started.elapsed());
     progress.advance(1);
     check(ctx)?;
@@ -286,7 +358,10 @@ pub(crate) fn compute_observed(
     };
     observe("realization", started.elapsed());
     let started = std::time::Instant::now();
-    let run = assemble_prepared(design, &prepared, &ideal, supports, key, ctx)?;
+    let mut run = assemble_prepared(design, &prepared, &ideal, supports, key, ctx)?;
+    if let Some(acceleration) = acceleration {
+        run.compute = acceleration.report();
+    }
     observe("assemble", started.elapsed());
     progress.advance(1);
     Ok(run)
@@ -422,6 +497,7 @@ pub(crate) fn assemble_prepared(
     }
     check(ctx)?;
     Ok(MimoRun {
+        compute: secs_types::compute::ComputeReport::default(),
         notes: ideal.notes.clone(),
         ideal,
         paths: MimoPaths {
