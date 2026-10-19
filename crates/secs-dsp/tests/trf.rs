@@ -225,26 +225,12 @@ fn trf_converging_results() {
         );
         assert_eq!(result.nfev, integer(&o["nfev"]) as usize, "{} nfev", fx.id);
         assert_eq!(result.njev, integer(&o["njev"]) as usize, "{} njev", fx.id);
-        let expected_status = integer(&o["status"]) as i32;
-        if fx.inputs()["kind"] == "peq" && !oracle_libm() {
-            // PEQ transcendental roundoff can change which stopping test wins
-            // at the same evaluation. Only successful termination is allowed:
-            // 1=gtol, 2=ftol, 3=xtol, 4=both ftol/xtol (optimize::termination).
-            assert!(
-                (1..=4).contains(&result.status),
-                "{} must converge: status={} oracle={expected_status}",
-                fx.id,
-                result.status
-            );
-            if result.status != expected_status {
-                println!(
-                    "PLATFORM {} converged PEQ status={} oracle={expected_status} off the oracle's libm",
-                    fx.id, result.status
-                );
-            }
-        } else {
-            assert_eq!(result.status, expected_status, "{} status", fx.id);
-        }
+        assert_eq!(
+            result.status,
+            integer(&o["status"]) as i32,
+            "{} status",
+            fx.id
+        );
         // P03c baseline measurements are below the 1e-10 relative floor.
         assert!(x_error <= 1e-10, "{} final x {x_error:e}", fx.id);
         assert!(cost_error <= 1e-10, "{} final cost {cost_error:e}", fx.id);

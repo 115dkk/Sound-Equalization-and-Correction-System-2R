@@ -80,8 +80,7 @@ jobs:
             bundles: nsis
             target: ""
           - name: macos
-            # Same native test host as CI; the installer still builds both architectures.
-            os: macos-15-intel
+            os: macos-latest
             bundles: app,dmg
             target: universal-apple-darwin
           - name: linux

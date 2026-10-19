@@ -91,12 +91,8 @@ bit-exact at a given point, the test subtracts the cost difference between
 the two `x_new` values and holds only the remainder to `1e-9`; acceptance and post-trial Jacobian recomputation must
 match exactly, except reported oracle ratios within `1e-9` of 0, 0.25 or
 0.75. Only converging fits gate global x/cost (1.5× the measured error,
-`1e-10` relative floor) and exact nfev/njev. Status is exact on the oracle
-libm and for all non-PEQ fixtures. Converging PEQ fits on foreign libm must
-return a valid successful status (1=gtol, 2=ftol, 3=xtol, 4=ftol and xtol);
-a different successful status is reported. The x/cost bounds and evaluation
-counts still gate every converging fit on every libm. Capped fits gate nfev
-and exact status 0, and report njev and trajectory differences. P03b established
+`1e-10` relative floor) and exact nfev/njev/status; capped fits gate nfev
+and status, and report njev and trajectory differences. P03b established
 that a one-ulp step change amplifies into a 5e-4 Jacobian change even in
 SciPy itself, while OpenBLAS Haswell/SandyBridge/Nehalem/Prescott runs agree
 to 1e-16: a variant-derived global trace horizon cannot gate this port.
@@ -107,17 +103,6 @@ mismatches without failing, and the converging-fit results remain the gate.
 On the room fits, trial 81's actual reduction differs by 8.579e-9, of which
 8.578e-9 is the cost difference of a one-ulp `x_new` difference; the largest
 unexplained remainder over all trials is 2.7e-12.
-
-The narrow PEQ status exception is supported by the 2026-10-19
-`macos-15-intel` CI run [39288719747](https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R/actions/runs/39288719747):
-`dsp/trf_peq150` returned xtol status 3 instead of oracle gtol status 1,
-with identical nfev/njev (7/7), x relative error
-`1.68920433196717568e-12` and cost relative error
-`1.07043449648881415e-21`, both below the unchanged `1e-10` bounds.
-PEQ residuals use exp/log10 and frequency-response transcendental functions;
-foreign-libm last-bit differences can change the winning stopping test near
-convergence. The solver and frozen goldens are unchanged; failed, capped or
-unknown statuses cannot satisfy the converging-fit gate.
 
 ## Shared engine cases (P05)
 
