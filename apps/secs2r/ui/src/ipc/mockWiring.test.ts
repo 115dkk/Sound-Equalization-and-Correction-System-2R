@@ -93,7 +93,7 @@ describe("P33 mock wiring", () => {
     expect(events.filter((e) => e.event === "measure_status")).toHaveLength(2);
     await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
     expect((await mock.request({ method: "jobs" })).map((j) => j.job)).toEqual([watch.job, meter.job]);
-    expect(await mock.request({ method: "level_monitor_stop" })).toMatchObject({ status: "succeeded", result: { kind: "stopped" } });
+    expect(await mock.request({ method: "level_monitor_stop" })).toMatchObject({ status: "succeeded" });
     await mock.request({ method: "status_watch_stop" });
     expect(events.at(-1)).toMatchObject({ event: "finished", job: watch.job, result: { kind: "stopped" } });
     expect(await mock.request({ method: "jobs" })).toEqual([]);
@@ -107,7 +107,7 @@ describe("P33 mock wiring", () => {
     expect((await mock.request({ method: "results" })).calibration).toMatchObject({ mode: "linear", stale: false });
     expect((await mock.request({ method: "result_lines" })).ba?.rows).toHaveLength(2);
     await mock.request({ method: "mimo", params: { settings: null } }); mock.drain();
-    expect(events.at(-1)).toMatchObject({ result: { kind: "mimo", data: { stale: false } } });
+    expect(events.at(-1)).toMatchObject({ result: { kind: "mimo" } });
     await mock.request({ method: "target_apply_preset", params: { preset: "flat" } });
     expect((await mock.request({ method: "results" })).mimo?.stale).toBe(true);
     await mock.request({ method: "export_folder_set", params: { folder: "/exports" } });

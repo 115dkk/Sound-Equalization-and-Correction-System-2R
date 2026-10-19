@@ -161,7 +161,29 @@ fn deterministic_run_and_sample_flow() {
     let sampled = assert_success(&sampled);
     assert!(sampled.iter().any(|value| value.get("event").is_some()));
     let (calibrated, calibrate_time) = run(&["--deterministic-uuids", "calibrate", &project_arg]);
-    assert_success(&calibrated);
+    let calibrated = assert_success(&calibrated);
+    let summaries: Vec<_> = calibrated
+        .iter()
+        .filter(|line| line["reply"]["data"]["method"] == "results")
+        .collect();
+    assert_eq!(summaries.len(), 1);
+    let summary = &summaries[0]["reply"]["data"]["data"]["calibration"];
+    assert!(summary.get("chain").is_none());
+    assert!(
+        summary["main_roles"]
+            .as_array()
+            .is_some_and(|roles| !roles.is_empty())
+    );
+    let completion = calibrated
+        .iter()
+        .find(|line| {
+            line["event"]["event"] == "finished" && line["event"]["result"]["kind"] == "calibration"
+        })
+        .unwrap();
+    assert_eq!(
+        completion["event"]["result"],
+        serde_json::json!({"kind":"calibration"})
+    );
     assert!(project.exists());
     assert!(project.with_extension("mdat").exists());
     eprintln!(

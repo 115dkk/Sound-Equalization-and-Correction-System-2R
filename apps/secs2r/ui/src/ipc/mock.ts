@@ -188,12 +188,12 @@ export function createMockService(options: MockOptions = {}): MockService {
   const snapshot = (job: SimJob): JobSnapshot => {
     const stage = job.stages[job.stageIndex];
     return { job: job.id, kind: job.kind, status: job.cancelRequested ? "cancel_requested" : "running", cancellable: true,
-      progress: stage && stage.total > 0 ? { stage: stage.stage ?? "", done: job.done, total: stage.total } : null, result: null, error: null };
+      progress: stage && stage.total > 0 ? { stage: stage.stage ?? "", done: job.done, total: stage.total } : null, error: null };
   };
   const finish = (job: SimJob, status: "succeeded" | "failed" | "cancelled", error: IpcError | null): JobSnapshot => {
     jobs.delete(job.id);
     const result = status === "succeeded" ? clone(job.complete()) : null;
-    const done: JobSnapshot = { ...snapshot(job), status, result, error, cancellable: false };
+    const done: JobSnapshot = { ...snapshot(job), status, error, cancellable: false };
     events.emit({ event: "finished", job: job.id, status, result, error });
     if (jobs.size === 0 && timer) { clearInterval(timer); timer = null; }
     return done;
@@ -327,14 +327,18 @@ export function createMockService(options: MockOptions = {}): MockService {
   };
   const warnings = (): Notice[] => Object.entries(settings.subs_manual).flatMap(([role, sub]) => sub.hp_hz > 0 && sub.lp_hz > 0 && sub.lp_hz < 2 * sub.hp_hz
     ? [{ code: "sub_narrow_band", params: { role, hp_hz: String(sub.hp_hz), lp_hz: String(sub.lp_hz) } }] : []);
+  // Mock-only design values: compact wire summaries carry roles, not DSP filters.
+  const resultSubs = () => results.calibration?.sub_roles.map((role, i) => ({
+    ...clone(fx.signalChain.subs[i % fx.signalChain.subs.length]!), role,
+  })) ?? [];
   const resultLines = (): ResultLinesResult => ({
     stale: results.calibration?.stale ?? false,
     channels: results.calibration?.scorecard.map((s) => ({ role: s.role, within_1db_pct: [s.before.in1_20, s.after.in1_20], gd_spread_ms: [s.before.gd_20, s.after.gd_20], peq_count: 2,
       fir_taps: fx.modeSpec(results.calibration!.mode, results.calibration!.ultra_ms).fir_taps, xo_hz: settings.xo[fx.groupOf(s.role)] ?? null, mimo_support_count: results.mimo ? 2 : null })) ?? [],
     total_delay_ms: results.calibration?.latency_ms ?? null, notes: results.calibration?.notes ?? [], rc: results.calibration?.notes ?? [],
-    ba: results.calibration && results.calibration.chain.subs.length >= 2 ? {
+    ba: results.calibration && results.calibration.sub_roles.length >= 2 ? {
       stale: results.calibration.stale, subs_only: subsOnly, band_hz: [20, 200], flatness_db: [6.2, 1.8], seat_spread_db: [4.5, 2.1], positions: records.length,
-      rows: results.calibration.chain.subs.map((s) => ({ role: s.role, mode: s.mode, gain_db: s.gain_db, delay_ms: s.delay_ms, polarity: s.polarity,
+      rows: resultSubs().map((s) => ({ role: s.role, mode: s.mode, gain_db: s.gain_db, delay_ms: s.delay_ms, polarity: s.polarity,
         allpass: s.allpass, high_pass: [s.hp_hz, s.hp_type], low_pass: [s.lp_hz, s.lp_type], peq: s.peq })),
       layouts: Object.entries(settings.bundle_layouts).map(([bundle, entry]) => ({ bundle, kind: entry.kind,
         members: Object.entries(settings.subs_manual).filter(([, s]) => s.mode === "bundle" && s.bundle === bundle).map(([role]) => role),
@@ -491,14 +495,13 @@ export function createMockService(options: MockOptions = {}): MockService {
           const spec = fx.modeSpec(captured.mode, captured.ultra_ms);
           summary.latency_ms = spec.max_latency_ms;
           summary.verdict.added_delay_ms = spec.max_latency_ms;
-          summary.chain.latency_ms = spec.max_latency_ms; summary.chain.lift_ms = spec.lift_ms;
           summary.notes = [{ code: "rc_limit", params: { hz: String(captured.rc_hi ?? 310), auto: String(captured.rc_hi === null), schroeder_hz: "310" } }];
           summary.scorecard = roles.map((role, i) => ({ ...clone(fx.scorecard[i % fx.scorecard.length]!), role }));
-          summary.chain.mains = roles.map((role, i) => ({ ...clone(fx.signalChain.mains[i % fx.signalChain.mains.length]!), role }));
-          summary.chain.subs = config.speakers.filter((s) => s.role.startsWith("SW")).map((s, i) => ({ ...clone(fx.signalChain.subs[i % fx.signalChain.subs.length]!), role: s.role }));
+          summary.main_roles = roles;
+          summary.sub_roles = config.speakers.filter((s) => s.role.startsWith("SW")).map((s) => s.role);
           results = { calibration: summary, mimo: results.mimo ? { ...results.mimo, stale: true } : null };
           subsOnly = req.params.subs_only;
-          return { kind: "calibration", data: results };
+          return { kind: "calibration" };
         }) };
       }
       case "recommend_xo":
@@ -512,11 +515,9 @@ export function createMockService(options: MockOptions = {}): MockService {
         needProject();
         if (req.params.settings) settings = clone(req.params.settings);
         return { method: req.method, data: start("mimo", () => {
-          const paths = config.speakers.filter((s) => !s.role.startsWith("SW")).flatMap((main) =>
-            config.speakers.filter((s) => s.role.startsWith("SW")).map((support) => ({ input: main.role, support: support.role,
-              filter: settings.mimo_fir ? { Fir: { taps_48k: [0.1, 0.2, 0.1] } } : { Iir: { gain_db: -12, delay_ms: 1, polarity: 1, peq: [], allpass: [] } },
-              low_hz: settings.mimo_low ?? 20, delay_ms: 2,
-            })));
+          const inputs = config.speakers.filter((speaker) => !speaker.role.startsWith("SW")).length;
+          const supports = config.speakers.filter((speaker) => speaker.role.startsWith("SW")).length;
+          const supportCount = inputs * supports;
           const selected = computeStatus();
           const gpu = settings.mimo_fir && selected.selected === "cuda";
           const compute: import("./bindings/ComputeReport").ComputeReport = {
@@ -524,8 +525,8 @@ export function createMockService(options: MockOptions = {}): MockService {
             stage: gpu ? "ideal_fir_sweep" : null, accelerated_systems: gpu ? 11 : 0, cpu_systems: gpu ? 0 : 11, fallbacks: 0, reason: settings.mimo_fir ? selected.reason : "iir_reference",
           };
           results = { ...results, mimo: { ...clone(fx.mimoSummary), compute, fsiso: settings.fsiso, kind: settings.mimo_fir ? "fir" : "iir",
-            support_count: paths.length, fir_taps_total: settings.mimo_fir ? 3 * paths.length : 0, paths: { fsiso: settings.fsiso, paths } } };
-          return { kind: "mimo", data: results.mimo! };
+            support_count: supportCount, fir_taps_total: settings.mimo_fir ? 3 * supportCount : 0, input_count: supports > 0 ? inputs : 0 } };
+          return { kind: "mimo" };
         }) };
       case "export": {
         if (needProject().tutorial) throw new MockError(ipcError("tutorial_blocked"));
@@ -534,7 +535,7 @@ export function createMockService(options: MockOptions = {}): MockService {
         if (kind === "filter_text" || kind === "equalizer_apo") {
           const calibration = results.calibration;
           const hasMimo = settings.mimo_on && needProject().positions.length >= MIMO_MIN_POSITIONS && results.mimo !== null && !results.mimo.stale;
-          const reason = kind === "filter_text" && calibration.chain.subs.length > 0 ? "subs" : hasMimo ? "mimo" : null;
+          const reason = kind === "filter_text" && calibration.sub_roles.length > 0 ? "subs" : hasMimo ? "mimo" : null;
           if (reason) throw new MockError(ipcError("export_scope", `${kind} cannot export a result with ${reason}`, { reason }));
           // Date.now also follows the tour's mock clock; service folder stamps use local time.
           const date = new Date(Date.now());
@@ -548,7 +549,7 @@ export function createMockService(options: MockOptions = {}): MockService {
           const files = kind === "filter_text"
             ? [`${folder}/SECS 필터 ${fx.modeLabel(settings.mode, settings.ultra_ms)}.txt`]
             : [`${folder}/config.txt`, `${folder}/${prefix}/${prefix}.txt`, `${folder}/EqAPO 적용 방법.txt`];
-          if (settings.mode !== "zero") files.push(...calibration.chain.mains.map((main) => `${firFolder}/${prefix}_${main.role}_fir.wav`));
+          if (settings.mode !== "zero") files.push(...calibration.main_roles.map((role) => `${firFolder}/${prefix}_${role}_fir.wav`));
           return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: calibration.stale } })) };
         }
         const folder = `${(req.params.folder || exportFolder.folder).replace(/[\\/]+$/, "")}/${req.params.kind === "camilla_dsp" ? "camilladsp" : req.params.kind}`;
@@ -676,7 +677,7 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "result_curves": return { method: req.method, data: resultCurves(req.params) };
       case "result_lines": return { method: req.method, data: resultLines() };
       case "sub_take_values":
-        for (const s of results.calibration?.chain.subs ?? []) settings.subs_manual[s.role] = { ...clone(fx.subEntry), ...clone(s), mode: "fixed" };
+        for (const s of resultSubs()) settings.subs_manual[s.role] = { ...clone(fx.subEntry), ...clone(s), mode: "fixed" };
         dirty(); return { method: req.method, data: settings };
       case "dialog_open_project": return { method: req.method, data: dialog(req.method, fx.projectInfo.path) };
       case "dialog_save_project": return { method: req.method, data: dialog(req.method, `C:/Users/demo/Documents/SECS/${req.params.suggested || "project.secs"}`) };

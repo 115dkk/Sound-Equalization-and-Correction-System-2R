@@ -1,0 +1,118 @@
+[
+  {
+    "file": "screen.calibrate.gpu-auto.en.png",
+    "size": [
+      1280,
+      829
+    ],
+    "difference_bbox": null,
+    "app_pixels_identical": true,
+    "excluded_region": "gallery specimen caption y < 27px",
+    "before_sha256": "836c41db099be1569661785064d60d018449ac6723726412dd15375620ff55c0",
+    "after_sha256": "836c41db099be1569661785064d60d018449ac6723726412dd15375620ff55c0"
+  },
+  {
+    "file": "screen.calibrate.gpu-auto.ko.png",
+    "size": [
+      1280,
+      829
+    ],
+    "difference_bbox": [
+      350,
+      4,
+      539,
+      17
+    ],
+    "app_pixels_identical": true,
+    "excluded_region": "gallery specimen caption y < 27px",
+    "before_sha256": "966c2e75d1f6812970d675728e6bcb8410130519dccc51323a28c0207677fe1b",
+    "after_sha256": "e4cc26c6f007b72a822bb9bc10fe0b53dcff02d406fe22b155b5e655fe077f97"
+  },
+  {
+    "file": "screen.calibrate.mimo-settings.en.png",
+    "size": [
+      1280,
+      829
+    ],
+    "difference_bbox": null,
+    "app_pixels_identical": true,
+    "excluded_region": "gallery specimen caption y < 27px",
+    "before_sha256": "d03e9c0e1a4d215d413233c69d526eebc1af3a45ff5ba8b3270a1ee64a4914db",
+    "after_sha256": "d03e9c0e1a4d215d413233c69d526eebc1af3a45ff5ba8b3270a1ee64a4914db"
+  },
+  {
+    "file": "screen.calibrate.mimo-settings.ko.png",
+    "size": [
+      1280,
+      829
+    ],
+    "difference_bbox": [
+      207,
+      5,
+      434,
+      18
+    ],
+    "app_pixels_identical": true,
+    "excluded_region": "gallery specimen caption y < 27px",
+    "before_sha256": "c58b4c5e0b03b7058fd257f1cd102a87064d43aa425527f355280ec0f4c80d6b",
+    "after_sha256": "0e981c2f36e7a48469db7cb9ae1568fdb31c7a2be1fb03526617d2ec3fd86f50"
+  },
+  {
+    "file": "screen.export.rc-only.en.png",
+    "size": [
+      1280,
+      828
+    ],
+    "difference_bbox": null,
+    "app_pixels_identical": true,
+    "excluded_region": "gallery specimen caption y < 27px",
+    "before_sha256": "2b32706f95a1d4465c61d101bfbb0f78cbde98b0bc0c6e29c68499334adb3a86",
+    "after_sha256": "2b32706f95a1d4465c61d101bfbb0f78cbde98b0bc0c6e29c68499334adb3a86"
+  },
+  {
+    "file": "screen.export.rc-only.ko.png",
+    "size": [
+      1280,
+      828
+    ],
+    "difference_bbox": [
+      411,
+      4,
+      570,
+      17
+    ],
+    "app_pixels_identical": true,
+    "excluded_region": "gallery specimen caption y < 27px",
+    "before_sha256": "1f4b04c139c31becec3c3af9765f7ec2069a5aa6228c1722ee31a73d8e4d2ee5",
+    "after_sha256": "72821a14be256fcaab43d69a97e1f1684e8e408a7e78a385b64d67f08d9b8e65"
+  },
+  {
+    "file": "screen.export.ready.en.png",
+    "size": [
+      1280,
+      829
+    ],
+    "difference_bbox": null,
+    "app_pixels_identical": true,
+    "excluded_region": "gallery specimen caption y < 27px",
+    "before_sha256": "6e0b291fa1d2bcf52c3f000553643eabb2ad470dd0a3c5172cfefbf571afa316",
+    "after_sha256": "6e0b291fa1d2bcf52c3f000553643eabb2ad470dd0a3c5172cfefbf571afa316"
+  },
+  {
+    "file": "screen.export.ready.ko.png",
+    "size": [
+      1280,
+      829
+    ],
+    "difference_bbox": [
+      207,
+      4,
+      350,
+      17
+    ],
+    "app_pixels_identical": true,
+    "excluded_region": "gallery specimen caption y < 27px",
+    "before_sha256": "79aa20985a141a8b16de43c49eae281e0fafa7deae118111e93559162aff4f10",
+    "after_sha256": "9d21854f2150931981f1fbf4e327ca99399affcee82c6f69c13c10717833115a"
+  }
+]

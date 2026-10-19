@@ -536,7 +536,7 @@ function BaSection({ view, actions, editSub }: Props & { editSub?: string | unde
   const infra = infraState(s, subs);
   const warnings = view.subWarnings;
   const result = view.results.calibration;
-  const canTake = !!result && result.chain.subs.length > 0;
+  const canTake = !!result && result.sub_roles.length > 0;
   const busy = view.running !== null;
   const anyFixed = subs.some((r) => subOf(s, r).mode === "fixed");
   return (
@@ -699,7 +699,7 @@ function MimoSection({ view, actions }: Props) {
     const parts = [t("calibrate.mimo.state.done", { kind: mimo.kind.toUpperCase(), count: mimo.support_count })];
     if (s.mimo_max_supports > 0) parts.push(t("calibrate.mimo.state.cap", { cap: s.mimo_max_supports }));
     if (mimo.kind === "fir" && view.firBudget > 0) {
-      const taps = mimo.paths.paths.reduce((sum, p) => sum + ("Fir" in p.filter ? p.filter.Fir.taps_48k.length : 0), 0);
+      const taps = mimo.fir_taps_total;
       parts.push(
         t(taps <= view.firBudget ? "calibrate.mimo.state.budget" : "calibrate.mimo.state.budget_over", { taps: number(taps), budget: number(view.firBudget) }),
       );

@@ -13,7 +13,8 @@ pub(crate) fn dispatch(
         Request::Bootstrap => Ok(Response::Bootstrap(service.bootstrap())),
         Request::ComputeStatus => Ok(Response::ComputeStatus(service.acceleration().status)),
         Request::ProjectNew(params) => {
-            let response = lock(&service.session)
+            let mut session = lock(&service.session);
+            let response = session
                 .create(
                     params.path.into(),
                     &params.preset,
@@ -29,7 +30,8 @@ pub(crate) fn dispatch(
             response
         }
         Request::ProjectOpen(params) => {
-            let response = lock(&service.session)
+            let mut session = lock(&service.session);
+            let response = session
                 .open(params.path.into())
                 .map(Response::ProjectOpen)
                 .map_err(IpcError::from);

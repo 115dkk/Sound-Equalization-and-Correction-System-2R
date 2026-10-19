@@ -93,6 +93,27 @@ fn call_ok(service: &Service, request: Request, events: Arc<dyn EventSink>) -> R
     *response
 }
 
+fn read_results(service: &Service) -> secs_types::ipc::ResultsSummary {
+    let Response::Results(results) = call_ok(service, Request::Results, Arc::new(NoEvents)) else {
+        panic!()
+    };
+    results
+}
+
+fn cached_field<T: serde::de::DeserializeOwned>(project: &Path, name: &str) -> T {
+    let value: serde_json::Value = serde_json::from_slice(
+        &fs::read(project.with_extension("irs").join("secs_run_cache.json")).unwrap(),
+    )
+    .unwrap();
+    serde_json::from_value(value["results"][name].clone()).unwrap()
+}
+fn cached_chain(project: &Path) -> secs_types::chain::SignalChain {
+    cached_field(project, "calibration_chain")
+}
+fn cached_paths(project: &Path) -> secs_types::chain::MimoPaths {
+    cached_field(project, "mimo_paths")
+}
+
 #[test]
 fn new_projects_match_upstream_bytes() {
     let root = temp_root("new-projects");
@@ -359,18 +380,16 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
 
     let calibration_events = Arc::new(Events::default());
     let calibration_job = start_calibration(&service, calibration_events.clone(), settings.clone());
-    let JobResult::Calibration(results) =
+    let JobResult::Calibration =
         finished_result(calibration_events.wait(calibration_job, Duration::from_secs(120)))
     else {
-        panic!("calibration result must be returned");
+        panic!("calibration completion must be returned");
     };
+    let results = read_results(&service);
     assert!(!results.calibration.as_ref().unwrap().stale);
-    assert_eq!(results.calibration.as_ref().unwrap().chain.mains.len(), 11);
+    assert_eq!(results.calibration.as_ref().unwrap().main_roles.len(), 11);
     let direct = secs_engine::test_support::production_case("dolby", 1);
-    assert_eq!(
-        results.calibration.as_ref().unwrap().chain,
-        direct.design.chain
-    );
+    assert_eq!(cached_chain(&path), direct.design.chain);
     let blocked_folder = root.join("blocked-filter-text-subs");
     let Envelope::Err(error) = service.call(
         Request::Export(ExportParams {
@@ -585,13 +604,15 @@ fn filter_text_export_matches_direct_and_reopened_bytes_without_redesign() {
     let settings = CalibrationSettings::default();
     let calibration_events = Arc::new(Events::default());
     let calibration = start_calibration(&service, calibration_events.clone(), settings.clone());
-    let JobResult::Calibration(results) =
+    let JobResult::Calibration =
         finished_result(calibration_events.wait(calibration, Duration::from_secs(120)))
     else {
-        panic!("calibration result must be returned");
+        panic!("calibration completion must be returned");
     };
+    let results = read_results(&service);
     let summary = results.calibration.unwrap();
-    assert!(summary.chain.subs.is_empty());
+    assert!(summary.sub_roles.is_empty());
+    let chain = cached_chain(&path);
 
     let folder = root.join("filter-text-export");
     let live = export_and_wait(
@@ -621,7 +642,7 @@ fn filter_text_export_matches_direct_and_reopened_bytes_without_redesign() {
     );
     let label = settings.label();
     let direct_run = secs_filters::FilterRun {
-        chain: &summary.chain,
+        chain: &chain,
         mimo: None,
         mode: "mixed",
         ultra_ms: settings.ultra_ms,
@@ -795,7 +816,7 @@ fn stale_calibration_exports_with_flag_and_cache_survives_reopen() {
         other => panic!("unexpected results response: {other:?}"),
     };
     assert!(!cached.stale);
-    assert_eq!(cached.chain, before.chain);
+    assert_eq!(cached, before);
 
     {
         let mut store = secs_project::MeasurementStore::open(&path).unwrap();
@@ -913,11 +934,11 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
     ) else {
         panic!("MIMO must start");
     };
-    let JobResult::Mimo(summary) =
-        finished_result(mimo_events.wait(started.job, Duration::from_secs(120)))
+    let JobResult::Mimo = finished_result(mimo_events.wait(started.job, Duration::from_secs(120)))
     else {
-        panic!("MIMO result must be returned");
+        panic!("MIMO completion must be returned");
     };
+    let summary = read_results(&service).mimo.unwrap();
     assert!(!summary.stale);
     let direct = secs_engine::test_support::production_case("room_dba", 1);
     let ctx = secs_compute::Context::new(
@@ -935,8 +956,8 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
         &ctx,
     )
     .unwrap();
-    assert_eq!(summary.paths, direct_mimo.paths);
-    assert!(!summary.paths.paths.is_empty());
+    assert_eq!(cached_paths(&path), direct_mimo.paths);
+    assert!(summary.support_count > 0);
 
     for (kind, reason) in [
         (ExportKind::FilterText, "subs"),
@@ -1250,11 +1271,12 @@ fn gpu_reports_survive_cache_and_fallback_exports() {
         ) else {
             panic!()
         };
-        let JobResult::Mimo(summary) =
-            finished_result(events.wait(started.job, Duration::from_secs(120)))
+        let JobResult::Mimo = finished_result(events.wait(started.job, Duration::from_secs(120)))
         else {
             panic!()
         };
+        let summary = read_results(&service).mimo.unwrap();
+        let paths = cached_paths(&path);
         assert_eq!(summary.compute.requested, ComputePreference::Auto);
         assert_eq!(
             summary.compute.backend,
@@ -1274,13 +1296,13 @@ fn gpu_reports_survive_cache_and_fallback_exports() {
                     .iter()
                     .any(|notice| notice.code == "compute_fallback")
             );
-            assert_eq!(previous_paths.as_ref(), Some(&summary.paths));
+            assert_eq!(previous_paths.as_ref(), Some(&paths));
         } else {
             assert!(summary.compute.accelerated_systems > 0);
             assert_eq!(summary.compute.stage, Some(ComputeStage::IdealFirSweep));
             assert_eq!(summary.compute.device.as_deref(), Some("Test GPU"));
             assert_eq!(summary.compute.fallbacks, 0);
-            previous_paths = Some(summary.paths.clone());
+            previous_paths = Some(paths);
         }
         call_ok(
             &service,
@@ -1374,4 +1396,129 @@ fn gpu_reports_survive_cache_and_fallback_exports() {
         }
     }
     fs::remove_dir_all(root).unwrap();
+}
+
+#[derive(Debug, Default)]
+struct PausedProgress {
+    events: Events,
+    gate: Mutex<(bool, bool)>,
+    changed: Condvar,
+}
+impl EventSink for PausedProgress {
+    fn send(&self, event: JobEvent) {
+        if matches!(event, JobEvent::Progress { .. }) {
+            let mut gate = lock(&self.gate);
+            if !gate.0 {
+                gate.0 = true;
+                self.changed.notify_all();
+                while !gate.1 {
+                    gate = self.changed.wait(gate).unwrap();
+                }
+            }
+        }
+        self.events.send(event);
+    }
+}
+impl PausedProgress {
+    fn wait_until_paused(&self) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let mut gate = lock(&self.gate);
+        while !gate.0 {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "worker did not reach progress gate");
+            gate = self.changed.wait_timeout(gate, remaining).unwrap().0;
+        }
+    }
+    fn release(&self) {
+        lock(&self.gate).1 = true;
+        self.changed.notify_all();
+    }
+}
+
+#[test]
+fn project_replacement_rejects_old_compute_commit_and_preserves_completion() {
+    for mimo in [false, true] {
+        let root = temp_root(if mimo {
+            "replace-mimo"
+        } else {
+            "replace-calibration"
+        });
+        fs::create_dir_all(&root).unwrap();
+        let (source, mut settings) = write_case(&root, "room_dba");
+        settings.mimo_on = true;
+        settings.mimo_fir = true;
+        settings.mimo_max_supports = 1;
+        let service = service();
+        open(&service, &source);
+        if mimo {
+            let events = Arc::new(Events::default());
+            let id = start_calibration(&service, events.clone(), settings.clone());
+            finished_result(events.wait(id, Duration::from_secs(120)));
+        }
+        let previous_cache =
+            fs::read(source.with_extension("irs").join("secs_run_cache.json")).ok();
+        let events = Arc::new(PausedProgress::default());
+        let request = if mimo {
+            Request::Mimo(MimoParams {
+                settings: Some(settings),
+            })
+        } else {
+            Request::Calibrate(CalibrateParams {
+                settings: Some(settings),
+                ..Default::default()
+            })
+        };
+        let response = call_ok(&service, request, events.clone());
+        let job = match response {
+            Response::Mimo(started) | Response::Calibrate(started) => started.job,
+            _ => panic!(),
+        };
+        events.wait_until_paused();
+        let replacement = root.join("replacement.secs");
+        let create = Request::ProjectNew(ProjectNewParams {
+            path: replacement.to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        });
+        if mimo {
+            // Exercise open as well as new while the old compute is active.
+            call_ok(&Service::new(Deps::default()), create, Arc::new(NoEvents));
+            open(&service, &replacement);
+        } else {
+            call_ok(&service, create, Arc::new(NoEvents));
+        }
+        events.release();
+        let finished = events.events.wait(job, Duration::from_secs(120));
+        assert!(
+            matches!(finished, JobEvent::Finished { status: JobStatus::Failed, result: None, error: Some(ref error), .. } if error.code == ErrorCode::StaleInputs)
+        );
+        let current = read_results(&service);
+        assert!(current.calibration.is_none() && current.mimo.is_none());
+        let Response::ProjectInfo(info) =
+            call_ok(&service, Request::ProjectInfo, Arc::new(NoEvents))
+        else {
+            panic!()
+        };
+        assert!(!info.dirty);
+        assert!(
+            !replacement
+                .with_extension("irs")
+                .join("secs_run_cache.json")
+                .exists()
+        );
+        assert_eq!(
+            fs::read(source.with_extension("irs").join("secs_run_cache.json")).ok(),
+            previous_cache
+        );
+        let Response::Jobs(jobs) = call_ok(&service, Request::Jobs, Arc::new(NoEvents)) else {
+            panic!()
+        };
+        assert!(
+            jobs.iter()
+                .any(|snapshot| snapshot.job == job && snapshot.status == JobStatus::Failed)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 }

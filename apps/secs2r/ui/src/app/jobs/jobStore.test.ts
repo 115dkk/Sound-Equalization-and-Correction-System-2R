@@ -47,7 +47,7 @@ describe("job store", () => {
     let state = jobsReducer(initialJobs, {
       type: "snapshots",
       at: 0,
-      jobs: [{ job: 9, kind: "export", status: "running", cancellable: true, progress: { stage: "design", done: 0, total: 1 }, result: null, error: null }],
+      jobs: [{ job: 9, kind: "export", status: "running", cancellable: true, progress: { stage: "design", done: 0, total: 1 }, error: null }],
     });
     expect(activeJobs(state).map((job) => job.id)).toEqual([9]);
     state = jobsReducer(state, { type: "cancel_requested", job: 9 });
@@ -69,11 +69,50 @@ describe("job store", () => {
       {
         type: "snapshots",
         at: 3,
-        jobs: [{ job: 4, kind: "status_watch", status: "running", cancellable: true, progress: null, result: null, error: null }],
+        jobs: [{ job: 4, kind: "status_watch", status: "running", cancellable: true, progress: null, error: null }],
       },
     ]);
     expect(state.jobs.map((job) => job.id)).toEqual([3]);
     expect(state.history).toEqual([]);
+  });
+
+  it("retains 32 terminal jobs, every active job and at most 200 history entries", () => {
+    let state = run([{ type: "event", at: 0, event: { event: "started", job: 1, kind: "measure" } }]);
+    for (let id = 2; id <= 151; id++) {
+      state = jobsReducer(state, { type: "event", at: id, event: { event: "started", job: id, kind: "calibrate" } });
+      state = jobsReducer(state, { type: "event", at: id, event: { event: "log", job: id, code: "note", params: {} } });
+      state = jobsReducer(state, { type: "event", at: id, event: { event: "finished", job: id, status: "succeeded", result: { kind: "calibration" }, error: null } });
+    }
+    expect(state.jobs).toHaveLength(33);
+    expect(activeJobs(state).map((job) => job.id)).toEqual([1]);
+    expect(state.jobs.filter((job) => job.status === "succeeded").map((job) => job.id)).toEqual(Array.from({ length: 32 }, (_, i) => i + 120));
+    expect(state.history).toHaveLength(200);
+    const before = state;
+    state = jobsReducer(state, { type: "event", at: 200, event: { event: "finished", job: 151, status: "succeeded", result: { kind: "calibration" }, error: null } });
+    expect(state).toBe(before);
+    state = jobsReducer(state, { type: "snapshots", at: 200, jobs: [{ job: 2, kind: "calibrate", status: "running", cancellable: true, progress: null, error: null }] });
+    expect(activeJobs(state).map((job) => job.id)).toEqual([1]);
+    state = jobsReducer(state, { type: "clear_history" });
+    expect(state.history).toEqual([]);
+    expect(state.jobs).toHaveLength(33);
+  });
+
+  it("keeps a first late Started even when its id is between already retired ids", () => {
+    let state = run([{ type: "event", at: 0, event: { event: "started", job: 1, kind: "measure" } }]);
+    for (let job = 100; job < 140; job++) {
+      state = jobsReducer(state, { type: "event", at: job, event: { event: "started", job, kind: "calibrate" } });
+      state = jobsReducer(state, { type: "event", at: job, event: { event: "finished", job, status: "succeeded", result: { kind: "calibration" }, error: null } });
+    }
+    const started: JobsAction = { type: "event", at: 200, event: { event: "started", job: 50, kind: "export" } };
+    state = jobsReducer(state, started);
+    expect(activeJobs(state).map((job) => job.id)).toEqual([1, 50]);
+    expect(state.jobs).toHaveLength(34);
+    expect(jobsReducer(state, started)).toBe(state);
+    const finished: JobsAction = { type: "event", at: 201, event: { event: "finished", job: 50, status: "succeeded", result: null, error: null } };
+    state = jobsReducer(state, finished);
+    expect(jobsReducer(state, finished)).toBe(state);
+    expect(activeJobs(state).map((job) => job.id)).toEqual([1]);
+    expect(state.history.filter((entry) => entry.job === 50 && entry.type === "finished")).toHaveLength(1);
   });
 
   it("offers cancel again when job_cancel is refused", () => {

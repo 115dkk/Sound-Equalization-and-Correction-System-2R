@@ -86,4 +86,4 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 
 | 번호 | 업스트림 동작 | 바꾸는 동작 | 출처 | 상태 |
 |---|---|---|---|---|
-| S1 | 프로젝트를 열면 `.irs/calibration_cache.pkl`을 제한 없이 역직렬화합니다. 남이 보낸 프로젝트 폴더로 코드를 실행할 수 있습니다. | 8 MiB로 제한한 버전 2 JSON 데이터 캐시(`secs_run_cache.json`)를 원자 교체합니다. 옛 피클은 열지 않습니다. 캐시는 CamillaDSP에 필요한 사슬·실행 라벨·MIMO 경로를 보관하고, 스펙트럼이 필요한 mdat는 다시 연 프로젝트에서 취소 가능한 `design` 단계를 먼저 계산합니다. `secs-service::{round_trip_and_ignore_pickle,corrupt_and_oversized_files_are_ignored,unknown_cache_version_is_ignored,exports_after_reopening_match_pre_close_bytes}`가 지킵니다. | `calibration.py:1144-1187, 1226-1236` | 적용 |
+| S1 | 프로젝트를 열면 `.irs/calibration_cache.pkl`을 제한 없이 역직렬화합니다. 남이 보낸 프로젝트 폴더로 코드를 실행할 수 있습니다. | 크기가 제한된 JSON 데이터 캐시(`secs_run_cache.json`)를 원자 교체합니다. 버전 4는 대형 FIR 원본을 보존하도록 64 MiB를 상한으로 하며 v2/v3를 읽어 이주합니다(ADR 0009). 옛 피클은 열지 않습니다. 캐시는 화면 요약과 분리된 사슬·실행 라벨·MIMO 경로를 보관하고, 스펙트럼이 필요한 mdat는 다시 연 프로젝트에서 취소 가능한 `design` 단계를 먼저 계산합니다. `secs-service::{round_trip_and_ignore_pickle,corrupt_and_oversized_files_are_ignored,unknown_cache_version_is_ignored,exports_after_reopening_match_pre_close_bytes}`가 지킵니다. | `calibration.py:1144-1187, 1226-1236` | 적용 |

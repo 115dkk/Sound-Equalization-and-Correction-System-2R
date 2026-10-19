@@ -437,6 +437,7 @@ fn run(action: Action, runner: &mut Runner) {
         Action::Calibrate { project } => {
             runner.open(&project);
             runner.calibrate(None);
+            runner.call(Request::Results);
         }
         Action::RecommendXo { project } => {
             runner.open(&project);
@@ -445,6 +446,7 @@ fn run(action: Action, runner: &mut Runner) {
         Action::Mimo { project } => {
             runner.open(&project);
             runner.call(Request::Mimo(MimoParams::default()));
+            runner.call(Request::Results);
         }
         Action::Export { project, kind, out } => {
             runner.open(&project);
@@ -540,11 +542,11 @@ fn full_run(runner: &mut Runner, out: &Path, project: Option<&Path>, fill: FillC
     let has_subs = results
         .as_ref()
         .and_then(|results| results.calibration.as_ref())
-        .is_some_and(|calibration| !calibration.chain.subs.is_empty());
+        .is_some_and(|calibration| !calibration.sub_roles.is_empty());
     let has_mimo = results
         .as_ref()
         .and_then(|results| results.mimo.as_ref())
-        .is_some_and(|mimo| !mimo.stale && !mimo.paths.paths.is_empty());
+        .is_some_and(|mimo| !mimo.stale && mimo.support_count > 0);
     for (kind, folder) in [
         (ExportKind::CamillaDsp, "camilla-dsp"),
         (ExportKind::StagedMdat, "staged-mdat"),

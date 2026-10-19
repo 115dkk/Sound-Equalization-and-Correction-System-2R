@@ -233,9 +233,8 @@ function ResultCard({ view, actions }: { view: ExportView; actions: ExportAction
 function ResultFacts({ view, result }: { view: ExportView; result: CalibrationSummary }) {
   const t = useT();
   const number = useNumber();
-  const chain = result.chain;
   const mimo = mimoInclusion(view);
-  const roles = [...chain.mains.map((main) => main.role), ...chain.subs.map((sub) => sub.role)].map(roleCode);
+  const roles = [...result.main_roles, ...result.sub_roles].map(roleCode);
   const rc = view.rc.map((notice) => rcText(t, notice, number));
   return (
     <div className="export-facts">
@@ -245,10 +244,10 @@ function ResultFacts({ view, result }: { view: ExportView; result: CalibrationSu
           <span className="tabular">{t("export.result.latency.value", { ms: number(result.latency_ms, 1) })}</span>
         </Fact>
         <Fact label={t("export.result.channels")}>
-          <span className="tabular">{t("export.result.channels.value", { count: chain.mains.length })}</span>
+          <span className="tabular">{t("export.result.channels.value", { count: result.main_roles.length })}</span>
         </Fact>
         <Fact label={t("export.result.subs")}>
-          {chain.subs.length > 0 ? <span className="tabular">{t("export.result.subs.value", { count: chain.subs.length })}</span> : t("export.result.subs.none")}
+          {result.sub_roles.length > 0 ? <span className="tabular">{t("export.result.subs.value", { count: result.sub_roles.length })}</span> : t("export.result.subs.none")}
         </Fact>
       </dl>
       <dl className="export-facts__lines">

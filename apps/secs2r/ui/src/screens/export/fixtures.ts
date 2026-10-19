@@ -3,7 +3,6 @@
 // and the same room without subs for the filter formats' scope.
 import type { FrameModel } from "../../app/model";
 import type { IpcError } from "../../ipc/bindings/IpcError";
-import type { MimoPath } from "../../ipc/bindings/MimoPath";
 import type { MimoSummary } from "../../ipc/bindings/MimoSummary";
 import type { Notice } from "../../ipc/bindings/Notice";
 import { SAMPLE_MAINS, SAMPLE_SUBS, calibrationSummary, cpuComputeReport, noResults } from "../../ipc/fixtures";
@@ -11,27 +10,16 @@ import { exportStepState, type ExportView } from "./types";
 
 const BASE = "C:/Users/demo/Documents/SECS/SECS_export/2026-10-14 거실 7.1.4";
 
-/** IIR support paths: each main input supported by both subs. */
-const paths: MimoPath[] = SAMPLE_MAINS.flatMap((input, i) =>
-  SAMPLE_SUBS.map((support, j) => ({
-    input,
-    support,
-    filter: { Iir: { gain_db: -6 - j * 2, delay_ms: 4.5 + i * 0.3, polarity: j === 1 ? -1 : 1, peq: [[38 + j * 6, 4, -3]], allpass: [[52, 0.71]] } },
-    low_hz: 20,
-    delay_ms: 2.4 + i * 0.1,
-  })),
-);
-
 export const exportMimo: MimoSummary = {
   compute: cpuComputeReport,
   stale: false,
   kind: "iir",
   fsiso: 150,
-  support_count: paths.length,
+  support_count: SAMPLE_MAINS.length * SAMPLE_SUBS.length,
   // IIR supports carry no FIR taps.
   fir_taps_total: 0,
   notes: [],
-  paths: { fsiso: 150, paths },
+  input_count: SAMPLE_MAINS.length,
 };
 
 export const exportRc: Notice[] = [
@@ -93,7 +81,7 @@ export const exportDone: ExportView = {
 export const exportFailed: ExportView = { ...exportReady, runs: { camilla_dsp: { status: "failed", error: exportError } } };
 
 /** The sample result without its subs: RC alone, so every filter format can carry it. */
-const rcOnlySummary = { ...calibrationSummary, chain: { ...calibrationSummary.chain, subs: [] } };
+const rcOnlySummary = { ...calibrationSummary, sub_roles: [] };
 
 /** No subs, MIMO off: all three filter formats are on. */
 export const exportRcOnly: ExportView = {
@@ -110,18 +98,7 @@ export const exportMimoNoSubs: ExportView = {
     mimo: {
       ...exportMimo,
       support_count: SAMPLE_MAINS.length * 2,
-      paths: {
-        fsiso: 150,
-        paths: SAMPLE_MAINS.flatMap((input, i) =>
-          [1, SAMPLE_MAINS.length - 1].map((step, j) => ({
-            input,
-            support: SAMPLE_MAINS[(i + step) % SAMPLE_MAINS.length]!,
-            filter: { Iir: { gain_db: -8 - j * 2, delay_ms: 3.5 + i * 0.2, polarity: 1, peq: [[64 + j * 8, 3, -2]], allpass: [] } },
-            low_hz: 30,
-            delay_ms: 2.1 + i * 0.1,
-          })),
-        ),
-      },
+      input_count: SAMPLE_MAINS.length,
     },
   },
   settings: { mode: "mixed", ultra_ms: 200, mimo_on: true },
@@ -166,7 +143,7 @@ export function exportFrame(view: ExportView, fileName = "거실 7.1.4.secs"): F
   const calibration = view.computing ? "computing" : !result ? "none" : result.stale ? "stale" : "done";
   const total = view.positions >= 9 ? 9 : view.positions;
   // The room the result came from: the sample's two subs, or none for the RC-only results.
-  const subs = result ? result.chain.subs.length : SAMPLE_SUBS.length;
+  const subs = result ? result.sub_roles.length : SAMPLE_SUBS.length;
   return {
     current: "export",
     project: {

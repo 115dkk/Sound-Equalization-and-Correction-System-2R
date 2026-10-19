@@ -49,6 +49,7 @@ pub(crate) struct Results {
 
 #[derive(Debug)]
 pub(crate) struct Prepared {
+    pub identity: u64,
     pub project: Project,
     pub settings: CalibrationSettings,
     pub measurements: MeasurementSet,
@@ -66,7 +67,6 @@ impl Service {
     ) -> Result<JobStarted, IpcError> {
         let prepared = self.prepare(params.settings)?;
         let subs_only = params.subs_only;
-        let compute_key = crate::compute::ComputeIdentity::from(&self.acceleration().status);
         let results = self.results_state.clone();
         let session = self.session.clone();
         let memory = self.deps.memory.available_bytes();
@@ -81,10 +81,13 @@ impl Service {
             };
             let fitters = production_fitters(job.cancel());
             let design = design(&request, &ctx, fitters.as_ref()).map_err(engine_error)?;
+            let mut session_guard = lock(&session);
+            let open = session_guard.require_mut().map_err(IpcError::from)?;
+            require_identity(open, prepared.identity)?;
             job.begin_commit()?;
             let summary = summarize(&design, &prepared.settings);
             let run = CalibrationRun {
-                summary: summary.clone(),
+                summary,
                 settings: prepared.settings.clone(),
                 signature: prepared.signature,
                 target_key: prepared.target_key,
@@ -92,24 +95,21 @@ impl Service {
                 measurements: prepared.measurements,
                 config: prepared.config,
             };
-            {
-                let mut state = lock(&results);
-                if subs_only {
-                    state.subs = Some(run);
-                } else {
-                    state.calibration = Some(run);
-                    state.subs = None;
-                }
+            let mut state = lock(&results);
+            if subs_only {
+                state.subs = Some(run);
+            } else {
+                state.calibration = Some(run);
+                state.subs = None;
             }
-            {
-                let mut session = lock(&session);
-                let open = session.require_mut().map_err(IpcError::from)?;
-                store_calibration(open.store.project_mut(), &prepared.settings);
-                open.dirty = true;
-            }
-            persist_cache(&results, &session)?;
-            let current = summaries(&results, &session, &compute_key)?;
-            Ok(JobResult::Calibration(Box::new(current)))
+            store_calibration(open.store.project_mut(), &prepared.settings);
+            open.dirty = true;
+            let path = open.path.clone();
+            let cached = snapshot_cache(&state);
+            drop(state);
+            drop(session_guard);
+            persist_cache(cached, &path, prepared.identity, &session)?;
+            Ok(JobResult::Calibration)
         })
     }
 
@@ -147,25 +147,17 @@ impl Service {
     ) -> Result<JobStarted, IpcError> {
         let selection = self.require_acceleration()?;
         let compute_key = crate::compute::ComputeIdentity::from(&selection.status);
-        let settings = {
-            let session = lock(&self.session);
-            let open = session.require().map_err(IpcError::from)?;
-            params
-                .settings
-                .unwrap_or_else(|| calibration_from_project(open.store.project()))
-        };
+        let session_guard = lock(&self.session);
+        let open = session_guard.require().map_err(IpcError::from)?;
+        let identity = open.identity;
+        let settings = params
+            .settings
+            .unwrap_or_else(|| calibration_from_project(open.store.project()));
         let state = lock(&self.results_state);
         let calibration = state.calibration.as_ref().ok_or_else(|| {
             IpcError::new(ErrorCode::EngineInput, "calibration must run before MIMO")
         })?;
-        if calibration_stale(
-            calibration,
-            lock(&self.session)
-                .require()
-                .map_err(IpcError::from)?
-                .store
-                .project(),
-        ) {
+        if calibration_stale(calibration, open.store.project()) {
             return Err(IpcError::new(
                 ErrorCode::StaleInputs,
                 "calibration result is stale",
@@ -182,6 +174,7 @@ impl Service {
         let measurements = calibration.measurements.clone();
         let config = calibration.config.clone();
         drop(state);
+        drop(session_guard);
         let memory = self.deps.memory.available_bytes();
         let results = self.results_state.clone();
         let session = self.session.clone();
@@ -197,6 +190,9 @@ impl Service {
                 &selection,
             )
             .map_err(engine_error)?;
+            let mut session_guard = lock(&session);
+            let open = session_guard.require_mut().map_err(IpcError::from)?;
+            require_identity(open, identity)?;
             job.begin_commit()?;
             let summary = MimoSummary {
                 stale: false,
@@ -221,18 +217,29 @@ impl Service {
                         params: [("count".into(), run.compute.fallbacks.to_string())].into(),
                     }))
                     .collect(),
-                paths: run.paths.clone(),
+                input_count: run
+                    .paths
+                    .paths
+                    .iter()
+                    .map(|path| &path.input)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len(),
                 compute: run.compute.clone(),
             };
-            lock(&results).mimo = Some(MimoResult {
-                summary: summary.clone(),
+            let mut state = lock(&results);
+            state.mimo = Some(MimoResult {
+                summary,
                 settings_key: settings.mimo_key(),
                 compute_key,
                 calibration_key,
                 run,
             });
-            persist_cache(&results, &session)?;
-            Ok(JobResult::Mimo(summary))
+            let path = open.path.clone();
+            let cached = snapshot_cache(&state);
+            drop(state);
+            drop(session_guard);
+            persist_cache(cached, &path, identity, &session)?;
+            Ok(JobResult::Mimo)
         })
     }
 
@@ -261,6 +268,7 @@ impl Service {
         };
         let inputs = engine_inputs(&view, &measurements, &settings).map_err(engine_error)?;
         Ok(Prepared {
+            identity: open.identity,
             signature: signature_key(&project),
             target_key: target_key_string(&project),
             project,
@@ -365,7 +373,18 @@ fn summarize(design: &Design, settings: &CalibrationSettings) -> CalibrationSumm
         scorecard,
         latency_ms: design.chain.latency_ms,
         notes: design.notes.iter().flat_map(notices).collect(),
-        chain: design.chain.clone(),
+        main_roles: design
+            .chain
+            .mains
+            .iter()
+            .map(|main| main.role.clone())
+            .collect(),
+        sub_roles: design
+            .chain
+            .subs
+            .iter()
+            .map(|sub| sub.role.clone())
+            .collect(),
     }
 }
 
@@ -681,16 +700,23 @@ fn summaries(
     Ok(ResultsSummary { calibration, mimo })
 }
 
-fn persist_cache(
-    results: &Arc<Mutex<Results>>,
-    session: &Arc<Mutex<crate::session::Session>>,
-) -> Result<(), IpcError> {
-    let state = lock(results);
-    let Some(calibration) = state.calibration.as_ref() else {
-        return Ok(());
-    };
-    let cached = crate::cache::CachedResults {
+fn require_identity(open: &crate::session::OpenProject, identity: u64) -> Result<(), IpcError> {
+    if open.identity != identity {
+        return Err(IpcError::new(
+            ErrorCode::StaleInputs,
+            "project changed while computing",
+        ));
+    }
+    Ok(())
+}
+
+// Capture the committed run under session -> results locks; serialization and
+// disk I/O happen after both are released.
+fn snapshot_cache(state: &Results) -> Option<crate::cache::CachedResults> {
+    let calibration = state.calibration.as_ref()?;
+    Some(crate::cache::CachedResults {
         calibration: calibration.summary.clone(),
+        calibration_chain: calibration.design.chain.clone(),
         mimo: state.mimo.as_ref().map(|result| result.summary.clone()),
         measurement_signature: calibration.signature.clone(),
         target_key: calibration.target_key.clone(),
@@ -722,12 +748,26 @@ fn persist_cache(
             .as_ref()
             .map(|result| result.compute_key.clone())
             .unwrap_or_default(),
+    })
+}
+
+fn persist_cache(
+    cached: Option<crate::cache::CachedResults>,
+    path: &std::path::Path,
+    identity: u64,
+    session: &Arc<Mutex<crate::session::Session>>,
+) -> Result<(), IpcError> {
+    let Some(cached) = cached else {
+        return Ok(());
     };
-    drop(state);
+    crate::cache::save(path, &cached).map_err(crate::ServiceError::from)?;
     let mut session = lock(session);
-    let open = session.require_mut().map_err(IpcError::from)?;
-    crate::cache::save(&open.path, &cached).map_err(crate::ServiceError::from)?;
-    open.cached = Some(cached);
+    if let Ok(open) = session.require_mut()
+        && open.identity == identity
+        && open.path == path
+    {
+        open.cached = Some(cached);
+    }
     Ok(())
 }
 

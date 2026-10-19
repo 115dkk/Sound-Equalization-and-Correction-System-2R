@@ -13,8 +13,8 @@ describe("mock filter exports", () => {
 
   function resultWithoutSubs() {
     const results = structuredClone(resultsSummary);
-    results.calibration!.chain.subs = [];
-    results.calibration!.chain.mains = results.calibration!.chain.mains.slice(0, 2);
+    results.calibration!.sub_roles = [];
+    results.calibration!.main_roles = results.calibration!.main_roles.slice(0, 2);
     results.mimo = null;
     return results;
   }
@@ -107,7 +107,7 @@ describe("mock filter exports", () => {
     const folder = "C:/exports/chosen";
     expect(await exported(mock, "equalizer_apo", folder)).toEqual({ folder, stale: false, files: [
       `${folder}/config.txt`, `${folder}/secs_mixed/secs_mixed.txt`, `${folder}/EqAPO 적용 방법.txt`,
-      ...results.calibration!.chain.mains.map(({ role }) => `${folder}/secs_mixed/secs_mixed_${role}_fir.wav`),
+      ...results.calibration!.main_roles.map((role) => `${folder}/secs_mixed/secs_mixed_${role}_fir.wav`),
     ] });
     mock.dispose();
   });
@@ -120,6 +120,30 @@ describe("mock filter exports", () => {
 });
 
 describe("mock service", () => {
+  it("delivers compact summaries and metadata without DSP payloads in job notifications", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    const events: JobEvent[] = [];
+    const off = mock.events.subscribe((event) => events.push(event));
+    try {
+      await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } });
+      expect((await mock.request({ method: "jobs" }))[0]).not.toHaveProperty("result");
+      mock.drain();
+      expect(events.at(-1)).toMatchObject({ result: { kind: "calibration" } });
+      expect(events.at(-1)).not.toHaveProperty("result.data");
+      const calibration = (await mock.request({ method: "results" })).calibration!;
+      expect(calibration).not.toHaveProperty("chain");
+      expect(calibration.main_roles).toEqual(calibration.scorecard.map((score) => score.role));
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_fir", on: true } } });
+      await mock.request({ method: "mimo", params: { settings: null } }); mock.drain();
+      expect(events.at(-1)).toMatchObject({ result: { kind: "mimo" } });
+      expect(events.at(-1)).not.toHaveProperty("result.data");
+      const mimo = (await mock.request({ method: "results" })).mimo!;
+      expect(mimo).not.toHaveProperty("paths");
+      expect(mimo.input_count).toBe(calibration.main_roles.length);
+      expect(mimo.fir_taps_total).toBe(mimo.support_count * 3);
+    } finally { off(); mock.dispose(); }
+  });
+
   it("preserves GPU preference while IIR uses CPU and FIR uses GPU", async () => {
     const mock = createMockService({ tickMs: 0, computeStatus: gpuComputeStatus, results: resultsSummary });
     try {

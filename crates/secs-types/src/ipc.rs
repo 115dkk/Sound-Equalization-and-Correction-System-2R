@@ -15,7 +15,6 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::calibration::{CalibrationSettings, Mode};
-use crate::chain::{MimoPaths, SignalChain};
 use crate::compute::{ComputePreference, ComputeReport, ComputeStatus};
 pub use crate::settings_edit::CalibrationSettingsEditParams;
 
@@ -767,8 +766,6 @@ pub struct JobSnapshot {
     pub cancellable: bool,
     /// Most recently reported stage progress.
     pub progress: Option<JobProgress>,
-    /// Successful result once finished.
-    pub result: Option<JobResult>,
     /// Failure once finished unsuccessfully.
     pub error: Option<IpcError>,
 }
@@ -807,7 +804,8 @@ pub enum JobEvent {
         code: String,
         params: BTreeMap<String, String>,
     },
-    /// Reports a terminal status with either a result or an error.
+    /// Reports a terminal status and an ephemeral operation result or error.
+    /// Calibration and MIMO carry only a marker; read `results` for their summary.
     Finished {
         job: JobId,
         status: JobStatus,
@@ -833,12 +831,12 @@ pub enum JobEvent {
 #[serde(tag = "kind", content = "data", rename_all = "snake_case")]
 #[ts(export)]
 pub enum JobResult {
-    /// Calibration result plus the latest compatible MIMO result.
-    Calibration(Box<ResultsSummary>),
+    /// Calibration committed; fetch the current screen summary with `results`.
+    Calibration,
     /// Crossover recommendation computed for the current project.
     Xo(XoRecommendation),
-    /// MIMO paths computed for the current calibration.
-    Mimo(MimoSummary),
+    /// MIMO committed; fetch the current screen summary with `results`.
+    Mimo,
     /// Paths written by an exporter.
     Export(ExportResult),
     /// Measured levels and recommended sweep level.
@@ -897,8 +895,10 @@ pub struct CalibrationSummary {
     pub latency_ms: f64,
     /// Informational codes and values translated by the screen.
     pub notes: Vec<Notice>,
-    /// Designed DSP signal chain used by exporters.
-    pub chain: SignalChain,
+    /// Main-channel roles in design order; filter coefficients stay in Rust.
+    pub main_roles: Vec<String>,
+    /// Subwoofer roles in design order; filter coefficients stay in Rust.
+    pub sub_roles: Vec<String>,
 }
 /// Values shown by the upstream `step_calibration.py` verdict card.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -986,8 +986,8 @@ pub struct MimoSummary {
     pub fir_taps_total: usize,
     /// Informational codes and values translated by the screen.
     pub notes: Vec<Notice>,
-    /// DSP-ready support paths.
-    pub paths: MimoPaths,
+    /// Number of distinct input roles with at least one generated support path.
+    pub input_count: usize,
 }
 /// Crossover candidates and the best value for each group.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -2176,6 +2176,44 @@ mod tests {
         .unwrap();
         assert_eq!(value["ok"], false);
         assert_eq!(value["error"]["code"], "invalid_request");
+    }
+
+    #[test]
+    fn compute_completion_events_are_payload_free_markers() {
+        for (result, kind) in [
+            (JobResult::Calibration, "calibration"),
+            (JobResult::Mimo, "mimo"),
+        ] {
+            let event = JobEvent::Finished {
+                job: JobId(1),
+                status: JobStatus::Succeeded,
+                result: Some(Box::new(result)),
+                error: None,
+            };
+            let wire = serde_json::to_vec(&event).unwrap();
+            let value: serde_json::Value = serde_json::from_slice(&wire).unwrap();
+            assert_eq!(value["result"], serde_json::json!({ "kind": kind }));
+            assert!(wire.len() < 128, "completion must not carry a design");
+            assert_eq!(serde_json::from_slice::<JobEvent>(&wire).unwrap(), event);
+        }
+    }
+
+    #[test]
+    fn job_snapshot_is_metadata_without_a_result_payload() {
+        let snapshot = JobSnapshot {
+            job: JobId(42),
+            kind: JobKind::Mimo,
+            status: JobStatus::Succeeded,
+            cancellable: false,
+            progress: None,
+            error: None,
+        };
+        let wire = serde_json::to_value(&snapshot).unwrap();
+        assert!(wire.get("result").is_none());
+        assert_eq!(
+            serde_json::from_value::<JobSnapshot>(wire).unwrap(),
+            snapshot
+        );
     }
 
     #[test]

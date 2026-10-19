@@ -197,17 +197,13 @@ fn result_curves_lines_take_values_and_staleness() {
             .iter()
             .find(|v| v["role"] == row.role)
             .unwrap();
-        let Response::Results(results) = call(&service, Request::Results) else {
-            panic!()
-        };
-        let source = results
-            .calibration
-            .unwrap()
-            .chain
-            .subs
-            .into_iter()
-            .find(|s| s.role == row.role)
-            .unwrap();
+        let cache: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(path.with_extension("irs").join("secs_run_cache.json")).unwrap(),
+        )
+        .unwrap();
+        let chain: secs_types::chain::SignalChain =
+            serde_json::from_value(cache["results"]["calibration_chain"].clone()).unwrap();
+        let source = chain.subs.iter().find(|sub| sub.role == row.role).unwrap();
         assert_eq!(row.gain_db, source.gain_db);
         assert_eq!(row.delay_ms, source.delay_ms);
         assert_eq!(row.polarity as i64, value["polarity"].as_i64().unwrap());
