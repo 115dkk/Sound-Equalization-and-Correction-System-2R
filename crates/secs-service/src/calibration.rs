@@ -33,6 +33,7 @@ pub(crate) struct CalibrationRun {
 pub(crate) struct MimoResult {
     pub summary: MimoSummary,
     pub settings_key: String,
+    pub compute_key: crate::compute::ComputeIdentity,
     pub calibration_key: String,
     pub run: secs_engine::MimoRun,
 }
@@ -65,6 +66,7 @@ impl Service {
     ) -> Result<JobStarted, IpcError> {
         let prepared = self.prepare(params.settings)?;
         let subs_only = params.subs_only;
+        let compute_key = crate::compute::ComputeIdentity::from(&self.acceleration().status);
         let results = self.results_state.clone();
         let session = self.session.clone();
         let memory = self.deps.memory.available_bytes();
@@ -106,7 +108,7 @@ impl Service {
                 open.dirty = true;
             }
             persist_cache(&results, &session)?;
-            let current = summaries(&results, &session)?;
+            let current = summaries(&results, &session, &compute_key)?;
             Ok(JobResult::Calibration(Box::new(current)))
         })
     }
@@ -143,6 +145,8 @@ impl Service {
         params: MimoParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
+        let selection = self.require_acceleration()?;
+        let compute_key = crate::compute::ComputeIdentity::from(&selection.status);
         let settings = {
             let session = lock(&self.session);
             let open = session.require().map_err(IpcError::from)?;
@@ -183,13 +187,14 @@ impl Service {
         let session = self.session.clone();
         self.jobs.start(JobKind::Mimo, events, move |job| {
             let ctx = compute_context(&job, memory);
-            let run = secs_engine::mimo::compute(
+            let run = secs_engine::mimo::compute_with_acceleration(
                 &design,
                 &measurements,
                 &config,
                 &settings,
                 &Tuning::default(),
                 &ctx,
+                &selection,
             )
             .map_err(engine_error)?;
             job.begin_commit()?;
@@ -207,12 +212,22 @@ impl Service {
                         secs_types::chain::MimoFilter::Iir { .. } => 0,
                     })
                     .sum(),
-                notes: run.notes.iter().flat_map(notices).collect(),
+                notes: run
+                    .notes
+                    .iter()
+                    .flat_map(notices)
+                    .chain((run.compute.fallbacks > 0).then(|| Notice {
+                        code: "compute_fallback".into(),
+                        params: [("count".into(), run.compute.fallbacks.to_string())].into(),
+                    }))
+                    .collect(),
                 paths: run.paths.clone(),
+                compute: run.compute.clone(),
             };
             lock(&results).mimo = Some(MimoResult {
                 summary: summary.clone(),
                 settings_key: settings.mimo_key(),
+                compute_key,
                 calibration_key,
                 run,
             });
@@ -222,7 +237,11 @@ impl Service {
     }
 
     pub(crate) fn results(&self) -> Result<ResultsSummary, IpcError> {
-        summaries(&self.results_state, &self.session)
+        summaries(
+            &self.results_state,
+            &self.session,
+            &crate::compute::ComputeIdentity::from(&self.acceleration().status),
+        )
     }
 
     pub(crate) fn prepare(
@@ -615,6 +634,7 @@ fn metrics(value: Metrics) -> MetricsSummary {
 fn summaries(
     results: &Arc<Mutex<Results>>,
     session: &Arc<Mutex<crate::session::Session>>,
+    compute_key: &crate::compute::ComputeIdentity,
 ) -> Result<ResultsSummary, IpcError> {
     let session = lock(session);
     let project = session.require().map_err(IpcError::from)?.store.project();
@@ -641,7 +661,8 @@ fn summaries(
                 .calibration
                 .as_ref()
                 .is_none_or(|run| run.settings.engine_key() != result.calibration_key)
-            || calibration_from_project(project).mimo_key() != result.settings_key;
+            || calibration_from_project(project).mimo_key() != result.settings_key
+            || &result.compute_key != compute_key;
         summary
     });
     let mimo = live_mimo.or_else(|| {
@@ -651,7 +672,8 @@ fn summaries(
                 summary.stale = calibration.as_ref().is_none_or(|value| value.stale)
                     || cache.mimo_key.as_deref() != Some(current_mimo_key.as_str())
                     || cache.mimo_calibration_key.as_deref() != Some(cache.engine_key.as_str())
-                    || cache.engine_key != calibration_from_project(project).engine_key();
+                    || cache.engine_key != calibration_from_project(project).engine_key()
+                    || &cache.mimo_compute_key != compute_key;
                 summary
             })
         })
@@ -695,6 +717,11 @@ fn persist_cache(
             mimo_max_supports: calibration.settings.mimo_max_supports.max(0) as usize,
         },
         mimo_paths: state.mimo.as_ref().map(|result| result.run.paths.clone()),
+        mimo_compute_key: state
+            .mimo
+            .as_ref()
+            .map(|result| result.compute_key.clone())
+            .unwrap_or_default(),
     };
     drop(state);
     let mut session = lock(session);

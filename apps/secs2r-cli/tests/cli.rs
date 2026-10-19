@@ -192,3 +192,41 @@ fn errors_exit_one_and_quiet_omits_events() {
     eprintln!("bad={bad_time:?} quiet={quiet_time:?}");
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn compute_info_and_process_overrides_are_json_and_missing_gpu_is_typed() {
+    let root = root("compute-info");
+    let missing_runtime = root.join("missing-cuda-runtime");
+    let run_isolated = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_secs2r-cli"))
+            .args(args)
+            .env("SECS_CUDA_LIBRARY_PATH", &missing_runtime)
+            .output()
+            .unwrap()
+    };
+    let default = run_isolated(&["compute-info"]);
+    let default = assert_success(&default);
+    let info = &default[0]["reply"]["data"]["data"];
+    assert_eq!(default[0]["reply"]["data"]["method"], "compute_status");
+    assert_eq!(info["preference"], "auto");
+    assert_eq!(info["selected"], "cpu");
+    assert_eq!(info["gpu_available"], false);
+    let cpu = run_isolated(&["compute-info", "--compute", "cpu"]);
+    let cpu = assert_success(&cpu);
+    assert_eq!(cpu[0]["reply"]["data"]["data"]["preference"], "cpu");
+    assert_eq!(cpu[0]["reply"]["data"]["data"]["selected"], "cpu");
+    let project = root.join("gpu.secs");
+    let project_arg = project.to_string_lossy();
+    assert_success(&run_isolated(&["project", "new", &project_arg]));
+    let gpu = run_isolated(&["--compute", "gpu", "mimo", &project_arg]);
+    assert_eq!(gpu.status.code(), Some(1));
+    assert_eq!(
+        lines(&gpu).last().unwrap()["reply"]["error"]["code"],
+        "compute_unavailable"
+    );
+    let invalid = run_isolated(&["--compute", "other", "compute-info"]);
+    assert_eq!(invalid.status.code(), Some(2));
+    let reopened = fs::read_to_string(&project).unwrap();
+    assert!(!reopened.contains("compute"));
+    fs::remove_dir_all(root).unwrap();
+}

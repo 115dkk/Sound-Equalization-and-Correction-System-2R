@@ -57,6 +57,9 @@ function mockActions(): MockActions {
     calibrateSubs: vi.fn(),
     recommendXo: vi.fn(),
     computeMimo: vi.fn(),
+    changeCompute: vi.fn(),
+    refreshCompute: vi.fn(),
+    openGpuHelp: vi.fn(),
     selectTab: vi.fn(),
     selectChannel: vi.fn(),
     selectXoGroup: vi.fn(),
@@ -384,6 +387,17 @@ describe("보정 screen", () => {
     for (const id of ["calibrate.xo.recommend", "calibrate.ba.compute_subs", "calibrate.ba.take_values"]) {
       expect((must(id) as HTMLButtonElement).disabled, id).toBe(true);
     }
+  });
+
+  it("requires recovery from an unavailable explicit GPU while Automatic remains calculable", () => {
+    const actions = setup(fx.requestedGpuUnavailableView);
+    expect((must("calibrate.mimo.compute") as HTMLButtonElement).disabled).toBe(true);
+    expect((must("calibrate.compute.preference") as HTMLSelectElement).disabled).toBe(false);
+    fireEvent.click(must("calibrate.mimo.compute"));
+    expect(actions.computeMimo).not.toHaveBeenCalled();
+    cleanupAll();
+    setup(fx.runtimeMissingView);
+    expect((must("calibrate.mimo.compute") as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("asks for a result and three positions before MIMO", () => {

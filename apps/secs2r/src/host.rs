@@ -109,6 +109,19 @@ impl Host for TauriHost {
         Self::selected(self.file_dialog(kind).blocking_pick_file())
     }
 
+    fn open_gpu_help(&self) -> Result<(), IpcError> {
+        let url = gpu_help_url(std::env::consts::OS).ok_or_else(|| {
+            IpcError::new(
+                ErrorCode::NotImplemented,
+                "CUDA is not supported on this platform",
+            )
+        })?;
+        self.app
+            .opener()
+            .open_url(url, None::<&str>)
+            .map_err(host_error)
+    }
+
     fn open_folder(&self, path: &Path) -> Result<(), IpcError> {
         self.app
             .opener()
@@ -137,4 +150,36 @@ impl Host for TauriHost {
 
 fn host_error(error: impl std::fmt::Display) -> IpcError {
     IpcError::new(ErrorCode::Internal, error.to_string())
+}
+
+// No URL is accepted from IPC. Only the operating system chooses a fixed guide.
+fn gpu_help_url(os: &str) -> Option<&'static str> {
+    match os {
+        "windows" => Some(
+            "https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html",
+        ),
+        "linux" => Some("https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html"),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gpu_help_only_opens_the_two_fixed_official_platform_guides() {
+        assert_eq!(
+            gpu_help_url("windows"),
+            Some(
+                "https://docs.nvidia.com/cuda/cuda-installation-guide-microsoft-windows/index.html"
+            )
+        );
+        assert_eq!(
+            gpu_help_url("linux"),
+            Some("https://docs.nvidia.com/cuda/cuda-installation-guide-linux/index.html")
+        );
+        assert_eq!(gpu_help_url("macos"), None);
+        assert_eq!(gpu_help_url("https://example.com"), None);
+    }
 }

@@ -25,3 +25,11 @@ M1에서 더 들어올 예정인 것: 임펄사이퍼 3.x의 `optimize.rs`(MIT, 
 러스트 크레이트와 npm 패키지의 라이선스 목록은 M6에서 릴리스마다 생성해 설치본에 함께 넣습니다. 지금은 `cargo deny check licenses`가 GPL-3.0과 호환되는 라이선스만 허용합니다(`deny.toml`).
 
 업스트림의 `THIRD_PARTY_NOTICES.md`는 SECS 2(PyQt6 등)의 고지이고 SECS 2R의 실행 파일과는 관계가 없습니다. 업스트림 파일이라 고치지 않고 그대로 둡니다.
+
+## 별도로 설치하는 GPU 런타임
+
+선택적 GPU 기능은 NVIDIA CUDA 13 런타임, cuBLAS, cuSOLVER의 공개 ABI를
+호출합니다. NVIDIA SDK 헤더와 DLL/SO는 저장소나 기본 설치본에 포함하지
+않으며, 사용자가 설치한 런타임을 동적으로 읽습니다. 설치 구성과 적용 범위는
+[`GPU.md`](GPU.md), 자체 작성한 네이티브 경계는 ADR 0008을 참조합니다.
+동적 로더인 `libloading` 0.9.0은 Cargo 의존성과 라이선스 검사에 포함됩니다.

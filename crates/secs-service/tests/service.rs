@@ -982,6 +982,47 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
     );
     assert_eq!(live_bytes, snapshot_relative_files(&folder, &cached.files));
 
+    // A compute preference change invalidates both live and reopened MIMO,
+    // even when both preferences currently resolve to the CPU.
+    for current in [&service, &reopened] {
+        for (compute, expected_stale) in [
+            (secs_types::compute::ComputePreference::Cpu, true),
+            (secs_types::compute::ComputePreference::Auto, false),
+        ] {
+            call_ok(
+                current,
+                Request::AppSettingsSet(secs_types::ipc::AppSettingsParams {
+                    settings: secs_types::ipc::AppSettings {
+                        compute,
+                        ..Default::default()
+                    },
+                }),
+                Arc::new(NoEvents),
+            );
+            let Response::Results(result) = call_ok(current, Request::Results, Arc::new(NoEvents))
+            else {
+                panic!()
+            };
+            assert_eq!(result.mimo.unwrap().stale, expected_stale);
+            let output = export_and_wait(
+                current,
+                ExportKind::CamillaDsp,
+                &folder,
+                Arc::new(Events::default()),
+            );
+            let yaml = output
+                .files
+                .iter()
+                .find(|path| path.ends_with(".yml") || path.ends_with(".yaml"))
+                .unwrap();
+            assert_eq!(
+                fs::read_to_string(yaml).unwrap().contains("mimo_"),
+                !expected_stale
+            );
+            assert!(!folder.join("compute-provenance.json").exists());
+        }
+    }
+
     for current in [&service, &reopened] {
         call_ok(
             current,
@@ -1112,4 +1153,225 @@ fn measurement_handlers_are_connected_and_fail_with_typed_errors() {
             assert_eq!(error.params["reason"], "cannot_launch");
         }
     }
+}
+
+#[derive(Debug)]
+struct FakeRidge {
+    fail: bool,
+    cpu: secs_engine::mimo::CpuRidgeBackend,
+}
+impl secs_engine::mimo::RidgeBackend for FakeRidge {
+    fn factor<'a>(
+        &'a self,
+        ata: &'a [f64],
+        atb: &'a [f64],
+        cancel: &secs_compute::CancelToken,
+    ) -> Result<Box<dyn secs_engine::mimo::ShiftedSystem + 'a>, secs_engine::mimo::AccelerationError>
+    {
+        if self.fail {
+            Err(secs_engine::mimo::AccelerationError::failed(
+                secs_types::compute::ComputeReason::DeviceFailure,
+                "simulated GPU failure",
+            ))
+        } else {
+            self.cpu.factor(ata, atb, cancel)
+        }
+    }
+}
+
+#[test]
+fn gpu_reports_survive_cache_and_fallback_exports() {
+    use secs_types::compute::*;
+    use std::sync::atomic::AtomicBool;
+    let root = temp_root("gpu-report");
+    fs::create_dir_all(&root).unwrap();
+    let (path, mut settings) = write_case(&root, "room_dba");
+    settings.mimo_on = true;
+    settings.mimo_fir = true;
+    settings.mimo_max_supports = 1;
+    let fail = Arc::new(AtomicBool::new(false));
+    let provider_fail = fail.clone();
+    let deps = Deps {
+        acceleration: Arc::new(move |preference| {
+            if preference == ComputePreference::Cpu {
+                return secs_engine::mimo::AccelerationSelection {
+                    status: ComputeStatus {
+                        preference,
+                        reason: ComputeReason::UserCpu,
+                        ..Default::default()
+                    },
+                    backend: None,
+                };
+            }
+            let device = GpuDeviceInfo {
+                id: 0,
+                name: "Test GPU".into(),
+                compute_major: 7,
+                compute_minor: 5,
+                multiprocessors: 48,
+                memory_bytes: 8 << 30,
+                integrated: false,
+                supported: true,
+                recommended: true,
+                reason: ComputeReason::Recommended,
+            };
+            secs_engine::mimo::AccelerationSelection {
+                status: ComputeStatus {
+                    preference,
+                    selected: ComputeBackend::Cuda,
+                    reason: ComputeReason::Recommended,
+                    gpu_available: true,
+                    device: Some(device.clone()),
+                    devices: vec![device],
+                },
+                backend: Some(Arc::new(FakeRidge {
+                    fail: provider_fail.load(Ordering::SeqCst),
+                    cpu: secs_engine::mimo::CpuRidgeBackend,
+                })),
+            }
+        }),
+        ..Deps::default()
+    };
+    let service = Service::new(deps.clone());
+    open(&service, &path);
+    let events = Arc::new(Events::default());
+    let job = start_calibration(&service, events.clone(), settings.clone());
+    finished_result(events.wait(job, Duration::from_secs(120)));
+    let mut previous_paths = None;
+    for fallback in [false, true] {
+        fail.store(fallback, Ordering::SeqCst);
+        let events = Arc::new(Events::default());
+        let Response::Mimo(started) = call_ok(
+            &service,
+            Request::Mimo(MimoParams {
+                settings: Some(settings.clone()),
+            }),
+            events.clone(),
+        ) else {
+            panic!()
+        };
+        let JobResult::Mimo(summary) =
+            finished_result(events.wait(started.job, Duration::from_secs(120)))
+        else {
+            panic!()
+        };
+        assert_eq!(summary.compute.requested, ComputePreference::Auto);
+        assert_eq!(
+            summary.compute.backend,
+            if fallback {
+                ComputeBackend::Cpu
+            } else {
+                ComputeBackend::Cuda
+            }
+        );
+        if fallback {
+            assert!(summary.compute.fallbacks > 0);
+            assert!(summary.compute.cpu_systems > 0);
+            assert_eq!(summary.compute.accelerated_systems, 0);
+            assert!(
+                summary
+                    .notes
+                    .iter()
+                    .any(|notice| notice.code == "compute_fallback")
+            );
+            assert_eq!(previous_paths.as_ref(), Some(&summary.paths));
+        } else {
+            assert!(summary.compute.accelerated_systems > 0);
+            assert_eq!(summary.compute.stage, Some(ComputeStage::IdealFirSweep));
+            assert_eq!(summary.compute.device.as_deref(), Some("Test GPU"));
+            assert_eq!(summary.compute.fallbacks, 0);
+            previous_paths = Some(summary.paths.clone());
+        }
+        call_ok(
+            &service,
+            Request::ProjectSave(secs_types::ipc::ProjectSaveParams::default()),
+            Arc::new(NoEvents),
+        );
+        let reopened = Service::new(deps.clone());
+        open(&reopened, &path);
+        let Response::Results(cached) = call_ok(&reopened, Request::Results, Arc::new(NoEvents))
+        else {
+            panic!()
+        };
+        assert_eq!(cached.mimo.unwrap(), summary);
+        for current in [&service, &reopened] {
+            let folder = root.join("export");
+            let export = export_and_wait(
+                current,
+                ExportKind::CamillaDsp,
+                &folder,
+                Arc::new(Events::default()),
+            );
+            let provenance = folder.join("compute-provenance.json");
+            assert!(
+                export
+                    .files
+                    .iter()
+                    .any(|path| Path::new(path) == provenance)
+            );
+            let report: ComputeReport =
+                serde_json::from_slice(&fs::read(provenance).unwrap()).unwrap();
+            assert_eq!(report, summary.compute);
+            for disable_mimo in [true, false] {
+                if disable_mimo {
+                    let mut disabled = settings.clone();
+                    disabled.mimo_on = false;
+                    call_ok(
+                        current,
+                        Request::CalibrationSettingsSet(
+                            secs_types::ipc::CalibrationSettingsParams { settings: disabled },
+                        ),
+                        Arc::new(NoEvents),
+                    );
+                } else {
+                    call_ok(
+                        current,
+                        Request::AppSettingsSet(secs_types::ipc::AppSettingsParams {
+                            settings: secs_types::ipc::AppSettings {
+                                compute: ComputePreference::Cpu,
+                                ..Default::default()
+                            },
+                        }),
+                        Arc::new(NoEvents),
+                    );
+                }
+                let cpu_export = export_and_wait(
+                    current,
+                    ExportKind::CamillaDsp,
+                    &folder,
+                    Arc::new(Events::default()),
+                );
+                assert!(!folder.join("compute-provenance.json").exists());
+                assert!(
+                    cpu_export
+                        .files
+                        .iter()
+                        .all(|path| !path.ends_with("compute-provenance.json"))
+                );
+                // Restore the choice; the previous GPU/fallback run can be exported again.
+                call_ok(
+                    current,
+                    Request::CalibrationSettingsSet(secs_types::ipc::CalibrationSettingsParams {
+                        settings: settings.clone(),
+                    }),
+                    Arc::new(NoEvents),
+                );
+                call_ok(
+                    current,
+                    Request::AppSettingsSet(secs_types::ipc::AppSettingsParams {
+                        settings: Default::default(),
+                    }),
+                    Arc::new(NoEvents),
+                );
+                export_and_wait(
+                    current,
+                    ExportKind::CamillaDsp,
+                    &folder,
+                    Arc::new(Events::default()),
+                );
+                assert!(folder.join("compute-provenance.json").exists());
+            }
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
 }

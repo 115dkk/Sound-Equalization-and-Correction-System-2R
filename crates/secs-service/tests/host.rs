@@ -56,6 +56,11 @@ impl Host for RecordingHost {
         self.answer(format!("open_file:{kind:?}"))
     }
 
+    fn open_gpu_help(&self) -> Result<(), IpcError> {
+        self.calls.lock().unwrap().push("open_gpu_help".into());
+        Ok(())
+    }
+
     fn open_folder(&self, path: &Path) -> Result<(), IpcError> {
         self.calls
             .lock()
@@ -163,4 +168,24 @@ fn null_host_reports_not_implemented() {
     )
     .unwrap_err();
     assert_eq!(error.code, ErrorCode::NotImplemented);
+}
+
+#[test]
+fn gpu_help_uses_the_host_operation_without_accepting_a_url() {
+    let host = Arc::new(RecordingHost::default());
+    let service = Service::new(Deps {
+        host: host.clone(),
+        ..Deps::default()
+    });
+    assert_eq!(
+        call(&service, Request::OpenGpuHelp).unwrap(),
+        Response::OpenGpuHelp(())
+    );
+    assert_eq!(*host.calls.lock().unwrap(), vec!["open_gpu_help"]);
+    assert_eq!(
+        call(&Service::new(Deps::default()), Request::OpenGpuHelp)
+            .unwrap_err()
+            .code,
+        ErrorCode::NotImplemented
+    );
 }

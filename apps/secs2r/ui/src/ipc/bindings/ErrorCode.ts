@@ -4,4 +4,4 @@
  * Why a call failed. The screen maps each code to a written message with the
  * cause and the next action.
  */
-export type ErrorCode = "invalid_request" | "internal" | "not_implemented" | "project_not_open" | "project_io" | "job_busy" | "job_not_found" | "cancelled" | "engine_input" | "export_failed" | "export_scope" | "stale_inputs" | "device_unavailable" | "recording_failed" | "share_mode_refused" | "rew_unreachable" | "rew_pro_required" | "rew_failed" | "measurement_input" | "tutorial_blocked" | "confirm_required";
+export type ErrorCode = "invalid_request" | "internal" | "not_implemented" | "project_not_open" | "project_io" | "job_busy" | "job_not_found" | "cancelled" | "engine_input" | "compute_unavailable" | "export_failed" | "export_scope" | "stale_inputs" | "device_unavailable" | "recording_failed" | "share_mode_refused" | "rew_unreachable" | "rew_pro_required" | "rew_failed" | "measurement_input" | "tutorial_blocked" | "confirm_required";

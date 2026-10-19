@@ -3,6 +3,7 @@
 // change goes through `changeSetting` (calibration_settings_set) and only
 // marks the result stale. Detail sits under 고급; the 초고지연 mode shows
 // with 전문가 표시 (U9).
+import { ComputeControl, ComputeResult } from "./ComputeControl";
 import { useEffect, useState, type ReactNode } from "react";
 import { errorText } from "../../app/jobs/jobText";
 import { usePrefs } from "../../app/prefs";
@@ -721,6 +722,7 @@ function MimoSection({ view, actions }: Props) {
       />
       {on && (
         <>
+          <ComputeControl view={view} actions={actions} />
           <div className="calibrate-fields">
             <NumberField
               id="calibrate.mimo.fsiso"
@@ -735,12 +737,13 @@ function MimoSection({ view, actions }: Props) {
             />
           </div>
           <div className="calibrate-actions">
-            <Button id="calibrate.mimo.compute" data-ui="calibrate.mimo.compute" busy={view.running === "mimo"} disabled={busy || !result} onClick={actions.computeMimo}>
+            <Button id="calibrate.mimo.compute" data-ui="calibrate.mimo.compute" busy={view.running === "mimo"} disabled={busy || !result || view.compute.saving || (view.compute.preference === "gpu" && view.compute.status?.gpu_available === false)} onClick={actions.computeMimo}>
               {t("calibrate.mimo.compute")}
             </Button>
             <JobFailure view={view} job="mimo" id="calibrate.mimo" />
           </div>
           {state()}
+          {mimo && <ComputeResult report={mimo.compute} />}
           <Advanced id="calibrate.mimo.advanced" count={3}>
             <Toggle
               id="calibrate.mimo.low_auto"

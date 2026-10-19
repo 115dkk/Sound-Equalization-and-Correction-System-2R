@@ -32,7 +32,7 @@ SECS 2R은 룸 보정 설계 프로그램 [SECS 2](https://github.com/Kim-O-O/So
 - Windows, macOS, Linux에서 돕니다. 업스트림은 Windows 전용입니다.
 - REW 없이도 측정할 수 있습니다. Windows는 WASAPI, macOS와 Linux는 CoreAudio·ALSA로 스윕을 재생하고 녹음합니다. REW Pro의 API 측정과 mdat 가져오기도 그대로 지원합니다.
 - 계산을 취소하면 실제로 멈추고, 설정을 바꿔도 이전 결과는 '낡음'으로 남습니다. 업스트림은 취소해도 계산이 계속 돌고, 다시 계산하면 MIMO 결과가 사라집니다.
-- 보정 계산과 MIMO 계산이 빨라집니다. MIMO의 IIR 서포트 맞춤은 GPU로 넘기는 선택 기능도 둡니다.
+- 보정 계산과 MIMO 계산이 빨라집니다. 지원되는 GPU에서는 MIMO FIR 필터 설계의 큰 선형계를 f64로 계산하며, 자동·CPU·GPU를 선택할 수 있습니다. 작은 문제와 IIR 모드는 CPU를 사용합니다([GPU 계산 안내](docs/GPU.md)).
 - 화면을 새로 만듭니다. 설정마다 자리를 하나로 정하고, 자주 쓰는 항목과 고급 항목을 나눠 보여 줍니다.
 - 풀 리퀘스트와 이슈를 받습니다([`CONTRIBUTING.md`](CONTRIBUTING.md)).
 

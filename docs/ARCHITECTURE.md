@@ -6,7 +6,7 @@
 
 1. **업스트림의 모든 기능을 옮깁니다.** 기능 목록은 `features.toml`이고, 업스트림 출처는 각 항목의 `upstream`에 적습니다. 업스트림 파이썬 트리는 고치지 않고 오라클로 씁니다(0001).
 2. **먼저 그대로, 그다음 고칩니다.** 이식은 골든을 맞추고, 결함 수정은 번호 붙은 편차로 따로 넣습니다(0004).
-3. **unsafe는 격리 크레이트에만.** `secs-sys` 하나이고 예산은 0입니다(0002).
+3. **unsafe는 격리 크레이트에만.** OS 경계 `secs-sys`와 선택적 GPU 경계 `secs-cuda-sys`의 예산을 정책으로 검사합니다(0002, 0008).
 4. **결정적인 계산.** 같은 입력이면 스레드 수와 무관하게 같은 바이트가 나옵니다. GPU 경로만 허용오차로 다루고 그 사실을 결과에 적습니다(0007).
 5. **기능마다 테스트.** `features.toml`에 없는 기능은 없는 것이고, '구현됨'에는 실제 테스트가 있어야 합니다.
 
@@ -16,7 +16,7 @@
 Cargo.toml                워크스페이스 루트 (lint, 공용 의존성)
 rust-toolchain.toml       1.99.0 고정
 features.toml             기능 등록부
-unsafe-budget.toml        크레이트별 unsafe 허용량 (secs-sys = 0)
+unsafe-budget.toml        크레이트별 unsafe 허용량 (secs-sys = 0, secs-cuda-sys = 80)
 deny.toml                 GPL 호환 라이선스, 권고, 출처
 UPSTREAM.toml             이식을 마친 업스트림 커밋
 crates/
@@ -24,7 +24,8 @@ crates/
   secs-dsp/               f64 프리미티브, TRF·차분 진화·RandomState 이식
   secs-compute/           스레드, 메모리 예산, 캐시, 취소, 진행
   secs-engine/            보정 설계 전 단계 (깊은 모듈)
-  secs-gpu/               MIMO 서포트 맞춤의 wgpu 어댑터 (선택)
+  secs-gpu/               GPU 장치 정책과 이상 FIR f64 RidgeBackend 어댑터
+  secs-cuda-sys/          선택적 CUDA/cuBLAS/cuSOLVER 네이티브 격리 경계
   secs-project/           .secs, 이주, 구성·DSP 프로파일·타겟, 측정 계획, .irs 저장소
   secs-jos/               자바 직렬화 그래프 (바이트 동일 왕복)
   secs-mdat/              REW mdat 읽기·만들기
@@ -60,9 +61,10 @@ ui ──IPC──> secs2r ─┬─> secs-service ─┬─> secs-engine ─┬
                     │                 ├─> secs-export ───> secs-engine, secs-mdat, secs-types
                     │                 ├─> secs-camilla ──> secs-dsp, secs-types
                     │                 └─> secs-filters ──> secs-camilla, secs-dsp, secs-types
-                    ├─> secs-gpu ─────> secs-engine (SupportFitBackend seam)
+                    ├─> secs-gpu ─────> secs-engine (RidgeBackend seam)
+                    │        └───────> secs-cuda-sys (선택적 네이티브 라이브러리)
                     └─> secs-sys ─────> wasapi, cpal, OS 조회 크레이트
-secs2r-cli ─────────> secs-service, secs-sys
+secs2r-cli ─────────> secs-service, secs-sys, secs-gpu
 secs-policy ────────> (파일 시스템만 읽음; IPC 메서드 목록 때문에 secs-types)
 ```
 
@@ -75,7 +77,7 @@ secs-policy ────────> (파일 시스템만 읽음; IPC 메서드
 | 측정 방식 | `secs-service` | 자체 측정(`secs-audio`), REW(`secs-rew` RealRew), 모의(시뮬레이션 방) |
 | 오디오 장치 `AudioBackend` | `secs-audio` | WASAPI(`secs-sys`), cpal(`secs-sys`), 시뮬레이션 방(테스트) |
 | REW 전송 | `secs-rew` 안쪽 | HTTP, 기록된 대화(테스트) |
-| 서포트 맞춤 `SupportFitBackend` | `secs-engine` | CPU(기준), GPU(`secs-gpu`) |
+| 이상 FIR의 정칙화 탐색 `RidgeBackend` | `secs-engine` | CPU RidgeSweep(기준), CUDA f64 spectral(`secs-gpu`) |
 | 신호 사슬 소비자 | `secs-types`의 사슬 값 | 응답 시뮬레이터(`secs-engine`), CamillaDSP 작성기(`secs-camilla`), 필터 텍스트·Equalizer APO 작성기(`secs-filters`) |
 | 메모리 조회 `MemoryProbe` | `secs-compute` | 운영체제(`secs-sys`), 고정값(테스트) |
 | 호스트 기능 `Host` | `secs-service` | Tauri(대화상자, 폴더 열기, 알림), 기록(테스트) |

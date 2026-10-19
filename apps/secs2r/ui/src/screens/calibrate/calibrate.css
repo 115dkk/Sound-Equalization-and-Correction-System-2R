@@ -436,3 +436,21 @@
   flex-direction: column;
   gap: var(--space-5);
 }
+
+/* Computation preference and the previous result use the card's existing surface. */
+.calibrate-compute {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr);
+  gap: var(--space-3) var(--space-5);
+  font-size: var(--text-ui);
+}
+.calibrate-compute .ui-select { height: var(--hit-min); }
+.calibrate-compute__state { align-self: center; min-width: 0; }
+.calibrate-compute__device { font-weight: var(--weight-medium); overflow-wrap: anywhere; }
+.calibrate-compute > .ui-error, .calibrate-compute__help { grid-column: 1 / -1; }
+.calibrate-compute .ui-details summary { min-height: var(--hit-min); align-content: center; }
+.calibrate-compute .ui-button { min-height: var(--hit-min); }
+.calibrate-compute-result { font-size: var(--text-ui); overflow-wrap: anywhere; }
+@container (max-width: 560px) {
+  .calibrate-compute { grid-template-columns: minmax(0, 1fr); }
+}

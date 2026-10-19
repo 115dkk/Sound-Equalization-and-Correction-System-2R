@@ -11,6 +11,7 @@ pub(crate) fn dispatch(
 ) -> Envelope {
     let response = match request {
         Request::Bootstrap => Ok(Response::Bootstrap(service.bootstrap())),
+        Request::ComputeStatus => Ok(Response::ComputeStatus(service.acceleration().status)),
         Request::ProjectNew(params) => {
             let response = lock(&service.session)
                 .create(
@@ -161,6 +162,7 @@ pub(crate) fn dispatch(
             .dialog_open_file(params)
             .map(Response::DialogOpenFile),
         Request::OpenFolder(params) => service.open_folder(params).map(Response::OpenFolder),
+        Request::OpenGpuHelp => service.deps.host.open_gpu_help().map(Response::OpenGpuHelp),
         Request::LevelMonitorStart(params) => service
             .start_level_monitor(params, events)
             .map(Response::LevelMonitorStart),

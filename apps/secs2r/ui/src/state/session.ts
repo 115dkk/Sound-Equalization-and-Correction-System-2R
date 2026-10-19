@@ -18,6 +18,7 @@ import { createResource, createStore, type Failure } from "./store";
 import { HOST_TRIGGERS, triggeredBy } from "./triggers";
 
 export type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "mdat" | "warnings"> & {
+  computeLoading: boolean; computeSaving: boolean; computeError: import("../ipc/bindings/IpcError").IpcError | null;
   current: StepId; path: ConnectPath | null;
   tab: CalibrateView["tab"]; channel: string | null; xoGroup: string | null; previewHz: number | null;
   jobs: JobSnapshot[]; jobRequests: Record<number, Request>;
@@ -30,6 +31,7 @@ export type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRang
 
 export function createSession(ipc: Ipc) {
   const rawHost = createStore<HostState>({
+    computeLoading: true, computeSaving: false, computeError: null,
     current: "system", path: null, selected: null, graphHidden: false, plotRange: { x: null, y: null },
     mdat: null, warnings: [], tab: "spl", channel: null, xoGroup: null, previewHz: null,
     jobs: [], jobRequests: {}, meter: null, monitor: "off", playing: null, playingAll: false, masterDbfs: -20,
@@ -48,7 +50,17 @@ export function createSession(ipc: Ipc) {
   const curveState = createStore<{ params: ResultCurvesParams; curves: ResultCurvesResult | null; pending: ResultCurvesParams | null } | null>(null);
   let curveVersion = 0;
   const resultCurves = { ...curveState, load: () => refreshCurves(curveParams()) };
+  let computeVersion = 0;
   const stores = {
+    computeStatus: createResource(async () => {
+      const ticket = ++computeVersion;
+      host.set({ computeLoading: true, computeError: null });
+      try { return await ipc.request({ method: "compute_status" }); }
+      finally { if (ticket === computeVersion) host.set({ computeLoading: false }); }
+    }, (error) => {
+      const value = error instanceof IpcFailure ? error.error : { code: "internal" as const, params: {}, retryable: true, detail: String(error) };
+      host.set({ computeError: value });
+    }),
     bootstrap: read({ method: "bootstrap" }), project: read({ method: "project_info" }),
     config: read({ method: "config_get" }), notices: read({ method: "config_validate" }), dsp: read({ method: "dsp_get" }),
     layout: read({ method: "layout_get" }), estimate: read({ method: "position_estimate" }), methods: read({ method: "measure_methods" }),
@@ -299,7 +311,7 @@ export function createSession(ipc: Ipc) {
     if (startPromise) return startPromise;
     off = ipc.events.subscribe(event);
     startPromise = (async () => {
-      await Promise.all([stores.bootstrap.load(), stores.appSettings.load(), stores.methods.load(),
+      await Promise.all([stores.bootstrap.load(), stores.appSettings.load(), stores.computeStatus.load(), stores.methods.load(),
         ipc.request({ method: "jobs" }).then((jobs) => {
           const live = host.getSnapshot().jobs;
           host.set({ jobs: [...jobs.filter((job) => !live.some((seen) => seen.job === job.job)), ...live] });
@@ -308,7 +320,7 @@ export function createSession(ipc: Ipc) {
       try { stores.project.set(await ipc.request({ method: "project_info" })); }
       catch (error) { report(error); }
       if (stores.project.getSnapshot()) {
-        await reload(Object.keys(stores).filter((key) => !["bootstrap", "measurementSettings", "appSettings", "methods", "rew"].includes(key)) as (keyof typeof stores)[]);
+        await reload(Object.keys(stores).filter((key) => !["bootstrap", "measurementSettings", "appSettings", "computeStatus", "methods", "rew"].includes(key)) as (keyof typeof stores)[]);
         // A window reloaded over a project the service still holds reads its
         // stored method, as opening it does; call() reports a failure.
         await call({ method: "measure_config_get" }).catch(() => {});
