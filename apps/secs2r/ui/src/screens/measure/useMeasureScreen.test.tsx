@@ -28,7 +28,7 @@ describe("useMeasureScreen", () => {
     await session.configure({ method: "mock" });
     const { result } = renderHook(useMeasureScreen, { wrapper });
     for (const kind of ["level_monitor", "status_watch", "calibrate", "recommend_xo", "mimo", "export", "level_check", "measure", "sample_load", "mdat_import"] as JobKind[]) {
-      await perform(() => session.host.set({ jobs: [{ job: 99, kind, status: "running", cancellable: true, progress: null, result: null, error: null }] }));
+      await perform(() => session.host.set({ jobs: [{ job: 99, epoch: 0, completionHandled: false, completionOrder: null, kind, status: "running", cancellable: true, progress: null, error: null }] }));
       const view = result.current.view!;
       const expected = kind === "level_check" ? { status: "blocked", reason: "device_busy" } : { status: "ready" };
       expect(measureStepState(view)).toEqual(expected);

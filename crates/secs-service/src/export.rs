@@ -19,8 +19,8 @@ impl Service {
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
         let compute_key = crate::compute::ComputeIdentity::from(&self.acceleration().status);
-        let state = lock(&self.results_state);
         let session = lock(&self.session);
+        let state = lock(&self.results_state);
         let open = session.require().map_err(IpcError::from)?;
         let project = open.store.project();
         if open.tutorial {
@@ -68,7 +68,7 @@ impl Service {
                 rc_hi_hz: cache.labels.rc_hi_hz,
                 mimo_max_supports: cache.labels.mimo_max_supports,
             };
-            (cache.calibration.chain.clone(), labels, cached_mimo.clone())
+            (cache.calibration_chain.clone(), labels, cached_mimo.clone())
         });
         let live_values = live.map(|calibration| {
             (
@@ -140,7 +140,7 @@ impl Service {
         };
         let export_chain = live
             .map(|calibration| &calibration.design.chain)
-            .or_else(|| cached.map(|cache| &cache.calibration.chain))
+            .or_else(|| cached.map(|cache| &cache.calibration_chain))
             .expect("live or cached calibration checked above");
         if let Some(block) = secs_types::ipc::filter_export_block(
             params.kind,
@@ -387,7 +387,7 @@ fn cached_filter_values(
         None => (cache.labels.rc_hi_hz, settings.rc_hi.is_none(), None, true),
     };
     FilterValues {
-        chain: cache.calibration.chain.clone(),
+        chain: cache.calibration_chain.clone(),
         mimo,
         mode: cache.labels.mode.clone(),
         ultra_ms: cache.labels.ultra_ms,

@@ -1,11 +1,12 @@
 // Connects the tray state to the service: one `jobs` request for the
 // snapshots on mount, then pushed events only. Cancel calls `job_cancel`
 // and shows 취소하는 중 until the service reports the job finished.
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
+import { TERMINAL_JOB_LIMIT, observeSnapshotStart, snapshotFence } from "../../state/jobRetention";
 import { IpcFailure } from "../../ipc/client";
 import type { Ipc } from "../../ipc/context";
 import type { JobId } from "../../ipc/bindings/JobId";
-import { activeJobs, initialJobs, jobsReducer, type JobsState } from "./jobStore";
+import { activeJobs, initialJobs, jobsReducer, type JobsState, type SnapshotFinish } from "./jobStore";
 
 export type JobsApi = { state: JobsState; cancel: (job: JobId) => void; clearHistory: () => void; now: number };
 
@@ -15,14 +16,31 @@ const asIpcError = (error: unknown) =>
 export function useJobs(ipc: Ipc, initial: JobsState = initialJobs): JobsApi {
   const [state, dispatch] = useReducer(jobsReducer, initial);
   const [now, setNow] = useState(() => Date.now());
+  const current = useRef(state);
+  current.current = state;
 
   useEffect(() => {
     let alive = true;
-    const off = ipc.events.subscribe((event) => dispatch({ type: "event", event, at: Date.now() }));
+    let reading = true;
+    const fence = snapshotFence(current.current.retention, current.current.jobs.map((job) => job.id), current.current.observedOrder);
+    let observationOrder = current.current.observedOrder;
+    const finished = new Map<number, SnapshotFinish>();
+    const off = ipc.events.subscribe((event) => {
+      const at = Date.now();
+      const order = observationOrder = Math.max(observationOrder, current.current.observedOrder) + 1;
+      if (reading && event.event === "started") observeSnapshotStart(fence, event.job);
+      if (reading && event.event === "finished" && !fence.baselineIds.includes(event.job)
+          && (fence.firstStarted === null || event.job < fence.firstStarted)) {
+        finished.set(event.job, { job: event.job, status: event.status, error: event.error, at, order });
+        if (finished.size > TERMINAL_JOB_LIMIT) finished.delete(finished.keys().next().value!);
+      }
+      dispatch({ type: "event", event, at, order });
+    });
     ipc
       .request({ method: "jobs" })
-      .then((jobs) => alive && dispatch({ type: "snapshots", jobs, at: Date.now() }))
-      .catch((error: unknown) => alive && dispatch({ type: "request_failed", job: null, error: asIpcError(error), at: Date.now() }));
+      .then((jobs) => alive && dispatch({ type: "snapshots", jobs, at: Date.now(), finished: [...finished.values()], fence }))
+      .catch((error: unknown) => alive && dispatch({ type: "request_failed", job: null, error: asIpcError(error), at: Date.now() }))
+      .finally(() => { reading = false; finished.clear(); });
     return () => {
       alive = false;
       off();

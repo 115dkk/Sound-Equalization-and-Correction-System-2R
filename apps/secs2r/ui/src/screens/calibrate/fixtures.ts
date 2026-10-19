@@ -447,10 +447,7 @@ function defaultSub() {
 
 const firMimoSummary: import("../../ipc/bindings/MimoSummary").MimoSummary = {
   ...fx.mimoSummary, kind: "fir", support_count: 2, fir_taps_total: 16000,
-  paths: { fsiso: 150, paths: ["SW1", "SW2"].map((support) => ({
-    input: "L", support, low_hz: 20, delay_ms: 2,
-    filter: { Fir: { taps_48k: Array.from({ length: 8000 }, (_, i) => i === 0 ? 0.1 : 0) } },
-  })) },
+  input_count: 1,
 };
 export const gpuView: CalibrateView = {
   ...mimoView, settings: { ...mimoView.settings, mimo_fir: true }, compute: { ...base.compute, status: fx.gpuComputeStatus },

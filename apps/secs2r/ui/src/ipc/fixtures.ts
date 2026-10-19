@@ -173,7 +173,8 @@ export const calibrationSummary: CalibrationSummary = {
   scorecard,
   latency_ms: 9.8,
   notes: [{ code: "rc_limit", params: { hz: "310", auto: "true", schroeder_hz: "310" } }],
-  chain: signalChain,
+  main_roles: signalChain.mains.map((main) => main.role),
+  sub_roles: signalChain.subs.map((sub) => sub.role),
 };
 
 export const computeStatus: import("./bindings/ComputeStatus").ComputeStatus = {
@@ -198,7 +199,7 @@ export const mimoSummary: MimoSummary = {
   support_count: 24,
   fir_taps_total: 0,
   notes: [],
-  paths: { fsiso: 150, paths: [] },
+  input_count: 0,
 };
 
 export const resultsSummary: ResultsSummary = { calibration: calibrationSummary, mimo: mimoSummary };

@@ -3,7 +3,6 @@ import type { IpcError } from "./IpcError";
 import type { JobId } from "./JobId";
 import type { JobKind } from "./JobKind";
 import type { JobProgress } from "./JobProgress";
-import type { JobResult } from "./JobResult";
 import type { JobStatus } from "./JobStatus";
 
 /**
@@ -30,10 +29,6 @@ cancellable: boolean,
  * Most recently reported stage progress.
  */
 progress: JobProgress | null, 
-/**
- * Successful result once finished.
- */
-result: JobResult | null, 
 /**
  * Failure once finished unsuccessfully.
  */

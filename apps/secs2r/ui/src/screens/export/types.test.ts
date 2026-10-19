@@ -16,7 +16,7 @@ describe("export scope (the service's filter_export_block)", () => {
 
   it("judges every kind for subs × MIMO: text carries RC only (subs first), Equalizer APO RC and BA", () => {
     // The four fixtures are the four combinations.
-    expect([subsOnly, exportReady, exportRcOnly, exportMimoNoSubs].map((view) => [view.results.calibration!.chain.subs.length > 0, mimoInclusion(view).included])).toEqual([
+    expect([subsOnly, exportReady, exportRcOnly, exportMimoNoSubs].map((view) => [view.results.calibration!.sub_roles.length > 0, mimoInclusion(view).included])).toEqual([
       [true, false],
       [true, true],
       [false, false],

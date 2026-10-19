@@ -2,7 +2,6 @@ import type { StepId } from "../app/model";
 import { IpcFailure } from "../ipc/client";
 import type { Ipc, RequestFn } from "../ipc/context";
 import type { Request } from "../ipc/bindings/Request";
-import type { JobSnapshot } from "../ipc/bindings/JobSnapshot";
 import type { JobEvent } from "../ipc/bindings/JobEvent";
 import type { MeasureConfigureParams } from "../ipc/bindings/MeasureConfigureParams";
 import type { ResultCurvesParams } from "../ipc/bindings/ResultCurvesParams";
@@ -15,13 +14,15 @@ import type { CalibrateView } from "../screens/calibrate/types";
 import type { ExportRun } from "../screens/export/types";
 import type { MeasureView } from "../screens/measure/types";
 import { createResource, createStore, type Failure } from "./store";
+import { isActiveJob } from "./jobRetention";
+import { createJobTracker, type FinishedJob, type JobRequestContext, type SessionJob } from "./jobTracker";
 import { HOST_TRIGGERS, triggeredBy } from "./triggers";
 
 export type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "mdat" | "warnings"> & {
   computeLoading: boolean; computeSaving: boolean; computeError: import("../ipc/bindings/IpcError").IpcError | null;
   current: StepId; path: ConnectPath | null;
   tab: CalibrateView["tab"]; channel: string | null; xoGroup: string | null; previewHz: number | null;
-  jobs: JobSnapshot[]; jobRequests: Record<number, Request>;
+  jobs: SessionJob[]; jobRequests: Record<number, JobRequestContext>;
   meter: MeterReading | null; monitor: MonitorState; playing: string | null; playingAll: boolean; masterDbfs: number;
   sweepResult: LevelResult | null; sweepRole: string | null;
   xoRecommendation: XoRecommendation | null; runs: Partial<Record<ExportKind, ExportRun>>;
@@ -88,26 +89,29 @@ export function createSession(ipc: Ipc) {
     }));
     if (keys.includes("modeSpec") && stores.settings.getSnapshot()) await stores.modeSpec.load();
   }
-  const earlyFinishes = new Map<number, Extract<JobEvent, { event: "finished" }>>();
+  const tracker = createJobTracker(host.getSnapshot, (state) => host.set(state), completeJob, (job) => {
+    if (job.kind === "level_monitor" && monitorWanted) monitorJob = job.job;
+    if (job.epoch === tracker.epoch && ["calibrate", "mimo", "recommend_xo"].includes(job.kind)) host.set({ failure: null });
+  });
   const call: RequestFn = async (request) => {
     const methodBefore = stores.measurementSettings.getSnapshot()?.method;
+    const pendingStart = tracker.begin(request);
     try {
       // A monitor that cannot be stopped must not keep the next project from opening.
       if (request.method === "project_new" || request.method === "project_open") await monitor(false).catch(() => {});
       const data = await ipc.request(request);
+      if (pendingStart) {
+        tracker.reply(pendingStart, data as import("../ipc/bindings/JobStarted").JobStarted);
+        if (pendingStart.context.epoch !== tracker.epoch) return data;
+      }
       errors.set(null);
       if (request.method === "measure_configure" || request.method === "measure_config_get" || request.method === "level_apply") {
         stores.measurementSettings.set(data as import("../ipc/bindings/MeasureConfigResult").MeasureConfigResult);
         const method = stores.measurementSettings.getSnapshot()!.method;
         host.set({ path: method === "none" ? null : method as ConnectPath });
       }
-      if (["measure_position", "sample_load", "mdat_import", "calibrate", "recommend_xo", "mimo", "export", "level_check"].includes(request.method)) {
-        const started = data as import("../ipc/bindings/JobStarted").JobStarted;
-        host.set({ jobRequests: { ...host.getSnapshot().jobRequests, [started.job]: request } });
-        const early = earlyFinishes.get(started.job);
-        if (early) { earlyFinishes.delete(started.job); event(early); }
-      }
       if (request.method === "project_new" || request.method === "project_open") {
+        tracker.replaceProject();
         curveVersion++;
         curveState.set(null);
         stores.measurementSettings.set(null);
@@ -131,7 +135,10 @@ export function createSession(ipc: Ipc) {
       // A new project stores "none"; a reopened one keeps its method and devices.
       else if (request.method === "project_new" || request.method === "project_open") await call({ method: "measure_config_get" });
       return data;
-    } catch (error) { report(error); throw error; }
+    } catch (error) {
+      if (!pendingStart || pendingStart.context.epoch === tracker.epoch) report(error);
+      throw error;
+    } finally { tracker.settle(pendingStart); }
   };
   const run = (work: () => Promise<unknown>) => { void work().catch(() => { /* call reports the typed cause once */ }); };
   async function configure(patch: Partial<MeasureConfigureParams>) {
@@ -162,17 +169,19 @@ export function createSession(ipc: Ipc) {
     }
   }
   async function waitForJob(id: number) {
-    const existing = host.getSnapshot().jobs.find((job) => job.job === id);
-    if (existing && !["running", "cancel_requested"].includes(existing.status)) {
-      if (existing.error) throw new IpcFailure(existing.error);
-      return;
-    }
     await new Promise<void>((resolve, reject) => {
-      const off = ipc.events.subscribe((event) => {
-        if (event.event === "finished" && event.job === id) {
-          off(); if (event.error) reject(new IpcFailure(event.error)); else resolve();
-        }
-      });
+      let off = () => {};
+      const check = () => {
+        const job = host.getSnapshot().jobs.find((candidate) => candidate.job === id);
+        if (job && isActiveJob(job.status)) return;
+        off();
+        if (!job) reject(new IpcFailure(tracker.notFound(id)));
+        else if (job.error) reject(new IpcFailure(job.error));
+        else resolve();
+      };
+      // Subscribe before inspecting: a finish during setup cannot be missed.
+      off = host.subscribe(check);
+      check();
     });
   }
   let monitorQueue = Promise.resolve();
@@ -258,17 +267,11 @@ export function createSession(ipc: Ipc) {
       }
       return;
     }
-    if (event.event === "started") {
-      if (event.kind === "level_monitor" && monitorWanted) monitorJob = event.job;
-      host.set({ jobs: [...h.jobs.filter((j) => j.job !== event.job), { job: event.job, kind: event.kind, status: "running", cancellable: true, progress: null, result: null, error: null }],
-        ...(["calibrate", "mimo", "recommend_xo"].includes(event.kind) ? { failure: null } : {}) });
-      return;
-    }
-    const job = h.jobs.find((j) => j.job === event.job);
-    if (!job) return;
-    if (event.event === "progress") {
-      host.set({ jobs: h.jobs.map((j) => j === job ? { ...j, progress: { stage: event.stage, done: event.done, total: event.total } } : j) }); return;
-    }
+    if (event.event === "started") { tracker.observeStart(event.job, event.kind); return; }
+    if (event.event === "progress") { tracker.progress(event); return; }
+    if (event.event === "finished") { tracker.finish(event); return; }
+    const job = h.jobs.find((candidate) => candidate.job === event.job);
+    if (!job || job.epoch !== tracker.epoch || !isActiveJob(job.status)) return;
     const request = h.jobRequests[event.job];
     if (event.event === "log") {
       if (event.code === "measurement_low_snr" && request?.method === "measure_position") {
@@ -278,13 +281,15 @@ export function createSession(ipc: Ipc) {
       }
       return;
     }
-    if (!request && !["level_monitor", "status_watch"].includes(job.kind)) earlyFinishes.set(event.job, event);
-    host.set({ jobs: h.jobs.map((j) => j === job ? { ...j, status: event.status, result: event.result, error: event.error } : j) });
+  }
+  function completeJob(job: SessionJob, event: FinishedJob, request: JobRequestContext | undefined) {
+    const h = host.getSnapshot();
     if (job.kind === "level_monitor" && event.job === monitorJob) {
       monitoring = false;
       clearMeterTimer();
       if (!restartingMonitor) host.set({ monitor: event.status === "failed" ? "offline" : "off" });
     }
+    if ((request?.epoch ?? job.epoch) !== tracker.epoch) return;
     // A cancelled job also carries an error (code `cancelled`); only a failure is one.
     if (event.status === "failed" && event.error && ["calibrate", "mimo", "recommend_xo"].includes(job.kind)) {
       host.set({ failure: { job: request?.method === "calibrate" && request.params.subs_only ? "calibrate_subs" : job.kind as "calibrate" | "mimo" | "recommend_xo", error: event.error } });
@@ -311,11 +316,9 @@ export function createSession(ipc: Ipc) {
     if (startPromise) return startPromise;
     off = ipc.events.subscribe(event);
     startPromise = (async () => {
+      const jobRead = tracker.beginSnapshots();
       await Promise.all([stores.bootstrap.load(), stores.appSettings.load(), stores.computeStatus.load(), stores.methods.load(),
-        ipc.request({ method: "jobs" }).then((jobs) => {
-          const live = host.getSnapshot().jobs;
-          host.set({ jobs: [...jobs.filter((job) => !live.some((seen) => seen.job === job.job)), ...live] });
-        }).catch(report),
+        ipc.request({ method: "jobs" }).then((jobs) => tracker.snapshots(jobs, jobRead)).catch(report).finally(() => tracker.endSnapshots(jobRead)),
       ]);
       try { stores.project.set(await ipc.request({ method: "project_info" })); }
       catch (error) { report(error); }

@@ -81,7 +81,7 @@ export function mimoInclusion(view: ExportView): MimoInclusion {
   if (view.positions < MIMO_MIN_POSITIONS) return { included: false, reason: "positions" };
   if (!mimo) return { included: false, reason: "none" };
   if (mimo.stale) return { included: false, reason: "stale" };
-  const channels = new Set(mimo.paths.paths.map((path) => path.input)).size;
+  const channels = mimo.input_count;
   return { included: true, kind: mimo.kind, supports: mimo.support_count, channels };
 }
 
@@ -97,7 +97,7 @@ export function mimoInclusion(view: ExportView): MimoInclusion {
 export function exportBlock(view: ExportView, kind: ExportKind): ExportBlock | null {
   const result = view.results.calibration;
   if (!result) return null;
-  const subs = result.chain.subs.length > 0;
+  const subs = result.sub_roles.length > 0;
   const mimo = mimoInclusion(view).included;
   if (kind === "filter_text" && subs) return "subs";
   if ((kind === "filter_text" || kind === "equalizer_apo") && mimo) return "mimo";
