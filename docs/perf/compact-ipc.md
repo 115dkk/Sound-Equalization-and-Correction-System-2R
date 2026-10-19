@@ -97,7 +97,9 @@ RSS·전체 Rust 서비스 메모리는 측정하지 않습니다. 작은 힙 �
 기능 등록부의 실제 컴파일 목록 검사는 Windows에서 제외되는 기존
 `secs-sys::callback_native_sample_conversion` 한 항목 때문에 로컬에서는
 통과하지 않습니다. 새로 등록한 테스트들은 모두 목록에 있으며, 전체 검사는
-Linux CI에서 확인합니다.
+Linux CI에서 확인합니다. [PR #52의 Linux 실행](https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R/actions/runs/39288719747/job/118184811634)에서는
+전체 workspace·문서·release 모드 엔진 테스트가 통과했고, 등록된 283개 테스트가
+모두 실제로 컴파일·열거됨을 확인했습니다.
 
 ## macOS CI 실행기
 
