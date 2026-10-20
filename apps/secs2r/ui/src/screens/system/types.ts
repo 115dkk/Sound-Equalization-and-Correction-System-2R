@@ -10,6 +10,8 @@ import type { Notice } from "../../ipc/bindings/Notice";
 import type { PositionEstimateResult } from "../../ipc/bindings/PositionEstimateResult";
 
 export type SystemView = {
+  /** Device selection is meaningful only for a physical measurement path. */
+  outputDeviceState: "unselected" | "default" | "selected" | "checking" | "unavailable" | "rew_unknown" | "not_required";
   /** config_get, and the config every config_* call answers with. */
   config: ConfigResult;
   /** config_validate, after every config change. */
@@ -35,6 +37,8 @@ export type SystemView = {
 };
 
 export type SystemActions = {
+  /** Open the current measurement setup without changing its method or device. */
+  configureMeasurement: (() => void) | null;
   /**
    * config_apply_preset { preset, confirm: true } (`custom` = an empty
    * configuration). The screen asks first when `positionsDone` is not empty.

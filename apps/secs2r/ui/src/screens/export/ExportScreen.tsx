@@ -177,19 +177,17 @@ function ResultCard({ view, actions }: { view: ExportView; actions: ExportAction
   const t = useT();
   const result = view.results.calibration;
   if (!result) {
-    // The header already says why there is nothing to export; this card says what will appear here.
+    // Show the running job or the action that creates an exportable result.
     return (
       <Card data-ui="export.result" aria-label={t("export.result.title")}>
         {view.computing ? (
           <div className="export-computing" data-ui="export.result.computing">
             <StatusPill tone="busy">{t("frame.status.calibration.computing")}</StatusPill>
-            <p className="export-note">{t("export.result.computing")}</p>
           </div>
         ) : (
           <EmptyState
             id="export.result.empty"
             title={t("export.result.empty")}
-            description={t("export.result.empty.body")}
             action={
               <Button variant="secondary" iconEnd="arrowRight" data-ui="export.go_calibrate" onClick={actions.goToCalibrate}>
                 {t("export.go_calibrate")}

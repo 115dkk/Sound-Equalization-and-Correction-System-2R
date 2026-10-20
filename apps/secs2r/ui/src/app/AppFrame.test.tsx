@@ -30,7 +30,7 @@ const model = (current: StepId, overrides: Partial<FrameModel["steps"]> = {}): F
   },
 });
 
-function setup(current: StepId, locale: "ko" | "en" = "ko", overrides: Partial<FrameModel["steps"]> = {}) {
+function setup(current: StepId, locale: "ko" | "en" = "ko", overrides: Partial<FrameModel["steps"]> = {}, withRecovery = false) {
   const handlers = {
     onNavigate: vi.fn(),
     onHelp: vi.fn(),
@@ -39,12 +39,14 @@ function setup(current: StepId, locale: "ko" | "en" = "ko", overrides: Partial<F
     onSave: vi.fn(),
     onSaveAs: vi.fn(),
     primary: vi.fn(),
+    recovery: vi.fn(),
   };
   renderWith(
     <AppFrame
       model={model(current, overrides)}
       onNavigate={handlers.onNavigate}
       primary={{ id: "step.primary", label: "Go", onClick: handlers.primary }}
+      recovery={withRecovery ? { id: "step.recovery", label: "Measure", onClick: handlers.recovery } : undefined}
       projectActions={{ onNew: handlers.onNew, onOpen: handlers.onOpen, onSave: handlers.onSave, onSaveAs: handlers.onSaveAs }}
       onHelp={handlers.onHelp}
       version={{ version: "0.13.0", prerelease: true }}
@@ -69,7 +71,7 @@ describe("app frame", () => {
     const blocked = { status: "blocked", reason: "no_project" } as const;
     setup("system", locale, { system: blocked, connect: blocked, measure: blocked, calibrate: blocked, export: blocked });
     for (const step of ["system", "connect", "measure", "calibrate", "export"] as const) expect(railButton(step).textContent).toContain(locale === "ko" ? "프로젝트 필요" : "Needs a project");
-    expect(document.querySelector('[data-ui="frame.header.blocked"]')?.textContent).toContain(locale === "ko" ? "새 프로젝트를 만들거나" : "Create a new project");
+    expect(document.querySelector('[data-ui="frame.header.blocked"]')?.textContent).toContain(locale === "ko" ? "프로젝트 필요" : "Needs a project");
   });
 
   it("draws each rail state: done, current, skipped and blocked with its reason", () => {
@@ -94,7 +96,7 @@ describe("app frame", () => {
   it("shows the blocked reason in the header and disables the primary action", () => {
     setup("calibrate");
     const reason = document.querySelector('[data-ui="frame.header.blocked"]');
-    expect(reason?.textContent).toBe("측정한 위치가 없습니다. 측정·가져오기에서 측정하거나 mdat 파일을 가져오세요.");
+    expect(reason?.textContent).toBe("측정 필요");
     const primary = screen.getByRole("button", { name: "Go" }) as HTMLButtonElement;
     expect(primary.disabled).toBe(true);
     expect(primary.getAttribute("aria-describedby")).toBe(reason?.id);
@@ -107,6 +109,16 @@ describe("app frame", () => {
     fireEvent.click(primary);
     expect(handlers.primary).toHaveBeenCalledOnce();
     expect(document.querySelector('[data-ui="frame.header.blocked"]')).toBeNull();
+  });
+
+  it("lets the blocked step open its recovery control while the primary stays disabled", () => {
+    const handlers = setup("calibrate", "ko", {}, true);
+    const recovery = screen.getByRole("button", { name: "Measure" });
+    expect((recovery as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.click(recovery);
+    expect(handlers.recovery).toHaveBeenCalledOnce();
+    expect((screen.getByRole("button", { name: "Go" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(handlers.primary).not.toHaveBeenCalled();
   });
 
   it("turns the primary off when the screen says so and names the status beside the title as the reason", () => {

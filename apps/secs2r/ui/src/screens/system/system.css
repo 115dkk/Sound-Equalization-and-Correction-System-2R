@@ -151,9 +151,15 @@ button.system-choice:active:not([aria-pressed="true"]) {
   overflow-wrap: anywhere;
 }
 
-.system-device__name--none {
-  color: var(--text-muted);
-  font-weight: var(--weight-regular);
+.system-device__name--warning {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  color: var(--warning);
+}
+
+.system-device__configure {
+  min-height: var(--hit-min);
 }
 
 .system-notices {

@@ -48,7 +48,6 @@ export const REACH_IDS = [
   "measure.run.progress",
   "measure.position.start",
   "measure.next",
-  "measure.path.note",
   "measure.status",
   "measure.cancel",
   "measure.redo",
@@ -184,10 +183,7 @@ describe("측정·가져오기 screen", () => {
     expect(current).not.toBe(1);
   });
 
-  it("says when the project has no path yet and that the step needs a method", () => {
-    renderStep(emptyView);
-    expect(ui("measure.path.note").textContent).toContain("저장할 위치");
-    cleanup();
+  it("keeps measuring unavailable until a measurement method is chosen", () => {
     renderStep(noPathView);
     expect((ui("measure.position.start") as HTMLButtonElement).disabled).toBe(true);
     expect(ui("frame.header.blocked").textContent).toContain("측정 방식");

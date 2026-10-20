@@ -38,7 +38,7 @@ const keysOf = (block: HelpBlock): string[] => {
     case "heading":
       return [block.text];
     case "steps":
-      return block.items.flatMap((item) => [item.do, item.see]);
+      return block.items.flatMap((item) => item.see ? [item.do, item.see] : [item.do]);
     case "pairs":
       return block.items.flatMap((item) => [item.term, item.text]);
     case "channels":

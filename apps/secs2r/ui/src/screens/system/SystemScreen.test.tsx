@@ -68,6 +68,7 @@ export const REACH_IDS = [
 
 function actionsMock(token: string | null = "undo-7") {
   return {
+    configureMeasurement: vi.fn(),
     applyPreset: vi.fn(async () => token),
     setSubCount: vi.fn(async () => token),
     setRole: vi.fn(),
@@ -297,6 +298,25 @@ describe("SystemScreen", () => {
     setup({ ...sampleView, config: { ...sampleView.config, device: "wasapi:{0.0.0.00000000}.{hdmi}" }, outputDeviceName: "AVR (HDMI)" });
     expect(must("system.device").textContent).toContain("AVR (HDMI)");
     expect(must("system.device").textContent).not.toContain("wasapi:");
+  });
+
+  it.each(["unselected", "unavailable"] as const)("opens the supplied setup action for %s measurement output", (outputDeviceState) => {
+    const actions = setup({ ...newProjectView, outputDeviceState });
+    expect(must("system.device.status").classList.contains("system-device__name--warning")).toBe(true);
+    fireEvent.click(must("system.device.configure"));
+    expect(actions.configureMeasurement).toHaveBeenCalledOnce();
+  });
+
+  it.each(["default", "checking", "rew_unknown", "not_required"] as const)("keeps %s distinct from a missing device and ignores the stored hardware name", (outputDeviceState) => {
+    const actions = { ...actionsMock(), configureMeasurement: outputDeviceState === "default" ? vi.fn() : null };
+    renderWith(<SystemScreen view={{ ...sampleView, outputDeviceState, outputChannels: null }} actions={actions} />);
+    if (outputDeviceState === "not_required") {
+      expect(ui("system.device")).toBeNull();
+      return;
+    }
+    expect(must("system.device.status").classList.contains("system-device__name--warning")).toBe(false);
+    expect(must("system.device").textContent).not.toContain(sampleView.config.device);
+    expect(ui("system.device.configure") !== null).toBe(outputDeviceState === "default");
   });
 
   it("keeps incomplete setup editable and marks valid setup done", () => {
