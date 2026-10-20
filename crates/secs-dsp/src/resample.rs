@@ -3,8 +3,8 @@
 //! Independent windowed-sinc/polyphase implementation. Mathematical references:
 //! SciPy's resample_poly/upfirdn documentation and the symmetric four-term
 //! Blackman-Harris window (0.35875, 0.48829, 0.14128, 0.01168).
-//! https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.upfirdn.html
-//! https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.windows.blackmanharris.html
+//! [upfirdn](https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.upfirdn.html)
+//! [Blackman-Harris](https://docs.scipy.org/doc/scipy/reference/generated/scipy.signal.windows.blackmanharris.html)
 //!
 //! Unlike waveform resampling, the FIR gain is `down`, not `up`: an IR's
 //! discrete sum/transfer response must stay constant as sample density changes.
