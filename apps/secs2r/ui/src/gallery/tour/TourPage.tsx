@@ -160,7 +160,6 @@ export function mountTour(container: HTMLElement, params: URLSearchParams) {
     const prefs: Prefs = {
       theme: params.get("theme") === "dark" ? "dark" : "light",
       locale: params.get("lang") === "en" ? "en" : "ko",
-      expert: scene.expert ?? false,
       accent: "default",
     };
     createRoot(container).render(

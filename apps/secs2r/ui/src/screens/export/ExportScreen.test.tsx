@@ -80,7 +80,6 @@ const REACH_IDS = [
   "frame.help",
   "frame.settings",
   "frame.settings.language",
-  "frame.settings.expert",
   "jobs.tray",
   "jobs.job.export",
   "jobs.cancel.export",

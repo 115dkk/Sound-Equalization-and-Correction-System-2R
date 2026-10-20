@@ -154,7 +154,7 @@ function Choices() {
   const t = useT();
   const [mode, setMode] = useState<"zero" | "mixed" | "linear">("mixed");
   const [subs, setSubs] = useState(2);
-  const [expert, setExpert] = useState(false);
+  const [autoLimit, setAutoLimit] = useState(false);
   const [theme, setTheme] = useState<"system" | "light" | "dark">("system");
   return (
     <div className="gal-grid-2">
@@ -183,7 +183,7 @@ function Choices() {
       <div className="gal-stack">
         <Stepper id="gallery.stepper.subs" label={t("gallery.sample.subs")} value={subs} min={0} max={8} onChange={setSubs} />
         <Stepper id="gallery.stepper.min" label={t("gallery.sample.subs")} value={0} min={0} max={8} onChange={() => {}} />
-        <Toggle id="gallery.toggle.expert" label={t("frame.settings.expert")} hint={t("frame.settings.expert.hint")} checked={expert} onChange={setExpert} />
+        <Toggle id="gallery.toggle.auto" label={t("calibrate.range.upper_auto")} help={t("calibrate.range.upper_auto.hint")} checked={autoLimit} onChange={setAutoLimit} />
         <Toggle id="gallery.toggle.on" label={t("gallery.sample.xo_peq")} checked onChange={() => {}} />
         <Toggle id="gallery.toggle.disabled" label={t("gallery.sample.mimo")} hint={t("gallery.sample.mimo.disabled")} checked={false} disabled onChange={() => {}} />
         <Segmented
@@ -286,7 +286,7 @@ function Dialogs() {
         <ConfirmUndoDemo />
         <Button onClick={() => setOpen(true)}>{t("gallery.sample.open_dialog")}</Button>
         <Dialog open={open} onClose={() => setOpen(false)} title={t("frame.settings")} footer={<Button variant="primary" onClick={() => setOpen(false)}>{t("ui.close")}</Button>}>
-          <p>{t("frame.settings.expert.hint")}</p>
+          <p>{t("calibrate.range.boost.hint")}</p>
         </Dialog>
       </div>
     </div>
@@ -349,7 +349,7 @@ function ContextualHelp({ edge = false }: { edge?: boolean }) {
       <Select id="gallery.help.disabled" label={t("connect.output_device")} value="device" disabled options={[{ value: "device", label: "MOTU M4" }]} help={t("connect.output_device.hint")} onChange={() => {}} />
       <Button data-ui="gallery.help.dialog.open" onClick={() => setDialog(true)}>{t("frame.settings")}</Button>
     </Card>
-    <Dialog id="gallery.help.dialog" open={dialog} onClose={() => setDialog(false)} title={t("frame.settings")} help={t("frame.settings.expert.hint")}>
+    <Dialog id="gallery.help.dialog" open={dialog} onClose={() => setDialog(false)} title={t("calibrate.range.boost")} help={t("calibrate.range.boost.hint")}>
       <NumberField id="gallery.help.dialog.value" label={t("calibrate.range.boost")} value={boost} min={0} max={10} step={1} digits={1} unit="dB" help={t("calibrate.range.boost.hint")} onChange={setBoost} />
     </Dialog>
   </div>;

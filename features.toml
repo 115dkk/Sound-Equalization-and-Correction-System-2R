@@ -1269,7 +1269,7 @@ id = "service.app_settings"
 kind = "service"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-service::app_settings_are_versioned_bounded_and_capped"]
+tests = ["secs-service::app_settings_are_versioned_bounded_and_capped", "secs-service::legacy_expert_preference_is_ignored_without_resetting_other_settings"]
 note = "versioned bounded data-only JSON, injected path or in-memory storage"
 
 [[feature]]

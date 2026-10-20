@@ -35,7 +35,6 @@ export type TourScene = {
   note?: { ko: string; en: string };
   /** The mock's starting project; "sample" (the default) is 7.1.4 + 3 subwoofers, "stereo" a new 2.0 project. */
   project?: "none" | "stereo" | "sample";
-  expert?: boolean;
   tutorialStart?: string;
   /** Brings the mock to the scene's state before the App mounts. */
   setup?: (mock: MockService) => void | Promise<void>;
@@ -265,7 +264,20 @@ export const TOUR_SCENES: TourScene[] = [
     note: { ko: "연결·점검을 건너뛰는 방식이라 레일에 건너뜀이 보입니다.", en: "This method skips Connect & check, so the rail marks it skipped." },
     ops: choosePath("mdat", "system"),
   },
-  { id: "system.expert", step: "system", title: { ko: "전문가 항목을 켠 시스템", en: "System with expert options shown" }, expert: true },
+  {
+    id: "system.channel-details",
+    step: "system",
+    title: { ko: "다중 밴드 채널 상세", en: "Multi-band channel details" },
+    setup: async (mock) => {
+      await devices(mock);
+      const config = await mock.request({ method: "config_get" });
+      config.speakers[0]!.bands = [{ band: "LOW", out: 1, pol: "+" }, { band: "HIGH", out: 16, pol: "-" }];
+      config.summary.outputs.push(16);
+      config.summary.max_channel = 16;
+      reply(mock, "config_get", config);
+    },
+    ops: [...choosePath("native", "system"), click(ui("system.room.speaker.L")), reveal(ui("system.speaker")), click(ui("system.speaker.help"))],
+  },
 
   // 연결·점검
   {
@@ -274,6 +286,13 @@ export const TOUR_SCENES: TourScene[] = [
     title: { ko: "장치를 고른 연결·점검", en: "Connect & check with devices chosen" },
     setup: (mock) => devices(mock),
     ops: [...choosePath("native"), tick(1)],
+  },
+  {
+    id: "connect.device-sharing",
+    step: "connect",
+    title: { ko: "장치 공유 방식", en: "Device sharing" },
+    setup: (mock) => devices(mock),
+    ops: [...choosePath("native"), click(ui("connect.devices.details")), reveal(ui("connect.devices.details"))],
   },
   {
     id: "connect.level-running",
@@ -413,6 +432,13 @@ export const TOUR_SCENES: TourScene[] = [
     title: { ko: "계산 전 보정 설정", en: "Correction settings before calculating" },
     setup: inProgress,
     ops: choosePath("native", "calibrate"),
+  },
+  {
+    id: "calibrate.ultra",
+    step: "calibrate",
+    title: { ko: "초고지연 모드", en: "Ultra latency mode" },
+    setup: inProgress,
+    ops: [...choosePath("native", "calibrate"), click(ui("calibrate.mode.ultra")), reveal(ui("calibrate.settings.mode"))],
   },
   {
     id: "calibrate.running",

@@ -2,12 +2,11 @@ import { HelpTip } from "../../ui/HelpTip";
 // The settings that change the correction, in five sections grouped by what
 // they change: 모드, 보정 범위, 크로스오버, 서브 정렬 (BA), MIMO. Every
 // change goes through `changeSetting` (calibration_settings_set) and only
-// marks the result stale. Detail sits under 고급; the 초고지연 mode shows
-// with 전문가 표시 (U9).
+// marks the result stale. Detail sits under 고급; every correction mode is
+// available in the mode selector.
 import { ComputeControl, ComputeResult } from "./ComputeControl";
 import { useEffect, useState, type ReactNode } from "react";
 import { errorText } from "../../app/jobs/jobText";
-import { usePrefs } from "../../app/prefs";
 import { useNumber, useT } from "../../i18n/react";
 import type { BandType } from "../../ipc/bindings/BandType";
 import type { CalibrationSettings } from "../../ipc/bindings/CalibrationSettings";
@@ -56,10 +55,7 @@ function JobFailure({ view, job, id }: { view: CalibrateView; job: CalibrateJob;
 function ModeSection({ view, actions }: Props) {
   const t = useT();
   const number = useNumber();
-  const { expert } = usePrefs();
   const s = view.settings;
-  // 초고지연 is for experts (U9: no hidden gesture); a project already in it keeps showing it.
-  const modes = MODES.filter((mode) => mode !== "ultra" || expert || s.mode === "ultra");
   return (
     <SettingsCard id="mode" title={t("calibrate.mode.title")} help={<>{t("calibrate.mode.description")}<p>{t(MODE_EFFECT[s.mode])}</p></>}>
       <Segmented
@@ -67,7 +63,7 @@ function ModeSection({ view, actions }: Props) {
         label={t("calibrate.mode.title")}
         hideLabel
         value={s.mode}
-        options={modes.map((mode) => ({ value: mode, label: t(MODE_NAME[mode]) }))}
+        options={MODES.map((mode) => ({ value: mode, label: t(MODE_NAME[mode]) }))}
         onChange={(mode) => actions.changeSetting({ kind: "mode", mode })}
       />
       <div className="calibrate-mode-text">

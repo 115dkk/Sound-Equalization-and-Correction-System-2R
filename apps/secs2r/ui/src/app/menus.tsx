@@ -1,11 +1,11 @@
 // The project menu (새로 만들기, 열기, 저장, 다른 이름으로 저장) and the
-// display settings (언어, 테마, 로고, 전문가 표시). Shortcut hints come from the
+// display settings (언어, 테마, 로고). Shortcut hints come from the
 // shortcut registry.
 import { useRef, useState } from "react";
 import { useT } from "../i18n/react";
 import { Icon } from "../ui/Icon";
 import { Menu, Popover } from "../ui/Popover";
-import { Segmented, Toggle } from "../ui/controls";
+import { Segmented } from "../ui/controls";
 import type { AppIcon } from "../ipc/bindings/AppIcon";
 import { DEFAULT_LOGO, SMALL_LOGOS } from "./logo";
 import { usePrefs, type ThemeChoice } from "./prefs";
@@ -128,13 +128,6 @@ export function SettingsButton({ initiallyOpen = false, inline = false }: { init
             media: <img className="settings__logo" src={SMALL_LOGOS[icon]} alt="" width={20} height={20} draggable={false} />,
           }))}
           onChange={(icon) => prefs.set({ icon })}
-        />
-        <Toggle
-          id="frame.settings.expert"
-          label={t("frame.settings.expert")}
-          help={t("frame.settings.expert.hint")}
-          checked={prefs.expert}
-          onChange={(expert) => prefs.set({ expert })}
         />
       </Popover>
     </>

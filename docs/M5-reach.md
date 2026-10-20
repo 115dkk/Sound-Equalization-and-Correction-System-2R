@@ -28,7 +28,7 @@
 | 스윕 길이 64k…4M "길이 · 초", 기본 256k | `connect.sweep_length` | 없음 | P30 |
 | REW가 떠 있는데 장치 목록이 비면 다시 읽기(2초마다, 15번) | `connect.input_device`, `connect.devices.retry` (다시 읽기는 `status_watch`의 `MeasureStatus`, P33) | 없음 | P30 |
 | 루프백 입력 채널(타이밍 기준이 케이블일 때, 자체 측정) | `connect.loopback_channel` | 없음 | P30 |
-| 장치 공유: 자동 / 독점 / 공유(전문가 표시, 자체 측정) | `connect.share_mode` | 없음 | P30 |
+| 장치 공유: 자동 / 독점 / 공유(자체 측정의 장치 카드에서 펼침) | `connect.devices.details`, `connect.share_mode` | 없음 | P30, P58 |
 | 진행 조건: REW 실행과 Pro("REW 를 켜 주세요.") | `connect.rew.hint`, `connect.rew.launch` | 없음 | P30 |
 | [장치 확인 건너뛰기] | `connect.method.mdat`, `connect.mdat`, `connect.next` | 없음 | P30 |
 
@@ -44,7 +44,7 @@
 | 표 묶음: 프론트, 센터, 서브, 서라운드, 백, 와이드, 탑, 하이트, 기타 | `system.patch` | 없음 | P30 |
 | 채널: 역할("코드 · 돌비 이름", 사용자 정의), 서브 역할이면 SUB 대역 | `system.patch.<role>.role` | 없음 | P30 |
 | 크기: 소형 · XO 적용 / 대형 · 풀레인지, 서브는 알약 | `system.patch.<role>.size` | 없음 | P30 |
-| 앰프 구성과 대역 칩(바이앰프와 함께 숨김) | `system.patch.<role>.band` (전문가 표시, 읽기 전용 대역 열); 앰프 구성 — | 숨김 유지(`M5.md` 5절) | P30 |
+| 앰프 구성과 대역 칩(바이앰프와 함께 숨김) | `system.speaker` (읽기 전용 대역별 상세); 앰프 구성 — | 앰프 구성 숨김 유지(`M5.md` 5절) | P30, P58 |
 | 측정 출력 1..N, "(범위 밖)" 항목, 중복 알약 | `system.patch.<role>.out` | 없음 | P30 |
 | 극성 정상 / 반전 | `system.patch.<role>.pol` | 없음 | P30 |
 | 빼기 | `system.patch.<role>.remove` | 없음 | P30 |
@@ -136,7 +136,7 @@
 | BA 탭: 빨간 경고(`sub_filter_warnings`, `sub_gain_warnings`) | `calibrate.ba.warnings` | 없음 | P31b |
 | 첫 계산 전: 위치 1 미리보기와 안내(계산이 할 일, XO 추천을 먼저 함, 모드) | `calibrate.verdict.plan`, `calibrate.plot.preview` | 없음 | P31b |
 | 모드: 최소 지연(`zero`), 낮은 지연(`mixed`, 기본), 표준(`linear`) | `calibrate.mode.zero`, `calibrate.mode.mixed`, `calibrate.mode.linear` | 없음 | P31b |
-| 초고지연(`ultra`, 사양 줄 다섯 번 누르기로 열림)과 지연 한도 30–200 ms, 10 단위 | `calibrate.mode.ultra`, `calibrate.mode.ultra_ms` | U9 | P31b |
+| 초고지연(`ultra`, 사양 줄 다섯 번 누르기로 열림)과 지연 한도 30–200 ms, 10 단위 | `calibrate.mode.ultra` (모드 목록에 항상 표시), `calibrate.mode.ultra_ms` | U9 | P31b, P58 |
 | 사양 줄(`cal.mode_spec`) | `calibrate.mode.spec` | 없음 | P31b |
 | [계산](첫 계산에서 XO 추천이 없으면 추천부터, 서비스가 정함) | `calibrate.compute` | 없음 | P31b |
 | [취소](결과를 버림)와 XO·MIMO 카드의 취소 | `jobs.cancel.calibrate`, `jobs.cancel.recommend_xo`, `jobs.cancel.mimo` | U8 | P31b |
@@ -260,7 +260,7 @@
 | 언어 전환과 문구(`t()`, 카탈로그), 살아 있는 툴팁 | `frame.settings.language` | U7 | P29 |
 | 툴팁(약 150개, 800 ms, 420 px) | `frame.rail.<step>`(막힌 이유 툴팁; 모든 화면의 키트 툴팁) | — | P29 |
 | 닫힌 콤보 위의 휠은 페이지를 스크롤 | `frame.content`(기본 select는 휠로 값이 바뀌지 않음) | — | P29 |
-| 전문가 모드·정보 창 없음 | `frame.settings.expert` | U9 | P29 |
+| 전문가 모드·정보 창 없음 | — (전역 전문가 표시 없음); 로고 선택은 `frame.settings.logo` | U9 | P29, P58 |
 | REW 감시 3초마다(3, 5, 8단계에서 멈춤) | `frame.status.path` | — | P29 |
 | 튜토리얼 모드: 데모 프로젝트, 가짜 REW, 분홍 테마, 저장·내보내기 막음 | `project.tutorial`, `frame`(튜토리얼 강조색), `export.tutorial` | — | P32 |
 | 기다림 표시: 로딩 카드, 작업 패널, 시작 화면 | `jobs.tray`, `jobs.job.<kind>`, `jobs.cancel.<kind>` | U8 | P29 |

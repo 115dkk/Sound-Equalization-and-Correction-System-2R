@@ -9,7 +9,6 @@ import { HelpTip } from "../../ui/HelpTip";
 // measurements ask first and offer undo (U5).
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import type { PrimaryAction } from "../../app/StepHeader";
-import { usePrefs } from "../../app/prefs";
 import type { Translate } from "../../i18n/react";
 import { useNumber, useT } from "../../i18n/react";
 import type { ConfigSpeaker } from "../../ipc/bindings/ConfigSpeaker";
@@ -336,7 +335,6 @@ function PatchTable({
   onSelect: (index: number) => void;
 }) {
   const t = useT();
-  const { expert } = usePrefs();
   const { config, outputChannels, outputNames } = view;
   const duplicates = new Set(config.summary.duplicate_outputs);
   // Upstream lists 1…channels (64 while the device is unknown) and adds the stored value when it is past the end.
@@ -396,20 +394,6 @@ function PatchTable({
           </CellKeys>
         ),
     },
-    ...(expert
-      ? [
-          {
-            key: "band",
-            header: t("system.patch.band"),
-            width: "5.5rem",
-            cell: ({ speaker }: Row) => (
-              <span className="system-bands" data-ui={`system.patch.${speaker.role}.band`}>
-                {speaker.bands.length === 0 ? "—" : speaker.bands.map((b) => b.band).join(" / ")}
-              </span>
-            ),
-          } satisfies Column<Row>,
-        ]
-      : []),
     {
       key: "out",
       header: t("system.patch.output"),
@@ -562,7 +546,6 @@ function RoomCard({ view, selected, onSelect }: { view: SystemView; selected: nu
 
 function SpeakerDetail({ view, index }: { view: SystemView; index: number | null }) {
   const t = useT();
-  const { expert } = usePrefs();
   const speaker = index === null ? undefined : view.config.speakers[index];
   if (!speaker) {
     return (
@@ -577,7 +560,7 @@ function SpeakerDetail({ view, index }: { view: SystemView; index: number | null
     <div className="system-speaker" data-ui="system.speaker" aria-live="polite">
       <div className="system-speaker__head">
         <span className="system-speaker__name" id="system.speaker.name">{roleName(t, speaker.role)}</span>
-        <HelpTip id="system.speaker.help" labelledBy="system.speaker.name" content={<>{t(note)}{expert && <p>{t("system.speaker.internal", { role: speaker.role })}</p>}</>} />
+        <HelpTip id="system.speaker.help" labelledBy="system.speaker.name" content={<>{t(note)}<p>{t("system.speaker.internal", { role: speaker.role })}</p></>} />
         <span className="system-chip">{roleCode(speaker.role)}</span>
         <StatusPill>{t(KIND_NAME[kind])}</StatusPill>
       </div>

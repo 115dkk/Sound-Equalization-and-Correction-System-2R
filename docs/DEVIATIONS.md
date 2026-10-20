@@ -26,7 +26,7 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 | D17 | 계산 취소가 결과만 버리고 계산 스레드는 계속 돕니다. 다시 누르면 계산이 겹치고, 다시 계산하면 MIMO 결과가 사라집니다. 프로세스 종료는 비공개 속성에 기댑니다. | 협조적 취소, 무리마다 잡 하나, 이전 결과 보존과 서명 기반 낡음 표시. `secs-service::{jobs_push_ordered_events_and_exclude_the_same_group,cancellation_finishes_within_one_second,cancelled_calibration_preserves_previous_results,room_dba_mimo_runs_and_becomes_stale_after_recalibration}`가 잡 경계, 취소, 이전 결과 보존, MIMO 낡음을 지킵니다. | `wizard/step_calibration.py:1836-1846`, `mimo_iir.py:180-195` | 적용 |
 | D37 | 보정 결과의 낡음을 정하는 측정 서명이 위치, 역할, t0만 봅니다. 같은 위치를 다시 재어 t0가 같으면(자체·모의 측정, 같은 시간 원점의 mdat) 파형이 바뀌어도 결과가 최신으로 보입니다. | 서명에 측정마다의 UUID를 더하고, 자체·모의 측정에도 UUID를 매깁니다. `secs-service::measuring_another_position_marks_calibration_stale`가 같은 위치 재측정과 다른 위치 측정이 모두 결과를 낡게 하는지 확인합니다. | `calibration.py measurement_signature` | 적용 |
 | D38 | REW 캘 파일의 `Sens Factor`가 숫자로 바뀌지 않으면 환경 수집 예외가 측정 전체를 실패시킵니다. | 측정은 남기고 그 측정의 환경만 생략합니다. | `rew_mdat/source_info.py from_rew_measurement`, `rewapi/rew.py _source_info` | 적용 |
-| D22 | 엔진 값 15개 안팎을 환경 변수로만 바꿀 수 있고, 워커가 호출마다 다시 읽습니다. | 명시적 튜닝 값, 화면의 전문가 표시. | `correction_engine.py`, `mimo.py`, `mimo_iir.py` 머리 | 계획 |
+| D22 | 엔진 값 15개 안팎을 환경 변수로만 바꿀 수 있고, 워커가 호출마다 다시 읽습니다. | 명시적 튜닝 값, 해당 기능의 세부 설정에서 공개. | `correction_engine.py`, `mimo.py`, `mimo_iir.py` 머리 | 계획 |
 | D24 | mdat 내보내기의 시간 원점이 `final` 응답과 시프트만큼 어긋납니다. | 신호 사슬 값 하나에서 시뮬레이터와 내보내기가 같은 원점을 씁니다. | `calibration.py:1101, 1321` | 계획 |
 | D27 | 퇴화한 IR에서 `long_spectra`가 0으로 나눕니다. | 측정 모듈이 입력을 확인합니다. | `correction_engine.py:558-559` | 계획 |
 | D36 | MIMO IIR의 직렬 경로(다중 스레드 BLAS)와 병렬 경로(BLAS 1스레드)가 같은 비트를 보장하지 않습니다. | 결정적 병렬(0007). | `mimo_iir.py:370-391` | 계획 |
@@ -76,7 +76,7 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 | U6 | SNR 경고 문턱이 코드는 20 dB, 도움말은 40 dB입니다. | 업스트림 의도를 확인한 뒤 하나로 맞춥니다. | `wizard/step5_measure.py`, `tutorial_text.py` | 보류 |
 | U7 | 영어 화면이 꺼져 있습니다(`ENGLISH_UI=False`). | 한국어와 영어 카탈로그를 처음부터 함께 냅니다. | `i18n.py:25`, `window.py:564-570` | 계획(M5) |
 | U8 | 기다림 표시가 작업 패널, 로딩 카드, 물방울 셋이고, 로딩 카드의 [취소]는 이어져 있지 않습니다. | 작업 트레이 하나에 잡마다 진행과 실제로 멈추는 취소를 둡니다. | `busy.py`, `loading.py:218-338`, `window.py:181-252` | 계획(M5) |
-| U9 | 초고지연 모드가 설명 줄을 3초 안에 다섯 번 눌러야 열립니다. | '전문가 표시'에서 고릅니다. | `step_calibration.py:1111-1145` | 계획(M5) |
+| U9 | 초고지연 모드가 설명 줄을 3초 안에 다섯 번 눌러야 열립니다. | 다른 보정 모드와 같은 선택 목록에서 고릅니다. | `step_calibration.py:1111-1145` | 구현(P58) |
 | U10 | 새 프로젝트가 측정 방법을 저장하지 않아 서비스의 옛 프로젝트 호환 기본값(`native`)으로 즉시 측정할 수 있습니다. | 새 프로젝트만 `devices.method = "none"`을 저장해 장치를 고르기 전 측정을 막습니다. 방법이 없는 기존 프로젝트는 계속 `native`로 읽습니다. `secs-service::new_projects_store_none_measurement_method`가 새 프로젝트의 명시값을 지킵니다. | `wizard/step1_devices.py`, `wizard/model.py` | 적용 |
 | U11 | 업스트림은 화면 테마 하나만 제공합니다. | 시스템 설정, 밝게, 어둡게 가운데 고른 테마를 앱 설정에 저장합니다. `secs-service::app_settings_are_versioned_bounded_and_capped`가 왕복과 이전 설정 파일의 시스템 기본값을 확인합니다. | `wizard/` 화면 전체 | 적용 |
 | U12 | 로고는 확정안(`logo_b8.svg`) 하나이고 사이드바 마크, 창·작업 표시줄 아이콘, exe 아이콘에 씁니다. | 실행 파일·설치본 아이콘과 기본 로고는 같은 확정안('전문가 모드')입니다. 앱 설정에서 SECS 2R이 따로 그린 '킹반인 모드' 로고(`apps/secs2r/icons/logo/civilian.svg`: 측정 응답과 목표선 위의 보정 응답, PEQ 손잡이)를 고르면 레일 로고와 창 아이콘만 바뀝니다. macOS의 Dock 아이콘과 설치한 파일·바로 가기의 아이콘은 그대로입니다. `secs-service::app_settings_are_versioned_bounded_and_capped`가 저장과 이전 설정 파일의 기본값을, `secs2r::{windows_icon_size_follows_the_display_scale,civilian_pictures_are_square_and_match_their_names}`가 창 아이콘 그림을, 화면의 `src/state/flow.test.tsx`가 고른 로고가 다시 켠 뒤에도 남는지 확인합니다. | `wizard/branding.py`, `window.py _sidebar`, `SECS.spec icon=` | 적용 |

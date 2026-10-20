@@ -116,7 +116,7 @@ function renderStep(view: MeasureView, actions = makeActions(), options: { tutor
   const ui = <Step view={view} actions={actions} />;
   if (options.tutorial) {
     render(
-      <PrefsScope initial={{ locale: options.locale ?? "ko", theme: "light", expert: false, accent: "tutorial" }}>{ui}</PrefsScope>,
+      <PrefsScope initial={{ locale: options.locale ?? "ko", theme: "light", accent: "tutorial" }}>{ui}</PrefsScope>,
     );
   } else {
     renderWith(ui, { locale: options.locale ?? "ko" });
@@ -421,7 +421,7 @@ describe("측정·가져오기 screen", () => {
           {state.extra}
         </>
       );
-      if (state.tutorial) render(<PrefsScope initial={{ locale: "ko", theme: "light", expert: false, accent: "tutorial" }}>{ui2}</PrefsScope>);
+      if (state.tutorial) render(<PrefsScope initial={{ locale: "ko", theme: "light", accent: "tutorial" }}>{ui2}</PrefsScope>);
       else renderWith(ui2);
       await state.then?.();
       collect();

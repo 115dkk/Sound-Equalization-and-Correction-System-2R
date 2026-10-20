@@ -118,7 +118,7 @@ describe("프로젝트 대화상자", () => {
 
   it("puts focus on the first choice of a form and on the safe action of a confirmation", () => {
     // The dialog opens in a frame that is already up (its layer exists), as in the app.
-    const prefs = { locale: "ko", theme: "light", expert: false, accent: "default" } as const;
+    const prefs = { locale: "ko", theme: "light", accent: "default" } as const;
     const tree = (dialog: ProjectDialog | null) => (
       <PrefsScope initial={prefs}>
         <ProjectDialogs view={{ dialog, busy: false, error: null }} actions={actions()} />

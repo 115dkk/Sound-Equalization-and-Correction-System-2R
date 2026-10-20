@@ -27,7 +27,7 @@
 | 적정 구간 | recommended range | 마이크 레벨 −30…−15 dBFS |
 | 분홍 잡음 | pink noise | 레벨 점검 소리 |
 | 마이크 보정 파일 | mic calibration file | 연결·점검, 용어 풀이 |
-| 공유 방식: 자동 · 독점 · 공유 | sharing mode: Automatic · Exclusive · Shared | 자체 측정의 장치 열기(전문가 표시) |
+| 장치 공유 방식: 자동 · 독점 · 공유 | Device sharing: Automatic · Exclusive · Shared | 자체 측정의 장치 카드에서 펼치는 항목 |
 | 보정 | correction | 단계와 결과 |
 | 보정 계산 | Calculate correction(동사 calculate) | 주 동작, 잡 이름. 다시 계산은 recalculate |
 | 다시 계산 필요 | Recalculation needed | 결과가 지금 입력과 맞지 않는 낡음 상태 |
@@ -52,7 +52,7 @@
 | CamillaDSP 설정 | CamillaDSP configuration | 내보내는 설정 파일. 화면의 설정(settings)과 영어에서 구분 |
 | 단계별 mdat | staged mdat | 내보내기의 고급 |
 | 작업, 작업 트레이 | job, job tray | 긴 작업의 진행·취소·기록 |
-| 계산 메모 | calculation notes | 판정 카드의 접힌 목록(업스트림처럼 전문가 표시와 상관없이 보임) |
+| 계산 메모 | calculation notes | 판정 카드에서 펼치는 목록 |
 | 튜토리얼 | tutorial | 튜토리얼 목록, 코치 카드 |
 
 ## 쓰는 법

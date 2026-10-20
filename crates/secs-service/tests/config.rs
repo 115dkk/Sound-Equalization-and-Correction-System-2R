@@ -724,7 +724,6 @@ fn app_settings_are_versioned_bounded_and_capped() {
         language: "en".into(),
         theme: AppTheme::Dark,
         icon: AppIcon::Civilian,
-        expert_display: true,
         recent_projects: (0..12).map(|index| format!("{index}.secs")).collect(),
         last_window_size: Some((1280, 720)),
     };
@@ -803,5 +802,83 @@ fn app_settings_are_versioned_bounded_and_capped() {
         .code,
         ErrorCode::InvalidRequest
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn legacy_expert_preference_is_ignored_without_resetting_other_settings() {
+    let root = root("legacy-expert");
+    let path = root.join("settings.json");
+    let deps = Deps {
+        app_settings_path: Some(path.clone()),
+        ..Deps::default()
+    };
+    for legacy_expert in [false, true] {
+        for icon in [AppIcon::Expert, AppIcon::Civilian] {
+            let expected = AppSettings {
+                compute: secs_types::compute::ComputePreference::Cpu,
+                language: "en".into(),
+                theme: AppTheme::Dark,
+                icon,
+                recent_projects: vec!["living-room.secs".into(), "studio.secs".into()],
+                last_window_size: Some((1440, 900)),
+            };
+            let mut old_settings = serde_json::to_value(&expected).unwrap();
+            old_settings["expert_display"] = legacy_expert.into();
+            fs::write(
+                &path,
+                serde_json::to_vec(&serde_json::json!({
+                    "version": 1,
+                    "settings": old_settings,
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+
+            let service = Service::new(deps.clone());
+            let Response::AppSettingsGet(loaded) = call(&service, Request::AppSettingsGet) else {
+                panic!("settings must load")
+            };
+            assert_eq!(loaded, expected);
+
+            // An older caller's extra field is ignored at the same IPC boundary.
+            // The saved file and reply use the current field set.
+            let Envelope::Ok(reply) = service.call_value(
+                serde_json::json!({
+                    "method": "app_settings_set",
+                    "params": { "settings": old_settings },
+                }),
+                Arc::new(NoEvents),
+            ) else {
+                panic!("legacy settings payload must remain accepted")
+            };
+            let Response::AppSettingsSet(saved) = *reply else {
+                panic!("settings must save")
+            };
+            assert_eq!(saved, expected);
+            assert!(
+                serde_json::to_value(&saved)
+                    .unwrap()
+                    .get("expert_display")
+                    .is_none()
+            );
+
+            let persisted: serde_json::Value =
+                serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            assert_eq!(persisted["version"], 1);
+            assert_eq!(
+                persisted["settings"],
+                serde_json::to_value(&expected).unwrap()
+            );
+            assert!(persisted["settings"].get("expert_display").is_none());
+
+            let reopened = Service::new(deps.clone());
+            let Response::AppSettingsGet(reloaded) = call(&reopened, Request::AppSettingsGet)
+            else {
+                panic!("rewritten settings must reload")
+            };
+            assert_eq!(reloaded, expected);
+        }
+    }
     fs::remove_dir_all(root).unwrap();
 }

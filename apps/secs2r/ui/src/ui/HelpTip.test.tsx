@@ -115,11 +115,11 @@ describe("contextual help", () => {
     renderWith(<>
       <button ref={anchor}>Settings</button>
       <Popover open onClose={close} anchor={anchor} label="Preferences">
-        <Toggle id="expert" label="Expert controls" checked={false} onChange={() => {}} help="Shows more controls." />
+        <Toggle id="crossover" label="Crossover PEQ" checked={false} onChange={() => {}} help="Corrects the combined response near the crossover." />
       </Popover>
       <HelpTip id="outside" label="Other context" content="Unrelated help" />
     </>);
-    const trigger = help("expert");
+    const trigger = help("crossover");
     fireEvent.click(trigger);
     const tip = screen.getByRole("tooltip");
     fireEvent.pointerDown(tip, { pointerType: "touch" });
