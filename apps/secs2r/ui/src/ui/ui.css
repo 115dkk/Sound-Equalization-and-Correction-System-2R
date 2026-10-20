@@ -1295,15 +1295,19 @@
   white-space: nowrap;
 }
 
-/* Help occupies its own 40px target beside a control, never inside its label. */
+/* Only the info glyph is visible; its separate 40px target stays transparent. */
 .ui-help {
   display: inline-flex; align-items: center; justify-content: center; flex: none;
   width: var(--hit-min); height: var(--hit-min); padding: 0; border: 0;
-  border-radius: var(--radius-sm); background: transparent; color: var(--text-muted);
-  transition: color var(--dur-fast) var(--ease-out), background-color var(--dur-fast) var(--ease-out);
+  background: transparent; color: var(--text-muted);
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--dur-fast) var(--ease-out);
 }
-.ui-help:hover, .ui-help[aria-expanded="true"] { color: var(--accent); background: var(--surface-hover); }
-.ui-help:active { scale: var(--press-scale); }
+.ui-help:hover { color: var(--accent); }
+.ui-help:focus-visible { outline: none; }
+.ui-help:focus-visible > svg {
+  border-radius: 50%; outline: var(--focus-w) solid var(--focus-color); outline-offset: var(--focus-offset);
+}
 .ui-control-help-row, .ui-heading-help { display: flex; align-items: center; gap: var(--space-1); min-width: 0; }
 .ui-control-help-row { flex-wrap: wrap; }
 .ui-heading-help > :first-child { min-width: 0; }

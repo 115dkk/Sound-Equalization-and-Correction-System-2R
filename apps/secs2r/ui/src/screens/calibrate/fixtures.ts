@@ -26,7 +26,7 @@ const GROUP_ORDER = ["프론트", "센터", "서브", "서라운드", "백", "�
 
 function config(roles: readonly string[], preset: string): ConfigResult {
   const speakers = roles.map((role, i) => ({ role, size: role.startsWith("SW") ? "sub" : roles.some((r) => r.startsWith("SW")) ? "small" : "large", bands: [{ band: role.startsWith("SW") ? "SUB" : "FULL", out: i + 1, pol: "+" }] }));
-  const groups = GROUP_ORDER.map((key) => ({ id: key, key, speaker_indices: roles.map((r, i) => (GROUP_OF[r] === key ? i : -1)).filter((i) => i >= 0) })).filter((g) => g.speaker_indices.length);
+  const groups = GROUP_ORDER.map((key) => ({ id: key, key, speaker_indices: roles.map((r, i) => ((r.startsWith("SW") ? "서브" : GROUP_OF[r]) === key ? i : -1)).filter((i) => i >= 0) })).filter((g) => g.speaker_indices.length);
   const subs = roles.filter((r) => r.startsWith("SW")).length;
   return { speakers, preset, device: "MOTU M4", groups, summary: { speaker_count: roles.length, outputs: roles.map((_, i) => i + 1), max_channel: roles.length, duplicate_outputs: [], sub_count: subs } };
 }
@@ -349,6 +349,14 @@ export const emptyView: CalibrateView = {
   settings: { ...baseSettings, xo: {}, xo_rec: {} },
   xoRecommendation: null,
   resultMode: null,
+};
+
+/** Pre-calculation branches: no measurements, singular/plural subs and each mode. */
+export const planViews: Record<"unmeasured" | "oneSub" | "threeSubs" | "noSubs", CalibrateView> = {
+  unmeasured: { ...emptyView, positions: [], measuredRoles: [], channel: null, curves: { ...previewResult(), curves: previewResult().curves.filter((c) => c.kind === "target") }, settings: { ...emptyView.settings, mode: "zero" }, modeSpec: modeSpecs.zero },
+  oneSub: { ...emptyView, positions: emptyView.positions.slice(0, 1), config: config(["L", "R", "SW1"], "2.1"), measuredRoles: ["L", "R", "SW1"] },
+  threeSubs: { ...emptyView, positions: emptyView.positions.slice(0, 1), config: config(["L", "R", "SW1", "SW2", "SW3"], "2.3"), measuredRoles: ["L", "R", "SW1", "SW2", "SW3"], settings: { ...emptyView.settings, mode: "linear" }, modeSpec: modeSpecs.linear },
+  noSubs: { ...emptyView, config: stereoConfig, measuredRoles: ["L", "R"], settings: { ...emptyView.settings, mode: "ultra", ultra_ms: 120 }, modeSpec: modeSpecs.ultra120 },
 };
 
 export const computingView: CalibrateView = { ...emptyView, running: "calibrate" };

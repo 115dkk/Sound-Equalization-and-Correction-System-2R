@@ -9,7 +9,7 @@ import { Button, Card, DataTable, ErrorNotice, StatusPill, type Column } from ".
 import { roleCode } from "../../ui/maps/geometry";
 import { Stat } from "./controls";
 import { availableTabs } from "./ResultGraph";
-import { FAILED_TEXT, groupOf, modeName, modeSpecText, noteLines, subRoles, xoGroups } from "./text";
+import { FAILED_TEXT, groupOf, modeName, noteLines } from "./text";
 import type { CalibrateActions, CalibrateView, StaleReason } from "./types";
 
 const STALE_TEXT: Record<StaleReason | "unknown", "calibrate.stale.settings" | "calibrate.stale.target" | "calibrate.stale.measurements" | "calibrate.stale.unknown"> = {
@@ -43,7 +43,6 @@ export function Verdict({ view }: { view: CalibrateView }) {
   const result = view.results.calibration;
   const mimo = view.results.mimo;
   const failure = view.failure?.job === "calibrate" ? view.failure : null;
-  const subs = subRoles(view.config);
   const resultMode = view.resultMode ?? (result && !result.stale ? { mode: view.settings.mode, ultra_ms: view.settings.ultra_ms } : null);
 
   // A stale result is named by the header pill and explained by the notice below; no third mark here.
@@ -64,11 +63,9 @@ export function Verdict({ view }: { view: CalibrateView }) {
   );
 
   if (!result) {
-    const needsXo = xoGroups(view.config).length > 0 && !Object.values(view.settings.xo_rec).some((hz) => hz > 0);
     return (
       <Card
-        title={t("calibrate.verdict.title")}
-        help={t("calibrate.verdict.plan.help")}
+        title={t("calibrate.verdict.plan.title")}
         actions={pill}
         className="calibrate-verdict"
         data-ui="calibrate.verdict"
@@ -77,16 +74,8 @@ export function Verdict({ view }: { view: CalibrateView }) {
         <div className="calibrate-plan" data-ui="calibrate.verdict.plan">
           <p>
             {view.positions.length > 0
-              ? t("calibrate.verdict.plan", { count: view.positions.length })
+              ? t(view.positions.length === 1 ? "calibrate.verdict.plan.one" : "calibrate.verdict.plan", { count: view.positions.length })
               : t("calibrate.verdict.plan.no_measurements")}
-            {subs.length > 0 && ` · ${subs.length > 1 ? t("calibrate.verdict.plan.subs", { count: subs.length }) : t("calibrate.verdict.plan.sub")}`}
-          </p>
-          {needsXo && view.positions.length > 0 && <p>{t("calibrate.verdict.plan.xo_first")}</p>}
-          <p className="calibrate-line tabular">
-            {t("calibrate.verdict.plan.mode", {
-              mode: modeName(t, number, view.settings.mode, view.settings.ultra_ms),
-              spec: modeSpecText(t, number, view.modeSpec),
-            })}
           </p>
         </div>
       </Card>
