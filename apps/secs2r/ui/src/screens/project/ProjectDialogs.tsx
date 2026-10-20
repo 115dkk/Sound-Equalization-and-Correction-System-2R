@@ -68,7 +68,6 @@ function NewProjectDialog({
       open
       inline={inline}
       id="project.new"
-      help={t("project.new.where")}
       onClose={actions.cancel}
       title={t("project.new.title")}
       footer={
@@ -171,7 +170,6 @@ function UnsavedDialog({
           {dialog.fileName ? t("project.unsaved.body", { name: dialog.fileName }) : t("project.unsaved.body_untitled")}{" "}
           {t(dialog.reason !== "tutorial" ? "project.unsaved.loss" : dialog.fileName ? "project.unsaved.loss_tutorial" : "project.unsaved.loss_tutorial_untitled")}
         </p>
-        {!dialog.fileName && <p className="ui-field__hint">{t("project.unsaved.where")}</p>}
         <Problem view={view} />
       </div>
     </Dialog>
@@ -181,10 +179,8 @@ function UnsavedDialog({
 /* ── 튜토리얼 시작 ──────────────────────────────────────────────────────── */
 
 const TUTORIAL_POINTS: readonly MessageKey[] = [
-  "project.tutorial.point.project",
   "project.tutorial.point.measure",
   "project.tutorial.point.blocked",
-  "project.tutorial.point.return",
 ];
 
 function TutorialStartDialog({ dialog, actions, inline }: { dialog: Extract<ProjectDialog, { kind: "tutorial" }>; actions: ProjectDialogsActions; inline?: boolean | undefined }) {

@@ -247,12 +247,6 @@ function WhereCard({
       </div>
       {measuring && <RunProgress job={measuring} roleCount={view.config.roles.length} onCancel={() => void actions.cancelJob(measuring.job)} />}
       {!measuring && warnings.length > 0 && <SnrWarning notices={warnings} />}
-      {!job && view.path === "measure" && view.project.path === "" && (
-        <p className="measure-note" data-ui="measure.path.note">
-          <Icon name="info" size={16} />
-          <span>{t("measure.where.no_path")}</span>
-        </p>
-      )}
       {view.path === "import" && (
         <p className="measure-note" data-ui="measure.import.note">
           <Icon name="info" size={16} />

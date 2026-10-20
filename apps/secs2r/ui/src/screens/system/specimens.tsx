@@ -18,6 +18,7 @@ const token = async () => "undo-1";
 
 /** Actions that do nothing (the gallery draws fixed views). */
 export const noopSystemActions: SystemActions = {
+  configureMeasurement: () => {},
   applyPreset: token,
   setSubCount: token,
   setRole: () => {},
@@ -40,6 +41,9 @@ export const noopSystemActions: SystemActions = {
 function frameFor(view: SystemView, project: Partial<ProjectSummary> = {}): FrameModel {
   const system = systemStepState(view);
   const measured = view.positionsDone.length;
+  const path: ProjectSummary["path"] = project.path ?? { kind: "none", state: "warning" };
+  const blocked = system.status !== "done" ? system.reason ?? "no_speakers"
+    : path.kind === "none" ? "no_path" : path.state !== "ok" ? "path_not_ready" : null;
   return {
     current: "system",
     project: {
@@ -49,15 +53,16 @@ function frameFor(view: SystemView, project: Partial<ProjectSummary> = {}): Fram
       positionsDone: measured,
       positionsTotal: view.layout.count,
       calibration: "none",
-      path: { kind: "none", state: "warning" },
+      path,
       fileName: null,
       dirty: false,
       ...project,
     },
     steps: {
       system,
-      connect: system.status === "done" ? { status: "blocked", reason: "no_path" } : { status: "blocked", reason: system.reason ?? "no_speakers" },
-      measure: { status: "blocked", reason: system.status === "done" ? "no_path" : (system.reason ?? "no_speakers") },
+      connect: blocked ? { status: "blocked", reason: blocked } : { status: path.kind === "mdat" ? "skipped" : "ready" },
+      measure: blocked ? { status: "blocked", reason: blocked }
+        : path.kind === "mdat" || measured > 0 ? { status: "ready" } : { status: "blocked", reason: "no_levels", count: view.config.speakers.length },
       calibrate: measured > 0 ? { status: "ready" } : { status: "blocked", reason: "no_measurements" },
       export: { status: "blocked", reason: "no_result" },
     },
@@ -68,9 +73,12 @@ const sampleProject: Partial<ProjectSummary> = { path: { kind: "rew", state: "ok
 
 function SystemFrame({ view, project, children }: { view: SystemView; project?: Partial<ProjectSummary>; children?: ReactNode }) {
   const t = useT();
+  const path = project?.path?.kind;
+  const configurable = !["checking", "rew_unknown", "not_required"].includes(view.outputDeviceState) && (!path || path === "none" || path === "native");
+  const actions = { ...noopSystemActions, configureMeasurement: configurable ? noopSystemActions.configureMeasurement : null };
   return (
-    <FrameBox frame={frameFor(view, project)} jobs={initialJobs} header={systemHeader(view, noopSystemActions, t)}>
-      <SystemScreen view={view} actions={noopSystemActions} />
+    <FrameBox frame={frameFor(view, project)} jobs={initialJobs} header={systemHeader(view, actions, t)}>
+      <SystemScreen view={view} actions={actions} />
       {children}
     </FrameBox>
   );
@@ -98,7 +106,19 @@ function ConfirmOverlay() {
   );
 }
 
+const DEVICE_PATHS = {
+  default: { kind: "native", state: "ok" },
+  checking: { kind: "native", state: "warning" },
+  rew_unknown: { kind: "rew", state: "warning" },
+  not_required: { kind: "mdat", state: "ok" },
+  unavailable: { kind: "native", state: "warning" },
+} satisfies Record<string, ProjectSummary["path"]>;
+
 export const systemSpecimens: SpecimenDef[] = [
+  ...(["default", "checking", "rew_unknown", "not_required", "unavailable"] as const).map((state) => ({
+    id: `screen.system.device-${state}`, title: `System · measurement output ${state}`, width: 1280, height: 800,
+    render: () => <SystemFrame view={{ ...newProjectView, outputDeviceState: state }} project={{ path: DEVICE_PATHS[state] }} />,
+  })),
   {
     id: "screen.system.new",
     title: "System · new project (2.0, nothing measured, no device yet)",

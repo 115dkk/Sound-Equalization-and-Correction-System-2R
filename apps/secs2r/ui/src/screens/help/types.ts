@@ -10,8 +10,8 @@ export type HelpBlock =
   | { kind: "lead"; text: MessageKey }
   | { kind: "paragraphs"; items: readonly MessageKey[] }
   | { kind: "heading"; text: MessageKey }
-  /** The walkthrough: what to do, then what you see when it worked. */
-  | { kind: "steps"; items: readonly { do: MessageKey; see: MessageKey }[] }
+  /** The walkthrough, with supporting detail only where it helps the task. */
+  | { kind: "steps"; items: readonly { do: MessageKey; see?: MessageKey }[] }
   | { kind: "bullets"; items: readonly MessageKey[] }
   | { kind: "numbered"; items: readonly MessageKey[] }
   /** Symptom and fix. */

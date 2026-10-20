@@ -127,7 +127,6 @@ export function SettingsButton({ initiallyOpen = false, inline = false }: { init
             label: t(`frame.settings.logo.${icon}`),
             media: <img className="settings__logo" src={SMALL_LOGOS[icon]} alt="" width={20} height={20} draggable={false} />,
           }))}
-          help={t("frame.settings.logo.hint")}
           onChange={(icon) => prefs.set({ icon })}
         />
         <Toggle

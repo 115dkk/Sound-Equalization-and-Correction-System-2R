@@ -235,7 +235,7 @@ function ConfigCard({
           onChange={(count) => ask({ kind: "subs", count })}
         />
       </div>
-      <DeviceLine view={view} />
+      <DeviceLine view={view} configure={actions.configureMeasurement} />
       {view.notices.length > 0 && <NoticeList view={view} />}
       <PatchTable view={view} actions={actions} selected={selected} onSelect={onSelect} />
       <Summary view={view} />
@@ -257,12 +257,14 @@ function ConfigCard({
   );
 }
 
-function DeviceLine({ view }: { view: SystemView }) {
+function DeviceLine({ view, configure }: { view: SystemView; configure: SystemActions["configureMeasurement"] }) {
   const t = useT();
+  const state = view.outputDeviceState;
+  if (state === "not_required") return null;
+  const warning = state === "unselected" || state === "unavailable";
   const channels = view.outputChannels;
   const over = channels !== null && view.config.summary.max_channel > channels;
-  const pill =
-    channels === null ? (
+  const pill = state !== "selected" && state !== "default" ? null : channels === null ? (
       <StatusPill>{t("system.device.unknown")}</StatusPill>
     ) : over ? (
       <StatusPill tone="danger">{t("system.device.over", { count: channels })}</StatusPill>
@@ -272,10 +274,21 @@ function DeviceLine({ view }: { view: SystemView }) {
   return (
     <div className="system-device" data-ui="system.device">
       <span className="system-device__label">{t("system.device.label")}</span>
-      <span className={view.config.device ? "system-device__name" : "system-device__name system-device__name--none"}>
-        {(view.outputDeviceName ?? view.config.device) || t("system.device.none")}
+      <span className={`system-device__name${warning ? " system-device__name--warning" : ""}`} data-ui="system.device.status">
+        {warning && <Icon name="warning" size={16} />}
+        {state === "unselected" ? t("system.device.none")
+          : state === "unavailable" ? t("system.device.unavailable")
+            : state === "default" ? t("connect.device.default")
+              : state === "checking" ? t("system.device.checking")
+                : state === "rew_unknown" ? t("system.device.rew_unknown")
+                  : view.outputDeviceName ?? view.config.device}
       </span>
       {pill}
+      {configure && (
+        <Button variant="quiet" className="system-device__configure" data-ui="system.device.configure" onClick={configure}>
+          {t("system.device.configure")}
+        </Button>
+      )}
     </div>
   );
 }

@@ -463,11 +463,16 @@
 
 .step-header__blocked {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-1-5);
   margin-top: var(--space-1);
   color: var(--warning);
   font-weight: var(--weight-medium);
+}
+
+.step-header__recovery {
+  min-height: var(--hit-min);
 }
 
 .step-header__actions {

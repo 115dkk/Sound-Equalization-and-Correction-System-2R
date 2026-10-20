@@ -25,13 +25,69 @@ describe("useSystemScreen", () => {
   it("resolves REW output names by ID or name and preserves unknown IDs", async () => {
     const { result } = renderHook(useSystemScreen, { wrapper });
     await perform(() => session.configure({ method: "rew", output_device: "hdmi" }));
-    await perform(() => session.stores.rew.set({ ...session.stores.rew.getSnapshot()!, output_devices: [{ id: "hdmi", name: "AVR (HDMI)", channels: 8 }] }));
+    await perform(() => session.stores.rew.set({ ...session.stores.rew.getSnapshot()!, reachable: true, output_device: "hdmi", output_devices: [{ id: "hdmi", name: "AVR (HDMI)", channels: 8 }] }));
     expect(result.current.view?.outputDeviceName).toBe("AVR (HDMI)");
     expect(result.current.view?.outputChannels).toBe(8);
-    await perform(() => session.configure({ output_device: "AVR (HDMI)" }));
+    await perform(() => session.stores.rew.set({ ...session.stores.rew.getSnapshot()!, output_device: "AVR (HDMI)" }));
     expect(result.current.view?.outputDeviceName).toBe("AVR (HDMI)");
-    await perform(() => session.configure({ output_device: "missing-device" }));
+    await perform(() => session.stores.rew.set({ ...session.stores.rew.getSnapshot()!, output_device: "missing-device" }));
     expect(result.current.view?.outputDeviceName).toBe("missing-device");
+    expect(result.current.actions.configureMeasurement).toBeNull();
+    await perform(() => session.stores.rew.set({ ...session.stores.rew.getSnapshot()!, reachable: false }));
+    expect(result.current.view?.outputDeviceState).toBe("rew_unknown");
+    expect(result.current.view?.outputDeviceName).toBe("");
+    expect(result.current.view?.outputChannels).toBeNull();
+  });
+
+  it("keeps a native default distinct from an old explicit device and never infers its channel count", async () => {
+    const { result } = renderHook(useSystemScreen, { wrapper });
+    await perform(() => session.configure({ method: "native", output_device: "old-output" }));
+    await perform(() => session.stores.config.set({ ...session.stores.config.getSnapshot()!, device: "old-output" }));
+    await perform(() => session.stores.methods.set({ ...session.stores.methods.getSnapshot()!, native_devices: [{ id: "old-output", name: "Old interface", input_channels: 2, output_channels: 16 }] }));
+    expect(result.current.view?.outputDeviceState).toBe("selected");
+    expect(result.current.view?.outputChannels).toBe(16);
+    await perform(() => session.configure({ output_device: "" }));
+    // Production keeps config.device when default output is selected.
+    await perform(() => session.stores.config.set({ ...session.stores.config.getSnapshot()!, device: "old-output" }));
+    expect(result.current.view?.outputDeviceState).toBe("default");
+    expect(result.current.view?.outputDeviceName).toBe("");
+    expect(result.current.view?.outputChannels).toBeNull();
+    await perform(() => session.configure({ output_device: "missing-output" }));
+    expect(result.current.view?.outputDeviceState).toBe("unavailable");
+    expect(result.current.view?.outputDeviceName).toBe("missing-output");
+    expect(result.current.view?.outputChannels).toBeNull();
+    await perform(() => session.stores.methods.set({ ...session.stores.methods.getSnapshot()!, native_devices: [
+      { id: "old-output", name: "Old interface", input_channels: 2, output_channels: 16 },
+      { id: "mic-only", name: "Microphone", input_channels: 2, output_channels: 0 },
+    ] }));
+    await perform(() => session.configure({ output_device: "mic-only" }));
+    expect(result.current.view?.outputDeviceState).toBe("unavailable");
+    expect(result.current.view?.outputDeviceName).toBe("Microphone");
+    expect(result.current.view?.outputChannels).toBeNull();
+    await perform(() => session.configure({ output_device: "" }));
+    await perform(() => session.stores.methods.set({ ...session.stores.methods.getSnapshot()!, native_devices: [] }));
+    expect(result.current.view?.outputDeviceState).toBe("unavailable");
+    expect(result.current.view?.outputDeviceName).toBe("");
+  });
+
+  it("offers setup only for an unchosen or native method and omits physical devices on import and mock paths", async () => {
+    const configure = vi.fn();
+    const { result } = renderHook(() => useSystemScreen(configure), { wrapper });
+    for (const method of ["none", "native", "mock", "mdat"] as const) {
+      await perform(() => session.configure({ method }));
+      expect(result.current.view?.outputDeviceState).toBe(method === "none" ? "unselected" : method === "native" ? "default" : "not_required");
+      if (method === "none" || method === "native") {
+        expect(result.current.actions.configureMeasurement).toBe(configure);
+        result.current.actions.configureMeasurement?.();
+      } else {
+        expect(result.current.actions.configureMeasurement).toBeNull();
+        expect(result.current.view?.outputChannels).toBeNull();
+      }
+    }
+    expect(configure).toHaveBeenCalledTimes(2);
+    await perform(() => { session.host.set({ path: "native" }); session.stores.measurementSettings.set(null); });
+    expect(result.current.view?.outputDeviceState).toBe("checking");
+    expect(result.current.actions.configureMeasurement).toBeNull();
   });
 
   it("waits for real core resources and projects output capability", async () => {

@@ -38,7 +38,7 @@ export function tabTexts(t: Translate, tab: HelpTab): string[] {
       case "code":
         return block.items.map((key) => t(key));
       case "steps":
-        return block.items.flatMap((item) => [t(item.do), t(item.see)]);
+        return block.items.flatMap((item) => item.see ? [t(item.do), t(item.see)] : [t(item.do)]);
       case "pairs":
         return block.items.flatMap((item) => [t(item.term), t(item.text)]);
       case "channels":
@@ -369,7 +369,7 @@ function TabBody({
                 </span>
                 <div className="help-steps__text">
                   <p className="help-steps__do">{mark(t(item.do))}</p>
-                  <p className="help-steps__see">{mark(t(item.see))}</p>
+                  {item.see && <p className="help-steps__see">{mark(t(item.see))}</p>}
                 </div>
               </li>
             ))}
