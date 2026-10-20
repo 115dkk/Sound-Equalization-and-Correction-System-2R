@@ -257,6 +257,7 @@ fn volume(dims: Option<[f64; 3]>) -> Option<f64> {
 fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
     match edit {
         SettingEdit::Mode { mode } => s.mode = mode,
+        SettingEdit::SampleRatePolicy { policy } => s.sample_rate_policy = policy,
         SettingEdit::UltraMs { ms } => s.ultra_ms = ms.clamp(30.0, 200.0),
         SettingEdit::RcLo { hz } => s.rc_lo = hz.clamp(10.0, 200.0),
         SettingEdit::RcHi { hz } => s.rc_hi = hz.map(|v| v.clamp(100.0, 20000.0)),

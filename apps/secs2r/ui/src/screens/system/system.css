@@ -312,6 +312,12 @@ button.system-choice:active:not([aria-pressed="true"]) {
   gap: var(--space-2);
 }
 
+.system-action-help {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
 /* ── 방 배치도 ─────────────────────────────────────────────────────────── */
 .system-room__body {
   display: flex;

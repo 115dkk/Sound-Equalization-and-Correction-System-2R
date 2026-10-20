@@ -481,6 +481,18 @@ export const TOUR_SCENES: TourScene[] = [
     ops: [...choosePath("native", "calibrate"), click(ui("calibrate.ba.advanced")), click(ui("calibrate.ba.edit.SW2")), reveal(`.ui-segmented-field:has(${ui("calibrate.ba.edit")})`)],
   },
   {
+    id: "calibrate.sample-rate",
+    step: "calibrate",
+    title: { ko: "측정 샘플레이트 처리 설정", en: "Measurement sample-rate policy" },
+    setup: async (mock) => {
+      await inProgress(mock);
+      mock.failJobs("calibrate", "engine_input", "invalid input: position 1 SW3: sample rate 44100 (expected 48000)", {
+        reason: "measurement_sample_rate", position: "1", role: "SW3", actual_hz: "44100", expected_hz: "48000",
+      });
+    },
+    ops: [...choosePath("native", "calibrate"), click(ui("calibrate.compute")), drain, click(ui("calibrate.verdict.failed.sample_rate")), reveal(ui("calibrate.settings.input"))],
+  },
+  {
     id: "calibrate.xo",
     step: "calibrate",
     title: { ko: "XO 추천 받음", en: "XO recommendation received" },
@@ -505,7 +517,7 @@ export const TOUR_SCENES: TourScene[] = [
     title: { ko: "보정 계산 실패", en: "Correction calculation failed" },
     setup: async (mock) => {
       await inProgress(mock);
-      mock.failJobs("calibrate", "engine_input", "position 1: SW3 impulse response is empty");
+      mock.failJobs("calibrate", "engine_input", "invalid input: position 1 SW3: empty or nonfinite IR", { reason: "invalid_measurement", position: "1", role: "SW3" });
     },
     ops: [...choosePath("native", "calibrate"), click(ui("calibrate.compute")), drain],
   },
@@ -617,7 +629,9 @@ export const TOUR_SCENES: TourScene[] = [
     note: { ko: "진행 중인 보정 계산 하나와 완료·실패·취소 기록입니다.", en: "One correction running, with completed, failed and canceled entries." },
     setup: async (mock) => {
       await inProgress(mock);
-      mock.failJobs("recommend_xo", "engine_input", "front: no crossover candidate between 60 and 120 Hz");
+      mock.failJobs("recommend_xo", "engine_input", "invalid input: position 1 SW3: sample rate 44100 (expected 48000)", {
+        reason: "measurement_sample_rate", position: "1", role: "SW3", actual_hz: "44100", expected_hz: "48000",
+      });
     },
     ops: [
       ...choosePath("native", "calibrate"),

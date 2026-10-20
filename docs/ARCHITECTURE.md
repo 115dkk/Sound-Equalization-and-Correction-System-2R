@@ -106,6 +106,7 @@ secs-policy ────────> (파일 시스템만 읽음; IPC 메서드
 
 - f64를 기본으로 하고, 원 IR은 float32로 저장합니다.
 - 설계 격자는 48 kHz, N_FFT = 2^17(0.366 Hz)입니다. MIMO 저속 영역은 600 Hz, 720샘플입니다.
+- 측정의 샘플레이트 처리 정책은 프로젝트 보정 설정에 있습니다. 기본값은 비48 kHz 입력 거부이며, 선택적 리샘플링은 작업 안에서 계산용 사본만 변환합니다. 변환한 측정은 보정·MIMO·미리보기·내보내기가 공유하고 원본 측정 저장소는 보존합니다(P60, D39).
 - NumPy·SciPy와 맞춰야 하는 세부 사항
   - `least_squares`: TRF, 경계 있음, exact 신뢰 영역 해법, `max_nfev`는 잔차 호출만 셉니다. 임펄사이퍼의 `optimize.rs`(MIT, SciPy 1.18.1 이식)를 들여옵니다.
   - `differential_evolution`: best1bin, 세대마다 dither 다시 뽑기, 재조합 0.7, LHS 초기화, `updating='immediate'`, `polish=False`. 정수 시드라 레거시 `RandomState`(MT19937)를 쓰고 난수 소비 순서(LHS, dither, 채움 위치, 섞기, 교차, 경계 밖 재표본)까지 맞춥니다.

@@ -46,6 +46,28 @@ upstream = "CorrectionEngine.stage_responses and input_response"
 tests = ["secs-engine::simulator_matches_recorded_stages"]
 
 [[feature]]
+id = "engine.measurement_resampling"
+kind = "engine"
+milestone = "M6"
+status = "implemented"
+upstream = "new; optional calculation-only conversion alongside correction_engine.py _prepare validation (D2, D39)"
+tests = [
+  "secs-types::sample_rate_policy_defaults_for_legacy_settings_and_changes_engine_key",
+  "secs-dsp::full_arrays_match_independent_scipy_polyphase_oracle",
+  "secs-dsp::first_last_and_fractional_grid_impulses_preserve_gain_and_physical_phase",
+  "secs-dsp::downsampling_rejects_out_of_band_aliases",
+  "secs-dsp::upsampling_rejects_images_above_the_source_nyquist",
+  "secs-dsp::cancellation_is_checked_during_kernel_and_output_work",
+  "secs-engine::reject_and_48k_paths_preserve_sample_arcs_and_time_bits",
+  "secs-engine::mixed_rates_preserve_the_original_ir_and_align_the_same_physical_arrival",
+  "secs-engine::unsupported_rates_invalid_data_and_large_ratio_budgets_fail_before_conversion",
+  "secs-service::resampled_calibration_and_cached_mdat_export_preserve_original_ir",
+  "secs-service::engine_measurement_errors_preserve_context_and_diagnostic_details",
+  "secs-service::xo_sample_rate_failure_reaches_ipc_with_the_affected_measurement",
+]
+note = "P59/P60: Reject remains the default. Opt-in conversion preserves full FIR tails, IR transfer gain, physical time, and original files. The saved policy participates in staleness and cached export. Known measurement errors carry structured context."
+
+[[feature]]
 id = "engine.e2e_demo"
 kind = "engine"
 milestone = "M2"

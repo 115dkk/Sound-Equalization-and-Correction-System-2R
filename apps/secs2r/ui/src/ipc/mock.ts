@@ -42,7 +42,7 @@ export type MockService = {
   failNext: (method: Method, code: ErrorCode, detail?: string, params?: Record<string, string>) => void;
   failAlways: (method: Method, code: ErrorCode, detail?: string) => void;
   clearFailures: () => void;
-  failJobs: (kind: JobKind, code: ErrorCode, detail?: string) => void;
+  failJobs: (kind: JobKind, code: ErrorCode, detail?: string, params?: Record<string, string>) => void;
   /** A null answer simulates cancelling the next matching host dialog. */
   queueDialog: (method: DialogMethod, path: string | null) => void;
   tick: () => void;
@@ -261,6 +261,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     };
     switch (edit.kind) {
       case "mode": settings.mode = edit.mode; break;
+      case "sample_rate_policy": settings.sample_rate_policy = edit.policy; break;
       case "ultra_ms": settings.ultra_ms = clamp(edit.ms, 30, 200); break;
       case "rc_lo": settings.rc_lo = clamp(edit.hz, 10, 200); break;
       case "rc_hi": settings.rc_hi = edit.hz === null ? null : clamp(edit.hz, 100, 20000); break;
@@ -708,7 +709,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     invoke, request: makeClient(invoke), events, calls,
     failNext: (method, code, detail = "", params = {}) => failures.set(method, { error: ipcError(code, detail, params), once: true }),
     failAlways: (method, code, detail = "") => failures.set(method, { error: ipcError(code, detail), once: false }),
-    clearFailures: () => failures.clear(), failJobs: (kind, code, detail = "") => jobFailures.set(kind, ipcError(code, detail)),
+    clearFailures: () => failures.clear(), failJobs: (kind, code, detail = "", params = {}) => jobFailures.set(kind, ipcError(code, detail, params)),
     queueDialog: (method, path) => { const queue = dialogs.get(method) ?? []; queue.push(path); dialogs.set(method, queue); },
     tick,
     drain: () => { for (let guard = 0; [...jobs.values()].some((j) => !monitor(j.kind) || j.cancelRequested) && guard < 1000; guard++) tick(); },

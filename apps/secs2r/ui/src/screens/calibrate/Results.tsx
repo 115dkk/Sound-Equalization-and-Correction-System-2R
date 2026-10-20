@@ -37,7 +37,7 @@ function Change({ before, after }: { before: string; after: string }) {
   );
 }
 
-export function Verdict({ view }: { view: CalibrateView }) {
+export function Verdict({ view, actions, onSampleRateSettings }: { view: CalibrateView; actions: CalibrateActions; onSampleRateSettings: () => void }) {
   const t = useT();
   const number = useNumber();
   const result = view.results.calibration;
@@ -52,13 +52,20 @@ export function Verdict({ view }: { view: CalibrateView }) {
     <StatusPill tone="success">{t("calibrate.verdict.current")}</StatusPill>
   );
 
-  const failed = failure && (
+  const failureText = failure ? errorText(t, failure.error) : null;
+  const sampleRateFailure = failure?.error.params.reason === "measurement_sample_rate";
+  const failed = failure && failureText && (
     <ErrorNotice
       id="calibrate.verdict.failed"
-      cause={`${t(FAILED_TEXT[failure.job])} ${errorText(t, failure.error).cause}`}
-      next={errorText(t, failure.error).next}
+      cause={failureText.generic ? t(FAILED_TEXT[failure.job]) : `${t(FAILED_TEXT[failure.job])} ${failureText.cause}`}
+      next={failureText.next}
       detail={failure.error.detail}
       code={failure.error.code}
+      action={failure.error.code === "engine_input" && !failureText.generic ? (
+        <Button variant="secondary" data-ui={`calibrate.verdict.failed.${sampleRateFailure ? "sample_rate" : "measurements"}`} onClick={sampleRateFailure ? onSampleRateSettings : actions.goToMeasurements}>
+          {t(sampleRateFailure ? "calibrate.failed.sample_rate_settings" : "calibrate.failed.inspect_measurements")}
+        </Button>
+      ) : undefined}
     />
   );
 

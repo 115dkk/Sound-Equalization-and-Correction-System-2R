@@ -303,6 +303,7 @@ export const target: TargetResult = {
   ],
 };
 export const calibrationSettings: CalibrationSettings = {
+  sample_rate_policy: "reject",
   mode: "mixed", rc_lo: 20, rc_hi: null, room_volume_m3: 62.6, room_dims_m: [5.2, 4.3, 2.8],
   mimo_on: false, fsiso: 150, mimo_low: null, mimo_max_supports: 0, mimo_fir: false,
   xo: { front: 80, center: 100, surround: 80, back: 80, top: 100 }, xo_rec: {}, ultra_ms: 100,

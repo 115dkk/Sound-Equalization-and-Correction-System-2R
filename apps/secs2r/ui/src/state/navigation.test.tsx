@@ -16,6 +16,64 @@ const setup = (mock: ReturnType<typeof createMockService>, method: string) => mo
     sweep_level_dbfs: null, timing: null, loopback_input_channel: null, timing_ref_output: null, share_mode: null },
 });
 
+it("opens and focuses the measurement list from a structured calculation error without starting a measurement", async () => {
+  const mock = createMockService({ tickMs: 0 });
+  await setup(mock, "native");
+  mock.failJobs("recommend_xo", "engine_input", "invalid input: position 1 SW2: empty or nonfinite IR", {
+    reason: "invalid_measurement", position: "1", role: "SW2",
+  });
+  const rendered = render(<App ipc={mock} />);
+  try {
+    await waitFor(() => expect(ui("frame.rail.calibrate")).not.toBeNull());
+    fireEvent.click(ui("frame.rail.calibrate")!);
+    await waitFor(() => expect(ui("calibrate.xo.recommend")).not.toBeNull());
+    fireEvent.click(ui("calibrate.xo.recommend")!);
+    await waitFor(() => expect(mock.calls.some((call) => call.method === "recommend_xo")).toBe(true));
+    await act(async () => mock.drain());
+    await waitFor(() => expect(ui("calibrate.xo.failed.measurements")).not.toBeNull());
+    const writes = () => mock.calls.filter((call) => ["measure_position", "sample_load", "mdat_import", "measure_configure"].includes(call.method));
+    const before = writes().length;
+    fireEvent.click(ui("calibrate.xo.failed.measurements")!);
+    await waitFor(() => expect(ui("measure.positions")?.contains(document.activeElement)).toBe(true));
+    expect(document.activeElement?.getAttribute("aria-current")).toBe("true");
+    expect(writes()).toHaveLength(before);
+  } finally { rendered.unmount(); mock.dispose(); }
+});
+
+it("opens sample-rate settings from the failure, persists a keyboard choice and restores it without recalculating", async () => {
+  const mock = createMockService({ tickMs: 0 });
+  await setup(mock, "native");
+  mock.failJobs("recommend_xo", "engine_input", "invalid input: position 1 SW2: sample rate 44100 (expected 48000)", {
+    reason: "measurement_sample_rate", position: "1", role: "SW2", actual_hz: "44100", expected_hz: "48000",
+  });
+  const rendered = render(<App ipc={mock} />);
+  try {
+    await waitFor(() => expect(ui("frame.rail.calibrate")).not.toBeNull());
+    fireEvent.click(ui("frame.rail.calibrate")!);
+    await waitFor(() => expect(ui("calibrate.xo.recommend")).not.toBeNull());
+    expect(ui("calibrate.input.details")?.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(ui("calibrate.xo.recommend")!);
+    await waitFor(() => expect(mock.calls.some((call) => call.method === "recommend_xo")).toBe(true));
+    await act(async () => mock.drain());
+    await waitFor(() => expect(ui("calibrate.xo.failed.sample_rate")).not.toBeNull());
+    const started = () => mock.calls.filter((call) => ["calibrate", "recommend_xo", "mimo", "measure_position"].includes(call.method)).length;
+    const before = started();
+    fireEvent.click(ui("calibrate.xo.failed.sample_rate")!);
+    await waitFor(() => expect(document.activeElement).toBe(ui("calibrate.sample_rate_policy.reject")));
+    expect(mock.calls.some((call) => call.method === "calibration_settings_edit" && call.params.edit.kind === "sample_rate_policy")).toBe(false);
+    fireEvent.keyDown(ui("calibrate.sample_rate_policy.reject")!, { key: "ArrowRight" });
+    await waitFor(() => expect(ui("calibrate.sample_rate_policy.resample")?.getAttribute("aria-checked")).toBe("true"));
+    expect(mock.calls).toContainEqual({ method: "calibration_settings_edit", params: { edit: { kind: "sample_rate_policy", policy: "resample" } } });
+    expect(started()).toBe(before);
+    fireEvent.click(ui("frame.rail.system")!);
+    await waitFor(() => expect(ui("system")).not.toBeNull());
+    fireEvent.click(ui("frame.rail.calibrate")!);
+    await waitFor(() => expect(ui("calibrate.sample_rate_policy.resample")?.getAttribute("aria-checked")).toBe("true"));
+    expect(ui("calibrate.input.details")?.getAttribute("aria-expanded")).toBe("true");
+    expect(started()).toBe(before);
+  } finally { rendered.unmount(); mock.dispose(); }
+});
+
 it("opens the native output picker without changing its selection, then reflects changes back on System", async () => {
   const mock = createMockService({ tickMs: 0 });
   await setup(mock, "native");
