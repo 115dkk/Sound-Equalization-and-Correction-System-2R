@@ -525,6 +525,7 @@
 
 .job-tray__bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-4);
   min-height: 52px;
@@ -537,7 +538,7 @@
   grid-template-columns: auto minmax(160px, 1.3fr) minmax(120px, 1fr) auto auto;
   align-items: center;
   gap: var(--space-1-5) var(--space-3);
-  min-width: 0;
+  min-width: min-content;
 }
 
 .job-tray__idle {
@@ -549,6 +550,7 @@
   position: relative;
   display: inline-flex;
   flex: none;
+  margin-left: auto;
   align-items: center;
   gap: var(--space-1-5);
   min-height: var(--control-h);

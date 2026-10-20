@@ -39,6 +39,7 @@ pub use numeric::sum as pairwise_sum;
 pub mod optimize;
 pub mod peaks;
 pub mod random;
+pub mod resample;
 pub mod response;
 pub mod smooth;
 

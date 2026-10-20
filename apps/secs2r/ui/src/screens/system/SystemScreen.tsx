@@ -245,9 +245,12 @@ function ConfigCard({
         <Button variant="quiet" data-ui="system.patch.renumber" onClick={actions.renumberOutputs}>
           {t("system.patch.renumber")}
         </Button>
-        <Button variant="quiet" icon="save" data-ui="system.patch.csv" onClick={actions.savePatchSheet}>
-          {t("system.patch.csv")}
-        </Button>
+        <div className="system-action-help">
+          <Button variant="quiet" icon="save" data-ui="system.patch.csv" aria-describedby="system.patch.csv.help-content" onClick={actions.savePatchSheet}>
+            {t("system.patch.csv")}
+          </Button>
+          <HelpTip id="system.patch.csv.help" label={t("system.patch.csv")} content={t("system.patch.csv.help")} />
+        </div>
         <Button variant="quiet" data-ui="system.preset.empty" onClick={() => ask({ kind: "preset", preset: "custom" })}>
           {t("system.preset.empty")}
         </Button>

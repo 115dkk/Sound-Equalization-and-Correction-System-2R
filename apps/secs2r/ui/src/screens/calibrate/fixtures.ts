@@ -72,6 +72,7 @@ const targetPoints = HARMAN.map(([hz, db]) => ({ hz, db }));
 const XO = { 프론트: 80, 센터: 100, 서라운드: 80, 백: 80, 탑: 100 };
 
 export const baseSettings: CalibrationSettings = {
+  sample_rate_policy: "reject",
   mode: "mixed",
   rc_lo: 20,
   rc_hi: null,
@@ -390,7 +391,7 @@ export const staleView: CalibrateView = {
 
 export const failedView: CalibrateView = {
   ...emptyView,
-  failure: { job: "calibrate", error: ipcError("engine_input", "position 2 has no IR for SW2 (expected 13 roles, found 12)") },
+  failure: { job: "calibrate", error: ipcError("engine_input", "invalid input: position 2 SW2: empty or nonfinite IR", { reason: "invalid_measurement", position: "2", role: "SW2" }) },
 };
 
 export const subsOnlyView: CalibrateView = {

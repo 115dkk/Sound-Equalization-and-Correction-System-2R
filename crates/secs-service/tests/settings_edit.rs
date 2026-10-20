@@ -100,3 +100,58 @@ fn settings_edit_and_warnings_require_an_open_project() {
         ));
     }
 }
+
+#[test]
+fn sample_rate_policy_edit_persists_across_reopen_and_marks_project_dirty() {
+    use secs_types::{calibration::SampleRatePolicy, settings_edit::SettingEdit};
+    let root = std::env::temp_dir().join(format!("secs-rate-policy-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("policy.secs").to_string_lossy().into_owned();
+    let service = Service::new(Deps::default());
+    call(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: path.clone(),
+            preset: "2.1".into(),
+            sub_count: 1,
+            sample: false,
+            tutorial: false,
+        }),
+    );
+    for policy in [SampleRatePolicy::Resample, SampleRatePolicy::Reject] {
+        let Response::CalibrationSettingsEdit(settings) = call(
+            &service,
+            Request::CalibrationSettingsEdit(CalibrationSettingsEditParams {
+                edit: SettingEdit::SampleRatePolicy { policy },
+            }),
+        ) else {
+            panic!("expected edited calibration settings")
+        };
+        assert_eq!(settings.sample_rate_policy, policy);
+        let Response::ProjectInfo(info) = call(&service, Request::ProjectInfo) else {
+            panic!("expected project info")
+        };
+        assert!(info.dirty);
+        call(
+            &service,
+            Request::ProjectSave(ProjectSaveParams { path: None }),
+        );
+        let saved = fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            saved.contains("sample_rate_policy"),
+            policy == SampleRatePolicy::Resample
+        );
+        let reopened = Service::new(Deps::default());
+        call(
+            &reopened,
+            Request::ProjectOpen(ProjectPathParams { path: path.clone() }),
+        );
+        let Response::CalibrationSettingsGet(settings) =
+            call(&reopened, Request::CalibrationSettingsGet)
+        else {
+            panic!("expected persisted calibration settings")
+        };
+        assert_eq!(settings.sample_rate_policy, policy);
+    }
+    fs::remove_dir_all(root).unwrap();
+}

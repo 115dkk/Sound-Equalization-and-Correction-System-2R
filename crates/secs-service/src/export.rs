@@ -31,6 +31,7 @@ impl Service {
         }
         let live = state.calibration.as_ref();
         let cached = open.cached.as_ref();
+        let cached_sample_rate_policy = cached.map(|cache| cache.labels.sample_rate_policy);
         if live.is_none() && cached.is_none() {
             return Err(IpcError::new(
                 ErrorCode::EngineInput,
@@ -252,11 +253,14 @@ impl Service {
                         if let Some(values) = &live_values {
                             values.clone()
                         } else {
-                            let prepared = {
+                            let mut prepared = {
                                 let mut session = lock(&session_for_design);
                                 let open = session.require_mut().map_err(IpcError::from)?;
                                 let project = open.store.project().clone();
-                                let settings = secs_project::calibration_from_project(&project);
+                                let mut settings = secs_project::calibration_from_project(&project);
+                                if let Some(policy) = cached_sample_rate_policy {
+                                    settings.sample_rate_policy = policy;
+                                }
                                 let measurements =
                                     super::calibration::load_measurements(&mut open.store)?;
                                 let groups = super::calibration::project_groups(&project);
@@ -272,6 +276,12 @@ impl Service {
                             };
                             job.report_progress("design", 0, 1);
                             let ctx = super::calibration::compute_context(&job, memory);
+                            prepared.1 = secs_engine::normalize_measurements(
+                                &prepared.1,
+                                prepared.0.sample_rate_policy,
+                                &ctx,
+                            )
+                            .map_err(super::calibration::engine_error)?;
                             let request = secs_engine::DesignRequest {
                                 measurements: &prepared.1,
                                 config: &prepared.2,

@@ -80,7 +80,8 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
     }
   }, [settingFocus, host.current]);
   const measure = useMeasureScreen();
-  const calibrate = useCalibrateScreen();
+  const goToMeasurements = useCallback(() => navigateToSetting("measure", '[data-ui="measure.positions"] [aria-current="true"]', '[data-ui="measure.positions"] button'), [navigateToSetting]);
+  const calibrate = useCalibrateScreen(goToMeasurements);
   const exporting = useExportScreen();
   const { model, navigate } = useFrameModel({ system: system.view, connect: connect.view, measure: measure.view, calibrate: calibrate.view, export: exporting.view });
   const reason = model.steps[host.current].reason;

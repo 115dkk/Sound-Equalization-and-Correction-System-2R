@@ -7,6 +7,7 @@ import { JobTray } from "../../app/jobs/JobTray";
 import { PrefsScope } from "../../app/prefs";
 import { T0, replay, staticApi } from "../../gallery/frameSpecimens";
 import { translate } from "../../i18n";
+import { ipcError } from "../../ipc/mock";
 import type { Translate } from "../../i18n/react";
 import { renderWith } from "../../test/render";
 import type { PlotScale } from "../../ui";
@@ -53,6 +54,7 @@ type MockActions = { [K in keyof CalibrateActions]: Mock<CalibrateActions[K]> };
 
 function mockActions(): MockActions {
   return {
+    goToMeasurements: vi.fn(),
     calibrate: vi.fn(),
     calibrateSubs: vi.fn(),
     recommendXo: vi.fn(),
@@ -232,12 +234,60 @@ describe("보정 screen", () => {
     setup(fx.staleView);
     expect(must("calibrate.verdict.stale").textContent).toContain("보정 설정이 바뀌었습니다");
     cleanupAll();
-    setup(fx.failedView);
+    const actions = setup(fx.failedView);
     const failed = must("calibrate.verdict.failed");
     expect(failed.getAttribute("role")).toBe("alert");
-    expect(failed.textContent).toContain("측정이 맞지 않습니다");
-    expect(failed.textContent).toContain("다시 계산하세요");
-    expect(failed.querySelector("details")?.textContent).toContain("position 2 has no IR");
+    expect(failed.querySelector(".ui-error__cause")?.textContent).toContain("SW2");
+    expect(failed.querySelector(".ui-error__cause")?.textContent).not.toContain("empty or nonfinite IR");
+    expect(failed.querySelector("details")?.textContent).toContain("invalid input: position 2 SW2: empty or nonfinite IR");
+    fireEvent.click(must("calibrate.verdict.failed.measurements"));
+    expect(actions.goToMeasurements).toHaveBeenCalledOnce();
+  });
+
+  it.each(["ko", "en"] as const)("shows generic failures once and offers measurement review only for structured errors (%s)", (locale) => {
+    for (const job of ["calibrate", "recommend_xo"] as const) {
+      const id = job === "calibrate" ? "calibrate.verdict.failed" : "calibrate.xo.failed";
+      setup({ ...fx.emptyView, failure: { job, error: ipcError("engine_input", "unknown solver diagnostic") } }, { locale });
+      expect(must(id).querySelector(".ui-error__cause")?.textContent).toBe(translate(locale, `calibrate.failed.${job}`));
+      expect(ui(`${id}.measurements`)).toBeNull();
+      expect(ui(`${id}.sample_rate`)).toBeNull();
+      cleanupAll();
+    }
+    const actions = setup({ ...fx.emptyView, failure: { job: "recommend_xo", error: ipcError("engine_input", "invalid input: position 1 SW3: sample rate 44100 (expected 48000)", {
+      reason: "measurement_sample_rate", position: "1", role: "SW3", actual_hz: "44100", expected_hz: "48000",
+    }) } }, { locale });
+    const cause = must("calibrate.xo.failed").querySelector(".ui-error__cause")?.textContent ?? "";
+    expect(cause.split(translate(locale, "calibrate.failed.recommend_xo"))).toHaveLength(2);
+    for (const value of ["SW3", "44,100", "48,000"]) expect(cause).toContain(value);
+    expect(must("calibrate.input.details").getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(must("calibrate.xo.failed.sample_rate"));
+    expect(must("calibrate.input.details").getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement).toBe(must("calibrate.sample_rate_policy.reject"));
+    expect(actions.goToMeasurements).not.toHaveBeenCalled();
+    expect(actions.changeSetting).not.toHaveBeenCalled();
+    expect(actions.calibrate).not.toHaveBeenCalled();
+    fireEvent.click(must("calibrate.input.details"));
+    fireEvent.click(must("calibrate.xo.failed.sample_rate"));
+    expect(document.activeElement).toBe(must("calibrate.sample_rate_policy.reject"));
+  });
+
+  it("restores the saved conversion policy and forwards an explicit choice without starting a calculation", () => {
+    const actions = setup({ ...fx.emptyView, settings: { ...fx.emptyView.settings, sample_rate_policy: "resample" } });
+    expect(must("calibrate.input.details").getAttribute("aria-expanded")).toBe("true");
+    expect(must("calibrate.sample_rate_policy.resample").getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(must("calibrate.sample_rate_policy.reject"));
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "sample_rate_policy", policy: "reject" });
+    expect(actions.calibrate).not.toHaveBeenCalled();
+  });
+
+  it("sends unsupported resampling rates to measurements instead of reopening the conversion choice", () => {
+    const actions = setup({ ...fx.emptyView, failure: { job: "recommend_xo", error: ipcError("engine_input", "unsupported rate", {
+      reason: "unsupported_resampling_rate", position: "1", role: "SW3", actual_hz: "4000", min_hz: "8000", max_hz: "384000",
+    }) } });
+    expect(ui("calibrate.xo.failed.sample_rate")).toBeNull();
+    fireEvent.click(must("calibrate.xo.failed.measurements"));
+    expect(actions.goToMeasurements).toHaveBeenCalledOnce();
+    expect(must("calibrate.input.details").getAttribute("aria-expanded")).toBe("false");
   });
 
   it("selects tabs and channels, and on XO the channel's group", () => {

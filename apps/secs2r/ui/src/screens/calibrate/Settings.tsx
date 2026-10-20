@@ -5,11 +5,12 @@ import { HelpTip } from "../../ui/HelpTip";
 // marks the result stale. Detail sits under 고급; every correction mode is
 // available in the mode selector.
 import { ComputeControl, ComputeResult } from "./ComputeControl";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { errorText } from "../../app/jobs/jobText";
 import { useNumber, useT } from "../../i18n/react";
 import type { BandType } from "../../ipc/bindings/BandType";
 import type { CalibrationSettings } from "../../ipc/bindings/CalibrationSettings";
+import type { SampleRatePolicy } from "../../ipc/bindings/SampleRatePolicy";
 import { Advanced, Button, Card, ErrorNotice, NumberField, Segmented, Select, Toggle, type Option } from "../../ui";
 import { Icon } from "../../ui/Icon";
 import { roleCode } from "../../ui/maps/geometry";
@@ -31,6 +32,7 @@ import { FAILED_TEXT, MODES, MODE_EFFECT, MODE_NAME, bandTypeText, filterSpec, g
 import type { BandTypeChoice, CalibrateActions, CalibrateJob, CalibrateView, SettingEdit, SubLayout, SubModeChoice } from "./types";
 
 type Props = { view: CalibrateView; actions: CalibrateActions };
+type FailureProps = Props & { onSampleRateSettings: () => void };
 
 function SettingsCard({ id, title, help, children }: { id: string; title: string; help: ReactNode; children: ReactNode }) {
   return (
@@ -41,13 +43,52 @@ function SettingsCard({ id, title, help, children }: { id: string; title: string
 }
 
 /** The last failure of a section's job: cause, next step and 자세히. A running job shows on its busy button and in the header. */
-function JobFailure({ view, job, id }: { view: CalibrateView; job: CalibrateJob; id: string }) {
+function JobFailure({ view, actions, onSampleRateSettings, job, id }: FailureProps & { job: CalibrateJob; id: string }) {
   const t = useT();
   if (view.failure?.job === job) {
     const text = errorText(t, view.failure.error);
-    return <ErrorNotice id={`${id}.failed`} cause={`${t(FAILED_TEXT[job])} ${text.cause}`} next={text.next} detail={view.failure.error.detail} code={view.failure.error.code} />;
+    const sampleRate = view.failure.error.params.reason === "measurement_sample_rate";
+    return <ErrorNotice id={`${id}.failed`}
+      cause={text.generic ? t(FAILED_TEXT[job]) : `${t(FAILED_TEXT[job])} ${text.cause}`}
+      next={text.next} detail={view.failure.error.detail} code={view.failure.error.code}
+      action={view.failure.error.code === "engine_input" && !text.generic ? (
+        <Button variant="secondary" data-ui={`${id}.failed.${sampleRate ? "sample_rate" : "measurements"}`} onClick={sampleRate ? onSampleRateSettings : actions.goToMeasurements}>
+          {t(sampleRate ? "calibrate.failed.sample_rate_settings" : "calibrate.failed.inspect_measurements")}
+        </Button>
+      ) : undefined} />;
   }
   return null;
+}
+
+/** This input policy applies to every calculation, independently of the filter mode. */
+function SampleRateSettings({ view, actions, request }: Props & { request: number }) {
+  const t = useT();
+  const root = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (request === 0) return;
+    const choice = root.current?.querySelector<HTMLButtonElement>('[role="radio"][aria-checked="true"]');
+    choice?.focus({ preventScroll: true });
+    const content = root.current?.closest<HTMLElement>(".app-content");
+    if (root.current && content) content.scrollTop = Math.max(0, root.current.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop - 16);
+  }, [request]);
+  return (
+    <div ref={root} data-ui="calibrate.settings.input">
+      <Advanced key={request} id="calibrate.input.details" label={t("calibrate.sample_rate.title")} defaultOpen={request > 0 || view.settings.sample_rate_policy === "resample"}>
+        <Segmented<SampleRatePolicy>
+          id="calibrate.sample_rate_policy"
+          label={t("calibrate.sample_rate.title")}
+          hideLabel
+          help={t("calibrate.sample_rate.help")}
+          value={view.settings.sample_rate_policy}
+          options={[
+            { value: "reject", label: t("calibrate.sample_rate.reject") },
+            { value: "resample", label: t("calibrate.sample_rate.resample") },
+          ]}
+          onChange={(policy) => actions.changeSetting({ kind: "sample_rate_policy", policy })}
+        />
+      </Advanced>
+    </div>
+  );
 }
 
 /* ── 모드 ───────────────────────────────────────────────────────────────── */
@@ -227,7 +268,7 @@ function RangeSection({ view, actions }: Props) {
 
 /* ── 크로스오버 ─────────────────────────────────────────────────────────── */
 
-function XoSection({ view, actions }: Props) {
+function XoSection({ view, actions, onSampleRateSettings }: FailureProps) {
   const t = useT();
   const number = useNumber();
   const s = view.settings;
@@ -278,7 +319,7 @@ function XoSection({ view, actions }: Props) {
         >
           {t("calibrate.xo.recommend")}
         </Button>
-        <JobFailure view={view} job="recommend_xo" id="calibrate.xo" />
+        <JobFailure view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} job="recommend_xo" id="calibrate.xo" />
       </div>
       {recs.length > 0 && view.running !== "recommend_xo" && (
         <p className="calibrate-line tabular" data-ui="calibrate.xo.state">
@@ -516,7 +557,7 @@ function SubEditor({ view, actions, role }: Props & { role: string }) {
   );
 }
 
-function BaSection({ view, actions, editSub }: Props & { editSub?: string | undefined }) {
+function BaSection({ view, actions, onSampleRateSettings, editSub }: FailureProps & { editSub?: string | undefined }) {
   const t = useT();
   const number = useNumber();
   const s = view.settings;
@@ -572,7 +613,7 @@ function BaSection({ view, actions, editSub }: Props & { editSub?: string | unde
         <Button id="calibrate.ba.take_values" data-ui="calibrate.ba.take_values" variant="quiet" disabled={busy || !canTake} onClick={actions.takeSubValues}>
           {t("calibrate.ba.take_values")}
         </Button>
-        <JobFailure view={view} job="calibrate_subs" id="calibrate.ba" />
+        <JobFailure view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} job="calibrate_subs" id="calibrate.ba" />
       </div>
       {!canTake && <p className="ui-field__hint">{t("calibrate.ba.actions.hint_no_result")}</p>}
       {warnings.length > 0 && (
@@ -675,7 +716,7 @@ function BaSection({ view, actions, editSub }: Props & { editSub?: string | unde
 
 /* ── MIMO ───────────────────────────────────────────────────────────────── */
 
-function MimoSection({ view, actions }: Props) {
+function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
   const t = useT();
   const number = useNumber();
   const s = view.settings;
@@ -741,7 +782,7 @@ function MimoSection({ view, actions }: Props) {
             <Button id="calibrate.mimo.compute" data-ui="calibrate.mimo.compute" busy={view.running === "mimo"} disabled={busy || !result || view.compute.saving || (view.compute.preference === "gpu" && view.compute.status?.gpu_available === false)} onClick={actions.computeMimo}>
               {t("calibrate.mimo.compute")}
             </Button>
-            <JobFailure view={view} job="mimo" id="calibrate.mimo" />
+            <JobFailure view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} job="mimo" id="calibrate.mimo" />
           </div>
           {state()}
           {mimo && <ComputeResult report={mimo.compute} />}
@@ -793,7 +834,7 @@ function MimoSection({ view, actions }: Props) {
   );
 }
 
-export function Settings({ view, actions, editSub }: Props & { editSub?: string | undefined }) {
+export function Settings({ view, actions, editSub, sampleRateRequest, onSampleRateSettings }: FailureProps & { editSub?: string | undefined; sampleRateRequest: number }) {
   const t = useT();
   return (
     <section className="calibrate-settings" aria-labelledby="calibrate.settings.title" data-ui="calibrate.settings">
@@ -803,11 +844,12 @@ export function Settings({ view, actions, editSub }: Props & { editSub?: string 
           <HelpTip id="calibrate.settings.help" labelledBy="calibrate.settings.title" content={t("calibrate.settings.description")} />
         </div>
       </header>
+      <SampleRateSettings view={view} actions={actions} request={sampleRateRequest} />
       <ModeSection view={view} actions={actions} />
       <RangeSection view={view} actions={actions} />
-      <XoSection view={view} actions={actions} />
-      <BaSection view={view} actions={actions} editSub={editSub} />
-      <MimoSection view={view} actions={actions} />
+      <XoSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} />
+      <BaSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} editSub={editSub} />
+      <MimoSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} />
     </section>
   );
 }

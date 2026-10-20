@@ -164,6 +164,10 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
   const params: MessageParams = {};
   let key: string = `notice.${notice.code}`;
   switch (notice.code) {
+    case "measurement_resampled":
+      if (num(p.count) === 1) key = "notice.measurement_resampled.one";
+      Object.assign(params, { count: f("count"), target_hz: f("target_hz") });
+      break;
     case "rc_limit":
       params.hz = f("hz");
       if (p.auto === "true" && p.schroeder_hz !== undefined) {

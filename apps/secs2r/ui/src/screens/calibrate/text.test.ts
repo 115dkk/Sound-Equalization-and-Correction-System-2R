@@ -21,6 +21,11 @@ const lines = (locale: Locale, notices: Notice[]) => {
 const n = (code: string, params: Record<string, string>): Notice => ({ code, params });
 
 describe("calculation notes", () => {
+  it("formats the reported resampling count and target rate in both locales", () => {
+    expect(lines("ko", [n("measurement_resampled", { count: "1500", target_hz: "48000" })])).toEqual(["측정 1,500개를 계산용 48,000 Hz 데이터로 변환했습니다."]);
+    expect(lines("en", [n("measurement_resampled", { count: "1", target_hz: "48000" })])).toEqual(["Converted 1 measurement to 48,000 Hz for calculation."]);
+    expect(lines("en", [n("measurement_resampled", { count: "2", target_hz: "48000" })])).toEqual(["Converted 2 measurements to 48,000 Hz for calculation."]);
+  });
   it("sub_filters: a sub's HP, LP and each fixed PEQ on one line", () => {
     const notes = [
       n("sub_filters", { role: "SW1", hp_hz: "10", hp_type: "LR12", lp_hz: "80", lp_type: "LR24", peq_count: "1" }),

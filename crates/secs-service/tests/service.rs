@@ -371,6 +371,100 @@ fn malformed_requests_become_invalid_request_envelopes() {
 }
 
 #[test]
+fn resampled_calibration_and_cached_mdat_export_preserve_original_ir() {
+    use secs_types::calibration::SampleRatePolicy;
+    let root = temp_root("resample-flow");
+    fs::create_dir_all(&root).unwrap();
+    let (path, mut settings) = write_case(&root, "room_dba");
+    let ir_path = secs_project::ir_file(&path, "L", 1);
+    let (samples, _) = secs_project::read_wav_float32(&fs::read(&ir_path).unwrap()).unwrap();
+    fs::write(&ir_path, secs_project::write_wav_float32(&samples, 96_000)).unwrap();
+    let original = fs::read(&ir_path).unwrap();
+    let original_project: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    let service = deterministic_service();
+    open(&service, &path);
+
+    let rejected = Arc::new(Events::default());
+    let job = start_calibration(&service, rejected.clone(), settings.clone());
+    let JobEvent::Finished {
+        status,
+        error: Some(error),
+        ..
+    } = rejected.wait(job, Duration::from_secs(120))
+    else {
+        panic!("default policy must reject the mismatched measurement")
+    };
+    assert_eq!(status, JobStatus::Failed);
+    assert_eq!(
+        error.params.get("actual_hz").map(String::as_str),
+        Some("96000")
+    );
+
+    settings.sample_rate_policy = SampleRatePolicy::Resample;
+    let events = Arc::new(Events::default());
+    let job = start_calibration(&service, events.clone(), settings);
+    finished_result(events.wait(job, Duration::from_secs(120)));
+    assert_eq!(fs::read(&ir_path).unwrap(), original);
+    let summary = read_results(&service).calibration.unwrap();
+    let notice = summary
+        .notes
+        .iter()
+        .find(|notice| notice.code == "measurement_resampled")
+        .expect("converted measurements must be visible in the calculation notes");
+    assert_eq!(notice.params["count"], "1");
+    assert_eq!(notice.params["target_hz"], "48000");
+    let labels: serde_json::Value = cached_field(&path, "labels");
+    assert_eq!(labels["sample_rate_policy"], "resample");
+    let xo_events = Arc::new(Events::default());
+    let Response::RecommendXo(xo) = call_ok(&service, Request::RecommendXo, xo_events.clone())
+    else {
+        panic!("XO recommendation must start with the resampling policy")
+    };
+    assert!(matches!(
+        finished_result(xo_events.wait(xo.job, Duration::from_secs(120))),
+        JobResult::Xo(_)
+    ));
+
+    // Saving another preparation policy makes the result stale, but a cached
+    // mdat rebuild must still use the policy that produced the cached run.
+    call_ok(
+        &service,
+        Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+            edit: secs_types::settings_edit::SettingEdit::SampleRatePolicy {
+                policy: SampleRatePolicy::Reject,
+            },
+        }),
+        Arc::new(NoEvents),
+    );
+    call_ok(
+        &service,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+        Arc::new(NoEvents),
+    );
+    let reopened = deterministic_service();
+    open(&reopened, &path);
+    assert!(read_results(&reopened).calibration.unwrap().stale);
+    let output = export_and_wait(
+        &reopened,
+        ExportKind::StagedMdat,
+        &root.join("cached-mdat"),
+        Arc::new(Events::default()),
+    );
+    assert!(output.stale);
+    assert!(!output.files.is_empty());
+    assert_eq!(fs::read(&ir_path).unwrap(), original);
+    assert_eq!(secs_project::read_wav_float32(&original).unwrap().1, 96_000);
+    let saved_project: serde_json::Value =
+        serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        saved_project["measurements"],
+        original_project["measurements"]
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn oracle_project_calibrates_recommends_xo_and_exports() {
     let root = temp_root("oracle-flow");
     fs::create_dir_all(&root).unwrap();
@@ -387,6 +481,15 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
     };
     let results = read_results(&service);
     assert!(!results.calibration.as_ref().unwrap().stale);
+    assert!(
+        results
+            .calibration
+            .as_ref()
+            .unwrap()
+            .notes
+            .iter()
+            .all(|notice| notice.code != "measurement_resampled")
+    );
     assert_eq!(results.calibration.as_ref().unwrap().main_roles.len(), 11);
     let direct = secs_engine::test_support::production_case("dolby", 1);
     assert_eq!(cached_chain(&path), direct.design.chain);
@@ -1002,6 +1105,41 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
         Arc::new(Events::default()),
     );
     assert_eq!(live_bytes, snapshot_relative_files(&folder, &cached.files));
+
+    // Preparation policy participates in the calibration identity for both
+    // live and reopened results, and consequently invalidates their MIMO.
+    for current in [&service, &reopened] {
+        for (policy, expected_stale) in [
+            (secs_types::calibration::SampleRatePolicy::Resample, true),
+            (secs_types::calibration::SampleRatePolicy::Reject, false),
+        ] {
+            call_ok(
+                current,
+                Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+                    edit: secs_types::settings_edit::SettingEdit::SampleRatePolicy { policy },
+                }),
+                Arc::new(NoEvents),
+            );
+            let result = read_results(current);
+            let calibration = result.calibration.unwrap();
+            assert_eq!(calibration.stale, expected_stale);
+            assert_eq!(
+                calibration.stale_reason.as_deref(),
+                expected_stale.then_some("settings")
+            );
+            assert_eq!(result.mimo.unwrap().stale, expected_stale);
+            call_ok(
+                current,
+                Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+                Arc::new(NoEvents),
+            );
+            let reloaded = Service::new(Deps::default());
+            open(&reloaded, &path);
+            let result = read_results(&reloaded);
+            assert_eq!(result.calibration.unwrap().stale, expected_stale);
+            assert_eq!(result.mimo.unwrap().stale, expected_stale);
+        }
+    }
 
     // A compute preference change invalidates both live and reopened MIMO,
     // even when both preferences currently resolve to the CPU.

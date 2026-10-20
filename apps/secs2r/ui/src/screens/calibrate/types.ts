@@ -112,10 +112,12 @@ export type { SubLayout } from "../../ipc/bindings/SubLayout";
 export type { SubModeChoice } from "../../ipc/bindings/SubModeChoice";
 
 export type CalibrateActions = {
+  /** Host: opens the measurement list to inspect a structured measurement error. */
+  goToMeasurements: () => void;
   changeCompute: (preference: ComputePreference) => void;
   refreshCompute: () => void;
   openGpuHelp: () => void;
-  /** calibrate { settings: null, subs_only: false } (a first run without an XO recommendation recommends first: the service's business) */
+  /** calibrate { settings: null, subs_only: false } */
   calibrate: () => void;
   /** calibrate { settings: null, subs_only: true } */
   calibrateSubs: () => void;

@@ -157,23 +157,27 @@ fn validate(set: &MeasurementSet) -> Result<(), EngineError> {
         previous = Some(*pos);
         for (i, (role, m)) in roles.iter().enumerate() {
             if m.sample_rate != SR {
-                return Err(EngineError::Input(format!(
-                    "position {pos} {role}: sample rate {} (expected 48000)",
-                    m.sample_rate
-                )));
+                return Err(EngineError::MeasurementSampleRate {
+                    position: *pos,
+                    role: role.clone(),
+                    actual_hz: m.sample_rate,
+                    expected_hz: SR,
+                });
             }
             if m.samples.is_empty()
                 || !m.t0.is_finite()
                 || (0..m.samples.len()).any(|i| !m.samples.at(i).is_finite())
             {
-                return Err(EngineError::Input(format!(
-                    "position {pos} {role}: empty or nonfinite IR"
-                )));
+                return Err(EngineError::InvalidMeasurement {
+                    position: *pos,
+                    role: role.clone(),
+                });
             }
             if roles[..i].iter().any(|(r, _)| r == role) {
-                return Err(EngineError::Input(format!(
-                    "position {pos}: duplicate role {role}"
-                )));
+                return Err(EngineError::DuplicateMeasurement {
+                    position: *pos,
+                    role: role.clone(),
+                });
             }
         }
     }
@@ -222,9 +226,13 @@ pub fn prepare(
         .positions
         .iter()
         .find(|(p, _)| *p == config.main_position)
-        .ok_or_else(|| EngineError::Input("missing main position".into()))?;
+        .ok_or(EngineError::MissingReferencePosition {
+            position: config.main_position,
+        })?;
     if !main.1.iter().any(|(r, _)| config.mains.contains(r)) {
-        return Err(EngineError::Input("no measured main".into()));
+        return Err(EngineError::MissingMainMeasurement {
+            position: config.main_position,
+        });
     }
     let arrival_s: Vec<_> = main
         .1

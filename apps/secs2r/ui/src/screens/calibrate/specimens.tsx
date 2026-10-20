@@ -8,13 +8,13 @@ import { PrefsScope, usePrefs } from "../../app/prefs";
 import { FrameBox, T0, replay } from "../../gallery/frameSpecimens";
 import type { SpecimenDef } from "../../gallery/Specimen";
 import { useT } from "../../i18n/react";
-import { ipcError } from "../../ipc/mock";
 import { CalibrateScreen, calibrateHeader, type CalibrateScreenProps } from "./CalibrateScreen";
 import * as fx from "./fixtures";
 import { calibrateStepState, type CalibrateActions, type CalibrateView } from "./types";
 
 const noop = () => {};
 export const noActions: CalibrateActions = {
+  goToMeasurements: noop,
   calibrate: noop,
   calibrateSubs: noop,
   recommendXo: noop,
@@ -79,7 +79,7 @@ const failedJobs = replay([
   {
     type: "event",
     at: T0 + 9000,
-    event: { event: "finished", job: 7, status: "failed", result: null, error: ipcError("engine_input", "position 2 has no IR for SW2 (expected 13 roles, found 12)") },
+    event: { event: "finished", job: 7, status: "failed", result: null, error: fx.failedView.failure!.error },
   },
 ] satisfies JobsAction[]);
 

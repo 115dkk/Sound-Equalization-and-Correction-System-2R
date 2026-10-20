@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import { useHost, useResource, useSession } from "../../state/react";
 import type { CalibrateActions, CalibrateJob, CalibrateView } from "./types";
 
-export function useCalibrateScreen(): { view: CalibrateView | null; actions: CalibrateActions } {
+export function useCalibrateScreen(goToMeasurements?: () => void): { view: CalibrateView | null; actions: CalibrateActions } {
   const session = useSession();
   const host = useHost();
   const appSettings = useResource("appSettings");
@@ -24,6 +24,7 @@ export function useCalibrateScreen(): { view: CalibrateView | null; actions: Cal
       session.run(() => session.refreshCurves({ tab: h.tab, channel: h.channel, group: h.xoGroup, xo_hz: h.previewHz, corrected: null }));
     };
     return {
+      goToMeasurements: goToMeasurements ?? (() => session.navigate("measure")),
       openGpuHelp: () => session.run(() => session.call({ method: "open_gpu_help" })),
       refreshCompute: () => session.run(() => session.stores.computeStatus.load()),
       changeCompute: (compute) => session.run(async () => {
@@ -61,7 +62,7 @@ export function useCalibrateScreen(): { view: CalibrateView | null; actions: Cal
         if (path !== null) await session.call({ method: "target_load", params: { path } });
       }),
     };
-  }, [session]);
+  }, [session, goToMeasurements]);
   const jobs = host.jobs.filter((job) => job.status === "running" || job.status === "cancel_requested");
   const runningJob = jobs.find((job) => ["calibrate", "recommend_xo", "mimo"].includes(job.kind));
   const request = runningJob ? host.jobRequests[runningJob.job] : undefined;

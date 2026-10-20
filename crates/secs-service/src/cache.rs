@@ -12,6 +12,8 @@ const VERSION: u32 = 4;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct CachedRunLabels {
     pub mode: String,
+    #[serde(default)]
+    pub sample_rate_policy: secs_types::calibration::SampleRatePolicy,
     pub ultra_ms: f64,
     pub latency_ms: f64,
     pub rc_hi_hz: f64,
@@ -259,6 +261,7 @@ mod tests {
             mimo_calibration_key: None,
             labels: CachedRunLabels {
                 mode: "mixed".into(),
+                sample_rate_policy: secs_types::calibration::SampleRatePolicy::Reject,
                 ultra_ms: 100.0,
                 latency_ms: 4.0,
                 rc_hi_hz: 300.0,
@@ -308,6 +311,41 @@ mod tests {
         replacement.engine_key = "replacement".into();
         save(&project, &replacement).unwrap();
         assert_eq!(load(&project).unwrap().engine_key, "replacement");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn sample_rate_policy_round_trips_and_legacy_cache_defaults_to_reject() {
+        use secs_types::calibration::SampleRatePolicy;
+        let root = std::env::temp_dir().join(format!("secs-cache-rate-{}", std::process::id()));
+        let project = root.join("project.secs");
+        let mut run = sample();
+        run.labels.sample_rate_policy = SampleRatePolicy::Resample;
+        save(&project, &run).unwrap();
+        assert_eq!(
+            load(&project).unwrap().labels.sample_rate_policy,
+            SampleRatePolicy::Resample
+        );
+        for version in [2, 3, VERSION] {
+            let mut value = if version == VERSION {
+                serde_json::to_value(CacheFile {
+                    version,
+                    results: sample(),
+                })
+                .unwrap()
+            } else {
+                legacy_value(sample(), version)
+            };
+            value["results"]["labels"]
+                .as_object_mut()
+                .unwrap()
+                .remove("sample_rate_policy");
+            fs::write(path(&project), serde_json::to_vec(&value).unwrap()).unwrap();
+            assert_eq!(
+                load(&project).unwrap().labels.sample_rate_policy,
+                SampleRatePolicy::Reject
+            );
+        }
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -228,6 +228,11 @@ describe("SystemScreen", () => {
 
   it("runs the sheet actions", () => {
     const actions = setup(sampleView);
+    const save = must("system.patch.csv");
+    const help = screen.getByRole("button", { name: `${translate("ko", "system.patch.csv")} ${translate("ko", "ui.help")}` });
+    fireEvent.click(help);
+    expect(screen.getByRole("tooltip").id).toBe(save.getAttribute("aria-describedby"));
+    expect(actions.savePatchSheet).not.toHaveBeenCalled();
     fireEvent.click(must("system.patch.add"));
     fireEvent.click(must("system.patch.renumber"));
     fireEvent.click(must("system.patch.csv"));
