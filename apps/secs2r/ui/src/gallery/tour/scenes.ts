@@ -655,7 +655,9 @@ export const TOUR_SCENES: TourScene[] = [
 
   // 튜토리얼 (tutorialLive.tsx와 같은 시작점)
   { id: "tutorial.system", step: "tutorial", title: { ko: "튜토리얼: 시스템", en: "Tutorial: System" }, tutorialStart: "system.output" },
+  { id: "tutorial.dsp", step: "tutorial", title: { ko: "튜토리얼: 내보낼 DSP", en: "Tutorial: Output DSP" }, tutorialStart: "system.dsp" },
   { id: "tutorial.connect", step: "tutorial", title: { ko: "튜토리얼: 연결·점검", en: "Tutorial: Connect & check" }, tutorialStart: "connect.retry" },
+  { id: "tutorial.measurement-method", step: "tutorial", title: { ko: "튜토리얼: 측정 방식", en: "Tutorial: Measurement method" }, tutorialStart: "connect.connection" },
   { id: "tutorial.measure", step: "tutorial", title: { ko: "튜토리얼: 측정·가져오기", en: "Tutorial: Measure & import" }, tutorialStart: "measure.sample" },
   {
     id: "tutorial.calibrate",
@@ -669,6 +671,16 @@ export const TOUR_SCENES: TourScene[] = [
     step: "tutorial",
     title: { ko: "튜토리얼: 내보내기", en: "Tutorial: Export" },
     tutorialStart: "export.mdat",
+    setup: async (mock) => {
+      await measured(mock);
+      await calibrated(mock);
+    },
+  },
+  {
+    id: "tutorial.camilladsp",
+    step: "tutorial",
+    title: { ko: "튜토리얼: CamillaDSP", en: "Tutorial: CamillaDSP" },
+    tutorialStart: "export.camilla",
     setup: async (mock) => {
       await measured(mock);
       await calibrated(mock);
