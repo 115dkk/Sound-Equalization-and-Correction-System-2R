@@ -495,13 +495,75 @@ fn relative_paths(root: &Path, paths: &[PathBuf]) -> Vec<String> {
         .collect()
 }
 
+fn replace_once(text: &str, old: &str, new: &str) -> String {
+    assert_eq!(text.matches(old).count(), 1, "F11 fixture text: {old}");
+    text.replacen(old, new, 1)
+}
+
+// Keep the upstream fixtures intact. Only F11's Eval syntax and its editing
+// instructions differ; every other character, filter body and WAV stays exact.
+fn f11_config(expected: &str) -> String {
+    let expected = replace_once(
+        expected,
+        "# ==== EDIT ONLY THESE TWO LINES:",
+        "# ==== EDIT ONLY THE CHANNEL NUMBERS BELOW:",
+    );
+    let mut groups = 0;
+    let mut result = String::new();
+    for line in expected.split_inclusive('\n') {
+        if let Some(assignments) = line.strip_prefix("Eval: ") {
+            let prefix = match groups {
+                0 => "in",
+                1 => "out",
+                _ => panic!("unexpected upstream Eval group"),
+            };
+            groups += 1;
+            for assignment in assignments.strip_suffix('\n').unwrap().split("; ") {
+                let (variable, number) = assignment.split_once(" = ").unwrap();
+                assert!(variable.starts_with(prefix));
+                assert!(variable.chars().all(|ch| ch.is_ascii_alphanumeric()));
+                assert!(!number.is_empty() && number.chars().all(|ch| ch.is_ascii_digit()));
+                result.push_str(&format!("Eval: {assignment}\n"));
+            }
+        } else {
+            result.push_str(line);
+        }
+    }
+    assert_eq!(groups, 2);
+    result
+}
+
+fn f11_guide(expected: &str) -> String {
+    let expected = replace_once(
+        expected,
+        "config.txt 맨 위 Eval 두 줄의 숫자만",
+        "config.txt 맨 위 입력·출력 Eval 줄의 숫자만",
+    );
+    let expected = replace_once(&expected, "\"Eval: inL = 1; …\"", "\"Eval: inL = 1\"");
+    replace_once(&expected, "\"Eval: outL = 1; …\"", "\"Eval: outL = 1\"")
+}
+
+fn f11_expected_file(kind: &str, path: &str, expected: Vec<u8>) -> Vec<u8> {
+    match (kind, path) {
+        ("eqapo", "config.txt") => f11_config(std::str::from_utf8(&expected).unwrap()).into_bytes(),
+        ("eqapo", secs_filters::EQAPO_GUIDE) => {
+            f11_guide(std::str::from_utf8(&expected).unwrap()).into_bytes()
+        }
+        _ => expected,
+    }
+}
+
 fn assert_written(fixture: &Fixture, kind: &str, root: &Path, paths: &[PathBuf]) {
     let expected = &fixture.outputs()["written"][kind];
     assert_eq!(relative_paths(root, paths), strings(&expected["paths"]));
     for item in expected["files"].as_array().unwrap() {
         assert_eq!(
             fs::read(root.join(item["path"].as_str().unwrap())).unwrap(),
-            fixture.blob(&item["bytes"]),
+            f11_expected_file(
+                kind,
+                item["path"].as_str().unwrap(),
+                fixture.blob(&item["bytes"]),
+            ),
             "{} {kind} {}",
             fixture.id,
             item["path"].as_str().unwrap()
@@ -515,6 +577,18 @@ fn assert_computed_written(fixture: &Fixture, kind: &str, root: &Path, paths: &[
     for item in expected["files"].as_array().unwrap() {
         let path = item["path"].as_str().unwrap();
         let bytes = fs::read(root.join(path)).unwrap();
+        if kind == "eqapo" && matches!(path, "config.txt" | secs_filters::EQAPO_GUIDE) {
+            let original = fixture.blob(&item["bytes"]);
+            assert_eq!(original.len() as u64, item["length"].as_u64().unwrap());
+            assert_eq!(sha256_hex(&original), item["sha256"].as_str().unwrap());
+            assert_eq!(
+                bytes,
+                f11_expected_file(kind, path, original),
+                "{} {kind} {path} (F11 only)",
+                fixture.id
+            );
+            continue;
+        }
         assert_eq!(
             bytes.len() as u64,
             item["length"].as_u64().unwrap(),
@@ -566,6 +640,199 @@ fn report_preamp_difference(fixture: &Fixture, root: &Path) {
             preamp_line(&expected)
         );
     }
+}
+
+// Opt in to retaining actual Rust writer outputs for an external APO engine.
+// Normal test runs only use TempDir; no repository or persistent output changes.
+fn dump_f11_export(case: &str, root: &Path, paths: &[PathBuf]) {
+    let Some(destination) = std::env::var_os("SECS_EQAPO_F11_DUMP_DIR") else {
+        return;
+    };
+    let destination = PathBuf::from(destination);
+    assert!(
+        destination.is_absolute(),
+        "F11 dump directory must be absolute"
+    );
+    for path in paths {
+        let target = destination
+            .join(case)
+            .join(path.strip_prefix(root).unwrap());
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::copy(path, target).unwrap();
+    }
+}
+
+fn f11_synthetic_chain(stereo: bool, fir: bool, subwoofer: bool) -> SignalChain {
+    let fixture = Fixture::load("filters", "rc_mixed");
+    let mut result = chain(&fixture);
+    if !stereo {
+        result.mains.truncate(1);
+    }
+    for (index, main) in result.mains.iter_mut().enumerate() {
+        main.input_peq.clear();
+        main.top_peq.clear();
+        main.fir = if fir {
+            if index == 0 {
+                vec![0.5, -0.25, 0.125]
+            } else {
+                vec![0.25, 0.125, -0.0625]
+            }
+        } else {
+            vec![1.0]
+        };
+        main.gain_db = if fir { 0.0 } else { -6.0 * (index + 1) as f64 };
+        main.delay_ms = 0.0;
+        main.align_delay_ms = 0.0;
+        main.xo_hz = subwoofer.then_some(80.0);
+    }
+    result.subs = if subwoofer {
+        vec![SubChannel {
+            role: "SW1".into(),
+            gain_db: -6.0,
+            delay_ms: 0.0,
+            polarity: 1,
+            allpass: vec![],
+            hp_hz: 0.0,
+            hp_type: BandType::Lr24,
+            lp_hz: 0.0,
+            lp_type: BandType::Lr24,
+            peq: vec![],
+            mode: "auto".into(),
+        }]
+    } else {
+        vec![]
+    };
+    result.sub_bus_peq.clear();
+    result.main_extra_ms = 0.0;
+    result.lift_ms = 0.0;
+    result.latency_ms = 0.0;
+    result
+}
+
+fn assert_f11_assignments(config: &str, expected: &[&str]) {
+    let assignments: Vec<_> = config
+        .lines()
+        .filter(|line| line.starts_with("Eval: "))
+        .collect();
+    assert_eq!(assignments, expected);
+    let first_routing = config.find("Copy: ").unwrap();
+    let first_condition = config.find("If: ").unwrap();
+    for assignment in assignments {
+        assert_eq!(assignment.matches('=').count(), 1);
+        assert!(!assignment.contains(';'));
+        assert!(config.find(assignment).unwrap() < first_routing);
+        assert!(config.find(assignment).unwrap() < first_condition);
+    }
+    assert!(!config.contains("TWO LINES"));
+}
+
+#[test]
+fn eqapo_public_exports_use_single_assignments_f11() {
+    let root = TempDir::new("f11_interop");
+    for (case, stereo, fir, subwoofer, expected) in [
+        (
+            "mono_fir",
+            false,
+            true,
+            false,
+            vec!["Eval: inL = 1", "Eval: outL = 1"],
+        ),
+        (
+            "stereo_fir",
+            true,
+            true,
+            false,
+            vec![
+                "Eval: inL = 1",
+                "Eval: inR = 2",
+                "Eval: outL = 1",
+                "Eval: outR = 2",
+            ],
+        ),
+        (
+            "stereo_gain_only",
+            true,
+            false,
+            false,
+            vec![
+                "Eval: inL = 1",
+                "Eval: inR = 2",
+                "Eval: outL = 1",
+                "Eval: outR = 2",
+            ],
+        ),
+        (
+            "stereo_2_1_fir",
+            true,
+            true,
+            true,
+            vec![
+                "Eval: inL = 1",
+                "Eval: inR = 2",
+                "Eval: inLFE = 3",
+                "Eval: outL = 1",
+                "Eval: outR = 2",
+                "Eval: outSW1 = 3",
+            ],
+        ),
+    ] {
+        let chain = f11_synthetic_chain(stereo, fir, subwoofer);
+        let run = FilterRun {
+            chain: &chain,
+            mimo: None,
+            mode: if fir { "mixed" } else { "zero" },
+            ultra_ms: 200.0,
+            label: "Interop synthetic",
+            latency_ms: 0.0,
+            rc_hi_hz: 100.0,
+            rc_pieces: &[],
+            stamp: "2026-10-21 00:00",
+        };
+        let folder = root.0.join(case);
+        let paths = export_eqapo(&run, &folder).unwrap();
+        let config = fs::read_to_string(&paths[0]).unwrap();
+        assert_f11_assignments(&config, &expected);
+        let guide = fs::read_to_string(folder.join(secs_filters::EQAPO_GUIDE)).unwrap();
+        assert!(guide.contains("입력·출력 Eval 줄의 숫자만"));
+        assert!(guide.contains("\"Eval: inL = 1\""));
+        assert!(guide.contains("\"Eval: outL = 1\""));
+        assert!(!guide.contains("두 줄") && !guide.contains("; …"));
+        dump_f11_export(case, &folder, &paths);
+    }
+}
+
+#[test]
+fn eqapo_disabled_and_case_sensitive_mapping_f11() {
+    let mut chain = f11_synthetic_chain(true, true, false);
+    // Deliberately differ from both alphabetical order and the mapping vectors.
+    chain.mains[0].role = "Tmr".into();
+    chain.mains[1].role = "Tml".into();
+    let plan = secs_filters::make_plan(&chain, None).unwrap();
+    let config = eqapo_config(
+        &plan,
+        "secs_mixed\\secs_mixed.txt",
+        0.0,
+        &[("Tml".into(), 0), ("Tmr".into(), 12)],
+        &[("Tml".into(), 11), ("Tmr".into(), 0)],
+        None,
+    );
+    assert_f11_assignments(
+        &config,
+        &[
+            "Eval: inTmr = 12",
+            "Eval: inTml = 0",
+            "Eval: outTmr = 0",
+            "Eval: outTml = 11",
+        ],
+    );
+    assert!(
+        config.contains(
+            "If: inTml >= 1 && inTml <= inputChannelCount\n  Copy: VMTML=`inTml`\nEndIf:"
+        )
+    );
+    assert!(config.contains(
+        "If: outTmr >= 1 && outTmr <= outputChannelCount\n  Copy: `outTmr`=VMTMR\nEndIf:"
+    ));
 }
 
 #[test]
@@ -622,7 +889,7 @@ fn serializers_match_oracle_text_exactly() {
                 &outputs,
                 Some(number(&run["latency_ms"])),
             ),
-            direct["eqapo_config"].as_str().unwrap(),
+            f11_config(direct["eqapo_config"].as_str().unwrap()),
             "{case} config"
         );
         assert_eq!(
@@ -635,7 +902,7 @@ fn serializers_match_oracle_text_exactly() {
                 Some(number(&run["latency_ms"])),
                 preamp,
             ),
-            direct["eqapo_guide"].as_str().unwrap(),
+            f11_guide(direct["eqapo_guide"].as_str().unwrap()),
             "{case} guide"
         );
         let info = vec![
@@ -885,6 +1152,7 @@ fn computed_public_wrappers_match_oracle_files() {
         let paths = export_eqapo(&run, &eqapo_root).unwrap();
         report_preamp_difference(&fixture, &eqapo_root);
         assert_computed_written(&fixture, "eqapo", &eqapo_root, &paths);
+        dump_f11_export(case, &eqapo_root, &paths);
         if fixture.outputs()["written"].get("text").is_some() {
             let text_root = root.0.join("text");
             let paths = export_filter_text(&run, &text_root).unwrap();
