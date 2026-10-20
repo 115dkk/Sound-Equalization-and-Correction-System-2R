@@ -1,6 +1,6 @@
 // Surfaces. A card is one unit with a title that names it; a section is a
 // titled group inside a card; "고급" folds the second tier of options away
-// (ARCHITECTURE §7: main path, folded advanced, expert display).
+// (ARCHITECTURE §7: main path and local detail disclosures).
 import { useId, useState, type HTMLAttributes, type ReactNode } from "react";
 import { useT } from "../i18n/react";
 import { HelpTip } from "./HelpTip";
@@ -73,6 +73,7 @@ export function Advanced({
   defaultOpen = false,
   id,
   count,
+  label,
 }: {
   children: ReactNode;
   defaultOpen?: boolean;
@@ -80,6 +81,8 @@ export function Advanced({
   id?: string;
   /** How many options are inside, shown while folded. */
   count?: number;
+  /** Name the local settings; other sections keep the default 고급 label. */
+  label?: ReactNode;
 }) {
   const t = useT();
   const [open, setOpen] = useState(defaultOpen);
@@ -96,7 +99,7 @@ export function Advanced({
         onClick={() => setOpen((value) => !value)}
       >
         <Icon name="chevronRight" size={16} className="ui-advanced__chevron" />
-        <span>{t("ui.advanced")}</span>
+        <span>{label ?? t("ui.advanced")}</span>
         {count !== undefined && !open && <span className="ui-advanced__count tabular">{t("ui.advanced.count", { count })}</span>}
       </button>
       {open && (

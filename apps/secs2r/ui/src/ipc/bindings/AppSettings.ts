@@ -24,10 +24,6 @@ theme: AppTheme,
  */
 icon: AppIcon, 
 /**
- * Shows expert-only settings (U9).
- */
-expert_display: boolean, 
-/**
  * Recently opened project paths, newest first (at most 10).
  */
 recent_projects: Array<string>, 

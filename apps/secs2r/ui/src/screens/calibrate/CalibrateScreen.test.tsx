@@ -154,7 +154,7 @@ describe("보정 screen", () => {
     expect(ui("calibrate.scorecard.card")).toBeNull();
   });
 
-  it("shows every engine note as a sentence, without 전문가 표시 and collapsed, as upstream does", () => {
+  it("keeps every engine note available as a sentence in the collapsed notes", () => {
     setup(fx.splView);
     const notes = must("calibrate.verdict.notes") as HTMLDetailsElement;
     expect(notes.tagName).toBe("DETAILS");
@@ -193,7 +193,7 @@ describe("보정 screen", () => {
     try {
       const actions = mockActions();
       const screenOf = (view: CalibrateView) => (
-        <PrefsScope initial={{ locale: "ko", theme: "light", expert: false, accent: "default" }}>
+        <PrefsScope initial={{ locale: "ko", theme: "light", accent: "default" }}>
           <CalibrateScreen view={view} actions={actions} />
         </PrefsScope>
       );
@@ -409,21 +409,18 @@ describe("보정 screen", () => {
     expect(document.getElementById("calibrate.mimo.on-hint")?.textContent).toBe("측정 위치가 2곳입니다. MIMO는 3곳 이상 필요합니다.");
   });
 
-  it("offers 초고지연 only with 전문가 표시 (U9)", () => {
-    setup(fx.splView);
-    expect(ui("calibrate.mode.ultra")).toBeNull();
-    cleanupAll();
-    render(
-      <PrefsScope initial={{ locale: "ko", theme: "light", expert: true, accent: "default" }}>
-        <CalibrateScreen view={fx.splView} actions={mockActions()} />
-      </PrefsScope>,
-    );
-    expect(ui("calibrate.mode.ultra")).not.toBeNull();
+  it("offers all four modes and shows the saved ultra delay at its own control", () => {
+    const actions = setup(fx.splView);
+    for (const mode of ["zero", "mixed", "linear", "ultra"]) expect(ui(`calibrate.mode.${mode}`)).not.toBeNull();
+    fireEvent.click(must("calibrate.mode.ultra"));
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "mode", mode: "ultra" });
     expect(ui("calibrate.verdict.notes")).not.toBeNull();
     cleanupAll();
-    setup(fx.ultraView);
+    const ultraActions = setup(fx.ultraView);
     expect(ui("calibrate.mode.ultra")?.getAttribute("aria-checked")).toBe("true");
     expect(ui("calibrate.mode.ultra_ms")).not.toBeNull();
+    commitNumber("calibrate.mode.ultra_ms", "150");
+    expect(ultraActions.changeSetting).toHaveBeenCalledWith({ kind: "ultra_ms", ms: 150 });
   });
 
   it("has a header with one primary action and the running job", () => {
@@ -566,9 +563,9 @@ const REACH_IDS = [
   "jobs.history",
 ] as const;
 
-/** The ids drawn by one render (every 고급 open, the target menu open, the expert view). */
-function idsOf(node: ReactNode, expert = false): Set<string> {
-  const { unmount } = render(<PrefsScope initial={{ locale: "ko", theme: "light", expert, accent: "default" }}>{node}</PrefsScope>);
+/** The ids drawn by one render (every 고급 and the target menu open). */
+function idsOf(node: ReactNode): Set<string> {
+  const { unmount } = render(<PrefsScope initial={{ locale: "ko", theme: "light", accent: "default" }}>{node}</PrefsScope>);
   openAdvanced();
   const menu = ui("calibrate.target.menu");
   if (menu) fireEvent.click(menu);
@@ -582,7 +579,7 @@ describe("reach table", () => {
     const seen = new Set<string>();
     const add = (ids: Set<string>) => ids.forEach((id) => seen.add(id));
     const screenOf = (view: CalibrateView, editSub?: string) => <CalibrateScreen view={view} actions={mockActions()} initial={{ editSub }} />;
-    for (const view of Object.values(STATES)) add(idsOf(screenOf(view), true));
+    for (const view of Object.values(STATES)) add(idsOf(screenOf(view)));
     // States that show the rest: a manual upper limit and lower MIMO limit, an infra sub, a group, a fixed sub.
     add(idsOf(screenOf({ ...fx.mimoView, settings: { ...fx.mimoView.settings, rc_hi: 400, mimo_low: 30 } })));
     add(idsOf(screenOf({ ...fx.splView, settings: { ...fx.splView.settings, subs_manual: { SW1: { ...fx.baView.settings.subs_manual.SW2!, mode: "auto", hp_hz: 0, lp_hz: 25 }, SW2: { ...fx.baView.settings.subs_manual.SW2!, mode: "auto", hp_hz: 25, lp_hz: 0 } } } })));

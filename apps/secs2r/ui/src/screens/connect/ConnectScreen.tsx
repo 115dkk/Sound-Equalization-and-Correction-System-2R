@@ -9,7 +9,6 @@ import { HelpTip } from "../../ui/HelpTip";
 import { type ReactNode } from "react";
 import type { PrimaryAction } from "../../app/StepHeader";
 import { errorText } from "../../app/jobs/jobText";
-import { usePrefs } from "../../app/prefs";
 import type { MessageKey } from "../../i18n";
 import type { Translate } from "../../i18n/react";
 import { useNumber, useT } from "../../i18n/react";
@@ -289,7 +288,6 @@ function deviceOption(t: Translate, device: MeasureDevice, channels: number): Op
 function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectActions }) {
   const t = useT();
   const number = useNumber();
-  const { expert } = usePrefs();
   const settings = view.settings;
   const rew = view.path === "rew";
   const methods = view.methods;
@@ -434,19 +432,22 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
           />
         )}
       </div>
-      {expert && !rew && (
-        <Segmented
-          id="connect.share_mode"
-          label={t("connect.share_mode")}
-          help={t("connect.share_mode.hint")}
-          value={settings?.share_mode === "exclusive" || settings?.share_mode === "shared" ? settings.share_mode : "auto"}
-          options={[
-            { value: "auto", label: t("connect.share_mode.auto") },
-            { value: "exclusive", label: t("connect.share_mode.exclusive") },
-            { value: "shared", label: t("connect.share_mode.shared") },
-          ]}
-          onChange={actions.setShareMode}
-        />
+      {!rew && (
+        <Advanced id="connect.devices.details" label={t("connect.share_mode")} defaultOpen={!!settings?.share_mode && settings.share_mode !== "auto"}>
+          <Segmented
+            id="connect.share_mode"
+            label={t("connect.share_mode")}
+            hideLabel
+            help={t("connect.share_mode.hint")}
+            value={settings?.share_mode === "exclusive" || settings?.share_mode === "shared" ? settings.share_mode : "auto"}
+            options={[
+              { value: "auto", label: t("connect.share_mode.auto") },
+              { value: "exclusive", label: t("connect.share_mode.exclusive") },
+              { value: "shared", label: t("connect.share_mode.shared") },
+            ]}
+            onChange={actions.setShareMode}
+          />
+        </Advanced>
       )}
     </Card>
   );

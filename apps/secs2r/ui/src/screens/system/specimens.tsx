@@ -1,15 +1,14 @@
 // 시스템 in each state the packet names: a new project, the sample 7.1.4
 // room, a configuration with problems, the confirm dialog of a preset change
-// with measurements, the expert view, and the smallest window.
+// with measurements, channel details, and the smallest window.
 import type { ReactNode } from "react";
 import type { FrameModel, ProjectSummary } from "../../app/model";
 import { initialJobs } from "../../app/jobs/jobStore";
-import { PrefsScope, usePrefs, type Prefs } from "../../app/prefs";
 import { useT } from "../../i18n/react";
 import { FrameBox } from "../../gallery/frameSpecimens";
 import type { SpecimenDef } from "../../gallery/Specimen";
 import { ConfirmDialog } from "../../ui";
-import { invalidView, newProjectView, sampleView } from "./fixtures";
+import { configOf, invalidView, newProjectView, sampleView } from "./fixtures";
 import { changeCopy, SystemScreen, systemHeader } from "./SystemScreen";
 import { systemStepState } from "./state";
 import type { SystemActions, SystemView } from "./types";
@@ -84,17 +83,6 @@ function SystemFrame({ view, project, children }: { view: SystemView; project?: 
   );
 }
 
-/** The same frame under other display settings (the expert view), in its own prefs scope. */
-function WithPrefs({ patch, children }: { patch: Partial<Prefs>; children: ReactNode }) {
-  const outer = usePrefs();
-  const prefs: Prefs = { locale: outer.locale, theme: outer.theme, expert: outer.expert, accent: outer.accent, ...patch };
-  return (
-    <PrefsScope key={`${outer.locale}-${outer.theme}-${outer.accent}`} initial={prefs} className="gal-fill">
-      {children}
-    </PrefsScope>
-  );
-}
-
 /** The preset-change dialog as it opens over the screen (drawn in place so other specimens stay uncovered). */
 function ConfirmOverlay() {
   const t = useT();
@@ -153,15 +141,11 @@ export const systemSpecimens: SpecimenDef[] = [
     ),
   },
   {
-    id: "screen.system.expert",
-    title: "System · expert display (band column, role names in the file)",
+    id: "screen.system.channel-details",
+    title: "System · multiband speaker details and file role name help",
     width: 1280,
     height: 800,
-    render: () => (
-      <WithPrefs patch={{ expert: true }}>
-        <SystemFrame view={sampleView} project={sampleProject} />
-      </WithPrefs>
-    ),
+    render: () => <SystemFrame view={{ ...newProjectView, config: configOf("custom", [invalidView.config.speakers.find((speaker) => speaker.bands.length > 1)!], "") }} />,
   },
   {
     id: "screen.system.sample.min",

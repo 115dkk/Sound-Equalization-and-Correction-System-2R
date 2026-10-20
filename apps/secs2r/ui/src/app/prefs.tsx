@@ -1,4 +1,4 @@
-// Per-user display settings: language, theme, logo, expert display, and the
+// Per-user display settings: language, theme, logo, and the
 // tutorial accent. The app applies them to <html>; the gallery applies them
 // to a subtree so light and dark specimens sit side by side. Persistence
 // goes through the service's app settings (P26/P33); here they are state.
@@ -13,7 +13,7 @@ export type ThemeChoice = "system" | "light" | "dark";
 export type AccentChoice = "default" | "tutorial";
 
 /** `icon` is the logo choice; scopes that leave it out show upstream's logo. */
-export type Prefs = { locale: Locale; theme: ThemeChoice; expert: boolean; accent: AccentChoice; icon?: AppIcon };
+export type Prefs = { locale: Locale; theme: ThemeChoice; accent: AccentChoice; icon?: AppIcon };
 
 type PrefsValue = Prefs & { set: (patch: Partial<Prefs>) => void };
 

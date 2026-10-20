@@ -123,10 +123,10 @@ function CalibrateFrame({
   );
 }
 
-/** A themed scope with changed prefs (expert display, tutorial accent) around a frame. */
-function Scoped({ expert, tutorial, children }: { expert?: boolean; tutorial?: boolean; children: ReactNode }) {
+/** A themed scope with changed prefs (tutorial accent) around a frame. */
+function Scoped({ tutorial, children }: { tutorial?: boolean; children: ReactNode }) {
   const outer = usePrefs();
-  const prefs = { locale: outer.locale, theme: outer.theme, expert: expert ?? outer.expert, accent: tutorial ? ("tutorial" as const) : outer.accent };
+  const prefs = { locale: outer.locale, theme: outer.theme, accent: tutorial ? ("tutorial" as const) : outer.accent };
   return (
     <PrefsScope key={`${outer.locale}-${outer.theme}`} initial={prefs} className="gal-fill">
       {children}
@@ -173,11 +173,7 @@ export const calibrateSpecimens: SpecimenDef[] = [
   frame("ba-editor", "BA 고급: values, fixed filters and MIMO support of a fixed sub", () => (
     <CalibrateFrame view={fx.baView} scrollTo="calibrate.ba.values" initial={{ editSub: "SW2" }} />
   )),
-  frame("ultra", "초고지연 mode in the expert view", () => (
-    <Scoped expert>
-      <CalibrateFrame view={fx.ultraView} scrollTo="calibrate.settings.mode" />
-    </Scoped>
-  )),
+  frame("ultra", "초고지연 mode and its delay limit", () => <CalibrateFrame view={fx.ultraView} scrollTo="calibrate.settings.mode" />),
   frame("tutorial", "tutorial accent", () => (
     <Scoped tutorial>
       <CalibrateFrame view={fx.splView} fileName="튜토리얼.secs" />

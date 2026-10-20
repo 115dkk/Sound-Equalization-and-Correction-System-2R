@@ -89,7 +89,7 @@ function ConnectFrame({ view, project }: { view: ConnectView; project?: Partial<
 /** The tutorial is the same frame with the tutorial accent (its own prefs scope). */
 function WithPrefs({ patch, children }: { patch: Partial<Prefs>; children: ReactNode }) {
   const outer = usePrefs();
-  const prefs: Prefs = { locale: outer.locale, theme: outer.theme, expert: outer.expert, accent: outer.accent, ...patch };
+  const prefs: Prefs = { locale: outer.locale, theme: outer.theme, accent: outer.accent, ...patch };
   return (
     <PrefsScope key={`${outer.locale}-${outer.theme}`} initial={prefs} className="gal-fill">
       {children}
@@ -117,6 +117,9 @@ export const connectSpecimens: SpecimenDef[] = [
   frame("screen.connect.rew_untested", "Connect · REW connected, licence not known yet; devices read from REW", rewUntestedView),
   frame("screen.connect.rew_not_pro", "Connect · REW refused a sweep for want of Pro (settings read)", rewNotProView),
   frame("screen.connect.native", "Connect · native measurement with devices", nativeView),
+  frame("screen.connect.native-sharing", "Connect · saved device sharing choice shown in local details", {
+    ...nativeView, settings: { ...nativeView.settings!, share_mode: "shared" },
+  }),
   frame("screen.connect.native_error", "Connect · native device list could not be read", nativeErrorView),
   frame("screen.connect.level_half", "Connect · level check half done, Rs playing in turn", levelHalfView),
   frame("screen.connect.level_done", "Connect · every channel has a level", levelDoneView),

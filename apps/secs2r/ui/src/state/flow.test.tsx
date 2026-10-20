@@ -81,3 +81,47 @@ it("keeps the chosen logo in the app settings and shows it again on the next sta
     expect(logo()).toBe(LOGOS.civilian);
   } finally { second.unmount(); mock.dispose(); }
 });
+
+it("keeps all modes, local device sharing and project values unchanged when either logo is selected", async () => {
+  const mock = createMockService({ tickMs: 0 });
+  const rendered = render(<App ipc={mock} />);
+  const values = async () => ({
+    project: await mock.request({ method: "project_info" }),
+    config: await mock.request({ method: "config_get" }),
+    measurement: await mock.request({ method: "measure_config_get" }),
+    correction: await mock.request({ method: "calibration_settings_get" }),
+  });
+  try {
+    await waitFor(() => expect(document.querySelector('[data-ui="frame.rail.connect"]')).not.toBeNull());
+    fireEvent.click(ui("frame.rail.connect"));
+    fireEvent.click(ui("connect.method.native"));
+    await waitFor(() => expect(document.querySelector('[data-ui="connect.devices.details"]')).not.toBeNull());
+    fireEvent.click(ui("connect.devices.details"));
+    fireEvent.click(ui("connect.share_mode.shared"));
+    await waitFor(() => expect(mock.calls.some((call) => call.method === "measure_configure" && call.params.share_mode === "shared")).toBe(true));
+    fireEvent.click(ui("frame.rail.calibrate"));
+    await waitFor(() => expect(document.querySelector('[data-ui="calibrate.mode.ultra"]')).not.toBeNull());
+    fireEvent.click(ui("calibrate.mode.ultra"));
+    await waitFor(() => expect(document.querySelector('[data-ui="calibrate.mode.ultra_ms"]')).not.toBeNull());
+    const before = await values();
+    const mutating = () => mock.calls.filter((call) => ["measure_configure", "calibration_settings_edit", "config_set_speaker", "config_apply_preset"].includes(call.method)).length;
+    const writes = mutating();
+    for (const icon of ["civilian", "expert"] as const) {
+      fireEvent.click(ui("frame.settings"));
+      expect(document.querySelector('[data-ui="frame.settings.expert"]')).toBeNull();
+      fireEvent.click(ui(`frame.settings.logo.${icon}`));
+      await waitFor(() => expect(ui("frame.logo").getAttribute("src")).toBe(LOGOS[icon]));
+      fireEvent.click(ui("frame.settings"));
+      for (const mode of ["zero", "mixed", "linear", "ultra"]) expect(document.querySelector(`[data-ui="calibrate.mode.${mode}"]`)).not.toBeNull();
+      expect(ui("calibrate.mode.ultra").getAttribute("aria-checked")).toBe("true");
+      expect((ui("calibrate.mode.ultra_ms") as HTMLInputElement).value).toBe(String(before.correction.ultra_ms));
+      fireEvent.click(ui("frame.rail.connect"));
+      await waitFor(() => expect(document.querySelector('[data-ui="connect.share_mode.shared"]')).not.toBeNull());
+      expect(ui("connect.share_mode.shared").getAttribute("aria-checked")).toBe("true");
+      expect(await values()).toEqual(before);
+      expect(mutating()).toBe(writes);
+      fireEvent.click(ui("frame.rail.calibrate"));
+      await waitFor(() => expect(document.querySelector('[data-ui="calibrate.mode.ultra"]')).not.toBeNull());
+    }
+  } finally { rendered.unmount(); mock.dispose(); }
+}, 15_000);

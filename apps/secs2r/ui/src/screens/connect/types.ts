@@ -102,7 +102,7 @@ export type ConnectActions = {
   setSweepLength: (samples: number) => void;
   /** measure_configure { loopback_input_channel } (timing reference = loopback). */
   setLoopbackChannel: (channel: number) => void;
-  /** measure_configure { share_mode } (expert; native only). */
+  /** measure_configure { share_mode } (native only, in the device details). */
   setShareMode: (mode: "auto" | "exclusive" | "shared") => void;
   /** level_play { role, master_dbfs } (level_monitor_start first when the monitor is off); subs play 50 Hz, 2.5 s. */
   playLevel: (role: string) => void;

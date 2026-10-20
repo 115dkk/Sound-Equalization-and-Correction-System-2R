@@ -1829,8 +1829,6 @@ pub struct AppSettings {
     /// Logo on the rail and the window.
     #[serde(default)]
     pub icon: AppIcon,
-    /// Shows expert-only settings (U9).
-    pub expert_display: bool,
     /// Recently opened project paths, newest first (at most 10).
     pub recent_projects: Vec<String>,
     /// Last window size in logical pixels.
@@ -1843,7 +1841,6 @@ impl Default for AppSettings {
             compute: ComputePreference::Auto,
             theme: AppTheme::System,
             icon: AppIcon::Expert,
-            expert_display: false,
             recent_projects: Vec::new(),
             last_window_size: None,
         }

@@ -207,13 +207,13 @@ function Preferences({ root, initialPrefs, tutorialStart }: { root: boolean; ini
   const settings = useResource("appSettings");
   useEffect(() => { void session.start(); return () => session.dispose(); }, [session]);
   if (!settings) return null;
-  const initial: Prefs = initialPrefs ?? { locale: settings.language === "en" ? "en" : settings.language === "ko" ? "ko" : pickLocale(navigator.languages), expert: settings.expert_display, theme: settings.theme, icon: settings.icon, accent: "default" };
+  const initial: Prefs = initialPrefs ?? { locale: settings.language === "en" ? "en" : settings.language === "ko" ? "ko" : pickLocale(navigator.languages), theme: settings.theme, icon: settings.icon, accent: "default" };
   return <PrefsScope initial={initial} root={root} onChange={(prefs) => {
     const current = session.stores.appSettings.getSnapshot();
     if (!current) return;
     const icon = prefs.icon ?? current.icon;
-    if (current.language !== prefs.locale || current.expert_display !== prefs.expert || current.theme !== prefs.theme || current.icon !== icon) {
-      session.run(() => session.call({ method: "app_settings_set", params: { settings: { ...current, language: prefs.locale, expert_display: prefs.expert, theme: prefs.theme, icon } } }));
+    if (current.language !== prefs.locale || current.theme !== prefs.theme || current.icon !== icon) {
+      session.run(() => session.call({ method: "app_settings_set", params: { settings: { ...current, language: prefs.locale, theme: prefs.theme, icon } } }));
     }
   }}><Shell tutorialStart={tutorialStart} /></PrefsScope>;
 }

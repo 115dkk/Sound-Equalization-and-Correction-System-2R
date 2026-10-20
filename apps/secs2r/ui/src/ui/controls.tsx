@@ -167,7 +167,7 @@ export function Toggle({
   disabled,
 }: {
   id: string;
-  /** Names the ON state ("전문가 항목 표시"), never a negation. */
+  /** Names the ON state ("크로스오버 PEQ"), never a negation. */
   label: ReactNode;
   checked: boolean;
   onChange: (checked: boolean) => void;

@@ -253,11 +253,6 @@ button.system-choice:active:not([aria-pressed="true"]) {
   flex: none;
 }
 
-.system-bands {
-  font-family: var(--font-mono);
-  color: var(--text-muted);
-}
-
 .system-polarity {
   position: relative;
   min-width: 4.5rem;

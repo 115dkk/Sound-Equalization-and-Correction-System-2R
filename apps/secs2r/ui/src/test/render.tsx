@@ -7,7 +7,7 @@ import type { Locale } from "../i18n";
 import { IpcProvider, type Ipc } from "../ipc/context";
 
 export function renderWith(ui: ReactNode, { locale = "ko", ipc }: { locale?: Locale; ipc?: Ipc } = {}) {
-  const prefs: Prefs = { locale, theme: "light", expert: false, accent: "default" };
+  const prefs: Prefs = { locale, theme: "light", accent: "default" };
   const tree = <PrefsScope initial={prefs}>{ui}</PrefsScope>;
   return render(ipc ? <IpcProvider value={ipc}>{tree}</IpcProvider> : tree);
 }
