@@ -71,9 +71,15 @@ function ModeSection({ view, actions }: Props) {
         onChange={(mode) => actions.changeSetting({ kind: "mode", mode })}
       />
       <div className="calibrate-mode-text">
-        <p className="calibrate-line tabular" data-ui="calibrate.mode.spec">
-          {modeSpecText(t, number, view.modeSpec)}
+        <p className="calibrate-line tabular" data-ui="calibrate.mode.latency">
+          {view.modeSpec.max_latency_ms === 0
+            ? t("calibrate.mode.latency.zero")
+            : t("calibrate.mode.latency.max", { ms: number(view.modeSpec.max_latency_ms) })}
         </p>
+        <span className="ui-heading-help" data-ui="calibrate.mode.spec">
+          <span id="calibrate.mode.spec.label">{t("calibrate.mode.spec.title")}</span>
+          <HelpTip id="calibrate.mode.spec.help" labelledBy="calibrate.mode.spec.label" content={modeSpecText(t, number, view.modeSpec)} />
+        </span>
       </div>
       {s.mode === "ultra" && (
         <div className="calibrate-fields">

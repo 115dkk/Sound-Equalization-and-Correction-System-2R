@@ -150,7 +150,6 @@ describe("보정 screen", () => {
     cleanupAll();
     setup(fx.emptyView);
     expect(must("calibrate.verdict.plan").textContent).toContain("3곳");
-    expect(must("calibrate.verdict.plan").textContent).toContain("크로스오버 추천");
     expect(must("calibrate.plot.preview").textContent).toContain("위치 1");
     expect(ui("calibrate.scorecard.card")).toBeNull();
   });

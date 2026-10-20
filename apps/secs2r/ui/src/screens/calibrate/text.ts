@@ -49,11 +49,10 @@ export function modeName(t: Translate, number: FormatNumber, mode: Mode, ultraMs
   return t(MODE_NAME[mode]);
 }
 
-/** The mode's spec line from `mode_spec` (upstream `cal.mode_spec`). */
+/** The room-correction filter details from `mode_spec`; MIMO has its own section. */
 export function modeSpecText(t: Translate, number: FormatNumber, spec: ModeSpecResult): string {
-  const mimo = spec.mimo_filter.toUpperCase();
-  if (spec.fir_taps <= 0) return t("calibrate.mode.spec.iir", { mimo, ms: number(spec.max_latency_ms) });
-  return t("calibrate.mode.spec.fir", { taps: number(spec.fir_taps), mimo, ms: number(spec.max_latency_ms) });
+  if (spec.fir_taps <= 0) return t("calibrate.mode.spec.iir");
+  return t("calibrate.mode.spec.fir", { taps: number(spec.fir_taps) });
 }
 
 /* ── Speaker groups ─────────────────────────────────────────────────────── */
