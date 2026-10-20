@@ -52,6 +52,7 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 | F8 | 파이썬 문자열은 짝 없는 UTF-16 서러게이트를 담습니다. | 러스트 문자열에는 담을 수 없어 글자 API는 U+FFFD로 보여 주고, 해석한 스트림은 원래 바이트를 지녀 고치지 않은 글자는 그대로 왕복합니다. UTF-16 단위 API로 잃지 않고 읽고 쓸 수 있습니다. `secs-jos::utf8_and_lone_surrogates`. | `rew_mdat/serialization/modified_utf8.py` | 적용 |
 | F9 | `.secs`의 `\uD800` 같은 짝 없는 서러게이트 이스케이프를 읽어 파이썬 문자열에 그대로 담습니다(저장할 때 UTF-8 인코딩에서 실패합니다). | 러스트 문자열에는 담을 수 없어 읽을 때 `ProjectError`로 거부합니다. SECS 2 자신이 이런 파일을 저장할 수 없으므로 손으로 고친 파일에서만 생깁니다. `secs-project::pyjson_regressions`. | `model.py:934-937` | 적용 |
 | F10 | 손으로 고친 `.src.json`의 부분 변환 오류가 `apply`에서 내보내기 전체를 실패시키거나 Java `Integer` 범위를 넘는 값과 유한하지 않은 날짜를 뒤 단계까지 넘깁니다. | 숫자 문자열·불을 포함한 float32 배열 등 파이썬이 변환하는 값은 그대로 변환하고, 실제로 잘못된 부분만 생략해 내보내기를 계속합니다. i32 범위 밖 `Integer`와 NaN·무한대 날짜도 생략합니다. `secs-project::measurement_source_tolerates_partial_values_and_rejects_unsafe_narrowing`, `secs-project::measurement_source_builds_upstream_mdat_bytes_and_skips_upstream_exceptions_f10`. | `rew_mdat/source_info.py apply` | 적용 |
+| F11 | Equalizer APO 설정의 여러 입력·출력 변수 할당을 세미콜론으로 연결한 `Eval:` 명령에 씁니다. | 입력·출력 변수마다 `Eval:` 명령을 따로 씁니다. 원본 APO의 muparserx 3.0.1은 기존 문법을 받지만, 4.0.12를 쓰는 XT에서 파싱 오류로 FIR·게인 적용이 막혀 공통 문법으로 내보냅니다. XT에는 별도로 구형 문법 호환을 복원합니다. FIR WAV·필터 본문·번호·경로는 보존하며 안내만 새 형식에 맞춥니다. `secs-filters::{eqapo_public_exports_use_single_assignments_f11,eqapo_disabled_and_case_sensitive_mapping_f11}` 및 기존 골든의 좁은 F11 기대값 보정으로 확인합니다. [소비자 재현 결과](EQUALIZER_APO_INTEROP.md). | `export_filters.py:372-374, 410-412` (고정 업스트림 `587159e`) | 적용 |
 
 ## REW
 
