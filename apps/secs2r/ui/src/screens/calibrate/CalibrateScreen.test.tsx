@@ -169,8 +169,8 @@ describe("보정 screen", () => {
       "FIR 2,048탭에 맞춰 위상 보정 여유를 8.0 ms에서 7.5 ms로 줄였습니다.",
       "위상 보정 세기: L 0.90, R 0.90, C 0.90, Ls 0.90, Rs 0.90, Lrs 0.90, Rrs 0.90, Ltf 0.50, Rtf 0.50, Ltr 0.50, Rtr 0.50",
       "오래 우는 룸 모드 2곳(34 Hz, 52 Hz)의 부스트를 4.0 dB로 제한했습니다.",
-      "BA 비용 0.84",
-      "BA 버스 PEQ 반영 비용 0.84 → 0.80",
+      "BA 평가값 0.84 (낮을수록 좋음)",
+      "서브 버스 PEQ 반영 후 BA 평가값 0.84 → 0.80 (낮을수록 좋음)",
     ]);
     // No raw code or parameter list reaches the screen.
     for (const line of lines) expect(line).not.toMatch(/[a-z]+_[a-z]+|[{}[\]]/);
@@ -309,7 +309,7 @@ describe("보정 screen", () => {
     setup(fx.baView);
     expect((must("calibrate.channel") as HTMLSelectElement).disabled).toBe(true);
     expect(must("calibrate.ba.table").textContent).toContain("반전");
-    expect(must("calibrate.ba.warnings").textContent).toContain("통과 대역이 거의 없습니다");
+    expect(must("calibrate.ba.warnings").textContent).toContain("두 필터 사이가 좁아 소리가 거의 나지 않습니다");
     expect(must("calibrate.ba.warnings").textContent).toContain("+13.4 dB");
     cleanupAll();
     setup(fx.noSubsView);

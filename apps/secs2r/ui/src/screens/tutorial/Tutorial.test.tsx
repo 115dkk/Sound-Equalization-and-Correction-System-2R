@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { STEPS, canLeave, type FrameModel, type StepId } from "../../app/model";
+import { translate } from "../../i18n";
 import { renderWith } from "../../test/render";
 import { INITIAL, glossaryFor, placeCoach, resumeIndex, tutorialReducer } from "./engine";
 import { GLOSSARY } from "./glossary";
@@ -202,6 +203,7 @@ function quests(host: { openHelp: () => void; compute: () => void }): Quest<View
       targets: ["frame.help"],
       title: "tutorial.sample.help.title",
       text: "tutorial.sample.help",
+      hint: "tutorial.sample.help.title",
       done: (v) => v.helpOpen,
       auto: { run: host.openHelp, note: "tutorial.sample.help.note" },
       ok: "tutorial.sample.help.ok",
@@ -308,9 +310,13 @@ describe("tutorial layer", () => {
   it("arms an act quest on the first 계속 and runs its auto on the second", async () => {
     renderWith(<Harness actions={host()} initial={{ index: 1, completed: [0] }} />);
     await tick();
-    expect(ui("tutorial.coach.rule")?.textContent).toContain("'계속'을 두 번 누르면");
+    const rule = () => ui("tutorial.coach.rule")!;
+    // The card shows only what to do; the first 계속 highlights it instead of explaining the double press.
+    expect(rule().textContent).toBe(translate("ko", "tutorial.sample.help.title"));
+    expect(rule().className).not.toContain("tutorial-coach__rule--armed");
     fireEvent.click(ui("tutorial.coach.next")!);
-    expect(ui("tutorial.coach.rule")?.textContent).toContain("한 번 더 누르면");
+    expect(rule().className).toContain("tutorial-coach__rule--armed");
+    expect(rule().textContent).toBe(translate("ko", "tutorial.sample.help.title"));
     fireEvent.click(ui("tutorial.coach.next")!);
     await tick();
     expect(ui("tutorial.toast")?.textContent).toContain("도움말을 열었습니다.");

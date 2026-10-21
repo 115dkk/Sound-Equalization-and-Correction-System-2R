@@ -66,16 +66,16 @@ describe("calculation notes", () => {
     expect(lines("ko", notes.slice(2))).toEqual(["위상 보정 세기: L 0.70, R 끔"]);
   });
 
-  it("ba_cost: the alignment's cost, two decimals as upstream", () => {
-    expect(lines("ko", [n("ba_cost", { value: "1.5" })])).toEqual(["BA 비용 1.50"]);
-    expect(lines("en", [n("ba_cost", { value: "1.5" })])).toEqual(["BA cost 1.50"]);
+  it("ba_cost: the alignment's score (upstream's cost), two decimals as upstream", () => {
+    expect(lines("ko", [n("ba_cost", { value: "1.5" })])).toEqual(["BA 평가값 1.50 (낮을수록 좋음)"]);
+    expect(lines("en", [n("ba_cost", { value: "1.5" })])).toEqual(["BA score 1.50 (lower is better)"]);
   });
 
   it("ba_bus_pass: the cost the pass ends with, and when the first result is kept", () => {
     const better = n("ba_bus_pass", { first: "1.5", second: "1.25", kept_first: "false" });
     const kept = n("ba_bus_pass", { first: "1.5", second: "1.75", kept_first: "true" });
-    expect(lines("ko", [better, kept])).toEqual(["BA 버스 PEQ 반영 비용 1.50 → 1.25", "BA 버스 PEQ 반영 비용 1.50 → 1.50 (1차 답 유지)"]);
-    expect(lines("en", [better, kept])).toEqual(["BA cost with the sub bus PEQ 1.50 → 1.25", "BA cost with the sub bus PEQ 1.50 → 1.50 (first result kept)"]);
+    expect(lines("ko", [better, kept])).toEqual(["서브 버스 PEQ 반영 후 BA 평가값 1.50 → 1.25 (낮을수록 좋음)", "서브 버스 PEQ 반영 후 BA 평가값 1.50 → 1.50 (낮을수록 좋음 · 첫 결과 유지)"]);
+    expect(lines("en", [better, kept])).toEqual(["BA score with the sub-bus PEQ 1.50 → 1.25 (lower is better)", "BA score with the sub-bus PEQ 1.50 → 1.50 (lower is better; first result kept)"]);
   });
 
   it("joins the per-record room modes, GD cuts and two-way subs into their existing lines", () => {
@@ -90,8 +90,8 @@ describe("calculation notes", () => {
     ];
     expect(lines("ko", notes)).toEqual([
       "오래 우는 룸 모드 2곳(40 Hz, 63 Hz)의 부스트를 3.0 dB로 제한했습니다.",
-      "L: 군지연 피크를 줄이는 컷 2개를 넣었습니다.",
-      "R: 군지연 피크를 줄이는 컷 1개를 넣었습니다.",
+      "L: GD 피크를 줄이는 컷 2개를 넣었습니다.",
+      "R: GD 피크를 줄이는 컷 1개를 넣었습니다.",
       "2웨이 서브(SW1·SW2): 저역 서브 게인 −1.0 dB, 크로스오버 50 Hz",
     ]);
     expect(lines("en", notes)[0]).toBe("Boost limited to 3.0 dB at long-ringing room modes: 2 (40 Hz, 63 Hz).");

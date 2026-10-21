@@ -59,7 +59,7 @@
 | 채널당 FIR 탭 512…65536 ("선형 위상 최대 x ms") | `system.dsp.advanced`, `system.dsp.fir_taps` | U2 | P30 |
 | 총 FIR 탭 예산 0–4,194,304, 1024 단계 | `system.dsp.fir_budget` | U2 | P30 |
 | IIR 밴드, 올패스 밴드, BM 경로 지연 0–64 | `system.dsp.iir_bands`, `system.dsp.allpass_bands`, `system.dsp.bm_path_delays` | U2 | P30 |
-| 직접 고치면 사용자 지정, "창 ≈ x ms · 해상도 ≈ y Hz" | `system.dsp.note` | U2 | P30 |
+| 직접 고치면 사용자 지정, "FIR 길이 ≈ x ms · 주파수 간격 ≈ y Hz" | `system.dsp.note` | U2 | P30 |
 | 프리셋 값(탭 / 예산 / IIR / AP / BM) | `system.dsp.device` (`dsp_set { preset }`) | U2 | P30 |
 | 진행 조건: 스피커 하나 이상, `validate()` 통과 | `frame.header.blocked`, `system.next` | 없음 | P30 |
 
@@ -68,7 +68,7 @@
 | 항목 | id | 편차 | 작업서 |
 |---|---|---|---|
 | 채널 줄(`ordered_speakers` 순서): 재생/멈춤, 역할, 이름, 미터, 값; 저장된 값 미리 채움 | `connect.level`, `connect.level.row.<role>`, `connect.level.meter.<role>` | 없음 | P30 |
-| 재생(분홍 잡음, 서브 50 Hz 사인), 다른 재생 단추 잠금, 2.5초 뒤 멈춤 | `connect.level.play.<role>` | 없음 | P30 |
+| 재생(핑크 노이즈, 서브 50 Hz 사인), 다른 재생 단추 잠금, 2.5초 뒤 멈춤 | `connect.level.play.<role>` | 없음 | P30 |
 | 레벨 기록(`extra['levels']`, `extra['spl']`), 단계가 보이는 동안 모니터 | `connect.level.meter.<role>`, `connect.mic.state` | 없음 | P30 |
 | 마스터 출력 −40…0 dBFS, 0.5 단계, 기본 −20; "재생 중 · 코드" 알약 | `connect.level.master`, `connect.level.playing` | 없음 | P30 |
 | [전 채널 자동 순차 재생] | `connect.level.play_all`, `connect.level.stop` | 없음 | P30 |
@@ -224,7 +224,7 @@
 | 지원 범위: 텍스트 = RC만, EqAPO = RC · BA, 카밀라 = 전부; 막힌 단추는 끄고 이유를 보임 | `export.kind.filter_text.blocked`, `export.kind.equalizer_apo.blocked` | — | P47 |
 | 보정 화면의 숨은 내보내기 카드(단계별 mdat) | `export.advanced`, `export.run.staged_mdat` | U3 | P32 |
 | 결과가 없거나 계산·내보내기 중이면 단추 끔 | `export.run.camilla_dsp`, `export.run.before_after_mdat`, `export.run.staged_mdat` | — | P32 |
-| 메모: N개 파일 저장 → 경로 / 실패 / 튜토리얼에서는 저장 안 함 | `export.outcome.<kind>`, `export.outcome.<kind>.open`, `export.tutorial` | — | P32 |
+| 메모: N개 파일 저장 → 경로 / 실패 / 튜토리얼에서는 저장 안 함 | `export.outcome.<kind>`, `export.outcome.<kind>.open` | — | P32 |
 | 기본 폴더 `<프로젝트 폴더>/SECS_export/<날짜> <이름>/`, 없으면 `~/Documents/SECS_export/<날짜>` | `export.folder.path` | — | P32 |
 | MIMO는 켜고, 계산했고, 위치 3곳 이상일 때만 포함 | `export.result.mimo` | — | P32 |
 | 아무 일도 하지 않는 [완료] 단추 | — | U4 | P32 |
@@ -262,7 +262,7 @@
 | 닫힌 콤보 위의 휠은 페이지를 스크롤 | `frame.content`(기본 select는 휠로 값이 바뀌지 않음) | — | P29 |
 | 전문가 모드·정보 창 없음 | — (전역 전문가 표시 없음); 로고 선택은 `frame.settings.logo` | U9 | P29, P58 |
 | REW 감시 3초마다(3, 5, 8단계에서 멈춤) | `frame.status.path` | — | P29 |
-| 튜토리얼 모드: 데모 프로젝트, 가짜 REW, 분홍 테마, 저장·내보내기 막음 | `project.tutorial`, `frame`(튜토리얼 강조색), `export.tutorial` | — | P32 |
+| 튜토리얼 모드: 데모 프로젝트, 가짜 REW, 분홍 테마, 저장·내보내기 막음 | `project.tutorial`, `frame`(튜토리얼 강조색) | — | P32 |
 | 기다림 표시: 로딩 카드, 작업 패널, 시작 화면 | `jobs.tray`, `jobs.job.<kind>`, `jobs.cancel.<kind>` | U8 | P29 |
 | 메시지가 여러 곳에 흩어짐, 알림 모음 없음 | `jobs.history` | U8 | P29 |
 | 단축키 Alt+← / Alt+→, Ctrl+1…5 | `frame.rail.<step>` | — | P29 |

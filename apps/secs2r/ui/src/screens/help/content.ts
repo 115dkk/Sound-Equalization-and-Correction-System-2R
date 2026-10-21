@@ -380,7 +380,6 @@ export const HELP_TABS: Record<StepId, readonly HelpTab[]> = {
             "help.export.checks.1",
             "help.export.checks.2",
             "help.export.checks.3",
-            "help.export.checks.4",
           ],
         },
       ],

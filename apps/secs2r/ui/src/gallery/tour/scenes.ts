@@ -331,7 +331,7 @@ export const TOUR_SCENES: TourScene[] = [
     id: "connect.meter",
     step: "connect",
     title: { ko: "떠 있는 마이크 미터", en: "Floating mic meter" },
-    note: { ko: "Ctrl+M으로 띄운 미터에 L의 분홍 잡음이 들어오는 중입니다.", en: "Opened with Ctrl+M while L plays pink noise." },
+    note: { ko: "Ctrl+M으로 띄운 미터에 L의 핑크 노이즈가 들어오는 중입니다.", en: "Opened with Ctrl+M while L plays pink noise." },
     setup: (mock) => devices(mock),
     ops: [...choosePath("native"), reveal(ui("connect.level")), click(ui("connect.level.play.L")), tick(2), press("Control+m")],
   },
