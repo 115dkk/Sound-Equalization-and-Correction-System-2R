@@ -17,7 +17,7 @@ fir_taps: number,
  */
 peq_bands: number | null, 
 /**
- * MIMO support filter kind (`iir` in every user mode).
+ * MIMO support filter kind (`fir` when requested, otherwise `iir`).
  */
 mimo_filter: string, 
 /**

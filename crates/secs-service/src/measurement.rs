@@ -270,12 +270,12 @@ impl Service {
         if !["none", "native", "rew", "mock", "mdat"].contains(&params.method.as_str()) {
             return Err(input("method", "unknown measurement method"));
         }
+        let open_rew_devices = params.method == "rew";
+        let rew_devices = (params.output_device.clone(), params.input_device.clone());
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
         let mut project = open.store.project().clone();
         let mut values = vec![("method".into(), PyJson::Str(params.method))];
-        // REW owns its live audio selection. These stored values remain for
-        // native measurement and project compatibility; they are not applied to REW.
         for (key, value) in [
             ("input", params.input_device),
             ("output", params.output_device),
@@ -381,6 +381,28 @@ impl Service {
         }
         *open.store.project_mut() = project;
         open.dirty = true;
+        drop(session);
+
+        if open_rew_devices {
+            let mut client = secs_rew::RewClient::new(Transport((self.deps.rew_transport)()));
+            for (kind, name) in [("output", rew_devices.0), ("input", rew_devices.1)] {
+                let Some(name) = name.filter(|name| !name.is_empty()) else {
+                    continue;
+                };
+                let devices = if kind == "output" {
+                    client.output_devices()
+                } else {
+                    client.input_devices()
+                };
+                if devices.iter().any(|device| device.name == name)
+                    && client.current_device(kind).as_deref() != Some(name.as_str())
+                    && let Err(secs_rew::RewError::ProRequired { .. }) =
+                        client.set_device(kind, &name)
+                {
+                    *lock(&self.rew_license) = Some(false);
+                }
+            }
+        }
         Ok(result)
     }
     pub(crate) fn measurement_records(&self) -> Result<MeasurementRecordsResult, IpcError> {
@@ -862,6 +884,7 @@ impl Service {
             running: info.running,
             reachable: info.reachable,
             version: info.version,
+            driver: info.driver,
             pro: info.reachable.then(|| *lock(&self.rew_license)).flatten(),
             input_device: current_audio.input_device,
             output_device: current_audio.output_device,
@@ -879,6 +902,25 @@ impl Service {
             }),
             level_dbfs: info.level_dbfs,
         }
+    }
+
+    pub(crate) fn rew_driver_set(
+        &self,
+        params: RewDriverSetParams,
+    ) -> Result<RewInfoResult, IpcError> {
+        if params.driver.trim().is_empty() {
+            return Err(input("driver", "driver must not be empty"));
+        }
+        let mut client = secs_rew::RewClient::new(Transport((self.deps.rew_transport)()));
+        client.set_driver(&params.driver).map_err(|error| {
+            measure_error(
+                error.into(),
+                "driver",
+                secs_audio::SharePreference::Auto,
+                Some(&self.rew_license),
+            )
+        })?;
+        Ok(self.rew_info())
     }
 
     pub(crate) fn rew_launch(&self) -> Result<RewStatusResult, IpcError> {

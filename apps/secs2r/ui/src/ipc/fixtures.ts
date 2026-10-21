@@ -316,10 +316,11 @@ export const subEntry: SubEntry = {
 };
 export const appSettings: AppSettings = { compute: "auto", language: "ko", theme: "system", icon: "expert", recent_projects: [], last_window_size: null };
 export const rewInfo: RewInfoResult = {
-  executable_path: "C:/Program Files/REW/roomeqwizard.exe", ...rewStatus, version: "5.40", blocking: false,
+  executable_path: "C:/Program Files/REW/roomeqwizard.exe", ...rewStatus, version: "5.40", driver: "Java", blocking: false,
   input_device: "UMIK-1", output_device: "AVR (HDMI)", input: "Input 1",
-  input_calibration_file: "UMIK-1.txt", input_devices: [{ id: "mic", name: "UMIK-1", channels: 2 }],
-  output_devices: [{ id: "hdmi", name: "AVR (HDMI)", channels: 16 }], input_channel_names: ["Input 1", "Input 2"],
+  // Java: REW knows the channel count only of the device it has open (0 = unknown).
+  input_calibration_file: "UMIK-1.txt", input_devices: [{ id: "mic", name: "UMIK-1", channels: 2 }, { id: "line", name: "Line In (Realtek)", channels: 0 }],
+  output_devices: [{ id: "hdmi", name: "AVR (HDMI)", channels: 16 }, { id: "speakers", name: "Speakers (Realtek)", channels: 0 }], input_channel_names: ["Input 1", "Input 2"],
   sample_rate: 48000, sweep: { start_hz: 10, end_hz: 20000, length: "256k" }, level_dbfs: -12,
 };
 /** File label from secs_types::mode_label, not the localized screen label. */
@@ -328,10 +329,10 @@ export function modeLabel(mode: Mode, ultra: number): string {
   return { zero: "최소 지연 모드", mixed: "저지연 모드", linear: "표준 모드" }[mode];
 }
 
-export function modeSpec(mode: Mode, ultra: number): ModeSpecResult {
+export function modeSpec(mode: Mode, ultra: number, mimoFir = false): ModeSpecResult {
   const max = mode === "zero" ? 0 : mode === "mixed" ? 10 : mode === "linear" ? 30 : Math.min(200, Math.max(30, ultra));
   return { rc_filter: mode === "zero" ? "iir" : "iir_fir", fir_taps: mode === "zero" ? 0 : mode === "ultra" ? 8192 : 2048,
-    peq_bands: mode === "zero" ? 32 : null, mimo_filter: "iir", lift_ms: Math.max(0, max - 2), phase_frac: max > 10 ? 24 : 6, max_latency_ms: max };
+    peq_bands: mode === "zero" ? 32 : null, mimo_filter: mimoFir ? "fir" : "iir", lift_ms: Math.max(0, max - 2), phase_frac: max > 10 ? 24 : 6, max_latency_ms: max };
 }
 // Synthetic IPC values, not a numerical-engine implementation.
 export const curveGrid = Array.from({ length: 280 }, (_, i) => 5 * (20000 / 5) ** (i / 279));

@@ -21,6 +21,7 @@ from secs.i18n import language_manager
 from secs.model import (PRESETS, ROLES, Band, DspProfile, Speaker, SpeakerConfig, role_code,
                         default_bands, role_group, role_kind, role_label)
 from secs.wizard.channels import output_channel_names, output_label
+from secs.wizard.step1_devices import device_text
 from secs.wizard.layout_map import RoomLayoutView
 from secs.wizard.strings import t
 from secs.wizard.tooltips import attach, attach_all, attach_cells, attach_header
@@ -477,8 +478,7 @@ class Step2Config(QtWidgets.QWidget):
         if devices:
             for device in devices:
                 # 이름에 채널 수가 있으면 덧붙이지 않는다('Demo ASIO 16ch · 16ch' — 10-10 3차 시험, 1단계와 같게)
-                tag = f'{device.channels}ch'
-                text = device.name if tag.lower() in device.name.lower() else f'{device.name} · {tag}'
+                text = device_text(device)
                 self.device_combo.addItem(text, device.id)
             wanted = self.config.device
             index = max(0, next((i for i, d in enumerate(devices)
@@ -1076,7 +1076,10 @@ class Step2Config(QtWidgets.QWidget):
     def _on_device(self, _index: int) -> None:
         if self._building:
             return
-        self.config.device = self.device_combo.currentText().split(' · ')[0]
+        self.config.device = str(self.device_combo.currentData() or '') or self.device_combo.currentText().split(' · ')[0]
+        send = getattr(self.devices, 'send_device', None)        # REW 에도 연다(10-17, 1단계와 같게)
+        if send is not None:
+            send('output', self.config.device)
         self._touch()
 
     def _on_profile(self, _index: int) -> None:

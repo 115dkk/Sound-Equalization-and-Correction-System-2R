@@ -1939,7 +1939,7 @@ class StepCalibration(QtWidgets.QWidget):
             self.mode_buttons[cal.ULTRA_MODE].setVisible(self._ultra_unlocked)
             self.ultra_row.setVisible(s.mode == cal.ULTRA_MODE)
             self.ultra_spin.setValue(float(s.ultra_ms))
-            self.mode_spec.setText(_join(cal.mode_spec(s.mode, s.ultra_ms).split(' · ')))
+            self.mode_spec.setText(_join(cal.mode_spec(s.mode, s.ultra_ms, s.mimo_fir).split(' · ')))
             self.rc_lo_spin.setValue(float(s.rc_lo))
             self.rc_hi_auto.setChecked(s.rc_hi is None)
             shown_hi = s.rc_hi if s.rc_hi is not None else (self.run.rc_hi if self.run is not None else 500.0)

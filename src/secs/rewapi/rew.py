@@ -9,7 +9,8 @@
   ASIO 는 `/audio/asio/devices`(입·출력 공용), Java 는 `/audio/{output,input}-devices`.
   모두 그냥 문자열 배열이다. 드라이버가 안 맞는 경로는 400 을 준다.
 - 출력 채널: 선택지는 `/audio/asio/outputs`(`"17: Optical Out 3"` 처럼 1-기준 번호 접두)
-  또는 `/audio/java/outputs`(`"L"`,`"R"`,`"L+R"`), 설정은 `POST .../output {"output": 문자열}`.
+  또는 `/audio/java/output-channels`(`"L"`,`"R"`,`"L+R"` …), 설정은 ASIO `POST .../output {"output": 문자열}`,
+  Java `POST /audio/java/output-channel {"channel": 문자열}`. Java 의 `outputs`·`output` 은 채널이 아니라 출력 포트다(10-17).
 - `/audio/samplerate` 는 정수가 아니라 `{"value":48000.0,"unit":"Hz"}`(Value).
 - `/measure/sweep/configuration` 의 `length` 는 샘플 수가 아니라 **문자열**("256k").
   허용값은 `/measure/sweep/configuration/sweep-lengths` = 64k~4M.
@@ -131,14 +132,19 @@ _AUDIO_PATHS: dict[str, dict[str, str]] = {
         'output_choices': '/audio/asio/outputs',
         'input_choices': '/audio/asio/inputs',
         'output_set': '/audio/asio/output',
+        'output_device': '/audio/asio/device',
+        'input_device': '/audio/asio/device',
         'ref_output_set': '/audio/asio/ref-output',          # {"output": "17: 이름"}
     },
     'java': {
         'output_devices': '/audio/java/output-devices',
         'input_devices': '/audio/java/input-devices',
-        'output_choices': '/audio/java/outputs',
+        # 10-17 사용자 리포트(7.1 장치가 2채널로 보임): Java 의 `outputs`·`output` 은 출력 포트, 채널은 `output-channel(s)`
+        'output_choices': '/audio/java/output-channels',
         'input_choices': '/audio/java/inputs',
-        'output_set': '/audio/java/output',
+        'output_set': '/audio/java/output-channel',          # {"channel": "C"}
+        'output_device': '/audio/java/output-device',
+        'input_device': '/audio/java/input-device',
         'ref_output_set': '/audio/java/ref-output-channel',  # {"channel": "R"}
         'ref_output_choices': '/audio/java/ref-output-channels',
     },
@@ -390,15 +396,46 @@ class RealREW:
 
     # ──────────────────────── 드라이버 ────────────────────────
     def driver(self) -> str:
-        """`GET /audio/driver` → `'ASIO'` 또는 `'Java'`. 한 번만 묻고 캐시한다."""
-        if self._driver is None:
+        """`GET /audio/driver` → `'ASIO'` 또는 `'Java'`. 장치 목록과 같은 수명(`LIST_CACHE_S`)으로 캐시한다
+        — 사용자가 REW 에서 드라이버를 바꿔도 따라간다(10-17)."""
+        def fetch():
             try:
                 data = self.get('/audio/driver')
             except RewError:
-                return 'Java'
+                return None
             name = data.get('driver') if isinstance(data, dict) else data
-            self._driver = str(name or 'Java')
-        return self._driver
+            return str(name or 'Java')
+        name = self._cached('driver', fetch)
+        if name:
+            self._driver = name
+        return self._driver or 'Java'      # 못 읽으면 마지막으로 읽은 값
+
+    def set_driver(self, name: str) -> None:
+        """`POST /audio/driver {"driver": "ASIO"|"Java"}`(10-17 사용자: SECS 에서 드라이버를 바꾼다).
+
+        바꾸면 장치 · 채널 목록이 달라지므로 목록 캐시를 비운다. REW 가 장치를 다시 여는 데 잠깐 걸린다.
+        """
+        self.post('/audio/driver', {'driver': str(name)}, timeout=max(self.timeout, 30.0))
+        self._driver = None
+        self._list_cache.clear()
+
+    def current_device(self, kind: str = 'output') -> str | None:
+        """REW 가 지금 연 장치 — ASIO `GET /audio/asio/device`(입·출력 공용), Java `GET /audio/java/{kind}-device`."""
+        try:
+            data = self.get(self._audio_path(f'{kind}_device'))
+        except RewError:
+            return None
+        name = data.get('device') if isinstance(data, dict) else data
+        return str(name) if name else None
+
+    def set_device(self, kind: str, name: str) -> None:
+        """장치 단계에서 고른 장치를 REW 에 연다(10-17: 전에는 이름만 기록해 스윕이 REW 에 걸린 장치로 나갔다).
+
+        Java 는 장치마다 채널 수가 달라(일반 사운드카드 7.1 등) 연 뒤에야 채널 목록이 맞는다 → 목록 캐시를 비운다.
+        """
+        # 다채널 장치를 여는 데 5 s 넘게 걸린다(10-17 실측: MOTU 24 출력 EXCL — 기본 타임아웃에 잘렸다)
+        self.post(self._audio_path(f'{kind}_device'), {'device': str(name)}, timeout=max(self.timeout, 30.0))
+        self._list_cache.clear()
 
     def _audio_path(self, key: str) -> str:
         """드라이버에 맞는 `/audio/...` 경로. 반대쪽 경로는 REW 가 400 으로 거부한다."""
@@ -443,10 +480,15 @@ class RealREW:
         if not isinstance(data, (list, tuple)):
             return []
         channels = self._channel_count(kind)
+        # Java 의 채널 목록은 REW 가 지금 연 장치 것뿐이다 — 다른 장치에 같은 수를 붙이면 틀린다(10-17 실측: 전부 2ch).
+        java = self.driver().strip().lower() != 'asio'
+        current = self.current_device(kind) if java else None
         out: list[DeviceInfo] = []
         for index, item in enumerate(data):
             if isinstance(item, str):
-                out.append(DeviceInfo(id=item, name=item, channels=channels, kind=kind))
+                known = not java or current is None or item == current
+                out.append(DeviceInfo(id=item, name=item, channels=channels if known else 0, kind=kind,
+                                      extra={} if known else {'channels_unknown': True}))
             elif isinstance(item, dict):
                 name = str(item.get('name') or item.get('device') or item.get('id') or index)
                 count = item.get('channels') or item.get('channelCount')
@@ -468,7 +510,8 @@ class RealREW:
             data = self.get(self._audio_path(f'{kind}_choices'))
             if isinstance(data, dict):     # 방어: ChannelList 모양으로 올 경우
                 data = data.get('channels') or data.get('values') or []
-            return [str(x) for x in data] if isinstance(data, (list, tuple)) else []
+            names = [str(x) for x in data] if isinstance(data, (list, tuple)) else []
+            return [x for x in names if '+' not in x]      # Java 의 "L+R" 같은 묶음은 채널 하나가 아니다
         return list(self._cached(f'channels:{kind}', fetch))
 
     # ──────────────────────── 채널 선택 ────────────────────────
@@ -500,7 +543,8 @@ class RealREW:
         if isinstance(channel, int):
             names = self.output_channel_names()
             value = channel_name_for(names, channel) or str(channel)
-        self.post(self._audio_path('output_set'), {'output': value})
+        asio = self.driver().strip().lower() == 'asio'
+        self.post(self._audio_path('output_set'), {'output': value} if asio else {'channel': value})
 
     def set_timing_ref_output(self, channel: int | str) -> None:
         """타이밍 레퍼런스 신호가 나갈 출력 채널(doc.json 2026-09-18 확인).
@@ -591,9 +635,23 @@ class RealREW:
         self.post('/measure/sequential-channels',
                   {'channels': [str(c) for c in channels]})
 
+    def open_plan_devices(self, plan: MeasurementPlan) -> None:
+        """장치 단계에서 고른 출력 · 입력 장치를 REW 가 열고 있게 한다(10-17).
+
+        전에는 이름을 기록만 해서 스윕이 REW 에 걸려 있던 장치로 나갔다. REW 목록에 있는 이름만,
+        REW 가 이미 연 장치가 아닐 때만 보낸다(ASIO 는 입·출력이 같은 장치라 한 번).
+        """
+        for kind, name in (('output', plan.output_device), ('input', plan.input_device)):
+            name = str(name or '')
+            if not name or name not in [d.name for d in self._devices(kind)]:
+                continue
+            if self.current_device(kind) != name:
+                self.set_device(kind, name)
+
     def configure(self, plan: MeasurementPlan) -> None:
         """plan 의 측정 파라미터를 REW 에 밀어 넣는다(역할별 설정은 제외)."""
         self.set_blocking(True)
+        self.open_plan_devices(plan)
         self.set_sample_rate(plan.sample_rate)
         self.set_sweep(plan.start_frequency, plan.end_frequency, plan.sweep_length)
         self.set_level(plan.sweep_level_db)

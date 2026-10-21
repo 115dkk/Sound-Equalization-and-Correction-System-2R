@@ -27,6 +27,12 @@ fn client(script: Vec<RecordedExchange>) -> (RewClient<RecordedTransport>, Recor
     let t = RecordedTransport::new(script);
     (RewClient::new(t.clone()), t)
 }
+fn test_plan(roles: &[&str], positions: &[u32]) -> MeasurementPlan {
+    let mut plan = fake_plan(roles, positions);
+    plan.output_device.clear();
+    plan.input_device.clear();
+    plan
+}
 fn configure(reps: u32, timing: &str, current: Value) -> Vec<RecordedExchange> {
     let mut script = vec![
         post("/application/blocking", json!(true)),
@@ -73,7 +79,7 @@ fn test_pro_state_only_comes_from_set_pro() {
 #[test]
 fn test_configure_sends_documented_payloads() {
     let (mut c, t) = client(configure(1, "Acoustic", data("ok")));
-    c.configure(&fake_plan(&["L", "R"], &[1])).unwrap();
+    c.configure(&test_plan(&["L", "R"], &[1])).unwrap();
     t.assert_finished();
 }
 #[test]
@@ -84,7 +90,7 @@ fn test_configure_repetitions_before_acoustic_and_timing_before_multiple() {
         (3, "Loopback", json!(1)),
     ] {
         let (mut c, t) = client(configure(reps, timing, current));
-        let mut plan = fake_plan(&["L"], &[1]);
+        let mut plan = test_plan(&["L"], &[1]);
         plan.repetitions = reps;
         plan.timing_reference = timing.into();
         c.configure(&plan).unwrap();
@@ -104,7 +110,7 @@ fn test_sweep_length_is_mapped_to_a_rew_name() {
     assert!(sweep_length_name("nonsense").is_err());
 }
 #[test]
-fn test_driver_is_queried_once_and_cached() {
+fn test_driver_uses_list_cache() {
     let (mut c, t) = client(vec![
         get("/audio/driver", data("asio_driver"), 5),
         get("/audio/asio/outputs", data("asio_outputs"), 5),
@@ -116,11 +122,32 @@ fn test_driver_is_queried_once_and_cached() {
     t.assert_finished();
 }
 #[test]
+fn test_set_driver_posts_and_drops_list_cache() {
+    let mut change = post("/audio/driver", json!({"driver":"Java"}));
+    change.request.timeout = Duration::from_secs(30);
+    let (mut c, t) = client(vec![
+        get("/audio/driver", data("asio_driver"), 5),
+        get("/audio/asio/outputs", data("asio_outputs"), 5),
+        change,
+        get("/audio/driver", data("java_driver"), 5),
+        get("/audio/java/output-channels", json!(["L", "L+R", "R"]), 5),
+    ]);
+    assert_eq!(c.output_channel_names().len(), 4);
+    c.set_driver("Java").unwrap();
+    assert_eq!(c.driver(), "Java");
+    assert_eq!(c.output_channel_names(), vec!["L", "R"]);
+    t.assert_finished();
+}
+#[test]
 fn test_output_channel_uses_rew_channel_names() {
     let (mut c, t) = client(vec![
         get("/audio/driver", data("java_driver"), 5),
-        get("/audio/java/outputs", json!(["L", "R", "C", "SW"]), 5),
-        post("/audio/java/output", json!({"output":"C"})),
+        get(
+            "/audio/java/output-channels",
+            json!(["L", "R", "C", "SW"]),
+            5,
+        ),
+        post("/audio/java/output-channel", json!({"channel":"C"})),
     ]);
     c.set_output_channel(3).unwrap();
     t.assert_finished();
@@ -141,12 +168,12 @@ fn test_output_channel_matches_asio_number_prefix() {
 }
 #[test]
 fn test_output_channel_falls_back_to_number() {
-    let mut bad = get("/audio/java/outputs", json!("Bad Request"), 5);
+    let mut bad = get("/audio/java/output-channels", json!("Bad Request"), 5);
     bad.response.as_mut().unwrap().status = 400;
     let (mut c, t) = client(vec![
         get("/audio/driver", data("java_driver"), 5),
         bad,
-        post("/audio/java/output", json!({"output":"5"})),
+        post("/audio/java/output-channel", json!({"channel":"5"})),
     ]);
     c.set_output_channel(5).unwrap();
     t.assert_finished();
@@ -170,8 +197,112 @@ fn test_devices_are_plain_string_lists() {
         get("/audio/driver", data("java_driver"), 5),
         get("/audio/java/input-devices", data("java_inputs"), 5),
         get("/audio/java/inputs", data("inputs"), 5),
+        get("/audio/java/input-device", json!("UMIK-1"), 5),
     ]);
     assert_eq!(c.input_devices()[0].name, "UMIK-1");
+    t.assert_finished();
+}
+#[test]
+fn test_java_multichannel_count_uses_output_channels() {
+    let (mut c, t) = client(vec![
+        get("/audio/driver", data("java_driver"), 5),
+        get(
+            "/audio/java/output-devices",
+            json!(["Open Speakers", "Closed Speakers"]),
+            5,
+        ),
+        get(
+            "/audio/java/output-channels",
+            json!(["L", "R", "C", "SW", "L+R"]),
+            5,
+        ),
+        get("/audio/java/output-device", json!("Open Speakers"), 5),
+    ]);
+    let devices = c.output_devices();
+    assert_eq!(devices[0].channels, 4);
+    assert_eq!(devices[1].channels, 0);
+    assert_eq!(devices[1].extra["channels_unknown"], true);
+    t.assert_finished();
+}
+#[test]
+fn test_set_device_uses_java_body_timeout_and_drops_cache() {
+    let mut change = post(
+        "/audio/java/output-device",
+        json!({"device":"Other Speakers"}),
+    );
+    change.request.timeout = Duration::from_secs(30);
+    let (mut c, t) = client(vec![
+        get("/audio/driver", data("java_driver"), 5),
+        get("/audio/java/output-devices", json!(["Open Speakers"]), 5),
+        get("/audio/java/output-channels", json!(["L", "R"]), 5),
+        get("/audio/java/output-device", json!("Open Speakers"), 5),
+        change,
+        get("/audio/driver", data("java_driver"), 5),
+        get(
+            "/audio/java/output-devices",
+            json!(["Open Speakers", "Other Speakers"]),
+            5,
+        ),
+        get("/audio/java/output-channels", json!(["L", "R"]), 5),
+        get("/audio/java/output-device", json!("Other Speakers"), 5),
+    ]);
+    assert_eq!(c.output_devices().len(), 1);
+    c.set_device("output", "Other Speakers").unwrap();
+    assert_eq!(c.output_devices().len(), 2);
+    t.assert_finished();
+}
+#[test]
+fn test_open_plan_devices_skips_missing_and_current_java_devices() {
+    let mut plan = fake_plan(&["L"], &[1]);
+    plan.output_device = "Open Speakers".into();
+    plan.input_device = "Missing Mic".into();
+    let (mut c, t) = client(vec![
+        get("/audio/driver", data("java_driver"), 5),
+        get(
+            "/audio/java/output-devices",
+            json!(["Open Speakers", "Other Speakers"]),
+            5,
+        ),
+        get("/audio/java/output-channels", json!(["L", "R"]), 5),
+        get("/audio/java/output-device", json!("Open Speakers"), 5),
+        get("/audio/java/output-device", json!("Open Speakers"), 5),
+        get("/audio/java/input-devices", json!(["Open Mic"]), 5),
+        get("/audio/java/inputs", json!(["Input 1"]), 5),
+        get("/audio/java/input-device", json!("Open Mic"), 5),
+    ]);
+    c.open_plan_devices(&plan).unwrap();
+    t.assert_finished();
+}
+#[test]
+fn test_open_plan_devices_sets_asio_device_once() {
+    let mut plan = fake_plan(&["L"], &[1]);
+    plan.output_device = "Other ASIO".into();
+    plan.input_device = "Other ASIO".into();
+    let mut change = post("/audio/asio/device", json!({"device":"Other ASIO"}));
+    change.request.timeout = Duration::from_secs(30);
+    let (mut c, t) = client(vec![
+        get("/audio/driver", data("asio_driver"), 5),
+        get(
+            "/audio/asio/devices",
+            json!(["MOTU Gen 5", "Other ASIO"]),
+            5,
+        ),
+        get("/audio/asio/outputs", data("asio_outputs"), 5),
+        get("/audio/asio/device", json!("MOTU Gen 5"), 5),
+        change,
+        get("/audio/driver", data("asio_driver"), 5),
+        get("/audio/asio/devices", json!(["Other ASIO"]), 5),
+        get("/audio/asio/inputs", data("inputs"), 5),
+        get("/audio/asio/device", json!("Other ASIO"), 5),
+    ]);
+    c.open_plan_devices(&plan).unwrap();
+    assert_eq!(
+        t.calls()
+            .iter()
+            .filter(|request| request.method == "POST" && request.path == "/audio/asio/device")
+            .count(),
+        1
+    );
     t.assert_finished();
 }
 #[test]
@@ -367,9 +498,13 @@ fn role_script(role: &str, index: usize, pos: u32, first: bool) -> Vec<RecordedE
     let mut s = vec![];
     if first {
         s.push(get("/audio/driver", data("java_driver"), 5));
-        s.push(get("/audio/java/outputs", json!(["L", "R", "SW"]), 5));
+        s.push(get(
+            "/audio/java/output-channels",
+            json!(["L", "R", "SW"]),
+            5,
+        ));
     }
-    s.push(post("/audio/java/output", json!({"output":role})));
+    s.push(post("/audio/java/output-channel", json!({"channel":role})));
     s.push(post("/measure/naming",json!({"title":format!("{role} P{pos}"),"namingOption":"Use as entered","prefixMeasNameWithOutput":false})));
     s.push(post(
         "/measure/notes",
@@ -430,7 +565,7 @@ fn test_run_position_sequence_and_ir() {
     let ev = events.clone();
     let results = c
         .run_position(
-            &fake_plan(&["L", "R"], &[1, 2]),
+            &test_plan(&["L", "R"], &[1, 2]),
             2,
             Some(Arc::new(move |p| ev.lock().unwrap().push(p))),
             &CancelToken::default(),
@@ -465,9 +600,9 @@ fn test_run_position_waits_until_the_measurement_appears() {
     script.extend(role_script("L", 1, 1, true));
     let (mut c, t) = client(script);
     c.poll_interval = Duration::ZERO;
-    assert!(RewClient::<RecordedTransport>::sweep_wait_s(&fake_plan(&["L"], &[1])) > 30.0);
+    assert!(RewClient::<RecordedTransport>::sweep_wait_s(&test_plan(&["L"], &[1])) > 30.0);
     assert_eq!(
-        c.run_position(&fake_plan(&["L"], &[1]), 1, None, &CancelToken::default())
+        c.run_position(&test_plan(&["L"], &[1]), 1, None, &CancelToken::default())
             .unwrap()[0]
             .uuid
             .as_deref(),
@@ -493,7 +628,7 @@ fn test_run_position_respects_cancel() {
     let cancel = CancelToken::default();
     cancel.cancel();
     assert!(
-        c.run_position(&fake_plan(&["L", "R"], &[1]), 1, None, &cancel)
+        c.run_position(&test_plan(&["L", "R"], &[1]), 1, None, &cancel)
             .unwrap()
             .is_empty()
     );
@@ -567,10 +702,13 @@ fn test_level_payload_reads_input_levels_arrays() {
 fn test_play_pink_uses_sine_for_subs() {
     let mut s = vec![
         get("/audio/driver", data("java_driver"), 5),
-        get("/audio/java/outputs", json!(["L", "R", "SW"]), 5),
+        get("/audio/java/output-channels", json!(["L", "R", "SW"]), 5),
     ];
     for (output, sub, level) in [("L", false, -20.0), ("SW", true, -24.0)] {
-        s.push(post("/audio/java/output", json!({"output":output})));
+        s.push(post(
+            "/audio/java/output-channel",
+            json!({"channel":output}),
+        ));
         s.push(post(
             "/generator/signal",
             json!({"signal":if sub {"sine"} else {"pinknoise"}}),
@@ -715,7 +853,7 @@ fn test_rew_progress_strings_reach_the_progress_callback() {
     let ev = events.clone();
     let results = c
         .run_position(
-            &fake_plan(&["L"], &[1]),
+            &test_plan(&["L"], &[1]),
             1,
             Some(Arc::new(move |p| {
                 let running = p.phase == "running";
@@ -753,7 +891,7 @@ fn test_r2_full_position_ignores_offline_hold_including_device_lookups() {
     c.hold_offline(Duration::from_secs(60));
     c.poll_interval = Duration::ZERO;
     assert_eq!(
-        c.run_position(&fake_plan(&["L"], &[1]), 1, None, &CancelToken::default())
+        c.run_position(&test_plan(&["L"], &[1]), 1, None, &CancelToken::default())
             .unwrap()
             .len(),
         1
@@ -792,7 +930,7 @@ fn test_cancel_during_running_aborts_and_keeps_terminal_phase_last() {
     let ev = events.clone();
     let result = c
         .run_position(
-            &fake_plan(&["L"], &[1]),
+            &test_plan(&["L"], &[1]),
             1,
             Some(Arc::new(move |p| {
                 let running = p.phase == "running";

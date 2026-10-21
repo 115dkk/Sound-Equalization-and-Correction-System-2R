@@ -84,6 +84,8 @@ export function createMockService(options: MockOptions = {}): MockService {
     ...(appSettings.compute === "cpu" ? { selected: "cpu" as const, reason: "user_cpu" as const } :
       appSettings.compute === "gpu" && availableCompute.gpu_available ? { selected: "cuda" as const, reason: "user_gpu" as const } : {}) });
   let measureConfig = clone(fx.measureConfig);
+  // REW's own state outlives projects; a driver switch or a chosen device changes it.
+  const rew = clone(fx.rewInfo);
   let levels: LevelsResult = { levels: {}, spl: {} };
   let exportFolder: ExportFolderResult = { folder: "C:/Users/demo/Documents/SECS_export", stored: false };
   let records: PositionRecord[] = (project?.positions ?? []).map((position) => ({ position, roles: config.speakers.map((s) => s.role), done: true, sources: {} }));
@@ -426,6 +428,11 @@ export function createMockService(options: MockOptions = {}): MockService {
         }
         layout.timing.reference = measureConfig.timing;
         layout.timing.output = measureConfig.timing_ref_output ?? layout.timing.output;
+        // REW mode opens a listed device in REW, as the service does.
+        if (p.method === "rew") {
+          if (p.input_device && rew.input_devices?.some((d) => d.name === p.input_device)) rew.input_device = p.input_device;
+          if (p.output_device && rew.output_devices?.some((d) => d.name === p.output_device)) rew.output_device = p.output_device;
+        }
         project = { ...needProject(), dirty: true };
         return { method: req.method, data: measureConfig };
       }
@@ -465,7 +472,11 @@ export function createMockService(options: MockOptions = {}): MockService {
         return { method: req.method, data: null };
       }
       case "rew_launch": return { method: req.method, data: fx.rewStatus };
-      case "rew_info": return { method: req.method, data: fx.rewInfo };
+      case "rew_info": return { method: req.method, data: clone(rew) };
+      case "rew_driver_set":
+        if (!req.params.driver.trim()) invalid("driver must not be empty");
+        rew.driver = req.params.driver;
+        return { method: req.method, data: clone(rew) };
       case "position_clear": {
         needProject(); const token = remember();
         records = records.filter((r) => r.position !== req.params.position);
@@ -664,7 +675,7 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "calibration_settings_set": settings = clone(req.params.settings); dirty(); return { method: req.method, data: settings };
       case "calibration_settings_edit": needProject(); return { method: req.method, data: editSettings(req.params.edit) };
       case "sub_warnings": return { method: req.method, data: warnings() };
-      case "mode_spec": return { method: req.method, data: fx.modeSpec(req.params.mode, req.params.ultra_ms ?? settings.ultra_ms) };
+      case "mode_spec": return { method: req.method, data: fx.modeSpec(req.params.mode, req.params.ultra_ms ?? settings.ultra_ms, req.params.mimo_fir ?? false) };
       case "open_gpu_help": return { method: req.method, data: null };
       case "compute_status": return { method: req.method, data: computeStatus() };
       case "app_settings_get": return { method: req.method, data: appSettings };

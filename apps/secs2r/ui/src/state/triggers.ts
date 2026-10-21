@@ -17,7 +17,7 @@ export const TRIGGERS = {
   dsp: { mutations: ["dsp_set"], finished: [] },
   layout: { mutations: ["layout_set", "undo", ...config], finished: [] },
   estimate: { mutations: [...config, "layout_set", "measure_configure", "undo"], finished: [] },
-  methods: { mutations: ["rew_launch"], finished: [] },
+  methods: { mutations: ["rew_launch", "rew_driver_set"], finished: [] },
   records: { mutations: measurements, finished: recorded },
   curves: { mutations: measurements, finished: recorded },
   levels: { mutations: ["level_apply", "levels_fill_defaults", "level_play", ...config], finished: ["level_check"] },

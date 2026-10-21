@@ -34,6 +34,21 @@ export const SWEEP_LENGTHS = [
 
 export const DEFAULT_SWEEP = 262144;
 
+/** REW's audio drivers (`POST /audio/driver`); a name REW reports beyond these (Core Audio and the like) is shown as is. */
+export const REW_DRIVERS = ["ASIO", "Java"] as const;
+
+/**
+ * The REW device the screen shows for one direction: the stored name when REW
+ * lists it (REW opens it before each sweep), else the device REW has open now (R7).
+ */
+export function rewDevice(view: ConnectView, kind: "input" | "output"): string | null {
+  const details = view.rew.details;
+  const devices = (kind === "input" ? details.inputs : details.outputs) ?? [];
+  const stored = kind === "input" ? view.settings?.input_device : view.settings?.output_device;
+  if (stored && devices.some((d) => d.name === stored)) return stored;
+  return (kind === "input" ? details.current?.inputDevice : details.current?.outputDevice) ?? null;
+}
+
 const PATHS: readonly ConnectPath[] = ["native", "rew", "mock", "mdat"];
 
 const PATH_TEXT: Record<ConnectPath, { name: MessageKey; needs: MessageKey }> = {
@@ -285,6 +300,11 @@ function deviceOption(t: Translate, device: MeasureDevice, channels: number): Op
   return { value: device.id, label: t("connect.device.option", { name: device.name, count: channels }) };
 }
 
+/** A REW device by name; REW knows a Java device's channel count only once it has opened it (0 = name only). */
+function rewOption(t: Translate, device: MeasureDevice, channels: number): Option<string> {
+  return { value: device.name, label: channels > 0 ? t("connect.device.option", { name: device.name, count: channels }) : device.name };
+}
+
 function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectActions }) {
   const t = useT();
   const number = useNumber();
@@ -314,9 +334,22 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
   }));
   const loopback = settings?.timing === "loopback" && !rew;
   const cal = view.rew.details.micCalibration;
-  // REW measures with its own audio preferences; the screen shows them instead of a choice it could not apply (R7).
+  // REW mode lists REW's own devices by name and opens the chosen one in REW; the input channel stays REW's (R7).
   const current = view.rew.details.current;
-  const rewReadout = (id: string, label: string, value: string | null | undefined, help?: string) => (
+  const rewReachable = !!methods?.rew.reachable;
+  const rewList = (devices: readonly MeasureDevice[], kind: "input" | "output", selected: string | null): Option<string>[] => {
+    if (devices.length === 0) return [{ value: selected ?? "", label: selected ?? empty }];
+    const options = devices.map((d) => rewOption(t, d, kind === "input" ? d.input_channels : d.output_channels));
+    if (selected === null) return [{ value: "", label: t("connect.rew.unknown") }, ...options];
+    return options.some((o) => o.value === selected) ? options : [...options, { value: selected, label: selected }];
+  };
+  const rewInput = rew ? rewDevice(view, "input") : null;
+  const rewOutput = rew ? rewDevice(view, "output") : null;
+  const driver = view.rew.details.driver ?? null;
+  const driverOptions: Option<string>[] = driver === null
+    ? [{ value: "", label: rewReachable ? t("connect.rew.unknown") : t("connect.device.after_rew") }]
+    : [...REW_DRIVERS, ...((REW_DRIVERS as readonly string[]).includes(driver) ? [] : [driver])].map((name) => ({ value: name, label: name }));
+  const rewReadout = (id: string, label: string, value: string | null | undefined) => (
     <div className="ui-field" data-ui={id}>
       <span className="ui-field__label" id={`${id}-label`}>{label}</span>
       <div className="ui-control-help-row">
@@ -329,7 +362,6 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
           <StatusPill>{methods?.rew.reachable ? t("connect.rew.unknown") : t("connect.device.after_rew")}</StatusPill>
         </span>
       )}
-      {help && <HelpTip id={`${id}.help`} labelledBy={`${id}-label`} content={help} />}
       </div>
     </div>
   );
@@ -355,9 +387,33 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
           <span>{t("connect.device.rew_owned")}</span>
         </p>
       )}
+      {rew && view.rew.switchingDriver && (
+        <p className="connect-note" data-ui="connect.rew_driver.switching" role="status">
+          <Icon name="info" size={18} className="connect-note__icon" />
+          <span>{t("connect.rew_driver.switching")}</span>
+        </p>
+      )}
       <div className="connect-fields">
+        {rew && (
+          <Select
+            id="connect.rew_driver"
+            label={t("connect.rew_driver")}
+            value={driver ?? ""}
+            options={driverOptions}
+            help={t("connect.rew_driver.help")}
+            disabled={!rewReachable || driver === null || view.rew.switchingDriver}
+            onChange={(name) => name !== driver && actions.setRewDriver(name)}
+          />
+        )}
         {rew ? (
-          rewReadout("connect.input_device", t("connect.input_device"), current?.inputDevice)
+          <Select
+            id="connect.input_device"
+            label={t("connect.input_device")}
+            value={rewInput ?? ""}
+            options={rewList(inputs, "input", rewInput)}
+            disabled={inputs.length === 0 || view.rew.switchingDriver}
+            onChange={actions.setInputDevice}
+          />
         ) : (
           <Select
             id="connect.input_device"
@@ -397,7 +453,15 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
           </div>
         )}
         {rew ? (
-          rewReadout("connect.output_device", t("connect.output_device"), current?.outputDevice, t("connect.output_device.hint"))
+          <Select
+            id="connect.output_device"
+            label={t("connect.output_device")}
+            value={rewOutput ?? ""}
+            options={rewList(outputs, "output", rewOutput)}
+            help={t("connect.output_device.hint")}
+            disabled={outputs.length === 0 || view.rew.switchingDriver}
+            onChange={actions.setOutputDevice}
+          />
         ) : (
           <Select
             id="connect.output_device"
@@ -462,11 +526,15 @@ function inputLabel(t: Translate, n: number, names: readonly string[]): string {
 export function micInput(t: Translate, view: ConnectView): string | null {
   const settings = view.settings;
   if (!settings || view.path === "mdat" || view.path === null) return null;
-  const devices = view.path === "rew" ? (view.rew.details.inputs ?? []) : (view.methods?.native_devices ?? []);
-  const device = devices.find((d) => d.id === settings.input_device);
+  if (view.path === "rew") {
+    const device = rewDevice(view, "input");
+    const input = view.rew.details.current?.input;
+    const names = view.rew.details.inputChannelNames ?? [];
+    return t("connect.mic.input", { channel: input ?? inputLabel(t, settings.input_channel, names), device: device ?? t("connect.rew.unknown") });
+  }
+  const device = (view.methods?.native_devices ?? []).find((d) => d.id === settings.input_device);
   const deviceName = view.path === "mock" ? t("connect.mock.device") : device ? device.name : t("connect.device.default");
-  const names = view.path === "rew" ? (view.rew.details.inputChannelNames ?? []) : [];
-  return t("connect.mic.input", { channel: inputLabel(t, settings.input_channel, names), device: deviceName });
+  return t("connect.mic.input", { channel: inputLabel(t, settings.input_channel, []), device: deviceName });
 }
 
 /* ── 레벨 점검 ─────────────────────────────────────────────────────────── */

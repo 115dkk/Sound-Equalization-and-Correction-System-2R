@@ -244,4 +244,33 @@ describe("host state after jobs and switches", () => {
       expect(session.host.getSnapshot().sweepResult).toBeNull();
     } finally { session.dispose(); await settle(); mock.dispose(); }
   });
+
+  it("takes REW's facts from a driver switch and forgets the level measured through the old driver", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    const session = createSession(mock);
+    try {
+      await session.start(); await settle();
+      await session.configure({ method: "mock" });
+      await session.call({ method: "level_check", params: { role: "L" } }); mock.drain(); await settle();
+      expect(session.host.getSnapshot().sweepResult).not.toBeNull();
+      mock.calls.length = 0;
+      await session.call({ method: "rew_driver_set", params: { driver: "ASIO" } });
+      expect(session.stores.rew.getSnapshot()?.driver).toBe("ASIO");
+      expect(session.host.getSnapshot().sweepResult).toBeNull();
+      expect(mock.calls.map((call) => call.method)).toEqual(["rew_driver_set", "measure_methods"]);
+    } finally { session.dispose(); await settle(); mock.dispose(); }
+  });
+
+  it("asks mode_spec with the MIMO FIR choice (upstream 1.3.3)", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    const session = createSession(mock);
+    try {
+      await session.start(); await settle();
+      await session.call({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_fir", on: true } } });
+      expect(mock.calls).toContainEqual({ method: "mode_spec", params: expect.objectContaining({ mimo_fir: true }) });
+      expect(session.stores.modeSpec.getSnapshot()?.mimo_filter).toBe("fir");
+      await session.call({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_fir", on: false } } });
+      expect(session.stores.modeSpec.getSnapshot()?.mimo_filter).toBe("iir");
+    } finally { session.dispose(); await settle(); mock.dispose(); }
+  });
 });

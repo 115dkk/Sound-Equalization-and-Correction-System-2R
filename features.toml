@@ -693,7 +693,7 @@ id = "measure.rew_api"
 kind = "measure"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-rew::test_run_position_sequence_and_ir", "secs-rew::test_rew_progress_strings_reach_the_progress_callback", "secs-rew::test_r1_pro_required_uses_only_status", "secs-rew::test_r2_full_position_ignores_offline_hold_including_device_lookups", "secs-rew::test_r3_random_token_wrong_path_404_and_oversized_body_drained", "secs-rew::test_r4_fake_two_position_plan_uses_only_supplied_ir_source", "secs-rew::test_current_audio_reads_java_string_and_object_values", "secs-rew::test_current_audio_reads_asio_device_once_for_both_directions", "secs-rew::test_current_audio_tolerates_errors_empty_and_unknown_values", "secs-service::test_measurements_follow_contract_shape", "secs-service::rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements", "secs-service::rew_source_devices_fall_back_only_to_names_in_rew_lists"]
+tests = ["secs-rew::test_run_position_sequence_and_ir", "secs-rew::test_rew_progress_strings_reach_the_progress_callback", "secs-rew::test_r1_pro_required_uses_only_status", "secs-rew::test_r2_full_position_ignores_offline_hold_including_device_lookups", "secs-rew::test_r3_random_token_wrong_path_404_and_oversized_body_drained", "secs-rew::test_r4_fake_two_position_plan_uses_only_supplied_ir_source", "secs-rew::test_current_audio_reads_java_string_and_object_values", "secs-rew::test_current_audio_reads_asio_device_once_for_both_directions", "secs-rew::test_current_audio_tolerates_errors_empty_and_unknown_values", "secs-rew::test_driver_uses_list_cache", "secs-rew::test_set_driver_posts_and_drops_list_cache", "secs-rew::test_java_multichannel_count_uses_output_channels", "secs-rew::test_set_device_uses_java_body_timeout_and_drops_cache", "secs-rew::test_open_plan_devices_skips_missing_and_current_java_devices", "secs-rew::test_open_plan_devices_sets_asio_device_once", "secs-rew::test_fake_driver_and_devices_record_changes", "secs-service::test_measurements_follow_contract_shape", "secs-service::rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements", "secs-service::rew_source_devices_fall_back_only_to_names_in_rew_lists"]
 upstream = "rewapi/rew.py, rewapi/callback.py"
 
 [[feature]]
@@ -993,7 +993,7 @@ id = "ipc.measure_configure"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::configure_validates_fields_and_host_stub_reports_its_error"]
+tests = ["secs-service::configure_validates_fields_and_host_stub_reports_its_error", "secs-service::measure_configure_opens_selected_rew_device_after_project_update"]
 
 [[feature]]
 id = "ipc.measure_config_get"
@@ -1258,11 +1258,19 @@ upstream = "rewapi/rew.py; wizard/step1_devices.py"
 tests = ["secs-service::rew_info_uses_injected_transport_and_preserves_unknown_facts", "secs-rew::rew_info_reads_recorded_api_shapes_without_writes", "secs-rew::fake_rew_info_covers_running_no_api_and_no_pro"]
 
 [[feature]]
+id = "ipc.rew_driver_set"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+upstream = "rewapi/rew.py; wizard/step1_devices.py"
+tests = ["secs-service::rew_driver_set_validates_posts_and_refreshes_info", "secs-service::rew_driver_set_maps_transport_license_and_http_errors"]
+
+[[feature]]
 id = "ipc.mode_spec"
 kind = "ipc"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-service::project_edit_surface_round_trips_dsp_layout_target_and_calibration"]
+tests = ["secs-service::project_edit_surface_round_trips_dsp_layout_target_and_calibration", "secs-service::mode_spec_follows_mimo_fir_1018"]
 
 [[feature]]
 id = "ipc.app_settings_get"

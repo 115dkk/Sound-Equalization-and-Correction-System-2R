@@ -162,7 +162,7 @@ describe("P33 mock wiring", () => {
       target_get: { method: "target_get" }, target_set_points: { method: "target_set_points", params: { points: [[20, 0], [20000, -3]] } }, target_apply_preset: { method: "target_apply_preset", params: { preset: "flat" } },
       target_save: { method: "target_save", params: { path: "/target.json" } }, target_load: { method: "target_load", params: { path: "/target.json" } }, calibration_settings_get: { method: "calibration_settings_get" },
       calibration_settings_set: { method: "calibration_settings_set", params: { settings: fx.calibrationSettings } }, calibration_settings_edit: { method: "calibration_settings_edit", params: { edit: { kind: "mode", mode: "zero" } } },
-      sub_warnings: { method: "sub_warnings" }, rew_info: { method: "rew_info" }, mode_spec: { method: "mode_spec", params: { mode: "mixed", ultra_ms: null } },
+      sub_warnings: { method: "sub_warnings" }, rew_info: { method: "rew_info" }, rew_driver_set: { method: "rew_driver_set", params: { driver: "ASIO" } }, mode_spec: { method: "mode_spec", params: { mode: "mixed", ultra_ms: null, mimo_fir: true } },
       app_settings_get: { method: "app_settings_get" }, app_settings_set: { method: "app_settings_set", params: { settings: fx.appSettings } },
       measurement_curves: { method: "measurement_curves", params: { positions: null, roles: null } }, result_curves: { method: "result_curves", params: { tab: "spl", channel: null, group: null, xo_hz: null, corrected: null } },
       result_lines: { method: "result_lines" }, sub_take_values: { method: "sub_take_values" }, dialog_open_project: { method: "dialog_open_project" }, dialog_save_project: { method: "dialog_save_project", params: { suggested: "new.secs" } },

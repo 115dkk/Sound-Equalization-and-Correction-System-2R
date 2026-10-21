@@ -58,6 +58,38 @@ fn test_status_and_devices() {
     assert_eq!(f.version(), None);
 }
 #[test]
+fn test_fake_driver_and_devices_record_changes() {
+    let mut f = fake();
+    assert_eq!(f.driver(), "ASIO");
+    assert_eq!(
+        f.current_device("output").as_deref(),
+        Some("Demo Speakers (2ch)")
+    );
+    f.set_driver("Java");
+    f.set_device("output", "Other Speakers");
+    f.set_device("input", "Other Mic");
+    assert_eq!(f.driver(), "Java");
+    assert_eq!(
+        f.current_device("output").as_deref(),
+        Some("Other Speakers")
+    );
+    assert_eq!(f.current_device("input").as_deref(), Some("Other Mic"));
+    assert_eq!(
+        f.calls,
+        vec![
+            ("set_driver".into(), serde_json::json!({"driver":"Java"})),
+            (
+                "set_device".into(),
+                serde_json::json!({"kind":"output","device":"Other Speakers"}),
+            ),
+            (
+                "set_device".into(),
+                serde_json::json!({"kind":"input","device":"Other Mic"}),
+            ),
+        ]
+    );
+}
+#[test]
 fn test_plan_validate_and_naming() {
     let p = fake_plan(&["L", "R", "SW1"], &[1, 2, 3]);
     assert!(p.validate().is_empty());

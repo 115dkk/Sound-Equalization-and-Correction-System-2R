@@ -135,6 +135,8 @@ pub enum Request {
     SubWarnings,
     /// Optional REW facts read through the injected transport.
     RewInfo,
+    /// Changes REW's audio driver and returns refreshed REW facts.
+    RewDriverSet(RewDriverSetParams),
     /// Returns numeric capabilities for one calibration mode.
     ModeSpec(ModeSpecParams),
     /// Returns application-local settings.
@@ -304,6 +306,8 @@ pub enum Response {
     SubWarnings(Vec<Notice>),
     /// Current REW facts; unavailable fields are null.
     RewInfo(RewInfoResult),
+    /// Current REW facts after changing its driver.
+    RewDriverSet(RewInfoResult),
     /// The `ModeSpec` Response variant.
     ModeSpec(ModeSpecResult),
     /// The `AppSettingsGet` Response variant.
@@ -1362,6 +1366,13 @@ pub struct RewStatusResult {
     /// Observed automatic-sweep license state: unknown until success or rejection.
     pub pro: Option<bool>,
 }
+/// A requested REW audio driver.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RewDriverSetParams {
+    /// Driver name as REW reports it (`ASIO` or `Java`).
+    pub driver: String,
+}
 /// Facts from REW, distinct from project-stored measurement preferences.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
 #[ts(export)]
@@ -1370,6 +1381,8 @@ pub struct RewInfoResult {
     pub running: bool,
     pub reachable: bool,
     pub version: Option<String>,
+    /// REW's current audio driver, or null when it could not be read.
+    pub driver: Option<String>,
     /// Observed automatic-sweep license state: unknown until success or rejection.
     pub pro: Option<bool>,
     /// REW's current input device, read from its own audio preferences.
@@ -1768,6 +1781,10 @@ pub struct ModeSpecParams {
     pub mode: Mode,
     /// Latency limit for the ultra mode, in ms.
     pub ultra_ms: Option<f64>,
+    /// Whether MIMO support paths use FIR instead of IIR.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mimo_fir: Option<bool>,
 }
 /// Presentation-neutral values underlying the upstream mode specification line.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -1779,7 +1796,7 @@ pub struct ModeSpecResult {
     pub fir_taps: usize,
     /// PEQ bands per channel, when the mode uses IIR.
     pub peq_bands: Option<usize>,
-    /// MIMO support filter kind (`iir` in every user mode).
+    /// MIMO support filter kind (`fir` when requested, otherwise `iir`).
     pub mimo_filter: String,
     /// Delay the FIR may add ahead of the main arrival (`lift_ms`), in ms.
     pub lift_ms: f64,
@@ -2080,12 +2097,16 @@ mod tests {
             }),
             Request::SubWarnings,
             Request::RewInfo,
+            Request::RewDriverSet(RewDriverSetParams {
+                driver: "ASIO".into(),
+            }),
             Request::CalibrationSettingsSet(CalibrationSettingsParams {
                 settings: CalibrationSettings::default(),
             }),
             Request::ModeSpec(ModeSpecParams {
                 mode: Mode::Mixed,
                 ultra_ms: None,
+                mimo_fir: None,
             }),
             Request::AppSettingsGet,
             Request::AppSettingsSet(AppSettingsParams {

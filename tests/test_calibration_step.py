@@ -629,3 +629,12 @@ def test_every_calibration_control_has_a_tip_and_english(qapp, fake, tmp_path): 
         language_manager().set_language('ko', persist=False)
         win.close()
         qapp.processEvents()
+
+
+def test_mode_spec_follows_mimo_fir_1018():
+    """10-18 사용자: MIMO 기본이 FIR 인데 모드 한 줄이 늘 'MIMO IIR' 였다 — [FIR 사용] 체크를 따른다."""
+    from secs import calibration as cal
+    assert cal.CalibrationSettings().mimo_fir is True
+    for mode in ('zero', 'mixed', 'linear'):
+        assert 'MIMO FIR' in cal.mode_spec(mode, mimo_fir=True)
+        assert 'MIMO IIR' in cal.mode_spec(mode, mimo_fir=False)

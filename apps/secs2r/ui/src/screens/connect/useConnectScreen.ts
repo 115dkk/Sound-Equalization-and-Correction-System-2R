@@ -104,9 +104,21 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
         try { await session.stores.rew.load(); }
         finally { session.host.set({ readingRew: false }); }
       }),
-      setInputDevice: (input_device) => session.run(() => session.configure({ input_device })),
+      setRewDriver: (driver) => session.run(async () => {
+        session.host.set({ switchingRewDriver: true });
+        try { await session.call({ method: "rew_driver_set", params: { driver } }); }
+        finally { session.host.set({ switchingRewDriver: false }); }
+      }),
+      // On the REW path measure_configure also opens the device in REW; read REW again for its channels.
+      setInputDevice: (input_device) => session.run(async () => {
+        await session.configure({ input_device });
+        if (session.host.getSnapshot().path === "rew") await session.stores.rew.load();
+      }),
       setInputChannel: (input_channel) => session.run(() => session.configure({ input_channel })),
-      setOutputDevice: (output_device) => session.run(() => session.configure({ output_device })),
+      setOutputDevice: (output_device) => session.run(async () => {
+        await session.configure({ output_device });
+        if (session.host.getSnapshot().path === "rew") await session.stores.rew.load();
+      }),
       setSweepLength: (sweep_length) => session.run(() => session.configure({ sweep_length })),
       setLoopbackChannel: (loopback_input_channel) => session.run(() => session.configure({ loopback_input_channel })),
       setShareMode: (share_mode) => session.run(() => session.configure({ share_mode })),
@@ -129,7 +141,7 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
     };
   }, [session]);
   const details: ConnectView["rew"]["details"] = rew ? {
-    executable: rew.executable_path, version: rew.version, blocking: rew.blocking,
+    executable: rew.executable_path, version: rew.version, driver: rew.driver, blocking: rew.blocking,
     micCalibration: rew.input_calibration_file,
     inputs: rew.input_devices?.map((device) => ({ id: device.id, name: device.name, input_channels: device.channels, output_channels: 0 })),
     outputs: rew.output_devices?.map((device) => ({ id: device.id, name: device.name, input_channels: 0, output_channels: device.channels })),
@@ -139,7 +151,7 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
   } : {};
   return { view: config ? {
     path: host.path, methods, settings, config, sampleRate: settings?.sample_rate ?? 48000,
-    rew: { launch: host.rewLaunch, problem: host.rewProblem, problemDetail: host.rewProblemDetail, readingSettings: host.readingRew, details },
+    rew: { launch: host.rewLaunch, problem: host.rewProblem, problemDetail: host.rewProblemDetail, readingSettings: host.readingRew, switchingDriver: host.switchingRewDriver, details },
     levels: levels?.levels ?? {},
     level: { monitor: host.monitor, reading: host.meter, playing: host.playing, playingAll: host.playingAll, masterDbfs: host.masterDbfs },
     sweepCheck: { running: sweepRunning, result: host.sweepResult, role: host.sweepRole },

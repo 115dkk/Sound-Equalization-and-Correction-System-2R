@@ -747,15 +747,19 @@ fn rew_script() -> Vec<secs_rew::RecordedExchange> {
                     json!(["Demo Speakers (2ch)"]),
                     5,
                 ),
-                get("/audio/java/outputs", json!(["L", "R"]), 5),
+                get("/audio/java/output-channels", json!(["L", "R"]), 5),
+                get("/audio/java/output-device", json!("Demo Speakers (2ch)"), 5),
                 get("/audio/java/input-devices", json!(["Demo USB Mic"]), 5),
                 get("/audio/java/inputs", json!(["1: Demo In 1"]), 5),
+                get("/audio/java/input-device", json!("Demo USB Mic"), 5),
             ]);
         } else {
             script.extend([
                 get("/audio/java/input-device", json!("Demo USB Mic"), 5),
                 get("/audio/java/output-device", json!("Demo Speakers (2ch)"), 5),
                 get("/audio/java/input", json!("1: Demo In 1"), 5),
+                get("/audio/java/output-device", json!("Demo Speakers (2ch)"), 5),
+                get("/audio/java/input-device", json!("Demo USB Mic"), 5),
             ]);
         }
         script.extend([
@@ -770,7 +774,7 @@ fn rew_script() -> Vec<secs_rew::RecordedExchange> {
             post("/measure/timing/reference", json!("None")),
         ]);
         script.extend([
-            post("/audio/java/output",json!({"output":role})),
+            post("/audio/java/output-channel",json!({"channel":role})),
             post("/measure/naming",json!({"title":format!("{role} P1"),"namingOption":"Use as entered","prefixMeasNameWithOutput":false})),
             post("/measure/notes",json!(format!("SECS {role} P1 (none timing)"))),
             get("/measurements",json!({}),10),
@@ -944,7 +948,7 @@ fn rew_cancel_keeps_already_recorded_role() {
         .iter()
         .enumerate()
         .filter(|(_, e)| e.request.path == "/audio/java/input-device")
-        .nth(1)
+        .nth(2)
         .unwrap()
         .0;
     script.truncate(second);
@@ -1149,6 +1153,74 @@ fn measure_config_get_reads_stored_settings_without_dirtying_the_project() {
         panic!()
     };
     assert_eq!(compatibility.method, "native");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[derive(Debug)]
+struct ConfigureRewTransport {
+    calls: Arc<Mutex<Vec<secs_rew::Request>>>,
+    session_free: Arc<std::sync::atomic::AtomicBool>,
+}
+impl secs_rew::Transport for ConfigureRewTransport {
+    fn request(
+        &self,
+        request: &secs_rew::Request,
+    ) -> Result<secs_rew::Response, secs_rew::RewError> {
+        self.calls.lock().unwrap().push(request.clone());
+        if request.path == "/audio/java/output-devices" {
+            self.session_free
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        let body = match request.path.as_str() {
+            "/audio/driver" => json!({"driver":"Java"}),
+            "/audio/java/output-devices" => json!(["Selected Speakers"]),
+            "/audio/java/output-channels" => json!(["L", "R"]),
+            "/audio/java/output-device" => json!("Old Speakers"),
+            _ => json!({"message":"ok"}),
+        };
+        Ok(secs_rew::Response::ok(body))
+    }
+}
+
+#[test]
+fn measure_configure_opens_selected_rew_device_after_project_update() {
+    let root = root("configure-rew-device");
+    let path = root.join("room.secs");
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let session_free = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let service = Service::new(Deps {
+        rew_transport: {
+            let calls = calls.clone();
+            let session_free = session_free.clone();
+            Arc::new(move || {
+                Box::new(ConfigureRewTransport {
+                    calls: calls.clone(),
+                    session_free: session_free.clone(),
+                })
+            })
+        },
+        ..Deps::default()
+    });
+    new(&service, &path);
+    let Response::MeasureConfigure(result) = call(
+        &service,
+        Request::MeasureConfigure(MeasureConfigureParams {
+            method: "rew".into(),
+            output_device: Some("Selected Speakers".into()),
+            ..Default::default()
+        }),
+    ) else {
+        panic!()
+    };
+    assert_eq!(result.output_device, "Selected Speakers");
+    assert!(session_free.load(std::sync::atomic::Ordering::Acquire));
+    let calls = calls.lock().unwrap();
+    assert!(calls.iter().any(|request| {
+        request.method == "POST"
+            && request.path == "/audio/java/output-device"
+            && request.body == Some(json!({"device":"Selected Speakers"}))
+            && request.timeout == Duration::from_secs(30)
+    }));
     fs::remove_dir_all(root).unwrap();
 }
 

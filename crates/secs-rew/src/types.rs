@@ -23,6 +23,7 @@ pub struct InfoSnapshot {
     pub running: bool,
     pub reachable: bool,
     pub version: Option<String>,
+    pub driver: Option<String>,
     pub pro: Option<bool>,
     pub blocking: Option<bool>,
     pub input_calibration_file: Option<String>,

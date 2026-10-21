@@ -139,7 +139,7 @@ class StubSession:
             self.measurements[str(self._counter)] = summary
             # 실응답은 202 + APIResponse
             return _Response(202, {"message": "Completed"})
-        if path in ("/audio/java/outputs", "/audio/asio/outputs"):
+        if path in ("/audio/java/output-channels", "/audio/asio/outputs"):
             if self.channels is None:
                 return _Response(400, None, "Bad Request")
             return _Response(200, list(self.channels))
@@ -272,7 +272,7 @@ def test_output_channel_uses_rew_channel_names(rew_mod):
     stub = StubSession(channels=["L", "R", "C", "SW"])    # Java 드라이버 선택지
     client = _client(rew_mod, stub)
     client.set_output_channel(3)
-    assert stub.posts("/audio/java/output") == [{"output": "C"}]
+    assert stub.posts("/audio/java/output-channel") == [{"channel": "C"}]
 
 
 def test_output_channel_matches_asio_number_prefix(rew_mod):
@@ -280,14 +280,14 @@ def test_output_channel_matches_asio_number_prefix(rew_mod):
     client = _client(rew_mod, stub)
     client.set_output_channel(3)
     assert stub.posts("/audio/asio/output") == [{"output": "3: Line Out 3"}]
-    assert stub.posts("/audio/java/output") == []        # 드라이버가 다른 경로는 건드리지 않는다
+    assert stub.posts("/audio/java/output-channel") == []        # 드라이버가 다른 경로는 건드리지 않는다
 
 
 def test_output_channel_falls_back_to_number(rew_mod):
     stub = StubSession(channels=None)                       # 목록 조회 400
     client = _client(rew_mod, stub)
     client.set_output_channel(5)
-    assert stub.posts("/audio/java/output") == [{"output": "5"}]
+    assert stub.posts("/audio/java/output-channel") == [{"channel": "5"}]
 
 
 def test_devices_are_plain_string_lists(rew_mod):
@@ -333,7 +333,7 @@ def test_run_position_sequence_and_ir(rew_mod, rewapi):
         {"title": "R P2", "namingOption": "Use as entered",
          "prefixMeasNameWithOutput": False}]
     assert stub.posts("/measure/command") == [{"command": "SPL"}, {"command": "SPL"}]
-    assert stub.posts("/audio/java/output") == [{"output": "L"}, {"output": "R"}]
+    assert stub.posts("/audio/java/output-channel") == [{"channel": "L"}, {"channel": "R"}]
     assert [c["params"] for c in stub.calls
             if c["path"].endswith("/impulse-response")] == [{"normalised": "false"},
                                                             {"normalised": "false"}]
@@ -561,3 +561,20 @@ def test_input_calibration_file_is_none_when_rew_is_down(rew_mod):
     client = _client(rew_mod, stub)
     assert client.input_calibration_file() is None
     assert rew_mod.REW_API_PORT == 4735
+
+
+def test_java_multichannel_count_uses_output_channels(rew_mod):
+    """10-17 리포트: Java 7.1 장치가 2채널로 보였다 — 채널 수는 포트(`outputs`)가 아니라 `output-channels` 에서, 묶음은 뺀다."""
+    names = ["L", "R", "C", "LFE", "SL", "SR", "BL", "BR", "L+R"]
+    client = _client(rew_mod, StubSession(channels=names))
+    assert client.output_devices()[0].channels == 8
+    assert client.output_channel_names() == names[:8]
+
+
+def test_set_driver_posts_and_drops_list_cache(rew_mod):
+    stub = StubSession(channels=["L", "R"])
+    client = _client(rew_mod, stub)
+    assert client.output_devices()[0].channels == 2               # 목록을 한 번 캐시해 둔다
+    client.set_driver("ASIO")
+    assert stub.posts("/audio/driver") == [{"driver": "ASIO"}]
+    assert client._list_cache == {}                                # 새 드라이버의 목록을 다시 읽는다
