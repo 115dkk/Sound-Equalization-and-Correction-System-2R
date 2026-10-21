@@ -57,7 +57,6 @@ const REACH_IDS = [
   "export.outcome.equalizer_apo",
   "export.outcome.equalizer_apo.open",
   "export.outcome.equalizer_apo.hint",
-  "export.tutorial",
   "frame",
   "frame.rail",
   "frame.rail.system",
@@ -308,9 +307,10 @@ describe("내보내기", () => {
     expect(screen.queryByText("내보냄")).toBeNull();
   });
 
-  it("says nothing is saved in the tutorial", () => {
+  it("has no folder in the tutorial and says nothing was saved only on the outcome", () => {
     renderWith(<Mounted view={exportTutorial} act={actions()} />);
-    expect(ui("export.tutorial")?.textContent).toContain("튜토리얼에서는 파일을 저장하지 않습니다.");
+    expect(ui("export.folder")).toBeNull();
+    expect(document.body.textContent).not.toContain("튜토리얼에서는 파일을 저장하지 않습니다");
     expect(ui("export.outcome.camilla_dsp")?.textContent).toContain("튜토리얼");
     expect(ui("export.folder.change")).toBeNull();
   });

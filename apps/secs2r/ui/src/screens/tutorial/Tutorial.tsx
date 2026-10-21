@@ -674,10 +674,9 @@ function Coach<V>({ cardRef, at, quest, head, state, pending, busy, blocked, ter
           )}
         </div>
       )}
-      {pending && !busy && (
+      {pending && !busy && quest.hint && (
         <div className={["tutorial-coach__rule", state.armed && "tutorial-coach__rule--armed"].filter(Boolean).join(" ")} data-ui="tutorial.coach.rule">
-          {quest.hint && <p className="tutorial-coach__hint">{t(quest.hint)}</p>}
-          <p>{t(state.armed ? "tutorial.coach.rule_armed" : "tutorial.coach.rule")}</p>
+          <p className="tutorial-coach__hint">{t(quest.hint)}</p>
         </div>
       )}
       {blocked && (

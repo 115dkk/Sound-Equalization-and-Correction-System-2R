@@ -325,19 +325,8 @@ function ExportGroup({ title, children }: { title: string; children: ReactNode }
 
 function FolderRow({ view, actions }: { view: ExportView; actions: ExportActions }) {
   const t = useT();
-  if (view.tutorial) {
-    return (
-      <div className="export-folder" data-ui="export.folder">
-        <div className="export-folder__text">
-          <p className="export-folder__label">{t("export.folder")}</p>
-          <p className="export-tutorial" data-ui="export.tutorial">
-            <Icon name="info" size={18} />
-            <span>{t("export.tutorial")}</span>
-          </p>
-        </div>
-      </div>
-    );
-  }
+  // The tutorial has no export folder; the outcome rows say nothing was saved.
+  if (view.tutorial) return null;
   const folder = view.folder;
   return (
     <div className="export-folder" data-ui="export.folder">

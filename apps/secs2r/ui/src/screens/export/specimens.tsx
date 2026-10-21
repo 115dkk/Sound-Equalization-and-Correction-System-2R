@@ -117,7 +117,7 @@ export const exportSpecimens: SpecimenDef[] = [
   frame("screen.export.done", "Export · done, files written", () => <ExportSpecimen view={exportDone} jobs={exportHistory} fileName="거실 7.1.4.secs" />),
   frame("screen.export.failed", "Export · CamillaDSP export failed", () => <ExportSpecimen view={exportFailed} />),
   frame("screen.export.advanced", "Export · 고급 open (staged mdat, U3), MIMO left out, scrolled to the end", () => <ExportSpecimen view={exportNoMimo} initialAdvanced scrolled />),
-  frame("screen.export.tutorial", "Export · tutorial (nothing is saved)", () => (
+  frame("screen.export.tutorial", "Export · tutorial (no export folder)", () => (
     <TutorialAccent>
       <ExportSpecimen view={exportTutorial} fileName="튜토리얼.secs" />
     </TutorialAccent>

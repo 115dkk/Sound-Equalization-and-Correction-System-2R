@@ -224,7 +224,7 @@
 | 지원 범위: 텍스트 = RC만, EqAPO = RC · BA, 카밀라 = 전부; 막힌 단추는 끄고 이유를 보임 | `export.kind.filter_text.blocked`, `export.kind.equalizer_apo.blocked` | — | P47 |
 | 보정 화면의 숨은 내보내기 카드(단계별 mdat) | `export.advanced`, `export.run.staged_mdat` | U3 | P32 |
 | 결과가 없거나 계산·내보내기 중이면 단추 끔 | `export.run.camilla_dsp`, `export.run.before_after_mdat`, `export.run.staged_mdat` | — | P32 |
-| 메모: N개 파일 저장 → 경로 / 실패 / 튜토리얼에서는 저장 안 함 | `export.outcome.<kind>`, `export.outcome.<kind>.open`, `export.tutorial` | — | P32 |
+| 메모: N개 파일 저장 → 경로 / 실패 / 튜토리얼에서는 저장 안 함 | `export.outcome.<kind>`, `export.outcome.<kind>.open` | — | P32 |
 | 기본 폴더 `<프로젝트 폴더>/SECS_export/<날짜> <이름>/`, 없으면 `~/Documents/SECS_export/<날짜>` | `export.folder.path` | — | P32 |
 | MIMO는 켜고, 계산했고, 위치 3곳 이상일 때만 포함 | `export.result.mimo` | — | P32 |
 | 아무 일도 하지 않는 [완료] 단추 | — | U4 | P32 |
@@ -262,7 +262,7 @@
 | 닫힌 콤보 위의 휠은 페이지를 스크롤 | `frame.content`(기본 select는 휠로 값이 바뀌지 않음) | — | P29 |
 | 전문가 모드·정보 창 없음 | — (전역 전문가 표시 없음); 로고 선택은 `frame.settings.logo` | U9 | P29, P58 |
 | REW 감시 3초마다(3, 5, 8단계에서 멈춤) | `frame.status.path` | — | P29 |
-| 튜토리얼 모드: 데모 프로젝트, 가짜 REW, 분홍 테마, 저장·내보내기 막음 | `project.tutorial`, `frame`(튜토리얼 강조색), `export.tutorial` | — | P32 |
+| 튜토리얼 모드: 데모 프로젝트, 가짜 REW, 분홍 테마, 저장·내보내기 막음 | `project.tutorial`, `frame`(튜토리얼 강조색) | — | P32 |
 | 기다림 표시: 로딩 카드, 작업 패널, 시작 화면 | `jobs.tray`, `jobs.job.<kind>`, `jobs.cancel.<kind>` | U8 | P29 |
 | 메시지가 여러 곳에 흩어짐, 알림 모음 없음 | `jobs.history` | U8 | P29 |
 | 단축키 Alt+← / Alt+→, Ctrl+1…5 | `frame.rail.<step>` | — | P29 |

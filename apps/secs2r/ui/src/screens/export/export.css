@@ -111,17 +111,6 @@
   gap: var(--space-2);
 }
 
-.export-tutorial {
-  display: flex;
-  align-items: flex-start;
-  gap: var(--space-1-5);
-  color: var(--text-muted);
-}
-
-.export-tutorial .ui-icon {
-  margin-top: 1px;
-}
-
 /* The exports, in two groups: the filters for the DSP, the responses for REW. */
 .export-groups {
   display: flex;
