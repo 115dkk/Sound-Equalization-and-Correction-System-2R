@@ -26,7 +26,7 @@ const GROUP_ORDER = ["프론트", "센터", "서브", "서라운드", "백", "�
 
 function config(roles: readonly string[], preset: string): ConfigResult {
   const speakers = roles.map((role, i) => ({ role, size: role.startsWith("SW") ? "sub" : roles.some((r) => r.startsWith("SW")) ? "small" : "large", bands: [{ band: role.startsWith("SW") ? "SUB" : "FULL", out: i + 1, pol: "+" }] }));
-  const groups = GROUP_ORDER.map((key) => ({ id: key, key, speaker_indices: roles.map((r, i) => (GROUP_OF[r] === key ? i : -1)).filter((i) => i >= 0) })).filter((g) => g.speaker_indices.length);
+  const groups = GROUP_ORDER.map((key) => ({ id: key, key, speaker_indices: roles.map((r, i) => ((r.startsWith("SW") ? "서브" : GROUP_OF[r]) === key ? i : -1)).filter((i) => i >= 0) })).filter((g) => g.speaker_indices.length);
   const subs = roles.filter((r) => r.startsWith("SW")).length;
   return { speakers, preset, device: "MOTU M4", groups, summary: { speaker_count: roles.length, outputs: roles.map((_, i) => i + 1), max_channel: roles.length, duplicate_outputs: [], sub_count: subs } };
 }
@@ -72,6 +72,7 @@ const targetPoints = HARMAN.map(([hz, db]) => ({ hz, db }));
 const XO = { 프론트: 80, 센터: 100, 서라운드: 80, 백: 80, 탑: 100 };
 
 export const baseSettings: CalibrationSettings = {
+  sample_rate_policy: "reject",
   mode: "mixed",
   rc_lo: 20,
   rc_hi: null,
@@ -316,6 +317,7 @@ const noLines: ResultLinesResult = { stale: false, channels: [], total_delay_ms:
 /* ── Views ──────────────────────────────────────────────────────────────── */
 
 const base: CalibrateView = {
+  compute: { preference: "auto", status: fx.computeStatus, loading: false, saving: false, error: null, locked: false },
   results: { calibration: summary(), mimo: null },
   lines: lines(),
   curves: splResult(),
@@ -350,6 +352,14 @@ export const emptyView: CalibrateView = {
   resultMode: null,
 };
 
+/** Pre-calculation branches: no measurements, singular/plural subs and each mode. */
+export const planViews: Record<"unmeasured" | "oneSub" | "threeSubs" | "noSubs", CalibrateView> = {
+  unmeasured: { ...emptyView, positions: [], measuredRoles: [], channel: null, curves: { ...previewResult(), curves: previewResult().curves.filter((c) => c.kind === "target") }, settings: { ...emptyView.settings, mode: "zero" }, modeSpec: modeSpecs.zero },
+  oneSub: { ...emptyView, positions: emptyView.positions.slice(0, 1), config: config(["L", "R", "SW1"], "2.1"), measuredRoles: ["L", "R", "SW1"] },
+  threeSubs: { ...emptyView, positions: emptyView.positions.slice(0, 1), config: config(["L", "R", "SW1", "SW2", "SW3"], "2.3"), measuredRoles: ["L", "R", "SW1", "SW2", "SW3"], settings: { ...emptyView.settings, mode: "linear" }, modeSpec: modeSpecs.linear },
+  noSubs: { ...emptyView, config: stereoConfig, measuredRoles: ["L", "R"], settings: { ...emptyView.settings, mode: "ultra", ultra_ms: 120 }, modeSpec: modeSpecs.ultra120 },
+};
+
 export const computingView: CalibrateView = { ...emptyView, running: "calibrate" };
 
 export const splView: CalibrateView = base;
@@ -381,7 +391,7 @@ export const staleView: CalibrateView = {
 
 export const failedView: CalibrateView = {
   ...emptyView,
-  failure: { job: "calibrate", error: ipcError("engine_input", "position 2 has no IR for SW2 (expected 13 roles, found 12)") },
+  failure: { job: "calibrate", error: ipcError("engine_input", "invalid input: position 2 SW2: empty or nonfinite IR", { reason: "invalid_measurement", position: "2", role: "SW2" }) },
 };
 
 export const subsOnlyView: CalibrateView = {
@@ -443,3 +453,40 @@ export const loadingEmptyView: CalibrateView = { ...base, curves: null, curvesLo
 function defaultSub() {
   return { mode: "auto", bundle: "A", gain_db: 0, delay_ms: 0, polarity: 1, allpass: [] as [number, number][], mimo_support: true, hp_hz: 0, lp_hz: 0, peq: [] as [number, number, number][], hp_type: "LR24", lp_type: "LR24", dba_row: "front" };
 }
+
+const firMimoSummary: import("../../ipc/bindings/MimoSummary").MimoSummary = {
+  ...fx.mimoSummary, kind: "fir", support_count: 2, fir_taps_total: 16000,
+  input_count: 1,
+};
+export const gpuView: CalibrateView = {
+  ...mimoView, settings: { ...mimoView.settings, mimo_fir: true }, compute: { ...base.compute, status: fx.gpuComputeStatus },
+  results: { ...mimoView.results, mimo: { ...firMimoSummary, compute: {
+    ...fx.cpuComputeReport, backend: "cuda", device: fx.gpuDevice.name, stage: "ideal_fir_sweep", accelerated_systems: 11, cpu_systems: 0, reason: "recommended",
+  } } },
+};
+export const cpuSelectedView: CalibrateView = { ...gpuView, compute: { ...gpuView.compute, preference: "cpu", status: {
+  ...fx.gpuComputeStatus, preference: "cpu", selected: "cpu", reason: "user_cpu",
+} } };
+export const runtimeMissingView: CalibrateView = { ...mimoView, compute: { ...base.compute, status: { ...fx.computeStatus, reason: "runtime_unavailable" } } };
+export const computeLoadingView: CalibrateView = { ...mimoView, compute: { ...base.compute, status: null, loading: true } };
+export const computeErrorView: CalibrateView = { ...mimoView, compute: { ...base.compute, status: null, error: ipcError("internal", "device probe failed") } };
+export const gpuFallbackView: CalibrateView = { ...gpuView, results: { ...gpuView.results, mimo: { ...firMimoSummary, compute: {
+  ...fx.cpuComputeReport, reason: "device_failure", fallbacks: 1,
+} } } };
+
+export const gpuSelectedView: CalibrateView = { ...gpuView, compute: { ...gpuView.compute, preference: "gpu", status: {
+  ...fx.gpuComputeStatus, preference: "gpu", reason: "user_gpu",
+} } };
+
+/** A saved explicit GPU choice survives moving to a host without its runtime. */
+export const requestedGpuUnavailableView: CalibrateView = { ...runtimeMissingView, compute: {
+  ...runtimeMissingView.compute, preference: "gpu", status: { ...fx.computeStatus, preference: "gpu", reason: "runtime_unavailable" },
+} };
+
+/** The saved GPU preference does not change the CPU reference used for IIR. */
+export const gpuIirReferenceView: CalibrateView = {
+  ...mimoView, compute: gpuSelectedView.compute,
+  results: { ...mimoView.results, mimo: { ...fx.mimoSummary, compute: {
+    ...fx.cpuComputeReport, requested: "gpu", reason: "iir_reference",
+  } } },
+};

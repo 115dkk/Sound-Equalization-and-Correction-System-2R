@@ -35,7 +35,6 @@ export type TourScene = {
   note?: { ko: string; en: string };
   /** The mock's starting project; "sample" (the default) is 7.1.4 + 3 subwoofers, "stereo" a new 2.0 project. */
   project?: "none" | "stereo" | "sample";
-  expert?: boolean;
   tutorialStart?: string;
   /** Brings the mock to the scene's state before the App mounts. */
   setup?: (mock: MockService) => void | Promise<void>;
@@ -265,7 +264,20 @@ export const TOUR_SCENES: TourScene[] = [
     note: { ko: "연결·점검을 건너뛰는 방식이라 레일에 건너뜀이 보입니다.", en: "This method skips Connect & check, so the rail marks it skipped." },
     ops: choosePath("mdat", "system"),
   },
-  { id: "system.expert", step: "system", title: { ko: "전문가 항목을 켠 시스템", en: "System with expert options shown" }, expert: true },
+  {
+    id: "system.channel-details",
+    step: "system",
+    title: { ko: "다중 밴드 채널 상세", en: "Multi-band channel details" },
+    setup: async (mock) => {
+      await devices(mock);
+      const config = await mock.request({ method: "config_get" });
+      config.speakers[0]!.bands = [{ band: "LOW", out: 1, pol: "+" }, { band: "HIGH", out: 16, pol: "-" }];
+      config.summary.outputs.push(16);
+      config.summary.max_channel = 16;
+      reply(mock, "config_get", config);
+    },
+    ops: [...choosePath("native", "system"), click(ui("system.room.speaker.L")), reveal(ui("system.speaker")), click(ui("system.speaker.help"))],
+  },
 
   // 연결·점검
   {
@@ -274,6 +286,13 @@ export const TOUR_SCENES: TourScene[] = [
     title: { ko: "장치를 고른 연결·점검", en: "Connect & check with devices chosen" },
     setup: (mock) => devices(mock),
     ops: [...choosePath("native"), tick(1)],
+  },
+  {
+    id: "connect.device-sharing",
+    step: "connect",
+    title: { ko: "장치 공유 방식", en: "Device sharing" },
+    setup: (mock) => devices(mock),
+    ops: [...choosePath("native"), click(ui("connect.devices.details")), reveal(ui("connect.devices.details"))],
   },
   {
     id: "connect.level-running",
@@ -415,6 +434,13 @@ export const TOUR_SCENES: TourScene[] = [
     ops: choosePath("native", "calibrate"),
   },
   {
+    id: "calibrate.ultra",
+    step: "calibrate",
+    title: { ko: "초고지연 모드", en: "Ultra latency mode" },
+    setup: inProgress,
+    ops: [...choosePath("native", "calibrate"), click(ui("calibrate.mode.ultra")), reveal(ui("calibrate.settings.mode"))],
+  },
+  {
     id: "calibrate.running",
     step: "calibrate",
     title: { ko: "보정 계산 진행 중", en: "Calculating correction" },
@@ -452,7 +478,19 @@ export const TOUR_SCENES: TourScene[] = [
       await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "sub_mode", role: "SW2", mode: "fixed" } } });
       await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "sub", role: "SW2", patch: { gain_db: -2.5, delay_ms: 3.2, lp_hz: 90 } } } });
     },
-    ops: [...choosePath("native", "calibrate"), click(ui("calibrate.ba.advanced")), click(ui("calibrate.ba.edit.SW2")), reveal(`.ui-segmented-field:has(> ${ui("calibrate.ba.edit")})`)],
+    ops: [...choosePath("native", "calibrate"), click(ui("calibrate.ba.advanced")), click(ui("calibrate.ba.edit.SW2")), reveal(`.ui-segmented-field:has(${ui("calibrate.ba.edit")})`)],
+  },
+  {
+    id: "calibrate.sample-rate",
+    step: "calibrate",
+    title: { ko: "측정 샘플레이트 처리 설정", en: "Measurement sample-rate policy" },
+    setup: async (mock) => {
+      await inProgress(mock);
+      mock.failJobs("calibrate", "engine_input", "invalid input: position 1 SW3: sample rate 44100 (expected 48000)", {
+        reason: "measurement_sample_rate", position: "1", role: "SW3", actual_hz: "44100", expected_hz: "48000",
+      });
+    },
+    ops: [...choosePath("native", "calibrate"), click(ui("calibrate.compute")), drain, click(ui("calibrate.verdict.failed.sample_rate")), reveal(ui("calibrate.settings.input"))],
   },
   {
     id: "calibrate.xo",
@@ -479,7 +517,7 @@ export const TOUR_SCENES: TourScene[] = [
     title: { ko: "보정 계산 실패", en: "Correction calculation failed" },
     setup: async (mock) => {
       await inProgress(mock);
-      mock.failJobs("calibrate", "engine_input", "position 1: SW3 impulse response is empty");
+      mock.failJobs("calibrate", "engine_input", "invalid input: position 1 SW3: empty or nonfinite IR", { reason: "invalid_measurement", position: "1", role: "SW3" });
     },
     ops: [...choosePath("native", "calibrate"), click(ui("calibrate.compute")), drain],
   },
@@ -591,7 +629,9 @@ export const TOUR_SCENES: TourScene[] = [
     note: { ko: "진행 중인 보정 계산 하나와 완료·실패·취소 기록입니다.", en: "One correction running, with completed, failed and canceled entries." },
     setup: async (mock) => {
       await inProgress(mock);
-      mock.failJobs("recommend_xo", "engine_input", "front: no crossover candidate between 60 and 120 Hz");
+      mock.failJobs("recommend_xo", "engine_input", "invalid input: position 1 SW3: sample rate 44100 (expected 48000)", {
+        reason: "measurement_sample_rate", position: "1", role: "SW3", actual_hz: "44100", expected_hz: "48000",
+      });
     },
     ops: [
       ...choosePath("native", "calibrate"),
@@ -615,7 +655,9 @@ export const TOUR_SCENES: TourScene[] = [
 
   // 튜토리얼 (tutorialLive.tsx와 같은 시작점)
   { id: "tutorial.system", step: "tutorial", title: { ko: "튜토리얼: 시스템", en: "Tutorial: System" }, tutorialStart: "system.output" },
+  { id: "tutorial.dsp", step: "tutorial", title: { ko: "튜토리얼: 내보낼 DSP", en: "Tutorial: Output DSP" }, tutorialStart: "system.dsp" },
   { id: "tutorial.connect", step: "tutorial", title: { ko: "튜토리얼: 연결·점검", en: "Tutorial: Connect & check" }, tutorialStart: "connect.retry" },
+  { id: "tutorial.measurement-method", step: "tutorial", title: { ko: "튜토리얼: 측정 방식", en: "Tutorial: Measurement method" }, tutorialStart: "connect.connection" },
   { id: "tutorial.measure", step: "tutorial", title: { ko: "튜토리얼: 측정·가져오기", en: "Tutorial: Measure & import" }, tutorialStart: "measure.sample" },
   {
     id: "tutorial.calibrate",
@@ -629,6 +671,16 @@ export const TOUR_SCENES: TourScene[] = [
     step: "tutorial",
     title: { ko: "튜토리얼: 내보내기", en: "Tutorial: Export" },
     tutorialStart: "export.mdat",
+    setup: async (mock) => {
+      await measured(mock);
+      await calibrated(mock);
+    },
+  },
+  {
+    id: "tutorial.camilladsp",
+    step: "tutorial",
+    title: { ko: "튜토리얼: CamillaDSP", en: "Tutorial: CamillaDSP" },
+    tutorialStart: "export.camilla",
     setup: async (mock) => {
       await measured(mock);
       await calibrated(mock);

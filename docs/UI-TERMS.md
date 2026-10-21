@@ -19,6 +19,8 @@
 | 측정 방식 | measurement method | 자체 측정, REW, 모의 측정, mdat 파일만 가져오기. 프로젝트 상태의 같은 칸도 측정 방식 |
 | 자체 측정 | built-in measurement (선택지 라벨은 Built-in) | 측정 방식 |
 | 모의 측정 | simulated measurement (선택지 라벨은 Simulated) | 측정 방식, 튜토리얼 |
+| 샘플레이트가 다른 측정 | Measurements with other sample rates | 보정 설정에서 펼치는 공통 측정 처리 정책 |
+| 계산 중단 (기본값) · 48 kHz로 변환 | Stop calculation (default) · Convert to 48 kHz | 샘플레이트 처리 선택지 |
 | 데모 방, 데모 데이터 | demo room, demo data | 7.1.4 · 서브 3의 표본 방과 그 측정 |
 | 스윕, 스윕 길이, 스윕 반복, 스윕 레벨 | sweep, sweep length, sweep repeats, sweep level | 측정 옵션, 연결·점검 |
 | 측정 시작 지연 | start delay | 측정을 누른 뒤 첫 스윕까지의 시간 |
@@ -27,7 +29,7 @@
 | 적정 구간 | recommended range | 마이크 레벨 −30…−15 dBFS |
 | 분홍 잡음 | pink noise | 레벨 점검 소리 |
 | 마이크 보정 파일 | mic calibration file | 연결·점검, 용어 풀이 |
-| 공유 방식: 자동 · 독점 · 공유 | sharing mode: Automatic · Exclusive · Shared | 자체 측정의 장치 열기(전문가 표시) |
+| 장치 공유 방식: 자동 · 독점 · 공유 | Device sharing: Automatic · Exclusive · Shared | 자체 측정의 장치 카드에서 펼치는 항목 |
 | 보정 | correction | 단계와 결과 |
 | 보정 계산 | Calculate correction(동사 calculate) | 주 동작, 잡 이름. 다시 계산은 recalculate |
 | 다시 계산 필요 | Recalculation needed | 결과가 지금 입력과 맞지 않는 낡음 상태 |
@@ -52,7 +54,7 @@
 | CamillaDSP 설정 | CamillaDSP configuration | 내보내는 설정 파일. 화면의 설정(settings)과 영어에서 구분 |
 | 단계별 mdat | staged mdat | 내보내기의 고급 |
 | 작업, 작업 트레이 | job, job tray | 긴 작업의 진행·취소·기록 |
-| 계산 메모 | calculation notes | 판정 카드의 접힌 목록(업스트림처럼 전문가 표시와 상관없이 보임) |
+| 계산 메모 | calculation notes | 판정 카드에서 펼치는 목록 |
 | 튜토리얼 | tutorial | 튜토리얼 목록, 코치 카드 |
 
 ## 쓰는 법
@@ -61,6 +63,10 @@
 - 문장 안에서 단추나 라벨을 가리킬 때는 화면의 글자 그대로 작은따옴표로 감쌉니다('보정 계산', 'Calculate correction').
 - 영어에서 개수를 붙이는 자리는 복수형이 틀리지 않게 `Label: {count}` 꼴로 씁니다. 코드가 단수와 복수를 따로 넘기지 않습니다.
 - 한국어 조사는 영문 낱말에 붙여 씁니다('REW가', 'MIMO는'). `i18n.test.ts`가 확인합니다.
+- 입력란과 설정에는 실제 동사를 씁니다. 이름은 입력하고, 파일은 불러오며, 기본값은 적용합니다. 이 동작들을 '채우다' 하나로 표현하지 않습니다.
+- 화면이나 안내의 전환은 목적지를 적어 '이동'으로 설명합니다. '채우고 넘어갑니다'처럼 실행 내용과 목적지가 모호한 표현을 피합니다.
+- 튜토리얼의 행동 안내에는 연습 목적을 연결하고, '이유'에는 그 행동이 필요한 근거를 적습니다. 모의 측정은 스피커 소리 재생 없이 측정 절차를 연습하기 위한 선택입니다.
+- 튜토리얼의 설명 단계는 기능과 효과를 설명합니다. 현재 조작할 수 없는 항목에 '고르세요', '바꾸세요'라고 지시하지 않습니다. 실행 지시는 실습 단계에서 허용된 조작에 사용합니다.
 
 ## 예외
 

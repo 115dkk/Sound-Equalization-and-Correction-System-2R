@@ -80,7 +80,7 @@ jobs:
             bundles: nsis
             target: ""
           - name: macos
-            os: macos-latest
+            os: macos-15
             bundles: app,dmg
             target: universal-apple-darwin
           - name: linux

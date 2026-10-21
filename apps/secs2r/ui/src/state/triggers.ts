@@ -24,12 +24,13 @@ export const TRIGGERS = {
   settings: { mutations: [...settings, ...config, "undo"], finished: ["recommend_xo"] },
   modeSpec: { mutations: settings, finished: [] },
   target: { mutations: target, finished: [] },
-  results: { mutations: inputs, finished: [...recorded, "calibrate", "mimo"] },
-  resultCurves: { mutations: inputs, finished: [...recorded, "calibrate", "mimo"] },
-  lines: { mutations: inputs, finished: [...recorded, "calibrate", "mimo"] },
+  results: { mutations: [...inputs, "app_settings_set"], finished: [...recorded, "calibrate", "mimo"] },
+  resultCurves: { mutations: [...inputs, "app_settings_set"], finished: [...recorded, "calibrate", "mimo"] },
+  lines: { mutations: [...inputs, "app_settings_set"], finished: [...recorded, "calibrate", "mimo"] },
   subWarnings: { mutations: [...settings, ...config, "undo"], finished: ["calibrate"] },
   rew: { mutations: ["rew_launch"], finished: [] },
   folder: { mutations: ["export_folder_set"], finished: ["export"] },
+  computeStatus: { mutations: ["app_settings_set"], finished: [] },
   appSettings: { mutations: ["app_settings_set", "project_open", "project_save", "project_new"], finished: [] },
 } as const satisfies Record<string, { mutations: readonly Request["method"][]; finished: readonly JobKind[] }>;
 

@@ -18,8 +18,9 @@ impl Service {
         params: ExportParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let state = lock(&self.results_state);
+        let compute_key = crate::compute::ComputeIdentity::from(&self.acceleration().status);
         let session = lock(&self.session);
+        let state = lock(&self.results_state);
         let open = session.require().map_err(IpcError::from)?;
         let project = open.store.project();
         if open.tutorial {
@@ -30,6 +31,7 @@ impl Service {
         }
         let live = state.calibration.as_ref();
         let cached = open.cached.as_ref();
+        let cached_sample_rate_policy = cached.map(|cache| cache.labels.sample_rate_policy);
         if live.is_none() && cached.is_none() {
             return Err(IpcError::new(
                 ErrorCode::EngineInput,
@@ -47,14 +49,15 @@ impl Service {
         let settings = secs_project::calibration_from_project(project);
         let cached_mimo = cached
             .filter(|cache| {
-                mimo_eligible(
-                    &settings,
-                    stale,
-                    secs_project::measured_positions(project).len(),
-                    cache.mimo_key.as_deref(),
-                    cache.mimo_calibration_key.as_deref(),
-                    &cache.engine_key,
-                )
+                cache.mimo_compute_key == compute_key
+                    && mimo_eligible(
+                        &settings,
+                        stale,
+                        secs_project::measured_positions(project).len(),
+                        cache.mimo_key.as_deref(),
+                        cache.mimo_calibration_key.as_deref(),
+                        &cache.engine_key,
+                    )
             })
             .and_then(|cache| cache.mimo_paths.clone())
             .filter(|paths| !paths.paths.is_empty());
@@ -66,7 +69,7 @@ impl Service {
                 rc_hi_hz: cache.labels.rc_hi_hz,
                 mimo_max_supports: cache.labels.mimo_max_supports,
             };
-            (cache.calibration.chain.clone(), labels, cached_mimo.clone())
+            (cache.calibration_chain.clone(), labels, cached_mimo.clone())
         });
         let live_values = live.map(|calibration| {
             (
@@ -94,7 +97,8 @@ impl Service {
                     Some(&result.settings_key),
                     Some(&result.calibration_key),
                     &calibration.settings.engine_key(),
-                ) && !result.run.paths.paths.is_empty();
+                ) && result.compute_key == compute_key
+                    && !result.run.paths.paths.is_empty();
                 fresh.then(|| MimoResponses {
                     kind: if result.run.fir {
                         MimoKind::Fir
@@ -123,9 +127,21 @@ impl Service {
         // Cached mdat exports rebuild calibration only, not MIMO responses.
         let folder_includes_mimo = mimo.is_some()
             || (live.is_none() && params.kind == ExportKind::CamillaDsp && cached_mimo.is_some());
+        let compute_report = if mimo.is_some() {
+            state
+                .mimo
+                .as_ref()
+                .map(|result| result.summary.compute.clone())
+        } else if live.is_none() && params.kind == ExportKind::CamillaDsp && cached_mimo.is_some() {
+            cached
+                .and_then(|cache| cache.mimo.as_ref())
+                .map(|result| result.compute.clone())
+        } else {
+            None
+        };
         let export_chain = live
             .map(|calibration| &calibration.design.chain)
-            .or_else(|| cached.map(|cache| &cache.calibration.chain))
+            .or_else(|| cached.map(|cache| &cache.calibration_chain))
             .expect("live or cached calibration checked above");
         if let Some(block) = secs_types::ipc::filter_export_block(
             params.kind,
@@ -201,7 +217,7 @@ impl Service {
                 .check()
                 .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
             let folder = destination.as_path();
-            let paths = match params.kind {
+            let mut paths = match params.kind {
                 ExportKind::CamillaDsp => {
                     let (chain, labels, paths) =
                         if let Some((design, _, _, settings)) = &live_values {
@@ -237,11 +253,14 @@ impl Service {
                         if let Some(values) = &live_values {
                             values.clone()
                         } else {
-                            let prepared = {
+                            let mut prepared = {
                                 let mut session = lock(&session_for_design);
                                 let open = session.require_mut().map_err(IpcError::from)?;
                                 let project = open.store.project().clone();
-                                let settings = secs_project::calibration_from_project(&project);
+                                let mut settings = secs_project::calibration_from_project(&project);
+                                if let Some(policy) = cached_sample_rate_policy {
+                                    settings.sample_rate_policy = policy;
+                                }
                                 let measurements =
                                     super::calibration::load_measurements(&mut open.store)?;
                                 let groups = super::calibration::project_groups(&project);
@@ -257,6 +276,12 @@ impl Service {
                             };
                             job.report_progress("design", 0, 1);
                             let ctx = super::calibration::compute_context(&job, memory);
+                            prepared.1 = secs_engine::normalize_measurements(
+                                &prepared.1,
+                                prepared.0.sample_rate_policy,
+                                &ctx,
+                            )
+                            .map_err(super::calibration::engine_error)?;
                             let request = secs_engine::DesignRequest {
                                 measurements: &prepared.1,
                                 config: &prepared.2,
@@ -302,6 +327,9 @@ impl Service {
                     vec![destination]
                 }
             };
+            if let Some(path) = write_compute_provenance(folder, compute_report.as_ref())? {
+                paths.push(path);
+            }
             Ok(JobResult::Export(ExportResult {
                 files: paths
                     .into_iter()
@@ -369,7 +397,7 @@ fn cached_filter_values(
         None => (cache.labels.rc_hi_hz, settings.rc_hi.is_none(), None, true),
     };
     FilterValues {
-        chain: cache.calibration.chain.clone(),
+        chain: cache.calibration_chain.clone(),
         mimo,
         mode: cache.labels.mode.clone(),
         ultra_ms: cache.labels.ultra_ms,
@@ -424,6 +452,28 @@ fn mode_name(mode: Mode) -> &'static str {
     }
 }
 
+fn write_compute_provenance(
+    folder: &Path,
+    report: Option<&secs_types::compute::ComputeReport>,
+) -> Result<Option<std::path::PathBuf>, IpcError> {
+    let path = folder.join("compute-provenance.json");
+    if let Some(report) =
+        report.filter(|report| report.accelerated_systems > 0 || report.fallbacks > 0)
+    {
+        let bytes = serde_json::to_vec_pretty(report).map_err(export_error)?;
+        std::fs::write(&path, bytes).map_err(export_error)?;
+        Ok(Some(path))
+    } else {
+        // Reusing an export directory must not retain an earlier GPU run's metadata.
+        match std::fs::remove_file(&path) {
+            Ok(()) => (),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (),
+            Err(error) => return Err(export_error(error)),
+        }
+        Ok(None)
+    }
+}
+
 fn export_error(error: impl std::fmt::Display) -> IpcError {
     IpcError::new(ErrorCode::ExportFailed, error.to_string())
 }
@@ -439,6 +489,42 @@ fn filter_error(error: FiltersError) -> IpcError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn provenance_records_actual_acceleration_and_clears_previous_gpu_metadata() {
+        use secs_types::compute::{ComputeBackend, ComputeReport, ComputeStage};
+        let folder =
+            std::env::temp_dir().join(format!("secs-compute-export-{}", std::process::id()));
+        std::fs::create_dir_all(&folder).unwrap();
+        assert!(
+            write_compute_provenance(&folder, Some(&ComputeReport::default()))
+                .unwrap()
+                .is_none()
+        );
+        let mut report = ComputeReport {
+            backend: ComputeBackend::Cuda,
+            device: Some("Test GPU".into()),
+            stage: Some(ComputeStage::IdealFirSweep),
+            accelerated_systems: 2,
+            ..Default::default()
+        };
+        let path = write_compute_provenance(&folder, Some(&report))
+            .unwrap()
+            .unwrap();
+        let saved: ComputeReport = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(saved, report);
+        report.backend = ComputeBackend::Cpu;
+        report.accelerated_systems = 0;
+        report.cpu_systems = 2;
+        report.fallbacks = 2;
+        write_compute_provenance(&folder, Some(&report)).unwrap();
+        let fallback: ComputeReport =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(fallback, report);
+        assert!(write_compute_provenance(&folder, None).unwrap().is_none());
+        assert!(!path.exists());
+        std::fs::remove_dir_all(folder).unwrap();
+    }
 
     #[test]
     fn mimo_requires_enabled_current_calibration_and_three_measured_positions() {

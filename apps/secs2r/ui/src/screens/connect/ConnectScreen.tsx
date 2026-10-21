@@ -1,3 +1,4 @@
+import { HelpTip } from "../../ui/HelpTip";
 // 연결·점검: choose how to measure, then check every channel's level
 // (upstream steps 1 and 3).
 //
@@ -8,12 +9,11 @@
 import { type ReactNode } from "react";
 import type { PrimaryAction } from "../../app/StepHeader";
 import { errorText } from "../../app/jobs/jobText";
-import { usePrefs } from "../../app/prefs";
 import type { MessageKey } from "../../i18n";
 import type { Translate } from "../../i18n/react";
 import { useNumber, useT } from "../../i18n/react";
 import type { MeasureDevice } from "../../ipc/bindings/MeasureDevice";
-import { Advanced, Button, Card, ErrorNotice, Icon, IconButton, LevelMeter, NumberField, Section, Segmented, Select, StatusPill, Tooltip, type Option, type PillTone } from "../../ui";
+import { Advanced, Button, Card, ErrorNotice, Icon, IconButton, LevelMeter, NumberField, Section, Segmented, Select, StatusPill, type Option, type PillTone } from "../../ui";
 import { roleCode, roleKind } from "../../ui/maps/geometry";
 import { roleName } from "../system/text";
 import { MicMeterPanel, type MicMeterView } from "./MicMeterPanel";
@@ -133,12 +133,11 @@ export function connectHeader(view: ConnectView, actions: ConnectActions, t: Tra
 function MethodCard({ view, actions }: { view: ConnectView; actions: ConnectActions }) {
   const t = useT();
   return (
-    <Card title={t("connect.method.title")} description={view.path === null ? t("connect.method.description") : undefined} data-ui="connect.method.card">
+    <Card title={t("connect.method.title")} help={<>{t("connect.method.description")}<ul>{PATHS.map((path) => <li key={path}><strong>{t(PATH_TEXT[path].name)}</strong>: {t(PATH_TEXT[path].needs)}</li>)}</ul></>} data-ui="connect.method.card">
       <div className={view.path === null ? "connect-methods" : "connect-methods connect-methods--compact"} role="group" aria-label={t("connect.method.title")} data-ui="connect.method">
         {PATHS.map((path) => {
           const status = pathStatus(t, view, path);
           const current = view.path === path;
-          const needs = t(PATH_TEXT[path].needs);
           const button = (
             <button
               key={path}
@@ -149,20 +148,12 @@ function MethodCard({ view, actions }: { view: ConnectView; actions: ConnectActi
               onClick={() => !current && actions.choosePath(path)}
             >
               <span className="connect-method__name">{t(PATH_TEXT[path].name)}</span>
-              {view.path === null && <span className="connect-method__needs">{needs}</span>}
               <StatusPill tone={status.tone} className="connect-method__status">
                 {status.text}
               </StatusPill>
             </button>
           );
-          // Once a method is chosen the choices are compact; what each needs moves to its tooltip.
-          return view.path === null ? (
-            button
-          ) : (
-            <Tooltip key={path} content={needs}>
-              {button}
-            </Tooltip>
-          );
+          return button;
         })}
       </div>
     </Card>
@@ -172,9 +163,7 @@ function MethodCard({ view, actions }: { view: ConnectView; actions: ConnectActi
 function MdatCard() {
   const t = useT();
   return (
-    <Card title={t("connect.mdat.title")} data-ui="connect.mdat">
-      <p className="connect-text">{t("connect.mdat.body")}</p>
-    </Card>
+    <Card title={t("connect.mdat.title")} help={t("connect.mdat.body")} data-ui="connect.mdat" />
   );
 }
 
@@ -299,7 +288,6 @@ function deviceOption(t: Translate, device: MeasureDevice, channels: number): Op
 function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectActions }) {
   const t = useT();
   const number = useNumber();
-  const { expert } = usePrefs();
   const settings = view.settings;
   const rew = view.path === "rew";
   const methods = view.methods;
@@ -328,9 +316,10 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
   const cal = view.rew.details.micCalibration;
   // REW measures with its own audio preferences; the screen shows them instead of a choice it could not apply (R7).
   const current = view.rew.details.current;
-  const rewReadout = (id: string, label: string, value: string | null | undefined, hint?: string) => (
+  const rewReadout = (id: string, label: string, value: string | null | undefined, help?: string) => (
     <div className="ui-field" data-ui={id}>
-      <span className="ui-field__label">{label}</span>
+      <span className="ui-field__label" id={`${id}-label`}>{label}</span>
+      <div className="ui-control-help-row">
       {value ? (
         <span className="connect-readout connect-readout--name" title={value}>
           {value}
@@ -340,7 +329,8 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
           <StatusPill>{methods?.rew.reachable ? t("connect.rew.unknown") : t("connect.device.after_rew")}</StatusPill>
         </span>
       )}
-      {hint && <span className="ui-field__hint">{hint}</span>}
+      {help && <HelpTip id={`${id}.help`} labelledBy={`${id}-label`} content={help} />}
+      </div>
     </div>
   );
   return (
@@ -379,14 +369,13 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
           />
         )}
         {rew ? (
-          rewReadout("connect.input_channel", t("connect.input_channel"), current?.input, t("connect.input_channel.hint"))
+          rewReadout("connect.input_channel", t("connect.input_channel"), current?.input)
         ) : (
           <Select
             id="connect.input_channel"
             label={t("connect.input_channel")}
             value={String(settings?.input_channel ?? 1)}
             options={channelOptions}
-            hint={t("connect.input_channel.hint")}
             disabled={inputs.length === 0}
             onChange={(v) => actions.setInputChannel(Number(v))}
           />
@@ -415,7 +404,7 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
             label={t("connect.output_device")}
             value={outputId}
             options={listOf(outputs, "output", outputId)}
-            hint={t("connect.output_device.hint")}
+            help={t("connect.output_device.hint")}
             disabled={outputs.length === 0}
             onChange={actions.setOutputDevice}
           />
@@ -429,7 +418,7 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
           label={t("connect.sweep_length")}
           value={String(sweep)}
           options={sweepOptions}
-          hint={t("connect.sweep_length.hint")}
+          help={t("connect.sweep_length.hint")}
           onChange={(v) => actions.setSweepLength(Number(v))}
         />
         {loopback && (
@@ -438,25 +427,28 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
             label={t("connect.loopback_channel")}
             value={String(settings?.loopback_input_channel ?? 2)}
             options={channelOptions}
-            hint={t("connect.loopback_channel.hint")}
+            help={t("connect.loopback_channel.hint")}
             onChange={(v) => actions.setLoopbackChannel(Number(v))}
           />
         )}
       </div>
-      {expert && !rew && (
-        <Segmented
-          id="connect.share_mode"
-          label={t("connect.share_mode")}
-          value={settings?.share_mode === "exclusive" || settings?.share_mode === "shared" ? settings.share_mode : "auto"}
-          options={[
-            { value: "auto", label: t("connect.share_mode.auto") },
-            { value: "exclusive", label: t("connect.share_mode.exclusive") },
-            { value: "shared", label: t("connect.share_mode.shared") },
-          ]}
-          onChange={actions.setShareMode}
-        />
+      {!rew && (
+        <Advanced id="connect.devices.details" label={t("connect.share_mode")} defaultOpen={!!settings?.share_mode && settings.share_mode !== "auto"}>
+          <Segmented
+            id="connect.share_mode"
+            label={t("connect.share_mode")}
+            hideLabel
+            help={t("connect.share_mode.hint")}
+            value={settings?.share_mode === "exclusive" || settings?.share_mode === "shared" ? settings.share_mode : "auto"}
+            options={[
+              { value: "auto", label: t("connect.share_mode.auto") },
+              { value: "exclusive", label: t("connect.share_mode.exclusive") },
+              { value: "shared", label: t("connect.share_mode.shared") },
+            ]}
+            onChange={actions.setShareMode}
+          />
+        </Advanced>
       )}
-      {expert && !rew && <p className="connect-hint">{t("connect.share_mode.hint")}</p>}
     </Card>
   );
 }
@@ -490,7 +482,7 @@ function LevelCard({ view, actions }: { view: ConnectView; actions: ConnectActio
   const meter: MicMeterView = { input: micInput(t, view), monitor: level.monitor, reading: level.reading };
   const firstMain = roles.find((role) => roleKind(role) !== "sub") ?? roles[0] ?? null;
   return (
-    <Card title={t("connect.level.title")} description={t("connect.level.description")} data-ui="connect.level">
+    <Card title={t("connect.level.title")} help={t("connect.level.description")} description={t("connect.level.target")} data-ui="connect.level">
       <div className="connect-level">
         <ol className="connect-level__rows" aria-label={t("connect.level.rows")}>
           {roles.map((role) => {
@@ -538,7 +530,7 @@ function LevelCard({ view, actions }: { view: ConnectView; actions: ConnectActio
               step={0.5}
               digits={1}
               unit="dBFS"
-              hint={t("connect.level.master.hint")}
+              help={t("connect.level.master.hint")}
               onChange={actions.setMasterLevel}
             />
             <div className="connect-level__playing">
@@ -576,11 +568,10 @@ function LevelCard({ view, actions }: { view: ConnectView; actions: ConnectActio
           )}
           <Advanced id="connect.level.advanced" count={1}>
             <div className="connect-sweep" data-ui="connect.level.sweep">
-              <span className="ui-field__label">{t("connect.sweep.title")}</span>
+              <div className="ui-heading-help"><span className="ui-field__label" id="connect.sweep.title">{t("connect.sweep.title")}</span><HelpTip id="connect.sweep.help" labelledBy="connect.sweep.title" content={t("connect.sweep.hint")} /></div>
               <span className="connect-readout tabular">
                 {view.settings?.sweep_level_dbfs == null ? t("connect.sweep.current.default") : t("connect.sweep.current", { value: number(view.settings.sweep_level_dbfs, 1) })}
               </span>
-              <p className="connect-hint">{t("connect.sweep.hint")}</p>
               <Button
                 size="sm"
                 data-ui="connect.level.sweep.check"

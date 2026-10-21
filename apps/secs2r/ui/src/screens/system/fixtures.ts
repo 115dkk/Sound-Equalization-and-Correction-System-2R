@@ -118,6 +118,7 @@ const sampleSpeakers = SAMPLE_ROLES.map((role, index) => speaker(role, index + 1
 
 /** New project: 2.0, nothing measured, no output device chosen yet. */
 export const newProjectView: SystemView = {
+  outputDeviceState: "unselected",
   config: configOf("2.0", [speaker("L", 1), speaker("R", 2)], ""),
   notices: [],
   dsp: dspOf("camilla"),
@@ -130,6 +131,7 @@ export const newProjectView: SystemView = {
 
 /** The sample 7.1.4 room with two subs on a 16-output interface; three positions measured. */
 export const sampleView: SystemView = {
+  outputDeviceState: "selected",
   config: configOf("7.1.4", sampleSpeakers, "MOTU 16A"),
   notices: [],
   dsp: dspOf("camilla"),
@@ -169,6 +171,7 @@ const invalidNotices: Notice[] = [
 
 /** A custom config with problems: a duplicate output, outputs past the device's 12, a speaker without a band. */
 export const invalidView: SystemView = {
+  outputDeviceState: "selected",
   config: configOf("custom", invalidSpeakers, "Focusrite 18i20"),
   notices: invalidNotices,
   dsp: dspOf("custom", fields(4096, 40960, 16, 8, 8)),

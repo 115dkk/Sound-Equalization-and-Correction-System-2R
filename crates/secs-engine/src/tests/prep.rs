@@ -237,35 +237,80 @@ fn rejects_invalid_measurements_at_every_position_d2() {
     let setup = Setup::new(&case.config);
     let mut set = case.measurements.clone();
     set.positions[1].1[0].1.sample_rate = 44100;
+    let position = set.positions[1].0;
+    let role = set.positions[1].1[0].0.clone();
+    let error = prepare(&set, &case.config, &setup).unwrap_err();
     assert!(matches!(
-        prepare(&set, &case.config, &setup),
-        Err(EngineError::Input(_))
+        &error,
+        EngineError::MeasurementSampleRate {
+            position: p, role: r, actual_hz: 44100, expected_hz: 48000,
+        } if *p == position && r == &role
     ));
+    assert_eq!(
+        error.to_string(),
+        format!("invalid input: position {position} {role}: sample rate 44100 (expected 48000)")
+    );
     let prepared = prepare(&case.measurements, &case.config, &setup).unwrap();
     assert!(matches!(
         long_spectra(&set, &prepared, &[], 2000.0),
-        Err(EngineError::Input(_))
+        Err(EngineError::MeasurementSampleRate {
+            position: p, role: r, actual_hz: 44100, expected_hz: 48000,
+        }) if p == position && r == role
     ));
     let mut config = case.config.clone();
     config.main_position = 99;
+    let error = prepare(&case.measurements, &config, &setup).unwrap_err();
     assert!(matches!(
-        prepare(&case.measurements, &config, &setup),
-        Err(EngineError::Input(_))
+        error,
+        EngineError::MissingReferencePosition { position: 99 }
     ));
+    assert_eq!(error.to_string(), "invalid input: missing main position");
     config = case.config.clone();
     config.mains = vec!["absent".into()];
+    let error = prepare(&case.measurements, &config, &setup).unwrap_err();
     assert!(matches!(
-        prepare(&case.measurements, &config, &setup),
-        Err(EngineError::Input(_))
+        error,
+        EngineError::MissingMainMeasurement { position } if position == config.main_position
     ));
+    assert_eq!(error.to_string(), "invalid input: no measured main");
     for samples in [vec![], vec![f64::NAN], vec![f64::INFINITY]] {
         set = case.measurements.clone();
         set.positions[0].1[0].1.samples = Samples::F64(samples.into());
+        let position = set.positions[0].0;
+        let role = &set.positions[0].1[0].0;
+        let error = prepare(&set, &case.config, &setup).unwrap_err();
+        assert!(matches!(
+            &error,
+            EngineError::InvalidMeasurement { position: p, role: r } if *p == position && r == role
+        ));
+        assert_eq!(
+            error.to_string(),
+            format!("invalid input: position {position} {role}: empty or nonfinite IR")
+        );
+    }
+    for t0 in [f64::NAN, f64::INFINITY] {
+        set = case.measurements.clone();
+        set.positions[0].1[0].1.t0 = t0;
         assert!(matches!(
             prepare(&set, &case.config, &setup),
-            Err(EngineError::Input(_))
+            Err(EngineError::InvalidMeasurement { position, role })
+                if position == set.positions[0].0 && role == set.positions[0].1[0].0
         ));
     }
+    set = case.measurements.clone();
+    let duplicate = set.positions[1].1[0].clone();
+    let position = set.positions[1].0;
+    let role = duplicate.0.clone();
+    set.positions[1].1.push(duplicate);
+    let error = prepare(&set, &case.config, &setup).unwrap_err();
+    assert!(matches!(
+        &error,
+        EngineError::DuplicateMeasurement { position: p, role: r } if *p == position && r == &role
+    ));
+    assert_eq!(
+        error.to_string(),
+        format!("invalid input: position {position}: duplicate role {role}")
+    );
     for ms in [0.0, -1.0, f64::NAN, f64::INFINITY, 0.01] {
         assert!(matches!(
             long_spectra(&case.measurements, &prepared, &[], ms),

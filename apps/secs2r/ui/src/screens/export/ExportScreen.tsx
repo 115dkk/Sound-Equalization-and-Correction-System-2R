@@ -1,3 +1,4 @@
+import { HelpTip } from "../../ui/HelpTip";
 // 내보내기: write what the DSP and REW need. What the correction is (mode,
 // delay, channels, MIMO, RC range), where the files go, and the exports in
 // two groups: the filters for the DSP (the CamillaDSP configuration, the
@@ -176,19 +177,17 @@ function ResultCard({ view, actions }: { view: ExportView; actions: ExportAction
   const t = useT();
   const result = view.results.calibration;
   if (!result) {
-    // The header already says why there is nothing to export; this card says what will appear here.
+    // Show the running job or the action that creates an exportable result.
     return (
       <Card data-ui="export.result" aria-label={t("export.result.title")}>
         {view.computing ? (
           <div className="export-computing" data-ui="export.result.computing">
             <StatusPill tone="busy">{t("frame.status.calibration.computing")}</StatusPill>
-            <p className="export-note">{t("export.result.computing")}</p>
           </div>
         ) : (
           <EmptyState
             id="export.result.empty"
             title={t("export.result.empty")}
-            description={t("export.result.empty.body")}
             action={
               <Button variant="secondary" iconEnd="arrowRight" data-ui="export.go_calibrate" onClick={actions.goToCalibrate}>
                 {t("export.go_calibrate")}
@@ -233,9 +232,8 @@ function ResultCard({ view, actions }: { view: ExportView; actions: ExportAction
 function ResultFacts({ view, result }: { view: ExportView; result: CalibrationSummary }) {
   const t = useT();
   const number = useNumber();
-  const chain = result.chain;
   const mimo = mimoInclusion(view);
-  const roles = [...chain.mains.map((main) => main.role), ...chain.subs.map((sub) => sub.role)].map(roleCode);
+  const roles = [...result.main_roles, ...result.sub_roles].map(roleCode);
   const rc = view.rc.map((notice) => rcText(t, notice, number));
   return (
     <div className="export-facts">
@@ -245,10 +243,10 @@ function ResultFacts({ view, result }: { view: ExportView; result: CalibrationSu
           <span className="tabular">{t("export.result.latency.value", { ms: number(result.latency_ms, 1) })}</span>
         </Fact>
         <Fact label={t("export.result.channels")}>
-          <span className="tabular">{t("export.result.channels.value", { count: chain.mains.length })}</span>
+          <span className="tabular">{t("export.result.channels.value", { count: result.main_roles.length })}</span>
         </Fact>
         <Fact label={t("export.result.subs")}>
-          {chain.subs.length > 0 ? <span className="tabular">{t("export.result.subs.value", { count: chain.subs.length })}</span> : t("export.result.subs.none")}
+          {result.sub_roles.length > 0 ? <span className="tabular">{t("export.result.subs.value", { count: result.sub_roles.length })}</span> : t("export.result.subs.none")}
         </Fact>
       </dl>
       <dl className="export-facts__lines">
@@ -383,10 +381,10 @@ function ExportItem({ kind, view, actions }: { kind: ExportKind; view: ExportVie
   return (
     <section className="export-item" data-ui={`export.kind.${kind}`} aria-labelledby={titleId}>
       <div className="export-item__text">
-        <h4 className="export-item__title" id={titleId}>
-          {t(text.title)}
-        </h4>
-        <p className="export-item__body">{t(text.body)}</p>
+        <div className="ui-heading-help">
+          <h4 className="export-item__title" id={titleId}>{t(text.title)}</h4>
+          <HelpTip id={`export.kind.${kind}.help`} labelledBy={titleId} content={t(text.body)} />
+        </div>
         <p className="export-item__where">
           <Icon name="folder" size={16} />
           <span>{whereText(t, kind, view)}</span>

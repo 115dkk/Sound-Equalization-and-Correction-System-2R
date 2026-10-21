@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { fireEvent, render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { StepState } from "../../app/model";
 import { PrefsScope } from "../../app/prefs";
@@ -107,17 +107,9 @@ const must = (id: string) => {
 };
 const ko = (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) => translate("ko", key, params);
 
-function setup(view: ConnectView, { locale = "ko", expert = false }: { locale?: "ko" | "en"; expert?: boolean } = {}) {
+function setup(view: ConnectView, { locale = "ko" }: { locale?: "ko" | "en" } = {}) {
   const actions = actionsMock();
-  if (expert) {
-    render(
-      <PrefsScope initial={{ locale, theme: "light", expert: true, accent: "default" }}>
-        <ConnectScreen view={view} actions={actions} />
-      </PrefsScope>,
-    );
-  } else {
-    renderWith(<ConnectScreen view={view} actions={actions} />, { locale });
-  }
+  renderWith(<ConnectScreen view={view} actions={actions} />, { locale });
   return actions;
 }
 
@@ -160,7 +152,8 @@ describe("ConnectScreen", () => {
 
   it("says what each method needs while nothing is chosen, and whether it is available", () => {
     setup(emptyView);
-    expect(must("connect.method.native").textContent).toContain(ko("connect.method.native.needs"));
+    fireEvent.click(must("connect.method.card.help"));
+    expect(screen.getByRole("tooltip").textContent).toContain(ko("connect.method.native.needs"));
     expect(must("connect.method.native").textContent).toContain(ko("connect.method.native.ready", { count: 4 }));
     expect(must("connect.method.rew").textContent).toContain(ko("connect.method.rew.off"));
     expect(ui("connect.level")).toBeNull();
@@ -233,7 +226,7 @@ describe("ConnectScreen", () => {
   });
 
   it("sets the devices, the channel and the sweep length", () => {
-    const actions = setup(loopbackView, { expert: true });
+    const actions = setup(loopbackView);
     fireEvent.change(must("connect.input_device"), { target: { value: "wasapi:{0.0.1.00000000}.{51f2}" } });
     expect(actions.setInputDevice).toHaveBeenCalledWith("wasapi:{0.0.1.00000000}.{51f2}");
     fireEvent.change(must("connect.input_channel"), { target: { value: "2" } });
@@ -244,16 +237,32 @@ describe("ConnectScreen", () => {
     expect(actions.setSweepLength).toHaveBeenCalledWith(524288);
     fireEvent.change(must("connect.loopback_channel"), { target: { value: "2" } });
     expect(actions.setLoopbackChannel).toHaveBeenCalledWith(2);
+    fireEvent.click(must("connect.devices.details"));
     fireEvent.click(must("connect.share_mode.exclusive"));
     expect(actions.setShareMode).toHaveBeenCalledWith("exclusive");
     expect(must("connect.sweep_length").textContent).toContain(translate("ko", "connect.sweep.option", { name: "256k", seconds: "5.5" }));
     expect(must("connect.sample_rate").textContent).toContain("48,000 Hz");
   });
 
-  it("keeps the share mode for the expert view and the loopback channel for a cable reference", () => {
+  it("keeps automatic device sharing folded until requested and the loopback channel for a cable reference", () => {
     setup(nativeView);
     expect(ui("connect.share_mode")).toBeNull();
+    fireEvent.click(must("connect.devices.details"));
+    expect(ui("connect.share_mode")).not.toBeNull();
     expect(ui("connect.loopback_channel")).toBeNull();
+  });
+
+  it.each(["exclusive", "shared"] as const)("shows saved %s sharing without changing the setting", (share_mode) => {
+    const actions = setup({ ...nativeView, settings: { ...nativeView.settings!, share_mode } });
+    expect(must("connect.devices.details").getAttribute("aria-expanded")).toBe("true");
+    expect(must(`connect.share_mode.${share_mode}`).getAttribute("aria-checked")).toBe("true");
+    expect(actions.setShareMode).not.toHaveBeenCalled();
+  });
+
+  it("keeps native sharing controls out of REW device settings", () => {
+    setup(rewUntestedView);
+    expect(ui("connect.devices.details")).toBeNull();
+    expect(ui("connect.share_mode")).toBeNull();
   });
 
   it("shows a device enumeration error with its cause and a way to read again", () => {
@@ -310,7 +319,7 @@ describe("ConnectScreen", () => {
     const { rerender } = renderWith(<MicMeterPanel view={view(reading(-30, -12))} />);
     expect(must("connect.mic.peak").textContent).toBe(ko("connect.mic.peak", { value: "−12.0" }));
     rerender(
-      <PrefsScope initial={{ locale: "ko", theme: "light", expert: false, accent: "default" }}>
+      <PrefsScope initial={{ locale: "ko", theme: "light", accent: "default" }}>
         <MicMeterPanel view={view(reading(-28, -0.5))} />
       </PrefsScope>,
     );
@@ -353,7 +362,7 @@ describe("ConnectScreen", () => {
     const header = connectHeader(checking, actionsMock(), t);
     expect(header.primary).toMatchObject({ id: "connect.level.play_all", disabled: true, busy: false });
     render(
-      <PrefsScope initial={{ locale: "ko", theme: "light", expert: false, accent: "default" }}>
+      <PrefsScope initial={{ locale: "ko", theme: "light", accent: "default" }}>
         <StepHeader step="connect" state={connectStepState(checking)} primary={header.primary} status={header.status} />
         <ConnectScreen view={checking} actions={actionsMock()} />
       </PrefsScope>,
@@ -378,7 +387,7 @@ describe("ConnectScreen", () => {
       const header = connectHeader(view, actionsMock(), t);
       const state: StepState = connectStepState(view);
       const { unmount } = render(
-        <PrefsScope initial={{ locale: "ko", theme: "light", expert: true, accent: "default" }}>
+        <PrefsScope initial={{ locale: "ko", theme: "light", accent: "default" }}>
           <StepHeader step="connect" state={state} primary={header.primary} status={header.status} />
           <ConnectScreen view={view} actions={actionsMock()} />
           <MicMeterPanel id="frame.mic" floating view={{ input: null, monitor: "off", reading: null }} onClose={() => {}} />
@@ -386,6 +395,7 @@ describe("ConnectScreen", () => {
       );
       collect();
       if (ui("connect.level.advanced")) fireEvent.click(must("connect.level.advanced"));
+      if (ui("connect.devices.details")) fireEvent.click(must("connect.devices.details"));
       collect();
       unmount();
     }

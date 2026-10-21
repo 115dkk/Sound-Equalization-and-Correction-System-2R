@@ -32,7 +32,6 @@ function readParams(): { prefs: Prefs; only: string[] } {
       theme: params.get("theme") === "dark" ? "dark" : "light",
       locale: params.get("lang") === "en" ? "en" : "ko",
       accent: params.get("accent") === "tutorial" ? "tutorial" : "default",
-      expert: false,
     },
     only: (params.get("only") ?? "").split(",").map((s) => s.trim()).filter(Boolean),
   };

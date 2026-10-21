@@ -7,6 +7,7 @@ import { JobTray } from "../../app/jobs/JobTray";
 import { PrefsScope } from "../../app/prefs";
 import { T0, replay, staticApi } from "../../gallery/frameSpecimens";
 import { translate } from "../../i18n";
+import { ipcError } from "../../ipc/mock";
 import type { Translate } from "../../i18n/react";
 import { renderWith } from "../../test/render";
 import type { PlotScale } from "../../ui";
@@ -53,10 +54,14 @@ type MockActions = { [K in keyof CalibrateActions]: Mock<CalibrateActions[K]> };
 
 function mockActions(): MockActions {
   return {
+    goToMeasurements: vi.fn(),
     calibrate: vi.fn(),
     calibrateSubs: vi.fn(),
     recommendXo: vi.fn(),
     computeMimo: vi.fn(),
+    changeCompute: vi.fn(),
+    refreshCompute: vi.fn(),
+    openGpuHelp: vi.fn(),
     selectTab: vi.fn(),
     selectChannel: vi.fn(),
     selectXoGroup: vi.fn(),
@@ -147,12 +152,11 @@ describe("보정 screen", () => {
     cleanupAll();
     setup(fx.emptyView);
     expect(must("calibrate.verdict.plan").textContent).toContain("3곳");
-    expect(must("calibrate.verdict.plan").textContent).toContain("크로스오버 추천");
     expect(must("calibrate.plot.preview").textContent).toContain("위치 1");
     expect(ui("calibrate.scorecard.card")).toBeNull();
   });
 
-  it("shows every engine note as a sentence, without 전문가 표시 and collapsed, as upstream does", () => {
+  it("keeps every engine note available as a sentence in the collapsed notes", () => {
     setup(fx.splView);
     const notes = must("calibrate.verdict.notes") as HTMLDetailsElement;
     expect(notes.tagName).toBe("DETAILS");
@@ -191,7 +195,7 @@ describe("보정 screen", () => {
     try {
       const actions = mockActions();
       const screenOf = (view: CalibrateView) => (
-        <PrefsScope initial={{ locale: "ko", theme: "light", expert: false, accent: "default" }}>
+        <PrefsScope initial={{ locale: "ko", theme: "light", accent: "default" }}>
           <CalibrateScreen view={view} actions={actions} />
         </PrefsScope>
       );
@@ -230,12 +234,60 @@ describe("보정 screen", () => {
     setup(fx.staleView);
     expect(must("calibrate.verdict.stale").textContent).toContain("보정 설정이 바뀌었습니다");
     cleanupAll();
-    setup(fx.failedView);
+    const actions = setup(fx.failedView);
     const failed = must("calibrate.verdict.failed");
     expect(failed.getAttribute("role")).toBe("alert");
-    expect(failed.textContent).toContain("측정이 맞지 않습니다");
-    expect(failed.textContent).toContain("다시 계산하세요");
-    expect(failed.querySelector("details")?.textContent).toContain("position 2 has no IR");
+    expect(failed.querySelector(".ui-error__cause")?.textContent).toContain("SW2");
+    expect(failed.querySelector(".ui-error__cause")?.textContent).not.toContain("empty or nonfinite IR");
+    expect(failed.querySelector("details")?.textContent).toContain("invalid input: position 2 SW2: empty or nonfinite IR");
+    fireEvent.click(must("calibrate.verdict.failed.measurements"));
+    expect(actions.goToMeasurements).toHaveBeenCalledOnce();
+  });
+
+  it.each(["ko", "en"] as const)("shows generic failures once and offers measurement review only for structured errors (%s)", (locale) => {
+    for (const job of ["calibrate", "recommend_xo"] as const) {
+      const id = job === "calibrate" ? "calibrate.verdict.failed" : "calibrate.xo.failed";
+      setup({ ...fx.emptyView, failure: { job, error: ipcError("engine_input", "unknown solver diagnostic") } }, { locale });
+      expect(must(id).querySelector(".ui-error__cause")?.textContent).toBe(translate(locale, `calibrate.failed.${job}`));
+      expect(ui(`${id}.measurements`)).toBeNull();
+      expect(ui(`${id}.sample_rate`)).toBeNull();
+      cleanupAll();
+    }
+    const actions = setup({ ...fx.emptyView, failure: { job: "recommend_xo", error: ipcError("engine_input", "invalid input: position 1 SW3: sample rate 44100 (expected 48000)", {
+      reason: "measurement_sample_rate", position: "1", role: "SW3", actual_hz: "44100", expected_hz: "48000",
+    }) } }, { locale });
+    const cause = must("calibrate.xo.failed").querySelector(".ui-error__cause")?.textContent ?? "";
+    expect(cause.split(translate(locale, "calibrate.failed.recommend_xo"))).toHaveLength(2);
+    for (const value of ["SW3", "44,100", "48,000"]) expect(cause).toContain(value);
+    expect(must("calibrate.input.details").getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(must("calibrate.xo.failed.sample_rate"));
+    expect(must("calibrate.input.details").getAttribute("aria-expanded")).toBe("true");
+    expect(document.activeElement).toBe(must("calibrate.sample_rate_policy.reject"));
+    expect(actions.goToMeasurements).not.toHaveBeenCalled();
+    expect(actions.changeSetting).not.toHaveBeenCalled();
+    expect(actions.calibrate).not.toHaveBeenCalled();
+    fireEvent.click(must("calibrate.input.details"));
+    fireEvent.click(must("calibrate.xo.failed.sample_rate"));
+    expect(document.activeElement).toBe(must("calibrate.sample_rate_policy.reject"));
+  });
+
+  it("restores the saved conversion policy and forwards an explicit choice without starting a calculation", () => {
+    const actions = setup({ ...fx.emptyView, settings: { ...fx.emptyView.settings, sample_rate_policy: "resample" } });
+    expect(must("calibrate.input.details").getAttribute("aria-expanded")).toBe("true");
+    expect(must("calibrate.sample_rate_policy.resample").getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(must("calibrate.sample_rate_policy.reject"));
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "sample_rate_policy", policy: "reject" });
+    expect(actions.calibrate).not.toHaveBeenCalled();
+  });
+
+  it("sends unsupported resampling rates to measurements instead of reopening the conversion choice", () => {
+    const actions = setup({ ...fx.emptyView, failure: { job: "recommend_xo", error: ipcError("engine_input", "unsupported rate", {
+      reason: "unsupported_resampling_rate", position: "1", role: "SW3", actual_hz: "4000", min_hz: "8000", max_hz: "384000",
+    }) } });
+    expect(ui("calibrate.xo.failed.sample_rate")).toBeNull();
+    fireEvent.click(must("calibrate.xo.failed.measurements"));
+    expect(actions.goToMeasurements).toHaveBeenCalledOnce();
+    expect(must("calibrate.input.details").getAttribute("aria-expanded")).toBe("false");
   });
 
   it("selects tabs and channels, and on XO the channel's group", () => {
@@ -386,6 +438,17 @@ describe("보정 screen", () => {
     }
   });
 
+  it("requires recovery from an unavailable explicit GPU while Automatic remains calculable", () => {
+    const actions = setup(fx.requestedGpuUnavailableView);
+    expect((must("calibrate.mimo.compute") as HTMLButtonElement).disabled).toBe(true);
+    expect((must("calibrate.compute.preference") as HTMLSelectElement).disabled).toBe(false);
+    fireEvent.click(must("calibrate.mimo.compute"));
+    expect(actions.computeMimo).not.toHaveBeenCalled();
+    cleanupAll();
+    setup(fx.runtimeMissingView);
+    expect((must("calibrate.mimo.compute") as HTMLButtonElement).disabled).toBe(false);
+  });
+
   it("asks for a result and three positions before MIMO", () => {
     setup({ ...fx.emptyView, settings: { ...fx.emptyView.settings, mimo_on: true } });
     expect(must("calibrate.mimo.reason").textContent).toContain("먼저 보정 계산");
@@ -396,21 +459,18 @@ describe("보정 screen", () => {
     expect(document.getElementById("calibrate.mimo.on-hint")?.textContent).toBe("측정 위치가 2곳입니다. MIMO는 3곳 이상 필요합니다.");
   });
 
-  it("offers 초고지연 only with 전문가 표시 (U9)", () => {
-    setup(fx.splView);
-    expect(ui("calibrate.mode.ultra")).toBeNull();
-    cleanupAll();
-    render(
-      <PrefsScope initial={{ locale: "ko", theme: "light", expert: true, accent: "default" }}>
-        <CalibrateScreen view={fx.splView} actions={mockActions()} />
-      </PrefsScope>,
-    );
-    expect(ui("calibrate.mode.ultra")).not.toBeNull();
+  it("offers all four modes and shows the saved ultra delay at its own control", () => {
+    const actions = setup(fx.splView);
+    for (const mode of ["zero", "mixed", "linear", "ultra"]) expect(ui(`calibrate.mode.${mode}`)).not.toBeNull();
+    fireEvent.click(must("calibrate.mode.ultra"));
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "mode", mode: "ultra" });
     expect(ui("calibrate.verdict.notes")).not.toBeNull();
     cleanupAll();
-    setup(fx.ultraView);
+    const ultraActions = setup(fx.ultraView);
     expect(ui("calibrate.mode.ultra")?.getAttribute("aria-checked")).toBe("true");
     expect(ui("calibrate.mode.ultra_ms")).not.toBeNull();
+    commitNumber("calibrate.mode.ultra_ms", "150");
+    expect(ultraActions.changeSetting).toHaveBeenCalledWith({ kind: "ultra_ms", ms: 150 });
   });
 
   it("has a header with one primary action and the running job", () => {
@@ -553,9 +613,9 @@ const REACH_IDS = [
   "jobs.history",
 ] as const;
 
-/** The ids drawn by one render (every 고급 open, the target menu open, the expert view). */
-function idsOf(node: ReactNode, expert = false): Set<string> {
-  const { unmount } = render(<PrefsScope initial={{ locale: "ko", theme: "light", expert, accent: "default" }}>{node}</PrefsScope>);
+/** The ids drawn by one render (every 고급 and the target menu open). */
+function idsOf(node: ReactNode): Set<string> {
+  const { unmount } = render(<PrefsScope initial={{ locale: "ko", theme: "light", accent: "default" }}>{node}</PrefsScope>);
   openAdvanced();
   const menu = ui("calibrate.target.menu");
   if (menu) fireEvent.click(menu);
@@ -569,7 +629,7 @@ describe("reach table", () => {
     const seen = new Set<string>();
     const add = (ids: Set<string>) => ids.forEach((id) => seen.add(id));
     const screenOf = (view: CalibrateView, editSub?: string) => <CalibrateScreen view={view} actions={mockActions()} initial={{ editSub }} />;
-    for (const view of Object.values(STATES)) add(idsOf(screenOf(view), true));
+    for (const view of Object.values(STATES)) add(idsOf(screenOf(view)));
     // States that show the rest: a manual upper limit and lower MIMO limit, an infra sub, a group, a fixed sub.
     add(idsOf(screenOf({ ...fx.mimoView, settings: { ...fx.mimoView.settings, rc_hi: 400, mimo_low: 30 } })));
     add(idsOf(screenOf({ ...fx.splView, settings: { ...fx.splView.settings, subs_manual: { SW1: { ...fx.baView.settings.subs_manual.SW2!, mode: "auto", hp_hz: 0, lp_hz: 25 }, SW2: { ...fx.baView.settings.subs_manual.SW2!, mode: "auto", hp_hz: 25, lp_hz: 0 } } } })));

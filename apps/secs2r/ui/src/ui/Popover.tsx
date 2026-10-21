@@ -4,7 +4,7 @@
 // outside, and hand focus back to the button that opened them.
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { Icon, type IconName } from "./Icon";
-import { Portal, placeNear } from "./layer";
+import { Portal, placeNear, isOwnedTooltipTarget } from "./layer";
 
 type Placement = "bottom-start" | "bottom-end" | "right-start";
 
@@ -30,7 +30,7 @@ function useDismiss(open: boolean, onClose: () => void, anchor: RefObject<HTMLEl
     if (!open) return;
     const onPointer = (event: PointerEvent) => {
       const target = event.target as Node;
-      if (panel.current?.contains(target) || anchor.current?.contains(target)) return;
+      if (panel.current?.contains(target) || anchor.current?.contains(target) || isOwnedTooltipTarget(target, [panel.current, anchor.current])) return;
       onClose();
     };
     document.addEventListener("pointerdown", onPointer, true);

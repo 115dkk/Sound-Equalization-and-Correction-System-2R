@@ -1,6 +1,7 @@
 // Adapted from Impulcifer-pip313 crates/impulcifer-jobs/src/registry.rs,
 // commit cac2217 (MIT). This port uses pushed events and one active job per group.
 
+use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -13,6 +14,8 @@ use secs_types::ipc::{
 };
 
 use crate::EventSink;
+
+const TERMINAL_HISTORY_LIMIT: usize = 32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum JobGroup {
@@ -43,6 +46,7 @@ pub(crate) struct JobRegistry {
 #[derive(Debug, Default)]
 struct Inner {
     jobs: Vec<JobRecord>,
+    completed: VecDeque<JobId>,
 }
 #[derive(Debug)]
 struct JobRecord {
@@ -190,7 +194,6 @@ impl JobRegistry {
                     status: JobStatus::Running,
                     cancellable: true,
                     progress: None,
-                    result: None,
                     error: None,
                 },
                 group: job_group,
@@ -311,29 +314,28 @@ impl JobRegistry {
             let Some(job) = inner.jobs.iter_mut().find(|job| job.snapshot.job == id) else {
                 return;
             };
-            match outcome {
-                Ok(_result) if job.cancel.is_cancelled() => {
-                    job.snapshot.status = JobStatus::Cancelled;
-                    job.snapshot.result = None;
-                }
-                Ok(result) => {
-                    job.snapshot.status = JobStatus::Succeeded;
-                    job.snapshot.result = Some(result);
-                }
+            let (status, result, error) = match outcome {
+                Ok(_) if job.cancel.is_cancelled() => (JobStatus::Cancelled, None, None),
+                Ok(result) => (JobStatus::Succeeded, Some(result), None),
                 Err(error) if error.code == ErrorCode::Cancelled || job.cancel.is_cancelled() => {
-                    job.snapshot.status = JobStatus::Cancelled;
-                    job.snapshot.error = Some(error);
+                    (JobStatus::Cancelled, None, Some(error))
                 }
-                Err(error) => {
-                    job.snapshot.status = JobStatus::Failed;
-                    job.snapshot.error = Some(error);
-                }
+                Err(error) => (JobStatus::Failed, None, Some(error)),
+            };
+            job.snapshot.status = status;
+            job.snapshot.cancellable = false;
+            job.snapshot.error = error.clone();
+            inner.completed.push_back(id);
+            while inner.completed.len() > TERMINAL_HISTORY_LIMIT {
+                let oldest = inner
+                    .completed
+                    .pop_front()
+                    .expect("history exceeds its limit");
+                inner.jobs.retain(|record| {
+                    record.snapshot.job != oldest || !record.snapshot.status.is_terminal()
+                });
             }
-            (
-                job.snapshot.status,
-                job.snapshot.result.clone(),
-                job.snapshot.error.clone(),
-            )
+            (status, result, error)
         };
         self.changed.notify_all();
         events.send(JobEvent::Finished {
@@ -433,6 +435,88 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    #[test]
+    fn terminal_history_is_bounded_by_completion_and_active_jobs_keep_their_events() {
+        let registry = JobRegistry::default();
+        let active_events = Arc::new(Events::default());
+        let gate = Arc::new((Mutex::new(false), Condvar::new()));
+        let worker_gate = gate.clone();
+        let active = registry
+            .start(JobKind::Calibrate, active_events.clone(), move |_| {
+                let mut ready = lock(&worker_gate.0);
+                while !*ready {
+                    ready = worker_gate.1.wait(ready).unwrap();
+                }
+                Ok(JobResult::Calibration)
+            })
+            .unwrap();
+        let mut completed = Vec::new();
+        for index in 0..96 {
+            let events = Arc::new(Events::default());
+            let folder = format!("export-{index}");
+            let expected = folder.clone();
+            let job = registry
+                .start(JobKind::Export, events.clone(), move |_| {
+                    Ok(JobResult::Export(ExportResult {
+                        folder,
+                        files: vec!["filter.wav".into()],
+                        stale: false,
+                    }))
+                })
+                .unwrap();
+            let values = events.wait_finished(Duration::from_secs(2));
+            let Some(JobEvent::Finished {
+                status: JobStatus::Succeeded,
+                result: Some(result),
+                ..
+            }) = values.last()
+            else {
+                panic!("finish must be delivered")
+            };
+            assert!(
+                matches!(result.as_ref(), JobResult::Export(value) if value.folder == expected)
+            );
+            completed.push(job.job);
+            let snapshots = registry.snapshots();
+            assert!(
+                snapshots
+                    .iter()
+                    .any(|snapshot| snapshot.job == active.job && !snapshot.status.is_terminal())
+            );
+            assert_eq!(
+                snapshots
+                    .iter()
+                    .filter(|snapshot| snapshot.status.is_terminal())
+                    .count(),
+                completed.len().min(TERMINAL_HISTORY_LIMIT)
+            );
+            assert!(
+                serde_json::to_value(snapshots)
+                    .unwrap()
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|snapshot| snapshot.get("result").is_none())
+            );
+        }
+        assert_eq!(
+            registry.cancel(completed[0]).unwrap_err().code,
+            ErrorCode::JobNotFound
+        );
+        *lock(&gate.0) = true;
+        gate.1.notify_all();
+        let values = active_events.wait_finished(Duration::from_secs(2));
+        assert!(
+            matches!(values.last(), Some(JobEvent::Finished { result: Some(result), .. }) if **result == JobResult::Calibration)
+        );
+        let snapshots = registry.snapshots();
+        assert_eq!(snapshots.len(), TERMINAL_HISTORY_LIMIT);
+        assert!(snapshots.iter().any(|snapshot| snapshot.job == active.job));
+        for id in &completed[completed.len() - (TERMINAL_HISTORY_LIMIT - 1)..] {
+            assert!(snapshots.iter().any(|snapshot| snapshot.job == *id));
+        }
     }
 
     #[test]

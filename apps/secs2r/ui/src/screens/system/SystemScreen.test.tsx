@@ -24,7 +24,6 @@ export const REACH_IDS = [
   "system.patch",
   "system.patch.L.role",
   "system.patch.L.size",
-  "system.patch.L.band",
   "system.patch.L.out",
   "system.patch.L.pol",
   "system.patch.L.remove",
@@ -68,6 +67,7 @@ export const REACH_IDS = [
 
 function actionsMock(token: string | null = "undo-7") {
   return {
+    configureMeasurement: vi.fn(),
     applyPreset: vi.fn(async () => token),
     setSubCount: vi.fn(async () => token),
     setRole: vi.fn(),
@@ -95,17 +95,9 @@ const must = (id: string) => {
   return node;
 };
 
-function setup(view: SystemView, { locale = "ko", expert = false }: { locale?: "ko" | "en"; expert?: boolean } = {}) {
+function setup(view: SystemView, { locale = "ko" }: { locale?: "ko" | "en" } = {}) {
   const actions = actionsMock(view.positionsDone.length > 0 ? "undo-7" : null);
-  if (expert) {
-    render(
-      <PrefsScope initial={{ locale, theme: "light", expert: true, accent: "default" }}>
-        <SystemScreen view={view} actions={actions} />
-      </PrefsScope>,
-    );
-  } else {
-    renderWith(<SystemScreen view={view} actions={actions} />, { locale });
-  }
+  renderWith(<SystemScreen view={view} actions={actions} />, { locale });
   return actions;
 }
 
@@ -236,6 +228,11 @@ describe("SystemScreen", () => {
 
   it("runs the sheet actions", () => {
     const actions = setup(sampleView);
+    const save = must("system.patch.csv");
+    const help = screen.getByRole("button", { name: `${translate("ko", "system.patch.csv")} ${translate("ko", "ui.help")}` });
+    fireEvent.click(help);
+    expect(screen.getByRole("tooltip").id).toBe(save.getAttribute("aria-describedby"));
+    expect(actions.savePatchSheet).not.toHaveBeenCalled();
     fireEvent.click(must("system.patch.add"));
     fireEvent.click(must("system.patch.renumber"));
     fireEvent.click(must("system.patch.csv"));
@@ -286,16 +283,39 @@ describe("SystemScreen", () => {
     expect(must("system.estimate").textContent).toContain(translate("ko", "system.estimate.total", { count: 9, time: "약 22분 40초" }));
   });
 
-  it("shows the band column and the file's role names in the expert view", () => {
-    setup(sampleView, { expert: true });
-    expect(must("system.patch.SW1.band").textContent).toBe("SUB");
-    expect(must("system.speaker").textContent).toContain(translate("ko", "system.speaker.internal", { role: "L" }));
+  it("keeps multiband details and file role names available without a global display mode", () => {
+    const speaker = invalidView.config.speakers.find((item) => item.bands.length > 1)!;
+    setup({ ...newProjectView, config: configOf("custom", [speaker], "") });
+    expect(document.querySelectorAll(".system-speaker__band")).toHaveLength(speaker.bands.length);
+    expect(document.querySelector(".system-speaker__bands")?.textContent).toContain("LF");
+    expect(document.querySelector(".system-speaker__bands")?.textContent).toContain("MF");
+    fireEvent.click(must("system.speaker.help"));
+    expect(screen.getByRole("tooltip").textContent).toContain(translate("ko", "system.speaker.internal", { role: speaker.role }));
   });
 
   it("shows the resolved measurement output name instead of its ID", () => {
     setup({ ...sampleView, config: { ...sampleView.config, device: "wasapi:{0.0.0.00000000}.{hdmi}" }, outputDeviceName: "AVR (HDMI)" });
     expect(must("system.device").textContent).toContain("AVR (HDMI)");
     expect(must("system.device").textContent).not.toContain("wasapi:");
+  });
+
+  it.each(["unselected", "unavailable"] as const)("opens the supplied setup action for %s measurement output", (outputDeviceState) => {
+    const actions = setup({ ...newProjectView, outputDeviceState });
+    expect(must("system.device.status").classList.contains("system-device__name--warning")).toBe(true);
+    fireEvent.click(must("system.device.configure"));
+    expect(actions.configureMeasurement).toHaveBeenCalledOnce();
+  });
+
+  it.each(["default", "checking", "rew_unknown", "not_required"] as const)("keeps %s distinct from a missing device and ignores the stored hardware name", (outputDeviceState) => {
+    const actions = { ...actionsMock(), configureMeasurement: outputDeviceState === "default" ? vi.fn() : null };
+    renderWith(<SystemScreen view={{ ...sampleView, outputDeviceState, outputChannels: null }} actions={actions} />);
+    if (outputDeviceState === "not_required") {
+      expect(ui("system.device")).toBeNull();
+      return;
+    }
+    expect(must("system.device.status").classList.contains("system-device__name--warning")).toBe(false);
+    expect(must("system.device").textContent).not.toContain(sampleView.config.device);
+    expect(ui("system.device.configure") !== null).toBe(outputDeviceState === "default");
   });
 
   it("keeps incomplete setup editable and marks valid setup done", () => {
@@ -329,14 +349,10 @@ describe("SystemScreen", () => {
     const seen = new Set<string>();
     const collect = () => document.querySelectorAll("[data-ui]").forEach((node) => seen.add(node.getAttribute("data-ui") ?? ""));
     const custom: SystemView = { ...newProjectView, config: configOf("custom", [speaker("L", 1), speaker("R", 2), speaker("Ext", 3)], "") };
-    for (const [view, expert] of [
-      [sampleView, true],
-      [invalidView, false],
-      [custom, false],
-    ] as const) {
+    for (const view of [sampleView, invalidView, custom]) {
       const header = systemHeader(view, actionsMock(), (key, params) => translate("ko", key, params));
       const { unmount } = render(
-        <PrefsScope initial={{ locale: "ko", theme: "light", expert, accent: "default" }}>
+        <PrefsScope initial={{ locale: "ko", theme: "light", accent: "default" }}>
           <StepHeader step="system" state={systemStepState(view)} primary={header.primary} status={header.status} />
           <SystemScreen view={view} actions={actionsMock()} />
         </PrefsScope>,
@@ -348,7 +364,7 @@ describe("SystemScreen", () => {
       unmount();
     }
     // Only the missing project blocks 시스템 itself; invalid configuration stays editable.
-    const empty = render(<PrefsScope initial={{ locale: "ko", theme: "light", expert: false, accent: "default" }}><StepHeader step="system" state={{ status: "blocked", reason: "no_project" }} /></PrefsScope>);
+    const empty = render(<PrefsScope initial={{ locale: "ko", theme: "light", accent: "default" }}><StepHeader step="system" state={{ status: "blocked", reason: "no_project" }} /></PrefsScope>);
     collect();
     empty.unmount();
     expect(REACH_IDS.filter((id) => !seen.has(id))).toEqual([]);

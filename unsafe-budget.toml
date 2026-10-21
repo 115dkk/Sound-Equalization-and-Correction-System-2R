@@ -9,3 +9,5 @@
 # probes (memory, keep-awake, thread priority) through safe wrapper crates.
 # First-party unsafe stays at 0, as in Impulcifer's impulcifer-sys-win.
 secs-sys = 0
+# ADR 0008: optional CUDA/cuBLAS/cuSOLVER dynamic-loader and native-call leaf.
+secs-cuda-sys = 80

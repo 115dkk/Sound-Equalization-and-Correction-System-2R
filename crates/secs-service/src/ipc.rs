@@ -11,8 +11,10 @@ pub(crate) fn dispatch(
 ) -> Envelope {
     let response = match request {
         Request::Bootstrap => Ok(Response::Bootstrap(service.bootstrap())),
+        Request::ComputeStatus => Ok(Response::ComputeStatus(service.acceleration().status)),
         Request::ProjectNew(params) => {
-            let response = lock(&service.session)
+            let mut session = lock(&service.session);
+            let response = session
                 .create(
                     params.path.into(),
                     &params.preset,
@@ -28,7 +30,8 @@ pub(crate) fn dispatch(
             response
         }
         Request::ProjectOpen(params) => {
-            let response = lock(&service.session)
+            let mut session = lock(&service.session);
+            let response = session
                 .open(params.path.into())
                 .map(Response::ProjectOpen)
                 .map_err(IpcError::from);
@@ -162,6 +165,7 @@ pub(crate) fn dispatch(
             .dialog_open_file(params)
             .map(Response::DialogOpenFile),
         Request::OpenFolder(params) => service.open_folder(params).map(Response::OpenFolder),
+        Request::OpenGpuHelp => service.deps.host.open_gpu_help().map(Response::OpenGpuHelp),
         Request::LevelMonitorStart(params) => service
             .start_level_monitor(params, events)
             .map(Response::LevelMonitorStart),

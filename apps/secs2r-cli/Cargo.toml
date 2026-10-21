@@ -17,6 +17,7 @@ path = "src/main.rs"
 
 [dependencies]
 secs-service.workspace = true
+secs-gpu = { path = "../../crates/secs-gpu" }
 secs-types.workspace = true
 secs-compute.workspace = true
 secs-rew = { path = "../../crates/secs-rew" }

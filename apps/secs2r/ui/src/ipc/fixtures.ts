@@ -173,17 +173,33 @@ export const calibrationSummary: CalibrationSummary = {
   scorecard,
   latency_ms: 9.8,
   notes: [{ code: "rc_limit", params: { hz: "310", auto: "true", schroeder_hz: "310" } }],
-  chain: signalChain,
+  main_roles: signalChain.mains.map((main) => main.role),
+  sub_roles: signalChain.subs.map((sub) => sub.role),
+};
+
+export const computeStatus: import("./bindings/ComputeStatus").ComputeStatus = {
+  preference: "auto", selected: "cpu", reason: "no_device", gpu_available: false, device: null, devices: [],
+};
+export const gpuDevice: import("./bindings/GpuDeviceInfo").GpuDeviceInfo = {
+  id: 0, name: "NVIDIA GeForce RTX 2080 SUPER", compute_major: 7, compute_minor: 5, multiprocessors: 48,
+  memory_bytes: 8589934592, integrated: false, supported: true, recommended: true, reason: "recommended",
+};
+export const gpuComputeStatus: import("./bindings/ComputeStatus").ComputeStatus = {
+  preference: "auto", selected: "cuda", reason: "recommended", gpu_available: true, device: gpuDevice, devices: [gpuDevice],
+};
+export const cpuComputeReport: import("./bindings/ComputeReport").ComputeReport = {
+  requested: "auto", backend: "cpu", device: null, stage: null, accelerated_systems: 0, cpu_systems: 11, fallbacks: 0, reason: "no_device",
 };
 
 export const mimoSummary: MimoSummary = {
+  compute: cpuComputeReport,
   stale: false,
   kind: "iir",
   fsiso: 150,
   support_count: 24,
   fir_taps_total: 0,
   notes: [],
-  paths: { fsiso: 150, paths: [] },
+  input_count: 0,
 };
 
 export const resultsSummary: ResultsSummary = { calibration: calibrationSummary, mimo: mimoSummary };
@@ -287,6 +303,7 @@ export const target: TargetResult = {
   ],
 };
 export const calibrationSettings: CalibrationSettings = {
+  sample_rate_policy: "reject",
   mode: "mixed", rc_lo: 20, rc_hi: null, room_volume_m3: 62.6, room_dims_m: [5.2, 4.3, 2.8],
   mimo_on: false, fsiso: 150, mimo_low: null, mimo_max_supports: 0, mimo_fir: false,
   xo: { front: 80, center: 100, surround: 80, back: 80, top: 100 }, xo_rec: {}, ultra_ms: 100,
@@ -297,7 +314,7 @@ export const subEntry: SubEntry = {
   mode: "auto", bundle: "A", gain_db: 0, delay_ms: 0, polarity: 1, allpass: [], mimo_support: true,
   hp_hz: 0, lp_hz: 0, peq: [], hp_type: "LR24", lp_type: "LR24", dba_row: "front",
 };
-export const appSettings: AppSettings = { language: "ko", theme: "system", icon: "expert", expert_display: false, recent_projects: [], last_window_size: null };
+export const appSettings: AppSettings = { compute: "auto", language: "ko", theme: "system", icon: "expert", recent_projects: [], last_window_size: null };
 export const rewInfo: RewInfoResult = {
   executable_path: "C:/Program Files/REW/roomeqwizard.exe", ...rewStatus, version: "5.40", blocking: false,
   input_device: "UMIK-1", output_device: "AVR (HDMI)", input: "Input 1",

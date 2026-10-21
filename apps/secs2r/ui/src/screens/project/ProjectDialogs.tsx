@@ -93,6 +93,7 @@ function NewProjectDialog({
             id="project.new.start"
             data-autofocus
             label={t("project.new.start")}
+            help={t(sample ? "project.new.start.sample.hint" : "project.new.start.empty.hint")}
             value={start}
             options={[
               { value: "empty", label: t("project.new.start.empty") },
@@ -100,7 +101,6 @@ function NewProjectDialog({
             ]}
             onChange={setStart}
           />
-          <p className="ui-field__hint">{t(sample ? "project.new.start.sample.hint" : "project.new.start.empty.hint")}</p>
         </div>
         <div className="project-form__row">
           <Segmented
@@ -116,7 +116,6 @@ function NewProjectDialog({
           <Stepper id="project.new.subs" label={t("project.new.subs")} value={sample ? SAMPLE.subCount : subs} min={0} max={8} disabled={sample} onChange={setSubs} />
         </div>
         {sample && <p className="ui-field__hint">{t("project.new.fixed")}</p>}
-        <p className="project-form__note">{t("project.new.where")}</p>
         <Problem view={view} />
       </div>
     </Dialog>
@@ -171,7 +170,6 @@ function UnsavedDialog({
           {dialog.fileName ? t("project.unsaved.body", { name: dialog.fileName }) : t("project.unsaved.body_untitled")}{" "}
           {t(dialog.reason !== "tutorial" ? "project.unsaved.loss" : dialog.fileName ? "project.unsaved.loss_tutorial" : "project.unsaved.loss_tutorial_untitled")}
         </p>
-        {!dialog.fileName && <p className="ui-field__hint">{t("project.unsaved.where")}</p>}
         <Problem view={view} />
       </div>
     </Dialog>
@@ -181,10 +179,8 @@ function UnsavedDialog({
 /* ── 튜토리얼 시작 ──────────────────────────────────────────────────────── */
 
 const TUTORIAL_POINTS: readonly MessageKey[] = [
-  "project.tutorial.point.project",
   "project.tutorial.point.measure",
   "project.tutorial.point.blocked",
-  "project.tutorial.point.return",
 ];
 
 function TutorialStartDialog({ dialog, actions, inline }: { dialog: Extract<ProjectDialog, { kind: "tutorial" }>; actions: ProjectDialogsActions; inline?: boolean | undefined }) {

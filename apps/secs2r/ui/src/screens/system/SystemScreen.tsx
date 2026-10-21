@@ -1,3 +1,4 @@
+import { HelpTip } from "../../ui/HelpTip";
 // 시스템: speakers, outputs, the export DSP and the measurement arrangement,
 // decided together before anything is connected (upstream steps 2 and 4).
 //
@@ -8,7 +9,6 @@
 // measurements ask first and offer undo (U5).
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import type { PrimaryAction } from "../../app/StepHeader";
-import { usePrefs } from "../../app/prefs";
 import type { Translate } from "../../i18n/react";
 import { useNumber, useT } from "../../i18n/react";
 import type { ConfigSpeaker } from "../../ipc/bindings/ConfigSpeaker";
@@ -234,7 +234,7 @@ function ConfigCard({
           onChange={(count) => ask({ kind: "subs", count })}
         />
       </div>
-      <DeviceLine view={view} />
+      <DeviceLine view={view} configure={actions.configureMeasurement} />
       {view.notices.length > 0 && <NoticeList view={view} />}
       <PatchTable view={view} actions={actions} selected={selected} onSelect={onSelect} />
       <Summary view={view} />
@@ -245,9 +245,12 @@ function ConfigCard({
         <Button variant="quiet" data-ui="system.patch.renumber" onClick={actions.renumberOutputs}>
           {t("system.patch.renumber")}
         </Button>
-        <Button variant="quiet" icon="save" data-ui="system.patch.csv" onClick={actions.savePatchSheet}>
-          {t("system.patch.csv")}
-        </Button>
+        <div className="system-action-help">
+          <Button variant="quiet" icon="save" data-ui="system.patch.csv" aria-describedby="system.patch.csv.help-content" onClick={actions.savePatchSheet}>
+            {t("system.patch.csv")}
+          </Button>
+          <HelpTip id="system.patch.csv.help" label={t("system.patch.csv")} content={t("system.patch.csv.help")} />
+        </div>
         <Button variant="quiet" data-ui="system.preset.empty" onClick={() => ask({ kind: "preset", preset: "custom" })}>
           {t("system.preset.empty")}
         </Button>
@@ -256,12 +259,14 @@ function ConfigCard({
   );
 }
 
-function DeviceLine({ view }: { view: SystemView }) {
+function DeviceLine({ view, configure }: { view: SystemView; configure: SystemActions["configureMeasurement"] }) {
   const t = useT();
+  const state = view.outputDeviceState;
+  if (state === "not_required") return null;
+  const warning = state === "unselected" || state === "unavailable";
   const channels = view.outputChannels;
   const over = channels !== null && view.config.summary.max_channel > channels;
-  const pill =
-    channels === null ? (
+  const pill = state !== "selected" && state !== "default" ? null : channels === null ? (
       <StatusPill>{t("system.device.unknown")}</StatusPill>
     ) : over ? (
       <StatusPill tone="danger">{t("system.device.over", { count: channels })}</StatusPill>
@@ -271,10 +276,21 @@ function DeviceLine({ view }: { view: SystemView }) {
   return (
     <div className="system-device" data-ui="system.device">
       <span className="system-device__label">{t("system.device.label")}</span>
-      <span className={view.config.device ? "system-device__name" : "system-device__name system-device__name--none"}>
-        {(view.outputDeviceName ?? view.config.device) || t("system.device.none")}
+      <span className={`system-device__name${warning ? " system-device__name--warning" : ""}`} data-ui="system.device.status">
+        {warning && <Icon name="warning" size={16} />}
+        {state === "unselected" ? t("system.device.none")
+          : state === "unavailable" ? t("system.device.unavailable")
+            : state === "default" ? t("connect.device.default")
+              : state === "checking" ? t("system.device.checking")
+                : state === "rew_unknown" ? t("system.device.rew_unknown")
+                  : view.outputDeviceName ?? view.config.device}
       </span>
       {pill}
+      {configure && (
+        <Button variant="quiet" className="system-device__configure" data-ui="system.device.configure" onClick={configure}>
+          {t("system.device.configure")}
+        </Button>
+      )}
     </div>
   );
 }
@@ -322,7 +338,6 @@ function PatchTable({
   onSelect: (index: number) => void;
 }) {
   const t = useT();
-  const { expert } = usePrefs();
   const { config, outputChannels, outputNames } = view;
   const duplicates = new Set(config.summary.duplicate_outputs);
   // Upstream lists 1…channels (64 while the device is unknown) and adds the stored value when it is past the end.
@@ -382,20 +397,6 @@ function PatchTable({
           </CellKeys>
         ),
     },
-    ...(expert
-      ? [
-          {
-            key: "band",
-            header: t("system.patch.band"),
-            width: "5.5rem",
-            cell: ({ speaker }: Row) => (
-              <span className="system-bands" data-ui={`system.patch.${speaker.role}.band`}>
-                {speaker.bands.length === 0 ? "—" : speaker.bands.map((b) => b.band).join(" / ")}
-              </span>
-            ),
-          } satisfies Column<Row>,
-        ]
-      : []),
     {
       key: "out",
       header: t("system.patch.output"),
@@ -548,7 +549,6 @@ function RoomCard({ view, selected, onSelect }: { view: SystemView; selected: nu
 
 function SpeakerDetail({ view, index }: { view: SystemView; index: number | null }) {
   const t = useT();
-  const { expert } = usePrefs();
   const speaker = index === null ? undefined : view.config.speakers[index];
   if (!speaker) {
     return (
@@ -562,7 +562,8 @@ function SpeakerDetail({ view, index }: { view: SystemView; index: number | null
   return (
     <div className="system-speaker" data-ui="system.speaker" aria-live="polite">
       <div className="system-speaker__head">
-        <span className="system-speaker__name">{roleName(t, speaker.role)}</span>
+        <span className="system-speaker__name" id="system.speaker.name">{roleName(t, speaker.role)}</span>
+        <HelpTip id="system.speaker.help" labelledBy="system.speaker.name" content={<>{t(note)}<p>{t("system.speaker.internal", { role: speaker.role })}</p></>} />
         <span className="system-chip">{roleCode(speaker.role)}</span>
         <StatusPill>{t(KIND_NAME[kind])}</StatusPill>
       </div>
@@ -581,8 +582,6 @@ function SpeakerDetail({ view, index }: { view: SystemView; index: number | null
           ))}
         </ul>
       )}
-      <p className="system-speaker__note">{t(note)}</p>
-      {expert && <p className="system-speaker__note tabular">{t("system.speaker.internal", { role: speaker.role })}</p>}
     </div>
   );
 }
@@ -596,7 +595,7 @@ function ArrangementCard({ view, actions, ask }: { view: SystemView; actions: Sy
   const points: MicPoint[] | undefined = arrangement?.points.map((p) => ({ x: p.x_cm, y: p.y_cm, h: p.height > 0 ? 1 : p.height < 0 ? -1 : 0 }));
   const counts = layout.arrangements.length > 0 ? layout.arrangements.map((a) => a.count) : [...ARRANGEMENT_COUNTS];
   return (
-    <Card className="system-layout" title={t("system.layout.title")} description={t("system.layout.description")} data-ui="system.layout">
+    <Card className="system-layout" title={t("system.layout.title")} help={t("system.layout.description")} data-ui="system.layout">
       <div className="system-arrangements" role="group" aria-label={t("system.layout.title")} data-ui="system.arrangement">
         {counts.map((count) => {
           const current = count === layout.count;
@@ -660,7 +659,8 @@ function MeasureOptions({ view, actions }: { view: SystemView; actions: SystemAc
           { value: "loopback", label: t("system.timing.loopback") },
           { value: "none", label: t("system.timing.none") },
         ]}
-        hint={t(timingHint[timing.reference === "loopback" || timing.reference === "none" ? timing.reference : "acoustic"])}
+        help={t(timingHint[timing.reference === "loopback" || timing.reference === "none" ? timing.reference : "acoustic"])}
+        hint={timing.reference === "acoustic" ? t("measure.options.repeats.acoustic") : undefined}
         onChange={(reference) => actions.setTiming({ ...timing, reference, role: refRole })}
       />
       {timing.reference === "loopback" ? (
@@ -716,15 +716,15 @@ function DspCard({ view, actions }: { view: SystemView; actions: SystemActions }
   // Upstream fir_tap_label: the linear-phase delay of N taps at 48 kHz, (N − 1) / 2 samples.
   const tapLabel = (n: number) => t("system.dsp.taps.option", { taps: number(n), ms: number(((n - 1) / 48000 / 2) * 1000, 1) });
   return (
-    <Card className="system-dsp" title={t("system.dsp.title")} description={t("system.dsp.description")} data-ui="system.dsp">
+    <Card className="system-dsp" title={t("system.dsp.title")} help={<>{t("system.dsp.description")}<p>{t("system.dsp.use")}</p></>} data-ui="system.dsp">
       <Select
         id="system.dsp.device"
         label={t("system.dsp.device")}
+        help={t("system.dsp.custom_hint")}
         value={dsp.profile}
         options={keys.map((key) => ({ value: key, label: presetName(key) }))}
         onChange={(key) => actions.setDspPreset(key)}
       />
-      <p className="system-dsp__use">{t("system.dsp.use")}</p>
       <Advanced id="system.dsp.advanced" count={5}>
         <div className="system-dsp__fields">
           <Select id="system.dsp.fir_taps" label={t("system.dsp.fir_taps")} value={String(dsp.fields.fir_taps)} options={taps.map((n) => ({ value: String(n), label: tapLabel(n) }))} onChange={(v) => edit({ fir_taps: Number(v) })} />
@@ -736,7 +736,6 @@ function DspCard({ view, actions }: { view: SystemView; actions: SystemActions }
         <p className="system-dsp__note tabular" data-ui="system.dsp.note">
           {t("system.dsp.note", { window: number(dsp.window_ms, 0), resolution: number(dsp.resolution_hz, 1) })}
         </p>
-        <p className="system-dsp__note">{t("system.dsp.custom_hint")}</p>
       </Advanced>
     </Card>
   );

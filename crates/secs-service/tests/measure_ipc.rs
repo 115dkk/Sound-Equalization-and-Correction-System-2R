@@ -247,7 +247,10 @@ fn calibration(service: &Service) -> CalibrationSummary {
     ) else {
         panic!()
     };
-    let JobResult::Calibration(result) = succeeded(&events, job.job) else {
+    let JobResult::Calibration = succeeded(&events, job.job) else {
+        panic!()
+    };
+    let Response::Results(result) = call(service, Request::Results) else {
         panic!()
     };
     result.calibration.unwrap()

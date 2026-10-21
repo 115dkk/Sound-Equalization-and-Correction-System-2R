@@ -2,7 +2,6 @@
 import type { ChannelScore } from "./ChannelScore";
 import type { Mode } from "./Mode";
 import type { Notice } from "./Notice";
-import type { SignalChain } from "./SignalChain";
 import type { VerdictSummary } from "./VerdictSummary";
 
 /**
@@ -42,6 +41,10 @@ latency_ms: number,
  */
 notes: Array<Notice>, 
 /**
- * Designed DSP signal chain used by exporters.
+ * Main-channel roles in design order; filter coefficients stay in Rust.
  */
-chain: SignalChain, };
+main_roles: Array<string>, 
+/**
+ * Subwoofer roles in design order; filter coefficients stay in Rust.
+ */
+sub_roles: Array<string>, };

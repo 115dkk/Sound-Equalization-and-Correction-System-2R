@@ -1,14 +1,16 @@
+import { HelpTip } from "../../ui/HelpTip";
 // The settings that change the correction, in five sections grouped by what
 // they change: 모드, 보정 범위, 크로스오버, 서브 정렬 (BA), MIMO. Every
 // change goes through `changeSetting` (calibration_settings_set) and only
-// marks the result stale. Detail sits under 고급; the 초고지연 mode shows
-// with 전문가 표시 (U9).
-import { useEffect, useState, type ReactNode } from "react";
+// marks the result stale. Detail sits under 고급; every correction mode is
+// available in the mode selector.
+import { ComputeControl, ComputeResult } from "./ComputeControl";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { errorText } from "../../app/jobs/jobText";
-import { usePrefs } from "../../app/prefs";
 import { useNumber, useT } from "../../i18n/react";
 import type { BandType } from "../../ipc/bindings/BandType";
 import type { CalibrationSettings } from "../../ipc/bindings/CalibrationSettings";
+import type { SampleRatePolicy } from "../../ipc/bindings/SampleRatePolicy";
 import { Advanced, Button, Card, ErrorNotice, NumberField, Segmented, Select, Toggle, type Option } from "../../ui";
 import { Icon } from "../../ui/Icon";
 import { roleCode } from "../../ui/maps/geometry";
@@ -30,23 +32,63 @@ import { FAILED_TEXT, MODES, MODE_EFFECT, MODE_NAME, bandTypeText, filterSpec, g
 import type { BandTypeChoice, CalibrateActions, CalibrateJob, CalibrateView, SettingEdit, SubLayout, SubModeChoice } from "./types";
 
 type Props = { view: CalibrateView; actions: CalibrateActions };
+type FailureProps = Props & { onSampleRateSettings: () => void };
 
-function SettingsCard({ id, title, description, children }: { id: string; title: string; description: string; children: ReactNode }) {
+function SettingsCard({ id, title, help, children }: { id: string; title: string; help: ReactNode; children: ReactNode }) {
   return (
-    <Card title={title} description={description} className="calibrate-settings__card" data-ui={`calibrate.settings.${id}`} id={`calibrate.settings.${id}`}>
+    <Card title={title} help={help} className="calibrate-settings__card" data-ui={`calibrate.settings.${id}`} id={`calibrate.settings.${id}`}>
       {children}
     </Card>
   );
 }
 
 /** The last failure of a section's job: cause, next step and 자세히. A running job shows on its busy button and in the header. */
-function JobFailure({ view, job, id }: { view: CalibrateView; job: CalibrateJob; id: string }) {
+function JobFailure({ view, actions, onSampleRateSettings, job, id }: FailureProps & { job: CalibrateJob; id: string }) {
   const t = useT();
   if (view.failure?.job === job) {
     const text = errorText(t, view.failure.error);
-    return <ErrorNotice id={`${id}.failed`} cause={`${t(FAILED_TEXT[job])} ${text.cause}`} next={text.next} detail={view.failure.error.detail} code={view.failure.error.code} />;
+    const sampleRate = view.failure.error.params.reason === "measurement_sample_rate";
+    return <ErrorNotice id={`${id}.failed`}
+      cause={text.generic ? t(FAILED_TEXT[job]) : `${t(FAILED_TEXT[job])} ${text.cause}`}
+      next={text.next} detail={view.failure.error.detail} code={view.failure.error.code}
+      action={view.failure.error.code === "engine_input" && !text.generic ? (
+        <Button variant="secondary" data-ui={`${id}.failed.${sampleRate ? "sample_rate" : "measurements"}`} onClick={sampleRate ? onSampleRateSettings : actions.goToMeasurements}>
+          {t(sampleRate ? "calibrate.failed.sample_rate_settings" : "calibrate.failed.inspect_measurements")}
+        </Button>
+      ) : undefined} />;
   }
   return null;
+}
+
+/** This input policy applies to every calculation, independently of the filter mode. */
+function SampleRateSettings({ view, actions, request }: Props & { request: number }) {
+  const t = useT();
+  const root = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (request === 0) return;
+    const choice = root.current?.querySelector<HTMLButtonElement>('[role="radio"][aria-checked="true"]');
+    choice?.focus({ preventScroll: true });
+    const content = root.current?.closest<HTMLElement>(".app-content");
+    if (root.current && content) content.scrollTop = Math.max(0, root.current.getBoundingClientRect().top - content.getBoundingClientRect().top + content.scrollTop - 16);
+  }, [request]);
+  return (
+    <div ref={root} data-ui="calibrate.settings.input">
+      <Advanced key={request} id="calibrate.input.details" label={t("calibrate.sample_rate.title")} defaultOpen={request > 0 || view.settings.sample_rate_policy === "resample"}>
+        <Segmented<SampleRatePolicy>
+          id="calibrate.sample_rate_policy"
+          label={t("calibrate.sample_rate.title")}
+          hideLabel
+          help={t("calibrate.sample_rate.help")}
+          value={view.settings.sample_rate_policy}
+          options={[
+            { value: "reject", label: t("calibrate.sample_rate.reject") },
+            { value: "resample", label: t("calibrate.sample_rate.resample") },
+          ]}
+          onChange={(policy) => actions.changeSetting({ kind: "sample_rate_policy", policy })}
+        />
+      </Advanced>
+    </div>
+  );
 }
 
 /* ── 모드 ───────────────────────────────────────────────────────────────── */
@@ -54,25 +96,27 @@ function JobFailure({ view, job, id }: { view: CalibrateView; job: CalibrateJob;
 function ModeSection({ view, actions }: Props) {
   const t = useT();
   const number = useNumber();
-  const { expert } = usePrefs();
   const s = view.settings;
-  // 초고지연 is for experts (U9: no hidden gesture); a project already in it keeps showing it.
-  const modes = MODES.filter((mode) => mode !== "ultra" || expert || s.mode === "ultra");
   return (
-    <SettingsCard id="mode" title={t("calibrate.mode.title")} description={t("calibrate.mode.description")}>
+    <SettingsCard id="mode" title={t("calibrate.mode.title")} help={<>{t("calibrate.mode.description")}<p>{t(MODE_EFFECT[s.mode])}</p></>}>
       <Segmented
         id="calibrate.mode"
         label={t("calibrate.mode.title")}
         hideLabel
         value={s.mode}
-        options={modes.map((mode) => ({ value: mode, label: t(MODE_NAME[mode]) }))}
+        options={MODES.map((mode) => ({ value: mode, label: t(MODE_NAME[mode]) }))}
         onChange={(mode) => actions.changeSetting({ kind: "mode", mode })}
       />
       <div className="calibrate-mode-text">
-        <p>{t(MODE_EFFECT[s.mode])}</p>
-        <p className="calibrate-line tabular" data-ui="calibrate.mode.spec">
-          {modeSpecText(t, number, view.modeSpec)}
+        <p className="calibrate-line tabular" data-ui="calibrate.mode.latency">
+          {view.modeSpec.max_latency_ms === 0
+            ? t("calibrate.mode.latency.zero")
+            : t("calibrate.mode.latency.max", { ms: number(view.modeSpec.max_latency_ms) })}
         </p>
+        <span className="ui-heading-help" data-ui="calibrate.mode.spec">
+          <span id="calibrate.mode.spec.label">{t("calibrate.mode.spec.title")}</span>
+          <HelpTip id="calibrate.mode.spec.help" labelledBy="calibrate.mode.spec.label" content={modeSpecText(t, number, view.modeSpec)} />
+        </span>
       </div>
       {s.mode === "ultra" && (
         <div className="calibrate-fields">
@@ -112,7 +156,7 @@ function RoomDims({ settings, change }: { settings: CalibrationSettings; change:
   const names = ["w", "d", "h"] as const;
   return (
     <fieldset className="calibrate-group" data-ui="calibrate.range.dims">
-      <legend className="ui-field__label">{t("calibrate.range.dims")}</legend>
+      <legend className="ui-field__label ui-heading-help"><span id="calibrate.range.dims.label">{t("calibrate.range.dims")}</span><HelpTip id="calibrate.range.dims.help" labelledBy="calibrate.range.dims.label" content={t("calibrate.range.dims.hint")} /></legend>
       <div className="calibrate-fields calibrate-fields--tight">
         {names.map((name, index) => (
           <NumberField
@@ -130,7 +174,6 @@ function RoomDims({ settings, change }: { settings: CalibrationSettings; change:
           />
         ))}
       </div>
-      <p className="ui-field__hint">{t("calibrate.range.dims.hint")}</p>
     </fieldset>
   );
 }
@@ -145,7 +188,7 @@ function RangeSection({ view, actions }: Props) {
   const shownHi = Number.isFinite(resolved) ? Math.round(Math.min(LIMITS.rcHi[1], Math.max(LIMITS.rcHi[0], resolved))) : 500;
   const notes = view.lines.rc.map((n) => noticeText(t, number, n)).filter((text): text is string => !!text);
   return (
-    <SettingsCard id="range" title={t("calibrate.range.title")} description={t("calibrate.range.description")}>
+    <SettingsCard id="range" title={t("calibrate.range.title")} help={t("calibrate.range.description")}>
       <div className="calibrate-fields">
         <NumberField
           id="calibrate.range.lower"
@@ -175,7 +218,7 @@ function RangeSection({ view, actions }: Props) {
       <Toggle
         id="calibrate.range.upper_auto"
         label={t("calibrate.range.upper_auto")}
-        hint={t("calibrate.range.upper_auto.hint")}
+        help={t("calibrate.range.upper_auto.hint")}
         checked={auto}
         onChange={(on) => actions.changeSetting({ kind: "rc_hi", hz: on ? null : shownHi })}
       />
@@ -190,7 +233,7 @@ function RangeSection({ view, actions }: Props) {
             step={10}
             digits={1}
             unit="m³"
-            hint={t("calibrate.range.volume.hint")}
+            help={t("calibrate.range.volume.hint")}
             onChange={(m3) => actions.changeSetting({ kind: "room_volume", m3 })}
           />
           <RoomDims settings={s} change={actions.changeSetting} />
@@ -214,7 +257,7 @@ function RangeSection({ view, actions }: Props) {
             step={1}
             digits={1}
             unit="dB"
-            hint={t("calibrate.range.boost.hint")}
+            help={t("calibrate.range.boost.hint")}
             onChange={(db) => actions.changeSetting({ kind: "boost_max", db })}
           />
         </div>
@@ -225,7 +268,7 @@ function RangeSection({ view, actions }: Props) {
 
 /* ── 크로스오버 ─────────────────────────────────────────────────────────── */
 
-function XoSection({ view, actions }: Props) {
+function XoSection({ view, actions, onSampleRateSettings }: FailureProps) {
   const t = useT();
   const number = useNumber();
   const s = view.settings;
@@ -233,7 +276,7 @@ function XoSection({ view, actions }: Props) {
   const group = view.xoGroup && groups.includes(view.xoGroup) ? view.xoGroup : (groups[0] ?? null);
   if (!group) {
     return (
-      <SettingsCard id="xo" title={t("calibrate.xo.title")} description={t("calibrate.xo.description")}>
+      <SettingsCard id="xo" title={t("calibrate.xo.title")} help={t("calibrate.xo.description")}>
         <p className="calibrate-hint" data-ui="calibrate.xo.none">
           {t("calibrate.xo.none")}
         </p>
@@ -245,7 +288,7 @@ function XoSection({ view, actions }: Props) {
   const recs = groups.filter((g) => s.xo_rec[g]).map((g) => t("calibrate.xo.rec_item", { group: groupName(t, g), hz: number(s.xo_rec[g]!) }));
   const busy = view.running !== null;
   return (
-    <SettingsCard id="xo" title={t("calibrate.xo.title")} description={t("calibrate.xo.description")}>
+    <SettingsCard id="xo" title={t("calibrate.xo.title")} help={t("calibrate.xo.description")}>
       <div className="calibrate-fields">
         <Select
           id="calibrate.xo.group"
@@ -276,7 +319,7 @@ function XoSection({ view, actions }: Props) {
         >
           {t("calibrate.xo.recommend")}
         </Button>
-        <JobFailure view={view} job="recommend_xo" id="calibrate.xo" />
+        <JobFailure view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} job="recommend_xo" id="calibrate.xo" />
       </div>
       {recs.length > 0 && view.running !== "recommend_xo" && (
         <p className="calibrate-line tabular" data-ui="calibrate.xo.state">
@@ -289,7 +332,7 @@ function XoSection({ view, actions }: Props) {
         <Toggle
           id="calibrate.xo.peq"
           label={t("calibrate.xo.peq")}
-          hint={t("calibrate.xo.peq.hint")}
+          help={t("calibrate.xo.peq.hint")}
           checked={s.xo_peq_on}
           onChange={(on) => actions.changeSetting({ kind: "xo_peq", on })}
         />
@@ -303,7 +346,7 @@ function XoSection({ view, actions }: Props) {
               max={LIMITS.xoPeq[1]}
               step={1}
               unit="Hz"
-              hint={t("calibrate.xo.peq_lo.hint")}
+              help={t("calibrate.xo.peq_lo.hint")}
               onChange={(lo) => actions.changeSetting({ kind: "xo_peq", lo })}
             />
             <NumberField
@@ -314,7 +357,7 @@ function XoSection({ view, actions }: Props) {
               max={LIMITS.xoPeq[1]}
               step={1}
               unit="Hz"
-              hint={t("calibrate.xo.peq_hi.hint")}
+              help={t("calibrate.xo.peq_hi.hint")}
               onChange={(hi) => actions.changeSetting({ kind: "xo_peq", hi })}
             />
           </div>
@@ -397,7 +440,7 @@ function SubEditor({ view, actions, role }: Props & { role: string }) {
                 step={0.1}
                 digits={2}
                 unit="ms"
-                hint={t("calibrate.ba.rear_trim.hint")}
+                help={t("calibrate.ba.rear_trim.hint")}
                 onChange={(ms) => actions.changeSetting({ kind: "rear_trim", bundle: e.bundle, ms })}
               />
             </>
@@ -445,8 +488,7 @@ function SubEditor({ view, actions, role }: Props & { role: string }) {
         </p>
       )}
       <fieldset className="calibrate-group" data-ui="calibrate.ba.fixed">
-        <legend className="ui-field__label">{t("calibrate.ba.fixed")}</legend>
-        <p className="ui-field__hint">{t("calibrate.ba.fixed.hint")}</p>
+        <legend className="ui-field__label ui-heading-help"><span id="calibrate.ba.fixed.label">{t("calibrate.ba.fixed")}</span><HelpTip id="calibrate.ba.fixed.help" labelledBy="calibrate.ba.fixed.label" content={t("calibrate.ba.fixed.hint")} /></legend>
         {(["hp", "lp"] as const).map((band) => {
           const on = (band === "hp" ? e.hp_hz : e.lp_hz) > 0;
           return (
@@ -507,7 +549,7 @@ function SubEditor({ view, actions, role }: Props & { role: string }) {
       <Toggle
         id="calibrate.ba.mimo_support"
         label={t("calibrate.ba.mimo_support")}
-        hint={t("calibrate.ba.mimo_support.hint")}
+        help={t("calibrate.ba.mimo_support.hint")}
         checked={e.mimo_support}
         onChange={(on) => change({ mimo_support: on })}
       />
@@ -515,7 +557,7 @@ function SubEditor({ view, actions, role }: Props & { role: string }) {
   );
 }
 
-function BaSection({ view, actions, editSub }: Props & { editSub?: string | undefined }) {
+function BaSection({ view, actions, onSampleRateSettings, editSub }: FailureProps & { editSub?: string | undefined }) {
   const t = useT();
   const number = useNumber();
   const s = view.settings;
@@ -523,7 +565,7 @@ function BaSection({ view, actions, editSub }: Props & { editSub?: string | unde
   const [editing, setEditing] = useState<string | null>(editSub ?? null);
   if (subs.length < 2) {
     return (
-      <SettingsCard id="ba" title={t("calibrate.ba.title")} description={t("calibrate.ba.description")}>
+      <SettingsCard id="ba" title={t("calibrate.ba.title")} help={<>{t("calibrate.ba.description")}<p>{t("calibrate.ba.actions.hint")}</p></>}>
         <p className="calibrate-hint" data-ui="calibrate.ba.none">
           {t("calibrate.ba.none", { count: subs.length })}
         </p>
@@ -535,11 +577,11 @@ function BaSection({ view, actions, editSub }: Props & { editSub?: string | unde
   const infra = infraState(s, subs);
   const warnings = view.subWarnings;
   const result = view.results.calibration;
-  const canTake = !!result && result.chain.subs.length > 0;
+  const canTake = !!result && result.sub_roles.length > 0;
   const busy = view.running !== null;
   const anyFixed = subs.some((r) => subOf(s, r).mode === "fixed");
   return (
-    <SettingsCard id="ba" title={t("calibrate.ba.title")} description={t("calibrate.ba.description")}>
+    <SettingsCard id="ba" title={t("calibrate.ba.title")} help={<>{t("calibrate.ba.description")}<p>{t("calibrate.ba.actions.hint")}</p></>}>
       <div className="calibrate-sub-modes" data-ui="calibrate.ba.subs">
         {subs.map((r) => (
           <Select
@@ -571,9 +613,9 @@ function BaSection({ view, actions, editSub }: Props & { editSub?: string | unde
         <Button id="calibrate.ba.take_values" data-ui="calibrate.ba.take_values" variant="quiet" disabled={busy || !canTake} onClick={actions.takeSubValues}>
           {t("calibrate.ba.take_values")}
         </Button>
-        <JobFailure view={view} job="calibrate_subs" id="calibrate.ba" />
+        <JobFailure view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} job="calibrate_subs" id="calibrate.ba" />
       </div>
-      <p className="ui-field__hint">{t(canTake ? "calibrate.ba.actions.hint" : "calibrate.ba.actions.hint_no_result")}</p>
+      {!canTake && <p className="ui-field__hint">{t("calibrate.ba.actions.hint_no_result")}</p>}
       {warnings.length > 0 && (
         <ul className="calibrate-warnings" data-ui="calibrate.ba.settings_warnings">
           {warnings.map((w) => (
@@ -587,11 +629,11 @@ function BaSection({ view, actions, editSub }: Props & { editSub?: string | unde
       <Advanced id="calibrate.ba.advanced" defaultOpen={editSub !== undefined}>
         <fieldset className="calibrate-group" data-ui="calibrate.ba.infra_group">
           <legend className="ui-field__label">{t("calibrate.ba.infra_title")}</legend>
-          <p className="ui-field__hint">{t("calibrate.ba.infra.hint")}</p>
           <div className="calibrate-fields">
             <Select
               id="calibrate.ba.infra"
               label={t("calibrate.ba.infra")}
+              help={t("calibrate.ba.infra.hint")}
               value={infra.role ?? ""}
               options={[{ value: "", label: t("calibrate.ba.infra.none") }, ...subs.map((r) => ({ value: r, label: roleCode(r) }))]}
               onChange={(value) =>
@@ -662,7 +704,7 @@ function BaSection({ view, actions, editSub }: Props & { editSub?: string | unde
               step={0.1}
               digits={2}
               unit="ms"
-              hint={t("calibrate.ba.main_delay.hint")}
+              help={t("calibrate.ba.main_delay.hint")}
               onChange={(ms) => actions.changeSetting({ kind: "main_delay", ms })}
             />
           </div>
@@ -674,7 +716,7 @@ function BaSection({ view, actions, editSub }: Props & { editSub?: string | unde
 
 /* ── MIMO ───────────────────────────────────────────────────────────────── */
 
-function MimoSection({ view, actions }: Props) {
+function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
   const t = useT();
   const number = useNumber();
   const s = view.settings;
@@ -698,7 +740,7 @@ function MimoSection({ view, actions }: Props) {
     const parts = [t("calibrate.mimo.state.done", { kind: mimo.kind.toUpperCase(), count: mimo.support_count })];
     if (s.mimo_max_supports > 0) parts.push(t("calibrate.mimo.state.cap", { cap: s.mimo_max_supports }));
     if (mimo.kind === "fir" && view.firBudget > 0) {
-      const taps = mimo.paths.paths.reduce((sum, p) => sum + ("Fir" in p.filter ? p.filter.Fir.taps_48k.length : 0), 0);
+      const taps = mimo.fir_taps_total;
       parts.push(
         t(taps <= view.firBudget ? "calibrate.mimo.state.budget" : "calibrate.mimo.state.budget_over", { taps: number(taps), budget: number(view.firBudget) }),
       );
@@ -710,17 +752,19 @@ function MimoSection({ view, actions }: Props) {
     );
   };
   return (
-    <SettingsCard id="mimo" title={t("calibrate.mimo.title")} description={t("calibrate.mimo.description")}>
+    <SettingsCard id="mimo" title={t("calibrate.mimo.title")} help={t("calibrate.mimo.description")}>
       <Toggle
         id="calibrate.mimo.on"
         label={t("calibrate.mimo.on")}
-        hint={available ? t("calibrate.mimo.on.hint") : t("calibrate.mimo.unavailable", { count, min: MIMO_MIN_POSITIONS })}
+        help={t("calibrate.mimo.on.hint")}
+        hint={!available ? t("calibrate.mimo.unavailable", { count, min: MIMO_MIN_POSITIONS }) : undefined}
         checked={on}
         disabled={!available}
         onChange={(value) => actions.changeSetting({ kind: "mimo_on", on: value })}
       />
       {on && (
         <>
+          <ComputeControl view={view} actions={actions} />
           <div className="calibrate-fields">
             <NumberField
               id="calibrate.mimo.fsiso"
@@ -730,22 +774,23 @@ function MimoSection({ view, actions }: Props) {
               max={LIMITS.fsiso[1]}
               step={5}
               unit="Hz"
-              hint={t("calibrate.mimo.fsiso.hint")}
+              help={t("calibrate.mimo.fsiso.hint")}
               onChange={(hz) => actions.changeSetting({ kind: "fsiso", hz })}
             />
           </div>
           <div className="calibrate-actions">
-            <Button id="calibrate.mimo.compute" data-ui="calibrate.mimo.compute" busy={view.running === "mimo"} disabled={busy || !result} onClick={actions.computeMimo}>
+            <Button id="calibrate.mimo.compute" data-ui="calibrate.mimo.compute" busy={view.running === "mimo"} disabled={busy || !result || view.compute.saving || (view.compute.preference === "gpu" && view.compute.status?.gpu_available === false)} onClick={actions.computeMimo}>
               {t("calibrate.mimo.compute")}
             </Button>
-            <JobFailure view={view} job="mimo" id="calibrate.mimo" />
+            <JobFailure view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} job="mimo" id="calibrate.mimo" />
           </div>
           {state()}
+          {mimo && <ComputeResult report={mimo.compute} />}
           <Advanced id="calibrate.mimo.advanced" count={3}>
             <Toggle
               id="calibrate.mimo.low_auto"
               label={t("calibrate.mimo.low_auto")}
-              hint={t("calibrate.mimo.low_auto.hint")}
+              help={t("calibrate.mimo.low_auto.hint")}
               checked={s.mimo_low === null}
               onChange={(auto) => actions.changeSetting({ kind: "mimo_low", hz: auto ? null : 20 })}
             />
@@ -770,14 +815,15 @@ function MimoSection({ view, actions }: Props) {
                 min={LIMITS.mimoMax[0]}
                 max={LIMITS.mimoMax[1]}
                 step={1}
-                hint={t("calibrate.mimo.max.hint")}
+                help={t("calibrate.mimo.max.hint")}
+                hint={t("calibrate.mimo.max.zero")}
                 onChange={(value) => actions.changeSetting({ kind: "mimo_max", count: value })}
               />
             </div>
             <Toggle
               id="calibrate.mimo.fir"
               label={t("calibrate.mimo.fir")}
-              hint={t("calibrate.mimo.fir.hint")}
+              help={t("calibrate.mimo.fir.hint")}
               checked={s.mimo_fir}
               onChange={(value) => actions.changeSetting({ kind: "mimo_fir", on: value })}
             />
@@ -788,21 +834,22 @@ function MimoSection({ view, actions }: Props) {
   );
 }
 
-export function Settings({ view, actions, editSub }: Props & { editSub?: string | undefined }) {
+export function Settings({ view, actions, editSub, sampleRateRequest, onSampleRateSettings }: FailureProps & { editSub?: string | undefined; sampleRateRequest: number }) {
   const t = useT();
   return (
     <section className="calibrate-settings" aria-labelledby="calibrate.settings.title" data-ui="calibrate.settings">
       <header className="calibrate-settings__head">
-        <h2 className="calibrate-settings__title" id="calibrate.settings.title">
-          {t("calibrate.settings.title")}
-        </h2>
-        <p className="muted">{t("calibrate.settings.description")}</p>
+        <div className="ui-heading-help">
+          <h2 className="calibrate-settings__title" id="calibrate.settings.title">{t("calibrate.settings.title")}</h2>
+          <HelpTip id="calibrate.settings.help" labelledBy="calibrate.settings.title" content={t("calibrate.settings.description")} />
+        </div>
       </header>
+      <SampleRateSettings view={view} actions={actions} request={sampleRateRequest} />
       <ModeSection view={view} actions={actions} />
       <RangeSection view={view} actions={actions} />
-      <XoSection view={view} actions={actions} />
-      <BaSection view={view} actions={actions} editSub={editSub} />
-      <MimoSection view={view} actions={actions} />
+      <XoSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} />
+      <BaSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} editSub={editSub} />
+      <MimoSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} />
     </section>
   );
 }

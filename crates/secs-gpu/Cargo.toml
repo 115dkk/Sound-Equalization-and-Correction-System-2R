@@ -1,6 +1,6 @@
 [package]
 name = "secs-gpu"
-description = "Optional wgpu adapter of the engine's SupportFitBackend seam for the MIMO FIR-to-IIR support fit."
+description = "Device selection and optional CUDA f64 acceleration of MIMO ideal-FIR shifted systems."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,3 +12,11 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
+secs-engine = { path = "../secs-engine" }
+secs-cuda-sys = { path = "../secs-cuda-sys" }
+secs-types.workspace = true
+secs-compute.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true
+secs-engine = { path = "../secs-engine", features = ["test-support"] }

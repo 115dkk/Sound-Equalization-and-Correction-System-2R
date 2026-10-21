@@ -1,14 +1,16 @@
 // Surfaces. A card is one unit with a title that names it; a section is a
 // titled group inside a card; "고급" folds the second tier of options away
-// (ARCHITECTURE §7: main path, folded advanced, expert display).
+// (ARCHITECTURE §7: main path and local detail disclosures).
 import { useId, useState, type HTMLAttributes, type ReactNode } from "react";
 import { useT } from "../i18n/react";
+import { HelpTip } from "./HelpTip";
 import { Icon } from "./Icon";
 
 type CardProps = Omit<HTMLAttributes<HTMLElement>, "title"> & {
   title?: ReactNode;
   /** One line under the title; omit when the title says enough. */
   description?: ReactNode;
+  help?: ReactNode;
   /** Controls at the right end of the header (quiet buttons, a pill). */
   actions?: ReactNode;
   /** Results that no longer match the inputs: dimmed body and a marker. */
@@ -18,8 +20,9 @@ type CardProps = Omit<HTMLAttributes<HTMLElement>, "title"> & {
   children?: ReactNode;
 };
 
-export function Card({ title, description, actions, stale, dense, className, children, ...rest }: CardProps) {
+export function Card({ title, description, help, actions, stale, dense, className, children, ...rest }: CardProps) {
   const titleId = useId();
+  const helpId = `${rest.id ?? (rest as { "data-ui"?: string })["data-ui"] ?? titleId}.help`;
   return (
     <section
       className={["ui-card", dense && "ui-card--dense", stale && "ui-card--stale", className].filter(Boolean).join(" ")}
@@ -29,11 +32,10 @@ export function Card({ title, description, actions, stale, dense, className, chi
       {(title || actions) && (
         <header className="ui-card__header">
           <div className="ui-card__heading">
-            {title && (
-              <h2 id={titleId} className="ui-card__title">
-                {title}
-              </h2>
-            )}
+            {title && <div className="ui-heading-help">
+              <h2 id={titleId} className="ui-card__title">{title}</h2>
+              {help && <HelpTip id={helpId} labelledBy={titleId} content={help} />}
+            </div>}
             {description && <p className="ui-card__description">{description}</p>}
           </div>
           {actions && <div className="ui-card__actions">{actions}</div>}
@@ -47,16 +49,18 @@ export function Card({ title, description, actions, stale, dense, className, chi
 export function Section({
   title,
   description,
+  help,
   children,
   className,
   ...rest
-}: Omit<HTMLAttributes<HTMLElement>, "title"> & { title: ReactNode; description?: ReactNode; children: ReactNode }) {
+}: Omit<HTMLAttributes<HTMLElement>, "title"> & { title: ReactNode; description?: ReactNode; help?: ReactNode; children: ReactNode }) {
   const titleId = useId();
   return (
     <section className={["ui-section", className].filter(Boolean).join(" ")} aria-labelledby={titleId} {...rest}>
-      <h3 id={titleId} className="ui-section__title">
-        {title}
-      </h3>
+      <div className="ui-heading-help">
+        <h3 id={titleId} className="ui-section__title">{title}</h3>
+        {help && <HelpTip id={`${rest.id ?? (rest as { "data-ui"?: string })["data-ui"] ?? titleId}.help`} labelledBy={titleId} content={help} />}
+      </div>
       {description && <p className="ui-section__description">{description}</p>}
       <div className="ui-section__body">{children}</div>
     </section>
@@ -69,6 +73,7 @@ export function Advanced({
   defaultOpen = false,
   id,
   count,
+  label,
 }: {
   children: ReactNode;
   defaultOpen?: boolean;
@@ -76,6 +81,8 @@ export function Advanced({
   id?: string;
   /** How many options are inside, shown while folded. */
   count?: number;
+  /** Name the local settings; other sections keep the default 고급 label. */
+  label?: ReactNode;
 }) {
   const t = useT();
   const [open, setOpen] = useState(defaultOpen);
@@ -92,7 +99,7 @@ export function Advanced({
         onClick={() => setOpen((value) => !value)}
       >
         <Icon name="chevronRight" size={16} className="ui-advanced__chevron" />
-        <span>{t("ui.advanced")}</span>
+        <span>{label ?? t("ui.advanced")}</span>
         {count !== undefined && !open && <span className="ui-advanced__count tabular">{t("ui.advanced.count", { count })}</span>}
       </button>
       {open && (

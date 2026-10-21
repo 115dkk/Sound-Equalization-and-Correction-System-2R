@@ -13,6 +13,7 @@ import {
   EmptyState,
   ErrorNotice,
   IconButton,
+  HelpTip,
   LevelMeter,
   NumberField,
   ProgressBar,
@@ -153,7 +154,7 @@ function Choices() {
   const t = useT();
   const [mode, setMode] = useState<"zero" | "mixed" | "linear">("mixed");
   const [subs, setSubs] = useState(2);
-  const [expert, setExpert] = useState(false);
+  const [autoLimit, setAutoLimit] = useState(false);
   const [theme, setTheme] = useState<"system" | "light" | "dark">("system");
   return (
     <div className="gal-grid-2">
@@ -182,7 +183,7 @@ function Choices() {
       <div className="gal-stack">
         <Stepper id="gallery.stepper.subs" label={t("gallery.sample.subs")} value={subs} min={0} max={8} onChange={setSubs} />
         <Stepper id="gallery.stepper.min" label={t("gallery.sample.subs")} value={0} min={0} max={8} onChange={() => {}} />
-        <Toggle id="gallery.toggle.expert" label={t("frame.settings.expert")} hint={t("frame.settings.expert.hint")} checked={expert} onChange={setExpert} />
+        <Toggle id="gallery.toggle.auto" label={t("calibrate.range.upper_auto")} help={t("calibrate.range.upper_auto.hint")} checked={autoLimit} onChange={setAutoLimit} />
         <Toggle id="gallery.toggle.on" label={t("gallery.sample.xo_peq")} checked onChange={() => {}} />
         <Toggle id="gallery.toggle.disabled" label={t("gallery.sample.mimo")} hint={t("gallery.sample.mimo.disabled")} checked={false} disabled onChange={() => {}} />
         <Segmented
@@ -285,7 +286,7 @@ function Dialogs() {
         <ConfirmUndoDemo />
         <Button onClick={() => setOpen(true)}>{t("gallery.sample.open_dialog")}</Button>
         <Dialog open={open} onClose={() => setOpen(false)} title={t("frame.settings")} footer={<Button variant="primary" onClick={() => setOpen(false)}>{t("ui.close")}</Button>}>
-          <p>{t("frame.settings.expert.hint")}</p>
+          <p>{t("calibrate.range.boost.hint")}</p>
         </Dialog>
       </div>
     </div>
@@ -334,6 +335,26 @@ function TooltipSpecimen() {
   );
 }
 
+function ContextualHelp({ edge = false }: { edge?: boolean }) {
+  const t = useT();
+  const [dialog, setDialog] = useState(false);
+  const [value, setValue] = useState(150);
+  const [boost, setBoost] = useState(6);
+  if (edge) return <div className="gal-help-edge">
+    <HelpTip id="gallery.help.edge" label={t("calibrate.xo.peq")} content={t("gallery.sample.tooltip.long")} side="bottom" />
+  </div>;
+  return <div className="gal-stack">
+    <Card title={t("calibrate.mimo.title")} help={t("calibrate.mimo.description")} data-ui="gallery.help.card">
+      <NumberField id="gallery.help.frequency" label={t("calibrate.mimo.fsiso")} value={value} min={50} max={150} step={5} unit="Hz" help={t("calibrate.mimo.fsiso.hint")} onChange={setValue} />
+      <Select id="gallery.help.disabled" label={t("connect.output_device")} value="device" disabled options={[{ value: "device", label: "MOTU M4" }]} help={t("connect.output_device.hint")} onChange={() => {}} />
+      <Button data-ui="gallery.help.dialog.open" onClick={() => setDialog(true)}>{t("frame.settings")}</Button>
+    </Card>
+    <Dialog id="gallery.help.dialog" open={dialog} onClose={() => setDialog(false)} title={t("calibrate.range.boost")} help={t("calibrate.range.boost.hint")}>
+      <NumberField id="gallery.help.dialog.value" label={t("calibrate.range.boost")} value={boost} min={0} max={10} step={1} digits={1} unit="dB" help={t("calibrate.range.boost.hint")} onChange={setBoost} />
+    </Dialog>
+  </div>;
+}
+
 function States() {
   const t = useT();
   return (
@@ -370,6 +391,8 @@ export const kitSpecimens: SpecimenDef[] = [
   { id: "ui.meter", title: "Level meter · none, low, in range, high, clipping; progress", render: () => <Meters /> },
   { id: "ui.toast", title: "Toasts · undo, success, warning, error", render: () => <Toasts /> },
   { id: "ui.dialog", title: "Dialog · confirm-and-undo (U5)", render: () => <Dialogs /> },
-  { id: "ui.tooltip", title: "Tooltip · open (800 ms on hover/focus), width cap", render: () => <TooltipSpecimen /> },
+  { id: "ui.tooltip", title: "Tooltip · open (400 ms hover, immediate keyboard focus), width cap", render: () => <TooltipSpecimen /> },
+  { id: "ui.help", title: "Contextual help · input, disabled field, dialog, pointer/keyboard/touch", width: 720, render: () => <ContextualHelp /> },
+  { id: "ui.help.edge", title: "Contextual help · viewport edge, wrapping and flip", width: 460, height: 340, render: () => <ContextualHelp edge /> },
   { id: "ui.states", title: "Empty and error states", render: () => <States /> },
 ];

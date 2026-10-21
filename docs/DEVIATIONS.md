@@ -11,7 +11,8 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 | 번호 | 업스트림 동작 | 바꾸는 동작 | 출처 | 상태 |
 |---|---|---|---|---|
 | D1 | 메인·서브 버스 지연의 목적 함수가 코히런트 합과 상쇄를 똑같이 벌해 직교 정렬을 고릅니다. 이상적인 LR4 80 Hz에서 −2.75 ms를 골라 합에 −2.8 dB 딥이 생깁니다. | 코히런트 합을 보상하는 목적 함수. 2026-10-13 유지보수자 결정. | `correction_engine.py:1063-1095` | 계획 |
-| D2 | 샘플레이트를 기준 위치에서만 확인하고 다른 위치는 48 kHz로 취급합니다. | 모든 IR을 확인하고 다른 레이트는 위치·역할·레이트와 함께 `EngineError::Input`으로 거절합니다. 준비와 긴 창 모두 `secs-engine::rejects_invalid_measurements_at_every_position_d2`가 확인합니다. | `correction_engine.py:494-497` | 적용 |
+| D2 | 샘플레이트를 기준 위치에서만 확인하고 다른 위치는 48 kHz로 취급합니다. | 모든 IR을 확인하고 기본 정책에서는 다른 레이트를 위치·역할·레이트가 있는 `EngineError::MeasurementSampleRate`로 거절합니다. 준비와 긴 창 모두 `secs-engine::rejects_invalid_measurements_at_every_position_d2`가 확인합니다. 선택적 변환은 D39를 따릅니다. | `correction_engine.py:494-497` | 적용 |
+| D39 | 비48 kHz 측정에 대한 리샘플링 선택지가 없습니다. 기준 위치에서는 거부하고 나머지 위치는 변환하지 않습니다. | 기본 검사를 유지하면서 사용자가 선택하면 계산용 IR만 48 kHz로 변환합니다. 원본 샘플과 파일을 보존하고, 전체 FIR 응답과 시간 원점 보상으로 크기·도착 시각을 유지합니다. `engine.measurement_resampling`의 수치 검사와 `secs-service::resampled_calibration_and_cached_mdat_export_preserve_original_ir`가 지킵니다. 설정·캐시·검증 계약은 P60에 있습니다. | `correction_engine.py:491-513`, `long_spectra:546-560` | 적용 |
 | D3 | `to_low`가 0.366 Hz 격자에서 0.417 Hz 격자로 선형 보간해 시간 가중과 앨리어싱을 만듭니다. T60 1 s 모드의 0.9 s 지점이 −3.9 dB, 1.15 s 지점이 −14 dB로 줄어 MIMO 목적과 가드가 늦은 에너지를 덜 봅니다. | 48 kHz irfft 뒤 안티앨리어싱 필터와 데시메이션. | `mimo.py:69-74` | 계획 |
 | D4 | `realize`의 위상 적분이 0 Hz 항을 포함해 상수 위상 −2π·lift·df가 돕니다(저지연 −1.05°, 표준 −3.7°, 초고지연 200 ms −26.1°). | 0 Hz 항을 빼고 적분합니다. | `correction_engine.py:1230` | 계획 |
 | D5 | 음수 시작 시각이 2.73 s 주기로 원형 이동하고, 다른 주기의 저속 투영에서는 직접음이 잘립니다. | 측정 모듈의 시간 축 규약 하나로 처리합니다. 골든으로 먼저 확인합니다. | `correction_engine.py:512, 560` | 보류 |
@@ -26,10 +27,16 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 | D17 | 계산 취소가 결과만 버리고 계산 스레드는 계속 돕니다. 다시 누르면 계산이 겹치고, 다시 계산하면 MIMO 결과가 사라집니다. 프로세스 종료는 비공개 속성에 기댑니다. | 협조적 취소, 무리마다 잡 하나, 이전 결과 보존과 서명 기반 낡음 표시. `secs-service::{jobs_push_ordered_events_and_exclude_the_same_group,cancellation_finishes_within_one_second,cancelled_calibration_preserves_previous_results,room_dba_mimo_runs_and_becomes_stale_after_recalibration}`가 잡 경계, 취소, 이전 결과 보존, MIMO 낡음을 지킵니다. | `wizard/step_calibration.py:1836-1846`, `mimo_iir.py:180-195` | 적용 |
 | D37 | 보정 결과의 낡음을 정하는 측정 서명이 위치, 역할, t0만 봅니다. 같은 위치를 다시 재어 t0가 같으면(자체·모의 측정, 같은 시간 원점의 mdat) 파형이 바뀌어도 결과가 최신으로 보입니다. | 서명에 측정마다의 UUID를 더하고, 자체·모의 측정에도 UUID를 매깁니다. `secs-service::measuring_another_position_marks_calibration_stale`가 같은 위치 재측정과 다른 위치 측정이 모두 결과를 낡게 하는지 확인합니다. | `calibration.py measurement_signature` | 적용 |
 | D38 | REW 캘 파일의 `Sens Factor`가 숫자로 바뀌지 않으면 환경 수집 예외가 측정 전체를 실패시킵니다. | 측정은 남기고 그 측정의 환경만 생략합니다. | `rew_mdat/source_info.py from_rew_measurement`, `rewapi/rew.py _source_info` | 적용 |
-| D22 | 엔진 값 15개 안팎을 환경 변수로만 바꿀 수 있고, 워커가 호출마다 다시 읽습니다. | 명시적 튜닝 값, 화면의 전문가 표시. | `correction_engine.py`, `mimo.py`, `mimo_iir.py` 머리 | 계획 |
+| D22 | 엔진 값 15개 안팎을 환경 변수로만 바꿀 수 있고, 워커가 호출마다 다시 읽습니다. | 명시적 튜닝 값, 해당 기능의 세부 설정에서 공개. | `correction_engine.py`, `mimo.py`, `mimo_iir.py` 머리 | 계획 |
 | D24 | mdat 내보내기의 시간 원점이 `final` 응답과 시프트만큼 어긋납니다. | 신호 사슬 값 하나에서 시뮬레이터와 내보내기가 같은 원점을 씁니다. | `calibration.py:1101, 1321` | 계획 |
 | D27 | 퇴화한 IR에서 `long_spectra`가 0으로 나눕니다. | 측정 모듈이 입력을 확인합니다. | `correction_engine.py:558-559` | 계획 |
 | D36 | MIMO IIR의 직렬 경로(다중 스레드 BLAS)와 병렬 경로(BLAS 1스레드)가 같은 비트를 보장하지 않습니다. | 결정적 병렬(0007). | `mimo_iir.py:370-391` | 계획 |
+
+## GPU 계산
+
+| 번호 | 업스트림 동작 | 바꾸는 동작 | 출처 | 상태 |
+|---|---|---|---|---|
+| G1 | MIMO의 정칙화 선형계를 CPU로 풉니다. | FIR 모드의 큰 선형계에 CUDA f64 spectral 풀이와 한 번의 보정을 허용합니다. CPU 기준·λ 선택·음향 가드는 유지하며, GPU 결과는 비트 동일성 대신 수치 허용오차로 확인하고 실행 이력을 기록합니다. IIR은 목표 설계부터 CPU를 유지합니다. 장치 정책·전체 CPU 재시작·취소 테스트와 [실제 GPU 음향 비교](perf/gpu.md)가 범위를 검증합니다. | `mimo.py`, [ADR 0008](adr/0008-native-gpu-acceleration.md) | 적용 |
 
 ## 형식과 저장
 
@@ -45,6 +52,7 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 | F8 | 파이썬 문자열은 짝 없는 UTF-16 서러게이트를 담습니다. | 러스트 문자열에는 담을 수 없어 글자 API는 U+FFFD로 보여 주고, 해석한 스트림은 원래 바이트를 지녀 고치지 않은 글자는 그대로 왕복합니다. UTF-16 단위 API로 잃지 않고 읽고 쓸 수 있습니다. `secs-jos::utf8_and_lone_surrogates`. | `rew_mdat/serialization/modified_utf8.py` | 적용 |
 | F9 | `.secs`의 `\uD800` 같은 짝 없는 서러게이트 이스케이프를 읽어 파이썬 문자열에 그대로 담습니다(저장할 때 UTF-8 인코딩에서 실패합니다). | 러스트 문자열에는 담을 수 없어 읽을 때 `ProjectError`로 거부합니다. SECS 2 자신이 이런 파일을 저장할 수 없으므로 손으로 고친 파일에서만 생깁니다. `secs-project::pyjson_regressions`. | `model.py:934-937` | 적용 |
 | F10 | 손으로 고친 `.src.json`의 부분 변환 오류가 `apply`에서 내보내기 전체를 실패시키거나 Java `Integer` 범위를 넘는 값과 유한하지 않은 날짜를 뒤 단계까지 넘깁니다. | 숫자 문자열·불을 포함한 float32 배열 등 파이썬이 변환하는 값은 그대로 변환하고, 실제로 잘못된 부분만 생략해 내보내기를 계속합니다. i32 범위 밖 `Integer`와 NaN·무한대 날짜도 생략합니다. `secs-project::measurement_source_tolerates_partial_values_and_rejects_unsafe_narrowing`, `secs-project::measurement_source_builds_upstream_mdat_bytes_and_skips_upstream_exceptions_f10`. | `rew_mdat/source_info.py apply` | 적용 |
+| F11 | Equalizer APO 설정의 여러 입력·출력 변수 할당을 세미콜론으로 연결한 `Eval:` 명령에 씁니다. | 입력·출력 변수마다 `Eval:` 명령을 따로 씁니다. 원본 APO의 muparserx 3.0.1은 기존 문법을 받지만, 4.0.12를 쓰는 XT에서 파싱 오류로 FIR·게인 적용이 막혀 공통 문법으로 내보냅니다. XT에는 별도로 구형 문법 호환을 복원합니다. FIR WAV·필터 본문·번호·경로는 보존하며 안내만 새 형식에 맞춥니다. `secs-filters::{eqapo_public_exports_use_single_assignments_f11,eqapo_disabled_and_case_sensitive_mapping_f11}` 및 기존 골든의 좁은 F11 기대값 보정으로 확인합니다. [소비자 재현 결과](EQUALIZER_APO_INTEROP.md). | `export_filters.py:372-374, 410-412` (고정 업스트림 `587159e`) | 적용 |
 
 ## REW
 
@@ -70,7 +78,7 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 | U6 | SNR 경고 문턱이 코드는 20 dB, 도움말은 40 dB입니다. | 업스트림 의도를 확인한 뒤 하나로 맞춥니다. | `wizard/step5_measure.py`, `tutorial_text.py` | 보류 |
 | U7 | 영어 화면이 꺼져 있습니다(`ENGLISH_UI=False`). | 한국어와 영어 카탈로그를 처음부터 함께 냅니다. | `i18n.py:25`, `window.py:564-570` | 계획(M5) |
 | U8 | 기다림 표시가 작업 패널, 로딩 카드, 물방울 셋이고, 로딩 카드의 [취소]는 이어져 있지 않습니다. | 작업 트레이 하나에 잡마다 진행과 실제로 멈추는 취소를 둡니다. | `busy.py`, `loading.py:218-338`, `window.py:181-252` | 계획(M5) |
-| U9 | 초고지연 모드가 설명 줄을 3초 안에 다섯 번 눌러야 열립니다. | '전문가 표시'에서 고릅니다. | `step_calibration.py:1111-1145` | 계획(M5) |
+| U9 | 초고지연 모드가 설명 줄을 3초 안에 다섯 번 눌러야 열립니다. | 다른 보정 모드와 같은 선택 목록에서 고릅니다. | `step_calibration.py:1111-1145` | 구현(P58) |
 | U10 | 새 프로젝트가 측정 방법을 저장하지 않아 서비스의 옛 프로젝트 호환 기본값(`native`)으로 즉시 측정할 수 있습니다. | 새 프로젝트만 `devices.method = "none"`을 저장해 장치를 고르기 전 측정을 막습니다. 방법이 없는 기존 프로젝트는 계속 `native`로 읽습니다. `secs-service::new_projects_store_none_measurement_method`가 새 프로젝트의 명시값을 지킵니다. | `wizard/step1_devices.py`, `wizard/model.py` | 적용 |
 | U11 | 업스트림은 화면 테마 하나만 제공합니다. | 시스템 설정, 밝게, 어둡게 가운데 고른 테마를 앱 설정에 저장합니다. `secs-service::app_settings_are_versioned_bounded_and_capped`가 왕복과 이전 설정 파일의 시스템 기본값을 확인합니다. | `wizard/` 화면 전체 | 적용 |
 | U12 | 로고는 확정안(`logo_b8.svg`) 하나이고 사이드바 마크, 창·작업 표시줄 아이콘, exe 아이콘에 씁니다. | 실행 파일·설치본 아이콘과 기본 로고는 같은 확정안('전문가 모드')입니다. 앱 설정에서 SECS 2R이 따로 그린 '킹반인 모드' 로고(`apps/secs2r/icons/logo/civilian.svg`: 측정 응답과 목표선 위의 보정 응답, PEQ 손잡이)를 고르면 레일 로고와 창 아이콘만 바뀝니다. macOS의 Dock 아이콘과 설치한 파일·바로 가기의 아이콘은 그대로입니다. `secs-service::app_settings_are_versioned_bounded_and_capped`가 저장과 이전 설정 파일의 기본값을, `secs2r::{windows_icon_size_follows_the_display_scale,civilian_pictures_are_square_and_match_their_names}`가 창 아이콘 그림을, 화면의 `src/state/flow.test.tsx`가 고른 로고가 다시 켠 뒤에도 남는지 확인합니다. | `wizard/branding.py`, `window.py _sidebar`, `SECS.spec icon=` | 적용 |
@@ -80,4 +88,4 @@ SECS 2R이 업스트림 SECS 2와 일부러 다르게 동작하는 자리의 목
 
 | 번호 | 업스트림 동작 | 바꾸는 동작 | 출처 | 상태 |
 |---|---|---|---|---|
-| S1 | 프로젝트를 열면 `.irs/calibration_cache.pkl`을 제한 없이 역직렬화합니다. 남이 보낸 프로젝트 폴더로 코드를 실행할 수 있습니다. | 8 MiB로 제한한 버전 2 JSON 데이터 캐시(`secs_run_cache.json`)를 원자 교체합니다. 옛 피클은 열지 않습니다. 캐시는 CamillaDSP에 필요한 사슬·실행 라벨·MIMO 경로를 보관하고, 스펙트럼이 필요한 mdat는 다시 연 프로젝트에서 취소 가능한 `design` 단계를 먼저 계산합니다. `secs-service::{round_trip_and_ignore_pickle,corrupt_and_oversized_files_are_ignored,unknown_cache_version_is_ignored,exports_after_reopening_match_pre_close_bytes}`가 지킵니다. | `calibration.py:1144-1187, 1226-1236` | 적용 |
+| S1 | 프로젝트를 열면 `.irs/calibration_cache.pkl`을 제한 없이 역직렬화합니다. 남이 보낸 프로젝트 폴더로 코드를 실행할 수 있습니다. | 크기가 제한된 JSON 데이터 캐시(`secs_run_cache.json`)를 원자 교체합니다. 버전 4는 대형 FIR 원본을 보존하도록 64 MiB를 상한으로 하며 v2/v3를 읽어 이주합니다(ADR 0009). 옛 피클은 열지 않습니다. 캐시는 화면 요약과 분리된 사슬·실행 라벨·MIMO 경로를 보관하고, 스펙트럼이 필요한 mdat는 다시 연 프로젝트에서 취소 가능한 `design` 단계를 먼저 계산합니다. `secs-service::{round_trip_and_ignore_pickle,corrupt_and_oversized_files_are_ignored,unknown_cache_version_is_ignored,exports_after_reopening_match_pre_close_bytes}`가 지킵니다. | `calibration.py:1144-1187, 1226-1236` | 적용 |

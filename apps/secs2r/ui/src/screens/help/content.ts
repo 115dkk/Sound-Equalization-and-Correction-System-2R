@@ -11,34 +11,8 @@ export const HELP_TABS: Record<StepId, readonly HelpTab[]> = {
     {
       id: "intro",
       blocks: [
-        {
-          kind: "paragraphs",
-          items: [
-            "help.system.intro.body.1",
-            "help.system.intro.body.2",
-            "help.system.intro.body.3",
-            "help.system.intro.body.4",
-          ],
-        },
+        { kind: "lead", text: "help.system.intro.body.1" },
         { kind: "tutorial" },
-        { kind: "heading", text: "help.system.intro.route_head" },
-        {
-          kind: "numbered",
-          items: [
-            "help.system.intro.route.1",
-            "help.system.intro.route.2",
-            "help.system.intro.route.3",
-            "help.system.intro.route.4",
-            "help.system.intro.route.5",
-            "help.system.intro.route.6",
-          ],
-        },
-        {
-          kind: "paragraphs",
-          items: [
-            "help.system.intro.outro.1",
-          ],
-        },
       ],
     },
     {
@@ -48,9 +22,9 @@ export const HELP_TABS: Record<StepId, readonly HelpTab[]> = {
         {
           kind: "steps",
           items: [
-            { do: "help.system.steps.1.do", see: "help.system.steps.1.see" },
-            { do: "help.system.steps.2.do", see: "help.system.steps.2.see" },
-            { do: "help.system.steps.3.do", see: "help.system.steps.3.see" },
+            { do: "help.system.steps.1.do" },
+            { do: "help.system.steps.2.do" },
+            { do: "help.system.steps.3.do" },
             { do: "help.system.steps.4.do", see: "help.system.steps.4.see" },
             { do: "help.system.steps.5.do", see: "help.system.steps.5.see" },
             { do: "help.system.steps.6.do", see: "help.system.steps.6.see" },
@@ -58,7 +32,7 @@ export const HELP_TABS: Record<StepId, readonly HelpTab[]> = {
             { do: "help.system.steps.8.do", see: "help.system.steps.8.see" },
             { do: "help.system.steps.9.do", see: "help.system.steps.9.see" },
             { do: "help.system.steps.10.do", see: "help.system.steps.10.see" },
-            { do: "help.system.steps.11.do", see: "help.system.steps.11.see" },
+            { do: "help.system.steps.11.do" },
           ],
         },
       ],
@@ -86,7 +60,6 @@ export const HELP_TABS: Record<StepId, readonly HelpTab[]> = {
           kind: "pairs",
           items: [
             { term: "help.system.trouble.1.symptom", text: "help.system.trouble.1.fix" },
-            { term: "help.system.trouble.2.symptom", text: "help.system.trouble.2.fix" },
             { term: "help.system.trouble.3.symptom", text: "help.system.trouble.3.fix" },
             { term: "help.system.trouble.4.symptom", text: "help.system.trouble.4.fix" },
             { term: "help.system.trouble.5.symptom", text: "help.system.trouble.5.fix" },
@@ -122,12 +95,12 @@ export const HELP_TABS: Record<StepId, readonly HelpTab[]> = {
             { do: "help.connect.steps.1.do", see: "help.connect.steps.1.see" },
             { do: "help.connect.steps.2.do", see: "help.connect.steps.2.see" },
             { do: "help.connect.steps.3.do", see: "help.connect.steps.3.see" },
-            { do: "help.connect.steps.4.do", see: "help.connect.steps.4.see" },
+            { do: "help.connect.steps.4.do" },
             { do: "help.connect.steps.5.do", see: "help.connect.steps.5.see" },
             { do: "help.connect.steps.6.do", see: "help.connect.steps.6.see" },
             { do: "help.connect.steps.7.do", see: "help.connect.steps.7.see" },
-            { do: "help.connect.steps.8.do", see: "help.connect.steps.8.see" },
-            { do: "help.connect.steps.9.do", see: "help.connect.steps.9.see" },
+            { do: "help.connect.steps.8.do" },
+            { do: "help.connect.steps.9.do" },
           ],
         },
       ],
@@ -191,12 +164,12 @@ export const HELP_TABS: Record<StepId, readonly HelpTab[]> = {
         {
           kind: "steps",
           items: [
-            { do: "help.measure.steps.1.do", see: "help.measure.steps.1.see" },
-            { do: "help.measure.steps.2.do", see: "help.measure.steps.2.see" },
+            { do: "help.measure.steps.1.do" },
+            { do: "help.measure.steps.2.do" },
             { do: "help.measure.steps.3.do", see: "help.measure.steps.3.see" },
-            { do: "help.measure.steps.4.do", see: "help.measure.steps.4.see" },
+            { do: "help.measure.steps.4.do" },
             { do: "help.measure.steps.5.do", see: "help.measure.steps.5.see" },
-            { do: "help.measure.steps.6.do", see: "help.measure.steps.6.see" },
+            { do: "help.measure.steps.6.do" },
             { do: "help.measure.steps.7.do", see: "help.measure.steps.7.see" },
           ],
         },
@@ -208,7 +181,6 @@ export const HELP_TABS: Record<StepId, readonly HelpTab[]> = {
         {
           kind: "bullets",
           items: [
-            "help.measure.checks.1",
             "help.measure.checks.2",
             "help.measure.checks.3",
             "help.measure.checks.4",
@@ -324,7 +296,7 @@ export const HELP_TABS: Record<StepId, readonly HelpTab[]> = {
         {
           kind: "steps",
           items: [
-            { do: "help.calibrate.steps.1.do", see: "help.calibrate.steps.1.see" },
+            { do: "help.calibrate.steps.1.do" },
             { do: "help.calibrate.steps.2.do", see: "help.calibrate.steps.2.see" },
             { do: "help.calibrate.steps.3.do", see: "help.calibrate.steps.3.see" },
             { do: "help.calibrate.steps.4.do", see: "help.calibrate.steps.4.see" },
@@ -332,7 +304,7 @@ export const HELP_TABS: Record<StepId, readonly HelpTab[]> = {
             { do: "help.calibrate.steps.6.do", see: "help.calibrate.steps.6.see" },
             { do: "help.calibrate.steps.7.do", see: "help.calibrate.steps.7.see" },
             { do: "help.calibrate.steps.8.do", see: "help.calibrate.steps.8.see" },
-            { do: "help.calibrate.steps.9.do", see: "help.calibrate.steps.9.see" },
+            { do: "help.calibrate.steps.9.do" },
           ],
         },
       ],
@@ -389,7 +361,7 @@ export const HELP_TABS: Record<StepId, readonly HelpTab[]> = {
         {
           kind: "steps",
           items: [
-            { do: "help.export.steps.1.do", see: "help.export.steps.1.see" },
+            { do: "help.export.steps.1.do" },
             { do: "help.export.steps.2.do", see: "help.export.steps.2.see" },
             { do: "help.export.steps.3.do", see: "help.export.steps.3.see" },
             { do: "help.export.steps.4.do", see: "help.export.steps.4.see" },

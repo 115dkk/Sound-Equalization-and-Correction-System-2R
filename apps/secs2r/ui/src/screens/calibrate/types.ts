@@ -2,6 +2,8 @@
 // do (CalibrateActions). P33 builds the view from the service and implements
 // the actions; the screen never calls the service itself
 // (docs/packets/M5-screens-common.md, P31b).
+import type { ComputePreference } from "../../ipc/bindings/ComputePreference";
+import type { ComputeStatus } from "../../ipc/bindings/ComputeStatus";
 import type { StepState } from "../../app/model";
 import type { BandType } from "../../ipc/bindings/BandType";
 import type { CalibrationSettings } from "../../ipc/bindings/CalibrationSettings";
@@ -31,6 +33,7 @@ export type CalibrateJob = "calibrate" | "calibrate_subs" | "recommend_xo" | "mi
 export type StaleReason = "settings" | "target" | "measurements";
 
 export type CalibrateView = {
+  compute: { preference: ComputePreference; status: ComputeStatus | null; loading: boolean; saving: boolean; error: IpcError | null; locked: boolean };
   /** `results`: the latest calibration and MIMO summaries, with their stale flags. */
   results: ResultsSummary;
   /** `result_lines`: per-channel lines, RC notes and the BA lines. */
@@ -109,7 +112,12 @@ export type { SubLayout } from "../../ipc/bindings/SubLayout";
 export type { SubModeChoice } from "../../ipc/bindings/SubModeChoice";
 
 export type CalibrateActions = {
-  /** calibrate { settings: null, subs_only: false } (a first run without an XO recommendation recommends first: the service's business) */
+  /** Host: opens the measurement list to inspect a structured measurement error. */
+  goToMeasurements: () => void;
+  changeCompute: (preference: ComputePreference) => void;
+  refreshCompute: () => void;
+  openGpuHelp: () => void;
+  /** calibrate { settings: null, subs_only: false } */
   calibrate: () => void;
   /** calibrate { settings: null, subs_only: true } */
   calibrateSubs: () => void;

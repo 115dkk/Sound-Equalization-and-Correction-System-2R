@@ -6,7 +6,7 @@
 
 1. **업스트림의 모든 기능을 옮깁니다.** 기능 목록은 `features.toml`이고, 업스트림 출처는 각 항목의 `upstream`에 적습니다. 업스트림 파이썬 트리는 고치지 않고 오라클로 씁니다(0001).
 2. **먼저 그대로, 그다음 고칩니다.** 이식은 골든을 맞추고, 결함 수정은 번호 붙은 편차로 따로 넣습니다(0004).
-3. **unsafe는 격리 크레이트에만.** `secs-sys` 하나이고 예산은 0입니다(0002).
+3. **unsafe는 격리 크레이트에만.** OS 경계 `secs-sys`와 선택적 GPU 경계 `secs-cuda-sys`의 예산을 정책으로 검사합니다(0002, 0008).
 4. **결정적인 계산.** 같은 입력이면 스레드 수와 무관하게 같은 바이트가 나옵니다. GPU 경로만 허용오차로 다루고 그 사실을 결과에 적습니다(0007).
 5. **기능마다 테스트.** `features.toml`에 없는 기능은 없는 것이고, '구현됨'에는 실제 테스트가 있어야 합니다.
 
@@ -16,7 +16,7 @@
 Cargo.toml                워크스페이스 루트 (lint, 공용 의존성)
 rust-toolchain.toml       1.99.0 고정
 features.toml             기능 등록부
-unsafe-budget.toml        크레이트별 unsafe 허용량 (secs-sys = 0)
+unsafe-budget.toml        크레이트별 unsafe 허용량 (secs-sys = 0, secs-cuda-sys = 80)
 deny.toml                 GPL 호환 라이선스, 권고, 출처
 UPSTREAM.toml             이식을 마친 업스트림 커밋
 crates/
@@ -24,7 +24,8 @@ crates/
   secs-dsp/               f64 프리미티브, TRF·차분 진화·RandomState 이식
   secs-compute/           스레드, 메모리 예산, 캐시, 취소, 진행
   secs-engine/            보정 설계 전 단계 (깊은 모듈)
-  secs-gpu/               MIMO 서포트 맞춤의 wgpu 어댑터 (선택)
+  secs-gpu/               GPU 장치 정책과 이상 FIR f64 RidgeBackend 어댑터
+  secs-cuda-sys/          선택적 CUDA/cuBLAS/cuSOLVER 네이티브 격리 경계
   secs-project/           .secs, 이주, 구성·DSP 프로파일·타겟, 측정 계획, .irs 저장소
   secs-jos/               자바 직렬화 그래프 (바이트 동일 왕복)
   secs-mdat/              REW mdat 읽기·만들기
@@ -60,9 +61,10 @@ ui ──IPC──> secs2r ─┬─> secs-service ─┬─> secs-engine ─┬
                     │                 ├─> secs-export ───> secs-engine, secs-mdat, secs-types
                     │                 ├─> secs-camilla ──> secs-dsp, secs-types
                     │                 └─> secs-filters ──> secs-camilla, secs-dsp, secs-types
-                    ├─> secs-gpu ─────> secs-engine (SupportFitBackend seam)
+                    ├─> secs-gpu ─────> secs-engine (RidgeBackend seam)
+                    │        └───────> secs-cuda-sys (선택적 네이티브 라이브러리)
                     └─> secs-sys ─────> wasapi, cpal, OS 조회 크레이트
-secs2r-cli ─────────> secs-service, secs-sys
+secs2r-cli ─────────> secs-service, secs-sys, secs-gpu
 secs-policy ────────> (파일 시스템만 읽음; IPC 메서드 목록 때문에 secs-types)
 ```
 
@@ -75,7 +77,7 @@ secs-policy ────────> (파일 시스템만 읽음; IPC 메서드
 | 측정 방식 | `secs-service` | 자체 측정(`secs-audio`), REW(`secs-rew` RealRew), 모의(시뮬레이션 방) |
 | 오디오 장치 `AudioBackend` | `secs-audio` | WASAPI(`secs-sys`), cpal(`secs-sys`), 시뮬레이션 방(테스트) |
 | REW 전송 | `secs-rew` 안쪽 | HTTP, 기록된 대화(테스트) |
-| 서포트 맞춤 `SupportFitBackend` | `secs-engine` | CPU(기준), GPU(`secs-gpu`) |
+| 이상 FIR의 정칙화 탐색 `RidgeBackend` | `secs-engine` | CPU RidgeSweep(기준), CUDA f64 spectral(`secs-gpu`) |
 | 신호 사슬 소비자 | `secs-types`의 사슬 값 | 응답 시뮬레이터(`secs-engine`), CamillaDSP 작성기(`secs-camilla`), 필터 텍스트·Equalizer APO 작성기(`secs-filters`) |
 | 메모리 조회 `MemoryProbe` | `secs-compute` | 운영체제(`secs-sys`), 고정값(테스트) |
 | 호스트 기능 `Host` | `secs-service` | Tauri(대화상자, 폴더 열기, 알림), 기록(테스트) |
@@ -98,12 +100,13 @@ secs-policy ────────> (파일 시스템만 읽음; IPC 메서드
 | 성적표 | 타입 있는 지표(±1 dB 비율, 위상 바퀴, GD 폭, 1/24 GD 봉우리, 앞울림) | `scorecard.py` |
 | 오케스트레이터 | 단계 캐시(입력 지문), 취소, 진행, XO 추천의 공유 단계 | `calibration.compute`, `compute_mimo` |
 
-업스트림이 환경 변수로 숨긴 값(`SECS_BOOST_RING_MS`, `SECS_BA_DELAY_MS`, `SECS_BA_EFF`, `SECS_SUB_BUS_FIX`, `SECS_MAIN_W_LO`, `SECS_PHASE_POS`, `SECS_LONG_BOOST_DB`, `SECS_NOBOOST_MS`, `SECS_MIMO_*`)은 명시적 튜닝 값의 필드가 되고, 화면의 '전문가 표시'에서만 보입니다.
+업스트림이 환경 변수로 숨긴 값(`SECS_BOOST_RING_MS`, `SECS_BA_DELAY_MS`, `SECS_BA_EFF`, `SECS_SUB_BUS_FIX`, `SECS_MAIN_W_LO`, `SECS_PHASE_POS`, `SECS_LONG_BOOST_DB`, `SECS_NOBOOST_MS`, `SECS_MIMO_*`)은 명시적 튜닝 값의 필드로 옮기는 대상입니다. 화면에 제공할 때는 해당 기능의 세부 설정에서 펼치며, 사용자 숙련도로 접근을 나누지 않습니다.
 
 ## 6. 수치
 
 - f64를 기본으로 하고, 원 IR은 float32로 저장합니다.
 - 설계 격자는 48 kHz, N_FFT = 2^17(0.366 Hz)입니다. MIMO 저속 영역은 600 Hz, 720샘플입니다.
+- 측정의 샘플레이트 처리 정책은 프로젝트 보정 설정에 있습니다. 기본값은 비48 kHz 입력 거부이며, 선택적 리샘플링은 작업 안에서 계산용 사본만 변환합니다. 변환한 측정은 보정·MIMO·미리보기·내보내기가 공유하고 원본 측정 저장소는 보존합니다(P60, D39).
 - NumPy·SciPy와 맞춰야 하는 세부 사항
   - `least_squares`: TRF, 경계 있음, exact 신뢰 영역 해법, `max_nfev`는 잔차 호출만 셉니다. 임펄사이퍼의 `optimize.rs`(MIT, SciPy 1.18.1 이식)를 들여옵니다.
   - `differential_evolution`: best1bin, 세대마다 dither 다시 뽑기, 재조합 0.7, LHS 초기화, `updating='immediate'`, `polish=False`. 정수 시드라 레거시 `RandomState`(MT19937)를 쓰고 난수 소비 순서(LHS, dither, 채움 위치, 섞기, 교차, 경계 밖 재표본)까지 맞춥니다.
@@ -113,9 +116,12 @@ secs-policy ────────> (파일 시스템만 읽음; IPC 메서드
 
 ## 7. 서비스와 화면
 
+- 화면 결과는 역할·개수·성적표 중심의 요약입니다. FIR 계수와 DSP 사슬은 Rust의 최신 결과와 내부 캐시에 두며, 완료 이벤트와 작업 이력에는 싣지 않습니다. 보정·MIMO 완료 뒤 요약을 한 번 조회하고, 작업 기록은 완료 32개와 모든 활성 작업으로 제한합니다(0009).
 - `secs-service`의 인터페이스는 `call(Request) -> Envelope`와 잡 이벤트입니다. 잡은 종류마다 하나만 동시에 돌고, 취소 토큰이 엔진 안쪽 반복까지 내려갑니다. 결과는 버리지 않고 낡음으로 표시합니다(다시 계산해도 MIMO 결과는 남고 '다시 계산 필요'로 바뀜).
 - 화면은 다섯 단계 레일입니다. 시스템(구성·배선) → 연결·점검(REW 경로 또는 자체 측정 장치, 레벨) → 측정·가져오기 → 보정 → 내보내기. mdat 가져오기 경로를 고르면 연결·점검 단계가 나타나지 않습니다.
-- 항목은 세 겹으로 공개합니다. 주 경로, 절마다 접힌 '고급', 사용자별로 기억하는 '전문가 표시'. 설정마다 정본 위치는 하나입니다.
+- 설정은 주 경로와 해당 절에서 펼치는 세부 항목으로 공개합니다. 전역 전문가 표시나 숙련도별 접근 제한은 두지 않습니다. 로고의 '전문가 모드 / 킹반인 모드'는 외형 선택이며 설정 접근과 무관합니다. 설정마다 정본 위치는 하나입니다(P58).
+- 설정의 라벨·단위·선택지는 설명 없이도 의미를 알 수 있게 씁니다. 정적 보충 설명은 해당 항목의 도움말로 열고, 현재 상태·추천값·오류·사용 불가 사유·다음 행동은 화면에 유지합니다(P55).
+- 앱 안에서 해결할 수 있는 문제는 짧은 상태와 실제 조작 또는 해당 설정으로 이동하는 버튼을 제공합니다. 다른 단계의 위치를 문장으로 안내하지 않습니다. 내부 처리 해명과 자명한 조작 설명은 도움말에 옮겨 쌓지 않고 삭제합니다(P57).
 - 결과는 판정 카드(20–200 Hz ±1 dB 비율 전후, 저역 시간 퍼짐, 추가 지연, 위치 간 편차) → 채널별 성적표 → 그래프(응답, 군지연, XO, 서브, 저역 감쇠) 순서로 보입니다.
 - 화면 규칙은 make-interfaces-feel-better를 리뷰 게이트로 씁니다(0003).
 

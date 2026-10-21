@@ -6,8 +6,9 @@
 
 - 업스트림 파이썬 트리(`src/`, `tests/`, `tools/`, `docs/STRUCTURE.md`, `배포/`, `run_secs.py`, `SECS.spec`, `build_exe.ps1`, `requirements*.txt`, `LICENSE`, `THIRD_PARTY_NOTICES.md`)는 고치지 않습니다. CI가 `UPSTREAM.toml`의 커밋과 비교합니다(ADR 0001). 업스트림 판의 README와 변경 기록은 `docs/upstream/`에 있습니다.
 - 업스트림 기능은 모두 옮깁니다. 먼저 골든을 맞추고, 결함 수정은 그다음 PR에서 편차로 넣고 `docs/DEVIATIONS.md`를 고칩니다(ADR 0004). 핵심 아이디어를 바꾸는 변경은 ADR이 먼저입니다.
-- unsafe는 격리 크레이트(`unsafe-budget.toml`에 오른 `-sys` 크레이트, 지금은 `secs-sys`, 예산 0)에만 둘 수 있습니다. 새 크레이트 루트에는 `#![forbid(unsafe_code)]`를 걸고 Cargo.toml에 `[lints] workspace = true`를 둡니다. 숫자를 올리거나 격리 크레이트를 더하려면 ADR이 먼저입니다(ADR 0002).
+- unsafe는 격리 크레이트(`secs-sys` 예산 0, `secs-cuda-sys` 예산 80)에만 둘 수 있습니다. GPU의 좁은 네이티브 경계는 ADR 0008과 `docs/UNSAFE_BOUNDARIES.md`를 따릅니다. 그 밖의 새 크레이트 루트에는 `#![forbid(unsafe_code)]`를 걸고 Cargo.toml에 `[lints] workspace = true`를 둡니다. 숫자를 올리거나 격리 크레이트를 더하려면 ADR이 먼저입니다(ADR 0002).
 - 운영체제 의존성(`wasapi`, `cpal`, `windows*`, `libc` 등)은 `secs-sys`만 가지고, `secs-sys`는 `apps/` 아래 앱만 의존합니다.
+- GPU 로더 의존성은 `secs-cuda-sys`만 가지고, 이 격리 크레이트는 `secs-gpu`만 의존합니다(ADR 0008).
 - 기능을 더하면 `features.toml`에 등록하고, `implemented`로 표시할 때는 실제로 있는 테스트를 가리킵니다. 화면이 부르는 IPC 메서드는 `ipc.<메서드>`로 등록합니다.
 - IPC 타입은 `secs-types`에서만 정의합니다. 바꾼 뒤 `cargo test -p secs-types`로 `apps/secs2r/ui/src/ipc/bindings/`를 다시 생성해 함께 커밋합니다.
 - 병렬은 map만 쓰고 부동소수점 누적은 원래 순서로 합니다. faer는 `std` 기능 없이, `Par::Seq`로 씁니다(ADR 0007).
@@ -45,11 +46,11 @@ cargo +nightly-2026-10-01 miri test --locked -p secs-jos -p secs-mdat
 
 ## 브랜치와 릴리스
 
-- 기본 브랜치는 `main`입니다. 작업은 브랜치에서 하고 PR로 머지합니다.
+- 기본 브랜치는 `main`입니다. 별도 지시가 없으면 변경 작업의 기본 완료 범위는 브랜치 구현, 검증, PR 생성과 머지입니다.
 - main에 머지하면 `release.yml`이 릴리스를 냅니다(ADR 0006). 머지가 곧 릴리스 결정입니다. 0.x는 모두 사전 출시이고 정식 출시는 1.0.0부터입니다.
 - 커밋 제목은 `feat:`, `fix:`, `docs:`, `ci:`, `chore:`, `refactor:`, `test:` 같은 접두어 뒤에 한국어로 씁니다. 출하 파일을 건드린 `feat`는 다음 릴리스에서 minor를, 나머지는 patch를 올립니다.
 - 출하물을 바꾸는 PR은 `CHANGELOG.md` 맨 위의 다음 버전 절에 항목을 더합니다. 릴리스 본문이 그 절입니다.
 - push한 뒤에는 PR의 CI를 끝까지 따라가고, 실패하면 같은 PR에 수정 커밋을 올립니다.
-- 유지보수자의 상시 승인에 따라, Claude가 연 PR은 CI가 모두 통과하고 충돌과 열린 리뷰 스레드가 없으면 사람의 리뷰를 기다리지 않고 머지 커밋으로 머지합니다. 머지한 뒤에는 `release.yml`의 실행(게이트의 판정, bump 커밋, 세 운영체제 설치본, 릴리스 자산)까지 확인합니다.
+- 유지보수자의 상시 승인에 따라, 에이전트가 연 PR은 CI가 모두 통과하고 충돌과 열린 리뷰 스레드가 없으면 사람의 리뷰를 기다리지 않고 머지 커밋으로 머지합니다. 머지한 뒤에는 `release.yml`의 실행(게이트의 판정, bump 커밋, 세 운영체제 설치본, 릴리스 자산)까지 확인합니다.
 - 화면이나 카탈로그를 바꾼 PR에서는 `ui-gallery.yml`이 리뷰 이슈(`화면 갤러리 리뷰: PR #N`)를 열어 화면 전체와 견본을 보여 줍니다. 머지를 막지 않지만, 그 링크를 사용자에게 알려 화면을 따로 볼 수 있게 합니다.
 - 업스트림에 새 커밋이 생기면 `upstream-watch.yml`이 이슈를 엽니다. 병합할 때 `README.md`·`CHANGELOG.md` 충돌은 우리 쪽을 남기고 업스트림 판을 `docs/upstream/`에 옮깁니다.

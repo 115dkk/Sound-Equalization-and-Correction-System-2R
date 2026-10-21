@@ -12,7 +12,7 @@ import { ProjectMenu, SettingsButton, type ProjectActions } from "./menus";
 import { STEPS, neighbourStep, type FrameModel, type StepId } from "./model";
 import { usePrefs } from "./prefs";
 import { ProjectStatus } from "./ProjectStatus";
-import { StepHeader, type PrimaryAction } from "./StepHeader";
+import { StepHeader, type PrimaryAction, type RecoveryAction } from "./StepHeader";
 import { StepRail } from "./StepRail";
 import { shortcutText, useShortcuts } from "./shortcuts";
 import "./app.css";
@@ -21,6 +21,7 @@ export type AppFrameProps = {
   model: FrameModel;
   onNavigate: (step: StepId) => void;
   primary?: PrimaryAction | undefined;
+  recovery?: RecoveryAction | undefined;
   headerStatus?: ReactNode;
   projectActions: ProjectActions;
   onHelp: () => void;
@@ -41,6 +42,7 @@ export function AppFrame({
   model,
   onNavigate,
   primary,
+  recovery,
   headerStatus,
   projectActions,
   onHelp,
@@ -112,7 +114,7 @@ export function AppFrame({
         </div>
       </aside>
       <main className="app-main" aria-labelledby="frame.header.title">
-        <StepHeader step={model.current} state={model.steps[model.current]} primary={primary} status={headerStatus} />
+        <StepHeader step={model.current} state={model.steps[model.current]} primary={primary} status={headerStatus} recovery={recovery} />
         <div className="app-body">
           <div className="app-content" id="frame.content" data-ui="frame.content">
             {children}

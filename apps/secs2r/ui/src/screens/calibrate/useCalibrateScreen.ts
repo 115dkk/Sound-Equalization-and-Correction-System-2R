@@ -2,9 +2,11 @@ import { useMemo } from "react";
 import { useHost, useResource, useSession } from "../../state/react";
 import type { CalibrateActions, CalibrateJob, CalibrateView } from "./types";
 
-export function useCalibrateScreen(): { view: CalibrateView | null; actions: CalibrateActions } {
+export function useCalibrateScreen(goToMeasurements?: () => void): { view: CalibrateView | null; actions: CalibrateActions } {
   const session = useSession();
   const host = useHost();
+  const appSettings = useResource("appSettings");
+  const computeStatus = useResource("computeStatus");
   const results = useResource("results");
   const lines = useResource("lines");
   const curves = useResource("resultCurves");
@@ -22,6 +24,17 @@ export function useCalibrateScreen(): { view: CalibrateView | null; actions: Cal
       session.run(() => session.refreshCurves({ tab: h.tab, channel: h.channel, group: h.xoGroup, xo_hz: h.previewHz, corrected: null }));
     };
     return {
+      goToMeasurements: goToMeasurements ?? (() => session.navigate("measure")),
+      openGpuHelp: () => session.run(() => session.call({ method: "open_gpu_help" })),
+      refreshCompute: () => session.run(() => session.stores.computeStatus.load()),
+      changeCompute: (compute) => session.run(async () => {
+        const h = session.host.getSnapshot();
+        const settings = session.stores.appSettings.getSnapshot();
+        if (!settings || h.computeSaving || h.computeLoading || h.computeError || h.jobs.some((job) => ["running", "cancel_requested"].includes(job.status) && !["status_watch", "level_monitor"].includes(job.kind))) return;
+        session.host.set({ computeSaving: true });
+        try { await session.call({ method: "app_settings_set", params: { settings: { ...settings, compute } } }); }
+        finally { session.host.set({ computeSaving: false }); }
+      }),
       calibrate: () => session.run(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } })),
       calibrateSubs: () => session.run(() => session.call({ method: "calibrate", params: { settings: null, subs_only: true } })),
       recommendXo: () => session.run(() => session.call({ method: "recommend_xo" })),
@@ -49,13 +62,15 @@ export function useCalibrateScreen(): { view: CalibrateView | null; actions: Cal
         if (path !== null) await session.call({ method: "target_load", params: { path } });
       }),
     };
-  }, [session]);
+  }, [session, goToMeasurements]);
   const jobs = host.jobs.filter((job) => job.status === "running" || job.status === "cancel_requested");
   const runningJob = jobs.find((job) => ["calibrate", "recommend_xo", "mimo"].includes(job.kind));
   const request = runningJob ? host.jobRequests[runningJob.job] : undefined;
   const running: CalibrateJob | null = runningJob ? request?.method === "calibrate" && request.params.subs_only ? "calibrate_subs" : runningJob.kind as CalibrateJob : null;
   const measuredRoles = new Set(measurements?.curves.filter((curve) => curve.position === 1).map((curve) => curve.role));
   return { view: results && lines && settings && modeSpec && target && config && project ? {
+    compute: { preference: appSettings?.compute ?? "auto", status: computeStatus, loading: host.computeLoading || !appSettings, saving: host.computeSaving, error: host.computeError,
+      locked: jobs.some((job) => !["status_watch", "level_monitor"].includes(job.kind)) },
     results, lines, curves: curves?.curves ?? null, settings, modeSpec, target, config, positions: project.positions,
     measuredRoles: config.speakers.map((speaker) => speaker.role).filter((role) => measuredRoles.has(role)),
     firBudget: dsp?.fields.fir_budget ?? 0, xoRecommendation: host.xoRecommendation, running,

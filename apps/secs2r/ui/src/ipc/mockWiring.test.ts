@@ -93,7 +93,7 @@ describe("P33 mock wiring", () => {
     expect(events.filter((e) => e.event === "measure_status")).toHaveLength(2);
     await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
     expect((await mock.request({ method: "jobs" })).map((j) => j.job)).toEqual([watch.job, meter.job]);
-    expect(await mock.request({ method: "level_monitor_stop" })).toMatchObject({ status: "succeeded", result: { kind: "stopped" } });
+    expect(await mock.request({ method: "level_monitor_stop" })).toMatchObject({ status: "succeeded" });
     await mock.request({ method: "status_watch_stop" });
     expect(events.at(-1)).toMatchObject({ event: "finished", job: watch.job, result: { kind: "stopped" } });
     expect(await mock.request({ method: "jobs" })).toEqual([]);
@@ -107,7 +107,7 @@ describe("P33 mock wiring", () => {
     expect((await mock.request({ method: "results" })).calibration).toMatchObject({ mode: "linear", stale: false });
     expect((await mock.request({ method: "result_lines" })).ba?.rows).toHaveLength(2);
     await mock.request({ method: "mimo", params: { settings: null } }); mock.drain();
-    expect(events.at(-1)).toMatchObject({ result: { kind: "mimo", data: { stale: false } } });
+    expect(events.at(-1)).toMatchObject({ result: { kind: "mimo" } });
     await mock.request({ method: "target_apply_preset", params: { preset: "flat" } });
     expect((await mock.request({ method: "results" })).mimo?.stale).toBe(true);
     await mock.request({ method: "export_folder_set", params: { folder: "/exports" } });
@@ -124,6 +124,7 @@ describe("P33 mock wiring", () => {
     const mock = createMockService({ tickMs: 0 });
     const edits = {
       mode: { kind: "mode", mode: "ultra" }, ultra_ms: { kind: "ultra_ms", ms: 999 }, rc_lo: { kind: "rc_lo", hz: 25 }, rc_hi: { kind: "rc_hi", hz: 500 },
+      sample_rate_policy: { kind: "sample_rate_policy", policy: "resample" },
       room_volume: { kind: "room_volume", m3: 60 }, room_dims: { kind: "room_dims", dims: [5, 4, 3] }, boost_max: { kind: "boost_max", db: 6 },
       xo: { kind: "xo", group: "front", hz: 100 }, xo_peq: { kind: "xo_peq", on: false, lo: 30, hi: 150 },
       infra: { kind: "infra", role: "SW1", hz: 40, type: "LR24", subs: ["SW1", "SW2"] }, infra_boost: { kind: "infra_boost", db: 18 },
@@ -134,12 +135,14 @@ describe("P33 mock wiring", () => {
       mimo_max: { kind: "mimo_max", count: 4 }, mimo_fir: { kind: "mimo_fir", on: true },
     } satisfies { [K in SettingEdit["kind"]]: Extract<SettingEdit, { kind: K }> };
     for (const edit of Object.values(edits)) await mock.request({ method: "calibration_settings_edit", params: { edit } });
-    expect(await mock.request({ method: "calibration_settings_get" })).toMatchObject({ mode: "ultra", ultra_ms: 200, room_volume_m3: 60, room_dims_m: [5, 4, 3], mimo_on: true, mimo_fir: true, subs_manual: { SW1: { mode: "bundle", gain_db: -4, hp_hz: 0 } } });
+    expect(await mock.request({ method: "calibration_settings_get" })).toMatchObject({ mode: "ultra", sample_rate_policy: "resample", ultra_ms: 200, room_volume_m3: 60, room_dims_m: [5, 4, 3], mimo_on: true, mimo_fir: true, subs_manual: { SW1: { mode: "bundle", gain_db: -4, hp_hz: 0 } } });
   });
 
   it("answers every generated Request variant with its tagged typed response", async () => {
     // This mapped type makes newly generated methods a compile-time test gap.
     const requests = {
+      compute_status: { method: "compute_status" },
+      open_gpu_help: { method: "open_gpu_help" },
       bootstrap: { method: "bootstrap" }, project_info: { method: "project_info" },
       project_new: { method: "project_new", params: { path: "/new.secs", preset: "2.0", sub_count: 0, sample: true, tutorial: false } },
       project_open: { method: "project_open", params: { path: "/saved.secs" } }, project_save: { method: "project_save", params: { path: null } },

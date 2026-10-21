@@ -9,7 +9,7 @@ import { Button, Card, DataTable, ErrorNotice, StatusPill, type Column } from ".
 import { roleCode } from "../../ui/maps/geometry";
 import { Stat } from "./controls";
 import { availableTabs } from "./ResultGraph";
-import { FAILED_TEXT, groupOf, modeName, modeSpecText, noteLines, subRoles, xoGroups } from "./text";
+import { FAILED_TEXT, groupOf, modeName, noteLines } from "./text";
 import type { CalibrateActions, CalibrateView, StaleReason } from "./types";
 
 const STALE_TEXT: Record<StaleReason | "unknown", "calibrate.stale.settings" | "calibrate.stale.target" | "calibrate.stale.measurements" | "calibrate.stale.unknown"> = {
@@ -37,13 +37,12 @@ function Change({ before, after }: { before: string; after: string }) {
   );
 }
 
-export function Verdict({ view }: { view: CalibrateView }) {
+export function Verdict({ view, actions, onSampleRateSettings }: { view: CalibrateView; actions: CalibrateActions; onSampleRateSettings: () => void }) {
   const t = useT();
   const number = useNumber();
   const result = view.results.calibration;
   const mimo = view.results.mimo;
   const failure = view.failure?.job === "calibrate" ? view.failure : null;
-  const subs = subRoles(view.config);
   const resultMode = view.resultMode ?? (result && !result.stale ? { mode: view.settings.mode, ultra_ms: view.settings.ultra_ms } : null);
 
   // A stale result is named by the header pill and explained by the notice below; no third mark here.
@@ -53,21 +52,27 @@ export function Verdict({ view }: { view: CalibrateView }) {
     <StatusPill tone="success">{t("calibrate.verdict.current")}</StatusPill>
   );
 
-  const failed = failure && (
+  const failureText = failure ? errorText(t, failure.error) : null;
+  const sampleRateFailure = failure?.error.params.reason === "measurement_sample_rate";
+  const failed = failure && failureText && (
     <ErrorNotice
       id="calibrate.verdict.failed"
-      cause={`${t(FAILED_TEXT[failure.job])} ${errorText(t, failure.error).cause}`}
-      next={errorText(t, failure.error).next}
+      cause={failureText.generic ? t(FAILED_TEXT[failure.job]) : `${t(FAILED_TEXT[failure.job])} ${failureText.cause}`}
+      next={failureText.next}
       detail={failure.error.detail}
       code={failure.error.code}
+      action={failure.error.code === "engine_input" && !failureText.generic ? (
+        <Button variant="secondary" data-ui={`calibrate.verdict.failed.${sampleRateFailure ? "sample_rate" : "measurements"}`} onClick={sampleRateFailure ? onSampleRateSettings : actions.goToMeasurements}>
+          {t(sampleRateFailure ? "calibrate.failed.sample_rate_settings" : "calibrate.failed.inspect_measurements")}
+        </Button>
+      ) : undefined}
     />
   );
 
   if (!result) {
-    const needsXo = xoGroups(view.config).length > 0 && !Object.values(view.settings.xo_rec).some((hz) => hz > 0);
     return (
       <Card
-        title={t("calibrate.verdict.title")}
+        title={t("calibrate.verdict.plan.title")}
         actions={pill}
         className="calibrate-verdict"
         data-ui="calibrate.verdict"
@@ -76,16 +81,8 @@ export function Verdict({ view }: { view: CalibrateView }) {
         <div className="calibrate-plan" data-ui="calibrate.verdict.plan">
           <p>
             {view.positions.length > 0
-              ? t("calibrate.verdict.plan", { count: view.positions.length })
+              ? t(view.positions.length === 1 ? "calibrate.verdict.plan.one" : "calibrate.verdict.plan", { count: view.positions.length })
               : t("calibrate.verdict.plan.no_measurements")}
-            {subs.length > 0 && ` ${subs.length > 1 ? t("calibrate.verdict.plan.subs", { count: subs.length }) : t("calibrate.verdict.plan.sub")}`}
-          </p>
-          {needsXo && view.positions.length > 0 && <p>{t("calibrate.verdict.plan.xo_first")}</p>}
-          <p className="calibrate-line tabular">
-            {t("calibrate.verdict.plan.mode", {
-              mode: modeName(t, number, view.settings.mode, view.settings.ultra_ms),
-              spec: modeSpecText(t, number, view.modeSpec),
-            })}
           </p>
         </div>
       </Card>

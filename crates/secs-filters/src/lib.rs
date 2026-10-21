@@ -1019,10 +1019,16 @@ pub fn eqapo_config(
     if let Some(ms) = latency_ms {
         lines.push(format!("# Latency of the filters: {} ms (video: delay the picture or set the player audio offset).", format_fixed(ms, 1, false)));
     }
-    lines.extend([String::new(), "# ==== EDIT ONLY THESE TWO LINES: device channel number of each SECS input / output (0 = not used) ====".into(),
-        format!("Eval: {}", plan.inputs.iter().map(|role| format!("in{role} = {}", map_number(in_num, role))).collect::<Vec<_>>().join("; ")),
-        format!("Eval: {}", plan.outputs.iter().map(|role| format!("out{role} = {}", map_number(out_num, role))).collect::<Vec<_>>().join("; ")),
-        "# ==== do not edit below ====".into(), String::new(), "# Headroom for the largest boost of the correction (avoids clipping).".into(), "Channel: all".into(),
+    lines.extend([String::new(), "# ==== EDIT ONLY THE CHANNEL NUMBERS BELOW: device channel number of each SECS input / output (0 = not used) ====".into()]);
+    // F11: Equalizer APO's expression parser accepts one assignment per Eval.
+    // A semicolon-separated list fails before the routing variables are set.
+    for role in &plan.inputs {
+        lines.push(format!("Eval: in{role} = {}", map_number(in_num, role)));
+    }
+    for role in &plan.outputs {
+        lines.push(format!("Eval: out{role} = {}", map_number(out_num, role)));
+    }
+    lines.extend(["# ==== do not edit below ====".into(), String::new(), "# Headroom for the largest boost of the correction (avoids clipping).".into(), "Channel: all".into(),
         if preamp_db > 0.0 { format!("Preamp: -{} dB", format_fixed(preamp_db, 1, false)) } else { "Preamp: 0.0 dB".into() }, String::new(),
         "# Inputs: start silent, then copy each device channel that exists (a missing channel stays silent).".into(),
         format!("Copy: {}", plan.inputs.iter().map(|role| format!("{}=0.0", input_channel(role))).collect::<Vec<_>>().join(" "))]);
@@ -1103,8 +1109,8 @@ pub fn eqapo_guide(
             windows_name(role, plan)
         ));
     }
-    lines.extend(["   배선이 다르면 config.txt 맨 위 Eval 두 줄의 숫자만 고칩니다(0 = 안 씀, 장치에 없는 번호는 저절로 건너뜀):".into(),
-        "   · 입력: \"Eval: inL = 1; …\" — 그 소리가 들어오는 장치 채널".into(), "   · 출력: \"Eval: outL = 1; …\" — 그 스피커가 꽂힌 장치 채널".into(),
+    lines.extend(["   배선이 다르면 config.txt 맨 위 입력·출력 Eval 줄의 숫자만 고칩니다(0 = 안 씀, 장치에 없는 번호는 저절로 건너뜀):".into(),
+        "   · 입력: \"Eval: inL = 1\" — 그 소리가 들어오는 장치 채널".into(), "   · 출력: \"Eval: outL = 1\" — 그 스피커가 꽂힌 장치 채널".into(),
         format!("   필터 본체({sub_dir} 폴더 안)는 고치지 않습니다."), String::new(), "■ 알아 둘 것".into(),
         format!("· 머리 여유: 보정의 가장 큰 부스트만큼 Preamp 를 {} dB 낮춰 두었습니다(클리핑 방지). 앰프·인터페이스 볼륨으로 레벨을 다시 맞춥니다.", format_fixed(preamp_db, 1, false)),
         "· 기존 EQ·룸 보정(다른 config 파일, 플레이어 EQ, 장치 드라이버의 베이스 관리·업믹스)은 끕니다 — 겹치면 보정이 틀어집니다.".into()]);

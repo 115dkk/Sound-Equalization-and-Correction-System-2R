@@ -2,6 +2,7 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
+import { gpuComputeStatus, resultsSummary } from "../../ipc/fixtures";
 import { createMockService } from "../../ipc/mock";
 import { SessionProvider } from "../../state/react";
 import { createSession } from "../../state/session";
@@ -22,6 +23,45 @@ beforeEach(async () => {
 afterEach(async () => { cleanup(); await session.monitor(false); session.dispose(); mock.dispose(); vi.restoreAllMocks(); });
 
 describe("useCalibrateScreen", () => {
+  it("loads automatic GPU choice, persists manual CPU and refreshes stale provenance", async () => {
+    session.dispose(); mock.dispose();
+    mock = createMockService({ tickMs: 0, computeStatus: gpuComputeStatus, results: resultsSummary });
+    session = createSession(mock); await session.start();
+    vi.spyOn(session, "run").mockImplementation((work) => { pending.push(work().catch(() => {})); });
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    expect(result.current.view?.compute).toMatchObject({ preference: "auto", status: { selected: "cuda" }, loading: false });
+    const prior = session.stores.appSettings.getSnapshot()!;
+    await perform(() => result.current.actions.changeCompute("cpu"));
+    expect(mock.calls).toContainEqual({ method: "app_settings_set", params: { settings: { ...prior, compute: "cpu" } } });
+    expect(result.current.view?.compute).toMatchObject({ preference: "cpu", status: { selected: "cpu", reason: "user_cpu" }, saving: false });
+    expect(result.current.view?.results.mimo?.stale).toBe(true);
+    await perform(result.current.actions.refreshCompute);
+    expect(result.current.view?.compute.preference).toBe("cpu");
+    await perform(result.current.actions.openGpuHelp);
+    expect(mock.calls).toContainEqual({ method: "open_gpu_help" });
+  });
+
+  it("retains a preference after save failure and blocks changes during jobs", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    mock.failNext("app_settings_set", "project_io");
+    await perform(() => result.current.actions.changeCompute("cpu"));
+    expect(result.current.view?.compute).toMatchObject({ preference: "auto", saving: false });
+    expect(session.errors.getSnapshot()?.error.code).toBe("project_io");
+    await perform(result.current.actions.computeMimo);
+    mock.calls.length = 0;
+    await perform(() => result.current.actions.changeCompute("cpu"));
+    expect(mock.calls.some((request) => request.method === "app_settings_set")).toBe(false);
+  });
+
+  it("exposes a failed device probe and recovers on retry", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    mock.failNext("compute_status", "internal", "probe unavailable");
+    await perform(result.current.actions.refreshCompute);
+    expect(result.current.view?.compute).toMatchObject({ loading: false, error: { code: "internal" } });
+    await perform(result.current.actions.refreshCompute);
+    expect(result.current.view?.compute).toMatchObject({ loading: false, error: null, status: { selected: "cpu" } });
+  });
+
   it("keeps the preview channel list empty without position-one measurements", async () => {
     const { result } = renderHook(useCalibrateScreen, { wrapper });
     await perform(() => session.call({ method: "project_new", params: { path: "", preset: "2.1", sub_count: 1, sample: false, tutorial: false } }));

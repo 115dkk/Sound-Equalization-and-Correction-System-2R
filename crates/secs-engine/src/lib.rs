@@ -58,6 +58,7 @@ mod levels;
 mod measurement;
 #[allow(dead_code)]
 pub mod mimo;
+mod normalize;
 #[allow(dead_code)]
 mod notes;
 pub mod preview;
@@ -91,8 +92,10 @@ pub use measurement::{Spectra, long_spectra};
 pub use mimo::{
     IirSupport, MimoDesign, MimoIir, MimoKey, MimoRequest, MimoRun, design_mimo, design_mimo_iir,
 };
+pub use normalize::normalize_measurements;
 pub use notes::{MimoNote, Note};
 pub use scorecard::Metrics;
+pub use secs_dsp::resample::{MAX_RESAMPLE_RATE, MIN_RESAMPLE_RATE};
 pub use setup::SubFilter;
 
 /// Complex spectrum value.

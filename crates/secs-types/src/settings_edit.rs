@@ -2,7 +2,10 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::{calibration::Mode, chain::BandType};
+use crate::{
+    calibration::{Mode, SampleRatePolicy},
+    chain::BandType,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -95,6 +98,9 @@ pub struct SubPatch {
 pub enum SettingEdit {
     Mode {
         mode: Mode,
+    },
+    SampleRatePolicy {
+        policy: SampleRatePolicy,
     },
     UltraMs {
         ms: f64,

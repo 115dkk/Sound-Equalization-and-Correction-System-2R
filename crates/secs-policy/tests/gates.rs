@@ -531,6 +531,9 @@ fn no_unsafe_outside_budget() {
             }
         }
 
+        if allowed > 0 {
+            eprintln!("unsafe budget {}: {total}/{allowed}", krate.name);
+        }
         if total > allowed {
             violations.push(format!(
                 "crate {}: found {total} unsafe token(s), budget is {allowed}",
@@ -1012,6 +1015,21 @@ fn check_dependency_table(
 ) {
     for (alias, specification) in dependencies {
         let package = dependency_package(alias, specification, workspace_packages);
+        if ["libloading", "cudarc"].contains(&package.as_str()) && krate.name != "secs-cuda-sys" {
+            violations.push(format!(
+                "{} (crate {}): GPU native loader package '{}' belongs in secs-cuda-sys (ADR 0008)",
+                relative_path(&krate.manifest),
+                krate.name,
+                package
+            ));
+        }
+        if package == "secs-cuda-sys" && krate.name != "secs-gpu" {
+            violations.push(format!(
+                "{} (crate {}): only secs-gpu may depend on secs-cuda-sys (ADR 0008)",
+                relative_path(&krate.manifest),
+                krate.name
+            ));
+        }
         if OS_PACKAGES.contains(&package.as_str()) && krate.name != ISOLATION_CRATE {
             violations.push(format!(
                 "{} (crate {}, [{section}] dependency '{}'): package '{}' may only be used by {ISOLATION_CRATE}",
@@ -1029,6 +1047,34 @@ fn check_dependency_table(
                 alias
             ));
         }
+    }
+}
+
+#[test]
+fn gpu_native_dependencies_stay_in_isolation() {
+    let packages = BTreeMap::new();
+    for (name, dependency, permitted) in [
+        ("secs-cuda-sys", "libloading", true),
+        ("secs-gpu", "secs-cuda-sys", true),
+        ("secs-engine", "secs-cuda-sys", false),
+        ("secs2r", "secs-cuda-sys", false),
+        ("secs-gpu", "libloading", false),
+        ("secs-engine", "cudarc", false),
+    ] {
+        let krate = FirstPartyCrate {
+            name: name.into(),
+            dir: repo_root().join("crates").join(name),
+            manifest: repo_root().join("crates").join(name).join("Cargo.toml"),
+            is_app: name == "secs2r",
+        };
+        // A renamed dependency must not evade the package boundary.
+        let table: toml::Table = toml::from_str(&format!(
+            "renamed = {{ package = \"{dependency}\", version = \"1\" }}"
+        ))
+        .unwrap();
+        let mut violations = Vec::new();
+        check_dependency_table(&krate, "dependencies", &table, &packages, &mut violations);
+        assert_eq!(violations.is_empty(), permitted, "{name} -> {dependency}");
     }
 }
 

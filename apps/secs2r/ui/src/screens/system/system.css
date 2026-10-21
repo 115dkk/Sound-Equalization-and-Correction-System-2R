@@ -151,9 +151,15 @@ button.system-choice:active:not([aria-pressed="true"]) {
   overflow-wrap: anywhere;
 }
 
-.system-device__name--none {
-  color: var(--text-muted);
-  font-weight: var(--weight-regular);
+.system-device__name--warning {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  color: var(--warning);
+}
+
+.system-device__configure {
+  min-height: var(--hit-min);
 }
 
 .system-notices {
@@ -247,11 +253,6 @@ button.system-choice:active:not([aria-pressed="true"]) {
   flex: none;
 }
 
-.system-bands {
-  font-family: var(--font-mono);
-  color: var(--text-muted);
-}
-
 .system-polarity {
   position: relative;
   min-width: 4.5rem;
@@ -309,6 +310,12 @@ button.system-choice:active:not([aria-pressed="true"]) {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+.system-action-help {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
 }
 
 /* ── 방 배치도 ─────────────────────────────────────────────────────────── */

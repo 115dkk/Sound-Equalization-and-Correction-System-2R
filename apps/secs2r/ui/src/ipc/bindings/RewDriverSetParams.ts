@@ -3,4 +3,8 @@
 /**
  * A requested REW audio driver.
  */
-export type RewDriverSetParams = { driver: string, };
+export type RewDriverSetParams = { 
+/**
+ * Driver name as REW reports it (`ASIO` or `Java`).
+ */
+driver: string, };

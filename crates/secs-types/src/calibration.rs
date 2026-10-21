@@ -19,6 +19,18 @@ pub enum Mode {
     Ultra,
 }
 
+/// How non-48 kHz measurement responses are prepared for calculation.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum SampleRatePolicy {
+    /// Preserve the existing validation error for mismatched measurements.
+    #[default]
+    Reject,
+    /// Resample calculation copies to 48 kHz, leaving stored measurements intact.
+    Resample,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct SubEntry {
@@ -77,6 +89,8 @@ impl Default for BundleLayoutEntry {
 #[ts(export)]
 pub struct CalibrationSettings {
     pub mode: Mode,
+    #[serde(default)]
+    pub sample_rate_policy: SampleRatePolicy,
     pub rc_lo: f64,
     pub rc_hi: Option<f64>,
     pub room_volume_m3: Option<f64>,
@@ -112,6 +126,7 @@ impl Default for CalibrationSettings {
     fn default() -> Self {
         Self {
             mode: Mode::Mixed,
+            sample_rate_policy: SampleRatePolicy::Reject,
             rc_lo: 20.0,
             rc_hi: None,
             room_volume_m3: None,
@@ -170,6 +185,10 @@ impl CalibrationSettings {
             number(self.boost_max_db)
         )
         .unwrap();
+        // Keep existing cache fingerprints unchanged for the default policy.
+        if self.sample_rate_policy == SampleRatePolicy::Resample {
+            out.push_str("|sample_rate_policy=resample");
+        }
         out
     }
 
@@ -476,6 +495,25 @@ ordered_map!(ordered_layout_map, super::BundleLayoutEntry);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sample_rate_policy_defaults_for_legacy_settings_and_changes_engine_key() {
+        let baseline = CalibrationSettings::default();
+        let mut json = serde_json::to_value(&baseline).unwrap();
+        assert_eq!(json["sample_rate_policy"], "reject");
+        json.as_object_mut().unwrap().remove("sample_rate_policy");
+        let legacy: CalibrationSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(legacy, baseline);
+        let mut resampled = legacy.clone();
+        resampled.sample_rate_policy = SampleRatePolicy::Resample;
+        assert_ne!(resampled.engine_key(), legacy.engine_key());
+        assert_eq!(
+            serde_json::to_value(&resampled).unwrap()["sample_rate_policy"],
+            "resample"
+        );
+        resampled.sample_rate_policy = SampleRatePolicy::Reject;
+        assert_eq!(resampled.engine_key(), legacy.engine_key());
+    }
 
     #[test]
     fn mode_labels_match_upstream() {

@@ -100,7 +100,7 @@ describe("프로젝트 대화상자", () => {
     const act = actions();
     renderWith(<ProjectDialogs view={view({ kind: "tutorial", dirty: true })} actions={act} />);
     expect(screen.getByText(/프로젝트 저장과 내보내기가 되지 않습니다/)).toBeTruthy();
-    expect(screen.getByText(/저장할지 고르는 창이 열립니다/)).toBeTruthy();
+    expect(document.querySelector(".project-form__note--warning")).not.toBeNull();
     fireEvent.click(ui("project.tutorial.start")!);
     expect(act.startTutorial).toHaveBeenCalledTimes(1);
   });
@@ -118,7 +118,7 @@ describe("프로젝트 대화상자", () => {
 
   it("puts focus on the first choice of a form and on the safe action of a confirmation", () => {
     // The dialog opens in a frame that is already up (its layer exists), as in the app.
-    const prefs = { locale: "ko", theme: "light", expert: false, accent: "default" } as const;
+    const prefs = { locale: "ko", theme: "light", accent: "default" } as const;
     const tree = (dialog: ProjectDialog | null) => (
       <PrefsScope initial={prefs}>
         <ProjectDialogs view={{ dialog, busy: false, error: null }} actions={actions()} />
@@ -171,7 +171,7 @@ describe("프로젝트 대화상자", () => {
       />,
     );
     expect(screen.getByText("프로젝트 파일을 읽거나 쓰지 못했습니다.")).toBeTruthy();
-    expect(screen.getByText(/저장 위치를 고르는 창이 먼저 열립니다/)).toBeTruthy();
+    expect(screen.getByText("파일 위치와 쓰기 권한을 확인하고 다시 시도하세요.")).toBeTruthy();
   });
 
   it("draws every id the reach table cites", () => {

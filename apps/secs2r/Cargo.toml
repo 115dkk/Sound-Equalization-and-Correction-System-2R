@@ -20,6 +20,7 @@ tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
 secs-service.workspace = true
+secs-gpu = { path = "../../crates/secs-gpu" }
 secs-types.workspace = true
 secs-rew.workspace = true
 secs-sys = { path = "../../crates/secs-sys" }

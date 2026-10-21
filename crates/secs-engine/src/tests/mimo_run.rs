@@ -730,3 +730,70 @@ fn run_bits(run: &mimo::MimoRun) -> Vec<u64> {
     bits.extend(values.into_iter().map(f64::to_bits));
     bits
 }
+
+#[test]
+fn iir_acceleration_request_keeps_cpu_target_and_outputs_bit_identical() {
+    use secs_types::compute::{ComputeBackend, ComputePreference, ComputeReason, ComputeStatus};
+    #[derive(Debug)]
+    struct MustNotFactor;
+    impl mimo::RidgeBackend for MustNotFactor {
+        fn factor<'a>(
+            &'a self,
+            _: &'a [f64],
+            _: &'a [f64],
+            _: &CancelToken,
+        ) -> Result<Box<dyn mimo::ShiftedSystem + 'a>, mimo::AccelerationError> {
+            panic!("IIR must retain the CPU reference target");
+        }
+    }
+    let case = cases::load("room");
+    let d = design::replay("room");
+    let ctx = Context::serial();
+    let cpu = mimo::AccelerationSelection {
+        status: ComputeStatus {
+            preference: ComputePreference::Cpu,
+            reason: ComputeReason::UserCpu,
+            ..ComputeStatus::default()
+        },
+        backend: None,
+    };
+    let expected = mimo::compute_with_acceleration(
+        &d,
+        &case.measurements,
+        &case.config,
+        &settings(false),
+        &case.tuning,
+        &ctx,
+        &cpu,
+    )
+    .unwrap();
+    let gpu = mimo::AccelerationSelection {
+        status: ComputeStatus {
+            preference: ComputePreference::Gpu,
+            selected: ComputeBackend::Cuda,
+            gpu_available: true,
+            reason: ComputeReason::UserGpu,
+            ..ComputeStatus::default()
+        },
+        backend: Some(Arc::new(MustNotFactor)),
+    };
+    let mut actual = mimo::compute_with_acceleration(
+        &d,
+        &case.measurements,
+        &case.config,
+        &settings(false),
+        &case.tuning,
+        &ctx,
+        &gpu,
+    )
+    .unwrap();
+    assert_eq!(actual.compute.requested, ComputePreference::Gpu);
+    assert_eq!(actual.compute.backend, ComputeBackend::Cpu);
+    assert_eq!(actual.compute.reason, Some(ComputeReason::IirReference));
+    assert_eq!(actual.compute.accelerated_systems, 0);
+    assert_eq!(actual.compute.cpu_systems, expected.compute.cpu_systems);
+    assert!(actual.compute.cpu_systems > 0);
+    actual.compute = expected.compute.clone();
+    assert_eq!(actual, expected);
+    assert_eq!(run_bits(&actual), run_bits(&expected));
+}

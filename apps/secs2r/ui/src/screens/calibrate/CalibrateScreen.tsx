@@ -2,7 +2,7 @@
 // verdict, the per-channel scorecard and one graph; then the settings that
 // change them, in five sections grouped by what they change. The screen
 // draws the view and reports what the user did; P33 wires the actions.
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { PrimaryAction } from "../../app/StepHeader";
 import type { Translate } from "../../i18n/react";
 import { StatusPill } from "../../ui";
@@ -22,9 +22,11 @@ export type CalibrateScreenProps = {
 
 export function CalibrateScreen({ view, actions, initial }: CalibrateScreenProps) {
   const computed = view.results.calibration !== null;
+  const [sampleRateRequest, setSampleRateRequest] = useState(0);
+  const openSampleRateSettings = () => setSampleRateRequest((request) => request + 1);
   return (
     <div className="calibrate" data-ui="calibrate">
-      <Verdict view={view} />
+      <Verdict view={view} actions={actions} onSampleRateSettings={openSampleRateSettings} />
       <div className={["calibrate-results", !computed && "calibrate-results--preview"].filter(Boolean).join(" ")}>
         {computed && (
           <div className="calibrate-scorecard-slot">
@@ -33,7 +35,7 @@ export function CalibrateScreen({ view, actions, initial }: CalibrateScreenProps
         )}
         <ResultGraph view={view} actions={actions} menuOpen={initial?.targetMenu} />
       </div>
-      <Settings view={view} actions={actions} editSub={initial?.editSub} />
+      <Settings view={view} actions={actions} editSub={initial?.editSub} sampleRateRequest={sampleRateRequest} onSampleRateSettings={openSampleRateSettings} />
     </div>
   );
 }

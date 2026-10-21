@@ -1,0 +1,622 @@
+{
+  "fixture": {
+    "source_commit": "d8e0bd6c5f470eb489f9f38d5e2d6cd59619b1be",
+    "implementation": "actual secs-types Rust serde",
+    "mimo_paths": 132,
+    "taps_per_mimo_path": 8000,
+    "mimo_coefficients": 1056000,
+    "mimo_coefficient_f64_bytes": 8448000,
+    "calibration_mains": 11,
+    "taps_per_calibration_main": 2048,
+    "calibration_coefficients": 22528,
+    "calibration_coefficient_f64_bytes": 180224,
+    "coefficient_generator": "SplitMix64-style integer mixing, SEED=0x5EC520261020; signed upper32/2^32/(256+tap); stream route_index or 100+main_index; see harness/src/main.rs"
+  },
+  "rows": [
+    {
+      "payload": "calibration-summary",
+      "baseline_json_bytes": 530505,
+      "after_json_bytes": 6282,
+      "reduction_pct": 98.81584527949784,
+      "baseline_serialize_median_ms": 0.4351,
+      "after_serialize_median_ms": 0.0081
+    },
+    {
+      "payload": "mimo-summary",
+      "baseline_json_bytes": 24690767,
+      "after_json_bytes": 351,
+      "reduction_pct": 99.99857841597225,
+      "baseline_serialize_median_ms": 24.608700000000002,
+      "after_serialize_median_ms": 0.00039999999999999996
+    },
+    {
+      "payload": "results-summary",
+      "baseline_json_bytes": 25221296,
+      "after_json_bytes": 6657,
+      "reduction_pct": 99.97360563866346,
+      "baseline_serialize_median_ms": 24.7314,
+      "after_serialize_median_ms": 0.0081
+    },
+    {
+      "payload": "mimo-finished",
+      "baseline_json_bytes": 24690863,
+      "after_json_bytes": 88,
+      "reduction_pct": 99.99964359285457,
+      "baseline_serialize_median_ms": 25.3014,
+      "after_serialize_median_ms": 9.999999999999999e-05
+    },
+    {
+      "payload": "calibration-finished",
+      "baseline_json_bytes": 25221399,
+      "after_json_bytes": 95,
+      "reduction_pct": 99.99962333572377,
+      "baseline_serialize_median_ms": 24.9978,
+      "after_serialize_median_ms": 9.999999999999999e-05
+    },
+    {
+      "payload": "mimo-job-snapshot",
+      "baseline_json_bytes": 24690894,
+      "after_json_bytes": 94,
+      "reduction_pct": 99.99961929284537,
+      "baseline_serialize_median_ms": 25.2909,
+      "after_serialize_median_ms": 9.999999999999999e-05
+    }
+  ],
+  "fixture_id": "dense-decaying-splitmix-v1-132x8000-cal11x2048",
+  "scope": [
+    "Exact UTF-8 serde_json payload byte comparison for this synthetic fixture.",
+    "Rust serde and Node parse timings are isolated microbenchmarks, not actual WebView/IPC/UI latency.",
+    "Heap numbers are V8 retained heap for a synthetic host.jobs/current-results model, not process RSS or total Rust application memory.",
+    "After still constructs and holds the full DSP data; exporter/cache preservation is not a total-memory claim."
+  ],
+  "schema_checks": {
+    "same_screen_metadata_after_intended_projection": true,
+    "finished_events_differ_only_by_payload_to_marker": true,
+    "job_snapshot_differs_only_by_removed_result": true,
+    "mimo_coefficient_count": 1056000,
+    "calibration_coefficient_count": 22528
+  },
+  "node_history": {
+    "baseline": {
+      "environment": {
+        "node": "v24.1.0",
+        "v8": "13.6.233.10-node.16",
+        "platform": "win32",
+        "arch": "x64",
+        "cpu": "12th Gen Intel(R) Core(TM) i5-12600KF",
+        "heap_size_limit": 2348810240
+      },
+      "phase": "baseline",
+      "protocol": "Synthetic host.jobs plus a separately JSON-decoded current ResultsSummary. Each completed MIMO job parses Finished and reloads ResultsSummary. Baseline retains event.result for every terminal job, matching baseline state/session.ts. After retains metadata for the latest 32 terminal jobs plus all active jobs and one compact current summary. Source JSON strings excluded from retained heap delta. Not a React/WebView/process-RSS or total Rust-service-memory measurement.",
+      "event_json_bytes": 24690863,
+      "results_json_bytes": 25221296,
+      "rows": [
+        {
+          "completed_jobs": 0,
+          "retained_terminal_jobs": 0,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 8688560,
+          "accumulated_json_parse_ms": 0
+        },
+        {
+          "completed_jobs": 1,
+          "retained_terminal_jobs": 1,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 17162184,
+          "accumulated_json_parse_ms": 91.03909999999996
+        },
+        {
+          "completed_jobs": 8,
+          "retained_terminal_jobs": 8,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 76473048,
+          "accumulated_json_parse_ms": 717.7719999999998
+        },
+        {
+          "completed_jobs": 16,
+          "retained_terminal_jobs": 16,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 144256376,
+          "accumulated_json_parse_ms": 1414.7596999999992
+        },
+        {
+          "completed_jobs": 32,
+          "retained_terminal_jobs": 32,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 279845888,
+          "accumulated_json_parse_ms": 2837.9201000000003
+        },
+        {
+          "completed_jobs": 40,
+          "retained_terminal_jobs": 40,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 347629216,
+          "accumulated_json_parse_ms": 3548.671500000001
+        }
+      ]
+    },
+    "after": {
+      "environment": {
+        "node": "v24.1.0",
+        "v8": "13.6.233.10-node.16",
+        "platform": "win32",
+        "arch": "x64",
+        "cpu": "12th Gen Intel(R) Core(TM) i5-12600KF",
+        "heap_size_limit": 2348810240
+      },
+      "phase": "after",
+      "protocol": "Synthetic host.jobs plus a separately JSON-decoded current ResultsSummary. Each completed MIMO job parses Finished and reloads ResultsSummary. Baseline retains event.result for every terminal job, matching baseline state/session.ts. After retains metadata for the latest 32 terminal jobs plus all active jobs and one compact current summary. Source JSON strings excluded from retained heap delta. Not a React/WebView/process-RSS or total Rust-service-memory measurement.",
+      "event_json_bytes": 88,
+      "results_json_bytes": 6657,
+      "rows": [
+        {
+          "completed_jobs": 0,
+          "retained_terminal_jobs": 0,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 22200,
+          "accumulated_json_parse_ms": 0
+        },
+        {
+          "completed_jobs": 1,
+          "retained_terminal_jobs": 1,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 23728,
+          "accumulated_json_parse_ms": 0.03790000000000049
+        },
+        {
+          "completed_jobs": 8,
+          "retained_terminal_jobs": 8,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 24896,
+          "accumulated_json_parse_ms": 0.21110000000002316
+        },
+        {
+          "completed_jobs": 16,
+          "retained_terminal_jobs": 16,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 48664,
+          "accumulated_json_parse_ms": 0.4538000000000224
+        },
+        {
+          "completed_jobs": 32,
+          "retained_terminal_jobs": 32,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 50544,
+          "accumulated_json_parse_ms": 0.843699999999977
+        },
+        {
+          "completed_jobs": 40,
+          "retained_terminal_jobs": 32,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 50640,
+          "accumulated_json_parse_ms": 1.028699999999965
+        }
+      ]
+    }
+  },
+  "node_parse": {
+    "baseline": {
+      "environment": {
+        "node": "v24.1.0",
+        "v8": "13.6.233.10-node.16",
+        "platform": "win32",
+        "arch": "x64",
+        "cpu": "12th Gen Intel(R) Core(TM) i5-12600KF",
+        "heap_size_limit": 2348810240
+      },
+      "phase": "baseline",
+      "protocol": "One JSON.parse warmup, 11 timed parses; explicit GC outside timers. Heap delta is one retained parsed object; source JSON string is already resident and excluded from the delta. This is Node V8, not WebView IPC or rendering latency. Host background work was not excluded; timings are illustrative microbenchmarks, not headline claims.",
+      "rows": [
+        {
+          "payload": "calibration-summary",
+          "json_bytes": 530505,
+          "parse_samples_ms": [
+            0.9594999999999985,
+            1.0313999999999908,
+            0.9994999999999976,
+            0.961199999999991,
+            0.9885000000000019,
+            0.9506999999999977,
+            0.9528999999999996,
+            0.9583999999999833,
+            1.2836999999999819,
+            0.9759000000000242,
+            0.9432999999999936
+          ],
+          "parse_median_ms": 0.961199999999991,
+          "single_parsed_retained_heap_bytes": 208920,
+          "coefficient_count": 22528
+        },
+        {
+          "payload": "mimo-summary",
+          "json_bytes": 24690767,
+          "parse_samples_ms": [
+            43.038700000000006,
+            46.08949999999999,
+            40.32919999999996,
+            44.76700000000005,
+            41.18870000000004,
+            39.93100000000004,
+            39.54189999999994,
+            40.31230000000005,
+            41.1884,
+            41.31280000000004,
+            39.96870000000001
+          ],
+          "parse_median_ms": 41.1884,
+          "single_parsed_retained_heap_bytes": 8476752,
+          "coefficient_count": 1056000
+        },
+        {
+          "payload": "results-summary",
+          "json_bytes": 25221296,
+          "parse_samples_ms": [
+            41.26839999999993,
+            45.69479999999999,
+            42.2188000000001,
+            40.98350000000005,
+            40.53359999999998,
+            42.30580000000009,
+            41.12979999999993,
+            41.25729999999999,
+            41.2351000000001,
+            42.09990000000016,
+            44.41419999999994
+          ],
+          "parse_median_ms": 41.26839999999993,
+          "single_parsed_retained_heap_bytes": 8685632,
+          "coefficient_count": 1078528
+        },
+        {
+          "payload": "mimo-finished",
+          "json_bytes": 24690863,
+          "parse_samples_ms": [
+            39.92669999999998,
+            40.35889999999995,
+            40.450000000000045,
+            39.937200000000075,
+            41.7331999999999,
+            42.397699999999986,
+            41.57020000000011,
+            40.614300000000185,
+            39.9070999999999,
+            43.482400000000325,
+            43.05690000000004
+          ],
+          "parse_median_ms": 40.614300000000185,
+          "single_parsed_retained_heap_bytes": 8477576,
+          "coefficient_count": 1056000
+        },
+        {
+          "payload": "calibration-finished",
+          "json_bytes": 25221399,
+          "parse_samples_ms": [
+            40.66280000000006,
+            40.7183,
+            43.00699999999961,
+            42.77509999999984,
+            40.46680000000015,
+            44.40449999999964,
+            42.98750000000018,
+            43.303300000000036,
+            43.61740000000009,
+            41.422399999999925,
+            53.63350000000037
+          ],
+          "parse_median_ms": 42.98750000000018,
+          "single_parsed_retained_heap_bytes": 8686768,
+          "coefficient_count": 1078528
+        },
+        {
+          "payload": "mimo-job-snapshot",
+          "json_bytes": 24690894,
+          "parse_samples_ms": [
+            40.72240000000011,
+            44.2841999999996,
+            39.74210000000039,
+            40.23559999999998,
+            40.67229999999972,
+            52.015699999999924,
+            39.90209999999979,
+            40.4716999999996,
+            40.31710000000021,
+            55.68799999999965,
+            50.541099999999915
+          ],
+          "parse_median_ms": 40.67229999999972,
+          "single_parsed_retained_heap_bytes": 8478416,
+          "coefficient_count": 1056000
+        }
+      ]
+    },
+    "after": {
+      "environment": {
+        "node": "v24.1.0",
+        "v8": "13.6.233.10-node.16",
+        "platform": "win32",
+        "arch": "x64",
+        "cpu": "12th Gen Intel(R) Core(TM) i5-12600KF",
+        "heap_size_limit": 2348810240
+      },
+      "phase": "after",
+      "protocol": "One JSON.parse warmup, 11 timed parses; explicit GC outside timers. Heap delta is one retained parsed object; source JSON string is already resident and excluded from the delta. This is Node V8, not WebView IPC or rendering latency. Host background work was not excluded; timings are illustrative microbenchmarks, not headline claims.",
+      "rows": [
+        {
+          "payload": "calibration-summary",
+          "json_bytes": 6282,
+          "parse_samples_ms": [
+            0.06269999999999243,
+            0.06340000000000146,
+            0.07259999999999422,
+            0.07560000000000855,
+            0.05709999999999127,
+            0.061499999999995225,
+            0.06189999999999429,
+            0.06330000000001235,
+            0.057699999999982765,
+            0.06550000000001432,
+            0.05860000000001264
+          ],
+          "parse_median_ms": 0.06269999999999243,
+          "single_parsed_retained_heap_bytes": 9944,
+          "coefficient_count": 0
+        },
+        {
+          "payload": "mimo-summary",
+          "json_bytes": 351,
+          "parse_samples_ms": [
+            0.032100000000014006,
+            0.03650000000001796,
+            0.035899999999998045,
+            0.037499999999994316,
+            0.03799999999998249,
+            0.03450000000000841,
+            0.03639999999998622,
+            0.03700000000000614,
+            0.03289999999998372,
+            0.03120000000001255,
+            0.03220000000004575
+          ],
+          "parse_median_ms": 0.035899999999998045,
+          "single_parsed_retained_heap_bytes": 3064,
+          "coefficient_count": 0
+        },
+        {
+          "payload": "results-summary",
+          "json_bytes": 6657,
+          "parse_samples_ms": [
+            0.133199999999988,
+            0.07730000000003656,
+            0.07209999999997763,
+            0.069500000000005,
+            0.14379999999999882,
+            0.07349999999996726,
+            0.08780000000001564,
+            0.7734999999999559,
+            0.07940000000002101,
+            0.09720000000004347,
+            0.09710000000001173
+          ],
+          "parse_median_ms": 0.08780000000001564,
+          "single_parsed_retained_heap_bytes": 13240,
+          "coefficient_count": 0
+        },
+        {
+          "payload": "mimo-finished",
+          "json_bytes": 88,
+          "parse_samples_ms": [
+            0.024600000000020827,
+            0.027100000000018554,
+            0.02410000000003265,
+            0.02549999999996544,
+            0.024399999999957345,
+            0.024999999999977263,
+            0.025300000000015643,
+            0.026799999999980173,
+            0.02760000000000673,
+            0.029200000000059845,
+            0.02970000000004802
+          ],
+          "parse_median_ms": 0.02549999999996544,
+          "single_parsed_retained_heap_bytes": 800,
+          "coefficient_count": 0
+        },
+        {
+          "payload": "calibration-finished",
+          "json_bytes": 95,
+          "parse_samples_ms": [
+            0.023099999999999454,
+            0.024800000000027467,
+            0.02179999999998472,
+            0.024900000000002365,
+            0.02539999999999054,
+            0.02580000000000382,
+            0.029899999999997817,
+            0.025899999999978718,
+            0.02289999999993597,
+            0.021999999999934516,
+            0.027300000000082036
+          ],
+          "parse_median_ms": 0.024900000000002365,
+          "single_parsed_retained_heap_bytes": 1064,
+          "coefficient_count": 0
+        },
+        {
+          "payload": "mimo-job-snapshot",
+          "json_bytes": 94,
+          "parse_samples_ms": [
+            0.03340000000002874,
+            0.05660000000000309,
+            0.02500000000009095,
+            0.022799999999961074,
+            0.022699999999986176,
+            0.026700000000005275,
+            0.027899999999931424,
+            0.02729999999996835,
+            0.022699999999986176,
+            0.02460000000007767,
+            0.05389999999999873
+          ],
+          "parse_median_ms": 0.026700000000005275,
+          "single_parsed_retained_heap_bytes": 1400,
+          "coefficient_count": 0
+        }
+      ]
+    }
+  },
+  "types_provenance": {
+    "baseline_commit": "d8e0bd6c5f470eb489f9f38d5e2d6cd59619b1be",
+    "after_measured_ipc_sha256": "deb881cd3cd9a6a21f50bcacf16acf3d0407e0c5501564768b7e2ed99652eb63",
+    "after_final_formatted_ipc_sha256": "14c2a9bea943305a593bae155be2ce0601c566796f899311e01216729be0a777",
+    "after_diff_note": "The final formatted file differs only in a unit-test assertion layout; see external after-types-format-diff.patch. Production DTO fields are unchanged."
+  },
+  "independent_verification": {
+    "method": "Rebuilt the copied current secs-types with the committed measure.py; byte-compared every after payload to the first run and checked preserved metadata against baseline JSON.",
+    "after_source": {
+      "phase": "after",
+      "source": "working-tree based on d8e0bd6c5f470eb489f9f38d5e2d6cd59619b1be",
+      "type_source_sha256": {
+        "crates/secs-types/Cargo.toml": "e0c059b3633a15af445832145a95b2a153f3e3534c3decdc986197f200681f50",
+        "crates/secs-types/src/calibration.rs": "d63872540c2f5382fc48203eec033ef74ae1de1a624b181680ab23b4deabe42e",
+        "crates/secs-types/src/chain.rs": "feb14a768b5e66191d31761d3a12c8c4723616a5660b17759093b61e68f8304b",
+        "crates/secs-types/src/compute.rs": "cf59c8aa159d979bd66066727b297d5600004e6d182dc04bd63e698900beb55e",
+        "crates/secs-types/src/ipc.rs": "14c2a9bea943305a593bae155be2ce0601c566796f899311e01216729be0a777",
+        "crates/secs-types/src/lib.rs": "9c2c1e8817b8ca3168b45a6fe233154487867f4da79dba0af19046ab1add1f8c",
+        "crates/secs-types/src/role.rs": "615e3c0d0d2e5370f23fa9ecdf8fe91cfc0b0428e406522856ba26aee5f9649c",
+        "crates/secs-types/src/settings_edit.rs": "96284f05b74f3598364b1c662a79c446c15d725831aa8621ae7e7b174eedd049",
+        "crates/secs-types/src/target.rs": "104ca8ffd530cacdc5a52d851913b698b5265fd46d06dcf0544c08db505a3299"
+      },
+      "helper_sha256": "8c40e5fc80df276c0d99eb6a2142ef9a82331abd5fc06e22a6073d3bb8d2ce28",
+      "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: x86_64-pc-windows-msvc\nrelease: 1.99.0\nLLVM version: 23.1.1\n",
+      "notes": [
+        "Only workspace membership and the external harness are changed in the temporary copy; secs-types source is copied verbatim.",
+        "No engine solver, real measurement, IPC transport, WebView rendering, or total application memory is measured.",
+        "Both phases generate the same full coefficient data; the after harness keeps it alive while serializing only screen DTOs."
+      ]
+    },
+    "after_payload_sha256": {
+      "calibration-summary": "d4b3a02648a7124a37bd6697d72b4d0eb52534851931d57ab7e2a1d5579a20f5",
+      "mimo-summary": "20b6a92a987fb80ac3c7a3bf9205f27baa71d41a31deb8104246c719e190783b",
+      "results-summary": "0d524513a7ae7ba3a15765ccc1a106eaad39c9239bc07c7d9aea3395ea161118",
+      "mimo-finished": "6abf977988fea1e139e9e7c3da7a619064fd5080dc447417c7fd345227f9f231",
+      "calibration-finished": "5e393ae8765f0d7dc0a7bf49b37e78f21044d19a770c494b9df0b10bbf3640a5",
+      "mimo-job-snapshot": "691069af49363424327a6135d54477d33ff25d44b533a5e753e0e5fb66eaeb40"
+    },
+    "baseline_history": {
+      "environment": {
+        "node": "v24.1.0",
+        "v8": "13.6.233.10-node.16",
+        "platform": "win32",
+        "arch": "x64",
+        "cpu": "12th Gen Intel(R) Core(TM) i5-12600KF",
+        "heap_size_limit": 2348810240
+      },
+      "phase": "baseline",
+      "protocol": "Synthetic host.jobs plus a separately JSON-decoded current ResultsSummary. Each completed MIMO job parses Finished and reloads ResultsSummary. Baseline retains event.result for every terminal job, matching baseline state/session.ts. After retains metadata for the latest 32 terminal jobs plus all active jobs and one compact current summary. Source JSON strings excluded from retained heap delta. Not a React/WebView/process-RSS or total Rust-service-memory measurement.",
+      "event_json_bytes": 24690863,
+      "results_json_bytes": 25221296,
+      "rows": [
+        {
+          "completed_jobs": 0,
+          "retained_terminal_jobs": 0,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 8688560,
+          "accumulated_json_parse_ms": 0
+        },
+        {
+          "completed_jobs": 1,
+          "retained_terminal_jobs": 1,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 17162184,
+          "accumulated_json_parse_ms": 84.67260000000002
+        },
+        {
+          "completed_jobs": 8,
+          "retained_terminal_jobs": 8,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 76473048,
+          "accumulated_json_parse_ms": 683.8986
+        },
+        {
+          "completed_jobs": 16,
+          "retained_terminal_jobs": 16,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 144256376,
+          "accumulated_json_parse_ms": 1340.6978000000004
+        },
+        {
+          "completed_jobs": 32,
+          "retained_terminal_jobs": 32,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 279844560,
+          "accumulated_json_parse_ms": 2661.7555
+        },
+        {
+          "completed_jobs": 40,
+          "retained_terminal_jobs": 40,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 347627888,
+          "accumulated_json_parse_ms": 3441.972600000001
+        }
+      ]
+    },
+    "after_history": {
+      "environment": {
+        "node": "v24.1.0",
+        "v8": "13.6.233.10-node.16",
+        "platform": "win32",
+        "arch": "x64",
+        "cpu": "12th Gen Intel(R) Core(TM) i5-12600KF",
+        "heap_size_limit": 2348810240
+      },
+      "phase": "after",
+      "protocol": "Synthetic host.jobs plus a separately JSON-decoded current ResultsSummary. Each completed MIMO job parses Finished and reloads ResultsSummary. Baseline retains event.result for every terminal job, matching baseline state/session.ts. After retains metadata for the latest 32 terminal jobs plus all active jobs and one compact current summary. Source JSON strings excluded from retained heap delta. Not a React/WebView/process-RSS or total Rust-service-memory measurement.",
+      "event_json_bytes": 88,
+      "results_json_bytes": 6657,
+      "rows": [
+        {
+          "completed_jobs": 0,
+          "retained_terminal_jobs": 0,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 16112,
+          "accumulated_json_parse_ms": 0
+        },
+        {
+          "completed_jobs": 1,
+          "retained_terminal_jobs": 1,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 17632,
+          "accumulated_json_parse_ms": 0.032900000000005036
+        },
+        {
+          "completed_jobs": 8,
+          "retained_terminal_jobs": 8,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 18800,
+          "accumulated_json_parse_ms": 0.2885000000000133
+        },
+        {
+          "completed_jobs": 16,
+          "retained_terminal_jobs": 16,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 41240,
+          "accumulated_json_parse_ms": 0.46870000000001255
+        },
+        {
+          "completed_jobs": 32,
+          "retained_terminal_jobs": 32,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 44000,
+          "accumulated_json_parse_ms": 0.8155000000000072
+        },
+        {
+          "completed_jobs": 40,
+          "retained_terminal_jobs": 32,
+          "retained_active_jobs": 2,
+          "retained_heap_delta_bytes": 43216,
+          "accumulated_json_parse_ms": 0.9893000000000072
+        }
+      ]
+    }
+  }
+}

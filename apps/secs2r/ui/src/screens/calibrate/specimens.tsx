@@ -8,17 +8,20 @@ import { PrefsScope, usePrefs } from "../../app/prefs";
 import { FrameBox, T0, replay } from "../../gallery/frameSpecimens";
 import type { SpecimenDef } from "../../gallery/Specimen";
 import { useT } from "../../i18n/react";
-import { ipcError } from "../../ipc/mock";
 import { CalibrateScreen, calibrateHeader, type CalibrateScreenProps } from "./CalibrateScreen";
 import * as fx from "./fixtures";
 import { calibrateStepState, type CalibrateActions, type CalibrateView } from "./types";
 
 const noop = () => {};
 export const noActions: CalibrateActions = {
+  goToMeasurements: noop,
   calibrate: noop,
   calibrateSubs: noop,
   recommendXo: noop,
   computeMimo: noop,
+  changeCompute: noop,
+  refreshCompute: noop,
+  openGpuHelp: noop,
   selectTab: noop,
   selectChannel: noop,
   selectXoGroup: noop,
@@ -76,7 +79,7 @@ const failedJobs = replay([
   {
     type: "event",
     at: T0 + 9000,
-    event: { event: "finished", job: 7, status: "failed", result: null, error: ipcError("engine_input", "position 2 has no IR for SW2 (expected 13 roles, found 12)") },
+    event: { event: "finished", job: 7, status: "failed", result: null, error: fx.failedView.failure!.error },
   },
 ] satisfies JobsAction[]);
 
@@ -120,10 +123,10 @@ function CalibrateFrame({
   );
 }
 
-/** A themed scope with changed prefs (expert display, tutorial accent) around a frame. */
-function Scoped({ expert, tutorial, children }: { expert?: boolean; tutorial?: boolean; children: ReactNode }) {
+/** A themed scope with changed prefs (tutorial accent) around a frame. */
+function Scoped({ tutorial, children }: { tutorial?: boolean; children: ReactNode }) {
   const outer = usePrefs();
-  const prefs = { locale: outer.locale, theme: outer.theme, expert: expert ?? outer.expert, accent: tutorial ? ("tutorial" as const) : outer.accent };
+  const prefs = { locale: outer.locale, theme: outer.theme, accent: tutorial ? ("tutorial" as const) : outer.accent };
   return (
     <PrefsScope key={`${outer.locale}-${outer.theme}`} initial={prefs} className="gal-fill">
       {children}
@@ -135,6 +138,7 @@ const frame = (id: string, title: string, render: () => ReactNode): SpecimenDef 
 
 export const calibrateSpecimens: SpecimenDef[] = [
   frame("empty", "no result yet: plan, position-1 preview and target", () => <CalibrateFrame view={fx.emptyView} />),
+  ...Object.entries(fx.planViews).map(([name, view]) => frame(`plan-${name}`, `calculation plan: ${name}`, () => <CalibrateFrame view={view} />)),
   frame("computing", "first run computing (busy primary, job in the tray)", () => <CalibrateFrame view={fx.computingView} jobs={runningJobs("calibrate", "engine.design", 11)} />),
   frame("spl", "current result, SPL with target handles and the RC band", () => <CalibrateFrame view={fx.splView} />),
   frame("target-menu", "target menu open (presets, 사용자 지정, save, load)", () => <CalibrateFrame view={fx.splView} initial={{ targetMenu: true }} />),
@@ -148,6 +152,18 @@ export const calibrateSpecimens: SpecimenDef[] = [
   frame("subs-only", "subs-only result on BA (DBA group)", () => <CalibrateFrame view={fx.subsOnlyView} />),
   frame("mimo", "MIMO computed: SPL with the MIMO curve", () => <CalibrateFrame view={fx.mimoView} />),
   frame("mimo-settings", "MIMO section after a run", () => <CalibrateFrame view={fx.mimoView} scrollTo="calibrate.settings.mimo" />),
+  frame("gpu-auto", "automatic GPU selection and actual GPU result", () => <CalibrateFrame view={fx.gpuView} scrollTo="calibrate.settings.mimo" />),
+  frame("gpu-selected", "manual GPU preference", () => <CalibrateFrame view={fx.gpuSelectedView} scrollTo="calibrate.settings.mimo" />),
+  frame("gpu-iir", "saved GPU preference with IIR calculated on CPU", () => <CalibrateFrame view={fx.gpuIirReferenceView} scrollTo="calibrate.settings.mimo" />),
+  frame("gpu-cpu", "manual CPU preference and previous GPU result", () => <CalibrateFrame view={fx.cpuSelectedView} scrollTo="calibrate.settings.mimo" />),
+  frame("gpu-request-unavailable", "saved GPU choice unavailable: select Automatic or CPU to recover", () => <CalibrateFrame view={fx.requestedGpuUnavailableView} scrollTo="calibrate.settings.mimo" />),
+  frame("gpu-unavailable", "missing runtime: normal CPU path and setup help", () => <CalibrateFrame view={fx.runtimeMissingView} scrollTo="calibrate.settings.mimo" />),
+  frame("gpu-running", "compute device locked during a job", () => <CalibrateFrame view={fx.runningMimoView} jobs={runningJobs("mimo", "engine.mimo_iir", 11)} scrollTo="calibrate.settings.mimo" />),
+  frame("gpu-loading", "compute devices loading", () => <CalibrateFrame view={fx.computeLoadingView} scrollTo="calibrate.settings.mimo" />),
+  frame("gpu-error", "compute status failed with retry", () => <CalibrateFrame view={fx.computeErrorView} scrollTo="calibrate.settings.mimo" />),
+  frame("gpu-fallback", "GPU selected but previous result recovered on CPU", () => <CalibrateFrame view={fx.gpuFallbackView} scrollTo="calibrate.settings.mimo" />),
+  { id: "screen.calibrate.gpu.min", title: "보정 · GPU at the smallest window", width: 1024, height: 700,
+    render: () => <CalibrateFrame view={fx.gpuView} scrollTo="calibrate.settings.mimo" /> },
   frame("mimo-running", "MIMO computing: 보정 계산 and the other jobs are off", () => (
     <CalibrateFrame view={fx.runningMimoView} jobs={runningJobs("mimo", "engine.mimo_iir", 11)} scrollTo="calibrate.settings.ba" />
   )),
@@ -157,11 +173,7 @@ export const calibrateSpecimens: SpecimenDef[] = [
   frame("ba-editor", "BA 고급: values, fixed filters and MIMO support of a fixed sub", () => (
     <CalibrateFrame view={fx.baView} scrollTo="calibrate.ba.values" initial={{ editSub: "SW2" }} />
   )),
-  frame("ultra", "초고지연 mode in the expert view", () => (
-    <Scoped expert>
-      <CalibrateFrame view={fx.ultraView} scrollTo="calibrate.settings.mode" />
-    </Scoped>
-  )),
+  frame("ultra", "초고지연 mode and its delay limit", () => <CalibrateFrame view={fx.ultraView} scrollTo="calibrate.settings.mode" />),
   frame("tutorial", "tutorial accent", () => (
     <Scoped tutorial>
       <CalibrateFrame view={fx.splView} fileName="튜토리얼.secs" />

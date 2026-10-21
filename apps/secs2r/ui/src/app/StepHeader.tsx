@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { useT } from "../i18n/react";
 import { Button } from "../ui/Button";
+import { HelpTip } from "../ui/HelpTip";
 import { Icon } from "../ui/Icon";
 import { BLOCKED_TEXT, STEP_PURPOSE, STEP_TITLE, type StepId, type StepState } from "./model";
 
@@ -21,17 +22,22 @@ export type PrimaryAction = {
   disabled?: boolean | undefined;
 };
 
+export type RecoveryAction = Pick<PrimaryAction, "id" | "label" | "onClick">;
+
 export function StepHeader({
   step,
   state,
   primary,
   status,
+  recovery,
 }: {
   step: StepId;
   state: StepState;
   primary?: PrimaryAction | undefined;
   /** A pill beside the title (보정 낡음, 측정 중 …). */
   status?: ReactNode;
+  /** Opens the control that resolves this blocked state. */
+  recovery?: RecoveryAction | undefined;
 }) {
   const t = useT();
   const blocked = state.status === "blocked" && state.reason ? BLOCKED_TEXT[state.reason] : null;
@@ -46,17 +52,22 @@ export function StepHeader({
           <h1 className="step-header__title" id="frame.header.title">
             {t(STEP_TITLE[step])}
           </h1>
+          <HelpTip id={`frame.header.${step}.help`} labelledBy="frame.header.title" content={t(STEP_PURPOSE[step])} />
           {status && (
             <div className="step-header__status" id={statusId}>
               {status}
             </div>
           )}
         </div>
-        <p className="step-header__purpose">{t(STEP_PURPOSE[step])}</p>
         {blocked && (
           <p className="step-header__blocked" id={reasonId} data-ui="frame.header.blocked">
             <Icon name="lock" size={16} />
-            <span>{t(blocked.full, { count: state.count ?? 0 })}</span>
+            <span>{t(blocked.short, { count: state.count ?? 0 })}</span>
+            {recovery && (
+              <Button variant="quiet" className="step-header__recovery" id={recovery.id} data-ui={recovery.id} onClick={recovery.onClick}>
+                {recovery.label}
+              </Button>
+            )}
           </p>
         )}
       </div>

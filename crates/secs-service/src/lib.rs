@@ -9,6 +9,7 @@
 mod cache;
 mod calibration;
 mod clock;
+mod compute;
 mod curves;
 mod export;
 pub mod export_folder;
@@ -121,6 +122,10 @@ pub trait Host: Send + Sync + Debug {
     ) -> Result<Option<String>, IpcError> {
         not_implemented("open-file dialog")
     }
+    /// Opens the fixed official CUDA installation guide for this host.
+    fn open_gpu_help(&self) -> Result<(), IpcError> {
+        not_implemented("GPU installation help")
+    }
     /// Reveals a folder in the operating-system file manager.
     fn open_folder(&self, _path: &Path) -> Result<(), IpcError> {
         not_implemented("open folder")
@@ -158,6 +163,14 @@ pub type UuidSource = Arc<Mutex<Box<dyn FnMut() -> Result<u128, secs_export::Exp
 /// them here keeps platform crates out of this service.
 #[derive(Clone)]
 pub struct Deps {
+    /// Resolves a requested compute policy without platform dependencies in the service.
+    pub acceleration: Arc<
+        dyn Fn(secs_types::compute::ComputePreference) -> secs_engine::mimo::AccelerationSelection
+            + Send
+            + Sync,
+    >,
+    /// Process-local override, used by the CLI without changing persisted app settings.
+    pub compute_override: Option<secs_types::compute::ComputePreference>,
     /// Creates an audio backend adapter for one measurement operation.
     pub audio_backend: Arc<dyn Fn() -> Box<dyn secs_audio::AudioBackend> + Send + Sync>,
     /// Creates the sample-room measurer; tests may inject explicit delayed rooms.
@@ -185,6 +198,8 @@ pub struct Deps {
 impl Debug for Deps {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Deps")
+            .field("acceleration", &"factory")
+            .field("compute_override", &self.compute_override)
             .field("audio_backend", &"factory")
             .field("rew_transport", &"factory")
             .field("process", &"probe")
@@ -241,6 +256,8 @@ fn random_uuid() -> Result<u128, secs_export::ExportError> {
 impl Default for Deps {
     fn default() -> Self {
         Self {
+            acceleration: Arc::new(compute::cpu_selection),
+            compute_override: None,
             audio_backend: Arc::new(|| Box::new(secs_audio::NullBackend)),
             mock_measurer: Arc::new(measure::MockMeasurer::new),
             rew_transport: Arc::new(|| Box::new(OfflineRew)),

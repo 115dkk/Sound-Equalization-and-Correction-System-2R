@@ -217,12 +217,16 @@ pub fn recommend_xo(
     ctx: &Context,
 ) -> Result<XoRecommendation, EngineError> {
     ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
-    let inputs = engine_inputs(view, irs, settings)?;
+    let mut inputs = engine_inputs(view, irs, settings)?;
     let groups = xo_groups(&inputs.config);
     if groups.is_empty() {
         return Err(EngineError::Input(
             "no subs for crossover recommendation".into(),
         ));
+    }
+    if !candidates.is_empty() {
+        inputs.measurements =
+            crate::normalize_measurements(&inputs.measurements, settings.sample_rate_policy, ctx)?;
     }
     let progress = ctx.stage("engine.xo_recommendation", candidates.len() as u64);
     // Empty candidate lists retain their old no-preparation behaviour.

@@ -1,6 +1,8 @@
 //! Read and write the calibration half of an upstream-compatible `.secs` file.
 
-use secs_types::calibration::{BundleLayoutEntry, CalibrationSettings, Mode, SubEntry};
+use secs_types::calibration::{
+    BundleLayoutEntry, CalibrationSettings, Mode, SampleRatePolicy, SubEntry,
+};
 
 use crate::{Project, PyJson};
 
@@ -26,6 +28,10 @@ pub fn calibration_from_project(project: &Project) -> CalibrationSettings {
         Some("linear") => Mode::Linear,
         Some("ultra") => Mode::Ultra,
         _ => Mode::Mixed,
+    };
+    out.sample_rate_policy = match get("sample_rate_policy").and_then(PyJson::str) {
+        Some("resample") => SampleRatePolicy::Resample,
+        _ => SampleRatePolicy::Reject,
     };
     out.rc_lo = num(get("rc_lo"), 10.0, 200.0).unwrap_or(20.0);
     out.rc_hi = num(get("rc_hi"), 100.0, 20_000.0);
@@ -82,7 +88,7 @@ pub fn store_calibration(project: &mut Project, settings: &CalibrationSettings) 
 }
 
 fn calibration_json(settings: &CalibrationSettings) -> PyJson {
-    PyJson::Object(vec![
+    let mut values = vec![
         ("mode".into(), PyJson::Str(mode_name(settings.mode).into())),
         ("rc_lo".into(), PyJson::Float(settings.rc_lo)),
         ("rc_hi".into(), optional_float(settings.rc_hi)),
@@ -147,7 +153,11 @@ fn calibration_json(settings: &CalibrationSettings) -> PyJson {
         ("boost_max_db".into(), PyJson::Float(settings.boost_max_db)),
         ("xo_peq_lo".into(), PyJson::Float(settings.xo_peq_lo)),
         ("xo_peq_hi".into(), PyJson::Float(settings.xo_peq_hi)),
-    ])
+    ];
+    if settings.sample_rate_policy == SampleRatePolicy::Resample {
+        values.push(("sample_rate_policy".into(), PyJson::Str("resample".into())));
+    }
+    PyJson::Object(values)
 }
 
 fn sub_json(entry: &SubEntry) -> PyJson {

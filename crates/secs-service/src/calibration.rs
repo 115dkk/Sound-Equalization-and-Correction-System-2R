@@ -33,6 +33,7 @@ pub(crate) struct CalibrationRun {
 pub(crate) struct MimoResult {
     pub summary: MimoSummary,
     pub settings_key: String,
+    pub compute_key: crate::compute::ComputeIdentity,
     pub calibration_key: String,
     pub run: secs_engine::MimoRun,
 }
@@ -48,6 +49,7 @@ pub(crate) struct Results {
 
 #[derive(Debug)]
 pub(crate) struct Prepared {
+    pub identity: u64,
     pub project: Project,
     pub settings: CalibrationSettings,
     pub measurements: MeasurementSet,
@@ -70,6 +72,20 @@ impl Service {
         let memory = self.deps.memory.available_bytes();
         self.jobs.start(JobKind::Calibrate, events, move |job| {
             let ctx = compute_context(&job, memory);
+            let mut prepared = prepared;
+            let resampled_count = prepared
+                .measurements
+                .positions
+                .iter()
+                .flat_map(|(_, roles)| roles)
+                .filter(|(_, measurement)| measurement.sample_rate != 48_000)
+                .count();
+            prepared.measurements = secs_engine::normalize_measurements(
+                &prepared.measurements,
+                prepared.settings.sample_rate_policy,
+                &ctx,
+            )
+            .map_err(engine_error)?;
             let request = DesignRequest {
                 measurements: &prepared.measurements,
                 config: &prepared.config,
@@ -79,10 +95,23 @@ impl Service {
             };
             let fitters = production_fitters(job.cancel());
             let design = design(&request, &ctx, fitters.as_ref()).map_err(engine_error)?;
+            let mut session_guard = lock(&session);
+            let open = session_guard.require_mut().map_err(IpcError::from)?;
+            require_identity(open, prepared.identity)?;
             job.begin_commit()?;
-            let summary = summarize(&design, &prepared.settings);
+            let mut summary = summarize(&design, &prepared.settings);
+            if resampled_count > 0 {
+                summary.notes.push(Notice {
+                    code: "measurement_resampled".into(),
+                    params: [
+                        ("count".into(), resampled_count.to_string()),
+                        ("target_hz".into(), "48000".into()),
+                    ]
+                    .into(),
+                });
+            }
             let run = CalibrationRun {
-                summary: summary.clone(),
+                summary,
                 settings: prepared.settings.clone(),
                 signature: prepared.signature,
                 target_key: prepared.target_key,
@@ -90,24 +119,21 @@ impl Service {
                 measurements: prepared.measurements,
                 config: prepared.config,
             };
-            {
-                let mut state = lock(&results);
-                if subs_only {
-                    state.subs = Some(run);
-                } else {
-                    state.calibration = Some(run);
-                    state.subs = None;
-                }
+            let mut state = lock(&results);
+            if subs_only {
+                state.subs = Some(run);
+            } else {
+                state.calibration = Some(run);
+                state.subs = None;
             }
-            {
-                let mut session = lock(&session);
-                let open = session.require_mut().map_err(IpcError::from)?;
-                store_calibration(open.store.project_mut(), &prepared.settings);
-                open.dirty = true;
-            }
-            persist_cache(&results, &session)?;
-            let current = summaries(&results, &session)?;
-            Ok(JobResult::Calibration(Box::new(current)))
+            store_calibration(open.store.project_mut(), &prepared.settings);
+            open.dirty = true;
+            let path = open.path.clone();
+            let cached = snapshot_cache(&state);
+            drop(state);
+            drop(session_guard);
+            persist_cache(cached, &path, prepared.identity, &session)?;
+            Ok(JobResult::Calibration)
         })
     }
 
@@ -143,25 +169,19 @@ impl Service {
         params: MimoParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let settings = {
-            let session = lock(&self.session);
-            let open = session.require().map_err(IpcError::from)?;
-            params
-                .settings
-                .unwrap_or_else(|| calibration_from_project(open.store.project()))
-        };
+        let selection = self.require_acceleration()?;
+        let compute_key = crate::compute::ComputeIdentity::from(&selection.status);
+        let session_guard = lock(&self.session);
+        let open = session_guard.require().map_err(IpcError::from)?;
+        let identity = open.identity;
+        let settings = params
+            .settings
+            .unwrap_or_else(|| calibration_from_project(open.store.project()));
         let state = lock(&self.results_state);
         let calibration = state.calibration.as_ref().ok_or_else(|| {
             IpcError::new(ErrorCode::EngineInput, "calibration must run before MIMO")
         })?;
-        if calibration_stale(
-            calibration,
-            lock(&self.session)
-                .require()
-                .map_err(IpcError::from)?
-                .store
-                .project(),
-        ) {
+        if calibration_stale(calibration, open.store.project()) {
             return Err(IpcError::new(
                 ErrorCode::StaleInputs,
                 "calibration result is stale",
@@ -178,20 +198,25 @@ impl Service {
         let measurements = calibration.measurements.clone();
         let config = calibration.config.clone();
         drop(state);
+        drop(session_guard);
         let memory = self.deps.memory.available_bytes();
         let results = self.results_state.clone();
         let session = self.session.clone();
         self.jobs.start(JobKind::Mimo, events, move |job| {
             let ctx = compute_context(&job, memory);
-            let run = secs_engine::mimo::compute(
+            let run = secs_engine::mimo::compute_with_acceleration(
                 &design,
                 &measurements,
                 &config,
                 &settings,
                 &Tuning::default(),
                 &ctx,
+                &selection,
             )
             .map_err(engine_error)?;
+            let mut session_guard = lock(&session);
+            let open = session_guard.require_mut().map_err(IpcError::from)?;
+            require_identity(open, identity)?;
             job.begin_commit()?;
             let summary = MimoSummary {
                 stale: false,
@@ -207,22 +232,47 @@ impl Service {
                         secs_types::chain::MimoFilter::Iir { .. } => 0,
                     })
                     .sum(),
-                notes: run.notes.iter().flat_map(notices).collect(),
-                paths: run.paths.clone(),
+                notes: run
+                    .notes
+                    .iter()
+                    .flat_map(notices)
+                    .chain((run.compute.fallbacks > 0).then(|| Notice {
+                        code: "compute_fallback".into(),
+                        params: [("count".into(), run.compute.fallbacks.to_string())].into(),
+                    }))
+                    .collect(),
+                input_count: run
+                    .paths
+                    .paths
+                    .iter()
+                    .map(|path| &path.input)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len(),
+                compute: run.compute.clone(),
             };
-            lock(&results).mimo = Some(MimoResult {
-                summary: summary.clone(),
+            let mut state = lock(&results);
+            state.mimo = Some(MimoResult {
+                summary,
                 settings_key: settings.mimo_key(),
+                compute_key,
                 calibration_key,
                 run,
             });
-            persist_cache(&results, &session)?;
-            Ok(JobResult::Mimo(summary))
+            let path = open.path.clone();
+            let cached = snapshot_cache(&state);
+            drop(state);
+            drop(session_guard);
+            persist_cache(cached, &path, identity, &session)?;
+            Ok(JobResult::Mimo)
         })
     }
 
     pub(crate) fn results(&self) -> Result<ResultsSummary, IpcError> {
-        summaries(&self.results_state, &self.session)
+        summaries(
+            &self.results_state,
+            &self.session,
+            &crate::compute::ComputeIdentity::from(&self.acceleration().status),
+        )
     }
 
     pub(crate) fn prepare(
@@ -242,6 +292,7 @@ impl Service {
         };
         let inputs = engine_inputs(&view, &measurements, &settings).map_err(engine_error)?;
         Ok(Prepared {
+            identity: open.identity,
             signature: signature_key(&project),
             target_key: target_key_string(&project),
             project,
@@ -346,7 +397,18 @@ fn summarize(design: &Design, settings: &CalibrationSettings) -> CalibrationSumm
         scorecard,
         latency_ms: design.chain.latency_ms,
         notes: design.notes.iter().flat_map(notices).collect(),
-        chain: design.chain.clone(),
+        main_roles: design
+            .chain
+            .mains
+            .iter()
+            .map(|main| main.role.clone())
+            .collect(),
+        sub_roles: design
+            .chain
+            .subs
+            .iter()
+            .map(|sub| sub.role.clone())
+            .collect(),
     }
 }
 
@@ -615,6 +677,7 @@ fn metrics(value: Metrics) -> MetricsSummary {
 fn summaries(
     results: &Arc<Mutex<Results>>,
     session: &Arc<Mutex<crate::session::Session>>,
+    compute_key: &crate::compute::ComputeIdentity,
 ) -> Result<ResultsSummary, IpcError> {
     let session = lock(session);
     let project = session.require().map_err(IpcError::from)?.store.project();
@@ -641,7 +704,8 @@ fn summaries(
                 .calibration
                 .as_ref()
                 .is_none_or(|run| run.settings.engine_key() != result.calibration_key)
-            || calibration_from_project(project).mimo_key() != result.settings_key;
+            || calibration_from_project(project).mimo_key() != result.settings_key
+            || &result.compute_key != compute_key;
         summary
     });
     let mimo = live_mimo.or_else(|| {
@@ -651,7 +715,8 @@ fn summaries(
                 summary.stale = calibration.as_ref().is_none_or(|value| value.stale)
                     || cache.mimo_key.as_deref() != Some(current_mimo_key.as_str())
                     || cache.mimo_calibration_key.as_deref() != Some(cache.engine_key.as_str())
-                    || cache.engine_key != calibration_from_project(project).engine_key();
+                    || cache.engine_key != calibration_from_project(project).engine_key()
+                    || &cache.mimo_compute_key != compute_key;
                 summary
             })
         })
@@ -659,16 +724,23 @@ fn summaries(
     Ok(ResultsSummary { calibration, mimo })
 }
 
-fn persist_cache(
-    results: &Arc<Mutex<Results>>,
-    session: &Arc<Mutex<crate::session::Session>>,
-) -> Result<(), IpcError> {
-    let state = lock(results);
-    let Some(calibration) = state.calibration.as_ref() else {
-        return Ok(());
-    };
-    let cached = crate::cache::CachedResults {
+fn require_identity(open: &crate::session::OpenProject, identity: u64) -> Result<(), IpcError> {
+    if open.identity != identity {
+        return Err(IpcError::new(
+            ErrorCode::StaleInputs,
+            "project changed while computing",
+        ));
+    }
+    Ok(())
+}
+
+// Capture the committed run under session -> results locks; serialization and
+// disk I/O happen after both are released.
+fn snapshot_cache(state: &Results) -> Option<crate::cache::CachedResults> {
+    let calibration = state.calibration.as_ref()?;
+    Some(crate::cache::CachedResults {
         calibration: calibration.summary.clone(),
+        calibration_chain: calibration.design.chain.clone(),
         mimo: state.mimo.as_ref().map(|result| result.summary.clone()),
         measurement_signature: calibration.signature.clone(),
         target_key: calibration.target_key.clone(),
@@ -682,6 +754,7 @@ fn persist_cache(
             .as_ref()
             .map(|result| result.calibration_key.clone()),
         labels: crate::cache::CachedRunLabels {
+            sample_rate_policy: calibration.settings.sample_rate_policy,
             mode: match calibration.settings.mode {
                 secs_types::calibration::Mode::Zero => "zero",
                 secs_types::calibration::Mode::Mixed => "mixed",
@@ -695,12 +768,31 @@ fn persist_cache(
             mimo_max_supports: calibration.settings.mimo_max_supports.max(0) as usize,
         },
         mimo_paths: state.mimo.as_ref().map(|result| result.run.paths.clone()),
+        mimo_compute_key: state
+            .mimo
+            .as_ref()
+            .map(|result| result.compute_key.clone())
+            .unwrap_or_default(),
+    })
+}
+
+fn persist_cache(
+    cached: Option<crate::cache::CachedResults>,
+    path: &std::path::Path,
+    identity: u64,
+    session: &Arc<Mutex<crate::session::Session>>,
+) -> Result<(), IpcError> {
+    let Some(cached) = cached else {
+        return Ok(());
     };
-    drop(state);
+    crate::cache::save(path, &cached).map_err(crate::ServiceError::from)?;
     let mut session = lock(session);
-    let open = session.require_mut().map_err(IpcError::from)?;
-    crate::cache::save(&open.path, &cached).map_err(crate::ServiceError::from)?;
-    open.cached = Some(cached);
+    if let Ok(open) = session.require_mut()
+        && open.identity == identity
+        && open.path == path
+    {
+        open.cached = Some(cached);
+    }
     Ok(())
 }
 
@@ -769,9 +861,47 @@ pub(crate) fn target_key_string(project: &Project) -> String {
 }
 
 pub(crate) fn engine_error(error: secs_engine::EngineError) -> IpcError {
+    use secs_engine::EngineError;
+    let failure = IpcError::new(ErrorCode::EngineInput, error.to_string());
     match error {
-        secs_engine::EngineError::Cancelled => IpcError::new(ErrorCode::Cancelled, "cancelled"),
-        other => IpcError::new(ErrorCode::EngineInput, other.to_string()),
+        EngineError::Cancelled => IpcError::new(ErrorCode::Cancelled, "cancelled"),
+        EngineError::MeasurementSampleRate {
+            position,
+            role,
+            actual_hz,
+            expected_hz,
+        } => failure
+            .with_param("reason", "measurement_sample_rate")
+            .with_param("position", position.to_string())
+            .with_param("role", role)
+            .with_param("actual_hz", actual_hz.to_string())
+            .with_param("expected_hz", expected_hz.to_string()),
+        EngineError::UnsupportedResamplingRate {
+            position,
+            role,
+            actual_hz,
+        } => failure
+            .with_param("reason", "unsupported_resampling_rate")
+            .with_param("position", position.to_string())
+            .with_param("role", role)
+            .with_param("actual_hz", actual_hz.to_string())
+            .with_param("min_hz", secs_engine::MIN_RESAMPLE_RATE.to_string())
+            .with_param("max_hz", secs_engine::MAX_RESAMPLE_RATE.to_string()),
+        EngineError::InvalidMeasurement { position, role } => failure
+            .with_param("reason", "invalid_measurement")
+            .with_param("position", position.to_string())
+            .with_param("role", role),
+        EngineError::DuplicateMeasurement { position, role } => failure
+            .with_param("reason", "duplicate_measurement")
+            .with_param("position", position.to_string())
+            .with_param("role", role),
+        EngineError::MissingReferencePosition { position } => failure
+            .with_param("reason", "missing_reference_position")
+            .with_param("position", position.to_string()),
+        EngineError::MissingMainMeasurement { position } => failure
+            .with_param("reason", "missing_main_measurement")
+            .with_param("position", position.to_string()),
+        EngineError::Input(_) | EngineError::Dsp(_) => failure,
     }
 }
 
@@ -781,6 +911,139 @@ mod tests {
     use secs_engine::Note;
     use secs_engine::SubFilter;
     use secs_types::chain::BandType;
+
+    #[test]
+    fn engine_measurement_errors_preserve_context_and_diagnostic_details() {
+        use secs_engine::EngineError;
+        use serde_json::json;
+        let cases = [
+            (
+                EngineError::MeasurementSampleRate {
+                    position: 3,
+                    role: "L".into(),
+                    actual_hz: 44100,
+                    expected_hz: 48000,
+                },
+                json!({"reason":"measurement_sample_rate","position":"3","role":"L","actual_hz":"44100","expected_hz":"48000"}),
+                "invalid input: position 3 L: sample rate 44100 (expected 48000)",
+            ),
+            (
+                EngineError::InvalidMeasurement {
+                    position: 2,
+                    role: "SW1".into(),
+                },
+                json!({"reason":"invalid_measurement","position":"2","role":"SW1"}),
+                "invalid input: position 2 SW1: empty or nonfinite IR",
+            ),
+            (
+                EngineError::DuplicateMeasurement {
+                    position: 4,
+                    role: "R".into(),
+                },
+                json!({"reason":"duplicate_measurement","position":"4","role":"R"}),
+                "invalid input: position 4: duplicate role R",
+            ),
+            (
+                EngineError::MissingReferencePosition { position: 7 },
+                json!({"reason":"missing_reference_position","position":"7"}),
+                "invalid input: missing main position",
+            ),
+            (
+                EngineError::MissingMainMeasurement { position: 5 },
+                json!({"reason":"missing_main_measurement","position":"5"}),
+                "invalid input: no measured main",
+            ),
+        ];
+        for (error, params, detail) in cases {
+            let error = engine_error(error);
+            assert_eq!(error.code, ErrorCode::EngineInput);
+            assert_eq!(serde_json::to_value(error.params).unwrap(), params);
+            assert_eq!(error.detail, detail);
+            assert!(!error.retryable);
+        }
+        // A similar-looking legacy string must not acquire an invented reason.
+        let legacy = engine_error(EngineError::Input(
+            "position 3 L: sample rate 44100 (expected 48000)".into(),
+        ));
+        assert_eq!(legacy.code, ErrorCode::EngineInput);
+        assert!(legacy.params.is_empty());
+        assert_eq!(
+            legacy.detail,
+            "invalid input: position 3 L: sample rate 44100 (expected 48000)"
+        );
+        let cancelled = engine_error(EngineError::Cancelled);
+        assert_eq!(cancelled.code, ErrorCode::Cancelled);
+        assert_eq!(cancelled.detail, "cancelled");
+        assert!(cancelled.params.is_empty());
+    }
+
+    #[test]
+    fn unsupported_resampling_rate_has_a_distinct_actionable_reason() {
+        let error = engine_error(secs_engine::EngineError::UnsupportedResamplingRate {
+            position: 4,
+            role: "SW2".into(),
+            actual_hz: 1000,
+        });
+        assert_eq!(error.code, ErrorCode::EngineInput);
+        assert_eq!(
+            serde_json::to_value(error.params).unwrap(),
+            serde_json::json!({
+                "reason": "unsupported_resampling_rate", "position": "4", "role": "SW2",
+                "actual_hz": "1000", "min_hz": "8000", "max_hz": "384000"
+            })
+        );
+    }
+
+    #[test]
+    fn xo_sample_rate_failure_reaches_ipc_with_the_affected_measurement() {
+        let project = Project::from_preset("2.1").unwrap();
+        let groups = project_groups(&project);
+        let view = ProjectView {
+            groups: &groups,
+            project_xo: &project.xo,
+            target: &project.target,
+        };
+        let measurements = MeasurementSet {
+            positions: vec![(
+                3,
+                ["L", "R", "SW1"]
+                    .into_iter()
+                    .map(|role| {
+                        (
+                            role.into(),
+                            Measurement {
+                                samples: Samples::F64(vec![1.0].into()),
+                                sample_rate: if role == "L" { 44100 } else { 48000 },
+                                t0: 0.0,
+                            },
+                        )
+                    })
+                    .collect(),
+            )],
+        };
+        let error = secs_engine::xo::recommend_xo(
+            &view,
+            &measurements,
+            &CalibrationSettings::default(),
+            &Tuning::default(),
+            &secs_engine::xo::XO_CANDIDATES,
+            &Context::serial(),
+        )
+        .map_err(engine_error)
+        .unwrap_err();
+        assert_eq!(error.code, ErrorCode::EngineInput);
+        assert_eq!(
+            serde_json::to_value(error.params).unwrap(),
+            serde_json::json!({
+                "reason": "measurement_sample_rate", "position": "3", "role": "L",
+                "actual_hz": "44100", "expected_hz": "48000",
+            })
+        );
+        assert_eq!(
+            error.detail,
+            "invalid input: position 3 L: sample rate 44100 (expected 48000)"
+        );
+    }
 
     #[test]
     fn stale_reasons_prioritize_measurements_then_settings_then_target() {

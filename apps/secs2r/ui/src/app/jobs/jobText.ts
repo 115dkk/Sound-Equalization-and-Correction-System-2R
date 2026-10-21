@@ -42,6 +42,7 @@ export const ERROR_TEXT: Record<ErrorCode, { cause: MessageKey; next: MessageKey
   export_failed: { cause: "error.export_failed", next: "error.export_failed.next" },
   export_scope: { cause: "error.export_scope", next: "error.export_scope.next" },
   stale_inputs: { cause: "error.stale_inputs", next: "error.stale_inputs.next" },
+  compute_unavailable: { cause: "error.compute_unavailable", next: "error.compute_unavailable.next" },
   device_unavailable: { cause: "error.device_unavailable", next: "error.device_unavailable.next" },
   recording_failed: { cause: "error.recording_failed", next: "error.recording_failed.next" },
   share_mode_refused: { cause: "error.share_mode_refused", next: "error.share_mode_refused.next" },
@@ -53,10 +54,32 @@ export const ERROR_TEXT: Record<ErrorCode, { cause: MessageKey; next: MessageKey
   tutorial_blocked: { cause: "error.tutorial_blocked", next: "error.tutorial_blocked.next" },
 };
 
-/** Cause and next step for an IPC error, in the current language. */
-export function errorText(t: Translate, error: IpcError): { cause: string; next: string } {
+const ENGINE_INPUT_TEXT = {
+  measurement_sample_rate: { cause: "error.engine_input.measurement_sample_rate", next: "error.engine_input.measurement_sample_rate.next", required: ["position", "role", "actual_hz", "expected_hz"] },
+  unsupported_resampling_rate: { cause: "error.engine_input.unsupported_resampling_rate", next: "error.engine_input.unsupported_resampling_rate.next", required: ["position", "role", "actual_hz", "min_hz", "max_hz"] },
+  invalid_measurement: { cause: "error.engine_input.invalid_measurement", next: "error.engine_input.invalid_measurement.next", required: ["position", "role"] },
+  duplicate_measurement: { cause: "error.engine_input.duplicate_measurement", next: "error.engine_input.duplicate_measurement.next", required: ["position", "role"] },
+  missing_reference_position: { cause: "error.engine_input.missing_reference_position", next: "error.engine_input.missing_reference_position.next", required: ["position"] },
+  missing_main_measurement: { cause: "error.engine_input.missing_main_measurement", next: "error.engine_input.missing_main_measurement.next", required: ["position"] },
+} as const satisfies Record<string, { cause: MessageKey; next: MessageKey; required: readonly string[] }>;
+
+const isU32 = (value: string | undefined): boolean => typeof value === "string" && /^(0|[1-9]\d*)$/.test(value) && Number(value) <= 4_294_967_295;
+// Both supported locales (ko-KR/en-US) group these unsigned integers with commas.
+const integer = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+
+/** A generic cause can be replaced with the caller's named task failure. */
+export function errorText(t: Translate, error: IpcError): { cause: string; next: string; generic: boolean } {
+  const reason = error.params.reason;
+  if (error.code === "engine_input" && reason && Object.hasOwn(ENGINE_INPUT_TEXT, reason)) {
+    const keys = ENGINE_INPUT_TEXT[reason as keyof typeof ENGINE_INPUT_TEXT];
+    if (keys.required.every((key) => key === "role" ? typeof error.params.role === "string" && error.params.role.trim().length > 0 : isU32(error.params[key]))) {
+      const params: Record<string, string> = { ...error.params, ...(error.params.role ? { role: roleCode(error.params.role.trim()) } : {}) };
+      for (const key of keys.required) if (key !== "role") params[key] = integer.format(Number(error.params[key]));
+      return { cause: t(keys.cause, params), next: t(keys.next, params), generic: false };
+    }
+  }
   const keys = ERROR_TEXT[error.code] ?? ERROR_TEXT.internal;
-  return { cause: t(keys.cause, error.params), next: t(keys.next, error.params) };
+  return { cause: t(keys.cause, error.params), next: t(keys.next, error.params), generic: error.code === "engine_input" || !ERROR_TEXT[error.code] };
 }
 
 /** What a progress stage is doing. Measurement stages are role ids. */
