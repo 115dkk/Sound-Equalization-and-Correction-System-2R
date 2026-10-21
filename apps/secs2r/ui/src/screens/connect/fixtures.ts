@@ -54,12 +54,10 @@ const rewFound: RewDetails = { executable: "C:\\Program Files\\REW\\roomeqwizard
 const rewConnected: RewDetails = {
   executable: "C:\\Program Files\\REW\\roomeqwizard.exe",
   version: "5.40 beta 92",
+  driver: "ASIO",
   blocking: true,
   micCalibration: "C:\\Users\\demo\\Documents\\REW\\7103946_90deg.txt",
-  inputs: [
-    { id: "ASIO: MOTU Pro Audio", name: "ASIO: MOTU Pro Audio", input_channels: 16, output_channels: 0 },
-    { id: "Java: UMIK-1", name: "UMIK-1", input_channels: 2, output_channels: 0 },
-  ],
+  inputs: [{ id: "ASIO: MOTU Pro Audio", name: "ASIO: MOTU Pro Audio", input_channels: 16, output_channels: 0 }],
   outputs: [{ id: "ASIO: MOTU Pro Audio", name: "ASIO: MOTU Pro Audio", input_channels: 0, output_channels: 16 }],
   inputChannelNames: ["Mic/Line 1", "Mic/Line 2", "Line 3", "Line 4", "Line 5", "Line 6", "Line 7", "Line 8"],
   current: { inputDevice: "ASIO: MOTU Pro Audio", outputDevice: "ASIO: MOTU Pro Audio", input: "Mic/Line 1" },
@@ -86,7 +84,7 @@ const base: ConnectView = {
   settings: null,
   config: sampleView.config,
   sampleRate: 48000,
-  rew: { launch: "idle", problem: null, problemDetail: null, readingSettings: false, details: {} },
+  rew: { launch: "idle", problem: null, problemDetail: null, readingSettings: false, switchingDriver: false, details: {} },
   levels: {},
   level: { monitor: "off", reading: null, playing: null, playingAll: false, masterDbfs: -20 },
   sweepCheck: { running: false, result: null, role: null },
@@ -124,6 +122,36 @@ export const rewNotProView: ConnectView = {
   settings: settingsFor("rew", { input_device: "Java: UMIK-1", output_device: "ASIO: MOTU Pro Audio" }),
   rew: { ...base.rew, details: { ...rewConnected, settings: { sample_rate: 48000, sweep_length: "256k", level_dbfs: -12 } } },
 };
+
+/**
+ * REW on its Java driver: it knows the channel count only of the devices it
+ * has open, so the others are listed by name alone; the stored names are REW's.
+ */
+export const rewJavaView: ConnectView = {
+  ...rewOffView,
+  methods: methodsWith({ running: true, reachable: true, pro: true }),
+  settings: settingsFor("rew", { input_device: "UMIK-1", output_device: "AVR (HDMI)" }),
+  rew: {
+    ...base.rew,
+    details: {
+      ...rewConnected,
+      driver: "Java",
+      inputs: [
+        { id: "UMIK-1", name: "UMIK-1", input_channels: 2, output_channels: 0 },
+        { id: "Line In (Realtek)", name: "Line In (Realtek)", input_channels: 0, output_channels: 0 },
+      ],
+      outputs: [
+        { id: "AVR (HDMI)", name: "AVR (HDMI)", input_channels: 0, output_channels: 8 },
+        { id: "Speakers (Realtek)", name: "Speakers (Realtek)", input_channels: 0, output_channels: 0 },
+      ],
+      inputChannelNames: ["Left", "Right"],
+      current: { inputDevice: "UMIK-1", outputDevice: "AVR (HDMI)", input: "Left" },
+    },
+  },
+};
+
+/** REW switching from Java to ASIO: the fields wait until it has reopened its devices. */
+export const rewSwitchingView: ConnectView = { ...rewJavaView, rew: { ...rewJavaView.rew, switchingDriver: true } };
 
 /** Native measurement with a USB mic and a 16-output interface; the monitor reads the quiet room. */
 export const nativeView: ConnectView = {

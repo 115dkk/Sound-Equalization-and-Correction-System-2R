@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup as cleanupScreen, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { StepState } from "../../app/model";
 import { PrefsScope } from "../../app/prefs";
@@ -16,9 +16,11 @@ import {
   mockView,
   nativeErrorView,
   nativeView,
+  rewJavaView,
   rewNoApiView,
   rewNotProView,
   rewOffView,
+  rewSwitchingView,
   rewUntestedView,
 } from "./fixtures";
 import { MicMeterPanel } from "./MicMeterPanel";
@@ -45,6 +47,7 @@ export const REACH_IDS = [
   "connect.rew.hint",
   "connect.devices",
   "connect.devices.retry",
+  "connect.rew_driver",
   "connect.input_device",
   "connect.input_channel",
   "connect.mic_cal",
@@ -82,6 +85,7 @@ function actionsMock() {
     refreshMethods: vi.fn(),
     launchRew: vi.fn(),
     readRewSettings: vi.fn(),
+    setRewDriver: vi.fn(),
     setInputDevice: vi.fn(),
     setInputChannel: vi.fn(),
     setOutputDevice: vi.fn(),
@@ -193,23 +197,66 @@ describe("ConnectScreen", () => {
     expect(must("connect.method.rew").textContent).toContain(ko("connect.method.rew.ready"));
   });
 
-  it("shows the devices REW measures with instead of choices it would not apply (R7)", () => {
+  it("lists REW's own devices and shows the one REW opens, never the native ids (R7)", () => {
     setup(rewUntestedView);
     expect(must("connect.devices.rew_owned").textContent).toBe(ko("connect.device.rew_owned"));
-    for (const id of ["connect.input_device", "connect.input_channel", "connect.output_device"]) {
-      expect(must(id).querySelector("select")).toBeNull();
-    }
-    expect(must("connect.input_device").textContent).toContain("ASIO: MOTU Pro Audio");
-    expect(must("connect.input_channel").textContent).toContain("Mic/Line 1");
-    expect(must("connect.output_device").textContent).toContain("ASIO: MOTU Pro Audio");
-    // The project still holds the native WASAPI ids; REW mode does not show them.
+    // The project still holds native WASAPI ids; REW does not list them, so the screen shows what REW has open.
+    expect((must("connect.input_device") as HTMLSelectElement).value).toBe("ASIO: MOTU Pro Audio");
+    expect((must("connect.output_device") as HTMLSelectElement).value).toBe("ASIO: MOTU Pro Audio");
     expect(must("connect.devices").textContent).not.toContain("wasapi:");
+    // The input channel stays REW's own choice.
+    expect(must("connect.input_channel").querySelector("select")).toBeNull();
+    expect(must("connect.input_channel").textContent).toContain("Mic/Line 1");
+  });
+
+  it("opens a chosen REW device by name and names Java devices REW has not opened without a channel count", () => {
+    const actions = setup(rewJavaView);
+    const output = must("connect.output_device") as HTMLSelectElement;
+    expect(output.value).toBe("AVR (HDMI)");
+    expect([...output.options].map((o) => o.textContent)).toEqual([
+      translate("ko", "connect.device.option", { name: "AVR (HDMI)", count: 8 }),
+      "Speakers (Realtek)",
+    ]);
+    fireEvent.change(output, { target: { value: "Speakers (Realtek)" } });
+    expect(actions.setOutputDevice).toHaveBeenCalledWith("Speakers (Realtek)");
+    fireEvent.change(must("connect.input_device"), { target: { value: "Line In (Realtek)" } });
+    expect(actions.setInputDevice).toHaveBeenCalledWith("Line In (Realtek)");
+  });
+
+  it("switches REW's driver and keeps a driver name REW reports beyond ASIO and Java", () => {
+    const actions = setup(rewJavaView);
+    const driver = must("connect.rew_driver") as HTMLSelectElement;
+    expect(driver.value).toBe("Java");
+    expect([...driver.options].map((o) => o.value)).toEqual(["ASIO", "Java"]);
+    expect(driver.disabled).toBe(false);
+    fireEvent.change(driver, { target: { value: "ASIO" } });
+    expect(actions.setRewDriver).toHaveBeenCalledWith("ASIO");
+    cleanupScreen();
+    setup({ ...rewJavaView, rew: { ...rewJavaView.rew, details: { ...rewJavaView.rew.details, driver: "CoreAudio" } } });
+    expect([...(must("connect.rew_driver") as HTMLSelectElement).options].map((o) => o.value)).toEqual(["ASIO", "Java", "CoreAudio"]);
+  });
+
+  it("holds the driver and device fields while REW switches its driver, and before REW answers", () => {
+    setup(rewSwitchingView);
+    expect(must("connect.rew_driver.switching").textContent).toBe(ko("connect.rew_driver.switching"));
+    for (const id of ["connect.rew_driver", "connect.input_device", "connect.output_device"]) {
+      expect((must(id) as HTMLSelectElement).disabled).toBe(true);
+    }
+    cleanupScreen();
+    setup(rewOffView);
+    const driver = must("connect.rew_driver") as HTMLSelectElement;
+    expect(driver.disabled).toBe(true);
+    expect(driver.textContent).toBe(ko("connect.device.after_rew"));
+    expect(ui("connect.rew_driver.switching")).toBeNull();
   });
 
   it("says when REW's own devices could not be read", () => {
     const unread = { ...rewUntestedView, rew: { ...rewUntestedView.rew, details: { ...rewUntestedView.rew.details, current: { inputDevice: null, outputDevice: null, input: null } } } };
     setup(unread);
-    expect(must("connect.input_device").textContent).toBe(ko("connect.input_device") + ko("connect.rew.unknown"));
+    const input = must("connect.input_device") as HTMLSelectElement;
+    expect(input.value).toBe("");
+    expect(input.selectedOptions[0]?.textContent).toBe(ko("connect.rew.unknown"));
+    expect(must("connect.input_channel").textContent).toBe(ko("connect.input_channel") + ko("connect.rew.unknown"));
   });
 
   it("explains a failed launch and while REW starts", () => {

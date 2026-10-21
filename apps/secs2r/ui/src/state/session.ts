@@ -28,6 +28,7 @@ export type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRang
   xoRecommendation: XoRecommendation | null; runs: Partial<Record<ExportKind, ExportRun>>;
   failure: CalibrateView["failure"]; rewLaunch: "idle" | "checking" | "launching";
   rewProblem: RewProblem | null; rewProblemDetail: string | null; readingRew: boolean;
+  switchingRewDriver: boolean;
 };
 
 export function createSession(ipc: Ipc) {
@@ -37,7 +38,7 @@ export function createSession(ipc: Ipc) {
     mdat: null, warnings: [], tab: "spl", channel: null, xoGroup: null, previewHz: null,
     jobs: [], jobRequests: {}, meter: null, monitor: "off", playing: null, playingAll: false, masterDbfs: -20,
     sweepResult: null, sweepRole: null, xoRecommendation: null, runs: {}, failure: null,
-    rewLaunch: "idle", rewProblem: null, rewProblemDetail: null, readingRew: false,
+    rewLaunch: "idle", rewProblem: null, rewProblemDetail: null, readingRew: false, switchingRewDriver: false,
   });
   const host = { ...rawHost, set: (patch: Partial<HostState>) => rawHost.set({ ...rawHost.getSnapshot(), ...patch }) };
   const errors = createStore<Failure | null>(null);
@@ -71,7 +72,7 @@ export function createSession(ipc: Ipc) {
     modeSpec: createResource(async (): Promise<import("../ipc/bindings/ModeSpecResult").ModeSpecResult> => {
       const settings = stores.settings.getSnapshot();
       if (!settings) throw new Error("calibration settings have not loaded");
-      return ipc.request({ method: "mode_spec", params: { mode: settings.mode, ultra_ms: settings.ultra_ms } });
+      return ipc.request({ method: "mode_spec", params: { mode: settings.mode, ultra_ms: settings.ultra_ms, mimo_fir: settings.mimo_fir } });
     }, report),
     target: read({ method: "target_get" }), results: read({ method: "results" }),
     resultCurves,
@@ -129,6 +130,11 @@ export function createSession(ipc: Ipc) {
         host.set({ warnings: host.getSnapshot().warnings.filter((w) => !positions.has(w.position)) });
       }
       if (request.method === "sample_load") host.set({ warnings: [] });
+      // rew_driver_set answers with REW's facts read after the switch; another driver also makes the recommended level stale.
+      if (request.method === "rew_driver_set") {
+        stores.rew.set(data as import("../ipc/bindings/RewInfoResult").RewInfoResult);
+        host.set({ sweepResult: null, sweepRole: null });
+      }
       await reload(triggeredBy({ mutation: request.method }));
       if ((HOST_TRIGGERS.measurementSettings.mutations as readonly string[]).includes(request.method) && stores.measurementSettings.getSnapshot()) await call({ method: "measure_config_get" });
       if (request.method === "project_new" && (request as Extract<Request, { method: "project_new" }>).params.tutorial) await configure({ method: "mock" });

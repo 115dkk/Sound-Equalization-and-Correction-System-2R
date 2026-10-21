@@ -59,6 +59,25 @@ describe("useConnectScreen", () => {
     expect(mock.calls).toEqual([]);
   });
 
+  it("switches REW's driver from its reply and reads REW again after opening a chosen REW device", async () => {
+    const { result } = renderHook(() => useConnectScreen(false), { wrapper });
+    await perform(() => result.current.actions.choosePath("rew"));
+    await perform(() => session.stores.rew.load());
+    expect(result.current.view?.rew.details.driver).toBe("Java");
+    mock.calls.length = 0;
+    await perform(() => result.current.actions.setRewDriver("ASIO"));
+    expect(mock.calls).toContainEqual({ method: "rew_driver_set", params: { driver: "ASIO" } });
+    expect(mock.calls).not.toContainEqual({ method: "rew_info" });
+    expect(result.current.view?.rew.details.driver).toBe("ASIO");
+    expect(result.current.view?.rew.switchingDriver).toBe(false);
+    mock.calls.length = 0;
+    await perform(() => result.current.actions.setOutputDevice("Speakers (Realtek)"));
+    const methods = mock.calls.map((call) => call.method);
+    expect(methods.indexOf("rew_info")).toBeGreaterThan(methods.indexOf("measure_configure"));
+    expect(methods.indexOf("measure_configure")).toBe(0);
+    expect(result.current.view?.rew.details.current?.outputDevice).toBe("Speakers (Realtek)");
+  });
+
   it("refreshes REW on each opening, monitors only a ready active path, and stops on leaving", async () => {
     await session.configure({ method: "mock" });
     const { result, rerender } = renderHook(({ active }) => useConnectScreen(active), { wrapper, initialProps: { active: false } });

@@ -53,7 +53,7 @@ export type CalibrateView = {
   curvesLoading: boolean;
   /** `calibration_settings_get`, and the reply of every `calibration_settings_set`. */
   settings: CalibrationSettings;
-  /** `mode_spec { mode: settings.mode, ultra_ms: settings.ultra_ms }`. */
+  /** `mode_spec { mode: settings.mode, ultra_ms: settings.ultra_ms, mimo_fir: settings.mimo_fir }`. */
   modeSpec: ModeSpecResult;
   /** `target_get` (and the reply of every target change). */
   target: TargetResult;

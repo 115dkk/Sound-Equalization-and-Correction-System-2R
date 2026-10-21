@@ -27,16 +27,18 @@ export type RewDetails = {
   executable?: string | null | undefined;
   /** REW's version (`GET /version`). */
   version?: string | null | undefined;
+  /** REW's audio driver (`GET /audio/driver`: ASIO, Java or another name); null = unreadable. */
+  driver?: string | null | undefined;
   /** Whether REW's API blocking mode is on. */
   blocking?: boolean | null | undefined;
   /** Mic calibration file REW has loaded (`GET /audio/input-cal`): "" = none loaded, null = unknown. */
   micCalibration?: string | null | undefined;
-  /** REW's input and output devices, with channel counts. */
+  /** REW's input and output devices, with channel counts (0 = REW has not opened this Java device, so the count is unknown). */
   inputs?: readonly MeasureDevice[] | undefined;
   outputs?: readonly MeasureDevice[] | undefined;
   /** REW's input channel names, index 0 = channel 1. */
   inputChannelNames?: readonly string[] | undefined;
-  /** What REW will measure with, read from its own audio preferences (R7); null = unreadable. */
+  /** The devices and input REW has open now, read from its own audio preferences (R7); null = unreadable. */
   current?: { inputDevice: string | null; outputDevice: string | null; input: string | null } | undefined;
   /** REW's measurement settings, read on request (rate, sweep length, level). */
   settings?: { sample_rate: number; sweep_length: string; level_dbfs: number | null } | null | undefined;
@@ -64,6 +66,8 @@ export type ConnectView = {
     problemDetail: string | null;
     /** Reading REW's settings into the hint line. */
     readingSettings: boolean;
+    /** rew_driver_set is waiting for REW to switch its driver and reopen its devices. */
+    switchingDriver: boolean;
     details: RewDetails;
   };
   /** Stored level per role in dBFS (`extra['levels']`), pre-filling the rows (service gap: no method returns them). */
@@ -92,11 +96,13 @@ export type ConnectActions = {
   launchRew: () => void;
   /** Reads REW's sample rate, sweep length and level for the hint line (service gap: no method yet). */
   readRewSettings: () => void;
-  /** measure_configure { input_device } ("" = the default device). */
+  /** rew_driver_set { driver }: switches REW's audio driver, then reads REW's devices again. */
+  setRewDriver: (driver: string) => void;
+  /** measure_configure { input_device } ("" = the default device); on the REW path a REW device name, which REW also opens. */
   setInputDevice: (id: string) => void;
   /** measure_configure { input_channel } (1-based). */
   setInputChannel: (channel: number) => void;
-  /** measure_configure { output_device } ("" = the default device); also the measurement output device 시스템 shows. */
+  /** measure_configure { output_device } ("" = the default device; on the REW path a REW device name, which REW also opens); also the measurement output device 시스템 shows. */
   setOutputDevice: (id: string) => void;
   /** measure_configure { sweep_length } in samples (65536 … 4194304). */
   setSweepLength: (samples: number) => void;
