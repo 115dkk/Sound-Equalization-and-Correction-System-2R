@@ -12,4 +12,8 @@ mode: Mode,
 /**
  * Latency limit for the ultra mode, in ms.
  */
-ultra_ms: number | null, };
+ultra_ms: number | null, 
+/**
+ * Whether MIMO support paths use FIR instead of IIR.
+ */
+mimo_fir?: boolean, };

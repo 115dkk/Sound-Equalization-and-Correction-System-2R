@@ -33,6 +33,7 @@ pub struct FakeOptions {
     pub level_interval: Duration,
     pub measure_level_dbfs: f64,
     pub cal_file: String,
+    pub driver: String,
     pub output_devices: Vec<DeviceInfo>,
     pub input_devices: Vec<DeviceInfo>,
     pub current_audio: CurrentAudio,
@@ -60,6 +61,7 @@ impl Default for FakeOptions {
             level_interval: Duration::from_millis(20),
             measure_level_dbfs: -20.0,
             cal_file: String::new(),
+            driver: "ASIO".into(),
             output_devices: vec![
                 device("fake-out-0", "Demo ASIO 16ch", 16, "output"),
                 device("fake-out-1", "Demo Speakers (2ch)", 2, "output"),
@@ -126,6 +128,7 @@ impl<S: IrSource> FakeRew<S> {
             running: true,
             reachable: true,
             version: self.version(),
+            driver: Some(self.options.driver.clone()),
             pro: Some(self.options.pro),
             blocking: Some(self.options.blocking),
             input_calibration_file: self.input_calibration_file(),
@@ -158,6 +161,30 @@ impl<S: IrSource> FakeRew<S> {
     }
     pub fn input_calibration_file(&self) -> Option<String> {
         self.is_running().then(|| self.options.cal_file.clone())
+    }
+    pub fn driver(&self) -> String {
+        self.options.driver.clone()
+    }
+    pub fn set_driver(&mut self, name: &str) {
+        self.calls
+            .push(("set_driver".into(), json!({"driver":name})));
+        self.options.driver = name.into();
+    }
+    pub fn current_device(&self, kind: &str) -> Option<String> {
+        match kind {
+            "input" => self.options.current_audio.input_device.clone(),
+            "output" => self.options.current_audio.output_device.clone(),
+            _ => None,
+        }
+    }
+    pub fn set_device(&mut self, kind: &str, name: &str) {
+        self.calls
+            .push(("set_device".into(), json!({"kind":kind,"device":name})));
+        match kind {
+            "input" => self.options.current_audio.input_device = Some(name.into()),
+            "output" => self.options.current_audio.output_device = Some(name.into()),
+            _ => {}
+        }
     }
     pub fn output_devices(&self) -> Vec<DeviceInfo> {
         self.options.output_devices.clone()

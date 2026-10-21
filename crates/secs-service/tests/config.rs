@@ -366,6 +366,7 @@ fn project_edit_surface_round_trips_dsp_layout_target_and_calibration() {
         Request::ModeSpec(ModeSpecParams {
             mode: Mode::Ultra,
             ultra_ms: Some(240.0),
+            mimo_fir: None,
         }),
     ) else {
         panic!()
@@ -373,6 +374,26 @@ fn project_edit_surface_round_trips_dsp_layout_target_and_calibration() {
     assert!(spec.fir_taps > 0);
     assert!(spec.max_latency_ms >= spec.lift_ms);
     fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn mode_spec_follows_mimo_fir_1018() {
+    let service = Service::new(Deps::default());
+    for mode in [Mode::Zero, Mode::Mixed, Mode::Linear] {
+        for (mimo_fir, expected) in [(Some(true), "fir"), (Some(false), "iir"), (None, "iir")] {
+            let Response::ModeSpec(spec) = call(
+                &service,
+                Request::ModeSpec(ModeSpecParams {
+                    mode,
+                    ultra_ms: None,
+                    mimo_fir,
+                }),
+            ) else {
+                panic!()
+            };
+            assert_eq!(spec.mimo_filter, expected);
+        }
+    }
 }
 
 #[test]

@@ -240,13 +240,13 @@ impl<T: Transport> RewClient<T> {
     pub fn set_pro(&mut self, value: Option<bool>) {
         self.pro_hint = value;
     }
-    pub fn driver(&mut self) -> String {
-        if let Some(driver) = &self.driver {
-            return driver.clone();
+    fn read_driver(&mut self) -> Result<String, RewError> {
+        if let Some((until, value)) = self.cache.get("driver")
+            && *until > Instant::now()
+        {
+            return Ok(value.as_str().unwrap_or("Java").to_owned());
         }
-        let Ok(data) = self.get_timeout("/audio/driver", self.timeout, true) else {
-            return "Java".into();
-        };
+        let data = self.get_timeout("/audio/driver", self.timeout, true)?;
         let driver = data
             .get("driver")
             .unwrap_or(&data)
@@ -255,7 +255,25 @@ impl<T: Transport> RewClient<T> {
             .unwrap_or("Java")
             .to_owned();
         self.driver = Some(driver.clone());
-        driver
+        self.cache.insert(
+            "driver".into(),
+            (Instant::now() + LIST_CACHE, Value::String(driver.clone())),
+        );
+        Ok(driver)
+    }
+    pub fn driver(&mut self) -> String {
+        self.read_driver()
+            .unwrap_or_else(|_| self.driver.clone().unwrap_or_else(|| "Java".into()))
+    }
+    pub fn set_driver(&mut self, name: &str) -> Result<(), RewError> {
+        self.post_timeout(
+            "/audio/driver",
+            json!({"driver":name}),
+            self.timeout.max(Duration::from_secs(30)),
+        )?;
+        self.driver = None;
+        self.cache.clear();
+        Ok(())
     }
     fn asio(&mut self) -> bool {
         self.driver().trim().eq_ignore_ascii_case("asio")
@@ -272,9 +290,23 @@ impl<T: Transport> RewClient<T> {
     fn current_audio_value(&mut self, path: &str) -> Option<String> {
         Self::audio_value(self.get_timeout(path, self.timeout, true).ok()?)
     }
+    pub fn current_device(&mut self, kind: &str) -> Option<String> {
+        let path = self.audio_path(&format!("{kind}_device"));
+        self.current_audio_value(&path)
+    }
+    pub fn set_device(&mut self, kind: &str, name: &str) -> Result<(), RewError> {
+        let path = self.audio_path(&format!("{kind}_device"));
+        self.post_timeout(
+            &path,
+            json!({"device":name}),
+            self.timeout.max(Duration::from_secs(30)),
+        )?;
+        self.cache.clear();
+        Ok(())
+    }
     pub fn current_audio(&mut self) -> CurrentAudio {
         if self.asio() {
-            let device = self.current_audio_value("/audio/asio/device");
+            let device = self.current_device("output");
             CurrentAudio {
                 input_device: device.clone(),
                 output_device: device,
@@ -282,8 +314,8 @@ impl<T: Transport> RewClient<T> {
             }
         } else {
             CurrentAudio {
-                input_device: self.current_audio_value("/audio/java/input-device"),
-                output_device: self.current_audio_value("/audio/java/output-device"),
+                input_device: self.current_device("input"),
+                output_device: self.current_device("output"),
                 input: self.current_audio_value("/audio/java/input"),
             }
         }
@@ -297,9 +329,14 @@ impl<T: Transport> RewClient<T> {
                 "output_devices" | "input_devices" if asio => "devices",
                 "output_devices" => "output-devices",
                 "input_devices" => "input-devices",
-                "output_choices" => "outputs",
+                "output_choices" if asio => "outputs",
+                "output_choices" => "output-channels",
                 "input_choices" => "inputs",
-                "output_set" => "output",
+                "output_set" if asio => "output",
+                "output_set" => "output-channel",
+                "output_device" | "input_device" if asio => "device",
+                "output_device" => "output-device",
+                "input_device" => "input-device",
                 "ref_output_set" if asio => "ref-output",
                 "ref_output_set" => "ref-output-channel",
                 "ref_output_choices" => "ref-output-channels",
@@ -338,6 +375,7 @@ impl<T: Transport> RewClient<T> {
                             .map(str::to_owned)
                             .unwrap_or_else(|| v.to_string())
                     })
+                    .filter(|name| !name.contains('+'))
                     .collect()
             })
             .unwrap_or_default())
@@ -368,17 +406,24 @@ impl<T: Transport> RewClient<T> {
             .channel_names(kind)
             .map(|n| n.len().max(2))
             .unwrap_or(2);
+        let java = !self.asio();
+        let current = java.then(|| self.current_device(kind)).flatten();
         Ok(items
             .iter()
             .enumerate()
             .filter_map(|(index, item)| {
                 if let Some(name) = item.as_str() {
+                    let known = !java || current.as_deref().is_none_or(|current| current == name);
                     Some(DeviceInfo {
                         id: name.into(),
                         name: name.into(),
-                        channels: count,
+                        channels: if known { count } else { 0 },
                         kind: kind.into(),
-                        extra: json!({}),
+                        extra: if known {
+                            json!({})
+                        } else {
+                            json!({"channels_unknown":true})
+                        },
                     })
                 } else if item.is_object() {
                     let name = item
@@ -388,18 +433,27 @@ impl<T: Transport> RewClient<T> {
                         .and_then(Value::as_str)
                         .map(str::to_owned)
                         .unwrap_or(index.to_string());
+                    let known = !java
+                        || current
+                            .as_deref()
+                            .is_none_or(|current| current == name.as_str());
+                    let channels = item
+                        .get("channels")
+                        .or_else(|| item.get("channelCount"))
+                        .and_then(Value::as_u64)
+                        .filter(|n| *n > 0)
+                        .map(|n| n as usize)
+                        .unwrap_or(count);
+                    let mut extra = item.clone();
+                    if !known && let Some(extra) = extra.as_object_mut() {
+                        extra.insert("channels_unknown".into(), json!(true));
+                    }
                     Some(DeviceInfo {
                         id: item["id"].as_str().unwrap_or(&name).into(),
                         name,
-                        channels: item
-                            .get("channels")
-                            .or_else(|| item.get("channelCount"))
-                            .and_then(Value::as_u64)
-                            .filter(|n| *n > 0)
-                            .map(|n| n as usize)
-                            .unwrap_or(count),
+                        channels: if known { channels } else { 0 },
                         kind: kind.into(),
-                        extra: item.clone(),
+                        extra,
                     })
                 } else {
                     None
@@ -419,6 +473,7 @@ impl<T: Transport> RewClient<T> {
             .ok()
             .and_then(|v| v.as_bool());
         let input_calibration_file = self.input_calibration_file();
+        let driver = self.read_driver().ok();
         let input_channel_names = self.channel_names("input").ok();
         let input_devices = self.devices_result("input").ok();
         let output_devices = self.devices_result("output").ok();
@@ -440,6 +495,7 @@ impl<T: Transport> RewClient<T> {
             version,
             reachable: true,
             running: true,
+            driver,
             pro: self.pro_state(),
             blocking,
             input_calibration_file,
@@ -464,8 +520,16 @@ impl<T: Transport> RewClient<T> {
         } else {
             value
         };
+        let asio = self.asio();
         let path = self.audio_path("output_set");
-        self.post(&path, json!({"output":value}))?;
+        self.post(
+            &path,
+            if asio {
+                json!({"output":value})
+            } else {
+                json!({"channel":value})
+            },
+        )?;
         Ok(())
     }
     pub fn set_timing_ref_output(&mut self, channel: impl ToString) -> Result<(), RewError> {
@@ -566,11 +630,26 @@ impl<T: Transport> RewClient<T> {
         self.post("/measure/sequential-channels", json!({"channels":channels}))?;
         Ok(())
     }
+    pub fn open_plan_devices(&mut self, plan: &MeasurementPlan) -> Result<(), RewError> {
+        for (kind, name) in [
+            ("output", plan.output_device.as_str()),
+            ("input", plan.input_device.as_str()),
+        ] {
+            if name.is_empty() || !self.devices(kind).iter().any(|device| device.name == name) {
+                continue;
+            }
+            if self.current_device(kind).as_deref() != Some(name) {
+                self.set_device(kind, name)?;
+            }
+        }
+        Ok(())
+    }
     pub fn configure(&mut self, plan: &MeasurementPlan) -> Result<(), RewError> {
         let previous = self.measuring;
         self.measuring = true;
         let result = (|| {
             self.set_blocking(true)?;
+            self.open_plan_devices(plan)?;
             self.set_sample_rate(plan.sample_rate)?;
             self.set_sweep(plan.start_frequency, plan.end_frequency, &plan.sweep_length)?;
             self.set_level(plan.sweep_level_db)?;

@@ -135,6 +135,7 @@ pub(crate) fn dispatch(
             .map(Response::CalibrationSettingsEdit),
         Request::SubWarnings => service.sub_warnings().map(Response::SubWarnings),
         Request::RewInfo => Ok(Response::RewInfo(service.rew_info())),
+        Request::RewDriverSet(params) => service.rew_driver_set(params).map(Response::RewDriverSet),
         Request::ModeSpec(params) => Ok(Response::ModeSpec(service.mode_spec(params))),
         Request::AppSettingsGet => Ok(Response::AppSettingsGet(service.app_settings_get())),
         Request::AppSettingsSet(params) => service

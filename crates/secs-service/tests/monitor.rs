@@ -302,7 +302,7 @@ impl secs_rew::Transport for RecordingRew {
         self.calls.lock().unwrap().push(request.clone());
         let body = match request.path.as_str() {
             "/audio/driver" => serde_json::json!({"driver":"Java"}),
-            "/audio/java/outputs" => serde_json::json!(["L", "R"]),
+            "/audio/java/output-channels" => serde_json::json!(["L", "R"]),
             _ => serde_json::json!({"message":"ok"}),
         };
         Ok(secs_rew::Response::ok(body))

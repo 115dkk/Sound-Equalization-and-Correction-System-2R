@@ -7,6 +7,10 @@ import type { RewSweepInfo } from "./RewSweepInfo";
  */
 export type RewInfoResult = { executable_path: string | null, running: boolean, reachable: boolean, version: string | null, 
 /**
+ * REW's current audio driver, or null when it could not be read.
+ */
+driver: string | null, 
+/**
  * Observed automatic-sweep license state: unknown until success or rejection.
  */
 pro: boolean | null, 

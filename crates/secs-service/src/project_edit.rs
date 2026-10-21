@@ -768,7 +768,11 @@ impl Service {
             },
             fir_taps: values.taps,
             peq_bands: values.peq_bands,
-            mimo_filter: "iir".into(),
+            mimo_filter: if params.mimo_fir == Some(true) {
+                "fir".into()
+            } else {
+                "iir".into()
+            },
             lift_ms: values.lift_ms,
             phase_frac: values.phase_frac,
             max_latency_ms: values.max_latency_ms,
