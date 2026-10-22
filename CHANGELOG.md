@@ -2,6 +2,16 @@
 
 SECS 2R의 변경 기록입니다. 번호는 major.minor.patch이고, 0.x는 모두 사전 출시판이며 정식 출시는 1.0.0부터입니다(docs/adr/0006). 각 절의 내용이 그 버전의 릴리스 본문이 됩니다. 업스트림 SECS 2의 변경 기록은 [`docs/upstream/CHANGELOG.md`](docs/upstream/CHANGELOG.md)에 있습니다.
 
+## 0.24.0 - 2026-10-22
+
+### 새 기능
+
+- 글꼴을 앱이 싣습니다. 지금까지는 사용자 PC에 깔린 글꼴에 기대어 Pretendard가 없는 Windows에서는 맑은 고딕이, 모노 칸에서는 영문·숫자와 한글이 서로 다른 글꼴로 나왔습니다. 이제 Pretendard Variable(모든 스킨의 글자), Sarasa Mono K와 Orbit(Signal Matrix 스킨)이 설치본에 들어 있어 어느 PC에서나 같은 글자로 보입니다. 네트워크에서 받는 것은 없습니다. 설치본은 약 5 MB 커집니다.
+
+### 바뀐 것
+
+- Signal Matrix 스킨의 활자가 바뀝니다. 수치·좌표·코드는 한글까지 고정폭인 Sarasa Mono K로, 사용자가 손대지 않는 띠(레일의 이름 띠, 단계 목록, 단계 제목, 카드 머리, 표의 머리줄, 미터 라벨)는 코딩 화면의 글꼴을 본떠 만든 한글 글꼴 Orbit으로 바뀝니다. Orbit은 굵기가 하나라 띠의 글자는 모두 같은 굵기이고 위계는 자리로만 말합니다. 기본 스킨과 Hardware Rack은 Pretendard가 실린 것 말고는 그대로입니다.
+
 ## 0.23.2 - 2026-10-22
 
 ### 바뀐 것

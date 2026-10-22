@@ -1,0 +1,48 @@
+/* Bundled fonts (docs/DESIGN.md §4, src/fonts/README.md). The app ships these
+   files and fetches nothing: Pretendard is every skin's label face, Sarasa
+   Mono K the Matrix skin's readout face, Orbit the Matrix skin's band face.
+   A page's @font-face shadows a system font of the same name, so a user's
+   own Pretendard never takes these families over. The files, their sources
+   and their coverage are listed in manifest.json (fonts.test.ts checks both
+   against this sheet and the catalogs); rebuild them with
+   scripts/build-fonts.py. */
+
+@font-face {
+  font-family: "Pretendard";
+  src: url("./PretendardVariable.woff2") format("woff2");
+  font-weight: 45 920;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Sarasa Mono K";
+  src: url("./SarasaMonoK-Regular.woff2") format("woff2");
+  font-weight: 400 500;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Sarasa Mono K";
+  src: url("./SarasaMonoK-SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Sarasa Mono K";
+  src: url("./SarasaMonoK-Bold.woff2") format("woff2");
+  font-weight: 700 900;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Orbit";
+  src: url("./Orbit-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}

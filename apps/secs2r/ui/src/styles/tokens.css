@@ -19,7 +19,11 @@
 /* ── Theme-independent tokens ──────────────────────────────────────────── */
 :root {
   /* Type. UI text never goes below 14 px, captions never below 13 px
-     (tokens.test.ts). Korean fallbacks after the Latin-capable faces. */
+     (tokens.test.ts). Pretendard ships with the app (src/fonts, DESIGN.md
+     §4), so every machine sets Korean the same way; the system faces after
+     it only cover what it lacks. The mono stack stays the platform's, with
+     the bundled Pretendard behind it for Hangul; the Matrix skin replaces
+     it with Sarasa Mono K, a fixed-pitch Hangul face. */
   --font-ui: "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "D2Coding", "Pretendard", "Malgun Gothic",
     "Noto Sans KR", monospace;

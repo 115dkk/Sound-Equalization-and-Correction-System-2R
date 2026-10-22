@@ -26,6 +26,16 @@ M1에서 더 들어올 예정인 것: 임펄사이퍼 3.x의 `optimize.rs`(MIT, 
 
 업스트림의 `THIRD_PARTY_NOTICES.md`는 SECS 2(PyQt6 등)의 고지이고 SECS 2R의 실행 파일과는 관계가 없습니다. 업스트림 파일이라 고치지 않고 그대로 둡니다.
 
+## 묶여 나가는 글꼴
+
+화면이 쓰는 글꼴은 `apps/secs2r/ui/src/fonts/`에 woff2로 들어 있고 설치본에 함께 나갑니다(`docs/DESIGN.md` §4). 라이선스 원문은 같은 폴더에 있고, 파일마다의 출처·버전·SHA-256은 `manifest.json`에 있습니다.
+
+| 글꼴 | 라이선스 | 들어온 곳 | 비고 |
+|---|---|---|---|
+| [Pretendard](https://github.com/orioncactus/pretendard) 1.3.9 (Kil Hyung-jin) | OFL-1.1, 예약 글꼴 이름 'Pretendard' | `PretendardVariable.woff2`: npm `pretendard@1.3.9`의 공식 variable woff2를 고치지 않고 그대로 | 모든 스킨의 라벨·본문. 이름이 예약되어 있어 서브셋을 뜨지 않음 |
+| [Sarasa Gothic](https://github.com/be5invis/Sarasa-Gothic) 1.0.42 (Renzhi Li; Iosevka와 Source Han Sans 기반) | OFL-1.1 | `SarasaMonoK-{Regular,SemiBold,Bold}.woff2`: 'Sarasa Mono K' 면을 `scripts/build-fonts.py`로 서브셋(라틴·기호·호환 자모·한글 음절 전부, 합자 제거) | Matrix 스킨의 판독값·좌표·코드 |
+| [Orbit](https://github.com/JAMO-TYPEFACE/Orbit) 1.000 (JAMO, 조수운) | OFL-1.1 | `Orbit-Regular.woff2`: 저장소의 TTF를 같은 스크립트로 서브셋 | Matrix 스킨의 띠 활자 |
+
 ## 별도로 설치하는 GPU 런타임
 
 선택적 GPU 기능은 NVIDIA CUDA 13 런타임, cuBLAS, cuSOLVER의 공개 ABI를

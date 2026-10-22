@@ -17,6 +17,16 @@
 
 /* ── Tokens: light ─────────────────────────────────────────────────────── */
 [data-skin="matrix"] {
+  /* Type (docs/skins/matrix.md, 타이포그래피; src/fonts). Readouts, coordinates
+     and codes: Sarasa Mono K, whose Hangul sits on the same fixed pitch as
+     its Latin, so a cell never mixes two faces. Bands (the brand strip, the
+     step list, the masthead title, card heads, column heads, meter labels):
+     Orbit, a Hangul face drawn after monospaced coding type, one weight.
+     Declared here, not in the :where() recipes: this block outranks
+     tokens.css's :root for --font-mono, a zero-specificity block would not.
+     Not colours, so the dark blocks do not repeat them. */
+  --font-mono: "Sarasa Mono K", ui-monospace, "Pretendard", monospace;
+  --skin-band-font: "Orbit", "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
   /* Shape and motion: right-angled cells, a 24 px board pitch, no scaling. */
   --radius-xs: 0px;
   --radius-sm: 0px;
@@ -292,6 +302,25 @@
   --skin-ticks: linear-gradient(90deg, var(--border-control) 0 1px, transparent 1px) 0 0 / var(--skin-grid-pitch) 6px repeat-x, linear-gradient(180deg, var(--border-control) 0 1px, transparent 1px) 0 0 / 6px var(--skin-grid-pitch) repeat-y;
 }
 
+/* The band face: one weight, never faked bold. */
+[data-skin="matrix"] .app-rail__heading,
+[data-skin="matrix"] .project-menu__label,
+[data-skin="matrix"] .rail-step__title,
+[data-skin="matrix"] .step-header__title,
+[data-skin="matrix"] .ui-card__title,
+[data-skin="matrix"] .ui-section__title,
+[data-skin="matrix"] .ui-dialog__title,
+[data-skin="matrix"] .ui-empty__title,
+[data-skin="matrix"] .settings__title,
+[data-skin="matrix"] .plot-axes__title,
+[data-skin="matrix"] .ui-table__caption,
+[data-skin="matrix"] .ui-table th[scope="col"],
+[data-skin="matrix"] .ui-meter__label {
+  font-family: var(--skin-band-font);
+  font-weight: var(--weight-regular);
+  font-synthesis-weight: none;
+}
+
 /* Square lamp cells: solid = running, hollow = attention, faint hollow = idle. */
 [data-skin="matrix"] .ui-pill__dot,
 [data-skin="matrix"] .status-dot:not(.status-dot--busy),
@@ -320,7 +349,6 @@
 }
 
 [data-skin="matrix"] .app-rail__heading {
-  font-family: var(--font-mono);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -336,7 +364,6 @@
 }
 
 [data-skin="matrix"] .project-menu__label {
-  font-family: var(--font-mono);
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -699,7 +726,6 @@
 [data-skin="matrix"] .plot-axes__title,
 [data-skin="matrix"] .ui-table__caption {
   font-size: var(--text-ui);
-  font-weight: var(--weight-bold);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
@@ -915,7 +941,6 @@
 [data-skin="matrix"] .ui-table th[scope="col"] {
   border-bottom-color: var(--border-control);
   background: var(--surface-sunken);
-  font-weight: var(--weight-semibold);
   letter-spacing: 0.06em;
 }
 
@@ -996,7 +1021,6 @@
 }
 
 [data-skin="matrix"] .ui-meter__label {
-  font-weight: var(--weight-semibold);
   letter-spacing: 0.06em;
 }
 
