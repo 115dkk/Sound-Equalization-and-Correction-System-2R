@@ -77,9 +77,9 @@
   --info: oklch(0.5 0.12 260);
   --info-soft: oklch(0.955 0.03 260);
 
-  /* Rules instead of shadows. */
+  /* Rules instead of shadows; a control at rest takes none (rule 9). */
   --shadow-card: 0 0 0 1px var(--border);
-  --shadow-control: 0 0 0 1px var(--border-control);
+  --shadow-control: none;
   --shadow-control-hover: 0 0 0 1px var(--accent);
   --shadow-thumb: 0 0 0 1px var(--border-control);
   --shadow-raised: 0 0 0 1px var(--border-control);
@@ -163,7 +163,7 @@
   --info-soft: oklch(0.29 0.045 260);
 
   --shadow-card: 0 0 0 1px var(--border);
-  --shadow-control: 0 0 0 1px var(--border-control);
+  --shadow-control: none;
   --shadow-control-hover: 0 0 0 1px var(--accent);
   --shadow-thumb: 0 0 0 1px var(--border-control);
   --shadow-raised: 0 0 0 1px var(--border-control);
@@ -240,7 +240,7 @@
     --info-soft: oklch(0.29 0.045 260);
 
     --shadow-card: 0 0 0 1px var(--border);
-    --shadow-control: 0 0 0 1px var(--border-control);
+    --shadow-control: none;
     --shadow-control-hover: 0 0 0 1px var(--accent);
     --shadow-thumb: 0 0 0 1px var(--border-control);
     --shadow-raised: 0 0 0 1px var(--border-control);
@@ -297,6 +297,8 @@
   --skin-board: repeating-linear-gradient(90deg, var(--skin-grid-line) 0 1px, transparent 1px var(--skin-grid-pitch)), repeating-linear-gradient(180deg, var(--skin-grid-line-soft) 0 1px, transparent 1px var(--skin-grid-pitch));
   --skin-segments: repeating-linear-gradient(90deg, currentColor 0 10px, transparent 10px 12px);
   --skin-prelight-layer: linear-gradient(var(--skin-prelight), var(--skin-prelight));
+  /* A cancelled control: a dashed rule under it, never a dotted box (rule 9). */
+  --skin-cancel-rule: repeating-linear-gradient(90deg, var(--border-control) 0 3px, transparent 3px 6px) 0 100% / 100% 1px no-repeat;
   --skin-band-lines: repeating-linear-gradient(90deg, var(--skin-band-grid) 0 1px, transparent 1px var(--skin-grid-pitch));
   --skin-ghost-segments: repeating-linear-gradient(90deg, var(--skin-ghost) 0 10px, transparent 10px 12px);
   --skin-ticks: linear-gradient(90deg, var(--border-control) 0 1px, transparent 1px) 0 0 / var(--skin-grid-pitch) 6px repeat-x, linear-gradient(180deg, var(--border-control) 0 1px, transparent 1px) 0 0 / 6px var(--skin-grid-pitch) repeat-y;
@@ -355,7 +357,7 @@
 
 [data-skin="matrix"] .project-menu__button {
   background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--border-control);
+  box-shadow: none;
 }
 
 [data-skin="matrix"] .project-menu__button:hover {
@@ -615,7 +617,7 @@
 [data-skin="matrix"] .job-row__time {
   padding: 0 var(--space-1-5);
   background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--border);
+  box-shadow: none;
   font-family: var(--font-mono);
   font-weight: var(--weight-bold);
 }
@@ -646,10 +648,11 @@
   box-shadow: inset 0 0 0 2px var(--accent);
 }
 
-/* Secondary: a caption key (1 px rule, light fill). */
+/* Secondary: a caption key, a sunken fill and no rule at rest (rule 9):
+   the fill difference tells it from the card, the rule comes with prelight. */
 [data-skin="matrix"] .ui-button--secondary {
   background: var(--surface-sunken);
-  box-shadow: inset 0 0 0 1px var(--border-control);
+  box-shadow: none;
 }
 
 /* Prelight: a 1 px cyan rule and a faint cyan fill. */
@@ -683,15 +686,15 @@
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
-/* Cancelled: a dotted rule, faint ink; the cell stays on the board. */
+/* Cancelled: a dashed rule under the cell and faint ink, no box; the cell
+   stays on the board. */
 [data-skin="matrix"] .ui-button:disabled:not([aria-busy]),
 [data-skin="matrix"] .ui-button--primary:disabled:not([aria-busy]),
 [data-skin="matrix"] .ui-button--danger:disabled:not([aria-busy]),
 [data-skin="matrix"] .ui-button--secondary:disabled:not([aria-busy]) {
-  background: transparent;
+  background: var(--skin-cancel-rule);
   box-shadow: none;
-  outline: 1px dotted var(--border-control);
-  outline-offset: -1px;
+  outline: none;
   color: var(--text-faint);
 }
 
@@ -790,15 +793,30 @@
   color: var(--info);
 }
 
-/* ── Fields: sunken mono box cells ─────────────────────────────────────── */
+/* ── Fields: sunken mono cells, no rule at rest ────────────────────────── */
+/* The sunken fill is the cell (rule 9); the kit's rest rule on a select is
+   overridden here, the rule returns with prelight, focus and a fault. */
 [data-skin="matrix"] .ui-number,
+[data-skin="matrix"] .ui-select,
 [data-skin="matrix"] .ui-cell-select {
   background: var(--surface-sunken);
+  box-shadow: none;
 }
 
 [data-skin="matrix"] .ui-number:hover,
 [data-skin="matrix"] .ui-select:hover,
 [data-skin="matrix"] .ui-cell-select:hover {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* The help search box is a field too. */
+[data-skin="matrix"] .help-search__box {
+  background: var(--surface-sunken);
+  box-shadow: none;
+}
+
+[data-skin="matrix"] .help-search__box:hover,
+[data-skin="matrix"] .help-search__box:focus-within {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
@@ -834,25 +852,35 @@
 [data-skin="matrix"] .ui-select.ui-select--disabled:hover,
 [data-skin="matrix"] .ui-cell-select.ui-cell-select--disabled,
 [data-skin="matrix"] .ui-cell-select.ui-cell-select--disabled:hover {
-  background: transparent;
+  background: var(--skin-cancel-rule);
   box-shadow: none;
-  outline: 1px dotted var(--border-control);
-  outline-offset: -1px;
+  outline: none;
 }
 
-/* A select keeps its drop zone: a ruled-off cell for the caret. */
+/* A select keeps its drop zone for the caret (the affordance stays honest),
+   marked a step deeper in the fill rather than ruled off (rule 9). */
 [data-skin="matrix"] .ui-select {
-  background: linear-gradient(90deg, transparent calc(100% - 33px), var(--border-control) calc(100% - 33px) calc(100% - 32px), var(--surface-sunken) calc(100% - 32px)), var(--surface);
+  background: linear-gradient(90deg, transparent calc(100% - 32px), var(--skin-grid-line) calc(100% - 32px)), var(--surface-sunken);
 }
 
 [data-skin="matrix"] .ui-cell-select {
-  background: linear-gradient(90deg, transparent calc(100% - 29px), var(--border-control) calc(100% - 29px) calc(100% - 28px), var(--surface-sunken) calc(100% - 28px)), var(--surface);
+  background: linear-gradient(90deg, transparent calc(100% - 28px), var(--skin-grid-line) calc(100% - 28px)), var(--surface-sunken);
 }
 
-/* Stepper: caption keys around a mono cell. */
-[data-skin="matrix"] .ui-stepper__button {
+/* Stepper: one sunken train with no outer rule; the keys and the mono cell
+   part with 1 px dividers. */
+[data-skin="matrix"] .ui-stepper {
   background: var(--surface-sunken);
-  box-shadow: inset 0 0 0 1px var(--border-control);
+  box-shadow: none;
+}
+
+[data-skin="matrix"] .ui-stepper__button {
+  background: transparent;
+  box-shadow: none;
+}
+
+[data-skin="matrix"] .ui-stepper__value {
+  box-shadow: inset 1px 0 0 var(--border), inset -1px 0 0 var(--border);
 }
 
 [data-skin="matrix"] .ui-stepper__button:hover:not(:disabled) {
@@ -860,11 +888,12 @@
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
-/* Toggle: two cells; the "on" cell lights as a cyan LED. */
+/* Toggle: two sunken cells parted by a divider, no outer rule; the "on"
+   cell lights as a cyan LED. */
 [data-skin="matrix"] .ui-toggle__track,
 [data-skin="matrix"] .ui-toggle[aria-checked="true"] .ui-toggle__track {
   background: var(--surface-sunken);
-  box-shadow: inset 0 0 0 1px var(--border-control);
+  box-shadow: none;
 }
 
 [data-skin="matrix"] .ui-toggle__track::before {
@@ -1027,7 +1056,7 @@
 [data-skin="matrix"] .ui-meter__value {
   padding: 0 var(--space-1-5);
   background: var(--surface-sunken);
-  box-shadow: inset 0 0 0 1px var(--border);
+  box-shadow: none;
   font-family: var(--font-mono);
   font-weight: var(--weight-bold);
 }
@@ -1036,11 +1065,11 @@
   font-family: var(--font-mono);
 }
 
-/* ── Progress: half-pitch segments in a ruled cell ─────────────────────── */
+/* ── Progress: half-pitch segments in a sunken cell ────────────────────── */
 [data-skin="matrix"] .ui-progress {
   height: 12px;
   background: var(--surface-sunken);
-  box-shadow: inset 0 0 0 1px var(--border-control);
+  box-shadow: none;
 }
 
 [data-skin="matrix"] .ui-progress__fill {
@@ -1106,12 +1135,15 @@
   font-family: var(--font-mono);
 }
 
+/* The toast's action: an accent fill inside the remark, the rule on prelight. */
 [data-skin="matrix"] .ui-toast__action {
-  box-shadow: inset 0 0 0 1px var(--accent);
+  background: var(--accent-soft);
+  box-shadow: none;
 }
 
 [data-skin="matrix"] .ui-toast__action:hover {
   background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 [data-skin="matrix"] .ui-toast__close:hover {
@@ -1167,7 +1199,7 @@
 
 [data-skin="matrix"] .ui-details__raw {
   background: var(--surface-sunken);
-  box-shadow: inset 0 0 0 1px var(--border);
+  box-shadow: none;
   font-family: var(--font-mono);
 }
 
@@ -1188,19 +1220,19 @@
 [data-skin="matrix"] .plot__readout:not(:empty) {
   padding: 0 var(--space-1-5);
   background: var(--surface-sunken);
-  box-shadow: inset 0 0 0 1px var(--border);
+  box-shadow: none;
   color: var(--text);
   font-weight: var(--weight-bold);
 }
 
 [data-skin="matrix"] .plot-band-label {
-  box-shadow: inset 0 0 0 1px var(--border);
+  box-shadow: none;
   font-family: var(--font-mono);
 }
 
 [data-skin="matrix"] .plot-chip {
   background: var(--surface-sunken);
-  box-shadow: inset 0 0 0 1px var(--border-control);
+  box-shadow: none;
 }
 
 [data-skin="matrix"] .plot-chip:hover {
@@ -1208,12 +1240,12 @@
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
-/* A chip switched off is a cancelled cell: dotted, struck through. */
+/* A chip switched off is a cancelled cell: a dashed rule under it, struck
+   through. */
 [data-skin="matrix"] .plot-chip[aria-pressed="false"] {
-  background: transparent;
+  background: var(--skin-cancel-rule);
   box-shadow: none;
-  outline: 1px dotted var(--border-control);
-  outline-offset: -1px;
+  outline: none;
   text-decoration: line-through;
 }
 
@@ -1276,10 +1308,9 @@
 }
 
 [data-skin="matrix"] .plot-xo--disabled .plot-xo__handle {
-  background: transparent;
+  background: var(--skin-cancel-rule);
   box-shadow: none;
-  outline: 1px dotted var(--border-control);
-  outline-offset: -1px;
+  outline: none;
 }
 
 /* ── Maps: the board's coordinate plane ────────────────────────────────── */
@@ -1364,21 +1395,25 @@
 
 [data-skin="matrix"] .map__unassigned-chip {
   background: var(--surface-sunken);
-  box-shadow: inset 0 0 0 1px var(--border-control);
+  box-shadow: none;
 }
 
 /* ── Choice cells and position rows on the screens ─────────────────────── */
+/* A choice (speaker preset, channel layout, connection method, polarity) is
+   a sunken cell with no rule at rest; the arrangement thumbnail prints on
+   the cell. Prelight brings the rule, the chosen cell is engaged (rule 9). */
 [data-skin="matrix"] .system-choice,
 [data-skin="matrix"] .connect-method,
 [data-skin="matrix"] .system-polarity {
-  box-shadow: inset 0 0 0 1px var(--border-control);
+  background: var(--surface-sunken);
+  box-shadow: none;
 }
 
 [data-skin="matrix"] button.system-choice:hover:not([aria-pressed="true"]),
 [data-skin="matrix"] .connect-method:hover:not([aria-pressed="true"]),
 [data-skin="matrix"] .system-polarity:hover,
 [data-skin="matrix"] .map__unassigned-chip:hover {
-  background: var(--skin-prelight-layer), var(--surface);
+  background: var(--skin-prelight-layer), var(--surface-sunken);
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
@@ -1470,13 +1505,13 @@
   box-shadow: inset 0 0 0 1.5px var(--warning);
 }
 
-/* Readings on the screens sit in mono box cells. */
+/* Readings on the screens sit in sunken mono cells, no rule at rest. */
 [data-skin="matrix"] .calibrate-stat__value,
 [data-skin="matrix"] .connect-readout.tabular,
 [data-skin="matrix"] .export-fact dd {
   padding: var(--space-0-5) var(--space-2);
   background: var(--surface-sunken);
-  box-shadow: inset 0 0 0 1px var(--border);
+  box-shadow: none;
   font-family: var(--font-mono);
 }
 
