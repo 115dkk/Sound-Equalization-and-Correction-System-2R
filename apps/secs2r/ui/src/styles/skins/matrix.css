@@ -915,10 +915,12 @@
   background: transparent;
 }
 
+/* The chosen row is an engaged bus: the 3 px band and the low-alpha fill,
+   as on the rail. No frame around the row (a boxed row reads as a key). */
 [data-skin="matrix"] .ui-table__row--selected,
 [data-skin="matrix"] .ui-table--selectable tbody tr.ui-table__row--selected:hover {
   background: var(--accent-soft);
-  box-shadow: inset 3px 0 0 var(--accent), inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 [data-skin="matrix"] .ui-table--selectable tbody tr[tabindex]:focus-visible {

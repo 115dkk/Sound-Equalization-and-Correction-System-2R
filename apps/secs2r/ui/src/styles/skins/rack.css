@@ -1224,9 +1224,10 @@
   text-shadow: var(--skin-engrave);
 }
 
+/* Cells are printed on the panel: a milling groove between rows and no
+   bevel, so a row never reads as a key. */
 [data-skin="rack"] .ui-table td {
   border-bottom-color: var(--skin-groove);
-  box-shadow: inset 0 1px 0 var(--skin-bevel-hi);
 }
 
 [data-skin="rack"] .ui-table td.ui-table__num {
@@ -1241,15 +1242,17 @@
   letter-spacing: 0.08em;
 }
 
+/* Hover warms the row; the chosen row lights the lamp strip along its
+   left edge (the console's assign lamp) on the warm selected panel. No
+   ring, no bevel: the row is a line on the panel, not a cap. */
 [data-skin="rack"] .ui-table--selectable tbody tr[tabindex]:hover {
   background: var(--surface-hover);
-  box-shadow: inset 0 0 0 1px var(--skin-bronze);
 }
 
 [data-skin="rack"] .ui-table__row--selected,
 [data-skin="rack"] .ui-table--selectable tbody tr.ui-table__row--selected:hover {
   background: var(--accent-soft);
-  box-shadow: inset 0 0 0 1px var(--skin-bronze), inset 0 2px 2px -1px var(--skin-bevel-lo);
+  box-shadow: inset 3px 0 0 var(--skin-lamp-amber), inset 6px 0 6px -3px color-mix(in oklch, var(--skin-lamp-amber) 45%, transparent);
 }
 
 /* ── Meter: a VU segment window ────────────────────────────────────────── */
