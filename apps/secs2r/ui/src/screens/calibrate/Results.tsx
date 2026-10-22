@@ -1,7 +1,7 @@
 // What the correction achieved, first (ARCHITECTURE §7): the verdict card
 // (is it good, is it current) and the per-channel scorecard whose rows pick
 // the channel the graph shows.
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { errorText } from "../../app/jobs/jobText";
 import { useNumber, useT } from "../../i18n/react";
 import type { ChannelResultLine } from "../../ipc/bindings/ChannelResultLine";
@@ -19,8 +19,27 @@ const STALE_TEXT: Record<StaleReason | "unknown", "calibrate.stale.settings" | "
   unknown: "calibrate.stale.unknown",
 };
 
-/** A before → after pair; the screen reader hears "보정 전 …, 보정 후 …". */
-function Change({ before, after }: { before: string; after: string }) {
+/**
+ * A number and its unit from a `{value} …` catalog template, as two spans,
+ * so the card's one display-size figure can keep its digits large and its
+ * unit at title size (DESIGN.md §4: the big number is the digits, not the
+ * unit). The template decides which side the unit is on.
+ */
+function Figure({ template, value }: { template: "calibrate.unit.percent" | "calibrate.unit.ms"; value: string }) {
+  const t = useT();
+  const marker = "\uE000";
+  const [lead = "", trail = ""] = t(template, { value: marker }).split(marker);
+  return (
+    <>
+      {lead.trim() && <span className="calibrate-change__unit">{lead.trim()}</span>}
+      <span className="calibrate-change__number">{value}</span>
+      {trail.trim() && <span className="calibrate-change__unit">{trail.trim()}</span>}
+    </>
+  );
+}
+
+/** A before → after pair; the screen reader hears "보정 전 …, 보정 후 …". `figure` draws `after` as digits + unit. */
+function Change({ before, after, figure }: { before: string; after: string; figure?: ReactNode }) {
   const t = useT();
   return (
     <span className="calibrate-change" aria-label={t("calibrate.change.aria", { before, after })}>
@@ -31,7 +50,7 @@ function Change({ before, after }: { before: string; after: string }) {
         →
       </span>
       <span className="calibrate-change__after" aria-hidden="true">
-        {after}
+        {figure ?? after}
       </span>
     </span>
   );
@@ -123,7 +142,7 @@ export function Verdict({ view, actions, onSampleRateSettings }: { view: Calibra
       <div className="calibrate-figures">
         <dl className="calibrate-stats">
           <Stat id="calibrate.verdict.within" lead label={t("calibrate.verdict.within")} detail={t("calibrate.verdict.within.band")}>
-            <Change before={pct(v.within_1db_before_pct)} after={pct(v.within_1db_after_pct)} />
+            <Change before={pct(v.within_1db_before_pct)} after={pct(v.within_1db_after_pct)} figure={<Figure template="calibrate.unit.percent" value={number(v.within_1db_after_pct)} />} />
           </Stat>
           <Stat id="calibrate.verdict.gd" label={t("calibrate.verdict.gd")} detail={t("calibrate.verdict.gd.band")}>
             <Change before={number(v.low_band_time_spread_before_ms, 1)} after={ms(v.low_band_time_spread_after_ms)} />

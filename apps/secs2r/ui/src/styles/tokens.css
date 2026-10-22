@@ -29,7 +29,7 @@
   --text-body: 16px; /* long-form help text */
   --text-title-s: 16px; /* card and dialog titles */
   --text-title: 20px; /* step title */
-  --text-display: 28px; /* one headline number per card at most */
+  --text-display: 24px; /* one headline number per card at most: its digits, with the unit at title size (1.5× the 16 px value beside it) */
 
   --leading-tight: 1.3;
   --leading-ui: 1.45;

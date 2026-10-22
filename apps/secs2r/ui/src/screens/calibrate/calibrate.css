@@ -92,6 +92,14 @@
   font-weight: var(--weight-semibold);
 }
 
+/* The headline figure is the digits; its unit sits beside them at title
+   size so the number, not the "%", carries the emphasis. */
+.calibrate-stat--lead .calibrate-change__unit {
+  margin-left: var(--space-1);
+  font-size: var(--text-title-s);
+  font-weight: var(--weight-medium);
+}
+
 .calibrate-plan {
   display: flex;
   flex-direction: column;

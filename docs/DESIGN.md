@@ -156,7 +156,7 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 | `--text-body` | 16px | 도움말 같은 긴 글 |
 | `--text-title-s` | 16px | 카드·대화상자 제목 |
 | `--text-title` | 20px | 단계 제목 |
-| `--text-display` | 28px | 카드마다 큰 숫자 하나까지 |
+| `--text-display` | 24px | 카드마다 큰 숫자 하나까지. 자릿수만 크고 단위는 `--text-title-s`로 옆에 둡니다(보정 결과의 ±1 dB 안 비율) |
 
 - 모든 `font-size`는 이 토큰을 거칩니다. 14px(캡션 13px) 아래는 `tokens.test.ts`가 막습니다. 글자가 넘치면 줄이지 않고 문장을 줄이거나 자리를 넓힙니다.
 - 굵기는 400, 500, 600, 700만 씁니다. 18px 아래에서 400보다 가늘게 쓰지 않습니다.
