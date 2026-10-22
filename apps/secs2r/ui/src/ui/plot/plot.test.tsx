@@ -11,7 +11,7 @@ import { renderWith } from "../../test/render";
 import type { AxisRangeValue } from "./AxisRange";
 import { TargetHandles, XoLine } from "./editors";
 import { Graph } from "./Graph";
-import { LogPlot, type PlotScale } from "./LogPlot";
+import { LogPlot, readPalette, type PlotScale } from "./LogPlot";
 import type { Curve } from "./series";
 import type { TargetPoint } from "./targetEdit";
 
@@ -19,7 +19,7 @@ let recorded: ReturnType<typeof installFakeCanvas> = [];
 const calls = () => recorded;
 
 beforeAll(() => {
-  recorded = installFakeCanvas(["fillRect"]);
+  recorded = installFakeCanvas(["fillRect", "font"]);
   // happy-dom does no layout: an element's positioned parent is its parent, at 0, 0.
   Object.defineProperty(HTMLElement.prototype, "offsetParent", {
     configurable: true,
@@ -225,6 +225,26 @@ describe("LogPlot", () => {
     expect(onDoubleClick).toHaveBeenCalledTimes(1);
   });
 
+  it("rebuilds with the tokens read again when a theme, accent or skin attribute changes above it", async () => {
+    const view = renderWith(<LogPlot id="r" label="graph" freqs={FREQS} curves={CURVES} roleOrder={["L"]} isSub={isSub} />);
+    const fonts = () => calls().filter((call) => call.method === "font").map((call) => String(call.args[0]));
+    expect(fonts().length).toBeGreaterThan(0);
+    expect(fonts().every((font) => font.startsWith("400 "))).toBe(true);
+    // The host applies its attributes after the graph's first read (PrefsScope
+    // does so in an effect); here the frame's own token stands in for the skin.
+    const frame = document.querySelector<HTMLElement>(".plot__frame")!;
+    frame.style.setProperty("--plot-weight", "700");
+    calls().length = 0;
+    await act(async () => {
+      document.documentElement.setAttribute("data-skin", "rack");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(fonts().length).toBeGreaterThan(0);
+    expect(fonts().every((font) => font.startsWith("700 "))).toBe(true);
+    document.documentElement.removeAttribute("data-skin");
+    view.unmount();
+  });
+
   it("shades only below the lower edge while the upper edge is open", async () => {
     const draw = async (band: { lo: number; hi?: number | null }) => {
       calls().length = 0;
@@ -242,6 +262,18 @@ describe("LogPlot", () => {
     expect(open).toBeGreaterThan(0);
     expect(closed).toBe(2 * open);
     expect(await draw({ lo: 20 })).toBe(open);
+  });
+});
+
+describe("readPalette", () => {
+  it("sets the axis figures' weight from --plot-weight, regular when a skin leaves it", () => {
+    const frame = document.createElement("div");
+    document.body.appendChild(frame);
+    frame.style.setProperty("--font-ui", "Mono");
+    expect(readPalette(frame, [], () => false).font).toBe("400 13px Mono");
+    frame.style.setProperty("--plot-weight", "700");
+    expect(readPalette(frame, [], () => false).font).toBe("700 13px Mono");
+    frame.remove();
   });
 });
 
