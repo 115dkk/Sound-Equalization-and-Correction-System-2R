@@ -5,6 +5,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Locale } from "../i18n";
 import type { AppIcon } from "../ipc/bindings/AppIcon";
+import type { AppSkin } from "../ipc/bindings/AppSkin";
 import { I18nProvider } from "../i18n/react";
 import { LayerRoot } from "../ui/layer";
 import { ToastProvider } from "../ui/Toast";
@@ -12,7 +13,7 @@ import { ToastProvider } from "../ui/Toast";
 export type ThemeChoice = "system" | "light" | "dark";
 export type AccentChoice = "default" | "tutorial";
 /** The skin set (ADR 0010, docs/skins): the default tokens, Hardware Rack or Signal Matrix. */
-export type SkinChoice = "default" | "rack" | "matrix";
+export type SkinChoice = AppSkin;
 export const SKINS: readonly SkinChoice[] = ["default", "rack", "matrix"];
 
 /** `icon` is the logo choice; scopes that leave it out show upstream's logo. `skin` left out is the default skin. */
