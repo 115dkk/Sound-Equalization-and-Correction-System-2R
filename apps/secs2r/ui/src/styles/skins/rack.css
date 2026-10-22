@@ -603,7 +603,7 @@
 
 [data-skin="rack"] .rail-step--current {
   background: var(--accent-soft);
-  box-shadow: var(--skin-sunk), 0 0 0 1px var(--skin-bronze);
+  box-shadow: 0 0 0 1px var(--skin-bronze), var(--skin-sunk);
 }
 
 [data-skin="rack"] .rail-step--current .rail-step__text,
@@ -1044,7 +1044,7 @@
 }
 
 [data-skin="rack"] .ui-number:hover {
-  box-shadow: var(--skin-bed), 0 0 0 1px var(--skin-bronze);
+  box-shadow: 0 0 0 1px var(--skin-bronze), var(--skin-bed);
 }
 
 [data-skin="rack"] .ui-number:focus-within,
@@ -1077,7 +1077,7 @@
 [data-skin="rack"] .ui-select.ui-select--invalid,
 [data-skin="rack"] .ui-cell-select.ui-cell-select--invalid,
 [data-skin="rack"] .ui-cell-select.ui-cell-select--invalid:hover {
-  box-shadow: var(--skin-bed), 0 0 0 1.5px var(--danger);
+  box-shadow: 0 0 0 1.5px var(--danger), var(--skin-bed);
 }
 
 [data-skin="rack"] .ui-number--disabled {
@@ -1586,7 +1586,7 @@
 [data-skin="rack"] .connect-method[aria-pressed="true"],
 [data-skin="rack"] .map__unassigned-chip[aria-pressed="true"] {
   background: var(--accent-soft);
-  box-shadow: var(--skin-sunk), 0 0 0 1px var(--skin-bronze);
+  box-shadow: 0 0 0 1px var(--skin-bronze), var(--skin-sunk);
 }
 
 [data-skin="rack"] .system-polarity[aria-pressed="true"] {
@@ -1615,7 +1615,7 @@
 [data-skin="rack"] .measure-row--current:hover,
 [data-skin="rack"] .measure-row--current[aria-disabled="true"]:hover {
   background: var(--accent-soft);
-  box-shadow: var(--skin-sunk), 0 0 0 1px var(--skin-bronze);
+  box-shadow: 0 0 0 1px var(--skin-bronze), var(--skin-sunk);
 }
 
 [data-skin="rack"] .measure-row__num {
