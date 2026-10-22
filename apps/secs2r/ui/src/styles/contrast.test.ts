@@ -2,7 +2,7 @@
 // every skin in both themes reaches 4.5:1, every control border, focus ring
 // and status glyph 3:1, and the dark copies of each skin stay identical.
 // Run with CONTRAST_TABLE=1 to print the Markdown table DESIGN.md quotes.
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -10,7 +10,9 @@ import { cascade, colour, hex, hue, pair, parseBlocks, type Theme } from "./pale
 
 const dir = fileURLToPath(new URL(".", import.meta.url));
 const tokens = readFileSync(join(dir, "tokens.css"), "utf8");
-const skinFiles = readdirSync(join(dir, "skins")).filter((name) => name.endsWith(".css")).sort();
+const skinDir = join(dir, "skins");
+// A checkout without skins still measures the default (git keeps no empty directory).
+const skinFiles = existsSync(skinDir) ? readdirSync(skinDir).filter((name) => name.endsWith(".css")).sort() : [];
 const skins = skinFiles.map((name) => ({ id: name.replace(/\.css$/, ""), css: readFileSync(join(dir, "skins", name), "utf8") }));
 const css = [tokens, ...skins.map((s) => s.css)];
 
