@@ -82,6 +82,14 @@
   --skin-cross: oklch(0.53 0.12 215 / 0.14);
   --skin-prelight: oklch(0.53 0.12 215 / 0.08);
 
+  /* The second face: a cool band for the head strips that belong to a
+     component but are not its body (card heads, the bus list), with the
+     caption grid the untouched bands carry, and the ghost ink of an unlit
+     LED segment. */
+  --skin-band-surface: oklch(0.935 0.018 230);
+  --skin-band-grid: oklch(0.22 0.004 250 / 0.08);
+  --skin-ghost: oklch(0.22 0.004 250 / 0.26);
+
   /* Sunken data cell: crisp grid, mono figures. */
   --plot-bg: var(--surface-sunken);
   --plot-grid: oklch(0.22 0.004 250 / 0.11);
@@ -91,7 +99,7 @@
   --plot-shade: oklch(0.22 0.004 250 / 0.06);
 
   --meter-track: var(--surface-sunken);
-  --meter-band: oklch(0.5 0.12 150 / 0.14);
+  --meter-band: oklch(0.5 0.12 150 / 0.6);
   --meter-fill: var(--text-muted);
   --meter-fill-ok: var(--success);
   --meter-fill-clip: var(--danger);
@@ -156,6 +164,9 @@
   --skin-band: oklch(0.8 0.11 215 / 0.07);
   --skin-cross: oklch(0.8 0.11 215 / 0.16);
   --skin-prelight: oklch(0.8 0.11 215 / 0.1);
+  --skin-band-surface: oklch(0.255 0.022 230);
+  --skin-band-grid: oklch(0.93 0.003 250 / 0.1);
+  --skin-ghost: oklch(0.93 0.003 250 / 0.3);
 
   --plot-bg: var(--surface-sunken);
   --plot-grid: oklch(0.93 0.003 250 / 0.09);
@@ -165,7 +176,7 @@
   --plot-shade: oklch(0.93 0.003 250 / 0.05);
 
   --meter-track: var(--surface-sunken);
-  --meter-band: oklch(0.76 0.12 150 / 0.16);
+  --meter-band: oklch(0.76 0.12 150 / 0.6);
   --meter-fill: var(--text-muted);
   --meter-fill-ok: var(--success);
   --meter-fill-clip: var(--danger);
@@ -230,6 +241,9 @@
     --skin-band: oklch(0.8 0.11 215 / 0.07);
     --skin-cross: oklch(0.8 0.11 215 / 0.16);
     --skin-prelight: oklch(0.8 0.11 215 / 0.1);
+    --skin-band-surface: oklch(0.255 0.022 230);
+    --skin-band-grid: oklch(0.93 0.003 250 / 0.1);
+    --skin-ghost: oklch(0.93 0.003 250 / 0.3);
 
     --plot-bg: var(--surface-sunken);
     --plot-grid: oklch(0.93 0.003 250 / 0.09);
@@ -239,7 +253,7 @@
     --plot-shade: oklch(0.93 0.003 250 / 0.05);
 
     --meter-track: var(--surface-sunken);
-    --meter-band: oklch(0.76 0.12 150 / 0.16);
+    --meter-band: oklch(0.76 0.12 150 / 0.6);
     --meter-fill: var(--text-muted);
     --meter-fill-ok: var(--success);
     --meter-fill-clip: var(--danger);
@@ -273,6 +287,8 @@
   --skin-board: repeating-linear-gradient(90deg, var(--skin-grid-line) 0 1px, transparent 1px var(--skin-grid-pitch)), repeating-linear-gradient(180deg, var(--skin-grid-line-soft) 0 1px, transparent 1px var(--skin-grid-pitch));
   --skin-segments: repeating-linear-gradient(90deg, currentColor 0 10px, transparent 10px 12px);
   --skin-prelight-layer: linear-gradient(var(--skin-prelight), var(--skin-prelight));
+  --skin-band-lines: repeating-linear-gradient(90deg, var(--skin-band-grid) 0 1px, transparent 1px var(--skin-grid-pitch));
+  --skin-ghost-segments: repeating-linear-gradient(90deg, var(--skin-ghost) 0 10px, transparent 10px 12px);
   --skin-ticks: linear-gradient(90deg, var(--border-control) 0 1px, transparent 1px) 0 0 / var(--skin-grid-pitch) 6px repeat-x, linear-gradient(180deg, var(--border-control) 0 1px, transparent 1px) 0 0 / 6px var(--skin-grid-pitch) repeat-y;
 }
 
@@ -295,6 +311,12 @@
 
 [data-skin="matrix"] .app-rail__mark {
   border-radius: 0;
+}
+
+/* The brand strip is a title bar: a band the user never touches, so it
+   carries the caption grid like the masthead and the tray. */
+[data-skin="matrix"] .app-rail__top {
+  background: var(--skin-band-lines), var(--rail-bg);
 }
 
 [data-skin="matrix"] .app-rail__heading {
@@ -326,6 +348,7 @@
   gap: 0;
   counter-reset: skin-bus;
   border-top: 1px solid var(--border-subtle);
+  background: var(--skin-band-surface);
 }
 
 [data-skin="matrix"] .rail-steps__list > li {
@@ -514,7 +537,7 @@
 /* ── Masthead, board, remark line ──────────────────────────────────────── */
 [data-skin="matrix"] .step-header {
   border-bottom-color: var(--border);
-  background: var(--surface);
+  background: var(--skin-band-lines), var(--surface);
 }
 
 /* The blocked reason: a hollow yellow lamp with a ! marker, a mono remark. */
@@ -544,7 +567,7 @@
 
 [data-skin="matrix"] .job-tray {
   border-top-color: var(--border);
-  background: var(--surface-sunken);
+  background: var(--skin-band-lines), var(--surface-sunken);
 }
 
 [data-skin="matrix"] .job-tray__bar::before {
@@ -577,7 +600,7 @@
 
 [data-skin="matrix"] .job-tray__errors {
   background: transparent;
-  box-shadow: inset 0 0 0 1px var(--danger);
+  box-shadow: inset 3px 0 0 var(--danger);
   font-family: var(--font-mono);
 }
 
@@ -654,12 +677,12 @@
   box-shadow: inset 0 0 0 1.5px var(--warning);
 }
 
-/* ── Cards: square cells, a sunken head band ruled off from the body ───── */
+/* ── Cards: square cells, a head band on the second face, ruled off ────── */
 [data-skin="matrix"] .ui-card__header {
   min-height: calc(var(--skin-grid-pitch) * 2);
   margin: calc(var(--space-5) * -1) calc(var(--space-5) * -1) 0;
   padding: var(--space-2) var(--space-5);
-  background: var(--surface-sunken);
+  background: var(--skin-band-lines), var(--skin-band-surface);
   box-shadow: inset 0 -1px 0 var(--border);
 }
 
@@ -701,7 +724,9 @@
   border-left-color: var(--border-control);
 }
 
-/* ── Status: square lamp cells, monochrome nouns ───────────────────────── */
+/* ── Status: a square lamp and a monochrome noun, no cell around them ───── */
+/* The lamp is the state; a frame around lamp and noun would be a box inside
+   whatever box holds the pill (a card head, a choice cell, a row). */
 [data-skin="matrix"] .ui-pill,
 [data-skin="matrix"] .ui-pill--success,
 [data-skin="matrix"] .ui-pill--warning,
@@ -710,9 +735,9 @@
 [data-skin="matrix"] .ui-pill--busy {
   gap: var(--space-2);
   height: var(--skin-grid-pitch);
-  padding: 0 var(--space-2);
-  background: var(--surface-sunken);
-  box-shadow: inset 0 0 0 1px var(--border);
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
   color: var(--text);
 }
 
@@ -894,11 +919,6 @@
   letter-spacing: 0.06em;
 }
 
-[data-skin="matrix"] .ui-table td + td,
-[data-skin="matrix"] .ui-table th[scope="col"] + th[scope="col"] {
-  border-left: 1px solid var(--border-subtle);
-}
-
 [data-skin="matrix"] .ui-table td.ui-table__num {
   font-family: var(--font-mono);
 }
@@ -943,16 +963,36 @@
   outline-offset: -1px;
 }
 
-/* ── Meter: a segment cell, the reading in a mono box ──────────────────── */
+/* ── Meter: an LED bar, the reading in a mono box ──────────────────────── */
+/* The knob ring of the XT board laid flat: the unlit segments stay visible
+   as a ghost row (the range geometry is always on the board), a lit segment
+   is taller and brighter than a ghost one (LEDs bloom, rules do not), and
+   the wanted band is a rule under the segments, not a filled block. No cell
+   around the bar: the bar is the instrument, the mono box is the reading. */
 [data-skin="matrix"] .ui-meter__track {
-  background: repeating-linear-gradient(90deg, transparent 0 10px, var(--border) 10px 12px), var(--meter-track);
-  box-shadow: inset 0 0 0 1px var(--border-control);
+  overflow: visible;
+  background: var(--skin-ghost-segments) 0 4px / 100% 4px no-repeat;
+  box-shadow: none;
+}
+
+[data-skin="matrix"] .ui-meter__band {
+  top: auto;
+  bottom: 0;
+  height: 2px;
+  background: var(--meter-band);
+  box-shadow: none;
 }
 
 [data-skin="matrix"] .ui-meter__fill {
   top: 2px;
   bottom: 2px;
+  border-radius: 0;
   mask: var(--skin-segments);
+}
+
+[data-skin="matrix"] .ui-meter__peak {
+  top: 0;
+  bottom: 0;
 }
 
 [data-skin="matrix"] .ui-meter__label {
@@ -1056,15 +1096,49 @@
   color: var(--danger);
 }
 
-/* ── Empty and error: the state rail speaks first ──────────────────────── */
+/* ── Notices: the state rail speaks first, and there is no box ─────────── */
+/* A notice inside a card is a remark line: a 3 px kill in its status colour
+   and the sentence beside it, on the card's own face. A filled, ruled block
+   would be a box inside the card. */
 [data-skin="matrix"] .ui-error {
-  background: var(--surface-sunken);
-  box-shadow: inset 3px 0 0 var(--danger), inset 0 0 0 1px var(--border);
+  background: transparent;
+  box-shadow: inset 3px 0 0 var(--danger);
 }
 
 [data-skin="matrix"] .ui-error--warning {
-  background: var(--surface-sunken);
-  box-shadow: inset 3px 0 0 var(--warning), inset 0 0 0 1px var(--border);
+  background: transparent;
+  box-shadow: inset 3px 0 0 var(--warning);
+}
+
+[data-skin="matrix"] .connect-note {
+  background: transparent;
+  box-shadow: inset 3px 0 0 var(--info);
+}
+
+[data-skin="matrix"] .system-notices {
+  background: transparent;
+  box-shadow: inset 3px 0 0 var(--warning);
+}
+
+[data-skin="matrix"] .system-device {
+  background: transparent;
+  box-shadow: inset 3px 0 0 var(--border-control);
+}
+
+[data-skin="matrix"] .system-device:has(.system-device__name--warning) {
+  box-shadow: inset 3px 0 0 var(--warning);
+}
+
+/* Export: a format's limit and the outcome line are remarks too. */
+[data-skin="matrix"] .export-item__blocked,
+[data-skin="matrix"] .export-outcome--muted {
+  background: transparent;
+  box-shadow: inset 3px 0 0 var(--border-control);
+}
+
+[data-skin="matrix"] .export-outcome {
+  background: transparent;
+  box-shadow: inset 3px 0 0 var(--success);
 }
 
 [data-skin="matrix"] .ui-details__raw {
@@ -1292,6 +1366,11 @@
   background: var(--accent-soft);
   box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--accent);
   color: var(--text);
+}
+
+[data-skin="matrix"] .connect-level__row--playing {
+  background: var(--info-soft);
+  box-shadow: inset 3px 0 0 var(--info);
 }
 
 [data-skin="matrix"] .measure-list {

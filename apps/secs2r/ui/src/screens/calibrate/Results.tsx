@@ -91,7 +91,7 @@ export function Verdict({ view, actions, onSampleRateSettings }: { view: Calibra
   if (!result) {
     return (
       <Card
-        title={t("calibrate.verdict.plan.title")}
+        title={t("calibrate.verdict.title")}
         actions={pill}
         className="calibrate-verdict"
         data-ui="calibrate.verdict"

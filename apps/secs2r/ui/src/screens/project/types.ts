@@ -13,7 +13,7 @@ export type UnsavedReason = "close" | "open" | "new" | "tutorial";
 export type ProjectDialog =
   /** 새 프로젝트: preset and sub count, empty or the demo room, then the save location. */
   | { kind: "new"; initial?: { preset: NewProjectPreset; subCount: number } }
-  /** 저장 안 한 변경: before closing, opening another project, creating one or starting the tutorial. `fileName` is null for a project never saved. */
+  /** 저장하지 않은 변경 사항: before closing, opening another project, creating one or starting the tutorial. `fileName` is null for a project never saved. */
   | { kind: "unsaved"; reason: UnsavedReason; fileName: string | null }
   /** 튜토리얼 시작: what the tutorial does, and its start. `dirty`: the unsaved question comes next. */
   | { kind: "tutorial"; dirty: boolean }

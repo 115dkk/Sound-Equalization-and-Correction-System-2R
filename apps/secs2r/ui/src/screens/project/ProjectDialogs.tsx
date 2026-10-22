@@ -1,4 +1,4 @@
-// The project dialogs: 새 프로젝트, 저장 안 한 변경, 튜토리얼 시작 and
+// The project dialogs: 새 프로젝트, 저장하지 않은 변경 사항, 튜토리얼 시작 and
 // 프로젝트 열기. Titles name the action and buttons repeat it; Esc and the
 // close button cancel (the kit Dialog).
 import { useState } from "react";
@@ -122,7 +122,7 @@ function NewProjectDialog({
   );
 }
 
-/* ── 저장 안 한 변경 ────────────────────────────────────────────────────── */
+/* ── 저장하지 않은 변경 사항 ───────────────────────────────────────────── */
 
 const UNSAVED: Record<UnsavedReason, { title: MessageKey; save: MessageKey; discard: MessageKey }> = {
   close: { title: "project.unsaved.title.close", save: "project.unsaved.save.close", discard: "project.unsaved.discard.close" },

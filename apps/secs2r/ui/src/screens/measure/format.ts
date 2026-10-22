@@ -37,7 +37,7 @@ export function micPoints(layout: LayoutResult): MicPoint[] {
     .map((point) => ({ x: point.x_cm, y: point.y_cm, h: point.height > 0 ? 1 : point.height < 0 ? -1 : 0 }));
 }
 
-/** Where position n is (upstream `arr_points` text: "청취 위치 · 귀 높이", "뒤 30 cm" …). */
+/** Where position n is (upstream `arr_points` text: "정가운데", "뒤 30 cm" …). */
 export function pointText(t: Translate, n: number): string {
   const key = `measure.point.${n}`;
   return isMessageKey(key) ? t(key) : t("measure.point.other", { n });

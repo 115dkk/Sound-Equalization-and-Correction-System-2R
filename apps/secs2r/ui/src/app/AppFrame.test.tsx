@@ -228,7 +228,7 @@ describe("app frame", () => {
     expect(status.textContent).toContain("다시 계산 필요");
     expect(status.textContent).toContain("REW · 연결됨");
     expect(status.textContent).toContain("거실.secs");
-    expect(status.textContent).toContain("저장 안 한 변경");
+    expect(status.textContent).toContain("미저장 변경 사항");
   });
 
   it("names an edited setup with the word 시스템 uses, not the raw preset value", () => {
