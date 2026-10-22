@@ -40,6 +40,18 @@ round trip), `src/ipc/fixtures.ts` (`appSettings`), `src/ipc/mock.ts`.
    Reuse the file's existing helpers and mock wiring.
 3. **Settle the four strings** in `src/i18n/ko.json` and `en.json`:
    `frame.settings.skin` (the row label), `.default`, `.rack`, `.matrix`.
+   Before you write them, read two guides with the Read tool and apply
+   them **to these four strings only**:
+   - `/root/.claude/skills/synced/1cf9b684-1b33-4e6b-b907-5ff120c804a0_4a388c23-0aa8-44f9-bc2f-de4a3001644a/make-interfaces-feel-better/write.md` (make-interfaces-feel-better, product copy: effect over
+     mechanism, no filler, no persona, the Korean register section). It
+     governs what a label says on screen. It does not govern code
+     comments, test names, this report, or any string you were not asked
+     to change; applying it elsewhere is the mistake the maintainer has
+     seen before and does not want again.
+   - `/root/.claude/plugins/synced/1cf9b684-1b33-4e6b-b907-5ff120c804a0_4a388c23-0aa8-44f9-bc2f-de4a3001644a/superloopy/skills/humanize-korean/SKILL.md` and its `references/` (Superloopy humanize-korean:
+     Korean that reads as written by a person, no 번역투, no AI tells,
+     meaning preserved). Use it to check the Korean strings' naturalness;
+     it changes wording, never facts.
    The register is DESIGN.md §10 (labels are noun phrases; no 해요체, no
    exclamation marks). The skin names are proper names in `docs/skins/`
    ("Hardware Rack", "Signal Matrix"); decide whether the Korean screen
@@ -58,6 +70,10 @@ round trip), `src/ipc/fixtures.ts` (`appSettings`), `src/ipc/mock.ts`.
   and the one wording in `docs/DESIGN.md`. Nothing else: no CSS, no
   components, no `menus.tsx`, no bindings, no Rust.
 - Do not reformat the catalogs; add or edit only the four keys in place.
+  Do not touch any other catalog string, even one that write.md would
+  change: that is a separate decision for the maintainer.
+- Write the report in plain Korean prose. write.md is for the screen, not
+  for the report.
 
 ## Verification (foreground; finish every command before you report)
 

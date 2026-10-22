@@ -75,3 +75,10 @@ HIGH is a gate failure or a constitution's "하지 말 것" violation or an
 illegible/broken state; MEDIUM is a weaker answer than the constitution
 asks for; LOW is polish. Cite files and selectors; do not propose
 rewrites longer than a line.
+
+Write the report in plain Korean that reads as written by a person
+(`/root/.claude/plugins/synced/1cf9b684-1b33-4e6b-b907-5ff120c804a0_4a388c23-0aa8-44f9-bc2f-de4a3001644a/superloopy/skills/humanize-korean/SKILL.md` is the standard for naturalness: no 번역투, no AI tells).
+Do not apply make-interfaces-feel-better's `write.md` to this report: that
+guide is for product copy on the screen, and the maintainer has seen it
+misapplied to internal prose before. If a catalog string on the screen
+looks wrong, note it as a finding with the key; do not rewrite it.
