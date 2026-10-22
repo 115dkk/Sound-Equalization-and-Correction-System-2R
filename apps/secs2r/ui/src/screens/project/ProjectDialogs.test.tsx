@@ -86,7 +86,7 @@ describe("프로젝트 대화상자", () => {
     renderWith(<ProjectDialogs view={view({ kind: "unsaved", reason: "open", fileName: "거실 7.1.4.secs" })} actions={act} />);
     expect(screen.getByText("다른 프로젝트를 열기 전에 저장")).toBeTruthy();
     expect(ui("project.unsaved.save")?.textContent).toBe("저장하고 열기");
-    expect(ui("project.unsaved.discard")?.textContent).toBe("저장 안 하고 열기");
+    expect(ui("project.unsaved.discard")?.textContent).toBe("저장하지 않고 열기");
     fireEvent.click(ui("project.unsaved.save")!);
     fireEvent.click(ui("project.unsaved.discard")!);
     fireEvent.click(ui("project.unsaved.cancel")!);

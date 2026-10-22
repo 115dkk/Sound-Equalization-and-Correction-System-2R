@@ -36,8 +36,8 @@ const dialog = (key: string) => () => <ProjectDialogs view={views[key]!} actions
 
 export const projectSpecimens: SpecimenDef[] = [
   { id: "screen.project.new", title: "새 프로젝트 · preset, subs, empty or demo room", render: dialog("new") },
-  { id: "screen.project.unsaved", title: "저장 안 한 변경 · before closing", render: dialog("unsaved") },
-  { id: "screen.project.unsaved.tutorial", title: "저장 안 한 변경 · before the tutorial, never saved, save failed", render: dialog("unsavedTutorial") },
+  { id: "screen.project.unsaved", title: "저장하지 않은 변경 사항 · before closing", render: dialog("unsaved") },
+  { id: "screen.project.unsaved.tutorial", title: "저장하지 않은 변경 사항 · before the tutorial, never saved, save failed", render: dialog("unsavedTutorial") },
   { id: "screen.project.tutorial", title: "튜토리얼 시작 · with unsaved changes", render: dialog("tutorial") },
   { id: "screen.project.open", title: "프로젝트 열기 · recent projects", render: dialog("open") },
 ];
