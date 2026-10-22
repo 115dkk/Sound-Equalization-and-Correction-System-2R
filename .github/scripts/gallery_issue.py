@@ -1,7 +1,7 @@
 """Markdown for the screen gallery review issue that ui-gallery.yml opens.
 
 The issue shows the screen tour (scripts/screen-tour.mjs: every step and
-state of the real app on the mock service, four variants per scene) and the
+state of the real app on the mock service, six variants per scene) and the
 specimen gallery (scripts/gallery-shots.mjs) from PNGs published on the
 ui-gallery branch.
 
@@ -42,6 +42,8 @@ VARIANT_TITLES = {
     "dark.ko": "한국어 · 어둡게",
     "light.en": "English · 밝게",
     "dark.en": "English · 어둡게",
+    "dark.ko.rack": "한국어 · 어둡게 · Hardware Rack 스킨",
+    "dark.ko.matrix": "한국어 · 어둡게 · Signal Matrix 스킨",
 }
 # The specimen gallery shows one variant inline; the rest stay on the branch.
 SPECIMEN_VARIANT = "light.ko"
@@ -147,7 +149,7 @@ def build_parts(args: argparse.Namespace) -> list[str]:
         f"화면 갤러리 — {args.context}, 커밋 `{args.sha[:12]}` (`{args.ref}`), [실행 기록]({args.run_url}).",
         "",
         f"실제 앱을 mock 서비스 위에 띄워 장면 {count}개를 창 크기({size}) 그대로 찍었습니다. "
-        "장면을 펼치면 한국어·영어와 밝게·어둡게 네 장이 있습니다. 부품 견본은 이어지는 댓글에 있습니다.",
+        "장면을 펼치면 한국어·영어와 밝게·어둡게 네 장, 그리고 Hardware Rack·Signal Matrix 스킨의 어두운 한국어 화면 두 장이 있습니다. 부품 견본은 이어지는 댓글에 있습니다.",
         "",
         f"원본 PNG는 [ui-gallery 브랜치]({tree})에 있고, 그 브랜치는 최근 {args.keep}번의 실행만 남깁니다. "
         "그보다 오래된 실행의 이미지는 이 이슈에서도 보이지 않게 됩니다.",

@@ -19,29 +19,29 @@ SECS 2R의 사용자는 그래프와 숫자를 읽는 애호가와 설치 기사
 
 ### 2.1 역할 토큰
 
-색은 역할 이름으로만 씁니다. 구성 요소의 CSS에는 색 값이 없습니다(`tokens.test.ts`가 확인). 값은 모두 OKLCH이고, 중립색은 색상 200–210의 차가운 기운 하나로 맞춥니다.
+색은 역할 이름으로만 씁니다. 구성 요소의 CSS에는 색 값이 없습니다(`tokens.test.ts`가 확인). 값은 모두 OKLCH이고, 중립색은 강조색과 같은 색상 255–258의 차가운 기운 하나로 맞춥니다. 아래 표는 기본 스킨(Instrument)의 값이고, 스킨(2.5절)은 같은 이름을 덮어씁니다.
 
 | 토큰 | 쓰임 | 밝게 | 어둡게 |
 |---|---|---|---|
-| `--bg` | 앱 바탕 | `oklch(0.968 0.004 200)` | `oklch(0.185 0.008 210)` |
-| `--surface` | 카드, 그래프 바탕, 작업 트레이 | `oklch(0.993 0.002 200)` | `oklch(0.225 0.009 210)` |
-| `--surface-sunken` | 표 묶음 줄, 미터 바탕, 분할 단추 바탕 | `oklch(0.952 0.005 200)` | `oklch(0.2 0.008 210)` |
-| `--surface-raised` | 팝오버, 메뉴, 대화상자, 토스트 | `oklch(0.995 0.002 200)` | `oklch(0.26 0.01 210)` |
+| `--bg` | 앱 바탕 | `oklch(0.968 0.004 255)` | `oklch(0.185 0.008 258)` |
+| `--surface` | 카드, 그래프 바탕, 작업 트레이 | `oklch(0.993 0.002 255)` | `oklch(0.225 0.009 258)` |
+| `--surface-sunken` | 표 묶음 줄, 미터 바탕, 분할 단추 바탕 | `oklch(0.952 0.005 255)` | `oklch(0.2 0.008 258)` |
+| `--surface-raised` | 팝오버, 메뉴, 대화상자, 토스트 | `oklch(0.995 0.002 255)` | `oklch(0.26 0.01 258)` |
 | `--surface-hover`, `--surface-pressed` | 줄과 조용한 단추의 hover, 눌림·비활성 바탕 | 0.935, 0.915 | 0.275, 0.3 |
-| `--rail-bg` | 단계 레일 | `oklch(0.948 0.006 200)` | `oklch(0.2 0.008 210)` |
+| `--rail-bg` | 단계 레일 | `oklch(0.948 0.006 255)` | `oklch(0.2 0.008 258)` |
 | `--image-outline` | 자기 타일이 있는 그림(로고)의 안쪽 1px 선 | `oklch(0 0 0 / 0.1)` | `oklch(1 0 0 / 0.1)` |
-| `--text` | 본문 | `oklch(0.25 0.015 200)` | `oklch(0.93 0.006 210)` |
-| `--text-muted` | 설명, 캡션, 축 글자 | `oklch(0.47 0.014 200)` | `oklch(0.75 0.012 210)` |
-| `--text-faint` | 비활성, 힌트 | `oklch(0.62 0.01 200)` | `oklch(0.56 0.01 210)` |
+| `--text` | 본문 | `oklch(0.25 0.015 255)` | `oklch(0.93 0.006 258)` |
+| `--text-muted` | 설명, 캡션, 축 글자 | `oklch(0.47 0.014 255)` | `oklch(0.75 0.012 258)` |
+| `--text-faint` | 비활성, 힌트 | `oklch(0.62 0.01 255)` | `oklch(0.56 0.01 258)` |
 | `--border` / `--border-subtle` | 구조 경계, 표의 가는 줄 | 0.88 / 0.92 | 0.33 / 0.29 |
-| `--border-control` | 입력칸 테두리(3:1) | `oklch(0.62 0.01 200)` | `oklch(0.54 0.012 210)` |
-| `--accent`, `--accent-hover`, `--accent-soft`, `--on-accent` | 주 동작, 고른 것, 초점 고리 | L 0.50 / 0.45 / 0.945 | L 0.76 / 0.81 / 0.31 |
+| `--border-control` | 입력칸 테두리(3:1) | `oklch(0.62 0.01 255)` | `oklch(0.54 0.012 258)` |
+| `--accent`, `--accent-hover`, `--accent-soft`, `--on-accent` | 주 동작, 고른 것, 초점 고리 | L 0.49 / 0.44 / 0.945 | L 0.76 / 0.81 / 0.31 |
 | `--success`, `--warning`, `--danger`, `--info` (+ `-soft`, `--on-success`, `--on-danger`) | 상태 | 2.3절 | 2.3절 |
 
 강조색은 `oklch(var(--accent-l) calc(var(--accent-chroma) * var(--theme-chroma)) var(--accent-hue))`로 조립합니다. 밝기는 테마가, 색상과 채도는 강조색 종류가 정합니다.
 
-- 기본 강조색은 색상 195(청록), 채도 0.088입니다. 업스트림 화면과 앱 아이콘의 청록에서 가져왔습니다.
-- 튜토리얼은 `data-accent="tutorial"`로 색상 345(자홍), 채도 0.165로 바꿉니다. 강조색만 바뀌고 나머지 토큰은 그대로입니다(업스트림 튜토리얼의 분홍 테마에 해당).
+- 기본 강조색은 색상 258(파랑), 채도 0.115입니다(밝게 `#3460a1`, 어둡게 `#8cb3ed`). 2026-10-22의 색 감사([`skins/default.md`](skins/default.md))에서 업스트림의 청록(195)을 대신해 골랐습니다. 파랑은 모든 데스크톱에서 '누를 수 있음'의 색이라 배우지 않아도 읽히고, 상태색과 15° 이상 떨어집니다(info는 그래서 232입니다).
+- 튜토리얼은 `data-accent="tutorial"`로 색상 345(자홍), 채도 0.165로 바꿉니다. 강조색만 바뀌고 나머지 토큰은 그대로입니다(업스트림 튜토리얼의 분홍 테마에 해당). Rack과 Matrix 스킨은 튜토리얼에서도 자기 강조색을 유지합니다.
 - 어두운 테마는 채도를 0.82배로 낮춥니다. 어두운 바탕에서 같은 채도는 번져 보이기 때문입니다.
 
 ### 2.2 테마 전환
@@ -50,6 +50,7 @@ SECS 2R의 사용자는 그래프와 숫자를 읽는 애호가와 설치 기사
 - `data-theme="light"|"dark"`를 `<html>`이나 어느 하위 요소에 걸어도 그 아래가 그 테마로 바뀝니다. 앱은 `<html>`에 걸고(`PrefsScope root`), 갤러리는 견본마다 걸 수 있습니다.
 - 어두운 값은 두 벌(시스템 선호, 명시 속성)이 같아야 합니다. CSS에 혼합 문법이 없어 두 번 적고, `tokens.test.ts`가 두 벌을 비교합니다.
 - 그래프는 테마나 강조색이 바뀌면 같은 인스턴스를 다시 칠합니다(새로 고침 없음, 6절).
+- 스킨(`data-skin`)은 테마와 독립인 세 번째 축입니다(2.5절).
 
 ### 2.3 상태색의 뜻
 
@@ -64,19 +65,44 @@ SECS 2R의 사용자는 그래프와 숫자를 읽는 애호가와 설치 기사
 
 ### 2.4 측정한 대비
 
-WCAG 대비는 추정하지 않고 계산했습니다(OKLCH → sRGB, 상대 휘도). 글자 4.5:1, 입력칸 테두리와 초점 고리 3:1 이상입니다.
+WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가 토큰 파일을 읽어 OKLCH→sRGB(감마 매핑 포함)로 바꾸고 상대 휘도로 대비를 구하며, 글자 4.5:1, 입력칸 테두리·초점 고리·상태 글리프 3:1 아래면 실패합니다. 아래 표는 그 테스트가 출력한 값입니다(`CONTRAST_TABLE=1 npx vitest run src/styles/contrast.test.ts --reporter=verbose`). 스킨의 표는 같은 명령이 함께 출력합니다.
 
-| 쌍 | 밝게 | 어둡게 |
-|---|---|---|
-| `--text` / `--bg`, `--surface` | 14.53, 15.62 | 15.17, 13.91 |
-| `--text-muted` / `--bg`, `--surface`, `--surface-sunken`, `--surface-raised` | 6.19, 6.65, 5.90, 6.69 | 8.40, 7.70, 8.16, 6.99 |
-| `--border-control` / `--surface`, `--surface-sunken` | 3.56, 3.16 | 3.39, 3.59 |
-| `--accent` / `--surface` (초점 고리 / `--bg`) | 5.61 (5.22) | 8.19 (8.93) |
-| `--on-accent` / `--accent`, `--accent-hover` | 5.56, 6.81 | 9.01, 10.70 |
-| 튜토리얼 강조색 / `--surface`, `--on-accent` / 튜토리얼 강조색 | 6.46, 6.41 | 7.47, 8.21 |
-| success, warning, danger, info / `--surface` | 5.57, 5.57, 5.89, 5.90 | 8.33, 9.04, 6.48, 7.69 |
-| 같은 색 / 자기 `-soft` 바탕 | 5.04, 4.95, 5.16, 5.28 | 6.77, 7.52, 5.62, 6.35 |
-| `--on-danger` / `--danger` | 5.84 | 7.13 |
+| 쌍 | default light | default dark | default light tutorial | default dark tutorial |
+|---|---|---|---|---|
+| `--text` / `--bg` | 14.58 | 15.17 | 14.58 | 15.17 |
+| `--text` / `--surface` | 15.67 | 13.92 | 15.67 | 13.92 |
+| `--text` / `--surface-sunken` | 13.91 | 14.73 | 13.91 | 14.73 |
+| `--text` / `--surface-raised` | 15.77 | 12.64 | 15.77 | 12.64 |
+| `--text` / `--rail-bg` | 13.74 | 14.73 | 13.74 | 14.73 |
+| `--text-muted` / `--bg` | 6.22 | 8.38 | 6.22 | 8.38 |
+| `--text-muted` / `--surface` | 6.68 | 7.69 | 6.68 | 7.69 |
+| `--text-muted` / `--surface-sunken` | 5.93 | 8.14 | 5.93 | 8.14 |
+| `--text-muted` / `--surface-raised` | 6.72 | 6.98 | 6.72 | 6.98 |
+| `--text-muted` / `--rail-bg` | 5.86 | 8.14 | 5.86 | 8.14 |
+| `--text-faint` / `--surface` | 3.57 | 3.68 | 3.57 | 3.68 |
+| `--border-control` / `--surface` | 3.57 | 3.38 | 3.57 | 3.38 |
+| `--border-control` / `--surface-sunken` | 3.16 | 3.58 | 3.16 | 3.58 |
+| `--accent` / `--surface` | 6.19 | 7.96 | 6.74 | 7.48 |
+| `--accent` / `--bg` | 5.75 | 8.68 | 6.27 | 8.15 |
+| `--on-accent` / `--accent` | 6.13 | 8.75 | 6.69 | 8.23 |
+| `--on-accent` / `--accent-hover` | 7.62 | 10.41 | 8.29 | 9.81 |
+| `--success` / `--surface` | 5.56 | 8.35 | 5.56 | 8.35 |
+| `--warning` / `--surface` | 5.57 | 9.06 | 5.57 | 9.06 |
+| `--danger` / `--surface` | 5.89 | 6.49 | 5.89 | 6.49 |
+| `--info` / `--surface` | 5.75 | 7.83 | 5.75 | 7.83 |
+| `--success` / `--success-soft` | 5.04 | 6.77 | 5.04 | 6.77 |
+| `--warning` / `--warning-soft` | 4.97 | 7.52 | 4.97 | 7.52 |
+| `--danger` / `--danger-soft` | 5.23 | 5.62 | 5.23 | 5.62 |
+| `--info` / `--info-soft` | 5.17 | 6.41 | 5.17 | 6.41 |
+| `--on-danger` / `--danger` | 5.83 | 7.14 | 5.83 | 7.14 |
+| `--on-success` / `--success` | 5.52 | 9.18 | 5.52 | 9.18 |
+| `--plot-text` / `--plot-bg` | 6.68 | 7.69 | 6.68 | 7.69 |
+| `--map-ink` / `--map-bg` | 10.64 | 10.82 | 10.64 | 10.82 |
+| `--meter-fill` / `--meter-track` | 5.93 | 8.14 | 5.93 | 8.14 |
+
+### 2.5 스킨
+
+스킨은 `data-skin="rack|matrix"`로 고르는 세 번째 축입니다([ADR 0010](adr/0010-skin-sets.md)). 기본 스킨은 속성이 없는 상태(Instrument)이고, 각 스킨은 `styles/skins/<id>.css` 한 파일에서 위 토큰의 일부를 덮어쓴 뒤 구성 요소의 모양(모서리, 깊이, 질감, 상태 표현)을 바꿉니다. 철학과 구성 요소별 답은 [`skins/`](skins/README.md)의 헌법에 있고, 두 스킨이 팔레트만 다르면 실패라는 차별화 게이트가 그 문서에 있습니다. 앱은 고른 스킨을 `AppSettings.skin`에 저장하고(설정 팝오버의 '스킨'), 갤러리는 `skin=` 인자와 툴바로 고릅니다.
 
 ## 3. 그래프
 
@@ -176,7 +202,7 @@ WCAG 대비는 추정하지 않고 계산했습니다(OKLCH → sRGB, 상대 휘
 - **단계 머리**: 제목, 해당 단계의 도움말, 주 동작 하나. 목적 설명은 제목 옆 도움말로 엽니다. 막혔으면 이유와 갈 곳을 화면에 적고 주 동작을 끕니다(`aria-describedby`로 이유를 잇습니다). 화면이 주 동작을 끌 수도 있습니다(`PrimaryAction.disabled`, 같은 화면의 다른 잡이 돌 때). 이때는 제목 옆 상태 알약이 이유이고 `aria-describedby`가 알약을 가리킵니다. 진행 중(`busy`)은 주 동작 자신의 잡에만 씁니다.
 - **곁 패널 자리**(`AppFrame aside`): 단계 머리와 작업 트레이 사이의 상자(`.app-body`)가 패널의 기준 상자입니다. 도움말 패널은 그 오른쪽에 놓여 주 동작과 트레이의 취소를 가리지 않고, 트레이 기록을 펴면 함께 줄어듭니다.
 - **프로젝트 상태**: 구성("7.1.4 · 서브 2 · 출력 13"), 측정 위치(k/N), 보정(결과 없음, 계산 중, 완료, 다시 계산 필요, 실패), 측정 경로(REW·자체 측정·모의 측정과 연결 상태), 파일(이름 또는 저장 안 됨, 저장 안 한 변경).
-- **프로젝트 메뉴**: 새로 만들기, 열기…, 저장, 다른 이름으로 저장…. **설정**: 언어, 테마(시스템·밝게·어둡게), 로고. 세부 항목은 해당 기능에서 펼치며 전역 숙련도 설정은 두지 않습니다(P58).
+- **프로젝트 메뉴**: 새로 만들기, 열기…, 저장, 다른 이름으로 저장…. **설정**: 언어, 테마(시스템·밝게·어둡게), 스킨(기본·Hardware Rack·Signal Matrix), 로고. 세부 항목은 해당 기능에서 펼치며 전역 숙련도 설정은 두지 않습니다(P58).
 - **단축키**는 `app/shortcuts.ts` 한 곳에 있고 메뉴의 힌트도 여기서 읽습니다. macOS에서는 Ctrl 대신 ⌘입니다. 한글 자판에서도 물리 키(`code`)로 맞춥니다.
 
 | 키 | 동작 |
@@ -240,7 +266,7 @@ WCAG 대비는 추정하지 않고 계산했습니다(OKLCH → sRGB, 상대 휘
 | 자리 | id |
 |---|---|
 | 틀 | `frame`, `frame.logo`, `frame.rail`, `frame.rail.<step>`, `frame.header`, `frame.header.blocked`, `frame.content`, `frame.status`, `frame.status.<config\|positions\|calibration\|path\|file>` |
-| 메뉴·설정 | `frame.project`, `frame.project.<new\|open\|save\|save_as>`, `frame.settings`, `frame.settings.<language\|theme\|expert>`, `frame.help` |
+| 메뉴·설정 | `frame.project`, `frame.project.<new\|open\|save\|save_as>`, `frame.settings`, `frame.settings.<language\|theme\|skin\|logo>`, `frame.help` |
 | 주 동작 | 화면이 정합니다(예: `measure.position.start`). 갤러리는 `<step>.primary` |
 | 작업 트레이 | `jobs.tray`, `jobs.job.<kind>`, `jobs.cancel.<kind>`, `jobs.history`, `jobs.history.toggle`, `jobs.history.clear` |
 | 그래프 | `<id>`, `<id>.axes`, `<id>.legend.role.<role>`, `<id>.legend.position.<n>`, `<id>.point.<n>` |
@@ -251,10 +277,10 @@ WCAG 대비는 추정하지 않고 계산했습니다(OKLCH → sRGB, 상대 휘
 ## 12. 갤러리와 모의 서비스
 
 - `gallery.html`은 두 번째 Vite 입구입니다. `vite build`는 앱과 갤러리를 함께 짓고, `npm run build`(Tauri가 부름)는 `--mode app`으로 앱만 지어 갤러리와 고정값이 설치본에 들어가지 않습니다. 갤러리만 지으려면 `npm run build:gallery`입니다.
-- 주소 인자: `gallery.html?theme=light|dark&lang=ko|en&accent=default|tutorial&only=<id 접두어,…>`. 견본마다 `data-gallery-id`가 있어 CI가 하나씩 찍을 수 있습니다. 상자 크기와 시각·진행 값이 고정이라 찍을 때마다 같습니다. 예외는 불확정 진행 막대의 움직이는 띠(CI는 `prefers-reduced-motion: reduce`로 찍으면 멈춥니다), `frame.live`, `plot.dense`의 시간 표시입니다.
+- 주소 인자: `gallery.html?theme=light|dark&lang=ko|en&accent=default|tutorial&skin=default|rack|matrix&only=<id 접두어,…>`. 견본마다 `data-gallery-id`가 있어 CI가 하나씩 찍을 수 있습니다. 상자 크기와 시각·진행 값이 고정이라 찍을 때마다 같습니다. 예외는 불확정 진행 막대의 움직이는 띠(CI는 `prefers-reduced-motion: reduce`로 찍으면 멈춥니다), `frame.live`, `plot.dense`의 시간 표시입니다.
 - 견본: `frame.empty`, `frame.normal`, `frame.busy`, `frame.stale`, `frame.error`, `frame.blocked`, `frame.tutorial`, `frame.skipped`, `frame.aside`(곁 패널 자리의 도움말, 트레이 기록 펼침), `frame.live`(모의 서비스에서 실제로 돌고 취소됨), `jobs.idle`, `jobs.running`, `jobs.history`, `frame.project-menu`, `frame.settings`, `ui.button`, `ui.card`, `ui.pill`, `ui.number`, `ui.choice`, `ui.table`, `ui.table.empty`, `ui.meter`, `ui.toast`, `ui.dialog`, `ui.tooltip`, `ui.states`, `plot.measure`, `plot.highlight`, `plot.target`, `plot.xo`, `plot.axes`, `plot.stale`, `plot.dense`, `map.room`, `map.room.unassigned`, `map.arrangement.9`, `map.arrangement.17`, `map.arrangement.13`, `map.thumbs`.
-- 찍기: `npm run build:gallery && npm run gallery:shots`가 `gallery-shots/`에 견본마다 PNG를 남깁니다. 이 컨테이너처럼 Chromium이 이미 있으면 `CHROMIUM_PATH`로 가리키고, 없으면 `npx playwright install chromium`으로 받습니다(`playwright`는 개발 의존성으로 고정).
-- **화면 투어**: `gallery.html?tour=<장면 id>&theme=light|dark&lang=ko|en`은 견본 대신 실제 `App`을 모의 서비스 위에 창 전체로 띄우고, 장면 표(`gallery/tour/`)의 준비(`setup`, 마운트 전 모의 서비스 조작)와 조작(`ops`, 마운트 뒤 키·누르기·페이지 안 함수)으로 정한 상태에서 멈춥니다. 모의 서비스는 자동 틱 없이(`tickMs: 0`) 돌아 찍을 때마다 같은 그림이 납니다. `node scripts/screen-tour.mjs`가 장면마다 1280×800 창(`tauri.conf.json`의 기본 창)을 밝게·어둡게, 한국어·영어로 찍어 `screen-shots/`에 PNG와 `manifest.json`을 남깁니다. 실장비 없이는 닿지 않는 상태(측정·계산 중, 실패, 결과, 내보내기 완료)도 실제 화면 코드로 그립니다. 화면을 바꿔 장면의 조작이 맞지 않게 되면 그 PR에서 장면 표를 고칩니다.
+- 찍기: `npm run build:gallery && npm run gallery:shots`가 `gallery-shots/`에 견본마다 PNG를 남깁니다(밝게·어둡게 × 한국어·영어, 튜토리얼 강조색, 그리고 Rack·Matrix 스킨의 밝게·어둡게 한국어: 9개 변형). 이 컨테이너처럼 Chromium이 이미 있으면 `CHROMIUM_PATH`로 가리키고, 없으면 `npx playwright install chromium`으로 받습니다(`playwright`는 개발 의존성으로 고정).
+- **화면 투어**: `gallery.html?tour=<장면 id>&theme=light|dark&lang=ko|en`은 견본 대신 실제 `App`을 모의 서비스 위에 창 전체로 띄우고, 장면 표(`gallery/tour/`)의 준비(`setup`, 마운트 전 모의 서비스 조작)와 조작(`ops`, 마운트 뒤 키·누르기·페이지 안 함수)으로 정한 상태에서 멈춥니다. 모의 서비스는 자동 틱 없이(`tickMs: 0`) 돌아 찍을 때마다 같은 그림이 납니다. `node scripts/screen-tour.mjs`가 장면마다 1280×800 창(`tauri.conf.json`의 기본 창)을 밝게·어둡게, 한국어·영어로, 그리고 Rack·Matrix 스킨의 어두운 한국어로 찍어(6개 변형) `screen-shots/`에 PNG와 `manifest.json`을 남깁니다. 실장비 없이는 닿지 않는 상태(측정·계산 중, 실패, 결과, 내보내기 완료)도 실제 화면 코드로 그립니다. 화면을 바꿔 장면의 조작이 맞지 않게 되면 그 PR에서 장면 표를 고칩니다.
 - **리뷰 이슈**: `ui-gallery.yml`이 화면 PR(`apps/secs2r/ui/**`)과 수동 실행에서 투어와 견본을 찍어 `ui-gallery` 브랜치에 올리고, PR마다 리뷰 이슈 하나(`화면 갤러리 리뷰: PR #N`, 라벨 `ui-gallery`)를 열거나 댓글로 갱신합니다. 이슈 글은 `.github/scripts/gallery_issue.py`가 짓습니다(본문은 투어, 댓글은 한국어·밝게 견본). 브랜치에는 장면 전부와 한국어·밝게 견본만 올리고(나머지 견본 변형은 실행 아티팩트), 최근 4번의 실행만 남기도록 매번 다시 쓰므로 저장소를 복제해도 스크린숏이 쌓이지 않고, 더 오래된 이슈는 이미지를 잃습니다. 이슈는 머지를 막지 않습니다.
 - Playwright에는 `locale`을 주어야 합니다. 브라우저 언어 태그가 잘못되면(`en-US@posix`처럼) uPlot이 `Intl.NumberFormat`에서 멈춥니다.
 - **모의 서비스**(`ipc/mock.ts`): `createMockService({ tickMs, project, results })`는 `makeClient`에 넘길 `invoke`와 그 클라이언트, 잡 이벤트 버스를 줍니다. 생성된 바인딩으로 타입을 맞춘 고정값(`ipc/fixtures.ts`)으로 답하고, 잡은 타이머(또는 `tick()`, `drain()`)로 진행·로그·완료 이벤트를 보냅니다. `failNext`, `failAlways`, `failJobs`로 실패시킬 수 있고, 받은 요청은 `calls`에 남습니다. 같은 종류의 잡이 돌면 `job_busy`, 없는 잡을 취소하면 `job_not_found`입니다.
@@ -263,7 +289,8 @@ WCAG 대비는 추정하지 않고 계산했습니다(OKLCH → sRGB, 상대 휘
 
 | 검사 | 파일 |
 |---|---|
-| 14px 하한(캡션 13px), 모든 `font-size`가 토큰, `transition: all` 없음, 어두운 테마 두 벌 일치, 밝게·어둡게 같은 토큰 집합, 줄인 움직임에서 시간 0, 구성 요소 CSS에 색 값 없음 | `styles/tokens.test.ts` |
+| 14px 하한(캡션 13px), 모든 `font-size`가 토큰, `transition: all` 없음, 어두운 테마 두 벌 일치, 밝게·어둡게 같은 토큰 집합, 줄인 움직임에서 시간 0, 구성 요소 CSS에 색 값 없음(토큰 파일과 스킨 파일만 예외) | `styles/tokens.test.ts` |
+| 측정한 대비(글자 4.5:1, 테두리·초점·글리프 3:1), 강조색이 상태색과 15° 이상, 중립색의 한 기운, 순흑·순백 없음, 스킨 파일의 어두운 두 벌 일치와 밝게·어둡게 색 토큰 집합 일치, 모든 스킨 × 테마 | `styles/contrast.test.ts` |
 | 카탈로그 키와 자리표시자 일치, 해요체 문장과 느낌표 없음 | `i18n/i18n.test.ts` |
 | 레일 상태와 막힌 이유, 주 동작 끄기(막힘, 화면이 끔), 곁 패널 자리, 단축키, 상태 요약, 영어 | `app/AppFrame.test.tsx` |
 | 이벤트로 그리는 잡, `job_cancel`, 기록의 원인·다음 행동·자세히 | `app/jobs/JobTray.test.tsx`, `jobStore.test.ts` |
@@ -274,5 +301,5 @@ WCAG 대비는 추정하지 않고 계산했습니다(OKLCH → sRGB, 상대 휘
 | 선 규칙, 색은 역할을 따름, 고정 눈금 | `ui/plot/series.test.ts` |
 | 배치도 키보드 선택, 역할 미지정 | `ui/maps/ArrangementMap.test.tsx` |
 | 모의 서비스 계약 | `ipc/mock.test.ts` |
-| 갤러리의 모든 견본이 Chromium에서 오류 없이 그려지고 13px 미만 글자가 없음, 견본마다 PNG(밝게·어둡게, 한국어·영어, 튜토리얼 강조색) | `scripts/gallery-shots.mjs`, `ci.yml`의 `gallery` 잡 |
-| 화면 투어의 모든 장면이 오류 없이 그려지고 13px 미만 글자가 없음, 장면마다 PNG 네 장(밝게·어둡게, 한국어·영어), 장면 표의 형식 | `scripts/screen-tour.mjs`, `ui-gallery.yml`의 `shots` 잡, `gallery/tour/scenes.test.ts` |
+| 갤러리의 모든 견본이 Chromium에서 오류 없이 그려지고 13px 미만 글자가 없음, 견본마다 PNG(밝게·어둡게, 한국어·영어, 튜토리얼 강조색, Rack·Matrix 스킨) | `scripts/gallery-shots.mjs`, `ci.yml`의 `gallery` 잡 |
+| 화면 투어의 모든 장면이 오류 없이 그려지고 13px 미만 글자가 없음, 장면마다 PNG 여섯 장(밝게·어둡게, 한국어·영어, Rack·Matrix 스킨의 어두운 한국어), 장면 표의 형식 | `scripts/screen-tour.mjs`, `ui-gallery.yml`의 `shots` 잡, `gallery/tour/scenes.test.ts` |

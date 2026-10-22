@@ -1,5 +1,5 @@
 // Screenshots every gallery specimen (docs/DESIGN.md, the gallery) in each
-// theme, language and accent, one PNG per data-gallery-id, and fails when
+// theme, language, accent and skin, one PNG per data-gallery-id, and fails when
 // the gallery throws, logs an error, draws no specimen, or draws text under
 // the 13 px caption floor (CLAUDE.md, screen rules). ci.yml's gallery job
 // runs it on the output of `npm run build:gallery` and keeps the PNGs as a
@@ -27,12 +27,18 @@ if (!existsSync(join(dist, "gallery.html"))) {
 }
 mkdirSync(out, { recursive: true });
 
+// The skins (docs/skins) are shot in Korean only: their difference from the
+// default is in the chrome, not in the words.
 const VARIANTS = [
-  { theme: "light", lang: "ko", accent: "default" },
-  { theme: "dark", lang: "ko", accent: "default" },
-  { theme: "light", lang: "en", accent: "default" },
-  { theme: "dark", lang: "en", accent: "default" },
-  { theme: "light", lang: "ko", accent: "tutorial" },
+  { theme: "light", lang: "ko", accent: "default", skin: "default" },
+  { theme: "dark", lang: "ko", accent: "default", skin: "default" },
+  { theme: "light", lang: "en", accent: "default", skin: "default" },
+  { theme: "dark", lang: "en", accent: "default", skin: "default" },
+  { theme: "light", lang: "ko", accent: "tutorial", skin: "default" },
+  { theme: "light", lang: "ko", accent: "default", skin: "rack" },
+  { theme: "dark", lang: "ko", accent: "default", skin: "rack" },
+  { theme: "light", lang: "ko", accent: "default", skin: "matrix" },
+  { theme: "dark", lang: "ko", accent: "default", skin: "matrix" },
 ];
 const BROWSER_LOCALE = { ko: "ko-KR", en: "en-US" };
 const FLOOR_PX = 13;
@@ -46,8 +52,8 @@ const browser = await chromium.launch(env.CHROMIUM_PATH ? { executablePath: env.
 const problems = [];
 let shots = 0;
 try {
-  for (const { theme, lang, accent } of VARIANTS) {
-    const label = `${theme}.${lang}${accent === "default" ? "" : `.${accent}`}`;
+  for (const { theme, lang, accent, skin } of VARIANTS) {
+    const label = `${theme}.${lang}${accent === "default" ? "" : `.${accent}`}${skin === "default" ? "" : `.${skin}`}`;
     const context = await browser.newContext({
       viewport: { width: 1440, height: 900 },
       deviceScaleFactor: 1,
@@ -60,7 +66,7 @@ try {
     page.on("console", (message) => {
       if (message.type() === "error") problems.push(`${label}: console error: ${message.text()} (${message.location().url})`);
     });
-    await page.goto(`${origin}/gallery.html?theme=${theme}&lang=${lang}&accent=${accent}`, { waitUntil: "networkidle" });
+    await page.goto(`${origin}/gallery.html?theme=${theme}&lang=${lang}&accent=${accent}&skin=${skin}`, { waitUntil: "networkidle" });
     await page.evaluate(() => document.fonts.ready);
 
     const ids = await page.$$eval("[data-gallery-id]", (nodes) => nodes.map((n) => n.getAttribute("data-gallery-id")));

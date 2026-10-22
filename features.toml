@@ -862,6 +862,15 @@ tests = []
 note = "five-stage flow, results first, three disclosure levels (docs/ARCHITECTURE.md, Screens). P29 landed the foundation: tokens, the frame with the step rail and status, the job tray, the component kit, the uPlot graphs, the SVG maps, the mock service and the gallery (docs/DESIGN.md). Its vitest tests live in apps/secs2r/ui, which this registry cannot reference (it lists cargo tests). P33 connects the P30-P32 screens through typed stores, explicit mutation/job invalidation, per-call Tauri channels, project/close dialogs and lifecycle hooks. src/state/flow.test.tsx walks a non-tutorial sample project through mock measure_position jobs, calibration and CamillaDSP export; per-screen hook tests pin action IPC params. app.live exercises the full mock app. P35 supplies the complete tutorial quests. P55 moves static setting explanations into contextual help while retaining live state, recommendations and recovery inline; labels and both locales are revised, with pointer/keyboard/touch and disabled-control coverage in the UI tests."
 
 [[feature]]
+id = "ui.skins"
+kind = "ui"
+milestone = "M6"
+status = "partial"
+tests = ["secs-service::app_settings_are_versioned_bounded_and_capped"]
+upstream = "new; docs/DEVIATIONS.md U14"
+note = "Skin sets (docs/adr/0010, docs/skins): the Instrument default plus Hardware Rack and Signal Matrix, chosen as data-skin and stored in AppSettings.skin (the listed service test pins the round trip and the old-file default). The screen gates live in apps/secs2r/ui, which this registry cannot reference: styles/contrast.test.ts measures every skin's contrast and hue discipline, tokens.test.ts keeps colours in the token and skin files, and gallery-shots.mjs and screen-tour.mjs shoot each skin. 2026-10-22's colour audit moved the default accent from teal 195 to blue 258 (docs/skins/default.md)."
+
+[[feature]]
 id = "ui.tutorial_help"
 kind = "ui"
 milestone = "M5"

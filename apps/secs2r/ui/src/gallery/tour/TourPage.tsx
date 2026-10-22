@@ -1,4 +1,4 @@
-// The screen tour's page: gallery.html?tour=<scene id>&theme=light|dark&lang=ko|en
+// The screen tour's page: gallery.html?tour=<scene id>&theme=light|dark&lang=ko|en&skin=default|rack|matrix
 // mounts the real App the way main.tsx does (root: theme, accent and
 // language on <html>) on the mock service with no automatic tick, and
 // leaves `window.__tour` for scripts/screen-tour.mjs to drive. With an
@@ -6,7 +6,7 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "../../App";
-import type { Prefs } from "../../app/prefs";
+import { SKINS, type Prefs, type SkinChoice } from "../../app/prefs";
 import { makeClient } from "../../ipc/client";
 import type { Ipc } from "../../ipc/context";
 import { createMockService, type MockService } from "../../ipc/mock";
@@ -105,9 +105,9 @@ function TourIndex() {
             <span>{scene.title.ko}</span>
             <span className="gal-note">{scene.title.en}</span>
             {variants.map((variant) => {
-              const [theme, lang] = variant.split(".");
+              const [theme, lang, skin = "default"] = variant.split(".");
               return (
-                <a key={variant} href={`?tour=${scene.id}&theme=${theme}&lang=${lang}`}>
+                <a key={variant} href={`?tour=${scene.id}&theme=${theme}&lang=${lang}&skin=${skin}`}>
                   {variant}
                 </a>
               );
@@ -161,6 +161,7 @@ export function mountTour(container: HTMLElement, params: URLSearchParams) {
       theme: params.get("theme") === "dark" ? "dark" : "light",
       locale: params.get("lang") === "en" ? "en" : "ko",
       accent: "default",
+      skin: (SKINS as readonly string[]).includes(params.get("skin") ?? "") ? (params.get("skin") as SkinChoice) : "default",
     };
     createRoot(container).render(
       <StrictMode>
