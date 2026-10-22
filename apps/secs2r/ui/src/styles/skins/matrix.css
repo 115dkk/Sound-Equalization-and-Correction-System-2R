@@ -1,0 +1,1337 @@
+/* Signal Matrix skin (docs/skins/matrix.md, ADR 0010).
+ *
+ * An airport departures board crossed with a broadcast routing matrix:
+ * radius 0 and 1 px rules everywhere, a 24 px grid on the board surface
+ * between the cards (never inside a card body), coordinate cells on the
+ * rail and the position list, every authoritative number in a sunken mono
+ * box cell, crosspoint hover (row band × column band), cyan only for what
+ * is engaged, selected or routed, and cancelled-flight styling (dotted
+ * rule, hollow lamp, strikethrough) for disabled things that stay on the
+ * board.
+ *
+ * Two parts. The token blocks override tokens.css names and add `--skin-*`
+ * names; colours live only there (tokens.test.ts). The structural rules
+ * below read tokens only and change shape, rules, texture, lamps and type,
+ * never the DOM, handlers, aria, focus order, ids or catalog strings.
+ */
+
+/* ── Tokens: light ─────────────────────────────────────────────────────── */
+[data-skin="matrix"] {
+  /* Shape and motion: right-angled cells, a 24 px board pitch, no scaling. */
+  --radius-xs: 0px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
+  --radius-pill: 0px;
+  --press-scale: 1;
+  --focus-w: 1px;
+  --focus-offset: 1px;
+  --skin-grid-pitch: 24px;
+
+  /* Cyan (hue 215): engaged, selected, routed. Nothing else. */
+  --accent-hue: 215;
+  --accent-chroma: 0.13;
+  --accent-l: 0.53;
+  --accent-hover-l: 0.48;
+  --accent-soft-l: 0.96;
+  --accent-soft-c: 0.04;
+  --on-accent: oklch(0.99 0.002 250);
+
+  /* A monochrome board: cool achromatic neutrals (hue 250, chroma ≤ 0.004). */
+  --bg: oklch(0.975 0.003 250);
+  --surface: oklch(0.995 0.002 250);
+  --surface-sunken: oklch(0.958 0.003 250);
+  --surface-raised: oklch(0.995 0.002 250);
+  --surface-hover: oklch(0.945 0.004 250);
+  --surface-pressed: oklch(0.925 0.004 250);
+  --rail-bg: oklch(0.965 0.003 250);
+  --scrim: oklch(0.22 0.004 250 / 0.36);
+
+  --text: oklch(0.22 0.004 250);
+  --text-muted: oklch(0.45 0.004 250);
+  --text-faint: oklch(0.6 0.004 250);
+
+  --border: oklch(0.8 0.004 250);
+  --border-subtle: oklch(0.885 0.003 250);
+  --border-control: oklch(0.6 0.004 250);
+
+  --success: oklch(0.5 0.12 150);
+  --success-soft: oklch(0.955 0.035 150);
+  --warning: oklch(0.52 0.11 88);
+  --warning-soft: oklch(0.955 0.045 88);
+  --danger: oklch(0.52 0.17 27);
+  --danger-hover: oklch(0.47 0.17 27);
+  --danger-soft: oklch(0.955 0.03 27);
+  --on-danger: oklch(0.99 0.002 250);
+  --on-success: oklch(0.99 0.002 250);
+  --info: oklch(0.5 0.12 260);
+  --info-soft: oklch(0.955 0.03 260);
+
+  /* Rules instead of shadows. */
+  --shadow-card: 0 0 0 1px var(--border);
+  --shadow-control: 0 0 0 1px var(--border-control);
+  --shadow-control-hover: 0 0 0 1px var(--accent);
+  --shadow-thumb: 0 0 0 1px var(--border-control);
+  --shadow-raised: 0 0 0 1px var(--border-control);
+  --shadow-dialog: 0 0 0 2px var(--border-control);
+
+  /* The board's grid and the crosspoint bands. */
+  --skin-grid-line: oklch(0.22 0.004 250 / 0.06);
+  --skin-grid-line-soft: oklch(0.22 0.004 250 / 0.03);
+  --skin-band: oklch(0.53 0.12 215 / 0.06);
+  --skin-cross: oklch(0.53 0.12 215 / 0.14);
+  --skin-prelight: oklch(0.53 0.12 215 / 0.08);
+
+  /* Sunken data cell: crisp grid, mono figures. */
+  --plot-bg: var(--surface-sunken);
+  --plot-grid: oklch(0.22 0.004 250 / 0.11);
+  --plot-axis: oklch(0.22 0.004 250 / 0.45);
+  --plot-text: var(--text-muted);
+  --plot-target: oklch(0.25 0.004 250);
+  --plot-shade: oklch(0.22 0.004 250 / 0.06);
+
+  --meter-track: var(--surface-sunken);
+  --meter-band: oklch(0.5 0.12 150 / 0.14);
+  --meter-fill: var(--text-muted);
+  --meter-fill-ok: var(--success);
+  --meter-fill-clip: var(--danger);
+
+  /* The map is the board's coordinate plane. */
+  --map-bg: var(--surface-sunken);
+  --map-ink: oklch(0.3 0.004 250);
+  --map-furniture: oklch(0.91 0.003 250);
+  --map-furniture-edge: oklch(0.66 0.004 250);
+  --map-guide: oklch(0.6 0.004 250);
+  --map-marker: oklch(0.3 0.004 250);
+  --map-marker-fill: var(--surface);
+  --map-half: oklch(0.3 0.004 250 / 0.3);
+}
+
+/* ── Tokens: dark (explicit) ───────────────────────────────────────────── */
+[data-skin="matrix"][data-theme="dark"] {
+  --accent-l: 0.8;
+  --accent-hover-l: 0.86;
+  --accent-soft-l: 0.3;
+  --accent-soft-c: 0.05;
+  --on-accent: oklch(0.17 0.004 250);
+
+  --bg: oklch(0.17 0.004 250);
+  --surface: oklch(0.21 0.004 250);
+  --surface-sunken: oklch(0.185 0.004 250);
+  --surface-raised: oklch(0.225 0.004 250);
+  --surface-hover: oklch(0.25 0.004 250);
+  --surface-pressed: oklch(0.27 0.004 250);
+  --rail-bg: oklch(0.19 0.004 250);
+  --scrim: oklch(0.08 0.003 250 / 0.6);
+
+  --text: oklch(0.93 0.003 250);
+  --text-muted: oklch(0.74 0.004 250);
+  --text-faint: oklch(0.55 0.004 250);
+
+  --border: oklch(0.34 0.004 250);
+  --border-subtle: oklch(0.28 0.004 250);
+  --border-control: oklch(0.55 0.004 250);
+
+  --success: oklch(0.76 0.12 150);
+  --success-soft: oklch(0.29 0.045 150);
+  --warning: oklch(0.8 0.12 88);
+  --warning-soft: oklch(0.29 0.045 88);
+  --danger: oklch(0.72 0.14 27);
+  --danger-hover: oklch(0.77 0.13 27);
+  --danger-soft: oklch(0.28 0.04 27);
+  --on-danger: oklch(0.17 0.004 250);
+  --on-success: oklch(0.17 0.004 250);
+  --info: oklch(0.74 0.1 260);
+  --info-soft: oklch(0.29 0.045 260);
+
+  --shadow-card: 0 0 0 1px var(--border);
+  --shadow-control: 0 0 0 1px var(--border-control);
+  --shadow-control-hover: 0 0 0 1px var(--accent);
+  --shadow-thumb: 0 0 0 1px var(--border-control);
+  --shadow-raised: 0 0 0 1px var(--border-control);
+  --shadow-dialog: 0 0 0 2px var(--border-control);
+
+  --skin-grid-line: oklch(0.93 0.003 250 / 0.08);
+  --skin-grid-line-soft: oklch(0.93 0.003 250 / 0.04);
+  --skin-band: oklch(0.8 0.11 215 / 0.07);
+  --skin-cross: oklch(0.8 0.11 215 / 0.16);
+  --skin-prelight: oklch(0.8 0.11 215 / 0.1);
+
+  --plot-bg: var(--surface-sunken);
+  --plot-grid: oklch(0.93 0.003 250 / 0.09);
+  --plot-axis: oklch(0.93 0.003 250 / 0.36);
+  --plot-text: var(--text-muted);
+  --plot-target: oklch(0.9 0.003 250);
+  --plot-shade: oklch(0.93 0.003 250 / 0.05);
+
+  --meter-track: var(--surface-sunken);
+  --meter-band: oklch(0.76 0.12 150 / 0.16);
+  --meter-fill: var(--text-muted);
+  --meter-fill-ok: var(--success);
+  --meter-fill-clip: var(--danger);
+
+  --map-bg: var(--surface-sunken);
+  --map-ink: oklch(0.86 0.003 250);
+  --map-furniture: oklch(0.26 0.004 250);
+  --map-furniture-edge: oklch(0.46 0.004 250);
+  --map-guide: oklch(0.55 0.004 250);
+  --map-marker: oklch(0.86 0.003 250);
+  --map-marker-fill: var(--surface);
+  --map-half: oklch(0.86 0.003 250 / 0.3);
+}
+
+/* ── Tokens: dark (system preference; identical to the block above) ───── */
+@media (prefers-color-scheme: dark) {
+  [data-skin="matrix"]:not([data-theme="light"]) {
+    --accent-l: 0.8;
+    --accent-hover-l: 0.86;
+    --accent-soft-l: 0.3;
+    --accent-soft-c: 0.05;
+    --on-accent: oklch(0.17 0.004 250);
+
+    --bg: oklch(0.17 0.004 250);
+    --surface: oklch(0.21 0.004 250);
+    --surface-sunken: oklch(0.185 0.004 250);
+    --surface-raised: oklch(0.225 0.004 250);
+    --surface-hover: oklch(0.25 0.004 250);
+    --surface-pressed: oklch(0.27 0.004 250);
+    --rail-bg: oklch(0.19 0.004 250);
+    --scrim: oklch(0.08 0.003 250 / 0.6);
+
+    --text: oklch(0.93 0.003 250);
+    --text-muted: oklch(0.74 0.004 250);
+    --text-faint: oklch(0.55 0.004 250);
+
+    --border: oklch(0.34 0.004 250);
+    --border-subtle: oklch(0.28 0.004 250);
+    --border-control: oklch(0.55 0.004 250);
+
+    --success: oklch(0.76 0.12 150);
+    --success-soft: oklch(0.29 0.045 150);
+    --warning: oklch(0.8 0.12 88);
+    --warning-soft: oklch(0.29 0.045 88);
+    --danger: oklch(0.72 0.14 27);
+    --danger-hover: oklch(0.77 0.13 27);
+    --danger-soft: oklch(0.28 0.04 27);
+    --on-danger: oklch(0.17 0.004 250);
+    --on-success: oklch(0.17 0.004 250);
+    --info: oklch(0.74 0.1 260);
+    --info-soft: oklch(0.29 0.045 260);
+
+    --shadow-card: 0 0 0 1px var(--border);
+    --shadow-control: 0 0 0 1px var(--border-control);
+    --shadow-control-hover: 0 0 0 1px var(--accent);
+    --shadow-thumb: 0 0 0 1px var(--border-control);
+    --shadow-raised: 0 0 0 1px var(--border-control);
+    --shadow-dialog: 0 0 0 2px var(--border-control);
+
+    --skin-grid-line: oklch(0.93 0.003 250 / 0.08);
+    --skin-grid-line-soft: oklch(0.93 0.003 250 / 0.04);
+    --skin-band: oklch(0.8 0.11 215 / 0.07);
+    --skin-cross: oklch(0.8 0.11 215 / 0.16);
+    --skin-prelight: oklch(0.8 0.11 215 / 0.1);
+
+    --plot-bg: var(--surface-sunken);
+    --plot-grid: oklch(0.93 0.003 250 / 0.09);
+    --plot-axis: oklch(0.93 0.003 250 / 0.36);
+    --plot-text: var(--text-muted);
+    --plot-target: oklch(0.9 0.003 250);
+    --plot-shade: oklch(0.93 0.003 250 / 0.05);
+
+    --meter-track: var(--surface-sunken);
+    --meter-band: oklch(0.76 0.12 150 / 0.16);
+    --meter-fill: var(--text-muted);
+    --meter-fill-ok: var(--success);
+    --meter-fill-clip: var(--danger);
+
+    --map-bg: var(--surface-sunken);
+    --map-ink: oklch(0.86 0.003 250);
+    --map-furniture: oklch(0.26 0.004 250);
+    --map-furniture-edge: oklch(0.46 0.004 250);
+    --map-guide: oklch(0.55 0.004 250);
+    --map-marker: oklch(0.86 0.003 250);
+    --map-marker-fill: var(--surface);
+    --map-half: oklch(0.86 0.003 250 / 0.3);
+  }
+}
+
+/* ── The lamp colour survives the tutorial accent ──────────────────────── */
+[data-skin="matrix"][data-accent] {
+  --accent-hue: 215;
+  --accent-chroma: 0.13;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Structure. Selectors mirror the component rules they override, prefixed
+   with the skin, so they win by specificity wherever the bundle puts them.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Shared recipes (`:where` keeps them apart from the token blocks, which
+   contrast.test.ts compares): the board's grid, half-pitch segments, and the
+   prelight a cell takes when the pointer reaches it. */
+:where([data-skin="matrix"]) {
+  --skin-board: repeating-linear-gradient(90deg, var(--skin-grid-line) 0 1px, transparent 1px var(--skin-grid-pitch)), repeating-linear-gradient(180deg, var(--skin-grid-line-soft) 0 1px, transparent 1px var(--skin-grid-pitch));
+  --skin-segments: repeating-linear-gradient(90deg, currentColor 0 10px, transparent 10px 12px);
+  --skin-prelight-layer: linear-gradient(var(--skin-prelight), var(--skin-prelight));
+  --skin-ticks: linear-gradient(90deg, var(--border-control) 0 1px, transparent 1px) 0 0 / var(--skin-grid-pitch) 6px repeat-x, linear-gradient(180deg, var(--border-control) 0 1px, transparent 1px) 0 0 / 6px var(--skin-grid-pitch) repeat-y;
+}
+
+/* Square lamp cells: solid = running, hollow = attention, faint hollow = idle. */
+[data-skin="matrix"] .ui-pill__dot,
+[data-skin="matrix"] .status-dot:not(.status-dot--busy),
+[data-skin="matrix"] .measure-row__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-faint);
+  opacity: 1;
+}
+
+/* ── App frame: the bus list ───────────────────────────────────────────── */
+[data-skin="matrix"] .app-rail {
+  border-right-color: var(--border);
+}
+
+[data-skin="matrix"] .app-rail__mark {
+  border-radius: 0;
+}
+
+[data-skin="matrix"] .app-rail__heading {
+  font-family: var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+[data-skin="matrix"] .project-menu__button {
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border-control);
+}
+
+[data-skin="matrix"] .project-menu__button:hover {
+  background: var(--skin-prelight-layer), var(--surface);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+[data-skin="matrix"] .project-menu__label {
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* Each step is a bus row: a 3 px state rail (done solid green, now the
+   engaged cyan band, blocked a dotted yellow rule, skipped struck through)
+   and an invariant coordinate cell S1…S5. */
+[data-skin="matrix"] .rail-steps__list {
+  gap: 0;
+  counter-reset: skin-bus;
+  border-top: 1px solid var(--border-subtle);
+}
+
+[data-skin="matrix"] .rail-steps__list > li {
+  counter-increment: skin-bus;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+[data-skin="matrix"] .rail-step {
+  min-height: calc(var(--skin-grid-pitch) * 2);
+  padding: var(--space-3) var(--space-2-5) var(--space-3) var(--space-3);
+}
+
+[data-skin="matrix"] .rail-step:hover:not(:disabled):not(.rail-step--current) {
+  background: var(--skin-band);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+[data-skin="matrix"] .rail-step--current {
+  background: var(--accent-soft);
+  box-shadow: inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent);
+}
+
+[data-skin="matrix"] .rail-step::before,
+[data-skin="matrix"] .rail-step--current::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 3px;
+  border-radius: 0;
+  background: transparent;
+}
+
+[data-skin="matrix"] .rail-step--done::before {
+  background: var(--success);
+}
+
+[data-skin="matrix"] .rail-step--blocked::before {
+  background: repeating-linear-gradient(180deg, var(--warning) 0 3px, transparent 3px 6px);
+}
+
+[data-skin="matrix"] .rail-step.rail-step--current::before {
+  background: var(--accent);
+}
+
+[data-skin="matrix"] .rail-step__mark,
+[data-skin="matrix"] .rail-step--done .rail-step__mark,
+[data-skin="matrix"] .rail-step--blocked .rail-step__mark,
+[data-skin="matrix"] .rail-step--current .rail-step__mark,
+[data-skin="matrix"] .rail-step--skipped .rail-step__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  width: auto;
+  min-width: 36px;
+  height: var(--skin-grid-pitch);
+  padding: 0 3px;
+  border-radius: 0;
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-weight: var(--weight-bold);
+}
+
+[data-skin="matrix"] .rail-step__mark::before {
+  content: "S";
+}
+
+[data-skin="matrix"] .rail-step--done .rail-step__mark::before,
+[data-skin="matrix"] .rail-step--blocked .rail-step__mark::before {
+  content: "S" counter(skin-bus);
+}
+
+[data-skin="matrix"] .rail-step__mark > svg {
+  margin-left: 2px;
+}
+
+[data-skin="matrix"] .rail-step--blocked .rail-step__mark {
+  box-shadow: inset 0 0 0 1.5px var(--warning);
+}
+
+[data-skin="matrix"] .rail-step--current .rail-step__mark {
+  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--accent);
+}
+
+[data-skin="matrix"] .rail-step--skipped .rail-step__title,
+[data-skin="matrix"] .rail-step--skipped .rail-step__reason {
+  text-decoration: line-through;
+}
+
+[data-skin="matrix"] .rail-step--skipped .rail-step__mark {
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  color: var(--text-faint);
+}
+
+[data-skin="matrix"] .rail-step__reason,
+[data-skin="matrix"] .rail-step__key {
+  font-family: var(--font-mono);
+}
+
+/* Project status: coordinate cells beside value cells. */
+[data-skin="matrix"] .app-rail__status {
+  gap: var(--space-3);
+  border-top-color: var(--border);
+}
+
+[data-skin="matrix"] .project-status {
+  gap: 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+[data-skin="matrix"] .status-row {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr);
+  gap: 0;
+  min-height: 36px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+[data-skin="matrix"] .status-row dt {
+  display: flex;
+  align-items: center;
+  padding: var(--space-1) var(--space-1-5);
+  background: var(--surface-sunken);
+  box-shadow: inset -1px 0 0 var(--border-subtle);
+  font-family: var(--font-mono);
+}
+
+[data-skin="matrix"] .status-row__value {
+  align-items: center;
+  padding: var(--space-1) var(--space-2);
+}
+
+[data-skin="matrix"] .status-row__value > .status-dot,
+[data-skin="matrix"] .status-row__value > .status-dot--busy {
+  margin-top: 0;
+}
+
+[data-skin="matrix"] .status-dot.status-dot--success,
+[data-skin="matrix"] .status-dot.status-dot--danger,
+[data-skin="matrix"] .status-dot.status-dot--info {
+  box-shadow: none;
+}
+
+[data-skin="matrix"] .status-dot.status-dot--success {
+  background: var(--success);
+}
+
+[data-skin="matrix"] .status-dot.status-dot--danger {
+  background: var(--danger);
+}
+
+[data-skin="matrix"] .status-dot.status-dot--info {
+  background: var(--info);
+}
+
+[data-skin="matrix"] .status-dot.status-dot--warning {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--warning);
+}
+
+[data-skin="matrix"] .app-rail__footer {
+  border-top-color: var(--border);
+}
+
+[data-skin="matrix"] .rail-tool:hover {
+  background: var(--skin-prelight);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+[data-skin="matrix"] .ui-kbd,
+[data-skin="matrix"] .ui-menu__shortcut {
+  font-family: var(--font-mono);
+}
+
+/* ── Masthead, board, remark line ──────────────────────────────────────── */
+[data-skin="matrix"] .step-header {
+  border-bottom-color: var(--border);
+  background: var(--surface);
+}
+
+/* The blocked reason: a hollow yellow lamp with a ! marker, a mono remark. */
+[data-skin="matrix"] .step-header__blocked {
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+[data-skin="matrix"] .step-header__blocked::before {
+  content: "!";
+  content: "!" / "";
+  display: inline-grid;
+  place-items: center;
+  width: var(--skin-grid-pitch);
+  height: var(--skin-grid-pitch);
+  box-shadow: inset 0 0 0 1.5px var(--warning);
+  color: var(--warning);
+  font-weight: var(--weight-bold);
+}
+
+/* The board surface: a 24 px grid between and around the cards (cards are
+   opaque panels, so the grid never shows inside a card body). */
+[data-skin="matrix"] .app-content {
+  background-image: var(--skin-board);
+  background-attachment: local;
+}
+
+[data-skin="matrix"] .job-tray {
+  border-top-color: var(--border);
+  background: var(--surface-sunken);
+}
+
+[data-skin="matrix"] .job-tray__bar::before {
+  content: ">";
+  content: ">" / "";
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-weight: var(--weight-bold);
+}
+
+[data-skin="matrix"] .job-tray__idle,
+[data-skin="matrix"] .job-row__stage,
+[data-skin="matrix"] .job-entry__time {
+  font-family: var(--font-mono);
+}
+
+[data-skin="matrix"] .job-row__count,
+[data-skin="matrix"] .job-row__time {
+  padding: 0 var(--space-1-5);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--border);
+  font-family: var(--font-mono);
+  font-weight: var(--weight-bold);
+}
+
+[data-skin="matrix"] .job-tray__toggle:hover {
+  background: var(--skin-prelight);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+[data-skin="matrix"] .job-tray__errors {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--danger);
+  font-family: var(--font-mono);
+}
+
+/* ── Buttons: cells ────────────────────────────────────────────────────── */
+[data-skin="matrix"] .ui-button {
+  transition-property: background-color, box-shadow, color;
+}
+
+/* The one primary: an engaged cell. Pressing engages it one step brighter. */
+[data-skin="matrix"] .ui-button--primary {
+  box-shadow: inset 0 0 0 1px var(--accent-hover);
+}
+
+[data-skin="matrix"] .ui-button--primary:active:not(:disabled) {
+  background: var(--accent-hover);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* Secondary: a caption key (1 px rule, light fill). */
+[data-skin="matrix"] .ui-button--secondary {
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--border-control);
+}
+
+/* Prelight: a 1 px cyan rule and a faint cyan fill. */
+[data-skin="matrix"] .ui-button--secondary:hover:not(:disabled),
+[data-skin="matrix"] .ui-button--quiet:hover:not(:disabled),
+[data-skin="matrix"] .ui-dialog__close:hover,
+[data-skin="matrix"] .ui-advanced__toggle:hover {
+  background: var(--skin-prelight-layer), var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+[data-skin="matrix"] .ui-button--secondary:active:not(:disabled),
+[data-skin="matrix"] .ui-button--quiet:active:not(:disabled) {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* Danger: a danger rule with a danger prelight, never a filled block. */
+[data-skin="matrix"] .ui-button--danger {
+  background: var(--danger-soft);
+  box-shadow: inset 0 0 0 1px var(--danger);
+  color: var(--danger);
+}
+
+[data-skin="matrix"] .ui-button--danger:hover:not(:disabled) {
+  background: var(--danger-soft);
+  box-shadow: inset 0 0 0 2px var(--danger);
+}
+
+[data-skin="matrix"] .ui-button:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* Cancelled: a dotted rule, faint ink; the cell stays on the board. */
+[data-skin="matrix"] .ui-button:disabled:not([aria-busy]),
+[data-skin="matrix"] .ui-button--primary:disabled:not([aria-busy]),
+[data-skin="matrix"] .ui-button--danger:disabled:not([aria-busy]),
+[data-skin="matrix"] .ui-button--secondary:disabled:not([aria-busy]) {
+  background: transparent;
+  box-shadow: none;
+  outline: 1px dotted var(--border-control);
+  outline-offset: -1px;
+  color: var(--text-faint);
+}
+
+/* A cancelled primary also shows the hollow yellow lamp. */
+[data-skin="matrix"] .ui-button--primary:disabled:not([aria-busy])::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  box-shadow: inset 0 0 0 1.5px var(--warning);
+}
+
+/* ── Cards: square cells, a sunken head band ruled off from the body ───── */
+[data-skin="matrix"] .ui-card__header {
+  min-height: calc(var(--skin-grid-pitch) * 2);
+  margin: calc(var(--space-5) * -1) calc(var(--space-5) * -1) 0;
+  padding: var(--space-2) var(--space-5);
+  background: var(--surface-sunken);
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+
+[data-skin="matrix"] .ui-card--dense .ui-card__header {
+  margin: calc(var(--space-4) * -1) calc(var(--space-4) * -1) 0;
+  padding: var(--space-2) var(--space-4);
+}
+
+[data-skin="matrix"] .ui-card__title,
+[data-skin="matrix"] .ui-section__title,
+[data-skin="matrix"] .ui-dialog__title,
+[data-skin="matrix"] .ui-empty__title,
+[data-skin="matrix"] .settings__title,
+[data-skin="matrix"] .plot-axes__title,
+[data-skin="matrix"] .ui-table__caption {
+  font-size: var(--text-ui);
+  font-weight: var(--weight-bold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+/* A dialog title can carry data (a file name): spacing only, no capitals. */
+[data-skin="matrix"] .ui-dialog__title {
+  text-transform: none;
+}
+
+/* Stale: a dashed outer rule instead of the solid one. */
+[data-skin="matrix"] .ui-card--stale {
+  box-shadow: none;
+  outline: 1px dashed var(--warning);
+}
+
+[data-skin="matrix"] .ui-section {
+  border-top-color: var(--border);
+}
+
+[data-skin="matrix"] .ui-advanced__panel {
+  border-left-width: 1px;
+  border-left-color: var(--border-control);
+}
+
+/* ── Status: square lamp cells, monochrome nouns ───────────────────────── */
+[data-skin="matrix"] .ui-pill,
+[data-skin="matrix"] .ui-pill--success,
+[data-skin="matrix"] .ui-pill--warning,
+[data-skin="matrix"] .ui-pill--danger,
+[data-skin="matrix"] .ui-pill--info,
+[data-skin="matrix"] .ui-pill--busy {
+  gap: var(--space-2);
+  height: var(--skin-grid-pitch);
+  padding: 0 var(--space-2);
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text);
+}
+
+[data-skin="matrix"] .ui-pill--success .ui-pill__dot {
+  background: var(--success);
+  box-shadow: none;
+}
+
+[data-skin="matrix"] .ui-pill--danger .ui-pill__dot {
+  background: var(--danger);
+  box-shadow: none;
+}
+
+[data-skin="matrix"] .ui-pill--info .ui-pill__dot {
+  background: var(--info);
+  box-shadow: none;
+}
+
+[data-skin="matrix"] .ui-pill--warning .ui-pill__dot {
+  box-shadow: inset 0 0 0 1.5px var(--warning);
+}
+
+[data-skin="matrix"] .ui-pill__spinner {
+  color: var(--info);
+}
+
+/* ── Fields: sunken mono box cells ─────────────────────────────────────── */
+[data-skin="matrix"] .ui-number,
+[data-skin="matrix"] .ui-cell-select {
+  background: var(--surface-sunken);
+}
+
+[data-skin="matrix"] .ui-number:hover,
+[data-skin="matrix"] .ui-select:hover,
+[data-skin="matrix"] .ui-cell-select:hover {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+[data-skin="matrix"] .ui-number:focus-within,
+[data-skin="matrix"] .ui-select:focus-within,
+[data-skin="matrix"] .ui-cell-select:focus-within {
+  outline: 1px solid var(--focus-color);
+  outline-offset: 1px;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+[data-skin="matrix"] .ui-number__input,
+[data-skin="matrix"] .ui-stepper__value,
+[data-skin="matrix"] .ui-number__unit {
+  font-family: var(--font-mono);
+}
+
+[data-skin="matrix"] .ui-number__input,
+[data-skin="matrix"] .ui-stepper__value {
+  font-weight: var(--weight-bold);
+}
+
+[data-skin="matrix"] .ui-number--invalid,
+[data-skin="matrix"] .ui-number--invalid:hover,
+[data-skin="matrix"] .ui-select.ui-select--invalid,
+[data-skin="matrix"] .ui-cell-select.ui-cell-select--invalid,
+[data-skin="matrix"] .ui-cell-select.ui-cell-select--invalid:hover {
+  box-shadow: inset 3px 0 0 var(--danger), inset 0 0 0 1px var(--danger);
+}
+
+[data-skin="matrix"] .ui-number--disabled,
+[data-skin="matrix"] .ui-select.ui-select--disabled,
+[data-skin="matrix"] .ui-select.ui-select--disabled:hover,
+[data-skin="matrix"] .ui-cell-select.ui-cell-select--disabled,
+[data-skin="matrix"] .ui-cell-select.ui-cell-select--disabled:hover {
+  background: transparent;
+  box-shadow: none;
+  outline: 1px dotted var(--border-control);
+  outline-offset: -1px;
+}
+
+/* A select keeps its drop zone: a ruled-off cell for the caret. */
+[data-skin="matrix"] .ui-select {
+  background: linear-gradient(90deg, transparent calc(100% - 33px), var(--border-control) calc(100% - 33px) calc(100% - 32px), var(--surface-sunken) calc(100% - 32px)), var(--surface);
+}
+
+[data-skin="matrix"] .ui-cell-select {
+  background: linear-gradient(90deg, transparent calc(100% - 29px), var(--border-control) calc(100% - 29px) calc(100% - 28px), var(--surface-sunken) calc(100% - 28px)), var(--surface);
+}
+
+/* Stepper: caption keys around a mono cell. */
+[data-skin="matrix"] .ui-stepper__button {
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--border-control);
+}
+
+[data-skin="matrix"] .ui-stepper__button:hover:not(:disabled) {
+  background: var(--skin-prelight-layer), var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* Toggle: two cells; the "on" cell lights as a cyan LED. */
+[data-skin="matrix"] .ui-toggle__track,
+[data-skin="matrix"] .ui-toggle[aria-checked="true"] .ui-toggle__track {
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--border-control);
+}
+
+[data-skin="matrix"] .ui-toggle__track::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 18px;
+  width: 1px;
+  background: var(--border-control);
+}
+
+[data-skin="matrix"] .ui-toggle__thumb {
+  top: 3px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--text-faint);
+}
+
+[data-skin="matrix"] .ui-toggle[aria-checked="true"] .ui-toggle__thumb {
+  translate: 18px 0;
+  background: var(--accent);
+  box-shadow: none;
+}
+
+[data-skin="matrix"] .ui-toggle:disabled .ui-toggle__label {
+  text-decoration: line-through;
+}
+
+/* Segmented: a train of cells; the chosen one is engaged. */
+[data-skin="matrix"] .ui-segmented {
+  gap: 0;
+  padding: 0;
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--border-control);
+}
+
+[data-skin="matrix"] .ui-segmented__option {
+  box-shadow: inset -1px 0 0 var(--border);
+}
+
+[data-skin="matrix"] .ui-segmented__option:last-child {
+  box-shadow: none;
+}
+
+[data-skin="matrix"] .ui-segmented__option:hover:not([aria-checked="true"]):not(:disabled) {
+  background: var(--skin-prelight);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+[data-skin="matrix"] .ui-segmented__option[aria-checked="true"] {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+[data-skin="matrix"] .ui-segmented__option:disabled {
+  text-decoration: line-through;
+}
+
+/* ── Tables: the board's main field ────────────────────────────────────── */
+[data-skin="matrix"] .ui-table th[scope="col"] {
+  border-bottom-color: var(--border-control);
+  background: var(--surface-sunken);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+}
+
+[data-skin="matrix"] .ui-table td + td,
+[data-skin="matrix"] .ui-table th[scope="col"] + th[scope="col"] {
+  border-left: 1px solid var(--border-subtle);
+}
+
+[data-skin="matrix"] .ui-table td.ui-table__num {
+  font-family: var(--font-mono);
+}
+
+[data-skin="matrix"] .ui-table__group th {
+  box-shadow: inset 0 1px 0 var(--border), inset 0 -1px 0 var(--border);
+  letter-spacing: 0.06em;
+}
+
+/* Crosspoint hover: the row band and the column band light together, and
+   their crossing is the brightest cell (the two layers add up). */
+[data-skin="matrix"] .ui-table tbody tr:hover > td {
+  background-color: var(--skin-band);
+}
+
+[data-skin="matrix"] .ui-table:has(tbody td:nth-child(1):hover) :is(tbody td, thead th):nth-child(1),
+[data-skin="matrix"] .ui-table:has(tbody td:nth-child(2):hover) :is(tbody td, thead th):nth-child(2),
+[data-skin="matrix"] .ui-table:has(tbody td:nth-child(3):hover) :is(tbody td, thead th):nth-child(3),
+[data-skin="matrix"] .ui-table:has(tbody td:nth-child(4):hover) :is(tbody td, thead th):nth-child(4),
+[data-skin="matrix"] .ui-table:has(tbody td:nth-child(5):hover) :is(tbody td, thead th):nth-child(5),
+[data-skin="matrix"] .ui-table:has(tbody td:nth-child(6):hover) :is(tbody td, thead th):nth-child(6),
+[data-skin="matrix"] .ui-table:has(tbody td:nth-child(7):hover) :is(tbody td, thead th):nth-child(7),
+[data-skin="matrix"] .ui-table:has(tbody td:nth-child(8):hover) :is(tbody td, thead th):nth-child(8),
+[data-skin="matrix"] .ui-table:has(tbody td:nth-child(9):hover) :is(tbody td, thead th):nth-child(9),
+[data-skin="matrix"] .ui-table:has(tbody td:nth-child(10):hover) :is(tbody td, thead th):nth-child(10) {
+  background-image: linear-gradient(var(--skin-band), var(--skin-band));
+}
+
+[data-skin="matrix"] .ui-table--selectable tbody tr[tabindex]:hover {
+  background: transparent;
+}
+
+[data-skin="matrix"] .ui-table__row--selected,
+[data-skin="matrix"] .ui-table--selectable tbody tr.ui-table__row--selected:hover {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent), inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent);
+}
+
+[data-skin="matrix"] .ui-table--selectable tbody tr[tabindex]:focus-visible {
+  outline-offset: -1px;
+}
+
+/* ── Meter: a segment cell, the reading in a mono box ──────────────────── */
+[data-skin="matrix"] .ui-meter__track {
+  background: repeating-linear-gradient(90deg, transparent 0 10px, var(--border) 10px 12px), var(--meter-track);
+  box-shadow: inset 0 0 0 1px var(--border-control);
+}
+
+[data-skin="matrix"] .ui-meter__fill {
+  top: 2px;
+  bottom: 2px;
+  mask: var(--skin-segments);
+}
+
+[data-skin="matrix"] .ui-meter__label {
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+}
+
+[data-skin="matrix"] .ui-meter__value {
+  padding: 0 var(--space-1-5);
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  font-family: var(--font-mono);
+  font-weight: var(--weight-bold);
+}
+
+[data-skin="matrix"] .ui-meter__ticks {
+  font-family: var(--font-mono);
+}
+
+/* ── Progress: half-pitch segments in a ruled cell ─────────────────────── */
+[data-skin="matrix"] .ui-progress {
+  height: 12px;
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--border-control);
+}
+
+[data-skin="matrix"] .ui-progress__fill {
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  mask: var(--skin-segments);
+}
+
+/* ── Remarks: tooltips, toasts, menus ──────────────────────────────────── */
+[data-skin="matrix"] .ui-tooltip,
+[data-skin="matrix"] .tutorial-toast {
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--border-control);
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+[data-skin="matrix"] .ui-menu {
+  padding: 0;
+}
+
+[data-skin="matrix"] .ui-menu__item {
+  box-shadow: inset 0 -1px 0 var(--border-subtle);
+}
+
+[data-skin="matrix"] .ui-menu__item:hover:not(:disabled),
+[data-skin="matrix"] .ui-menu__item:focus-visible {
+  background: var(--skin-prelight);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+[data-skin="matrix"] .ui-menu__item--checked,
+[data-skin="matrix"] .ui-menu__item--checked:hover:not(:disabled) {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent), inset 0 -1px 0 var(--border-subtle);
+}
+
+[data-skin="matrix"] .ui-menu__separator {
+  margin: 0;
+  background: var(--border-control);
+}
+
+[data-skin="matrix"] .ui-toast {
+  box-shadow: 0 0 0 1px var(--border-control), inset 3px 0 0 var(--accent);
+}
+
+[data-skin="matrix"] .ui-toast__message {
+  font-family: var(--font-mono);
+}
+
+[data-skin="matrix"] .ui-toast__action {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+[data-skin="matrix"] .ui-toast__action:hover {
+  background: var(--accent-soft);
+}
+
+[data-skin="matrix"] .ui-toast__close:hover {
+  background: var(--danger-soft);
+  box-shadow: inset 0 0 0 1px var(--danger);
+  color: var(--danger);
+}
+
+/* ── Empty and error: the state rail speaks first ──────────────────────── */
+[data-skin="matrix"] .ui-error {
+  background: var(--surface-sunken);
+  box-shadow: inset 3px 0 0 var(--danger), inset 0 0 0 1px var(--border);
+}
+
+[data-skin="matrix"] .ui-error--warning {
+  background: var(--surface-sunken);
+  box-shadow: inset 3px 0 0 var(--warning), inset 0 0 0 1px var(--border);
+}
+
+[data-skin="matrix"] .ui-details__raw {
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  font-family: var(--font-mono);
+}
+
+/* ── Graphs: a sunken data cell ────────────────────────────────────────── */
+[data-skin="matrix"] .plot__frame {
+  --font-ui: var(--font-mono);
+}
+
+[data-skin="matrix"] .plot__canvas {
+  background: var(--plot-bg);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+[data-skin="matrix"] .plot__unit {
+  font-family: var(--font-ui);
+}
+
+[data-skin="matrix"] .plot__readout:not(:empty) {
+  padding: 0 var(--space-1-5);
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text);
+  font-weight: var(--weight-bold);
+}
+
+[data-skin="matrix"] .plot-band-label {
+  box-shadow: inset 0 0 0 1px var(--border);
+  font-family: var(--font-mono);
+}
+
+[data-skin="matrix"] .plot-chip {
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--border-control);
+}
+
+[data-skin="matrix"] .plot-chip:hover {
+  background: var(--skin-prelight-layer), var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* A chip switched off is a cancelled cell: dotted, struck through. */
+[data-skin="matrix"] .plot-chip[aria-pressed="false"] {
+  background: transparent;
+  box-shadow: none;
+  outline: 1px dotted var(--border-control);
+  outline-offset: -1px;
+  text-decoration: line-through;
+}
+
+[data-skin="matrix"] .plot-chip--position {
+  font-family: var(--font-mono);
+}
+
+/* Target points are square crosspoints: hollow at rest; prelit with a hair
+   line through the plot on hover and focus; engaged while dragged. */
+[data-skin="matrix"] .u-over {
+  overflow: clip;
+  overflow-clip-margin: 12px;
+}
+
+[data-skin="matrix"] .plot-handle::after {
+  inset: 7px;
+  border-radius: 0;
+  background: var(--plot-bg);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
+}
+
+[data-skin="matrix"] .plot-handle:hover::after,
+[data-skin="matrix"] .plot-handle--active::after {
+  scale: 1;
+  background: var(--skin-prelight-layer), var(--plot-bg);
+  box-shadow: inset 0 0 0 1.5px var(--accent), 0 0 0 1px var(--accent);
+}
+
+[data-skin="matrix"] .plot-handle--active::after {
+  background: var(--accent);
+}
+
+[data-skin="matrix"] .plot-handle:hover::before,
+[data-skin="matrix"] .plot-handle:focus-visible::before,
+[data-skin="matrix"] .plot-handle--active::before {
+  content: "";
+  position: absolute;
+  top: -2000px;
+  left: -2000px;
+  width: 4024px;
+  height: 4024px;
+  background:
+    linear-gradient(90deg, transparent calc(50% - 1px), var(--skin-cross) calc(50% - 1px) 50%, transparent 50%),
+    linear-gradient(180deg, transparent calc(50% - 1px), var(--skin-cross) calc(50% - 1px) 50%, transparent 50%);
+  pointer-events: none;
+}
+
+[data-skin="matrix"] .plot-xo__line {
+  left: 0;
+  width: 1px;
+}
+
+[data-skin="matrix"] .plot-xo__handle {
+  box-shadow: inset 0 0 0 1px var(--accent-hover);
+  font-family: var(--font-mono);
+}
+
+[data-skin="matrix"] .plot-xo--disabled .plot-xo__line {
+  background: repeating-linear-gradient(180deg, var(--text-faint) 0 3px, transparent 3px 6px);
+}
+
+[data-skin="matrix"] .plot-xo--disabled .plot-xo__handle {
+  background: transparent;
+  box-shadow: none;
+  outline: 1px dotted var(--border-control);
+  outline-offset: -1px;
+}
+
+/* ── Maps: the board's coordinate plane ────────────────────────────────── */
+[data-skin="matrix"] .map__frame {
+  background: var(--skin-ticks), var(--map-bg);
+  box-shadow: inset 0 0 0 1px var(--border-control);
+}
+
+[data-skin="matrix"] .map-marker__number,
+[data-skin="matrix"] .map-speaker__code {
+  font-family: var(--font-mono);
+}
+
+[data-skin="matrix"] .map-marker--is-done .map-marker__body {
+  fill: var(--map-marker-fill);
+  stroke: var(--success);
+  stroke-width: 2;
+}
+
+[data-skin="matrix"] .map-marker--is-done .map-marker__number {
+  fill: var(--map-ink);
+}
+
+[data-skin="matrix"] .map-marker--current.map-marker--is-done .map-marker__body {
+  fill: var(--accent);
+  stroke: var(--success);
+}
+
+[data-skin="matrix"] .map-marker--current.map-marker--is-done .map-marker__number {
+  fill: var(--on-accent);
+}
+
+[data-skin="matrix"] .map-marker__halo,
+[data-skin="matrix"] .map-speaker__halo {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 3 2;
+}
+
+[data-skin="matrix"] .map__unassigned-chip {
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--border-control);
+}
+
+/* ── Choice cells and position rows on the screens ─────────────────────── */
+[data-skin="matrix"] .system-choice,
+[data-skin="matrix"] .connect-method,
+[data-skin="matrix"] .system-polarity {
+  box-shadow: inset 0 0 0 1px var(--border-control);
+}
+
+[data-skin="matrix"] button.system-choice:hover:not([aria-pressed="true"]),
+[data-skin="matrix"] .connect-method:hover:not([aria-pressed="true"]),
+[data-skin="matrix"] .system-polarity:hover,
+[data-skin="matrix"] .map__unassigned-chip:hover {
+  background: var(--skin-prelight-layer), var(--surface);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+[data-skin="matrix"] .system-choice[aria-pressed="true"],
+[data-skin="matrix"] .system-choice[aria-current="true"],
+[data-skin="matrix"] .connect-method[aria-pressed="true"],
+[data-skin="matrix"] .system-polarity[aria-pressed="true"],
+[data-skin="matrix"] .map__unassigned-chip[aria-pressed="true"] {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent), inset 0 0 0 1px var(--accent);
+  color: var(--text);
+}
+
+[data-skin="matrix"] .measure-list {
+  gap: 0;
+  border-top: 1px solid var(--border-subtle);
+}
+
+[data-skin="matrix"] .measure-list > li {
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+[data-skin="matrix"] .measure-row:hover {
+  background: var(--skin-band);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+[data-skin="matrix"] .measure-row[aria-disabled="true"]:hover {
+  box-shadow: none;
+}
+
+[data-skin="matrix"] .measure-row--current,
+[data-skin="matrix"] .measure-row--current:hover,
+[data-skin="matrix"] .measure-row--current[aria-disabled="true"]:hover {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* Position coordinates P01… never renumber: they are the position numbers. */
+[data-skin="matrix"] .measure-row__num {
+  padding: 0 var(--space-1);
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  font-family: var(--font-mono);
+  font-weight: var(--weight-bold);
+}
+
+[data-skin="matrix"] .measure-row__num::before {
+  content: "P";
+  content: "P" / "";
+}
+
+[data-skin="matrix"] .measure-row--current .measure-row__num {
+  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--accent);
+}
+
+[data-skin="matrix"] .measure-row__state,
+[data-skin="matrix"] .measure-row--done .measure-row__state,
+[data-skin="matrix"] .measure-row--redo .measure-row__state,
+[data-skin="matrix"] .measure-row--next .measure-row__state,
+[data-skin="matrix"] .measure-row--measuring .measure-row__state,
+[data-skin="matrix"] .measure-row--partial .measure-row__state {
+  color: var(--text-muted);
+}
+
+[data-skin="matrix"] .measure-row--done .measure-row__dot,
+[data-skin="matrix"] .measure-row--redo .measure-row__dot {
+  background: var(--success);
+  box-shadow: none;
+}
+
+[data-skin="matrix"] .measure-row--next .measure-row__dot {
+  background: var(--accent);
+  box-shadow: none;
+}
+
+[data-skin="matrix"] .measure-row--measuring .measure-row__dot {
+  background: var(--info);
+  box-shadow: none;
+}
+
+[data-skin="matrix"] .measure-row--partial .measure-row__dot {
+  box-shadow: inset 0 0 0 1.5px var(--warning);
+}
+
+/* Readings on the screens sit in mono box cells. */
+[data-skin="matrix"] .calibrate-stat__value,
+[data-skin="matrix"] .connect-readout.tabular,
+[data-skin="matrix"] .export-fact dd {
+  padding: var(--space-0-5) var(--space-2);
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  font-family: var(--font-mono);
+}
+
+[data-skin="matrix"] .connect-readout.tabular,
+[data-skin="matrix"] .export-fact dd {
+  align-self: flex-start;
+  width: fit-content;
+}
+
+/* ── Tutorial: a board panel and a square bracket ──────────────────────── */
+[data-skin="matrix"] .tutorial-ring {
+  border-radius: 0;
+}
+
+[data-skin="matrix"] .tutorial-ring--act {
+  box-shadow: 0 0 0 1px var(--accent), 0 0 0 3px var(--surface);
+}
+
+/* The bracket's corner ticks replace the pulse ring. */
+[data-skin="matrix"] .tutorial-ring--act::after {
+  inset: -6px;
+  border-radius: 0;
+  box-shadow: none;
+  opacity: 1;
+  animation: none;
+  background:
+    linear-gradient(var(--accent), var(--accent)) 0 0 / 10px 2px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) 0 0 / 2px 10px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) 100% 0 / 10px 2px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) 100% 0 / 2px 10px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) 0 100% / 10px 2px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) 0 100% / 2px 10px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) 100% 100% / 10px 2px no-repeat,
+    linear-gradient(var(--accent), var(--accent)) 100% 100% / 2px 10px no-repeat;
+}

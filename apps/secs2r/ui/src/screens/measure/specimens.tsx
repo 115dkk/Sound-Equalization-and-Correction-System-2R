@@ -124,7 +124,7 @@ function FilesDialogSpecimen() {
 function Tutorial({ view }: { view: MeasureView }) {
   const outer = usePrefs();
   return (
-    <PrefsScope key={`${outer.locale}-${outer.theme}`} initial={{ locale: outer.locale, theme: outer.theme, accent: "tutorial" }} className="gal-fill">
+    <PrefsScope key={`${outer.locale}-${outer.theme}-${outer.skin ?? "default"}`} initial={{ locale: outer.locale, theme: outer.theme, accent: "tutorial", ...(outer.skin ? { skin: outer.skin } : {}) }} className="gal-fill">
       <MeasureFrame view={view} jobs={view.job ? sampleJobs : initialJobs} />
     </PrefsScope>
   );
