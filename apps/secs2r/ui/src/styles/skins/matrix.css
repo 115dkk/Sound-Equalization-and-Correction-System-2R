@@ -458,6 +458,12 @@
   font-family: var(--font-mono);
 }
 
+/* Numbers in the status summary are readouts: mono, like every value cell. */
+[data-skin="matrix"] .status-row .tabular {
+  font-family: var(--font-mono);
+  font-weight: var(--weight-semibold);
+}
+
 [data-skin="matrix"] .status-row__value {
   align-items: center;
   padding: var(--space-1) var(--space-2);
@@ -866,6 +872,16 @@
   box-shadow: inset 0 0 0 1px var(--accent);
 }
 
+/* The segment bank and the help glyph's focus ring keep radius 0 too (the
+   kit derives them from a radius token plus a constant). */
+[data-skin="matrix"] .ui-segmented {
+  border-radius: 0;
+}
+
+[data-skin="matrix"] .ui-help:focus-visible > svg {
+  border-radius: 0;
+}
+
 [data-skin="matrix"] .ui-segmented__option:disabled {
   text-decoration: line-through;
 }
@@ -1004,8 +1020,22 @@
   background: var(--border-control);
 }
 
+/* The toast's left kill carries its tone (the colour ration): neutral is a
+   rule, the rest their status colour. Never the accent (nothing is engaged). */
 [data-skin="matrix"] .ui-toast {
-  box-shadow: 0 0 0 1px var(--border-control), inset 3px 0 0 var(--accent);
+  box-shadow: 0 0 0 1px var(--border-control), inset 3px 0 0 var(--border-control);
+}
+
+[data-skin="matrix"] .ui-toast--success {
+  box-shadow: 0 0 0 1px var(--border-control), inset 3px 0 0 var(--success);
+}
+
+[data-skin="matrix"] .ui-toast--warning {
+  box-shadow: 0 0 0 1px var(--border-control), inset 3px 0 0 var(--warning);
+}
+
+[data-skin="matrix"] .ui-toast--danger {
+  box-shadow: 0 0 0 1px var(--border-control), inset 3px 0 0 var(--danger);
 }
 
 [data-skin="matrix"] .ui-toast__message {
@@ -1163,6 +1193,15 @@
 [data-skin="matrix"] .map-marker__number,
 [data-skin="matrix"] .map-speaker__code {
   font-family: var(--font-mono);
+}
+
+/* Position markers are square cells on the board (the shared SVG draws
+   rounded rects; the skin removes the rounding). */
+[data-skin="matrix"] .map-marker__body,
+[data-skin="matrix"] .map-marker__hit,
+[data-skin="matrix"] .map-marker__halo {
+  rx: 0;
+  ry: 0;
 }
 
 [data-skin="matrix"] .map-marker--is-done .map-marker__body {
