@@ -9,10 +9,13 @@
   margin: 0;
 }
 
+/* The row above the canvas holds the unit, the cursor readout and the toolbar;
+   it is one small control tall plus a gap, so a raised toolbar cap never sits on
+   the glass. */
 .plot__frame {
   position: relative;
   min-width: 0;
-  padding-top: 28px;
+  padding-top: calc(var(--control-h-sm) + var(--space-2));
 }
 
 .plot__canvas {
@@ -30,7 +33,7 @@
 
 .plot__unit {
   position: absolute;
-  top: 6px;
+  top: 7px;
   left: 0;
   width: 46px;
   padding-right: 10px;
@@ -41,7 +44,7 @@
 
 .plot__toolbar {
   position: absolute;
-  top: -4px;
+  top: 0;
   right: 0;
   z-index: var(--z-sticky);
   display: flex;
@@ -51,7 +54,7 @@
 
 .plot__readout {
   position: absolute;
-  top: 6px;
+  top: 7px;
   left: 56px;
   min-height: 18px;
   color: var(--text-muted);

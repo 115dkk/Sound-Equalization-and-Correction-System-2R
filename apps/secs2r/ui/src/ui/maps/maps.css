@@ -32,6 +32,22 @@
   font-size: var(--text-caption);
 }
 
+/* The screen caption's meaning without words: an arrow pointing at the
+   screen. The default skin keeps the caption and hides this; a skin may show
+   it in place of the caption (docs/skins/README.md). */
+.map__front {
+  display: none;
+}
+
+.map__front-shaft {
+  stroke: var(--map-ink);
+  stroke-width: 2;
+}
+
+.map__front-head {
+  fill: var(--map-ink);
+}
+
 .map__guide {
   fill: none;
   stroke: var(--map-guide);

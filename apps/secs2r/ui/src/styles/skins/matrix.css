@@ -1190,6 +1190,39 @@
   box-shadow: inset 0 0 0 1px var(--border-control);
 }
 
+/* The screen is a 1px rule on the board and a hairline arrow under it points
+   at it; no caption, and the seat needs no label. The scale keeps its number,
+   set in the mono face. */
+[data-skin="matrix"] .map__screen {
+  y: 12px;
+  height: 1px;
+  rx: 0;
+  ry: 0;
+}
+
+[data-skin="matrix"] .map__caption--screen,
+[data-skin="matrix"] .map__caption--seat {
+  display: none;
+}
+
+[data-skin="matrix"] .map__front {
+  display: inline;
+}
+
+[data-skin="matrix"] .map__front-shaft {
+  stroke: var(--map-ink);
+  stroke-width: 1;
+}
+
+[data-skin="matrix"] .map__front-head {
+  fill: var(--map-ink);
+}
+
+[data-skin="matrix"] .map__caption {
+  font-family: var(--font-mono);
+  letter-spacing: 0.04em;
+}
+
 [data-skin="matrix"] .map-marker__number,
 [data-skin="matrix"] .map-speaker__code {
   font-family: var(--font-mono);

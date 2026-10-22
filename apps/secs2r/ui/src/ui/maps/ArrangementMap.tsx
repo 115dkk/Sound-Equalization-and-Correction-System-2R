@@ -82,9 +82,16 @@ export function ArrangementMap({ id, count, done = [], current = null, onSelect,
       >
         <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} className="map__svg">
           <rect className="map__screen" x={W * 0.2} y={8} width={W * 0.6} height={6} rx={2} />
-          <text className="map__caption" x={cx} y={32} textAnchor="middle">
+          <text className="map__caption map__caption--screen" x={cx} y={32} textAnchor="middle">
             {t("map.screen_front")}
           </text>
+          {/* The caption's meaning without words: an arrow under the screen
+              pointing at it. The default skin hides it; a skin may show it in
+              place of the caption. */}
+          <g className="map__front" aria-hidden="true">
+            <line className="map__front-shaft" x1={cx} y1={25} x2={cx} y2={38} />
+            <path className="map__front-head" d={`M${cx},17 L${cx + 4},25 L${cx - 4},25 Z`} />
+          </g>
           <circle className="map__guide" cx={cx} cy={cy} r={50 * k} />
           {sofa ? (
             <g className="map__furniture">
@@ -104,7 +111,7 @@ export function ArrangementMap({ id, count, done = [], current = null, onSelect,
             <line x1={W - 18 - 30 * k} y1={H - 16} x2={W - 18} y2={H - 16} />
             <line x1={W - 18 - 30 * k} y1={H - 21} x2={W - 18 - 30 * k} y2={H - 11} />
             <line x1={W - 18} y1={H - 21} x2={W - 18} y2={H - 11} />
-            <text className="map__caption" x={W - 18 - 15 * k} y={H - 24} textAnchor="middle">
+            <text className="map__caption map__caption--scale" x={W - 18 - 15 * k} y={H - 24} textAnchor="middle">
               {t("map.scale_30")}
             </text>
           </g>

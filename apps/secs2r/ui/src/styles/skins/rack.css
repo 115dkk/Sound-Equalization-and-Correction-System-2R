@@ -98,7 +98,7 @@
   --skin-segment-muted: oklch(0.72 0.09 160);
   --skin-segment-off: oklch(0.85 0.14 160 / 0.12);
   --skin-segment-glow: oklch(0.85 0.14 160 / 0.35);
-  --skin-print-muted: oklch(0.72 0.02 85);
+  --skin-print-muted: oklch(0.8 0.02 85);
 
   /* LEDs: bright lamps in both finishes, a dark lens when off, a metal bezel. */
   --skin-lamp-amber: oklch(0.82 0.13 66);
@@ -130,13 +130,16 @@
   --shadow-raised: 0 0 0 1px var(--skin-seam), inset 1px 1px 0 var(--skin-bevel-hi), inset -1px -1px 0 var(--skin-bevel-lo), 0 8px 16px -6px var(--skin-drop);
   --shadow-dialog: 0 0 0 1px var(--skin-seam), inset 2px 2px 0 var(--skin-bevel-hi), inset -2px -2px 0 var(--skin-bevel-lo), 0 20px 40px -12px var(--skin-drop);
 
-  /* Scope glass: a dark well, a green graticule, phosphor axis figures. The
+  /* Scope glass: a dark well, a green graticule, axis figures in the segment
+     ink, bold (the display clause: in the light finish the glass sits in a
+     bright panel, so its figures need the LCD's own ink and weight). The
      curves keep their roles; on the dark glass they take the set validated
      for a dark ground (tokens.css dark values). */
   --plot-bg: var(--skin-well);
   --plot-grid: oklch(0.324 0.037 171);
   --plot-axis: oklch(0.5 0.05 168);
-  --plot-text: oklch(0.8 0.11 160);
+  --plot-text: var(--skin-segment);
+  --plot-weight: var(--weight-bold);
   --plot-target: oklch(0.92 0.03 85);
   --plot-shade: oklch(0.85 0.14 160 / 0.07);
   --ch-1: oklch(0.61 0.13 250);
@@ -251,7 +254,7 @@
   --skin-segment-muted: oklch(0.72 0.09 160);
   --skin-segment-off: oklch(0.85 0.14 160 / 0.12);
   --skin-segment-glow: oklch(0.85 0.14 160 / 0.35);
-  --skin-print-muted: oklch(0.72 0.02 85);
+  --skin-print-muted: oklch(0.8 0.02 85);
 
   --skin-lamp-amber: oklch(0.82 0.13 66);
   --skin-lamp-green: oklch(0.78 0.126 163);
@@ -283,7 +286,8 @@
   --plot-bg: var(--skin-well);
   --plot-grid: oklch(0.324 0.037 171);
   --plot-axis: oklch(0.5 0.05 168);
-  --plot-text: oklch(0.8 0.11 160);
+  --plot-text: var(--skin-segment);
+  --plot-weight: var(--weight-bold);
   --plot-target: oklch(0.92 0.03 85);
   --plot-shade: oklch(0.85 0.14 160 / 0.07);
   --ch-1: oklch(0.61 0.13 250);
@@ -397,7 +401,7 @@
     --skin-segment-muted: oklch(0.72 0.09 160);
     --skin-segment-off: oklch(0.85 0.14 160 / 0.12);
     --skin-segment-glow: oklch(0.85 0.14 160 / 0.35);
-    --skin-print-muted: oklch(0.72 0.02 85);
+    --skin-print-muted: oklch(0.8 0.02 85);
 
     --skin-lamp-amber: oklch(0.82 0.13 66);
     --skin-lamp-green: oklch(0.78 0.126 163);
@@ -429,7 +433,8 @@
     --plot-bg: var(--skin-well);
     --plot-grid: oklch(0.324 0.037 171);
     --plot-axis: oklch(0.5 0.05 168);
-    --plot-text: oklch(0.8 0.11 160);
+    --plot-text: var(--skin-segment);
+    --plot-weight: var(--weight-bold);
     --plot-target: oklch(0.92 0.03 85);
     --plot-shade: oklch(0.85 0.14 160 / 0.07);
     --ch-1: oklch(0.61 0.13 250);
@@ -1507,8 +1512,42 @@
   box-shadow: var(--skin-well-bezel);
 }
 
+/* The drawing's legend: printed, letter-spaced, in the print ink. */
 [data-skin="rack"] .map__caption,
 [data-skin="rack"] .map-speaker__outputs {
+  fill: var(--skin-print-muted);
+}
+
+[data-skin="rack"] .map__caption {
+  letter-spacing: 0.06em;
+}
+
+/* The drawing says it without words: the screen is a 2px rule with square
+   ends and an arrow under it points at it. No screen caption, no seat label;
+   the scale keeps its number. */
+[data-skin="rack"] .map__caption--screen,
+[data-skin="rack"] .map__caption--seat {
+  display: none;
+}
+
+[data-skin="rack"] .map__screen {
+  y: 12px;
+  height: 2px;
+  rx: 0;
+  ry: 0;
+  fill: var(--skin-print-muted);
+}
+
+[data-skin="rack"] .map__front {
+  display: inline;
+}
+
+[data-skin="rack"] .map__front-shaft {
+  stroke: var(--skin-print-muted);
+  stroke-width: 2;
+}
+
+[data-skin="rack"] .map__front-head {
   fill: var(--skin-print-muted);
 }
 

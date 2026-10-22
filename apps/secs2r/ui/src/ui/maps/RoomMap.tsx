@@ -63,14 +63,19 @@ export function RoomMap({
       >
         <svg viewBox={`0 0 ${SIZE} ${SIZE}`} width={SIZE} height={SIZE} className="map__svg">
           <rect className="map__screen" x={MARGIN + INNER * 0.22} y={10} width={INNER * 0.56} height={7} rx={2} />
-          <text className="map__caption" x={SIZE / 2} y={34} textAnchor="middle">
+          <text className="map__caption map__caption--screen" x={SIZE / 2} y={34} textAnchor="middle">
             {t("map.screen")}
           </text>
+          {/* The caption's meaning without words (see ArrangementMap). */}
+          <g className="map__front" aria-hidden="true">
+            <line className="map__front-shaft" x1={SIZE / 2} y1={27} x2={SIZE / 2} y2={40} />
+            <path className="map__front-head" d={`M${SIZE / 2},19 L${SIZE / 2 + 4},27 L${SIZE / 2 - 4},27 Z`} />
+          </g>
           <g className="map__furniture">
             <rect x={MARGIN + INNER * 0.36} y={MARGIN + INNER * 0.62} width={INNER * 0.28} height={INNER * 0.11} rx={6} />
             <rect className="map__furniture-dark" x={MARGIN + INNER * 0.38} y={MARGIN + INNER * 0.61} width={INNER * 0.24} height={INNER * 0.05} rx={3} />
           </g>
-          <text className="map__caption" x={SIZE / 2} y={MARGIN + INNER * 0.705} textAnchor="middle" dominantBaseline="central">
+          <text className="map__caption map__caption--seat" x={SIZE / 2} y={MARGIN + INNER * 0.705} textAnchor="middle" dominantBaseline="central">
             {t("map.seat")}
           </text>
           {placed.map(({ speaker, index, at }) => {

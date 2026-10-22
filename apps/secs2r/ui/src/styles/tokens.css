@@ -92,6 +92,7 @@
   --plot-w-target: 2; /* target: dashed */
   --plot-dash-target: 6 4;
   --plot-dash-before: 2 3;
+  --plot-weight: var(--weight-regular); /* axis figures (a skin may set them bold) */
 
   /* Layers. */
   --z-sticky: 10;

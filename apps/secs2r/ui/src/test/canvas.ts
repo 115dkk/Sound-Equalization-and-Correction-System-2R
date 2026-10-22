@@ -1,7 +1,8 @@
 // happy-dom has no 2D canvas; uPlot draws on one. `installFakeCanvas()`
 // gives every canvas a context that accepts every call (and Path2D likewise),
 // so tests keep the real graph, its overlay and its legend. `calls` records
-// the context methods named in `record` (e.g. fillRect) for drawing checks.
+// the context methods named in `record` (e.g. fillRect) for drawing checks,
+// and likewise the context properties named there (e.g. font) when set.
 import { vi } from "vitest";
 
 export type CanvasCall = { method: string; args: unknown[] };
@@ -22,6 +23,7 @@ function fakeContext(canvas: HTMLCanvasElement, record: ReadonlySet<string>, cal
     },
     set: (target, key, value) => {
       target[key] = value;
+      if (typeof key === "string" && record.has(key)) calls.push({ method: key, args: [value] });
       return true;
     },
   }) as unknown as CanvasRenderingContext2D;

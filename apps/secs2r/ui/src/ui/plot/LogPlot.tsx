@@ -3,7 +3,8 @@
 // optional shaded band outside a range (the RC band; the upper edge may be
 // open), a cursor readout, and an overlay slot for editable things (target
 // points, the XO line) that gets the scale mapping. Dozens of curves of a few thousand points draw in one
-// pass; hover highlight and theme changes restyle the same instance.
+// pass; hover highlight restyles the same instance, while a theme, accent or
+// skin change rebuilds it so the tokens (colours and the axis font) are read again.
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import uPlot from "uplot";
@@ -71,7 +72,8 @@ type Palette = {
 const EMPTY_ROLES: ReadonlySet<string> = new Set();
 const EMPTY_POSITIONS: ReadonlySet<number> = new Set();
 
-function readPalette(element: Element, roleOrder: readonly string[], isSub: (role: string) => boolean): Palette {
+/** The canvas palette and font as `element` sees them (exported for tests). */
+export function readPalette(element: Element, roleOrder: readonly string[], isSub: (role: string) => boolean): Palette {
   const tokens = colorTokens(roleOrder, isSub);
   const colors = new Map<string, Rgba>();
   for (const [role, token] of tokens) colors.set(role, readColor(element, token));
@@ -81,6 +83,7 @@ function readPalette(element: Element, roleOrder: readonly string[], isSub: (rol
     return parts.length ? parts : fallback;
   };
   const caption = readNumber(element, "--text-caption", 13);
+  const weight = readNumber(element, "--plot-weight", 400);
   const family = style.getPropertyValue("--font-ui").trim() || "system-ui, sans-serif";
   return {
     colors,
@@ -99,29 +102,8 @@ function readPalette(element: Element, roleOrder: readonly string[], isSub: (rol
       dashTarget: dash("--plot-dash-target", DEFAULT_RULES.dashTarget),
       dashBefore: dash("--plot-dash-before", DEFAULT_RULES.dashBefore),
     },
-    font: `${caption}px ${family}`,
+    font: `${weight} ${caption}px ${family}`,
   };
-}
-
-/** Calls `onChange` when the theme, accent or skin around `element` may have changed. */
-function useThemeChange(element: HTMLElement | null, onChange: () => void) {
-  const callback = useRef(onChange);
-  callback.current = onChange;
-  useEffect(() => {
-    if (!element) return;
-    const fire = () => callback.current();
-    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
-    media?.addEventListener?.("change", fire);
-    const observer = new MutationObserver(fire);
-    // Watch every ancestor: the gallery scopes themes to subtrees.
-    for (let node: HTMLElement | null = element; node; node = node.parentElement) {
-      observer.observe(node, { attributes: true, attributeFilter: ["data-theme", "data-accent", "data-skin"] });
-    }
-    return () => {
-      media?.removeEventListener?.("change", fire);
-      observer.disconnect();
-    };
-  }, [element]);
 }
 
 function niceRange(curves: readonly Curve[], hiddenRoles: ReadonlySet<string>, hiddenPositions: ReadonlySet<number>): [number, number] {
@@ -169,6 +151,8 @@ export function LogPlot({
   const plot = useRef<uPlot | null>(null);
   const [over, setOver] = useState<HTMLDivElement | null>(null);
   const [version, setVersion] = useState(0);
+  // Bumped when the theme, accent or skin around the graph changes: the chart is rebuilt with the tokens read again.
+  const [themeTick, setThemeTick] = useState(0);
   const [cursor, setCursor] = useState<{ hz: number; value: number } | null>(null);
 
   // Everything the draw callbacks read lives in one ref, so a prop change
@@ -194,13 +178,11 @@ export function LogPlot({
   const structure = useMemo(() => `${freqs.length}:${curves.map((curve) => `${curve.id}/${curve.kind}`).join("|")}`, [freqs, curves]);
   const roleKey = roleOrder.join("|");
 
-  /** Restyles in place; `reread` reads the tokens again (theme or accent changed). */
-  const applyStyles = (reread = false) => {
+  /** Restyles in place with the palette the build read. */
+  const applyStyles = () => {
     const u = plot.current;
-    const element = wrap.current;
-    if (!u || !element) return;
-    if (reread || !live.current.palette) live.current.palette = readPalette(element, roleOrder, isSub);
-    const { palette } = live.current;
+    const palette = live.current.palette;
+    if (!u || !palette) return;
     live.current.curves.forEach((curve, index) => {
       const series = u.series[index + 1];
       if (!series) return;
@@ -216,6 +198,8 @@ export function LogPlot({
     const element = host.current;
     const outer = wrap.current;
     if (!element || !outer) return;
+    // uPlot fires setScale and setSize while constructing; the build bumps the version once, after.
+    let building = false;
     live.current.palette = readPalette(outer, roleOrder, isSub);
     const color = (curve: Curve): Rgba =>
       curve.kind === "target" ? live.current.palette!.target : (live.current.palette!.colors.get(curve.role) ?? live.current.palette!.text);
@@ -319,8 +303,8 @@ export function LogPlot({
             ctx.restore();
           },
         ],
-        setScale: [() => setVersion((v) => v + 1)],
-        setSize: [() => setVersion((v) => v + 1)],
+        setScale: [() => { if (!building) setVersion((v) => v + 1); }],
+        setSize: [() => { if (!building) setVersion((v) => v + 1); }],
         setCursor: [
           (u) => {
             const { left, top } = u.cursor;
@@ -331,7 +315,9 @@ export function LogPlot({
       },
     };
     const data: uPlot.AlignedData = [freqs as number[], ...curves.map((curve) => curve.values as (number | null)[])];
+    building = true;
     const u = new uPlot(options, data, element);
+    building = false;
     plot.current = u;
     const overEl = u.over as HTMLDivElement;
     const onDbl = (event: MouseEvent) => {
@@ -345,16 +331,30 @@ export function LogPlot({
       handler({ hz: u.posToVal(event.clientX - rect.left, "x"), value: u.posToVal(event.clientY - rect.top, "y") });
     };
     overEl.addEventListener("dblclick", onDbl);
+    // The tokens were read just now, so from here on watch the theme, accent and
+    // skin attributes on every ancestor (the app sets them on <html>, the gallery
+    // scopes them to subtrees) and the OS colour scheme; any change rebuilds the
+    // chart. Attached here, in the layout effect, so an attribute the host applies
+    // in a later effect of this same commit (PrefsScope does) is not missed.
+    const retheme = () => setThemeTick((tick) => tick + 1);
+    const media = window.matchMedia?.("(prefers-color-scheme: dark)");
+    media?.addEventListener?.("change", retheme);
+    const themeObserver = typeof MutationObserver === "undefined" ? null : new MutationObserver(retheme);
+    for (let node: HTMLElement | null = outer; node && themeObserver; node = node.parentElement) {
+      themeObserver.observe(node, { attributes: true, attributeFilter: ["data-theme", "data-accent", "data-skin"] });
+    }
     setOver(overEl);
     setVersion((v) => v + 1);
     return () => {
+      media?.removeEventListener?.("change", retheme);
+      themeObserver?.disconnect();
       overEl.removeEventListener("dblclick", onDbl);
       u.destroy();
       plot.current = null;
       setOver(null);
     };
-    // Rebuild only when the set of curves, the grid or the role order changes.
-  }, [structure, roleKey, height]);
+    // Rebuild when the set of curves, the grid, the role order or the theme changes.
+  }, [structure, roleKey, height, themeTick]);
 
   // New values on the same curves: swap the data, keep the instance.
   const firstData = useRef(true);
@@ -397,9 +397,6 @@ export function LogPlot({
   // Highlight, staleness and band: restyle in place.
   useEffect(() => applyStyles(), [highlight, stale, band?.lo, band?.hi]);
 
-  // Theme, accent or skin changes: re-read the tokens, redraw.
-  useThemeChange(wrap.current, () => applyStyles(true));
-
   // Width follows the container.
   useEffect(() => {
     const outer = wrap.current;
@@ -417,6 +414,10 @@ export function LogPlot({
     if (!u || !over) return null;
     const xs = u.scales.x;
     const ys = u.scales.y;
+    // While an instance is still being built (its hooks fire before it has
+    // data) there is no mapping: the overlay waits for the next version
+    // rather than drawing at Infinity.
+    if (![xs?.min, xs?.max, ys?.min, ys?.max].every((v) => typeof v === "number" && Number.isFinite(v))) return null;
     return {
       xToPx: (hz) => u.valToPos(hz, "x"),
       pxToX: (px) => u.posToVal(px, "x"),
