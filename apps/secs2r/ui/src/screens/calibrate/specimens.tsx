@@ -126,9 +126,9 @@ function CalibrateFrame({
 /** A themed scope with changed prefs (tutorial accent) around a frame. */
 function Scoped({ tutorial, children }: { tutorial?: boolean; children: ReactNode }) {
   const outer = usePrefs();
-  const prefs = { locale: outer.locale, theme: outer.theme, accent: tutorial ? ("tutorial" as const) : outer.accent };
+  const prefs = { locale: outer.locale, theme: outer.theme, accent: tutorial ? ("tutorial" as const) : outer.accent, ...(outer.skin ? { skin: outer.skin } : {}) };
   return (
-    <PrefsScope key={`${outer.locale}-${outer.theme}`} initial={prefs} className="gal-fill">
+    <PrefsScope key={`${outer.locale}-${outer.theme}-${outer.skin ?? "default"}`} initial={prefs} className="gal-fill">
       {children}
     </PrefsScope>
   );

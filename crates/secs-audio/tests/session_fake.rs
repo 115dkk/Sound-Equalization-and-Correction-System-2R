@@ -663,8 +663,13 @@ fn session_captures_playback_length_plus_tail() {
 
 #[test]
 fn session_cancel_stops_both_sides() {
+    // Playback that would run for seconds, so that a cancel which really
+    // stops both sides returns long before the fake drains. The budget is
+    // generous on purpose: a loaded 2-core Windows runner has taken more
+    // than 500 ms just to wake the input thread and join the workers, and
+    // the test is about not waiting for playback, not about scheduling.
     let fake = Fake {
-        duration: Duration::from_secs(1),
+        duration: Duration::from_secs(8),
         ..Fake::default()
     };
     let token = CancelToken::new();
@@ -678,8 +683,8 @@ fn session_cancel_stops_both_sides() {
         }
     });
     assert!(matches!(result, Err(AudioError::Cancelled)));
-    let cancelled_at = cancelled_at.expect("a progress event before the 1 s playback ends");
-    assert!(cancelled_at.elapsed() < Duration::from_millis(500));
+    let cancelled_at = cancelled_at.expect("a progress event before the 8 s playback ends");
+    assert!(cancelled_at.elapsed() < Duration::from_secs(3));
     let state = fake.state.lock().unwrap();
     assert!(state.history.contains(&"input stop"));
     assert!(state.history.contains(&"output cancelled"));

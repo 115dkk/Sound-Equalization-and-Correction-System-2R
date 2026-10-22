@@ -92,9 +92,9 @@ function ConnectFrame({ view, project }: { view: ConnectView; project?: Partial<
 /** The tutorial is the same frame with the tutorial accent (its own prefs scope). */
 function WithPrefs({ patch, children }: { patch: Partial<Prefs>; children: ReactNode }) {
   const outer = usePrefs();
-  const prefs: Prefs = { locale: outer.locale, theme: outer.theme, accent: outer.accent, ...patch };
+  const prefs: Prefs = { locale: outer.locale, theme: outer.theme, accent: outer.accent, ...(outer.skin ? { skin: outer.skin } : {}), ...patch };
   return (
-    <PrefsScope key={`${outer.locale}-${outer.theme}`} initial={prefs} className="gal-fill">
+    <PrefsScope key={`${outer.locale}-${outer.theme}-${outer.skin ?? "default"}`} initial={prefs} className="gal-fill">
       {children}
     </PrefsScope>
   );

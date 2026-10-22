@@ -34,12 +34,17 @@ mkdirSync(out, { recursive: true });
 
 // tauri.conf.json's default window.
 const VIEWPORT = { width: 1280, height: 800 };
+// The two skins (docs/skins) ride along in Korean and dark, where their
+// chrome differs most from the default.
 const VARIANTS = [
-  { theme: "light", lang: "ko" },
-  { theme: "dark", lang: "ko" },
-  { theme: "light", lang: "en" },
-  { theme: "dark", lang: "en" },
+  { theme: "light", lang: "ko", skin: "default" },
+  { theme: "dark", lang: "ko", skin: "default" },
+  { theme: "light", lang: "en", skin: "default" },
+  { theme: "dark", lang: "en", skin: "default" },
+  { theme: "dark", lang: "ko", skin: "rack" },
+  { theme: "dark", lang: "ko", skin: "matrix" },
 ];
+const variantName = ({ theme, lang, skin }) => `${theme}.${lang}${skin === "default" ? "" : `.${skin}`}`;
 const BROWSER_LOCALE = { ko: "ko-KR", en: "en-US" };
 const FLOOR_PX = 13;
 const READY_MS = 10_000;
@@ -96,8 +101,8 @@ try {
   if (repeated.length) problems.push(`repeated scene id ${[...new Set(repeated)].join(", ")}`);
   const chosen = scenes.filter((scene) => only.length === 0 || only.some((prefix) => scene.id.startsWith(prefix)));
 
-  for (const { theme, lang } of VARIANTS) {
-    const variant = `${theme}.${lang}`;
+  for (const { theme, lang, skin } of VARIANTS) {
+    const variant = variantName({ theme, lang, skin });
     const context = await phase(variant, "new context", () => browser.newContext({
       viewport: VIEWPORT,
       deviceScaleFactor: 1,
@@ -128,7 +133,7 @@ try {
       console.log(`tour: ${label}`);
       try {
         await phase(label, "reset pointer", () => page.mouse.move(0, 0));
-        await phase(label, "navigate", () => page.goto(`${server.origin}/gallery.html?tour=${encodeURIComponent(scene.id)}&theme=${theme}&lang=${lang}`, { waitUntil: "load" }), TRANSFER_MS);
+        await phase(label, "navigate", () => page.goto(`${server.origin}/gallery.html?tour=${encodeURIComponent(scene.id)}&theme=${theme}&lang=${lang}&skin=${skin}`, { waitUntil: "load" }), TRANSFER_MS);
         const ready = await phase(label, "scene ready", () => page
           .waitForFunction(() => document.documentElement.dataset.tourReady, null, { timeout: READY_MS })
           .then((handle) => handle.jsonValue())
@@ -188,7 +193,7 @@ try {
 
   const manifest = {
     viewport: VIEWPORT,
-    variants: VARIANTS.map(({ theme, lang }) => `${theme}.${lang}`),
+    variants: VARIANTS.map(variantName),
     scenes: chosen.map(({ id, step, title, note }) => ({ id, step, title, ...(note ? { note } : {}) })),
   };
   writeFileSync(join(out, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);

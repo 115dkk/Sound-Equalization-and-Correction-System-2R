@@ -1,0 +1,1710 @@
+/* Hardware Rack skin (docs/skins/rack.md, ADR 0010).
+ *
+ * A 19-inch rack faceplate: brushed metal with 3 px machined corners, depth
+ * from bevels lit from the top left instead of shadows, four slotted screws
+ * on every card, a bezel LED for every status, dark LCD wells with phosphor
+ * digits for every reading (in both finishes), machined caps that sink when
+ * pressed, amber for the accent and warm ivory or brown ink.
+ *
+ * Two parts. The token blocks override tokens.css names and add `--skin-*`
+ * names; colours live only there (tokens.test.ts). The structural rules
+ * below read tokens only and change shape, depth, texture, lamps and type,
+ * never the DOM, handlers, aria, focus order, ids or catalog strings.
+ * Everything is drawn with gradients, box-shadow and pseudo-elements.
+ */
+
+/* ── Tokens: light ─────────────────────────────────────────────────────── */
+[data-skin="rack"] {
+  /* Shape and motion: machined corners, caps sink instead of scaling. */
+  --radius-xs: 3px;
+  --radius-sm: 3px;
+  --radius-md: 3px;
+  --radius-lg: 3px;
+  --press-scale: 1;
+  /* Focus is the amber service edge: 2 px, no gap. */
+  --focus-offset: 0px;
+
+  /* Amber lamp (hue 66), away from the yellow warning lamp (88). */
+  --accent-hue: 66;
+  --accent-chroma: 0.13;
+  --accent-l: 0.52;
+  --accent-hover-l: 0.47;
+  /* The selected panel colour (rack.md): a warm face, set outright. */
+  --accent-soft: oklch(0.937 0.06 86);
+  --on-accent: oklch(0.99 0.008 86);
+
+  /* Cream aluminium faceplates in a light rack room. */
+  --bg: oklch(0.914 0.014 85);
+  --surface: oklch(0.986 0.015 86);
+  --surface-sunken: oklch(0.95 0.016 86);
+  --surface-raised: oklch(0.99 0.012 86);
+  --surface-hover: oklch(0.996 0.01 86);
+  --surface-pressed: oklch(0.925 0.017 85);
+  --rail-bg: oklch(0.93 0.015 85);
+  --scrim: oklch(0.2 0.02 80 / 0.38);
+
+  --text: oklch(0.26 0.02 80);
+  --text-muted: oklch(0.47 0.025 80);
+  --text-faint: oklch(0.6 0.022 82);
+
+  --border: oklch(0.61 0.041 84);
+  --border-subtle: oklch(0.84 0.024 85);
+  --border-control: oklch(0.58 0.03 82);
+
+  --success: oklch(0.516 0.105 162);
+  --success-soft: oklch(0.95 0.03 162);
+  --warning: oklch(0.52 0.11 88);
+  --warning-soft: oklch(0.955 0.045 88);
+  --danger: oklch(0.52 0.17 27);
+  --danger-hover: oklch(0.47 0.17 27);
+  --danger-soft: oklch(0.955 0.03 27);
+  --on-danger: oklch(0.99 0.008 86);
+  --on-success: oklch(0.99 0.008 86);
+  --info: oklch(0.5 0.1 232);
+  --info-soft: oklch(0.955 0.025 232);
+
+  /* Bevels, not shadows: highlight on the top left, shade on the bottom right. */
+  --skin-bevel-hi: oklch(1 0 0 / 0.92);
+  --skin-bevel-lo: oklch(0.36 0.035 80 / 0.3);
+  --skin-seam: oklch(0.61 0.041 84);
+  --skin-groove: oklch(0.8 0.026 84);
+  --skin-drop: oklch(0.32 0.03 80 / 0.24);
+  --skin-grain: oklch(0.42 0.03 84 / 0.04);
+  --skin-sheen: oklch(1 0 0 / 0.55);
+  --skin-cap-hi: oklch(0.998 0.006 86);
+  --skin-cap-top: oklch(0.99 0.01 86);
+  --skin-cap-bottom: oklch(0.93 0.02 85);
+  --skin-hole: oklch(0.36 0.02 80);
+  --skin-film: oklch(0.42 0.02 80 / 0.12);
+  --skin-screw-hi: oklch(0.985 0.008 86);
+  --skin-screw-lo: oklch(0.74 0.022 84);
+  --skin-screw-rim: oklch(0.5 0.03 82);
+  --skin-screw-slot: oklch(0.36 0.025 80);
+
+  /* The backlit lens of the primary cap and of latched caps: dark in both finishes. */
+  --skin-lens-hi: oklch(0.34 0.012 75);
+  --skin-lens-top: oklch(0.29 0.011 75);
+  --skin-lens-bottom: oklch(0.2 0.008 75);
+  --skin-legend: oklch(0.84 0.13 68);
+  --skin-legend-glow: oklch(0.84 0.13 68 / 0.45);
+  --skin-legend-danger: oklch(0.76 0.15 27);
+  --skin-legend-danger-glow: oklch(0.76 0.15 27 / 0.45);
+  --skin-legend-off: oklch(0.56 0.014 80);
+
+  /* LCD wells and scope glass (the display clause: dark in both finishes). */
+  --skin-well: oklch(0.13 0.005 165);
+  --skin-well-shade: oklch(0 0 0 / 0.55);
+  --skin-segment: oklch(0.85 0.14 160);
+  --skin-segment-muted: oklch(0.72 0.09 160);
+  --skin-segment-off: oklch(0.85 0.14 160 / 0.12);
+  --skin-segment-glow: oklch(0.85 0.14 160 / 0.35);
+  --skin-print-muted: oklch(0.72 0.02 85);
+
+  /* LEDs: bright lamps in both finishes, a dark lens when off, a metal bezel. */
+  --skin-lamp-amber: oklch(0.82 0.13 66);
+  --skin-lamp-green: oklch(0.78 0.126 163);
+  --skin-lamp-yellow: oklch(0.84 0.12 88);
+  --skin-lamp-red: oklch(0.7 0.17 27);
+  --skin-lamp-blue: oklch(0.75 0.09 232);
+  --skin-lamp-off: oklch(0.4 0.012 78);
+  --skin-led-bezel: oklch(0.42 0.02 80);
+  --skin-led-spec: oklch(1 0 0 / 0.8);
+  --skin-bronze: var(--accent);
+
+  /* Dymo embossing tape (tooltips): glossy black in both finishes. */
+  --skin-tape: oklch(0.19 0.006 75);
+  --skin-tape-hi: oklch(1 0 0 / 0.12);
+  --skin-tape-ink: oklch(0.93 0.02 85);
+  --skin-tape-deep: oklch(0 0 0 / 0.7);
+
+  /* Composite bevels (same expression in both finishes). */
+  --skin-engrave: 0 1px 0 var(--skin-bevel-hi);
+  --skin-sunk: 0 0 0 1px var(--skin-seam), inset 0 2px 2px -1px var(--skin-bevel-lo), inset 0 -1px 0 var(--skin-bevel-hi);
+  --skin-bed: 0 0 0 1px var(--skin-seam), inset 0 1px 2px var(--skin-bevel-lo), 0 1px 0 var(--skin-bevel-hi);
+  --skin-well-bezel: inset 0 2px 3px var(--skin-well-shade), 0 0 0 1px var(--skin-seam), 0 1px 0 var(--skin-bevel-hi);
+
+  --shadow-card: 0 0 0 1px var(--skin-seam), inset 1px 1px 0 var(--skin-bevel-hi), inset -1px -1px 0 var(--skin-bevel-lo);
+  --shadow-control: 0 0 0 1px var(--skin-seam), inset 0 1px 0 var(--skin-bevel-hi), inset 0 -2px 0 var(--skin-bevel-lo);
+  --shadow-control-hover: 0 0 0 1px var(--skin-bronze), inset 0 1px 0 var(--skin-bevel-hi), inset 0 -2px 0 var(--skin-bevel-lo);
+  --shadow-thumb: 0 0 0 1px var(--skin-seam), inset 0 1px 0 var(--skin-bevel-hi), inset 0 -1px 0 var(--skin-bevel-lo);
+  --shadow-raised: 0 0 0 1px var(--skin-seam), inset 1px 1px 0 var(--skin-bevel-hi), inset -1px -1px 0 var(--skin-bevel-lo), 0 8px 16px -6px var(--skin-drop);
+  --shadow-dialog: 0 0 0 1px var(--skin-seam), inset 2px 2px 0 var(--skin-bevel-hi), inset -2px -2px 0 var(--skin-bevel-lo), 0 20px 40px -12px var(--skin-drop);
+
+  /* Scope glass: a dark well, a green graticule, phosphor axis figures. The
+     curves keep their roles; on the dark glass they take the set validated
+     for a dark ground (tokens.css dark values). */
+  --plot-bg: var(--skin-well);
+  --plot-grid: oklch(0.324 0.037 171);
+  --plot-axis: oklch(0.5 0.05 168);
+  --plot-text: oklch(0.8 0.11 160);
+  --plot-target: oklch(0.92 0.03 85);
+  --plot-shade: oklch(0.85 0.14 160 / 0.07);
+  --ch-1: oklch(0.61 0.13 250);
+  --ch-2: oklch(0.665 0.13 65);
+  --ch-3: oklch(0.55 0.13 280);
+  --ch-4: oklch(0.665 0.13 145);
+  --ch-5: oklch(0.55 0.13 5);
+  --ch-6: oklch(0.665 0.116 210);
+  --ch-7: oklch(0.55 0.13 50);
+  --ch-8: oklch(0.665 0.13 255);
+  --ch-9: oklch(0.55 0.13 140);
+  --ch-10: oklch(0.665 0.13 340);
+  --ch-11: oklch(0.61 0.13 140);
+  --ch-12: oklch(0.55 0.13 320);
+  --ch-13: oklch(0.665 0.13 105);
+  --ch-14: oklch(0.61 0.13 300);
+  --ch-15: oklch(0.61 0.126 95);
+  --ch-16: oklch(0.665 0.13 295);
+  --sub-1: oklch(0.78 0.11 265);
+  --sub-2: oklch(0.86 0.084 50);
+  --sub-3: oklch(0.72 0.12 175);
+  --sub-4: oklch(0.86 0.094 345);
+  --sub-5: oklch(0.8 0.12 130);
+  --sub-6: oklch(0.76 0.12 305);
+  --sub-7: oklch(0.88 0.078 225);
+  --sub-8: oklch(0.82 0.12 85);
+
+  /* VU segment window. */
+  --meter-track: var(--skin-well);
+  --meter-band: oklch(0.78 0.126 163 / 0.18);
+  --meter-fill: var(--skin-segment);
+  --meter-fill-ok: var(--skin-lamp-green);
+  --meter-fill-clip: var(--skin-lamp-red);
+
+  /* Map glass: the drawing behind the same dark glass. */
+  --map-bg: var(--skin-well);
+  --map-ink: oklch(0.88 0.02 85);
+  --map-furniture: oklch(0.21 0.008 120);
+  --map-furniture-edge: oklch(0.46 0.02 100);
+  --map-guide: oklch(0.55 0.02 90);
+  --map-marker: oklch(0.88 0.02 85);
+  --map-marker-fill: var(--skin-well);
+  --map-half: oklch(0.88 0.02 85 / 0.3);
+}
+
+/* ── Tokens: dark (explicit) ───────────────────────────────────────────── */
+[data-skin="rack"][data-theme="dark"] {
+  --accent-l: 0.82;
+  --accent-hover-l: 0.86;
+  --accent-soft: oklch(0.28 0.031 72);
+  --on-accent: oklch(0.16 0.006 75);
+
+  /* Bakelite and steel faceplates inside a dark rack. */
+  --bg: oklch(0.16 0.006 75);
+  --surface: oklch(0.25 0.012 75);
+  --surface-sunken: oklch(0.21 0.01 75);
+  --surface-raised: oklch(0.29 0.013 75);
+  --surface-hover: oklch(0.3 0.014 75);
+  --surface-pressed: oklch(0.22 0.01 75);
+  --rail-bg: oklch(0.2 0.009 75);
+  --scrim: oklch(0.08 0.005 75 / 0.62);
+
+  --text: oklch(0.91 0.017 85);
+  --text-muted: oklch(0.74 0.02 85);
+  --text-faint: oklch(0.56 0.016 82);
+
+  --border: oklch(0.13 0.005 75);
+  --border-subtle: oklch(0.18 0.007 75);
+  --border-control: oklch(0.55 0.02 80);
+
+  --success: oklch(0.78 0.126 163);
+  --success-soft: oklch(0.3 0.045 163);
+  --warning: oklch(0.8 0.12 88);
+  --warning-soft: oklch(0.3 0.045 88);
+  --danger: oklch(0.72 0.14 27);
+  --danger-hover: oklch(0.77 0.13 27);
+  --danger-soft: oklch(0.29 0.045 27);
+  --on-danger: oklch(0.16 0.006 75);
+  --on-success: oklch(0.16 0.006 75);
+  --info: oklch(0.75 0.09 232);
+  --info-soft: oklch(0.3 0.04 232);
+
+  --skin-bevel-hi: oklch(1 0 0 / 0.09);
+  --skin-bevel-lo: oklch(0 0 0 / 0.55);
+  --skin-seam: oklch(0.13 0.005 75);
+  --skin-groove: oklch(0.15 0.006 75);
+  --skin-drop: oklch(0 0 0 / 0.55);
+  --skin-grain: oklch(1 0 0 / 0.025);
+  --skin-sheen: oklch(1 0 0 / 0.045);
+  --skin-cap-hi: oklch(0.37 0.014 75);
+  --skin-cap-top: oklch(0.33 0.013 75);
+  --skin-cap-bottom: oklch(0.265 0.011 75);
+  --skin-hole: oklch(0.08 0.004 75);
+  --skin-film: oklch(0.08 0.004 75 / 0.42);
+  --skin-screw-hi: oklch(0.58 0.012 80);
+  --skin-screw-lo: oklch(0.32 0.01 75);
+  --skin-screw-rim: oklch(0.14 0.005 75);
+  --skin-screw-slot: oklch(0.12 0.005 75);
+
+  --skin-lens-hi: oklch(0.25 0.009 75);
+  --skin-lens-top: oklch(0.21 0.008 75);
+  --skin-lens-bottom: oklch(0.14 0.005 75);
+  --skin-legend: oklch(0.84 0.13 68);
+  --skin-legend-glow: oklch(0.84 0.13 68 / 0.45);
+  --skin-legend-danger: oklch(0.76 0.15 27);
+  --skin-legend-danger-glow: oklch(0.76 0.15 27 / 0.45);
+  --skin-legend-off: oklch(0.46 0.012 80);
+
+  --skin-well: oklch(0.13 0.005 165);
+  --skin-well-shade: oklch(0 0 0 / 0.7);
+  --skin-segment: oklch(0.85 0.14 160);
+  --skin-segment-muted: oklch(0.72 0.09 160);
+  --skin-segment-off: oklch(0.85 0.14 160 / 0.12);
+  --skin-segment-glow: oklch(0.85 0.14 160 / 0.35);
+  --skin-print-muted: oklch(0.72 0.02 85);
+
+  --skin-lamp-amber: oklch(0.82 0.13 66);
+  --skin-lamp-green: oklch(0.78 0.126 163);
+  --skin-lamp-yellow: oklch(0.84 0.12 88);
+  --skin-lamp-red: oklch(0.7 0.17 27);
+  --skin-lamp-blue: oklch(0.75 0.09 232);
+  --skin-lamp-off: oklch(0.3 0.01 75);
+  --skin-led-bezel: oklch(0.12 0.005 75);
+  --skin-led-spec: oklch(1 0 0 / 0.7);
+  --skin-bronze: oklch(0.62 0.021 83);
+
+  --skin-tape: oklch(0.19 0.006 75);
+  --skin-tape-hi: oklch(1 0 0 / 0.12);
+  --skin-tape-ink: oklch(0.93 0.02 85);
+  --skin-tape-deep: oklch(0 0 0 / 0.7);
+
+  --skin-engrave: 0 1px 0 var(--skin-bevel-hi);
+  --skin-sunk: 0 0 0 1px var(--skin-seam), inset 0 2px 2px -1px var(--skin-bevel-lo), inset 0 -1px 0 var(--skin-bevel-hi);
+  --skin-bed: 0 0 0 1px var(--skin-seam), inset 0 1px 2px var(--skin-bevel-lo), 0 1px 0 var(--skin-bevel-hi);
+  --skin-well-bezel: inset 0 2px 3px var(--skin-well-shade), 0 0 0 1px var(--skin-seam), 0 1px 0 var(--skin-bevel-hi);
+
+  --shadow-card: 0 0 0 1px var(--skin-seam), inset 1px 1px 0 var(--skin-bevel-hi), inset -1px -1px 0 var(--skin-bevel-lo);
+  --shadow-control: 0 0 0 1px var(--skin-seam), inset 0 1px 0 var(--skin-bevel-hi), inset 0 -2px 0 var(--skin-bevel-lo);
+  --shadow-control-hover: 0 0 0 1px var(--skin-bronze), inset 0 1px 0 var(--skin-bevel-hi), inset 0 -2px 0 var(--skin-bevel-lo);
+  --shadow-thumb: 0 0 0 1px var(--skin-seam), inset 0 1px 0 var(--skin-bevel-hi), inset 0 -1px 0 var(--skin-bevel-lo);
+  --shadow-raised: 0 0 0 1px var(--skin-seam), inset 1px 1px 0 var(--skin-bevel-hi), inset -1px -1px 0 var(--skin-bevel-lo), 0 8px 16px -6px var(--skin-drop);
+  --shadow-dialog: 0 0 0 1px var(--skin-seam), inset 2px 2px 0 var(--skin-bevel-hi), inset -2px -2px 0 var(--skin-bevel-lo), 0 20px 40px -12px var(--skin-drop);
+
+  --plot-bg: var(--skin-well);
+  --plot-grid: oklch(0.324 0.037 171);
+  --plot-axis: oklch(0.5 0.05 168);
+  --plot-text: oklch(0.8 0.11 160);
+  --plot-target: oklch(0.92 0.03 85);
+  --plot-shade: oklch(0.85 0.14 160 / 0.07);
+  --ch-1: oklch(0.61 0.13 250);
+  --ch-2: oklch(0.665 0.13 65);
+  --ch-3: oklch(0.55 0.13 280);
+  --ch-4: oklch(0.665 0.13 145);
+  --ch-5: oklch(0.55 0.13 5);
+  --ch-6: oklch(0.665 0.116 210);
+  --ch-7: oklch(0.55 0.13 50);
+  --ch-8: oklch(0.665 0.13 255);
+  --ch-9: oklch(0.55 0.13 140);
+  --ch-10: oklch(0.665 0.13 340);
+  --ch-11: oklch(0.61 0.13 140);
+  --ch-12: oklch(0.55 0.13 320);
+  --ch-13: oklch(0.665 0.13 105);
+  --ch-14: oklch(0.61 0.13 300);
+  --ch-15: oklch(0.61 0.126 95);
+  --ch-16: oklch(0.665 0.13 295);
+  --sub-1: oklch(0.78 0.11 265);
+  --sub-2: oklch(0.86 0.084 50);
+  --sub-3: oklch(0.72 0.12 175);
+  --sub-4: oklch(0.86 0.094 345);
+  --sub-5: oklch(0.8 0.12 130);
+  --sub-6: oklch(0.76 0.12 305);
+  --sub-7: oklch(0.88 0.078 225);
+  --sub-8: oklch(0.82 0.12 85);
+
+  --meter-track: var(--skin-well);
+  --meter-band: oklch(0.78 0.126 163 / 0.18);
+  --meter-fill: var(--skin-segment);
+  --meter-fill-ok: var(--skin-lamp-green);
+  --meter-fill-clip: var(--skin-lamp-red);
+
+  --map-bg: var(--skin-well);
+  --map-ink: oklch(0.88 0.02 85);
+  --map-furniture: oklch(0.21 0.008 120);
+  --map-furniture-edge: oklch(0.46 0.02 100);
+  --map-guide: oklch(0.55 0.02 90);
+  --map-marker: oklch(0.88 0.02 85);
+  --map-marker-fill: var(--skin-well);
+  --map-half: oklch(0.88 0.02 85 / 0.3);
+}
+
+/* ── Tokens: dark (system preference; identical to the block above) ───── */
+@media (prefers-color-scheme: dark) {
+  [data-skin="rack"]:not([data-theme="light"]) {
+    --accent-l: 0.82;
+    --accent-hover-l: 0.86;
+    --accent-soft: oklch(0.28 0.031 72);
+    --on-accent: oklch(0.16 0.006 75);
+
+    /* Bakelite and steel faceplates inside a dark rack. */
+    --bg: oklch(0.16 0.006 75);
+    --surface: oklch(0.25 0.012 75);
+    --surface-sunken: oklch(0.21 0.01 75);
+    --surface-raised: oklch(0.29 0.013 75);
+    --surface-hover: oklch(0.3 0.014 75);
+    --surface-pressed: oklch(0.22 0.01 75);
+    --rail-bg: oklch(0.2 0.009 75);
+    --scrim: oklch(0.08 0.005 75 / 0.62);
+
+    --text: oklch(0.91 0.017 85);
+    --text-muted: oklch(0.74 0.02 85);
+    --text-faint: oklch(0.56 0.016 82);
+
+    --border: oklch(0.13 0.005 75);
+    --border-subtle: oklch(0.18 0.007 75);
+    --border-control: oklch(0.55 0.02 80);
+
+    --success: oklch(0.78 0.126 163);
+    --success-soft: oklch(0.3 0.045 163);
+    --warning: oklch(0.8 0.12 88);
+    --warning-soft: oklch(0.3 0.045 88);
+    --danger: oklch(0.72 0.14 27);
+    --danger-hover: oklch(0.77 0.13 27);
+    --danger-soft: oklch(0.29 0.045 27);
+    --on-danger: oklch(0.16 0.006 75);
+    --on-success: oklch(0.16 0.006 75);
+    --info: oklch(0.75 0.09 232);
+    --info-soft: oklch(0.3 0.04 232);
+
+    --skin-bevel-hi: oklch(1 0 0 / 0.09);
+    --skin-bevel-lo: oklch(0 0 0 / 0.55);
+    --skin-seam: oklch(0.13 0.005 75);
+    --skin-groove: oklch(0.15 0.006 75);
+    --skin-drop: oklch(0 0 0 / 0.55);
+    --skin-grain: oklch(1 0 0 / 0.025);
+    --skin-sheen: oklch(1 0 0 / 0.045);
+    --skin-cap-hi: oklch(0.37 0.014 75);
+    --skin-cap-top: oklch(0.33 0.013 75);
+    --skin-cap-bottom: oklch(0.265 0.011 75);
+    --skin-hole: oklch(0.08 0.004 75);
+    --skin-film: oklch(0.08 0.004 75 / 0.42);
+    --skin-screw-hi: oklch(0.58 0.012 80);
+    --skin-screw-lo: oklch(0.32 0.01 75);
+    --skin-screw-rim: oklch(0.14 0.005 75);
+    --skin-screw-slot: oklch(0.12 0.005 75);
+
+    --skin-lens-hi: oklch(0.25 0.009 75);
+    --skin-lens-top: oklch(0.21 0.008 75);
+    --skin-lens-bottom: oklch(0.14 0.005 75);
+    --skin-legend: oklch(0.84 0.13 68);
+    --skin-legend-glow: oklch(0.84 0.13 68 / 0.45);
+    --skin-legend-danger: oklch(0.76 0.15 27);
+    --skin-legend-danger-glow: oklch(0.76 0.15 27 / 0.45);
+    --skin-legend-off: oklch(0.46 0.012 80);
+
+    --skin-well: oklch(0.13 0.005 165);
+    --skin-well-shade: oklch(0 0 0 / 0.7);
+    --skin-segment: oklch(0.85 0.14 160);
+    --skin-segment-muted: oklch(0.72 0.09 160);
+    --skin-segment-off: oklch(0.85 0.14 160 / 0.12);
+    --skin-segment-glow: oklch(0.85 0.14 160 / 0.35);
+    --skin-print-muted: oklch(0.72 0.02 85);
+
+    --skin-lamp-amber: oklch(0.82 0.13 66);
+    --skin-lamp-green: oklch(0.78 0.126 163);
+    --skin-lamp-yellow: oklch(0.84 0.12 88);
+    --skin-lamp-red: oklch(0.7 0.17 27);
+    --skin-lamp-blue: oklch(0.75 0.09 232);
+    --skin-lamp-off: oklch(0.3 0.01 75);
+    --skin-led-bezel: oklch(0.12 0.005 75);
+    --skin-led-spec: oklch(1 0 0 / 0.7);
+    --skin-bronze: oklch(0.62 0.021 83);
+
+    --skin-tape: oklch(0.19 0.006 75);
+    --skin-tape-hi: oklch(1 0 0 / 0.12);
+    --skin-tape-ink: oklch(0.93 0.02 85);
+    --skin-tape-deep: oklch(0 0 0 / 0.7);
+
+    --skin-engrave: 0 1px 0 var(--skin-bevel-hi);
+    --skin-sunk: 0 0 0 1px var(--skin-seam), inset 0 2px 2px -1px var(--skin-bevel-lo), inset 0 -1px 0 var(--skin-bevel-hi);
+    --skin-bed: 0 0 0 1px var(--skin-seam), inset 0 1px 2px var(--skin-bevel-lo), 0 1px 0 var(--skin-bevel-hi);
+    --skin-well-bezel: inset 0 2px 3px var(--skin-well-shade), 0 0 0 1px var(--skin-seam), 0 1px 0 var(--skin-bevel-hi);
+
+    --shadow-card: 0 0 0 1px var(--skin-seam), inset 1px 1px 0 var(--skin-bevel-hi), inset -1px -1px 0 var(--skin-bevel-lo);
+    --shadow-control: 0 0 0 1px var(--skin-seam), inset 0 1px 0 var(--skin-bevel-hi), inset 0 -2px 0 var(--skin-bevel-lo);
+    --shadow-control-hover: 0 0 0 1px var(--skin-bronze), inset 0 1px 0 var(--skin-bevel-hi), inset 0 -2px 0 var(--skin-bevel-lo);
+    --shadow-thumb: 0 0 0 1px var(--skin-seam), inset 0 1px 0 var(--skin-bevel-hi), inset 0 -1px 0 var(--skin-bevel-lo);
+    --shadow-raised: 0 0 0 1px var(--skin-seam), inset 1px 1px 0 var(--skin-bevel-hi), inset -1px -1px 0 var(--skin-bevel-lo), 0 8px 16px -6px var(--skin-drop);
+    --shadow-dialog: 0 0 0 1px var(--skin-seam), inset 2px 2px 0 var(--skin-bevel-hi), inset -2px -2px 0 var(--skin-bevel-lo), 0 20px 40px -12px var(--skin-drop);
+
+    --plot-bg: var(--skin-well);
+    --plot-grid: oklch(0.324 0.037 171);
+    --plot-axis: oklch(0.5 0.05 168);
+    --plot-text: oklch(0.8 0.11 160);
+    --plot-target: oklch(0.92 0.03 85);
+    --plot-shade: oklch(0.85 0.14 160 / 0.07);
+    --ch-1: oklch(0.61 0.13 250);
+    --ch-2: oklch(0.665 0.13 65);
+    --ch-3: oklch(0.55 0.13 280);
+    --ch-4: oklch(0.665 0.13 145);
+    --ch-5: oklch(0.55 0.13 5);
+    --ch-6: oklch(0.665 0.116 210);
+    --ch-7: oklch(0.55 0.13 50);
+    --ch-8: oklch(0.665 0.13 255);
+    --ch-9: oklch(0.55 0.13 140);
+    --ch-10: oklch(0.665 0.13 340);
+    --ch-11: oklch(0.61 0.13 140);
+    --ch-12: oklch(0.55 0.13 320);
+    --ch-13: oklch(0.665 0.13 105);
+    --ch-14: oklch(0.61 0.13 300);
+    --ch-15: oklch(0.61 0.126 95);
+    --ch-16: oklch(0.665 0.13 295);
+    --sub-1: oklch(0.78 0.11 265);
+    --sub-2: oklch(0.86 0.084 50);
+    --sub-3: oklch(0.72 0.12 175);
+    --sub-4: oklch(0.86 0.094 345);
+    --sub-5: oklch(0.8 0.12 130);
+    --sub-6: oklch(0.76 0.12 305);
+    --sub-7: oklch(0.88 0.078 225);
+    --sub-8: oklch(0.82 0.12 85);
+
+    --meter-track: var(--skin-well);
+    --meter-band: oklch(0.78 0.126 163 / 0.18);
+    --meter-fill: var(--skin-segment);
+    --meter-fill-ok: var(--skin-lamp-green);
+    --meter-fill-clip: var(--skin-lamp-red);
+
+    --map-bg: var(--skin-well);
+    --map-ink: oklch(0.88 0.02 85);
+    --map-furniture: oklch(0.21 0.008 120);
+    --map-furniture-edge: oklch(0.46 0.02 100);
+    --map-guide: oklch(0.55 0.02 90);
+    --map-marker: oklch(0.88 0.02 85);
+    --map-marker-fill: var(--skin-well);
+    --map-half: oklch(0.88 0.02 85 / 0.3);
+  }
+}
+
+/* ── The lamp colour survives the tutorial accent ──────────────────────── */
+[data-skin="rack"][data-accent] {
+  --accent-hue: 66;
+  --accent-chroma: 0.13;
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   Structure. Selectors mirror the component rules they override, prefixed
+   with the skin, so they win by specificity wherever the bundle puts them.
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Shared recipes, kept as custom properties on the skin root so every rule
+   below reads one definition (`:where` keeps them apart from the token
+   blocks, which contrast.test.ts compares). Brushed grain runs across the
+   faceplates and down the rail (both cut from one sheet); an LED is a bezel
+   ring, a dome and a specular dot, with a halo only when lit. */
+:where([data-skin="rack"]) {
+  --skin-brush-h: repeating-linear-gradient(0deg, var(--skin-grain) 0 1px, transparent 1px 3px), linear-gradient(180deg, var(--skin-sheen), transparent 55%);
+  --skin-brush-v: repeating-linear-gradient(90deg, var(--skin-grain) 0 1px, transparent 1px 3px), linear-gradient(90deg, var(--skin-sheen), transparent 70%);
+  --skin-cap: linear-gradient(180deg, var(--skin-cap-top), var(--skin-cap-bottom));
+  --skin-cap-lit: linear-gradient(180deg, var(--skin-cap-hi), var(--skin-cap-top));
+  --skin-cap-down: linear-gradient(180deg, var(--skin-cap-bottom), var(--skin-cap-top));
+  --skin-lens: linear-gradient(180deg, var(--skin-lens-top), var(--skin-lens-bottom));
+  --skin-lens-lit: linear-gradient(180deg, var(--skin-lens-hi), var(--skin-lens-top));
+  --skin-lens-down: linear-gradient(180deg, var(--skin-lens-bottom), var(--skin-lens-top));
+  --skin-film-layer: linear-gradient(var(--skin-film), var(--skin-film));
+  --skin-lamp: var(--skin-lamp-off);
+}
+
+/* The LED: set --skin-lamp on the element, add .lit-style halo by state. */
+[data-skin="rack"] .ui-pill__dot,
+[data-skin="rack"] .status-dot:not(.status-dot--busy),
+[data-skin="rack"] .measure-row__dot,
+[data-skin="rack"] .rail-step::before,
+[data-skin="rack"] .step-header__blocked::before,
+[data-skin="rack"] .ui-card--stale::after,
+[data-skin="rack"] .job-tray__errors::before,
+[data-skin="rack"] .plot-axes-button--custom::before {
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 34% 30%, var(--skin-led-spec) 0 14%, transparent 34%),
+    radial-gradient(circle at 50% 45%, var(--skin-lamp) 0 42%, color-mix(in oklch, var(--skin-lamp) 55%, var(--skin-led-bezel)) 100%);
+  box-shadow: 0 0 0 1.5px var(--skin-led-bezel), 0 0 0 2.5px var(--skin-bevel-hi);
+  opacity: 1;
+}
+
+/* ── App frame: the mounting rail ──────────────────────────────────────── */
+[data-skin="rack"] .app-rail {
+  position: relative;
+  border-right: 0;
+  background: var(--skin-brush-v), var(--rail-bg);
+  box-shadow: inset -1px 0 0 var(--skin-seam), inset -2px 0 0 var(--skin-bevel-hi);
+}
+
+/* Rack-ear holes down the rail's outer edge, one per rack unit. */
+[data-skin="rack"] .app-rail::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 8px;
+  background:
+    radial-gradient(3px 5.5px at 4px 22px, var(--skin-hole) 0 82%, transparent 100%) 0 0 / 8px 44px repeat-y,
+    radial-gradient(3px 5.5px at 4px 23.5px, var(--skin-bevel-hi) 0 82%, transparent 100%) 0 0 / 8px 44px repeat-y;
+  pointer-events: none;
+}
+
+/* The brand sits on a nameplate; the logo itself is untouched. */
+[data-skin="rack"] .app-rail__brand {
+  padding: var(--space-2) var(--space-2-5);
+  border-radius: var(--radius-sm);
+  background: var(--skin-brush-h), var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+[data-skin="rack"] .app-rail__name {
+  letter-spacing: 0.1em;
+  text-shadow: var(--skin-engrave);
+}
+
+[data-skin="rack"] .app-rail__heading,
+[data-skin="rack"] .project-menu__label {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: var(--weight-semibold);
+  text-shadow: var(--skin-engrave);
+}
+
+[data-skin="rack"] .project-menu__button {
+  background: var(--skin-brush-h), var(--skin-cap);
+  box-shadow: var(--shadow-control);
+}
+
+[data-skin="rack"] .project-menu__button:hover {
+  background: var(--skin-brush-h), var(--skin-cap-lit);
+  box-shadow: var(--shadow-control-hover);
+}
+
+[data-skin="rack"] .project-menu__button:active {
+  background: var(--skin-cap-down);
+  box-shadow: var(--skin-sunk);
+}
+
+/* Steps: five 1U units. A bezel LED on the left (done green, current amber
+   with a halo, blocked dark, skipped an empty socket), an engraved number
+   plate, the current unit latched (inverted bevel, warm face, 1 px lower). */
+[data-skin="rack"] .rail-steps__list {
+  gap: var(--space-1);
+}
+
+[data-skin="rack"] .rail-step {
+  padding-left: 30px;
+  background: var(--skin-brush-h), var(--skin-cap);
+  box-shadow: var(--shadow-control);
+}
+
+[data-skin="rack"] .rail-step:hover:not(:disabled):not(.rail-step--current) {
+  background: var(--skin-brush-h), var(--skin-cap-lit);
+  box-shadow: var(--shadow-control-hover);
+}
+
+[data-skin="rack"] .rail-step:active:not(.rail-step--current) {
+  background: var(--skin-cap-down);
+  box-shadow: var(--skin-sunk);
+}
+
+[data-skin="rack"] .rail-step--current {
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--skin-bronze), var(--skin-sunk);
+}
+
+[data-skin="rack"] .rail-step--current .rail-step__text,
+[data-skin="rack"] .rail-step--current .rail-step__mark {
+  translate: 0 1px;
+}
+
+[data-skin="rack"] .rail-step::before,
+[data-skin="rack"] .rail-step--current::before {
+  content: "";
+  position: absolute;
+  top: 15px;
+  bottom: auto;
+  left: 11px;
+  width: 10px;
+  height: 10px;
+}
+
+[data-skin="rack"] .rail-step--done::before {
+  --skin-lamp: var(--skin-lamp-green);
+  box-shadow: 0 0 0 1.5px var(--skin-led-bezel), 0 0 0 2.5px var(--skin-bevel-hi), 0 0 6px 1px color-mix(in oklch, var(--skin-lamp-green) 50%, transparent);
+}
+
+[data-skin="rack"] .rail-step.rail-step--current::before {
+  --skin-lamp: var(--skin-lamp-amber);
+  box-shadow: 0 0 0 1.5px var(--skin-led-bezel), 0 0 0 2.5px var(--skin-bevel-hi), 0 0 8px 2px color-mix(in oklch, var(--skin-lamp-amber) 55%, transparent);
+}
+
+/* A pulled module: the socket is empty. */
+[data-skin="rack"] .rail-step--skipped::before {
+  background: radial-gradient(circle at 50% 60%, var(--skin-hole) 0 55%, color-mix(in oklch, var(--skin-hole) 70%, var(--skin-led-bezel)) 100%);
+}
+
+[data-skin="rack"] .rail-step__mark,
+[data-skin="rack"] .rail-step--done .rail-step__mark,
+[data-skin="rack"] .rail-step--blocked .rail-step__mark,
+[data-skin="rack"] .rail-step--current .rail-step__mark,
+[data-skin="rack"] .rail-step--skipped .rail-step__mark {
+  border-radius: var(--radius-xs);
+  background: var(--surface-sunken);
+  box-shadow: inset 0 1px 2px var(--skin-bevel-lo), 0 1px 0 var(--skin-bevel-hi);
+  color: var(--text-muted);
+  font-weight: var(--weight-bold);
+}
+
+[data-skin="rack"] .rail-step--current .rail-step__mark {
+  color: var(--text);
+}
+
+[data-skin="rack"] .rail-step--skipped .rail-step__mark {
+  color: var(--text-faint);
+}
+
+[data-skin="rack"] .rail-step__title {
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.02em;
+  text-shadow: var(--skin-engrave);
+}
+
+/* Project status: LEDs for the dots, engraved names. */
+[data-skin="rack"] .app-rail__status {
+  border-top: 1px solid var(--skin-groove);
+  box-shadow: inset 0 1px 0 var(--skin-bevel-hi);
+}
+
+[data-skin="rack"] .status-row dt {
+  letter-spacing: 0.06em;
+  text-shadow: var(--skin-engrave);
+}
+
+[data-skin="rack"] .status-dot:not(.status-dot--busy) {
+  width: 8px;
+  height: 8px;
+}
+
+[data-skin="rack"] .status-dot.status-dot--success {
+  --skin-lamp: var(--skin-lamp-green);
+}
+
+[data-skin="rack"] .status-dot.status-dot--warning {
+  --skin-lamp: var(--skin-lamp-yellow);
+}
+
+[data-skin="rack"] .status-dot.status-dot--danger {
+  --skin-lamp: var(--skin-lamp-red);
+}
+
+[data-skin="rack"] .status-dot.status-dot--info {
+  --skin-lamp: var(--skin-lamp-blue);
+}
+
+[data-skin="rack"] .status-dot.status-dot--success,
+[data-skin="rack"] .status-dot.status-dot--warning,
+[data-skin="rack"] .status-dot.status-dot--danger,
+[data-skin="rack"] .status-dot.status-dot--info {
+  box-shadow: 0 0 0 1.5px var(--skin-led-bezel), 0 0 0 2.5px var(--skin-bevel-hi), 0 0 5px 1px color-mix(in oklch, var(--skin-lamp) 50%, transparent);
+}
+
+[data-skin="rack"] .app-rail__footer {
+  border-top: 1px solid var(--skin-groove);
+  box-shadow: inset 0 1px 0 var(--skin-bevel-hi);
+}
+
+[data-skin="rack"] .rail-tool {
+  text-shadow: var(--skin-engrave);
+}
+
+[data-skin="rack"] .rail-tool:hover {
+  background: var(--surface-hover);
+  box-shadow: inset 0 0 0 1px var(--skin-bronze);
+}
+
+/* Single shortcut hints are tiny keycaps. */
+[data-skin="rack"] .rail-tool__key,
+[data-skin="rack"] .ui-menu__shortcut {
+  padding: 0 var(--space-1);
+  border-radius: 2px;
+  background: var(--skin-cap);
+  box-shadow: 0 0 0 1px var(--skin-seam), inset 0 1px 0 var(--skin-bevel-hi), inset 0 -1px 0 var(--skin-bevel-lo);
+  font-family: var(--font-mono);
+}
+
+/* ── Step header: the faceplate's top strip ────────────────────────────── */
+[data-skin="rack"] .step-header {
+  border-bottom: 0;
+  background: var(--skin-brush-h), var(--surface);
+  box-shadow: inset 0 -1px 0 var(--skin-seam), inset 0 1px 0 var(--skin-bevel-hi), 0 1px 0 var(--skin-bevel-hi);
+}
+
+[data-skin="rack"] .step-header__title {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  text-shadow: var(--skin-engrave);
+}
+
+/* The blocked reason: a yellow lamp, then one line of body ink. */
+[data-skin="rack"] .step-header__blocked {
+  color: var(--text);
+}
+
+[data-skin="rack"] .step-header__blocked::before {
+  content: "";
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin: 0 var(--space-1) 0 3px;
+  --skin-lamp: var(--skin-lamp-yellow);
+  box-shadow: 0 0 0 1.5px var(--skin-led-bezel), 0 0 0 2.5px var(--skin-bevel-hi), 0 0 6px 1px color-mix(in oklch, var(--skin-lamp-yellow) 50%, transparent);
+}
+
+/* ── Job tray: the relay panel ─────────────────────────────────────────── */
+[data-skin="rack"] .job-tray {
+  border-top: 0;
+  background: var(--skin-brush-h), var(--surface-sunken);
+  box-shadow: inset 0 1px 0 var(--skin-seam), inset 0 2px 0 var(--skin-bevel-hi);
+}
+
+[data-skin="rack"] .job-tray__history-title,
+[data-skin="rack"] .job-row__name {
+  letter-spacing: 0.06em;
+  text-shadow: var(--skin-engrave);
+}
+
+[data-skin="rack"] .job-tray__toggle:hover {
+  background: var(--surface-hover);
+  box-shadow: inset 0 0 0 1px var(--skin-bronze);
+}
+
+[data-skin="rack"] .job-row__count,
+[data-skin="rack"] .job-row__time {
+  padding: 1px var(--space-1-5);
+  border-radius: 2px;
+  background: var(--skin-well);
+  box-shadow: var(--skin-well-bezel);
+  color: var(--skin-segment);
+  font-family: var(--font-mono);
+  font-weight: var(--weight-bold);
+}
+
+[data-skin="rack"] .job-tray__errors {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1-5);
+  background: transparent;
+  color: var(--text);
+}
+
+[data-skin="rack"] .job-tray__errors::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  --skin-lamp: var(--skin-lamp-red);
+  box-shadow: 0 0 0 1.5px var(--skin-led-bezel), 0 0 0 2.5px var(--skin-bevel-hi), 0 0 5px 1px color-mix(in oklch, var(--skin-lamp-red) 50%, transparent);
+}
+
+/* ── Buttons: machined caps ────────────────────────────────────────────── */
+[data-skin="rack"] .ui-button {
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  transition-property: background-color, box-shadow, color;
+}
+
+/* Pressed caps sink: the legend drops 1 px, the bevel inverts. */
+[data-skin="rack"] .ui-button:active:not(:disabled) > :not(.ui-spinner) {
+  translate: 0 1px;
+}
+
+[data-skin="rack"] .ui-button--secondary,
+[data-skin="rack"] .ui-button--quiet.ui-button--icon-only,
+[data-skin="rack"] .ui-dialog__close,
+[data-skin="rack"] .ui-toast__close {
+  background: var(--skin-cap);
+  box-shadow: var(--shadow-control);
+}
+
+[data-skin="rack"] .ui-button--secondary:hover:not(:disabled),
+[data-skin="rack"] .ui-button--quiet.ui-button--icon-only:hover:not(:disabled),
+[data-skin="rack"] .ui-dialog__close:hover,
+[data-skin="rack"] .ui-toast__close:hover {
+  background: var(--skin-cap-lit);
+  box-shadow: var(--shadow-control-hover);
+}
+
+[data-skin="rack"] .ui-button--secondary:active:not(:disabled),
+[data-skin="rack"] .ui-button--quiet:active:not(:disabled),
+[data-skin="rack"] .ui-dialog__close:active,
+[data-skin="rack"] .ui-toast__close:active {
+  background: var(--skin-cap-down);
+  box-shadow: var(--skin-sunk);
+}
+
+/* The one primary: a cap with a backlit amber legend; danger is backlit red. */
+[data-skin="rack"] .ui-button--primary,
+[data-skin="rack"] .ui-button--danger {
+  background: var(--skin-lens);
+  box-shadow: var(--shadow-control);
+  color: var(--skin-legend);
+  text-shadow: 0 0 6px var(--skin-legend-glow);
+}
+
+[data-skin="rack"] .ui-button--danger {
+  color: var(--skin-legend-danger);
+  text-shadow: 0 0 6px var(--skin-legend-danger-glow);
+}
+
+[data-skin="rack"] .ui-button--primary:hover:not(:disabled),
+[data-skin="rack"] .ui-button--danger:hover:not(:disabled) {
+  background: var(--skin-lens-lit);
+  box-shadow: var(--shadow-control-hover);
+}
+
+[data-skin="rack"] .ui-button--primary:active:not(:disabled),
+[data-skin="rack"] .ui-button--danger:active:not(:disabled) {
+  background: var(--skin-lens-down);
+  box-shadow: var(--skin-sunk);
+}
+
+/* A quiet button is a label engraved in the plate; it warms on hover. */
+[data-skin="rack"] .ui-button--quiet {
+  text-shadow: var(--skin-engrave);
+}
+
+[data-skin="rack"] .ui-button--quiet:hover:not(:disabled) {
+  background: var(--surface-hover);
+  box-shadow: inset 0 0 0 1px var(--skin-bronze);
+}
+
+/* Powered down: the legend goes dark under a film; the cap stays. */
+[data-skin="rack"] .ui-button--primary:disabled:not([aria-busy]),
+[data-skin="rack"] .ui-button--danger:disabled:not([aria-busy]) {
+  background: var(--skin-film-layer), var(--skin-lens);
+  color: var(--skin-legend-off);
+  text-shadow: none;
+}
+
+[data-skin="rack"] .ui-button--secondary:disabled:not([aria-busy]),
+[data-skin="rack"] .ui-button--quiet.ui-button--icon-only:disabled:not([aria-busy]) {
+  background: var(--skin-film-layer), var(--skin-cap);
+  box-shadow: var(--shadow-control);
+}
+
+/* ── Cards: brushed faceplates with four slotted screws ────────────────── */
+[data-skin="rack"] .ui-card {
+  position: relative;
+  background: var(--skin-brush-h), var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+[data-skin="rack"] .ui-card::before,
+[data-skin="rack"] .ui-dialog::before {
+  --skin-screw: 9px;
+  --skin-screw-at: 6px;
+  --skin-far: calc(100% - var(--skin-screw-at));
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(28deg, transparent calc(50% - 0.8px), var(--skin-screw-slot) calc(50% - 0.8px) calc(50% + 0.8px), transparent calc(50% + 0.8px)) var(--skin-screw-at) var(--skin-screw-at) / var(--skin-screw) var(--skin-screw) no-repeat,
+    linear-gradient(-64deg, transparent calc(50% - 0.8px), var(--skin-screw-slot) calc(50% - 0.8px) calc(50% + 0.8px), transparent calc(50% + 0.8px)) var(--skin-far) var(--skin-screw-at) / var(--skin-screw) var(--skin-screw) no-repeat,
+    linear-gradient(112deg, transparent calc(50% - 0.8px), var(--skin-screw-slot) calc(50% - 0.8px) calc(50% + 0.8px), transparent calc(50% + 0.8px)) var(--skin-screw-at) var(--skin-far) / var(--skin-screw) var(--skin-screw) no-repeat,
+    linear-gradient(-9deg, transparent calc(50% - 0.8px), var(--skin-screw-slot) calc(50% - 0.8px) calc(50% + 0.8px), transparent calc(50% + 0.8px)) var(--skin-far) var(--skin-far) / var(--skin-screw) var(--skin-screw) no-repeat,
+    radial-gradient(circle at 36% 32%, var(--skin-screw-hi), var(--skin-screw-lo) 62%, var(--skin-screw-rim) 92%) var(--skin-screw-at) var(--skin-screw-at) / var(--skin-screw) var(--skin-screw) no-repeat,
+    radial-gradient(circle at 36% 32%, var(--skin-screw-hi), var(--skin-screw-lo) 62%, var(--skin-screw-rim) 92%) var(--skin-far) var(--skin-screw-at) / var(--skin-screw) var(--skin-screw) no-repeat,
+    radial-gradient(circle at 36% 32%, var(--skin-screw-hi), var(--skin-screw-lo) 62%, var(--skin-screw-rim) 92%) var(--skin-screw-at) var(--skin-far) / var(--skin-screw) var(--skin-screw) no-repeat,
+    radial-gradient(circle at 36% 32%, var(--skin-screw-hi), var(--skin-screw-lo) 62%, var(--skin-screw-rim) 92%) var(--skin-far) var(--skin-far) / var(--skin-screw) var(--skin-screw) no-repeat;
+  mask:
+    radial-gradient(circle closest-side, currentColor 90%, transparent 100%) var(--skin-screw-at) var(--skin-screw-at) / var(--skin-screw) var(--skin-screw) no-repeat,
+    radial-gradient(circle closest-side, currentColor 90%, transparent 100%) var(--skin-far) var(--skin-screw-at) / var(--skin-screw) var(--skin-screw) no-repeat,
+    radial-gradient(circle closest-side, currentColor 90%, transparent 100%) var(--skin-screw-at) var(--skin-far) / var(--skin-screw) var(--skin-screw) no-repeat,
+    radial-gradient(circle closest-side, currentColor 90%, transparent 100%) var(--skin-far) var(--skin-far) / var(--skin-screw) var(--skin-screw) no-repeat;
+}
+
+/* Dense cards keep the bevel and drop the screws. */
+[data-skin="rack"] .ui-card--dense::before {
+  content: none;
+}
+
+[data-skin="rack"] .ui-card__title,
+[data-skin="rack"] .ui-dialog__title,
+[data-skin="rack"] .ui-empty__title,
+[data-skin="rack"] .ui-section__title,
+[data-skin="rack"] .settings__title,
+[data-skin="rack"] .plot-axes__title {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: var(--weight-semibold);
+  text-shadow: var(--skin-engrave);
+}
+
+/* A dialog title can carry data (a file name): spacing only, no capitals. */
+[data-skin="rack"] .ui-dialog__title {
+  text-transform: none;
+}
+
+/* Stale: a yellow lamp on the card's bezel instead of a painted stripe. */
+[data-skin="rack"] .ui-card--stale {
+  box-shadow: var(--shadow-card);
+}
+
+[data-skin="rack"] .ui-card--stale::after {
+  content: "";
+  position: absolute;
+  top: 6px;
+  right: 24px;
+  width: 9px;
+  height: 9px;
+  --skin-lamp: var(--skin-lamp-yellow);
+  box-shadow: 0 0 0 1.5px var(--skin-led-bezel), 0 0 0 2.5px var(--skin-bevel-hi), 0 0 6px 1px color-mix(in oklch, var(--skin-lamp-yellow) 50%, transparent);
+  pointer-events: none;
+}
+
+/* Sections are divided by a milled groove. */
+[data-skin="rack"] .ui-section {
+  border-top-color: var(--skin-groove);
+  box-shadow: inset 0 1px 0 var(--skin-bevel-hi);
+}
+
+[data-skin="rack"] .ui-section:first-child {
+  box-shadow: none;
+}
+
+/* The advanced fold is a service hatch: an engraved caret label over a sunken bed. */
+[data-skin="rack"] .ui-advanced__toggle {
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  text-shadow: var(--skin-engrave);
+}
+
+[data-skin="rack"] .ui-advanced__toggle:hover {
+  background: var(--surface-hover);
+  box-shadow: inset 0 0 0 1px var(--skin-bronze);
+}
+
+[data-skin="rack"] .ui-advanced__panel {
+  padding: var(--space-3);
+  border-left: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  box-shadow: var(--skin-bed);
+}
+
+/* ── Status: bezel LEDs and engraved legends, painted on the plate ─────── */
+[data-skin="rack"] .ui-pill,
+[data-skin="rack"] .ui-pill--success,
+[data-skin="rack"] .ui-pill--warning,
+[data-skin="rack"] .ui-pill--danger,
+[data-skin="rack"] .ui-pill--info,
+[data-skin="rack"] .ui-pill--busy {
+  gap: var(--space-2);
+  padding: 0 var(--space-1) 0 3px;
+  background: transparent;
+  color: var(--text);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+  text-shadow: var(--skin-engrave);
+}
+
+[data-skin="rack"] .ui-pill__dot {
+  width: 10px;
+  height: 10px;
+}
+
+[data-skin="rack"] .ui-pill--success {
+  --skin-lamp: var(--skin-lamp-green);
+}
+
+[data-skin="rack"] .ui-pill--warning {
+  --skin-lamp: var(--skin-lamp-yellow);
+}
+
+[data-skin="rack"] .ui-pill--danger {
+  --skin-lamp: var(--skin-lamp-red);
+}
+
+[data-skin="rack"] .ui-pill--info {
+  --skin-lamp: var(--skin-lamp-blue);
+}
+
+[data-skin="rack"] .ui-pill--success .ui-pill__dot,
+[data-skin="rack"] .ui-pill--warning .ui-pill__dot,
+[data-skin="rack"] .ui-pill--danger .ui-pill__dot,
+[data-skin="rack"] .ui-pill--info .ui-pill__dot {
+  box-shadow: 0 0 0 1.5px var(--skin-led-bezel), 0 0 0 2.5px var(--skin-bevel-hi), 0 0 6px 1px color-mix(in oklch, var(--skin-lamp) 50%, transparent);
+}
+
+[data-skin="rack"] .ui-pill__spinner {
+  color: var(--info);
+}
+
+/* ── Fields: LCD wells inside a bezel ──────────────────────────────────── */
+[data-skin="rack"] .ui-number {
+  padding: 3px var(--space-2) 3px 3px;
+  background: var(--skin-cap-down);
+  box-shadow: var(--skin-bed);
+}
+
+[data-skin="rack"] .ui-number:hover {
+  box-shadow: 0 0 0 1px var(--skin-bronze), var(--skin-bed);
+}
+
+[data-skin="rack"] .ui-number:focus-within,
+[data-skin="rack"] .ui-select:focus-within,
+[data-skin="rack"] .ui-cell-select:focus-within {
+  outline: var(--focus-w) solid var(--focus-color);
+  outline-offset: 0;
+}
+
+[data-skin="rack"] .ui-number__input,
+[data-skin="rack"] .ui-stepper__value {
+  align-self: stretch;
+  padding: 0 var(--space-1-5);
+  border-radius: 2px;
+  background: var(--skin-well);
+  box-shadow: inset 0 2px 3px var(--skin-well-shade);
+  color: var(--skin-segment);
+  font-family: var(--font-mono);
+  font-weight: var(--weight-bold);
+  text-shadow: 0 0 5px var(--skin-segment-glow);
+}
+
+[data-skin="rack"] .ui-number__unit {
+  font-weight: var(--weight-semibold);
+  text-shadow: var(--skin-engrave);
+}
+
+[data-skin="rack"] .ui-number--invalid,
+[data-skin="rack"] .ui-number--invalid:hover,
+[data-skin="rack"] .ui-select.ui-select--invalid,
+[data-skin="rack"] .ui-cell-select.ui-cell-select--invalid,
+[data-skin="rack"] .ui-cell-select.ui-cell-select--invalid:hover {
+  box-shadow: 0 0 0 1.5px var(--danger), var(--skin-bed);
+}
+
+[data-skin="rack"] .ui-number--disabled {
+  background: var(--skin-film-layer), var(--skin-cap-down);
+  color: var(--text-faint);
+}
+
+[data-skin="rack"] .ui-number--disabled .ui-number__input {
+  color: var(--skin-legend-off);
+  text-shadow: none;
+}
+
+/* Selects: an engraved caption over a milled groove, a small printed triangle. */
+[data-skin="rack"] .ui-select,
+[data-skin="rack"] .ui-cell-select {
+  background: transparent;
+  box-shadow: inset 0 -1px 0 var(--skin-bevel-hi), inset 0 -2px 0 var(--border-control), inset 0 -4px 3px -3px var(--skin-bevel-lo);
+}
+
+[data-skin="rack"] .ui-select:hover,
+[data-skin="rack"] .ui-cell-select:hover {
+  box-shadow: inset 0 -1px 0 var(--skin-bevel-hi), inset 0 -2px 0 var(--skin-bronze), inset 0 -4px 3px -3px var(--skin-bevel-lo);
+}
+
+[data-skin="rack"] .ui-select__native,
+[data-skin="rack"] .ui-cell-select__display {
+  font-weight: var(--weight-semibold);
+  text-shadow: var(--skin-engrave);
+}
+
+[data-skin="rack"] .ui-select.ui-select--disabled,
+[data-skin="rack"] .ui-select.ui-select--disabled:hover,
+[data-skin="rack"] .ui-cell-select.ui-cell-select--disabled,
+[data-skin="rack"] .ui-cell-select.ui-cell-select--disabled:hover {
+  background: var(--skin-film-layer);
+  box-shadow: inset 0 -1px 0 var(--skin-bevel-hi), inset 0 -2px 0 var(--border);
+}
+
+/* Stepper: two small caps around an LCD. */
+[data-skin="rack"] .ui-stepper {
+  gap: 3px;
+  background: transparent;
+  box-shadow: none;
+}
+
+[data-skin="rack"] .ui-stepper__button {
+  background: var(--skin-cap);
+  box-shadow: var(--shadow-control);
+}
+
+[data-skin="rack"] .ui-stepper__button:hover:not(:disabled) {
+  background: var(--skin-cap-lit);
+  box-shadow: var(--shadow-control-hover);
+}
+
+[data-skin="rack"] .ui-stepper__button:active:not(:disabled) {
+  background: var(--skin-cap-down);
+  box-shadow: var(--skin-sunk);
+}
+
+[data-skin="rack"] .ui-stepper__button:disabled {
+  background: var(--skin-film-layer), var(--skin-cap);
+}
+
+[data-skin="rack"] .ui-stepper__value {
+  min-width: 5ch;
+  box-shadow: var(--skin-well-bezel);
+}
+
+/* Toggle: a latching switch. Sunken bed, a ridged cap, an amber lamp window
+   that the cap uncovers when it latches on. */
+[data-skin="rack"] .ui-toggle__track,
+[data-skin="rack"] .ui-toggle[aria-checked="true"] .ui-toggle__track {
+  border-radius: var(--radius-sm);
+  background: var(--surface-sunken);
+  box-shadow: var(--skin-bed);
+}
+
+[data-skin="rack"] .ui-toggle__track::before {
+  content: "";
+  position: absolute;
+  top: 6px;
+  left: 4px;
+  width: 9px;
+  height: 8px;
+  border-radius: 1px;
+  background: var(--skin-lamp-off);
+  box-shadow: inset 0 1px 1px var(--skin-bevel-lo);
+}
+
+[data-skin="rack"] .ui-toggle[aria-checked="true"]:not(:disabled) .ui-toggle__track::before {
+  background: radial-gradient(circle at 40% 35%, var(--skin-led-spec) 0 12%, transparent 40%), var(--skin-lamp-amber);
+  box-shadow: 0 0 6px 1px color-mix(in oklch, var(--skin-lamp-amber) 55%, transparent);
+}
+
+[data-skin="rack"] .ui-toggle__thumb,
+[data-skin="rack"] .ui-toggle[aria-checked="true"] .ui-toggle__thumb {
+  border-radius: 2px;
+  background:
+    repeating-linear-gradient(90deg, var(--skin-bevel-lo) 0 1px, var(--skin-bevel-hi) 1px 2px, transparent 2px 4px) center / 8px 8px no-repeat,
+    var(--skin-cap);
+  box-shadow: var(--shadow-thumb);
+}
+
+/* Segmented: a bank of caps; the chosen one latches down and lights. */
+[data-skin="rack"] .ui-segmented {
+  background: var(--surface-sunken);
+  box-shadow: var(--skin-bed);
+}
+
+[data-skin="rack"] .ui-segmented__option {
+  background: var(--skin-cap);
+  box-shadow: var(--shadow-thumb);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.04em;
+}
+
+[data-skin="rack"] .ui-segmented__option:hover:not([aria-checked="true"]):not(:disabled) {
+  background: var(--skin-cap-lit);
+  box-shadow: 0 0 0 1px var(--skin-bronze), inset 0 1px 0 var(--skin-bevel-hi), inset 0 -1px 0 var(--skin-bevel-lo);
+}
+
+[data-skin="rack"] .ui-segmented__option[aria-checked="true"] {
+  background: var(--skin-lens-down);
+  box-shadow: var(--skin-sunk);
+  color: var(--skin-legend);
+  text-shadow: 0 0 6px var(--skin-legend-glow);
+}
+
+[data-skin="rack"] .ui-segmented__option[aria-checked="true"] > * {
+  translate: 0 1px;
+}
+
+[data-skin="rack"] .ui-segmented__option:disabled {
+  background: var(--skin-film-layer), var(--skin-cap);
+}
+
+/* ── Tables: printed on the panel ──────────────────────────────────────── */
+[data-skin="rack"] .ui-table th[scope="col"] {
+  border-bottom: 1px solid var(--skin-seam);
+  color: var(--text-muted);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-shadow: var(--skin-engrave);
+}
+
+/* Cells are printed on the panel: a milling groove between rows and no
+   bevel, so a row never reads as a key. */
+[data-skin="rack"] .ui-table td {
+  border-bottom-color: var(--skin-groove);
+}
+
+[data-skin="rack"] .ui-table td.ui-table__num {
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.02em;
+  text-shadow: var(--skin-engrave);
+}
+
+[data-skin="rack"] .ui-table__group th {
+  background: var(--surface-sunken);
+  box-shadow: inset 0 1px 2px var(--skin-bevel-lo);
+  letter-spacing: 0.08em;
+}
+
+/* Hover warms the row; the chosen row lights the lamp strip along its
+   left edge (the console's assign lamp) on the warm selected panel. No
+   ring, no bevel: the row is a line on the panel, not a cap. */
+[data-skin="rack"] .ui-table--selectable tbody tr[tabindex]:hover {
+  background: var(--surface-hover);
+}
+
+[data-skin="rack"] .ui-table__row--selected,
+[data-skin="rack"] .ui-table--selectable tbody tr.ui-table__row--selected:hover {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--skin-lamp-amber), inset 6px 0 6px -3px color-mix(in oklch, var(--skin-lamp-amber) 45%, transparent);
+}
+
+/* ── Meter: a VU segment window ────────────────────────────────────────── */
+[data-skin="rack"] .ui-meter__track {
+  height: 14px;
+  border-radius: 2px;
+  background:
+    repeating-linear-gradient(90deg, var(--skin-segment-off) 0 4px, transparent 4px 5px) center / calc(100% - 6px) 6px no-repeat,
+    var(--meter-track);
+  box-shadow: var(--skin-well-bezel);
+}
+
+[data-skin="rack"] .ui-meter__fill {
+  top: 4px;
+  bottom: 4px;
+  left: 3px;
+  border-radius: 0;
+  mask: repeating-linear-gradient(90deg, currentColor 0 4px, transparent 4px 5px);
+}
+
+[data-skin="rack"] .ui-meter--high .ui-meter__fill {
+  background: var(--skin-lamp-yellow);
+}
+
+[data-skin="rack"] .ui-meter__band {
+  background: var(--meter-band);
+  box-shadow: inset 0 -2px 0 var(--skin-lamp-green), inset 0 2px 0 var(--skin-lamp-green);
+}
+
+[data-skin="rack"] .ui-meter__peak {
+  top: 4px;
+  bottom: 4px;
+  width: 4px;
+  margin-left: -2px;
+  background: var(--skin-segment);
+  box-shadow: 0 0 4px var(--skin-segment-glow);
+}
+
+[data-skin="rack"] .ui-meter__label {
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+  text-shadow: var(--skin-engrave);
+}
+
+[data-skin="rack"] .ui-meter__value {
+  padding: 1px var(--space-1-5);
+  border-radius: 2px;
+  background: var(--skin-well);
+  box-shadow: var(--skin-well-bezel);
+  color: var(--skin-segment);
+  font-family: var(--font-mono);
+  font-weight: var(--weight-bold);
+  text-shadow: 0 0 5px var(--skin-segment-glow);
+}
+
+/* ── Progress: lit segments in a well ──────────────────────────────────── */
+[data-skin="rack"] .ui-progress {
+  height: 10px;
+  border-radius: 2px;
+  background: var(--skin-well);
+  box-shadow: var(--skin-well-bezel);
+}
+
+[data-skin="rack"] .ui-progress__fill {
+  top: 2px;
+  bottom: 2px;
+  border-radius: 0;
+  background: var(--skin-lamp-blue);
+  mask: repeating-linear-gradient(90deg, currentColor 0 5px, transparent 5px 6px);
+}
+
+[data-skin="rack"] .tutorial-panel .ui-progress__fill {
+  background: var(--skin-lamp-amber);
+}
+
+/* ── Tooltip: Dymo embossing tape ──────────────────────────────────────── */
+[data-skin="rack"] .ui-tooltip,
+[data-skin="rack"] .tutorial-toast {
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--skin-tape-hi), transparent 45%), var(--skin-tape);
+  box-shadow: 0 0 0 1px var(--skin-tape-deep), 0 3px 6px -2px var(--skin-drop);
+  color: var(--skin-tape-ink);
+  letter-spacing: 0.02em;
+  text-shadow: 0 1px 0 var(--skin-tape-deep);
+}
+
+/* ── Floating service panels ───────────────────────────────────────────── */
+[data-skin="rack"] .ui-popover,
+[data-skin="rack"] .ui-menu,
+[data-skin="rack"] .ui-toast,
+[data-skin="rack"] .ui-dialog {
+  background: var(--skin-brush-h), var(--surface-raised);
+}
+
+[data-skin="rack"] .ui-dialog {
+  position: relative;
+}
+
+[data-skin="rack"] .ui-menu__item:hover:not(:disabled),
+[data-skin="rack"] .ui-menu__item:focus-visible {
+  background: var(--surface-hover);
+  box-shadow: inset 0 0 0 1px var(--skin-bronze);
+}
+
+[data-skin="rack"] .ui-menu__item--checked,
+[data-skin="rack"] .ui-menu__item--checked:hover:not(:disabled) {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--skin-bronze), inset 0 2px 2px -1px var(--skin-bevel-lo);
+}
+
+[data-skin="rack"] .ui-menu__separator {
+  height: 2px;
+  background: linear-gradient(180deg, var(--skin-groove) 0 1px, var(--skin-bevel-hi) 1px 2px);
+}
+
+/* Toast: a service notice with an amber keel. */
+[data-skin="rack"] .ui-toast {
+  box-shadow: var(--shadow-raised), inset 3px 0 0 var(--skin-bronze);
+}
+
+[data-skin="rack"] .ui-toast__action {
+  background: var(--skin-lens);
+  box-shadow: var(--shadow-control);
+  color: var(--skin-legend);
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 6px var(--skin-legend-glow);
+}
+
+[data-skin="rack"] .ui-toast__action:hover {
+  background: var(--skin-lens-lit);
+  box-shadow: var(--shadow-control-hover);
+}
+
+/* ── Empty and error ───────────────────────────────────────────────────── */
+[data-skin="rack"] .ui-error,
+[data-skin="rack"] .ui-error--warning {
+  border-radius: var(--radius-sm);
+  background: var(--skin-brush-h), var(--surface-sunken);
+  box-shadow: var(--skin-bed);
+}
+
+[data-skin="rack"] .ui-details__raw {
+  background: var(--skin-well);
+  box-shadow: var(--skin-well-bezel);
+  color: var(--skin-segment-muted);
+  font-family: var(--font-mono);
+}
+
+/* ── Graphs: scope glass ───────────────────────────────────────────────── */
+[data-skin="rack"] .plot__frame {
+  --font-ui: var(--font-mono);
+}
+
+[data-skin="rack"] .plot__canvas {
+  border-radius: var(--radius-sm);
+  background: var(--plot-bg);
+  box-shadow: var(--skin-well-bezel);
+}
+
+[data-skin="rack"] .plot__unit {
+  font-family: var(--font-ui);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.06em;
+  text-shadow: var(--skin-engrave);
+}
+
+[data-skin="rack"] .plot__readout:not(:empty) {
+  padding: 0 var(--space-1-5);
+  border-radius: 2px;
+  background: var(--skin-well);
+  box-shadow: var(--skin-well-bezel);
+  color: var(--skin-segment);
+  font-weight: var(--weight-bold);
+}
+
+[data-skin="rack"] .plot-band-label {
+  color: var(--plot-text);
+}
+
+[data-skin="rack"] .plot-chip {
+  background: var(--skin-cap);
+  box-shadow: var(--shadow-control);
+  text-shadow: var(--skin-engrave);
+}
+
+[data-skin="rack"] .plot-chip:hover {
+  background: var(--skin-cap-lit);
+  box-shadow: var(--shadow-control-hover);
+}
+
+[data-skin="rack"] .plot-chip[aria-pressed="false"] {
+  background: var(--skin-film-layer), var(--skin-cap-down);
+  box-shadow: var(--skin-sunk);
+}
+
+[data-skin="rack"] .plot-chip__swatch {
+  box-shadow: 0 0 0 1px var(--skin-led-bezel);
+}
+
+[data-skin="rack"] .plot-axes-button--custom::before {
+  top: 4px;
+  right: 4px;
+  width: 7px;
+  height: 7px;
+  --skin-lamp: var(--skin-lamp-amber);
+}
+
+/* Target points are amber adjustment knobs; XO is an amber trace with a lit cap. */
+[data-skin="rack"] .plot-handle::after {
+  background: radial-gradient(circle at 38% 32%, var(--skin-cap-hi), var(--skin-cap-bottom) 80%);
+  box-shadow: 0 0 0 2px var(--skin-lamp-amber), 0 1px 2px 1px var(--skin-drop);
+}
+
+[data-skin="rack"] .plot-handle:hover::after,
+[data-skin="rack"] .plot-handle--active::after {
+  scale: 1;
+  background: radial-gradient(circle at 38% 32%, var(--skin-cap-hi), var(--skin-cap-bottom) 80%);
+  box-shadow: 0 0 0 2px var(--skin-lamp-amber), 0 0 8px 2px var(--skin-legend-glow);
+}
+
+[data-skin="rack"] .plot-xo__line {
+  background: var(--skin-lamp-amber);
+}
+
+[data-skin="rack"] .plot-xo__handle {
+  background: var(--skin-lens);
+  box-shadow: var(--shadow-control);
+  color: var(--skin-legend);
+  font-family: var(--font-mono);
+  text-shadow: 0 0 6px var(--skin-legend-glow);
+}
+
+[data-skin="rack"] .plot-xo__handle:hover,
+[data-skin="rack"] .plot-xo--active .plot-xo__handle {
+  background: var(--skin-lens-lit);
+  box-shadow: var(--shadow-control-hover);
+}
+
+[data-skin="rack"] .plot-xo--disabled .plot-xo__line {
+  background: var(--plot-axis);
+}
+
+[data-skin="rack"] .plot-xo--disabled .plot-xo__handle {
+  background: var(--skin-film-layer), var(--skin-lens);
+  color: var(--skin-legend-off);
+  text-shadow: none;
+}
+
+/* ── Maps: drawings behind the same glass ──────────────────────────────── */
+[data-skin="rack"] .map__frame {
+  background: var(--map-bg);
+  box-shadow: var(--skin-well-bezel);
+}
+
+[data-skin="rack"] .map__caption,
+[data-skin="rack"] .map-speaker__outputs {
+  fill: var(--skin-print-muted);
+}
+
+[data-skin="rack"] .map__scale line {
+  stroke: var(--map-guide);
+}
+
+[data-skin="rack"] .map-marker--is-done .map-marker__body {
+  fill: var(--skin-lamp-green);
+  stroke: var(--skin-lamp-green);
+}
+
+[data-skin="rack"] .map-marker--current .map-marker__body,
+[data-skin="rack"] .map-speaker--selected .map-speaker__body {
+  fill: var(--skin-lamp-amber);
+  stroke: var(--skin-lamp-amber);
+}
+
+[data-skin="rack"] .map-speaker--selected.map-speaker--top .map-speaker__body,
+[data-skin="rack"] .map-speaker--selected.map-speaker--height .map-speaker__body {
+  fill: var(--skin-well);
+  stroke: var(--skin-lamp-amber);
+}
+
+[data-skin="rack"] .map-marker--is-done .map-marker__number,
+[data-skin="rack"] .map-marker--current .map-marker__number {
+  fill: var(--skin-well);
+}
+
+[data-skin="rack"] .map-marker__halo,
+[data-skin="rack"] .map-speaker__halo {
+  fill: var(--skin-lamp-amber);
+  fill-opacity: 0.28;
+}
+
+[data-skin="rack"] .map-marker--is-done .map-marker__half,
+[data-skin="rack"] .map-marker--current .map-marker__half {
+  fill: var(--skin-well);
+}
+
+[data-skin="rack"] .map-thumb__seat {
+  fill: var(--surface-sunken);
+  stroke: var(--border-control);
+}
+
+[data-skin="rack"] .map__legend-mark .map-marker__body,
+[data-skin="rack"] .map__legend-mark .map-speaker__body {
+  fill: var(--surface-sunken);
+  stroke: var(--text-muted);
+}
+
+/* ── Choice tiles and rows on the screens: caps that latch ─────────────── */
+[data-skin="rack"] .system-choice,
+[data-skin="rack"] .connect-method,
+[data-skin="rack"] .system-polarity,
+[data-skin="rack"] .map__unassigned-chip {
+  background: var(--skin-brush-h), var(--skin-cap);
+  box-shadow: var(--shadow-control);
+}
+
+[data-skin="rack"] button.system-choice:hover:not([aria-pressed="true"]),
+[data-skin="rack"] .connect-method:hover:not([aria-pressed="true"]),
+[data-skin="rack"] .system-polarity:hover,
+[data-skin="rack"] .map__unassigned-chip:hover {
+  background: var(--skin-brush-h), var(--skin-cap-lit);
+  box-shadow: var(--shadow-control-hover);
+}
+
+[data-skin="rack"] button.system-choice:active:not([aria-pressed="true"]),
+[data-skin="rack"] .connect-method:active:not([aria-pressed="true"]),
+[data-skin="rack"] .system-polarity:active {
+  background: var(--skin-cap-down);
+  box-shadow: var(--skin-sunk);
+}
+
+[data-skin="rack"] .system-choice[aria-pressed="true"],
+[data-skin="rack"] .system-choice[aria-current="true"],
+[data-skin="rack"] .connect-method[aria-pressed="true"],
+[data-skin="rack"] .map__unassigned-chip[aria-pressed="true"] {
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--skin-bronze), var(--skin-sunk);
+}
+
+[data-skin="rack"] .system-polarity[aria-pressed="true"] {
+  background: var(--skin-lens-down);
+  box-shadow: var(--skin-sunk);
+  color: var(--skin-legend);
+  text-shadow: 0 0 6px var(--skin-legend-glow);
+}
+
+[data-skin="rack"] .connect-method__name {
+  letter-spacing: 0.04em;
+  text-shadow: var(--skin-engrave);
+}
+
+/* Measurement positions: engraved numbers, a bezel LED per row. */
+[data-skin="rack"] .measure-row:hover {
+  background: var(--surface-hover);
+  box-shadow: inset 0 0 0 1px var(--skin-bronze);
+}
+
+[data-skin="rack"] .measure-row[aria-disabled="true"]:hover {
+  box-shadow: none;
+}
+
+[data-skin="rack"] .measure-row--current,
+[data-skin="rack"] .measure-row--current:hover,
+[data-skin="rack"] .measure-row--current[aria-disabled="true"]:hover {
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 1px var(--skin-bronze), var(--skin-sunk);
+}
+
+[data-skin="rack"] .measure-row__num {
+  font-weight: var(--weight-bold);
+  text-shadow: var(--skin-engrave);
+}
+
+[data-skin="rack"] .measure-row__state,
+[data-skin="rack"] .measure-row--done .measure-row__state,
+[data-skin="rack"] .measure-row--redo .measure-row__state,
+[data-skin="rack"] .measure-row--next .measure-row__state,
+[data-skin="rack"] .measure-row--measuring .measure-row__state,
+[data-skin="rack"] .measure-row--partial .measure-row__state {
+  color: var(--text-muted);
+}
+
+[data-skin="rack"] .measure-row__dot {
+  width: 9px;
+  height: 9px;
+}
+
+[data-skin="rack"] .measure-row--done .measure-row__dot,
+[data-skin="rack"] .measure-row--redo .measure-row__dot {
+  --skin-lamp: var(--skin-lamp-green);
+}
+
+[data-skin="rack"] .measure-row--next .measure-row__dot {
+  --skin-lamp: var(--skin-lamp-amber);
+}
+
+[data-skin="rack"] .measure-row--measuring .measure-row__dot {
+  --skin-lamp: var(--skin-lamp-blue);
+}
+
+[data-skin="rack"] .measure-row--partial .measure-row__dot {
+  --skin-lamp: var(--skin-lamp-yellow);
+}
+
+[data-skin="rack"] .measure-row--done .measure-row__dot,
+[data-skin="rack"] .measure-row--redo .measure-row__dot,
+[data-skin="rack"] .measure-row--next .measure-row__dot,
+[data-skin="rack"] .measure-row--measuring .measure-row__dot,
+[data-skin="rack"] .measure-row--partial .measure-row__dot {
+  box-shadow: 0 0 0 1.5px var(--skin-led-bezel), 0 0 0 2.5px var(--skin-bevel-hi), 0 0 5px 1px color-mix(in oklch, var(--skin-lamp) 50%, transparent);
+}
+
+/* Readings on the screens are LCD wells. */
+[data-skin="rack"] .calibrate-stat__value,
+[data-skin="rack"] .connect-readout.tabular,
+[data-skin="rack"] .export-fact dd {
+  padding: var(--space-0-5) var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--skin-well);
+  box-shadow: var(--skin-well-bezel);
+  color: var(--skin-segment);
+  font-family: var(--font-mono);
+  text-shadow: 0 0 5px var(--skin-segment-glow);
+}
+
+[data-skin="rack"] .connect-readout.tabular,
+[data-skin="rack"] .export-fact dd {
+  align-self: flex-start;
+  width: fit-content;
+}
+
+[data-skin="rack"] .calibrate-change__before,
+[data-skin="rack"] .calibrate-change__arrow {
+  color: var(--skin-segment-muted);
+}
+
+/* ── Tutorial: a service notice and an amber service edge ──────────────── */
+[data-skin="rack"] .tutorial-ring {
+  border-radius: var(--radius-sm);
+}
+
+[data-skin="rack"] .tutorial-ring--act {
+  box-shadow: 0 0 0 2px var(--accent), 0 0 0 4px var(--skin-seam);
+}
+
+[data-skin="rack"] .tutorial-ring--act::after {
+  border-radius: var(--radius-sm);
+}
+
+[data-skin="rack"] .tutorial-coach,
+[data-skin="rack"] .tutorial-panel,
+[data-skin="rack"] .tutorial-end,
+[data-skin="rack"] .help-panel {
+  background: var(--skin-brush-h), var(--surface-raised);
+}

@@ -94,11 +94,49 @@ describe("motion and theme tokens", () => {
     expect(reduced).toMatch(/--dur-slow:\s*0ms/);
   });
 
-  it("names colours only in tokens.css (components use roles)", () => {
+  it("names colours only in tokens.css and the skins' token blocks (components use roles)", () => {
     const raw = /#[0-9a-f]{3,8}\b|\b(?:rgb|rgba|hsl|hsla|oklch|lab)\(/i;
+    const isSkin = (file: string) => /[\\/]styles[\\/]skins[\\/][^\\/]+\.css$/.test(file);
     const offenders = cssFiles
       .filter((file) => !file.endsWith("tokens.css") && !file.endsWith("gallery.css"))
-      .filter((file) => raw.test(stripComments(readFileSync(file, "utf8"))));
+      .filter((file) => raw.test(isSkin(file) ? skinStructure(readFileSync(file, "utf8")) : stripComments(readFileSync(file, "utf8"))));
     expect(offenders).toEqual([]);
   });
+
+  it("finds the skins' token blocks", () => {
+    const skins = cssFiles.filter((file) => /[\\/]styles[\\/]skins[\\/][^\\/]+\.css$/.test(file));
+    for (const file of skins) {
+      const text = stripComments(readFileSync(file, "utf8"));
+      expect(skinStructure(text).length, file).toBeLessThan(text.length);
+    }
+  });
 });
+
+/**
+ * A skin stylesheet (styles/skins/<id>.css, ADR 0010) without its token
+ * blocks: the light, dark and accent blocks on the skin root, and the media
+ * query that repeats the dark one. Colour values may live only in those.
+ */
+function skinStructure(css: string): string {
+  const text = stripComments(css);
+  const tokenBlock = /^(?:\[data-skin="[a-z]+"\](?:\[data-theme="dark"\]|\[data-accent\])?|@media \(prefers-color-scheme: dark\))$/;
+  let out = "";
+  let i = 0;
+  while (i < text.length) {
+    const open = text.indexOf("{", i);
+    if (open < 0) {
+      out += text.slice(i);
+      break;
+    }
+    let depth = 0;
+    let end = open;
+    for (; end < text.length; end++) {
+      if (text[end] === "{") depth++;
+      if (text[end] === "}" && --depth === 0) break;
+    }
+    const selector = text.slice(i, open).trim();
+    if (!tokenBlock.test(selector)) out += text.slice(i, end + 1);
+    i = end + 1;
+  }
+  return out;
+}

@@ -1,5 +1,5 @@
 // The project menu (새로 만들기, 열기, 저장, 다른 이름으로 저장) and the
-// display settings (언어, 테마, 로고). Shortcut hints come from the
+// display settings (언어, 테마, 스킨, 로고). Shortcut hints come from the
 // shortcut registry.
 import { useRef, useState } from "react";
 import { useT } from "../i18n/react";
@@ -8,7 +8,7 @@ import { Menu, Popover } from "../ui/Popover";
 import { Segmented } from "../ui/controls";
 import type { AppIcon } from "../ipc/bindings/AppIcon";
 import { DEFAULT_LOGO, SMALL_LOGOS } from "./logo";
-import { usePrefs, type ThemeChoice } from "./prefs";
+import { usePrefs, type SkinChoice, type ThemeChoice } from "./prefs";
 import { shortcutText } from "./shortcuts";
 
 export type ProjectActions = {
@@ -117,6 +117,17 @@ export function SettingsButton({ initiallyOpen = false, inline = false }: { init
             { value: "dark", label: t("frame.settings.theme.dark") },
           ]}
           onChange={(theme) => prefs.set({ theme })}
+        />
+        <Segmented<SkinChoice>
+          id="frame.settings.skin"
+          label={t("frame.settings.skin")}
+          value={prefs.skin ?? "default"}
+          options={[
+            { value: "default", label: t("frame.settings.skin.default") },
+            { value: "rack", label: t("frame.settings.skin.rack") },
+            { value: "matrix", label: t("frame.settings.skin.matrix") },
+          ]}
+          onChange={(skin) => prefs.set({ skin })}
         />
         <Segmented<AppIcon>
           id="frame.settings.logo"

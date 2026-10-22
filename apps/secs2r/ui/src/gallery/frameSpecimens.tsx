@@ -371,9 +371,9 @@ function StaleFrame() {
 /** The tutorial is the same frame with the tutorial accent (its own prefs scope). */
 function TutorialScope() {
   const outer = usePrefs();
-  const prefs = { locale: outer.locale, theme: outer.theme, accent: "tutorial" as const };
+  const prefs = { locale: outer.locale, theme: outer.theme, accent: "tutorial" as const, ...(outer.skin ? { skin: outer.skin } : {}) };
   return (
-    <PrefsScope key={`${outer.locale}-${outer.theme}`} initial={prefs} className="gal-fill">
+    <PrefsScope key={`${outer.locale}-${outer.theme}-${outer.skin ?? "default"}`} initial={prefs} className="gal-fill">
       <TutorialFrame />
     </PrefsScope>
   );

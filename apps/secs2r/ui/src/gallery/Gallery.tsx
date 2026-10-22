@@ -1,10 +1,10 @@
 // The screen gallery (gallery.html, a second Vite entry that the app's main
 // route never loads). Every component and the frame in each state, in the
 // theme, language and accent the URL asks for:
-//   gallery.html?theme=light|dark&lang=ko|en&accent=default|tutorial&only=frame.,ui.button
+//   gallery.html?theme=light|dark&lang=ko|en&accent=default|tutorial&skin=default|rack|matrix&only=frame.,ui.button
 // Each specimen carries a stable data-gallery-id so CI can screenshot it alone.
 import { useMemo, useState } from "react";
-import { PrefsScope, usePrefs, type Prefs } from "../app/prefs";
+import { PrefsScope, SKINS, usePrefs, type Prefs, type SkinChoice } from "../app/prefs";
 import "../ui";
 import { Segmented } from "../ui/controls";
 import { frameSpecimens, trayAndMenuSpecimens } from "./frameSpecimens";
@@ -32,6 +32,7 @@ function readParams(): { prefs: Prefs; only: string[] } {
       theme: params.get("theme") === "dark" ? "dark" : "light",
       locale: params.get("lang") === "en" ? "en" : "ko",
       accent: params.get("accent") === "tutorial" ? "tutorial" : "default",
+      skin: (SKINS as readonly string[]).includes(params.get("skin") ?? "") ? (params.get("skin") as SkinChoice) : "default",
     },
     only: (params.get("only") ?? "").split(",").map((s) => s.trim()).filter(Boolean),
   };
@@ -88,6 +89,21 @@ function Toolbar() {
         onChange={(accent) => {
           writeParam("accent", accent);
           prefs.set({ accent });
+        }}
+      />
+      <Segmented<SkinChoice>
+        id="gallery.skin"
+        label="Skin"
+        size="sm"
+        value={prefs.skin ?? "default"}
+        options={[
+          { value: "default", label: "Default" },
+          { value: "rack", label: "Rack" },
+          { value: "matrix", label: "Matrix" },
+        ]}
+        onChange={(skin) => {
+          writeParam("skin", skin);
+          prefs.set({ skin });
         }}
       />
     </div>

@@ -82,6 +82,39 @@ it("keeps the chosen logo in the app settings and shows it again on the next sta
   } finally { second.unmount(); mock.dispose(); }
 });
 
+it("keeps the chosen skin in the app settings and applies it again on the next start", async () => {
+  const mock = createMockService({ project: null, tickMs: 0 });
+  const first = render(<App ipc={mock} />);
+  try {
+    await waitFor(() => expect(document.querySelector('[data-ui="frame.settings"]')).not.toBeNull());
+    expect(document.documentElement.hasAttribute("data-skin")).toBe(false);
+    fireEvent.click(ui("frame.settings"));
+    expect(ui("frame.settings.skin.default").getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(ui("frame.settings.skin.rack"));
+    await waitFor(() => expect(mock.calls.some((r) => r.method === "app_settings_set" && r.params.settings.skin === "rack")).toBe(true));
+    expect(document.documentElement.dataset.skin).toBe("rack");
+  } finally { first.unmount(); delete document.documentElement.dataset.skin; }
+  const second = render(<App ipc={mock} />);
+  try {
+    await waitFor(() => expect(document.querySelector('[data-ui="frame.settings"]')).not.toBeNull());
+    expect(document.documentElement.dataset.skin).toBe("rack");
+  } finally { second.unmount(); mock.dispose(); delete document.documentElement.dataset.skin; }
+});
+
+it("applies the saved matrix skin on startup before any user action", async () => {
+  const mock = createMockService({ project: null, tickMs: 0 });
+  const settings = await mock.request({ method: "app_settings_get" });
+  await mock.request({ method: "app_settings_set", params: { settings: { ...settings, skin: "matrix" } } });
+  mock.calls.length = 0;
+  delete document.documentElement.dataset.skin;
+  const rendered = render(<App ipc={mock} />);
+  try {
+    await waitFor(() => expect(document.querySelector('[data-ui="frame.settings"]')).not.toBeNull());
+    expect(document.documentElement.dataset.skin).toBe("matrix");
+    expect(mock.calls.some((r) => r.method === "app_settings_set")).toBe(false);
+  } finally { rendered.unmount(); mock.dispose(); delete document.documentElement.dataset.skin; }
+});
+
 it("keeps all modes, local device sharing and project values unchanged when either logo is selected", async () => {
   const mock = createMockService({ tickMs: 0 });
   const rendered = render(<App ipc={mock} />);

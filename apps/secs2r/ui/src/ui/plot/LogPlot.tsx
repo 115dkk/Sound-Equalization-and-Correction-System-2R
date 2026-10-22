@@ -103,7 +103,7 @@ function readPalette(element: Element, roleOrder: readonly string[], isSub: (rol
   };
 }
 
-/** Calls `onChange` when the theme or accent around `element` may have changed. */
+/** Calls `onChange` when the theme, accent or skin around `element` may have changed. */
 function useThemeChange(element: HTMLElement | null, onChange: () => void) {
   const callback = useRef(onChange);
   callback.current = onChange;
@@ -115,7 +115,7 @@ function useThemeChange(element: HTMLElement | null, onChange: () => void) {
     const observer = new MutationObserver(fire);
     // Watch every ancestor: the gallery scopes themes to subtrees.
     for (let node: HTMLElement | null = element; node; node = node.parentElement) {
-      observer.observe(node, { attributes: true, attributeFilter: ["data-theme", "data-accent"] });
+      observer.observe(node, { attributes: true, attributeFilter: ["data-theme", "data-accent", "data-skin"] });
     }
     return () => {
       media?.removeEventListener?.("change", fire);
@@ -397,7 +397,7 @@ export function LogPlot({
   // Highlight, staleness and band: restyle in place.
   useEffect(() => applyStyles(), [highlight, stale, band?.lo, band?.hi]);
 
-  // Theme or accent changes: re-read the tokens, redraw.
+  // Theme, accent or skin changes: re-read the tokens, redraw.
   useThemeChange(wrap.current, () => applyStyles(true));
 
   // Width follows the container.

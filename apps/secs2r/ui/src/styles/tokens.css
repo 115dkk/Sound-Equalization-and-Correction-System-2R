@@ -4,11 +4,13 @@
  * from the same names; the default follows the system and `data-theme`
  * overrides it on <html> or on any subtree (the gallery shows both side by
  * side). The tutorial is the same palette with another accent hue
- * (`data-accent="tutorial"`).
+ * (`data-accent="tutorial"`); a skin (`data-skin`, styles/skins/*.css, ADR
+ * 0010) overrides a subset of these names and nothing else.
  *
- * Colours are OKLCH. Neutrals keep one cool cast (hue 200–210); every other
- * non-semantic colour is derived from them by lightness, chroma or alpha.
- * Contrast pairs are measured, not estimated: see DESIGN.md §2.
+ * Colours are OKLCH. Neutrals keep one cool cast on the accent's hue
+ * (255–258); every other non-semantic colour is derived from them by
+ * lightness, chroma or alpha. Contrast pairs are measured, not estimated
+ * (styles/contrast.test.ts; DESIGN.md §2 quotes its table).
  *
  * The dark block appears twice (system preference and explicit attribute);
  * tokens.test.ts checks that the two copies stay identical.
@@ -27,7 +29,7 @@
   --text-body: 16px; /* long-form help text */
   --text-title-s: 16px; /* card and dialog titles */
   --text-title: 20px; /* step title */
-  --text-display: 28px; /* one headline number per card at most */
+  --text-display: 24px; /* one headline number per card at most: its digits, with the unit at title size (1.5× the 16 px value beside it) */
 
   --leading-tight: 1.3;
   --leading-ui: 1.45;
@@ -99,9 +101,12 @@
   --z-toast: 70;
   --z-tooltip: 80;
 
-  /* Accent: hue and chroma per accent, lightness per theme. */
-  --accent-hue: 195;
-  --accent-chroma: 0.088;
+  /* Accent: hue and chroma per accent, lightness per theme. Blue 258: the
+     colour of 'can be pressed' on every desktop, far from the status hues
+     (success 150, warning 65–80, danger 27, info 232) and from the two
+     skins' lamps (rack amber, matrix cyan). */
+  --accent-hue: 258;
+  --accent-chroma: 0.115;
 }
 
 [data-accent="tutorial"] {
@@ -115,30 +120,30 @@
   color-scheme: light;
   --theme-chroma: 1;
 
-  --bg: oklch(0.968 0.004 200);
-  --surface: oklch(0.993 0.002 200);
-  --surface-sunken: oklch(0.952 0.005 200);
-  --surface-raised: oklch(0.995 0.002 200);
-  --surface-hover: oklch(0.935 0.006 200);
-  --surface-pressed: oklch(0.915 0.007 200);
-  --rail-bg: oklch(0.948 0.006 200);
-  --scrim: oklch(0.25 0.015 200 / 0.32);
+  --bg: oklch(0.968 0.004 255);
+  --surface: oklch(0.993 0.002 255);
+  --surface-sunken: oklch(0.952 0.005 255);
+  --surface-raised: oklch(0.995 0.002 255);
+  --surface-hover: oklch(0.935 0.006 255);
+  --surface-pressed: oklch(0.915 0.007 255);
+  --rail-bg: oklch(0.948 0.006 255);
+  --scrim: oklch(0.25 0.015 255 / 0.32);
 
-  --text: oklch(0.25 0.015 200);
-  --text-muted: oklch(0.47 0.014 200);
-  --text-faint: oklch(0.62 0.01 200);
+  --text: oklch(0.25 0.015 255);
+  --text-muted: oklch(0.47 0.014 255);
+  --text-faint: oklch(0.62 0.01 255);
 
-  --border: oklch(0.88 0.006 200);
-  --border-subtle: oklch(0.92 0.005 200);
-  --border-control: oklch(0.62 0.01 200);
+  --border: oklch(0.88 0.006 255);
+  --border-subtle: oklch(0.92 0.005 255);
+  --border-control: oklch(0.62 0.01 255);
   /* A hairline inside pictures that carry their own tile (the rail logo). */
   --image-outline: oklch(0 0 0 / 0.1);
 
-  --accent-l: 0.5;
-  --accent-hover-l: 0.45;
+  --accent-l: 0.49;
+  --accent-hover-l: 0.44;
   --accent-soft-l: 0.945;
   --accent-soft-c: 0.03;
-  --on-accent: oklch(0.99 0.003 195);
+  --on-accent: oklch(0.99 0.003 258);
 
   --success: oklch(0.5 0.12 150);
   --success-soft: oklch(0.955 0.035 150);
@@ -149,8 +154,8 @@
   --danger-soft: oklch(0.955 0.03 27);
   --on-danger: oklch(0.99 0.003 27);
   --on-success: oklch(0.99 0.003 150);
-  --info: oklch(0.5 0.11 255);
-  --info-soft: oklch(0.955 0.025 255);
+  --info: oklch(0.5 0.1 232);
+  --info-soft: oklch(0.955 0.025 232);
 
   --shadow-card: 0 0 0 1px oklch(0 0 0 / 0.07), 0 1px 2px -1px oklch(0 0 0 / 0.06), 0 2px 4px 0 oklch(0 0 0 / 0.03);
   --shadow-control: 0 0 0 1px oklch(0 0 0 / 0.1), 0 1px 2px -1px oklch(0 0 0 / 0.08);
@@ -161,11 +166,11 @@
 
   /* Graphs: 16 mains, 8 subs (validated: DESIGN.md §3). */
   --plot-bg: var(--surface);
-  --plot-grid: oklch(0.25 0.015 200 / 0.09);
-  --plot-axis: oklch(0.25 0.015 200 / 0.28);
+  --plot-grid: oklch(0.25 0.015 255 / 0.09);
+  --plot-axis: oklch(0.25 0.015 255 / 0.28);
   --plot-text: var(--text-muted);
-  --plot-target: oklch(0.3 0.015 200);
-  --plot-shade: oklch(0.25 0.015 200 / 0.06);
+  --plot-target: oklch(0.3 0.015 255);
+  --plot-shade: oklch(0.25 0.015 255 / 0.06);
   --ch-1: oklch(0.58 0.15 250);
   --ch-2: oklch(0.64 0.144 65);
   --ch-3: oklch(0.48 0.15 280);
@@ -194,19 +199,19 @@
   /* Level meter (−60…0 dBFS; the −30…−15 band is the target). */
   --meter-track: var(--surface-sunken);
   --meter-band: oklch(0.5 0.12 150 / 0.16);
-  --meter-fill: oklch(0.47 0.014 200);
+  --meter-fill: oklch(0.47 0.014 255);
   --meter-fill-ok: var(--success);
   --meter-fill-clip: var(--danger);
 
   /* Maps. */
   --map-bg: var(--surface);
-  --map-ink: oklch(0.36 0.014 200);
-  --map-furniture: oklch(0.9 0.008 200);
-  --map-furniture-edge: oklch(0.72 0.012 200);
-  --map-guide: oklch(0.62 0.01 200);
-  --map-marker: oklch(0.36 0.014 200);
+  --map-ink: oklch(0.36 0.014 255);
+  --map-furniture: oklch(0.9 0.008 255);
+  --map-furniture-edge: oklch(0.72 0.012 255);
+  --map-guide: oklch(0.62 0.01 255);
+  --map-marker: oklch(0.36 0.014 255);
   --map-marker-fill: var(--surface);
-  --map-half: oklch(0.36 0.014 200 / 0.3);
+  --map-half: oklch(0.36 0.014 255 / 0.3);
 }
 
 /* ── Dark (system preference) ──────────────────────────────────────────── */
@@ -215,29 +220,29 @@
     color-scheme: dark;
     --theme-chroma: 0.82;
 
-    --bg: oklch(0.185 0.008 210);
-    --surface: oklch(0.225 0.009 210);
-    --surface-sunken: oklch(0.2 0.008 210);
-    --surface-raised: oklch(0.26 0.01 210);
-    --surface-hover: oklch(0.275 0.01 210);
-    --surface-pressed: oklch(0.3 0.011 210);
-    --rail-bg: oklch(0.2 0.008 210);
-    --scrim: oklch(0.1 0.006 210 / 0.6);
+    --bg: oklch(0.185 0.008 258);
+    --surface: oklch(0.225 0.009 258);
+    --surface-sunken: oklch(0.2 0.008 258);
+    --surface-raised: oklch(0.26 0.01 258);
+    --surface-hover: oklch(0.275 0.01 258);
+    --surface-pressed: oklch(0.3 0.011 258);
+    --rail-bg: oklch(0.2 0.008 258);
+    --scrim: oklch(0.1 0.006 258 / 0.6);
 
-    --text: oklch(0.93 0.006 210);
-    --text-muted: oklch(0.75 0.012 210);
-    --text-faint: oklch(0.56 0.01 210);
+    --text: oklch(0.93 0.006 258);
+    --text-muted: oklch(0.75 0.012 258);
+    --text-faint: oklch(0.56 0.01 258);
 
-    --border: oklch(0.33 0.01 210);
-    --border-subtle: oklch(0.29 0.009 210);
-    --border-control: oklch(0.54 0.012 210);
+    --border: oklch(0.33 0.01 258);
+    --border-subtle: oklch(0.29 0.009 258);
+    --border-control: oklch(0.54 0.012 258);
     --image-outline: oklch(1 0 0 / 0.1);
 
     --accent-l: 0.76;
     --accent-hover-l: 0.81;
     --accent-soft-l: 0.31;
     --accent-soft-c: 0.04;
-    --on-accent: oklch(0.18 0.01 210);
+    --on-accent: oklch(0.18 0.01 258);
 
     --success: oklch(0.76 0.12 150);
     --success-soft: oklch(0.29 0.045 150);
@@ -246,10 +251,10 @@
     --danger: oklch(0.72 0.14 25);
     --danger-hover: oklch(0.77 0.13 25);
     --danger-soft: oklch(0.28 0.04 27);
-    --on-danger: oklch(0.18 0.01 210);
-    --on-success: oklch(0.18 0.01 210);
-    --info: oklch(0.75 0.09 255);
-    --info-soft: oklch(0.29 0.04 255);
+    --on-danger: oklch(0.18 0.01 258);
+    --on-success: oklch(0.18 0.01 258);
+    --info: oklch(0.75 0.09 232);
+    --info-soft: oklch(0.29 0.04 232);
 
     --shadow-card: 0 0 0 1px oklch(1 0 0 / 0.08);
     --shadow-control: 0 0 0 1px oklch(1 0 0 / 0.12);
@@ -259,11 +264,11 @@
     --shadow-dialog: 0 0 0 1px oklch(1 0 0 / 0.1), 0 20px 48px -8px oklch(0 0 0 / 0.6);
 
     --plot-bg: var(--surface);
-    --plot-grid: oklch(0.93 0.006 210 / 0.08);
-    --plot-axis: oklch(0.93 0.006 210 / 0.26);
+    --plot-grid: oklch(0.93 0.006 258 / 0.08);
+    --plot-axis: oklch(0.93 0.006 258 / 0.26);
     --plot-text: var(--text-muted);
-    --plot-target: oklch(0.9 0.006 210);
-    --plot-shade: oklch(0.93 0.006 210 / 0.05);
+    --plot-target: oklch(0.9 0.006 258);
+    --plot-shade: oklch(0.93 0.006 258 / 0.05);
     --ch-1: oklch(0.61 0.13 250);
     --ch-2: oklch(0.665 0.13 65);
     --ch-3: oklch(0.55 0.13 280);
@@ -291,18 +296,18 @@
 
     --meter-track: var(--surface-sunken);
     --meter-band: oklch(0.76 0.12 150 / 0.16);
-    --meter-fill: oklch(0.75 0.012 210);
+    --meter-fill: oklch(0.75 0.012 258);
     --meter-fill-ok: var(--success);
     --meter-fill-clip: var(--danger);
 
     --map-bg: var(--surface);
-    --map-ink: oklch(0.85 0.008 210);
-    --map-furniture: oklch(0.29 0.01 210);
-    --map-furniture-edge: oklch(0.45 0.012 210);
-    --map-guide: oklch(0.56 0.01 210);
-    --map-marker: oklch(0.85 0.008 210);
+    --map-ink: oklch(0.85 0.008 258);
+    --map-furniture: oklch(0.29 0.01 258);
+    --map-furniture-edge: oklch(0.45 0.012 258);
+    --map-guide: oklch(0.56 0.01 258);
+    --map-marker: oklch(0.85 0.008 258);
     --map-marker-fill: var(--surface);
-    --map-half: oklch(0.85 0.008 210 / 0.3);
+    --map-half: oklch(0.85 0.008 258 / 0.3);
   }
 }
 
@@ -311,29 +316,29 @@
   color-scheme: dark;
   --theme-chroma: 0.82;
 
-  --bg: oklch(0.185 0.008 210);
-  --surface: oklch(0.225 0.009 210);
-  --surface-sunken: oklch(0.2 0.008 210);
-  --surface-raised: oklch(0.26 0.01 210);
-  --surface-hover: oklch(0.275 0.01 210);
-  --surface-pressed: oklch(0.3 0.011 210);
-  --rail-bg: oklch(0.2 0.008 210);
-  --scrim: oklch(0.1 0.006 210 / 0.6);
+  --bg: oklch(0.185 0.008 258);
+  --surface: oklch(0.225 0.009 258);
+  --surface-sunken: oklch(0.2 0.008 258);
+  --surface-raised: oklch(0.26 0.01 258);
+  --surface-hover: oklch(0.275 0.01 258);
+  --surface-pressed: oklch(0.3 0.011 258);
+  --rail-bg: oklch(0.2 0.008 258);
+  --scrim: oklch(0.1 0.006 258 / 0.6);
 
-  --text: oklch(0.93 0.006 210);
-  --text-muted: oklch(0.75 0.012 210);
-  --text-faint: oklch(0.56 0.01 210);
+  --text: oklch(0.93 0.006 258);
+  --text-muted: oklch(0.75 0.012 258);
+  --text-faint: oklch(0.56 0.01 258);
 
-  --border: oklch(0.33 0.01 210);
-  --border-subtle: oklch(0.29 0.009 210);
-  --border-control: oklch(0.54 0.012 210);
+  --border: oklch(0.33 0.01 258);
+  --border-subtle: oklch(0.29 0.009 258);
+  --border-control: oklch(0.54 0.012 258);
   --image-outline: oklch(1 0 0 / 0.1);
 
   --accent-l: 0.76;
   --accent-hover-l: 0.81;
   --accent-soft-l: 0.31;
   --accent-soft-c: 0.04;
-  --on-accent: oklch(0.18 0.01 210);
+  --on-accent: oklch(0.18 0.01 258);
 
   --success: oklch(0.76 0.12 150);
   --success-soft: oklch(0.29 0.045 150);
@@ -342,10 +347,10 @@
   --danger: oklch(0.72 0.14 25);
   --danger-hover: oklch(0.77 0.13 25);
   --danger-soft: oklch(0.28 0.04 27);
-  --on-danger: oklch(0.18 0.01 210);
-  --on-success: oklch(0.18 0.01 210);
-  --info: oklch(0.75 0.09 255);
-  --info-soft: oklch(0.29 0.04 255);
+  --on-danger: oklch(0.18 0.01 258);
+  --on-success: oklch(0.18 0.01 258);
+  --info: oklch(0.75 0.09 232);
+  --info-soft: oklch(0.29 0.04 232);
 
   --shadow-card: 0 0 0 1px oklch(1 0 0 / 0.08);
   --shadow-control: 0 0 0 1px oklch(1 0 0 / 0.12);
@@ -355,11 +360,11 @@
   --shadow-dialog: 0 0 0 1px oklch(1 0 0 / 0.1), 0 20px 48px -8px oklch(0 0 0 / 0.6);
 
   --plot-bg: var(--surface);
-  --plot-grid: oklch(0.93 0.006 210 / 0.08);
-  --plot-axis: oklch(0.93 0.006 210 / 0.26);
+  --plot-grid: oklch(0.93 0.006 258 / 0.08);
+  --plot-axis: oklch(0.93 0.006 258 / 0.26);
   --plot-text: var(--text-muted);
-  --plot-target: oklch(0.9 0.006 210);
-  --plot-shade: oklch(0.93 0.006 210 / 0.05);
+  --plot-target: oklch(0.9 0.006 258);
+  --plot-shade: oklch(0.93 0.006 258 / 0.05);
   --ch-1: oklch(0.61 0.13 250);
   --ch-2: oklch(0.665 0.13 65);
   --ch-3: oklch(0.55 0.13 280);
@@ -387,24 +392,25 @@
 
   --meter-track: var(--surface-sunken);
   --meter-band: oklch(0.76 0.12 150 / 0.16);
-  --meter-fill: oklch(0.75 0.012 210);
+  --meter-fill: oklch(0.75 0.012 258);
   --meter-fill-ok: var(--success);
   --meter-fill-clip: var(--danger);
 
   --map-bg: var(--surface);
-  --map-ink: oklch(0.85 0.008 210);
-  --map-furniture: oklch(0.29 0.01 210);
-  --map-furniture-edge: oklch(0.45 0.012 210);
-  --map-guide: oklch(0.56 0.01 210);
-  --map-marker: oklch(0.85 0.008 210);
+  --map-ink: oklch(0.85 0.008 258);
+  --map-furniture: oklch(0.29 0.01 258);
+  --map-furniture-edge: oklch(0.45 0.012 258);
+  --map-guide: oklch(0.56 0.01 258);
+  --map-marker: oklch(0.85 0.008 258);
   --map-marker-fill: var(--surface);
-  --map-half: oklch(0.85 0.008 210 / 0.3);
+  --map-half: oklch(0.85 0.008 258 / 0.3);
 }
 
-/* ── Accent family, recomposed wherever theme or accent changes ───────── */
+/* ── Accent family, recomposed wherever theme, accent or skin changes ─── */
 :root,
 [data-theme],
-[data-accent] {
+[data-accent],
+[data-skin] {
   --accent: oklch(var(--accent-l) calc(var(--accent-chroma) * var(--theme-chroma)) var(--accent-hue));
   --accent-hover: oklch(var(--accent-hover-l) calc(var(--accent-chroma) * var(--theme-chroma)) var(--accent-hue));
   --accent-soft: oklch(var(--accent-soft-l) var(--accent-soft-c) var(--accent-hue));

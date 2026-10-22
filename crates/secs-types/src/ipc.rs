@@ -1818,6 +1818,19 @@ pub enum AppTheme {
     /// Always use the dark theme.
     Dark,
 }
+/// The skin set the screen draws with (docs/skins, ADR 0010).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum AppSkin {
+    /// The instrument skin: the default tokens.
+    #[default]
+    Default,
+    /// Hardware Rack: a 19-inch rack faceplate.
+    Rack,
+    /// Signal Matrix: a routing board of cells on a grid.
+    Matrix,
+}
 /// The logo on the rail and the window (docs/DEVIATIONS.md U12). The
 /// installed program's own icon is always `Expert`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
@@ -1846,6 +1859,9 @@ pub struct AppSettings {
     /// Logo on the rail and the window.
     #[serde(default)]
     pub icon: AppIcon,
+    /// Skin set the screen draws with.
+    #[serde(default)]
+    pub skin: AppSkin,
     /// Recently opened project paths, newest first (at most 10).
     pub recent_projects: Vec<String>,
     /// Last window size in logical pixels.
@@ -1858,6 +1874,7 @@ impl Default for AppSettings {
             compute: ComputePreference::Auto,
             theme: AppTheme::System,
             icon: AppIcon::Expert,
+            skin: AppSkin::Default,
             recent_projects: Vec::new(),
             last_window_size: None,
         }

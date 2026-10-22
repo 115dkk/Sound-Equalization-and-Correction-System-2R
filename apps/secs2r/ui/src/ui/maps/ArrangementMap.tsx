@@ -135,9 +135,10 @@ export function ArrangementMap({ id, count, done = [], current = null, onSelect,
                 data-ui={`${id}.position.${n}`}
                 onClick={selectable ? () => onSelect?.(n) : undefined}
               >
-                {isCurrent && <circle className="map-marker__halo" cx={x} cy={y} r={r + 5} />}
-                <circle className="map-marker__hit" cx={x} cy={y} r={r + 4} />
-                <circle className="map-marker__body" cx={x} cy={y} r={r} />
+                {/* Rounded rects, not circles: rx = r draws the same disc, and a skin may square the cell (ADR 0010). */}
+                {isCurrent && <rect className="map-marker__halo" x={x - r - 5} y={y - r - 5} width={2 * r + 10} height={2 * r + 10} rx={r + 5} />}
+                <rect className="map-marker__hit" x={x - r - 4} y={y - r - 4} width={2 * r + 8} height={2 * r + 8} rx={r + 4} />
+                <rect className="map-marker__body" x={x - r} y={y - r} width={2 * r} height={2 * r} rx={r} />
                 {point.h !== 0 && <path className="map-marker__half" d={halfPath(x, y, r, point.h)} />}
                 <text className="map-marker__number" x={x} y={y} textAnchor="middle" dominantBaseline="central">
                   {n}
@@ -150,20 +151,20 @@ export function ArrangementMap({ id, count, done = [], current = null, onSelect,
       <ul className="map__legend" aria-hidden="true">
         <li>
           <svg width="14" height="14" viewBox="0 0 14 14" className="map__legend-mark">
-            <circle cx="7" cy="7" r="6" className="map-marker__body" />
+            <rect x="1" y="1" width="12" height="12" rx="6" className="map-marker__body" />
           </svg>
           {t("map.height.ear")}
         </li>
         <li>
           <svg width="14" height="14" viewBox="0 0 14 14" className="map__legend-mark">
-            <circle cx="7" cy="7" r="6" className="map-marker__body" />
+            <rect x="1" y="1" width="12" height="12" rx="6" className="map-marker__body" />
             <path d={halfPath(7, 7, 6, 1)} className="map-marker__half" />
           </svg>
           {t("map.height.up")}
         </li>
         <li>
           <svg width="14" height="14" viewBox="0 0 14 14" className="map__legend-mark">
-            <circle cx="7" cy="7" r="6" className="map-marker__body" />
+            <rect x="1" y="1" width="12" height="12" rx="6" className="map-marker__body" />
             <path d={halfPath(7, 7, 6, -1)} className="map-marker__half" />
           </svg>
           {t("map.height.down")}

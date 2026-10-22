@@ -90,7 +90,7 @@ export function ExportSpecimen({
 export function TutorialAccent({ children }: { children: ReactNode }) {
   const outer = usePrefs();
   return (
-    <PrefsScope key={`${outer.locale}-${outer.theme}`} initial={{ locale: outer.locale, theme: outer.theme, accent: "tutorial" }} className="gal-fill">
+    <PrefsScope key={`${outer.locale}-${outer.theme}-${outer.skin ?? "default"}`} initial={{ locale: outer.locale, theme: outer.theme, accent: "tutorial", ...(outer.skin ? { skin: outer.skin } : {}) }} className="gal-fill">
       {children}
     </PrefsScope>
   );
