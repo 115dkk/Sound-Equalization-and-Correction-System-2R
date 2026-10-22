@@ -67,7 +67,10 @@ try {
       if (message.type() === "error") problems.push(`${label}: console error: ${message.text()} (${message.location().url})`);
     });
     await page.goto(`${origin}/gallery.html?theme=${theme}&lang=${lang}&accent=${accent}&skin=${skin}`, { waitUntil: "networkidle" });
-    await page.evaluate(() => document.fonts.ready);
+    // The bundled faces (src/fonts) must be in: a specimen set in a fallback
+    // font is not the product's screen.
+    const fonts = await page.evaluate(() => document.fonts.ready.then(() => document.fonts.check('14px "Pretendard"')));
+    if (fonts !== true) problems.push(`${label}: the bundled Pretendard did not load`);
 
     const ids = await page.$$eval("[data-gallery-id]", (nodes) => nodes.map((n) => n.getAttribute("data-gallery-id")));
     if (ids.length === 0) problems.push(`${label}: the gallery drew no specimen`);

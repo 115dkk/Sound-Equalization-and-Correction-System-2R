@@ -1,5 +1,7 @@
 /* Base layer: reset, text defaults, focus and a few utilities. Component
    styles live next to their components and read only tokens. */
+/* Bundled fonts (DESIGN.md §4): the faces the tokens name, shipped with the app. */
+@import "../fonts/fonts.css";
 @import "./tokens.css";
 /* Skin sets (ADR 0010, docs/skins): token overrides and structure under data-skin. */
 @import "./skins/rack.css";

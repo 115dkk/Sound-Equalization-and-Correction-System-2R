@@ -148,7 +148,7 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 
 ## 4. 글자
 
-- **글꼴**: `--font-ui` = "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif. 웹 글꼴은 받지 않습니다(오프라인, CSP). 코드와 원문 오류에는 `--font-mono`를 쓰고, 여기에도 한글 대체 글꼴을 둡니다.
+- **글꼴**: 앱이 싣습니다. `apps/secs2r/ui/src/fonts/`의 woff2를 `fonts.css`의 `@font-face`가 선언하고, 출처·버전·라이선스는 그 폴더의 `README.md`와 `manifest.json`에 있습니다. 네트워크에서 받는 글꼴은 없으므로 오프라인과 CSP(`font-src 'self'`)는 그대로입니다. `--font-ui` = "Pretendard"(Pretendard Variable 1.3.9, 한글 11,172자) 뒤에 시스템 대체 글꼴. `--font-mono`는 기본 스킨과 Rack에서 플랫폼의 모노(ui-monospace, Cascadia Mono, Consolas…) 뒤에 Pretendard이고, Matrix에서는 한글까지 고정폭인 Sarasa Mono K입니다. Matrix의 띠 활자는 Orbit(`--skin-band-font`, 굵기 하나)입니다. 글꼴을 바꾸면 `scripts/build-fonts.py`로 다시 만들고, `fonts/fonts.test.ts`가 파일과 매니페스트의 일치, 스타일시트의 참조, 크기 상한, 카탈로그 글자의 커버리지를 검사합니다. '웹 글꼴은 받지 않는다'던 예전 원칙은 2026-10-22에 폐기했습니다. 글꼴을 싣지 않으면 스킨이 자기 활자를 가질 수 없고, 한 줄 안에서 라틴·숫자와 한글이 다른 글꼴로 섞이며, 갤러리 스크린샷이 실행 환경마다 다르게 나옵니다.
 - **크기**
 
 | 토큰 | 크기 | 쓰임 |
@@ -293,6 +293,7 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 | 검사 | 파일 |
 |---|---|
 | 14px 하한(캡션 13px), 모든 `font-size`가 토큰, `transition: all` 없음, 어두운 테마 두 벌 일치, 밝게·어둡게 같은 토큰 집합, 줄인 움직임에서 시간 0, 구성 요소 CSS에 색 값 없음(토큰 파일과 스킨 파일만 예외) | `styles/tokens.test.ts` |
+| 묶인 글꼴 파일이 `manifest.json`과 바이트까지 일치, `fonts.css`가 그 파일만 참조, 실은 글꼴은 모두 스타일시트가 쓰는 것, 전체 6 MiB 이하, 카탈로그의 모든 글자가 Pretendard·Sarasa Mono K에 있고 모든 한글 음절이 Orbit에 있음 | `fonts/fonts.test.ts` |
 | 측정한 대비(글자 4.5:1, 테두리·초점·글리프 3:1), 강조색이 상태색과 15° 이상, 중립색의 한 기운, 순흑·순백 없음, 스킨 파일의 어두운 두 벌 일치와 밝게·어둡게 색 토큰 집합 일치, 모든 스킨 × 테마 | `styles/contrast.test.ts` |
 | 카탈로그 키와 자리표시자 일치, 해요체 문장과 느낌표 없음 | `i18n/i18n.test.ts` |
 | 레일 상태와 막힌 이유, 주 동작 끄기(막힘, 화면이 끔), 곁 패널 자리, 단축키, 상태 요약, 영어 | `app/AppFrame.test.tsx` |

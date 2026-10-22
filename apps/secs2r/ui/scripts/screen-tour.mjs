@@ -139,7 +139,10 @@ try {
           .then((handle) => handle.jsonValue())
           .catch(() => null));
         if (ready !== "1") throw new Error(ready === null ? `not ready within ${READY_MS / 1000} s` : `tour page says "${ready}"`);
-        await phase(label, "fonts", () => page.evaluate(() => document.fonts.ready));
+        // The bundled faces (src/fonts) must be in: a shot set in a fallback
+        // font is not the product's screen.
+        const fonts = await phase(label, "fonts", () => page.evaluate(() => document.fonts.ready.then(() => document.fonts.check('14px "Pretendard"'))));
+        if (fonts !== true) throw new Error("the bundled Pretendard did not load");
 
         const { opCount } = await phase(label, "read scene", () => page.evaluate(() => window.__tour.scene));
         for (let i = 0; i < opCount; i++) {
