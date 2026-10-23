@@ -749,6 +749,18 @@
   box-shadow: inset 0 0 0 2px var(--danger);
 }
 
+/* Go: a green-lit cell, ruled like danger, for the way on to the next step. */
+[data-skin="matrix"] .ui-button--go {
+  background: var(--success-soft);
+  box-shadow: inset 0 0 0 1px var(--success);
+  color: var(--success);
+}
+
+[data-skin="matrix"] .ui-button--go:hover:not(:disabled) {
+  background: var(--success-soft);
+  box-shadow: inset 0 0 0 2px var(--success);
+}
+
 [data-skin="matrix"] .ui-button:focus-visible {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
@@ -757,6 +769,7 @@
    stays on the board. */
 [data-skin="matrix"] .ui-button:disabled:not([aria-busy]),
 [data-skin="matrix"] .ui-button--primary:disabled:not([aria-busy]),
+[data-skin="matrix"] .ui-button--go:disabled:not([aria-busy]),
 [data-skin="matrix"] .ui-button--danger:disabled:not([aria-busy]),
 [data-skin="matrix"] .ui-button--secondary:disabled:not([aria-busy]) {
   background: var(--skin-cancel-rule);

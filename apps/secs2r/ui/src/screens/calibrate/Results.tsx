@@ -5,7 +5,7 @@ import { useState, type ReactNode } from "react";
 import { errorText } from "../../app/jobs/jobText";
 import { useNumber, useT } from "../../i18n/react";
 import type { ChannelResultLine } from "../../ipc/bindings/ChannelResultLine";
-import { Button, Card, DataTable, ErrorNotice, StatusPill, type Column } from "../../ui";
+import { Button, Card, DataTable, ErrorNotice, Spinner, StatusPill, type Column } from "../../ui";
 import { roleCode } from "../../ui/maps/geometry";
 import { Stat } from "./controls";
 import { availableTabs } from "./ResultGraph";
@@ -56,7 +56,52 @@ function Change({ before, after, figure }: { before: string; after: string; figu
   );
 }
 
-export function Verdict({ view, actions, onSampleRateSettings }: { view: CalibrateView; actions: CalibrateActions; onSampleRateSettings: () => void }) {
+/**
+ * The correction run lives in this card (DESIGN.md §1: the button beside
+ * what it acts on). Before a result: the plan sentence and 보정 계산 after
+ * it; while the correction runs: a spinner and what it computes from; with
+ * a result: the figures and, after them, 다시 측정하기 and 다시 보정하기, and
+ * on a current result 보정값 내보내기 last. The same inputs give the same
+ * result here (upstream's runs could differ), so measuring again is the one
+ * that can change it and carries the emphasis; the way on to 내보내기 is in
+ * the go colour, apart from it (the rail is not where users look for it).
+ * `blocked` is the step's blocked state (the header says why).
+ */
+function RunControls({ view, actions, blocked, again, current = false }: { view: CalibrateView; actions: CalibrateActions; blocked: boolean; again: boolean; current?: boolean }) {
+  const t = useT();
+  const count = view.positions.length;
+  if (view.running === "calibrate") {
+    return (
+      <p className="calibrate-run__busy" role="status" data-ui="calibrate.verdict.computing">
+        <Spinner size={18} />
+        <span>{t("calibrate.verdict.computing", { count })}</span>
+      </p>
+    );
+  }
+  // Another of this screen's jobs runs: the header pill names it, as the step's blocked reason names a block.
+  const off = blocked || view.running !== null || count === 0;
+  const reason = blocked ? "frame.header.calibrate.blocked" : view.running !== null ? "frame.header.calibrate.status" : undefined;
+  const compute = (
+    <Button variant={again ? "secondary" : "primary"} id="calibrate.compute" data-ui="calibrate.compute" disabled={off} aria-describedby={reason} onClick={actions.calibrate}>
+      {t(again ? "calibrate.verdict.recompute" : "frame.step.calibrate.primary")}
+    </Button>
+  );
+  return again ? (
+    <div className="calibrate-run__actions">
+      <Button variant="primary" data-ui="calibrate.remeasure" onClick={actions.goToMeasurements}>
+        {t("calibrate.verdict.remeasure")}
+      </Button>
+      {compute}
+      {current && (
+        <Button variant="go" data-ui="calibrate.export" onClick={actions.goToExport}>
+          {t("calibrate.verdict.export")}
+        </Button>
+      )}
+    </div>
+  ) : compute;
+}
+
+export function Verdict({ view, actions, blocked, onSampleRateSettings }: { view: CalibrateView; actions: CalibrateActions; blocked: boolean; onSampleRateSettings: () => void }) {
   const t = useT();
   const number = useNumber();
   const result = view.results.calibration;
@@ -97,12 +142,15 @@ export function Verdict({ view, actions, onSampleRateSettings }: { view: Calibra
         data-ui="calibrate.verdict"
       >
         {failed}
-        <div className="calibrate-plan" data-ui="calibrate.verdict.plan">
-          <p>
-            {view.positions.length > 0
-              ? t(view.positions.length === 1 ? "calibrate.verdict.plan.one" : "calibrate.verdict.plan", { count: view.positions.length })
-              : t("calibrate.verdict.plan.no_measurements")}
-          </p>
+        <div className="calibrate-run" data-ui="calibrate.verdict.plan">
+          {view.positions.length === 0 ? (
+            <p>{t("calibrate.verdict.plan.no_measurements")}</p>
+          ) : (
+            <>
+              {view.running !== "calibrate" && <p>{t(view.positions.length === 1 ? "calibrate.verdict.plan.one" : "calibrate.verdict.plan", { count: view.positions.length })}</p>}
+              <RunControls view={view} actions={actions} blocked={blocked} again={false} />
+            </>
+          )}
         </div>
       </Card>
     );
@@ -140,23 +188,26 @@ export function Verdict({ view, actions, onSampleRateSettings }: { view: Calibra
         />
       )}
       <div className="calibrate-figures">
-        <dl className="calibrate-stats">
-          <Stat id="calibrate.verdict.within" lead label={t("calibrate.verdict.within")} detail={t("calibrate.verdict.within.band")}>
-            <Change before={pct(v.within_1db_before_pct)} after={pct(v.within_1db_after_pct)} figure={<Figure template="calibrate.unit.percent" value={number(v.within_1db_after_pct)} />} />
-          </Stat>
-          <Stat id="calibrate.verdict.gd" label={t("calibrate.verdict.gd")} detail={t("calibrate.verdict.gd.band")}>
-            <Change before={number(v.low_band_time_spread_before_ms, 1)} after={ms(v.low_band_time_spread_after_ms)} />
-          </Stat>
-          <Stat id="calibrate.verdict.spread" label={t("calibrate.verdict.spread")}>
-            {view.positions.length > 1 ? t("calibrate.unit.db", { value: number(v.position_spread_db, 1) }) : t("calibrate.verdict.spread.one")}
-          </Stat>
-          <Stat id="calibrate.verdict.delay" label={t("calibrate.verdict.delay")}>
-            {ms(result.latency_ms)}
-          </Stat>
-          <Stat id="calibrate.verdict.mimo" label={t("calibrate.verdict.mimo")}>
-            {mimoText}
-          </Stat>
-        </dl>
+        <div className="calibrate-run">
+          <dl className="calibrate-stats">
+            <Stat id="calibrate.verdict.within" lead label={t("calibrate.verdict.within")} detail={t("calibrate.verdict.within.band")}>
+              <Change before={pct(v.within_1db_before_pct)} after={pct(v.within_1db_after_pct)} figure={<Figure template="calibrate.unit.percent" value={number(v.within_1db_after_pct)} />} />
+            </Stat>
+            <Stat id="calibrate.verdict.gd" label={t("calibrate.verdict.gd")} detail={t("calibrate.verdict.gd.band")}>
+              <Change before={number(v.low_band_time_spread_before_ms, 1)} after={ms(v.low_band_time_spread_after_ms)} />
+            </Stat>
+            <Stat id="calibrate.verdict.spread" label={t("calibrate.verdict.spread")}>
+              {view.positions.length > 1 ? t("calibrate.unit.db", { value: number(v.position_spread_db, 1) }) : t("calibrate.verdict.spread.one")}
+            </Stat>
+            <Stat id="calibrate.verdict.delay" label={t("calibrate.verdict.delay")}>
+              {ms(result.latency_ms)}
+            </Stat>
+            <Stat id="calibrate.verdict.mimo" label={t("calibrate.verdict.mimo")}>
+              {mimoText}
+            </Stat>
+          </dl>
+          <RunControls view={view} actions={actions} blocked={blocked} again current={!result.stale} />
+        </div>
         {/* With the figures, as upstream shows them beside the total latency; collapsed. */}
         {notes.length > 0 && (
           <details className="ui-details calibrate-notes" data-ui="calibrate.verdict.notes">

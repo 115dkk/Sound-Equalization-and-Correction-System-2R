@@ -142,11 +142,24 @@
   background: var(--danger-hover);
 }
 
+/* Go: on to the next step, in the colour of a finished step (the rail's
+   check), so it reads apart from a primary that redoes the work. */
+.ui-button--go {
+  background: var(--success);
+  color: var(--on-success);
+  font-weight: var(--weight-semibold);
+}
+
+.ui-button--go:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--success) 88%, var(--text));
+}
+
 .ui-button:disabled:not([aria-busy]) {
   color: var(--text-faint);
 }
 
 .ui-button--primary:disabled:not([aria-busy]),
+.ui-button--go:disabled:not([aria-busy]),
 .ui-button--danger:disabled:not([aria-busy]) {
   background: var(--surface-pressed);
 }

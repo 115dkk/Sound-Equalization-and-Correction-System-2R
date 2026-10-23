@@ -70,8 +70,8 @@ describe("app frame", () => {
   it.each(["ko", "en"] as const)("explains that every step needs a project (%s)", (locale) => {
     const blocked = { status: "blocked", reason: "no_project" } as const;
     setup("system", locale, { system: blocked, connect: blocked, measure: blocked, calibrate: blocked, export: blocked });
-    for (const step of ["system", "connect", "measure", "calibrate", "export"] as const) expect(railButton(step).textContent).toContain(locale === "ko" ? "프로젝트 필요" : "Needs a project");
-    expect(document.querySelector('[data-ui="frame.header.blocked"]')?.textContent).toContain(locale === "ko" ? "프로젝트 필요" : "Needs a project");
+    for (const step of ["system", "connect", "measure", "calibrate", "export"] as const) expect(railButton(step).textContent).toContain(locale === "ko" ? "프로젝트 열기 필요" : "Needs an open project");
+    expect(document.querySelector('[data-ui="frame.header.blocked"]')?.textContent).toContain(locale === "ko" ? "프로젝트 열기 필요" : "Needs an open project");
   });
 
   it("draws each rail state: done, current, skipped and blocked with its reason", () => {
@@ -90,7 +90,7 @@ describe("app frame", () => {
 
     expect(railButton("calibrate").className).toContain("rail-step--blocked");
     expect(railButton("calibrate").textContent).toContain("측정 필요");
-    expect(railButton("export").textContent).toContain("보정 결과 필요");
+    expect(railButton("export").textContent).toContain("보정 계산 필요");
   });
 
   it("shows the blocked reason in the header and disables the primary action", () => {

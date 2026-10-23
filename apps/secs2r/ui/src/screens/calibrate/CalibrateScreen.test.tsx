@@ -55,6 +55,7 @@ type MockActions = { [K in keyof CalibrateActions]: Mock<CalibrateActions[K]> };
 function mockActions(): MockActions {
   return {
     goToMeasurements: vi.fn(),
+    goToExport: vi.fn(),
     calibrate: vi.fn(),
     calibrateSubs: vi.fn(),
     recommendXo: vi.fn(),
@@ -151,7 +152,7 @@ describe("보정 screen", () => {
     expect(must("calibrate.verdict.delay").textContent).toContain("9.8 ms");
     cleanupAll();
     setup(fx.emptyView);
-    expect(must("calibrate.verdict.plan").textContent).toContain("3곳");
+    expect(must("calibrate.verdict.plan").textContent).toContain("3곳에서");
     expect(must("calibrate.plot.preview").textContent).toContain("위치 1");
     expect(ui("calibrate.scorecard.card")).toBeNull();
   });
@@ -168,7 +169,7 @@ describe("보정 screen", () => {
     expect(lines).toEqual([
       "FIR 2,048탭에 맞춰 위상 보정 여유를 8.0 ms에서 7.5 ms로 줄였습니다.",
       "위상 보정 세기: L 0.90, R 0.90, C 0.90, Ls 0.90, Rs 0.90, Lrs 0.90, Rrs 0.90, Ltf 0.50, Rtf 0.50, Ltr 0.50, Rtr 0.50",
-      "오래 우는 룸 모드 2곳(34 Hz, 52 Hz)의 부스트를 4.0 dB로 제한했습니다.",
+      "울림이 오래 남는 룸 모드 2곳(34 Hz, 52 Hz)의 부스트를 4.0 dB로 제한했습니다.",
       "BA 평가값 0.84 (낮을수록 좋음)",
       "서브 버스 PEQ 반영 후 BA 평가값 0.84 → 0.80 (낮을수록 좋음)",
     ]);
@@ -473,23 +474,70 @@ describe("보정 screen", () => {
     expect(ultraActions.changeSetting).toHaveBeenCalledWith({ kind: "ultra_ms", ms: 150 });
   });
 
-  it("has a header with one primary action and the running job", () => {
-    const actions = mockActions();
-    const idle = calibrateHeader(fx.splView, actions, t);
-    expect(idle.primary?.label).toBe("보정 계산");
-    expect(idle.primary?.busy).toBe(false);
-    idle.primary?.onClick();
-    expect(actions.calibrate).toHaveBeenCalled();
-    expect(calibrateHeader(fx.computingView, actions, t).primary?.busy).toBe(true);
-    expect(idle.primary?.disabled).toBe(false);
-    // Another job of this screen runs: 보정 계산 stays in place, off, and the pill says why.
-    const mimo = calibrateHeader(fx.runningMimoView, actions, t);
-    expect(mimo.primary?.disabled).toBe(true);
-    expect(mimo.primary?.busy).toBe(false);
-    renderWith(<>{mimo.status}</>);
+  it("runs the correction from the result card, beside what it computes from", () => {
+    // Before a result: the plan sentence, then 보정 계산 right after it.
+    let actions = setup(fx.emptyView);
+    expect(must("calibrate.verdict.plan").textContent).toContain("3곳에서 측정한 값으로 보정합니다.");
+    const compute = must("calibrate.compute") as HTMLButtonElement;
+    expect(compute.textContent).toBe("보정 계산");
+    expect(compute.disabled).toBe(false);
+    fireEvent.click(compute);
+    expect(actions.calibrate).toHaveBeenCalledOnce();
+    cleanupAll();
+    // No measurement: one sentence and nothing to press.
+    setup({ ...fx.emptyView, positions: [] });
+    expect(must("calibrate.verdict.plan").textContent).toBe("측정값이 없어 보정할 수 없습니다.");
+    expect(ui("calibrate.compute")).toBeNull();
+    cleanupAll();
+    // While it runs: a spinner and what it corrects from, in place of the button.
+    setup(fx.computingView);
+    expect(must("calibrate.verdict.computing").textContent).toBe("3점 측정값을 기반으로 보정 중…");
+    expect(must("calibrate.verdict.computing").querySelector(".ui-spinner")).not.toBeNull();
+    expect(ui("calibrate.compute")).toBeNull();
+    cleanupAll();
+    // With a result: the figures, then 다시 측정하기 and 다시 보정하기 after them.
+    actions = setup(fx.splView);
+    const again = must("calibrate.compute") as HTMLButtonElement;
+    expect(again.textContent).toBe("다시 보정하기");
+    expect(again.closest(".calibrate-run")?.querySelector(".calibrate-stats")).not.toBeNull();
+    fireEvent.click(again);
+    expect(actions.calibrate).toHaveBeenCalledOnce();
+    // Measuring again can change the result; correcting again cannot, so the emphasis is on the first.
+    expect(must("calibrate.remeasure").className).toContain("ui-button--primary");
+    expect(again.className).not.toContain("ui-button--primary");
+    fireEvent.click(must("calibrate.remeasure"));
+    expect(actions.goToMeasurements).toHaveBeenCalledOnce();
+    // On a current result the way on to 내보내기 comes last, in the go colour.
+    const onward = must("calibrate.export");
+    expect(onward.textContent).toBe("보정값 내보내기");
+    expect(onward.className).toContain("ui-button--go");
+    expect(onward.previousElementSibling).toBe(again);
+    fireEvent.click(onward);
+    expect(actions.goToExport).toHaveBeenCalledOnce();
+    cleanupAll();
+    // A stale result is not exported from here: 다시 보정하기 comes first.
+    setup(fx.staleView);
+    expect(ui("calibrate.export")).toBeNull();
+    cleanupAll();
+    // Another job of this screen runs: the button stays, off, and the header pill says why.
+    setup(fx.runningMimoView);
+    expect((must("calibrate.compute") as HTMLButtonElement).disabled).toBe(true);
+    expect(must("calibrate.compute").getAttribute("aria-describedby")).toBe("frame.header.calibrate.status");
+    cleanupAll();
+    // A blocked step (a measurement runs) turns it off and points at the header's reason.
+    renderWith(<CalibrateScreen view={{ ...fx.emptyView, measuring: true }} actions={mockActions()} />, { locale: "ko" });
+    expect((must("calibrate.compute") as HTMLButtonElement).disabled).toBe(true);
+    expect(must("calibrate.compute").getAttribute("aria-describedby")).toBe("frame.header.calibrate.blocked");
+  });
+
+  it("has a header with the running job or the stale result and no primary", () => {
+    const idle = calibrateHeader(fx.splView, t);
+    expect(idle.primary).toBeUndefined();
+    expect(idle.status).toBeUndefined();
+    renderWith(<>{calibrateHeader(fx.runningMimoView, t).status}</>);
     expect(must("calibrate.running").textContent).toBe("MIMO 계산 중");
     cleanupAll();
-    renderWith(<>{calibrateHeader(fx.staleView, actions, t).status}</>);
+    renderWith(<>{calibrateHeader(fx.staleView, t).status}</>);
     expect(must("calibrate.stale").textContent).toBe("다시 계산 필요");
   });
 
@@ -636,12 +684,8 @@ describe("reach table", () => {
     add(idsOf(screenOf(fx.subsOnlyView, "SW2")));
     add(idsOf(screenOf(fx.baView, "SW2")));
     add(idsOf(screenOf({ ...fx.emptyView, settings: { ...fx.emptyView.settings, mimo_on: true } })));
-    // The header's pills and primary, and the job tray's cancels and history (U8).
-    const actions = mockActions();
-    for (const view of [fx.splView, fx.staleView, fx.runningMimoView]) {
-      const header = calibrateHeader(view, actions, t);
-      add(idsOf(<>{header.status}{header.primary && <button data-ui={header.primary.id} type="button" />}</>));
-    }
+    // The header's pills, and the job tray's cancels and history (U8).
+    for (const view of [fx.splView, fx.staleView, fx.runningMimoView]) add(idsOf(<>{calibrateHeader(view, t).status}</>));
     const jobs = (["calibrate", "recommend_xo", "mimo"] as const).map((kind, i) => ({ type: "event" as const, at: T0 + i, event: { event: "started" as const, job: i + 1, kind } }));
     add(idsOf(<JobTray api={staticApi(replay(jobs), T0 + 5000)} defaultOpen />));
     const missing = REACH_IDS.filter((id) => !seen.has(id));

@@ -1475,8 +1475,26 @@ pub fn export_eqapo(run: &FilterRun<'_>, folder: &Path) -> Result<Vec<PathBuf>, 
     validate_run(run)?;
     let plan = make_plan(run.chain, run.mimo)?;
     let mode = mode_name(run);
+    let mimo_note = if let Some(mimo) = run.mimo {
+        let kind = if mimo
+            .paths
+            .iter()
+            .any(|path| matches!(path.filter, MimoFilter::Fir { .. }))
+        {
+            "FIR"
+        } else {
+            "IIR"
+        };
+        format!(
+            "MIMO {kind} support paths {} (Fsiso {} Hz)",
+            plan.mimo.len(),
+            format_g(mimo.fsiso, false)
+        )
+    } else {
+        "no MIMO".into()
+    };
     let note = format!(
-        "mode {mode}, total latency {} ms, RC upper {} Hz; no MIMO",
+        "mode {mode}, total latency {} ms, RC upper {} Hz; {mimo_note}",
         format_fixed(run.latency_ms, 1, false),
         format_fixed(run.rc_hi_hz, 0, false)
     );

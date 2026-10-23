@@ -11,6 +11,7 @@ import { ConnectScreen, connectHeader, micInput } from "./ConnectScreen";
 import {
   emptyView,
   levelDoneView,
+  levelPassedView,
   levelHalfView,
   mdatView,
   mockView,
@@ -128,6 +129,7 @@ export const connectSpecimens: SpecimenDef[] = [
   frame("screen.connect.native_error", "Connect · native device list could not be read", nativeErrorView),
   frame("screen.connect.level_half", "Connect · level check half done, Rs playing in turn", levelHalfView),
   frame("screen.connect.level_done", "Connect · every channel has a level", levelDoneView),
+  frame("screen.connect.level_passed", "Connect · every level in range: the header goes on to 측정하기", levelPassedView),
   frame("screen.connect.mock", "Connect · simulated room", mockView, { fileName: "샘플 7.1.4.secs", dirty: false }),
   frame("screen.connect.mdat", "Connect · mdat import only (step skipped)", mdatView),
   {

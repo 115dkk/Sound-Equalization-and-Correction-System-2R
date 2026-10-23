@@ -1055,7 +1055,7 @@ fn equalizer_apo_files_match_oracle_bytes() {
 }
 
 #[test]
-fn public_wrappers_match_oracle_and_enforce_scope() {
+fn public_wrappers_match_oracle_and_eqapo_carries_mimo_f12() {
     let fixture = Fixture::load("filters", "rc_mixed");
     let rc_chain = chain(&fixture);
     let run_value = &fixture.inputs()["run"];
@@ -1121,12 +1121,13 @@ fn public_wrappers_match_oracle_and_enforce_scope() {
         Err(FiltersError::Scope(ExportBlock::Subs))
     ));
     assert!(!blocked_text.exists());
-    let blocked_eqapo = root.0.join("blocked_mimo_eqapo");
-    assert!(matches!(
-        export_eqapo(&run, &blocked_eqapo),
-        Err(FiltersError::Scope(ExportBlock::Mimo))
-    ));
-    assert!(!blocked_eqapo.exists());
+    let eqapo = root.0.join("mimo_eqapo");
+    let written = export_eqapo(&run, &eqapo).unwrap();
+    assert!(written.iter().all(|path| path.exists()));
+    let config = fs::read_to_string(eqapo.join("config.txt")).unwrap();
+    assert!(config.contains("+VP1"));
+    let body = fs::read_to_string(eqapo.join("secs_mixed/secs_mixed.txt")).unwrap();
+    assert!(body.contains("MIMO IIR support paths"));
 }
 
 #[test]

@@ -11,6 +11,7 @@ import { ConnectScreen, connectHeader } from "./ConnectScreen";
 import {
   emptyView,
   levelDoneView,
+  levelPassedView,
   levelHalfView,
   mdatView,
   mockView,
@@ -401,6 +402,23 @@ describe("ConnectScreen", () => {
     mdat.primary?.onClick();
     expect(actions.next).toHaveBeenCalled();
     expect(connectHeader(emptyView, actions, t).status).toBeUndefined();
+  });
+
+  it("goes on to measuring from the header once every level is in range, and checks all again from the level card", () => {
+    const t = (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) => translate("ko", key, params);
+    const actions = actionsMock();
+    const done = connectHeader(levelPassedView, actions, t);
+    expect(done.primary).toMatchObject({ id: "connect.next", label: "측정하기" });
+    done.primary?.onClick();
+    expect(actions.next).toHaveBeenCalledOnce();
+    // A level out of range (one high, one low) is a problem the check found: playing every channel stays the way on.
+    expect(connectHeader(levelDoneView, actions, t).primary?.id).toBe("connect.level.play_all");
+    // The card offers the whole check again, beside the idle line.
+    const card = setup(levelPassedView);
+    const again = must("connect.level.play_all") as HTMLButtonElement;
+    expect(again.textContent).toBe("모두 다시 점검");
+    fireEvent.click(again);
+    expect(card.playAllLevels).toHaveBeenCalledOnce();
   });
 
   it("turns every level play off while the sweep level is being found, and says why", () => {

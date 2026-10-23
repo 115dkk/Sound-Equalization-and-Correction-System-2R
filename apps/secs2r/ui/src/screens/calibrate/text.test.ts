@@ -89,7 +89,7 @@ describe("calculation notes", () => {
       n("two_way", { role: "SW2", gain_db: "-1", xo_hz: "50" }),
     ];
     expect(lines("ko", notes)).toEqual([
-      "오래 우는 룸 모드 2곳(40 Hz, 63 Hz)의 부스트를 3.0 dB로 제한했습니다.",
+      "울림이 오래 남는 룸 모드 2곳(40 Hz, 63 Hz)의 부스트를 3.0 dB로 제한했습니다.",
       "L: GD 피크를 줄이는 컷 2개를 넣었습니다.",
       "R: GD 피크를 줄이는 컷 1개를 넣었습니다.",
       "2웨이 서브(SW1·SW2): 저역 서브 게인 −1.0 dB, 크로스오버 50 Hz",

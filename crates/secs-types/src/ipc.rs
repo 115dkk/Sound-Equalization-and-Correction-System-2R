@@ -1030,7 +1030,7 @@ pub enum ExportKind {
 pub enum ExportBlock {
     /// The result has subs (BA); filter text carries RC only.
     Subs,
-    /// The result includes MIMO; filter text and Equalizer APO do not carry it.
+    /// The result includes MIMO; filter text does not carry it.
     Mimo,
 }
 
@@ -1045,10 +1045,12 @@ impl ExportBlock {
 }
 
 /// Upstream `filter_export_block`: whether `kind` can carry a result with
-/// subs (`has_subs`) and MIMO support paths (`has_mimo`). CamillaDSP and the
-/// mdat exports carry everything; filter text carries RC only (subs are
-/// checked first, as upstream); Equalizer APO carries RC and BA. The screen
-/// mirrors this rule (`screens/export/types.ts`).
+/// subs (`has_subs`) and MIMO support paths (`has_mimo`). CamillaDSP, the
+/// mdat exports and Equalizer APO carry everything; filter text carries RC
+/// only (subs are checked first, as upstream). Upstream stops MIMO at
+/// Equalizer APO as well; its writer already routes the support paths, and
+/// `secs-filters/tests/eqapo_playback.rs` plays them through the engine
+/// (DEVIATIONS F12). The screen mirrors this rule (`screens/export/types.ts`).
 pub fn filter_export_block(
     kind: ExportKind,
     has_subs: bool,
@@ -1056,7 +1058,7 @@ pub fn filter_export_block(
 ) -> Option<ExportBlock> {
     match kind {
         ExportKind::FilterText if has_subs => Some(ExportBlock::Subs),
-        ExportKind::FilterText | ExportKind::EqualizerApo if has_mimo => Some(ExportBlock::Mimo),
+        ExportKind::FilterText if has_mimo => Some(ExportBlock::Mimo),
         _ => None,
     }
 }
@@ -2252,9 +2254,9 @@ mod tests {
     }
 
     #[test]
-    fn filter_export_scope_follows_upstream() {
+    fn filter_export_scope_follows_upstream_but_eqapo_carries_mimo_f12() {
         use ExportKind::*;
-        for kind in [CamillaDsp, StagedMdat, BeforeAfterMdat] {
+        for kind in [CamillaDsp, StagedMdat, BeforeAfterMdat, EqualizerApo] {
             for (subs, mimo) in [(false, false), (true, false), (false, true), (true, true)] {
                 assert_eq!(filter_export_block(kind, subs, mimo), None, "{kind:?}");
             }
@@ -2270,15 +2272,6 @@ mod tests {
         );
         assert_eq!(
             filter_export_block(FilterText, false, true),
-            Some(ExportBlock::Mimo)
-        );
-        assert_eq!(filter_export_block(EqualizerApo, true, false), None);
-        assert_eq!(
-            filter_export_block(EqualizerApo, false, true),
-            Some(ExportBlock::Mimo)
-        );
-        assert_eq!(
-            filter_export_block(EqualizerApo, true, true),
             Some(ExportBlock::Mimo)
         );
         assert_eq!(serde_json::to_value(FilterText).unwrap(), "filter_text");

@@ -25,6 +25,7 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
     };
     return {
       goToMeasurements: goToMeasurements ?? (() => session.navigate("measure")),
+      goToExport: () => session.navigate("export"),
       openGpuHelp: () => session.run(() => session.call({ method: "open_gpu_help" })),
       refreshCompute: () => session.run(() => session.stores.computeStatus.load()),
       changeCompute: (compute) => session.run(async () => {

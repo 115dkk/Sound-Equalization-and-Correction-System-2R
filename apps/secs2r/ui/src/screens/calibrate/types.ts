@@ -112,8 +112,10 @@ export type { SubLayout } from "../../ipc/bindings/SubLayout";
 export type { SubModeChoice } from "../../ipc/bindings/SubModeChoice";
 
 export type CalibrateActions = {
-  /** Host: opens the measurement list to inspect a structured measurement error. */
+  /** Host: opens the measurement list to inspect a structured measurement error, or to measure again. */
   goToMeasurements: () => void;
+  /** Host: opens the 내보내기 step once the result is current. */
+  goToExport: () => void;
   changeCompute: (preference: ComputePreference) => void;
   refreshCompute: () => void;
   openGpuHelp: () => void;

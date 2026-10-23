@@ -841,8 +841,10 @@
   box-shadow: var(--skin-sunk);
 }
 
-/* The one primary: a cap with a backlit amber legend; danger is backlit red. */
+/* The one primary: a cap with a backlit amber legend; danger is backlit
+   red, go (on to the next step) backlit green. */
 [data-skin="rack"] .ui-button--primary,
+[data-skin="rack"] .ui-button--go,
 [data-skin="rack"] .ui-button--danger {
   background: var(--skin-lens);
   box-shadow: var(--shadow-control);
@@ -855,13 +857,20 @@
   text-shadow: 0 0 6px var(--skin-legend-danger-glow);
 }
 
+[data-skin="rack"] .ui-button--go {
+  color: var(--skin-lamp-green);
+  text-shadow: 0 0 6px color-mix(in oklch, var(--skin-lamp-green) 45%, transparent);
+}
+
 [data-skin="rack"] .ui-button--primary:hover:not(:disabled),
+[data-skin="rack"] .ui-button--go:hover:not(:disabled),
 [data-skin="rack"] .ui-button--danger:hover:not(:disabled) {
   background: var(--skin-lens-lit);
   box-shadow: var(--shadow-control-hover);
 }
 
 [data-skin="rack"] .ui-button--primary:active:not(:disabled),
+[data-skin="rack"] .ui-button--go:active:not(:disabled),
 [data-skin="rack"] .ui-button--danger:active:not(:disabled) {
   background: var(--skin-lens-down);
   box-shadow: var(--skin-sunk);
@@ -879,6 +888,7 @@
 
 /* Powered down: the legend goes dark under a film; the cap stays. */
 [data-skin="rack"] .ui-button--primary:disabled:not([aria-busy]),
+[data-skin="rack"] .ui-button--go:disabled:not([aria-busy]),
 [data-skin="rack"] .ui-button--danger:disabled:not([aria-busy]) {
   background: var(--skin-film-layer), var(--skin-lens);
   color: var(--skin-legend-off);

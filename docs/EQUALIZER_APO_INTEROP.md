@@ -129,3 +129,36 @@ $env:SECS_EQAPO_F11_DUMP_DIR = 'E:/scratch/eqapo-f11'
 cargo test -p secs-filters --test golden --locked
 Remove-Item Env:SECS_EQAPO_F11_DUMP_DIR
 ```
+
+## MIMO 재생 검증
+
+확인일: 2026-10-23 (KST). 관련 작업서: [P66](packets/P66-daybreak-eqapo-playback.md),
+편차 F12.
+
+SECS 2R은 MIMO를 켠 결과도 Equalizer APO 설정으로 내보냅니다. 작성기는 서포트
+경로마다 가공하지 않은 입력을 가상 채널 `VP1…`로 복사해 경로 필터(지연, 하이패스,
+FIR 또는 PEQ·올패스·로우패스, 반전)를 걸고, 지원 스피커의 출력에 더합니다. CI의
+`eqapo-playback` 잡이 이 파일이 실제 엔진에서 설계대로 재생되는지 확인합니다.
+
+### 방법
+
+- 엔진: `.github/eqapo-engines.toml`에 판과 SHA-256을 고정한 EqualizerAPO-XT의
+  x64 SSE2 페이로드와 공식 Equalizer APO 1.4.2 x64 설치본 안의 `Benchmark.exe`.
+  공식판은 설정 폴더 인자가 없어, 버리는 러너에서 레지스트리 `ConfigPath`를
+  시험 폴더로 돌립니다.
+- 사례: 실제 계산 골든 `export_mimo/room_dba_fir`(메인 3, 서브 4, FIR 서포트 18),
+  `room_dba_iir`(IIR 서포트 17, 반전과 수십 ms 지연 포함), 같은 사슬의 MIMO 없는 기준,
+  `filters/computed_dolby`.
+- 들뜸: 입력 채널마다 주기 131072의 무작위 위상 멀티사인을 두 주기 넣고, 둘째
+  주기의 출력을 들뜸 스펙트럼으로 나눠 전달 함수를 얻습니다. 두 Benchmark 모두
+  출력을 PCM16으로 쓰지만, 에너지가 모든 칸에 고르게 퍼져 양자화 잡음이 단위
+  응답보다 약 75 dB 낮습니다.
+- 기준: 파일에 적힌 정밀도(PK 2·2·4자리, 지연 3자리 뒤 정수 샘플 반올림, FIR f32)로
+  되돌린 필터 계획의 `plan_responses`에 전역 Preamp를 곱한 값.
+- 판정: 10 Hz–20 kHz의 모든 칸에서 `|측정 − 기준| ≤ 2e-3·|기준| + 1e-4·최대값`.
+  기준이 0인 출력은 누설 검사가 됩니다. 사례·입력·출력마다 최악의 칸과 남는
+  지연을 표로 남깁니다(잡 요약).
+
+### 결과
+
+첫 CI 실행 결과를 여기에 적습니다.

@@ -15,6 +15,7 @@ import { calibrateStepState, type CalibrateActions, type CalibrateView } from ".
 const noop = () => {};
 export const noActions: CalibrateActions = {
   goToMeasurements: noop,
+  goToExport: noop,
   calibrate: noop,
   calibrateSubs: noop,
   recommendXo: noop,
@@ -116,7 +117,7 @@ function CalibrateFrame({
 }) {
   const t = useT();
   return (
-    <FrameBox frame={frameOf(view, fileName)} jobs={jobs} header={calibrateHeader(view, noActions, t)}>
+    <FrameBox frame={frameOf(view, fileName)} jobs={jobs} header={calibrateHeader(view, t)}>
       <CalibrateScreen view={view} actions={noActions} initial={initial} />
       {scrollTo && <ScrollTo target={scrollTo} />}
     </FrameBox>

@@ -1,0 +1,15 @@
+# Equalizer APO engines the playback check plays SECS 2R exports through
+# (ci.yml eqapo-playback, crates/secs-filters/tests/eqapo_playback.rs).
+# Bump deliberately: a new engine version is a new claim about playback.
+
+[xt]
+version = "2.60.4"
+url = "https://github.com/115dkk/EqualizerAPO-XT/releases/download/v2.60.4/EqualizerAPO-XT-x64-sse2-2.60.4-x64-sse2-full.nupkg"
+sha256 = "334a18580c0e65e6243693ab56377a1146f185d464ae64b72ba4b6f11a1436ce"
+format = "nupkg"
+
+[original]
+version = "1.4.2"
+url = "https://downloads.sourceforge.net/project/equalizerapo/1.4.2/EqualizerAPO-x64-1.4.2.exe"
+sha256 = "7403be7427bbe1936a40dded082829b6e217fc4f5990fee5cba501f0ae055afa"
+format = "nsis"
