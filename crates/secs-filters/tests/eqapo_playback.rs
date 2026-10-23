@@ -196,6 +196,48 @@ struct PlaybackCase {
     mimo: Option<MimoPaths>,
 }
 
+fn fir_lowrate_case(fixture: &Fixture) -> PlaybackCase {
+    let mut mimo = mimo_paths(fixture);
+    for path in &mut mimo.paths {
+        let MimoFilter::Fir { taps_48k } = &path.filter else {
+            panic!("room_dba_fir path is not FIR");
+        };
+        assert_eq!(taps_48k.len(), 8_000);
+        // A 600 Hz impulse sampled from the 48 kHz representation needs the
+        // decimation ratio as its amplitude scale to preserve the DTFT.
+        let taps_low = taps_48k
+            .iter()
+            .step_by(80)
+            .map(|tap| tap * 80.0)
+            .collect::<Vec<_>>();
+        assert_eq!(taps_low.len(), 100);
+        let expanded = secs_dsp::fir::lowrate_to_48k(&taps_low, 600.0);
+        let error_rms = (expanded
+            .iter()
+            .zip(taps_48k.iter())
+            .map(|(got, expected)| (got - expected).powi(2))
+            .sum::<f64>()
+            / taps_48k.len() as f64)
+            .sqrt();
+        let reference_rms =
+            (taps_48k.iter().map(|tap| tap * tap).sum::<f64>() / taps_48k.len() as f64).sqrt();
+        assert!(
+            error_rms / reference_rms <= 1e-2,
+            "low-rate FIR relative RMS {}",
+            error_rms / reference_rms
+        );
+        path.filter = MimoFilter::FirLowRate {
+            taps_low,
+            fs_low: 600.0,
+        };
+    }
+    PlaybackCase {
+        name: "mimo_fir_lowrate_room_dba",
+        chain: chain(fixture),
+        mimo: Some(mimo),
+    }
+}
+
 fn playback_cases() -> Vec<PlaybackCase> {
     let fir = Fixture::load("export_mimo", "room_dba_fir");
     let iir = Fixture::load("export_mimo", "room_dba_iir");
@@ -211,6 +253,7 @@ fn playback_cases() -> Vec<PlaybackCase> {
             chain: chain(&fir),
             mimo: Some(mimo_paths(&fir)),
         },
+        fir_lowrate_case(&fir),
         PlaybackCase {
             name: "mimo_iir_room_dba",
             chain: chain(&iir),
@@ -1034,6 +1077,51 @@ fn wav_write_and_read_cover_pcm_float_and_extensible() {
             assert!((got - expected).abs() <= tolerance);
         }
     }
+}
+
+#[test]
+fn lowrate_playback_case_writes_the_as_written_fir_samples() {
+    let fixture = Fixture::load("export_mimo", "room_dba_fir");
+    let case = fir_lowrate_case(&fixture);
+    let mimo = case.mimo.as_ref().unwrap();
+    let plan = make_plan(&case.chain, Some(mimo)).unwrap();
+    let written = as_written(&plan);
+    let root = TempDir::new("lowrate_fir");
+    let run = FilterRun {
+        chain: &case.chain,
+        mimo: Some(mimo),
+        mode: "mixed",
+        ultra_ms: 200.0,
+        label: "playback",
+        latency_ms: case.chain.latency_ms,
+        rc_hi_hz: 100.0,
+        rc_pieces: &[],
+        stamp: "2026-10-23 00:00",
+    };
+    export_eqapo(&run, &root.0).unwrap();
+    let mut checked = 0;
+    for feed in &written.mimo {
+        for op in &feed.ops {
+            let Op::Fir { name, taps, .. } = op else {
+                continue;
+            };
+            let wav = read_wav(
+                &root
+                    .0
+                    .join("secs_mixed")
+                    .join(format!("secs_mixed_{name}.wav")),
+            )
+            .unwrap();
+            assert_eq!(wav.rate, SAMPLE_RATE);
+            assert_eq!(wav.channels, 1);
+            assert_eq!(wav.samples.len(), taps.len());
+            for (actual, expected) in wav.samples.iter().zip(taps) {
+                assert_eq!((*actual as f32).to_bits(), (*expected as f32).to_bits());
+            }
+            checked += 1;
+        }
+    }
+    assert!(checked > 0);
 }
 
 #[test]

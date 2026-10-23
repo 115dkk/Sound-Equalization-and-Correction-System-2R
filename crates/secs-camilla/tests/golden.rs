@@ -254,7 +254,7 @@ const FREQUENCIES: [f64; 11] = [
 ];
 
 fn yaml_head(yaml: &str) -> &str {
-    yaml.split_once("filters:").unwrap().0
+    yaml.split_once("\nfilters:\n").unwrap().0
 }
 
 fn assert_yaml_transfer(
@@ -277,6 +277,7 @@ fn assert_yaml_transfer(
     };
     let inputs = input_count(expected);
     assert_eq!(input_count(got), inputs, "{id} input channels");
+    let mut max_expected = 0.0_f64;
     let convolution_paths = |yaml: &str| {
         yaml_filters(yaml)
             .into_values()
@@ -301,6 +302,7 @@ fn assert_yaml_transfer(
                 support::camilla_graph::transfer(expected, expected_wav, input, frequency);
             assert_eq!(got.len(), expected.len(), "{id} input {input}");
             for (output, (got, expected)) in got.iter().zip(&expected).enumerate() {
+                max_expected = max_expected.max(expected.norm());
                 assert!(
                     (*got - *expected).norm() <= 2e-12 * expected.norm().max(1.0),
                     "{id} input {input} output {output} frequency {frequency}: {got} != {expected}"
@@ -308,6 +310,10 @@ fn assert_yaml_transfer(
             }
         }
     }
+    assert!(
+        max_expected >= 1e-3,
+        "{id}: expected Camilla responses are all silent ({max_expected})"
+    );
 }
 
 fn yaml_filters(yaml: &str) -> std::collections::BTreeMap<String, Value> {

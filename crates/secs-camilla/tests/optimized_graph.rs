@@ -267,6 +267,7 @@ fn expected(chain: &SignalChain, mimo: &MimoPaths, input: usize, f: f64, lfe: bo
 #[test]
 fn factored_graph_preserves_every_input_to_output_transfer_and_integer_delay() {
     let (chain, mimo) = sample();
+    let mut max_expected = 0.0_f64;
     for include_mimo in [false, true] {
         for lfe in [false, true] {
             let options = Options {
@@ -311,7 +312,9 @@ fn factored_graph_preserves_every_input_to_output_transfer_and_integer_delay() {
                         input,
                         f,
                     );
+                    assert_eq!(actual.len(), expected.len());
                     for (output, (got, wanted)) in actual.iter().zip(&expected).enumerate() {
+                        max_expected = max_expected.max(wanted.norm());
                         assert!(
                             (*got - *wanted).norm() <= 2e-12 * wanted.norm().max(1.0),
                             "input {input} output {output} f {f}: {got} != {wanted}"
@@ -321,6 +324,10 @@ fn factored_graph_preserves_every_input_to_output_transfer_and_integer_delay() {
             }
         }
     }
+    assert!(
+        max_expected >= 1e-3,
+        "expected optimized graph responses are all silent ({max_expected})"
+    );
 }
 
 #[test]

@@ -143,6 +143,7 @@ tests = [
   "secs-service::compact_fir_cache_round_trips_bits_and_pins_materialization",
   "secs-service::version_four_expanded_fir_cache_remains_readable",
   "secs-service::legacy_layouts_reject_low_rate_firs",
+  "secs-filters::lowrate_playback_case_writes_the_as_written_fir_samples",
 ]
 note = "Small FFT on matching integer-ratio grids, direct fallback otherwise; retain low-rate f64 taps and materialize compatible 48 kHz exports lazily. Cache v5 pins materializer 1 and reads legacy expanded FIRs."
 

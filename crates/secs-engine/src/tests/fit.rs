@@ -31,7 +31,7 @@ pub(crate) fn same_recorded_fit(a: &RecordedFit, b: &RecordedFit) -> bool {
             == (b.n, b.lo.to_bits(), b.hi.to_bits(), b.boost.to_bits())
         && a.ring_ms.map(f64::to_bits) == b.ring_ms.map(f64::to_bits)
         && a.f_max.map(f64::to_bits) == b.f_max.map(f64::to_bits)
-        && a.result == b.result
+        && bits(&flat(&a.result)) == bits(&flat(&b.result))
 }
 
 fn recorded(fx: &Fixture) -> RecordedFit {

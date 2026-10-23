@@ -11,11 +11,32 @@ fn biquad(b: [f64; 3], a: [f64; 3], f: f64) -> C {
 
 fn line_response(line: &str, f: f64, wav: &dyn Fn(&str) -> Vec<u8>) -> C {
     let p = line.split_whitespace().collect::<Vec<_>>();
-    let parse = |i: usize| p[i].parse::<f64>().unwrap();
-    match p[0] {
-        "Preamp:" => C::new(10_f64.powf(parse(1) / 20.0), 0.0),
-        "Delay:" => C::from_polar(1.0, -2.0 * PI * f * parse(1) / 1000.0),
+    let parse = |i: usize| {
+        p[i].parse::<f64>()
+            .unwrap_or_else(|_| panic!("expected number at token {i}: {line}"))
+    };
+    match p.first().copied().unwrap_or("") {
+        "Preamp:" => {
+            assert_eq!(p.len(), 3, "Preamp syntax: {line}");
+            assert_eq!(p[2], "dB", "Preamp syntax: {line}");
+            C::new(10_f64.powf(parse(1) / 20.0), 0.0)
+        }
+        "Delay:" => {
+            assert_eq!(p.len(), 3, "Delay syntax: {line}");
+            assert_eq!(p[2], "ms", "Delay syntax: {line}");
+            let ms = parse(1);
+            // The writer first rounds milliseconds to the three decimals present
+            // in this parsed string. This is therefore the same per-command
+            // sample rule as eqapo_playback::as_written after rounded(ms, 3).
+            let samples = if ms <= 0.0 {
+                0.0
+            } else {
+                (ms * 48.0 + 0.5).floor()
+            };
+            C::from_polar(1.0, -2.0 * PI * f * samples / SAMPLE_RATE)
+        }
         "Convolution:" => {
+            assert_eq!(p.len(), 2, "Convolution syntax: {line}");
             let bytes = wav(p[1]);
             assert_eq!(&bytes[0..4], b"RIFF");
             assert_eq!(&bytes[8..12], b"WAVE");
@@ -36,9 +57,24 @@ fn line_response(line: &str, f: f64, wav: &dyn Fn(&str) -> Vec<u8>) -> C {
                 .sum()
         }
         "Filter:" => {
-            assert_eq!(p[1], "ON");
+            assert!(
+                matches!(p.get(2), Some(&("PK" | "HPQ" | "LPQ" | "AP"))),
+                "Filter kind: {line}"
+            );
+            let pk = p[2] == "PK";
+            assert_eq!(p.len(), if pk { 11 } else { 8 }, "Filter syntax: {line}");
+            assert_eq!(p[1], "ON", "Filter syntax: {line}");
+            assert_eq!(p[3], "Fc", "Filter syntax: {line}");
+            assert_eq!(p[5], "Hz", "Filter syntax: {line}");
+            if pk {
+                assert_eq!(p[6], "Gain", "Filter syntax: {line}");
+                assert_eq!(p[8], "dB", "Filter syntax: {line}");
+                assert_eq!(p[9], "Q", "Filter syntax: {line}");
+            } else {
+                assert_eq!(p[6], "Q", "Filter syntax: {line}");
+            }
             let frequency = parse(4);
-            let q = if p[2] == "PK" { parse(10) } else { parse(7) };
+            let q = if pk { parse(10) } else { parse(7) };
             let w = 2.0 * PI * frequency / SAMPLE_RATE;
             let alpha = w.sin() / (2.0 * q);
             let c = w.cos();
@@ -62,7 +98,7 @@ fn line_response(line: &str, f: f64, wav: &dyn Fn(&str) -> Vec<u8>) -> C {
                     [1.0 - alpha, -2.0 * c, 1.0 + alpha],
                     [1.0 + alpha, -2.0 * c, 1.0 - alpha],
                 ),
-                other => panic!("unexpected filter {other}: {line}"),
+                _ => unreachable!(),
             };
             biquad(b, a, f)
         }
@@ -159,6 +195,7 @@ fn run(
                 names
                     .split_whitespace()
                     .map(|name| resolve(name, vars))
+                    .inspect(|name| assert!(channels.contains_key(name), "unknown Channel: {name}"))
                     .collect()
             };
         } else if let Some(assignments) = line.strip_prefix("Copy: ") {
@@ -220,6 +257,61 @@ pub fn transfer(
     (1..=DEVICE_CHANNELS)
         .map(|channel| channels[&channel.to_string()])
         .collect()
+}
+
+#[test]
+fn delay_rounds_each_command_to_integer_samples() {
+    let wav = |path: &str| panic!("unexpected WAV {path}");
+    assert!(
+        [
+            7.0, 20.0, 31.0, 43.0, 80.0, 120.0, 173.0, 350.0, 1000.0, 8765.0, 20_000.0
+        ]
+        .into_iter()
+        .any(|frequency| {
+            let one = line_response("Delay: 2.675 ms", frequency, &wav);
+            let split = line_response("Delay: 1.345 ms", frequency, &wav)
+                * line_response("Delay: 1.330 ms", frequency, &wav);
+            (one - split).norm() > 2e-12
+        })
+    );
+}
+
+#[test]
+#[should_panic(expected = "Delay syntax")]
+fn delay_rejects_wrong_unit() {
+    line_response("Delay: 2.675 samples", 80.0, &|path| {
+        panic!("unexpected WAV {path}")
+    });
+}
+
+#[test]
+#[should_panic(expected = "Filter syntax")]
+fn filter_rejects_wrong_literal() {
+    line_response(
+        "Filter: ON PK Frequency 80.00 Hz Gain -3.00 dB Q 1.0000",
+        80.0,
+        &|path| panic!("unexpected WAV {path}"),
+    );
+}
+
+#[test]
+#[should_panic(expected = "Convolution syntax")]
+fn convolution_rejects_extra_token() {
+    line_response("Convolution: impulse.wav extra", 80.0, &|path| {
+        panic!("unexpected WAV {path}")
+    });
+}
+
+#[test]
+#[should_panic(expected = "unknown Channel")]
+fn channel_rejects_names_that_do_not_exist_yet() {
+    transfer(
+        "Channel: VNEW\nPreamp: 1.0 dB\n",
+        &|path| panic!("unexpected include {path}"),
+        &|path| panic!("unexpected WAV {path}"),
+        0,
+        80.0,
+    );
 }
 
 #[test]

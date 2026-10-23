@@ -137,7 +137,29 @@ pub fn transfer(yaml: &str, wav: &dyn Fn(&str) -> Vec<u8>, input: usize, f: f64)
                     let spec = &filters[name.as_str().unwrap()];
                     let p = &spec["parameters"];
                     let get = |key: &str| p[key].as_f64().unwrap();
-                    let h = match spec["type"].as_str().unwrap() {
+                    let kind = spec["type"].as_str().unwrap();
+                    let parameter_type = p.get("type").and_then(Value::as_str);
+                    let allowed: &[&str] = match (kind, parameter_type) {
+                        ("Gain", None) => &["gain", "inverted"],
+                        ("Delay", None) => &["delay", "unit", "subsample"],
+                        ("Biquad", Some("Peaking")) => &["type", "freq", "q", "gain"],
+                        ("Biquad", Some("Allpass")) => &["type", "freq", "q"],
+                        ("BiquadCombo", Some(_)) => &["type", "freq", "order"],
+                        ("Conv", Some("Wav")) => &["type", "filename"],
+                        other => panic!("unexpected filter parameters {other:?}: {p}"),
+                    };
+                    for key in p.as_object().unwrap().keys() {
+                        assert!(
+                            allowed.contains(&key.as_str()),
+                            "unexpected {kind} parameter {key}: {p}"
+                        );
+                    }
+                    assert_eq!(
+                        p.as_object().unwrap().len(),
+                        allowed.len(),
+                        "missing {kind} parameter: {p}"
+                    );
+                    let h = match kind {
                         "Gain" => C::new(
                             10_f64.powf(get("gain") / 20.0)
                                 * if p["inverted"] == true { -1.0 } else { 1.0 },

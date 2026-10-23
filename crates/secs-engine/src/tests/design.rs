@@ -181,17 +181,22 @@ fn replay_with_context(name: &str, context: &Context) -> Design {
     // The RC channel evaluates the phase-independent preparation once for
     // both phase candidates (ADR 0012); SECS 2 recorded it per candidate.
     for (key, calls) in &mut stages {
-        if key.starts_with("Rc:") {
-            let mut kept: Vec<RecordedFit> = Vec::new();
-            for call in calls.drain(..) {
-                if !kept
-                    .iter()
-                    .any(|earlier| super::fit::same_recorded_fit(earlier, &call))
-                {
-                    kept.push(call);
-                }
+        if key.starts_with("Rc:")
+            && let Some(k) =
+                (1..calls.len()).find(|&k| super::fit::same_recorded_fit(&calls[0], &calls[k]))
+        {
+            let shared = calls[k..]
+                .iter()
+                .zip(&calls[..])
+                .take_while(|(a, b)| super::fit::same_recorded_fit(a, b))
+                .count();
+            if calls.len() == 2 * k && shared == k {
+                calls.truncate(k);
+            } else {
+                // The FIR preparation holds at most the first PEQ fit.
+                assert!(shared <= 1, "{name}/{key} shared preparation fit");
+                calls.drain(k..k + shared);
             }
-            *calls = kept;
         }
     }
     let counts: Arc<Mutex<BTreeMap<String, (usize, usize)>>> =

@@ -567,6 +567,47 @@ fn eqapo_body_path(config: &str) -> String {
         .replace('\\', "/")
 }
 
+fn compare_apo_graph_outside(
+    expected_config: &str,
+    got_config: &str,
+    expected_body: &str,
+    got_body: &str,
+) -> Result<(), String> {
+    let expected_lines = expected_config.split_inclusive('\n').collect::<Vec<_>>();
+    let got_lines = got_config.split_inclusive('\n').collect::<Vec<_>>();
+    if expected_lines.len() != got_lines.len() {
+        return Err(format!(
+            "config.txt line count: got {}, expected {}",
+            got_lines.len(),
+            expected_lines.len()
+        ));
+    }
+    for (index, (expected, got)) in expected_lines.iter().zip(&got_lines).enumerate() {
+        let expected_copy = expected.trim_start().starts_with("Copy:");
+        let got_copy = got.trim_start().starts_with("Copy:");
+        if expected_copy != got_copy {
+            return Err(format!("config.txt line {} command changed", index + 1));
+        }
+        if !expected_copy && expected != got {
+            return Err(format!(
+                "config.txt line {} differs: {got:?} != {expected:?}",
+                index + 1
+            ));
+        }
+    }
+    fn head(body: &str) -> &str {
+        body.split_once("\n\n").map_or(body, |(head, _)| head)
+    }
+    if head(expected_body) != head(got_body) {
+        return Err(format!(
+            "filter body head differs: {:?} != {:?}",
+            head(got_body),
+            head(expected_body)
+        ));
+    }
+    Ok(())
+}
+
 fn assert_apo_transfer(
     id: &str,
     got_config: &str,
@@ -576,8 +617,11 @@ fn assert_apo_transfer(
     expected_body: &str,
     expected_wav: &dyn Fn(&str) -> Vec<u8>,
 ) {
+    compare_apo_graph_outside(expected_config, got_config, expected_body, got_body)
+        .unwrap_or_else(|error| panic!("{id}: {error}"));
     let got_body_path = eqapo_body_path(got_config);
     let expected_body_path = eqapo_body_path(expected_config);
+    let mut max_expected = 0.0_f64;
     for input in 0..16 {
         for frequency in TRANSFER_FREQUENCIES {
             let got = support::apo_graph::transfer(
@@ -604,7 +648,9 @@ fn assert_apo_transfer(
                 input,
                 frequency,
             );
+            assert_eq!(got.len(), expected.len(), "{id} input {input}");
             for (output, (got, expected)) in got.iter().zip(&expected).enumerate() {
+                max_expected = max_expected.max(expected.norm());
                 assert!(
                     (*got - *expected).norm() <= 2e-12 * expected.norm().max(1.0),
                     "{id} input {input} output {output} frequency {frequency}: {got} != {expected}"
@@ -612,6 +658,19 @@ fn assert_apo_transfer(
             }
         }
     }
+    assert!(
+        max_expected >= 1e-3,
+        "{id}: expected APO responses are all silent ({max_expected})"
+    );
+}
+
+#[test]
+fn apo_graph_outside_comparison_rejects_device_format_changes() {
+    let expected = "# Device format: 48000 Hz\nCopy: 1=V1\n";
+    let changed = "# Device format: 44100 Hz\nCopy: 1=V2\n";
+    assert!(
+        compare_apo_graph_outside(expected, changed, "# note\n\nold", "# note\n\nnew").is_err()
+    );
 }
 
 fn assert_written(fixture: &Fixture, kind: &str, root: &Path, paths: &[PathBuf]) {
@@ -1290,14 +1349,24 @@ fn public_wrappers_match_oracle_and_eqapo_carries_mimo_f12() {
     // MIMO body, including the fixed sub filter on both contributing paths.
     let direct = &fixture.outputs()["direct"];
     let expected_config = f11_config(direct["eqapo_config"].as_str().unwrap());
+    let expected_config = replace_once(
+        &expected_config,
+        "Include: edge\\edge.txt",
+        "Include: secs_mixed\\secs_mixed.txt",
+    );
     let expected_body = direct["eqapo_filters"].as_str().unwrap();
+    let expected_body = replace_once(
+        expected_body,
+        "# ASCII before /  / after",
+        "# mode mixed, total latency 12.2 ms, RC upper 321 Hz; MIMO IIR support paths 1 (Fsiso 150 Hz)",
+    );
     assert_apo_transfer(
         &fixture.id,
         &config,
         &body,
         &|name| fs::read(eqapo.join("secs_mixed").join(name)).unwrap(),
         &expected_config,
-        expected_body,
+        &expected_body,
         &|name| panic!("unexpected MIMO IIR fixture WAV: {name}"),
     );
     for (role, output) in outputs {
