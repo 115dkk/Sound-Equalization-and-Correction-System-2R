@@ -100,6 +100,12 @@
   --skin-band-surface: oklch(0.935 0.018 230);
   --skin-band-grid: oklch(0.22 0.004 250 / 0.08);
   --skin-ghost: oklch(0.22 0.004 250 / 0.26);
+  /* The bus display: the second face of the step list lit from behind,
+     its light (glow), its LCD row lines, the dim at its ends and its bezel. */
+  --skin-display-glow: oklch(1 0 0 / 0.7);
+  --skin-display-line: oklch(0.3 0.03 230 / 0.035);
+  --skin-display-shade: oklch(0.3 0.03 230 / 0.06);
+  --skin-display-bezel: oklch(0.84 0.022 230);
 
   /* Sunken data cell: crisp grid, mono figures. */
   --plot-bg: var(--surface-sunken);
@@ -178,6 +184,10 @@
   --skin-band-surface: oklch(0.255 0.022 230);
   --skin-band-grid: oklch(0.93 0.003 250 / 0.1);
   --skin-ghost: oklch(0.93 0.003 250 / 0.3);
+  --skin-display-glow: oklch(0.62 0.1 215 / 0.3);
+  --skin-display-line: oklch(0.1 0.01 230 / 0.2);
+  --skin-display-shade: oklch(0.1 0.01 230 / 0.4);
+  --skin-display-bezel: oklch(0.15 0.012 230);
 
   --plot-bg: var(--surface-sunken);
   --plot-grid: oklch(0.93 0.003 250 / 0.09);
@@ -255,6 +265,10 @@
     --skin-band-surface: oklch(0.255 0.022 230);
     --skin-band-grid: oklch(0.93 0.003 250 / 0.1);
     --skin-ghost: oklch(0.93 0.003 250 / 0.3);
+    --skin-display-glow: oklch(0.62 0.1 215 / 0.3);
+    --skin-display-line: oklch(0.1 0.01 230 / 0.2);
+    --skin-display-shade: oklch(0.1 0.01 230 / 0.4);
+    --skin-display-bezel: oklch(0.15 0.012 230);
 
     --plot-bg: var(--surface-sunken);
     --plot-grid: oklch(0.93 0.003 250 / 0.09);
@@ -375,15 +389,26 @@
    trace, as instrument annunciators and electronic checklists show it: a
    done step is a backlit green lamp with one check, glowing past its cell,
    and the trace through it is lit; the current step is the engaged cyan
-   band with its number in a cyan-ruled cell; a step still to do is an
-   unlit cell with its number; a blocked one an unlit cell with a lock in a
-   dashed amber frame. The shape says each state with its colour (lit fill,
-   rule, dashed rule, strike), so no state rests on colour alone. */
+   band, its lamp or number in the band with no frame of its own; a step
+   still to do is an unlit cell with its number; a blocked one an unlit cell
+   with a lock in a dashed amber frame. The shape says each state with its
+   colour (lit fill, band, dashed rule, strike), so no state rests on colour
+   alone.
+
+   The list's second face is a bus display, not a painted panel: its blue is
+   the backlight, brightest along the signal trace that feeds it and fading
+   across the legends, drawn in LCD row lines, dimmer at its two ends and set
+   behind a 1px bezel. A flat fill of blue read as paint. */
 [data-skin="matrix"] .rail-steps__list {
   --skin-lamp: 22px;
+  --skin-trace-x: calc(var(--space-3) + var(--skin-lamp) / 2);
   gap: 0;
-  border-top: 1px solid var(--border-subtle);
-  background: var(--skin-band-surface);
+  background:
+    repeating-linear-gradient(180deg, var(--skin-display-line) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, var(--skin-display-shade), transparent 22px, transparent calc(100% - 22px), var(--skin-display-shade)),
+    linear-gradient(90deg, transparent, var(--skin-display-glow) var(--skin-trace-x), transparent 65%),
+    var(--skin-band-surface);
+  box-shadow: inset 0 0 0 1px var(--skin-display-bezel);
 }
 
 [data-skin="matrix"] .rail-steps__list > li {
@@ -450,6 +475,12 @@
   height: calc(var(--space-3) + var(--skin-lamp) / 2 + 1px);
 }
 
+/* A lit trace lights the display around it: the green spills a little onto
+   its row before fading into the backlight. */
+[data-skin="matrix"] .rail-step--done:not(.rail-step--current):not(:hover) {
+  background: linear-gradient(90deg, transparent, color-mix(in oklch, var(--success) 12%, transparent) var(--skin-trace-x), transparent 42%);
+}
+
 [data-skin="matrix"] .rail-step--done::after {
   background: var(--success);
   box-shadow: 0 0 4px color-mix(in oklch, var(--success) 55%, transparent);
@@ -492,20 +523,17 @@
   color: var(--on-success);
 }
 
-/* The current step that is also done keeps its lamp lit inside the cursor. */
-[data-skin="matrix"] .rail-step--current.rail-step--done .rail-step__mark {
-  outline: 1px solid var(--accent);
-  outline-offset: 2px;
-}
-
 [data-skin="matrix"] .rail-step--blocked .rail-step__mark {
   outline: 1.5px dashed var(--warning);
   outline-offset: -1.5px;
   box-shadow: none;
 }
 
+/* The engaged band already frames the current step: its number cell keeps
+   the sunken fill and only takes the accent ink, never a ruled box of its
+   own inside the band (rule 9). */
 [data-skin="matrix"] .rail-step--current:not(.rail-step--done) .rail-step__mark {
-  box-shadow: inset 0 0 0 1px var(--accent);
+  box-shadow: none;
   color: var(--accent);
 }
 
