@@ -161,6 +161,13 @@ html[data-gallery-page] body {
   min-width: 0;
 }
 
+/* The frame specimens' stand-in step is cut by rules like the real steps
+   (styles/skins/matrix.css, rule 11). */
+[data-skin="matrix"] .gal-step-grid {
+  align-items: stretch;
+  gap: 1px;
+}
+
 .gal-tooltip-stage {
   display: flex;
   justify-content: center;

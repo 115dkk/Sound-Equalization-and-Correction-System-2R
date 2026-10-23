@@ -360,10 +360,8 @@ function StaleFrame() {
       ])}
       headerStatus={<StatusPill tone="warning">{t("frame.status.calibration.stale")}</StatusPill>}
     >
-      <div className="gal-stack">
-        <ErrorNotice tone="warning" cause={t("error.stale_inputs")} next={t("error.stale_inputs.next")} />
-        <MeasureContent stale />
-      </div>
+      <ErrorNotice tone="warning" cause={t("error.stale_inputs")} next={t("error.stale_inputs.next")} />
+      <MeasureContent stale />
     </FrameBox>
   );
 }

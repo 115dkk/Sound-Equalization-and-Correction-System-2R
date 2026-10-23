@@ -1,8 +1,9 @@
 /* Signal Matrix skin (docs/skins/matrix.md, ADR 0010).
  *
  * An airport departures board crossed with a broadcast routing matrix:
- * radius 0 and 1 px rules everywhere, a 24 px grid on the board surface
- * between the cards (never inside a card body), coordinate cells on the
+ * radius 0 and 1 px rules everywhere, a step's cards meeting edge to edge
+ * as one face cut by single rules, a 24 px grid on the board surface where
+ * no card is mounted (never inside a card body), coordinate cells on the
  * rail and the position list, every authoritative number in a sunken mono
  * box cell, crosspoint hover (row band × column band), cyan only for what
  * is engaged, selected or routed, and cancelled-flight styling (dotted
@@ -587,11 +588,77 @@
   font-weight: var(--weight-bold);
 }
 
-/* The board surface: a 24 px grid between and around the cards (cards are
-   opaque panels, so the grid never shows inside a card body). */
+/* The board surface: a 24 px grid where no card is mounted (cards are opaque
+   panels, so the grid never shows inside a card body). */
 [data-skin="matrix"] .app-content {
+  padding: 0 0 var(--space-8);
   background-image: var(--skin-board);
   background-attachment: local;
+}
+
+/* One face cut by rules (rule 11): a step's cards run edge to edge across
+   the content and meet with a 1 px gap, where the outer rules of the two
+   cards fall on the same pixel and read as one rule. No card floats on the
+   board with a margin of grid around it. Rows of a grid end together, so a
+   short card does not open a notch of board inside the face. */
+[data-skin="matrix"] :is(
+  .connect-screen,
+  .connect-pair,
+  .system-grid,
+  .measure-layout,
+  .measure-stack,
+  .calibrate,
+  .calibrate-results,
+  .calibrate-settings,
+  .export-screen
+) {
+  gap: 1px;
+}
+
+[data-skin="matrix"] :is(.connect-pair, .system-grid, .measure-layout) {
+  align-items: stretch;
+}
+
+[data-skin="matrix"] .measure-stack > :last-child {
+  flex-grow: 1;
+}
+
+/* Beside a long arrangement card the DSP card runs down to its end, so no
+   cell of board opens under it. */
+@container (min-width: 900px) and (max-width: 1239.98px) {
+  [data-skin="matrix"] .system-grid {
+    grid-template-areas:
+      "config config"
+      "room layout"
+      "dsp layout"
+      "dsp layout";
+  }
+}
+
+/* The settings' title and the input policy under it are one strip on the
+   face; the rule under them is the first settings card's. */
+[data-skin="matrix"] .calibrate-settings__head {
+  margin-top: 0;
+  padding: var(--space-4) var(--space-5) var(--space-2);
+  background: var(--surface);
+}
+
+[data-skin="matrix"] .calibrate-settings__head + [data-ui="calibrate.settings.input"] {
+  margin-top: -1px;
+  padding: 0 var(--space-5) var(--space-3);
+  background: var(--surface);
+}
+
+/* A notice the frame puts above the step is the face's first strip. */
+[data-skin="matrix"] .app-content > .ui-error {
+  margin-bottom: 1px;
+  padding-inline: var(--space-5);
+  background: var(--surface);
+  box-shadow: inset 3px 0 0 var(--danger), var(--shadow-card);
+}
+
+[data-skin="matrix"] .app-content > .ui-error--warning {
+  box-shadow: inset 3px 0 0 var(--warning), var(--shadow-card);
 }
 
 [data-skin="matrix"] .job-tray {
@@ -1519,6 +1586,137 @@
 [data-skin="matrix"] .export-fact dd {
   align-self: flex-start;
   width: fit-content;
+}
+
+/* ── Export: the result routed to its outputs ──────────────────────────── */
+/* Each format is an output of the router: a code cell before its name, then
+   a route from the name to the format's action across the row's width, with
+   a lamp at its tail. The route is ruled while the format can take the
+   result, dashed (cancelled) when it cannot, cyan while it runs and once it
+   is routed (saved this session); the lamp lights green on a save and red
+   on a failure. */
+[data-skin="matrix"] .export-item {
+  --skin-route: var(--border-control);
+  --skin-route-gap: var(--border-control);
+  --skin-route-lamp: transparent;
+  --skin-route-ring: var(--border-control);
+  grid-template-columns: fit-content(50%) minmax(var(--skin-grid-pitch), 1fr) auto;
+}
+
+/* The name, the route and the action share one line; the folder line runs
+   under the name and the route. */
+[data-skin="matrix"] .export-item__text {
+  display: contents;
+}
+
+[data-skin="matrix"] .export-item__text > .ui-heading-help {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: center;
+}
+
+[data-skin="matrix"] .export-item__where {
+  grid-column: 1 / 3;
+  grid-row: 2;
+}
+
+[data-skin="matrix"] .export-item__action {
+  grid-column: 3;
+  grid-row: 1;
+  align-self: center;
+}
+
+[data-skin="matrix"] .export-item::before,
+[data-skin="matrix"] .export-item::after {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: center;
+  pointer-events: none;
+}
+
+/* The lamp at the route's tail. */
+[data-skin="matrix"] .export-item::before {
+  content: "";
+  justify-self: start;
+  width: 8px;
+  height: 8px;
+  background: var(--skin-route-lamp);
+  box-shadow: inset 0 0 0 1.5px var(--skin-route-ring);
+}
+
+/* The route and its head. */
+[data-skin="matrix"] .export-item::after {
+  content: ">";
+  content: ">" / "";
+  justify-self: stretch;
+  height: var(--skin-grid-pitch);
+  background: repeating-linear-gradient(90deg, var(--skin-route) 0 3px, var(--skin-route-gap) 3px 6px) calc(8px + var(--space-2)) 50% / calc(100% - 8px - var(--space-2) - 2ch) 1px no-repeat;
+  color: var(--skin-route);
+  font-family: var(--font-mono);
+  font-weight: var(--weight-bold);
+  line-height: var(--skin-grid-pitch);
+  text-align: right;
+}
+
+[data-skin="matrix"] .export-item:has(> .export-item__blocked) {
+  --skin-route: var(--text-faint);
+  --skin-route-gap: transparent;
+  --skin-route-ring: var(--text-faint);
+}
+
+[data-skin="matrix"] .export-item:has(> .export-item__action :is([aria-busy="true"], .ui-pill--busy)),
+[data-skin="matrix"] .export-item:has(> .export-done) {
+  --skin-route: var(--accent);
+  --skin-route-gap: var(--accent);
+}
+
+[data-skin="matrix"] .export-item:has(> .export-done) {
+  --skin-route-lamp: var(--success);
+  --skin-route-ring: var(--success);
+}
+
+[data-skin="matrix"] .export-item:has(> .export-item__outcome .ui-error) {
+  --skin-route-lamp: var(--danger);
+  --skin-route-ring: var(--danger);
+}
+
+/* The output's code: a coordinate cell (rule 4), fixed by the format. */
+[data-skin="matrix"] .export-item__title::before {
+  display: inline-block;
+  min-width: 7ch;
+  margin-right: var(--space-2);
+  padding: 0 3px;
+  background: var(--surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-weight: var(--weight-bold);
+  text-align: center;
+}
+
+[data-skin="matrix"] [data-ui="export.kind.camilla_dsp"] .export-item__title::before {
+  content: "CDSP";
+  content: "CDSP" / "";
+}
+
+[data-skin="matrix"] [data-ui="export.kind.filter_text"] .export-item__title::before {
+  content: "TEXT";
+  content: "TEXT" / "";
+}
+
+[data-skin="matrix"] [data-ui="export.kind.equalizer_apo"] .export-item__title::before {
+  content: "EQAPO";
+  content: "EQAPO" / "";
+}
+
+[data-skin="matrix"] [data-ui="export.kind.before_after_mdat"] .export-item__title::before {
+  content: "MDAT";
+  content: "MDAT" / "";
+}
+
+[data-skin="matrix"] [data-ui="export.kind.staged_mdat"] .export-item__title::before {
+  content: "STAGE";
+  content: "STAGE" / "";
 }
 
 /* ── Tutorial: a board panel and a square bracket ──────────────────────── */

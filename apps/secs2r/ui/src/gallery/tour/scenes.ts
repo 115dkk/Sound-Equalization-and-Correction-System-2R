@@ -591,7 +591,7 @@ export const TOUR_SCENES: TourScene[] = [
   {
     id: "export.mimo-blocked",
     step: "export",
-    title: { ko: "MIMO를 넣은 결과의 필터", en: "Filters for a result with MIMO" },
+    title: { ko: "MIMO를 켠 결과의 필터", en: "Filters for a result with MIMO" },
     note: {
       ko: "세 위치를 측정하고 MIMO를 계산한 결과라 필터 값 텍스트와 Equalizer APO가 꺼집니다.",
       en: "With three positions measured and MIMO calculated, the filter text and Equalizer APO are off.",
