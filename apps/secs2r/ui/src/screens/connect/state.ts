@@ -9,6 +9,7 @@
 // after it to show.
 import type { StepState } from "../../app/model";
 import { orderRoles } from "../../ui/maps/geometry";
+import { levelState } from "../../ui/meters";
 import type { ConnectView } from "./types";
 
 /** Whether the chosen path can measure now. */
@@ -32,6 +33,12 @@ export function levelRoles(view: Pick<ConnectView, "config">): string[] {
 
 export function missingLevels(view: Pick<ConnectView, "config" | "levels">): string[] {
   return levelRoles(view).filter((role) => view.levels[role] === undefined);
+}
+
+/** Every channel has a level in the recommended range: the check ended without a problem. */
+export function levelsPassed(view: Pick<ConnectView, "config" | "levels">): boolean {
+  const roles = levelRoles(view);
+  return roles.length > 0 && roles.every((role) => levelState(view.levels[role] ?? null) === "ok");
 }
 
 export function connectStepState(view: Pick<ConnectView, "path" | "methods" | "config" | "levels">): StepState {

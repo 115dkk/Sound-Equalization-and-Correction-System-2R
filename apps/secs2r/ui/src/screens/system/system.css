@@ -430,6 +430,13 @@ button.system-choice:active:not([aria-pressed="true"]) {
   width: 100%;
 }
 
+.system-options__advanced {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-top: var(--space-2);
+}
+
 .system-estimate {
   display: flex;
   flex-direction: column;

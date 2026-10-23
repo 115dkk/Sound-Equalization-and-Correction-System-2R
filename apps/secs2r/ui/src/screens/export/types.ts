@@ -90,9 +90,9 @@ export function mimoInclusion(view: ExportView): MimoInclusion {
  * there is no result). Follows the service's `filter_export_block`
  * (crates/secs-types/src/ipc.rs, upstream `calibration.filter_export_block`):
  * the filter text carries RC only, so subs block it first and MIMO next;
- * Equalizer APO carries RC and BA, so MIMO blocks it; CamillaDSP and the
- * mdat exports carry everything. MIMO counts only when it goes into the
- * export (`mimoInclusion`).
+ * CamillaDSP, Equalizer APO and the mdat exports carry everything
+ * (upstream stops MIMO at Equalizer APO too; DEVIATIONS F12). MIMO counts
+ * only when it goes into the export (`mimoInclusion`).
  */
 export function exportBlock(view: ExportView, kind: ExportKind): ExportBlock | null {
   const result = view.results.calibration;
@@ -100,7 +100,7 @@ export function exportBlock(view: ExportView, kind: ExportKind): ExportBlock | n
   const subs = result.sub_roles.length > 0;
   const mimo = mimoInclusion(view).included;
   if (kind === "filter_text" && subs) return "subs";
-  if ((kind === "filter_text" || kind === "equalizer_apo") && mimo) return "mimo";
+  if (kind === "filter_text" && mimo) return "mimo";
   return null;
 }
 

@@ -167,7 +167,7 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
     case "system": if (system.view) { content = <SystemScreen view={system.view} actions={system.actions} />; header = systemHeader(system.view, system.actions, t); } break;
     case "connect": if (connect.view) { content = <ConnectScreen view={connect.view} actions={connect.actions} />; header = connectHeader(connect.view, connect.actions, t); } break;
     case "measure": if (measure.view) { content = <MeasureScreen view={measure.view} actions={measure.actions} />; header = measureHeader(measure.view, measure.actions, t); } break;
-    case "calibrate": if (calibrate.view) { content = <CalibrateScreen view={calibrate.view} actions={calibrate.actions} initial={project?.tutorial ? { editSub: "SW3" } : undefined} />; header = calibrateHeader(calibrate.view, calibrate.actions, t); } break;
+    case "calibrate": if (calibrate.view) { content = <CalibrateScreen view={calibrate.view} actions={calibrate.actions} initial={project?.tutorial ? { editSub: "SW3" } : undefined} blocked={model.steps.calibrate.status === "blocked"} />; header = calibrateHeader(calibrate.view, t); } break;
     case "export": if (exporting.view) { content = <ExportScreen view={exporting.view} actions={exporting.actions} />; header = exportHeader(exporting.view, exporting.actions, t); } break;
   }
   const error = failure ? errorText(t, failure.error) : null;

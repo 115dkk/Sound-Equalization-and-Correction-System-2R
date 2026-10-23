@@ -1062,24 +1062,42 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
     assert_eq!(cached_paths(&path), direct_mimo.paths);
     assert!(summary.support_count > 0);
 
-    for (kind, reason) in [
-        (ExportKind::FilterText, "subs"),
-        (ExportKind::EqualizerApo, "mimo"),
-    ] {
-        let blocked_folder = root.join(format!("blocked-mimo-{kind:?}"));
-        let Envelope::Err(error) = service.call(
-            Request::Export(ExportParams {
-                kind,
-                folder: blocked_folder.to_string_lossy().into_owned(),
-            }),
-            Arc::new(NoEvents),
-        ) else {
-            panic!("MIMO filter export must fail synchronously");
-        };
-        assert_eq!(error.code, ErrorCode::ExportScope);
-        assert_eq!(error.params.get("reason").map(String::as_str), Some(reason));
-        assert!(!blocked_folder.exists());
-    }
+    let blocked_folder = root.join("blocked-mimo-FilterText");
+    let Envelope::Err(error) = service.call(
+        Request::Export(ExportParams {
+            kind: ExportKind::FilterText,
+            folder: blocked_folder.to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("MIMO filter text export must fail synchronously");
+    };
+    assert_eq!(error.code, ErrorCode::ExportScope);
+    assert_eq!(error.params.get("reason").map(String::as_str), Some("subs"));
+    assert!(!blocked_folder.exists());
+
+    let eqapo_folder = root.join("mimo-eqapo");
+    let eqapo = export_and_wait(
+        &service,
+        ExportKind::EqualizerApo,
+        &eqapo_folder,
+        Arc::new(Events::default()),
+    );
+    let body = eqapo
+        .files
+        .iter()
+        .find(|path| {
+            let path = Path::new(path);
+            path.extension().is_some_and(|extension| extension == "txt")
+                && path.parent().is_some_and(|parent| parent != eqapo_folder)
+                && path.file_name().is_some_and(|name| name != "config.txt")
+        })
+        .expect("Equalizer APO filter body");
+    assert!(
+        fs::read_to_string(body)
+            .unwrap()
+            .contains("# 6) MIMO support paths")
+    );
 
     // The same live/cached result must produce identical explicit-folder bytes.
     let folder = root.join("explicit-mimo");

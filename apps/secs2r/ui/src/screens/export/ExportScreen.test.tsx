@@ -50,7 +50,6 @@ const REACH_IDS = [
   "export.kind.before_after_mdat",
   "export.kind.staged_mdat",
   "export.kind.filter_text.blocked",
-  "export.kind.equalizer_apo.blocked",
   "export.advanced",
   "export.outcome.camilla_dsp",
   "export.outcome.camilla_dsp.open",
@@ -170,12 +169,12 @@ describe("내보내기", () => {
 
   it("turns off a filter format that cannot carry the result and says why in its row", () => {
     const cases: [ExportView, Record<"filter_text" | "equalizer_apo", string | null>][] = [
-      // Subs and MIMO (the sample): text blocked by the subs first, Equalizer APO by MIMO.
-      [exportReady, { filter_text: "서브(BA)가 있는 결과는 텍스트로 내보낼 수 없습니다. CamillaDSP나 Equalizer APO 설정으로 내보내세요.", equalizer_apo: "MIMO를 켠 결과는 Equalizer APO 설정으로 내보낼 수 없습니다. 보정에서 MIMO를 끄면 내보낼 수 있습니다." }],
+      // Subs and MIMO (the sample): text blocked by the subs first; Equalizer APO carries both (F12).
+      [exportReady, { filter_text: "서브(BA)가 있는 결과는 텍스트로 내보낼 수 없습니다. CamillaDSP나 Equalizer APO 설정으로 내보내세요.", equalizer_apo: null }],
       // Subs, MIMO left out: only the text.
       [exportNoMimo, { filter_text: "서브(BA)가 있는 결과는 텍스트로 내보낼 수 없습니다. CamillaDSP나 Equalizer APO 설정으로 내보내세요.", equalizer_apo: null }],
-      // MIMO without subs: both by MIMO.
-      [exportMimoNoSubs, { filter_text: "MIMO를 켠 결과는 텍스트로 내보낼 수 없습니다. 보정에서 MIMO를 끄면 내보낼 수 있습니다.", equalizer_apo: "MIMO를 켠 결과는 Equalizer APO 설정으로 내보낼 수 없습니다. 보정에서 MIMO를 끄면 내보낼 수 있습니다." }],
+      // MIMO without subs: the text by MIMO.
+      [exportMimoNoSubs, { filter_text: "MIMO를 켠 결과는 텍스트로 내보낼 수 없습니다. 보정에서 MIMO를 끄면 내보낼 수 있습니다.", equalizer_apo: null }],
       // RC alone: everything on.
       [exportRcOnly, { filter_text: null, equalizer_apo: null }],
     ];
@@ -200,6 +199,9 @@ describe("내보내기", () => {
       expect(act.exportFiles.mock.calls).toEqual((["filter_text", "equalizer_apo"] as const).filter((kind) => reasons[kind] === null).map((kind) => [kind]));
       unmount();
     }
+    // With MIMO in it, the Equalizer APO folder is named like the mdat one.
+    renderWith(<Mounted view={exportMimoNoSubs} act={actions()} advanced />);
+    expect(ui("export.kind.equalizer_apo")?.textContent).toContain("SECS_eqapo_RC_BA_MIMO_mixed_<저장 시각> 폴더");
   });
 
   it("says where the Equalizer APO files go after they are saved, with the filter files' mode", () => {
@@ -300,7 +302,7 @@ describe("내보내기", () => {
 
   it("shows the failure with its cause, next step and the raw text behind 자세히", () => {
     renderWith(<Mounted view={exportFailed} act={actions()} />);
-    expect(screen.getByText("내보내기 파일을 쓰지 못했습니다.")).toBeTruthy();
+    expect(screen.getByText("파일을 내보내지 못했습니다.")).toBeTruthy();
     expect(screen.getByText(/Access is denied/)).toBeTruthy();
     // The row may be below the fold in a small window: the header says it too.
     expect(screen.getByText("내보내기 실패")).toBeTruthy();

@@ -27,7 +27,6 @@
 | 샘플레이트(읽기 전용) | `connect.sample_rate` | 없음 | P30 |
 | 스윕 길이 64k…4M "길이 · 초", 기본 256k | `connect.sweep_length` | 없음 | P30 |
 | REW가 떠 있는데 장치 목록이 비면 다시 읽기(2초마다, 15번) | `connect.input_device`, `connect.devices.retry` (다시 읽기는 `status_watch`의 `MeasureStatus`, P33) | 없음 | P30 |
-| 루프백 입력 채널(타이밍 기준이 케이블일 때, 자체 측정) | `connect.loopback_channel` | 없음 | P30 |
 | 장치 공유: 자동 / 독점 / 공유(자체 측정의 장치 카드에서 펼침) | `connect.devices.details`, `connect.share_mode` | 없음 | P30, P58 |
 | 진행 조건: REW 실행과 Pro("REW 를 켜 주세요.") | `connect.rew.hint`, `connect.rew.launch` | 없음 | P30 |
 | [장치 확인 건너뛰기] | `connect.method.mdat`, `connect.mdat`, `connect.next` | 없음 | P30 |
@@ -88,8 +87,8 @@
 | 측정 시작 지연: 끔 / 5 / 10 / 15초 | `system.start_delay` | 없음 | P30 |
 | 위치당 스윕 | `system.sweeps` | 없음 | P30 |
 | 예상 시간: 위치당과 전체(`position_seconds`) | `system.estimate` | 없음 | P30 |
-| 타이밍 기준: 음향(기준 스피커) / 루프백(케이블) / 없음 | `system.timing` | 없음 | P30 |
-| 기준 출력: 스피커(`timing_ref_role`, 기본 R) 또는 채널(`timing_ref_output`) | `system.timing.role`, `system.timing.output` | 없음 | P30 |
+| 타이밍 기준: 음향(기준 스피커) / 루프백(케이블) / 없음. REW로 측정할 때만, '고급' 안에 | `system.timing.advanced`, `system.timing` | U15 | P30 |
+| 기준 출력: 스피커(`timing_ref_role`, 기본 R) 또는 채널(`timing_ref_output`) | `system.timing.role`, `system.timing.output` | U15 | P30 |
 | 진행 조건: 스피커가 있음 | `frame.header.blocked`, `system.next` | 없음 | P30 |
 
 ## 5. 측정 (Step 5) — P31a
@@ -106,7 +105,7 @@
 | [이 위치 측정] (잰 위치면 다시 측정, 모두 끝나면 끔): 카운트다운, 프로젝트 경로, 계획 확인, 측정 | `measure.position.start`, `measure.next`, `measure.path.note` | 모두 측정하면 끄는 대신 주 동작이 "보정으로"(`measure.next`). 경로가 없으면 `~/Documents/SECS/측정 …`을 몰래 만들지 않고 저장 대화상자를 먼저 엶(작업서 P31a, 편차 번호 없음) | P31a |
 | [측정 취소]: 카운트다운은 바로, 스윕은 지금 스윕 뒤 멈춤 | `measure.cancel` | U8: 트레이의 `jobs.cancel.measure`도 같은 잡을 멈춤 | P31a |
 | [마지막 위치 다시]: 마지막으로 끝낸 위치를 지움 | `measure.redo`, `measure.clear`, `measure.clear.confirm`, `measure.clear.undo` | U5: 확인 뒤 지우고 알림에서 되돌림 | P31a |
-| 옵션: 시작 지연, 스윕 길이, 반복 1/2/4/8(음향 타이밍 기준이면 1) | `measure.options.delay`, `measure.options.sweep`, `measure.options.repeats`, `measure.options.repeats.acoustic` | — | P31a |
+| 옵션: 시작 지연, 스윕 길이, 반복 1/2/4/8(REW에서 음향 기준이 아닐 때만) | `measure.options.delay`, `measure.options.sweep`, `measure.options.repeats` | U15 | P31a |
 | [mdat 불러오기] | `measure.mdat.load` | — | P31a |
 | [파일 관리] | `measure.files.open` | — | P31a |
 | [데모 데이터] (튜토리얼만) | `measure.sample.load` | — | P31a |
@@ -296,7 +295,7 @@
 | system.output | system | act | system.patch.SW3.out | 308 |
 | system.layout_next | system | look | system.layout | 314 |
 | system.layout | system | look | system.arrangement.map | 326 |
-| system.timing | system | look | system.timing, system.start_delay | 327 |
+| system.timing | system | look | system.start_delay | 327 |
 | system.single | system | look | system.arrangement.1 | 329 |
 | system.next | system | act | system.next | 332 |
 | connect.sidebar | connect | look | frame.status, frame.help, frame.project | 288 |

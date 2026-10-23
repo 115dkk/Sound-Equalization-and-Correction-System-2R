@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { oklchToSrgb, parseColor, rgbaString } from "./color";
-import { DEFAULT_RULES, colorTokens, lineStyle, visibleCurves, type Curve } from "./series";
+import { DEFAULT_RULES, afterglowIds, colorTokens, glows, lineStyle, traceSegments, visibleCurves, type Curve } from "./series";
 import { FREQ_TICKS, formatHz, freqTicksIn } from "./ticks";
 
 const curve = (role: string, kind: Curve["kind"], position = 1): Curve => ({ id: `${role}@${position}`, role, kind, position, values: [] });
@@ -24,6 +24,36 @@ describe("graph styling", () => {
     expect(Object.fromEntries(tokens)).toEqual({ L: "--ch-1", R: "--ch-2", SW1: "--sub-1", C: "--ch-3", SW2: "--sub-2" });
     const curves = [curve("L", "main"), curve("R", "main"), curve("target", "target")];
     expect(visibleCurves(curves, new Set(["R"]), new Set()).map((c) => c.role)).toEqual(["L", "target"]);
+  });
+
+  it("lights the scope's phosphor only on solid traces at full strength", () => {
+    const style = (c: Curve, highlight: Parameters<typeof lineStyle>[1] = null) => lineStyle(c, highlight);
+    expect(glows(curve("L", "main", 1), style(curve("L", "main", 1)))).toBe(true);
+    expect(glows(curve("SW1", "sub", 1), style(curve("SW1", "sub", 1)))).toBe(true);
+    // A faint position, a dimmed channel, a dashed before-curve and the target stay plain.
+    expect(glows(curve("L", "main", 2), style(curve("L", "main", 2)))).toBe(false);
+    expect(glows(curve("R", "main", 1), style(curve("R", "main", 1), { role: "L" }))).toBe(false);
+    expect(glows(curve("L", "before", 1), style(curve("L", "before", 1)))).toBe(false);
+    expect(glows(curve("target", "target"), style(curve("target", "target")))).toBe(false);
+  });
+
+  it("leaves an afterglow on the highlighted trace or the only one, never on many at once", () => {
+    const mains = [curve("L", "main", 1), curve("R", "main", 1), curve("L", "main", 2)];
+    expect([...afterglowIds(mains, null)]).toEqual([]);
+    expect([...afterglowIds(mains, { role: "L" })]).toEqual(["L@1"]);
+    expect([...afterglowIds(mains, { role: "L", position: 2 })]).toEqual(["L@2"]);
+    expect([...afterglowIds(mains, { position: 1 })]).toEqual(["L@1", "R@1"]);
+    expect([...afterglowIds([curve("L", "main", 1)], null)]).toEqual(["L@1"]);
+  });
+
+  it("blanks the beam where a curve has no value", () => {
+    const xs = [1, 2, 3, 4, 5, 6];
+    const values = [0, 1, null, 2, Number.NaN, 3];
+    expect(traceSegments(xs, values, (x) => x * 10, (y) => -y)).toEqual([[10, -0, 20, -1]]);
+    expect(traceSegments(xs, [0, 1, 2, null, 4, 5], (x) => x, (y) => y)).toEqual([[1, 0, 2, 1, 3, 2], [5, 4, 6, 5]]);
+    // Finer than a pixel adds nothing to a halo: the points between are skipped, the ends kept.
+    const dense = Array.from({ length: 11 }, (_, i) => i / 10);
+    expect(traceSegments(dense, dense, (x) => x, (y) => y * 2, 0.5)).toEqual([[0, 0, 0.5, 1, 1, 2]]);
   });
 
   it("reads token colours into canvas strings", () => {

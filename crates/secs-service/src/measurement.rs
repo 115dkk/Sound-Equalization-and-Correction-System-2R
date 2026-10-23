@@ -369,16 +369,9 @@ impl Service {
                 }
             }
         }
+        // A cable reference without a native loopback input is no longer an
+        // error: only REW reads the timing reference (U15).
         let result = settings(&project)?;
-        if result.timing == "loopback"
-            && result.method != "rew"
-            && result.loopback_input_channel.is_none()
-        {
-            return Err(input(
-                "loopback_input_channel",
-                "loopback requires an input channel",
-            ));
-        }
         *open.store.project_mut() = project;
         open.dirty = true;
         drop(session);

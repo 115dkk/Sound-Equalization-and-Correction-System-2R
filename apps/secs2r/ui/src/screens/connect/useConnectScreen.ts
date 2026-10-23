@@ -120,7 +120,6 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
         if (session.host.getSnapshot().path === "rew") await session.stores.rew.load();
       }),
       setSweepLength: (sweep_length) => session.run(() => session.configure({ sweep_length })),
-      setLoopbackChannel: (loopback_input_channel) => session.run(() => session.configure({ loopback_input_channel })),
       setShareMode: (share_mode) => session.run(() => session.configure({ share_mode })),
       playLevel: (role) => play([role], false),
       stopLevel: () => session.run(stop),

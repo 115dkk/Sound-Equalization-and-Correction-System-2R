@@ -60,7 +60,6 @@ const KIND_TEXT: Record<ExportKind, { title: MessageKey; body: MessageKey; run?:
 /** Why a filter format cannot carry this result: only these pairs occur (`exportBlock`). */
 const BLOCK_TEXT: Partial<Record<ExportKind, Partial<Record<ExportBlock, MessageKey>>>> = {
   filter_text: { subs: "export.blocked.filter_text.subs", mimo: "export.blocked.filter_text.mimo" },
-  equalizer_apo: { mimo: "export.blocked.equalizer_apo.mimo" },
 };
 
 const MIMO_REASON: Record<Extract<MimoInclusion, { included: false }>["reason"], MessageKey> = {
@@ -354,8 +353,9 @@ function whereText(t: Translate, kind: ExportKind, view: ExportView): string {
   if (kind === "camilla_dsp") return t("export.kind.camilla_dsp.where");
   if (kind === "staged_mdat") return t("export.kind.staged_mdat.where");
   if (kind === "filter_text") return t("export.kind.filter_text.where", { mode: view.settings.mode });
-  if (kind === "equalizer_apo") return t("export.kind.equalizer_apo.where", { mode: view.settings.mode });
-  return t("export.kind.before_after_mdat.where", { what: mimoInclusion(view).included ? "RC_BA_MIMO" : "RC_BA", mode: view.settings.mode });
+  const what = mimoInclusion(view).included ? "RC_BA_MIMO" : "RC_BA";
+  if (kind === "equalizer_apo") return t("export.kind.equalizer_apo.where", { what, mode: view.settings.mode });
+  return t("export.kind.before_after_mdat.where", { what, mode: view.settings.mode });
 }
 
 function ExportItem({ kind, view, actions }: { kind: ExportKind; view: ExportView; actions: ExportActions }) {

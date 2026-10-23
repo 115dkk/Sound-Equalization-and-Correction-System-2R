@@ -389,6 +389,39 @@ fn level_check_mock_and_apply_recommended_level_u1() {
     assert!((report.input_dbfs + 22.5).abs() < 1e-4);
 }
 #[test]
+fn native_plan_ignores_the_rew_only_timing_and_repetitions_u15() {
+    // An REW setup leaves a cable reference and four repetitions behind. The
+    // native path shows neither, records one sweep per channel and needs no
+    // reference: one session keeps every channel's arrival time.
+    let mut project = project();
+    store_devices(
+        &mut project,
+        vec![
+            ("timing_reference".into(), PyJson::Str("loopback".into())),
+            ("repetitions".into(), PyJson::Int("4".into())),
+        ],
+    );
+    let mut settings = MeasurementSettings::default();
+    let p = plan_for(&project, &settings);
+    assert_eq!(p.repetitions, 4);
+    assert_eq!(to_rew_plan(&p).unwrap().repetitions, 4);
+    let duplex = secs_audio::Endpoint {
+        id: "duplex".into(),
+        name: "Duplex".into(),
+        host_api: "test".into(),
+        max_input_channels: 2,
+        max_output_channels: 2,
+        default_samplerate: 48_000.0,
+        is_default_input: true,
+        is_default_output: true,
+    };
+    for loopback in [None, Some(2)] {
+        settings.loopback_input_channel = loopback;
+        let native = to_audio_plan(&p, std::slice::from_ref(&duplex), &settings).unwrap();
+        assert_eq!(native.loopback_input_channel, None);
+    }
+}
+#[test]
 fn test_changes_update_extra_plan_and_step1_combo() {
     let mut project = project();
     store_devices(

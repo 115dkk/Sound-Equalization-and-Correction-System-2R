@@ -275,6 +275,18 @@ describe("readPalette", () => {
     expect(readPalette(frame, [], () => false).font).toBe("700 13px Mono");
     frame.remove();
   });
+
+  it("draws plain lines unless a skin's scope glass sets the --plot-glow tokens", () => {
+    const frame = document.createElement("div");
+    document.body.appendChild(frame);
+    expect(readPalette(frame, [], () => false).scope).toEqual({ glow: 0, glowAlpha: 0, afterglowAlpha: 0, zeroAlpha: 0 });
+    frame.style.setProperty("--plot-glow", "3");
+    frame.style.setProperty("--plot-glow-alpha", "0.22");
+    frame.style.setProperty("--plot-afterglow-alpha", "0.1");
+    frame.style.setProperty("--plot-zero-alpha", "0.55");
+    expect(readPalette(frame, [], () => false).scope).toEqual({ glow: 3, glowAlpha: 0.22, afterglowAlpha: 0.1, zeroAlpha: 0.55 });
+    frame.remove();
+  });
 });
 
 describe("Graph axis range", () => {

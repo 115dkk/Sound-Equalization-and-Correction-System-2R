@@ -191,6 +191,12 @@ export const levelDoneView: ConnectView = {
   sweepCheck: { running: false, result: { rms_dbfs: -22.4, peak_dbfs: -11.8, spl_db: 78.5, recommended_sweep_dbfs: -14.5 }, role: "L" },
 };
 
+/** Every channel in the recommended range: the check passed, the header goes on to measuring. */
+export const levelPassedView: ConnectView = {
+  ...levelDoneView,
+  levels: { ...allLevels, Tfl: -27.4, Tbr: -18.2 },
+};
+
 /** The sample room: no devices to choose, some channels checked. */
 export const mockView: ConnectView = {
   ...base,

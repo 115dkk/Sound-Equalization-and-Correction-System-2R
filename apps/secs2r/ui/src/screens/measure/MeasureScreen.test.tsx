@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { PrefsScope } from "../../app/prefs";
@@ -57,7 +57,6 @@ export const REACH_IDS = [
   "measure.options.delay",
   "measure.options.sweep",
   "measure.options.repeats",
-  "measure.options.repeats.acoustic",
   "measure.mdat.load",
   "measure.import.note",
   "measure.files.open",
@@ -280,17 +279,20 @@ describe("측정·가져오기 screen", () => {
     fireEvent.click(ui("measure.options.advanced"));
     fireEvent.change(ui("measure.options.sweep"), { target: { value: "524288" } });
     expect(actions.setSweepLength).toHaveBeenCalledWith(524288);
-    // Acoustic timing: one repetition only, and the hint says why.
-    const repeats = within(ui("measure.options.repeats"));
-    expect((repeats.getByRole("radio", { name: "4회" }) as HTMLButtonElement).disabled).toBe(true);
-    expect(ui("measure.options.repeats.acoustic").textContent).toContain("음향 타이밍");
+    // REW's acoustic reference allows one sweep: the choice is not drawn at all.
+    expect(byUi("measure.options.repeats")).toBeNull();
 
     cleanup();
     const loopback: MeasureView = { ...partialView, layout: { ...partialView.layout, timing: { reference: "loopback", role: "", output: 14 } } };
     const other = makeActions();
     renderWith(<MeasureOptions view={loopback} actions={other} busy={false} advancedOpen />);
-    fireEvent.click(screen.getByRole("radio", { name: "4회" }));
+    fireEvent.click(within(ui("measure.options.repeats")).getByRole("radio", { name: "4회" }));
     expect(other.setRepetitions).toHaveBeenCalledWith(4);
+
+    // Native measurement records one sweep per channel, whatever reference is stored.
+    cleanup();
+    renderWith(<MeasureOptions view={{ ...loopback, config: { ...loopback.config, method: "native" } }} actions={makeActions()} busy={false} advancedOpen />);
+    expect(byUi("measure.options.repeats")).toBeNull();
   });
 
   it("assigns mdat measurements: a doubled channel blocks the import until it is fixed", () => {
@@ -406,7 +408,7 @@ describe("측정·가져오기 screen", () => {
           });
         },
       },
-      { view: partialView, extra: <MeasureOptions view={partialView} actions={makeActions()} busy={false} advancedOpen /> },
+      { view: partialView, extra: <MeasureOptions view={{ ...partialView, layout: { ...partialView.layout, timing: { reference: "none", role: "", output: 1 } } }} actions={makeActions()} busy={false} advancedOpen /> },
       {
         view: filesView,
         extra: <MdatFilesDialog open count={9} records={filesView.records} roleCount={13} busy={false} onLoad={() => {}} onClear={() => {}} onClose={() => {}} />,

@@ -23,6 +23,11 @@ name: CI
 #   integrity the CLI's mock flow and a four-position MIMO flow at 1, the
 #             default and 7 threads on every OS; the exports must be
 #             byte-identical (docs/adr/0007)
+#   eqapo-playback  Equalizer APO exports (with and without MIMO) played
+#             through the Benchmark of EqualizerAPO-XT and of the official
+#             Equalizer APO, pinned in .github/eqapo-engines.toml; every
+#             input-to-output response must match the designed one
+#             (crates/secs-filters/tests/eqapo_playback.rs, DEVIATIONS F12)
 #
 # Pin macOS 15 ARM64 after repeated macOS 26 runner allocation failures.
 
@@ -215,6 +220,60 @@ jobs:
         run: |
           python .github/scripts/integrity.py compare integrity/sample-default integrity/sample-1 integrity/sample-7
           python .github/scripts/integrity.py compare integrity/case-default integrity/case-1 integrity/case-7
+
+  eqapo-playback:
+    name: Equalizer APO playback (${{ matrix.engine }})
+    needs: lint
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [xt, original]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: test
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      # The official Benchmark has no config-path argument and reads the
+      # ConfigPath registry value; --register points it at a folder of the
+      # runner's (a disposable machine), which the test exports into.
+      - name: Fetch the engine (.github/eqapo-engines.toml)
+        shell: pwsh
+        run: |
+          $register = if ("${{ matrix.engine }}" -eq "original") { "--register" } else { $null }
+          python .github/scripts/eqapo_engine.py fetch --engine ${{ matrix.engine }} --dest "$env:RUNNER_TEMP\eqapo" --github-env "$env:GITHUB_ENV" $register
+
+      - name: Play the exports through the engine
+        env:
+          SECS_EQAPO_REPORT: ${{ runner.temp }}\eqapo-report.md
+          SECS_EQAPO_ARTIFACTS: ${{ runner.temp }}\eqapo-artifacts
+        run: cargo test -p secs-filters --test eqapo_playback --locked -- --ignored --nocapture
+
+      # The exported folders and every engine log, to read a failure from.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: eqapo-playback-${{ matrix.engine }}
+          path: ${{ runner.temp }}/eqapo-artifacts
+          if-no-files-found: ignore
+
+      - name: Report
+        if: always()
+        shell: pwsh
+        run: |
+          $report = Join-Path $env:RUNNER_TEMP "eqapo-report.md"
+          if (Test-Path $report) { Get-Content $report | Add-Content $env:GITHUB_STEP_SUMMARY }
 
   frontend:
     name: screen (typecheck, tests, build, IPC bindings)

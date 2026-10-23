@@ -4,7 +4,8 @@
 import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { Icon, Spinner, type IconName } from "./Icon";
 
-export type ButtonVariant = "primary" | "secondary" | "quiet" | "danger";
+/** `go` moves on to the next step from a result, beside actions that redo it; it reads apart from the primary by colour. */
+export type ButtonVariant = "primary" | "secondary" | "quiet" | "danger" | "go";
 
 export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: ButtonVariant | undefined;

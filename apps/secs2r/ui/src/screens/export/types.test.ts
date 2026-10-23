@@ -14,7 +14,7 @@ describe("export scope (the service's filter_export_block)", () => {
     expect(EXPORT_KINDS).toEqual(["camilla_dsp", "filter_text", "equalizer_apo", "before_after_mdat", "staged_mdat"]);
   });
 
-  it("judges every kind for subs × MIMO: text carries RC only (subs first), Equalizer APO RC and BA", () => {
+  it("judges every kind for subs × MIMO: text carries RC only (subs first), Equalizer APO everything (F12)", () => {
     // The four fixtures are the four combinations.
     expect([subsOnly, exportReady, exportRcOnly, exportMimoNoSubs].map((view) => [view.results.calibration!.sub_roles.length > 0, mimoInclusion(view).included])).toEqual([
       [true, false],
@@ -24,14 +24,14 @@ describe("export scope (the service's filter_export_block)", () => {
     ]);
     const open = { camilla_dsp: null, before_after_mdat: null, staged_mdat: null };
     expect(judged(subsOnly)).toEqual({ ...open, filter_text: "subs", equalizer_apo: null });
-    expect(judged(exportReady)).toEqual({ ...open, filter_text: "subs", equalizer_apo: "mimo" });
+    expect(judged(exportReady)).toEqual({ ...open, filter_text: "subs", equalizer_apo: null });
     expect(judged(exportRcOnly)).toEqual({ ...open, filter_text: null, equalizer_apo: null });
-    expect(judged(exportMimoNoSubs)).toEqual({ ...open, filter_text: "mimo", equalizer_apo: "mimo" });
+    expect(judged(exportMimoNoSubs)).toEqual({ ...open, filter_text: "mimo", equalizer_apo: null });
   });
 
   it("counts MIMO only when it goes into the export, and blocks nothing without a result", () => {
     // Fewer than three positions, or a stale MIMO: left out, so it blocks nothing.
-    expect(exportBlock({ ...exportMimoNoSubs, positions: 2 }, "equalizer_apo")).toBeNull();
+    expect(exportBlock({ ...exportMimoNoSubs, positions: 2 }, "filter_text")).toBeNull();
     expect(exportBlock({ ...exportMimoNoSubs, results: { ...exportMimoNoSubs.results, mimo: { ...exportMimoNoSubs.results.mimo!, stale: true } } }, "filter_text")).toBeNull();
     expect(exportBlock(exportStale, "equalizer_apo")).toBeNull();
     expect(judged(exportNoResult)).toEqual(Object.fromEntries(EXPORT_KINDS.map((kind) => [kind, null])));

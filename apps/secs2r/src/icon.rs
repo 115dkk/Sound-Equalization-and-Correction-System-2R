@@ -19,21 +19,37 @@ pub(crate) struct Shown(Mutex<AppIcon>);
 /// keeps the previous icon: the logo is decoration, so nothing is reported.
 pub(crate) fn show(app: &AppHandle, icon: AppIcon) {
     let shown = app.state::<Shown>();
-    let mut current = shown.0.lock().unwrap_or_else(PoisonError::into_inner);
+    let current = shown.0.lock().unwrap_or_else(PoisonError::into_inner);
     if *current == icon {
         return;
     }
+    drop(current);
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-    let image = match icon {
-        AppIcon::Expert => app.default_window_icon().cloned(),
+    let image: Option<Image<'static>> = match icon {
+        AppIcon::Expert => app.default_window_icon().cloned().map(Image::to_owned),
         AppIcon::Civilian => Some(civilian(window.scale_factor().unwrap_or(1.0))),
     };
-    if let Some(image) = image
-        && window.set_icon(image).is_ok()
+    let Some(image) = image else {
+        return;
+    };
+
+    #[cfg(target_os = "windows")]
     {
-        *current = icon;
+        let app: AppHandle = app.clone();
+        let _ = window.clone().run_on_main_thread(move || {
+            if window.set_icon(image.clone()).is_ok() {
+                let _ =
+                    secs_sys::set_large_icon(&window, image.rgba(), image.width(), image.height());
+                let shown = app.state::<Shown>();
+                *shown.0.lock().unwrap_or_else(PoisonError::into_inner) = icon;
+            }
+        });
+    }
+    #[cfg(not(target_os = "windows"))]
+    if window.set_icon(image).is_ok() {
+        *shown.0.lock().unwrap_or_else(PoisonError::into_inner) = icon;
     }
 }
 

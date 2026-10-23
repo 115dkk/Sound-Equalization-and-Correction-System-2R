@@ -32,6 +32,7 @@
 | 장치 공유 방식: 자동 · 독점 · 공유 | Device sharing: Automatic · Exclusive · Shared | 자체 측정의 장치 카드에서 펼치는 항목 |
 | 보정 | correction | 단계와 결과 |
 | 보정 계산 | Calculate correction(동사 calculate) | 주 동작, 잡 이름. 다시 계산은 recalculate |
+| 다시 측정하기 · 다시 보정하기 | Measure again · Correct again | 보정 결과 카드에서 결과가 나온 뒤의 두 단추. 결과를 바꿀 수 있는 다시 측정하기가 채운 단추 |
 | 다시 계산 필요 | Recalculation needed | 결과가 지금 입력과 맞지 않는 낡음 상태 |
 | 보정 모드: 최소 지연 · 저지연 · 표준 · 초고지연 | correction mode: Minimum latency · Low latency · Standard · Ultra latency | 보정 설정, 내보내기 |
 | 지연, 전체 지연, 지연 한도 | latency, total latency, latency limit | 보정 필터가 더하는 시간 |

@@ -142,11 +142,24 @@
   background: var(--danger-hover);
 }
 
+/* Go: on to the next step, in the colour of a finished step (the rail's
+   check), so it reads apart from a primary that redoes the work. */
+.ui-button--go {
+  background: var(--success);
+  color: var(--on-success);
+  font-weight: var(--weight-semibold);
+}
+
+.ui-button--go:hover:not(:disabled) {
+  background: color-mix(in oklch, var(--success) 88%, var(--text));
+}
+
 .ui-button:disabled:not([aria-busy]) {
   color: var(--text-faint);
 }
 
 .ui-button--primary:disabled:not([aria-busy]),
+.ui-button--go:disabled:not([aria-busy]),
 .ui-button--danger:disabled:not([aria-busy]) {
   background: var(--surface-pressed);
 }
@@ -461,6 +474,95 @@
   border-radius: var(--radius-sm);
   background: transparent;
   font-size: var(--text-ui);
+}
+
+/* The select fills its box, so the whole box opens it: the box stretches in
+   forms and grids while the select kept its text's width, and only a press
+   on the text opened the list. */
+.ui-select__native {
+  flex: 1 1 auto;
+  align-self: stretch;
+  width: 100%;
+}
+
+/* The open list in the app's colours. The system list (engines that cannot
+   draw it otherwise) at least gets the app's text on the app's surface: a
+   transparent select left light text on a white list in dark themes. */
+.ui-select__native option {
+  background-color: var(--surface-raised);
+  color: var(--text);
+}
+
+/* Where the engine lets the page draw the list (customizable select; the
+   Windows WebView2 does), it is the kit's menu: the surface, the shadow, the
+   item rows, and the accent on the item under the pointer or the arrow keys
+   and on the chosen item's check (DESIGN.md §2: the accent marks the primary
+   action, the chosen item and the focus ring). */
+@supports (appearance: base-select) {
+  .ui-select__native,
+  .ui-select__native::picker(select) {
+    appearance: base-select;
+  }
+
+  .ui-select__native {
+    display: flex;
+    align-items: center;
+    border: 0;
+    color: inherit;
+    font: inherit;
+  }
+
+  .ui-select__native::picker-icon {
+    display: none;
+  }
+
+  .ui-select__native::picker(select) {
+    min-width: anchor-size(width);
+    margin-block: var(--space-1);
+    padding: var(--space-1);
+    border: 0;
+    border-radius: var(--radius-md);
+    background: var(--surface-raised);
+    box-shadow: var(--shadow-raised);
+    color: var(--text);
+  }
+
+  .ui-select__native option {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-height: var(--control-h);
+    padding: 0 var(--space-3) 0 var(--space-2);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-ui);
+    transition: background-color var(--dur-fast) var(--ease-out);
+  }
+
+  .ui-select__native option::checkmark {
+    order: -1;
+    width: 16px;
+    color: var(--accent);
+  }
+
+  .ui-select__native option:checked {
+    font-weight: var(--weight-semibold);
+  }
+
+  .ui-select__native option:hover:not(:disabled),
+  .ui-select__native option:focus-visible {
+    background: var(--accent);
+    color: var(--on-accent);
+    outline: none;
+  }
+
+  .ui-select__native option:hover:not(:disabled)::checkmark,
+  .ui-select__native option:focus-visible::checkmark {
+    color: var(--on-accent);
+  }
+
+  .ui-select__native option:disabled {
+    color: var(--text-faint);
+  }
 }
 
 .ui-select__chevron {

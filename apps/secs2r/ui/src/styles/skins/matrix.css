@@ -371,18 +371,22 @@
   text-transform: uppercase;
 }
 
-/* Each step is a bus row: a 3 px state rail (done solid green, now the
-   engaged cyan band, blocked a dotted yellow rule, skipped struck through)
-   and an invariant coordinate cell S1…S5. */
+/* Each step is a bus row, and its state is a legend lamp on one signal
+   trace, as instrument annunciators and electronic checklists show it: a
+   done step is a backlit green lamp with one check, glowing past its cell,
+   and the trace through it is lit; the current step is the engaged cyan
+   band with its number in a cyan-ruled cell; a step still to do is an
+   unlit cell with its number; a blocked one an unlit cell with a lock in a
+   dashed amber frame. The shape says each state with its colour (lit fill,
+   rule, dashed rule, strike), so no state rests on colour alone. */
 [data-skin="matrix"] .rail-steps__list {
+  --skin-lamp: 22px;
   gap: 0;
-  counter-reset: skin-bus;
   border-top: 1px solid var(--border-subtle);
   background: var(--skin-band-surface);
 }
 
 [data-skin="matrix"] .rail-steps__list > li {
-  counter-increment: skin-bus;
   border-bottom: 1px solid var(--border-subtle);
 }
 
@@ -401,6 +405,8 @@
   box-shadow: inset 0 1px 0 var(--accent), inset 0 -1px 0 var(--accent);
 }
 
+/* The band's edge: engaged cyan on the current step, a dashed amber rule on
+   a blocked one. A done step has no painted edge; its lamp says it. */
 [data-skin="matrix"] .rail-step::before,
 [data-skin="matrix"] .rail-step--current::before {
   content: "";
@@ -413,10 +419,6 @@
   background: transparent;
 }
 
-[data-skin="matrix"] .rail-step--done::before {
-  background: var(--success);
-}
-
 [data-skin="matrix"] .rail-step--blocked::before {
   background: repeating-linear-gradient(180deg, var(--warning) 0 3px, transparent 3px 6px);
 }
@@ -425,45 +427,84 @@
   background: var(--accent);
 }
 
+/* The signal trace through the lamps' centres, from the first step's lamp
+   to the last one's: dim where the work is still to do, lit green through
+   every done step, cyan through the current one. */
+[data-skin="matrix"] .rail-step::after {
+  content: "";
+  position: absolute;
+  top: -1px;
+  bottom: 0;
+  left: calc(var(--space-3) + var(--skin-lamp) / 2 - 1px);
+  width: 2px;
+  background: var(--border);
+  pointer-events: none;
+}
+
+[data-skin="matrix"] .rail-steps__list > li:first-child .rail-step::after {
+  top: calc(var(--space-3) + var(--skin-lamp) / 2);
+}
+
+[data-skin="matrix"] .rail-steps__list > li:last-child .rail-step::after {
+  bottom: auto;
+  height: calc(var(--space-3) + var(--skin-lamp) / 2 + 1px);
+}
+
+[data-skin="matrix"] .rail-step--done::after {
+  background: var(--success);
+  box-shadow: 0 0 4px color-mix(in oklch, var(--success) 55%, transparent);
+}
+
+[data-skin="matrix"] .rail-step.rail-step--current::after {
+  background: var(--accent);
+}
+
+/* The lamp. */
 [data-skin="matrix"] .rail-step__mark,
 [data-skin="matrix"] .rail-step--done .rail-step__mark,
 [data-skin="matrix"] .rail-step--blocked .rail-step__mark,
 [data-skin="matrix"] .rail-step--current .rail-step__mark,
 [data-skin="matrix"] .rail-step--skipped .rail-step__mark {
+  position: relative;
+  z-index: 1;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 0;
-  width: auto;
-  min-width: 36px;
-  height: var(--skin-grid-pitch);
-  padding: 0 3px;
+  width: var(--skin-lamp);
+  height: var(--skin-lamp);
+  padding: 0;
   border-radius: 0;
   background: var(--surface-sunken);
   box-shadow: inset 0 0 0 1px var(--border);
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-weight: var(--weight-bold);
+  transition-property: background-color, box-shadow, color;
+  transition-duration: var(--dur-fast);
+  transition-timing-function: var(--ease-out);
 }
 
-[data-skin="matrix"] .rail-step__mark::before {
-  content: "S";
+/* Lit: the legend is backlit, brighter at its centre, and the light spills
+   past the cell onto the band. */
+[data-skin="matrix"] .rail-step--done .rail-step__mark {
+  background: radial-gradient(circle at 50% 42%, color-mix(in oklch, var(--success) 72%, white), var(--success) 72%);
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--success) 70%, black), 0 0 8px 1px color-mix(in oklch, var(--success) 50%, transparent);
+  color: var(--on-success);
 }
 
-[data-skin="matrix"] .rail-step--done .rail-step__mark::before,
-[data-skin="matrix"] .rail-step--blocked .rail-step__mark::before {
-  content: "S" counter(skin-bus);
-}
-
-[data-skin="matrix"] .rail-step__mark > svg {
-  margin-left: 2px;
+/* The current step that is also done keeps its lamp lit inside the cursor. */
+[data-skin="matrix"] .rail-step--current.rail-step--done .rail-step__mark {
+  outline: 1px solid var(--accent);
+  outline-offset: 2px;
 }
 
 [data-skin="matrix"] .rail-step--blocked .rail-step__mark {
-  box-shadow: inset 0 0 0 1.5px var(--warning);
+  outline: 1.5px dashed var(--warning);
+  outline-offset: -1.5px;
+  box-shadow: none;
 }
 
-[data-skin="matrix"] .rail-step--current .rail-step__mark {
+[data-skin="matrix"] .rail-step--current:not(.rail-step--done) .rail-step__mark {
   box-shadow: inset 0 0 0 1px var(--accent);
   color: var(--accent);
 }
@@ -749,6 +790,18 @@
   box-shadow: inset 0 0 0 2px var(--danger);
 }
 
+/* Go: a green-lit cell, ruled like danger, for the way on to the next step. */
+[data-skin="matrix"] .ui-button--go {
+  background: var(--success-soft);
+  box-shadow: inset 0 0 0 1px var(--success);
+  color: var(--success);
+}
+
+[data-skin="matrix"] .ui-button--go:hover:not(:disabled) {
+  background: var(--success-soft);
+  box-shadow: inset 0 0 0 2px var(--success);
+}
+
 [data-skin="matrix"] .ui-button:focus-visible {
   box-shadow: inset 0 0 0 1px var(--accent);
 }
@@ -757,6 +810,7 @@
    stays on the board. */
 [data-skin="matrix"] .ui-button:disabled:not([aria-busy]),
 [data-skin="matrix"] .ui-button--primary:disabled:not([aria-busy]),
+[data-skin="matrix"] .ui-button--go:disabled:not([aria-busy]),
 [data-skin="matrix"] .ui-button--danger:disabled:not([aria-busy]),
 [data-skin="matrix"] .ui-button--secondary:disabled:not([aria-busy]) {
   background: var(--skin-cancel-rule);
@@ -1173,6 +1227,39 @@
 [data-skin="matrix"] .ui-menu__item--checked:hover:not(:disabled) {
   background: var(--accent-soft);
   box-shadow: inset 3px 0 0 var(--accent), inset 0 -1px 0 var(--border-subtle);
+}
+
+/* The open list of a select is the same cell menu: square, ruled, the row
+   under the pointer prelit, the chosen row sunken with the accent bar. */
+@supports (appearance: base-select) {
+  [data-skin="matrix"] .ui-select__native::picker(select) {
+    padding: 0;
+    border-radius: 0;
+    box-shadow: 0 0 0 1px var(--border-control), var(--shadow-raised);
+  }
+
+  [data-skin="matrix"] .ui-select__native option {
+    border-radius: 0;
+    box-shadow: inset 0 -1px 0 var(--border-subtle);
+    font-family: var(--font-mono);
+  }
+
+  [data-skin="matrix"] .ui-select__native option:checked {
+    background: var(--accent-soft);
+    box-shadow: inset 3px 0 0 var(--accent), inset 0 -1px 0 var(--border-subtle);
+  }
+
+  [data-skin="matrix"] .ui-select__native option:hover:not(:disabled),
+  [data-skin="matrix"] .ui-select__native option:focus-visible {
+    background: var(--skin-prelight);
+    box-shadow: inset 0 0 0 1px var(--accent);
+    color: var(--text);
+  }
+
+  [data-skin="matrix"] .ui-select__native option:hover:not(:disabled)::checkmark,
+  [data-skin="matrix"] .ui-select__native option:focus-visible::checkmark {
+    color: var(--accent);
+  }
 }
 
 [data-skin="matrix"] .ui-menu__separator {

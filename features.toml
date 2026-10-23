@@ -824,7 +824,7 @@ id = "export.filter_text"
 kind = "export"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-filters::filter_text_files_match_oracle_bytes", "secs-filters::public_wrappers_match_oracle_and_enforce_scope", "secs-filters::computed_public_wrappers_match_oracle_files", "secs-filters::computed_subwoofer_text_scope_matches_oracle"]
+tests = ["secs-filters::filter_text_files_match_oracle_bytes", "secs-filters::public_wrappers_match_oracle_and_eqapo_carries_mimo_f12", "secs-filters::computed_public_wrappers_match_oracle_files", "secs-filters::computed_subwoofer_text_scope_matches_oracle"]
 upstream = "calibration.py export_filter_text; export_filters.py"
 
 [[feature]]
@@ -832,7 +832,7 @@ id = "export.eqapo"
 kind = "export"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-filters::equalizer_apo_files_match_oracle_bytes", "secs-filters::public_wrappers_match_oracle_and_enforce_scope", "secs-filters::computed_public_wrappers_match_oracle_files", "secs-filters::eqapo_public_exports_use_single_assignments_f11", "secs-filters::eqapo_disabled_and_case_sensitive_mapping_f11"]
+tests = ["secs-filters::equalizer_apo_files_match_oracle_bytes", "secs-filters::public_wrappers_match_oracle_and_eqapo_carries_mimo_f12", "secs-filters::computed_public_wrappers_match_oracle_files", "secs-filters::eqapo_public_exports_use_single_assignments_f11", "secs-filters::eqapo_disabled_and_case_sensitive_mapping_f11", "secs-filters::exported_configs_play_as_designed"]
 upstream = "calibration.py export_eqapo; export_filters.py"
 
 [[feature]]

@@ -17,7 +17,7 @@ import { Advanced, Button, Card, ErrorNotice, Icon, IconButton, LevelMeter, Numb
 import { roleCode, roleKind } from "../../ui/maps/geometry";
 import { roleName } from "../system/text";
 import { MicMeterPanel, type MicMeterView } from "./MicMeterPanel";
-import { levelRoles, missingLevels, pathReady } from "./state";
+import { levelRoles, levelsPassed, missingLevels, pathReady } from "./state";
 import type { ConnectActions, ConnectPath, ConnectView, RewProblem } from "./types";
 import "./connect.css";
 
@@ -137,6 +137,12 @@ export function connectHeader(view: ConnectView, actions: ConnectActions, t: Tra
         {t("connect.status.levels", { done: roles.length - missing, total: roles.length })}
       </StatusPill>
     );
+  // The check ended without a problem: the way on is measuring, here where
+  // the check was (the rail is not where users look for it); checking all
+  // again moves into the level card.
+  if (!checking && !view.level.playingAll && levelsPassed(view)) {
+    return { primary: { id: "connect.next", label: t("connect.primary.measure"), onClick: actions.next }, status };
+  }
   return {
     primary: { id: "connect.level.play_all", label: t("frame.step.connect.primary"), onClick: actions.playAllLevels, busy: view.level.playingAll, disabled: checking },
     status,
@@ -332,7 +338,6 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
     value: String(s.samples),
     label: t("connect.sweep.option", { name: s.name, seconds: number(s.samples / Math.max(1, view.sampleRate), 1) }),
   }));
-  const loopback = settings?.timing === "loopback" && !rew;
   const cal = view.rew.details.micCalibration;
   // REW mode lists REW's own devices by name and opens the chosen one in REW; the input channel stays REW's (R7).
   const current = view.rew.details.current;
@@ -485,16 +490,6 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
           help={t("connect.sweep_length.hint")}
           onChange={(v) => actions.setSweepLength(Number(v))}
         />
-        {loopback && (
-          <Select
-            id="connect.loopback_channel"
-            label={t("connect.loopback_channel")}
-            value={String(settings?.loopback_input_channel ?? 2)}
-            options={channelOptions}
-            help={t("connect.loopback_channel.hint")}
-            onChange={(v) => actions.setLoopbackChannel(Number(v))}
-          />
-        )}
       </div>
       {!rew && (
         <Advanced id="connect.devices.details" label={t("connect.share_mode")} defaultOpen={!!settings?.share_mode && settings.share_mode !== "auto"}>
@@ -613,6 +608,12 @@ function LevelCard({ view, actions }: { view: ConnectView; actions: ConnectActio
                 </StatusPill>
               ) : (
                 <StatusPill data-ui="connect.level.playing">{t("connect.level.idle")}</StatusPill>
+              )}
+              {/* Once the check passed, the header goes on to measuring; checking all again is here. */}
+              {!busy && levelsPassed(view) && (
+                <Button variant="secondary" size="sm" data-ui="connect.level.play_all" disabled={!ready} onClick={actions.playAllLevels}>
+                  {t("connect.level.again")}
+                </Button>
               )}
               {(level.playing !== null || level.playingAll) && (
                 <Button variant="secondary" size="sm" icon="stop" data-ui="connect.level.stop" onClick={actions.stopLevel}>

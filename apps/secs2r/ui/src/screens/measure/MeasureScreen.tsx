@@ -494,8 +494,10 @@ function GraphCard({ view, actions }: { view: MeasureView; actions: MeasureActio
 /* ── Options ────────────────────────────────────────────────────────────── */
 
 /**
- * Start delay (shown), sweep length and repetitions (고급). With an acoustic
- * timing reference the repetitions stay at 1 and the hint says why.
+ * Start delay (shown), sweep length and repetitions (고급). Repetitions are
+ * offered only where they can be used: REW with a loopback or no timing
+ * reference. Native measurement records one sweep per channel, and REW's
+ * acoustic reference allows one, so elsewhere the choice is not drawn.
  */
 export function MeasureOptions({
   view,
@@ -511,10 +513,10 @@ export function MeasureOptions({
 }) {
   const t = useT();
   const number = useNumber();
-  const acoustic = view.layout.timing.reference === "acoustic";
+  const repeatable = view.config.method === "rew" && (view.layout.timing.reference === "loopback" || view.layout.timing.reference === "none");
   const delay = (START_DELAYS as readonly string[]).includes(view.layout.start_delay) ? (view.layout.start_delay as StartDelay) : START_DELAYS[0];
   const delayLabel = (value: StartDelay) => (value === START_DELAYS[0] ? t("measure.options.delay.off") : t("measure.options.delay.seconds", { n: Number.parseInt(value, 10) }));
-  const repetitions = acoustic ? 1 : (REPETITIONS as readonly number[]).includes(view.repetitions) ? view.repetitions : 1;
+  const repetitions = (REPETITIONS as readonly number[]).includes(view.repetitions) ? view.repetitions : 1;
   return (
     <Card dense className="measure-options" data-ui="measure.options" title={t("measure.options.title")}>
       <Select
@@ -526,7 +528,7 @@ export function MeasureOptions({
         help={t("measure.options.delay.hint")}
         disabled={busy}
       />
-      <Advanced id="measure.options.advanced" count={2} defaultOpen={advancedOpen}>
+      <Advanced id="measure.options.advanced" count={repeatable ? 2 : 1} defaultOpen={advancedOpen}>
         <div className="measure-options__advanced">
           <Select
             id="measure.options.sweep"
@@ -540,18 +542,17 @@ export function MeasureOptions({
             help={t("measure.options.sweep.hint")}
             disabled={busy}
           />
-          <div className="ui-field">
+          {repeatable && (
             <Segmented
               id="measure.options.repeats"
               label={t("measure.options.repeats")}
               help={t("measure.options.repeats.hint")}
               size="sm"
               value={String(repetitions)}
-              options={REPETITIONS.map((n) => ({ value: String(n), label: t("measure.options.repeats.option", { n }), disabled: busy || (acoustic && n !== 1) }))}
+              options={REPETITIONS.map((n) => ({ value: String(n), label: t("measure.options.repeats.option", { n }), disabled: busy }))}
               onChange={(value) => void actions.setRepetitions(Number(value))}
             />
-            {acoustic && <p className="ui-field__hint" data-ui="measure.options.repeats.acoustic">{t("measure.options.repeats.acoustic")}</p>}
-          </div>
+          )}
         </div>
       </Advanced>
     </Card>

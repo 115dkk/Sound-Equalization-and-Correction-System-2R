@@ -1,7 +1,8 @@
 // The 보정 step (upstream wizard/step_calibration.py). Results first: the
-// verdict, the per-channel scorecard and one graph; then the settings that
-// change them, in five sections grouped by what they change. The screen
-// draws the view and reports what the user did; P33 wires the actions.
+// verdict with the run beside it, the per-channel scorecard and one graph;
+// then the settings that change them, in five sections grouped by what they
+// change. The screen draws the view and reports what the user did; P33
+// wires the actions.
 import { useState, type ReactNode } from "react";
 import type { PrimaryAction } from "../../app/StepHeader";
 import type { Translate } from "../../i18n/react";
@@ -10,7 +11,7 @@ import { ResultGraph } from "./ResultGraph";
 import { Scorecard, Verdict } from "./Results";
 import { Settings } from "./Settings";
 import { RUNNING_TEXT } from "./text";
-import type { CalibrateActions, CalibrateView } from "./types";
+import { calibrateStepState, type CalibrateActions, type CalibrateView } from "./types";
 import "./calibrate.css";
 
 export type CalibrateScreenProps = {
@@ -18,15 +19,17 @@ export type CalibrateScreenProps = {
   actions: CalibrateActions;
   /** Gallery and tests: start with the target menu open, or the BA 고급 part open on this sub. */
   initial?: { targetMenu?: boolean | undefined; editSub?: string | undefined } | undefined;
+  /** The step is blocked (the header says why); the screen's own rule when omitted. */
+  blocked?: boolean | undefined;
 };
 
-export function CalibrateScreen({ view, actions, initial }: CalibrateScreenProps) {
+export function CalibrateScreen({ view, actions, initial, blocked }: CalibrateScreenProps) {
   const computed = view.results.calibration !== null;
   const [sampleRateRequest, setSampleRateRequest] = useState(0);
   const openSampleRateSettings = () => setSampleRateRequest((request) => request + 1);
   return (
     <div className="calibrate" data-ui="calibrate">
-      <Verdict view={view} actions={actions} onSampleRateSettings={openSampleRateSettings} />
+      <Verdict view={view} actions={actions} blocked={blocked ?? calibrateStepState(view).status === "blocked"} onSampleRateSettings={openSampleRateSettings} />
       <div className={["calibrate-results", !computed && "calibrate-results--preview"].filter(Boolean).join(" ")}>
         {computed && (
           <div className="calibrate-scorecard-slot">
@@ -41,13 +44,12 @@ export function CalibrateScreen({ view, actions, initial }: CalibrateScreenProps
 }
 
 /**
- * The step header: 보정 계산 (one primary action) and, beside the title, the
- * job of this screen that runs or the stale result. The primary is busy
- * while the correction runs and off while another of this screen's jobs
- * runs (XO 추천, 서브만, MIMO), so a second job cannot start; the pill
- * beside the title names the job that runs.
+ * The step header: beside the title, the job of this screen that runs or
+ * the stale result. 보정 계산 is not here but in the result card, beside
+ * what it computes from (DESIGN.md §1); it is off while another of this
+ * screen's jobs runs (XO 추천, 서브만, MIMO), and this pill names that job.
  */
-export function calibrateHeader(view: CalibrateView, actions: CalibrateActions, t: Translate): { primary?: PrimaryAction; status?: ReactNode } {
+export function calibrateHeader(view: CalibrateView, t: Translate): { primary?: PrimaryAction; status?: ReactNode } {
   const running = view.running;
   const status = running ? (
     <StatusPill tone="busy" data-ui="calibrate.running">
@@ -58,14 +60,5 @@ export function calibrateHeader(view: CalibrateView, actions: CalibrateActions, 
       {t("frame.status.calibration.stale")}
     </StatusPill>
   ) : undefined;
-  return {
-    primary: {
-      id: "calibrate.compute",
-      label: t("frame.step.calibrate.primary"),
-      onClick: actions.calibrate,
-      busy: running === "calibrate",
-      disabled: running !== null && running !== "calibrate",
-    },
-    status,
-  };
+  return { status };
 }

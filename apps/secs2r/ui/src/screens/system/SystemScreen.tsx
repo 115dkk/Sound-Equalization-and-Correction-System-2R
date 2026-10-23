@@ -638,6 +638,7 @@ function MeasureOptions({ view, actions }: { view: SystemView; actions: SystemAc
   const channels = outputChannels ?? 8;
   const bands = config.speakers.reduce((sum, s) => sum + s.bands.length, 0);
   const timingHint = { acoustic: "system.timing.acoustic.hint", loopback: "system.timing.loopback.hint", none: "system.timing.none.hint" } as const;
+  const reference = timing.reference === "loopback" || timing.reference === "none" ? timing.reference : "acoustic";
   return (
     <div className="system-options" data-ui="system.options">
       <Segmented
@@ -650,35 +651,43 @@ function MeasureOptions({ view, actions }: { view: SystemView; actions: SystemAc
           if (next) actions.setStartDelay(next.stored);
         }}
       />
-      <Select
-        id="system.timing"
-        label={t("system.timing.label")}
-        value={timing.reference === "loopback" || timing.reference === "none" ? timing.reference : "acoustic"}
-        options={[
-          { value: "acoustic", label: t("system.timing.acoustic") },
-          { value: "loopback", label: t("system.timing.loopback") },
-          { value: "none", label: t("system.timing.none") },
-        ]}
-        help={t(timingHint[timing.reference === "loopback" || timing.reference === "none" ? timing.reference : "acoustic"])}
-        hint={timing.reference === "acoustic" ? t("measure.options.repeats.acoustic") : undefined}
-        onChange={(reference) => actions.setTiming({ ...timing, reference, role: refRole })}
-      />
-      {timing.reference === "loopback" ? (
-        <Select
-          id="system.timing.output"
-          label={t("system.timing.output")}
-          value={String(timing.output)}
-          options={Array.from({ length: Math.max(channels, timing.output) }, (_, i) => ({ value: String(i + 1), label: outputLabel(t, i + 1, outputNames) }))}
-          onChange={(output) => actions.setTiming({ ...timing, role: refRole, output: Number(output) })}
-        />
-      ) : timing.reference === "none" ? null : (
-        <Select
-          id="system.timing.role"
-          label={t("system.timing.role")}
-          value={refRole}
-          options={refs.map((r) => ({ value: r.role, label: t("system.timing.role.option", { code: roleCode(r.role), output: outputLabel(t, r.out, outputNames) }) }))}
-          onChange={(role) => actions.setTiming({ ...timing, role })}
-        />
+      {/* Only REW needs a timing reference: it records each channel on its own.
+          The default (the acoustic reference on R, else the first main speaker)
+          suits most rooms, so the choice waits folded under 고급. */}
+      {view.rew && (
+        <Advanced id="system.timing.advanced" count={reference === "none" ? 1 : 2}>
+          <div className="system-options__advanced">
+            <Select
+              id="system.timing"
+              label={t("system.timing.label")}
+              value={reference}
+              options={[
+                { value: "acoustic", label: t("system.timing.acoustic") },
+                { value: "loopback", label: t("system.timing.loopback") },
+                { value: "none", label: t("system.timing.none") },
+              ]}
+              help={t(timingHint[reference])}
+              onChange={(next) => actions.setTiming({ ...timing, reference: next, role: refRole })}
+            />
+            {reference === "loopback" ? (
+              <Select
+                id="system.timing.output"
+                label={t("system.timing.output")}
+                value={String(timing.output)}
+                options={Array.from({ length: Math.max(channels, timing.output) }, (_, i) => ({ value: String(i + 1), label: outputLabel(t, i + 1, outputNames) }))}
+                onChange={(output) => actions.setTiming({ ...timing, role: refRole, output: Number(output) })}
+              />
+            ) : reference === "none" ? null : (
+              <Select
+                id="system.timing.role"
+                label={t("system.timing.role")}
+                value={refRole}
+                options={refs.map((r) => ({ value: r.role, label: t("system.timing.role.option", { code: roleCode(r.role), output: outputLabel(t, r.out, outputNames) }) }))}
+                onChange={(role) => actions.setTiming({ ...timing, role })}
+              />
+            )}
+          </div>
+        </Advanced>
       )}
       <div className="system-estimate" data-ui="system.estimate">
         <span className="ui-field__label">{t("system.estimate.label")}</span>

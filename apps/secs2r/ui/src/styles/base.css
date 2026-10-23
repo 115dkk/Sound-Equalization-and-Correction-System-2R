@@ -36,6 +36,30 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* A window selects what there is to read, not its controls: a drag across
+   the screen never paints a button's label, a tab, a step of the rail or a
+   status pill, as no native window does. Text in cards, notices and tables
+   stays selectable, and so do inputs. */
+button,
+summary,
+label,
+select,
+[role="button"],
+[role="tab"],
+[role="radio"],
+[role="checkbox"],
+[role="switch"],
+[role="menuitem"],
+[role="menuitemradio"],
+[role="option"],
+.ui-pill,
+.app-rail,
+.step-header__status,
+.job-tray__bar {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
 h1,
 h2,
 h3,

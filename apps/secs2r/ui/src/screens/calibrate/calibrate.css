@@ -100,11 +100,63 @@
   font-weight: var(--weight-medium);
 }
 
-.calibrate-plan {
+/* The run sits right after what it acts on (DESIGN.md §1): the plan
+   sentence, or the figures, then its buttons; not at the card's far edge.
+   A narrow card puts the buttons under them. */
+.calibrate-run {
   display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3) var(--space-5);
+  min-width: 0;
+}
+
+.calibrate-run > p {
+  margin: 0;
   max-width: 72ch;
+}
+
+.calibrate-run > .calibrate-stats {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+/* Beside the buttons the stats take their own widths, so the buttons stand
+   right after the last figure instead of past a stretched grid. */
+@container (min-width: 640.02px) {
+  .calibrate-run > .calibrate-stats {
+    grid-template-columns: repeat(5, auto);
+    column-gap: var(--space-6);
+  }
+}
+
+/* The smallest window: the two buttons stack so they still fit beside the
+   figures. */
+@container (min-width: 640.02px) and (max-width: 899.98px) {
+  .calibrate-run .calibrate-run__actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+}
+
+.calibrate-run__actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.calibrate-run__busy {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin: 0;
+}
+
+.calibrate-run__busy .ui-spinner {
+  flex: none;
+  color: var(--accent);
 }
 
 /* The figures and their notes are one block; the collapsed notes sit close

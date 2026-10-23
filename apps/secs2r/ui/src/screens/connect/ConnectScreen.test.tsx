@@ -11,6 +11,7 @@ import { ConnectScreen, connectHeader } from "./ConnectScreen";
 import {
   emptyView,
   levelDoneView,
+  levelPassedView,
   levelHalfView,
   mdatView,
   mockView,
@@ -54,7 +55,6 @@ export const REACH_IDS = [
   "connect.output_device",
   "connect.sample_rate",
   "connect.sweep_length",
-  "connect.loopback_channel",
   "connect.share_mode",
   "connect.level",
   "connect.level.row.L",
@@ -90,7 +90,6 @@ function actionsMock() {
     setInputChannel: vi.fn(),
     setOutputDevice: vi.fn(),
     setSweepLength: vi.fn(),
-    setLoopbackChannel: vi.fn(),
     setShareMode: vi.fn(),
     playLevel: vi.fn(),
     stopLevel: vi.fn(),
@@ -117,6 +116,7 @@ function setup(view: ConnectView, { locale = "ko" }: { locale?: "ko" | "en" } = 
   return actions;
 }
 
+/** A cable reference stored by an REW setup: the native path neither shows nor uses it. */
 const loopbackView: ConnectView = {
   ...nativeView,
   settings: { ...nativeView.settings!, timing: "loopback", loopback_input_channel: 3 },
@@ -282,8 +282,7 @@ describe("ConnectScreen", () => {
     expect(actions.setOutputDevice).toHaveBeenCalledWith("");
     fireEvent.change(must("connect.sweep_length"), { target: { value: "524288" } });
     expect(actions.setSweepLength).toHaveBeenCalledWith(524288);
-    fireEvent.change(must("connect.loopback_channel"), { target: { value: "2" } });
-    expect(actions.setLoopbackChannel).toHaveBeenCalledWith(2);
+    expect(ui("connect.loopback_channel")).toBeNull();
     fireEvent.click(must("connect.devices.details"));
     fireEvent.click(must("connect.share_mode.exclusive"));
     expect(actions.setShareMode).toHaveBeenCalledWith("exclusive");
@@ -291,7 +290,7 @@ describe("ConnectScreen", () => {
     expect(must("connect.sample_rate").textContent).toContain("48,000 Hz");
   });
 
-  it("keeps automatic device sharing folded until requested and the loopback channel for a cable reference", () => {
+  it("keeps automatic device sharing folded until requested", () => {
     setup(nativeView);
     expect(ui("connect.share_mode")).toBeNull();
     fireEvent.click(must("connect.devices.details"));
@@ -401,6 +400,23 @@ describe("ConnectScreen", () => {
     mdat.primary?.onClick();
     expect(actions.next).toHaveBeenCalled();
     expect(connectHeader(emptyView, actions, t).status).toBeUndefined();
+  });
+
+  it("goes on to measuring from the header once every level is in range, and checks all again from the level card", () => {
+    const t = (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) => translate("ko", key, params);
+    const actions = actionsMock();
+    const done = connectHeader(levelPassedView, actions, t);
+    expect(done.primary).toMatchObject({ id: "connect.next", label: "측정하기" });
+    done.primary?.onClick();
+    expect(actions.next).toHaveBeenCalledOnce();
+    // A level out of range (one high, one low) is a problem the check found: playing every channel stays the way on.
+    expect(connectHeader(levelDoneView, actions, t).primary?.id).toBe("connect.level.play_all");
+    // The card offers the whole check again, beside the idle line.
+    const card = setup(levelPassedView);
+    const again = must("connect.level.play_all") as HTMLButtonElement;
+    expect(again.textContent).toBe("모두 다시 점검");
+    fireEvent.click(again);
+    expect(card.playAllLevels).toHaveBeenCalledOnce();
   });
 
   it("turns every level play off while the sweep level is being found, and says why", () => {
