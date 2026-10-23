@@ -6,7 +6,7 @@ SECS 2R의 변경 기록입니다. 번호는 major.minor.patch이고, 0.x는 모
 
 ### 새 기능
 
-- MIMO를 켠 보정 결과도 Equalizer APO 설정으로 내보낼 수 있습니다. 지금까지는 'MIMO를 켠 결과는 Equalizer APO 설정으로 내보낼 수 없습니다'라며 단추가 꺼져 MIMO를 끄거나 CamillaDSP로 내보내야 했습니다. 이제 서포트 경로가 config.txt와 필터 본문에 함께 들어가고, 저장 폴더 이름에 `_MIMO`가 붙습니다. 내보낸 파일을 실제 Equalizer APO 엔진에 넣어 입력마다 모든 출력의 응답이 설계값과 같은지 CI가 매번 확인합니다. 필터 값 텍스트는 지금처럼 MIMO와 서브가 없는 결과만 받습니다.
+- MIMO를 켠 보정 결과도 Equalizer APO 설정으로 내보낼 수 있습니다. 지금까지는 'MIMO를 켠 결과는 Equalizer APO 설정으로 내보낼 수 없습니다'라며 단추가 꺼져 MIMO를 끄거나 CamillaDSP로 내보내야 했습니다. 이제 서포트 경로가 config.txt와 필터 본문에 함께 들어가고, 저장 폴더 이름에 `_MIMO`가 붙습니다. 내보낸 파일을 공식 Equalizer APO 1.4.2와 EqualizerAPO-XT의 엔진에 넣어, 입력마다 모든 출력의 응답이 설계값과 같은지 CI가 매번 확인합니다. 두 엔진 모두 MIMO 서포트 경로를 설계대로 재생하므로 XT가 없어도 됩니다. 필터 값 텍스트는 지금처럼 MIMO와 서브가 없는 결과만 받습니다.
 
 ### 바뀐 것
 
