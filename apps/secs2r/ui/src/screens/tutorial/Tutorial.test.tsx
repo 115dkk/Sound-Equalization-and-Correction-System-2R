@@ -284,7 +284,7 @@ describe("tutorial layer", () => {
     expect(ui("tutorial.overlay.look")).not.toBeNull();
     expect(screen.getByText("MIMO")).toBeTruthy();
     fireEvent.click(ui("tutorial.coach.why")!);
-    expect(screen.getByText(/단계는 순서대로 이어집니다/)).toBeTruthy();
+    expect(screen.getByText(/단계를 순서대로 밟게 하기 위함입니다/)).toBeTruthy();
     fireEvent.click(ui("tutorial.coach.next")!);
     await tick();
     expect(ui("tutorial.coach")?.textContent).toContain("시스템 · 2 / 2");

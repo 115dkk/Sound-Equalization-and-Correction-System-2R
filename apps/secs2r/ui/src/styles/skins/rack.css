@@ -1780,6 +1780,44 @@
     linear-gradient(currentColor, currentColor) 50% 50% / calc(var(--skin-vent) + 2px) 16px no-repeat;
 }
 
+/* ── Lines on the faceplate are machined, never drawn ──────────────────── */
+/* A divider between the parts of a panel is a milled groove: the cut in the
+   groove ink and its lit lower lip, like the sections and the rail. */
+[data-skin="rack"] :is(
+  .export-item + .export-item,
+  .export-facts__lines,
+  .calibrate-ba,
+  .measure-sample,
+  .tutorial-terms,
+  .tutorial-panel__foot,
+  .help-panel__foot
+),
+[data-skin="rack"] .connect-level__extras > .ui-section:first-child,
+[data-skin="rack"] .connect-level__controls > .ui-section + .ui-section {
+  border-top-color: var(--skin-groove);
+  box-shadow: inset 0 1px 0 var(--skin-bevel-hi);
+}
+
+[data-skin="rack"] :is(.connect-level__row, .help-table td, .help-tabs) {
+  border-bottom-color: var(--skin-groove);
+}
+
+/* A group heading is engraved with a bracket: the cut runs from the words
+   to the panel's edge and turns down over the modules it names. */
+[data-skin="rack"] .export-group__title {
+  letter-spacing: 0.04em;
+  text-shadow: var(--skin-engrave);
+}
+
+[data-skin="rack"] .export-group__title::after {
+  align-self: center;
+  height: 8px;
+  margin-top: 8px;
+  border-top: 1px solid var(--skin-groove);
+  border-right: 1px solid var(--skin-groove);
+  box-shadow: inset 0 1px 0 var(--skin-bevel-hi), 1px 0 0 var(--skin-bevel-hi);
+}
+
 /* ── Tutorial: a service notice and an amber service edge ──────────────── */
 [data-skin="rack"] .tutorial-ring {
   border-radius: var(--radius-sm);
