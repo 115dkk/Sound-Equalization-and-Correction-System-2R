@@ -161,7 +161,7 @@ describe("내보내기", () => {
       ["export.kind.before_after_mdat", "export.kind.staged_mdat"],
     ]);
     // h2 card, h3 group, h4 row.
-    expect(files.querySelector("h2")?.textContent).toBe("내보낼 파일");
+    expect(files.querySelector("h2")?.textContent).toBe("파일 내보내기");
     expect([...groups[0]!.querySelectorAll("h3")].map((h) => h.textContent)).toEqual(["DSP에 넣을 필터"]);
     expect([...groups[0]!.querySelectorAll("h4")].map((h) => h.textContent)).toEqual(["CamillaDSP 설정", "필터 값 텍스트", "Equalizer APO 설정"]);
     fireEvent.click(ui("export.kind.camilla_dsp.help")!);
@@ -171,11 +171,11 @@ describe("내보내기", () => {
   it("turns off a filter format that cannot carry the result and says why in its row", () => {
     const cases: [ExportView, Record<"filter_text" | "equalizer_apo", string | null>][] = [
       // Subs and MIMO (the sample): text blocked by the subs first, Equalizer APO by MIMO.
-      [exportReady, { filter_text: "서브(BA)가 있는 결과는 텍스트로 내보낼 수 없습니다. CamillaDSP나 Equalizer APO 설정으로 내보내세요.", equalizer_apo: "MIMO를 넣은 결과는 Equalizer APO로 낼 수 없습니다. 보정에서 MIMO를 끄면 낼 수 있습니다." }],
+      [exportReady, { filter_text: "서브(BA)가 있는 결과는 텍스트로 내보낼 수 없습니다. CamillaDSP나 Equalizer APO 설정으로 내보내세요.", equalizer_apo: "MIMO를 켠 결과는 Equalizer APO 설정으로 내보낼 수 없습니다. 보정에서 MIMO를 끄면 내보낼 수 있습니다." }],
       // Subs, MIMO left out: only the text.
       [exportNoMimo, { filter_text: "서브(BA)가 있는 결과는 텍스트로 내보낼 수 없습니다. CamillaDSP나 Equalizer APO 설정으로 내보내세요.", equalizer_apo: null }],
       // MIMO without subs: both by MIMO.
-      [exportMimoNoSubs, { filter_text: "MIMO를 넣은 결과는 텍스트로 낼 수 없습니다. 보정에서 MIMO를 끄면 낼 수 있습니다.", equalizer_apo: "MIMO를 넣은 결과는 Equalizer APO로 낼 수 없습니다. 보정에서 MIMO를 끄면 낼 수 있습니다." }],
+      [exportMimoNoSubs, { filter_text: "MIMO를 켠 결과는 텍스트로 내보낼 수 없습니다. 보정에서 MIMO를 끄면 내보낼 수 있습니다.", equalizer_apo: "MIMO를 켠 결과는 Equalizer APO 설정으로 내보낼 수 없습니다. 보정에서 MIMO를 끄면 내보낼 수 있습니다." }],
       // RC alone: everything on.
       [exportRcOnly, { filter_text: null, equalizer_apo: null }],
     ];
