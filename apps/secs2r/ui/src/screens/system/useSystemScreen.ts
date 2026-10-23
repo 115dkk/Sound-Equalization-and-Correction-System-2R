@@ -74,7 +74,7 @@ export function useSystemScreen(configureMeasurement?: () => void): { view: Syst
   const outputChannels = state !== "selected" ? null : host.path === "rew" ? rewDevice?.channels : nativeDevice?.output_channels;
   return {
     view: config && dsp && layout && project ? {
-      config, dsp, layout, notices: notices ?? [], estimate, outputDeviceState: state,
+      config, dsp, layout, notices: notices ?? [], estimate, outputDeviceState: state, rew: host.path === "rew",
       outputDeviceName: state === "selected" || state === "unavailable" ? (host.path === "rew" ? rewDevice?.name : nativeDevice?.name) ?? output ?? "" : "",
       outputChannels: outputChannels ?? null, outputNames: [], positionsDone: project.positions,
     } : null,

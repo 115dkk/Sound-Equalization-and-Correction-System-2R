@@ -20,6 +20,13 @@ export type SystemView = {
   dsp: DspResult;
   /** layout_get / layout_set (arrangement, start delay, timing reference). */
   layout: LayoutResult;
+  /**
+   * The measurement path is REW. REW records every channel in a recording of
+   * its own, so only there does a timing reference (and its speaker or output)
+   * decide anything; native measurement records every channel of a position
+   * in one session and keeps their arrival times as they are.
+   */
+  rew: boolean;
   /** position_estimate after every config, layout or sweep-length change; null while unknown. */
   estimate: PositionEstimateResult | null;
   /**

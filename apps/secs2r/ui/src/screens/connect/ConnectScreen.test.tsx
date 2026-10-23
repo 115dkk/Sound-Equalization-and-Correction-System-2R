@@ -55,7 +55,6 @@ export const REACH_IDS = [
   "connect.output_device",
   "connect.sample_rate",
   "connect.sweep_length",
-  "connect.loopback_channel",
   "connect.share_mode",
   "connect.level",
   "connect.level.row.L",
@@ -91,7 +90,6 @@ function actionsMock() {
     setInputChannel: vi.fn(),
     setOutputDevice: vi.fn(),
     setSweepLength: vi.fn(),
-    setLoopbackChannel: vi.fn(),
     setShareMode: vi.fn(),
     playLevel: vi.fn(),
     stopLevel: vi.fn(),
@@ -118,6 +116,7 @@ function setup(view: ConnectView, { locale = "ko" }: { locale?: "ko" | "en" } = 
   return actions;
 }
 
+/** A cable reference stored by an REW setup: the native path neither shows nor uses it. */
 const loopbackView: ConnectView = {
   ...nativeView,
   settings: { ...nativeView.settings!, timing: "loopback", loopback_input_channel: 3 },
@@ -283,8 +282,7 @@ describe("ConnectScreen", () => {
     expect(actions.setOutputDevice).toHaveBeenCalledWith("");
     fireEvent.change(must("connect.sweep_length"), { target: { value: "524288" } });
     expect(actions.setSweepLength).toHaveBeenCalledWith(524288);
-    fireEvent.change(must("connect.loopback_channel"), { target: { value: "2" } });
-    expect(actions.setLoopbackChannel).toHaveBeenCalledWith(2);
+    expect(ui("connect.loopback_channel")).toBeNull();
     fireEvent.click(must("connect.devices.details"));
     fireEvent.click(must("connect.share_mode.exclusive"));
     expect(actions.setShareMode).toHaveBeenCalledWith("exclusive");
@@ -292,7 +290,7 @@ describe("ConnectScreen", () => {
     expect(must("connect.sample_rate").textContent).toContain("48,000 Hz");
   });
 
-  it("keeps automatic device sharing folded until requested and the loopback channel for a cable reference", () => {
+  it("keeps automatic device sharing folded until requested", () => {
     setup(nativeView);
     expect(ui("connect.share_mode")).toBeNull();
     fireEvent.click(must("connect.devices.details"));

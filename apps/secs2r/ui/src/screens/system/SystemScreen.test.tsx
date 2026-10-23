@@ -57,6 +57,7 @@ export const REACH_IDS = [
   "system.start_delay",
   "system.sweeps",
   "system.estimate",
+  "system.timing.advanced",
   "system.timing",
   "system.timing.role",
   "system.timing.output",
@@ -267,14 +268,24 @@ describe("SystemScreen", () => {
     expect(must("system.dsp.note").textContent).toContain("1,365");
   });
 
-  it("sets the start delay and the timing reference", () => {
+  it("sets the start delay and, folded under 고급 on the REW path, the timing reference", () => {
     const actions = setup(sampleView);
     fireEvent.click(must("system.start_delay.10"));
     expect(actions.setStartDelay).toHaveBeenCalledWith("10 초");
+    expect(ui("system.timing")).toBeNull();
+    fireEvent.click(must("system.timing.advanced"));
     fireEvent.change(must("system.timing.role"), { target: { value: "C" } });
     expect(actions.setTiming).toHaveBeenCalledWith({ reference: "acoustic", role: "C", output: 1 });
     fireEvent.change(must("system.timing"), { target: { value: "loopback" } });
     expect(actions.setTiming).toHaveBeenLastCalledWith({ reference: "loopback", role: "R", output: 1 });
+  });
+
+  it("hides the timing reference unless REW measures: native keeps arrival times in one recording", () => {
+    setup({ ...sampleView, rew: false });
+    expect(ui("system.start_delay")).not.toBeNull();
+    expect(ui("system.timing.advanced")).toBeNull();
+    expect(ui("system.timing")).toBeNull();
+    expect(ui("system.timing.role")).toBeNull();
   });
 
   it("shows the estimate per position and in total", () => {
@@ -349,7 +360,8 @@ describe("SystemScreen", () => {
     const seen = new Set<string>();
     const collect = () => document.querySelectorAll("[data-ui]").forEach((node) => seen.add(node.getAttribute("data-ui") ?? ""));
     const custom: SystemView = { ...newProjectView, config: configOf("custom", [speaker("L", 1), speaker("R", 2), speaker("Ext", 3)], "") };
-    for (const view of [sampleView, invalidView, custom]) {
+    const loopback: SystemView = { ...sampleView, layout: { ...sampleView.layout, timing: { reference: "loopback", role: "R", output: 1 } } };
+    for (const view of [sampleView, invalidView, custom, loopback]) {
       const header = systemHeader(view, actionsMock(), (key, params) => translate("ko", key, params));
       const { unmount } = render(
         <PrefsScope initial={{ locale: "ko", theme: "light", accent: "default" }}>
@@ -359,6 +371,7 @@ describe("SystemScreen", () => {
       );
       collect();
       if (ui("system.dsp.advanced")) fireEvent.click(must("system.dsp.advanced"));
+      if (ui("system.timing.advanced")) fireEvent.click(must("system.timing.advanced"));
       if (view.positionsDone.length > 0) fireEvent.click(must("system.preset.5.1"));
       collect();
       unmount();

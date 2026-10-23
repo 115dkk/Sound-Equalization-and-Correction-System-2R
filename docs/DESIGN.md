@@ -127,6 +127,8 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 | 보정 전 | 점선 2 3 | | `--plot-dash-before` |
 | 낡은 결과 | | ×0.45 | |
 
+스킨이 그래프를 스코프 유리로 그리면 `--plot-glow`(실선 곡선에 더하는 헤일로 폭), `--plot-glow-alpha`, `--plot-afterglow-alpha`(가리킨 곡선의 잔광), `--plot-zero-alpha`(해시 눈금을 단 0 축)를 정합니다. 기본값 0은 위 선만 그립니다. 지금은 Hardware Rack만 씁니다([skins/rack.md](skins/rack.md)). 빛은 uPlot이 곡선을 긋기 직전의 `drawAxes` 훅에서 같은 점으로 넓은 선을 먼저 그어 곡선 밑에 깔고, 낡은 결과에는 그리지 않습니다.
+
 ### 3.3 축과 상호작용
 
 - **주파수 축**은 로그이고 눈금은 5, 10, 20, 50, 100, 200, 500, 1k, 2k, 5k, 10k, 20k로 고정입니다(업스트림 `plot.py`). 기본 범위는 5–22000 Hz입니다.

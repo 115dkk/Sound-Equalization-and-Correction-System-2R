@@ -11,7 +11,7 @@ import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import { useNumber, useT } from "../../i18n/react";
 import { readColor, readNumber, rgbaString, type Rgba } from "./color";
-import { DEFAULT_RULES, colorTokens, lineStyle, type Curve, type Highlight, type LineRules } from "./series";
+import { DEFAULT_RULES, NO_SCOPE, afterglowIds, colorTokens, glows, lineStyle, traceSegments, type Curve, type Highlight, type LineRules, type ScopeRules } from "./series";
 import { FREQ_RANGE, formatHz, freqTicksIn } from "./ticks";
 
 export type PlotScale = {
@@ -66,6 +66,7 @@ type Palette = {
   text: Rgba;
   shade: Rgba;
   rules: LineRules;
+  scope: ScopeRules;
   font: string;
 };
 
@@ -102,8 +103,89 @@ export function readPalette(element: Element, roleOrder: readonly string[], isSu
       dashTarget: dash("--plot-dash-target", DEFAULT_RULES.dashTarget),
       dashBefore: dash("--plot-dash-before", DEFAULT_RULES.dashBefore),
     },
+    scope: {
+      glow: readNumber(element, "--plot-glow", NO_SCOPE.glow),
+      glowAlpha: readNumber(element, "--plot-glow-alpha", NO_SCOPE.glowAlpha),
+      afterglowAlpha: readNumber(element, "--plot-afterglow-alpha", NO_SCOPE.afterglowAlpha),
+      zeroAlpha: readNumber(element, "--plot-zero-alpha", NO_SCOPE.zeroAlpha),
+    },
     font: `${weight} ${caption}px ${family}`,
   };
+}
+
+const pathOf = (ctx: CanvasRenderingContext2D, segment: readonly number[]) => {
+  ctx.moveTo(segment[0]!, segment[1]!);
+  for (let i = 2; i < segment.length; i += 2) ctx.lineTo(segment[i]!, segment[i + 1]!);
+};
+
+/**
+ * The scope glass of a skin that sets the --plot-glow tokens, drawn under
+ * the traces uPlot strokes next: the zero axis with the scope's fine hash
+ * ticks, the afterglow around the highlighted trace, and the phosphor halo
+ * around every solid trace (stroke overpainting, two passes, like EQ APO
+ * XT's analysis monitor, only finer). Stale results draw no phosphor: their
+ * beam is already faint.
+ */
+function drawScope(u: uPlot, state: { curves: readonly Curve[]; highlight: Highlight; stale: boolean; palette: Palette | null }) {
+  const palette = state.palette;
+  if (!palette) return;
+  const scope = palette.scope;
+  if (scope.glow <= 0 && scope.afterglowAlpha <= 0 && scope.zeroAlpha <= 0) return;
+  const lo = u.scales.y?.min;
+  const hi = u.scales.y?.max;
+  if (typeof lo !== "number" || typeof hi !== "number" || !Number.isFinite(lo) || !Number.isFinite(hi)) return;
+  const { ctx } = u;
+  const { left, top, width, height } = u.bbox;
+  const ratio = devicePixelRatio || 1;
+  const zeroY = u.valToPos(0, "y", true);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(left, top, width, height);
+  ctx.clip();
+  if (scope.zeroAlpha > 0 && lo < 0 && hi > 0) {
+    const y = Math.round(zeroY) + 0.5;
+    ctx.lineWidth = Math.max(1, Math.round(ratio));
+    ctx.strokeStyle = rgbaString(palette.text, scope.zeroAlpha);
+    ctx.beginPath();
+    ctx.moveTo(left, y);
+    ctx.lineTo(left + width, y);
+    ctx.stroke();
+    ctx.strokeStyle = rgbaString(palette.text, scope.zeroAlpha * 0.45);
+    ctx.beginPath();
+    for (let x = left + 4 * ratio; x < left + width - 2 * ratio; x += 7 * ratio) {
+      const px = Math.round(x) + 0.5;
+      ctx.moveTo(px, y - 2 * ratio);
+      ctx.lineTo(px, y + 2 * ratio);
+    }
+    ctx.stroke();
+  }
+  if (!state.stale && (scope.glow > 0 || scope.afterglowAlpha > 0)) {
+    const xs = u.data[0];
+    const traces = state.curves
+      .map((curve, index) => ({ curve, index, style: lineStyle(curve, state.highlight, palette.rules) }))
+      .filter(({ curve, index, style }) => u.series[index + 1]?.show && glows(curve, style));
+    const persistent = afterglowIds(traces.map(({ curve }) => curve), state.highlight);
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    for (const { curve, index, style } of traces) {
+      const values = u.data[index + 1];
+      if (!values) continue;
+      const color = palette.colors.get(curve.role) ?? palette.text;
+      const segments = traceSegments(xs, values, (x) => u.valToPos(x, "x", true), (y) => u.valToPos(y, "y", true), ratio);
+      // Widest first: the afterglow (three halos wide), then the outer and inner halo.
+      const passes: (readonly [number, number])[] = [];
+      if (scope.afterglowAlpha > 0 && persistent.has(curve.id)) passes.push([scope.glow * 3, scope.afterglowAlpha]);
+      if (scope.glow > 0) passes.push([scope.glow, scope.glowAlpha * 0.5], [scope.glow / 2, scope.glowAlpha]);
+      for (const [extra, alpha] of passes) {
+        ctx.lineWidth = (style.width + extra) * ratio;
+        ctx.strokeStyle = rgbaString(color, alpha);
+        ctx.beginPath();
+        for (const segment of segments) pathOf(ctx, segment);
+        ctx.stroke();
+      }
+    }
+  }
+  ctx.restore();
 }
 
 function niceRange(curves: readonly Curve[], hiddenRoles: ReadonlySet<string>, hiddenPositions: ReadonlySet<number>): [number, number] {
@@ -278,6 +360,7 @@ export function LogPlot({
       series,
       hooks: {
         drawAxes: [
+          (u) => drawScope(u, live.current),
           (u) => {
             const range = live.current.band;
             const palette = live.current.palette;

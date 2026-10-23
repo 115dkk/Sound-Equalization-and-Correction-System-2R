@@ -184,7 +184,6 @@ export const HELP_TABS: Record<StepId, readonly HelpTab[]> = {
             "help.measure.checks.2",
             "help.measure.checks.3",
             "help.measure.checks.4",
-            "help.measure.checks.5",
             "help.measure.checks.6",
           ],
         },

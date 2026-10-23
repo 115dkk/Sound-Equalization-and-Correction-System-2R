@@ -43,7 +43,9 @@ export function tutorialQuests(host: TutorialHost): Entry[] {
       { when: (v) => v.system.config.speakers.some((s) => s.role === "SW3" && s.bands[0]?.out === 16), why: key("system.output", "why"), whyTerms: ["sweep"], keep: ["system.patch.SW3.out"] }),
     look("system.layout_next", 314, ["system.layout"]),
     look("system.layout", 326, ["system.arrangement.map"]),
-    look("system.timing", 327, ["system.timing", "system.start_delay"], { terms: ["timing"] }),
+    // The timing reference shows only on the REW path (U15), so the quest
+    // points at the start delay every path has.
+    look("system.timing", 327, ["system.start_delay"]),
     look("system.single", 329, ["system.arrangement.1"], { why: key("system.single", "why"), whyTerms: ["mimo"] }),
     act("system.next", 332, ["system.next"], (v) => v.step !== "system", () => host.system.next(), (v) => v.system.config.speakers.length === 0 || v.system.notices.length > 0, { gate: true }),
     look("connect.sidebar", 288, ["frame.status", "frame.help", "frame.project"], { apart: true }),

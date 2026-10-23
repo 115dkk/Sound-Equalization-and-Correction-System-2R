@@ -41,7 +41,6 @@ describe("useConnectScreen", () => {
       [() => a.setInputChannel(2), { input_channel: 2 }],
       [() => a.setOutputDevice("output"), { output_device: "output" }],
       [() => a.setSweepLength(65536), { sweep_length: 65536 }],
-      [() => a.setLoopbackChannel(2), { loopback_input_channel: 2 }],
       [() => a.setShareMode("shared"), { share_mode: "shared" }],
     ] as const) {
       await perform(work);

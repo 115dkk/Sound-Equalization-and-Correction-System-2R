@@ -1452,13 +1452,27 @@
 }
 
 /* ── Graphs: scope glass ───────────────────────────────────────────────── */
+/* EQ APO XT's analysis monitor, finer: its beam is a 1.6 px core in a 6 px
+   halo for one trace; here a dozen traces share the glass, so the core stays
+   at 1.75 px for the listening position and the halo adds 3 px. Solid traces
+   glow in their own colour, the chip the pointer is on leaves an afterglow
+   down to the zero axis, and the zero axis carries the scope's hash ticks.
+   The tube's memory warms the middle of the glass. */
 [data-skin="rack"] .plot__frame {
   --font-ui: var(--font-mono);
+  --plot-w-pos1: 1.75;
+  --plot-w-sub: 2.5;
+  --plot-glow: 3;
+  --plot-glow-alpha: 0.22;
+  --plot-afterglow-alpha: 0.1;
+  --plot-zero-alpha: 0.55;
 }
 
 [data-skin="rack"] .plot__canvas {
   border-radius: var(--radius-sm);
-  background: var(--plot-bg);
+  background:
+    radial-gradient(ellipse 58% 64% at 50% 46%, color-mix(in oklch, var(--skin-segment) 7%, transparent), transparent 72%),
+    var(--plot-bg);
   box-shadow: var(--skin-well-bezel);
 }
 

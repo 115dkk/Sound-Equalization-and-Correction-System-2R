@@ -5,7 +5,9 @@ use secs_project::{MeasurementPlan, Project, PyJson, TimingReference};
 
 /// Additional native options stay beside upstream device options, never in a
 /// second service-owned settings file. REW's acoustic reference is not confused
-/// with a native loopback input channel.
+/// with a native loopback input channel. The native path no longer reads that
+/// channel (U15): the screen shows the timing reference only for REW, and a
+/// native session already keeps every channel's arrival time on one clock.
 #[derive(Clone, Debug)]
 pub struct MeasurementSettings {
     pub positions: Option<Vec<i64>>,
@@ -257,17 +259,11 @@ pub fn to_audio_plan(
         u16::try_from(positive(v, name)?)
             .map_err(|_| MeasureError::Input(format!("{name} exceeds u16")))
     };
-    if p.repetitions != 1 {
-        return Err(MeasureError::Input(
-            "native repetitions are not supported".into(),
-        ));
-    }
-    if p.timing_reference == TimingReference::Loopback && settings.loopback_input_channel.is_none()
-    {
-        return Err(MeasureError::Input(
-            "native loopback requires an input channel".into(),
-        ));
-    }
+    // The timing reference and the repetitions are REW's (U15). A native
+    // session plays every channel of a position against one clock, so their
+    // arrival times need no reference, and it records one sweep per channel.
+    // Values an REW setup stored stay in the project for REW and are not read
+    // here: the screen does not show them on this path.
     Ok(secs_audio::MeasurementPlan {
         output: choose(&p.output_device, false)?,
         input: choose(&p.input_device, true)?,
@@ -282,7 +278,7 @@ pub fn to_audio_plan(
             })
             .collect::<Result<_, MeasureError>>()?,
         input_channel: channel(p.input_channel, "input")?,
-        loopback_input_channel: settings.loopback_input_channel,
+        loopback_input_channel: None,
         sample_rate: positive(p.sample_rate, "sample rate")?,
         sweep_length: p.sweep_length.clone(),
         start_frequency: p.start_frequency,

@@ -338,7 +338,6 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
     value: String(s.samples),
     label: t("connect.sweep.option", { name: s.name, seconds: number(s.samples / Math.max(1, view.sampleRate), 1) }),
   }));
-  const loopback = settings?.timing === "loopback" && !rew;
   const cal = view.rew.details.micCalibration;
   // REW mode lists REW's own devices by name and opens the chosen one in REW; the input channel stays REW's (R7).
   const current = view.rew.details.current;
@@ -491,16 +490,6 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
           help={t("connect.sweep_length.hint")}
           onChange={(v) => actions.setSweepLength(Number(v))}
         />
-        {loopback && (
-          <Select
-            id="connect.loopback_channel"
-            label={t("connect.loopback_channel")}
-            value={String(settings?.loopback_input_channel ?? 2)}
-            options={channelOptions}
-            help={t("connect.loopback_channel.hint")}
-            onChange={(v) => actions.setLoopbackChannel(Number(v))}
-          />
-        )}
       </div>
       {!rew && (
         <Advanced id="connect.devices.details" label={t("connect.share_mode")} defaultOpen={!!settings?.share_mode && settings.share_mode !== "auto"}>

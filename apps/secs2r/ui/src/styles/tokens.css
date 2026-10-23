@@ -97,6 +97,11 @@
   --plot-dash-target: 6 4;
   --plot-dash-before: 2 3;
   --plot-weight: var(--weight-regular); /* axis figures (a skin may set them bold) */
+  /* Scope glass (a skin that draws graphs as a scope sets these; 0 draws plain lines). */
+  --plot-glow: 0; /* phosphor halo, px added around a solid trace at full strength */
+  --plot-glow-alpha: 0;
+  --plot-afterglow-alpha: 0; /* wash between the highlighted trace and the zero axis */
+  --plot-zero-alpha: 0; /* zero axis with the scope's hash ticks, in the axis-figure ink */
 
   /* Layers. */
   --z-sticky: 10;
