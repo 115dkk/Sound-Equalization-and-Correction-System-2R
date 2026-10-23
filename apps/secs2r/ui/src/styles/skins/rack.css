@@ -533,18 +533,42 @@
   box-shadow: inset -1px 0 0 var(--skin-seam), inset -2px 0 0 var(--skin-bevel-hi);
 }
 
-/* Rack-ear holes down the rail's outer edge, one per rack unit. */
+/* The rack ear: a flange down the rail's outer edge, set off from the rail
+   face by a seam, held by one slotted screw at the top and one at the bottom
+   (a panel this tall is fixed at its ends). Loose holes on the bare rail
+   read as scattered dots, not as a part. */
+[data-skin="rack"] .app-rail {
+  --skin-ear: 14px;
+}
+
 [data-skin="rack"] .app-rail::before {
+  --skin-screw: 9px;
+  --skin-ear-screw-x: 2.5px;
+  --skin-ear-screw-top: 10px;
+  --skin-ear-screw-bottom: calc(100% - 10px - var(--skin-screw));
   content: "";
   position: absolute;
+  z-index: 1;
   top: 0;
   bottom: 0;
-  left: 2px;
-  width: 8px;
+  left: 0;
+  width: var(--skin-ear);
   background:
-    radial-gradient(3px 5.5px at 4px 22px, var(--skin-hole) 0 82%, transparent 100%) 0 0 / 8px 44px repeat-y,
-    radial-gradient(3px 5.5px at 4px 23.5px, var(--skin-bevel-hi) 0 82%, transparent 100%) 0 0 / 8px 44px repeat-y;
+    linear-gradient(48deg, transparent calc(50% - 0.8px), var(--skin-screw-slot) calc(50% - 0.8px) calc(50% + 0.8px), transparent calc(50% + 0.8px)) var(--skin-ear-screw-x) var(--skin-ear-screw-top) / var(--skin-screw) var(--skin-screw) no-repeat,
+    linear-gradient(-23deg, transparent calc(50% - 0.8px), var(--skin-screw-slot) calc(50% - 0.8px) calc(50% + 0.8px), transparent calc(50% + 0.8px)) var(--skin-ear-screw-x) var(--skin-ear-screw-bottom) / var(--skin-screw) var(--skin-screw) no-repeat,
+    radial-gradient(circle 4.5px at 50% 50%, var(--skin-screw-hi) 0, var(--skin-screw-lo) 48%, var(--skin-screw-rim) 86%, transparent 100%) var(--skin-ear-screw-x) var(--skin-ear-screw-top) / var(--skin-screw) var(--skin-screw) no-repeat,
+    radial-gradient(circle 4.5px at 50% 50%, var(--skin-screw-hi) 0, var(--skin-screw-lo) 48%, var(--skin-screw-rim) 86%, transparent 100%) var(--skin-ear-screw-x) var(--skin-ear-screw-bottom) / var(--skin-screw) var(--skin-screw) no-repeat,
+    var(--skin-brush-v),
+    color-mix(in oklch, var(--rail-bg) 86%, var(--skin-screw-rim));
+  box-shadow: inset -1px 0 0 var(--skin-seam), inset -2px 0 0 var(--skin-bevel-hi), inset 1px 0 0 var(--skin-bevel-hi);
   pointer-events: none;
+}
+
+/* The rail's parts start past the ear. */
+[data-skin="rack"] .app-rail__top,
+[data-skin="rack"] .app-rail__middle,
+[data-skin="rack"] .app-rail__footer {
+  padding-left: calc(var(--skin-ear) + var(--space-2));
 }
 
 /* The brand sits on a nameplate; the logo itself is untouched. */
@@ -1364,6 +1388,17 @@
 
 [data-skin="rack"] .ui-dialog {
   position: relative;
+}
+
+/* A select's open list is the same brushed panel as the menus. */
+@supports (appearance: base-select) {
+  [data-skin="rack"] .ui-select__native::picker(select) {
+    background: var(--skin-brush-h), var(--surface-raised);
+  }
+
+  [data-skin="rack"] .ui-select__native option {
+    text-shadow: none;
+  }
 }
 
 [data-skin="rack"] .ui-menu__item:hover:not(:disabled),

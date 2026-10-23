@@ -20,8 +20,21 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 const SAMPLE_RATE: u32 = 48_000;
 const PERIOD: usize = 131_072;
-const REL: f64 = 2e-3;
-const ABS: f64 = 1e-4;
+/// Relative bound: -40 dB, 0.09 dB of level or 0.6 degrees of phase. It
+/// covers the reference's analog high- and low-pass prototypes against the
+/// engine's digital RBJ sections, near Nyquist, and stays far below any
+/// audible routing, polarity, delay or filter error.
+const REL: f64 = 1e-2;
+/// Absolute bound against the input's largest response: -60 dB, the floor
+/// of a float32 engine's long convolutions.
+const ABS: f64 = 1e-3;
+/// RMS of the excitation; a PCM16 output cannot show a response smaller
+/// than a few quanta at this level.
+const EXCITATION_RMS: f64 = 0.05;
+/// How many output quanta (relative to the excitation) the resolution floor
+/// of an integer output allows: quantising a signal only a few quanta tall
+/// is distortion concentrated in few bins, not white noise.
+const QUANTA: f64 = 8.0;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 struct TempDir(PathBuf);
@@ -282,7 +295,7 @@ fn excitation(seed_index: usize) -> Vec<f32> {
     let rms = (samples.iter().map(|value| value * value).sum::<f64>() / PERIOD as f64).sqrt();
     samples
         .iter_mut()
-        .map(|value| (*value * 0.05 / rms) as f32)
+        .map(|value| (*value * EXCITATION_RMS / rms) as f32)
         .collect()
 }
 
@@ -312,6 +325,8 @@ fn write_float_wav(path: &Path, channels: usize, frames: &[f32]) {
 struct Wav {
     channels: usize,
     rate: u32,
+    /// One output step: 2^-15 for PCM16, 0 for float.
+    quantum: f64,
     samples: Vec<f64>,
 }
 
@@ -403,6 +418,7 @@ fn read_wav_bytes(bytes: &[u8]) -> Result<Wav, String> {
     Ok(Wav {
         channels,
         rate,
+        quantum: if format == 1 { 1.0 / 32768.0 } else { 0.0 },
         samples,
     })
 }
@@ -453,6 +469,31 @@ fn clear_folder(path: &Path) {
             fs::remove_dir_all(path).unwrap();
         } else {
             fs::remove_file(path).unwrap();
+        }
+    }
+}
+
+/// Whether the engine logged an error. Equalizer APO marks its trace lines
+/// with `(TRACE)` (a trace may quote an error it recovered from, such as a
+/// missing registry key); an error line carries no such mark.
+fn engine_error(stdout: &str, stderr: &str) -> Option<String> {
+    stdout
+        .lines()
+        .chain(stderr.lines())
+        .map(str::trim)
+        .find(|line| line.contains("rror") && !line.starts_with("(TRACE)"))
+        .map(str::to_owned)
+}
+
+fn copy_folder(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let path = entry.unwrap().path();
+        let target = to.join(path.file_name().unwrap());
+        if path.is_dir() {
+            copy_folder(&path, &target);
+        } else {
+            fs::copy(&path, &target).unwrap();
         }
     }
 }
@@ -527,9 +568,17 @@ struct ReportRow {
     residual_samples: f64,
 }
 
-fn markdown_report(engine: &str, rows: &[ReportRow]) -> String {
+fn markdown_report(engine: &str, quantum: Option<f64>, rows: &[ReportRow]) -> String {
+    let output = match quantum {
+        Some(q) if q > 0.0 => format!(
+            "PCM16 output: responses below {:.1} dB of the excitation are under its resolution",
+            20.0 * (QUANTA * q / 2.0 / EXCITATION_RMS).log10()
+        ),
+        Some(_) => "float output".to_owned(),
+        None => "no output read".to_owned(),
+    };
     let mut text = format!(
-        "# Equalizer APO playback — {engine}\n\n| Case | Input | Output | Worst err/bound | Hz | Error/peak dB | Measured dB | Reference dB | Phase Δ ° | Residual delay samples |\n|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n"
+        "# Equalizer APO playback: {engine}\n\nBound per bin: {REL} x reference + {ABS} x the input's peak + the output's resolution floor. {output}.\n\n| Case | Input | Output | Worst err/bound | Hz | Error/peak dB | Measured dB | Reference dB | Phase Δ ° | Residual delay samples |\n|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n"
     );
     for row in rows {
         text.push_str(&format!(
@@ -570,9 +619,12 @@ fn exported_configs_play_as_designed() {
             .map(str::to_owned)
             .collect::<Vec<_>>()
     });
+    // CI keeps each case's exported folder and every engine log here.
+    let artifacts = std::env::var_os("SECS_EQAPO_ARTIFACTS").map(PathBuf::from);
     let root = TempDir::new("engine");
     let mut rows = Vec::new();
     let mut failures = Vec::new();
+    let mut quantum = None;
     for case in playback_cases().into_iter().filter(|case| {
         selected
             .as_ref()
@@ -596,6 +648,9 @@ fn exported_configs_play_as_designed() {
             stamp: "2026-10-23 00:00",
         };
         export_eqapo(&run, &config).unwrap();
+        if let Some(artifacts) = &artifacts {
+            copy_folder(&config, &artifacts.join(case.name).join("export"));
+        }
         let preamp = preamp_gain(&config.join("config.txt"));
         let plan = make_plan(&case.chain, case.mimo.as_ref()).unwrap();
         let reference_plan = as_written(&plan);
@@ -631,17 +686,24 @@ fn exported_configs_play_as_designed() {
             let output = command.output().expect("run Equalizer APO Benchmark.exe");
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let error_line = stdout
-                .lines()
-                .chain(stderr.lines())
-                .any(|line| line.contains("Error"));
+            if let Some(artifacts) = &artifacts {
+                let folder = artifacts.join(case.name);
+                fs::create_dir_all(&folder).unwrap();
+                fs::write(
+                    folder.join(format!("{input}.log")),
+                    format!("stdout:\n{stdout}\nstderr:\n{stderr}"),
+                )
+                .unwrap();
+            }
+            let error_line = engine_error(&stdout, &stderr);
             // Every case runs to the end and lands in the report, so one engine's
             // run says which cases it plays and which it does not.
-            if !output.status.success() || error_line {
+            if !output.status.success() || error_line.is_some() {
                 failures.push(format!(
-                    "{} / {input}: Benchmark failed ({:?})\nstdout:\n{stdout}\nstderr:\n{stderr}",
+                    "{} / {input}: Benchmark failed ({:?}): {}",
                     case.name,
-                    output.status.code()
+                    output.status.code(),
+                    error_line.as_deref().unwrap_or("non-zero exit")
                 ));
                 continue;
             }
@@ -678,6 +740,10 @@ fn exported_configs_play_as_designed() {
                 .map(|value| value.norm() * preamp)
                 .fold(0.0_f64, f64::max);
             assert!(peak > 0.0, "{} / {input}: zero reference", case.name);
+            // The smallest response an integer output can show at this
+            // excitation; 0 for a float output.
+            let floor = QUANTA * (wav.quantum / 2.0) / EXCITATION_RMS;
+            quantum = Some(wav.quantum);
             for (output_role, output_number) in &outputs {
                 let output_samples = output_channel(&wav, output_number - 1, PERIOD, PERIOD);
                 let measured = estimate_response(&excitation, &output_samples);
@@ -697,7 +763,7 @@ fn exported_configs_play_as_designed() {
                         continue;
                     }
                     let error = (*got - *expected).norm();
-                    let bound = REL * expected.norm() + ABS * peak;
+                    let bound = REL * expected.norm() + ABS * peak + floor;
                     let ratio = error / bound;
                     if ratio > worst.0 {
                         worst = (ratio, index, error);
@@ -732,7 +798,7 @@ fn exported_configs_play_as_designed() {
             }
         }
     }
-    let mut report = markdown_report(&engine, &rows);
+    let mut report = markdown_report(&engine, quantum, &rows);
     if !failures.is_empty() {
         report.push_str("\n## Failures\n\n```text\n");
         report.push_str(&failures.join("\n"));
@@ -759,6 +825,20 @@ fn exported_configs_play_as_designed() {
         "{} playback checks failed (REL={REL}, ABS={ABS}):\n{}",
         failures.len(),
         failures.join("\n")
+    );
+}
+
+#[test]
+fn engine_errors_are_lines_without_a_trace_mark() {
+    let trace =
+        "(TRACE) Registry ConfigPath unavailable (Error while opening registry key X); proceeding";
+    assert_eq!(engine_error("Benchmark 2.60.4", trace), None);
+    assert_eq!(
+        engine_error(
+            "",
+            &format!("{trace}\nError while evaluating expression inL = 1; inR = 2")
+        ),
+        Some("Error while evaluating expression inL = 1; inR = 2".to_owned())
     );
 }
 

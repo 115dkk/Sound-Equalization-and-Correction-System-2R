@@ -3998,11 +3998,14 @@ dependencies = [
  "audio_thread_priority",
  "chrono",
  "cpal",
+ "raw-window-handle",
  "secs-audio",
  "secs-compute",
  "secs-rew",
  "sysinfo",
+ "thiserror 2.0.21",
  "wasapi",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

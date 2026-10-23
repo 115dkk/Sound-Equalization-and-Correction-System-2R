@@ -5,9 +5,8 @@
 # own `[lints.rust]` table instead. Raising a number requires an ADR
 # (docs/adr) first (docs/adr/0002).
 [budget]
-# The isolation crate: WASAPI through wasapi-rs's safe API, cpal, and the OS
-# probes (memory, keep-awake, thread priority) through safe wrapper crates.
-# First-party unsafe stays at 0, as in Impulcifer's impulcifer-sys-win.
-secs-sys = 0
+# ADR 0011: Windows taskbar large-icon creation, assignment and replacement
+# cleanup. Other OS audio and probe paths continue through safe wrapper crates.
+secs-sys = 3
 # ADR 0008: optional CUDA/cuBLAS/cuSOLVER dynamic-loader and native-call leaf.
 secs-cuda-sys = 80
