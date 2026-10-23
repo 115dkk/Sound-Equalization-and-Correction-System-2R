@@ -1742,8 +1742,8 @@
   height: var(--control-h);
   pointer-events: none;
   background:
-    linear-gradient(-38deg, transparent calc(50% - 0.8px), var(--skin-screw-slot) calc(50% - 0.8px) calc(50% + 0.8px), transparent calc(50% + 0.8px)) 0 50% / var(--skin-screw) var(--skin-screw) no-repeat,
-    linear-gradient(71deg, transparent calc(50% - 0.8px), var(--skin-screw-slot) calc(50% - 0.8px) calc(50% + 0.8px), transparent calc(50% + 0.8px)) 100% 50% / var(--skin-screw) var(--skin-screw) no-repeat,
+    linear-gradient(var(--skin-screw-a, -38deg), transparent calc(50% - 0.8px), var(--skin-screw-slot) calc(50% - 0.8px) calc(50% + 0.8px), transparent calc(50% + 0.8px)) 0 50% / var(--skin-screw) var(--skin-screw) no-repeat,
+    linear-gradient(var(--skin-screw-b, 71deg), transparent calc(50% - 0.8px), var(--skin-screw-slot) calc(50% - 0.8px) calc(50% + 0.8px), transparent calc(50% + 0.8px)) 100% 50% / var(--skin-screw) var(--skin-screw) no-repeat,
     radial-gradient(circle at 36% 32%, var(--skin-screw-hi), var(--skin-screw-lo) 62%, var(--skin-screw-rim) 92%) 0 50% / var(--skin-screw) var(--skin-screw) no-repeat,
     radial-gradient(circle at 36% 32%, var(--skin-screw-hi), var(--skin-screw-lo) 62%, var(--skin-screw-rim) 92%) 100% 50% / var(--skin-screw) var(--skin-screw) no-repeat,
     repeating-linear-gradient(90deg, var(--skin-hole) 0 3px, transparent 3px 8px) 50% 50% / var(--skin-vent) 14px no-repeat,
@@ -1752,6 +1752,33 @@
     radial-gradient(circle closest-side, currentColor 90%, transparent 100%) 0 50% / var(--skin-screw) var(--skin-screw) no-repeat,
     radial-gradient(circle closest-side, currentColor 90%, transparent 100%) 100% 50% / var(--skin-screw) var(--skin-screw) no-repeat,
     linear-gradient(currentColor, currentColor) 50% 50% / calc(var(--skin-vent) + 2px) 16px no-repeat;
+}
+
+/* Each module was screwed down by hand: no two slots sit at the same angle,
+   and the same row keeps its angles from one look to the next. */
+[data-skin="rack"] [data-ui="export.kind.camilla_dsp"] {
+  --skin-screw-a: -38deg;
+  --skin-screw-b: 71deg;
+}
+
+[data-skin="rack"] [data-ui="export.kind.filter_text"] {
+  --skin-screw-a: 17deg;
+  --skin-screw-b: -56deg;
+}
+
+[data-skin="rack"] [data-ui="export.kind.equalizer_apo"] {
+  --skin-screw-a: 104deg;
+  --skin-screw-b: 33deg;
+}
+
+[data-skin="rack"] [data-ui="export.kind.before_after_mdat"] {
+  --skin-screw-a: 58deg;
+  --skin-screw-b: -9deg;
+}
+
+[data-skin="rack"] [data-ui="export.kind.staged_mdat"] {
+  --skin-screw-a: 88deg;
+  --skin-screw-b: 4deg;
 }
 
 /* ── Lines on the faceplate are machined, never drawn ──────────────────── */

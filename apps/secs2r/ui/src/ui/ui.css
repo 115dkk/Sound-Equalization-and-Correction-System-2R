@@ -1266,8 +1266,19 @@
   font-weight: var(--weight-semibold);
 }
 
+/* A notice with an action that clears it is as wide as its words and the
+   action, so the action closes the box with the same inset the icon opens
+   it with, and stands at the box's middle height, level with the words it
+   answers, not on the first line of a tall box or adrift in a wide one. */
+.ui-error:has(> .ui-error__action) {
+  width: fit-content;
+  max-width: 100%;
+}
+
 .ui-error__action {
   flex: none;
+  align-self: center;
+  margin-left: var(--space-2);
 }
 
 .ui-details summary {
