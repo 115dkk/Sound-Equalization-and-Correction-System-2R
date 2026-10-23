@@ -28,13 +28,29 @@ const REL: f64 = 1e-2;
 /// Absolute bound against the input's largest response: -60 dB, the floor
 /// of a float32 engine's long convolutions.
 const ABS: f64 = 1e-3;
-/// RMS of the excitation; a PCM16 output cannot show a response smaller
-/// than a few quanta at this level.
+/// RMS of the excitation before its level is fitted to the input's paths.
 const EXCITATION_RMS: f64 = 0.05;
-/// How many output quanta (relative to the excitation) the resolution floor
-/// of an integer output allows: quantising a signal only a few quanta tall
-/// is distortion concentrated in few bins, not white noise.
+/// The fitted level never exceeds this RMS: the multisine's peaks (up to
+/// about five times the RMS) stay near 0.75 of full scale in the input file.
+const EXCITATION_RMS_MAX: f64 = 0.15;
+/// The fitted level keeps every predicted output at or below this RMS, so
+/// output peaks (about five times the RMS) stay well inside full scale.
+const OUTPUT_RMS_MAX: f64 = 0.1;
+/// Bins up to this frequency carry LOW_BAND_GAIN times the amplitude of the
+/// rest. Sub buses, the LFE route and MIMO support paths live below it, and
+/// a flat multisine spread over 65535 bins left them a quantum or two tall
+/// in a PCM16 output.
+const LOW_BAND_HZ: f64 = 600.0;
+const LOW_BAND_GAIN: f64 = 16.0;
+/// How many output quanta (relative to the excitation in that bin) the
+/// resolution floor of an integer output allows: quantising a signal only a
+/// few quanta tall is distortion concentrated in few bins, not white noise.
 const QUANTA: f64 = 8.0;
+/// A faint path whose predicted output stays below this many quanta RMS
+/// cannot be read through an integer output; it is checked only for leaks (a
+/// measured output well above the prediction) and reported apart. A pair
+/// with no path at all is still compared bin by bin: any output is a leak.
+const RESOLVABLE_QUANTA: f64 = 16.0;
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
 struct TempDir(PathBuf);
@@ -280,23 +296,76 @@ fn as_written(plan: &FilterPlan) -> FilterPlan {
     result
 }
 
-fn excitation(seed_index: usize) -> Vec<f32> {
+/// One period of a random-phase multisine at `rms`, LOW_BAND_GAIN times
+/// stronger per bin up to LOW_BAND_HZ.
+fn excitation(seed_index: usize, rms: f64) -> Vec<f32> {
     let mut state = 0x6a09_e667_f3bc_c909_u64 ^ (seed_index as u64 + 1);
     let mut spectrum = vec![Complex64::new(0.0, 0.0); PERIOD / 2 + 1];
-    for value in &mut spectrum[1..PERIOD / 2] {
+    for (index, value) in spectrum.iter_mut().enumerate().take(PERIOD / 2).skip(1) {
         state ^= state >> 12;
         state ^= state << 25;
         state ^= state >> 27;
         let random = state.wrapping_mul(0x2545_f491_4f6c_dd1d);
         let phase = 2.0 * PI * (random as f64 / u64::MAX as f64);
-        *value = Complex64::from_polar(1.0, phase);
+        let frequency = index as f64 * SAMPLE_RATE as f64 / PERIOD as f64;
+        let gain = if frequency <= LOW_BAND_HZ {
+            LOW_BAND_GAIN
+        } else {
+            1.0
+        };
+        *value = Complex64::from_polar(gain, phase);
     }
     let mut samples = irfft(&spectrum, PERIOD);
-    let rms = (samples.iter().map(|value| value * value).sum::<f64>() / PERIOD as f64).sqrt();
+    let actual = (samples.iter().map(|value| value * value).sum::<f64>() / PERIOD as f64).sqrt();
     samples
         .iter_mut()
-        .map(|value| (*value * EXCITATION_RMS / rms) as f32)
+        .map(|value| (*value * rms / actual) as f32)
         .collect()
+}
+
+/// Per-bin amplitude of a period: |X_k| scaled so a sine of amplitude a reads a.
+fn bin_amplitudes(samples: &[f32]) -> Vec<f64> {
+    let samples = samples
+        .iter()
+        .map(|value| f64::from(*value))
+        .collect::<Vec<_>>();
+    rfft(&samples)
+        .iter()
+        .map(|value| 2.0 * value.norm() / PERIOD as f64)
+        .collect()
+}
+
+/// RMS of the output a response gives this excitation (Parseval over the excited bins).
+fn predicted_rms(amplitudes: &[f64], response: &[Complex64]) -> f64 {
+    (amplitudes
+        .iter()
+        .zip(response)
+        .skip(1)
+        .take(PERIOD / 2 - 1)
+        .map(|(amplitude, value)| (amplitude * value.norm()).powi(2) / 2.0)
+        .sum::<f64>())
+    .sqrt()
+}
+
+/// The excitation level for one input: as high as EXCITATION_RMS_MAX allows
+/// while the loudest predicted output stays at OUTPUT_RMS_MAX, never below
+/// EXCITATION_RMS.
+fn fitted_rms(loudest_at_base: f64) -> f64 {
+    if loudest_at_base <= 0.0 {
+        return EXCITATION_RMS_MAX;
+    }
+    (EXCITATION_RMS * OUTPUT_RMS_MAX / loudest_at_base).clamp(EXCITATION_RMS, EXCITATION_RMS_MAX)
+}
+
+/// The smallest response an integer output with step `quantum` can show in
+/// a bin the excitation drives at `amplitude`; 0 for a float output. With a
+/// flat multisine of RMS r this is QUANTA x half a step / r.
+fn resolution_floor(quantum: f64, amplitude: f64) -> f64 {
+    if quantum <= 0.0 {
+        return 0.0;
+    }
+    let flat = (2.0 / (PERIOD / 2 - 1) as f64).sqrt();
+    QUANTA * (quantum / 2.0) * flat / amplitude
 }
 
 fn write_float_wav(path: &Path, channels: usize, frames: &[f32]) {
@@ -566,27 +635,33 @@ struct ReportRow {
     reference_db: f64,
     phase_deg: f64,
     residual_samples: f64,
+    /// Predicted output RMS in dBFS at the fitted excitation.
+    predicted_dbfs: f64,
+    /// False for a faint path below RESOLVABLE_QUANTA: only the leak check applies.
+    resolved: bool,
 }
 
 fn markdown_report(engine: &str, quantum: Option<f64>, rows: &[ReportRow]) -> String {
     let output = match quantum {
         Some(q) if q > 0.0 => format!(
-            "PCM16 output: responses below {:.1} dB of the excitation are under its resolution",
-            20.0 * (QUANTA * q / 2.0 / EXCITATION_RMS).log10()
+            "PCM16 output: a path whose predicted output is under {RESOLVABLE_QUANTA} quanta RMS ({:.1} dBFS) is below its resolution and checked only for leaks",
+            20.0 * (RESOLVABLE_QUANTA * q).log10()
         ),
         Some(_) => "float output".to_owned(),
         None => "no output read".to_owned(),
     };
     let mut text = format!(
-        "# Equalizer APO playback: {engine}\n\nBound per bin: {REL} x reference + {ABS} x the input's peak + the output's resolution floor. {output}.\n\n| Case | Input | Output | Worst err/bound | Hz | Error/peak dB | Measured dB | Reference dB | Phase Δ ° | Residual delay samples |\n|---|---|---:|---:|---:|---:|---:|---:|---:|---:|\n"
+        "# Equalizer APO playback: {engine}\n\nExcitation: a random-phase multisine, {LOW_BAND_GAIN} times stronger per bin up to {LOW_BAND_HZ} Hz, its level fitted per input between RMS {EXCITATION_RMS} and {EXCITATION_RMS_MAX} so the loudest predicted output stays at RMS {OUTPUT_RMS_MAX}. Bound per bin: {REL} x reference + {ABS} x the input's peak + the output's resolution floor in that bin. {output}.\n\n| Case | Input | Output | Predicted out dBFS | Checked | Worst err/bound | Hz | Error/peak dB | Measured dB | Reference dB | Phase Δ ° | Residual delay samples |\n|---|---|---|---:|---|---:|---:|---:|---:|---:|---:|---:|\n"
     );
     for row in rows {
         text.push_str(&format!(
-            "| {} | {} | {} ({}) | {:.6} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {:.4} |\n",
+            "| {} | {} | {} ({}) | {:.1} | {} | {:.6} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3} | {:.4} |\n",
             row.case,
             row.input,
             row.output,
             row.output_number,
+            row.predicted_dbfs,
+            if row.resolved { "response" } else { "leak only" },
             row.ratio,
             row.frequency,
             row.error_db,
@@ -594,6 +669,13 @@ fn markdown_report(engine: &str, quantum: Option<f64>, rows: &[ReportRow]) -> St
             row.reference_db,
             row.phase_deg,
             row.residual_samples
+        ));
+    }
+    let unresolved = rows.iter().filter(|row| !row.resolved).count();
+    if unresolved > 0 {
+        text.push_str(&format!(
+            "\n{unresolved} of {} paths are below the output's resolution: their response is not compared, only that no more than the prediction comes out.\n",
+            rows.len()
         ));
     }
     text
@@ -665,7 +747,21 @@ fn exported_configs_play_as_designed() {
             .map(|index| index as f64 * SAMPLE_RATE as f64 / PERIOD as f64)
             .collect::<Vec<_>>();
         for (input_index, (input, input_number)) in inputs.iter().enumerate() {
-            let excitation = excitation(input_index);
+            let expected = plan_responses(&reference_plan, &frequencies, input, false).unwrap();
+            // Fit the level: the loudest predicted output at the base level.
+            let base = bin_amplitudes(&excitation(input_index, EXCITATION_RMS));
+            let loudest = expected
+                .iter()
+                .map(|(_, response)| {
+                    let scaled = response
+                        .iter()
+                        .map(|value| value * preamp)
+                        .collect::<Vec<_>>();
+                    predicted_rms(&base, &scaled)
+                })
+                .fold(0.0_f64, f64::max);
+            let excitation = excitation(input_index, fitted_rms(loudest));
+            let amplitudes = bin_amplitudes(&excitation);
             let mut input_samples = vec![0.0_f32; 2 * PERIOD * channels];
             for frame in 0..2 * PERIOD {
                 input_samples[frame * channels + input_number - 1] = excitation[frame % PERIOD];
@@ -733,16 +829,12 @@ fn exported_configs_play_as_designed() {
                 failures.push(format!("{} / {input}: {problem}", case.name));
                 continue;
             }
-            let expected = plan_responses(&reference_plan, &frequencies, input, false).unwrap();
             let peak = expected
                 .iter()
                 .flat_map(|(_, response)| response.iter())
                 .map(|value| value.norm() * preamp)
                 .fold(0.0_f64, f64::max);
             assert!(peak > 0.0, "{} / {input}: zero reference", case.name);
-            // The smallest response an integer output can show at this
-            // excitation; 0 for a float output.
-            let floor = QUANTA * (wav.quantum / 2.0) / EXCITATION_RMS;
             quantum = Some(wav.quantum);
             for (output_role, output_number) in &outputs {
                 let output_samples = output_channel(&wav, output_number - 1, PERIOD, PERIOD);
@@ -756,6 +848,8 @@ fn exported_configs_play_as_designed() {
                     .into_iter()
                     .map(|value| value * preamp)
                     .collect::<Vec<_>>();
+                let predicted = predicted_rms(&amplitudes, &reference);
+                let resolved = predicted == 0.0 || predicted >= RESOLVABLE_QUANTA * wav.quantum;
                 let mut worst = (0.0_f64, 0_usize, 0.0_f64);
                 for (index, (got, expected)) in measured.iter().zip(&reference).enumerate() {
                     let frequency = frequencies[index];
@@ -763,6 +857,7 @@ fn exported_configs_play_as_designed() {
                         continue;
                     }
                     let error = (*got - *expected).norm();
+                    let floor = resolution_floor(wav.quantum, amplitudes[index]);
                     let bound = REL * expected.norm() + ABS * peak + floor;
                     let ratio = error / bound;
                     if ratio > worst.0 {
@@ -782,8 +877,29 @@ fn exported_configs_play_as_designed() {
                     reference_db: db(reference[index].norm()),
                     phase_deg: phase_error(measured[index], reference[index]),
                     residual_samples: residual_delay(&measured, &reference, peak),
+                    predicted_dbfs: db(predicted),
+                    resolved,
                 };
-                if row.ratio > 1.0 {
+                // Below the resolution only a leak can be seen: an output well
+                // above what the export predicts for this path.
+                let measured_rms = (output_samples
+                    .iter()
+                    .map(|value| value * value)
+                    .sum::<f64>()
+                    / output_samples.len() as f64)
+                    .sqrt();
+                let leak_limit = (4.0 * predicted).max(RESOLVABLE_QUANTA * wav.quantum);
+                if !resolved && measured_rms > leak_limit {
+                    failures.push(format!(
+                        "{} / {} -> {} ({}): output RMS {:.1} dBFS where the export predicts {:.1} dBFS",
+                        row.case,
+                        row.input,
+                        row.output,
+                        row.output_number,
+                        db(measured_rms),
+                        row.predicted_dbfs
+                    ));
+                } else if resolved && row.ratio > 1.0 {
                     failures.push(format!(
                         "{} / {} -> {} ({}): err/bound {:.6} at {:.3} Hz",
                         row.case,
@@ -971,7 +1087,7 @@ fn circular_output(input: &[f32], fir: &[f64], delay: usize) -> Vec<f64> {
 
 #[test]
 fn response_estimator_recovers_fir_delay_and_pcm16_stays_in_bounds() {
-    let input = excitation(19);
+    let input = excitation(19, EXCITATION_RMS);
     let fir = [0.72, 0.08, -0.03, 0.01];
     let delay = 37;
     let output = circular_output(&input, &fir, delay);
@@ -1007,4 +1123,36 @@ fn response_estimator_recovers_fir_delay_and_pcm16_stays_in_bounds() {
             );
         }
     }
+}
+
+#[test]
+fn excitation_favours_the_low_band_and_its_level_follows_the_paths() {
+    let samples = excitation(3, 0.1);
+    let rms = (samples
+        .iter()
+        .map(|value| f64::from(*value).powi(2))
+        .sum::<f64>()
+        / PERIOD as f64)
+        .sqrt();
+    assert!((rms - 0.1).abs() < 1e-6, "{rms}");
+    let amplitudes = bin_amplitudes(&samples);
+    let bin = |hz: f64| (hz * PERIOD as f64 / SAMPLE_RATE as f64).round() as usize;
+    let ratio = amplitudes[bin(100.0)] / amplitudes[bin(5_000.0)];
+    assert!((ratio - LOW_BAND_GAIN).abs() < 1e-3, "{ratio}");
+    // A unity response predicts the input's own RMS.
+    let unity = vec![Complex64::new(1.0, 0.0); amplitudes.len()];
+    assert!((predicted_rms(&amplitudes, &unity) - 0.1).abs() < 1e-6);
+    // The floor of a flat multisine is QUANTA half steps over its RMS, and
+    // a float output has none.
+    let flat = EXCITATION_RMS * (2.0 / (PERIOD / 2 - 1) as f64).sqrt();
+    let quantum = 1.0 / 32_768.0;
+    assert!(
+        (resolution_floor(quantum, flat) - QUANTA * quantum / 2.0 / EXCITATION_RMS).abs() < 1e-12
+    );
+    assert_eq!(resolution_floor(0.0, flat), 0.0);
+    // Quiet paths raise the level up to the cap; loud ones keep the base.
+    assert_eq!(fitted_rms(0.0), EXCITATION_RMS_MAX);
+    assert_eq!(fitted_rms(1e-6), EXCITATION_RMS_MAX);
+    assert_eq!(fitted_rms(0.5), EXCITATION_RMS);
+    assert!((fitted_rms(0.05) - 0.1).abs() < 1e-12);
 }
