@@ -25,6 +25,7 @@
 //! FFT APIs retain their documented panic contract. TRF parity is partial;
 //! see `tests/golden.rs` and the feature registry before using it in an engine.
 
+pub mod convolution;
 pub mod fft;
 pub use fft::Complex64;
 pub mod fir;
@@ -32,6 +33,7 @@ pub mod grid;
 pub mod iir;
 pub mod lowrate;
 pub mod minphase;
+pub mod multirate;
 mod numeric;
 pub use numeric::divide as complex_div;
 pub use numeric::interp;

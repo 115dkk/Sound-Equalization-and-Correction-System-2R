@@ -4,17 +4,21 @@
 //!
 //! Port of SciPy 1.18.1 optimize/_lsq/{trf,common}.py and _numdiff.py,
 //! Copyright SciPy Developers, BSD-3-Clause (see docs/THIRD_PARTY.md).
-//! The dense solver supports x_scale=1; the normal-equation solver also supports
-//! x_scale='jac'. Both require linear loss and at least one finite bound.
+//! The dense exact-SVD solver supports x_scale=1; the normal-equation and opt-in
+//! matrix-free solvers also support x_scale='jac'. All require linear loss and
+//! at least one finite bound. The operator solver uses truncated CG for its
+//! subproblem and intentionally does not promise the exact solver's trajectory.
 //! Default ftol=xtol=gtol=1e-8; custom/disabled tolerances are explicit options. Jacobian evaluations
 //! are deliberately excluded from nfev, as in scipy.optimize.least_squares.
 mod de;
 mod normal;
+mod operator;
 pub use de::{DifferentialEvolutionOptions, DifferentialEvolutionResult, differential_evolution};
 pub use normal::{
     NormalEquations, NormalOptions, NormalTrace, NormalTrial, XScale, least_squares_normal,
     least_squares_normal_with_trace, trf_normal_one_step,
 };
+pub use operator::{JacobianOperator, OperatorOptions, least_squares_operator};
 
 use crate::DspError;
 use faer::Mat;

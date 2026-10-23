@@ -22,6 +22,7 @@ secs-project = { path = "../secs-project" }
 secs-audio = { path = "../secs-audio" }
 getrandom = "0.3"
 secs-rew = { path = "../secs-rew" }
+secs-dsp.workspace = true
 secs-types.workspace = true
 serde.workspace = true
 serde_json.workspace = true

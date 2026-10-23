@@ -27,22 +27,58 @@ pub struct BaRow {
 /// or a subset of it). Each factor is a complex multiplication in NumPy's
 /// order and formula (a real factor is the complex `(x, 0)`).
 pub fn term(h: &[C], f: &[f64], row: &BaRow) -> Vec<C> {
-    let gain = C::new(10f64.powf(row.gain_db / 20.0), 0.0);
-    let polarity = C::new(f64::from(row.polarity), 0.0);
-    let mut out: Vec<C> = h
-        .iter()
-        .zip(f)
-        .map(|(&h, &f)| {
-            let delay = C::from_polar(1.0, ramp_phase(f, row.delay_ms) * 0.001);
-            h * gain * polarity * delay
-        })
-        .collect();
-    for &(f0, q) in &row.allpass {
-        for (v, a) in out.iter_mut().zip(allpass2(f, f0, q)) {
-            *v *= a;
+    PreparedBaTerm::new(f, row).apply(h)
+}
+
+/// Candidate-dependent factors shared by all measurement positions. Keep the
+/// factors separate: pre-multiplying them would change the floating-point order.
+pub(crate) struct PreparedBaTerm {
+    gain: C,
+    polarity: C,
+    delay: Vec<C>,
+    allpass: Vec<Vec<C>>,
+}
+
+impl PreparedBaTerm {
+    pub(crate) fn new(f: &[f64], row: &BaRow) -> Self {
+        Self {
+            gain: C::new(10f64.powf(row.gain_db / 20.0), 0.0),
+            polarity: C::new(f64::from(row.polarity), 0.0),
+            delay: f
+                .iter()
+                .map(|&f| C::from_polar(1.0, ramp_phase(f, row.delay_ms) * 0.001))
+                .collect(),
+            allpass: row
+                .allpass
+                .iter()
+                .map(|&(f0, q)| allpass2(f, f0, q))
+                .collect(),
         }
     }
-    out
+
+    fn apply(&self, h: &[C]) -> Vec<C> {
+        let mut out: Vec<_> = h
+            .iter()
+            .zip(&self.delay)
+            .map(|(&h, &delay)| h * self.gain * self.polarity * delay)
+            .collect();
+        for factor in &self.allpass {
+            for (v, &a) in out.iter_mut().zip(factor) {
+                *v *= a;
+            }
+        }
+        out
+    }
+}
+
+pub(crate) fn sub_sum_prepared(hs: &[Vec<C>], terms: &[PreparedBaTerm], bins: usize) -> Vec<C> {
+    let mut sum = vec![C::new(0.0, 0.0); bins];
+    for (h, term) in hs.iter().zip(terms) {
+        for (s, t) in sum.iter_mut().zip(term.apply(h)) {
+            *s += t;
+        }
+    }
+    sum
 }
 
 /// `_sub_sum` at one position: the sum of the subs' terms in sub order,

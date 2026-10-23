@@ -90,7 +90,8 @@ pub use fit::{FitRequest, Fitter};
 pub use input::{EngineConfig, Measurement, MeasurementSet, Samples, Tuning};
 pub use measurement::{Spectra, long_spectra};
 pub use mimo::{
-    IirSupport, MimoDesign, MimoIir, MimoKey, MimoRequest, MimoRun, design_mimo, design_mimo_iir,
+    IirSolveOptions, IirSolver, IirSupport, MimoDesign, MimoIir, MimoKey, MimoRequest, MimoRun,
+    design_mimo, design_mimo_iir, design_mimo_iir_with_options,
 };
 pub use normalize::normalize_measurements;
 pub use notes::{MimoNote, Note};

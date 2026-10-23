@@ -94,6 +94,89 @@ upstream = "mimo.design_mimo, mimo_iir.design_mimo_iir, calibration.compute_mimo
 tests = ["secs-engine::mimo_input_selection_preserves_all_input_result", "secs-engine::mimo_stage_boundary_goldens", "secs-engine::mimo_whole_path_goldens", "secs-engine::mimo_iir_whole_path_within_spread_and_deterministic", "secs-engine::mimo_ridge_sweep_recorded_systems_and_trajectories", "secs-engine::mimo_ridge_sweep_falls_back", "secs-engine::mimo_deterministic_threads", "secs-engine::mimo_shared_preparation_bit_identical", "secs-engine::mimo_compute_shared_preparation_bit_identical", "secs-engine::mimo_shared_paths_reject_combined_budget"]
 note = "docs/perf/mimo.md (P18, P18b, P18c): on the big case the default MIMO run is 11x (one thread) and over 64x (shipped) faster than SECS 2, with peak PSS 0.79 GB against at least 1.86 GB. The ideal FIR design step alone and FIR mode with one thread stay below 5x (docs/MIMO.md section 6). Timing is not a CI gate; the tests prove the speed-ups kept the results."
 
+# Resource optimizations (ADR 0012): reuse that keeps results bit-identical,
+# shared output filters, compact MIMO FIR storage and opt-in playback/solvers.
+[[feature]]
+id = "perf.resource_reuse"
+kind = "perf"
+milestone = "M6"
+status = "implemented"
+upstream = "correction_engine.py, mimo.py, mimo_iir.py; shared preparation"
+tests = [
+  "secs-engine::rc_phase_candidates_share_preparation",
+  "secs-engine::xo_partial_metrics_match_full",
+  "secs-dsp::selected_complex_smoothing_preserves_prefix_bits_and_all_grid_errors",
+  "secs-engine::mimo_bounded_block_batches_preserve_bits",
+  "secs-engine::mimo_scalar_ranking_preserves_near_ties_and_direct_scores",
+  "secs-engine::mimo_guard_baselines_and_applied_response_preserve_bits",
+]
+note = "ADR 0012: XO candidate metrics, RC phase-candidate preparation, BA candidate factors, GD peaks, MIMO guard baselines and Gram blocks are computed once. All 10 golden rooms design bit-identically to the previous release; D11 and analytic derivatives were measured and left out (docs/perf/resource-optimizations.md)."
+
+[[feature]]
+id = "engine.mimo_iir_operator"
+kind = "engine"
+milestone = "M6"
+status = "implemented"
+upstream = "new; optional operator form of the existing joint IIR residual"
+tests = [
+  "secs-dsp::operator_matches_dense_bounded_solution",
+  "secs-dsp::operator_handles_rank_deficiency_and_invalid_options",
+  "secs-engine::real_inverse_adjoint_handles_dc_nyquist_and_truncation",
+  "secs-engine::iir_matrix_free_solve_is_reachable_and_reduces_the_same_objective",
+  "secs-engine::iir_operator_error_preserves_dense_fallback",
+  "secs-engine::iir_operator_matches_derivatives_normal_equations_and_adjoint",
+  "secs-engine::iir_level_derivative_respects_the_additive_energy_floor",
+]
+note = "Explicit IirSolveOptions API; Dense remains default. Jv/Jt-v with bounded reflective TRF and truncated CG; dense fallback reserves its own memory budget. No app/IPC enablement and no change to FIR ridge sweep."
+
+[[feature]]
+id = "perf.compact_mimo_fir"
+kind = "perf"
+milestone = "M6"
+status = "implemented"
+upstream = "mimo.fir_response, export_camilladsp.fir_to_48k, calibration cache"
+tests = [
+  "secs-dsp::lowrate_small_fft_matches_dtft_and_edge_ramp",
+  "secs-dsp::lowrate_nonstandard_grids_keep_direct_accumulation",
+  "secs-dsp::lowrate_materialization_preserves_inverse_and_crop",
+  "secs-camilla::compact_fir_exports_the_compatible_full_rate_waveform",
+  "secs-service::compact_fir_cache_round_trips_bits_and_pins_materialization",
+  "secs-service::version_four_expanded_fir_cache_remains_readable",
+  "secs-service::legacy_layouts_reject_low_rate_firs",
+]
+note = "Small FFT on matching integer-ratio grids, direct fallback otherwise; retain low-rate f64 taps and materialize compatible 48 kHz exports lazily. Cache v5 pins materializer 1 and reads legacy expanded FIRs."
+
+[[feature]]
+id = "export.shared_linear_filters"
+kind = "export"
+milestone = "M6"
+status = "implemented"
+upstream = "export_camilladsp.py and export_filters.py routing"
+tests = [
+  "secs-camilla::factored_graph_preserves_every_input_to_output_transfer_and_integer_delay",
+  "secs-filters::apo_factoring_preserves_rendered_transfer_and_gain_rounding",
+  "secs-filters::prepared_sub_responses_leave_headroom_bits_unchanged",
+]
+note = "Shared bus/output filters keep every input-to-output transfer function and the original total-delay rounding (F13). The oracle goldens now compare the transfer of the oracle's own configuration with the new one; CamillaDSP 4.1.3 rendering of 16 oracle cases matched within 1.8e-14 of peak, and eqapo-playback runs both Equalizer APO engines in CI."
+
+[[feature]]
+id = "dsp.matrix_fir_playback"
+kind = "dsp"
+milestone = "M6"
+status = "implemented"
+upstream = "new; streaming/offline reference FIR consumer"
+tests = [
+  "secs-dsp::shared_matrix_partitions_match_direct_across_blocks_and_reset",
+  "secs-dsp::convolution_rejects_invalid_data_without_consuming_a_block",
+  "secs-dsp::polyphase_stream_matches_explicit_filter_downsample_upsample_filter",
+  "secs-dsp::default_rate_converter_preserves_dc_rejects_aliases_and_reports_delay",
+  "secs-dsp::invalid_multirate_dimensions_and_prototypes_are_rejected",
+  "secs-filters::playback_groups_match_per_path_reference_and_reset",
+  "secs-filters::playback_keeps_half_sample_writer_rounding_and_rejects_blocks_before_advancing",
+  "secs-filters::playback_lowrate_materialization_and_base_alignment_are_explicit",
+]
+note = "Shared partitioned FFTs and optional shared polyphase converters. MimoFirPlayback plus render_mimo PCM example consume real chain values. Multirate is explicitly experimental and has a different response/extra latency; it is not a CamillaDSP feature."
+
 # ---- Policy (M0) ----
 
 [[feature]]

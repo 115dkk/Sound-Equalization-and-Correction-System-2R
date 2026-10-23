@@ -6,7 +6,7 @@ use crate::{
 };
 use secs_dsp::{
     fft, interp,
-    response::gd_curve,
+    response::gd_curve_with_peak,
     smooth::{Fraction, smooth_complex, smooth_power},
 };
 use std::f64::consts::PI;
@@ -89,21 +89,7 @@ fn band(x: &[f64], y: &[f64], lo: f64, hi: f64) -> Vec<f64> {
 /// two; `f` is the linear real-FFT frequency grid with a positive Nyquist.
 pub fn metrics(h: &[C], f: &[f64], target_db: &[f64], norm: (f64, f64)) -> Metrics {
     assert!(h.len() >= 2 && h.len() == f.len() && f.len() == target_db.len());
-    let power: Vec<_> = h
-        .iter()
-        .map(|h| {
-            let a = h.re.hypot(h.im);
-            a * a
-        })
-        .collect();
-    let db: Vec<_> = smooth_power(f, &power, Fraction::Scalar(6.0))
-        .unwrap()
-        .iter()
-        .zip(target_db)
-        .map(|(p, t)| 10.0 * (p + 1e-30).log10() - t)
-        .collect();
-    let level = median(&band(f, &db, norm.0, norm.1));
-    let dev: Vec<_> = db.iter().map(|d| d - level).collect();
+    let (level, dev) = amplitude_deviation(h, f, target_db, norm);
     let mut percentages = Vec::new();
     for (lo, hi) in [(20.0, 200.0), (200.0, 2000.0), (2000.0, 16000.0)] {
         let values = band(f, &dev, lo, hi);
@@ -118,42 +104,13 @@ pub fn metrics(h: &[C], f: &[f64], target_db: &[f64], norm: (f64, f64)) -> Metri
     let ir = fft::irfft(h, 2 * (h.len() - 1));
     let peak = first_max(&ir.iter().map(|v| v.abs()).collect::<Vec<_>>());
     let fs = 2.0 * f[f.len() - 1];
-    let t = peak as f64 / fs;
-    let shifted: Vec<_> = h
-        .iter()
-        .zip(f)
-        .map(|(h, f)| h * C::from_polar(1.0, 0.0 + (2.0 * PI * f) * t))
-        .collect();
-    let hs = smooth_complex(f, &shifted, Fraction::Scalar(6.0)).unwrap();
-    let re: Vec<_> = hs.iter().map(|h| h.re).collect();
-    let im: Vec<_> = hs.iter().map(|h| h.im).collect();
-    let g = geomspace(20.0, 20000.0, 2000);
-    let mut phase: Vec<_> = g
-        .iter()
-        .map(|g| {
-            (C::new(interp(*g, f, &re), 0.0) + C::new(0.0, 1.0) * C::new(interp(*g, f, &im), 0.0))
-                .arg()
-        })
-        .collect();
-    unwrap(&mut phase);
-    let slope = fit_slope(
-        &band(&g, &g, 1000.0, 10000.0),
-        &band(&g, &phase, 1000.0, 10000.0),
-    );
-    for (p, g) in phase.iter_mut().zip(&g) {
-        *p -= slope * g;
-    }
-    let turns = (phase.iter().copied().fold(f64::NEG_INFINITY, f64::max)
-        - phase.iter().copied().fold(f64::INFINITY, f64::min))
-        / (2.0 * PI);
-    let x: Vec<_> = g.iter().map(|g| 2.0 * PI * g).collect();
-    let gd: Vec<_> = gradient(&phase, &x).iter().map(|v| -v * 1000.0).collect();
+    let (g, gd, turns) = phase_metrics(h, f, peak, fs);
     let span = |lo, hi| {
         let v = band(&g, &gd, lo, hi);
         percentile(&v, 90.0) - percentile(&v, 10.0)
     };
     let g24 = geomspace(20.0, 500.0, 1500);
-    let gd24 = gd_curve(h, f, &g24, Fraction::Scalar(24.0)).unwrap();
+    let gd24 = gd_curve_with_peak(h, f, &g24, Fraction::Scalar(24.0), peak).unwrap();
     let k24 = first_max(&gd24);
     let gd24_abs = gd24[k24];
     let center = median(&gd24);
@@ -187,5 +144,97 @@ pub fn metrics(h: &[C], f: &[f64], target_db: &[f64], norm: (f64, f64)) -> Metri
         gd24_span: percentile(&centered, 95.0) - percentile(&centered, 5.0),
         gd_30: span(30.0, 100.0),
         pre_db: 10.0 * (pre / (main + 1e-30) + 1e-30).log10(),
+    }
+}
+
+// Shared arithmetic with the full scorecard; selected metrics do not compute
+// unrelated transforms, plots, GD24, or pre-ringing windows.
+fn amplitude_deviation(h: &[C], f: &[f64], target_db: &[f64], norm: (f64, f64)) -> (f64, Vec<f64>) {
+    let power: Vec<_> = h
+        .iter()
+        .map(|h| {
+            let a = h.re.hypot(h.im);
+            a * a
+        })
+        .collect();
+    let db: Vec<_> = smooth_power(f, &power, Fraction::Scalar(6.0))
+        .unwrap()
+        .iter()
+        .zip(target_db)
+        .map(|(p, t)| 10.0 * (p + 1e-30).log10() - t)
+        .collect();
+    let level = median(&band(f, &db, norm.0, norm.1));
+    let dev: Vec<f64> = db.iter().map(|d| d - level).collect();
+    (level, dev)
+}
+
+fn phase_metrics(h: &[C], f: &[f64], peak: usize, fs: f64) -> (Vec<f64>, Vec<f64>, f64) {
+    let t = peak as f64 / fs;
+    let shifted: Vec<_> = h
+        .iter()
+        .zip(f)
+        .map(|(h, f)| h * C::from_polar(1.0, 0.0 + (2.0 * PI * f) * t))
+        .collect();
+    let hs = smooth_complex(f, &shifted, Fraction::Scalar(6.0)).unwrap();
+    let re: Vec<_> = hs.iter().map(|h| h.re).collect();
+    let im: Vec<_> = hs.iter().map(|h| h.im).collect();
+    let g = geomspace(20.0, 20000.0, 2000);
+    let mut phase: Vec<_> = g
+        .iter()
+        .map(|g| {
+            (C::new(interp(*g, f, &re), 0.0) + C::new(0.0, 1.0) * C::new(interp(*g, f, &im), 0.0))
+                .arg()
+        })
+        .collect();
+    unwrap(&mut phase);
+    let slope = fit_slope(
+        &band(&g, &g, 1000.0, 10000.0),
+        &band(&g, &phase, 1000.0, 10000.0),
+    );
+    for (p, g) in phase.iter_mut().zip(&g) {
+        *p -= slope * g;
+    }
+    let turns = (phase.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+        - phase.iter().copied().fold(f64::INFINITY, f64::min))
+        / (2.0 * PI);
+    let x: Vec<_> = g.iter().map(|g| 2.0 * PI * g).collect();
+    let gd: Vec<_> = gradient(&phase, &x).iter().map(|v| -v * 1000.0).collect();
+    (g, gd, turns)
+}
+
+pub(crate) fn flatness_20(h: &[C], f: &[f64], target_db: &[f64], norm: (f64, f64)) -> f64 {
+    assert!(h.len() >= 2 && h.len() == f.len() && f.len() == target_db.len());
+    let (_, dev) = amplitude_deviation(h, f, target_db, norm);
+    let values = band(f, &dev, 20.0, 200.0);
+    100.0 * (values.iter().filter(|v| v.abs() <= 1.0).count() as f64 / values.len() as f64)
+}
+
+pub(crate) fn gd_span_20(h: &[C], f: &[f64]) -> f64 {
+    assert!(h.len() >= 2 && h.len() == f.len());
+    let ir = fft::irfft(h, 2 * (h.len() - 1));
+    let peak = first_max(&ir.iter().map(|v| v.abs()).collect::<Vec<_>>());
+    let (g, gd, _) = phase_metrics(h, f, peak, 2.0 * f[f.len() - 1]);
+    let v = band(&g, &gd, 20.0, 100.0);
+    percentile(&v, 90.0) - percentile(&v, 10.0)
+}
+
+#[cfg(test)]
+mod resource_tests {
+    use super::*;
+
+    #[test]
+    fn xo_partial_metrics_match_full() {
+        let f = crate::grid::design_freqs();
+        let h = secs_dsp::response::peq_response(f, &[(67.0, 2.1, -5.0), (123.0, 0.9, 3.0)]);
+        let target: Vec<f64> = f
+            .iter()
+            .map(|f| -0.1 * (f.max(1.0) / 20.0).log2())
+            .collect();
+        let all = metrics(&h, f, &target, (100.0, 400.0));
+        assert_eq!(
+            flatness_20(&h, f, &target, (100.0, 400.0)).to_bits(),
+            all.in1_20.to_bits()
+        );
+        assert_eq!(gd_span_20(&h, f).to_bits(), all.gd_20.to_bits());
     }
 }

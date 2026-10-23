@@ -193,6 +193,28 @@ pub(crate) fn design_prepared(
     prepared: &measurement::Prepared,
     observed: &(dyn Fn(&str, std::time::Duration) + Sync),
 ) -> Result<Design, EngineError> {
+    design_prepared_scored(req, ctx, fitters, prepared, observed, true)
+}
+
+/// Candidate-only design: the recommendation consumes the chain and spectra,
+/// not the final report plots. A normal design always includes those reports.
+pub(crate) fn design_prepared_for_xo(
+    req: &DesignRequest<'_>,
+    ctx: &Context,
+    fitters: &FitterFactory<'_>,
+    prepared: &measurement::Prepared,
+) -> Result<Design, EngineError> {
+    design_prepared_scored(req, ctx, fitters, prepared, &|_, _| {}, false)
+}
+
+fn design_prepared_scored(
+    req: &DesignRequest<'_>,
+    ctx: &Context,
+    fitters: &FitterFactory<'_>,
+    prepared: &measurement::Prepared,
+    observed: &(dyn Fn(&str, std::time::Duration) + Sync),
+    include_scores: bool,
+) -> Result<Design, EngineError> {
     check(ctx)?;
     let config = req.config;
     let mut setup = Setup::new(config);
@@ -585,11 +607,19 @@ pub(crate) fn design_prepared(
         .target
         .sample(&f.iter().map(|f| f.max(1.0)).collect::<Vec<_>>());
     let target_db: Arc<[f64]> = target.iter().map(|v| v + ref_level).collect();
-    let spl_grid = geomspace(5.0, 20000.0, 1390);
-    let gd_grid = geomspace(5.0, 5000.0, 1070);
+    let spl_grid = if include_scores {
+        geomspace(5.0, 20000.0, 1390)
+    } else {
+        Vec::new()
+    };
+    let gd_grid = if include_scores {
+        geomspace(5.0, 5000.0, 1070)
+    } else {
+        Vec::new()
+    };
     let scores_started = std::time::Instant::now();
-    let scores = ctx
-        .try_map(mains.iter().collect(), |main| {
+    let scores = if include_scores {
+        ctx.try_map(mains.iter().collect(), |main| {
             check(ctx)?;
             Ok(RoleScores {
                 role: main.role.clone(),
@@ -604,7 +634,10 @@ pub(crate) fn design_prepared(
         .map_err(|e| match e {
             MapError::Cancelled => EngineError::Cancelled,
             MapError::Item { error, .. } => error,
-        })?;
+        })?
+    } else {
+        Vec::new()
+    };
     observed("scores", scores_started.elapsed());
     #[cfg(test)]
     timings.push(("scores".into(), scores_started.elapsed()));

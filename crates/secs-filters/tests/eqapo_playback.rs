@@ -247,6 +247,23 @@ fn as_written(plan: &FilterPlan) -> FilterPlan {
                     taps.iter_mut()
                         .for_each(|tap| *tap = f64::from(*tap as f32));
                 }
+                // The writer expands a low-rate FIR to 48 kHz, then stores f32 WAV samples.
+                Op::FirLowRate {
+                    name,
+                    taps_low,
+                    fs_low,
+                    fixed,
+                } => {
+                    let taps = secs_dsp::fir::lowrate_to_48k(taps_low, *fs_low)
+                        .into_iter()
+                        .map(|tap| f64::from(tap as f32))
+                        .collect();
+                    *op = Op::Fir {
+                        name: std::mem::take(name),
+                        taps,
+                        fixed: *fixed,
+                    };
+                }
                 Op::Gain { db, .. } => {
                     *db = if db.abs() < 0.005 {
                         0.0
@@ -1051,6 +1068,7 @@ fn as_written_rounds_equalizer_apo_values() {
             }
             Op::Delay { ms, .. } => assert_eq!(*ms * 48.0, (*ms * 48.0).round()),
             Op::Fir { taps, .. } => assert!(taps.iter().all(|tap| *tap == f64::from(*tap as f32))),
+            Op::FirLowRate { .. } => panic!("as_written expands low-rate FIRs"),
             Op::Gain { db, .. } => assert!(*db == 0.0 || *db == rounded(*db, 2)),
             Op::Hp { frequency, .. } | Op::Lp { frequency, .. } => {
                 assert_eq!(*frequency, rounded(*frequency, 2));

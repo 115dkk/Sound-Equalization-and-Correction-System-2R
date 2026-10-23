@@ -14,7 +14,7 @@ use crate::{
     calibration::{engine_inputs, resolve_xo},
     chain::stage_responses,
     decay::late_db_20_150,
-    design::{design_prepared, production_fitters},
+    design::{design_prepared_for_xo, production_fitters},
     grid::design_freqs,
     levels, measurement, scorecard,
     setup::Setup,
@@ -152,19 +152,25 @@ fn xo_scores_prepared(
                 .filter(|r| design.mains.iter().any(|m| &m.role == *r))
             {
                 let (mut total, mut weight) = (0.0, 0.0);
+                let mut reference_gd = None;
                 for (&position, &w) in short.positions().iter().zip(&weights) {
                     if short.get(position, role).is_none() {
                         continue;
                     }
                     let h = stage_responses(design, role, &short, position)
                         .expect("complete measurement position");
-                    total += w * scorecard::metrics(&h.output, f, &target, (100.0, 400.0)).in1_20;
+                    total += w * scorecard::flatness_20(&h.output, f, &target, (100.0, 400.0));
+                    if position == config.main_position {
+                        reference_gd = Some(scorecard::gd_span_20(&h.output, f));
+                    }
                     weight += w;
                 }
                 flat.push(total / weight);
-                let h = stage_responses(design, role, &short, config.main_position)
-                    .expect("reference main");
-                gd.push(scorecard::metrics(&h.output, f, &target, (100.0, 400.0)).gd_20);
+                gd.push(reference_gd.unwrap_or_else(|| {
+                    let h = stage_responses(design, role, &short, config.main_position)
+                        .expect("reference main");
+                    scorecard::gd_span_20(&h.output, f)
+                }));
                 let h = stage_responses(design, role, &long, config.main_position)
                     .expect("reference main");
                 late.push(late_db_20_150(&h.output));
@@ -263,7 +269,7 @@ pub fn recommend_xo(
                 Arc::new(NoProgress),
                 ctx.cancel().clone(),
             );
-            let result = design_prepared(
+            let result = design_prepared_for_xo(
                 &DesignRequest {
                     measurements: &inputs.measurements,
                     config: &config,
@@ -274,7 +280,6 @@ pub fn recommend_xo(
                 &inner,
                 &*production_fitters(inner.cancel()),
                 prepared,
-                &|_, _| {},
             )?;
             // Only the unfiltered windows are shared. The final multiplication
             // by BA-derived sub filters still happens per candidate, in order.
@@ -452,7 +457,9 @@ mod perf_tests {
             };
             let fitters = production_fitters(ctx.cancel());
             let own = crate::design::design(&req, &ctx, &*fitters).unwrap();
-            let shared = design_prepared(&req, &ctx, &*fitters, &prepared, &|_, _| {}).unwrap();
+            let shared =
+                crate::design::design_prepared(&req, &ctx, &*fitters, &prepared, &|_, _| {})
+                    .unwrap();
             assert_eq!(
                 serde_json::to_vec(&own.chain).unwrap(),
                 serde_json::to_vec(&shared.chain).unwrap()

@@ -4,7 +4,7 @@
 use secs_dsp::{
     fft,
     fir::firwin,
-    iir::{BType, butter, sosfilt},
+    iir::{BType, Sos, butter, sosfilt},
     interp, pairwise_sum,
     response::hp2,
     smooth::{Fraction, smooth_power},
@@ -294,10 +294,8 @@ fn block_pairs(candidates: usize) -> Vec<(usize, usize)> {
 
 /// Place the upper-triangle blocks; AᵀA is symmetric, and the opposite
 /// triangle reuses the same value instead of a second accumulation.
-fn place(blocks: Vec<PairBlock>, candidates: usize, taps: usize) -> (Vec<f64>, Vec<f64>) {
-    let dim = candidates * taps;
-    let mut ata = vec![0.0; dim * dim];
-    let mut atb = vec![0.0; dim];
+fn place(blocks: Vec<PairBlock>, ata: &mut [f64], atb: &mut [f64], taps: usize) {
+    let dim = atb.len();
     for ((j, jj), (block, rhs)) in blocks {
         if j == jj {
             atb[j * taps..(j + 1) * taps].copy_from_slice(&rhs);
@@ -312,7 +310,6 @@ fn place(blocks: Vec<PairBlock>, candidates: usize, taps: usize) -> (Vec<f64>, V
             }
         }
     }
-    (ata, atb)
 }
 
 /// Weighted normal equations, position-major paths, row-major output.
@@ -324,11 +321,13 @@ pub(crate) fn normal_equations(
     early_weight: f64,
 ) -> (Vec<f64>, Vec<f64>) {
     let candidates = paths[0].len();
-    let blocks = block_pairs(candidates)
-        .into_iter()
-        .map(|pair| (pair, block_pair(xs, paths, pair, taps, early_weight)))
-        .collect();
-    place(blocks, candidates, taps)
+    let dim = candidates * taps;
+    let (mut ata, mut atb) = (vec![0.0; dim * dim], vec![0.0; dim]);
+    for pair in block_pairs(candidates) {
+        let block = block_pair(xs, paths, pair, taps, early_weight);
+        place(vec![(pair, block)], &mut ata, &mut atb, taps);
+    }
+    (ata, atb)
 }
 
 /// [`normal_equations`] with the block pairs as a map over `ctx`. Each block
@@ -341,15 +340,25 @@ pub(crate) fn normal_equations_mapped(
     early_weight: f64,
     ctx: &Context,
 ) -> Result<(Vec<f64>, Vec<f64>), EngineError> {
+    check(ctx)?;
     let candidates = paths[0].len();
-    let blocks = ctx
-        .map(block_pairs(candidates), |pair| {
-            (pair, block_pair(xs, paths, pair, taps, early_weight))
-        })
-        .map_err(|_| EngineError::Cancelled)?;
-    Ok(place(blocks, candidates, taps))
+    let dim = candidates * taps;
+    let (mut ata, mut atb) = (vec![0.0; dim * dim], vec![0.0; dim]);
+    // Retain at most eight completed blocks alongside AᵀA. Each block keeps
+    // its original position/time sums; placement only copies disjoint entries.
+    for pairs in block_pairs(candidates).chunks(8) {
+        let blocks = ctx
+            .map(pairs.to_vec(), |pair| {
+                (pair, block_pair(xs, paths, pair, taps, early_weight))
+            })
+            .map_err(|_| EngineError::Cancelled)?;
+        place(blocks, &mut ata, &mut atb, taps);
+    }
+    Ok((ata, atb))
 }
 
+// Retain the direct form as an independent guard oracle and diagnostic entry.
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) fn worst_band_db(
     xs: &[Vec<f64>],
     paths: &[Vec<Vec<f64>>],
@@ -410,9 +419,189 @@ pub(crate) fn worst_band_db(
         .unwrap_or(-99.0)
 }
 
+#[derive(Debug)]
+pub(crate) struct BandGuard {
+    n: usize,
+    starts: Vec<usize>,
+    bands: Vec<(usize, usize)>,
+    before: Vec<f64>,
+}
+
+impl BandGuard {
+    pub(crate) fn new(xs: &[Vec<f64>], fsiso: f64) -> Self {
+        let n = xs[0].len();
+        let bins = secs_dsp::grid::freqs(2 * n, FS_LOW).expect("MIMO grid");
+        let stop = (fsiso / 20.0).log2() + 1e-9;
+        let edges: Vec<_> = (0..)
+            .map(|k| k as f64 / 3.0)
+            .take_while(|&v| v < stop)
+            .map(|v| 20.0 * 2f64.powf(v))
+            .collect();
+        let refs: Vec<_> = xs.iter().map(Vec::as_slice).collect();
+        let bands = edges
+            .windows(2)
+            .map(|v| (v[0], v[1]))
+            .chain(
+                decay::late_peaks(&refs, 6)
+                    .into_iter()
+                    .map(|f| (f - 1.5, f + 1.5)),
+            )
+            .map(|(lo, hi)| {
+                (
+                    bins.partition_point(|&f| f < lo),
+                    bins.partition_point(|&f| f < hi),
+                )
+            })
+            .collect();
+        let mut guard = Self {
+            n,
+            starts: xs.iter().map(|x| (onset(x) + EARLY).min(n)).collect(),
+            bands,
+            before: Vec::new(),
+        };
+        guard.before = guard.energies(xs, true);
+        guard
+    }
+
+    fn energies(&self, responses: &[Vec<f64>], baseline: bool) -> Vec<f64> {
+        let mut totals = vec![0.0; self.bands.len()];
+        for (response, &start) in responses.iter().zip(&self.starts) {
+            let mut window = vec![0.0; 2 * self.n];
+            for t in start..self.n {
+                // Preserve the original baseline's x + 0.0, including -0.0.
+                window[t] = if baseline {
+                    response[t] + 0.0
+                } else {
+                    response[t]
+                };
+            }
+            let spectrum: Vec<_> = fft::rfft(&window)
+                .iter()
+                .map(|h| {
+                    let a = h.re.hypot(h.im);
+                    a * a
+                })
+                .collect();
+            for (total, &(begin, end)) in totals.iter_mut().zip(&self.bands) {
+                *total += pairwise_sum(&spectrum[begin..end]);
+            }
+        }
+        totals
+    }
+
+    pub(crate) fn evaluate(&self, ys: &[Vec<f64>]) -> f64 {
+        self.before
+            .iter()
+            .zip(self.energies(ys, false))
+            .filter(|(a, _)| **a > 0.0)
+            .map(|(a, b)| 10.0 * ((b + 1e-30) / a).log10())
+            .reduce(f64::max)
+            .unwrap_or(-99.0)
+    }
+}
+
 /// Absolute modal-tail change, in the upstream 0.15 seconds-per-dB scale.
 /// Despite its name this guard does not compare fitted T60 slopes.
 pub fn worst_t60_change(
+    xs: &[Vec<f64>],
+    ys: &[Vec<f64>],
+    count: usize,
+) -> Result<f64, EngineError> {
+    T60Guard::new(xs, count).evaluate(ys)
+}
+
+#[derive(Debug)]
+struct TailBaseline {
+    frequency: f64,
+    positions: usize,
+    sos: Sos,
+    energy: f64,
+}
+
+/// Fixed original modal peaks and mode-specific tails, shared across guard
+/// trials. Each trial still discovers its own new peaks before taking the
+/// union, so reducing the support cannot hide a newly exposed mode.
+#[derive(Debug)]
+pub(crate) struct T60Guard<'a> {
+    xs: &'a [Vec<f64>],
+    count: usize,
+    original_modes: Vec<f64>,
+    starts: Vec<usize>,
+    baselines: Vec<TailBaseline>,
+}
+
+impl<'a> T60Guard<'a> {
+    pub(crate) fn new(xs: &'a [Vec<f64>], count: usize) -> Self {
+        Self {
+            xs,
+            count,
+            original_modes: decay::late_peaks(
+                &xs.iter().map(Vec::as_slice).collect::<Vec<_>>(),
+                count,
+            ),
+            starts: xs.iter().map(|x| onset(x) + 180).collect(),
+            baselines: Vec::new(),
+        }
+    }
+
+    pub(crate) fn evaluate(&mut self, ys: &[Vec<f64>]) -> Result<f64, EngineError> {
+        let mut modes: Vec<_> = self
+            .original_modes
+            .iter()
+            .copied()
+            .chain(decay::late_peaks(
+                &ys.iter().map(Vec::as_slice).collect::<Vec<_>>(),
+                self.count,
+            ))
+            .map(|f| (f * 10.0).round_ties_even() / 10.0)
+            .collect();
+        modes.sort_by(f64::total_cmp);
+        modes.dedup();
+        let positions = self.xs.len().min(ys.len());
+        let mut tails = Vec::new();
+        for fm in modes {
+            let index = self
+                .baselines
+                .iter()
+                .position(|entry| entry.frequency == fm && entry.positions == positions);
+            let index = if let Some(index) = index {
+                index
+            } else {
+                let sos = butter(2, &[(fm - 1.5).max(1.0), fm + 1.5], BType::Bandpass, FS_LOW)?;
+                let mut energy = 0.0;
+                for (x, &t) in self.xs.iter().zip(&self.starts).take(positions) {
+                    let xf = sosfilt(&sos, x)?;
+                    energy += decay::energy(&xf[t.min(xf.len())..]);
+                }
+                self.baselines.push(TailBaseline {
+                    frequency: fm,
+                    positions,
+                    sos,
+                    energy,
+                });
+                self.baselines.len() - 1
+            };
+            let baseline = &self.baselines[index];
+            let mut after = 0.0;
+            for (y, &t) in ys.iter().zip(&self.starts).take(positions) {
+                let yf = sosfilt(&baseline.sos, y)?;
+                after += decay::energy(&yf[t.min(yf.len())..]);
+            }
+            tails.push((baseline.energy, after));
+        }
+        let top = tails.iter().map(|&(a, _)| a).fold(0.0, f64::max);
+        let mut worst: f64 = -99.0;
+        for (a, b) in tails {
+            if a > 0.0 && a >= top * 10f64.powf(-20.0 / 10.0) {
+                worst = worst.max(10.0 * ((b + 1e-30) / a).log10());
+            }
+        }
+        Ok(worst * 0.15)
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn worst_t60_change_before(
     xs: &[Vec<f64>],
     ys: &[Vec<f64>],
     count: usize,
@@ -482,35 +671,135 @@ fn check(ctx: &Context) -> Result<(), EngineError> {
     ctx.cancel().check().map_err(|_| EngineError::Cancelled)
 }
 
-fn rank_supports(
+pub(crate) fn rank_supports(
     candidates: &[String],
     xs: &[Vec<f64>],
     paths: &[Vec<Vec<f64>>],
     taps: usize,
     ctx: &Context,
 ) -> Result<Vec<(String, f64)>, EngineError> {
-    let mut scores = Vec::new();
+    let late_input: Vec<_> = xs
+        .iter()
+        .flat_map(|x| {
+            let e = onset(x) + EARLY;
+            x.iter()
+                .enumerate()
+                .map(move |(t, &x)| if t >= e { x } else { 0.0 })
+        })
+        .collect();
+    let input_energy = decay::energy(&late_input);
+    let work = xs.iter().map(Vec::len).sum::<usize>() + 3 * taps;
+    let mut scored = Vec::new();
     for (j, role) in candidates.iter().enumerate() {
         check(ctx)?;
-        let paths: Vec<_> = paths.iter().map(|g| vec![g[j].clone()]).collect();
-        let (ata, atb) = normal_equations(xs, &paths, taps, 0.0);
+        let candidate_paths: Vec<_> = paths.iter().map(|g| vec![g[j].clone()]).collect();
+        let (ata, atb) = normal_equations(xs, &candidate_paths, taps, 0.0);
         let diagonal: Vec<_> = (0..taps).map(|k| ata[k * taps + k]).collect();
         let lambda = 1e-2 * pairwise_sum(&diagonal) / taps as f64;
         let u = solve(&ata, &atb, lambda, false)?;
-        let mut residual = Vec::new();
-        for (x, gs) in xs.iter().zip(&paths) {
-            let y = convolve(&gs[0], &u);
-            let e = onset(x) + EARLY;
-            residual.extend(
-                x.iter()
-                    .enumerate()
-                    .map(|(t, &x)| if t >= e { y[t] + x } else { 0.0 }),
-            );
+        let path_energy = candidate_paths.iter().map(|gs| decay::energy(&gs[0])).sum();
+        let (score, uncertainty) =
+            rank_score(input_energy, path_energy, &ata, &atb, &u, lambda, work);
+        // Cancellation and nonfinite arithmetic must not make a poor path
+        // look perfect. Keep the original residual evaluation in that case.
+        let direct = !score.is_finite() || !uncertainty.is_finite() || score <= 8.0 * uncertainty;
+        scored.push((
+            role.clone(),
+            if direct {
+                rank_score_direct(xs, paths, j, &u)
+            } else {
+                score
+            },
+            if direct { 0.0 } else { uncertainty },
+            u,
+        ));
+    }
+    // A tiny scalar roundoff must not change the discrete support ordering.
+    // Recompute both members of every overlapping score interval, before
+    // the stable sort, in the original time-domain accumulation order.
+    let mut direct = vec![false; scored.len()];
+    for i in 0..scored.len() {
+        for j in i + 1..scored.len() {
+            if (scored[i].1 - scored[j].1).abs() <= scored[i].2 + scored[j].2 {
+                direct[i] = true;
+                direct[j] = true;
+            }
         }
-        scores.push((role.clone(), decay::energy(&residual)));
+    }
+    let mut scores = Vec::with_capacity(scored.len());
+    for (j, ((role, score, _, u), direct)) in scored.into_iter().zip(direct).enumerate() {
+        check(ctx)?;
+        scores.push((
+            role,
+            if direct {
+                rank_score_direct(xs, paths, j, &u)
+            } else {
+                score
+            },
+        ));
     }
     scores.sort_by(|a, b| a.1.total_cmp(&b.1));
     Ok(scores)
+}
+
+fn rank_score(
+    input_energy: f64,
+    path_energy: f64,
+    ata: &[f64],
+    atb: &[f64],
+    u: &[f64],
+    lambda: f64,
+    work: usize,
+) -> (f64, f64) {
+    let products: Vec<_> = u.iter().zip(atb).map(|(u, b)| u * b).collect();
+    let ub = pairwise_sum(&products);
+    let regularization = lambda * decay::energy(u);
+    let u_l1 = u.iter().map(|v| v.abs()).sum::<f64>();
+    // Full path energy also bounds cancellation in the Gram's sliding
+    // recurrence when the retained late-window block itself is tiny.
+    let mut magnitude = input_energy
+        + 2.0 * products.iter().map(|v| v.abs()).sum::<f64>()
+        + regularization.abs()
+        + path_energy * u_l1 * u_l1;
+    let mut row_products = vec![0.0; u.len()];
+    let mut corrections = Vec::with_capacity(u.len());
+    for (i, row) in ata.chunks_exact(u.len()).enumerate() {
+        for ((v, a), u) in row_products.iter_mut().zip(row).zip(u) {
+            *v = a * u;
+        }
+        let residual = (pairwise_sum(&row_products) + lambda * u[i]) - atb[i];
+        corrections.push(u[i] * residual);
+        magnitude += u[i].abs() * row_products.iter().map(|v| v.abs()).sum::<f64>();
+    }
+    // b = -Aᵀx, M = AᵀA. For a finite-precision solve the exact identity is
+    // ||Au+x||² = xᵀx - uᵀb - λuᵀu + uᵀ((M+λI)u-b).
+    // The O(taps²) residual correction is cheaper than the old O(P*N*taps)
+    // convolutions and does not assume the solver residual is exactly zero.
+    let score = ((input_energy - ub) - regularization) + pairwise_sum(&corrections);
+    // This deliberately conservative reevaluation trigger scales with Gram
+    // recurrences and dot products. It is not a certified error bound or a
+    // relaxation of any result-validation tolerance.
+    let uncertainty = 64.0 * f64::EPSILON * work.max(1) as f64 * magnitude;
+    (score, uncertainty)
+}
+
+pub(crate) fn rank_score_direct(
+    xs: &[Vec<f64>],
+    paths: &[Vec<Vec<f64>>],
+    candidate: usize,
+    u: &[f64],
+) -> f64 {
+    let mut residual = Vec::new();
+    for (x, gs) in xs.iter().zip(paths) {
+        let y = convolve(&gs[candidate], u);
+        let e = onset(x) + EARLY;
+        residual.extend(
+            x.iter()
+                .enumerate()
+                .map(|(t, &x)| if t >= e { y[t] + x } else { 0.0 }),
+        );
+    }
+    decay::energy(&residual)
 }
 
 /// The low-rate stage boundary used by the oracle: paths have lower-edge
@@ -658,6 +947,8 @@ fn design_selected(
         .collect();
     let mut scale = 1.0;
     let mut guards = Vec::new();
+    let band_guard = BandGuard::new(xs, req.fsiso);
+    let mut tail_guard = T60Guard::new(xs, 6);
     for step in 0..5 {
         check(ctx)?;
         let trial: Vec<Vec<_>> = supports
@@ -677,8 +968,8 @@ fn design_selected(
                 x.iter().zip(add).map(|(x, a)| x + a).collect()
             })
             .collect();
-        let band_db = worst_band_db(xs, raw_paths, &trial, req.fsiso);
-        let t60_change = worst_t60_change(xs, &ys, 6)?;
+        let band_db = band_guard.evaluate(&ys);
+        let t60_change = tail_guard.evaluate(&ys)?;
         guards.push(GuardStep {
             scale,
             band_db,

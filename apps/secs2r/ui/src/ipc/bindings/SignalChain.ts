@@ -19,7 +19,7 @@ mains: Array<MainChannel>,
  */
 subs: Array<SubChannel>, 
 /**
- * PEQ on the summed sub bus, copied into every sub output.
+ * PEQ on the summed sub bus, before the per-sub output branches.
  */
 sub_bus_peq: Array<[number, number, number]>, 
 /**

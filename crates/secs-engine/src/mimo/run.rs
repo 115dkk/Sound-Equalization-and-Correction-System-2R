@@ -2,7 +2,7 @@
 //! (GPL-3.0). Export filters and the displayed response share one run value.
 
 use secs_compute::Context;
-use secs_dsp::{fft, response::lr4};
+use secs_dsp::response::lr4;
 use secs_types::{
     calibration::CalibrationSettings,
     chain::{MimoFilter, MimoPath, MimoPaths},
@@ -117,37 +117,13 @@ pub(crate) fn fir_supports(ideal: &MimoDesign) -> Supports {
 
 /// Low-rate DTFT and upstream's linear 10% edge ramp (its comment says cosine).
 pub(crate) fn fir_response(taps: &[f64], fs_low: f64, frequencies: &[f64]) -> Vec<C> {
-    let edge = fs_low / 2.0;
-    frequencies
-        .iter()
-        .map(|&f| {
-            if f >= edge {
-                return C::new(0.0, 0.0);
-            }
-            let mut sum = C::new(0.0, 0.0);
-            for (k, &tap) in taps.iter().enumerate() {
-                let phase = (-2.0 * std::f64::consts::PI * (f * k as f64)) / fs_low;
-                sum += C::from_polar(1.0, phase) * tap;
-            }
-            sum * ((edge - f) / (0.1 * edge)).clamp(0.0, 1.0)
-        })
-        .collect()
+    secs_dsp::fir::lowrate_response(taps, fs_low, frequencies)
 }
 
 /// Band-limited interpolation to 48 kHz, cropped to the low-rate FIR's duration.
-/// Empty taps or a non-positive/non-finite sample rate produce an empty filter.
+/// Invalid or oversized low-rate recipes produce an empty filter.
 pub fn fir_to_48k(taps_low: &[f64], fs_low: f64) -> Vec<f64> {
-    if taps_low.is_empty() || !fs_low.is_finite() || fs_low <= 0.0 {
-        return Vec::new();
-    }
-    let n48 = (taps_low.len() as f64 * (48000.0 / fs_low)).ceil() as usize;
-    let nfft = (n48 * 2).next_power_of_two();
-    let f: Vec<_> = (0..=nfft / 2)
-        .map(|k| k as f64 * (48000.0 / nfft as f64))
-        .collect();
-    let mut taps = fft::irfft(&fir_response(taps_low, fs_low, &f), nfft);
-    taps.truncate(n48);
-    taps
+    secs_dsp::fir::lowrate_to_48k(taps_low, fs_low)
 }
 
 pub fn availability(positions: usize) -> (bool, String) {
@@ -181,15 +157,7 @@ pub fn fir_budget_text(run: &MimoRun, budget: usize) -> String {
     if !run.fir || budget == 0 {
         return String::new();
     }
-    let total: usize = run
-        .paths
-        .paths
-        .iter()
-        .map(|p| match &p.filter {
-            MimoFilter::Fir { taps_48k } => taps_48k.len(),
-            MimoFilter::Iir { .. } => 0,
-        })
-        .sum();
+    let total: usize = run.paths.paths.iter().map(|p| p.filter.fir_len_48k()).sum();
     format!(
         "FIR 서포트 총 {}탭 — DSP FIR 예산 {}탭 {}",
         grouped(total),
@@ -418,8 +386,9 @@ pub(crate) fn assemble_prepared(
                     peq: s.peq.clone(),
                     allpass: s.allpass.clone(),
                 },
-                Support::Fir { taps, fs_low } => MimoFilter::Fir {
-                    taps_48k: fir_to_48k(taps, *fs_low),
+                Support::Fir { taps, fs_low } => MimoFilter::FirLowRate {
+                    taps_low: taps.clone(),
+                    fs_low: *fs_low,
                 },
             };
             paths.push(MimoPath {
@@ -440,13 +409,7 @@ pub(crate) fn assemble_prepared(
             }));
     }
     if key.fir {
-        let total: usize = paths
-            .iter()
-            .map(|p| match &p.filter {
-                MimoFilter::Fir { taps_48k } => taps_48k.len(),
-                _ => 0,
-            })
-            .sum();
+        let total: usize = paths.iter().map(|p| p.filter.fir_len_48k()).sum();
         ideal
             .notes
             .push(Note::Mimo(crate::notes::MimoNote::FirBudget {

@@ -122,6 +122,179 @@ fn mimo_toeplitz_normal_equations_match_dense() {
     }
 }
 
+#[test]
+fn mimo_bounded_block_batches_preserve_bits() {
+    let xs: Vec<Vec<_>> = (0..3)
+        .map(|p| (0..96).map(|k| ((k * 37 + p * 7) as f64).sin()).collect())
+        .collect();
+    let paths: Vec<Vec<Vec<_>>> = (0..3)
+        .map(|p| {
+            (0..6)
+                .map(|j| {
+                    (0..96)
+                        .map(|k| ((k * 19 + j * 11 + p * 7) as f64).cos())
+                        .collect()
+                })
+                .collect()
+        })
+        .collect();
+    for early in [0.0, 10.0] {
+        let expected = normal_equations(&xs, &paths, 17, early);
+        for threads in [1, 4] {
+            let ctx = Context::new(
+                threads,
+                MemoryBudget::new(u64::MAX),
+                Arc::new(NoProgress),
+                CancelToken::new(),
+            );
+            let got =
+                crate::mimo::design::normal_equations_mapped(&xs, &paths, 17, early, &ctx).unwrap();
+            for (a, b) in got
+                .0
+                .iter()
+                .chain(&got.1)
+                .zip(expected.0.iter().chain(&expected.1))
+            {
+                assert_eq!(a.to_bits(), b.to_bits(), "threads={threads}, early={early}");
+            }
+        }
+    }
+}
+
+#[test]
+fn mimo_scalar_ranking_preserves_near_ties_and_direct_scores() {
+    use crate::mimo::design::{rank_score_direct, rank_supports};
+    let (n, taps) = (160, 12);
+    let xs: Vec<Vec<_>> = (0..3)
+        .map(|p| {
+            (0..n)
+                .map(|k| ((k * 17 + p * 7) as f64).sin() / (k + 1) as f64)
+                .collect()
+        })
+        .collect();
+    let paths: Vec<Vec<Vec<_>>> = (0..3)
+        .map(|p| {
+            (0..4)
+                .map(|j| {
+                    (0..n)
+                        .map(|k| {
+                            let seed = if j < 3 { 19 } else { 11 };
+                            let value = ((k * seed + p * 7) as f64).cos() / (k + 1) as f64;
+                            if j == 2 && k == 70 {
+                                value + 1e-15
+                            } else {
+                                value
+                            }
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .collect();
+    let candidates: Vec<_> = (0..4).map(|j| format!("support-{j}")).collect();
+    let expected: Vec<_> = (0..4)
+        .map(|j| {
+            let candidate_paths: Vec<_> = paths.iter().map(|g| vec![g[j].clone()]).collect();
+            let (a, b) = normal_equations(&xs, &candidate_paths, taps, 0.0);
+            let diagonal: Vec<_> = (0..taps).map(|k| a[k * taps + k]).collect();
+            let lambda = 1e-2 * secs_dsp::pairwise_sum(&diagonal) / taps as f64;
+            let u = crate::mimo::solve::solve(&a, &b, lambda, false).unwrap();
+            (candidates[j].clone(), rank_score_direct(&xs, &paths, j, &u))
+        })
+        .collect();
+    let got = rank_supports(&candidates, &xs, &paths, taps, &Context::serial()).unwrap();
+    let mut sorted = expected.clone();
+    sorted.sort_by(|a, b| a.1.total_cmp(&b.1));
+    assert_eq!(
+        got.iter().map(|(r, _)| r).collect::<Vec<_>>(),
+        sorted.iter().map(|(r, _)| r).collect::<Vec<_>>()
+    );
+    for (role, score) in got {
+        let expected = expected.iter().find(|(r, _)| r == &role).unwrap().1;
+        if role != "support-3" {
+            assert_eq!(
+                score.to_bits(),
+                expected.to_bits(),
+                "near-tie must use direct score"
+            );
+        } else {
+            assert!((score - expected).abs() < 1e-11 * expected.max(1.0));
+        }
+    }
+}
+
+#[test]
+fn mimo_guard_baselines_and_applied_response_preserve_bits() {
+    use crate::mimo::design::{BandGuard, T60Guard, worst_band_db, worst_t60_change_before};
+    let n = 720;
+    let xs: Vec<Vec<_>> = (0..3)
+        .map(|p| {
+            (0..n)
+                .map(|k| {
+                    if k < 3 + p {
+                        0.0
+                    } else {
+                        let t = (k - 3 - p) as f64 / 600.0;
+                        (-4.0 * t).exp()
+                            * (2.0 * std::f64::consts::PI * (47.0 + p as f64) * t).cos()
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    let paths: Vec<Vec<Vec<_>>> = (0..3)
+        .map(|p| {
+            (0..2)
+                .map(|j| {
+                    (0..n)
+                        .map(|k| {
+                            let t = k as f64 / 600.0;
+                            (-5.0 * t).exp()
+                                * (2.0 * std::f64::consts::PI * (60.0 + (p + j) as f64) * t).cos()
+                        })
+                        .collect()
+                })
+                .collect()
+        })
+        .collect();
+    let supports: Vec<Vec<_>> = (0..2)
+        .map(|j| {
+            (0..17)
+                .map(|k| ((k * 7 + j) as f64).sin() / 100.0)
+                .collect()
+        })
+        .collect();
+    let band_guard = BandGuard::new(&xs, 150.0);
+    let mut tail_guard = T60Guard::new(&xs, 6);
+    for scale in [1.0, 10f64.powf(-3.0 / 20.0), 0.25, 0.0, 1.0] {
+        let trial: Vec<Vec<_>> = supports
+            .iter()
+            .map(|s| s.iter().map(|v| v * scale).collect())
+            .collect();
+        let ys: Vec<Vec<_>> = xs
+            .iter()
+            .zip(&paths)
+            .map(|(x, gs)| {
+                let mut add = vec![0.0; n];
+                for (g, s) in gs.iter().zip(&trial) {
+                    for (v, h) in add.iter_mut().zip(convolve(g, s)) {
+                        *v += h;
+                    }
+                }
+                x.iter().zip(add).map(|(x, a)| x + a).collect()
+            })
+            .collect();
+        assert_eq!(
+            band_guard.evaluate(&ys).to_bits(),
+            worst_band_db(&xs, &paths, &trial, 150.0).to_bits()
+        );
+        assert_eq!(
+            tail_guard.evaluate(&ys).unwrap().to_bits(),
+            worst_t60_change_before(&xs, &ys, 6).unwrap().to_bits()
+        );
+    }
+}
+
 #[derive(Default)]
 struct Statistics {
     total: usize,

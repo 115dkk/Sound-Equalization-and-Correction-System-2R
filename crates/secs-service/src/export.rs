@@ -47,9 +47,15 @@ impl Service {
             |calibration| calibration_stale(calibration, project),
         );
         let settings = secs_project::calibration_from_project(project);
+        let mdat = matches!(
+            params.kind,
+            ExportKind::BeforeAfterMdat | ExportKind::StagedMdat
+        );
         let cached_mimo = cached
             .filter(|cache| {
-                cache.mimo_compute_key == compute_key
+                live.is_none()
+                    && !mdat
+                    && cache.mimo_compute_key == compute_key
                     && mimo_eligible(
                         &settings,
                         stale,
@@ -59,38 +65,11 @@ impl Service {
                         &cache.engine_key,
                     )
             })
-            .and_then(|cache| cache.mimo_paths.clone())
+            .and_then(|cache| cache.mimo_paths.as_ref())
             .filter(|paths| !paths.paths.is_empty());
-        let cached_camilla = cached.map(|cache| {
-            let labels = RunLabels {
-                mode: cache.labels.mode.clone(),
-                ultra_ms: cache.labels.ultra_ms,
-                latency_ms: cache.labels.latency_ms,
-                rc_hi_hz: cache.labels.rc_hi_hz,
-                mimo_max_supports: cache.labels.mimo_max_supports,
-            };
-            (cache.calibration_chain.clone(), labels, cached_mimo.clone())
-        });
-        let live_values = live.map(|calibration| {
-            (
-                calibration.design.clone(),
-                calibration.measurements.clone(),
-                calibration.config.clone(),
-                calibration.settings.clone(),
-            )
-        });
-        let spl_offset = secs_project::project_spl_offset(project);
-        let sources = secs_project::load_project_sources(project, &open.path);
-        let uuid = self.deps.uuid.clone();
-        let session_for_design = self.session.clone();
-        let memory = self.deps.memory.available_bytes();
-        let mode_name = live
-            .map(|calibration| mode_name(calibration.settings.mode).to_owned())
-            .or_else(|| cached.map(|cache| cache.labels.mode.clone()))
-            .unwrap_or_else(|| "mixed".into());
-        let mimo = live.and_then(|calibration| {
-            state.mimo.as_ref().and_then(|result| {
-                let fresh = mimo_eligible(
+        let live_mimo = live.and_then(|calibration| {
+            state.mimo.as_ref().filter(|result| {
+                mimo_eligible(
                     &settings,
                     stale,
                     calibration.design.spectra.positions.len(),
@@ -98,41 +77,82 @@ impl Service {
                     Some(&result.calibration_key),
                     &calibration.settings.engine_key(),
                 ) && result.compute_key == compute_key
-                    && !result.run.paths.paths.is_empty();
-                fresh.then(|| MimoResponses {
-                    kind: if result.run.fir {
-                        MimoKind::Fir
-                    } else {
-                        MimoKind::Iir
-                    },
-                    fsiso: result.run.paths.fsiso,
-                    cap_text: if calibration.settings.mimo_max_supports == 0 {
-                        String::new()
-                    } else {
-                        format!("max {}", calibration.settings.mimo_max_supports)
-                    },
-                    paths: result.run.paths.clone(),
-                    applied: result.run.applied.clone(),
-                })
+                    && !result.run.paths.paths.is_empty()
             })
         });
-        // A cached MIMO run is selected only when there is no live calibration,
-        // matching the CamillaDSP freshness rule.
-        let export_mimo = if live.is_some() {
-            mimo.as_ref().map(|value| value.paths.clone())
+        // Capture only what this export format consumes. In particular the
+        // convolution writers never clone the large applied-response matrices.
+        let mut live_values = live.filter(|_| mdat).map(|calibration| {
+            (
+                calibration.design.clone(),
+                calibration.measurements.clone(),
+                calibration.config.clone(),
+                calibration.settings.clone(),
+            )
+        });
+        let live_camilla =
+            live.filter(|_| params.kind == ExportKind::CamillaDsp)
+                .map(|calibration| {
+                    (
+                        calibration.design.clone(),
+                        labels(&calibration.settings, &calibration.design),
+                    )
+                });
+        let cached_camilla = cached
+            .filter(|_| live.is_none() && params.kind == ExportKind::CamillaDsp)
+            .map(|cache| {
+                (
+                    cache.calibration_chain.clone(),
+                    RunLabels {
+                        mode: cache.labels.mode.clone(),
+                        ultra_ms: cache.labels.ultra_ms,
+                        latency_ms: cache.labels.latency_ms,
+                        rc_hi_hz: cache.labels.rc_hi_hz,
+                        mimo_max_supports: cache.labels.mimo_max_supports,
+                    },
+                )
+            });
+        let spl_offset = secs_project::project_spl_offset(project);
+        let sources = if mdat {
+            secs_project::load_project_sources(project, &open.path)
         } else {
-            cached_mimo.clone()
+            Default::default()
+        };
+        let uuid = self.deps.uuid.clone();
+        let session_for_design = self.session.clone();
+        let memory = self.deps.memory.available_bytes();
+        let mode_name = live
+            .map(|calibration| mode_name(calibration.settings.mode).to_owned())
+            .or_else(|| cached.map(|cache| cache.labels.mode.clone()))
+            .unwrap_or_else(|| "mixed".into());
+        let mimo = live_mimo.filter(|_| mdat).map(|result| MimoResponses {
+            kind: if result.run.fir {
+                MimoKind::Fir
+            } else {
+                MimoKind::Iir
+            },
+            fsiso: result.run.paths.fsiso,
+            cap_text: live
+                .filter(|calibration| calibration.settings.mimo_max_supports != 0)
+                .map_or_else(String::new, |calibration| {
+                    format!("max {}", calibration.settings.mimo_max_supports)
+                }),
+            paths: result.run.paths.clone(),
+            applied: result.run.applied.clone(),
+        });
+        let mut export_mimo = if mdat {
+            None
+        } else {
+            live_mimo
+                .map(|result| &result.run.paths)
+                .or(cached_mimo)
+                .cloned()
         };
         let includes_mimo = export_mimo.is_some();
-        // Cached mdat exports rebuild calibration only, not MIMO responses.
-        let folder_includes_mimo = mimo.is_some()
-            || (live.is_none() && params.kind == ExportKind::CamillaDsp && cached_mimo.is_some());
-        let compute_report = if mimo.is_some() {
-            state
-                .mimo
-                .as_ref()
-                .map(|result| result.summary.compute.clone())
-        } else if live.is_none() && params.kind == ExportKind::CamillaDsp && cached_mimo.is_some() {
+        let folder_includes_mimo = mimo.is_some() || includes_mimo;
+        let compute_report = if let Some(result) = live_mimo {
+            Some(result.summary.compute.clone())
+        } else if cached_mimo.is_some() {
             cached
                 .and_then(|cache| cache.mimo.as_ref())
                 .map(|result| result.compute.clone())
@@ -166,7 +186,7 @@ impl Service {
                     };
                     FilterValues {
                         chain: calibration.design.chain.clone(),
-                        mimo: export_mimo.clone(),
+                        mimo: export_mimo.take(),
                         mode: mode_name.clone(),
                         ultra_ms: calibration.settings.ultra_ms,
                         label: calibration.settings.label(),
@@ -179,7 +199,7 @@ impl Service {
                     cached_filter_values(
                         cached.expect("live or cached calibration checked above"),
                         &settings,
-                        export_mimo.clone(),
+                        export_mimo.take(),
                         now.minute_stamp(),
                     )
                 })
@@ -219,20 +239,16 @@ impl Service {
             let folder = destination.as_path();
             let mut paths = match params.kind {
                 ExportKind::CamillaDsp => {
-                    let (chain, labels, paths) =
-                        if let Some((design, _, _, settings)) = &live_values {
-                            (
-                                design.chain.clone(),
-                                labels(settings, design),
-                                mimo.as_ref().map(|value| value.paths.clone()),
-                            )
-                        } else {
-                            cached_camilla.clone().ok_or_else(|| {
-                                IpcError::new(ErrorCode::Internal, "run cache disappeared")
-                            })?
-                        };
+                    let (chain, labels) = if let Some((design, labels)) = &live_camilla {
+                        (&design.chain, labels)
+                    } else {
+                        let (chain, labels) = cached_camilla.as_ref().ok_or_else(|| {
+                            IpcError::new(ErrorCode::Internal, "run cache disappeared")
+                        })?;
+                        (chain, labels)
+                    };
                     job.begin_commit()?;
-                    secs_camilla::export(&chain, folder, &labels, paths.as_ref())
+                    secs_camilla::export(chain, folder, labels, export_mimo.as_ref())
                         .map_err(export_error)?
                 }
                 ExportKind::FilterText | ExportKind::EqualizerApo => {
@@ -250,8 +266,8 @@ impl Service {
                 }
                 kind => {
                     let (design, measurements, config, settings) =
-                        if let Some(values) = &live_values {
-                            values.clone()
+                        if let Some(values) = live_values.take() {
+                            values
                         } else {
                             let mut prepared = {
                                 let mut session = lock(&session_for_design);

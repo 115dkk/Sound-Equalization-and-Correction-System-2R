@@ -185,6 +185,15 @@ fn compare_paths(got: &MimoPaths, expected: &MimoPaths, tolerance: f64, downstre
             (MimoFilter::Fir { taps_48k: g }, MimoFilter::Fir { taps_48k: e }) => {
                 measure("path FIR", relative(g, e), tolerance, downstream)
             }
+            (MimoFilter::FirLowRate { taps_low, fs_low }, MimoFilter::Fir { taps_48k }) => {
+                let materialized = secs_dsp::fir::lowrate_to_48k(taps_low, *fs_low);
+                measure(
+                    "path FIR",
+                    relative(&materialized, taps_48k),
+                    tolerance,
+                    downstream,
+                )
+            }
             (g, e) => assert_eq!(g, e),
         }
     }
@@ -348,8 +357,14 @@ fn mimo_run_compute_fir_and_iir_end_to_end() {
                 compare_paths(&run.paths, &expected, 3e-7, true);
                 compare_curves(&fx, &run, 3e-7);
                 assert!(run.paths.paths.iter().all(
-                    |p| matches!(&p.filter,MimoFilter::Fir { taps_48k } if taps_48k.len()==8000)
+                    |p| matches!(&p.filter, MimoFilter::FirLowRate { taps_low, fs_low } if taps_low.len() == 100 && *fs_low == 600.0)
                 ));
+                assert!(
+                    run.paths
+                        .paths
+                        .iter()
+                        .all(|p| p.filter.fir_len_48k() == 8000)
+                );
             } else {
                 let got: Vec<_> = run
                     .paths
@@ -702,6 +717,10 @@ fn run_bits(run: &mimo::MimoRun) -> Vec<u64> {
         values.extend([path.low_hz, path.delay_ms]);
         match &path.filter {
             MimoFilter::Fir { taps_48k } => values.extend(taps_48k),
+            MimoFilter::FirLowRate { taps_low, fs_low } => {
+                values.push(*fs_low);
+                values.extend(taps_low);
+            }
             MimoFilter::Iir {
                 gain_db,
                 delay_ms,

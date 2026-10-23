@@ -29,7 +29,7 @@ pub struct RcInput<'a> {
     pub tuning: &'a Tuning,
     pub positions: &'a [u32],
 }
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct RcOutput {
     pub fir: Vec<f64>,
     pub response: Vec<C>,
@@ -249,12 +249,40 @@ impl Realizer<'_> {
 pub fn correction(input: &RcInput<'_>, phase_frac: f64, fitter: &mut Fitter<'_>) -> RcOutput {
     correction_traced(input, phase_frac, fitter, &mut Trace::default())
 }
+// The first PEQ fit and position-common excess phase do not depend on the
+// candidate phase fraction. Each candidate owns only the values it modifies.
+struct FirPreparation {
+    peq: Vec<Peq>,
+    p: Vec<C>,
+    m: Vec<C>,
+    u: Vec<C>,
+    nb: Vec<bool>,
+    g: Vec<f64>,
+    lo_fir: f64,
+    design_db: Vec<f64>,
+    notes: Vec<Note>,
+}
+
+enum RcPreparation {
+    Complete(RcOutput),
+    Fir(FirPreparation),
+}
+
 pub(crate) fn correction_traced(
     input: &RcInput<'_>,
     phase_frac: f64,
     fitter: &mut Fitter<'_>,
     trace: &mut Trace,
 ) -> RcOutput {
+    let prepared = prepare_correction(input, fitter, trace);
+    finish_correction(input, phase_frac, &prepared, fitter, trace)
+}
+
+fn prepare_correction(
+    input: &RcInput<'_>,
+    fitter: &mut Fitter<'_>,
+    trace: &mut Trace,
+) -> RcPreparation {
     let f = design_freqs();
     let (s, c, t) = (input.setup, input.config, input.tuning);
     let weights = levels::freq_weights(input.positions, input.main_position, t.main_weight_lo);
@@ -348,7 +376,7 @@ pub(crate) fn correction_traced(
             None,
             fitter,
         ));
-        return RcOutput {
+        return RcPreparation::Complete(RcOutput {
             fir: vec![1.0],
             response: response::peq_response(f, &peq),
             peq,
@@ -356,7 +384,7 @@ pub(crate) fn correction_traced(
             phase_band: None,
             design_db,
             notes,
-        };
+        });
     }
     let g = geomspace(15.0, 20000.0, 700);
     let lo_fir = 1.5 * SR_F / c.taps as f64;
@@ -378,7 +406,7 @@ pub(crate) fn correction_traced(
                 (corr[i] - db(p[i])) * ((f[i] - lo_fir / 2.0) / (lo_fir / 2.0)).clamp(0.0, 1.0);
         }
     }
-    let mut m = minimum_phase(
+    let m = minimum_phase(
         &corr
             .iter()
             .map(|v| 10_f64.powf(v / 20.0))
@@ -420,8 +448,45 @@ pub(crate) fn correction_traced(
     for u in &mut u {
         *u = divide(*u, C::new(total, 0.0));
     }
+    RcPreparation::Fir(FirPreparation {
+        peq,
+        p,
+        m,
+        u,
+        nb,
+        g,
+        lo_fir,
+        design_db,
+        notes,
+    })
+}
+
+fn finish_correction(
+    input: &RcInput<'_>,
+    phase_frac: f64,
+    prepared: &RcPreparation,
+    fitter: &mut Fitter<'_>,
+    trace: &mut Trace,
+) -> RcOutput {
+    let RcPreparation::Fir(prepared) = prepared else {
+        let RcPreparation::Complete(out) = prepared else {
+            unreachable!()
+        };
+        return out.clone();
+    };
+    let f = design_freqs();
+    let (s, c) = (input.setup, input.config);
+    let mut peq = prepared.peq.clone();
+    let mut p = prepared.p.clone();
+    let mut m = prepared.m.clone();
+    let u = &prepared.u;
+    let nb = &prepared.nb;
+    let g = &prepared.g;
+    let lo_fir = prepared.lo_fir;
+    let design_db = prepared.design_db.clone();
+    let notes = prepared.notes.clone();
     let phase =
-        unwrap(&smooth::smooth_complex(f, &u, Fraction::Scalar(phase_frac)).expect("design grid"));
+        unwrap(&smooth::smooth_complex(f, u, Fraction::Scalar(phase_frac)).expect("design grid"));
     let tau = smooth(&gradient(&phase), phase_frac);
     let hf: Vec<_> = f
         .iter()
@@ -480,7 +545,7 @@ pub(crate) fn correction_traced(
         let cg: Vec<_> = g.iter().map(|&g| interp(g, f, &resid)).collect();
         peq = fit_request(
             input,
-            &g,
+            g,
             &cg,
             s.peq_bands,
             20.0,
@@ -576,6 +641,10 @@ pub(crate) fn phase_score(input: &RcInput<'_>, out: &RcOutput) -> f64 {
     gd.iter().map(|v| v - med).fold(f64::NEG_INFINITY, f64::max)
 }
 
+/// Compare phase candidates while sharing their phase-independent preparation.
+/// The supplied fitter must return the same result for the same request: an
+/// identical preparation is evaluated once, including the PEQ-only path.
+/// Sequential replay clients must account for the shared preparation call.
 pub fn channel(input: &RcInput<'_>, fitter: &mut Fitter<'_>) -> ChannelRc {
     channel_with_cuts(input, fitter, &mut |h, lo, hi| {
         fit::fit_gd_cuts(design_freqs(), h, lo, hi, 6, 3.0)
@@ -589,10 +658,11 @@ pub(crate) fn channel_with_cuts(
     cuts: &mut GdFitter<'_>,
 ) -> ChannelRc {
     let requested = input.config.phase_frac;
-    let mut out = correction(input, requested, fitter);
+    let prepared = prepare_correction(input, fitter, &mut Trace::default());
+    let mut out = finish_correction(input, requested, &prepared, fitter, &mut Trace::default());
     let mut used = None;
     if requested > 6.0 {
-        let other = correction(input, 6.0, fitter);
+        let other = finish_correction(input, 6.0, &prepared, fitter, &mut Trace::default());
         let mut notes = out.notes.clone();
         notes.extend(other.notes.clone());
         if phase_score(input, &other) < phase_score(input, &out) {

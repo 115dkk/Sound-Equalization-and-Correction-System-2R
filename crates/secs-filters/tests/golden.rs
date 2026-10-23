@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod support;
+
 use secs_filters::{
     FilterPlan, FilterRun, FiltersError, MimoFeed, Op, SubFeed, eqapo_config, eqapo_filters,
     eqapo_guide, export_eqapo, export_filter_text, filter_text, headroom_db, make_plan_with_lfe,
@@ -553,20 +555,127 @@ fn f11_expected_file(kind: &str, path: &str, expected: Vec<u8>) -> Vec<u8> {
     }
 }
 
+const TRANSFER_FREQUENCIES: [f64; 11] = [
+    7.0, 20.0, 31.0, 43.0, 80.0, 120.0, 173.0, 350.0, 1000.0, 8765.0, 20_000.0,
+];
+
+fn eqapo_body_path(config: &str) -> String {
+    config
+        .lines()
+        .find_map(|line| line.strip_prefix("Include: "))
+        .unwrap()
+        .replace('\\', "/")
+}
+
+fn assert_apo_transfer(
+    id: &str,
+    got_config: &str,
+    got_body: &str,
+    got_wav: &dyn Fn(&str) -> Vec<u8>,
+    expected_config: &str,
+    expected_body: &str,
+    expected_wav: &dyn Fn(&str) -> Vec<u8>,
+) {
+    let got_body_path = eqapo_body_path(got_config);
+    let expected_body_path = eqapo_body_path(expected_config);
+    for input in 0..16 {
+        for frequency in TRANSFER_FREQUENCIES {
+            let got = support::apo_graph::transfer(
+                got_config,
+                &|path| {
+                    assert_eq!(path.replace('\\', "/"), got_body_path, "{id} Include");
+                    got_body.into()
+                },
+                got_wav,
+                input,
+                frequency,
+            );
+            let expected = support::apo_graph::transfer(
+                expected_config,
+                &|path| {
+                    assert_eq!(
+                        path.replace('\\', "/"),
+                        expected_body_path,
+                        "{id} oracle Include"
+                    );
+                    expected_body.into()
+                },
+                expected_wav,
+                input,
+                frequency,
+            );
+            for (output, (got, expected)) in got.iter().zip(&expected).enumerate() {
+                assert!(
+                    (*got - *expected).norm() <= 2e-12 * expected.norm().max(1.0),
+                    "{id} input {input} output {output} frequency {frequency}: {got} != {expected}"
+                );
+            }
+        }
+    }
+}
+
 fn assert_written(fixture: &Fixture, kind: &str, root: &Path, paths: &[PathBuf]) {
     let expected = &fixture.outputs()["written"][kind];
     assert_eq!(relative_paths(root, paths), strings(&expected["paths"]));
-    for item in expected["files"].as_array().unwrap() {
+    if kind == "eqapo" {
+        let files = expected["files"].as_array().unwrap();
+        let expected_config_item = files
+            .iter()
+            .find(|item| item["path"] == "config.txt")
+            .unwrap();
+        let expected_config =
+            f11_config(std::str::from_utf8(&fixture.blob(&expected_config_item["bytes"])).unwrap());
+        let body_path = eqapo_body_path(&expected_config);
+        let expected_body_item = files.iter().find(|item| item["path"] == body_path).unwrap();
+        let expected_body = String::from_utf8(fixture.blob(&expected_body_item["bytes"])).unwrap();
+        let got_config = fs::read_to_string(root.join("config.txt")).unwrap();
         assert_eq!(
-            fs::read(root.join(item["path"].as_str().unwrap())).unwrap(),
-            f11_expected_file(
-                kind,
-                item["path"].as_str().unwrap(),
-                fixture.blob(&item["bytes"]),
-            ),
-            "{} {kind} {}",
+            eqapo_body_path(&got_config),
+            body_path,
+            "{} Include",
+            fixture.id
+        );
+        let got_body = fs::read_to_string(root.join(&body_path)).unwrap();
+        assert_apo_transfer(
+            &fixture.id,
+            &got_config,
+            &got_body,
+            &|name| {
+                fs::read(
+                    root.join(Path::new(&body_path).parent().unwrap())
+                        .join(name),
+                )
+                .unwrap()
+            },
+            &expected_config,
+            &expected_body,
+            &|name| {
+                let item = files
+                    .iter()
+                    .find(|item| {
+                        Path::new(item["path"].as_str().unwrap())
+                            .file_name()
+                            .unwrap()
+                            == name
+                    })
+                    .unwrap();
+                fixture.blob(&item["bytes"])
+            },
+        );
+    }
+    for item in expected["files"].as_array().unwrap() {
+        let path = item["path"].as_str().unwrap();
+        if kind == "eqapo"
+            && (path == "config.txt"
+                || path == eqapo_body_path(&fs::read_to_string(root.join("config.txt")).unwrap()))
+        {
+            continue;
+        }
+        assert_eq!(
+            fs::read(root.join(path)).unwrap(),
+            f11_expected_file(kind, path, fixture.blob(&item["bytes"])),
+            "{} {kind} {path}",
             fixture.id,
-            item["path"].as_str().unwrap()
         );
     }
 }
@@ -574,33 +683,50 @@ fn assert_written(fixture: &Fixture, kind: &str, root: &Path, paths: &[PathBuf])
 fn assert_computed_written(fixture: &Fixture, kind: &str, root: &Path, paths: &[PathBuf]) {
     let expected = &fixture.outputs()["written"][kind];
     assert_eq!(relative_paths(root, paths), strings(&expected["paths"]));
+    let config = (kind == "eqapo").then(|| fs::read_to_string(root.join("config.txt")).unwrap());
+    let body_path = config.as_deref().map(eqapo_body_path);
+    if let (Some(got_config), Some(body_path)) = (&config, &body_path) {
+        let files = expected["files"].as_array().unwrap();
+        let config_item = files
+            .iter()
+            .find(|item| item["path"] == "config.txt")
+            .unwrap();
+        let expected_config =
+            f11_config(std::str::from_utf8(&fixture.blob(&config_item["bytes"])).unwrap());
+        let body_item = files
+            .iter()
+            .find(|item| item["path"] == *body_path)
+            .unwrap();
+        let expected_body = String::from_utf8(fixture.blob(&body_item["bytes"])).unwrap();
+        let got_body = fs::read_to_string(root.join(body_path)).unwrap();
+        let wav = |name: &str| {
+            fs::read(root.join(Path::new(body_path).parent().unwrap()).join(name)).unwrap()
+        };
+        assert_apo_transfer(
+            &fixture.id,
+            got_config,
+            &got_body,
+            &wav,
+            &expected_config,
+            &expected_body,
+            &wav,
+        );
+    }
     for item in expected["files"].as_array().unwrap() {
         let path = item["path"].as_str().unwrap();
         let bytes = fs::read(root.join(path)).unwrap();
-        if kind == "eqapo" && matches!(path, "config.txt" | secs_filters::EQAPO_GUIDE) {
+        if kind == "eqapo" && (path == "config.txt" || Some(path) == body_path.as_deref()) {
+            continue;
+        }
+        if kind == "eqapo" && path == secs_filters::EQAPO_GUIDE {
             let original = fixture.blob(&item["bytes"]);
             assert_eq!(original.len() as u64, item["length"].as_u64().unwrap());
             assert_eq!(sha256_hex(&original), item["sha256"].as_str().unwrap());
-            assert_eq!(
-                bytes,
-                f11_expected_file(kind, path, original),
-                "{} {kind} {path} (F11 only)",
-                fixture.id
-            );
+            assert_eq!(bytes, f11_expected_file(kind, path, original));
             continue;
         }
-        assert_eq!(
-            bytes.len() as u64,
-            item["length"].as_u64().unwrap(),
-            "{} {kind} {path} length",
-            fixture.id
-        );
-        assert_eq!(
-            sha256_hex(&bytes),
-            item["sha256"].as_str().unwrap(),
-            "{} {kind} {path} sha256",
-            fixture.id
-        );
+        assert_eq!(bytes.len() as u64, item["length"].as_u64().unwrap());
+        assert_eq!(sha256_hex(&bytes), item["sha256"].as_str().unwrap());
         if let Some(blob) = item.get("bytes") {
             assert_eq!(bytes, fixture.blob(blob), "{} {kind} {path}", fixture.id);
         }
@@ -875,22 +1001,51 @@ fn serializers_match_oracle_text_exactly() {
         let (inputs, outputs) = windows_channels(&plan);
         let preamp = (headroom_db(&plan).unwrap() * 2.0).ceil() / 2.0;
         let run = &fixture.inputs()["run"];
-        assert_eq!(
-            eqapo_filters(&plan, &firs, "ASCII before / 한글 / after"),
-            direct["eqapo_filters"].as_str().unwrap(),
-            "{case} filters"
+        let got_body = eqapo_filters(&plan, &firs, "ASCII before / 한글 / after");
+        let expected_body = direct["eqapo_filters"].as_str().unwrap();
+        let got_config = eqapo_config(
+            &plan,
+            "edge\\edge.txt",
+            preamp,
+            &inputs,
+            &outputs,
+            Some(number(&run["latency_ms"])),
         );
-        assert_eq!(
-            eqapo_config(
-                &plan,
-                "edge\\edge.txt",
-                preamp,
-                &inputs,
-                &outputs,
-                Some(number(&run["latency_ms"])),
-            ),
-            f11_config(direct["eqapo_config"].as_str().unwrap()),
-            "{case} config"
+        let expected_config = f11_config(direct["eqapo_config"].as_str().unwrap());
+        let wav = |name: &str| {
+            let key = firs
+                .iter()
+                .find(|(_, path)| path == name)
+                .unwrap()
+                .0
+                .as_str();
+            let op = plan
+                .input_ops
+                .iter()
+                .flat_map(|(_, ops)| ops)
+                .chain(plan.mimo.iter().flat_map(|feed| &feed.ops))
+                .find(|op| match op {
+                    Op::Fir { name, .. } | Op::FirLowRate { name, .. } => name == key,
+                    _ => false,
+                })
+                .unwrap();
+            let taps = match op {
+                Op::Fir { taps, .. } => taps.clone(),
+                Op::FirLowRate {
+                    taps_low, fs_low, ..
+                } => secs_dsp::fir::lowrate_to_48k(taps_low, *fs_low),
+                _ => unreachable!(),
+            };
+            secs_camilla::wav_bytes(&taps, 48_000)
+        };
+        assert_apo_transfer(
+            case,
+            &got_config,
+            &got_body,
+            &wav,
+            &expected_config,
+            expected_body,
+            &wav,
         );
         assert_eq!(
             eqapo_guide(
@@ -1125,9 +1280,29 @@ fn public_wrappers_match_oracle_and_eqapo_carries_mimo_f12() {
     let written = export_eqapo(&run, &eqapo).unwrap();
     assert!(written.iter().all(|path| path.exists()));
     let config = fs::read_to_string(eqapo.join("config.txt")).unwrap();
-    assert!(config.contains("+VP1"));
+    assert_eq!(eqapo_body_path(&config), "secs_mixed/secs_mixed.txt");
     let body = fs::read_to_string(eqapo.join("secs_mixed/secs_mixed.txt")).unwrap();
     assert!(body.contains("MIMO IIR support paths"));
+    let plan = secs_filters::make_plan(&chain, Some(&mimo)).unwrap();
+    let (_, outputs) = windows_channels(&plan);
+    // F13 preserves the serialized APO transfer, not the unrounded analog
+    // response from plan_responses. The direct fixture retains the unfactored
+    // MIMO body, including the fixed sub filter on both contributing paths.
+    let direct = &fixture.outputs()["direct"];
+    let expected_config = f11_config(direct["eqapo_config"].as_str().unwrap());
+    let expected_body = direct["eqapo_filters"].as_str().unwrap();
+    assert_apo_transfer(
+        &fixture.id,
+        &config,
+        &body,
+        &|name| fs::read(eqapo.join("secs_mixed").join(name)).unwrap(),
+        &expected_config,
+        expected_body,
+        &|name| panic!("unexpected MIMO IIR fixture WAV: {name}"),
+    );
+    for (role, output) in outputs {
+        assert!(output <= 16, "MIMO output {role} channel {output}");
+    }
 }
 
 #[test]
@@ -1279,6 +1454,7 @@ impl FixedMarker for Op {
         match self {
             Op::Peq { fixed, .. }
             | Op::Fir { fixed, .. }
+            | Op::FirLowRate { fixed, .. }
             | Op::Gain { fixed, .. }
             | Op::Invert { fixed }
             | Op::Hp { fixed, .. }

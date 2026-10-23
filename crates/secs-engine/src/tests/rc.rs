@@ -317,11 +317,37 @@ fn rc_recorded_candidates_and_channel() {
                 out.peq.len()
             );
         }
-        let calls: Vec<_> = candidates
+        // SECS 2 repeats the phase-independent preparation (its first PEQ
+        // fit, or the whole PEQ-only result) for each phase candidate; the
+        // channel computes it once (ADR 0012). Replay the recorded sequence
+        // without the second candidate's identical leading calls. The replay
+        // still fails on any extra, missing or different request.
+        let recorded: Vec<Vec<_>> = candidates
             .iter()
-            .flat_map(|c| c["fits"].as_array().unwrap())
-            .map(|v| read_recorded_fit(&fx, &v["inputs"], &v["result"]))
+            .map(|c| {
+                c["fits"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|v| read_recorded_fit(&fx, &v["inputs"], &v["result"]))
+                    .collect()
+            })
             .collect();
+        let mut calls = recorded[0].clone();
+        if let Some(second) = recorded.get(1) {
+            let shared = second
+                .iter()
+                .zip(&recorded[0])
+                .take_while(|(a, b)| super::fit::same_recorded_fit(a, b))
+                .count();
+            if case.config.taps == 0 {
+                assert_eq!(shared, second.len(), "{} PEQ-only candidates", fx.id);
+            } else {
+                // The FIR preparation holds at most the first PEQ fit.
+                assert!(shared <= 1, "{} shared preparation fit", fx.id);
+            }
+            calls.extend(second[shared..].iter().cloned());
+        }
         let count = calls.len();
         let mut seen = 0;
         let mut gd_seen = 0;
@@ -390,4 +416,66 @@ fn rc_recorded_candidates_and_channel() {
             out.gd_cuts.len()
         );
     }
+}
+
+#[test]
+fn rc_phase_candidates_share_preparation() {
+    let mut case = cases::load("room");
+    case.config.taps = 2048;
+    case.config.peq_bands = Some(2);
+    case.config.phase_frac = 24.0;
+    case.tuning.gd_cuts = false;
+    let setup = Setup::new(&case.config);
+    let prepared = measurement::prepare(&case.measurements, &case.config, &setup).unwrap();
+    let role = &case.config.mains[0];
+    let comb: Vec<_> = prepared
+        .h
+        .positions()
+        .iter()
+        .filter_map(|&position| {
+            prepared
+                .h
+                .get(position, role)
+                .map(|h| (position, Arc::clone(h)))
+        })
+        .collect();
+    let positions: Vec<_> = comb.iter().map(|(p, _)| *p).collect();
+    let input = RcInput {
+        role,
+        comb: &comb,
+        main_position: case.config.main_position,
+        level_db: 0.0,
+        setup: &setup,
+        config: &case.config,
+        tuning: &case.tuning,
+        positions: &positions,
+    };
+    let mut calls = 0;
+    let mut fit = |_: &crate::fit::FitRequest<'_>| {
+        calls += 1;
+        vec![(67.0, 1.2, -2.0)]
+    };
+    let a = rc::correction(&input, 24.0, &mut fit);
+    let b = rc::correction(&input, 6.0, &mut fit);
+    assert_eq!(calls, 4);
+    let expected = if rc::phase_score(&input, &b) < rc::phase_score(&input, &a) {
+        &b
+    } else {
+        &a
+    };
+    let mut shared_calls = 0;
+    let mut fit = |_: &crate::fit::FitRequest<'_>| {
+        shared_calls += 1;
+        vec![(67.0, 1.2, -2.0)]
+    };
+    let actual = rc::channel(&input, &mut fit);
+    assert_eq!(shared_calls, 3);
+    assert_eq!(actual.out.fir, expected.fir);
+    assert_eq!(actual.out.response, expected.response);
+    assert_eq!(actual.out.peq, expected.peq);
+    assert_eq!(actual.out.phase_strength, expected.phase_strength);
+    assert_eq!(actual.out.design_db, expected.design_db);
+    let mut notes = a.notes.clone();
+    notes.extend(b.notes.clone());
+    assert_eq!(actual.out.notes, notes);
 }

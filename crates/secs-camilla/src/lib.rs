@@ -16,6 +16,7 @@ use pyfmt::{format_fixed, format_g, format_i3, format_s30, repr_f64, round_ndigi
 use secs_types::chain::{
     BandType, MainChannel, MimoFilter, MimoPath, MimoPaths, Peq, SignalChain, SubChannel,
 };
+use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -291,15 +292,16 @@ fn combo(kind: &str, frequency: f64, order: i64) -> Json {
 }
 
 fn delay(milliseconds: f64) -> Json {
+    delay_samples(round_ties_even_i64(
+        milliseconds * f64::from(SAMPLE_RATE) / 1000.0,
+    ))
+}
+
+fn delay_samples(samples: i64) -> Json {
     filter_spec(
         "Delay",
         object([
-            (
-                "delay",
-                Json::Int(round_ties_even_i64(
-                    milliseconds * f64::from(SAMPLE_RATE) / 1000.0,
-                )),
-            ),
+            ("delay", Json::Int(samples)),
             ("unit", Json::Str("samples".into())),
             ("subsample", Json::Bool(false)),
         ]),
@@ -488,6 +490,19 @@ fn validate_mimo(chain: &SignalChain, mimo: Option<&MimoPaths>) -> Result<(), Ca
                     finite(&format!("mimo.paths[{index}].taps_48k[{tap}]"), *value)?;
                 }
             }
+            MimoFilter::FirLowRate { taps_low, fs_low } => {
+                finite(&format!("mimo.paths[{index}].fs_low"), *fs_low)?;
+                if *fs_low > f64::from(SAMPLE_RATE)
+                    || secs_dsp::fir::lowrate_len_48k(taps_low.len(), *fs_low).is_none()
+                {
+                    return Err(CamillaError::Invalid(format!(
+                        "invalid or oversized low-rate FIR at path {index}"
+                    )));
+                }
+                for (tap, value) in taps_low.iter().enumerate() {
+                    finite(&format!("mimo.paths[{index}].taps_low[{tap}]"), *value)?;
+                }
+            }
         }
     }
     Ok(())
@@ -674,26 +689,6 @@ fn allpass(frequency: f64, q: f64) -> Json {
     )
 }
 
-fn fixed_filter_names(support: &str, subs: &[SubChannel]) -> Vec<String> {
-    let Some(sub) = subs.iter().find(|sub| sub.role == support) else {
-        return Vec::new();
-    };
-    let mut names = Vec::new();
-    if sub.hp_hz != 0.0 {
-        names.push(format!("sub_{support}_fixed_hp"));
-    }
-    if sub.lp_hz != 0.0 {
-        names.push(format!("sub_{support}_fixed_lp"));
-    }
-    names.extend(
-        sub.peq
-            .iter()
-            .enumerate()
-            .map(|(index, _)| format!("sub_{support}_fixed_peq{index}")),
-    );
-    names
-}
-
 fn path_tag(path: &MimoPath) -> String {
     format!("mimo_{}_{}", path.input, path.support)
 }
@@ -866,20 +861,66 @@ pub fn make_config_observed(
         ));
     }
 
-    let split = object([
-        ("channels", channels(n_in + n_paths, 2 * n_in + n_paths)),
-        (
-            "mapping",
-            Json::Array(
-                (0..n_in)
-                    .map(|k| one(k, k, false))
-                    .chain((0..n_in).map(|k| one(n_in + k, k, false)))
-                    .chain((0..n_paths).map(|p| one(2 * n_in + p, n_in + p, false)))
-                    .collect(),
+    // Corrected inputs that share a crossover can be summed before their
+    // common LR4 low-pass. Raw MIMO copies were taken before correction.
+    let mut xo_groups: Vec<(f64, Vec<usize>)> = Vec::new();
+    if n_sub > 0 {
+        for (channel, main) in mains.iter().enumerate() {
+            if let Some(xo) = main.xo_hz.filter(|value| *value != 0.0) {
+                if let Some((_, members)) = xo_groups.iter_mut().find(|(f, _)| *f == xo) {
+                    members.push(channel);
+                } else {
+                    xo_groups.push((xo, vec![channel]));
+                }
+            }
+        }
+    }
+    let n_xo = xo_groups.len();
+    let split_width = n_in + n_xo + n_paths;
+    let sum = |dest: usize, sources: Vec<usize>| {
+        object([
+            ("dest", int(dest)),
+            (
+                "sources",
+                Json::Array(
+                    sources
+                        .into_iter()
+                        .map(|channel| {
+                            object([
+                                ("channel", int(channel)),
+                                ("gain", Json::Int(0)),
+                                ("inverted", Json::Bool(false)),
+                            ])
+                        })
+                        .collect(),
+                ),
             ),
-        ),
-    ]);
+        ])
+    };
+    let mut mixers = Vec::<(String, Json)>::new();
+    let split_mapping = (0..n_in)
+        .map(|channel| one(channel, channel, false))
+        .chain(
+            xo_groups
+                .iter()
+                .enumerate()
+                .map(|(group, (_, members))| sum(n_in + group, members.clone())),
+        )
+        .chain((0..n_paths).map(|path| one(n_in + n_xo + path, n_in + path, false)))
+        .collect();
+    mixers.push((
+        "split".into(),
+        object([
+            ("channels", channels(n_in + n_paths, split_width)),
+            ("mapping", Json::Array(split_mapping)),
+        ]),
+    ));
     pipeline.push(pipeline_mixer("split"));
+    for (group, (frequency, _)) in xo_groups.iter().enumerate() {
+        let name = format!("bass_xo{group}_lp");
+        filters.push((name.clone(), combo("LinkwitzRileyLowpass", *frequency, 4)));
+        pipeline.push(pipeline_filter(n_in + group, vec![name]));
+    }
     for (channel, main) in mains.iter().enumerate() {
         let mut names = Vec::new();
         let gain_name = format!("main_{}_gain", main.role);
@@ -903,58 +944,87 @@ pub fn make_config_observed(
             let high = format!("main_{}_hp", main.role);
             filters.push((high.clone(), combo("LinkwitzRileyHighpass", xo, 4)));
             names.push(high);
-            let low = format!("send_{}_lp", main.role);
-            filters.push((low.clone(), combo("LinkwitzRileyLowpass", xo, 4)));
-            pipeline.push(pipeline_filter(n_in + channel, vec![low]));
         }
-        let delay_name = format!("main_{}_delay", main.role);
-        filters.push((delay_name.clone(), delay(main.delay_ms)));
-        names.push(delay_name);
+        let name = format!("main_{}_delay", main.role);
+        filters.push((name.clone(), delay(main.delay_ms)));
+        names.push(name);
         pipeline.push(pipeline_filter(channel, names));
     }
 
-    let mut bus_mapping: Vec<Json> = (0..n_main).map(|k| one(k, k, false)).collect();
-    for (sub_index, sub) in subs.iter().enumerate() {
-        let sources = (0..n_in)
-            .filter(|index| {
-                *index == n_main
-                    || mains
-                        .get(*index)
-                        .and_then(|main| main.xo_hz)
-                        .is_some_and(|value| value != 0.0)
-            })
-            .map(|index| {
-                object([
-                    ("channel", int(n_in + index)),
-                    ("gain", Json::Float(round_ndigits(sub.gain_db, 4))),
-                    ("inverted", Json::Bool(sub.polarity < 0)),
-                ])
-            })
+    let bass_width = n_main + usize::from(n_sub > 0) + n_paths;
+    let mut bass_mapping: Vec<_> = (0..n_main)
+        .map(|channel| one(channel, channel, false))
+        .collect();
+    if n_sub > 0 {
+        let sources = (0..n_xo)
+            .map(|group| n_in + group)
+            .chain(lfe.then_some(n_main))
             .collect::<Vec<_>>();
         if !sources.is_empty() {
-            bus_mapping.push(object([
-                ("dest", int(n_main + sub_index)),
-                ("sources", Json::Array(sources)),
-            ]));
+            bass_mapping.push(sum(n_main, sources));
         }
     }
-    bus_mapping.extend((0..n_paths).map(|path| one(n_out + path, 2 * n_in + path, false)));
-    let bus = object([
-        ("channels", channels(2 * n_in + n_paths, n_out + n_paths)),
-        ("mapping", Json::Array(bus_mapping)),
-    ]);
+    bass_mapping.extend((0..n_paths).map(|path| {
+        one(
+            n_main + usize::from(n_sub > 0) + path,
+            n_in + n_xo + path,
+            false,
+        )
+    }));
+    mixers.push((
+        "bass_sum".into(),
+        object([
+            ("channels", channels(split_width, bass_width)),
+            ("mapping", Json::Array(bass_mapping)),
+        ]),
+    ));
+    pipeline.push(pipeline_mixer("bass_sum"));
+    if n_sub > 0 && !chain.sub_bus_peq.is_empty() {
+        let names = chain
+            .sub_bus_peq
+            .iter()
+            .enumerate()
+            .map(|(index, &(frequency, q, gain))| {
+                let name = format!("bass_bus_peq{index}");
+                filters.push((name.clone(), peaking(frequency, q, gain)));
+                name
+            })
+            .collect();
+        pipeline.push(pipeline_filter(n_main, names));
+    }
+    // Apply each sub's gain/polarity after the shared sum and bus PEQ.
+    let mut bus_mapping: Vec<_> = (0..n_main)
+        .map(|channel| one(channel, channel, false))
+        .collect();
+    bus_mapping.extend(subs.iter().enumerate().map(|(index, sub)| {
+        object([
+            ("dest", int(n_main + index)),
+            (
+                "sources",
+                Json::Array(vec![object([
+                    ("channel", int(n_main)),
+                    ("gain", Json::Float(round_ndigits(sub.gain_db, 4))),
+                    ("inverted", Json::Bool(sub.polarity < 0)),
+                ])]),
+            ),
+        ])
+    }));
+    bus_mapping.extend(
+        (0..n_paths).map(|path| one(n_out + path, n_main + usize::from(n_sub > 0) + path, false)),
+    );
+    mixers.push((
+        "bus".into(),
+        object([
+            ("channels", channels(bass_width, n_out + n_paths)),
+            ("mapping", Json::Array(bus_mapping)),
+        ]),
+    ));
     pipeline.push(pipeline_mixer("bus"));
     for (sub_index, sub) in subs.iter().enumerate() {
         let mut names = Vec::new();
-        for (index, (frequency, q, gain)) in chain.sub_bus_peq.iter().enumerate() {
-            let name = format!("sub_{}_peq{index}", sub.role);
-            filters.push((name.clone(), peaking(*frequency, *q, *gain)));
-            names.push(name);
-        }
-        names.extend(fixed_filters(&sub.role, sub, &mut filters));
-        for (index, (frequency, q)) in sub.allpass.iter().enumerate() {
+        for (index, &(frequency, q)) in sub.allpass.iter().enumerate() {
             let name = format!("sub_{}_ap{index}", sub.role);
-            filters.push((name.clone(), allpass(*frequency, *q)));
+            filters.push((name.clone(), allpass(frequency, q)));
             names.push(name);
         }
         let name = format!("sub_{}_delay", sub.role);
@@ -963,26 +1033,81 @@ pub fn make_config_observed(
         pipeline.push(pipeline_filter(n_main + sub_index, names));
     }
 
+    struct SupportGroup {
+        output: usize,
+        low_hz: f64,
+        fir: bool,
+        delay_samples: i64,
+        members: Vec<usize>,
+    }
+    let output_roles = mains
+        .iter()
+        .map(|main| &main.role)
+        .chain(subs.iter().map(|sub| &sub.role))
+        .collect::<Vec<_>>();
+    let path_delays: Vec<_> = paths
+        .iter()
+        .map(|path| {
+            let extra = match &path.filter {
+                MimoFilter::Iir { delay_ms, .. } => *delay_ms,
+                _ => 0.0,
+            };
+            // Round the old complete delay exactly once, then factor integer samples.
+            round_ties_even_i64((path.delay_ms + extra) * f64::from(SAMPLE_RATE) / 1000.0)
+        })
+        .collect();
+    let mut groups: Vec<SupportGroup> = Vec::new();
+    let mut path_groups = Vec::with_capacity(n_paths);
+    for (index, path) in paths.iter().enumerate() {
+        let output = output_roles
+            .iter()
+            .position(|role| **role == path.support)
+            .expect("validated support");
+        let low_hz = round_ndigits(path.low_hz, 3);
+        let fir = path.filter.is_fir();
+        let group = if let Some(group) = groups
+            .iter()
+            .position(|group| group.output == output && group.low_hz == low_hz && group.fir == fir)
+        {
+            groups[group].delay_samples = groups[group].delay_samples.min(path_delays[index]);
+            groups[group].members.push(index);
+            group
+        } else {
+            groups.push(SupportGroup {
+                output,
+                low_hz,
+                fir,
+                delay_samples: path_delays[index],
+                members: vec![index],
+            });
+            groups.len() - 1
+        };
+        path_groups.push(group);
+    }
     for (index, path) in paths.iter().enumerate() {
         let tag = path_tag(path);
         let mut names = Vec::new();
+        let residual = path_delays[index] - groups[path_groups[index]].delay_samples;
+        if residual != 0 {
+            let name = format!("{tag}_delay");
+            filters.push((name.clone(), delay_samples(residual)));
+            names.push(name);
+        }
         match &path.filter {
-            MimoFilter::Fir { taps_48k } => {
-                let delay_name = format!("{tag}_delay");
-                filters.push((delay_name.clone(), delay(path.delay_ms)));
-                names.push(delay_name);
-                let hp_name = format!("{tag}_hp");
-                filters.push((
-                    hp_name.clone(),
-                    combo("LinkwitzRileyHighpass", round_ndigits(path.low_hz, 3), 4),
-                ));
-                names.push(hp_name);
+            MimoFilter::Fir { .. } | MimoFilter::FirLowRate { .. } => {
+                let taps = match &path.filter {
+                    MimoFilter::Fir { taps_48k } => Cow::Borrowed(taps_48k.as_slice()),
+                    MimoFilter::FirLowRate { taps_low, fs_low } => {
+                        Cow::Owned(secs_dsp::fir::lowrate_to_48k(taps_low, *fs_low))
+                    }
+                    MimoFilter::Iir { .. } => unreachable!(),
+                };
                 let file = coeff_dir.join(format!("{fir_prefix}{tag}.wav"));
                 let filename = posix(&relative(&file, config_dir)?);
-                coeffs.push((file, wav_bytes(taps_48k, SAMPLE_RATE)));
-                let fir_name = format!("{tag}_fir");
+                coeffs.push((file, wav_bytes(&taps, SAMPLE_RATE)));
+                let name = format!("{tag}_fir");
                 filters.push((
-                    fir_name.clone(),
+                    name.clone(),
                     filter_spec(
                         "Conv",
                         object([
@@ -991,18 +1116,18 @@ pub fn make_config_observed(
                         ]),
                     ),
                 ));
-                names.push(fir_name);
+                names.push(name);
             }
             MimoFilter::Iir {
                 gain_db,
-                delay_ms,
                 polarity,
                 peq,
                 allpass: path_allpass,
+                ..
             } => {
-                let gain_name = format!("{tag}_gain");
+                let name = format!("{tag}_gain");
                 filters.push((
-                    gain_name.clone(),
+                    name.clone(),
                     filter_spec(
                         "Gain",
                         object([
@@ -1011,10 +1136,7 @@ pub fn make_config_observed(
                         ]),
                     ),
                 ));
-                names.push(gain_name);
-                let delay_name = format!("{tag}_delay");
-                filters.push((delay_name.clone(), delay(path.delay_ms + *delay_ms)));
-                names.push(delay_name);
+                names.push(name);
                 for (band, &(frequency, q, gain)) in peq.iter().enumerate() {
                     let name = format!("{tag}_peq{band}");
                     filters.push((name.clone(), peaking(frequency, q, gain)));
@@ -1025,67 +1147,92 @@ pub fn make_config_observed(
                     filters.push((name.clone(), allpass(frequency, q)));
                     names.push(name);
                 }
-                let hp_name = format!("{tag}_hp");
+            }
+        }
+        if !names.is_empty() {
+            pipeline.push(pipeline_filter(n_out + index, names));
+        }
+    }
+    if !groups.is_empty() {
+        // A group shares its exported HP (and IIR LP). Different support limits
+        // or filter families remain separate even in caller-constructed plans.
+        let mapping = (0..n_out)
+            .map(|channel| one(channel, channel, false))
+            .chain(groups.iter().enumerate().map(|(group, value)| {
+                sum(
+                    n_out + group,
+                    value.members.iter().map(|path| n_out + path).collect(),
+                )
+            }))
+            .collect();
+        mixers.push((
+            "mimo_groups".into(),
+            object([
+                ("channels", channels(n_out + n_paths, n_out + groups.len())),
+                ("mapping", Json::Array(mapping)),
+            ]),
+        ));
+        pipeline.push(pipeline_mixer("mimo_groups"));
+        for (index, group) in groups.iter().enumerate() {
+            let mut names = Vec::new();
+            if group.delay_samples != 0 {
+                let name = format!("mimo_group{index}_delay");
+                filters.push((name.clone(), delay_samples(group.delay_samples)));
+                names.push(name);
+            }
+            let name = format!("mimo_group{index}_hp");
+            filters.push((
+                name.clone(),
+                combo("LinkwitzRileyHighpass", group.low_hz, 4),
+            ));
+            names.push(name);
+            if !group.fir {
+                let name = format!("mimo_group{index}_lp");
                 filters.push((
-                    hp_name.clone(),
-                    combo("LinkwitzRileyHighpass", round_ndigits(path.low_hz, 3), 4),
-                ));
-                names.push(hp_name);
-                let lp_name = format!("{tag}_lp");
-                filters.push((
-                    lp_name.clone(),
+                    name.clone(),
                     combo(
                         "LinkwitzRileyLowpass",
-                        mimo.expect("MIMO path has container").fsiso,
+                        mimo.expect("MIMO container").fsiso,
                         4,
                     ),
                 ));
-                names.push(lp_name);
+                names.push(name);
             }
+            pipeline.push(pipeline_filter(n_out + index, names));
         }
-        names.extend(fixed_filter_names(&path.support, subs));
-        pipeline.push(pipeline_filter(n_out + index, names));
-    }
-    let merge = if paths.is_empty() {
-        None
-    } else {
-        let outputs = mains
-            .iter()
-            .map(|main| main.role.as_str())
-            .chain(subs.iter().map(|sub| sub.role.as_str()))
-            .collect::<Vec<_>>();
-        let mapping = outputs
-            .iter()
-            .enumerate()
-            .map(|(output, role)| {
-                let sources = std::iter::once(object([
-                    ("channel", int(output)),
-                    ("gain", Json::Int(0)),
-                    ("inverted", Json::Bool(false)),
-                ]))
-                .chain(
-                    paths
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, path)| path.support == *role)
-                        .map(|(path_index, _)| {
-                            object([
-                                ("channel", int(n_out + path_index)),
-                                ("gain", Json::Int(0)),
-                                ("inverted", Json::Bool(false)),
-                            ])
-                        }),
+        let mapping = (0..n_out)
+            .map(|output| {
+                sum(
+                    output,
+                    std::iter::once(output)
+                        .chain(
+                            groups
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, group)| group.output == output)
+                                .map(|(index, _)| n_out + index),
+                        )
+                        .collect(),
                 )
-                .collect();
-                object([("dest", int(output)), ("sources", Json::Array(sources))])
             })
             .collect();
+        mixers.push((
+            "mimo_merge".into(),
+            object([
+                ("channels", channels(n_out + groups.len(), n_out)),
+                ("mapping", Json::Array(mapping)),
+            ]),
+        ));
         pipeline.push(pipeline_mixer("mimo_merge"));
-        Some(object([
-            ("channels", channels(n_out + n_paths, n_out)),
-            ("mapping", Json::Array(mapping)),
-        ]))
-    };
+    }
+    // The fixed speaker filter belongs after base + support summation. It is
+    // identical on both branches; apply it once to the physical output.
+    for (sub_index, sub) in subs.iter().enumerate() {
+        let names = fixed_filters(&sub.role, sub, &mut filters);
+        if !names.is_empty() {
+            pipeline.push(pipeline_filter(n_main + sub_index, names));
+        }
+    }
     pipeline.push(pipeline_mixer("route_out"));
 
     let route_in = object([
@@ -1254,14 +1401,12 @@ pub fn make_config_observed(
         "mixers:".into(),
         format!("  route_in: {}", json(&route_in)),
         format!("  route_out: {}", json(&route_out)),
-        format!("  split: {}", json(&split)),
-        format!("  bus: {}", json(&bus)),
     ]);
     if let Some(fork) = fork {
         lines.push(format!("  mimo_fork: {}", json(&fork)));
     }
-    if let Some(merge) = merge {
-        lines.push(format!("  mimo_merge: {}", json(&merge)));
+    for (name, mixer) in mixers {
+        lines.push(format!("  {name}: {}", json(&mixer)));
     }
     lines.push("pipeline:".into());
     for stage in pipeline {
@@ -1394,11 +1539,7 @@ pub fn export(
     let mimo_note = mimo.filter(|paths| !paths.paths.is_empty()).map_or_else(
         || "no MIMO".to_owned(),
         |paths| {
-            let kind = if paths
-                .paths
-                .iter()
-                .any(|path| matches!(path.filter, MimoFilter::Fir { .. }))
-            {
+            let kind = if paths.paths.iter().any(|path| path.filter.is_fir()) {
                 "FIR"
             } else {
                 "IIR"

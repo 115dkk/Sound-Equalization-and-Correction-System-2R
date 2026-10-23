@@ -227,10 +227,7 @@ impl Service {
                     .paths
                     .paths
                     .iter()
-                    .map(|path| match &path.filter {
-                        secs_types::chain::MimoFilter::Fir { taps_48k } => taps_48k.len(),
-                        secs_types::chain::MimoFilter::Iir { .. } => 0,
-                    })
+                    .map(|path| path.filter.fir_len_48k())
                     .sum(),
                 notes: run
                     .notes

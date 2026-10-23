@@ -125,7 +125,7 @@ pub struct SignalChain {
     pub mains: Vec<MainChannel>,
     /// Subs in configuration order (`CorrectionResult.subs`).
     pub subs: Vec<SubChannel>,
-    /// PEQ on the summed sub bus, copied into every sub output.
+    /// PEQ on the summed sub bus, before the per-sub output branches.
     pub sub_bus_peq: Vec<Peq>,
     /// Common shift from the internal to the output axis in ms
     /// (`engine.main_extra_ms`).
@@ -161,6 +161,37 @@ pub enum MimoFilter {
         /// Taps at 48 kHz.
         taps_48k: Vec<f64>,
     },
+    /// FIR support retained at its design rate. Exporters materialize the
+    /// historical 48 kHz representation only when writing convolution files.
+    /// The isolation low-pass is already included in these taps.
+    FirLowRate {
+        /// Design-rate coefficients, including the isolation low-pass.
+        taps_low: Vec<f64>,
+        /// Design sample rate in hertz.
+        fs_low: f64,
+    },
+}
+
+impl MimoFilter {
+    /// Whether this support uses a finite impulse response.
+    pub fn is_fir(&self) -> bool {
+        matches!(self, Self::Fir { .. } | Self::FirLowRate { .. })
+    }
+
+    /// Number of coefficients in the compatible 48 kHz export representation.
+    pub fn fir_len_48k(&self) -> usize {
+        match self {
+            Self::Iir { .. } => 0,
+            Self::Fir { taps_48k } => taps_48k.len(),
+            Self::FirLowRate { taps_low, fs_low } => {
+                if !fs_low.is_finite() || *fs_low <= 0.0 || taps_low.is_empty() {
+                    0
+                } else {
+                    (taps_low.len() as f64 * (48_000.0 / fs_low)).ceil() as usize
+                }
+            }
+        }
+    }
 }
 
 /// One MIMO support path: input `input` also drives speaker `support`.
