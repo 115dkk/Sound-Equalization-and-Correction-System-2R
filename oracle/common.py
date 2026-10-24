@@ -22,7 +22,7 @@ import platform
 import sys
 import tomllib
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import numpy as np
 import scipy
@@ -195,42 +195,3 @@ class Family:
             raise SystemExit(f"stale files in oracle/goldens/{self.name}: {stale}; delete them")
         total = sum(self.written.values())
         print(f"{self.name}: {len(self.written)} files, {total} bytes")
-
-
-# -- interposition (observing intermediate values without copying the oracle)
-class Recorder:
-    """Calls observed while a session is open; nested calls of a recorded function are not recorded."""
-
-    def __init__(self) -> None:
-        self.calls: list[dict] | None = None
-        self.depth = 0
-
-    def open(self) -> None:
-        self.calls = []
-
-    def close(self) -> list[dict]:
-        calls, self.calls = self.calls or [], None
-        return calls
-
-
-REC = Recorder()
-
-
-def interpose(module: Any, name: str, label: str | None = None) -> Callable:
-    """Wrap ``module.name`` so calls are recorded in ``REC`` while a session is open."""
-    original = getattr(module, name)
-
-    def wrapper(*args, **kwargs):
-        if REC.calls is None or REC.depth:
-            return original(*args, **kwargs)
-        REC.depth += 1
-        try:
-            out = original(*args, **kwargs)
-        finally:
-            REC.depth -= 1
-        REC.calls.append({"label": label or name, "args": args, "kwargs": kwargs, "out": out})
-        return out
-
-    wrapper.__wrapped__ = original
-    setattr(module, name, wrapper)
-    return original
