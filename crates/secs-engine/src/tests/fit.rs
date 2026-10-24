@@ -21,6 +21,19 @@ pub(crate) fn read_recorded_fit(fx: &Fixture, input: &Value, result: &Value) -> 
         result: cases::peq(result),
     }
 }
+/// Bit-equal request and result. SECS 2 records the phase-independent RC
+/// preparation once per phase candidate; the channel computes it once.
+pub(crate) fn same_recorded_fit(a: &RecordedFit, b: &RecordedFit) -> bool {
+    let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    bits(&a.g) == bits(&b.g)
+        && bits(&a.corr_db) == bits(&b.corr_db)
+        && (a.n, a.lo.to_bits(), a.hi.to_bits(), a.boost.to_bits())
+            == (b.n, b.lo.to_bits(), b.hi.to_bits(), b.boost.to_bits())
+        && a.ring_ms.map(f64::to_bits) == b.ring_ms.map(f64::to_bits)
+        && a.f_max.map(f64::to_bits) == b.f_max.map(f64::to_bits)
+        && bits(&flat(&a.result)) == bits(&flat(&b.result))
+}
+
 fn recorded(fx: &Fixture) -> RecordedFit {
     read_recorded_fit(fx, fx.inputs(), &fx.outputs()["result"])
 }

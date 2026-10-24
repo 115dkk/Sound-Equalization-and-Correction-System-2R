@@ -124,6 +124,54 @@ pub fn smooth_complex(
         .collect())
 }
 
+/// Smooths only an output prefix, evaluating input bins lazily. Every bound is
+/// still validated against the original grid. Prefix sums start at zero and
+/// retain exactly the accumulation order of `smooth_complex`, including NaNs.
+pub(crate) fn smooth_complex_prefix(
+    f: &[f64],
+    frac: Fraction<'_>,
+    output_len: usize,
+    mut value: impl FnMut(usize) -> Complex64,
+) -> Result<Vec<Complex64>, DspError> {
+    if f.len() < 2 || output_len > f.len() {
+        return Err(invalid(
+            "smoothing requires matching arrays of at least two bins",
+        ));
+    }
+    if let Fraction::PerBin(x) = frac
+        && x.len() != f.len()
+        && x.len() != 1
+    {
+        return Err(invalid("fraction cannot broadcast to frequency grid"));
+    }
+    let mut selected = Vec::with_capacity(output_len);
+    let mut input_len = 0;
+    for (i, bound) in bounds(f, frac).enumerate() {
+        let (lo, hi) = bound?;
+        if i < output_len {
+            selected.push((lo, hi));
+            input_len = input_len.max(hi);
+        }
+    }
+    let mut re = Vec::with_capacity(input_len + 1);
+    let mut im = Vec::with_capacity(input_len + 1);
+    re.push(0.0);
+    im.push(0.0);
+    for i in 0..input_len {
+        let h = value(i);
+        re.push(re.last().unwrap() + h.re);
+        im.push(im.last().unwrap() + h.im);
+    }
+    Ok(selected
+        .into_iter()
+        .map(|(lo, hi)| {
+            let real = (re[hi] - re[lo]) / (hi - lo) as f64;
+            let imaginary = (im[hi] - im[lo]) / (hi - lo) as f64;
+            real + Complex64::new(0.0, 1.0) * Complex64::new(imaginary, 0.0)
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,5 +202,46 @@ mod tests {
         assert!(PowerSmoother::new(&[], Fraction::Scalar(12.0)).is_err());
         assert!(PowerSmoother::new(&f, Fraction::PerBin(&[])).is_err());
         assert!(PowerSmoother::new(&f, Fraction::Scalar(-12.0)).is_err());
+    }
+
+    #[test]
+    fn selected_complex_smoothing_preserves_prefix_bits_and_all_grid_errors() {
+        let f: Vec<_> = (0..4097).map(|i| i as f64 * 0.3662109375).collect();
+        let h: Vec<_> = f
+            .iter()
+            .map(|f| Complex64::new((f * 0.013).sin(), (f * 0.017).cos()))
+            .collect();
+        let per_bin: Vec<_> = f.iter().map(|f| 6.0 + f / 50.0).collect();
+        for frac in [
+            Fraction::Scalar(24.0),
+            Fraction::PerBin(&[24.0]),
+            Fraction::PerBin(&per_bin),
+        ] {
+            let expected = smooth_complex(&f, &h, frac).unwrap();
+            let mut calls = 0;
+            let actual = smooth_complex_prefix(&f, frac, 100, |i| {
+                calls += 1;
+                h[i]
+            })
+            .unwrap();
+            assert!(calls < 150, "unneeded high-frequency bins were evaluated");
+            for (a, b) in actual.iter().zip(&expected) {
+                assert_eq!(a.re.to_bits(), b.re.to_bits());
+                assert_eq!(a.im.to_bits(), b.im.to_bits());
+            }
+        }
+        let mut special = h.clone();
+        special[30] = Complex64::new(f64::INFINITY, f64::NAN);
+        let full = smooth_complex(&f, &special, Fraction::Scalar(24.0)).unwrap();
+        let prefix =
+            smooth_complex_prefix(&f, Fraction::Scalar(24.0), 100, |i| special[i]).unwrap();
+        for (a, b) in prefix.iter().zip(full) {
+            assert!(a.re.to_bits() == b.re.to_bits() || a.re.is_nan() && b.re.is_nan());
+            assert!(a.im.to_bits() == b.im.to_bits() || a.im.is_nan() && b.im.is_nan());
+        }
+        let mut invalid = vec![24.0; f.len()];
+        invalid[f.len() - 1] = -24.0;
+        assert!(smooth_complex_prefix(&f, Fraction::PerBin(&invalid), 10, |i| h[i]).is_err());
+        assert!(smooth_complex_prefix(&f, Fraction::PerBin(&[]), 10, |i| h[i]).is_err());
     }
 }

@@ -78,11 +78,18 @@ secs-policy ────────> (파일 시스템만 읽음; IPC 메서드
 | 오디오 장치 `AudioBackend` | `secs-audio` | WASAPI(`secs-sys`), cpal(`secs-sys`), 시뮬레이션 방(테스트) |
 | REW 전송 | `secs-rew` 안쪽 | HTTP, 기록된 대화(테스트) |
 | 이상 FIR의 정칙화 탐색 `RidgeBackend` | `secs-engine` | CPU RidgeSweep(기준), CUDA f64 spectral(`secs-gpu`) |
-| 신호 사슬 소비자 | `secs-types`의 사슬 값 | 응답 시뮬레이터(`secs-engine`), CamillaDSP 작성기(`secs-camilla`), 필터 텍스트·Equalizer APO 작성기(`secs-filters`) |
+| 신호 사슬 소비자 | `secs-types`의 사슬 값 | 응답 시뮬레이터(`secs-engine`), CamillaDSP 작성기(`secs-camilla`), 필터 텍스트·Equalizer APO 작성기와 FIR streaming 참조 소비자(`secs-filters`) |
 | 메모리 조회 `MemoryProbe` | `secs-compute` | 운영체제(`secs-sys`), 고정값(테스트) |
 | 호스트 기능 `Host` | `secs-service` | Tauri(대화상자, 폴더 열기, 알림), 기록(테스트) |
 
 ## 5. 엔진
+
+MIMO FIR 서포트는 설계 레이트의 계수(`MimoFilter::FirLowRate { taps_low, fs_low }`)로
+보관하고, 48 kHz WAV가 필요한 작성기에서 펼칩니다. 이전의 `Fir { taps_48k }`도 읽습니다
+(ADR 0012). `secs-dsp`의 행렬 컨볼루션과 다중 레이트 커널은 장치에 의존하지 않고,
+`secs-filters::playback::MimoFirPlayback`와 `render_mimo` 예제가 이 값을 직접 재생합니다.
+다중 레이트 재생과 MIMO IIR의 연산자 풀이는 공개 API의 옵션으로만 고르며, 앱 설정과
+IPC의 기본 동작은 바꾸지 않습니다.
 
 `secs-engine`의 인터페이스는 한 번의 호출입니다. 측정, 설정, 튜닝, 계산 환경을 넣으면 바뀌지 않는 결과가 나옵니다. 업스트림의 `CorrectionEngine`은 생성자 인자 21개, 생성 뒤 덮어쓰는 속성 5개, `compute()`가 바꾸는 속성 약 25개를 가졌고, 화면·MIMO·내보내기가 그 내부 배열을 직접 읽었습니다. SECS 2R은 이것을 다음 안쪽 모듈로 나눕니다.
 

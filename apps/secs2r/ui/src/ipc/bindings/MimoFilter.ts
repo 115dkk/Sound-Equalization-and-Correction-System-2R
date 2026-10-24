@@ -27,4 +27,12 @@ allpass: Array<[number, number]>, } } | { "Fir": {
 /**
  * Taps at 48 kHz.
  */
-taps_48k: Array<number>, } };
+taps_48k: Array<number>, } } | { "FirLowRate": { 
+/**
+ * Design-rate coefficients, including the isolation low-pass.
+ */
+taps_low: Array<number>, 
+/**
+ * Design sample rate in hertz.
+ */
+fs_low: number, } };

@@ -7,7 +7,7 @@ use secs_types::chain::{MimoPaths, SignalChain};
 use secs_types::ipc::{CalibrationSummary, MimoSummary};
 use serde::{Deserialize, Serialize};
 
-const VERSION: u32 = 4;
+const VERSION: u32 = 5;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct CachedRunLabels {
@@ -19,8 +19,8 @@ pub(crate) struct CachedRunLabels {
     pub rc_hi_hz: f64,
     pub mimo_max_supports: usize,
 }
-// 132 x 8,000 support taps alone serialize to about 20 MiB; retain a
-// bounded 64 MiB envelope for those paths plus calibration FIRs (ADR 0009).
+// New FIR runs retain only their design-rate coefficients. Keep the historical
+// 64 MiB envelope so v4 caches with 132 x 8,000 expanded taps still load.
 const MAX_CACHE_BYTES: u64 = 64 * 1024 * 1024;
 const CACHE_NAME: &str = "secs_run_cache.json";
 
@@ -43,7 +43,34 @@ pub(crate) struct CachedResults {
 #[derive(Debug, Serialize, Deserialize)]
 struct CacheFile {
     version: u32,
+    #[serde(default)]
+    fir_materialization_version: u32,
     results: CachedResults,
+}
+
+fn valid_fir_recipes(results: &CachedResults) -> bool {
+    results.mimo_paths.as_ref().is_none_or(|mimo| {
+        mimo.paths.iter().all(|path| match &path.filter {
+            secs_types::chain::MimoFilter::FirLowRate { taps_low, fs_low } => {
+                *fs_low <= 48_000.0
+                    && secs_dsp::fir::lowrate_len_48k(taps_low.len(), *fs_low).is_some()
+                    && taps_low.iter().all(|tap| tap.is_finite())
+            }
+            _ => true,
+        })
+    })
+}
+
+// Only v5 can store design-rate FIRs; older layouts hold expanded taps.
+fn has_lowrate_fir(results: &CachedResults) -> bool {
+    results.mimo_paths.as_ref().is_some_and(|mimo| {
+        mimo.paths.iter().any(|path| {
+            matches!(
+                path.filter,
+                secs_types::chain::MimoFilter::FirLowRate { .. }
+            )
+        })
+    })
 }
 
 pub(crate) fn load(project_path: &Path) -> Option<CachedResults> {
@@ -63,7 +90,14 @@ pub(crate) fn load(project_path: &Path) -> Option<CachedResults> {
     // Current caches deserialize directly into their owned DSP arrays. Only
     // legacy layouts need a temporary JSON tree for moving the old fields.
     if let Ok(file) = serde_json::from_slice::<CacheFile>(&bytes) {
-        return (file.version == VERSION).then_some(file.results);
+        // v4 contains already-expanded FIRs and needs no materializer. v5
+        // retains design-rate taps and pins their expansion algorithm.
+        return (valid_fir_recipes(&file.results)
+            && ((file.version == 4 && !has_lowrate_fir(&file.results))
+                || (file.version == VERSION
+                    && file.fir_materialization_version
+                        == secs_dsp::fir::LOWRATE_MATERIALIZATION_VERSION)))
+            .then_some(file.results);
     }
     let mut value: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
     let version = value.get("version")?.as_u64()?;
@@ -123,7 +157,7 @@ pub(crate) fn load(project_path: &Path) -> Option<CachedResults> {
         );
     }
     let cache: CacheFile = serde_json::from_value(value).ok()?;
-    Some(cache.results)
+    (!has_lowrate_fir(&cache.results)).then_some(cache.results)
 }
 
 pub(crate) fn save(project_path: &Path, results: &CachedResults) -> Result<(), std::io::Error> {
@@ -135,6 +169,12 @@ fn save_with_limit(
     results: &CachedResults,
     limit: u64,
 ) -> Result<(), std::io::Error> {
+    if !valid_fir_recipes(results) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "invalid or oversized low-rate FIR recipe",
+        ));
+    }
     let destination = path(project_path);
     let parent = destination.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
@@ -174,6 +214,7 @@ fn save_with_limit(
             &mut writer,
             &CacheFileRef {
                 version: VERSION,
+                fir_materialization_version: secs_dsp::fir::LOWRATE_MATERIALIZATION_VERSION,
                 results,
             },
         )
@@ -192,6 +233,7 @@ fn save_with_limit(
 #[derive(Serialize)]
 struct CacheFileRef<'a> {
     version: u32,
+    fir_materialization_version: u32,
     results: &'a CachedResults,
 }
 
@@ -273,7 +315,12 @@ mod tests {
     }
 
     fn legacy_value(results: CachedResults, version: u32) -> serde_json::Value {
-        let mut value = serde_json::to_value(CacheFile { version, results }).unwrap();
+        let mut value = serde_json::to_value(CacheFile {
+            version,
+            fir_materialization_version: secs_dsp::fir::LOWRATE_MATERIALIZATION_VERSION,
+            results,
+        })
+        .unwrap();
         let fields = value["results"].as_object_mut().unwrap();
         let chain = fields.remove("calibration_chain").unwrap();
         let paths = fields["mimo_paths"].clone();
@@ -330,6 +377,7 @@ mod tests {
             let mut value = if version == VERSION {
                 serde_json::to_value(CacheFile {
                     version,
+                    fir_materialization_version: secs_dsp::fir::LOWRATE_MATERIALIZATION_VERSION,
                     results: sample(),
                 })
                 .unwrap()
@@ -566,11 +614,138 @@ mod tests {
         fs::create_dir_all(project.with_extension("irs")).unwrap();
         let bytes = serde_json::to_vec(&CacheFile {
             version: VERSION + 1,
+            fir_materialization_version: secs_dsp::fir::LOWRATE_MATERIALIZATION_VERSION,
             results: sample(),
         })
         .unwrap();
         fs::write(path(&project), bytes).unwrap();
         assert!(load(&project).is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn compact_fir_cache_round_trips_bits_and_pins_materialization() {
+        use secs_types::chain::{MimoFilter, MimoPath, MimoPaths};
+        let root = std::env::temp_dir().join(format!("secs-cache-compact-{}", std::process::id()));
+        let project = root.join("project.secs");
+        let taps = vec![
+            0.12345678901234568,
+            -0.0,
+            f64::from_bits(0x3fc123456789abcd),
+            -1.9876543210987654e-12,
+        ];
+        let mut results = sample();
+        results.mimo_paths = Some(MimoPaths {
+            fsiso: 150.0,
+            paths: vec![MimoPath {
+                input: "L".into(),
+                support: "R".into(),
+                low_hz: 40.0,
+                delay_ms: 2.0,
+                filter: MimoFilter::FirLowRate {
+                    taps_low: taps.clone(),
+                    fs_low: 600.0,
+                },
+            }],
+        });
+        save(&project, &results).unwrap();
+        let loaded = load(&project).unwrap();
+        let MimoFilter::FirLowRate { taps_low, fs_low } =
+            &loaded.mimo_paths.unwrap().paths[0].filter
+        else {
+            panic!("compact cache expanded during load");
+        };
+        assert_eq!(*fs_low, 600.0);
+        assert_eq!(
+            taps_low.iter().map(|tap| tap.to_bits()).collect::<Vec<_>>(),
+            taps.iter().map(|tap| tap.to_bits()).collect::<Vec<_>>()
+        );
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(path(&project)).unwrap()).unwrap();
+        value["fir_materialization_version"] =
+            (secs_dsp::fir::LOWRATE_MATERIALIZATION_VERSION + 1).into();
+        fs::write(path(&project), serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(load(&project).is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn version_four_expanded_fir_cache_remains_readable() {
+        use secs_types::chain::{MimoFilter, MimoPath, MimoPaths};
+        let root = std::env::temp_dir().join(format!("secs-cache-v4-fir-{}", std::process::id()));
+        let project = root.join("project.secs");
+        let mut results = sample();
+        results.mimo_paths = Some(MimoPaths {
+            fsiso: 150.0,
+            paths: vec![MimoPath {
+                input: "L".into(),
+                support: "R".into(),
+                low_hz: 40.0,
+                delay_ms: 2.0,
+                filter: MimoFilter::Fir {
+                    taps_48k: vec![0.12345678901234568; 8_000],
+                },
+            }],
+        });
+        let mut value = serde_json::to_value(CacheFile {
+            version: 4,
+            fir_materialization_version: 0,
+            results,
+        })
+        .unwrap();
+        value
+            .as_object_mut()
+            .unwrap()
+            .remove("fir_materialization_version");
+        fs::create_dir_all(project.with_extension("irs")).unwrap();
+        fs::write(path(&project), serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(
+            matches!(&load(&project).unwrap().mimo_paths.unwrap().paths[0].filter,
+            MimoFilter::Fir { taps_48k } if taps_48k.len() == 8_000)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_layouts_reject_low_rate_firs() {
+        use secs_types::chain::{MimoFilter, MimoPath, MimoPaths};
+        let root =
+            std::env::temp_dir().join(format!("secs-cache-legacy-low-{}", std::process::id()));
+        let project = root.join("project.secs");
+        fs::create_dir_all(project.with_extension("irs")).unwrap();
+        let results = || {
+            let mut results = sample();
+            results.mimo_paths = Some(MimoPaths {
+                fsiso: 150.0,
+                paths: vec![MimoPath {
+                    input: "L".into(),
+                    support: "R".into(),
+                    low_hz: 40.0,
+                    delay_ms: 2.0,
+                    filter: MimoFilter::FirLowRate {
+                        taps_low: vec![1.0],
+                        fs_low: 600.0,
+                    },
+                }],
+            });
+            results
+        };
+        for version in [2, 3] {
+            let mut value = legacy_value(results(), version);
+            value
+                .as_object_mut()
+                .unwrap()
+                .remove("fir_materialization_version");
+            fs::write(path(&project), serde_json::to_vec(&value).unwrap()).unwrap();
+            assert!(load(&project).is_none(), "v{version}");
+        }
+        let value = serde_json::to_value(CacheFile {
+            version: 4,
+            fir_materialization_version: secs_dsp::fir::LOWRATE_MATERIALIZATION_VERSION,
+            results: results(),
+        })
+        .unwrap();
+        fs::write(path(&project), serde_json::to_vec(&value).unwrap()).unwrap();
+        assert!(load(&project).is_none(), "v4");
         fs::remove_dir_all(root).unwrap();
     }
 }

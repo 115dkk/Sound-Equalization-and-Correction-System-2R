@@ -419,6 +419,13 @@ fn stage_items_with_mimo(
                         secs_types::chain::MimoFilter::Fir { taps_48k } => {
                             format!("{} FIR {}탭", path.support, grouped(taps_48k.len()))
                         }
+                        secs_types::chain::MimoFilter::FirLowRate { .. } => {
+                            format!(
+                                "{} FIR {}탭",
+                                path.support,
+                                grouped(path.filter.fir_len_48k())
+                            )
+                        }
                         secs_types::chain::MimoFilter::Iir {
                             gain_db,
                             delay_ms,

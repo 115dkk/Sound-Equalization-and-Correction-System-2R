@@ -1,7 +1,7 @@
 //! Bass alignment, ported from `correction_engine.py:624–1095,1371–1428`.
 //! D1 is deliberately not applied: bus delay still penalizes coherent addition.
 
-use crate::chain::{BaRow, gather, sub_sum};
+use crate::chain::{BaRow, PreparedBaTerm, gather, sub_sum, sub_sum_prepared};
 use crate::decay::{BaLateGrid, ba_late_db};
 use crate::fit::{Fitter, xo_target_peq};
 use crate::grid::{BINS, SR_F, design_freqs};
@@ -316,6 +316,13 @@ fn gd_variance(h: &[C], f: &[f64]) -> f64 {
     mean(&gd.iter().map(|v| (v - m).powi(2)).collect::<Vec<_>>())
 }
 
+fn individual_db(power: &[Vec<f64>]) -> Vec<Vec<f64>> {
+    power
+        .iter()
+        .map(|row| row.iter().map(|p| 10.0 * (p + 1e-30).log10()).collect())
+        .collect()
+}
+
 struct BaSetup {
     grid: Vec<usize>,
     positions: Vec<u32>,
@@ -398,7 +405,21 @@ impl BaSetup {
             })
             .collect()
     }
+    // Existing cost-oracle callers supply powers. Production precomputes the
+    // fixed reference in dB once before entering differential evolution.
+    #[cfg(test)]
     fn cost(
+        &self,
+        input: &BaInput<'_>,
+        rows: &[BaRow],
+        fixed_indiv: Option<&[Vec<f64>]>,
+        bus: Option<&[C]>,
+    ) -> f64 {
+        let fixed_db = fixed_indiv.map(individual_db);
+        self.cost_with_db(input, rows, fixed_db.as_deref(), bus)
+    }
+
+    fn cost_with_db(
         &self,
         input: &BaInput<'_>,
         rows: &[BaRow],
@@ -412,27 +433,27 @@ impl BaSetup {
         let indiv = if let Some(i) = fixed_indiv {
             i
         } else {
-            owned = self.indiv(Some(rows));
+            owned = individual_db(&self.indiv(Some(rows)));
             &owned
         };
+        let grid_terms: Vec<_> = rows
+            .iter()
+            .map(|r| PreparedBaTerm::new(&self.f, r))
+            .collect();
+        let lin_terms: Vec<_> = rows
+            .iter()
+            .map(|r| PreparedBaTerm::new(&design_freqs()[..self.late.lin], r))
+            .collect();
         let mut levels = Vec::new();
         let mut total = 0.0;
         let mut weights = 0.0;
         for (k, &pos) in self.positions.iter().enumerate() {
-            let terms: Vec<_> = self.h_grid[k]
-                .iter()
-                .zip(rows)
-                .map(|(h, r)| (h.as_slice(), r))
-                .collect();
-            let sum = sub_sum(&terms, &self.f);
+            let sum = sub_sum_prepared(&self.h_grid[k], &grid_terms, self.f.len());
             let db: Vec<_> = sum
                 .iter()
                 .map(|&h| 20.0 * (mag(h) + 1e-20).log10())
                 .collect();
-            let ind: Vec<_> = indiv[k]
-                .iter()
-                .map(|p| 10.0 * (p + 1e-30).log10())
-                .collect();
+            let ind = &indiv[k];
             let rough = self.quadratic.rough(&db);
             let loss = mean(
                 &ind.iter()
@@ -440,19 +461,14 @@ impl BaSetup {
                     .map(|(i, d)| (i - d - 3.0).max(0.0).powi(2))
                     .collect::<Vec<_>>(),
             );
-            let eff = mean(&db.iter().zip(&ind).map(|(d, i)| d - i).collect::<Vec<_>>());
+            let eff = mean(&db.iter().zip(ind).map(|(d, i)| d - i).collect::<Vec<_>>());
             let with_bus: Vec<_> = sum
                 .iter()
                 .zip(&self.grid)
                 .map(|(&s, &i)| bus.map_or(s, |b| s * b[i]))
                 .collect();
             let gd = gd_variance(&with_bus, &self.f);
-            let terms: Vec<_> = self.h_lin[k]
-                .iter()
-                .zip(rows)
-                .map(|(h, r)| (h.as_slice(), r))
-                .collect();
-            let ls = sub_sum(&terms, &design_freqs()[..self.late.lin]);
+            let ls = sub_sum_prepared(&self.h_lin[k], &lin_terms, self.late.lin);
             let worse = (ba_late_db(&self.late, &ls) - self.raw_late[k]).max(0.0);
             let w = weight(pos, input.config.main_position);
             weights += w;
@@ -1230,9 +1246,9 @@ fn align_with(
         if s.positions.is_empty() {
             return Err(EngineError::Input("BA has no complete position".into()));
         }
-        let indiv = search.fixed_indiv.then(|| s.indiv(None));
+        let indiv = search.fixed_indiv.then(|| individual_db(&s.indiv(None)));
         let res = solver(
-            &mut |x| s.cost(input, &search.unpack(input, x), indiv.as_deref(), None),
+            &mut |x| s.cost_with_db(input, &search.unpack(input, x), indiv.as_deref(), None),
             &search.bounds,
             None,
             DifferentialEvolutionOptions::default(),
@@ -1249,7 +1265,9 @@ fn align_with(
                 .map(|(x, (a, b))| x.clamp(*a, *b))
                 .collect();
             let res = solver(
-                &mut |x| s.cost(input, &search.unpack(input, x), indiv.as_deref(), Some(&p1)),
+                &mut |x| {
+                    s.cost_with_db(input, &search.unpack(input, x), indiv.as_deref(), Some(&p1))
+                },
                 &search.bounds,
                 Some(&x0),
                 DifferentialEvolutionOptions {
@@ -1260,14 +1278,14 @@ fn align_with(
             )?;
             check(input)?;
             let b1 = bus_response(input, &h, &out, &search.unpack(input, &x), fitter)?;
-            let c1 = s.cost(
+            let c1 = s.cost_with_db(
                 input,
                 &search.unpack(input, &x),
                 indiv.as_deref(),
                 b1.as_deref(),
             );
             let b2 = bus_response(input, &h, &out, &search.unpack(input, &res.x), fitter)?;
-            let c2 = s.cost(
+            let c2 = s.cost_with_db(
                 input,
                 &search.unpack(input, &res.x),
                 indiv.as_deref(),

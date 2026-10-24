@@ -5,7 +5,7 @@
 use crate::{
     Complex64 as C, DspError, fft, invalid,
     numeric::{divide, interp},
-    smooth::{Fraction, smooth_complex},
+    smooth::{Fraction, smooth_complex, smooth_complex_prefix},
 };
 use std::f64::consts::PI;
 
@@ -102,6 +102,7 @@ pub fn peaking_response_z(z: &[C], f0: f64, q: f64, gain_db: f64, sr: f64) -> Ve
         })
         .collect()
 }
+
 pub fn peq_response(f: &[f64], bands: &[(f64, f64, f64)]) -> Vec<C> {
     let z: Vec<_> = f
         .iter()
@@ -146,13 +147,48 @@ pub fn gd_curve(h: &[C], f: &[f64], g: &[f64], frac: Fraction<'_>) -> Result<Vec
             peak = i;
         }
     }
+    gd_curve_with_peak(h, f, g, frac, peak)
+}
+
+/// `gd_curve` with an already known absolute IR peak. The peak must come from
+/// `irfft(h, 2 * (h.len() - 1))`, with the same first-maximum/NaN convention.
+/// Reusing it avoids another full inverse transform in scorecard callers.
+pub fn gd_curve_with_peak(
+    h: &[C],
+    f: &[f64],
+    g: &[f64],
+    frac: Fraction<'_>,
+    peak: usize,
+) -> Result<Vec<f64>, DspError> {
+    if h.len() < 2 || h.len() != f.len() || g.len() < 2 || peak >= 2 * (h.len() - 1) {
+        return Err(invalid("invalid group-delay shape or peak"));
+    }
     let t = peak as f64 / (2. * f[f.len() - 1]);
-    let shifted: Vec<_> = h
-        .iter()
-        .zip(f)
-        .map(|(&h, &f)| h * C::from_polar(1., 2. * PI * f * t))
-        .collect();
-    let s = smooth_complex(f, &shifted, frac)?;
+    // Interpolation needs at most the two neighboring bins. Keep the original
+    // grid for smoothing bounds, and accumulate from bin zero so omitting high
+    // frequencies does not change cancellation or special-value propagation.
+    let regular = f.iter().all(|v| v.is_finite())
+        && f.windows(2).all(|v| v[0] < v[1])
+        && g.iter().all(|v| !v.is_nan());
+    let end = if regular {
+        let top = g.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        (f.partition_point(|&v| v <= top) + 1).min(f.len())
+    } else {
+        f.len()
+    };
+    let s = if regular {
+        smooth_complex_prefix(f, frac, end, |i| {
+            h[i] * C::from_polar(1.0, 2.0 * PI * f[i] * t)
+        })?
+    } else {
+        let shifted: Vec<_> = h
+            .iter()
+            .zip(f)
+            .map(|(&h, &f)| h * C::from_polar(1.0, 2.0 * PI * f * t))
+            .collect();
+        smooth_complex(f, &shifted, frac)?
+    };
+    let f = &f[..end];
     let re: Vec<_> = s.iter().map(|h| h.re).collect();
     let im: Vec<_> = s.iter().map(|h| h.im).collect();
     let p: Vec<_> = g

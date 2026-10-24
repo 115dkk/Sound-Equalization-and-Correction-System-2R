@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod support;
+
 use secs_camilla::pyfmt::{format_fixed, format_g, repr_f64, round_ndigits};
 use secs_camilla::{
     CamillaError, Device, DeviceValue, Options, RunLabels, export, make_config, write_config,
@@ -247,6 +249,238 @@ fn replace_folder(text: &str, folder: &Path) -> String {
     text.replace(&folder.to_string_lossy().replace('\\', "/"), "{OUT}")
 }
 
+const FREQUENCIES: [f64; 11] = [
+    7.0, 20.0, 31.0, 43.0, 80.0, 120.0, 173.0, 350.0, 1000.0, 8765.0, 20_000.0,
+];
+
+fn yaml_head(yaml: &str) -> &str {
+    yaml.split_once("\nfilters:\n").unwrap().0
+}
+
+fn assert_yaml_transfer(
+    id: &str,
+    got: &str,
+    expected: &str,
+    got_wav: &dyn Fn(&str) -> Vec<u8>,
+    expected_wav: &dyn Fn(&str) -> Vec<u8>,
+) {
+    assert_eq!(yaml_head(got), yaml_head(expected), "{id} YAML head");
+    let input_count = |yaml: &str| {
+        serde_json::from_str::<Value>(
+            yaml.lines()
+                .find_map(|line| line.strip_prefix("  route_in: "))
+                .unwrap(),
+        )
+        .unwrap()["channels"]["in"]
+            .as_u64()
+            .unwrap() as usize
+    };
+    let inputs = input_count(expected);
+    assert_eq!(input_count(got), inputs, "{id} input channels");
+    let mut max_expected = 0.0_f64;
+    let convolution_paths = |yaml: &str| {
+        yaml_filters(yaml)
+            .into_values()
+            .filter(|filter| filter["type"] == "Conv")
+            .map(|filter| {
+                filter["parameters"]["filename"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        convolution_paths(got),
+        convolution_paths(expected),
+        "{id} convolution paths"
+    );
+    for input in 0..inputs {
+        for frequency in FREQUENCIES {
+            let got = support::camilla_graph::transfer(got, got_wav, input, frequency);
+            let expected =
+                support::camilla_graph::transfer(expected, expected_wav, input, frequency);
+            assert_eq!(got.len(), expected.len(), "{id} input {input}");
+            for (output, (got, expected)) in got.iter().zip(&expected).enumerate() {
+                max_expected = max_expected.max(expected.norm());
+                assert!(
+                    (*got - *expected).norm() <= 2e-12 * expected.norm().max(1.0),
+                    "{id} input {input} output {output} frequency {frequency}: {got} != {expected}"
+                );
+            }
+        }
+    }
+    assert!(
+        max_expected >= 1e-3,
+        "{id}: expected Camilla responses are all silent ({max_expected})"
+    );
+}
+
+fn yaml_filters(yaml: &str) -> std::collections::BTreeMap<String, Value> {
+    yaml_section(yaml, "filters:")
+}
+
+fn yaml_mixers(yaml: &str) -> std::collections::BTreeMap<String, Value> {
+    yaml_section(yaml, "mixers:")
+}
+
+fn yaml_section(yaml: &str, wanted: &str) -> std::collections::BTreeMap<String, Value> {
+    let mut section = "";
+    let mut result = std::collections::BTreeMap::new();
+    for line in yaml.lines() {
+        if ["filters:", "mixers:", "pipeline:"].contains(&line) {
+            section = line;
+        } else if section == wanted
+            && let Some(row) = line.strip_prefix("  ")
+            && let Some((name, json)) = row.split_once(": ")
+        {
+            result.insert(name.into(), serde_json::from_str(json).unwrap());
+        }
+    }
+    result
+}
+
+fn yaml_pipeline(yaml: &str) -> Vec<Value> {
+    let mut section = "";
+    let mut result = Vec::new();
+    for line in yaml.lines() {
+        if ["filters:", "mixers:", "pipeline:"].contains(&line) {
+            section = line;
+        } else if section == "pipeline:"
+            && let Some(row) = line.strip_prefix("  - ")
+        {
+            result.push(serde_json::from_str(row).unwrap());
+        }
+    }
+    result
+}
+
+fn filter_delay(filters: &std::collections::BTreeMap<String, Value>, name: &str) -> Option<i64> {
+    filters.get(name).map(|filter| {
+        filter["parameters"]["delay"]
+            .as_i64()
+            .or_else(|| {
+                filter["parameters"]["delay"]
+                    .as_f64()
+                    .map(|value| value as i64)
+            })
+            .unwrap()
+    })
+}
+
+fn support_group_delay_for(yaml: &str, tag: &str) -> i64 {
+    let filters = yaml_filters(yaml);
+    let mixers = yaml_mixers(yaml);
+    let pipeline = yaml_pipeline(yaml);
+    let path_channel = pipeline
+        .iter()
+        .find(|step| {
+            step.get("names").is_some_and(|names| {
+                names
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|name| name == &format!("{tag}_fir") || name == &format!("{tag}_gain"))
+            })
+        })
+        .unwrap()["channels"][0]
+        .as_u64()
+        .unwrap();
+    let group_channel = mixers["mimo_groups"]["mapping"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| {
+            row["sources"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|source| source["channel"].as_u64() == Some(path_channel))
+        })
+        .unwrap()["dest"]
+        .as_u64()
+        .unwrap();
+    let names = pipeline
+        .iter()
+        .find(|step| {
+            step.get("channels").is_some_and(|channels| {
+                channels
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|channel| channel.as_u64() == Some(group_channel))
+            }) && step.get("names").is_some_and(|names| {
+                names
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|name| name.as_str().unwrap().starts_with("mimo_group"))
+            })
+        })
+        .unwrap()["names"]
+        .as_array()
+        .unwrap();
+    names
+        .iter()
+        .filter_map(|name| {
+            let name = name.as_str().unwrap();
+            name.ends_with("_delay")
+                .then(|| filter_delay(&filters, name).unwrap())
+        })
+        .next()
+        .unwrap_or(0)
+}
+
+fn config_wav<'a>(coeffs: &'a [(PathBuf, Vec<u8>)]) -> impl Fn(&str) -> Vec<u8> + 'a {
+    move |name| {
+        coeffs
+            .iter()
+            .find(|(path, _)| path.file_name().unwrap() == name)
+            .unwrap_or_else(|| panic!("missing generated WAV {name}"))
+            .1
+            .clone()
+    }
+}
+
+fn fixture_camilla_wav<'a>(fixture: &'a Fixture) -> impl Fn(&str) -> Vec<u8> + 'a {
+    move |name| {
+        let descriptor = fixture.outputs()["coeffs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| {
+                Path::new(item["path"].as_str().unwrap())
+                    .file_name()
+                    .unwrap()
+                    == name
+            })
+            .unwrap_or_else(|| panic!("missing fixture WAV {name}"));
+        expected_blob(fixture, &descriptor["bytes"])
+    }
+}
+
+fn mimo_fixture_wav(fixture: &Fixture, mimo: &MimoPaths, name: &str) -> Vec<u8> {
+    if let Some(main) = chain(fixture)
+        .mains
+        .into_iter()
+        .find(|main| name.ends_with(&format!("{}_fir.wav", main.role)))
+    {
+        return secs_camilla::wav_bytes(&main.fir, 48_000);
+    }
+    let path = mimo
+        .paths
+        .iter()
+        .find(|path| name.ends_with(&format!("mimo_{}_{}.wav", path.input, path.support)))
+        .unwrap_or_else(|| panic!("missing MIMO fixture WAV {name}"));
+    match &path.filter {
+        MimoFilter::Fir { taps_48k } => secs_camilla::wav_bytes(taps_48k, 48_000),
+        MimoFilter::FirLowRate { taps_low, fs_low } => {
+            secs_camilla::wav_bytes(&secs_dsp::fir::lowrate_to_48k(taps_low, *fs_low), 48_000)
+        }
+        MimoFilter::Iir { .. } => panic!("IIR MIMO path has no WAV {name}"),
+    }
+}
+
 #[test]
 fn pyfmt_matches_oracle_edges() {
     let fixture = Fixture::load("camilla", "pyfmt");
@@ -306,11 +540,14 @@ fn make_config_matches_oracle() {
             None,
         )
         .unwrap();
-        assert_eq!(
-            replace_folder(&config.yaml, &temp.0),
-            fixture.outputs()["yaml"].as_str().unwrap(),
-            "{}",
-            fixture.id
+        let got_yaml = replace_folder(&config.yaml, &temp.0);
+        let expected_yaml = fixture.outputs()["yaml"].as_str().unwrap();
+        assert_yaml_transfer(
+            &fixture.id,
+            &got_yaml,
+            expected_yaml,
+            &config_wav(&config.coeffs),
+            &fixture_camilla_wav(&fixture),
         );
         let expected = fixture.outputs()["coeffs"].as_array().unwrap();
         assert_eq!(config.coeffs.len(), expected.len());
@@ -353,11 +590,14 @@ fn export_camilladsp_matches_oracle() {
             .map(|value| value.as_str().unwrap().to_owned())
             .collect();
         assert_eq!(got, expected, "{}", fixture.id);
-        assert_eq!(
-            replace_folder(&fs::read_to_string(&paths[0]).unwrap(), &temp.0),
-            fixture.outputs()["yaml"].as_str().unwrap(),
-            "{}",
-            fixture.id
+        let got_yaml = replace_folder(&fs::read_to_string(&paths[0]).unwrap(), &temp.0);
+        let expected_yaml = fixture.outputs()["yaml"].as_str().unwrap();
+        assert_yaml_transfer(
+            &fixture.id,
+            &got_yaml,
+            expected_yaml,
+            &|name| fs::read(temp.0.join("coeffs").join(name)).unwrap(),
+            &fixture_camilla_wav(&fixture),
         );
         for expected in fixture.outputs()["coeffs"].as_array().unwrap() {
             let path = temp.0.join(expected["path"].as_str().unwrap());
@@ -400,11 +640,14 @@ fn mimo_camilladsp_matches_four_oracles() {
         let temp = TempDir::new(&fixture.id.replace('/', "_"));
         let mimo = mimo_paths(&fixture);
         let written = export(&chain(&fixture), &temp.0, &labels(&fixture), Some(&mimo)).unwrap();
-        assert_eq!(
-            replace_folder(&fs::read_to_string(&written[0]).unwrap(), &temp.0),
-            fixture.outputs()["yaml"].as_str().unwrap(),
-            "{}",
-            fixture.id
+        let got_yaml = replace_folder(&fs::read_to_string(&written[0]).unwrap(), &temp.0);
+        let expected_yaml = fixture.outputs()["yaml"].as_str().unwrap();
+        assert_yaml_transfer(
+            &fixture.id,
+            &got_yaml,
+            expected_yaml,
+            &|name| fs::read(temp.0.join("coeffs").join(name)).unwrap(),
+            &|name| mimo_fixture_wav(&fixture, &mimo, name),
         );
 
         for expected in fixture.outputs()["wavs"].as_array().unwrap() {
@@ -424,6 +667,9 @@ fn mimo_camilladsp_matches_four_oracles() {
                         Some(match &mimo_path.filter {
                             MimoFilter::Fir { taps_48k } => taps_48k,
                             MimoFilter::Iir { .. } => unreachable!("MIMO WAV for IIR path"),
+                            MimoFilter::FirLowRate { .. } => {
+                                unreachable!("legacy golden fixtures store full-rate FIRs")
+                            }
                         })
                     } else {
                         None
@@ -510,38 +756,49 @@ fn mimo_yaml_preserves_delay_filter_order_and_fir_shape() {
             Some(&mimo),
         )
         .unwrap();
+        let filters = yaml_filters(&config.yaml);
         for path in &mimo.paths {
             let tag = format!("mimo_{}_{}", path.input, path.support);
+            let extra = match &path.filter {
+                MimoFilter::Iir { delay_ms, .. } => *delay_ms,
+                _ => 0.0,
+            };
+            let expected = secs_camilla::round_ties_even_i64((path.delay_ms + extra) * 48.0);
+            let residual = filter_delay(&filters, &format!("{tag}_delay")).unwrap_or(0);
+            let group_delay = support_group_delay_for(&config.yaml, &tag);
+            assert_eq!(group_delay + residual, expected, "{} {tag}", fixture.id);
             match &path.filter {
-                MimoFilter::Iir { delay_ms, .. } => {
-                    let samples = ((path.delay_ms + delay_ms) * 48.0).round() as i64;
-                    assert!(config.yaml.contains(&format!(
-                        "  {tag}_delay: {{\"type\": \"Delay\", \"parameters\": {{\"delay\": {samples},"
-                    )));
-                    if let Some(sub) = chain(&fixture)
-                        .subs
-                        .into_iter()
-                        .find(|sub| sub.role == path.support && !sub.peq.is_empty())
-                    {
-                        assert!(
-                            config
-                                .yaml
-                                .contains(&format!("\"names\": [\"{tag}_gain\", \"{tag}_delay\""))
-                        );
-                        assert!(config.yaml.contains(&format!(
-                            "\"sub_{}_fixed_peq{}\"]}}",
-                            sub.role,
-                            sub.peq.len() - 1
-                        )));
-                    }
+                MimoFilter::Iir { .. } => {
+                    assert!(!filters.contains_key(&format!("{tag}_hp")));
+                    assert!(!filters.contains_key(&format!("{tag}_lp")));
+                }
+                MimoFilter::FirLowRate { .. } => {
+                    unreachable!("legacy golden fixtures store full-rate FIRs")
                 }
                 MimoFilter::Fir { taps_48k } => {
                     assert_eq!(taps_48k.len(), 8000);
-                    assert!(!config.yaml.contains(&format!("{tag}_peq0")));
-                    assert!(config.yaml.contains(&format!(
-                        "\"names\": [\"{tag}_delay\", \"{tag}_hp\", \"{tag}_fir\""
-                    )));
+                    assert!(
+                        !filters
+                            .keys()
+                            .any(|name| name.starts_with(&format!("{tag}_peq")))
+                    );
+                    assert!(filters.contains_key(&format!("{tag}_fir")));
+                    assert!(!filters.contains_key(&format!("{tag}_hp")));
                 }
+            }
+        }
+        for sub in &chain(&fixture).subs {
+            for name in [
+                format!("sub_{}_fixed_hp", sub.role),
+                format!("sub_{}_fixed_lp", sub.role),
+            ] {
+                if filters.contains_key(&name) {
+                    assert_eq!(config.yaml.matches(&format!("\"{name}\"")).count(), 1);
+                }
+            }
+            for index in 0..sub.peq.len() {
+                let name = format!("sub_{}_fixed_peq{index}", sub.role);
+                assert_eq!(config.yaml.matches(&format!("\"{name}\"")).count(), 1);
             }
         }
     }
@@ -580,10 +837,14 @@ fn mimo_delay_is_filter_plus_support_alignment_plus_main_extra() {
         Some(&mimo),
     )
     .unwrap();
-    let expected = ((3.0 + align_sw1 + chain.main_extra_ms) * 48.0).round() as i64;
-    assert!(config.yaml.contains(&format!(
-        "  mimo_L_SW1_delay: {{\"type\": \"Delay\", \"parameters\": {{\"delay\": {expected},"
-    )));
+    let expected =
+        secs_camilla::round_ties_even_i64((3.0 + align_sw1 + chain.main_extra_ms) * 48.0);
+    let filters = yaml_filters(&config.yaml);
+    let residual = filter_delay(&filters, "mimo_L_SW1_delay").unwrap_or(0);
+    assert_eq!(
+        support_group_delay_for(&config.yaml, "mimo_L_SW1") + residual,
+        expected
+    );
 }
 
 #[test]
@@ -618,9 +879,14 @@ fn write_config_sanitizes_nonascii_name_like_oracle() {
         .map(|value| value.as_str().unwrap().to_owned())
         .collect();
     assert_eq!(got, expected);
-    assert_eq!(
-        replace_folder(&fs::read_to_string(&paths[0]).unwrap(), &temp.0),
-        fixture.outputs()["yaml"].as_str().unwrap()
+    let got_yaml = replace_folder(&fs::read_to_string(&paths[0]).unwrap(), &temp.0);
+    let expected_yaml = fixture.outputs()["yaml"].as_str().unwrap();
+    assert_yaml_transfer(
+        &fixture.id,
+        &got_yaml,
+        expected_yaml,
+        &|name| fs::read(temp.0.join("coeffs").join(name)).unwrap(),
+        &fixture_camilla_wav(&fixture),
     );
     for expected in fixture.outputs()["coeffs"].as_array().unwrap() {
         assert_eq!(

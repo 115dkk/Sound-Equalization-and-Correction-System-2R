@@ -1093,11 +1093,9 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
                 && path.file_name().is_some_and(|name| name != "config.txt")
         })
         .expect("Equalizer APO filter body");
-    assert!(
-        fs::read_to_string(body)
-            .unwrap()
-            .contains("# 6) MIMO support paths")
-    );
+    let body = fs::read_to_string(body).unwrap();
+    assert!(body.contains("# Raw input copies for MIMO support"));
+    assert!(body.contains("# support "));
 
     // The same live/cached result must produce identical explicit-folder bytes.
     let folder = root.join("explicit-mimo");

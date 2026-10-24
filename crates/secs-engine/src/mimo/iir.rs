@@ -1,17 +1,18 @@
 //! Port of SECS 2 `src/secs/mimo_iir.py` (GPL-3.0).
-//! Joint TRF accumulates position blocks, never a dense Jacobian (ADR 0007).
+//! Default joint TRF accumulates position blocks; the opt-in solver applies
+//! Jv/Jᵀv directly. Neither stacks a dense residual Jacobian (ADR 0007).
 
-use std::f64::consts::PI;
+use std::{cell::RefCell, f64::consts::PI};
 
 use faer::{Accum, Mat, Par, linalg::matmul::matmul};
 use secs_compute::{Context, MapError, MemoryError};
 use secs_dsp::{
-    DspError, complex_div, fft, optimize,
-    optimize::{NormalEquations, NormalOptions, XScale},
+    DspError, fft, optimize,
+    optimize::{JacobianOperator, NormalEquations, NormalOptions, OperatorOptions, XScale},
     pairwise_sum, response,
 };
 
-use super::{MimoDesign, MimoRequest, support_path, worst_t60_change};
+use super::{MimoDesign, MimoRequest, support_path};
 use crate::{
     C, Design, EngineConfig, EngineError, MeasurementSet, Note, Tuning, decay,
     fit::{FitRequest, fit_peq_until},
@@ -33,6 +34,10 @@ pub struct IirSupport {
 
 impl IirSupport {
     pub fn response(&self, f: &[f64]) -> Vec<C> {
+        self.response_z(f, &frequency_z(f))
+    }
+
+    fn response_z(&self, f: &[f64], z: &[C]) -> Vec<C> {
         let gain = 10f64.powf(self.gain_db / 20.0) * f64::from(self.polarity);
         let mut out: Vec<_> = f
             .iter()
@@ -41,7 +46,7 @@ impl IirSupport {
         for &(f0, q, g) in &self.peq {
             for (h, p) in out
                 .iter_mut()
-                .zip(response::peaking_response(f, f0, q, g, 48000.0))
+                .zip(response::peaking_response_z(z, f0, q, g, 48000.0))
             {
                 *h *= p;
             }
@@ -55,11 +60,60 @@ impl IirSupport {
     }
 }
 
+fn frequency_z(f: &[f64]) -> Vec<C> {
+    f.iter()
+        .map(|&f| C::from_polar(1.0, (-2.0 * PI * f) * (1.0 / 48000.0)))
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct MimoIir {
     pub supports: Vec<(String, Vec<(String, IirSupport)>)>,
     pub removed: Vec<(String, Vec<String>)>,
     pub notes: Vec<Note>,
+}
+
+/// Joint IIR optimizer. The matrix-free path is explicit because an iterative
+/// trust-region subproblem follows a different numerical trajectory.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub enum IirSolver {
+    #[default]
+    Dense,
+    MatrixFree {
+        max_cg_iterations: usize,
+        cg_rtol: f64,
+    },
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct IirSolveOptions {
+    pub solver: IirSolver,
+    /// Retry the original dense Jac/Unit solvers after an operator error. The
+    /// memory permit also includes dense workspaces when this is enabled.
+    pub dense_fallback: bool,
+}
+
+impl Default for IirSolveOptions {
+    fn default() -> Self {
+        Self {
+            solver: IirSolver::Dense,
+            dense_fallback: true,
+        }
+    }
+}
+
+impl IirSolveOptions {
+    fn validate(&self) -> Result<(), EngineError> {
+        if let IirSolver::MatrixFree {
+            max_cg_iterations,
+            cg_rtol,
+        } = self.solver
+            && (max_cg_iterations == 0 || !cg_rtol.is_finite() || cg_rtol <= 0.0 || cg_rtol >= 1.0)
+        {
+            return Err(EngineError::Input("invalid matrix-free IIR options".into()));
+        }
+        Ok(())
+    }
 }
 
 fn check(ctx: &Context) -> Result<(), EngineError> {
@@ -227,12 +281,16 @@ pub(crate) fn fit_one(
             .collect::<Vec<_>>(),
     ) / 160.0
         + 1e-12;
+    let z = frequency_z(&f);
+    let cache = RefCell::new(Parts::default());
     let residual = |x: &[f64]| {
         if ctx.cancel().is_cancelled() {
             return vec![0.0; 320];
         }
-        let h = unpack(x, &[polarity], t).remove(0).response(&f);
-        let r: Vec<_> = h
+        let mut cache = cache.borrow_mut();
+        cache.response(x, polarity, &f, &z, t);
+        let r: Vec<_> = cache
+            .s
             .iter()
             .zip(&target)
             .map(|(&h, &v)| (h - v) / norm)
@@ -281,14 +339,37 @@ pub(crate) struct Problem {
     pub level_db: f64,
 }
 
+#[derive(Default)]
 struct Parts {
+    key: Vec<u64>,
     s: Vec<C>,
     d: Vec<Vec<C>>,
 }
 
-fn parts(v: &[f64], pol: i8, f: &[f64], t: &Tuning) -> Parts {
-    let support = unpack(v, &[pol], t).remove(0);
-    let s = support.response(f);
+impl Parts {
+    fn response(&mut self, v: &[f64], pol: i8, f: &[f64], z: &[C], t: &Tuning) {
+        if self.key.len() == v.len() && self.key.iter().zip(v).all(|(&a, &b)| a == b.to_bits()) {
+            return;
+        }
+        self.s = unpack(v, &[pol], t).remove(0).response_z(f, z);
+        self.key.clear();
+        self.key.extend(v.iter().map(|v| v.to_bits()));
+        self.d.clear();
+    }
+
+    fn derivatives(&mut self, v: &[f64], pol: i8, f: &[f64], z: &[C], t: &Tuning) {
+        self.response(v, pol, f, z, t);
+        if !self.d.is_empty() {
+            return;
+        }
+        self.d = finite_difference_derivatives(v, &self.s, f, t);
+    }
+}
+
+/// Upstream's central differences (step 1e-4) for the support factors. The
+/// gain and delay columns are exact. Analytic factor derivatives moved the
+/// joint fit outside SECS 2's spread (ADR 0012), so the port keeps these.
+fn finite_difference_derivatives(v: &[f64], s: &[C], f: &[f64], t: &Tuning) -> Vec<Vec<C>> {
     let mut d = vec![vec![C::new(0.0, 0.0); f.len()]; per(t)];
     for (k, &f) in f.iter().enumerate() {
         d[0][k] = s[k] * 10f64.ln() / 20.0;
@@ -307,7 +388,7 @@ fn parts(v: &[f64], pol: i8, f: &[f64], t: &Tuning) -> Parts {
             let u = response::peaking_response(f, up[0].exp(), up[1].exp(), up[2], 48000.0);
             let l = response::peaking_response(f, dn[0].exp(), dn[1].exp(), dn[2], 48000.0);
             for i in 0..f.len() {
-                d[base + c][i] = complex_div(s[i] * (u[i] - l[i]) / (2.0 * h), factor[i]);
+                d[base + c][i] = secs_dsp::complex_div(s[i] * (u[i] - l[i]) / (2.0 * h), factor[i]);
             }
         }
     }
@@ -322,11 +403,11 @@ fn parts(v: &[f64], pol: i8, f: &[f64], t: &Tuning) -> Parts {
             let u = response::allpass2(f, up[0].exp(), up[1].exp());
             let l = response::allpass2(f, dn[0].exp(), dn[1].exp());
             for i in 0..f.len() {
-                d[base + c][i] = complex_div(s[i] * (u[i] - l[i]) / (2.0 * h), factor[i]);
+                d[base + c][i] = secs_dsp::complex_div(s[i] * (u[i] - l[i]) / (2.0 * h), factor[i]);
             }
         }
     }
-    Parts { s, d }
+    d
 }
 
 fn time_product(a: &[C], b: &[C], nf: usize, n: usize) -> Vec<f64> {
@@ -342,8 +423,16 @@ pub(crate) struct Objective<'a> {
     pols: &'a [i8],
     weff: Vec<Vec<f64>>,
     scale: f64,
-    key: Vec<u64>,
+    z: Vec<C>,
     cache: Vec<Parts>,
+    operator: Option<OperatorState>,
+}
+
+struct OperatorState {
+    /// Per support, parameter and frequency. Retained independently of trial
+    /// response caches, so a rejected residual cannot change Jv or Jᵀv.
+    derivatives: Vec<Vec<Vec<C>>>,
+    level: Vec<f64>,
 }
 
 impl<'a> Objective<'a> {
@@ -394,20 +483,31 @@ impl<'a> Objective<'a> {
             pols,
             weff,
             scale: energy.sqrt(),
-            key: Vec::new(),
-            cache: Vec::new(),
+            z: frequency_z(&pb.f),
+            cache: (0..pb.roles.len()).map(|_| Parts::default()).collect(),
+            operator: None,
         }
     }
 
     fn evaluate(&mut self, x: &[f64]) {
-        let key: Vec<_> = x.iter().map(|v| v.to_bits()).collect();
-        if key != self.key {
-            self.cache = x
-                .chunks_exact(per(self.t))
-                .zip(self.pols)
-                .map(|(v, &pol)| parts(v, pol, &self.pb.f, self.t))
-                .collect();
-            self.key = key;
+        for ((part, v), &pol) in self
+            .cache
+            .iter_mut()
+            .zip(x.chunks_exact(per(self.t)))
+            .zip(self.pols)
+        {
+            part.response(v, pol, &self.pb.f, &self.z, self.t);
+        }
+    }
+
+    fn derivatives(&mut self, x: &[f64]) {
+        for ((part, v), &pol) in self
+            .cache
+            .iter_mut()
+            .zip(x.chunks_exact(per(self.t)))
+            .zip(self.pols)
+        {
+            part.derivatives(v, pol, &self.pb.f, &self.z, self.t);
         }
     }
 
@@ -441,6 +541,17 @@ pub(crate) fn solve_joint(
     x0: &[f64],
     pols: &[i8],
 ) -> Result<optimize::LeastSquaresResult, EngineError> {
+    solve_joint_with_options(pb, t, ctx, x0, pols, &IirSolveOptions::default())
+}
+
+fn solve_joint_with_options(
+    pb: &Problem,
+    t: &Tuning,
+    ctx: &Context,
+    x0: &[f64],
+    pols: &[i8],
+    options: &IirSolveOptions,
+) -> Result<optimize::LeastSquaresResult, EngineError> {
     check(ctx)?;
     let mut lb = Vec::new();
     let mut ub = Vec::new();
@@ -455,6 +566,30 @@ pub(crate) fn solve_joint(
         .map(|(k, &v)| v.clamp(lb[k] + 1e-6, ub[k] - 1e-6))
         .collect();
     let mut objective = Objective::new(pb, t, ctx, pols);
+    if let IirSolver::MatrixFree {
+        max_cg_iterations,
+        cg_rtol,
+    } = options.solver
+    {
+        let result = optimize::least_squares_operator(
+            &mut objective,
+            &x0,
+            &lb,
+            &ub,
+            &OperatorOptions {
+                max_nfev: t.mimo_max_nfev,
+                max_cg_iterations,
+                cg_rtol,
+                ..OperatorOptions::default()
+            },
+        );
+        check(ctx)?;
+        match result {
+            Ok(solution) => return Ok(solution),
+            Err(error) if !options.dense_fallback => return Err(error.into()),
+            Err(_) => objective.operator = None,
+        }
+    }
     for x_scale in [XScale::Jac, XScale::Unit] {
         let result = optimize::least_squares_normal(
             &mut objective,
@@ -472,7 +607,7 @@ pub(crate) fn solve_joint(
             return Ok(sol);
         }
     }
-    let cost = 0.5 * decay::energy(&objective.residual(&x0));
+    let cost = 0.5 * decay::energy(&NormalEquations::residual(&mut objective, &x0));
     Ok(optimize::LeastSquaresResult {
         x: x0,
         cost,
@@ -487,6 +622,15 @@ pub(crate) fn solve_problem(
     pb: &Problem,
     t: &Tuning,
     ctx: &Context,
+) -> Result<(Vec<f64>, Vec<i8>), EngineError> {
+    solve_problem_with_options(pb, t, ctx, &IirSolveOptions::default())
+}
+
+fn solve_problem_with_options(
+    pb: &Problem,
+    t: &Tuning,
+    ctx: &Context,
+    options: &IirSolveOptions,
 ) -> Result<(Vec<f64>, Vec<i8>), EngineError> {
     let mut starts = Vec::new();
     let mut pols = Vec::new();
@@ -510,7 +654,10 @@ pub(crate) fn solve_problem(
         starts.extend(seed.x);
         pols.push(seed.polarity);
     }
-    Ok((solve_joint(pb, t, ctx, &starts, &pols)?.x, pols))
+    Ok((
+        solve_joint_with_options(pb, t, ctx, &starts, &pols, options)?.x,
+        pols,
+    ))
 }
 
 pub(crate) fn applied(pb: &Problem, supports: &[(usize, IirSupport)]) -> Vec<Vec<f64>> {
@@ -531,24 +678,41 @@ pub(crate) fn applied(pb: &Problem, supports: &[(usize, IirSupport)]) -> Vec<Vec
         .collect()
 }
 
-pub(crate) fn worst_band_db(pb: &Problem, supports: &[(usize, IirSupport)]) -> f64 {
-    let stop = (pb.fsiso / 20.0).log2() + 1e-9;
-    let edges: Vec<_> = (0..)
-        .map(|k| k as f64 / 3.0)
-        .take_while(|&v| v < stop)
-        .map(|v| 20.0 * 2f64.powf(v))
-        .collect();
-    let mut bands: Vec<_> = edges.windows(2).map(|v| (v[0], v[1])).collect();
-    bands.extend(
-        late_modes(&pb.xs, 6, 20.0, 160.0)
-            .iter()
-            .map(|f| (f - 1.5, f + 1.5)),
-    );
-    let mut before = vec![0.0; bands.len()];
-    let mut after = before.clone();
-    let ys = applied(pb, supports);
-    for (p, y) in ys.iter().enumerate() {
-        for (acc, y) in [(&mut before, &pb.xs[p]), (&mut after, y)] {
+struct BandGuard {
+    bounds: Vec<(usize, usize)>,
+    before: Vec<f64>,
+}
+
+impl BandGuard {
+    fn new(pb: &Problem) -> Self {
+        let stop = (pb.fsiso / 20.0).log2() + 1e-9;
+        let edges: Vec<_> = (0..)
+            .map(|k| k as f64 / 3.0)
+            .take_while(|&v| v < stop)
+            .map(|v| 20.0 * 2f64.powf(v))
+            .collect();
+        let mut bands: Vec<_> = edges.windows(2).map(|v| (v[0], v[1])).collect();
+        bands.extend(
+            late_modes(&pb.xs, 6, 20.0, 160.0)
+                .iter()
+                .map(|f| (f - 1.5, f + 1.5)),
+        );
+        let bounds = bands
+            .into_iter()
+            .map(|(lo, hi)| {
+                (
+                    pb.f.partition_point(|&f| f < lo),
+                    pb.f.partition_point(|&f| f < hi),
+                )
+            })
+            .collect::<Vec<_>>();
+        let before = Self::power(pb, &pb.xs, &bounds);
+        Self { bounds, before }
+    }
+
+    fn power(pb: &Problem, ys: &[Vec<f64>], bounds: &[(usize, usize)]) -> Vec<f64> {
+        let mut total = vec![0.0; bounds.len()];
+        for (p, y) in ys.iter().enumerate() {
             let mut windowed: Vec<_> = y.iter().zip(&pb.wl[p]).map(|(y, w)| y * w).collect();
             windowed.resize(pb.nf, 0.0);
             let power: Vec<_> = fft::rfft(&windowed)
@@ -558,34 +722,63 @@ pub(crate) fn worst_band_db(pb: &Problem, supports: &[(usize, IirSupport)]) -> f
                     a * a
                 })
                 .collect();
-            for (total, &(lo, hi)) in acc.iter_mut().zip(&bands) {
-                let a = pb.f.partition_point(|&f| f < lo);
-                let b = pb.f.partition_point(|&f| f < hi);
+            for (total, &(a, b)) in total.iter_mut().zip(bounds) {
                 *total += pairwise_sum(&power[a..b]);
             }
         }
+        total
     }
-    before
-        .iter()
-        .zip(after)
-        .filter(|(b, _)| **b > 0.0)
-        .map(|(b, a)| 10.0 * ((a + 1e-30) / b).log10())
-        .reduce(f64::max)
-        .unwrap_or(-99.0)
+
+    fn evaluate(&self, pb: &Problem, ys: &[Vec<f64>]) -> f64 {
+        self.before
+            .iter()
+            .zip(Self::power(pb, ys, &self.bounds))
+            .filter(|(b, _)| **b > 0.0)
+            .map(|(b, a)| 10.0 * ((a + 1e-30) / b).log10())
+            .reduce(f64::max)
+            .unwrap_or(-99.0)
+    }
+}
+
+pub(crate) fn worst_band_db(pb: &Problem, supports: &[(usize, IirSupport)]) -> f64 {
+    BandGuard::new(pb).evaluate(pb, &applied(pb, supports))
+}
+
+struct OutcomeGuard<'a> {
+    pb: &'a Problem,
+    band: BandGuard,
+    tail: super::design::T60Guard<'a>,
+}
+
+impl<'a> OutcomeGuard<'a> {
+    fn new(pb: &'a Problem) -> Self {
+        Self {
+            pb,
+            band: BandGuard::new(pb),
+            tail: super::design::T60Guard::new(&pb.xs, 6),
+        }
+    }
+
+    fn evaluate(&mut self, supports: &[(usize, IirSupport)]) -> Result<(f64, f64), EngineError> {
+        // Both guards consume the same candidate waveform, while baseline
+        // windows, bands, modal filters and original tails survive all trials.
+        let ys = applied(self.pb, supports);
+        Ok((
+            if supports.is_empty() {
+                -99.0
+            } else {
+                self.band.evaluate(self.pb, &ys)
+            },
+            self.tail.evaluate(&ys)?,
+        ))
+    }
 }
 
 pub(crate) fn outcome(
     pb: &Problem,
     supports: &[(usize, IirSupport)],
 ) -> Result<(f64, f64), EngineError> {
-    Ok((
-        if supports.is_empty() {
-            -99.0
-        } else {
-            worst_band_db(pb, supports)
-        },
-        worst_t60_change(&pb.xs, &applied(pb, supports), 6)?,
-    ))
+    OutcomeGuard::new(pb).evaluate(supports)
 }
 
 #[derive(Debug)]
@@ -621,9 +814,10 @@ pub(crate) fn postprocess(
     }
     let mut cur: Vec<_> = sups.into_iter().enumerate().collect();
     let mut violations = Vec::new();
+    let mut guard = OutcomeGuard::new(pb);
     let mut violation = |s: &[(usize, IirSupport)]| -> Result<f64, EngineError> {
         check(ctx)?;
-        let (band, tail) = outcome(pb, s)?;
+        let (band, tail) = guard.evaluate(s)?;
         let v = (band - t.mimo_worse_db).max(tail - 0.15 * t.mimo_worse_db);
         violations.push(v);
         Ok(v)
@@ -786,14 +980,42 @@ pub fn design_mimo_iir(
     t: &Tuning,
     ctx: &Context,
 ) -> Result<MimoIir, EngineError> {
+    design_mimo_iir_with_options(
+        design,
+        measurements,
+        config,
+        ideal,
+        req,
+        t,
+        &IirSolveOptions::default(),
+        ctx,
+    )
+}
+
+/// Designs IIR supports with an explicit joint-solver choice. Existing callers
+/// use `design_mimo_iir`, which retains the dense solver. Setting
+/// `IirSolver::MatrixFree { max_cg_iterations: 64, cg_rtol: 1e-3 }` enables the
+/// f64 operator solver without changing project files or IPC tuning values.
+#[allow(clippy::too_many_arguments)]
+pub fn design_mimo_iir_with_options(
+    design: &Design,
+    measurements: &MeasurementSet,
+    config: &EngineConfig,
+    ideal: &MimoDesign,
+    req: &MimoRequest,
+    t: &Tuning,
+    options: &IirSolveOptions,
+    ctx: &Context,
+) -> Result<MimoIir, EngineError> {
     check(ctx)?;
     validate_request(req, t)?;
+    options.validate()?;
     if ideal.supports.iter().all(|(_, s)| s.is_empty()) {
         let _progress = ctx.stage("engine.mimo_iir", 0);
         return Ok(MimoIir::default());
     }
     let prepared = super::prepared::Prepared::new(design, measurements, config)?;
-    design_mimo_iir_prepared(design, &prepared, ideal, req, t, ctx)
+    design_mimo_iir_prepared_with_options(design, &prepared, ideal, req, t, options, ctx)
 }
 
 pub(crate) fn design_mimo_iir_prepared(
@@ -804,8 +1026,30 @@ pub(crate) fn design_mimo_iir_prepared(
     t: &Tuning,
     ctx: &Context,
 ) -> Result<MimoIir, EngineError> {
+    design_mimo_iir_prepared_with_options(
+        design,
+        prepared,
+        ideal,
+        req,
+        t,
+        &IirSolveOptions::default(),
+        ctx,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn design_mimo_iir_prepared_with_options(
+    design: &Design,
+    prepared: &super::prepared::Prepared,
+    ideal: &MimoDesign,
+    req: &MimoRequest,
+    t: &Tuning,
+    options: &IirSolveOptions,
+    ctx: &Context,
+) -> Result<MimoIir, EngineError> {
     check(ctx)?;
     validate_request(req, t)?;
+    options.validate()?;
     let inputs: Vec<_> = ideal
         .supports
         .iter()
@@ -821,14 +1065,19 @@ pub(crate) fn design_mimo_iir_prepared(
         .try_map(inputs, |(input, supports)| {
             let r = supports.len();
             let dim = r * per(t);
+            let rows = 2 * positions.len() * N + 1 + 2 * r * (N + 1) + r * t.mimo_k_bands;
+            let solver_bytes = if options.solver == IirSolver::Dense || options.dense_fallback {
+                4 * N * dim + 12 * dim * dim
+            } else {
+                8 * rows + 24 * dim + 8 * r * (N + 1)
+            };
             // Problem X/WL/WE/G, derivative cache, one position's time columns,
             // weighted columns, normal/eigen/TRF workspaces, seed Jacobian and
             // design-grid response temporaries. Reserve before per-input allocation.
             let bytes = 8
                 * (positions.len() * N * (3 + 4 * r)
                     + 4 * dim * (N + 1)
-                    + 4 * N * dim
-                    + 12 * dim * dim
+                    + solver_bytes
                     + 320 * per(t) * 4
                     + 32 * design_freqs().len()
                     + 32768);
@@ -850,7 +1099,7 @@ pub(crate) fn design_mimo_iir_prepared(
                 t,
                 ctx,
             )?;
-            let (x, pols) = solve_problem(&pb, t, ctx)?;
+            let (x, pols) = solve_problem_with_options(&pb, t, ctx, options)?;
             let post = postprocess(&pb, &x, &pols, t, ctx)?;
             let paths = post
                 .supports
@@ -913,7 +1162,7 @@ impl NormalEquations for Objective<'_> {
         if self.ctx.cancel().is_cancelled() {
             return Ok((Mat::zeros(dim, dim), vec![0.0; dim]));
         }
-        self.evaluate(x);
+        self.derivatives(x);
         let pb = self.pb;
         let width = per(self.t);
         let mut h = Mat::zeros(dim, dim);
@@ -981,7 +1230,7 @@ impl NormalEquations for Objective<'_> {
                 if over > 0.0 {
                     let ct = time_product(&part.d[a], &pb.lp, pb.nf, pb.n);
                     let dot = ct.iter().zip(&st[r]).map(|(a, b)| a * b).sum::<f64>();
-                    level[r * width + a] = self.scale * 10.0 / (10f64.ln() * lvl.max(1e-30))
+                    level[r * width + a] = self.scale * 10.0 / (10f64.ln() * (lvl + 1e-30))
                         * (2.0 * dot / pb.direct.max(1e-30));
                 }
             }
@@ -1006,5 +1255,492 @@ impl NormalEquations for Objective<'_> {
             }
         }
         Ok((h, grad))
+    }
+}
+
+/// Adjoint of the normalized real inverse transform after truncation to n.
+/// Interior bins carry both conjugate frequencies (2/nf); DC and an even
+/// Nyquist bin carry one (1/nf), with imaginary endpoint derivatives ignored.
+fn inverse_adjoint(time: &[f64], nf: usize) -> Vec<C> {
+    let mut padded = time.to_vec();
+    padded.resize(nf, 0.0);
+    let mut spectrum = fft::rfft(&padded);
+    for (k, h) in spectrum.iter_mut().enumerate() {
+        let endpoint = k == 0 || (nf.is_multiple_of(2) && k == nf / 2);
+        *h *= if endpoint {
+            1.0 / nf as f64
+        } else {
+            2.0 / nf as f64
+        };
+        if endpoint {
+            h.im = 0.0;
+        }
+    }
+    spectrum
+}
+
+impl JacobianOperator for Objective<'_> {
+    fn residual(&mut self, x: &[f64]) -> Vec<f64> {
+        NormalEquations::residual(self, x)
+    }
+
+    fn linearize(&mut self, x: &[f64]) -> Result<Vec<f64>, DspError> {
+        let width = per(self.t);
+        let dim = x.len();
+        if self.ctx.cancel().is_cancelled() {
+            self.operator = Some(OperatorState {
+                derivatives: Vec::new(),
+                level: vec![0.0; dim],
+            });
+            return Ok(vec![0.0; dim]);
+        }
+        self.derivatives(x);
+        let pb = self.pb;
+        let mut diagonal = vec![0.0; dim];
+        // Exact column norms need one time column at a time, never an n×dim
+        // block and never a Gram matrix. They supply scaling/preconditioning.
+        for p in 0..pb.xs.len() {
+            for (r, part) in self.cache.iter().enumerate() {
+                for (a, d) in part.d.iter().enumerate() {
+                    let column = time_product(&pb.g[p][r], d, pb.nf, pb.n);
+                    for (i, value) in column.into_iter().enumerate() {
+                        diagonal[r * width + a] += value
+                            * value
+                            * (pb.wl[p][i] * pb.wl[p][i] + MU * pb.we[p][i] * pb.we[p][i]);
+                    }
+                }
+            }
+        }
+        let (st, lvl, over) = self.level();
+        let mut level = vec![0.0; dim];
+        for (r, part) in self.cache.iter().enumerate() {
+            for (a, derivative) in part.d.iter().enumerate() {
+                let j = r * width + a;
+                for component in [false, true] {
+                    for (k, d) in derivative.iter().enumerate() {
+                        let v = self.weff[r][k] * if component { d.im } else { d.re };
+                        diagonal[j] += v * v;
+                    }
+                }
+                if over > 0.0 {
+                    let ct = time_product(derivative, &pb.lp, pb.nf, pb.n);
+                    let dot = ct.iter().zip(&st[r]).map(|(a, b)| a * b).sum::<f64>();
+                    level[j] = self.scale * 10.0 / (10f64.ln() * (lvl + 1e-30))
+                        * (2.0 * dot / pb.direct.max(1e-30));
+                    diagonal[j] += level[j] * level[j];
+                }
+            }
+        }
+        if self.t.mimo_band_reg > 0.0 {
+            let factor = self.t.mimo_band_reg * self.scale / 30.0;
+            for r in 0..pb.roles.len() {
+                for k in 0..self.t.mimo_k_bands {
+                    diagonal[r * width + 4 + 3 * k] += factor * factor;
+                }
+            }
+        }
+        // Moving derivatives into the retained base point avoids a second full
+        // cache and lets every rejected trial remain response-only.
+        self.operator = Some(OperatorState {
+            derivatives: self
+                .cache
+                .iter_mut()
+                .map(|part| std::mem::take(&mut part.d))
+                .collect(),
+            level,
+        });
+        Ok(diagonal)
+    }
+
+    fn jvp(&self, direction: &[f64], out: &mut [f64]) -> Result<(), DspError> {
+        let pb = self.pb;
+        let width = per(self.t);
+        if direction.len() != width * pb.roles.len() || out.len() != self.rows() {
+            return Err(DspError::InvalidArgument(
+                "invalid IIR Jacobian product shape".into(),
+            ));
+        }
+        out.fill(0.0);
+        if self.ctx.cancel().is_cancelled() {
+            return Ok(());
+        }
+        let state = self
+            .operator
+            .as_ref()
+            .ok_or_else(|| DspError::InvalidArgument("IIR operator has no linearization".into()))?;
+        let mut responses = vec![vec![C::new(0.0, 0.0); pb.f.len()]; pb.roles.len()];
+        for (r, derivatives) in state.derivatives.iter().enumerate() {
+            for (a, derivative) in derivatives.iter().enumerate() {
+                for (k, d) in derivative.iter().enumerate() {
+                    responses[r][k] += d * direction[r * width + a];
+                }
+            }
+        }
+        for p in 0..pb.xs.len() {
+            let mut sum = vec![C::new(0.0, 0.0); pb.f.len()];
+            for (r, response) in responses.iter().enumerate() {
+                for (k, value) in sum.iter_mut().enumerate() {
+                    *value += pb.g[p][r][k] * response[k];
+                }
+            }
+            let time = fft::irfft(&sum, pb.nf);
+            for i in 0..pb.n {
+                out[2 * p * pb.n + i] = pb.wl[p][i] * time[i];
+                out[(2 * p + 1) * pb.n + i] = MU.sqrt() * pb.we[p][i] * time[i];
+            }
+        }
+        let level_row = 2 * pb.xs.len() * pb.n;
+        out[level_row] = state.level.iter().zip(direction).map(|(g, v)| g * v).sum();
+        for (r, response) in responses.iter().enumerate() {
+            let base = level_row + 1 + 2 * r * pb.f.len();
+            for (k, h) in response.iter().enumerate() {
+                out[base + k] = self.weff[r][k] * h.re;
+                out[base + pb.f.len() + k] = self.weff[r][k] * h.im;
+            }
+        }
+        if self.t.mimo_band_reg > 0.0 {
+            let base = level_row + 1 + 2 * pb.roles.len() * pb.f.len();
+            let factor = self.t.mimo_band_reg * self.scale / 30.0;
+            for r in 0..pb.roles.len() {
+                for k in 0..self.t.mimo_k_bands {
+                    out[base + r * self.t.mimo_k_bands + k] =
+                        factor * direction[r * width + 4 + 3 * k];
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn vjp(&self, residual_direction: &[f64], out: &mut [f64]) -> Result<(), DspError> {
+        let pb = self.pb;
+        let width = per(self.t);
+        if out.len() != width * pb.roles.len() || residual_direction.len() != self.rows() {
+            return Err(DspError::InvalidArgument(
+                "invalid IIR transpose product shape".into(),
+            ));
+        }
+        out.fill(0.0);
+        if self.ctx.cancel().is_cancelled() {
+            return Ok(());
+        }
+        let state = self
+            .operator
+            .as_ref()
+            .ok_or_else(|| DspError::InvalidArgument("IIR operator has no linearization".into()))?;
+        let mut adjoints = vec![vec![C::new(0.0, 0.0); pb.f.len()]; pb.roles.len()];
+        for p in 0..pb.xs.len() {
+            let time: Vec<_> = (0..pb.n)
+                .map(|i| {
+                    pb.wl[p][i] * residual_direction[2 * p * pb.n + i]
+                        + MU.sqrt() * pb.we[p][i] * residual_direction[(2 * p + 1) * pb.n + i]
+                })
+                .collect();
+            let spectrum = inverse_adjoint(&time, pb.nf);
+            for (r, adjoint) in adjoints.iter_mut().enumerate() {
+                for (k, value) in adjoint.iter_mut().enumerate() {
+                    *value += pb.g[p][r][k].conj() * spectrum[k];
+                }
+            }
+        }
+        let level_row = 2 * pb.xs.len() * pb.n;
+        for (r, adjoint) in adjoints.iter_mut().enumerate() {
+            let base = level_row + 1 + 2 * r * pb.f.len();
+            for (k, value) in adjoint.iter_mut().enumerate() {
+                *value += C::new(
+                    self.weff[r][k] * residual_direction[base + k],
+                    self.weff[r][k] * residual_direction[base + pb.f.len() + k],
+                );
+            }
+            for (a, derivative) in state.derivatives[r].iter().enumerate() {
+                let j = r * width + a;
+                out[j] = derivative
+                    .iter()
+                    .zip(&*adjoint)
+                    .map(|(d, a)| d.re * a.re + d.im * a.im)
+                    .sum::<f64>()
+                    + state.level[j] * residual_direction[level_row];
+            }
+        }
+        if self.t.mimo_band_reg > 0.0 {
+            let base = level_row + 1 + 2 * pb.roles.len() * pb.f.len();
+            let factor = self.t.mimo_band_reg * self.scale / 30.0;
+            for r in 0..pb.roles.len() {
+                for k in 0..self.t.mimo_k_bands {
+                    out[r * width + 4 + 3 * k] +=
+                        factor * residual_direction[base + r * self.t.mimo_k_bands + k];
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod operator_tests {
+    use super::*;
+
+    fn fixture(level_db: f64) -> (Problem, Tuning, Vec<f64>, Vec<i8>) {
+        let (n, nf) = (64, 128);
+        let f = secs_dsp::grid::freqs(nf, FS).unwrap();
+        let t = Tuning {
+            mimo_k_bands: 2,
+            mimo_a_bands: 1,
+            mimo_max_nfev: 25,
+            ..Tuning::default()
+        };
+        let lp = response::lr4(&f, 100.0, "LP");
+        let xs: Vec<Vec<f64>> = (0..2)
+            .map(|p| {
+                (0..n)
+                    .map(|i| {
+                        let time = i as f64;
+                        (time * 0.6 + p as f64 * 0.1).cos() * (-time / 40.0).exp()
+                    })
+                    .collect()
+            })
+            .collect();
+        let wl: Vec<Vec<f64>> = (0..2)
+            .map(|p| (0..n).map(|i| if i >= 8 + p { 1.0 } else { 0.0 }).collect())
+            .collect();
+        let we = wl
+            .iter()
+            .map(|w| w.iter().map(|w| 1.0 - w).collect())
+            .collect();
+        let g = (0..2)
+            .map(|p| {
+                (0..2)
+                    .map(|r| {
+                        let mut ir = vec![0.0; nf];
+                        for (i, value) in ir.iter_mut().enumerate().take(n).skip(2 + p + r) {
+                            *value = (-((i - 2 - p - r) as f64) / 12.0).exp()
+                                * (i as f64 * (0.4 + r as f64 * 0.1)).cos();
+                        }
+                        fft::rfft(&ir).iter().zip(&lp).map(|(a, b)| a * b).collect()
+                    })
+                    .collect()
+            })
+            .collect();
+        let x = (0..2)
+            .flat_map(|r| {
+                [
+                    -6.0 - r as f64,
+                    12.0 + r as f64,
+                    50.0_f64.ln(),
+                    2.0_f64.ln(),
+                    3.0,
+                    110.0_f64.ln(),
+                    1.3_f64.ln(),
+                    -4.0,
+                    70.0_f64.ln(),
+                    1.5_f64.ln(),
+                ]
+            })
+            .collect();
+        (
+            Problem {
+                roles: vec!["SW1".into(), "SW2".into()],
+                f,
+                lp,
+                n,
+                nf,
+                xs,
+                wl,
+                we,
+                g,
+                fir: vec![vec![0.0; n]; 2],
+                ranges: vec![(20.0, 150.0); 2],
+                modes: vec![50.0, 80.0],
+                fsiso: 100.0,
+                direct: 1.0,
+                level_db,
+            },
+            t,
+            x,
+            vec![1, -1],
+        )
+    }
+
+    fn dot(a: &[f64], b: &[f64]) -> f64 {
+        a.iter().zip(b).map(|(a, b)| a * b).sum()
+    }
+
+    #[test]
+    fn real_inverse_adjoint_handles_dc_nyquist_and_truncation() {
+        for nf in [63, 64] {
+            let spectrum: Vec<_> = (0..nf / 2 + 1)
+                .map(|k| C::new((k as f64 * 0.3).sin(), (k as f64 * 0.7).cos()))
+                .collect();
+            let time: Vec<_> = (0..17).map(|i| (i as f64 * 0.5).cos()).collect();
+            let transformed = fft::irfft(&spectrum, nf);
+            let lhs = dot(&transformed[..time.len()], &time);
+            let adjoint = inverse_adjoint(&time, nf);
+            let rhs: f64 = spectrum
+                .iter()
+                .zip(&adjoint)
+                .map(|(a, b)| a.re * b.re + a.im * b.im)
+                .sum();
+            assert!((lhs - rhs).abs() < 1e-12 * lhs.abs().max(rhs.abs()).max(1.0));
+        }
+    }
+
+    #[test]
+    fn iir_operator_matches_derivatives_normal_equations_and_adjoint() {
+        for level_db in [-80.0, 80.0] {
+            let (pb, tuning, x, pols) = fixture(level_db);
+            let ctx = Context::serial();
+            let mut objective = Objective::new(&pb, &tuning, &ctx, &pols);
+            let f = NormalEquations::residual(&mut objective, &x);
+            assert!(
+                objective.cache.iter().all(|part| part.d.is_empty()),
+                "residual calculated unused derivatives"
+            );
+            let (normal, gradient) = objective.normal(&x, &f).unwrap();
+            let diagonal = objective.linearize(&x).unwrap();
+            let direction: Vec<_> = (0..x.len()).map(|i| (i as f64 * 0.4).sin()).collect();
+            let row_direction: Vec<_> = (0..f.len()).map(|i| (i as f64 * 0.13).cos()).collect();
+            let mut jv = vec![0.0; f.len()];
+            objective.jvp(&direction, &mut jv).unwrap();
+            let mut jtu = vec![0.0; x.len()];
+            objective.vjp(&row_direction, &mut jtu).unwrap();
+            let lhs = dot(&jv, &row_direction);
+            let rhs = dot(&direction, &jtu);
+            assert!((lhs - rhs).abs() < 1e-10 * lhs.abs().max(rhs.abs()).max(1.0));
+            let mut jt_jv = vec![0.0; x.len()];
+            objective.vjp(&jv, &mut jt_jv).unwrap();
+            let mut jt_f = vec![0.0; x.len()];
+            objective.vjp(&f, &mut jt_f).unwrap();
+            for j in 0..x.len() {
+                let expected: f64 = (0..x.len()).map(|k| normal[(j, k)] * direction[k]).sum();
+                assert!((jt_jv[j] - expected).abs() < 2e-10 * expected.abs().max(1.0));
+                assert!((jt_f[j] - gradient[j]).abs() < 2e-10 * gradient[j].abs().max(1.0));
+                assert!(
+                    (diagonal[j] - normal[(j, j)]).abs() < 2e-10 * normal[(j, j)].abs().max(1.0)
+                );
+            }
+            let up: Vec<_> = x
+                .iter()
+                .zip(&direction)
+                .map(|(x, v)| x + 1e-5 * v)
+                .collect();
+            let down: Vec<_> = x
+                .iter()
+                .zip(&direction)
+                .map(|(x, v)| x - 1e-5 * v)
+                .collect();
+            let up = NormalEquations::residual(&mut objective, &up);
+            let down = NormalEquations::residual(&mut objective, &down);
+            let error = jv
+                .iter()
+                .zip(up.iter().zip(down))
+                .map(|(d, (u, l))| (d - (u - l) / 2e-5).abs())
+                .fold(0.0_f64, f64::max);
+            let scale = jv.iter().map(|v| v.abs()).fold(1.0_f64, f64::max);
+            assert!(
+                error < 5e-6 * scale,
+                "analytic directional derivative {error}/{scale}"
+            );
+            let mut unchanged = vec![0.0; f.len()];
+            objective.jvp(&direction, &mut unchanged).unwrap();
+            assert!(
+                unchanged
+                    .iter()
+                    .zip(&jv)
+                    .all(|(a, b)| a.to_bits() == b.to_bits()),
+                "trial residual invalidated the retained operator"
+            );
+        }
+    }
+
+    #[test]
+    fn iir_matrix_free_solve_is_reachable_and_reduces_the_same_objective() {
+        let (pb, tuning, x, pols) = fixture(80.0);
+        let ctx = Context::serial();
+        let mut objective = Objective::new(&pb, &tuning, &ctx, &pols);
+        let initial = 0.5 * decay::energy(&NormalEquations::residual(&mut objective, &x));
+        let options = IirSolveOptions {
+            solver: IirSolver::MatrixFree {
+                max_cg_iterations: 20,
+                cg_rtol: 1e-4,
+            },
+            dense_fallback: false,
+        };
+        let result = solve_joint_with_options(&pb, &tuning, &ctx, &x, &pols, &options).unwrap();
+        assert!(result.cost < initial * 0.95, "{initial} -> {}", result.cost);
+        assert!(result.nfev > 1 && result.nfev <= tuning.mimo_max_nfev);
+        for (r, &(lo, hi)) in pb.ranges.iter().enumerate() {
+            let (lb, ub) = bounds(band_of(lo, hi, pb.fsiso, &tuning), &tuning);
+            assert!(
+                result.x[r * per(&tuning)..(r + 1) * per(&tuning)]
+                    .iter()
+                    .zip(lb)
+                    .zip(ub)
+                    .all(|((&x, l), u)| x >= l && x <= u)
+            );
+        }
+    }
+
+    #[test]
+    fn iir_level_derivative_respects_the_additive_energy_floor() {
+        let (mut pb, tuning, x, pols) = fixture(-400.0);
+        for h in &mut pb.lp {
+            *h *= 1e-15;
+        }
+        let ctx = Context::serial();
+        let mut objective = Objective::new(&pb, &tuning, &ctx, &pols);
+        let _ = NormalEquations::residual(&mut objective, &x);
+        objective.linearize(&x).unwrap();
+        let mut direction = vec![0.0; x.len()];
+        direction[0] = 1.0;
+        let mut jv = vec![0.0; objective.rows()];
+        objective.jvp(&direction, &mut jv).unwrap();
+        let (mut up, mut down) = (x.clone(), x);
+        up[0] += 1e-3;
+        down[0] -= 1e-3;
+        let up = NormalEquations::residual(&mut objective, &up);
+        let down = NormalEquations::residual(&mut objective, &down);
+        let row = 2 * pb.xs.len() * pb.n;
+        let central = (up[row] - down[row]) / 2e-3;
+        assert!((jv[row] - central).abs() < 1e-7 * central.abs().max(1.0));
+    }
+
+    #[test]
+    fn iir_operator_error_preserves_dense_fallback() {
+        let (pb, tuning, x, pols) = fixture(80.0);
+        let ctx = Context::serial();
+        // Public API validation rejects this option before any design work.
+        // Passing it internally injects an operator error to exercise recovery.
+        let options = IirSolveOptions {
+            solver: IirSolver::MatrixFree {
+                max_cg_iterations: 0,
+                cg_rtol: 1e-3,
+            },
+            dense_fallback: true,
+        };
+        assert!(options.validate().is_err());
+        let recovered = solve_joint_with_options(&pb, &tuning, &ctx, &x, &pols, &options).unwrap();
+        let dense = solve_joint(&pb, &tuning, &ctx, &x, &pols).unwrap();
+        assert_eq!(recovered.cost.to_bits(), dense.cost.to_bits());
+        assert_eq!(recovered.nfev, dense.nfev);
+        assert!(
+            recovered
+                .x
+                .iter()
+                .zip(dense.x)
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+        );
+        assert!(
+            solve_joint_with_options(
+                &pb,
+                &tuning,
+                &ctx,
+                &x,
+                &pols,
+                &IirSolveOptions {
+                    dense_fallback: false,
+                    ..options
+                }
+            )
+            .is_err()
+        );
     }
 }

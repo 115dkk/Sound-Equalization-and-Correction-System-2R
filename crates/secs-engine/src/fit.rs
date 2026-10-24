@@ -24,6 +24,7 @@ pub struct FitRequest<'a> {
     pub f_max: Option<f64>,
 }
 /// Production uses `fit_peq`; stage goldens inject recorded decisions here.
+/// Callers may reuse the result of an identical request across candidates.
 pub type Fitter<'f> = dyn FnMut(&FitRequest<'_>) -> Vec<Peq> + 'f;
 
 pub fn ring_q_cap(f0: f64, gain_db: f64, ring_ms: f64) -> f64 {
