@@ -180,6 +180,10 @@ def check_tree() -> int:
         return 1
     diff = _run("git", "-c", "core.quotepath=off", "diff", "--stat", commit, "--", *UPSTREAM_PATHS,
                 check=False)
+    if diff.returncode != 0:
+        print(diff.stderr, end="")
+        print("::error::git diff failed while checking the upstream Python tree")
+        return 1
     untracked = _git("ls-files", "--others", "--exclude-standard", "--", *UPSTREAM_PATHS)
     if diff.stdout.strip() or untracked:
         print("::error::the upstream Python tree differs from UPSTREAM.toml's commit "
