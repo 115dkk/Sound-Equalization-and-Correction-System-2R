@@ -7,8 +7,6 @@
 //! - **Memory budget.** A job estimates its bytes and takes a weighted permit
 //!   before it allocates; a single job larger than the budget is refused up
 //!   front with the reason, instead of exhausting RAM halfway.
-//! - **Caches.** Spectra, responses and stage results live in byte-capped LRU
-//!   caches keyed by input fingerprints; a changed measurement evicts its keys.
 //! - **Threads.** A rayon pool sized by cores and budget. Parallel work is
 //!   `map` only; floating-point accumulation runs in its original order, so
 //!   results do not depend on the thread count.

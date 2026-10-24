@@ -1,6 +1,6 @@
 [package]
 name = "secs-compute"
-description = "Resource rules for heavy work: thread pool, memory budget, byte-capped caches, cancellation and progress."
+description = "Resource rules for heavy work: thread pool, memory budget, cancellation and progress."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
