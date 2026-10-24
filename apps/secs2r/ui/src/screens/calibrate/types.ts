@@ -87,7 +87,7 @@ export type CalibrateView = {
   tab: ResultTab;
   /** Selected channel (role); null lets the service pick the first. */
   channel: string | null;
-  /** Selected XO group (configuration group key, `프론트` …); null before one exists. */
+  /** Resolved XO group (configuration group key, `프론트` …); follows the selected channel on XO entry/channel changes, null without an eligible group. */
   xoGroup: string | null;
   /** sub_warnings: the subs' filter warnings for the current settings (upstream `sub_filter_warnings`, shown before a run). */
   subWarnings: Notice[];
@@ -124,7 +124,7 @@ export type CalibrateActions = {
   computeMimo: () => void;
   /** result_curves { tab, channel, group: xoGroup }: P33 keeps `tab` */
   selectTab: (tab: ResultTab) => void;
-  /** result_curves { tab, channel: role, group }: P33 keeps `channel`, and on the XO tab sets `xoGroup` to `group` (the channel's group) */
+  /** result_curves { tab, channel: role, group }: keeps `channel` and resolves its XO group from the current configuration; the group argument is retained for view callers. */
   selectChannel: (role: string, group: string | null) => void;
   /** result_curves { tab, channel, group }: P33 keeps `xoGroup` */
   selectXoGroup: (group: string) => void;

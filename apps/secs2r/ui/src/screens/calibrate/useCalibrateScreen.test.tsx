@@ -23,6 +23,36 @@ beforeEach(async () => {
 afterEach(async () => { cleanup(); await session.monitor(false); session.dispose(); mock.dispose(); vi.restoreAllMocks(); });
 
 describe("useCalibrateScreen", () => {
+  it("edits the center crossover after selecting C on SPL and opening XO", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    await perform(() => result.current.actions.selectChannel("C", null));
+    await perform(() => result.current.actions.selectTab("xo"));
+    expect(session.host.getSnapshot().xoGroup).toBe("센터");
+    expect(result.current.view?.xoGroup).toBe("센터");
+    expect(mock.calls).toContainEqual({ method: "result_curves", params: { tab: "xo", channel: "C", group: "센터", xo_hz: null, corrected: null } });
+    const group = result.current.view!.xoGroup!;
+    await perform(() => result.current.actions.previewXo(group, 95));
+    await perform(() => result.current.actions.changeSetting({ kind: "xo", group, hz: 95 }));
+    expect(mock.calls).toContainEqual({ method: "calibration_settings_edit", params: { edit: { kind: "xo", group: "센터", hz: 95 } } });
+    expect(result.current.view?.settings.xo["센터"]).toBe(95);
+    await perform(() => result.current.actions.selectChannel("L", null));
+    expect(result.current.view?.xoGroup).toBe("프론트");
+    await perform(() => result.current.actions.selectTab("spl"));
+    await perform(() => result.current.actions.selectChannel("C", null));
+    await perform(() => result.current.actions.selectTab("xo"));
+    expect(result.current.view?.xoGroup).toBe("센터");
+  });
+  it("resolves the default preview channel on XO entry and leaves an empty preview without a group", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    await perform(() => result.current.actions.selectTab("xo"));
+    expect(result.current.view?.xoGroup).toBe("프론트");
+    await perform(() => result.current.actions.selectXoGroup("센터"));
+    expect(result.current.view?.xoGroup).toBe("센터");
+    await perform(() => session.call({ method: "project_new", params: { path: "", preset: "2.1", sub_count: 1, sample: false, tutorial: false } }));
+    await perform(() => result.current.actions.selectTab("xo"));
+    expect(result.current.view?.xoGroup).toBeNull();
+  });
+
   it("returns failed target and XO edits and exposes saving, failure and retry state", async () => {
     const { result } = renderHook(useCalibrateScreen, { wrapper });
     const points: [number, number][] = [[20, 4], [20000, -2]];
@@ -139,7 +169,7 @@ describe("useCalibrateScreen", () => {
     expect(session.host.getSnapshot().xoGroup).toBeNull();
     await perform(() => a.selectTab("xo"));
     await perform(() => a.selectChannel("R", "front"));
-    expect(result.current.view).toMatchObject({ tab: "xo", channel: "R", xoGroup: "front" });
+    expect(result.current.view).toMatchObject({ tab: "xo", channel: "R", xoGroup: "프론트" });
     await perform(() => a.selectXoGroup("surround"));
     expect(mock.calls).toContainEqual({ method: "result_curves", params: { tab: "xo", channel: "R", group: "surround", xo_hz: null, corrected: null } });
     await perform(() => a.previewXo("front", 90));

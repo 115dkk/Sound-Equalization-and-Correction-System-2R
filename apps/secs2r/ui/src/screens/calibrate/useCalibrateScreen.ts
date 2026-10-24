@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useHost, useResource, useSession } from "../../state/react";
 import type { CalibrateActions, CalibrateJob, CalibrateView } from "./types";
+import { groupOf, xoGroups } from "./text";
 
 export function useCalibrateScreen(goToMeasurements?: () => void): { view: CalibrateView | null; actions: CalibrateActions } {
   const session = useSession();
@@ -19,6 +20,17 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
   const dsp = useResource("dsp");
   const subWarnings = useResource("subWarnings");
   const actions = useMemo<CalibrateActions>(() => {
+    const selectedGroup = (channel: string | null) => {
+      const config = session.stores.config.getSnapshot();
+      if (!config) return null;
+      const measured = new Set(session.stores.curves.getSnapshot()?.curves.filter((curve) => curve.position === 1).map((curve) => curve.role));
+      const channels = session.stores.results.getSnapshot()?.calibration
+        ? session.stores.lines.getSnapshot()?.channels.map((line) => line.role) ?? []
+        : config.speakers.map((speaker) => speaker.role).filter((role) => measured.has(role));
+      const role = channel && channels.includes(channel) ? channel : channels[0];
+      const group = role ? groupOf(config, role) : null;
+      return group && xoGroups(config).includes(group) ? group : null;
+    };
     const refresh = () => {
       const h = session.host.getSnapshot();
       session.run(() => session.refreshCurves({ tab: h.tab, channel: h.channel, group: h.xoGroup, xo_hz: h.previewHz, corrected: null }));
@@ -40,9 +52,12 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
       calibrateSubs: () => session.run(() => session.call({ method: "calibrate", params: { settings: null, subs_only: true } })),
       recommendXo: () => session.run(() => session.call({ method: "recommend_xo" })),
       computeMimo: () => session.run(() => session.call({ method: "mimo", params: { settings: null } })),
-      selectTab: (tab) => { session.host.set({ tab, previewHz: null }); refresh(); },
-      selectChannel: (channel, group) => {
-        session.host.set({ channel, previewHz: null, ...(session.host.getSnapshot().tab === "xo" ? { xoGroup: group } : {}) });
+      selectTab: (tab) => {
+        session.host.set({ tab, previewHz: null, ...(tab === "xo" ? { xoGroup: selectedGroup(session.host.getSnapshot().channel) } : {}) });
+        refresh();
+      },
+      selectChannel: (channel) => {
+        session.host.set({ channel, previewHz: null, ...(session.host.getSnapshot().tab === "xo" ? { xoGroup: selectedGroup(channel) } : {}) });
         refresh();
       },
       selectXoGroup: (xoGroup) => { session.host.set({ xoGroup, previewHz: null }); refresh(); },

@@ -292,7 +292,7 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
   // (other positions may be measured): say so where the channel would be chosen.
   const noPreview = !computed && channels.length === 0;
   const channel = view.channel && channels.includes(view.channel) ? view.channel : (channels[0] ?? null);
-  const xoGroup = view.xoGroup && groups.includes(view.xoGroup) ? view.xoGroup : (groups[0] ?? null);
+  const xoGroup = view.xoGroup;
 
   // Axis ranges the user picked, per tab, for this visit.
   const [ranges, setRanges] = useState<Partial<Record<ResultTab, AxisRangeValue>>>({});
