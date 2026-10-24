@@ -29,8 +29,8 @@ All line references below are `src/secs/rewapi/rew.py` in the pinned tree.
 | GET | `/audio/asio/devices` | 129–130, 433 |
 | GET | `/audio/java/output-devices`, `/audio/java/input-devices` | 137–138, 433 |
 | GET | `/audio/asio/outputs`, `/audio/asio/inputs` | 131–132, 468 |
-| GET | `/audio/java/outputs`, `/audio/java/inputs` | 139–140, 468 |
-| POST | `/audio/asio/output`, `/audio/java/output` | 133, 141, 503 |
+| GET | `/audio/java/output-channels`, `/audio/java/inputs` | 139–140, 468 |
+| POST | `/audio/asio/output`, `/audio/java/output-channel` | 133, 141, 503 |
 | GET | `/audio/java/ref-output-channels` | 143, 519 |
 | POST | `/audio/asio/ref-output`, `/audio/java/ref-output-channel` | 134, 142, 524 |
 | POST | `/application/blocking` | 535 |
@@ -83,7 +83,7 @@ Every name in the first column has the `test_` prefix in Rust. Unless otherwise 
 | devices_are_plain_string_lists | same |
 | sequential_channels_uses_channel_list_object | same |
 | timing_ref_output_uses_driver_specific_body | `rew.py:505–525` |
-| r1_pro_required_uses_only_status_and_measure_command_path | `test_pro_required_error_on_403`, R1 adversarial body/path/status matrix |
+| test_r1_pro_required_uses_only_status | `test_pro_required_error_on_403`, R1 adversarial body/path/status matrix |
 | http_error_raises_rew_error | same |
 | get_ir_decodes_big_endian_float32 | same, plus malformed base64/length |
 | impulse_response_reports_start_time_as_t0 | same |
@@ -162,6 +162,6 @@ Every name in the first column has the `test_` prefix in Rust. Unless otherwise 
 
 ## Deviations and boundary notes
 
-R1–R4 are implemented and linked to tests in `docs/DEVIATIONS.md`. R1 intentionally confines 401/402/403 Pro detection to `/measure/command`, never text. R2 isolates probe failure state from a running measurement, including channel lookups. R3 uses a random token namespace, a 4 MiB body cap, bounded headers, drain-and-413 behavior, and registered-route-only dispatch. Callback framing is Content-Length as used by REW; unsupported chunked/ambiguous framing is rejected and the connection closed. The callback server uses only std plus the JSON parser already used by the client; no server or OS crate was added. R4 puts all data ownership in `IrSource`; no test module or embedded sample data is in the production crate.
+R1–R4 are implemented and linked to tests in `docs/DEVIATIONS.md`. R1 treats 401/402/403 as "Pro required" on every path, as upstream does, and never infers it from body text (until 0.19.0 only `/measure/command` was checked; REW 5.40 answers 401 on `/measure/sweep/configuration`, see `docs/DEVIATIONS.md` R1). R2 isolates probe failure state from a running measurement, including channel lookups. R3 uses a random token namespace, a 4 MiB body cap, bounded headers, drain-and-413 behavior, and registered-route-only dispatch. Callback framing is Content-Length as used by REW; unsupported chunked/ambiguous framing is rejected and the connection closed. The callback server uses only std plus the JSON parser already used by the client; no server or OS crate was added. R4 puts all data ownership in `IrSource`; no test module or embedded sample data is in the production crate.
 
 Not performed: real REW/device sweeps, installed-application launch, Windows/macOS runtime validation, or Qt behavior. Project-plan extraction/re-export and multiamp expansion are P20 scope; Qt sidebar/watchers and low-SNR warning presentation are UI/service scope. P24 must supply process enumeration. The caller must provide sample IRs to FakeRew. `check_feature_tests.py` is intentionally reserved for the parent gate.
