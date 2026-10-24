@@ -1,5 +1,9 @@
 """Unit tests for release_gate.py (python -m unittest, no dependencies)."""
+import contextlib
+import io
+import subprocess
 import unittest
+from unittest import mock
 
 import release_gate as g
 
@@ -158,6 +162,36 @@ class DecideTest(unittest.TestCase):
         self.assertIn("[skip ci]", body)
         # The subject still reads as a patch-level message for bump_kind.
         self.assertEqual(g.bump_kind([message]), "patch")
+
+
+class GitFailureTest(unittest.TestCase):
+    @staticmethod
+    def result(returncode=0, stdout="", stderr=""):
+        return subprocess.CompletedProcess([], returncode, stdout, stderr)
+
+    def test_failed_push_with_unchanged_main_fails(self):
+        runs = [self.result(), self.result(), self.result(), self.result(),
+                self.result(1, stderr="permission denied"), self.result(),
+                self.result(stdout="a" * 40 + "\n")]
+        with mock.patch.object(g, "_read", side_effect=[VersionTest.CARGO, VersionTest.LOCK]), \
+             mock.patch.object(g, "_write"), mock.patch.object(g, "_run", side_effect=runs), \
+             self.assertRaisesRegex(SystemExit, "bump push failed"):
+            g._commit_bump("0.0.1", "0.0.2", "a" * 40)
+
+    def test_failed_push_with_advanced_main_skips(self):
+        runs = [self.result(), self.result(), self.result(), self.result(),
+                self.result(1, stderr="non-fast-forward"), self.result(),
+                self.result(stdout="b" * 40 + "\n")]
+        with mock.patch.object(g, "_read", side_effect=[VersionTest.CARGO, VersionTest.LOCK]), \
+             mock.patch.object(g, "_write"), mock.patch.object(g, "_run", side_effect=runs):
+            self.assertIsNone(g._commit_bump("0.0.1", "0.0.2", "a" * 40))
+
+    def test_fetch_failure_fails_and_prints_stderr(self):
+        with mock.patch.object(g, "_run", return_value=self.result(1, stderr="network down")), \
+             contextlib.redirect_stderr(io.StringIO()) as stderr, \
+             self.assertRaisesRegex(SystemExit, "git fetch failed"):
+            g.fetch_remote_main(tags=True)
+        self.assertIn("network down", stderr.getvalue())
 
 
 if __name__ == "__main__":

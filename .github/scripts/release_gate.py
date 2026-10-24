@@ -47,6 +47,7 @@ import fnmatch
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 
 SHIP = (
@@ -241,7 +242,20 @@ def bump_commit_message(new: str) -> str:
     return f"chore(release): v{new}\n\n[skip ci]"
 
 
-def _commit_bump(old: str, new: str) -> str | None:
+def fetch_remote_main(*, tags: bool = False) -> str:
+    """Fetch main into its remote-tracking ref and return that named ref."""
+    args = ["git", "fetch"]
+    if tags:
+        args.extend(["--tags", "--force"])
+    args.extend(["--quiet", "origin", "main:refs/remotes/origin/main"])
+    fetched = _run(*args, check=False)
+    if fetched.returncode != 0:
+        print(fetched.stderr, file=sys.stderr, end="")
+        raise SystemExit("git fetch failed")
+    return _git("rev-parse", "origin/main")
+
+
+def _commit_bump(old: str, new: str, started_head: str) -> str | None:
     """Commit the bump and push it to main; None when main moved meanwhile."""
     _write(CARGO_TOML, set_workspace_version(_read(CARGO_TOML), new))
     _write(CARGO_LOCK, set_lock_versions(_read(CARGO_LOCK), old, new))
@@ -252,13 +266,18 @@ def _commit_bump(old: str, new: str) -> str | None:
     _run("git", "commit", "-m", bump_commit_message(new))
     # The push goes over SSH with the release deploy key (the gate's checkout),
     # which the default branch's "Required checks" ruleset lets through; the
-    # bump commit has no checks of its own. A rejected push means main moved:
-    # the newer push's run releases this change too, so nothing is rebased.
+    # bump commit has no checks of its own. A rejected push is tolerated only
+    # when a newer main commit explains it; authentication and network failures
+    # must fail the release instead of becoming a successful no-op.
     push = _run("git", "push", "origin", "HEAD:main", check=False)
     if push.returncode == 0:
         return _git("rev-parse", "HEAD")
-    print(f"::warning::bump push rejected; main moved during the gate\n{push.stderr}")
-    return None
+    main_head = fetch_remote_main()
+    if is_stale(started_head, main_head):
+        print(f"::warning::bump push rejected; main moved during the gate\n{push.stderr}")
+        return None
+    print(push.stderr, file=sys.stderr, end="")
+    raise SystemExit("bump push failed while main was unchanged")
 
 
 def main(argv=None) -> int:
@@ -268,9 +287,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     head = os.environ.get("GITHUB_SHA") or _git("rev-parse", "HEAD")
-    _run("git", "fetch", "--tags", "--force", "--quiet", "origin", check=False)
-    _run("git", "fetch", "--quiet", "origin", "main", check=False)
-    main_head = _run("git", "rev-parse", "FETCH_HEAD", check=False).stdout.strip()
+    main_head = fetch_remote_main(tags=True)
     tags = set(_git("tag", "-l", "v*").splitlines())
     version = workspace_version(_read(CARGO_TOML))
     current_tag = f"v{version}"
@@ -299,7 +316,7 @@ def main(argv=None) -> int:
     if action == "bump":
         if os.environ.get("GITHUB_REF", "refs/heads/main") != "refs/heads/main":
             raise SystemExit("a bump commits to main; run on main")
-        bumped_sha = _commit_bump(version, new_version)
+        bumped_sha = _commit_bump(version, new_version, head)
         if bumped_sha is None:
             action, new_version = "none", version
         else:
