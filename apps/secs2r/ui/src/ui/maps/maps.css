@@ -186,9 +186,12 @@
   fill: var(--accent-soft);
 }
 
+/* Drawn only: presses go to the hit circles, which split where two speakers
+   sit close, and a selected speaker's halo would reach past its half. */
 .map-speaker__halo {
   fill: var(--accent);
   fill-opacity: 0.2;
+  pointer-events: none;
 }
 
 .map-speaker:hover .map-speaker__body {

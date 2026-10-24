@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { renderWith } from "../../test/render";
 import { ArrangementMap, nextPosition } from "./ArrangementMap";
 import { arrangementPoints } from "./geometry";
-import { RoomMap } from "./RoomMap";
+import { HIT_R, RoomMap, hitCell } from "./RoomMap";
 
 describe("arrangement map", () => {
   it("copies the upstream arrangements", () => {
@@ -93,5 +93,46 @@ describe("room map", () => {
     expect(screen.getByRole("option", { name: "SW1, 서브우퍼, 출력 3" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "역할 미지정 스피커, 출력 9" }));
     expect(onSelect).toHaveBeenLastCalledWith(3);
+  });
+
+  /** Ray casting: whether (x, y) lies inside the polygon. */
+  const inside = (polygon: readonly (readonly [number, number])[], [x, y]: readonly [number, number]) => {
+    let hit = false;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const [xi, yi] = polygon[i]!;
+      const [xj, yj] = polygon[j]!;
+      if (yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
+    }
+    return hit;
+  };
+  const roles = ["L", "R", "C", "SW1", "SW2", "SW3", "SW4", "SW5", "Ls", "Rs", "Lb", "Rb", "Lw", "Rw", "Tfl", "Tfr", "Tml", "Tmr", "Tbl", "Tbr", "Hfl", "Hfr", "Hbl", "Hbr"];
+
+  it("presses every speaker through a hit circle 40 px across without drawing it", () => {
+    renderWith(<RoomMap id="room" speakers={roles.map((role, i) => ({ role, outputs: [i + 1] }))} selected={2} onSelect={() => {}} />);
+    const hits = document.querySelectorAll(".map-speaker__hit");
+    expect(hits).toHaveLength(roles.length);
+    for (const hit of hits) expect(Number(hit.getAttribute("r"))).toBeGreaterThanOrEqual(20);
+    // C and SW5 sit 30 px apart: each circle is clipped to its own half; L has no neighbour that close.
+    const clip = (role: string) => document.querySelector(`[data-ui="room.speaker.${role}"] .map-speaker__hit`)?.getAttribute("clip-path");
+    expect(clip("C")).toBe("url(#room-spk-2-hit)");
+    expect(clip("SW5")).toBe("url(#room-spk-7-hit)");
+    expect(clip("L")).toBeNull();
+    expect(document.getElementById("room-spk-2-hit")?.querySelector("polygon")).not.toBeNull();
+  });
+
+  it("gives the overlap of two close speakers' hit circles to the nearer speaker", () => {
+    const c = [210, 65.6] as const;
+    const sw5 = [210, 35.2] as const;
+    const cCell = hitCell(c, [c, sw5])!;
+    const swCell = hitCell(sw5, [c, sw5])!;
+    // Inside both circles: 2 px towards C from the halfway line belongs to C only, and the other way to SW5.
+    expect(inside(cCell, [210, 52.4])).toBe(true);
+    expect(inside(swCell, [210, 52.4])).toBe(false);
+    expect(inside(swCell, [210, 48.4])).toBe(true);
+    expect(inside(cCell, [210, 48.4])).toBe(false);
+    // Away from the neighbour each keeps its whole radius.
+    expect(inside(cCell, [210, c[1] + HIT_R - 1])).toBe(true);
+    expect(inside(cCell, [c[0] + HIT_R - 1, c[1]])).toBe(true);
+    expect(hitCell([100, 100], [[100, 100], [100, 140]])).toBeNull();
   });
 });
