@@ -293,6 +293,68 @@ describe("measurement settings", () => {
   });
 });
 
+describe("XO recommendation completion", () => {
+  it.each(["failed", "cancelled"] as const)("does not apply recommendations or recalibrate after a %s recommendation", async (status) => {
+    const mock = createMockService({ tickMs: 0 });
+    const session = createSession(mock);
+    try {
+      await session.start();
+      const before = await mock.request({ method: "calibration_settings_get" });
+      if (status === "failed") mock.failJobs("recommend_xo", "engine_input");
+      const started = await session.call({ method: "recommend_xo" });
+      if (status === "cancelled") await session.call({ method: "job_cancel", params: { job: started.job } });
+      mock.drain(); await settle();
+      expect(session.stores.settings.getSnapshot()).toEqual(before);
+      expect(mock.calls.some((call) => call.method === "calibrate")).toBe(false);
+    } finally { session.dispose(); await settle(); mock.dispose(); }
+  });
+
+  it("does not recalibrate a replacement project while the recommended settings reload is delayed", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    const session = createSession(mock);
+    try {
+      await session.start();
+      const request = mock.request;
+      let release!: () => void;
+      let delay = true;
+      vi.spyOn(mock, "request").mockImplementation(async (params) => {
+        const value = await request(params);
+        if (params.method === "calibration_settings_get" && delay) {
+          delay = false;
+          await new Promise<void>((resolve) => { release = resolve; });
+        }
+        return value;
+      });
+      await session.call({ method: "recommend_xo" });
+      mock.drain(); await settle();
+      await session.call({ method: "project_open", params: { path: "C:/rooms/next.secs" } });
+      const settings = session.stores.settings.getSnapshot();
+      release(); await settle();
+      expect(session.stores.settings.getSnapshot()).toBe(settings);
+      expect(mock.calls.some((call) => call.method === "calibrate")).toBe(false);
+    } finally { session.dispose(); await settle(); mock.dispose(); vi.restoreAllMocks(); }
+  });
+  it("reloads recommended settings after completion and starts a full calibration", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    const session = createSession(mock);
+    try {
+      await session.start();
+      const before = await mock.request({ method: "calibration_settings_get" });
+      mock.calls.length = 0;
+      await session.call({ method: "recommend_xo" });
+      expect(await mock.request({ method: "calibration_settings_get" })).toEqual(before);
+      expect(mock.calls.some((call) => call.method === "calibrate")).toBe(false);
+      mock.drain(); await settle();
+      expect(session.stores.settings.getSnapshot()?.xo_rec).toMatchObject({ "프론트": 80, "센터": 100 });
+      expect(session.stores.settings.getSnapshot()?.xo).toMatchObject({ "프론트": 80, "센터": 100 });
+      expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false } });
+      expect(session.host.getSnapshot().jobs.some((job) => job.kind === "calibrate" && job.status === "running")).toBe(true);
+      mock.drain(); await settle();
+      expect(session.stores.results.getSnapshot()?.calibration?.stale).toBe(false);
+    } finally { session.dispose(); await settle(); mock.dispose(); }
+  });
+});
+
 describe("host state after jobs and switches", () => {
   it("treats a cancelled calibration as no failure", async () => {
     const mock = createMockService({ tickMs: 0 });

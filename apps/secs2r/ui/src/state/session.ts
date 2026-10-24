@@ -325,7 +325,12 @@ export function createSession(ipc: Ipc) {
       } else if (event.status === "failed" && event.error) host.set({ runs: { ...h.runs, [request.params.kind]: { status: "failed", error: event.error } } });
     }
     // A failed/cancelled job may already have committed some measurements.
-    void reload(triggeredBy({ finished: job.kind }));
+    run(async () => {
+      await reload(triggeredBy({ finished: job.kind }));
+      if (job.kind === "recommend_xo" && event.status === "succeeded" && job.epoch === tracker.epoch) {
+        await call({ method: "calibrate", params: { settings: null, subs_only: false } });
+      }
+    });
   }
   let off: (() => void) | null = null;
   let startPromise: Promise<void> | null = null;
