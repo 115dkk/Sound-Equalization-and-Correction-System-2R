@@ -326,6 +326,27 @@ function NoticeList({ view }: { view: SystemView }) {
   );
 }
 
+/** The service stores output numbers 1..=256 (P74, the project's output rule), so no output select lists past it. */
+export const OUTPUT_LIMIT = 256;
+
+/**
+ * Outputs 1…`count`, never past OUTPUT_LIMIT, and a stored value outside them
+ * as one more option (`outside` names it), not a range up to it: a number in
+ * an opened project file never decides how many options the screen draws.
+ */
+function outputChoices(
+  t: Translate,
+  count: number,
+  stored: number,
+  names: readonly string[],
+  outside: (label: string) => string = (label) => label,
+): Option<string>[] {
+  const shown = Math.max(0, Math.min(count, OUTPUT_LIMIT));
+  const options: Option<string>[] = Array.from({ length: shown }, (_, i) => ({ value: String(i + 1), label: outputLabel(t, i + 1, names) }));
+  if (stored < 1 || stored > shown) options.push({ value: String(stored), label: outside(outputLabel(t, stored, names)) });
+  return options;
+}
+
 function PatchTable({
   view,
   actions,
@@ -341,12 +362,10 @@ function PatchTable({
   const { config, outputChannels, outputNames } = view;
   const duplicates = new Set(config.summary.duplicate_outputs);
   // Upstream lists 1…channels (64 while the device is unknown) and adds the stored value when it is past the end.
+  // An unknown device lists up to the largest stored output here, within OUTPUT_LIMIT.
   const count = outputChannels ?? Math.max(64, config.summary.max_channel);
-  const outputOptions = (out: number): Option<string>[] => {
-    const options: Option<string>[] = Array.from({ length: count }, (_, i) => ({ value: String(i + 1), label: outputLabel(t, i + 1, outputNames) }));
-    if (out > count || out < 1) options.push({ value: String(out), label: t("system.output.out_of_range", { output: outputLabel(t, out, outputNames) }) });
-    return options;
-  };
+  const outputOptions = (out: number): Option<string>[] =>
+    outputChoices(t, count, out, outputNames, (output) => t("system.output.out_of_range", { output }));
   const roleOptions = (role: string): Option<string>[] => {
     const known: Option<string>[] = ROLES.map((r) => ({ value: r, label: roleLabel(t, r) }));
     const custom = isKnownRole(role) ? "custom" : role;
@@ -635,6 +654,8 @@ function MeasureOptions({ view, actions }: { view: SystemView; actions: SystemAc
   // An empty or vanished reference role falls back to upstream default_ref_role: R, else the first main speaker.
   const mains = refs.filter((r) => roleKind(r.role) !== "sub");
   const refRole = refs.some((r) => r.role === timing.role) ? timing.role : (mains.find((r) => r.role === "R") ?? mains[0] ?? refs[0])?.role ?? "";
+  // Upstream's reference output lists the device's channels (8 while it is
+  // unknown) and adds a stored value past them as one more item.
   const channels = outputChannels ?? 8;
   const bands = config.speakers.reduce((sum, s) => sum + s.bands.length, 0);
   const timingHint = { acoustic: "system.timing.acoustic.hint", loopback: "system.timing.loopback.hint", none: "system.timing.none.hint" } as const;
@@ -674,7 +695,7 @@ function MeasureOptions({ view, actions }: { view: SystemView; actions: SystemAc
                 id="system.timing.output"
                 label={t("system.timing.output")}
                 value={String(timing.output)}
-                options={Array.from({ length: Math.max(channels, timing.output) }, (_, i) => ({ value: String(i + 1), label: outputLabel(t, i + 1, outputNames) }))}
+                options={outputChoices(t, channels, timing.output, outputNames)}
                 onChange={(output) => actions.setTiming({ ...timing, role: refRole, output: Number(output) })}
               />
             ) : reference === "none" ? null : (
