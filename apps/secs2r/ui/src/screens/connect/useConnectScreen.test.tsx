@@ -27,6 +27,22 @@ afterEach(async () => {
 });
 
 describe("useConnectScreen", () => {
+  it("releases the end subscription and timer immediately when level_play fails", async () => {
+    vi.useFakeTimers();
+    const subscribe = mock.events.subscribe;
+    const releases: ReturnType<typeof vi.fn>[] = [];
+    vi.spyOn(mock.events, "subscribe").mockImplementation((listener) => {
+      const release = vi.fn(subscribe(listener)); releases.push(release); return release;
+    });
+    const { result } = renderHook(() => useConnectScreen(false), { wrapper });
+    await perform(() => result.current.actions.choosePath("mock"));
+    mock.failNext("level_play", "device_unavailable");
+    await perform(() => result.current.actions.playLevel("L"));
+    expect(releases).toHaveLength(1);
+    expect(releases[0]).toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(result.current.view?.level.playing).toBeNull();
+  });
   it("chooses every path and wires every device preference with nullable fields", async () => {
     const { result } = renderHook(() => useConnectScreen(false), { wrapper });
     const a = result.current.actions;
