@@ -329,6 +329,44 @@ describe("Graph axis range", () => {
     expect(described()).toBe("곡선 1개, 5–20k Hz");
   });
 
+  it("does not apply a field that is not a number: Enter keeps the popover open and goes to that field", async () => {
+    const onRangeChange = vi.fn();
+    renderWith(<Graph id="g" label="graph" freqs={FREQS} curves={CURVES} channels={[{ role: "L", label: "L", sub: false }]} roleOrder={["L"]} xRange={[5, 20000]} onRangeChange={onRangeChange} />);
+    openPopover();
+    const upper = ui("g.axes.x1") as HTMLInputElement;
+    const level = ui("g.axes.y0") as HTMLInputElement;
+    upper.focus();
+    fireEvent.change(upper, { target: { value: "abc" } });
+    // The user moves on and presses Enter in another field.
+    fireEvent.blur(upper);
+    level.focus();
+    fireEvent.keyDown(level, { key: "Enter" });
+    await act(() => new Promise((done) => setTimeout(done, 0)));
+    expect(ui("g.axes.popover")).not.toBeNull();
+    expect(document.activeElement).toBe(upper);
+    expect(upper.getAttribute("aria-invalid")).toBe("true");
+    expect(onRangeChange).not.toHaveBeenCalled();
+    expect(described()).toBe("곡선 1개, 5–20k Hz");
+  });
+
+  it("does not apply an out-of-range field from 적용 either, and applies once it is fixed", async () => {
+    const onRangeChange = vi.fn();
+    renderWith(<Graph id="g" label="graph" freqs={FREQS} curves={CURVES} channels={[{ role: "L", label: "L", sub: false }]} roleOrder={["L"]} xRange={[5, 20000]} onRangeChange={onRangeChange} />);
+    openPopover();
+    const lower = ui("g.axes.x0") as HTMLInputElement;
+    fireEvent.change(lower, { target: { value: "30000" } });
+    fireEvent.blur(lower);
+    fireEvent.click(ui("g.axes.apply"));
+    expect(ui("g.axes.popover")).not.toBeNull();
+    expect(document.activeElement).toBe(lower);
+    expect(onRangeChange).not.toHaveBeenCalled();
+    fireEvent.change(lower, { target: { value: "30" } });
+    fireEvent.keyDown(lower, { key: "Enter" });
+    await act(() => new Promise((done) => setTimeout(done, 0)));
+    expect(onRangeChange).toHaveBeenCalledWith({ x: [30, 20000], y: [-35, 20] });
+    expect(document.querySelector('[data-ui="g.axes.popover"]')).toBeNull();
+  });
+
   it("keeps the pick itself when nobody holds it", () => {
     const onRangeChange = vi.fn();
     renderWith(<Graph id="g" label="graph" freqs={FREQS} curves={CURVES} channels={[{ role: "L", label: "L", sub: false }]} roleOrder={["L"]} xRange={[5, 20000]} onRangeChange={onRangeChange} />);
