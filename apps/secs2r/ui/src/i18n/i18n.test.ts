@@ -83,6 +83,13 @@ describe("catalogs", () => {
     expect(offenders).toEqual([]);
   });
 
+  it("uses ASCII hyphens next to Latin letters", () => {
+    for (const [locale, catalog] of Object.entries(catalogs)) {
+      const offenders = Object.entries(catalog).filter(([, text]) => /[A-Za-z][‐-―]|[‐-―][A-Za-z]/.test(text));
+      expect(offenders, locale).toEqual([]);
+    }
+  });
+
   it("has no exclamation marks", () => {
     for (const [locale, catalog] of Object.entries(catalogs)) {
       const offenders = Object.entries(catalog).filter(([, text]) => /!/.test(text));
