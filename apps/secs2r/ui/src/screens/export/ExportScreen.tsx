@@ -69,7 +69,7 @@ const MIMO_REASON: Record<Extract<MimoInclusion, { included: false }>["reason"],
   stale: "export.result.mimo.stale",
 };
 
-export function modeText(t: Translate, mode: Mode, ultraMs: number, number: (value: number, digits?: number) => string): string {
+function modeText(t: Translate, mode: Mode, ultraMs: number, number: (value: number, digits?: number) => string): string {
   return mode === "ultra" ? t("export.mode.ultra", { ms: number(ultraMs) }) : t(MODE_TEXT[mode]);
 }
 

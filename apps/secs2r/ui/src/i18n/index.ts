@@ -7,7 +7,6 @@ import ko from "./ko.json";
 export type MessageKey = keyof typeof ko;
 export const catalogs = { ko, en } as const;
 export type Locale = keyof typeof catalogs;
-export const LOCALES: readonly Locale[] = ["ko", "en"];
 
 export type MessageParams = Record<string, string | number>;
 

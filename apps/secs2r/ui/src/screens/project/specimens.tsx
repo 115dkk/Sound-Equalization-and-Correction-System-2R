@@ -4,7 +4,7 @@ import type { IpcError } from "../../ipc/bindings/IpcError";
 import { ProjectDialogs } from "./ProjectDialogs";
 import type { ProjectDialogsActions, ProjectDialogsView } from "./types";
 
-export const noopProjectActions: ProjectDialogsActions = {
+const noopProjectActions: ProjectDialogsActions = {
   createProject: () => {},
   saveAndContinue: () => {},
   discardAndContinue: () => {},

@@ -17,7 +17,7 @@ import { StepRail } from "./StepRail";
 import { shortcutText, useShortcuts } from "./shortcuts";
 import "./app.css";
 
-export type AppFrameProps = {
+type AppFrameProps = {
   model: FrameModel;
   onNavigate: (step: StepId) => void;
   primary?: PrimaryAction | undefined;

@@ -111,28 +111,6 @@ describe("session completion ownership", () => {
     } finally { session.dispose(); await settle(); mock.dispose(); }
   });
 
-  it("waits for an active job without a subscribe gap and rejects pruned or unknown ids", async () => {
-    const mock = createMockService({ tickMs: 0 });
-    const session = createSession(mock);
-    try {
-      await session.start(); await settle();
-      mock.events.emit({ event: "started", job: 100, kind: "calibrate" });
-      const subscribed = session.host.subscribe;
-      const spy = vi.spyOn(session.host, "subscribe").mockImplementation((listener) => {
-        const off = subscribed(listener); mock.events.emit(done(100)); return off;
-      });
-      await expect(session.waitForJob(100)).resolves.toBeUndefined(); spy.mockRestore();
-      for (let job = 101; job <= 150; job++) {
-        mock.events.emit({ event: "started", job, kind: "calibrate" }); mock.events.emit(done(job));
-      }
-      await settle();
-      expect(session.host.getSnapshot().jobs.filter((job) => job.status === "succeeded")).toHaveLength(32);
-      await expect(session.waitForJob(100)).rejects.toMatchObject({ error: { code: "job_not_found" } });
-      await expect(session.waitForJob(99999)).rejects.toMatchObject({ error: { code: "job_not_found" } });
-      await expect(session.waitForJob(150)).resolves.toBeUndefined();
-    } finally { vi.restoreAllMocks(); session.dispose(); await settle(); mock.dispose(); }
-  });
-
   it("does not revive an unknown finish or replace recent terminal history with a delayed bootstrap snapshot", async () => {
     const mock = createMockService({ tickMs: 0 });
     let release!: (jobs: JobSnapshot[]) => void;

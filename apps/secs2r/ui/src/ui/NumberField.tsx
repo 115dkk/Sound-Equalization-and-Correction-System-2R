@@ -7,7 +7,7 @@ import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useNumber, useT } from "../i18n/react";
 import { Field, describedBy } from "./Field";
 
-export type NumberCheck = { ok: true; value: number } | { ok: false; reason: "empty" | "nan" | "below" | "above" };
+type NumberCheck = { ok: true; value: number } | { ok: false; reason: "empty" | "nan" | "below" | "above" };
 
 /** Reads a typed number (accepts "−", "-", "," as a decimal mark) and checks the range. */
 export function checkNumber(text: string, min: number, max: number): NumberCheck {
@@ -28,7 +28,7 @@ export function stepNumber(value: number, delta: number, min: number, max: numbe
   return Math.round(next * factor) / factor;
 }
 
-export type NumberFieldProps = {
+type NumberFieldProps = {
   id: string;
   label: ReactNode;
   value: number;

@@ -8,7 +8,7 @@ import { colorTokens, type Highlight } from "./series";
 
 export type LegendChannel = { role: string; label: string; sub: boolean };
 
-export type LegendProps = {
+type LegendProps = {
   id: string;
   channels: readonly LegendChannel[];
   roleOrder: readonly string[];

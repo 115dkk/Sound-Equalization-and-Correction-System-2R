@@ -12,7 +12,7 @@
 // Colours are OKLCH (optionally with alpha) and are gamut-mapped to sRGB the
 // way CSS Color 4 does for display: chroma is reduced until the colour fits.
 
-export type Rgb = [number, number, number];
+type Rgb = [number, number, number];
 export type Theme = "light" | "dark";
 
 /** One `selector { declarations }` block, custom properties only. */
@@ -84,7 +84,7 @@ export function cascade(css: string[], options: { theme: Theme; skin?: string | 
 }
 
 /** `value` with every `var(--x)` and simple `calc(a * b)` substituted. */
-export function resolve(tokens: Map<string, string>, value: string, depth = 0): string {
+function resolve(tokens: Map<string, string>, value: string, depth = 0): string {
   if (depth > 32) throw new Error(`token cycle in ${value}`);
   let out = value;
   for (;;) {
@@ -105,10 +105,10 @@ export function resolve(tokens: Map<string, string>, value: string, depth = 0): 
   return out;
 }
 
-export type Oklch = { l: number; c: number; h: number; alpha: number };
+type Oklch = { l: number; c: number; h: number; alpha: number };
 
 /** `oklch(L C H)` or `oklch(L C H / A)`; L in 0–1 (or percent). */
-export function parseOklch(text: string): Oklch {
+function parseOklch(text: string): Oklch {
   const m = /^oklch\(\s*([\d.]+)(%?)\s+([\d.]+)\s+([\d.]+)\s*(?:\/\s*([\d.]+)(%?))?\s*\)$/i.exec(text.trim());
   if (!m) throw new Error(`not an oklch colour: ${text}`);
   const l = Number(m[1]) / (m[2] ? 100 : 1);
@@ -133,7 +133,7 @@ function oklabToLinearSrgb(L: number, a: number, b: number): Rgb {
 const inGamut = (rgb: Rgb, eps = 1e-6) => rgb.every((v) => v >= -eps && v <= 1 + eps);
 
 /** Linear sRGB of an OKLCH colour, chroma reduced until it fits the gamut. */
-export function oklchToLinearSrgb({ l, c, h }: Oklch): Rgb {
+function oklchToLinearSrgb({ l, c, h }: Oklch): Rgb {
   if (l <= 0) return [0, 0, 0];
   if (l >= 1) return [1, 1, 1];
   const rad = (h * Math.PI) / 180;
@@ -155,10 +155,10 @@ export function oklchToLinearSrgb({ l, c, h }: Oklch): Rgb {
 const composite = (over: Rgb, alpha: number, under: Rgb): Rgb => over.map((v, i) => v * alpha + under[i]! * (1 - alpha)) as Rgb;
 
 /** WCAG relative luminance of linear sRGB. */
-export const luminance = ([r, g, b]: Rgb) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
+const luminance = ([r, g, b]: Rgb) => 0.2126 * r + 0.7152 * g + 0.0722 * b;
 
 /** WCAG 2 contrast ratio, 1–21. */
-export function contrast(a: Rgb, b: Rgb): number {
+function contrast(a: Rgb, b: Rgb): number {
   const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x) as [number, number];
   return (hi + 0.05) / (lo + 0.05);
 }

@@ -51,7 +51,7 @@ export type MockService = {
   setResults: (results: ResultsSummary) => void;
   dispose: () => void;
 };
-export type MockOptions = { computeStatus?: import("./bindings/ComputeStatus").ComputeStatus; tickMs?: number; project?: ProjectInfo | null; results?: ResultsSummary };
+type MockOptions = { computeStatus?: import("./bindings/ComputeStatus").ComputeStatus; tickMs?: number; project?: ProjectInfo | null; results?: ResultsSummary };
 export const ipcError = (code: ErrorCode, detail = "", params: Record<string, string> = {}): IpcError => ({
   code, params, retryable: code === "job_busy" || code === "rew_unreachable" || code === "device_unavailable", detail,
 });

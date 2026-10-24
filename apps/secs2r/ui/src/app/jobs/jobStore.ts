@@ -43,15 +43,14 @@ export type JobsAction =
   | { type: "request_failed"; job: JobId | null; error: IpcError; at: number }
   | { type: "clear_history" };
 
-export const HISTORY_LIMIT = 200;
+const HISTORY_LIMIT = 200;
 
 export const initialJobs: JobsState = { jobs: [], history: [], seq: 0, observedOrder: 0, retention: initialRetention };
 
 /** Background jobs the tray does not list: the level monitor shows on its
  * screen as the meter, and the status watch runs whenever the app does. */
-export const TRAY_HIDDEN: readonly JobKind[] = ["level_monitor", "status_watch"];
+const TRAY_HIDDEN: readonly JobKind[] = ["level_monitor", "status_watch"];
 
-export const isActive = isActiveJob;
 
 const blank = (id: JobId, kind: JobKind, at: number): JobView => ({
   id,
@@ -98,7 +97,7 @@ export function jobsReducer(state: JobsState, action: JobsAction): JobsState {
         return keep({ ...state, observedOrder: order }, [...state.jobs, blank(event.job, event.kind, at)]);
       }
       // Meter readings and path status are screen data, not job history.
-      if (!known || !isActive(known.status) || event.event === "meter" || event.event === "measure_status") return state;
+      if (!known || !isActiveJob(known.status) || event.event === "meter" || event.event === "measure_status") return state;
       state = { ...state, observedOrder: order };
       if (event.event === "progress") {
         return update(state, event.job, (job) => {
@@ -132,7 +131,7 @@ export function jobsReducer(state: JobsState, action: JobsAction): JobsState {
         const snap = finished ? { ...original, status: finished.status, error: finished.error, cancellable: false } : original;
         if (TRAY_HIDDEN.includes(snap.kind)) continue;
         const known = next.jobs.find((job) => job.id === snap.job);
-        if (known && !isActive(known.status)) continue;
+        if (known && !isActiveJob(known.status)) continue;
         if (!known && retiredFromSnapshot(fence, snap.job, action.fence)) continue;
         const progress = snap.progress;
         if (!known) {
@@ -141,16 +140,16 @@ export function jobsReducer(state: JobsState, action: JobsAction): JobsState {
             cancellable: snap.cancellable, stage: progress?.stage ?? null,
             done: progress?.done ?? 0, total: progress?.total ?? 0,
             stageStartDone: progress?.done ?? 0, error: snap.error,
-            finishedAt: isActive(snap.status) ? null : finished?.at ?? action.at,
-            completionOrder: isActive(snap.status) ? null : finished?.order ?? action.fence?.sequence ?? 0,
+            finishedAt: isActiveJob(snap.status) ? null : finished?.at ?? action.at,
+            completionOrder: isActiveJob(snap.status) ? null : finished?.order ?? action.fence?.sequence ?? 0,
           }]);
         } else {
           const status = known.status === "cancel_requested" && snap.status === "running" ? known.status : snap.status;
-          const order = isActive(status) ? next.observedOrder : next.observedOrder + 1;
+          const order = isActiveJob(status) ? next.observedOrder : next.observedOrder + 1;
           const updated = { ...known, status, cancellable: snap.cancellable, error: snap.error ?? known.error,
-            finishedAt: isActive(snap.status) ? null : action.at, completionOrder: isActive(snap.status) ? null : order };
+            finishedAt: isActiveJob(snap.status) ? null : action.at, completionOrder: isActiveJob(snap.status) ? null : order };
           next = keep({ ...next, observedOrder: order }, [...next.jobs.filter((job) => job.id !== snap.job), updated]);
-          if (!isActive(snap.status)) next = push(next, { at: action.at, job: snap.job, kind: snap.kind, type: "finished", status: snap.status, error: snap.error });
+          if (!isActiveJob(snap.status)) next = push(next, { at: action.at, job: snap.job, kind: snap.kind, type: "finished", status: snap.status, error: snap.error });
         }
       }
       return next;
@@ -168,7 +167,7 @@ export function jobsReducer(state: JobsState, action: JobsAction): JobsState {
   }
 }
 
-export const activeJobs = (state: JobsState): JobView[] => state.jobs.filter((job) => isActive(job.status));
+export const activeJobs = (state: JobsState): JobView[] => state.jobs.filter((job) => isActiveJob(job.status));
 
 /** Milliseconds left at the current stage's rate, or null when unknown. */
 export function remainingMs(job: JobView, now: number): number | null {

@@ -86,9 +86,5 @@ export function useProjectScreen(close: () => Promise<void>) {
         session.navigate("system");
       }
     }),
-    restartTutorial: () => perform(async () => {
-      await session.call({ method: "project_new", params: { path: "", preset: "7.1.4", sub_count: 3, sample: true, tutorial: true } });
-      await session.configure({ method: "mock" }); session.navigate("system");
-    }),
   };
 }

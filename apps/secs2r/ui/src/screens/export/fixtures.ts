@@ -10,7 +10,7 @@ import { exportStepState, type ExportView } from "./types";
 
 const BASE = "C:/Users/demo/Documents/SECS/SECS_export/2026-10-14 거실 7.1.4";
 
-export const exportMimo: MimoSummary = {
+const exportMimo: MimoSummary = {
   compute: cpuComputeReport,
   stale: false,
   kind: "iir",
@@ -22,7 +22,7 @@ export const exportMimo: MimoSummary = {
   input_count: SAMPLE_MAINS.length,
 };
 
-export const exportRc: Notice[] = [
+const exportRc: Notice[] = [
   { code: "rc_limit", params: { hz: "310.4", auto: "true", schroeder_hz: "310.4" } },
   { code: "rc_room_volume", params: { volume_m3: "62.5" } },
 ];

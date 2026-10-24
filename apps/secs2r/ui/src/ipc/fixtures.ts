@@ -15,7 +15,6 @@ import type { TargetResult } from "./bindings/TargetResult";
 import type { BootstrapInfo } from "./bindings/BootstrapInfo";
 import type { CalibrationSummary } from "./bindings/CalibrationSummary";
 import type { ChannelScore } from "./bindings/ChannelScore";
-import type { ExportResult } from "./bindings/ExportResult";
 import type { LevelResult } from "./bindings/LevelResult";
 import type { MeasureConfigResult } from "./bindings/MeasureConfigResult";
 import type { MeasureMethodsResult } from "./bindings/MeasureMethodsResult";
@@ -203,10 +202,6 @@ export const mimoSummary: MimoSummary = {
 };
 
 export const resultsSummary: ResultsSummary = { calibration: calibrationSummary, mimo: mimoSummary };
-export const staleResults: ResultsSummary = {
-  calibration: { ...calibrationSummary, stale: true },
-  mimo: { ...mimoSummary, stale: true },
-};
 export const noResults: ResultsSummary = { calibration: null, mimo: null };
 
 export const xoRecommendation: XoRecommendation = {
@@ -218,15 +213,6 @@ export const xoRecommendation: XoRecommendation = {
     ["탑", 100],
   ],
   candidates: [60, 80, 100, 120],
-};
-
-export const exportResult: ExportResult = {
-  files: [
-    "C:/Users/demo/Documents/SECS_export/2026-10-14 거실 7.1.4/camilladsp/secs_camilladsp.yml",
-    "C:/Users/demo/Documents/SECS_export/2026-10-14 거실 7.1.4/camilladsp/fir_L.wav",
-  ],
-  folder: "C:/Users/demo/Documents/SECS_export/2026-10-14 거실 7.1.4/camilladsp",
-  stale: false,
 };
 
 export const presetRoles: Record<string, readonly string[]> = {

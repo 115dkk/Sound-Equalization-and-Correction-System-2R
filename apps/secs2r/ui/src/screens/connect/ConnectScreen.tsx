@@ -22,7 +22,7 @@ import type { ConnectActions, ConnectPath, ConnectView, RewProblem } from "./typ
 import "./connect.css";
 
 /** REW's sweep lengths (secs-project SWEEP_LENGTHS) in samples; 256k by default. */
-export const SWEEP_LENGTHS = [
+const SWEEP_LENGTHS = [
   { samples: 65536, name: "64k" },
   { samples: 131072, name: "128k" },
   { samples: 262144, name: "256k" },
@@ -32,16 +32,16 @@ export const SWEEP_LENGTHS = [
   { samples: 4194304, name: "4M" },
 ] as const;
 
-export const DEFAULT_SWEEP = 262144;
+const DEFAULT_SWEEP = 262144;
 
 /** REW's audio drivers (`POST /audio/driver`); a name REW reports beyond these (Core Audio and the like) is shown as is. */
-export const REW_DRIVERS = ["ASIO", "Java"] as const;
+const REW_DRIVERS = ["ASIO", "Java"] as const;
 
 /**
  * The REW device the screen shows for one direction: the stored name when REW
  * lists it (REW opens it before each sweep), else the device REW has open now (R7).
  */
-export function rewDevice(view: ConnectView, kind: "input" | "output"): string | null {
+function rewDevice(view: ConnectView, kind: "input" | "output"): string | null {
   const details = view.rew.details;
   const devices = (kind === "input" ? details.inputs : details.outputs) ?? [];
   const stored = kind === "input" ? view.settings?.input_device : view.settings?.output_device;

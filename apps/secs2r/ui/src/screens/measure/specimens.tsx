@@ -29,7 +29,7 @@ import { MeasureOptions, MeasureScreen, measureHeader } from "./MeasureScreen";
 import { donePositions, measureStepState, type MeasureActions, type MeasureView } from "./types";
 
 const noop = () => {};
-export const noopActions: MeasureActions = {
+const noopActions: MeasureActions = {
   measurePosition: noop,
   cancelJob: noop,
   clearPosition: () => Promise.resolve("undo-token"),
@@ -164,7 +164,7 @@ const frame = (id: string, title: string, render: () => ReactNode, size: "defaul
   render,
 });
 
-export const measureSpecimens: SpecimenDef[] = [
+const measureSpecimens: SpecimenDef[] = [
   frame("screen.measure.empty", "Measure · nothing measured, project not saved yet", () => <MeasureFrame view={emptyView} />),
   frame("screen.measure.partial", "Measure · three of nine positions measured", () => <MeasureFrame view={partialView} />),
   frame("screen.measure.measuring", "Measure · measuring position 4 (role progress)", () => <MeasureFrame view={measuringView} jobs={measuringJobs} now={T0 + 52000} />),

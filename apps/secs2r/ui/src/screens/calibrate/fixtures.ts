@@ -31,8 +31,8 @@ function config(roles: readonly string[], preset: string): ConfigResult {
   return { speakers, preset, device: "MOTU M4", groups, summary: { speaker_count: roles.length, outputs: roles.map((_, i) => i + 1), max_channel: roles.length, duplicate_outputs: [], sub_count: subs } };
 }
 
-export const sampleConfig = config(fx.SAMPLE_ROLES, "7.1.4");
-export const stereoConfig = config(["L", "R"], "2.0");
+const sampleConfig = config(fx.SAMPLE_ROLES, "7.1.4");
+const stereoConfig = config(["L", "R"], "2.0");
 
 const HARMAN: [number, number][] = [
   [25, 6],
@@ -41,7 +41,7 @@ const HARMAN: [number, number][] = [
   [1000, 0],
   [16000, -3],
 ];
-export const sampleTarget: TargetResult = {
+const sampleTarget: TargetResult = {
   points: HARMAN,
   preset: "harman",
   presets: [
@@ -96,7 +96,7 @@ export const baseSettings: CalibrationSettings = {
   xo_peq_hi: 0,
 };
 
-export const modeSpecs: Record<"zero" | "mixed" | "linear" | "ultra120", ModeSpecResult> = {
+const modeSpecs: Record<"zero" | "mixed" | "linear" | "ultra120", ModeSpecResult> = {
   zero: { rc_filter: "iir", fir_taps: 0, peq_bands: 32, mimo_filter: "iir", lift_ms: 0, phase_frac: 6, max_latency_ms: 0 },
   mixed: { rc_filter: "iir_fir", fir_taps: 2048, peq_bands: null, mimo_filter: "iir", lift_ms: 8, phase_frac: 6, max_latency_ms: 10 },
   linear: { rc_filter: "iir_fir", fir_taps: 2048, peq_bands: null, mimo_filter: "iir", lift_ms: 28, phase_frac: 24, max_latency_ms: 30 },
@@ -156,17 +156,17 @@ function curvesResult(tab: ResultCurvesResult["tab"], grid: Float64Array, curves
   return { tab, grid: arr(grid), curves, axes, stale: false, subs_only: false, rc_band_hz: tab === "spl" || tab === "gd" ? [RC[0], RC[1]] : null, xo_hz: null, ...extra };
 }
 
-export function splResult(role = "L", options: { mimo?: boolean } = {}): ResultCurvesResult {
+function splResult(role = "L", options: { mimo?: boolean } = {}): ResultCurvesResult {
   return curvesResult("spl", logGrid(5, 20000, 520), splCurves(role, options));
 }
 
 /** Before the first run: the position-1 measurement and the target; the auto upper limit is not known yet. */
-export function previewResult(role = "L"): ResultCurvesResult {
+function previewResult(role = "L"): ResultCurvesResult {
   const curves = splCurves(role).filter((c) => c.kind !== "after");
   return curvesResult("spl", logGrid(5, 20000, 520), curves, { rc_band_hz: [RC[0], null] });
 }
 
-export function gdResult(role = "L"): ResultCurvesResult {
+function gdResult(role = "L"): ResultCurvesResult {
   const grid = logGrid(5, 5000, 420);
   const seed = [...role].reduce((h, c) => h + c.charCodeAt(0), 0);
   const modes = [34, 52, 78, 115, 170].map((f, k) => ({ f: f * (0.95 + ((seed * (k + 3)) % 10) / 100), h: [42, 28, 20, 12, 7][k]! }));
@@ -180,7 +180,7 @@ export function gdResult(role = "L"): ResultCurvesResult {
   ]);
 }
 
-export function xoResult(role = "L", hz = 80): ResultCurvesResult {
+function xoResult(role = "L", hz = 80): ResultCurvesResult {
   const grid = logGrid(5, 500, 320);
   const main = response(grid, role, 1, false);
   const sub = response(grid, "SW1", 1, true);
@@ -201,7 +201,7 @@ export function xoResult(role = "L", hz = 80): ResultCurvesResult {
   );
 }
 
-export function baResult({ subsOnly = false }: { subsOnly?: boolean } = {}): ResultCurvesResult {
+function baResult({ subsOnly = false }: { subsOnly?: boolean } = {}): ResultCurvesResult {
   const grid = logGrid(5, 300, 280);
   const t = grid.map((f) => targetAt(targetPoints, f));
   const shape = subShape;
@@ -248,7 +248,7 @@ const BA_ROWS: SubResultLines["rows"] = [
   { role: "SW2", mode: "auto", gain_db: -2, delay_ms: 0, polarity: -1, allpass: [], high_pass: [0, "LR24"], low_pass: [0, "LR24"], peq: [] },
 ];
 
-export const baLines: SubResultLines = {
+const baLines: SubResultLines = {
   stale: false,
   subs_only: false,
   band_hz: [20, 120],
@@ -261,7 +261,7 @@ export const baLines: SubResultLines = {
 };
 
 /** BA with a fixed SW2 whose filters leave almost no pass band, and the gain that tries to fill it. */
-export const baWarnLines: SubResultLines = {
+const baWarnLines: SubResultLines = {
   ...baLines,
   flatness_db: [7.4, 3.6],
   rows: [BA_ROWS[0]!, { ...BA_ROWS[1]!, mode: "fixed", gain_db: 13.4, delay_ms: 1.2, high_pass: [40, "LR24"], low_pass: [60, "LR24"] }],
@@ -271,7 +271,7 @@ export const baWarnLines: SubResultLines = {
   ],
 };
 
-export const baDbaLines: SubResultLines = {
+const baDbaLines: SubResultLines = {
   ...baLines,
   subs_only: true,
   flatness_db: [7.4, 1.8],

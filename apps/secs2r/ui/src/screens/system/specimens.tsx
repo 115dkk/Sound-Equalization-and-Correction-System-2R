@@ -16,7 +16,7 @@ import type { SystemActions, SystemView } from "./types";
 const token = async () => "undo-1";
 
 /** Actions that do nothing (the gallery draws fixed views). */
-export const noopSystemActions: SystemActions = {
+const noopSystemActions: SystemActions = {
   configureMeasurement: () => {},
   applyPreset: token,
   setSubCount: token,

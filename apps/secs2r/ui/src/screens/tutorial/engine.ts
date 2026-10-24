@@ -23,7 +23,7 @@ export const INITIAL: TutorialState = {
 
 type Meta = { step: StepId };
 
-export type TutorialAction =
+type TutorialAction =
   | { type: "next"; quests: readonly Meta[]; praise?: Said["key"] | undefined; note?: Said["key"] | undefined }
   | { type: "prev"; quests: readonly Meta[] }
   | { type: "skip"; quests: readonly Meta[] }
@@ -38,7 +38,7 @@ export type TutorialAction =
   | { type: "restart" };
 
 /** Steps in rail order that have quests, for the "단계 k/n 끝" count. */
-export function questSteps(quests: readonly Meta[]): StepId[] {
+function questSteps(quests: readonly Meta[]): StepId[] {
   return STEPS.filter((step) => quests.some((quest) => quest.step === step));
 }
 

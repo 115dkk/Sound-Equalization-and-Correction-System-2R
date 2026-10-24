@@ -4,7 +4,7 @@
 import { useEffect, useRef } from "react";
 import type { MessageKey } from "../i18n";
 
-export type ShortcutId =
+type ShortcutId =
   | "step.prev"
   | "step.next"
   | "step.1"
@@ -20,7 +20,7 @@ export type ShortcutId =
 /** Ctrl+1…5 in rail order. */
 export const STEP_SHORTCUTS = ["step.1", "step.2", "step.3", "step.4", "step.5"] as const satisfies readonly ShortcutId[];
 
-export type Shortcut = {
+type Shortcut = {
   id: ShortcutId;
   key: string;
   mod?: boolean;
@@ -43,7 +43,7 @@ export const SHORTCUTS: readonly Shortcut[] = [
   { id: "help", key: "F1", label: "frame.help" },
 ];
 
-export type KeyLike = { key: string; code?: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean };
+type KeyLike = { key: string; code?: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; shiftKey: boolean };
 
 export const isMac = (): boolean => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
 

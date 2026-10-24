@@ -58,7 +58,7 @@ function Scrolled({ to, children }: { to: string; children: ReactNode }) {
   return <div ref={ref}>{children}</div>;
 }
 
-export function ExportSpecimen({
+function ExportSpecimen({
   view,
   jobs = initialJobs,
   initialAdvanced,

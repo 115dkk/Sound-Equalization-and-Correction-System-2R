@@ -11,7 +11,7 @@ import { Tooltip } from "../Tooltip";
 
 export type AxisRangeValue = { x: readonly [number, number] | null; y: readonly [number, number] | null };
 
-export function validateRange(x: readonly [number, number], y: readonly [number, number]): "ok" | "x" | "y" {
+function validateRange(x: readonly [number, number], y: readonly [number, number]): "ok" | "x" | "y" {
   if (!(x[0] < x[1])) return "x";
   if (!(y[0] < y[1])) return "y";
   return "ok";

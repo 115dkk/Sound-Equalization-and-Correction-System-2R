@@ -8,7 +8,7 @@ export const isActiveJob = (status: JobStatus) => status === "running" || status
  * accepted local start reply. Known active jobs always take precedence. */
 export type JobRetention = { firstSeen: number | null; retiredThrough: number };
 export const initialRetention: JobRetention = { firstSeen: null, retiredThrough: 0 };
-export const wasRetired = (retention: JobRetention, id: number) =>
+const wasRetired = (retention: JobRetention, id: number) =>
   retention.firstSeen !== null && id >= retention.firstSeen && id <= retention.retiredThrough;
 
 /** Input order is observation order; a newly finished job moves to the end. */

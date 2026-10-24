@@ -20,7 +20,7 @@ import type { CalibrateActions, CalibrateView } from "./types";
 const PLOT_HEIGHT = 300;
 /** A reply quicker than this never shows the loading look (no flash). */
 export const LOADING_DELAY_MS = 150;
-export const TAB_LABEL: Record<ResultTab, "calibrate.tab.spl" | "calibrate.tab.gd" | "calibrate.tab.xo" | "calibrate.tab.ba"> = {
+const TAB_LABEL: Record<ResultTab, "calibrate.tab.spl" | "calibrate.tab.gd" | "calibrate.tab.xo" | "calibrate.tab.ba"> = {
   spl: "calibrate.tab.spl",
   gd: "calibrate.tab.gd",
   xo: "calibrate.tab.xo",
@@ -139,14 +139,14 @@ const PRESET_TEXT: Readonly<Record<string, "calibrate.target.preset.flat" | "cal
   cinema: "calibrate.target.preset.cinema",
 };
 
-export function presetName(t: Translate, preset: string | null): string {
+function presetName(t: Translate, preset: string | null): string {
   if (preset === null) return t("calibrate.target.custom");
   const key = PRESET_TEXT[preset];
   return key ? t(key) : preset;
 }
 
 /** Presets to choose, 사용자 지정 checked when the points were edited (upstream `target_menu`), then save and load. */
-export function targetMenuItems(t: Translate, view: Pick<CalibrateView, "target">, actions: Pick<CalibrateActions, "applyTargetPreset" | "saveTarget" | "loadTarget">): MenuItem[] {
+function targetMenuItems(t: Translate, view: Pick<CalibrateView, "target">, actions: Pick<CalibrateActions, "applyTargetPreset" | "saveTarget" | "loadTarget">): MenuItem[] {
   const current = view.target.preset;
   return [
     ...view.target.presets.map(([name]) => ({

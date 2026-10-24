@@ -558,6 +558,3 @@ export function MeasureOptions({
     </Card>
   );
 }
-
-/** File name for the frame's status (`ProjectInfo.path` is "" until the project is saved). */
-export const projectFileName = (view: MeasureView) => (view.project.path ? baseName(view.project.path) : null);

@@ -29,7 +29,7 @@ import { connectStepState, pathReady } from "./state";
 import type { ConnectActions, ConnectView } from "./types";
 
 /** Actions that do nothing (the gallery draws fixed views). */
-export const noopConnectActions: ConnectActions = {
+const noopConnectActions: ConnectActions = {
   choosePath: () => {},
   refreshMethods: () => {},
   launchRew: () => {},

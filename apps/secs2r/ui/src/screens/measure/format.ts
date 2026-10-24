@@ -8,7 +8,7 @@ import { arrangementPoints, roleCode } from "../../ui/maps/geometry";
 import type { PositionRecord } from "./types";
 
 /** [1, 2, 3, 5] → "1–3, 5" (upstream `position_spans`). */
-export function positionSpans(numbers: readonly number[]): string {
+function positionSpans(numbers: readonly number[]): string {
   const sorted = [...new Set(numbers)].sort((a, b) => a - b);
   const spans: [number, number][] = [];
   for (const n of sorted) {

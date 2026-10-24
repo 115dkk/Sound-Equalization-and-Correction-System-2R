@@ -14,7 +14,7 @@ import type { TutorialState } from "./types";
 
 const QUESTS = sampleQuests({ openHelp: () => {}, compute: () => {} });
 
-export function tutorialFrame(current: StepId, computing = current === "calibrate"): FrameModel {
+function tutorialFrame(current: StepId, computing = current === "calibrate"): FrameModel {
   return {
     current,
     project: {

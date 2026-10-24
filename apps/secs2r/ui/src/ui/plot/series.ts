@@ -44,8 +44,8 @@ export const DEFAULT_RULES: LineRules = {
   dashBefore: [2, 3],
 };
 
-export const MAIN_COLORS = 16;
-export const SUB_COLORS = 8;
+const MAIN_COLORS = 16;
+const SUB_COLORS = 8;
 
 /** Token name for each role, in project order. Unknown roles keep their slot order. */
 export function colorTokens(roleOrder: readonly string[], isSub: (role: string) => boolean): Map<string, string> {
@@ -60,7 +60,7 @@ export function colorTokens(roleOrder: readonly string[], isSub: (role: string) 
   return tokens;
 }
 
-export type LineStyle = { width: number; alpha: number; dash: number[] | undefined };
+type LineStyle = { width: number; alpha: number; dash: number[] | undefined };
 
 export function lineStyle(curve: Curve, highlight: Highlight, rules: LineRules = DEFAULT_RULES): LineStyle {
   if (curve.kind === "target") return { width: rules.target, alpha: 1, dash: rules.dashTarget };

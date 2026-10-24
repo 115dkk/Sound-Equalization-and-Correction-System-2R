@@ -18,7 +18,7 @@ import { isActiveJob } from "./jobRetention";
 import { createJobTracker, type FinishedJob, type JobRequestContext, type SessionJob } from "./jobTracker";
 import { HOST_TRIGGERS, triggeredBy } from "./triggers";
 
-export type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "mdat" | "warnings"> & {
+type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "mdat" | "warnings"> & {
   computeLoading: boolean; computeSaving: boolean; computeError: import("../ipc/bindings/IpcError").IpcError | null;
   current: StepId; path: ConnectPath | null;
   tab: CalibrateView["tab"]; channel: string | null; xoGroup: string | null; previewHz: number | null;
@@ -178,22 +178,6 @@ export function createSession(ipc: Ipc) {
         report(error);
       }
     }
-  }
-  async function waitForJob(id: number) {
-    await new Promise<void>((resolve, reject) => {
-      let off = () => {};
-      const check = () => {
-        const job = host.getSnapshot().jobs.find((candidate) => candidate.job === id);
-        if (job && isActiveJob(job.status)) return;
-        off();
-        if (!job) reject(new IpcFailure(tracker.notFound(id)));
-        else if (job.error) reject(new IpcFailure(job.error));
-        else resolve();
-      };
-      // Subscribe before inspecting: a finish during setup cannot be missed.
-      off = host.subscribe(check);
-      check();
-    });
   }
   let monitorQueue = Promise.resolve();
   let monitoring = false;
@@ -359,7 +343,7 @@ export function createSession(ipc: Ipc) {
       });
     });
   }
-  return { ipc, stores, host, errors, ready, call, run, configure, refreshCurves, ensureSaved, waitForJob, monitor, start, dispose,
+  return { ipc, stores, host, errors, ready, call, run, configure, refreshCurves, ensureSaved, monitor, start, dispose,
     navigate: (current: StepId) => host.set({ current }) };
 }
 export type Session = ReturnType<typeof createSession>;

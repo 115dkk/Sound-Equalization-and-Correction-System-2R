@@ -70,7 +70,7 @@ const GROUP_KEY: Readonly<Record<string, MessageKey>> = {
   기타: "calibrate.group.other",
 };
 
-export const SUB_GROUP = "서브";
+const SUB_GROUP = "서브";
 
 export function groupName(t: Translate, group: string): string {
   const key = GROUP_KEY[group];

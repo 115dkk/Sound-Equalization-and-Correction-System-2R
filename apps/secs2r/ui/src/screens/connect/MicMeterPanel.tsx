@@ -19,7 +19,7 @@ export type MicMeterView = {
 };
 
 /** Upstream shows "클립" when the held peak passes −1 dBFS. */
-export const CLIP_DBFS = -1;
+const CLIP_DBFS = -1;
 
 const MONITOR: Record<MonitorState, { tone: PillTone; key: "connect.mic.off" | "connect.mic.starting" | "connect.mic.receiving" | "connect.mic.stalled" | "connect.mic.offline" }> = {
   off: { tone: "neutral", key: "connect.mic.off" },

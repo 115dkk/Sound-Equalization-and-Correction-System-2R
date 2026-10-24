@@ -13,7 +13,7 @@ const SIZE = 420;
 const MARGIN = 20;
 const INNER = SIZE - MARGIN * 2;
 
-export type RoomSpeaker = { role: string; outputs: readonly number[] };
+type RoomSpeaker = { role: string; outputs: readonly number[] };
 
 const KIND_KEY: Record<RoleKind, MessageKey> = { main: "map.kind.main", sub: "map.kind.sub", top: "map.kind.top", height: "map.kind.height" };
 

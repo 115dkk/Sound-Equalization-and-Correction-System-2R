@@ -41,19 +41,19 @@ import "./system.css";
 
 /** Upstream preset buttons (model.PRESETS) with the 4.0, 4.1, 4.2 and 7.1 presets SECS 2R adds (U13), in order.
  * Grouped as stereo, quad, surround and immersive; a narrow row wraps between groups. */
-export const PRESET_GROUPS = [
+const PRESET_GROUPS = [
   ["2.0", "2.1", "2.2"],
   ["4.0", "4.1", "4.2"],
   ["5.1", "7.1"],
   ["7.1.4", "9.1.6"],
 ] as const;
-export const PRESETS = PRESET_GROUPS.flat();
+const PRESETS = PRESET_GROUPS.flat();
 
 /** Upstream FIR_TAP_CHOICES (step2_config.py). */
-export const FIR_TAP_CHOICES = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536] as const;
+const FIR_TAP_CHOICES = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536] as const;
 
 /** Stored start-delay values (`extra['start_delay']`, upstream bytes) and their option ids. */
-export const START_DELAYS = [
+const START_DELAYS = [
   { id: "off", stored: "끄기", label: "system.start_delay.off" },
   { id: "5", stored: "5 초", label: "system.start_delay.5" },
   { id: "10", stored: "10 초", label: "system.start_delay.10" },
@@ -70,7 +70,7 @@ const ARRANGEMENT_NAME = {
 } as const;
 
 /** A change that clears measurements (U5). */
-export type SystemChange = { kind: "preset"; preset: string } | { kind: "subs"; count: number } | { kind: "arrangement"; count: number };
+type SystemChange = { kind: "preset"; preset: string } | { kind: "subs"; count: number } | { kind: "arrangement"; count: number };
 
 /** The confirm dialog's words for a change: title names the action, the body says what is lost and that it can be undone. */
 export function changeCopy(t: Translate, change: SystemChange, positions: number) {

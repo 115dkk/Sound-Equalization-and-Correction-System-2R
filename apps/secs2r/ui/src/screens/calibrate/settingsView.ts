@@ -5,7 +5,6 @@
 // wizard/step_calibration.py). Edits go to the service
 // (`calibration_settings_edit`), which applies upstream's rules.
 import type { BandType } from "../../ipc/bindings/BandType";
-import type { BundleLayoutEntry } from "../../ipc/bindings/BundleLayoutEntry";
 import type { CalibrationSettings } from "../../ipc/bindings/CalibrationSettings";
 import type { SubEntry } from "../../ipc/bindings/SubEntry";
 import type { SubLayout, SubModeChoice } from "./types";
@@ -37,20 +36,16 @@ export const LIMITS = {
 } as const;
 
 export const BAND_TYPES: readonly BandType[] = ["LR24", "LR12", "LR48", "BW12", "BW24"];
-export const SUB_BUNDLES = ["A", "B"] as const;
-export const SUB_LAYOUTS: readonly SubLayout[] = ["values", "dba", "multi"];
-export const SUB_FILTER_DEFAULT_HZ = { hp: 20, lp: 80 } as const;
+const SUB_BUNDLES = ["A", "B"] as const;
 export const INFRA_DEFAULT_HZ = 25;
 export const MIMO_MIN_POSITIONS = 3;
-export const DEFAULT_XO_HZ = 80;
 export const ALLPASS_Q_DEFAULT = 0.71;
 
-const FILTER_KEYS = ["hp_hz", "hp_type", "lp_hz", "lp_type", "peq"] as const;
 
 const clamp = (value: number, [lo, hi]: readonly [number, number]) => Math.min(hi, Math.max(lo, value));
 const finite = (value: number, fallback: number) => (Number.isFinite(value) ? value : fallback);
 
-export const DEFAULT_SUB: SubEntry = {
+const DEFAULT_SUB: SubEntry = {
   mode: "auto",
   bundle: "A",
   gain_db: 0,
@@ -108,12 +103,6 @@ export function subOf(settings: CalibrationSettings, role: string): SubEntry {
 export function layoutOf(settings: CalibrationSettings, bundle: string): SubLayout {
   const kind = settings.bundle_layouts[bundle]?.kind;
   return kind === "dba" || kind === "multi" ? kind : "values";
-}
-
-export function bundleMembers(settings: CalibrationSettings, bundle: string): string[] {
-  return Object.entries(settings.subs_manual)
-    .filter(([, e]) => e.mode === "bundle" && e.bundle === bundle)
-    .map(([role]) => role);
 }
 
 /** The mode a sub shows in the 방식 list. */

@@ -1,7 +1,6 @@
 // The screen's only door to the Rust side (docs/adr/0003). Every call goes
 // through the `secs_call` command and comes back as an envelope; the command
 // never rejects, so a rejection here means the bridge itself is broken.
-import { invoke } from "@tauri-apps/api/core";
 import type { IpcError } from "./bindings/IpcError";
 import type { Request } from "./bindings/Request";
 import type { Response } from "./bindings/Response";
@@ -10,7 +9,7 @@ import type { Response } from "./bindings/Response";
 export type Envelope = { ok: true; data: Response } | { ok: false; error: IpcError };
 
 /** The response type that belongs to request method `M`. */
-export type ResponseOf<M extends Request["method"]> = Extract<Response, { method: M }>["data"];
+type ResponseOf<M extends Request["method"]> = Extract<Response, { method: M }>["data"];
 
 export type Invoke = (command: string, args: Record<string, unknown>) => Promise<unknown>;
 
@@ -43,5 +42,3 @@ export function makeClient(call: Invoke) {
     return envelope.data.data as ResponseOf<M>;
   };
 }
-
-export const request = makeClient((command, args) => invoke(command, args));

@@ -12,7 +12,6 @@ export type MicPoint = { x: number; y: number; h: -1 | 0 | 1 };
 
 /** Arrangements by position count (upstream ARRANGEMENTS). */
 export const ARRANGEMENT_COUNTS = [1, 9, 13, 17] as const;
-export type ArrangementCount = (typeof ARRANGEMENT_COUNTS)[number];
 
 const RING1: readonly MicPoint[] = [
   { x: 35, y: 0, h: 0 },

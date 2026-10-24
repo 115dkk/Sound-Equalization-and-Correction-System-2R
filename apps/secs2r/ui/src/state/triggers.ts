@@ -37,11 +37,9 @@ export const TRIGGERS = {
 /** Response-only / event-owned state has no getter in the current protocol. */
 export const HOST_TRIGGERS = {
   measurementSettings: { mutations: [...config, "layout_set", "undo"], responses: ["measure_configure", "measure_config_get", "level_apply"] },
-  runs: { mutations: PROJECT_REPLACED, finished: ["calibrate", "mimo", "export"] },
-  selected: { mutations: PROJECT_REPLACED, finished: ["measure"] },
 } as const;
 
-export type ResourceKey = keyof typeof TRIGGERS;
+type ResourceKey = keyof typeof TRIGGERS;
 export function triggeredBy(trigger: { mutation: Request["method"] } | { finished: JobKind }): ResourceKey[] {
   return (Object.keys(TRIGGERS) as ResourceKey[]).filter((key) => {
     const row: { mutations: readonly Request["method"][]; finished: readonly JobKind[] } = TRIGGERS[key];

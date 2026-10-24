@@ -10,7 +10,7 @@ import { Icon } from "./Icon";
 
 export type Option<V extends string> = { value: V; label: string; disabled?: boolean };
 /** A segment may show a small picture before its label (the logo choice in Settings). */
-export type SegmentedOption<V extends string> = Option<V> & { media?: ReactNode };
+type SegmentedOption<V extends string> = Option<V> & { media?: ReactNode };
 
 export function Select<V extends string>({
   id,
