@@ -15,7 +15,7 @@
 
 ## 요약
 
-- 발견 89건: **Critical 2, High 29, Medium 43, Low 15**. 기준선이 없으므로 모두 `NEW`입니다.
+- 발견 104건: **Critical 2, High 30, Medium 50, Low 22**. 기준선이 없으므로 모두 `NEW`입니다. TD-90–TD-104는 처음 판에서 '관리자에게 묻는 것'에 두었던 항목을 코드, 업스트림, ADR로 판정하면서 결함으로 확인해 더한 것입니다.
 - **잘못된 보정이 출하될 수 있는 경로가 둘입니다.** MIMO의 낡음 판정은 보정 설정 키만 봅니다. 그래서 측정이나 타겟을 바꾸고 다시 보정하면, 이전 측정으로 만든 MIMO가 최신으로 판정돼 새 보정과 함께 내보내집니다(TD-01). Dirac 가져오기는 UUID 없이 저장하므로 같은 자리에 다른 측정을 다시 가져와도 결과가 낡음으로 바뀌지 않습니다(TD-02). 낡음 판정에는 스피커 구성도 빠져 있습니다(TD-10).
 - **다른 이름으로 저장이 약합니다.** 저장하면 캐시 결과가 사라지고(TD-03), 쓰기가 실패해도 세션은 새 경로로 바뀌며, `.irs`를 자기 하위로 저장하면 끝없이 복사하고, 기존 목적지의 IR을 원자적이지 않게 덮어씁니다(TD-04).
 - **REW 레벨 재생이 멈추지 않습니다.** 100ms마다 신호를 다시 시작해 자동 종료에 닿지 못합니다(TD-05). 오류가 나면 신호 발생기를 끄지 않습니다(TD-06).
@@ -159,6 +159,21 @@ README와 ARCHITECTURE의 큰 그림은 실제와 맞습니다. 어긋나는 곳
 | TD-87 | NEW | 5 의존성 | `apps/secs2r/ui/scripts/build-fonts.py:15` | Low | S | 출하 글꼴을 다시 만드는 도구(`fonttools[woff]`, Brotli) 판과 Orbit 원본 리비전·해시가 기록되어 있지 않습니다. | 도구 판과 원본 해시를 기록합니다. 글꼴 바이트는 바꾸지 않습니다. |
 | TD-88 | NEW | 5 의존성 | `crates/secs-dsp/Cargo.toml:18` | Low | S | `cargo machete`가 `pulp`, `gemm`, `faer-traits`를 쓰지 않는 의존성으로 보고합니다. 이유는 워크스페이스 `Cargo.toml:56`에 있지만 이 manifest에는 없어서 다음 감사도 같은 경고를 받습니다. | `[package.metadata.cargo-machete] ignored`에 셋을 넣고 워크스페이스 주석을 가리키는 한 줄을 적습니다. |
 | TD-89 | NEW | 1 아키텍처 | `crates/secs-camilla/src/lib.rs:63` | Low | S | 쓰이지 않는 옵션이 둘입니다. `Options.fsiso`는 검증(`:522`)만 하고 쓰지 않습니다. `MemoryBudget::from_probe`는 쓰이지 않고, 서비스가 같은 값을 따로 계산합니다(`secs-service/src/calibration.rs:304-312`). | 필드를 지우거나 쓰는 쪽으로 정리하고, 서비스가 `from_probe`를 쓰게 합니다. |
+| TD-90 | NEW | 7 오류 처리 | `crates/secs-service/src/session.rs:96` | High | M | 튜토리얼은 `path: ""`로 프로젝트를 만듭니다(`apps/secs2r/ui/src/App.tsx:196`, `useProjectScreen.ts:46`). `.secs`는 저장하지 않지만, 측정 IR과 결과 캐시는 그 빈 경로를 기준으로 씁니다. 그래서 `secs_run_cache.json`과 IR WAV가 **앱의 현재 작업 폴더**에 생깁니다(`cache.rs:258-260`, `secs-project/src/irs.rs:8-11`). 작업 폴더에 쓸 수 없으면 튜토리얼의 보정이 캐시 저장 실패로 끝납니다. `ProjectNewParams.tutorial`의 설명 "non-writable"(`secs-types/src/ipc.rs:622`)도 실제 계약(저장·내보내기만 막음, P36 14번)과 다릅니다. | 튜토리얼 세션마다 비공개 임시 폴더(`temp_dir()/secs2r-tutorial-<pid>-<n>/tutorial.secs`)를 쓰고, 프로젝트를 닫거나 바꿀 때 지웁니다. 타입 문서를 실제 계약으로 고칩니다. 작업 폴더를 임시 폴더로 바꾼 테스트에서 튜토리얼 측정과 보정 뒤 작업 폴더가 비어 있는지 확인합니다. |
+| TD-91 | NEW | 3 계약 | `crates/secs-service/src/measurement.rs:380` | Medium | S | `rew_driver_set`과 장치를 바꾸는 `measure_configure`(`:908`)는 측정 잡이 REW로 스윕하는 중에도 REW의 드라이버와 장치를 바꿉니다. 화면이 막는 것에만 기대고 있습니다. | 측정 무리의 잡(측정, 샘플 불러오기, 가져오기)이 도는 동안에는 `JobBusy`로 거부합니다. 레벨 모니터는 화면이 다시 시작하므로 허용합니다. IPC 테스트로 확인합니다. |
+| TD-92 | NEW | 3 계약 | `crates/secs-project/src/calibration.rs:84` | Medium | M | ADR 0004의 파일 호환 조항은 모르는 키를 순서째 보존하라고 정합니다. 그런데 `SpeakerConfig`, `DspProfile`, `TargetCurve`의 변환은 모르는 중첩 키를 버리고, 설정을 저장할 때는 `calibration` 객체를 통째로 바꿉니다. P02(108-110행)는 최상위와 전달용 객체만 적었지만, 상위 결정은 ADR입니다. 그래서 더 새로운 SECS 2가 쓴 중첩 키를 SECS 2R이 저장하면 잃습니다. | 각 구조체에 순서를 지키는 모르는 키 보관 칸을 두고 되씁니다. 모르는 중첩 키가 든 `.secs`가 바이트 순서째 왕복하는 테스트를 둡니다. 모르는 키가 없는 파일의 골든 바이트는 그대로입니다. |
+| TD-93 | NEW | 7 오류 처리 | `crates/secs-project/src/irs.rs:132` | Medium | S | WAV 읽기는 선언된 data 청크 끝을 실제 파일 끝으로 줄입니다. 그래서 남은 길이가 표본 크기의 배수이면, 잘린 IR도 짧은 IR로 조용히 받아들입니다(업스트림 `session.py:84`도 같음). 저장 중에 끊긴 파일이 오류 없이 다른 측정이 됩니다. | 선언 길이가 실제보다 길면, 파일과 두 길이를 담은 오류로 거부합니다. 편차 번호를 붙여 `docs/DEVIATIONS.md`에 적고 테스트합니다. |
+| TD-94 | NEW | 3 계약 | `crates/secs-filters/src/lib.rs:941` | Medium | S | 음수 지연을 두 작성기가 다르게 처리합니다. CamillaDSP는 음수 `Delay`로 쓰고, Equalizer APO는 조용히 뺍니다. 캐시에서 되살린 사슬에는 엔진 같은 검증이 없습니다. `plan_responses`(`:589`)는 받은 `f`가 아니라 그 길이로 만든 균등 격자에서 FIR 응답을 계산하는데, 이 전제가 interface에 없습니다. | 두 작성기 모두 유한하지 않거나 음수인 지연을 첫 쓰기 전에 거부합니다. `plan_responses`는 격자 전제를 문서와 검사로 드러냅니다. |
+| TD-95 | NEW | 9 문서 | `docs/ARCHITECTURE.md:58` | Low | S | 의존 방향 그림에 실제 의존 둘이 빠졌습니다. `secs-project → secs-mdat`(source info, `crates/secs-project/Cargo.toml:15`)와 `secs-export → secs-camilla`(숫자 포매터, `crates/secs-export/Cargo.toml:16`)입니다. | 그림에 두 선과 이유를 더합니다. |
+| TD-96 | NEW | 6 자원 | `crates/secs-engine/src/mimo/acceleration.rs:84` | Medium | S | `RidgeSweep::new`는 분해 전후에만 취소를 확인하고, Householder 분해(`mimo/solve.rs:36`) 안에는 확인 지점이 없습니다. 공개 요청은 720탭까지 받으므로, 큰 입력에서 M2의 '취소가 1초 안에 멈춤'을 보장하지 못합니다. | 분해의 열 반복마다 취소를 확인합니다(산술 순서는 그대로). 취소하면 `Cancelled`가 돌아오는지 테스트합니다. |
+| TD-97 | NEW | 6 자원 | `crates/secs-dsp/src/fft.rs:18` | Low | S | 스레드 로컬 FFT planner(realfft의 무제한 `HashMap`)가 길이마다 계획을 계속 보존합니다. 리샘플링처럼 원본 길이로 FFT를 하는 경로가 있어서, 오래 켜 둔 앱에서는 길이 종류만큼 스레드마다 쌓입니다. | 스레드마다 최근에 쓴 길이 몇 개만 남기는 상한을 둡니다(결과는 그대로). 길이를 바꿔 가며 부를 때 보관 수가 상한을 넘지 않는지 테스트합니다. |
+| TD-98 | NEW | 9 문서 | `docs/UNSAFE_BOUNDARIES.md:52` | Low | S | 문서는 장치 선택이나 동기화가 실패하면 Drop이 그냥 돌아간다고 적었습니다. 그런데 `Session::drop`(`crates/secs-cuda-sys/src/native.rs:761`)은 stream 동기화 오류를 무시하고 핸들을 파괴합니다. 이것은 CUDA의 파괴 API 계약(작업이 남은 stream의 파괴는 완료 뒤에 자원을 놓음)에 맞지만, 문서는 버퍼만 설명합니다. | 버퍼와 Session을 나눠 각각의 정책과 CUDA 문서 근거를 적습니다. |
+| TD-99 | NEW | 8 보안 | `crates/secs-sys/src/taskbar.rs:26` | Medium | S | `CreateIcon`의 AND mask는 행마다 2바이트 단위로 맞춘 단색 비트맵이라 `ceil(w/16)·2·h`바이트가 필요합니다. 코드는 `w·h`바이트만 할당하고, 공개 API(`secs-sys/src/lib.rs:56`)는 너비 1을 허용합니다. 너비 1이면 Windows가 버퍼 밖을 읽습니다(앱은 16px 이상만 넘김). | mask 길이를 규칙대로 계산하고, 그 계산을 단위 테스트합니다. unsafe 개수는 그대로입니다. |
+| TD-100 | NEW | 2 일관성 | `apps/secs2r/ui/src/ui/maps/RoomMap.tsx:99` | Low | M | 배치도의 스피커 누름 영역이 지름 36px(`r=18`)로, 화면 규칙의 40px보다 작습니다. 다른 보이지 않는 누름 영역도 '별도 PR'로 미뤄져 있습니다(`docs/skins/README.md:51`). | 겉모습을 바꾸지 않는 보이지 않는 누름 영역부터 40px로 넓힙니다. 세 스킨에서 확인합니다. |
+| TD-101 | NEW | 3 계약 | `apps/secs2r/ui/src/screens/project/useProjectScreen.ts:20` | Medium | S | 저장 안 한 변경을 확인하는 guard가 `project.dirty`를 읽습니다. 그런데 이 값은 편집 요청의 응답과 재조회가 끝난 뒤에야 바뀝니다. 그래서 편집 직후 바로 프로젝트를 열거나 닫으면 확인 대화상자 없이 변경을 잃을 수 있습니다. | 진행 중인 프로젝트 편집 요청이 끝나기를 기다린 뒤 판정합니다. 지연 응답 테스트로 확인합니다. |
+| TD-102 | NEW | 6 자원 | `apps/secs2r/ui/src/state/session.ts:233` | Low | S | 모니터 종료를 기다리는 구독(`:233-242`)에 시간 제한이 없습니다. 완료 이벤트를 잃으면 뒤따르는 모니터 큐와 프로젝트 작업이 계속 기다립니다. | 시간 제한을 두고, 넘으면 `jobs`를 다시 읽어 상태를 되맞춥니다. 가짜 타이머로 테스트합니다. |
+| TD-103 | NEW | 9 문서 | `docs/DESIGN.md:10` | Low | S | DESIGN 1절은 화면마다 채운 기본 동작 하나를 정합니다. 보정 결과의 '내보내기'는 `go` 변형으로 둘째 채운 단추이고(`screens/calibrate/Results.tsx:96`), 그 이유는 `ui/Button.tsx:7`에만 있습니다. | DESIGN 1절에 `go`의 예외와 조건(결과 바로 옆에서 다음 단계로 넘어감, 색으로 주 동작과 구별)을 적습니다. |
+| TD-104 | NEW | 3 계약 | `crates/secs-engine/src/mimo/iir.rs:953` | Low | S | `Tuning`의 `mimo_k_bands`·`mimo_a_bands` 상한을 검사하지 않습니다. 검사를 통과한 아주 좁은 gain/Q 범위는 `:275`의 양쪽 `1e-6` 여유를 뒤집을 수 있습니다. 앱은 기본값만 쓰지만 공개 API입니다. | 엔진 입구에서 `Tuning`의 범위를 검사하고 `EngineError::Input`으로 돌려줍니다. 경계값을 테스트합니다. |
 
 ## Top 5 — 다른 것은 못 고쳐도 이것은 고칩니다
 
@@ -238,6 +253,12 @@ README와 ARCHITECTURE의 큰 그림은 실제와 맞습니다. 어긋나는 곳
 - [ ] TD-71 모의 서비스 어긋남 셋
 - [ ] TD-72 측정 화면 취소 표시
 - [ ] TD-73 개발 의존성 권고
+- [ ] TD-91 측정 중 REW 장치·드라이버 변경 거부
+- [ ] TD-93 잘린 WAV data 청크 거부
+- [ ] TD-94 음수 지연 거부와 `plan_responses` 격자
+- [ ] TD-96 Householder 분해 취소
+- [ ] TD-99 작업 표시줄 아이콘 AND mask 크기
+- [ ] TD-101 저장 안 한 변경 확인 경쟁
 
 ## 이상해 보이지만 맞는 것
 
@@ -277,26 +298,16 @@ README와 ARCHITECTURE의 큰 그림은 실제와 맞습니다. 어긋나는 곳
 - `apps/secs2r/ui/src/styles/skins/matrix.css:1514-1520` — 스킨이 캡션을 숨기고 방향 기호로 대신합니다. 근거: `docs/skins/README.md:20`, `docs/DESIGN.md:256`, ADR 0010.
 - `apps/secs2r/ui/vite.config.ts:47-50` — 갤러리 진입점은 앱 빌드에서 빠집니다. 근거: `package.json:11`의 `--mode app`, `docs/DESIGN.md:285`. knip이 갤러리 파일을 쓰이지 않는다고 본 것은 진입점을 몰라서입니다.
 
+- `crates/secs-service/src/curves.rs:519` — [결과 값 가져오기]가 서브만 계산한 결과가 아니라 전체 보정 결과에서 값을 가져옵니다. 근거: 업스트림이 `self.settings.take_sub_values(self.run)`으로 같은 일을 합니다(`src/secs/wizard/step_calibration.py:1316`). BA 탭 표시만 `sub_run`을 우선합니다(`:2320`).
+- `apps/secs2r/ui/src/screens/calibrate/Settings.tsx:565-573` — 서브가 한 대면 BA 카드의 고정 필터와 MIMO 서포트 선택까지 숨깁니다. 근거: 업스트림도 서브가 두 대 미만이면 서브 카드를 숨깁니다(`step_calibration.py:1323`, `:2142`).
+- `crates/secs-service/src/measure/native.rs:141` — 자체 측정이 마이크 보정을 레벨 확인에만 넘기고 IR에는 합치지 않습니다. 근거: `crates/secs-audio/src/calibration.rs:7-9`의 계약(REW처럼 측정 IR은 그대로 두고 곡선만 넘김)이고, 업스트림도 보정 파일 이름만 출처 정보로 남깁니다(`src/secs/rewapi/rew.py:766`, `:902`).
+- `crates/secs-engine/src/mimo/design.rs:922` — 서포트 후보가 없으면 MIMO 전체를 입력 오류로 끝냅니다. 근거: 오류가 타입 있는 입력 오류이고 문구가 원인을 말합니다. 업스트림은 이 경우를 따로 다루지 않습니다.
+- `docs/MIMO.md:78`의 1 GB — 공식 최대 구성의 보장이 아니라 큰 사례의 합격 기준입니다. 근거: 같은 절 6의 측정 조건("큰 사례의 `mimo::compute` 전체"). 예약 누락 자체는 TD-24입니다.
 ## 관리자에게 묻는 것
 
-- **stale cache로 mdat 재설계의 뜻**: `export.rs:276`은 현재 입력으로 새 보정을 만들면서 원래 캐시의 낡음 상태를 붙입니다. S1의 "재설계"가 저장된 결과를 재현하는 뜻인지, 현재 입력으로 새로 만드는 뜻인지 정해야 TD-08과 TD-09를 어떻게 고칠지 정해집니다.
-- **XO 추천의 저장 위치**: 업스트림은 추천값을 `xo_rec`에 저장합니다. 서비스가 저장할지(동등성), 화면이 응답만 볼지(TD-27) 정해야 합니다.
-- **튜토리얼의 쓰기 경계**: `ipc.rs:622`와 `session.rs:134`는 non-writable이라고 하는데, `sample_load`, 측정 기록, 보정 캐시는 파일을 씁니다. P36 14번은 `project_save`와 `export`만 금지합니다.
-- **결과 값 가져오기의 대상**: `curves.rs:519`는 전용 서브 결과가 있어도 전체 결과에서 값을 가져옵니다. P27의 `take_sub_values(run)`가 어느 결과를 뜻하는지 확인이 필요합니다.
-- **자체 측정의 마이크 보정**: `measure/native.rs:83`은 레벨 확인에 마이크 보정을 넘기는데, 실제 측정(`:141`)에는 넘기지 않습니다. 계약이 레벨 전용인지 확인이 필요합니다.
-- **실행 중 REW 장치 변경**: `measurement.rs:380`, `:908`은 측정이나 모니터가 도는 중에도 REW 장치를 바꿉니다. 서비스가 거부해야 하는지 정해야 합니다.
-- **중첩 확장 키 보존**: ADR 0004 20행은 모르는 키를 넓게 보존한다고 하고, P02 108-110행은 최상위만 보존한다고 합니다. `SpeakerConfig`, `DspProfile`, `TargetCurve`는 모르는 중첩 키를 버립니다.
-- **잘린 WAV**: `irs.rs:132`는 남은 길이가 표본 크기의 배수면 잘린 data 청크도 받습니다(업스트림 `session.py:84`도 같음). 편차로 고칠지 정해야 합니다.
-- **작성기 입력 범위**: 음수 지연이 Camilla에서는 음수 Delay로 나가고, APO에서는 빠집니다(`secs-filters/src/lib.rs:941`). 파일에서 복원한 사슬에도 엔진과 같은 검증을 할지 정해야 합니다. `plan_responses`(`:589`)가 임의 주파수를 받는지도 정해야 합니다.
-- **ARCHITECTURE 3절에 없는 의존**: `secs-project → secs-mdat`, `secs-export → secs-camilla`가 그림에 없습니다. 그림을 고칠지 경계를 고칠지 정해야 합니다(TD-74의 공용 도구 자리와 함께).
-- **설정의 정본 위치**: 시작 지연과 스윕 길이를 두 화면에서 고칠 수 있습니다. 이는 ARCHITECTURE 7절과 P58의 '정본 하나'와 충돌하는데, `docs/M5-reach.md:28, 87, 108`은 두 자리를 다 적었습니다.
-- **CPU 분해 중 취소**: `RidgeSweep::new`(`acceleration.rs:84`)와 Householder 분해(`solve.rs:36`) 안에는 취소 확인이 없습니다. 720탭 최대 구성에서 1초 안에 멈추는지 실측이 필요합니다.
-- **FFT 계획 캐시**: `secs-dsp/src/fft.rs:18`의 스레드 로컬 planner(realfft의 무제한 HashMap)가 길이별 계획을 계속 보존합니다. 상한 정책이 필요한지 정해야 합니다.
-- **MIMO 후보 없음**: `mimo/design.rs:922`는 후보가 없으면 MIMO 전체를 입력 오류로 끝냅니다. 정상 결과 '없음'으로 돌려줄지 정해야 합니다.
-- **M3의 1 GB**: `docs/MIMO.md:78`이 공식 최대 구성까지 보장하는 상한인지, 스트레스 사례의 합격 기준인지 정해야 합니다(TD-24와 관련).
-- **공개 튜닝 범위**: `mimo/iir.rs:953`은 `mimo_k_bands`·`mimo_a_bands` 상한을 검사하지 않습니다. 공개 API가 임의 범위를 받는지 정해야 합니다.
-- **GPU Session 해제**: `native.rs:761`의 `Session::drop`은 stream 동기화 오류를 무시하고 핸들을 파괴합니다. `UNSAFE_BOUNDARIES.md:52`의 대상이 버퍼만인지 확인이 필요합니다.
-- **작업 표시줄 아이콘 mask**: `taskbar.rs:26`의 AND mask는 `width × height`바이트입니다. `CreateIcon`의 1bpp 행 정렬에 맞는지 너비 1·2·홀수에서 확인이 필요합니다.
-- **1.0.0 출시 조건**: `docs/HARDWARE.md:34`의 실측 기록이 비어 있고 `features.toml:750`은 자체 측정을 partial로 둡니다. 설치본에 의존성 고지를 넣는 일(`docs/THIRD_PARTY.md:25`, `collect_bundles.py:92-95`)도 M6로 미뤄져 있습니다. 1.0.0 체크리스트에 둘 다 들어 있는지 확인이 필요합니다.
-- **화면 규칙 예외**: 서브가 한 대면 BA 카드의 고정 필터와 MIMO 서포트 선택까지 숨깁니다(`Settings.tsx:565-573`). 보정 결과의 두 번째 채운 동작(`Results.tsx:96`), `RoomMap.tsx:99`의 36px 히트 영역(`docs/skins/README.md:51`의 유예 범위)도 의도인지 확인이 필요합니다.
-- **닫기 직전 편집**: `useProjectScreen.ts:20-24`는 비동기 편집 뒤에 갱신되는 `dirty`를 읽습니다. 편집 중에 바로 닫거나 프로젝트를 바꾸는 경로에서 변경을 잃는지는 창 파괴 정책과 함께 확인이 필요합니다. 모니터 종료 대기(`session.ts:233-242`)에 시간 제한이 없는 것도 같은 범주입니다.
+없습니다. 처음 판의 질문 21개는 감사 이슈 #92에서 이렇게 정리했습니다.
+- **유지보수자가 답한 것 둘**: 낡은 캐시의 mdat는 막고 [재보정]을 보입니다. 시작 지연과 스윕 길이의 정본은 측정 화면입니다.
+- **나머지**:
+  - 업스트림 동작으로 답했습니다: XO 추천 저장, 결과 값 가져오기, 단일 서브 BA 카드.
+  - ADR과 저장소 문서로 답했습니다: 중첩 키 보존(ADR 0004), M3 1 GB의 범위, 1.0.0 조건(ARCHITECTURE 8절의 M6, `docs/THIRD_PARTY.md:25`).
+  - 코드를 읽어 결함으로 확인한 것은 TD-90–TD-104가 되었습니다.
