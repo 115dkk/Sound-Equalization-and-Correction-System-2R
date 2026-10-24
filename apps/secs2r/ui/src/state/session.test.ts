@@ -6,6 +6,20 @@ import { PROJECT_REPLACED, TRIGGERS, triggeredBy } from "./triggers";
 
 const settle = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 
+it("reloads results and the new default export folder after Save As", async () => {
+  const mock = createMockService({ tickMs: 0 });
+  const session = createSession(mock);
+  try {
+    await session.start();
+    const previous = session.stores.results.getSnapshot();
+    mock.calls.length = 0;
+    await session.call({ method: "project_save", params: { path: "D:/New Room/living.secs" } });
+    expect(mock.calls.map((call) => call.method)).toEqual(expect.arrayContaining(["results", "export_folder_get"]));
+    expect(session.stores.results.getSnapshot()).not.toBe(previous);
+    expect(session.stores.folder.getSnapshot()?.folder).toMatch(/^D:\/New Room\/SECS_export\/\d{4}-\d{2}-\d{2} living$/);
+  } finally { session.dispose(); await settle(); mock.dispose(); }
+});
+
 describe("service invalidation table", () => {
   it("reloads every project resource when a project is replaced", () => {
     for (const mutation of PROJECT_REPLACED) expect(triggeredBy({ mutation }).sort()).toEqual(Object.keys(TRIGGERS).sort());

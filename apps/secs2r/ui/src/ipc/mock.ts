@@ -396,6 +396,7 @@ export function createMockService(options: MockOptions = {}): MockService {
         if (current.tutorial) throw new MockError(ipcError("tutorial_blocked"));
         const path = req.params.path ?? current.path;
         project = { ...current, path, name: basename(path).replace(/\.secs$/i, ""), dirty: false };
+        if (!exportFolder.stored) exportFolder = { folder: `${path.replace(/[^\\/\\\\]+$/, "")}SECS_export/2026-10-24 ${project.name}`, stored: false };
         savedProjects.set(path, state());
         return { method: req.method, data: project };
       }
