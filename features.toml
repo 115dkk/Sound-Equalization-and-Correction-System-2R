@@ -859,7 +859,7 @@ kind = "service"
 milestone = "M5"
 status = "implemented"
 tests = ["secs-types::compute_completion_events_are_payload_free_markers", "secs-service::large_fir_cache_round_trips_every_coefficient_without_large_screen_summaries", "secs-service::legacy_v2_and_v3_move_dsp_into_private_cache_without_changing_samples", "secs-service::rejected_cache_write_preserves_previous_file_and_removes_temporary", "secs-service::project_replacement_rejects_old_compute_commit_and_preserves_completion"]
-note = "Screen results contain roles, counts and metrics rather than DSP coefficient arrays. Calibration/MIMO completion carries a marker; summaries are fetched once. Full filters remain in Rust and private v4 caches; v2/v3 caches migrate (ADR 0009)."
+note = "Screen results contain roles, counts and metrics rather than DSP coefficient arrays. Calibration/MIMO completion carries a marker; summaries are fetched once. Full filters remain in Rust and private v5 caches (design-rate MIMO FIR, ADR 0012); v4 caches load as is and v2/v3 caches migrate (ADR 0009)."
 
 [[feature]]
 id = "service.session"

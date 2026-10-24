@@ -16,7 +16,7 @@
 Cargo.toml                워크스페이스 루트 (lint, 공용 의존성)
 rust-toolchain.toml       1.99.0 고정
 features.toml             기능 등록부
-unsafe-budget.toml        크레이트별 unsafe 허용량 (secs-sys = 0, secs-cuda-sys = 80)
+unsafe-budget.toml        크레이트별 unsafe 허용량 (secs-sys = 3, ADR 0011; secs-cuda-sys = 80)
 deny.toml                 GPL 호환 라이선스, 권고, 출처
 UPSTREAM.toml             이식을 마친 업스트림 커밋
 crates/
@@ -104,7 +104,7 @@ IPC의 기본 동작은 바꾸지 않습니다.
 | XO | 크로스오버 그룹, XO 타겟 PEQ, 추천(후보별 점수) | `xo_peq_band`, `recommend_xo`, `xo_scores` |
 | RC | 채널별 크기 설계, 위치 공통 초과위상, FIR 실현 사다리, PEQ 재맞춤, 넓은 다듬기, 위상 해상도 선택, 슈뢰더 범위 | `_correction`, `schroeder_hz` |
 | 감쇠 | 늦은 에너지 창, 모드 T60, 늦은 봉우리, 해를 끼치지 않는다 가드 (업스트림의 정의 다섯 벌을 하나로) | `_late_db`, `mode_t60`, `_late_peaks` 등 |
-| 신호 사슬 | DSP 토폴로지 값 하나 (입력 PEQ·FIR, 분기, 버스, 서브 필터, MIMO 경로, 지연) | `stage_responses`, `export_camilladsp.make_config` |
+| 신호 사슬 | DSP 토폴로지 값 하나 (입력 PEQ·FIR, 분기, 버스, 서브 필터, 지연). MIMO 서포트 경로는 옆의 `MimoPaths` 값 | `stage_responses`, `export_camilladsp.make_config` |
 | MIMO | 서포트 범위·순위, 정규화 이상 서포트(블록 구조 정규 방정식, λ 이분), IIR 또는 FIR 실현, 가드 | `mimo.py`, `mimo_iir.py` |
 | 성적표 | 타입 있는 지표(±1 dB 비율, 위상 바퀴, GD 폭, 1/24 GD 봉우리, 앞울림) | `scorecard.py` |
 | 오케스트레이터 | 단계 캐시(입력 지문), 취소, 진행, XO 추천의 공유 단계 | `calibration.compute`, `compute_mimo` |
