@@ -153,6 +153,7 @@ impl Service {
     pub(crate) fn start_xo(&self, events: Arc<dyn EventSink>) -> Result<JobStarted, IpcError> {
         let prepared = self.prepare(None)?;
         let memory = self.deps.memory.available_bytes();
+        let session = self.session.clone();
         self.jobs.start(JobKind::RecommendXo, events, move |job| {
             let groups = project_groups(&prepared.project);
             let view = ProjectView {
@@ -170,10 +171,25 @@ impl Service {
                 &ctx,
             )
             .map_err(engine_error)?;
-            Ok(JobResult::Xo(XoRecommendation {
+            let recommendation = XoRecommendation {
                 best: result.best,
                 candidates: result.candidates,
-            }))
+            };
+            let mut session_guard = lock(&session);
+            let open = session_guard.require_mut().map_err(IpcError::from)?;
+            require_identity(open, prepared.identity)?;
+            job.begin_commit()?;
+            let mut settings = calibration_from_project(open.store.project());
+            for (group, hz) in &recommendation.best {
+                match settings.xo.iter_mut().find(|(name, _)| name == group) {
+                    Some((_, current)) => *current = *hz,
+                    None => settings.xo.push((group.clone(), *hz)),
+                }
+            }
+            settings.xo_rec = recommendation.best.clone();
+            store_calibration(open.store.project_mut(), &settings);
+            open.dirty = true;
+            Ok(JobResult::Xo(recommendation))
         })
     }
 

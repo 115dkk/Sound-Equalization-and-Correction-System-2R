@@ -607,6 +607,24 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
     .unwrap();
     assert_eq!(recommendation.best, direct_xo.best);
     assert_eq!(recommendation.candidates, direct_xo.candidates);
+    let Response::CalibrationSettingsGet(applied) = call_ok(
+        &service,
+        Request::CalibrationSettingsGet,
+        Arc::new(NoEvents),
+    ) else {
+        panic!()
+    };
+    assert_eq!(applied.xo_rec, recommendation.best);
+    for (group, hz) in &recommendation.best {
+        assert_eq!(
+            applied.xo.iter().find(|(name, _)| name == group),
+            Some(&(group.clone(), *hz))
+        );
+    }
+    assert_eq!(
+        read_results(&service).calibration.unwrap().stale_reason,
+        Some("settings".into())
+    );
 
     for kind in [
         ExportKind::CamillaDsp,
