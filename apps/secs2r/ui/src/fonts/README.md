@@ -18,11 +18,37 @@
 ## 다시 만들기
 
 ```sh
-pip install "fonttools[woff]"
+pip install "fonttools[woff]==4.60.1" "brotli==1.1.0"
 python3 apps/secs2r/ui/scripts/build-fonts.py \
   --pretendard <PretendardVariable.woff2> \
   --sarasa-dir <SarasaMonoK-{Regular,SemiBold,Bold}.ttf가 있는 폴더> \
   --orbit <Orbit-Regular.ttf>
 ```
+
+### 바이트 재현 확인 (2026-10-24)
+
+최초 생성 환경의 도구 판은 남아 있지 않습니다. 위의 fontTools 4.60.1과
+Brotli 1.1.0을 Python 3.13에서 설치해 별도 임시 폴더에 다시 만들었으며,
+출하 파일은 덮어쓰지 않았습니다. Orbit과 Sarasa 세 굵기의 SHA-256이
+`manifest.json`과 일치했습니다. Pretendard는 원본 복사이므로 서브셋 도구를 거치지 않습니다.
+
+- Orbit 원본 리비전: [`95122395c6d1fda07aebdf36f566a75678bc3bdd`](https://github.com/JAMO-TYPEFACE/Orbit/tree/95122395c6d1fda07aebdf36f566a75678bc3bdd)
+- 원본 경로: `Fonts/ttf/Orbit-Regular.ttf` (784,480바이트)
+- 원본 SHA-256: `5d0206fb0a9e3eeac51aff8d4a6dbb7613d63fc435f1a51f96dc35cefb5f9f87`
+- Orbit 서브셋 SHA-256: `4d25ddd3161f43e05fe1445541bdd65e06dc5a898ad58f6ef89d476ad243bd46`
+
+Sarasa 원본은 [Arch 보관소의 1.0.42-2 패키지](https://archive.archlinux.org/packages/t/ttf-sarasa-gothic/ttf-sarasa-gothic-1.0.42-2-any.pkg.tar.zst)입니다.
+TTC에서 `Sarasa Mono K` 면을 TTF로 저장하면 `head.modified`가 추출 시각으로
+바뀝니다. 이 값까지 달라지면 글리프와 다른 테이블이 같아도 woff2 바이트가
+달라집니다. 재현할 때는 추출한 TTF를 `TTFont(path, recalcTimestamp=False)`로
+열고 아래의 원래 `head.modified` 값(OpenType epoch 초)을 넣어 저장한 뒤
+`build-fonts.py`에 넘깁니다. 이 값을 맞추기 전에는 세 굵기 모두 불일치했고,
+맞춘 뒤에는 세 파일 모두 바이트 단위로 일치했습니다.
+
+| 굵기 | `head.modified` | 서브셋 SHA-256 |
+|---|---:|---|
+| Regular | 3875516346 | `fbfa7352f127e4aacb7544d7bc20e999c225760e3328e263cf34f6aa7b361abe` |
+| SemiBold | 3875516388 | `0243d618f44f617e5ebf584a08364220918417490ecc8e23b7b06af6149bf159` |
+| Bold | 3875516340 | `2d9416b31583401e5b38f4e56033186eb69c5480aae1c839020ed8c951d4068f` |
 
 원본을 올릴 때는 이 표와 `manifest.json`의 `upstream`, `docs/THIRD_PARTY.md`를 함께 고칩니다. 크기 상한(6 MiB)은 `fonts.test.ts`에 있습니다.
