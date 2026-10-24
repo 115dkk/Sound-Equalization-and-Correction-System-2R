@@ -99,6 +99,7 @@ export function createSession(ipc: Ipc) {
   });
   let pendingProjectEdits = 0;
   const call: RequestFn = async (request) => {
+    let epoch = tracker.epoch;
     const projectEdit = request.method !== "project_save" && (TRIGGERS.project.mutations as readonly string[]).includes(request.method);
     if (projectEdit) pendingProjectEdits++;
     const methodBefore = stores.measurementSettings.getSnapshot()?.method;
@@ -111,8 +112,8 @@ export function createSession(ipc: Ipc) {
       const data = await ipc.request(request);
       if (pendingStart) {
         tracker.reply(pendingStart, data as import("../ipc/bindings/JobStarted").JobStarted);
-        if (pendingStart.context.epoch !== tracker.epoch) return data;
       }
+      if (epoch !== tracker.epoch) return data;
       errors.set(null);
       if (request.method === "measure_configure" || request.method === "measure_config_get" || request.method === "level_apply") {
         stores.measurementSettings.set(data as import("../ipc/bindings/MeasureConfigResult").MeasureConfigResult);
@@ -121,6 +122,7 @@ export function createSession(ipc: Ipc) {
       }
       if (request.method === "project_new" || request.method === "project_open") {
         tracker.replaceProject();
+        epoch = tracker.epoch;
         curveVersion++;
         curveState.set(null);
         stores.measurementSettings.set(null);
@@ -144,15 +146,18 @@ export function createSession(ipc: Ipc) {
         host.set({ sweepResult: null, sweepRole: null });
       }
       await reload(triggeredBy({ mutation: request.method }));
+      if (epoch !== tracker.epoch) return data;
       if ((HOST_TRIGGERS.measurementSettings.mutations as readonly string[]).includes(request.method) && stores.measurementSettings.getSnapshot()) await call({ method: "measure_config_get" });
       if (request.method === "project_new" && (request as Extract<Request, { method: "project_new" }>).params.tutorial) await configure({ method: "mock" });
       // A new project stores "none"; a reopened one keeps its method and devices.
       else if (request.method === "project_new" || request.method === "project_open") await call({ method: "measure_config_get" });
-      if (edit) host.set({ [edit]: "idle" });
+      if (edit && epoch === tracker.epoch) host.set({ [edit]: "idle" });
       return data;
     } catch (error) {
-      if (edit) host.set({ [edit]: "failed" });
-      if (!pendingStart || pendingStart.context.epoch === tracker.epoch) report(error);
+      if (epoch === tracker.epoch) {
+        if (edit) host.set({ [edit]: "failed" });
+        report(error);
+      }
       throw error;
     } finally {
       if (projectEdit) pendingProjectEdits--;

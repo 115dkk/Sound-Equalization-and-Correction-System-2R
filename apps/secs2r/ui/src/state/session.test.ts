@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMockService } from "../ipc/mock";
+import { levelResult } from "../ipc/fixtures";
+import { IpcFailure } from "../ipc/client";
 import { createSession } from "./session";
 import { createResource } from "./store";
 import { PROJECT_REPLACED, TRIGGERS, triggeredBy } from "./triggers";
@@ -206,6 +208,60 @@ describe("level monitor silence", () => {
 });
 
 describe("measurement settings", () => {
+  it.each(["measure_config_get", "measure_configure", "level_apply"] as const)("ignores an old %s reply after opening another project but returns it to the caller", async (method) => {
+    const mock = createMockService({ tickMs: 0 });
+    const session = createSession(mock);
+    try {
+      await session.start();
+      await session.configure({ method: "mock" });
+      await session.call({ method: "project_save", params: { path: "C:/rooms/next.secs" } });
+      await session.configure({ method: "rew" });
+      const request = mock.request;
+      let release!: () => void;
+      let delay = true;
+      vi.spyOn(mock, "request").mockImplementation(async (params) => {
+        const value = await request(params);
+        if (params.method === method && delay) {
+          delay = false;
+          await new Promise<void>((resolve) => { release = resolve; });
+        }
+        return value;
+      });
+      const previous = method === "measure_configure" ? session.configure({ method: "rew" })
+        : method === "level_apply" ? session.call({ method, params: { level: levelResult } }) : session.call({ method });
+      await settle();
+      await session.call({ method: "project_open", params: { path: "C:/rooms/next.secs" } });
+      expect(session.stores.measurementSettings.getSnapshot()?.method).toBe("mock");
+      release();
+      expect((await previous).method).toBe("rew");
+      expect(session.stores.measurementSettings.getSnapshot()?.method).toBe("mock");
+      expect(session.host.getSnapshot().path).toBe("mock");
+    } finally { session.dispose(); await settle(); mock.dispose(); vi.restoreAllMocks(); }
+  });
+  it("throws an old request failure without reporting it in the new project", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    const session = createSession(mock);
+    try {
+      await session.start();
+      const request = mock.request;
+      const failure = new IpcFailure({ code: "device_unavailable", params: {}, retryable: true, detail: "old device" });
+      let reject!: (error: unknown) => void;
+      let delay = true;
+      vi.spyOn(mock, "request").mockImplementation(async (params) => {
+        if (params.method === "measure_config_get" && delay) {
+          delay = false;
+          await new Promise<void>((_resolve, fail) => { reject = fail; });
+        }
+        return request(params);
+      });
+      const previous = session.call({ method: "measure_config_get" });
+      const rejected = expect(previous).rejects.toBe(failure);
+      await session.call({ method: "project_open", params: { path: "C:/rooms/next.secs" } });
+      reject(failure); await rejected;
+      expect(session.errors.getSnapshot()).toBeNull();
+    } finally { session.dispose(); await settle(); mock.dispose(); vi.restoreAllMocks(); }
+  });
+
   it("reads a reopened project's stored method instead of asking again", async () => {
     const mock = createMockService({ tickMs: 0 });
     const session = createSession(mock); await session.start();
