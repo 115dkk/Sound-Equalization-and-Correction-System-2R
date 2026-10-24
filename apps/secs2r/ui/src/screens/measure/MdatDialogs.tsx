@@ -74,7 +74,14 @@ export function MdatAssignDialog({
 }) {
   const t = useT();
   const problemId = useId();
-  const measurements = pending.scan.measurements;
+  // A Dirac Live project carries every position; 파일 관리 brings in only the row's own position (ADR 0013).
+  const measurements = useMemo(
+    () =>
+      pending.position !== null && pending.path.toLowerCase().endsWith(".liveproject")
+        ? pending.scan.measurements.filter((m) => m.position === pending.position)
+        : pending.scan.measurements,
+    [pending],
+  );
   const readable = useMemo(() => measurements.map((m) => m.looks_like_sub !== null), [measurements]);
   const [rows, setRows] = useState<Row[]>(() =>
     measurements.map((m) => ({

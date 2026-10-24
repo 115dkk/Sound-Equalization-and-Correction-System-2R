@@ -466,6 +466,25 @@ upstream = "rew_mdat/source_info.py"
 note = "원 측정의 마이크 캘리브레이션, 장치, 박스 값, 시각과 형식을 꺼내고 비운 템플릿에 되넣으며 REW 측정 캘 파일을 파싱합니다."
 
 [[feature]]
+id = "format.dirac_liveproject_read"
+kind = "format"
+milestone = "M4"
+status = "implemented"
+tests = [
+  "secs-dirac::decodes_mu_law_codes_symmetrically_and_monotonically",
+  "secs-dirac::synthetic_project_round_trips_within_code_precision",
+  "secs-dirac::committed_seed_matches_the_writer",
+  "secs-dirac::every_truncation_of_the_seed_is_an_error",
+  "secs-dirac::malformed_protobuf_is_rejected",
+  "secs-dirac::ir_set_shape_is_validated",
+  "secs-dirac::limits_are_enforced",
+  "secs-dirac::no_measurements_is_its_own_error",
+  "secs-dirac::channel_names_fall_back_when_the_list_does_not_match",
+]
+upstream = "new"
+note = "new: Dirac Live 3.14.3 .liveproject의 측정 IR(μ-law 16비트, 마이크 보정 포함)과 채널 목록을 읽습니다. 형식은 docs/DIRAC_LIVEPROJECT.md, 실제 표본 검증은 무시된 테스트 parses_dirac_live_sample_projects(SECS_DIRAC_SAMPLES)입니다."
+
+[[feature]]
 id = "format.camilladsp_v4"
 kind = "format"
 milestone = "M2"
@@ -787,6 +806,20 @@ milestone = "M4"
 status = "implemented"
 tests = ["secs-service::service_mdat_every_oracle_value_and_imported_secs_bytes", "secs-service::test_mdat_titles_match_biamp_roles", "secs-service::test_mdat_cancel_and_missing_file_leave_measurements_unchanged", "secs-service::test_mdat_dialog_repeated_duplicate_skip_and_cancel", "secs-service::mdat_scan_and_import_match_direct_oracle_bytes"]
 upstream = "wizard/step5_measure.py MdatAssignDialog, MdatFilesDialog"
+
+[[feature]]
+id = "measure.dirac_import"
+kind = "measure"
+milestone = "M4"
+status = "implemented"
+tests = [
+  "secs-service::dirac_channel_names_suggest_roles",
+  "secs-service::dirac_scan_lists_positions_channels_and_sub_flags",
+  "secs-service::dirac_import_records_irs_t0_and_source",
+  "secs-service::dirac_import_skips_unplanned_and_outside_rows_and_rejects_bad_files",
+]
+upstream = "new"
+note = "new: mdat 가져오기 흐름(mdat_scan, mdat_import)이 .liveproject도 받습니다. Dirac 위치 p는 위치 p+1, 채널 이름에서 역할 제안, t0 −0.25 s, 출처는 파일 이름입니다(ADR 0013)."
 
 [[feature]]
 id = "measure.mock"

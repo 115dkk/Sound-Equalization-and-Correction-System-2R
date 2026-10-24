@@ -33,6 +33,7 @@ secs-audio = { path = "crates/secs-audio" }
 secs-rew = { path = "crates/secs-rew" }
 secs-compute = { path = "crates/secs-compute" }
 secs-dsp = { path = "crates/secs-dsp" }
+secs-dirac = { path = "crates/secs-dirac" }
 secs-camilla = { path = "crates/secs-camilla" }
 secs-filters = { path = "crates/secs-filters" }
 

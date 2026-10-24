@@ -11,6 +11,7 @@ mod calibration;
 mod clock;
 mod compute;
 mod curves;
+pub mod dirac_import;
 mod export;
 pub mod export_folder;
 mod host;

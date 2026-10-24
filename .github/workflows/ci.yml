@@ -18,7 +18,8 @@ name: CI
 #             artifacts so a pull request can be installed and tried
 #   docs      rustdoc with warnings denied
 #   deny      cargo-deny: advisories, GPL-compatible licenses, bans, sources
-#   miri      the parsers of untrusted files (secs-jos, secs-mdat) under Miri
+#   miri      the parsers of untrusted files (secs-jos, secs-mdat, secs-dirac)
+#             under Miri
 #   fuzz      every fuzz target (fuzz/) for a fixed time from a seed corpus
 #   integrity the CLI's mock flow and a four-position MIMO flow at 1, the
 #             default and 7 threads on every OS; the exports must be
@@ -476,7 +477,7 @@ jobs:
         run: cargo deny --all-features check
 
   miri:
-    name: Miri (secs-jos, secs-mdat)
+    name: Miri (secs-jos, secs-mdat, secs-dirac)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -493,7 +494,7 @@ jobs:
       # Tests that parse the 218 kB template are ignored under Miri (too slow);
       # they run natively in the test job.
       - name: cargo miri test
-        run: cargo "+$NIGHTLY" miri test --locked -p secs-jos -p secs-mdat
+        run: cargo "+$NIGHTLY" miri test --locked -p secs-jos -p secs-mdat -p secs-dirac
 
   fuzz:
     name: fuzz (parsers, 60 s per target)
@@ -523,13 +524,15 @@ jobs:
       - name: Build the fuzz targets
         run: cargo "+$NIGHTLY" fuzz build --target "$FUZZ_TARGET"
 
-      # Seeds: the bundled REW template and the mdat golden blobs.
+      # Seeds: the bundled REW template, the mdat golden blobs and the
+      # synthetic Dirac Live project (sample projects hold personal data).
       - name: Run every target
         run: |
           for target in $(cargo "+$NIGHTLY" fuzz list); do
             mkdir -p "corpus/$target"
             cp ../src/secs/rew_mdat/template_1.mdat "corpus/$target/template"
             cp ../oracle/goldens/mdat/*.bin "corpus/$target/"
+            cp ../crates/secs-dirac/tests/data/*.liveproject "corpus/$target/"
             echo "::group::$target"
             cargo "+$NIGHTLY" fuzz run --target "$FUZZ_TARGET" "$target" "corpus/$target" -- \
               -max_total_time=60 -rss_limit_mb=2048 -max_len=262144

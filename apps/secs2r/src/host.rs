@@ -80,7 +80,9 @@ impl Host for TauriHost {
             self.app
                 .dialog()
                 .file()
+                .add_filter("Measurements", &["mdat", "liveproject"])
                 .add_filter("REW measurement", &["mdat"])
+                .add_filter("Dirac Live project", &["liveproject"])
                 .blocking_pick_file(),
         )
     }
