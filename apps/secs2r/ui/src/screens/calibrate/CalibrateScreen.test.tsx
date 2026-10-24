@@ -67,9 +67,9 @@ function mockActions(): MockActions {
     selectChannel: vi.fn(),
     selectXoGroup: vi.fn(),
     previewXo: vi.fn(),
-    changeSetting: vi.fn(),
+    changeSetting: vi.fn(async () => true),
     takeSubValues: vi.fn(),
-    setTargetPoints: vi.fn(),
+    setTargetPoints: vi.fn(async () => true),
     applyTargetPreset: vi.fn(),
     saveTarget: vi.fn(),
     loadTarget: vi.fn(),
@@ -362,6 +362,75 @@ describe("보정 screen", () => {
     expect(actions.changeSetting).not.toHaveBeenCalled();
     fireEvent.keyUp(handle, { key: "ArrowRight" });
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "xo", group: "프론트", hz: 85 });
+  });
+
+  it("puts the target back when its save fails, says so next to the graph and saves the same draft again", async () => {
+    vi.useFakeTimers();
+    try {
+      const actions = mockActions();
+      const replies: ((saved: boolean) => void)[] = [];
+      actions.setTargetPoints.mockImplementation(() => new Promise<boolean>((reply) => replies.push(reply)));
+      const screenOf = (view: CalibrateView) => (
+        <PrefsScope initial={{ locale: "ko", theme: "light", accent: "default" }}>
+          <CalibrateScreen view={view} actions={actions} />
+        </PrefsScope>
+      );
+      const { rerender } = render(screenOf(fx.splView));
+      const point = () => must("calibrate.target.point.2").getAttribute("aria-label");
+      const stored = point();
+      fireEvent.keyDown(must("calibrate.target.point.2"), { key: "ArrowUp" });
+      fireEvent.keyUp(must("calibrate.target.point.2"), { key: "ArrowUp" });
+      const draft = actions.setTargetPoints.mock.lastCall?.[0];
+      expect(draft).toContainEqual([60, 5.5]);
+      expect(point()).not.toBe(stored);
+      // Saving: the draft stays; the state shows once the save is slow.
+      rerender(screenOf({ ...fx.splView, targetEdit: "saving" }));
+      expect(ui("calibrate.graph.save")).toBeNull();
+      act(() => vi.advanceTimersByTime(LOADING_DELAY_MS));
+      expect(must("calibrate.graph.save").textContent).toBe("타겟 저장 중");
+      expect(ui("calibrate.graph.save.retry")).toBeNull();
+      // Refused: the graph shows the stored target again, the state and 다시 저장 beside it.
+      await act(async () => replies[0]!(false));
+      rerender(screenOf({ ...fx.splView, targetEdit: "failed" }));
+      expect(point()).toBe(stored);
+      expect(must("calibrate.graph.save").getAttribute("role")).toBe("status");
+      expect(must("calibrate.graph.save").textContent).toContain("타겟 저장 실패");
+      fireEvent.click(must("calibrate.graph.save.retry"));
+      expect(actions.setTargetPoints).toHaveBeenCalledTimes(2);
+      expect(actions.setTargetPoints.mock.lastCall?.[0]).toEqual(draft);
+      expect(point()).not.toBe(stored);
+      // Stored: the state goes away with the new target.
+      await act(async () => replies[1]!(true));
+      rerender(screenOf({ ...fx.splView, targetEdit: "idle", target: { ...fx.splView.target, points: draft! } }));
+      expect(ui("calibrate.graph.save")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("puts the XO line and curves back when its save fails and saves the same crossover again", async () => {
+    const actions = mockActions();
+    actions.changeSetting.mockResolvedValueOnce(false);
+    const screenOf = (view: CalibrateView) => (
+      <PrefsScope initial={{ locale: "ko", theme: "light", accent: "default" }}>
+        <CalibrateScreen view={view} actions={actions} />
+      </PrefsScope>
+    );
+    const { rerender } = render(screenOf(fx.xoView));
+    const handle = () => must("calibrate.xo.line.handle");
+    fireEvent.keyDown(handle(), { key: "ArrowRight" });
+    fireEvent.keyUp(handle(), { key: "ArrowRight" });
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "xo", group: "프론트", hz: 85 });
+    await act(async () => {});
+    rerender(screenOf({ ...fx.xoView, xoEdit: "failed" }));
+    expect(handle().getAttribute("aria-valuenow")).toBe("80");
+    // The curves are asked for the stored crossover again.
+    expect(actions.selectXoGroup).toHaveBeenLastCalledWith("프론트");
+    expect(must("calibrate.graph.save").textContent).toContain("크로스오버 저장 실패");
+    fireEvent.click(must("calibrate.graph.save.retry"));
+    expect(actions.previewXo).toHaveBeenLastCalledWith("프론트", 85);
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "xo", group: "프론트", hz: 85 });
+    expect(handle().getAttribute("aria-valuenow")).toBe("85");
   });
 
   it("sends every setting through changeSetting", () => {

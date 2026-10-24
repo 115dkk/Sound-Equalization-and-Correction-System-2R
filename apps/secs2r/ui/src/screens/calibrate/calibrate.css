@@ -258,6 +258,13 @@
   white-space: nowrap;
 }
 
+/* A target or XO save: its state, and 다시 저장 right after it when refused. */
+.calibrate-graph__save {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
 /* In place of the channel box when position 1 has nothing to preview: the
    same label and height, the reason as plain text. */
 .calibrate-graph__no-channel {

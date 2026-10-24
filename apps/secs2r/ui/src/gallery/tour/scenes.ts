@@ -521,6 +521,20 @@ export const TOUR_SCENES: TourScene[] = [
     },
     ops: [...choosePath("native", "calibrate"), click(ui("calibrate.compute")), drain],
   },
+  {
+    id: "calibrate.target-failed",
+    step: "calibrate",
+    title: { ko: "타겟 저장 실패", en: "Target not saved" },
+    note: { ko: "타겟 점을 옮긴 뒤 저장이 실패해 그래프가 저장된 타겟으로 돌아간 상태입니다.", en: "A target point was moved and the save failed; the graph is back on the stored target." },
+    setup: inProgress,
+    ops: [
+      ...choosePath("native", "calibrate"),
+      page(({ mock }) => mock.failNext("target_set_points", "project_io", "C:/Users/demo/Documents/SECS/home-theater.secs: access is denied (os error 5)")),
+      click(ui("calibrate.target.point.3")),
+      press("ArrowUp"),
+      page(flush),
+    ],
+  },
 
   // 내보내기
   {
