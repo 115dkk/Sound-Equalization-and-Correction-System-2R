@@ -42,7 +42,7 @@ describe("mock filter exports", () => {
     mock.dispose();
   });
 
-  it.each(["filter_text", "equalizer_apo"] as const)("rejects %s when current MIMO is included, without starting a job", async (kind) => {
+  it.each(["filter_text"] as const)("rejects %s when current MIMO is included, without starting a job", async (kind) => {
     const results = resultWithoutSubs();
     results.mimo = structuredClone(resultsSummary.mimo);
     const mock = createMockService({ tickMs: 0, results });
@@ -100,6 +100,17 @@ describe("mock filter exports", () => {
     mock.dispose();
   });
 
+  it("exports current MIMO through Equalizer APO", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+      mock.setResults(resultsSummary);
+      const result = await exported(mock, "equalizer_apo");
+      expect(result.folder).toContain("RC_BA_MIMO");
+      expect(result.files).toContain(`${result.folder}/config.txt`);
+    } finally { mock.dispose(); }
+  });
+
   it("allows BA in EqAPO and writes directly into an explicit folder", async () => {
     const results = structuredClone(resultsSummary);
     results.mimo = null;
@@ -120,6 +131,24 @@ describe("mock filter exports", () => {
 });
 
 describe("mock service", () => {
+  it("uses contract group keys for center XO settings, lines and curves", async () => {
+    const mock = createMockService({ tickMs: 0, results: resultsSummary });
+    try {
+      expect((await mock.request({ method: "calibration_settings_get" })).xo["센터"]).toBe(100);
+      expect((await mock.request({ method: "result_lines" })).channels.find((line) => line.role === "C")?.xo_hz).toBe(100);
+      expect((await mock.request({ method: "result_curves", params: { tab: "xo", channel: "C", group: "센터", xo_hz: null, corrected: null } })).xo_hz).toBe(100);
+    } finally { mock.dispose(); }
+  });
+  it("preserves full results when only the subs are calibrated", async () => {
+    const mock = createMockService({ tickMs: 0, results: resultsSummary });
+    try {
+      const before = await mock.request({ method: "results" });
+      await mock.request({ method: "calibrate", params: { settings: null, subs_only: true } });
+      mock.drain();
+      expect(await mock.request({ method: "results" })).toEqual(before);
+      expect((await mock.request({ method: "result_lines" })).ba?.subs_only).toBe(true);
+    } finally { mock.dispose(); }
+  });
   it("delivers compact summaries and metadata without DSP payloads in job notifications", async () => {
     const mock = createMockService({ tickMs: 0 });
     const events: JobEvent[] = [];

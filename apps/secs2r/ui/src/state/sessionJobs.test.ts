@@ -60,7 +60,7 @@ describe("session completion ownership", () => {
       await settle(); rejectFirst(); await rejected;
       resolveSecond(); await accepted; await settle();
       expect(mock.calls.filter((request) => request.method === "results")).toHaveLength(1);
-      expect(session.stores.results.getSnapshot()?.calibration).not.toBeNull();
+      expect(session.stores.results.getSnapshot()?.calibration).toBeNull();
       expect(session.host.getSnapshot().jobRequests).toEqual({});
     } finally { rejectFirst(); resolveSecond(); session.dispose(); await settle(); mock.dispose(); }
   });

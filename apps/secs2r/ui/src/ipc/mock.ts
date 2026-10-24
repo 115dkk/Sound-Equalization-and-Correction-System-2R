@@ -336,7 +336,7 @@ export function createMockService(options: MockOptions = {}): MockService {
   const resultLines = (): ResultLinesResult => ({
     stale: results.calibration?.stale ?? false,
     channels: results.calibration?.scorecard.map((s) => ({ role: s.role, within_1db_pct: [s.before.in1_20, s.after.in1_20], gd_spread_ms: [s.before.gd_20, s.after.gd_20], peq_count: 2,
-      fir_taps: fx.modeSpec(results.calibration!.mode, results.calibration!.ultra_ms).fir_taps, xo_hz: settings.xo[fx.groupOf(s.role)] ?? null, mimo_support_count: results.mimo ? 2 : null })) ?? [],
+      fir_taps: fx.modeSpec(results.calibration!.mode, results.calibration!.ultra_ms).fir_taps, xo_hz: settings.xo[fx.GROUP_KEYS[fx.groupOf(s.role)]!] ?? null, mimo_support_count: results.mimo ? 2 : null })) ?? [],
     total_delay_ms: results.calibration?.latency_ms ?? null, notes: results.calibration?.notes ?? [], rc: results.calibration?.notes ?? [],
     ba: results.calibration && results.calibration.sub_roles.length >= 2 ? {
       stale: results.calibration.stale, subs_only: subsOnly, band_hz: [20, 200], flatness_db: [6.2, 1.8], seat_spread_db: [4.5, 2.1], positions: records.length,
@@ -370,7 +370,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     return { tab: params.tab, grid: [...fx.curveGrid], curves,
       axes: { frequency_hz: [5, params.tab === "ba" ? 300 : params.tab === "xo" ? 500 : 20000], value: params.tab === "gd" ? [-10, 90] : [-30, 15], unit: params.tab === "gd" ? "ms" : "db" },
       stale: results.calibration?.stale ?? false, subs_only: subsOnly, rc_band_hz: [settings.rc_lo, settings.rc_hi],
-      xo_hz: params.tab === "xo" ? params.xo_hz ?? settings.xo[params.group ?? fx.groupOf(role)] ?? 80 : null };
+      xo_hz: params.tab === "xo" ? params.xo_hz ?? settings.xo[params.group ?? fx.GROUP_KEYS[fx.groupOf(role)]!] ?? 80 : null };
   };
 
   const answer = (req: Request): Response => {
@@ -511,7 +511,7 @@ export function createMockService(options: MockOptions = {}): MockService {
           summary.scorecard = roles.map((role, i) => ({ ...clone(fx.scorecard[i % fx.scorecard.length]!), role }));
           summary.main_roles = roles;
           summary.sub_roles = config.speakers.filter((s) => s.role.startsWith("SW")).map((s) => s.role);
-          results = { calibration: summary, mimo: results.mimo ? { ...results.mimo, stale: true } : null };
+          if (!req.params.subs_only) results = { calibration: summary, mimo: results.mimo ? { ...results.mimo, stale: true } : null };
           subsOnly = req.params.subs_only;
           return { kind: "calibration" };
         }) };
@@ -547,7 +547,7 @@ export function createMockService(options: MockOptions = {}): MockService {
         if (kind === "filter_text" || kind === "equalizer_apo") {
           const calibration = results.calibration;
           const hasMimo = settings.mimo_on && needProject().positions.length >= MIMO_MIN_POSITIONS && results.mimo !== null && !results.mimo.stale;
-          const reason = kind === "filter_text" && calibration.sub_roles.length > 0 ? "subs" : hasMimo ? "mimo" : null;
+          const reason = kind === "filter_text" ? calibration.sub_roles.length > 0 ? "subs" : hasMimo ? "mimo" : null : null;
           if (reason) throw new MockError(ipcError("export_scope", `${kind} cannot export a result with ${reason}`, { reason }));
           // Date.now also follows the tour's mock clock; service folder stamps use local time.
           const date = new Date(Date.now());

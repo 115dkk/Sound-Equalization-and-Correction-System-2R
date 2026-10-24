@@ -306,7 +306,7 @@ export const calibrationSettings: CalibrationSettings = {
   sample_rate_policy: "reject",
   mode: "mixed", rc_lo: 20, rc_hi: null, room_volume_m3: 62.6, room_dims_m: [5.2, 4.3, 2.8],
   mimo_on: false, fsiso: 150, mimo_low: null, mimo_max_supports: 0, mimo_fir: false,
-  xo: { front: 80, center: 100, surround: 80, back: 80, top: 100 }, xo_rec: {}, ultra_ms: 100,
+  xo: { 프론트: 80, 센터: 100, 서라운드: 80, 백: 80, 탑: 100 }, xo_rec: {}, ultra_ms: 100,
   subs_manual: {}, sub_main_delay_ms: 0, bundle_layouts: {}, infra_boost_max_db: 24,
   xo_peq_on: true, boost_max_db: 10, xo_peq_lo: 0, xo_peq_hi: 0,
 };
