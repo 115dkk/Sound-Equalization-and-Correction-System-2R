@@ -314,3 +314,18 @@ describe("host state after jobs and switches", () => {
     } finally { session.dispose(); await settle(); mock.dispose(); }
   });
 });
+
+it("counts each project opened or created, so a screen can forget what it hid for the last one", async () => {
+  const mock = createMockService({ tickMs: 0 });
+  const session = createSession(mock);
+  try {
+    await session.start();
+    expect(session.host.getSnapshot().opened).toBe(0);
+    await session.call({ method: "project_open", params: { path: "C:/rooms/a.secs" } });
+    expect(session.host.getSnapshot().opened).toBe(1);
+    await session.call({ method: "project_save", params: { path: "C:/rooms/b.secs" } });
+    expect(session.host.getSnapshot().opened).toBe(1);
+    await session.call({ method: "project_new", params: { path: "", preset: "2.0", sub_count: 0, sample: false, tutorial: false } });
+    expect(session.host.getSnapshot().opened).toBe(2);
+  } finally { session.dispose(); await settle(); mock.dispose(); }
+});

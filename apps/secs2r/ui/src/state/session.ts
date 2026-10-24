@@ -30,6 +30,8 @@ type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "m
   failure: CalibrateView["failure"]; rewLaunch: "idle" | "checking" | "launching";
   rewProblem: RewProblem | null; rewProblemDetail: string | null; readingRew: boolean;
   switchingRewDriver: boolean;
+  /** Projects opened or created in this window; screens reset what they hid for the previous one when it changes. */
+  opened: number;
 };
 
 export function createSession(ipc: Ipc) {
@@ -39,7 +41,7 @@ export function createSession(ipc: Ipc) {
     mdat: null, warnings: [], tab: "spl", channel: null, xoGroup: null, previewHz: null, targetEdit: "idle", xoEdit: "idle",
     jobs: [], jobRequests: {}, meter: null, monitor: "off", playing: null, playingAll: false, masterDbfs: -20,
     sweepResult: null, sweepRole: null, xoRecommendation: null, runs: {}, failure: null,
-    rewLaunch: "idle", rewProblem: null, rewProblemDetail: null, readingRew: false, switchingRewDriver: false,
+    rewLaunch: "idle", rewProblem: null, rewProblemDetail: null, readingRew: false, switchingRewDriver: false, opened: 0,
   });
   const host = { ...rawHost, set: (patch: Partial<HostState>) => rawHost.set({ ...rawHost.getSnapshot(), ...patch }) };
   const errors = createStore<Failure | null>(null);
@@ -122,7 +124,7 @@ export function createSession(ipc: Ipc) {
         curveVersion++;
         curveState.set(null);
         stores.measurementSettings.set(null);
-        host.set({ path: null, selected: null, mdat: null, warnings: [], runs: {}, channel: null, xoGroup: null, xoRecommendation: null, failure: null, sweepResult: null, sweepRole: null });
+        host.set({ path: null, selected: null, mdat: null, warnings: [], runs: {}, channel: null, xoGroup: null, xoRecommendation: null, failure: null, sweepResult: null, sweepRole: null, opened: host.getSnapshot().opened + 1 });
       }
       // The recommended sweep level was measured with one method, device and channel; another makes it stale.
       if (request.method === "measure_configure") {

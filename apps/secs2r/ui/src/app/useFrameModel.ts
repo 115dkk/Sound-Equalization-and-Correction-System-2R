@@ -37,6 +37,7 @@ export function useFrameModel(views: { system: SystemView | null; connect: Conne
       calibration: computing ? "computing" : host.failure ? "failed" : result ? result.stale ? "stale" : "done" : "none",
       path: { kind: host.path ?? "none", state: pathReady({ path: host.path, methods: views.connect?.methods ?? null }) ? "ok" : "warning" },
       fileName: project?.path ? project.name : null, dirty: project?.dirty ?? false,
+      warnings: project?.migration_warnings ?? [], opened: host.opened,
     },
   };
   if (!project) {

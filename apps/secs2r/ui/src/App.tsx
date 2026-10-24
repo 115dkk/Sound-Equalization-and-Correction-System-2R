@@ -19,6 +19,7 @@ import { Button, EmptyState, ErrorNotice } from "./ui";
 import { SystemScreen, systemHeader } from "./screens/system/SystemScreen";
 import { ConnectScreen, connectHeader, micInput } from "./screens/connect/ConnectScreen";
 import { MeasureScreen, measureHeader } from "./screens/measure/MeasureScreen";
+import { isRunning } from "./screens/measure/types";
 import { CalibrateScreen, calibrateHeader } from "./screens/calibrate/CalibrateScreen";
 import { ExportScreen, exportHeader } from "./screens/export/ExportScreen";
 import { useSystemScreen } from "./screens/system/useSystemScreen";
@@ -81,6 +82,13 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
   }, [settingFocus, host.current]);
   const measure = useMeasureScreen();
   const goToMeasurements = useCallback(() => navigateToSetting("measure", '[data-ui="measure.positions"] [aria-current="true"]', '[data-ui="measure.positions"] button'), [navigateToSetting]);
+  // A project warning's 다시 측정: that position picked (never during a device
+  // job) and its measure action focused; on the import path, the import.
+  const measureJob = measure.view?.job ?? null;
+  const remeasure = useCallback((position: number) => {
+    if (!isRunning(measureJob)) measure.actions.selectPosition(position);
+    navigateToSetting("measure", '[data-ui="measure.position.start"]', '[data-ui="measure.mdat.load"]');
+  }, [measureJob, measure.actions, navigateToSetting]);
   const calibrate = useCalibrateScreen(goToMeasurements);
   const exporting = useExportScreen();
   const { model, navigate } = useFrameModel({ system: system.view, connect: connect.view, measure: measure.view, calibrate: calibrate.view, export: exporting.view });
@@ -174,7 +182,7 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
   const body = <>
     <AppFrame model={model} onNavigate={navigate} primary={header.primary} headerStatus={header.status} recovery={recovery}
       projectActions={dialogs.menu} onHelp={() => setHelpOpen((open) => !open)}
-      version={info ? { version: info.version, prerelease: info.prerelease } : null} tray={<JobTray api={jobs} />}
+      version={info ? { version: info.version, prerelease: info.prerelease } : null} tray={<JobTray api={jobs} />} onRemeasure={remeasure}
       aside={helpOpen || meterOpen ? <>
         {helpOpen && <HelpPanel view={{ step: host.current, tutorial: project?.tutorial ?? false }} actions={{ close: () => setHelpOpen(false), startTutorial: dialogs.offerTutorial }} />}
         {meterOpen && <div className="app-mic"><MicMeterPanel id="app.mic" floating view={{ input: connect.view ? micInput(t, connect.view) : null, monitor: host.monitor, reading: host.meter }} onClose={() => setMeterOpen(false)} /></div>}

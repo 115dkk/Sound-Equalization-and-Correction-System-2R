@@ -33,6 +33,7 @@ const BUILT: readonly { template: string; keys: RegExp }[] = [
   { template: "jobs.log.${code}", keys: /^jobs\.log\.[a-z_]+$/ },
   { template: "jobs.stage.${stage}", keys: /^jobs\.stage\.[a-z_.]+$/ },
   { template: "notice.${notice.code}", keys: /^notice\.[a-z_]+$/ },
+  { template: "project.warning.${code}", keys: /^project\.warning\.[a-z_.]+$/ },
   { template: "measure.point.${n}", keys: /^measure\.point\.\d+$/ },
   { template: "measure.role.${base}", keys: /^measure\.role\.[A-Za-z]+$/ },
   { template: "tutorial.q.${id}.${field}", keys: /^tutorial\.q\.[a-z_]+\.[a-z_]+\.[a-z]+$/ },

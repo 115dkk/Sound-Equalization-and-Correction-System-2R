@@ -36,6 +36,8 @@ type AppFrameProps = {
   children: ReactNode;
   /** Listen for the keyboard shortcuts (off for all but one frame in the gallery). */
   shortcuts?: boolean;
+  /** A project warning's 다시 측정: opens 측정·가져오기 at that position. Without it the warnings only say what happened. */
+  onRemeasure?: ((position: number) => void) | undefined;
 };
 
 export function AppFrame({
@@ -51,6 +53,7 @@ export function AppFrame({
   aside,
   children,
   shortcuts = true,
+  onRemeasure,
 }: AppFrameProps) {
   const t = useT();
   const prefs = usePrefs();
@@ -101,7 +104,7 @@ export function AppFrame({
             <h2 className="app-rail__heading" id="frame.status.heading">
               {t("frame.status")}
             </h2>
-            <ProjectStatus project={model.project} />
+            <ProjectStatus project={model.project} onRemeasure={onRemeasure} />
           </section>
         </div>
         <div className="app-rail__footer">

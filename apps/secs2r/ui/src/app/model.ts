@@ -17,6 +17,9 @@ export type CalibrationState = "none" | "computing" | "done" | "stale" | "failed
 export type PathKind = "rew" | "native" | "mock" | "mdat" | "none";
 export type PathState = "ok" | "warning" | "error";
 
+/** A warning the service raised while reading the open project's entries (`ProjectInfo.migration_warnings`). */
+export type ProjectWarning = { code: string; entry: string };
+
 export type ProjectSummary = {
   preset: string | null;
   subCount: number;
@@ -27,6 +30,10 @@ export type ProjectSummary = {
   path: { kind: PathKind; state: PathState; device?: string };
   fileName: string | null;
   dirty: boolean;
+  /** Listed under the status until dismissed; a dismissal lasts until `opened` changes. */
+  warnings?: readonly ProjectWarning[];
+  /** Changes with every project opened or created (the session's count). */
+  opened?: number;
 };
 
 export type FrameModel = {

@@ -134,6 +134,7 @@ export function FrameBox({
   header,
   headerStatus,
   aside,
+  onRemeasure,
   children,
 }: {
   frame: FrameModel;
@@ -149,6 +150,8 @@ export function FrameBox({
   headerStatus?: ReactNode;
   /** The frame's aside slot (the help panel). */
   aside?: ReactNode;
+  /** The project warnings' 다시 측정 (drawn only when given). */
+  onRemeasure?: (position: number) => void;
   children: ReactNode;
 }) {
   const t = useT();
@@ -167,6 +170,7 @@ export function FrameBox({
       tray={<JobTray api={staticApi(jobs, now)} defaultOpen={trayOpen} />}
       aside={aside}
       shortcuts={false}
+      onRemeasure={onRemeasure}
     >
       {children}
     </AppFrame>
@@ -276,6 +280,29 @@ export const frameSpecimens: SpecimenDef[] = [
     height: 800,
     render: () => (
       <FrameBox frame={model("measure", { ...filledProject, path: { kind: "rew", state: "error" } })} jobs={historyJobs} now={T0 + 30000} trayOpen>
+        <MeasureContent />
+      </FrameBox>
+    ),
+  },
+  {
+    id: "frame.warnings",
+    title: "Frame · project warnings (F5: measurement files outside the project folder)",
+    width: 1280,
+    height: 800,
+    render: () => (
+      <FrameBox
+        frame={model("measure", {
+          ...filledProject,
+          opened: 1,
+          warnings: [
+            { code: "measurement.ir_path.outside", entry: "position 2, role L" },
+            { code: "measurement.ir_path.outside", entry: "position 2, role SW1" },
+            { code: "measurement.ir_path.outside", entry: "position 3, role Tfl" },
+          ],
+        })}
+        jobs={initialJobs}
+        onRemeasure={() => {}}
+      >
         <MeasureContent />
       </FrameBox>
     ),
