@@ -49,25 +49,30 @@ oracle/                   골든 내보내기 스크립트와 골든 (oracle/REA
 
 ## 3. 의존 방향
 
-의존은 아래로만 흐릅니다. `secs-sys`는 앱만 의존하고, 앱이 그 어댑터를 seam에 주입합니다.
+의존은 아래로만 흐릅니다. `secs-sys`는 앱만 의존하고, 앱이 그 어댑터를 seam에 주입합니다. 그림은 각 `Cargo.toml`의 `[dependencies]`와 같습니다(감사 #92 TD-95).
 
 ```text
 ui ──IPC──> secs2r ─┬─> secs-service ─┬─> secs-engine ─┬─> secs-dsp
                     │                 │                ├─> secs-compute
                     │                 │                └─> secs-types
-                    │                 ├─> secs-project ──> secs-types
-                    │                 ├─> secs-rew ──────> secs-types
-                    │                 ├─> secs-audio ────> secs-dsp, secs-types
+                    │                 ├─> secs-project ──> secs-mdat (출처 정보), secs-types
+                    │                 ├─> secs-rew
+                    │                 ├─> secs-audio ────> secs-dsp
                     │                 ├─> secs-mdat ─────> secs-jos, secs-dsp
                     │                 ├─> secs-dirac
-                    │                 ├─> secs-export ───> secs-engine, secs-mdat, secs-types
+                    │                 ├─> secs-export ───> secs-engine, secs-mdat, secs-camilla (숫자 포매터),
+                    │                 │                    secs-dsp, secs-types
                     │                 ├─> secs-camilla ──> secs-dsp, secs-types
-                    │                 └─> secs-filters ──> secs-camilla, secs-dsp, secs-types
-                    ├─> secs-gpu ─────> secs-engine (RidgeBackend seam)
+                    │                 ├─> secs-filters ──> secs-camilla, secs-dsp, secs-types
+                    │                 └─> secs-compute, secs-dsp, secs-types
+                    ├─> secs-gpu ─────> secs-engine (RidgeBackend seam), secs-compute, secs-types
                     │        └───────> secs-cuda-sys (선택적 네이티브 라이브러리)
-                    └─> secs-sys ─────> wasapi, cpal, OS 조회 크레이트
-secs2r-cli ─────────> secs-service, secs-sys, secs-gpu
-secs-policy ────────> (파일 시스템만 읽음; IPC 메서드 목록 때문에 secs-types)
+                    ├─> secs-sys ─────> wasapi, cpal, OS 조회 크레이트
+                    │        └───────> secs-audio, secs-rew, secs-compute (어댑터가 구현하는 seam)
+                    └─> secs-rew, secs-types
+secs2r-cli ─────────> secs-service, secs-sys, secs-gpu, secs-rew, secs-compute, secs-types
+secs-policy ────────> (파일 시스템만 읽음; 테스트가 IPC 메서드 목록 때문에 secs-types)
+secs-engine ┄┄┄┄┄┄┄┄> secs-oracle (`test-support` 기능에서만; 출하하지 않음)
 ```
 
 ## 4. seam과 어댑터
