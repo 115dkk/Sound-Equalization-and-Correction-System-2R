@@ -14,7 +14,7 @@
   - 태그가 있고 그 뒤로 출하 파일이 바뀌었으면 버전을 올립니다. 출하 파일을 건드린 커밋 중에 `feat` 제목이나 `BREAKING CHANGE`가 있으면 minor, 아니면 patch입니다. 1.0 전에는 호환을 깨는 변경도 minor로 올립니다.
   - 출하 파일이 바뀌지 않았으면 릴리스하지 않습니다.
 - 출하 파일은 `crates/`, `apps/`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain.toml`, `LICENSE`, `UPSTREAM.toml`에서 테스트, 벤치, 퍼즈, 문서, 화면 단위 테스트, `secs-policy`를 뺀 것입니다. 업스트림 파이썬 트리는 출하하지 않습니다.
-- 버전을 올릴 때 게이트가 `Cargo.toml`과 `Cargo.lock`의 워크스페이스 버전을 고쳐 `chore(release): v0.x.y`로 main에 커밋합니다. 워크플로 토큰으로 한 push는 워크플로를 시작하지 않으므로 이 커밋이 다시 릴리스를 부르지 않습니다. 앱의 버전은 `tauri.conf.json`이 아니라 크레이트 버전을 따르므로 두 파일만 고치면 됩니다.
+- 버전을 올릴 때 게이트가 `Cargo.toml`과 `Cargo.lock`의 워크스페이스 버전을 고쳐 `chore(release): v0.x.y`로 main에 커밋합니다. 이 push는 저장소 비밀 `RELEASE_DEPLOY_KEY`에 든 쓰기 배포 키로 합니다. main에는 PR 검사를 모두 필수로 거는 'Required checks' 룰셋이 있고, 검사 결과가 없는 bump 커밋은 배포 키 우회로만 들어갈 수 있습니다(GitHub은 개인 저장소 룰셋에 GitHub Actions를 우회 주체로 받지 않습니다). 배포 키 push는 워크플로를 시작하므로 커밋 본문에 `[skip ci]`를 넣어 이 커밋이 release.yml과 ci.yml을 다시 부르지 않게 합니다. 앱의 버전은 `tauri.conf.json`이 아니라 크레이트 버전을 따르므로 두 파일만 고치면 됩니다.
 - 릴리스 자산의 이름은 인터페이스이므로 고정합니다(`collect_bundles.py`).
   - Windows: `SECS2R-<버전>-windows-x64-setup.exe`(NSIS, 사용자 단위 설치), `SECS2R-<버전>-windows-x64-portable.zip`(설치 없이 폴더째 실행)
   - macOS: `SECS2R-<버전>-macos-universal.dmg`
