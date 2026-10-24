@@ -62,7 +62,7 @@ describe("도움말", () => {
     expect(unused).toEqual([]);
   });
 
-  it("gives each step its tabs: 처음이라면 on 시스템, mdat 가져오기 on 측정·가져오기, CamillaDSP on 내보내기", () => {
+  it("gives each step its tabs: 처음이라면 on 시스템, 측정 파일 가져오기 on 측정·가져오기, CamillaDSP on 내보내기", () => {
     const tabs = (step: StepId) => HELP_TABS[step].map((tab) => tab.id);
     expect(tabs("system")).toEqual(["intro", "steps", "checks", "trouble", "real"]);
     expect(tabs("connect")).toEqual(["steps", "checks", "trouble", "real"]);

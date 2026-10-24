@@ -8,7 +8,8 @@ use secs_types::ipc::*;
 
 use crate::measure::json::JsonExt;
 use crate::measure::{self, MeasureError, MeasurementSettings, Measurer, plan_for, store_devices};
-use crate::{Deps, EventSink, Service, lock, mdat_import, session};
+use crate::{Deps, EventSink, Service, dirac_import, lock, mdat_import, session};
+use secs_types::role::ROLES;
 
 struct Transport(Box<dyn secs_rew::Transport>);
 impl secs_rew::Transport for Transport {
@@ -937,7 +938,48 @@ impl Service {
         })
     }
     pub(crate) fn mdat_scan(&self, params: MdatScanParams) -> Result<MdatScanResult, IpcError> {
-        let scan = mdat_import::scan(Path::new(&params.path))
+        let path = Path::new(&params.path);
+        if dirac_import::is_liveproject(path) {
+            let roles = ROLES.into_iter().map(str::to_owned).collect::<Vec<_>>();
+            let scan = dirac_import::scan(path, &roles)
+                .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto, None))?;
+            let suggested_roles = scan
+                .rows
+                .iter()
+                .map(|row| row.role.clone())
+                .collect::<Vec<_>>();
+            let positions = scan.rows.iter().map(|row| row.position).collect::<Vec<_>>();
+            return Ok(MdatScanResult {
+                suggestions: scan
+                    .rows
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, row)| {
+                        row.role.as_ref().map(|role| MdatAssignment {
+                            measurement: row.title.clone(),
+                            role: role.clone(),
+                            index: Some(index),
+                            position: Some(row.position),
+                        })
+                    })
+                    .collect(),
+                problems: mdat_import::problem_notices(&suggested_roles, &positions),
+                measurements: scan
+                    .rows
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, row)| MdatScanMeasurement {
+                        index,
+                        title: row.title,
+                        role: row.role,
+                        position: row.position,
+                        position_tagged: true,
+                        looks_like_sub: row.looks_like_sub,
+                    })
+                    .collect(),
+            });
+        }
+        let scan = mdat_import::scan(path)
             .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto, None))?;
         let roles = scan
             .measurements
@@ -992,22 +1034,36 @@ impl Service {
         };
         let session = self.session.clone();
         self.jobs.start(JobKind::MdatImport, events, move |ctx| {
-            let scan = mdat_import::scan(Path::new(&params.path))
-                .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto, None))?;
+            let path = Path::new(&params.path);
             let plan = plan_for(&project, &Default::default());
+            let liveproject = dirac_import::is_liveproject(path);
+            let titles = if liveproject {
+                dirac_import::scan(path, &plan.roles)
+                    .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto, None))?
+                    .rows
+                    .into_iter()
+                    .map(|row| row.title)
+                    .collect::<Vec<_>>()
+            } else {
+                mdat_import::scan(path)
+                    .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto, None))?
+                    .measurements
+                    .into_iter()
+                    .map(|measurement| measurement.info.title)
+                    .collect::<Vec<_>>()
+            };
             let mut assignments = vec![
                 mdat_import::Assignment {
                     role: None,
                     position: None
                 };
-                scan.measurements.len()
+                titles.len()
             ];
             for a in params.assignments {
-                let matches = scan
-                    .measurements
+                let matches = titles
                     .iter()
                     .enumerate()
-                    .filter(|(_, m)| m.info.title == a.measurement)
+                    .filter(|(_, title)| **title == a.measurement)
                     .map(|(i, _)| i)
                     .collect::<Vec<_>>();
                 let index = a
@@ -1021,7 +1077,7 @@ impl Service {
                     })
                     .ok_or_else(|| input("assignments", "title missing or ambiguous"))?;
                 if index >= assignments.len()
-                    || scan.measurements[index].info.title != a.measurement
+                    || titles[index] != a.measurement
                     || assignments[index].role.is_some()
                     || !plan.roles.contains(&a.role)
                 {
@@ -1060,12 +1116,16 @@ impl Service {
                 ));
             }
             ctx.begin_commit()?;
-            let count = mdat_import::import(
-                &mut open.store,
-                Path::new(&params.path),
-                Some(&assignments),
-                Some(params.position),
-            )
+            let count = if liveproject {
+                dirac_import::import(&mut open.store, path, &assignments)
+            } else {
+                mdat_import::import(
+                    &mut open.store,
+                    path,
+                    Some(&assignments),
+                    Some(params.position),
+                )
+            }
             .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto, None))?;
             open.dirty = false;
             let info = session::info(open);

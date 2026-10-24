@@ -594,8 +594,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "secs-dirac"
+version = "0.26.0"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "secs-dsp"
-version = "0.0.1"
+version = "0.26.0"
 dependencies = [
  "faer",
  "faer-traits",
@@ -609,14 +616,14 @@ dependencies = [
 
 [[package]]
 name = "secs-jos"
-version = "0.0.1"
+version = "0.26.0"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "secs-mdat"
-version = "0.0.1"
+version = "0.26.0"
 dependencies = [
  "secs-dsp",
  "secs-jos",
@@ -626,9 +633,10 @@ dependencies = [
 
 [[package]]
 name = "secs-project"
-version = "0.0.1"
+version = "0.26.0"
 dependencies = [
  "ryu",
+ "secs-mdat",
  "secs-types",
  "serde",
  "thiserror 2.0.21",
@@ -636,7 +644,7 @@ dependencies = [
 
 [[package]]
 name = "secs-types"
-version = "0.0.1"
+version = "0.26.0"
 dependencies = [
  "serde",
  "strum",
@@ -648,6 +656,7 @@ name = "secs2r-fuzz"
 version = "0.0.0"
 dependencies = [
  "libfuzzer-sys",
+ "secs-dirac",
  "secs-jos",
  "secs-mdat",
  "secs-project",

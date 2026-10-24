@@ -56,7 +56,7 @@ enum Action {
         #[arg(long)]
         method: Option<MeasureMethod>,
     },
-    /// Import suggested assignments from a REW mdat.
+    /// Import suggested assignments from a REW mdat or a Dirac Live project.
     ImportMdat {
         project: PathBuf,
         file: PathBuf,
