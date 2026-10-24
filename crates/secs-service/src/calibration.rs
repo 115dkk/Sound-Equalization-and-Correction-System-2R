@@ -24,6 +24,7 @@ pub(crate) struct CalibrationRun {
     pub settings: CalibrationSettings,
     pub signature: String,
     pub target_key: String,
+    pub config_key: String,
     pub run_key: String,
     pub design: Arc<Design>,
     pub measurements: MeasurementSet,
@@ -58,6 +59,7 @@ pub(crate) struct Prepared {
     pub notes: Vec<String>,
     pub signature: String,
     pub target_key: String,
+    pub config_key: String,
 }
 
 impl Service {
@@ -117,11 +119,12 @@ impl Service {
                     &prepared.signature,
                     &prepared.target_key,
                     &prepared.settings.engine_key(),
-                    "",
+                    &prepared.config_key,
                 ),
                 settings: prepared.settings.clone(),
                 signature: prepared.signature,
                 target_key: prepared.target_key,
+                config_key: prepared.config_key,
                 design: Arc::new(design),
                 measurements: prepared.measurements,
                 config: prepared.config,
@@ -299,6 +302,7 @@ impl Service {
             identity: open.identity,
             signature: signature_key(&project),
             target_key: target_key_string(&project),
+            config_key: config_key(&project),
             project,
             settings,
             measurements: inputs.measurements,
@@ -750,6 +754,7 @@ fn snapshot_cache(state: &Results) -> Option<crate::cache::CachedResults> {
         target_key: calibration.target_key.clone(),
         engine_key: calibration.settings.engine_key(),
         run_key: Some(calibration.run_key.clone()),
+        config_key: Some(calibration.config_key.clone()),
         mimo_key: state
             .mimo
             .as_ref()
@@ -810,6 +815,7 @@ fn calibration_stale_reason(run: &CalibrationRun, project: &Project) -> Option<&
         &run.signature,
         &run.settings.engine_key(),
         &run.target_key,
+        Some(&run.config_key),
         project,
     )
 }
@@ -822,6 +828,7 @@ pub(crate) fn cached_stale_reason(
         &cached.measurement_signature,
         &cached.engine_key,
         &cached.target_key,
+        cached.config_key.as_deref(),
         project,
     )
 }
@@ -830,10 +837,13 @@ fn stale_reason(
     signature: &str,
     engine_key: &str,
     target_key: &str,
+    config_key_at_run: Option<&str>,
     project: &Project,
 ) -> Option<&'static str> {
     if signature != signature_key(project) {
         Some("measurements")
+    } else if config_key_at_run.is_some_and(|key| key != config_key(project)) {
+        Some("config")
     } else if engine_key != calibration_from_project(project).engine_key() {
         Some("settings")
     } else if target_key != target_key_string(project) {
@@ -841,6 +851,10 @@ fn stale_reason(
     } else {
         None
     }
+}
+
+pub(crate) fn config_key(project: &Project) -> String {
+    format!("{:?}:{:?}", project.config, project.xo)
 }
 
 pub(crate) fn run_key(
@@ -1060,24 +1074,36 @@ mod tests {
     }
 
     #[test]
-    fn stale_reasons_prioritize_measurements_then_settings_then_target() {
+    fn stale_reasons_prioritize_measurements_then_config_settings_and_target() {
         let project = Project::default();
         let signature = signature_key(&project);
         let engine = calibration_from_project(&project).engine_key();
         let target = target_key_string(&project);
+        let config = config_key(&project);
         assert_eq!(
-            stale_reason("changed", "changed", "changed", &project),
+            stale_reason("changed", "changed", "changed", Some("changed"), &project),
             Some("measurements")
         );
         assert_eq!(
-            stale_reason(&signature, "changed", "changed", &project),
+            stale_reason(&signature, "changed", "changed", Some("changed"), &project),
+            Some("config")
+        );
+        assert_eq!(
+            stale_reason(&signature, "changed", "changed", Some(&config), &project),
             Some("settings")
         );
         assert_eq!(
-            stale_reason(&signature, &engine, "changed", &project),
+            stale_reason(&signature, &engine, "changed", Some(&config), &project),
             Some("target")
         );
-        assert_eq!(stale_reason(&signature, &engine, &target, &project), None);
+        assert_eq!(
+            stale_reason(&signature, &engine, &target, Some(&config), &project),
+            None
+        );
+        assert_eq!(
+            stale_reason(&signature, &engine, &target, None, &project),
+            None
+        );
     }
 
     #[test]

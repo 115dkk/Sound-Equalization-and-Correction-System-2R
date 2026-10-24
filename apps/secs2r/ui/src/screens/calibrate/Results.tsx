@@ -12,10 +12,11 @@ import { availableTabs } from "./ResultGraph";
 import { FAILED_TEXT, groupOf, modeName, noteLines } from "./text";
 import type { CalibrateActions, CalibrateView, StaleReason } from "./types";
 
-const STALE_TEXT: Record<StaleReason | "unknown", "calibrate.stale.settings" | "calibrate.stale.target" | "calibrate.stale.measurements" | "calibrate.stale.unknown"> = {
+const STALE_TEXT: Record<StaleReason | "unknown", "calibrate.stale.settings" | "calibrate.stale.target" | "calibrate.stale.measurements" | "calibrate.stale.config" | "calibrate.stale.unknown"> = {
   settings: "calibrate.stale.settings",
   target: "calibrate.stale.target",
   measurements: "calibrate.stale.measurements",
+  config: "calibrate.stale.config",
   unknown: "calibrate.stale.unknown",
 };
 

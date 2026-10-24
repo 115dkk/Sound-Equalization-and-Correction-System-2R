@@ -81,7 +81,7 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
     firBudget: dsp?.fields.fir_budget ?? 0, xoRecommendation: host.xoRecommendation, running,
     measuring: jobs.some((job) => ["measure", "sample_load", "mdat_import"].includes(job.kind)),
     failure: host.failure, targetEdit: host.targetEdit, xoEdit: host.xoEdit,
-    staleReason: results.calibration?.stale_reason === "settings" || results.calibration?.stale_reason === "target" || results.calibration?.stale_reason === "measurements" ? results.calibration.stale_reason : null,
+    staleReason: results.calibration?.stale_reason === "settings" || results.calibration?.stale_reason === "target" || results.calibration?.stale_reason === "measurements" || results.calibration?.stale_reason === "config" ? results.calibration.stale_reason : null,
     resultMode: results.calibration ? { mode: results.calibration.mode, ultra_ms: results.calibration.ultra_ms } : null,
     tab: host.tab, channel: host.channel, xoGroup: host.xoGroup, subWarnings: subWarnings ?? [],
     curvesLoading: curves?.pending != null && curves.pending.tab === host.tab && curves.pending.channel === host.channel && curves.pending.group === host.xoGroup,

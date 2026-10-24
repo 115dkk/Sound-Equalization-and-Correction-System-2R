@@ -1043,6 +1043,40 @@ fn stale_calibration_exports_with_flag_and_cache_survives_reopen() {
 }
 
 #[test]
+fn removing_a_speaker_marks_live_and_cached_calibration_stale() {
+    let root = temp_root("speaker-config-stale");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room_dba");
+    let service = service();
+    open(&service, &path);
+    let events = Arc::new(Events::default());
+    let calibration = start_calibration(&service, events.clone(), settings);
+    finished_result(events.wait(calibration, Duration::from_secs(120)));
+
+    call_ok(
+        &service,
+        Request::ConfigRemoveSpeaker(secs_types::ipc::ConfigIndexParams { index: 0 }),
+        Arc::new(NoEvents),
+    );
+    let live = read_results(&service).calibration.unwrap();
+    assert!(live.stale);
+    assert_eq!(live.stale_reason.as_deref(), Some("config"));
+    call_ok(
+        &service,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+        Arc::new(NoEvents),
+    );
+
+    let reopened = Service::new(Deps::default());
+    open(&reopened, &path);
+    let cached = read_results(&reopened).calibration.unwrap();
+    assert!(cached.stale);
+    assert_eq!(cached.stale_reason.as_deref(), Some("config"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn cancelled_calibration_preserves_previous_results() {
     let root = temp_root("cancel-preserve");
     fs::create_dir_all(&root).unwrap();

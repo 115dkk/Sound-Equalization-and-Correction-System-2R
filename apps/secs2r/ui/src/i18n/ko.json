@@ -793,6 +793,7 @@
   "calibrate.stale.settings": "결과를 계산한 뒤 보정 설정이 바뀌었습니다.",
   "calibrate.stale.target": "결과를 계산한 뒤 타겟 곡선이 바뀌었습니다.",
   "calibrate.stale.measurements": "결과를 계산한 뒤 측정이 바뀌었습니다.",
+  "calibrate.stale.config": "스피커 구성이 바뀌었습니다",
   "calibrate.stale.unknown": "설정이나 측정이 바뀌어 결과가 지금 입력과 맞지 않습니다.",
   "calibrate.stale.next": "'다시 보정하기'를 누르세요.",
   "calibrate.failed.inspect_measurements": "측정 데이터 확인",

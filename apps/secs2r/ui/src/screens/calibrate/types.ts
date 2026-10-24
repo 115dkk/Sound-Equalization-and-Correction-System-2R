@@ -30,7 +30,7 @@ import type { XoRecommendation } from "../../ipc/bindings/XoRecommendation";
 export type CalibrateJob = "calibrate" | "calibrate_subs" | "recommend_xo" | "mimo";
 
 /** What changed since the result was computed, when P33 knows it. */
-export type StaleReason = "settings" | "target" | "measurements";
+export type StaleReason = "settings" | "target" | "measurements" | "config";
 
 export type CalibrateView = {
   compute: { preference: ComputePreference; status: ComputeStatus | null; loading: boolean; saving: boolean; error: IpcError | null; locked: boolean };

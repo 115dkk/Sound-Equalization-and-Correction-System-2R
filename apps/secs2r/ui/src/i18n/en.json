@@ -793,6 +793,7 @@
   "calibrate.stale.settings": "The correction settings changed after this result was calculated.",
   "calibrate.stale.target": "The target curve changed after this result was calculated.",
   "calibrate.stale.measurements": "The measurements changed after this result was calculated.",
+  "calibrate.stale.config": "The speaker setup has changed",
   "calibrate.stale.unknown": "The settings or measurements changed, so the result no longer matches them.",
   "calibrate.stale.next": "Press 'Correct again'.",
   "calibrate.failed.inspect_measurements": "Review measurements",

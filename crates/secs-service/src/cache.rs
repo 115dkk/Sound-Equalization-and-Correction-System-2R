@@ -34,6 +34,8 @@ pub(crate) struct CachedResults {
     pub engine_key: String,
     #[serde(default)]
     pub run_key: Option<String>,
+    #[serde(default)]
+    pub config_key: Option<String>,
     pub mimo_key: Option<String>,
     pub mimo_calibration_key: Option<String>,
     pub labels: CachedRunLabels,
@@ -302,6 +304,7 @@ mod tests {
             target_key: "t".into(),
             engine_key: "e".into(),
             run_key: Some("run".into()),
+            config_key: Some("config".into()),
             mimo_key: None,
             mimo_calibration_key: None,
             labels: CachedRunLabels {
