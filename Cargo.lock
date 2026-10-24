@@ -3840,6 +3840,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "secs-dirac"
+version = "0.26.0"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "secs-dsp"
 version = "0.26.0"
 dependencies = [
@@ -3977,6 +3984,7 @@ dependencies = [
  "secs-audio",
  "secs-camilla",
  "secs-compute",
+ "secs-dirac",
  "secs-dsp",
  "secs-engine",
  "secs-export",

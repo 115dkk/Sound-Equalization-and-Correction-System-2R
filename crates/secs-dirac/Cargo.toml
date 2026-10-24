@@ -1,0 +1,18 @@
+[package]
+name = "secs-dirac"
+description = "Bounded reader for measured impulse responses in Dirac Live projects."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+test-support = []
+
+[dependencies]
+thiserror.workspace = true

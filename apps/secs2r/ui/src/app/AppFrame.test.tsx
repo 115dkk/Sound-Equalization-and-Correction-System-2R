@@ -62,9 +62,9 @@ function setup(current: StepId, locale: "ko" | "en" = "ko", overrides: Partial<F
 const railButton = (id: StepId) => document.querySelector<HTMLButtonElement>(`[data-ui="frame.rail.${id}"]`)!;
 
 describe("app frame", () => {
-  it.each(["ko", "en"] as const)("names mdat import in project status (%s)", (locale) => {
+  it.each(["ko", "en"] as const)("names measurement file import in project status (%s)", (locale) => {
     renderWith(<ProjectStatus project={{ ...model("system").project, path: { kind: "mdat", state: "ok" } }} />, { locale });
-    expect(document.querySelector('[data-ui="frame.status.path"]')?.textContent).toContain(locale === "ko" ? "mdat 가져오기" : "mdat import");
+    expect(document.querySelector('[data-ui="frame.status.path"]')?.textContent).toContain(locale === "ko" ? "측정 파일 가져오기" : "Measurement file import");
   });
 
   it.each(["ko", "en"] as const)("explains that every step needs a project (%s)", (locale) => {

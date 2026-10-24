@@ -31,6 +31,7 @@ SECS 2R은 룸 보정 설계 프로그램 [SECS 2](https://github.com/Kim-O-O/So
 
 - Windows, macOS, Linux에서 돕니다. 업스트림은 Windows 전용입니다.
 - REW 없이도 측정할 수 있습니다. Windows는 WASAPI, macOS와 Linux는 CoreAudio·ALSA로 스윕을 재생하고 녹음합니다. REW Pro의 API 측정과 mdat 가져오기도 그대로 지원합니다.
+- Dirac Live 프로젝트(`.liveproject`)의 측정을 가져옵니다. Dirac Live로 측정했다면 다시 측정하지 않고 같은 측정으로 보정을 계산할 수 있습니다([형식 문서](docs/DIRAC_LIVEPROJECT.md)). 업스트림에 없는 기능입니다.
 - 계산을 취소하면 실제로 멈추고, 설정을 바꿔도 이전 결과는 '낡음'으로 남습니다. 업스트림은 취소해도 계산이 계속 돌고, 다시 계산하면 MIMO 결과가 사라집니다.
 - 보정 계산과 MIMO 계산이 빨라집니다. 지원되는 GPU에서는 MIMO FIR 필터 설계의 큰 선형계를 f64로 계산하며, 자동·CPU·GPU를 선택할 수 있습니다. 작은 문제와 IIR 모드는 CPU를 사용합니다([GPU 계산 안내](docs/GPU.md)).
 - 화면을 새로 만듭니다. 설정마다 자리를 하나로 정하고, 자주 쓰는 항목과 고급 항목을 나눠 보여 줍니다.
@@ -86,4 +87,4 @@ SECS 2는 한국 오디오 커뮤니티 스피커 갤러리의 Sound Equalizatio
 
 SECS 2R is a fork of [SECS 2](https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2), a room correction designer, rewritten with a Rust core and a Tauri user interface. It designs room correction (RC), bass alignment (BA) and MIMO bass-decay correction from speaker measurements and exports CamillaDSP and Equalizer APO configurations, filter values as text, and REW mdat files.
 
-It is under development: milestones M0 to M5 are done. The 0.x prereleases carry the SECS 2 correction engine (levels and delays, BA, XO, RC, MIMO, scorecard), native and REW measurement, mdat import, the exports, the new screens and the tutorial; checking the whole path on real hardware (M6) is still ahead. Every upstream feature is being ported; the upstream Python tree stays untouched in this repository as the reference the port is checked against, and deliberate differences are listed in [`docs/DEVIATIONS.md`](docs/DEVIATIONS.md). Pull requests and issues are welcome. License: GPL-3.0-only.
+It is under development: milestones M0 to M5 are done. The 0.x prereleases carry the SECS 2 correction engine (levels and delays, BA, XO, RC, MIMO, scorecard), native and REW measurement, mdat import, Dirac Live project (`.liveproject`) import, the exports, the new screens and the tutorial; checking the whole path on real hardware (M6) is still ahead. Every upstream feature is being ported; the upstream Python tree stays untouched in this repository as the reference the port is checked against, and deliberate differences are listed in [`docs/DEVIATIONS.md`](docs/DEVIATIONS.md). Pull requests and issues are welcome. License: GPL-3.0-only.

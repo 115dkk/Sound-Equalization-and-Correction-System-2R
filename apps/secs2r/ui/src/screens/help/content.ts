@@ -284,6 +284,17 @@ export const HELP_TABS: Record<StepId, readonly HelpTab[]> = {
             "help.measure.mdat.s6.2",
           ],
         },
+        { kind: "heading", text: "help.measure.mdat.s7.head" },
+        {
+          kind: "bullets",
+          items: [
+            "help.measure.mdat.s7.1",
+            "help.measure.mdat.s7.2",
+            "help.measure.mdat.s7.3",
+            "help.measure.mdat.s7.4",
+            "help.measure.mdat.s7.5",
+          ],
+        },
       ],
     },
   ],

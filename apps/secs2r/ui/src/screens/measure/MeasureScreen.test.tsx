@@ -322,6 +322,38 @@ describe("측정·가져오기 screen", () => {
     expect(actions.closeMdat).toHaveBeenCalledOnce();
   });
 
+  it("imports only the picked position of a Dirac Live project from 파일 관리, but every mdat row", () => {
+    const row = (index: number, title: string, role: string, position: number) => ({
+      index,
+      title,
+      role,
+      position,
+      position_tagged: true,
+      looks_like_sub: role.startsWith("SW"),
+    });
+    const scan = {
+      measurements: [row(0, "Left P1", "L", 1), row(1, "Subwoofer 1 P1", "SW1", 1), row(2, "Left P2", "L", 2), row(3, "Subwoofer 1 P2", "SW1", 2)],
+      suggestions: [],
+      problems: [],
+    };
+    const dirac = { ...mdatAssignView, mdat: { path: "C:/Users/demo/Dirac/projects/거실.liveproject", position: 2, scan } };
+    const actions = renderStep(dirac);
+    expect(byUi("measure.mdat.row.3.role")).toBeNull();
+    const importButton = ui("measure.mdat.import") as HTMLButtonElement;
+    expect(importButton.disabled).toBe(false);
+    fireEvent.click(importButton);
+    expect(actions.importMdat.mock.calls[0]?.[0].assignments).toEqual([
+      { measurement: "Left P2", role: "L", index: 2, position: 2 },
+      { measurement: "Subwoofer 1 P2", role: "SW1", index: 3, position: 2 },
+    ]);
+
+    // An mdat keeps upstream's rule: every measurement of the file goes to the picked position.
+    cleanup();
+    renderStep({ ...dirac, mdat: { ...dirac.mdat, path: "C:/Users/demo/Documents/REW/거실.mdat" } });
+    expect(byUi("measure.mdat.row.4.role")).toBeTruthy();
+    expect((ui("measure.mdat.import") as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("reports the problems the way upstream does", () => {
     const rows = [
       { role: "L", position: 1 },

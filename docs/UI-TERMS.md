@@ -16,7 +16,7 @@
 | 청취 위치 | listening position | 위치 1(기준 위치) |
 | 측정 배치 | measurement arrangement | 위치 수를 고르는 카드. 배치 이름은 청취 위치만 / 의자 하나 / 2–3인 소파 / 소파 두 줄(Main seat / One chair / Sofa for 2–3 / Two rows) |
 | 방 배치도, 측정 배치도 | room map, arrangement map | 스피커 그림, 측정 위치 그림 |
-| 측정 방식 | measurement method | 자체 측정, REW, 모의 측정, mdat 파일만 가져오기. 프로젝트 상태의 같은 칸도 측정 방식 |
+| 측정 방식 | measurement method | 자체 측정, REW, 모의 측정, 측정 파일만 가져오기(REW mdat, Dirac Live 프로젝트). 프로젝트 상태의 같은 칸도 측정 방식 |
 | 자체 측정 | built-in measurement (선택지 라벨은 Built-in) | 측정 방식 |
 | 모의 측정 | simulated measurement (선택지 라벨은 Simulated) | 측정 방식, 튜토리얼 |
 | 샘플레이트가 다른 측정 | Measurements with other sample rates | 보정 설정에서 펼치는 공통 측정 처리 정책 |

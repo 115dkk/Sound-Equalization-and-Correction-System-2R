@@ -29,6 +29,7 @@ crates/
   secs-project/           .secs, 이주, 구성·DSP 프로파일·타겟, 측정 계획, .irs 저장소
   secs-jos/               자바 직렬화 그래프 (바이트 동일 왕복)
   secs-mdat/              REW mdat 읽기·만들기
+  secs-dirac/             Dirac Live .liveproject의 측정 IR 읽기
   secs-export/            보정 단계·전후 REW mdat 내보내기
   secs-rew/               REW API (Real, Fake)
   secs-audio/             자체 측정 (스윕, 세션, 디컨볼루션, 레벨 체크)
@@ -58,6 +59,7 @@ ui ──IPC──> secs2r ─┬─> secs-service ─┬─> secs-engine ─┬
                     │                 ├─> secs-rew ──────> secs-types
                     │                 ├─> secs-audio ────> secs-dsp, secs-types
                     │                 ├─> secs-mdat ─────> secs-jos, secs-dsp
+                    │                 ├─> secs-dirac
                     │                 ├─> secs-export ───> secs-engine, secs-mdat, secs-types
                     │                 ├─> secs-camilla ──> secs-dsp, secs-types
                     │                 └─> secs-filters ──> secs-camilla, secs-dsp, secs-types
@@ -125,7 +127,7 @@ IPC의 기본 동작은 바꾸지 않습니다.
 
 - 화면 결과는 역할·개수·성적표 중심의 요약입니다. FIR 계수와 DSP 사슬은 Rust의 최신 결과와 내부 캐시에 두며, 완료 이벤트와 작업 이력에는 싣지 않습니다. 보정·MIMO 완료 뒤 요약을 한 번 조회하고, 작업 기록은 완료 32개와 모든 활성 작업으로 제한합니다(0009).
 - `secs-service`의 인터페이스는 `call(Request) -> Envelope`와 잡 이벤트입니다. 잡은 종류마다 하나만 동시에 돌고, 취소 토큰이 엔진 안쪽 반복까지 내려갑니다. 결과는 버리지 않고 낡음으로 표시합니다(다시 계산해도 MIMO 결과는 남고 '다시 계산 필요'로 바뀜).
-- 화면은 다섯 단계 레일입니다. 시스템(구성·배선) → 연결·점검(REW 경로 또는 자체 측정 장치, 레벨) → 측정·가져오기 → 보정 → 내보내기. mdat 가져오기 경로를 고르면 연결·점검 단계가 나타나지 않습니다.
+- 화면은 다섯 단계 레일입니다. 시스템(구성·배선) → 연결·점검(REW 경로 또는 자체 측정 장치, 레벨) → 측정·가져오기 → 보정 → 내보내기. 측정 파일(REW mdat, Dirac 프로젝트) 가져오기 경로를 고르면 연결·점검 단계가 나타나지 않습니다.
 - 설정은 주 경로와 해당 절에서 펼치는 세부 항목으로 공개합니다. 전역 전문가 표시나 숙련도별 접근 제한은 두지 않습니다. 로고의 '전문가 모드 / 킹반인 모드'는 외형 선택이며 설정 접근과 무관합니다. 설정마다 정본 위치는 하나입니다(P58).
 - 설정의 라벨·단위·선택지는 설명 없이도 의미를 알 수 있게 씁니다. 정적 보충 설명은 해당 항목의 도움말로 열고, 현재 상태·추천값·오류·사용 불가 사유·다음 행동은 화면에 유지합니다(P55).
 - 앱 안에서 해결할 수 있는 문제는 짧은 상태와 실제 조작 또는 해당 설정으로 이동하는 버튼을 제공합니다. 다른 단계의 위치를 문장으로 안내하지 않습니다. 내부 처리 해명과 자명한 조작 설명은 도움말에 옮겨 쌓지 않고 삭제합니다(P57).
@@ -149,7 +151,7 @@ IPC의 기본 동작은 바꾸지 않습니다.
 | 담당 | 맡는 일 |
 |---|---|
 | Claude | 설계, ADR, 작업서, `secs-types`의 시그니처, 게이트, CI 설계, 디프 검토, 게이트 재실행, 커밋과 PR |
-| ASTRA (`gpt-6-astra`) | 수치와 외부 규격이 드는 구현: `secs-dsp`, `secs-engine`, `secs-gpu`, `secs-jos`, `secs-mdat`, `secs-rew`; 화면 연결(호출 코드와 상태), 번역 카탈로그, 감사와 성능 감사 |
+| ASTRA (`gpt-6-astra`) | 수치와 외부 규격이 드는 구현: `secs-dsp`, `secs-engine`, `secs-gpu`, `secs-jos`, `secs-mdat`, `secs-dirac`, `secs-rew`; 화면 연결(호출 코드와 상태), 번역 카탈로그, 감사와 성능 감사 |
 | Daybreak Blue (`gpt-daybreak-blue`) | `secs-project`, `secs-camilla`, `secs-filters`, `secs-compute`, `secs-service`, `secs2r-cli`, `secs-sys`, 오라클 내보내기 스크립트, CI 보조 스크립트 |
 | Opus 5.5 | 화면 전부: 디자인 토큰, 뷰, 컴포넌트, 레이아웃, 튜토리얼 화면 |
 
