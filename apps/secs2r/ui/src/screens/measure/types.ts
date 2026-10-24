@@ -13,6 +13,7 @@ import type { MdatScanResult } from "../../ipc/bindings/MdatScanResult";
 import type { MeasureConfigResult } from "../../ipc/bindings/MeasureConfigResult";
 import type { MeasurementCurvesResult } from "../../ipc/bindings/MeasurementCurvesResult";
 import type { Notice } from "../../ipc/bindings/Notice";
+import type { PositionRecord } from "../../ipc/bindings/PositionRecord";
 import type { PositionEstimateResult } from "../../ipc/bindings/PositionEstimateResult";
 import type { ProjectInfo } from "../../ipc/bindings/ProjectInfo";
 import type { AxisRangeValue } from "../../ui/plot/AxisRange";
@@ -26,22 +27,8 @@ import type { AxisRangeValue } from "../../ui/plot/AxisRange";
  */
 export type MeasurePath = "measure" | "none" | "import";
 
-/**
- * One measurement position as the list, the source note and 파일 관리 show it.
- * Service gap: no IPC method reports per-position records yet (roles
- * recorded, done, `source` per role, upstream `done_positions()` and
- * `mdat_sources()`); `ProjectInfo.positions` only lists positions with any IR.
- */
-export type PositionRecord = {
-  /** One-based position number. */
-  position: number;
-  /** Every role of the measurement plan is recorded here (upstream `done_positions`). */
-  done: boolean;
-  /** Roles recorded at this position, in plan order. */
-  roles: string[];
-  /** mdat file name per imported role (upstream measurement `source`); roles measured here are absent. */
-  sources: { [role: string]: string };
-};
+/** `measurement_records.records`: per-position roles, completion and sources. */
+export type { PositionRecord } from "../../ipc/bindings/PositionRecord";
 
 /**
  * A sweep length the device can play, with its duration at the device's

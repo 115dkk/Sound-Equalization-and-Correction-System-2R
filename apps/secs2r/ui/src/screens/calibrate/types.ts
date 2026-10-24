@@ -79,16 +79,9 @@ export type CalibrateView = {
   measuring: boolean;
   /** The last of this screen's jobs that failed, until the next one starts. */
   failure: { job: CalibrateJob; error: IpcError } | null;
-  /**
-   * Why the result is stale, when P33 saw the change (service gap: the
-   * summary's `stale` carries no reason); null shows the general sentence.
-   */
+  /** `results.calibration.stale_reason`; null shows the general sentence. */
   staleReason: StaleReason | null;
-  /**
-   * The mode the shown result was computed with: P33 keeps the settings it
-   * started the run with (service gap: `CalibrationSummary` has no mode);
-   * null when unknown (a result restored from the cache).
-   */
+  /** `results.calibration.mode` and `ultra_ms`; null without a calibration result. */
   resultMode: { mode: Mode; ultra_ms: number } | null;
   /** Selection P33 keeps across visits; it decides what `result_curves` asks for. */
   tab: ResultTab;

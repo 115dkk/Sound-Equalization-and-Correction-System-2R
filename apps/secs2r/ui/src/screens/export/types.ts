@@ -33,9 +33,9 @@ export type ExportView = {
   /** `results`: the latest correction and MIMO summaries. */
   results: ResultsSummary;
   /**
-   * `calibration_settings_get`: the mode (and ultra limit) the result was
-   * designed with, and whether MIMO is switched on. The summary does not
-   * carry them (service gap: `CalibrationSummary` should).
+   * Current `calibration_settings_get` mode, ultra limit and MIMO switch.
+   * The computed mode and ultra limit are in `results.calibration.mode`
+   * and `results.calibration.ultra_ms`.
    */
   settings: Pick<CalibrationSettings, "mode" | "ultra_ms" | "mimo_on">;
   /** `project_info().positions.length`: MIMO needs three positions or more. */
