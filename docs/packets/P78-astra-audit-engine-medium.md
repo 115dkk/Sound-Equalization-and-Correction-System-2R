@@ -77,6 +77,33 @@ not change any arithmetic or ordering.
    `mimo/design.rs:372`, `:435`, `mimo/iir.rs:689`. One `pub(crate)` helper
    each; `measurement::onset_index` (a `>=` rule) stays separate. Bit-identical.
    Commit: `refactor(audit): B-3 MIMO의 onset과 대역 경계 도우미를 하나씩으로 모읍니다 (#92 TD-75)`
+8. **TD-96** — `RidgeSweep::new` (`mimo/acceleration.rs:84`) checks the
+   cancel token only before and after the Householder factorisation
+   (`mimo/solve.rs:36`); requests allow 720 taps, so M2's "cancel stops
+   within 1 s" does not hold on large inputs. Check the token once per
+   column of the factorisation (arithmetic order unchanged) and return
+   `Cancelled`. Test: a token cancelled before the call on a large system
+   returns `Cancelled` without finishing; an uncancelled run is
+   bit-identical to before (existing goldens). Commit:
+   `fix(audit): A-86 Householder 분해 중에도 취소를 확인합니다 (#92 TD-96)`
+9. **TD-97** — `secs-dsp/src/fft.rs:18`: the thread-local `realfft`/`rustfft`
+   planners keep every planned length forever, and resampling plans FFTs
+   at source lengths. Keep a small per-thread cache of the most recently
+   used lengths (for example 16 forward and 16 inverse plans, LRU) in front
+   of the planners, rebuilding the planner when the cache evicts, so memory
+   stays bounded while results are unchanged. Test: plan 100 distinct
+   lengths on one thread → the cache holds at most the bound; outputs equal
+   the uncached transform bit for bit. Commit:
+   `fix(audit): A-87 FFT 계획 캐시에 상한을 둡니다 (#92 TD-97)`
+10. **TD-104** — `mimo/iir.rs:953` `validate_request` does not bound
+    `mimo_k_bands`/`mimo_a_bands`, and accepts a gain/Q range so narrow
+    that `:275` `clamp(lb + 1e-6, ub - 1e-6)` gets `min > max` (a panic in
+    `f64::clamp`). Read `bounds()` and where the band counts index, then
+    reject in `validate_request` any tuning whose band counts exceed what
+    the design supports or whose `bounds()` interval is not wider than
+    `2e-6` for some parameter, with `EngineError::Input`. Test: the two
+    boundary tunings → `Input`; the defaults pass. Commit:
+    `fix(audit): A-92 MIMO IIR 조율 값의 범위를 입구에서 검사합니다 (#92 TD-104)`
 
 ## Allowed files
 

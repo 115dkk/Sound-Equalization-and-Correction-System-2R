@@ -10,7 +10,8 @@ comments only — no markup, CSS or layout. Where a screen needs a new view
 field or action, add it to the types and hook; P83 (Opus) draws it.
 
 Read first: `CLAUDE.md`, `TECH_DEBT_AUDIT.md` rows TD-66, TD-67, TD-69,
-TD-71, TD-83, TD-84, TD-85, TD-86, TD-87, and the files they cite.
+TD-71, TD-83, TD-84, TD-85, TD-86, TD-87, TD-101, TD-102, and the files
+they cite.
 
 Method: A items test first (red with the reason, minimum green); B (TD-84)
 keeps every test passing with no new tests and reports before/after counts;
@@ -94,6 +95,20 @@ C items are gated by typecheck, tests and the i18n tests.
    shipped fonts) and the Orbit source revision and SHA-256 in
    `src/fonts/README.md`. Commit:
    `chore(audit): C-12 글꼴 생성 도구 판과 원본 해시를 적습니다 (#92 TD-87)`
+10. **TD-101** (A) — `screens/project/useProjectScreen.ts:20` decides
+    whether to ask about unsaved changes from `project.dirty`, which changes
+    only after an edit's response and the follow-up reload. Opening or
+    closing right after an edit can skip the dialog. Track pending project
+    edit requests in the state layer and have the guard await them (or
+    treat a pending edit as dirty) before deciding. Test: a delayed edit
+    response, then open → the confirm dialog is requested. Commit:
+    `fix(audit): A-90 편집 응답 전에 열거나 닫아도 저장 안 한 변경을 묻습니다 (#92 TD-101)`
+11. **TD-102** (A) — `state/session.ts:233-242` waits for the monitor's
+    completion event with no limit; a lost event blocks the monitor queue
+    and project work. Add a timeout (5 s), after which the session reads
+    `jobs` and reconciles. Test with fake timers: no completion event → the
+    wait ends after the timeout and the next queued action runs. Commit:
+    `fix(audit): A-91 모니터 종료 기다림에 시간 제한을 둡니다 (#92 TD-102)`
 
 ## Gates (foreground; do not end the turn before they finish)
 

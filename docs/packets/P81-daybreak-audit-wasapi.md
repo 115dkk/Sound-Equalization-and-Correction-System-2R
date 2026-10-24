@@ -61,6 +61,15 @@ beyond what is there; keep the existing tests passing.
    per session instead of discarding them (`:719`) — no change to measurement
    behaviour. Commit:
    `chore(audit): C-8 WASAPI 진단 변수를 문서에 적고 trace 오류를 알립니다 (#92 TD-80)`
+5. **TD-99** — `taskbar.rs:26` allocates the `CreateIcon` AND mask as
+   `width * height` bytes, but a monochrome bitmap row is word-aligned:
+   `ceil(width / 16) * 2 * height` bytes. The public check
+   (`lib.rs:56`) allows width 1, where Windows reads past the buffer. Compute
+   the length with a small pure function and use it; no change to the unsafe
+   blocks or their count. Test (runs on Linux if the function is outside the
+   Windows-only module): widths 1, 16, 17, 256 → 2, 2, 4, 32 bytes per row.
+   Commit:
+   `fix(audit): A-88 작업 표시줄 아이콘 AND mask 크기를 규칙대로 셉니다 (#92 TD-99)`
 
 ## Allowed files
 

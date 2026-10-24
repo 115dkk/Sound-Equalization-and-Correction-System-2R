@@ -101,6 +101,35 @@ committed), show the old test still passes and the new one fails, restore.
     success test only where none exists. Gate:
     `python3 .github/scripts/check_feature_tests.py`. Commit:
     `chore(audit): C-1 기능 등록부의 IPC 근거를 동작 테스트로 잇습니다 (#92 TD-41)`
+11. **TD-90** — a tutorial project is created with `path: ""` (the screen
+    sends it, `apps/secs2r/ui/src/App.tsx:196`), so measured IR WAVs and
+    `secs_run_cache.json` land in the app's current directory
+    (`cache.rs:258-260`, `secs-project/src/irs.rs:8-11`). In
+    `session.rs::new`, when `tutorial` is set, ignore the given path and use
+    a private directory `std::env::temp_dir()/secs2r-tutorial-<pid>-<n>/`
+    (`n` from a process-wide counter) with `tutorial.secs` inside; hold it in
+    `OpenProject` through a small guard type whose `Drop` removes the
+    directory (best effort, error ignored), so closing, replacing or opening
+    another project cleans it up. Fix the `ProjectNewParams.tutorial` doc in
+    `secs-types/src/ipc.rs:622` to the real contract (the session cannot be
+    saved or exported; measurements and results live in a temporary folder
+    removed when the session ends) and regenerate bindings. Test
+    (`tests/`): a tutorial project that loads samples and calibrates writes
+    nothing to a fresh current directory (set a temp CWD in a dedicated
+    test binary or assert on the paths the session reports), its folder
+    exists while open and is gone after `project_close`. Commit:
+    `fix(audit): A-81 튜토리얼이 작업 폴더가 아니라 임시 폴더에 씁니다 (#92 TD-90)`
+12. **TD-91** — `measurement.rs::rew_driver_set` (`:902`) and the REW
+    device switch inside `measure_configure` (`:380-400`) change REW's
+    driver and devices even while a measurement-group job sweeps through
+    REW. Reject both with `ErrorCode::JobBusy` (same shape as `jobs.rs:185`)
+    while `jobs.running_in_device_group()` is true for a job other than the
+    level monitor (the screen restarts the monitor itself; add a small
+    `JobRegistry` query that excludes `JobKind::LevelMonitor` rather than
+    changing the existing one). Test: start a blocked fake measurement, call
+    each method → `JobBusy`; with only a level monitor running → accepted.
+    Commit:
+    `fix(audit): A-82 측정 중에는 REW 드라이버와 장치를 바꾸지 않습니다 (#92 TD-91)`
 
 ## Allowed files
 

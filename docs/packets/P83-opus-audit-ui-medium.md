@@ -8,7 +8,7 @@ the gates and re-authors the commits.
 Read first: `CLAUDE.md` (screen rules), `docs/DESIGN.md`, `docs/UI-TERMS.md`,
 `docs/skins/README.md`, ADR 0010 (three skins, one DOM), `docs/ARCHITECTURE.md`
 §7 (P55, P57), `docs/DEVIATIONS.md` F5, `TECH_DEBT_AUDIT.md` rows TD-65,
-TD-67, TD-70, and P82's report. Load the `anthropic-skills:make-interfaces-feel-better`
+TD-67, TD-70, TD-100, and P82's report. Load the `anthropic-skills:make-interfaces-feel-better`
 skill before drawing. Tokens: `styles/tokens.css` and `styles/skins/*`;
 components in `ui/`.
 
@@ -41,6 +41,13 @@ components in `ui/`.
    type `abc` → Enter → popover still open, focus on that field, no
    `onApply`. Commit:
    `fix(audit): A-64 축 범위 입력이 틀리면 적용하지 않고 그 칸으로 갑니다 (#92 TD-70)`
+4. **TD-100** — `ui/maps/RoomMap.tsx:99`: the speaker hit circle is 36 px
+   across (`r=18`), under the 40 px rule. Widen the invisible hit areas to
+   40 px without changing what is drawn (the P65 note in
+   `docs/skins/README.md:51` deferred this; update that note), check the
+   three skins, and make sure neighbouring speakers' hit areas still resolve
+   to the nearer speaker. Test: the hit element's radius is ≥ 20. Commit:
+   `fix(audit): A-89 배치도 스피커 누름 영역을 40px로 넓힙니다 (#92 TD-100)`
 
 ## Gates (foreground; do not end the turn before they finish)
 

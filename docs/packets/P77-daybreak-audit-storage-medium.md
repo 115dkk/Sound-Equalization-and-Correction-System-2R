@@ -97,11 +97,51 @@ C items: compiler and linters are the gate.
     faer's runtime SIMD detection. Gate: `cargo machete` reports nothing
     (`~/.cargo/bin/cargo-machete` is installed). Commit:
     `chore(audit): C-13 의도한 secs-dsp 의존성을 machete 무시 목록에 적습니다 (#92 TD-88)`
+11. **TD-92** (A) — ADR 0004 (file compatibility: unknown keys are kept in
+    order) is broken for nested objects: `store_calibration`
+    (`calibration.rs:77`) replaces the whole `calibration` object, and the
+    `SpeakerConfig`, `DspProfile` and `TargetCurve` conversions drop keys they
+    do not know. First read how upstream saves these objects
+    (`src/secs/project/` and `src/secs/wizard/`) and say in the report whether
+    upstream keeps or drops nested unknown keys. Then, for every object the
+    writer rebuilds from a typed value, merge with the object read from the
+    file: known keys in the writer's order and with the writer's values,
+    followed by the old object's unknown keys in their original order;
+    recurse into nested objects the writer owns; arrays are replaced unless
+    both sides are arrays of objects of the same length (then merge element
+    by element). Keep the merge in one `pub(crate)` helper next to `PyJson`.
+    Tests: a `.secs` whose `calibration`, a speaker entry, the DSP profile
+    and a target curve each carry an unknown nested key keeps them, in
+    order, after open → change a setting → save; every existing golden byte
+    test stays unchanged. If upstream drops them, add the next free number
+    in `docs/DEVIATIONS.md` (file-compatibility section). Commit:
+    `fix(audit): A-83 중첩 객체의 모르는 키를 저장할 때 보존합니다 (#92 TD-92)`
+12. **TD-93** (A) — `irs.rs:132` clamps a declared chunk end to the file
+    length, so a truncated `data` chunk whose remainder is a multiple of the
+    sample size reads as a shorter IR (upstream `session.py:84` does the
+    same). For the `data` chunk only, reject `declared_end > data.len()` with
+    `ProjectError::Wav` naming both lengths; other chunks keep today's
+    handling. Test: a valid IR with its last 8 bytes cut → error; the intact
+    file → unchanged samples. Add a deviation entry to `docs/DEVIATIONS.md`.
+    Commit:
+    `fix(audit): A-84 data 청크가 잘린 IR WAV를 거부합니다 (#92 TD-93)`
+13. **TD-94** (A) — negative delays: the CamillaDSP writer emits a negative
+    `Delay`, the Equalizer APO writer drops it (`secs-filters/src/lib.rs:941`),
+    and chains revived from the cache are not validated. In both writers,
+    reject a non-finite or negative delay before writing anything (an error
+    of the writer's existing error type naming the channel). Also
+    `plan_responses` (`:589`) computes FIR responses on a uniform grid built
+    from `f.len()` rather than on `f`: document that precondition on the
+    function and check it (return the existing error type when `f` is not
+    that grid). Tests: a chain with `Delay { ms: -1.0 }` → both writers
+    fail, no file written; a non-uniform `f` → error; existing goldens
+    unchanged. Commit:
+    `fix(audit): A-85 음수 지연을 두 작성기가 똑같이 거부합니다 (#92 TD-94)`
 
 ## Allowed files
 
 `crates/secs-project/**`, `crates/secs-camilla/**`, `crates/secs-export/**`,
-`crates/secs-filters/**` (only if a shared helper moves), `crates/secs-service/src/**`
+`crates/secs-filters/**`, `crates/secs-service/src/**`
 (call-site replacement), `crates/secs-compute/**`, `crates/secs-types/src/**`
 (only if the helper goes there; then `cargo test -p secs-types` and commit
 any binding change), `crates/secs-dsp/Cargo.toml`, `docs/ARCHITECTURE.md` §3,
