@@ -44,7 +44,7 @@ export const sweepOptions: SweepOption[] = [65536, 131072, 262144, 524288, 10485
   seconds: Math.round((samples / 48000) * 10) / 10,
 }));
 
-const measured = (positions: readonly number[], sources: Record<string, string> = {}): PositionRecord[] =>
+const measured = (positions: readonly number[], sources: Record<string, string> = Object.fromEntries(ROLES.map((role) => [role, "measured"]))): PositionRecord[] =>
   positions.map((position) => ({ position, done: true, roles: [...ROLES], sources: { ...sources } }));
 
 const fromFile = (file: string): Record<string, string> => Object.fromEntries(ROLES.map((role) => [role, file]));
@@ -84,7 +84,7 @@ export const partialView: MeasureView = {
 /** Measuring position 4: seven of thirteen channels recorded. */
 export const measuringView: MeasureView = {
   ...partialView,
-  records: [...measured([1, 2, 3]), { position: 4, done: false, roles: ROLES.slice(0, 7), sources: {} }],
+  records: [...measured([1, 2, 3]), { position: 4, done: false, roles: ROLES.slice(0, 7), sources: Object.fromEntries(ROLES.slice(0, 7).map((role) => [role, "measured"])) }],
   job: { job: 12, kind: "measure", status: "running", position: 4, progress: { stage: "Lb", done: 7, total: 13 } },
 };
 

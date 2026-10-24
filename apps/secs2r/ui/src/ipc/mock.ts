@@ -88,7 +88,7 @@ export function createMockService(options: MockOptions = {}): MockService {
   const rew = clone(fx.rewInfo);
   let levels: LevelsResult = { levels: {}, spl: {} };
   let exportFolder: ExportFolderResult = { folder: "C:/Users/demo/Documents/SECS_export", stored: false };
-  let records: PositionRecord[] = (project?.positions ?? []).map((position) => ({ position, roles: config.speakers.map((s) => s.role), done: true, sources: {} }));
+  let records: PositionRecord[] = (project?.positions ?? []).map((position) => ({ position, roles: config.speakers.map((s) => s.role), done: true, sources: Object.fromEntries(config.speakers.map((s) => [s.role, "measured"])) }));
   let playing: { role: string; master: number; ticks: number } | null = null;
   let subsOnly = false;
   let nextJob = 1;
@@ -146,8 +146,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     const old = records.find((r) => r.position === position);
     const sources = { ...old?.sources };
     for (const role of roles) {
-      if (source) sources[role] = basename(source);
-      else delete sources[role];
+      sources[role] = source ? basename(source) : "measured";
     }
     const merged = [...new Set([...(old?.roles ?? []), ...roles])];
     const record = { position, roles: merged, sources, done: measureConfig.roles.every((role) => merged.includes(role)) };
@@ -161,7 +160,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     dsp = clone(fx.dsp); layout = clone(fx.layout); settings = clone(fx.calibrationSettings); target = clone(fx.target);
     measureConfig = clone(fx.measureConfig); levels = { levels: {}, spl: {} };
     results = clone(fx.noResults); exportFolder = { folder: "C:/Users/demo/Documents/SECS_export", stored: false };
-    records = info.positions.map((position) => ({ position, roles: config.speakers.map((s) => s.role), sources: {}, done: true }));
+    records = info.positions.map((position) => ({ position, roles: config.speakers.map((s) => s.role), sources: Object.fromEntries(config.speakers.map((s) => [s.role, "measured"])), done: true }));
     undos.clear(); subsOnly = false; syncMeasure();
   };
   const dialog = (method: DialogMethod, fallback: string): string | null => {

@@ -60,7 +60,8 @@ export function roleText(t: Translate, role: string): string {
 export function recordSources(record: PositionRecord): string[] {
   const names: string[] = [];
   for (const role of record.roles) {
-    const name = record.sources[role] ?? "";
+    const source = record.sources[role] ?? "";
+    const name = source === "measured" ? "" : source;
     if (!names.includes(name)) names.push(name);
   }
   return names;
