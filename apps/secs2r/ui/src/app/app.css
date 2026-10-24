@@ -14,6 +14,23 @@
   color: var(--text);
 }
 
+/* ── Before the frame: the app settings did not load (TD-29) ───────────── */
+/* The window's own background and one dialog surface in its middle. It is
+   the first thing the window draws, so the surface does not rise in (two
+   classes: the kit's `.ui-dialog` loads after this file). */
+.app-start {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: var(--space-6);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app-start > .app-start__panel {
+  animation: none;
+}
+
 /* ── Rail ──────────────────────────────────────────────────────────────── */
 .app-rail {
   display: flex;

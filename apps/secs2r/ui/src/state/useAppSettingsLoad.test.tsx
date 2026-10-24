@@ -94,3 +94,24 @@ it("stays ready while loaded settings are read again, and when a later read fail
     expect(session.errors.getSnapshot()?.error.code).toBe("project_io");
   } finally { session.dispose(); mock.dispose(); }
 });
+
+it("takes back its own error notice once a retry reads the app settings, and leaves other notices", async () => {
+  const mock = createMockService({ tickMs: 0 });
+  const session = createSession(mock);
+  const wrapper = ({ children }: { children: ReactNode }) => createElement(SessionProvider, { value: session, children });
+  try {
+    const { result } = renderHook(useAppSettingsLoad, { wrapper });
+    mock.failNext("app_settings_get", "project_io", "settings unavailable");
+    await act(() => session.start());
+    mock.failNext("app_settings_get", "internal", "still unavailable");
+    await act(() => result.current.retry());
+    expect(session.errors.getSnapshot()?.error.code).toBe("internal");
+    await act(() => result.current.retry());
+    expect(result.current.state.status).toBe("ready");
+    expect(session.errors.getSnapshot()).toBeNull();
+    mock.failNext("results", "project_io", "another failure");
+    await act(() => session.stores.results.load());
+    await act(() => session.stores.appSettings.load());
+    expect(session.errors.getSnapshot()?.error.detail).toBe("another failure");
+  } finally { session.dispose(); mock.dispose(); }
+});

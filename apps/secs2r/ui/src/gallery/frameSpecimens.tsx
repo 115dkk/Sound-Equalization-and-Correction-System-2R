@@ -7,6 +7,7 @@ import { initialJobs, jobsReducer, type JobsAction, type JobsState } from "../ap
 import { LOGOS, SMALL_LOGOS } from "../app/logo";
 import { useJobs, type JobsApi } from "../app/jobs/useJobs";
 import { ProjectMenu, SettingsButton } from "../app/menus";
+import { SettingsFailed } from "../app/SettingsFailed";
 import { STEP_PRIMARY, type FrameModel, type ProjectSummary, type StepId } from "../app/model";
 import { PrefsScope, usePrefs } from "../app/prefs";
 import { useT } from "../i18n/react";
@@ -352,6 +353,13 @@ export const frameSpecimens: SpecimenDef[] = [
         <MeasureContent />
       </FrameBox>
     ),
+  },
+  {
+    id: "frame.settings-failed",
+    title: "Start · the app settings did not load (outside the frame, before any skin or theme is known)",
+    width: 1280,
+    height: 800,
+    render: () => <SettingsFailed error={ipcError("project_io", "settings.json: permission denied")} busy={false} onRetry={() => {}} />,
   },
   {
     id: "frame.live",

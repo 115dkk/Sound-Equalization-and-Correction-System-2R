@@ -1,6 +1,8 @@
 {
   "app.prerelease": "Pre-release {version}",
   "app.release": "{version}",
+  "app.settings_failed.title": "App settings not loaded",
+  "app.settings_failed.retry": "Try again",
   "frame.rail": "Steps",
   "frame.rail.done": "done",
   "frame.rail.blocked": "blocked",

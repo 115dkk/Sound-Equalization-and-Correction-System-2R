@@ -47,6 +47,7 @@ export function createSession(ipc: Ipc) {
   const errors = createStore<Failure | null>(null);
   const ready = createStore(false);
   let errorId = 0;
+  let appSettingsFailure: number | null = null;
   const report = (error: unknown) => {
     const value = error instanceof IpcFailure ? error.error : { code: "internal" as const, params: {}, retryable: false, detail: String(error) };
     if (value.code !== "project_not_open") errors.set({ id: ++errorId, error: value });
@@ -80,7 +81,15 @@ export function createSession(ipc: Ipc) {
     target: read({ method: "target_get" }), results: read({ method: "results" }),
     resultCurves,
     lines: read({ method: "result_lines" }), subWarnings: read({ method: "sub_warnings" }), rew: read({ method: "rew_info" }),
-    folder: read({ method: "export_folder_get" }), appSettings: read({ method: "app_settings_get" }),
+    folder: read({ method: "export_folder_get" }),
+    // The settings-failed screen retries this read: once it succeeds, the
+    // notice its own earlier failure raised is withdrawn (a newer one stays).
+    appSettings: createResource(async () => {
+      const value = await ipc.request({ method: "app_settings_get" });
+      if (appSettingsFailure !== null && errors.getSnapshot()?.id === appSettingsFailure) errors.set(null);
+      appSettingsFailure = null;
+      return value;
+    }, (error) => { report(error); appSettingsFailure = errors.getSnapshot()?.id ?? null; }),
   };
   function curveParams(): ResultCurvesParams {
     const h = host.getSnapshot();

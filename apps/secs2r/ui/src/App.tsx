@@ -5,16 +5,19 @@ import { JobTray } from "./app/jobs/JobTray";
 import { errorText } from "./app/jobs/jobText";
 import { useJobs } from "./app/jobs/useJobs";
 import { PrefsScope, usePrefs, type Prefs } from "./app/prefs";
+import { SettingsFailed } from "./app/SettingsFailed";
 import { canLeave, type StepId } from "./app/model";
 import type { RecoveryAction } from "./app/StepHeader";
 import { useFrameModel } from "./app/useFrameModel";
 import { pickLocale } from "./i18n";
 import { useT } from "./i18n/react";
+import type { IpcError } from "./ipc/bindings/IpcError";
 import { IpcProvider, type Ipc } from "./ipc/context";
 import { createTauriIpc } from "./ipc/tauri";
 import { createSession } from "./state/session";
 import { SessionProvider, useHost, useResource, useSession } from "./state/react";
 import { useWindowClose } from "./state/closing";
+import { useAppSettingsLoad } from "./state/useAppSettingsLoad";
 import { Button, EmptyState, ErrorNotice } from "./ui";
 import { SystemScreen, systemHeader } from "./screens/system/SystemScreen";
 import { ConnectScreen, connectHeader, micInput } from "./screens/connect/ConnectScreen";
@@ -213,11 +216,27 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
 
 function Preferences({ root, initialPrefs, tutorialStart }: { root: boolean; initialPrefs?: Prefs | undefined; tutorialStart?: string | undefined }) {
   const session = useSession();
-  const settings = useResource("appSettings");
+  const { state, retry } = useAppSettingsLoad();
+  // The failure a retry is reading past: the panel stays (its button busy)
+  // instead of the window going blank while the load state is loading again.
+  const [retrying, setRetrying] = useState<IpcError | null>(null);
   useEffect(() => { void session.start(); return () => session.dispose(); }, [session]);
-  if (!settings) return null;
+  const failed = state.status === "failed" ? state.error : state.status === "loading" ? retrying : null;
+  if (failed) {
+    // No settings yet: the defaults the window has before they arrive. The
+    // keys give the loaded settings a fresh scope instead of these defaults.
+    const defaults: Prefs = initialPrefs ?? { locale: pickLocale(navigator.languages), theme: "system", accent: "default" };
+    return <PrefsScope key="settings-failed" initial={defaults} root={root}>
+      <SettingsFailed error={failed} busy={state.status === "loading"} onRetry={() => {
+        setRetrying(failed);
+        void retry().finally(() => setRetrying(null));
+      }} />
+    </PrefsScope>;
+  }
+  if (state.status !== "ready") return null;
+  const settings = state.value;
   const initial: Prefs = initialPrefs ?? { locale: settings.language === "en" ? "en" : settings.language === "ko" ? "ko" : pickLocale(navigator.languages), theme: settings.theme, icon: settings.icon, skin: settings.skin, accent: "default" };
-  return <PrefsScope initial={initial} root={root} onChange={(prefs) => {
+  return <PrefsScope key="settings" initial={initial} root={root} onChange={(prefs) => {
     const current = session.stores.appSettings.getSnapshot();
     if (!current) return;
     const icon = prefs.icon ?? current.icon;

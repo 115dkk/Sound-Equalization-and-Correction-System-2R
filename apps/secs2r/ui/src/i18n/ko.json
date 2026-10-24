@@ -1,6 +1,8 @@
 {
   "app.prerelease": "사전 출시판 {version}",
   "app.release": "{version}",
+  "app.settings_failed.title": "앱 설정을 읽지 못함",
+  "app.settings_failed.retry": "다시 시도",
   "frame.rail": "단계",
   "frame.rail.done": "완료",
   "frame.rail.blocked": "막힘",
