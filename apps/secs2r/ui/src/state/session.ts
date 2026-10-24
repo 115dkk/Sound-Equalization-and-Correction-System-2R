@@ -16,7 +16,7 @@ import type { MeasureView } from "../screens/measure/types";
 import { createResource, createStore, type Failure } from "./store";
 import { isActiveJob } from "./jobRetention";
 import { createJobTracker, type FinishedJob, type JobRequestContext, type SessionJob } from "./jobTracker";
-import { HOST_TRIGGERS, triggeredBy } from "./triggers";
+import { HOST_TRIGGERS, TRIGGERS, triggeredBy } from "./triggers";
 
 type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "mdat" | "warnings"> & {
   computeLoading: boolean; computeSaving: boolean; computeError: import("../ipc/bindings/IpcError").IpcError | null;
@@ -95,7 +95,10 @@ export function createSession(ipc: Ipc) {
     if (job.kind === "level_monitor" && monitorWanted) monitorJob = job.job;
     if (job.epoch === tracker.epoch && ["calibrate", "mimo", "recommend_xo"].includes(job.kind)) host.set({ failure: null });
   });
+  let pendingProjectEdits = 0;
   const call: RequestFn = async (request) => {
+    const projectEdit = request.method !== "project_save" && (TRIGGERS.project.mutations as readonly string[]).includes(request.method);
+    if (projectEdit) pendingProjectEdits++;
     const methodBefore = stores.measurementSettings.getSnapshot()?.method;
     const pendingStart = tracker.begin(request);
     const edit = request.method === "target_set_points" ? "targetEdit" : request.method === "calibration_settings_edit" && (request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit.kind === "xo" ? "xoEdit" : null;
@@ -149,7 +152,10 @@ export function createSession(ipc: Ipc) {
       if (edit) host.set({ [edit]: "failed" });
       if (!pendingStart || pendingStart.context.epoch === tracker.epoch) report(error);
       throw error;
-    } finally { tracker.settle(pendingStart); }
+    } finally {
+      if (projectEdit) pendingProjectEdits--;
+      tracker.settle(pendingStart);
+    }
   };
   const run = (work: () => Promise<unknown>) => { void work().catch(() => { /* call reports the typed cause once */ }); };
   async function configure(patch: Partial<MeasureConfigureParams>) {
@@ -344,6 +350,7 @@ export function createSession(ipc: Ipc) {
     });
   }
   return { ipc, stores, host, errors, ready, call, run, configure, refreshCurves, ensureSaved, monitor, start, dispose,
+    hasPendingProjectEdits: () => pendingProjectEdits > 0,
     navigate: (current: StepId) => host.set({ current }) };
 }
 export type Session = ReturnType<typeof createSession>;

@@ -8,6 +8,29 @@ import { SessionProvider } from "../../state/react";
 import { useProjectScreen } from "./useProjectScreen";
 
 afterEach(cleanup);
+it.each(["open", "close"] as const)("asks about unsaved changes on %s while an edit response is pending", async (action) => {
+  const mock = createMockService({ tickMs: 0 });
+  let release!: () => void;
+  const delayed = new Promise<void>((resolve) => { release = resolve; });
+  const session = createSession({ ...mock, request: async (request) => {
+    const response = await mock.request(request);
+    if (request.method === "target_set_points") await delayed;
+    return response;
+  } });
+  await session.start();
+  await session.call({ method: "project_save", params: { path: "C:/room.secs" } });
+  const close = vi.fn(async () => {});
+  const hook = renderHook(() => useProjectScreen(close), { wrapper: ({ children }: { children: ReactNode }) => createElement(SessionProvider, { value: session, children }) });
+  const edit = session.call({ method: "target_set_points", params: { points: [[20, 3], [20000, -3]] } });
+  try {
+    expect(session.stores.project.getSnapshot()?.dirty).toBe(false);
+    act(() => action === "open" ? hook.result.current.actions.openRecent("C:/other.secs") : hook.result.current.requestClose());
+    expect(hook.result.current.view.dialog).toMatchObject({ kind: "unsaved", reason: action });
+    expect(mock.calls.some((r) => r.method === "project_open")).toBe(false);
+    expect(close).not.toHaveBeenCalled();
+    await act(async () => { release(); await edit; });
+  } finally { release(); await edit; hook.unmount(); session.dispose(); mock.dispose(); }
+});
 it("keeps jobs on cancelled close and saves before an approved close", async () => {
   const mock = createMockService({ tickMs: 0 });
   const session = createSession(mock);

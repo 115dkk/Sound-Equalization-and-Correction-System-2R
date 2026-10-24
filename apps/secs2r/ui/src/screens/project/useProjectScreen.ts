@@ -18,7 +18,7 @@ export function useProjectScreen(close: () => Promise<void>) {
     });
   };
   const guard = (reason: UnsavedReason, work: () => Promise<void>) => {
-    if (session.stores.project.getSnapshot()?.dirty) {
+    if (session.hasPendingProjectEdits() || session.stores.project.getSnapshot()?.dirty) {
       waiting.current = work;
       show({ kind: "unsaved", reason, fileName: project?.name || null });
     } else perform(work);
