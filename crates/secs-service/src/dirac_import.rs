@@ -10,11 +10,45 @@ use std::path::Path;
 use secs_dirac::{ChannelKind, Limits, LiveProject};
 use secs_project::{MeasurementResult, MeasurementStore};
 use secs_types::role::SUB_ROLES;
+use sha2::{Digest, Sha256};
 
 use crate::mdat_import::{self, Assignment};
 use crate::measure::{MeasureError, MeasurementSettings, plan_for, position_count};
 
 const FILE_LIMIT: u64 = 256 * 1024 * 1024;
+
+fn content_uuid(samples: &[f64], sample_rate: u32, t0_s: f64) -> String {
+    let mut hasher = Sha256::new();
+    for sample in samples {
+        hasher.update((*sample as f32).to_le_bytes());
+    }
+    hasher.update(sample_rate.to_le_bytes());
+    hasher.update(t0_s.to_bits().to_le_bytes());
+    let digest = hasher.finalize();
+    let mut id = [0_u8; 16];
+    id.copy_from_slice(&digest[..16]);
+    id[6] = (id[6] & 0x0f) | 0x50;
+    id[8] = (id[8] & 0x3f) | 0x80;
+    format!(
+        "{:02x}{:02x}{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}-{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+        id[0],
+        id[1],
+        id[2],
+        id[3],
+        id[4],
+        id[5],
+        id[6],
+        id[7],
+        id[8],
+        id[9],
+        id[10],
+        id[11],
+        id[12],
+        id[13],
+        id[14],
+        id[15]
+    )
+}
 
 /// Returns whether the path has the Dirac Live project extension.
 pub fn is_liveproject(path: &Path) -> bool {
@@ -267,17 +301,18 @@ pub fn import(
         let samples = project
             .response((row.position - 1) as usize, row.channel)
             .ok_or_else(|| MeasureError::Input("Dirac measurement row is missing its IR".into()))?;
+        let t0_s = -secs_dirac::NOMINAL_ARRIVAL_S;
         store.record(
             MeasurementResult {
                 role: role.clone(),
                 pos: position,
                 ir: samples.iter().map(|sample| *sample as f32).collect(),
                 sample_rate,
-                t0_s: -secs_dirac::NOMINAL_ARRIVAL_S,
+                t0_s,
                 spl_db: None,
                 spl_offset_db: None,
                 snr_db: None,
-                uuid: None,
+                uuid: Some(content_uuid(samples, project.sample_rate, t0_s)),
                 source: Some(name.clone()),
                 source_info: None,
             },
