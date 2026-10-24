@@ -39,26 +39,43 @@ def listed_tests(terse_list: str) -> set[str]:
     return names
 
 
-def missing(wanted: dict[str, set[str]], listed: dict[str, set[str]]) -> list[str]:
-    return sorted(f"{crate}::{name}" for crate, names in wanted.items()
-                  for name in names if name not in listed.get(crate, set()))
+# These ignored tests run in the named CI job with ``--ignored``.
+IGNORED_CI_TESTS = {
+    "secs-filters::exported_configs_play_as_designed": "eqapo-playback",
+}
+
+
+def missing(wanted: dict[str, set[str]], listed: dict[str, set[str]],
+            ignored: dict[str, set[str]]) -> list[str]:
+    return sorted(
+        f"{crate}::{name}"
+        for crate, names in wanted.items()
+        for name in names
+        if name not in listed.get(crate, set())
+        or (name in ignored.get(crate, set())
+            and f"{crate}::{name}" not in IGNORED_CI_TESTS)
+    )
 
 
 def main() -> int:
     with open("features.toml", "rb") as fh:
         wanted = referenced_tests(tomllib.load(fh))
     listed = {}
+    ignored = {}
     for crate in sorted(wanted):
-        result = subprocess.run(
-            ["cargo", "test", "--locked", "-q", "-p", crate, "--all-targets",
-             "--", "--list", "--format", "terse"],
-            capture_output=True, text=True, encoding="utf-8")
-        if result.returncode != 0:
-            print(result.stderr)
-            print(f"::error::cargo test --list failed for {crate}")
-            return 1
-        listed[crate] = listed_tests(result.stdout)
-    gone = missing(wanted, listed)
+        for ignored_only, destination in ((False, listed), (True, ignored)):
+            command = ["cargo", "test", "--locked", "-q", "-p", crate, "--all-targets",
+                       "--", "--list", "--format", "terse"]
+            if ignored_only:
+                command.append("--ignored")
+            result = subprocess.run(command, capture_output=True, text=True, encoding="utf-8")
+            if result.returncode != 0:
+                print(result.stderr)
+                suffix = " --ignored" if ignored_only else ""
+                print(f"::error::cargo test --list{suffix} failed for {crate}")
+                return 1
+            destination[crate] = listed_tests(result.stdout)
+    gone = missing(wanted, listed, ignored)
     if gone:
         print("::error::features.toml names tests that Cargo does not run:\n" + "\n".join(gone))
         return 1
