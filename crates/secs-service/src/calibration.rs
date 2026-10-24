@@ -24,6 +24,7 @@ pub(crate) struct CalibrationRun {
     pub settings: CalibrationSettings,
     pub signature: String,
     pub target_key: String,
+    pub run_key: String,
     pub design: Arc<Design>,
     pub measurements: MeasurementSet,
     pub config: EngineConfig,
@@ -112,6 +113,12 @@ impl Service {
             }
             let run = CalibrationRun {
                 summary,
+                run_key: run_key(
+                    &prepared.signature,
+                    &prepared.target_key,
+                    &prepared.settings.engine_key(),
+                    "",
+                ),
                 settings: prepared.settings.clone(),
                 signature: prepared.signature,
                 target_key: prepared.target_key,
@@ -193,7 +200,7 @@ impl Service {
                 "MIMO settings do not match the calibration result",
             ));
         }
-        let calibration_key = calibration.settings.engine_key();
+        let calibration_key = calibration.run_key.clone();
         let design = calibration.design.clone();
         let measurements = calibration.measurements.clone();
         let config = calibration.config.clone();
@@ -700,7 +707,7 @@ fn summaries(
             || state
                 .calibration
                 .as_ref()
-                .is_none_or(|run| run.settings.engine_key() != result.calibration_key)
+                .is_none_or(|run| run.run_key != result.calibration_key)
             || calibration_from_project(project).mimo_key() != result.settings_key
             || &result.compute_key != compute_key;
         summary
@@ -711,7 +718,7 @@ fn summaries(
                 let current_mimo_key = calibration_from_project(project).mimo_key();
                 summary.stale = calibration.as_ref().is_none_or(|value| value.stale)
                     || cache.mimo_key.as_deref() != Some(current_mimo_key.as_str())
-                    || cache.mimo_calibration_key.as_deref() != Some(cache.engine_key.as_str())
+                    || cache.mimo_calibration_key.as_deref() != cache.run_key.as_deref()
                     || cache.engine_key != calibration_from_project(project).engine_key()
                     || &cache.mimo_compute_key != compute_key;
                 summary
@@ -742,6 +749,7 @@ fn snapshot_cache(state: &Results) -> Option<crate::cache::CachedResults> {
         measurement_signature: calibration.signature.clone(),
         target_key: calibration.target_key.clone(),
         engine_key: calibration.settings.engine_key(),
+        run_key: Some(calibration.run_key.clone()),
         mimo_key: state
             .mimo
             .as_ref()
@@ -833,6 +841,15 @@ fn stale_reason(
     } else {
         None
     }
+}
+
+pub(crate) fn run_key(
+    signature: &str,
+    target_key: &str,
+    engine_key: &str,
+    config_key: &str,
+) -> String {
+    format!("{signature}\u{1f}{target_key}\u{1f}{engine_key}\u{1f}{config_key}")
 }
 
 pub(crate) fn signature_key(project: &Project) -> String {

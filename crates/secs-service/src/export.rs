@@ -62,7 +62,7 @@ impl Service {
                         secs_project::measured_positions(project).len(),
                         cache.mimo_key.as_deref(),
                         cache.mimo_calibration_key.as_deref(),
-                        &cache.engine_key,
+                        cache.run_key.as_deref(),
                     )
             })
             .and_then(|cache| cache.mimo_paths.as_ref())
@@ -75,7 +75,7 @@ impl Service {
                     calibration.design.spectra.positions.len(),
                     Some(&result.settings_key),
                     Some(&result.calibration_key),
-                    &calibration.settings.engine_key(),
+                    Some(&calibration.run_key),
                 ) && result.compute_key == compute_key
                     && !result.run.paths.paths.is_empty()
             })
@@ -437,13 +437,14 @@ fn mimo_eligible(
     measured_positions: usize,
     mimo_key: Option<&str>,
     mimo_calibration_key: Option<&str>,
-    engine_key: &str,
+    run_key: Option<&str>,
 ) -> bool {
     settings.mimo_on
         && !stale
         && measured_positions >= 3
         && mimo_key == Some(settings.mimo_key().as_str())
-        && mimo_calibration_key == Some(engine_key)
+        && mimo_calibration_key == run_key
+        && run_key.is_some()
 }
 
 fn labels(
@@ -556,7 +557,7 @@ mod tests {
             3,
             Some(&mimo),
             Some(&engine),
-            &engine
+            Some(&engine)
         ));
         for count in [0, 1, 2] {
             assert!(!mimo_eligible(
@@ -565,7 +566,7 @@ mod tests {
                 count,
                 Some(&mimo),
                 Some(&engine),
-                &engine
+                Some(&engine)
             ));
         }
         assert!(!mimo_eligible(
@@ -574,7 +575,7 @@ mod tests {
             3,
             Some(&mimo),
             Some(&engine),
-            &engine
+            Some(&engine)
         ));
         assert!(!mimo_eligible(
             &settings,
@@ -582,7 +583,7 @@ mod tests {
             3,
             None,
             Some(&engine),
-            &engine
+            Some(&engine)
         ));
         assert!(!mimo_eligible(
             &settings,
@@ -590,7 +591,7 @@ mod tests {
             3,
             Some("old"),
             Some(&engine),
-            &engine
+            Some(&engine)
         ));
         assert!(!mimo_eligible(
             &settings,
@@ -598,7 +599,7 @@ mod tests {
             3,
             Some(&mimo),
             Some("old"),
-            &engine
+            Some(&engine)
         ));
         settings.mimo_on = false;
         assert!(!mimo_eligible(
@@ -607,7 +608,7 @@ mod tests {
             3,
             Some(&mimo),
             Some(&engine),
-            &engine
+            Some(&engine)
         ));
     }
 }

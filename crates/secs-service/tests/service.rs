@@ -341,6 +341,73 @@ fn export_and_wait(
     result
 }
 
+fn calibrate_and_run_mimo(service: &Service, settings: &CalibrationSettings) {
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(service, calibration_events.clone(), settings.clone());
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+    let mimo_events = Arc::new(Events::default());
+    let Response::Mimo(started) = call_ok(
+        service,
+        Request::Mimo(MimoParams {
+            settings: Some(settings.clone()),
+        }),
+        mimo_events.clone(),
+    ) else {
+        panic!("MIMO must start");
+    };
+    finished_result(mimo_events.wait(started.job, Duration::from_secs(120)));
+}
+
+fn replace_measurement(service: &Service, role: &str) {
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../oracle/goldens/mdat/build_3_real_48000_bytes.bin");
+    let Response::MdatScan(scan) = call_ok(
+        service,
+        Request::MdatScan(secs_types::ipc::MdatScanParams {
+            path: source.to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("replacement mdat must scan");
+    };
+    let replacement = scan.measurements.first().unwrap();
+    let events = Arc::new(Events::default());
+    let Response::MdatImport(started) = call_ok(
+        service,
+        Request::MdatImport(secs_types::ipc::MdatImportParams {
+            path: source.to_string_lossy().into_owned(),
+            assignments: vec![secs_types::ipc::MdatAssignment {
+                measurement: replacement.title.clone(),
+                role: role.into(),
+                index: Some(replacement.index),
+                position: Some(1),
+            }],
+            position: 1,
+        }),
+        events.clone(),
+    ) else {
+        panic!("replacement mdat import must start");
+    };
+    finished_result(events.wait(started.job, Duration::from_secs(120)));
+}
+
+fn automatic_camilla_has_mimo(service: &Service, root: &Path) -> bool {
+    call_ok(
+        service,
+        Request::ExportFolderSet(secs_types::ipc::ExportFolderSetParams {
+            folder: root.to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    );
+    let result = export_and_wait(
+        service,
+        ExportKind::CamillaDsp,
+        Path::new(""),
+        Arc::new(Events::default()),
+    );
+    result.folder.contains("_MIMO_")
+}
+
 #[test]
 fn bootstrap_reports_version_and_upstream_base() {
     let service = service();
@@ -912,7 +979,7 @@ fn stale_calibration_exports_with_flag_and_cache_survives_reopen() {
         other => panic!("unexpected results response: {other:?}"),
     };
     assert!(!before.stale);
-    let reopened = service();
+    let reopened = Service::new(Deps::default());
     open(&reopened, &path);
     let cached = match call_ok(&reopened, Request::Results, Arc::new(NoEvents)) {
         Response::Results(results) => results.calibration.unwrap(),
@@ -1011,6 +1078,86 @@ fn cancelled_calibration_preserves_previous_results() {
         other => panic!("unexpected results response: {other:?}"),
     };
     assert_eq!(current, previous);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn mimo_becomes_stale_when_recalibration_uses_replaced_measurements() {
+    let root = temp_root("mimo-measurement-stale");
+    fs::create_dir_all(&root).unwrap();
+    let (path, mut settings) = write_case(&root, "room_dba");
+    settings.mimo_on = true;
+    settings.mimo_max_supports = 1;
+    let service = service();
+    open(&service, &path);
+    calibrate_and_run_mimo(&service, &settings);
+
+    replace_measurement(&service, "C");
+    let events = Arc::new(Events::default());
+    let calibration = start_calibration(&service, events.clone(), settings.clone());
+    finished_result(events.wait(calibration, Duration::from_secs(120)));
+
+    assert!(read_results(&service).mimo.unwrap().stale);
+    assert!(!automatic_camilla_has_mimo(
+        &service,
+        &root.join("automatic-live")
+    ));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cached_mimo_becomes_stale_when_recalibration_uses_replaced_measurements() {
+    let root = temp_root("cached-mimo-measurement-stale");
+    fs::create_dir_all(&root).unwrap();
+    let (path, mut settings) = write_case(&root, "room_dba");
+    settings.mimo_on = true;
+    settings.mimo_max_supports = 1;
+    let service = service();
+    open(&service, &path);
+    calibrate_and_run_mimo(&service, &settings);
+
+    replace_measurement(&service, "C");
+    let events = Arc::new(Events::default());
+    let calibration = start_calibration(&service, events.clone(), settings);
+    finished_result(events.wait(calibration, Duration::from_secs(120)));
+
+    let reopened = Service::new(Deps::default());
+    open(&reopened, &path);
+    assert!(read_results(&reopened).mimo.unwrap().stale);
+    assert!(!automatic_camilla_has_mimo(
+        &reopened,
+        &root.join("automatic-cached")
+    ));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn old_cache_without_run_key_keeps_calibration_but_marks_mimo_stale() {
+    let root = temp_root("old-cache-run-key");
+    fs::create_dir_all(&root).unwrap();
+    let (path, mut settings) = write_case(&root, "room_dba");
+    settings.mimo_on = true;
+    settings.mimo_max_supports = 1;
+    let service = service();
+    open(&service, &path);
+    calibrate_and_run_mimo(&service, &settings);
+
+    let cache_path = path.with_extension("irs").join("secs_run_cache.json");
+    let mut cache: serde_json::Value =
+        serde_json::from_slice(&fs::read(&cache_path).unwrap()).unwrap();
+    let results = cache["results"].as_object_mut().unwrap();
+    results.remove("run_key");
+    results.insert("mimo_calibration_key".into(), results["engine_key"].clone());
+    fs::write(&cache_path, serde_json::to_vec(&cache).unwrap()).unwrap();
+
+    let reopened = Service::new(Deps::default());
+    open(&reopened, &path);
+    let results = read_results(&reopened);
+    assert!(!results.calibration.unwrap().stale);
+    assert!(results.mimo.unwrap().stale);
+
     fs::remove_dir_all(root).unwrap();
 }
 

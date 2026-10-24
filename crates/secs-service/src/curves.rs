@@ -75,7 +75,7 @@ fn fresh_mimo<'a>(
     mimo.filter(|m| {
         settings.mimo_on
             && !calibration_stale(run, project)
-            && m.calibration_key == run.settings.engine_key()
+            && m.calibration_key == run.run_key
             && m.settings_key == settings.mimo_key()
     })
 }
