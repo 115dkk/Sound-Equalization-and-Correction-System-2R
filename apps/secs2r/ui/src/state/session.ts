@@ -230,11 +230,22 @@ export function createSession(ipc: Ipc) {
       const stopped = await call({ method: "level_monitor_stop" });
       if (stopped && ["running", "cancel_requested"].includes(stopped.status)
           && !host.getSnapshot().jobs.some((job) => job.job === stopped.job && !["running", "cancel_requested"].includes(job.status))) {
-        await new Promise<void>((resolve) => {
+        const finished = await new Promise<boolean>((resolve) => {
+          const finish = (received: boolean) => { off(); clearTimeout(timer); resolve(received); };
           const off = ipc.events.subscribe((event) => {
-            if (event.event === "finished" && event.job === stopped.job) { off(); resolve(); }
+            if (event.event === "finished" && event.job === stopped.job) finish(true);
           });
+          const timer = setTimeout(() => finish(false), 5000);
         });
+        if (!finished) {
+          const jobs = await call({ method: "jobs" });
+          const current = jobs.find((job) => job.job === stopped.job);
+          if (current && isActiveJob(current.status)) {
+            throw new IpcFailure({ code: "job_busy", params: {}, retryable: true, detail: "Level monitor is still stopping." });
+          }
+          if (current) tracker.finish({ event: "finished", job: current.job, status: current.status, result: null, error: current.error });
+          else host.set({ jobs: host.getSnapshot().jobs.filter((job) => job.job !== stopped.job) });
+        }
       }
     }
     monitoring = false;

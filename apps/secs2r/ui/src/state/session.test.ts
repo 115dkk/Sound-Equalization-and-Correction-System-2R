@@ -95,6 +95,32 @@ it("shares a curve generation between selection and automatic refreshes", async 
 });
 
 describe("level monitor silence", () => {
+  it("reconciles jobs after a lost monitor finish and releases the next queued action after five seconds", async () => {
+    vi.useFakeTimers();
+    const mock = createMockService({ tickMs: 0 });
+    const session = createSession({ ...mock, request: (async (request) => {
+      const value = await mock.request(request);
+      if (request.method === "level_monitor_stop" && value) return { ...(value as import("../ipc/bindings/JobSnapshot").JobSnapshot), status: "cancel_requested", cancellable: true };
+      return value;
+    }) as typeof mock.request, events: { subscribe: (listener) => mock.events.subscribe((event) => {
+      if (event.event !== "finished") listener(event);
+    }) } });
+    try {
+      await session.start(); await session.configure({ method: "mock" }); await session.monitor(true);
+      const id = session.host.getSnapshot().jobs.find((job) => job.kind === "level_monitor")!.job;
+      mock.calls.length = 0;
+      const stopped = session.monitor(false);
+      const next = session.call({ method: "project_open", params: { path: "C:/next.secs" } });
+      await settle();
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(mock.calls.some((call) => call.method === "project_open")).toBe(false);
+      await vi.advanceTimersByTimeAsync(1); await settle();
+      expect(mock.calls.some((call) => call.method === "jobs")).toBe(true);
+      expect(mock.calls.some((call) => call.method === "project_open")).toBe(true);
+      await Promise.all([stopped, next]);
+      expect(session.host.getSnapshot().jobs.some((job) => job.job === id && ["running", "cancel_requested"].includes(job.status))).toBe(false);
+    } finally { session.dispose(); await settle(); mock.dispose(); vi.useRealTimers(); }
+  });
   it("leaves a native or mock monitor alone while it is quiet between plays", async () => {
     vi.useFakeTimers();
     const mock = createMockService({ tickMs: 0 });
