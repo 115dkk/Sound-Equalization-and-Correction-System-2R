@@ -161,28 +161,31 @@ Design (fixed, IPC types change — regenerate bindings with
   `stale_cache`, otherwise `filter_export_block(..)`. The service's
   `start_export` and the CLI use `export_block`.
 - Service: in `start_export`, when there is no live calibration, the cached
-  one is stale and the kind is mdat → return `IpcError` with code
-  `StaleInputs` and message "cached result is stale; recalibrate before mdat
-  export" (defence in depth; the screen blocks first). When fresh, build the
-  `MimoResponses` from the cached MIMO paths after the redesign (the same
-  eligibility as the live path, including the P71 run key).
-- Look for the exhaustive `ExportBlock` match in the UI
-  (`apps/secs2r/ui/src/screens/export/ExportScreen.tsx`, `types.ts`) — the
-  TypeScript build must still compile: add the variant to the TS mirror of
-  the rule (`exportBlock` in `screens/export/types.ts`) returning
-  `"stale_cache"` for mdat kinds when `view.calibration.cached && stale`, and
-  map it to a placeholder text key `export.block.stale_cache` in `ko.json`
-  and `en.json` with the exact Korean text above and the English "These
-  values were measured with an earlier version. Recalibrate to export mdat."
-  Do not add the button or change markup — packet U1 does that.
+  one is stale and the kind is mdat → return the same error the existing
+  blocks use: `ErrorCode::ExportScope` with `params.reason` from
+  `ExportBlock::StaleCache` (see `impl ExportBlock` and how
+  `filter_export_block`'s result becomes an error today) — defence in depth;
+  the screen blocks first. When fresh, build the `MimoResponses` from the
+  cached MIMO paths after the redesign (the same eligibility as the live
+  path, including the P71 run key).
+- UI mirror (the TypeScript build must still compile): in
+  `screens/export/types.ts` `exportBlock` returns `"stale_cache"` for
+  `staged_mdat` and `before_after_mdat` when `result.cached && result.stale`
+  (checked first); in `ExportScreen.tsx` `BLOCK_TEXT` add
+  `staged_mdat: { stale_cache: "export.blocked.mdat.stale_cache" }` and the
+  same for `before_after_mdat`; add the key to `ko.json` with exactly
+  "구 버전에서 측정한 값입니다. mdat으로 내보내려면 다시 보정해야 합니다." and to
+  `en.json` with "These values were measured with an earlier version. Recalibrate to export mdat."
+  Update the UI tests that pin `exportBlock`. Do not add the [재보정] button
+  or change markup — packet U1 does that.
 
 Seam: `Service::call`: (a) calibrate + MIMO, close, reopen (fresh cache) →
 `StagedMdat` export contains the MIMO stage files/curves exactly as the
 pre-close export did (compare to the existing
 `exports_after_reopening_match_pre_close_bytes` pattern); (b) reopen, change
-a setting so the cache is stale → `StagedMdat` returns `StaleInputs`, and
-`Results.calibration.cached == true`; CamillaDSP still exports with
-`stale: true`. Unit test for `export_block`.
+a setting so the cache is stale → `StagedMdat` returns `ExportScope` with
+reason `stale_cache`, and `Results.calibration.cached == true`; CamillaDSP
+still exports with `stale: true`. Unit test for `export_block`.
 
 Commit: `fix(audit): A-11 다시 연 프로젝트의 mdat에 캐시 MIMO를 넣고 낡은 캐시는 막습니다 (#92 TD-09)`
 
