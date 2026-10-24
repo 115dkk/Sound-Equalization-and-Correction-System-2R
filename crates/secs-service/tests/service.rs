@@ -254,7 +254,7 @@ fn open(service: &Service, path: &Path) {
 
 fn start_calibration(
     service: &Service,
-    events: Arc<Events>,
+    events: Arc<dyn EventSink>,
     settings: CalibrationSettings,
 ) -> JobId {
     let Response::Calibrate(started) = call_ok(
@@ -1768,6 +1768,44 @@ impl PausedProgress {
         lock(&self.gate).1 = true;
         self.changed.notify_all();
     }
+}
+
+#[test]
+fn calibration_preserves_settings_edited_while_the_job_runs() {
+    let root = temp_root("settings-race");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room_dba");
+    let service = service();
+    open(&service, &path);
+    let events = Arc::new(PausedProgress::default());
+    let job = start_calibration(&service, events.clone(), settings.clone());
+    events.wait_until_paused();
+
+    call_ok(
+        &service,
+        Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+            edit: secs_types::settings_edit::SettingEdit::RcLo {
+                hz: settings.rc_lo + 5.0,
+            },
+        }),
+        Arc::new(NoEvents),
+    );
+    events.release();
+    finished_result(events.events.wait(job, Duration::from_secs(120)));
+
+    let Response::CalibrationSettingsGet(current) = call_ok(
+        &service,
+        Request::CalibrationSettingsGet,
+        Arc::new(NoEvents),
+    ) else {
+        panic!()
+    };
+    assert_eq!(current.rc_lo, settings.rc_lo + 5.0);
+    let summary = read_results(&service).calibration.unwrap();
+    assert!(summary.stale);
+    assert_eq!(summary.stale_reason.as_deref(), Some("settings"));
+
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

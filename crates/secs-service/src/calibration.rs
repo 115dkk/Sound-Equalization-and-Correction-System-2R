@@ -53,6 +53,7 @@ pub(crate) struct Results {
 pub(crate) struct Prepared {
     pub identity: u64,
     pub project: Project,
+    pub project_settings: CalibrationSettings,
     pub settings: CalibrationSettings,
     pub measurements: MeasurementSet,
     pub config: EngineConfig,
@@ -136,8 +137,10 @@ impl Service {
                 state.calibration = Some(run);
                 state.subs = None;
             }
-            store_calibration(open.store.project_mut(), &prepared.settings);
-            open.dirty = true;
+            if calibration_from_project(open.store.project()) == prepared.project_settings {
+                store_calibration(open.store.project_mut(), &prepared.settings);
+                open.dirty = true;
+            }
             let path = open.path.clone();
             let cached = snapshot_cache(&state);
             drop(state);
@@ -289,7 +292,8 @@ impl Service {
         let mut session = lock(&self.session);
         let open = session.require_mut().map_err(IpcError::from)?;
         let project = open.store.project().clone();
-        let settings = override_settings.unwrap_or_else(|| calibration_from_project(&project));
+        let project_settings = calibration_from_project(&project);
+        let settings = override_settings.unwrap_or_else(|| project_settings.clone());
         let measurements = load_measurements(&mut open.store)?;
         let groups = project_groups(&project);
         let view = ProjectView {
@@ -304,6 +308,7 @@ impl Service {
             target_key: target_key_string(&project),
             config_key: config_key(&project),
             project,
+            project_settings,
             settings,
             measurements: inputs.measurements,
             config: inputs.config,
