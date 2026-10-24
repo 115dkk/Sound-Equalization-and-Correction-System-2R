@@ -25,7 +25,7 @@ const host: TutorialHost = {
   system: { setOutput: noop, renumberOutputs: noop, next: noop },
   connect: { choosePath: noop, skipLevels: noop, next: noop },
   measure: { loadSample: noop, openCalibrate: noop, setGraphHidden: noop },
-  calibrate: { calibrate: noop, calibrateSubs: noop, selectTab: noop, changeSetting: noop }, goTo: noop,
+  calibrate: { calibrate: noop, calibrateSubs: noop, selectTab: noop, changeSetting: async () => true }, goTo: noop,
 };
 function useQuestHost() {
   const state = useHost();

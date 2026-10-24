@@ -57,6 +57,8 @@ export type CalibrateView = {
   modeSpec: ModeSpecResult;
   /** `target_get` (and the reply of every target change). */
   target: TargetResult;
+  targetEdit: "idle" | "saving" | "failed";
+  xoEdit: "idle" | "saving" | "failed";
   /** `config_get`: speakers, subs and groups (XO groups, BA subs). */
   config: ConfigResult;
   /** `project_info.positions`: measured positions. */
@@ -136,11 +138,11 @@ export type CalibrateActions = {
   /** result_curves { tab: "xo", channel, group, xo_hz: hz } while the XO line is dragged; stores nothing */
   previewXo: (group: string, hz: number) => void;
   /** calibration_settings_edit { edit } */
-  changeSetting: (edit: SettingEdit) => void;
+  changeSetting: (edit: SettingEdit) => Promise<boolean>;
   /** sub_take_values */
   takeSubValues: () => void;
   /** target_set_points { points } */
-  setTargetPoints: (points: [number, number][]) => void;
+  setTargetPoints: (points: [number, number][]) => Promise<boolean>;
   /** target_apply_preset { preset } */
   applyTargetPreset: (preset: string) => void;
   /** dialog_save_file { kind: "target", suggested: "타겟.json" }, then target_save { path } */

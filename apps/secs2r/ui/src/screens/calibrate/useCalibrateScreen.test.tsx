@@ -23,6 +23,29 @@ beforeEach(async () => {
 afterEach(async () => { cleanup(); await session.monitor(false); session.dispose(); mock.dispose(); vi.restoreAllMocks(); });
 
 describe("useCalibrateScreen", () => {
+  it("returns failed target and XO edits and exposes saving, failure and retry state", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    const points: [number, number][] = [[20, 4], [20000, -2]];
+    mock.failNext("target_set_points", "project_io");
+    let accepted: unknown;
+    await act(async () => { accepted = await result.current.actions.setTargetPoints(points); });
+    expect(accepted).toBe(false);
+    expect(result.current.view).toMatchObject({ targetEdit: "failed", xoEdit: "idle" });
+    const states: string[] = [];
+    const off = session.host.subscribe(() => states.push(session.host.getSnapshot().targetEdit));
+    await act(async () => { accepted = await result.current.actions.setTargetPoints(points); });
+    off();
+    expect(accepted).toBe(true);
+    expect(states).toContain("saving");
+    expect(result.current.view).toMatchObject({ targetEdit: "idle", target: { points } });
+    mock.failNext("calibration_settings_edit", "project_io");
+    await act(async () => { accepted = await result.current.actions.changeSetting({ kind: "xo", group: "프론트", hz: 90 }); });
+    expect(accepted).toBe(false);
+    expect(result.current.view?.xoEdit).toBe("failed");
+    await act(async () => { accepted = await result.current.actions.changeSetting({ kind: "xo", group: "프론트", hz: 90 }); });
+    expect(accepted).toBe(true);
+    expect(result.current.view?.xoEdit).toBe("idle");
+  });
   it("loads automatic GPU choice, persists manual CPU and refreshes stale provenance", async () => {
     session.dispose(); mock.dispose();
     mock = createMockService({ tickMs: 0, computeStatus: gpuComputeStatus, results: resultsSummary });

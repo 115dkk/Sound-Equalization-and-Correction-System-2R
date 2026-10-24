@@ -22,6 +22,7 @@ export type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRang
   computeLoading: boolean; computeSaving: boolean; computeError: import("../ipc/bindings/IpcError").IpcError | null;
   current: StepId; path: ConnectPath | null;
   tab: CalibrateView["tab"]; channel: string | null; xoGroup: string | null; previewHz: number | null;
+  targetEdit: CalibrateView["targetEdit"]; xoEdit: CalibrateView["xoEdit"];
   jobs: SessionJob[]; jobRequests: Record<number, JobRequestContext>;
   meter: MeterReading | null; monitor: MonitorState; playing: string | null; playingAll: boolean; masterDbfs: number;
   sweepResult: LevelResult | null; sweepRole: string | null;
@@ -35,7 +36,7 @@ export function createSession(ipc: Ipc) {
   const rawHost = createStore<HostState>({
     computeLoading: true, computeSaving: false, computeError: null,
     current: "system", path: null, selected: null, graphHidden: false, plotRange: { x: null, y: null },
-    mdat: null, warnings: [], tab: "spl", channel: null, xoGroup: null, previewHz: null,
+    mdat: null, warnings: [], tab: "spl", channel: null, xoGroup: null, previewHz: null, targetEdit: "idle", xoEdit: "idle",
     jobs: [], jobRequests: {}, meter: null, monitor: "off", playing: null, playingAll: false, masterDbfs: -20,
     sweepResult: null, sweepRole: null, xoRecommendation: null, runs: {}, failure: null,
     rewLaunch: "idle", rewProblem: null, rewProblemDetail: null, readingRew: false, switchingRewDriver: false,
@@ -97,6 +98,8 @@ export function createSession(ipc: Ipc) {
   const call: RequestFn = async (request) => {
     const methodBefore = stores.measurementSettings.getSnapshot()?.method;
     const pendingStart = tracker.begin(request);
+    const edit = request.method === "target_set_points" ? "targetEdit" : request.method === "calibration_settings_edit" && (request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit.kind === "xo" ? "xoEdit" : null;
+    if (edit) host.set({ [edit]: "saving" });
     try {
       // A monitor that cannot be stopped must not keep the next project from opening.
       if (request.method === "project_new" || request.method === "project_open") await monitor(false).catch(() => {});
@@ -140,8 +143,10 @@ export function createSession(ipc: Ipc) {
       if (request.method === "project_new" && (request as Extract<Request, { method: "project_new" }>).params.tutorial) await configure({ method: "mock" });
       // A new project stores "none"; a reopened one keeps its method and devices.
       else if (request.method === "project_new" || request.method === "project_open") await call({ method: "measure_config_get" });
+      if (edit) host.set({ [edit]: "idle" });
       return data;
     } catch (error) {
+      if (edit) host.set({ [edit]: "failed" });
       if (!pendingStart || pendingStart.context.epoch === tracker.epoch) report(error);
       throw error;
     } finally { tracker.settle(pendingStart); }

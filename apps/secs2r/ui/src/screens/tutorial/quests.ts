@@ -82,7 +82,7 @@ export function tutorialQuests(host: TutorialHost): Entry[] {
     look("calibrate.ba_metrics", 400, ["calibrate.ba.metrics", "calibrate.ba.table"], { ...ba, terms: ["gain", "delay", "polarity", "allpass", "dsp"], why: key("calibrate.ba_metrics", "why") }),
     look("calibrate.ba_settings", 408, ["calibrate.ba.subs", "calibrate.ba.edit", "calibrate.ba.editor"], { ...ba, why: key("calibrate.ba_settings", "why"), whyTerms: ["dba"] }),
     act("calibrate.infra", 415, ["calibrate.ba.infra"], (v) => !!infraState(v.calibrate.settings, subs(v)).role,
-      (v) => host.calibrate.changeSetting({ kind: "infra", role: subs(v).at(-1)!, hz: 25, type: "LR24", subs: subs(v) }),
+      (v) => { void host.calibrate.changeSetting({ kind: "infra", role: subs(v).at(-1)!, hz: 25, type: "LR24", subs: subs(v) }); },
       (v) => !twoSubs(v) || computing(v), { ...ba, why: key("calibrate.infra", "why"), whyTerms: ["lp_hp"], keep: ["calibrate.ba.infra_group"] }),
     look("calibrate.ba_filters", 424, ["calibrate.ba.fixed"], { ...ba, terms: ["lp_hp", "peq"] }),
     act("calibrate.subs", 430, ["calibrate.ba.compute_subs"], (v, before) => !!v.calibrate.lines.ba?.subs_only && v.calibrate.lines.ba !== before,

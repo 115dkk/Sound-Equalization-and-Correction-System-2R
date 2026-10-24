@@ -47,12 +47,16 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
       },
       selectXoGroup: (xoGroup) => { session.host.set({ xoGroup, previewHz: null }); refresh(); },
       previewXo: (xoGroup, previewHz) => { session.host.set({ tab: "xo", xoGroup, previewHz }); refresh(); },
-      changeSetting: (edit) => session.run(async () => {
+      changeSetting: async (edit) => {
         session.host.set({ previewHz: null });
-        await session.call({ method: "calibration_settings_edit", params: { edit } });
-      }),
+        try { await session.call({ method: "calibration_settings_edit", params: { edit } }); return true; }
+        catch { return false; }
+      },
       takeSubValues: () => session.run(() => session.call({ method: "sub_take_values" })),
-      setTargetPoints: (points) => session.run(() => session.call({ method: "target_set_points", params: { points } })),
+      setTargetPoints: async (points) => {
+        try { await session.call({ method: "target_set_points", params: { points } }); return true; }
+        catch { return false; }
+      },
       applyTargetPreset: (preset) => session.run(() => session.call({ method: "target_apply_preset", params: { preset } })),
       saveTarget: () => session.run(async () => {
         const path = await session.call({ method: "dialog_save_file", params: { kind: "target", suggested: "타겟.json" } });
@@ -76,7 +80,7 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
     measuredRoles: config.speakers.map((speaker) => speaker.role).filter((role) => measuredRoles.has(role)),
     firBudget: dsp?.fields.fir_budget ?? 0, xoRecommendation: host.xoRecommendation, running,
     measuring: jobs.some((job) => ["measure", "sample_load", "mdat_import"].includes(job.kind)),
-    failure: host.failure,
+    failure: host.failure, targetEdit: host.targetEdit, xoEdit: host.xoEdit,
     staleReason: results.calibration?.stale_reason === "settings" || results.calibration?.stale_reason === "target" || results.calibration?.stale_reason === "measurements" ? results.calibration.stale_reason : null,
     resultMode: results.calibration ? { mode: results.calibration.mode, ultra_ms: results.calibration.ultra_ms } : null,
     tab: host.tab, channel: host.channel, xoGroup: host.xoGroup, subWarnings: subWarnings ?? [],

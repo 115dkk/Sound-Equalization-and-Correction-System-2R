@@ -324,6 +324,7 @@ const base: CalibrateView = {
   settings: baseSettings,
   modeSpec: modeSpecs.mixed,
   target: sampleTarget,
+  targetEdit: "idle", xoEdit: "idle",
   config: sampleConfig,
   positions: [1, 2, 3],
   measuredRoles: [...fx.SAMPLE_ROLES],
