@@ -233,6 +233,14 @@ def _write(path: Path, text: str) -> None:
         fh.write(text)
 
 
+def bump_commit_message(new: str) -> str:
+    """Message of the bump commit. The bump is pushed with the release deploy
+    key, which starts push workflows (the workflow token did not), so the body
+    carries ``[skip ci]``: the bump commit starts neither release.yml nor
+    ci.yml, and the release it belongs to is built by the run that made it."""
+    return f"chore(release): v{new}\n\n[skip ci]"
+
+
 def _commit_bump(old: str, new: str) -> str | None:
     """Commit the bump and push it to main; None when main moved meanwhile."""
     _write(CARGO_TOML, set_workspace_version(_read(CARGO_TOML), new))
@@ -241,10 +249,11 @@ def _commit_bump(old: str, new: str) -> str | None:
     _run("git", "config", "user.email",
          "41898282+github-actions[bot]@users.noreply.github.com")
     _run("git", "add", str(CARGO_TOML), str(CARGO_LOCK))
-    _run("git", "commit", "-m", f"chore(release): v{new}")
-    # A push made with the workflow token starts no workflow, so the bump
-    # commit does not release itself. A rejected push means main moved: the
-    # newer push's run releases this change too, so nothing is rebased here.
+    _run("git", "commit", "-m", bump_commit_message(new))
+    # The push goes over SSH with the release deploy key (the gate's checkout),
+    # which the default branch's "Required checks" ruleset lets through; the
+    # bump commit has no checks of its own. A rejected push means main moved:
+    # the newer push's run releases this change too, so nothing is rebased.
     push = _run("git", "push", "origin", "HEAD:main", check=False)
     if push.returncode == 0:
         return _git("rev-parse", "HEAD")
