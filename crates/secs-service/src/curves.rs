@@ -368,121 +368,128 @@ impl Service {
         let session = lock(&self.session);
         let project = session.require().map_err(IpcError::from)?.store.project();
         let state = lock(&self.results_state);
-        let Some(run) = state.calibration.as_ref() else {
-            return Ok(ResultLinesResult {
-                stale: false,
-                channels: vec![],
-                total_delay_ms: None,
-                notes: vec![],
-                rc: vec![],
-                ba: None,
-            });
-        };
-        let design = &run.design;
-        let mimo = fresh_mimo(run, state.mimo.as_ref(), project);
-        let channels = design
-            .scores
-            .iter()
-            .filter_map(|score| {
-                let main = design.chain.mains.iter().find(|m| m.role == score.role)?;
-                Some(ChannelResultLine {
-                    role: score.role.clone(),
-                    within_1db_pct: [score.before.in1_20, score.after.in1_20],
-                    gd_spread_ms: [score.before.gd_20, score.after.gd_20],
-                    peq_count: main.input_peq.len(),
-                    fir_taps: (main.fir.len() > 1).then_some(main.fir.len()),
-                    xo_hz: main.xo_hz,
-                    mimo_support_count: mimo.map(|m| {
-                        m.run
-                            .paths
-                            .paths
-                            .iter()
-                            .filter(|p| p.input == score.role)
-                            .count()
-                    }),
-                })
-            })
-            .collect();
-        let mut rc = vec![notice(
-            "rc_limit",
-            [
-                ("hz", design.rc_hi.to_string()),
-                ("auto", design.rc_auto.to_string()),
-            ],
-        )];
-        if let Some(hz) = design.schroeder_hz {
-            rc[0].params.insert("schroeder_hz".into(), hz.to_string());
-        }
-        if design.rc_auto {
-            rc.push(match run.settings.room_volume_m3.filter(|v| *v != 0.0) {
-                Some(volume) => notice("rc_room_volume", [("volume_m3", volume.to_string())]),
-                None => notice("rc_no_room_volume", []),
-            });
-            if run.settings.room_volume_m3.is_some_and(|v| v != 0.0)
-                && design.schroeder_hz.is_some_and(|v| v > design.rc_hi + 0.5)
-            {
-                rc.push(notice("rc_auto_cap", [("hz", design.rc_hi.to_string())]));
-            }
-        }
-        let stale = calibration_stale(run, project);
+        let (stale, channels, total_delay_ms, rc) = state.calibration.as_ref().map_or_else(
+            || (false, Vec::new(), None, Vec::new()),
+            |run| {
+                let design = &run.design;
+                let mimo = fresh_mimo(run, state.mimo.as_ref(), project);
+                let channels = design
+                    .scores
+                    .iter()
+                    .filter_map(|score| {
+                        let main = design.chain.mains.iter().find(|m| m.role == score.role)?;
+                        Some(ChannelResultLine {
+                            role: score.role.clone(),
+                            within_1db_pct: [score.before.in1_20, score.after.in1_20],
+                            gd_spread_ms: [score.before.gd_20, score.after.gd_20],
+                            peq_count: main.input_peq.len(),
+                            fir_taps: (main.fir.len() > 1).then_some(main.fir.len()),
+                            xo_hz: main.xo_hz,
+                            mimo_support_count: mimo.map(|m| {
+                                m.run
+                                    .paths
+                                    .paths
+                                    .iter()
+                                    .filter(|p| p.input == score.role)
+                                    .count()
+                            }),
+                        })
+                    })
+                    .collect();
+                let mut rc = vec![notice(
+                    "rc_limit",
+                    [
+                        ("hz", design.rc_hi.to_string()),
+                        ("auto", design.rc_auto.to_string()),
+                    ],
+                )];
+                if let Some(hz) = design.schroeder_hz {
+                    rc[0].params.insert("schroeder_hz".into(), hz.to_string());
+                }
+                if design.rc_auto {
+                    rc.push(match run.settings.room_volume_m3.filter(|v| *v != 0.0) {
+                        Some(volume) => {
+                            notice("rc_room_volume", [("volume_m3", volume.to_string())])
+                        }
+                        None => notice("rc_no_room_volume", []),
+                    });
+                    if run.settings.room_volume_m3.is_some_and(|v| v != 0.0)
+                        && design.schroeder_hz.is_some_and(|v| v > design.rc_hi + 0.5)
+                    {
+                        rc.push(notice("rc_auto_cap", [("hz", design.rc_hi.to_string())]));
+                    }
+                }
+                (
+                    calibration_stale(run, project),
+                    channels,
+                    Some(design.chain.latency_ms),
+                    rc,
+                )
+            },
+        );
         // BA lines come from the last subs-only run while there is one, like
         // the BA curves (`source = sub_run or run`).
-        let ba_run = state.subs.as_ref().unwrap_or(run);
-        let ba_design = &ba_run.design;
-        let ba_stale = calibration_stale(ba_run, project);
-        let ba = sub_combine(ba_design).map(|view| {
-            let warnings = secs_export::sub_filter_warnings(&ba_run.settings, &view.subs)
-                .into_iter()
-                .chain(secs_export::sub_gain_warnings(ba_design))
-                .map(warning)
-                .collect();
-            let mut layouts: Vec<_> = view
-                .layout_info
-                .iter()
-                .map(|(bundle, info)| SubLayoutLine {
-                    bundle: bundle.clone(),
-                    kind: format!("{:?}", info.kind).to_lowercase(),
-                    members: info.members.clone(),
-                    front: info.front.clone(),
-                    rear: info.rear.clone(),
-                    rear_ms: info.rear_ms,
-                    auto_ms: info.auto_ms,
-                    trim_ms: info.trim_ms,
-                    peq: info.peq.clone(),
+        let ba = state
+            .subs
+            .as_ref()
+            .or(state.calibration.as_ref())
+            .and_then(|ba_run| {
+                let ba_design = &ba_run.design;
+                let ba_stale = calibration_stale(ba_run, project);
+                sub_combine(ba_design).map(|view| {
+                    let warnings = secs_export::sub_filter_warnings(&ba_run.settings, &view.subs)
+                        .into_iter()
+                        .chain(secs_export::sub_gain_warnings(ba_design))
+                        .map(warning)
+                        .collect();
+                    let mut layouts: Vec<_> = view
+                        .layout_info
+                        .iter()
+                        .map(|(bundle, info)| SubLayoutLine {
+                            bundle: bundle.clone(),
+                            kind: format!("{:?}", info.kind).to_lowercase(),
+                            members: info.members.clone(),
+                            front: info.front.clone(),
+                            rear: info.rear.clone(),
+                            rear_ms: info.rear_ms,
+                            auto_ms: info.auto_ms,
+                            trim_ms: info.trim_ms,
+                            peq: info.peq.clone(),
+                        })
+                        .collect();
+                    layouts.sort_by(|a, b| a.bundle.cmp(&b.bundle));
+                    SubResultLines {
+                        stale: ba_stale,
+                        subs_only: state.subs.is_some(),
+                        band_hz: [view.band.0, view.band.1],
+                        flatness_db: [view.flat.0, view.flat.1],
+                        seat_spread_db: view.seat.map(|(a, b)| [a, b]),
+                        positions: view.positions,
+                        rows: ba_design
+                            .chain
+                            .subs
+                            .iter()
+                            .map(|s| SubResultRow {
+                                role: s.role.clone(),
+                                mode: s.mode.clone(),
+                                gain_db: s.gain_db,
+                                delay_ms: s.delay_ms,
+                                polarity: s.polarity,
+                                allpass: s.allpass.clone(),
+                                high_pass: (s.hp_hz, s.hp_type.name().into()),
+                                low_pass: (s.lp_hz, s.lp_type.name().into()),
+                                peq: s.peq.clone(),
+                            })
+                            .collect(),
+                        layouts,
+                        warnings,
+                    }
                 })
-                .collect();
-            layouts.sort_by(|a, b| a.bundle.cmp(&b.bundle));
-            SubResultLines {
-                stale: ba_stale,
-                subs_only: state.subs.is_some(),
-                band_hz: [view.band.0, view.band.1],
-                flatness_db: [view.flat.0, view.flat.1],
-                seat_spread_db: view.seat.map(|(a, b)| [a, b]),
-                positions: view.positions,
-                rows: ba_design
-                    .chain
-                    .subs
-                    .iter()
-                    .map(|s| SubResultRow {
-                        role: s.role.clone(),
-                        mode: s.mode.clone(),
-                        gain_db: s.gain_db,
-                        delay_ms: s.delay_ms,
-                        polarity: s.polarity,
-                        allpass: s.allpass.clone(),
-                        high_pass: (s.hp_hz, s.hp_type.name().into()),
-                        low_pass: (s.lp_hz, s.lp_type.name().into()),
-                        peq: s.peq.clone(),
-                    })
-                    .collect(),
-                layouts,
-                warnings,
-            }
-        });
+            });
         Ok(ResultLinesResult {
             stale,
             channels,
-            total_delay_ms: Some(design.chain.latency_ms),
+            total_delay_ms,
             notes: summary.calibration.map_or_else(Vec::new, |s| s.notes),
             rc,
             ba,
