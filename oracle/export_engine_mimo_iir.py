@@ -9,6 +9,7 @@ import os
 import pickle
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -194,6 +195,10 @@ def replay_engine(case):
     return engine
 
 
+def scratch_directory(argument=None):
+    return Path(argument) if argument else Path(tempfile.gettempdir()) / 'secs-oracle-engine_mimo_iir'
+
+
 def main(scratch):
     common.check_libm()
     start = time.perf_counter()
@@ -307,18 +312,21 @@ def finish(fam, jobs, runs, labels, seed_runs=None):
 
 
 if __name__ == '__main__':
-    if sys.argv[1] == '--worker':
+    command = sys.argv[1] if len(sys.argv) > 1 else None
+    if command == '--worker':
         worker(sys.argv[2], sys.argv[3])
-    elif sys.argv[1] == '--finish':
+    elif command == '--finish':
         scratch = Path(sys.argv[2])
         jobs = pickle.loads((scratch / 'mimo_iir_jobs.pkl').read_bytes())
         labels = [l for l in LABELS if l == 'reference' or (scratch / f'mimo_iir_{l}.json').exists()]
         runs = {l: json.loads((scratch / f'mimo_iir_{l}.json').read_text()) for l in labels[1:]}
         seed_runs = {l: json.loads((scratch/f'mimo_iir_{l}.json').read_text()) for l in tuple(f'seed_ulp_{i}' for i in range(8)) if (scratch/f'mimo_iir_{l}.json').exists()}
         finish(common.Family('engine_mimo_iir'), jobs, runs, labels, seed_runs)
-    elif sys.argv[1] == '--seed-spread':
+    elif command == '--seed-spread':
         for label in tuple(f'seed_ulp_{i}' for i in range(8)):
             if not (Path(sys.argv[2])/f'mimo_iir_{label}.json').exists():
                 seed_spread(Path(sys.argv[2])/'mimo_iir_jobs.pkl',label)
     else:
-        main(Path(sys.argv[1]))
+        scratch = scratch_directory(command)
+        scratch.mkdir(parents=True, exist_ok=True)
+        main(scratch)

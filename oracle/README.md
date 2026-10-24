@@ -22,6 +22,9 @@ that differ from the C library in the last bit, and a PEQ fit that stops at its
 evaluation cap amplifies that into a different result; with dispatch off they
 are the C library's, which is also what Rust's `f64` methods call on Linux.
 Every exporter checks this (`common.check_libm`) and refuses to run otherwise.
+`engine_mimo_iir` stores its long-running intermediate files under the system
+temporary directory's `secs-oracle-engine_mimo_iir` folder when launched by
+`run.py`; passing a directory directly to its exporter overrides that location.
 
 An exporter rewrites only files whose bytes changed and refuses to finish when
 its folder holds a file it did not write (delete stale files by hand). Commit
