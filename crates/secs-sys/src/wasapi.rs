@@ -69,6 +69,18 @@ fn validate_shared_channels(requested: u16, mix_channels: u16) -> Result<(), Aud
     Ok(())
 }
 
+/// The HRESULT an endpoint returns when it refuses the format itself.
+const AUDCLNT_E_UNSUPPORTED_FORMAT: u32 = 0x8889_0008;
+
+/// Whether a failing HRESULT is the endpoint refusing the format, as opposed
+/// to the device or the audio service failing (a removed device answers
+/// `AUDCLNT_E_DEVICE_INVALIDATED`, a stopped service
+/// `AUDCLNT_E_SERVICE_NOT_RUNNING`). Probes and opens report only a refusal as
+/// an unsupported format; anything else is an error of the probe or open.
+fn is_format_refusal_hresult(code: i32) -> bool {
+    code as u32 == AUDCLNT_E_UNSUPPORTED_FORMAT
+}
+
 fn validate_frame_aligned(len: usize, channels: u16) -> Result<(), AudioError> {
     if channels == 0 || !len.is_multiple_of(usize::from(channels)) {
         return Err(AudioError::UnsupportedFormat(format!(
@@ -695,7 +707,6 @@ mod windows_backend {
         }
     }
 
-    const AUDCLNT_E_UNSUPPORTED_FORMAT: u32 = 0x8889_0008;
     const TRACE_ENV: &str = "SECS_PA05_TRACE_PREFIX";
     static TRACE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -1072,6 +1083,44 @@ mod windows_backend {
         AudioError::UnsupportedFormat(format!("{context}: {err}"))
     }
 
+    /// The one classification of a failed format query or initialization,
+    /// shared by the probes and the open path: the endpoint refusing the
+    /// format, or (`false`) a failure of the device or the audio service.
+    fn is_format_refusal(error: &wasapi::WasapiError) -> bool {
+        match error {
+            wasapi::WasapiError::Windows(error) => is_format_refusal_hresult(error.code().0),
+            wasapi::WasapiError::UnsupportedFormat => true,
+            _ => false,
+        }
+    }
+
+    #[cfg(test)]
+    mod format_refusal_tests {
+        use super::*;
+
+        fn windows_error(code: u32) -> wasapi::WasapiError {
+            // HRESULT::from_win32 keeps a negative code as it is, so this is
+            // exactly the HRESULT `code`.
+            wasapi::WasapiError::Windows(std::io::Error::from_raw_os_error(code as i32).into())
+        }
+
+        #[test]
+        fn wasapi_errors_are_classified_by_their_hresult() {
+            assert!(is_format_refusal(&windows_error(
+                AUDCLNT_E_UNSUPPORTED_FORMAT
+            )));
+            assert!(is_format_refusal(&wasapi::WasapiError::UnsupportedFormat));
+            for code in [0x8889_0004, 0x8889_0010, 0x8007_000e] {
+                assert!(!is_format_refusal(&windows_error(code)), "{code:#x}");
+            }
+            assert!(!is_format_refusal(&wasapi::WasapiError::EventTimeout));
+            assert!(!is_format_refusal(&wasapi::WasapiError::ClientNotInit));
+            assert!(!is_format_refusal(&wasapi::WasapiError::DeviceNotFound(
+                "gone".into()
+            )));
+        }
+    }
+
     fn wasapi_direction(direction: Direction) -> WasapiDirection {
         match direction {
             Direction::Input => WasapiDirection::Capture,
@@ -1204,12 +1253,7 @@ mod windows_backend {
         let query =
             |format: &WaveFormat| match client.is_supported(format, &WasapiShareMode::Exclusive) {
                 Ok(_) => Ok(true),
-                Err(wasapi::WasapiError::Windows(e))
-                    if e.code().0 as u32 == AUDCLNT_E_UNSUPPORTED_FORMAT =>
-                {
-                    Ok(false)
-                }
-                Err(wasapi::WasapiError::UnsupportedFormat) => Ok(false),
+                Err(e) if is_format_refusal(&e) => Ok(false),
                 Err(e) => Err(backend_error("exclusive format query", e)),
             };
         if query(requested)? {
@@ -1379,16 +1423,12 @@ mod windows_backend {
         trace_stage(trace, "initialize_client", || {
             client
                 .initialize_client(&accepted, &wasapi_direction(direction), &stream_mode)
-                .map_err(|err| match err {
-                    wasapi::WasapiError::Windows(ref e)
-                        if e.code().0 as u32 == AUDCLNT_E_UNSUPPORTED_FORMAT =>
-                    {
+                .map_err(|err| {
+                    if is_format_refusal(&err) {
                         unsupported("WASAPI stream initialization rejected the format", err)
+                    } else {
+                        backend_error("WASAPI stream initialization", err)
                     }
-                    wasapi::WasapiError::UnsupportedFormat => {
-                        unsupported("WASAPI stream initialization rejected the format", err)
-                    }
-                    _ => backend_error("WASAPI stream initialization", err),
                 })
         })?;
         if let Some(trace) = trace {
@@ -1542,12 +1582,21 @@ mod windows_backend {
                                         "shared auto-convert accepted by initialization (IsFormatSupported said: {query_err})"
                                     ),
                                 ),
-                                Err(init_err) => (
+                                Err(init_err) if is_format_refusal(&init_err) => (
                                     false,
                                     format!(
                                         "shared auto-convert rejected: IsFormatSupported {query_err}; Initialize {init_err}"
                                     ),
                                 ),
+                                // A removed device or a stopped audio service
+                                // is the probe's error, as in the exclusive
+                                // search above, not a refused format.
+                                Err(init_err) => {
+                                    return Err(backend_error(
+                                        "shared auto-convert trial initialization",
+                                        init_err,
+                                    ));
+                                }
                             }
                         }
                     }
@@ -2594,6 +2643,25 @@ mod tests {
     fn dst_length_must_be_frame_aligned() {
         assert!(validate_frame_aligned(7, 2).is_err());
         assert!(validate_frame_aligned(8, 2).is_ok());
+    }
+
+    #[test]
+    fn only_an_unsupported_format_hresult_is_a_format_refusal() {
+        let table: [(u32, bool, &str); 10] = [
+            (0x8889_0008, true, "AUDCLNT_E_UNSUPPORTED_FORMAT"),
+            (0x8889_0004, false, "AUDCLNT_E_DEVICE_INVALIDATED"),
+            (0x8889_0010, false, "AUDCLNT_E_SERVICE_NOT_RUNNING"),
+            (0x8889_000a, false, "AUDCLNT_E_DEVICE_IN_USE"),
+            (0x8889_000e, false, "AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED"),
+            (0x8889_000f, false, "AUDCLNT_E_ENDPOINT_CREATE_FAILED"),
+            (0x8889_0019, false, "AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED"),
+            (0x8007_000e, false, "E_OUTOFMEMORY"),
+            (0x8007_0057, false, "E_INVALIDARG"),
+            (0x8000_4003, false, "E_POINTER"),
+        ];
+        for (code, refusal, name) in table {
+            assert_eq!(is_format_refusal_hresult(code as i32), refusal, "{name}");
+        }
     }
 
     struct CancellingSink {
