@@ -255,11 +255,27 @@ pub fn save_ir(
     rate: u32,
 ) -> Result<PathBuf, ProjectError> {
     let path = ir_file(project, role, pos);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+    let directory = ir_directory(project);
+    reject_symlink(&directory)?;
+    if !directory.exists() {
+        fs::create_dir_all(&directory)?;
     }
+    reject_symlink(&directory)?;
+    reject_symlink(&path)?;
     atomic_write(&path, &try_write_wav_float32(samples, rate)?)?;
     Ok(path)
+}
+
+fn reject_symlink(path: &Path) -> Result<(), ProjectError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(ProjectError::Invalid(format!(
+            "IR write path is a symlink: {}",
+            path.display()
+        ))),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 pub fn load_ir(project: &Path, role: &str, pos: i64) -> Result<(Vec<f32>, u32), ProjectError> {
     read_mono_float_wav(&fs::read(ir_file(project, role, pos))?)

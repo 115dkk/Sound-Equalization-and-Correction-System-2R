@@ -530,6 +530,40 @@ fn f5_absolute_parent_and_symlink_escapes_are_rejected_but_in_tree_reads() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn ir_writes_reject_symlinked_store_and_destination_td16() {
+    use std::os::unix::fs::symlink;
+
+    let directory = TempDir::new();
+    let path = directory.0.join("project.secs");
+    let project = Project::from_preset("2.0").unwrap();
+    fs::write(&path, project.save_text()).unwrap();
+    let outside = directory.0.join("outside");
+    fs::create_dir(&outside).unwrap();
+    let outside_wav = outside.join("L_P1.wav");
+    let old = write_wav_float32(&[0.25], 48_000);
+    fs::write(&outside_wav, &old).unwrap();
+    symlink(&outside, path.with_extension("irs")).unwrap();
+
+    let mut store = MeasurementStore::new(&path, project.clone());
+    let error = store
+        .record(result("L", 1, "linked-store"), None)
+        .unwrap_err();
+    assert!(error.to_string().contains("symlink"));
+    assert_eq!(fs::read(&outside_wav).unwrap(), old);
+
+    fs::remove_file(path.with_extension("irs")).unwrap();
+    fs::create_dir(path.with_extension("irs")).unwrap();
+    symlink(&outside_wav, path.with_extension("irs").join("L_P1.wav")).unwrap();
+    let mut store = MeasurementStore::new(&path, project);
+    let error = store
+        .record(result("L", 1, "linked-destination"), None)
+        .unwrap_err();
+    assert!(error.to_string().contains("symlink"));
+    assert_eq!(fs::read(&outside_wav).unwrap(), old);
+}
+
 #[test]
 fn ir_cache_rereads_changed_file_and_evicts_to_cap() {
     let directory = TempDir::new();
