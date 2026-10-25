@@ -266,25 +266,68 @@ pub fn scan(path: &Path, roles: &[String]) -> Result<DiracScan, MeasureError> {
     Ok(scan_project(&load(path)?, roles))
 }
 
+/// A Dirac project parsed and classified once, without the open store, so
+/// the session lock is needed only for [`record_import`] (TD-37).
+#[derive(Debug)]
+pub(crate) struct ScannedImport {
+    project: LiveProject,
+    rows: Vec<DiracRow>,
+    name: String,
+}
+
+impl ScannedImport {
+    pub(crate) fn titles(&self) -> Vec<String> {
+        self.rows.iter().map(|row| row.title.clone()).collect()
+    }
+}
+
+/// Parses `path` and classifies its rows for `roles`.
+pub(crate) fn scan_for_import(
+    path: &Path,
+    roles: &[String],
+) -> Result<ScannedImport, MeasureError> {
+    let project = load(path)?;
+    let rows = scan_project(&project, roles).rows;
+    let name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    Ok(ScannedImport {
+        project,
+        rows,
+        name,
+    })
+}
+
 pub fn import(
     store: &mut MeasurementStore,
     path: &Path,
     assignments: &[Assignment],
 ) -> Result<usize, MeasureError> {
-    let project = load(path)?;
     let plan = plan_for(store.project(), &MeasurementSettings::default());
-    let rows = scan_project(&project, &plan.roles).rows;
+    let scanned = scan_for_import(path, &plan.roles)?;
+    record_import(store, &scanned, assignments)
+}
+
+/// Records the assigned rows into the open store.
+pub(crate) fn record_import(
+    store: &mut MeasurementStore,
+    scanned: &ScannedImport,
+    assignments: &[Assignment],
+) -> Result<usize, MeasureError> {
+    let ScannedImport {
+        project,
+        rows,
+        name,
+    } = scanned;
+    let plan = plan_for(store.project(), &MeasurementSettings::default());
     if assignments.len() != rows.len() {
         return Err(MeasureError::Input(
             "assignment count does not match Dirac measurement rows".into(),
         ));
     }
     let position_count = position_count(store.project());
-    let name = path
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned();
     let sample_rate = crate::measure::positive(i64::from(project.sample_rate), "sample rate")?;
     let mut used = BTreeSet::new();
     let mut saved = 0;
@@ -318,7 +361,7 @@ pub fn import(
             },
             Some(&plan.roles),
         )?;
-        mdat_import::record_source(store, position, role, &name);
+        mdat_import::record_source(store, position, role, name);
         store.save()?;
         saved += 1;
     }

@@ -1,9 +1,12 @@
 //! Port of wizard/step5_measure.py and mdat_loader.py (SECS 2, GPL-3.0-only).
 use crate::measure::json::JsonExt;
 use crate::measure::{MeasureError, MeasurementSettings, plan_for, position_count};
-use secs_project::{MeasurementResult, MeasurementStore, PyJson};
+use secs_project::{MeasurementResult, MeasurementStore, Project, PyJson};
 use secs_types::role::{ROLES, role_code, role_from_title};
-use std::{collections::BTreeSet, path::Path};
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 
 pub fn split_position(title: &str) -> (String, i64) {
     let text = title.trim();
@@ -376,16 +379,34 @@ pub struct Assignment {
     pub role: Option<String>,
     pub position: Option<i64>,
 }
-pub fn import(
-    store: &mut MeasurementStore,
+/// An mdat file parsed and classified once, without the open store, so the
+/// session lock is needed only for [`record_import`] (TD-37).
+#[derive(Debug)]
+pub(crate) struct ScannedImport {
+    loaded: secs_mdat::LoadedMdatProject,
+    scan: MdatScan,
+    name: String,
+}
+
+impl ScannedImport {
+    pub(crate) fn titles(&self) -> Vec<String> {
+        self.scan
+            .measurements
+            .iter()
+            .map(|m| m.info.title.clone())
+            .collect()
+    }
+}
+
+/// Parses `path` and classifies its rows for `project`.
+pub(crate) fn scan_for_import(
     path: &Path,
-    assignment: Option<&[Assignment]>,
+    project: &Project,
     position: Option<i64>,
-) -> Result<usize, MeasureError> {
+) -> Result<ScannedImport, MeasureError> {
     let loaded = load(path)?;
-    let plan = plan_for(store.project(), &MeasurementSettings::default());
-    let count = position_count(store.project());
-    let current = store
+    let plan = plan_for(project, &MeasurementSettings::default());
+    let current = MeasurementStore::new(PathBuf::new(), project.clone())
         .pending_positions(&plan.positions, &plan.roles)
         .first()
         .copied()
@@ -396,6 +417,28 @@ pub fn import(
         .unwrap_or_default()
         .to_string_lossy()
         .into_owned();
+    Ok(ScannedImport { loaded, scan, name })
+}
+
+pub fn import(
+    store: &mut MeasurementStore,
+    path: &Path,
+    assignment: Option<&[Assignment]>,
+    position: Option<i64>,
+) -> Result<usize, MeasureError> {
+    let scanned = scan_for_import(path, store.project(), position)?;
+    record_import(store, &scanned, assignment)
+}
+
+/// Records the scanned rows into the open store.
+pub(crate) fn record_import(
+    store: &mut MeasurementStore,
+    scanned: &ScannedImport,
+    assignment: Option<&[Assignment]>,
+) -> Result<usize, MeasureError> {
+    let ScannedImport { loaded, scan, name } = scanned;
+    let plan = plan_for(store.project(), &MeasurementSettings::default());
+    let count = position_count(store.project());
     let mut used = BTreeSet::new();
     let mut saved = 0;
     for (i, m) in scan.measurements.iter().enumerate() {
@@ -433,7 +476,7 @@ pub fn import(
             },
             Some(&plan.roles),
         )?;
-        record_source(store, pos, role, &name);
+        record_source(store, pos, role, name);
         store.save()?;
         saved += 1;
     }

@@ -1035,23 +1035,28 @@ impl Service {
         };
         let session = self.session.clone();
         self.jobs.start(JobKind::MdatImport, events, move |ctx| {
+            // Parse and classify once here, without the session lock; the
+            // lock is held only for the record loop below (TD-37).
+            enum Scanned {
+                Dirac(dirac_import::ScannedImport),
+                Mdat(mdat_import::ScannedImport),
+            }
             let path = Path::new(&params.path);
             let plan = plan_for(&project, &Default::default());
-            let liveproject = dirac_import::is_liveproject(path);
-            let titles = if liveproject {
-                dirac_import::scan(path, &plan.roles)
-                    .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto, None))?
-                    .rows
-                    .into_iter()
-                    .map(|row| row.title)
-                    .collect::<Vec<_>>()
+            let path_error = |e| measure_error(e, "path", secs_audio::SharePreference::Auto, None);
+            let scanned = if dirac_import::is_liveproject(path) {
+                Scanned::Dirac(
+                    dirac_import::scan_for_import(path, &plan.roles).map_err(path_error)?,
+                )
             } else {
-                mdat_import::scan(path)
-                    .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto, None))?
-                    .measurements
-                    .into_iter()
-                    .map(|measurement| measurement.info.title)
-                    .collect::<Vec<_>>()
+                Scanned::Mdat(
+                    mdat_import::scan_for_import(path, &project, Some(params.position))
+                        .map_err(path_error)?,
+                )
+            };
+            let titles = match &scanned {
+                Scanned::Dirac(scanned) => scanned.titles(),
+                Scanned::Mdat(scanned) => scanned.titles(),
             };
             let mut assignments = vec![
                 mdat_import::Assignment {
@@ -1117,17 +1122,15 @@ impl Service {
                 ));
             }
             ctx.begin_commit()?;
-            let count = if liveproject {
-                dirac_import::import(&mut open.store, path, &assignments)
-            } else {
-                mdat_import::import(
-                    &mut open.store,
-                    path,
-                    Some(&assignments),
-                    Some(params.position),
-                )
+            let count = match &scanned {
+                Scanned::Dirac(scanned) => {
+                    dirac_import::record_import(&mut open.store, scanned, &assignments)
+                }
+                Scanned::Mdat(scanned) => {
+                    mdat_import::record_import(&mut open.store, scanned, Some(&assignments))
+                }
             }
-            .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto, None))?;
+            .map_err(path_error)?;
             open.dirty = false;
             let info = session::info(open);
             drop(session);

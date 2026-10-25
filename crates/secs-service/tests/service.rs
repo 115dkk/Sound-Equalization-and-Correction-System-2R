@@ -63,16 +63,23 @@ impl EventSink for Events {
 
 impl Events {
     fn wait(&self, job: JobId, timeout: Duration) -> JobEvent {
+        self.try_wait(job, timeout)
+            .unwrap_or_else(|| panic!("job {job:?} did not finish"))
+    }
+
+    fn try_wait(&self, job: JobId, timeout: Duration) -> Option<JobEvent> {
         let deadline = Instant::now() + timeout;
         let mut values = lock(&self.values);
         loop {
             if let Some(event) = values.iter().find(|event| {
                 matches!(event, JobEvent::Finished { job: event_job, .. } if *event_job == job)
             }) {
-                return event.clone();
+                return Some(event.clone());
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
-            assert!(!remaining.is_zero(), "job {job:?} did not finish");
+            if remaining.is_zero() {
+                return None;
+            }
             values = self.changed.wait_timeout(values, remaining).unwrap().0;
         }
     }
@@ -2347,5 +2354,209 @@ fn save_as_into_a_folder_that_does_not_exist_yet_carries_the_measurements() {
         fs::read(target.with_extension("irs").join("marker")).unwrap(),
         b"source"
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A file swapped for a named pipe: whoever reads it waits until
+/// [`Fifo::release`] hands over the original bytes, once per call.
+#[cfg(unix)]
+struct Fifo {
+    path: PathBuf,
+    bytes: Vec<u8>,
+}
+
+#[cfg(unix)]
+impl Fifo {
+    fn replace(path: &Path) -> Self {
+        let bytes = fs::read(path).unwrap();
+        fs::remove_file(path).unwrap();
+        Self::create(path, bytes)
+    }
+
+    fn create(path: &Path, bytes: Vec<u8>) -> Self {
+        let made = std::process::Command::new("mkfifo")
+            .arg(path)
+            .status()
+            .unwrap();
+        assert!(made.success(), "mkfifo failed");
+        Self {
+            path: path.to_owned(),
+            bytes,
+        }
+    }
+
+    fn release(&self) -> std::thread::JoinHandle<()> {
+        let (path, bytes) = (self.path.clone(), self.bytes.clone());
+        std::thread::spawn(move || fs::write(path, bytes).unwrap())
+    }
+}
+
+#[cfg(unix)]
+fn call_within(service: &Arc<Service>, request: Request, timeout: Duration) -> Option<Envelope> {
+    call_with_events(service, request, Arc::new(NoEvents), timeout)
+}
+
+#[cfg(unix)]
+fn call_with_events(
+    service: &Arc<Service>,
+    request: Request,
+    events: Arc<dyn EventSink>,
+    timeout: Duration,
+) -> Option<Envelope> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let service = service.clone();
+    std::thread::spawn(move || {
+        let _ = sender.send(service.call(request, events));
+    });
+    receiver.recv_timeout(timeout).ok()
+}
+
+#[cfg(unix)]
+#[test]
+fn calibration_reads_measurements_inside_its_job_outside_the_session_lock() {
+    let root = temp_root("load-outside-lock");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "dolby");
+    let mut wavs: Vec<_> = fs::read_dir(path.with_extension("irs"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "wav"))
+        .collect();
+    wavs.sort();
+    let fifo = Fifo::replace(&wavs[wavs.len() / 2]);
+    let service = Arc::new(service());
+    open(&service, &path);
+
+    let events = Arc::new(Events::default());
+    let calibrate = Request::Calibrate(CalibrateParams {
+        settings: Some(settings),
+        ..Default::default()
+    });
+    let started =
+        match call_with_events(&service, calibrate, events.clone(), Duration::from_secs(10)) {
+            Some(Envelope::Ok(response)) => {
+                let Response::Calibrate(started) = *response else {
+                    panic!()
+                };
+                started
+            }
+            Some(Envelope::Err(error)) => panic!("{error:?}"),
+            None => {
+                fifo.release();
+                panic!("calibrate read the measurements before it started a job");
+            }
+        };
+    // The job now waits on the pipe. The session stays free and the compute
+    // group is busy, so a second request is refused without reading a WAV.
+    assert!(
+        matches!(
+            call_within(&service, Request::ProjectInfo, Duration::from_secs(5)),
+            Some(Envelope::Ok(_))
+        ),
+        "project_info waited for the measurement load"
+    );
+    for request in [
+        Request::Calibrate(CalibrateParams::default()),
+        Request::RecommendXo,
+    ] {
+        let method = request.method();
+        match call_within(&service, request, Duration::from_secs(5)) {
+            Some(Envelope::Err(error)) => assert_eq!(error.code, ErrorCode::JobBusy, "{method}"),
+            other => {
+                fifo.release();
+                panic!("{method} must be refused at once: {other:?}");
+            }
+        }
+    }
+    let Response::Jobs(jobs) = call_ok(&service, Request::Jobs, Arc::new(NoEvents)) else {
+        panic!()
+    };
+    let job = jobs.iter().find(|job| job.job == started.job).unwrap();
+    assert_eq!(job.status, JobStatus::Running);
+    assert!(job.cancellable);
+    call_ok(
+        &service,
+        Request::JobCancel(JobCancelParams { job: started.job }),
+        Arc::new(NoEvents),
+    );
+    // Hand the bytes over in case the job already waits on the pipe. A job
+    // cancelled before it reaches the pipe never opens it, so the writer is
+    // left waiting rather than joined.
+    fifo.release();
+    let finished = events.wait(started.job, Duration::from_secs(60));
+    assert!(
+        matches!(
+            finished,
+            JobEvent::Finished {
+                status: JobStatus::Cancelled,
+                ..
+            }
+        ),
+        "{finished:?}"
+    );
+    assert!(read_results(&service).calibration.is_none());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn mdat_import_reads_the_file_once_before_taking_the_session_lock() {
+    let root = temp_root("import-once");
+    fs::create_dir_all(&root).unwrap();
+    let service = Arc::new(service());
+    call_ok(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: root.join("room.secs").to_string_lossy().into_owned(),
+            preset: "7.1.4".into(),
+            sub_count: 1,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    let golden = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../oracle/goldens/mdat/build_3_real_48000_bytes.bin");
+    let Response::MdatScan(scan) = call_ok(
+        &service,
+        Request::MdatScan(secs_types::ipc::MdatScanParams {
+            path: golden.to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!()
+    };
+    let fifo = Fifo::create(&root.join("room.mdat"), fs::read(&golden).unwrap());
+    let events = Arc::new(Events::default());
+    let Response::MdatImport(started) = call_ok(
+        &service,
+        Request::MdatImport(secs_types::ipc::MdatImportParams {
+            path: fifo.path.to_string_lossy().into_owned(),
+            assignments: scan.suggestions,
+            position: 1,
+        }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    assert!(
+        matches!(
+            call_within(&service, Request::ProjectInfo, Duration::from_secs(5)),
+            Some(Envelope::Ok(_))
+        ),
+        "project_info waited for the mdat parse"
+    );
+    let writer = fifo.release();
+    let Some(finished) = events.try_wait(started.job, Duration::from_secs(30)) else {
+        fifo.release();
+        panic!("mdat import read the file a second time");
+    };
+    finished_result(finished);
+    writer.join().unwrap();
+    let Response::ProjectInfo(info) = call_ok(&service, Request::ProjectInfo, Arc::new(NoEvents))
+    else {
+        panic!()
+    };
+    assert_eq!(info.positions, [1]);
     fs::remove_dir_all(root).unwrap();
 }

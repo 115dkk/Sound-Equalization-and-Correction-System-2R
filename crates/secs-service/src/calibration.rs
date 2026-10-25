@@ -49,6 +49,17 @@ pub(crate) struct Results {
     pub subs: Option<CalibrationRun>,
 }
 
+/// What loading the measurements needs, taken under the session lock
+/// without reading any WAV (TD-37).
+#[derive(Debug)]
+pub(crate) struct Snapshot {
+    identity: u64,
+    path: std::path::PathBuf,
+    project: Project,
+    project_settings: CalibrationSettings,
+    settings: CalibrationSettings,
+}
+
 #[derive(Debug)]
 pub(crate) struct Prepared {
     pub identity: u64,
@@ -69,14 +80,14 @@ impl Service {
         params: CalibrateParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let prepared = self.prepare(params.settings)?;
+        let snapshot = self.snapshot(params.settings)?;
         let subs_only = params.subs_only;
         let results = self.results_state.clone();
         let session = self.session.clone();
         let memory = self.deps.memory.available_bytes();
         self.jobs.start(JobKind::Calibrate, events, move |job| {
+            let mut prepared = snapshot.load(&job)?;
             let ctx = compute_context(&job, memory);
-            let mut prepared = prepared;
             let resampled_count = prepared
                 .measurements
                 .positions
@@ -151,10 +162,11 @@ impl Service {
     }
 
     pub(crate) fn start_xo(&self, events: Arc<dyn EventSink>) -> Result<JobStarted, IpcError> {
-        let prepared = self.prepare(None)?;
+        let snapshot = self.snapshot(None)?;
         let memory = self.deps.memory.available_bytes();
         let session = self.session.clone();
         self.jobs.start(JobKind::RecommendXo, events, move |job| {
+            let prepared = snapshot.load(&job)?;
             let groups = project_groups(&prepared.project);
             let view = ProjectView {
                 groups: &groups,
@@ -301,31 +313,50 @@ impl Service {
         )
     }
 
-    pub(crate) fn prepare(
+    /// Holds the session lock only to copy the project; the WAVs are read by
+    /// [`Snapshot::load`] inside the job, so a busy group answers `JobBusy`
+    /// before any file is read and other requests do not wait (TD-37).
+    pub(crate) fn snapshot(
         &self,
         override_settings: Option<CalibrationSettings>,
-    ) -> Result<Prepared, IpcError> {
-        let mut session = lock(&self.session);
-        let open = session.require_mut().map_err(IpcError::from)?;
+    ) -> Result<Snapshot, IpcError> {
+        let session = lock(&self.session);
+        let open = session.require().map_err(IpcError::from)?;
         let project = open.store.project().clone();
         let project_settings = calibration_from_project(&project);
         let settings = override_settings.unwrap_or_else(|| project_settings.clone());
-        let measurements = load_measurements(&mut open.store)?;
+        Ok(Snapshot {
+            identity: open.identity,
+            path: open.path.clone(),
+            project,
+            project_settings,
+            settings,
+        })
+    }
+}
+
+impl Snapshot {
+    /// Reads every IR of the snapshot without the session lock, checking for
+    /// cancellation between files. The commit re-checks the project identity.
+    pub(crate) fn load(self, job: &JobContext) -> Result<Prepared, IpcError> {
+        let mut store = secs_project::MeasurementStore::new(&self.path, self.project.clone());
+        let measurements = load_measurements_cancellable(&mut store, job.cancel())?;
+        let project = self.project;
         let groups = project_groups(&project);
         let view = ProjectView {
             groups: &groups,
             project_xo: &project.xo,
             target: &project.target,
         };
-        let inputs = engine_inputs(&view, &measurements, &settings).map_err(engine_error)?;
+        let inputs = engine_inputs(&view, &measurements, &self.settings).map_err(engine_error)?;
         Ok(Prepared {
-            identity: open.identity,
+            identity: self.identity,
             signature: signature_key(&project),
             target_key: target_key_string(&project),
             config_key: config_key(&project),
             project,
-            project_settings,
-            settings,
+            project_settings: self.project_settings,
+            settings: self.settings,
             measurements: inputs.measurements,
             config: inputs.config,
             notes: inputs.notes,
@@ -363,6 +394,13 @@ pub(crate) fn project_groups(project: &Project) -> Vec<(String, Vec<String>)> {
 pub(crate) fn load_measurements(
     store: &mut secs_project::MeasurementStore,
 ) -> Result<MeasurementSet, IpcError> {
+    load_measurements_cancellable(store, &secs_compute::CancelToken::new())
+}
+
+fn load_measurements_cancellable(
+    store: &mut secs_project::MeasurementStore,
+    cancel: &secs_compute::CancelToken,
+) -> Result<MeasurementSet, IpcError> {
     let mut positions = Vec::new();
     for record in store.records() {
         if record.pos < 0 {
@@ -370,6 +408,9 @@ pub(crate) fn load_measurements(
         }
         let mut roles = Vec::new();
         for role in record.ir.keys() {
+            if cancel.is_cancelled() {
+                return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
+            }
             let (samples, sample_rate) = store
                 .ir_of(role, record.pos)
                 .map_err(crate::ServiceError::from)?;
@@ -385,6 +426,9 @@ pub(crate) fn load_measurements(
         if !roles.is_empty() {
             positions.push((record.pos as u32, roles));
         }
+    }
+    if cancel.is_cancelled() {
+        return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
     }
     positions.sort_by_key(|(position, _)| *position);
     Ok(MeasurementSet { positions })
