@@ -11,7 +11,10 @@ use secs_dsp::{
 };
 
 use crate::{
-    C, Design, EngineError, Note, Spectra, decay, grid::design_freqs, measurement::delay_response,
+    C, Design, EngineError, Note, Spectra,
+    decay::{self, onset},
+    grid::design_freqs,
+    measurement::delay_response,
 };
 
 const FS_LOW: f64 = 600.0;
@@ -212,11 +215,6 @@ pub fn support_path(
         .collect())
 }
 
-fn onset(x: &[f64]) -> usize {
-    let top = x.iter().map(|v| v.abs()).fold(0.0, f64::max);
-    x.iter().position(|v| v.abs() > 0.1 * top).unwrap_or(0)
-}
-
 pub(crate) fn convolve(a: &[f64], b: &[f64]) -> Vec<f64> {
     if a.is_empty() || b.is_empty() {
         return Vec::new();
@@ -370,13 +368,7 @@ pub(crate) fn worst_band_db(
     let n = xs[0].len();
     let nf = 2 * n;
     let bins = secs_dsp::grid::freqs(nf, FS_LOW).expect("MIMO grid");
-    let stop = (fsiso / 20.0).log2() + 1e-9;
-    let edges: Vec<_> = (0..)
-        .map(|k| k as f64 / 3.0)
-        .take_while(|&v| v < stop)
-        .map(|v| 20.0 * 2f64.powf(v))
-        .collect();
-    let mut bands: Vec<_> = edges.windows(2).map(|v| (v[0], v[1])).collect();
+    let mut bands = third_octave_bands(fsiso);
     let refs: Vec<_> = xs.iter().map(Vec::as_slice).collect();
     bands.extend(
         decay::late_peaks(&refs, 6)
@@ -421,6 +413,19 @@ pub(crate) fn worst_band_db(
         .unwrap_or(-99.0)
 }
 
+/// The guards' third-octave bands from 20 Hz while the upper edge stays below
+/// `fsiso`, as `(lo, hi)` in Hz (TD-75: the CPU guard, its direct-form oracle
+/// and the IIR guard share them).
+pub(crate) fn third_octave_bands(fsiso: f64) -> Vec<(f64, f64)> {
+    let stop = (fsiso / 20.0).log2() + 1e-9;
+    let edges: Vec<_> = (0..)
+        .map(|k| k as f64 / 3.0)
+        .take_while(|&v| v < stop)
+        .map(|v| 20.0 * 2f64.powf(v))
+        .collect();
+    edges.windows(2).map(|v| (v[0], v[1])).collect()
+}
+
 #[derive(Debug)]
 pub(crate) struct BandGuard {
     n: usize,
@@ -433,16 +438,9 @@ impl BandGuard {
     pub(crate) fn new(xs: &[Vec<f64>], fsiso: f64) -> Self {
         let n = xs[0].len();
         let bins = secs_dsp::grid::freqs(2 * n, FS_LOW).expect("MIMO grid");
-        let stop = (fsiso / 20.0).log2() + 1e-9;
-        let edges: Vec<_> = (0..)
-            .map(|k| k as f64 / 3.0)
-            .take_while(|&v| v < stop)
-            .map(|v| 20.0 * 2f64.powf(v))
-            .collect();
         let refs: Vec<_> = xs.iter().map(Vec::as_slice).collect();
-        let bands = edges
-            .windows(2)
-            .map(|v| (v[0], v[1]))
+        let bands = third_octave_bands(fsiso)
+            .into_iter()
             .chain(
                 decay::late_peaks(&refs, 6)
                     .into_iter()

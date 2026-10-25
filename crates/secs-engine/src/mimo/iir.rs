@@ -12,7 +12,7 @@ use secs_dsp::{
     pairwise_sum, response,
 };
 
-use super::{MimoDesign, MimoRequest, support_path};
+use super::{MimoDesign, MimoRequest, design::third_octave_bands, support_path};
 use crate::{
     C, Design, EngineConfig, EngineError, MeasurementSet, Note, Tuning, decay,
     fit::{FitRequest, fit_peq_until},
@@ -168,16 +168,11 @@ pub(crate) fn unpack(x: &[f64], pols: &[i8], t: &Tuning) -> Vec<IirSupport> {
         .collect()
 }
 
-fn onset(x: &[f64]) -> usize {
-    let top = x.iter().map(|v| v.abs()).fold(0.0, f64::max);
-    x.iter().position(|v| v.abs() > 0.1 * top).unwrap_or(0)
-}
-
 pub(crate) fn late_modes(xs: &[Vec<f64>], count: usize, lo: f64, hi: f64) -> Vec<f64> {
     let mut spec = vec![0.0; 2049];
     for x in xs {
         let mut late = vec![0.0; 4096];
-        let begin = (onset(x) + 90).min(x.len().min(4096));
+        let begin = (decay::onset(x) + 90).min(x.len().min(4096));
         let end = x.len().min(4096);
         late[begin..end].copy_from_slice(&x[begin..end]);
         for (s, h) in spec.iter_mut().zip(fft::rfft(&late)) {
@@ -685,13 +680,7 @@ struct BandGuard {
 
 impl BandGuard {
     fn new(pb: &Problem) -> Self {
-        let stop = (pb.fsiso / 20.0).log2() + 1e-9;
-        let edges: Vec<_> = (0..)
-            .map(|k| k as f64 / 3.0)
-            .take_while(|&v| v < stop)
-            .map(|v| 20.0 * 2f64.powf(v))
-            .collect();
-        let mut bands: Vec<_> = edges.windows(2).map(|v| (v[0], v[1])).collect();
+        let mut bands = third_octave_bands(pb.fsiso);
         bands.extend(
             late_modes(&pb.xs, 6, 20.0, 160.0)
                 .iter()
@@ -915,7 +904,7 @@ pub(crate) fn build_problem(
         let h = crate::input_response(design, input, spectra, p)
             .ok_or_else(|| EngineError::Input(format!("missing MIMO input {p}/{input}")))?;
         let x = secs_dsp::lowrate::to_low(&h, design_freqs(), N)?;
-        let onset = onset(&x) + 36;
+        let onset = decay::onset(&x) + 36;
         pb.wl
             .push((0..N).map(|i| if i >= onset { 1.0 } else { 0.0 }).collect());
         pb.we
