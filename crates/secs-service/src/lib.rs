@@ -323,13 +323,14 @@ pub struct Service {
     jobs: JobRegistry,
     level: monitor::LevelState,
     status_watch: watch::WatchState,
-    rew_license: Arc<Mutex<Option<bool>>>,
+    rew: measure::RewLink,
 }
 
 impl Service {
     /// Creates a service from platform dependency factories.
     pub fn new(deps: Deps) -> Self {
         let app_settings = project_edit::load_app_settings(deps.app_settings_path.as_deref());
+        let rew = measure::RewLink::new(&deps);
         Self {
             deps,
             session: Arc::new(Mutex::new(Session::default())),
@@ -338,7 +339,7 @@ impl Service {
             jobs: JobRegistry::default(),
             level: monitor::LevelState::default(),
             status_watch: watch::WatchState::default(),
-            rew_license: Arc::new(Mutex::new(None)),
+            rew,
         }
     }
 

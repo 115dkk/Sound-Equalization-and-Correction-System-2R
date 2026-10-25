@@ -6,6 +6,7 @@ pub mod sample;
 mod settings;
 
 pub use native::{BackendFactory, NativeMeasurer};
+pub(crate) use rew::RewLink;
 pub use rew::RewMeasurer;
 pub use sample::MockMeasurer;
 pub use settings::{

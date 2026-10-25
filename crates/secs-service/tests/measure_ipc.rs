@@ -1383,6 +1383,29 @@ impl secs_rew::Transport for LevelRewTransport {
     }
 }
 
+#[derive(Debug)]
+struct ProRequiredLevelRewTransport;
+impl secs_rew::Transport for ProRequiredLevelRewTransport {
+    fn request(
+        &self,
+        request: &secs_rew::Request,
+    ) -> Result<secs_rew::Response, secs_rew::RewError> {
+        if request.path == "/audio/java/output-channel" {
+            return Ok(secs_rew::Response {
+                status: 401,
+                body: json!({"message":"A Pro upgrade license is required for this action"}),
+            });
+        }
+        let body = match request.path.as_str() {
+            "/version" => json!({"message":"5.40 Beta 124 API 0.9.4"}),
+            "/audio/driver" => json!({"driver":"Java"}),
+            "/audio/java/output-channels" => json!(["L", "R"]),
+            _ => json!({"message":"ok"}),
+        };
+        Ok(secs_rew::Response::ok(body))
+    }
+}
+
 fn post_repeatedly(url: &str, body: &str) {
     use std::io::{Read, Write};
     let rest = url.strip_prefix("http://").unwrap();
@@ -1399,6 +1422,42 @@ fn post_repeatedly(url: &str, body: &str) {
         }
         std::thread::sleep(Duration::from_millis(20));
     }
+}
+
+#[test]
+fn rew_level_pro_required_is_visible_in_status() {
+    let root = root("rew-level-license");
+    let path = root.join("room.secs");
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(|| Box::new(ProRequiredLevelRewTransport)),
+        ..Deps::default()
+    });
+    new(&service, &path);
+    configure(&service, "rew");
+    let events = Arc::new(Events::default());
+    let Response::LevelCheck(job) = ok(
+        &service,
+        Request::LevelCheck(LevelCheckParams { role: "L".into() }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    assert!(matches!(
+        events.wait(job.job, Duration::from_secs(1)),
+        JobEvent::Finished {
+            status: JobStatus::Failed,
+            error: Some(IpcError {
+                code: ErrorCode::RewProRequired,
+                ..
+            }),
+            ..
+        }
+    ));
+    let Response::MeasureMethods(methods) = call(&service, Request::MeasureMethods) else {
+        panic!()
+    };
+    assert_eq!(methods.rew.pro, Some(false));
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

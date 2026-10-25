@@ -53,16 +53,12 @@ fn level_error(
     field: &str,
     share: secs_audio::SharePreference,
 ) -> IpcError {
-    super::measurement::measure_error(error, field, share, None)
+    super::measurement::measure_error(error, field, share)
 }
 
-fn rew_error(error: secs_rew::RewError, rew_license: &Arc<Mutex<Option<bool>>>) -> IpcError {
-    super::measurement::measure_error(
-        error.into(),
-        "level",
-        secs_audio::SharePreference::Auto,
-        Some(rew_license),
-    )
+fn rew_error(error: secs_rew::RewError, rew: &crate::measure::RewLink) -> IpcError {
+    rew.observe(&error);
+    super::measurement::measure_error(error.into(), "level", secs_audio::SharePreference::Auto)
 }
 
 impl Service {
@@ -89,19 +85,11 @@ impl Service {
         let deps = self.deps.clone();
         let state = self.level.inner.clone();
         let session = self.session.clone();
-        let rew_license = self.rew_license.clone();
+        let rew = self.rew.clone();
         let started = self.jobs.start(JobKind::LevelMonitor, events, move |job| {
             lock(&state).job = Some(job.id());
             let outcome = monitor_loop(
-                &deps,
-                &session,
-                &state,
-                &project,
-                ticket,
-                settings,
-                plan,
-                &job,
-                &rew_license,
+                &deps, &session, &state, &project, ticket, settings, plan, &job, &rew,
             );
             let mut state = lock(&state);
             if state.job == Some(job.id()) {
@@ -205,10 +193,10 @@ fn monitor_loop(
     settings: MeasurementSettings,
     plan: secs_project::MeasurementPlan,
     job: &crate::jobs::JobContext,
-    rew_license: &Arc<Mutex<Option<bool>>>,
+    rew: &crate::measure::RewLink,
 ) -> Result<JobResult, IpcError> {
     match method(project) {
-        "rew" => rew_loop(deps, session, state, &plan, ticket, job, rew_license),
+        "rew" => rew_loop(session, state, &plan, ticket, job, rew),
         "native" | "mock" => sampled_loop(deps, session, state, ticket, settings, plan, job),
         _ => Err(input("method", "unknown measurement method")),
     }
@@ -318,31 +306,22 @@ fn send_play_end(job: &crate::jobs::JobContext, role: &str, outcome: &str) {
 }
 
 fn rew_loop(
-    deps: &crate::Deps,
     session: &Arc<Mutex<crate::session::Session>>,
     state: &Arc<Mutex<LevelInner>>,
     plan: &secs_project::MeasurementPlan,
     ticket: ProjectTicket,
     job: &crate::jobs::JobContext,
-    rew_license: &Arc<Mutex<Option<bool>>>,
+    rew: &crate::measure::RewLink,
 ) -> Result<JobResult, IpcError> {
-    struct Transport(Box<dyn secs_rew::Transport>);
-    impl secs_rew::Transport for Transport {
-        fn request(
-            &self,
-            request: &secs_rew::Request,
-        ) -> Result<secs_rew::Response, secs_rew::RewError> {
-            self.0.request(request)
-        }
-    }
     let pending = Arc::new(Mutex::new(Vec::<secs_rew::Level>::new()));
     let callback_pending = pending.clone();
-    let mut rew = secs_rew::RewClient::new(Transport((deps.rew_transport)()));
+    let link = rew;
+    let mut rew = link.client();
     secs_rew::LevelMonitor::start(
         &mut rew,
         Arc::new(move |level| lock(&callback_pending).push(level)),
     )
-    .map_err(|error| rew_error(error, rew_license))?;
+    .map_err(|error| rew_error(error, link))?;
     let mut handled_generation = 0;
     let mut active: Option<(PlayRequest, std::time::Instant, Option<secs_rew::Level>)> = None;
     let result = (|| {
@@ -370,7 +349,7 @@ fn rew_loop(
                     .filter(|value| *value > 0)
                     .ok_or_else(|| input("role", "role has no output"))?;
                 secs_rew::LevelMonitor::play_pink(&mut rew, &play.role, output, play.master_dbfs)
-                    .map_err(|error| rew_error(error, rew_license))?;
+                    .map_err(|error| rew_error(error, link))?;
                 active = Some((play, std::time::Instant::now(), None));
             }
             for level in std::mem::take(&mut *lock(&pending)) {

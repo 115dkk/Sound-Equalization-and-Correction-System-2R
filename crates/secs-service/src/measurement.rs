@@ -11,16 +11,6 @@ use crate::measure::{self, MeasureError, MeasurementSettings, Measurer, plan_for
 use crate::{Deps, EventSink, Service, lock, mdat_import, measurement_file, session};
 use secs_types::role::ROLES;
 
-struct Transport(Box<dyn secs_rew::Transport>);
-impl secs_rew::Transport for Transport {
-    fn request(
-        &self,
-        request: &secs_rew::Request,
-    ) -> Result<secs_rew::Response, secs_rew::RewError> {
-        self.0.request(request)
-    }
-}
-
 fn input(field: &str, detail: impl Into<String>) -> IpcError {
     IpcError::new(ErrorCode::MeasurementInput, detail).with_param("field", field)
 }
@@ -30,7 +20,6 @@ pub(crate) fn measure_error(
     error: MeasureError,
     field: &str,
     share: secs_audio::SharePreference,
-    rew_license: Option<&Arc<std::sync::Mutex<Option<bool>>>>,
 ) -> IpcError {
     use secs_audio::AudioError as A;
     use secs_rew::RewError as R;
@@ -70,9 +59,6 @@ pub(crate) fn measure_error(
             IpcError::new(ErrorCode::RewUnreachable, detail).with_param("path", path)
         }
         MeasureError::Rew(R::ProRequired { status, path }) => {
-            if let Some(rew_license) = rew_license {
-                *lock(rew_license) = Some(false);
-            }
             IpcError::new(ErrorCode::RewProRequired, detail)
                 .with_param("path", path)
                 .with_param("status", status.to_string())
@@ -124,7 +110,7 @@ const LENGTHS: [(usize, &str); 7] = [
 ];
 fn settings(project: &Project) -> Result<MeasureConfigResult, IpcError> {
     let s = MeasurementSettings::from_project(project)
-        .map_err(|e| measure_error(e, "settings", secs_audio::SharePreference::Auto, None))?;
+        .map_err(|e| measure_error(e, "settings", secs_audio::SharePreference::Auto))?;
     let p = plan_for(project, &s);
     let channel = |n: i64| {
         u16::try_from(n)
@@ -162,6 +148,7 @@ fn settings(project: &Project) -> Result<MeasureConfigResult, IpcError> {
 }
 fn measurer(
     deps: &Deps,
+    rew: &measure::RewLink,
     method: &str,
     settings: MeasurementSettings,
 ) -> Result<Box<dyn Measurer>, IpcError> {
@@ -171,14 +158,15 @@ fn measurer(
             settings,
         ))),
         "mock" => Ok(Box::new((deps.mock_measurer)())),
-        "rew" => Ok(Box::new(measure::RewMeasurer::new(
-            secs_rew::RewClient::new(Transport((deps.rew_transport)())),
+        "rew" => Ok(Box::new(measure::RewMeasurer::linked(
+            rew.client(),
             deps.unix_ms.clone(),
+            rew.clone(),
         ))),
         _ => Err(input("method", "unknown measurement method")),
     }
 }
-fn rew_status(deps: &Deps, rew_license: &Arc<std::sync::Mutex<Option<bool>>>) -> RewStatusResult {
+fn rew_status(deps: &Deps, rew: &measure::RewLink) -> RewStatusResult {
     let running = deps
         .process
         .process_names()
@@ -189,22 +177,19 @@ fn rew_status(deps: &Deps, rew_license: &Arc<std::sync::Mutex<Option<bool>>>) ->
                 .iter()
                 .any(|r| name.eq_ignore_ascii_case(r))
         });
-    let mut client = secs_rew::RewClient::new(Transport((deps.rew_transport)()));
+    let mut client = rew.client();
     let reachable = client.is_running();
     if !reachable {
-        *lock(rew_license) = None;
+        rew.forget_license();
     }
     RewStatusResult {
         running: running || reachable,
         reachable,
-        pro: reachable.then(|| *lock(rew_license)).flatten(),
+        pro: reachable.then(|| rew.license()).flatten(),
     }
 }
 
-pub(crate) fn measure_methods_for(
-    deps: &Deps,
-    rew_license: &Arc<std::sync::Mutex<Option<bool>>>,
-) -> MeasureMethodsResult {
+pub(crate) fn measure_methods_for(deps: &Deps, rew: &measure::RewLink) -> MeasureMethodsResult {
     let mut native =
         measure::NativeMeasurer::from_backend((deps.audio_backend)(), Default::default());
     let (native_devices, native_error) = match native.devices() {
@@ -226,11 +211,10 @@ pub(crate) fn measure_methods_for(
                 e,
                 "devices",
                 secs_audio::SharePreference::Auto,
-                Some(rew_license),
             )),
         ),
     };
-    let rew = rew_status(deps, rew_license);
+    let rew = rew_status(deps, rew);
     let mut methods = vec!["mock".into()];
     if native_devices.iter().any(|d| d.input_channels > 0)
         && native_devices.iter().any(|d| d.output_channels > 0)
@@ -256,7 +240,7 @@ pub(crate) fn measure_methods_for(
 
 impl Service {
     pub(crate) fn measure_methods(&self) -> MeasureMethodsResult {
-        measure_methods_for(&self.deps, &self.rew_license)
+        measure_methods_for(&self.deps, &self.rew)
     }
 
     pub(crate) fn measure_config_get(&self) -> Result<MeasureConfigResult, IpcError> {
@@ -385,7 +369,7 @@ impl Service {
         drop(session);
 
         if open_rew_devices {
-            let mut client = secs_rew::RewClient::new(Transport((self.deps.rew_transport)()));
+            let mut client = self.rew.client();
             for (kind, name) in [("output", rew_devices.0), ("input", rew_devices.1)] {
                 let Some(name) = name.filter(|name| !name.is_empty()) else {
                     continue;
@@ -397,10 +381,9 @@ impl Service {
                 };
                 if devices.iter().any(|device| device.name == name)
                     && client.current_device(kind).as_deref() != Some(name.as_str())
-                    && let Err(secs_rew::RewError::ProRequired { .. }) =
-                        client.set_device(kind, &name)
+                    && let Err(error) = client.set_device(kind, &name)
                 {
-                    *lock(&self.rew_license) = Some(false);
+                    self.rew.observe(&error);
                 }
             }
         }
@@ -473,7 +456,7 @@ impl Service {
             },
             played,
         )
-        .map_err(|e| measure_error(e, "level", secs_audio::SharePreference::Auto, None))?;
+        .map_err(|e| measure_error(e, "level", secs_audio::SharePreference::Auto))?;
         open.dirty = true;
         settings(open.store.project())
     }
@@ -484,26 +467,24 @@ impl Service {
     ) -> Result<JobStarted, IpcError> {
         let project = lock(&self.session).require()?.store.project().clone();
         let s = MeasurementSettings::from_project(&project)
-            .map_err(|e| measure_error(e, "settings", secs_audio::SharePreference::Auto, None))?;
+            .map_err(|e| measure_error(e, "settings", secs_audio::SharePreference::Auto))?;
         let p = plan_for(&project, &s);
         if !p.roles.contains(&params.role) {
             return Err(input("role", "unknown measurement role"));
         }
         let share = s.share;
-        let rew = method(&project) == "rew";
-        let rew_license = self.rew_license.clone();
-        let mut m = measurer(&self.deps, method(&project), s)?;
+        let mut m = measurer(&self.deps, &self.rew, method(&project), s)?;
         self.jobs.start(JobKind::LevelCheck, events, move |ctx| {
             ctx.role_progress(&params.role, 0, 1);
             let report = m
                 .level_check(&p, &params.role, 0.5, ctx.measurement_cancel())
-                .map_err(|e| measure_error(e, "level", share, rew.then_some(&rew_license)))?;
+                .map_err(|e| measure_error(e, "level", share))?;
             let recommended = secs_audio::recommend_sweep_level(
                 report.input_dbfs,
                 p.sweep_level_db,
                 secs_audio::level::TARGET_WINDOW,
             )
-            .map_err(|e| measure_error(e.into(), "level", share, None))?;
+            .map_err(|e| measure_error(e.into(), "level", share))?;
             ctx.role_progress(&params.role, 1, 1);
             Ok(JobResult::Level(LevelResult {
                 rms_dbfs: report.input_dbfs,
@@ -592,7 +573,6 @@ impl Service {
                                     error.into(),
                                     "record",
                                     secs_audio::SharePreference::Auto,
-                                    None,
                                 )
                             })?;
                         done += 1;
@@ -624,7 +604,7 @@ impl Service {
             return Err(input("method", "selected method cannot run a measurement"));
         }
         let mut s = MeasurementSettings::from_project(&project)
-            .map_err(|e| measure_error(e, "settings", secs_audio::SharePreference::Auto, None))?;
+            .map_err(|e| measure_error(e, "settings", secs_audio::SharePreference::Auto))?;
         if params.position < 1 || params.position > measure::position_count(&project) {
             return Err(input("position", "position outside layout"));
         }
@@ -636,8 +616,8 @@ impl Service {
         let share = s.share;
         let delay = start_delay(&project);
         let rew = method(&project) == "rew";
-        let rew_license = self.rew_license.clone();
-        let mut m = measurer(&self.deps, method(&project), s)?;
+        let rew_link = self.rew.clone();
+        let mut m = measurer(&self.deps, &self.rew, method(&project), s)?;
         let session = self.session.clone();
         let uuid = self.deps.uuid.clone();
         let atomic_position = method(&project) != "rew";
@@ -686,7 +666,7 @@ impl Service {
                             }
                             open.store
                                 .record(result, Some(&p.roles))
-                                .map_err(|e| measure_error(e.into(), "record", share, None))?;
+                                .map_err(|e| measure_error(e.into(), "record", share))?;
                             // Each record is written to disk as it is made.
                             open.dirty = false;
                             Ok(((), false))
@@ -720,12 +700,9 @@ impl Service {
                     Ok(())
                 },
             )
-            .map_err(|e| {
-                failure
-                    .unwrap_or_else(|| measure_error(e, "plan", share, rew.then_some(&rew_license)))
-            })?;
+            .map_err(|e| failure.unwrap_or_else(|| measure_error(e, "plan", share)))?;
             if rew {
-                *lock(&rew_license) = Some(true);
+                rew_link.confirm_license();
             }
             if ctx.cancel().is_cancelled() {
                 return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
@@ -752,7 +729,6 @@ impl Service {
                 error.into(),
                 "position",
                 secs_audio::SharePreference::Auto,
-                None,
             ));
         }
         let token = session::push_position_undo(open, removed);
@@ -791,7 +767,6 @@ impl Service {
                         error.into(),
                         "undo",
                         secs_audio::SharePreference::Auto,
-                        None,
                     ));
                 }
                 open.dirty = false;
@@ -811,7 +786,7 @@ impl Service {
         Ok(session::info(open))
     }
     pub(crate) fn rew_info(&self) -> RewInfoResult {
-        let mut client = secs_rew::RewClient::new(Transport((self.deps.rew_transport)()));
+        let mut client = self.rew.client();
         let mut info = client.info();
         let current_audio = if info.reachable {
             client.current_audio()
@@ -819,7 +794,7 @@ impl Service {
             Default::default()
         };
         if !info.reachable {
-            *lock(&self.rew_license) = None;
+            self.rew.forget_license();
         }
         let executable_path =
             secs_rew::launch::find_rew_exe().map(|p| p.to_string_lossy().into_owned());
@@ -850,7 +825,7 @@ impl Service {
             reachable: info.reachable,
             version: info.version,
             driver: info.driver,
-            pro: info.reachable.then(|| *lock(&self.rew_license)).flatten(),
+            pro: info.reachable.then(|| self.rew.license()).flatten(),
             input_device: current_audio.input_device,
             output_device: current_audio.output_device,
             input: current_audio.input,
@@ -877,14 +852,10 @@ impl Service {
             return Err(input("driver", "driver must not be empty"));
         }
         self.refuse_while_measuring()?;
-        let mut client = secs_rew::RewClient::new(Transport((self.deps.rew_transport)()));
+        let mut client = self.rew.client();
         client.set_driver(&params.driver).map_err(|error| {
-            measure_error(
-                error.into(),
-                "driver",
-                secs_audio::SharePreference::Auto,
-                Some(&self.rew_license),
-            )
+            self.rew.observe(&error);
+            measure_error(error.into(), "driver", secs_audio::SharePreference::Auto)
         })?;
         Ok(self.rew_info())
     }
@@ -903,8 +874,8 @@ impl Service {
     }
 
     pub(crate) fn rew_launch(&self) -> Result<RewStatusResult, IpcError> {
-        *lock(&self.rew_license) = None;
-        let status = rew_status(&self.deps, &self.rew_license);
+        self.rew.forget_license();
+        let status = rew_status(&self.deps, &self.rew);
         if status.running {
             return Ok(status);
         }
@@ -925,7 +896,7 @@ impl Service {
     pub(crate) fn mdat_scan(&self, params: MdatScanParams) -> Result<MdatScanResult, IpcError> {
         let roles = ROLES.into_iter().map(str::to_owned).collect::<Vec<_>>();
         let reader = measurement_file::open(Path::new(&params.path), &roles, None, 1)
-            .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto, None))?;
+            .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto))?;
         let rows = reader.rows();
         Ok(MdatScanResult {
             suggestions: rows
@@ -976,7 +947,7 @@ impl Service {
             // is held only for the import below (TD-37).
             let path = Path::new(&params.path);
             let plan = plan_for(&project, &Default::default());
-            let path_error = |e| measure_error(e, "path", secs_audio::SharePreference::Auto, None);
+            let path_error = |e| measure_error(e, "path", secs_audio::SharePreference::Auto);
             let reader =
                 measurement_file::open(path, &plan.roles, Some(params.position), params.position)
                     .map_err(path_error)?;
@@ -1191,7 +1162,7 @@ mod tests {
             ),
         ];
         for (error, share, code, key, value) in cases {
-            let got = measure_error(error, "plan", share, None);
+            let got = measure_error(error, "plan", share);
             assert_eq!(got.code, code);
             assert_eq!(got.params[key], value);
             assert_eq!(
@@ -1207,13 +1178,13 @@ mod tests {
             MeasureError::Rew(R::Cancelled),
         ] {
             assert_eq!(
-                measure_error(error, "plan", S::Auto, None).code,
+                measure_error(error, "plan", S::Auto).code,
                 ErrorCode::Cancelled
             );
         }
         let error = secs_project::Project::load_text("not json").unwrap_err();
         assert_eq!(
-            measure_error(error.into(), "project", S::Auto, None).code,
+            measure_error(error.into(), "project", S::Auto).code,
             ErrorCode::ProjectIo
         );
     }
