@@ -92,6 +92,8 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
     if (!isRunning(measureJob)) measure.actions.selectPosition(position);
     navigateToSetting("measure", '[data-ui="measure.position.start"]', '[data-ui="measure.mdat.load"]');
   }, [measureJob, measure.actions, navigateToSetting]);
+  // The output-number warnings' action: 시스템 with the patch's first output focused.
+  const openPatch = useCallback(() => navigateToSetting("system", '[data-ui^="system.patch."][data-ui*=".out"]', '[data-ui="system.patch.renumber"]'), [navigateToSetting]);
   const calibrate = useCalibrateScreen(goToMeasurements);
   const exporting = useExportScreen();
   const { model, navigate } = useFrameModel({ system: system.view, connect: connect.view, measure: measure.view, calibrate: calibrate.view, export: exporting.view });
@@ -176,7 +178,7 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
   const body = <>
     <AppFrame model={model} onNavigate={navigate} primary={header.primary} headerStatus={header.status} recovery={recovery}
       projectActions={dialogs.menu} onHelp={() => setHelpOpen((open) => !open)}
-      version={info ? { version: info.version, prerelease: info.prerelease } : null} tray={<JobTray api={jobs} />} onRemeasure={remeasure}
+      version={info ? { version: info.version, prerelease: info.prerelease } : null} tray={<JobTray api={jobs} />} onRemeasure={remeasure} onOpenPatch={openPatch}
       aside={helpOpen || meterOpen ? <>
         {helpOpen && <HelpPanel view={{ step: host.current, tutorial: project?.tutorial ?? false }} actions={{ close: () => setHelpOpen(false), startTutorial: dialogs.offerTutorial }} />}
         {meterOpen && <div className="app-mic"><MicMeterPanel id="app.mic" floating view={{ input: connect.view ? micInput(t, connect.view) : null, monitor: host.monitor, reading: host.meter }} onClose={() => setMeterOpen(false)} /></div>}

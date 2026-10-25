@@ -69,6 +69,8 @@
   "frame.status.warnings.position": "Position {n}",
   "frame.status.warnings.remeasure": "Measure again",
   "frame.status.warnings.reimport": "Import again",
+  "frame.status.warnings.band_output": "{role} {band} band: was output {output}",
+  "frame.status.warnings.open_patch": "Open output patch",
   "frame.project": "Project",
   "frame.project.new": "New",
   "frame.project.open": "Open…",

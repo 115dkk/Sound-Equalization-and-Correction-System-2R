@@ -69,6 +69,8 @@
   "frame.status.warnings.position": "위치 {n}",
   "frame.status.warnings.remeasure": "다시 측정",
   "frame.status.warnings.reimport": "다시 가져오기",
+  "frame.status.warnings.band_output": "{role} {band} 대역: 원래 출력 {output}",
+  "frame.status.warnings.open_patch": "출력 배선 열기",
   "frame.project": "프로젝트",
   "frame.project.new": "새로 만들기",
   "frame.project.open": "열기…",

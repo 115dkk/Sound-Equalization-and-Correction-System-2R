@@ -1,8 +1,9 @@
 // Project warnings (`ProjectInfo.migration_warnings`, F5) as the status lists
 // them: one sentence per code, then one line per measurement position with
-// the roles it lost, or the entry as the service wrote it. A code is
-// translated by `project.warning.<code>`; one without a key reads as an
-// unknown warning with its raw code and entry.
+// the roles it lost, one line per band whose output number was replaced, or
+// the entry as the service wrote it. A code is translated by
+// `project.warning.<code>`; one without a key reads as an unknown warning
+// with its raw code and entry.
 import { isMessageKey } from "../i18n";
 import type { Translate } from "../i18n/react";
 import { roleCode } from "../ui/maps/geometry";
@@ -10,9 +11,13 @@ import type { ProjectWarning } from "./model";
 
 /** Codes the app clears by measuring the position again (the new IR lands in the project's own folder). */
 const REMEASURE: ReadonlySet<string> = new Set(["measurement.ir_path.outside"]);
+/** Codes the user checks in 시스템's output patch (the replaced output numbers). */
+const PATCH: ReadonlySet<string> = new Set(["config.band.out.outside"]);
 
-export type WarningRow = { position: number; roles: string[] } | { raw: string };
-export type WarningGroup = { code: string; text: string; known: boolean; remeasure: boolean; rows: WarningRow[] };
+export type PositionRow = { position: number; roles: string[] };
+export type BandOutputRow = { role: string; band: string; output: number };
+export type WarningRow = PositionRow | BandOutputRow | { raw: string };
+export type WarningGroup = { code: string; text: string; known: boolean; remeasure: boolean; patch: boolean; rows: WarningRow[] };
 
 /** A warning's identity, for dismissing it. */
 export const warningKey = (warning: ProjectWarning): string => `${warning.code}\n${warning.entry}`;
@@ -21,6 +26,12 @@ export const warningKey = (warning: ProjectWarning): string => `${warning.code}\
 export function warningTarget(entry: string): { position: number; role: string } | null {
   const match = /^position (\d+), role (.+)$/.exec(entry);
   return match?.[1] && match[2] ? { position: Number(match[1]), role: match[2] } : null;
+}
+
+/** "role Lb, band FULL, output 300" (secs-project config.rs) as the role's code, the band and the output it had. */
+export function bandOutput(entry: string): BandOutputRow | null {
+  const match = /^role (.+), band (.+), output (-?\d+)$/.exec(entry);
+  return match?.[1] && match[2] && match[3] ? { role: roleCode(match[1]), band: match[2], output: Number(match[3]) } : null;
 }
 
 function warningText(t: Translate, code: string): { text: string; known: boolean } {
@@ -36,11 +47,16 @@ export function groupWarnings(t: Translate, warnings: readonly ProjectWarning[])
     let group = groups.get(warning.code);
     if (!group) {
       const { text, known } = warningText(t, warning.code);
-      group = { code: warning.code, text, known, remeasure: REMEASURE.has(warning.code), rows: [] };
+      group = { code: warning.code, text, known, remeasure: REMEASURE.has(warning.code), patch: PATCH.has(warning.code), rows: [] };
       groups.set(warning.code, group);
     }
+    const band = bandOutput(warning.entry);
+    if (band) {
+      group.rows.push(band);
+      continue;
+    }
     const target = warningTarget(warning.entry);
-    const row = target && group.rows.find((r): r is { position: number; roles: string[] } => "position" in r && r.position === target.position);
+    const row = target && group.rows.find((r): r is PositionRow => "position" in r && r.position === target.position);
     if (row && target) {
       if (!row.roles.includes(roleCode(target.role))) row.roles.push(roleCode(target.role));
     } else if (target && target.position >= 1) {

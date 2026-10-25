@@ -38,6 +38,8 @@ type AppFrameProps = {
   shortcuts?: boolean;
   /** A project warning's 다시 측정: opens 측정·가져오기 at that position. Without it the warnings only say what happened. */
   onRemeasure?: ((position: number) => void) | undefined;
+  /** The output-number warnings' 출력 배선 열기: opens 시스템's output patch. */
+  onOpenPatch?: (() => void) | undefined;
 };
 
 export function AppFrame({
@@ -54,6 +56,7 @@ export function AppFrame({
   children,
   shortcuts = true,
   onRemeasure,
+  onOpenPatch,
 }: AppFrameProps) {
   const t = useT();
   const prefs = usePrefs();
@@ -104,7 +107,7 @@ export function AppFrame({
             <h2 className="app-rail__heading" id="frame.status.heading">
               {t("frame.status")}
             </h2>
-            <ProjectStatus project={model.project} onRemeasure={onRemeasure} />
+            <ProjectStatus project={model.project} onRemeasure={onRemeasure} onOpenPatch={onOpenPatch} />
           </section>
         </div>
         <div className="app-rail__footer">

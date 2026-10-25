@@ -321,4 +321,41 @@ describe("project warnings", () => {
     renderWith(<ProjectStatus project={{ ...project(two, 1), path: { kind: "mdat", state: "ok" } }} onRemeasure={() => {}} />, { locale });
     expect(ui("frame.status.warnings.position.3.fix")?.textContent).toBe(locale === "ko" ? "다시 가져오기" : "Import again");
   });
+
+  const replaced = (entry: string) => ({ code: "config.band.out.outside", entry });
+  const outputs = [replaced("role Lb, band FULL, output 300"), replaced("role SW1, band SUB, output 0")];
+
+  it.each([
+    ["ko", "Lrs FULL 대역: 원래 출력 300", "SW1 SUB 대역: 원래 출력 0", "출력 배선 열기"],
+    ["en", "Lrs FULL band: was output 300", "SW1 SUB band: was output 0", "Open output patch"],
+  ] as const)("lists each replaced output as role, band and the output it had, and opens the output patch (%s)", (locale, first, second, action) => {
+    const onOpenPatch = vi.fn();
+    renderWith(
+      <AppFrame
+        model={{ ...model("calibrate"), project: project(outputs, 1) }}
+        onNavigate={() => {}}
+        projectActions={{ onNew: () => {}, onOpen: () => {}, onSave: () => {}, onSaveAs: () => {} }}
+        onHelp={() => {}}
+        version={null}
+        tray={<div />}
+        onOpenPatch={onOpenPatch}
+      >
+        <p>content</p>
+      </AppFrame>,
+      { locale },
+    );
+    expect(ui("frame.status.warnings.band_output.Lrs.FULL")?.textContent).toBe(first);
+    expect(ui("frame.status.warnings.band_output.SW1.SUB")?.textContent).toBe(second);
+    const buttons = document.querySelectorAll<HTMLButtonElement>('[data-ui="frame.status.warnings.open_patch"]');
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]?.textContent).toBe(action);
+    fireEvent.click(buttons[0]!);
+    expect(onOpenPatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("says only what happened to the outputs when there is no patch to open", () => {
+    render(status(outputs, 1));
+    expect(ui("frame.status.warnings.band_output.Lrs.FULL")?.textContent).toBe("Lrs FULL 대역: 원래 출력 300");
+    expect(ui("frame.status.warnings.open_patch")).toBeNull();
+  });
 });

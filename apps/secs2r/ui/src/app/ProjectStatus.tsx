@@ -58,20 +58,23 @@ const NOTHING_HIDDEN: ReadonlySet<string> = new Set();
 /**
  * The warnings as one notice: a sentence per code, a line per position with
  * the roles it lost and, where measuring it again clears the warning, the
- * action that opens that position. 닫기 hides the warnings shown now; one
- * raised later, or the next project's, shows again.
+ * action that opens that position; a line per band whose output number was
+ * replaced, with one action that opens the output patch. 닫기 hides the
+ * warnings shown now; one raised later, or the next project's, shows again.
  */
 function ProjectWarnings({
   warnings,
   opened,
   reimport,
   onRemeasure,
+  onOpenPatch,
 }: {
   warnings: readonly ProjectWarning[];
   opened: number | undefined;
   /** The project's measurements come from files (the action imports again). */
   reimport: boolean;
   onRemeasure?: ((position: number) => void) | undefined;
+  onOpenPatch?: (() => void) | undefined;
 }) {
   const t = useT();
   const id = useId();
@@ -122,6 +125,10 @@ function ProjectWarnings({
                         {row.roles.join(" · ")}
                       </span>
                     </li>
+                  ) : "output" in row ? (
+                    <li key={`band.${i}`} className="project-warnings__row" data-ui={`frame.status.warnings.band_output.${row.role}.${row.band}`}>
+                      <span className="project-warnings__entry">{t("frame.status.warnings.band_output", { role: row.role, band: row.band, output: row.output })}</span>
+                    </li>
                   ) : (
                     <li key={`raw.${i}`} className="project-warnings__row">
                       <span className="project-warnings__entry">{row.raw}</span>
@@ -132,8 +139,22 @@ function ProjectWarnings({
             ) : (
               <details className="ui-details">
                 <summary>{t("ui.details")}</summary>
-                <pre className="ui-details__raw">{[`[${group.code}]`, ...group.rows.map((row) => ("raw" in row ? row.raw : `position ${row.position}, role ${row.roles.join(", ")}`))].join("\n")}</pre>
+                <pre className="ui-details__raw">
+                  {[
+                    `[${group.code}]`,
+                    ...group.rows.map((row) =>
+                      "raw" in row ? row.raw : "output" in row ? `role ${row.role}, band ${row.band}, output ${row.output}` : `position ${row.position}, role ${row.roles.join(", ")}`,
+                    ),
+                  ].join("\n")}
+                </pre>
               </details>
+            )}
+            {group.known && group.patch && onOpenPatch && (
+              <div className="project-warnings__row">
+                <Button size="sm" variant="secondary" data-ui="frame.status.warnings.open_patch" onClick={onOpenPatch}>
+                  {t("frame.status.warnings.open_patch")}
+                </Button>
+              </div>
             )}
           </div>
         ))}
@@ -142,7 +163,16 @@ function ProjectWarnings({
   );
 }
 
-export function ProjectStatus({ project, onRemeasure }: { project: ProjectSummary; onRemeasure?: ((position: number) => void) | undefined }) {
+export function ProjectStatus({
+  project,
+  onRemeasure,
+  onOpenPatch,
+}: {
+  project: ProjectSummary;
+  onRemeasure?: ((position: number) => void) | undefined;
+  /** The output-number warnings' action: opens 시스템's output patch. */
+  onOpenPatch?: (() => void) | undefined;
+}) {
   const t = useT();
   const calibration = CALIBRATION[project.calibration];
   const pathState = project.path.kind === "none" ? null : PATH_STATE[project.path.state];
@@ -192,7 +222,7 @@ export function ProjectStatus({ project, onRemeasure }: { project: ProjectSummar
           </Value>
         </div>
       </dl>
-      <ProjectWarnings warnings={project.warnings ?? []} opened={project.opened} reimport={project.path.kind === "mdat"} onRemeasure={onRemeasure} />
+      <ProjectWarnings warnings={project.warnings ?? []} opened={project.opened} reimport={project.path.kind === "mdat"} onRemeasure={onRemeasure} onOpenPatch={onOpenPatch} />
     </>
   );
 }
