@@ -81,6 +81,12 @@ impl RidgeBackend for CpuRidgeBackend {
                 "invalid ridge system",
             ));
         }
+        // The Householder tridiagonalization inside (faer `tridiag_in_place`)
+        // is one call with no place to check the token, so the token is read
+        // before and after it and one factorization bounds the cancel latency.
+        // Checking per column would mean copying faer's loop, which uses
+        // uninitialised buffers (ADR 0002). docs/MIMO.md gives measured times
+        // (audit #92 TD-96).
         let system = CpuSystem(RidgeSweep::new(ata, atb));
         cancelled(cancel)?;
         Ok(Box::new(system))
