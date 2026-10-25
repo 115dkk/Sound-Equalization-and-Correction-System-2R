@@ -20,8 +20,9 @@ committed), show the old test still passes and the new one fails, restore.
 
 ## Findings, in order
 
-1. **TD-32** — `export.rs:135-139` formats the MIMO cap as `"max N"` from the
-   raw setting. Use `secs_engine::mimo::cap_text(run.key.max_supports)` (the
+1. **TD-32** — `export.rs` formats the MIMO cap as `"max N"` from the
+   raw setting, in two places since P72: the live `MimoResponses` and
+   `cached_mimo_responses` (the reopened-cache path). Fix both. Use `secs_engine::mimo::cap_text(run.key.max_supports)` (the
    clamped value; check the field name on `MimoRun`). Seam: live staged mdat
    export with `mimo_max_supports = 4` → the note text contains
    `" · 입력당 서포트 ≤ 4"` exactly as upstream (`calibration.py:1000-1002`)
