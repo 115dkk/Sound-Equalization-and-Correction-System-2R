@@ -638,3 +638,78 @@ fn generic_cancel_ends_monitor_during_an_active_burst() {
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+fn failed_error(events: &Events, job: JobId) -> IpcError {
+    assert_eq!(
+        events.wait_finished(job, Duration::from_secs(10)),
+        JobStatus::Failed
+    );
+    events
+        .values
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|event| match event {
+            JobEvent::Finished {
+                job: id,
+                error: Some(error),
+                ..
+            } if *id == job => Some(error.clone()),
+            _ => None,
+        })
+        .unwrap()
+}
+
+fn level_check_error(service: &Service, role: &str) -> IpcError {
+    let events = Arc::new(Events::default());
+    match service.call(
+        Request::LevelCheck(LevelCheckParams { role: role.into() }),
+        events.clone(),
+    ) {
+        Envelope::Err(error) => error,
+        Envelope::Ok(response) => {
+            let Response::LevelCheck(started) = *response else {
+                panic!()
+            };
+            failed_error(&events, started.job)
+        }
+    }
+}
+
+fn monitor_error(service: &Service, role: &str) -> IpcError {
+    let events = Arc::new(Events::default());
+    let Response::LevelMonitorStart(started) = call(
+        service,
+        Request::LevelMonitorStart(LevelMonitorStartParams::default()),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    call(
+        service,
+        Request::LevelPlay(LevelPlayParams {
+            role: role.into(),
+            master_dbfs: -30.0,
+        }),
+        Arc::new(NoEvents),
+    );
+    failed_error(&events, started.job)
+}
+
+#[test]
+fn monitor_errors_are_classified_like_level_check() {
+    // mock: a role outside the plan; native: no audio device (the null backend).
+    for (method, role) in [("mock", "Nope"), ("native", "L")] {
+        let root = root();
+        let service = Service::new(Default::default());
+        configure(&service, &root.join("room.secs"), method);
+        let expected = level_check_error(&service, role);
+        let got = monitor_error(&service, role);
+        assert_eq!(
+            (got.code, got.retryable),
+            (expected.code, expected.retryable),
+            "{method}: monitor {got:?}, level check {expected:?}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+}

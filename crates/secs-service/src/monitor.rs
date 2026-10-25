@@ -46,8 +46,13 @@ fn input(field: &str, detail: impl Into<String>) -> IpcError {
     IpcError::new(ErrorCode::MeasurementInput, detail).with_param("field", field)
 }
 
-fn level_error(error: impl std::fmt::Display) -> IpcError {
-    IpcError::new(ErrorCode::DeviceUnavailable, error.to_string())
+/// The same classification as `level_check` (TD-34).
+fn level_error(
+    error: crate::measure::MeasureError,
+    field: &str,
+    share: secs_audio::SharePreference,
+) -> IpcError {
+    super::measurement::measure_error(error, field, share, None)
 }
 
 fn rew_error(error: secs_rew::RewError, rew_license: &Arc<Mutex<Option<bool>>>) -> IpcError {
@@ -70,7 +75,8 @@ impl Service {
             let open = session.require()?;
             (open.store.project().clone(), open.identity)
         };
-        let settings = MeasurementSettings::from_project(&project).map_err(level_error)?;
+        let settings = MeasurementSettings::from_project(&project)
+            .map_err(|error| level_error(error, "settings", secs_audio::SharePreference::Auto))?;
         let plan = plan_for(&project, &settings);
         if let Some(role) = params.role.as_ref()
             && !plan.roles.contains(role)
@@ -215,6 +221,7 @@ fn sampled_loop(
     job: &crate::jobs::JobContext,
 ) -> Result<JobResult, IpcError> {
     let method = method(lock(session).require()?.store.project()).to_owned();
+    let share = settings.share;
     let mut measurer = match method.as_str() {
         "native" => SampledMeasurer::Native(crate::measure::NativeMeasurer::from_backend(
             (deps.audio_backend)(),
@@ -241,7 +248,7 @@ fn sampled_loop(
         ) {
             Ok(report) => Some(report),
             Err(crate::measure::MeasureError::Audio(secs_audio::AudioError::Cancelled)) => None,
-            Err(error) => return Err(level_error(error)),
+            Err(error) => return Err(level_error(error, "level", share)),
         };
         if let Some(report) = report {
             send_meter(job, report);
