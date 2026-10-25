@@ -80,7 +80,10 @@ pub mod test_support;
 mod tests;
 
 pub use ba::{LayoutInfo, ManualPlan};
-pub use calibration::{EngineInputs, ProjectView, engine_inputs};
+pub use calibration::{
+    Calibration, CalibrationRequest, EngineInputs, ProjectView, calibrate, calibrate_with,
+    engine_inputs,
+};
 pub use chain::{BaRow, StageResponses, input_response, stage_responses};
 pub use design::{
     Design, DesignRequest, DesignSpectra, FitStage, FitterFactory, MainDesign, RoleScores,

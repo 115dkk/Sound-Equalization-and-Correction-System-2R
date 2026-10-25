@@ -27,6 +27,77 @@ pub struct EngineInputs {
     pub notes: Vec<String>,
 }
 
+#[derive(Debug)]
+pub struct CalibrationRequest<'a> {
+    pub view: &'a ProjectView<'a>,
+    pub irs: &'a MeasurementSet,
+    pub settings: &'a CalibrationSettings,
+    pub subs_only: bool,
+}
+
+#[derive(Debug)]
+pub struct Calibration {
+    pub design: crate::Design,
+    /// The normalized measurements and config the design was made from.
+    pub measurements: MeasurementSet,
+    pub config: EngineConfig,
+    /// IRs resampled to 48 kHz by the sample-rate policy.
+    pub resampled: usize,
+}
+
+/// Resolve, normalize and design with the context's cancellable production fitters.
+pub fn calibrate(
+    req: &CalibrationRequest<'_>,
+    ctx: &secs_compute::Context,
+) -> Result<Calibration, EngineError> {
+    calibrate_with(req, ctx, &*crate::production_fitters(ctx.cancel()))
+}
+
+/// The calibration entry point with caller-supplied fitters (oracle replay).
+pub fn calibrate_with(
+    req: &CalibrationRequest<'_>,
+    ctx: &secs_compute::Context,
+    fitters: &crate::FitterFactory<'_>,
+) -> Result<Calibration, EngineError> {
+    ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
+    let inputs = engine_inputs(req.view, req.irs, req.settings)?;
+    let (inputs, resampled) = prepare_inputs(inputs, req.settings.sample_rate_policy, ctx)?;
+    let design = crate::design(
+        &crate::DesignRequest {
+            measurements: &inputs.measurements,
+            config: &inputs.config,
+            tuning: &crate::Tuning::default(),
+            subs_only: req.subs_only,
+            adapter_notes: &inputs.notes,
+        },
+        ctx,
+        fitters,
+    )?;
+    Ok(Calibration {
+        design,
+        measurements: inputs.measurements,
+        config: inputs.config,
+        resampled,
+    })
+}
+
+pub(crate) fn prepare_inputs(
+    mut inputs: EngineInputs,
+    policy: secs_types::calibration::SampleRatePolicy,
+    ctx: &secs_compute::Context,
+) -> Result<(EngineInputs, usize), EngineError> {
+    ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
+    let resampled = inputs
+        .measurements
+        .positions
+        .iter()
+        .flat_map(|(_, roles)| roles)
+        .filter(|(_, measurement)| measurement.sample_rate != crate::grid::SR)
+        .count();
+    inputs.measurements = crate::normalize_measurements(&inputs.measurements, policy, ctx)?;
+    Ok((inputs, resampled))
+}
+
 pub fn engine_inputs(
     view: &ProjectView<'_>,
     irs: &MeasurementSet,

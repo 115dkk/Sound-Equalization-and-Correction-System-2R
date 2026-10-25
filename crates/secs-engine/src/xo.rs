@@ -9,7 +9,7 @@ use secs_types::calibration::CalibrationSettings;
 use crate::{
     Design, DesignRequest, EngineConfig, EngineError, MeasurementSet, ProjectView, SubFilter,
     Tuning,
-    calibration::{engine_inputs, resolve_xo},
+    calibration::{engine_inputs, prepare_inputs, resolve_xo},
     chain::stage_responses,
     decay::late_db_20_150,
     design::{DesignBytes, design_prepared_for_xo, production_fitters},
@@ -294,8 +294,7 @@ pub fn recommend_xo(
         ));
     }
     if !candidates.is_empty() {
-        inputs.measurements =
-            crate::normalize_measurements(&inputs.measurements, settings.sample_rate_policy, ctx)?;
+        inputs = prepare_inputs(inputs, settings.sample_rate_policy, ctx)?.0;
     }
     let progress = ctx.stage("engine.xo_recommendation", candidates.len() as u64);
     // Reserve the shared preparation and score windows before allocating them

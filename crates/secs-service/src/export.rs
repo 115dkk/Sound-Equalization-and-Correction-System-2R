@@ -271,56 +271,51 @@ impl Service {
                         job.report_progress("design", 0, 1);
                         // Reads the measurements of the project the export
                         // started from; the job stays cancellable.
-                        let mut prepared = session::apply(&session_for_design, ticket, |open| {
-                            let project = open.store.project().clone();
-                            let mut settings = secs_project::calibration_from_project(&project);
-                            if let Some(policy) = cached_sample_rate_policy {
-                                settings.sample_rate_policy = policy;
-                            }
-                            let measurements =
-                                super::calibration::load_measurements(&mut open.store)?;
-                            let groups = super::calibration::project_groups(&project);
-                            let view = secs_engine::ProjectView {
-                                groups: &groups,
-                                project_xo: &project.xo,
-                                target: &project.target,
-                            };
-                            let inputs =
-                                secs_engine::engine_inputs(&view, &measurements, &settings)
-                                    .map_err(super::calibration::engine_error)?;
-                            Ok((
-                                (settings, inputs.measurements, inputs.config, inputs.notes),
-                                false,
-                            ))
-                        })?;
+                        let (project, settings, measurements) =
+                            session::apply(&session_for_design, ticket, |open| {
+                                let project = open.store.project().clone();
+                                let mut settings = secs_project::calibration_from_project(&project);
+                                if let Some(policy) = cached_sample_rate_policy {
+                                    settings.sample_rate_policy = policy;
+                                }
+                                let measurements =
+                                    super::calibration::load_measurements(&mut open.store)?;
+                                Ok(((project, settings, measurements), false))
+                            })?;
                         let ctx = super::calibration::compute_context(&job, memory);
-                        prepared.1 = secs_engine::normalize_measurements(
-                            &prepared.1,
-                            prepared.0.sample_rate_policy,
+                        let groups = super::calibration::project_groups(&project);
+                        let view = secs_engine::ProjectView {
+                            groups: &groups,
+                            project_xo: &project.xo,
+                            target: &project.target,
+                        };
+                        let calibration = secs_engine::calibrate(
+                            &secs_engine::CalibrationRequest {
+                                view: &view,
+                                irs: &measurements,
+                                settings: &settings,
+                                subs_only: false,
+                            },
                             &ctx,
                         )
                         .map_err(super::calibration::engine_error)?;
-                        let request = secs_engine::DesignRequest {
-                            measurements: &prepared.1,
-                            config: &prepared.2,
-                            tuning: &secs_engine::Tuning::default(),
-                            subs_only: false,
-                            adapter_notes: &prepared.3,
-                        };
-                        let fitters = secs_engine::production_fitters(job.cancel());
-                        let design = secs_engine::design(&request, &ctx, fitters.as_ref())
-                            .map_err(super::calibration::engine_error)?;
+                        let design = calibration.design;
                         job.report_progress("design", 1, 1);
                         if let Some(paths) = cached_mimo_paths.as_ref() {
                             mimo = Some(cached_mimo_responses(
                                 &design,
-                                &prepared.1,
-                                &prepared.2,
+                                &calibration.measurements,
+                                &calibration.config,
                                 paths,
                                 secs_engine::MimoKey::from_settings(&settings).max_supports,
                             )?);
                         }
-                        (Arc::new(design), prepared.1, prepared.2, prepared.0)
+                        (
+                            Arc::new(design),
+                            calibration.measurements,
+                            calibration.config,
+                            settings,
+                        )
                     };
                     job.begin_commit()?;
                     let run = ExportRun {

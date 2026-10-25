@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use secs_compute::{Context, FixedMemory, MemoryBudget};
 use secs_engine::{
-    Design, DesignRequest, EngineConfig, Measurement, MeasurementSet, Metrics, ProjectView,
-    Samples, Tuning, design, engine_inputs, production_fitters,
+    CalibrationRequest, Design, EngineConfig, Measurement, MeasurementSet, Metrics, ProjectView,
+    Samples, Tuning, calibrate,
 };
 use secs_project::{
     Project, calibration_from_project, measurement_signature, store_calibration, target_key,
@@ -68,8 +68,6 @@ pub(crate) struct Prepared {
     pub project_settings: CalibrationSettings,
     pub settings: CalibrationSettings,
     pub measurements: MeasurementSet,
-    pub config: EngineConfig,
-    pub notes: Vec<String>,
     pub signature: String,
     pub target_key: String,
     pub config_key: String,
@@ -87,38 +85,33 @@ impl Service {
         let session = self.session.clone();
         let memory = self.deps.memory.available_bytes();
         self.jobs.start(JobKind::Calibrate, events, move |job| {
-            let mut prepared = snapshot.load(&job)?;
+            let prepared = snapshot.load(&job)?;
             let ctx = compute_context(&job, memory);
-            let resampled_count = prepared
-                .measurements
-                .positions
-                .iter()
-                .flat_map(|(_, roles)| roles)
-                .filter(|(_, measurement)| measurement.sample_rate != 48_000)
-                .count();
-            prepared.measurements = secs_engine::normalize_measurements(
-                &prepared.measurements,
-                prepared.settings.sample_rate_policy,
+            let groups = project_groups(&prepared.project);
+            let view = ProjectView {
+                groups: &groups,
+                project_xo: &prepared.project.xo,
+                target: &prepared.project.target,
+            };
+            let calibration = calibrate(
+                &CalibrationRequest {
+                    view: &view,
+                    irs: &prepared.measurements,
+                    settings: &prepared.settings,
+                    subs_only,
+                },
                 &ctx,
             )
             .map_err(engine_error)?;
-            let request = DesignRequest {
-                measurements: &prepared.measurements,
-                config: &prepared.config,
-                tuning: &Tuning::default(),
-                subs_only,
-                adapter_notes: &prepared.notes,
-            };
-            let fitters = production_fitters(job.cancel());
-            let design = design(&request, &ctx, fitters.as_ref()).map_err(engine_error)?;
+            let design = calibration.design;
             let ticket = prepared.ticket;
             let (path, cached) = session::commit(&session, ticket, &job, |open| {
                 let mut summary = summarize(&design, &prepared.settings);
-                if resampled_count > 0 {
+                if calibration.resampled > 0 {
                     summary.notes.push(Notice {
                         code: "measurement_resampled".into(),
                         params: [
-                            ("count".into(), resampled_count.to_string()),
+                            ("count".into(), calibration.resampled.to_string()),
                             ("target_hz".into(), "48000".into()),
                         ]
                         .into(),
@@ -137,8 +130,8 @@ impl Service {
                     target_key: prepared.target_key,
                     config_key: prepared.config_key,
                     design: Arc::new(design),
-                    measurements: prepared.measurements,
-                    config: prepared.config,
+                    measurements: calibration.measurements,
+                    config: calibration.config,
                 };
                 let mut state = lock(&results);
                 if subs_only {
@@ -338,13 +331,6 @@ impl Snapshot {
         let mut store = secs_project::MeasurementStore::new(&self.path, self.project.clone());
         let measurements = load_measurements_cancellable(&mut store, job.cancel())?;
         let project = self.project;
-        let groups = project_groups(&project);
-        let view = ProjectView {
-            groups: &groups,
-            project_xo: &project.xo,
-            target: &project.target,
-        };
-        let inputs = engine_inputs(&view, &measurements, &self.settings).map_err(engine_error)?;
         Ok(Prepared {
             ticket: self.ticket,
             signature: signature_key(&project),
@@ -353,9 +339,7 @@ impl Snapshot {
             project,
             project_settings: self.project_settings,
             settings: self.settings,
-            measurements: inputs.measurements,
-            config: inputs.config,
-            notes: inputs.notes,
+            measurements,
         })
     }
 }
