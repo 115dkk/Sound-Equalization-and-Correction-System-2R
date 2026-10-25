@@ -20,14 +20,16 @@ pub fn export_view(
     config: &EngineConfig,
 ) -> Result<ExportView, EngineError> {
     let prepared = measurement::prepare(measurements, config, &Setup::new(config))?;
-    export_view_prepared(design, measurements, &prepared)
+    export_view_prepared(design, measurements, &prepared, &|| false)
 }
 
-/// [`export_view`] on measurements already prepared with the same config.
+/// [`export_view`] on measurements already prepared with the same config;
+/// `Err(Cancelled)` once `cancelled()` reads true while the spectra are built.
 pub(crate) fn export_view_prepared(
     design: &crate::Design,
     measurements: &MeasurementSet,
     prepared: &measurement::Prepared,
+    cancelled: &dyn Fn() -> bool,
 ) -> Result<ExportView, EngineError> {
     let sub_filters: Vec<_> = design
         .chain
@@ -47,7 +49,8 @@ pub(crate) fn export_view_prepared(
             )
         })
         .collect();
-    let spectra = measurement::long_spectra(measurements, prepared, &sub_filters, 2000.0)?;
+    let spectra =
+        measurement::long_spectra_until(measurements, prepared, &sub_filters, 2000.0, cancelled)?;
     Ok(ExportView {
         spectra,
         base_s: prepared.base_s,

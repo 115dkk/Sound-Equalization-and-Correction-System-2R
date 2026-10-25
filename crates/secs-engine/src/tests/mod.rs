@@ -4,6 +4,7 @@
 //! (`oracle/goldens/engine_inputs`) that every family refers to by name.
 
 mod calibration;
+pub(crate) mod cancel;
 pub(crate) mod cases;
 mod chain;
 mod decay;

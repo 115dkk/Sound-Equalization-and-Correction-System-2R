@@ -1340,6 +1340,9 @@ fn align_with(
 }
 
 /// Main spectra include acoustic-XO PEQ, but not their electrical HP or delay.
+/// Returns `Err(Cancelled)` once `cancelled()` reads true; it is polled once
+/// per main position while the bands are gathered and once per candidate
+/// delay, which leaves the search's arithmetic and order unchanged (TD-49).
 #[allow(clippy::type_complexity)]
 pub fn bus_delay(
     alignment: &SubAlignment,
@@ -1347,13 +1350,15 @@ pub fn bus_delay(
     align_delay_ms: &[(String, f64)],
     xo_of: &[(String, f64)],
     lo_ms: f64,
-) -> (f64, i8) {
+    cancelled: &dyn Fn() -> bool,
+) -> Result<(f64, i8), EngineError> {
     bus_delay_observe(
         alignment,
         mains,
         align_delay_ms,
         xo_of,
         lo_ms,
+        cancelled,
         &mut |_, _, _| {},
     )
 }
@@ -1365,10 +1370,18 @@ fn bus_delay_observe(
     align_delay_ms: &[(String, f64)],
     xo_of: &[(String, f64)],
     lo_ms: f64,
+    cancelled: &dyn Fn() -> bool,
     observe: &mut dyn FnMut(i8, f64, f64),
-) -> (f64, i8) {
+) -> Result<(f64, i8), EngineError> {
+    let check = || {
+        if cancelled() {
+            Err(EngineError::Cancelled)
+        } else {
+            Ok(())
+        }
+    };
     if alignment.plan.as_ref().is_some_and(|p| !p.fixed.is_empty()) {
-        return (0.0, 1);
+        return Ok((0.0, 1));
     }
     let mut prepared = vec![];
     for (r, positions) in mains {
@@ -1386,6 +1399,7 @@ fn bus_delay_observe(
         let hp = response::lr4(&f, xo, "HP");
         let lp = response::lr4(&f, xo, "LP");
         for (pos, h) in positions {
+            check()?;
             let sub = &alignment
                 .sub_sum_by_pos
                 .iter()
@@ -1406,12 +1420,13 @@ fn bus_delay_observe(
         }
     }
     if prepared.is_empty() {
-        return (0.0, 1);
+        return Ok((0.0, 1));
     }
     let mut best = (1e18, 0.0, 1);
     for pol in [1, -1] {
         let mut k = 0;
         while lo_ms + k as f64 * 0.25 < 15.01 {
+            check()?;
             let d = lo_ms + k as f64 * 0.25;
             k += 1;
             let mut cost = 0.0;
@@ -1438,7 +1453,7 @@ fn bus_delay_observe(
             }
         }
     }
-    (best.1, best.2)
+    Ok((best.1, best.2))
 }
 pub fn fold(rows: &[BaRow], bus_gain: f64, bus_delay_ms: f64, bus_polarity: i8) -> Vec<BaRow> {
     rows.iter()

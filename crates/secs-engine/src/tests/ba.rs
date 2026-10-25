@@ -482,8 +482,10 @@ fn ba_oracle_auto_manual_bus() {
                 &prep.align_delay_ms,
                 &xo,
                 number(&b["lo"]),
+                &|| false,
                 &mut |p, d, c| candidates.extend([f64::from(p), d, c]),
-            );
+            )
+            .unwrap();
             compare(
                 &format!("{} bus delay costs", fx.id),
                 &candidates,
@@ -550,6 +552,77 @@ fn ba_oracle_auto_manual_bus() {
         compare("orchestrated gain", &[got.bus_gain], &[out.bus_gain], 1e-9);
         assert_eq!(got.bus_peq, out.bus_peq);
     }
+}
+
+#[test]
+fn ba_bus_delay_stops_at_every_cancellation_check() {
+    // TD-49: the bus-delay grid search polls the token once per main position
+    // while it gathers the crossover bands and once per candidate delay.
+    let case = cases::load("room");
+    let setup = Setup::new(&case.config);
+    let prep = crate::measurement::prepare(&case.measurements, &case.config, &setup).unwrap();
+    let cancel = CancelToken::new();
+    let input = BaInput {
+        measurements: &case.measurements,
+        prepared: &prep,
+        setup: &setup,
+        config: &case.config,
+        tuning: &case.tuning,
+        xo_of: &[],
+        ref_level: 0.0,
+        cancel: &cancel,
+    };
+    let mut alignment = empty(&input);
+    let rows: Vec<_> = case
+        .config
+        .subs
+        .iter()
+        .map(|_| row(0.0, 0.0, 1, vec![]))
+        .collect();
+    alignment.sub_sum_by_pos = sums(
+        &prep.h,
+        &case.config.subs,
+        &rows,
+        &(0..BINS).collect::<Vec<_>>(),
+        &complete(&prep.h, &case.config.subs),
+    );
+    let mains: Vec<_> = case
+        .config
+        .mains
+        .iter()
+        .map(|r| {
+            let cells: Vec<_> = prep
+                .h
+                .positions()
+                .iter()
+                .filter_map(|&p| prep.h.get(p, r).map(|h| (p, Arc::clone(h))))
+                .collect();
+            (r.clone(), cells)
+        })
+        .collect();
+    let xo: Vec<_> = case
+        .config
+        .mains
+        .iter()
+        .map(|r| (r.clone(), 80.0))
+        .collect();
+    let plain = bus_delay(&alignment, &mains, &prep.align_delay_ms, &xo, -5.0, &|| {
+        false
+    })
+    .unwrap();
+    let (delay, polls) = crate::tests::cancel::assert_cancels("bus_delay", 1, |cancelled| {
+        bus_delay(
+            &alignment,
+            &mains,
+            &prep.align_delay_ms,
+            &xo,
+            -5.0,
+            cancelled,
+        )
+    });
+    assert_eq!(delay, plain);
+    // Twelve main cells, then two polarities of the 81 delays -5..=15 ms.
+    assert_eq!(polls, 12 + 2 * 81);
 }
 
 #[test]

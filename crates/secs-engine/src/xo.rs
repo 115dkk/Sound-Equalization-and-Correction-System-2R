@@ -152,10 +152,11 @@ impl ScoreWindows {
     fn new(
         measurements: &MeasurementSet,
         prepared: &measurement::Prepared,
+        cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, EngineError> {
         Ok(Self {
-            short: measurement::long_spectra(measurements, prepared, &[], 500.0)?,
-            long: measurement::long_spectra(measurements, prepared, &[], 2000.0)?,
+            short: measurement::long_spectra_until(measurements, prepared, &[], 500.0, cancelled)?,
+            long: measurement::long_spectra_until(measurements, prepared, &[], 2000.0, cancelled)?,
         })
     }
 }
@@ -309,10 +310,11 @@ pub fn recommend_xo(
     let prepared = if candidates.is_empty() {
         None
     } else {
-        Some(measurement::prepare(
+        Some(measurement::prepare_until(
             &inputs.measurements,
             &inputs.config,
             &Setup::new(&inputs.config),
+            &|| ctx.cancel().is_cancelled(),
         )?)
     };
     if prepared.is_some() {
@@ -324,7 +326,9 @@ pub fn recommend_xo(
         .as_ref()
         .map(|prepared| {
             ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
-            ScoreWindows::new(&inputs.measurements, prepared)
+            ScoreWindows::new(&inputs.measurements, prepared, &|| {
+                ctx.cancel().is_cancelled()
+            })
         })
         .transpose()?;
     ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
@@ -567,7 +571,7 @@ mod perf_tests {
                 }
             }
             let own_scores = xo_scores(&own, &case.measurements, &config);
-            let windows = ScoreWindows::new(&case.measurements, &prepared).unwrap();
+            let windows = ScoreWindows::new(&case.measurements, &prepared, &|| false).unwrap();
             let shared_scores = xo_scores_prepared(
                 &shared,
                 &case.measurements,

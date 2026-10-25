@@ -249,7 +249,9 @@ pub(crate) fn design_observed(
     let held =
         measurement::preparation_bytes(req.measurements, &setup).saturating_add(bytes.retained);
     let _permit = crate::memory::reserve(ctx, held, bytes.channel)?;
-    let prepared = measurement::prepare(req.measurements, config, &setup)?;
+    let prepared = measurement::prepare_until(req.measurements, config, &setup, &|| {
+        ctx.cancel().is_cancelled()
+    })?;
     observed("prepare", prep_started.elapsed());
     design_prepared_scored(
         req,
@@ -519,7 +521,8 @@ fn design_prepared_scored(
             &prepared.align_delay_ms,
             &xo_of,
             lo.ceil() / 4.0,
-        )
+            &|| ctx.cancel().is_cancelled(),
+        )?
     };
     check(ctx)?;
     let rows = ba::fold(
@@ -605,7 +608,8 @@ fn design_prepared_scored(
                     positions: &positions,
                 },
                 &mut *fitter,
-            );
+                &|| ctx.cancel().is_cancelled(),
+            )?;
             check(ctx)?;
             let combined = comb
                 .iter()

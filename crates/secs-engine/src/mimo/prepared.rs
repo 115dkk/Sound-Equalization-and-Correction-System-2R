@@ -41,9 +41,12 @@ impl<'ctx> Prepared<'ctx> {
     ) -> Result<Self, EngineError> {
         let (peak, held) = Self::bytes(measurements, config);
         let mut permit = crate::memory::reserve(ctx, peak, 0)?;
-        let prepared = measurement::prepare(measurements, config, &Setup::new(config))?;
+        let cancelled = || ctx.cancel().is_cancelled();
+        let prepared =
+            measurement::prepare_until(measurements, config, &Setup::new(config), &cancelled)?;
         let spectra =
-            crate::export_view::export_view_prepared(design, measurements, &prepared)?.spectra;
+            crate::export_view::export_view_prepared(design, measurements, &prepared, &cancelled)?
+                .spectra;
         let align_delay_ms = prepared.align_delay_ms;
         drop(prepared.h);
         drop(prepared.h0);
