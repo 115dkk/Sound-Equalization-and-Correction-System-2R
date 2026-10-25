@@ -1059,3 +1059,40 @@ fn fir_taps_that_overflow_f32_write_nothing_td45() {
     assert!(error.to_string().contains("mimo.paths[0]"), "{error}");
     assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
 }
+
+#[test]
+fn duplicate_or_reserved_roles_write_nothing_td46() {
+    let temp = TempDir::new("duplicate_roles");
+    let reject = |chain: &SignalChain, role: &str| {
+        let error = write_config(chain, &temp.0, "bad", &Options::default(), None).unwrap_err();
+        assert!(matches!(error, CamillaError::Invalid(_)), "{error}");
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("duplicate or reserved role {role:?}")),
+            "{error}"
+        );
+        assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
+    };
+
+    let fixture = Fixture::load("camilla", "direct_no_subs");
+    let mut two_mains = chain(&fixture);
+    two_mains.mains.push(two_mains.mains[0].clone());
+    reject(&two_mains, "L");
+    let mut reserved = chain(&fixture);
+    reserved.mains[0].role = "LFE".into();
+    reject(&reserved, "LFE");
+
+    let fixture = Fixture::load("export_mimo", "room_dba_iir");
+    let mut sub_as_main = chain(&fixture);
+    sub_as_main.subs[0].role = sub_as_main.mains[0].role.clone();
+    let role = sub_as_main.mains[0].role.clone();
+    reject(&sub_as_main, &role);
+    let mut two_subs = chain(&fixture);
+    two_subs.subs.push(two_subs.subs[0].clone());
+    let role = two_subs.subs[0].role.clone();
+    reject(&two_subs, &role);
+    let mut reserved_sub = chain(&fixture);
+    reserved_sub.subs[0].role = "LFE".into();
+    reject(&reserved_sub, "LFE");
+}

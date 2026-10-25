@@ -527,6 +527,18 @@ fn validate_mimo(chain: &SignalChain, mimo: Option<&MimoPaths>) -> Result<(), Ca
     Ok(())
 }
 
+/// Roles become YAML keys and coefficient filenames and `LFE` names the LFE
+/// input, so each role is unique and none is `LFE` (the filter writer's rule).
+fn reserve_role<'a>(roles: &mut Vec<&'a str>, role: &'a str) -> Result<(), CamillaError> {
+    if roles.contains(&role) || role == "LFE" {
+        return Err(CamillaError::Invalid(format!(
+            "duplicate or reserved role {role:?}"
+        )));
+    }
+    roles.push(role);
+    Ok(())
+}
+
 fn validate(
     chain: &SignalChain,
     options: &Options,
@@ -592,6 +604,10 @@ fn validate(
             finite(&format!("main.{role}.fir[{index}]"), *value)?;
         }
     }
+    let mut roles = Vec::new();
+    for main in &chain.mains {
+        reserve_role(&mut roles, &main.role)?;
+    }
     for SubChannel {
         role,
         gain_db,
@@ -606,6 +622,7 @@ fn validate(
     } in &chain.subs
     {
         check_ascii_identifier(role)?;
+        reserve_role(&mut roles, role)?;
         finite(&format!("sub.{role}.gain_db"), *gain_db)?;
         finite(&format!("sub.{role}.delay_ms"), *delay_ms)?;
         finite(&format!("sub.{role}.hp_hz"), *hp_hz)?;

@@ -933,7 +933,7 @@ id = "export.camilladsp"
 kind = "export"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-camilla::export_camilladsp_matches_oracle", "secs-camilla::invalid_values_write_nothing", "secs-camilla::fir_taps_that_overflow_f32_write_nothing_td45"]
+tests = ["secs-camilla::export_camilladsp_matches_oracle", "secs-camilla::invalid_values_write_nothing", "secs-camilla::fir_taps_that_overflow_f32_write_nothing_td45", "secs-camilla::duplicate_or_reserved_roles_write_nothing_td46"]
 upstream = "calibration.py export_camilladsp"
 
 [[feature]]
