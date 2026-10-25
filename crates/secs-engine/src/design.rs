@@ -19,7 +19,7 @@ use crate::{
     ba::{self, BaInput, LayoutInfo, ManualPlan},
     chain::BaRow,
     fit::{self, Fitter},
-    grid::{SR, design_freqs},
+    grid::{N_FFT, SR, design_freqs},
     levels,
     measurement::{self, Spectra},
     notes::Note,
@@ -128,6 +128,19 @@ pub struct RoleScores {
 }
 fn check(ctx: &Context) -> Result<(), EngineError> {
     ctx.cancel().check().map_err(|_| EngineError::Cancelled)
+}
+
+/// RC realizes each channel FIR on the `N_FFT`-point design grid and keeps
+/// its first `taps` samples, so more taps than that cannot be designed
+/// (TD-50); 0 selects the PEQ-only path. The modes use 0 and 2048–16384.
+pub(crate) fn check_taps(config: &EngineConfig) -> Result<(), EngineError> {
+    if config.taps > N_FFT {
+        return Err(EngineError::Input(format!(
+            "FIR taps {} outside 0..={N_FFT} (0 is PEQ only)",
+            config.taps
+        )));
+    }
+    Ok(())
 }
 
 /// Full-grid arrays one `rc::channel` keeps alive at once, in spectra (16
@@ -239,6 +252,7 @@ pub(crate) fn design_observed(
     observed: &(dyn Fn(&str, std::time::Duration) + Sync),
 ) -> Result<Design, EngineError> {
     check(ctx)?;
+    check_taps(req.config)?;
     let prep_started = std::time::Instant::now();
     let config = req.config;
     let setup = Setup::new(config);
@@ -347,6 +361,7 @@ fn design_prepared_scored(
     reserve: ChannelBytes,
 ) -> Result<Design, EngineError> {
     check(ctx)?;
+    check_taps(req.config)?;
     let config = req.config;
     let mut setup = Setup::new(config);
     let positions = prepared.h.positions().to_vec();

@@ -414,6 +414,42 @@ fn design_empty_subs_and_subs_only_keep_axes_and_shared_spectra() {
 }
 
 #[test]
+fn design_rejects_taps_beyond_the_design_fft() {
+    // TD-50: RC truncates the N_FFT-point FIR to `taps`; more taps than that
+    // used to panic on a slice (2·N_FFT) or taper garbage (N_FFT + 1).
+    let mut c = cases::load("room");
+    c.config.subs.clear();
+    c.config.sub_manual.clear();
+    c.config.bundle_layouts.clear();
+    let n_fft = crate::grid::N_FFT;
+    for taps in [2 * n_fft, n_fft + 1] {
+        c.config.taps = taps;
+        let context = Context::serial();
+        let result = design::design(
+            &DesignRequest {
+                measurements: &c.measurements,
+                config: &c.config,
+                tuning: &c.tuning,
+                subs_only: false,
+                adapter_notes: &[],
+            },
+            &context,
+            &*design::production_fitters(context.cancel()),
+        );
+        assert!(
+            matches!(&result, Err(crate::EngineError::Input(message))
+                if *message == format!("FIR taps {taps} outside 0..={n_fft} (0 is PEQ only)")),
+            "{:?}",
+            result.err()
+        );
+    }
+    for taps in [0, 1, 2048, n_fft] {
+        c.config.taps = taps;
+        assert!(design::check_taps(&c.config).is_ok(), "{taps} taps");
+    }
+}
+
+#[test]
 fn design_cancellation_returns_within_one_second() {
     use secs_compute::{CancelToken, MemoryBudget, NoProgress};
     use std::{
