@@ -309,6 +309,78 @@ impl secs_rew::Transport for RecordingRew {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+struct FailingRew {
+    calls: Arc<Mutex<Vec<secs_rew::Request>>>,
+}
+
+impl secs_rew::Transport for FailingRew {
+    fn request(
+        &self,
+        request: &secs_rew::Request,
+    ) -> Result<secs_rew::Response, secs_rew::RewError> {
+        self.calls.lock().unwrap().push(request.clone());
+        if request.path == "/generator/command"
+            && request
+                .body
+                .as_ref()
+                .is_some_and(|body| body["command"] == "Play")
+        {
+            return Err(secs_rew::RewError::Connection {
+                path: request.path.clone(),
+                message: "injected failure after play".into(),
+            });
+        }
+        Ok(secs_rew::Response::ok(serde_json::json!({"message":"ok"})))
+    }
+}
+
+#[test]
+fn rew_monitor_cleans_up_after_loop_error() {
+    let root = root();
+    let transport = FailingRew::default();
+    let injected = transport.clone();
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(move || Box::new(injected.clone())),
+        ..Default::default()
+    });
+    configure(&service, &root.join("room.secs"), "rew");
+    let events = Arc::new(Events::default());
+    let Response::LevelMonitorStart(started) = call(
+        &service,
+        Request::LevelMonitorStart(LevelMonitorStartParams::default()),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    call(
+        &service,
+        Request::LevelPlay(LevelPlayParams {
+            role: "L".into(),
+            master_dbfs: -30.0,
+        }),
+        Arc::new(NoEvents),
+    );
+    assert_eq!(
+        events.wait_finished(started.job, Duration::from_secs(2)),
+        JobStatus::Failed
+    );
+    let calls = transport.calls.lock().unwrap();
+    assert!(calls.iter().any(|call| {
+        call.path == "/generator/command"
+            && call
+                .body
+                .as_ref()
+                .is_some_and(|body| body["command"] == "Stop")
+    }));
+    assert!(
+        calls
+            .iter()
+            .any(|call| call.path == "/input-levels/unsubscribe")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn rew_level_play_ends_once_after_its_duration() {
     let root = root();

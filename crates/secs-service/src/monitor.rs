@@ -324,66 +324,69 @@ fn rew_loop(
     .map_err(|error| rew_error(error, rew_license))?;
     let mut handled_generation = 0;
     let mut active: Option<(PlayRequest, std::time::Instant, Option<secs_rew::Level>)> = None;
-    while !job.cancel().is_cancelled() {
-        let requested = lock(state).play.clone();
-        if active.as_ref().is_some_and(|(play, _, _)| {
-            requested
-                .as_ref()
-                .is_none_or(|requested| requested.generation != play.generation)
-        }) {
-            secs_rew::LevelMonitor::stop_generator(&mut rew);
-            if let Some((play, _, _)) = active.take() {
-                send_play_end(job, &play.role, "stopped");
-                handled_generation = play.generation;
-            }
-        }
-        if let Some(play) = requested.filter(|play| {
-            play.generation != handled_generation
-                && active
+    let result = (|| {
+        while !job.cancel().is_cancelled() {
+            let requested = lock(state).play.clone();
+            if active.as_ref().is_some_and(|(play, _, _)| {
+                requested
                     .as_ref()
-                    .is_none_or(|(active, _, _)| active.generation != play.generation)
-        }) {
-            let output = u32::try_from(plan.output_for(&play.role))
-                .ok()
-                .filter(|value| *value > 0)
-                .ok_or_else(|| input("role", "role has no output"))?;
-            secs_rew::LevelMonitor::play_pink(&mut rew, &play.role, output, play.master_dbfs)
-                .map_err(|error| rew_error(error, rew_license))?;
-            active = Some((play, std::time::Instant::now(), None));
-        }
-        for level in std::mem::take(&mut *lock(&pending)) {
-            job.send(JobEvent::Meter {
-                job: job.id(),
-                rms_dbfs: level.input_dbfs,
-                peak_dbfs: level.peak_dbfs,
-                spl_db: level.spl_db,
-                clipping: level.clip,
-            });
-            if let Some((_, _, settled)) = active.as_mut() {
-                *settled = Some(level);
-            }
-        }
-        if active
-            .as_ref()
-            .is_some_and(|(_, started, _)| started.elapsed() >= Duration::from_secs_f64(2.5))
-        {
-            secs_rew::LevelMonitor::stop_generator(&mut rew);
-            if let Some((play, _, settled)) = active.take() {
-                if let Some(level) = settled {
-                    store_level(session, &play.role, level.input_dbfs, level.spl_db)?;
+                    .is_none_or(|requested| requested.generation != play.generation)
+            }) {
+                secs_rew::LevelMonitor::stop_generator(&mut rew);
+                if let Some((play, _, _)) = active.take() {
+                    send_play_end(job, &play.role, "stopped");
+                    handled_generation = play.generation;
                 }
-                send_play_end(job, &play.role, "done");
-                handled_generation = play.generation;
             }
+            if let Some(play) = requested.filter(|play| {
+                play.generation != handled_generation
+                    && active
+                        .as_ref()
+                        .is_none_or(|(active, _, _)| active.generation != play.generation)
+            }) {
+                let output = u32::try_from(plan.output_for(&play.role))
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(|| input("role", "role has no output"))?;
+                secs_rew::LevelMonitor::play_pink(&mut rew, &play.role, output, play.master_dbfs)
+                    .map_err(|error| rew_error(error, rew_license))?;
+                active = Some((play, std::time::Instant::now(), None));
+            }
+            for level in std::mem::take(&mut *lock(&pending)) {
+                job.send(JobEvent::Meter {
+                    job: job.id(),
+                    rms_dbfs: level.input_dbfs,
+                    peak_dbfs: level.peak_dbfs,
+                    spl_db: level.spl_db,
+                    clipping: level.clip,
+                });
+                if let Some((_, _, settled)) = active.as_mut() {
+                    *settled = Some(level);
+                }
+            }
+            if active
+                .as_ref()
+                .is_some_and(|(_, started, _)| started.elapsed() >= Duration::from_secs_f64(2.5))
+            {
+                secs_rew::LevelMonitor::stop_generator(&mut rew);
+                if let Some((play, _, settled)) = active.take() {
+                    if let Some(level) = settled {
+                        store_level(session, &play.role, level.input_dbfs, level.spl_db)?;
+                    }
+                    send_play_end(job, &play.role, "done");
+                    handled_generation = play.generation;
+                }
+            }
+            std::thread::sleep(Duration::from_millis(100));
         }
-        std::thread::sleep(Duration::from_millis(100));
-    }
+        Ok(JobResult::Stopped)
+    })();
     secs_rew::LevelMonitor::stop_generator(&mut rew);
     if let Some((play, _, _)) = active.take() {
         send_play_end(job, &play.role, "stopped");
     }
     secs_rew::LevelMonitor::stop(&mut rew);
-    Ok(JobResult::Stopped)
+    result
 }
 
 fn store_level(
