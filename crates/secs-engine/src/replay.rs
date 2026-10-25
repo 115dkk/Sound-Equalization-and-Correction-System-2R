@@ -1,0 +1,157 @@
+//! The inputs and preparation retained by an immutable design.
+
+use std::sync::Arc;
+
+use crate::{
+    Design, EngineConfig, EngineError, ExportView, MeasurementSet, measurement::Prepared,
+    setup::Setup,
+};
+
+/// What a design was made from. Sample buffers and prepared spectra are shared,
+/// never copied. Long-window spectra are computed on request, never cached.
+#[derive(Debug)]
+pub struct DesignReplay {
+    measurements: Arc<MeasurementSet>,
+    config: EngineConfig,
+    setup: Setup,
+    prepared: Prepared,
+}
+
+impl DesignReplay {
+    pub(crate) fn new(
+        measurements: &MeasurementSet,
+        config: &EngineConfig,
+        setup: Setup,
+        prepared: &Prepared,
+    ) -> Self {
+        Self {
+            measurements: Arc::new(measurements.clone()),
+            config: config.clone(),
+            setup,
+            prepared: prepared.clone(),
+        }
+    }
+
+    pub fn measurements(&self) -> &MeasurementSet {
+        &self.measurements
+    }
+
+    pub fn config(&self) -> &EngineConfig {
+        &self.config
+    }
+
+    pub fn base_s(&self) -> f64 {
+        self.prepared.base_s
+    }
+
+    /// Rebuilds the 2 s spectra used by SECS 2's REW exports.
+    /// `design` must be the design that owns this replay.
+    pub fn export_view(&self, design: &Design) -> Result<ExportView, EngineError> {
+        self.export_view_until(design, &|| false)
+    }
+
+    pub(crate) fn export_view_until(
+        &self,
+        design: &Design,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<ExportView, EngineError> {
+        crate::export_view::export_view_prepared(
+            design,
+            self.measurements(),
+            &self.prepared,
+            cancelled,
+        )
+    }
+
+    /// Legacy callers may supply a different input. Comparing shared storage
+    /// avoids scanning samples; independently loaded equivalent inputs safely
+    /// take the fresh-preparation path.
+    pub(crate) fn matches(&self, set: &MeasurementSet, config: &EngineConfig) -> bool {
+        self.config == *config
+            && self.measurements.positions.len() == set.positions.len()
+            && self
+                .measurements
+                .positions
+                .iter()
+                .zip(&set.positions)
+                .all(|((p, a), (q, b))| {
+                    p == q
+                        && a.len() == b.len()
+                        && a.iter().zip(b).all(|((r, a), (s, b))| {
+                            r == s
+                                && a.sample_rate == b.sample_rate
+                                && a.t0.to_bits() == b.t0.to_bits()
+                                && match (&a.samples, &b.samples) {
+                                    (crate::Samples::F32(a), crate::Samples::F32(b)) => {
+                                        Arc::ptr_eq(a, b)
+                                    }
+                                    (crate::Samples::F64(a), crate::Samples::F64(b)) => {
+                                        Arc::ptr_eq(a, b)
+                                    }
+                                    _ => false,
+                                }
+                        })
+                })
+    }
+
+    pub(crate) fn prepared(&self) -> &Prepared {
+        &self.prepared
+    }
+
+    pub(crate) fn setup(&self) -> &Setup {
+        &self.setup
+    }
+
+    /// Owned metadata added to the TD-24 reservation. Samples and spectrum
+    /// buffers are Arc-shared with the input and the already-counted preparation.
+    /// Count cloned containers and strings, with room for their allocation headers.
+    pub(crate) fn bytes(set: &MeasurementSet, config: &EngineConfig, setup: &Setup) -> u64 {
+        fn strings(values: &[String]) -> usize {
+            values.iter().map(|s| 32 + s.len()).sum()
+        }
+        fn manual(values: &[(String, crate::input::SubManual)]) -> usize {
+            values
+                .iter()
+                .map(|(r, m)| {
+                    256 + r.len() + m.bundle.len() + m.allpass.len() * 16 + m.peq.len() * 24
+                })
+                .sum()
+        }
+        let measurements: usize = set
+            .positions
+            .iter()
+            .map(|(_, roles)| {
+                // Measurement metadata, two cloned Spectra cell tables, and timing
+                // entries (only the reference has timing, so all cells overcount it).
+                128 + roles.iter().map(|(r, _)| 320 + 5 * r.len()).sum::<usize>()
+            })
+            .sum();
+        let config_bytes = strings(&config.mains)
+            + strings(&config.subs)
+            + config
+                .groups
+                .iter()
+                .map(|(g, rs)| 64 + g.len() + strings(rs))
+                .sum::<usize>()
+            + config.target.points.len() * 16
+            + config.xo.iter().map(|(g, _)| 48 + g.len()).sum::<usize>()
+            + manual(&config.sub_manual)
+            + config
+                .bundle_layouts
+                .iter()
+                .map(|(g, _)| 64 + g.len())
+                .sum::<usize>();
+        let setup_bytes = manual(&setup.sub_manual)
+            + setup
+                .sub_filters
+                .iter()
+                .map(|(r, f)| 96 + r.len() + f.peq.len() * 24)
+                .sum::<usize>()
+            + setup
+                .layouts
+                .iter()
+                .map(|(g, l)| 80 + g.len() + strings(&l.members))
+                .sum::<usize>();
+        (std::mem::size_of::<Self>() + 128 + measurements + config_bytes + setup_bytes) as u64
+    }
+}

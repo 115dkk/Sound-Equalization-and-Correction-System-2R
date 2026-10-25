@@ -152,7 +152,7 @@ pub struct BundleLayout {
 }
 
 /// The resolved design settings: the engine constructor's surface.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct EngineConfig {
     /// Main roles, in configuration group order.
     pub mains: Vec<String>,

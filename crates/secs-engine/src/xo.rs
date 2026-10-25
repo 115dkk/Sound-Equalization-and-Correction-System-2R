@@ -107,9 +107,20 @@ pub fn xo_scores(
     measurements: &MeasurementSet,
     config: &EngineConfig,
 ) -> Vec<(String, XoScores)> {
-    let prepared = measurement::prepare(measurements, config, &Setup::new(config))
-        .expect("measurements belonging to the design");
-    xo_scores_prepared(design, measurements, config, &prepared, None)
+    let replay = &design.replay;
+    if replay.matches(measurements, config) {
+        xo_scores_prepared(
+            design,
+            replay.measurements(),
+            replay.config(),
+            replay.prepared(),
+            None,
+        )
+    } else {
+        let prepared = measurement::prepare(measurements, config, &Setup::new(config))
+            .expect("measurements belonging to the design");
+        xo_scores_prepared(design, measurements, config, &prepared, None)
+    }
 }
 
 /// What `xo_scores` replays (TD-48): every main it scores (a group member
@@ -411,6 +422,38 @@ mod perf_tests {
     use super::*;
     use crate::tests::cases;
     use std::sync::Arc;
+
+    #[test]
+    fn xo_replay_scores_match_fresh_preparation_bits() {
+        for name in ["dolby", "room_filters"] {
+            let case = crate::test_support::replay_case(name);
+            let prepared =
+                measurement::prepare(&case.measurements, &case.config, &Setup::new(&case.config))
+                    .unwrap();
+            let expected = xo_scores_prepared(
+                &case.design,
+                &case.measurements,
+                &case.config,
+                &prepared,
+                None,
+            );
+            let builds = measurement::SPECTRA_BUILT.with(|count| count.get());
+            let actual = xo_scores(&case.design, &case.measurements, &case.config);
+            assert_eq!(
+                measurement::SPECTRA_BUILT.with(|count| count.get()) - builds,
+                2,
+                "scoring builds its two windows, not another preparation"
+            );
+            assert_eq!(actual.len(), expected.len());
+            for ((role, a), (expected_role, b)) in actual.iter().zip(&expected) {
+                assert_eq!(role, expected_role);
+                assert_eq!(
+                    [a.flat, a.gd, a.late].map(f64::to_bits),
+                    [b.flat, b.gd, b.late].map(f64::to_bits)
+                );
+            }
+        }
+    }
 
     #[test]
     fn xo_preparation_is_candidate_independent() {

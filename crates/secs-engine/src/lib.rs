@@ -66,6 +66,7 @@ mod notes;
 pub mod preview;
 #[allow(dead_code)]
 mod rc;
+mod replay;
 #[allow(dead_code)]
 mod scorecard;
 #[allow(dead_code)]
@@ -100,6 +101,7 @@ pub use mimo::{
 };
 pub use normalize::normalize_measurements;
 pub use notes::{MimoNote, Note};
+pub use replay::DesignReplay;
 pub use scorecard::Metrics;
 pub use secs_dsp::resample::{MAX_RESAMPLE_RATE, MIN_RESAMPLE_RATE};
 pub use setup::SubFilter;

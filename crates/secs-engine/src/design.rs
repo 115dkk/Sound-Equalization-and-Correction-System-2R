@@ -60,6 +60,7 @@ pub struct DesignRequest<'a> {
 }
 #[derive(Debug)]
 pub struct Design {
+    pub replay: Arc<crate::DesignReplay>,
     pub chain: SignalChain,
     pub mains: Vec<MainDesign>,
     pub subs: Option<SubDesign>,
@@ -172,6 +173,8 @@ impl DesignBytes {
     ///   cells, index and result at one position (S + 2), `top_responses` (M),
     ///   and per finished channel `MainDesign.response`, `after` and
     ///   `combined` (3·M). Without subs only the last term remains.
+    /// - replay: owned input/config/Setup metadata and preparation handles;
+    ///   IR samples and prepared spectrum buffers are shared, not copied.
     /// - channel: `comb` (P), `rc::combine`'s `delay`, `hp`, `lp` and bus
     ///   `delay` (4), and `rc::channel`'s scratch (`RC_SCRATCH_SPECTRA`).
     pub(crate) fn new(
@@ -199,7 +202,8 @@ impl DesignBytes {
         };
         let spectra = |n: u64| n.saturating_mul(measurement::SPECTRUM_BYTES);
         Self {
-            retained: spectra(ba.saturating_add(3 * mains)),
+            retained: spectra(ba.saturating_add(3 * mains))
+                .saturating_add(crate::DesignReplay::bytes(set, config, setup)),
             channel: if mains == 0 {
                 0
             } else {
@@ -843,6 +847,12 @@ fn design_prepared_scored(
         target: config.target.clone(),
         xo: config.xo.clone(),
         scores,
+        replay: Arc::new(crate::DesignReplay::new(
+            req.measurements,
+            config,
+            setup,
+            prepared,
+        )),
         #[cfg(test)]
         timings,
     })

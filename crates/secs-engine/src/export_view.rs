@@ -1,9 +1,6 @@
 //! Narrow derived state used by response exports.
 
-use crate::{
-    EngineConfig, EngineError, MeasurementSet, Spectra, measurement,
-    setup::{Setup, SubFilter},
-};
+use crate::{EngineConfig, EngineError, MeasurementSet, Spectra, measurement, setup::SubFilter};
 
 /// Long-window spectra and timing on the engine's internal axis.
 #[derive(Debug)]
@@ -13,14 +10,20 @@ pub struct ExportView {
     pub has_sub_filters: bool,
 }
 
-/// Rebuilds the 2 s spectra used by SECS 2's REW exports.
+/// Rebuilds the 2 s spectra, reusing the design's preparation for matching inputs.
+/// New same-input callers use `design.replay.export_view(design)` directly.
 pub fn export_view(
     design: &crate::Design,
     measurements: &MeasurementSet,
     config: &EngineConfig,
 ) -> Result<ExportView, EngineError> {
-    let prepared = measurement::prepare(measurements, config, &Setup::new(config))?;
-    export_view_prepared(design, measurements, &prepared, &|| false)
+    if design.replay.matches(measurements, config) {
+        design.replay.export_view(design)
+    } else {
+        let prepared =
+            measurement::prepare(measurements, config, &crate::setup::Setup::new(config))?;
+        export_view_prepared(design, measurements, &prepared, &|| false)
+    }
 }
 
 /// [`export_view`] on measurements already prepared with the same config;

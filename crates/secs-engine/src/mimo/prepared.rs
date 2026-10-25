@@ -16,14 +16,19 @@ pub(crate) struct Prepared<'ctx> {
 }
 
 impl<'ctx> Prepared<'ctx> {
-    /// `(peak, held)` bytes of the request-local spectra (TD-24). While the
-    /// preparation runs, `measurement::prepare`'s 500 ms `h` and the 2 s
-    /// `long_spectra` are alive together (one spectrum per IR cell each, plus
-    /// the build scratch with one response per sub filter); afterwards only
-    /// the 2 s set is held, until the preparation is dropped.
+    /// `(peak, held)` bytes of the request-local spectra (TD-24). The design
+    /// owns its 500 ms preparation; this request allocates only the 2 s set
+    /// and build scratch, then holds the 2 s set until it is dropped. Keep
+    /// the existing conservative peak (both windows) and admission threshold.
     pub(crate) fn bytes(measurements: &MeasurementSet, config: &EngineConfig) -> (u64, u64) {
+        Self::bytes_with_filters(
+            measurements,
+            Setup::new(config).sub_filters.len().max(config.subs.len()),
+        )
+    }
+
+    fn bytes_with_filters(measurements: &MeasurementSet, filters: usize) -> (u64, u64) {
         let set = measurement::spectra_bytes(measurements);
-        let filters = Setup::new(config).sub_filters.len().max(config.subs.len());
         (
             set.saturating_mul(2)
                 .saturating_add(measurement::build_scratch_bytes(filters)),
@@ -39,17 +44,39 @@ impl<'ctx> Prepared<'ctx> {
         config: &EngineConfig,
         ctx: &'ctx Context,
     ) -> Result<Self, EngineError> {
-        let (peak, held) = Self::bytes(measurements, config);
+        let replay = &design.replay;
+        let same = replay.matches(measurements, config);
+        let (peak, held) = if same {
+            Self::bytes_with_filters(
+                replay.measurements(),
+                replay
+                    .setup()
+                    .sub_filters
+                    .len()
+                    .max(replay.config().subs.len()),
+            )
+        } else {
+            Self::bytes(measurements, config)
+        };
         let mut permit = crate::memory::reserve(ctx, peak, 0)?;
         let cancelled = || ctx.cancel().is_cancelled();
-        let prepared =
-            measurement::prepare_until(measurements, config, &Setup::new(config), &cancelled)?;
-        let spectra =
-            crate::export_view::export_view_prepared(design, measurements, &prepared, &cancelled)?
-                .spectra;
-        let align_delay_ms = prepared.align_delay_ms;
-        drop(prepared.h);
-        drop(prepared.h0);
+        let (spectra, align_delay_ms) = if same {
+            (
+                replay.export_view_until(design, &cancelled)?.spectra,
+                replay.prepared().align_delay_ms.clone(),
+            )
+        } else {
+            let prepared =
+                measurement::prepare_until(measurements, config, &Setup::new(config), &cancelled)?;
+            let spectra = crate::export_view::export_view_prepared(
+                design,
+                measurements,
+                &prepared,
+                &cancelled,
+            )?
+            .spectra;
+            (spectra, prepared.align_delay_ms)
+        };
         permit.shrink_to(held);
         Ok(Self {
             spectra,
@@ -65,8 +92,10 @@ impl<'ctx> Prepared<'ctx> {
         measurements: &MeasurementSet,
         config: &EngineConfig,
     ) -> Result<Self, EngineError> {
-        let spectra = crate::export_view(design, measurements, config)?.spectra;
         let prepared = measurement::prepare(measurements, config, &Setup::new(config))?;
+        let spectra =
+            crate::export_view::export_view_prepared(design, measurements, &prepared, &|| false)?
+                .spectra;
         Ok(Self {
             spectra,
             align_delay_ms: prepared.align_delay_ms,

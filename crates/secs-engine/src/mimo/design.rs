@@ -1334,9 +1334,11 @@ pub(crate) fn design_mimo_before(
     {
         return Err(EngineError::Input("invalid MIMO request".into()));
     }
-    let spectra = crate::export_view(design, measurements, config)?.spectra;
     let prepared =
         crate::measurement::prepare(measurements, config, &crate::setup::Setup::new(config))?;
+    let spectra =
+        crate::export_view::export_view_prepared(design, measurements, &prepared, &|| false)?
+            .spectra;
     out.ranges = support_ranges(design, &spectra, req.fsiso, positions)?;
     if let Some(low) = req.f_low.filter(|v| *v != 0.0) {
         for (_, range) in &mut out.ranges {
