@@ -15,5 +15,6 @@ pub mod compute;
 pub mod fs;
 pub mod ipc;
 pub mod role;
+pub mod rules;
 pub mod settings_edit;
 pub mod target;

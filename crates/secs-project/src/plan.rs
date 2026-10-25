@@ -1,7 +1,7 @@
 use crate::{Project, PyJson, ordered_speakers};
 use std::collections::{BTreeMap, BTreeSet};
 
-pub const SWEEP_LENGTHS: [&str; 7] = ["64k", "128k", "256k", "512k", "1M", "2M", "4M"];
+pub use secs_types::rules::SWEEP_LENGTHS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimingReference {

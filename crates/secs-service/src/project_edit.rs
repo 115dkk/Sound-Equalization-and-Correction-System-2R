@@ -10,6 +10,7 @@ use secs_project::{
 use secs_types::calibration::{CalibrationSettings, mode_params};
 use secs_types::ipc::*;
 use secs_types::role::{role_group, role_label};
+use secs_types::rules::{ARRANGEMENT_COUNTS, CONFIG_GROUPS, RECENT_PROJECTS_MAX};
 use serde::{Deserialize, Serialize};
 
 use crate::measure::json::JsonExt;
@@ -18,32 +19,6 @@ use crate::{Service, lock, session};
 
 const FILE_LIMIT: u64 = 1024 * 1024;
 const APP_SETTINGS_VERSION: u32 = 1;
-const ARRANGEMENTS: [usize; 4] = [1, 9, 13, 17];
-const CONFIG_GROUP_ORDER: [&str; 9] = [
-    "프론트",
-    "센터",
-    "서브",
-    "서라운드",
-    "백",
-    "와이드",
-    "탑",
-    "하이트",
-    "기타",
-];
-
-fn group_id(key: &str) -> &'static str {
-    match key {
-        "프론트" => "front",
-        "센터" => "center",
-        "서브" => "sub",
-        "서라운드" => "surround",
-        "백" => "back",
-        "와이드" => "wide",
-        "탑" => "top",
-        "하이트" => "height",
-        _ => "other",
-    }
-}
 
 fn invalid(field: &str, detail: impl Into<String>) -> IpcError {
     IpcError::new(ErrorCode::InvalidRequest, detail).with_param("field", field)
@@ -114,17 +89,17 @@ fn config_result(project: &Project) -> ConfigResult {
         }
     }
     let mut groups = Vec::new();
-    for key in CONFIG_GROUP_ORDER {
+    for (key, id) in CONFIG_GROUPS {
         if let Some((_, speaker_indices)) = grouped.iter().find(|(name, _)| name == key) {
             groups.push(ConfigGroup {
-                id: group_id(key).into(),
+                id: id.into(),
                 key: key.to_owned(),
                 speaker_indices: speaker_indices.clone(),
             });
         }
     }
     for (key, speaker_indices) in grouped {
-        if !CONFIG_GROUP_ORDER.contains(&key.as_str()) {
+        if !CONFIG_GROUPS.iter().any(|(known, _)| *known == key) {
             groups.push(ConfigGroup {
                 id: "other".into(),
                 key,
@@ -275,7 +250,7 @@ fn layout_result(project: &Project) -> LayoutResult {
         secs_project::default_ref_role(project)
     };
     LayoutResult {
-        count: if ARRANGEMENTS.contains(&count) {
+        count: if ARRANGEMENT_COUNTS.contains(&count) {
             count
         } else {
             9
@@ -286,7 +261,7 @@ fn layout_result(project: &Project) -> LayoutResult {
             role,
             output: integer(get("timing_ref_output"), 1),
         },
-        arrangements: ARRANGEMENTS
+        arrangements: ARRANGEMENT_COUNTS
             .into_iter()
             .map(|count| LayoutArrangement {
                 count,
@@ -589,7 +564,7 @@ impl Service {
         params: LayoutSetParams,
     ) -> Result<LayoutMutationResult, IpcError> {
         if let Some(count) = params.count
-            && !ARRANGEMENTS.contains(&count)
+            && !ARRANGEMENT_COUNTS.contains(&count)
         {
             return Err(invalid("count", "arrangement must be 1, 9, 13, or 17"));
         }
@@ -762,7 +737,10 @@ impl Service {
         &self,
         mut params: AppSettingsParams,
     ) -> Result<AppSettings, IpcError> {
-        params.settings.recent_projects.truncate(10);
+        params
+            .settings
+            .recent_projects
+            .truncate(RECENT_PROJECTS_MAX);
         if let Some((width, height)) = params.settings.last_window_size
             && (width == 0 || height == 0)
         {
@@ -799,7 +777,7 @@ pub(crate) fn load_app_settings(path: Option<&Path>) -> AppSettings {
         return AppSettings::default();
     }
     let mut settings = file.settings;
-    settings.recent_projects.truncate(10);
+    settings.recent_projects.truncate(RECENT_PROJECTS_MAX);
     settings
 }
 
