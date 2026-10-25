@@ -1,8 +1,7 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use secs_project::{
     DspProfile, Project, PyJson, SpeakerConfig, TargetCurve, TargetJson, calibration_from_project,
@@ -380,31 +379,7 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, IpcError> {
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), IpcError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent).map_err(|error| project_io(path, error))?;
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("output");
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    let temporary = parent.join(format!(
-        ".{name}.{}-{}.tmp",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let result = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&temporary, path)
-    })();
-    if let Err(error) = result {
-        let _ = fs::remove_file(&temporary);
-        return Err(project_io(path, error));
-    }
-    Ok(())
+    secs_types::fs::write_atomic_bytes(path, bytes).map_err(|error| project_io(path, error))
 }
 
 impl Service {

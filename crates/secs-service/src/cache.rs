@@ -1,7 +1,6 @@
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use secs_types::chain::{MimoPaths, SignalChain};
 use secs_types::ipc::{CalibrationSummary, MimoSummary};
@@ -182,34 +181,7 @@ fn save_with_limit(
     let destination = path(project_path);
     let parent = destination.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
-    static TEMP: AtomicU64 = AtomicU64::new(0);
-    let mut temporary = None;
-    for _ in 0..100 {
-        let candidate = parent.join(format!(
-            ".secs-run-cache-{}-{}.tmp",
-            std::process::id(),
-            TEMP.fetch_add(1, Ordering::Relaxed)
-        ));
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(file) => {
-                temporary = Some((candidate, file));
-                break;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error),
-        }
-    }
-    let Some((temporary, file)) = temporary else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            "could not create run cache temporary file",
-        ));
-    };
-    let result = (|| {
+    secs_types::fs::write_atomic(&destination, |file| {
         let mut writer = LimitedWriter {
             inner: BufWriter::new(file),
             remaining: limit,
@@ -223,15 +195,8 @@ fn save_with_limit(
             },
         )
         .map_err(std::io::Error::other)?;
-        writer.flush()?;
-        writer.inner.get_ref().sync_all()?;
-        drop(writer);
-        fs::rename(&temporary, &destination)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temporary);
-    }
-    result
+        writer.flush()
+    })
 }
 
 #[derive(Serialize)]

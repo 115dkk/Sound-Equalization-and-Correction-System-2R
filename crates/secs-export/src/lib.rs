@@ -4,10 +4,8 @@
 
 use std::{
     collections::BTreeMap,
-    fs::{self, OpenOptions},
-    io::Write,
+    fs,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
 };
 
 use secs_camilla::pyfmt::{format_fixed, format_g};
@@ -24,7 +22,6 @@ use secs_types::{
 const N_FFT: usize = 1 << 17;
 const SR: u32 = 48_000;
 const SUB_GAIN_WARN_DB: f64 = 12.0;
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub type Sources = BTreeMap<u32, BTreeMap<String, SourceInfo>>;
 
@@ -790,49 +787,15 @@ fn random_uuid() -> Result<u128, getrandom::Error> {
 }
 
 fn atomic_replace(destination: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
-    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
-    let stem = destination
-        .file_name()
-        .and_then(|v| v.to_str())
-        .unwrap_or("export.mdat");
-    let mut temporary = None;
-    for _ in 0..100 {
-        let serial = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let candidate = parent.join(format!(".{stem}.{}.{}.tmp", std::process::id(), serial));
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(file) => {
-                temporary = Some((candidate, file));
-                break;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error),
-        }
-    }
-    let Some((path, mut file)) = temporary else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            "could not create export temporary file",
-        ));
-    };
-    let result = (|| {
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&path, destination)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&path);
-    }
-    result
+    secs_types::fs::write_atomic_bytes(destination, bytes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn rc_pieces_from_values_preserves_live_and_legacy_wording() {

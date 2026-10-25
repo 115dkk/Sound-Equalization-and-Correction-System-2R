@@ -1,5 +1,4 @@
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -465,40 +464,7 @@ fn write_side_mdat(
 fn atomic_replace(destination: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
     let parent = destination.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
-    let stem = destination
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("project.mdat");
-    static TEMP: AtomicU64 = AtomicU64::new(0);
-    let mut temporary = None;
-    for _ in 0..100 {
-        let id = TEMP.fetch_add(1, Ordering::Relaxed);
-        let path = parent.join(format!(".{stem}.{}-{id}.tmp", std::process::id()));
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(file) => {
-                temporary = Some((path, file));
-                break;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error),
-        }
-    }
-    let Some((path, mut file)) = temporary else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            "could not create side mdat temporary file",
-        ));
-    };
-    let result = (|| {
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&path, destination)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&path);
-    }
-    result
+    secs_types::fs::write_atomic_bytes(destination, bytes)
 }
 
 fn rewrite_ir_directory(project: &mut Project, old: &Path, new: &Path) {

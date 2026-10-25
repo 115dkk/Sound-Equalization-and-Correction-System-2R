@@ -1040,34 +1040,7 @@ fn cache_key(path: &Path) -> Result<CacheKey, ProjectError> {
 pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> Result<(), ProjectError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
-    let stem = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("project.secs");
-    let mut counter = 0_u64;
-    let temp = loop {
-        let candidate = parent.join(format!(".{stem}.tmp-{}-{counter}", std::process::id()));
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(mut file) => {
-                use std::io::Write;
-                if let Err(error) = file.write_all(data).and_then(|()| file.sync_all()) {
-                    let _ = fs::remove_file(&candidate);
-                    return Err(error.into());
-                }
-                break candidate;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => counter += 1,
-            Err(error) => return Err(error.into()),
-        }
-    };
-    if let Err(error) = fs::rename(&temp, path) {
-        let _ = fs::remove_file(&temp);
-        return Err(error.into());
-    }
+    secs_types::fs::write_atomic_bytes(path, data)?;
     Ok(())
 }
 

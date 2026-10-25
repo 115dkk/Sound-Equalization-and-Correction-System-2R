@@ -1492,46 +1492,7 @@ pub fn safe_name(name: &str) -> String {
 
 /// Atomically replace one export file through a sibling temporary file.
 pub fn atomic_write(destination: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
-    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
-    let filename = destination
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("export");
-    let mut temporary = None;
-    for _ in 0..100 {
-        let serial = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let candidate = parent.join(format!(".{filename}.{}.{}.tmp", std::process::id(), serial));
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(file) => {
-                temporary = Some((candidate, file));
-                break;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error),
-        }
-    }
-    let Some((path, mut file)) = temporary else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            "could not create export temporary file",
-        ));
-    };
-    use std::io::Write as _;
-    let result = (|| {
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        // std's rename replaces an existing destination on every platform.
-        fs::rename(&path, destination)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&path);
-    }
-    result
+    secs_types::fs::write_atomic_bytes(destination, bytes)
 }
 
 fn safe_bundle_path(path: &Path) -> bool {
