@@ -2275,7 +2275,7 @@ fn cached_mdat_export_rejects_project_replacement_before_writing() {
     let finished = events.events.wait(started.job, Duration::from_secs(120));
     assert!(
         matches!(finished, JobEvent::Finished { status: JobStatus::Failed, error: Some(ref error), .. }
-            if error.code == ErrorCode::StaleInputs && error.detail == "project changed while exporting")
+            if error.code == ErrorCode::StaleInputs && error.detail == "project changed while computing")
     );
     assert!(!folder.exists());
     fs::remove_dir_all(root).unwrap();

@@ -16,6 +16,7 @@ use secs_types::ipc::{
 };
 
 use crate::jobs::JobContext;
+use crate::session::{self, ProjectTicket};
 use crate::{EventSink, Service, lock};
 
 #[derive(Debug)]
@@ -53,7 +54,7 @@ pub(crate) struct Results {
 /// without reading any WAV (TD-37).
 #[derive(Debug)]
 pub(crate) struct Snapshot {
-    identity: u64,
+    ticket: ProjectTicket,
     path: std::path::PathBuf,
     project: Project,
     project_settings: CalibrationSettings,
@@ -62,7 +63,7 @@ pub(crate) struct Snapshot {
 
 #[derive(Debug)]
 pub(crate) struct Prepared {
-    pub identity: u64,
+    pub ticket: ProjectTicket,
     pub project: Project,
     pub project_settings: CalibrationSettings,
     pub settings: CalibrationSettings,
@@ -110,58 +111,55 @@ impl Service {
             };
             let fitters = production_fitters(job.cancel());
             let design = design(&request, &ctx, fitters.as_ref()).map_err(engine_error)?;
-            let mut session_guard = lock(&session);
-            let open = session_guard.require_mut().map_err(IpcError::from)?;
-            require_identity(open, prepared.identity)?;
-            job.begin_commit()?;
-            let mut summary = summarize(&design, &prepared.settings);
-            if resampled_count > 0 {
-                summary.notes.push(Notice {
-                    code: "measurement_resampled".into(),
-                    params: [
-                        ("count".into(), resampled_count.to_string()),
-                        ("target_hz".into(), "48000".into()),
-                    ]
-                    .into(),
-                });
-            }
-            let run = CalibrationRun {
-                summary,
-                run_key: run_key(
-                    &prepared.signature,
-                    &prepared.target_key,
-                    &prepared.settings.engine_key(),
-                    &prepared.config_key,
-                ),
-                settings: prepared.settings.clone(),
-                signature: prepared.signature,
-                target_key: prepared.target_key,
-                config_key: prepared.config_key,
-                design: Arc::new(design),
-                measurements: prepared.measurements,
-                config: prepared.config,
-            };
-            let mut state = lock(&results);
-            if subs_only {
-                state.subs = Some(run);
-            } else {
-                state.calibration = Some(run);
-                state.subs = None;
-            }
-            if calibration_from_project(open.store.project()) == prepared.project_settings {
-                store_calibration(open.store.project_mut(), &prepared.settings);
-                open.dirty = true;
-            }
-            let path = open.path.clone();
-            let cached = snapshot_cache(&state);
-            drop(state);
-            drop(session_guard);
+            let ticket = prepared.ticket;
+            let (path, cached) = session::commit(&session, ticket, &job, |open| {
+                let mut summary = summarize(&design, &prepared.settings);
+                if resampled_count > 0 {
+                    summary.notes.push(Notice {
+                        code: "measurement_resampled".into(),
+                        params: [
+                            ("count".into(), resampled_count.to_string()),
+                            ("target_hz".into(), "48000".into()),
+                        ]
+                        .into(),
+                    });
+                }
+                let run = CalibrationRun {
+                    summary,
+                    run_key: run_key(
+                        &prepared.signature,
+                        &prepared.target_key,
+                        &prepared.settings.engine_key(),
+                        &prepared.config_key,
+                    ),
+                    settings: prepared.settings.clone(),
+                    signature: prepared.signature,
+                    target_key: prepared.target_key,
+                    config_key: prepared.config_key,
+                    design: Arc::new(design),
+                    measurements: prepared.measurements,
+                    config: prepared.config,
+                };
+                let mut state = lock(&results);
+                if subs_only {
+                    state.subs = Some(run);
+                } else {
+                    state.calibration = Some(run);
+                    state.subs = None;
+                }
+                let stores_settings =
+                    calibration_from_project(open.store.project()) == prepared.project_settings;
+                if stores_settings {
+                    store_calibration(open.store.project_mut(), &prepared.settings);
+                }
+                Ok(((open.path.clone(), snapshot_cache(&state)), stores_settings))
+            })?;
             let owner = if subs_only {
                 CacheOwner::Subs
             } else {
                 CacheOwner::Calibration
             };
-            persist_cache(cached, &path, prepared.identity, &session, &results, owner);
+            persist_cache(cached, &path, ticket, &session, &results, owner);
             Ok(JobResult::Calibration)
         })
     }
@@ -192,20 +190,18 @@ impl Service {
                 best: result.best,
                 candidates: result.candidates,
             };
-            let mut session_guard = lock(&session);
-            let open = session_guard.require_mut().map_err(IpcError::from)?;
-            require_identity(open, prepared.identity)?;
-            job.begin_commit()?;
-            let mut settings = calibration_from_project(open.store.project());
-            for (group, hz) in &recommendation.best {
-                match settings.xo.iter_mut().find(|(name, _)| name == group) {
-                    Some((_, current)) => *current = *hz,
-                    None => settings.xo.push((group.clone(), *hz)),
+            session::commit(&session, prepared.ticket, &job, |open| {
+                let mut settings = calibration_from_project(open.store.project());
+                for (group, hz) in &recommendation.best {
+                    match settings.xo.iter_mut().find(|(name, _)| name == group) {
+                        Some((_, current)) => *current = *hz,
+                        None => settings.xo.push((group.clone(), *hz)),
+                    }
                 }
-            }
-            settings.xo_rec = recommendation.best.clone();
-            store_calibration(open.store.project_mut(), &settings);
-            open.dirty = true;
+                settings.xo_rec = recommendation.best.clone();
+                store_calibration(open.store.project_mut(), &settings);
+                Ok(((), true))
+            })?;
             Ok(JobResult::Xo(recommendation))
         })
     }
@@ -219,7 +215,7 @@ impl Service {
         let compute_key = crate::compute::ComputeIdentity::from(&selection.status);
         let session_guard = lock(&self.session);
         let open = session_guard.require().map_err(IpcError::from)?;
-        let identity = open.identity;
+        let ticket = session_guard.ticket()?;
         let settings = params
             .settings
             .unwrap_or_else(|| calibration_from_project(open.store.project()));
@@ -260,59 +256,47 @@ impl Service {
                 &selection,
             )
             .map_err(engine_error)?;
-            let mut session_guard = lock(&session);
-            let open = session_guard.require_mut().map_err(IpcError::from)?;
-            require_identity(open, identity)?;
-            job.begin_commit()?;
-            let summary = MimoSummary {
-                stale: false,
-                kind: if run.fir { "fir" } else { "iir" }.into(),
-                fsiso: run.paths.fsiso,
-                support_count: run.paths.paths.len(),
-                fir_taps_total: run
-                    .paths
-                    .paths
-                    .iter()
-                    .map(|path| path.filter.fir_len_48k())
-                    .sum(),
-                notes: run
-                    .notes
-                    .iter()
-                    .flat_map(notices)
-                    .chain((run.compute.fallbacks > 0).then(|| Notice {
-                        code: "compute_fallback".into(),
-                        params: [("count".into(), run.compute.fallbacks.to_string())].into(),
-                    }))
-                    .collect(),
-                input_count: run
-                    .paths
-                    .paths
-                    .iter()
-                    .map(|path| &path.input)
-                    .collect::<std::collections::BTreeSet<_>>()
-                    .len(),
-                compute: run.compute.clone(),
-            };
-            let mut state = lock(&results);
-            state.mimo = Some(MimoResult {
-                summary,
-                settings_key: settings.mimo_key(),
-                compute_key,
-                calibration_key,
-                run,
-            });
-            let path = open.path.clone();
-            let cached = snapshot_cache(&state);
-            drop(state);
-            drop(session_guard);
-            persist_cache(
-                cached,
-                &path,
-                identity,
-                &session,
-                &results,
-                CacheOwner::Mimo,
-            );
+            let (path, cached) = session::commit(&session, ticket, &job, |open| {
+                let summary = MimoSummary {
+                    stale: false,
+                    kind: if run.fir { "fir" } else { "iir" }.into(),
+                    fsiso: run.paths.fsiso,
+                    support_count: run.paths.paths.len(),
+                    fir_taps_total: run
+                        .paths
+                        .paths
+                        .iter()
+                        .map(|path| path.filter.fir_len_48k())
+                        .sum(),
+                    notes: run
+                        .notes
+                        .iter()
+                        .flat_map(notices)
+                        .chain((run.compute.fallbacks > 0).then(|| Notice {
+                            code: "compute_fallback".into(),
+                            params: [("count".into(), run.compute.fallbacks.to_string())].into(),
+                        }))
+                        .collect(),
+                    input_count: run
+                        .paths
+                        .paths
+                        .iter()
+                        .map(|path| &path.input)
+                        .collect::<std::collections::BTreeSet<_>>()
+                        .len(),
+                    compute: run.compute.clone(),
+                };
+                let mut state = lock(&results);
+                state.mimo = Some(MimoResult {
+                    summary,
+                    settings_key: settings.mimo_key(),
+                    compute_key,
+                    calibration_key,
+                    run,
+                });
+                Ok(((open.path.clone(), snapshot_cache(&state)), false))
+            })?;
+            persist_cache(cached, &path, ticket, &session, &results, CacheOwner::Mimo);
             Ok(JobResult::Mimo)
         })
     }
@@ -338,7 +322,7 @@ impl Service {
         let project_settings = calibration_from_project(&project);
         let settings = override_settings.unwrap_or_else(|| project_settings.clone());
         Ok(Snapshot {
-            identity: open.identity,
+            ticket: session.ticket()?,
             path: open.path.clone(),
             project,
             project_settings,
@@ -349,7 +333,7 @@ impl Service {
 
 impl Snapshot {
     /// Reads every IR of the snapshot without the session lock, checking for
-    /// cancellation between files. The commit re-checks the project identity.
+    /// cancellation between files. The commit checks the ticket.
     pub(crate) fn load(self, job: &JobContext) -> Result<Prepared, IpcError> {
         let mut store = secs_project::MeasurementStore::new(&self.path, self.project.clone());
         let measurements = load_measurements_cancellable(&mut store, job.cancel())?;
@@ -362,7 +346,7 @@ impl Snapshot {
         };
         let inputs = engine_inputs(&view, &measurements, &self.settings).map_err(engine_error)?;
         Ok(Prepared {
-            identity: self.identity,
+            ticket: self.ticket,
             signature: signature_key(&project),
             target_key: target_key_string(&project),
             config_key: config_key(&project),
@@ -811,16 +795,6 @@ fn summaries(
     Ok(ResultsSummary { calibration, mimo })
 }
 
-fn require_identity(open: &crate::session::OpenProject, identity: u64) -> Result<(), IpcError> {
-    if open.identity != identity {
-        return Err(IpcError::new(
-            ErrorCode::StaleInputs,
-            "project changed while computing",
-        ));
-    }
-    Ok(())
-}
-
 // Capture the committed run under session -> results locks; serialization and
 // disk I/O happen after both are released.
 fn snapshot_cache(state: &Results) -> Option<crate::cache::CachedResults> {
@@ -899,7 +873,7 @@ fn summary_notes(state: &mut Results) -> impl Iterator<Item = &mut Vec<Notice>> 
 fn persist_cache(
     cached: Option<crate::cache::CachedResults>,
     path: &std::path::Path,
-    identity: u64,
+    ticket: ProjectTicket,
     session: &Arc<Mutex<crate::session::Session>>,
     results: &Arc<Mutex<Results>>,
     owner: CacheOwner,
@@ -909,15 +883,15 @@ fn persist_cache(
     };
     match crate::cache::save(path, &cached) {
         Ok(()) => {
-            {
-                let mut session = lock(session);
-                if let Ok(open) = session.require_mut()
-                    && open.identity == identity
-                    && open.path == path
-                {
+            // Another project opened since the commit, or this one saved
+            // under another path, keeps its own cache: only the in-memory
+            // copy is skipped.
+            let _ = session::apply(session, ticket, |open| {
+                if open.path == path {
                     open.cached = Some(cached);
                 }
-            }
+                Ok(((), false))
+            });
             for notes in summary_notes(&mut lock(results)) {
                 notes.retain(|notice| notice.code != CACHE_SAVE_FAILED);
             }

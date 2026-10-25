@@ -1,13 +1,15 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use secs_project::{
     DspProfile, MeasurementStore, Project, PyJson, load_project_sources, measured_positions,
     plan_from_project,
 };
-use secs_types::ipc::{MigrationWarning, ProjectInfo};
+use secs_types::ipc::{ErrorCode, IpcError, MigrationWarning, ProjectInfo};
 
+use crate::jobs::JobContext;
 use crate::{ServiceError, UuidSource, lock};
 
 #[derive(Debug, Default)]
@@ -24,7 +26,9 @@ pub(crate) struct OpenProject {
     /// A tutorial's private folder, removed with the session (TD-90).
     pub tutorial_folder: Option<TutorialFolder>,
     pub cached: Option<crate::cache::CachedResults>,
-    pub identity: u64,
+    /// Read only through [`Session::ticket`] and compared only by
+    /// [`commit`] and [`apply`] (ADR 0009).
+    identity: u64,
     pub undo: std::collections::VecDeque<UndoEntry>,
 }
 
@@ -216,6 +220,73 @@ impl Session {
     pub fn require_mut(&mut self) -> Result<&mut OpenProject, ServiceError> {
         self.open.as_mut().ok_or(ServiceError::ProjectNotOpen)
     }
+
+    /// The open project's ticket; `ProjectNotOpen` when none is open.
+    pub(crate) fn ticket(&self) -> Result<ProjectTicket, IpcError> {
+        Ok(ProjectTicket(self.require()?.identity))
+    }
+
+    /// The open project if it is still the one `ticket` was taken from.
+    fn holding(&mut self, ticket: ProjectTicket) -> Result<&mut OpenProject, IpcError> {
+        let open = self.require_mut()?;
+        if open.identity != ticket.0 {
+            return Err(IpcError::new(
+                ErrorCode::StaleInputs,
+                "project changed while computing",
+            ));
+        }
+        Ok(open)
+    }
+}
+
+/// The open project a request started from (ADR 0009). A job takes one when
+/// its handler starts and changes the project only through [`commit`] or
+/// [`apply`], so a late result of an earlier project never lands in a newer one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ProjectTicket(u64);
+
+/// Commits a finishing job's change (ADR 0009). Under the session lock: a
+/// different open project fails with `StaleInputs` ("project changed while
+/// computing"), then `job.begin_commit()` fails with `Cancelled` if the job
+/// was cancelled; only then `change` runs. `change` returns its value and
+/// whether it changed the project; `commit` sets `dirty` when it did.
+///
+/// `change` runs under the session lock; a lock it takes (the results)
+/// comes after the session's.
+pub(crate) fn commit<T>(
+    session: &Mutex<Session>,
+    ticket: ProjectTicket,
+    job: &JobContext,
+    change: impl FnOnce(&mut OpenProject) -> Result<(T, bool), IpcError>,
+) -> Result<T, IpcError> {
+    let mut session = lock(session);
+    let open = session.holding(ticket)?;
+    job.begin_commit()?;
+    run_change(open, change)
+}
+
+/// The same check for a job that keeps running and writes as it goes (the
+/// level monitor): the ticket check only, no `begin_commit`, so the job
+/// stays cancellable.
+pub(crate) fn apply<T>(
+    session: &Mutex<Session>,
+    ticket: ProjectTicket,
+    change: impl FnOnce(&mut OpenProject) -> Result<(T, bool), IpcError>,
+) -> Result<T, IpcError> {
+    let mut session = lock(session);
+    let open = session.holding(ticket)?;
+    run_change(open, change)
+}
+
+fn run_change<T>(
+    open: &mut OpenProject,
+    change: impl FnOnce(&mut OpenProject) -> Result<(T, bool), IpcError>,
+) -> Result<T, IpcError> {
+    let (value, changed) = change(open)?;
+    if changed {
+        open.dirty = true;
+    }
+    Ok(value)
 }
 
 fn next_identity() -> u64 {
@@ -671,5 +742,312 @@ mod tests {
         session.save(None, &uuid, 0).unwrap();
         assert!(!target.with_extension("mdat").exists());
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod commit_tests {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::mpsc;
+    use std::sync::{Arc, Condvar};
+    use std::time::{Duration, Instant};
+
+    use secs_types::ipc::{JobEvent, JobId, JobKind, JobResult, JobStatus};
+
+    use super::*;
+    use crate::EventSink;
+    use crate::jobs::JobRegistry;
+
+    #[derive(Debug, Default)]
+    struct Finished {
+        values: Mutex<Vec<(JobId, JobStatus, Option<IpcError>)>>,
+        changed: Condvar,
+    }
+    impl EventSink for Finished {
+        fn send(&self, event: JobEvent) {
+            if let JobEvent::Finished {
+                job, status, error, ..
+            } = event
+            {
+                lock(&self.values).push((job, status, error));
+                self.changed.notify_all();
+            }
+        }
+    }
+    impl Finished {
+        fn wait(&self, job: JobId) -> (JobStatus, Option<IpcError>) {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            let mut values = lock(&self.values);
+            loop {
+                if let Some((_, status, error)) = values.iter().find(|(id, ..)| *id == job) {
+                    return (*status, error.clone());
+                }
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                assert!(!remaining.is_zero(), "job {job:?} did not finish");
+                values = self.changed.wait_timeout(values, remaining).unwrap().0;
+            }
+        }
+    }
+
+    /// An open, unsaved project with its own identity; nothing touches the disk.
+    fn project() -> OpenProject {
+        let path = PathBuf::from("commit-test.secs");
+        OpenProject {
+            store: MeasurementStore::new(&path, Project::default()),
+            path,
+            dirty: false,
+            tutorial: false,
+            tutorial_folder: None,
+            cached: None,
+            identity: next_identity(),
+            undo: Default::default(),
+        }
+    }
+
+    fn opened() -> Arc<Mutex<Session>> {
+        Arc::new(Mutex::new(Session {
+            open: Some(project()),
+        }))
+    }
+
+    /// Opens another project, as `project_new` or `project_open` would.
+    fn replace(session: &Mutex<Session>) {
+        lock(session).open = Some(project());
+    }
+
+    fn dirty(session: &Mutex<Session>) -> bool {
+        lock(session).require().unwrap().dirty
+    }
+
+    fn cancellable(registry: &JobRegistry, job: JobId) -> bool {
+        registry
+            .snapshots()
+            .into_iter()
+            .find(|snapshot| snapshot.job == job)
+            .expect("the job is listed")
+            .cancellable
+    }
+
+    /// Starts `body` as a real job, lets the test act before it commits,
+    /// and waits for its finish.
+    fn run(
+        registry: &JobRegistry,
+        before_commit: impl FnOnce(JobId),
+        body: impl FnOnce(JobContext) -> Result<JobResult, IpcError> + Send + 'static,
+    ) -> (JobStatus, Option<IpcError>) {
+        let events = Arc::new(Finished::default());
+        let (release, gate) = mpsc::channel::<()>();
+        let started = registry
+            .start(JobKind::Calibrate, events.clone(), move |job| {
+                gate.recv().expect("the test releases the job");
+                body(job)
+            })
+            .unwrap();
+        before_commit(started.job);
+        release.send(()).unwrap();
+        events.wait(started.job)
+    }
+
+    #[test]
+    fn ticket_needs_an_open_project() {
+        let error = Session::default().ticket().unwrap_err();
+        assert_eq!(error.code, ErrorCode::ProjectNotOpen);
+        let session = opened();
+        let ticket = lock(&session).ticket().unwrap();
+        assert_eq!(lock(&session).ticket().unwrap(), ticket);
+        replace(&session);
+        assert_ne!(lock(&session).ticket().unwrap(), ticket);
+    }
+
+    #[test]
+    fn commit_with_a_stale_ticket_fails_before_begin_commit_and_change() {
+        let registry = JobRegistry::default();
+        let session = opened();
+        let ticket = lock(&session).ticket().unwrap();
+        let ran = Arc::new(AtomicBool::new(false));
+        let still_cancellable = Arc::new(AtomicBool::new(false));
+        let (job_session, job_ran, job_cancellable, job_registry) = (
+            session.clone(),
+            ran.clone(),
+            still_cancellable.clone(),
+            registry.clone(),
+        );
+        let (status, error) = run(
+            &registry,
+            |_| replace(&session),
+            move |job| {
+                let outcome = commit(&job_session, ticket, &job, |_| {
+                    job_ran.store(true, Ordering::SeqCst);
+                    Ok(((), true))
+                });
+                job_cancellable.store(cancellable(&job_registry, job.id()), Ordering::SeqCst);
+                outcome.map(|()| JobResult::Stopped)
+            },
+        );
+        let error = error.expect("a stale commit fails");
+        assert_eq!(status, JobStatus::Failed);
+        assert_eq!(error.code, ErrorCode::StaleInputs);
+        assert_eq!(error.detail, "project changed while computing");
+        assert!(!ran.load(Ordering::SeqCst));
+        assert!(still_cancellable.load(Ordering::SeqCst));
+        assert!(!dirty(&session));
+    }
+
+    #[test]
+    fn commit_of_a_cancelled_job_fails_with_cancelled_before_change() {
+        let registry = JobRegistry::default();
+        let session = opened();
+        let ticket = lock(&session).ticket().unwrap();
+        let ran = Arc::new(AtomicBool::new(false));
+        let (job_session, job_ran) = (session.clone(), ran.clone());
+        let (status, error) = run(
+            &registry,
+            |job| {
+                registry.cancel(job).unwrap();
+            },
+            move |job| {
+                commit(&job_session, ticket, &job, |_| {
+                    job_ran.store(true, Ordering::SeqCst);
+                    Ok(((), true))
+                })
+                .map(|()| JobResult::Stopped)
+            },
+        );
+        assert_eq!(status, JobStatus::Cancelled);
+        assert_eq!(
+            error.expect("a cancelled commit fails").code,
+            ErrorCode::Cancelled
+        );
+        assert!(!ran.load(Ordering::SeqCst));
+        assert!(!dirty(&session));
+    }
+
+    #[test]
+    fn a_stale_ticket_is_reported_before_cancellation() {
+        let registry = JobRegistry::default();
+        let session = opened();
+        let ticket = lock(&session).ticket().unwrap();
+        let job_session = session.clone();
+        let (_, error) = run(
+            &registry,
+            |job| {
+                registry.cancel(job).unwrap();
+                replace(&session);
+            },
+            move |job| {
+                commit(
+                    &job_session,
+                    ticket,
+                    &job,
+                    |_| -> Result<((), bool), IpcError> {
+                        unreachable!("change runs only for the current project")
+                    },
+                )
+                .map(|()| JobResult::Stopped)
+            },
+        );
+        assert_eq!(
+            error.expect("the commit fails").code,
+            ErrorCode::StaleInputs
+        );
+    }
+
+    #[test]
+    fn commit_with_a_valid_ticket_runs_change_after_begin_commit_and_dirty_follows_it() {
+        for changed in [false, true] {
+            let registry = JobRegistry::default();
+            let session = opened();
+            let ticket = lock(&session).ticket().unwrap();
+            let seen = Arc::new(Mutex::new(None));
+            let (job_session, job_seen, job_registry) =
+                (session.clone(), seen.clone(), registry.clone());
+            let (status, error) = run(
+                &registry,
+                |_| {},
+                move |job| {
+                    let id = job.id();
+                    let value = commit(&job_session, ticket, &job, |open| {
+                        // `begin_commit` already made the job non-cancellable.
+                        let cancellable = cancellable(&job_registry, id);
+                        Ok(((open.path.clone(), cancellable), changed))
+                    })?;
+                    *lock(&job_seen) = Some(value);
+                    Ok(JobResult::Stopped)
+                },
+            );
+            assert_eq!((status, error), (JobStatus::Succeeded, None));
+            assert_eq!(
+                lock(&seen).take(),
+                Some((PathBuf::from("commit-test.secs"), false))
+            );
+            assert_eq!(dirty(&session), changed);
+        }
+    }
+
+    #[test]
+    fn a_failing_change_leaves_dirty_alone() {
+        let registry = JobRegistry::default();
+        let session = opened();
+        let ticket = lock(&session).ticket().unwrap();
+        let job_session = session.clone();
+        let (status, error) = run(
+            &registry,
+            |_| {},
+            move |job| {
+                commit(
+                    &job_session,
+                    ticket,
+                    &job,
+                    |_| -> Result<((), bool), IpcError> {
+                        Err(IpcError::new(ErrorCode::ProjectIo, "disk full"))
+                    },
+                )
+                .map(|()| JobResult::Stopped)
+            },
+        );
+        assert_eq!(status, JobStatus::Failed);
+        assert_eq!(error.unwrap().code, ErrorCode::ProjectIo);
+        assert!(!dirty(&session));
+    }
+
+    #[test]
+    fn apply_checks_the_ticket_without_begin_commit() {
+        let session = opened();
+        let stale = lock(&session).ticket().unwrap();
+        replace(&session);
+        let mut ran = false;
+        let error = apply(&session, stale, |_| {
+            ran = true;
+            Ok(((), true))
+        })
+        .unwrap_err();
+        assert_eq!(error.code, ErrorCode::StaleInputs);
+        assert_eq!(error.detail, "project changed while computing");
+        assert!(!ran);
+        assert!(!dirty(&session));
+
+        let ticket = lock(&session).ticket().unwrap();
+        assert_eq!(apply(&session, ticket, |_| Ok((7, false))).unwrap(), 7);
+        assert!(!dirty(&session));
+        apply(&session, ticket, |_| Ok(((), true))).unwrap();
+        assert!(dirty(&session));
+
+        // A job that writes as it goes stays cancellable.
+        let registry = JobRegistry::default();
+        let still_cancellable = Arc::new(AtomicBool::new(false));
+        let (job_session, job_cancellable, job_registry) =
+            (session.clone(), still_cancellable.clone(), registry.clone());
+        let (status, error) = run(
+            &registry,
+            |_| {},
+            move |job| {
+                apply(&job_session, ticket, |_| Ok(((), false)))?;
+                job_cancellable.store(cancellable(&job_registry, job.id()), Ordering::SeqCst);
+                Ok(JobResult::Stopped)
+            },
+        );
+        assert_eq!((status, error), (JobStatus::Succeeded, None));
+        assert!(still_cancellable.load(Ordering::SeqCst));
+        assert!(dirty(&session));
     }
 }

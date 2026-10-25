@@ -10,6 +10,7 @@ use secs_types::ipc::{
 
 use crate::measure::json::JsonExt;
 use crate::measure::{MeasurementSettings, plan_for};
+use crate::session::{self, ProjectTicket};
 use crate::{EventSink, Service, lock};
 
 #[derive(Debug, Default)]
@@ -70,10 +71,12 @@ impl Service {
         params: LevelMonitorStartParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let (project, identity) = {
+        let (project, ticket) = {
             let session = lock(&self.session);
-            let open = session.require()?;
-            (open.store.project().clone(), open.identity)
+            (
+                session.require()?.store.project().clone(),
+                session.ticket()?,
+            )
         };
         let settings = MeasurementSettings::from_project(&project)
             .map_err(|error| level_error(error, "settings", secs_audio::SharePreference::Auto))?;
@@ -94,7 +97,7 @@ impl Service {
                 &session,
                 &state,
                 &project,
-                identity,
+                ticket,
                 settings,
                 plan,
                 &job,
@@ -198,15 +201,15 @@ fn monitor_loop(
     session: &Arc<Mutex<crate::session::Session>>,
     state: &Arc<Mutex<LevelInner>>,
     project: &Project,
-    identity: u64,
+    ticket: ProjectTicket,
     settings: MeasurementSettings,
     plan: secs_project::MeasurementPlan,
     job: &crate::jobs::JobContext,
     rew_license: &Arc<Mutex<Option<bool>>>,
 ) -> Result<JobResult, IpcError> {
     match method(project) {
-        "rew" => rew_loop(deps, session, state, &plan, identity, job, rew_license),
-        "native" | "mock" => sampled_loop(deps, session, state, identity, settings, plan, job),
+        "rew" => rew_loop(deps, session, state, &plan, ticket, job, rew_license),
+        "native" | "mock" => sampled_loop(deps, session, state, ticket, settings, plan, job),
         _ => Err(input("method", "unknown measurement method")),
     }
 }
@@ -215,7 +218,7 @@ fn sampled_loop(
     deps: &crate::Deps,
     session: &Arc<Mutex<crate::session::Session>>,
     state: &Arc<Mutex<LevelInner>>,
-    identity: u64,
+    ticket: ProjectTicket,
     settings: MeasurementSettings,
     plan: secs_project::MeasurementPlan,
     job: &crate::jobs::JobContext,
@@ -254,7 +257,7 @@ fn sampled_loop(
             send_meter(job, report);
             store_level(
                 session,
-                identity,
+                ticket,
                 &play.role,
                 report.input_dbfs,
                 report.spl_db,
@@ -319,7 +322,7 @@ fn rew_loop(
     session: &Arc<Mutex<crate::session::Session>>,
     state: &Arc<Mutex<LevelInner>>,
     plan: &secs_project::MeasurementPlan,
-    identity: u64,
+    ticket: ProjectTicket,
     job: &crate::jobs::JobContext,
     rew_license: &Arc<Mutex<Option<bool>>>,
 ) -> Result<JobResult, IpcError> {
@@ -389,13 +392,7 @@ fn rew_loop(
                 secs_rew::LevelMonitor::stop_generator(&mut rew);
                 if let Some((play, _, settled)) = active.take() {
                     if let Some(level) = settled {
-                        store_level(
-                            session,
-                            identity,
-                            &play.role,
-                            level.input_dbfs,
-                            level.spl_db,
-                        )?;
+                        store_level(session, ticket, &play.role, level.input_dbfs, level.spl_db)?;
                     }
                     send_play_end(job, &play.role, "done");
                     handled_generation = play.generation;
@@ -413,24 +410,27 @@ fn rew_loop(
     result
 }
 
+/// Stores a settled level in the project the monitor started from. A level
+/// that settles after another project was opened is dropped, and the
+/// monitor keeps running.
 fn store_level(
     session: &Arc<Mutex<crate::session::Session>>,
-    identity: u64,
+    ticket: ProjectTicket,
     role: &str,
     dbfs: f64,
     spl_db: Option<f64>,
 ) -> Result<(), IpcError> {
-    let mut session = lock(session);
-    let open = session.require_mut()?;
-    if open.identity != identity {
-        return Ok(());
+    let stored = session::apply(session, ticket, |open| {
+        put_extra_map(open.store.project_mut(), "levels", role, dbfs);
+        if let Some(spl) = spl_db {
+            put_extra_map(open.store.project_mut(), "spl", role, spl);
+        }
+        Ok(((), true))
+    });
+    match stored {
+        Err(error) if error.code == ErrorCode::StaleInputs => Ok(()),
+        other => other,
     }
-    put_extra_map(open.store.project_mut(), "levels", role, dbfs);
-    if let Some(spl) = spl_db {
-        put_extra_map(open.store.project_mut(), "spl", role, spl);
-    }
-    open.dirty = true;
-    Ok(())
 }
 
 fn levels_result(project: &Project) -> LevelsResult {

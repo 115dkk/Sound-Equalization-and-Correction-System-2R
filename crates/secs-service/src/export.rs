@@ -10,7 +10,7 @@ use secs_types::ipc::{
     ErrorCode, ExportKind, ExportParams, ExportResult, IpcError, JobKind, JobResult, JobStarted,
 };
 
-use crate::{EventSink, Service, calibration::calibration_stale, lock};
+use crate::{EventSink, Service, calibration::calibration_stale, lock, session};
 
 impl Service {
     pub(crate) fn start_export(
@@ -22,7 +22,7 @@ impl Service {
         let session = lock(&self.session);
         let state = lock(&self.results_state);
         let open = session.require().map_err(IpcError::from)?;
-        let project_identity = open.identity;
+        let ticket = session.ticket()?;
         let project = open.store.project();
         if open.tutorial {
             return Err(IpcError::new(
@@ -263,67 +263,65 @@ impl Service {
                     .map_err(filter_error)?
                 }
                 kind => {
-                    let (design, measurements, config, settings) =
-                        if let Some(values) = live_values.take() {
-                            values
-                        } else {
-                            job.report_progress("design", 0, 1);
-                            let mut prepared = {
-                                let mut session = lock(&session_for_design);
-                                let open = session.require_mut().map_err(IpcError::from)?;
-                                if open.identity != project_identity {
-                                    return Err(IpcError::new(
-                                        ErrorCode::StaleInputs,
-                                        "project changed while exporting",
-                                    ));
-                                }
-                                let project = open.store.project().clone();
-                                let mut settings = secs_project::calibration_from_project(&project);
-                                if let Some(policy) = cached_sample_rate_policy {
-                                    settings.sample_rate_policy = policy;
-                                }
-                                let measurements =
-                                    super::calibration::load_measurements(&mut open.store)?;
-                                let groups = super::calibration::project_groups(&project);
-                                let view = secs_engine::ProjectView {
-                                    groups: &groups,
-                                    project_xo: &project.xo,
-                                    target: &project.target,
-                                };
-                                let inputs =
-                                    secs_engine::engine_inputs(&view, &measurements, &settings)
-                                        .map_err(super::calibration::engine_error)?;
-                                (settings, inputs.measurements, inputs.config, inputs.notes)
-                            };
-                            let ctx = super::calibration::compute_context(&job, memory);
-                            prepared.1 = secs_engine::normalize_measurements(
-                                &prepared.1,
-                                prepared.0.sample_rate_policy,
-                                &ctx,
-                            )
-                            .map_err(super::calibration::engine_error)?;
-                            let request = secs_engine::DesignRequest {
-                                measurements: &prepared.1,
-                                config: &prepared.2,
-                                tuning: &secs_engine::Tuning::default(),
-                                subs_only: false,
-                                adapter_notes: &prepared.3,
-                            };
-                            let fitters = secs_engine::production_fitters(job.cancel());
-                            let design = secs_engine::design(&request, &ctx, fitters.as_ref())
-                                .map_err(super::calibration::engine_error)?;
-                            job.report_progress("design", 1, 1);
-                            if let Some(paths) = cached_mimo_paths.as_ref() {
-                                mimo = Some(cached_mimo_responses(
-                                    &design,
-                                    &prepared.1,
-                                    &prepared.2,
-                                    paths,
-                                    secs_engine::MimoKey::from_settings(&settings).max_supports,
-                                )?);
+                    let (design, measurements, config, settings) = if let Some(values) =
+                        live_values.take()
+                    {
+                        values
+                    } else {
+                        job.report_progress("design", 0, 1);
+                        // Reads the measurements of the project the export
+                        // started from; the job stays cancellable.
+                        let mut prepared = session::apply(&session_for_design, ticket, |open| {
+                            let project = open.store.project().clone();
+                            let mut settings = secs_project::calibration_from_project(&project);
+                            if let Some(policy) = cached_sample_rate_policy {
+                                settings.sample_rate_policy = policy;
                             }
-                            (Arc::new(design), prepared.1, prepared.2, prepared.0)
+                            let measurements =
+                                super::calibration::load_measurements(&mut open.store)?;
+                            let groups = super::calibration::project_groups(&project);
+                            let view = secs_engine::ProjectView {
+                                groups: &groups,
+                                project_xo: &project.xo,
+                                target: &project.target,
+                            };
+                            let inputs =
+                                secs_engine::engine_inputs(&view, &measurements, &settings)
+                                    .map_err(super::calibration::engine_error)?;
+                            Ok((
+                                (settings, inputs.measurements, inputs.config, inputs.notes),
+                                false,
+                            ))
+                        })?;
+                        let ctx = super::calibration::compute_context(&job, memory);
+                        prepared.1 = secs_engine::normalize_measurements(
+                            &prepared.1,
+                            prepared.0.sample_rate_policy,
+                            &ctx,
+                        )
+                        .map_err(super::calibration::engine_error)?;
+                        let request = secs_engine::DesignRequest {
+                            measurements: &prepared.1,
+                            config: &prepared.2,
+                            tuning: &secs_engine::Tuning::default(),
+                            subs_only: false,
+                            adapter_notes: &prepared.3,
                         };
+                        let fitters = secs_engine::production_fitters(job.cancel());
+                        let design = secs_engine::design(&request, &ctx, fitters.as_ref())
+                            .map_err(super::calibration::engine_error)?;
+                        job.report_progress("design", 1, 1);
+                        if let Some(paths) = cached_mimo_paths.as_ref() {
+                            mimo = Some(cached_mimo_responses(
+                                &design,
+                                &prepared.1,
+                                &prepared.2,
+                                paths,
+                                secs_engine::MimoKey::from_settings(&settings).max_supports,
+                            )?);
+                        }
+                        (Arc::new(design), prepared.1, prepared.2, prepared.0)
+                    };
                     job.begin_commit()?;
                     let run = ExportRun {
                         design: &design,

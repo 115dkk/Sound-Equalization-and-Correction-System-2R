@@ -482,11 +482,7 @@ impl Service {
         params: LevelCheckParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let (project, _) = {
-            let session = lock(&self.session);
-            let open = session.require()?;
-            (open.store.project().clone(), open.identity)
-        };
+        let project = lock(&self.session).require()?.store.project().clone();
         let s = MeasurementSettings::from_project(&project)
             .map_err(|e| measure_error(e, "settings", secs_audio::SharePreference::Auto, None))?;
         let p = plan_for(&project, &s);
@@ -522,11 +518,11 @@ impl Service {
         params: SampleLoadParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let (roles, identity) = {
+        let (roles, ticket) = {
             let session = lock(&self.session);
             let open = session.require()?;
             let roles = plan_for(open.store.project(), &Default::default()).roles;
-            (roles, open.identity)
+            (roles, session.ticket()?)
         };
         // 17 is the largest measurement layout (패밀리); checked before any allocation.
         let positions = match params.positions {
@@ -537,85 +533,80 @@ impl Service {
         let embedded = params.positions.is_none();
         let session = self.session.clone();
         self.jobs.start(JobKind::SampleLoad, events, move |ctx| {
-            ctx.begin_commit()?;
             let total = (roles.len() * positions.len()) as u64;
             let mut done = 0;
-            let mut session = lock(&session);
-            let open = session.require_mut()?;
-            if open.identity != identity {
-                return Err(IpcError::new(
-                    ErrorCode::StaleInputs,
-                    "open project changed",
-                ));
-            }
-            if embedded {
-                let existing = secs_project::measured_positions(open.store.project());
-                for position in existing {
-                    if position != 1 {
+            let info = session::commit(&session, ticket, &ctx, |open| {
+                if embedded {
+                    let existing = secs_project::measured_positions(open.store.project());
+                    for position in existing {
+                        if position != 1 {
+                            open.store.clear_position(position);
+                        }
+                    }
+                } else {
+                    let existing = secs_project::measured_positions(open.store.project());
+                    for position in existing {
                         open.store.clear_position(position);
                     }
                 }
-            } else {
-                let existing = secs_project::measured_positions(open.store.project());
-                for position in existing {
-                    open.store.clear_position(position);
-                }
-            }
-            for position in positions {
-                open.store.start_position(position);
-                for role in &roles {
-                    if ctx.cancel().is_cancelled() {
-                        return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
-                    }
-                    let (ir, sample_rate, t0_s, source) = if embedded {
-                        match measure::sample::ir(role, 1) {
-                            Ok((ir, rate, t0)) => (ir, rate, t0, "sample"),
-                            Err(_) => {
-                                (measure::sample::fallback_ir(role), 48_000, 0.0, "synthetic")
-                            }
+                for position in positions {
+                    open.store.start_position(position);
+                    for role in &roles {
+                        if ctx.cancel().is_cancelled() {
+                            return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
                         }
-                    } else {
-                        (
-                            measure::sample::position_variation(
-                                &measure::sample::fallback_ir(role),
-                                u32::try_from(position).unwrap_or(u32::MAX),
-                            ),
-                            48_000,
-                            0.0,
-                            "synthetic",
-                        )
-                    };
-                    open.store
-                        .record(
-                            secs_project::MeasurementResult {
-                                role: role.clone(),
-                                pos: position,
-                                ir,
-                                sample_rate,
-                                t0_s,
-                                spl_db: None,
-                                spl_offset_db: None,
-                                snr_db: None,
-                                uuid: Some(format!("sample-{role}-{position}")),
-                                source: Some(source.into()),
-                                source_info: None,
-                            },
-                            Some(&roles),
-                        )
-                        .map_err(|error| {
-                            measure_error(
-                                error.into(),
-                                "record",
-                                secs_audio::SharePreference::Auto,
-                                None,
+                        let (ir, sample_rate, t0_s, source) = if embedded {
+                            match measure::sample::ir(role, 1) {
+                                Ok((ir, rate, t0)) => (ir, rate, t0, "sample"),
+                                Err(_) => {
+                                    (measure::sample::fallback_ir(role), 48_000, 0.0, "synthetic")
+                                }
+                            }
+                        } else {
+                            (
+                                measure::sample::position_variation(
+                                    &measure::sample::fallback_ir(role),
+                                    u32::try_from(position).unwrap_or(u32::MAX),
+                                ),
+                                48_000,
+                                0.0,
+                                "synthetic",
                             )
-                        })?;
-                    done += 1;
-                    ctx.role_progress(role, done, total);
+                        };
+                        open.store
+                            .record(
+                                secs_project::MeasurementResult {
+                                    role: role.clone(),
+                                    pos: position,
+                                    ir,
+                                    sample_rate,
+                                    t0_s,
+                                    spl_db: None,
+                                    spl_offset_db: None,
+                                    snr_db: None,
+                                    uuid: Some(format!("sample-{role}-{position}")),
+                                    source: Some(source.into()),
+                                    source_info: None,
+                                },
+                                Some(&roles),
+                            )
+                            .map_err(|error| {
+                                measure_error(
+                                    error.into(),
+                                    "record",
+                                    secs_audio::SharePreference::Auto,
+                                    None,
+                                )
+                            })?;
+                        done += 1;
+                        ctx.role_progress(role, done, total);
+                    }
                 }
-            }
-            open.dirty = false;
-            Ok(JobResult::Measurement(session::info(open)))
+                // Each record is written to disk as it is made.
+                open.dirty = false;
+                Ok((session::info(open), false))
+            })?;
+            Ok(JobResult::Measurement(info))
         })
     }
 
@@ -624,10 +615,12 @@ impl Service {
         params: MeasurePositionParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let (project, identity) = {
+        let (project, ticket) = {
             let session = lock(&self.session);
-            let open = session.require()?;
-            (open.store.project().clone(), open.identity)
+            (
+                session.require()?.store.project().clone(),
+                session.ticket()?,
+            )
         };
         let active_method = method(&project);
         if matches!(active_method, "none" | "mdat") {
@@ -687,28 +680,28 @@ impl Service {
                                 ))?
                             ));
                         }
-                        let mut session = lock(&session);
-                        let open = session.require_mut()?;
-                        if open.identity != identity {
-                            return Err(IpcError::new(
-                                ErrorCode::StaleInputs,
-                                "open project changed",
-                            ));
-                        }
-                        if count == 0 {
-                            if atomic_position {
-                                ctx.begin_commit()?;
-                            }
-                            open.store.start_position(params.position);
-                        }
                         let role = result.role.clone();
                         let snr = result.snr_db;
-                        open.store
-                            .record(result, Some(&p.roles))
-                            .map_err(|e| measure_error(e.into(), "record", share, None))?;
-                        open.dirty = false;
+                        let first = count == 0;
+                        let record = |open: &mut session::OpenProject| -> Result<_, IpcError> {
+                            if first {
+                                open.store.start_position(params.position);
+                            }
+                            open.store
+                                .record(result, Some(&p.roles))
+                                .map_err(|e| measure_error(e.into(), "record", share, None))?;
+                            // Each record is written to disk as it is made.
+                            open.dirty = false;
+                            Ok(((), false))
+                        };
+                        // An atomic method's position becomes non-cancellable
+                        // with its first record; REW keeps every role it recorded.
+                        if first && atomic_position {
+                            session::commit(&session, ticket, &ctx, record)?;
+                        } else {
+                            session::apply(&session, ticket, record)?;
+                        }
                         count += 1;
-                        drop(session);
                         ctx.role_progress(&role, count, p.roles.len() as u64);
                         if let Some(snr) = snr.filter(|v| *v < secs_rew::LOW_SNR_DB) {
                             ctx.log(Notice {
@@ -740,15 +733,8 @@ impl Service {
             if ctx.cancel().is_cancelled() {
                 return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
             }
-            let session = lock(&session);
-            let open = session.require()?;
-            if open.identity != identity {
-                return Err(IpcError::new(
-                    ErrorCode::StaleInputs,
-                    "open project changed",
-                ));
-            }
-            Ok(JobResult::Measurement(session::info(open)))
+            let info = session::apply(&session, ticket, |open| Ok((session::info(open), false)))?;
+            Ok(JobResult::Measurement(info))
         })
     }
     pub(crate) fn position_clear(
@@ -1049,10 +1035,12 @@ impl Service {
         params: MdatImportParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let (project, identity) = {
+        let (project, ticket) = {
             let session = lock(&self.session);
-            let open = session.require()?;
-            (open.store.project().clone(), open.identity)
+            (
+                session.require()?.store.project().clone(),
+                session.ticket()?,
+            )
         };
         let session = self.session.clone();
         self.jobs.start(JobKind::MdatImport, events, move |ctx| {
@@ -1134,27 +1122,20 @@ impl Service {
                 error.params.extend(problem.params.clone());
                 return Err(error);
             }
-            let mut session = lock(&session);
-            let open = session.require_mut()?;
-            if open.identity != identity {
-                return Err(IpcError::new(
-                    ErrorCode::StaleInputs,
-                    "open project changed",
-                ));
-            }
-            ctx.begin_commit()?;
-            let count = match &scanned {
-                Scanned::Dirac(scanned) => {
-                    dirac_import::record_import(&mut open.store, scanned, &assignments)
+            let (count, info) = session::commit(&session, ticket, &ctx, |open| {
+                let count = match &scanned {
+                    Scanned::Dirac(scanned) => {
+                        dirac_import::record_import(&mut open.store, scanned, &assignments)
+                    }
+                    Scanned::Mdat(scanned) => {
+                        mdat_import::record_import(&mut open.store, scanned, Some(&assignments))
+                    }
                 }
-                Scanned::Mdat(scanned) => {
-                    mdat_import::record_import(&mut open.store, scanned, Some(&assignments))
-                }
-            }
-            .map_err(path_error)?;
-            open.dirty = false;
-            let info = session::info(open);
-            drop(session);
+                .map_err(path_error)?;
+                // The import writes its records to disk.
+                open.dirty = false;
+                Ok(((count, session::info(open)), false))
+            })?;
             ctx.report_progress("mdat_import", count as u64, count as u64);
             Ok(JobResult::MdatImport(info))
         })
