@@ -402,3 +402,207 @@ fn wav_writer_and_readers_match_oracle() {
         assert_eq!(general, expected);
     }
 }
+
+// Writer-independent WAV fixtures (#92 TD-47): every header below is built
+// from the RIFF/WAVE layout, never by this crate's writer, and every expected
+// sample is worked out by hand from the stored integers or floats.
+
+const PCM_GUID: [u8; 16] = [
+    0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
+];
+const FLOAT_GUID: [u8; 16] = [
+    0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71,
+];
+
+/// `fmt ` body of a plain WAVEFORMAT: tag, channels, rate, byte rate, block align, bits.
+fn fmt_body(tag: u16, channels: u16, rate: u32, block_align: u16, bits: u16) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend(tag.to_le_bytes());
+    out.extend(channels.to_le_bytes());
+    out.extend(rate.to_le_bytes());
+    out.extend((rate * u32::from(block_align)).to_le_bytes());
+    out.extend(block_align.to_le_bytes());
+    out.extend(bits.to_le_bytes());
+    out
+}
+
+/// `fmt ` body of WAVE_FORMAT_EXTENSIBLE (40 bytes, cbSize 22).
+fn extensible_body(rate: u32, block_align: u16, bits: u16, valid: u16, guid: [u8; 16]) -> Vec<u8> {
+    let mut out = fmt_body(0xfffe, 1, rate, block_align, bits);
+    out.extend(22_u16.to_le_bytes());
+    out.extend(valid.to_le_bytes());
+    out.extend(4_u32.to_le_bytes()); // SPEAKER_FRONT_CENTER
+    out.extend(guid);
+    out
+}
+
+/// `RIFF` + `WAVE` + `fmt ` + `data`, with exact chunk sizes.
+fn riff(fmt: &[u8], data: &[u8]) -> Vec<u8> {
+    let mut out = b"RIFF".to_vec();
+    out.extend(
+        u32::try_from(4 + 8 + fmt.len() + 8 + data.len())
+            .unwrap()
+            .to_le_bytes(),
+    );
+    out.extend(b"WAVEfmt ");
+    out.extend(u32::try_from(fmt.len()).unwrap().to_le_bytes());
+    out.extend(fmt);
+    out.extend(b"data");
+    out.extend(u32::try_from(data.len()).unwrap().to_le_bytes());
+    out.extend(data);
+    out
+}
+
+fn le_bytes<const N: usize>(values: impl IntoIterator<Item = [u8; N]>) -> Vec<u8> {
+    values.into_iter().flatten().collect()
+}
+
+fn wav_error(bytes: &[u8]) -> String {
+    match read_mono_float_wav(bytes) {
+        Err(secs_project::ProjectError::Wav(message)) => message,
+        other => panic!("expected a WAV error, got {other:?}"),
+    }
+}
+
+#[test]
+fn wav_reader_decodes_hand_built_fixtures_of_every_supported_format_td47() {
+    // The helper's bytes for one PCM16 file, spelled out.
+    let pcm16 = riff(
+        &fmt_body(1, 1, 44_100, 2, 16),
+        &le_bytes([i16::MAX, i16::MIN, 0, 16_384, -1].map(i16::to_le_bytes)),
+    );
+    assert_eq!(
+        pcm16,
+        [
+            b"RIFF".as_slice(),
+            &[46, 0, 0, 0],
+            b"WAVEfmt ",
+            &[
+                16, 0, 0, 0, 1, 0, 1, 0, 0x44, 0xac, 0, 0, 0x88, 0x58, 1, 0, 2, 0, 16, 0
+            ],
+            b"data",
+            &[
+                10, 0, 0, 0, 0xff, 0x7f, 0x00, 0x80, 0, 0, 0x00, 0x40, 0xff, 0xff
+            ],
+        ]
+        .concat()
+    );
+    let pcm16_expected = vec![32_767.0 / 32_768.0, -1.0, 0.0, 0.5, -1.0 / 32_768.0];
+    assert_eq!(
+        read_mono_float_wav(&pcm16).unwrap(),
+        (pcm16_expected.clone(), 44_100)
+    );
+
+    // PCM24: 0x7fffff, 0x800000, 0x400000, 0xffffff (-1).
+    let pcm24 = riff(
+        &fmt_body(1, 1, 48_000, 3, 24),
+        &[
+            0xff, 0xff, 0x7f, 0x00, 0x00, 0x80, 0x00, 0x00, 0x40, 0xff, 0xff, 0xff,
+        ],
+    );
+    assert_eq!(
+        read_mono_float_wav(&pcm24).unwrap(),
+        (
+            vec![8_388_607.0 / 8_388_608.0, -1.0, 0.5, -1.0 / 8_388_608.0],
+            48_000
+        )
+    );
+
+    // PCM32: i32::MAX is 2^31 - 1, which rounds to 2^31 in f32, so 1.0.
+    let pcm32 = riff(
+        &fmt_body(1, 1, 96_000, 4, 32),
+        &le_bytes([i32::MAX, i32::MIN, 1 << 30, -(1 << 16)].map(i32::to_le_bytes)),
+    );
+    assert_eq!(
+        read_mono_float_wav(&pcm32).unwrap(),
+        (vec![1.0, -1.0, 0.5, -1.0 / 32_768.0], 96_000)
+    );
+
+    let float32 = riff(
+        &fmt_body(3, 1, 48_000, 4, 32),
+        &le_bytes([0.25_f32, -1.5, 0.375].map(f32::to_le_bytes)),
+    );
+    assert_eq!(
+        read_mono_float_wav(&float32).unwrap(),
+        (vec![0.25, -1.5, 0.375], 48_000)
+    );
+    assert_eq!(
+        read_wav_float32(&float32).unwrap(),
+        (vec![0.25, -1.5, 0.375], 48_000)
+    );
+
+    // float64 narrows to f32: 1 + 2^-30 is not an f32 and rounds to 1.0.
+    let float64 = riff(
+        &fmt_body(3, 1, 48_000, 8, 64),
+        &le_bytes([0.25_f64, -1.5, 1.0 + 2_f64.powi(-30)].map(f64::to_le_bytes)),
+    );
+    assert_eq!(
+        read_mono_float_wav(&float64).unwrap(),
+        (vec![0.25, -1.5, 1.0], 48_000)
+    );
+
+    let extensible_pcm = riff(
+        &extensible_body(44_100, 2, 16, 16, PCM_GUID),
+        &le_bytes([i16::MAX, i16::MIN, 0, 16_384, -1].map(i16::to_le_bytes)),
+    );
+    assert_eq!(
+        read_mono_float_wav(&extensible_pcm).unwrap(),
+        (pcm16_expected, 44_100)
+    );
+    let extensible_float = riff(
+        &extensible_body(48_000, 4, 32, 32, FLOAT_GUID),
+        &le_bytes([0.25_f32, -1.5].map(f32::to_le_bytes)),
+    );
+    assert_eq!(
+        read_mono_float_wav(&extensible_float).unwrap(),
+        (vec![0.25, -1.5], 48_000)
+    );
+
+    // 24 valid bits left-aligned in a 32-bit container: the low byte is padding.
+    let valid24 = riff(
+        &extensible_body(48_000, 4, 32, 24, PCM_GUID),
+        &le_bytes([0x7fff_ff00_u32, 0x8000_0000, 0x4000_0000, 0xffff_ff00].map(u32::to_le_bytes)),
+    );
+    assert_eq!(
+        read_mono_float_wav(&valid24).unwrap(),
+        (
+            vec![8_388_607.0 / 8_388_608.0, -1.0, 0.5, -1.0 / 8_388_608.0],
+            48_000
+        )
+    );
+}
+
+#[test]
+fn wav_reader_rejects_hand_built_malformed_fixtures_td47() {
+    // `fmt ` declares 16 bytes but the file ends after 10 of them.
+    let mut truncated = b"RIFF".to_vec();
+    truncated.extend(26_u32.to_le_bytes());
+    truncated.extend(b"WAVEfmt ");
+    truncated.extend(16_u32.to_le_bytes());
+    truncated.extend(&fmt_body(1, 1, 48_000, 2, 16)[..10]);
+    assert_eq!(wav_error(&truncated), "short fmt chunk");
+
+    let unknown_guid = riff(
+        &extensible_body(48_000, 2, 16, 16, [0x55; 16]),
+        &[0, 0, 0, 0],
+    );
+    assert_eq!(
+        wav_error(&unknown_guid),
+        "unsupported extensible WAV subformat"
+    );
+
+    let stereo = riff(&fmt_body(1, 2, 48_000, 4, 16), &[0, 0, 0, 0]);
+    assert_eq!(wav_error(&stereo), "WAV is not mono");
+
+    // PCM16 with a 4-byte block.
+    let misaligned = riff(&fmt_body(1, 1, 48_000, 4, 16), &[0, 0, 0, 0]);
+    assert_eq!(wav_error(&misaligned), "invalid block alignment");
+
+    // Not left-aligned in a 32-bit container: documented as unsupported.
+    let valid20 = riff(&extensible_body(48_000, 3, 24, 20, PCM_GUID), &[0, 0, 0]);
+    assert_eq!(wav_error(&valid20), "unsupported WAV format 1/24/20");
+
+    // The float32-only reader refuses PCM.
+    let pcm16 = riff(&fmt_body(1, 1, 48_000, 2, 16), &[0, 0]);
+    assert!(read_wav_float32(&pcm16).is_err());
+}
