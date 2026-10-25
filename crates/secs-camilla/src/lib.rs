@@ -1502,6 +1502,95 @@ pub fn atomic_write(destination: &Path, bytes: &[u8]) -> Result<(), std::io::Err
     result
 }
 
+fn safe_bundle_path(path: &Path) -> bool {
+    !path.as_os_str().is_empty()
+        && path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+}
+
+/// Stage a complete bundle beside its destination, then install its entry file last.
+#[doc(hidden)]
+pub fn write_bundle_observed(
+    root: &Path,
+    files: &[(PathBuf, Vec<u8>)],
+    entry: &Path,
+    after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
+) -> Result<(), std::io::Error> {
+    if !safe_bundle_path(entry)
+        || !files.iter().any(|(path, _)| path == entry)
+        || files.iter().any(|(path, _)| !safe_bundle_path(path))
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "bundle paths must be relative file paths and include the entry",
+        ));
+    }
+    let parent = root.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let folder = root
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("export");
+    let mut staging = None;
+    for _ in 0..100 {
+        let serial = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(".{folder}.stage-{}-{serial}", std::process::id()));
+        match fs::create_dir(&candidate) {
+            Ok(()) => {
+                staging = Some(candidate);
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(error),
+        }
+    }
+    let Some(staging) = staging else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "could not create export staging directory",
+        ));
+    };
+    let stage_result = (|| {
+        use std::io::Write as _;
+        for (index, (relative, bytes)) in files.iter().enumerate() {
+            let path = staging.join(relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)?;
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            after_stage_write(index, &path)?;
+        }
+        Ok::<(), std::io::Error>(())
+    })();
+    if let Err(error) = stage_result {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error);
+    }
+
+    fs::create_dir_all(root)?;
+    let install = |relative: &Path| -> Result<(), std::io::Error> {
+        let destination = root.join(relative);
+        if let Some(parent) = destination.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::rename(staging.join(relative), destination)
+    };
+    let result = (|| {
+        for (relative, _) in files.iter().filter(|(path, _)| path != entry) {
+            install(relative)?;
+        }
+        install(entry)
+    })();
+    let _ = fs::remove_dir_all(&staging);
+    result
+}
+
 /// Write `configs/<name>.yml`, coefficient WAVs, and a placeholder `in.raw` when needed.
 pub fn write_config(
     chain: &SignalChain,
@@ -1509,6 +1598,19 @@ pub fn write_config(
     name: &str,
     options: &Options,
     mimo: Option<&MimoPaths>,
+) -> Result<Vec<PathBuf>, CamillaError> {
+    write_config_observed(chain, out, name, options, mimo, &|_, _| Ok(()))
+}
+
+/// Audit-only staging seam invoked after each complete staged file.
+#[doc(hidden)]
+pub fn write_config_observed(
+    chain: &SignalChain,
+    out: &Path,
+    name: &str,
+    options: &Options,
+    mimo: Option<&MimoPaths>,
+    after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
 ) -> Result<Vec<PathBuf>, CamillaError> {
     let safe = safe_name(name);
     if safe == "." || safe == ".." {
@@ -1522,22 +1624,24 @@ pub fn write_config(
         chain.mains.len() + usize::from(!chain.subs.is_empty() && options.lfe_gain_db.is_some());
 
     // All validation and pure construction have completed before the first write.
-    fs::create_dir_all(out)?;
-    if options.capture.is_none() {
-        let input = out.join("in.raw");
-        if !input.exists() {
-            fs::write(&input, vec![0_u8; 1024 * n_in * 4])?;
-        }
+    let config_relative = PathBuf::from(CONFIG_DIR).join(format!("{safe}.yml"));
+    let mut bundle = Vec::new();
+    if options.capture.is_none() && !out.join("in.raw").exists() {
+        bundle.push((PathBuf::from("in.raw"), vec![0_u8; 1024 * n_in * 4]));
     }
     for (path, bytes) in &config.coeffs {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        atomic_write(path, bytes)?;
+        let relative = path.strip_prefix(out).map_err(|_| {
+            CamillaError::Invalid(format!(
+                "coefficient path escapes export folder: {}",
+                path.display()
+            ))
+        })?;
+        bundle.push((relative.to_path_buf(), bytes.clone()));
     }
-    fs::create_dir_all(&config_dir)?;
-    let config_path = config_dir.join(format!("{safe}.yml"));
-    atomic_write(&config_path, config.yaml.as_bytes())?;
+    bundle.push((config_relative.clone(), config.yaml.into_bytes()));
+    write_bundle_observed(out, &bundle, &config_relative, after_stage_write)?;
+
+    let config_path = out.join(&config_relative);
     let mut written = vec![config_path];
     let mut coeff_paths: Vec<_> = config.coeffs.into_iter().map(|(path, _)| path).collect();
     coeff_paths.sort();

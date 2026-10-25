@@ -6,7 +6,8 @@ mod support;
 use secs_filters::{
     FilterPlan, FilterRun, FiltersError, MimoFeed, Op, SubFeed, eqapo_config, eqapo_filters,
     eqapo_guide, export_eqapo, export_filter_text, filter_text, headroom_db, make_plan_with_lfe,
-    plan_responses, windows_channels, write_eqapo, write_text,
+    plan_responses, windows_channels, write_eqapo, write_eqapo_observed, write_text,
+    write_text_observed,
 };
 use secs_oracle::{Fixture, assert_close, goldens, rtol};
 use secs_types::chain::{
@@ -1503,6 +1504,47 @@ fn invalid_values_write_nothing_and_existing_files_are_replaced_atomically() {
     .unwrap();
     assert_eq!(first, second);
     assert_ne!(fs::read(&second[0]).unwrap(), b"old");
+    let previous = fs::read(&second[0]).unwrap();
+    let error = write_eqapo_observed(
+        &plan,
+        &replace,
+        "secs_mixed",
+        "혼합 위상 모드",
+        "changed note",
+        Some(12.25),
+        &|index, _| {
+            if index == 1 {
+                Err(std::io::Error::other("injected second-file failure"))
+            } else {
+                Ok(())
+            }
+        },
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("injected second-file failure"));
+    assert_eq!(fs::read(&second[0]).unwrap(), previous);
+
+    let text = root.0.join("text_replace");
+    let text_paths = write_text(&plan, &text, "filters.txt", "secs", "first", &[]).unwrap();
+    let previous = fs::read(&text_paths[0]).unwrap();
+    let error = write_text_observed(
+        &plan,
+        &text,
+        "filters.txt",
+        "secs",
+        "changed",
+        &[],
+        &|index, _| {
+            if index == 1 {
+                Err(std::io::Error::other("injected second-file failure"))
+            } else {
+                Ok(())
+            }
+        },
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("injected second-file failure"));
+    assert_eq!(fs::read(&text_paths[0]).unwrap(), previous);
     for directory in [&replace, &replace.join("secs_mixed")] {
         assert!(fs::read_dir(directory).unwrap().all(|entry| {
             !entry

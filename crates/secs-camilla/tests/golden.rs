@@ -6,6 +6,7 @@ mod support;
 use secs_camilla::pyfmt::{format_fixed, format_g, repr_f64, round_ndigits};
 use secs_camilla::{
     CamillaError, Device, DeviceValue, Options, RunLabels, export, make_config, write_config,
+    write_config_observed,
 };
 use secs_oracle::{Fixture, goldens};
 use secs_types::chain::{
@@ -929,6 +930,46 @@ fn write_config_replaces_existing_files_without_leaving_temporary_files() {
                 .file_name()
                 .to_string_lossy()
                 .ends_with(".tmp"))
+    );
+}
+
+#[test]
+fn failed_reexport_keeps_the_previous_camilla_bundle_td22() {
+    let fixture = Fixture::load("camilla", "direct_no_subs");
+    let temp = TempDir::new("failed_reexport");
+    let chain = chain(&fixture);
+    write_config(&chain, &temp.0, "replace", &Options::default(), None).unwrap();
+    let config = temp.0.join("configs/replace.yml");
+    let before = fs::read(&config).unwrap();
+
+    let mut changed = chain.clone();
+    changed.mains[0].fir[0] += 0.5;
+    let error = write_config_observed(
+        &changed,
+        &temp.0,
+        "replace",
+        &Options::default(),
+        None,
+        &|index, _| {
+            if index == 1 {
+                Err(std::io::Error::other("injected second-file failure"))
+            } else {
+                Ok(())
+            }
+        },
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("injected second-file failure"));
+    assert_eq!(fs::read(config).unwrap(), before);
+    let stage_prefix = format!(".{}.stage-", temp.0.file_name().unwrap().to_string_lossy());
+    assert!(
+        fs::read_dir(temp.0.parent().unwrap())
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&stage_prefix))
     );
 }
 

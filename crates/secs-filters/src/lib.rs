@@ -11,7 +11,8 @@ pub mod playback;
 
 use secs_camilla::pyfmt::{format_fixed, format_g};
 use secs_camilla::{
-    LFE_GAIN_DB, LFE_LP_HZ, SAMPLE_RATE, atomic_write, round_ties_even_i64, safe_name, wav_bytes,
+    LFE_GAIN_DB, LFE_LP_HZ, SAMPLE_RATE, round_ties_even_i64, safe_name, wav_bytes,
+    write_bundle_observed,
 };
 use secs_dsp::Complex64;
 use secs_dsp::fft;
@@ -21,7 +22,6 @@ use secs_types::ipc::{ExportBlock, ExportKind, filter_export_block};
 use std::borrow::Cow;
 use std::f64::consts::PI;
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Equalizer APO application guide filename.
@@ -1674,6 +1674,28 @@ pub fn write_text(
     title: &str,
     info: &[String],
 ) -> Result<Vec<PathBuf>, FiltersError> {
+    write_text_observed(
+        plan,
+        out,
+        file_name,
+        wav_prefix,
+        title,
+        info,
+        &|_, _| Ok(()),
+    )
+}
+
+/// Audit-only staging seam invoked after each complete staged file.
+#[doc(hidden)]
+pub fn write_text_observed(
+    plan: &FilterPlan,
+    out: &Path,
+    file_name: &str,
+    wav_prefix: &str,
+    title: &str,
+    info: &[String],
+    after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
+) -> Result<Vec<PathBuf>, FiltersError> {
     if file_name.contains(['/', '\\', '\0']) || matches!(file_name, "." | "..") {
         return Err(FiltersError::Invalid(format!(
             "unsafe text filename {file_name:?}"
@@ -1682,12 +1704,14 @@ pub fn write_text(
     let prefix = format!("{}_", ensure_safe_component(wav_prefix)?);
     let (firs, wavs) = fir_files(plan, &prefix)?;
     let text = utf8_bom(&filter_text(plan, &firs, title, info));
-    fs::create_dir_all(out)?;
-    for (name, bytes) in &wavs {
-        atomic_write(&out.join(name), bytes)?;
-    }
+    let entry = PathBuf::from(file_name);
+    let mut bundle = wavs
+        .iter()
+        .map(|(name, bytes)| (PathBuf::from(name), bytes.clone()))
+        .collect::<Vec<_>>();
+    bundle.push((entry.clone(), text));
+    write_bundle_observed(out, &bundle, &entry, after_stage_write)?;
     let path = out.join(file_name);
-    atomic_write(&path, &text)?;
     let mut written = vec![path];
     written.extend(wavs.into_iter().map(|(name, _)| out.join(name)));
     Ok(written)
@@ -1701,6 +1725,28 @@ pub fn write_eqapo(
     mode_label: &str,
     note: &str,
     latency_ms: Option<f64>,
+) -> Result<Vec<PathBuf>, FiltersError> {
+    write_eqapo_observed(
+        plan,
+        out,
+        name,
+        mode_label,
+        note,
+        latency_ms,
+        &|_, _| Ok(()),
+    )
+}
+
+/// Audit-only staging seam invoked after each complete staged file.
+#[doc(hidden)]
+pub fn write_eqapo_observed(
+    plan: &FilterPlan,
+    out: &Path,
+    name: &str,
+    mode_label: &str,
+    note: &str,
+    latency_ms: Option<f64>,
+    after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
 ) -> Result<Vec<PathBuf>, FiltersError> {
     let safe = ensure_safe_component(name)?;
     let sub = out.join(&safe);
@@ -1720,16 +1766,22 @@ pub fn write_eqapo(
     let guide = utf8_bom(&eqapo_guide(
         plan, &inputs, &outputs, &safe, mode_label, latency_ms, preamp,
     ));
-    fs::create_dir_all(&sub)?;
-    for (filename, bytes) in &wavs {
-        atomic_write(&sub.join(filename), bytes)?;
-    }
-    let body_path = sub.join(format!("{safe}.txt"));
-    atomic_write(&body_path, &body)?;
-    let guide_path = out.join(EQAPO_GUIDE);
-    atomic_write(&guide_path, &guide)?;
-    let config_path = out.join("config.txt");
-    atomic_write(&config_path, &config)?;
+    let body_relative = PathBuf::from(&safe).join(format!("{safe}.txt"));
+    let guide_relative = PathBuf::from(EQAPO_GUIDE);
+    let config_relative = PathBuf::from("config.txt");
+    let mut bundle = wavs
+        .iter()
+        .map(|(filename, bytes)| (PathBuf::from(&safe).join(filename), bytes.clone()))
+        .collect::<Vec<_>>();
+    bundle.extend([
+        (body_relative.clone(), body),
+        (guide_relative.clone(), guide),
+        (config_relative.clone(), config),
+    ]);
+    write_bundle_observed(out, &bundle, &config_relative, after_stage_write)?;
+    let config_path = out.join(&config_relative);
+    let body_path = out.join(&body_relative);
+    let guide_path = out.join(&guide_relative);
     let mut written = vec![config_path, body_path, guide_path];
     written.extend(wavs.into_iter().map(|(name, _)| sub.join(name)));
     Ok(written)
