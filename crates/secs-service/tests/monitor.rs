@@ -193,6 +193,55 @@ fn mock_monitor_emits_stores_excludes_and_stops() {
 }
 
 #[test]
+fn monitor_started_in_another_project_does_not_store_late_level() {
+    let root = root();
+    let first = root.join("first.secs");
+    let second = root.join("second.secs");
+    let service = Service::new(Default::default());
+    configure_mock(&service, &first);
+    let events = Arc::new(Events::default());
+    let Response::LevelMonitorStart(started) = call(
+        &service,
+        Request::LevelMonitorStart(LevelMonitorStartParams::default()),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    call(
+        &service,
+        Request::LevelPlay(LevelPlayParams {
+            role: "L".into(),
+            master_dbfs: -30.0,
+        }),
+        Arc::new(NoEvents),
+    );
+    events.wait_meters(started.job, 1, Duration::from_secs(1));
+    configure_mock(&service, &second);
+    call(
+        &service,
+        Request::ProjectSave(ProjectSaveParams::default()),
+        Arc::new(NoEvents),
+    );
+    events.wait_play_end(started.job, "L", "done", Duration::from_secs(10));
+    let Response::LevelsGet(levels) = call(&service, Request::LevelsGet, Arc::new(NoEvents)) else {
+        panic!()
+    };
+    assert!(levels.levels.is_empty());
+    assert!(levels.spl.is_empty());
+    let Response::ProjectInfo(info) = call(&service, Request::ProjectInfo, Arc::new(NoEvents))
+    else {
+        panic!()
+    };
+    assert!(!info.dirty);
+    call(&service, Request::LevelMonitorStop, Arc::new(NoEvents));
+    assert_eq!(
+        events.wait_finished(started.job, Duration::from_secs(1)),
+        JobStatus::Cancelled
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn level_stop_cancels_only_the_active_burst_and_is_idempotent() {
     let root = root();
     let service = Service::new(Default::default());

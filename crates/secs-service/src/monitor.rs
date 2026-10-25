@@ -65,9 +65,10 @@ impl Service {
         params: LevelMonitorStartParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let project = {
+        let (project, identity) = {
             let session = lock(&self.session);
-            session.require()?.store.project().clone()
+            let open = session.require()?;
+            (open.store.project().clone(), open.identity)
         };
         let settings = MeasurementSettings::from_project(&project).map_err(level_error)?;
         let plan = plan_for(&project, &settings);
@@ -87,6 +88,7 @@ impl Service {
                 &session,
                 &state,
                 &project,
+                identity,
                 settings,
                 plan,
                 &job,
@@ -190,14 +192,15 @@ fn monitor_loop(
     session: &Arc<Mutex<crate::session::Session>>,
     state: &Arc<Mutex<LevelInner>>,
     project: &Project,
+    identity: u64,
     settings: MeasurementSettings,
     plan: secs_project::MeasurementPlan,
     job: &crate::jobs::JobContext,
     rew_license: &Arc<Mutex<Option<bool>>>,
 ) -> Result<JobResult, IpcError> {
     match method(project) {
-        "rew" => rew_loop(deps, session, state, &plan, job, rew_license),
-        "native" | "mock" => sampled_loop(deps, session, state, settings, plan, job),
+        "rew" => rew_loop(deps, session, state, &plan, identity, job, rew_license),
+        "native" | "mock" => sampled_loop(deps, session, state, identity, settings, plan, job),
         _ => Err(input("method", "unknown measurement method")),
     }
 }
@@ -206,6 +209,7 @@ fn sampled_loop(
     deps: &crate::Deps,
     session: &Arc<Mutex<crate::session::Session>>,
     state: &Arc<Mutex<LevelInner>>,
+    identity: u64,
     settings: MeasurementSettings,
     plan: secs_project::MeasurementPlan,
     job: &crate::jobs::JobContext,
@@ -241,7 +245,13 @@ fn sampled_loop(
         };
         if let Some(report) = report {
             send_meter(job, report);
-            store_level(session, &play.role, report.input_dbfs, report.spl_db)?;
+            store_level(
+                session,
+                identity,
+                &play.role,
+                report.input_dbfs,
+                report.spl_db,
+            )?;
             send_play_end(job, &play.role, "done");
         } else {
             send_play_end(job, &play.role, "stopped");
@@ -302,6 +312,7 @@ fn rew_loop(
     session: &Arc<Mutex<crate::session::Session>>,
     state: &Arc<Mutex<LevelInner>>,
     plan: &secs_project::MeasurementPlan,
+    identity: u64,
     job: &crate::jobs::JobContext,
     rew_license: &Arc<Mutex<Option<bool>>>,
 ) -> Result<JobResult, IpcError> {
@@ -371,7 +382,13 @@ fn rew_loop(
                 secs_rew::LevelMonitor::stop_generator(&mut rew);
                 if let Some((play, _, settled)) = active.take() {
                     if let Some(level) = settled {
-                        store_level(session, &play.role, level.input_dbfs, level.spl_db)?;
+                        store_level(
+                            session,
+                            identity,
+                            &play.role,
+                            level.input_dbfs,
+                            level.spl_db,
+                        )?;
                     }
                     send_play_end(job, &play.role, "done");
                     handled_generation = play.generation;
@@ -391,12 +408,16 @@ fn rew_loop(
 
 fn store_level(
     session: &Arc<Mutex<crate::session::Session>>,
+    identity: u64,
     role: &str,
     dbfs: f64,
     spl_db: Option<f64>,
 ) -> Result<(), IpcError> {
     let mut session = lock(session);
     let open = session.require_mut()?;
+    if open.identity != identity {
+        return Ok(());
+    }
     put_extra_map(open.store.project_mut(), "levels", role, dbfs);
     if let Some(spl) = spl_db {
         put_extra_map(open.store.project_mut(), "spl", role, spl);
