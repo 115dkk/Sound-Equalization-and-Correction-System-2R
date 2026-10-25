@@ -713,3 +713,39 @@ fn monitor_errors_are_classified_like_level_check() {
         fs::remove_dir_all(root).unwrap();
     }
 }
+
+#[test]
+fn jobs_lists_a_running_job_and_then_its_end() {
+    let root = root();
+    let service = Service::new(Default::default());
+    configure_mock(&service, &root.join("room.secs"));
+    let events = Arc::new(Events::default());
+    let Response::LevelMonitorStart(started) = call(
+        &service,
+        Request::LevelMonitorStart(LevelMonitorStartParams::default()),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    let snapshot = |service: &Service| {
+        let Response::Jobs(jobs) = call(service, Request::Jobs, Arc::new(NoEvents)) else {
+            panic!()
+        };
+        jobs.into_iter()
+            .find(|job| job.job == started.job)
+            .expect("the started job is listed")
+    };
+    let running = snapshot(&service);
+    assert_eq!(running.kind, JobKind::LevelMonitor);
+    assert_eq!(running.status, JobStatus::Running);
+    assert!(running.cancellable);
+    call(&service, Request::LevelMonitorStop, Arc::new(NoEvents));
+    assert_eq!(
+        events.wait_finished(started.job, Duration::from_secs(5)),
+        JobStatus::Cancelled
+    );
+    let ended = snapshot(&service);
+    assert_eq!(ended.status, JobStatus::Cancelled);
+    assert!(!ended.cancellable);
+    fs::remove_dir_all(root).unwrap();
+}

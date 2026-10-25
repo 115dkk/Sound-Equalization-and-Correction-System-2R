@@ -1027,7 +1027,7 @@ id = "ipc.project_new"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::new_projects_match_upstream_bytes", "secs-service::tutorial_projects_block_save_without_writing"]
 
 [[feature]]
 id = "ipc.sample_load"
@@ -1041,7 +1041,7 @@ id = "ipc.project_open"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::exports_after_reopening_match_pre_close_bytes", "secs-service::old_cache_without_run_key_keeps_calibration_but_marks_mimo_stale"]
 
 [[feature]]
 id = "ipc.project_save"
@@ -1055,35 +1055,35 @@ id = "ipc.project_info"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::measure_config_get_reads_stored_settings_without_dirtying_the_project"]
 
 [[feature]]
 id = "ipc.calibrate"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::cancelled_calibration_preserves_previous_results"]
 
 [[feature]]
 id = "ipc.recommend_xo"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::oracle_project_calibrates_recommends_xo_and_exports"]
 
 [[feature]]
 id = "ipc.mimo"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration"]
 
 [[feature]]
 id = "ipc.results"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::stale_calibration_exports_with_flag_and_cache_survives_reopen"]
 
 [[feature]]
 id = "ipc.export"
@@ -1098,14 +1098,14 @@ id = "ipc.job_cancel"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::cancelled_calibration_preserves_previous_results", "secs-service::generic_cancel_ends_monitor_during_an_active_burst"]
 
 [[feature]]
 id = "ipc.jobs"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::jobs_lists_a_running_job_and_then_its_end"]
 
 [[feature]]
 id = "ipc.measure_methods"
@@ -1196,7 +1196,7 @@ id = "ipc.rew_launch"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::configure_validates_fields_and_host_stub_reports_its_error"]
+tests = ["secs-service::rew_launch_classifies_reasons_and_returns_after_spawn", "secs-service::configure_validates_fields_and_host_stub_reports_its_error"]
 
 [[feature]]
 id = "ipc.mdat_scan"
