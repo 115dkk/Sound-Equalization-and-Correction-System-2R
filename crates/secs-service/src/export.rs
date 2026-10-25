@@ -1,11 +1,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use secs_camilla::RunLabels;
-use secs_export::{ExportRun, MimoKind, MimoResponses};
-use secs_filters::{FilterRun, FiltersError};
-use secs_types::calibration::{Mode, mode_label};
-use secs_types::chain::{MimoPaths, SignalChain};
+use secs_export::ExportRun;
+use secs_filters::FiltersError;
 use secs_types::ipc::{
     ErrorCode, ExportKind, ExportParams, ExportResult, IpcError, JobKind, JobResult, JobStarted,
 };
@@ -40,7 +37,9 @@ impl Service {
             ));
         }
         let stale = calibration.is_some_and(crate::results::RunView::stale);
-        let settings = secs_project::calibration_from_project(project);
+        let now = (self.deps.clock)();
+        let description =
+            crate::export_run::describe(&open.results, project, &compute_key, params.kind, now)?;
         let mdat = matches!(
             params.kind,
             ExportKind::BeforeAfterMdat | ExportKind::StagedMdat
@@ -55,28 +54,12 @@ impl Service {
         let mut live_values = live
             .filter(|_| mdat)
             .map(|calibration| (calibration.shared_design(), calibration.settings.clone()));
-        let live_camilla =
-            live.filter(|_| params.kind == ExportKind::CamillaDsp)
-                .map(|calibration| {
-                    (
-                        calibration.shared_design(),
-                        labels(&calibration.settings, calibration.design()),
-                    )
-                });
+        let live_camilla = live
+            .filter(|_| params.kind == ExportKind::CamillaDsp)
+            .map(|calibration| calibration.shared_design());
         let cached_camilla = cached
             .filter(|_| live.is_none() && params.kind == ExportKind::CamillaDsp)
-            .map(|cache| {
-                (
-                    cache.calibration_chain.clone(),
-                    RunLabels {
-                        mode: cache.labels.mode.clone(),
-                        ultra_ms: cache.labels.ultra_ms,
-                        latency_ms: cache.labels.latency_ms,
-                        rc_hi_hz: cache.labels.rc_hi_hz,
-                        mimo_max_supports: cache.labels.mimo_max_supports,
-                    },
-                )
-            });
+            .map(|cache| cache.calibration_chain.clone());
         let spl_offset = secs_project::project_spl_offset(project);
         let sources = if mdat {
             secs_project::load_project_sources(project, &open.path)
@@ -86,20 +69,9 @@ impl Service {
         let uuid = self.deps.uuid.clone();
         let session_for_design = self.session.clone();
         let memory = self.deps.memory.available_bytes();
-        let mode_name = live
-            .map(|calibration| mode_name(calibration.settings.mode).to_owned())
-            .or_else(|| cached.map(|cache| cache.labels.mode.clone()))
-            .unwrap_or_else(|| "mixed".into());
-        let mut mimo = live_mimo.filter(|_| mdat).map(|result| MimoResponses {
-            kind: if result.run.fir {
-                MimoKind::Fir
-            } else {
-                MimoKind::Iir
-            },
-            fsiso: result.run.paths.fsiso,
-            cap_text: secs_engine::mimo::cap_text(result.run.key.max_supports),
-            paths: result.run.paths.clone(),
-            applied: result.run.applied.clone(),
+        let mode_name = description.mode();
+        let mut mimo = live_mimo.filter(|_| mdat).map(|result| {
+            description.mimo_responses(result.run.paths.clone(), result.run.applied.clone())
         });
         let cached_mimo_paths = cached_mimo.cloned();
         let mut export_mimo = if mdat {
@@ -137,39 +109,11 @@ impl Service {
             )
             .with_param("reason", block.name()));
         }
-        let now = (self.deps.clock)();
-        let filter_values = match params.kind {
-            ExportKind::FilterText | ExportKind::EqualizerApo => {
-                Some(if let Some(calibration) = live {
-                    let design = calibration.design();
-                    let run = ExportRun {
-                        design,
-                        measurements: design.replay.measurements(),
-                        config: design.replay.config(),
-                        settings: &calibration.settings,
-                    };
-                    FilterValues {
-                        chain: design.chain.clone(),
-                        mimo: export_mimo.take(),
-                        mode: mode_name.clone(),
-                        ultra_ms: calibration.settings.ultra_ms,
-                        label: calibration.settings.label(),
-                        latency_ms: design.chain.latency_ms,
-                        rc_hi_hz: design.rc_hi,
-                        rc_pieces: secs_export::rc_pieces(&run),
-                        stamp: now.minute_stamp(),
-                    }
-                } else {
-                    cached_filter_values(
-                        cached.expect("live or cached calibration checked above"),
-                        &settings,
-                        export_mimo.take(),
-                        now.minute_stamp(),
-                    )
-                })
-            }
-            _ => None,
-        };
+        let filter_values = matches!(
+            params.kind,
+            ExportKind::FilterText | ExportKind::EqualizerApo
+        )
+        .then(|| (export_chain.clone(), export_mimo.take()));
         // One export reads the clock once; every mdat it builds gets that date.
         let now_ms = (self.deps.unix_ms)();
         drop(session);
@@ -179,17 +123,17 @@ impl Service {
                 ExportKind::CamillaDsp => crate::export_folder::camilladsp_folder(
                     &base,
                     folder_includes_mimo,
-                    &mode_name,
+                    mode_name,
                     now,
                 ),
                 ExportKind::BeforeAfterMdat | ExportKind::StagedMdat => {
-                    crate::export_folder::mdat_folder(&base, folder_includes_mimo, &mode_name, now)
+                    crate::export_folder::mdat_folder(&base, folder_includes_mimo, mode_name, now)
                 }
                 ExportKind::FilterText => {
-                    crate::export_folder::text_folder(&base, includes_mimo, &mode_name, now)
+                    crate::export_folder::text_folder(&base, includes_mimo, mode_name, now)
                 }
                 ExportKind::EqualizerApo => {
-                    crate::export_folder::eqapo_folder(&base, includes_mimo, &mode_name, now)
+                    crate::export_folder::eqapo_folder(&base, includes_mimo, mode_name, now)
                 }
             }
         } else {
@@ -202,23 +146,27 @@ impl Service {
             let folder = destination.as_path();
             let mut paths = match params.kind {
                 ExportKind::CamillaDsp => {
-                    let (chain, labels) = if let Some((design, labels)) = &live_camilla {
-                        (&design.chain, labels)
+                    let chain = if let Some(design) = &live_camilla {
+                        &design.chain
                     } else {
-                        let (chain, labels) = cached_camilla.as_ref().ok_or_else(|| {
+                        cached_camilla.as_ref().ok_or_else(|| {
                             IpcError::new(ErrorCode::Internal, "run cache disappeared")
-                        })?;
-                        (chain, labels)
+                        })?
                     };
                     job.begin_commit()?;
-                    secs_camilla::export(chain, folder, labels, export_mimo.as_ref())
-                        .map_err(export_error)?
+                    secs_camilla::export(
+                        chain,
+                        folder,
+                        &description.camilla(),
+                        export_mimo.as_ref(),
+                    )
+                    .map_err(export_error)?
                 }
                 ExportKind::FilterText | ExportKind::EqualizerApo => {
                     let values = filter_values.as_ref().ok_or_else(|| {
                         IpcError::new(ErrorCode::Internal, "filter export values disappeared")
                     })?;
-                    let run = values.run();
+                    let run = description.filters(&values.0, values.1.as_ref());
                     job.begin_commit()?;
                     if params.kind == ExportKind::FilterText {
                         secs_filters::export_filter_text(&run, folder)
@@ -265,22 +213,15 @@ impl Service {
                         let design = calibration.design;
                         job.report_progress("design", 1, 1);
                         if let Some(paths) = cached_mimo_paths.as_ref() {
-                            mimo = Some(MimoResponses {
-                                kind: if paths.paths.iter().any(|path| path.filter.is_fir()) {
-                                    MimoKind::Fir
-                                } else {
-                                    MimoKind::Iir
-                                },
-                                fsiso: paths.fsiso,
-                                cap_text: secs_engine::mimo::cap_text(
-                                    secs_engine::MimoKey::from_settings(&settings).max_supports,
+                            mimo = Some(
+                                description.mimo_responses(
+                                    paths.clone(),
+                                    design
+                                        .replay
+                                        .mimo_responses(&design, paths)
+                                        .map_err(super::calibration::engine_error)?,
                                 ),
-                                paths: paths.clone(),
-                                applied: design
-                                    .replay
-                                    .mimo_responses(&design, paths)
-                                    .map_err(super::calibration::engine_error)?,
-                            });
+                            );
                         }
                         (Arc::new(design), settings)
                     };
@@ -328,101 +269,6 @@ impl Service {
                 stale,
             }))
         })
-    }
-}
-
-#[derive(Debug, Clone)]
-struct FilterValues {
-    chain: SignalChain,
-    mimo: Option<MimoPaths>,
-    mode: String,
-    ultra_ms: f64,
-    label: String,
-    latency_ms: f64,
-    rc_hi_hz: f64,
-    rc_pieces: Vec<String>,
-    stamp: String,
-}
-
-impl FilterValues {
-    fn run(&self) -> FilterRun<'_> {
-        FilterRun {
-            chain: &self.chain,
-            mimo: self.mimo.as_ref(),
-            mode: &self.mode,
-            ultra_ms: self.ultra_ms,
-            label: &self.label,
-            latency_ms: self.latency_ms,
-            rc_hi_hz: self.rc_hi_hz,
-            rc_pieces: &self.rc_pieces,
-            stamp: &self.stamp,
-        }
-    }
-}
-
-fn cached_filter_values(
-    cache: &crate::cache::CachedResults,
-    settings: &secs_types::calibration::CalibrationSettings,
-    mimo: Option<MimoPaths>,
-    stamp: String,
-) -> FilterValues {
-    let rc_note = cache
-        .calibration
-        .notes
-        .iter()
-        .find(|notice| notice.code == "rc_limit");
-    let rc_values = rc_note.and_then(|notice| {
-        Some((
-            notice.params.get("hz")?.parse::<f64>().ok()?,
-            notice.params.get("auto")?.parse::<bool>().ok()?,
-            notice
-                .params
-                .get("schroeder_hz")
-                .and_then(|value| value.parse::<f64>().ok()),
-        ))
-    });
-    let (rc_hi_hz, rc_auto, schroeder_hz, legacy_fallback) = match rc_values {
-        Some((hz, auto, schroeder)) => (hz, auto, schroeder, false),
-        None => (cache.labels.rc_hi_hz, settings.rc_hi.is_none(), None, true),
-    };
-    FilterValues {
-        chain: cache.calibration_chain.clone(),
-        mimo,
-        mode: cache.labels.mode.clone(),
-        ultra_ms: cache.labels.ultra_ms,
-        label: mode_label(cache.calibration.mode, Some(cache.calibration.ultra_ms)),
-        latency_ms: cache.labels.latency_ms,
-        rc_hi_hz,
-        rc_pieces: secs_export::rc_pieces_from_values(
-            rc_hi_hz,
-            rc_auto,
-            schroeder_hz,
-            settings.room_volume_m3,
-            legacy_fallback,
-        ),
-        stamp,
-    }
-}
-
-fn labels(
-    settings: &secs_types::calibration::CalibrationSettings,
-    design: &secs_engine::Design,
-) -> RunLabels {
-    RunLabels {
-        mode: mode_name(settings.mode).into(),
-        ultra_ms: settings.ultra_ms,
-        latency_ms: design.chain.latency_ms,
-        rc_hi_hz: design.rc_hi,
-        mimo_max_supports: settings.mimo_max_supports.max(0) as usize,
-    }
-}
-
-fn mode_name(mode: Mode) -> &'static str {
-    match mode {
-        Mode::Zero => "zero",
-        Mode::Mixed => "mixed",
-        Mode::Linear => "linear",
-        Mode::Ultra => "ultra",
     }
 }
 

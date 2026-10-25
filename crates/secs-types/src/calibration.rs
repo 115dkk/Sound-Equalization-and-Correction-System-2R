@@ -302,6 +302,16 @@ pub struct ModeParams {
     pub max_latency_ms: f64,
 }
 
+/// Stable ASCII correction-mode tag used by export names and metadata.
+pub fn mode_tag(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Zero => "zero",
+        Mode::Mixed => "mixed",
+        Mode::Linear => "linear",
+        Mode::Ultra => "ultra",
+    }
+}
+
 /// Korean user-visible mode name, including the clamped ultra latency when supplied.
 pub fn mode_label(mode: Mode, ultra_ms: Option<f64>) -> String {
     let name = match mode {
