@@ -270,6 +270,12 @@ impl Project {
     }
 
     pub fn from_json(value: PyJson) -> Result<Self, ProjectError> {
+        Self::from_json_with_warnings(value).map(|(project, _)| project)
+    }
+
+    pub(crate) fn from_json_with_warnings(
+        value: PyJson,
+    ) -> Result<(Self, Vec<crate::MigrationWarning>), ProjectError> {
         let object = value
             .object()
             .ok_or_else(|| ProjectError::Invalid("project root must be an object".into()))?;
@@ -331,7 +337,8 @@ impl Project {
             }
         }
         project.migrate_legacy()?;
-        Ok(project)
+        let warnings = project.config.repair_output_numbers();
+        Ok((project, warnings))
     }
 
     pub fn to_json(&self) -> PyJson {

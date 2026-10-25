@@ -93,8 +93,10 @@ impl MeasurementStore {
         let text = String::from_utf8(bytes).map_err(|error| {
             ProjectError::Invalid(format!("project {} is not UTF-8: {error}", path.display()))
         })?;
-        let project = Project::load_text(&text)?;
-        Ok(Self::new(path, project))
+        let (project, warnings) = Project::from_json_with_warnings(loads(&text)?)?;
+        let mut store = Self::new(path, project);
+        store.warnings.extend(warnings);
+        Ok(store)
     }
 
     pub fn new(path: impl Into<PathBuf>, project: Project) -> Self {

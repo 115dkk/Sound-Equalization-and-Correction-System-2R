@@ -1541,6 +1541,7 @@
   "tutorial.sample.compute.busy": "Calculating. Progress appears in the job tray, and the tutorial opens the next instruction when the result is ready.",
   "tutorial.sample.compute.note": "Calculation started.",
   "project.warning.measurement.ir_path.outside": "These measurement files are outside the project folder and were not read.",
+  "project.warning.config.band.out.outside": "Output numbers outside 1–256 were changed to the lowest unused output.",
   "project.warning.unknown": "Unknown warning",
   "project.new.title": "New project",
   "project.new.start": "Start from",

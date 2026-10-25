@@ -1541,6 +1541,7 @@
   "tutorial.sample.compute.busy": "계산하는 중입니다. 진행 상황은 작업 트레이에 표시되며 결과가 나오면 다음 안내로 이동합니다.",
   "tutorial.sample.compute.note": "계산을 시작했습니다.",
   "project.warning.measurement.ir_path.outside": "측정 파일이 프로젝트 폴더 밖에 있어 읽지 않았습니다.",
+  "project.warning.config.band.out.outside": "1–256 밖의 출력 번호를 쓰이지 않은 가장 낮은 번호로 바꿨습니다.",
   "project.warning.unknown": "알 수 없는 경고",
   "project.new.title": "새 프로젝트",
   "project.new.start": "시작",

@@ -82,6 +82,25 @@ fn oracle_result(role: &str, pos: i64, uuid: &str, offset: Option<f64>) -> Measu
 }
 
 #[test]
+fn out_of_range_output_is_reset_with_a_migration_warning_td31() {
+    let directory = TempDir::new();
+    let path = directory.0.join("untrusted.secs");
+    let mut project = Project::from_preset("2.0").unwrap();
+    project.config.speakers[0].bands[0].out = 1_000_000_000;
+    fs::write(&path, project.save_text()).unwrap();
+
+    let store = MeasurementStore::open(&path).unwrap();
+
+    assert_eq!(store.project().config.speakers[0].bands[0].out, 1);
+    assert_eq!(store.warnings().len(), 1);
+    assert_eq!(store.warnings()[0].code, "config.band.out.outside");
+    assert_eq!(
+        store.warnings()[0].entry,
+        "role L, band FULL, output 1000000000"
+    );
+}
+
+#[test]
 fn measurement_session_saved_bytes_match_upstream_after_every_step() {
     let roles = vec!["L".into(), "R".into()];
     for fx in Fixture::all("service_plan", "session_") {

@@ -15,6 +15,8 @@ fn plus() -> String {
     "+".into()
 }
 
+pub const MAX_OUTPUT_NUMBER: i64 = 256;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Speaker {
     pub role: String,
@@ -125,6 +127,41 @@ impl Default for SpeakerConfig {
     }
 }
 impl SpeakerConfig {
+    pub(crate) fn repair_output_numbers(&mut self) -> Vec<crate::MigrationWarning> {
+        let mut warnings = Vec::new();
+        let mut used = self
+            .speakers
+            .iter()
+            .flat_map(|speaker| &speaker.bands)
+            .filter_map(|band| {
+                (1..=MAX_OUTPUT_NUMBER)
+                    .contains(&band.out)
+                    .then_some(band.out)
+            })
+            .collect::<BTreeSet<_>>();
+
+        for speaker in &mut self.speakers {
+            for band in &mut speaker.bands {
+                if (1..=MAX_OUTPUT_NUMBER).contains(&band.out) {
+                    continue;
+                }
+                let original = band.out;
+                band.out = (1..=MAX_OUTPUT_NUMBER)
+                    .find(|output| !used.contains(output))
+                    .unwrap_or(1);
+                used.insert(band.out);
+                warnings.push(crate::MigrationWarning {
+                    code: "config.band.out.outside",
+                    entry: format!(
+                        "role {}, band {}, output {original}",
+                        speaker.role, band.band
+                    ),
+                });
+            }
+        }
+        warnings
+    }
+
     pub fn to_json(&self) -> crate::PyJson {
         crate::PyJson::Object(vec![
             (
