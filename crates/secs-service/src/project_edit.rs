@@ -749,10 +749,22 @@ impl Service {
                 "window dimensions must be positive",
             ));
         }
-        if let Some(path) = self.deps.app_settings_path.as_deref() {
-            save_app_settings(path, &params.settings)?;
+        let bytes = serde_json::to_vec_pretty(&AppSettingsFile {
+            version: APP_SETTINGS_VERSION,
+            settings: params.settings.clone(),
+        })
+        .map_err(|error| invalid("settings", error.to_string()))?;
+        // Saved settings above the read cap would be dropped at the next start.
+        if bytes.len() as u64 > FILE_LIMIT {
+            return Err(invalid("settings", "settings exceed 1 MiB"));
         }
-        *lock(&self.app_settings) = params.settings.clone();
+        // One critical section for the file and memory, so what is read now
+        // is what a restart restores even when requests run in parallel (TD-39).
+        let mut current = lock(&self.app_settings);
+        if let Some(path) = self.deps.app_settings_path.as_deref() {
+            atomic_write(path, &bytes)?;
+        }
+        *current = params.settings.clone();
         Ok(params.settings)
     }
 }
@@ -779,13 +791,4 @@ pub(crate) fn load_app_settings(path: Option<&Path>) -> AppSettings {
     let mut settings = file.settings;
     settings.recent_projects.truncate(RECENT_PROJECTS_MAX);
     settings
-}
-
-fn save_app_settings(path: &Path, settings: &AppSettings) -> Result<(), IpcError> {
-    let bytes = serde_json::to_vec_pretty(&AppSettingsFile {
-        version: APP_SETTINGS_VERSION,
-        settings: settings.clone(),
-    })
-    .map_err(|error| project_io(path, error))?;
-    atomic_write(path, &bytes)
 }

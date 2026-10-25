@@ -905,3 +905,74 @@ fn legacy_expert_preference_is_ignored_without_resetting_other_settings() {
     }
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn app_settings_writes_are_serialized_with_memory_and_bounded_by_the_read_cap() {
+    let root = root("settings-race");
+    let path = root.join("settings.json");
+    let deps = Deps {
+        app_settings_path: Some(path.clone()),
+        ..Deps::default()
+    };
+    let service = Arc::new(Service::new(deps.clone()));
+    // Each round two writers start together, as Tauri runs requests in parallel.
+    for round in 0..200 {
+        let start = Arc::new(std::sync::Barrier::new(2));
+        let writers: Vec<_> = ["ko", "en"]
+            .into_iter()
+            .map(|language| {
+                let service = service.clone();
+                let start = start.clone();
+                std::thread::spawn(move || {
+                    start.wait();
+                    call(
+                        &service,
+                        Request::AppSettingsSet(AppSettingsParams {
+                            settings: AppSettings {
+                                language: language.into(),
+                                recent_projects: vec![format!("{language}-{round}.secs")],
+                                ..AppSettings::default()
+                            },
+                        }),
+                    );
+                })
+            })
+            .collect();
+        for writer in writers {
+            writer.join().unwrap();
+        }
+        let Response::AppSettingsGet(current) = call(&service, Request::AppSettingsGet) else {
+            panic!()
+        };
+        let Response::AppSettingsGet(restored) =
+            call(&Service::new(deps.clone()), Request::AppSettingsGet)
+        else {
+            panic!()
+        };
+        assert_eq!(current, restored, "round {round}");
+    }
+
+    let Response::AppSettingsGet(before) = call(&service, Request::AppSettingsGet) else {
+        panic!()
+    };
+    let saved = fs::read(&path).unwrap();
+    let oversized = service.call(
+        Request::AppSettingsSet(AppSettingsParams {
+            settings: AppSettings {
+                recent_projects: vec!["x".repeat(1024 * 1024)],
+                ..AppSettings::default()
+            },
+        }),
+        Arc::new(NoEvents),
+    );
+    let Envelope::Err(oversized) = oversized else {
+        panic!("settings over the 1 MiB read cap were saved");
+    };
+    assert_eq!(oversized.code, ErrorCode::InvalidRequest);
+    assert_eq!(fs::read(&path).unwrap(), saved);
+    assert_eq!(
+        call(&service, Request::AppSettingsGet),
+        Response::AppSettingsGet(before)
+    );
+    fs::remove_dir_all(root).unwrap();
+}
