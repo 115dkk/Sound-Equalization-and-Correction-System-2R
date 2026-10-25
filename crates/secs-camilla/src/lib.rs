@@ -446,6 +446,25 @@ fn finite(name: &str, value: f64) -> Result<(), CamillaError> {
     }
 }
 
+/// Whether a delay is negative at the writers' resolution: below zero after
+/// the half-to-even rounding to whole 48 kHz samples. A smaller negative
+/// value is float noise that both writers emit as no delay. The Equalizer APO
+/// writer applies the same rule (#92 TD-94).
+pub fn is_negative_delay(milliseconds: f64) -> bool {
+    round_ties_even_i64(milliseconds * f64::from(SAMPLE_RATE) / 1000.0) < 0
+}
+
+/// A delay the writer emits: finite and not negative (#92 TD-94).
+fn non_negative_delay(name: &str, milliseconds: f64) -> Result<(), CamillaError> {
+    finite(name, milliseconds)?;
+    if is_negative_delay(milliseconds) {
+        return Err(CamillaError::Invalid(format!(
+            "negative delay {name} = {milliseconds} ms"
+        )));
+    }
+    Ok(())
+}
+
 fn validate_peq(prefix: &str, bands: &[Peq]) -> Result<(), CamillaError> {
     for (index, (frequency, q, gain)) in bands.iter().enumerate() {
         finite(&format!("{prefix}[{index}].frequency"), *frequency)?;
@@ -476,7 +495,7 @@ fn validate_mimo(chain: &SignalChain, mimo: Option<&MimoPaths>) -> Result<(), Ca
             )));
         }
         finite(&format!("mimo.paths[{index}].low_hz"), path.low_hz)?;
-        finite(&format!("mimo.paths[{index}].delay_ms"), path.delay_ms)?;
+        non_negative_delay(&format!("mimo.paths[{index}].delay_ms"), path.delay_ms)?;
         match &path.filter {
             MimoFilter::Iir {
                 gain_db,
@@ -486,7 +505,7 @@ fn validate_mimo(chain: &SignalChain, mimo: Option<&MimoPaths>) -> Result<(), Ca
                 allpass,
             } => {
                 finite(&format!("mimo.paths[{index}].gain_db"), *gain_db)?;
-                finite(&format!("mimo.paths[{index}].filter_delay_ms"), *delay_ms)?;
+                non_negative_delay(&format!("mimo.paths[{index}].filter_delay_ms"), *delay_ms)?;
                 if !matches!(polarity, -1 | 1) {
                     return Err(CamillaError::Invalid(format!(
                         "MIMO path {index} polarity {polarity}"
@@ -591,7 +610,7 @@ fn validate(
         validate_peq(&format!("main.{role}.input_peq"), input_peq)?;
         validate_peq(&format!("main.{role}.top_peq"), top_peq)?;
         finite(&format!("main.{role}.gain_db"), *gain_db)?;
-        finite(&format!("main.{role}.delay_ms"), *delay_ms)?;
+        non_negative_delay(&format!("main.{role}.delay_ms"), *delay_ms)?;
         finite(&format!("main.{role}.align_delay_ms"), *align_delay_ms)?;
         if let Some(value) = xo_hz {
             finite(&format!("main.{role}.xo_hz"), *value)?;
@@ -620,7 +639,7 @@ fn validate(
         check_ascii_identifier(role)?;
         reserve_role(&mut roles, role)?;
         finite(&format!("sub.{role}.gain_db"), *gain_db)?;
-        finite(&format!("sub.{role}.delay_ms"), *delay_ms)?;
+        non_negative_delay(&format!("sub.{role}.delay_ms"), *delay_ms)?;
         finite(&format!("sub.{role}.hp_hz"), *hp_hz)?;
         finite(&format!("sub.{role}.lp_hz"), *lp_hz)?;
         if !matches!(polarity, -1 | 1) {

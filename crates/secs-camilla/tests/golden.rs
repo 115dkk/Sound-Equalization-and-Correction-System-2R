@@ -1096,3 +1096,51 @@ fn duplicate_or_reserved_roles_write_nothing_td46() {
     reserved_sub.subs[0].role = "LFE".into();
     reject(&reserved_sub, "LFE");
 }
+
+#[test]
+fn negative_delays_write_nothing_td94() {
+    // Negative means a negative whole 48 kHz sample after half-to-even
+    // rounding; the oracles' -0.0005-sample noise and exactly -0.5 samples are 0.
+    assert!(!secs_camilla::is_negative_delay(
+        -0.000_010_416_666_666_666_666
+    ));
+    assert!(!secs_camilla::is_negative_delay(-0.5 / 48.0));
+    assert!(secs_camilla::is_negative_delay(-0.51 / 48.0));
+    assert!(secs_camilla::is_negative_delay(-1.0));
+    let temp = TempDir::new("negative_delay");
+    let reject = |chain: &SignalChain, mimo: Option<&MimoPaths>, name: &str| {
+        let error = write_config(chain, &temp.0, "bad", &Options::default(), mimo).unwrap_err();
+        assert!(matches!(error, CamillaError::Invalid(_)), "{error}");
+        assert!(error.to_string().contains(name), "{error}");
+        assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
+    };
+
+    let fixture = Fixture::load("export_mimo", "room_dba_iir");
+    let mut main = chain(&fixture);
+    main.mains[0].delay_ms = -1.0;
+    let role = main.mains[0].role.clone();
+    reject(&main, None, &format!("main.{role}.delay_ms"));
+    let mut sub = chain(&fixture);
+    sub.subs[0].delay_ms = -1.0;
+    let role = sub.subs[0].role.clone();
+    reject(&sub, None, &format!("sub.{role}.delay_ms"));
+
+    let mut mimo = mimo_paths(&fixture);
+    mimo.paths.truncate(1);
+    mimo.paths[0].delay_ms = -1.0;
+    reject(&chain(&fixture), Some(&mimo), "mimo.paths[0].delay_ms");
+    let mut mimo = mimo_paths(&fixture);
+    mimo.paths.truncate(1);
+    mimo.paths[0].filter = MimoFilter::Iir {
+        gain_db: -6.0,
+        delay_ms: -1.0,
+        polarity: 1,
+        peq: Vec::new(),
+        allpass: Vec::new(),
+    };
+    reject(
+        &chain(&fixture),
+        Some(&mimo),
+        "mimo.paths[0].filter_delay_ms",
+    );
+}

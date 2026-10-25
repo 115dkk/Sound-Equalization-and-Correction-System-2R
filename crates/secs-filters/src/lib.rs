@@ -11,8 +11,8 @@ pub mod playback;
 
 use secs_camilla::pyfmt::{format_fixed, format_g};
 use secs_camilla::{
-    LFE_GAIN_DB, LFE_LP_HZ, SAMPLE_RATE, round_ties_even_i64, safe_name, wav_bytes,
-    write_bundle_observed,
+    LFE_GAIN_DB, LFE_LP_HZ, SAMPLE_RATE, is_negative_delay, round_ties_even_i64, safe_name,
+    wav_bytes, write_bundle_observed,
 };
 use secs_dsp::Complex64;
 use secs_dsp::fft;
@@ -647,13 +647,40 @@ fn add_response(out: &mut Vec<(String, Vec<Complex64>)>, role: &str, value: Vec<
 }
 
 /// Compute electrical responses from one input to every reachable output.
+///
+/// A FIR's response is one real FFT of its taps, which lands on that FFT's
+/// grid, not on `f`. So when the plan holds a FIR, `f` must be the 48 kHz
+/// real-FFT grid `f[k] = k * 48000 / (2 * (f.len() - 1))` with at least two
+/// points, and any other `f` is [`FiltersError::Invalid`]. Without a FIR,
+/// every response is evaluated on `f` itself.
 pub fn plan_responses(
     plan: &FilterPlan,
     f: &[f64],
     source: &str,
     skip_fixed: bool,
 ) -> Result<Vec<(String, Vec<Complex64>)>, FiltersError> {
+    if !plan.firs().is_empty() {
+        check_rfft_grid(f)?;
+    }
     plan_responses_prepared(plan, f, source, skip_fixed, None)
+}
+
+fn check_rfft_grid(f: &[f64]) -> Result<(), FiltersError> {
+    let n = 2 * f.len().saturating_sub(1);
+    let step = f64::from(SAMPLE_RATE) / n as f64;
+    // A millionth of a bin absorbs how a caller rounds `k * step`.
+    let on_grid = n > 0
+        && f.iter()
+            .enumerate()
+            .all(|(k, &value)| (value - k as f64 * step).abs() <= step * 1e-6);
+    if on_grid {
+        Ok(())
+    } else {
+        Err(FiltersError::Invalid(format!(
+            "FIR responses need the 48 kHz real-FFT grid of {} points",
+            f.len()
+        )))
+    }
 }
 
 fn plan_responses_prepared(
@@ -1701,6 +1728,7 @@ pub fn write_text_observed(
         )));
     }
     let prefix = format!("{}_", ensure_safe_component(wav_prefix)?);
+    validate_plan_delays(plan)?;
     let (firs, wavs) = fir_files(plan, &prefix)?;
     let text = utf8_bom(&filter_text(plan, &firs, title, info));
     let entry = PathBuf::from(file_name);
@@ -1748,6 +1776,7 @@ pub fn write_eqapo_observed(
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
 ) -> Result<Vec<PathBuf>, FiltersError> {
     let safe = ensure_safe_component(name)?;
+    validate_plan_delays(plan)?;
     let sub = out.join(&safe);
     let (firs, wavs) = fir_files(plan, &format!("{safe}_"))?;
     let body = eqapo_filters(plan, &firs, note).into_bytes();
@@ -1876,6 +1905,50 @@ fn finite(name: &str, value: f64) -> Result<(), FiltersError> {
         Err(FiltersError::Invalid(format!("non-finite {name}")))
     }
 }
+/// A delay the writers emit: finite and not negative, by the CamillaDSP
+/// writer's rule ([`is_negative_delay`], #92 TD-94).
+fn emitted_delay(name: &str, channel: &str, ms: f64) -> Result<(), FiltersError> {
+    if ms.is_finite() && !is_negative_delay(ms) {
+        Ok(())
+    } else {
+        Err(FiltersError::Invalid(format!(
+            "{name} of {channel:?} must be finite and not negative, got {ms} ms"
+        )))
+    }
+}
+/// Plans may be built by hand or revived from a cache, so the writers check
+/// every delay again before their first file.
+fn validate_plan_delays(plan: &FilterPlan) -> Result<(), FiltersError> {
+    let channels = plan
+        .input_ops
+        .iter()
+        .chain(&plan.main_ops)
+        .chain(&plan.send_ops)
+        .map(|(role, ops)| (Cow::Borrowed(role.as_str()), ops.as_slice()))
+        .chain(std::iter::once((
+            Cow::Borrowed("LFE"),
+            plan.lfe_ops.as_slice(),
+        )))
+        .chain(
+            plan.subs
+                .iter()
+                .map(|(role, feed)| (Cow::Borrowed(role.as_str()), feed.ops.as_slice())),
+        )
+        .chain(plan.mimo.iter().map(|path| {
+            (
+                Cow::Owned(format!("{}->{}", path.input, path.support)),
+                path.ops.as_slice(),
+            )
+        }));
+    for (channel, ops) in channels {
+        for op in ops {
+            if let Op::Delay { ms, .. } = op {
+                emitted_delay("delay", &channel, *ms)?;
+            }
+        }
+    }
+    Ok(())
+}
 fn identifier(name: &str, value: &str) -> Result<(), FiltersError> {
     if value.is_empty() || !value.chars().all(|ch| ch.is_ascii_alphanumeric()) {
         Err(FiltersError::Invalid(format!("unsafe {name} {value:?}")))
@@ -1907,6 +1980,7 @@ fn validate_chain(chain: &SignalChain, mimo: Option<&MimoPaths>) -> Result<(), F
         validate_peqs("main top PEQ", &main.top_peq)?;
         finite("main gain", main.gain_db)?;
         finite("main delay", main.delay_ms)?;
+        emitted_delay("main delay", &main.role, main.delay_ms)?;
         finite("main align delay", main.align_delay_ms)?;
         if let Some(xo) = main.xo_hz {
             finite("main XO", xo)?;
@@ -1936,6 +2010,7 @@ fn validate_chain(chain: &SignalChain, mimo: Option<&MimoPaths>) -> Result<(), F
         roles.push(sub.role.clone());
         finite("sub gain", sub.gain_db)?;
         finite("sub delay", sub.delay_ms)?;
+        emitted_delay("sub delay", &sub.role, sub.delay_ms)?;
         finite("sub HP", sub.hp_hz)?;
         finite("sub LP", sub.lp_hz)?;
         if !matches!(sub.polarity, -1 | 1) {
@@ -1972,6 +2047,8 @@ fn validate_chain(chain: &SignalChain, mimo: Option<&MimoPaths>) -> Result<(), F
             }
             finite("MIMO low", path.low_hz)?;
             finite("MIMO delay", path.delay_ms)?;
+            let channel = format!("{}->{}", path.input, path.support);
+            emitted_delay("MIMO delay", &channel, path.delay_ms)?;
             match &path.filter {
                 MimoFilter::Fir { taps_48k } => {
                     for &tap in taps_48k {
@@ -2000,6 +2077,7 @@ fn validate_chain(chain: &SignalChain, mimo: Option<&MimoPaths>) -> Result<(), F
                 } => {
                     finite("MIMO gain", *gain_db)?;
                     finite("MIMO filter delay", *delay_ms)?;
+                    emitted_delay("MIMO filter delay", &channel, *delay_ms)?;
                     if !matches!(polarity, -1 | 1) {
                         return Err(FiltersError::Invalid(format!("MIMO polarity {polarity}")));
                     }

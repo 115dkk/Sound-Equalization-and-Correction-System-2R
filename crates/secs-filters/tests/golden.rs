@@ -1615,6 +1615,58 @@ fn fir_taps_that_overflow_f32_write_nothing_td45() {
     assert!(!folder.exists());
 }
 
+#[test]
+fn negative_delays_write_nothing_td94() {
+    let root = TempDir::new("negative_delay");
+    // A chain with a negative channel delay is refused when the plan is made.
+    let mut bad = f11_synthetic_chain(true, false, true);
+    bad.mains[0].delay_ms = -1.0;
+    let error = make_plan_with_lfe(&bad, None, None, 120.0).unwrap_err();
+    assert!(error.to_string().contains("\"L\""), "{error}");
+    let mut bad = f11_synthetic_chain(true, false, true);
+    bad.subs[0].delay_ms = -1.0;
+    let error = make_plan_with_lfe(&bad, None, None, 120.0).unwrap_err();
+    assert!(error.to_string().contains("\"SW1\""), "{error}");
+
+    // A plan holding `Delay { ms: -1.0 }` is refused by both plan writers.
+    let chain = f11_synthetic_chain(true, false, true);
+    let mut plan = make_plan_with_lfe(&chain, None, None, 120.0).unwrap();
+    for op in &mut plan.main_ops[0].1 {
+        if let Op::Delay { ms, .. } = op {
+            *ms = -1.0;
+        }
+    }
+    let folder = root.0.join("eqapo");
+    let error = write_eqapo(&plan, &folder, "secs_mixed", "mode", "note", None).unwrap_err();
+    assert!(matches!(error, FiltersError::Invalid(_)), "{error}");
+    assert!(error.to_string().contains("\"L\""), "{error}");
+    assert!(!folder.exists());
+    let folder = root.0.join("text");
+    let error = write_text(&plan, &folder, "filters.txt", "secs", "title", &[]).unwrap_err();
+    assert!(matches!(error, FiltersError::Invalid(_)), "{error}");
+    assert!(!folder.exists());
+}
+
+#[test]
+fn fir_responses_require_the_rfft_grid_td94() {
+    let uniform = (0..=8)
+        .map(|k| f64::from(k) * 48_000.0 / 16.0)
+        .collect::<Vec<_>>();
+    let mut skewed = uniform.clone();
+    skewed[3] += 1.0;
+    let fir =
+        make_plan_with_lfe(&f11_synthetic_chain(true, true, false), None, None, 120.0).unwrap();
+    assert!(plan_responses(&fir, &uniform, "L", false).is_ok());
+    assert!(matches!(
+        plan_responses(&fir, &skewed, "L", false),
+        Err(FiltersError::Invalid(_))
+    ));
+    // Without a FIR every response is evaluated on `f` itself.
+    let iir =
+        make_plan_with_lfe(&f11_synthetic_chain(true, false, false), None, None, 120.0).unwrap();
+    assert!(plan_responses(&iir, &skewed, "L", false).is_ok());
+}
+
 fn _public_shapes(_: &SubFeed, _: &MimoFeed) {
     let _ = goldens();
 }
