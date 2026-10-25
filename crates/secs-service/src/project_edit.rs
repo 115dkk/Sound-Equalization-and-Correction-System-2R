@@ -569,7 +569,7 @@ impl Service {
             return Err(invalid("count", "arrangement must be 1, 9, 13, or 17"));
         }
         if let Some(delay) = params.start_delay.as_deref()
-            && !["끄기", "5 초", "10 초", "15 초"].contains(&delay)
+            && !secs_types::rules::START_DELAYS.contains(&delay)
         {
             return Err(invalid("start_delay", "unknown start delay"));
         }

@@ -10,7 +10,8 @@ export type LayoutSetParams = {
  */
 count: number | null, 
 /**
- * New start delay.
+ * New start delay, one of [`crate::rules::START_DELAYS`]; any other
+ * value answers `invalid_request` (field `start_delay`).
  */
 start_delay: string | null, 
 /**

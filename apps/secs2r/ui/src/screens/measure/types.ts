@@ -3,6 +3,7 @@
 // the view from the IPC and implements the actions (docs/packets/P31a,
 // M5-screens-common.md). Upstream: src/secs/wizard/step5_measure.py.
 import type { BlockedReason, StepState } from "../../app/model";
+import { START_DELAYS } from "../../ipc/bindings/rules";
 import type { JobId } from "../../ipc/bindings/JobId";
 import type { JobKind } from "../../ipc/bindings/JobKind";
 import type { JobProgress } from "../../ipc/bindings/JobProgress";
@@ -74,8 +75,8 @@ export type MdatPending = {
   position: number | null;
 };
 
-/** Start delays as stored in the project (`extra.start_delay`, upstream `START_DELAYS`). */
-export const START_DELAYS = ["끄기", "5 초", "10 초", "15 초"] as const;
+/** Start delays as stored in the project (`extra.start_delay`, upstream `START_DELAYS`), as the service has them. */
+export { START_DELAYS };
 export type StartDelay = (typeof START_DELAYS)[number];
 
 /** Sweep repetitions REW and the native path accept (upstream `REPETITIONS`). */

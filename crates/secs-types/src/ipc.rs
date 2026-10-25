@@ -1027,7 +1027,8 @@ pub enum ExportKind {
     /// `calibration.export_filter_text`). Results with RC only.
     FilterText,
     /// A complete Equalizer APO configuration: `config.txt`, the filter file
-    /// and FIR WAV files (upstream `calibration.export_eqapo`). RC and BA.
+    /// and FIR WAV files (upstream `calibration.export_eqapo`). RC, BA and
+    /// MIMO support paths, which upstream refuses (docs/DEVIATIONS.md F12).
     EqualizerApo,
 }
 
@@ -1731,7 +1732,8 @@ pub struct LayoutArrangement {
 pub struct LayoutResult {
     /// Chosen arrangement (`extra['array']`).
     pub count: usize,
-    /// Start delay before each position: `off`, `5`, `10` or `15` seconds.
+    /// Start delay before each position as stored (`extra['start_delay']`):
+    /// one of [`crate::rules::START_DELAYS`], `끄기` or `5 초` to `15 초`.
     pub start_delay: String,
     /// Timing reference and its reference speaker or output.
     pub timing: LayoutTiming,
@@ -1744,7 +1746,8 @@ pub struct LayoutResult {
 pub struct LayoutSetParams {
     /// New arrangement; changing it clears measurements (U5).
     pub count: Option<usize>,
-    /// New start delay.
+    /// New start delay, one of [`crate::rules::START_DELAYS`]; any other
+    /// value answers `invalid_request` (field `start_delay`).
     pub start_delay: Option<String>,
     /// New timing reference.
     pub timing: Option<LayoutTiming>,

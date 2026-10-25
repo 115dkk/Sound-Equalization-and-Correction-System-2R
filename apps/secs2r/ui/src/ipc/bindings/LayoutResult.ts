@@ -11,7 +11,8 @@ export type LayoutResult = {
  */
 count: number, 
 /**
- * Start delay before each position: `off`, `5`, `10` or `15` seconds.
+ * Start delay before each position as stored (`extra['start_delay']`):
+ * one of [`crate::rules::START_DELAYS`], `끄기` or `5 초` to `15 초`.
  */
 start_delay: string, 
 /**

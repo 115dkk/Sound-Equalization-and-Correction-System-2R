@@ -71,6 +71,10 @@ pub const CALIBRATION_LIMITS: CalibrationLimits = CalibrationLimits {
 /// Sweep lengths a measurement plan accepts, shortest first.
 pub const SWEEP_LENGTHS: [&str; 7] = ["64k", "128k", "256k", "512k", "1M", "2M", "4M"];
 
+/// Start delays before each measured position, as upstream stores them in
+/// `extra['start_delay']` (step 4 of the wizard).
+pub const START_DELAYS: [&str; 4] = ["끄기", "5 초", "10 초", "15 초"];
+
 /// How many recent projects the app settings keep.
 pub const RECENT_PROJECTS_MAX: usize = 10;
 
@@ -158,6 +162,7 @@ mod typescript {
                 &CALIBRATION_LIMITS,
             ),
             constant("SWEEP_LENGTHS", None, &SWEEP_LENGTHS),
+            constant("START_DELAYS", None, &START_DELAYS),
             constant("RECENT_PROJECTS_MAX", None, &RECENT_PROJECTS_MAX),
             constant("CONFIG_GROUPS", None, &CONFIG_GROUPS),
             constant("ARRANGEMENT_COUNTS", None, &ARRANGEMENT_COUNTS),
