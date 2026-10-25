@@ -1949,6 +1949,67 @@ fn calibration_preserves_settings_edited_while_the_job_runs() {
     fs::remove_dir_all(root).unwrap();
 }
 
+fn mimo_notes(files: &[String]) -> Vec<String> {
+    files
+        .iter()
+        .filter(|file| file.ends_with(".mdat"))
+        .flat_map(|file| {
+            secs_mdat::load_mdat_project(&fs::read(file).unwrap(), &secs_jos::Limits::default())
+                .unwrap()
+                .measurements
+        })
+        .filter(|measurement| measurement.title.contains("MIMO"))
+        .map(|measurement| measurement.notes)
+        .collect()
+}
+
+#[test]
+fn staged_mdat_states_the_mimo_support_cap_like_upstream_live_and_cached() {
+    let root = temp_root("mimo-cap-text");
+    fs::create_dir_all(&root).unwrap();
+    let (source, mut settings) = write_case(&root, "room_dba");
+    settings.mimo_on = true;
+    settings.mimo_max_supports = 4;
+    let mut store = secs_project::MeasurementStore::open(&source).unwrap();
+    let mut project_settings = secs_project::calibration_from_project(store.project());
+    project_settings.mimo_on = true;
+    project_settings.mimo_max_supports = 4;
+    secs_project::store_calibration(store.project_mut(), &project_settings);
+    store.save().unwrap();
+    let running = service();
+    open(&running, &source);
+    calibrate_and_run_mimo(&running, &settings);
+
+    // `calibration.py:1000-1002`: "(Fsiso 150 Hz · 입력당 서포트 ≤ 4)".
+    let live = export_and_wait(
+        &running,
+        ExportKind::StagedMdat,
+        &root.join("live"),
+        Arc::new(Events::default()),
+    );
+    let reopened = service();
+    open(&reopened, &source);
+    assert!(!read_results(&reopened).mimo.unwrap().stale);
+    let cached = export_and_wait(
+        &reopened,
+        ExportKind::StagedMdat,
+        &root.join("cached"),
+        Arc::new(Events::default()),
+    );
+    for (path, files) in [("live", &live.files), ("cached", &cached.files)] {
+        let notes = mimo_notes(files);
+        assert!(!notes.is_empty(), "{path}: no MIMO measurement");
+        for note in notes {
+            assert!(
+                note.contains(" Hz · 입력당 서포트 ≤ 4)"),
+                "{path}: cap text missing: {note}"
+            );
+            assert!(!note.contains("max"), "{path}: raw cap text: {note}");
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn reopened_fresh_cache_keeps_mimo_in_mdat() {
     let root = temp_root("fresh-cached-mimo-mdat");

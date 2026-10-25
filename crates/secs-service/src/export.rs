@@ -132,11 +132,7 @@ impl Service {
                 MimoKind::Iir
             },
             fsiso: result.run.paths.fsiso,
-            cap_text: live
-                .filter(|calibration| calibration.settings.mimo_max_supports != 0)
-                .map_or_else(String::new, |calibration| {
-                    format!("max {}", calibration.settings.mimo_max_supports)
-                }),
+            cap_text: secs_engine::mimo::cap_text(result.run.key.max_supports),
             paths: result.run.paths.clone(),
             applied: result.run.applied.clone(),
         });
@@ -323,7 +319,7 @@ impl Service {
                                     &prepared.1,
                                     &prepared.2,
                                     paths,
-                                    settings.mimo_max_supports,
+                                    secs_engine::MimoKey::from_settings(&settings).max_supports,
                                 )?);
                             }
                             (Arc::new(design), prepared.1, prepared.2, prepared.0)
@@ -453,7 +449,7 @@ fn cached_mimo_responses(
     measurements: &secs_engine::MeasurementSet,
     config: &secs_engine::EngineConfig,
     paths: &MimoPaths,
-    mimo_max_supports: i64,
+    max_supports: usize,
 ) -> Result<MimoResponses, IpcError> {
     let view = secs_engine::export_view(design, measurements, config)
         .map_err(super::calibration::engine_error)?;
@@ -502,11 +498,7 @@ fn cached_mimo_responses(
             MimoKind::Iir
         },
         fsiso: paths.fsiso,
-        cap_text: if mimo_max_supports == 0 {
-            String::new()
-        } else {
-            format!("max {}", mimo_max_supports.max(0))
-        },
+        cap_text: secs_engine::mimo::cap_text(max_supports),
         paths: paths.clone(),
         applied,
     })
