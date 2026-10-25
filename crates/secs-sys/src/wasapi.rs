@@ -799,20 +799,25 @@ mod windows_backend {
             result
         }
 
+        /// Writes the CSV. It is attempted once per session: a failure is
+        /// returned once and not retried.
         fn flush(&self) -> Result<(), AudioError> {
             let mut state = self.0.borrow_mut();
             if state.flushed {
                 return Ok(());
             }
-            let file = File::create(&state.path).map_err(|error| {
+            state.flushed = true;
+            let state = &*state;
+            let failed = |action: &str, error: std::io::Error| {
                 AudioError::Backend(format!(
-                    "create PA05 trace {}: {error}",
+                    "{action} PA05 trace {}: {error}",
                     state.path.display()
                 ))
-            })?;
+            };
+            let file = File::create(&state.path).map_err(|error| failed("create", error))?;
             let mut writer = BufWriter::new(file);
             writeln!(writer, "elapsed_us,category,event,duration_us,ordinal,frames,frame_start,frame_end,buffer_index,buffer_timestamp,silent,discontinuity,initial_discontinuity,raw_zero_runs,raw_zero_frames,silent_fill_frames,queue_before,queue_after,delivery_start,delivery_end,buffer_size,padding,free,detail")
-                .map_err(|error| AudioError::Backend(format!("write PA05 trace header: {error}")))?;
+                .map_err(|error| failed("write", error))?;
             for record in &state.records {
                 writeln!(
                     writer,
@@ -842,13 +847,34 @@ mod windows_backend {
                     csv_option(record.free),
                     record.detail.replace(',', ";")
                 )
-                .map_err(|error| AudioError::Backend(format!("write PA05 trace row: {error}")))?;
+                .map_err(|error| failed("write", error))?;
             }
-            writer
-                .flush()
-                .map_err(|error| AudioError::Backend(format!("flush PA05 trace: {error}")))?;
-            state.flushed = true;
+            writer.flush().map_err(|error| failed("flush", error))?;
             Ok(())
+        }
+    }
+
+    #[cfg(test)]
+    mod trace_tests {
+        use super::*;
+
+        #[test]
+        fn trace_write_failure_names_the_file_and_is_not_retried() {
+            let path = std::env::temp_dir()
+                .join(format!("secs-pa05-missing-{}", std::process::id()))
+                .join("trace.csv");
+            let trace = TraceHandle(Rc::new(std::cell::RefCell::new(TraceState {
+                started: Instant::now(),
+                path: path.clone(),
+                records: Vec::new(),
+                flushed: false,
+            })));
+            let error = trace.flush().unwrap_err();
+            assert!(
+                error.to_string().contains(&path.display().to_string()),
+                "{error}"
+            );
+            assert!(trace.flush().is_ok(), "a failed trace is attempted once");
         }
     }
 
@@ -910,8 +936,13 @@ mod windows_backend {
 
     impl Drop for TraceOwner {
         fn drop(&mut self) {
-            if let Some(trace) = &self.0 {
-                let _ = trace.flush();
+            // Drop cannot return the error, and the measurement does not
+            // depend on its trace: say once on stderr that the trace is lost,
+            // as RealtimeGuard does for a failed demotion.
+            if let Some(trace) = &self.0
+                && let Err(error) = trace.flush()
+            {
+                eprintln!("{error}");
             }
         }
     }
