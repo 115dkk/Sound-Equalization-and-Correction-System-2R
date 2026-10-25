@@ -1029,6 +1029,7 @@
   "notice.rc_limit.manual": "RC upper limit {hz} Hz (set by hand)",
   "notice.measurement_resampled": "Converted {count} measurements to {target_hz} Hz for calculation.",
   "notice.measurement_resampled.one": "Converted {count} measurement to {target_hz} Hz for calculation.",
+  "notice.cache_save_failed": "The results could not be saved in the project folder. They will need to be recalculated after reopening.",
   "notice.rc_limit.auto": "RC upper limit {hz} Hz (automatic)",
   "notice.rc_limit.schroeder": "RC upper limit {hz} Hz (automatic · Schroeder {schroeder_hz} Hz)",
   "notice.rc_room_volume": "The automatic upper limit is the Schroeder frequency of a {volume_m3} m³ room.",

@@ -1029,6 +1029,7 @@
   "notice.rc_limit.manual": "RC 상한 {hz} Hz (직접 정함)",
   "notice.measurement_resampled": "측정 {count}개를 계산용 {target_hz} Hz 데이터로 변환했습니다.",
   "notice.measurement_resampled.one": "측정 {count}개를 계산용 {target_hz} Hz 데이터로 변환했습니다.",
+  "notice.cache_save_failed": "결과를 프로젝트 폴더에 저장하지 못했습니다. 다시 열면 다시 계산해야 합니다.",
   "notice.rc_limit.auto": "RC 상한 {hz} Hz (자동)",
   "notice.rc_limit.schroeder": "RC 상한 {hz} Hz (자동 · 슈뢰더 {schroeder_hz} Hz)",
   "notice.rc_room_volume": "자동 상한은 방 부피 {volume_m3} m³에서 구한 슈뢰더 주파수입니다.",

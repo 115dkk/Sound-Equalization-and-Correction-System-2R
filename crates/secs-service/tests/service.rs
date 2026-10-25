@@ -2560,3 +2560,65 @@ fn mdat_import_reads_the_file_once_before_taking_the_session_lock() {
     assert_eq!(info.positions, [1]);
     fs::remove_dir_all(root).unwrap();
 }
+
+fn has_cache_warning(notes: &[secs_types::ipc::Notice]) -> bool {
+    notes.iter().any(|notice| {
+        notice.code == "cache_save_failed"
+            && notice
+                .params
+                .get("error")
+                .is_some_and(|error| !error.is_empty())
+    })
+}
+
+#[test]
+fn cache_save_failure_is_a_warning_on_a_successful_calculation() {
+    let root = temp_root("cache-save-warning");
+    fs::create_dir_all(&root).unwrap();
+    let (path, mut settings) = write_case(&root, "room_dba");
+    settings.mimo_on = true;
+    settings.mimo_max_supports = 1;
+    // A non-empty folder where the cache file goes: the final rename fails
+    // on every platform and for every user (a read-only folder does not stop root).
+    let obstacle = path.with_extension("irs").join("secs_run_cache.json");
+    fs::create_dir_all(obstacle.join("in-the-way")).unwrap();
+    let service = service();
+    open(&service, &path);
+
+    calibrate_and_run_mimo(&service, &settings);
+    let results = read_results(&service);
+    let calibration = results.calibration.unwrap();
+    let mimo = results.mimo.unwrap();
+    assert!(!calibration.stale && !mimo.stale);
+    assert!(
+        has_cache_warning(&calibration.notes),
+        "{:?}",
+        calibration.notes
+    );
+    assert!(has_cache_warning(&mimo.notes), "{:?}", mimo.notes);
+
+    // Once a save succeeds the warning goes, and it is never written to the cache.
+    fs::remove_dir_all(&obstacle).unwrap();
+    let events = Arc::new(Events::default());
+    let Response::Mimo(started) = call_ok(
+        &service,
+        Request::Mimo(MimoParams {
+            settings: Some(settings),
+        }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    finished_result(events.wait(started.job, Duration::from_secs(120)));
+    let results = read_results(&service);
+    assert!(!has_cache_warning(&results.calibration.unwrap().notes));
+    assert!(!has_cache_warning(&results.mimo.unwrap().notes));
+    let cached: secs_types::ipc::CalibrationSummary = cached_field(&path, "calibration");
+    assert!(
+        cached
+            .notes
+            .iter()
+            .all(|notice| notice.code != "cache_save_failed")
+    );
+    fs::remove_dir_all(root).unwrap();
+}

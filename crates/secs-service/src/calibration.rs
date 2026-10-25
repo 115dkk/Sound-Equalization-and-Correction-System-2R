@@ -156,7 +156,12 @@ impl Service {
             let cached = snapshot_cache(&state);
             drop(state);
             drop(session_guard);
-            persist_cache(cached, &path, prepared.identity, &session)?;
+            let owner = if subs_only {
+                CacheOwner::Subs
+            } else {
+                CacheOwner::Calibration
+            };
+            persist_cache(cached, &path, prepared.identity, &session, &results, owner);
             Ok(JobResult::Calibration)
         })
     }
@@ -300,7 +305,14 @@ impl Service {
             let cached = snapshot_cache(&state);
             drop(state);
             drop(session_guard);
-            persist_cache(cached, &path, identity, &session)?;
+            persist_cache(
+                cached,
+                &path,
+                identity,
+                &session,
+                &results,
+                CacheOwner::Mimo,
+            );
             Ok(JobResult::Mimo)
         })
     }
@@ -814,9 +826,15 @@ fn require_identity(open: &crate::session::OpenProject, identity: u64) -> Result
 fn snapshot_cache(state: &Results) -> Option<crate::cache::CachedResults> {
     let calibration = state.calibration.as_ref()?;
     Some(crate::cache::CachedResults {
-        calibration: calibration.summary.clone(),
+        calibration: CalibrationSummary {
+            notes: cached_notes(&calibration.summary.notes),
+            ..calibration.summary.clone()
+        },
         calibration_chain: calibration.design.chain.clone(),
-        mimo: state.mimo.as_ref().map(|result| result.summary.clone()),
+        mimo: state.mimo.as_ref().map(|result| MimoSummary {
+            notes: cached_notes(&result.summary.notes),
+            ..result.summary.clone()
+        }),
         measurement_signature: calibration.signature.clone(),
         target_key: calibration.target_key.clone(),
         engine_key: calibration.settings.engine_key(),
@@ -853,24 +871,85 @@ fn snapshot_cache(state: &Results) -> Option<crate::cache::CachedResults> {
     })
 }
 
+/// The notice a calculation carries when its results stay in memory but
+/// could not be written to the project folder (TD-38).
+const CACHE_SAVE_FAILED: &str = "cache_save_failed";
+
+/// Which in-memory summary a cache save belongs to.
+#[derive(Debug, Clone, Copy)]
+enum CacheOwner {
+    Calibration,
+    Subs,
+    Mimo,
+}
+
+fn summary_notes(state: &mut Results) -> impl Iterator<Item = &mut Vec<Notice>> {
+    [
+        state.calibration.as_mut().map(|run| &mut run.summary.notes),
+        state.subs.as_mut().map(|run| &mut run.summary.notes),
+        state.mimo.as_mut().map(|result| &mut result.summary.notes),
+    ]
+    .into_iter()
+    .flatten()
+}
+
+/// Saves the cache after the results were committed in memory. A failure is
+/// not a failed calculation: the owner's summary carries a
+/// `cache_save_failed` notice until a later save succeeds (TD-38).
 fn persist_cache(
     cached: Option<crate::cache::CachedResults>,
     path: &std::path::Path,
     identity: u64,
     session: &Arc<Mutex<crate::session::Session>>,
-) -> Result<(), IpcError> {
+    results: &Arc<Mutex<Results>>,
+    owner: CacheOwner,
+) {
     let Some(cached) = cached else {
-        return Ok(());
+        return;
     };
-    crate::cache::save(path, &cached).map_err(crate::ServiceError::from)?;
-    let mut session = lock(session);
-    if let Ok(open) = session.require_mut()
-        && open.identity == identity
-        && open.path == path
-    {
-        open.cached = Some(cached);
+    match crate::cache::save(path, &cached) {
+        Ok(()) => {
+            {
+                let mut session = lock(session);
+                if let Ok(open) = session.require_mut()
+                    && open.identity == identity
+                    && open.path == path
+                {
+                    open.cached = Some(cached);
+                }
+            }
+            for notes in summary_notes(&mut lock(results)) {
+                notes.retain(|notice| notice.code != CACHE_SAVE_FAILED);
+            }
+        }
+        Err(error) => {
+            let mut state = lock(results);
+            let notes = match owner {
+                CacheOwner::Calibration => {
+                    state.calibration.as_mut().map(|run| &mut run.summary.notes)
+                }
+                CacheOwner::Subs => state.subs.as_mut().map(|run| &mut run.summary.notes),
+                CacheOwner::Mimo => state.mimo.as_mut().map(|result| &mut result.summary.notes),
+            };
+            if let Some(notes) = notes {
+                notes.retain(|notice| notice.code != CACHE_SAVE_FAILED);
+                notes.push(Notice {
+                    code: CACHE_SAVE_FAILED.into(),
+                    params: [("error".into(), error.to_string())].into(),
+                });
+            }
+        }
     }
-    Ok(())
+}
+
+/// A summary as the cache stores it: without the save warning, which only
+/// describes this session.
+fn cached_notes(notes: &[Notice]) -> Vec<Notice> {
+    notes
+        .iter()
+        .filter(|notice| notice.code != CACHE_SAVE_FAILED)
+        .cloned()
+        .collect()
 }
 
 pub(crate) fn calibration_stale(run: &CalibrationRun, project: &Project) -> bool {
