@@ -23,3 +23,4 @@ export const SWEEP_LENGTHS = ["64k", "128k", "256k", "512k", "1M", "2M", "4M"] a
 export const RECENT_PROJECTS_MAX = 10;
 export const CONFIG_GROUPS = [["프론트", "front"], ["센터", "center"], ["서브", "sub"], ["서라운드", "surround"], ["백", "back"], ["와이드", "wide"], ["탑", "top"], ["하이트", "height"], ["기타", "other"]] as const;
 export const ARRANGEMENT_COUNTS = [1, 9, 13, 17] as const;
+export const JOB_HISTORY_MAX = 32;

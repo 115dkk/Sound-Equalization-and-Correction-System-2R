@@ -91,6 +91,10 @@ pub const CONFIG_GROUPS: [(&str, &str); 9] = [
 /// Measurement arrangements by position count.
 pub const ARRANGEMENT_COUNTS: [usize; 4] = [1, 9, 13, 17];
 
+/// Finished jobs the service keeps in its job list beside every active one
+/// (ADR 0009).
+pub const JOB_HISTORY_MAX: usize = 32;
+
 #[cfg(test)]
 mod typescript {
     //! `rules.ts`: the values above as TypeScript, deterministic text.
@@ -157,6 +161,7 @@ mod typescript {
             constant("RECENT_PROJECTS_MAX", None, &RECENT_PROJECTS_MAX),
             constant("CONFIG_GROUPS", None, &CONFIG_GROUPS),
             constant("ARRANGEMENT_COUNTS", None, &ARRANGEMENT_COUNTS),
+            constant("JOB_HISTORY_MAX", None, &JOB_HISTORY_MAX),
         ]
         .concat()
     }

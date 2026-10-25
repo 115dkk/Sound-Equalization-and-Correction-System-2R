@@ -1,10 +1,8 @@
 import { useRef, useState } from "react";
+import { RECENT_PROJECTS_MAX } from "../../ipc/bindings/rules";
 import { IpcFailure } from "../../ipc/client";
 import { useResource, useSession } from "../../state/react";
 import type { ProjectDialog, ProjectDialogsActions, ProjectDialogsView, UnsavedReason } from "./types";
-
-/** The service keeps this many recent projects and drops the rest (`app_settings_set`, crates/secs-service/src/project_edit.rs:790). */
-const RECENT_PROJECTS = 10;
 
 export function useProjectScreen(close: () => Promise<void>) {
   const session = useSession();
@@ -29,7 +27,7 @@ export function useProjectScreen(close: () => Promise<void>) {
   async function remember(path: string) {
     if (!path) return;
     // Built on the latest settings when sent, so a pending edit is not undone (TD-68).
-    await session.writers.app.edit((latest) => ({ recent_projects: [path, ...latest.recent_projects.filter((p) => p !== path)].slice(0, RECENT_PROJECTS) }));
+    await session.writers.app.edit((latest) => ({ recent_projects: [path, ...latest.recent_projects.filter((p) => p !== path)].slice(0, RECENT_PROJECTS_MAX) }));
   }
   async function save(as = false): Promise<boolean> {
     let path = as ? "" : session.stores.project.getSnapshot()?.path;

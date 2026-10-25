@@ -15,7 +15,7 @@ use secs_types::ipc::{
 
 use crate::EventSink;
 
-const TERMINAL_HISTORY_LIMIT: usize = 32;
+const TERMINAL_HISTORY_LIMIT: usize = secs_types::rules::JOB_HISTORY_MAX;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum JobGroup {
