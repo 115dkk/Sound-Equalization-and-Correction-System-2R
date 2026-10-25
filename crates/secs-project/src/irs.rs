@@ -138,6 +138,14 @@ fn wav_chunks(data: &[u8], default_format: Option<WavFormat>) -> Result<WavChunk
         let declared_end = header_end
             .checked_add(size)
             .ok_or_else(|| ProjectError::Wav("chunk size overflow".into()))?;
+        // F17: a cut `data` chunk is an error, not a shorter IR. Other chunks
+        // keep upstream's clamp to the file end.
+        if &data[pos..pos + 4] == b"data" && declared_end > data.len() {
+            return Err(ProjectError::Wav(format!(
+                "WAV data chunk declares {size} bytes but the file holds {}",
+                data.len() - header_end
+            )));
+        }
         let end = declared_end.min(data.len());
         match &data[pos..pos + 4] {
             b"fmt " => format = Some(parse_wav_format(&data[header_end..end])?),

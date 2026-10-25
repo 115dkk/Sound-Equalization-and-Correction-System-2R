@@ -606,3 +606,20 @@ fn wav_reader_rejects_hand_built_malformed_fixtures_td47() {
     let pcm16 = riff(&fmt_body(1, 1, 48_000, 2, 16), &[0, 0]);
     assert!(read_wav_float32(&pcm16).is_err());
 }
+
+#[test]
+fn truncated_wav_data_chunk_is_rejected_f17() {
+    let intact = write_wav_float32(&[0.25, -0.5, 0.75, 1.0], 48_000);
+    assert_eq!(
+        read_mono_float_wav(&intact).unwrap(),
+        (vec![0.25, -0.5, 0.75, 1.0], 48_000)
+    );
+    // Cutting 8 bytes leaves two whole samples, which used to read as a
+    // shorter IR.
+    let truncated = &intact[..intact.len() - 8];
+    assert_eq!(
+        wav_error(truncated),
+        "WAV data chunk declares 16 bytes but the file holds 8"
+    );
+    assert!(read_wav_float32(truncated).is_err());
+}

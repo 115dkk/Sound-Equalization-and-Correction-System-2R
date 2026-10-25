@@ -425,7 +425,7 @@ id = "format.irs_store"
 kind = "format"
 milestone = "M1"
 status = "implemented"
-tests = ["secs-project::wav_writer_and_readers_match_oracle", "secs-project::wav_reader_decodes_hand_built_fixtures_of_every_supported_format_td47", "secs-project::wav_reader_rejects_hand_built_malformed_fixtures_td47"]
+tests = ["secs-project::wav_writer_and_readers_match_oracle", "secs-project::wav_reader_decodes_hand_built_fixtures_of_every_supported_format_td47", "secs-project::wav_reader_rejects_hand_built_malformed_fixtures_td47", "secs-project::truncated_wav_data_chunk_is_rejected_f17"]
 upstream = "rewapi/session.py"
 note = "float32 writer bytes match upstream; reader also supports mono PCM 16/24/32, float 32/64 and WAVE_FORMAT_EXTENSIBLE; PCM8 and non-left-aligned valid-bit/container combinations are unsupported"
 
