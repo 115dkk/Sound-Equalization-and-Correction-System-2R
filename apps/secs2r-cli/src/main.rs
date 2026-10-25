@@ -563,10 +563,9 @@ fn full_run(runner: &mut Runner, out: &Path, project: Option<&Path>, fill: FillC
         .as_ref()
         .and_then(|results| results.calibration.as_ref())
         .is_some_and(|calibration| !calibration.sub_roles.is_empty());
-    let has_mimo = results
-        .as_ref()
-        .and_then(|results| results.mimo.as_ref())
-        .is_some_and(|mimo| !mimo.stale && mimo.support_count > 0);
+    let has_mimo = results.as_ref().is_some_and(|results| {
+        results.mimo_export == secs_types::ipc::MimoExportDecision::Included
+    });
     for (kind, folder) in [
         (ExportKind::CamillaDsp, "camilla-dsp"),
         (ExportKind::StagedMdat, "staged-mdat"),

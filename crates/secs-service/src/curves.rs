@@ -15,12 +15,7 @@ use secs_types::{
     role::{RoleKind, role_kind},
 };
 
-use crate::{
-    Service,
-    calibration::{CalibrationRun, MimoResult, calibration_stale},
-    compute::ComputeIdentity,
-    lock,
-};
+use crate::{Service, lock};
 
 pub(crate) fn dispatch(service: &Service, request: Request) -> Result<Response, IpcError> {
     match request {
@@ -67,24 +62,6 @@ fn offset(design: &Design) -> f64 {
         50.0,
     )
 }
-/// The MIMO result the graphs may draw: the same judgement as the results
-/// summary and export, including the compute environment (TD-33).
-fn fresh_mimo<'a>(
-    run: &CalibrationRun,
-    mimo: Option<&'a MimoResult>,
-    project: &Project,
-    compute_key: &ComputeIdentity,
-) -> Option<&'a MimoResult> {
-    let settings = calibration_from_project(project);
-    mimo.filter(|m| {
-        settings.mimo_on
-            && !calibration_stale(run, project)
-            && m.calibration_key == run.run_key
-            && m.settings_key == settings.mimo_key()
-            && &m.compute_key == compute_key
-    })
-}
-
 impl Service {
     fn measurement_curves(
         &self,
@@ -152,17 +129,16 @@ impl Service {
                 "XO frequency must be finite and positive",
             ));
         }
-        let compute_key = ComputeIdentity::from(&self.acceleration().status);
+        let compute_key = crate::compute::ComputeIdentity::from(&self.acceleration().status);
         let mut session = lock(&self.session);
         let open = session.require_mut().map_err(IpcError::from)?;
-        let state = lock(&self.results_state);
         // The BA tab shows the last subs-only run while there is one, as
         // upstream's `_draw_subs` does (`source = sub_run or run`).
-        let subs_only = params.tab == ResultTab::Ba && state.subs.is_some();
+        let subs_only = params.tab == ResultTab::Ba && open.results.subs().is_some();
         let run = if subs_only {
-            state.subs.as_ref()
+            open.results.subs()
         } else {
-            state.calibration.as_ref()
+            open.results.live_calibration()
         };
         let project = open.store.project();
         let settings = calibration_from_project(project);
@@ -170,7 +146,7 @@ impl Service {
             tab: params.tab,
             grid: Vec::new(),
             curves: Vec::new(),
-            stale: run.is_some_and(|r| calibration_stale(r, project)),
+            stale: run.is_some_and(|r| crate::results::calibration_stale(r, project)),
             subs_only,
             axes: match params.tab {
                 ResultTab::Spl => axes([5.0, 20000.0], [-30.0, 15.0], "db"),
@@ -180,7 +156,7 @@ impl Service {
             },
             rc_band_hz: matches!(params.tab, ResultTab::Spl | ResultTab::Gd).then(|| {
                 run.map_or((settings.rc_lo, settings.rc_hi), |r| {
-                    (r.settings.rc_lo, Some(r.design.rc_hi))
+                    (r.settings.rc_lo, Some(r.design().rc_hi))
                 })
             }),
             xo_hz: None,
@@ -234,7 +210,7 @@ impl Service {
             }
             return Ok(result);
         };
-        let design = &run.design;
+        let design = run.design();
         let offset = offset(design);
         let role = params
             .channel
@@ -253,7 +229,8 @@ impl Service {
                         series("after", None, &score.spl_after, offset),
                         series("target", None, &project.target.sample(&result.grid), 0.0),
                     ];
-                    if let Some(mimo) = fresh_mimo(run, state.mimo.as_ref(), project, &compute_key)
+                    if let Some(crate::results::MimoView::Live(mimo)) =
+                        open.results.mimo(project, &compute_key).shown()
                         && let Some((_, values)) =
                             mimo.run.spl_mimo.iter().find(|(r, _)| r == &score.role)
                     {
@@ -371,15 +348,19 @@ impl Service {
 
     fn result_lines(&self) -> Result<ResultLinesResult, IpcError> {
         let summary = self.results()?;
-        let compute_key = ComputeIdentity::from(&self.acceleration().status);
+        let compute_key = crate::compute::ComputeIdentity::from(&self.acceleration().status);
         let session = lock(&self.session);
-        let project = session.require().map_err(IpcError::from)?.store.project();
-        let state = lock(&self.results_state);
-        let (stale, channels, total_delay_ms, rc) = state.calibration.as_ref().map_or_else(
+        let open = session.require().map_err(IpcError::from)?;
+        let project = open.store.project();
+        let live_mimo = match open.results.mimo(project, &compute_key).shown() {
+            Some(crate::results::MimoView::Live(result)) => Some(result),
+            _ => None,
+        };
+        let (stale, channels, total_delay_ms, rc) = open.results.live_calibration().map_or_else(
             || (false, Vec::new(), None, Vec::new()),
             |run| {
-                let design = &run.design;
-                let mimo = fresh_mimo(run, state.mimo.as_ref(), project, &compute_key);
+                let design = run.design();
+                let mimo = live_mimo;
                 let channels = design
                     .scores
                     .iter()
@@ -427,7 +408,7 @@ impl Service {
                     }
                 }
                 (
-                    calibration_stale(run, project),
+                    crate::results::calibration_stale(run, project),
                     channels,
                     Some(design.chain.latency_ms),
                     rc,
@@ -436,13 +417,13 @@ impl Service {
         );
         // BA lines come from the last subs-only run while there is one, like
         // the BA curves (`source = sub_run or run`).
-        let ba = state
-            .subs
-            .as_ref()
-            .or(state.calibration.as_ref())
+        let ba = open
+            .results
+            .subs()
+            .or(open.results.live_calibration())
             .and_then(|ba_run| {
-                let ba_design = &ba_run.design;
-                let ba_stale = calibration_stale(ba_run, project);
+                let ba_design = ba_run.design();
+                let ba_stale = crate::results::calibration_stale(ba_run, project);
                 sub_combine(ba_design).map(|view| {
                     let warnings = secs_export::sub_filter_warnings(&ba_run.settings, &view.subs)
                         .into_iter()
@@ -467,7 +448,7 @@ impl Service {
                     layouts.sort_by(|a, b| a.bundle.cmp(&b.bundle));
                     SubResultLines {
                         stale: ba_stale,
-                        subs_only: state.subs.is_some(),
+                        subs_only: open.results.subs().is_some(),
                         band_hz: [view.band.0, view.band.1],
                         flatness_db: [view.flat.0, view.flat.1],
                         seat_spread_db: view.seat.map(|(a, b)| [a, b]),
@@ -529,15 +510,14 @@ impl Service {
     fn sub_take_values(&self) -> Result<CalibrationSettings, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut().map_err(IpcError::from)?;
-        let state = lock(&self.results_state);
-        let run = state.calibration.as_ref().ok_or_else(|| {
+        let run = open.results.live_calibration().ok_or_else(|| {
             IpcError::new(
                 ErrorCode::EngineInput,
                 "calibration must run before taking sub values",
             )
         })?;
         let mut settings = calibration_from_project(open.store.project());
-        take_values(&mut settings, &run.design);
+        take_values(&mut settings, run.design());
         store_calibration(open.store.project_mut(), &settings);
         open.dirty = true;
         Ok(settings)

@@ -873,6 +873,26 @@ pub struct ResultsSummary {
     pub calibration: Option<CalibrationSummary>,
     /// Latest MIMO result, including stale state.
     pub mimo: Option<MimoSummary>,
+    /// Whether the MIMO result goes into an export, and if not, why.
+    pub mimo_export: MimoExportDecision,
+}
+/// Whether the MIMO result goes into an export, and if not, why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum MimoExportDecision {
+    /// The current MIMO support paths go into the export.
+    Included,
+    /// MIMO is switched off in the current settings.
+    Off,
+    /// No MIMO result has been computed or restored.
+    None,
+    /// The MIMO result does not match the current inputs or compute environment.
+    Stale,
+    /// MIMO needs at least three measured positions.
+    TooFewPositions,
+    /// The current MIMO result contains no support paths.
+    NoSupports,
 }
 /// A presentation-neutral note or warning code with template parameters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]

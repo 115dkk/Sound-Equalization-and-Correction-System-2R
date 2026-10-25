@@ -10,7 +10,7 @@ use secs_types::ipc::{
     ErrorCode, ExportKind, ExportParams, ExportResult, IpcError, JobKind, JobResult, JobStarted,
 };
 
-use crate::{EventSink, Service, calibration::calibration_stale, lock, session};
+use crate::{EventSink, Service, lock, results::MimoView, session};
 
 impl Service {
     pub(crate) fn start_export(
@@ -20,7 +20,6 @@ impl Service {
     ) -> Result<JobStarted, IpcError> {
         let compute_key = crate::compute::ComputeIdentity::from(&self.acceleration().status);
         let session = lock(&self.session);
-        let state = lock(&self.results_state);
         let open = session.require().map_err(IpcError::from)?;
         let ticket = session.ticket()?;
         let project = open.store.project();
@@ -30,67 +29,38 @@ impl Service {
                 "tutorial sessions cannot export",
             ));
         }
-        let live = state.calibration.as_ref();
-        let cached = open.cached.as_ref();
+        let live = open.results.live_calibration();
+        let cached = open.results.cached();
         let cached_sample_rate_policy = cached.map(|cache| cache.labels.sample_rate_policy);
-        if live.is_none() && cached.is_none() {
+        let calibration = open.results.calibration(project);
+        if calibration.is_none() {
             return Err(IpcError::new(
                 ErrorCode::EngineInput,
                 "calibration must run before export",
             ));
         }
-        let stale = live.map_or_else(
-            || {
-                cached.is_some_and(|cache| {
-                    super::calibration::cached_stale_reason(cache, project).is_some()
-                })
-            },
-            |calibration| calibration_stale(calibration, project),
-        );
+        let stale = calibration.is_some_and(crate::results::RunView::stale);
         let settings = secs_project::calibration_from_project(project);
         let mdat = matches!(
             params.kind,
             ExportKind::BeforeAfterMdat | ExportKind::StagedMdat
         );
-        let cached_mimo = cached
-            .filter(|cache| {
-                live.is_none()
-                    && cache.mimo_compute_key == compute_key
-                    && mimo_eligible(
-                        &settings,
-                        stale,
-                        secs_project::measured_positions(project).len(),
-                        cache.mimo_key.as_deref(),
-                        cache.mimo_calibration_key.as_deref(),
-                        cache.run_key.as_deref(),
-                    )
-            })
-            .and_then(|cache| cache.mimo_paths.as_ref())
-            .filter(|paths| !paths.paths.is_empty());
-        let live_mimo = live.and_then(|calibration| {
-            state.mimo.as_ref().filter(|result| {
-                mimo_eligible(
-                    &settings,
-                    stale,
-                    calibration.design.spectra.positions.len(),
-                    Some(&result.settings_key),
-                    Some(&result.calibration_key),
-                    Some(&calibration.run_key),
-                ) && result.compute_key == compute_key
-                    && !result.run.paths.paths.is_empty()
-            })
-        });
+        let (live_mimo, cached_mimo) = match open.results.mimo(project, &compute_key).exported() {
+            Some(MimoView::Live(result)) => (Some(result), None),
+            Some(MimoView::Cached(cache)) => (None, cache.mimo_paths.as_ref()),
+            None => (None, None),
+        };
         // Capture only what this export format consumes. In particular the
         // convolution writers never clone the large applied-response matrices.
         let mut live_values = live
             .filter(|_| mdat)
-            .map(|calibration| (calibration.design.clone(), calibration.settings.clone()));
+            .map(|calibration| (calibration.shared_design(), calibration.settings.clone()));
         let live_camilla =
             live.filter(|_| params.kind == ExportKind::CamillaDsp)
                 .map(|calibration| {
                     (
-                        calibration.design.clone(),
-                        labels(&calibration.settings, &calibration.design),
+                        calibration.shared_design(),
+                        labels(&calibration.settings, calibration.design()),
                     )
                 });
         let cached_camilla = cached
@@ -152,7 +122,7 @@ impl Service {
             None
         };
         let export_chain = live
-            .map(|calibration| &calibration.design.chain)
+            .map(|calibration| &calibration.design().chain)
             .or_else(|| cached.map(|cache| &cache.calibration_chain))
             .expect("live or cached calibration checked above");
         if let Some(block) = secs_types::ipc::export_block(
@@ -171,20 +141,21 @@ impl Service {
         let filter_values = match params.kind {
             ExportKind::FilterText | ExportKind::EqualizerApo => {
                 Some(if let Some(calibration) = live {
+                    let design = calibration.design();
                     let run = ExportRun {
-                        design: &calibration.design,
-                        measurements: calibration.design.replay.measurements(),
-                        config: calibration.design.replay.config(),
+                        design,
+                        measurements: design.replay.measurements(),
+                        config: design.replay.config(),
                         settings: &calibration.settings,
                     };
                     FilterValues {
-                        chain: calibration.design.chain.clone(),
+                        chain: design.chain.clone(),
                         mimo: export_mimo.take(),
                         mode: mode_name.clone(),
                         ultra_ms: calibration.settings.ultra_ms,
                         label: calibration.settings.label(),
-                        latency_ms: calibration.design.chain.latency_ms,
-                        rc_hi_hz: calibration.design.rc_hi,
+                        latency_ms: design.chain.latency_ms,
+                        rc_hi_hz: design.rc_hi,
                         rc_pieces: secs_export::rc_pieces(&run),
                         stamp: now.minute_stamp(),
                     }
@@ -202,7 +173,6 @@ impl Service {
         // One export reads the clock once; every mdat it builds gets that date.
         let now_ms = (self.deps.unix_ms)();
         drop(session);
-        drop(state);
         let destination = if params.folder.is_empty() {
             let base = self.resolved_export_base()?;
             match params.kind {
@@ -434,22 +404,6 @@ fn cached_filter_values(
     }
 }
 
-fn mimo_eligible(
-    settings: &secs_types::calibration::CalibrationSettings,
-    stale: bool,
-    measured_positions: usize,
-    mimo_key: Option<&str>,
-    mimo_calibration_key: Option<&str>,
-    run_key: Option<&str>,
-) -> bool {
-    settings.mimo_on
-        && !stale
-        && measured_positions >= 3
-        && mimo_key == Some(settings.mimo_key().as_str())
-        && mimo_calibration_key == run_key
-        && run_key.is_some()
-}
-
 fn labels(
     settings: &secs_types::calibration::CalibrationSettings,
     design: &secs_engine::Design,
@@ -544,74 +498,5 @@ mod tests {
         assert!(write_compute_provenance(&folder, None).unwrap().is_none());
         assert!(!path.exists());
         std::fs::remove_dir_all(folder).unwrap();
-    }
-
-    #[test]
-    fn mimo_requires_enabled_current_calibration_and_three_measured_positions() {
-        let mut settings = secs_types::calibration::CalibrationSettings {
-            mimo_on: true,
-            ..Default::default()
-        };
-        let engine = settings.engine_key();
-        let mimo = settings.mimo_key();
-        assert!(mimo_eligible(
-            &settings,
-            false,
-            3,
-            Some(&mimo),
-            Some(&engine),
-            Some(&engine)
-        ));
-        for count in [0, 1, 2] {
-            assert!(!mimo_eligible(
-                &settings,
-                false,
-                count,
-                Some(&mimo),
-                Some(&engine),
-                Some(&engine)
-            ));
-        }
-        assert!(!mimo_eligible(
-            &settings,
-            true,
-            3,
-            Some(&mimo),
-            Some(&engine),
-            Some(&engine)
-        ));
-        assert!(!mimo_eligible(
-            &settings,
-            false,
-            3,
-            None,
-            Some(&engine),
-            Some(&engine)
-        ));
-        assert!(!mimo_eligible(
-            &settings,
-            false,
-            3,
-            Some("old"),
-            Some(&engine),
-            Some(&engine)
-        ));
-        assert!(!mimo_eligible(
-            &settings,
-            false,
-            3,
-            Some(&mimo),
-            Some("old"),
-            Some(&engine)
-        ));
-        settings.mimo_on = false;
-        assert!(!mimo_eligible(
-            &settings,
-            false,
-            3,
-            Some(&mimo),
-            Some(&engine),
-            Some(&engine)
-        ));
     }
 }

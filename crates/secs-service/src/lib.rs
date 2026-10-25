@@ -23,6 +23,7 @@ mod measurement;
 mod measurement_file;
 mod monitor;
 mod project_edit;
+mod results;
 mod session;
 mod settings_edit;
 mod watch;
@@ -37,7 +38,6 @@ use secs_types::ipc::{
     BootstrapInfo, Envelope, ErrorCode, IpcError, JobEvent, Platform, Request, UpstreamBase,
 };
 
-use calibration::Results;
 pub use clock::LocalTime;
 use jobs::JobRegistry;
 use session::Session;
@@ -318,7 +318,6 @@ impl From<ServiceError> for IpcError {
 pub struct Service {
     deps: Deps,
     session: Arc<Mutex<Session>>,
-    results_state: Arc<Mutex<Results>>,
     app_settings: Arc<Mutex<secs_types::ipc::AppSettings>>,
     jobs: JobRegistry,
     level: monitor::LevelState,
@@ -334,7 +333,6 @@ impl Service {
         Self {
             deps,
             session: Arc::new(Mutex::new(Session::default())),
-            results_state: Arc::new(Mutex::new(Results::default())),
             app_settings: Arc::new(Mutex::new(app_settings)),
             jobs: JobRegistry::default(),
             level: monitor::LevelState::default(),

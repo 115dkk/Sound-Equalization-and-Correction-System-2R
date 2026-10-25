@@ -25,7 +25,7 @@ pub(crate) struct OpenProject {
     pub tutorial: bool,
     /// A tutorial's private folder, removed with the session (TD-90).
     pub tutorial_folder: Option<TutorialFolder>,
-    pub cached: Option<crate::cache::CachedResults>,
+    pub results: crate::results::ResultBook,
     /// Read only through [`Session::ticket`] and compared only by
     /// [`commit`] and [`apply`] (ADR 0009).
     identity: u64,
@@ -151,7 +151,7 @@ impl Session {
             dirty: false,
             tutorial,
             tutorial_folder,
-            cached: None,
+            results: crate::results::ResultBook::from_cache(None),
             identity: next_identity(),
             undo: Default::default(),
         });
@@ -167,7 +167,7 @@ impl Session {
             dirty: false,
             tutorial: false,
             tutorial_folder: None,
-            cached,
+            results: crate::results::ResultBook::from_cache(cached),
             identity: next_identity(),
             undo: Default::default(),
         });
@@ -187,18 +187,9 @@ impl Session {
         if let Some(path) = path
             && path != open.path
         {
-            let previous_cached = open.cached.take();
-            let next = prepare_save_as(open, &path);
-            let next = match next {
-                Ok(next) => next,
-                Err(error) => {
-                    open.cached = previous_cached;
-                    return Err(error);
-                }
-            };
+            let next = prepare_save_as(open, &path)?;
             open.path = path;
             open.store = next.finish();
-            open.cached = crate::cache::load(&open.path).or(previous_cached);
         } else {
             open.store.save()?;
         }
@@ -250,9 +241,6 @@ pub(crate) struct ProjectTicket(u64);
 /// computing"), then `job.begin_commit()` fails with `Cancelled` if the job
 /// was cancelled; only then `change` runs. `change` returns its value and
 /// whether it changed the project; `commit` sets `dirty` when it did.
-///
-/// `change` runs under the session lock; a lock it takes (the results)
-/// comes after the session's.
 pub(crate) fn commit<T>(
     session: &Mutex<Session>,
     ticket: ProjectTicket,
@@ -798,7 +786,7 @@ mod commit_tests {
             dirty: false,
             tutorial: false,
             tutorial_folder: None,
-            cached: None,
+            results: crate::results::ResultBook::default(),
             identity: next_identity(),
             undo: Default::default(),
         }

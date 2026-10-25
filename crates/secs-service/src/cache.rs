@@ -522,6 +522,7 @@ mod tests {
         let summary = serde_json::to_vec(&secs_types::ipc::ResultsSummary {
             calibration: Some(loaded.calibration),
             mimo: loaded.mimo,
+            mimo_export: secs_types::ipc::MimoExportDecision::Included,
         })
         .unwrap();
         assert!(summary.len() < 4096);

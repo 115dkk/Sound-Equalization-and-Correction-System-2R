@@ -1,4 +1,4 @@
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use secs_compute::{Context, FixedMemory, MemoryBudget};
 use secs_engine::{
@@ -16,37 +16,9 @@ use secs_types::ipc::{
 };
 
 use crate::jobs::JobContext;
+use crate::results::{CacheOwner, CalibrationRun, MimoResult, calibration_stale};
 use crate::session::{self, ProjectTicket};
 use crate::{EventSink, Service, lock};
-
-#[derive(Debug)]
-pub(crate) struct CalibrationRun {
-    pub summary: CalibrationSummary,
-    pub settings: CalibrationSettings,
-    pub signature: String,
-    pub target_key: String,
-    pub config_key: String,
-    pub run_key: String,
-    pub design: Arc<Design>,
-}
-
-#[derive(Debug)]
-pub(crate) struct MimoResult {
-    pub summary: MimoSummary,
-    pub settings_key: String,
-    pub compute_key: crate::compute::ComputeIdentity,
-    pub calibration_key: String,
-    pub run: secs_engine::MimoRun,
-}
-
-#[derive(Debug, Default)]
-pub(crate) struct Results {
-    pub calibration: Option<CalibrationRun>,
-    pub mimo: Option<MimoResult>,
-    /// The last subs-only run; the BA tab shows it, a full run clears it
-    /// (`step_calibration.py:1868-1876`).
-    pub subs: Option<CalibrationRun>,
-}
 
 /// What loading the measurements needs, taken under the session lock
 /// without reading any WAV (TD-37).
@@ -79,7 +51,6 @@ impl Service {
     ) -> Result<JobStarted, IpcError> {
         let snapshot = self.snapshot(params.settings)?;
         let subs_only = params.subs_only;
-        let results = self.results_state.clone();
         let session = self.session.clone();
         let memory = self.deps.memory.available_bytes();
         self.jobs.start(JobKind::Calibrate, events, move |job| {
@@ -115,40 +86,38 @@ impl Service {
                         .into(),
                     });
                 }
-                let run = CalibrationRun {
+                let run_key = run_key(
+                    &prepared.signature,
+                    &prepared.target_key,
+                    &prepared.settings.engine_key(),
+                    &prepared.config_key,
+                );
+                let run = CalibrationRun::new(
                     summary,
-                    run_key: run_key(
-                        &prepared.signature,
-                        &prepared.target_key,
-                        &prepared.settings.engine_key(),
-                        &prepared.config_key,
-                    ),
-                    settings: prepared.settings.clone(),
-                    signature: prepared.signature,
-                    target_key: prepared.target_key,
-                    config_key: prepared.config_key,
-                    design: Arc::new(design),
-                };
-                let mut state = lock(&results);
-                if subs_only {
-                    state.subs = Some(run);
-                } else {
-                    state.calibration = Some(run);
-                    state.subs = None;
-                }
+                    prepared.settings.clone(),
+                    prepared.signature,
+                    prepared.target_key,
+                    prepared.config_key,
+                    run_key,
+                    Arc::new(design),
+                );
+                open.results.commit_calibration(run, subs_only);
                 let stores_settings =
                     calibration_from_project(open.store.project()) == prepared.project_settings;
                 if stores_settings {
                     store_calibration(open.store.project_mut(), &prepared.settings);
                 }
-                Ok(((open.path.clone(), snapshot_cache(&state)), stores_settings))
+                Ok((
+                    (open.path.clone(), open.results.cache_snapshot()),
+                    stores_settings,
+                ))
             })?;
             let owner = if subs_only {
                 CacheOwner::Subs
             } else {
                 CacheOwner::Calibration
             };
-            persist_cache(cached, &path, ticket, &session, &results, owner);
+            persist_cache(cached, &path, ticket, &session, owner);
             Ok(JobResult::Calibration)
         })
     }
@@ -208,8 +177,7 @@ impl Service {
         let settings = params
             .settings
             .unwrap_or_else(|| calibration_from_project(open.store.project()));
-        let state = lock(&self.results_state);
-        let calibration = state.calibration.as_ref().ok_or_else(|| {
+        let calibration = open.results.live_calibration().ok_or_else(|| {
             IpcError::new(ErrorCode::EngineInput, "calibration must run before MIMO")
         })?;
         if calibration_stale(calibration, open.store.project()) {
@@ -225,11 +193,9 @@ impl Service {
             ));
         }
         let calibration_key = calibration.run_key.clone();
-        let design = calibration.design.clone();
-        drop(state);
+        let design = calibration.shared_design();
         drop(session_guard);
         let memory = self.deps.memory.available_bytes();
-        let results = self.results_state.clone();
         let session = self.session.clone();
         self.jobs.start(JobKind::Mimo, events, move |job| {
             let ctx = compute_context(&job, memory);
@@ -273,27 +239,25 @@ impl Service {
                         .len(),
                     compute: run.compute.clone(),
                 };
-                let mut state = lock(&results);
-                state.mimo = Some(MimoResult {
+                open.results.commit_mimo(MimoResult {
                     summary,
                     settings_key: settings.mimo_key(),
                     compute_key,
                     calibration_key,
                     run,
                 });
-                Ok(((open.path.clone(), snapshot_cache(&state)), false))
+                Ok(((open.path.clone(), open.results.cache_snapshot()), false))
             })?;
-            persist_cache(cached, &path, ticket, &session, &results, CacheOwner::Mimo);
+            persist_cache(cached, &path, ticket, &session, CacheOwner::Mimo);
             Ok(JobResult::Mimo)
         })
     }
 
     pub(crate) fn results(&self) -> Result<ResultsSummary, IpcError> {
-        summaries(
-            &self.results_state,
-            &self.session,
-            &crate::compute::ComputeIdentity::from(&self.acceleration().status),
-        )
+        let compute = crate::compute::ComputeIdentity::from(&self.acceleration().status);
+        let session = lock(&self.session);
+        let open = session.require().map_err(IpcError::from)?;
+        Ok(open.results.summary(open.store.project(), &compute))
     }
 
     /// Holds the session lock only to copy the project; the WAVs are read by
@@ -722,128 +686,9 @@ fn metrics(value: Metrics) -> MetricsSummary {
     }
 }
 
-fn summaries(
-    results: &Arc<Mutex<Results>>,
-    session: &Arc<Mutex<crate::session::Session>>,
-    compute_key: &crate::compute::ComputeIdentity,
-) -> Result<ResultsSummary, IpcError> {
-    let session = lock(session);
-    let project = session.require().map_err(IpcError::from)?.store.project();
-    let state = lock(results);
-    let live_calibration = state.calibration.as_ref().map(|run| {
-        let mut summary = run.summary.clone();
-        summary.stale_reason = calibration_stale_reason(run, project).map(str::to_owned);
-        summary.stale = summary.stale_reason.is_some();
-        summary
-    });
-    let cached = session.require().map_err(IpcError::from)?.cached.as_ref();
-    let calibration = live_calibration.or_else(|| {
-        cached.map(|cached| {
-            let mut summary = cached.calibration.clone();
-            summary.cached = true;
-            summary.stale_reason = cached_stale_reason(cached, project).map(str::to_owned);
-            summary.stale = summary.stale_reason.is_some();
-            summary
-        })
-    });
-    let live_mimo = state.mimo.as_ref().map(|result| {
-        let mut summary = result.summary.clone();
-        summary.stale = calibration.as_ref().is_none_or(|value| value.stale)
-            || state
-                .calibration
-                .as_ref()
-                .is_none_or(|run| run.run_key != result.calibration_key)
-            || calibration_from_project(project).mimo_key() != result.settings_key
-            || &result.compute_key != compute_key;
-        summary
-    });
-    let mimo = live_mimo.or_else(|| {
-        cached.and_then(|cache| {
-            cache.mimo.clone().map(|mut summary| {
-                let current_mimo_key = calibration_from_project(project).mimo_key();
-                summary.stale = calibration.as_ref().is_none_or(|value| value.stale)
-                    || cache.mimo_key.as_deref() != Some(current_mimo_key.as_str())
-                    || cache.mimo_calibration_key.as_deref() != cache.run_key.as_deref()
-                    || cache.engine_key != calibration_from_project(project).engine_key()
-                    || &cache.mimo_compute_key != compute_key;
-                summary
-            })
-        })
-    });
-    Ok(ResultsSummary { calibration, mimo })
-}
-
-// Capture the committed run under session -> results locks; serialization and
-// disk I/O happen after both are released.
-fn snapshot_cache(state: &Results) -> Option<crate::cache::CachedResults> {
-    let calibration = state.calibration.as_ref()?;
-    Some(crate::cache::CachedResults {
-        calibration: CalibrationSummary {
-            notes: cached_notes(&calibration.summary.notes),
-            ..calibration.summary.clone()
-        },
-        calibration_chain: calibration.design.chain.clone(),
-        mimo: state.mimo.as_ref().map(|result| MimoSummary {
-            notes: cached_notes(&result.summary.notes),
-            ..result.summary.clone()
-        }),
-        measurement_signature: calibration.signature.clone(),
-        target_key: calibration.target_key.clone(),
-        engine_key: calibration.settings.engine_key(),
-        run_key: Some(calibration.run_key.clone()),
-        config_key: Some(calibration.config_key.clone()),
-        mimo_key: state
-            .mimo
-            .as_ref()
-            .map(|result| result.settings_key.clone()),
-        mimo_calibration_key: state
-            .mimo
-            .as_ref()
-            .map(|result| result.calibration_key.clone()),
-        labels: crate::cache::CachedRunLabels {
-            sample_rate_policy: calibration.settings.sample_rate_policy,
-            mode: match calibration.settings.mode {
-                secs_types::calibration::Mode::Zero => "zero",
-                secs_types::calibration::Mode::Mixed => "mixed",
-                secs_types::calibration::Mode::Linear => "linear",
-                secs_types::calibration::Mode::Ultra => "ultra",
-            }
-            .into(),
-            ultra_ms: calibration.settings.ultra_ms,
-            latency_ms: calibration.design.chain.latency_ms,
-            rc_hi_hz: calibration.design.rc_hi,
-            mimo_max_supports: calibration.settings.mimo_max_supports.max(0) as usize,
-        },
-        mimo_paths: state.mimo.as_ref().map(|result| result.run.paths.clone()),
-        mimo_compute_key: state
-            .mimo
-            .as_ref()
-            .map(|result| result.compute_key.clone())
-            .unwrap_or_default(),
-    })
-}
-
 /// The notice a calculation carries when its results stay in memory but
 /// could not be written to the project folder (TD-38).
 const CACHE_SAVE_FAILED: &str = "cache_save_failed";
-
-/// Which in-memory summary a cache save belongs to.
-#[derive(Debug, Clone, Copy)]
-enum CacheOwner {
-    Calibration,
-    Subs,
-    Mimo,
-}
-
-fn summary_notes(state: &mut Results) -> impl Iterator<Item = &mut Vec<Notice>> {
-    [
-        state.calibration.as_mut().map(|run| &mut run.summary.notes),
-        state.subs.as_mut().map(|run| &mut run.summary.notes),
-        state.mimo.as_mut().map(|result| &mut result.summary.notes),
-    ]
-    .into_iter()
-    .flatten()
-}
 
 /// Saves the cache after the results were committed in memory. A failure is
 /// not a failed calculation: the owner's summary carries a
@@ -852,8 +697,7 @@ fn persist_cache(
     cached: Option<crate::cache::CachedResults>,
     path: &std::path::Path,
     ticket: ProjectTicket,
-    session: &Arc<Mutex<crate::session::Session>>,
-    results: &Arc<Mutex<Results>>,
+    session: &Arc<std::sync::Mutex<crate::session::Session>>,
     owner: CacheOwner,
 ) {
     let Some(cached) = cached else {
@@ -866,88 +710,28 @@ fn persist_cache(
             // copy is skipped.
             let _ = session::apply(session, ticket, |open| {
                 if open.path == path {
-                    open.cached = Some(cached);
+                    open.results.replace_cache(cached);
+                    for notes in open.results.all_notes_mut() {
+                        notes.retain(|notice| notice.code != CACHE_SAVE_FAILED);
+                    }
                 }
                 Ok(((), false))
             });
-            for notes in summary_notes(&mut lock(results)) {
-                notes.retain(|notice| notice.code != CACHE_SAVE_FAILED);
-            }
         }
         Err(error) => {
-            let mut state = lock(results);
-            let notes = match owner {
-                CacheOwner::Calibration => {
-                    state.calibration.as_mut().map(|run| &mut run.summary.notes)
+            let _ = session::apply(session, ticket, |open| {
+                if open.path == path
+                    && let Some(notes) = open.results.owner_notes_mut(owner)
+                {
+                    notes.retain(|notice| notice.code != CACHE_SAVE_FAILED);
+                    notes.push(Notice {
+                        code: CACHE_SAVE_FAILED.into(),
+                        params: [("error".into(), error.to_string())].into(),
+                    });
                 }
-                CacheOwner::Subs => state.subs.as_mut().map(|run| &mut run.summary.notes),
-                CacheOwner::Mimo => state.mimo.as_mut().map(|result| &mut result.summary.notes),
-            };
-            if let Some(notes) = notes {
-                notes.retain(|notice| notice.code != CACHE_SAVE_FAILED);
-                notes.push(Notice {
-                    code: CACHE_SAVE_FAILED.into(),
-                    params: [("error".into(), error.to_string())].into(),
-                });
-            }
+                Ok(((), false))
+            });
         }
-    }
-}
-
-/// A summary as the cache stores it: without the save warning, which only
-/// describes this session.
-fn cached_notes(notes: &[Notice]) -> Vec<Notice> {
-    notes
-        .iter()
-        .filter(|notice| notice.code != CACHE_SAVE_FAILED)
-        .cloned()
-        .collect()
-}
-
-pub(crate) fn calibration_stale(run: &CalibrationRun, project: &Project) -> bool {
-    calibration_stale_reason(run, project).is_some()
-}
-
-fn calibration_stale_reason(run: &CalibrationRun, project: &Project) -> Option<&'static str> {
-    stale_reason(
-        &run.signature,
-        &run.settings.engine_key(),
-        &run.target_key,
-        Some(&run.config_key),
-        project,
-    )
-}
-
-pub(crate) fn cached_stale_reason(
-    cached: &crate::cache::CachedResults,
-    project: &Project,
-) -> Option<&'static str> {
-    stale_reason(
-        &cached.measurement_signature,
-        &cached.engine_key,
-        &cached.target_key,
-        cached.config_key.as_deref(),
-        project,
-    )
-}
-
-fn stale_reason(
-    signature: &str,
-    engine_key: &str,
-    target_key: &str,
-    config_key_at_run: Option<&str>,
-    project: &Project,
-) -> Option<&'static str> {
-    if signature != signature_key(project) {
-        Some("measurements")
-    } else if config_key_at_run.is_some_and(|key| key != config_key(project)) {
-        Some("config")
-    } else if engine_key != calibration_from_project(project).engine_key() {
-        Some("settings")
-    } else if target_key != target_key_string(project) {
-        Some("target")
-    } else {
-        None
     }
 }
 
@@ -1168,39 +952,6 @@ mod tests {
         assert_eq!(
             error.detail,
             "invalid input: position 3 L: sample rate 44100 (expected 48000)"
-        );
-    }
-
-    #[test]
-    fn stale_reasons_prioritize_measurements_then_config_settings_and_target() {
-        let project = Project::default();
-        let signature = signature_key(&project);
-        let engine = calibration_from_project(&project).engine_key();
-        let target = target_key_string(&project);
-        let config = config_key(&project);
-        assert_eq!(
-            stale_reason("changed", "changed", "changed", Some("changed"), &project),
-            Some("measurements")
-        );
-        assert_eq!(
-            stale_reason(&signature, "changed", "changed", Some("changed"), &project),
-            Some("config")
-        );
-        assert_eq!(
-            stale_reason(&signature, "changed", "changed", Some(&config), &project),
-            Some("settings")
-        );
-        assert_eq!(
-            stale_reason(&signature, &engine, "changed", Some(&config), &project),
-            Some("target")
-        );
-        assert_eq!(
-            stale_reason(&signature, &engine, &target, Some(&config), &project),
-            None
-        );
-        assert_eq!(
-            stale_reason(&signature, &engine, &target, None, &project),
-            None
         );
     }
 
