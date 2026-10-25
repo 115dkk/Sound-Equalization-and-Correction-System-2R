@@ -60,8 +60,6 @@ pub struct Options {
     pub chunksize: u32,
     /// ASCII head-comment note (non-ASCII characters are dropped).
     pub note: String,
-    /// MIMO upper frequency; retained for the M3 path.
-    pub fsiso: f64,
     /// LFE gain, or `None` to omit the LFE input.
     pub lfe_gain_db: Option<f64>,
     /// LFE low-pass frequency.
@@ -79,7 +77,6 @@ impl Default for Options {
             playback: None,
             chunksize: 1024,
             note: String::new(),
-            fsiso: 150.0,
             lfe_gain_db: Some(10.0),
             lfe_lp_hz: 120.0,
             latency_ms: None,
@@ -550,7 +547,6 @@ fn validate(
             chain.sample_rate
         )));
     }
-    finite("options.fsiso", options.fsiso)?;
     finite("options.lfe_lp_hz", options.lfe_lp_hz)?;
     if !options.mode.is_ascii() {
         return Err(CamillaError::NonAscii(options.mode.clone()));

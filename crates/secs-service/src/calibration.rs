@@ -1,6 +1,6 @@
 use std::sync::{Arc, Mutex};
 
-use secs_compute::{Context, MemoryBudget};
+use secs_compute::{Context, FixedMemory, MemoryBudget};
 use secs_engine::{
     Design, DesignRequest, EngineConfig, Measurement, MeasurementSet, Metrics, ProjectView,
     Samples, Tuning, design, engine_inputs, production_fitters,
@@ -337,7 +337,7 @@ pub(crate) fn compute_context(job: &JobContext, available: u64) -> Context {
     let threads = std::thread::available_parallelism().map_or(1, |value| value.get());
     Context::new(
         threads,
-        MemoryBudget::new((available / 2).max(64 * 1024 * 1024)),
+        MemoryBudget::from_probe(&FixedMemory(available), 0.5, 64 * 1024 * 1024),
         job.progress_sink(),
         job.cancel().clone(),
     )
