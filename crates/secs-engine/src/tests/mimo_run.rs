@@ -136,11 +136,7 @@ fn settings(fir: bool) -> CalibrationSettings {
     }
 }
 fn error(got: &[f64], expected: &[f64]) -> f64 {
-    assert_eq!(got.len(), expected.len());
-    got.iter()
-        .zip(expected)
-        .map(|(a, b)| (a - b).abs())
-        .fold(0., f64::max)
+    super::max_abs_diff(got, expected)
 }
 fn relative(got: &[f64], expected: &[f64]) -> f64 {
     error(got, expected) / expected.iter().map(|v| v.abs()).fold(1e-30, f64::max)

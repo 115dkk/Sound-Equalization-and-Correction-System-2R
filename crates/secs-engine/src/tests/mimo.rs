@@ -107,11 +107,7 @@ fn mimo_toeplitz_normal_equations_match_dense() {
                 .collect();
             for (kind, got, expected) in [("AtA", ata, expected_a), ("Atb", atb, expected_b)] {
                 let scale = expected.iter().map(|v| v.abs()).fold(0.0, f64::max);
-                let error = got
-                    .iter()
-                    .zip(&expected)
-                    .map(|(a, b)| (a - b).abs())
-                    .fold(0.0, f64::max);
+                let error = super::max_abs_diff(&got, &expected);
                 eprintln!(
                     "MEASURE MIMO dense {onsets:?} early={early} {kind} relative={:.12e}",
                     error / scale.max(1e-30)

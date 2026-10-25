@@ -19,3 +19,51 @@ mod preview;
 mod rc;
 mod scorecard;
 mod xo;
+
+/// Largest `|a - b|` over the element pairs (TD-52). Equal pairs, equal
+/// infinities included, count 0; a pair that differs where either side is
+/// NaN or infinite counts as infinitely far. Folding `(a - b).abs()` with
+/// `f64::max` instead drops NaN and reads an all-NaN result as exact.
+pub(crate) fn max_abs_diff(a: &[f64], b: &[f64]) -> f64 {
+    assert_eq!(a.len(), b.len());
+    a.iter()
+        .zip(b)
+        .map(|(&a, &b)| {
+            if a == b {
+                0.0
+            } else if a.is_finite() && b.is_finite() {
+                (a - b).abs()
+            } else {
+                f64::INFINITY
+            }
+        })
+        .fold(0.0, f64::max)
+}
+
+#[test]
+fn max_abs_diff_does_not_swallow_nan() {
+    let nan = [f64::NAN; 3];
+    let ones = [1.0; 3];
+    // The fold the MIMO comparisons used reads an all-NaN result as exact.
+    let fold = nan
+        .iter()
+        .zip(&ones)
+        .map(|(a, b)| (a - b).abs())
+        .fold(0.0, f64::max);
+    assert_eq!(fold, 0.0);
+    assert_eq!(max_abs_diff(&nan, &ones), f64::INFINITY);
+    assert_eq!(max_abs_diff(&ones, &nan), f64::INFINITY);
+    assert_eq!(max_abs_diff(&nan, &nan), f64::INFINITY);
+    assert_eq!(max_abs_diff(&[1.0, f64::NAN], &[1.0, 2.0]), f64::INFINITY);
+    assert_eq!(max_abs_diff(&[f64::INFINITY], &[1.0]), f64::INFINITY);
+    assert_eq!(
+        max_abs_diff(&[f64::INFINITY], &[f64::NEG_INFINITY]),
+        f64::INFINITY
+    );
+    assert_eq!(
+        max_abs_diff(&[f64::INFINITY, 1.0], &[f64::INFINITY, 1.5]),
+        0.5
+    );
+    assert_eq!(max_abs_diff(&[1.0, -2.0], &[1.25, -2.0]), 0.25);
+    assert_eq!(max_abs_diff(&[], &[]), 0.0);
+}
