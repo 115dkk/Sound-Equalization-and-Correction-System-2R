@@ -361,8 +361,6 @@ pub(crate) fn record_import(
             },
             Some(&plan.roles),
         )?;
-        mdat_import::record_source(store, position, role, name);
-        store.save()?;
         saved += 1;
     }
     Ok(saved)

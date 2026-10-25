@@ -4,8 +4,8 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use secs_project::{
-    DspProfile, MeasurementStore, Project, PyJson, load_project_sources, measured_positions,
-    plan_from_project,
+    DspProfile, MeasurementStore, Project, PyJson, RemovedPosition, load_project_sources,
+    measured_positions, plan_from_project,
 };
 use secs_types::ipc::{ErrorCode, IpcError, MigrationWarning, ProjectInfo};
 
@@ -76,7 +76,7 @@ pub(crate) struct UndoEntry {
 
 #[derive(Debug, Clone)]
 pub(crate) enum UndoPayload {
-    Position(Vec<(usize, PyJson)>),
+    Position(RemovedPosition),
     Measurements(PyJson),
 }
 
@@ -294,7 +294,7 @@ fn next_identity() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-pub(crate) fn push_position_undo(open: &mut OpenProject, removed: Vec<(usize, PyJson)>) -> String {
+pub(crate) fn push_position_undo(open: &mut OpenProject, removed: RemovedPosition) -> String {
     push_undo(open, UndoPayload::Position(removed))
 }
 

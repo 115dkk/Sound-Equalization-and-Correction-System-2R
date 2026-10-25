@@ -34,8 +34,8 @@ pub use project::{
 pub use pyjson::{PyJson, PyJsonError, dumps, dumps_compact, loads};
 pub use record::{
     IR_CACHE_LIMIT_BYTES, IrCache, LoadedIr, MAX_PROJECT_BYTES, MeasurementRecord,
-    MeasurementResult, MeasurementStore, MigrationWarning, load_project_irs, load_project_sources,
-    load_source, save_source, source_path,
+    MeasurementResult, MeasurementStore, MigrationWarning, RemovedPosition, load_project_irs,
+    load_project_sources, load_source, save_source, source_path,
 };
 pub use signature::{
     FloatKey, MeasurementSignatureEntry, estimate_seconds, estimate_subs_seconds,

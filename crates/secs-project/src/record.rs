@@ -84,6 +84,23 @@ pub struct MeasurementStore {
     snr_db: BTreeMap<(i64, String), f64>,
     warnings: Vec<MigrationWarning>,
     cache: IrCache,
+    saves: u64,
+}
+
+/// A removed position: its measurement entries (with their list indices)
+/// and the SNR values the store held for it.
+#[derive(Clone, Debug)]
+pub struct RemovedPosition {
+    pos: i64,
+    entries: Vec<(usize, PyJson)>,
+    snr_db: Vec<(String, f64)>,
+}
+
+impl RemovedPosition {
+    /// The measurement position that was removed.
+    pub fn position(&self) -> i64 {
+        self.pos
+    }
 }
 
 impl MeasurementStore {
@@ -106,6 +123,7 @@ impl MeasurementStore {
             snr_db: BTreeMap::new(),
             warnings: Vec::new(),
             cache: IrCache::default(),
+            saves: 0,
         }
     }
 
@@ -194,6 +212,13 @@ impl MeasurementStore {
         self.entry_for(pos).expect("new entry has a valid position")
     }
 
+    /// Writes the IR and its source sidecar, enters the result into its
+    /// position (upstream `session.record`), and saves the project once.
+    ///
+    /// A result with a `source` also sets `source[role]` on the entry, where
+    /// upstream's importer (`step5.load_mdat`) sets it after recording: the
+    /// key goes last when the entry has none, and a value that is not an
+    /// object is replaced by one.
     pub fn record(
         &mut self,
         result: MeasurementResult,
@@ -256,6 +281,12 @@ impl MeasurementStore {
             },
         );
         set_value(entry, "done", PyJson::Bool(done));
+        if let Some(source) = result.source {
+            if !value_for(entry, "source").is_some_and(|value| matches!(value, PyJson::Object(_))) {
+                set_value(entry, "source", PyJson::Object(Vec::new()));
+            }
+            set_nested(entry, "source", &role, PyJson::Str(source));
+        }
         if let Some(value) = result.snr_db {
             self.snr_db.insert((result.pos, role), value);
         }
@@ -265,15 +296,64 @@ impl MeasurementStore {
             .expect("recorded entry has a valid position"))
     }
 
+    /// Removes a position's entries and SNR values; `false` if it had none.
     pub fn clear_position(&mut self, pos: i64) -> bool {
+        self.remove_position(pos).is_some()
+    }
+
+    /// Takes a position's entries and SNR values out of the store, keeping
+    /// them for [`Self::restore_position`]. `None` if the position has no
+    /// entry. The project file is not written.
+    pub fn remove_position(&mut self, pos: i64) -> Option<RemovedPosition> {
         let records = measurement_values_mut(&mut self.project);
-        let before = records.len();
-        records.retain(|entry| pos_of_or_minus_one(entry) != pos);
-        let changed = before != records.len();
-        if changed {
-            self.snr_db.retain(|(entry_pos, _), _| *entry_pos != pos);
+        let entries = records
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| pos_of_or_minus_one(entry) == pos)
+            .map(|(index, entry)| (index, entry.clone()))
+            .collect::<Vec<_>>();
+        if entries.is_empty() {
+            return None;
         }
-        changed
+        records.retain(|entry| pos_of_or_minus_one(entry) != pos);
+        let snr_db = self
+            .snr_db
+            .iter()
+            .filter(|((entry_pos, _), _)| *entry_pos == pos)
+            .map(|((_, role), value)| (role.clone(), *value))
+            .collect();
+        self.snr_db.retain(|(entry_pos, _), _| *entry_pos != pos);
+        Some(RemovedPosition {
+            pos,
+            entries,
+            snr_db,
+        })
+    }
+
+    /// Puts a removed position back; fails if that position was recorded
+    /// again meanwhile. Each entry returns to its old list index (or the
+    /// end, if the list is shorter now). The project file is not written.
+    pub fn restore_position(&mut self, removed: RemovedPosition) -> Result<(), ProjectError> {
+        let RemovedPosition {
+            pos,
+            entries,
+            snr_db,
+        } = removed;
+        if measurement_values(&self.project)
+            .iter()
+            .any(|entry| pos_of_or_minus_one(entry) == pos)
+        {
+            return Err(ProjectError::Invalid(format!(
+                "position {pos} was recorded again"
+            )));
+        }
+        let records = measurement_values_mut(&mut self.project);
+        for (index, entry) in entries {
+            records.insert(index.min(records.len()), entry);
+        }
+        self.snr_db
+            .extend(snr_db.into_iter().map(|(role, value)| ((pos, role), value)));
+        Ok(())
     }
 
     pub fn ir_path_of(&mut self, role: &str, pos: i64) -> Result<PathBuf, ProjectError> {
@@ -356,7 +436,15 @@ impl MeasurementStore {
     }
 
     pub fn save(&mut self) -> Result<(), ProjectError> {
-        atomic_write(&self.path, self.project.save_text().as_bytes())
+        atomic_write(&self.path, self.project.save_text().as_bytes())?;
+        self.saves += 1;
+        Ok(())
+    }
+
+    /// How many times this store has written its project file. A test hook:
+    /// tests count saves with it.
+    pub fn save_count(&self) -> u64 {
+        self.saves
     }
 }
 

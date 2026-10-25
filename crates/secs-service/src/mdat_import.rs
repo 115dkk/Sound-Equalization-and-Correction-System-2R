@@ -476,42 +476,9 @@ pub(crate) fn record_import(
             },
             Some(&plan.roles),
         )?;
-        record_source(store, pos, role, name);
-        store.save()?;
         saved += 1;
     }
     Ok(saved)
-}
-
-pub(crate) fn record_source(store: &mut MeasurementStore, pos: i64, role: &str, name: &str) {
-    // MeasurementStore follows upstream session.record; the importer owns
-    // the source field, as step5.load_mdat does after recording each IR.
-    if let PyJson::Array(entries) = &mut store.project_mut().measurements {
-        for entry in entries {
-            if entry
-                .get("pos")
-                .is_some_and(|v| *v == PyJson::Int(pos.to_string()))
-            {
-                let object = entry.object_mut().unwrap();
-                let index = object
-                    .iter()
-                    .position(|(k, _)| k == "source")
-                    .unwrap_or_else(|| {
-                        object.push(("source".into(), PyJson::Object(vec![])));
-                        object.len() - 1
-                    });
-                if object[index].1.object().is_none() {
-                    object[index].1 = PyJson::Object(vec![]);
-                }
-                let sources = object[index].1.object_mut().unwrap();
-                if let Some((_, value)) = sources.iter_mut().find(|(k, _)| k == role) {
-                    *value = PyJson::Str(name.to_owned());
-                } else {
-                    sources.push((role.to_owned(), PyJson::Str(name.to_owned())));
-                }
-            }
-        }
-    }
 }
 
 pub fn mdat_sources(store: &MeasurementStore) -> std::collections::BTreeMap<i64, String> {

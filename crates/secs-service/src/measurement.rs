@@ -555,13 +555,10 @@ impl Service {
                         if ctx.cancel().is_cancelled() {
                             return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
                         }
-                        let (ir, sample_rate, t0_s, source) = if embedded {
-                            match measure::sample::ir(role, 1) {
-                                Ok((ir, rate, t0)) => (ir, rate, t0, "sample"),
-                                Err(_) => {
-                                    (measure::sample::fallback_ir(role), 48_000, 0.0, "synthetic")
-                                }
-                            }
+                        let (ir, sample_rate, t0_s) = if embedded {
+                            measure::sample::ir(role, 1).unwrap_or_else(|_| {
+                                (measure::sample::fallback_ir(role), 48_000, 0.0)
+                            })
                         } else {
                             (
                                 measure::sample::position_variation(
@@ -570,7 +567,6 @@ impl Service {
                                 ),
                                 48_000,
                                 0.0,
-                                "synthetic",
                             )
                         };
                         open.store
@@ -585,7 +581,8 @@ impl Service {
                                     spl_offset_db: None,
                                     snr_db: None,
                                     uuid: Some(format!("sample-{role}-{position}")),
-                                    source: Some(source.into()),
+                                    // Upstream sets `source` only for mdat imports.
+                                    source: None,
                                     source_info: None,
                                 },
                                 Some(&roles),
@@ -743,25 +740,14 @@ impl Service {
     ) -> Result<UndoResult, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        let before = open.store.project().measurements.clone();
-        let removed = match &before {
-            PyJson::Array(entries) => entries
-                .iter()
-                .enumerate()
-                .filter(|(_, v)| position_of(v) == Some(params.position))
-                .map(|(i, v)| (i, v.clone()))
-                .collect::<Vec<_>>(),
-            _ => vec![],
-        };
-        if removed.is_empty() {
-            return Err(IpcError::new(
-                ErrorCode::InvalidRequest,
-                "position has no record",
-            ));
-        }
-        open.store.clear_position(params.position);
+        let removed = open
+            .store
+            .remove_position(params.position)
+            .ok_or_else(|| IpcError::new(ErrorCode::InvalidRequest, "position has no record"))?;
         if let Err(error) = open.store.save() {
-            open.store.project_mut().measurements = before;
+            open.store
+                .restore_position(removed)
+                .expect("nothing recorded the position since it was removed");
             return Err(measure_error(
                 error.into(),
                 "position",
@@ -789,27 +775,18 @@ impl Service {
         let payload = open.undo[index].payload.clone();
         match payload {
             session::UndoPayload::Position(removed) => {
-                let before = open.store.project().measurements.clone();
-                let PyJson::Array(entries) = &mut open.store.project_mut().measurements else {
+                if !matches!(open.store.project().measurements, PyJson::Array(_)) {
                     return Err(IpcError::new(
                         ErrorCode::InvalidRequest,
                         "measurement list changed",
                     ));
-                };
-                if removed
-                    .iter()
-                    .any(|(_, v)| entries.iter().any(|e| position_of(e) == position_of(v)))
-                {
-                    return Err(IpcError::new(
-                        ErrorCode::InvalidRequest,
-                        "position was recorded again",
-                    ));
                 }
-                for (index, entry) in removed {
-                    entries.insert(index.min(entries.len()), entry);
-                }
+                let position = removed.position();
+                open.store.restore_position(removed).map_err(|_| {
+                    IpcError::new(ErrorCode::InvalidRequest, "position was recorded again")
+                })?;
                 if let Err(error) = open.store.save() {
-                    open.store.project_mut().measurements = before;
+                    open.store.remove_position(position);
                     return Err(measure_error(
                         error.into(),
                         "undo",
@@ -1145,13 +1122,6 @@ fn measurement_entries(project: &Project) -> &[PyJson] {
     match &project.measurements {
         PyJson::Array(entries) => entries,
         _ => &[],
-    }
-}
-
-fn position_of(value: &PyJson) -> Option<i64> {
-    match value.get("pos") {
-        Some(PyJson::Int(v) | PyJson::Str(v)) => v.parse().ok(),
-        _ => None,
     }
 }
 

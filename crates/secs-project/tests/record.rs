@@ -77,7 +77,9 @@ fn oracle_result(role: &str, pos: i64, uuid: &str, offset: Option<f64>) -> Measu
         spl_offset_db: offset,
         snr_db: Some(31.0),
         uuid: Some(uuid.into()),
-        source: Some("must-not-be-written".into()),
+        // Upstream `session.record` results carry no source; one that has
+        // a source is written by `record` (C6).
+        source: None,
         source_info: None,
     }
 }
@@ -170,7 +172,6 @@ fn measurement_session_saved_bytes_match_upstream_after_every_step() {
 
         let saved = fs::read_to_string(&path).unwrap();
         assert!(!saved.contains("snr_db"), "{}", fx.id);
-        assert!(!saved.contains("must-not-be-written"), "{}", fx.id);
     }
 }
 
@@ -447,14 +448,165 @@ fn test_cancel_then_resume_skips_done_positions_and_partial_position_is_not_done
     assert!(!store.entry_for(2).unwrap().done);
 }
 
+/// What upstream `step5.load_mdat` does to the entry `session.record`
+/// returned: `entry['source'] = {}` unless it is a dict, then
+/// `entry['source'][role] = name`.
+fn upstream_source(project: &mut Project, pos: i64, role: &str, name: &str) {
+    let PyJson::Array(entries) = &mut project.measurements else {
+        panic!("measurements are a list")
+    };
+    let entry = entries
+        .iter_mut()
+        .find(|entry| {
+            matches!(entry, PyJson::Object(fields)
+                if fields.contains(&("pos".into(), PyJson::Int(pos.to_string()))))
+        })
+        .unwrap();
+    let object = members(entry);
+    let index = object
+        .iter()
+        .position(|(key, _)| key == "source")
+        .unwrap_or_else(|| {
+            object.push(("source".into(), PyJson::Object(Vec::new())));
+            object.len() - 1
+        });
+    if !matches!(object[index].1, PyJson::Object(_)) {
+        object[index].1 = PyJson::Object(Vec::new());
+    }
+    let sources = members(&mut object[index].1);
+    match sources.iter_mut().find(|(key, _)| key == role) {
+        Some((_, value)) => *value = PyJson::Str(name.into()),
+        None => sources.push((role.into(), PyJson::Str(name.into()))),
+    }
+}
+
 #[test]
-fn clear_position_updates_the_project_view() {
+fn record_writes_its_source_and_saves_the_project_once_c6() {
+    let (_directory, path, mut store, roles) = setup();
+    // Position 3 holds a malformed `source` before other keys: it is
+    // replaced in place, where upstream's `entry['source'] = {}` puts it.
+    store.project_mut().measurements = PyJson::Array(vec![PyJson::Object(vec![
+        ("pos".into(), PyJson::Int("3".into())),
+        ("source".into(), PyJson::Str("stale".into())),
+        ("label".into(), PyJson::Str("kept".into())),
+    ])]);
+    // The reference records without a source, then sets it like upstream
+    // and saves again: the bytes the importers wrote before C6.
+    let reference_directory = TempDir::new();
+    let reference_path = reference_directory.0.join("측정.secs");
+    let mut reference = MeasurementStore::new(&reference_path, store.project().clone());
+    for (role, pos, name) in [
+        ("L", 1, "room.mdat"),
+        ("R", 1, "room.mdat"),
+        ("L", 1, "again.mdat"),
+        ("SW1", 3, "room.liveproject"),
+    ] {
+        let mut imported = result(role, pos, &format!("{role}-{pos}"));
+        imported.source = Some(name.into());
+        let saves = store.save_count();
+        store.record(imported.clone(), Some(&roles)).unwrap();
+        assert_eq!(store.save_count(), saves + 1, "{role} P{pos}");
+
+        imported.source = None;
+        reference.record(imported, Some(&roles)).unwrap();
+        upstream_source(reference.project_mut(), pos, role, name);
+        reference.save().unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            fs::read_to_string(&reference_path).unwrap(),
+            "{role} P{pos}"
+        );
+    }
+    let first = store.entry_for(1).unwrap();
+    assert_eq!(first.source["L"], "again.mdat");
+    assert_eq!(first.source["R"], "room.mdat");
+    assert_eq!(
+        store.entry_for(3).unwrap().source["SW1"],
+        "room.liveproject"
+    );
+    let mut saved = loads(&fs::read_to_string(&path).unwrap()).unwrap();
+    let PyJson::Array(entries) = member(&mut saved, "measurements") else {
+        panic!("measurements are a list")
+    };
+    assert_eq!(keys(&entries[0])[..2], ["pos", "source"]);
+    assert_eq!(keys(&entries[1]).last().unwrap(), "source");
+
+    // A result without a source (a measurement) leaves the entry without one.
+    let mut measured = result("L", 2, "measured");
+    measured.source = None;
+    store.record(measured, Some(&roles)).unwrap();
+    assert!(store.entry_for(2).unwrap().source.is_empty());
+    let PyJson::Array(entries) = &store.project().measurements else {
+        panic!("measurements are a list")
+    };
+    assert!(!keys(&entries[2]).contains(&"source".into()));
+}
+
+#[test]
+fn removed_position_comes_back_with_its_entries_and_snr_c6() {
     let (_directory, _path, mut store, roles) = setup();
-    store.record(result("L", 1, "one"), Some(&roles)).unwrap();
-    assert!(store.clear_position(1));
+    for pos in [1, 2, 3] {
+        for (index, role) in roles.iter().enumerate() {
+            let mut measured = result(role, pos, &format!("{role}-{pos}"));
+            measured.snr_db = Some(20.0 + pos as f64 + index as f64 / 10.0);
+            store.record(measured, Some(&roles)).unwrap();
+        }
+    }
+    let json = store.project().save_text();
+    let middle = store.entry_for(2).unwrap();
+    assert_eq!(middle.snr_db.len(), roles.len());
+    let saves = store.save_count();
+
+    let removed = store.remove_position(2).unwrap();
+    assert_eq!(removed.position(), 2);
+    assert!(store.entry_for(2).is_none());
+    assert_eq!(
+        store
+            .records()
+            .iter()
+            .map(|record| record.pos)
+            .collect::<Vec<_>>(),
+        [1, 3]
+    );
+    assert!(store.remove_position(2).is_none());
+
+    store.restore_position(removed).unwrap();
+    assert_eq!(store.project().save_text(), json);
+    assert_eq!(store.entry_for(2).unwrap(), middle);
+    assert_eq!(store.save_count(), saves, "neither writes the project file");
+
+    for pos in [1, 2, 3] {
+        assert!(store.clear_position(pos));
+    }
     assert!(store.records().is_empty());
     assert_eq!(store.project().measurements, PyJson::Array(Vec::new()));
     assert!(!store.clear_position(1));
+}
+
+#[test]
+fn restoring_a_position_recorded_again_fails_c6() {
+    let (_directory, _path, mut store, roles) = setup();
+    store.record(result("L", 1, "first"), Some(&roles)).unwrap();
+    let removed = store.remove_position(1).unwrap();
+    let mut again = result("R", 1, "again");
+    again.snr_db = Some(12.5);
+    store.record(again, Some(&roles)).unwrap();
+    let json = store.project().save_text();
+    let entry = store.entry_for(1).unwrap();
+
+    assert!(matches!(
+        store.restore_position(removed.clone()),
+        Err(ProjectError::Invalid(_))
+    ));
+    assert_eq!(store.project().save_text(), json);
+    assert_eq!(store.entry_for(1).unwrap(), entry);
+
+    assert!(store.clear_position(1));
+    store.restore_position(removed).unwrap();
+    let restored = store.entry_for(1).unwrap();
+    assert_eq!(restored.uuid["L"].as_deref(), Some("first"));
+    assert_eq!(restored.snr_db.get("L"), Some(&24.0));
+    assert!(!restored.ir.contains_key("R"));
 }
 
 #[test]
