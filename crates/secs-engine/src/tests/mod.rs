@@ -5,7 +5,7 @@
 
 mod calibration;
 pub(crate) mod cancel;
-pub(crate) mod cases;
+pub(crate) use crate::test_support as cases;
 mod chain;
 mod decay;
 mod design;

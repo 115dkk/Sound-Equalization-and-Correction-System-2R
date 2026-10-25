@@ -443,7 +443,7 @@ pub fn xo_target_peq(
 }
 
 #[cfg(any(test, feature = "test-support"))]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct RecordedFit {
     pub g: Vec<f64>,
     pub corr_db: Vec<f64>,

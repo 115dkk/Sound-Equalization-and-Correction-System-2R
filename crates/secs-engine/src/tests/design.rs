@@ -1,8 +1,8 @@
-use super::{cases, fit::read_recorded_fit};
+use super::cases;
+pub(super) use crate::test_support::{replay, replay_with_context};
 use crate::{
     C,
-    design::{self, Design, DesignRequest, FitStage, FitterFactory},
-    fit::{RecordedFit, replay_fitter},
+    design::{self, DesignRequest},
     grid::design_freqs,
 };
 use secs_compute::Context;
@@ -131,111 +131,11 @@ fn complex(fx: &Fixture, name: &str, h: &[C], expected: &Value, gate: bool) {
         .collect();
     compare(name, &got, &expected, gate);
 }
-fn verify_request_hash(fixture: &Fixture, fit: &RecordedFit, hashes: &Value) {
-    for (key, values) in [("g", &fit.g), ("corr_db", &fit.corr_db)] {
-        fixture.assert_digest(
-            key,
-            &serde_json::json!({
-                "digest": hashes[key], "length": values.len(), "first": [], "last": []
-            }),
-            values,
-        );
-    }
-}
-
-pub(super) fn replay(name: &str) -> Design {
-    replay_with_context(name, &Context::serial())
-}
-
-fn replay_with_context(name: &str, context: &Context) -> Design {
-    let case = cases::load(name);
-    let mut stages: BTreeMap<String, Vec<RecordedFit>> = BTreeMap::new();
-    for call in Fixture::all_calls("engine_design", &format!("{name}_fits_")) {
-        let recorded = if let Some(reference) = call.inputs().get("reference") {
-            let source = Fixture::load(
-                reference["family"].as_str().unwrap(),
-                reference["fixture"].as_str().unwrap(),
-            );
-            let fit = if let Some(index) = reference["call"].as_u64() {
-                let calls = source.calls();
-                let c = &calls[index as usize];
-                read_recorded_fit(c, c.inputs(), &c.outputs()["result"])
-            } else {
-                let fit = &source.outputs()["candidates"]
-                    [reference["candidate"].as_u64().unwrap() as usize]["fits"]
-                    [reference["fit"].as_u64().unwrap() as usize];
-                read_recorded_fit(&source, &fit["inputs"], &fit["result"])
-            };
-            verify_request_hash(&source, &fit, &reference["request_sha256"]);
-            fit
-        } else {
-            let fit = read_recorded_fit(&call, call.inputs(), &call.outputs()["result"]);
-            verify_request_hash(&call, &fit, &call.inputs()["request_sha256"]);
-            fit
-        };
-        stages
-            .entry(call.inputs()["stage"].as_str().unwrap().into())
-            .or_default()
-            .push(recorded);
-    }
-    // The RC channel evaluates the phase-independent preparation once for
-    // both phase candidates (ADR 0012); SECS 2 recorded it per candidate.
-    for (key, calls) in &mut stages {
-        if key.starts_with("Rc:")
-            && let Some(k) =
-                (1..calls.len()).find(|&k| super::fit::same_recorded_fit(&calls[0], &calls[k]))
-        {
-            let shared = calls[k..]
-                .iter()
-                .zip(&calls[..])
-                .take_while(|(a, b)| super::fit::same_recorded_fit(a, b))
-                .count();
-            if calls.len() == 2 * k && shared == k {
-                calls.truncate(k);
-            } else {
-                // The FIR preparation holds at most the first PEQ fit.
-                assert!(shared <= 1, "{name}/{key} shared preparation fit");
-                calls.drain(k..k + shared);
-            }
-        }
-    }
-    let counts: Arc<Mutex<BTreeMap<String, (usize, usize)>>> =
-        Arc::new(Mutex::new(BTreeMap::new()));
-    let seen = counts.clone();
-    let factory: Box<FitterFactory<'_>> = Box::new(move |stage| {
-        let key = match stage {
-            FitStage::Ba => "Ba".into(),
-            FitStage::Top(r) => format!("Top:{r}"),
-            FitStage::Rc(r) => format!("Rc:{r}"),
-        };
-        let calls = stages.get(&key).cloned().unwrap_or_default();
-        let expected = calls.len();
-        let report_calls = (name == "room" || !oracle_libm()).then(|| calls.clone());
-        let mut next = 0;
-        let mut fit = replay_fitter(
-            calls,
-            if name == "room" || !oracle_libm() {
-                f64::INFINITY
-            } else {
-                PLATFORM_RTOL
-            },
-        );
-        let seen = seen.clone();
-        seen.lock().unwrap().insert(key.clone(), (0, expected));
-        Box::new(move |r| {
-            seen.lock().unwrap().get_mut(&key).unwrap().0 += 1;
-            if let Some(calls) = &report_calls {
-                let expected = &calls[next];
-                let (_, rel) = errors(r.corr_db, &expected.corr_db);
-                eprintln!(
-                    "MEASURE design {name}/{key}/fit{next} corr_db max_rel={rel:e} report-only (room BA or foreign-libm thresholds)"
-                );
-            }
-            next += 1;
-            fit(r)
-        })
-    });
-    let result = design::design(
+#[test]
+fn replay_case_linear_matches_checked_engine_replay() {
+    let case = cases::load("dolby_linear");
+    let replay = crate::test_support::Replay::for_case("dolby_linear");
+    let expected = design::design(
         &DesignRequest {
             measurements: &case.measurements,
             config: &case.config,
@@ -243,15 +143,50 @@ fn replay_with_context(name: &str, context: &Context) -> Design {
             subs_only: false,
             adapter_notes: &[],
         },
-        context,
-        &*factory,
+        &Context::serial(),
+        &*replay.factory(),
     )
     .unwrap();
-    for (key, (actual, expected)) in counts.lock().unwrap().iter() {
-        assert_eq!(actual, expected, "{name} {key} count");
+    replay.finish();
+    let actual = crate::test_support::replay_case("dolby_linear").design;
+    assert_eq!(actual.chain, expected.chain);
+    assert_eq!(actual.notes, expected.notes);
+    assert_eq!(actual.adapter_notes, expected.adapter_notes);
+    assert_eq!(actual.mains.len(), expected.mains.len());
+    for (actual, expected) in actual.mains.iter().zip(&expected.mains) {
+        assert_eq!(actual.role, expected.role);
+        for (actual, expected) in [
+            (&actual.before, &expected.before),
+            (&actual.combined, &expected.combined),
+            (&actual.after, &expected.after),
+        ] {
+            assert_eq!(actual.len(), expected.len());
+            assert!(actual.iter().zip(expected.iter()).all(|(a, b)| (
+                a.re.to_bits(),
+                a.im.to_bits()
+            ) == (
+                b.re.to_bits(),
+                b.im.to_bits()
+            )));
+        }
     }
-    result
+    assert_eq!(actual.scores.len(), expected.scores.len());
+    for (actual, expected) in actual.scores.iter().zip(&expected.scores) {
+        assert_eq!(actual.role, expected.role);
+        for (actual, expected) in [
+            (metrics(&actual.before), metrics(&expected.before)),
+            (metrics(&actual.after), metrics(&expected.after)),
+        ] {
+            assert!(
+                actual
+                    .iter()
+                    .zip(expected)
+                    .all(|((_, a), (_, b))| a.to_bits() == b.to_bits())
+            );
+        }
+    }
 }
+
 #[test]
 fn design_reserves_preparation_and_one_channel_before_allocating() {
     use secs_compute::{CancelToken, MemoryBudget, NoProgress};
