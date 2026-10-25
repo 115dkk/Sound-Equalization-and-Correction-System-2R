@@ -1,10 +1,12 @@
 import { useMemo } from "react";
 import { useHost, useResource, useSession } from "../../state/react";
+import { useJobLedger } from "../../state/useJobLedger";
 import type { MeasureActions, MeasureView } from "./types";
 
 export function useMeasureScreen(): { view: MeasureView | null; actions: MeasureActions } {
   const session = useSession();
   const host = useHost();
+  const ledger = useJobLedger();
   const project = useResource("project");
   const layout = useResource("layout");
   const estimate = useResource("estimate");
@@ -17,7 +19,7 @@ export function useMeasureScreen(): { view: MeasureView | null; actions: Measure
       await session.monitor(false);
       await session.call({ method: "measure_position", params: { position } });
     }),
-    cancelJob: (job) => session.run(() => session.call({ method: "job_cancel", params: { job } })),
+    cancelJob: (job) => session.run(() => session.jobs.cancel(job)),
     clearPosition: async (position) => (await session.call({ method: "position_clear", params: { position } })).token,
     undo: async (token) => { await session.call({ method: "undo", params: { token } }); },
     selectPosition: (selected) => session.host.set({ selected }),
@@ -44,8 +46,8 @@ export function useMeasureScreen(): { view: MeasureView | null; actions: Measure
     }),
     openCalibrate: () => session.navigate("calibrate"),
   }), [session]);
-  const running = host.jobs.find((job) => ["measure", "sample_load", "mdat_import", "level_check", "level_monitor"].includes(job.kind) && (job.status === "running" || job.status === "cancel_requested"));
-  const request = running ? host.jobRequests[running.job] : undefined;
+  const running = ledger.jobs.find((job) => ["measure", "sample_load", "mdat_import", "level_check", "level_monitor"].includes(job.kind) && (job.status === "running" || job.status === "cancel_requested"));
+  const request = running?.request;
   return { view: project && layout && config ? {
     project, layout, estimate, config, path: host.path === "mdat" ? "import" : host.path ? "measure" : "none",
     records: records?.records ?? [], curves,

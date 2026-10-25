@@ -23,9 +23,6 @@ type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "m
   current: StepId; path: ConnectPath | null;
   tab: CalibrateView["tab"]; channel: string | null; xoGroup: string | null; previewHz: number | null;
   targetEdit: CalibrateView["targetEdit"]; xoEdit: CalibrateView["xoEdit"];
-  /** Run 1 compatibility projection; screen hooks move to session.jobs in run 2. */
-  jobs: Omit<LedgerJob, "request" | "startedAt" | "stageStartedAt" | "stageStartDone" | "finishedAt">[];
-  jobRequests: Record<number, JobRequestContext>;
   meter: MeterReading | null; monitor: MonitorState; playing: string | null; playingAll: boolean; masterDbfs: number;
   sweepResult: LevelResult | null; sweepRole: string | null;
   xoRecommendation: XoRecommendation | null; runs: Partial<Record<ExportKind, ExportRun>>;
@@ -41,7 +38,7 @@ export function createSession(ipc: Ipc) {
     computeLoading: true, computeSaving: false, computeError: null,
     current: "system", path: null, selected: null, graphHidden: false, plotRange: { x: null, y: null },
     mdat: null, warnings: [], tab: "spl", channel: null, xoGroup: null, previewHz: null, targetEdit: "idle", xoEdit: "idle",
-    jobs: [], jobRequests: {}, meter: null, monitor: "off", playing: null, playingAll: false, masterDbfs: -20,
+    meter: null, monitor: "off", playing: null, playingAll: false, masterDbfs: -20,
     sweepResult: null, sweepRole: null, xoRecommendation: null, runs: {}, failure: null,
     rewLaunch: "idle", rewProblem: null, rewProblemDetail: null, readingRew: false, switchingRewDriver: false, opened: 0,
   });
@@ -108,10 +105,6 @@ export function createSession(ipc: Ipc) {
     if (job.kind === "level_monitor" && monitorWanted) monitorJob = job.job;
     if (job.epoch === jobs.epoch && ["calibrate", "mimo", "recommend_xo"].includes(job.kind)) host.set({ failure: null });
   } });
-  jobs.subscribe(() => {
-    const snapshot = jobs.getSnapshot();
-    host.set({ jobs: snapshot.jobs, jobRequests: Object.fromEntries(snapshot.jobs.flatMap((job) => job.request ? [[job.job, job.request]] : [])) });
-  });
   let pendingProjectEdits = 0;
   const call: RequestFn = async (request) => {
     let epoch = jobs.epoch;

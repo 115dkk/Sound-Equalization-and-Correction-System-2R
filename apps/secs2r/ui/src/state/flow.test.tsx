@@ -62,6 +62,31 @@ it("walks a non-tutorial sample project through mock measurements, calibration a
   // can exceed the default 5 s, so it gets a wider bound rather than a retry.
 }, 30_000);
 
+it("shows cancel_requested in both the measure view and tray when the measure screen cancels (TD-72)", async () => {
+  const mock = createMockService({ tickMs: 0 });
+  await mock.request({ method: "measure_configure", params: {
+    method: "mock", input_device: null, output_device: null, input_channel: null, output_channels: [], sweep_length: null, repetitions: null,
+    sweep_level_dbfs: null, timing: null, loopback_input_channel: null, timing_ref_output: null, share_mode: null,
+  } });
+  const rendered = render(<App ipc={mock} />);
+  try {
+    await waitFor(() => expect(document.querySelector('[data-ui="frame.rail.measure"]')).not.toBeNull());
+    fireEvent.click(ui("frame.rail.measure"));
+    await waitFor(() => expect(document.querySelector('[data-ui="measure.position.start"]')).not.toBeNull());
+    fireEvent.click(ui("measure.position.start"));
+    await waitFor(() => expect(document.querySelector('[data-ui="measure.cancel"]')).not.toBeNull());
+    expect(ui("jobs.cancel.measure").textContent).toBe("취소");
+    await act(async () => { fireEvent.click(ui("measure.cancel")); });
+    expect(mock.calls.filter((call) => call.method === "job_cancel")).toHaveLength(1);
+    expect.soft(ui("measure.cancel").hasAttribute("disabled")).toBe(true);
+    expect.soft(ui("measure.status").textContent).toContain("취소 중");
+    expect.soft(ui("jobs.cancel.measure").textContent).toBe("취소하는 중");
+    await act(async () => { mock.tick(); });
+    expect(document.querySelector('[data-ui="measure.run"]')).toBeNull();
+    expect(document.querySelector('[data-ui="jobs.job.measure"]')).toBeNull();
+  } finally { rendered.unmount(); mock.dispose(); }
+});
+
 it("keeps the chosen logo in the app settings and shows it again on the next start", async () => {
   const mock = createMockService({ project: null, tickMs: 0 });
   const logo = () => ui("frame.logo").getAttribute("src");

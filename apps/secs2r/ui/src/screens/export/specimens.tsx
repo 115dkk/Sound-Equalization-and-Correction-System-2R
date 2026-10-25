@@ -3,7 +3,7 @@
 // and BA) shows on the results with subs, with MIMO, and with RC alone.
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { PrefsScope, usePrefs } from "../../app/prefs";
-import { initialJobs, type JobsState } from "../../app/jobs/jobStore";
+import { initialLedger, type LedgerState } from "../../state/jobLedger";
 import { FrameBox, T0, replay } from "../../gallery/frameSpecimens";
 import type { SpecimenDef } from "../../gallery/Specimen";
 import { useT } from "../../i18n/react";
@@ -62,14 +62,14 @@ function Scrolled({ to, children }: { to: string; children: ReactNode }) {
 
 function ExportSpecimen({
   view,
-  jobs = initialJobs,
+  jobs = initialLedger,
   initialAdvanced,
   scrolled,
   fileName,
   children,
 }: {
   view: ExportView;
-  jobs?: JobsState;
+  jobs?: LedgerState;
   initialAdvanced?: boolean;
   /** Draw the content scrolled to its end, or to the element with this `data-ui`. */
   scrolled?: true | string;

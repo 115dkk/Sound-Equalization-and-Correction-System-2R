@@ -1,11 +1,13 @@
 import { useMemo } from "react";
 import { useHost, useResource, useSession } from "../../state/react";
+import { useJobLedger } from "../../state/useJobLedger";
 import type { CalibrateActions, CalibrateJob, CalibrateView } from "./types";
 import { groupOf, xoGroups } from "./text";
 
 export function useCalibrateScreen(goToMeasurements?: () => void): { view: CalibrateView | null; actions: CalibrateActions } {
   const session = useSession();
   const host = useHost();
+  const ledger = useJobLedger();
   const appSettings = useResource("appSettings");
   const computeStatus = useResource("computeStatus");
   const results = useResource("results");
@@ -43,7 +45,7 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
       changeCompute: (compute) => session.run(async () => {
         const h = session.host.getSnapshot();
         const settings = session.stores.appSettings.getSnapshot();
-        if (!settings || h.computeSaving || h.computeLoading || h.computeError || h.jobs.some((job) => ["running", "cancel_requested"].includes(job.status) && !["status_watch", "level_monitor"].includes(job.kind))) return;
+        if (!settings || h.computeSaving || h.computeLoading || h.computeError || session.jobs.getSnapshot().jobs.some((job) => ["running", "cancel_requested"].includes(job.status) && !["status_watch", "level_monitor"].includes(job.kind))) return;
         session.host.set({ computeSaving: true });
         try { await session.call({ method: "app_settings_set", params: { settings: { ...settings, compute } } }); }
         finally { session.host.set({ computeSaving: false }); }
@@ -83,9 +85,9 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
       }),
     };
   }, [session, goToMeasurements]);
-  const jobs = host.jobs.filter((job) => job.status === "running" || job.status === "cancel_requested");
+  const jobs = ledger.jobs.filter((job) => job.status === "running" || job.status === "cancel_requested");
   const runningJob = jobs.find((job) => ["calibrate", "recommend_xo", "mimo"].includes(job.kind));
-  const request = runningJob ? host.jobRequests[runningJob.job] : undefined;
+  const request = runningJob?.request;
   const running: CalibrateJob | null = runningJob ? request?.method === "calibrate" && request.params.subs_only ? "calibrate_subs" : runningJob.kind as CalibrateJob : null;
   const measuredRoles = new Set(measurements?.curves.filter((curve) => curve.position === 1).map((curve) => curve.role));
   return { view: results && lines && settings && modeSpec && target && config && project ? {

@@ -4,27 +4,31 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createMockService, type MockService } from "../../ipc/mock";
 import { renderWith } from "../../test/render";
 import { ConnectedJobTray } from "./JobTray";
+import { createSession, type Session } from "../../state/session";
 
 let mock: MockService;
+let session: Session;
 
-function setup(locale: "ko" | "en" = "ko") {
+async function setup(locale: "ko" | "en" = "ko") {
   mock = createMockService({ tickMs: 0 });
-  renderWith(<ConnectedJobTray />, { locale, ipc: { request: mock.request, events: mock.events } });
+  session = createSession(mock);
+  await session.start();
+  renderWith(<ConnectedJobTray />, { locale, session });
 }
 
 const tray = () => document.querySelector('[data-ui="jobs.tray"]')!;
 
-afterEach(() => mock?.dispose());
+afterEach(() => { session?.dispose(); mock?.dispose(); });
 
 describe("job tray", () => {
   it("asks for the job snapshots once and then only listens", async () => {
-    setup();
-    await waitFor(() => expect(mock.calls.map((c) => c.method)).toEqual(["jobs"]));
+    await setup();
+    await waitFor(() => expect(mock.calls.filter((c) => c.method === "jobs")).toHaveLength(1));
     expect(screen.getByText("진행 중인 작업 없음")).toBeTruthy();
   });
 
   it("draws a job from its pushed events: name, stage, progress, then the result", async () => {
-    setup();
+    await setup();
     await act(async () => {
       await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } });
     });
@@ -42,7 +46,7 @@ describe("job tray", () => {
   });
 
   it("cancels through job_cancel and reports the job as cancelled", async () => {
-    setup();
+    await setup();
     let job = 0;
     await act(async () => {
       job = (await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } })).job;
@@ -60,7 +64,7 @@ describe("job tray", () => {
   });
 
   it("keeps Log notices and errors in the history with cause, next step and details", async () => {
-    setup();
+    await setup();
     mock.failJobs("measure", "rew_unreachable", "connection refused (os error 10061)");
     await act(async () => {
       await mock.request({ method: "measure_position", params: { position: 4 } });
@@ -78,7 +82,7 @@ describe("job tray", () => {
   });
 
   it("writes the tray in English too", async () => {
-    setup("en");
+    await setup("en");
     await act(async () => {
       await mock.request({ method: "recommend_xo" });
     });

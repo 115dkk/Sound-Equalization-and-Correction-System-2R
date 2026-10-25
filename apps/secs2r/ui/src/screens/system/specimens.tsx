@@ -3,7 +3,7 @@
 // with measurements, channel details, and the smallest window.
 import type { ReactNode } from "react";
 import type { FrameModel, ProjectSummary } from "../../app/model";
-import { initialJobs } from "../../app/jobs/jobStore";
+import { initialLedger } from "../../state/jobLedger";
 import { useT } from "../../i18n/react";
 import { FrameBox } from "../../gallery/frameSpecimens";
 import type { SpecimenDef } from "../../gallery/Specimen";
@@ -76,7 +76,7 @@ function SystemFrame({ view, project, children }: { view: SystemView; project?: 
   const configurable = !["checking", "rew_unknown", "not_required"].includes(view.outputDeviceState) && (!path || path === "none" || path === "native");
   const actions = { ...noopSystemActions, configureMeasurement: configurable ? noopSystemActions.configureMeasurement : null };
   return (
-    <FrameBox frame={frameFor(view, project)} jobs={initialJobs} header={systemHeader(view, actions, t)}>
+    <FrameBox frame={frameFor(view, project)} jobs={initialLedger} header={systemHeader(view, actions, t)}>
       <SystemScreen view={view} actions={actions} />
       {children}
     </FrameBox>

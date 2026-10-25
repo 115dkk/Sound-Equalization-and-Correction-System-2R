@@ -2,7 +2,7 @@
 // quest, an act quest (armed, list folded, a toast), a busy act quest,
 // paused, and the end.
 import type { FrameModel, StepId } from "../../app/model";
-import { initialJobs, type JobsState } from "../../app/jobs/jobStore";
+import { initialLedger, type LedgerState } from "../../state/jobLedger";
 import { FrameBox, T0, replay } from "../../gallery/frameSpecimens";
 import type { SpecimenDef } from "../../gallery/Specimen";
 import { EmptyState } from "../../ui";
@@ -48,7 +48,7 @@ const computeJob = replay([
   { type: "event", at: T0 + 1500, event: { event: "progress", job: 4, stage: "engine.design", done: 3, total: 11 } },
 ]);
 
-function Sample({ initial, view, step = "system", jobs = initialJobs }: { initial: Partial<TutorialState>; view?: Partial<SampleView>; step?: StepId; jobs?: JobsState }) {
+function Sample({ initial, view, step = "system", jobs = initialLedger }: { initial: Partial<TutorialState>; view?: Partial<SampleView>; step?: StepId; jobs?: LedgerState }) {
   const sample: SampleView = { helpOpen: false, computing: false, computed: false, ...view };
   return (
     <TutorialAccent>

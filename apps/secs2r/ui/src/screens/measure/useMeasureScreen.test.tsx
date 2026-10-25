@@ -27,15 +27,18 @@ describe("useMeasureScreen", () => {
   it("ignores passive watches but blocks finite device checks and active monitor playback", async () => {
     await session.configure({ method: "mock" });
     const { result } = renderHook(useMeasureScreen, { wrapper });
+    let job = 99;
     for (const kind of ["level_monitor", "status_watch", "calibrate", "recommend_xo", "mimo", "export", "level_check", "measure", "sample_load", "mdat_import"] as JobKind[]) {
-      await perform(() => session.host.set({ jobs: [{ job: 99, epoch: 0, completionHandled: false, completionOrder: null, kind, status: "running", cancellable: true, progress: null, error: null }] }));
+      await perform(() => mock.events.emit({ event: "started", job, kind }));
       const view = result.current.view!;
       const expected = kind === "level_check" ? { status: "blocked", reason: "device_busy" } : { status: "ready" };
       expect(measureStepState(view)).toEqual(expected);
       // The state function also accepts passive snapshots independently of hook filtering.
-      expect(measureStepState({ ...view, job: { job: 99, kind, status: "cancel_requested", progress: null, position: null } })).toEqual(expected);
+      expect(measureStepState({ ...view, job: { job, kind, status: "cancel_requested", progress: null, position: null } })).toEqual(expected);
+      await perform(() => mock.events.emit({ event: "finished", job, status: "cancelled", result: null, error: null }));
+      job++;
     }
-    await perform(() => session.host.set({ jobs: [], playing: "L" }));
+    await perform(() => session.host.set({ playing: "L" }));
     expect(measureStepState(result.current.view!)).toEqual({ status: "blocked", reason: "device_busy" });
     await perform(() => session.host.set({ playing: null, playingAll: true }));
     expect(measureStepState(result.current.view!).reason).toBe("device_busy");

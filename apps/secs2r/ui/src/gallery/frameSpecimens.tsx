@@ -3,15 +3,16 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { AppFrame } from "../app/AppFrame";
 import { JobTray } from "../app/jobs/JobTray";
-import { initialJobs, jobsReducer, type JobsAction, type JobsState } from "../app/jobs/jobStore";
+import { initialLedger, ledgerReducer, type LedgerAction, type LedgerState } from "../state/jobLedger";
 import { LOGOS, SMALL_LOGOS } from "../app/logo";
-import { useJobs, type JobsApi } from "../app/jobs/useJobs";
+import { trayState, useJobs, type JobsApi } from "../app/jobs/useJobs";
 import { ProjectMenu, SettingsButton } from "../app/menus";
 import { SettingsFailed } from "../app/SettingsFailed";
 import { STEP_PRIMARY, type FrameModel, type ProjectSummary, type StepId } from "../app/model";
 import { PrefsScope, usePrefs } from "../app/prefs";
 import { useT } from "../i18n/react";
-import { IpcProvider, useIpc } from "../ipc/context";
+import { SessionProvider } from "../state/react";
+import { createSession } from "../state/session";
 import { createMockService, ipcError } from "../ipc/mock";
 import { HelpPanel } from "../screens/help/HelpPanel";
 import { SAMPLE_ROLES, bootstrapInfo } from "../ipc/fixtures";
@@ -24,11 +25,11 @@ import type { SpecimenDef } from "./Specimen";
 export const T0 = Date.UTC(2026, 9, 14, 5, 12, 0);
 
 /** A tray state built by replaying events at fixed times (deterministic screenshots). */
-export function replay(actions: JobsAction[]): JobsState {
-  return actions.reduce(jobsReducer, initialJobs);
+export function replay(actions: LedgerAction[]): LedgerState {
+  return actions.reduce(ledgerReducer, initialLedger);
 }
 
-export const staticApi = (state: JobsState, now: number): JobsApi => ({ state, now, cancel: () => {}, clearHistory: () => {} });
+export const staticApi = (state: LedgerState, now: number): JobsApi => ({ state: trayState(state), now, cancel: () => {}, clearHistory: () => {} });
 
 const busyJobs = replay([
   { type: "event", at: T0, event: { event: "started", job: 7, kind: "calibrate" } },
@@ -139,7 +140,7 @@ export function FrameBox({
   children,
 }: {
   frame: FrameModel;
-  jobs: JobsState;
+  jobs: LedgerState;
   now?: number;
   trayOpen?: boolean;
   primaryBusy?: boolean;
@@ -187,17 +188,20 @@ function Placeholder() {
 function LiveFrame() {
   const t = useT();
   const mock = useMemo(() => createMockService({ tickMs: 700 }), []);
-  useEffect(() => () => mock.dispose(), [mock]);
-  const ipc = useMemo(() => ({ request: mock.request, events: mock.events }), [mock]);
+  const session = useMemo(() => createSession(mock), [mock]);
+  useEffect(() => {
+    void session.start();
+    return () => { session.dispose(); mock.dispose(); };
+  }, [session, mock]);
   return (
-    <IpcProvider value={ipc}>
-      <LiveFrameInner start={() => void mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }).catch(() => {})} label={t(STEP_PRIMARY.calibrate)} />
-    </IpcProvider>
+    <SessionProvider value={session}>
+      <LiveFrameInner start={() => session.run(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } }))} label={t(STEP_PRIMARY.calibrate)} />
+    </SessionProvider>
   );
 }
 
 function LiveFrameInner({ start, label }: { start: () => void; label: string }) {
-  const api = useJobs(useIpc());
+  const api = useJobs();
   const running = api.state.jobs.some((job) => job.kind === "calibrate" && (job.status === "running" || job.status === "cancel_requested"));
   const [current, setCurrent] = useState<StepId>("calibrate");
   return (
@@ -231,7 +235,7 @@ export const frameSpecimens: SpecimenDef[] = [
           calibrate: { status: "blocked", reason: "no_measurements" },
           export: { status: "blocked", reason: "no_result" },
         })}
-        jobs={initialJobs}
+        jobs={initialLedger}
         noPrimary
       >
         <Placeholder />
@@ -244,7 +248,7 @@ export const frameSpecimens: SpecimenDef[] = [
     width: 1280,
     height: 800,
     render: () => (
-      <FrameBox frame={model("measure", filledProject)} jobs={initialJobs}>
+      <FrameBox frame={model("measure", filledProject)} jobs={initialLedger}>
         <MeasureContent />
       </FrameBox>
     ),
@@ -301,7 +305,7 @@ export const frameSpecimens: SpecimenDef[] = [
             { code: "measurement.ir_path.outside", entry: "position 3, role Tfl" },
           ],
         })}
-        jobs={initialJobs}
+        jobs={initialLedger}
         onRemeasure={() => {}}
       >
         <MeasureContent />
@@ -314,7 +318,7 @@ export const frameSpecimens: SpecimenDef[] = [
     width: 1280,
     height: 800,
     render: () => (
-      <FrameBox frame={model("export", filledProject)} jobs={initialJobs}>
+      <FrameBox frame={model("export", filledProject)} jobs={initialLedger}>
         <Placeholder />
       </FrameBox>
     ),
@@ -332,7 +336,7 @@ export const frameSpecimens: SpecimenDef[] = [
     width: 1280,
     height: 800,
     render: () => (
-      <FrameBox frame={model("measure", { ...filledProject, path: { kind: "none", state: "warning" } }, { connect: { status: "skipped" } })} jobs={initialJobs}>
+      <FrameBox frame={model("measure", { ...filledProject, path: { kind: "none", state: "warning" } }, { connect: { status: "skipped" } })} jobs={initialLedger}>
         <MeasureContent />
       </FrameBox>
     ),
@@ -414,14 +418,14 @@ function TutorialScope() {
 
 function TutorialFrame() {
   return (
-    <FrameBox frame={model("connect", { ...filledProject, positionsDone: 0, path: { kind: "mock", state: "ok" }, fileName: "튜토리얼.secs", dirty: false }, { connect: { status: "ready" }, measure: { status: "ready" }, calibrate: { status: "blocked", reason: "no_measurements" } })} jobs={initialJobs}>
+    <FrameBox frame={model("connect", { ...filledProject, positionsDone: 0, path: { kind: "mock", state: "ok" }, fileName: "튜토리얼.secs", dirty: false }, { connect: { status: "ready" }, measure: { status: "ready" }, calibrate: { status: "blocked", reason: "no_measurements" } })} jobs={initialLedger}>
       <Placeholder />
     </FrameBox>
   );
 }
 
 export const trayAndMenuSpecimens: SpecimenDef[] = [
-  { id: "jobs.idle", title: "Job tray · idle", width: 960, render: () => <JobTray api={staticApi(initialJobs, T0)} /> },
+  { id: "jobs.idle", title: "Job tray · idle", width: 960, render: () => <JobTray api={staticApi(initialLedger, T0)} /> },
   { id: "jobs.running", title: "Job tray · three jobs (determinate, indeterminate, cancel requested)", width: 1020, render: () => <JobTray api={staticApi(twoJobs, T0 + 18000)} /> },
   { id: "jobs.history", title: "Job tray · history with a log, a cancel and an error", width: 960, render: () => <JobTray api={staticApi(historyJobs, T0 + 30000)} defaultOpen /> },
   {

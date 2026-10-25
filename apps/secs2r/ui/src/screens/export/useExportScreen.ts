@@ -1,10 +1,12 @@
 import { useMemo } from "react";
 import { useHost, useResource, useSession } from "../../state/react";
+import { useJobLedger } from "../../state/useJobLedger";
 import type { ExportActions, ExportView } from "./types";
 
 export function useExportScreen(): { view: ExportView | null; actions: ExportActions } {
   const session = useSession();
   const host = useHost();
+  const ledger = useJobLedger();
   const results = useResource("results");
   const settings = useResource("settings");
   const project = useResource("project");
@@ -24,10 +26,10 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
     goToCalibrate: () => session.navigate("calibrate"),
     recalibrate: () => session.run(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } })),
   }), [session]);
-  const jobs = host.jobs.filter((job) => job.status === "running" || job.status === "cancel_requested");
+  const jobs = ledger.jobs.filter((job) => job.status === "running" || job.status === "cancel_requested");
   const recalibrating = jobs.some((job) => job.kind === "calibrate");
   const exporting = jobs.find((job) => job.kind === "export");
-  const request = exporting ? host.jobRequests[exporting.job] : undefined;
+  const request = exporting?.request;
   return { view: results && settings && project ? {
     results, settings: { mode: results.calibration?.mode ?? settings.mode, ultra_ms: results.calibration?.ultra_ms ?? settings.ultra_ms, mimo_on: settings.mimo_on },
     positions: project.positions.length, rc: lines?.rc ?? [], folder,

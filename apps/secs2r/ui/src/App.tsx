@@ -12,7 +12,7 @@ import { useFrameModel } from "./app/useFrameModel";
 import { pickLocale } from "./i18n";
 import { useT } from "./i18n/react";
 import type { IpcError } from "./ipc/bindings/IpcError";
-import { IpcProvider, type Ipc } from "./ipc/context";
+import type { Ipc } from "./ipc/context";
 import { createTauriIpc } from "./ipc/tauri";
 import { createSession } from "./state/session";
 import { SessionProvider, useHost, useResource, useSession } from "./state/react";
@@ -46,7 +46,7 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
   const info = useResource("bootstrap");
   const project = useResource("project");
   const failure = useSyncExternalStore(session.errors.subscribe, session.errors.getSnapshot);
-  const jobs = useJobs(session.ipc);
+  const jobs = useJobs();
   const [helpOpen, setHelpOpen] = useState(false);
   const [meterOpen, setMeterOpen] = useState(false);
   const [settingFocus, setSettingFocus] = useState<{ step: StepId; selector: string; fallback?: string | undefined } | null>(null);
@@ -249,5 +249,5 @@ function Preferences({ root, initialPrefs, tutorialStart }: { root: boolean; ini
 export function App({ ipc: supplied, root = true, initialPrefs, tutorialStart }: { ipc?: Ipc; root?: boolean; initialPrefs?: Prefs; /** Gallery: first quest to show after preparing the tutorial project. */ tutorialStart?: string } = {}) {
   const ipc = useMemo(() => supplied ?? createTauriIpc(), [supplied]);
   const session = useMemo(() => createSession(ipc), [ipc]);
-  return <IpcProvider value={ipc}><SessionProvider value={session}><Preferences root={root} initialPrefs={initialPrefs} tutorialStart={tutorialStart} /></SessionProvider></IpcProvider>;
+  return <SessionProvider value={session}><Preferences root={root} initialPrefs={initialPrefs} tutorialStart={tutorialStart} /></SessionProvider>;
 }

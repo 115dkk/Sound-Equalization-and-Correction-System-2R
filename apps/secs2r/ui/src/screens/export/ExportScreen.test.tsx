@@ -3,7 +3,8 @@ import { fireEvent, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AppFrame } from "../../app/AppFrame";
 import { JobTray } from "../../app/jobs/JobTray";
-import { initialJobs, jobsReducer } from "../../app/jobs/jobStore";
+import { initialLedger, ledgerReducer } from "../../state/jobLedger";
+import { trayState } from "../../app/jobs/useJobs";
 import { ProjectMenu, SettingsButton } from "../../app/menus";
 import { useT, type Translate } from "../../i18n/react";
 import { renderWith } from "../../test/render";
@@ -424,7 +425,7 @@ describe("내보내기", () => {
       unmount();
     }
     // The frame's menus open and the tray with an export running (§10 cites them).
-    const jobs = jobsReducer(initialJobs, { type: "event", at: 0, event: { event: "started", job: 1, kind: "export" } });
+    const jobs = trayState(ledgerReducer(initialLedger, { type: "event", at: 0, event: { event: "started", job: 1, kind: "export" } }));
     renderWith(
       <>
         <ProjectMenu name="거실 7.1.4.secs" dirty actions={{ onNew: () => {}, onOpen: () => {}, onSave: () => {}, onSaveAs: () => {} }} initiallyOpen inline />

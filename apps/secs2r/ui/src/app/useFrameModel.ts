@@ -1,5 +1,6 @@
 import { STEPS, type FrameModel, type StepState } from "./model";
 import { useHost, useResource, useSession } from "../state/react";
+import { useJobLedger } from "../state/useJobLedger";
 import type { SystemView } from "../screens/system/types";
 import type { ConnectView } from "../screens/connect/types";
 import type { MeasureView } from "../screens/measure/types";
@@ -20,7 +21,7 @@ export function useFrameModel(views: { system: SystemView | null; connect: Conne
   const records = useResource("records");
   const result = useResource("results")?.calibration;
   const ready: StepState = { status: "ready" };
-  const computing = host.jobs.some((job) => job.kind === "calibrate" && ["running", "cancel_requested"].includes(job.status));
+  const computing = useJobLedger().jobs.some((job) => job.kind === "calibrate" && ["running", "cancel_requested"].includes(job.status));
   const model: FrameModel = {
     current: host.current,
     steps: {

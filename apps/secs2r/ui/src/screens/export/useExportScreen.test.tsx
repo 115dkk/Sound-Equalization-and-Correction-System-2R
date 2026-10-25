@@ -109,7 +109,7 @@ describe("useExportScreen", () => {
     await perform(result.current.actions.recalibrate);
     expect(result.current.view?.recalibrating).toBe(true);
     if (status === "cancelled") {
-      const job = session.host.getSnapshot().jobs.find((job) => job.kind === "calibrate" && job.status === "running")!;
+      const job = session.jobs.getSnapshot().jobs.find((job) => job.kind === "calibrate" && job.status === "running")!;
       await perform(() => session.call({ method: "job_cancel", params: { job: job.job } }));
       expect(result.current.view?.recalibrating).toBe(true);
     }

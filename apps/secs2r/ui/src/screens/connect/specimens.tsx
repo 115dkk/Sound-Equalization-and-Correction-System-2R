@@ -1,7 +1,7 @@
 // 연결·점검 in each state the packet names, the floating mic meter, and the
 // smallest window.
 import type { ReactNode } from "react";
-import { initialJobs } from "../../app/jobs/jobStore";
+import { initialLedger } from "../../state/jobLedger";
 import type { FrameModel, PathKind, PathState, ProjectSummary } from "../../app/model";
 import { PrefsScope, usePrefs, type Prefs } from "../../app/prefs";
 import { useT } from "../../i18n/react";
@@ -83,7 +83,7 @@ function ConnectFrame({ view, project }: { view: ConnectView; project?: Partial<
   const t = useT();
   const header = connectHeader(view, noopConnectActions, t);
   return (
-    <FrameBox frame={frameFor(view, project)} jobs={initialJobs} header={header}>
+    <FrameBox frame={frameFor(view, project)} jobs={initialLedger} header={header}>
       <ConnectScreen view={view} actions={noopConnectActions} />
     </FrameBox>
   );

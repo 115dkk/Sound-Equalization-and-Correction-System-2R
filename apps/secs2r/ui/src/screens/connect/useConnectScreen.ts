@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef } from "react";
 import { IpcFailure } from "../../ipc/client";
 import { useHost, useResource, useSession } from "../../state/react";
+import { useJobLedger } from "../../state/useJobLedger";
 import { levelRoles, pathReady } from "./state";
 import type { ConnectActions, ConnectView, RewProblem } from "./types";
 
 export function useConnectScreen(active: boolean): { view: ConnectView | null; actions: ConnectActions } {
   const session = useSession();
   const host = useHost();
+  const ledger = useJobLedger();
   const config = useResource("config");
   const methods = useResource("methods");
   const settings = useResource("measurementSettings");
@@ -14,7 +16,7 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
   const rew = useResource("rew");
   const queue = useRef(0);
   const cancelWait = useRef<(() => void) | null>(null);
-  const sweepRunning = host.jobs.some((job) => job.kind === "level_check" && (job.status === "running" || job.status === "cancel_requested"));
+  const sweepRunning = ledger.jobs.some((job) => job.kind === "level_check" && (job.status === "running" || job.status === "cancel_requested"));
   const ready = host.path !== "mdat" && settings !== null && pathReady({ path: host.path, methods });
   useEffect(() => () => { queue.current++; cancelWait.current?.(); }, []);
   useEffect(() => {
