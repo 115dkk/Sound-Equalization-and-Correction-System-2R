@@ -325,7 +325,14 @@ pub fn round_ties_even_i64(value: f64) -> i64 {
 }
 
 /// Serialize an IEEE-float, mono, 32-bit WAV exactly like upstream `write_wav`.
-pub fn wav_bytes(data: &[f64], rate: u32) -> Vec<u8> {
+///
+/// Fails when a tap is not finite once narrowed to `f32` (`1e100` is a finite
+/// `f64` but an infinite `f32`), so both writers that share it reject the
+/// coefficients before their first file.
+pub fn wav_bytes(data: &[f64], rate: u32) -> Result<Vec<u8>, CamillaError> {
+    if let Some(index) = data.iter().position(|value| !(*value as f32).is_finite()) {
+        return Err(CamillaError::NonFinite(format!("fir[{index}] as f32")));
+    }
     let data_len = u32::try_from(data.len() * 4).expect("FIR WAV fits u32");
     let mut out = Vec::with_capacity(44 + data.len() * 4);
     out.extend_from_slice(b"RIFF");
@@ -343,7 +350,15 @@ pub fn wav_bytes(data: &[f64], rate: u32) -> Vec<u8> {
     for value in data {
         out.extend_from_slice(&(*value as f32).to_le_bytes());
     }
-    out
+    Ok(out)
+}
+
+/// [`wav_bytes`] for one exported FIR, naming its owner in a range error.
+fn fir_wav(owner: &str, taps: &[f64]) -> Result<Vec<u8>, CamillaError> {
+    wav_bytes(taps, SAMPLE_RATE).map_err(|error| match error {
+        CamillaError::NonFinite(name) => CamillaError::NonFinite(format!("{owner}.{name}")),
+        other => other,
+    })
 }
 
 fn absolute(path: &Path) -> Result<PathBuf, CamillaError> {
@@ -835,7 +850,7 @@ pub fn make_config_observed(
                 )));
             }
             let filename = posix(&relative(&file, config_dir)?);
-            coeffs.push((file, wav_bytes(&main.fir, SAMPLE_RATE)));
+            coeffs.push((file, fir_wav(&format!("main.{}", main.role), &main.fir)?));
             let name = format!("in_{}_fir", main.role);
             filters.push((
                 name.clone(),
@@ -1123,7 +1138,7 @@ pub fn make_config_observed(
                     )));
                 }
                 let filename = posix(&relative(&file, config_dir)?);
-                coeffs.push((file, wav_bytes(&taps, SAMPLE_RATE)));
+                coeffs.push((file, fir_wav(&format!("mimo.paths[{index}]"), &taps)?));
                 let name = format!("{tag}_fir");
                 filters.push((
                     name.clone(),

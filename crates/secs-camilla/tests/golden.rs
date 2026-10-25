@@ -466,7 +466,7 @@ fn mimo_fixture_wav(fixture: &Fixture, mimo: &MimoPaths, name: &str) -> Vec<u8> 
         .into_iter()
         .find(|main| name.ends_with(&format!("{}_fir.wav", main.role)))
     {
-        return secs_camilla::wav_bytes(&main.fir, 48_000);
+        return secs_camilla::wav_bytes(&main.fir, 48_000).unwrap();
     }
     let path = mimo
         .paths
@@ -474,9 +474,10 @@ fn mimo_fixture_wav(fixture: &Fixture, mimo: &MimoPaths, name: &str) -> Vec<u8> 
         .find(|path| name.ends_with(&format!("mimo_{}_{}.wav", path.input, path.support)))
         .unwrap_or_else(|| panic!("missing MIMO fixture WAV {name}"));
     match &path.filter {
-        MimoFilter::Fir { taps_48k } => secs_camilla::wav_bytes(taps_48k, 48_000),
+        MimoFilter::Fir { taps_48k } => secs_camilla::wav_bytes(taps_48k, 48_000).unwrap(),
         MimoFilter::FirLowRate { taps_low, fs_low } => {
             secs_camilla::wav_bytes(&secs_dsp::fir::lowrate_to_48k(taps_low, *fs_low), 48_000)
+                .unwrap()
         }
         MimoFilter::Iir { .. } => panic!("IIR MIMO path has no WAV {name}"),
     }
@@ -1016,5 +1017,45 @@ fn invalid_values_write_nothing() {
         write_config(&chain(&fixture), &temp.0, "..", &Options::default(), None,),
         Err(CamillaError::Invalid(_))
     ));
+    assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
+}
+
+#[test]
+fn fir_taps_that_overflow_f32_write_nothing_td45() {
+    // 1e100 is a finite f64 but becomes infinity in the f32 WAV.
+    let fixture = Fixture::load("camilla", "direct_no_subs");
+    let temp = TempDir::new("f32_overflow");
+    let mut bad = chain(&fixture);
+    bad.mains[0].fir = vec![1.0, 1e100];
+    let error = write_config(&bad, &temp.0, "bad", &Options::default(), None).unwrap_err();
+    assert!(matches!(error, CamillaError::NonFinite(_)), "{error}");
+    assert!(error.to_string().contains("main.L.fir[1]"), "{error}");
+    assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
+
+    // A low-rate FIR is checked after its expansion to 48 kHz.
+    let fixture = Fixture::load("export_mimo", "room_dba_iir");
+    let mut path = mimo_paths(&fixture)
+        .paths
+        .into_iter()
+        .find(|path| path.input == "L" && path.support == "SW1")
+        .unwrap();
+    path.filter = MimoFilter::FirLowRate {
+        taps_low: vec![1e100, 0.5, 0.25, 0.125],
+        fs_low: 1000.0,
+    };
+    let mimo = MimoPaths {
+        fsiso: 120.0,
+        paths: vec![path],
+    };
+    let error = write_config(
+        &chain(&fixture),
+        &temp.0,
+        "bad",
+        &Options::default(),
+        Some(&mimo),
+    )
+    .unwrap_err();
+    assert!(matches!(error, CamillaError::NonFinite(_)), "{error}");
+    assert!(error.to_string().contains("mimo.paths[0]"), "{error}");
     assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
 }

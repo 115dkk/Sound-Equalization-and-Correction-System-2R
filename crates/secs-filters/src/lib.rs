@@ -1641,10 +1641,9 @@ fn fir_files(plan: &FilterPlan, prefix: &str) -> Result<(FirNames, ExportFiles),
     for (stem, taps) in plan.firs() {
         taps.validate()?;
         let filename = format!("{prefix}{stem}.wav");
-        files.push((
-            filename.clone(),
-            wav_bytes(&taps.materialize(), SAMPLE_RATE),
-        ));
+        let bytes = wav_bytes(&taps.materialize(), SAMPLE_RATE)
+            .map_err(|error| FiltersError::Invalid(format!("{stem}: {error}")))?;
+        files.push((filename.clone(), bytes));
         names.push((stem.to_owned(), filename));
     }
     Ok((names, files))

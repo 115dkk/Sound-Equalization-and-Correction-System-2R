@@ -1096,7 +1096,7 @@ fn serializers_match_oracle_text_exactly() {
                 } => secs_dsp::fir::lowrate_to_48k(taps_low, *fs_low),
                 _ => unreachable!(),
             };
-            secs_camilla::wav_bytes(&taps, 48_000)
+            secs_camilla::wav_bytes(&taps, 48_000).unwrap()
         };
         assert_apo_transfer(
             case,
@@ -1577,6 +1577,44 @@ impl FixedMarker for Op {
 }
 
 #[allow(dead_code)]
+#[test]
+fn fir_taps_that_overflow_f32_write_nothing_td45() {
+    // 1e100 is a finite f64 but becomes infinity in the f32 WAV.
+    let root = TempDir::new("f32_overflow");
+    let mut bad = f11_synthetic_chain(true, true, false);
+    bad.mains[0].fir[1] = 1e100;
+    let plan = make_plan_with_lfe(&bad, None, None, 120.0).unwrap();
+    let folder = root.0.join("eqapo");
+    let error = write_eqapo(&plan, &folder, "secs_mixed", "mode", "note", None).unwrap_err();
+    assert!(matches!(error, FiltersError::Invalid(_)), "{error}");
+    assert!(!folder.exists());
+    let folder = root.0.join("text");
+    let error = write_text(&plan, &folder, "filters.txt", "secs", "title", &[]).unwrap_err();
+    assert!(matches!(error, FiltersError::Invalid(_)), "{error}");
+    assert!(!folder.exists());
+
+    // A low-rate FIR is checked after its expansion to 48 kHz.
+    let chain = f11_synthetic_chain(true, false, true);
+    let mimo = MimoPaths {
+        fsiso: 120.0,
+        paths: vec![MimoPath {
+            input: "L".into(),
+            support: "SW1".into(),
+            filter: MimoFilter::FirLowRate {
+                taps_low: vec![1e100, 0.5, 0.25, 0.125],
+                fs_low: 1000.0,
+            },
+            low_hz: 30.0,
+            delay_ms: 0.0,
+        }],
+    };
+    let plan = make_plan_with_lfe(&chain, Some(&mimo), None, 120.0).unwrap();
+    let folder = root.0.join("eqapo_lowrate");
+    let error = write_eqapo(&plan, &folder, "secs_mixed", "mode", "note", None).unwrap_err();
+    assert!(matches!(error, FiltersError::Invalid(_)), "{error}");
+    assert!(!folder.exists());
+}
+
 fn _public_shapes(_: &SubFeed, _: &MimoFeed) {
     let _ = goldens();
 }
