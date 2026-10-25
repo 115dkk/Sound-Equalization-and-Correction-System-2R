@@ -403,7 +403,8 @@ pub fn assert_close(name: &str, got: &[f64], expected: &[f64], atol: f64, rtol: 
     );
     for (i, (&g, &e)) in got.iter().zip(expected).enumerate() {
         let same = g.is_nan() && e.is_nan() || g == e;
-        let near = (g - e).abs() <= atol + rtol * e.abs().max(1.0);
+        let near =
+            g.is_finite() && e.is_finite() && (g - e).abs() <= atol + rtol * e.abs().max(1.0);
         assert!(same || near, "{name}[{i}]: got {g:e}, expected {e:e}");
     }
 }
@@ -497,6 +498,41 @@ mod tests {
         fx.assert_digest("values", &v, &values);
         let changed = [1.5, 0.0, f64::NAN, 3.25];
         assert!(std::panic::catch_unwind(|| fx.assert_digest("changed", &v, &changed)).is_err());
+    }
+
+    #[test]
+    #[should_panic]
+    fn assert_close_rejects_finite_against_infinity_td25() {
+        assert_close("finite_inf", &[1.0], &[f64::INFINITY], 0.0, 1.0);
+    }
+
+    #[test]
+    #[should_panic]
+    fn assert_close_rejects_opposite_infinities_td25() {
+        assert_close(
+            "opposite_inf",
+            &[f64::INFINITY],
+            &[f64::NEG_INFINITY],
+            0.0,
+            1.0,
+        );
+    }
+
+    #[test]
+    #[should_panic]
+    fn assert_close_rejects_nan_against_finite_td25() {
+        assert_close("nan_finite", &[f64::NAN], &[1.0], 0.0, 1.0);
+    }
+
+    #[test]
+    fn assert_close_accepts_matching_nonfinite_values_td25() {
+        assert_close(
+            "matching_nonfinite",
+            &[f64::INFINITY, f64::NAN],
+            &[f64::INFINITY, f64::NAN],
+            0.0,
+            1.0,
+        );
     }
 
     #[test]
