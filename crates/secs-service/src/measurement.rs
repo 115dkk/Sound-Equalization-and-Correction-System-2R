@@ -273,6 +273,13 @@ impl Service {
         }
         let open_rew_devices = params.method == "rew";
         let rew_devices = (params.output_device.clone(), params.input_device.clone());
+        if open_rew_devices
+            && [&rew_devices.0, &rew_devices.1]
+                .into_iter()
+                .any(|name| name.as_ref().is_some_and(|name| !name.is_empty()))
+        {
+            self.refuse_while_measuring()?;
+        }
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
         let mut project = open.store.project().clone();
@@ -906,6 +913,7 @@ impl Service {
         if params.driver.trim().is_empty() {
             return Err(input("driver", "driver must not be empty"));
         }
+        self.refuse_while_measuring()?;
         let mut client = secs_rew::RewClient::new(Transport((self.deps.rew_transport)()));
         client.set_driver(&params.driver).map_err(|error| {
             measure_error(
@@ -916,6 +924,19 @@ impl Service {
             )
         })?;
         Ok(self.rew_info())
+    }
+
+    /// REW's driver and devices stay as they are while a measurement job
+    /// sweeps through REW (TD-91).
+    fn refuse_while_measuring(&self) -> Result<(), IpcError> {
+        match self.jobs.running_measurement() {
+            Some(kind) => Err(IpcError::new(
+                ErrorCode::JobBusy,
+                "a measurement job is using the audio devices",
+            )
+            .with_param("kind", format!("{kind:?}"))),
+            None => Ok(()),
+        }
     }
 
     pub(crate) fn rew_launch(&self) -> Result<RewStatusResult, IpcError> {

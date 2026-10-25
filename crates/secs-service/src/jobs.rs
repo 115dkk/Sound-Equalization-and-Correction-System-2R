@@ -266,6 +266,20 @@ impl JobRegistry {
             .any(|job| job.group == JobGroup::Device && !job.snapshot.status.is_terminal())
     }
 
+    /// The kind of a running measurement-group job other than the level
+    /// monitor, which the screen restarts itself (TD-91).
+    pub fn running_measurement(&self) -> Option<JobKind> {
+        lock(&self.inner)
+            .jobs
+            .iter()
+            .find(|job| {
+                job.group == JobGroup::Device
+                    && job.snapshot.kind != JobKind::LevelMonitor
+                    && !job.snapshot.status.is_terminal()
+            })
+            .map(|job| job.snapshot.kind)
+    }
+
     pub fn cancel_all(&self) {
         let mut inner = lock(&self.inner);
         for job in &mut inner.jobs {

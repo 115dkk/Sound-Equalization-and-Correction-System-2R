@@ -1119,7 +1119,7 @@ id = "ipc.measure_configure"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::configure_validates_fields_and_host_stub_reports_its_error", "secs-service::measure_configure_opens_selected_rew_device_after_project_update"]
+tests = ["secs-service::configure_validates_fields_and_host_stub_reports_its_error", "secs-service::measure_configure_opens_selected_rew_device_after_project_update", "secs-service::rew_driver_and_devices_stay_while_a_measurement_runs"]
 
 [[feature]]
 id = "ipc.measure_config_get"
@@ -1389,7 +1389,7 @@ kind = "ipc"
 milestone = "M5"
 status = "implemented"
 upstream = "rewapi/rew.py; wizard/step1_devices.py"
-tests = ["secs-service::rew_driver_set_validates_posts_and_refreshes_info", "secs-service::rew_driver_set_maps_transport_license_and_http_errors"]
+tests = ["secs-service::rew_driver_set_validates_posts_and_refreshes_info", "secs-service::rew_driver_set_maps_transport_license_and_http_errors", "secs-service::rew_driver_and_devices_stay_while_a_measurement_runs"]
 
 [[feature]]
 id = "ipc.mode_spec"

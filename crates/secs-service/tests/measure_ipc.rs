@@ -1436,3 +1436,89 @@ fn rew_level_check_reports_the_rew_peak() {
     assert_eq!(level.peak_dbfs, -1.0);
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn rew_driver_and_devices_stay_while_a_measurement_runs() {
+    let root = root("rew-busy");
+    let path = root.join("room.secs");
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let gate = Arc::new(Gate::default());
+    gate.release();
+    let service = Service::new(Deps {
+        rew_transport: {
+            let calls = calls.clone();
+            Arc::new(move || {
+                Box::new(ConfigureRewTransport {
+                    calls: calls.clone(),
+                    gate: gate.clone(),
+                })
+            })
+        },
+        ..Deps::default()
+    });
+    new(&service, &path);
+    set_start_delay(&path, 60);
+    call(
+        &service,
+        Request::ProjectOpen(ProjectPathParams {
+            path: path.to_string_lossy().into_owned(),
+        }),
+    );
+    configure(&service, "mock");
+    let set_driver = || {
+        Request::RewDriverSet(RewDriverSetParams {
+            driver: "Java".into(),
+        })
+    };
+    let switch_device = || {
+        Request::MeasureConfigure(MeasureConfigureParams {
+            method: "rew".into(),
+            output_device: Some("Selected Speakers".into()),
+            ..Default::default()
+        })
+    };
+
+    // A measurement waits in its start countdown.
+    let events = Arc::new(Events::default());
+    let job = measure(&service, 1, events.clone());
+    for request in [set_driver(), switch_device()] {
+        let method = request.method();
+        let Envelope::Err(error) = service.call(request, Arc::new(NoEvents)) else {
+            panic!("{method} must wait for the measurement");
+        };
+        assert_eq!(error.code, ErrorCode::JobBusy, "{method}");
+        assert_eq!(
+            error.params.get("kind").map(String::as_str),
+            Some("Measure"),
+            "{method}"
+        );
+    }
+    assert!(calls.lock().unwrap().is_empty(), "REW was called");
+    let Response::MeasureConfigGet(unchanged) = call(&service, Request::MeasureConfigGet) else {
+        panic!()
+    };
+    assert_eq!(unchanged.method, "mock");
+    call(&service, Request::JobCancel(JobCancelParams { job }));
+    events.wait(job, Duration::from_secs(5));
+
+    // The level monitor does not hold REW back: the screen restarts it.
+    let monitor_events = Arc::new(Events::default());
+    let Response::LevelMonitorStart(monitor) = ok(
+        &service,
+        Request::LevelMonitorStart(LevelMonitorStartParams::default()),
+        monitor_events.clone(),
+    ) else {
+        panic!()
+    };
+    assert!(matches!(
+        call(&service, set_driver()),
+        Response::RewDriverSet(_)
+    ));
+    let Response::MeasureConfigure(switched) = call(&service, switch_device()) else {
+        panic!()
+    };
+    assert_eq!(switched.output_device, "Selected Speakers");
+    call(&service, Request::LevelMonitorStop);
+    monitor_events.wait(monitor.job, Duration::from_secs(5));
+    fs::remove_dir_all(root).unwrap();
+}
