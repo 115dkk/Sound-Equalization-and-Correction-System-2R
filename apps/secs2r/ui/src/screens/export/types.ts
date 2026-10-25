@@ -97,6 +97,7 @@ export function mimoInclusion(view: ExportView): MimoInclusion {
 export function exportBlock(view: ExportView, kind: ExportKind): ExportBlock | null {
   const result = view.results.calibration;
   if (!result) return null;
+  if ((kind === "staged_mdat" || kind === "before_after_mdat") && result.cached && result.stale) return "stale_cache";
   const subs = result.sub_roles.length > 0;
   const mimo = mimoInclusion(view).included;
   if (kind === "filter_text" && subs) return "subs";

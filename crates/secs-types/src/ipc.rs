@@ -883,6 +883,10 @@ pub struct Notice {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct CalibrationSummary {
+    /// Whether this result was restored from the project cache instead of computed in this
+    /// session; staged and before/after mdat need a live design.
+    #[serde(default)]
+    pub cached: bool,
     /// Whether current project inputs differ from this result.
     pub stale: bool,
     /// Which input first differs: measurements, settings or target.
@@ -1032,6 +1036,9 @@ pub enum ExportBlock {
     Subs,
     /// The result includes MIMO; filter text does not carry it.
     Mimo,
+    /// The result was restored from the cache and is stale; mdat needs the measurements' spectra,
+    /// so it must be recalibrated first.
+    StaleCache,
 }
 
 impl ExportBlock {
@@ -1040,6 +1047,7 @@ impl ExportBlock {
         match self {
             Self::Subs => "subs",
             Self::Mimo => "mimo",
+            Self::StaleCache => "stale_cache",
         }
     }
 }
@@ -1060,6 +1068,22 @@ pub fn filter_export_block(
         ExportKind::FilterText if has_subs => Some(ExportBlock::Subs),
         ExportKind::FilterText if has_mimo => Some(ExportBlock::Mimo),
         _ => None,
+    }
+}
+
+/// Whether an export format can carry the current result. Stale cached
+/// calibration blocks mdat; filter formats retain [`filter_export_block`].
+pub fn export_block(
+    kind: ExportKind,
+    has_subs: bool,
+    has_mimo: bool,
+    stale_cache: bool,
+) -> Option<ExportBlock> {
+    match kind {
+        ExportKind::StagedMdat | ExportKind::BeforeAfterMdat if stale_cache => {
+            Some(ExportBlock::StaleCache)
+        }
+        _ => filter_export_block(kind, has_subs, has_mimo),
     }
 }
 /// The export bundle and destination folder.
@@ -2262,6 +2286,15 @@ mod tests {
             }
         }
         assert_eq!(filter_export_block(FilterText, false, false), None);
+        assert_eq!(
+            export_block(StagedMdat, false, false, true),
+            Some(ExportBlock::StaleCache)
+        );
+        assert_eq!(
+            export_block(BeforeAfterMdat, true, true, true),
+            Some(ExportBlock::StaleCache)
+        );
+        assert_eq!(export_block(CamillaDsp, true, true, true), None);
         assert_eq!(
             filter_export_block(FilterText, true, false),
             Some(ExportBlock::Subs)

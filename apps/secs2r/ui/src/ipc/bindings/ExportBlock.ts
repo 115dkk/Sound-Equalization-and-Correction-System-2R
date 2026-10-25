@@ -4,4 +4,4 @@
  * Why a filter export cannot carry the current result (upstream
  * `calibration.filter_export_block`).
  */
-export type ExportBlock = "subs" | "mimo";
+export type ExportBlock = "subs" | "mimo" | "stale_cache";

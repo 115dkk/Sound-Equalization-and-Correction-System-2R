@@ -493,8 +493,8 @@ fn resampled_calibration_and_cached_mdat_export_preserve_original_ir() {
         JobResult::Xo(_)
     ));
 
-    // Saving another preparation policy makes the result stale, but a cached
-    // mdat rebuild must still use the policy that produced the cached run.
+    // Saving another preparation policy makes the result stale. A stale cached
+    // design cannot be rebuilt for mdat until calibration runs again.
     call_ok(
         &service,
         Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
@@ -512,14 +512,20 @@ fn resampled_calibration_and_cached_mdat_export_preserve_original_ir() {
     let reopened = deterministic_service();
     open(&reopened, &path);
     assert!(read_results(&reopened).calibration.unwrap().stale);
-    let output = export_and_wait(
-        &reopened,
-        ExportKind::StagedMdat,
-        &root.join("cached-mdat"),
-        Arc::new(Events::default()),
+    let Envelope::Err(error) = reopened.call(
+        Request::Export(ExportParams {
+            kind: ExportKind::StagedMdat,
+            folder: root.join("cached-mdat").to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("stale cached mdat export must fail")
+    };
+    assert_eq!(error.code, ErrorCode::ExportScope);
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("stale_cache")
     );
-    assert!(output.stale);
-    assert!(!output.files.is_empty());
     assert_eq!(fs::read(&ir_path).unwrap(), original);
     assert_eq!(secs_project::read_wav_float32(&original).unwrap().1, 96_000);
     let saved_project: serde_json::Value =
@@ -1108,7 +1114,14 @@ fn stale_calibration_exports_with_flag_and_cache_survives_reopen() {
         other => panic!("unexpected results response: {other:?}"),
     };
     assert!(!cached.stale);
-    assert_eq!(cached, before);
+    assert!(cached.cached);
+    assert_eq!(
+        cached,
+        secs_types::ipc::CalibrationSummary {
+            cached: true,
+            ..before
+        }
+    );
 
     {
         let mut store = secs_project::MeasurementStore::open(&path).unwrap();
@@ -1143,15 +1156,21 @@ fn stale_calibration_exports_with_flag_and_cache_survives_reopen() {
     };
     assert!(stale.stale);
     assert_eq!(stale.stale_reason.as_deref(), Some("measurements"));
-    let export_events = Arc::new(Events::default());
-    let export = export_and_wait(
-        &running_service,
-        ExportKind::StagedMdat,
-        &root.join("stale-export"),
-        export_events,
+    assert!(stale.cached);
+    let Envelope::Err(error) = running_service.call(
+        Request::Export(ExportParams {
+            kind: ExportKind::StagedMdat,
+            folder: root.join("stale-export").to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("stale cached mdat export must fail")
+    };
+    assert_eq!(error.code, ErrorCode::ExportScope);
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("stale_cache")
     );
-    assert!(export.stale);
-    assert_eq!(Path::new(&export.folder), root.join("stale-export"));
 
     let changed_reopen = service();
     open(&changed_reopen, &path);
@@ -1927,6 +1946,109 @@ fn calibration_preserves_settings_edited_while_the_job_runs() {
     assert!(summary.stale);
     assert_eq!(summary.stale_reason.as_deref(), Some("settings"));
 
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn reopened_fresh_cache_keeps_mimo_in_mdat() {
+    let root = temp_root("fresh-cached-mimo-mdat");
+    fs::create_dir_all(&root).unwrap();
+    let (source, mut settings) = write_case(&root, "room_dba");
+    settings.mimo_on = true;
+    settings.mimo_max_supports = 1;
+    let mut store = secs_project::MeasurementStore::open(&source).unwrap();
+    let mut project_settings = secs_project::calibration_from_project(store.project());
+    project_settings.mimo_on = true;
+    project_settings.mimo_max_supports = 1;
+    secs_project::store_calibration(store.project_mut(), &project_settings);
+    store.save().unwrap();
+    let running = deterministic_service();
+    open(&running, &source);
+    calibrate_and_run_mimo(&running, &settings);
+
+    let live_folder = root.join("live-mdat");
+    let live = export_and_wait(
+        &running,
+        ExportKind::StagedMdat,
+        &live_folder,
+        Arc::new(Events::default()),
+    );
+    let live_snapshot = snapshot_relative_files(&live_folder, &live.files);
+
+    let reopened = deterministic_service();
+    open(&reopened, &source);
+    let cached = read_results(&reopened);
+    assert!(cached.calibration.unwrap().cached);
+    assert!(!cached.mimo.unwrap().stale);
+    let reopened_folder = root.join("reopened-mdat");
+    let reopened_export = export_and_wait(
+        &reopened,
+        ExportKind::StagedMdat,
+        &reopened_folder,
+        Arc::new(Events::default()),
+    );
+    let reopened_snapshot = snapshot_relative_files(&reopened_folder, &reopened_export.files);
+    assert_eq!(
+        live_snapshot
+            .iter()
+            .map(|(_, bytes)| bytes)
+            .collect::<Vec<_>>(),
+        reopened_snapshot
+            .iter()
+            .map(|(_, bytes)| bytes)
+            .collect::<Vec<_>>()
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn reopened_stale_cache_blocks_mdat_but_allows_camilla() {
+    let root = temp_root("stale-cached-mdat");
+    fs::create_dir_all(&root).unwrap();
+    let (source, settings) = write_case(&root, "dolby");
+    let running = service();
+    open(&running, &source);
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&running, calibration_events.clone(), settings.clone());
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+
+    let reopened = service();
+    open(&reopened, &source);
+    call_ok(
+        &reopened,
+        Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+            edit: secs_types::settings_edit::SettingEdit::RcLo {
+                hz: settings.rc_lo + 5.0,
+            },
+        }),
+        Arc::new(NoEvents),
+    );
+    let summary = read_results(&reopened).calibration.unwrap();
+    assert!(summary.cached);
+    assert!(summary.stale);
+
+    let Envelope::Err(error) = reopened.call(
+        Request::Export(ExportParams {
+            kind: ExportKind::StagedMdat,
+            folder: root.join("blocked-mdat").to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("stale cached mdat must be blocked")
+    };
+    assert_eq!(error.code, ErrorCode::ExportScope);
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("stale_cache")
+    );
+
+    let camilla = export_and_wait(
+        &reopened,
+        ExportKind::CamillaDsp,
+        &root.join("camilla"),
+        Arc::new(Events::default()),
+    );
+    assert!(camilla.stale);
     fs::remove_dir_all(root).unwrap();
 }
 

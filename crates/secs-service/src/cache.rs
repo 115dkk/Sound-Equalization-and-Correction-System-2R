@@ -272,6 +272,7 @@ mod tests {
     fn sample() -> CachedResults {
         CachedResults {
             calibration: CalibrationSummary {
+                cached: false,
                 stale: false,
                 stale_reason: None,
                 mode: secs_types::calibration::Mode::Mixed,

@@ -60,6 +60,8 @@ const KIND_TEXT: Record<ExportKind, { title: MessageKey; body: MessageKey; run?:
 /** Why a filter format cannot carry this result: only these pairs occur (`exportBlock`). */
 const BLOCK_TEXT: Partial<Record<ExportKind, Partial<Record<ExportBlock, MessageKey>>>> = {
   filter_text: { subs: "export.blocked.filter_text.subs", mimo: "export.blocked.filter_text.mimo" },
+  staged_mdat: { stale_cache: "export.blocked.mdat.stale_cache" },
+  before_after_mdat: { stale_cache: "export.blocked.mdat.stale_cache" },
 };
 
 const MIMO_REASON: Record<Extract<MimoInclusion, { included: false }>["reason"], MessageKey> = {

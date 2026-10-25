@@ -9,6 +9,11 @@ import type { VerdictSummary } from "./VerdictSummary";
  */
 export type CalibrationSummary = { 
 /**
+ * Whether this result was restored from the project cache instead of computed in this
+ * session; staged and before/after mdat need a live design.
+ */
+cached: boolean, 
+/**
  * Whether current project inputs differ from this result.
  */
 stale: boolean, 

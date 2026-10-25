@@ -409,6 +409,7 @@ fn summarize(design: &Design, settings: &CalibrationSettings) -> CalibrationSumm
             / count
     };
     CalibrationSummary {
+        cached: false,
         stale: false,
         stale_reason: None,
         mode: settings.mode,
@@ -721,6 +722,7 @@ fn summaries(
     let calibration = live_calibration.or_else(|| {
         cached.map(|cached| {
             let mut summary = cached.calibration.clone();
+            summary.cached = true;
             summary.stale_reason = cached_stale_reason(cached, project).map(str::to_owned);
             summary.stale = summary.stale_reason.is_some();
             summary

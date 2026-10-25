@@ -554,7 +554,11 @@ fn full_run(runner: &mut Runner, out: &Path, project: Option<&Path>, fill: FillC
         (ExportKind::FilterText, "filter-text"),
         (ExportKind::EqualizerApo, "equalizer-apo"),
     ] {
-        if let Some(block) = secs_types::ipc::filter_export_block(kind, has_subs, has_mimo) {
+        let stale_cache = results
+            .as_ref()
+            .and_then(|results| results.calibration.as_ref())
+            .is_some_and(|calibration| calibration.cached && calibration.stale);
+        if let Some(block) = secs_types::ipc::export_block(kind, has_subs, has_mimo, stale_cache) {
             print_json(&serde_json::json!({"reply": {
                 "ok": true,
                 "data": {

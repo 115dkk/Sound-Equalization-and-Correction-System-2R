@@ -1112,6 +1112,7 @@
   "export.kind.equalizer_apo.run": "EqAPO 설정 저장",
   "export.blocked.filter_text.subs": "서브(BA)가 있는 결과는 텍스트로 내보낼 수 없습니다. CamillaDSP나 Equalizer APO 설정으로 내보내세요.",
   "export.blocked.filter_text.mimo": "MIMO를 켠 결과는 텍스트로 내보낼 수 없습니다. 보정에서 MIMO를 끄면 내보낼 수 있습니다.",
+  "export.blocked.mdat.stale_cache": "구 버전에서 측정한 값입니다. mdat으로 내보내려면 다시 보정해야 합니다.",
   "export.run.busy": "저장하는 중",
   "export.run.done": "파일 {count}개 저장 → {path}",
   "export.run.tutorial": "저장하지 않음 · 튜토리얼",

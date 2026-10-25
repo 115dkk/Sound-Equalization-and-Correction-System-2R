@@ -29,11 +29,22 @@ describe("export scope (the service's filter_export_block)", () => {
     expect(judged(exportMimoNoSubs)).toEqual({ ...open, filter_text: "mimo", equalizer_apo: null });
   });
 
-  it("counts MIMO only when it goes into the export, and blocks nothing without a result", () => {
+  it("counts MIMO only when it goes into the export, and blocks stale cached mdat", () => {
     // Fewer than three positions, or a stale MIMO: left out, so it blocks nothing.
     expect(exportBlock({ ...exportMimoNoSubs, positions: 2 }, "filter_text")).toBeNull();
     expect(exportBlock({ ...exportMimoNoSubs, results: { ...exportMimoNoSubs.results, mimo: { ...exportMimoNoSubs.results.mimo!, stale: true } } }, "filter_text")).toBeNull();
     expect(exportBlock(exportStale, "equalizer_apo")).toBeNull();
+    const staleCached = {
+      ...exportStale,
+      results: { ...exportStale.results, calibration: { ...exportStale.results.calibration!, cached: true } },
+    };
+    expect(judged(staleCached)).toEqual({
+      camilla_dsp: null,
+      filter_text: "subs",
+      equalizer_apo: null,
+      before_after_mdat: "stale_cache",
+      staged_mdat: "stale_cache",
+    });
     expect(judged(exportNoResult)).toEqual(Object.fromEntries(EXPORT_KINDS.map((kind) => [kind, null])));
   });
 

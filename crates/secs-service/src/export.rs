@@ -55,7 +55,6 @@ impl Service {
         let cached_mimo = cached
             .filter(|cache| {
                 live.is_none()
-                    && !mdat
                     && cache.mimo_compute_key == compute_key
                     && mimo_eligible(
                         &settings,
@@ -126,7 +125,7 @@ impl Service {
             .map(|calibration| mode_name(calibration.settings.mode).to_owned())
             .or_else(|| cached.map(|cache| cache.labels.mode.clone()))
             .unwrap_or_else(|| "mixed".into());
-        let mimo = live_mimo.filter(|_| mdat).map(|result| MimoResponses {
+        let mut mimo = live_mimo.filter(|_| mdat).map(|result| MimoResponses {
             kind: if result.run.fir {
                 MimoKind::Fir
             } else {
@@ -141,6 +140,7 @@ impl Service {
             paths: result.run.paths.clone(),
             applied: result.run.applied.clone(),
         });
+        let cached_mimo_paths = cached_mimo.cloned();
         let mut export_mimo = if mdat {
             None
         } else {
@@ -164,10 +164,11 @@ impl Service {
             .map(|calibration| &calibration.design.chain)
             .or_else(|| cached.map(|cache| &cache.calibration_chain))
             .expect("live or cached calibration checked above");
-        if let Some(block) = secs_types::ipc::filter_export_block(
+        if let Some(block) = secs_types::ipc::export_block(
             params.kind,
             !export_chain.subs.is_empty(),
             includes_mimo,
+            live.is_none() && stale,
         ) {
             return Err(IpcError::new(
                 ErrorCode::ExportScope,
@@ -316,6 +317,15 @@ impl Service {
                             let design = secs_engine::design(&request, &ctx, fitters.as_ref())
                                 .map_err(super::calibration::engine_error)?;
                             job.report_progress("design", 1, 1);
+                            if let Some(paths) = cached_mimo_paths.as_ref() {
+                                mimo = Some(cached_mimo_responses(
+                                    &design,
+                                    &prepared.1,
+                                    &prepared.2,
+                                    paths,
+                                    settings.mimo_max_supports,
+                                )?);
+                            }
                             (Arc::new(design), prepared.1, prepared.2, prepared.0)
                         };
                     job.begin_commit()?;
@@ -436,6 +446,152 @@ fn cached_filter_values(
         ),
         stamp,
     }
+}
+
+fn cached_mimo_responses(
+    design: &secs_engine::Design,
+    measurements: &secs_engine::MeasurementSet,
+    config: &secs_engine::EngineConfig,
+    paths: &MimoPaths,
+    mimo_max_supports: i64,
+) -> Result<MimoResponses, IpcError> {
+    let view = secs_engine::export_view(design, measurements, config)
+        .map_err(super::calibration::engine_error)?;
+    let frequencies = secs_engine::grid::design_freqs();
+    let mut applied = Vec::new();
+    for main in &design.chain.mains {
+        let base = secs_engine::stage_responses(
+            design,
+            &main.role,
+            &view.spectra,
+            design.spectra.main_position,
+        )
+        .ok_or_else(|| IpcError::new(ErrorCode::EngineInput, "missing MIMO final response"))?
+        .output;
+        let mut response = base;
+        for path in paths.paths.iter().filter(|path| path.input == main.role) {
+            let support = view
+                .spectra
+                .get(design.spectra.main_position, &path.support)
+                .ok_or_else(|| {
+                    IpcError::new(
+                        ErrorCode::EngineInput,
+                        format!("missing MIMO support response {}", path.support),
+                    )
+                })?;
+            let delay_ms = path.delay_ms - design.chain.main_extra_ms;
+            let delay = delay_response(delay_ms, frequencies);
+            let high_pass = secs_dsp::response::lr4(frequencies, path.low_hz, "HP");
+            let electrical = cached_mimo_filter_response(&path.filter, frequencies, paths.fsiso)?;
+            for ((((output, acoustic), delay), high_pass), electrical) in response
+                .iter_mut()
+                .zip(support.iter())
+                .zip(delay)
+                .zip(high_pass)
+                .zip(electrical)
+            {
+                *output += acoustic * delay * high_pass * electrical;
+            }
+        }
+        applied.push((main.role.clone(), response));
+    }
+    Ok(MimoResponses {
+        kind: if paths.paths.iter().any(|path| path.filter.is_fir()) {
+            MimoKind::Fir
+        } else {
+            MimoKind::Iir
+        },
+        fsiso: paths.fsiso,
+        cap_text: if mimo_max_supports == 0 {
+            String::new()
+        } else {
+            format!("max {}", mimo_max_supports.max(0))
+        },
+        paths: paths.clone(),
+        applied,
+    })
+}
+
+fn delay_response(ms: f64, frequencies: &[f64]) -> Vec<secs_engine::C> {
+    frequencies
+        .iter()
+        .map(|&frequency| {
+            secs_engine::C::from_polar(1.0, (-2.0 * std::f64::consts::PI * frequency) * ms * 0.001)
+        })
+        .collect()
+}
+
+fn cached_mimo_filter_response(
+    filter: &secs_types::chain::MimoFilter,
+    frequencies: &[f64],
+    fsiso: f64,
+) -> Result<Vec<secs_engine::C>, IpcError> {
+    use secs_types::chain::MimoFilter;
+
+    Ok(match filter {
+        MimoFilter::Iir {
+            gain_db,
+            delay_ms,
+            polarity,
+            peq,
+            allpass,
+        } => {
+            let gain = f64::from(*polarity) * 10_f64.powf(gain_db / 20.0);
+            let mut response: Vec<_> = delay_response(*delay_ms, frequencies)
+                .into_iter()
+                .map(|value| value * gain)
+                .collect();
+            for &(frequency, q, gain_db) in peq {
+                for (value, filter) in
+                    response
+                        .iter_mut()
+                        .zip(secs_dsp::response::peaking_response(
+                            frequencies,
+                            frequency,
+                            q,
+                            gain_db,
+                            secs_engine::grid::SR_F,
+                        ))
+                {
+                    *value *= filter;
+                }
+            }
+            for &(frequency, q) in allpass {
+                for (value, filter) in
+                    response
+                        .iter_mut()
+                        .zip(secs_dsp::response::allpass2(frequencies, frequency, q))
+                {
+                    *value *= filter;
+                }
+            }
+            for (value, filter) in
+                response
+                    .iter_mut()
+                    .zip(secs_dsp::response::lr4(frequencies, fsiso, "LP"))
+            {
+                *value *= filter;
+            }
+            response
+        }
+        MimoFilter::Fir { taps_48k } => {
+            let n = 2 * frequencies.len().saturating_sub(1);
+            let mut padded = vec![0.0; n];
+            let count = n.min(taps_48k.len());
+            padded[..count].copy_from_slice(&taps_48k[..count]);
+            secs_dsp::fft::rfft(&padded)
+        }
+        MimoFilter::FirLowRate { taps_low, fs_low } => {
+            if !fs_low.is_finite() || *fs_low <= 0.0 || taps_low.iter().any(|tap| !tap.is_finite())
+            {
+                return Err(IpcError::new(
+                    ErrorCode::ExportFailed,
+                    "invalid cached MIMO FIR recipe",
+                ));
+            }
+            secs_dsp::fir::lowrate_response(taps_low, *fs_low, frequencies)
+        }
+    })
 }
 
 fn mimo_eligible(

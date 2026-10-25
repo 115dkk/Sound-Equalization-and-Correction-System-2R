@@ -157,6 +157,7 @@ export const signalChain: SignalChain = {
 };
 
 export const calibrationSummary: CalibrationSummary = {
+  cached: false,
   stale: false,
   stale_reason: null,
   mode: "mixed",
