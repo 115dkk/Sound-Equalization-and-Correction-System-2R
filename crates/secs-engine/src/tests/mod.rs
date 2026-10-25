@@ -18,6 +18,7 @@ mod prep;
 mod preview;
 mod rc;
 mod replay;
+mod replay_cached_mimo;
 mod scorecard;
 mod xo;
 

@@ -79,6 +79,16 @@ impl DesignReplay {
         (samples, t0)
     }
 
+    /// Applies cached IIR, full-rate FIR or low-rate FIR support paths to the
+    /// long-window responses. `design` must be the design that owns this replay.
+    pub fn mimo_responses(
+        &self,
+        design: &Design,
+        paths: &secs_types::chain::MimoPaths,
+    ) -> Result<Vec<(String, Vec<crate::C>)>, EngineError> {
+        crate::replay_mimo::responses(design, &self.export_view(design)?, paths)
+    }
+
     pub(crate) fn export_view_until(
         &self,
         design: &Design,

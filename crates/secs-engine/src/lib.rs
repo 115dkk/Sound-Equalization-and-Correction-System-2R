@@ -67,6 +67,7 @@ pub mod preview;
 #[allow(dead_code)]
 mod rc;
 mod replay;
+mod replay_mimo;
 #[allow(dead_code)]
 mod scorecard;
 #[allow(dead_code)]

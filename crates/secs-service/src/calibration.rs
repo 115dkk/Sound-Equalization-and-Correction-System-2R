@@ -2,8 +2,8 @@ use std::sync::{Arc, Mutex};
 
 use secs_compute::{Context, FixedMemory, MemoryBudget};
 use secs_engine::{
-    CalibrationRequest, Design, EngineConfig, Measurement, MeasurementSet, Metrics, ProjectView,
-    Samples, Tuning, calibrate,
+    CalibrationRequest, Design, Measurement, MeasurementSet, Metrics, ProjectView, Samples, Tuning,
+    calibrate,
 };
 use secs_project::{
     Project, calibration_from_project, measurement_signature, store_calibration, target_key,
@@ -28,8 +28,6 @@ pub(crate) struct CalibrationRun {
     pub config_key: String,
     pub run_key: String,
     pub design: Arc<Design>,
-    pub measurements: MeasurementSet,
-    pub config: EngineConfig,
 }
 
 #[derive(Debug)]
@@ -130,8 +128,6 @@ impl Service {
                     target_key: prepared.target_key,
                     config_key: prepared.config_key,
                     design: Arc::new(design),
-                    measurements: calibration.measurements,
-                    config: calibration.config,
                 };
                 let mut state = lock(&results);
                 if subs_only {
@@ -230,8 +226,6 @@ impl Service {
         }
         let calibration_key = calibration.run_key.clone();
         let design = calibration.design.clone();
-        let measurements = calibration.measurements.clone();
-        let config = calibration.config.clone();
         drop(state);
         drop(session_guard);
         let memory = self.deps.memory.available_bytes();
@@ -241,8 +235,8 @@ impl Service {
             let ctx = compute_context(&job, memory);
             let run = secs_engine::mimo::compute_with_acceleration(
                 &design,
-                &measurements,
-                &config,
+                design.replay.measurements(),
+                design.replay.config(),
                 &settings,
                 &Tuning::default(),
                 &ctx,

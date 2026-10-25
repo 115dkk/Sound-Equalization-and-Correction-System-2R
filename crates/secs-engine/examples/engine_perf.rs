@@ -46,6 +46,8 @@ mod preview;
 mod rc;
 #[path = "../src/replay.rs"]
 mod replay;
+#[path = "../src/replay_mimo.rs"]
+mod replay_mimo;
 #[path = "../src/scorecard.rs"]
 mod scorecard;
 #[path = "../src/setup.rs"]
