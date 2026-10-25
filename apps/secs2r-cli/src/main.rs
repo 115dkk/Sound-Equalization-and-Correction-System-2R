@@ -67,7 +67,7 @@ enum Action {
     Calibrate { project: PathBuf },
     /// Recommend crossover frequencies.
     RecommendXo { project: PathBuf },
-    /// Compute MIMO support paths.
+    /// Calibrate first, then compute MIMO support paths.
     Mimo { project: PathBuf },
     /// Write one export bundle.
     Export {
@@ -445,6 +445,7 @@ fn run(action: Action, runner: &mut Runner) {
         }
         Action::Mimo { project } => {
             runner.open(&project);
+            runner.calibrate(None);
             runner.call(Request::Mimo(MimoParams::default()));
             runner.call(Request::Results);
         }
