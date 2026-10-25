@@ -10,19 +10,17 @@ import { useConnectScreen } from "./useConnectScreen";
 
 let mock: ReturnType<typeof createMockService>;
 let session: ReturnType<typeof createSession>;
-let pending: Promise<unknown>[];
 const ticks = (count: number) => { for (let i = 0; i < count; i++) mock.tick(); };
 const wrapper = ({ children }: { children: ReactNode }) => <SessionProvider value={session}>{children}</SessionProvider>;
 async function perform(work: () => unknown) {
-  await act(async () => { await work(); while (pending.length) await Promise.all(pending.splice(0)); });
+  await act(async () => { await work(); await session.settled(); });
 }
 beforeEach(async () => {
   mock = createMockService({ tickMs: 0 }); session = createSession(mock); await session.start();
-  pending = []; vi.spyOn(session, "run").mockImplementation((work) => { pending.push(work().catch(() => {})); });
   mock.calls.length = 0;
 });
 afterEach(async () => {
-  cleanup(); while (pending.length) await Promise.all(pending.splice(0));
+  cleanup(); await session.settled();
   await session.monitor(false); session.dispose(); mock.dispose(); vi.restoreAllMocks(); vi.useRealTimers();
 });
 
@@ -234,7 +232,7 @@ describe("useConnectScreen", () => {
     await waitFor(() => expect(releases).toHaveLength(1));
     expect(mock.calls.filter((call) => call.method === "level_play")).toHaveLength(1);
     act(() => result.current.actions.stopLevel());
-    await act(async () => { releases[0]!(); while (pending.length) await Promise.all(pending.splice(0)); });
+    await act(async () => { releases[0]!(); await session.settled(); });
     expect(mock.calls.filter((call) => call.method === "level_play")).toHaveLength(1);
     expect(result.current.view?.level).toMatchObject({ playing: null, playingAll: false });
   });

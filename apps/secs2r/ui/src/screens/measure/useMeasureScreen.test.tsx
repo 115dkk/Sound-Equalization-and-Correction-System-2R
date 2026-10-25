@@ -11,14 +11,12 @@ import type { JobKind } from "../../ipc/bindings/JobKind";
 
 let mock: ReturnType<typeof createMockService>;
 let session: ReturnType<typeof createSession>;
-let pending: Promise<unknown>[];
 const wrapper = ({ children }: { children: ReactNode }) => <SessionProvider value={session}>{children}</SessionProvider>;
 async function perform(work: () => unknown) {
-  await act(async () => { await work(); while (pending.length) await Promise.all(pending.splice(0)); });
+  await act(async () => { await work(); await session.settled(); });
 }
 beforeEach(async () => {
   mock = createMockService({ tickMs: 0 }); session = createSession(mock); await session.start();
-  pending = []; vi.spyOn(session, "run").mockImplementation((work) => { pending.push(work().catch(() => {})); });
   mock.calls.length = 0;
 });
 afterEach(async () => { cleanup(); await session.monitor(false); session.dispose(); mock.dispose(); vi.restoreAllMocks(); });

@@ -8,7 +8,6 @@ import { SessionProvider } from "../../state/react";
 import { useMeasureScreen } from "../../screens/measure/useMeasureScreen";
 import { useJobs } from "./useJobs";
 
-const settle = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
 describe("tray ledger view", () => {
   it("shares one startup read and event subscription across mounts and stops only its display clock on unmount", async () => {
@@ -18,7 +17,7 @@ describe("tray ledger view", () => {
     const session = createSession(mock);
     const wrapper = ({ children }: { children: ReactNode }) => <SessionProvider value={session}>{children}</SessionProvider>;
     try {
-      await session.start(); await settle();
+      await session.start(); await session.settled();
       const first = renderHook(() => useJobs(), { wrapper });
       const second = renderHook(() => useJobs(), { wrapper });
       expect(mock.calls.filter((call) => call.method === "jobs")).toHaveLength(1);
@@ -32,13 +31,13 @@ describe("tray ledger view", () => {
       expect(first.result.current.now).toBe(before + 1000);
       first.unmount(); second.unmount();
       expect(vi.getTimerCount()).toBe(0);
-      await act(async () => { mock.drain(); await settle(); });
+      await act(async () => { mock.drain(); await session.settled(); });
       const remount = renderHook(() => useJobs(), { wrapper });
       expect(remount.result.current.state.history.some((entry) => entry.type === "finished" && entry.job === job)).toBe(true);
       expect(mock.calls.filter((call) => call.method === "jobs")).toHaveLength(1);
       expect(subscribe).toHaveBeenCalledTimes(1);
       remount.unmount();
-    } finally { session.dispose(); await settle(); mock.dispose(); }
+    } finally { session.dispose(); await session.settled(); mock.dispose(); }
   });
 
   it("shares tray cancellation with the measure view and clears history for every tray consumer", async () => {
@@ -55,13 +54,13 @@ describe("tray ledger view", () => {
       await act(async () => { first.result.current.tray.cancel(job); });
       expect(first.result.current.measure.view?.job?.status).toBe("cancel_requested");
       expect(second.result.current.state.jobs[0]?.status).toBe("cancel_requested");
-      await act(async () => { mock.tick(); await settle(); });
+      await act(async () => { mock.tick(); await session.settled(); });
       expect(first.result.current.measure.view?.job).toBeNull();
       expect(second.result.current.state.history).toEqual([expect.objectContaining({ type: "finished", status: "cancelled", job })]);
       act(() => first.result.current.tray.clearHistory());
       expect(second.result.current.state.history).toEqual([]);
       expect(session.jobs.getSnapshot().history).toEqual([]);
       first.unmount(); second.unmount();
-    } finally { session.dispose(); await settle(); mock.dispose(); }
+    } finally { session.dispose(); await session.settled(); mock.dispose(); }
   });
 });
