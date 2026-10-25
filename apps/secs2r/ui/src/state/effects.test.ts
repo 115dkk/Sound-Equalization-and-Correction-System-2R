@@ -143,7 +143,7 @@ it("settled includes export completion's nested folder request", async () => {
     expect(done).toBe(false);
     expect(session.host.getSnapshot().runs.camilla_dsp?.status).toBe("done");
     release(); await waiting;
-    expect(mock.calls).toContainEqual({ method: "open_folder", params: { path: "/export/camilladsp" } });
+    expect(mock.calls).toContainEqual({ method: "open_folder", params: { path: "/export" } });
   } finally { release(); vi.restoreAllMocks(); session.dispose(); await session.settled(); mock.dispose(); }
 });
 
@@ -246,8 +246,8 @@ const finishedCases = [
     mock.drain(); await session.settled();
     await session.call({ method: "export", params: { kind: "camilla_dsp", folder: "/export" } });
     mock.drain(); await session.settled();
-    expect(session.host.getSnapshot().runs.camilla_dsp).toMatchObject({ status: "done", folder: "/export/camilladsp" });
-    expect(mock.calls).toContainEqual({ method: "open_folder", params: { path: "/export/camilladsp" } });
+    expect(session.host.getSnapshot().runs.camilla_dsp).toMatchObject({ status: "done", folder: "/export" });
+    expect(mock.calls).toContainEqual({ method: "open_folder", params: { path: "/export" } });
   } },
   { name: "xo.recalibrate", trigger: { finished: "recommend_xo", status: "succeeded" }, run: async (session, mock) => {
     await session.call({ method: "recommend_xo" });

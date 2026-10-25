@@ -3,6 +3,7 @@ import type { JobEvent } from "./bindings/JobEvent";
 import type { Request } from "./bindings/Request";
 import type { MeasureConfigureParams } from "./bindings/MeasureConfigureParams";
 import type { SettingEdit } from "./bindings/SettingEdit";
+import { CALIBRATION_LIMITS } from "./bindings/rules";
 import { createMockService } from "./mock";
 import * as fx from "./fixtures";
 
@@ -113,7 +114,9 @@ describe("P33 mock wiring", () => {
     await mock.request({ method: "export_folder_set", params: { folder: "/exports" } });
     expect(await mock.request({ method: "export_folder_get" })).toEqual({ folder: "/exports", stored: true });
     await mock.request({ method: "export", params: { kind: "camilla_dsp", folder: "" } }); mock.drain();
-    expect(events.at(-1)).toMatchObject({ result: { kind: "export", data: { folder: "/exports/camilladsp", files: ["/exports/camilladsp/secs_camilladsp.yml", "/exports/camilladsp/fir_L.wav"], stale: true } } });
+    // export_folder.rs: a timestamped folder below the stored base, CamillaDSP in its `camilladsp`.
+    const folder = expect.stringMatching(/^\/exports\/SECS_camilla_RC_BA_linear_\d{8}-\d{6}\/camilladsp$/);
+    expect(events.at(-1)).toMatchObject({ result: { kind: "export", data: { folder, files: [expect.stringMatching(/camilladsp\/secs_camilladsp\.yml$/), expect.stringMatching(/camilladsp\/fir_L\.wav$/)], stale: true } } });
     mock.failJobs("measure", "device_unavailable");
     await mock.request({ method: "measure_position", params: { position: 7 } }); mock.drain();
     expect(events.at(-1)).toMatchObject({ status: "failed", error: { code: "device_unavailable" } });
@@ -135,7 +138,7 @@ describe("P33 mock wiring", () => {
       mimo_max: { kind: "mimo_max", count: 4 }, mimo_fir: { kind: "mimo_fir", on: true },
     } satisfies { [K in SettingEdit["kind"]]: Extract<SettingEdit, { kind: K }> };
     for (const edit of Object.values(edits)) await mock.request({ method: "calibration_settings_edit", params: { edit } });
-    expect(await mock.request({ method: "calibration_settings_get" })).toMatchObject({ mode: "ultra", sample_rate_policy: "resample", ultra_ms: 200, room_volume_m3: 60, room_dims_m: [5, 4, 3], mimo_on: true, mimo_fir: true, subs_manual: { SW1: { mode: "bundle", gain_db: -4, hp_hz: 0 } } });
+    expect(await mock.request({ method: "calibration_settings_get" })).toMatchObject({ mode: "ultra", sample_rate_policy: "resample", ultra_ms: CALIBRATION_LIMITS.ultra_ms[1], room_volume_m3: 60, room_dims_m: [5, 4, 3], mimo_on: true, mimo_fir: true, subs_manual: { SW1: { mode: "bundle", gain_db: -4, hp_hz: 0 } } });
   });
 
   it("answers every generated Request variant with its tagged typed response", async () => {

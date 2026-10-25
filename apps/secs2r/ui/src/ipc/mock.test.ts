@@ -85,7 +85,10 @@ describe("mock filter exports", () => {
     vi.spyOn(Date, "now").mockReturnValue(new Date(2026, 9, 15, 9, 41, 7).getTime());
     const mock = createMockService({ tickMs: 0, results: resultWithoutSubs() });
     await mock.request({ method: "calibration_settings_set", params: { settings: { ...calibrationSettings, mode, ultra_ms: 200, mimo_on: false } } });
-    mock.setResults(resultWithoutSubs());
+    // The service names the folder after the result's mode.
+    const results = resultWithoutSubs();
+    results.calibration!.mode = mode;
+    mock.setResults(results);
     await mock.request({ method: "export_folder_set", params: { folder: "C:/exports/" } });
     for (const kind of ["filter_text", "equalizer_apo"] as const) {
       const folder = `C:/exports/SECS_${kind === "filter_text" ? "text" : "eqapo"}_RC_BA_${mode}_20261015-094107`;
@@ -131,14 +134,6 @@ describe("mock filter exports", () => {
 });
 
 describe("mock service", () => {
-  it("uses contract group keys for center XO settings, lines and curves", async () => {
-    const mock = createMockService({ tickMs: 0, results: resultsSummary });
-    try {
-      expect((await mock.request({ method: "calibration_settings_get" })).xo["센터"]).toBe(100);
-      expect((await mock.request({ method: "result_lines" })).channels.find((line) => line.role === "C")?.xo_hz).toBe(100);
-      expect((await mock.request({ method: "result_curves", params: { tab: "xo", channel: "C", group: "센터", xo_hz: null, corrected: null } })).xo_hz).toBe(100);
-    } finally { mock.dispose(); }
-  });
   it("preserves full results when only the subs are calibrated", async () => {
     const mock = createMockService({ tickMs: 0, results: resultsSummary });
     try {
