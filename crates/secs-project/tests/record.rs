@@ -155,6 +155,20 @@ fn measurement_session_saved_bytes_match_upstream_after_every_step() {
 }
 
 #[test]
+fn malformed_spl_offset_is_repaired_before_recording_td20() {
+    let (_directory, _path, mut store, _roles) = setup();
+    let mut project = Project::from_preset("2.0").unwrap();
+    project.measurements = PyJson::Array(vec![PyJson::Object(vec![
+        ("pos".into(), PyJson::Int("1".into())),
+        ("spl_offset".into(), PyJson::Null),
+    ])]);
+    *store.project_mut() = project;
+
+    let recorded = store.record(result("L", 1, "offset"), None).unwrap();
+    assert_eq!(recorded.spl_offset.get("L"), Some(&116.1));
+}
+
+#[test]
 fn test_run_plan_writes_secs_and_ir_files() {
     let (_directory, path, mut store, roles) = setup();
     for pos in [1, 2] {

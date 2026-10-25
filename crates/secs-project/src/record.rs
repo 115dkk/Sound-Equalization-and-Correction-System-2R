@@ -934,6 +934,9 @@ fn repair_entry(object: &mut Vec<(String, PyJson)>, pos: i64, label: String) {
             set_value(object, key, PyJson::Object(Vec::new()));
         }
     }
+    if value_for(object, "spl_offset").is_some_and(|value| !matches!(value, PyJson::Object(_))) {
+        set_value(object, "spl_offset", PyJson::Object(Vec::new()));
+    }
     setdefault_value(object, "done", PyJson::Bool(false));
     setdefault_value(object, "sample_rate", PyJson::Null);
 }
