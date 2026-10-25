@@ -459,7 +459,8 @@ pub fn mimo_acoustic_metrics(
 ) -> Result<Vec<MimoAcousticMetrics>, crate::EngineError> {
     use crate::mimo::{self, design as md, iir};
     use secs_types::chain::MimoFilter;
-    let prepared = mimo::prepared::Prepared::new(&case.design, &case.measurements, &case.config)?;
+    let prepared =
+        mimo::prepared::Prepared::new(&case.design, &case.measurements, &case.config, ctx)?;
     let req = run.key.request();
     let mut metrics = Vec::new();
     for (input, ideal_supports) in &run.ideal.supports {

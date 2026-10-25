@@ -9,6 +9,44 @@ use std::{f64::consts::PI, sync::Arc};
 
 pub const WINDOW_MS: f64 = 500.0;
 
+/// Bytes of one design-grid spectrum (`BINS` complex values).
+pub(crate) const SPECTRUM_BYTES: u64 = (BINS * std::mem::size_of::<C>()) as u64;
+
+#[cfg(test)]
+thread_local! {
+    /// `build_spectra` calls on this thread; tests check that a refused
+    /// budget returns before any spectra are built.
+    pub(crate) static SPECTRA_BUILT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// IR cells of `roles` (all roles when `None`) across every position.
+pub(crate) fn cells(set: &MeasurementSet, roles: Option<&[String]>) -> u64 {
+    set.positions
+        .iter()
+        .flat_map(|(_, measured)| measured)
+        .filter(|(role, _)| roles.is_none_or(|roles| roles.contains(role)))
+        .count() as u64
+}
+
+/// Bytes of one `build_spectra` result: one spectrum per IR cell.
+pub(crate) fn spectra_bytes(set: &MeasurementSet) -> u64 {
+    cells(set, None).saturating_mul(SPECTRUM_BYTES)
+}
+
+/// Transient bytes of one `build_spectra` call beyond its result: per cell
+/// the window `w`, the zero-padded `padded` and the FFT's thread-local input
+/// and scratch (at most `N_FFT` f64 each), the FFT output and its `Arc` copy
+/// (one spectrum each), plus one `sub_filter_response` per filtered role.
+pub(crate) fn build_scratch_bytes(filters: usize) -> u64 {
+    (4 * N_FFT * std::mem::size_of::<f64>()) as u64
+        + (2 + filters as u64).saturating_mul(SPECTRUM_BYTES)
+}
+
+/// What `prepare` allocates: `h` (`h0` shares its handles) and the scratch.
+pub(crate) fn preparation_bytes(set: &MeasurementSet, setup: &Setup) -> u64 {
+    spectra_bytes(set).saturating_add(build_scratch_bytes(setup.sub_filters.len()))
+}
+
 pub fn onset_index(ir: &Samples) -> usize {
     if ir.is_empty() {
         return 0;
@@ -191,6 +229,8 @@ fn build_spectra(
     length: usize,
     taper: f64,
 ) -> Spectra {
+    #[cfg(test)]
+    SPECTRA_BUILT.with(|built| built.set(built.get() + 1));
     let filters: Vec<_> = filters
         .iter()
         .map(|(r, f)| (r, sub_filter_response(f)))

@@ -1429,7 +1429,9 @@ fn mimo_one_input_budget_completes_parallel_and_matches_unbounded() {
     let case = cases::load("room_dba");
     let mut d = design::replay("room_dba");
     // Repeat the two recorded inputs so nested Rayon maps can steal another
-    // input even on a four-thread pool; the acoustic problem stays small.
+    // input even on a four-thread pool; the acoustic problem stays small, but
+    // an input must outweigh half of what the preparation returns after its
+    // peak (TD-24), so that the budget still fits exactly one input.
     d.mains = d
         .mains
         .iter()
@@ -1451,7 +1453,7 @@ fn mimo_one_input_budget_completes_parallel_and_matches_unbounded() {
         })
         .collect();
     let req = MimoRequest {
-        taps_low: 8,
+        taps_low: 64,
         ..MimoRequest::default()
     };
     let expected = crate::design_mimo(
@@ -1486,13 +1488,22 @@ fn mimo_one_input_budget_completes_parallel_and_matches_unbounded() {
     let shared_bytes = positions
         * usable.len()
         * (720 * 8 + std::mem::size_of::<Vec<f64>>() + 2 * std::mem::size_of::<(u32, &String)>());
+    // The preparation reserves its peak first, then holds its 2 s spectra
+    // underneath the shared table and the inputs.
+    let (peak, held) = crate::mimo::prepared::Prepared::bytes(&case.measurements, &case.config);
+    let budget = peak.max(held + (shared_bytes + input_bytes) as u64);
+    let room = budget - held - shared_bytes as u64;
+    assert!(
+        (input_bytes as u64..2 * input_bytes as u64).contains(&room),
+        "the budget must fit exactly one input"
+    );
     let cancel = CancelToken::new();
     let worker_cancel = cancel.clone();
     let (tx, rx) = std::sync::mpsc::channel();
     let worker = std::thread::spawn(move || {
         let ctx = Context::new(
             4,
-            MemoryBudget::new((shared_bytes + input_bytes) as u64),
+            MemoryBudget::new(budget),
             Arc::new(NoProgress),
             worker_cancel,
         );
@@ -1514,8 +1525,10 @@ fn mimo_shared_paths_reject_combined_budget() {
     let case = cases::load("room");
     let d = design::replay("room");
     let req = MimoRequest::default();
+    let serial = Context::serial();
     let prepared =
-        crate::mimo::prepared::Prepared::new(&d, &case.measurements, &case.config).unwrap();
+        crate::mimo::prepared::Prepared::new(&d, &case.measurements, &case.config, &serial)
+            .unwrap();
     let ranges =
         crate::mimo::support_ranges(&d, &prepared.spectra, req.fsiso, &d.spectra.positions)
             .unwrap();
@@ -1531,8 +1544,9 @@ fn mimo_shared_paths_reject_combined_budget() {
         .max()
         .unwrap();
     let dim = candidates * req.taps_low;
-    // Every old per-input permit fits, but the retained shared table plus
-    // that permit does not. Reject rather than waiting on our own reservation.
+    // Every old per-input permit fits beside the preparation's held spectra,
+    // but the retained shared table plus that permit does not. Reject rather
+    // than waiting on our own reservation.
     let input_bytes = 8
         * (4 * dim * dim
             + req.taps_low * req.taps_low
@@ -1540,9 +1554,12 @@ fn mimo_shared_paths_reject_combined_budget() {
             + 32 * crate::grid::design_freqs().len()
             + 16 * dim
             + 16384);
+    let (peak, held) = crate::mimo::prepared::Prepared::bytes(&case.measurements, &case.config);
+    let budget = held + input_bytes as u64;
+    assert!(peak <= budget, "the preparation itself must fit");
     let ctx = Context::new(
         1,
-        MemoryBudget::new(input_bytes as u64),
+        MemoryBudget::new(budget),
         Arc::new(NoProgress),
         CancelToken::new(),
     );
@@ -1556,6 +1573,7 @@ fn mimo_shared_paths_reject_combined_budget() {
         ),
         Err(crate::EngineError::Input(_))
     ));
+    assert_eq!(ctx.budget().available(), budget);
 }
 
 pub(super) fn design_bits(d: &MimoDesign) -> Vec<u64> {

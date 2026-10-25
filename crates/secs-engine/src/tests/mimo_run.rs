@@ -816,3 +816,37 @@ fn iir_acceleration_request_keeps_cpu_target_and_outputs_bit_identical() {
     assert_eq!(actual, expected);
     assert_eq!(run_bits(&actual), run_bits(&expected));
 }
+
+#[test]
+fn mimo_preparation_budget_refuses_before_spectra() {
+    let case = cases::load("room_dba");
+    let d = design::replay("room_dba");
+    let (peak, held) = mimo::prepared::Prepared::bytes(&case.measurements, &case.config);
+    assert!(held > 0 && peak > 2 * held);
+    let ctx = Context::new(
+        2,
+        MemoryBudget::new(peak - 1),
+        Arc::new(secs_compute::NoProgress),
+        CancelToken::new(),
+    );
+    let built = crate::measurement::SPECTRA_BUILT.with(std::cell::Cell::get);
+    let result = mimo::compute(
+        &d,
+        &case.measurements,
+        &case.config,
+        &settings(true),
+        &case.tuning,
+        &ctx,
+    );
+    assert!(
+        matches!(&result, Err(crate::EngineError::Input(message))
+            if message.contains("exceeds memory budget")),
+        "{result:?}"
+    );
+    assert_eq!(
+        crate::measurement::SPECTRA_BUILT.with(std::cell::Cell::get),
+        built,
+        "MIMO built spectra before refusing its preparation"
+    );
+    assert_eq!(ctx.budget().available(), ctx.budget().total());
+}

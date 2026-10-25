@@ -2,9 +2,7 @@
 //!
 //! Upstream: `calibration.xo_groups`, `xo_scores`, `pick_xo`, `recommend_xo`.
 
-use std::sync::Arc;
-
-use secs_compute::{Context, MapError, MemoryBudget, NoProgress};
+use secs_compute::Context;
 use secs_dsp::pairwise_sum;
 use secs_types::calibration::CalibrationSettings;
 
@@ -14,7 +12,7 @@ use crate::{
     calibration::{engine_inputs, resolve_xo},
     chain::stage_responses,
     decay::late_db_20_150,
-    design::{design_prepared_for_xo, production_fitters},
+    design::{DesignBytes, design_prepared_for_xo, production_fitters},
     grid::design_freqs,
     levels, measurement, scorecard,
     setup::Setup,
@@ -22,6 +20,38 @@ use crate::{
 
 /// Default crossover candidates in Hz, in upstream order.
 pub const XO_CANDIDATES: [f64; 4] = [60.0, 80.0, 100.0, 120.0];
+
+/// Arrays one XO score evaluation keeps alive, in spectra: `stage_responses`'
+/// delay, `top`, the sub `sum` and one sub term, the `lr4` HP and LP,
+/// `combined` and `output`.
+const SCORE_SPECTRA: u64 = 8;
+
+/// What `recommend_xo` reserves (TD-24), as `(shared, candidate)`.
+///
+/// `shared` is held from before `measurement::prepare` to the end: its `h`
+/// and the unfiltered `ScoreWindows` `short` and `long` (three spectra per IR
+/// cell) plus the build scratch. Each candidate reserves `candidate` before
+/// it starts: its design on a serial child context (`DesignBytes::retained`
+/// and one RC channel at a time) and its scoring (`filtered_spectra` copies of
+/// every sub cell in both windows, their filter responses, `SCORE_SPECTRA`).
+pub(crate) fn xo_bytes(set: &MeasurementSet, config: &EngineConfig) -> (u64, u64) {
+    let setup = Setup::new(config);
+    let shared = measurement::spectra_bytes(set)
+        .saturating_mul(3)
+        .saturating_add(measurement::build_scratch_bytes(setup.sub_filters.len()));
+    let design = DesignBytes::new(set, config, &setup, false);
+    let scoring = (2 * measurement::cells(set, Some(&config.subs))
+        + config.subs.len() as u64
+        + SCORE_SPECTRA)
+        .saturating_mul(measurement::SPECTRUM_BYTES);
+    (
+        shared,
+        design
+            .retained
+            .saturating_add(design.channel)
+            .saturating_add(scoring),
+    )
+}
 
 /// Group-averaged crossover quality before the candidate-relative penalty.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -235,6 +265,14 @@ pub fn recommend_xo(
             crate::normalize_measurements(&inputs.measurements, settings.sample_rate_policy, ctx)?;
     }
     let progress = ctx.stage("engine.xo_recommendation", candidates.len() as u64);
+    // Reserve the shared preparation and score windows before allocating them
+    // (TD-24); each batch of candidates reserves its designs out of the rest.
+    let (shared, candidate) = if candidates.is_empty() {
+        (0, 0)
+    } else {
+        xo_bytes(&inputs.measurements, &inputs.config)
+    };
+    let _shared = crate::memory::reserve(ctx, shared, candidate)?;
     // Empty candidate lists retain their old no-preparation behaviour.
     let prepared = if candidates.is_empty() {
         None
@@ -255,20 +293,22 @@ pub fn recommend_xo(
         })
         .transpose()?;
     ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
-    let trials = ctx
-        .try_map(candidates.to_vec(), |fc| {
+    // A candidate's permit is taken on this thread for its whole batch, never
+    // inside a pool task (TD-23); its design runs on a serial child of this
+    // job, so it reserves nothing more and waits on no pool work.
+    let trials = crate::memory::try_map(
+        ctx,
+        candidates.to_vec(),
+        shared,
+        |_| candidate,
+        |fc| {
             // engine_inputs depends on the trial only through settings.xo.
             // Keep its zero-value fallback and ordering in the same helper.
             let mut config = inputs.config.clone();
             let selected: Vec<_> = groups.iter().map(|g| (g.clone(), fc)).collect();
             config.xo = resolve_xo(&config.groups, &selected, view.project_xo);
             let prepared = prepared.as_ref().expect("nonempty candidates");
-            let inner = Context::new(
-                1,
-                MemoryBudget::new(ctx.budget().total()),
-                Arc::new(NoProgress),
-                ctx.cancel().clone(),
-            );
+            let inner = ctx.child_serial();
             let result = design_prepared_for_xo(
                 &DesignRequest {
                     measurements: &inputs.measurements,
@@ -293,11 +333,8 @@ pub fn recommend_xo(
             ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
             progress.advance(1);
             Ok(scores)
-        })
-        .map_err(|e| match e {
-            MapError::Cancelled => EngineError::Cancelled,
-            MapError::Item { error, .. } => error,
-        })?;
+        },
+    )?;
     let mut table: Vec<_> = groups
         .into_iter()
         .filter_map(|g| {
@@ -335,6 +372,7 @@ pub fn recommend_xo(
 mod perf_tests {
     use super::*;
     use crate::tests::cases;
+    use std::sync::Arc;
 
     #[test]
     fn xo_preparation_is_candidate_independent() {

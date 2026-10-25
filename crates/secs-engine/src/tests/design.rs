@@ -253,6 +253,78 @@ fn replay_with_context(name: &str, context: &Context) -> Design {
     result
 }
 #[test]
+fn design_reserves_preparation_and_one_channel_before_allocating() {
+    use secs_compute::{CancelToken, MemoryBudget, NoProgress};
+    let name = "room_dba";
+    let case = cases::load(name);
+    let setup = crate::setup::Setup::new(&case.config);
+    let bytes = design::DesignBytes::new(&case.measurements, &case.config, &setup, false);
+    let needed = crate::measurement::preparation_bytes(&case.measurements, &setup)
+        + bytes.retained
+        + bytes.channel;
+    let budget = |bytes| {
+        Context::new(
+            3,
+            MemoryBudget::new(bytes),
+            Arc::new(NoProgress),
+            CancelToken::new(),
+        )
+    };
+    // Room for one RC channel at a time on three threads: the same design,
+    // and every reserved byte returned.
+    let ctx = budget(needed);
+    let bounded = replay_with_context(name, &ctx);
+    let serial = replay(name);
+    assert_eq!(bounded.chain, serial.chain);
+    assert_eq!(bounded.notes, serial.notes);
+    assert_eq!(bounded.mains.len(), serial.mains.len());
+    for (a, b) in bounded.mains.iter().zip(&serial.mains) {
+        assert!(
+            a.after
+                .iter()
+                .zip(b.after.iter())
+                .all(|(x, y)| (x.re.to_bits(), x.im.to_bits()) == (y.re.to_bits(), y.im.to_bits()))
+        );
+    }
+    for (a, b) in bounded.scores.iter().zip(&serial.scores) {
+        assert!(
+            a.gd_after
+                .iter()
+                .zip(&b.gd_after)
+                .all(|(x, y)| x.to_bits() == y.to_bits())
+        );
+    }
+    assert_eq!(ctx.budget().available(), needed);
+    // One byte less is refused before `measurement::prepare` allocates.
+    let ctx = budget(needed - 1);
+    let built = crate::measurement::SPECTRA_BUILT.with(std::cell::Cell::get);
+    let fitters = design::production_fitters(ctx.cancel());
+    let result = design::design(
+        &DesignRequest {
+            measurements: &case.measurements,
+            config: &case.config,
+            tuning: &case.tuning,
+            subs_only: false,
+            adapter_notes: &[],
+        },
+        &ctx,
+        &*fitters,
+    );
+    assert!(
+        matches!(&result, Err(crate::EngineError::Input(message))
+            if message.contains("exceeds memory budget")),
+        "{:?}",
+        result.err()
+    );
+    assert_eq!(
+        crate::measurement::SPECTRA_BUILT.with(std::cell::Cell::get),
+        built,
+        "design built spectra before refusing its budget"
+    );
+    assert_eq!(ctx.budget().available(), needed - 1);
+}
+
+#[test]
 fn design_parallel_progress_counts_completed_channels() {
     use secs_compute::{CancelToken, MemoryBudget, Progress, ProgressSink};
     #[derive(Debug, Default)]

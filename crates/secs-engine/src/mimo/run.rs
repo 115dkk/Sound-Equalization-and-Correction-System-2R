@@ -290,7 +290,7 @@ fn compute_observed_accelerated(
     let req = key.request();
     let progress = ctx.stage("engine.mimo", 2);
     let started = std::time::Instant::now();
-    let prepared = super::prepared::Prepared::new(design, measurements, config)?;
+    let prepared = super::prepared::Prepared::new(design, measurements, config, ctx)?;
     observe("preparation", started.elapsed());
     let started = std::time::Instant::now();
     let acceleration = acceleration.map(super::acceleration::RunAcceleration::new);
@@ -353,7 +353,7 @@ pub(crate) fn assemble(
 
 pub(crate) fn assemble_prepared(
     design: &Design,
-    prepared: &super::prepared::Prepared,
+    prepared: &super::prepared::Prepared<'_>,
     ideal: &MimoDesign,
     supports: Supports,
     key: MimoKey,

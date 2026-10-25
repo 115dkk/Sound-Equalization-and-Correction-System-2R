@@ -1067,7 +1067,7 @@ pub(crate) fn design_mimo_inputs_observed(
     }
     validate_request(req)?;
     let started = std::time::Instant::now();
-    let prepared = super::prepared::Prepared::new(design, measurements, config)?;
+    let prepared = super::prepared::Prepared::new(design, measurements, config, ctx)?;
     observe("preparation", started.elapsed());
     design_mimo_prepared(design, &prepared, req, ctx, input, observe)
 }
@@ -1075,7 +1075,7 @@ pub(crate) fn design_mimo_inputs_observed(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn design_mimo_prepared(
     design: &Design,
-    prepared: &super::prepared::Prepared,
+    prepared: &super::prepared::Prepared<'_>,
     req: &MimoRequest,
     ctx: &Context,
     input: Option<&str>,
@@ -1087,7 +1087,7 @@ pub(crate) fn design_mimo_prepared(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn design_mimo_prepared_accelerated(
     design: &Design,
-    prepared: &super::prepared::Prepared,
+    prepared: &super::prepared::Prepared<'_>,
     req: &MimoRequest,
     ctx: &Context,
     input: Option<&str>,
@@ -1172,8 +1172,10 @@ pub(crate) fn design_mimo_prepared_accelerated(
         .max()
         .unwrap_or(0);
     // A retained reservation must not leave a worker waiting for bytes that
-    // this same invocation cannot release until the worker has finished.
-    let needed = shared_bytes.saturating_add(largest_input.max(scratch_bytes));
+    // this same invocation cannot release until the worker has finished. The
+    // preparation's spectra stay reserved underneath (TD-24).
+    let retained = prepared.reserved.saturating_add(shared_bytes);
+    let needed = retained.saturating_add(largest_input.max(scratch_bytes));
     if needed > ctx.budget().total() {
         return Err(EngineError::Input(
             MemoryError::TooLarge {
@@ -1190,7 +1192,7 @@ pub(crate) fn design_mimo_prepared_accelerated(
     let low_paths = crate::memory::try_map(
         ctx,
         pairs.clone(),
-        shared_bytes,
+        retained,
         |_| scratch_bytes,
         |(p, r)| {
             let h = support_path(&out, r, spectra, p, &prepared.align_delay_ms)?;
@@ -1202,7 +1204,7 @@ pub(crate) fn design_mimo_prepared_accelerated(
     let results = crate::memory::try_map(
         ctx,
         mains,
-        shared_bytes,
+        retained,
         |main| {
             input_bytes(
                 positions.len(),

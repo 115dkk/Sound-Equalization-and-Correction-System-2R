@@ -156,6 +156,12 @@ impl MemoryBudget {
         self.total
     }
 
+    /// Returns the bytes not reserved at this moment.
+    #[must_use]
+    pub fn available(&self) -> u64 {
+        lock_unpoisoned(&self.state).available
+    }
+
     /// Waits for and reserves `bytes` until the returned permit is dropped.
     pub fn acquire(
         &self,
@@ -211,16 +217,34 @@ pub struct MemoryPermit<'a> {
     bytes: u64,
 }
 
-impl Drop for MemoryPermit<'_> {
-    fn drop(&mut self) {
-        let mut state = lock_unpoisoned(&self.budget.state);
+impl MemoryPermit<'_> {
+    /// Returns everything above `bytes` to the budget, for buffers this
+    /// reservation covered that are already dropped. Never grows the permit.
+    pub fn shrink_to(&mut self, bytes: u64) {
+        if bytes < self.bytes {
+            let excess = self.bytes - bytes;
+            self.bytes = bytes;
+            self.budget.release(excess);
+        }
+    }
+}
+
+impl MemoryBudget {
+    fn release(&self, bytes: u64) {
+        let mut state = lock_unpoisoned(&self.state);
         state.available = state
             .available
-            .checked_add(self.bytes)
+            .checked_add(bytes)
             .expect("memory permit release cannot exceed u64");
-        debug_assert!(state.available <= self.budget.total);
+        debug_assert!(state.available <= self.total);
         drop(state);
-        self.budget.released.notify_all();
+        self.released.notify_all();
+    }
+}
+
+impl Drop for MemoryPermit<'_> {
+    fn drop(&mut self) {
+        self.budget.release(self.bytes);
     }
 }
 
@@ -236,7 +260,7 @@ pub struct Context {
     cancel: CancelToken,
     progress: Arc<dyn ProgressSink>,
     executor: Executor,
-    budget: MemoryBudget,
+    budget: Arc<MemoryBudget>,
 }
 
 impl Context {
@@ -263,7 +287,20 @@ impl Context {
             cancel,
             progress,
             executor,
-            budget,
+            budget: Arc::new(budget),
+        }
+    }
+
+    /// A one-thread context for work that runs inside one of this job's
+    /// items: it reserves from the same budget and stops with the same token,
+    /// and reports no progress of its own.
+    #[must_use]
+    pub fn child_serial(&self) -> Context {
+        Self {
+            cancel: self.cancel.clone(),
+            progress: Arc::new(NoProgress),
+            executor: Executor::Inline,
+            budget: Arc::clone(&self.budget),
         }
     }
 
@@ -620,6 +657,60 @@ mod tests {
             assert_eq!(waiter.join().unwrap().unwrap_err(), MemoryError::Cancelled);
         });
         drop(holder);
+    }
+
+    #[test]
+    fn child_serial_shares_budget_and_cancel_without_progress() {
+        let sink = Arc::new(RecordingSink::default());
+        let cancel = CancelToken::new();
+        let parent = Context::new(4, MemoryBudget::new(10), sink.clone(), cancel.clone());
+        let child = parent.child_serial();
+        let caller = thread::current().id();
+        let output = child
+            .map((0..8).collect(), |value: u64| {
+                assert_eq!(thread::current().id(), caller);
+                value * 2
+            })
+            .unwrap();
+        assert_eq!(output, (0..8).map(|v| v * 2).collect::<Vec<_>>());
+
+        let permit = child.budget().acquire(7, child.cancel()).unwrap();
+        assert_eq!(parent.budget().available(), 3);
+        assert_eq!(child.budget().total(), 10);
+        drop(permit);
+        assert_eq!(parent.budget().available(), 10);
+
+        let _stage = child.stage("engine.child", 1);
+        assert!(lock_unpoisoned(&sink.reports).is_empty());
+        cancel.cancel();
+        assert!(child.cancel().is_cancelled());
+    }
+
+    #[test]
+    fn memory_permit_shrink_returns_the_excess() {
+        let budget = MemoryBudget::new(10);
+        let mut permit = budget.acquire(8, &CancelToken::new()).unwrap();
+        assert_eq!(budget.available(), 2);
+        permit.shrink_to(5);
+        assert_eq!(budget.available(), 5);
+        permit.shrink_to(9);
+        assert_eq!(budget.available(), 5);
+        drop(permit);
+        assert_eq!(budget.available(), 10);
+    }
+
+    #[test]
+    fn memory_permit_shrink_wakes_a_waiter() {
+        let budget = MemoryBudget::new(4);
+        let mut holder = budget.acquire(4, &CancelToken::new()).unwrap();
+        thread::scope(|scope| {
+            let waiter = scope.spawn(|| budget.acquire(3, &CancelToken::new()).map(drop));
+            thread::sleep(Duration::from_millis(15));
+            holder.shrink_to(1);
+            assert_eq!(waiter.join().unwrap(), Ok(()));
+        });
+        drop(holder);
+        assert_eq!(budget.available(), 4);
     }
 
     #[test]

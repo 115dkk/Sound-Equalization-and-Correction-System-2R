@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use secs_compute::{CancelToken, Context, MapError};
+use secs_compute::{CancelToken, Context};
 use secs_dsp::{
     interp, response,
     smooth::{self, Fraction},
@@ -129,6 +129,72 @@ pub struct RoleScores {
 fn check(ctx: &Context) -> Result<(), EngineError> {
     ctx.cancel().check().map_err(|_| EngineError::Cancelled)
 }
+
+/// Full-grid arrays one `rc::channel` keeps alive at once, in spectra (16
+/// bytes per bin). `prepare_correction` holds `p`, `m`, `u`, `reference`, `mp`
+/// and the minimum-phase buffers (`logm`, `cep`, FFT output) beside the f64
+/// grids `power`, `total`, `frac`, `sm`, `sm3`, `target`, `corr`, `design_db`
+/// and the masks; `finish_correction` holds that preparation and its clones
+/// of `p`, `m`, `design_db` beside `phase`, `tau`, `excess`, `band`, the
+/// realized `spec`/`h`/`response`, the residual grids and, for a second phase
+/// candidate, the first `RcOutput`. About 350 bytes per bin, rounded up.
+const RC_SCRATCH_SPECTRA: u64 = 24;
+
+/// What one design reserves beyond the prepared spectra (TD-24). `retained`
+/// is alive from BA to the end of the design; `channel` is one RC channel (or
+/// one channel's scores, which need less) while it runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct DesignBytes {
+    pub retained: u64,
+    pub channel: u64,
+}
+
+impl DesignBytes {
+    /// Counted in spectra of `SPECTRUM_BYTES`, with P positions, S subs and M
+    /// mains (none for a subs-only design):
+    ///
+    /// - retained: `used` cells replaced by BA's `alignment.h_subs` (each sub
+    ///   cell once per layout) and the top PEQ (each main cell), BA's
+    ///   `sub_sum_by_pos` and layout `by_pos` sums (2·P), `ba::sums`' gathered
+    ///   cells, index and result at one position (S + 2), `top_responses` (M),
+    ///   and per finished channel `MainDesign.response`, `after` and
+    ///   `combined` (3·M). Without subs only the last term remains.
+    /// - channel: `comb` (P), `rc::combine`'s `delay`, `hp`, `lp` and bus
+    ///   `delay` (4), and `rc::channel`'s scratch (`RC_SCRATCH_SPECTRA`).
+    pub(crate) fn new(
+        set: &MeasurementSet,
+        config: &EngineConfig,
+        setup: &Setup,
+        subs_only: bool,
+    ) -> Self {
+        let positions = set.positions.len() as u64;
+        let subs = config.subs.len() as u64;
+        let mains = if subs_only {
+            0
+        } else {
+            config.mains.len() as u64
+        };
+        let ba = if config.subs.is_empty() {
+            0
+        } else {
+            measurement::cells(set, Some(&config.subs))
+                .saturating_mul(setup.layouts.len() as u64)
+                .saturating_add(measurement::cells(set, Some(&config.mains)))
+                .saturating_add(2 * positions)
+                .saturating_add(subs + 2)
+                .saturating_add(config.mains.len() as u64)
+        };
+        let spectra = |n: u64| n.saturating_mul(measurement::SPECTRUM_BYTES);
+        Self {
+            retained: spectra(ba.saturating_add(3 * mains)),
+            channel: if mains == 0 {
+                0
+            } else {
+                spectra(positions + 4 + RC_SCRATCH_SPECTRA)
+            },
+        }
+    }
+}
 pub(crate) fn geomspace(lo: f64, hi: f64, n: usize) -> Vec<f64> {
     let start = lo.log10();
     let step = (hi.log10() - start) / (n - 1) as f64;
@@ -176,9 +242,27 @@ pub(crate) fn design_observed(
     let prep_started = std::time::Instant::now();
     let config = req.config;
     let setup = Setup::new(config);
+    // Reserve before `measurement::prepare` allocates (TD-24): its spectra
+    // and the design's retained arrays are held to the end; RC channels and
+    // their scores reserve `bytes.channel` each, in batches, out of the rest.
+    let bytes = DesignBytes::new(req.measurements, config, &setup, req.subs_only);
+    let held =
+        measurement::preparation_bytes(req.measurements, &setup).saturating_add(bytes.retained);
+    let _permit = crate::memory::reserve(ctx, held, bytes.channel)?;
     let prepared = measurement::prepare(req.measurements, config, &setup)?;
     observed("prepare", prep_started.elapsed());
-    design_prepared(req, ctx, fitters, &prepared, observed)
+    design_prepared_scored(
+        req,
+        ctx,
+        fitters,
+        &prepared,
+        observed,
+        true,
+        ChannelBytes {
+            held,
+            channel: bytes.channel,
+        },
+    )
 }
 
 /// The caller must prepare these measurements with this config's non-XO fields.
@@ -193,18 +277,62 @@ pub(crate) fn design_prepared(
     prepared: &measurement::Prepared,
     observed: &(dyn Fn(&str, std::time::Duration) + Sync),
 ) -> Result<Design, EngineError> {
-    design_prepared_scored(req, ctx, fitters, prepared, observed, true)
+    let bytes = DesignBytes::new(
+        req.measurements,
+        req.config,
+        &Setup::new(req.config),
+        req.subs_only,
+    );
+    let _permit = crate::memory::reserve(ctx, bytes.retained, bytes.channel)?;
+    design_prepared_scored(
+        req,
+        ctx,
+        fitters,
+        prepared,
+        observed,
+        true,
+        ChannelBytes {
+            held: bytes.retained,
+            channel: bytes.channel,
+        },
+    )
 }
 
 /// Candidate-only design: the recommendation consumes the chain and spectra,
 /// not the final report plots. A normal design always includes those reports.
+/// The caller reserves the whole design (`DesignBytes` with one channel) for
+/// this serial context, so the channel maps below reserve nothing more.
 pub(crate) fn design_prepared_for_xo(
     req: &DesignRequest<'_>,
     ctx: &Context,
     fitters: &FitterFactory<'_>,
     prepared: &measurement::Prepared,
 ) -> Result<Design, EngineError> {
-    design_prepared_scored(req, ctx, fitters, prepared, &|_, _| {}, false)
+    design_prepared_scored(
+        req,
+        ctx,
+        fitters,
+        prepared,
+        &|_, _| {},
+        false,
+        ChannelBytes::RESERVED,
+    )
+}
+
+/// How the per-channel maps reserve: `held` bytes are already reserved by
+/// this job on the calling thread, and each channel needs `channel` more.
+#[derive(Debug, Clone, Copy)]
+struct ChannelBytes {
+    held: u64,
+    channel: u64,
+}
+
+impl ChannelBytes {
+    /// The caller reserved every channel already.
+    const RESERVED: Self = Self {
+        held: 0,
+        channel: 0,
+    };
 }
 
 fn design_prepared_scored(
@@ -214,6 +342,7 @@ fn design_prepared_scored(
     prepared: &measurement::Prepared,
     observed: &(dyn Fn(&str, std::time::Duration) + Sync),
     include_scores: bool,
+    reserve: ChannelBytes,
 ) -> Result<Design, EngineError> {
     check(ctx)?;
     let config = req.config;
@@ -416,8 +545,14 @@ fn design_prepared_scored(
         config.mains.iter().collect()
     };
     let rc_all_started = std::time::Instant::now();
-    let outputs = ctx
-        .try_map(roles, |role| {
+    // Batches of channels reserve on this thread before entering the pool,
+    // never inside a pool task (TD-23); outputs keep the channel order.
+    let outputs = crate::memory::try_map(
+        ctx,
+        roles,
+        reserve.held,
+        |_| reserve.channel,
+        |role| {
             check(ctx)?;
             let Some(before) = prepared.h0.get(config.main_position, role) else {
                 progress.advance(1);
@@ -523,11 +658,8 @@ fn design_prepared_scored(
             #[cfg(not(test))]
             let elapsed = ();
             Ok(Some((channel, main, result.out.notes, elapsed)))
-        })
-        .map_err(|e| match e {
-            MapError::Cancelled => EngineError::Cancelled,
-            MapError::Item { error, .. } => error,
-        })?;
+        },
+    )?;
     observed("rc_all", rc_all_started.elapsed());
     let mut channels = Vec::new();
     let mut mains = Vec::new();
@@ -619,22 +751,30 @@ fn design_prepared_scored(
     };
     let scores_started = std::time::Instant::now();
     let scores = if include_scores {
-        ctx.try_map(mains.iter().collect(), |main| {
-            check(ctx)?;
-            Ok(RoleScores {
-                role: main.role.clone(),
-                before: scorecard::metrics(&main.before, f, &target, (100.0, 400.0)),
-                after: scorecard::metrics(&main.after, f, &target, (100.0, 400.0)),
-                spl_before: spl_db(&main.before, &spl_grid),
-                spl_after: spl_db(&main.after, &spl_grid),
-                gd_before: response::gd_curve(&main.before, f, &gd_grid, Fraction::Scalar(24.0))?,
-                gd_after: response::gd_curve(&main.after, f, &gd_grid, Fraction::Scalar(24.0))?,
-            })
-        })
-        .map_err(|e| match e {
-            MapError::Cancelled => EngineError::Cancelled,
-            MapError::Item { error, .. } => error,
-        })?
+        // A channel's scores need less than its RC working set.
+        crate::memory::try_map(
+            ctx,
+            mains.iter().collect(),
+            reserve.held,
+            |_| reserve.channel,
+            |main| {
+                check(ctx)?;
+                Ok(RoleScores {
+                    role: main.role.clone(),
+                    before: scorecard::metrics(&main.before, f, &target, (100.0, 400.0)),
+                    after: scorecard::metrics(&main.after, f, &target, (100.0, 400.0)),
+                    spl_before: spl_db(&main.before, &spl_grid),
+                    spl_after: spl_db(&main.after, &spl_grid),
+                    gd_before: response::gd_curve(
+                        &main.before,
+                        f,
+                        &gd_grid,
+                        Fraction::Scalar(24.0),
+                    )?,
+                    gd_after: response::gd_curve(&main.after, f, &gd_grid, Fraction::Scalar(24.0))?,
+                })
+            },
+        )?
     } else {
         Vec::new()
     };

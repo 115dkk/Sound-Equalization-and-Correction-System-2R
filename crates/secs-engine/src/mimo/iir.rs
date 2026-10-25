@@ -1014,13 +1014,13 @@ pub fn design_mimo_iir_with_options(
         let _progress = ctx.stage("engine.mimo_iir", 0);
         return Ok(MimoIir::default());
     }
-    let prepared = super::prepared::Prepared::new(design, measurements, config)?;
+    let prepared = super::prepared::Prepared::new(design, measurements, config, ctx)?;
     design_mimo_iir_prepared_with_options(design, &prepared, ideal, req, t, options, ctx)
 }
 
 pub(crate) fn design_mimo_iir_prepared(
     design: &Design,
-    prepared: &super::prepared::Prepared,
+    prepared: &super::prepared::Prepared<'_>,
     ideal: &MimoDesign,
     req: &MimoRequest,
     t: &Tuning,
@@ -1040,7 +1040,7 @@ pub(crate) fn design_mimo_iir_prepared(
 #[allow(clippy::too_many_arguments)]
 fn design_mimo_iir_prepared_with_options(
     design: &Design,
-    prepared: &super::prepared::Prepared,
+    prepared: &super::prepared::Prepared<'_>,
     ideal: &MimoDesign,
     req: &MimoRequest,
     t: &Tuning,
@@ -1064,7 +1064,7 @@ fn design_mimo_iir_prepared_with_options(
     let results = crate::memory::try_map(
         ctx,
         inputs,
-        0,
+        prepared.reserved,
         |(_, supports)| {
             let r = supports.len();
             let dim = r * per(t);

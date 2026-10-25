@@ -1,6 +1,6 @@
 //! Reservations precede ordered pool work, including work with nested maps.
 
-use secs_compute::{Context, MapError, MemoryError};
+use secs_compute::{Context, MapError, MemoryError, MemoryPermit};
 
 use crate::EngineError;
 
@@ -9,6 +9,26 @@ pub(crate) fn memory_error(error: MemoryError) -> EngineError {
         MemoryError::Cancelled => EngineError::Cancelled,
         other => EngineError::Input(other.to_string()),
     }
+}
+
+/// Reserves `held` on the calling thread for the caller's lifetime, after
+/// checking that `next` more (the largest item the caller will reserve while
+/// holding it) also fits. Too small a budget is refused before allocation.
+pub(crate) fn reserve(
+    ctx: &Context,
+    held: u64,
+    next: u64,
+) -> Result<MemoryPermit<'_>, EngineError> {
+    let requested = held.saturating_add(next);
+    if requested > ctx.budget().total() {
+        return Err(memory_error(MemoryError::TooLarge {
+            requested,
+            total: ctx.budget().total(),
+        }));
+    }
+    ctx.budget()
+        .acquire(held, ctx.cancel())
+        .map_err(memory_error)
 }
 
 pub(crate) fn try_map<T: Send, U: Send>(
