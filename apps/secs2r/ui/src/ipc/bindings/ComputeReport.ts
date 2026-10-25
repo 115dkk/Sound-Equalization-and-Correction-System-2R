@@ -12,4 +12,11 @@ backend: ComputeBackend, device: string | null,
 /**
  * Identifies the accelerated stage; other correction stages remain on the CPU.
  */
-stage: ComputeStage | null, accelerated_systems: number, cpu_systems: number, fallbacks: number, reason: ComputeReason | null, };
+stage: ComputeStage | null, accelerated_systems: number, cpu_systems: number, fallbacks: number, reason: ComputeReason | null, 
+/**
+ * What the accelerator reported for its most severe fallback (the failed
+ * call and status, for example), at most 200 characters
+ * (`DETAIL_MAX_CHARS`). Absent without a fallback and in reports written
+ * before it existed.
+ */
+detail?: string, };

@@ -1816,6 +1816,11 @@ fn gpu_reports_survive_cache_and_fallback_exports() {
             assert!(summary.compute.fallbacks > 0);
             assert!(summary.compute.cpu_systems > 0);
             assert_eq!(summary.compute.accelerated_systems, 0);
+            // TD-54: the backend's own failure text survives beside the reason.
+            assert_eq!(
+                summary.compute.detail.as_deref(),
+                Some("simulated GPU failure")
+            );
             assert!(
                 summary
                     .notes
@@ -1828,6 +1833,7 @@ fn gpu_reports_survive_cache_and_fallback_exports() {
             assert_eq!(summary.compute.stage, Some(ComputeStage::IdealFirSweep));
             assert_eq!(summary.compute.device.as_deref(), Some("Test GPU"));
             assert_eq!(summary.compute.fallbacks, 0);
+            assert_eq!(summary.compute.detail, None);
             previous_paths = Some(paths);
         }
         call_ok(

@@ -429,6 +429,7 @@ mod tests {
                 cpu_systems: 1,
                 fallbacks: 1,
                 reason: Some(ComputeReason::DeviceFailure),
+                detail: Some("cuSolverDnDpotrf: CUSOLVER_STATUS_EXECUTION_FAILED".into()),
             },
         });
         save(&project, &run).unwrap();
