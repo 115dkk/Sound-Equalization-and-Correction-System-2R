@@ -109,7 +109,7 @@ describe("level monitor silence", () => {
     }) } });
     try {
       await session.start(); await session.configure({ method: "mock" }); await session.monitor(true);
-      const id = session.host.getSnapshot().jobs.find((job) => job.kind === "level_monitor")!.job;
+      const id = session.jobs.getSnapshot().jobs.find((job) => job.kind === "level_monitor")!.job;
       mock.calls.length = 0;
       const stopped = session.monitor(false);
       const next = session.call({ method: "project_open", params: { path: "C:/next.secs" } });
@@ -120,7 +120,7 @@ describe("level monitor silence", () => {
       expect(mock.calls.some((call) => call.method === "jobs")).toBe(true);
       expect(mock.calls.some((call) => call.method === "project_open")).toBe(true);
       await Promise.all([stopped, next]);
-      expect(session.host.getSnapshot().jobs.some((job) => job.job === id && ["running", "cancel_requested"].includes(job.status))).toBe(false);
+      expect(session.jobs.getSnapshot().jobs.some((job) => job.job === id && ["running", "cancel_requested"].includes(job.status))).toBe(false);
     } finally { session.dispose(); await settle(); mock.dispose(); vi.useRealTimers(); }
   });
   it("leaves a native or mock monitor alone while it is quiet between plays", async () => {
@@ -144,7 +144,7 @@ describe("level monitor silence", () => {
       await session.start(); await settle(); await session.configure({ method: "rew" }); await session.monitor(true);
       const states: string[] = [];
       const off = session.host.subscribe(() => states.push(session.host.getSnapshot().monitor));
-      const first = session.host.getSnapshot().jobs.find((job) => job.kind === "level_monitor")!.job;
+      const first = session.jobs.getSnapshot().jobs.find((job) => job.kind === "level_monitor")!.job;
       const reading = { event: "meter" as const, job: first, rms_dbfs: -40, peak_dbfs: -30, spl_db: null, clipping: false };
       mock.events.emit(reading);
       expect(session.host.getSnapshot().monitor).toBe("receiving");
@@ -154,7 +154,7 @@ describe("level monitor silence", () => {
       expect(states).toContain("stalled");
       expect(session.host.getSnapshot().monitor).toBe("stalled");
       expect(mock.calls.filter((call) => ["level_monitor_start", "level_monitor_stop"].includes(call.method)).map((call) => call.method)).toEqual(["level_monitor_start", "level_monitor_stop", "level_monitor_start"]);
-      const second = session.host.getSnapshot().jobs.find((job) => job.kind === "level_monitor" && job.status === "running")!.job;
+      const second = session.jobs.getSnapshot().jobs.find((job) => job.kind === "level_monitor" && job.status === "running")!.job;
       mock.events.emit(reading);
       expect(session.host.getSnapshot().monitor).toBe("stalled");
       mock.events.emit({ ...reading, job: second });
@@ -348,7 +348,7 @@ describe("XO recommendation completion", () => {
       expect(session.stores.settings.getSnapshot()?.xo_rec).toMatchObject({ "프론트": 80, "센터": 100 });
       expect(session.stores.settings.getSnapshot()?.xo).toMatchObject({ "프론트": 80, "센터": 100 });
       expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false } });
-      expect(session.host.getSnapshot().jobs.some((job) => job.kind === "calibrate" && job.status === "running")).toBe(true);
+      expect(session.jobs.getSnapshot().jobs.some((job) => job.kind === "calibrate" && job.status === "running")).toBe(true);
       mock.drain(); await settle();
       expect(session.stores.results.getSnapshot()?.calibration?.stale).toBe(false);
     } finally { session.dispose(); await settle(); mock.dispose(); }
@@ -364,7 +364,7 @@ describe("host state after jobs and switches", () => {
       const started = await session.call({ method: "calibrate", params: { settings: null, subs_only: false } });
       await session.call({ method: "job_cancel", params: { job: started.job } });
       mock.drain(); await settle();
-      expect(session.host.getSnapshot().jobs.find((job) => job.job === started.job)?.status).toBe("cancelled");
+      expect(session.jobs.getSnapshot().jobs.find((job) => job.job === started.job)?.status).toBe("cancelled");
       expect(session.host.getSnapshot().failure).toBeNull();
     } finally { session.dispose(); await settle(); mock.dispose(); }
   });

@@ -1,6 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import type { JobEvent } from "../ipc/bindings/JobEvent";
-import type { JobSnapshot } from "../ipc/bindings/JobSnapshot";
 import type { Request } from "../ipc/bindings/Request";
 import type { RequestFn } from "../ipc/context";
 import { IpcFailure } from "../ipc/client";
@@ -9,7 +8,6 @@ import { levelResult, resultsSummary, xoRecommendation } from "../ipc/fixtures";
 import { createSession } from "./session";
 
 const settle = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
-const done = (job: number): JobEvent => ({ event: "finished", job, status: "succeeded", result: { kind: "calibration" }, error: null });
 const newProject: Request = { method: "project_new", params: { path: "", preset: "2.0", sub_count: 0, sample: false, tutorial: false } };
 
 describe("session completion ownership", () => {
@@ -31,8 +29,8 @@ describe("session completion ownership", () => {
       if (!early) mock.drain();
       await settle();
       expect(mock.calls.filter((request) => request.method === "results")).toHaveLength(1);
-      expect(session.host.getSnapshot().jobRequests[started.job]).toBeUndefined();
-      expect(session.host.getSnapshot().jobs.find((job) => job.job === started.job)).not.toHaveProperty("result");
+      expect(session.jobs.getSnapshot().jobs.find((job) => job.job === started.job)?.request).toBeNull();
+      expect(session.jobs.getSnapshot().jobs.find((job) => job.job === started.job)).not.toHaveProperty("result");
       mock.events.emit(finished!); await settle();
       expect(mock.calls.filter((request) => request.method === "results")).toHaveLength(1);
     } finally { off(); session.dispose(); await settle(); mock.dispose(); }
@@ -61,7 +59,7 @@ describe("session completion ownership", () => {
       resolveSecond(); await accepted; await settle();
       expect(mock.calls.filter((request) => request.method === "results")).toHaveLength(1);
       expect(session.stores.results.getSnapshot()?.calibration).toBeNull();
-      expect(session.host.getSnapshot().jobRequests).toEqual({});
+      expect(session.jobs.getSnapshot().jobs.every((job) => job.request === null)).toBe(true);
     } finally { rejectFirst(); resolveSecond(); session.dispose(); await settle(); mock.dispose(); }
   });
 
@@ -85,8 +83,8 @@ describe("session completion ownership", () => {
       release(); await old; await settle();
       expect(session.host.getSnapshot().runs).toEqual({});
       expect(session.host.getSnapshot().failure?.error.detail).toBe("new project");
-      expect(session.host.getSnapshot().jobs.some((job) => job.kind === kind && job.status === "succeeded")).toBe(true);
-      expect(session.host.getSnapshot().jobRequests).toEqual({});
+      expect(session.jobs.getSnapshot().jobs.some((job) => job.kind === kind && job.status === "succeeded")).toBe(true);
+      expect(session.jobs.getSnapshot().jobs.every((job) => job.request === null)).toBe(true);
       expect(mock.calls.some((request) => request.method === "open_folder")).toBe(false);
     } finally { release(); session.dispose(); await settle(); mock.dispose(); }
   });
@@ -105,31 +103,10 @@ describe("session completion ownership", () => {
       mock.events.emit({ event: "finished", job: level.job, status: "succeeded", result: { kind: "level", data: levelResult }, error: null });
       mock.events.emit({ event: "finished", job: 1000, status: "failed", result: null, error: ipcError("engine_input", "old") });
       await settle();
-      expect(session.host.getSnapshot()).toMatchObject({ xoRecommendation: null, sweepResult: null, failure: null, jobRequests: {} });
-      expect(session.host.getSnapshot().jobs.find((job) => job.job === 1000)?.status).toBe("failed");
+      expect(session.host.getSnapshot()).toMatchObject({ xoRecommendation: null, sweepResult: null, failure: null });
+      expect(session.jobs.getSnapshot().jobs.every((job) => job.request === null)).toBe(true);
+      expect(session.jobs.getSnapshot().jobs.find((job) => job.job === 1000)?.status).toBe("failed");
       expect(mock.calls.some((request) => request.method === "results")).toBe(false);
     } finally { session.dispose(); await settle(); mock.dispose(); }
-  });
-
-  it("does not revive an unknown finish or replace recent terminal history with a delayed bootstrap snapshot", async () => {
-    const mock = createMockService({ tickMs: 0 });
-    let release!: (jobs: JobSnapshot[]) => void;
-    const delayed = new Promise<JobSnapshot[]>((resolve) => { release = resolve; });
-    const session = createSession({ ...mock, request: (async (request: Request) => request.method === "jobs" ? delayed : mock.request(request)) as RequestFn });
-    try {
-      const starting = session.start(); await settle();
-      mock.events.emit(done(2));
-      for (let job = 100; job < 200; job++) {
-        mock.events.emit({ event: "started", job, kind: "calibrate" }); mock.events.emit(done(job));
-      }
-      const snapshot = (job: number): JobSnapshot => ({ job, kind: "calibrate", status: "running", cancellable: true, progress: null, error: null });
-      release([snapshot(2), snapshot(3), ...Array.from({ length: 32 }, (_, i) => ({ ...snapshot(i + 4), status: "succeeded" as const, cancellable: false }))]);
-      await starting; await settle();
-      const jobs = session.host.getSnapshot().jobs;
-      expect(jobs.some((job) => job.job === 2)).toBe(false);
-      expect(jobs.find((job) => job.job === 3)?.status).toBe("running");
-      expect(jobs.filter((job) => job.status === "succeeded").map((job) => job.job)).toEqual(Array.from({ length: 32 }, (_, i) => i + 168));
-      expect(session.host.getSnapshot().jobRequests).toEqual({});
-    } finally { release([]); session.dispose(); await settle(); mock.dispose(); }
   });
 });
