@@ -310,6 +310,64 @@ impl secs_rew::Transport for RecordingRew {
 }
 
 #[test]
+fn rew_level_play_ends_once_after_its_duration() {
+    let root = root();
+    let transport = RecordingRew::default();
+    let injected = transport.clone();
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(move || Box::new(injected.clone())),
+        ..Default::default()
+    });
+    configure(&service, &root.join("room.secs"), "rew");
+    let events = Arc::new(Events::default());
+    let Response::LevelMonitorStart(started) = call(
+        &service,
+        Request::LevelMonitorStart(LevelMonitorStartParams::default()),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    call(
+        &service,
+        Request::LevelPlay(LevelPlayParams {
+            role: "L".into(),
+            master_dbfs: -30.0,
+        }),
+        Arc::new(NoEvents),
+    );
+    events.wait_play_end(started.job, "L", "done", Duration::from_secs(4));
+    call(&service, Request::LevelMonitorStop, Arc::new(NoEvents));
+    assert_eq!(
+        events.wait_finished(started.job, Duration::from_secs(1)),
+        JobStatus::Cancelled
+    );
+    let calls = transport.calls();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.path == "/generator/command"
+                && call
+                    .body
+                    .as_ref()
+                    .is_some_and(|body| body["command"] == "Play"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.path == "/generator/command"
+                && call
+                    .body
+                    .as_ref()
+                    .is_some_and(|body| body["command"] == "Stop"))
+            .count(),
+        2
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn rew_level_stop_stops_generator_but_keeps_subscription_alive() {
     let root = root();
     let transport = RecordingRew::default();

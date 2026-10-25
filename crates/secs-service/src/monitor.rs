@@ -337,7 +337,12 @@ fn rew_loop(
                 handled_generation = play.generation;
             }
         }
-        if let Some(play) = requested.filter(|play| play.generation != handled_generation) {
+        if let Some(play) = requested.filter(|play| {
+            play.generation != handled_generation
+                && active
+                    .as_ref()
+                    .is_none_or(|(active, _, _)| active.generation != play.generation)
+        }) {
             let output = u32::try_from(plan.output_for(&play.role))
                 .ok()
                 .filter(|value| *value > 0)
