@@ -33,6 +33,7 @@ crates/
   secs-export/            보정 단계·전후 REW mdat 내보내기
   secs-rew/               REW API (Real, Fake)
   secs-audio/             자체 측정 (스윕, 세션, 디컨볼루션, 레벨 체크)
+  secs-graph/             내보내기 그래프: 신호 사슬과 MIMO 경로의 유일한 검증, 작성기가 함께 읽는 계획과 서포트 묶음
   secs-camilla/           CamillaDSP v4 설정과 FIR
   secs-filters/           필터 값 텍스트와 Equalizer APO 설정
   secs-service/           애플리케이션 서비스 (깊은 모듈)
@@ -62,8 +63,9 @@ ui ──IPC──> secs2r ─┬─> secs-service ─┬─> secs-engine ─┬
                     │                 ├─> secs-dirac
                     │                 ├─> secs-export ───> secs-engine, secs-mdat, secs-camilla (숫자 포매터),
                     │                 │                    secs-dsp, secs-types
-                    │                 ├─> secs-camilla ──> secs-dsp, secs-types
-                    │                 ├─> secs-filters ──> secs-camilla, secs-dsp, secs-types
+                    │                 ├─> secs-camilla ──> secs-graph, secs-dsp, secs-types
+                    │                 ├─> secs-filters ──> secs-graph, secs-camilla (숫자 포매터),
+                    │                 │                    secs-dsp, secs-types
                     │                 └─> secs-compute, secs-dsp, secs-types
                     ├─> secs-gpu ─────> secs-engine (RidgeBackend seam), secs-compute, secs-types
                     │        └───────> secs-cuda-sys (선택적 네이티브 라이브러리)
@@ -71,6 +73,7 @@ ui ──IPC──> secs2r ─┬─> secs-service ─┬─> secs-engine ─┬
                     │        └───────> secs-audio, secs-rew, secs-compute (어댑터가 구현하는 seam)
                     └─> secs-rew, secs-types
 secs2r-cli ─────────> secs-service, secs-sys, secs-gpu, secs-rew, secs-compute, secs-types
+secs-graph ─────────> secs-dsp, secs-types (작성기를 의존하지 않음)
 secs-policy ────────> (파일 시스템만 읽음; 테스트가 IPC 메서드 목록 때문에 secs-types)
 secs-engine ┄┄┄┄┄┄┄┄> secs-oracle (`test-support` 기능에서만; 출하하지 않음)
 ```
@@ -85,7 +88,7 @@ secs-engine ┄┄┄┄┄┄┄┄> secs-oracle (`test-support` 기능에서�
 | 오디오 장치 `AudioBackend` | `secs-audio` | WASAPI(`secs-sys`), cpal(`secs-sys`), 시뮬레이션 방(테스트) |
 | REW 전송 | `secs-rew` 안쪽 | HTTP, 기록된 대화(테스트) |
 | 이상 FIR의 정칙화 탐색 `RidgeBackend` | `secs-engine` | CPU RidgeSweep(기준), CUDA f64 spectral(`secs-gpu`) |
-| 신호 사슬 소비자 | `secs-types`의 사슬 값 | 응답 시뮬레이터(`secs-engine`), CamillaDSP 작성기(`secs-camilla`), 필터 텍스트·Equalizer APO 작성기와 FIR streaming 참조 소비자(`secs-filters`) |
+| 신호 사슬 소비자 | `secs-types`의 사슬 값, 그리고 그 값과 MIMO 경로를 검증해 묶은 `secs-graph`의 내보내기 그래프(`ExportGraph`) | 사슬 값을 읽는 응답 시뮬레이터(`secs-engine`), 내보내기 그래프를 읽는 CamillaDSP 작성기(`secs-camilla`), 필터 텍스트·Equalizer APO 작성기와 FIR streaming 참조 소비자(`secs-filters`) |
 | 메모리 조회 `MemoryProbe` | `secs-compute` | 운영체제(`secs-sys`), 고정값(테스트) |
 | 호스트 기능 `Host` | `secs-service` | Tauri(대화상자, 폴더 열기, 알림), 기록(테스트) |
 

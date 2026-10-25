@@ -556,6 +556,14 @@ pub fn eqapo_filters(plan: &FilterPlan, firs: &[(String, String)], note: &str) -
         lines.extend(eqapo_ops(&ops, &channel, firs));
     }
 
+    // The export graph's support groups key on output, family and exact low
+    // edge. This writer renders the shared HP (and an IIR path's Fsiso LP) at
+    // two decimals and shares one VG channel among the paths of one support
+    // whose rendered filters coincide, which only joins graph groups. Its
+    // entry points take a FilterPlan, which may be built by hand, so it
+    // buckets the plan's MIMO feeds by that rendered text itself; for a plan
+    // from `ExportGraph::build` the buckets are the graph's groups joined by
+    // rendered text.
     struct SupportGroup {
         support: String,
         common: Vec<Op>,
