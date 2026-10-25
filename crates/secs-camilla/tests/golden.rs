@@ -952,6 +952,15 @@ fn invalid_values_write_nothing() {
     ));
     assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
 
+    let mut bad = chain(&fixture);
+    bad.mains[0].role = "../x".into();
+    assert!(matches!(
+        write_config(&bad, &temp.0, "bad", &Options::default(), None),
+        Err(CamillaError::Invalid(_))
+    ));
+    assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
+    assert!(!temp.0.parent().unwrap().join("x_fir.wav").exists());
+
     let options = Options {
         mode: "bad\nmode".into(),
         ..Options::default()

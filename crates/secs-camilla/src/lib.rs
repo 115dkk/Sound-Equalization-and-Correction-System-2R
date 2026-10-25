@@ -416,7 +416,11 @@ fn check_ascii_identifier(name: &str) -> Result<(), CamillaError> {
     if !name.is_ascii() {
         return Err(CamillaError::NonAscii(name.into()));
     }
-    if name.is_empty() || name.contains(['\n', '\r', ':']) {
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
         return Err(CamillaError::Invalid(format!("unsafe identifier {name:?}")));
     }
     Ok(())
@@ -775,6 +779,9 @@ pub fn make_config_observed(
     boundary: &dyn Fn(&str),
 ) -> Result<Config, CamillaError> {
     validate(chain, options, mimo)?;
+    if !fir_prefix.is_empty() {
+        check_ascii_identifier(fir_prefix)?;
+    }
     let mains = &chain.mains;
     let subs = &chain.subs;
     let lfe = !subs.is_empty() && options.lfe_gain_db.is_some();
@@ -821,6 +828,12 @@ pub fn make_config_observed(
         }
         if main.fir.len() > 1 {
             let file = coeff_dir.join(format!("{fir_prefix}{}_fir.wav", main.role));
+            if file.parent() != Some(coeff_dir.as_path()) {
+                return Err(CamillaError::Invalid(format!(
+                    "coefficient path escapes export folder: {}",
+                    file.display()
+                )));
+            }
             let filename = posix(&relative(&file, config_dir)?);
             coeffs.push((file, wav_bytes(&main.fir, SAMPLE_RATE)));
             let name = format!("in_{}_fir", main.role);
@@ -1103,6 +1116,12 @@ pub fn make_config_observed(
                     MimoFilter::Iir { .. } => unreachable!(),
                 };
                 let file = coeff_dir.join(format!("{fir_prefix}{tag}.wav"));
+                if file.parent() != Some(coeff_dir.as_path()) {
+                    return Err(CamillaError::Invalid(format!(
+                        "coefficient path escapes export folder: {}",
+                        file.display()
+                    )));
+                }
                 let filename = posix(&relative(&file, config_dir)?);
                 coeffs.push((file, wav_bytes(&taps, SAMPLE_RATE)));
                 let name = format!("{tag}_fir");
