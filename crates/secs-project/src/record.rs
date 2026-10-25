@@ -1,5 +1,5 @@
 use crate::{
-    Project, ProjectError, PyJson, dumps_compact, ir_directory, ir_file, loads,
+    MAX_IR_BYTES, Project, ProjectError, PyJson, dumps_compact, ir_directory, ir_file, loads,
     read_mono_float_wav, save_ir,
 };
 use secs_mdat::{Boxed, CalInfo, SourceDate, SourceInfo};
@@ -9,6 +9,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 pub const IR_CACHE_LIMIT_BYTES: usize = 256 * 1024 * 1024;
+pub const MAX_PROJECT_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MeasurementResult {
@@ -88,7 +89,11 @@ pub struct MeasurementStore {
 impl MeasurementStore {
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, ProjectError> {
         let path = path.into();
-        let project = Project::load_text(&fs::read_to_string(&path)?)?;
+        let bytes = crate::irs::read_bounded(&path, MAX_PROJECT_BYTES, "project")?;
+        let text = String::from_utf8(bytes).map_err(|error| {
+            ProjectError::Invalid(format!("project {} is not UTF-8: {error}", path.display()))
+        })?;
+        let project = Project::load_text(&text)?;
         Ok(Self::new(path, project))
     }
 
@@ -497,7 +502,9 @@ impl IrCache {
         if let Some(value) = self.entries.get(&key) {
             return Ok((value.samples.clone(), value.sample_rate));
         }
-        let (samples, sample_rate) = read_mono_float_wav(&fs::read(path)?)?;
+        let (samples, sample_rate) =
+            read_mono_float_wav(&crate::irs::read_bounded(path, MAX_IR_BYTES, "WAV")?)
+                .map_err(|error| ProjectError::Wav(format!("{}: {error}", path.display())))?;
         self.insert(key, samples.clone(), sample_rate);
         Ok((samples, sample_rate))
     }

@@ -3,9 +3,9 @@
 use secs_mdat::{Boxed, CalInfo, SourceDate, SourceInfo};
 use secs_oracle::Fixture;
 use secs_project::{
-    IrCache, LoadedIr, MeasurementResult, MeasurementStore, Project, ProjectError, PyJson,
-    load_project_irs, load_project_sources, load_source, save_ir, save_source, source_path,
-    write_wav_float32,
+    IrCache, LoadedIr, MAX_IR_BYTES, MAX_PROJECT_BYTES, MeasurementResult, MeasurementStore,
+    Project, ProjectError, PyJson, load_project_irs, load_project_sources, load_source, save_ir,
+    save_source, source_path, write_wav_float32,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -562,6 +562,27 @@ fn ir_writes_reject_symlinked_store_and_destination_td16() {
         .unwrap_err();
     assert!(error.to_string().contains("symlink"));
     assert_eq!(fs::read(&outside_wav).unwrap(), old);
+}
+
+#[test]
+fn oversized_project_and_wav_reads_are_rejected_td19() {
+    let directory = TempDir::new();
+    let project_path = directory.0.join("oversized.secs");
+    let project_file = fs::File::create(&project_path).unwrap();
+    project_file.set_len(MAX_PROJECT_BYTES + 1).unwrap();
+    let error = MeasurementStore::open(&project_path).unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains(&project_path.display().to_string()));
+    assert!(message.contains(&MAX_PROJECT_BYTES.to_string()));
+
+    let wav_path = directory.0.join("oversized.wav");
+    let mut wav = write_wav_float32(&[], 48_000);
+    wav[40..44].copy_from_slice(&u32::try_from(MAX_IR_BYTES + 1).unwrap().to_le_bytes());
+    fs::write(&wav_path, wav).unwrap();
+    let error = IrCache::default().load(&wav_path).unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains(&wav_path.display().to_string()));
+    assert!(message.contains(&MAX_IR_BYTES.to_string()));
 }
 
 #[test]

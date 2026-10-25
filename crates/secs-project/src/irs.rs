@@ -1,6 +1,9 @@
 use crate::{ProjectError, record::atomic_write};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+
+pub const MAX_IR_BYTES: u64 = 256 * 1024 * 1024;
 
 pub fn ir_directory(project: &Path) -> PathBuf {
     project.with_extension("irs")
@@ -125,7 +128,13 @@ fn wav_chunks(data: &[u8], default_format: Option<WavFormat>) -> Result<WavChunk
         if header_end > data.len() {
             break;
         }
-        let size = le_u32(data, pos + 4)? as usize;
+        let size_u32 = le_u32(data, pos + 4)?;
+        if &data[pos..pos + 4] == b"data" && u64::from(size_u32) > MAX_IR_BYTES {
+            return Err(ProjectError::Wav(format!(
+                "WAV data chunk exceeds {MAX_IR_BYTES} bytes"
+            )));
+        }
+        let size = size_u32 as usize;
         let declared_end = header_end
             .checked_add(size)
             .ok_or_else(|| ProjectError::Wav("chunk size overflow".into()))?;
@@ -278,5 +287,20 @@ fn reject_symlink(path: &Path) -> Result<(), ProjectError> {
     }
 }
 pub fn load_ir(project: &Path, role: &str, pos: i64) -> Result<(Vec<f32>, u32), ProjectError> {
-    read_mono_float_wav(&fs::read(ir_file(project, role, pos))?)
+    let path = ir_file(project, role, pos);
+    read_mono_float_wav(&read_bounded(&path, MAX_IR_BYTES, "WAV")?)
+        .map_err(|error| ProjectError::Wav(format!("{}: {error}", path.display())))
+}
+
+pub(crate) fn read_bounded(path: &Path, limit: u64, kind: &str) -> Result<Vec<u8>, ProjectError> {
+    let mut file = fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    file.by_ref().take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(ProjectError::Invalid(format!(
+            "{kind} file {} exceeds {limit} bytes",
+            path.display()
+        )));
+    }
+    Ok(bytes)
 }
