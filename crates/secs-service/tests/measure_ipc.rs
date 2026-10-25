@@ -1156,10 +1156,48 @@ fn measure_config_get_reads_stored_settings_without_dirtying_the_project() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// Holds REW's answer to one request until the test releases it.
+#[derive(Debug, Default)]
+struct Gate {
+    state: Mutex<(bool, bool)>,
+    changed: Condvar,
+}
+impl Gate {
+    fn arrive_and_wait(&self) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut state = self.state.lock().unwrap();
+        state.0 = true;
+        self.changed.notify_all();
+        while !state.1 {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return;
+            }
+            state = self.changed.wait_timeout(state, remaining).unwrap().0;
+        }
+    }
+    fn wait_arrived(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut state = self.state.lock().unwrap();
+        while !state.0 {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            state = self.changed.wait_timeout(state, remaining).unwrap().0;
+        }
+        true
+    }
+    fn release(&self) {
+        self.state.lock().unwrap().1 = true;
+        self.changed.notify_all();
+    }
+}
+
 #[derive(Debug)]
 struct ConfigureRewTransport {
     calls: Arc<Mutex<Vec<secs_rew::Request>>>,
-    session_free: Arc<std::sync::atomic::AtomicBool>,
+    gate: Arc<Gate>,
 }
 impl secs_rew::Transport for ConfigureRewTransport {
     fn request(
@@ -1168,8 +1206,7 @@ impl secs_rew::Transport for ConfigureRewTransport {
     ) -> Result<secs_rew::Response, secs_rew::RewError> {
         self.calls.lock().unwrap().push(request.clone());
         if request.path == "/audio/java/output-devices" {
-            self.session_free
-                .store(true, std::sync::atomic::Ordering::Release);
+            self.gate.arrive_and_wait();
         }
         let body = match request.path.as_str() {
             "/audio/driver" => json!({"driver":"Java"}),
@@ -1187,33 +1224,59 @@ fn measure_configure_opens_selected_rew_device_after_project_update() {
     let root = root("configure-rew-device");
     let path = root.join("room.secs");
     let calls = Arc::new(Mutex::new(Vec::new()));
-    let session_free = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let service = Service::new(Deps {
+    let gate = Arc::new(Gate::default());
+    let service = Arc::new(Service::new(Deps {
         rew_transport: {
             let calls = calls.clone();
-            let session_free = session_free.clone();
+            let gate = gate.clone();
             Arc::new(move || {
                 Box::new(ConfigureRewTransport {
                     calls: calls.clone(),
-                    session_free: session_free.clone(),
+                    gate: gate.clone(),
                 })
             })
         },
         ..Deps::default()
-    });
+    }));
     new(&service, &path);
-    let Response::MeasureConfigure(result) = call(
-        &service,
-        Request::MeasureConfigure(MeasureConfigureParams {
-            method: "rew".into(),
-            output_device: Some("Selected Speakers".into()),
-            ..Default::default()
-        }),
-    ) else {
+    let configuring = {
+        let service = service.clone();
+        std::thread::spawn(move || {
+            call(
+                &service,
+                Request::MeasureConfigure(MeasureConfigureParams {
+                    method: "rew".into(),
+                    output_device: Some("Selected Speakers".into()),
+                    ..Default::default()
+                }),
+            )
+        })
+    };
+    assert!(
+        gate.wait_arrived(Duration::from_secs(30)),
+        "REW was not asked for its devices"
+    );
+    // REW is mid-request: another request must finish without waiting for it.
+    let (sender, receiver) = std::sync::mpsc::channel();
+    {
+        let service = service.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(service.call(Request::ProjectInfo, Arc::new(NoEvents)));
+        });
+    }
+    let info = receiver.recv_timeout(Duration::from_secs(5));
+    gate.release();
+    let Response::MeasureConfigure(result) = configuring.join().unwrap() else {
         panic!()
     };
+    let Ok(Envelope::Ok(info)) = info else {
+        panic!("project_info waited for the REW device request: {info:?}");
+    };
+    let Response::ProjectInfo(info) = *info else {
+        panic!()
+    };
+    assert!(info.dirty, "the project is updated before REW is called");
     assert_eq!(result.output_device, "Selected Speakers");
-    assert!(session_free.load(std::sync::atomic::Ordering::Acquire));
     let calls = calls.lock().unwrap();
     assert!(calls.iter().any(|request| {
         request.method == "POST"

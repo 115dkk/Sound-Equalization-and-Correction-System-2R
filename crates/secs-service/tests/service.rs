@@ -1616,45 +1616,88 @@ fn measurement_handlers_are_connected_and_fail_with_typed_errors() {
     };
 
     let service = service();
-    let requests = [
-        Request::MeasureMethods,
-        Request::MeasureConfigure(MeasureConfigureParams::default()),
-        Request::LevelCheck(LevelCheckParams { role: "L".into() }),
-        Request::LevelApply(LevelApplyParams {
-            level: LevelResult {
-                rms_dbfs: -20.0,
-                peak_dbfs: -10.0,
-                spl_db: None,
-                recommended_sweep_dbfs: -20.0,
-            },
-        }),
-        Request::MeasurePosition(MeasurePositionParams { position: 1 }),
-        Request::PositionClear(PositionClearParams { position: 1 }),
-        Request::Undo(UndoParams {
-            token: "undo".into(),
-        }),
-        Request::RewLaunch,
-        Request::MdatScan(MdatScanParams {
-            path: "input.mdat".into(),
-        }),
-        Request::MdatImport(MdatImportParams {
-            path: "input.mdat".into(),
-            assignments: vec![],
-            position: 1,
-        }),
+    let not_open = Err((ErrorCode::ProjectNotOpen, None));
+    let cases = [
+        (Request::MeasureMethods, Ok("measure_methods")),
+        (
+            Request::MeasureConfigure(MeasureConfigureParams {
+                method: "mock".into(),
+                ..Default::default()
+            }),
+            not_open,
+        ),
+        (
+            Request::MeasureConfigure(MeasureConfigureParams::default()),
+            Err((ErrorCode::MeasurementInput, Some(("field", "method")))),
+        ),
+        (
+            Request::LevelCheck(LevelCheckParams { role: "L".into() }),
+            not_open,
+        ),
+        (
+            Request::LevelApply(LevelApplyParams {
+                level: LevelResult {
+                    rms_dbfs: -20.0,
+                    peak_dbfs: -10.0,
+                    spl_db: None,
+                    recommended_sweep_dbfs: -20.0,
+                },
+            }),
+            not_open,
+        ),
+        (
+            Request::MeasurePosition(MeasurePositionParams { position: 1 }),
+            not_open,
+        ),
+        (
+            Request::PositionClear(PositionClearParams { position: 1 }),
+            not_open,
+        ),
+        (
+            Request::Undo(UndoParams {
+                token: "undo".into(),
+            }),
+            not_open,
+        ),
+        // The headless host reports its structured launch failure.
+        (
+            Request::RewLaunch,
+            Err((ErrorCode::RewFailed, Some(("reason", "cannot_launch")))),
+        ),
+        (
+            Request::MdatScan(MdatScanParams {
+                path: "input.mdat".into(),
+            }),
+            Err((ErrorCode::MeasurementInput, Some(("field", "path")))),
+        ),
+        (
+            Request::MdatImport(MdatImportParams {
+                path: "input.mdat".into(),
+                assignments: vec![],
+                position: 1,
+            }),
+            not_open,
+        ),
     ];
     // Without an open project (and with a file that does not exist) each
-    // measurement handler refuses with a typed error; none is a stub any more.
-    // `rew_launch` reports the headless host's structured launch failure.
-    for request in requests {
+    // measurement handler answers exactly as below; none is a stub any more.
+    for (request, expected) in cases {
         let method = request.method();
-        let Envelope::Err(error) = service.call(request, Arc::new(NoEvents)) else {
-            continue;
-        };
-        assert_ne!(error.code, ErrorCode::NotImplemented, "{method}");
-        if method == "rew_launch" {
-            assert_eq!(error.code, ErrorCode::RewFailed, "{method}");
-            assert_eq!(error.params["reason"], "cannot_launch");
+        match (service.call(request, Arc::new(NoEvents)), expected) {
+            (Envelope::Ok(response), Ok(name)) => {
+                assert_eq!(serde_json::to_value(&response).unwrap()["method"], name)
+            }
+            (Envelope::Err(error), Err((code, param))) => {
+                assert_eq!(error.code, code, "{method}: {error:?}");
+                if let Some((key, value)) = param {
+                    assert_eq!(
+                        error.params.get(key).map(String::as_str),
+                        Some(value),
+                        "{method}"
+                    );
+                }
+            }
+            (envelope, expected) => panic!("{method}: {envelope:?}, expected {expected:?}"),
         }
     }
 }

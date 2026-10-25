@@ -480,14 +480,41 @@ fn test_remeasure_replaces_entry() {
 fn interrupted_save_leaves_old_secs_intact_f1() {
     let (directory, path, mut store, _roles) = setup();
     let old = fs::read(&path).unwrap();
-    let blocker = directory.0.join("blocker");
-    fs::write(&blocker, b"not a directory").unwrap();
-    let inaccessible = blocker.join("project.secs");
-    let project = store.project().clone();
-    let mut failing = MeasurementStore::new(inaccessible, project);
-    assert!(failing.save().is_err());
-    assert_eq!(fs::read(path).unwrap(), old);
+    let no_temporary = || {
+        fs::read_dir(&directory.0).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".tmp-")
+        })
+    };
+    // A save never writes into the existing file: a second name for the old
+    // bytes keeps them while the project name gets the new ones.
+    let backup = directory.0.join("old.secs");
+    fs::hard_link(&path, &backup).unwrap();
+    store.project_mut().name = "바뀐 이름".into();
     store.save().unwrap();
+    assert!(
+        fs::read(&backup).unwrap() == old,
+        "the save wrote into the existing file"
+    );
+    assert!(fs::read(&path).unwrap() != old, "the save did not land");
+    assert!(no_temporary());
+
+    // A save of this same project that fails at the last step (the name is
+    // taken by a folder holding the old bytes) leaves them and no temporary file.
+    let saved = fs::read(&path).unwrap();
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    fs::write(path.join("old"), &saved).unwrap();
+    store.project_mut().name = "저장하지 못한 이름".into();
+    assert!(store.save().is_err());
+    assert!(
+        fs::read(path.join("old")).unwrap() == saved,
+        "the failed save touched the old bytes"
+    );
+    assert!(no_temporary(), "the failed save left its temporary file");
 }
 
 #[test]
