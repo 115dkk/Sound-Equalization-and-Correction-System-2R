@@ -15,7 +15,7 @@ use secs_types::ipc::{
 
 use crate::EventSink;
 
-const TERMINAL_HISTORY_LIMIT: usize = 32;
+const TERMINAL_HISTORY_LIMIT: usize = secs_types::rules::JOB_HISTORY_MAX;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum JobGroup {
@@ -264,6 +264,20 @@ impl JobRegistry {
             .jobs
             .iter()
             .any(|job| job.group == JobGroup::Device && !job.snapshot.status.is_terminal())
+    }
+
+    /// The kind of a running measurement-group job other than the level
+    /// monitor, which the screen restarts itself (TD-91).
+    pub fn running_measurement(&self) -> Option<JobKind> {
+        lock(&self.inner)
+            .jobs
+            .iter()
+            .find(|job| {
+                job.group == JobGroup::Device
+                    && job.snapshot.kind != JobKind::LevelMonitor
+                    && !job.snapshot.status.is_terminal()
+            })
+            .map(|job| job.snapshot.kind)
     }
 
     pub fn cancel_all(&self) {

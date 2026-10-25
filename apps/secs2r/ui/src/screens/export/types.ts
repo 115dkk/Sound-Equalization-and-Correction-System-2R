@@ -33,9 +33,9 @@ export type ExportView = {
   /** `results`: the latest correction and MIMO summaries. */
   results: ResultsSummary;
   /**
-   * `calibration_settings_get`: the mode (and ultra limit) the result was
-   * designed with, and whether MIMO is switched on. The summary does not
-   * carry them (service gap: `CalibrationSummary` should).
+   * Current `calibration_settings_get` mode, ultra limit and MIMO switch.
+   * The computed mode and ultra limit are in `results.calibration.mode`
+   * and `results.calibration.ultra_ms`.
    */
   settings: Pick<CalibrationSettings, "mode" | "ultra_ms" | "mimo_on">;
   /** `project_info().positions.length`: MIMO needs three positions or more. */
@@ -46,6 +46,8 @@ export type ExportView = {
   folder: ExportFolderResult | null;
   /** A `calibrate` job runs (job events): the result is about to change. */
   computing: boolean;
+  /** A calibration job is running or awaiting cancellation; the recovery action stays busy until it finishes. */
+  recalibrating: boolean;
   /** The kind of the running `export` job, or null. Export jobs run one at a time. */
   exporting: ExportKind | null;
   /** The last export of each kind for the current result. P33 keeps it for the session and clears it when a new result arrives. */
@@ -68,6 +70,8 @@ export type ExportActions = {
   openFolder: (path: string) => void;
   /** Host: the frame goes to 보정. */
   goToCalibrate: () => void;
+  /** `calibrate { settings: null, subs_only: false }`: recompute with current settings without leaving export. */
+  recalibrate: () => void;
 };
 
 /** Whether MIMO goes into the export, and if not, why (upstream `show_mimo`: on, computed, current, three positions or more). */
@@ -76,13 +80,18 @@ export type MimoInclusion =
   | { included: false; reason: "off" | "positions" | "none" | "stale" };
 
 export function mimoInclusion(view: ExportView): MimoInclusion {
-  const mimo = view.results.mimo;
-  if (!view.settings.mimo_on) return { included: false, reason: "off" };
-  if (view.positions < MIMO_MIN_POSITIONS) return { included: false, reason: "positions" };
-  if (!mimo) return { included: false, reason: "none" };
-  if (mimo.stale) return { included: false, reason: "stale" };
-  const channels = mimo.input_count;
-  return { included: true, kind: mimo.kind, supports: mimo.support_count, channels };
+  switch (view.results.mimo_export) {
+    case "off": return { included: false, reason: "off" };
+    case "too_few_positions": return { included: false, reason: "positions" };
+    case "none": return { included: false, reason: "none" };
+    case "stale": return { included: false, reason: "stale" };
+    // The existing screen shows current MIMO even when it has no support paths.
+    case "no_supports":
+    case "included": {
+      const mimo = view.results.mimo!;
+      return { included: true, kind: mimo.kind, supports: mimo.support_count, channels: mimo.input_count };
+    }
+  }
 }
 
 /**
@@ -97,6 +106,7 @@ export function mimoInclusion(view: ExportView): MimoInclusion {
 export function exportBlock(view: ExportView, kind: ExportKind): ExportBlock | null {
   const result = view.results.calibration;
   if (!result) return null;
+  if ((kind === "staged_mdat" || kind === "before_after_mdat") && result.cached && result.stale) return "stale_cache";
   const subs = result.sub_roles.length > 0;
   const mimo = mimoInclusion(view).included;
   if (kind === "filter_text" && subs) return "subs";

@@ -9,6 +9,11 @@ use std::{collections::BTreeMap, fmt::Write as _};
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
+use crate::rules::CALIBRATION_LIMITS;
+
+/// The ultra mode's latency budget range (ms).
+const ULTRA_MS: (f64, f64) = CALIBRATION_LIMITS.ultra_ms;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 #[ts(export)]
@@ -297,6 +302,16 @@ pub struct ModeParams {
     pub max_latency_ms: f64,
 }
 
+/// Stable ASCII correction-mode tag used by export names and metadata.
+pub fn mode_tag(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Zero => "zero",
+        Mode::Mixed => "mixed",
+        Mode::Linear => "linear",
+        Mode::Ultra => "ultra",
+    }
+}
+
 /// Korean user-visible mode name, including the clamped ultra latency when supplied.
 pub fn mode_label(mode: Mode, ultra_ms: Option<f64>) -> String {
     let name = match mode {
@@ -308,7 +323,8 @@ pub fn mode_label(mode: Mode, ultra_ms: Option<f64>) -> String {
     if mode == Mode::Ultra
         && let Some(ms) = ultra_ms
     {
-        format!("{name} {} ms", python_g(ms.clamp(30.0, 200.0)))
+        let (lo, hi) = ULTRA_MS;
+        format!("{name} {} ms", python_g(ms.clamp(lo, hi)))
     } else {
         name.into()
     }
@@ -383,7 +399,7 @@ pub fn mode_params(mode: Mode, ultra_ms: f64) -> ModeParams {
             max_latency_ms: 30.0,
         },
         Mode::Ultra => {
-            let ms = ultra_ms.clamp(30.0, 200.0);
+            let ms = ultra_ms.clamp(ULTRA_MS.0, ULTRA_MS.1);
             let lift_ms = ms - 2.0;
             let mut taps = 2048;
             while taps < 16384 && 0.7 * taps as f64 / 48_000.0 * 1000.0 < lift_ms {

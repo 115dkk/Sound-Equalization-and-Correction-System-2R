@@ -88,10 +88,7 @@ fn relative(got: &[f64], expected: &[f64], norm: bool) -> f64 {
                 .sqrt()
                 .max(1e-30)
     } else {
-        got.iter()
-            .zip(expected)
-            .map(|(a, b)| (a - b).abs())
-            .fold(0.0, f64::max)
+        super::max_abs_diff(got, expected)
             / expected
                 .iter()
                 .map(|v| v.abs())

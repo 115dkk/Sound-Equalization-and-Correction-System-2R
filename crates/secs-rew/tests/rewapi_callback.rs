@@ -2,10 +2,11 @@
 use secs_rew::*;
 use serde_json::json;
 use std::{
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, ErrorKind, Read, Write},
     net::TcpStream,
     sync::{Arc, mpsc},
-    time::Duration,
+    thread,
+    time::{Duration, Instant},
 };
 fn path(url: &str) -> &str {
     url[url.find("127.0.0.1:").unwrap() + 10..]
@@ -167,6 +168,90 @@ fn test_r3_random_token_wrong_path_404_and_oversized_body_drained() {
     assert_eq!(rx.recv_timeout(Duration::from_secs(1)).unwrap(), json!(42));
     assert!(rx.try_recv().is_err());
     drop(r);
+}
+/// Send headers for a body of `length` bytes, then one body byte every 100 ms
+/// until the server closes the connection or 10 s pass.
+fn trickle(s: &CallbackServer, path: &str, length: u64) -> TcpStream {
+    let mut stream = TcpStream::connect(("127.0.0.1", s.port())).unwrap();
+    write!(
+        stream,
+        "POST /{path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {length}\r\n\r\n"
+    )
+    .unwrap();
+    let mut writer = stream.try_clone().unwrap();
+    thread::spawn(move || {
+        let start = Instant::now();
+        while start.elapsed() < Duration::from_secs(10) && writer.write_all(b"x").is_ok() {
+            thread::sleep(Duration::from_millis(100));
+        }
+    });
+    stream
+}
+#[test]
+fn test_td21_stop_returns_while_a_client_keeps_sending() {
+    // One body within the limit (read) and one above it (drained).
+    for length in [MAX_CALLBACK_BODY as u64, 1 << 40] {
+        let mut s = CallbackServer::default();
+        s.start().unwrap();
+        let url = s.route("levels", Arc::new(|_| {}));
+        let _stream = trickle(&s, path(&url), length);
+        thread::sleep(Duration::from_millis(300));
+        let (tx, rx) = mpsc::channel();
+        thread::spawn(move || {
+            s.stop();
+            let _ = tx.send(());
+        });
+        assert!(
+            rx.recv_timeout(Duration::from_secs(2)).is_ok(),
+            "stop() waited on a client still sending a {length}-byte body"
+        );
+    }
+}
+#[test]
+fn test_td21_request_deadline_closes_a_trickling_connection() {
+    let mut s = CallbackServer::default();
+    s.start().unwrap();
+    let url = s.route("levels", Arc::new(|_| {}));
+    let start = Instant::now();
+    let mut stream = trickle(&s, path(&url), 1_000_000);
+    stream
+        .set_read_timeout(Some(CALLBACK_REQUEST_DEADLINE + Duration::from_secs(3)))
+        .unwrap();
+    let closed = match stream.read(&mut [0; 1]) {
+        Ok(0) => true,
+        Ok(_) => false,
+        Err(e) => matches!(
+            e.kind(),
+            ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted
+        ),
+    };
+    let elapsed = start.elapsed();
+    assert!(
+        closed && elapsed < CALLBACK_REQUEST_DEADLINE + Duration::from_secs(2),
+        "connection still open after {elapsed:?}"
+    );
+    s.stop();
+}
+#[test]
+fn test_td21_wrong_token_is_rejected_before_the_body() {
+    let mut s = CallbackServer::default();
+    s.start().unwrap();
+    let (tx, rx) = mpsc::channel();
+    let url = s.route("levels", Arc::new(move |v| tx.send(v).unwrap()));
+    let wrong = format!("{}/levels", "0".repeat(32));
+    assert_ne!(path(&url), wrong);
+    for length in [1000, MAX_CALLBACK_BODY as u64 + 1] {
+        let mut r = connect(&s);
+        write!(
+            r.get_mut(),
+            "POST /{wrong} HTTP/1.1\r\nHost: localhost\r\nContent-Length: {length}\r\n\r\n"
+        )
+        .unwrap();
+        // No body follows: the rejection must not wait for one.
+        assert_eq!(response(&mut r).0, 404, "{length}-byte body");
+    }
+    assert!(rx.try_recv().is_err());
+    s.stop();
 }
 #[test]
 fn test_reply_is_sent_before_dispatch() {

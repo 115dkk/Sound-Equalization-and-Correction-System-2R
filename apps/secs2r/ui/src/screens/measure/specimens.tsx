@@ -2,7 +2,7 @@
 // of the packet in a 1280 × 800 frame, the densest one again at 1024 × 700,
 // and the two mdat dialogs drawn in place over their frame.
 import type { ReactNode } from "react";
-import { initialJobs, type JobsState } from "../../app/jobs/jobStore";
+import { initialLedger, type LedgerState } from "../../state/jobLedger";
 import type { FrameModel, PathKind, StepState } from "../../app/model";
 import { PrefsScope, usePrefs } from "../../app/prefs";
 import { FrameBox, replay, T0 } from "../../gallery/frameSpecimens";
@@ -29,7 +29,7 @@ import { MeasureOptions, MeasureScreen, measureHeader } from "./MeasureScreen";
 import { donePositions, measureStepState, type MeasureActions, type MeasureView } from "./types";
 
 const noop = () => {};
-export const noopActions: MeasureActions = {
+const noopActions: MeasureActions = {
   measurePosition: noop,
   cancelJob: noop,
   clearPosition: () => Promise.resolve("undo-token"),
@@ -81,7 +81,7 @@ function frameModel(view: MeasureView): FrameModel {
   };
 }
 
-function MeasureFrame({ view, jobs = initialJobs, now = T0 + 16000 }: { view: MeasureView; jobs?: JobsState; now?: number }) {
+function MeasureFrame({ view, jobs = initialLedger, now = T0 + 16000 }: { view: MeasureView; jobs?: LedgerState; now?: number }) {
   const t = useT();
   return (
     <FrameBox frame={frameModel(view)} jobs={jobs} now={now} header={measureHeader(view, noopActions, t)}>
@@ -125,7 +125,7 @@ function Tutorial({ view }: { view: MeasureView }) {
   const outer = usePrefs();
   return (
     <PrefsScope key={`${outer.locale}-${outer.theme}-${outer.skin ?? "default"}`} initial={{ locale: outer.locale, theme: outer.theme, accent: "tutorial", ...(outer.skin ? { skin: outer.skin } : {}) }} className="gal-fill">
-      <MeasureFrame view={view} jobs={view.job ? sampleJobs : initialJobs} />
+      <MeasureFrame view={view} jobs={view.job ? sampleJobs : initialLedger} />
     </PrefsScope>
   );
 }
@@ -164,7 +164,7 @@ const frame = (id: string, title: string, render: () => ReactNode, size: "defaul
   render,
 });
 
-export const measureSpecimens: SpecimenDef[] = [
+const measureSpecimens: SpecimenDef[] = [
   frame("screen.measure.empty", "Measure · nothing measured, project not saved yet", () => <MeasureFrame view={emptyView} />),
   frame("screen.measure.partial", "Measure · three of nine positions measured", () => <MeasureFrame view={partialView} />),
   frame("screen.measure.measuring", "Measure · measuring position 4 (role progress)", () => <MeasureFrame view={measuringView} jobs={measuringJobs} now={T0 + 52000} />),

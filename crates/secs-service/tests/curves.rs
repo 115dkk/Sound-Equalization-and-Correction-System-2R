@@ -280,6 +280,27 @@ fn ba_lines(service: &Service) -> SubResultLines {
 }
 
 #[test]
+fn subs_only_run_returns_ba_lines_without_full_calibration() {
+    let root = root("subs-only-lines");
+    let (path, _) = case_project::write(&root, "room_dba");
+    let service = Service::new(Deps::default());
+    open(&service, &path);
+
+    calibrate(&service, true);
+    let Response::ResultLines(lines) = call(&service, Request::ResultLines) else {
+        panic!()
+    };
+    assert!(lines.channels.is_empty());
+    let ba = lines
+        .ba
+        .expect("subs-only calibration must provide BA lines");
+    assert!(ba.subs_only);
+    assert!(!ba.rows.is_empty());
+
+    std::fs::remove_dir_all(root).ok();
+}
+
+#[test]
 fn subs_only_run_feeds_the_ba_tab_until_the_next_full_run() {
     // Upstream [서브만 계산]: the BA tab draws `sub_run or run`, the other
     // tabs keep the full result, and a full run drops the subs-only one

@@ -85,6 +85,18 @@ pub struct ComputeReport {
     pub cpu_systems: u32,
     pub fallbacks: u32,
     pub reason: Option<ComputeReason>,
+    /// What the accelerator reported for its most severe fallback (the failed
+    /// call and status, for example), at most 200 characters
+    /// (`DETAIL_MAX_CHARS`). Absent without a fallback and in reports written
+    /// before it existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub detail: Option<String>,
+}
+
+impl ComputeReport {
+    /// Upper bound on `detail`, in characters.
+    pub const DETAIL_MAX_CHARS: usize = 200;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -103,5 +115,26 @@ mod tests {
         assert_eq!(ComputePreference::default(), ComputePreference::Auto);
         assert_eq!(ComputeReport::default().backend, ComputeBackend::Cpu);
         assert!(!ComputeStatus::default().gpu_available);
+    }
+
+    #[test]
+    fn report_detail_is_optional_on_the_wire() {
+        let report = ComputeReport::default();
+        let value = serde_json::to_value(&report).unwrap();
+        assert!(value.get("detail").is_none());
+        assert_eq!(
+            serde_json::from_value::<ComputeReport>(value).unwrap(),
+            report
+        );
+        let failed = ComputeReport {
+            detail: Some("cuMemAlloc: CUDA_ERROR_OUT_OF_MEMORY".into()),
+            ..ComputeReport::default()
+        };
+        let value = serde_json::to_value(&failed).unwrap();
+        assert_eq!(value["detail"], "cuMemAlloc: CUDA_ERROR_OUT_OF_MEMORY");
+        assert_eq!(
+            serde_json::from_value::<ComputeReport>(value).unwrap(),
+            failed
+        );
     }
 }

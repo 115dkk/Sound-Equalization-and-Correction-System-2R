@@ -1,5 +1,5 @@
 use crate::{
-    Project, ProjectError, PyJson, dumps_compact, ir_directory, ir_file, loads,
+    MAX_IR_BYTES, Project, ProjectError, PyJson, dumps_compact, ir_directory, ir_file, loads,
     read_mono_float_wav, save_ir,
 };
 use secs_mdat::{Boxed, CalInfo, SourceDate, SourceInfo};
@@ -9,6 +9,7 @@ use std::path::{Component, Path, PathBuf};
 use std::time::UNIX_EPOCH;
 
 pub const IR_CACHE_LIMIT_BYTES: usize = 256 * 1024 * 1024;
+pub const MAX_PROJECT_BYTES: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MeasurementResult {
@@ -83,13 +84,36 @@ pub struct MeasurementStore {
     snr_db: BTreeMap<(i64, String), f64>,
     warnings: Vec<MigrationWarning>,
     cache: IrCache,
+    saves: u64,
+}
+
+/// A removed position: its measurement entries (with their list indices)
+/// and the SNR values the store held for it.
+#[derive(Clone, Debug)]
+pub struct RemovedPosition {
+    pos: i64,
+    entries: Vec<(usize, PyJson)>,
+    snr_db: Vec<(String, f64)>,
+}
+
+impl RemovedPosition {
+    /// The measurement position that was removed.
+    pub fn position(&self) -> i64 {
+        self.pos
+    }
 }
 
 impl MeasurementStore {
     pub fn open(path: impl Into<PathBuf>) -> Result<Self, ProjectError> {
         let path = path.into();
-        let project = Project::load_text(&fs::read_to_string(&path)?)?;
-        Ok(Self::new(path, project))
+        let bytes = crate::irs::read_bounded(&path, MAX_PROJECT_BYTES, "project")?;
+        let text = String::from_utf8(bytes).map_err(|error| {
+            ProjectError::Invalid(format!("project {} is not UTF-8: {error}", path.display()))
+        })?;
+        let (project, warnings) = Project::from_json_with_warnings(loads(&text)?)?;
+        let mut store = Self::new(path, project);
+        store.warnings.extend(warnings);
+        Ok(store)
     }
 
     pub fn new(path: impl Into<PathBuf>, project: Project) -> Self {
@@ -99,6 +123,7 @@ impl MeasurementStore {
             snr_db: BTreeMap::new(),
             warnings: Vec::new(),
             cache: IrCache::default(),
+            saves: 0,
         }
     }
 
@@ -187,6 +212,13 @@ impl MeasurementStore {
         self.entry_for(pos).expect("new entry has a valid position")
     }
 
+    /// Writes the IR and its source sidecar, enters the result into its
+    /// position (upstream `session.record`), and saves the project once.
+    ///
+    /// A result with a `source` also sets `source[role]` on the entry, where
+    /// upstream's importer (`step5.load_mdat`) sets it after recording: the
+    /// key goes last when the entry has none, and a value that is not an
+    /// object is replaced by one.
     pub fn record(
         &mut self,
         result: MeasurementResult,
@@ -244,11 +276,17 @@ impl MeasurementStore {
                 roles.iter().all(|role| {
                     nested_object(entry, "ir")
                         .and_then(|values| value_for(values, role))
-                        .is_some_and(py_truthy)
+                        .is_some_and(PyJson::is_truthy)
                 })
             },
         );
         set_value(entry, "done", PyJson::Bool(done));
+        if let Some(source) = result.source {
+            if !value_for(entry, "source").is_some_and(|value| matches!(value, PyJson::Object(_))) {
+                set_value(entry, "source", PyJson::Object(Vec::new()));
+            }
+            set_nested(entry, "source", &role, PyJson::Str(source));
+        }
         if let Some(value) = result.snr_db {
             self.snr_db.insert((result.pos, role), value);
         }
@@ -258,15 +296,64 @@ impl MeasurementStore {
             .expect("recorded entry has a valid position"))
     }
 
+    /// Removes a position's entries and SNR values; `false` if it had none.
     pub fn clear_position(&mut self, pos: i64) -> bool {
+        self.remove_position(pos).is_some()
+    }
+
+    /// Takes a position's entries and SNR values out of the store, keeping
+    /// them for [`Self::restore_position`]. `None` if the position has no
+    /// entry. The project file is not written.
+    pub fn remove_position(&mut self, pos: i64) -> Option<RemovedPosition> {
         let records = measurement_values_mut(&mut self.project);
-        let before = records.len();
-        records.retain(|entry| pos_of_or_minus_one(entry) != pos);
-        let changed = before != records.len();
-        if changed {
-            self.snr_db.retain(|(entry_pos, _), _| *entry_pos != pos);
+        let entries = records
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| pos_of_or_minus_one(entry) == pos)
+            .map(|(index, entry)| (index, entry.clone()))
+            .collect::<Vec<_>>();
+        if entries.is_empty() {
+            return None;
         }
-        changed
+        records.retain(|entry| pos_of_or_minus_one(entry) != pos);
+        let snr_db = self
+            .snr_db
+            .iter()
+            .filter(|((entry_pos, _), _)| *entry_pos == pos)
+            .map(|((_, role), value)| (role.clone(), *value))
+            .collect();
+        self.snr_db.retain(|(entry_pos, _), _| *entry_pos != pos);
+        Some(RemovedPosition {
+            pos,
+            entries,
+            snr_db,
+        })
+    }
+
+    /// Puts a removed position back; fails if that position was recorded
+    /// again meanwhile. Each entry returns to its old list index (or the
+    /// end, if the list is shorter now). The project file is not written.
+    pub fn restore_position(&mut self, removed: RemovedPosition) -> Result<(), ProjectError> {
+        let RemovedPosition {
+            pos,
+            entries,
+            snr_db,
+        } = removed;
+        if measurement_values(&self.project)
+            .iter()
+            .any(|entry| pos_of_or_minus_one(entry) == pos)
+        {
+            return Err(ProjectError::Invalid(format!(
+                "position {pos} was recorded again"
+            )));
+        }
+        let records = measurement_values_mut(&mut self.project);
+        for (index, entry) in entries {
+            records.insert(index.min(records.len()), entry);
+        }
+        self.snr_db
+            .extend(snr_db.into_iter().map(|(role, value)| ((pos, role), value)));
+        Ok(())
     }
 
     pub fn ir_path_of(&mut self, role: &str, pos: i64) -> Result<PathBuf, ProjectError> {
@@ -349,7 +436,15 @@ impl MeasurementStore {
     }
 
     pub fn save(&mut self) -> Result<(), ProjectError> {
-        atomic_write(&self.path, self.project.save_text().as_bytes())
+        atomic_write(&self.path, self.project.save_text().as_bytes())?;
+        self.saves += 1;
+        Ok(())
+    }
+
+    /// How many times this store has written its project file. A test hook:
+    /// tests count saves with it.
+    pub fn save_count(&self) -> u64 {
+        self.saves
     }
 }
 
@@ -405,6 +500,12 @@ pub fn load_project_sources(
             } else {
                 base.join(path)
             };
+            // F5: neither the IR nor its sidecar may lead outside the `.irs`.
+            if confined_ir_path(project_path, &path).is_err()
+                || confined_ir_path(project_path, &source_path(&path)).is_err()
+            {
+                continue;
+            }
             if let Some(info) = load_source(&path) {
                 out.entry(pos)
                     .or_insert_with(BTreeMap::new)
@@ -495,10 +596,17 @@ impl IrCache {
         let key = cache_key(path)?;
         self.remove_old_versions(&key.path, Some(&key));
         if let Some(value) = self.entries.get(&key) {
-            return Ok((value.samples.clone(), value.sample_rate));
+            let hit = (value.samples.clone(), value.sample_rate);
+            if let Some(index) = self.order.iter().position(|old_key| old_key == &key) {
+                let touched = self.order.remove(index).expect("index from position");
+                self.order.push_back(touched);
+            }
+            return Ok(hit);
         }
-        let (samples, sample_rate) = read_mono_float_wav(&fs::read(path)?)?;
-        self.insert(key, samples.clone(), sample_rate);
+        let (samples, sample_rate) =
+            read_mono_float_wav(&crate::irs::read_bounded(path, MAX_IR_BYTES, "WAV")?)
+                .map_err(|error| ProjectError::Wav(format!("{}: {error}", path.display())))?;
+        self.insert(key, &samples, sample_rate);
         Ok((samples, sample_rate))
     }
 
@@ -510,7 +618,7 @@ impl IrCache {
     ) -> Result<(), ProjectError> {
         let key = cache_key(path)?;
         self.remove_old_versions(&key.path, Some(&key));
-        self.insert(key, samples.to_vec(), sample_rate);
+        self.insert(key, samples, sample_rate);
         Ok(())
     }
 
@@ -522,7 +630,14 @@ impl IrCache {
         self.entries.is_empty()
     }
 
-    fn insert(&mut self, key: CacheKey, samples: Vec<f32>, sample_rate: u32) {
+    /// Sample bytes the cache holds; never more than its cap.
+    pub fn retained_bytes(&self) -> usize {
+        self.bytes
+    }
+
+    /// Stores a copy unless it alone exceeds the cap, then evicts from the
+    /// least recently used end until the cache fits.
+    fn insert(&mut self, key: CacheKey, samples: &[f32], sample_rate: u32) {
         let size = samples.len().saturating_mul(std::mem::size_of::<f32>());
         if let Some(old) = self.entries.remove(&key) {
             self.bytes = self
@@ -530,19 +645,22 @@ impl IrCache {
                 .saturating_sub(old.samples.len().saturating_mul(4));
             self.order.retain(|old_key| old_key != &key);
         }
+        if size > self.cap {
+            return;
+        }
         self.bytes = self.bytes.saturating_add(size);
         self.order.push_back(key.clone());
         self.entries.insert(
             key,
             CacheValue {
-                samples,
+                samples: samples.to_vec(),
                 sample_rate,
             },
         );
-        while self.bytes > self.cap && self.entries.len() > 1 {
-            if let Some(old_key) = self.order.pop_front()
-                && let Some(old) = self.entries.remove(&old_key)
-            {
+        while self.bytes > self.cap
+            && let Some(old_key) = self.order.pop_front()
+        {
+            if let Some(old) = self.entries.remove(&old_key) {
                 self.bytes = self
                     .bytes
                     .saturating_sub(old.samples.len().saturating_mul(4));
@@ -732,12 +850,13 @@ fn source_from_json(value: &PyJson) -> Option<SourceInfo> {
             info.cal.push((
                 name.clone(),
                 CalInfo {
-                    inverse_c_selected: value_for(cal, "inverseCSelected").is_some_and(py_truthy),
+                    inverse_c_selected: value_for(cal, "inverseCSelected")
+                        .is_some_and(PyJson::is_truthy),
                     source_name: value_for(cal, "sourceName")
-                        .filter(|value| py_truthy(value))
+                        .filter(|value| value.is_truthy())
                         .map_or_else(String::new, python_str),
                     source_path: value_for(cal, "sourcePath")
-                        .filter(|value| py_truthy(value))
+                        .filter(|value| value.is_truthy())
                         .map_or_else(String::new, python_str),
                     freq: value_for(cal, "freqArray").and_then(float_array_from_json),
                     gain: value_for(cal, "gainArray").and_then(float_array_from_json),
@@ -749,10 +868,10 @@ fn source_from_json(value: &PyJson) -> Option<SourceInfo> {
     }
     info.date = value_for(object, "date").and_then(date_from_json);
     info.notes = value_for(object, "notes")
-        .filter(|value| py_truthy(value))
+        .filter(|value| value.is_truthy())
         .map(python_str);
     info.format = value_for(object, "format")
-        .filter(|value| py_truthy(value))
+        .filter(|value| value.is_truthy())
         .map(python_str);
     Some(info)
 }
@@ -768,7 +887,7 @@ fn boxed_from_json(value: &PyJson) -> Option<Boxed> {
         "java.lang.Integer" => python_int(raw)
             .filter(|value| i32::try_from(*value).is_ok())
             .map(Boxed::Integer),
-        "java.lang.Boolean" => Some(Boxed::Boolean(py_truthy(raw))),
+        "java.lang.Boolean" => Some(Boxed::Boolean(raw.is_truthy())),
         _ => None,
     }
 }
@@ -927,6 +1046,9 @@ fn repair_entry(object: &mut Vec<(String, PyJson)>, pos: i64, label: String) {
             set_value(object, key, PyJson::Object(Vec::new()));
         }
     }
+    if value_for(object, "spl_offset").is_some_and(|value| !matches!(value, PyJson::Object(_))) {
+        set_value(object, "spl_offset", PyJson::Object(Vec::new()));
+    }
     setdefault_value(object, "done", PyJson::Bool(false));
     setdefault_value(object, "sample_rate", PyJson::Null);
 }
@@ -978,18 +1100,6 @@ fn setdefault_nested(object: &mut Vec<(String, PyJson)>, key: &str, role: &str, 
     set_value(nested, role, value);
 }
 
-fn py_truthy(value: &PyJson) -> bool {
-    match value {
-        PyJson::Null => false,
-        PyJson::Bool(value) => *value,
-        PyJson::Int(value) => value != "0",
-        PyJson::Float(value) => *value != 0.0,
-        PyJson::Str(value) => !value.is_empty(),
-        PyJson::Array(value) => !value.is_empty(),
-        PyJson::Object(value) => !value.is_empty(),
-    }
-}
-
 fn cache_key(path: &Path) -> Result<CacheKey, ProjectError> {
     let metadata = fs::metadata(path)?;
     let modified_ns = metadata
@@ -1004,37 +1114,10 @@ fn cache_key(path: &Path) -> Result<CacheKey, ProjectError> {
     })
 }
 
-fn atomic_write(path: &Path, data: &[u8]) -> Result<(), ProjectError> {
+pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> Result<(), ProjectError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
-    let stem = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("project.secs");
-    let mut counter = 0_u64;
-    let temp = loop {
-        let candidate = parent.join(format!(".{stem}.tmp-{}-{counter}", std::process::id()));
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(mut file) => {
-                use std::io::Write;
-                if let Err(error) = file.write_all(data).and_then(|()| file.sync_all()) {
-                    let _ = fs::remove_file(&candidate);
-                    return Err(error.into());
-                }
-                break candidate;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => counter += 1,
-            Err(error) => return Err(error.into()),
-        }
-    };
-    if let Err(error) = fs::rename(&temp, path) {
-        let _ = fs::remove_file(&temp);
-        return Err(error.into());
-    }
+    secs_types::fs::write_atomic_bytes(path, data)?;
     Ok(())
 }
 

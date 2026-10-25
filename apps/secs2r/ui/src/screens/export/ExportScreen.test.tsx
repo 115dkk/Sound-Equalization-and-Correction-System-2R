@@ -3,7 +3,8 @@ import { fireEvent, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { AppFrame } from "../../app/AppFrame";
 import { JobTray } from "../../app/jobs/JobTray";
-import { initialJobs, jobsReducer } from "../../app/jobs/jobStore";
+import { initialLedger, ledgerReducer } from "../../state/jobLedger";
+import { trayState } from "../../app/jobs/useJobs";
 import { ProjectMenu, SettingsButton } from "../../app/menus";
 import { useT, type Translate } from "../../i18n/react";
 import { renderWith } from "../../test/render";
@@ -20,7 +21,9 @@ import {
   exportNoResult,
   exportRcOnly,
   exportReady,
+  exportRecalibrating,
   exportStale,
+  exportStaleCache,
   exportTutorial,
 } from "./fixtures";
 import { canExport, exportStepState, mimoInclusion, type ExportActions, type ExportView } from "./types";
@@ -88,6 +91,8 @@ const STATES: Record<string, ExportView> = {
   noResult: exportNoResult,
   computingFirst: exportComputingFirst,
   stale: exportStale,
+  staleCache: exportStaleCache,
+  recalibrating: exportRecalibrating,
   ready: exportReady,
   exporting: exportExporting,
   done: exportDone,
@@ -105,6 +110,7 @@ function actions() {
     changeFolder: vi.fn<ExportActions["changeFolder"]>(),
     openFolder: vi.fn<ExportActions["openFolder"]>(),
     goToCalibrate: vi.fn<ExportActions["goToCalibrate"]>(),
+    recalibrate: vi.fn<ExportActions["recalibrate"]>(),
   };
 }
 
@@ -202,6 +208,69 @@ describe("내보내기", () => {
     // With MIMO in it, the Equalizer APO folder is named like the mdat one.
     renderWith(<Mounted view={exportMimoNoSubs} act={actions()} advanced />);
     expect(ui("export.kind.equalizer_apo")?.textContent).toContain("SECS_eqapo_RC_BA_MIMO_mixed_<저장 시각> 폴더");
+  });
+
+  it("offers 재보정 right after the sentence that blocks both mdat formats for a stale cached result", () => {
+    const act = actions();
+    const { unmount } = renderWith(<Mounted view={exportStaleCache} act={act} advanced />);
+    for (const kind of ["before_after_mdat", "staged_mdat"] as const) {
+      const run = ui(`export.run.${kind}`) as HTMLButtonElement;
+      const reason = ui(`export.kind.${kind}.blocked`);
+      const recalibrate = ui(`export.kind.${kind}.recalibrate`) as HTMLButtonElement | null;
+      expect(reason?.textContent, kind).toBe("구 버전에서 측정한 값입니다. mdat으로 내보내려면 다시 보정해야 합니다.");
+      expect(run.disabled, kind).toBe(true);
+      expect(document.getElementById(run.getAttribute("aria-describedby") ?? ""), kind).toBe(reason);
+      // The action follows its sentence in the same notice and says what it lifts; a peer of the header's primary.
+      expect(recalibrate?.textContent, kind).toBe("재보정");
+      expect(reason?.nextElementSibling, kind).toBe(recalibrate);
+      expect(recalibrate?.classList.contains("ui-button--secondary"), kind).toBe(true);
+      expect(recalibrate?.disabled, kind).toBe(false);
+      expect(recalibrate?.getAttribute("aria-busy"), kind).toBeNull();
+      expect(document.getElementById(recalibrate?.getAttribute("aria-describedby") ?? ""), kind).toBe(reason);
+      fireEvent.click(recalibrate!);
+    }
+    // Two buttons with one label: each one's name carries its format.
+    expect(screen.getByRole("button", { name: "재보정 보정 전후 REW mdat" })).toBe(ui("export.kind.before_after_mdat.recalibrate"));
+    expect(screen.getByRole("button", { name: "재보정 단계별 mdat" })).toBe(ui("export.kind.staged_mdat.recalibrate"));
+    expect(act.recalibrate).toHaveBeenCalledTimes(2);
+    expect(act.exportFiles).not.toHaveBeenCalled();
+    // CamillaDSP carries the cached result; the subs' block on the text has nothing to recalibrate.
+    expect((ui("export.run.camilla_dsp") as HTMLButtonElement).disabled).toBe(false);
+    expect([...document.querySelectorAll("[data-ui$='.recalibrate']")].map((el) => el.getAttribute("data-ui"))).toEqual([
+      "export.kind.before_after_mdat.recalibrate",
+      "export.kind.staged_mdat.recalibrate",
+    ]);
+    unmount();
+    // A stale result computed in this session exports mdat as it is; English names the formats too.
+    const { unmount: unmountStale } = renderWith(<Mounted view={exportStale} act={actions()} advanced />);
+    expect(document.querySelector("[data-ui$='.recalibrate']")).toBeNull();
+    unmountStale();
+    renderWith(<Mounted view={exportStaleCache} act={actions()} advanced />, { locale: "en" });
+    expect(ui("export.kind.staged_mdat.blocked")?.textContent).toBe("These values were measured with an earlier version. Recalibrate to export mdat.");
+    expect(screen.getByRole("button", { name: "Recalibrate Before and after REW mdat" })).toBe(ui("export.kind.before_after_mdat.recalibrate"));
+    expect(screen.getByRole("button", { name: "Recalibrate Staged mdat" })).toBe(ui("export.kind.staged_mdat.recalibrate"));
+  });
+
+  it("keeps 재보정 busy and unclickable while the correction runs, and off while an export runs", () => {
+    const act = actions();
+    const { unmount } = renderWith(<Mounted view={exportRecalibrating} act={act} advanced />);
+    for (const kind of ["before_after_mdat", "staged_mdat"] as const) {
+      const recalibrate = ui(`export.kind.${kind}.recalibrate`) as HTMLButtonElement;
+      expect(recalibrate.disabled, kind).toBe(true);
+      expect(recalibrate.getAttribute("aria-busy"), kind).toBe("true");
+      // The spinner joins the label; the label stays.
+      expect(recalibrate.textContent, kind).toBe("재보정");
+      expect((ui(`export.run.${kind}`) as HTMLButtonElement).disabled, kind).toBe(true);
+      fireEvent.click(recalibrate);
+    }
+    unmount();
+    // A CamillaDSP export runs on the cached result: a new one must not replace it mid-export.
+    renderWith(<Mounted view={{ ...exportStaleCache, exporting: "camilla_dsp" }} act={act} advanced />);
+    const recalibrate = ui("export.kind.before_after_mdat.recalibrate") as HTMLButtonElement;
+    expect(recalibrate.disabled).toBe(true);
+    expect(recalibrate.getAttribute("aria-busy")).toBeNull();
+    fireEvent.click(recalibrate);
+    expect(act.recalibrate).not.toHaveBeenCalled();
   });
 
   it("says where the Equalizer APO files go after they are saved, with the filter files' mode", () => {
@@ -330,9 +399,9 @@ describe("내보내기", () => {
 
   it("includes MIMO only when on, computed, current and with three positions", () => {
     expect(mimoInclusion(exportReady)).toEqual({ included: true, kind: "iir", supports: 22, channels: 11 });
-    expect(mimoInclusion({ ...exportReady, settings: { ...exportReady.settings, mimo_on: false } })).toEqual({ included: false, reason: "off" });
-    expect(mimoInclusion({ ...exportReady, positions: 2 })).toEqual({ included: false, reason: "positions" });
-    expect(mimoInclusion({ ...exportReady, results: { ...exportReady.results, mimo: null } })).toEqual({ included: false, reason: "none" });
+    expect(mimoInclusion({ ...exportReady, settings: { ...exportReady.settings, mimo_on: false }, results: { ...exportReady.results, mimo_export: "off" } })).toEqual({ included: false, reason: "off" });
+    expect(mimoInclusion({ ...exportReady, positions: 2, results: { ...exportReady.results, mimo_export: "too_few_positions" } })).toEqual({ included: false, reason: "positions" });
+    expect(mimoInclusion({ ...exportReady, results: { ...exportReady.results, mimo: null, mimo_export: "none" } })).toEqual({ included: false, reason: "none" });
     expect(mimoInclusion(exportStale)).toEqual({ included: false, reason: "stale" });
   });
 
@@ -356,7 +425,7 @@ describe("내보내기", () => {
       unmount();
     }
     // The frame's menus open and the tray with an export running (§10 cites them).
-    const jobs = jobsReducer(initialJobs, { type: "event", at: 0, event: { event: "started", job: 1, kind: "export" } });
+    const jobs = trayState(ledgerReducer(initialLedger, { type: "event", at: 0, event: { event: "started", job: 1, kind: "export" } }));
     renderWith(
       <>
         <ProjectMenu name="거실 7.1.4.secs" dirty actions={{ onNew: () => {}, onOpen: () => {}, onSave: () => {}, onSaveAs: () => {} }} initiallyOpen inline />

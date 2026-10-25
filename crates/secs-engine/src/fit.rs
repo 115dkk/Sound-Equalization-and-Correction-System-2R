@@ -274,10 +274,30 @@ fn sum(v: &[f64]) -> f64 {
 }
 
 pub fn fit_gd_cuts(f: &[f64], h: &[C], lo: f64, hi: f64, n_max: usize, depth_db: f64) -> Vec<Peq> {
+    fit_gd_cuts_until(f, h, lo, hi, n_max, depth_db, &|| false)
+}
+
+/// `fit_gd_cuts` that gives up once `cancelled()` turns true (TD-49), as
+/// `fit_peq_until` does: no further cut starts, and the running fit's residual
+/// reads zero so the trust-region solver stops at its next gradient test. The
+/// cuts it returns are then meaningless and the caller discards them. Until
+/// then the arithmetic is exactly `fit_gd_cuts`'s.
+pub fn fit_gd_cuts_until(
+    f: &[f64],
+    h: &[C],
+    lo: f64,
+    hi: f64,
+    n_max: usize,
+    depth_db: f64,
+    cancelled: &dyn Fn() -> bool,
+) -> Vec<Peq> {
     let g = geomspace(lo, hi, 1500);
     let mut cur = h.to_vec();
     let mut cuts = Vec::new();
     for _ in 0..n_max {
+        if cancelled() {
+            break;
+        }
         let gd = response::gd_curve(&cur, f, &g, Fraction::Scalar(24.0)).expect("valid GD grid");
         let base: Vec<_> = (0..g.len())
             .map(|i| median(&gd[i.saturating_sub(40)..(i + 40).min(g.len())]))
@@ -327,7 +347,23 @@ pub fn fit_gd_cuts(f: &[f64], h: &[C], lo: f64, hi: f64, n_max: usize, depth_db:
         let x0 = [f0.ln(), 8_f64.ln(), -1.0];
         let lb = [(f0 / 1.1).ln(), 2_f64.ln(), -depth_db];
         let ub = [(f0 * 1.1).ln(), 40_f64.ln(), 0.0];
-        let sol = optimize::least_squares(res, &x0, &lb, &ub, 60).expect("valid GD fit");
+        let sol = optimize::least_squares(
+            |x| {
+                if cancelled() {
+                    vec![0.0; 2 * gw.len()]
+                } else {
+                    res(x)
+                }
+            },
+            &x0,
+            &lb,
+            &ub,
+            60,
+        )
+        .expect("valid GD fit");
+        if cancelled() {
+            break;
+        }
         let band = (sol.x[0].exp(), sol.x[1].exp(), sol.x[2]);
         let norm = |x: &[f64]| sum(&res(x).iter().map(|v| v * v).collect::<Vec<_>>());
         if norm(&sol.x) >= norm(&[f0.ln(), 8_f64.ln(), 0.0]) * 0.95 || band.2 > -0.1 {
@@ -407,7 +443,7 @@ pub fn xo_target_peq(
 }
 
 #[cfg(any(test, feature = "test-support"))]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub(crate) struct RecordedFit {
     pub g: Vec<f64>,
     pub corr_db: Vec<f64>,

@@ -3,15 +3,19 @@ from __future__ import annotations
 
 import concurrent.futures
 import contextlib
+import hashlib
 import io
 import json
 import os
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 from unittest.mock import patch
 
 import common
+import numpy as np
+import scipy
 from engine_cases import cases
 from export_engine_design import DesignFamily
 from export_engine_e2e import LABELS, worker as e2e_worker
@@ -22,6 +26,27 @@ def recommendation(value):
     return dict(candidates=value.candidates,
                 table=[(g, [(fc, row) for fc, row in rows.items()]) for g, rows in value.table.items()],
                 best=list(value.best.items()))
+
+
+def cache_fingerprint(label):
+    with open(common.ROOT / 'UPSTREAM.toml', 'rb') as fh:
+        upstream = tomllib.load(fh)['upstream']['commit']
+    return {
+        'upstream': upstream,
+        'exporter_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        'case': label,
+        'numpy': np.__version__,
+        'scipy': scipy.__version__,
+    }
+
+
+def cached_run(path, label):
+    if not path.exists():
+        return None
+    record = json.loads(path.read_text())
+    if record.get('fingerprint') != cache_fingerprint(label):
+        return None
+    return record['results'], record['cores']
 
 
 def worker(label):
@@ -89,17 +114,18 @@ def main():
             env.pop('NPY_DISABLE_CPU_FEATURES', None)
         cache = os.environ.get('SECS_XO_RUN_CACHE')
         cached = Path(cache) / (label + '.json') if cache else None
-        if cached is not None and cached.exists():
-            record = json.loads(cached.read_text())
+        saved = cached_run(cached, label) if cached is not None else None
+        if saved is not None:
             print('engine_xo: saved run', label, flush=True)
-            return label, record['results'], record['cores']
+            return label, *saved
         p = subprocess.run([sys.executable, __file__, '--worker', label], env=env,
                            text=True, capture_output=True, check=True)
         print('engine_xo:', label, p.stderr.strip(), flush=True)
         results, cores = json.loads(p.stdout), p.stderr.strip()
         if cached is not None:
             cached.parent.mkdir(parents=True, exist_ok=True)
-            cached.write_text(json.dumps(dict(results=results, cores=cores)))
+            cached.write_text(json.dumps(dict(fingerprint=cache_fingerprint(label),
+                                              results=results, cores=cores)))
         return label, results, cores
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
         runs = list(pool.map(launch, LABELS))

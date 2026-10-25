@@ -73,7 +73,7 @@ const SENTINEL = "#010203";
  * …) resolved to sRGB by painting one pixel. Null without a canvas or when
  * the engine rejects the value.
  */
-export function resolveWithCanvas(css: string): Rgba | null {
+function resolveWithCanvas(css: string): Rgba | null {
   if (probe === undefined) {
     const canvas = typeof document !== "undefined" ? document.createElement("canvas") : null;
     if (canvas) {

@@ -18,7 +18,7 @@ export type SystemView = {
   notices: readonly Notice[];
   /** dsp_get / dsp_set. */
   dsp: DspResult;
-  /** layout_get / layout_set (arrangement, start delay, timing reference). */
+  /** layout_get / layout_set (arrangement, timing reference); the start delay in it is set on 측정·가져오기. */
   layout: LayoutResult;
   /**
    * The measurement path is REW. REW records every channel in a recording of
@@ -76,8 +76,6 @@ export type SystemActions = {
   setDspFields: (fields: DspFields) => void;
   /** layout_set { count, confirm: true }; asked first like applyPreset. Resolves the undo token or null. */
   setArrangement: (count: number) => Promise<string | null>;
-  /** layout_set { start_delay } with the stored value (`끄기`, `5 초`, `10 초`, `15 초`). */
-  setStartDelay: (delay: string) => void;
   /** layout_set { timing }. */
   setTiming: (timing: LayoutTiming) => void;
   /** undo { token } (the toast after a change that cleared measurements). */

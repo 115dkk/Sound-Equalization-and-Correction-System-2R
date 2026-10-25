@@ -6,7 +6,7 @@
 
 - 업스트림 파이썬 트리(`src/`, `tests/`, `tools/`, `docs/STRUCTURE.md`, `배포/`, `run_secs.py`, `SECS.spec`, `build_exe.ps1`, `requirements*.txt`, `LICENSE`, `THIRD_PARTY_NOTICES.md`)는 고치지 않습니다. CI가 `UPSTREAM.toml`의 커밋과 비교합니다(ADR 0001). 업스트림 판의 README와 변경 기록은 `docs/upstream/`에 있습니다.
 - 업스트림 기능은 모두 옮깁니다. 먼저 골든을 맞추고, 결함 수정은 그다음 PR에서 편차로 넣고 `docs/DEVIATIONS.md`를 고칩니다(ADR 0004). 핵심 아이디어를 바꾸는 변경은 ADR이 먼저입니다.
-- unsafe는 격리 크레이트(`secs-sys` 예산 0, `secs-cuda-sys` 예산 80)에만 둘 수 있습니다. GPU의 좁은 네이티브 경계는 ADR 0008과 `docs/UNSAFE_BOUNDARIES.md`를 따릅니다. 그 밖의 새 크레이트 루트에는 `#![forbid(unsafe_code)]`를 걸고 Cargo.toml에 `[lints] workspace = true`를 둡니다. 숫자를 올리거나 격리 크레이트를 더하려면 ADR이 먼저입니다(ADR 0002).
+- unsafe는 격리 크레이트(`secs-sys` 예산 3, ADR 0011의 작업 표시줄 아이콘만; `secs-cuda-sys` 예산 80)에만 둘 수 있습니다. GPU의 좁은 네이티브 경계는 ADR 0008과 `docs/UNSAFE_BOUNDARIES.md`를 따릅니다. 그 밖의 새 크레이트 루트에는 `#![forbid(unsafe_code)]`를 걸고 Cargo.toml에 `[lints] workspace = true`를 둡니다. 숫자를 올리거나 격리 크레이트를 더하려면 ADR이 먼저입니다(ADR 0002).
 - 운영체제 의존성(`wasapi`, `cpal`, `windows*`, `libc` 등)은 `secs-sys`만 가지고, `secs-sys`는 `apps/` 아래 앱만 의존합니다.
 - GPU 로더 의존성은 `secs-cuda-sys`만 가지고, 이 격리 크레이트는 `secs-gpu`만 의존합니다(ADR 0008).
 - 기능을 더하면 `features.toml`에 등록하고, `implemented`로 표시할 때는 실제로 있는 테스트를 가리킵니다. 화면이 부르는 IPC 메서드는 `ipc.<메서드>`로 등록합니다.
@@ -37,11 +37,13 @@ python3 .github/scripts/check_feature_tests.py
 
 화면 의존성은 Node 24(npm 11)로 설치합니다. npm 10은 이 의존성 묶음에서 피어 해석이 실패합니다.
 
-신뢰할 수 없는 파일을 읽는 크레이트(`secs-jos`, `secs-mdat`, `secs-dirac`, 앞으로 `secs-project`)를 고치면 CI의 `miri`·`fuzz` 잡과 같은 것을 돌립니다. nightly는 `ci.yml`의 `NIGHTLY`로 고정합니다.
+신뢰할 수 없는 파일을 읽는 크레이트(`secs-jos`, `secs-mdat`, `secs-dirac`, `secs-project`)를 고치면 CI의 `miri`·`fuzz` 잡과 같은 것을 돌립니다. `secs-project`는 파일 시스템을 쓰지 않는 파서 테스트만 Miri로 돌립니다. nightly는 `ci.yml`의 `NIGHTLY`로 고정하고, fuzz 대상마다 넣는 seed는 `ci.yml`의 fuzz 잡에 있습니다(새 대상은 seed를 정해야 CI가 통과합니다).
 
 ```sh
 cargo +nightly-2026-10-01 miri test --locked -p secs-jos -p secs-mdat -p secs-dirac
-(cd fuzz && cargo +nightly-2026-10-01 fuzz run jos_parse -- -max_total_time=60)
+cargo +nightly-2026-10-01 miri test --locked -p secs-project --lib
+cargo +nightly-2026-10-01 miri test --locked -p secs-project --test golden -- wav_reader truncated_wav_data
+(cd fuzz && cargo +nightly-2026-10-01 fuzz run --target x86_64-unknown-linux-gnu wav_read -- -max_total_time=60)
 ```
 
 ## 브랜치와 릴리스

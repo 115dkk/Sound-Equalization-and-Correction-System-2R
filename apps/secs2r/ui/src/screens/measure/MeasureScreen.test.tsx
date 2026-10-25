@@ -295,6 +295,13 @@ describe("측정·가져오기 screen", () => {
     expect(byUi("measure.options.repeats")).toBeNull();
   });
 
+  it("offers only the sweep lengths the service supplies, here the one place they are set", () => {
+    const view: MeasureView = { ...partialView, sweepOptions: [{ samples: 131072, seconds: 2.7 }, { samples: 524288, seconds: 10.9 }], config: { ...partialView.config, sweep_length: 131072 } };
+    renderWith(<MeasureOptions view={view} actions={makeActions()} busy={false} advancedOpen />);
+    const select = ui("measure.options.sweep") as HTMLSelectElement;
+    expect(Array.from(select.options, (option) => option.value)).toEqual(["131072", "524288"]);
+  });
+
   it("assigns mdat measurements: a doubled channel blocks the import until it is fixed", () => {
     const actions = renderStep(mdatAssignView);
     const dialog = ui("measure.mdat.dialog");

@@ -181,3 +181,17 @@ impl Measurer for NativeMeasurer {
             .collect())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn native_commits_a_position_at_once() {
+        let measurer = NativeMeasurer::from_backend(
+            Box::new(secs_audio::NullBackend),
+            MeasurementSettings::default(),
+        );
+        assert_eq!(measurer.commit_boundary(), CommitBoundary::Position);
+    }
+}

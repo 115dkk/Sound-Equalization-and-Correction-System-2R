@@ -193,6 +193,52 @@ fn deterministic_run_and_sample_flow() {
 }
 
 #[test]
+fn mimo_calibrates_in_a_fresh_process_before_computing_paths() {
+    let root = root("fresh-mimo");
+    let project = root.join("fresh-mimo.secs");
+    let project_arg = project.to_string_lossy();
+    assert_success(
+        &run(&[
+            "--deterministic-uuids",
+            "project",
+            "new",
+            &project_arg,
+            "--sample",
+        ])
+        .0,
+    );
+    let mut project_json: Value = serde_json::from_slice(&fs::read(&project).unwrap()).unwrap();
+    project_json["calibration"] = serde_json::json!({
+        "mimo_on": true,
+        "mimo_max_supports": 1,
+    });
+    fs::write(&project, serde_json::to_vec_pretty(&project_json).unwrap()).unwrap();
+    assert_success(
+        &run(&[
+            "--deterministic-uuids",
+            "sample",
+            &project_arg,
+            "--positions",
+            "3",
+        ])
+        .0,
+    );
+    assert_success(&run(&["--deterministic-uuids", "calibrate", &project_arg]).0);
+
+    let (mimo, _) = run(&["--deterministic-uuids", "mimo", &project_arg]);
+    let mimo = assert_success(&mimo);
+    assert!(mimo.iter().any(|line| {
+        line["event"]["event"] == "finished" && line["event"]["result"]["kind"] == "mimo"
+    }));
+    let results = mimo
+        .iter()
+        .find(|line| line["reply"]["data"]["method"] == "results")
+        .expect("mimo command must print results");
+    assert!(results["reply"]["data"]["data"]["mimo"].is_object());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn errors_exit_one_and_quiet_omits_events() {
     let root = root("errors-quiet");
     let missing = root.join("missing.secs");
@@ -239,16 +285,74 @@ fn compute_info_and_process_overrides_are_json_and_missing_gpu_is_typed() {
     assert_eq!(cpu[0]["reply"]["data"]["data"]["selected"], "cpu");
     let project = root.join("gpu.secs");
     let project_arg = project.to_string_lossy();
-    assert_success(&run_isolated(&["project", "new", &project_arg]));
+    assert_success(&run_isolated(&["project", "new", &project_arg, "--sample"]));
+    assert_success(&run_isolated(&["sample", &project_arg]));
     let gpu = run_isolated(&["--compute", "gpu", "mimo", &project_arg]);
     assert_eq!(gpu.status.code(), Some(1));
-    assert_eq!(
-        lines(&gpu).last().unwrap()["reply"]["error"]["code"],
-        "compute_unavailable"
+    assert!(
+        lines(&gpu)
+            .iter()
+            .any(|line| { line["reply"]["error"]["code"] == "compute_unavailable" })
     );
     let invalid = run_isolated(&["--compute", "other", "compute-info"]);
     assert_eq!(invalid.status.code(), Some(2));
     let reopened = fs::read_to_string(&project).unwrap();
     assert!(!reopened.contains("compute"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn import_mdat_position_applies_to_titles_without_a_position_tag() {
+    let root = root("import-mdat-position");
+    let project = root.join("room.secs");
+    let project_arg = project.to_string_lossy();
+    assert_success(
+        &run(&[
+            "project",
+            "new",
+            &project_arg,
+            "--preset",
+            "7.1.4",
+            "--subs",
+            "1",
+        ])
+        .0,
+    );
+    // Titles "L", "Tfl", "SW1": no position tag.
+    let mdat = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../oracle/goldens/mdat/build_3_real_48000_bytes.bin");
+    assert_success(
+        &run(&[
+            "import-mdat",
+            &project_arg,
+            &mdat.to_string_lossy(),
+            "--position",
+            "3",
+        ])
+        .0,
+    );
+    let saved: Value = serde_json::from_slice(&fs::read(&project).unwrap()).unwrap();
+    let recorded: Vec<(i64, Vec<String>)> = saved["measurements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| {
+            let pos = entry["pos"]
+                .as_i64()
+                .or_else(|| entry["pos"].as_str()?.parse().ok())?;
+            let roles: Vec<String> = entry["ir"]
+                .as_object()?
+                .iter()
+                .filter(|(_, path)| path.as_str().is_some_and(|path| !path.is_empty()))
+                .map(|(role, _)| role.clone())
+                .collect();
+            (!roles.is_empty()).then_some((pos, roles))
+        })
+        .collect();
+    assert_eq!(
+        recorded,
+        [(3, vec!["L".into(), "Tfl".into(), "SW1".into()])],
+        "{saved}"
+    );
     fs::remove_dir_all(root).unwrap();
 }

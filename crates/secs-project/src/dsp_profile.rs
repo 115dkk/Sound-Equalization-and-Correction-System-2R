@@ -1,5 +1,12 @@
+use crate::pyjson::Shape;
 use crate::{ProjectError, PyJson, SpeakerConfig};
 use std::collections::BTreeMap;
+
+/// The `dsp` object [`DspProfile::to_json`] writes (F16).
+pub(crate) static DSP_SHAPE: Shape = Shape::Record {
+    optional: &[],
+    nested: &[],
+};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DspProfile {

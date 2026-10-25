@@ -3,36 +3,8 @@ use super::cases;
 use crate::{fit::*, measurement, setup::Setup};
 use secs_dsp::optimize;
 use secs_oracle::{Fixture, assert_same, errors, integer, number, oracle_libm};
-use serde_json::Value;
 
-/// Shared recorded-fit reader for RC, BA and XO families. Descriptors resolve
-/// relative to the owning fixture, not necessarily the engine_fit family.
-pub(crate) fn read_recorded_fit(fx: &Fixture, input: &Value, result: &Value) -> RecordedFit {
-    let optional = |v: &Value| (!v.is_null()).then(|| number(v));
-    RecordedFit {
-        g: fx.f64s(&input["g"]),
-        corr_db: fx.f64s(&input["corr_db"]),
-        n: integer(&input["n"]) as usize,
-        lo: number(&input["lo"]),
-        hi: number(&input["hi"]),
-        boost: number(&input["boost"]),
-        ring_ms: optional(&input["ring_ms"]),
-        f_max: optional(&input["f_max"]),
-        result: cases::peq(result),
-    }
-}
-/// Bit-equal request and result. SECS 2 records the phase-independent RC
-/// preparation once per phase candidate; the channel computes it once.
-pub(crate) fn same_recorded_fit(a: &RecordedFit, b: &RecordedFit) -> bool {
-    let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
-    bits(&a.g) == bits(&b.g)
-        && bits(&a.corr_db) == bits(&b.corr_db)
-        && (a.n, a.lo.to_bits(), a.hi.to_bits(), a.boost.to_bits())
-            == (b.n, b.lo.to_bits(), b.hi.to_bits(), b.boost.to_bits())
-        && a.ring_ms.map(f64::to_bits) == b.ring_ms.map(f64::to_bits)
-        && a.f_max.map(f64::to_bits) == b.f_max.map(f64::to_bits)
-        && bits(&flat(&a.result)) == bits(&flat(&b.result))
-}
+pub(crate) use crate::test_support::{read_recorded_fit, same_recorded_fit};
 
 fn recorded(fx: &Fixture) -> RecordedFit {
     read_recorded_fit(fx, fx.inputs(), &fx.outputs()["result"])

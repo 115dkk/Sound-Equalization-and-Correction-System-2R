@@ -1,14 +1,15 @@
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use secs_project::{
-    DspProfile, MeasurementStore, Project, PyJson, load_project_sources, measured_positions,
-    plan_from_project,
+    DspProfile, MeasurementStore, Project, PyJson, RemovedPosition, load_project_sources,
+    measured_positions, plan_from_project,
 };
-use secs_types::ipc::{MigrationWarning, ProjectInfo};
+use secs_types::ipc::{ErrorCode, IpcError, MigrationWarning, ProjectInfo};
 
+use crate::jobs::JobContext;
 use crate::{ServiceError, UuidSource, lock};
 
 #[derive(Debug, Default)]
@@ -22,9 +23,49 @@ pub(crate) struct OpenProject {
     pub store: MeasurementStore,
     pub dirty: bool,
     pub tutorial: bool,
-    pub cached: Option<crate::cache::CachedResults>,
-    pub identity: u64,
+    /// A tutorial's private folder, removed with the session (TD-90).
+    pub tutorial_folder: Option<TutorialFolder>,
+    pub results: crate::results::ResultBook,
+    /// Read only through [`Session::ticket`] and compared only by
+    /// [`commit`] and [`apply`] (ADR 0009).
+    identity: u64,
     pub undo: std::collections::VecDeque<UndoEntry>,
+}
+
+/// The private folder a tutorial session writes its measurements and
+/// results into instead of the given path (`temp_dir()/secs2r-tutorial-<pid>-<n>`).
+/// Dropping it removes the folder, best effort, so closing, replacing or
+/// opening another project cleans up (TD-90).
+#[derive(Debug)]
+pub(crate) struct TutorialFolder {
+    folder: PathBuf,
+    /// The path the screen gave, reported back unchanged.
+    requested: PathBuf,
+}
+
+impl TutorialFolder {
+    fn create(requested: PathBuf) -> Result<Self, ServiceError> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let folder = std::env::temp_dir().join(format!(
+            "secs2r-tutorial-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        // A folder of that name can only be left by an earlier process with this id.
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(&folder)?;
+        Ok(Self { folder, requested })
+    }
+
+    fn project(&self) -> PathBuf {
+        self.folder.join("tutorial.secs")
+    }
+}
+
+impl Drop for TutorialFolder {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.folder);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -35,7 +76,7 @@ pub(crate) struct UndoEntry {
 
 #[derive(Debug, Clone)]
 pub(crate) enum UndoPayload {
-    Position(Vec<(usize, PyJson)>),
+    Position(RemovedPosition),
     Measurements(PyJson),
 }
 
@@ -92,6 +133,14 @@ impl Session {
             &mut project,
             vec![("method".into(), PyJson::Str("none".into()))],
         );
+        let tutorial_folder = if tutorial {
+            Some(TutorialFolder::create(path.clone())?)
+        } else {
+            None
+        };
+        let path = tutorial_folder
+            .as_ref()
+            .map_or(path, TutorialFolder::project);
         let mut store = MeasurementStore::new(&path, project);
         if !tutorial {
             store.save()?;
@@ -101,7 +150,8 @@ impl Session {
             store,
             dirty: false,
             tutorial,
-            cached: None,
+            tutorial_folder,
+            results: crate::results::ResultBook::from_cache(None),
             identity: next_identity(),
             undo: Default::default(),
         });
@@ -116,7 +166,8 @@ impl Session {
             store,
             dirty: false,
             tutorial: false,
-            cached,
+            tutorial_folder: None,
+            results: crate::results::ResultBook::from_cache(cached),
             identity: next_identity(),
             undo: Default::default(),
         });
@@ -136,13 +187,12 @@ impl Session {
         if let Some(path) = path
             && path != open.path
         {
-            carry_irs(&open.path, &path)?;
-            rewrite_ir_directory(open.store.project_mut(), &open.path, &path);
-            open.path = path.clone();
-            open.store = MeasurementStore::new(path, open.store.project().clone());
-            open.cached = None;
+            let next = prepare_save_as(open, &path)?;
+            open.path = path;
+            open.store = next.finish();
+        } else {
+            open.store.save()?;
         }
-        open.store.save()?;
         if let Err(error) = write_side_mdat(open, uuid, now_ms) {
             eprintln!("곁 mdat을 저장하지 못했습니다: {error}");
         }
@@ -161,6 +211,70 @@ impl Session {
     pub fn require_mut(&mut self) -> Result<&mut OpenProject, ServiceError> {
         self.open.as_mut().ok_or(ServiceError::ProjectNotOpen)
     }
+
+    /// The open project's ticket; `ProjectNotOpen` when none is open.
+    pub(crate) fn ticket(&self) -> Result<ProjectTicket, IpcError> {
+        Ok(ProjectTicket(self.require()?.identity))
+    }
+
+    /// The open project if it is still the one `ticket` was taken from.
+    fn holding(&mut self, ticket: ProjectTicket) -> Result<&mut OpenProject, IpcError> {
+        let open = self.require_mut()?;
+        if open.identity != ticket.0 {
+            return Err(IpcError::new(
+                ErrorCode::StaleInputs,
+                "project changed while computing",
+            ));
+        }
+        Ok(open)
+    }
+}
+
+/// The open project a request started from (ADR 0009). A job takes one when
+/// its handler starts and changes the project only through [`commit`] or
+/// [`apply`], so a late result of an earlier project never lands in a newer one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ProjectTicket(u64);
+
+/// Commits a finishing job's change (ADR 0009). Under the session lock: a
+/// different open project fails with `StaleInputs` ("project changed while
+/// computing"), then `job.begin_commit()` fails with `Cancelled` if the job
+/// was cancelled; only then `change` runs. `change` returns its value and
+/// whether it changed the project; `commit` sets `dirty` when it did.
+pub(crate) fn commit<T>(
+    session: &Mutex<Session>,
+    ticket: ProjectTicket,
+    job: &JobContext,
+    change: impl FnOnce(&mut OpenProject) -> Result<(T, bool), IpcError>,
+) -> Result<T, IpcError> {
+    let mut session = lock(session);
+    let open = session.holding(ticket)?;
+    job.begin_commit()?;
+    run_change(open, change)
+}
+
+/// The same check for a job that keeps running and writes as it goes (the
+/// level monitor): the ticket check only, no `begin_commit`, so the job
+/// stays cancellable.
+pub(crate) fn apply<T>(
+    session: &Mutex<Session>,
+    ticket: ProjectTicket,
+    change: impl FnOnce(&mut OpenProject) -> Result<(T, bool), IpcError>,
+) -> Result<T, IpcError> {
+    let mut session = lock(session);
+    let open = session.holding(ticket)?;
+    run_change(open, change)
+}
+
+fn run_change<T>(
+    open: &mut OpenProject,
+    change: impl FnOnce(&mut OpenProject) -> Result<(T, bool), IpcError>,
+) -> Result<T, IpcError> {
+    let (value, changed) = change(open)?;
+    if changed {
+        open.dirty = true;
+    }
+    Ok(value)
 }
 
 fn next_identity() -> u64 {
@@ -168,7 +282,7 @@ fn next_identity() -> u64 {
     NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
-pub(crate) fn push_position_undo(open: &mut OpenProject, removed: Vec<(usize, PyJson)>) -> String {
+pub(crate) fn push_position_undo(open: &mut OpenProject, removed: RemovedPosition) -> String {
     push_undo(open, UndoPayload::Position(removed))
 }
 
@@ -195,8 +309,12 @@ fn push_undo(open: &mut OpenProject, payload: UndoPayload) -> String {
 
 pub(crate) fn info(open: &OpenProject) -> ProjectInfo {
     let project = open.store.project();
+    let path = open
+        .tutorial_folder
+        .as_ref()
+        .map_or(&open.path, |folder| &folder.requested);
     ProjectInfo {
-        path: open.path.to_string_lossy().into_owned(),
+        path: path.to_string_lossy().into_owned(),
         name: project.name.clone(),
         preset: project.config.preset.clone(),
         sub_count: project.config.sub_count(),
@@ -215,22 +333,174 @@ pub(crate) fn info(open: &OpenProject) -> ProjectInfo {
     }
 }
 
-fn carry_irs(old: &Path, new: &Path) -> Result<(), std::io::Error> {
-    let source = old.with_extension("irs");
-    let destination = new.with_extension("irs");
-    if source == destination || !source.is_dir() {
-        return Ok(());
-    }
-    copy_tree(&source, &destination)
+struct PreparedSaveAs {
+    store: MeasurementStore,
+    old_project: Option<PathBuf>,
+    old_irs: Option<PathBuf>,
 }
 
-fn copy_tree(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
+impl PreparedSaveAs {
+    fn finish(self) -> MeasurementStore {
+        if let Some(path) = self.old_project {
+            let _ = remove_path(&path);
+        }
+        if let Some(path) = self.old_irs {
+            let _ = remove_path(&path);
+        }
+        self.store
+    }
+}
+
+fn prepare_save_as(open: &OpenProject, destination: &Path) -> Result<PreparedSaveAs, ServiceError> {
+    let source_irs = open.path.with_extension("irs");
+    let destination_irs = destination.with_extension("irs");
+    reject_nested_irs(&source_irs, &destination_irs)?;
+    if destination.exists() && !destination.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::IsADirectory,
+            "project destination is not a file",
+        )
+        .into());
+    }
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let temporary_irs = unique_sibling(&destination_irs, "tmp")?;
+    fs::create_dir(&temporary_irs)?;
+    let temporary_project = unique_sibling(destination, "tmp")?;
+    let result = (|| {
+        if source_irs.is_dir() {
+            copy_tree_contents(&source_irs, &temporary_irs)?;
+        }
+        let mut project = open.store.project().clone();
+        rewrite_ir_directory(&mut project, &open.path, destination);
+        let mut staged = MeasurementStore::new(&temporary_project, project.clone());
+        staged.save()?;
+
+        let old_project = swap_aside(destination, "old")?;
+        let old_irs = match swap_aside(&destination_irs, "old") {
+            Ok(path) => path,
+            Err(error) => {
+                restore_aside(destination, old_project.as_deref());
+                return Err(error);
+            }
+        };
+        if let Err(error) = fs::rename(&temporary_irs, &destination_irs) {
+            restore_aside(&destination_irs, old_irs.as_deref());
+            restore_aside(destination, old_project.as_deref());
+            return Err(error.into());
+        }
+        if let Err(error) = fs::rename(&temporary_project, destination) {
+            let _ = fs::rename(&destination_irs, &temporary_irs);
+            restore_aside(&destination_irs, old_irs.as_deref());
+            restore_aside(destination, old_project.as_deref());
+            return Err(error.into());
+        }
+        Ok(PreparedSaveAs {
+            store: MeasurementStore::new(destination, project),
+            old_project,
+            old_irs,
+        })
+    })();
+    if result.is_err() {
+        let _ = remove_path(&temporary_project);
+        let _ = remove_path(&temporary_irs);
+    }
+    result
+}
+
+fn reject_nested_irs(source: &Path, destination: &Path) -> Result<(), ServiceError> {
+    if !source.is_dir() {
+        return Ok(());
+    }
+    let source = source.canonicalize()?;
+    // The destination folder may not exist yet (it is created after this
+    // check): resolve its deepest existing ancestor and keep the rest as written.
+    let mut existing = destination;
+    let mut rest = Vec::new();
+    let resolved =
+        loop {
+            match existing.canonicalize() {
+                Ok(path) => break path,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    rest.push(existing.file_name().ok_or_else(|| {
+                        ServiceError::Project("invalid measurement folder".into())
+                    })?);
+                    existing = existing
+                        .parent()
+                        .filter(|p| !p.as_os_str().is_empty())
+                        .unwrap_or(Path::new("."));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        };
+    let destination = rest
+        .iter()
+        .rev()
+        .fold(resolved, |path, part| path.join(part));
+    if destination == source || destination.starts_with(&source) {
+        return Err(ServiceError::InvalidRequest(
+            "cannot save a project inside its own measurement folder".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn unique_sibling(path: &Path, kind: &str) -> Result<PathBuf, std::io::Error> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("project");
+    static TEMP: AtomicU64 = AtomicU64::new(0);
+    for _ in 0..100 {
+        let id = TEMP.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(".{name}.{kind}-{}-{id}", std::process::id()));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not reserve a project staging path",
+    ))
+}
+
+fn swap_aside(path: &Path, kind: &str) -> Result<Option<PathBuf>, ServiceError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let aside = unique_sibling(path, kind)?;
+    fs::rename(path, &aside)?;
+    Ok(Some(aside))
+}
+
+fn restore_aside(path: &Path, aside: Option<&Path>) {
+    let _ = remove_path(path);
+    if let Some(aside) = aside {
+        let _ = fs::rename(aside, path);
+    }
+}
+
+fn remove_path(path: &Path) -> Result<(), std::io::Error> {
+    if path.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+fn copy_tree_contents(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
     fs::create_dir_all(destination)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         let target = destination.join(entry.file_name());
         if entry.file_type()?.is_dir() {
-            copy_tree(&entry.path(), &target)?;
+            fs::create_dir(&target)?;
+            copy_tree_contents(&entry.path(), &target)?;
         } else {
             fs::copy(entry.path(), target)?;
         }
@@ -305,40 +575,7 @@ fn write_side_mdat(
 fn atomic_replace(destination: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
     let parent = destination.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
-    let stem = destination
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("project.mdat");
-    static TEMP: AtomicU64 = AtomicU64::new(0);
-    let mut temporary = None;
-    for _ in 0..100 {
-        let id = TEMP.fetch_add(1, Ordering::Relaxed);
-        let path = parent.join(format!(".{stem}.{}-{id}.tmp", std::process::id()));
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(file) => {
-                temporary = Some((path, file));
-                break;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error),
-        }
-    }
-    let Some((path, mut file)) = temporary else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            "could not create side mdat temporary file",
-        ));
-    };
-    let result = (|| {
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&path, destination)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&path);
-    }
-    result
+    secs_types::fs::write_atomic_bytes(destination, bytes)
 }
 
 fn rewrite_ir_directory(project: &mut Project, old: &Path, new: &Path) {
@@ -493,5 +730,312 @@ mod tests {
         session.save(None, &uuid, 0).unwrap();
         assert!(!target.with_extension("mdat").exists());
         fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod commit_tests {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::mpsc;
+    use std::sync::{Arc, Condvar};
+    use std::time::{Duration, Instant};
+
+    use secs_types::ipc::{JobEvent, JobId, JobKind, JobResult, JobStatus};
+
+    use super::*;
+    use crate::EventSink;
+    use crate::jobs::JobRegistry;
+
+    #[derive(Debug, Default)]
+    struct Finished {
+        values: Mutex<Vec<(JobId, JobStatus, Option<IpcError>)>>,
+        changed: Condvar,
+    }
+    impl EventSink for Finished {
+        fn send(&self, event: JobEvent) {
+            if let JobEvent::Finished {
+                job, status, error, ..
+            } = event
+            {
+                lock(&self.values).push((job, status, error));
+                self.changed.notify_all();
+            }
+        }
+    }
+    impl Finished {
+        fn wait(&self, job: JobId) -> (JobStatus, Option<IpcError>) {
+            let deadline = Instant::now() + Duration::from_secs(60);
+            let mut values = lock(&self.values);
+            loop {
+                if let Some((_, status, error)) = values.iter().find(|(id, ..)| *id == job) {
+                    return (*status, error.clone());
+                }
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                assert!(!remaining.is_zero(), "job {job:?} did not finish");
+                values = self.changed.wait_timeout(values, remaining).unwrap().0;
+            }
+        }
+    }
+
+    /// An open, unsaved project with its own identity; nothing touches the disk.
+    fn project() -> OpenProject {
+        let path = PathBuf::from("commit-test.secs");
+        OpenProject {
+            store: MeasurementStore::new(&path, Project::default()),
+            path,
+            dirty: false,
+            tutorial: false,
+            tutorial_folder: None,
+            results: crate::results::ResultBook::default(),
+            identity: next_identity(),
+            undo: Default::default(),
+        }
+    }
+
+    fn opened() -> Arc<Mutex<Session>> {
+        Arc::new(Mutex::new(Session {
+            open: Some(project()),
+        }))
+    }
+
+    /// Opens another project, as `project_new` or `project_open` would.
+    fn replace(session: &Mutex<Session>) {
+        lock(session).open = Some(project());
+    }
+
+    fn dirty(session: &Mutex<Session>) -> bool {
+        lock(session).require().unwrap().dirty
+    }
+
+    fn cancellable(registry: &JobRegistry, job: JobId) -> bool {
+        registry
+            .snapshots()
+            .into_iter()
+            .find(|snapshot| snapshot.job == job)
+            .expect("the job is listed")
+            .cancellable
+    }
+
+    /// Starts `body` as a real job, lets the test act before it commits,
+    /// and waits for its finish.
+    fn run(
+        registry: &JobRegistry,
+        before_commit: impl FnOnce(JobId),
+        body: impl FnOnce(JobContext) -> Result<JobResult, IpcError> + Send + 'static,
+    ) -> (JobStatus, Option<IpcError>) {
+        let events = Arc::new(Finished::default());
+        let (release, gate) = mpsc::channel::<()>();
+        let started = registry
+            .start(JobKind::Calibrate, events.clone(), move |job| {
+                gate.recv().expect("the test releases the job");
+                body(job)
+            })
+            .unwrap();
+        before_commit(started.job);
+        release.send(()).unwrap();
+        events.wait(started.job)
+    }
+
+    #[test]
+    fn ticket_needs_an_open_project() {
+        let error = Session::default().ticket().unwrap_err();
+        assert_eq!(error.code, ErrorCode::ProjectNotOpen);
+        let session = opened();
+        let ticket = lock(&session).ticket().unwrap();
+        assert_eq!(lock(&session).ticket().unwrap(), ticket);
+        replace(&session);
+        assert_ne!(lock(&session).ticket().unwrap(), ticket);
+    }
+
+    #[test]
+    fn commit_with_a_stale_ticket_fails_before_begin_commit_and_change() {
+        let registry = JobRegistry::default();
+        let session = opened();
+        let ticket = lock(&session).ticket().unwrap();
+        let ran = Arc::new(AtomicBool::new(false));
+        let still_cancellable = Arc::new(AtomicBool::new(false));
+        let (job_session, job_ran, job_cancellable, job_registry) = (
+            session.clone(),
+            ran.clone(),
+            still_cancellable.clone(),
+            registry.clone(),
+        );
+        let (status, error) = run(
+            &registry,
+            |_| replace(&session),
+            move |job| {
+                let outcome = commit(&job_session, ticket, &job, |_| {
+                    job_ran.store(true, Ordering::SeqCst);
+                    Ok(((), true))
+                });
+                job_cancellable.store(cancellable(&job_registry, job.id()), Ordering::SeqCst);
+                outcome.map(|()| JobResult::Stopped)
+            },
+        );
+        let error = error.expect("a stale commit fails");
+        assert_eq!(status, JobStatus::Failed);
+        assert_eq!(error.code, ErrorCode::StaleInputs);
+        assert_eq!(error.detail, "project changed while computing");
+        assert!(!ran.load(Ordering::SeqCst));
+        assert!(still_cancellable.load(Ordering::SeqCst));
+        assert!(!dirty(&session));
+    }
+
+    #[test]
+    fn commit_of_a_cancelled_job_fails_with_cancelled_before_change() {
+        let registry = JobRegistry::default();
+        let session = opened();
+        let ticket = lock(&session).ticket().unwrap();
+        let ran = Arc::new(AtomicBool::new(false));
+        let (job_session, job_ran) = (session.clone(), ran.clone());
+        let (status, error) = run(
+            &registry,
+            |job| {
+                registry.cancel(job).unwrap();
+            },
+            move |job| {
+                commit(&job_session, ticket, &job, |_| {
+                    job_ran.store(true, Ordering::SeqCst);
+                    Ok(((), true))
+                })
+                .map(|()| JobResult::Stopped)
+            },
+        );
+        assert_eq!(status, JobStatus::Cancelled);
+        assert_eq!(
+            error.expect("a cancelled commit fails").code,
+            ErrorCode::Cancelled
+        );
+        assert!(!ran.load(Ordering::SeqCst));
+        assert!(!dirty(&session));
+    }
+
+    #[test]
+    fn a_stale_ticket_is_reported_before_cancellation() {
+        let registry = JobRegistry::default();
+        let session = opened();
+        let ticket = lock(&session).ticket().unwrap();
+        let job_session = session.clone();
+        let (_, error) = run(
+            &registry,
+            |job| {
+                registry.cancel(job).unwrap();
+                replace(&session);
+            },
+            move |job| {
+                commit(
+                    &job_session,
+                    ticket,
+                    &job,
+                    |_| -> Result<((), bool), IpcError> {
+                        unreachable!("change runs only for the current project")
+                    },
+                )
+                .map(|()| JobResult::Stopped)
+            },
+        );
+        assert_eq!(
+            error.expect("the commit fails").code,
+            ErrorCode::StaleInputs
+        );
+    }
+
+    #[test]
+    fn commit_with_a_valid_ticket_runs_change_after_begin_commit_and_dirty_follows_it() {
+        for changed in [false, true] {
+            let registry = JobRegistry::default();
+            let session = opened();
+            let ticket = lock(&session).ticket().unwrap();
+            let seen = Arc::new(Mutex::new(None));
+            let (job_session, job_seen, job_registry) =
+                (session.clone(), seen.clone(), registry.clone());
+            let (status, error) = run(
+                &registry,
+                |_| {},
+                move |job| {
+                    let id = job.id();
+                    let value = commit(&job_session, ticket, &job, |open| {
+                        // `begin_commit` already made the job non-cancellable.
+                        let cancellable = cancellable(&job_registry, id);
+                        Ok(((open.path.clone(), cancellable), changed))
+                    })?;
+                    *lock(&job_seen) = Some(value);
+                    Ok(JobResult::Stopped)
+                },
+            );
+            assert_eq!((status, error), (JobStatus::Succeeded, None));
+            assert_eq!(
+                lock(&seen).take(),
+                Some((PathBuf::from("commit-test.secs"), false))
+            );
+            assert_eq!(dirty(&session), changed);
+        }
+    }
+
+    #[test]
+    fn a_failing_change_leaves_dirty_alone() {
+        let registry = JobRegistry::default();
+        let session = opened();
+        let ticket = lock(&session).ticket().unwrap();
+        let job_session = session.clone();
+        let (status, error) = run(
+            &registry,
+            |_| {},
+            move |job| {
+                commit(
+                    &job_session,
+                    ticket,
+                    &job,
+                    |_| -> Result<((), bool), IpcError> {
+                        Err(IpcError::new(ErrorCode::ProjectIo, "disk full"))
+                    },
+                )
+                .map(|()| JobResult::Stopped)
+            },
+        );
+        assert_eq!(status, JobStatus::Failed);
+        assert_eq!(error.unwrap().code, ErrorCode::ProjectIo);
+        assert!(!dirty(&session));
+    }
+
+    #[test]
+    fn apply_checks_the_ticket_without_begin_commit() {
+        let session = opened();
+        let stale = lock(&session).ticket().unwrap();
+        replace(&session);
+        let mut ran = false;
+        let error = apply(&session, stale, |_| {
+            ran = true;
+            Ok(((), true))
+        })
+        .unwrap_err();
+        assert_eq!(error.code, ErrorCode::StaleInputs);
+        assert_eq!(error.detail, "project changed while computing");
+        assert!(!ran);
+        assert!(!dirty(&session));
+
+        let ticket = lock(&session).ticket().unwrap();
+        assert_eq!(apply(&session, ticket, |_| Ok((7, false))).unwrap(), 7);
+        assert!(!dirty(&session));
+        apply(&session, ticket, |_| Ok(((), true))).unwrap();
+        assert!(dirty(&session));
+
+        // A job that writes as it goes stays cancellable.
+        let registry = JobRegistry::default();
+        let still_cancellable = Arc::new(AtomicBool::new(false));
+        let (job_session, job_cancellable, job_registry) =
+            (session.clone(), still_cancellable.clone(), registry.clone());
+        let (status, error) = run(
+            &registry,
+            |_| {},
+            move |job| {
+                apply(&job_session, ticket, |_| Ok(((), false)))?;
+                job_cancellable.store(cancellable(&job_registry, job.id()), Ordering::SeqCst);
+                Ok(JobResult::Stopped)
+            },
+        );
+        assert_eq!((status, error), (JobStatus::Succeeded, None));
+        assert!(still_cancellable.load(Ordering::SeqCst));
+        assert!(dirty(&session));
     }
 }

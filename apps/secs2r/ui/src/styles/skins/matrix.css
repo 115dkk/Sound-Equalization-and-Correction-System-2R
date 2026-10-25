@@ -1348,6 +1348,17 @@
   box-shadow: inset 3px 0 0 var(--warning);
 }
 
+/* The project warnings are a remark line on the rail, and the rail's face
+   is the sunken fill a resting control wears elsewhere: their actions take
+   the surface cell the project menu uses, so they still read as controls. */
+[data-skin="matrix"] .project-warnings .ui-button--secondary {
+  background: var(--surface);
+}
+
+[data-skin="matrix"] .project-warnings .ui-button--secondary:hover:not(:disabled) {
+  background: var(--skin-prelight-layer), var(--surface);
+}
+
 [data-skin="matrix"] .connect-note {
   background: transparent;
   box-shadow: inset 3px 0 0 var(--info);

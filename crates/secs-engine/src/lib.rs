@@ -23,9 +23,10 @@
 //! - **decay**: late-energy windows, mode T60, late peaks, "do no harm" guards.
 //! - **chain**: the DSP topology as one value; the response simulator here and
 //!   the CamillaDSP writer in `secs-camilla` read the same value.
-//! - **mimo**: support planning, regularised ideal supports, IIR or FIR
-//!   realisation behind the `SupportFitBackend` seam (CPU here, GPU in
-//!   `secs-gpu`).
+//! - **mimo**: support planning, regularised ideal supports (the λ search of
+//!   the ideal FIR goes through the `RidgeBackend` seam: CPU `RidgeSweep`
+//!   here, CUDA f64 in `secs-gpu`, ADR 0008), IIR or FIR realisation (IIR
+//!   always runs on the CPU).
 //! - **scorecard**: typed metrics before and after.
 //!
 //! Engine knobs that SECS 2 hid in environment variables are fields of an
@@ -56,6 +57,7 @@ mod fit;
 mod levels;
 #[allow(dead_code)]
 mod measurement;
+mod memory;
 #[allow(dead_code)]
 pub mod mimo;
 mod normalize;
@@ -64,6 +66,8 @@ mod notes;
 pub mod preview;
 #[allow(dead_code)]
 mod rc;
+mod replay;
+mod replay_mimo;
 #[allow(dead_code)]
 mod scorecard;
 #[allow(dead_code)]
@@ -72,13 +76,16 @@ mod setup;
 pub mod xo;
 
 mod error;
-#[cfg(feature = "test-support")]
+#[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 #[cfg(test)]
 mod tests;
 
 pub use ba::{LayoutInfo, ManualPlan};
-pub use calibration::{EngineInputs, ProjectView, engine_inputs};
+pub use calibration::{
+    Calibration, CalibrationRequest, EngineInputs, ProjectView, calibrate, calibrate_with,
+    engine_inputs,
+};
 pub use chain::{BaRow, StageResponses, input_response, stage_responses};
 pub use design::{
     Design, DesignRequest, DesignSpectra, FitStage, FitterFactory, MainDesign, RoleScores,
@@ -95,6 +102,7 @@ pub use mimo::{
 };
 pub use normalize::normalize_measurements;
 pub use notes::{MimoNote, Note};
+pub use replay::{DesignReplay, ExportAxis};
 pub use scorecard::Metrics;
 pub use secs_dsp::resample::{MAX_RESAMPLE_RATE, MIN_RESAMPLE_RATE};
 pub use setup::SubFilter;

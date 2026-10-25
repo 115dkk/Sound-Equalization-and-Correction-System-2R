@@ -5,7 +5,7 @@
 // capture. Installed by the tour page only; importing this has no effect.
 
 /** 09:41 in Seoul (scripts/screen-tour.mjs captures in that time zone). */
-export const TOUR_EPOCH = Date.parse("2026-10-15T09:41:00+09:00");
+const TOUR_EPOCH = Date.parse("2026-10-15T09:41:00+09:00");
 
 let offset = 0;
 let moved = false;

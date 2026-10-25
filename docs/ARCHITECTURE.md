@@ -16,7 +16,7 @@
 Cargo.toml                워크스페이스 루트 (lint, 공용 의존성)
 rust-toolchain.toml       1.99.0 고정
 features.toml             기능 등록부
-unsafe-budget.toml        크레이트별 unsafe 허용량 (secs-sys = 0, secs-cuda-sys = 80)
+unsafe-budget.toml        크레이트별 unsafe 허용량 (secs-sys = 3, ADR 0011; secs-cuda-sys = 80)
 deny.toml                 GPL 호환 라이선스, 권고, 출처
 UPSTREAM.toml             이식을 마친 업스트림 커밋
 crates/
@@ -33,6 +33,7 @@ crates/
   secs-export/            보정 단계·전후 REW mdat 내보내기
   secs-rew/               REW API (Real, Fake)
   secs-audio/             자체 측정 (스윕, 세션, 디컨볼루션, 레벨 체크)
+  secs-graph/             내보내기 그래프: 신호 사슬과 MIMO 경로의 유일한 검증, 작성기가 함께 읽는 계획과 서포트 묶음
   secs-camilla/           CamillaDSP v4 설정과 FIR
   secs-filters/           필터 값 텍스트와 Equalizer APO 설정
   secs-service/           애플리케이션 서비스 (깊은 모듈)
@@ -49,25 +50,32 @@ oracle/                   골든 내보내기 스크립트와 골든 (oracle/REA
 
 ## 3. 의존 방향
 
-의존은 아래로만 흐릅니다. `secs-sys`는 앱만 의존하고, 앱이 그 어댑터를 seam에 주입합니다.
+의존은 아래로만 흐릅니다. `secs-sys`는 앱만 의존하고, 앱이 그 어댑터를 seam에 주입합니다. 그림은 각 `Cargo.toml`의 `[dependencies]`와 같습니다(감사 #92 TD-95).
 
 ```text
 ui ──IPC──> secs2r ─┬─> secs-service ─┬─> secs-engine ─┬─> secs-dsp
                     │                 │                ├─> secs-compute
                     │                 │                └─> secs-types
-                    │                 ├─> secs-project ──> secs-types
-                    │                 ├─> secs-rew ──────> secs-types
-                    │                 ├─> secs-audio ────> secs-dsp, secs-types
+                    │                 ├─> secs-project ──> secs-mdat (출처 정보), secs-types
+                    │                 ├─> secs-rew
+                    │                 ├─> secs-audio ────> secs-dsp
                     │                 ├─> secs-mdat ─────> secs-jos, secs-dsp
                     │                 ├─> secs-dirac
-                    │                 ├─> secs-export ───> secs-engine, secs-mdat, secs-types
-                    │                 ├─> secs-camilla ──> secs-dsp, secs-types
-                    │                 └─> secs-filters ──> secs-camilla, secs-dsp, secs-types
-                    ├─> secs-gpu ─────> secs-engine (RidgeBackend seam)
+                    │                 ├─> secs-export ───> secs-engine, secs-mdat, secs-camilla (숫자 포매터),
+                    │                 │                    secs-dsp, secs-types
+                    │                 ├─> secs-camilla ──> secs-graph, secs-dsp, secs-types
+                    │                 ├─> secs-filters ──> secs-graph, secs-camilla (숫자 포매터),
+                    │                 │                    secs-dsp, secs-types
+                    │                 └─> secs-compute, secs-dsp, secs-types
+                    ├─> secs-gpu ─────> secs-engine (RidgeBackend seam), secs-compute, secs-types
                     │        └───────> secs-cuda-sys (선택적 네이티브 라이브러리)
-                    └─> secs-sys ─────> wasapi, cpal, OS 조회 크레이트
-secs2r-cli ─────────> secs-service, secs-sys, secs-gpu
-secs-policy ────────> (파일 시스템만 읽음; IPC 메서드 목록 때문에 secs-types)
+                    ├─> secs-sys ─────> wasapi, cpal, OS 조회 크레이트
+                    │        └───────> secs-audio, secs-rew, secs-compute (어댑터가 구현하는 seam)
+                    └─> secs-rew, secs-types
+secs2r-cli ─────────> secs-service, secs-sys, secs-gpu, secs-rew, secs-compute, secs-types
+secs-graph ─────────> secs-dsp, secs-types (작성기를 의존하지 않음)
+secs-policy ────────> (파일 시스템만 읽음; 테스트가 IPC 메서드 목록 때문에 secs-types)
+secs-engine ┄┄┄┄┄┄┄┄> secs-oracle (`test-support` 기능에서만; 출하하지 않음)
 ```
 
 ## 4. seam과 어댑터
@@ -80,7 +88,7 @@ secs-policy ────────> (파일 시스템만 읽음; IPC 메서드
 | 오디오 장치 `AudioBackend` | `secs-audio` | WASAPI(`secs-sys`), cpal(`secs-sys`), 시뮬레이션 방(테스트) |
 | REW 전송 | `secs-rew` 안쪽 | HTTP, 기록된 대화(테스트) |
 | 이상 FIR의 정칙화 탐색 `RidgeBackend` | `secs-engine` | CPU RidgeSweep(기준), CUDA f64 spectral(`secs-gpu`) |
-| 신호 사슬 소비자 | `secs-types`의 사슬 값 | 응답 시뮬레이터(`secs-engine`), CamillaDSP 작성기(`secs-camilla`), 필터 텍스트·Equalizer APO 작성기와 FIR streaming 참조 소비자(`secs-filters`) |
+| 신호 사슬 소비자 | `secs-types`의 사슬 값, 그리고 그 값과 MIMO 경로를 검증해 묶은 `secs-graph`의 내보내기 그래프(`ExportGraph`) | 사슬 값을 읽는 응답 시뮬레이터(`secs-engine`), 내보내기 그래프를 읽는 CamillaDSP 작성기(`secs-camilla`), 필터 텍스트·Equalizer APO 작성기와 FIR streaming 참조 소비자(`secs-filters`) |
 | 메모리 조회 `MemoryProbe` | `secs-compute` | 운영체제(`secs-sys`), 고정값(테스트) |
 | 호스트 기능 `Host` | `secs-service` | Tauri(대화상자, 폴더 열기, 알림), 기록(테스트) |
 
@@ -104,7 +112,7 @@ IPC의 기본 동작은 바꾸지 않습니다.
 | XO | 크로스오버 그룹, XO 타겟 PEQ, 추천(후보별 점수) | `xo_peq_band`, `recommend_xo`, `xo_scores` |
 | RC | 채널별 크기 설계, 위치 공통 초과위상, FIR 실현 사다리, PEQ 재맞춤, 넓은 다듬기, 위상 해상도 선택, 슈뢰더 범위 | `_correction`, `schroeder_hz` |
 | 감쇠 | 늦은 에너지 창, 모드 T60, 늦은 봉우리, 해를 끼치지 않는다 가드 (업스트림의 정의 다섯 벌을 하나로) | `_late_db`, `mode_t60`, `_late_peaks` 등 |
-| 신호 사슬 | DSP 토폴로지 값 하나 (입력 PEQ·FIR, 분기, 버스, 서브 필터, MIMO 경로, 지연) | `stage_responses`, `export_camilladsp.make_config` |
+| 신호 사슬 | DSP 토폴로지 값 하나 (입력 PEQ·FIR, 분기, 버스, 서브 필터, 지연). MIMO 서포트 경로는 옆의 `MimoPaths` 값 | `stage_responses`, `export_camilladsp.make_config` |
 | MIMO | 서포트 범위·순위, 정규화 이상 서포트(블록 구조 정규 방정식, λ 이분), IIR 또는 FIR 실현, 가드 | `mimo.py`, `mimo_iir.py` |
 | 성적표 | 타입 있는 지표(±1 dB 비율, 위상 바퀴, GD 폭, 1/24 GD 봉우리, 앞울림) | `scorecard.py` |
 | 오케스트레이터 | 단계 캐시(입력 지문), 취소, 진행, XO 추천의 공유 단계 | `calibration.compute`, `compute_mimo` |
@@ -133,6 +141,7 @@ IPC의 기본 동작은 바꾸지 않습니다.
 - 앱 안에서 해결할 수 있는 문제는 짧은 상태와 실제 조작 또는 해당 설정으로 이동하는 버튼을 제공합니다. 다른 단계의 위치를 문장으로 안내하지 않습니다. 내부 처리 해명과 자명한 조작 설명은 도움말에 옮겨 쌓지 않고 삭제합니다(P57).
 - 결과는 판정 카드(20–200 Hz ±1 dB 비율 전후, 저역 시간 퍼짐, 추가 지연, 위치 간 편차) → 채널별 성적표 → 그래프(응답, 군지연, XO, 서브, 저역 감쇠) 순서로 보입니다.
 - 화면 규칙은 make-interfaces-feel-better를 리뷰 게이트로 씁니다(0003).
+- 화면과 모의 서비스는 서비스 규칙 값(설정 한도, 스윕 길이, 최근 프로젝트 개수 등)을 생성된 `ipc/bindings/rules.ts`와 서비스 테스트가 기록한 `ipc/recorded/` 응답에서 받고, 같은 값을 다시 적지 않습니다. 모의 서비스는 봉투, 잡, 실패 주입, 되돌리기, 프로젝트 상태 보관만 맡습니다(0014).
 
 ## 8. 마일스톤
 

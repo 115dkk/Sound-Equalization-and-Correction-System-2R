@@ -5,7 +5,6 @@ import type { Translate } from "../../i18n/react";
 import type { ErrorCode } from "../../ipc/bindings/ErrorCode";
 import type { IpcError } from "../../ipc/bindings/IpcError";
 import type { JobKind } from "../../ipc/bindings/JobKind";
-import type { JobStatus } from "../../ipc/bindings/JobStatus";
 import { roleCode } from "../../ui/maps/geometry";
 
 export const JOB_NAME: Record<JobKind, MessageKey> = {
@@ -21,15 +20,7 @@ export const JOB_NAME: Record<JobKind, MessageKey> = {
   status_watch: "jobs.kind.status_watch",
 };
 
-export const JOB_STATUS: Record<JobStatus, MessageKey> = {
-  running: "jobs.status.running",
-  cancel_requested: "jobs.status.cancel_requested",
-  succeeded: "jobs.status.succeeded",
-  failed: "jobs.status.failed",
-  cancelled: "jobs.status.cancelled",
-};
-
-export const ERROR_TEXT: Record<ErrorCode, { cause: MessageKey; next: MessageKey }> = {
+const ERROR_TEXT: Record<ErrorCode, { cause: MessageKey; next: MessageKey }> = {
   invalid_request: { cause: "error.invalid_request", next: "error.invalid_request.next" },
   internal: { cause: "error.internal", next: "error.internal.next" },
   not_implemented: { cause: "error.not_implemented", next: "error.not_implemented.next" },

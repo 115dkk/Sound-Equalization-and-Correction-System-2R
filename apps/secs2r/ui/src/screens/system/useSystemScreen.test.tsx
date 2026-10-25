@@ -9,14 +9,12 @@ import { useSystemScreen } from "./useSystemScreen";
 
 let mock: ReturnType<typeof createMockService>;
 let session: ReturnType<typeof createSession>;
-let pending: Promise<unknown>[];
 const wrapper = ({ children }: { children: ReactNode }) => <SessionProvider value={session}>{children}</SessionProvider>;
 async function perform(work: () => unknown) {
-  await act(async () => { await work(); while (pending.length) await Promise.all(pending.splice(0)); });
+  await act(async () => { await work(); await session.settled(); });
 }
 beforeEach(async () => {
   mock = createMockService({ tickMs: 0 }); session = createSession(mock); await session.start();
-  pending = []; vi.spyOn(session, "run").mockImplementation((work) => { pending.push(work().catch(() => {})); });
   mock.calls.length = 0;
 });
 afterEach(async () => { cleanup(); await session.monitor(false); session.dispose(); mock.dispose(); vi.restoreAllMocks(); });
@@ -131,37 +129,14 @@ describe("useSystemScreen", () => {
     await perform(() => a.setDspFields(fields));
     expect(mock.calls).toContainEqual({ method: "dsp_set", params: { preset: null, fields } });
     await perform(() => a.setArrangement(13));
-    await perform(() => a.setStartDelay("10 초"));
     const timing = session.stores.layout.getSnapshot()!.timing;
     await perform(() => a.setTiming(timing));
     expect(mock.calls).toContainEqual({ method: "layout_set", params: { count: 13, start_delay: null, timing: null, confirm: true } });
-    expect(mock.calls).toContainEqual({ method: "layout_set", params: { count: null, start_delay: "10 초", timing: null, confirm: false } });
     expect(mock.calls).toContainEqual({ method: "layout_set", params: { count: null, start_delay: null, timing, confirm: false } });
     await perform(a.next); expect(session.host.getSnapshot().current).toBe("connect");
     // The button says 연결·점검으로 on the mdat path too; that screen leads on to 측정·가져오기.
     await perform(() => { session.host.set({ path: "mdat" }); session.navigate("system"); a.next(); });
     expect(session.host.getSnapshot().current).toBe("connect");
-  });
-
-  it("rebases rapid DSP field edits after a delayed full replacement", async () => {
-    const { result } = renderHook(useSystemScreen, { wrapper });
-    const actions = result.current.actions;
-    const fields = result.current.view!.dsp.fields;
-    const original = mock.request;
-    let release!: () => void;
-    let writes = 0;
-    vi.spyOn(mock, "request").mockImplementation(async (request) => {
-      if (request.method === "dsp_set" && ++writes === 1) await new Promise<void>((resolve) => { release = resolve; });
-      return original(request);
-    });
-    await act(async () => {
-      actions.setDspFields({ ...fields, fir_taps: fields.fir_taps + 1 });
-      actions.setDspFields({ ...fields, fir_budget: fields.fir_budget + 1 });
-    });
-    expect(writes).toBe(1);
-    await perform(() => release());
-    expect(session.stores.dsp.getSnapshot()?.fields).toEqual({ ...fields, fir_taps: fields.fir_taps + 1, fir_budget: fields.fir_budget + 1 });
-    expect(writes).toBe(2);
   });
 
   it("does not write a cancelled patch sheet; reports and rejects destructive failures", async () => {

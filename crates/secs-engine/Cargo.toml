@@ -11,6 +11,10 @@ publish.workspace = true
 [lints]
 workspace = true
 
+[[example]]
+name = "engine_perf"
+required-features = ["test-support"]
+
 [features]
 test-support = ["dep:secs-oracle", "dep:serde_json"]
 

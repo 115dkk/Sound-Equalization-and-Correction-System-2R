@@ -13,10 +13,10 @@ import { createMockService, type MockService } from "../../ipc/mock";
 import { clockMoved, installTourClock } from "./clock";
 import { PROJECT_PATH, TOUR_SCENES, type TourOp, type TourScene } from "./scenes";
 
-export type TourSceneInfo = Pick<TourScene, "id" | "step" | "title" | "note">;
+type TourSceneInfo = Pick<TourScene, "id" | "step" | "title" | "note">;
 type SerializedOp = { kind: "press"; key: string } | { kind: "click" | "hover"; selector: string } | { kind: "page" };
 
-export type TourHandle = {
+type TourHandle = {
   scene: { id: string; opCount: number; ops: TourOp["kind"][] };
   /** Runs page op `i` and waits for the window to settle. */
   run: (i: number) => Promise<void>;

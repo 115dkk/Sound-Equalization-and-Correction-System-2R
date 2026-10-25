@@ -1156,10 +1156,48 @@ fn measure_config_get_reads_stored_settings_without_dirtying_the_project() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// Holds REW's answer to one request until the test releases it.
+#[derive(Debug, Default)]
+struct Gate {
+    state: Mutex<(bool, bool)>,
+    changed: Condvar,
+}
+impl Gate {
+    fn arrive_and_wait(&self) {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        let mut state = self.state.lock().unwrap();
+        state.0 = true;
+        self.changed.notify_all();
+        while !state.1 {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return;
+            }
+            state = self.changed.wait_timeout(state, remaining).unwrap().0;
+        }
+    }
+    fn wait_arrived(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        let mut state = self.state.lock().unwrap();
+        while !state.0 {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return false;
+            }
+            state = self.changed.wait_timeout(state, remaining).unwrap().0;
+        }
+        true
+    }
+    fn release(&self) {
+        self.state.lock().unwrap().1 = true;
+        self.changed.notify_all();
+    }
+}
+
 #[derive(Debug)]
 struct ConfigureRewTransport {
     calls: Arc<Mutex<Vec<secs_rew::Request>>>,
-    session_free: Arc<std::sync::atomic::AtomicBool>,
+    gate: Arc<Gate>,
 }
 impl secs_rew::Transport for ConfigureRewTransport {
     fn request(
@@ -1168,8 +1206,7 @@ impl secs_rew::Transport for ConfigureRewTransport {
     ) -> Result<secs_rew::Response, secs_rew::RewError> {
         self.calls.lock().unwrap().push(request.clone());
         if request.path == "/audio/java/output-devices" {
-            self.session_free
-                .store(true, std::sync::atomic::Ordering::Release);
+            self.gate.arrive_and_wait();
         }
         let body = match request.path.as_str() {
             "/audio/driver" => json!({"driver":"Java"}),
@@ -1187,33 +1224,59 @@ fn measure_configure_opens_selected_rew_device_after_project_update() {
     let root = root("configure-rew-device");
     let path = root.join("room.secs");
     let calls = Arc::new(Mutex::new(Vec::new()));
-    let session_free = Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let service = Service::new(Deps {
+    let gate = Arc::new(Gate::default());
+    let service = Arc::new(Service::new(Deps {
         rew_transport: {
             let calls = calls.clone();
-            let session_free = session_free.clone();
+            let gate = gate.clone();
             Arc::new(move || {
                 Box::new(ConfigureRewTransport {
                     calls: calls.clone(),
-                    session_free: session_free.clone(),
+                    gate: gate.clone(),
                 })
             })
         },
         ..Deps::default()
-    });
+    }));
     new(&service, &path);
-    let Response::MeasureConfigure(result) = call(
-        &service,
-        Request::MeasureConfigure(MeasureConfigureParams {
-            method: "rew".into(),
-            output_device: Some("Selected Speakers".into()),
-            ..Default::default()
-        }),
-    ) else {
+    let configuring = {
+        let service = service.clone();
+        std::thread::spawn(move || {
+            call(
+                &service,
+                Request::MeasureConfigure(MeasureConfigureParams {
+                    method: "rew".into(),
+                    output_device: Some("Selected Speakers".into()),
+                    ..Default::default()
+                }),
+            )
+        })
+    };
+    assert!(
+        gate.wait_arrived(Duration::from_secs(30)),
+        "REW was not asked for its devices"
+    );
+    // REW is mid-request: another request must finish without waiting for it.
+    let (sender, receiver) = std::sync::mpsc::channel();
+    {
+        let service = service.clone();
+        std::thread::spawn(move || {
+            let _ = sender.send(service.call(Request::ProjectInfo, Arc::new(NoEvents)));
+        });
+    }
+    let info = receiver.recv_timeout(Duration::from_secs(5));
+    gate.release();
+    let Response::MeasureConfigure(result) = configuring.join().unwrap() else {
         panic!()
     };
+    let Ok(Envelope::Ok(info)) = info else {
+        panic!("project_info waited for the REW device request: {info:?}");
+    };
+    let Response::ProjectInfo(info) = *info else {
+        panic!()
+    };
+    assert!(info.dirty, "the project is updated before REW is called");
     assert_eq!(result.output_device, "Selected Speakers");
-    assert!(session_free.load(std::sync::atomic::Ordering::Acquire));
     let calls = calls.lock().unwrap();
     assert!(calls.iter().any(|request| {
         request.method == "POST"
@@ -1257,5 +1320,264 @@ fn configure_validates_fields_and_host_stub_reports_its_error() {
     };
     assert_eq!(error.code, ErrorCode::RewFailed);
     assert_eq!(error.params["reason"], "cannot_launch");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn sample_load_positions_stop_at_the_largest_layout() {
+    let root = root("sample-load-bound");
+    let path = root.join("bound.secs");
+    let service = Service::new(Deps::default());
+    new(&service, &path);
+    for positions in [18, u32::MAX] {
+        let started = std::time::Instant::now();
+        let error = service.call(
+            Request::SampleLoad(SampleLoadParams {
+                positions: Some(positions),
+            }),
+            Arc::new(NoEvents),
+        );
+        let Envelope::Err(error) = error else {
+            panic!("{positions} positions must be refused");
+        };
+        assert_eq!(error.code, ErrorCode::MeasurementInput, "{positions}");
+        assert_eq!(
+            error.params.get("field").map(String::as_str),
+            Some("positions")
+        );
+        assert!(started.elapsed() < Duration::from_secs(1), "{positions}");
+    }
+    let JobResult::Measurement(info) = sample_load(&service, Some(17), Arc::new(Events::default()))
+    else {
+        panic!("17 positions must load");
+    };
+    assert_eq!(info.positions, (1..=17).collect::<Vec<i64>>());
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// REW that answers a level subscription by posting one recorded reading to
+/// the callback URL, as REW does.
+#[derive(Debug)]
+struct LevelRewTransport {
+    level: serde_json::Value,
+}
+impl secs_rew::Transport for LevelRewTransport {
+    fn request(
+        &self,
+        request: &secs_rew::Request,
+    ) -> Result<secs_rew::Response, secs_rew::RewError> {
+        if request.path == "/input-levels/subscribe" {
+            let url = request.body.as_ref().unwrap()["url"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let body = self.level.to_string();
+            std::thread::spawn(move || post_repeatedly(&url, &body));
+        }
+        let body = match request.path.as_str() {
+            "/audio/driver" => json!({"driver":"Java"}),
+            "/audio/java/output-channels" => json!(["L", "R"]),
+            _ => json!({"message":"ok"}),
+        };
+        Ok(secs_rew::Response::ok(body))
+    }
+}
+
+#[derive(Debug)]
+struct ProRequiredLevelRewTransport;
+impl secs_rew::Transport for ProRequiredLevelRewTransport {
+    fn request(
+        &self,
+        request: &secs_rew::Request,
+    ) -> Result<secs_rew::Response, secs_rew::RewError> {
+        if request.path == "/audio/java/output-channel" {
+            return Ok(secs_rew::Response {
+                status: 401,
+                body: json!({"message":"A Pro upgrade license is required for this action"}),
+            });
+        }
+        let body = match request.path.as_str() {
+            "/version" => json!({"message":"5.40 Beta 124 API 0.9.4"}),
+            "/audio/driver" => json!({"driver":"Java"}),
+            "/audio/java/output-channels" => json!(["L", "R"]),
+            _ => json!({"message":"ok"}),
+        };
+        Ok(secs_rew::Response::ok(body))
+    }
+}
+
+fn post_repeatedly(url: &str, body: &str) {
+    use std::io::{Read, Write};
+    let rest = url.strip_prefix("http://").unwrap();
+    let (host, path) = rest.split_at(rest.find('/').unwrap());
+    for _ in 0..50 {
+        if let Ok(mut stream) = std::net::TcpStream::connect(host) {
+            let _ = write!(
+                stream,
+                "POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.read_to_end(&mut Vec::new());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn rew_level_pro_required_is_visible_in_status() {
+    let root = root("rew-level-license");
+    let path = root.join("room.secs");
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(|| Box::new(ProRequiredLevelRewTransport)),
+        ..Deps::default()
+    });
+    new(&service, &path);
+    configure(&service, "rew");
+    let events = Arc::new(Events::default());
+    let Response::LevelCheck(job) = ok(
+        &service,
+        Request::LevelCheck(LevelCheckParams { role: "L".into() }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    assert!(matches!(
+        events.wait(job.job, Duration::from_secs(1)),
+        JobEvent::Finished {
+            status: JobStatus::Failed,
+            error: Some(IpcError {
+                code: ErrorCode::RewProRequired,
+                ..
+            }),
+            ..
+        }
+    ));
+    let Response::MeasureMethods(methods) = call(&service, Request::MeasureMethods) else {
+        panic!()
+    };
+    assert_eq!(methods.rew.pro, Some(false));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn rew_level_check_reports_the_rew_peak() {
+    let root = root("rew-level-peak");
+    let path = root.join("room.secs");
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(|| {
+            Box::new(LevelRewTransport {
+                level: json!({"unit":"dBFS","rms":[-30.0],"peak":[-1.0]}),
+            })
+        }),
+        ..Deps::default()
+    });
+    new(&service, &path);
+    call(
+        &service,
+        Request::MeasureConfigure(MeasureConfigureParams {
+            method: "rew".into(),
+            ..Default::default()
+        }),
+    );
+    let events = Arc::new(Events::default());
+    let Response::LevelCheck(job) = ok(
+        &service,
+        Request::LevelCheck(LevelCheckParams { role: "L".into() }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    let JobResult::Level(level) = succeeded(&events, job.job) else {
+        panic!()
+    };
+    assert_eq!(level.rms_dbfs, -30.0);
+    assert_eq!(level.peak_dbfs, -1.0);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn rew_driver_and_devices_stay_while_a_measurement_runs() {
+    let root = root("rew-busy");
+    let path = root.join("room.secs");
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let gate = Arc::new(Gate::default());
+    gate.release();
+    let service = Service::new(Deps {
+        rew_transport: {
+            let calls = calls.clone();
+            Arc::new(move || {
+                Box::new(ConfigureRewTransport {
+                    calls: calls.clone(),
+                    gate: gate.clone(),
+                })
+            })
+        },
+        ..Deps::default()
+    });
+    new(&service, &path);
+    set_start_delay(&path, 60);
+    call(
+        &service,
+        Request::ProjectOpen(ProjectPathParams {
+            path: path.to_string_lossy().into_owned(),
+        }),
+    );
+    configure(&service, "mock");
+    let set_driver = || {
+        Request::RewDriverSet(RewDriverSetParams {
+            driver: "Java".into(),
+        })
+    };
+    let switch_device = || {
+        Request::MeasureConfigure(MeasureConfigureParams {
+            method: "rew".into(),
+            output_device: Some("Selected Speakers".into()),
+            ..Default::default()
+        })
+    };
+
+    // A measurement waits in its start countdown.
+    let events = Arc::new(Events::default());
+    let job = measure(&service, 1, events.clone());
+    for request in [set_driver(), switch_device()] {
+        let method = request.method();
+        let Envelope::Err(error) = service.call(request, Arc::new(NoEvents)) else {
+            panic!("{method} must wait for the measurement");
+        };
+        assert_eq!(error.code, ErrorCode::JobBusy, "{method}");
+        assert_eq!(
+            error.params.get("kind").map(String::as_str),
+            Some("Measure"),
+            "{method}"
+        );
+    }
+    assert!(calls.lock().unwrap().is_empty(), "REW was called");
+    let Response::MeasureConfigGet(unchanged) = call(&service, Request::MeasureConfigGet) else {
+        panic!()
+    };
+    assert_eq!(unchanged.method, "mock");
+    call(&service, Request::JobCancel(JobCancelParams { job }));
+    events.wait(job, Duration::from_secs(5));
+
+    // The level monitor does not hold REW back: the screen restarts it.
+    let monitor_events = Arc::new(Events::default());
+    let Response::LevelMonitorStart(monitor) = ok(
+        &service,
+        Request::LevelMonitorStart(LevelMonitorStartParams::default()),
+        monitor_events.clone(),
+    ) else {
+        panic!()
+    };
+    assert!(matches!(
+        call(&service, set_driver()),
+        Response::RewDriverSet(_)
+    ));
+    let Response::MeasureConfigure(switched) = call(&service, switch_device()) else {
+        panic!()
+    };
+    assert_eq!(switched.output_device, "Selected Speakers");
+    call(&service, Request::LevelMonitorStop);
+    monitor_events.wait(monitor.job, Duration::from_secs(5));
     fs::remove_dir_all(root).unwrap();
 }

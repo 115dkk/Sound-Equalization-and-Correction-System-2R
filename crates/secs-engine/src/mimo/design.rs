@@ -11,7 +11,10 @@ use secs_dsp::{
 };
 
 use crate::{
-    C, Design, EngineError, Note, Spectra, decay, grid::design_freqs, measurement::delay_response,
+    C, Design, EngineError, Note, Spectra,
+    decay::{self, onset},
+    grid::design_freqs,
+    measurement::delay_response,
 };
 
 const FS_LOW: f64 = 600.0;
@@ -19,7 +22,9 @@ const EARLY: usize = 36;
 
 use super::solve::solve;
 use crate::{EngineConfig, MeasurementSet};
-use secs_compute::{Context, MapError, MemoryError};
+#[cfg(test)]
+use secs_compute::MapError;
+use secs_compute::{Context, MemoryError};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MimoRequest {
@@ -210,11 +215,6 @@ pub fn support_path(
         .collect())
 }
 
-fn onset(x: &[f64]) -> usize {
-    let top = x.iter().map(|v| v.abs()).fold(0.0, f64::max);
-    x.iter().position(|v| v.abs() > 0.1 * top).unwrap_or(0)
-}
-
 pub(crate) fn convolve(a: &[f64], b: &[f64]) -> Vec<f64> {
     if a.is_empty() || b.is_empty() {
         return Vec::new();
@@ -368,13 +368,7 @@ pub(crate) fn worst_band_db(
     let n = xs[0].len();
     let nf = 2 * n;
     let bins = secs_dsp::grid::freqs(nf, FS_LOW).expect("MIMO grid");
-    let stop = (fsiso / 20.0).log2() + 1e-9;
-    let edges: Vec<_> = (0..)
-        .map(|k| k as f64 / 3.0)
-        .take_while(|&v| v < stop)
-        .map(|v| 20.0 * 2f64.powf(v))
-        .collect();
-    let mut bands: Vec<_> = edges.windows(2).map(|v| (v[0], v[1])).collect();
+    let mut bands = third_octave_bands(fsiso);
     let refs: Vec<_> = xs.iter().map(Vec::as_slice).collect();
     bands.extend(
         decay::late_peaks(&refs, 6)
@@ -419,6 +413,19 @@ pub(crate) fn worst_band_db(
         .unwrap_or(-99.0)
 }
 
+/// The guards' third-octave bands from 20 Hz while the upper edge stays below
+/// `fsiso`, as `(lo, hi)` in Hz (TD-75: the CPU guard, its direct-form oracle
+/// and the IIR guard share them).
+pub(crate) fn third_octave_bands(fsiso: f64) -> Vec<(f64, f64)> {
+    let stop = (fsiso / 20.0).log2() + 1e-9;
+    let edges: Vec<_> = (0..)
+        .map(|k| k as f64 / 3.0)
+        .take_while(|&v| v < stop)
+        .map(|v| 20.0 * 2f64.powf(v))
+        .collect();
+    edges.windows(2).map(|v| (v[0], v[1])).collect()
+}
+
 #[derive(Debug)]
 pub(crate) struct BandGuard {
     n: usize,
@@ -431,16 +438,9 @@ impl BandGuard {
     pub(crate) fn new(xs: &[Vec<f64>], fsiso: f64) -> Self {
         let n = xs[0].len();
         let bins = secs_dsp::grid::freqs(2 * n, FS_LOW).expect("MIMO grid");
-        let stop = (fsiso / 20.0).log2() + 1e-9;
-        let edges: Vec<_> = (0..)
-            .map(|k| k as f64 / 3.0)
-            .take_while(|&v| v < stop)
-            .map(|v| 20.0 * 2f64.powf(v))
-            .collect();
         let refs: Vec<_> = xs.iter().map(Vec::as_slice).collect();
-        let bands = edges
-            .windows(2)
-            .map(|v| (v[0], v[1]))
+        let bands = third_octave_bands(fsiso)
+            .into_iter()
             .chain(
                 decay::late_peaks(&refs, 6)
                     .into_iter()
@@ -1065,7 +1065,7 @@ pub(crate) fn design_mimo_inputs_observed(
     }
     validate_request(req)?;
     let started = std::time::Instant::now();
-    let prepared = super::prepared::Prepared::new(design, measurements, config)?;
+    let prepared = super::prepared::Prepared::new(design, measurements, config, ctx)?;
     observe("preparation", started.elapsed());
     design_mimo_prepared(design, &prepared, req, ctx, input, observe)
 }
@@ -1073,7 +1073,7 @@ pub(crate) fn design_mimo_inputs_observed(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn design_mimo_prepared(
     design: &Design,
-    prepared: &super::prepared::Prepared,
+    prepared: &super::prepared::Prepared<'_>,
     req: &MimoRequest,
     ctx: &Context,
     input: Option<&str>,
@@ -1085,7 +1085,7 @@ pub(crate) fn design_mimo_prepared(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn design_mimo_prepared_accelerated(
     design: &Design,
-    prepared: &super::prepared::Prepared,
+    prepared: &super::prepared::Prepared<'_>,
     req: &MimoRequest,
     ctx: &Context,
     input: Option<&str>,
@@ -1170,8 +1170,10 @@ pub(crate) fn design_mimo_prepared_accelerated(
         .max()
         .unwrap_or(0);
     // A retained reservation must not leave a worker waiting for bytes that
-    // this same invocation cannot release until the worker has finished.
-    let needed = shared_bytes.saturating_add(largest_input.max(scratch_bytes));
+    // this same invocation cannot release until the worker has finished. The
+    // preparation's spectra stay reserved underneath (TD-24).
+    let retained = prepared.reserved.saturating_add(shared_bytes);
+    let needed = retained.saturating_add(largest_input.max(scratch_bytes));
     if needed > ctx.budget().total() {
         return Err(EngineError::Input(
             MemoryError::TooLarge {
@@ -1185,39 +1187,35 @@ pub(crate) fn design_mimo_prepared_accelerated(
         .budget()
         .acquire(shared_bytes, ctx.cancel())
         .map_err(memory_error)?;
-    let low_paths = ctx
-        .try_map(pairs.clone(), |(p, r)| {
-            let _scratch = ctx
-                .budget()
-                .acquire(scratch_bytes, ctx.cancel())
-                .map_err(memory_error)?;
+    let low_paths = crate::memory::try_map(
+        ctx,
+        pairs.clone(),
+        retained,
+        |_| scratch_bytes,
+        |(p, r)| {
             let h = support_path(&out, r, spectra, p, &prepared.align_delay_ms)?;
             Ok::<_, EngineError>(secs_dsp::lowrate::to_low(&h, design_freqs(), 720)?)
-        })
-        .map_err(|e| match e {
-            MapError::Cancelled => EngineError::Cancelled,
-            MapError::Item { error, .. } => error,
-        })?;
+        },
+    )?;
     observe("shared_paths", started.elapsed());
     let started = std::time::Instant::now();
-    let results = ctx
-        .try_map(mains, |main| {
+    let results = crate::memory::try_map(
+        ctx,
+        mains,
+        retained,
+        |main| {
+            input_bytes(
+                positions.len(),
+                usable.iter().filter(|r| **r != main.role).count(),
+                req.taps_low,
+            ) as u64
+        },
+        |main| {
             let candidates: Vec<_> = usable
                 .iter()
                 .filter(|r| **r != main.role)
                 .cloned()
                 .collect();
-            // Normal equations, Householder reduction, possible fallback factor,
-            // and scratch (also covers the mapped blocks during construction),
-            // plus path/guard/design-grid buffers. Reserve before allocating.
-            let bytes = input_bytes(positions.len(), candidates.len(), req.taps_low);
-            let _permit =
-                ctx.budget()
-                    .acquire(bytes as u64, ctx.cancel())
-                    .map_err(|e| match e {
-                        MemoryError::Cancelled => EngineError::Cancelled,
-                        other => EngineError::Input(other.to_string()),
-                    })?;
             let started = std::time::Instant::now();
             let mut xs = Vec::new();
             let mut paths = Vec::new();
@@ -1254,11 +1252,8 @@ pub(crate) fn design_mimo_prepared_accelerated(
                 acceleration,
             )?;
             Ok((main.role.clone(), result))
-        })
-        .map_err(|e| match e {
-            MapError::Cancelled => EngineError::Cancelled,
-            MapError::Item { error, .. } => error,
-        })?;
+        },
+    )?;
     observe("inputs_wall", started.elapsed());
     let mut traces = Vec::new();
     for (role, result) in results {
@@ -1339,9 +1334,11 @@ pub(crate) fn design_mimo_before(
     {
         return Err(EngineError::Input("invalid MIMO request".into()));
     }
-    let spectra = crate::export_view(design, measurements, config)?.spectra;
     let prepared =
         crate::measurement::prepare(measurements, config, &crate::setup::Setup::new(config))?;
+    let spectra =
+        crate::export_view::export_view_prepared(design, measurements, &prepared, &|| false)?
+            .spectra;
     out.ranges = support_ranges(design, &spectra, req.fsiso, positions)?;
     if let Some(low) = req.f_low.filter(|v| *v != 0.0) {
         for (_, range) in &mut out.ranges {

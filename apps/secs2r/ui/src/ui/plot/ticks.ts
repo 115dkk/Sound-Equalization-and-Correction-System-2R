@@ -16,7 +16,7 @@ export function formatHz(hz: number): string {
 }
 
 /** Narrowest room per label before the axis falls back to decades (CSS px). */
-export const MIN_TICK_SPACING = 26;
+const MIN_TICK_SPACING = 26;
 
 /**
  * The fixed ticks inside [min, max] (inclusive, with float slack). When the
@@ -28,9 +28,4 @@ export function freqTicksIn(min: number, max: number, widthPx = Infinity): numbe
   if (all.length < 2 || widthPx / all.length >= MIN_TICK_SPACING) return all;
   const decades = all.filter((tick) => Number.isInteger(Math.log10(tick)));
   return decades.length >= 2 ? decades : all;
-}
-
-/** 1/n-octave step in frequency: hz × 2^(steps/n). */
-export function octaveStep(hz: number, steps: number, perOctave = 24): number {
-  return hz * 2 ** (steps / perOctave);
 }

@@ -1,5 +1,12 @@
+use crate::pyjson::Shape;
 use crate::{ProjectError, PyJson};
 pub use secs_types::target::TargetCurve;
+
+/// The `target` object [`TargetJson::to_json`] writes; `points` is replaced (F16).
+pub(crate) static TARGET_SHAPE: Shape = Shape::Record {
+    optional: &[],
+    nested: &[],
+};
 
 /// `.secs` conversion of [`TargetCurve`], whose arithmetic lives in
 /// `secs-types` so the engine can sample it without depending on file formats.

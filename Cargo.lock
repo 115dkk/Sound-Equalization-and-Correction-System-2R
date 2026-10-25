@@ -3817,6 +3817,7 @@ dependencies = [
  "num-traits",
  "ryu",
  "secs-dsp",
+ "secs-graph",
  "secs-oracle",
  "secs-types",
  "serde_json",
@@ -3898,6 +3899,7 @@ version = "0.27.0"
 dependencies = [
  "secs-camilla",
  "secs-dsp",
+ "secs-graph",
  "secs-oracle",
  "secs-types",
  "serde_json",
@@ -3913,6 +3915,15 @@ dependencies = [
  "secs-engine",
  "secs-types",
  "serde_json",
+]
+
+[[package]]
+name = "secs-graph"
+version = "0.27.0"
+dependencies = [
+ "secs-dsp",
+ "secs-types",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3997,6 +4008,7 @@ dependencies = [
  "secs-types",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "thiserror 2.0.21",
  "toml 1.1.8+spec-1.1.0",
 ]

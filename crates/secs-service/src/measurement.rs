@@ -8,18 +8,8 @@ use secs_types::ipc::*;
 
 use crate::measure::json::JsonExt;
 use crate::measure::{self, MeasureError, MeasurementSettings, Measurer, plan_for, store_devices};
-use crate::{Deps, EventSink, Service, dirac_import, lock, mdat_import, session};
+use crate::{Deps, EventSink, Service, lock, mdat_import, measurement_file, session};
 use secs_types::role::ROLES;
-
-struct Transport(Box<dyn secs_rew::Transport>);
-impl secs_rew::Transport for Transport {
-    fn request(
-        &self,
-        request: &secs_rew::Request,
-    ) -> Result<secs_rew::Response, secs_rew::RewError> {
-        self.0.request(request)
-    }
-}
 
 fn input(field: &str, detail: impl Into<String>) -> IpcError {
     IpcError::new(ErrorCode::MeasurementInput, detail).with_param("field", field)
@@ -30,7 +20,6 @@ pub(crate) fn measure_error(
     error: MeasureError,
     field: &str,
     share: secs_audio::SharePreference,
-    rew_license: Option<&Arc<std::sync::Mutex<Option<bool>>>>,
 ) -> IpcError {
     use secs_audio::AudioError as A;
     use secs_rew::RewError as R;
@@ -70,9 +59,6 @@ pub(crate) fn measure_error(
             IpcError::new(ErrorCode::RewUnreachable, detail).with_param("path", path)
         }
         MeasureError::Rew(R::ProRequired { status, path }) => {
-            if let Some(rew_license) = rew_license {
-                *lock(rew_license) = Some(false);
-            }
             IpcError::new(ErrorCode::RewProRequired, detail)
                 .with_param("path", path)
                 .with_param("status", status.to_string())
@@ -124,7 +110,7 @@ const LENGTHS: [(usize, &str); 7] = [
 ];
 fn settings(project: &Project) -> Result<MeasureConfigResult, IpcError> {
     let s = MeasurementSettings::from_project(project)
-        .map_err(|e| measure_error(e, "settings", secs_audio::SharePreference::Auto, None))?;
+        .map_err(|e| measure_error(e, "settings", secs_audio::SharePreference::Auto))?;
     let p = plan_for(project, &s);
     let channel = |n: i64| {
         u16::try_from(n)
@@ -162,6 +148,7 @@ fn settings(project: &Project) -> Result<MeasureConfigResult, IpcError> {
 }
 fn measurer(
     deps: &Deps,
+    rew: &measure::RewLink,
     method: &str,
     settings: MeasurementSettings,
 ) -> Result<Box<dyn Measurer>, IpcError> {
@@ -171,14 +158,15 @@ fn measurer(
             settings,
         ))),
         "mock" => Ok(Box::new((deps.mock_measurer)())),
-        "rew" => Ok(Box::new(measure::RewMeasurer::new(
-            secs_rew::RewClient::new(Transport((deps.rew_transport)())),
+        "rew" => Ok(Box::new(measure::RewMeasurer::linked(
+            rew.client(),
             deps.unix_ms.clone(),
+            rew.clone(),
         ))),
         _ => Err(input("method", "unknown measurement method")),
     }
 }
-fn rew_status(deps: &Deps, rew_license: &Arc<std::sync::Mutex<Option<bool>>>) -> RewStatusResult {
+fn rew_status(deps: &Deps, rew: &measure::RewLink) -> RewStatusResult {
     let running = deps
         .process
         .process_names()
@@ -189,22 +177,19 @@ fn rew_status(deps: &Deps, rew_license: &Arc<std::sync::Mutex<Option<bool>>>) ->
                 .iter()
                 .any(|r| name.eq_ignore_ascii_case(r))
         });
-    let mut client = secs_rew::RewClient::new(Transport((deps.rew_transport)()));
+    let mut client = rew.client();
     let reachable = client.is_running();
     if !reachable {
-        *lock(rew_license) = None;
+        rew.forget_license();
     }
     RewStatusResult {
         running: running || reachable,
         reachable,
-        pro: reachable.then(|| *lock(rew_license)).flatten(),
+        pro: reachable.then(|| rew.license()).flatten(),
     }
 }
 
-pub(crate) fn measure_methods_for(
-    deps: &Deps,
-    rew_license: &Arc<std::sync::Mutex<Option<bool>>>,
-) -> MeasureMethodsResult {
+pub(crate) fn measure_methods_for(deps: &Deps, rew: &measure::RewLink) -> MeasureMethodsResult {
     let mut native =
         measure::NativeMeasurer::from_backend((deps.audio_backend)(), Default::default());
     let (native_devices, native_error) = match native.devices() {
@@ -226,11 +211,10 @@ pub(crate) fn measure_methods_for(
                 e,
                 "devices",
                 secs_audio::SharePreference::Auto,
-                Some(rew_license),
             )),
         ),
     };
-    let rew = rew_status(deps, rew_license);
+    let rew = rew_status(deps, rew);
     let mut methods = vec!["mock".into()];
     if native_devices.iter().any(|d| d.input_channels > 0)
         && native_devices.iter().any(|d| d.output_channels > 0)
@@ -256,7 +240,7 @@ pub(crate) fn measure_methods_for(
 
 impl Service {
     pub(crate) fn measure_methods(&self) -> MeasureMethodsResult {
-        measure_methods_for(&self.deps, &self.rew_license)
+        measure_methods_for(&self.deps, &self.rew)
     }
 
     pub(crate) fn measure_config_get(&self) -> Result<MeasureConfigResult, IpcError> {
@@ -273,6 +257,13 @@ impl Service {
         }
         let open_rew_devices = params.method == "rew";
         let rew_devices = (params.output_device.clone(), params.input_device.clone());
+        if open_rew_devices
+            && [&rew_devices.0, &rew_devices.1]
+                .into_iter()
+                .any(|name| name.as_ref().is_some_and(|name| !name.is_empty()))
+        {
+            self.refuse_while_measuring()?;
+        }
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
         let mut project = open.store.project().clone();
@@ -378,7 +369,7 @@ impl Service {
         drop(session);
 
         if open_rew_devices {
-            let mut client = secs_rew::RewClient::new(Transport((self.deps.rew_transport)()));
+            let mut client = self.rew.client();
             for (kind, name) in [("output", rew_devices.0), ("input", rew_devices.1)] {
                 let Some(name) = name.filter(|name| !name.is_empty()) else {
                     continue;
@@ -390,10 +381,9 @@ impl Service {
                 };
                 if devices.iter().any(|device| device.name == name)
                     && client.current_device(kind).as_deref() != Some(name.as_str())
-                    && let Err(secs_rew::RewError::ProRequired { .. }) =
-                        client.set_device(kind, &name)
+                    && let Err(error) = client.set_device(kind, &name)
                 {
-                    *lock(&self.rew_license) = Some(false);
+                    self.rew.observe(&error);
                 }
             }
         }
@@ -466,7 +456,7 @@ impl Service {
             },
             played,
         )
-        .map_err(|e| measure_error(e, "level", secs_audio::SharePreference::Auto, None))?;
+        .map_err(|e| measure_error(e, "level", secs_audio::SharePreference::Auto))?;
         open.dirty = true;
         settings(open.store.project())
     }
@@ -475,32 +465,26 @@ impl Service {
         params: LevelCheckParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let (project, _) = {
-            let session = lock(&self.session);
-            let open = session.require()?;
-            (open.store.project().clone(), open.identity)
-        };
+        let project = lock(&self.session).require()?.store.project().clone();
         let s = MeasurementSettings::from_project(&project)
-            .map_err(|e| measure_error(e, "settings", secs_audio::SharePreference::Auto, None))?;
+            .map_err(|e| measure_error(e, "settings", secs_audio::SharePreference::Auto))?;
         let p = plan_for(&project, &s);
         if !p.roles.contains(&params.role) {
             return Err(input("role", "unknown measurement role"));
         }
         let share = s.share;
-        let rew = method(&project) == "rew";
-        let rew_license = self.rew_license.clone();
-        let mut m = measurer(&self.deps, method(&project), s)?;
+        let mut m = measurer(&self.deps, &self.rew, method(&project), s)?;
         self.jobs.start(JobKind::LevelCheck, events, move |ctx| {
             ctx.role_progress(&params.role, 0, 1);
             let report = m
                 .level_check(&p, &params.role, 0.5, ctx.measurement_cancel())
-                .map_err(|e| measure_error(e, "level", share, rew.then_some(&rew_license)))?;
+                .map_err(|e| measure_error(e, "level", share))?;
             let recommended = secs_audio::recommend_sweep_level(
                 report.input_dbfs,
                 p.sweep_level_db,
                 secs_audio::level::TARGET_WINDOW,
             )
-            .map_err(|e| measure_error(e.into(), "level", share, None))?;
+            .map_err(|e| measure_error(e.into(), "level", share))?;
             ctx.role_progress(&params.role, 1, 1);
             Ok(JobResult::Level(LevelResult {
                 rms_dbfs: report.input_dbfs,
@@ -515,99 +499,91 @@ impl Service {
         params: SampleLoadParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let (roles, identity) = {
+        let (roles, ticket) = {
             let session = lock(&self.session);
             let open = session.require()?;
             let roles = plan_for(open.store.project(), &Default::default()).roles;
-            (roles, open.identity)
+            (roles, session.ticket()?)
         };
+        // 17 is the largest measurement layout (패밀리); checked before any allocation.
         let positions = match params.positions {
             None => vec![1],
-            Some(count) if count >= 2 => (1..=count).map(i64::from).collect(),
-            Some(_) => return Err(input("positions", "positions must be at least 2")),
+            Some(count @ 2..=17) => (1..=count).map(i64::from).collect(),
+            Some(_) => return Err(input("positions", "positions must be from 2 to 17")),
         };
         let embedded = params.positions.is_none();
         let session = self.session.clone();
         self.jobs.start(JobKind::SampleLoad, events, move |ctx| {
-            ctx.begin_commit()?;
             let total = (roles.len() * positions.len()) as u64;
             let mut done = 0;
-            let mut session = lock(&session);
-            let open = session.require_mut()?;
-            if open.identity != identity {
-                return Err(IpcError::new(
-                    ErrorCode::StaleInputs,
-                    "open project changed",
-                ));
-            }
-            if embedded {
-                let existing = secs_project::measured_positions(open.store.project());
-                for position in existing {
-                    if position != 1 {
+            let info = session::commit(&session, ticket, &ctx, |open| {
+                if embedded {
+                    let existing = secs_project::measured_positions(open.store.project());
+                    for position in existing {
+                        if position != 1 {
+                            open.store.clear_position(position);
+                        }
+                    }
+                } else {
+                    let existing = secs_project::measured_positions(open.store.project());
+                    for position in existing {
                         open.store.clear_position(position);
                     }
                 }
-            } else {
-                let existing = secs_project::measured_positions(open.store.project());
-                for position in existing {
-                    open.store.clear_position(position);
-                }
-            }
-            for position in positions {
-                open.store.start_position(position);
-                for role in &roles {
-                    if ctx.cancel().is_cancelled() {
-                        return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
-                    }
-                    let (ir, sample_rate, t0_s, source) = if embedded {
-                        match measure::sample::ir(role, 1) {
-                            Ok((ir, rate, t0)) => (ir, rate, t0, "sample"),
-                            Err(_) => {
-                                (measure::sample::fallback_ir(role), 48_000, 0.0, "synthetic")
-                            }
+                for position in positions {
+                    open.store.start_position(position);
+                    for role in &roles {
+                        if ctx.cancel().is_cancelled() {
+                            return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
                         }
-                    } else {
-                        (
-                            measure::sample::position_variation(
-                                &measure::sample::fallback_ir(role),
-                                u32::try_from(position).unwrap_or(u32::MAX),
-                            ),
-                            48_000,
-                            0.0,
-                            "synthetic",
-                        )
-                    };
-                    open.store
-                        .record(
-                            secs_project::MeasurementResult {
-                                role: role.clone(),
-                                pos: position,
-                                ir,
-                                sample_rate,
-                                t0_s,
-                                spl_db: None,
-                                spl_offset_db: None,
-                                snr_db: None,
-                                uuid: Some(format!("sample-{role}-{position}")),
-                                source: Some(source.into()),
-                                source_info: None,
-                            },
-                            Some(&roles),
-                        )
-                        .map_err(|error| {
-                            measure_error(
-                                error.into(),
-                                "record",
-                                secs_audio::SharePreference::Auto,
-                                None,
+                        let (ir, sample_rate, t0_s) = if embedded {
+                            measure::sample::ir(role, 1).unwrap_or_else(|_| {
+                                (measure::sample::fallback_ir(role), 48_000, 0.0)
+                            })
+                        } else {
+                            (
+                                measure::sample::position_variation(
+                                    &measure::sample::fallback_ir(role),
+                                    u32::try_from(position).unwrap_or(u32::MAX),
+                                ),
+                                48_000,
+                                0.0,
                             )
-                        })?;
-                    done += 1;
-                    ctx.role_progress(role, done, total);
+                        };
+                        open.store
+                            .record(
+                                secs_project::MeasurementResult {
+                                    role: role.clone(),
+                                    pos: position,
+                                    ir,
+                                    sample_rate,
+                                    t0_s,
+                                    spl_db: None,
+                                    spl_offset_db: None,
+                                    snr_db: None,
+                                    uuid: Some(format!("sample-{role}-{position}")),
+                                    // Upstream sets `source` only for mdat imports.
+                                    source: None,
+                                    source_info: None,
+                                },
+                                Some(&roles),
+                            )
+                            .map_err(|error| {
+                                measure_error(
+                                    error.into(),
+                                    "record",
+                                    secs_audio::SharePreference::Auto,
+                                )
+                            })?;
+                        done += 1;
+                        ctx.role_progress(role, done, total);
+                    }
                 }
-            }
-            open.dirty = false;
-            Ok(JobResult::Measurement(session::info(open)))
+                // Each record is written to disk as it is made.
+                open.dirty = false;
+                Ok((session::info(open), false))
+            })?;
+            Ok(JobResult::Measurement(info))
         })
     }
 
@@ -616,17 +592,19 @@ impl Service {
         params: MeasurePositionParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let (project, identity) = {
+        let (project, ticket) = {
             let session = lock(&self.session);
-            let open = session.require()?;
-            (open.store.project().clone(), open.identity)
+            (
+                session.require()?.store.project().clone(),
+                session.ticket()?,
+            )
         };
         let active_method = method(&project);
         if matches!(active_method, "none" | "mdat") {
             return Err(input("method", "selected method cannot run a measurement"));
         }
         let mut s = MeasurementSettings::from_project(&project)
-            .map_err(|e| measure_error(e, "settings", secs_audio::SharePreference::Auto, None))?;
+            .map_err(|e| measure_error(e, "settings", secs_audio::SharePreference::Auto))?;
         if params.position < 1 || params.position > measure::position_count(&project) {
             return Err(input("position", "position outside layout"));
         }
@@ -638,11 +616,11 @@ impl Service {
         let share = s.share;
         let delay = start_delay(&project);
         let rew = method(&project) == "rew";
-        let rew_license = self.rew_license.clone();
-        let mut m = measurer(&self.deps, method(&project), s)?;
+        let rew_link = self.rew.clone();
+        let mut m = measurer(&self.deps, &self.rew, method(&project), s)?;
+        let commit_boundary = m.commit_boundary();
         let session = self.session.clone();
         let uuid = self.deps.uuid.clone();
-        let atomic_position = method(&project) != "rew";
         self.jobs.start(JobKind::Measure, events, move |ctx| {
             let countdown_started = std::time::Instant::now();
             let mut seconds_passed = 0;
@@ -679,28 +657,28 @@ impl Service {
                                 ))?
                             ));
                         }
-                        let mut session = lock(&session);
-                        let open = session.require_mut()?;
-                        if open.identity != identity {
-                            return Err(IpcError::new(
-                                ErrorCode::StaleInputs,
-                                "open project changed",
-                            ));
-                        }
-                        if count == 0 {
-                            if atomic_position {
-                                ctx.begin_commit()?;
-                            }
-                            open.store.start_position(params.position);
-                        }
                         let role = result.role.clone();
                         let snr = result.snr_db;
-                        open.store
-                            .record(result, Some(&p.roles))
-                            .map_err(|e| measure_error(e.into(), "record", share, None))?;
-                        open.dirty = false;
+                        let first = count == 0;
+                        let record = |open: &mut session::OpenProject| -> Result<_, IpcError> {
+                            if first {
+                                open.store.start_position(params.position);
+                            }
+                            open.store
+                                .record(result, Some(&p.roles))
+                                .map_err(|e| measure_error(e.into(), "record", share))?;
+                            // Each record is written to disk as it is made.
+                            open.dirty = false;
+                            Ok(((), false))
+                        };
+                        // An atomic method's position becomes non-cancellable
+                        // with its first record; REW keeps every role it recorded.
+                        if first && commit_boundary == measure::CommitBoundary::Position {
+                            session::commit(&session, ticket, &ctx, record)?;
+                        } else {
+                            session::apply(&session, ticket, record)?;
+                        }
                         count += 1;
-                        drop(session);
                         ctx.role_progress(&role, count, p.roles.len() as u64);
                         if let Some(snr) = snr.filter(|v| *v < secs_rew::LOW_SNR_DB) {
                             ctx.log(Notice {
@@ -722,25 +700,15 @@ impl Service {
                     Ok(())
                 },
             )
-            .map_err(|e| {
-                failure
-                    .unwrap_or_else(|| measure_error(e, "plan", share, rew.then_some(&rew_license)))
-            })?;
+            .map_err(|e| failure.unwrap_or_else(|| measure_error(e, "plan", share)))?;
             if rew {
-                *lock(&rew_license) = Some(true);
+                rew_link.confirm_license();
             }
             if ctx.cancel().is_cancelled() {
                 return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
             }
-            let session = lock(&session);
-            let open = session.require()?;
-            if open.identity != identity {
-                return Err(IpcError::new(
-                    ErrorCode::StaleInputs,
-                    "open project changed",
-                ));
-            }
-            Ok(JobResult::Measurement(session::info(open)))
+            let info = session::apply(&session, ticket, |open| Ok((session::info(open), false)))?;
+            Ok(JobResult::Measurement(info))
         })
     }
     pub(crate) fn position_clear(
@@ -749,30 +717,18 @@ impl Service {
     ) -> Result<UndoResult, IpcError> {
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
-        let before = open.store.project().measurements.clone();
-        let removed = match &before {
-            PyJson::Array(entries) => entries
-                .iter()
-                .enumerate()
-                .filter(|(_, v)| position_of(v) == Some(params.position))
-                .map(|(i, v)| (i, v.clone()))
-                .collect::<Vec<_>>(),
-            _ => vec![],
-        };
-        if removed.is_empty() {
-            return Err(IpcError::new(
-                ErrorCode::InvalidRequest,
-                "position has no record",
-            ));
-        }
-        open.store.clear_position(params.position);
+        let removed = open
+            .store
+            .remove_position(params.position)
+            .ok_or_else(|| IpcError::new(ErrorCode::InvalidRequest, "position has no record"))?;
         if let Err(error) = open.store.save() {
-            open.store.project_mut().measurements = before;
+            open.store
+                .restore_position(removed)
+                .expect("nothing recorded the position since it was removed");
             return Err(measure_error(
                 error.into(),
                 "position",
                 secs_audio::SharePreference::Auto,
-                None,
             ));
         }
         let token = session::push_position_undo(open, removed);
@@ -795,32 +751,22 @@ impl Service {
         let payload = open.undo[index].payload.clone();
         match payload {
             session::UndoPayload::Position(removed) => {
-                let before = open.store.project().measurements.clone();
-                let PyJson::Array(entries) = &mut open.store.project_mut().measurements else {
+                if !matches!(open.store.project().measurements, PyJson::Array(_)) {
                     return Err(IpcError::new(
                         ErrorCode::InvalidRequest,
                         "measurement list changed",
                     ));
-                };
-                if removed
-                    .iter()
-                    .any(|(_, v)| entries.iter().any(|e| position_of(e) == position_of(v)))
-                {
-                    return Err(IpcError::new(
-                        ErrorCode::InvalidRequest,
-                        "position was recorded again",
-                    ));
                 }
-                for (index, entry) in removed {
-                    entries.insert(index.min(entries.len()), entry);
-                }
+                let position = removed.position();
+                open.store.restore_position(removed).map_err(|_| {
+                    IpcError::new(ErrorCode::InvalidRequest, "position was recorded again")
+                })?;
                 if let Err(error) = open.store.save() {
-                    open.store.project_mut().measurements = before;
+                    open.store.remove_position(position);
                     return Err(measure_error(
                         error.into(),
                         "undo",
                         secs_audio::SharePreference::Auto,
-                        None,
                     ));
                 }
                 open.dirty = false;
@@ -840,7 +786,7 @@ impl Service {
         Ok(session::info(open))
     }
     pub(crate) fn rew_info(&self) -> RewInfoResult {
-        let mut client = secs_rew::RewClient::new(Transport((self.deps.rew_transport)()));
+        let mut client = self.rew.client();
         let mut info = client.info();
         let current_audio = if info.reachable {
             client.current_audio()
@@ -848,7 +794,7 @@ impl Service {
             Default::default()
         };
         if !info.reachable {
-            *lock(&self.rew_license) = None;
+            self.rew.forget_license();
         }
         let executable_path =
             secs_rew::launch::find_rew_exe().map(|p| p.to_string_lossy().into_owned());
@@ -879,7 +825,7 @@ impl Service {
             reachable: info.reachable,
             version: info.version,
             driver: info.driver,
-            pro: info.reachable.then(|| *lock(&self.rew_license)).flatten(),
+            pro: info.reachable.then(|| self.rew.license()).flatten(),
             input_device: current_audio.input_device,
             output_device: current_audio.output_device,
             input: current_audio.input,
@@ -905,21 +851,31 @@ impl Service {
         if params.driver.trim().is_empty() {
             return Err(input("driver", "driver must not be empty"));
         }
-        let mut client = secs_rew::RewClient::new(Transport((self.deps.rew_transport)()));
+        self.refuse_while_measuring()?;
+        let mut client = self.rew.client();
         client.set_driver(&params.driver).map_err(|error| {
-            measure_error(
-                error.into(),
-                "driver",
-                secs_audio::SharePreference::Auto,
-                Some(&self.rew_license),
-            )
+            self.rew.observe(&error);
+            measure_error(error.into(), "driver", secs_audio::SharePreference::Auto)
         })?;
         Ok(self.rew_info())
     }
 
+    /// REW's driver and devices stay as they are while a measurement job
+    /// sweeps through REW (TD-91).
+    fn refuse_while_measuring(&self) -> Result<(), IpcError> {
+        match self.jobs.running_measurement() {
+            Some(kind) => Err(IpcError::new(
+                ErrorCode::JobBusy,
+                "a measurement job is using the audio devices",
+            )
+            .with_param("kind", format!("{kind:?}"))),
+            None => Ok(()),
+        }
+    }
+
     pub(crate) fn rew_launch(&self) -> Result<RewStatusResult, IpcError> {
-        *lock(&self.rew_license) = None;
-        let status = rew_status(&self.deps, &self.rew_license);
+        self.rew.forget_license();
+        let status = rew_status(&self.deps, &self.rew);
         if status.running {
             return Ok(status);
         }
@@ -938,86 +894,37 @@ impl Service {
         })
     }
     pub(crate) fn mdat_scan(&self, params: MdatScanParams) -> Result<MdatScanResult, IpcError> {
-        let path = Path::new(&params.path);
-        if dirac_import::is_liveproject(path) {
-            let roles = ROLES.into_iter().map(str::to_owned).collect::<Vec<_>>();
-            let scan = dirac_import::scan(path, &roles)
-                .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto, None))?;
-            let suggested_roles = scan
-                .rows
-                .iter()
-                .map(|row| row.role.clone())
-                .collect::<Vec<_>>();
-            let positions = scan.rows.iter().map(|row| row.position).collect::<Vec<_>>();
-            return Ok(MdatScanResult {
-                suggestions: scan
-                    .rows
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, row)| {
-                        row.role.as_ref().map(|role| MdatAssignment {
-                            measurement: row.title.clone(),
-                            role: role.clone(),
-                            index: Some(index),
-                            position: Some(row.position),
-                        })
-                    })
-                    .collect(),
-                problems: mdat_import::problem_notices(&suggested_roles, &positions),
-                measurements: scan
-                    .rows
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, row)| MdatScanMeasurement {
-                        index,
-                        title: row.title,
-                        role: row.role,
-                        position: row.position,
-                        position_tagged: true,
-                        looks_like_sub: row.looks_like_sub,
-                    })
-                    .collect(),
-            });
-        }
-        let scan = mdat_import::scan(path)
-            .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto, None))?;
-        let roles = scan
-            .measurements
-            .iter()
-            .map(|m| m.role.clone())
-            .collect::<Vec<_>>();
-        let positions = scan
-            .measurements
-            .iter()
-            .map(|m| m.position)
-            .collect::<Vec<_>>();
+        let roles = ROLES.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        let reader = measurement_file::open(Path::new(&params.path), &roles, None, 1)
+            .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto))?;
+        let rows = reader.rows();
         Ok(MdatScanResult {
-            suggestions: scan
-                .measurements
+            suggestions: rows
                 .iter()
                 .enumerate()
-                .filter_map(|(index, m)| {
-                    m.role.as_ref().map(|role| MdatAssignment {
-                        measurement: m.info.title.clone(),
+                .filter_map(|(index, row)| {
+                    row.role.as_ref().map(|role| MdatAssignment {
+                        measurement: row.title.clone(),
                         role: role.clone(),
                         index: Some(index),
-                        position: Some(m.position),
+                        position: Some(row.position),
                     })
                 })
                 .collect(),
-            problems: mdat_import::problem_notices(&roles, &positions),
-            measurements: scan
-                .measurements
-                .into_iter()
+            problems: mdat_import::problem_notices(
+                &rows.iter().map(|row| row.role.clone()).collect::<Vec<_>>(),
+                &rows.iter().map(|row| row.position).collect::<Vec<_>>(),
+            ),
+            measurements: rows
+                .iter()
                 .enumerate()
-                .map(|(index, m)| MdatScanMeasurement {
+                .map(|(index, row)| MdatScanMeasurement {
                     index,
-                    position_tagged: mdat_import::split_position(&m.info.title).0
-                        != m.info.title.trim(),
-                    title: m.info.title,
-                    role: m.role,
-                    position: m.position,
-                    looks_like_sub: m.looks_like_sub,
+                    title: row.title.clone(),
+                    role: row.role.clone(),
+                    position: row.position,
+                    position_tagged: row.position_tagged,
+                    looks_like_sub: row.looks_like_sub,
                 })
                 .collect(),
         })
@@ -1027,33 +934,30 @@ impl Service {
         params: MdatImportParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
-        let (project, identity) = {
+        let (project, ticket) = {
             let session = lock(&self.session);
-            let open = session.require()?;
-            (open.store.project().clone(), open.identity)
+            (
+                session.require()?.store.project().clone(),
+                session.ticket()?,
+            )
         };
         let session = self.session.clone();
         self.jobs.start(JobKind::MdatImport, events, move |ctx| {
+            // Read the file once here, without the session lock; the lock
+            // is held only for the import below (TD-37).
             let path = Path::new(&params.path);
             let plan = plan_for(&project, &Default::default());
-            let liveproject = dirac_import::is_liveproject(path);
-            let titles = if liveproject {
-                dirac_import::scan(path, &plan.roles)
-                    .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto, None))?
-                    .rows
-                    .into_iter()
-                    .map(|row| row.title)
-                    .collect::<Vec<_>>()
-            } else {
-                mdat_import::scan(path)
-                    .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto, None))?
-                    .measurements
-                    .into_iter()
-                    .map(|measurement| measurement.info.title)
-                    .collect::<Vec<_>>()
-            };
+            let path_error = |e| measure_error(e, "path", secs_audio::SharePreference::Auto);
+            let reader =
+                measurement_file::open(path, &plan.roles, Some(params.position), params.position)
+                    .map_err(path_error)?;
+            let titles = reader
+                .rows()
+                .iter()
+                .map(|row| row.title.as_str())
+                .collect::<Vec<_>>();
             let mut assignments = vec![
-                mdat_import::Assignment {
+                measurement_file::Assignment {
                     role: None,
                     position: None
                 };
@@ -1087,7 +991,7 @@ impl Service {
                 if !(1..=measure::position_count(&project)).contains(&position) {
                     return Err(input("position", "position outside layout"));
                 }
-                assignments[index] = mdat_import::Assignment {
+                assignments[index] = measurement_file::Assignment {
                     role: Some(a.role),
                     position: Some(position),
                 };
@@ -1107,29 +1011,15 @@ impl Service {
                 error.params.extend(problem.params.clone());
                 return Err(error);
             }
-            let mut session = lock(&session);
-            let open = session.require_mut()?;
-            if open.identity != identity {
-                return Err(IpcError::new(
-                    ErrorCode::StaleInputs,
-                    "open project changed",
-                ));
-            }
-            ctx.begin_commit()?;
-            let count = if liveproject {
-                dirac_import::import(&mut open.store, path, &assignments)
-            } else {
-                mdat_import::import(
-                    &mut open.store,
-                    path,
-                    Some(&assignments),
-                    Some(params.position),
-                )
-            }
-            .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto, None))?;
-            open.dirty = false;
-            let info = session::info(open);
-            drop(session);
+            let file_name = measurement_file::file_name(path);
+            let (count, info) = session::commit(&session, ticket, &ctx, |open| {
+                let count =
+                    measurement_file::import(&mut open.store, &*reader, &file_name, &assignments)
+                        .map_err(path_error)?;
+                // The import writes its records to disk.
+                open.dirty = false;
+                Ok(((count, session::info(open)), false))
+            })?;
             ctx.report_progress("mdat_import", count as u64, count as u64);
             Ok(JobResult::MdatImport(info))
         })
@@ -1139,13 +1029,6 @@ fn measurement_entries(project: &Project) -> &[PyJson] {
     match &project.measurements {
         PyJson::Array(entries) => entries,
         _ => &[],
-    }
-}
-
-fn position_of(value: &PyJson) -> Option<i64> {
-    match value.get("pos") {
-        Some(PyJson::Int(v) | PyJson::Str(v)) => v.parse().ok(),
-        _ => None,
     }
 }
 
@@ -1279,7 +1162,7 @@ mod tests {
             ),
         ];
         for (error, share, code, key, value) in cases {
-            let got = measure_error(error, "plan", share, None);
+            let got = measure_error(error, "plan", share);
             assert_eq!(got.code, code);
             assert_eq!(got.params[key], value);
             assert_eq!(
@@ -1295,13 +1178,13 @@ mod tests {
             MeasureError::Rew(R::Cancelled),
         ] {
             assert_eq!(
-                measure_error(error, "plan", S::Auto, None).code,
+                measure_error(error, "plan", S::Auto).code,
                 ErrorCode::Cancelled
             );
         }
         let error = secs_project::Project::load_text("not json").unwrap_err();
         assert_eq!(
-            measure_error(error.into(), "project", S::Auto, None).code,
+            measure_error(error.into(), "project", S::Auto).code,
             ErrorCode::ProjectIo
         );
     }

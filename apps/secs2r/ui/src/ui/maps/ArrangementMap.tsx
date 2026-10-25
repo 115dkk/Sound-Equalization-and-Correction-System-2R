@@ -29,7 +29,7 @@ function halfPath(x: number, y: number, r: number, h: 1 | -1): string {
   return `M${x - r},${y} A${r},${r} 0 0 ${sweep} ${x + r},${y} Z`;
 }
 
-export type ArrangementMapProps = {
+type ArrangementMapProps = {
   id: string;
   count: number;
   /** Positions already measured (1-based). */

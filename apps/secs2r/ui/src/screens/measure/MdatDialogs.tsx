@@ -213,7 +213,7 @@ export function MdatAssignDialog({
 }
 
 /** A service notice code as a sentence (`notice.<code>`). */
-export function noticeText(t: Translate, notice: Notice): string {
+function noticeText(t: Translate, notice: Notice): string {
   switch (notice.code) {
     case "mdat_duplicate_roles":
       return t("notice.mdat_duplicate_roles", { roles: duplicateRoles(notice.params.roles ?? "") });

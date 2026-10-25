@@ -5,14 +5,14 @@
 use std::{cell::RefCell, f64::consts::PI};
 
 use faer::{Accum, Mat, Par, linalg::matmul::matmul};
-use secs_compute::{Context, MapError, MemoryError};
+use secs_compute::Context;
 use secs_dsp::{
     DspError, fft, optimize,
     optimize::{JacobianOperator, NormalEquations, NormalOptions, OperatorOptions, XScale},
     pairwise_sum, response,
 };
 
-use super::{MimoDesign, MimoRequest, support_path};
+use super::{MimoDesign, MimoRequest, design::third_octave_bands, support_path};
 use crate::{
     C, Design, EngineConfig, EngineError, MeasurementSet, Note, Tuning, decay,
     fit::{FitRequest, fit_peq_until},
@@ -20,6 +20,8 @@ use crate::{
 };
 
 const FS: f64 = 600.0;
+/// Residuals of one support's seed fit: 160 frequencies, real and imaginary.
+const SEED_RESIDUALS: usize = 320;
 const N: usize = 720;
 const MU: f64 = 10.0;
 
@@ -168,16 +170,11 @@ pub(crate) fn unpack(x: &[f64], pols: &[i8], t: &Tuning) -> Vec<IirSupport> {
         .collect()
 }
 
-fn onset(x: &[f64]) -> usize {
-    let top = x.iter().map(|v| v.abs()).fold(0.0, f64::max);
-    x.iter().position(|v| v.abs() > 0.1 * top).unwrap_or(0)
-}
-
 pub(crate) fn late_modes(xs: &[Vec<f64>], count: usize, lo: f64, hi: f64) -> Vec<f64> {
     let mut spec = vec![0.0; 2049];
     for x in xs {
         let mut late = vec![0.0; 4096];
-        let begin = (onset(x) + 90).min(x.len().min(4096));
+        let begin = (decay::onset(x) + 90).min(x.len().min(4096));
         let end = x.len().min(4096);
         late[begin..end].copy_from_slice(&x[begin..end]);
         for (s, h) in spec.iter_mut().zip(fft::rfft(&late)) {
@@ -285,7 +282,7 @@ pub(crate) fn fit_one(
     let cache = RefCell::new(Parts::default());
     let residual = |x: &[f64]| {
         if ctx.cancel().is_cancelled() {
-            return vec![0.0; 320];
+            return vec![0.0; SEED_RESIDUALS];
         }
         let mut cache = cache.borrow_mut();
         cache.response(x, polarity, &f, &z, t);
@@ -685,13 +682,7 @@ struct BandGuard {
 
 impl BandGuard {
     fn new(pb: &Problem) -> Self {
-        let stop = (pb.fsiso / 20.0).log2() + 1e-9;
-        let edges: Vec<_> = (0..)
-            .map(|k| k as f64 / 3.0)
-            .take_while(|&v| v < stop)
-            .map(|v| 20.0 * 2f64.powf(v))
-            .collect();
-        let mut bands: Vec<_> = edges.windows(2).map(|v| (v[0], v[1])).collect();
+        let mut bands = third_octave_bands(pb.fsiso);
         bands.extend(
             late_modes(&pb.xs, 6, 20.0, 160.0)
                 .iter()
@@ -915,7 +906,7 @@ pub(crate) fn build_problem(
         let h = crate::input_response(design, input, spectra, p)
             .ok_or_else(|| EngineError::Input(format!("missing MIMO input {p}/{input}")))?;
         let x = secs_dsp::lowrate::to_low(&h, design_freqs(), N)?;
-        let onset = onset(&x) + 36;
+        let onset = decay::onset(&x) + 36;
         pb.wl
             .push((0..N).map(|i| if i >= onset { 1.0 } else { 0.0 }).collect());
         pb.we
@@ -967,6 +958,35 @@ fn validate_request(req: &MimoRequest, t: &Tuning) -> Result<(), EngineError> {
     {
         return Err(EngineError::Input("invalid MIMO IIR tuning".into()));
     }
+    // Each support's seed fit solves `per(t)` = 2 + 3·K + 2·A parameters from
+    // its SEED_RESIDUALS residuals; more unknowns than that is not a fit the
+    // design supports, and the count must not overflow (TD-104).
+    let parameters = t
+        .mimo_k_bands
+        .checked_mul(3)
+        .zip(t.mimo_a_bands.checked_mul(2))
+        .and_then(|(k, a)| k.checked_add(a)?.checked_add(2));
+    if parameters.is_none_or(|n| n > SEED_RESIDUALS) {
+        return Err(EngineError::Input(format!(
+            "invalid MIMO IIR tuning: {} peaking and {} all-pass bands exceed {SEED_RESIDUALS} parameters per support",
+            t.mimo_k_bands, t.mimo_a_bands
+        )));
+    }
+    // The seed and joint fits clamp their start into [lb + 1e-6, ub - 1e-6],
+    // which needs every interval wider than 2e-6. The tuning sets the gain, Q
+    // and band-gain intervals; the frequency ones are at least ln 1.5 wide
+    // for any band `band_of` returns, so one representative band suffices.
+    // Every bound is finite after the checks above.
+    let (lb, ub) = bounds((15.0, 300.0), t);
+    if lb
+        .iter()
+        .zip(&ub)
+        .any(|(&l, &u)| u - l <= 2e-6 || l + 1e-6 > u - 1e-6)
+    {
+        return Err(EngineError::Input(
+            "invalid MIMO IIR tuning: a parameter range is not wider than 2e-6".into(),
+        ));
+    }
     Ok(())
 }
 
@@ -1014,13 +1034,13 @@ pub fn design_mimo_iir_with_options(
         let _progress = ctx.stage("engine.mimo_iir", 0);
         return Ok(MimoIir::default());
     }
-    let prepared = super::prepared::Prepared::new(design, measurements, config)?;
+    let prepared = super::prepared::Prepared::new(design, measurements, config, ctx)?;
     design_mimo_iir_prepared_with_options(design, &prepared, ideal, req, t, options, ctx)
 }
 
 pub(crate) fn design_mimo_iir_prepared(
     design: &Design,
-    prepared: &super::prepared::Prepared,
+    prepared: &super::prepared::Prepared<'_>,
     ideal: &MimoDesign,
     req: &MimoRequest,
     t: &Tuning,
@@ -1040,7 +1060,7 @@ pub(crate) fn design_mimo_iir_prepared(
 #[allow(clippy::too_many_arguments)]
 fn design_mimo_iir_prepared_with_options(
     design: &Design,
-    prepared: &super::prepared::Prepared,
+    prepared: &super::prepared::Prepared<'_>,
     ideal: &MimoDesign,
     req: &MimoRequest,
     t: &Tuning,
@@ -1061,8 +1081,11 @@ fn design_mimo_iir_prepared_with_options(
     }
     let spectra = &prepared.spectra;
     let positions = &design.spectra.positions;
-    let results = ctx
-        .try_map(inputs, |(input, supports)| {
+    let results = crate::memory::try_map(
+        ctx,
+        inputs,
+        prepared.reserved,
+        |(_, supports)| {
             let r = supports.len();
             let dim = r * per(t);
             let rows = 2 * positions.len() * N + 1 + 2 * r * (N + 1) + r * t.mimo_k_bands;
@@ -1081,13 +1104,9 @@ fn design_mimo_iir_prepared_with_options(
                     + 320 * per(t) * 4
                     + 32 * design_freqs().len()
                     + 32768);
-            let _permit =
-                ctx.budget()
-                    .acquire(bytes as u64, ctx.cancel())
-                    .map_err(|e| match e {
-                        MemoryError::Cancelled => EngineError::Cancelled,
-                        other => EngineError::Input(other.to_string()),
-                    })?;
+            bytes as u64
+        },
+        |(input, supports)| {
             let pb = build_problem(
                 design,
                 spectra,
@@ -1108,11 +1127,8 @@ fn design_mimo_iir_prepared_with_options(
                 .collect();
             progress.advance(1);
             Ok((input.clone(), paths, post.removed))
-        })
-        .map_err(|e| match e {
-            MapError::Cancelled => EngineError::Cancelled,
-            MapError::Item { error, .. } => error,
-        })?;
+        },
+    )?;
     let mut out = MimoIir::default();
     for (input, paths, removed) in results {
         out.supports.push((input.clone(), paths));
@@ -1742,5 +1758,59 @@ mod operator_tests {
             )
             .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod tuning_tests {
+    use super::*;
+
+    #[test]
+    fn iir_tuning_ranges_are_checked_at_entry() {
+        // TD-104: band counts beyond the seed fit's residuals, and bounds too
+        // narrow for the 1e-6 start margins (f64::clamp panics on min > max).
+        let req = MimoRequest::default();
+        let ok = |t: Tuning| validate_request(&req, &t).is_ok();
+        assert!(ok(Tuning::default()));
+        // 2 + 3·106 = 320 parameters per support: as many as residuals.
+        assert!(ok(Tuning {
+            mimo_k_bands: 106,
+            mimo_a_bands: 0,
+            ..Tuning::default()
+        }));
+        for (k, a) in [(106, 1), (0, 160), (usize::MAX, 0), (0, usize::MAX)] {
+            let t = Tuning {
+                mimo_k_bands: k,
+                mimo_a_bands: a,
+                ..Tuning::default()
+            };
+            assert!(
+                matches!(validate_request(&req, &t), Err(EngineError::Input(_))),
+                "{k} peaking and {a} all-pass bands"
+            );
+        }
+        assert!(ok(Tuning {
+            mimo_band_db: 2e-6,
+            ..Tuning::default()
+        }));
+        for t in [
+            Tuning {
+                mimo_band_db: 1e-6,
+                ..Tuning::default()
+            },
+            Tuning {
+                mimo_q_max: 0.5 * 1e-6f64.exp(),
+                ..Tuning::default()
+            },
+            Tuning {
+                mimo_gain_max_db: -80.0 + 1e-6,
+                ..Tuning::default()
+            },
+        ] {
+            assert!(
+                matches!(validate_request(&req, &t), Err(EngineError::Input(_))),
+                "{t:?}"
+            );
+        }
     }
 }

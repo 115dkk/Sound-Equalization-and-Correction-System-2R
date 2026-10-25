@@ -3,14 +3,18 @@ use serde_json::Value;
 use std::{
     collections::{HashMap, VecDeque, hash_map::RandomState},
     hash::{BuildHasher, Hasher},
-    io::{BufRead, BufReader, Read, Write},
+    io::{BufRead, BufReader, ErrorKind, Write},
     net::{TcpListener, TcpStream},
     sync::{Arc, Mutex},
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 pub const MAX_CALLBACK_BODY: usize = 4 * 1024 * 1024;
+/// A request's line, headers and body must arrive within this time.
+pub const CALLBACK_REQUEST_DEADLINE: Duration = Duration::from_secs(5);
+/// Largest read between two stop and deadline checks.
+const CHUNK: usize = 64 * 1024;
 type Handler = Arc<dyn Fn(Value) + Send + Sync>;
 struct State {
     routes: HashMap<String, Handler>,
@@ -172,11 +176,62 @@ fn reply(stream: &mut TcpStream, code: u16, body: &str) -> std::io::Result<()> {
     )?;
     stream.flush()
 }
-fn line(reader: &mut BufReader<TcpStream>, budget: &mut usize) -> std::io::Result<String> {
+/// The server's stop flag and one request's deadline, checked between reads.
+/// Each read waits at most the 1 s socket timeout, so a client that keeps
+/// sending cannot hold a worker (and `stop()`) past either.
+struct Guard<'a> {
+    stop: &'a CancelToken,
+    deadline: Instant,
+}
+impl Guard<'_> {
+    fn check(&self) -> std::io::Result<()> {
+        if self.stop.is_cancelled() {
+            return Err(std::io::Error::new(
+                ErrorKind::ConnectionAborted,
+                "callback server stopped",
+            ));
+        }
+        if Instant::now() >= self.deadline {
+            return Err(std::io::Error::new(
+                ErrorKind::TimedOut,
+                "callback request deadline passed",
+            ));
+        }
+        Ok(())
+    }
+}
+/// Buffer at most one socket read, retried on EINTR as `read_until` and
+/// `read_to_end` do; the bytes are then in `reader.buffer()`. 0 is end of stream.
+fn fill(reader: &mut BufReader<TcpStream>) -> std::io::Result<usize> {
+    loop {
+        match reader.fill_buf() {
+            Ok(available) => return Ok(available.len()),
+            Err(e) if e.kind() == ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+    }
+}
+fn line(
+    reader: &mut BufReader<TcpStream>,
+    budget: &mut usize,
+    guard: &Guard,
+) -> std::io::Result<String> {
+    // Same bound as `take(budget + 1).read_until(b'\n')`, checked per read.
     let mut raw = Vec::new();
-    reader
-        .take((*budget + 1) as u64)
-        .read_until(b'\n', &mut raw)?;
+    while raw.len() <= *budget && !raw.ends_with(b"\n") {
+        guard.check()?;
+        let n = fill(reader)?;
+        if n == 0 {
+            break;
+        }
+        let window = &reader.buffer()[..n.min(*budget + 1 - raw.len())];
+        let used = window
+            .iter()
+            .position(|&b| b == b'\n')
+            .map_or(window.len(), |i| i + 1);
+        raw.extend_from_slice(&window[..used]);
+        reader.consume(used);
+    }
     if raw.len() > *budget || (!raw.is_empty() && !raw.ends_with(b"\n")) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
@@ -186,6 +241,31 @@ fn line(reader: &mut BufReader<TcpStream>, budget: &mut usize) -> std::io::Resul
     *budget -= raw.len();
     String::from_utf8(raw).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
+/// Read `length` body bytes into `keep`, or discard them, in chunks of at most
+/// [`CHUNK`]. Ok(false) when the peer closed before the whole body arrived.
+fn body(
+    reader: &mut BufReader<TcpStream>,
+    length: u64,
+    mut keep: Option<&mut Vec<u8>>,
+    guard: &Guard,
+) -> std::io::Result<bool> {
+    let mut left = length;
+    while left > 0 {
+        guard.check()?;
+        let n = fill(reader)?
+            .min(CHUNK)
+            .min(usize::try_from(left).unwrap_or(usize::MAX));
+        if n == 0 {
+            return Ok(false);
+        }
+        if let Some(raw) = keep.as_deref_mut() {
+            raw.extend_from_slice(&reader.buffer()[..n]);
+        }
+        reader.consume(n);
+        left -= n as u64;
+    }
+    Ok(true)
+}
 fn serve(stream: TcpStream, state: Arc<Mutex<State>>, stop: CancelToken) -> std::io::Result<()> {
     // The listener is non-blocking so `stop` is seen between accepts. On macOS
     // and other BSDs an accepted socket inherits that flag, and a non-blocking
@@ -193,10 +273,14 @@ fn serve(stream: TcpStream, state: Arc<Mutex<State>>, stop: CancelToken) -> std:
     stream.set_nonblocking(false)?;
     stream.set_read_timeout(Some(Duration::from_secs(1)))?;
     stream.set_write_timeout(Some(Duration::from_secs(1)))?;
-    let mut reader = BufReader::new(stream);
+    let mut reader = BufReader::with_capacity(CHUNK, stream);
     while !stop.is_cancelled() {
+        let guard = Guard {
+            stop: &stop,
+            deadline: Instant::now() + CALLBACK_REQUEST_DEADLINE,
+        };
         let mut budget = 16 * 1024;
-        let request = line(&mut reader, &mut budget)?;
+        let request = line(&mut reader, &mut budget, &guard)?;
         if request.is_empty() {
             break;
         }
@@ -211,7 +295,7 @@ fn serve(stream: TcpStream, state: Arc<Mutex<State>>, stop: CancelToken) -> std:
         let mut bad = false;
         let mut close = false;
         loop {
-            let h = line(&mut reader, &mut budget)?;
+            let h = line(&mut reader, &mut budget, &guard)?;
             if h == "\r\n" || h == "\n" {
                 break;
             }
@@ -242,10 +326,22 @@ fn serve(stream: TcpStream, state: Arc<Mutex<State>>, stop: CancelToken) -> std:
             break;
         }
         let length = length.unwrap_or(0);
-        let mut raw = Vec::new();
+        // Routes include the server's token: an unknown path is refused before
+        // its body is read. A small body is then discarded to keep the
+        // connection; a larger one closes it.
+        let handler = state.lock().unwrap().routes.get(path).cloned();
+        let Some(handler) = handler else {
+            reply(reader.get_mut(), 404, "Not Found")?;
+            if close
+                || length > MAX_CALLBACK_BODY as u64
+                || !body(&mut reader, length, None, &guard)?
+            {
+                break;
+            }
+            continue;
+        };
         if length > MAX_CALLBACK_BODY as u64 {
-            let drained = std::io::copy(&mut reader.by_ref().take(length), &mut std::io::sink())?;
-            if drained != length {
+            if !body(&mut reader, length, None, &guard)? {
                 break;
             }
             reply(reader.get_mut(), 413, "Payload Too Large")?;
@@ -255,19 +351,10 @@ fn serve(stream: TcpStream, state: Arc<Mutex<State>>, stop: CancelToken) -> std:
                 continue;
             }
         }
-        reader.by_ref().take(length).read_to_end(&mut raw)?;
-        if raw.len() as u64 != length {
+        let mut raw = Vec::new();
+        if !body(&mut reader, length, Some(&mut raw), &guard)? {
             break;
         }
-        let handler = state.lock().unwrap().routes.get(path).cloned();
-        let Some(handler) = handler else {
-            reply(reader.get_mut(), 404, "Not Found")?;
-            if close {
-                break;
-            } else {
-                continue;
-            }
-        };
         if method == "GET" {
             reply(reader.get_mut(), 200, "{\"status\":\"ok\"}")?;
         } else if method == "POST" || method == "PUT" {

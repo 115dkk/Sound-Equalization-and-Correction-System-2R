@@ -30,7 +30,7 @@ import type { XoRecommendation } from "../../ipc/bindings/XoRecommendation";
 export type CalibrateJob = "calibrate" | "calibrate_subs" | "recommend_xo" | "mimo";
 
 /** What changed since the result was computed, when P33 knows it. */
-export type StaleReason = "settings" | "target" | "measurements";
+export type StaleReason = "settings" | "target" | "measurements" | "config";
 
 export type CalibrateView = {
   compute: { preference: ComputePreference; status: ComputeStatus | null; loading: boolean; saving: boolean; error: IpcError | null; locked: boolean };
@@ -57,6 +57,8 @@ export type CalibrateView = {
   modeSpec: ModeSpecResult;
   /** `target_get` (and the reply of every target change). */
   target: TargetResult;
+  targetEdit: "idle" | "saving" | "failed";
+  xoEdit: "idle" | "saving" | "failed";
   /** `config_get`: speakers, subs and groups (XO groups, BA subs). */
   config: ConfigResult;
   /** `project_info.positions`: measured positions. */
@@ -77,22 +79,15 @@ export type CalibrateView = {
   measuring: boolean;
   /** The last of this screen's jobs that failed, until the next one starts. */
   failure: { job: CalibrateJob; error: IpcError } | null;
-  /**
-   * Why the result is stale, when P33 saw the change (service gap: the
-   * summary's `stale` carries no reason); null shows the general sentence.
-   */
+  /** `results.calibration.stale_reason`; null shows the general sentence. */
   staleReason: StaleReason | null;
-  /**
-   * The mode the shown result was computed with: P33 keeps the settings it
-   * started the run with (service gap: `CalibrationSummary` has no mode);
-   * null when unknown (a result restored from the cache).
-   */
+  /** `results.calibration.mode` and `ultra_ms`; null without a calibration result. */
   resultMode: { mode: Mode; ultra_ms: number } | null;
   /** Selection P33 keeps across visits; it decides what `result_curves` asks for. */
   tab: ResultTab;
   /** Selected channel (role); null lets the service pick the first. */
   channel: string | null;
-  /** Selected XO group (configuration group key, `프론트` …); null before one exists. */
+  /** Resolved XO group (configuration group key, `프론트` …); follows the selected channel on XO entry/channel changes, null without an eligible group. */
   xoGroup: string | null;
   /** sub_warnings: the subs' filter warnings for the current settings (upstream `sub_filter_warnings`, shown before a run). */
   subWarnings: Notice[];
@@ -129,18 +124,18 @@ export type CalibrateActions = {
   computeMimo: () => void;
   /** result_curves { tab, channel, group: xoGroup }: P33 keeps `tab` */
   selectTab: (tab: ResultTab) => void;
-  /** result_curves { tab, channel: role, group }: P33 keeps `channel`, and on the XO tab sets `xoGroup` to `group` (the channel's group) */
+  /** result_curves { tab, channel: role, group }: keeps `channel` and resolves its XO group from the current configuration; the group argument is retained for view callers. */
   selectChannel: (role: string, group: string | null) => void;
   /** result_curves { tab, channel, group }: P33 keeps `xoGroup` */
   selectXoGroup: (group: string) => void;
   /** result_curves { tab: "xo", channel, group, xo_hz: hz } while the XO line is dragged; stores nothing */
   previewXo: (group: string, hz: number) => void;
   /** calibration_settings_edit { edit } */
-  changeSetting: (edit: SettingEdit) => void;
+  changeSetting: (edit: SettingEdit) => Promise<boolean>;
   /** sub_take_values */
   takeSubValues: () => void;
   /** target_set_points { points } */
-  setTargetPoints: (points: [number, number][]) => void;
+  setTargetPoints: (points: [number, number][]) => Promise<boolean>;
   /** target_apply_preset { preset } */
   applyTargetPreset: (preset: string) => void;
   /** dialog_save_file { kind: "target", suggested: "타겟.json" }, then target_save { path } */

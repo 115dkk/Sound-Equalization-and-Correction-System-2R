@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { HelpTip, helpContentId } from "./HelpTip";
 import { Icon } from "./Icon";
 
-export type FieldProps = {
+type FieldProps = {
   id: string;
   label: ReactNode;
   hint?: ReactNode;
@@ -18,8 +18,8 @@ export type FieldProps = {
   children: ReactNode;
 };
 
-export const hintId = (id: string) => `${id}-hint`;
-export const errorId = (id: string) => `${id}-error`;
+const hintId = (id: string) => `${id}-hint`;
+const errorId = (id: string) => `${id}-error`;
 
 export function describedBy(id: string, hint: unknown, error: unknown, help?: unknown): string | undefined {
   return [error ? errorId(id) : null, hint ? hintId(id) : null, help ? helpContentId(id) : null].filter(Boolean).join(" ") || undefined;

@@ -1,5 +1,9 @@
 """Unit tests for upstream.py (python -m unittest, no dependencies)."""
+import contextlib
+import io
+import subprocess
 import unittest
+from unittest import mock
 
 import upstream as u
 
@@ -23,6 +27,35 @@ class ReachTest(unittest.TestCase):
     def test_unknown_paths_ask_for_review(self):
         self.assertEqual(u.reach("src/secs/new_module.py"), "검토 필요")
         self.assertEqual(u.reach("something/else.txt"), "검토 필요")
+
+
+class CheckTreeTest(unittest.TestCase):
+    @staticmethod
+    def result(returncode=0, stdout="", stderr=""):
+        return subprocess.CompletedProcess([], returncode, stdout, stderr)
+
+    def run_check(self, diff, untracked=""):
+        with mock.patch.object(u, "load_upstream", return_value={"commit": "a" * 40}), \
+             mock.patch.object(u, "_run", side_effect=[self.result(), diff]), \
+             mock.patch.object(u, "_git", return_value=untracked), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            code = u.check_tree()
+        return code, output.getvalue()
+
+    def test_matching_tree_passes(self):
+        code, output = self.run_check(self.result())
+        self.assertEqual(code, 0)
+        self.assertIn("upstream tree matches", output)
+
+    def test_difference_fails(self):
+        code, output = self.run_check(self.result(stdout=" 1 file changed\n"))
+        self.assertEqual(code, 1)
+        self.assertIn("differs", output)
+
+    def test_diff_command_failure_prints_stderr_and_fails(self):
+        code, output = self.run_check(self.result(128, stderr="fatal: bad object\n"))
+        self.assertEqual(code, 1)
+        self.assertIn("fatal: bad object", output)
 
 
 class VersionTest(unittest.TestCase):

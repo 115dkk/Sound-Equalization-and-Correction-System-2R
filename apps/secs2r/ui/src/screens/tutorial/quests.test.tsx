@@ -17,6 +17,7 @@ import { installFakeCanvas } from "../../test/canvas";
 import ko from "../../i18n/ko.json";
 import en from "../../i18n/en.json";
 import { tutorialQuests, type TutorialHost } from "./quests";
+import { TOUR_SCENES } from "../../gallery/tour/scenes";
 
 beforeAll(() => installFakeCanvas());
 afterEach(cleanup);
@@ -25,7 +26,7 @@ const host: TutorialHost = {
   system: { setOutput: noop, renumberOutputs: noop, next: noop },
   connect: { choosePath: noop, skipLevels: noop, next: noop },
   measure: { loadSample: noop, openCalibrate: noop, setGraphHidden: noop },
-  calibrate: { calibrate: noop, calibrateSubs: noop, selectTab: noop, changeSetting: noop }, goTo: noop,
+  calibrate: { calibrate: noop, calibrateSubs: noop, selectTab: noop, changeSetting: async () => true }, goTo: noop,
 };
 function useQuestHost() {
   const state = useHost();
@@ -47,14 +48,17 @@ it("ports all 43 upstream entries once, in rail order and upstream order within 
   expect(quests.map((q) => q.upstreamLine).sort((a, b) => a - b)).toEqual(upstream);
   expect(new Set(quests.map((q) => q.id)).size).toBe(43);
   expect(quests.map((q) => q.upstreamLine)).toEqual([
-    304, 306, 307, 308, 314, 326, 327, 329, 332,
+    304, 306, 307, 308, 314, 326, 329, 332,
     288, 289, 293, 296, 297, 302, 316, 317, 324,
-    334, 335, 339, 341, 344,
+    327, 334, 335, 339, 341, 344,
     346, 349, 352, 356, 365, 370, 375, 379, 384, 389, 395, 400, 408, 415, 424, 430, 442, 449,
     451, 453,
   ]);
   // No counterpart is dropped. The two same-step next entries become looks;
   // export has no act upstream. The packet's count of 38 predates this tree.
+  // 327 (step 4's measurement options, here the start delay) opens 측정·가져오기,
+  // where the start delay is set (P58).
+  expect(quests.find((q) => q.upstreamLine === 327)).toMatchObject({ id: "measure.delay", step: "measure", targets: ["measure.options"] });
 });
 
 it("resolves every named quest message in both catalogs with matching placeholders", () => {
@@ -81,10 +85,8 @@ for (const route of ["action", "auto"] as const) it(`finishes every act through 
   try {
     for (const entry of quests.filter((q) => q.kind === "act")) {
       await act(async () => {
-        await session.call({ method: "project_new", params: { path: "", preset: "7.1.4", sub_count: 3, sample: true, tutorial: true } });
+        await session.startTutorial({ quest: entry.id });
         session.navigate(entry.step);
-        if (entry.id === "system.output") await session.call({ method: "config_set_speaker", params: { index: 5, role: null, size: null, band_index: 0, out: 16, pol: null } });
-        if (entry.id === "connect.retry") await session.configure({ method: "none" });
         if (entry.id === "measure.next" || entry.step === "calibrate") {
           await session.call({ method: "sample_load", params: { positions: null } }); mock.drain();
         }
@@ -167,6 +169,42 @@ it("resumes past finished quests: without levels, 보정 goes back to the 연결
   } finally { rendered.unmount(); mock.dispose(); }
 }, 15000);
 
+it("starts from the help offer once and waits for the shared preparation", async () => {
+  const mock = createMockService({ tickMs: 0 });
+  await mock.request({ method: "project_save", params: { path: "/room.secs" } });
+  const rendered = render(<App ipc={mock} />);
+  try {
+    await waitFor(() => expect(ui("frame.help")).not.toBeNull());
+    fireEvent.click(ui("frame.help")!);
+    fireEvent.click(ui("help.intro.tutorial")!);
+    mock.calls.length = 0;
+    fireEvent.click(ui("project.tutorial.start")!);
+    await waitFor(() => expect(ui("tutorial.coach")?.textContent).toContain(ko[quests[0]!.text]), { timeout: 8000 });
+    expect(mock.calls.filter((request) => request.method === "project_new")).toHaveLength(1);
+    expect(mock.calls.filter((request) => request.method === "measure_configure")).toEqual([
+      { method: "measure_configure", params: expect.objectContaining({ method: "none" }) },
+    ]);
+  } finally { rendered.unmount(); mock.dispose(); }
+});
+
+it.each(TOUR_SCENES.filter((scene) => scene.tutorialStart))("keeps $id on its prepared screen", async (scene) => {
+  const mock = createMockService({ project: null, tickMs: 0 });
+  await mock.request({ method: "project_new", params: { path: "", preset: "7.1.4", sub_count: 3, sample: true, tutorial: true } });
+  await scene.setup?.(mock);
+  mock.calls.length = 0;
+  const quest = quests.find((q) => q.id === scene.tutorialStart)!;
+  const rendered = render(<App ipc={mock} tutorialStart={scene.tutorialStart!} />);
+  try {
+    await waitFor(() => expect(ui("tutorial.coach")?.textContent).toContain(ko[quest.text]), { timeout: 8000 });
+    expect(ui(`frame.rail.${quest.step}`)?.getAttribute("aria-current")).toBe("step");
+    expect(ui("app.error")).toBeNull();
+    expect(mock.calls.some((request) => request.method === "project_new")).toBe(false);
+    expect(mock.calls.filter((request) => request.method === "measure_configure")).toHaveLength(1);
+    if (quest.step === "calibrate" || quest.step === "export") expect((await mock.request({ method: "project_info" })).positions.length).toBeGreaterThan(0);
+    if (quest.step === "export") expect((await mock.request({ method: "results" })).calibration).not.toBeNull();
+  } finally { rendered.unmount(); mock.dispose(); }
+});
+
 it("walks every quest on the real App hooks, checks every target, and reaches the end via Continue", async () => {
   const mock = createMockService({ project: null, tickMs: 0 });
   await mock.request({ method: "project_new", params: { path: "", preset: "7.1.4", sub_count: 3, sample: true, tutorial: true } });
@@ -189,8 +227,13 @@ it("walks every quest on the real App hooks, checks every target, and reaches th
     expect(mock.calls.some((r) => r.method === "sample_load")).toBe(true);
     expect(mock.calls.filter((r) => r.method === "calibrate")).toHaveLength(2);
     expect(mock.calls.some((r) => r.method === "export")).toBe(false);
+    mock.calls.length = 0;
     fireEvent.click(ui("tutorial.end.restart")!);
     await waitFor(() => expect(ui("tutorial.coach")?.textContent).toContain(ko[quests[0]!.text]));
+    expect(mock.calls.filter((request) => request.method === "project_new")).toHaveLength(1);
+    expect(mock.calls.filter((request) => request.method === "measure_configure")).toEqual([
+      { method: "measure_configure", params: expect.objectContaining({ method: "none" }) },
+    ]);
     const config = await mock.request({ method: "config_get" });
     expect(config.speakers.find((s) => s.role === "SW3")?.bands[0]?.out).toBe(16);
     expect(mock.calls.some((r) => r.method === "rew_launch")).toBe(false);

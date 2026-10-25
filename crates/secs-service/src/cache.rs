@@ -1,7 +1,6 @@
-use std::fs::{self, OpenOptions};
+use std::fs;
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use secs_types::chain::{MimoPaths, SignalChain};
 use secs_types::ipc::{CalibrationSummary, MimoSummary};
@@ -32,6 +31,10 @@ pub(crate) struct CachedResults {
     pub measurement_signature: String,
     pub target_key: String,
     pub engine_key: String,
+    #[serde(default)]
+    pub run_key: Option<String>,
+    #[serde(default)]
+    pub config_key: Option<String>,
     pub mimo_key: Option<String>,
     pub mimo_calibration_key: Option<String>,
     pub labels: CachedRunLabels,
@@ -178,34 +181,7 @@ fn save_with_limit(
     let destination = path(project_path);
     let parent = destination.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
-    static TEMP: AtomicU64 = AtomicU64::new(0);
-    let mut temporary = None;
-    for _ in 0..100 {
-        let candidate = parent.join(format!(
-            ".secs-run-cache-{}-{}.tmp",
-            std::process::id(),
-            TEMP.fetch_add(1, Ordering::Relaxed)
-        ));
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(file) => {
-                temporary = Some((candidate, file));
-                break;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error),
-        }
-    }
-    let Some((temporary, file)) = temporary else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            "could not create run cache temporary file",
-        ));
-    };
-    let result = (|| {
+    secs_types::fs::write_atomic(&destination, |file| {
         let mut writer = LimitedWriter {
             inner: BufWriter::new(file),
             remaining: limit,
@@ -219,15 +195,8 @@ fn save_with_limit(
             },
         )
         .map_err(std::io::Error::other)?;
-        writer.flush()?;
-        writer.inner.get_ref().sync_all()?;
-        drop(writer);
-        fs::rename(&temporary, &destination)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(temporary);
-    }
-    result
+        writer.flush()
+    })
 }
 
 #[derive(Serialize)]
@@ -268,6 +237,7 @@ mod tests {
     fn sample() -> CachedResults {
         CachedResults {
             calibration: CalibrationSummary {
+                cached: false,
                 stale: false,
                 stale_reason: None,
                 mode: secs_types::calibration::Mode::Mixed,
@@ -299,6 +269,8 @@ mod tests {
             measurement_signature: "m".into(),
             target_key: "t".into(),
             engine_key: "e".into(),
+            run_key: Some("run".into()),
+            config_key: Some("config".into()),
             mimo_key: None,
             mimo_calibration_key: None,
             labels: CachedRunLabels {
@@ -457,6 +429,7 @@ mod tests {
                 cpu_systems: 1,
                 fallbacks: 1,
                 reason: Some(ComputeReason::DeviceFailure),
+                detail: Some("cuSolverDnDpotrf: CUSOLVER_STATUS_EXECUTION_FAILED".into()),
             },
         });
         save(&project, &run).unwrap();
@@ -549,6 +522,7 @@ mod tests {
         let summary = serde_json::to_vec(&secs_types::ipc::ResultsSummary {
             calibration: Some(loaded.calibration),
             mimo: loaded.mimo,
+            mimo_export: secs_types::ipc::MimoExportDecision::Included,
         })
         .unwrap();
         assert!(summary.len() < 4096);

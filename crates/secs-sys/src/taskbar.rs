@@ -23,10 +23,11 @@ pub(super) fn set_large_icon(
     for pixel in bgra.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }
-    let and_mask = vec![0; width as usize * height as usize];
+    let and_mask = vec![0; crate::and_mask_len(width, height)];
 
-    // SAFETY: dimensions and buffer lengths were checked by the public API;
-    // both buffers remain alive for the call and CreateIcon copies their contents.
+    // SAFETY: dimensions and the RGBA length were checked by the public API,
+    // and the AND mask has the word-aligned rows CreateIcon reads; both
+    // buffers remain alive for the call and CreateIcon copies their contents.
     let icon = unsafe {
         CreateIcon(
             core::ptr::null_mut(),

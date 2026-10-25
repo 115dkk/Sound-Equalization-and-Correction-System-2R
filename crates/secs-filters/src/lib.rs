@@ -3,25 +3,26 @@
 //! Filter-value text and Equalizer APO configuration export.
 //!
 //! Upstream sources: `export_filters.py` and the calibration-level wrappers in
-//! `calibration.py`. The writer reads only [`SignalChain`] and optional
-//! [`MimoPaths`] values. Validation and serialization finish before the first
-//! filesystem change.
+//! `calibration.py`. The writers serialise the plan of an [`ExportGraph`],
+//! whose construction is the only validation of the [`SignalChain`] and its
+//! optional [`MimoPaths`]; a run's own label, stamp and numbers are checked
+//! here. Validation and serialization finish before the first filesystem
+//! change.
 
 pub mod playback;
 
-use secs_camilla::pyfmt::{format_fixed, format_g};
-use secs_camilla::{
-    LFE_GAIN_DB, LFE_LP_HZ, SAMPLE_RATE, atomic_write, round_ties_even_i64, safe_name, wav_bytes,
-};
+use secs_camilla::pyfmt::{format_fixed, round_ndigits};
 use secs_dsp::Complex64;
-use secs_dsp::fft;
-use secs_dsp::response::{allpass2, band_filter, peaking_response};
-use secs_types::chain::{BandType, MimoFilter, MimoPaths, SignalChain};
+use secs_graph::files::{safe_name, wav_bytes, write_bundle_observed};
+use secs_graph::{
+    ExportGraph, FirView, GraphError, LFE_GAIN_DB, LFE_LP_HZ, LfeChoice, SAMPLE_RATE,
+    is_negative_delay, round_ties_even_i64,
+};
+pub use secs_graph::{FilterPlan, MimoFeed, Op, SubFeed};
+use secs_types::chain::{BandType, MimoPaths, SignalChain};
 use secs_types::ipc::{ExportBlock, ExportKind, filter_export_block};
 use std::borrow::Cow;
-use std::f64::consts::PI;
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Equalizer APO application guide filename.
@@ -58,214 +59,6 @@ const WINDOWS_NAMES: [&str; 18] = [
     "TBL", "TBC", "TBR",
 ];
 
-/// One filter-plan operation. `fixed` marks a fixed subwoofer filter.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Op {
-    /// RBJ peaking EQ.
-    Peq {
-        /// Center frequency in hertz.
-        frequency: f64,
-        /// Quality factor.
-        q: f64,
-        /// Gain in dB.
-        gain_db: f64,
-        /// Whether the band is a fixed subwoofer filter.
-        fixed: bool,
-    },
-    /// 48 kHz FIR and its plan-local stem.
-    Fir {
-        /// FIR stem before the writer-specific prefix.
-        name: String,
-        /// IEEE-float samples before WAV serialization.
-        taps: Vec<f64>,
-        /// Fixed-filter marker (normally false for FIRs).
-        fixed: bool,
-    },
-    /// Compact design-rate FIR, expanded only for a consumer that needs 48 kHz taps.
-    FirLowRate {
-        /// FIR stem before the writer-specific prefix.
-        name: String,
-        /// Design-rate coefficients including the isolation low-pass.
-        taps_low: Vec<f64>,
-        /// Design sample rate in hertz.
-        fs_low: f64,
-        /// Fixed-filter marker.
-        fixed: bool,
-    },
-    /// Gain in dB and its fixed marker.
-    Gain {
-        /// Gain in dB.
-        db: f64,
-        /// Fixed-filter marker.
-        fixed: bool,
-    },
-    /// Polarity inversion and its fixed marker.
-    Invert {
-        /// Fixed-filter marker.
-        fixed: bool,
-    },
-    /// Analog-prototype high-pass.
-    Hp {
-        /// Cutoff frequency in hertz.
-        frequency: f64,
-        /// Filter family and order.
-        kind: BandType,
-        /// Fixed-filter marker.
-        fixed: bool,
-    },
-    /// Analog-prototype low-pass.
-    Lp {
-        /// Cutoff frequency in hertz.
-        frequency: f64,
-        /// Filter family and order.
-        kind: BandType,
-        /// Fixed-filter marker.
-        fixed: bool,
-    },
-    /// Second-order analog all-pass.
-    Ap {
-        /// Center frequency in hertz.
-        frequency: f64,
-        /// Quality factor.
-        q: f64,
-        /// Fixed-filter marker.
-        fixed: bool,
-    },
-    /// Delay in milliseconds.
-    Delay {
-        /// Delay in milliseconds.
-        ms: f64,
-        /// Fixed-filter marker.
-        fixed: bool,
-    },
-}
-
-impl Op {
-    fn fixed(&self) -> bool {
-        match self {
-            Self::Peq { fixed, .. }
-            | Self::Fir { fixed, .. }
-            | Self::FirLowRate { fixed, .. }
-            | Self::Gain { fixed, .. }
-            | Self::Invert { fixed }
-            | Self::Hp { fixed, .. }
-            | Self::Lp { fixed, .. }
-            | Self::Ap { fixed, .. }
-            | Self::Delay { fixed, .. } => *fixed,
-        }
-    }
-}
-
-/// One subwoofer bus output, preserving upstream insertion order.
-#[derive(Debug, Clone, PartialEq)]
-pub struct SubFeed {
-    /// Main sends and optional LFE input summed into this bus.
-    pub sources: Vec<String>,
-    /// Per-sub bus gain.
-    pub gain_db: f64,
-    /// `1` or `-1`.
-    pub polarity: i8,
-    /// Bus, fixed, all-pass, and delay operations.
-    pub ops: Vec<Op>,
-}
-
-/// One MIMO support feed.
-#[derive(Debug, Clone, PartialEq)]
-pub struct MimoFeed {
-    /// Raw input role.
-    pub input: String,
-    /// Support output role.
-    pub support: String,
-    /// Path operations.
-    pub ops: Vec<Op>,
-}
-
-/// The complete export plan, with every map represented as an ordered vector.
-#[derive(Debug, Clone, PartialEq)]
-pub struct FilterPlan {
-    /// Main roles followed by optional LFE.
-    pub inputs: Vec<String>,
-    /// Main roles followed by sub roles.
-    pub outputs: Vec<String>,
-    /// Input-correction operations by role.
-    pub input_ops: Vec<(String, Vec<Op>)>,
-    /// Main-path operations by role.
-    pub main_ops: Vec<(String, Vec<Op>)>,
-    /// Crossover sends by role.
-    pub send_ops: Vec<(String, Vec<Op>)>,
-    /// LFE input operations.
-    pub lfe_ops: Vec<Op>,
-    /// Sub feeds by role.
-    pub subs: Vec<(String, SubFeed)>,
-    /// MIMO paths.
-    pub mimo: Vec<MimoFeed>,
-}
-
-/// Borrowed coefficients: collecting export files never clones stored FIR arrays.
-#[derive(Clone, Copy)]
-enum FirView<'a> {
-    Full(&'a [f64]),
-    LowRate(&'a [f64], f64),
-}
-impl<'a> FirView<'a> {
-    fn validate(self) -> Result<(), FiltersError> {
-        if let Self::LowRate(taps, fs_low) = self
-            && (fs_low > f64::from(SAMPLE_RATE)
-                || secs_dsp::fir::lowrate_len_48k(taps.len(), fs_low).is_none()
-                || taps.iter().any(|tap| !tap.is_finite()))
-        {
-            return Err(FiltersError::Invalid(
-                "invalid or oversized low-rate FIR recipe".into(),
-            ));
-        }
-        Ok(())
-    }
-    fn len_48k(self) -> usize {
-        match self {
-            Self::Full(taps) => taps.len(),
-            Self::LowRate(taps, fs_low) => {
-                (taps.len() as f64 * (f64::from(SAMPLE_RATE) / fs_low)).ceil() as usize
-            }
-        }
-    }
-    fn materialize(self) -> Cow<'a, [f64]> {
-        match self {
-            Self::Full(taps) => Cow::Borrowed(taps),
-            Self::LowRate(taps, fs_low) => Cow::Owned(secs_dsp::fir::lowrate_to_48k(taps, fs_low)),
-        }
-    }
-}
-impl FilterPlan {
-    fn firs(&self) -> Vec<(&str, FirView<'_>)> {
-        let mut out: Vec<(&str, FirView<'_>)> = Vec::new();
-        for ops in self
-            .input_ops
-            .iter()
-            .map(|(_, ops)| ops)
-            .chain(self.mimo.iter().map(|m| &m.ops))
-        {
-            for op in ops {
-                let (name, view) = match op {
-                    Op::Fir { name, taps, .. } => (name.as_str(), FirView::Full(taps)),
-                    Op::FirLowRate {
-                        name,
-                        taps_low,
-                        fs_low,
-                        ..
-                    } => (name.as_str(), FirView::LowRate(taps_low, *fs_low)),
-                    _ => continue,
-                };
-                if let Some(found) = out.iter_mut().find(|(key, _)| *key == name) {
-                    found.1 = view;
-                } else {
-                    out.push((name, view));
-                }
-            }
-        }
-        out
-    }
-}
-
 /// Values read by upstream's calibration-level filter export wrappers.
 #[derive(Debug, Clone, Copy)]
 pub struct FilterRun<'a> {
@@ -273,16 +66,14 @@ pub struct FilterRun<'a> {
     pub chain: &'a SignalChain,
     /// MIMO paths only when the run includes MIMO.
     pub mimo: Option<&'a MimoPaths>,
-    /// `zero`, `mixed`, `linear`, or `ultra`.
+    /// Mode name (`secs_camilla::note::mode_name`).
     pub mode: &'a str,
-    /// Ultra-mode budget in milliseconds.
-    pub ultra_ms: f64,
+    /// Equalizer APO's ASCII header note (`secs_camilla::note::eqapo_note`).
+    pub note: &'a str,
     /// Human-facing mode label.
     pub label: &'a str,
     /// Total filter latency.
     pub latency_ms: f64,
-    /// Room-correction upper frequency.
-    pub rc_hi_hz: f64,
     /// Upstream `rc_pieces(run)` strings.
     pub rc_pieces: &'a [String],
     /// Caller-supplied `%Y-%m-%d %H:%M` stamp.
@@ -303,6 +94,16 @@ pub enum FiltersError {
     Io(#[from] std::io::Error),
 }
 
+impl From<GraphError> for FiltersError {
+    fn from(error: GraphError) -> Self {
+        Self::Invalid(match error {
+            GraphError::NonAscii(detail) => format!("non-ASCII {detail}"),
+            GraphError::NonFinite(detail) => format!("non-finite {detail}"),
+            GraphError::Invalid(detail) => detail,
+        })
+    }
+}
+
 fn find_ops<'a>(items: &'a [(String, Vec<Op>)], role: &str) -> Option<&'a [Op]> {
     items
         .iter()
@@ -310,35 +111,8 @@ fn find_ops<'a>(items: &'a [(String, Vec<Op>)], role: &str) -> Option<&'a [Op]> 
         .map(|(_, value)| value.as_slice())
 }
 
-fn fixed_ops(chain: &SignalChain, role: &str) -> Vec<Op> {
-    let Some(sub) = chain.subs.iter().find(|sub| sub.role == role) else {
-        return Vec::new();
-    };
-    let mut ops = Vec::new();
-    if sub.hp_hz != 0.0 {
-        ops.push(Op::Hp {
-            frequency: sub.hp_hz,
-            kind: sub.hp_type,
-            fixed: true,
-        });
-    }
-    if sub.lp_hz != 0.0 {
-        ops.push(Op::Lp {
-            frequency: sub.lp_hz,
-            kind: sub.lp_type,
-            fixed: true,
-        });
-    }
-    ops.extend(sub.peq.iter().map(|&(frequency, q, gain_db)| Op::Peq {
-        frequency,
-        q,
-        gain_db,
-        fixed: true,
-    }));
-    ops
-}
-
-/// Convert a signal-chain value into the upstream filter plan.
+/// Convert a signal-chain value into the upstream filter plan, with
+/// upstream's Dolby LFE.
 pub fn make_plan(
     chain: &SignalChain,
     mimo: Option<&MimoPaths>,
@@ -346,419 +120,41 @@ pub fn make_plan(
     make_plan_with_lfe(chain, mimo, Some(LFE_GAIN_DB), LFE_LP_HZ)
 }
 
-/// Convert a signal-chain value with an explicit optional LFE feed.
+/// Convert a signal-chain value with an explicit optional LFE feed: the
+/// plan of [`ExportGraph::build`].
 pub fn make_plan_with_lfe(
     chain: &SignalChain,
     mimo: Option<&MimoPaths>,
     lfe_gain_db: Option<f64>,
     lfe_lp_hz: f64,
 ) -> Result<FilterPlan, FiltersError> {
-    validate_chain(chain, mimo)?;
-    if let Some(gain) = lfe_gain_db {
-        finite("lfe_gain_db", gain)?;
-    }
+    let lfe = lfe_gain_db.map_or(LfeChoice::Omit, |gain_db| LfeChoice::Include {
+        gain_db,
+        lp_hz: lfe_lp_hz,
+    });
+    plain_roles(chain, mimo)?;
+    let graph = ExportGraph::build(chain, mimo, lfe)?;
+    // The low-pass stays a checked parameter even when no LFE input is built.
     finite("lfe_lp_hz", lfe_lp_hz)?;
-    let lfe = !chain.subs.is_empty() && lfe_gain_db.is_some();
-    let mut plan = FilterPlan {
-        inputs: chain.mains.iter().map(|main| main.role.clone()).collect(),
-        outputs: chain
-            .mains
-            .iter()
-            .map(|main| main.role.clone())
-            .chain(chain.subs.iter().map(|sub| sub.role.clone()))
-            .collect(),
-        input_ops: Vec::new(),
-        main_ops: Vec::new(),
-        send_ops: Vec::new(),
-        lfe_ops: Vec::new(),
-        subs: Vec::new(),
-        mimo: Vec::new(),
-    };
-    if lfe {
-        plan.inputs.push("LFE".into());
-    }
-    for main in &chain.mains {
-        let mut input = main
-            .input_peq
-            .iter()
-            .map(|&(frequency, q, gain_db)| Op::Peq {
-                frequency,
-                q,
-                gain_db,
-                fixed: false,
-            })
-            .collect::<Vec<_>>();
-        if main.fir.len() > 1 {
-            input.push(Op::Fir {
-                name: format!("{}_fir", main.role),
-                taps: main.fir.clone(),
-                fixed: false,
-            });
-        }
-        plan.input_ops.push((main.role.clone(), input));
-        let mut path = vec![Op::Gain {
-            db: main.gain_db,
-            fixed: false,
-        }];
-        path.extend(main.top_peq.iter().map(|&(frequency, q, gain_db)| Op::Peq {
-            frequency,
-            q,
-            gain_db,
-            fixed: false,
-        }));
-        if let Some(frequency) = main.xo_hz.filter(|value| *value != 0.0) {
-            path.push(Op::Hp {
-                frequency,
-                kind: BandType::Lr24,
-                fixed: false,
-            });
-            plan.send_ops.push((
-                main.role.clone(),
-                vec![Op::Lp {
-                    frequency,
-                    kind: BandType::Lr24,
-                    fixed: false,
-                }],
-            ));
-        }
-        path.push(Op::Delay {
-            ms: main.delay_ms,
-            fixed: false,
-        });
-        plan.main_ops.push((main.role.clone(), path));
-    }
-    if lfe {
-        plan.lfe_ops = vec![
-            Op::Gain {
-                db: lfe_gain_db.expect("LFE is enabled"),
-                fixed: false,
-            },
-            Op::Lp {
-                frequency: lfe_lp_hz,
-                kind: BandType::Lr24,
-                fixed: false,
-            },
-        ];
-    }
-    let mut sources = plan
-        .send_ops
-        .iter()
-        .map(|(role, _)| role.clone())
-        .collect::<Vec<_>>();
-    if lfe {
-        sources.push("LFE".into());
-    }
-    for sub in &chain.subs {
-        let mut ops = chain
-            .sub_bus_peq
-            .iter()
-            .map(|&(frequency, q, gain_db)| Op::Peq {
-                frequency,
-                q,
-                gain_db,
-                fixed: false,
-            })
-            .collect::<Vec<_>>();
-        ops.extend(fixed_ops(chain, &sub.role));
-        ops.extend(sub.allpass.iter().map(|&(frequency, q)| Op::Ap {
-            frequency,
-            q,
-            fixed: false,
-        }));
-        ops.push(Op::Delay {
-            ms: sub.delay_ms,
-            fixed: false,
-        });
-        plan.subs.push((
-            sub.role.clone(),
-            SubFeed {
-                sources: sources.clone(),
-                gain_db: sub.gain_db,
-                polarity: if sub.polarity > 0 { 1 } else { -1 },
-                ops,
-            },
-        ));
-    }
-    if let Some(paths) = mimo {
-        for path in &paths.paths {
-            let mut ops = match &path.filter {
-                MimoFilter::Fir { taps_48k } => vec![
-                    Op::Delay {
-                        ms: path.delay_ms,
-                        fixed: false,
-                    },
-                    Op::Hp {
-                        frequency: path.low_hz,
-                        kind: BandType::Lr24,
-                        fixed: false,
-                    },
-                    Op::Fir {
-                        name: format!("mimo_{}_{}", path.input, path.support),
-                        taps: taps_48k.clone(),
-                        fixed: false,
-                    },
-                ],
-                MimoFilter::FirLowRate { taps_low, fs_low } => vec![
-                    Op::Delay {
-                        ms: path.delay_ms,
-                        fixed: false,
-                    },
-                    Op::Hp {
-                        frequency: path.low_hz,
-                        kind: BandType::Lr24,
-                        fixed: false,
-                    },
-                    Op::FirLowRate {
-                        name: format!("mimo_{}_{}", path.input, path.support),
-                        taps_low: taps_low.clone(),
-                        fs_low: *fs_low,
-                        fixed: false,
-                    },
-                ],
-                MimoFilter::Iir {
-                    gain_db,
-                    delay_ms,
-                    polarity,
-                    peq,
-                    allpass,
-                } => {
-                    let mut ops = vec![Op::Gain {
-                        db: *gain_db,
-                        fixed: false,
-                    }];
-                    if *polarity < 0 {
-                        ops.push(Op::Invert { fixed: false });
-                    }
-                    ops.push(Op::Delay {
-                        ms: path.delay_ms + delay_ms,
-                        fixed: false,
-                    });
-                    ops.extend(peq.iter().map(|&(frequency, q, gain_db)| Op::Peq {
-                        frequency,
-                        q,
-                        gain_db,
-                        fixed: false,
-                    }));
-                    ops.extend(allpass.iter().map(|&(frequency, q)| Op::Ap {
-                        frequency,
-                        q,
-                        fixed: false,
-                    }));
-                    ops.push(Op::Hp {
-                        frequency: path.low_hz,
-                        kind: BandType::Lr24,
-                        fixed: false,
-                    });
-                    ops.push(Op::Lp {
-                        frequency: paths.fsiso,
-                        kind: BandType::Lr24,
-                        fixed: false,
-                    });
-                    ops
-                }
-            };
-            ops.extend(fixed_ops(chain, &path.support));
-            plan.mimo.push(MimoFeed {
-                input: path.input.clone(),
-                support: path.support.clone(),
-                ops,
-            });
-        }
-    }
-    Ok(plan)
+    Ok(graph.plan().clone())
 }
 
-fn multiply(out: &mut [Complex64], values: impl IntoIterator<Item = Complex64>) {
-    for (left, right) in out.iter_mut().zip(values) {
-        *left *= right;
-    }
-}
-
-fn op_response(op: &Op, f: &[f64], skip_fixed: bool) -> Result<Vec<Complex64>, FiltersError> {
-    if skip_fixed && op.fixed() {
-        return Ok(vec![Complex64::new(1.0, 0.0); f.len()]);
-    }
-    let result = match op {
-        Op::Peq {
-            frequency,
-            q,
-            gain_db,
-            ..
-        } => peaking_response(f, *frequency, *q, *gain_db, f64::from(SAMPLE_RATE)),
-        Op::Fir { taps, .. } => {
-            let n = 2 * f.len().saturating_sub(1);
-            if n == 0 {
-                return Ok(Vec::new());
-            }
-            let mut padded = vec![0.0; n];
-            let count = n.min(taps.len());
-            padded[..count].copy_from_slice(&taps[..count]);
-            fft::rfft(&padded)
-        }
-        Op::FirLowRate {
-            taps_low, fs_low, ..
-        } => {
-            FirView::LowRate(taps_low, *fs_low).validate()?;
-            let taps = secs_dsp::fir::lowrate_to_48k(taps_low, *fs_low);
-            let n = 2 * f.len().saturating_sub(1);
-            if n == 0 {
-                return Ok(Vec::new());
-            }
-            let mut padded = vec![0.0; n];
-            let count = n.min(taps.len());
-            padded[..count].copy_from_slice(&taps[..count]);
-            fft::rfft(&padded)
-        }
-        Op::Gain { db, .. } => vec![Complex64::new(10_f64.powf(db / 20.0), 0.0); f.len()],
-        Op::Invert { .. } => vec![Complex64::new(-1.0, 0.0); f.len()],
-        Op::Hp {
-            frequency, kind, ..
-        } => band_filter(f, *frequency, "HP", kind.name())
-            .map_err(|error| FiltersError::Invalid(error.to_string()))?,
-        Op::Lp {
-            frequency, kind, ..
-        } => band_filter(f, *frequency, "LP", kind.name())
-            .map_err(|error| FiltersError::Invalid(error.to_string()))?,
-        Op::Ap { frequency, q, .. } => allpass2(f, *frequency, *q),
-        Op::Delay { ms, .. } => f
-            .iter()
-            .map(|frequency| Complex64::from_polar(1.0, -2.0 * PI * frequency * ms / 1000.0))
-            .collect(),
-    };
-    Ok(result)
-}
-
-fn response_chain(ops: &[Op], f: &[f64], skip_fixed: bool) -> Result<Vec<Complex64>, FiltersError> {
-    let mut out = vec![Complex64::new(1.0, 0.0); f.len()];
-    for op in ops {
-        multiply(&mut out, op_response(op, f, skip_fixed)?);
-    }
-    Ok(out)
-}
-
-fn add_response(out: &mut Vec<(String, Vec<Complex64>)>, role: &str, value: Vec<Complex64>) {
-    if let Some((_, current)) = out.iter_mut().find(|(name, _)| name == role) {
-        for (left, right) in current.iter_mut().zip(value) {
-            *left += right;
-        }
-    } else {
-        out.push((role.to_owned(), value));
-    }
-}
-
-/// Compute electrical responses from one input to every reachable output.
+/// [`secs_graph::plan_responses`]: electrical responses from one input to
+/// every reachable output, on the 48 kHz real-FFT grid when the plan holds a
+/// FIR.
 pub fn plan_responses(
     plan: &FilterPlan,
     f: &[f64],
     source: &str,
     skip_fixed: bool,
 ) -> Result<Vec<(String, Vec<Complex64>)>, FiltersError> {
-    plan_responses_prepared(plan, f, source, skip_fixed, None)
+    Ok(secs_graph::plan_responses(plan, f, source, skip_fixed)?)
 }
 
-fn plan_responses_prepared(
-    plan: &FilterPlan,
-    f: &[f64],
-    source: &str,
-    skip_fixed: bool,
-    sub_responses: Option<&[Vec<Complex64>]>,
-) -> Result<Vec<(String, Vec<Complex64>)>, FiltersError> {
-    let mut out = Vec::new();
-    let (pre, send) = if source == "LFE" {
-        if !plan.inputs.iter().any(|role| role == "LFE") {
-            return Err(FiltersError::Invalid("unknown input LFE".into()));
-        }
-        (
-            response_chain(&plan.lfe_ops, f, false)?,
-            Some(vec![Complex64::new(1.0, 0.0); f.len()]),
-        )
-    } else {
-        let input = find_ops(&plan.input_ops, source)
-            .ok_or_else(|| FiltersError::Invalid(format!("unknown input {source}")))?;
-        let pre = response_chain(input, f, false)?;
-        let mut main = pre.clone();
-        multiply(
-            &mut main,
-            response_chain(
-                find_ops(&plan.main_ops, source).expect("plan main"),
-                f,
-                false,
-            )?,
-        );
-        add_response(&mut out, source, main);
-        let send = find_ops(&plan.send_ops, source)
-            .map(|ops| response_chain(ops, f, false))
-            .transpose()?;
-        (pre, send)
-    };
-    for (sub_index, (role, feed)) in plan.subs.iter().enumerate() {
-        if feed.sources.iter().any(|item| item == source)
-            && let Some(send) = &send
-        {
-            let factor = f64::from(feed.polarity) * 10_f64.powf(feed.gain_db / 20.0);
-            let mut value = pre.clone();
-            multiply(&mut value, send.iter().copied());
-            for item in &mut value {
-                *item *= factor;
-            }
-            if let Some(responses) = sub_responses {
-                multiply(&mut value, responses[sub_index].iter().copied());
-            } else {
-                multiply(&mut value, response_chain(&feed.ops, f, skip_fixed)?);
-            }
-            add_response(&mut out, role, value);
-        }
-    }
-    for path in &plan.mimo {
-        if path.input == source {
-            add_response(
-                &mut out,
-                &path.support,
-                response_chain(&path.ops, f, skip_fixed)?,
-            );
-        }
-    }
-    Ok(out)
-}
-
-/// Largest non-LFE output boost from 20 Hz through 20 kHz.
+/// [`secs_graph::headroom_db`]: the largest non-LFE output boost from 20 Hz
+/// through 20 kHz.
 pub fn headroom_db(plan: &FilterPlan) -> Result<f64, FiltersError> {
-    let firs = plan.firs();
-    for (_, taps) in &firs {
-        taps.validate()?;
-    }
-    let taps = firs
-        .iter()
-        .map(|(_, taps)| taps.len_48k())
-        .max()
-        .unwrap_or(1);
-    let n = 65_536_usize.max(taps.max(2).next_power_of_two());
-    let f = (0..=n / 2)
-        .map(|index| index as f64 * f64::from(SAMPLE_RATE) / n as f64)
-        .collect::<Vec<_>>();
-    // The same sub output chain is reached from every input. Compute it once;
-    // keep multiplication and summation in the original per-input order.
-    let sub_responses = plan
-        .subs
-        .iter()
-        .map(|(_, feed)| response_chain(&feed.ops, &f, false))
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut peak = 0.0_f64;
-    for source in plan.inputs.iter().filter(|source| source.as_str() != "LFE") {
-        for (_, response) in plan_responses_prepared(plan, &f, source, false, Some(&sub_responses))?
-        {
-            for (&frequency, value) in f.iter().zip(response) {
-                if (20.0..=20_000.0).contains(&frequency) {
-                    peak = peak.max(value.norm());
-                }
-            }
-        }
-    }
-    Ok(if peak > 0.0 {
-        (20.0 * peak.log10()).max(0.0)
-    } else {
-        0.0
-    })
+    Ok(secs_graph::headroom_db(plan)?)
 }
 
 fn position(role: &str) -> Option<usize> {
@@ -1067,14 +463,19 @@ pub fn eqapo_filters(plan: &FilterPlan, firs: &[(String, String)], note: &str) -
             let filters = feed
                 .ops
                 .iter()
-                .filter(|op| op.fixed())
+                .filter(|op| op.is_fixed())
                 .cloned()
                 .collect::<Vec<_>>();
             if plan
                 .mimo
                 .iter()
                 .filter(|path| path.support == *role)
-                .all(|path| path.ops.iter().filter(|op| op.fixed()).eq(filters.iter()))
+                .all(|path| {
+                    path.ops
+                        .iter()
+                        .filter(|op| op.is_fixed())
+                        .eq(filters.iter())
+                })
             {
                 filters
             } else {
@@ -1148,12 +549,20 @@ pub fn eqapo_filters(plan: &FilterPlan, firs: &[(String, String)], note: &str) -
         ]);
         let ops = feed.ops[prefix..]
             .iter()
-            .filter(|op| fixed[sub_index].is_empty() || !op.fixed())
+            .filter(|op| fixed[sub_index].is_empty() || !op.is_fixed())
             .cloned()
             .collect::<Vec<_>>();
         lines.extend(eqapo_ops(&ops, &channel, firs));
     }
 
+    // The export graph's support groups key on output, family and exact low
+    // edge. This writer renders the shared HP (and an IIR path's Fsiso LP) at
+    // two decimals and shares one VG channel among the paths of one support
+    // whose rendered filters coincide, which only joins graph groups. Its
+    // entry points take a FilterPlan, which may be built by hand, so it
+    // buckets the plan's MIMO feeds by that rendered text itself; for a plan
+    // from `ExportGraph::build` the buckets are the graph's groups joined by
+    // rendered text.
     struct SupportGroup {
         support: String,
         common: Vec<Op>,
@@ -1222,7 +631,7 @@ pub fn eqapo_filters(plan: &FilterPlan, firs: &[(String, String)], note: &str) -
                         op,
                         Op::Hp { fixed: false, .. } | Op::Lp { fixed: false, .. }
                     ) || (share_delay && matches!(op, Op::Delay { fixed: false, .. }))
-                        || (move_fixed && op.fixed()))
+                        || (move_fixed && op.is_fixed()))
                 })
                 .collect::<Vec<_>>();
             lines.extend([
@@ -1424,7 +833,7 @@ pub fn eqapo_guide(
 }
 
 fn db(value: f64) -> String {
-    let rounded = secs_camilla::pyfmt::round_ndigits(value, 2) + 0.0;
+    let rounded = round_ndigits(value, 2) + 0.0;
     format_fixed(rounded, 2, true)
 }
 fn comma(value: usize) -> String {
@@ -1442,7 +851,7 @@ fn text_ops(ops: &[Op], firs: &[(String, String)]) -> Vec<String> {
     let mut lines = Vec::new();
     let mut peq = 0;
     for op in ops {
-        let tag = if op.fixed() { " (고정)" } else { "" };
+        let tag = if op.is_fixed() { " (고정)" } else { "" };
         match op {
             Op::Peq {
                 frequency,
@@ -1641,10 +1050,9 @@ fn fir_files(plan: &FilterPlan, prefix: &str) -> Result<(FirNames, ExportFiles),
     for (stem, taps) in plan.firs() {
         taps.validate()?;
         let filename = format!("{prefix}{stem}.wav");
-        files.push((
-            filename.clone(),
-            wav_bytes(&taps.materialize(), SAMPLE_RATE),
-        ));
+        let bytes = wav_bytes(&taps.materialize(), SAMPLE_RATE)
+            .map_err(|error| FiltersError::Invalid(format!("{stem}: {error}")))?;
+        files.push((filename.clone(), bytes));
         names.push((stem.to_owned(), filename));
     }
     Ok((names, files))
@@ -1674,20 +1082,45 @@ pub fn write_text(
     title: &str,
     info: &[String],
 ) -> Result<Vec<PathBuf>, FiltersError> {
+    write_text_observed(
+        plan,
+        out,
+        file_name,
+        wav_prefix,
+        title,
+        info,
+        &|_, _| Ok(()),
+    )
+}
+
+/// Audit-only staging seam invoked after each complete staged file.
+#[doc(hidden)]
+pub fn write_text_observed(
+    plan: &FilterPlan,
+    out: &Path,
+    file_name: &str,
+    wav_prefix: &str,
+    title: &str,
+    info: &[String],
+    after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
+) -> Result<Vec<PathBuf>, FiltersError> {
     if file_name.contains(['/', '\\', '\0']) || matches!(file_name, "." | "..") {
         return Err(FiltersError::Invalid(format!(
             "unsafe text filename {file_name:?}"
         )));
     }
     let prefix = format!("{}_", ensure_safe_component(wav_prefix)?);
+    validate_plan_delays(plan)?;
     let (firs, wavs) = fir_files(plan, &prefix)?;
     let text = utf8_bom(&filter_text(plan, &firs, title, info));
-    fs::create_dir_all(out)?;
-    for (name, bytes) in &wavs {
-        atomic_write(&out.join(name), bytes)?;
-    }
+    let entry = PathBuf::from(file_name);
+    let mut bundle = wavs
+        .iter()
+        .map(|(name, bytes)| (PathBuf::from(name), bytes.clone()))
+        .collect::<Vec<_>>();
+    bundle.push((entry.clone(), text));
+    write_bundle_observed(out, &bundle, &entry, after_stage_write)?;
     let path = out.join(file_name);
-    atomic_write(&path, &text)?;
     let mut written = vec![path];
     written.extend(wavs.into_iter().map(|(name, _)| out.join(name)));
     Ok(written)
@@ -1702,7 +1135,30 @@ pub fn write_eqapo(
     note: &str,
     latency_ms: Option<f64>,
 ) -> Result<Vec<PathBuf>, FiltersError> {
+    write_eqapo_observed(
+        plan,
+        out,
+        name,
+        mode_label,
+        note,
+        latency_ms,
+        &|_, _| Ok(()),
+    )
+}
+
+/// Audit-only staging seam invoked after each complete staged file.
+#[doc(hidden)]
+pub fn write_eqapo_observed(
+    plan: &FilterPlan,
+    out: &Path,
+    name: &str,
+    mode_label: &str,
+    note: &str,
+    latency_ms: Option<f64>,
+    after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
+) -> Result<Vec<PathBuf>, FiltersError> {
     let safe = ensure_safe_component(name)?;
+    validate_plan_delays(plan)?;
     let sub = out.join(&safe);
     let (firs, wavs) = fir_files(plan, &format!("{safe}_"))?;
     let body = eqapo_filters(plan, &firs, note).into_bytes();
@@ -1720,27 +1176,25 @@ pub fn write_eqapo(
     let guide = utf8_bom(&eqapo_guide(
         plan, &inputs, &outputs, &safe, mode_label, latency_ms, preamp,
     ));
-    fs::create_dir_all(&sub)?;
-    for (filename, bytes) in &wavs {
-        atomic_write(&sub.join(filename), bytes)?;
-    }
-    let body_path = sub.join(format!("{safe}.txt"));
-    atomic_write(&body_path, &body)?;
-    let guide_path = out.join(EQAPO_GUIDE);
-    atomic_write(&guide_path, &guide)?;
-    let config_path = out.join("config.txt");
-    atomic_write(&config_path, &config)?;
+    let body_relative = PathBuf::from(&safe).join(format!("{safe}.txt"));
+    let guide_relative = PathBuf::from(EQAPO_GUIDE);
+    let config_relative = PathBuf::from("config.txt");
+    let mut bundle = wavs
+        .iter()
+        .map(|(filename, bytes)| (PathBuf::from(&safe).join(filename), bytes.clone()))
+        .collect::<Vec<_>>();
+    bundle.extend([
+        (body_relative.clone(), body),
+        (guide_relative.clone(), guide),
+        (config_relative.clone(), config),
+    ]);
+    write_bundle_observed(out, &bundle, &config_relative, after_stage_write)?;
+    let config_path = out.join(&config_relative);
+    let body_path = out.join(&body_relative);
+    let guide_path = out.join(&guide_relative);
     let mut written = vec![config_path, body_path, guide_path];
     written.extend(wavs.into_iter().map(|(name, _)| sub.join(name)));
     Ok(written)
-}
-
-fn mode_name(run: &FilterRun<'_>) -> String {
-    if run.mode == "ultra" {
-        format!("ultra{}", format_g(run.ultra_ms, false))
-    } else {
-        run.mode.into()
-    }
 }
 
 /// Calibration-level filter-value export wrapper.
@@ -1756,8 +1210,8 @@ pub fn export_filter_text(
         return Err(FiltersError::Scope(block));
     }
     validate_run(run)?;
-    let plan = make_plan(run.chain, run.mimo)?;
-    let mode = mode_name(run);
+    let graph = ExportGraph::build(run.chain, run.mimo, LfeChoice::DOLBY)?;
+    let mode = run.mode;
     let info = vec![
         format!(
             "만든 때 {} · 전체 지연 {} ms · {}",
@@ -1768,7 +1222,7 @@ pub fn export_filter_text(
         "샘플레이트 48000 Hz(FIR wav · 딜레이 샘플 수 기준)".into(),
     ];
     write_text(
-        &plan,
+        graph.plan(),
         folder,
         &format!("SECS 필터 {}.txt", run.label),
         &format!("secs_{mode}"),
@@ -1787,33 +1241,14 @@ pub fn export_eqapo(run: &FilterRun<'_>, folder: &Path) -> Result<Vec<PathBuf>, 
         return Err(FiltersError::Scope(block));
     }
     validate_run(run)?;
-    let plan = make_plan(run.chain, run.mimo)?;
-    let mode = mode_name(run);
-    let mimo_note = if let Some(mimo) = run.mimo {
-        let kind = if mimo.paths.iter().any(|path| path.filter.is_fir()) {
-            "FIR"
-        } else {
-            "IIR"
-        };
-        format!(
-            "MIMO {kind} support paths {} (Fsiso {} Hz)",
-            plan.mimo.len(),
-            format_g(mimo.fsiso, false)
-        )
-    } else {
-        "no MIMO".into()
-    };
-    let note = format!(
-        "mode {mode}, total latency {} ms, RC upper {} Hz; {mimo_note}",
-        format_fixed(run.latency_ms, 1, false),
-        format_fixed(run.rc_hi_hz, 0, false)
-    );
+    let graph = ExportGraph::build(run.chain, run.mimo, LfeChoice::DOLBY)?;
+    let mode = run.mode;
     write_eqapo(
-        &plan,
+        graph.plan(),
         folder,
         &format!("secs_{mode}"),
         run.label,
-        &note,
+        run.note,
         Some(run.latency_ms),
     )
 }
@@ -1825,6 +1260,52 @@ fn finite(name: &str, value: f64) -> Result<(), FiltersError> {
         Err(FiltersError::Invalid(format!("non-finite {name}")))
     }
 }
+/// A delay the writers emit: finite and not negative, by the export graph's
+/// rule ([`is_negative_delay`], #92 TD-94).
+fn emitted_delay(name: &str, channel: &str, ms: f64) -> Result<(), FiltersError> {
+    if ms.is_finite() && !is_negative_delay(ms) {
+        Ok(())
+    } else {
+        Err(FiltersError::Invalid(format!(
+            "{name} of {channel:?} must be finite and not negative, got {ms} ms"
+        )))
+    }
+}
+/// Plans may be built by hand or revived from a cache, so the writers check
+/// every delay again before their first file. A plan from
+/// [`ExportGraph::build`] always passes.
+fn validate_plan_delays(plan: &FilterPlan) -> Result<(), FiltersError> {
+    let channels = plan
+        .input_ops
+        .iter()
+        .chain(&plan.main_ops)
+        .chain(&plan.send_ops)
+        .map(|(role, ops)| (Cow::Borrowed(role.as_str()), ops.as_slice()))
+        .chain(std::iter::once((
+            Cow::Borrowed("LFE"),
+            plan.lfe_ops.as_slice(),
+        )))
+        .chain(
+            plan.subs
+                .iter()
+                .map(|(role, feed)| (Cow::Borrowed(role.as_str()), feed.ops.as_slice())),
+        )
+        .chain(plan.mimo.iter().map(|path| {
+            (
+                Cow::Owned(format!("{}->{}", path.input, path.support)),
+                path.ops.as_slice(),
+            )
+        }));
+    for (channel, ops) in channels {
+        for op in ops {
+            if let Op::Delay { ms, .. } = op {
+                emitted_delay("delay", &channel, *ms)?;
+            }
+        }
+    }
+    Ok(())
+}
+/// A run's mode names the export files.
 fn identifier(name: &str, value: &str) -> Result<(), FiltersError> {
     if value.is_empty() || !value.chars().all(|ch| ch.is_ascii_alphanumeric()) {
         Err(FiltersError::Invalid(format!("unsafe {name} {value:?}")))
@@ -1832,142 +1313,26 @@ fn identifier(name: &str, value: &str) -> Result<(), FiltersError> {
         Ok(())
     }
 }
-fn validate_peqs(name: &str, values: &[(f64, f64, f64)]) -> Result<(), FiltersError> {
-    for (index, &(frequency, q, gain)) in values.iter().enumerate() {
-        finite(&format!("{name}[{index}].frequency"), frequency)?;
-        finite(&format!("{name}[{index}].q"), q)?;
-        finite(&format!("{name}[{index}].gain"), gain)?;
-    }
-    Ok(())
-}
-fn validate_chain(chain: &SignalChain, mimo: Option<&MimoPaths>) -> Result<(), FiltersError> {
-    if chain.sample_rate != SAMPLE_RATE {
-        return Err(FiltersError::Invalid(format!(
-            "sample rate {}",
-            chain.sample_rate
-        )));
-    }
-    finite("chain.main_extra_ms", chain.main_extra_ms)?;
-    finite("chain.lift_ms", chain.lift_ms)?;
-    finite("chain.latency_ms", chain.latency_ms)?;
+/// The text and Equalizer APO formats take roles as plain names: letters and
+/// digits only, stricter than the export graph's rule (`_` and `-`), which
+/// the CamillaDSP writer shares.
+fn plain_roles(chain: &SignalChain, mimo: Option<&MimoPaths>) -> Result<(), FiltersError> {
     for main in &chain.mains {
         identifier("main role", &main.role)?;
-        validate_peqs("main input PEQ", &main.input_peq)?;
-        validate_peqs("main top PEQ", &main.top_peq)?;
-        finite("main gain", main.gain_db)?;
-        finite("main delay", main.delay_ms)?;
-        finite("main align delay", main.align_delay_ms)?;
-        if let Some(xo) = main.xo_hz {
-            finite("main XO", xo)?;
-        }
-        for &tap in &main.fir {
-            finite("main FIR", tap)?;
-        }
-    }
-    let mut roles = Vec::new();
-    for main in &chain.mains {
-        if roles.iter().any(|role| role == &main.role) || main.role == "LFE" {
-            return Err(FiltersError::Invalid(format!(
-                "duplicate or reserved role {:?}",
-                main.role
-            )));
-        }
-        roles.push(main.role.clone());
     }
     for sub in &chain.subs {
         identifier("sub role", &sub.role)?;
-        if roles.iter().any(|role| role == &sub.role) || sub.role == "LFE" {
-            return Err(FiltersError::Invalid(format!(
-                "duplicate or reserved role {:?}",
-                sub.role
-            )));
-        }
-        roles.push(sub.role.clone());
-        finite("sub gain", sub.gain_db)?;
-        finite("sub delay", sub.delay_ms)?;
-        finite("sub HP", sub.hp_hz)?;
-        finite("sub LP", sub.lp_hz)?;
-        if !matches!(sub.polarity, -1 | 1) {
-            return Err(FiltersError::Invalid(format!(
-                "sub polarity {}",
-                sub.polarity
-            )));
-        }
-        validate_peqs("sub PEQ", &sub.peq)?;
-        for &(frequency, q) in &sub.allpass {
-            finite("sub allpass frequency", frequency)?;
-            finite("sub allpass Q", q)?;
-        }
     }
-    validate_peqs("sub bus PEQ", &chain.sub_bus_peq)?;
-    if let Some(paths) = mimo {
-        finite("MIMO Fsiso", paths.fsiso)?;
-        for path in &paths.paths {
-            identifier("MIMO input", &path.input)?;
-            identifier("MIMO support", &path.support)?;
-            if !chain.mains.iter().any(|main| main.role == path.input) {
-                return Err(FiltersError::Invalid(format!(
-                    "MIMO input {:?} is not a main role",
-                    path.input
-                )));
-            }
-            if !chain.mains.iter().any(|main| main.role == path.support)
-                && !chain.subs.iter().any(|sub| sub.role == path.support)
-            {
-                return Err(FiltersError::Invalid(format!(
-                    "MIMO support {:?} is not an output role",
-                    path.support
-                )));
-            }
-            finite("MIMO low", path.low_hz)?;
-            finite("MIMO delay", path.delay_ms)?;
-            match &path.filter {
-                MimoFilter::Fir { taps_48k } => {
-                    for &tap in taps_48k {
-                        finite("MIMO FIR", tap)?;
-                    }
-                }
-                MimoFilter::FirLowRate { taps_low, fs_low } => {
-                    finite("MIMO FIR sample rate", *fs_low)?;
-                    if *fs_low > f64::from(SAMPLE_RATE)
-                        || secs_dsp::fir::lowrate_len_48k(taps_low.len(), *fs_low).is_none()
-                    {
-                        return Err(FiltersError::Invalid(
-                            "invalid or oversized low-rate MIMO FIR".into(),
-                        ));
-                    }
-                    for &tap in taps_low {
-                        finite("MIMO FIR", tap)?;
-                    }
-                }
-                MimoFilter::Iir {
-                    gain_db,
-                    delay_ms,
-                    polarity,
-                    peq,
-                    allpass,
-                } => {
-                    finite("MIMO gain", *gain_db)?;
-                    finite("MIMO filter delay", *delay_ms)?;
-                    if !matches!(polarity, -1 | 1) {
-                        return Err(FiltersError::Invalid(format!("MIMO polarity {polarity}")));
-                    }
-                    validate_peqs("MIMO PEQ", peq)?;
-                    for &(frequency, q) in allpass {
-                        finite("MIMO allpass frequency", frequency)?;
-                        finite("MIMO allpass Q", q)?;
-                    }
-                }
-            }
-        }
+    for path in mimo.into_iter().flat_map(|mimo| &mimo.paths) {
+        identifier("MIMO input", &path.input)?;
+        identifier("MIMO support", &path.support)?;
     }
     Ok(())
 }
 fn validate_run(run: &FilterRun<'_>) -> Result<(), FiltersError> {
     identifier("mode", run.mode)?;
-    finite("ultra_ms", run.ultra_ms)?;
+    plain_roles(run.chain, run.mimo)?;
     finite("latency_ms", run.latency_ms)?;
-    finite("rc_hi_hz", run.rc_hi_hz)?;
     if run.label.contains(['\0', '/', '\\']) {
         return Err(FiltersError::Invalid(format!(
             "unsafe label {:?}",
@@ -1980,7 +1345,7 @@ fn validate_run(run: &FilterRun<'_>) -> Result<(), FiltersError> {
             run.stamp
         )));
     }
-    validate_chain(run.chain, run.mimo)
+    Ok(())
 }
 
 #[cfg(test)]

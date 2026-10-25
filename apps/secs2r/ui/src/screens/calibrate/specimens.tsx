@@ -2,7 +2,7 @@
 // the densest one again at 1024×700. Settings states scroll the frame's
 // content to their section so the screenshot shows it.
 import { useLayoutEffect, useRef, type ReactNode } from "react";
-import { initialJobs, type JobsAction, type JobsState } from "../../app/jobs/jobStore";
+import { initialLedger, type LedgerAction, type LedgerState } from "../../state/jobLedger";
 import type { CalibrationState, FrameModel } from "../../app/model";
 import { PrefsScope, usePrefs } from "../../app/prefs";
 import { FrameBox, T0, replay } from "../../gallery/frameSpecimens";
@@ -27,9 +27,9 @@ export const noActions: CalibrateActions = {
   selectChannel: noop,
   selectXoGroup: noop,
   previewXo: noop,
-  changeSetting: noop,
+  changeSetting: async () => true,
   takeSubValues: noop,
-  setTargetPoints: noop,
+  setTargetPoints: async () => true,
   applyTargetPreset: noop,
   saveTarget: noop,
   loadTarget: noop,
@@ -68,7 +68,7 @@ function frameOf(view: CalibrateView, fileName = "거실 7.1.4.secs"): FrameMode
   };
 }
 
-const runningJobs = (kind: "calibrate" | "mimo", stage: string, total: number): JobsState =>
+const runningJobs = (kind: "calibrate" | "mimo", stage: string, total: number): LedgerState =>
   replay([
     { type: "event", at: T0, event: { event: "started", job: 7, kind } },
     { type: "event", at: T0 + 3000, event: { event: "progress", job: 7, stage, done: 2, total } },
@@ -82,7 +82,7 @@ const failedJobs = replay([
     at: T0 + 9000,
     event: { event: "finished", job: 7, status: "failed", result: null, error: fx.failedView.failure!.error },
   },
-] satisfies JobsAction[]);
+] satisfies LedgerAction[]);
 
 /** Scrolls the frame's content so `target` sits at the top (settings specimens). */
 function ScrollTo({ target }: { target: string }) {
@@ -104,13 +104,13 @@ function ScrollTo({ target }: { target: string }) {
 
 function CalibrateFrame({
   view,
-  jobs = initialJobs,
+  jobs = initialLedger,
   scrollTo,
   initial,
   fileName,
 }: {
   view: CalibrateView;
-  jobs?: JobsState;
+  jobs?: LedgerState;
   scrollTo?: string | undefined;
   initial?: CalibrateScreenProps["initial"];
   fileName?: string | undefined;

@@ -15,7 +15,7 @@ import { HELP_TABS, MDAT_CHANNEL_ROWS } from "./content";
 import type { HelpActions, HelpBlock, HelpTab, HelpTabId, HelpView } from "./types";
 import "./help.css";
 
-export const TAB_LABEL: Record<HelpTabId, MessageKey> = {
+const TAB_LABEL: Record<HelpTabId, MessageKey> = {
   intro: "help.tab.intro",
   steps: "help.tab.steps",
   checks: "help.tab.checks",

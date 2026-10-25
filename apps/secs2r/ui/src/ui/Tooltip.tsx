@@ -8,7 +8,7 @@ export const TOOLTIP_CLOSE_DELAY_MS = 180;
 let active: { id: string; close: () => void } | null = null;
 let latestIntent = 0;
 type Trigger = { "aria-describedby"?: string | undefined; "aria-expanded"?: boolean | undefined; "aria-controls"?: string | undefined };
-export type TooltipProps = {
+type TooltipProps = {
   content: ReactNode; children: ReactElement<Trigger>; side?: "top" | "bottom";
   delay?: number; staticOpen?: boolean; id?: string;
   /** A dedicated help button can pin the tooltip with click, touch or Enter. */

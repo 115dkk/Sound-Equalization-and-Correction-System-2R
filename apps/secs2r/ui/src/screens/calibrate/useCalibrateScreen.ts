@@ -1,10 +1,13 @@
 import { useMemo } from "react";
 import { useHost, useResource, useSession } from "../../state/react";
+import { useJobLedger } from "../../state/useJobLedger";
 import type { CalibrateActions, CalibrateJob, CalibrateView } from "./types";
+import { groupOf, xoGroups } from "./text";
 
 export function useCalibrateScreen(goToMeasurements?: () => void): { view: CalibrateView | null; actions: CalibrateActions } {
   const session = useSession();
   const host = useHost();
+  const ledger = useJobLedger();
   const appSettings = useResource("appSettings");
   const computeStatus = useResource("computeStatus");
   const results = useResource("results");
@@ -19,6 +22,17 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
   const dsp = useResource("dsp");
   const subWarnings = useResource("subWarnings");
   const actions = useMemo<CalibrateActions>(() => {
+    const selectedGroup = (channel: string | null) => {
+      const config = session.stores.config.getSnapshot();
+      if (!config) return null;
+      const measured = new Set(session.stores.curves.getSnapshot()?.curves.filter((curve) => curve.position === 1).map((curve) => curve.role));
+      const channels = session.stores.results.getSnapshot()?.calibration
+        ? session.stores.lines.getSnapshot()?.channels.map((line) => line.role) ?? []
+        : config.speakers.map((speaker) => speaker.role).filter((role) => measured.has(role));
+      const role = channel && channels.includes(channel) ? channel : channels[0];
+      const group = role ? groupOf(config, role) : null;
+      return group && xoGroups(config).includes(group) ? group : null;
+    };
     const refresh = () => {
       const h = session.host.getSnapshot();
       session.run(() => session.refreshCurves({ tab: h.tab, channel: h.channel, group: h.xoGroup, xo_hz: h.previewHz, corrected: null }));
@@ -31,28 +45,35 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
       changeCompute: (compute) => session.run(async () => {
         const h = session.host.getSnapshot();
         const settings = session.stores.appSettings.getSnapshot();
-        if (!settings || h.computeSaving || h.computeLoading || h.computeError || h.jobs.some((job) => ["running", "cancel_requested"].includes(job.status) && !["status_watch", "level_monitor"].includes(job.kind))) return;
+        if (!settings || h.computeSaving || h.computeLoading || h.computeError || session.jobs.getSnapshot().jobs.some((job) => ["running", "cancel_requested"].includes(job.status) && !["status_watch", "level_monitor"].includes(job.kind))) return;
         session.host.set({ computeSaving: true });
-        try { await session.call({ method: "app_settings_set", params: { settings: { ...settings, compute } } }); }
+        try { await session.writers.app.edit({ compute }); }
         finally { session.host.set({ computeSaving: false }); }
       }),
       calibrate: () => session.run(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } })),
       calibrateSubs: () => session.run(() => session.call({ method: "calibrate", params: { settings: null, subs_only: true } })),
       recommendXo: () => session.run(() => session.call({ method: "recommend_xo" })),
       computeMimo: () => session.run(() => session.call({ method: "mimo", params: { settings: null } })),
-      selectTab: (tab) => { session.host.set({ tab, previewHz: null }); refresh(); },
-      selectChannel: (channel, group) => {
-        session.host.set({ channel, previewHz: null, ...(session.host.getSnapshot().tab === "xo" ? { xoGroup: group } : {}) });
+      selectTab: (tab) => {
+        session.host.set({ tab, previewHz: null, ...(tab === "xo" ? { xoGroup: selectedGroup(session.host.getSnapshot().channel) } : {}) });
+        refresh();
+      },
+      selectChannel: (channel) => {
+        session.host.set({ channel, previewHz: null, ...(session.host.getSnapshot().tab === "xo" ? { xoGroup: selectedGroup(channel) } : {}) });
         refresh();
       },
       selectXoGroup: (xoGroup) => { session.host.set({ xoGroup, previewHz: null }); refresh(); },
       previewXo: (xoGroup, previewHz) => { session.host.set({ tab: "xo", xoGroup, previewHz }); refresh(); },
-      changeSetting: (edit) => session.run(async () => {
+      changeSetting: async (edit) => {
         session.host.set({ previewHz: null });
-        await session.call({ method: "calibration_settings_edit", params: { edit } });
-      }),
+        try { await session.call({ method: "calibration_settings_edit", params: { edit } }); return true; }
+        catch { return false; }
+      },
       takeSubValues: () => session.run(() => session.call({ method: "sub_take_values" })),
-      setTargetPoints: (points) => session.run(() => session.call({ method: "target_set_points", params: { points } })),
+      setTargetPoints: async (points) => {
+        try { await session.call({ method: "target_set_points", params: { points } }); return true; }
+        catch { return false; }
+      },
       applyTargetPreset: (preset) => session.run(() => session.call({ method: "target_apply_preset", params: { preset } })),
       saveTarget: () => session.run(async () => {
         const path = await session.call({ method: "dialog_save_file", params: { kind: "target", suggested: "타겟.json" } });
@@ -64,9 +85,9 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
       }),
     };
   }, [session, goToMeasurements]);
-  const jobs = host.jobs.filter((job) => job.status === "running" || job.status === "cancel_requested");
+  const jobs = ledger.jobs.filter((job) => job.status === "running" || job.status === "cancel_requested");
   const runningJob = jobs.find((job) => ["calibrate", "recommend_xo", "mimo"].includes(job.kind));
-  const request = runningJob ? host.jobRequests[runningJob.job] : undefined;
+  const request = runningJob?.request;
   const running: CalibrateJob | null = runningJob ? request?.method === "calibrate" && request.params.subs_only ? "calibrate_subs" : runningJob.kind as CalibrateJob : null;
   const measuredRoles = new Set(measurements?.curves.filter((curve) => curve.position === 1).map((curve) => curve.role));
   return { view: results && lines && settings && modeSpec && target && config && project ? {
@@ -76,8 +97,8 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
     measuredRoles: config.speakers.map((speaker) => speaker.role).filter((role) => measuredRoles.has(role)),
     firBudget: dsp?.fields.fir_budget ?? 0, xoRecommendation: host.xoRecommendation, running,
     measuring: jobs.some((job) => ["measure", "sample_load", "mdat_import"].includes(job.kind)),
-    failure: host.failure,
-    staleReason: results.calibration?.stale_reason === "settings" || results.calibration?.stale_reason === "target" || results.calibration?.stale_reason === "measurements" ? results.calibration.stale_reason : null,
+    failure: host.failure, targetEdit: host.targetEdit, xoEdit: host.xoEdit,
+    staleReason: results.calibration?.stale_reason === "settings" || results.calibration?.stale_reason === "target" || results.calibration?.stale_reason === "measurements" || results.calibration?.stale_reason === "config" ? results.calibration.stale_reason : null,
     resultMode: results.calibration ? { mode: results.calibration.mode, ultra_ms: results.calibration.ultra_ms } : null,
     tab: host.tab, channel: host.channel, xoGroup: host.xoGroup, subWarnings: subWarnings ?? [],
     curvesLoading: curves?.pending != null && curves.pending.tab === host.tab && curves.pending.channel === host.channel && curves.pending.group === host.xoGroup,

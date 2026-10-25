@@ -193,6 +193,55 @@ fn mock_monitor_emits_stores_excludes_and_stops() {
 }
 
 #[test]
+fn monitor_started_in_another_project_does_not_store_late_level() {
+    let root = root();
+    let first = root.join("first.secs");
+    let second = root.join("second.secs");
+    let service = Service::new(Default::default());
+    configure_mock(&service, &first);
+    let events = Arc::new(Events::default());
+    let Response::LevelMonitorStart(started) = call(
+        &service,
+        Request::LevelMonitorStart(LevelMonitorStartParams::default()),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    call(
+        &service,
+        Request::LevelPlay(LevelPlayParams {
+            role: "L".into(),
+            master_dbfs: -30.0,
+        }),
+        Arc::new(NoEvents),
+    );
+    events.wait_meters(started.job, 1, Duration::from_secs(1));
+    configure_mock(&service, &second);
+    call(
+        &service,
+        Request::ProjectSave(ProjectSaveParams::default()),
+        Arc::new(NoEvents),
+    );
+    events.wait_play_end(started.job, "L", "done", Duration::from_secs(10));
+    let Response::LevelsGet(levels) = call(&service, Request::LevelsGet, Arc::new(NoEvents)) else {
+        panic!()
+    };
+    assert!(levels.levels.is_empty());
+    assert!(levels.spl.is_empty());
+    let Response::ProjectInfo(info) = call(&service, Request::ProjectInfo, Arc::new(NoEvents))
+    else {
+        panic!()
+    };
+    assert!(!info.dirty);
+    call(&service, Request::LevelMonitorStop, Arc::new(NoEvents));
+    assert_eq!(
+        events.wait_finished(started.job, Duration::from_secs(1)),
+        JobStatus::Cancelled
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn level_stop_cancels_only_the_active_burst_and_is_idempotent() {
     let root = root();
     let service = Service::new(Default::default());
@@ -307,6 +356,136 @@ impl secs_rew::Transport for RecordingRew {
         };
         Ok(secs_rew::Response::ok(body))
     }
+}
+
+#[derive(Debug, Clone, Default)]
+struct FailingRew {
+    calls: Arc<Mutex<Vec<secs_rew::Request>>>,
+}
+
+impl secs_rew::Transport for FailingRew {
+    fn request(
+        &self,
+        request: &secs_rew::Request,
+    ) -> Result<secs_rew::Response, secs_rew::RewError> {
+        self.calls.lock().unwrap().push(request.clone());
+        if request.path == "/generator/command"
+            && request
+                .body
+                .as_ref()
+                .is_some_and(|body| body["command"] == "Play")
+        {
+            return Err(secs_rew::RewError::Connection {
+                path: request.path.clone(),
+                message: "injected failure after play".into(),
+            });
+        }
+        Ok(secs_rew::Response::ok(serde_json::json!({"message":"ok"})))
+    }
+}
+
+#[test]
+fn rew_monitor_cleans_up_after_loop_error() {
+    let root = root();
+    let transport = FailingRew::default();
+    let injected = transport.clone();
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(move || Box::new(injected.clone())),
+        ..Default::default()
+    });
+    configure(&service, &root.join("room.secs"), "rew");
+    let events = Arc::new(Events::default());
+    let Response::LevelMonitorStart(started) = call(
+        &service,
+        Request::LevelMonitorStart(LevelMonitorStartParams::default()),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    call(
+        &service,
+        Request::LevelPlay(LevelPlayParams {
+            role: "L".into(),
+            master_dbfs: -30.0,
+        }),
+        Arc::new(NoEvents),
+    );
+    assert_eq!(
+        events.wait_finished(started.job, Duration::from_secs(2)),
+        JobStatus::Failed
+    );
+    let calls = transport.calls.lock().unwrap();
+    assert!(calls.iter().any(|call| {
+        call.path == "/generator/command"
+            && call
+                .body
+                .as_ref()
+                .is_some_and(|body| body["command"] == "Stop")
+    }));
+    assert!(
+        calls
+            .iter()
+            .any(|call| call.path == "/input-levels/unsubscribe")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn rew_level_play_ends_once_after_its_duration() {
+    let root = root();
+    let transport = RecordingRew::default();
+    let injected = transport.clone();
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(move || Box::new(injected.clone())),
+        ..Default::default()
+    });
+    configure(&service, &root.join("room.secs"), "rew");
+    let events = Arc::new(Events::default());
+    let Response::LevelMonitorStart(started) = call(
+        &service,
+        Request::LevelMonitorStart(LevelMonitorStartParams::default()),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    call(
+        &service,
+        Request::LevelPlay(LevelPlayParams {
+            role: "L".into(),
+            master_dbfs: -30.0,
+        }),
+        Arc::new(NoEvents),
+    );
+    events.wait_play_end(started.job, "L", "done", Duration::from_secs(4));
+    call(&service, Request::LevelMonitorStop, Arc::new(NoEvents));
+    assert_eq!(
+        events.wait_finished(started.job, Duration::from_secs(1)),
+        JobStatus::Cancelled
+    );
+    let calls = transport.calls();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.path == "/generator/command"
+                && call
+                    .body
+                    .as_ref()
+                    .is_some_and(|body| body["command"] == "Play"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.path == "/generator/command"
+                && call
+                    .body
+                    .as_ref()
+                    .is_some_and(|body| body["command"] == "Stop"))
+            .count(),
+        2
+    );
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -457,5 +636,116 @@ fn generic_cancel_ends_monitor_during_an_active_burst() {
         events.wait_finished(started.job, Duration::from_secs(1)),
         JobStatus::Cancelled
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn failed_error(events: &Events, job: JobId) -> IpcError {
+    assert_eq!(
+        events.wait_finished(job, Duration::from_secs(10)),
+        JobStatus::Failed
+    );
+    events
+        .values
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|event| match event {
+            JobEvent::Finished {
+                job: id,
+                error: Some(error),
+                ..
+            } if *id == job => Some(error.clone()),
+            _ => None,
+        })
+        .unwrap()
+}
+
+fn level_check_error(service: &Service, role: &str) -> IpcError {
+    let events = Arc::new(Events::default());
+    match service.call(
+        Request::LevelCheck(LevelCheckParams { role: role.into() }),
+        events.clone(),
+    ) {
+        Envelope::Err(error) => error,
+        Envelope::Ok(response) => {
+            let Response::LevelCheck(started) = *response else {
+                panic!()
+            };
+            failed_error(&events, started.job)
+        }
+    }
+}
+
+fn monitor_error(service: &Service, role: &str) -> IpcError {
+    let events = Arc::new(Events::default());
+    let Response::LevelMonitorStart(started) = call(
+        service,
+        Request::LevelMonitorStart(LevelMonitorStartParams::default()),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    call(
+        service,
+        Request::LevelPlay(LevelPlayParams {
+            role: role.into(),
+            master_dbfs: -30.0,
+        }),
+        Arc::new(NoEvents),
+    );
+    failed_error(&events, started.job)
+}
+
+#[test]
+fn monitor_errors_are_classified_like_level_check() {
+    // mock: a role outside the plan; native: no audio device (the null backend).
+    for (method, role) in [("mock", "Nope"), ("native", "L")] {
+        let root = root();
+        let service = Service::new(Default::default());
+        configure(&service, &root.join("room.secs"), method);
+        let expected = level_check_error(&service, role);
+        let got = monitor_error(&service, role);
+        assert_eq!(
+            (got.code, got.retryable),
+            (expected.code, expected.retryable),
+            "{method}: monitor {got:?}, level check {expected:?}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
+fn jobs_lists_a_running_job_and_then_its_end() {
+    let root = root();
+    let service = Service::new(Default::default());
+    configure_mock(&service, &root.join("room.secs"));
+    let events = Arc::new(Events::default());
+    let Response::LevelMonitorStart(started) = call(
+        &service,
+        Request::LevelMonitorStart(LevelMonitorStartParams::default()),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    let snapshot = |service: &Service| {
+        let Response::Jobs(jobs) = call(service, Request::Jobs, Arc::new(NoEvents)) else {
+            panic!()
+        };
+        jobs.into_iter()
+            .find(|job| job.job == started.job)
+            .expect("the started job is listed")
+    };
+    let running = snapshot(&service);
+    assert_eq!(running.kind, JobKind::LevelMonitor);
+    assert_eq!(running.status, JobStatus::Running);
+    assert!(running.cancellable);
+    call(&service, Request::LevelMonitorStop, Arc::new(NoEvents));
+    assert_eq!(
+        events.wait_finished(started.job, Duration::from_secs(5)),
+        JobStatus::Cancelled
+    );
+    let ended = snapshot(&service);
+    assert_eq!(ended.status, JobStatus::Cancelled);
+    assert!(!ended.cancellable);
     fs::remove_dir_all(root).unwrap();
 }

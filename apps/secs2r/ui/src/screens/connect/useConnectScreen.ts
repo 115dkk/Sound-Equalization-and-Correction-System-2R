@@ -1,12 +1,14 @@
 import { useEffect, useMemo, useRef } from "react";
 import { IpcFailure } from "../../ipc/client";
 import { useHost, useResource, useSession } from "../../state/react";
+import { useJobLedger } from "../../state/useJobLedger";
 import { levelRoles, pathReady } from "./state";
 import type { ConnectActions, ConnectView, RewProblem } from "./types";
 
 export function useConnectScreen(active: boolean): { view: ConnectView | null; actions: ConnectActions } {
   const session = useSession();
   const host = useHost();
+  const ledger = useJobLedger();
   const config = useResource("config");
   const methods = useResource("methods");
   const settings = useResource("measurementSettings");
@@ -14,7 +16,7 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
   const rew = useResource("rew");
   const queue = useRef(0);
   const cancelWait = useRef<(() => void) | null>(null);
-  const sweepRunning = host.jobs.some((job) => job.kind === "level_check" && (job.status === "running" || job.status === "cancel_requested"));
+  const sweepRunning = ledger.jobs.some((job) => job.kind === "level_check" && (job.status === "running" || job.status === "cancel_requested"));
   const ready = host.path !== "mdat" && settings !== null && pathReady({ path: host.path, methods });
   useEffect(() => () => { queue.current++; cancelWait.current?.(); }, []);
   useEffect(() => {
@@ -58,19 +60,23 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
             // level_play only enqueues the 2.5 s burst; the monitor job says
             // when it ended (level_play_end), after storing the level. Listen
             // before asking, and give up after 8 s so a lost event cannot stall the queue.
+            let release = () => {};
             const ended = new Promise<void>((resolve) => {
               let timer: ReturnType<typeof setTimeout> | undefined;
               let off = () => {};
-              const finish = () => { off(); clearTimeout(timer); cancelWait.current = null; resolve(); };
+              const finish = () => { off(); clearTimeout(timer); if (cancelWait.current === finish) cancelWait.current = null; resolve(); };
+              release = finish;
               off = session.ipc.events.subscribe((event) => {
                 if (event.event === "log" && event.code === "level_play_end" && event.params.role === role) finish();
               });
               timer = setTimeout(finish, 8000);
               cancelWait.current = finish;
             });
-            await session.call({ method: "level_play", params: { role, master_dbfs: session.host.getSnapshot().masterDbfs } });
-            if (epoch !== queue.current) break;
-            await ended;
+            try {
+              await session.call({ method: "level_play", params: { role, master_dbfs: session.host.getSnapshot().masterDbfs } });
+              if (epoch !== queue.current) break;
+              await ended;
+            } finally { release(); }
             if (epoch !== queue.current) break;
             await Promise.all([session.stores.levels.load(), session.stores.project.load()]);
           }
@@ -83,7 +89,7 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
       choosePath: (path) => session.run(async () => {
         await stop();
         if (session.host.getSnapshot().path !== path) await session.monitor(false);
-        await session.configure({ method: path });
+        await session.writers.measurement.edit({ method: path });
       }),
       refreshMethods: () => session.run(() => session.stores.methods.load()),
       launchRew: () => session.run(async () => {
@@ -91,7 +97,6 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
         try {
           const status = await session.call({ method: "rew_launch" });
           session.host.set({ rewLaunch: status.reachable ? "idle" : "launching" });
-          await Promise.all([session.stores.methods.load(), session.stores.rew.load()]);
         } catch (error) {
           const reason = error instanceof IpcFailure ? error.error.params.reason : null;
           const problem: RewProblem = reason === "exe_not_found" || reason === "cannot_launch" || reason === "timed_out" ? reason : "launch_failed";
@@ -111,16 +116,15 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
       }),
       // On the REW path measure_configure also opens the device in REW; read REW again for its channels.
       setInputDevice: (input_device) => session.run(async () => {
-        await session.configure({ input_device });
+        if (!await session.writers.measurement.edit({ input_device })) return;
         if (session.host.getSnapshot().path === "rew") await session.stores.rew.load();
       }),
-      setInputChannel: (input_channel) => session.run(() => session.configure({ input_channel })),
+      setInputChannel: (input_channel) => session.run(() => session.writers.measurement.edit({ input_channel })),
       setOutputDevice: (output_device) => session.run(async () => {
-        await session.configure({ output_device });
+        if (!await session.writers.measurement.edit({ output_device })) return;
         if (session.host.getSnapshot().path === "rew") await session.stores.rew.load();
       }),
-      setSweepLength: (sweep_length) => session.run(() => session.configure({ sweep_length })),
-      setShareMode: (share_mode) => session.run(() => session.configure({ share_mode })),
+      setShareMode: (share_mode) => session.run(() => session.writers.measurement.edit({ share_mode })),
       playLevel: (role) => play([role], false),
       stopLevel: () => session.run(stop),
       playAllLevels: () => {

@@ -416,7 +416,7 @@ id = "format.secs_project"
 kind = "format"
 milestone = "M1"
 status = "implemented"
-tests = ["secs-project::project_load_migrations_and_save_match_oracle", "secs-project::direct_project_preset_matches_oracle", "secs-project::project_edge_contracts_match_oracle", "secs-project::project_presets_save_exactly", "secs-project::pyjson_edge_cases_match_oracle", "secs-project::pyjson_scanner_edges_match_oracle", "secs-project::pyjson_regressions", "secs-project::dsp_tap_allocation_matches_oracle", "secs-project::target_curves_match_oracle"]
+tests = ["secs-project::project_load_migrations_and_save_match_oracle", "secs-project::direct_project_preset_matches_oracle", "secs-project::project_edge_contracts_match_oracle", "secs-project::project_presets_save_exactly", "secs-project::pyjson_edge_cases_match_oracle", "secs-project::pyjson_scanner_edges_match_oracle", "secs-project::pyjson_regressions", "secs-project::dsp_tap_allocation_matches_oracle", "secs-project::target_curves_match_oracle", "secs-project::unknown_nested_keys_survive_open_change_and_save_f16"]
 upstream = "model.py"
 note = ".secs versions 1-3 read and migrated while forward versions are preserved; written in SECS 2's key order and number format"
 
@@ -425,7 +425,7 @@ id = "format.irs_store"
 kind = "format"
 milestone = "M1"
 status = "implemented"
-tests = ["secs-project::wav_writer_and_readers_match_oracle"]
+tests = ["secs-project::wav_writer_and_readers_match_oracle", "secs-project::wav_reader_decodes_hand_built_fixtures_of_every_supported_format_td47", "secs-project::wav_reader_rejects_hand_built_malformed_fixtures_td47", "secs-project::truncated_wav_data_chunk_is_rejected_f17"]
 upstream = "rewapi/session.py"
 note = "float32 writer bytes match upstream; reader also supports mono PCM 16/24/32, float 32/64 and WAVE_FORMAT_EXTENSIBLE; PCM8 and non-left-aligned valid-bit/container combinations are unsupported"
 
@@ -516,7 +516,7 @@ id = "project.measurement_store"
 kind = "project"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-project::test_run_plan_writes_secs_and_ir_files", "secs-project::test_reload_project_restores_irs_by_role_and_load_project_irs_roundtrip", "secs-project::interrupted_save_leaves_old_secs_intact_f1", "secs-project::test_cancel_then_resume_skips_done_positions_and_partial_position_is_not_done_f2", "secs-project::f5_absolute_parent_and_symlink_escapes_are_rejected_but_in_tree_reads", "secs-project::ir_cache_rereads_changed_file_and_evicts_to_cap"]
+tests = ["secs-project::test_run_plan_writes_secs_and_ir_files", "secs-project::test_reload_project_restores_irs_by_role_and_load_project_irs_roundtrip", "secs-project::interrupted_save_leaves_old_secs_intact_f1", "secs-project::test_cancel_then_resume_skips_done_positions_and_partial_position_is_not_done_f2", "secs-project::f5_absolute_parent_and_symlink_escapes_are_rejected_but_in_tree_reads", "secs-project::ir_cache_rereads_changed_file_and_evicts_to_cap", "secs-project::ir_cache_keeps_its_byte_cap_and_evicts_least_recently_used_td44"]
 upstream = "rewapi/session.py MeasurementSession, IrSaver, load_project_irs"
 
 [[feature]]
@@ -524,7 +524,7 @@ id = "project.measurement_source"
 kind = "project"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-project::measurement_source_writes_exact_bytes_reads_and_deletes_stale_file", "secs-project::measurement_source_tolerates_partial_values_and_rejects_unsafe_narrowing", "secs-project::measurement_source_builds_upstream_mdat_bytes_and_skips_upstream_exceptions_f10", "secs-service::project_session_create_open_save_and_save_as", "secs-service::mdat_scan_and_import_match_direct_oracle_bytes", "secs-service::rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements", "secs-service::exports_after_reopening_match_pre_close_bytes"]
+tests = ["secs-project::measurement_source_writes_exact_bytes_reads_and_deletes_stale_file", "secs-project::measurement_source_tolerates_partial_values_and_rejects_unsafe_narrowing", "secs-project::measurement_source_builds_upstream_mdat_bytes_and_skips_upstream_exceptions_f10", "secs-project::project_sources_are_read_only_inside_the_irs_folder_td43", "secs-service::project_session_create_open_save_and_save_as", "secs-service::mdat_scan_and_import_match_direct_oracle_bytes", "secs-service::rew_measurements_capture_calibration_and_keep_bad_sensitivity_measurements", "secs-service::exports_after_reopening_match_pre_close_bytes"]
 upstream = "rewapi/session.py IrSaver.save_source, IrSaver.load_source, load_project_sources"
 
 [[feature]]
@@ -859,7 +859,7 @@ kind = "service"
 milestone = "M5"
 status = "implemented"
 tests = ["secs-types::compute_completion_events_are_payload_free_markers", "secs-service::large_fir_cache_round_trips_every_coefficient_without_large_screen_summaries", "secs-service::legacy_v2_and_v3_move_dsp_into_private_cache_without_changing_samples", "secs-service::rejected_cache_write_preserves_previous_file_and_removes_temporary", "secs-service::project_replacement_rejects_old_compute_commit_and_preserves_completion"]
-note = "Screen results contain roles, counts and metrics rather than DSP coefficient arrays. Calibration/MIMO completion carries a marker; summaries are fetched once. Full filters remain in Rust and private v4 caches; v2/v3 caches migrate (ADR 0009)."
+note = "Screen results contain roles, counts and metrics rather than DSP coefficient arrays. Calibration/MIMO completion carries a marker; summaries are fetched once. Full filters remain in Rust and private v5 caches (design-rate MIMO FIR, ADR 0012); v4 caches load as is and v2/v3 caches migrate (ADR 0009)."
 
 [[feature]]
 id = "service.session"
@@ -933,7 +933,7 @@ id = "export.camilladsp"
 kind = "export"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-camilla::export_camilladsp_matches_oracle", "secs-camilla::invalid_values_write_nothing"]
+tests = ["secs-camilla::export_camilladsp_matches_oracle", "secs-camilla::invalid_values_write_nothing", "secs-camilla::fir_taps_that_overflow_f32_write_nothing_td45", "secs-camilla::duplicate_or_reserved_roles_write_nothing_td46", "secs-camilla::negative_delays_write_nothing_td94"]
 upstream = "calibration.py export_camilladsp"
 
 [[feature]]
@@ -949,7 +949,7 @@ id = "export.eqapo"
 kind = "export"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-filters::equalizer_apo_files_match_oracle_bytes", "secs-filters::public_wrappers_match_oracle_and_eqapo_carries_mimo_f12", "secs-filters::computed_public_wrappers_match_oracle_files", "secs-filters::eqapo_public_exports_use_single_assignments_f11", "secs-filters::eqapo_disabled_and_case_sensitive_mapping_f11", "secs-filters::exported_configs_play_as_designed"]
+tests = ["secs-filters::equalizer_apo_files_match_oracle_bytes", "secs-filters::public_wrappers_match_oracle_and_eqapo_carries_mimo_f12", "secs-filters::computed_public_wrappers_match_oracle_files", "secs-filters::eqapo_public_exports_use_single_assignments_f11", "secs-filters::eqapo_disabled_and_case_sensitive_mapping_f11", "secs-filters::exported_configs_play_as_designed", "secs-filters::fir_taps_that_overflow_f32_write_nothing_td45", "secs-filters::negative_delays_write_nothing_td94", "secs-filters::fir_responses_require_the_rfft_grid_td94"]
 upstream = "calibration.py export_eqapo; export_filters.py"
 
 [[feature]]
@@ -1027,7 +1027,7 @@ id = "ipc.project_new"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::new_projects_match_upstream_bytes", "secs-service::tutorial_projects_block_save_without_writing", "secs-service::tutorial_measurements_and_results_stay_in_a_temporary_folder_removed_with_the_session"]
 
 [[feature]]
 id = "ipc.sample_load"
@@ -1041,7 +1041,7 @@ id = "ipc.project_open"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::exports_after_reopening_match_pre_close_bytes", "secs-service::old_cache_without_run_key_keeps_calibration_but_marks_mimo_stale"]
 
 [[feature]]
 id = "ipc.project_save"
@@ -1055,35 +1055,35 @@ id = "ipc.project_info"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::measure_config_get_reads_stored_settings_without_dirtying_the_project"]
 
 [[feature]]
 id = "ipc.calibrate"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::cancelled_calibration_preserves_previous_results"]
 
 [[feature]]
 id = "ipc.recommend_xo"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::oracle_project_calibrates_recommends_xo_and_exports"]
 
 [[feature]]
 id = "ipc.mimo"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration"]
 
 [[feature]]
 id = "ipc.results"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::stale_calibration_exports_with_flag_and_cache_survives_reopen"]
 
 [[feature]]
 id = "ipc.export"
@@ -1098,14 +1098,14 @@ id = "ipc.job_cancel"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::cancelled_calibration_preserves_previous_results", "secs-service::generic_cancel_ends_monitor_during_an_active_burst"]
 
 [[feature]]
 id = "ipc.jobs"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::malformed_requests_become_invalid_request_envelopes"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::jobs_lists_a_running_job_and_then_its_end"]
 
 [[feature]]
 id = "ipc.measure_methods"
@@ -1119,7 +1119,7 @@ id = "ipc.measure_configure"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::configure_validates_fields_and_host_stub_reports_its_error", "secs-service::measure_configure_opens_selected_rew_device_after_project_update"]
+tests = ["secs-service::configure_validates_fields_and_host_stub_reports_its_error", "secs-service::measure_configure_opens_selected_rew_device_after_project_update", "secs-service::rew_driver_and_devices_stay_while_a_measurement_runs"]
 
 [[feature]]
 id = "ipc.measure_config_get"
@@ -1196,7 +1196,7 @@ id = "ipc.rew_launch"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::configure_validates_fields_and_host_stub_reports_its_error"]
+tests = ["secs-service::rew_launch_classifies_reasons_and_returns_after_spawn", "secs-service::configure_validates_fields_and_host_stub_reports_its_error"]
 
 [[feature]]
 id = "ipc.mdat_scan"
@@ -1389,7 +1389,7 @@ kind = "ipc"
 milestone = "M5"
 status = "implemented"
 upstream = "rewapi/rew.py; wizard/step1_devices.py"
-tests = ["secs-service::rew_driver_set_validates_posts_and_refreshes_info", "secs-service::rew_driver_set_maps_transport_license_and_http_errors"]
+tests = ["secs-service::rew_driver_set_validates_posts_and_refreshes_info", "secs-service::rew_driver_set_maps_transport_license_and_http_errors", "secs-service::rew_driver_and_devices_stay_while_a_measurement_runs"]
 
 [[feature]]
 id = "ipc.mode_spec"

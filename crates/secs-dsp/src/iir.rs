@@ -114,6 +114,12 @@ fn butter_single(order: usize, wn: f64, btype: BType) -> Sos {
 
 /// Butterworth band-pass, normalized edges (1 is Nyquist), SciPy nearest SOS.
 /// The analog low-pass prototype is transformed before the bilinear map.
+/// As in `scipy.signal._cplxreal`, a pole within `100·eps·|p|` of the real
+/// axis is real; complex poles keep their positive-imaginary representative,
+/// sorted by real part and then imaginary part, followed by the real poles in
+/// ascending order. A band wide enough that `(bw/2)² > wo²` turns the real
+/// prototype pole of an odd order into two real poles (TD-51); `zpk2sos`
+/// pairs a real pole with the remaining real pole nearest the unit circle.
 fn butter_bandpass(order: usize, low: f64, high: f64) -> Sos {
     assert!(
         order > 0 && low.is_finite() && high.is_finite() && 0. < low && low < high && high < 1.
@@ -138,12 +144,21 @@ fn butter_bandpass(order: usize, low: f64, high: f64) -> Sos {
         denom *= 4. - p;
     }
     let gain = bw.powi(order as i32) * (Complex64::new(4_f64.powi(order as i32), 0.) / denom).re;
-    let mut poles: Vec<_> = analog
-        .iter()
-        .map(|p| divide(4. + p, 4. - p))
-        .filter(|p| p.im > 0.)
-        .collect();
+    let tol = 100. * f64::EPSILON;
+    let mut poles = Vec::with_capacity(order);
+    let mut reals = Vec::new();
+    for p in analog.iter().map(|p| divide(4. + p, 4. - p)) {
+        if p.im.abs() <= tol * p.norm() {
+            reals.push(p.re);
+        } else if p.im > 0. {
+            poles.push(p);
+        }
+    }
     poles.sort_by(|a, b| a.re.total_cmp(&b.re).then(a.im.total_cmp(&b.im)));
+    reals.sort_by(f64::total_cmp);
+    poles.extend(reals.into_iter().map(|re| Complex64::new(re, 0.)));
+    let worst =
+        |a: &Complex64, b: &Complex64| (1. - a.norm()).abs().total_cmp(&(1. - b.norm()).abs());
     let mut zeros = vec![1.; order];
     zeros.extend(vec![-1.; order]);
     let mut rows = vec![[0.; 6]; order];
@@ -151,10 +166,24 @@ fn butter_bandpass(order: usize, low: f64, high: f64) -> Sos {
         let k = poles
             .iter()
             .enumerate()
-            .min_by(|(_, a), (_, b)| (1. - a.norm()).abs().total_cmp(&(1. - b.norm()).abs()))
+            .min_by(|(_, a), (_, b)| worst(a, b))
             .unwrap()
             .0;
         let p = poles.remove(k);
+        // `np.poly([p, conj(p)])` or `np.poly([p, q])` for a real pair.
+        let (a1, a2) = if p.im == 0. {
+            let k = poles
+                .iter()
+                .enumerate()
+                .filter(|(_, q)| q.im == 0.)
+                .min_by(|(_, a), (_, b)| worst(a, b))
+                .expect("real band-pass poles come in pairs")
+                .0;
+            let q = poles.remove(k).re;
+            (-(p.re + q), p.re * q)
+        } else {
+            (-2. * p.re, p.norm_sqr())
+        };
         let mut take = || {
             let k = zeros
                 .iter()
@@ -166,7 +195,7 @@ fn butter_bandpass(order: usize, low: f64, high: f64) -> Sos {
         };
         let z1 = take();
         let z2 = take();
-        *row = [1., -(z1 + z2), z1 * z2, 1., -2. * p.re, p.norm_sqr()];
+        *row = [1., -(z1 + z2), z1 * z2, 1., a1, a2];
     }
     for b in &mut rows[0][..3] {
         *b *= gain;

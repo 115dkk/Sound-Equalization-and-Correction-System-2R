@@ -1,8 +1,9 @@
 // Ported from Impulcifer-pip313 impulcifer-types/src/audio.rs, commit cac2217.
 // MIT; Copyright (c) 2018- Jaakko Pasanen, 2024- 115dkk, 2025- LionLion123, SDC.
 // See ../THIRD_PARTY_LICENSES.txt and docs/THIRD_PARTY.md.
-//! Audio backend contract shared by `impulcifer-sys-win` (WASAPI) and
-//! `impulcifer-audio-io` (cpal + orchestration). Sessions are deliberately
+//! Audio backend contract. In SECS 2R the adapters live in `secs-sys`
+//! (WASAPI on Windows, cpal on macOS and Linux), and `secs-audio` adds the
+//! simulated room and the null backend for tests. Sessions are deliberately
 //! not `Send`: they are created, used and dropped on one dedicated OS thread.
 //! Threads exchange endpoint ids, specs, owned buffers and reports only.
 

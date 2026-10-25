@@ -28,7 +28,11 @@ import { MicMeterPanel } from "./MicMeterPanel";
 import { connectStepState } from "./state";
 import type { ConnectActions, ConnectView, MeterReading } from "./types";
 
-/** Every id docs/M5-reach.md cites for 연결·점검 (sections 1 and 3), with a role filled in. */
+/**
+ * Every id docs/M5-reach.md cites for 연결·점검 (sections 1 and 3), with a role
+ * filled in. The sweep length row there names `measure.options.sweep`, which
+ * 측정·가져오기 draws (MeasureScreen.test.tsx).
+ */
 export const REACH_IDS = [
   "connect.method",
   "connect.method.native",
@@ -54,7 +58,6 @@ export const REACH_IDS = [
   "connect.mic_cal",
   "connect.output_device",
   "connect.sample_rate",
-  "connect.sweep_length",
   "connect.share_mode",
   "connect.level",
   "connect.level.row.L",
@@ -89,7 +92,6 @@ function actionsMock() {
     setInputDevice: vi.fn(),
     setInputChannel: vi.fn(),
     setOutputDevice: vi.fn(),
-    setSweepLength: vi.fn(),
     setShareMode: vi.fn(),
     playLevel: vi.fn(),
     stopLevel: vi.fn(),
@@ -272,7 +274,7 @@ describe("ConnectScreen", () => {
     expect(must("connect.rew.launch").getAttribute("aria-busy")).toBe("true");
   });
 
-  it("sets the devices, the channel and the sweep length", () => {
+  it("sets the devices and the channel; the sweep length is left to 측정·가져오기", () => {
     const actions = setup(loopbackView);
     fireEvent.change(must("connect.input_device"), { target: { value: "wasapi:{0.0.1.00000000}.{51f2}" } });
     expect(actions.setInputDevice).toHaveBeenCalledWith("wasapi:{0.0.1.00000000}.{51f2}");
@@ -280,13 +282,11 @@ describe("ConnectScreen", () => {
     expect(actions.setInputChannel).toHaveBeenCalledWith(2);
     fireEvent.change(must("connect.output_device"), { target: { value: "" } });
     expect(actions.setOutputDevice).toHaveBeenCalledWith("");
-    fireEvent.change(must("connect.sweep_length"), { target: { value: "524288" } });
-    expect(actions.setSweepLength).toHaveBeenCalledWith(524288);
+    expect(ui("connect.sweep_length")).toBeNull();
     expect(ui("connect.loopback_channel")).toBeNull();
     fireEvent.click(must("connect.devices.details"));
     fireEvent.click(must("connect.share_mode.exclusive"));
     expect(actions.setShareMode).toHaveBeenCalledWith("exclusive");
-    expect(must("connect.sweep_length").textContent).toContain(translate("ko", "connect.sweep.option", { name: "256k", seconds: "5.5" }));
     expect(must("connect.sample_rate").textContent).toContain("48,000 Hz");
   });
 

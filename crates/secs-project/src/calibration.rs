@@ -4,7 +4,28 @@ use secs_types::calibration::{
     BundleLayoutEntry, CalibrationSettings, Mode, SampleRatePolicy, SubEntry,
 };
 
+use crate::pyjson::Shape;
 use crate::{Project, PyJson};
+
+static SUB_ENTRY_SHAPE: Shape = Shape::Record {
+    optional: &[],
+    nested: &[],
+};
+static BUNDLE_LAYOUT_SHAPE: Shape = Shape::Record {
+    optional: &[],
+    nested: &[],
+};
+/// The `calibration` object [`store_calibration`] writes (F16). Its `xo` and
+/// `xo_rec` maps are replaced; `subs_manual` and `bundle_layouts` keep only
+/// the entries the settings still have.
+pub(crate) static CALIBRATION_SHAPE: Shape = Shape::Record {
+    // Written only for the resample policy, so a stored one must not return.
+    optional: &["sample_rate_policy"],
+    nested: &[
+        ("subs_manual", Shape::Map(&SUB_ENTRY_SHAPE)),
+        ("bundle_layouts", Shape::Map(&BUNDLE_LAYOUT_SHAPE)),
+    ],
+};
 
 pub fn calibration_from_project(project: &Project) -> CalibrationSettings {
     let Some(raw) = project
@@ -37,14 +58,14 @@ pub fn calibration_from_project(project: &Project) -> CalibrationSettings {
     out.rc_hi = num(get("rc_hi"), 100.0, 20_000.0);
     out.room_volume_m3 = num(get("room_volume_m3"), 5.0, 100_000.0);
     out.room_dims_m = room_dims(get("room_dims_m"));
-    out.mimo_on = get("mimo_on").is_some_and(truthy);
+    out.mimo_on = get("mimo_on").is_some_and(PyJson::is_truthy);
     out.fsiso = num(get("fsiso"), 50.0, 150.0).unwrap_or(150.0);
     out.mimo_low = num(get("mimo_low"), 15.0, 150.0);
     out.mimo_max_supports =
         num(get("mimo_max_supports"), 0.0, 12.0).map_or(0, |value| value.round_ties_even() as i64);
     // Upstream 1.3.0: a stored calibration without the key predates FIR
     // supports (1.2.0) and stays IIR; an empty one keeps the FIR default.
-    out.mimo_fir = get("mimo_fir").map_or(raw.is_empty(), truthy);
+    out.mimo_fir = get("mimo_fir").map_or(raw.is_empty(), PyJson::is_truthy);
     out.xo = xo_map(get("xo"));
     out.xo_rec = xo_map(get("xo_rec"));
     out.ultra_ms = num(get("ultra_ms"), 30.0, 200.0).unwrap_or(200.0);
@@ -57,7 +78,7 @@ pub fn calibration_from_project(project: &Project) -> CalibrationSettings {
             .collect();
     }
     out.sub_main_delay_ms = num(get("sub_main_delay_ms"), 0.0, 100.0).unwrap_or(0.0);
-    out.xo_peq_on = get("xo_peq_on").is_none_or(truthy);
+    out.xo_peq_on = get("xo_peq_on").is_none_or(PyJson::is_truthy);
     out.boost_max_db = num(get("boost_max_db"), 0.0, 10.0).unwrap_or(10.0);
     out.xo_peq_lo = num(get("xo_peq_lo"), 0.0, 1000.0).unwrap_or(0.0);
     out.xo_peq_hi = num(get("xo_peq_hi"), 0.0, 1000.0).unwrap_or(0.0);
@@ -89,7 +110,10 @@ pub fn store_calibration(project: &mut Project, settings: &CalibrationSettings) 
 
 fn calibration_json(settings: &CalibrationSettings) -> PyJson {
     let mut values = vec![
-        ("mode".into(), PyJson::Str(mode_name(settings.mode).into())),
+        (
+            "mode".into(),
+            PyJson::Str(secs_types::calibration::mode_tag(settings.mode).into()),
+        ),
         ("rc_lo".into(), PyJson::Float(settings.rc_lo)),
         ("rc_hi".into(), optional_float(settings.rc_hi)),
         (
@@ -274,7 +298,7 @@ fn sub_entry(value: &[(String, PyJson)]) -> SubEntry {
             1
         },
         allpass,
-        mimo_support: get("mimo_support").is_none_or(truthy),
+        mimo_support: get("mimo_support").is_none_or(PyJson::is_truthy),
         hp_hz: corner("hp_hz"),
         lp_hz: corner("lp_hz"),
         peq,
@@ -316,18 +340,6 @@ fn as_float(value: &PyJson) -> Option<f64> {
         PyJson::Float(value) => Some(*value),
         PyJson::Bool(value) => Some(if *value { 1.0 } else { 0.0 }),
         _ => None,
-    }
-}
-
-fn truthy(value: &PyJson) -> bool {
-    match value {
-        PyJson::Null => false,
-        PyJson::Bool(value) => *value,
-        PyJson::Int(value) => value != "0",
-        PyJson::Float(value) => *value != 0.0,
-        PyJson::Str(value) => !value.is_empty(),
-        PyJson::Array(value) => !value.is_empty(),
-        PyJson::Object(value) => !value.is_empty(),
     }
 }
 
@@ -380,13 +392,4 @@ fn f64_map(values: &[(String, f64)]) -> PyJson {
             .map(|(key, value)| (key.clone(), PyJson::Float(*value)))
             .collect(),
     )
-}
-
-fn mode_name(mode: Mode) -> &'static str {
-    match mode {
-        Mode::Zero => "zero",
-        Mode::Mixed => "mixed",
-        Mode::Linear => "linear",
-        Mode::Ultra => "ultra",
-    }
 }

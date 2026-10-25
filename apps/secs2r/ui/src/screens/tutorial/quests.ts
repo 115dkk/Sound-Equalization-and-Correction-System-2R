@@ -43,9 +43,6 @@ export function tutorialQuests(host: TutorialHost): Entry[] {
       { when: (v) => v.system.config.speakers.some((s) => s.role === "SW3" && s.bands[0]?.out === 16), why: key("system.output", "why"), whyTerms: ["sweep"], keep: ["system.patch.SW3.out"] }),
     look("system.layout_next", 314, ["system.layout"]),
     look("system.layout", 326, ["system.arrangement.map"]),
-    // The timing reference shows only on the REW path (U15), so the quest
-    // points at the start delay every path has.
-    look("system.timing", 327, ["system.start_delay"]),
     look("system.single", 329, ["system.arrangement.1"], { why: key("system.single", "why"), whyTerms: ["mimo"] }),
     act("system.next", 332, ["system.next"], (v) => v.step !== "system", () => host.system.next(), (v) => v.system.config.speakers.length === 0 || v.system.notices.length > 0, { gate: true }),
     look("connect.sidebar", 288, ["frame.status", "frame.help", "frame.project"], { apart: true }),
@@ -59,6 +56,12 @@ export function tutorialQuests(host: TutorialHost): Entry[] {
     act("connect.levels", 317, ["connect.level.play_all", "connect.level.skip"], (v) => v.system.config.speakers.length > 0 && v.system.config.speakers.every((s) => s.role in v.connect.levels), () => host.connect.skipLevels(), (v) => v.connect.path !== "mock" || !v.connect.settings,
       { why: key("connect.levels", "why"), whyTerms: ["dbfs"], busy: { when: (v) => v.connect.level.playingAll || v.connect.level.playing !== null, text: key("connect.levels", "busy") }, keep: ["connect.level", "connect.mic"] }),
     act("connect.next", 324, ["frame.rail.measure"], (v) => v.step !== "connect", () => host.connect.next(), (v) => !v.connect.settings || v.connect.path === null || v.connect.level.playingAll, { gate: true }),
+    // Upstream's measurement options card (327, step 4): the timing reference
+    // shows only on the REW path (U15), so the quest names the start delay
+    // every path has. The start delay is set on 측정·가져오기 only (P58), so
+    // the quest points at that screen's options card and opens the step,
+    // before 334 as upstream has it.
+    look("measure.delay", 327, ["measure.options"]),
     look("measure.positions", 334, ["measure.positions"]),
     act("measure.sample", 335, ["measure.sample.load"], (v) => v.measure.project.positions.length > 0, () => { void host.measure.loadSample(); }, (v) => !v.measure.project.tutorial || !!v.measure.job && v.measure.job.kind !== "level_monitor",
       { why: key("measure.sample", "why"), busy: { when: (v) => v.measure.job?.kind === "sample_load", text: key("measure.sample", "busy") }, keep: ["measure.status", "jobs.tray"] }),
@@ -82,7 +85,7 @@ export function tutorialQuests(host: TutorialHost): Entry[] {
     look("calibrate.ba_metrics", 400, ["calibrate.ba.metrics", "calibrate.ba.table"], { ...ba, terms: ["gain", "delay", "polarity", "allpass", "dsp"], why: key("calibrate.ba_metrics", "why") }),
     look("calibrate.ba_settings", 408, ["calibrate.ba.subs", "calibrate.ba.edit", "calibrate.ba.editor"], { ...ba, why: key("calibrate.ba_settings", "why"), whyTerms: ["dba"] }),
     act("calibrate.infra", 415, ["calibrate.ba.infra"], (v) => !!infraState(v.calibrate.settings, subs(v)).role,
-      (v) => host.calibrate.changeSetting({ kind: "infra", role: subs(v).at(-1)!, hz: 25, type: "LR24", subs: subs(v) }),
+      (v) => { void host.calibrate.changeSetting({ kind: "infra", role: subs(v).at(-1)!, hz: 25, type: "LR24", subs: subs(v) }); },
       (v) => !twoSubs(v) || computing(v), { ...ba, why: key("calibrate.infra", "why"), whyTerms: ["lp_hp"], keep: ["calibrate.ba.infra_group"] }),
     look("calibrate.ba_filters", 424, ["calibrate.ba.fixed"], { ...ba, terms: ["lp_hp", "peq"] }),
     act("calibrate.subs", 430, ["calibrate.ba.compute_subs"], (v, before) => !!v.calibrate.lines.ba?.subs_only && v.calibrate.lines.ba !== before,

@@ -48,6 +48,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "wav_read"
+path = "fuzz_targets/wav_read.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "liveproject_parse"
 path = "fuzz_targets/liveproject_parse.rs"
 test = false

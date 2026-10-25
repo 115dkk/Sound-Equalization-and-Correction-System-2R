@@ -18,13 +18,13 @@ impl Service {
         let deps = self.deps.clone();
         let jobs = self.jobs.clone();
         let state = self.status_watch.job.clone();
-        let rew_license = self.rew_license.clone();
+        let rew = self.rew.clone();
         let started = self.jobs.start(JobKind::StatusWatch, events, move |job| {
             *lock(&state) = Some(job.id());
             let mut previous = None;
             while !job.cancel().is_cancelled() {
                 if !jobs.running_in_device_group() {
-                    let status = super::measurement::measure_methods_for(&deps, &rew_license);
+                    let status = super::measurement::measure_methods_for(&deps, &rew);
                     if previous.as_ref() != Some(&status) {
                         job.send(JobEvent::MeasureStatus {
                             job: job.id(),

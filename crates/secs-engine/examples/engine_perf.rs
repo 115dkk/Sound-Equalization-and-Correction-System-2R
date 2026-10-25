@@ -7,8 +7,9 @@
 mod ba;
 #[path = "../src/calibration.rs"]
 mod calibration;
-#[path = "../src/tests/cases.rs"]
-mod cases;
+#[path = "../src/test_support.rs"]
+mod test_support;
+use test_support as cases;
 #[path = "../src/chain.rs"]
 mod chain;
 #[path = "../src/decay.rs"]
@@ -29,6 +30,8 @@ mod input;
 mod levels;
 #[path = "../src/measurement.rs"]
 mod measurement;
+#[path = "../src/memory.rs"]
+mod memory;
 // The example re-includes the engine sources; it uses only part of the MIMO surface.
 #[allow(unused_imports)]
 #[path = "../src/mimo/mod.rs"]
@@ -41,6 +44,10 @@ mod notes;
 mod preview;
 #[path = "../src/rc.rs"]
 mod rc;
+#[path = "../src/replay.rs"]
+mod replay;
+#[path = "../src/replay_mimo.rs"]
+mod replay_mimo;
 #[path = "../src/scorecard.rs"]
 mod scorecard;
 #[path = "../src/setup.rs"]
@@ -60,11 +67,15 @@ pub use design::{
 };
 pub use error::EngineError;
 pub use export_view::{ExportView, export_view};
+pub use fit::FitRequest;
 pub use input::{EngineConfig, Measurement, MeasurementSet, Samples, Tuning};
 pub use measurement::{Spectra, long_spectra};
-pub use mimo::{IirSupport, MimoDesign, MimoIir, MimoRequest, design_mimo, design_mimo_iir};
+pub use mimo::{
+    IirSupport, MimoDesign, MimoIir, MimoKey, MimoRequest, design_mimo, design_mimo_iir,
+};
 pub use normalize::normalize_measurements;
 pub use notes::{MimoNote, Note};
+pub use replay::{DesignReplay, ExportAxis};
 pub use setup::SubFilter;
 pub type C = secs_dsp::Complex64;
 
@@ -106,92 +117,22 @@ fn measure<T>(op: &str, case: &str, threads: usize, mut call: impl FnMut() -> T)
     );
 }
 
-// Full IR storage would be 14.3 MiB. Recreate the modal room from the recorded
-// upstream excitation (including its NumPy random noise), before any timer.
 fn big_case() -> cases::Case {
-    use secs_oracle::{Fixture, number};
-    use std::f64::consts::PI;
-    let fx = Fixture::load("perf_mimo", "big");
-    let mut case = cases::load_fixture(&fx);
-    let r = &fx.inputs()["recipe"];
-    let xyz = |v: &serde_json::Value| [number(&v[0]), number(&v[1]), number(&v[2])];
-    let dims = xyz(&r["dims"]);
-    let q = number(&r["q"]);
-    let scale = number(&r["scale"]);
-    let excitations: Vec<_> = cases::pairs(&r["excitations"])
-        .map(|(_, v)| {
-            let data = fx.blob(v);
-            let (chunks, rest) = data.as_chunks::<8>();
-            assert!(rest.is_empty());
-            let samples: Vec<_> = chunks.iter().map(|b| f64::from_le_bytes(*b)).collect();
-            secs_dsp::fft::rfft(&samples)
-        })
-        .collect();
-    for (pos, receiver) in r["receivers"].as_array().unwrap().iter().enumerate() {
-        let receiver = xyz(receiver);
-        let mut measurements = Vec::new();
-        for (i, role) in r["roles"].as_array().unwrap().iter().enumerate() {
-            let source = xyz(&r["sources"][i]);
-            let distance = source
-                .iter()
-                .zip(receiver)
-                .map(|(s, r)| (s - r).powi(2))
-                .sum::<f64>()
-                .sqrt();
-            let mut transfer = vec![C::new(0.0, 0.0); 24001];
-            for mode in r["modes"].as_array().unwrap() {
-                let ns = xyz(mode);
-                let mut shape = 1.0;
-                for k in 0..3 {
-                    shape *= (ns[k] * PI * source[k] / dims[k]).cos()
-                        * (ns[k] * PI * receiver[k] / dims[k]).cos();
-                }
-                let weight = ns
-                    .iter()
-                    .map(|&n| if n == 0.0 { 1.0 } else { 2.0 })
-                    .product::<f64>();
-                let mw = 2.0 * PI * number(&mode[3]);
-                for (k, h) in transfer.iter_mut().enumerate() {
-                    let w = 2.0 * PI * k as f64;
-                    *h += secs_dsp::complex_div(
-                        C::new(weight * shape, 0.0),
-                        C::new(mw * mw - w * w, w * mw / q),
-                    );
-                }
-            }
-            for (k, h) in transfer.iter_mut().enumerate() {
-                let direct = C::from_polar(1.0, -2.0 * PI * k as f64 * distance / 343.0) / distance;
-                *h = excitations[i][k] * (*h * scale + direct);
-            }
-            let samples: Vec<_> = secs_dsp::fft::irfft(&transfer, 48000)
-                .into_iter()
-                .map(|v| v as f32)
-                .collect();
-            if let Ok(folder) = std::env::var("SECS_PERF_IR_DUMP") {
-                std::fs::create_dir_all(&folder).unwrap();
-                let data: Vec<_> = samples.iter().flat_map(|v| v.to_le_bytes()).collect();
+    let case = cases::load("big");
+    if let Ok(folder) = std::env::var("SECS_PERF_IR_DUMP") {
+        std::fs::create_dir_all(&folder).unwrap();
+        for (position, roles) in &case.measurements.positions {
+            for (role, measurement) in roles {
+                let data: Vec<_> = (0..measurement.samples.len())
+                    .flat_map(|i| (measurement.samples.at(i) as f32).to_le_bytes())
+                    .collect();
                 std::fs::write(
-                    std::path::Path::new(&folder).join(format!(
-                        "{}_{}.f32",
-                        pos + 1,
-                        role.as_str().unwrap()
-                    )),
+                    std::path::Path::new(&folder).join(format!("{position}_{role}.f32")),
                     data,
                 )
                 .unwrap();
             }
-            measurements.push((
-                role.as_str().unwrap().to_owned(),
-                Measurement {
-                    samples: Samples::F32(samples.into()),
-                    sample_rate: 48000,
-                    t0: pos as f64 * 0.00013 + i as f64 * 0.00107 - 0.0002,
-                },
-            ));
         }
-        case.measurements
-            .positions
-            .push((pos as u32 + 1, measurements));
     }
     case
 }

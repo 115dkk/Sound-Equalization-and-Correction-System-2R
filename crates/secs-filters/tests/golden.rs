@@ -6,7 +6,8 @@ mod support;
 use secs_filters::{
     FilterPlan, FilterRun, FiltersError, MimoFeed, Op, SubFeed, eqapo_config, eqapo_filters,
     eqapo_guide, export_eqapo, export_filter_text, filter_text, headroom_db, make_plan_with_lfe,
-    plan_responses, windows_channels, write_eqapo, write_text,
+    plan_responses, windows_channels, write_eqapo, write_eqapo_observed, write_text,
+    write_text_observed,
 };
 use secs_oracle::{Fixture, assert_close, goldens, rtol};
 use secs_types::chain::{
@@ -966,10 +967,9 @@ fn eqapo_public_exports_use_single_assignments_f11() {
             chain: &chain,
             mimo: None,
             mode: if fir { "mixed" } else { "zero" },
-            ultra_ms: 200.0,
+            note: &export_note(if fir { "mixed" } else { "zero" }, 0.0, 100.0, None),
             label: "Interop synthetic",
             latency_ms: 0.0,
-            rc_hi_hz: 100.0,
             rc_pieces: &[],
             stamp: "2026-10-21 00:00",
         };
@@ -1095,7 +1095,7 @@ fn serializers_match_oracle_text_exactly() {
                 } => secs_dsp::fir::lowrate_to_48k(taps_low, *fs_low),
                 _ => unreachable!(),
             };
-            secs_camilla::wav_bytes(&taps, 48_000)
+            secs_camilla::wav_bytes(&taps, 48_000).unwrap()
         };
         assert_apo_transfer(
             case,
@@ -1277,11 +1277,15 @@ fn public_wrappers_match_oracle_and_eqapo_carries_mimo_f12() {
     let run = FilterRun {
         chain: &rc_chain,
         mimo: None,
-        mode: run_value["mode"].as_str().unwrap(),
-        ultra_ms: number(&run_value["ultra_ms"]),
+        mode: &export_mode(run_value),
+        note: &export_note(
+            &export_mode(run_value),
+            number(&run_value["latency_ms"]),
+            number(&run_value["rc_hi_hz"]),
+            None,
+        ),
         label: &label,
         latency_ms: number(&run_value["latency_ms"]),
-        rc_hi_hz: number(&run_value["rc_hi_hz"]),
         rc_pieces: &rc_pieces,
         stamp: &stamp,
     };
@@ -1298,11 +1302,15 @@ fn public_wrappers_match_oracle_and_eqapo_carries_mimo_f12() {
     let run = FilterRun {
         chain: &ba_chain,
         mimo: None,
-        mode: value["mode"].as_str().unwrap(),
-        ultra_ms: number(&value["ultra_ms"]),
+        mode: &export_mode(value),
+        note: &export_note(
+            &export_mode(value),
+            number(&value["latency_ms"]),
+            number(&value["rc_hi_hz"]),
+            None,
+        ),
         label: &label,
         latency_ms: number(&value["latency_ms"]),
-        rc_hi_hz: number(&value["rc_hi_hz"]),
         rc_pieces: &rc_pieces,
         stamp: &stamp,
     };
@@ -1321,11 +1329,15 @@ fn public_wrappers_match_oracle_and_eqapo_carries_mimo_f12() {
     let run = FilterRun {
         chain: &chain,
         mimo: Some(&mimo),
-        mode: value["mode"].as_str().unwrap(),
-        ultra_ms: number(&value["ultra_ms"]),
+        mode: &export_mode(value),
+        note: &export_note(
+            &export_mode(value),
+            number(&value["latency_ms"]),
+            number(&value["rc_hi_hz"]),
+            Some(&mimo),
+        ),
         label: &label,
         latency_ms: number(&value["latency_ms"]),
-        rc_hi_hz: number(&value["rc_hi_hz"]),
         rc_pieces: &rc_pieces,
         stamp: &stamp,
     };
@@ -1384,11 +1396,15 @@ fn computed_public_wrappers_match_oracle_files() {
         let run = FilterRun {
             chain: &chain,
             mimo: None,
-            mode: value["mode"].as_str().unwrap(),
-            ultra_ms: number(&value["ultra_ms"]),
+            mode: &export_mode(value),
+            note: &export_note(
+                &export_mode(value),
+                number(&value["latency_ms"]),
+                number(&value["rc_hi_hz"]),
+                None,
+            ),
             label: &label,
             latency_ms: number(&value["latency_ms"]),
-            rc_hi_hz: number(&value["rc_hi_hz"]),
             rc_pieces: &rc_pieces,
             stamp: &stamp,
         };
@@ -1415,11 +1431,15 @@ fn computed_subwoofer_text_scope_matches_oracle() {
     let run = FilterRun {
         chain: &chain,
         mimo: None,
-        mode: value["mode"].as_str().unwrap(),
-        ultra_ms: number(&value["ultra_ms"]),
+        mode: &export_mode(value),
+        note: &export_note(
+            &export_mode(value),
+            number(&value["latency_ms"]),
+            number(&value["rc_hi_hz"]),
+            None,
+        ),
         label: &label,
         latency_ms: number(&value["latency_ms"]),
-        rc_hi_hz: number(&value["rc_hi_hz"]),
         rc_pieces: &rc_pieces,
         stamp: &stamp,
     };
@@ -1452,11 +1472,15 @@ fn invalid_values_write_nothing_and_existing_files_are_replaced_atomically() {
     let bad_run = FilterRun {
         chain: &bad_chain,
         mimo: None,
-        mode: value["mode"].as_str().unwrap(),
-        ultra_ms: number(&value["ultra_ms"]),
+        mode: &export_mode(value),
+        note: &export_note(
+            &export_mode(value),
+            number(&value["latency_ms"]),
+            number(&value["rc_hi_hz"]),
+            None,
+        ),
         label: &label,
         latency_ms: number(&value["latency_ms"]),
-        rc_hi_hz: number(&value["rc_hi_hz"]),
         rc_pieces: &rc_pieces,
         stamp: &stamp,
     };
@@ -1503,6 +1527,47 @@ fn invalid_values_write_nothing_and_existing_files_are_replaced_atomically() {
     .unwrap();
     assert_eq!(first, second);
     assert_ne!(fs::read(&second[0]).unwrap(), b"old");
+    let previous = fs::read(&second[0]).unwrap();
+    let error = write_eqapo_observed(
+        &plan,
+        &replace,
+        "secs_mixed",
+        "혼합 위상 모드",
+        "changed note",
+        Some(12.25),
+        &|index, _| {
+            if index == 1 {
+                Err(std::io::Error::other("injected second-file failure"))
+            } else {
+                Ok(())
+            }
+        },
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("injected second-file failure"));
+    assert_eq!(fs::read(&second[0]).unwrap(), previous);
+
+    let text = root.0.join("text_replace");
+    let text_paths = write_text(&plan, &text, "filters.txt", "secs", "first", &[]).unwrap();
+    let previous = fs::read(&text_paths[0]).unwrap();
+    let error = write_text_observed(
+        &plan,
+        &text,
+        "filters.txt",
+        "secs",
+        "changed",
+        &[],
+        &|index, _| {
+            if index == 1 {
+                Err(std::io::Error::other("injected second-file failure"))
+            } else {
+                Ok(())
+            }
+        },
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("injected second-file failure"));
+    assert_eq!(fs::read(&text_paths[0]).unwrap(), previous);
     for directory in [&replace, &replace.join("secs_mixed")] {
         assert!(fs::read_dir(directory).unwrap().all(|entry| {
             !entry
@@ -1535,6 +1600,124 @@ impl FixedMarker for Op {
 }
 
 #[allow(dead_code)]
+#[test]
+fn fir_taps_that_overflow_f32_write_nothing_td45() {
+    // 1e100 is a finite f64 but becomes infinity in the f32 WAV.
+    let root = TempDir::new("f32_overflow");
+    let mut bad = f11_synthetic_chain(true, true, false);
+    bad.mains[0].fir[1] = 1e100;
+    let plan = make_plan_with_lfe(&bad, None, None, 120.0).unwrap();
+    let folder = root.0.join("eqapo");
+    let error = write_eqapo(&plan, &folder, "secs_mixed", "mode", "note", None).unwrap_err();
+    assert!(matches!(error, FiltersError::Invalid(_)), "{error}");
+    assert!(!folder.exists());
+    let folder = root.0.join("text");
+    let error = write_text(&plan, &folder, "filters.txt", "secs", "title", &[]).unwrap_err();
+    assert!(matches!(error, FiltersError::Invalid(_)), "{error}");
+    assert!(!folder.exists());
+
+    // A low-rate FIR is checked after its expansion to 48 kHz.
+    let chain = f11_synthetic_chain(true, false, true);
+    let mimo = MimoPaths {
+        fsiso: 120.0,
+        paths: vec![MimoPath {
+            input: "L".into(),
+            support: "SW1".into(),
+            filter: MimoFilter::FirLowRate {
+                taps_low: vec![1e100, 0.5, 0.25, 0.125],
+                fs_low: 1000.0,
+            },
+            low_hz: 30.0,
+            delay_ms: 0.0,
+        }],
+    };
+    let plan = make_plan_with_lfe(&chain, Some(&mimo), None, 120.0).unwrap();
+    let folder = root.0.join("eqapo_lowrate");
+    let error = write_eqapo(&plan, &folder, "secs_mixed", "mode", "note", None).unwrap_err();
+    assert!(matches!(error, FiltersError::Invalid(_)), "{error}");
+    assert!(!folder.exists());
+}
+
+#[test]
+fn negative_delays_write_nothing_td94() {
+    let root = TempDir::new("negative_delay");
+    // A chain with a negative channel delay is refused when the plan is made.
+    let mut bad = f11_synthetic_chain(true, false, true);
+    bad.mains[0].delay_ms = -1.0;
+    let error = make_plan_with_lfe(&bad, None, None, 120.0).unwrap_err();
+    assert!(error.to_string().contains("\"L\""), "{error}");
+    let mut bad = f11_synthetic_chain(true, false, true);
+    bad.subs[0].delay_ms = -1.0;
+    let error = make_plan_with_lfe(&bad, None, None, 120.0).unwrap_err();
+    assert!(error.to_string().contains("\"SW1\""), "{error}");
+
+    // A plan holding `Delay { ms: -1.0 }` is refused by both plan writers.
+    let chain = f11_synthetic_chain(true, false, true);
+    let mut plan = make_plan_with_lfe(&chain, None, None, 120.0).unwrap();
+    for op in &mut plan.main_ops[0].1 {
+        if let Op::Delay { ms, .. } = op {
+            *ms = -1.0;
+        }
+    }
+    let folder = root.0.join("eqapo");
+    let error = write_eqapo(&plan, &folder, "secs_mixed", "mode", "note", None).unwrap_err();
+    assert!(matches!(error, FiltersError::Invalid(_)), "{error}");
+    assert!(error.to_string().contains("\"L\""), "{error}");
+    assert!(!folder.exists());
+    let folder = root.0.join("text");
+    let error = write_text(&plan, &folder, "filters.txt", "secs", "title", &[]).unwrap_err();
+    assert!(matches!(error, FiltersError::Invalid(_)), "{error}");
+    assert!(!folder.exists());
+}
+
+#[test]
+fn fir_responses_require_the_rfft_grid_td94() {
+    let uniform = (0..=8)
+        .map(|k| f64::from(k) * 48_000.0 / 16.0)
+        .collect::<Vec<_>>();
+    let mut skewed = uniform.clone();
+    skewed[3] += 1.0;
+    let fir =
+        make_plan_with_lfe(&f11_synthetic_chain(true, true, false), None, None, 120.0).unwrap();
+    assert!(plan_responses(&fir, &uniform, "L", false).is_ok());
+    assert!(matches!(
+        plan_responses(&fir, &skewed, "L", false),
+        Err(FiltersError::Invalid(_))
+    ));
+    // Without a FIR every response is evaluated on `f` itself.
+    let iir =
+        make_plan_with_lfe(&f11_synthetic_chain(true, false, false), None, None, 120.0).unwrap();
+    assert!(plan_responses(&iir, &skewed, "L", false).is_ok());
+}
+
 fn _public_shapes(_: &SubFeed, _: &MimoFeed) {
     let _ = goldens();
+}
+
+/// The text and Equalizer APO formats keep letters and digits only in role
+/// names, although the export graph (and CamillaDSP) also takes `_` and `-`.
+#[test]
+fn filter_plans_refuse_roles_beyond_letters_and_digits() {
+    let fixture = Fixture::load("filters", "rc_mixed");
+    for (index, role) in [(0, "L_top"), (1, "R-2")] {
+        let mut chain = chain(&fixture);
+        chain.mains[index].role = role.into();
+        let error = make_plan_with_lfe(&chain, None, Some(10.0), 120.0).unwrap_err();
+        assert!(
+            matches!(&error, FiltersError::Invalid(message) if message.contains("unsafe main role")),
+            "{role}: {error}"
+        );
+    }
+}
+
+fn export_mode(value: &Value) -> String {
+    secs_camilla::note::mode_name(
+        serde_json::from_value(value["mode"].clone()).unwrap(),
+        number(&value["ultra_ms"]),
+    )
+}
+
+fn export_note(mode: &str, latency: f64, rc_hi: f64, mimo: Option<&MimoPaths>) -> String {
+    let mimo = mimo.and_then(|paths| secs_camilla::note::MimoNote::for_paths(paths, 0));
+    secs_camilla::note::eqapo_note(mode, latency, rc_hi, mimo.as_ref())
 }

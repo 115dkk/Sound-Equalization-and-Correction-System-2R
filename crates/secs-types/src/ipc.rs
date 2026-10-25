@@ -619,7 +619,10 @@ pub struct ProjectNewParams {
     pub sub_count: u8,
     /// Whether to create the fixed 7.1.4 sample-room project.
     pub sample: bool,
-    /// Whether this is a non-writable tutorial session using the sample room.
+    /// Whether this is a tutorial session using the sample room. The session
+    /// cannot be saved or exported; its measurements and results live in a
+    /// temporary folder that is removed when the session ends, and `path` is
+    /// only reported back.
     #[serde(default)]
     pub tutorial: bool,
 }
@@ -627,7 +630,9 @@ pub struct ProjectNewParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
 #[ts(export)]
 pub struct SampleLoadParams {
-    /// Synthetic position count; absent loads the one-position embedded room.
+    /// Synthetic position count, 2 to 17 (the largest layout); absent loads
+    /// the one-position embedded room. Other counts are refused with
+    /// `measurement_input` (`field = positions`).
     pub positions: Option<u32>,
 }
 /// A project file path.
@@ -868,6 +873,26 @@ pub struct ResultsSummary {
     pub calibration: Option<CalibrationSummary>,
     /// Latest MIMO result, including stale state.
     pub mimo: Option<MimoSummary>,
+    /// Whether the MIMO result goes into an export, and if not, why.
+    pub mimo_export: MimoExportDecision,
+}
+/// Whether the MIMO result goes into an export, and if not, why.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum MimoExportDecision {
+    /// The current MIMO support paths go into the export.
+    Included,
+    /// MIMO is switched off in the current settings.
+    Off,
+    /// No MIMO result has been computed or restored.
+    None,
+    /// The MIMO result does not match the current inputs or compute environment.
+    Stale,
+    /// MIMO needs at least three measured positions.
+    TooFewPositions,
+    /// The current MIMO result contains no support paths.
+    NoSupports,
 }
 /// A presentation-neutral note or warning code with template parameters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -883,6 +908,10 @@ pub struct Notice {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct CalibrationSummary {
+    /// Whether this result was restored from the project cache instead of computed in this
+    /// session; staged and before/after mdat need a live design.
+    #[serde(default)]
+    pub cached: bool,
     /// Whether current project inputs differ from this result.
     pub stale: bool,
     /// Which input first differs: measurements, settings or target.
@@ -1018,7 +1047,8 @@ pub enum ExportKind {
     /// `calibration.export_filter_text`). Results with RC only.
     FilterText,
     /// A complete Equalizer APO configuration: `config.txt`, the filter file
-    /// and FIR WAV files (upstream `calibration.export_eqapo`). RC and BA.
+    /// and FIR WAV files (upstream `calibration.export_eqapo`). RC, BA and
+    /// MIMO support paths, which upstream refuses (docs/DEVIATIONS.md F12).
     EqualizerApo,
 }
 
@@ -1032,6 +1062,9 @@ pub enum ExportBlock {
     Subs,
     /// The result includes MIMO; filter text does not carry it.
     Mimo,
+    /// The result was restored from the cache and is stale; mdat needs the measurements' spectra,
+    /// so it must be recalibrated first.
+    StaleCache,
 }
 
 impl ExportBlock {
@@ -1040,6 +1073,7 @@ impl ExportBlock {
         match self {
             Self::Subs => "subs",
             Self::Mimo => "mimo",
+            Self::StaleCache => "stale_cache",
         }
     }
 }
@@ -1060,6 +1094,22 @@ pub fn filter_export_block(
         ExportKind::FilterText if has_subs => Some(ExportBlock::Subs),
         ExportKind::FilterText if has_mimo => Some(ExportBlock::Mimo),
         _ => None,
+    }
+}
+
+/// Whether an export format can carry the current result. Stale cached
+/// calibration blocks mdat; filter formats retain [`filter_export_block`].
+pub fn export_block(
+    kind: ExportKind,
+    has_subs: bool,
+    has_mimo: bool,
+    stale_cache: bool,
+) -> Option<ExportBlock> {
+    match kind {
+        ExportKind::StagedMdat | ExportKind::BeforeAfterMdat if stale_cache => {
+            Some(ExportBlock::StaleCache)
+        }
+        _ => filter_export_block(kind, has_subs, has_mimo),
     }
 }
 /// The export bundle and destination folder.
@@ -1702,7 +1752,8 @@ pub struct LayoutArrangement {
 pub struct LayoutResult {
     /// Chosen arrangement (`extra['array']`).
     pub count: usize,
-    /// Start delay before each position: `off`, `5`, `10` or `15` seconds.
+    /// Start delay before each position as stored (`extra['start_delay']`):
+    /// one of [`crate::rules::START_DELAYS`], `끄기` or `5 초` to `15 초`.
     pub start_delay: String,
     /// Timing reference and its reference speaker or output.
     pub timing: LayoutTiming,
@@ -1715,7 +1766,8 @@ pub struct LayoutResult {
 pub struct LayoutSetParams {
     /// New arrangement; changing it clears measurements (U5).
     pub count: Option<usize>,
-    /// New start delay.
+    /// New start delay, one of [`crate::rules::START_DELAYS`]; any other
+    /// value answers `invalid_request` (field `start_delay`).
     pub start_delay: Option<String>,
     /// New timing reference.
     pub timing: Option<LayoutTiming>,
@@ -2262,6 +2314,15 @@ mod tests {
             }
         }
         assert_eq!(filter_export_block(FilterText, false, false), None);
+        assert_eq!(
+            export_block(StagedMdat, false, false, true),
+            Some(ExportBlock::StaleCache)
+        );
+        assert_eq!(
+            export_block(BeforeAfterMdat, true, true, true),
+            Some(ExportBlock::StaleCache)
+        );
+        assert_eq!(export_block(CamillaDsp, true, true, true), None);
         assert_eq!(
             filter_export_block(FilterText, true, false),
             Some(ExportBlock::Subs)

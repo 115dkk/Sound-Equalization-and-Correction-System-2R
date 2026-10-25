@@ -4,33 +4,31 @@
 //!
 //! Upstream source: `export_camilladsp.py`.
 //!
-//! Reads one signal-chain value (not engine internals) and writes
-//! `configs/*.yml` and `coeffs/*.wav` in the CamillaGUI folder layout, with
-//! Python's float formatting and half-to-even delay rounding, ASCII-only
-//! (the CamillaGUI server reads CP949). Every check (ASCII, finite numbers)
-//! runs before the first file is written.
+//! Reads one signal-chain value (not engine internals) through its export
+//! graph and writes `configs/*.yml` and `coeffs/*.wav` in the CamillaGUI
+//! folder layout, with Python's float formatting and half-to-even delay
+//! rounding, ASCII-only (the CamillaGUI server reads CP949). Building the
+//! [`ExportGraph`] validates the chain and its MIMO paths; the writer checks
+//! only its own options. Every check runs before the first file is written.
 
+pub mod note;
 pub mod pyfmt;
 
 use pyfmt::{format_fixed, format_g, format_i3, format_s30, repr_f64, round_ndigits};
-use secs_types::chain::{
-    BandType, MainChannel, MimoFilter, MimoPath, MimoPaths, Peq, SignalChain, SubChannel,
-};
+use secs_graph::{ExportGraph, GraphError, LfeChoice};
+use secs_types::chain::{BandType, MimoFilter, MimoPath, MimoPaths, SignalChain, SubChannel};
 use std::borrow::Cow;
 use std::fmt::Write as _;
-use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Sample rate used by every exported FIR and delay.
-pub const SAMPLE_RATE: u32 = 48_000;
-/// Upstream Dolby LFE playback gain.
-pub const LFE_GAIN_DB: f64 = 10.0;
-/// Upstream Dolby LFE content low-pass frequency.
-pub const LFE_LP_HZ: f64 = 120.0;
+// The export graph owns the rate, the LFE defaults, the delay rounding and
+// the file helpers every writer shares; they stay reachable here under their
+// old names.
+pub use secs_graph::files::{safe_name, wav_bytes, write_bundle_observed};
+pub use secs_graph::{LFE_GAIN_DB, LFE_LP_HZ, SAMPLE_RATE, is_negative_delay, round_ties_even_i64};
+
 const CONFIG_DIR: &str = "configs";
 const COEFF_DIR: &str = "coeffs";
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// A device map as CamillaDSP takes it, keys in insertion order.
 #[derive(Debug, Clone, PartialEq)]
@@ -60,8 +58,6 @@ pub struct Options {
     pub chunksize: u32,
     /// ASCII head-comment note (non-ASCII characters are dropped).
     pub note: String,
-    /// MIMO upper frequency; retained for the M3 path.
-    pub fsiso: f64,
     /// LFE gain, or `None` to omit the LFE input.
     pub lfe_gain_db: Option<f64>,
     /// LFE low-pass frequency.
@@ -79,7 +75,6 @@ impl Default for Options {
             playback: None,
             chunksize: 1024,
             note: String::new(),
-            fsiso: 150.0,
             lfe_gain_db: Some(10.0),
             lfe_lp_hz: 120.0,
             latency_ms: None,
@@ -100,17 +95,12 @@ pub struct Config {
 /// Labels needed by the calibration-level export wrapper.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunLabels {
-    /// Correction mode.
+    /// Mode name ([`note::mode_name`]), also the configuration's file name.
     pub mode: String,
-    /// Ultra-mode latency budget.
-    pub ultra_ms: f64,
+    /// ASCII header note ([`note::camilla_note`]).
+    pub note: String,
     /// Total filter latency.
     pub latency_ms: f64,
-    /// Room-correction upper bound.
-    pub rc_hi_hz: f64,
-    /// Per-input MIMO support cap the run used, 0 for none
-    /// (upstream `MimoRun.max_supports`).
-    pub mimo_max_supports: usize,
 }
 
 /// CamillaDSP export failure.
@@ -128,6 +118,16 @@ pub enum CamillaError {
     /// Filesystem operation failed.
     #[error(transparent)]
     Io(#[from] std::io::Error),
+}
+
+impl From<GraphError> for CamillaError {
+    fn from(error: GraphError) -> Self {
+        match error {
+            GraphError::NonAscii(detail) => Self::NonAscii(detail),
+            GraphError::NonFinite(detail) => Self::NonFinite(detail),
+            GraphError::Invalid(detail) => Self::Invalid(detail),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -308,42 +308,12 @@ fn delay_samples(samples: i64) -> Json {
     )
 }
 
-/// Python/NumPy half-even rounding to an integer.
-pub fn round_ties_even_i64(value: f64) -> i64 {
-    let floor = value.floor();
-    let fraction = value - floor;
-    let rounded = if fraction < 0.5 {
-        floor
-    } else if fraction > 0.5 {
-        floor + 1.0
-    } else if (floor as i64) & 1 == 0 {
-        floor
-    } else {
-        floor + 1.0
-    };
-    rounded as i64
-}
-
-/// Serialize an IEEE-float, mono, 32-bit WAV exactly like upstream `write_wav`.
-pub fn wav_bytes(data: &[f64], rate: u32) -> Vec<u8> {
-    let data_len = u32::try_from(data.len() * 4).expect("FIR WAV fits u32");
-    let mut out = Vec::with_capacity(44 + data.len() * 4);
-    out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&(36 + data_len).to_le_bytes());
-    out.extend_from_slice(b"WAVEfmt ");
-    out.extend_from_slice(&16_u32.to_le_bytes());
-    out.extend_from_slice(&3_u16.to_le_bytes());
-    out.extend_from_slice(&1_u16.to_le_bytes());
-    out.extend_from_slice(&rate.to_le_bytes());
-    out.extend_from_slice(&(rate * 4).to_le_bytes());
-    out.extend_from_slice(&4_u16.to_le_bytes());
-    out.extend_from_slice(&32_u16.to_le_bytes());
-    out.extend_from_slice(b"data");
-    out.extend_from_slice(&data_len.to_le_bytes());
-    for value in data {
-        out.extend_from_slice(&(*value as f32).to_le_bytes());
-    }
-    out
+/// [`wav_bytes`] for one exported FIR, naming its owner in a range error.
+fn fir_wav(owner: &str, taps: &[f64]) -> Result<Vec<u8>, CamillaError> {
+    wav_bytes(taps, SAMPLE_RATE).map_err(|error| match error {
+        GraphError::NonFinite(name) => CamillaError::NonFinite(format!("{owner}.{name}")),
+        other => other.into(),
+    })
 }
 
 fn absolute(path: &Path) -> Result<PathBuf, CamillaError> {
@@ -412,11 +382,16 @@ fn file_devices(out: &Path, n_in: usize, n_out: usize) -> Result<(Device, Device
     ))
 }
 
+/// The coefficient filename prefix (`secs_mixed_`), the writer's own identifier.
 fn check_ascii_identifier(name: &str) -> Result<(), CamillaError> {
     if !name.is_ascii() {
         return Err(CamillaError::NonAscii(name.into()));
     }
-    if name.is_empty() || name.contains(['\n', '\r', ':']) {
+    if name.is_empty()
+        || !name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
         return Err(CamillaError::Invalid(format!("unsafe identifier {name:?}")));
     }
     Ok(())
@@ -430,96 +405,9 @@ fn finite(name: &str, value: f64) -> Result<(), CamillaError> {
     }
 }
 
-fn validate_peq(prefix: &str, bands: &[Peq]) -> Result<(), CamillaError> {
-    for (index, (frequency, q, gain)) in bands.iter().enumerate() {
-        finite(&format!("{prefix}[{index}].frequency"), *frequency)?;
-        finite(&format!("{prefix}[{index}].q"), *q)?;
-        finite(&format!("{prefix}[{index}].gain"), *gain)?;
-    }
-    Ok(())
-}
-
-fn validate_mimo(chain: &SignalChain, mimo: Option<&MimoPaths>) -> Result<(), CamillaError> {
-    let Some(mimo) = mimo else { return Ok(()) };
-    finite("mimo.fsiso", mimo.fsiso)?;
-    for (index, path) in mimo.paths.iter().enumerate() {
-        check_ascii_identifier(&path.input)?;
-        check_ascii_identifier(&path.support)?;
-        if !chain.mains.iter().any(|main| main.role == path.input) {
-            return Err(CamillaError::Invalid(format!(
-                "MIMO path {index} input {} is not a main channel",
-                path.input
-            )));
-        }
-        if !chain.mains.iter().any(|main| main.role == path.support)
-            && !chain.subs.iter().any(|sub| sub.role == path.support)
-        {
-            return Err(CamillaError::Invalid(format!(
-                "MIMO path {index} support {} is not an output",
-                path.support
-            )));
-        }
-        finite(&format!("mimo.paths[{index}].low_hz"), path.low_hz)?;
-        finite(&format!("mimo.paths[{index}].delay_ms"), path.delay_ms)?;
-        match &path.filter {
-            MimoFilter::Iir {
-                gain_db,
-                delay_ms,
-                polarity,
-                peq,
-                allpass,
-            } => {
-                finite(&format!("mimo.paths[{index}].gain_db"), *gain_db)?;
-                finite(&format!("mimo.paths[{index}].filter_delay_ms"), *delay_ms)?;
-                if !matches!(polarity, -1 | 1) {
-                    return Err(CamillaError::Invalid(format!(
-                        "MIMO path {index} polarity {polarity}"
-                    )));
-                }
-                validate_peq(&format!("mimo.paths[{index}].peq"), peq)?;
-                for (band, &(frequency, q)) in allpass.iter().enumerate() {
-                    finite(
-                        &format!("mimo.paths[{index}].allpass[{band}].frequency"),
-                        frequency,
-                    )?;
-                    finite(&format!("mimo.paths[{index}].allpass[{band}].q"), q)?;
-                }
-            }
-            MimoFilter::Fir { taps_48k } => {
-                for (tap, value) in taps_48k.iter().enumerate() {
-                    finite(&format!("mimo.paths[{index}].taps_48k[{tap}]"), *value)?;
-                }
-            }
-            MimoFilter::FirLowRate { taps_low, fs_low } => {
-                finite(&format!("mimo.paths[{index}].fs_low"), *fs_low)?;
-                if *fs_low > f64::from(SAMPLE_RATE)
-                    || secs_dsp::fir::lowrate_len_48k(taps_low.len(), *fs_low).is_none()
-                {
-                    return Err(CamillaError::Invalid(format!(
-                        "invalid or oversized low-rate FIR at path {index}"
-                    )));
-                }
-                for (tap, value) in taps_low.iter().enumerate() {
-                    finite(&format!("mimo.paths[{index}].taps_low[{tap}]"), *value)?;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn validate(
-    chain: &SignalChain,
-    options: &Options,
-    mimo: Option<&MimoPaths>,
-) -> Result<(), CamillaError> {
-    if chain.sample_rate != SAMPLE_RATE {
-        return Err(CamillaError::Invalid(format!(
-            "sample rate {} (expected {SAMPLE_RATE})",
-            chain.sample_rate
-        )));
-    }
-    finite("options.fsiso", options.fsiso)?;
+/// The writer's own options; the chain and its MIMO paths are the export
+/// graph's to check.
+fn validate_options(options: &Options) -> Result<(), CamillaError> {
     finite("options.lfe_lp_hz", options.lfe_lp_hz)?;
     if !options.mode.is_ascii() {
         return Err(CamillaError::NonAscii(options.mode.clone()));
@@ -546,70 +434,7 @@ fn validate(
             }
         }
     }
-    finite("chain.main_extra_ms", chain.main_extra_ms)?;
-    finite("chain.lift_ms", chain.lift_ms)?;
-    finite("chain.latency_ms", chain.latency_ms)?;
-    for MainChannel {
-        role,
-        input_peq,
-        fir,
-        gain_db,
-        delay_ms,
-        xo_hz,
-        top_peq,
-        align_delay_ms,
-    } in &chain.mains
-    {
-        check_ascii_identifier(role)?;
-        validate_peq(&format!("main.{role}.input_peq"), input_peq)?;
-        validate_peq(&format!("main.{role}.top_peq"), top_peq)?;
-        finite(&format!("main.{role}.gain_db"), *gain_db)?;
-        finite(&format!("main.{role}.delay_ms"), *delay_ms)?;
-        finite(&format!("main.{role}.align_delay_ms"), *align_delay_ms)?;
-        if let Some(value) = xo_hz {
-            finite(&format!("main.{role}.xo_hz"), *value)?;
-        }
-        for (index, value) in fir.iter().enumerate() {
-            finite(&format!("main.{role}.fir[{index}]"), *value)?;
-        }
-    }
-    for SubChannel {
-        role,
-        gain_db,
-        delay_ms,
-        polarity,
-        allpass,
-        hp_hz,
-        lp_hz,
-        peq,
-        mode,
-        ..
-    } in &chain.subs
-    {
-        check_ascii_identifier(role)?;
-        finite(&format!("sub.{role}.gain_db"), *gain_db)?;
-        finite(&format!("sub.{role}.delay_ms"), *delay_ms)?;
-        finite(&format!("sub.{role}.hp_hz"), *hp_hz)?;
-        finite(&format!("sub.{role}.lp_hz"), *lp_hz)?;
-        if !matches!(polarity, -1 | 1) {
-            return Err(CamillaError::Invalid(format!(
-                "sub {role} polarity {polarity}"
-            )));
-        }
-        if !mode.is_ascii() {
-            return Err(CamillaError::NonAscii(mode.clone()));
-        }
-        for (index, (frequency, q)) in allpass.iter().enumerate() {
-            finite(
-                &format!("sub.{role}.allpass[{index}].frequency"),
-                *frequency,
-            )?;
-            finite(&format!("sub.{role}.allpass[{index}].q"), *q)?;
-        }
-        validate_peq(&format!("sub.{role}.peq"), peq)?;
-    }
-    validate_peq("sub_bus_peq", &chain.sub_bus_peq)?;
-    validate_mimo(chain, mimo)
+    Ok(())
 }
 
 fn band_name(kind: BandType, highpass: bool) -> (&'static str, i64) {
@@ -774,14 +599,30 @@ pub fn make_config_observed(
     mimo: Option<&MimoPaths>,
     boundary: &dyn Fn(&str),
 ) -> Result<Config, CamillaError> {
-    validate(chain, options, mimo)?;
+    validate_options(options)?;
+    let lfe_choice = options
+        .lfe_gain_db
+        .map_or(LfeChoice::Omit, |gain_db| LfeChoice::Include {
+            gain_db,
+            lp_hz: options.lfe_lp_hz,
+        });
+    let graph = ExportGraph::build(chain, mimo, lfe_choice)?;
+    if !fir_prefix.is_empty() {
+        check_ascii_identifier(fir_prefix)?;
+    }
+    let chain = graph.chain();
+    let mimo = graph.mimo();
     let mains = &chain.mains;
     let subs = &chain.subs;
-    let lfe = !subs.is_empty() && options.lfe_gain_db.is_some();
+    // Main roles, then `LFE` when the chain has subs and the options keep it.
+    let inputs = &graph.plan().inputs;
+    // Main roles, then sub roles.
+    let outputs = &graph.plan().outputs;
     let n_main = mains.len();
     let n_sub = subs.len();
-    let n_in = n_main + usize::from(lfe);
-    let n_out = n_main + n_sub;
+    let n_in = inputs.len();
+    let lfe = n_in > n_main;
+    let n_out = outputs.len();
     let paths = mimo.map_or(&[][..], |value| value.paths.as_slice());
     let n_paths = paths.len();
     let (default_capture, default_playback) = file_devices(out, n_in, n_out)?;
@@ -821,8 +662,14 @@ pub fn make_config_observed(
         }
         if main.fir.len() > 1 {
             let file = coeff_dir.join(format!("{fir_prefix}{}_fir.wav", main.role));
+            if file.parent() != Some(coeff_dir.as_path()) {
+                return Err(CamillaError::Invalid(format!(
+                    "coefficient path escapes export folder: {}",
+                    file.display()
+                )));
+            }
             let filename = posix(&relative(&file, config_dir)?);
-            coeffs.push((file, wav_bytes(&main.fir, SAMPLE_RATE)));
+            coeffs.push((file, fir_wav(&format!("main.{}", main.role), &main.fir)?));
             let name = format!("in_{}_fir", main.role);
             filters.push((
                 name.clone(),
@@ -1040,11 +887,6 @@ pub fn make_config_observed(
         delay_samples: i64,
         members: Vec<usize>,
     }
-    let output_roles = mains
-        .iter()
-        .map(|main| &main.role)
-        .chain(subs.iter().map(|sub| &sub.role))
-        .collect::<Vec<_>>();
     let path_delays: Vec<_> = paths
         .iter()
         .map(|path| {
@@ -1056,33 +898,42 @@ pub fn make_config_observed(
             round_ties_even_i64((path.delay_ms + extra) * f64::from(SAMPLE_RATE) / 1000.0)
         })
         .collect();
+    // The graph groups support paths by output, family and exact low edge.
+    // CamillaDSP writes the high-pass at the low edge rounded to three places,
+    // so graph groups whose rounded cutoff coincides share one channel. The
+    // delay split is this writer's own (F13): each path's total delay is
+    // rounded to whole samples once, the group carries the smallest and each
+    // path the rest, so no path's delay is rounded twice. Equalizer APO keeps
+    // the identical rendered milliseconds instead.
     let mut groups: Vec<SupportGroup> = Vec::new();
-    let mut path_groups = Vec::with_capacity(n_paths);
-    for (index, path) in paths.iter().enumerate() {
-        let output = output_roles
-            .iter()
-            .position(|role| **role == path.support)
-            .expect("validated support");
-        let low_hz = round_ndigits(path.low_hz, 3);
-        let fir = path.filter.is_fir();
-        let group = if let Some(group) = groups
-            .iter()
-            .position(|group| group.output == output && group.low_hz == low_hz && group.fir == fir)
-        {
-            groups[group].delay_samples = groups[group].delay_samples.min(path_delays[index]);
-            groups[group].members.push(index);
-            group
+    for shared in graph.support_groups() {
+        let low_hz = round_ndigits(shared.low_hz, 3);
+        if let Some(group) = groups.iter_mut().find(|group| {
+            group.output == shared.output && group.low_hz == low_hz && group.fir == shared.fir
+        }) {
+            group.members.extend_from_slice(&shared.members);
         } else {
             groups.push(SupportGroup {
-                output,
+                output: shared.output,
                 low_hz,
-                fir,
-                delay_samples: path_delays[index],
-                members: vec![index],
+                fir: shared.fir,
+                delay_samples: 0,
+                members: shared.members.clone(),
             });
-            groups.len() - 1
-        };
-        path_groups.push(group);
+        }
+    }
+    let mut path_groups = vec![0; n_paths];
+    for (index, group) in groups.iter_mut().enumerate() {
+        group.members.sort_unstable();
+        group.delay_samples = group
+            .members
+            .iter()
+            .map(|&path| path_delays[path])
+            .min()
+            .expect("a support group has a path");
+        for &path in &group.members {
+            path_groups[path] = index;
+        }
     }
     for (index, path) in paths.iter().enumerate() {
         let tag = path_tag(path);
@@ -1103,8 +954,14 @@ pub fn make_config_observed(
                     MimoFilter::Iir { .. } => unreachable!(),
                 };
                 let file = coeff_dir.join(format!("{fir_prefix}{tag}.wav"));
+                if file.parent() != Some(coeff_dir.as_path()) {
+                    return Err(CamillaError::Invalid(format!(
+                        "coefficient path escapes export folder: {}",
+                        file.display()
+                    )));
+                }
                 let filename = posix(&relative(&file, config_dir)?);
-                coeffs.push((file, wav_bytes(&taps, SAMPLE_RATE)));
+                coeffs.push((file, fir_wav(&format!("mimo.paths[{index}]"), &taps)?));
                 let name = format!("{tag}_fir");
                 filters.push((
                     name.clone(),
@@ -1260,15 +1117,6 @@ pub fn make_config_observed(
         ),
     ]);
 
-    let mut inputs: Vec<String> = mains.iter().map(|main| main.role.clone()).collect();
-    if lfe {
-        inputs.push("LFE".into());
-    }
-    let outputs: Vec<String> = mains
-        .iter()
-        .map(|main| main.role.clone())
-        .chain(subs.iter().map(|sub| sub.role.clone()))
-        .collect();
     let mut lines = vec![
         "# SECS 2 calibration -> CamillaDSP v4 (generated)".into(),
         format!(
@@ -1350,8 +1198,8 @@ pub fn make_config_observed(
     }
     lines.push("#".into());
     lines.extend(howto_lines(
-        &inputs,
-        &outputs,
+        inputs,
+        outputs,
         options.latency_ms,
         &options.mode,
     ));
@@ -1420,67 +1268,9 @@ pub fn make_config_observed(
     Ok(config)
 }
 
-/// Replace filename-unsafe or non-ASCII characters as upstream does.
-pub fn safe_name(name: &str) -> String {
-    let safe: String = name
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii() && (ch.is_ascii_alphanumeric() || "-_.".contains(ch)) {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if safe.is_empty() {
-        "secs_calibration".into()
-    } else {
-        safe
-    }
-}
-
 /// Atomically replace one export file through a sibling temporary file.
 pub fn atomic_write(destination: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
-    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
-    let filename = destination
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("export");
-    let mut temporary = None;
-    for _ in 0..100 {
-        let serial = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let candidate = parent.join(format!(".{filename}.{}.{}.tmp", std::process::id(), serial));
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(file) => {
-                temporary = Some((candidate, file));
-                break;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error),
-        }
-    }
-    let Some((path, mut file)) = temporary else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            "could not create export temporary file",
-        ));
-    };
-    use std::io::Write as _;
-    let result = (|| {
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        // std's rename replaces an existing destination on every platform.
-        fs::rename(&path, destination)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&path);
-    }
-    result
+    secs_types::fs::write_atomic_bytes(destination, bytes)
 }
 
 /// Write `configs/<name>.yml`, coefficient WAVs, and a placeholder `in.raw` when needed.
@@ -1490,6 +1280,19 @@ pub fn write_config(
     name: &str,
     options: &Options,
     mimo: Option<&MimoPaths>,
+) -> Result<Vec<PathBuf>, CamillaError> {
+    write_config_observed(chain, out, name, options, mimo, &|_, _| Ok(()))
+}
+
+/// Audit-only staging seam invoked after each complete staged file.
+#[doc(hidden)]
+pub fn write_config_observed(
+    chain: &SignalChain,
+    out: &Path,
+    name: &str,
+    options: &Options,
+    mimo: Option<&MimoPaths>,
+    after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
 ) -> Result<Vec<PathBuf>, CamillaError> {
     let safe = safe_name(name);
     if safe == "." || safe == ".." {
@@ -1503,22 +1306,24 @@ pub fn write_config(
         chain.mains.len() + usize::from(!chain.subs.is_empty() && options.lfe_gain_db.is_some());
 
     // All validation and pure construction have completed before the first write.
-    fs::create_dir_all(out)?;
-    if options.capture.is_none() {
-        let input = out.join("in.raw");
-        if !input.exists() {
-            fs::write(&input, vec![0_u8; 1024 * n_in * 4])?;
-        }
+    let config_relative = PathBuf::from(CONFIG_DIR).join(format!("{safe}.yml"));
+    let mut bundle = Vec::new();
+    if options.capture.is_none() && !out.join("in.raw").exists() {
+        bundle.push((PathBuf::from("in.raw"), vec![0_u8; 1024 * n_in * 4]));
     }
     for (path, bytes) in &config.coeffs {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        atomic_write(path, bytes)?;
+        let relative = path.strip_prefix(out).map_err(|_| {
+            CamillaError::Invalid(format!(
+                "coefficient path escapes export folder: {}",
+                path.display()
+            ))
+        })?;
+        bundle.push((relative.to_path_buf(), bytes.clone()));
     }
-    fs::create_dir_all(&config_dir)?;
-    let config_path = config_dir.join(format!("{safe}.yml"));
-    atomic_write(&config_path, config.yaml.as_bytes())?;
+    bundle.push((config_relative.clone(), config.yaml.into_bytes()));
+    write_bundle_observed(out, &bundle, &config_relative, after_stage_write)?;
+
+    let config_path = out.join(&config_relative);
     let mut written = vec![config_path];
     let mut coeff_paths: Vec<_> = config.coeffs.into_iter().map(|(path, _)| path).collect();
     coeff_paths.sort();
@@ -1533,47 +1338,20 @@ pub fn export(
     labels: &RunLabels,
     mimo: Option<&MimoPaths>,
 ) -> Result<Vec<PathBuf>, CamillaError> {
-    finite("labels.ultra_ms", labels.ultra_ms)?;
     finite("labels.latency_ms", labels.latency_ms)?;
-    finite("labels.rc_hi_hz", labels.rc_hi_hz)?;
-    let mimo_note = mimo.filter(|paths| !paths.paths.is_empty()).map_or_else(
-        || "no MIMO".to_owned(),
-        |paths| {
-            let kind = if paths.paths.iter().any(|path| path.filter.is_fir()) {
-                "FIR"
-            } else {
-                "IIR"
-            };
-            let cap = if labels.mimo_max_supports == 0 {
-                String::new()
-            } else {
-                format!(", max {} per input", labels.mimo_max_supports)
-            };
-            format!(
-                "MIMO {kind} support paths {} (Fsiso {} Hz{cap})",
-                paths.paths.len(),
-                format_g(paths.fsiso, false)
-            )
-        },
-    );
-    let note = format!(
-        "mode {}, total latency {} ms, RC upper {} Hz; {mimo_note}",
-        labels.mode,
-        format_fixed(labels.latency_ms, 1, false),
-        format_fixed(labels.rc_hi_hz, 0, false)
-    );
-    let mode = if labels.mode == "ultra" {
-        format!("ultra{}", format_g(labels.ultra_ms, false))
-    } else {
-        labels.mode.clone()
-    };
     let options = Options {
-        note,
+        note: labels.note.clone(),
         latency_ms: Some(labels.latency_ms),
-        mode: mode.clone(),
+        mode: labels.mode.clone(),
         ..Options::default()
     };
-    write_config(chain, folder, &format!("secs_{mode}"), &options, mimo)
+    write_config(
+        chain,
+        folder,
+        &format!("secs_{}", labels.mode),
+        &options,
+        mimo,
+    )
 }
 
 #[cfg(test)]

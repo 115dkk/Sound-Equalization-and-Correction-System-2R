@@ -48,7 +48,11 @@ pub(crate) fn first_max(x: &[f64]) -> usize {
     k
 }
 
-fn onset(x: &[f64]) -> usize {
+/// The first index whose magnitude exceeds a tenth of the absolute maximum,
+/// else 0: the onset of the late-ratio windows and of every MIMO low-rate
+/// window and guard (TD-75). `measurement::onset_index` is a different rule
+/// (`>=` up to the peak) and stays separate.
+pub(crate) fn onset(x: &[f64]) -> usize {
     let top = x.iter().map(|v| v.abs()).fold(0.0, f64::max);
     x.iter().position(|v| v.abs() > 0.1 * top).unwrap_or(0)
 }

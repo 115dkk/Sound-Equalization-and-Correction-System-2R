@@ -9,11 +9,11 @@ import { SAMPLE_ROLES, measureConfig, projectInfo } from "../../ipc/fixtures";
 import { ARRANGEMENT_COUNTS, arrangementPoints, isSubRole, roleKind } from "../../ui/maps/geometry";
 import type { MeasureView, PositionRecord, SweepOption } from "./types";
 
-export const ROLES: string[] = [...SAMPLE_ROLES];
+const ROLES: string[] = [...SAMPLE_ROLES];
 
 const GRID = Array.from(logGrid(5, 22000, 280));
 
-export function curvesAt(positions: readonly number[], roles: readonly string[] = ROLES): MeasurementCurvesResult {
+function curvesAt(positions: readonly number[], roles: readonly string[] = ROLES): MeasurementCurvesResult {
   return {
     grid: GRID,
     curves: positions.flatMap((position) =>
@@ -28,7 +28,7 @@ export function curvesAt(positions: readonly number[], roles: readonly string[] 
   };
 }
 
-export const layout: LayoutResult = {
+const layout: LayoutResult = {
   count: 9,
   start_delay: "끄기",
   timing: { reference: "acoustic", role: "R", output: 1 },
@@ -39,12 +39,12 @@ export const layout: LayoutResult = {
 };
 
 /** Sweep lengths at 48 kHz (upstream SWEEP_SECONDS: 64k 1.4 s … 4M 87.4 s). */
-export const sweepOptions: SweepOption[] = [65536, 131072, 262144, 524288, 1048576, 2097152, 4194304].map((samples) => ({
+const sweepOptions: SweepOption[] = [65536, 131072, 262144, 524288, 1048576, 2097152, 4194304].map((samples) => ({
   samples,
   seconds: Math.round((samples / 48000) * 10) / 10,
 }));
 
-const measured = (positions: readonly number[], sources: Record<string, string> = {}): PositionRecord[] =>
+const measured = (positions: readonly number[], sources: Record<string, string> = Object.fromEntries(ROLES.map((role) => [role, "measured"]))): PositionRecord[] =>
   positions.map((position) => ({ position, done: true, roles: [...ROLES], sources: { ...sources } }));
 
 const fromFile = (file: string): Record<string, string> => Object.fromEntries(ROLES.map((role) => [role, file]));
@@ -84,7 +84,7 @@ export const partialView: MeasureView = {
 /** Measuring position 4: seven of thirteen channels recorded. */
 export const measuringView: MeasureView = {
   ...partialView,
-  records: [...measured([1, 2, 3]), { position: 4, done: false, roles: ROLES.slice(0, 7), sources: {} }],
+  records: [...measured([1, 2, 3]), { position: 4, done: false, roles: ROLES.slice(0, 7), sources: Object.fromEntries(ROLES.slice(0, 7).map((role) => [role, "measured"])) }],
   job: { job: 12, kind: "measure", status: "running", position: 4, progress: { stage: "Lb", done: 7, total: 13 } },
 };
 

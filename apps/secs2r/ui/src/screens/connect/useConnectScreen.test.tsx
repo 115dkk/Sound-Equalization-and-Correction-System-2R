@@ -10,23 +10,37 @@ import { useConnectScreen } from "./useConnectScreen";
 
 let mock: ReturnType<typeof createMockService>;
 let session: ReturnType<typeof createSession>;
-let pending: Promise<unknown>[];
 const ticks = (count: number) => { for (let i = 0; i < count; i++) mock.tick(); };
 const wrapper = ({ children }: { children: ReactNode }) => <SessionProvider value={session}>{children}</SessionProvider>;
 async function perform(work: () => unknown) {
-  await act(async () => { await work(); while (pending.length) await Promise.all(pending.splice(0)); });
+  await act(async () => { await work(); await session.settled(); });
 }
 beforeEach(async () => {
   mock = createMockService({ tickMs: 0 }); session = createSession(mock); await session.start();
-  pending = []; vi.spyOn(session, "run").mockImplementation((work) => { pending.push(work().catch(() => {})); });
   mock.calls.length = 0;
 });
 afterEach(async () => {
-  cleanup(); while (pending.length) await Promise.all(pending.splice(0));
+  cleanup(); await session.settled();
   await session.monitor(false); session.dispose(); mock.dispose(); vi.restoreAllMocks(); vi.useRealTimers();
 });
 
 describe("useConnectScreen", () => {
+  it("releases the end subscription and timer immediately when level_play fails", async () => {
+    vi.useFakeTimers();
+    const subscribe = mock.events.subscribe;
+    const releases: ReturnType<typeof vi.fn>[] = [];
+    vi.spyOn(mock.events, "subscribe").mockImplementation((listener) => {
+      const release = vi.fn(subscribe(listener)); releases.push(release); return release;
+    });
+    const { result } = renderHook(() => useConnectScreen(false), { wrapper });
+    await perform(() => result.current.actions.choosePath("mock"));
+    mock.failNext("level_play", "device_unavailable");
+    await perform(() => result.current.actions.playLevel("L"));
+    expect(releases).toHaveLength(1);
+    expect(releases[0]).toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    expect(result.current.view?.level.playing).toBeNull();
+  });
   it("chooses every path and wires every device preference with nullable fields", async () => {
     const { result } = renderHook(() => useConnectScreen(false), { wrapper });
     const a = result.current.actions;
@@ -40,7 +54,6 @@ describe("useConnectScreen", () => {
       [() => a.setInputDevice("input"), { input_device: "input" }],
       [() => a.setInputChannel(2), { input_channel: 2 }],
       [() => a.setOutputDevice("output"), { output_device: "output" }],
-      [() => a.setSweepLength(65536), { sweep_length: 65536 }],
       [() => a.setShareMode("shared"), { share_mode: "shared" }],
     ] as const) {
       await perform(work);
@@ -129,8 +142,9 @@ describe("useConnectScreen", () => {
     mock.failNext("rew_launch", "rew_failed", "not installed", { reason: "exe_not_found" });
     await perform(result.current.actions.launchRew);
     expect(result.current.view?.rew).toMatchObject({ launch: "idle", problem: "exe_not_found", problemDetail: "not installed" });
+    mock.calls.length = 0;
     await perform(result.current.actions.launchRew);
-    expect(mock.calls).toContainEqual({ method: "rew_launch" });
+    expect(mock.calls).toEqual([{ method: "rew_launch" }, { method: "measure_methods" }, { method: "rew_info" }]);
     expect(result.current.view?.rew.problem).toBeNull();
   });
 
@@ -218,7 +232,7 @@ describe("useConnectScreen", () => {
     await waitFor(() => expect(releases).toHaveLength(1));
     expect(mock.calls.filter((call) => call.method === "level_play")).toHaveLength(1);
     act(() => result.current.actions.stopLevel());
-    await act(async () => { releases[0]!(); while (pending.length) await Promise.all(pending.splice(0)); });
+    await act(async () => { releases[0]!(); await session.settled(); });
     expect(mock.calls.filter((call) => call.method === "level_play")).toHaveLength(1);
     expect(result.current.view?.level).toMatchObject({ playing: null, playingAll: false });
   });

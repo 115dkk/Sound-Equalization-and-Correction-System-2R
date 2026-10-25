@@ -7,6 +7,58 @@ import { createMockService } from "./mock";
 import { calibrationSettings, gpuComputeStatus, modeLabel, projectInfo, resultsSummary } from "./fixtures";
 import type { ExportKind } from "./bindings/ExportKind";
 import type { Mode } from "./bindings/Mode";
+import type { MimoExportDecision } from "./bindings/MimoExportDecision";
+
+describe("mock MIMO export decisions", () => {
+  it.each([
+    ["off", false, 2, false, true, 0],
+    ["too_few_positions", true, 2, false, true, 0],
+    ["none", true, 3, false, true, 0],
+    ["stale", true, 3, true, true, 0],
+    ["no_supports", true, 3, true, false, 0],
+    ["included", true, 3, true, false, 2],
+  ] satisfies [MimoExportDecision, boolean, number, boolean, boolean, number][])("returns %s in service precedence order", async (decision, on, positions, computed, stale, supports) => {
+    const mock = createMockService({ tickMs: 0, project: { ...projectInfo, positions: Array.from({ length: positions }, (_, i) => i + 1) } });
+    await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on } } });
+    mock.setResults({
+      ...resultsSummary,
+      calibration: { ...resultsSummary.calibration!, sub_roles: [] },
+      mimo: computed ? { ...resultsSummary.mimo!, stale, support_count: supports } : null,
+    });
+    expect((await mock.request({ method: "results" })).mimo_export).toBe(decision);
+    if (decision === "no_supports") {
+      await expect(mock.request({ method: "export", params: { kind: "filter_text", folder: "" } })).resolves.toMatchObject({ kind: "export" });
+      mock.drain();
+    }
+    mock.dispose();
+  });
+
+  it.each([false, true])("uses run positions for live results and project positions for cached results (cached: %s)", async (cached) => {
+    const mock = createMockService({ tickMs: 0, project: { ...projectInfo, positions: [1, 2, 3] } });
+    await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+    mock.setResults({ ...resultsSummary, calibration: { ...resultsSummary.calibration!, cached } });
+    await mock.request({ method: "position_clear", params: { position: 3 } });
+    expect((await mock.request({ method: "results" })).mimo_export).toBe(cached ? "too_few_positions" : "stale");
+    mock.dispose();
+  });
+
+  it("refreshes the decision after calibration, MIMO, compute changes and project replacement", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+    await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } });
+    mock.drain();
+    expect((await mock.request({ method: "results" })).mimo_export).toBe("none");
+    await mock.request({ method: "mimo", params: { settings: null } });
+    mock.drain();
+    expect((await mock.request({ method: "results" })).mimo_export).toBe("included");
+    const settings = await mock.request({ method: "app_settings_get" });
+    await mock.request({ method: "app_settings_set", params: { settings: { ...settings, compute: "cpu" } } });
+    expect((await mock.request({ method: "results" })).mimo_export).toBe("stale");
+    await mock.request({ method: "project_open", params: { path: "C:/another.secs" } });
+    expect((await mock.request({ method: "results" })).mimo_export).toBe("off");
+    mock.dispose();
+  });
+});
 
 describe("mock filter exports", () => {
   afterEach(() => vi.restoreAllMocks());
@@ -42,7 +94,7 @@ describe("mock filter exports", () => {
     mock.dispose();
   });
 
-  it.each(["filter_text", "equalizer_apo"] as const)("rejects %s when current MIMO is included, without starting a job", async (kind) => {
+  it.each(["filter_text"] as const)("rejects %s when current MIMO is included, without starting a job", async (kind) => {
     const results = resultWithoutSubs();
     results.mimo = structuredClone(resultsSummary.mimo);
     const mock = createMockService({ tickMs: 0, results });
@@ -85,7 +137,10 @@ describe("mock filter exports", () => {
     vi.spyOn(Date, "now").mockReturnValue(new Date(2026, 9, 15, 9, 41, 7).getTime());
     const mock = createMockService({ tickMs: 0, results: resultWithoutSubs() });
     await mock.request({ method: "calibration_settings_set", params: { settings: { ...calibrationSettings, mode, ultra_ms: 200, mimo_on: false } } });
-    mock.setResults(resultWithoutSubs());
+    // The service names the folder after the result's mode.
+    const results = resultWithoutSubs();
+    results.calibration!.mode = mode;
+    mock.setResults(results);
     await mock.request({ method: "export_folder_set", params: { folder: "C:/exports/" } });
     for (const kind of ["filter_text", "equalizer_apo"] as const) {
       const folder = `C:/exports/SECS_${kind === "filter_text" ? "text" : "eqapo"}_RC_BA_${mode}_20261015-094107`;
@@ -98,6 +153,17 @@ describe("mock filter exports", () => {
       expect(await exported(mock, kind)).toEqual({ folder, files, stale: false });
     }
     mock.dispose();
+  });
+
+  it("exports current MIMO through Equalizer APO", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+      mock.setResults(resultsSummary);
+      const result = await exported(mock, "equalizer_apo");
+      expect(result.folder).toContain("RC_BA_MIMO");
+      expect(result.files).toContain(`${result.folder}/config.txt`);
+    } finally { mock.dispose(); }
   });
 
   it("allows BA in EqAPO and writes directly into an explicit folder", async () => {
@@ -120,6 +186,16 @@ describe("mock filter exports", () => {
 });
 
 describe("mock service", () => {
+  it("preserves full results when only the subs are calibrated", async () => {
+    const mock = createMockService({ tickMs: 0, results: resultsSummary });
+    try {
+      const before = await mock.request({ method: "results" });
+      await mock.request({ method: "calibrate", params: { settings: null, subs_only: true } });
+      mock.drain();
+      expect(await mock.request({ method: "results" })).toEqual(before);
+      expect((await mock.request({ method: "result_lines" })).ba?.subs_only).toBe(true);
+    } finally { mock.dispose(); }
+  });
   it("delivers compact summaries and metadata without DSP payloads in job notifications", async () => {
     const mock = createMockService({ tickMs: 0 });
     const events: JobEvent[] = [];

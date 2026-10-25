@@ -7,9 +7,9 @@ import { useT } from "../i18n/react";
 import { Icon, type IconName } from "./Icon";
 import { Portal } from "./layer";
 
-export type ToastTone = "neutral" | "success" | "warning" | "danger";
+type ToastTone = "neutral" | "success" | "warning" | "danger";
 
-export type ToastInput = {
+type ToastInput = {
   message: ReactNode;
   tone?: ToastTone;
   action?: { label: string; onAction: () => void; id?: string };

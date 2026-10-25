@@ -48,9 +48,23 @@ NVIDIA 라이브러리의 ABI·드라이버 구현은 외부 신뢰 경계입니
 보고했습니다. 검토 범위는 함수 포인터 ABI, 라이브러리 보존, 대칭·유한·
 크기 검사, RHS 검사, stream 완료 뒤 readback, 부분 초기화와 Drop입니다.
 버퍼는 `Rc<Session>`을 소유해 핸들보다 먼저 해제되며, 계산 객체는 `Rc`와
-`PhantomData<Rc<()>>`로 생성 스레드에 묶입니다. 장치 선택·동기화에 실패한
-Drop은 자원을 재사용하지 않고 반환합니다. 라이브러리/드라이버의 정확성은
-외부 신뢰 경계로 남습니다.
+`PhantomData<Rc<()>>`로 생성 스레드에 묶입니다. 라이브러리/드라이버의
+정확성은 외부 신뢰 경계로 남습니다.
+
+Drop의 실패 정책은 버퍼와 `Session`이 다릅니다(감사 #92 TD-98).
+
+- **버퍼.** 장치 선택이나 stream 동기화에 실패하면 장치 메모리를 해제하지
+  않고 돌아갑니다. 아직 끝나지 않은 커널이 그 메모리를 쓰고 있을 수 있어서,
+  해제보다 누수가 안전합니다.
+- **`Session`** (`crates/secs-cuda-sys/src/native.rs`의 `impl Drop for Session`).
+  장치 선택에 실패하면 아무 핸들도 파괴하지 않고 돌아갑니다. 선택에 성공하면
+  stream 동기화의 오류는 무시하고 BLAS, solver, stream 순서로 파괴합니다.
+  CUDA Runtime API 문서는 장치가 아직 작업 중인 stream을 `cudaStreamDestroy`로
+  파괴하면 함수가 바로 돌아오고, stream의 자원은 그 작업이 모두 끝난 뒤
+  자동으로 놓인다고 정합니다
+  ([Stream Management](https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__STREAM.html)).
+  그래서 동기화가 실패해도 파괴 순서는 안전합니다. 버퍼가 `Rc<Session>`을
+  쥐므로, 이 Drop은 모든 버퍼의 Drop 뒤에만 실행됩니다.
 
 ## 작업 표시줄 아이콘 (secs-sys, ADR 0011)
 

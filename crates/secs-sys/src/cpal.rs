@@ -1,7 +1,8 @@
 // Ported from Impulcifer-pip313 impulcifer-audio-io/src/cpal_backend.rs, commit cac2217.
 // MIT; Copyright (c) 2018- Jaakko Pasanen, 2024- 115dkk, 2025- LionLion123, SDC.
 // See ../THIRD_PARTY_LICENSES.txt and docs/THIRD_PARTY.md.
-//! CPAL transport (also available on Windows for explicit backend comparison).
+//! CPAL transport for macOS and Linux. Windows measures through WASAPI only
+//! (ADR 0005); this module and its `cpal` dependency are not built there.
 //!
 //! ShareMode is ignored by CPAL, but retained as request/report metadata. The
 //! requested rate and channel count must be natively supported: no remapping or
@@ -26,8 +27,9 @@ use secs_audio::{
     OutputSession, PlaybackReport, ProbeResult, ShareMode, StreamSpec,
 };
 
+use crate::STALL;
+
 const POLL: Duration = Duration::from_millis(5);
-const STALL: Duration = Duration::from_secs(2);
 const PACKET_SAMPLES: usize = 1024;
 const QUEUE_PACKETS: usize = 256;
 

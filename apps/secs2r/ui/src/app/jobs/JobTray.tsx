@@ -4,21 +4,21 @@
 // with a cancel that really stops it. The history keeps Log notices and
 // results; errors carry the cause and the next step, the raw text behind 자세히.
 import { useId, useState } from "react";
-import { useIpc } from "../../ipc/context";
+import { isActiveJob } from "../../state/jobRetention";
 import { formatDuration, useT } from "../../i18n/react";
 import { Button } from "../../ui/Button";
 import { Icon, Spinner } from "../../ui/Icon";
 import { ProgressBar } from "../../ui/meters";
 import { ErrorNotice } from "../../ui/states";
-import { activeJobs, elapsedMs, errorCount, remainingMs, type HistoryEntry, type JobView } from "./jobStore";
+import { elapsedMs, errorCount, remainingMs, type HistoryEntry } from "../../state/jobLedger";
 import { JOB_NAME, WARNING_LOGS, errorText, logText, stageText } from "./jobText";
-import { useJobs, type JobsApi } from "./useJobs";
+import { useJobs, type JobsApi, type JobView } from "./useJobs";
 
 export function JobTray({ api, defaultOpen = false }: { api: JobsApi; defaultOpen?: boolean | undefined }) {
   const t = useT();
   const historyId = useId();
   const [open, setOpen] = useState(defaultOpen);
-  const active = activeJobs(api.state);
+  const active = api.state.jobs.filter((job) => isActiveJob(job.status));
   const errors = errorCount(api.state);
   const count = api.state.history.length;
   return (
@@ -173,8 +173,8 @@ function HistoryItem({ entry }: { entry: HistoryEntry }) {
   );
 }
 
-/** The tray wired to the IPC in context. */
+/** The tray wired to the session's ledger. */
 export function ConnectedJobTray({ defaultOpen }: { defaultOpen?: boolean | undefined }) {
-  const api = useJobs(useIpc());
+  const api = useJobs();
   return <JobTray api={api} defaultOpen={defaultOpen} />;
 }

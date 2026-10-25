@@ -4,8 +4,9 @@ import { HelpTip } from "../../ui/HelpTip";
 //
 // Cards: 구성 (presets, sub count, the output patch sheet, the problems
 // config_validate reports), 방 배치도 (the room map synced with the sheet and
-// the chosen speaker's wiring), 측정 배치 (arrangement, start delay, timing
-// reference, the time estimate) and 내보낼 DSP (U2). Changes that clear
+// the chosen speaker's wiring), 측정 배치 (arrangement, the time estimate,
+// the timing reference) and 내보낼 DSP (U2). The start delay and the sweep
+// length are set on 측정·가져오기 only (P58). Changes that clear
 // measurements ask first and offer undo (U5).
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import type { PrimaryAction } from "../../app/StepHeader";
@@ -25,7 +26,6 @@ import {
   IconButton,
   NumberField,
   RoomMap,
-  Segmented,
   Select,
   StatusPill,
   Stepper,
@@ -41,24 +41,16 @@ import "./system.css";
 
 /** Upstream preset buttons (model.PRESETS) with the 4.0, 4.1, 4.2 and 7.1 presets SECS 2R adds (U13), in order.
  * Grouped as stereo, quad, surround and immersive; a narrow row wraps between groups. */
-export const PRESET_GROUPS = [
+const PRESET_GROUPS = [
   ["2.0", "2.1", "2.2"],
   ["4.0", "4.1", "4.2"],
   ["5.1", "7.1"],
   ["7.1.4", "9.1.6"],
 ] as const;
-export const PRESETS = PRESET_GROUPS.flat();
+const PRESETS = PRESET_GROUPS.flat();
 
 /** Upstream FIR_TAP_CHOICES (step2_config.py). */
-export const FIR_TAP_CHOICES = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536] as const;
-
-/** Stored start-delay values (`extra['start_delay']`, upstream bytes) and their option ids. */
-export const START_DELAYS = [
-  { id: "off", stored: "끄기", label: "system.start_delay.off" },
-  { id: "5", stored: "5 초", label: "system.start_delay.5" },
-  { id: "10", stored: "10 초", label: "system.start_delay.10" },
-  { id: "15", stored: "15 초", label: "system.start_delay.15" },
-] as const;
+const FIR_TAP_CHOICES = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536] as const;
 
 const DSP_ORDER = ["camilla", "tesira", "qsys", "minidsp", "custom"] as const;
 
@@ -70,7 +62,7 @@ const ARRANGEMENT_NAME = {
 } as const;
 
 /** A change that clears measurements (U5). */
-export type SystemChange = { kind: "preset"; preset: string } | { kind: "subs"; count: number } | { kind: "arrangement"; count: number };
+type SystemChange = { kind: "preset"; preset: string } | { kind: "subs"; count: number } | { kind: "arrangement"; count: number };
 
 /** The confirm dialog's words for a change: title names the action, the body says what is lost and that it can be undone. */
 export function changeCopy(t: Translate, change: SystemChange, positions: number) {
@@ -326,6 +318,27 @@ function NoticeList({ view }: { view: SystemView }) {
   );
 }
 
+/** The service stores output numbers 1..=256 (P74, the project's output rule), so no output select lists past it. */
+export const OUTPUT_LIMIT = 256;
+
+/**
+ * Outputs 1…`count`, never past OUTPUT_LIMIT, and a stored value outside them
+ * as one more option (`outside` names it), not a range up to it: a number in
+ * an opened project file never decides how many options the screen draws.
+ */
+function outputChoices(
+  t: Translate,
+  count: number,
+  stored: number,
+  names: readonly string[],
+  outside: (label: string) => string = (label) => label,
+): Option<string>[] {
+  const shown = Math.max(0, Math.min(count, OUTPUT_LIMIT));
+  const options: Option<string>[] = Array.from({ length: shown }, (_, i) => ({ value: String(i + 1), label: outputLabel(t, i + 1, names) }));
+  if (stored < 1 || stored > shown) options.push({ value: String(stored), label: outside(outputLabel(t, stored, names)) });
+  return options;
+}
+
 function PatchTable({
   view,
   actions,
@@ -341,12 +354,10 @@ function PatchTable({
   const { config, outputChannels, outputNames } = view;
   const duplicates = new Set(config.summary.duplicate_outputs);
   // Upstream lists 1…channels (64 while the device is unknown) and adds the stored value when it is past the end.
+  // An unknown device lists up to the largest stored output here, within OUTPUT_LIMIT.
   const count = outputChannels ?? Math.max(64, config.summary.max_channel);
-  const outputOptions = (out: number): Option<string>[] => {
-    const options: Option<string>[] = Array.from({ length: count }, (_, i) => ({ value: String(i + 1), label: outputLabel(t, i + 1, outputNames) }));
-    if (out > count || out < 1) options.push({ value: String(out), label: t("system.output.out_of_range", { output: outputLabel(t, out, outputNames) }) });
-    return options;
-  };
+  const outputOptions = (out: number): Option<string>[] =>
+    outputChoices(t, count, out, outputNames, (output) => t("system.output.out_of_range", { output }));
   const roleOptions = (role: string): Option<string>[] => {
     const known: Option<string>[] = ROLES.map((r) => ({ value: r, label: roleLabel(t, r) }));
     const custom = isKnownRole(role) ? "custom" : role;
@@ -627,7 +638,6 @@ function MeasureOptions({ view, actions }: { view: SystemView; actions: SystemAc
   const t = useT();
   const { layout, config, outputChannels, outputNames } = view;
   const timing = layout.timing;
-  const delay = START_DELAYS.find((d) => d.stored === layout.start_delay) ?? START_DELAYS[0];
   // Reference speakers in role order (upstream measurement_roles): every speaker's first band.
   const refs = orderRoles(config.speakers.map((s) => s.role))
     .map((role) => config.speakers.find((s) => s.role === role))
@@ -635,22 +645,32 @@ function MeasureOptions({ view, actions }: { view: SystemView; actions: SystemAc
   // An empty or vanished reference role falls back to upstream default_ref_role: R, else the first main speaker.
   const mains = refs.filter((r) => roleKind(r.role) !== "sub");
   const refRole = refs.some((r) => r.role === timing.role) ? timing.role : (mains.find((r) => r.role === "R") ?? mains[0] ?? refs[0])?.role ?? "";
+  // Upstream's reference output lists the device's channels (8 while it is
+  // unknown) and adds a stored value past them as one more item.
   const channels = outputChannels ?? 8;
   const bands = config.speakers.reduce((sum, s) => sum + s.bands.length, 0);
   const timingHint = { acoustic: "system.timing.acoustic.hint", loopback: "system.timing.loopback.hint", none: "system.timing.none.hint" } as const;
   const reference = timing.reference === "loopback" || timing.reference === "none" ? timing.reference : "acoustic";
+  // The estimate comes first; the timing reference (REW only) stays folded
+  // under 고급 at the end, where the other cards keep theirs.
   return (
     <div className="system-options" data-ui="system.options">
-      <Segmented
-        id="system.start_delay"
-        label={t("system.start_delay.label")}
-        value={delay.id}
-        options={START_DELAYS.map((d) => ({ value: d.id, label: t(d.label) }))}
-        onChange={(id) => {
-          const next = START_DELAYS.find((d) => d.id === id);
-          if (next) actions.setStartDelay(next.stored);
-        }}
-      />
+      <div className="system-estimate" data-ui="system.estimate">
+        <span className="ui-field__label">{t("system.estimate.label")}</span>
+        {view.estimate ? (
+          <>
+            <span className="system-estimate__main tabular">{t("system.estimate.per_position", { time: durationText(t, view.estimate.per_position_seconds) })}</span>
+            <span className="system-estimate__sub tabular">
+              {t("system.estimate.total", { count: view.estimate.positions, time: durationText(t, view.estimate.total_seconds) })}
+            </span>
+          </>
+        ) : (
+          <span className="system-estimate__sub">—</span>
+        )}
+        <span className="system-estimate__sub tabular" data-ui="system.sweeps">
+          {t("system.estimate.sweeps", { count: bands })}
+        </span>
+      </div>
       {/* Only REW needs a timing reference: it records each channel on its own.
           The default (the acoustic reference on R, else the first main speaker)
           suits most rooms, so the choice waits folded under 고급. */}
@@ -674,7 +694,7 @@ function MeasureOptions({ view, actions }: { view: SystemView; actions: SystemAc
                 id="system.timing.output"
                 label={t("system.timing.output")}
                 value={String(timing.output)}
-                options={Array.from({ length: Math.max(channels, timing.output) }, (_, i) => ({ value: String(i + 1), label: outputLabel(t, i + 1, outputNames) }))}
+                options={outputChoices(t, channels, timing.output, outputNames)}
                 onChange={(output) => actions.setTiming({ ...timing, role: refRole, output: Number(output) })}
               />
             ) : reference === "none" ? null : (
@@ -689,22 +709,6 @@ function MeasureOptions({ view, actions }: { view: SystemView; actions: SystemAc
           </div>
         </Advanced>
       )}
-      <div className="system-estimate" data-ui="system.estimate">
-        <span className="ui-field__label">{t("system.estimate.label")}</span>
-        {view.estimate ? (
-          <>
-            <span className="system-estimate__main tabular">{t("system.estimate.per_position", { time: durationText(t, view.estimate.per_position_seconds) })}</span>
-            <span className="system-estimate__sub tabular">
-              {t("system.estimate.total", { count: view.estimate.positions, time: durationText(t, view.estimate.total_seconds) })}
-            </span>
-          </>
-        ) : (
-          <span className="system-estimate__sub">—</span>
-        )}
-        <span className="system-estimate__sub tabular" data-ui="system.sweeps">
-          {t("system.estimate.sweeps", { count: bands })}
-        </span>
-      </div>
     </div>
   );
 }

@@ -27,6 +27,19 @@ describe("number field", () => {
     return { onChange, input };
   }
 
+  it("tells a form whether the typed draft can be committed, each time that changes", () => {
+    const onDraftValidity = vi.fn();
+    renderWith(<NumberField id="rc_lo" label="RC 하한" value={20} onChange={() => {}} min={10} max={200} step={5} unit="Hz" onDraftValidity={onDraftValidity} />);
+    const input = screen.getByRole("spinbutton", { name: "RC 하한" }) as HTMLInputElement;
+    expect(onDraftValidity.mock.calls).toEqual([[true]]);
+    fireEvent.change(input, { target: { value: "abc" } });
+    fireEvent.change(input, { target: { value: "250" } });
+    expect(onDraftValidity.mock.calls).toEqual([[true], [false]]);
+    // Escape restores the committed value, which is valid again.
+    fireEvent.keyDown(input, { key: "Escape" });
+    expect(onDraftValidity.mock.calls).toEqual([[true], [false], [true]]);
+  });
+
   it("marks an out-of-range value invalid with the range in words and does not commit it", () => {
     const { onChange, input } = setup();
     fireEvent.change(input, { target: { value: "250" } });

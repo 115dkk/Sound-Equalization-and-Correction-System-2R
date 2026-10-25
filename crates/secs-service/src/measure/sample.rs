@@ -368,3 +368,16 @@ impl Measurer for MockMeasurer {
         Ok(results)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mock_commits_a_position_at_once() {
+        assert_eq!(
+            MockMeasurer::new().commit_boundary(),
+            CommitBoundary::Position
+        );
+    }
+}

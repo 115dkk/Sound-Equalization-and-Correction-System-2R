@@ -24,3 +24,8 @@ thiserror.workspace = true
 [dev-dependencies]
 secs-oracle = { path = "../secs-oracle" }
 serde_json.workspace = true
+
+# Not imported: these give faer runtime SIMD detection without its `std`
+# (see the faer note in the workspace Cargo.toml, docs/adr/0007).
+[package.metadata.cargo-machete]
+ignored = ["pulp", "gemm", "faer-traits"]

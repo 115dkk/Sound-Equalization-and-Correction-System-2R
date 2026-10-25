@@ -320,6 +320,46 @@ fn rejects_invalid_measurements_at_every_position_d2() {
 }
 
 #[test]
+fn preparation_stops_at_every_cancellation_check() {
+    // TD-49: validation, reference onsets and the per-cell FFTs all poll the
+    // token, so a cancel anywhere in them returns at the next cell; with no
+    // cancel the spectra are the uncancellable call's, bit for bit.
+    let case = cases::load("room");
+    let setup = Setup::new(&case.config);
+    let plain = prepare(&case.measurements, &case.config, &setup).unwrap();
+    let bits = |s: &Spectra| {
+        s.positions()
+            .iter()
+            .flat_map(|&p| s.roles_at(p).map(move |r| (p, r)))
+            .flat_map(|(p, r)| s.get(p, r).unwrap().iter())
+            .flat_map(|z| [z.re.to_bits(), z.im.to_bits()])
+            .collect::<Vec<_>>()
+    };
+    let cells = case
+        .measurements
+        .positions
+        .iter()
+        .map(|(_, roles)| roles.len())
+        .sum::<usize>();
+    let (prepared, polls) = super::cancel::assert_cancels("prepare", 1, |cancelled| {
+        prepare_until(&case.measurements, &case.config, &setup, cancelled)
+    });
+    // validate and build_spectra once per cell, the onsets once per
+    // reference cell.
+    let reference = case.measurements.positions[0].1.len();
+    assert_eq!(polls, 2 * cells + reference);
+    assert_eq!(bits(&prepared.h), bits(&plain.h));
+    assert_eq!(prepared.align_delay_ms, plain.align_delay_ms);
+    let filters = &setup.sub_filters;
+    let long = long_spectra(&case.measurements, &plain, filters, 2000.0).unwrap();
+    let (cancellable, polls) = super::cancel::assert_cancels("long_spectra", 1, |cancelled| {
+        long_spectra_until(&case.measurements, &plain, filters, 2000.0, cancelled)
+    });
+    assert_eq!(polls, 3 * cells);
+    assert_eq!(bits(&cancellable), bits(&long));
+}
+
+#[test]
 fn setup_caps_lift_and_preserves_dictionary_order() {
     let mut c = cases::load("room_filters").config;
     c.taps = 1024;

@@ -2,19 +2,17 @@
 //!
 //! Upstream: `calibration.xo_groups`, `xo_scores`, `pick_xo`, `recommend_xo`.
 
-use std::sync::Arc;
-
-use secs_compute::{Context, MapError, MemoryBudget, NoProgress};
+use secs_compute::Context;
 use secs_dsp::pairwise_sum;
 use secs_types::calibration::CalibrationSettings;
 
 use crate::{
     Design, DesignRequest, EngineConfig, EngineError, MeasurementSet, ProjectView, SubFilter,
     Tuning,
-    calibration::{engine_inputs, resolve_xo},
+    calibration::{engine_inputs, prepare_inputs, resolve_xo},
     chain::stage_responses,
     decay::late_db_20_150,
-    design::{design_prepared_for_xo, production_fitters},
+    design::{DesignBytes, design_prepared_for_xo, production_fitters},
     grid::design_freqs,
     levels, measurement, scorecard,
     setup::Setup,
@@ -22,6 +20,38 @@ use crate::{
 
 /// Default crossover candidates in Hz, in upstream order.
 pub const XO_CANDIDATES: [f64; 4] = [60.0, 80.0, 100.0, 120.0];
+
+/// Arrays one XO score evaluation keeps alive, in spectra: `stage_responses`'
+/// delay, `top`, the sub `sum` and one sub term, the `lr4` HP and LP,
+/// `combined` and `output`.
+const SCORE_SPECTRA: u64 = 8;
+
+/// What `recommend_xo` reserves (TD-24), as `(shared, candidate)`.
+///
+/// `shared` is held from before `measurement::prepare` to the end: its `h`
+/// and the unfiltered `ScoreWindows` `short` and `long` (three spectra per IR
+/// cell) plus the build scratch. Each candidate reserves `candidate` before
+/// it starts: its design on a serial child context (`DesignBytes::retained`
+/// and one RC channel at a time) and its scoring (`filtered_spectra` copies of
+/// every sub cell in both windows, their filter responses, `SCORE_SPECTRA`).
+pub(crate) fn xo_bytes(set: &MeasurementSet, config: &EngineConfig) -> (u64, u64) {
+    let setup = Setup::new(config);
+    let shared = measurement::spectra_bytes(set)
+        .saturating_mul(3)
+        .saturating_add(measurement::build_scratch_bytes(setup.sub_filters.len()));
+    let design = DesignBytes::new(set, config, &setup, false);
+    let scoring = (2 * measurement::cells(set, Some(&config.subs))
+        + config.subs.len() as u64
+        + SCORE_SPECTRA)
+        .saturating_mul(measurement::SPECTRUM_BYTES);
+    (
+        shared,
+        design
+            .retained
+            .saturating_add(design.channel)
+            .saturating_add(scoring),
+    )
+}
 
 /// Group-averaged crossover quality before the candidate-relative penalty.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -70,15 +100,58 @@ pub fn xo_groups(config: &EngineConfig) -> Vec<String> {
 ///
 /// `measurements` and `config` must be the valid inputs used for `design`.
 /// Panics if they are invalid or a scored main's required sub measurement is missing,
-/// as upstream does; recommendation propagates input errors before reaching here.
+/// as upstream does; recommendation checks both (`check_scored_positions`) and
+/// returns input errors before reaching here.
 pub fn xo_scores(
     design: &Design,
     measurements: &MeasurementSet,
     config: &EngineConfig,
 ) -> Vec<(String, XoScores)> {
-    let prepared = measurement::prepare(measurements, config, &Setup::new(config))
-        .expect("measurements belonging to the design");
-    xo_scores_prepared(design, measurements, config, &prepared, None)
+    let replay = &design.replay;
+    if replay.matches(measurements, config) {
+        xo_scores_prepared(
+            design,
+            replay.measurements(),
+            replay.config(),
+            replay.prepared(),
+            None,
+        )
+    } else {
+        let prepared = measurement::prepare(measurements, config, &Setup::new(config))
+            .expect("measurements belonging to the design");
+        xo_scores_prepared(design, measurements, config, &prepared, None)
+    }
+}
+
+/// What `xo_scores` replays (TD-48): every main it scores (a group member
+/// measured at the reference) at every position where that main was measured,
+/// through `stage_responses`, which needs every sub there whenever the main has
+/// a crossover. BA and RC only use complete positions, so a design succeeds
+/// without them. Recommendation gives every group a nonzero crossover, so each
+/// such position must hold every sub; the first one that does not is named.
+fn check_scored_positions(set: &MeasurementSet, config: &EngineConfig) -> Result<(), EngineError> {
+    let scored = config
+        .groups
+        .iter()
+        .filter(|(group, _)| group != "sub")
+        .flat_map(|(_, roles)| roles)
+        .filter(|role| {
+            config.mains.contains(role) && set.get(config.main_position, role).is_some()
+        });
+    for role in scored {
+        for (position, measured) in &set.positions {
+            let has = |r: &str| measured.iter().any(|(m, _)| m == r);
+            if !has(role) {
+                continue;
+            }
+            if let Some(sub) = config.subs.iter().find(|sub| !has(sub)) {
+                return Err(EngineError::Input(format!(
+                    "position {position} {role}: missing {sub} for crossover scoring"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 struct ScoreWindows {
@@ -90,10 +163,11 @@ impl ScoreWindows {
     fn new(
         measurements: &MeasurementSet,
         prepared: &measurement::Prepared,
+        cancelled: &dyn Fn() -> bool,
     ) -> Result<Self, EngineError> {
         Ok(Self {
-            short: measurement::long_spectra(measurements, prepared, &[], 500.0)?,
-            long: measurement::long_spectra(measurements, prepared, &[], 2000.0)?,
+            short: measurement::long_spectra_until(measurements, prepared, &[], 500.0, cancelled)?,
+            long: measurement::long_spectra_until(measurements, prepared, &[], 2000.0, cancelled)?,
         })
     }
 }
@@ -231,44 +305,59 @@ pub fn recommend_xo(
         ));
     }
     if !candidates.is_empty() {
-        inputs.measurements =
-            crate::normalize_measurements(&inputs.measurements, settings.sample_rate_policy, ctx)?;
+        inputs = prepare_inputs(inputs, settings.sample_rate_policy, ctx)?.0;
     }
     let progress = ctx.stage("engine.xo_recommendation", candidates.len() as u64);
+    // Reserve the shared preparation and score windows before allocating them
+    // (TD-24); each batch of candidates reserves its designs out of the rest.
+    let (shared, candidate) = if candidates.is_empty() {
+        (0, 0)
+    } else {
+        xo_bytes(&inputs.measurements, &inputs.config)
+    };
+    let _shared = crate::memory::reserve(ctx, shared, candidate)?;
     // Empty candidate lists retain their old no-preparation behaviour.
     let prepared = if candidates.is_empty() {
         None
     } else {
-        Some(measurement::prepare(
+        Some(measurement::prepare_until(
             &inputs.measurements,
             &inputs.config,
             &Setup::new(&inputs.config),
+            &|| ctx.cancel().is_cancelled(),
         )?)
     };
+    if prepared.is_some() {
+        check_scored_positions(&inputs.measurements, &inputs.config)?;
+    }
     // Window lengths, taper, onset and time origin are all XO-independent.
     // Applying final sub filters here would not be: BA can change them.
     let windows = prepared
         .as_ref()
         .map(|prepared| {
             ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
-            ScoreWindows::new(&inputs.measurements, prepared)
+            ScoreWindows::new(&inputs.measurements, prepared, &|| {
+                ctx.cancel().is_cancelled()
+            })
         })
         .transpose()?;
     ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
-    let trials = ctx
-        .try_map(candidates.to_vec(), |fc| {
+    // A candidate's permit is taken on this thread for its whole batch, never
+    // inside a pool task (TD-23); its design runs on a serial child of this
+    // job, so it reserves nothing more and waits on no pool work.
+    let trials = crate::memory::try_map(
+        ctx,
+        candidates.to_vec(),
+        shared,
+        |_| candidate,
+        |fc| {
             // engine_inputs depends on the trial only through settings.xo.
             // Keep its zero-value fallback and ordering in the same helper.
             let mut config = inputs.config.clone();
             let selected: Vec<_> = groups.iter().map(|g| (g.clone(), fc)).collect();
             config.xo = resolve_xo(&config.groups, &selected, view.project_xo);
             let prepared = prepared.as_ref().expect("nonempty candidates");
-            let inner = Context::new(
-                1,
-                MemoryBudget::new(ctx.budget().total()),
-                Arc::new(NoProgress),
-                ctx.cancel().clone(),
-            );
+            let inner = ctx.child_serial();
             let result = design_prepared_for_xo(
                 &DesignRequest {
                     measurements: &inputs.measurements,
@@ -293,11 +382,8 @@ pub fn recommend_xo(
             ctx.cancel().check().map_err(|_| EngineError::Cancelled)?;
             progress.advance(1);
             Ok(scores)
-        })
-        .map_err(|e| match e {
-            MapError::Cancelled => EngineError::Cancelled,
-            MapError::Item { error, .. } => error,
-        })?;
+        },
+    )?;
     let mut table: Vec<_> = groups
         .into_iter()
         .filter_map(|g| {
@@ -335,6 +421,39 @@ pub fn recommend_xo(
 mod perf_tests {
     use super::*;
     use crate::tests::cases;
+    use std::sync::Arc;
+
+    #[test]
+    fn xo_replay_scores_match_fresh_preparation_bits() {
+        for name in ["dolby", "room_filters"] {
+            let case = crate::test_support::replay_case(name);
+            let prepared =
+                measurement::prepare(&case.measurements, &case.config, &Setup::new(&case.config))
+                    .unwrap();
+            let expected = xo_scores_prepared(
+                &case.design,
+                &case.measurements,
+                &case.config,
+                &prepared,
+                None,
+            );
+            let builds = measurement::SPECTRA_BUILT.with(|count| count.get());
+            let actual = xo_scores(&case.design, &case.measurements, &case.config);
+            assert_eq!(
+                measurement::SPECTRA_BUILT.with(|count| count.get()) - builds,
+                2,
+                "scoring builds its two windows, not another preparation"
+            );
+            assert_eq!(actual.len(), expected.len());
+            for ((role, a), (expected_role, b)) in actual.iter().zip(&expected) {
+                assert_eq!(role, expected_role);
+                assert_eq!(
+                    [a.flat, a.gd, a.late].map(f64::to_bits),
+                    [b.flat, b.gd, b.late].map(f64::to_bits)
+                );
+            }
+        }
+    }
 
     #[test]
     fn xo_preparation_is_candidate_independent() {
@@ -494,7 +613,7 @@ mod perf_tests {
                 }
             }
             let own_scores = xo_scores(&own, &case.measurements, &config);
-            let windows = ScoreWindows::new(&case.measurements, &prepared).unwrap();
+            let windows = ScoreWindows::new(&case.measurements, &prepared, &|| false).unwrap();
             let shared_scores = xo_scores_prepared(
                 &shared,
                 &case.measurements,

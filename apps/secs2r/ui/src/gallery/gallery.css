@@ -88,6 +88,7 @@ html[data-gallery-page] body {
 
 /* Frames fill their 1280 × 800 stage edge to edge. */
 .gal-specimen__stage:has(> .app-frame),
+.gal-specimen__stage:has(> .app-start),
 .gal-specimen__stage:has(> .gal-fill) {
   padding: 0;
 }

@@ -62,7 +62,7 @@ jobs:
     name: fmt + clippy + policy gates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # upstream.py check-tree compares against UPSTREAM.toml's commit.
           fetch-depth: 0
@@ -79,7 +79,7 @@ jobs:
           rustup target add x86_64-pc-windows-msvc
           rustup show active-toolchain
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: lint
 
@@ -113,7 +113,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-15]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Linux packages for Tauri and ALSA
         if: runner.os == 'Linux'
@@ -127,7 +127,7 @@ jobs:
           rustup toolchain install
           rustup show active-toolchain
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: test
 
@@ -164,7 +164,7 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: ALSA for cpal (the CLI links secs-sys)
         if: runner.os == 'Linux'
@@ -175,11 +175,11 @@ jobs:
           rustup toolchain install
           rustup show active-toolchain
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: integrity
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
 
@@ -231,18 +231,18 @@ jobs:
         engine: [xt, original]
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install the pinned toolchain (rust-toolchain.toml)
         run: |
           rustup toolchain install
           rustup show active-toolchain
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: test
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
 
@@ -262,7 +262,7 @@ jobs:
         run: cargo test -p secs-filters --test eqapo_playback --locked -- --ignored --nocapture
 
       # The exported folders and every engine log, to read a failure from.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:
           name: eqapo-playback-${{ matrix.engine }}
@@ -283,9 +283,9 @@ jobs:
       run:
         working-directory: apps/secs2r/ui
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           cache: npm
@@ -307,7 +307,7 @@ jobs:
         working-directory: .
         run: rustup toolchain install
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: bindings
 
@@ -331,9 +331,9 @@ jobs:
       run:
         working-directory: apps/secs2r/ui
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           cache: npm
@@ -352,7 +352,7 @@ jobs:
       - name: Screenshot every specimen
         run: npm run gallery:shots
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: gallery-shots
@@ -381,7 +381,7 @@ jobs:
             target: ""
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Linux packages for Tauri and ALSA
         if: runner.os == 'Linux'
@@ -398,11 +398,11 @@ jobs:
             rustup target add aarch64-apple-darwin x86_64-apple-darwin
           fi
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: bundle-${{ matrix.name }}
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
           cache: npm
@@ -421,7 +421,7 @@ jobs:
           node ui/node_modules/@tauri-apps/cli/tauri.js "${args[@]}"
 
       # Windows runners have `python`, not always `python3`.
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.13"
 
@@ -429,7 +429,7 @@ jobs:
         shell: bash
         run: python .github/scripts/collect_bundles.py --name "${{ matrix.name }}" --target "${{ matrix.target }}" --version "0.0.0-ci.${{ github.run_number }}" --out dist
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: installers-${{ matrix.name }}
           path: dist/*
@@ -440,7 +440,7 @@ jobs:
     name: rustdoc (deny warnings)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Linux packages for Tauri and ALSA
         run: |
@@ -451,7 +451,7 @@ jobs:
       - name: Install the pinned toolchain (rust-toolchain.toml)
         run: rustup toolchain install
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: docs
 
@@ -464,30 +464,32 @@ jobs:
     name: cargo-deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install the pinned toolchain (rust-toolchain.toml)
         run: rustup toolchain install
 
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
-          tool: cargo-deny
+          tool: cargo-deny@0.20.2
 
       - name: cargo deny check
         run: cargo deny --all-features check
 
+  # The check name stays as the default branch's "Required checks" ruleset
+  # knows it; the job also runs secs-project's parsers (audit #92 TD-60).
   miri:
     name: Miri (secs-jos, secs-mdat, secs-dirac)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install the pinned nightly with Miri
         run: |
           rustup toolchain install "$NIGHTLY" --profile minimal --component miri,rust-src
           cargo "+$NIGHTLY" miri setup
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: miri
 
@@ -495,6 +497,15 @@ jobs:
       # they run natively in the test job.
       - name: cargo miri test
         run: cargo "+$NIGHTLY" miri test --locked -p secs-jos -p secs-mdat -p secs-dirac
+
+      # secs-project reads untrusted .secs text and IR WAVs. Its pure parsers
+      # run under Miri: the JSON reader (unit tests) and the WAV readers on
+      # hand-built byte fixtures. The store tests touch the file system and run
+      # natively in the test job (audit #92 TD-60).
+      - name: cargo miri test (secs-project parsers)
+        run: |
+          cargo "+$NIGHTLY" miri test --locked -p secs-project --lib
+          cargo "+$NIGHTLY" miri test --locked -p secs-project --test golden -- wav_reader truncated_wav_data
 
   fuzz:
     name: fuzz (parsers, 60 s per target)
@@ -505,16 +516,16 @@ jobs:
       run:
         working-directory: fuzz
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install the pinned nightly
         run: rustup toolchain install "$NIGHTLY" --profile minimal
 
-      - uses: taiki-e/install-action@v2
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-fuzz@0.13.1
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           shared-key: fuzz
           workspaces: fuzz
@@ -524,15 +535,28 @@ jobs:
       - name: Build the fuzz targets
         run: cargo "+$NIGHTLY" fuzz build --target "$FUZZ_TARGET"
 
-      # Seeds: the bundled REW template, the mdat golden blobs and the
-      # synthetic Dirac Live project (sample projects hold personal data).
+      # Seeds per target, in the format each parser reads (audit #92 TD-60):
+      # the bundled REW template and the mdat golden blobs for the mdat and
+      # jos parsers, the synthetic Dirac Live project, the service golden
+      # .secs files and the project WAV goldens (the real sample projects
+      # hold personal data). An unknown target fails here so it gets seeds.
       - name: Run every target
         run: |
           for target in $(cargo "+$NIGHTLY" fuzz list); do
             mkdir -p "corpus/$target"
-            cp ../src/secs/rew_mdat/template_1.mdat "corpus/$target/template"
-            cp ../oracle/goldens/mdat/*.bin "corpus/$target/"
-            cp ../crates/secs-dirac/tests/data/*.liveproject "corpus/$target/"
+            case "$target" in
+              jos_parse|mdat_load|mdat_build_template)
+                cp ../src/secs/rew_mdat/template_1.mdat "corpus/$target/template"
+                cp ../oracle/goldens/mdat/*.bin "corpus/$target/" ;;
+              liveproject_parse)
+                cp ../crates/secs-dirac/tests/data/*.liveproject "corpus/$target/" ;;
+              project_load_text)
+                cp ../oracle/goldens/service_config/*.secs "corpus/$target/" ;;
+              wav_read)
+                cp ../oracle/goldens/project/wav_*.wav "corpus/$target/" ;;
+              *)
+                echo "::error::fuzz target $target has no seeds in ci.yml"; exit 1 ;;
+            esac
             echo "::group::$target"
             cargo "+$NIGHTLY" fuzz run --target "$FUZZ_TARGET" "$target" "corpus/$target" -- \
               -max_total_time=60 -rss_limit_mb=2048 -max_len=262144
@@ -541,7 +565,7 @@ jobs:
 
       - name: Keep crashing inputs
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: fuzz-artifacts
           path: fuzz/artifacts

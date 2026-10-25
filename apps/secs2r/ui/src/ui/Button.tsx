@@ -5,9 +5,9 @@ import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from "react";
 import { Icon, Spinner, type IconName } from "./Icon";
 
 /** `go` moves on to the next step from a result, beside actions that redo it; it reads apart from the primary by colour. */
-export type ButtonVariant = "primary" | "secondary" | "quiet" | "danger" | "go";
+type ButtonVariant = "primary" | "secondary" | "quiet" | "danger" | "go";
 
-export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: ButtonVariant | undefined;
   size?: "md" | "sm" | undefined;
   icon?: IconName | undefined;

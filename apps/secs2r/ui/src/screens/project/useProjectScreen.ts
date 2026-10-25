@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { RECENT_PROJECTS_MAX } from "../../ipc/bindings/rules";
 import { IpcFailure } from "../../ipc/client";
 import { useResource, useSession } from "../../state/react";
 import type { ProjectDialog, ProjectDialogsActions, ProjectDialogsView, UnsavedReason } from "./types";
@@ -18,15 +19,15 @@ export function useProjectScreen(close: () => Promise<void>) {
     });
   };
   const guard = (reason: UnsavedReason, work: () => Promise<void>) => {
-    if (session.stores.project.getSnapshot()?.dirty) {
+    if (session.hasPendingProjectEdits() || session.stores.project.getSnapshot()?.dirty) {
       waiting.current = work;
       show({ kind: "unsaved", reason, fileName: project?.name || null });
     } else perform(work);
   };
   async function remember(path: string) {
-    const current = session.stores.appSettings.getSnapshot();
-    if (!current || !path) return;
-    await session.call({ method: "app_settings_set", params: { settings: { ...current, recent_projects: [path, ...current.recent_projects.filter((p) => p !== path)].slice(0, 20) } } });
+    if (!path) return;
+    // Built on the latest settings when sent, so a pending edit is not undone (TD-68).
+    await session.writers.app.edit((latest) => ({ recent_projects: [path, ...latest.recent_projects.filter((p) => p !== path)].slice(0, RECENT_PROJECTS_MAX) }));
   }
   async function save(as = false): Promise<boolean> {
     let path = as ? "" : session.stores.project.getSnapshot()?.path;
@@ -42,9 +43,7 @@ export function useProjectScreen(close: () => Promise<void>) {
   }
   async function tutorial() {
     previous.current = session.stores.project.getSnapshot()?.path || null;
-    await session.monitor(false);
-    await session.call({ method: "project_new", params: { path: "", preset: "7.1.4", sub_count: 3, sample: true, tutorial: true } });
-    await session.configure({ method: "mock" });
+    await session.startTutorial();
     session.navigate("system"); show(null);
   }
   const actions: ProjectDialogsActions = {
@@ -85,10 +84,6 @@ export function useProjectScreen(close: () => Promise<void>) {
         await session.call({ method: "project_new", params: { path: "", preset: "2.0", sub_count: 0, sample: false, tutorial: false } });
         session.navigate("system");
       }
-    }),
-    restartTutorial: () => perform(async () => {
-      await session.call({ method: "project_new", params: { path: "", preset: "7.1.4", sub_count: 3, sample: true, tutorial: true } });
-      await session.configure({ method: "mock" }); session.navigate("system");
     }),
   };
 }

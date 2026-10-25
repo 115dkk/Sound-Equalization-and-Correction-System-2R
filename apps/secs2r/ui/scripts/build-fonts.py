@@ -12,8 +12,8 @@ which src/fonts/fonts.test.ts checks against the files and the catalogs.
         --sarasa-dir /path/with/SarasaMonoK-{Regular,SemiBold,Bold}.ttf \
         --orbit /path/to/Orbit-Regular.ttf
 
-Needs fontTools with woff2 support (`pip install "fonttools[woff]"`, which
-brings brotli). Sources and licences are listed in src/fonts/README.md.
+Verified with `pip install "fonttools[woff]==4.60.1" "brotli==1.1.0"`.
+Sources, extraction timestamps and licences are in src/fonts/README.md.
 
 Pretendard is copied unchanged: its licence reserves the font name, and the
 official variable woff2 already is a web build. Sarasa Mono K and Orbit are

@@ -25,7 +25,7 @@
 | 마이크 보정 알약: 알 수 없음 / 불러온 파일 없음 / 파일 이름 | `connect.mic_cal` | 없음 | P30 |
 | 출력 드라이버(시스템의 측정 출력 장치) | `connect.output_device` | 없음 | P30 |
 | 샘플레이트(읽기 전용) | `connect.sample_rate` | 없음 | P30 |
-| 스윕 길이 64k…4M "길이 · 초", 기본 256k | `connect.sweep_length` | 없음 | P30 |
+| 스윕 길이 64k…4M "길이 · 초", 기본 256k(측정·가져오기의 측정 옵션에서만 정함, P58) | `measure.options.sweep` | 없음 | P30, P86 |
 | REW가 떠 있는데 장치 목록이 비면 다시 읽기(2초마다, 15번) | `connect.input_device`, `connect.devices.retry` (다시 읽기는 `status_watch`의 `MeasureStatus`, P33) | 없음 | P30 |
 | 장치 공유: 자동 / 독점 / 공유(자체 측정의 장치 카드에서 펼침) | `connect.devices.details`, `connect.share_mode` | 없음 | P30, P58 |
 | 진행 조건: REW 실행과 Pro("REW 를 켜 주세요.") | `connect.rew.hint`, `connect.rew.launch` | 없음 | P30 |
@@ -84,7 +84,7 @@
 |---|---|---|---|
 | 배치 카드 1 / 9 / 13 / 17(작은 배치도, "위치 N곳"), 다른 카드를 누르면 측정 지움 | `system.layout`, `system.arrangement`, `system.arrangement.<n>`, `system.confirm` | U5 | P30 |
 | 측정 배치도: 스크린, 1 m 원, 의자·소파, 머리, 30 cm 축척, 번호 표식(위치 1, ±20 cm, 완료·지금) | `system.arrangement.map`, `system.arrangement.map.position.<n>` | 없음 | P30 |
-| 측정 시작 지연: 끔 / 5 / 10 / 15초 | `system.start_delay` | 없음 | P30 |
+| 측정 시작 지연: 끔 / 5 / 10 / 15초(측정·가져오기의 측정 옵션에서만 정함, P58) | `measure.options.delay` | 없음 | P30, P86 |
 | 위치당 스윕 | `system.sweeps` | 없음 | P30 |
 | 예상 시간: 위치당과 전체(`position_seconds`) | `system.estimate` | 없음 | P30 |
 | 타이밍 기준: 음향(기준 스피커) / 루프백(케이블) / 없음. REW로 측정할 때만, '고급' 안에 | `system.timing.advanced`, `system.timing` | U15 | P30 |
@@ -105,7 +105,7 @@
 | [이 위치 측정] (잰 위치면 다시 측정, 모두 끝나면 끔): 카운트다운, 프로젝트 경로, 계획 확인, 측정 | `measure.position.start`, `measure.next`, `measure.path.note` | 모두 측정하면 끄는 대신 주 동작이 "보정으로"(`measure.next`). 경로가 없으면 `~/Documents/SECS/측정 …`을 몰래 만들지 않고 저장 대화상자를 먼저 엶(작업서 P31a, 편차 번호 없음) | P31a |
 | [측정 취소]: 카운트다운은 바로, 스윕은 지금 스윕 뒤 멈춤 | `measure.cancel` | U8: 트레이의 `jobs.cancel.measure`도 같은 잡을 멈춤 | P31a |
 | [마지막 위치 다시]: 마지막으로 끝낸 위치를 지움 | `measure.redo`, `measure.clear`, `measure.clear.confirm`, `measure.clear.undo` | U5: 확인 뒤 지우고 알림에서 되돌림 | P31a |
-| 옵션: 시작 지연, 스윕 길이, 반복 1/2/4/8(REW에서 음향 기준이 아닐 때만) | `measure.options.delay`, `measure.options.sweep`, `measure.options.repeats` | U15 | P31a |
+| 옵션: 시작 지연, 스윕 길이(1절과 4절의 같은 설정도 이곳에서만 정함, P58), 반복 1/2/4/8(REW에서 음향 기준이 아닐 때만) | `measure.options.delay`, `measure.options.sweep`, `measure.options.repeats` | U15 | P31a, P86 |
 | [mdat 불러오기] | `measure.mdat.load` | — | P31a |
 | [파일 관리] | `measure.files.open` | — | P31a |
 | [데모 데이터] (튜토리얼만) | `measure.sample.load` | — | P31a |
@@ -281,6 +281,7 @@
 
 - 시스템(구성 2 → 배치 4)을 연결·점검(장치 1 → 레벨 3)보다 먼저 둡니다. 각 단계 안에서는 업스트림 순서를 지킵니다.
 - `system.layout_next`와 `connect.level_next`는 같은 단계 안의 영역 소개이므로 `act`에서 `look`으로 바꿉니다. 없는 다음 화면 단추를 만들지 않습니다.
+- 업스트림 327(배치 단계의 측정 옵션 카드)은 모의 경로에 없는 타이밍 기준 대신 측정 시작 지연을 소개합니다. 시작 지연은 측정·가져오기에서만 정하므로(P58) 그 화면의 측정 옵션 카드를 가리키는 측정 단계의 첫 퀘스트 `measure.delay`로 둡니다. 단계 안의 업스트림 순서는 그대로입니다.
 - `connect.retry`는 실제 REW를 켜는 대신 화면의 모의 측정을 선택합니다. 장치·마이크 소개는 모의 경로에 없는 REW 카드 대신 `connect.method`를 가리킵니다.
 - `plant_wrong_out`은 App의 튜토리얼 준비와 재시작에서 수행합니다. SW3 출력이 6이고 16이 비었을 때만 16으로 바꿉니다. 퀘스트는 실제 `setOutput` 액션으로 고칩니다.
 - 보정 탭은 호스트의 `selectTab`으로 엽니다. BA 고급은 기존 `CalibrateScreen.initial.editSub`로 SW3을 선택하여 엽니다. 마크업과 스타일은 바꾸지 않습니다.
@@ -295,7 +296,6 @@
 | system.output | system | act | system.patch.SW3.out | 308 |
 | system.layout_next | system | look | system.layout | 314 |
 | system.layout | system | look | system.arrangement.map | 326 |
-| system.timing | system | look | system.start_delay | 327 |
 | system.single | system | look | system.arrangement.1 | 329 |
 | system.next | system | act | system.next | 332 |
 | connect.sidebar | connect | look | frame.status, frame.help, frame.project | 288 |
@@ -307,6 +307,7 @@
 | connect.master | connect | look | connect.level.master, connect.level.play_all | 316 |
 | connect.levels | connect | act | connect.level.play_all, connect.level.skip | 317 |
 | connect.next | connect | act | frame.rail.measure | 324 |
+| measure.delay | measure | look | measure.options | 327 |
 | measure.positions | measure | look | measure.positions | 334 |
 | measure.sample | measure | act | measure.sample.load | 335 |
 | measure.graph | measure | look | measure.plot | 339 |

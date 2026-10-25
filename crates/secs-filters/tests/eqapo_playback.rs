@@ -782,10 +782,9 @@ fn exported_configs_play_as_designed() {
             chain: &case.chain,
             mimo: case.mimo.as_ref(),
             mode: "mixed",
-            ultra_ms: 200.0,
+            note: &playback_note(case.chain.latency_ms, case.mimo.as_ref()),
             label: "playback",
             latency_ms: case.chain.latency_ms,
-            rc_hi_hz: 100.0,
             rc_pieces: &[],
             stamp: "2026-10-23 00:00",
         };
@@ -1091,10 +1090,9 @@ fn lowrate_playback_case_writes_the_as_written_fir_samples() {
         chain: &case.chain,
         mimo: Some(mimo),
         mode: "mixed",
-        ultra_ms: 200.0,
+        note: &playback_note(case.chain.latency_ms, case.mimo.as_ref()),
         label: "playback",
         latency_ms: case.chain.latency_ms,
-        rc_hi_hz: 100.0,
         rc_pieces: &[],
         stamp: "2026-10-23 00:00",
     };
@@ -1261,4 +1259,9 @@ fn excitation_favours_the_low_band_and_its_level_follows_the_paths() {
     assert_eq!(fitted_rms(1e-6), EXCITATION_RMS_MAX);
     assert_eq!(fitted_rms(0.5), EXCITATION_RMS);
     assert!((fitted_rms(0.05) - 0.1).abs() < 1e-12);
+}
+
+fn playback_note(latency: f64, mimo: Option<&MimoPaths>) -> String {
+    let mimo = mimo.and_then(|paths| secs_camilla::note::MimoNote::for_paths(paths, 0));
+    secs_camilla::note::eqapo_note("mixed", latency, 100.0, mimo.as_ref())
 }

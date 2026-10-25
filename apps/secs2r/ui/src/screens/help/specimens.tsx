@@ -1,7 +1,7 @@
 // 도움말 over each step (a different tab on each), a search hit, and the
 // smallest window. The panel sits in the frame's aside slot.
 import type { FrameModel, StepId } from "../../app/model";
-import { initialJobs } from "../../app/jobs/jobStore";
+import { initialLedger } from "../../state/jobLedger";
 import { FrameBox } from "../../gallery/frameSpecimens";
 import type { SpecimenDef } from "../../gallery/Specimen";
 import { useLocale, useT } from "../../i18n/react";
@@ -56,7 +56,7 @@ function HelpSpecimen({ step, tab, search }: { step: StepId; tab?: HelpTabId; se
     />
   );
   return (
-    <FrameBox frame={helpFrame(step)} jobs={initialJobs} aside={panel} {...(step === "export" ? { header: exportHeader(exportReady, noopExportActions, t) } : {})}>
+    <FrameBox frame={helpFrame(step)} jobs={initialLedger} aside={panel} {...(step === "export" ? { header: exportHeader(exportReady, noopExportActions, t) } : {})}>
       <Behind step={step} />
     </FrameBox>
   );

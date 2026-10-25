@@ -5,20 +5,25 @@ import { JobTray } from "./app/jobs/JobTray";
 import { errorText } from "./app/jobs/jobText";
 import { useJobs } from "./app/jobs/useJobs";
 import { PrefsScope, usePrefs, type Prefs } from "./app/prefs";
+import { SettingsFailed } from "./app/SettingsFailed";
 import { canLeave, type StepId } from "./app/model";
 import type { RecoveryAction } from "./app/StepHeader";
 import { useFrameModel } from "./app/useFrameModel";
 import { pickLocale } from "./i18n";
 import { useT } from "./i18n/react";
-import { IpcProvider, type Ipc } from "./ipc/context";
+import type { AppSettings } from "./ipc/bindings/AppSettings";
+import type { IpcError } from "./ipc/bindings/IpcError";
+import type { Ipc } from "./ipc/context";
 import { createTauriIpc } from "./ipc/tauri";
 import { createSession } from "./state/session";
 import { SessionProvider, useHost, useResource, useSession } from "./state/react";
 import { useWindowClose } from "./state/closing";
+import { useAppSettingsLoad } from "./state/useAppSettingsLoad";
 import { Button, EmptyState, ErrorNotice } from "./ui";
 import { SystemScreen, systemHeader } from "./screens/system/SystemScreen";
 import { ConnectScreen, connectHeader, micInput } from "./screens/connect/ConnectScreen";
 import { MeasureScreen, measureHeader } from "./screens/measure/MeasureScreen";
+import { isRunning } from "./screens/measure/types";
 import { CalibrateScreen, calibrateHeader } from "./screens/calibrate/CalibrateScreen";
 import { ExportScreen, exportHeader } from "./screens/export/ExportScreen";
 import { useSystemScreen } from "./screens/system/useSystemScreen";
@@ -32,7 +37,6 @@ import { HelpPanel } from "./screens/help/HelpPanel";
 import { MicMeterPanel } from "./screens/connect/MicMeterPanel";
 import { TutorialLayer } from "./screens/tutorial/Tutorial";
 import { tutorialQuests, type TutorialView } from "./screens/tutorial/quests";
-import { wrongOutput } from "./screens/tutorial/questHost";
 
 function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
   const session = useSession();
@@ -42,7 +46,7 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
   const info = useResource("bootstrap");
   const project = useResource("project");
   const failure = useSyncExternalStore(session.errors.subscribe, session.errors.getSnapshot);
-  const jobs = useJobs(session.ipc);
+  const jobs = useJobs();
   const [helpOpen, setHelpOpen] = useState(false);
   const [meterOpen, setMeterOpen] = useState(false);
   const [settingFocus, setSettingFocus] = useState<{ step: StepId; selector: string; fallback?: string | undefined } | null>(null);
@@ -81,6 +85,15 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
   }, [settingFocus, host.current]);
   const measure = useMeasureScreen();
   const goToMeasurements = useCallback(() => navigateToSetting("measure", '[data-ui="measure.positions"] [aria-current="true"]', '[data-ui="measure.positions"] button'), [navigateToSetting]);
+  // A project warning's 다시 측정: that position picked (never during a device
+  // job) and its measure action focused; on the import path, the import.
+  const measureJob = measure.view?.job ?? null;
+  const remeasure = useCallback((position: number) => {
+    if (!isRunning(measureJob)) measure.actions.selectPosition(position);
+    navigateToSetting("measure", '[data-ui="measure.position.start"]', '[data-ui="measure.mdat.load"]');
+  }, [measureJob, measure.actions, navigateToSetting]);
+  // The output-number warnings' action: 시스템 with the patch's first output focused.
+  const openPatch = useCallback(() => navigateToSetting("system", '[data-ui^="system.patch."][data-ui*=".out"]', '[data-ui="system.patch.renumber"]'), [navigateToSetting]);
   const calibrate = useCalibrateScreen(goToMeasurements);
   const exporting = useExportScreen();
   const { model, navigate } = useFrameModel({ system: system.view, connect: connect.view, measure: measure.view, calibrate: calibrate.view, export: exporting.view });
@@ -139,22 +152,13 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, []);
-  const [tutorialReady, setTutorialReady] = useState(false);
+  const tutorialReady = useSyncExternalStore(session.tutorialReady.subscribe, session.tutorialReady.getSnapshot);
   const preparing = useRef(false);
   useEffect(() => {
-    if (!project?.tutorial) { setTutorialReady(false); preparing.current = false; return; }
+    if (!project?.tutorial) { preparing.current = false; return; }
     if (!ready || !system.view || !connect.view || !calibrate.view || !exporting.view || preparing.current || tutorialReady) return;
     preparing.current = true;
-    session.run(async () => {
-      const index = tutorialStart && !tutorialStart.startsWith("system.") ? null : wrongOutput(session.stores.config.getSnapshot()!);
-      if (index !== null) {
-        await session.call({ method: "config_set_speaker", params: { index, role: null, size: null, band_index: 0, out: 16, pol: null } });
-      }
-      // The retry quest asks the user to choose the silent mock path. No real
-      // device or REW is opened as a side effect of a tutorial card.
-      await session.configure({ method: tutorialStart && !tutorialStart.startsWith("system.") && tutorialStart !== "connect.retry" ? "mock" : "none" });
-      setTutorialReady(true);
-    });
+    session.run(() => session.startTutorial(tutorialStart ? { quest: tutorialStart } : {}));
   }, [project?.tutorial, ready, system.view, connect.view, measure.view, calibrate.view, exporting.view, tutorialReady, tutorialStart, session]);
   const quests = useMemo(() => tutorialQuests({ system: system.actions, connect: connect.actions, measure: measure.actions, calibrate: calibrate.actions, goTo: navigate }),
     [system.actions, connect.actions, measure.actions, calibrate.actions, navigate]);
@@ -174,7 +178,7 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
   const body = <>
     <AppFrame model={model} onNavigate={navigate} primary={header.primary} headerStatus={header.status} recovery={recovery}
       projectActions={dialogs.menu} onHelp={() => setHelpOpen((open) => !open)}
-      version={info ? { version: info.version, prerelease: info.prerelease } : null} tray={<JobTray api={jobs} />}
+      version={info ? { version: info.version, prerelease: info.prerelease } : null} tray={<JobTray api={jobs} />} onRemeasure={remeasure} onOpenPatch={openPatch}
       aside={helpOpen || meterOpen ? <>
         {helpOpen && <HelpPanel view={{ step: host.current, tutorial: project?.tutorial ?? false }} actions={{ close: () => setHelpOpen(false), startTutorial: dialogs.offerTutorial }} />}
         {meterOpen && <div className="app-mic"><MicMeterPanel id="app.mic" floating view={{ input: connect.view ? micInput(t, connect.view) : null, monitor: host.monitor, reading: host.meter }} onClose={() => setMeterOpen(false)} /></div>}
@@ -189,38 +193,51 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
     stepOpen={(_view, step) => canLeave(model.steps, step)}
     initial={tutorialStart ? { index: Math.max(0, kept.findIndex((q) => q.id === tutorialStart)) } : undefined}
     actions={{ goTo: navigate, finish: dialogs.finishTutorial, restart: () => {
-      setTutorialReady(false);
       preparing.current = true;
       session.run(async () => {
-        await session.monitor(false);
-        await session.call({ method: "project_new", params: { path: "", preset: "7.1.4", sub_count: 3, sample: true, tutorial: true } });
-        await session.configure({ method: "none" });
-        const index = wrongOutput(session.stores.config.getSnapshot()!);
-        if (index !== null) await session.call({ method: "config_set_speaker", params: { index, role: null, size: null, band_index: 0, out: 16, pol: null } });
+        await session.startTutorial();
         session.navigate("system");
-        setTutorialReady(true);
       });
     } }}>{body}</TutorialLayer> : body;
 }
 
 function Preferences({ root, initialPrefs, tutorialStart }: { root: boolean; initialPrefs?: Prefs | undefined; tutorialStart?: string | undefined }) {
   const session = useSession();
-  const settings = useResource("appSettings");
+  const { state, retry } = useAppSettingsLoad();
+  // The failure a retry is reading past: the panel stays (its button busy)
+  // instead of the window going blank while the load state is loading again.
+  const [retrying, setRetrying] = useState<IpcError | null>(null);
   useEffect(() => { void session.start(); return () => session.dispose(); }, [session]);
-  if (!settings) return null;
+  const failed = state.status === "failed" ? state.error : state.status === "loading" ? retrying : null;
+  if (failed) {
+    // No settings yet: the defaults the window has before they arrive. The
+    // keys give the loaded settings a fresh scope instead of these defaults.
+    const defaults: Prefs = initialPrefs ?? { locale: pickLocale(navigator.languages), theme: "system", accent: "default" };
+    return <PrefsScope key="settings-failed" initial={defaults} root={root}>
+      <SettingsFailed error={failed} busy={state.status === "loading"} onRetry={() => {
+        setRetrying(failed);
+        void retry().finally(() => setRetrying(null));
+      }} />
+    </PrefsScope>;
+  }
+  if (state.status !== "ready") return null;
+  const settings = state.value;
   const initial: Prefs = initialPrefs ?? { locale: settings.language === "en" ? "en" : settings.language === "ko" ? "ko" : pickLocale(navigator.languages), theme: settings.theme, icon: settings.icon, skin: settings.skin, accent: "default" };
-  return <PrefsScope initial={initial} root={root} onChange={(prefs) => {
-    const current = session.stores.appSettings.getSnapshot();
-    if (!current) return;
-    const icon = prefs.icon ?? current.icon;
-    if (current.language !== prefs.locale || current.theme !== prefs.theme || current.icon !== icon || current.skin !== (prefs.skin ?? "default")) {
-      session.run(() => session.call({ method: "app_settings_set", params: { settings: { ...current, language: prefs.locale, theme: prefs.theme, icon, skin: prefs.skin ?? "default" } } }));
-    }
+  return <PrefsScope key="settings" initial={initial} root={root} onChange={(patch) => {
+    // Only the changed display fields go to the app settings writer, which
+    // builds them on the latest settings (TD-68); the scope shows them once
+    // the service accepts. The tutorial accent stays in this window.
+    const edit: Partial<AppSettings> = {};
+    if (patch.locale !== undefined) edit.language = patch.locale;
+    if (patch.theme !== undefined) edit.theme = patch.theme;
+    if (patch.icon !== undefined) edit.icon = patch.icon;
+    if (patch.skin !== undefined) edit.skin = patch.skin;
+    return Object.keys(edit).length > 0 ? session.writers.app.edit(edit) : undefined;
   }}><Shell tutorialStart={tutorialStart} /></PrefsScope>;
 }
 
 export function App({ ipc: supplied, root = true, initialPrefs, tutorialStart }: { ipc?: Ipc; root?: boolean; initialPrefs?: Prefs; /** Gallery: first quest to show after preparing the tutorial project. */ tutorialStart?: string } = {}) {
   const ipc = useMemo(() => supplied ?? createTauriIpc(), [supplied]);
   const session = useMemo(() => createSession(ipc), [ipc]);
-  return <IpcProvider value={ipc}><SessionProvider value={session}><Preferences root={root} initialPrefs={initialPrefs} tutorialStart={tutorialStart} /></SessionProvider></IpcProvider>;
+  return <SessionProvider value={session}><Preferences root={root} initialPrefs={initialPrefs} tutorialStart={tutorialStart} /></SessionProvider>;
 }

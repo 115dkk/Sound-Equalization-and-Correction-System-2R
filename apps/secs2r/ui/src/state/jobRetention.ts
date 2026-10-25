@@ -1,6 +1,8 @@
 import type { JobStatus } from "../ipc/bindings/JobStatus";
+import { JOB_HISTORY_MAX } from "../ipc/bindings/rules";
 
-export const TERMINAL_JOB_LIMIT = 32;
+/** Finished jobs the service keeps beside the active ones (ADR 0009). */
+export const TERMINAL_JOB_LIMIT = JOB_HISTORY_MAX;
 export const isActiveJob = (status: JobStatus) => status === "running" || status === "cancel_requested";
 
 /** Job ids are allocated monotonically, but events can arrive out of order.
@@ -8,7 +10,7 @@ export const isActiveJob = (status: JobStatus) => status === "running" || status
  * accepted local start reply. Known active jobs always take precedence. */
 export type JobRetention = { firstSeen: number | null; retiredThrough: number };
 export const initialRetention: JobRetention = { firstSeen: null, retiredThrough: 0 };
-export const wasRetired = (retention: JobRetention, id: number) =>
+const wasRetired = (retention: JobRetention, id: number) =>
   retention.firstSeen !== null && id >= retention.firstSeen && id <= retention.retiredThrough;
 
 /** Input order is observation order; a newly finished job moves to the end. */

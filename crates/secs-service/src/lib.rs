@@ -14,14 +14,17 @@ mod curves;
 pub mod dirac_import;
 mod export;
 pub mod export_folder;
+mod export_run;
 mod host;
 mod ipc;
 mod jobs;
 pub mod mdat_import;
 pub mod measure;
 mod measurement;
+mod measurement_file;
 mod monitor;
 mod project_edit;
+mod results;
 mod session;
 mod settings_edit;
 mod watch;
@@ -36,7 +39,6 @@ use secs_types::ipc::{
     BootstrapInfo, Envelope, ErrorCode, IpcError, JobEvent, Platform, Request, UpstreamBase,
 };
 
-use calibration::Results;
 pub use clock::LocalTime;
 use jobs::JobRegistry;
 use session::Session;
@@ -279,6 +281,8 @@ pub(crate) enum ServiceError {
     ProjectNotOpen,
     #[error("tutorial sessions cannot write project data")]
     TutorialBlocked,
+    #[error("{0}")]
+    InvalidRequest(String),
     #[error("project I/O: {0}")]
     Project(String),
 }
@@ -302,6 +306,9 @@ impl From<ServiceError> for IpcError {
             ServiceError::TutorialBlocked => {
                 IpcError::new(ErrorCode::TutorialBlocked, value.to_string())
             }
+            ServiceError::InvalidRequest(_) => {
+                IpcError::new(ErrorCode::InvalidRequest, value.to_string())
+            }
             ServiceError::Project(_) => IpcError::new(ErrorCode::ProjectIo, value.to_string()),
         }
     }
@@ -312,27 +319,26 @@ impl From<ServiceError> for IpcError {
 pub struct Service {
     deps: Deps,
     session: Arc<Mutex<Session>>,
-    results_state: Arc<Mutex<Results>>,
     app_settings: Arc<Mutex<secs_types::ipc::AppSettings>>,
     jobs: JobRegistry,
     level: monitor::LevelState,
     status_watch: watch::WatchState,
-    rew_license: Arc<Mutex<Option<bool>>>,
+    rew: measure::RewLink,
 }
 
 impl Service {
     /// Creates a service from platform dependency factories.
     pub fn new(deps: Deps) -> Self {
         let app_settings = project_edit::load_app_settings(deps.app_settings_path.as_deref());
+        let rew = measure::RewLink::new(&deps);
         Self {
             deps,
             session: Arc::new(Mutex::new(Session::default())),
-            results_state: Arc::new(Mutex::new(Results::default())),
             app_settings: Arc::new(Mutex::new(app_settings)),
             jobs: JobRegistry::default(),
             level: monitor::LevelState::default(),
             status_watch: watch::WatchState::default(),
-            rew_license: Arc::new(Mutex::new(None)),
+            rew,
         }
     }
 

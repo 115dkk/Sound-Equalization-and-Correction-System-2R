@@ -1,8 +1,7 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use secs_project::{
     DspProfile, Project, PyJson, SpeakerConfig, TargetCurve, TargetJson, calibration_from_project,
@@ -11,6 +10,7 @@ use secs_project::{
 use secs_types::calibration::{CalibrationSettings, mode_params};
 use secs_types::ipc::*;
 use secs_types::role::{role_group, role_label};
+use secs_types::rules::{ARRANGEMENT_COUNTS, CONFIG_GROUPS, RECENT_PROJECTS_MAX};
 use serde::{Deserialize, Serialize};
 
 use crate::measure::json::JsonExt;
@@ -19,32 +19,6 @@ use crate::{Service, lock, session};
 
 const FILE_LIMIT: u64 = 1024 * 1024;
 const APP_SETTINGS_VERSION: u32 = 1;
-const ARRANGEMENTS: [usize; 4] = [1, 9, 13, 17];
-const CONFIG_GROUP_ORDER: [&str; 9] = [
-    "프론트",
-    "센터",
-    "서브",
-    "서라운드",
-    "백",
-    "와이드",
-    "탑",
-    "하이트",
-    "기타",
-];
-
-fn group_id(key: &str) -> &'static str {
-    match key {
-        "프론트" => "front",
-        "센터" => "center",
-        "서브" => "sub",
-        "서라운드" => "surround",
-        "백" => "back",
-        "와이드" => "wide",
-        "탑" => "top",
-        "하이트" => "height",
-        _ => "other",
-    }
-}
 
 fn invalid(field: &str, detail: impl Into<String>) -> IpcError {
     IpcError::new(ErrorCode::InvalidRequest, detail).with_param("field", field)
@@ -115,17 +89,17 @@ fn config_result(project: &Project) -> ConfigResult {
         }
     }
     let mut groups = Vec::new();
-    for key in CONFIG_GROUP_ORDER {
+    for (key, id) in CONFIG_GROUPS {
         if let Some((_, speaker_indices)) = grouped.iter().find(|(name, _)| name == key) {
             groups.push(ConfigGroup {
-                id: group_id(key).into(),
+                id: id.into(),
                 key: key.to_owned(),
                 speaker_indices: speaker_indices.clone(),
             });
         }
     }
     for (key, speaker_indices) in grouped {
-        if !CONFIG_GROUP_ORDER.contains(&key.as_str()) {
+        if !CONFIG_GROUPS.iter().any(|(known, _)| *known == key) {
             groups.push(ConfigGroup {
                 id: "other".into(),
                 key,
@@ -276,7 +250,7 @@ fn layout_result(project: &Project) -> LayoutResult {
         secs_project::default_ref_role(project)
     };
     LayoutResult {
-        count: if ARRANGEMENTS.contains(&count) {
+        count: if ARRANGEMENT_COUNTS.contains(&count) {
             count
         } else {
             9
@@ -287,7 +261,7 @@ fn layout_result(project: &Project) -> LayoutResult {
             role,
             output: integer(get("timing_ref_output"), 1),
         },
-        arrangements: ARRANGEMENTS
+        arrangements: ARRANGEMENT_COUNTS
             .into_iter()
             .map(|count| LayoutArrangement {
                 count,
@@ -380,31 +354,7 @@ fn read_bounded(path: &Path) -> Result<Vec<u8>, IpcError> {
 fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), IpcError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent).map_err(|error| project_io(path, error))?;
-    let name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("output");
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    let temporary = parent.join(format!(
-        ".{name}.{}-{}.tmp",
-        std::process::id(),
-        NEXT.fetch_add(1, Ordering::Relaxed)
-    ));
-    let result = (|| {
-        let mut file = fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&temporary, path)
-    })();
-    if let Err(error) = result {
-        let _ = fs::remove_file(&temporary);
-        return Err(project_io(path, error));
-    }
-    Ok(())
+    secs_types::fs::write_atomic_bytes(path, bytes).map_err(|error| project_io(path, error))
 }
 
 impl Service {
@@ -614,12 +564,12 @@ impl Service {
         params: LayoutSetParams,
     ) -> Result<LayoutMutationResult, IpcError> {
         if let Some(count) = params.count
-            && !ARRANGEMENTS.contains(&count)
+            && !ARRANGEMENT_COUNTS.contains(&count)
         {
             return Err(invalid("count", "arrangement must be 1, 9, 13, or 17"));
         }
         if let Some(delay) = params.start_delay.as_deref()
-            && !["끄기", "5 초", "10 초", "15 초"].contains(&delay)
+            && !secs_types::rules::START_DELAYS.contains(&delay)
         {
             return Err(invalid("start_delay", "unknown start delay"));
         }
@@ -787,7 +737,10 @@ impl Service {
         &self,
         mut params: AppSettingsParams,
     ) -> Result<AppSettings, IpcError> {
-        params.settings.recent_projects.truncate(10);
+        params
+            .settings
+            .recent_projects
+            .truncate(RECENT_PROJECTS_MAX);
         if let Some((width, height)) = params.settings.last_window_size
             && (width == 0 || height == 0)
         {
@@ -796,10 +749,22 @@ impl Service {
                 "window dimensions must be positive",
             ));
         }
-        if let Some(path) = self.deps.app_settings_path.as_deref() {
-            save_app_settings(path, &params.settings)?;
+        let bytes = serde_json::to_vec_pretty(&AppSettingsFile {
+            version: APP_SETTINGS_VERSION,
+            settings: params.settings.clone(),
+        })
+        .map_err(|error| invalid("settings", error.to_string()))?;
+        // Saved settings above the read cap would be dropped at the next start.
+        if bytes.len() as u64 > FILE_LIMIT {
+            return Err(invalid("settings", "settings exceed 1 MiB"));
         }
-        *lock(&self.app_settings) = params.settings.clone();
+        // One critical section for the file and memory, so what is read now
+        // is what a restart restores even when requests run in parallel (TD-39).
+        let mut current = lock(&self.app_settings);
+        if let Some(path) = self.deps.app_settings_path.as_deref() {
+            atomic_write(path, &bytes)?;
+        }
+        *current = params.settings.clone();
         Ok(params.settings)
     }
 }
@@ -824,15 +789,6 @@ pub(crate) fn load_app_settings(path: Option<&Path>) -> AppSettings {
         return AppSettings::default();
     }
     let mut settings = file.settings;
-    settings.recent_projects.truncate(10);
+    settings.recent_projects.truncate(RECENT_PROJECTS_MAX);
     settings
-}
-
-fn save_app_settings(path: &Path, settings: &AppSettings) -> Result<(), IpcError> {
-    let bytes = serde_json::to_vec_pretty(&AppSettingsFile {
-        version: APP_SETTINGS_VERSION,
-        settings: settings.clone(),
-    })
-    .map_err(|error| project_io(path, error))?;
-    atomic_write(path, &bytes)
 }

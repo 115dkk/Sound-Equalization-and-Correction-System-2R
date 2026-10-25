@@ -1,10 +1,11 @@
 // @vitest-environment happy-dom
-import { fireEvent, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { renderWith } from "../test/render";
 import { AppFrame } from "./AppFrame";
 import type { FrameModel, StepId } from "./model";
 import { neighbourStep } from "./model";
+import { PrefsScope } from "./prefs";
 import { ProjectStatus } from "./ProjectStatus";
 
 const model = (current: StepId, overrides: Partial<FrameModel["steps"]> = {}): FrameModel => ({
@@ -255,5 +256,106 @@ describe("app frame", () => {
     expect(neighbourStep(steps, "system", 1)).toBe("measure");
     expect(neighbourStep(steps, "measure", -1)).toBe("system");
     expect(neighbourStep(steps, "export", 1)).toBeNull();
+  });
+});
+
+describe("project warnings", () => {
+  const outside = (entry: string) => ({ code: "measurement.ir_path.outside", entry });
+  const two = [outside("position 3, role L"), outside("position 5, role Tfl")];
+  const project = (warnings: readonly { code: string; entry: string }[], opened: number) => ({ ...model("system").project, warnings, opened });
+  const ui = (id: string) => document.querySelector<HTMLElement>(`[data-ui="${id}"]`);
+  const status = (warnings: readonly { code: string; entry: string }[], opened: number, onRemeasure?: (position: number) => void) => (
+    <PrefsScope initial={{ locale: "ko", theme: "light", accent: "default" }}>
+      <ProjectStatus project={project(warnings, opened)} onRemeasure={onRemeasure} />
+    </PrefsScope>
+  );
+
+  it("lists both warnings of a project with their position and role, and opens each position to measure it again", () => {
+    const onRemeasure = vi.fn();
+    render(status(two, 1, onRemeasure));
+    const notice = ui("frame.status.warnings")!;
+    expect(notice.getAttribute("role")).toBe("status");
+    expect(notice.textContent).toContain("프로젝트 경고 2건");
+    expect(notice.textContent).toContain("측정 파일이 프로젝트 폴더 밖에 있어 읽지 않았습니다.");
+    expect(ui("frame.status.warnings.position.3")?.textContent).toContain("위치 3");
+    expect(ui("frame.status.warnings.position.3")?.textContent).toContain("L");
+    // The role as the screen names it (Dolby code), not the service id.
+    expect(ui("frame.status.warnings.position.5")?.textContent).toContain("Ltf");
+    expect(ui("frame.status.warnings.position.5.fix")?.textContent).toBe("다시 측정");
+    fireEvent.click(ui("frame.status.warnings.position.5.fix")!);
+    expect(onRemeasure).toHaveBeenCalledWith(5);
+  });
+
+  it("gives one line per position, the roles it lost on it, and only the state without an action to run", () => {
+    render(status([...two, outside("position 3, role SW1")], 1));
+    expect(ui("frame.status.warnings")?.textContent).toContain("프로젝트 경고 3건");
+    expect(ui("frame.status.warnings.position.3")?.textContent).toContain("L · SW1");
+    expect(document.querySelectorAll('[data-ui^="frame.status.warnings.position."][data-ui$=".fix"]')).toHaveLength(0);
+  });
+
+  it("hides the warnings once closed, until the next project is opened", () => {
+    const view = render(status(two, 1));
+    fireEvent.click(ui("frame.status.warnings.close")!);
+    expect(ui("frame.status.warnings")).toBeNull();
+    // A reload of the same project keeps them closed.
+    view.rerender(status([...two], 1));
+    expect(ui("frame.status.warnings")).toBeNull();
+    // One raised later in the same project is new and shows on its own.
+    view.rerender(status([...two, outside("position 7, role R")], 1));
+    expect(ui("frame.status.warnings")?.textContent).toContain("프로젝트 경고 1건");
+    expect(ui("frame.status.warnings.position.3")).toBeNull();
+    expect(ui("frame.status.warnings.position.7")).not.toBeNull();
+    // The next open shows every warning again.
+    view.rerender(status(two, 2));
+    expect(ui("frame.status.warnings")?.textContent).toContain("프로젝트 경고 2건");
+  });
+
+  it("names an unknown code as such and keeps its raw text behind 자세히", () => {
+    render(status([{ code: "config.something_new", entry: "role FL, band 0" }], 1));
+    const notice = ui("frame.status.warnings")!;
+    expect(notice.textContent).toContain("알 수 없는 경고");
+    expect(notice.querySelector(".ui-details__raw")?.textContent).toBe("[config.something_new]\nrole FL, band 0");
+  });
+
+  it.each(["ko", "en"] as const)("asks to import again on the file import path (%s)", (locale) => {
+    renderWith(<ProjectStatus project={{ ...project(two, 1), path: { kind: "mdat", state: "ok" } }} onRemeasure={() => {}} />, { locale });
+    expect(ui("frame.status.warnings.position.3.fix")?.textContent).toBe(locale === "ko" ? "다시 가져오기" : "Import again");
+  });
+
+  const replaced = (entry: string) => ({ code: "config.band.out.outside", entry });
+  const outputs = [replaced("role Lb, band FULL, output 300"), replaced("role SW1, band SUB, output 0")];
+
+  it.each([
+    ["ko", "Lrs FULL 대역: 원래 출력 300", "SW1 SUB 대역: 원래 출력 0", "출력 배선 열기"],
+    ["en", "Lrs FULL band: was output 300", "SW1 SUB band: was output 0", "Open output patch"],
+  ] as const)("lists each replaced output as role, band and the output it had, and opens the output patch (%s)", (locale, first, second, action) => {
+    const onOpenPatch = vi.fn();
+    renderWith(
+      <AppFrame
+        model={{ ...model("calibrate"), project: project(outputs, 1) }}
+        onNavigate={() => {}}
+        projectActions={{ onNew: () => {}, onOpen: () => {}, onSave: () => {}, onSaveAs: () => {} }}
+        onHelp={() => {}}
+        version={null}
+        tray={<div />}
+        onOpenPatch={onOpenPatch}
+      >
+        <p>content</p>
+      </AppFrame>,
+      { locale },
+    );
+    expect(ui("frame.status.warnings.band_output.Lrs.FULL")?.textContent).toBe(first);
+    expect(ui("frame.status.warnings.band_output.SW1.SUB")?.textContent).toBe(second);
+    const buttons = document.querySelectorAll<HTMLButtonElement>('[data-ui="frame.status.warnings.open_patch"]');
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0]?.textContent).toBe(action);
+    fireEvent.click(buttons[0]!);
+    expect(onOpenPatch).toHaveBeenCalledTimes(1);
+  });
+
+  it("says only what happened to the outputs when there is no patch to open", () => {
+    render(status(outputs, 1));
+    expect(ui("frame.status.warnings.band_output.Lrs.FULL")?.textContent).toBe("Lrs FULL 대역: 원래 출력 300");
+    expect(ui("frame.status.warnings.open_patch")).toBeNull();
   });
 });

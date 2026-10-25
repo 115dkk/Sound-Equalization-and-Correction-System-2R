@@ -1,7 +1,10 @@
 // Axis range popover (upstream axis_range.py): frequency and level limits,
 // 자동 returns to the graph's own range, 적용 sets the typed one. A lower
 // limit must sit below its upper limit; the popover says so and stays open.
-// Enter applies. The chosen range is kept by the screen for the session.
+// A field whose typed text is not a number or is out of range is not
+// applied either: the popover stays open on that field, whose own message
+// says why. Enter applies. The chosen range is kept by the screen for the
+// session.
 import { useEffect, useRef, useState } from "react";
 import { useT } from "../../i18n/react";
 import { Button, IconButton } from "../Button";
@@ -11,7 +14,11 @@ import { Tooltip } from "../Tooltip";
 
 export type AxisRangeValue = { x: readonly [number, number] | null; y: readonly [number, number] | null };
 
-export function validateRange(x: readonly [number, number], y: readonly [number, number]): "ok" | "x" | "y" {
+/** The fields in the order focus visits them. */
+const FIELDS = ["x0", "x1", "y0", "y1"] as const;
+type FieldKey = (typeof FIELDS)[number];
+
+function validateRange(x: readonly [number, number], y: readonly [number, number]): "ok" | "x" | "y" {
   if (!(x[0] < x[1])) return "x";
   if (!(y[0] < y[1])) return "y";
   return "ok";
@@ -49,6 +56,13 @@ export function AxisRangeButton({
   const latest = useRef(draft);
   latest.current = draft;
   const firstOpen = useRef(true);
+  const form = useRef<HTMLFormElement>(null);
+  // Fields whose typed draft cannot be committed (NumberField says so).
+  const invalid = useRef(new Set<FieldKey>());
+  const validity = (field: FieldKey) => (valid: boolean) => {
+    if (valid) invalid.current.delete(field);
+    else invalid.current.add(field);
+  };
 
   // Each time the popover opens, the draft starts from the graph's range.
   useEffect(() => {
@@ -63,6 +77,11 @@ export function AxisRangeButton({
   }, [open]);
 
   const apply = () => {
+    const wrong = FIELDS.find((field) => invalid.current.has(field));
+    if (wrong) {
+      form.current?.querySelector<HTMLInputElement>(`[data-ui="${id}.${wrong}"]`)?.focus();
+      return;
+    }
     const { x, y } = latest.current;
     const check = validateRange(x, y);
     if (check !== "ok") {
@@ -99,6 +118,7 @@ export function AxisRangeButton({
       </Tooltip>
       <Popover open={open} onClose={() => setOpen(false)} anchor={anchor} label={t("plot.axes.title")} placement="bottom-end" id={`${id}.popover`} inline={inline}>
         <form
+          ref={form}
           className="plot-axes"
           onSubmit={(event) => {
             event.preventDefault();
@@ -115,13 +135,13 @@ export function AxisRangeButton({
           <h3 className="plot-axes__title">{t("plot.axes.title")}</h3>
           <fieldset className="plot-axes__pair">
             <legend>{t("plot.axes.frequency")}</legend>
-            <NumberField id={`${id}.x0`} label={t("plot.axes.lower")} value={draft.x[0]} onChange={(v) => set("x", 0, v)} min={1} max={24000} step={1} unit="Hz" size={6} />
-            <NumberField id={`${id}.x1`} label={t("plot.axes.upper")} value={draft.x[1]} onChange={(v) => set("x", 1, v)} min={1} max={24000} step={1} unit="Hz" size={6} />
+            <NumberField id={`${id}.x0`} label={t("plot.axes.lower")} value={draft.x[0]} onChange={(v) => set("x", 0, v)} onDraftValidity={validity("x0")} min={1} max={24000} step={1} unit="Hz" size={6} />
+            <NumberField id={`${id}.x1`} label={t("plot.axes.upper")} value={draft.x[1]} onChange={(v) => set("x", 1, v)} onDraftValidity={validity("x1")} min={1} max={24000} step={1} unit="Hz" size={6} />
           </fieldset>
           <fieldset className="plot-axes__pair">
             <legend>{t("plot.axes.level")}</legend>
-            <NumberField id={`${id}.y0`} label={t("plot.axes.lower")} value={draft.y[0]} onChange={(v) => set("y", 0, v)} min={yLimits[0]} max={yLimits[1]} step={1} unit={yUnit} digits={0} size={5} />
-            <NumberField id={`${id}.y1`} label={t("plot.axes.upper")} value={draft.y[1]} onChange={(v) => set("y", 1, v)} min={yLimits[0]} max={yLimits[1]} step={1} unit={yUnit} digits={0} size={5} />
+            <NumberField id={`${id}.y0`} label={t("plot.axes.lower")} value={draft.y[0]} onChange={(v) => set("y", 0, v)} onDraftValidity={validity("y0")} min={yLimits[0]} max={yLimits[1]} step={1} unit={yUnit} digits={0} size={5} />
+            <NumberField id={`${id}.y1`} label={t("plot.axes.upper")} value={draft.y[1]} onChange={(v) => set("y", 1, v)} onDraftValidity={validity("y1")} min={yLimits[0]} max={yLimits[1]} step={1} unit={yUnit} digits={0} size={5} />
           </fieldset>
           {error && (
             <p className="plot-axes__error" role="alert">

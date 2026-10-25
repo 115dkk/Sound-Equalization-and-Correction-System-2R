@@ -20,7 +20,7 @@ import type { CalibrateActions, CalibrateView } from "./types";
 const PLOT_HEIGHT = 300;
 /** A reply quicker than this never shows the loading look (no flash). */
 export const LOADING_DELAY_MS = 150;
-export const TAB_LABEL: Record<ResultTab, "calibrate.tab.spl" | "calibrate.tab.gd" | "calibrate.tab.xo" | "calibrate.tab.ba"> = {
+const TAB_LABEL: Record<ResultTab, "calibrate.tab.spl" | "calibrate.tab.gd" | "calibrate.tab.xo" | "calibrate.tab.ba"> = {
   spl: "calibrate.tab.spl",
   gd: "calibrate.tab.gd",
   xo: "calibrate.tab.xo",
@@ -139,14 +139,14 @@ const PRESET_TEXT: Readonly<Record<string, "calibrate.target.preset.flat" | "cal
   cinema: "calibrate.target.preset.cinema",
 };
 
-export function presetName(t: Translate, preset: string | null): string {
+function presetName(t: Translate, preset: string | null): string {
   if (preset === null) return t("calibrate.target.custom");
   const key = PRESET_TEXT[preset];
   return key ? t(key) : preset;
 }
 
 /** Presets to choose, 사용자 지정 checked when the points were edited (upstream `target_menu`), then save and load. */
-export function targetMenuItems(t: Translate, view: Pick<CalibrateView, "target">, actions: Pick<CalibrateActions, "applyTargetPreset" | "saveTarget" | "loadTarget">): MenuItem[] {
+function targetMenuItems(t: Translate, view: Pick<CalibrateView, "target">, actions: Pick<CalibrateActions, "applyTargetPreset" | "saveTarget" | "loadTarget">): MenuItem[] {
   const current = view.target.preset;
   return [
     ...view.target.presets.map(([name]) => ({
@@ -272,6 +272,7 @@ function useHeld(on: boolean, ms: number): boolean {
 }
 
 type TargetPoint = targetEdit.TargetPoint;
+type RefusedEdit = { kind: "target"; points: TargetPoint[] } | { kind: "xo"; group: string; hz: number };
 
 export function ResultGraph({ view, actions, menuOpen = false }: { view: CalibrateView; actions: CalibrateActions; menuOpen?: boolean | undefined }) {
   const t = useT();
@@ -291,7 +292,7 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
   // (other positions may be measured): say so where the channel would be chosen.
   const noPreview = !computed && channels.length === 0;
   const channel = view.channel && channels.includes(view.channel) ? view.channel : (channels[0] ?? null);
-  const xoGroup = view.xoGroup && groups.includes(view.xoGroup) ? view.xoGroup : (groups[0] ?? null);
+  const xoGroup = view.xoGroup;
 
   // Axis ranges the user picked, per tab, for this visit.
   const [ranges, setRanges] = useState<Partial<Record<ResultTab, AxisRangeValue>>>({});
@@ -300,19 +301,72 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
   const yRange = curves?.axes.value ?? ([-30, 15] as [number, number]);
   const unit = curves?.axes.unit === "ms" ? "ms" : "dB";
 
+  // The last target or XO edit the service refused. The graph is back on the
+  // stored value; 다시 저장 sends this draft again. A new stored value (any
+  // edit, a preset, another project) makes it moot.
+  const [refused, setRefused] = useState<RefusedEdit | null>(null);
+  const targetTicket = useRef(0);
+  const xoTicket = useRef(0);
+
   // Target points while dragging stay local; the end of a gesture (or a removal, a double-click) stores them.
   const [draft, setDraft] = useState<TargetPoint[] | null>(null);
-  useEffect(() => setDraft(null), [view.target]);
+  useEffect(() => {
+    setDraft(null);
+    setRefused((edit) => (edit?.kind === "target" ? null : edit));
+  }, [view.target]);
   const points: TargetPoint[] = draft ?? view.target.points.map(([hz, db]) => ({ hz, db }));
   const commit = (next: TargetPoint[]) => {
+    const ticket = ++targetTicket.current;
     setDraft(next);
-    actions.setTargetPoints(next.map((p) => [p.hz, p.db]));
+    void actions.setTargetPoints(next.map((p) => [p.hz, p.db])).then((saved) => {
+      if (ticket !== targetTicket.current) return;
+      if (saved) {
+        setRefused((edit) => (edit?.kind === "target" ? null : edit));
+      } else {
+        setDraft(null);
+        setRefused({ kind: "target", points: next });
+      }
+    });
   };
 
   // The XO line follows the pointer; curves follow through previewXo; the end of the gesture stores the value.
   const [dragHz, setDragHz] = useState<number | null>(null);
   const xoHz = dragHz ?? curves?.xo_hz ?? (xoGroup ? (view.settings.xo[xoGroup] ?? null) : null);
-  useEffect(() => setDragHz(null), [view.settings.xo]);
+  useEffect(() => {
+    setDragHz(null);
+    setRefused((edit) => (edit?.kind === "xo" ? null : edit));
+  }, [view.settings.xo]);
+  const commitXo = (group: string, hz: number) => {
+    const ticket = ++xoTicket.current;
+    setDragHz(hz);
+    void actions.changeSetting({ kind: "xo", group, hz }).then((saved) => {
+      if (ticket !== xoTicket.current) return;
+      if (saved) {
+        setRefused((edit) => (edit?.kind === "xo" ? null : edit));
+      } else {
+        // The line and the curves go back to the stored crossover.
+        setDragHz(null);
+        setRefused({ kind: "xo", group, hz });
+        actions.selectXoGroup(group);
+      }
+    });
+  };
+  const retry = (edit: RefusedEdit) => {
+    if (edit.kind === "target") {
+      commit(edit.points);
+    } else {
+      actions.previewXo(edit.group, edit.hz);
+      commitXo(edit.group, edit.hz);
+    }
+  };
+
+  // Saving and refused saves of the edit this tab draws, next to the graph.
+  // A save quicker than LOADING_DELAY_MS never flashes its state; a refused
+  // one says so with 다시 저장 (the cause is the session's error notice).
+  const edited = tab === "spl" ? "target" : tab === "xo" ? "xo" : null;
+  const editState = edited === "target" ? view.targetEdit : edited === "xo" ? view.xoEdit : "idle";
+  const saving = useHeld(editState === "saving", LOADING_DELAY_MS);
+  const refusedHere = editState === "failed" && refused?.kind === edited ? refused : null;
 
   // Loading (the curves for this selection are on their way): busy for
   // readers at once; dimmed with a status only once it takes longer than
@@ -364,7 +418,7 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
             setDragHz(hz);
             actions.previewXo(xoGroup, hz);
           }}
-          onCommit={(hz) => actions.changeSetting({ kind: "xo", group: xoGroup, hz })}
+          onCommit={(hz) => commitXo(xoGroup, hz)}
         />
       )}
     </>
@@ -440,6 +494,20 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
           <StatusPill tone="info" data-ui="calibrate.ba.subs_only">
             {t("calibrate.ba.subs_only")}
           </StatusPill>
+        )}
+        {edited && (saving || refusedHere) && (
+          <span className="calibrate-graph__save" role="status" data-ui="calibrate.graph.save">
+            {saving ? (
+              <StatusPill tone="busy">{t(edited === "target" ? "calibrate.graph.save.target.saving" : "calibrate.graph.save.xo.saving")}</StatusPill>
+            ) : (
+              <StatusPill tone="danger">{t(edited === "target" ? "calibrate.graph.save.target.failed" : "calibrate.graph.save.xo.failed")}</StatusPill>
+            )}
+            {!saving && refusedHere && (
+              <Button size="sm" variant="secondary" data-ui="calibrate.graph.save.retry" onClick={() => retry(refusedHere)}>
+                {t("calibrate.graph.save.retry")}
+              </Button>
+            )}
+          </span>
         )}
       </div>
       <div className="calibrate-graph__stage" ref={stageRef} onContextMenu={onContextMenu}>

@@ -83,7 +83,7 @@ const DSP_PRESETS: DspResult["presets"] = [
   { key: "tesira", name: "Biamp Tesira SERVER (DSP-2 ×3)", fields: fields(2048, 51200, 16, 16, 16) },
 ];
 
-export function dspOf(profile: string, override?: DspFields): DspResult {
+function dspOf(profile: string, override?: DspFields): DspResult {
   const preset = DSP_PRESETS.find((p) => p.key === profile) ?? DSP_PRESETS[0]!;
   const current = override ?? preset.fields;
   return {
@@ -96,7 +96,7 @@ export function dspOf(profile: string, override?: DspFields): DspResult {
   };
 }
 
-export function layoutOf(count: number, start_delay = "끄기", reference = "acoustic"): LayoutResult {
+function layoutOf(count: number, start_delay = "끄기", reference = "acoustic"): LayoutResult {
   return {
     count,
     start_delay,
@@ -109,7 +109,7 @@ export function layoutOf(count: number, start_delay = "끄기", reference = "aco
 }
 
 /** Upstream position_seconds with an acoustic reference, 256k at 48 kHz: 2 × 5.46 s + 0.7 s per channel. */
-export function estimateOf(channels: number, positions: number, delaySeconds = 0): PositionEstimateResult {
+function estimateOf(channels: number, positions: number, delaySeconds = 0): PositionEstimateResult {
   const per = channels * (2 * (262144 / 48000) + 0.7) + delaySeconds;
   return { positions, per_position_seconds: per, total_seconds: per * positions };
 }

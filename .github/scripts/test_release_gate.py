@@ -1,5 +1,11 @@
 """Unit tests for release_gate.py (python -m unittest, no dependencies)."""
+import contextlib
+import io
+import subprocess
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
 
 import release_gate as g
 
@@ -102,6 +108,29 @@ checksum = "00"
         self.assertIn('name = "secs-types"\nversion = "0.1.0"', lock)
         self.assertIn('name = "unrelated"\nversion = "0.0.1"', lock)
 
+    def test_fuzz_lock_follows_the_workspace_packages_whatever_it_held(self):
+        fuzz = """version = 4
+
+[[package]]
+name = "secs-types"
+version = "0.0.0"
+
+[[package]]
+name = "secs2r-fuzz"
+version = "0.0.0"
+
+[[package]]
+name = "unrelated"
+version = "0.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+"""
+        members = g.workspace_packages(self.LOCK, "0.0.1")
+        self.assertEqual(members, {"secs-types"})
+        lock = g.set_member_versions(fuzz, members, "0.1.0")
+        self.assertIn('name = "secs-types"\nversion = "0.1.0"', lock)
+        self.assertIn('name = "secs2r-fuzz"\nversion = "0.0.0"', lock)
+        self.assertIn('name = "unrelated"\nversion = "0.0.0"', lock)
+
     def test_latest_tag_ignores_suffixed_tags(self):
         tags = ["v0.1.0-pre.11", "v0.1.9", "v0.1.10", "v0.2.0-rc.1", "x", "v2.0.0-beta.1.2.0"]
         self.assertEqual(g.latest_tag(tags), "v0.1.10")
@@ -158,6 +187,54 @@ class DecideTest(unittest.TestCase):
         self.assertIn("[skip ci]", body)
         # The subject still reads as a patch-level message for bump_kind.
         self.assertEqual(g.bump_kind([message]), "patch")
+
+
+class GitFailureTest(unittest.TestCase):
+    @staticmethod
+    def result(returncode=0, stdout="", stderr=""):
+        return subprocess.CompletedProcess([], returncode, stdout, stderr)
+
+    def test_failed_push_with_unchanged_main_fails(self):
+        runs = [self.result(), self.result(), self.result(), self.result(),
+                self.result(1, stderr="permission denied"), self.result(),
+                self.result(stdout="a" * 40 + "\n")]
+        with mock.patch.object(g, "_read", side_effect=[VersionTest.CARGO, VersionTest.LOCK]), \
+             mock.patch.object(g, "FUZZ_LOCK", Path("no-fuzz-workspace/Cargo.lock")), \
+             mock.patch.object(g, "_write"), mock.patch.object(g, "_run", side_effect=runs), \
+             self.assertRaisesRegex(SystemExit, "bump push failed"):
+            g._commit_bump("0.0.1", "0.0.2", "a" * 40)
+
+    def test_failed_push_with_advanced_main_skips(self):
+        runs = [self.result(), self.result(), self.result(), self.result(),
+                self.result(1, stderr="non-fast-forward"), self.result(),
+                self.result(stdout="b" * 40 + "\n")]
+        with mock.patch.object(g, "_read", side_effect=[VersionTest.CARGO, VersionTest.LOCK]), \
+             mock.patch.object(g, "FUZZ_LOCK", Path("no-fuzz-workspace/Cargo.lock")), \
+             mock.patch.object(g, "_write"), mock.patch.object(g, "_run", side_effect=runs):
+            self.assertIsNone(g._commit_bump("0.0.1", "0.0.2", "a" * 40))
+
+    def test_bump_also_rewrites_and_stages_the_fuzz_lock(self):
+        fuzz_lock = 'version = 4\n\n[[package]]\nname = "secs-types"\nversion = "0.0.0"\n'
+        runs = [self.result()] * 5 + [self.result(stdout="c" * 40 + "\n")]
+        with tempfile.TemporaryDirectory() as folder:
+            fuzz = Path(folder) / "Cargo.lock"
+            fuzz.write_text(fuzz_lock)
+            with mock.patch.object(g, "_read",
+                                   side_effect=[VersionTest.CARGO, VersionTest.LOCK, fuzz_lock]), \
+                 mock.patch.object(g, "FUZZ_LOCK", fuzz), \
+                 mock.patch.object(g, "_write") as write, \
+                 mock.patch.object(g, "_run", side_effect=runs) as run:
+                self.assertEqual(g._commit_bump("0.0.1", "0.0.2", "a" * 40), "c" * 40)
+        written = {path: text for (path, text), _ in write.call_args_list}
+        self.assertIn('name = "secs-types"\nversion = "0.0.2"', written[fuzz])
+        self.assertIn(str(fuzz), run.call_args_list[2].args)
+
+    def test_fetch_failure_fails_and_prints_stderr(self):
+        with mock.patch.object(g, "_run", return_value=self.result(1, stderr="network down")), \
+             contextlib.redirect_stderr(io.StringIO()) as stderr, \
+             self.assertRaisesRegex(SystemExit, "git fetch failed"):
+            g.fetch_remote_main(tags=True)
+        self.assertIn("network down", stderr.getvalue())
 
 
 if __name__ == "__main__":

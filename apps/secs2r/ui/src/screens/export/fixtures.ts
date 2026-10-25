@@ -10,7 +10,7 @@ import { exportStepState, type ExportView } from "./types";
 
 const BASE = "C:/Users/demo/Documents/SECS/SECS_export/2026-10-14 거실 7.1.4";
 
-export const exportMimo: MimoSummary = {
+const exportMimo: MimoSummary = {
   compute: cpuComputeReport,
   stale: false,
   kind: "iir",
@@ -22,7 +22,7 @@ export const exportMimo: MimoSummary = {
   input_count: SAMPLE_MAINS.length,
 };
 
-export const exportRc: Notice[] = [
+const exportRc: Notice[] = [
   { code: "rc_limit", params: { hz: "310.4", auto: "true", schroeder_hz: "310.4" } },
   { code: "rc_room_volume", params: { volume_m3: "62.5" } },
 ];
@@ -36,25 +36,39 @@ const exportError: IpcError = {
 
 /** A current result with MIMO, nothing exported yet. */
 export const exportReady: ExportView = {
-  results: { calibration: calibrationSummary, mimo: exportMimo },
+  results: { calibration: calibrationSummary, mimo: exportMimo, mimo_export: "included" },
   settings: { mode: "mixed", ultra_ms: 200, mimo_on: true },
   positions: 9,
   rc: exportRc,
   folder: { folder: BASE, stored: false },
   computing: false,
+  recalibrating: false,
   exporting: null,
   runs: {},
   tutorial: false,
 };
 
-export const exportNoResult: ExportView = { ...exportReady, results: noResults, rc: [] };
+export const exportNoResult: ExportView = { ...exportReady, results: { ...noResults, mimo_export: "none" }, rc: [] };
 
-export const exportComputingFirst: ExportView = { ...exportNoResult, computing: true };
+export const exportComputingFirst: ExportView = { ...exportNoResult, computing: true, recalibrating: true };
 
 export const exportStale: ExportView = {
   ...exportReady,
-  results: { calibration: { ...calibrationSummary, stale: true }, mimo: { ...exportMimo, stale: true } },
+  results: { calibration: { ...calibrationSummary, stale: true }, mimo: { ...exportMimo, stale: true }, mimo_export: "stale" },
 };
+
+/**
+ * A reopened project whose result came from the project cache and no longer
+ * matches the inputs: CamillaDSP still exports it, both mdat formats need a
+ * new correction (`stale_cache`, #92 TD-09).
+ */
+export const exportStaleCache: ExportView = {
+  ...exportStale,
+  results: { ...exportStale.results, calibration: { ...calibrationSummary, stale: true, cached: true } },
+};
+
+/** The same, with the correction 재보정 started running. */
+export const exportRecalibrating: ExportView = { ...exportStaleCache, computing: true, recalibrating: true };
 
 export const exportExporting: ExportView = { ...exportReady, exporting: "before_after_mdat" };
 
@@ -86,7 +100,7 @@ const rcOnlySummary = { ...calibrationSummary, sub_roles: [] };
 /** No subs, MIMO off: all three filter formats are on. */
 export const exportRcOnly: ExportView = {
   ...exportReady,
-  results: { calibration: rcOnlySummary, mimo: null },
+  results: { calibration: rcOnlySummary, mimo: null, mimo_export: "off" },
   settings: { mode: "mixed", ultra_ms: 200, mimo_on: false },
 };
 
@@ -95,6 +109,7 @@ export const exportMimoNoSubs: ExportView = {
   ...exportRcOnly,
   results: {
     calibration: rcOnlySummary,
+    mimo_export: "included",
     mimo: {
       ...exportMimo,
       support_count: SAMPLE_MAINS.length * 2,
@@ -109,7 +124,7 @@ const EQAPO = "D:/Audio/거실 보정/SECS_eqapo_RC_BA_mixed_20261014-142233";
 /** Subs, no MIMO: the Equalizer APO configuration was saved (the files as the service lists them: config.txt first). */
 export const exportEqapoDone: ExportView = {
   ...exportReady,
-  results: { calibration: calibrationSummary, mimo: null },
+  results: { calibration: calibrationSummary, mimo: null, mimo_export: "off" },
   settings: { mode: "mixed", ultra_ms: 200, mimo_on: false },
   folder: { folder: "D:/Audio/거실 보정", stored: true },
   runs: {
@@ -127,7 +142,7 @@ export const exportEqapoDone: ExportView = {
 };
 
 /** Fewer than three positions: MIMO is left out and the mdat folder says RC_BA. */
-export const exportNoMimo: ExportView = { ...exportReady, positions: 1, results: { calibration: calibrationSummary, mimo: null }, settings: { mode: "linear", ultra_ms: 200, mimo_on: false } };
+export const exportNoMimo: ExportView = { ...exportReady, positions: 1, results: { calibration: calibrationSummary, mimo: null, mimo_export: "off" }, settings: { mode: "linear", ultra_ms: 200, mimo_on: false } };
 
 export const exportTutorial: ExportView = {
   ...exportNoMimo,

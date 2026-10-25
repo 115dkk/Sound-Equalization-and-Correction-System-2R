@@ -19,6 +19,7 @@ import {
   BAND_TYPES,
   INFRA_DEFAULT_HZ,
   LIMITS,
+  SUB_LIMITS,
   MIMO_MIN_POSITIONS,
   ALLPASS_Q_DEFAULT,
   infraState,
@@ -124,8 +125,8 @@ function ModeSection({ view, actions }: Props) {
             id="calibrate.mode.ultra_ms"
             label={t("calibrate.mode.ultra_ms.label")}
             value={s.ultra_ms}
-            min={LIMITS.ultraMs[0]}
-            max={LIMITS.ultraMs[1]}
+            min={LIMITS.ultra_ms[0]}
+            max={LIMITS.ultra_ms[1]}
             step={10}
             unit="ms"
             showRange
@@ -185,7 +186,7 @@ function RangeSection({ view, actions }: Props) {
   const auto = s.rc_hi === null;
   const rcLimit = view.lines.rc.find((n) => n.code === "rc_limit");
   const resolved = rcLimit ? Number(rcLimit.params.hz) : Number.NaN;
-  const shownHi = Number.isFinite(resolved) ? Math.round(Math.min(LIMITS.rcHi[1], Math.max(LIMITS.rcHi[0], resolved))) : 500;
+  const shownHi = Number.isFinite(resolved) ? Math.round(Math.min(LIMITS.rc_hi[1], Math.max(LIMITS.rc_hi[0], resolved))) : 500;
   const notes = view.lines.rc.map((n) => noticeText(t, number, n)).filter((text): text is string => !!text);
   return (
     <SettingsCard id="range" title={t("calibrate.range.title")} help={t("calibrate.range.description")}>
@@ -194,8 +195,8 @@ function RangeSection({ view, actions }: Props) {
           id="calibrate.range.lower"
           label={t("calibrate.range.lower")}
           value={s.rc_lo}
-          min={LIMITS.rcLo[0]}
-          max={LIMITS.rcLo[1]}
+          min={LIMITS.rc_lo[0]}
+          max={LIMITS.rc_lo[1]}
           step={5}
           unit="Hz"
           showRange
@@ -206,8 +207,8 @@ function RangeSection({ view, actions }: Props) {
             id="calibrate.range.upper"
             label={t("calibrate.range.upper")}
             value={s.rc_hi ?? shownHi}
-            min={LIMITS.rcHi[0]}
-            max={LIMITS.rcHi[1]}
+            min={LIMITS.rc_hi[0]}
+            max={LIMITS.rc_hi[1]}
             step={50}
             unit="Hz"
             showRange
@@ -342,8 +343,8 @@ function XoSection({ view, actions, onSampleRateSettings }: FailureProps) {
               id="calibrate.xo.peq_lo"
               label={t("calibrate.xo.peq_lo")}
               value={s.xo_peq_lo}
-              min={LIMITS.xoPeq[0]}
-              max={LIMITS.xoPeq[1]}
+              min={LIMITS.xo_peq[0]}
+              max={LIMITS.xo_peq[1]}
               step={1}
               unit="Hz"
               help={t("calibrate.xo.peq_lo.hint")}
@@ -353,8 +354,8 @@ function XoSection({ view, actions, onSampleRateSettings }: FailureProps) {
               id="calibrate.xo.peq_hi"
               label={t("calibrate.xo.peq_hi")}
               value={s.xo_peq_hi}
-              min={LIMITS.xoPeq[0]}
-              max={LIMITS.xoPeq[1]}
+              min={LIMITS.xo_peq[0]}
+              max={LIMITS.xo_peq[1]}
               step={1}
               unit="Hz"
               help={t("calibrate.xo.peq_hi.hint")}
@@ -435,8 +436,8 @@ function SubEditor({ view, actions, role }: Props & { role: string }) {
                 id="calibrate.ba.rear_trim"
                 label={t("calibrate.ba.rear_trim")}
                 value={s.bundle_layouts[e.bundle]?.rear_trim_ms ?? 0}
-                min={LIMITS.rearTrim[0]}
-                max={LIMITS.rearTrim[1]}
+                min={LIMITS.rear_trim[0]}
+                max={LIMITS.rear_trim[1]}
                 step={0.1}
                 digits={2}
                 unit="ms"
@@ -451,8 +452,8 @@ function SubEditor({ view, actions, role }: Props & { role: string }) {
         <fieldset className="calibrate-group" data-ui="calibrate.ba.values">
           <legend className="ui-field__label">{t("calibrate.ba.values")}</legend>
           <div className="calibrate-fields">
-            <NumberField id="calibrate.ba.gain" label={t("calibrate.ba.gain")} value={e.gain_db} min={LIMITS.gain[0]} max={LIMITS.gain[1]} step={0.5} digits={2} unit="dB" onChange={(gain_db) => change({ gain_db })} />
-            <NumberField id="calibrate.ba.delay" label={t("calibrate.ba.delay")} value={e.delay_ms} min={LIMITS.delay[0]} max={LIMITS.delay[1]} step={0.1} digits={2} unit="ms" onChange={(delay_ms) => change({ delay_ms })} />
+            <NumberField id="calibrate.ba.gain" label={t("calibrate.ba.gain")} value={e.gain_db} min={SUB_LIMITS.gain[0]} max={SUB_LIMITS.gain[1]} step={0.5} digits={2} unit="dB" onChange={(gain_db) => change({ gain_db })} />
+            <NumberField id="calibrate.ba.delay" label={t("calibrate.ba.delay")} value={e.delay_ms} min={SUB_LIMITS.delay[0]} max={SUB_LIMITS.delay[1]} step={0.1} digits={2} unit="ms" onChange={(delay_ms) => change({ delay_ms })} />
             <Segmented
               id="calibrate.ba.polarity"
               label={t("calibrate.ba.polarity")}
@@ -471,14 +472,14 @@ function SubEditor({ view, actions, role }: Props & { role: string }) {
                 label={t("calibrate.ba.allpass", { n: k + 1 })}
                 value={hz}
                 min={0}
-                max={LIMITS.apHz[1]}
+                max={SUB_LIMITS.apHz[1]}
                 step={1}
                 unit="Hz"
                 size={5}
                 hint={k === 0 ? t("calibrate.ba.zero_none") : undefined}
                 onChange={(value) => setAllpass(k, [value, q])}
               />
-              <NumberField id={`calibrate.ba.allpass.${k + 1}.q`} label="Q" value={q} min={LIMITS.apQ[0]} max={LIMITS.apQ[1]} step={0.01} digits={2} size={5} onChange={(value) => setAllpass(k, [hz, value])} />
+              <NumberField id={`calibrate.ba.allpass.${k + 1}.q`} label="Q" value={q} min={SUB_LIMITS.apQ[0]} max={SUB_LIMITS.apQ[1]} step={0.01} digits={2} size={5} onChange={(value) => setAllpass(k, [hz, value])} />
             </div>
           ))}
         </fieldset>
@@ -505,8 +506,8 @@ function SubEditor({ view, actions, role }: Props & { role: string }) {
                   id={`calibrate.ba.${band}`}
                   label={t("calibrate.ba.filter.hz")}
                   value={band === "hp" ? e.hp_hz : e.lp_hz}
-                  min={LIMITS.filterHz[0]}
-                  max={LIMITS.filterHz[1]}
+                  min={SUB_LIMITS.filterHz[0]}
+                  max={SUB_LIMITS.filterHz[1]}
                   step={1}
                   unit="Hz"
                   size={5}
@@ -523,20 +524,20 @@ function SubEditor({ view, actions, role }: Props & { role: string }) {
               label={t("calibrate.ba.peq", { n: k + 1 })}
               value={hz}
               min={0}
-              max={LIMITS.apHz[1]}
+              max={SUB_LIMITS.apHz[1]}
               step={1}
               unit="Hz"
               size={5}
               hint={k === 0 ? t("calibrate.ba.zero_none") : undefined}
               onChange={(value) => setPeq(k, [value, q, gain])}
             />
-            <NumberField id={`calibrate.ba.peq.${k + 1}.q`} label="Q" value={q} min={LIMITS.apQ[0]} max={LIMITS.apQ[1]} step={0.01} digits={2} size={5} onChange={(value) => setPeq(k, [hz, value, gain])} />
+            <NumberField id={`calibrate.ba.peq.${k + 1}.q`} label="Q" value={q} min={SUB_LIMITS.apQ[0]} max={SUB_LIMITS.apQ[1]} step={0.01} digits={2} size={5} onChange={(value) => setPeq(k, [hz, value, gain])} />
             <NumberField
               id={`calibrate.ba.peq.${k + 1}.gain`}
               label={t("calibrate.ba.peq.gain")}
               value={gain}
-              min={LIMITS.peqGain[0]}
-              max={LIMITS.peqGain[1]}
+              min={SUB_LIMITS.peqGain[0]}
+              max={SUB_LIMITS.peqGain[1]}
               step={0.5}
               digits={1}
               unit="dB"
@@ -646,8 +647,8 @@ function BaSection({ view, actions, onSampleRateSettings, editSub }: FailureProp
                   id="calibrate.ba.infra_hz"
                   label={t("calibrate.ba.infra_hz")}
                   value={infra.hz}
-                  min={LIMITS.infraHz[0]}
-                  max={LIMITS.infraHz[1]}
+                  min={LIMITS.infra_hz[0]}
+                  max={LIMITS.infra_hz[1]}
                   step={1}
                   unit="Hz"
                   size={5}
@@ -664,8 +665,8 @@ function BaSection({ view, actions, onSampleRateSettings, editSub }: FailureProp
                   id="calibrate.ba.infra_boost"
                   label={t("calibrate.ba.infra_boost")}
                   value={s.infra_boost_max_db}
-                  min={LIMITS.infraBoost[0]}
-                  max={LIMITS.infraBoost[1]}
+                  min={LIMITS.infra_boost[0]}
+                  max={LIMITS.infra_boost[1]}
                   step={1}
                   digits={1}
                   unit="dB"
@@ -699,8 +700,8 @@ function BaSection({ view, actions, onSampleRateSettings, editSub }: FailureProp
               id="calibrate.ba.main_delay"
               label={t("calibrate.ba.main_delay")}
               value={s.sub_main_delay_ms}
-              min={LIMITS.mainDelay[0]}
-              max={LIMITS.mainDelay[1]}
+              min={LIMITS.main_delay[0]}
+              max={LIMITS.main_delay[1]}
               step={0.1}
               digits={2}
               unit="ms"
@@ -800,8 +801,8 @@ function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
                   id="calibrate.mimo.low"
                   label={t("calibrate.mimo.low")}
                   value={s.mimo_low}
-                  min={LIMITS.mimoLow[0]}
-                  max={LIMITS.mimoLow[1]}
+                  min={LIMITS.mimo_low[0]}
+                  max={LIMITS.mimo_low[1]}
                   step={5}
                   unit="Hz"
                   showRange
@@ -812,8 +813,8 @@ function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
                 id="calibrate.mimo.max"
                 label={t("calibrate.mimo.max")}
                 value={s.mimo_max_supports}
-                min={LIMITS.mimoMax[0]}
-                max={LIMITS.mimoMax[1]}
+                min={LIMITS.mimo_max[0]}
+                max={LIMITS.mimo_max[1]}
                 step={1}
                 help={t("calibrate.mimo.max.hint")}
                 hint={t("calibrate.mimo.max.zero")}

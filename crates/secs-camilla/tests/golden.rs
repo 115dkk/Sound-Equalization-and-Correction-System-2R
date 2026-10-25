@@ -3,9 +3,11 @@
 
 mod support;
 
+use secs_camilla::note;
 use secs_camilla::pyfmt::{format_fixed, format_g, repr_f64, round_ndigits};
 use secs_camilla::{
     CamillaError, Device, DeviceValue, Options, RunLabels, export, make_config, write_config,
+    write_config_observed,
 };
 use secs_oracle::{Fixture, goldens};
 use secs_types::chain::{
@@ -229,13 +231,32 @@ fn direct_options(fixture: &Fixture) -> Options {
 }
 
 fn labels(fixture: &Fixture) -> RunLabels {
-    let labels = &fixture.inputs()["labels"];
+    let cap = fixture.inputs()["labels"]["mimo_max_supports"]
+        .as_u64()
+        .unwrap_or(0) as usize;
+    labels_with_cap(fixture, cap)
+}
+
+/// The labels the service gives this fixture's run, with `max_supports` as
+/// the run's per-input support cap.
+fn labels_with_cap(fixture: &Fixture, max_supports: usize) -> RunLabels {
+    let values = &fixture.inputs()["labels"];
+    let mode: secs_types::calibration::Mode =
+        serde_json::from_value(values["mode"].clone()).unwrap();
+    let mimo = fixture
+        .id
+        .starts_with("export_mimo/")
+        .then(|| note::MimoNote::for_paths(&mimo_paths(fixture), max_supports))
+        .flatten();
     RunLabels {
-        mode: labels["mode"].as_str().unwrap().into(),
-        ultra_ms: number(&labels["ultra_ms"]),
-        latency_ms: number(&labels["latency_ms"]),
-        rc_hi_hz: number(&labels["rc_hi_hz"]),
-        mimo_max_supports: labels["mimo_max_supports"].as_u64().unwrap_or(0) as usize,
+        mode: note::mode_name(mode, number(&values["ultra_ms"])),
+        note: note::camilla_note(
+            mode,
+            number(&values["latency_ms"]),
+            number(&values["rc_hi_hz"]),
+            mimo.as_ref(),
+        ),
+        latency_ms: number(&values["latency_ms"]),
     }
 }
 
@@ -465,7 +486,7 @@ fn mimo_fixture_wav(fixture: &Fixture, mimo: &MimoPaths, name: &str) -> Vec<u8> 
         .into_iter()
         .find(|main| name.ends_with(&format!("{}_fir.wav", main.role)))
     {
-        return secs_camilla::wav_bytes(&main.fir, 48_000);
+        return secs_camilla::wav_bytes(&main.fir, 48_000).unwrap();
     }
     let path = mimo
         .paths
@@ -473,9 +494,10 @@ fn mimo_fixture_wav(fixture: &Fixture, mimo: &MimoPaths, name: &str) -> Vec<u8> 
         .find(|path| name.ends_with(&format!("mimo_{}_{}.wav", path.input, path.support)))
         .unwrap_or_else(|| panic!("missing MIMO fixture WAV {name}"));
     match &path.filter {
-        MimoFilter::Fir { taps_48k } => secs_camilla::wav_bytes(taps_48k, 48_000),
+        MimoFilter::Fir { taps_48k } => secs_camilla::wav_bytes(taps_48k, 48_000).unwrap(),
         MimoFilter::FirLowRate { taps_low, fs_low } => {
             secs_camilla::wav_bytes(&secs_dsp::fir::lowrate_to_48k(taps_low, *fs_low), 48_000)
+                .unwrap()
         }
         MimoFilter::Iir { .. } => panic!("IIR MIMO path has no WAV {name}"),
     }
@@ -730,8 +752,7 @@ fn mimo_note_names_the_support_cap() {
     let n = mimo.paths.len();
     for (cap, tail) in [(0, ")".to_owned()), (4, ", max 4 per input)".to_owned())] {
         let temp = TempDir::new(&format!("mimo_cap_{cap}"));
-        let mut labels = labels(&fixture);
-        labels.mimo_max_supports = cap;
+        let labels = labels_with_cap(&fixture, cap);
         let written = export(&chain(&fixture), &temp.0, &labels, Some(&mimo)).unwrap();
         let yaml = fs::read_to_string(&written[0]).unwrap();
         let fsiso = secs_camilla::pyfmt::format_g(mimo.fsiso, false);
@@ -933,6 +954,46 @@ fn write_config_replaces_existing_files_without_leaving_temporary_files() {
 }
 
 #[test]
+fn failed_reexport_keeps_the_previous_camilla_bundle_td22() {
+    let fixture = Fixture::load("camilla", "direct_no_subs");
+    let temp = TempDir::new("failed_reexport");
+    let chain = chain(&fixture);
+    write_config(&chain, &temp.0, "replace", &Options::default(), None).unwrap();
+    let config = temp.0.join("configs/replace.yml");
+    let before = fs::read(&config).unwrap();
+
+    let mut changed = chain.clone();
+    changed.mains[0].fir[0] += 0.5;
+    let error = write_config_observed(
+        &changed,
+        &temp.0,
+        "replace",
+        &Options::default(),
+        None,
+        &|index, _| {
+            if index == 1 {
+                Err(std::io::Error::other("injected second-file failure"))
+            } else {
+                Ok(())
+            }
+        },
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("injected second-file failure"));
+    assert_eq!(fs::read(config).unwrap(), before);
+    let stage_prefix = format!(".{}.stage-", temp.0.file_name().unwrap().to_string_lossy());
+    assert!(
+        fs::read_dir(temp.0.parent().unwrap())
+            .unwrap()
+            .all(|entry| !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with(&stage_prefix))
+    );
+}
+
+#[test]
 fn invalid_values_write_nothing() {
     let fixture = Fixture::load("camilla", "direct_no_subs");
     let temp = TempDir::new("errors");
@@ -952,6 +1013,15 @@ fn invalid_values_write_nothing() {
     ));
     assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
 
+    let mut bad = chain(&fixture);
+    bad.mains[0].role = "../x".into();
+    assert!(matches!(
+        write_config(&bad, &temp.0, "bad", &Options::default(), None),
+        Err(CamillaError::Invalid(_))
+    ));
+    assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
+    assert!(!temp.0.parent().unwrap().join("x_fir.wav").exists());
+
     let options = Options {
         mode: "bad\nmode".into(),
         ..Options::default()
@@ -967,4 +1037,129 @@ fn invalid_values_write_nothing() {
         Err(CamillaError::Invalid(_))
     ));
     assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
+}
+
+#[test]
+fn fir_taps_that_overflow_f32_write_nothing_td45() {
+    // 1e100 is a finite f64 but becomes infinity in the f32 WAV.
+    let fixture = Fixture::load("camilla", "direct_no_subs");
+    let temp = TempDir::new("f32_overflow");
+    let mut bad = chain(&fixture);
+    bad.mains[0].fir = vec![1.0, 1e100];
+    let error = write_config(&bad, &temp.0, "bad", &Options::default(), None).unwrap_err();
+    assert!(matches!(error, CamillaError::NonFinite(_)), "{error}");
+    assert!(error.to_string().contains("main.L.fir[1]"), "{error}");
+    assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
+
+    // A low-rate FIR is checked after its expansion to 48 kHz.
+    let fixture = Fixture::load("export_mimo", "room_dba_iir");
+    let mut path = mimo_paths(&fixture)
+        .paths
+        .into_iter()
+        .find(|path| path.input == "L" && path.support == "SW1")
+        .unwrap();
+    path.filter = MimoFilter::FirLowRate {
+        taps_low: vec![1e100, 0.5, 0.25, 0.125],
+        fs_low: 1000.0,
+    };
+    let mimo = MimoPaths {
+        fsiso: 120.0,
+        paths: vec![path],
+    };
+    let error = write_config(
+        &chain(&fixture),
+        &temp.0,
+        "bad",
+        &Options::default(),
+        Some(&mimo),
+    )
+    .unwrap_err();
+    assert!(matches!(error, CamillaError::NonFinite(_)), "{error}");
+    assert!(error.to_string().contains("mimo.paths[0]"), "{error}");
+    assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
+}
+
+#[test]
+fn duplicate_or_reserved_roles_write_nothing_td46() {
+    let temp = TempDir::new("duplicate_roles");
+    let reject = |chain: &SignalChain, role: &str| {
+        let error = write_config(chain, &temp.0, "bad", &Options::default(), None).unwrap_err();
+        assert!(matches!(error, CamillaError::Invalid(_)), "{error}");
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("duplicate or reserved role {role:?}")),
+            "{error}"
+        );
+        assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
+    };
+
+    let fixture = Fixture::load("camilla", "direct_no_subs");
+    let mut two_mains = chain(&fixture);
+    two_mains.mains.push(two_mains.mains[0].clone());
+    reject(&two_mains, "L");
+    let mut reserved = chain(&fixture);
+    reserved.mains[0].role = "LFE".into();
+    reject(&reserved, "LFE");
+
+    let fixture = Fixture::load("export_mimo", "room_dba_iir");
+    let mut sub_as_main = chain(&fixture);
+    sub_as_main.subs[0].role = sub_as_main.mains[0].role.clone();
+    let role = sub_as_main.mains[0].role.clone();
+    reject(&sub_as_main, &role);
+    let mut two_subs = chain(&fixture);
+    two_subs.subs.push(two_subs.subs[0].clone());
+    let role = two_subs.subs[0].role.clone();
+    reject(&two_subs, &role);
+    let mut reserved_sub = chain(&fixture);
+    reserved_sub.subs[0].role = "LFE".into();
+    reject(&reserved_sub, "LFE");
+}
+
+#[test]
+fn negative_delays_write_nothing_td94() {
+    // Negative means a negative whole 48 kHz sample after half-to-even
+    // rounding; the oracles' -0.0005-sample noise and exactly -0.5 samples are 0.
+    assert!(!secs_camilla::is_negative_delay(
+        -0.000_010_416_666_666_666_666
+    ));
+    assert!(!secs_camilla::is_negative_delay(-0.5 / 48.0));
+    assert!(secs_camilla::is_negative_delay(-0.51 / 48.0));
+    assert!(secs_camilla::is_negative_delay(-1.0));
+    let temp = TempDir::new("negative_delay");
+    let reject = |chain: &SignalChain, mimo: Option<&MimoPaths>, name: &str| {
+        let error = write_config(chain, &temp.0, "bad", &Options::default(), mimo).unwrap_err();
+        assert!(matches!(error, CamillaError::Invalid(_)), "{error}");
+        assert!(error.to_string().contains(name), "{error}");
+        assert_eq!(fs::read_dir(&temp.0).unwrap().count(), 0);
+    };
+
+    let fixture = Fixture::load("export_mimo", "room_dba_iir");
+    let mut main = chain(&fixture);
+    main.mains[0].delay_ms = -1.0;
+    let role = main.mains[0].role.clone();
+    reject(&main, None, &format!("main.{role}.delay_ms"));
+    let mut sub = chain(&fixture);
+    sub.subs[0].delay_ms = -1.0;
+    let role = sub.subs[0].role.clone();
+    reject(&sub, None, &format!("sub.{role}.delay_ms"));
+
+    let mut mimo = mimo_paths(&fixture);
+    mimo.paths.truncate(1);
+    mimo.paths[0].delay_ms = -1.0;
+    reject(&chain(&fixture), Some(&mimo), "mimo.paths[0].delay_ms");
+    let mut mimo = mimo_paths(&fixture);
+    mimo.paths.truncate(1);
+    mimo.paths[0].filter = MimoFilter::Iir {
+        gain_db: -6.0,
+        delay_ms: -1.0,
+        polarity: 1,
+        peq: Vec::new(),
+        allpass: Vec::new(),
+    };
+    reject(
+        &chain(&fixture),
+        Some(&mimo),
+        "mimo.paths[0].filter_delay_ms",
+    );
 }

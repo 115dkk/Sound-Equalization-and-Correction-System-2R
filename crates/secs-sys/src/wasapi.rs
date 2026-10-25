@@ -17,11 +17,14 @@
 //! HEnquist/wasapi-rs#65), so `forbid(unsafe_code)` keeps both out.
 
 use std::collections::VecDeque;
+use std::time::Instant;
 
 use secs_audio::{
     AudioBackend, AudioError, CancelToken, Direction, Endpoint, InputSession, OutputSession,
     PlaybackReport, ProbeResult, ShareMode, StreamSpec,
 };
+
+use crate::STALL;
 
 const HOST_API: &str = "Windows WASAPI";
 
@@ -64,6 +67,18 @@ fn validate_shared_channels(requested: u16, mix_channels: u16) -> Result<(), Aud
         )));
     }
     Ok(())
+}
+
+/// The HRESULT an endpoint returns when it refuses the format itself.
+const AUDCLNT_E_UNSUPPORTED_FORMAT: u32 = 0x8889_0008;
+
+/// Whether a failing HRESULT is the endpoint refusing the format, as opposed
+/// to the device or the audio service failing (a removed device answers
+/// `AUDCLNT_E_DEVICE_INVALIDATED`, a stopped service
+/// `AUDCLNT_E_SERVICE_NOT_RUNNING`). Probes and opens report only a refusal as
+/// an unsupported format; anything else is an error of the probe or open.
+fn is_format_refusal_hresult(code: i32) -> bool {
+    code as u32 == AUDCLNT_E_UNSUPPORTED_FORMAT
 }
 
 fn validate_frame_aligned(len: usize, channels: u16) -> Result<(), AudioError> {
@@ -180,6 +195,8 @@ fn packet_continuity(
 #[derive(Clone, Copy, Debug, Default)]
 struct AppendedPacket {
     header: PacketHeader,
+    /// The packet did not fit in the room left in the queue and was dropped.
+    dropped: bool,
     raw_zero_runs: usize,
     raw_zero_frames: usize,
     silent_fill_frames: usize,
@@ -187,6 +204,77 @@ struct AppendedPacket {
 
 trait PacketSource {
     fn read_packet(&mut self, scratch: &mut [u8]) -> Result<PacketHeader, AudioError>;
+}
+
+/// The capture endpoint as the read loop polls it.
+trait CaptureEndpoint: PacketSource {
+    /// Whether a packet is waiting to be read.
+    fn packet_ready(&mut self) -> Result<bool, AudioError>;
+    /// Blocks until the endpoint signals or a short timeout passes.
+    fn wait(&mut self) -> Result<(), AudioError>;
+}
+
+/// The monotonic time a [`StallWatch`] reads. The backend reads the system
+/// clock; the tests advance a fake one, so a stall takes no real time.
+trait Clock {
+    fn now(&self) -> Instant;
+}
+
+impl<C: Clock + ?Sized> Clock for &C {
+    fn now(&self) -> Instant {
+        (**self).now()
+    }
+}
+
+/// The system's monotonic clock.
+#[derive(Clone, Copy, Debug, Default)]
+struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+
+/// The last instant a stream made progress. A WASAPI event wait that times
+/// out is not an error, so a device that stops moving without a failing
+/// HRESULT would otherwise keep a loop waiting forever; past [`STALL`] the
+/// watch turns that silence into the error the cpal backend also returns.
+#[derive(Debug)]
+struct StallWatch<C> {
+    clock: C,
+    last_progress: Instant,
+    stream: &'static str,
+}
+
+impl<C: Clock> StallWatch<C> {
+    fn start(clock: C, stream: &'static str) -> Self {
+        let last_progress = clock.now();
+        Self {
+            clock,
+            last_progress,
+            stream,
+        }
+    }
+
+    fn progressed(&mut self) {
+        self.last_progress = self.clock.now();
+    }
+
+    fn check(&self) -> Result<(), AudioError> {
+        let idle = self
+            .clock
+            .now()
+            .saturating_duration_since(self.last_progress);
+        if idle > STALL {
+            return Err(AudioError::Backend(format!(
+                "WASAPI {} stalled: no progress for {} seconds",
+                self.stream,
+                STALL.as_secs()
+            )));
+        }
+        Ok(())
+    }
 }
 
 fn append_packet<S: PacketSource>(
@@ -210,7 +298,14 @@ fn append_packet<S: PacketSource>(
             scratch.len()
         )));
     }
-    let (raw_zero_runs, raw_zero_frames, silent_fill_frames) = if header.flags.silent {
+    // This runs on the MMCSS thread, so the queue never grows here. A packet
+    // that does not fit in the room reserved at open is dropped, and the
+    // queue reports the loss as a discontinuity, as cpal's callback does on
+    // overflow.
+    let dropped = pending.capacity() - pending.len() < sample_count;
+    let (raw_zero_runs, raw_zero_frames, silent_fill_frames) = if dropped {
+        (0, 0, 0)
+    } else if header.flags.silent {
         pending.extend(std::iter::repeat_n(0.0, sample_count));
         (0, 0, header.frames)
     } else {
@@ -248,6 +343,7 @@ fn append_packet<S: PacketSource>(
     };
     Ok(AppendedPacket {
         header,
+        dropped,
         raw_zero_runs,
         raw_zero_frames,
         silent_fill_frames,
@@ -264,7 +360,29 @@ struct CaptureQueue {
     flags: PacketFlags,
 }
 
+/// Endpoint buffers of samples the capture queue may hold: up to one buffer
+/// waiting for the caller (the backlog check in `next_packet`) plus the packet
+/// read on top of it, which is at most one buffer.
+const CAPTURE_BACKLOG_BUFFERS: usize = 2;
+
 impl CaptureQueue {
+    /// A queue for an endpoint buffer of `buffer_samples` samples. The whole
+    /// allowed backlog is reserved here, when the session opens, so reading
+    /// packets on the MMCSS thread never grows the queue.
+    fn for_endpoint_buffer(buffer_samples: usize) -> Result<Self, AudioError> {
+        let samples = buffer_samples
+            .checked_mul(CAPTURE_BACKLOG_BUFFERS)
+            .ok_or_else(|| AudioError::Backend("capture queue size overflow".into()))?;
+        let mut pending = VecDeque::new();
+        pending
+            .try_reserve_exact(samples)
+            .map_err(|error| AudioError::Backend(format!("capture queue: {error}")))?;
+        Ok(Self {
+            pending,
+            flags: PacketFlags::default(),
+        })
+    }
+
     /// Move queued samples into `dst[*written..]`. Returns the flags that
     /// applied to the samples handed out (all false when nothing was queued)
     /// and clears the stored flags once the queue runs empty.
@@ -290,6 +408,7 @@ impl CaptureQueue {
     }
 
     /// Read one packet from `source` into the queue and remember its flags.
+    /// A packet the queue has no room for is dropped and marks a gap.
     fn push_packet<S: PacketSource>(
         &mut self,
         source: &mut S,
@@ -298,13 +417,75 @@ impl CaptureQueue {
         diagnose_zeros: bool,
     ) -> Result<AppendedPacket, AudioError> {
         let packet = append_packet(source, scratch, &mut self.pending, channels, diagnose_zeros)?;
-        self.flags.silent |= packet.header.flags.silent;
+        if packet.dropped {
+            self.flags.discontinuity = true;
+        } else {
+            self.flags.silent |= packet.header.flags.silent;
+        }
         Ok(packet)
     }
 
     fn mark_gap(&mut self, gap: bool) {
         self.flags.discontinuity |= gap;
     }
+
+    /// One step of the capture loop once the queue has been drained into the
+    /// caller's buffer: read the ready packet into the queue, or wait once
+    /// when none is ready. `watch` sees a packet with frames as progress.
+    fn next_packet<E: CaptureEndpoint, C: Clock>(
+        &mut self,
+        endpoint: &mut E,
+        watch: &mut StallWatch<C>,
+        scratch: &mut [u8],
+        channels: u16,
+        diagnose_zeros: bool,
+        dst_full: bool,
+    ) -> Result<CaptureStep, AudioError> {
+        if !endpoint.packet_ready()? {
+            // A wake may represent several packets. Return a full dst
+            // only after every available packet has been released.
+            if dst_full {
+                return Ok(CaptureStep::Full);
+            }
+            watch.check()?;
+            endpoint.wait()?;
+            return Ok(CaptureStep::Waited);
+        }
+        // Bound backlog to two endpoint buffers. A caller that cannot
+        // keep up gets an explicit failure, never silently dropped data.
+        if self.pending.len() > scratch.len() / size_of::<f32>() {
+            return Err(AudioError::Backend(
+                "capture backlog exceeded endpoint buffer".into(),
+            ));
+        }
+        let queue_before = self.pending.len();
+        let packet = self.push_packet(endpoint, scratch, channels, diagnose_zeros)?;
+        if packet.header.frames > 0 {
+            watch.progressed();
+        } else {
+            // An endpoint that keeps reporting a ready but empty packet never
+            // waits, so the watch has to be checked here as well.
+            watch.check()?;
+        }
+        Ok(CaptureStep::Packet {
+            packet,
+            queue_before,
+        })
+    }
+}
+
+/// What [`CaptureQueue::next_packet`] did.
+#[derive(Debug)]
+enum CaptureStep {
+    /// A packet was read from the endpoint into the queue.
+    Packet {
+        packet: AppendedPacket,
+        queue_before: usize,
+    },
+    /// No packet was ready; the endpoint was waited on once.
+    Waited,
+    /// No packet is ready and the caller's buffer is full: the read is done.
+    Full,
 }
 
 trait SampleSink {
@@ -324,8 +505,9 @@ trait SampleSink {
     fn stop(&mut self) -> Result<(), AudioError>;
 }
 
-fn play_with_sink<S: SampleSink>(
+fn play_with_sink<S: SampleSink, C: Clock>(
     sink: &mut S,
+    clock: C,
     interleaved: &[f32],
     channels: u16,
     mode: ShareMode,
@@ -337,6 +519,8 @@ fn play_with_sink<S: SampleSink>(
     let mut submitted = 0usize;
     let mut underruns = 0u32;
     let mut started = false;
+    // Progress is a write the endpoint accepted, or padding that fell.
+    let mut watch = StallWatch::start(clock, "render");
 
     while submitted < total_frames {
         if cancel.is_cancelled() {
@@ -358,6 +542,7 @@ fn play_with_sink<S: SampleSink>(
             underruns = underruns.saturating_add(1);
         }
         if capacity == 0 {
+            watch.check()?;
             sink.wait()?;
             continue;
         }
@@ -366,6 +551,7 @@ fn play_with_sink<S: SampleSink>(
         let last = first + frames * channels;
         sink.write_frames(&interleaved[first..last], (capacity, padding))?;
         submitted += frames;
+        watch.progressed();
         if !started {
             sink.start()?;
             started = true;
@@ -377,21 +563,31 @@ fn play_with_sink<S: SampleSink>(
         }
     }
 
-    while started && sink.padding_frames()? > 0 {
-        if cancel.is_cancelled() {
-            let padding = sink.padding_frames()?;
-            sink.stop()?;
-            return Ok(PlaybackReport {
-                frames_submitted: submitted as u64,
-                frames_drained: submitted.saturating_sub(padding) as u64,
-                mode,
-                underruns,
-                cancelled: true,
-            });
-        }
-        sink.wait()?;
-    }
     if started {
+        let mut previous_padding = None;
+        loop {
+            let padding = sink.padding_frames()?;
+            if padding == 0 {
+                break;
+            }
+            if cancel.is_cancelled() {
+                let padding = sink.padding_frames()?;
+                sink.stop()?;
+                return Ok(PlaybackReport {
+                    frames_submitted: submitted as u64,
+                    frames_drained: submitted.saturating_sub(padding) as u64,
+                    mode,
+                    underruns,
+                    cancelled: true,
+                });
+            }
+            if previous_padding.is_some_and(|previous| padding < previous) {
+                watch.progressed();
+            }
+            previous_padding = Some(padding);
+            watch.check()?;
+            sink.wait()?;
+        }
         sink.stop()?;
     }
     Ok(PlaybackReport {
@@ -511,7 +707,6 @@ mod windows_backend {
         }
     }
 
-    const AUDCLNT_E_UNSUPPORTED_FORMAT: u32 = 0x8889_0008;
     const TRACE_ENV: &str = "SECS_PA05_TRACE_PREFIX";
     static TRACE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -604,20 +799,25 @@ mod windows_backend {
             result
         }
 
+        /// Writes the CSV. It is attempted once per session: a failure is
+        /// returned once and not retried.
         fn flush(&self) -> Result<(), AudioError> {
             let mut state = self.0.borrow_mut();
             if state.flushed {
                 return Ok(());
             }
-            let file = File::create(&state.path).map_err(|error| {
+            state.flushed = true;
+            let state = &*state;
+            let failed = |action: &str, error: std::io::Error| {
                 AudioError::Backend(format!(
-                    "create PA05 trace {}: {error}",
+                    "{action} PA05 trace {}: {error}",
                     state.path.display()
                 ))
-            })?;
+            };
+            let file = File::create(&state.path).map_err(|error| failed("create", error))?;
             let mut writer = BufWriter::new(file);
             writeln!(writer, "elapsed_us,category,event,duration_us,ordinal,frames,frame_start,frame_end,buffer_index,buffer_timestamp,silent,discontinuity,initial_discontinuity,raw_zero_runs,raw_zero_frames,silent_fill_frames,queue_before,queue_after,delivery_start,delivery_end,buffer_size,padding,free,detail")
-                .map_err(|error| AudioError::Backend(format!("write PA05 trace header: {error}")))?;
+                .map_err(|error| failed("write", error))?;
             for record in &state.records {
                 writeln!(
                     writer,
@@ -647,13 +847,34 @@ mod windows_backend {
                     csv_option(record.free),
                     record.detail.replace(',', ";")
                 )
-                .map_err(|error| AudioError::Backend(format!("write PA05 trace row: {error}")))?;
+                .map_err(|error| failed("write", error))?;
             }
-            writer
-                .flush()
-                .map_err(|error| AudioError::Backend(format!("flush PA05 trace: {error}")))?;
-            state.flushed = true;
+            writer.flush().map_err(|error| failed("flush", error))?;
             Ok(())
+        }
+    }
+
+    #[cfg(test)]
+    mod trace_tests {
+        use super::*;
+
+        #[test]
+        fn trace_write_failure_names_the_file_and_is_not_retried() {
+            let path = std::env::temp_dir()
+                .join(format!("secs-pa05-missing-{}", std::process::id()))
+                .join("trace.csv");
+            let trace = TraceHandle(Rc::new(std::cell::RefCell::new(TraceState {
+                started: Instant::now(),
+                path: path.clone(),
+                records: Vec::new(),
+                flushed: false,
+            })));
+            let error = trace.flush().unwrap_err();
+            assert!(
+                error.to_string().contains(&path.display().to_string()),
+                "{error}"
+            );
+            assert!(trace.flush().is_ok(), "a failed trace is attempted once");
         }
     }
 
@@ -715,8 +936,13 @@ mod windows_backend {
 
     impl Drop for TraceOwner {
         fn drop(&mut self) {
-            if let Some(trace) = &self.0 {
-                let _ = trace.flush();
+            // Drop cannot return the error, and the measurement does not
+            // depend on its trace: say once on stderr that the trace is lost,
+            // as RealtimeGuard does for a failed demotion.
+            if let Some(trace) = &self.0
+                && let Err(error) = trace.flush()
+            {
+                eprintln!("{error}");
             }
         }
     }
@@ -888,6 +1114,44 @@ mod windows_backend {
         AudioError::UnsupportedFormat(format!("{context}: {err}"))
     }
 
+    /// The one classification of a failed format query or initialization,
+    /// shared by the probes and the open path: the endpoint refusing the
+    /// format, or (`false`) a failure of the device or the audio service.
+    fn is_format_refusal(error: &wasapi::WasapiError) -> bool {
+        match error {
+            wasapi::WasapiError::Windows(error) => is_format_refusal_hresult(error.code().0),
+            wasapi::WasapiError::UnsupportedFormat => true,
+            _ => false,
+        }
+    }
+
+    #[cfg(test)]
+    mod format_refusal_tests {
+        use super::*;
+
+        fn windows_error(code: u32) -> wasapi::WasapiError {
+            // HRESULT::from_win32 keeps a negative code as it is, so this is
+            // exactly the HRESULT `code`.
+            wasapi::WasapiError::Windows(std::io::Error::from_raw_os_error(code as i32).into())
+        }
+
+        #[test]
+        fn wasapi_errors_are_classified_by_their_hresult() {
+            assert!(is_format_refusal(&windows_error(
+                AUDCLNT_E_UNSUPPORTED_FORMAT
+            )));
+            assert!(is_format_refusal(&wasapi::WasapiError::UnsupportedFormat));
+            for code in [0x8889_0004, 0x8889_0010, 0x8007_000e] {
+                assert!(!is_format_refusal(&windows_error(code)), "{code:#x}");
+            }
+            assert!(!is_format_refusal(&wasapi::WasapiError::EventTimeout));
+            assert!(!is_format_refusal(&wasapi::WasapiError::ClientNotInit));
+            assert!(!is_format_refusal(&wasapi::WasapiError::DeviceNotFound(
+                "gone".into()
+            )));
+        }
+    }
+
     fn wasapi_direction(direction: Direction) -> WasapiDirection {
         match direction {
             Direction::Input => WasapiDirection::Capture,
@@ -1020,12 +1284,7 @@ mod windows_backend {
         let query =
             |format: &WaveFormat| match client.is_supported(format, &WasapiShareMode::Exclusive) {
                 Ok(_) => Ok(true),
-                Err(wasapi::WasapiError::Windows(e))
-                    if e.code().0 as u32 == AUDCLNT_E_UNSUPPORTED_FORMAT =>
-                {
-                    Ok(false)
-                }
-                Err(wasapi::WasapiError::UnsupportedFormat) => Ok(false),
+                Err(e) if is_format_refusal(&e) => Ok(false),
                 Err(e) => Err(backend_error("exclusive format query", e)),
             };
         if query(requested)? {
@@ -1195,16 +1454,12 @@ mod windows_backend {
         trace_stage(trace, "initialize_client", || {
             client
                 .initialize_client(&accepted, &wasapi_direction(direction), &stream_mode)
-                .map_err(|err| match err {
-                    wasapi::WasapiError::Windows(ref e)
-                        if e.code().0 as u32 == AUDCLNT_E_UNSUPPORTED_FORMAT =>
-                    {
+                .map_err(|err| {
+                    if is_format_refusal(&err) {
                         unsupported("WASAPI stream initialization rejected the format", err)
+                    } else {
+                        backend_error("WASAPI stream initialization", err)
                     }
-                    wasapi::WasapiError::UnsupportedFormat => {
-                        unsupported("WASAPI stream initialization rejected the format", err)
-                    }
-                    _ => backend_error("WASAPI stream initialization", err),
                 })
         })?;
         if let Some(trace) = trace {
@@ -1358,12 +1613,21 @@ mod windows_backend {
                                         "shared auto-convert accepted by initialization (IsFormatSupported said: {query_err})"
                                     ),
                                 ),
-                                Err(init_err) => (
+                                Err(init_err) if is_format_refusal(&init_err) => (
                                     false,
                                     format!(
                                         "shared auto-convert rejected: IsFormatSupported {query_err}; Initialize {init_err}"
                                     ),
                                 ),
+                                // A removed device or a stopped audio service
+                                // is the probe's error, as in the exclusive
+                                // search above, not a refused format.
+                                Err(init_err) => {
+                                    return Err(backend_error(
+                                        "shared auto-convert trial initialization",
+                                        init_err,
+                                    ));
+                                }
                             }
                         }
                     }
@@ -1507,12 +1771,7 @@ mod windows_backend {
             let (scratch, queue) = trace_stage(trace.as_ref(), "allocation", || {
                 Ok((
                     vec![0; scratch_len],
-                    CaptureQueue {
-                        pending: VecDeque::with_capacity(
-                            buffer_frames * usize::from(spec.channels),
-                        ),
-                        flags: PacketFlags::default(),
-                    },
+                    CaptureQueue::for_endpoint_buffer(scratch_len / size_of::<f32>())?,
                 ))
             })?;
             let realtime = RealtimeGuard::acquire(buffer_frames, spec.sample_rate, trace.as_ref())?;
@@ -1726,6 +1985,7 @@ mod windows_backend {
             };
             play_with_sink(
                 &mut sink,
+                SystemClock,
                 interleaved,
                 self.spec.channels,
                 self.mode,
@@ -1734,11 +1994,40 @@ mod windows_backend {
         }
     }
 
-    struct WasapiPacketSource<'a> {
+    /// The capture service, its client and the shared-mode event.
+    struct WasapiCaptureEndpoint<'a> {
         capture: &'a AudioCaptureClient,
+        client: &'a AudioClient,
+        event: Option<&'a wasapi::Handle>,
     }
 
-    impl PacketSource for WasapiPacketSource<'_> {
+    impl CaptureEndpoint for WasapiCaptureEndpoint<'_> {
+        fn packet_ready(&mut self) -> Result<bool, AudioError> {
+            match self
+                .capture
+                .get_next_packet_size()
+                .map_err(|err| backend_error("failed to query WASAPI capture packet", err))?
+            {
+                Some(frames) => Ok(frames > 0),
+                None => self
+                    .client
+                    .get_current_padding()
+                    .map(|frames| frames > 0)
+                    .map_err(|err| backend_error("failed to query WASAPI capture padding", err)),
+            }
+        }
+
+        fn wait(&mut self) -> Result<(), AudioError> {
+            if let Some(event) = self.event {
+                wait_event(event)
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                Ok(())
+            }
+        }
+    }
+
+    impl PacketSource for WasapiCaptureEndpoint<'_> {
         fn read_packet(&mut self, scratch: &mut [u8]) -> Result<PacketHeader, AudioError> {
             let (frames, info) = self
                 .capture
@@ -1781,21 +2070,6 @@ mod windows_backend {
         pub fn capture_stats(&self) -> CaptureStats {
             self.stats
         }
-
-        fn packet_ready(&self) -> Result<bool, AudioError> {
-            match self
-                .capture
-                .get_next_packet_size()
-                .map_err(|err| backend_error("failed to query WASAPI capture packet", err))?
-            {
-                Some(frames) => Ok(frames > 0),
-                None => self
-                    .client
-                    .get_current_padding()
-                    .map(|frames| frames > 0)
-                    .map_err(|err| backend_error("failed to query WASAPI capture padding", err)),
-            }
-        }
     }
 
     impl InputSession for WasapiInputSession {
@@ -1823,6 +2097,14 @@ mod windows_backend {
             let mut written = 0usize;
             let mut any_silent = false;
             let mut any_discontinuity = false;
+            let mut endpoint = WasapiCaptureEndpoint {
+                capture: &self.capture,
+                client: &self.client,
+                event: self.event.as_ref(),
+            };
+            // Started per call: time the caller spends between reads is not
+            // the device's.
+            let mut watch = StallWatch::start(SystemClock, "capture");
             while !dst.is_empty() {
                 let delivery_start = self.delivered_frames;
                 let queue_before = self.queue.pending.len();
@@ -1852,36 +2134,21 @@ mod windows_backend {
                 if cancel.is_cancelled() {
                     break;
                 }
-                if !self.packet_ready()? {
-                    // A wake may represent several packets. Return a full dst
-                    // only after every available packet has been released.
-                    if written == dst.len() {
-                        break;
-                    }
-                    if let Some(event) = &self.event {
-                        wait_event(event)?;
-                    } else {
-                        std::thread::sleep(std::time::Duration::from_millis(1));
-                    }
-                    continue;
-                }
-                // Bound backlog to two endpoint buffers. A caller that cannot
-                // keep up gets an explicit failure, never silently dropped data.
-                if self.queue.pending.len() > self.scratch.len() / size_of::<f32>() {
-                    return Err(AudioError::Backend(
-                        "capture backlog exceeded endpoint buffer".into(),
-                    ));
-                }
-                let mut source = WasapiPacketSource {
-                    capture: &self.capture,
-                };
-                let queue_before = self.queue.pending.len();
-                let packet = self.queue.push_packet(
-                    &mut source,
+                let (packet, queue_before) = match self.queue.next_packet(
+                    &mut endpoint,
+                    &mut watch,
                     &mut self.scratch,
                     self.spec.channels,
                     self.trace.is_some(),
-                )?;
+                    written == dst.len(),
+                )? {
+                    CaptureStep::Packet {
+                        packet,
+                        queue_before,
+                    } => (packet, queue_before),
+                    CaptureStep::Waited => continue,
+                    CaptureStep::Full => break,
+                };
                 let continuity =
                     packet_continuity(self.packet_ordinal, &packet.header, self.expected_position);
                 self.queue.mark_gap(continuity.gap);
@@ -1907,10 +2174,11 @@ mod windows_backend {
                         silent_fill_frames: Some(packet.silent_fill_frames),
                         queue_before: Some(queue_before),
                         queue_after: Some(self.queue.pending.len()),
-                        detail: if continuity.position_jump {
-                            "device_to_queue;position_jump"
-                        } else {
-                            "device_to_queue"
+                        detail: match (continuity.position_jump, packet.dropped) {
+                            (false, false) => "device_to_queue",
+                            (true, false) => "device_to_queue;position_jump",
+                            (false, true) => "device_to_queue;dropped_queue_full",
+                            (true, true) => "device_to_queue;position_jump;dropped_queue_full",
                         }
                         .into(),
                         ..TraceRecord::default()
@@ -2178,6 +2446,7 @@ mod tests {
         };
         let report = play_with_sink(
             &mut sink,
+            SystemClock,
             &[0.25; 8],
             2,
             ShareMode::SharedAutoConvert,
@@ -2198,7 +2467,7 @@ mod tests {
             },
         };
         let mut scratch = vec![0; source.bytes.len()];
-        let mut pending = VecDeque::new();
+        let mut pending = VecDeque::with_capacity(source.bytes.len() / size_of::<f32>());
         let report = append_packet(&mut source, &mut scratch, &mut pending, 1, true).unwrap();
         assert!(report.header.flags.silent);
         assert_eq!(pending, VecDeque::from(vec![0.0; 4]));
@@ -2306,7 +2575,7 @@ mod tests {
             },
         };
         let mut scratch = vec![0; source.bytes.len()];
-        let mut queue = CaptureQueue::default();
+        let mut queue = CaptureQueue::for_endpoint_buffer(4).unwrap();
         queue
             .push_packet(&mut source, &mut scratch, 1, true)
             .unwrap();
@@ -2373,7 +2642,7 @@ mod tests {
             },
         };
         let mut scratch = vec![0; source.bytes.len()];
-        let mut pending = VecDeque::new();
+        let mut pending = VecDeque::with_capacity(source.bytes.len() / size_of::<f32>());
         let packet = append_packet(&mut source, &mut scratch, &mut pending, 1, true).unwrap();
         assert_eq!(packet.header.frames, 3);
         assert!(packet.header.flags.discontinuity);
@@ -2393,7 +2662,7 @@ mod tests {
             },
         };
         let mut scratch = vec![0; source.bytes.len()];
-        let mut pending = VecDeque::new();
+        let mut pending = VecDeque::with_capacity(source.bytes.len() / size_of::<f32>());
         let packet = append_packet(&mut source, &mut scratch, &mut pending, 1, true).unwrap();
         assert_eq!(packet.raw_zero_runs, 0);
         assert_eq!(packet.raw_zero_frames, 0);
@@ -2405,6 +2674,25 @@ mod tests {
     fn dst_length_must_be_frame_aligned() {
         assert!(validate_frame_aligned(7, 2).is_err());
         assert!(validate_frame_aligned(8, 2).is_ok());
+    }
+
+    #[test]
+    fn only_an_unsupported_format_hresult_is_a_format_refusal() {
+        let table: [(u32, bool, &str); 10] = [
+            (0x8889_0008, true, "AUDCLNT_E_UNSUPPORTED_FORMAT"),
+            (0x8889_0004, false, "AUDCLNT_E_DEVICE_INVALIDATED"),
+            (0x8889_0010, false, "AUDCLNT_E_SERVICE_NOT_RUNNING"),
+            (0x8889_000a, false, "AUDCLNT_E_DEVICE_IN_USE"),
+            (0x8889_000e, false, "AUDCLNT_E_EXCLUSIVE_MODE_NOT_ALLOWED"),
+            (0x8889_000f, false, "AUDCLNT_E_ENDPOINT_CREATE_FAILED"),
+            (0x8889_0019, false, "AUDCLNT_E_BUFFER_SIZE_NOT_ALIGNED"),
+            (0x8007_000e, false, "E_OUTOFMEMORY"),
+            (0x8007_0057, false, "E_INVALIDARG"),
+            (0x8000_4003, false, "E_POINTER"),
+        ];
+        for (code, refusal, name) in table {
+            assert_eq!(is_format_refusal_hresult(code as i32), refusal, "{name}");
+        }
     }
 
     struct CancellingSink {
@@ -2449,10 +2737,323 @@ mod tests {
             padding: 0,
             started: false,
         };
-        let report =
-            play_with_sink(&mut sink, &[0.0; 16], 2, ShareMode::Exclusive, &cancel).unwrap();
+        let report = play_with_sink(
+            &mut sink,
+            SystemClock,
+            &[0.0; 16],
+            2,
+            ShareMode::Exclusive,
+            &cancel,
+        )
+        .unwrap();
         assert!(report.cancelled);
         assert_eq!(report.frames_submitted, 2);
         assert!(!sink.started);
+    }
+
+    /// A clock the fakes advance by hand, so a stall takes no real time.
+    struct FakeClock(std::cell::Cell<Instant>);
+
+    impl FakeClock {
+        fn new() -> Self {
+            Self(std::cell::Cell::new(Instant::now()))
+        }
+
+        fn advance(&self, by: std::time::Duration) {
+            self.0.set(self.0.get() + by);
+        }
+    }
+
+    impl Clock for FakeClock {
+        fn now(&self) -> Instant {
+            self.0.get()
+        }
+    }
+
+    /// One wait of the fakes below: the 10 ms timeout of the shared-mode event.
+    const FAKE_WAIT: std::time::Duration = std::time::Duration::from_millis(10);
+
+    /// The first wait count whose elapsed time is past `STALL`.
+    fn waits_past_stall() -> u32 {
+        (STALL.as_millis() / FAKE_WAIT.as_millis()) as u32 + 1
+    }
+
+    fn is_stall(error: &AudioError) -> bool {
+        matches!(error, AudioError::Backend(message) if message.contains("stalled"))
+    }
+
+    /// A mono capture endpoint whose packet of `frames` frames becomes ready
+    /// after `every` waits; `None` never delivers.
+    struct FakeEndpoint<'a> {
+        clock: &'a FakeClock,
+        every: Option<u32>,
+        frames: usize,
+        since_packet: u32,
+        waits: u32,
+    }
+
+    impl<'a> FakeEndpoint<'a> {
+        fn new(clock: &'a FakeClock, every: Option<u32>, frames: usize) -> Self {
+            Self {
+                clock,
+                every,
+                frames,
+                since_packet: 0,
+                waits: 0,
+            }
+        }
+    }
+
+    impl PacketSource for FakeEndpoint<'_> {
+        fn read_packet(&mut self, scratch: &mut [u8]) -> Result<PacketHeader, AudioError> {
+            self.since_packet = 0;
+            scratch[..self.frames * size_of::<f32>()].fill(0);
+            Ok(PacketHeader {
+                frames: self.frames,
+                ..PacketHeader::default()
+            })
+        }
+    }
+
+    impl CaptureEndpoint for FakeEndpoint<'_> {
+        fn packet_ready(&mut self) -> Result<bool, AudioError> {
+            Ok(self.every.is_some_and(|every| self.since_packet >= every))
+        }
+
+        fn wait(&mut self) -> Result<(), AudioError> {
+            self.clock.advance(FAKE_WAIT);
+            self.since_packet += 1;
+            self.waits += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn capture_stalls_when_no_packet_arrives() {
+        let clock = FakeClock::new();
+        let mut endpoint = FakeEndpoint::new(&clock, None, 4);
+        let mut watch = StallWatch::start(&clock, "capture");
+        let mut queue = CaptureQueue {
+            pending: VecDeque::with_capacity(8),
+            ..CaptureQueue::default()
+        };
+        let mut scratch = [0; 16];
+        let error = loop {
+            assert!(endpoint.waits <= 10 * waits_past_stall(), "no stall error");
+            match queue.next_packet(&mut endpoint, &mut watch, &mut scratch, 1, false, false) {
+                Ok(CaptureStep::Waited) => {}
+                Ok(step) => panic!("unexpected {step:?}"),
+                Err(error) => break error,
+            }
+        };
+        assert!(is_stall(&error), "{error}");
+        assert_eq!(endpoint.waits, waits_past_stall());
+    }
+
+    #[test]
+    fn capture_backlog_fits_the_reserved_queue() {
+        // An endpoint buffer of 8 mono frames. Once the destination is full,
+        // the loop keeps reading every ready packet until the backlog limit.
+        for (frames, packets_at_limit) in [(3, 3), (5, 2), (8, 2)] {
+            let clock = FakeClock::new();
+            let mut endpoint = FakeEndpoint::new(&clock, Some(0), frames);
+            let mut watch = StallWatch::start(&clock, "capture");
+            let mut queue = CaptureQueue::for_endpoint_buffer(8).unwrap();
+            let capacity = queue.pending.capacity();
+            let mut scratch = [0; 8 * size_of::<f32>()];
+            let mut packets = 0;
+            let error = loop {
+                match queue.next_packet(&mut endpoint, &mut watch, &mut scratch, 1, false, true) {
+                    Ok(CaptureStep::Packet { packet, .. }) => {
+                        assert!(!packet.dropped, "{frames}-frame packet {packets} dropped");
+                        packets += 1;
+                    }
+                    Ok(step) => panic!("unexpected {step:?}"),
+                    Err(error) => break error,
+                }
+                assert_eq!(queue.pending.capacity(), capacity, "{frames}-frame packets");
+                assert!(packets <= 8, "no backlog error");
+            };
+            assert!(
+                matches!(&error, AudioError::Backend(message) if message.contains("backlog")),
+                "{error}"
+            );
+            assert_eq!(packets, packets_at_limit, "{frames}-frame packets");
+            assert_eq!(queue.pending.len(), frames * packets_at_limit);
+        }
+    }
+
+    #[test]
+    fn packet_beyond_the_reserved_queue_is_dropped_as_a_gap() {
+        let mut queue = CaptureQueue::for_endpoint_buffer(4).unwrap();
+        let capacity = queue.pending.capacity();
+        let mut source = FakePacket {
+            bytes: f32_to_bytes(&vec![0.5; capacity + 1]),
+            flags: PacketFlags::default(),
+        };
+        let mut scratch = vec![0; source.bytes.len()];
+        let packet = queue
+            .push_packet(&mut source, &mut scratch, 1, true)
+            .unwrap();
+        assert!(packet.dropped);
+        assert!(queue.pending.is_empty());
+        assert_eq!(queue.pending.capacity(), capacity);
+
+        // The samples handed out after the drop report the lost audio.
+        let mut source = FakePacket {
+            bytes: f32_to_bytes(&[0.25, -0.25]),
+            flags: PacketFlags::default(),
+        };
+        let packet = queue
+            .push_packet(&mut source, &mut scratch, 1, true)
+            .unwrap();
+        assert!(!packet.dropped);
+        let mut dst = [0.0; 2];
+        let mut written = 0;
+        assert!(queue.drain_into(&mut dst, &mut written).discontinuity);
+        assert_eq!(dst, [0.25, -0.25]);
+        assert_eq!(queue.pending.capacity(), capacity);
+    }
+
+    #[test]
+    fn slow_capture_packets_do_not_stall() {
+        let clock = FakeClock::new();
+        let started = clock.now();
+        // A packet every 1.5 s: slow, but each one is progress.
+        let every = waits_past_stall() * 3 / 4;
+        let mut endpoint = FakeEndpoint::new(&clock, Some(every), 4);
+        let mut watch = StallWatch::start(&clock, "capture");
+        let mut queue = CaptureQueue {
+            pending: VecDeque::with_capacity(8),
+            ..CaptureQueue::default()
+        };
+        let mut scratch = [0; 16];
+        let mut packets = 0;
+        while packets < 4 {
+            match queue
+                .next_packet(&mut endpoint, &mut watch, &mut scratch, 1, false, false)
+                .unwrap()
+            {
+                CaptureStep::Packet { packet, .. } => {
+                    assert_eq!(packet.header.frames, 4);
+                    packets += 1;
+                    queue.pending.clear();
+                }
+                CaptureStep::Waited => {}
+                CaptureStep::Full => panic!("the destination is not full"),
+            }
+        }
+        assert!(clock.now() - started > STALL * 2);
+    }
+
+    /// A mono render endpoint of `buffer` frames that consumes one frame every
+    /// `every` waits; `None` never consumes.
+    struct FakeRender<'a> {
+        clock: &'a FakeClock,
+        buffer: usize,
+        every: Option<u32>,
+        padding: std::cell::Cell<usize>,
+        waits: std::cell::Cell<u32>,
+    }
+
+    impl<'a> FakeRender<'a> {
+        fn new(clock: &'a FakeClock, buffer: usize, every: Option<u32>) -> Self {
+            Self {
+                clock,
+                buffer,
+                every,
+                padding: std::cell::Cell::new(0),
+                waits: std::cell::Cell::new(0),
+            }
+        }
+    }
+
+    impl SampleSink for FakeRender<'_> {
+        fn wait(&self) -> Result<(), AudioError> {
+            self.clock.advance(FAKE_WAIT);
+            let waits = self.waits.get() + 1;
+            self.waits.set(waits);
+            if self.every.is_some_and(|every| waits.is_multiple_of(every)) {
+                self.padding.set(self.padding.get().saturating_sub(1));
+            }
+            Ok(())
+        }
+
+        fn capacity_frames(&self) -> Result<usize, AudioError> {
+            Ok(self.buffer - self.padding.get())
+        }
+
+        fn padding_frames(&self) -> Result<usize, AudioError> {
+            Ok(self.padding.get())
+        }
+
+        fn buffer_snapshot(&self) -> Result<(usize, usize), AudioError> {
+            Ok((self.buffer - self.padding.get(), self.padding.get()))
+        }
+
+        fn write_frames(&mut self, samples: &[f32], _: (usize, usize)) -> Result<(), AudioError> {
+            self.padding.set(self.padding.get() + samples.len());
+            Ok(())
+        }
+
+        fn start(&mut self) -> Result<(), AudioError> {
+            Ok(())
+        }
+
+        fn stop(&mut self) -> Result<(), AudioError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn render_stalls_when_the_device_stops_consuming() {
+        // Priming: the buffer fills and never frees space for the rest.
+        let clock = FakeClock::new();
+        let mut sink = FakeRender::new(&clock, 4, None);
+        let error = play_with_sink(
+            &mut sink,
+            &clock,
+            &[0.0; 8],
+            1,
+            ShareMode::SharedAutoConvert,
+            &CancelToken::new(),
+        )
+        .unwrap_err();
+        assert!(is_stall(&error), "{error}");
+        assert_eq!(sink.waits.get(), waits_past_stall());
+
+        // Drain: everything was submitted but the padding never falls.
+        let clock = FakeClock::new();
+        let mut sink = FakeRender::new(&clock, 8, None);
+        let error = play_with_sink(
+            &mut sink,
+            &clock,
+            &[0.0; 4],
+            1,
+            ShareMode::SharedAutoConvert,
+            &CancelToken::new(),
+        )
+        .unwrap_err();
+        assert!(is_stall(&error), "{error}");
+        assert_eq!(sink.waits.get(), waits_past_stall());
+    }
+
+    #[test]
+    fn slow_render_progress_does_not_stall() {
+        // One frame every 1.5 s, both while priming and while draining.
+        let clock = FakeClock::new();
+        let started = clock.now();
+        let mut sink = FakeRender::new(&clock, 4, Some(waits_past_stall() * 3 / 4));
+        let report = play_with_sink(
+            &mut sink,
+            &clock,
+            &[0.0; 8],
+            1,
+            ShareMode::SharedAutoConvert,
+            &CancelToken::new(),
+        )
+        .unwrap();
+        assert_eq!(report.frames_drained, 8);
+        assert!(clock.now() - started > STALL * 4);
     }
 }

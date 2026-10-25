@@ -81,6 +81,12 @@ impl RidgeBackend for CpuRidgeBackend {
                 "invalid ridge system",
             ));
         }
+        // The Householder tridiagonalization inside (faer `tridiag_in_place`)
+        // is one call with no place to check the token, so the token is read
+        // before and after it and one factorization bounds the cancel latency.
+        // Checking per column would mean copying faer's loop, which uses
+        // uninitialised buffers (ADR 0002). docs/MIMO.md gives measured times
+        // (audit #92 TD-96).
         let system = CpuSystem(RidgeSweep::new(ata, atb));
         cancelled(cancel)?;
         Ok(Box::new(system))
@@ -105,21 +111,32 @@ fn cancelled(cancel: &CancelToken) -> Result<(), AccelerationError> {
 
 pub(crate) struct RunAcceleration<'a> {
     selection: &'a AccelerationSelection,
-    report: Mutex<ComputeReport>,
+    report: Mutex<RunReport>,
+}
+
+/// The report and the fallback reason its `detail` belongs to (TD-54). The
+/// detail follows its own fallback, not `report.reason`, which can also come
+/// from the selection.
+struct RunReport {
+    report: ComputeReport,
+    detail_reason: Option<ComputeReason>,
 }
 
 impl<'a> RunAcceleration<'a> {
     pub(crate) fn new(selection: &'a AccelerationSelection) -> Self {
         Self {
             selection,
-            report: Mutex::new(ComputeReport {
-                requested: selection.status.preference,
-                reason: Some(if selection.status.preference == ComputePreference::Cpu {
-                    ComputeReason::UserCpu
-                } else {
-                    selection.status.reason
-                }),
-                ..ComputeReport::default()
+            report: Mutex::new(RunReport {
+                report: ComputeReport {
+                    requested: selection.status.preference,
+                    reason: Some(if selection.status.preference == ComputePreference::Cpu {
+                        ComputeReason::UserCpu
+                    } else {
+                        selection.status.reason
+                    }),
+                    ..ComputeReport::default()
+                },
+                detail_reason: None,
             }),
         }
     }
@@ -128,11 +145,17 @@ impl<'a> RunAcceleration<'a> {
         self.report
             .lock()
             .unwrap_or_else(|e| e.into_inner())
+            .report
             .clone()
     }
 
-    fn completed(&self, gpu: bool, fallback: Option<ComputeReason>, small: bool) {
-        let mut report = self.report.lock().unwrap_or_else(|e| e.into_inner());
+    /// `fallback` is the failed accelerator's reason and detail.
+    fn completed(&self, gpu: bool, fallback: Option<(ComputeReason, &str)>, small: bool) {
+        let mut state = self.report.lock().unwrap_or_else(|e| e.into_inner());
+        let RunReport {
+            report,
+            detail_reason,
+        } = &mut *state;
         if gpu {
             report.accelerated_systems += 1;
             report.backend = ComputeBackend::Cuda;
@@ -152,7 +175,7 @@ impl<'a> RunAcceleration<'a> {
                 report.reason = Some(ComputeReason::SmallProblem);
             }
         }
-        if let Some(reason) = fallback {
+        if let Some((reason, detail)) = fallback {
             report.fallbacks += 1;
             report.stage = Some(ComputeStage::IdealFirSweep);
             report.device = self
@@ -167,6 +190,23 @@ impl<'a> RunAcceleration<'a> {
                 .is_none_or(|old| reason_priority(reason) > reason_priority(old))
             {
                 report.reason = Some(reason);
+            }
+            // The detail of the most severe fallback; equal severities keep
+            // the smaller text, so the worker order stays irrelevant.
+            let detail: String = detail
+                .chars()
+                .take(ComputeReport::DETAIL_MAX_CHARS)
+                .collect();
+            let replace = match (*detail_reason, &report.detail) {
+                (Some(old), Some(kept)) => {
+                    let (new, old) = (reason_priority(reason), reason_priority(old));
+                    new > old || (new == old && detail < *kept)
+                }
+                _ => true,
+            };
+            if replace {
+                *detail_reason = Some(reason);
+                report.detail = Some(detail);
             }
         }
     }
@@ -274,7 +314,7 @@ pub(crate) fn run_sweep(
     cancel: &CancelToken,
     acceleration: Option<&RunAcceleration<'_>>,
 ) -> Result<SweepResult, EngineError> {
-    let mut fallback = None;
+    let mut fallback: Option<(ComputeReason, String)> = None;
     let mut small = false;
     if let Some(run) = acceleration
         && run.selection.status.preference != ComputePreference::Cpu
@@ -294,7 +334,9 @@ pub(crate) fn run_sweep(
                     return Ok(result);
                 }
                 Err(AccelerationError::Cancelled) => return Err(EngineError::Cancelled),
-                Err(AccelerationError::Failed { reason, .. }) => fallback = Some(reason),
+                Err(AccelerationError::Failed { reason, detail }) => {
+                    fallback = Some((reason, detail));
+                }
             }
         }
     }
@@ -307,7 +349,11 @@ pub(crate) fn run_sweep(
             AccelerationError::Failed { detail, .. } => EngineError::Input(detail),
         })?;
     if let Some(run) = acceleration {
-        run.completed(false, fallback, small);
+        run.completed(
+            false,
+            fallback.as_ref().map(|(r, d)| (*r, d.as_str())),
+            small,
+        );
     }
     Ok(result)
 }
@@ -432,6 +478,8 @@ mod tests {
         assert_eq!(report.backend, ComputeBackend::Cpu);
         assert_eq!(report.stage, Some(ComputeStage::IdealFirSweep));
         assert_eq!(report.device.as_deref(), Some("Fake CUDA"));
+        assert_eq!(report.reason, Some(ComputeReason::DeviceFailure));
+        assert_eq!(report.detail.as_deref(), Some("injected device loss"));
     }
     #[test]
     fn cancellation_during_shift_never_falls_back() {
@@ -507,15 +555,41 @@ mod tests {
         );
         let first = RunAcceleration::new(&selection);
         let second = RunAcceleration::new(&selection);
-        first.completed(false, Some(ComputeReason::InsufficientMemory), false);
-        first.completed(false, Some(ComputeReason::RuntimeUnavailable), false);
-        second.completed(false, Some(ComputeReason::RuntimeUnavailable), false);
-        second.completed(false, Some(ComputeReason::InsufficientMemory), false);
+        let memory = (
+            ComputeReason::InsufficientMemory,
+            "cuMemAlloc: out of memory",
+        );
+        let runtime_b = (ComputeReason::RuntimeUnavailable, "nvcuda: version 12.2");
+        let runtime_a = (ComputeReason::RuntimeUnavailable, "cuInit: 999");
+        for fallback in [memory, runtime_b, runtime_a] {
+            first.completed(false, Some(fallback), false);
+        }
+        for fallback in [runtime_a, memory, runtime_b] {
+            second.completed(false, Some(fallback), false);
+        }
         assert_eq!(first.report(), second.report());
         assert_eq!(
             first.report().reason,
             Some(ComputeReason::RuntimeUnavailable)
         );
+        assert_eq!(first.report().detail.as_deref(), Some("cuInit: 999"));
+    }
+
+    #[test]
+    fn fallback_detail_is_bounded_to_two_hundred_characters() {
+        let selection = selection(
+            ComputePreference::Auto,
+            Arc::new(AtomicUsize::new(0)),
+            0,
+            false,
+            0,
+        );
+        let run = RunAcceleration::new(&selection);
+        let long = "é".repeat(300);
+        run.completed(false, Some((ComputeReason::DeviceFailure, &long)), false);
+        let detail = run.report().detail.unwrap();
+        assert_eq!(detail.chars().count(), ComputeReport::DETAIL_MAX_CHARS);
+        assert!(long.starts_with(&detail));
     }
 }
 

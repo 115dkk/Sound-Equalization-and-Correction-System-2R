@@ -3,8 +3,9 @@
 use secs_mdat::{Boxed, CalInfo, SourceDate, SourceInfo};
 use secs_oracle::Fixture;
 use secs_project::{
-    IrCache, LoadedIr, MeasurementResult, MeasurementStore, Project, ProjectError, PyJson,
-    load_project_irs, load_project_sources, load_source, save_ir, save_source, source_path,
+    IrCache, LoadedIr, MAX_IR_BYTES, MAX_PROJECT_BYTES, MeasurementResult, MeasurementStore,
+    Project, ProjectError, PyJson, TargetCurve, calibration_from_project, dumps, load_project_irs,
+    load_project_sources, load_source, loads, save_ir, save_source, source_path, store_calibration,
     write_wav_float32,
 };
 use std::fs;
@@ -76,9 +77,30 @@ fn oracle_result(role: &str, pos: i64, uuid: &str, offset: Option<f64>) -> Measu
         spl_offset_db: offset,
         snr_db: Some(31.0),
         uuid: Some(uuid.into()),
-        source: Some("must-not-be-written".into()),
+        // Upstream `session.record` results carry no source; one that has
+        // a source is written by `record` (C6).
+        source: None,
         source_info: None,
     }
+}
+
+#[test]
+fn out_of_range_output_is_reset_with_a_migration_warning_td31() {
+    let directory = TempDir::new();
+    let path = directory.0.join("untrusted.secs");
+    let mut project = Project::from_preset("2.0").unwrap();
+    project.config.speakers[0].bands[0].out = 1_000_000_000;
+    fs::write(&path, project.save_text()).unwrap();
+
+    let store = MeasurementStore::open(&path).unwrap();
+
+    assert_eq!(store.project().config.speakers[0].bands[0].out, 1);
+    assert_eq!(store.warnings().len(), 1);
+    assert_eq!(store.warnings()[0].code, "config.band.out.outside");
+    assert_eq!(
+        store.warnings()[0].entry,
+        "role L, band FULL, output 1000000000"
+    );
 }
 
 #[test]
@@ -150,8 +172,21 @@ fn measurement_session_saved_bytes_match_upstream_after_every_step() {
 
         let saved = fs::read_to_string(&path).unwrap();
         assert!(!saved.contains("snr_db"), "{}", fx.id);
-        assert!(!saved.contains("must-not-be-written"), "{}", fx.id);
     }
+}
+
+#[test]
+fn malformed_spl_offset_is_repaired_before_recording_td20() {
+    let (_directory, _path, mut store, _roles) = setup();
+    let mut project = Project::from_preset("2.0").unwrap();
+    project.measurements = PyJson::Array(vec![PyJson::Object(vec![
+        ("pos".into(), PyJson::Int("1".into())),
+        ("spl_offset".into(), PyJson::Null),
+    ])]);
+    *store.project_mut() = project;
+
+    let recorded = store.record(result("L", 1, "offset"), None).unwrap();
+    assert_eq!(recorded.spl_offset.get("L"), Some(&116.1));
 }
 
 #[test]
@@ -413,14 +448,165 @@ fn test_cancel_then_resume_skips_done_positions_and_partial_position_is_not_done
     assert!(!store.entry_for(2).unwrap().done);
 }
 
+/// What upstream `step5.load_mdat` does to the entry `session.record`
+/// returned: `entry['source'] = {}` unless it is a dict, then
+/// `entry['source'][role] = name`.
+fn upstream_source(project: &mut Project, pos: i64, role: &str, name: &str) {
+    let PyJson::Array(entries) = &mut project.measurements else {
+        panic!("measurements are a list")
+    };
+    let entry = entries
+        .iter_mut()
+        .find(|entry| {
+            matches!(entry, PyJson::Object(fields)
+                if fields.contains(&("pos".into(), PyJson::Int(pos.to_string()))))
+        })
+        .unwrap();
+    let object = members(entry);
+    let index = object
+        .iter()
+        .position(|(key, _)| key == "source")
+        .unwrap_or_else(|| {
+            object.push(("source".into(), PyJson::Object(Vec::new())));
+            object.len() - 1
+        });
+    if !matches!(object[index].1, PyJson::Object(_)) {
+        object[index].1 = PyJson::Object(Vec::new());
+    }
+    let sources = members(&mut object[index].1);
+    match sources.iter_mut().find(|(key, _)| key == role) {
+        Some((_, value)) => *value = PyJson::Str(name.into()),
+        None => sources.push((role.into(), PyJson::Str(name.into()))),
+    }
+}
+
 #[test]
-fn clear_position_updates_the_project_view() {
+fn record_writes_its_source_and_saves_the_project_once_c6() {
+    let (_directory, path, mut store, roles) = setup();
+    // Position 3 holds a malformed `source` before other keys: it is
+    // replaced in place, where upstream's `entry['source'] = {}` puts it.
+    store.project_mut().measurements = PyJson::Array(vec![PyJson::Object(vec![
+        ("pos".into(), PyJson::Int("3".into())),
+        ("source".into(), PyJson::Str("stale".into())),
+        ("label".into(), PyJson::Str("kept".into())),
+    ])]);
+    // The reference records without a source, then sets it like upstream
+    // and saves again: the bytes the importers wrote before C6.
+    let reference_directory = TempDir::new();
+    let reference_path = reference_directory.0.join("측정.secs");
+    let mut reference = MeasurementStore::new(&reference_path, store.project().clone());
+    for (role, pos, name) in [
+        ("L", 1, "room.mdat"),
+        ("R", 1, "room.mdat"),
+        ("L", 1, "again.mdat"),
+        ("SW1", 3, "room.liveproject"),
+    ] {
+        let mut imported = result(role, pos, &format!("{role}-{pos}"));
+        imported.source = Some(name.into());
+        let saves = store.save_count();
+        store.record(imported.clone(), Some(&roles)).unwrap();
+        assert_eq!(store.save_count(), saves + 1, "{role} P{pos}");
+
+        imported.source = None;
+        reference.record(imported, Some(&roles)).unwrap();
+        upstream_source(reference.project_mut(), pos, role, name);
+        reference.save().unwrap();
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            fs::read_to_string(&reference_path).unwrap(),
+            "{role} P{pos}"
+        );
+    }
+    let first = store.entry_for(1).unwrap();
+    assert_eq!(first.source["L"], "again.mdat");
+    assert_eq!(first.source["R"], "room.mdat");
+    assert_eq!(
+        store.entry_for(3).unwrap().source["SW1"],
+        "room.liveproject"
+    );
+    let mut saved = loads(&fs::read_to_string(&path).unwrap()).unwrap();
+    let PyJson::Array(entries) = member(&mut saved, "measurements") else {
+        panic!("measurements are a list")
+    };
+    assert_eq!(keys(&entries[0])[..2], ["pos", "source"]);
+    assert_eq!(keys(&entries[1]).last().unwrap(), "source");
+
+    // A result without a source (a measurement) leaves the entry without one.
+    let mut measured = result("L", 2, "measured");
+    measured.source = None;
+    store.record(measured, Some(&roles)).unwrap();
+    assert!(store.entry_for(2).unwrap().source.is_empty());
+    let PyJson::Array(entries) = &store.project().measurements else {
+        panic!("measurements are a list")
+    };
+    assert!(!keys(&entries[2]).contains(&"source".into()));
+}
+
+#[test]
+fn removed_position_comes_back_with_its_entries_and_snr_c6() {
     let (_directory, _path, mut store, roles) = setup();
-    store.record(result("L", 1, "one"), Some(&roles)).unwrap();
-    assert!(store.clear_position(1));
+    for pos in [1, 2, 3] {
+        for (index, role) in roles.iter().enumerate() {
+            let mut measured = result(role, pos, &format!("{role}-{pos}"));
+            measured.snr_db = Some(20.0 + pos as f64 + index as f64 / 10.0);
+            store.record(measured, Some(&roles)).unwrap();
+        }
+    }
+    let json = store.project().save_text();
+    let middle = store.entry_for(2).unwrap();
+    assert_eq!(middle.snr_db.len(), roles.len());
+    let saves = store.save_count();
+
+    let removed = store.remove_position(2).unwrap();
+    assert_eq!(removed.position(), 2);
+    assert!(store.entry_for(2).is_none());
+    assert_eq!(
+        store
+            .records()
+            .iter()
+            .map(|record| record.pos)
+            .collect::<Vec<_>>(),
+        [1, 3]
+    );
+    assert!(store.remove_position(2).is_none());
+
+    store.restore_position(removed).unwrap();
+    assert_eq!(store.project().save_text(), json);
+    assert_eq!(store.entry_for(2).unwrap(), middle);
+    assert_eq!(store.save_count(), saves, "neither writes the project file");
+
+    for pos in [1, 2, 3] {
+        assert!(store.clear_position(pos));
+    }
     assert!(store.records().is_empty());
     assert_eq!(store.project().measurements, PyJson::Array(Vec::new()));
     assert!(!store.clear_position(1));
+}
+
+#[test]
+fn restoring_a_position_recorded_again_fails_c6() {
+    let (_directory, _path, mut store, roles) = setup();
+    store.record(result("L", 1, "first"), Some(&roles)).unwrap();
+    let removed = store.remove_position(1).unwrap();
+    let mut again = result("R", 1, "again");
+    again.snr_db = Some(12.5);
+    store.record(again, Some(&roles)).unwrap();
+    let json = store.project().save_text();
+    let entry = store.entry_for(1).unwrap();
+
+    assert!(matches!(
+        store.restore_position(removed.clone()),
+        Err(ProjectError::Invalid(_))
+    ));
+    assert_eq!(store.project().save_text(), json);
+    assert_eq!(store.entry_for(1).unwrap(), entry);
+
+    assert!(store.clear_position(1));
+    store.restore_position(removed).unwrap();
+    let restored = store.entry_for(1).unwrap();
+    assert_eq!(restored.uuid["L"].as_deref(), Some("first"));
+    assert_eq!(restored.snr_db.get("L"), Some(&24.0));
+    assert!(!restored.ir.contains_key("R"));
 }
 
 #[test]
@@ -446,14 +632,70 @@ fn test_remeasure_replaces_entry() {
 fn interrupted_save_leaves_old_secs_intact_f1() {
     let (directory, path, mut store, _roles) = setup();
     let old = fs::read(&path).unwrap();
-    let blocker = directory.0.join("blocker");
-    fs::write(&blocker, b"not a directory").unwrap();
-    let inaccessible = blocker.join("project.secs");
-    let project = store.project().clone();
-    let mut failing = MeasurementStore::new(inaccessible, project);
-    assert!(failing.save().is_err());
-    assert_eq!(fs::read(path).unwrap(), old);
+    let no_temporary = || {
+        fs::read_dir(&directory.0).unwrap().all(|entry| {
+            !entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains(".tmp-")
+        })
+    };
+    // A save never writes into the existing file: a second name for the old
+    // bytes keeps them while the project name gets the new ones.
+    let backup = directory.0.join("old.secs");
+    fs::hard_link(&path, &backup).unwrap();
+    store.project_mut().name = "바뀐 이름".into();
     store.save().unwrap();
+    assert!(
+        fs::read(&backup).unwrap() == old,
+        "the save wrote into the existing file"
+    );
+    assert!(fs::read(&path).unwrap() != old, "the save did not land");
+    assert!(no_temporary());
+
+    // A save of this same project that fails at the last step (the name is
+    // taken by a folder holding the old bytes) leaves them and no temporary file.
+    let saved = fs::read(&path).unwrap();
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    fs::write(path.join("old"), &saved).unwrap();
+    store.project_mut().name = "저장하지 못한 이름".into();
+    assert!(store.save().is_err());
+    assert!(
+        fs::read(path.join("old")).unwrap() == saved,
+        "the failed save touched the old bytes"
+    );
+    assert!(no_temporary(), "the failed save left its temporary file");
+}
+
+#[test]
+fn ir_wav_replacement_is_atomic_and_failed_rename_leaves_no_temporary_file_td15() {
+    let (directory, path, _store, _roles) = setup();
+    let irs = path.with_extension("irs");
+    fs::create_dir_all(&irs).unwrap();
+    let wav = irs.join("L_P1.wav");
+    let backup = directory.0.join("old.wav");
+    let old = write_wav_float32(&[0.25], 48_000);
+    fs::write(&wav, &old).unwrap();
+    fs::hard_link(&wav, &backup).unwrap();
+
+    save_ir(&path, "L", 1, &[0.5], 48_000).unwrap();
+    assert_eq!(fs::read(&backup).unwrap(), old);
+    assert_ne!(fs::read(&wav).unwrap(), old);
+
+    fs::remove_file(&wav).unwrap();
+    fs::create_dir(&wav).unwrap();
+    fs::write(wav.join("old"), &old).unwrap();
+    assert!(save_ir(&path, "L", 1, &[1.0], 48_000).is_err());
+    assert_eq!(fs::read(wav.join("old")).unwrap(), old);
+    assert!(fs::read_dir(&irs).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains(".tmp-")
+    }));
 }
 
 #[test]
@@ -502,6 +744,109 @@ fn f5_absolute_parent_and_symlink_escapes_are_rejected_but_in_tree_reads() {
 }
 
 #[test]
+fn project_sources_are_read_only_inside_the_irs_folder_td43() {
+    let directory = TempDir::new();
+    let project_directory = directory.0.join("project");
+    fs::create_dir_all(&project_directory).unwrap();
+    let path = project_directory.join("측정.secs");
+    let irs = path.with_extension("irs");
+    fs::create_dir_all(&irs).unwrap();
+    let info = SourceInfo {
+        strings: vec![("outputName".into(), "원 측정".into())],
+        ..SourceInfo::default()
+    };
+    let good = irs.join("good.wav");
+    fs::write(&good, write_wav_float32(&[0.25], 48_000)).unwrap();
+    save_source(&good, Some(&info)).unwrap();
+    let outside = directory.0.join("outside.wav");
+    fs::write(&outside, write_wav_float32(&[0.5], 48_000)).unwrap();
+    save_source(&outside, Some(&info)).unwrap();
+
+    // Only Unix adds the symlink rows below.
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut entries = vec![
+        entry_at(1, "측정.irs/good.wav"),
+        entry_at(2, "../outside.wav"),
+        entry_at(3, &outside.to_string_lossy()),
+    ];
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        // An in-tree IR whose sidecar links outside.
+        let linked_source = irs.join("linked.wav");
+        fs::write(&linked_source, write_wav_float32(&[0.75], 48_000)).unwrap();
+        symlink(source_path(&outside), source_path(&linked_source)).unwrap();
+        entries.push(entry_at(4, "측정.irs/linked.wav"));
+        // An IR that links outside, with an in-tree sidecar.
+        let linked_ir = irs.join("link.wav");
+        symlink(&outside, &linked_ir).unwrap();
+        save_source(&linked_ir, Some(&info)).unwrap();
+        entries.push(entry_at(5, "측정.irs/link.wav"));
+    }
+    let mut project = Project::from_preset("2.0").unwrap();
+    project.measurements = PyJson::Array(entries);
+
+    let sources = load_project_sources(&project, &path);
+    assert_eq!(sources.keys().copied().collect::<Vec<_>>(), vec![1]);
+    assert_eq!(sources[&1]["L"], info);
+}
+
+#[cfg(unix)]
+#[test]
+fn ir_writes_reject_symlinked_store_and_destination_td16() {
+    use std::os::unix::fs::symlink;
+
+    let directory = TempDir::new();
+    let path = directory.0.join("project.secs");
+    let project = Project::from_preset("2.0").unwrap();
+    fs::write(&path, project.save_text()).unwrap();
+    let outside = directory.0.join("outside");
+    fs::create_dir(&outside).unwrap();
+    let outside_wav = outside.join("L_P1.wav");
+    let old = write_wav_float32(&[0.25], 48_000);
+    fs::write(&outside_wav, &old).unwrap();
+    symlink(&outside, path.with_extension("irs")).unwrap();
+
+    let mut store = MeasurementStore::new(&path, project.clone());
+    let error = store
+        .record(result("L", 1, "linked-store"), None)
+        .unwrap_err();
+    assert!(error.to_string().contains("symlink"));
+    assert_eq!(fs::read(&outside_wav).unwrap(), old);
+
+    fs::remove_file(path.with_extension("irs")).unwrap();
+    fs::create_dir(path.with_extension("irs")).unwrap();
+    symlink(&outside_wav, path.with_extension("irs").join("L_P1.wav")).unwrap();
+    let mut store = MeasurementStore::new(&path, project);
+    let error = store
+        .record(result("L", 1, "linked-destination"), None)
+        .unwrap_err();
+    assert!(error.to_string().contains("symlink"));
+    assert_eq!(fs::read(&outside_wav).unwrap(), old);
+}
+
+#[test]
+fn oversized_project_and_wav_reads_are_rejected_td19() {
+    let directory = TempDir::new();
+    let project_path = directory.0.join("oversized.secs");
+    let project_file = fs::File::create(&project_path).unwrap();
+    project_file.set_len(MAX_PROJECT_BYTES + 1).unwrap();
+    let error = MeasurementStore::open(&project_path).unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains(&project_path.display().to_string()));
+    assert!(message.contains(&MAX_PROJECT_BYTES.to_string()));
+
+    let wav_path = directory.0.join("oversized.wav");
+    let mut wav = write_wav_float32(&[], 48_000);
+    wav[40..44].copy_from_slice(&u32::try_from(MAX_IR_BYTES + 1).unwrap().to_le_bytes());
+    fs::write(&wav_path, wav).unwrap();
+    let error = IrCache::default().load(&wav_path).unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains(&wav_path.display().to_string()));
+    assert!(message.contains(&MAX_IR_BYTES.to_string()));
+}
+
+#[test]
 fn ir_cache_rereads_changed_file_and_evicts_to_cap() {
     let directory = TempDir::new();
     let a = directory.0.join("a.wav");
@@ -520,9 +865,196 @@ fn ir_cache_rereads_changed_file_and_evicts_to_cap() {
     assert_eq!(cache.load(&b).unwrap().0, vec![2.0, 2.0]);
 }
 
+#[test]
+fn ir_cache_keeps_its_byte_cap_and_evicts_least_recently_used_td44() {
+    let directory = TempDir::new();
+    let wav = |name: &str, samples: &[f32]| {
+        let path = directory.0.join(name);
+        fs::write(&path, write_wav_float32(samples, 48_000)).unwrap();
+        path
+    };
+
+    // 12 bytes of samples under an 8-byte cap: returned, not retained.
+    let large = wav("large.wav", &[1.0, 2.0, 3.0]);
+    let mut cache = IrCache::new(8);
+    assert_eq!(cache.load(&large).unwrap().0, vec![1.0, 2.0, 3.0]);
+    assert_eq!(cache.retained_bytes(), 0);
+    assert!(cache.is_empty());
+    cache.remember(&large, &[1.0, 2.0, 3.0], 48_000).unwrap();
+    assert_eq!(cache.retained_bytes(), 0);
+
+    // A (4 bytes), B (8 bytes), hit A, then C (4 bytes) under a 12-byte cap:
+    // B is the least recently used, so A and C (8 bytes) remain.
+    let a = wav("a.wav", &[1.0]);
+    let b = wav("b.wav", &[2.0, 2.0]);
+    let c = wav("c.wav", &[3.0]);
+    let mut cache = IrCache::new(12);
+    cache.load(&a).unwrap();
+    cache.load(&b).unwrap();
+    assert_eq!(cache.retained_bytes(), 12);
+    cache.load(&a).unwrap();
+    cache.load(&c).unwrap();
+    assert_eq!(cache.len(), 2);
+    assert_eq!(cache.retained_bytes(), 8);
+}
+
+/// The member `key` of an object.
+fn member<'a>(value: &'a mut PyJson, key: &str) -> &'a mut PyJson {
+    &mut members(value)
+        .iter_mut()
+        .find(|(name, _)| name == key)
+        .unwrap_or_else(|| panic!("no member {key}"))
+        .1
+}
+
+fn members(value: &mut PyJson) -> &mut Vec<(String, PyJson)> {
+    match value {
+        PyJson::Object(fields) => fields,
+        _ => panic!("not an object"),
+    }
+}
+
+fn first(value: &mut PyJson) -> &mut PyJson {
+    match value {
+        PyJson::Array(items) => &mut items[0],
+        _ => panic!("not an array"),
+    }
+}
+
+fn keys(value: &PyJson) -> Vec<String> {
+    match value {
+        PyJson::Object(fields) => fields.iter().map(|(key, _)| key.clone()).collect(),
+        _ => panic!("not an object"),
+    }
+}
+
+fn followed_by(mut known: Vec<String>, unknown: &[&str]) -> Vec<String> {
+    known.extend(unknown.iter().map(|key| (*key).to_owned()));
+    known
+}
+
+#[test]
+fn unknown_nested_keys_survive_open_change_and_save_f16() {
+    let directory = TempDir::new();
+    let path = directory.0.join("future.secs");
+    let mut project = Project::from_preset("2.1").unwrap();
+    project.extra.push((
+        "calibration".into(),
+        loads(r#"{"subs_manual":{"SW1":{"mode":"fixed"}},"bundle_layouts":{"A":{"kind":"dba"}}}"#)
+            .unwrap(),
+    ));
+    let settings = calibration_from_project(&project);
+    store_calibration(&mut project, &settings);
+
+    // What SECS 2R writes, then what a newer SECS 2 adds to it.
+    let mut file = project.to_json();
+    let mut writer = file.clone();
+    let calibration = member(&mut file, "calibration");
+    members(calibration).insert(0, ("future_first".into(), PyJson::Str("a".into())));
+    members(calibration).push((
+        "future_last".into(),
+        loads(r#"{"nested":[1,{"deeper":true}]}"#).unwrap(),
+    ));
+    members(member(member(calibration, "subs_manual"), "SW1"))
+        .push(("future_sub".into(), PyJson::Bool(true)));
+    members(member(member(calibration, "bundle_layouts"), "A"))
+        .push(("future_layout".into(), PyJson::Int("7".into())));
+    let config = member(&mut file, "config");
+    members(config).push(("future_config".into(), PyJson::Str("c".into())));
+    let speaker = first(member(config, "speakers"));
+    members(speaker).insert(1, ("future_speaker".into(), loads(r#"{"x":1}"#).unwrap()));
+    members(first(member(speaker, "bands"))).push(("future_band".into(), PyJson::Str("b".into())));
+    members(member(&mut file, "dsp")).insert(0, ("future_dsp".into(), PyJson::Float(1.5)));
+    members(member(&mut file, "target")).push(("future_target".into(), loads("[[1, 2]]").unwrap()));
+    fs::write(&path, format!("{}\n", dumps(&file))).unwrap();
+
+    // Open, change a setting in each object, save.
+    let mut store = MeasurementStore::open(&path).unwrap();
+    let mut settings = calibration_from_project(store.project());
+    settings.rc_lo = 30.0;
+    store_calibration(store.project_mut(), &settings);
+    store.project_mut().config.speakers[0].size = "large".into();
+    store.project_mut().dsp.fir_taps = 4096;
+    store.project_mut().target = TargetCurve::new(vec![(20.0, 1.0), (20_000.0, -1.0)]);
+    store.save().unwrap();
+
+    let saved_text = fs::read_to_string(&path).unwrap();
+    let mut saved = loads(&saved_text).unwrap();
+    let calibration = member(&mut saved, "calibration");
+    let written_calibration = member(&mut writer, "calibration");
+    assert_eq!(
+        keys(calibration),
+        followed_by(keys(written_calibration), &["future_first", "future_last"])
+    );
+    assert_eq!(*member(calibration, "rc_lo"), PyJson::Float(30.0));
+    assert_eq!(
+        *member(calibration, "future_last"),
+        loads(r#"{"nested":[1,{"deeper":true}]}"#).unwrap()
+    );
+    let sub = member(member(calibration, "subs_manual"), "SW1");
+    assert_eq!(
+        keys(sub),
+        followed_by(
+            keys(member(member(written_calibration, "subs_manual"), "SW1")),
+            &["future_sub"]
+        )
+    );
+    let layout = member(member(calibration, "bundle_layouts"), "A");
+    assert_eq!(keys(layout), ["kind", "rear_trim_ms", "future_layout"]);
+    let config = member(&mut saved, "config");
+    assert_eq!(
+        keys(config),
+        [
+            "speakers",
+            "device",
+            "preset",
+            "biamp_default",
+            "future_config"
+        ]
+    );
+    let speaker = first(member(config, "speakers"));
+    assert_eq!(keys(speaker), ["role", "size", "bands", "future_speaker"]);
+    assert_eq!(*member(speaker, "size"), PyJson::Str("large".into()));
+    assert_eq!(
+        keys(first(member(speaker, "bands"))),
+        ["band", "out", "pol", "future_band"]
+    );
+    let dsp = member(&mut saved, "dsp");
+    assert_eq!(
+        keys(dsp),
+        followed_by(keys(member(&mut writer, "dsp")), &["future_dsp"])
+    );
+    assert_eq!(*member(dsp, "fir_taps"), PyJson::Int("4096".into()));
+    let target = member(&mut saved, "target");
+    assert_eq!(keys(target), ["points", "future_target"]);
+    assert_eq!(
+        *member(target, "points"),
+        loads("[[20.0, 1.0], [20000.0, -1.0]]").unwrap()
+    );
+
+    // Reopening and saving again changes nothing.
+    let mut reopened = MeasurementStore::open(&path).unwrap();
+    reopened.save().unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), saved_text);
+
+    // Entries the writer dropped stay dropped; the rest is still kept.
+    let mut settings = calibration_from_project(reopened.project());
+    settings.subs_manual.clear();
+    store_calibration(reopened.project_mut(), &settings);
+    reopened.save().unwrap();
+    let mut saved = loads(&fs::read_to_string(&path).unwrap()).unwrap();
+    let calibration = member(&mut saved, "calibration");
+    assert_eq!(*member(calibration, "subs_manual"), PyJson::Object(vec![]));
+    assert!(keys(calibration).ends_with(&["future_first".into(), "future_last".into()]));
+}
+
 fn entry_with_path(path: &str) -> PyJson {
+    entry_at(1, path)
+}
+
+fn entry_at(pos: i64, path: &str) -> PyJson {
     PyJson::Object(vec![
-        ("pos".into(), PyJson::Int("1".into())),
+        ("pos".into(), PyJson::Int(pos.to_string())),
         (
             "ir".into(),
             PyJson::Object(vec![("L".into(), PyJson::Str(path.into()))]),

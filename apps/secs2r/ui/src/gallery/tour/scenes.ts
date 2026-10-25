@@ -146,6 +146,21 @@ async function inProgress(mock: MockService) {
 }
 
 /**
+ * Corrected, a setting changed, saved and reopened: the result comes back
+ * from the project cache, no longer current. The built-in path is chosen
+ * before saving, since choosing it is an edit that would leave the reopened
+ * project unsaved; the scenes go straight to 내보내기.
+ */
+async function staleCache(mock: MockService) {
+  await inProgress(mock);
+  await calibrated(mock);
+  await mock.request({ method: "measure_configure", params: { ...MEASURE_DEFAULTS, method: "native" } });
+  await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mode", mode: "linear" } } });
+  await mock.request({ method: "project_save", params: { path: PROJECT_PATH } });
+  await mock.request({ method: "project_open", params: { path: PROJECT_PATH } });
+}
+
+/**
  * Answers one method with a fixed reply instead of the mock's. The tour
  * mounts the App on `mock.invoke` (looked up per call), so a setup can shape
  * a reply the mock does not produce without changing the mock.
@@ -521,6 +536,20 @@ export const TOUR_SCENES: TourScene[] = [
     },
     ops: [...choosePath("native", "calibrate"), click(ui("calibrate.compute")), drain],
   },
+  {
+    id: "calibrate.target-failed",
+    step: "calibrate",
+    title: { ko: "타겟 저장 실패", en: "Target not saved" },
+    note: { ko: "타겟 점을 옮긴 뒤 저장이 실패해 그래프가 저장된 타겟으로 돌아간 상태입니다.", en: "A target point was moved and the save failed; the graph is back on the stored target." },
+    setup: inProgress,
+    ops: [
+      ...choosePath("native", "calibrate"),
+      page(({ mock }) => mock.failNext("target_set_points", "project_io", "C:/Users/demo/Documents/SECS/home-theater.secs: access is denied (os error 5)")),
+      click(ui("calibrate.target.point.3")),
+      press("ArrowUp"),
+      page(flush),
+    ],
+  },
 
   // 내보내기
   {
@@ -607,6 +636,30 @@ export const TOUR_SCENES: TourScene[] = [
       await mimo(mock);
     },
     ops: [...choosePath("native", "export"), reveal(ui("export.files"))],
+  },
+  {
+    id: "export.stale-cache",
+    step: "export",
+    title: { ko: "구 버전 결과의 mdat", en: "mdat for a result from an earlier version" },
+    note: {
+      ko: "보정한 뒤 설정을 바꾸고 저장한 프로젝트를 다시 열어, 두 mdat 줄이 막히고 문장 뒤에 '재보정'이 섭니다.",
+      en: "A project saved after a settings change and reopened: both mdat rows are blocked, with 'Recalibrate' after the sentence.",
+    },
+    setup: staleCache,
+    ops: [go("export"), click(ui("export.advanced")), reveal(ui("export.kind.before_after_mdat"))],
+  },
+  {
+    id: "export.recalibrating",
+    step: "export",
+    title: { ko: "mdat 줄에서 시작한 재보정", en: "Recalibrating from an mdat row" },
+    setup: staleCache,
+    ops: [
+      go("export"),
+      click(ui("export.advanced")),
+      reveal(ui("export.kind.before_after_mdat")),
+      click(ui("export.kind.before_after_mdat.recalibrate")),
+      page(flush),
+    ],
   },
   {
     id: "export.failed",

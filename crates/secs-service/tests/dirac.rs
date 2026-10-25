@@ -323,6 +323,83 @@ fn dirac_import_records_irs_t0_and_source() {
     }
 }
 
+fn import_dirac(service: &Service, source: &Path) {
+    let scanned = scan(service, source);
+    let events = Arc::new(Events::default());
+    let Envelope::Ok(response) = service.call(
+        Request::MdatImport(MdatImportParams {
+            path: source.to_string_lossy().into_owned(),
+            assignments: scanned.suggestions,
+            position: 1,
+        }),
+        events.clone(),
+    ) else {
+        panic!("Dirac import must start")
+    };
+    let Response::MdatImport(started) = *response else {
+        panic!()
+    };
+    assert!(matches!(
+        events.wait(started.job),
+        JobEvent::Finished {
+            status: JobStatus::Succeeded,
+            ..
+        }
+    ));
+}
+
+fn calibrate(service: &Service) {
+    let events = Arc::new(Events::default());
+    let Envelope::Ok(response) =
+        service.call(Request::Calibrate(Default::default()), events.clone())
+    else {
+        panic!("calibration must start")
+    };
+    let Response::Calibrate(started) = *response else {
+        panic!()
+    };
+    assert!(matches!(
+        events.wait(started.job),
+        JobEvent::Finished {
+            status: JobStatus::Succeeded,
+            ..
+        }
+    ));
+}
+
+fn calibration_summary(service: &Service) -> CalibrationSummary {
+    let Response::Results(results) = call(service, Request::Results) else {
+        panic!()
+    };
+    results.calibration.unwrap()
+}
+
+#[test]
+fn dirac_content_identity_marks_changed_ir_stale_but_not_identical_reimport() {
+    let directory = TempDir::new("content-identity");
+    let source = directory.0.join("room.liveproject");
+    let project_path = directory.0.join("room.secs");
+    let service = Service::new(Deps::default());
+    new_project(&service, &project_path, "2.2", 2);
+
+    let original = four_channel_project(None);
+    fs::write(&source, write(&original)).unwrap();
+    import_dirac(&service, &source);
+    calibrate(&service);
+    assert!(!calibration_summary(&service).stale);
+
+    import_dirac(&service, &source);
+    assert!(!calibration_summary(&service).stale);
+
+    let mut changed = original;
+    changed.responses[0].as_mut().unwrap()[12001] += 0.125;
+    fs::write(&source, write(&changed)).unwrap();
+    import_dirac(&service, &source);
+    let summary = calibration_summary(&service);
+    assert!(summary.stale);
+    assert_eq!(summary.stale_reason.as_deref(), Some("measurements"));
+}
+
 #[test]
 fn dirac_import_skips_unplanned_and_outside_rows_and_rejects_bad_files() {
     let directory = TempDir::new("invalid");

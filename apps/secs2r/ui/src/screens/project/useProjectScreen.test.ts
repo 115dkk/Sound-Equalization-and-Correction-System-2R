@@ -8,6 +8,29 @@ import { SessionProvider } from "../../state/react";
 import { useProjectScreen } from "./useProjectScreen";
 
 afterEach(cleanup);
+it.each(["open", "close"] as const)("asks about unsaved changes on %s while an edit response is pending", async (action) => {
+  const mock = createMockService({ tickMs: 0 });
+  let release!: () => void;
+  const delayed = new Promise<void>((resolve) => { release = resolve; });
+  const session = createSession({ ...mock, request: async (request) => {
+    const response = await mock.request(request);
+    if (request.method === "target_set_points") await delayed;
+    return response;
+  } });
+  await session.start();
+  await session.call({ method: "project_save", params: { path: "C:/room.secs" } });
+  const close = vi.fn(async () => {});
+  const hook = renderHook(() => useProjectScreen(close), { wrapper: ({ children }: { children: ReactNode }) => createElement(SessionProvider, { value: session, children }) });
+  const edit = session.call({ method: "target_set_points", params: { points: [[20, 3], [20000, -3]] } });
+  try {
+    expect(session.stores.project.getSnapshot()?.dirty).toBe(false);
+    act(() => action === "open" ? hook.result.current.actions.openRecent("C:/other.secs") : hook.result.current.requestClose());
+    expect(hook.result.current.view.dialog).toMatchObject({ kind: "unsaved", reason: action });
+    expect(mock.calls.some((r) => r.method === "project_open")).toBe(false);
+    expect(close).not.toHaveBeenCalled();
+    await act(async () => { release(); await edit; });
+  } finally { release(); await edit; hook.unmount(); session.dispose(); mock.dispose(); }
+});
 it("keeps jobs on cancelled close and saves before an approved close", async () => {
   const mock = createMockService({ tickMs: 0 });
   const session = createSession(mock);
@@ -43,8 +66,20 @@ it("does not close when save picker is cancelled and starts tutorial with both f
     expect(close).not.toHaveBeenCalled();
     expect(hook.result.current.view.dialog?.kind).toBe("unsaved");
     act(() => hook.result.current.actions.cancel());
+    mock.calls.length = 0;
+    act(() => hook.result.current.offerTutorial());
+    expect(hook.result.current.view.dialog?.kind).toBe("tutorial");
     act(() => hook.result.current.actions.startTutorial()); act(() => hook.result.current.actions.discardAndContinue());
-    await waitFor(() => expect(session.stores.project.getSnapshot()?.tutorial).toBe(true));
-    expect(mock.calls.some((r) => r.method === "project_new" && r.params.sample && r.params.tutorial)).toBe(true);
+    await act(async () => { await session.settled(); });
+    await waitFor(() => expect(hook.result.current.view.dialog).toBeNull());
+    expect(session.stores.project.getSnapshot()?.tutorial).toBe(true);
+    expect(session.tutorialReady.getSnapshot()).toBe(true);
+    expect(mock.calls.filter((r) => r.method === "project_new")).toEqual([
+      { method: "project_new", params: { path: "", preset: "7.1.4", sub_count: 3, sample: true, tutorial: true } },
+    ]);
+    expect(mock.calls.filter((r) => r.method === "measure_configure")).toEqual([
+      { method: "measure_configure", params: expect.objectContaining({ method: "none" }) },
+    ]);
+    expect(session.stores.config.getSnapshot()?.speakers.find((speaker) => speaker.role === "SW3")?.bands[0]?.out).toBe(16);
   } finally { hook.unmount(); session.dispose(); mock.dispose(); }
 });

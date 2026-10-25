@@ -7,7 +7,7 @@
 SECS 2R의 사용자는 그래프와 숫자를 읽는 애호가와 설치 기사입니다. 화면은 차분하고 정밀한 계측기처럼 보여야 합니다.
 
 - **데이터가 있는 곳만 촘촘하게.** 그래프, 표, 배치도는 밀도를 높이고, 나머지는 여백과 중립색으로 조용히 둡니다.
-- **화면마다 채운 기본 동작 하나.** 단계 머리의 주 동작만 강조색으로 채웁니다. 나머지 단추는 보조(secondary)이거나 조용한(quiet) 단추입니다.
+- **화면마다 채운 기본 동작 하나.** 단계 머리의 주 동작만 강조색으로 채웁니다. 나머지 단추는 보조(secondary)이거나 조용한(quiet) 단추입니다. 예외는 `go` 단추 하나입니다. 결과 바로 옆에서 그 결과를 다시 만드는 주 동작과 함께, 다음 단계로 넘어가는 동작에만 씁니다(보정 결과의 '내보내기'). 강조색이 아니라 끝난 단계의 색(`--success`)으로 채워서, 주 동작과 색으로 구별됩니다(`ui/Button.tsx`, `ui/ui.css`, 감사 #92 TD-103).
 - **강조색 하나.** 강조색은 '누를 수 있음'과 '지금 고른 것'을 뜻합니다. 정적인 글자에는 쓰지 않습니다.
 - **글자는 14px 아래로 내리지 않습니다.** 캡션(축 눈금, 단위, 단축키 힌트, 메타데이터)만 13px입니다.
 - **단추는 그것이 가리키는 글 바로 옆에 둡니다.** 이름이나 문장은 왼쪽에 있는데 단추가 넓은 카드의 오른쪽 끝에 있으면, 사용자는 줄마다 눈을 화면 끝에서 끝까지 굴려야 합니다. 여러 줄의 단추는 가장 긴 이름 바로 뒤의 한 열에 세우고(내보내기의 subgrid), 알림의 동작은 문장 바로 뒤에 둡니다. 결과를 만드는 동작은 단계 머리가 아니라 그 결과 바로 옆에 둡니다(보정 결과 카드의 '보정 계산', 결과 뒤의 '다시 측정하기'·'다시 보정하기'). 동작이 있는 알림은 문장과 동작만큼만 넓어져 동작이 아이콘과 같은 안쪽 여백으로 상자를 닫고, 동작은 상자 높이의 가운데에 섭니다. 넓은 상자 안에 떠 있거나 첫 줄에 붙은 단추는 대칭이 어긋나 보입니다. 줄의 남는 너비는 스킨의 장식이 씁니다. EqualizerAPO-XT v2.42.0의 판례(27인치 화면 제보, '내용은 왼쪽에 있는데 버튼은 오른쪽에 있어 눈을 많이 굴린다')를 따릅니다.
@@ -132,10 +132,10 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 ### 3.3 축과 상호작용
 
 - **주파수 축**은 로그이고 눈금은 5, 10, 20, 50, 100, 200, 500, 1k, 2k, 5k, 10k, 20k로 고정입니다(업스트림 `plot.py`). 기본 범위는 5–22000 Hz입니다.
-- **축 범위 팝오버**는 주파수와 레벨의 하한·상한, 자동, 적용을 둡니다. 하한이 상한보다 낮지 않으면 "주파수 하한은 상한보다 낮아야 합니다."를 보이고 닫히지 않습니다. Enter는 적용입니다. 직접 정한 범위가 있으면 단추에 강조색 점이 붙습니다. `Graph`는 고른 범위를 스스로 쥐고, 화면이 실행 동안 남겨야 하면 `range`와 `onRangeChange`로 쥡니다(측정 그래프).
+- **축 범위 팝오버**는 주파수와 레벨의 하한·상한, 자동, 적용을 둡니다. 하한이 상한보다 낮지 않으면 "주파수 하한은 상한보다 낮아야 합니다."를 보이고 닫히지 않습니다. 숫자가 아니거나 범위 밖인 칸이 있으면 적용하지 않고, 팝오버를 연 채 그런 칸 가운데 첫 칸으로 초점을 옮깁니다. 이유는 그 칸의 메시지가 말합니다(`NumberField`의 `onDraftValidity`, 감사 #92 TD-70). Enter는 적용입니다. 직접 정한 범위가 있으면 단추에 강조색 점이 붙습니다. `Graph`는 고른 범위를 스스로 쥐고, 화면이 실행 동안 남겨야 하면 `range`와 `onRangeChange`로 쥡니다(측정 그래프).
 - **타겟 점**은 10–24000 Hz, ±30 dB 안에 있고 언제나 두 개 이상입니다. 끌기로 옮기고(이웃 점을 넘지 않음), 빈 곳을 두 번 누르면 더하고, 점에서 오른쪽 클릭하거나 Delete를 누르면 뺍니다. 점을 두 번 누르면 그 점에 머물고 점을 더하지 않습니다. 초점이 있는 점은 ←/→로 1/24옥타브(Shift 1/3옥타브), ↑/↓로 0.5 dB(Shift 3 dB) 움직입니다.
 - **XO 선**은 40–200 Hz 안에서 5 Hz 단위로 끕니다. 손잡이는 `role="slider"`이고 화살표, PageUp/PageDown, Home/End가 움직입니다.
-- **한 동작에 한 번 저장.** 타겟 점과 XO 선은 움직이는 동안 `onChange`로 값을 알리고(화면이 그 값을 쥐고 다시 넘김), 동작이 끝날 때 `onCommit`을 한 번 부릅니다: 끌고 놓았을 때, 키를 누르다 놓았을 때(누르고 있으면 반복), 초점이 떠날 때. 점 빼기는 그 자체로 한 동작이라 바로 저장합니다. 화면은 `onCommit`에서 저장합니다.
+- **한 동작에 한 번 저장.** 타겟 점과 XO 선은 움직이는 동안 `onChange`로 값을 알리고(화면이 그 값을 쥐고 다시 넘김), 동작이 끝날 때 `onCommit`을 한 번 부릅니다: 끌고 놓았을 때, 키를 누르다 놓았을 때(누르고 있으면 반복), 초점이 떠날 때. 점 빼기는 그 자체로 한 동작이라 바로 저장합니다. 화면은 `onCommit`에서 저장합니다. 저장이 실패하면 보정 그래프는 저장된 값으로 돌아가고, 그래프 위 줄에 '타겟 저장 실패'(XO 탭은 '크로스오버 저장 실패')와 마지막 초안을 다시 보내는 '다시 저장'이 섭니다. 원인은 세션의 오류 알림이 말하므로 그래프는 상태만 둡니다. 저장이 150 ms보다 오래 걸리면 그 자리에 '저장 중'이 보입니다(감사 #92 TD-67).
 - **RC 대역**은 범위 밖을 `--plot-shade`로 칠하고 경계에 점선과 "RC 하한 20 Hz" 같은 라벨을 둡니다. 자동 상한을 아직 모르면(계산 전) 하한 아래만 칠하고 하한 선만 둡니다(`band.hi` 없음).
 - **커서 값**은 그래프 위 왼쪽에 "1.25k Hz · −3.2 dB"처럼 보입니다.
 - **그래프 위 줄**(단위, 커서 값, 축 범위 단추)은 작은 컨트롤 높이에 8px을 더한 띠(40px)이고, 단추는 캔버스에서 8px 떨어집니다. 스킨이 단추를 돌출 캡으로 그려도 유리의 베젤에 닿지 않게 하기 위한 것입니다.
@@ -202,11 +202,12 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 └───────────────────────┴───────────────────────────────────────────────┘
 ```
 
+- **시작**: 앱 설정을 읽기 전에는 틀이 없습니다. 읽는 동안은 빈 창이고, 읽지 못하면 창 바탕 가운데에 대화상자 면 하나(`app/SettingsFailed.tsx`)가 섭니다. 제목 '앱 설정을 읽지 못함', 서비스가 준 원인의 알림(원문은 '자세히'), 채운 '다시 시도' 하나입니다. 다시 읽는 동안 면은 그대로이고 단추만 진행 중이 되며, 읽고 나면 그 설정의 언어·테마·스킨으로 틀이 열립니다. 설정을 모르므로 면은 기본 스킨, 시스템 테마, 시스템 언어로 그립니다(감사 #92 TD-29).
 - **로고**(그림의 [L]): 레일 맨 위, 이름과 판 줄 왼쪽의 36px 마크입니다. 업스트림 사이드바처럼 로고 자신의 짙은 타일이 두 테마 모두에서 색을 지니고, `--image-outline` 1px 선이 어두운 레일에서 타일 가장자리를 남깁니다. 설정에서 고른 로고를 따릅니다(편차 U12). '전문가 모드'는 업스트림 트리의 SVG를 그대로 읽고, '킹반인 모드'는 `apps/secs2r/icons/logo/civilian.svg`입니다(`app/logo.ts`). 킹반인 판은 같은 짙은 청록 타일에 측정 응답(분홍)과 목표선 위의 보정 응답(청록), PEQ 손잡이를 그리고, 위쪽 광원·아래쪽 비네트·선 그림자로 깊이를 줍니다. Qt SVG로도 똑같이 그려지도록 필터 없이 그라디언트와 투명도만 씁니다. 32px 이하로 그릴 때는 두 로고 모두 작은 크기용 단순판을 씁니다.
 - **레일**: 다섯 단계와 상태(완료 ✓, 지금 단계, 막힘(자물쇠 아이콘, 그림의 ⓛ)과 짧은 이유, 건너뜀). 막힌 단계도 열어서 무엇이 필요한지 볼 수 있습니다. 건너뛴 단계(mdat 가져오기 경로의 연결·점검)는 열리지 않습니다. 막힌 이유의 전체 문장은 툴팁과 단계 머리에 있습니다.
 - **단계 머리**: 제목, 해당 단계의 도움말, 주 동작 하나. 목적 설명은 제목 옆 도움말로 엽니다. 막혔으면 이유와 갈 곳을 화면에 적고 주 동작을 끕니다(`aria-describedby`로 이유를 잇습니다). 화면이 주 동작을 끌 수도 있습니다(`PrimaryAction.disabled`, 같은 화면의 다른 잡이 돌 때). 이때는 제목 옆 상태 알약이 이유이고 `aria-describedby`가 알약을 가리킵니다. 진행 중(`busy`)은 주 동작 자신의 잡에만 씁니다.
 - **곁 패널 자리**(`AppFrame aside`): 단계 머리와 작업 트레이 사이의 상자(`.app-body`)가 패널의 기준 상자입니다. 도움말 패널은 그 오른쪽에 놓여 주 동작과 트레이의 취소를 가리지 않고, 트레이 기록을 펴면 함께 줄어듭니다.
-- **프로젝트 상태**: 구성("7.1.4 · 서브 2 · 출력 13"), 측정 위치(k/N), 보정(결과 없음, 계산 중, 완료, 다시 계산 필요, 실패), 측정 경로(REW·자체 측정·모의 측정과 연결 상태), 파일(이름 또는 저장 전, 미저장 변경 사항).
+- **프로젝트 상태**: 구성("7.1.4 · 서브 2 · 출력 13"), 측정 위치(k/N), 보정(결과 없음, 계산 중, 완료, 다시 계산 필요, 실패), 측정 경로(REW·자체 측정·모의 측정과 연결 상태), 파일(이름 또는 저장 전, 미저장 변경 사항). 그 아래에 프로젝트를 읽으며 생긴 경고(`ProjectInfo.migration_warnings`, 편차 F5)를 경고 상자 하나로 둡니다. 코드마다 문장 하나(`project.warning.<code>`, 키가 없는 코드는 '알 수 없는 경고'와 '자세히'의 원문), 그 아래 위치마다 한 줄과 그 위치에서 빠진 역할 코드, 다시 측정하면 풀리는 경고에는 그 위치를 고른 채 측정·가져오기를 여는 '다시 측정'(측정 파일 가져오기 경로에서는 '다시 가져오기')이 섭니다. 닫기는 지금 보이는 경고만 숨기고, 같은 프로젝트에서 새로 생긴 경고와 다음에 연 프로젝트의 경고는 다시 보입니다(`app/ProjectStatus.tsx`, 감사 #92 TD-65).
 - **프로젝트 메뉴**: 새로 만들기, 열기…, 저장, 다른 이름으로 저장…. **설정**: 언어, 테마(시스템·밝게·어둡게), 스킨(기본·하드웨어 랙·시그널 매트릭스), 로고. 세부 항목은 해당 기능에서 펼치며 전역 숙련도 설정은 두지 않습니다(P58).
 - **단축키**는 `app/shortcuts.ts` 한 곳에 있고 메뉴의 힌트도 여기서 읽습니다. macOS에서는 Ctrl 대신 ⌘입니다. 한글 자판에서도 물리 키(`code`)로 맞춥니다.
 
@@ -251,7 +252,7 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 ## 9. 배치도
 
 - 손으로 그린 SVG이고 라이브러리를 쓰지 않습니다. 좌표와 모양은 업스트림 `layout_map.py`와 `model.py`에서 옮긴 고정값(`ui/maps/geometry.ts`)이고, 서비스가 배치를 보내게 되면(P26 `layout_get`) props로 받습니다.
-- **방 배치도**(420px): 스크린, 청취 위치, 스피커 표식(메인 채운 원, 탑·하이트 점선 원, 서브 사각형)과 코드·출력. 방 안 자리가 없는 역할은 아래 '역할 미지정' 줄에 단추로 둡니다.
+- **방 배치도**(420px): 스크린, 청취 위치, 스피커 표식(메인 채운 원, 탑·하이트 점선 원, 서브 사각형)과 코드·출력. 방 안 자리가 없는 역할은 아래 '역할 미지정' 줄에 단추로 둡니다. 표식은 보이지 않는 지름 40px 원(`map-speaker__hit`)으로 누르고, 40px보다 가까운 두 스피커(C와 SW5)는 겹친 곳을 중간선에서 잘라(`clipPath`) 가까운 스피커가 받습니다. 고른 표식의 헤일로는 누름을 받지 않습니다.
 - **측정 배치도**(360 × 300px): 스크린, 의자 또는 소파(13곳부터), 머리, 지름 1 m 원, 30 cm 축척, 번호 표식. 위치 1은 크고, ±20 cm 높이는 반만 채우며, 완료는 success, 지금 위치는 강조색입니다. ←/↑는 이전, →/↓는 다음, 고른 위치가 없으면 → 는 1, ←는 마지막입니다(업스트림과 같음). Home/End도 됩니다.
 - **스크린**은 지도 위쪽의 둥근 띠(`map__screen`)와 캡션(`map__caption--screen`)입니다. 같은 뜻의 글 없는 기호 `map__front`(스크린을 가리키는 화살표: `map__front-shaft`와 `map__front-head`)도 함께 그려 두고 기본 스킨은 숨깁니다. Rack·Matrix는 캡션과 좌석 라벨(`map__caption--seat`)을 숨기고 기호를 보입니다. 축척 라벨(`map__caption--scale`)은 어느 스킨에서도 남습니다.
 - **작은 배치도**는 배치 카드의 장식이고 `aria-hidden`입니다.
@@ -271,7 +272,8 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 
 | 자리 | id |
 |---|---|
-| 틀 | `frame`, `frame.logo`, `frame.rail`, `frame.rail.<step>`, `frame.header`, `frame.header.blocked`, `frame.content`, `frame.status`, `frame.status.<config\|positions\|calibration\|path\|file>` |
+| 시작 | `app.settings_failed`, `app.settings_failed.error`, `app.settings_failed.retry` |
+| 틀 | `frame`, `frame.logo`, `frame.rail`, `frame.rail.<step>`, `frame.header`, `frame.header.blocked`, `frame.content`, `frame.status`, `frame.status.<config\|positions\|calibration\|path\|file>`, `frame.status.warnings`, `frame.status.warnings.close`, `frame.status.warnings.position.<n>`, `frame.status.warnings.position.<n>.fix` |
 | 메뉴·설정 | `frame.project`, `frame.project.<new\|open\|save\|save_as>`, `frame.settings`, `frame.settings.<language\|theme\|skin\|logo>`, `frame.help` |
 | 주 동작 | 화면이 정합니다(예: `measure.position.start`). 갤러리는 `<step>.primary` |
 | 작업 트레이 | `jobs.tray`, `jobs.job.<kind>`, `jobs.cancel.<kind>`, `jobs.history`, `jobs.history.toggle`, `jobs.history.clear` |
@@ -284,7 +286,7 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 
 - `gallery.html`은 두 번째 Vite 입구입니다. `vite build`는 앱과 갤러리를 함께 짓고, `npm run build`(Tauri가 부름)는 `--mode app`으로 앱만 지어 갤러리와 고정값이 설치본에 들어가지 않습니다. 갤러리만 지으려면 `npm run build:gallery`입니다.
 - 주소 인자: `gallery.html?theme=light|dark&lang=ko|en&accent=default|tutorial&skin=default|rack|matrix&only=<id 접두어,…>`. 견본마다 `data-gallery-id`가 있어 CI가 하나씩 찍을 수 있습니다. 상자 크기와 시각·진행 값이 고정이라 찍을 때마다 같습니다. 예외는 불확정 진행 막대의 움직이는 띠(CI는 `prefers-reduced-motion: reduce`로 찍으면 멈춥니다), `frame.live`, `plot.dense`의 시간 표시입니다.
-- 견본: `frame.empty`, `frame.normal`, `frame.busy`, `frame.stale`, `frame.error`, `frame.blocked`, `frame.tutorial`, `frame.skipped`, `frame.aside`(곁 패널 자리의 도움말, 트레이 기록 펼침), `frame.live`(모의 서비스에서 실제로 돌고 취소됨), `jobs.idle`, `jobs.running`, `jobs.history`, `frame.project-menu`, `frame.settings`, `ui.button`, `ui.card`, `ui.pill`, `ui.number`, `ui.choice`, `ui.table`, `ui.table.empty`, `ui.meter`, `ui.toast`, `ui.dialog`, `ui.tooltip`, `ui.states`, `plot.measure`, `plot.highlight`, `plot.target`, `plot.xo`, `plot.axes`, `plot.stale`, `plot.dense`, `map.room`, `map.room.unassigned`, `map.arrangement.9`, `map.arrangement.17`, `map.arrangement.13`, `map.thumbs`.
+- 견본: `frame.empty`, `frame.normal`, `frame.busy`, `frame.stale`, `frame.error`, `frame.warnings`, `frame.blocked`, `frame.tutorial`, `frame.skipped`, `frame.aside`(곁 패널 자리의 도움말, 트레이 기록 펼침), `frame.settings-failed`(앱 설정을 읽지 못한 시작 화면), `frame.live`(모의 서비스에서 실제로 돌고 취소됨), `jobs.idle`, `jobs.running`, `jobs.history`, `frame.project-menu`, `frame.settings`, `ui.button`, `ui.card`, `ui.pill`, `ui.number`, `ui.choice`, `ui.table`, `ui.table.empty`, `ui.meter`, `ui.toast`, `ui.dialog`, `ui.tooltip`, `ui.states`, `plot.measure`, `plot.highlight`, `plot.target`, `plot.xo`, `plot.axes`, `plot.stale`, `plot.dense`, `map.room`, `map.room.unassigned`, `map.arrangement.9`, `map.arrangement.17`, `map.arrangement.13`, `map.thumbs`.
 - 찍기: `npm run build:gallery && npm run gallery:shots`가 `gallery-shots/`에 견본마다 PNG를 남깁니다(밝게·어둡게 × 한국어·영어, 튜토리얼 강조색, 그리고 Rack·Matrix 스킨의 밝게·어둡게 한국어: 9개 변형). 이 컨테이너처럼 Chromium이 이미 있으면 `CHROMIUM_PATH`로 가리키고, 없으면 `npx playwright install chromium`으로 받습니다(`playwright`는 개발 의존성으로 고정).
 - **화면 투어**: `gallery.html?tour=<장면 id>&theme=light|dark&lang=ko|en`은 견본 대신 실제 `App`을 모의 서비스 위에 창 전체로 띄우고, 장면 표(`gallery/tour/`)의 준비(`setup`, 마운트 전 모의 서비스 조작)와 조작(`ops`, 마운트 뒤 키·누르기·페이지 안 함수)으로 정한 상태에서 멈춥니다. 모의 서비스는 자동 틱 없이(`tickMs: 0`) 돌아 찍을 때마다 같은 그림이 납니다. `node scripts/screen-tour.mjs`가 장면마다 1280×800 창(`tauri.conf.json`의 기본 창)을 밝게·어둡게, 한국어·영어로, 그리고 Rack·Matrix 스킨의 어두운 한국어로 찍어(6개 변형) `screen-shots/`에 PNG와 `manifest.json`을 남깁니다. 실장비 없이는 닿지 않는 상태(측정·계산 중, 실패, 결과, 내보내기 완료)도 실제 화면 코드로 그립니다. 화면을 바꿔 장면의 조작이 맞지 않게 되면 그 PR에서 장면 표를 고칩니다.
 - **리뷰 이슈**: `ui-gallery.yml`이 화면 PR(`apps/secs2r/ui/**`)과 수동 실행에서 투어와 견본을 찍어 `ui-gallery` 브랜치에 올리고, PR마다 리뷰 이슈 하나(`화면 갤러리 리뷰: PR #N`, 라벨 `ui-gallery`)를 열거나 댓글로 갱신합니다. 이슈 글은 `.github/scripts/gallery_issue.py`가 짓습니다(본문은 투어, 댓글은 한국어·밝게 견본). 브랜치에는 장면 전부와 한국어·밝게 견본만 올리고(나머지 견본 변형은 실행 아티팩트), 최근 4번의 실행만 남기도록 매번 다시 쓰므로 저장소를 복제해도 스크린숏이 쌓이지 않고, 더 오래된 이슈는 이미지를 잃습니다. 이슈는 머지를 막지 않습니다.

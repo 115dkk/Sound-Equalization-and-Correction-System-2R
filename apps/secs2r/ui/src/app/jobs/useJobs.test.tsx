@@ -1,65 +1,66 @@
 // @vitest-environment happy-dom
 import { act, cleanup, renderHook } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
-import type { Ipc, RequestFn } from "../../ipc/context";
-import type { JobSnapshot } from "../../ipc/bindings/JobSnapshot";
-import type { Request } from "../../ipc/bindings/Request";
-import { createEventBus } from "../../ipc/events";
-import { activeJobs } from "./jobStore";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ReactNode } from "react";
+import { createMockService } from "../../ipc/mock";
+import { createSession } from "../../state/session";
+import { SessionProvider } from "../../state/react";
+import { useMeasureScreen } from "../../screens/measure/useMeasureScreen";
 import { useJobs } from "./useJobs";
 
-const snapshot = (job: number): JobSnapshot => ({ job, kind: "calibrate", status: "running", cancellable: true, progress: null, error: null });
-afterEach(cleanup);
-describe("tray snapshot races", () => {
-  it("keeps older unknown active jobs without reviving an unknown finish after 100 newer completions", async () => {
-    const events = createEventBus();
-    let resolve!: (jobs: JobSnapshot[]) => void;
-    const pending = new Promise<JobSnapshot[]>((done) => { resolve = done; });
-    const ipc: Ipc = { events, request: (async (request: Request) => {
-      if (request.method === "jobs") return pending;
-      throw new Error("unexpected request");
-    }) as RequestFn };
-    const { result } = renderHook(() => useJobs(ipc));
-    act(() => {
-      events.emit({ event: "finished", job: 2, status: "succeeded", result: { kind: "calibration" }, error: null });
-      for (let job = 100; job < 200; job++) {
-        events.emit({ event: "started", job, kind: "calibrate" });
-        events.emit({ event: "finished", job, status: "succeeded", result: { kind: "calibration" }, error: null });
-      }
-    });
-    await act(async () => {
-      resolve([snapshot(2), snapshot(3), ...Array.from({ length: 32 }, (_, i) => ({ ...snapshot(i + 4), status: "succeeded" as const, cancellable: false }))]);
-      await pending;
-    });
-    expect(activeJobs(result.current.state).map((job) => job.id)).toEqual([3]);
-    expect(result.current.state.jobs.some((job) => job.id === 2)).toBe(false);
-    expect(result.current.state.jobs.filter((job) => job.status === "succeeded").map((job) => job.id)).toEqual(Array.from({ length: 32 }, (_, i) => i + 168));
-    expect(result.current.state.history).toHaveLength(100);
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.restoreAllMocks(); });
+describe("tray ledger view", () => {
+  it("shares one startup read and event subscription across mounts and stops only its display clock on unmount", async () => {
+    vi.useFakeTimers();
+    const mock = createMockService({ tickMs: 0 });
+    const subscribe = vi.spyOn(mock.events, "subscribe");
+    const session = createSession(mock);
+    const wrapper = ({ children }: { children: ReactNode }) => <SessionProvider value={session}>{children}</SessionProvider>;
+    try {
+      await session.start(); await session.settled();
+      const first = renderHook(() => useJobs(), { wrapper });
+      const second = renderHook(() => useJobs(), { wrapper });
+      expect(mock.calls.filter((call) => call.method === "jobs")).toHaveLength(1);
+      expect(subscribe).toHaveBeenCalledTimes(1);
+      let job = 0;
+      await act(async () => { job = (await session.call({ method: "measure_position", params: { position: 4 } })).job; });
+      expect(first.result.current.state.jobs.map((job) => job.id)).toEqual([job]);
+      expect(second.result.current.state.jobs.map((job) => job.id)).toEqual([job]);
+      const before = first.result.current.now;
+      await act(async () => { await vi.advanceTimersByTimeAsync(1000); });
+      expect(first.result.current.now).toBe(before + 1000);
+      first.unmount(); second.unmount();
+      expect(vi.getTimerCount()).toBe(0);
+      await act(async () => { mock.drain(); await session.settled(); });
+      const remount = renderHook(() => useJobs(), { wrapper });
+      expect(remount.result.current.state.history.some((entry) => entry.type === "finished" && entry.job === job)).toBe(true);
+      expect(mock.calls.filter((call) => call.method === "jobs")).toHaveLength(1);
+      expect(subscribe).toHaveBeenCalledTimes(1);
+      remount.unmount();
+    } finally { session.dispose(); await session.settled(); mock.dispose(); }
   });
 
-  it("ignores a delayed cancellation snapshot after its completed job was retired", async () => {
-    const events = createEventBus();
-    let resolve!: (job: JobSnapshot) => void;
-    const pending = new Promise<JobSnapshot>((done) => { resolve = done; });
-    const ipc: Ipc = { events, request: (async (request: Request) => {
-      if (request.method === "jobs") return [];
-      if (request.method === "job_cancel") return pending;
-      throw new Error("unexpected request");
-    }) as RequestFn };
-    const { result } = renderHook(() => useJobs(ipc));
-    await act(async () => { await Promise.resolve(); });
-    act(() => events.emit({ event: "started", job: 1, kind: "calibrate" }));
-    act(() => result.current.cancel(1));
-    act(() => {
-      events.emit({ event: "finished", job: 1, status: "cancelled", result: null, error: null });
-      for (let job = 2; job <= 40; job++) {
-        events.emit({ event: "started", job, kind: "calibrate" });
-        events.emit({ event: "finished", job, status: "succeeded", result: { kind: "calibration" }, error: null });
-      }
-    });
-    await act(async () => { resolve({ ...snapshot(1), status: "cancel_requested" }); await pending; });
-    expect(activeJobs(result.current.state)).toEqual([]);
-    expect(result.current.state.jobs).toHaveLength(32);
-    expect(result.current.state.jobs.some((job) => job.id === 1)).toBe(false);
+  it("shares tray cancellation with the measure view and clears history for every tray consumer", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    const session = createSession(mock);
+    const wrapper = ({ children }: { children: ReactNode }) => <SessionProvider value={session}>{children}</SessionProvider>;
+    try {
+      await session.start(); await session.configure({ method: "mock" });
+      const first = renderHook(() => ({ tray: useJobs(), measure: useMeasureScreen() }), { wrapper });
+      const second = renderHook(() => useJobs(), { wrapper });
+      let job = 0;
+      await act(async () => { job = (await session.call({ method: "measure_position", params: { position: 4 } })).job; });
+      expect(first.result.current.measure.view?.job).toMatchObject({ job, position: 4, status: "running" });
+      await act(async () => { first.result.current.tray.cancel(job); });
+      expect(first.result.current.measure.view?.job?.status).toBe("cancel_requested");
+      expect(second.result.current.state.jobs[0]?.status).toBe("cancel_requested");
+      await act(async () => { mock.tick(); await session.settled(); });
+      expect(first.result.current.measure.view?.job).toBeNull();
+      expect(second.result.current.state.history).toEqual([expect.objectContaining({ type: "finished", status: "cancelled", job })]);
+      act(() => first.result.current.tray.clearHistory());
+      expect(second.result.current.state.history).toEqual([]);
+      expect(session.jobs.getSnapshot().history).toEqual([]);
+      first.unmount(); second.unmount();
+    } finally { session.dispose(); await session.settled(); mock.dispose(); }
   });
 });

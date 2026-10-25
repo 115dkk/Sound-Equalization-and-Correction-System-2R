@@ -12,34 +12,20 @@ pub(crate) fn dispatch(
     let response = match request {
         Request::Bootstrap => Ok(Response::Bootstrap(service.bootstrap())),
         Request::ComputeStatus => Ok(Response::ComputeStatus(service.acceleration().status)),
-        Request::ProjectNew(params) => {
-            let mut session = lock(&service.session);
-            let response = session
-                .create(
-                    params.path.into(),
-                    &params.preset,
-                    params.sub_count,
-                    params.sample,
-                    params.tutorial,
-                )
-                .map(Response::ProjectNew)
-                .map_err(IpcError::from);
-            if response.is_ok() {
-                *lock(&service.results_state) = Default::default();
-            }
-            response
-        }
-        Request::ProjectOpen(params) => {
-            let mut session = lock(&service.session);
-            let response = session
-                .open(params.path.into())
-                .map(Response::ProjectOpen)
-                .map_err(IpcError::from);
-            if response.is_ok() {
-                *lock(&service.results_state) = Default::default();
-            }
-            response
-        }
+        Request::ProjectNew(params) => lock(&service.session)
+            .create(
+                params.path.into(),
+                &params.preset,
+                params.sub_count,
+                params.sample,
+                params.tutorial,
+            )
+            .map(Response::ProjectNew)
+            .map_err(IpcError::from),
+        Request::ProjectOpen(params) => lock(&service.session)
+            .open(params.path.into())
+            .map(Response::ProjectOpen)
+            .map_err(IpcError::from),
         Request::ProjectSave(params) => lock(&service.session)
             .save(
                 params.path.map(Into::into),

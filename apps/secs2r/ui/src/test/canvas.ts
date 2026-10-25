@@ -5,7 +5,7 @@
 // and likewise the context properties named there (e.g. font) when set.
 import { vi } from "vitest";
 
-export type CanvasCall = { method: string; args: unknown[] };
+type CanvasCall = { method: string; args: unknown[] };
 
 function fakeContext(canvas: HTMLCanvasElement, record: ReadonlySet<string>, calls: CanvasCall[]): CanvasRenderingContext2D {
   const fixed: Record<PropertyKey, unknown> = {

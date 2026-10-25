@@ -63,16 +63,23 @@ impl EventSink for Events {
 
 impl Events {
     fn wait(&self, job: JobId, timeout: Duration) -> JobEvent {
+        self.try_wait(job, timeout)
+            .unwrap_or_else(|| panic!("job {job:?} did not finish"))
+    }
+
+    fn try_wait(&self, job: JobId, timeout: Duration) -> Option<JobEvent> {
         let deadline = Instant::now() + timeout;
         let mut values = lock(&self.values);
         loop {
             if let Some(event) = values.iter().find(|event| {
                 matches!(event, JobEvent::Finished { job: event_job, .. } if *event_job == job)
             }) {
-                return event.clone();
+                return Some(event.clone());
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
-            assert!(!remaining.is_zero(), "job {job:?} did not finish");
+            if remaining.is_zero() {
+                return None;
+            }
             values = self.changed.wait_timeout(values, remaining).unwrap().0;
         }
     }
@@ -254,7 +261,7 @@ fn open(service: &Service, path: &Path) {
 
 fn start_calibration(
     service: &Service,
-    events: Arc<Events>,
+    events: Arc<dyn EventSink>,
     settings: CalibrationSettings,
 ) -> JobId {
     let Response::Calibrate(started) = call_ok(
@@ -339,6 +346,73 @@ fn export_and_wait(
         panic!("export result must be returned");
     };
     result
+}
+
+fn calibrate_and_run_mimo(service: &Service, settings: &CalibrationSettings) {
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(service, calibration_events.clone(), settings.clone());
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+    let mimo_events = Arc::new(Events::default());
+    let Response::Mimo(started) = call_ok(
+        service,
+        Request::Mimo(MimoParams {
+            settings: Some(settings.clone()),
+        }),
+        mimo_events.clone(),
+    ) else {
+        panic!("MIMO must start");
+    };
+    finished_result(mimo_events.wait(started.job, Duration::from_secs(120)));
+}
+
+fn replace_measurement(service: &Service, role: &str) {
+    let source = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../oracle/goldens/mdat/build_3_real_48000_bytes.bin");
+    let Response::MdatScan(scan) = call_ok(
+        service,
+        Request::MdatScan(secs_types::ipc::MdatScanParams {
+            path: source.to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("replacement mdat must scan");
+    };
+    let replacement = scan.measurements.first().unwrap();
+    let events = Arc::new(Events::default());
+    let Response::MdatImport(started) = call_ok(
+        service,
+        Request::MdatImport(secs_types::ipc::MdatImportParams {
+            path: source.to_string_lossy().into_owned(),
+            assignments: vec![secs_types::ipc::MdatAssignment {
+                measurement: replacement.title.clone(),
+                role: role.into(),
+                index: Some(replacement.index),
+                position: Some(1),
+            }],
+            position: 1,
+        }),
+        events.clone(),
+    ) else {
+        panic!("replacement mdat import must start");
+    };
+    finished_result(events.wait(started.job, Duration::from_secs(120)));
+}
+
+fn automatic_camilla_has_mimo(service: &Service, root: &Path) -> bool {
+    call_ok(
+        service,
+        Request::ExportFolderSet(secs_types::ipc::ExportFolderSetParams {
+            folder: root.to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    );
+    let result = export_and_wait(
+        service,
+        ExportKind::CamillaDsp,
+        Path::new(""),
+        Arc::new(Events::default()),
+    );
+    result.folder.contains("_MIMO_")
 }
 
 #[test]
@@ -426,8 +500,8 @@ fn resampled_calibration_and_cached_mdat_export_preserve_original_ir() {
         JobResult::Xo(_)
     ));
 
-    // Saving another preparation policy makes the result stale, but a cached
-    // mdat rebuild must still use the policy that produced the cached run.
+    // Saving another preparation policy makes the result stale. A stale cached
+    // design cannot be rebuilt for mdat until calibration runs again.
     call_ok(
         &service,
         Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
@@ -445,14 +519,20 @@ fn resampled_calibration_and_cached_mdat_export_preserve_original_ir() {
     let reopened = deterministic_service();
     open(&reopened, &path);
     assert!(read_results(&reopened).calibration.unwrap().stale);
-    let output = export_and_wait(
-        &reopened,
-        ExportKind::StagedMdat,
-        &root.join("cached-mdat"),
-        Arc::new(Events::default()),
+    let Envelope::Err(error) = reopened.call(
+        Request::Export(ExportParams {
+            kind: ExportKind::StagedMdat,
+            folder: root.join("cached-mdat").to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("stale cached mdat export must fail")
+    };
+    assert_eq!(error.code, ErrorCode::ExportScope);
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("stale_cache")
     );
-    assert!(output.stale);
-    assert!(!output.files.is_empty());
     assert_eq!(fs::read(&ir_path).unwrap(), original);
     assert_eq!(secs_project::read_wav_float32(&original).unwrap().1, 96_000);
     let saved_project: serde_json::Value =
@@ -540,6 +620,24 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
     .unwrap();
     assert_eq!(recommendation.best, direct_xo.best);
     assert_eq!(recommendation.candidates, direct_xo.candidates);
+    let Response::CalibrationSettingsGet(applied) = call_ok(
+        &service,
+        Request::CalibrationSettingsGet,
+        Arc::new(NoEvents),
+    ) else {
+        panic!()
+    };
+    assert_eq!(applied.xo_rec, recommendation.best);
+    for (group, hz) in &recommendation.best {
+        assert_eq!(
+            applied.xo.iter().find(|(name, _)| name == group),
+            Some(&(group.clone(), *hz))
+        );
+    }
+    assert_eq!(
+        read_results(&service).calibration.unwrap().stale_reason,
+        Some("settings".into())
+    );
 
     for kind in [
         ExportKind::CamillaDsp,
@@ -570,17 +668,14 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
             ExportKind::CamillaDsp => {
                 let snapshot = snapshot_relative_files(&folder, &export.files);
                 let labels = secs_camilla::RunLabels {
-                    mode: match settings.mode {
-                        secs_types::calibration::Mode::Zero => "zero",
-                        secs_types::calibration::Mode::Mixed => "mixed",
-                        secs_types::calibration::Mode::Linear => "linear",
-                        secs_types::calibration::Mode::Ultra => "ultra",
-                    }
-                    .into(),
-                    ultra_ms: settings.ultra_ms,
+                    mode: export_mode(&settings),
+                    note: secs_camilla::note::camilla_note(
+                        settings.mode,
+                        direct.design.chain.latency_ms,
+                        direct.design.rc_hi,
+                        None,
+                    ),
                     latency_ms: direct.design.chain.latency_ms,
-                    rc_hi_hz: direct.design.rc_hi,
-                    mimo_max_supports: settings.mimo_max_supports.max(0) as usize,
                 };
                 let direct_files =
                     secs_camilla::export(&direct.design.chain, &folder, &labels, None).unwrap();
@@ -591,8 +686,6 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                 let direct_folder = root.join(format!("direct-{kind:?}"));
                 let run = secs_export::ExportRun {
                     design: &direct.design,
-                    measurements: &direct.measurements,
-                    config: &direct.config,
                     settings: &settings,
                 };
                 let mut uuid = || Ok(0x1234_5678_9abc_def0);
@@ -629,8 +722,6 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                 let direct_folder = folder.clone();
                 let export_run = secs_export::ExportRun {
                     design: &direct.design,
-                    measurements: &direct.measurements,
-                    config: &direct.config,
                     settings: &settings,
                 };
                 let rc_pieces = secs_export::rc_pieces(&export_run);
@@ -638,16 +729,15 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                 let filter_run = secs_filters::FilterRun {
                     chain: &direct.design.chain,
                     mimo: None,
-                    mode: match settings.mode {
-                        secs_types::calibration::Mode::Zero => "zero",
-                        secs_types::calibration::Mode::Mixed => "mixed",
-                        secs_types::calibration::Mode::Linear => "linear",
-                        secs_types::calibration::Mode::Ultra => "ultra",
-                    },
-                    ultra_ms: settings.ultra_ms,
+                    mode: &export_mode(&settings),
+                    note: &secs_camilla::note::eqapo_note(
+                        &export_mode(&settings),
+                        direct.design.chain.latency_ms,
+                        direct.design.rc_hi,
+                        None,
+                    ),
                     label: &label,
                     latency_ms: direct.design.chain.latency_ms,
-                    rc_hi_hz: direct.design.rc_hi,
                     rc_pieces: &rc_pieces,
                     stamp: "2024-01-02 03:04",
                 };
@@ -748,10 +838,9 @@ fn filter_text_export_matches_direct_and_reopened_bytes_without_redesign() {
         chain: &chain,
         mimo: None,
         mode: "mixed",
-        ultra_ms: settings.ultra_ms,
+        note: &secs_camilla::note::eqapo_note("mixed", summary.latency_ms, rc_hi_hz, None),
         label: &label,
         latency_ms: summary.latency_ms,
-        rc_hi_hz,
         rc_pieces: &rc_pieces,
         stamp: "2024-01-02 03:04",
     };
@@ -897,6 +986,110 @@ fn exports_after_reopening_match_pre_close_bytes() {
 }
 
 #[test]
+fn save_as_failure_and_nested_destination_leave_projects_untouched() {
+    let root = temp_root("save-as-stage");
+    fs::create_dir_all(&root).unwrap();
+    let source = root.join("source.secs");
+    let service = service();
+    call_ok(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: source.to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    let source_irs = source.with_extension("irs");
+    fs::create_dir_all(&source_irs).unwrap();
+    fs::write(source_irs.join("marker"), b"source").unwrap();
+
+    let nested = source_irs.join("inner.secs");
+    let Envelope::Err(error) = service.call(
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams {
+            path: Some(nested.to_string_lossy().into_owned()),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("nested save as must fail");
+    };
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(
+        error.detail,
+        "cannot save a project inside its own measurement folder"
+    );
+    assert!(!nested.exists());
+    assert!(!nested.with_extension("irs").exists());
+
+    let target = root.join("target.secs");
+    fs::create_dir(&target).unwrap();
+    let target_irs = target.with_extension("irs");
+    fs::create_dir(&target_irs).unwrap();
+    fs::write(target_irs.join("marker"), b"destination").unwrap();
+    let Envelope::Err(error) = service.call(
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams {
+            path: Some(target.to_string_lossy().into_owned()),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("unwritable project path must fail");
+    };
+    assert_eq!(error.code, ErrorCode::ProjectIo);
+    let Response::ProjectInfo(info) = call_ok(&service, Request::ProjectInfo, Arc::new(NoEvents))
+    else {
+        panic!();
+    };
+    assert_eq!(info.path, source.to_string_lossy());
+    assert_eq!(fs::read(target_irs.join("marker")).unwrap(), b"destination");
+    assert_eq!(fs::read(source_irs.join("marker")).unwrap(), b"source");
+    assert_eq!(
+        fs::read_dir(&root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp-"))
+            .count(),
+        0
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn save_as_preserves_reopened_cached_results_and_export() {
+    let root = temp_root("save-as-cache");
+    fs::create_dir_all(&root).unwrap();
+    let (source, settings) = write_case(&root, "dolby");
+    let target = root.join("saved-as.secs");
+    let service = deterministic_service();
+    open(&service, &source);
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&service, calibration_events.clone(), settings);
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+
+    open(&service, &source);
+    assert!(read_results(&service).calibration.is_some());
+    let Response::ProjectSave(info) = call_ok(
+        &service,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams {
+            path: Some(target.to_string_lossy().into_owned()),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("save as must succeed");
+    };
+    assert_eq!(info.path, target.to_string_lossy());
+    assert!(read_results(&service).calibration.is_some());
+    export_and_wait(
+        &service,
+        ExportKind::CamillaDsp,
+        &root.join("export"),
+        Arc::new(Events::default()),
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn stale_calibration_exports_with_flag_and_cache_survives_reopen() {
     let root = temp_root("stale-cache");
     fs::create_dir_all(&root).unwrap();
@@ -912,14 +1105,21 @@ fn stale_calibration_exports_with_flag_and_cache_survives_reopen() {
         other => panic!("unexpected results response: {other:?}"),
     };
     assert!(!before.stale);
-    let reopened = service();
+    let reopened = Service::new(Deps::default());
     open(&reopened, &path);
     let cached = match call_ok(&reopened, Request::Results, Arc::new(NoEvents)) {
         Response::Results(results) => results.calibration.unwrap(),
         other => panic!("unexpected results response: {other:?}"),
     };
     assert!(!cached.stale);
-    assert_eq!(cached, before);
+    assert!(cached.cached);
+    assert_eq!(
+        cached,
+        secs_types::ipc::CalibrationSummary {
+            cached: true,
+            ..before
+        }
+    );
 
     {
         let mut store = secs_project::MeasurementStore::open(&path).unwrap();
@@ -954,15 +1154,21 @@ fn stale_calibration_exports_with_flag_and_cache_survives_reopen() {
     };
     assert!(stale.stale);
     assert_eq!(stale.stale_reason.as_deref(), Some("measurements"));
-    let export_events = Arc::new(Events::default());
-    let export = export_and_wait(
-        &running_service,
-        ExportKind::StagedMdat,
-        &root.join("stale-export"),
-        export_events,
+    assert!(stale.cached);
+    let Envelope::Err(error) = running_service.call(
+        Request::Export(ExportParams {
+            kind: ExportKind::StagedMdat,
+            folder: root.join("stale-export").to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("stale cached mdat export must fail")
+    };
+    assert_eq!(error.code, ErrorCode::ExportScope);
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("stale_cache")
     );
-    assert!(export.stale);
-    assert_eq!(Path::new(&export.folder), root.join("stale-export"));
 
     let changed_reopen = service();
     open(&changed_reopen, &path);
@@ -972,6 +1178,40 @@ fn stale_calibration_exports_with_flag_and_cache_survives_reopen() {
     };
     assert!(changed.stale);
     assert_eq!(changed.stale_reason.as_deref(), Some("measurements"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn removing_a_speaker_marks_live_and_cached_calibration_stale() {
+    let root = temp_root("speaker-config-stale");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room_dba");
+    let service = service();
+    open(&service, &path);
+    let events = Arc::new(Events::default());
+    let calibration = start_calibration(&service, events.clone(), settings);
+    finished_result(events.wait(calibration, Duration::from_secs(120)));
+
+    call_ok(
+        &service,
+        Request::ConfigRemoveSpeaker(secs_types::ipc::ConfigIndexParams { index: 0 }),
+        Arc::new(NoEvents),
+    );
+    let live = read_results(&service).calibration.unwrap();
+    assert!(live.stale);
+    assert_eq!(live.stale_reason.as_deref(), Some("config"));
+    call_ok(
+        &service,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+        Arc::new(NoEvents),
+    );
+
+    let reopened = Service::new(Deps::default());
+    open(&reopened, &path);
+    let cached = read_results(&reopened).calibration.unwrap();
+    assert!(cached.stale);
+    assert_eq!(cached.stale_reason.as_deref(), Some("config"));
+
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1011,6 +1251,86 @@ fn cancelled_calibration_preserves_previous_results() {
         other => panic!("unexpected results response: {other:?}"),
     };
     assert_eq!(current, previous);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn mimo_becomes_stale_when_recalibration_uses_replaced_measurements() {
+    let root = temp_root("mimo-measurement-stale");
+    fs::create_dir_all(&root).unwrap();
+    let (path, mut settings) = write_case(&root, "room_dba");
+    settings.mimo_on = true;
+    settings.mimo_max_supports = 1;
+    let service = service();
+    open(&service, &path);
+    calibrate_and_run_mimo(&service, &settings);
+
+    replace_measurement(&service, "C");
+    let events = Arc::new(Events::default());
+    let calibration = start_calibration(&service, events.clone(), settings.clone());
+    finished_result(events.wait(calibration, Duration::from_secs(120)));
+
+    assert!(read_results(&service).mimo.unwrap().stale);
+    assert!(!automatic_camilla_has_mimo(
+        &service,
+        &root.join("automatic-live")
+    ));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cached_mimo_becomes_stale_when_recalibration_uses_replaced_measurements() {
+    let root = temp_root("cached-mimo-measurement-stale");
+    fs::create_dir_all(&root).unwrap();
+    let (path, mut settings) = write_case(&root, "room_dba");
+    settings.mimo_on = true;
+    settings.mimo_max_supports = 1;
+    let service = service();
+    open(&service, &path);
+    calibrate_and_run_mimo(&service, &settings);
+
+    replace_measurement(&service, "C");
+    let events = Arc::new(Events::default());
+    let calibration = start_calibration(&service, events.clone(), settings);
+    finished_result(events.wait(calibration, Duration::from_secs(120)));
+
+    let reopened = Service::new(Deps::default());
+    open(&reopened, &path);
+    assert!(read_results(&reopened).mimo.unwrap().stale);
+    assert!(!automatic_camilla_has_mimo(
+        &reopened,
+        &root.join("automatic-cached")
+    ));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn old_cache_without_run_key_keeps_calibration_but_marks_mimo_stale() {
+    let root = temp_root("old-cache-run-key");
+    fs::create_dir_all(&root).unwrap();
+    let (path, mut settings) = write_case(&root, "room_dba");
+    settings.mimo_on = true;
+    settings.mimo_max_supports = 1;
+    let service = service();
+    open(&service, &path);
+    calibrate_and_run_mimo(&service, &settings);
+
+    let cache_path = path.with_extension("irs").join("secs_run_cache.json");
+    let mut cache: serde_json::Value =
+        serde_json::from_slice(&fs::read(&cache_path).unwrap()).unwrap();
+    let results = cache["results"].as_object_mut().unwrap();
+    results.remove("run_key");
+    results.insert("mimo_calibration_key".into(), results["engine_key"].clone());
+    fs::write(&cache_path, serde_json::to_vec(&cache).unwrap()).unwrap();
+
+    let reopened = Service::new(Deps::default());
+    open(&reopened, &path);
+    let results = read_results(&reopened);
+    assert!(!results.calibration.unwrap().stale);
+    assert!(results.mimo.unwrap().stale);
+
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1287,45 +1607,88 @@ fn measurement_handlers_are_connected_and_fail_with_typed_errors() {
     };
 
     let service = service();
-    let requests = [
-        Request::MeasureMethods,
-        Request::MeasureConfigure(MeasureConfigureParams::default()),
-        Request::LevelCheck(LevelCheckParams { role: "L".into() }),
-        Request::LevelApply(LevelApplyParams {
-            level: LevelResult {
-                rms_dbfs: -20.0,
-                peak_dbfs: -10.0,
-                spl_db: None,
-                recommended_sweep_dbfs: -20.0,
-            },
-        }),
-        Request::MeasurePosition(MeasurePositionParams { position: 1 }),
-        Request::PositionClear(PositionClearParams { position: 1 }),
-        Request::Undo(UndoParams {
-            token: "undo".into(),
-        }),
-        Request::RewLaunch,
-        Request::MdatScan(MdatScanParams {
-            path: "input.mdat".into(),
-        }),
-        Request::MdatImport(MdatImportParams {
-            path: "input.mdat".into(),
-            assignments: vec![],
-            position: 1,
-        }),
+    let not_open = Err((ErrorCode::ProjectNotOpen, None));
+    let cases = [
+        (Request::MeasureMethods, Ok("measure_methods")),
+        (
+            Request::MeasureConfigure(MeasureConfigureParams {
+                method: "mock".into(),
+                ..Default::default()
+            }),
+            not_open,
+        ),
+        (
+            Request::MeasureConfigure(MeasureConfigureParams::default()),
+            Err((ErrorCode::MeasurementInput, Some(("field", "method")))),
+        ),
+        (
+            Request::LevelCheck(LevelCheckParams { role: "L".into() }),
+            not_open,
+        ),
+        (
+            Request::LevelApply(LevelApplyParams {
+                level: LevelResult {
+                    rms_dbfs: -20.0,
+                    peak_dbfs: -10.0,
+                    spl_db: None,
+                    recommended_sweep_dbfs: -20.0,
+                },
+            }),
+            not_open,
+        ),
+        (
+            Request::MeasurePosition(MeasurePositionParams { position: 1 }),
+            not_open,
+        ),
+        (
+            Request::PositionClear(PositionClearParams { position: 1 }),
+            not_open,
+        ),
+        (
+            Request::Undo(UndoParams {
+                token: "undo".into(),
+            }),
+            not_open,
+        ),
+        // The headless host reports its structured launch failure.
+        (
+            Request::RewLaunch,
+            Err((ErrorCode::RewFailed, Some(("reason", "cannot_launch")))),
+        ),
+        (
+            Request::MdatScan(MdatScanParams {
+                path: "input.mdat".into(),
+            }),
+            Err((ErrorCode::MeasurementInput, Some(("field", "path")))),
+        ),
+        (
+            Request::MdatImport(MdatImportParams {
+                path: "input.mdat".into(),
+                assignments: vec![],
+                position: 1,
+            }),
+            not_open,
+        ),
     ];
     // Without an open project (and with a file that does not exist) each
-    // measurement handler refuses with a typed error; none is a stub any more.
-    // `rew_launch` reports the headless host's structured launch failure.
-    for request in requests {
+    // measurement handler answers exactly as below; none is a stub any more.
+    for (request, expected) in cases {
         let method = request.method();
-        let Envelope::Err(error) = service.call(request, Arc::new(NoEvents)) else {
-            continue;
-        };
-        assert_ne!(error.code, ErrorCode::NotImplemented, "{method}");
-        if method == "rew_launch" {
-            assert_eq!(error.code, ErrorCode::RewFailed, "{method}");
-            assert_eq!(error.params["reason"], "cannot_launch");
+        match (service.call(request, Arc::new(NoEvents)), expected) {
+            (Envelope::Ok(response), Ok(name)) => {
+                assert_eq!(serde_json::to_value(&response).unwrap()["method"], name)
+            }
+            (Envelope::Err(error), Err((code, param))) => {
+                assert_eq!(error.code, code, "{method}: {error:?}");
+                if let Some((key, value)) = param {
+                    assert_eq!(
+                        error.params.get(key).map(String::as_str),
+                        Some(value),
+                        "{method}"
+                    );
+                }
+            }
+            (envelope, expected) => panic!("{method}: {envelope:?}, expected {expected:?}"),
         }
     }
 }
@@ -1444,6 +1807,11 @@ fn gpu_reports_survive_cache_and_fallback_exports() {
             assert!(summary.compute.fallbacks > 0);
             assert!(summary.compute.cpu_systems > 0);
             assert_eq!(summary.compute.accelerated_systems, 0);
+            // TD-54: the backend's own failure text survives beside the reason.
+            assert_eq!(
+                summary.compute.detail.as_deref(),
+                Some("simulated GPU failure")
+            );
             assert!(
                 summary
                     .notes
@@ -1456,6 +1824,7 @@ fn gpu_reports_survive_cache_and_fallback_exports() {
             assert_eq!(summary.compute.stage, Some(ComputeStage::IdealFirSweep));
             assert_eq!(summary.compute.device.as_deref(), Some("Test GPU"));
             assert_eq!(summary.compute.fallbacks, 0);
+            assert_eq!(summary.compute.detail, None);
             previous_paths = Some(paths);
         }
         call_ok(
@@ -1590,6 +1959,320 @@ impl PausedProgress {
 }
 
 #[test]
+fn calibration_preserves_settings_edited_while_the_job_runs() {
+    let root = temp_root("settings-race");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room_dba");
+    let service = service();
+    open(&service, &path);
+    let events = Arc::new(PausedProgress::default());
+    let job = start_calibration(&service, events.clone(), settings.clone());
+    events.wait_until_paused();
+
+    call_ok(
+        &service,
+        Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+            edit: secs_types::settings_edit::SettingEdit::RcLo {
+                hz: settings.rc_lo + 5.0,
+            },
+        }),
+        Arc::new(NoEvents),
+    );
+    events.release();
+    finished_result(events.events.wait(job, Duration::from_secs(120)));
+
+    let Response::CalibrationSettingsGet(current) = call_ok(
+        &service,
+        Request::CalibrationSettingsGet,
+        Arc::new(NoEvents),
+    ) else {
+        panic!()
+    };
+    assert_eq!(current.rc_lo, settings.rc_lo + 5.0);
+    let summary = read_results(&service).calibration.unwrap();
+    assert!(summary.stale);
+    assert_eq!(summary.stale_reason.as_deref(), Some("settings"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn mimo_notes(files: &[String]) -> Vec<String> {
+    files
+        .iter()
+        .filter(|file| file.ends_with(".mdat"))
+        .flat_map(|file| {
+            secs_mdat::load_mdat_project(&fs::read(file).unwrap(), &secs_jos::Limits::default())
+                .unwrap()
+                .measurements
+        })
+        .filter(|measurement| measurement.title.contains("MIMO"))
+        .map(|measurement| measurement.notes)
+        .collect()
+}
+
+#[test]
+fn staged_mdat_states_the_mimo_support_cap_like_upstream_live_and_cached() {
+    let root = temp_root("mimo-cap-text");
+    fs::create_dir_all(&root).unwrap();
+    let (source, mut settings) = write_case(&root, "room_dba");
+    settings.mimo_on = true;
+    settings.mimo_max_supports = 4;
+    let mut store = secs_project::MeasurementStore::open(&source).unwrap();
+    let mut project_settings = secs_project::calibration_from_project(store.project());
+    project_settings.mimo_on = true;
+    project_settings.mimo_max_supports = 4;
+    secs_project::store_calibration(store.project_mut(), &project_settings);
+    store.save().unwrap();
+    let running = service();
+    open(&running, &source);
+    calibrate_and_run_mimo(&running, &settings);
+
+    // `calibration.py:1000-1002`: "(Fsiso 150 Hz · 입력당 서포트 ≤ 4)".
+    let live = export_and_wait(
+        &running,
+        ExportKind::StagedMdat,
+        &root.join("live"),
+        Arc::new(Events::default()),
+    );
+    let reopened = service();
+    open(&reopened, &source);
+    assert!(!read_results(&reopened).mimo.unwrap().stale);
+    let cached = export_and_wait(
+        &reopened,
+        ExportKind::StagedMdat,
+        &root.join("cached"),
+        Arc::new(Events::default()),
+    );
+    for (path, files) in [("live", &live.files), ("cached", &cached.files)] {
+        let notes = mimo_notes(files);
+        assert!(!notes.is_empty(), "{path}: no MIMO measurement");
+        for note in notes {
+            assert!(
+                note.contains(" Hz · 입력당 서포트 ≤ 4)"),
+                "{path}: cap text missing: {note}"
+            );
+            assert!(!note.contains("max"), "{path}: raw cap text: {note}");
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn spl_has_mimo_curve(service: &Service) -> bool {
+    let Response::ResultCurves(curves) = call_ok(
+        service,
+        Request::ResultCurves(secs_types::ipc::ResultCurvesParams {
+            tab: secs_types::ipc::ResultTab::Spl,
+            channel: None,
+            group: None,
+            xo_hz: None,
+            corrected: None,
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!()
+    };
+    curves.curves.iter().any(|curve| curve.kind == "mimo")
+}
+
+fn support_counts(service: &Service) -> Vec<Option<usize>> {
+    let Response::ResultLines(lines) = call_ok(service, Request::ResultLines, Arc::new(NoEvents))
+    else {
+        panic!()
+    };
+    lines
+        .channels
+        .iter()
+        .map(|line| line.mimo_support_count)
+        .collect()
+}
+
+#[test]
+fn result_curves_and_lines_drop_mimo_after_the_compute_preference_changes() {
+    let root = temp_root("mimo-compute-curves");
+    fs::create_dir_all(&root).unwrap();
+    let (path, mut settings) = write_case(&root, "room_dba");
+    settings.mimo_on = true;
+    settings.mimo_max_supports = 1;
+    let service = service();
+    open(&service, &path);
+    calibrate_and_run_mimo(&service, &settings);
+    assert!(!read_results(&service).mimo.unwrap().stale);
+    assert!(spl_has_mimo_curve(&service));
+    assert!(support_counts(&service).iter().all(Option::is_some));
+
+    let Response::AppSettingsGet(mut app) =
+        call_ok(&service, Request::AppSettingsGet, Arc::new(NoEvents))
+    else {
+        panic!()
+    };
+    assert_ne!(app.compute, secs_types::compute::ComputePreference::Cpu);
+    app.compute = secs_types::compute::ComputePreference::Cpu;
+    call_ok(
+        &service,
+        Request::AppSettingsSet(secs_types::ipc::AppSettingsParams { settings: app }),
+        Arc::new(NoEvents),
+    );
+
+    assert!(read_results(&service).mimo.unwrap().stale);
+    assert!(!spl_has_mimo_curve(&service), "stale MIMO is still drawn");
+    assert!(
+        support_counts(&service).iter().all(Option::is_none),
+        "stale MIMO support counts are still listed"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn reopened_fresh_cache_keeps_mimo_in_mdat() {
+    let root = temp_root("fresh-cached-mimo-mdat");
+    fs::create_dir_all(&root).unwrap();
+    let (source, mut settings) = write_case(&root, "room_dba");
+    settings.mimo_on = true;
+    settings.mimo_max_supports = 1;
+    let mut store = secs_project::MeasurementStore::open(&source).unwrap();
+    let mut project_settings = secs_project::calibration_from_project(store.project());
+    project_settings.mimo_on = true;
+    project_settings.mimo_max_supports = 1;
+    secs_project::store_calibration(store.project_mut(), &project_settings);
+    store.save().unwrap();
+    let running = deterministic_service();
+    open(&running, &source);
+    calibrate_and_run_mimo(&running, &settings);
+
+    let live_folder = root.join("live-mdat");
+    let live = export_and_wait(
+        &running,
+        ExportKind::StagedMdat,
+        &live_folder,
+        Arc::new(Events::default()),
+    );
+    let live_snapshot = snapshot_relative_files(&live_folder, &live.files);
+
+    let reopened = deterministic_service();
+    open(&reopened, &source);
+    let cached = read_results(&reopened);
+    assert!(cached.calibration.unwrap().cached);
+    assert!(!cached.mimo.unwrap().stale);
+    let reopened_folder = root.join("reopened-mdat");
+    let reopened_export = export_and_wait(
+        &reopened,
+        ExportKind::StagedMdat,
+        &reopened_folder,
+        Arc::new(Events::default()),
+    );
+    let reopened_snapshot = snapshot_relative_files(&reopened_folder, &reopened_export.files);
+    assert_eq!(
+        live_snapshot
+            .iter()
+            .map(|(_, bytes)| bytes)
+            .collect::<Vec<_>>(),
+        reopened_snapshot
+            .iter()
+            .map(|(_, bytes)| bytes)
+            .collect::<Vec<_>>()
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn reopened_stale_cache_blocks_mdat_but_allows_camilla() {
+    let root = temp_root("stale-cached-mdat");
+    fs::create_dir_all(&root).unwrap();
+    let (source, settings) = write_case(&root, "dolby");
+    let running = service();
+    open(&running, &source);
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&running, calibration_events.clone(), settings.clone());
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+
+    let reopened = service();
+    open(&reopened, &source);
+    call_ok(
+        &reopened,
+        Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+            edit: secs_types::settings_edit::SettingEdit::RcLo {
+                hz: settings.rc_lo + 5.0,
+            },
+        }),
+        Arc::new(NoEvents),
+    );
+    let summary = read_results(&reopened).calibration.unwrap();
+    assert!(summary.cached);
+    assert!(summary.stale);
+
+    let Envelope::Err(error) = reopened.call(
+        Request::Export(ExportParams {
+            kind: ExportKind::StagedMdat,
+            folder: root.join("blocked-mdat").to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("stale cached mdat must be blocked")
+    };
+    assert_eq!(error.code, ErrorCode::ExportScope);
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("stale_cache")
+    );
+
+    let camilla = export_and_wait(
+        &reopened,
+        ExportKind::CamillaDsp,
+        &root.join("camilla"),
+        Arc::new(Events::default()),
+    );
+    assert!(camilla.stale);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cached_mdat_export_rejects_project_replacement_before_writing() {
+    let root = temp_root("replace-cached-export");
+    fs::create_dir_all(&root).unwrap();
+    let (source, settings) = write_case(&root, "dolby");
+    let running = service();
+    open(&running, &source);
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&running, calibration_events.clone(), settings);
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+
+    let reopened = service();
+    open(&reopened, &source);
+    let folder = root.join("export");
+    let events = Arc::new(PausedProgress::default());
+    let Response::Export(started) = call_ok(
+        &reopened,
+        Request::Export(ExportParams {
+            kind: ExportKind::StagedMdat,
+            folder: folder.to_string_lossy().into_owned(),
+        }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    events.wait_until_paused();
+    call_ok(
+        &reopened,
+        Request::ProjectNew(ProjectNewParams {
+            path: root.join("replacement.secs").to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    events.release();
+    let finished = events.events.wait(started.job, Duration::from_secs(120));
+    assert!(
+        matches!(finished, JobEvent::Finished { status: JobStatus::Failed, error: Some(ref error), .. }
+            if error.code == ErrorCode::StaleInputs && error.detail == "project changed while computing")
+    );
+    assert!(!folder.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn project_replacement_rejects_old_compute_commit_and_preserves_completion() {
     for mimo in [false, true] {
         let root = temp_root(if mimo {
@@ -1675,4 +2358,311 @@ fn project_replacement_rejects_old_compute_commit_and_preserves_completion() {
         );
         fs::remove_dir_all(root).unwrap();
     }
+}
+
+#[test]
+fn save_as_into_a_folder_that_does_not_exist_yet_carries_the_measurements() {
+    let root = temp_root("save-as-new-folder");
+    fs::create_dir_all(&root).unwrap();
+    let source = root.join("source.secs");
+    let service = service();
+    call_ok(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: source.to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    let source_irs = source.with_extension("irs");
+    fs::create_dir_all(&source_irs).unwrap();
+    fs::write(source_irs.join("marker"), b"source").unwrap();
+
+    let target = root.join("new").join("deeper").join("copy.secs");
+    call_ok(
+        &service,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams {
+            path: Some(target.to_string_lossy().into_owned()),
+        }),
+        Arc::new(NoEvents),
+    );
+    assert!(target.is_file());
+    assert_eq!(
+        fs::read(target.with_extension("irs").join("marker")).unwrap(),
+        b"source"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// A file swapped for a named pipe: whoever reads it waits until
+/// [`Fifo::release`] hands over the original bytes, once per call.
+#[cfg(unix)]
+struct Fifo {
+    path: PathBuf,
+    bytes: Vec<u8>,
+}
+
+#[cfg(unix)]
+impl Fifo {
+    fn replace(path: &Path) -> Self {
+        let bytes = fs::read(path).unwrap();
+        fs::remove_file(path).unwrap();
+        Self::create(path, bytes)
+    }
+
+    fn create(path: &Path, bytes: Vec<u8>) -> Self {
+        let made = std::process::Command::new("mkfifo")
+            .arg(path)
+            .status()
+            .unwrap();
+        assert!(made.success(), "mkfifo failed");
+        Self {
+            path: path.to_owned(),
+            bytes,
+        }
+    }
+
+    fn release(&self) -> std::thread::JoinHandle<()> {
+        let (path, bytes) = (self.path.clone(), self.bytes.clone());
+        std::thread::spawn(move || fs::write(path, bytes).unwrap())
+    }
+}
+
+#[cfg(unix)]
+fn call_within(service: &Arc<Service>, request: Request, timeout: Duration) -> Option<Envelope> {
+    call_with_events(service, request, Arc::new(NoEvents), timeout)
+}
+
+#[cfg(unix)]
+fn call_with_events(
+    service: &Arc<Service>,
+    request: Request,
+    events: Arc<dyn EventSink>,
+    timeout: Duration,
+) -> Option<Envelope> {
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let service = service.clone();
+    std::thread::spawn(move || {
+        let _ = sender.send(service.call(request, events));
+    });
+    receiver.recv_timeout(timeout).ok()
+}
+
+#[cfg(unix)]
+#[test]
+fn calibration_reads_measurements_inside_its_job_outside_the_session_lock() {
+    let root = temp_root("load-outside-lock");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "dolby");
+    let mut wavs: Vec<_> = fs::read_dir(path.with_extension("irs"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|extension| extension == "wav"))
+        .collect();
+    wavs.sort();
+    let fifo = Fifo::replace(&wavs[wavs.len() / 2]);
+    let service = Arc::new(service());
+    open(&service, &path);
+
+    let events = Arc::new(Events::default());
+    let calibrate = Request::Calibrate(CalibrateParams {
+        settings: Some(settings),
+        ..Default::default()
+    });
+    let started =
+        match call_with_events(&service, calibrate, events.clone(), Duration::from_secs(10)) {
+            Some(Envelope::Ok(response)) => {
+                let Response::Calibrate(started) = *response else {
+                    panic!()
+                };
+                started
+            }
+            Some(Envelope::Err(error)) => panic!("{error:?}"),
+            None => {
+                fifo.release();
+                panic!("calibrate read the measurements before it started a job");
+            }
+        };
+    // The job now waits on the pipe. The session stays free and the compute
+    // group is busy, so a second request is refused without reading a WAV.
+    assert!(
+        matches!(
+            call_within(&service, Request::ProjectInfo, Duration::from_secs(5)),
+            Some(Envelope::Ok(_))
+        ),
+        "project_info waited for the measurement load"
+    );
+    for request in [
+        Request::Calibrate(CalibrateParams::default()),
+        Request::RecommendXo,
+    ] {
+        let method = request.method();
+        match call_within(&service, request, Duration::from_secs(5)) {
+            Some(Envelope::Err(error)) => assert_eq!(error.code, ErrorCode::JobBusy, "{method}"),
+            other => {
+                fifo.release();
+                panic!("{method} must be refused at once: {other:?}");
+            }
+        }
+    }
+    let Response::Jobs(jobs) = call_ok(&service, Request::Jobs, Arc::new(NoEvents)) else {
+        panic!()
+    };
+    let job = jobs.iter().find(|job| job.job == started.job).unwrap();
+    assert_eq!(job.status, JobStatus::Running);
+    assert!(job.cancellable);
+    call_ok(
+        &service,
+        Request::JobCancel(JobCancelParams { job: started.job }),
+        Arc::new(NoEvents),
+    );
+    // Hand the bytes over in case the job already waits on the pipe. A job
+    // cancelled before it reaches the pipe never opens it, so the writer is
+    // left waiting rather than joined.
+    fifo.release();
+    let finished = events.wait(started.job, Duration::from_secs(60));
+    assert!(
+        matches!(
+            finished,
+            JobEvent::Finished {
+                status: JobStatus::Cancelled,
+                ..
+            }
+        ),
+        "{finished:?}"
+    );
+    assert!(read_results(&service).calibration.is_none());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn mdat_import_reads_the_file_once_before_taking_the_session_lock() {
+    let root = temp_root("import-once");
+    fs::create_dir_all(&root).unwrap();
+    let service = Arc::new(service());
+    call_ok(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: root.join("room.secs").to_string_lossy().into_owned(),
+            preset: "7.1.4".into(),
+            sub_count: 1,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    let golden = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../oracle/goldens/mdat/build_3_real_48000_bytes.bin");
+    let Response::MdatScan(scan) = call_ok(
+        &service,
+        Request::MdatScan(secs_types::ipc::MdatScanParams {
+            path: golden.to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!()
+    };
+    let fifo = Fifo::create(&root.join("room.mdat"), fs::read(&golden).unwrap());
+    let events = Arc::new(Events::default());
+    let Response::MdatImport(started) = call_ok(
+        &service,
+        Request::MdatImport(secs_types::ipc::MdatImportParams {
+            path: fifo.path.to_string_lossy().into_owned(),
+            assignments: scan.suggestions,
+            position: 1,
+        }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    assert!(
+        matches!(
+            call_within(&service, Request::ProjectInfo, Duration::from_secs(5)),
+            Some(Envelope::Ok(_))
+        ),
+        "project_info waited for the mdat parse"
+    );
+    let writer = fifo.release();
+    let Some(finished) = events.try_wait(started.job, Duration::from_secs(30)) else {
+        fifo.release();
+        panic!("mdat import read the file a second time");
+    };
+    finished_result(finished);
+    writer.join().unwrap();
+    let Response::ProjectInfo(info) = call_ok(&service, Request::ProjectInfo, Arc::new(NoEvents))
+    else {
+        panic!()
+    };
+    assert_eq!(info.positions, [1]);
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn has_cache_warning(notes: &[secs_types::ipc::Notice]) -> bool {
+    notes.iter().any(|notice| {
+        notice.code == "cache_save_failed"
+            && notice
+                .params
+                .get("error")
+                .is_some_and(|error| !error.is_empty())
+    })
+}
+
+#[test]
+fn cache_save_failure_is_a_warning_on_a_successful_calculation() {
+    let root = temp_root("cache-save-warning");
+    fs::create_dir_all(&root).unwrap();
+    let (path, mut settings) = write_case(&root, "room_dba");
+    settings.mimo_on = true;
+    settings.mimo_max_supports = 1;
+    // A non-empty folder where the cache file goes: the final rename fails
+    // on every platform and for every user (a read-only folder does not stop root).
+    let obstacle = path.with_extension("irs").join("secs_run_cache.json");
+    fs::create_dir_all(obstacle.join("in-the-way")).unwrap();
+    let service = service();
+    open(&service, &path);
+
+    calibrate_and_run_mimo(&service, &settings);
+    let results = read_results(&service);
+    let calibration = results.calibration.unwrap();
+    let mimo = results.mimo.unwrap();
+    assert!(!calibration.stale && !mimo.stale);
+    assert!(
+        has_cache_warning(&calibration.notes),
+        "{:?}",
+        calibration.notes
+    );
+    assert!(has_cache_warning(&mimo.notes), "{:?}", mimo.notes);
+
+    // Once a save succeeds the warning goes, and it is never written to the cache.
+    fs::remove_dir_all(&obstacle).unwrap();
+    let events = Arc::new(Events::default());
+    let Response::Mimo(started) = call_ok(
+        &service,
+        Request::Mimo(MimoParams {
+            settings: Some(settings),
+        }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    finished_result(events.wait(started.job, Duration::from_secs(120)));
+    let results = read_results(&service);
+    assert!(!has_cache_warning(&results.calibration.unwrap().notes));
+    assert!(!has_cache_warning(&results.mimo.unwrap().notes));
+    let cached: secs_types::ipc::CalibrationSummary = cached_field(&path, "calibration");
+    assert!(
+        cached
+            .notes
+            .iter()
+            .all(|notice| notice.code != "cache_save_failed")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+fn export_mode(settings: &CalibrationSettings) -> String {
+    secs_camilla::note::mode_name(settings.mode, settings.ultra_ms)
 }

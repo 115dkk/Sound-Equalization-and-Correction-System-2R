@@ -3,6 +3,7 @@
 use secs_project::{Project, calibration_from_project, store_calibration};
 use secs_types::calibration::{BundleLayoutEntry, CalibrationSettings, SubEntry};
 use secs_types::ipc::{CalibrationSettingsEditParams, IpcError};
+use secs_types::rules::CALIBRATION_LIMITS as LIMITS;
 use secs_types::settings_edit::*;
 
 use crate::{Service, lock};
@@ -173,7 +174,7 @@ fn set_layout(
         .into();
     }
     if let Some(trim) = trim {
-        e.rear_trim_ms = trim.clamp(-20.0, 20.0);
+        e.rear_trim_ms = trim.clamp(LIMITS.rear_trim.0, LIMITS.rear_trim.1);
     }
     put(&mut s.bundle_layouts, bundle.clone(), e);
     if let Some(first) = members(s, &bundle).first() {
@@ -224,7 +225,7 @@ fn set_infra(
         }
         return;
     };
-    let hz = hz.clamp(10.0, 300.0);
+    let hz = hz.clamp(LIMITS.infra_hz.0, LIMITS.infra_hz.1);
     let e = sub(s, &role);
     let mut group = if e.mode == "bundle" && layout(s, &e.bundle) != "values" {
         members(s, &e.bundle)
@@ -250,7 +251,8 @@ fn set_infra(
 }
 
 fn volume(dims: Option<[f64; 3]>) -> Option<f64> {
-    dims.filter(|d| d.iter().all(|v| v.is_finite() && (0.5..=100.0).contains(v)))
+    let (lo, hi) = LIMITS.dim_valid;
+    dims.filter(|d| d.iter().all(|v| v.is_finite() && (lo..=hi).contains(v)))
         .map(|d| d[0] * d[1] * d[2])
 }
 
@@ -258,11 +260,11 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
     match edit {
         SettingEdit::Mode { mode } => s.mode = mode,
         SettingEdit::SampleRatePolicy { policy } => s.sample_rate_policy = policy,
-        SettingEdit::UltraMs { ms } => s.ultra_ms = ms.clamp(30.0, 200.0),
-        SettingEdit::RcLo { hz } => s.rc_lo = hz.clamp(10.0, 200.0),
-        SettingEdit::RcHi { hz } => s.rc_hi = hz.map(|v| v.clamp(100.0, 20000.0)),
+        SettingEdit::UltraMs { ms } => s.ultra_ms = ms.clamp(LIMITS.ultra_ms.0, LIMITS.ultra_ms.1),
+        SettingEdit::RcLo { hz } => s.rc_lo = hz.clamp(LIMITS.rc_lo.0, LIMITS.rc_lo.1),
+        SettingEdit::RcHi { hz } => s.rc_hi = hz.map(|v| v.clamp(LIMITS.rc_hi.0, LIMITS.rc_hi.1)),
         SettingEdit::RoomVolume { m3 } => {
-            s.room_volume_m3 = (m3 > 0.0).then_some(m3.min(100000.0));
+            s.room_volume_m3 = (m3 > LIMITS.volume.0).then_some(m3.min(LIMITS.volume.1));
             if !volume(s.room_dims_m)
                 .zip(s.room_volume_m3)
                 .is_some_and(|(a, b)| (a - b).abs() <= 0.5)
@@ -271,20 +273,29 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
             }
         }
         SettingEdit::RoomDims { dims } => {
-            let dims = dims.map(|v| v.clamp(0.0, 100.0));
+            let dims = dims.map(|v| v.clamp(LIMITS.dim.0, LIMITS.dim.1));
             s.room_dims_m = volume(Some(dims)).map(|_| dims);
             if let Some(v) = volume(s.room_dims_m) {
                 // Python round(v, 1) rounds the original binary value to a decimal.
-                s.room_volume_m3 = Some(format!("{v:.1}").parse::<f64>().unwrap().min(100000.0));
+                s.room_volume_m3 = Some(
+                    format!("{v:.1}")
+                        .parse::<f64>()
+                        .unwrap()
+                        .min(LIMITS.volume.1),
+                );
             }
         }
-        SettingEdit::BoostMax { db } => s.boost_max_db = db.clamp(0.0, 10.0),
+        SettingEdit::BoostMax { db } => s.boost_max_db = db.clamp(LIMITS.boost.0, LIMITS.boost.1),
         SettingEdit::Xo { group, hz } => {
             let groups = project.config.groups();
             if groups.iter().any(|(g, _)| *g == "sub")
                 && groups.iter().any(|(g, _)| *g == group && *g != "sub")
             {
-                put(&mut s.xo, group, hz.clamp(40.0, 200.0).round_ties_even());
+                put(
+                    &mut s.xo,
+                    group,
+                    hz.clamp(LIMITS.xo.0, LIMITS.xo.1).round_ties_even(),
+                );
             }
         }
         SettingEdit::XoPeq { on, lo, hi } => {
@@ -292,10 +303,10 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
                 s.xo_peq_on = v;
             }
             if let Some(v) = lo {
-                s.xo_peq_lo = v.clamp(0.0, 1000.0);
+                s.xo_peq_lo = v.clamp(LIMITS.xo_peq.0, LIMITS.xo_peq.1);
             }
             if let Some(v) = hi {
-                s.xo_peq_hi = v.clamp(0.0, 1000.0);
+                s.xo_peq_hi = v.clamp(LIMITS.xo_peq.0, LIMITS.xo_peq.1);
             }
         }
         SettingEdit::Infra {
@@ -304,7 +315,9 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
             typ,
             subs,
         } => set_infra(s, role, hz, typ.name(), &subs),
-        SettingEdit::InfraBoost { db } => s.infra_boost_max_db = db.clamp(0.0, 24.0),
+        SettingEdit::InfraBoost { db } => {
+            s.infra_boost_max_db = db.clamp(LIMITS.infra_boost.0, LIMITS.infra_boost.1)
+        }
         SettingEdit::SubMode { role, mode } => {
             let mut e = sub(s, &role);
             let (kind, bundle) = match mode {
@@ -353,13 +366,149 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
                 },
             );
         }
-        SettingEdit::MainDelay { ms } => s.sub_main_delay_ms = ms.clamp(0.0, 100.0),
+        SettingEdit::MainDelay { ms } => {
+            s.sub_main_delay_ms = ms.clamp(LIMITS.main_delay.0, LIMITS.main_delay.1)
+        }
         SettingEdit::MimoOn { on } => s.mimo_on = on,
-        SettingEdit::Fsiso { hz } => s.fsiso = hz.clamp(50.0, 150.0),
-        SettingEdit::MimoLow { hz } => s.mimo_low = hz.map(|v| v.clamp(15.0, 150.0)),
+        SettingEdit::Fsiso { hz } => s.fsiso = hz.clamp(LIMITS.fsiso.0, LIMITS.fsiso.1),
+        SettingEdit::MimoLow { hz } => {
+            s.mimo_low = hz.map(|v| v.clamp(LIMITS.mimo_low.0, LIMITS.mimo_low.1))
+        }
         SettingEdit::MimoMax { count } => {
-            s.mimo_max_supports = count.clamp(0.0, 12.0).round_ties_even() as i64
+            s.mimo_max_supports = count
+                .clamp(LIMITS.mimo_max.0, LIMITS.mimo_max.1)
+                .round_ties_even() as i64
         }
         SettingEdit::MimoFir { on } => s.mimo_fir = on,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use secs_project::SpeakerConfig;
+    use secs_types::chain::BandType;
+
+    use super::*;
+
+    /// Reads back the value one edit stored.
+    type Read = fn(f64) -> f64;
+
+    const FAR: f64 = 1e9;
+
+    fn edited(edit: SettingEdit) -> CalibrationSettings {
+        let project = Project {
+            config: SpeakerConfig::from_preset("2.1", "", false).unwrap(),
+            ..Project::default()
+        };
+        let mut s = calibration_from_project(&project);
+        apply(&mut s, edit, &project);
+        s
+    }
+
+    fn entry<T: Clone>(items: &[(String, T)], key: &str) -> T {
+        items.iter().find(|(k, _)| k == key).unwrap().1.clone()
+    }
+
+    /// Every clamp lands on the rule constant at both edges.
+    #[test]
+    fn clamps_land_on_the_rule_limits() {
+        let edges: [(&str, (f64, f64), Read); 16] = [
+            ("ultra_ms", LIMITS.ultra_ms, |v| {
+                edited(SettingEdit::UltraMs { ms: v }).ultra_ms
+            }),
+            ("rc_lo", LIMITS.rc_lo, |v| {
+                edited(SettingEdit::RcLo { hz: v }).rc_lo
+            }),
+            ("rc_hi", LIMITS.rc_hi, |v| {
+                edited(SettingEdit::RcHi { hz: Some(v) }).rc_hi.unwrap()
+            }),
+            ("boost", LIMITS.boost, |v| {
+                edited(SettingEdit::BoostMax { db: v }).boost_max_db
+            }),
+            ("xo", LIMITS.xo, |v| {
+                let group = "프론트".to_owned();
+                entry(&edited(SettingEdit::Xo { group, hz: v }).xo, "프론트")
+            }),
+            ("xo_peq lo", LIMITS.xo_peq, |v| {
+                let edit = SettingEdit::XoPeq {
+                    on: None,
+                    lo: Some(v),
+                    hi: None,
+                };
+                edited(edit).xo_peq_lo
+            }),
+            ("xo_peq hi", LIMITS.xo_peq, |v| {
+                let edit = SettingEdit::XoPeq {
+                    on: None,
+                    lo: None,
+                    hi: Some(v),
+                };
+                edited(edit).xo_peq_hi
+            }),
+            ("infra_hz", LIMITS.infra_hz, |v| {
+                let edit = SettingEdit::Infra {
+                    role: Some("SW1".into()),
+                    hz: v,
+                    typ: BandType::Lr24,
+                    subs: vec!["SW1".into()],
+                };
+                sub(&edited(edit), "SW1").lp_hz
+            }),
+            ("infra_boost", LIMITS.infra_boost, |v| {
+                edited(SettingEdit::InfraBoost { db: v }).infra_boost_max_db
+            }),
+            ("rear_trim", LIMITS.rear_trim, |v| {
+                let edit = SettingEdit::RearTrim {
+                    bundle: "A".into(),
+                    ms: v,
+                };
+                entry(&edited(edit).bundle_layouts, "A").rear_trim_ms
+            }),
+            ("main_delay", LIMITS.main_delay, |v| {
+                edited(SettingEdit::MainDelay { ms: v }).sub_main_delay_ms
+            }),
+            ("fsiso", LIMITS.fsiso, |v| {
+                edited(SettingEdit::Fsiso { hz: v }).fsiso
+            }),
+            ("mimo_low", LIMITS.mimo_low, |v| {
+                edited(SettingEdit::MimoLow { hz: Some(v) })
+                    .mimo_low
+                    .unwrap()
+            }),
+            ("mimo_max", LIMITS.mimo_max, |v| {
+                edited(SettingEdit::MimoMax { count: v }).mimo_max_supports as f64
+            }),
+            // At or below the low end the volume is cleared.
+            ("volume", LIMITS.volume, |v| {
+                let volume = edited(SettingEdit::RoomVolume { m3: v }).room_volume_m3;
+                volume.unwrap_or(LIMITS.volume.0)
+            }),
+            // A low-edge dimension yields no room, so the other two sit at the high edge.
+            ("dim", LIMITS.dim, |v| {
+                let high = LIMITS.dim.1;
+                let room = edited(SettingEdit::RoomDims {
+                    dims: [v, high, high],
+                });
+                room.room_dims_m.map_or(LIMITS.dim.0, |d| d[0])
+            }),
+        ];
+        for (name, (lo, hi), read) in edges {
+            assert_eq!(read(-FAR), lo, "{name} low edge");
+            assert_eq!(read(FAR), hi, "{name} high edge");
+        }
+    }
+
+    #[test]
+    fn room_dimensions_yield_a_volume_only_within_the_valid_range() {
+        let room = |d: f64| edited(SettingEdit::RoomDims { dims: [d; 3] });
+        let (lo, hi) = LIMITS.dim_valid;
+        assert_eq!(room(lo).room_dims_m, Some([lo; 3]));
+        assert_eq!(room(hi).room_dims_m, Some([hi; 3]));
+        assert_eq!(room(hi).room_volume_m3, Some(LIMITS.volume.1));
+        assert_eq!(room(lo - 0.01).room_dims_m, None);
+        let cleared = edited(SettingEdit::RoomVolume {
+            m3: LIMITS.volume.0,
+        });
+        assert_eq!(cleared.room_volume_m3, None);
     }
 }

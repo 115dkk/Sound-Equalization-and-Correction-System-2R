@@ -14,6 +14,23 @@
   color: var(--text);
 }
 
+/* ── Before the frame: the app settings did not load (TD-29) ───────────── */
+/* The window's own background and one dialog surface in its middle. It is
+   the first thing the window draws, so the surface does not rise in (two
+   classes: the kit's `.ui-dialog` loads after this file). */
+.app-start {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: var(--space-6);
+  background: var(--bg);
+  color: var(--text);
+}
+
+.app-start > .app-start__panel {
+  animation: none;
+}
+
 /* ── Rail ──────────────────────────────────────────────────────────────── */
 .app-rail {
   display: flex;
@@ -370,6 +387,74 @@
   height: 12px;
   background: none;
   color: var(--info);
+}
+
+/* Project warnings: the notice kit's warning box laid out for the rail. The
+   icon, the title and 닫기 share the first line; the sentences and the
+   positions run under them across the whole width, so a position's action
+   stands right after its name and the role codes take the line below.
+   (Two classes: the kit's `.ui-error` is a row and loads after this file.) */
+.ui-error.project-warnings {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-2) var(--space-1-5);
+  padding: var(--space-2-5) var(--space-1-5) var(--space-3) var(--space-2-5);
+}
+
+.project-warnings__title {
+  font-size: var(--text-ui);
+}
+
+/* A 32 px button on the 18 px title line, without making the line taller. */
+.project-warnings__close {
+  margin-block: -7px;
+}
+
+.project-warnings__body {
+  display: flex;
+  grid-column: 1 / -1;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.project-warnings__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.project-warnings__list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2-5);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-warnings__row {
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: start;
+  align-items: center;
+  gap: var(--space-0-5) var(--space-3);
+}
+
+.project-warnings__position {
+  font-weight: var(--weight-medium);
+}
+
+.project-warnings__roles,
+.project-warnings__entry {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.project-warnings__roles {
+  color: var(--text-muted);
+  font-size: var(--text-caption);
 }
 
 /* Rail tools (settings, help) */

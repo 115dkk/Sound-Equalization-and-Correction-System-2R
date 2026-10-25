@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { PrefsScope } from "../../app/prefs";
 import { StepHeader } from "../../app/StepHeader";
@@ -7,10 +7,14 @@ import { translate } from "../../i18n";
 import { renderWith } from "../../test/render";
 import { configOf, invalidView, newProjectView, sampleView, speaker } from "./fixtures";
 import { systemStepState } from "./state";
-import { SystemScreen, systemHeader } from "./SystemScreen";
+import { OUTPUT_LIMIT, SystemScreen, systemHeader } from "./SystemScreen";
 import type { SystemActions, SystemView } from "./types";
 
-/** Every id docs/M5-reach.md cites for 시스템 (sections 2 and 4), with a role or number filled in. */
+/**
+ * Every id docs/M5-reach.md cites for 시스템 (sections 2 and 4), with a role or
+ * number filled in. The start delay row there names `measure.options.delay`,
+ * which 측정·가져오기 draws (MeasureScreen.test.tsx).
+ */
 export const REACH_IDS = [
   "system.config",
   "system.preset",
@@ -54,7 +58,6 @@ export const REACH_IDS = [
   "system.arrangement.17",
   "system.arrangement.map",
   "system.arrangement.map.position.1",
-  "system.start_delay",
   "system.sweeps",
   "system.estimate",
   "system.timing.advanced",
@@ -82,7 +85,6 @@ function actionsMock(token: string | null = "undo-7") {
     setDspPreset: vi.fn(),
     setDspFields: vi.fn(),
     setArrangement: vi.fn(async () => token),
-    setStartDelay: vi.fn(),
     setTiming: vi.fn(),
     undo: vi.fn(async () => {}),
     next: vi.fn(),
@@ -214,6 +216,40 @@ describe("SystemScreen", () => {
     expect(must("system.device").textContent).toContain(translate("ko", "system.device.over", { count: 12 }));
   });
 
+  it("bounds the output choices by the device and the service's 256, listing a far stored output as one option (TD-31)", () => {
+    const far = 1_000_000_000;
+    const farView: SystemView = {
+      ...sampleView,
+      config: configOf("2.0", [speaker("L", 1), speaker("R", far)], "MOTU 16A"),
+      layout: { ...sampleView.layout, timing: { reference: "loopback", role: "R", output: far } },
+    };
+    const values = (id: string) => [...must(id).querySelectorAll("option")].map((option) => option.value);
+    const labels = (id: string) => [...must(id).querySelectorAll("option")].map((option) => option.textContent);
+    const upTo = (n: number) => Array.from({ length: n }, (_, i) => String(i + 1));
+    const farLabel = translate("ko", "system.output.n", { n: far });
+
+    // The device is not known: the patch lists up to the bound, the reference output upstream's 8.
+    setup({ ...farView, outputChannels: null });
+    fireEvent.click(must("system.timing.advanced"));
+    for (const id of ["system.patch.L.out", "system.patch.R.out", "system.timing.output"]) expect(values(id).length).toBeLessThanOrEqual(OUTPUT_LIMIT + 1);
+    expect(OUTPUT_LIMIT).toBe(256);
+    expect(values("system.patch.L.out")).toEqual(upTo(OUTPUT_LIMIT));
+    expect(values("system.patch.R.out")).toEqual([...upTo(OUTPUT_LIMIT), String(far)]);
+    expect(labels("system.patch.R.out").at(-1)).toBe(translate("ko", "system.output.out_of_range", { output: farLabel }));
+    expect((must("system.patch.R.out") as HTMLSelectElement).value).toBe(String(far));
+    expect(values("system.timing.output")).toEqual([...upTo(8), String(far)]);
+    expect(labels("system.timing.output").at(-1)).toBe(farLabel);
+    expect((must("system.timing.output") as HTMLSelectElement).value).toBe(String(far));
+    cleanup();
+
+    // A known device bounds them by its channels.
+    setup({ ...farView, outputChannels: 16 });
+    fireEvent.click(must("system.timing.advanced"));
+    expect(values("system.patch.L.out")).toEqual(upTo(16));
+    expect(values("system.patch.R.out")).toEqual([...upTo(16), String(far)]);
+    expect(values("system.timing.output")).toEqual([...upTo(16), String(far)]);
+  });
+
   it("lists the first four notices with cause and next step, the rest behind 외 N개", () => {
     setup(invalidView);
     const notices = must("system.notices");
@@ -268,10 +304,13 @@ describe("SystemScreen", () => {
     expect(must("system.dsp.note").textContent).toContain("1,365");
   });
 
-  it("sets the start delay and, folded under 고급 on the REW path, the timing reference", () => {
+  it("sets the timing reference folded under 고급 on the REW path, after the estimate", () => {
     const actions = setup(sampleView);
-    fireEvent.click(must("system.start_delay.10"));
-    expect(actions.setStartDelay).toHaveBeenCalledWith("10 초");
+    // The start delay is set on 측정·가져오기 only (P58).
+    expect(ui("system.start_delay")).toBeNull();
+    const options = must("system.options");
+    expect(options.firstElementChild).toBe(must("system.estimate"));
+    expect(options.lastElementChild?.contains(must("system.timing.advanced"))).toBe(true);
     expect(ui("system.timing")).toBeNull();
     fireEvent.click(must("system.timing.advanced"));
     fireEvent.change(must("system.timing.role"), { target: { value: "C" } });
@@ -282,7 +321,7 @@ describe("SystemScreen", () => {
 
   it("hides the timing reference unless REW measures: native keeps arrival times in one recording", () => {
     setup({ ...sampleView, rew: false });
-    expect(ui("system.start_delay")).not.toBeNull();
+    expect(ui("system.estimate")).not.toBeNull();
     expect(ui("system.timing.advanced")).toBeNull();
     expect(ui("system.timing")).toBeNull();
     expect(ui("system.timing.role")).toBeNull();

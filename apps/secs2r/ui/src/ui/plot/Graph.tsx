@@ -12,7 +12,7 @@ import { FREQ_RANGE } from "./ticks";
 
 const UNSET: AxisRangeValue = { x: null, y: null };
 
-export type GraphProps = {
+type GraphProps = {
   id: string;
   label: string;
   freqs: ArrayLike<number>;

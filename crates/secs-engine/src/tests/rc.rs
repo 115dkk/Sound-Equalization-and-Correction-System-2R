@@ -373,9 +373,9 @@ fn rc_recorded_candidates_and_channel() {
             cases::peq(&v["result"])
         };
         let out = if tuning.gd_cuts {
-            rc::channel_with_cuts(&input, &mut fitter, &mut cuts)
+            rc::channel_with_cuts(&input, &mut fitter, &mut cuts, &|| false).unwrap()
         } else {
-            rc::channel(&input, &mut fitter)
+            rc::channel(&input, &mut fitter, &|| false).unwrap()
         };
         assert_eq!(seen, count);
         assert_eq!(gd_seen, usize::from(tuning.gd_cuts));
@@ -416,6 +416,58 @@ fn rc_recorded_candidates_and_channel() {
             out.gd_cuts.len()
         );
     }
+}
+
+#[test]
+fn rc_channel_stops_at_every_cancellation_check() {
+    // TD-49: phase preparation, the FIR ladder, the wide trims, the second
+    // phase candidate and the GD cuts all poll the token. A boundary check
+    // returns at the poll that reads true. Inside a GD cut fit every residual
+    // then reads zero: at worst the solver finishes the Jacobian it is in
+    // (three columns), tries one step, takes one more Jacobian and stops at
+    // its gradient test (3 + 1 + 3), then the fit's own check and the
+    // channel's check after the cuts read true once each: 9 polls.
+    let mut case = cases::load("room");
+    case.config.taps = 2048;
+    case.config.peq_bands = Some(2);
+    case.config.phase_frac = 24.0;
+    case.tuning.gd_cuts = true;
+    let setup = Setup::new(&case.config);
+    let prepared = measurement::prepare(&case.measurements, &case.config, &setup).unwrap();
+    let role = &case.config.mains[0];
+    let comb: Vec<_> = prepared
+        .h
+        .positions()
+        .iter()
+        .filter_map(|&position| {
+            prepared
+                .h
+                .get(position, role)
+                .map(|h| (position, Arc::clone(h)))
+        })
+        .collect();
+    let positions: Vec<_> = comb.iter().map(|(p, _)| *p).collect();
+    let input = RcInput {
+        role,
+        comb: &comb,
+        main_position: case.config.main_position,
+        level_db: 0.0,
+        setup: &setup,
+        config: &case.config,
+        tuning: &case.tuning,
+        positions: &positions,
+    };
+    let fit = |_: &crate::fit::FitRequest<'_>| vec![(67.0, 1.2, -2.0)];
+    let plain = rc::channel(&input, &mut { fit }, &|| false).unwrap();
+    let (out, polls) = super::cancel::assert_cancels("rc channel", 9, |cancelled| {
+        rc::channel(&input, &mut { fit }, cancelled)
+    });
+    // The GD fits poll once per residual, so most polls are theirs.
+    assert!(!plain.gd_cuts.is_empty() && polls > 600, "{polls} polls");
+    assert_eq!(out.out.fir, plain.out.fir);
+    assert_eq!(out.response, plain.response);
+    assert_eq!(out.gd_cuts, plain.gd_cuts);
+    assert_eq!(out.phase_frac_used, plain.phase_frac_used);
 }
 
 #[test]
@@ -468,7 +520,7 @@ fn rc_phase_candidates_share_preparation() {
         shared_calls += 1;
         vec![(67.0, 1.2, -2.0)]
     };
-    let actual = rc::channel(&input, &mut fit);
+    let actual = rc::channel(&input, &mut fit, &|| false).unwrap();
     assert_eq!(shared_calls, 3);
     assert_eq!(actual.out.fir, expected.fir);
     assert_eq!(actual.out.response, expected.response);

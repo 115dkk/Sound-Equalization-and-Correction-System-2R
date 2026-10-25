@@ -67,7 +67,7 @@ enum Action {
     Calibrate { project: PathBuf },
     /// Recommend crossover frequencies.
     RecommendXo { project: PathBuf },
-    /// Compute MIMO support paths.
+    /// Calibrate first, then compute MIMO support paths.
     Mimo { project: PathBuf },
     /// Write one export bundle.
     Export {
@@ -424,7 +424,7 @@ fn run(action: Action, runner: &mut Runner) {
             let path = file.to_string_lossy().into_owned();
             let scan = runner.call(Request::MdatScan(MdatScanParams { path: path.clone() }));
             let assignments = match scan {
-                Some(Response::MdatScan(result)) => result.suggestions,
+                Some(Response::MdatScan(result)) => untagged_rows_use_position(result),
                 _ => Vec::new(),
             };
             runner.call(Request::MdatImport(MdatImportParams {
@@ -445,6 +445,7 @@ fn run(action: Action, runner: &mut Runner) {
         }
         Action::Mimo { project } => {
             runner.open(&project);
+            runner.calibrate(None);
             runner.call(Request::Mimo(MimoParams::default()));
             runner.call(Request::Results);
         }
@@ -459,6 +460,25 @@ fn run(action: Action, runner: &mut Runner) {
             mimo,
         } => full_run(runner, &out, project.as_deref(), fill, mimo),
     }
+}
+
+/// Rows whose title names no position keep `--position` (TD-36): the scan's
+/// suggested position for them is only the current position guess.
+fn untagged_rows_use_position(scan: MdatScanResult) -> Vec<MdatAssignment> {
+    scan.suggestions
+        .into_iter()
+        .map(|mut assignment| {
+            let untagged = assignment.index.is_some_and(|index| {
+                scan.measurements
+                    .iter()
+                    .any(|row| row.index == index && !row.position_tagged)
+            });
+            if untagged {
+                assignment.position = None;
+            }
+            assignment
+        })
+        .collect()
 }
 
 fn check(runner: &mut Runner) {
@@ -543,10 +563,9 @@ fn full_run(runner: &mut Runner, out: &Path, project: Option<&Path>, fill: FillC
         .as_ref()
         .and_then(|results| results.calibration.as_ref())
         .is_some_and(|calibration| !calibration.sub_roles.is_empty());
-    let has_mimo = results
-        .as_ref()
-        .and_then(|results| results.mimo.as_ref())
-        .is_some_and(|mimo| !mimo.stale && mimo.support_count > 0);
+    let has_mimo = results.as_ref().is_some_and(|results| {
+        results.mimo_export == secs_types::ipc::MimoExportDecision::Included
+    });
     for (kind, folder) in [
         (ExportKind::CamillaDsp, "camilla-dsp"),
         (ExportKind::StagedMdat, "staged-mdat"),
@@ -554,7 +573,11 @@ fn full_run(runner: &mut Runner, out: &Path, project: Option<&Path>, fill: FillC
         (ExportKind::FilterText, "filter-text"),
         (ExportKind::EqualizerApo, "equalizer-apo"),
     ] {
-        if let Some(block) = secs_types::ipc::filter_export_block(kind, has_subs, has_mimo) {
+        let stale_cache = results
+            .as_ref()
+            .and_then(|results| results.calibration.as_ref())
+            .is_some_and(|calibration| calibration.cached && calibration.stale);
+        if let Some(block) = secs_types::ipc::export_block(kind, has_subs, has_mimo, stale_cache) {
             print_json(&serde_json::json!({"reply": {
                 "ok": true,
                 "data": {

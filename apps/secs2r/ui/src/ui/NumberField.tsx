@@ -2,12 +2,13 @@
 // the draft stays as typed, an out-of-range or non-numeric draft is marked
 // invalid with the range in words, and only a valid value is committed (on
 // Enter or leaving the field). ↑/↓ step by `step` (Shift ×10) inside the
-// range; Escape restores the last committed value.
-import { useEffect, useState, type KeyboardEvent, type ReactNode } from "react";
+// range; Escape restores the last committed value. A form that submits
+// several fields at once hears each draft's validity (`onDraftValidity`).
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { useNumber, useT } from "../i18n/react";
 import { Field, describedBy } from "./Field";
 
-export type NumberCheck = { ok: true; value: number } | { ok: false; reason: "empty" | "nan" | "below" | "above" };
+type NumberCheck = { ok: true; value: number } | { ok: false; reason: "empty" | "nan" | "below" | "above" };
 
 /** Reads a typed number (accepts "−", "-", "," as a decimal mark) and checks the range. */
 export function checkNumber(text: string, min: number, max: number): NumberCheck {
@@ -28,7 +29,7 @@ export function stepNumber(value: number, delta: number, min: number, max: numbe
   return Math.round(next * factor) / factor;
 }
 
-export type NumberFieldProps = {
+type NumberFieldProps = {
   id: string;
   label: ReactNode;
   value: number;
@@ -46,6 +47,11 @@ export type NumberFieldProps = {
   disabled?: boolean;
   /** Width of the input box in characters (numbers, not labels). */
   size?: number;
+  /**
+   * Told whether the draft can be committed, whenever that changes (and once
+   * on mount): false while a typed draft is not a number or is out of range.
+   */
+  onDraftValidity?: (valid: boolean) => void;
 };
 
 export function NumberField({
@@ -63,6 +69,7 @@ export function NumberField({
   showRange,
   disabled,
   size = 7,
+  onDraftValidity,
 }: NumberFieldProps) {
   const t = useT();
   const number = useNumber();
@@ -76,6 +83,11 @@ export function NumberField({
   }, [value, digits, touched]);
 
   const check = checkNumber(draft, min, max);
+  // Before the next key reaches the form, so Enter sees the draft just typed.
+  const validity = useRef(onDraftValidity);
+  validity.current = onDraftValidity;
+  const valid = !touched || check.ok;
+  useLayoutEffect(() => validity.current?.(valid), [valid]);
   const range = t("ui.number.range", { min: shown(min), max: shown(max), unit: unit ?? "" }).trim();
   const error = touched && !check.ok ? (check.reason === "nan" || check.reason === "empty" ? t("ui.number.nan", { range }) : t("ui.number.out_of_range", { range })) : null;
   const inlineHint = hint ?? (showRange ? range : undefined);

@@ -1,5 +1,7 @@
 //! Python-compatible JSON values, parser, and pretty-printer.
 
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::fmt;
 
 /// A JSON value exactly as Python's `json` module reads and writes it.
@@ -58,6 +60,99 @@ impl PyJson {
             Self::Object(value) => Some(value),
             _ => None,
         }
+    }
+
+    /// Python's `bool(value)`: `None`, `False`, zero and empty containers are false.
+    pub(crate) fn is_truthy(&self) -> bool {
+        match self {
+            Self::Null => false,
+            Self::Bool(value) => *value,
+            Self::Int(value) => value != "0",
+            Self::Float(value) => *value != 0.0,
+            Self::Str(value) => !value.is_empty(),
+            Self::Array(value) => !value.is_empty(),
+            Self::Object(value) => !value.is_empty(),
+        }
+    }
+}
+
+/// How a value the writer rebuilds from a typed field meets the value the
+/// file held, so saving keeps keys this version does not know (ADR 0004,
+/// docs/DEVIATIONS.md F16).
+#[derive(Debug)]
+pub(crate) enum Shape {
+    /// An object with fixed field names: the writer's fields in its order,
+    /// then the file's other fields in theirs. `optional` names fields the
+    /// writer leaves out on purpose, which therefore do not come back from the
+    /// file. `nested` gives the shape of fields merged in turn; the writer's
+    /// value replaces every other field.
+    Record {
+        optional: &'static [&'static str],
+        nested: &'static [(&'static str, Shape)],
+    },
+    /// An object whose keys are data (roles, bundles): only the writer's
+    /// entries, each merged with the file's entry of the same key.
+    Map(&'static Shape),
+    /// An array merged element by element when both sides have the same
+    /// length; otherwise the writer's array.
+    List(&'static Shape),
+}
+
+/// Merges `new`, rebuilt by the writer, with `old`, read from the file.
+pub(crate) fn merge_with_file(new: PyJson, old: &PyJson, shape: &Shape) -> PyJson {
+    match (shape, new, old) {
+        (
+            Shape::Record { optional, nested },
+            PyJson::Object(fields),
+            PyJson::Object(old_fields),
+        ) => {
+            let mut out = fields
+                .into_iter()
+                .map(|(key, value)| {
+                    let value = match (
+                        nested.iter().find(|(name, _)| *name == key),
+                        old_fields.iter().find(|(name, _)| *name == key),
+                    ) {
+                        (Some((_, shape)), Some((_, old))) => merge_with_file(value, old, shape),
+                        _ => value,
+                    };
+                    (key, value)
+                })
+                .collect::<Vec<_>>();
+            let unknown = old_fields
+                .iter()
+                .filter(|(key, _)| {
+                    !optional.contains(&key.as_str()) && !out.iter().any(|(name, _)| name == key)
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            out.extend(unknown);
+            PyJson::Object(out)
+        }
+        (Shape::Map(entry), PyJson::Object(fields), PyJson::Object(old_fields)) => PyJson::Object(
+            fields
+                .into_iter()
+                .map(|(key, value)| {
+                    let value = match old_fields.iter().find(|(name, _)| *name == key) {
+                        Some((_, old)) => merge_with_file(value, old, entry),
+                        None => value,
+                    };
+                    (key, value)
+                })
+                .collect(),
+        ),
+        (Shape::List(item), PyJson::Array(items), PyJson::Array(old_items))
+            if items.len() == old_items.len() =>
+        {
+            PyJson::Array(
+                items
+                    .into_iter()
+                    .zip(old_items)
+                    .map(|(value, old)| merge_with_file(value, old, item))
+                    .collect(),
+            )
+        }
+        (_, new, _) => new,
     }
 }
 
@@ -197,6 +292,8 @@ impl Parser<'_> {
             self.pos += 1;
             return Ok(PyJson::Object(values));
         }
+        // Key -> position in `values`, only while this object is parsed.
+        let mut index: HashMap<String, usize> = HashMap::new();
         loop {
             if self.bytes.get(self.pos) != Some(&b'"') {
                 return Err(self.error("expecting property name"));
@@ -209,10 +306,14 @@ impl Parser<'_> {
             self.pos += 1;
             self.whitespace();
             let value = self.value(depth)?;
-            if let Some((_, old)) = values.iter_mut().find(|(name, _)| *name == key) {
-                *old = value;
-            } else {
-                values.push((key, value));
+            // Like a Python dict: a repeated key keeps its first position and
+            // takes the last value.
+            match index.entry(key) {
+                Entry::Occupied(slot) => values[*slot.get()].1 = value,
+                Entry::Vacant(slot) => {
+                    values.push((slot.key().clone(), value));
+                    slot.insert(values.len() - 1);
+                }
             }
             self.whitespace();
             match self.bytes.get(self.pos) {

@@ -3,14 +3,16 @@
 use std::collections::BTreeMap;
 
 use secs_compute::Context;
-use secs_oracle::{Fixture, PLATFORM_RTOL, number};
+use secs_oracle::{Fixture, PLATFORM_RTOL, errors, integer, number, oracle_libm};
+use secs_types::target::TargetCurve;
 use serde_json::Value;
+use std::sync::{Arc, Mutex};
 
 use crate::{
-    Design, DesignRequest, EngineConfig, FitRequest, FitStage, FitterFactory, Measurement,
-    MeasurementSet, Samples, Tuning, design,
+    Design, DesignRequest, EngineConfig, FitStage, FitterFactory, Measurement, MeasurementSet,
+    Samples, Tuning, design,
     fit::{RecordedFit, replay_fitter},
-    input::{BundleLayout, DbaRow, LayoutKind, SubManual, SubMode},
+    input::{BandType, BundleLayout, DbaRow, LayoutKind, Peq, SubManual, SubMode},
 };
 
 /// Inputs and replayed output of one shared engine case.
@@ -22,69 +24,79 @@ pub struct ReplayCase {
     pub settings: Value,
 }
 
-fn pairs(value: &Value) -> impl Iterator<Item = (&str, &Value)> {
-    value
-        .as_array()
-        .expect("ordered pairs")
-        .iter()
-        .map(|v| (v[0].as_str().expect("pair key"), &v[1]))
+#[derive(Debug)]
+pub struct Case {
+    pub measurements: MeasurementSet,
+    pub config: EngineConfig,
+    pub tuning: Tuning,
+    pub settings: Value,
+    pub project: Value,
 }
 
-fn strings(value: &Value) -> Vec<String> {
-    value
-        .as_array()
-        .expect("strings")
+pub fn names() -> Vec<String> {
+    Fixture::all("engine_inputs", "")
         .iter()
-        .map(|v| v.as_str().expect("string").to_owned())
+        .map(|f| f.id.strip_prefix("engine_inputs/").unwrap().to_owned())
         .collect()
 }
 
-fn optional(value: &Value) -> Option<f64> {
-    (!value.is_null()).then(|| number(value))
-}
-
-fn peq(value: &Value) -> Vec<(f64, f64, f64)> {
-    value
-        .as_array()
-        .expect("peq")
+pub fn pairs(v: &Value) -> impl Iterator<Item = (&str, &Value)> {
+    v.as_array()
+        .unwrap()
         .iter()
-        .map(|v| (number(&v[0]), number(&v[1]), number(&v[2])))
+        .map(|v| (v[0].as_str().unwrap(), &v[1]))
+}
+fn strings(v: &Value) -> Vec<String> {
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().to_owned())
         .collect()
 }
+fn optional(v: &Value) -> Option<f64> {
+    (!v.is_null()).then(|| number(v))
+}
 
-fn manual(value: &Value) -> SubManual {
+pub fn manual(v: &Value) -> SubManual {
     SubManual {
-        mode: match value["mode"].as_str().expect("sub mode") {
+        mode: match v["mode"].as_str().unwrap() {
             "fixed" => SubMode::Fixed,
             "bundle" => SubMode::Bundle,
             "auto" => SubMode::Auto,
-            other => panic!("unknown sub mode {other}"),
+            other => panic!("unknown mode {other}"),
         },
-        bundle: value["bundle"].as_str().expect("bundle").into(),
-        gain_db: number(&value["gain_db"]),
-        delay_ms: number(&value["delay_ms"]),
-        polarity: value["polarity"].as_i64().expect("polarity") as i8,
-        allpass: value["allpass"]
+        bundle: v["bundle"].as_str().unwrap().into(),
+        gain_db: number(&v["gain_db"]),
+        delay_ms: number(&v["delay_ms"]),
+        polarity: v["polarity"].as_i64().unwrap() as i8,
+        allpass: v["allpass"]
             .as_array()
-            .expect("allpass")
+            .unwrap()
             .iter()
-            .map(|v| (number(&v[0]), number(&v[1])))
+            .map(|b| (number(&b[0]), number(&b[1])))
             .collect(),
-        mimo_support: value["mimo_support"].as_bool().expect("mimo_support"),
-        hp_hz: number(&value["hp_hz"]),
-        hp_type: crate::input::BandType::from_name(value["hp_type"].as_str().expect("hp_type")),
-        lp_hz: number(&value["lp_hz"]),
-        lp_type: crate::input::BandType::from_name(value["lp_type"].as_str().expect("lp_type")),
-        peq: peq(&value["peq"]),
-        dba_row: if value["dba_row"] == "rear" {
+        mimo_support: v["mimo_support"].as_bool().unwrap(),
+        hp_hz: number(&v["hp_hz"]),
+        hp_type: BandType::from_name(v["hp_type"].as_str().unwrap()),
+        lp_hz: number(&v["lp_hz"]),
+        lp_type: BandType::from_name(v["lp_type"].as_str().unwrap()),
+        peq: peq(&v["peq"]),
+        dba_row: if v["dba_row"] == "rear" {
             DbaRow::Rear
         } else {
             DbaRow::Front
         },
     }
 }
+pub fn peq(v: &Value) -> Vec<Peq> {
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|b| (number(&b[0]), number(&b[1]), number(&b[2])))
+        .collect()
+}
 
-fn inputs(name: &str) -> (MeasurementSet, EngineConfig, Value) {
+pub fn load(name: &str) -> Case {
     let large = name == "big_fir";
     let fixture = Fixture::load(
         if name == "big" || large {
@@ -94,45 +106,53 @@ fn inputs(name: &str) -> (MeasurementSet, EngineConfig, Value) {
         },
         if large { "big" } else { name },
     );
-    let input = fixture.inputs();
-    let value = &input["config"];
-    let mut config = EngineConfig {
-        mains: strings(&value["mains"]),
-        subs: strings(&value["subs"]),
-        groups: pairs(&value["groups"])
-            .map(|(g, r)| (g.into(), strings(r)))
+    let mut case = load_fixture(&fixture);
+    if name == "big" || large {
+        case.measurements = big_measurements(&fixture, large);
+    }
+    if large {
+        expand_config(&mut case.config);
+    }
+    case
+}
+
+pub fn load_fixture(fx: &Fixture) -> Case {
+    let i = fx.inputs();
+    let v = &i["config"];
+    let config = EngineConfig {
+        mains: strings(&v["mains"]),
+        subs: strings(&v["subs"]),
+        groups: pairs(&v["groups"])
+            .map(|(g, rs)| (g.to_owned(), strings(rs)))
             .collect(),
-        target: secs_types::target::TargetCurve::new(
-            value["target"]
+        target: TargetCurve::new(
+            v["target"]
                 .as_array()
-                .expect("target")
+                .unwrap()
                 .iter()
                 .map(|p| (number(&p[0]), number(&p[1])))
                 .collect(),
         ),
-        xo: pairs(&value["xo"])
-            .map(|(g, v)| (g.into(), number(v)))
+        xo: pairs(&v["xo"])
+            .map(|(g, v)| (g.to_owned(), number(v)))
             .collect(),
-        main_position: value["main_position"].as_u64().expect("position") as u32,
-        taps: value["taps"].as_u64().expect("taps") as usize,
-        lift_ms: number(&value["lift_ms"]),
-        max_boost_db: number(&value["max_boost_db"]),
-        peq_bands: value["peq_bands"].as_u64().map(|v| v as usize),
-        max_latency_ms: optional(&value["max_latency_ms"]),
-        rc_range: (
-            number(&value["rc_range"][0]),
-            optional(&value["rc_range"][1]),
-        ),
-        room_volume_m3: optional(&value["room_volume_m3"]),
-        phase_frac: number(&value["phase_frac"]),
-        sub_manual: pairs(&value["sub_manual"])
-            .map(|(r, v)| (r.into(), manual(v)))
+        main_position: integer(&v["main_position"]) as u32,
+        taps: integer(&v["taps"]) as usize,
+        lift_ms: number(&v["lift_ms"]),
+        max_boost_db: number(&v["max_boost_db"]),
+        peq_bands: (!v["peq_bands"].is_null()).then(|| integer(&v["peq_bands"]) as usize),
+        max_latency_ms: optional(&v["max_latency_ms"]),
+        rc_range: (number(&v["rc_range"][0]), optional(&v["rc_range"][1])),
+        room_volume_m3: optional(&v["room_volume_m3"]),
+        phase_frac: number(&v["phase_frac"]),
+        sub_manual: pairs(&v["sub_manual"])
+            .map(|(r, m)| (r.to_owned(), manual(m)))
             .collect(),
-        sub_main_delay_ms: number(&value["sub_main_delay_ms"]),
-        bundle_layouts: pairs(&value["bundle_layouts"])
-            .map(|(name, v)| {
+        sub_main_delay_ms: number(&v["sub_main_delay_ms"]),
+        bundle_layouts: pairs(&v["bundle_layouts"])
+            .map(|(b, v)| {
                 (
-                    name.into(),
+                    b.to_owned(),
                     BundleLayout {
                         kind: if v["kind"] == "dba" {
                             LayoutKind::Dba
@@ -144,94 +164,94 @@ fn inputs(name: &str) -> (MeasurementSet, EngineConfig, Value) {
                 )
             })
             .collect(),
-        infra_boost_max_db: number(&value["infra_boost_max_db"]),
-        xo_peq_on: value["xo_peq_on"].as_bool().expect("xo_peq_on"),
-        xo_peq_lo_hz: number(&value["xo_peq_lo_hz"]),
-        xo_peq_hi_hz: number(&value["xo_peq_hi_hz"]),
+        infra_boost_max_db: number(&v["infra_boost_max_db"]),
+        xo_peq_on: v["xo_peq_on"].as_bool().unwrap(),
+        xo_peq_lo_hz: number(&v["xo_peq_lo_hz"]),
+        xo_peq_hi_hz: number(&v["xo_peq_hi_hz"]),
     };
-    let mut positions = input["measurements"]
+    let positions = i["measurements"]
         .as_array()
-        .expect("measurements")
+        .unwrap()
         .iter()
         .map(|p| {
             let roles = pairs(&p[1])
-                .map(|(role, m)| {
-                    let bytes = fixture.blob(&m["samples"]);
+                .map(|(r, m)| {
+                    let bytes = fx.blob(&m["samples"]);
                     let (chunks, rest) = bytes.as_chunks::<4>();
                     assert!(rest.is_empty());
                     let samples: Vec<_> = chunks.iter().map(|b| f32::from_le_bytes(*b)).collect();
                     (
-                        role.into(),
+                        r.to_owned(),
                         Measurement {
                             samples: Samples::F32(samples.into()),
-                            sample_rate: m["sample_rate"].as_u64().expect("sample rate") as u32,
+                            sample_rate: integer(&m["sample_rate"]) as u32,
                             t0: number(&m["t0"]),
                         },
                     )
                 })
                 .collect();
-            (p[0].as_u64().expect("position") as u32, roles)
+            (integer(&p[0]) as u32, roles)
         })
         .collect();
-    if name == "big" || large {
-        positions = big_measurements(&fixture, large).positions;
-    }
-    if large {
-        use secs_types::role::{ROLES, SUB_ROLES, role_group};
-        config.mains = ROLES
-            .iter()
-            .filter(|r| !SUB_ROLES.contains(r))
-            .map(|r| (*r).to_owned())
-            .collect();
-        config.subs = SUB_ROLES.iter().map(|r| (*r).to_owned()).collect();
-        config.groups.clear();
-        for &role in &ROLES {
-            let group = role_group(role);
-            if let Some((_, roles)) = config.groups.iter_mut().find(|(g, _)| g == group) {
-                roles.push(role.into());
-            } else {
-                config.groups.push((group.into(), vec![role.into()]));
-            }
-        }
-        config.xo = config
-            .groups
-            .iter()
-            .filter(|(g, _)| g != "sub")
-            .map(|(g, _)| (g.clone(), 80.0))
-            .collect();
-        config.sub_manual = config
-            .subs
-            .iter()
-            .map(|role| {
-                (
-                    role.clone(),
-                    SubManual {
-                        mode: SubMode::Fixed,
-                        bundle: "A".into(),
-                        gain_db: 0.0,
-                        delay_ms: 0.0,
-                        polarity: 1,
-                        allpass: Vec::new(),
-                        mimo_support: true,
-                        hp_hz: 0.0,
-                        hp_type: crate::input::BandType::Lr24,
-                        lp_hz: 0.0,
-                        lp_type: crate::input::BandType::Lr24,
-                        peq: Vec::new(),
-                        dba_row: DbaRow::Front,
-                    },
-                )
-            })
-            .collect();
-    }
-    (
-        MeasurementSet { positions },
+    Case {
+        measurements: MeasurementSet { positions },
         config,
-        input["settings"].clone(),
-    )
+        tuning: Tuning::default(),
+        settings: i["settings"].clone(),
+        project: i["project"].clone(),
+    }
 }
 
-fn recorded(fixture: &Fixture, input: &Value, result: &Value) -> RecordedFit {
+fn expand_config(config: &mut EngineConfig) {
+    use secs_types::role::{ROLES, SUB_ROLES, role_group};
+    config.mains = ROLES
+        .iter()
+        .filter(|r| !SUB_ROLES.contains(r))
+        .map(|r| (*r).to_owned())
+        .collect();
+    config.subs = SUB_ROLES.iter().map(|r| (*r).to_owned()).collect();
+    config.groups.clear();
+    for &role in &ROLES {
+        let group = role_group(role);
+        if let Some((_, roles)) = config.groups.iter_mut().find(|(g, _)| g == group) {
+            roles.push(role.into());
+        } else {
+            config.groups.push((group.into(), vec![role.into()]));
+        }
+    }
+    config.xo = config
+        .groups
+        .iter()
+        .filter(|(g, _)| g != "sub")
+        .map(|(g, _)| (g.clone(), 80.0))
+        .collect();
+    config.sub_manual = config
+        .subs
+        .iter()
+        .map(|role| {
+            (
+                role.clone(),
+                SubManual {
+                    mode: SubMode::Fixed,
+                    bundle: "A".into(),
+                    gain_db: 0.0,
+                    delay_ms: 0.0,
+                    polarity: 1,
+                    allpass: Vec::new(),
+                    mimo_support: true,
+                    hp_hz: 0.0,
+                    hp_type: crate::input::BandType::Lr24,
+                    lp_hz: 0.0,
+                    lp_type: crate::input::BandType::Lr24,
+                    peq: Vec::new(),
+                    dba_row: DbaRow::Front,
+                },
+            )
+        })
+        .collect();
+}
+
+pub(crate) fn read_recorded_fit(fixture: &Fixture, input: &Value, result: &Value) -> RecordedFit {
     RecordedFit {
         g: fixture.f64s(&input["g"]),
         corr_db: fixture.f64s(&input["corr_db"]),
@@ -248,7 +268,13 @@ fn recorded(fixture: &Fixture, input: &Value, result: &Value) -> RecordedFit {
 /// Runs a shared oracle input with production fitters for release benchmarks.
 /// Unlike replay, this supports cases whose BA path diverges from the oracle.
 pub fn production_case(name: &str, threads: usize) -> ReplayCase {
-    let (measurements, config, settings) = inputs(name);
+    let Case {
+        measurements,
+        config,
+        tuning,
+        settings,
+        ..
+    } = load(name);
     let ctx = Context::new(
         threads,
         secs_compute::MemoryBudget::new(u64::MAX),
@@ -259,7 +285,7 @@ pub fn production_case(name: &str, threads: usize) -> ReplayCase {
         &DesignRequest {
             measurements: &measurements,
             config: &config,
-            tuning: &Tuning::default(),
+            tuning: &tuning,
             subs_only: false,
             adapter_notes: &[],
         },
@@ -275,72 +301,192 @@ pub fn production_case(name: &str, threads: usize) -> ReplayCase {
     }
 }
 
-/// Replays the recorded fitter decisions for a shared oracle case.
-pub fn replay_case(name: &str) -> ReplayCase {
-    let (measurements, config, settings) = inputs(name);
-    let mut stages: BTreeMap<String, Vec<RecordedFit>> = BTreeMap::new();
-    for call in Fixture::all_calls("engine_design", &format!("{name}_fits_")) {
-        let fit = if let Some(reference) = call.inputs().get("reference") {
-            let source = Fixture::load(
-                reference["family"].as_str().expect("family"),
-                reference["fixture"].as_str().expect("fixture"),
-            );
-            if let Some(index) = reference["call"].as_u64() {
-                let source_call = &source.calls()[index as usize];
-                recorded(
-                    source_call,
-                    source_call.inputs(),
-                    &source_call.outputs()["result"],
-                )
-            } else {
-                let fit = &source.outputs()["candidates"]
-                    [reference["candidate"].as_u64().expect("candidate") as usize]["fits"]
-                    [reference["fit"].as_u64().expect("fit") as usize];
-                recorded(&source, &fit["inputs"], &fit["result"])
-            }
-        } else {
-            recorded(&call, call.inputs(), &call.outputs()["result"])
-        };
-        stages
-            .entry(call.inputs()["stage"].as_str().expect("stage").into())
-            .or_default()
-            .push(fit);
+fn verify_request_hash(fixture: &Fixture, fit: &RecordedFit, hashes: &Value) {
+    for (key, values) in [("g", &fit.g), ("corr_db", &fit.corr_db)] {
+        fixture.assert_digest(
+            key,
+            &serde_json::json!({
+                "digest": hashes[key], "length": values.len(), "first": [], "last": []
+            }),
+            values,
+        );
     }
-    let factory: Box<FitterFactory<'_>> = Box::new(move |stage| {
-        let key = match stage {
-            FitStage::Ba => "Ba".into(),
-            FitStage::Top(role) => format!("Top:{role}"),
-            FitStage::Rc(role) => format!("Rc:{role}"),
-        };
-        // Off the oracle libm BA's differential evolution can diverge (macOS:
-        // room_filters), so the recorded requests no longer match; inject the
-        // recorded results without checking them, as the engine's own replayed
-        // design test does, and let the caller report what follows BA.
-        let rtol = if secs_oracle::oracle_libm() {
-            PLATFORM_RTOL
-        } else {
-            f64::INFINITY
-        };
-        let mut fitter = replay_fitter(stages.get(&key).cloned().unwrap_or_default(), rtol);
-        Box::new(move |request: &FitRequest<'_>| fitter(request))
-    });
+}
+
+/// Bit-equal request and result. SECS 2 records the phase-independent RC
+/// preparation once per phase candidate; the channel computes it once.
+pub(crate) fn same_recorded_fit(a: &RecordedFit, b: &RecordedFit) -> bool {
+    let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+    bits(&a.g) == bits(&b.g)
+        && bits(&a.corr_db) == bits(&b.corr_db)
+        && (a.n, a.lo.to_bits(), a.hi.to_bits(), a.boost.to_bits())
+            == (b.n, b.lo.to_bits(), b.hi.to_bits(), b.boost.to_bits())
+        && a.ring_ms.map(f64::to_bits) == b.ring_ms.map(f64::to_bits)
+        && a.f_max.map(f64::to_bits) == b.f_max.map(f64::to_bits)
+        && a.result
+            .iter()
+            .map(|&(f, q, g)| [f.to_bits(), q.to_bits(), g.to_bits()])
+            .eq(b
+                .result
+                .iter()
+                .map(|&(f, q, g)| [f.to_bits(), q.to_bits(), g.to_bits()]))
+}
+
+/// Checked replay of one oracle design, including shared RC preparation.
+#[derive(Debug)]
+pub struct Replay {
+    name: String,
+    stages: BTreeMap<String, Vec<RecordedFit>>,
+    counts: Arc<Mutex<BTreeMap<String, (usize, usize)>>>,
+}
+
+impl Replay {
+    pub fn for_case(name: &str) -> Self {
+        let mut stages: BTreeMap<String, Vec<RecordedFit>> = BTreeMap::new();
+        for call in Fixture::all_calls("engine_design", &format!("{name}_fits_")) {
+            let recorded = if let Some(reference) = call.inputs().get("reference") {
+                let source = Fixture::load(
+                    reference["family"].as_str().unwrap(),
+                    reference["fixture"].as_str().unwrap(),
+                );
+                let fit = if let Some(index) = reference["call"].as_u64() {
+                    let calls = source.calls();
+                    let c = &calls[index as usize];
+                    read_recorded_fit(c, c.inputs(), &c.outputs()["result"])
+                } else {
+                    let fit = &source.outputs()["candidates"]
+                        [reference["candidate"].as_u64().unwrap() as usize]["fits"]
+                        [reference["fit"].as_u64().unwrap() as usize];
+                    read_recorded_fit(&source, &fit["inputs"], &fit["result"])
+                };
+                verify_request_hash(&source, &fit, &reference["request_sha256"]);
+                fit
+            } else {
+                let fit = read_recorded_fit(&call, call.inputs(), &call.outputs()["result"]);
+                verify_request_hash(&call, &fit, &call.inputs()["request_sha256"]);
+                fit
+            };
+            stages
+                .entry(call.inputs()["stage"].as_str().unwrap().into())
+                .or_default()
+                .push(recorded);
+        }
+        // The RC channel evaluates the phase-independent preparation once for
+        // both phase candidates (ADR 0012); SECS 2 recorded it per candidate.
+        for (key, calls) in &mut stages {
+            if key.starts_with("Rc:")
+                && let Some(k) = (1..calls.len()).find(|&k| same_recorded_fit(&calls[0], &calls[k]))
+            {
+                let shared = calls[k..]
+                    .iter()
+                    .zip(&calls[..])
+                    .take_while(|(a, b)| same_recorded_fit(a, b))
+                    .count();
+                if calls.len() == 2 * k && shared == k {
+                    calls.truncate(k);
+                } else {
+                    // The FIR preparation holds at most the first PEQ fit.
+                    assert!(shared <= 1, "{name}/{key} shared preparation fit");
+                    calls.drain(k..k + shared);
+                }
+            }
+        }
+        let counts: Arc<Mutex<BTreeMap<String, (usize, usize)>>> = Arc::new(Mutex::new(
+            stages
+                .iter()
+                .map(|(key, calls)| (key.clone(), (0, calls.len())))
+                .collect(),
+        ));
+        Self {
+            name: name.into(),
+            stages,
+            counts,
+        }
+    }
+
+    pub fn factory(&self) -> Box<FitterFactory<'_>> {
+        let seen = self.counts.clone();
+        let stages = &self.stages;
+        let name = self.name.as_str();
+        Box::new(move |stage| {
+            let key = match stage {
+                FitStage::Ba => "Ba".into(),
+                FitStage::Top(r) => format!("Top:{r}"),
+                FitStage::Rc(r) => format!("Rc:{r}"),
+            };
+            let calls = stages.get(&key).cloned().unwrap_or_default();
+            let expected = calls.len();
+            let report_calls = (name == "room" || !oracle_libm()).then(|| calls.clone());
+            let mut next = 0;
+            let mut fit = replay_fitter(
+                calls,
+                if name == "room" || !oracle_libm() {
+                    f64::INFINITY
+                } else {
+                    PLATFORM_RTOL
+                },
+            );
+            let seen = seen.clone();
+            seen.lock().unwrap().insert(key.clone(), (0, expected));
+            Box::new(move |r| {
+                seen.lock().unwrap().get_mut(&key).unwrap().0 += 1;
+                if let Some(calls) = &report_calls {
+                    let expected = &calls[next];
+                    let (_, rel) = errors(r.corr_db, &expected.corr_db);
+                    eprintln!(
+                        "MEASURE design {name}/{key}/fit{next} corr_db max_rel={rel:e} report-only (room BA or foreign-libm thresholds)"
+                    );
+                }
+                next += 1;
+                fit(r)
+            })
+        })
+    }
+
+    /// Assert that every recorded stage consumed exactly its expected calls.
+    pub fn finish(self) {
+        for (key, (actual, expected)) in self.counts.lock().unwrap().iter() {
+            assert_eq!(actual, expected, "{} {key} count", self.name);
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn replay(name: &str) -> Design {
+    replay_case(name).design
+}
+
+#[cfg(test)]
+pub(crate) fn replay_with_context(name: &str, context: &Context) -> Design {
+    replay_case_with_context(name, context).design
+}
+
+/// Replays the recorded fitter decisions and checks requests and call counts.
+pub fn replay_case(name: &str) -> ReplayCase {
+    replay_case_with_context(name, &Context::serial())
+}
+
+fn replay_case_with_context(name: &str, context: &Context) -> ReplayCase {
+    let case = load(name);
+    let replay = Replay::for_case(name);
     let design = design(
         &DesignRequest {
-            measurements: &measurements,
-            config: &config,
-            tuning: &Tuning::default(),
+            measurements: &case.measurements,
+            config: &case.config,
+            tuning: &case.tuning,
             subs_only: false,
             adapter_notes: &[],
         },
-        &Context::serial(),
-        &*factory,
+        context,
+        &*replay.factory(),
     )
     .expect("recorded design replay");
+    replay.finish();
     ReplayCase {
         design,
-        measurements,
-        config,
-        settings,
+        measurements: case.measurements,
+        config: case.config,
+        settings: case.settings,
     }
 }
 
@@ -459,7 +605,8 @@ pub fn mimo_acoustic_metrics(
 ) -> Result<Vec<MimoAcousticMetrics>, crate::EngineError> {
     use crate::mimo::{self, design as md, iir};
     use secs_types::chain::MimoFilter;
-    let prepared = mimo::prepared::Prepared::new(&case.design, &case.measurements, &case.config)?;
+    let prepared =
+        mimo::prepared::Prepared::new(&case.design, &case.measurements, &case.config, ctx)?;
     let req = run.key.request();
     let mut metrics = Vec::new();
     for (input, ideal_supports) in &run.ideal.supports {

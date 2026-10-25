@@ -1,4 +1,5 @@
 use crate::ProjectError;
+use crate::pyjson::Shape;
 use secs_types::ipc::Notice;
 use secs_types::role::{ROLES, RoleKind, SUB_ROLES, role_group, role_kind, role_order};
 use serde::{Deserialize, Serialize};
@@ -14,6 +15,22 @@ pub struct Band {
 fn plus() -> String {
     "+".into()
 }
+
+pub const MAX_OUTPUT_NUMBER: i64 = 256;
+
+static BAND_SHAPE: Shape = Shape::Record {
+    optional: &[],
+    nested: &[],
+};
+static SPEAKER_SHAPE: Shape = Shape::Record {
+    optional: &[],
+    nested: &[("bands", Shape::List(&BAND_SHAPE))],
+};
+/// The `config` object [`SpeakerConfig::to_json`] writes (F16).
+pub(crate) static CONFIG_SHAPE: Shape = Shape::Record {
+    optional: &[],
+    nested: &[("speakers", Shape::List(&SPEAKER_SHAPE))],
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Speaker {
@@ -125,6 +142,41 @@ impl Default for SpeakerConfig {
     }
 }
 impl SpeakerConfig {
+    pub(crate) fn repair_output_numbers(&mut self) -> Vec<crate::MigrationWarning> {
+        let mut warnings = Vec::new();
+        let mut used = self
+            .speakers
+            .iter()
+            .flat_map(|speaker| &speaker.bands)
+            .filter_map(|band| {
+                (1..=MAX_OUTPUT_NUMBER)
+                    .contains(&band.out)
+                    .then_some(band.out)
+            })
+            .collect::<BTreeSet<_>>();
+
+        for speaker in &mut self.speakers {
+            for band in &mut speaker.bands {
+                if (1..=MAX_OUTPUT_NUMBER).contains(&band.out) {
+                    continue;
+                }
+                let original = band.out;
+                band.out = (1..=MAX_OUTPUT_NUMBER)
+                    .find(|output| !used.contains(output))
+                    .unwrap_or(1);
+                used.insert(band.out);
+                warnings.push(crate::MigrationWarning {
+                    code: "config.band.out.outside",
+                    entry: format!(
+                        "role {}, band {}, output {original}",
+                        speaker.role, band.band
+                    ),
+                });
+            }
+        }
+        warnings
+    }
+
     pub fn to_json(&self) -> crate::PyJson {
         crate::PyJson::Object(vec![
             (

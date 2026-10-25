@@ -1,6 +1,9 @@
 // Fixtures typed by the generated bindings, for the mock service, the
 // gallery and the tests. Values are plausible, not measured: the sample room
 // is the 7.1.4 project the service creates with `project_new { sample }`.
+// Service rules are not copied here (ADR 0014): limits and other constants
+// come from the generated `bindings/rules`, presets, mode specs and new-project
+// settings from the responses the service recorded (`./recorded`).
 import type { AppSettings } from "./bindings/AppSettings";
 import type { CalibrationSettings } from "./bindings/CalibrationSettings";
 import type { ConfigResult } from "./bindings/ConfigResult";
@@ -15,7 +18,6 @@ import type { TargetResult } from "./bindings/TargetResult";
 import type { BootstrapInfo } from "./bindings/BootstrapInfo";
 import type { CalibrationSummary } from "./bindings/CalibrationSummary";
 import type { ChannelScore } from "./bindings/ChannelScore";
-import type { ExportResult } from "./bindings/ExportResult";
 import type { LevelResult } from "./bindings/LevelResult";
 import type { MeasureConfigResult } from "./bindings/MeasureConfigResult";
 import type { MeasureMethodsResult } from "./bindings/MeasureMethodsResult";
@@ -27,7 +29,9 @@ import type { RewStatusResult } from "./bindings/RewStatusResult";
 import type { SignalChain } from "./bindings/SignalChain";
 import type { XoRecommendation } from "./bindings/XoRecommendation";
 
-import { arrangementPoints, ARRANGEMENT_COUNTS } from "../ui/maps/geometry";
+import { ARRANGEMENT_COUNTS, CALIBRATION_LIMITS, CONFIG_GROUPS } from "./bindings/rules";
+import { recorded } from "./recorded";
+import { arrangementPoints } from "../ui/maps/geometry";
 
 export const SAMPLE_ROLES = ["L", "R", "C", "SW1", "SW2", "Ls", "Rs", "Lb", "Rb", "Tfl", "Tfr", "Tbl", "Tbr"] as const;
 export const SAMPLE_MAINS = SAMPLE_ROLES.filter((role) => !role.startsWith("SW"));
@@ -158,6 +162,7 @@ export const signalChain: SignalChain = {
 };
 
 export const calibrationSummary: CalibrationSummary = {
+  cached: false,
   stale: false,
   stale_reason: null,
   mode: "mixed",
@@ -202,12 +207,8 @@ export const mimoSummary: MimoSummary = {
   input_count: 0,
 };
 
-export const resultsSummary: ResultsSummary = { calibration: calibrationSummary, mimo: mimoSummary };
-export const staleResults: ResultsSummary = {
-  calibration: { ...calibrationSummary, stale: true },
-  mimo: { ...mimoSummary, stale: true },
-};
-export const noResults: ResultsSummary = { calibration: null, mimo: null };
+export const resultsSummary: ResultsSummary = { calibration: calibrationSummary, mimo: mimoSummary, mimo_export: "off" };
+export const noResults: ResultsSummary = { calibration: null, mimo: null, mimo_export: "off" };
 
 export const xoRecommendation: XoRecommendation = {
   best: [
@@ -220,23 +221,8 @@ export const xoRecommendation: XoRecommendation = {
   candidates: [60, 80, 100, 120],
 };
 
-export const exportResult: ExportResult = {
-  files: [
-    "C:/Users/demo/Documents/SECS_export/2026-10-14 거실 7.1.4/camilladsp/secs_camilladsp.yml",
-    "C:/Users/demo/Documents/SECS_export/2026-10-14 거실 7.1.4/camilladsp/fir_L.wav",
-  ],
-  folder: "C:/Users/demo/Documents/SECS_export/2026-10-14 거실 7.1.4/camilladsp",
-  stale: false,
-};
-
-export const presetRoles: Record<string, readonly string[]> = {
-  "2.0": ["L", "R"], "2.1": ["L", "R"], "2.2": ["L", "R"],
-  "4.0": ["L", "R", "Ls", "Rs"], "4.1": ["L", "R", "Ls", "Rs"], "4.2": ["L", "R", "Ls", "Rs"],
-  "5.1": ["L", "R", "C", "Ls", "Rs"], "7.1": ["L", "R", "C", "Ls", "Rs", "Lb", "Rb"], "7.1.4": SAMPLE_MAINS,
-  "9.1.6": [...SAMPLE_MAINS, "Lw", "Rw", "Tml", "Tmr"], custom: [],
-};
-/** Presentation group id → upstream group name (`ConfigGroup.key`). */
-export const GROUP_KEYS: Readonly<Record<string, string>> = { front: "프론트", center: "센터", sub: "서브", surround: "서라운드", back: "백", wide: "와이드", top: "탑", height: "하이트", other: "기타" };
+/** Presentation group id → upstream group name (`ConfigGroup.key`), in the service's order. */
+export const GROUP_KEYS: Readonly<Record<string, string>> = Object.fromEntries(CONFIG_GROUPS.map(([key, id]) => [id, key]));
 export const groupOf = (role: string): string => {
   if (role.startsWith("SW")) return "sub";
   if (["L", "R"].includes(role)) return "front";
@@ -271,8 +257,15 @@ export function subsAt(roles: readonly string[]): number {
   return at < 0 ? roles.length : at;
 }
 
+/** A preset's configuration as `config_apply_preset` answers it on a new project (recorded). */
+export function presetConfig(preset: string): ConfigResult | undefined {
+  return recorded("config_apply_preset", (params) => params.preset === preset)?.config;
+}
+
+/** A preset's mains with `subs` subwoofers after L, R and C, outputs numbered in order (the sample room, new projects). */
 export function configPreset(preset: string, subs: number): ConfigResult {
-  const mains = presetRoles[preset] ?? presetRoles["2.0"]!;
+  const base = presetConfig(preset) ?? presetConfig("2.0")!;
+  const mains = base.speakers.map((s) => s.role).filter((role) => !role.startsWith("SW"));
   const at = subsAt(mains);
   const roles = [...mains.slice(0, at), ...Array.from({ length: subs }, (_, i) => `SW${i + 1}`), ...mains.slice(at)];
   return configOf(preset, roles.map((role, i) => speaker(role, i + 1)));
@@ -294,21 +287,16 @@ export const layout: LayoutResult = {
   count: 9, start_delay: "끄기", timing: { reference: "acoustic", role: "R", output: 2 },
   arrangements: ARRANGEMENT_COUNTS.map((count) => ({ count, points: arrangementPoints(count).map((p, i) => ({ position: i + 1, x_cm: p.x, y_cm: p.y, height: p.h })) })),
 };
-export const target: TargetResult = {
-  preset: "harman", points: [[25, 6], [60, 5], [120, 1], [1000, 0], [16000, -3]],
-  presets: [
-    ["flat", [[25, 0], [1000, 0], [16000, 0]]],
-    ["harman", [[25, 6], [60, 5], [120, 1], [1000, 0], [16000, -3]]],
-    ["cinema", [[25, 4], [80, 3], [200, 0], [1000, -1], [16000, -5]]],
-  ],
-};
+/** The sample room's target: the harman preset as `target_apply_preset` answers it (recorded). */
+export const target: TargetResult = recorded("target_apply_preset", (params) => params.preset === "harman")!;
+/** A new project's calibration settings (recorded `calibration_settings_get`). */
+export const newProjectSettings: CalibrationSettings = recorded("calibration_settings_get")!;
+/** The sample room's settings: a new project's, with the room, crossovers and MIMO filter the sample sets. */
 export const calibrationSettings: CalibrationSettings = {
-  sample_rate_policy: "reject",
-  mode: "mixed", rc_lo: 20, rc_hi: null, room_volume_m3: 62.6, room_dims_m: [5.2, 4.3, 2.8],
-  mimo_on: false, fsiso: 150, mimo_low: null, mimo_max_supports: 0, mimo_fir: false,
-  xo: { front: 80, center: 100, surround: 80, back: 80, top: 100 }, xo_rec: {}, ultra_ms: 100,
-  subs_manual: {}, sub_main_delay_ms: 0, bundle_layouts: {}, infra_boost_max_db: 24,
-  xo_peq_on: true, boost_max_db: 10, xo_peq_lo: 0, xo_peq_hi: 0,
+  ...newProjectSettings,
+  room_volume_m3: 62.6, room_dims_m: [5.2, 4.3, 2.8],
+  xo: { 프론트: 80, 센터: 100, 서라운드: 80, 백: 80, 탑: 100 },
+  mimo_fir: false,
 };
 export const subEntry: SubEntry = {
   mode: "auto", bundle: "A", gain_db: 0, delay_ms: 0, polarity: 1, allpass: [], mimo_support: true,
@@ -325,14 +313,19 @@ export const rewInfo: RewInfoResult = {
 };
 /** File label from secs_types::mode_label, not the localized screen label. */
 export function modeLabel(mode: Mode, ultra: number): string {
-  if (mode === "ultra") return `초고지연 모드 ${Number(Math.min(200, Math.max(30, ultra)).toPrecision(6))} ms`;
+  const [lo, hi] = CALIBRATION_LIMITS.ultra_ms;
+  if (mode === "ultra") return `초고지연 모드 ${Number(Math.min(hi, Math.max(lo, ultra)).toPrecision(6))} ms`;
   return { zero: "최소 지연 모드", mixed: "저지연 모드", linear: "표준 모드" }[mode];
 }
 
-export function modeSpec(mode: Mode, ultra: number, mimoFir = false): ModeSpecResult {
-  const max = mode === "zero" ? 0 : mode === "mixed" ? 10 : mode === "linear" ? 30 : Math.min(200, Math.max(30, ultra));
-  return { rc_filter: mode === "zero" ? "iir" : "iir_fir", fir_taps: mode === "zero" ? 0 : mode === "ultra" ? 8192 : 2048,
-    peq_bands: mode === "zero" ? 32 : null, mimo_filter: mimoFir ? "fir" : "iir", lift_ms: Math.max(0, max - 2), phase_frac: max > 10 ? 24 : 6, max_latency_ms: max };
+/**
+ * A mode's spec as `mode_spec` answers it (recorded). The ultra mode is
+ * recorded at a new project's budget; other budgets get that spec too, a
+ * sample rather than the service's taps and latency for them.
+ */
+export function modeSpec(mode: Mode, mimoFir = false): ModeSpecResult {
+  return (recorded("mode_spec", (params) => params.mode === mode && (params.mimo_fir ?? false) === mimoFir)
+    ?? recorded("mode_spec", (params) => params.mode === mode))!;
 }
 // Synthetic IPC values, not a numerical-engine implementation.
 export const curveGrid = Array.from({ length: 280 }, (_, i) => 5 * (20000 / 5) ** (i / 279));

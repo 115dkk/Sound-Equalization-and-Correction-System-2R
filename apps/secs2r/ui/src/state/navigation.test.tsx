@@ -3,7 +3,7 @@ import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "../App";
 import { createMockService } from "../ipc/mock";
-import { measureMethods } from "../ipc/fixtures";
+import { measureMethods, projectInfo } from "../ipc/fixtures";
 import { installFakeCanvas } from "../test/canvas";
 import * as sessions from "./session";
 
@@ -254,5 +254,33 @@ it.each([
     await waitFor(() => expect(document.activeElement).toBe(ui(target)));
     expect(mock.calls.filter((call) => call.method === "measure_configure")).toHaveLength(before);
     expect(mock.calls.some((call) => call.method === "rew_launch")).toBe(false);
+  } finally { rendered.unmount(); mock.dispose(); }
+});
+
+it("lists the project's warnings in the rail, opens a position to measure it again and lists them again after the next open", async () => {
+  const warnings = [
+    { code: "measurement.ir_path.outside", entry: "position 2, role L" },
+    { code: "measurement.ir_path.outside", entry: "position 3, role R" },
+  ];
+  const mock = createMockService({ tickMs: 0, project: { ...projectInfo, migration_warnings: warnings } });
+  await setup(mock, "native");
+  const original = sessions.createSession;
+  let session!: sessions.Session;
+  vi.spyOn(sessions, "createSession").mockImplementation((ipc) => (session = original(ipc)));
+  const rendered = render(<App ipc={mock} />);
+  try {
+    await waitFor(() => expect(ui("frame.status.warnings.position.3")).not.toBeNull());
+    expect(ui("frame.status.warnings.position.2")).not.toBeNull();
+    fireEvent.click(ui("frame.status.warnings.position.3.fix")!);
+    await waitFor(() => expect(document.activeElement).toBe(ui("measure.position.start")));
+    expect(ui("measure.positions.3")?.getAttribute("aria-current")).toBe("true");
+    expect(ui("measure.position.start")?.textContent).toContain("이 위치 다시 측정");
+    expect(mock.calls.some((call) => call.method === "measure_position")).toBe(false);
+    fireEvent.click(ui("frame.status.warnings.close")!);
+    expect(ui("frame.status.warnings")).toBeNull();
+    await act(async () => { await session.call({ method: "project_save", params: { path: "C:/rooms/room.secs" } }); });
+    expect(ui("frame.status.warnings")).toBeNull();
+    await act(async () => { await session.call({ method: "project_open", params: { path: "C:/rooms/room.secs" } }); });
+    await waitFor(() => expect(ui("frame.status.warnings")?.textContent).toContain("프로젝트 경고 2건"));
   } finally { rendered.unmount(); mock.dispose(); }
 });

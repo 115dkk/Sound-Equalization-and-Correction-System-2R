@@ -4,16 +4,13 @@
 
 use std::{
     collections::BTreeMap,
-    fs::{self, OpenOptions},
-    io::Write,
+    fs,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
 };
 
 use secs_camilla::pyfmt::{format_fixed, format_g};
 use secs_engine::{
-    Design, EngineConfig, EngineError, MeasurementSet, StageResponses, export_view,
-    input::LayoutKind, stage_responses,
+    Design, EngineError, ExportAxis, StageResponses, input::LayoutKind, stage_responses,
 };
 use secs_mdat::{MdatError, MeasurementInput, SourceInfo, TEMPLATE};
 use secs_types::{
@@ -21,10 +18,8 @@ use secs_types::{
     chain::{MimoPaths, SubChannel},
 };
 
-const N_FFT: usize = 1 << 17;
 const SR: u32 = 48_000;
 const SUB_GAIN_WARN_DB: f64 = 12.0;
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 pub type Sources = BTreeMap<u32, BTreeMap<String, SourceInfo>>;
 
@@ -32,8 +27,6 @@ pub type Sources = BTreeMap<u32, BTreeMap<String, SourceInfo>>;
 #[derive(Debug)]
 pub struct ExportRun<'a> {
     pub design: &'a Design,
-    pub measurements: &'a MeasurementSet,
-    pub config: &'a EngineConfig,
     pub settings: &'a CalibrationSettings,
 }
 
@@ -65,7 +58,7 @@ pub struct MimoResponses {
 
 /// Typed future seam for M3 MIMO stage responses.
 #[derive(Debug, Clone, Copy)]
-pub enum MimoExport<'a> {
+enum MimoExport<'a> {
     None,
     Responses(&'a MimoResponses),
 }
@@ -98,9 +91,12 @@ pub enum ExportError {
 }
 
 fn chain_text(run: &ExportRun<'_>) -> String {
-    let peq = run.config.peq_bands.unwrap_or(16);
-    if run.config.taps > 0 {
-        format!("PEQ {peq} + FIR {}", grouped(run.config.taps))
+    let peq = run.design.replay.config().peq_bands.unwrap_or(16);
+    if run.design.replay.config().taps > 0 {
+        format!(
+            "PEQ {peq} + FIR {}",
+            grouped(run.design.replay.config().taps)
+        )
     } else {
         format!("PEQ {peq}")
     }
@@ -309,19 +305,19 @@ pub fn sub_gain_warnings(design: &Design) -> Vec<SubWarning> {
         .collect()
 }
 
-fn ir(spectrum: &[secs_engine::C]) -> Vec<f64> {
-    secs_dsp::fft::irfft(spectrum, N_FFT)
-        .into_iter()
-        .map(|sample| f64::from(sample as f32))
-        .collect()
-}
-
-fn item(title: String, notes: String, spectrum: &[secs_engine::C], t0: f64) -> MeasurementInput {
+fn item(
+    design: &Design,
+    title: String,
+    notes: String,
+    spectrum: &[secs_engine::C],
+    axis: ExportAxis,
+) -> MeasurementInput {
+    let (samples, t0) = design.replay.export_ir(design, spectrum, axis);
     MeasurementInput {
         title,
         notes,
         sample_rate_hz: SR,
-        samples: ir(spectrum),
+        samples,
         start_time_s: t0,
         spl_offset_db: None,
         source_info: None,
@@ -334,16 +330,17 @@ fn stage_items_with_mimo(
     mimo: MimoExport<'_>,
     label: Option<&str>,
 ) -> Result<Vec<MeasurementInput>, ExportError> {
-    let view = export_view(run.design, run.measurements, run.config)?;
-    let position = run.config.main_position;
+    let view = run.design.replay.export_view(run.design)?;
+    let position = run.design.replay.config().main_position;
     let subs: Vec<_> = run
-        .config
+        .design
+        .replay
+        .config()
         .subs
         .iter()
         .filter_map(|role| view.spectra.get(position, role))
         .collect();
     let label = label.map_or_else(|| run.settings.label(), str::to_owned);
-    let shifted = view.base_s - run.design.chain.latency_ms / 1000.0;
     let mut items = Vec::new();
     for (index, main) in run.design.chain.mains.iter().enumerate() {
         let seq = index + 1;
@@ -355,10 +352,11 @@ fn stage_items_with_mimo(
             .ok_or_else(|| ExportError::MissingResponse(main.role.clone()))?;
         let prefix = format!("SECS 보정 설계 · {label} · 청취 위치 {position} · 계산값 — ");
         items.push(item(
+            run.design,
             format!("{seq:02}_{}_1 보정 전 메인", main.role),
             format!("{prefix}메인 스피커 원 응답(2 s 창, 필터 없음)"),
             raw,
-            view.base_s,
+            ExportAxis::Measurement,
         ));
         if !subs.is_empty() {
             let mut sum = vec![secs_engine::C::new(0.0, 0.0); raw.len()];
@@ -373,22 +371,16 @@ fn stage_items_with_mimo(
                 "서브 원 응답의 단순 합(정렬 없음·필터 없음)"
             };
             items.push(item(
+                run.design,
                 format!("{seq:02}_{}_1 보정 전 서브", main.role),
                 format!("{prefix}{tail}"),
                 &sum,
-                view.base_s,
+                ExportAxis::Measurement,
             ));
         }
-        add_xo_items(
-            run,
-            &mut items,
-            seq,
-            main.role.as_str(),
-            &prefix,
-            &stages,
-            view.base_s,
-        );
+        add_xo_items(run, &mut items, seq, main.role.as_str(), &prefix, &stages);
         items.push(item(
+            run.design,
             format!("{seq:02}_{}_3 합 후 보정", main.role),
             format!(
                 "{prefix}2차: 탑+서브 합에 입력 보정({}) · 전체 지연 {} ms(시작 시각에서 뺌) · RC 상한 {} Hz",
@@ -397,7 +389,7 @@ fn stage_items_with_mimo(
                 format_fixed(run.design.rc_hi, 0, false)
             ),
             &stages.output,
-            shifted,
+            ExportAxis::Corrected,
         ));
         if let MimoExport::Responses(mimo) = mimo {
             let supports: Vec<_> = mimo
@@ -445,6 +437,7 @@ fn stage_items_with_mimo(
                     .collect::<Vec<_>>()
                     .join("; ");
                 items.push(item(
+                    run.design,
                     format!("{seq:02}_{}_4 MIMO 적용({})", main.role, mimo.kind.name()),
                     format!(
                         "{prefix}MIMO {} 서포트 {}개(Fsiso {} Hz{}) — {description}",
@@ -454,7 +447,7 @@ fn stage_items_with_mimo(
                         mimo.cap_text
                     ),
                     response,
-                    shifted,
+                    ExportAxis::Corrected,
                 ));
             }
         }
@@ -469,7 +462,6 @@ fn add_xo_items(
     role: &str,
     prefix: &str,
     stages: &StageResponses,
-    base_s: f64,
 ) {
     let Some(xo) = run
         .design
@@ -483,23 +475,25 @@ fn add_xo_items(
         return;
     };
     items.push(item(
+        run.design,
         format!("{seq:02}_{role}_2 XO 타겟 메인"),
         format!(
             "{prefix}1차: 게인·딜레이·출력 PEQ(음향 XO 타겟)·전기 HP {} Hz",
             format_g(xo, false)
         ),
         &stages.top_xo,
-        base_s,
+        ExportAxis::Measurement,
     ));
     if let Some(sub) = &stages.sub_xo {
         items.push(item(
+            run.design,
             format!("{seq:02}_{role}_2 XO 타겟 서브"),
             format!(
                 "{prefix}1차: BA(게인·지연·극성)·서브 버스 PEQ·전기 LP — {}",
                 sub_values_text(run)
             ),
             sub,
-            base_s,
+            ExportAxis::Measurement,
         ));
     }
 }
@@ -521,16 +515,15 @@ fn before_after_items_with_mimo(
     mimo: MimoExport<'_>,
     sources: Option<&Sources>,
 ) -> Result<Vec<MeasurementInput>, ExportError> {
-    let view = export_view(run.design, run.measurements, run.config)?;
-    let position = run.config.main_position;
+    let view = run.design.replay.export_view(run.design)?;
+    let position = run.design.replay.config().main_position;
     let label = run.settings.label();
-    let shifted = view.base_s - run.design.chain.latency_ms / 1000.0;
     let source_env = sources.and_then(|sources| sources.get(&position));
     let mut items = Vec::new();
     let mut seq = 0;
     for main in &run.design.chain.mains {
         seq += 1;
-        if let Some(measured) = run.measurements.get(position, &main.role) {
+        if let Some(measured) = run.design.replay.measurements().get(position, &main.role) {
             items.push(measured_item(
                 seq,
                 &main.role,
@@ -559,10 +552,11 @@ fn before_after_items_with_mimo(
             notes.push_str(&sub_values_text(run));
         }
         let mut corrected = item(
+            run.design,
             format!("{seq:02}_{}_2 보정 후 {label}", main.role),
             notes,
             &final_response,
-            shifted,
+            ExportAxis::Corrected,
         );
         corrected.source_info = source_env
             .and_then(|sources| sources.get(&main.role))
@@ -584,6 +578,7 @@ fn before_after_items_with_mimo(
                     .map(|(_, response)| response.as_slice())
                     .ok_or_else(|| ExportError::MissingResponse(main.role.clone()))?;
                 items.push(item(
+            run.design,
                     format!(
                         "{seq:02}_{}_3 보정 후 + MIMO({})",
                         main.role,
@@ -596,13 +591,13 @@ fn before_after_items_with_mimo(
                         mimo.cap_text
                     ),
                     response,
-                    shifted,
+                    ExportAxis::Corrected,
                 ));
             }
         }
     }
     for sub in &run.design.chain.subs {
-        if let Some(measured) = run.measurements.get(position, &sub.role) {
+        if let Some(measured) = run.design.replay.measurements().get(position, &sub.role) {
             seq += 1;
             items.push(measured_item(
                 seq,
@@ -663,7 +658,7 @@ pub fn export_mdat(
     export_mdat_with_mimo(run, folder, None, spl_offset_db, now_ms)
 }
 
-pub fn export_mdat_with_mimo(
+fn export_mdat_with_mimo(
     run: &ExportRun<'_>,
     folder: &Path,
     mimo: Option<&MimoResponses>,
@@ -710,7 +705,7 @@ pub fn export_before_after_mdat(
     export_before_after_mdat_with_mimo(run, folder, None, sources, spl_offset_db, now_ms)
 }
 
-pub fn export_before_after_mdat_with_mimo(
+fn export_before_after_mdat_with_mimo(
     run: &ExportRun<'_>,
     folder: &Path,
     mimo: Option<&MimoResponses>,
@@ -790,49 +785,15 @@ fn random_uuid() -> Result<u128, getrandom::Error> {
 }
 
 fn atomic_replace(destination: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
-    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
-    let stem = destination
-        .file_name()
-        .and_then(|v| v.to_str())
-        .unwrap_or("export.mdat");
-    let mut temporary = None;
-    for _ in 0..100 {
-        let serial = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let candidate = parent.join(format!(".{stem}.{}.{}.tmp", std::process::id(), serial));
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&candidate)
-        {
-            Ok(file) => {
-                temporary = Some((candidate, file));
-                break;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error),
-        }
-    }
-    let Some((path, mut file)) = temporary else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            "could not create export temporary file",
-        ));
-    };
-    let result = (|| {
-        file.write_all(bytes)?;
-        file.sync_all()?;
-        drop(file);
-        fs::rename(&path, destination)
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&path);
-    }
-    result
+    secs_types::fs::write_atomic_bytes(destination, bytes)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
     #[test]
     fn rc_pieces_from_values_preserves_live_and_legacy_wording() {

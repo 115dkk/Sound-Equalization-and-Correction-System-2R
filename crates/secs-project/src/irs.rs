@@ -1,6 +1,9 @@
-use crate::ProjectError;
+use crate::{ProjectError, record::atomic_write};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+
+pub const MAX_IR_BYTES: u64 = 256 * 1024 * 1024;
 
 pub fn ir_directory(project: &Path) -> PathBuf {
     project.with_extension("irs")
@@ -125,10 +128,24 @@ fn wav_chunks(data: &[u8], default_format: Option<WavFormat>) -> Result<WavChunk
         if header_end > data.len() {
             break;
         }
-        let size = le_u32(data, pos + 4)? as usize;
+        let size_u32 = le_u32(data, pos + 4)?;
+        if &data[pos..pos + 4] == b"data" && u64::from(size_u32) > MAX_IR_BYTES {
+            return Err(ProjectError::Wav(format!(
+                "WAV data chunk exceeds {MAX_IR_BYTES} bytes"
+            )));
+        }
+        let size = size_u32 as usize;
         let declared_end = header_end
             .checked_add(size)
             .ok_or_else(|| ProjectError::Wav("chunk size overflow".into()))?;
+        // F17: a cut `data` chunk is an error, not a shorter IR. Other chunks
+        // keep upstream's clamp to the file end.
+        if &data[pos..pos + 4] == b"data" && declared_end > data.len() {
+            return Err(ProjectError::Wav(format!(
+                "WAV data chunk declares {size} bytes but the file holds {}",
+                data.len() - header_end
+            )));
+        }
         let end = declared_end.min(data.len());
         match &data[pos..pos + 4] {
             b"fmt " => format = Some(parse_wav_format(&data[header_end..end])?),
@@ -255,12 +272,43 @@ pub fn save_ir(
     rate: u32,
 ) -> Result<PathBuf, ProjectError> {
     let path = ir_file(project, role, pos);
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+    let directory = ir_directory(project);
+    reject_symlink(&directory)?;
+    if !directory.exists() {
+        fs::create_dir_all(&directory)?;
     }
-    fs::write(&path, try_write_wav_float32(samples, rate)?)?;
+    reject_symlink(&directory)?;
+    reject_symlink(&path)?;
+    atomic_write(&path, &try_write_wav_float32(samples, rate)?)?;
     Ok(path)
 }
+
+fn reject_symlink(path: &Path) -> Result<(), ProjectError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(ProjectError::Invalid(format!(
+            "IR write path is a symlink: {}",
+            path.display()
+        ))),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
 pub fn load_ir(project: &Path, role: &str, pos: i64) -> Result<(Vec<f32>, u32), ProjectError> {
-    read_mono_float_wav(&fs::read(ir_file(project, role, pos))?)
+    let path = ir_file(project, role, pos);
+    read_mono_float_wav(&read_bounded(&path, MAX_IR_BYTES, "WAV")?)
+        .map_err(|error| ProjectError::Wav(format!("{}: {error}", path.display())))
+}
+
+pub(crate) fn read_bounded(path: &Path, limit: u64, kind: &str) -> Result<Vec<u8>, ProjectError> {
+    let mut file = fs::File::open(path)?;
+    let mut bytes = Vec::new();
+    file.by_ref().take(limit + 1).read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > limit {
+        return Err(ProjectError::Invalid(format!(
+            "{kind} file {} exceeds {limit} bytes",
+            path.display()
+        )));
+    }
+    Ok(bytes)
 }

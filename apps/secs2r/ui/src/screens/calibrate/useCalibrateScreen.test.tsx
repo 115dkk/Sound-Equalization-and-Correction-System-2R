@@ -10,24 +10,74 @@ import { useCalibrateScreen } from "./useCalibrateScreen";
 
 let mock: ReturnType<typeof createMockService>;
 let session: ReturnType<typeof createSession>;
-let pending: Promise<unknown>[];
 const wrapper = ({ children }: { children: ReactNode }) => <SessionProvider value={session}>{children}</SessionProvider>;
 async function perform(work: () => unknown) {
-  await act(async () => { await work(); while (pending.length) await Promise.all(pending.splice(0)); });
+  await act(async () => { await work(); await session.settled(); });
 }
 beforeEach(async () => {
   mock = createMockService({ tickMs: 0 }); session = createSession(mock); await session.start();
-  pending = []; vi.spyOn(session, "run").mockImplementation((work) => { pending.push(work().catch(() => {})); });
   mock.calls.length = 0;
 });
 afterEach(async () => { cleanup(); await session.monitor(false); session.dispose(); mock.dispose(); vi.restoreAllMocks(); });
 
 describe("useCalibrateScreen", () => {
+  it("edits the center crossover after selecting C on SPL and opening XO", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    await perform(() => result.current.actions.selectChannel("C", null));
+    await perform(() => result.current.actions.selectTab("xo"));
+    expect(session.host.getSnapshot().xoGroup).toBe("센터");
+    expect(result.current.view?.xoGroup).toBe("센터");
+    expect(mock.calls).toContainEqual({ method: "result_curves", params: { tab: "xo", channel: "C", group: "센터", xo_hz: null, corrected: null } });
+    const group = result.current.view!.xoGroup!;
+    await perform(() => result.current.actions.previewXo(group, 95));
+    await perform(() => result.current.actions.changeSetting({ kind: "xo", group, hz: 95 }));
+    expect(mock.calls).toContainEqual({ method: "calibration_settings_edit", params: { edit: { kind: "xo", group: "센터", hz: 95 } } });
+    expect(result.current.view?.settings.xo["센터"]).toBe(95);
+    await perform(() => result.current.actions.selectChannel("L", null));
+    expect(result.current.view?.xoGroup).toBe("프론트");
+    await perform(() => result.current.actions.selectTab("spl"));
+    await perform(() => result.current.actions.selectChannel("C", null));
+    await perform(() => result.current.actions.selectTab("xo"));
+    expect(result.current.view?.xoGroup).toBe("센터");
+  });
+  it("resolves the default preview channel on XO entry and leaves an empty preview without a group", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    await perform(() => result.current.actions.selectTab("xo"));
+    expect(result.current.view?.xoGroup).toBe("프론트");
+    await perform(() => result.current.actions.selectXoGroup("센터"));
+    expect(result.current.view?.xoGroup).toBe("센터");
+    await perform(() => session.call({ method: "project_new", params: { path: "", preset: "2.1", sub_count: 1, sample: false, tutorial: false } }));
+    await perform(() => result.current.actions.selectTab("xo"));
+    expect(result.current.view?.xoGroup).toBeNull();
+  });
+
+  it("returns failed target and XO edits and exposes saving, failure and retry state", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    const points: [number, number][] = [[20, 4], [20000, -2]];
+    mock.failNext("target_set_points", "project_io");
+    let accepted: unknown;
+    await act(async () => { accepted = await result.current.actions.setTargetPoints(points); });
+    expect(accepted).toBe(false);
+    expect(result.current.view).toMatchObject({ targetEdit: "failed", xoEdit: "idle" });
+    const states: string[] = [];
+    const off = session.host.subscribe(() => states.push(session.host.getSnapshot().targetEdit));
+    await act(async () => { accepted = await result.current.actions.setTargetPoints(points); });
+    off();
+    expect(accepted).toBe(true);
+    expect(states).toContain("saving");
+    expect(result.current.view).toMatchObject({ targetEdit: "idle", target: { points } });
+    mock.failNext("calibration_settings_edit", "project_io");
+    await act(async () => { accepted = await result.current.actions.changeSetting({ kind: "xo", group: "프론트", hz: 90 }); });
+    expect(accepted).toBe(false);
+    expect(result.current.view?.xoEdit).toBe("failed");
+    await act(async () => { accepted = await result.current.actions.changeSetting({ kind: "xo", group: "프론트", hz: 90 }); });
+    expect(accepted).toBe(true);
+    expect(result.current.view?.xoEdit).toBe("idle");
+  });
   it("loads automatic GPU choice, persists manual CPU and refreshes stale provenance", async () => {
     session.dispose(); mock.dispose();
     mock = createMockService({ tickMs: 0, computeStatus: gpuComputeStatus, results: resultsSummary });
     session = createSession(mock); await session.start();
-    vi.spyOn(session, "run").mockImplementation((work) => { pending.push(work().catch(() => {})); });
     const { result } = renderHook(useCalibrateScreen, { wrapper });
     expect(result.current.view?.compute).toMatchObject({ preference: "auto", status: { selected: "cuda" }, loading: false });
     const prior = session.stores.appSettings.getSnapshot()!;
@@ -116,7 +166,7 @@ describe("useCalibrateScreen", () => {
     expect(session.host.getSnapshot().xoGroup).toBeNull();
     await perform(() => a.selectTab("xo"));
     await perform(() => a.selectChannel("R", "front"));
-    expect(result.current.view).toMatchObject({ tab: "xo", channel: "R", xoGroup: "front" });
+    expect(result.current.view).toMatchObject({ tab: "xo", channel: "R", xoGroup: "프론트" });
     await perform(() => a.selectXoGroup("surround"));
     expect(mock.calls).toContainEqual({ method: "result_curves", params: { tab: "xo", channel: "R", group: "surround", xo_hz: null, corrected: null } });
     await perform(() => a.previewXo("front", 90));

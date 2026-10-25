@@ -6,6 +6,7 @@ pub mod sample;
 mod settings;
 
 pub use native::{BackendFactory, NativeMeasurer};
+pub(crate) use rew::RewLink;
 pub use rew::RewMeasurer;
 pub use sample::MockMeasurer;
 pub use settings::{
@@ -88,10 +89,25 @@ pub struct Progress {
 }
 pub type ProgressSink = Arc<dyn Fn(Progress) + Send + Sync>;
 
+/// How a measurement method commits a position's results.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommitBoundary {
+    /// All roles of the position at once; a cancelled position leaves nothing.
+    Position,
+    /// Each role as it arrives; completed roles stay on a later failure.
+    Role,
+}
+
 /// A position's results use the canonical `.secs` record regardless of source.
 /// Native measures one duplex sequence; cancellation yields no partial sequence.
 /// REW returns completed roles on cancellation, as its upstream session does.
 pub trait Measurer: Send {
+    /// How a position's results are committed: all roles at once (native,
+    /// mock), or each role as it arrives (REW, which records role by role).
+    fn commit_boundary(&self) -> CommitBoundary {
+        CommitBoundary::Position
+    }
+
     fn devices(&mut self) -> Result<Vec<Device>, MeasureError>;
     fn status(&mut self) -> Result<Status, MeasureError>;
     fn level_check(

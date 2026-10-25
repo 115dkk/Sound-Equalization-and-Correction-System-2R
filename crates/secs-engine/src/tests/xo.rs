@@ -222,6 +222,129 @@ fn xo_parallel_order_progress_and_cancellation() {
     ));
 }
 
+#[test]
+fn xo_recommendation_reports_a_position_missing_a_sub() {
+    // TD-48: BA and RC only use complete positions, so the candidate designs
+    // succeed; scoring replays every position where a main was measured and
+    // used to panic there instead of reporting the incomplete measurement.
+    let mut case = cases::load("room");
+    let (_, roles) = case
+        .measurements
+        .positions
+        .iter_mut()
+        .find(|(p, _)| *p == 2)
+        .unwrap();
+    roles.retain(|(r, _)| r != "SW2");
+    let settings = serde_json::from_value(case.settings.clone()).unwrap();
+    let view = crate::ProjectView {
+        groups: &case.config.groups,
+        project_xo: &case.config.xo,
+        target: &case.config.target,
+    };
+    let result = recommend_xo(
+        &view,
+        &case.measurements,
+        &settings,
+        &case.tuning,
+        &[80.0],
+        &Context::serial(),
+    );
+    assert!(
+        matches!(&result, Err(crate::EngineError::Input(message))
+            if message == "position 2 L: missing SW2 for crossover scoring"),
+        "{result:?}"
+    );
+}
+
+#[test]
+fn xo_candidates_share_the_job_budget() {
+    use secs_compute::{CancelToken, MemoryBudget, NoProgress};
+    use std::sync::Arc;
+    let case = cases::load("room");
+    let settings: secs_types::calibration::CalibrationSettings =
+        serde_json::from_value(case.settings.clone()).unwrap();
+    let view = crate::ProjectView {
+        groups: &case.config.groups,
+        project_xo: &case.config.xo,
+        target: &case.config.target,
+    };
+    let inputs = crate::engine_inputs(&view, &case.measurements, &settings).unwrap();
+    let (shared, candidate) = crate::xo::xo_bytes(&inputs.measurements, &inputs.config);
+    let candidates = [60.0, 120.0];
+    let expected = recommend_xo(
+        &view,
+        &case.measurements,
+        &settings,
+        &case.tuning,
+        &candidates,
+        &Context::serial(),
+    )
+    .unwrap();
+    let budget = |bytes| {
+        Arc::new(Context::new(
+            4,
+            MemoryBudget::new(bytes),
+            Arc::new(NoProgress),
+            CancelToken::new(),
+        ))
+    };
+    // Room for one candidate at a time on four threads: it must finish, give
+    // the unbounded result, and return every reserved byte.
+    let ctx = budget(shared + candidate);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let worker = {
+        let ctx = Arc::clone(&ctx);
+        let (case, settings) = (cases::load("room"), settings.clone());
+        std::thread::spawn(move || {
+            let view = crate::ProjectView {
+                groups: &case.config.groups,
+                project_xo: &case.config.xo,
+                target: &case.config.target,
+            };
+            let result = recommend_xo(
+                &view,
+                &case.measurements,
+                &settings,
+                &case.tuning,
+                &candidates,
+                &ctx,
+            );
+            let _ = tx.send(result);
+        })
+    };
+    let result = rx.recv_timeout(std::time::Duration::from_secs(300));
+    ctx.cancel().cancel();
+    worker.join().unwrap();
+    let actual = result
+        .expect("XO recommendation timed out with a one-candidate budget")
+        .unwrap();
+    assert_eq!(actual, expected);
+    assert_eq!(ctx.budget().available(), ctx.budget().total());
+    // One byte less does not fit the shared preparation and one candidate:
+    // refuse before any spectra are built.
+    let ctx = budget(shared + candidate - 1);
+    let built = crate::measurement::SPECTRA_BUILT.with(std::cell::Cell::get);
+    let result = recommend_xo(
+        &view,
+        &case.measurements,
+        &settings,
+        &case.tuning,
+        &candidates,
+        &ctx,
+    );
+    assert!(
+        matches!(&result, Err(crate::EngineError::Input(message))
+            if message.contains("exceeds memory budget")),
+        "{result:?}"
+    );
+    assert_eq!(
+        crate::measurement::SPECTRA_BUILT.with(std::cell::Cell::get),
+        built,
+        "XO built spectra before refusing its budget"
+    );
+    assert_eq!(ctx.budget().available(), ctx.budget().total());
+}
+
 fn binomial_quantile(n: usize, p: f64) -> usize {
     let mut probability = (1.0 - p).powi(n as i32);
     let mut cumulative = probability;

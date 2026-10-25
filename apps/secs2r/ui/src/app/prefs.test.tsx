@@ -2,10 +2,11 @@
 // The skin axis (ADR 0010): a scope carries data-skin for Hardware Rack and
 // Signal Matrix and nothing for the default skin, and the settings popover
 // switches it on <html> for the app.
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { SettingsButton } from "./menus";
-import { PrefsScope, type Prefs } from "./prefs";
+import { PrefsScope, usePrefs, type Prefs } from "./prefs";
+import type { ReactNode } from "react";
 
 const base: Prefs = { locale: "ko", theme: "light", accent: "default" };
 
@@ -22,6 +23,20 @@ function scopeOf(prefs: Prefs) {
 
 afterEach(() => {
   delete document.documentElement.dataset.skin;
+});
+
+describe("persisted preferences", () => {
+  it("keeps accepted display preferences after a rejected edit without losing a later edit", async () => {
+    const replies: ((accepted: boolean) => void)[] = [];
+    const hook = renderHook(usePrefs, { wrapper: ({ children }: { children: ReactNode }) =>
+      <PrefsScope initial={base} onChange={() => new Promise<boolean>((resolve) => replies.push(resolve))}>{children}</PrefsScope> });
+    act(() => { hook.result.current.set({ theme: "dark" }); hook.result.current.set({ skin: "rack" }); });
+    expect(hook.result.current.theme).toBe("light");
+    expect(hook.result.current.skin).toBeUndefined();
+    await act(async () => { replies[0]!(false); replies[1]!(true); });
+    expect(hook.result.current).toMatchObject({ theme: "light", skin: "rack" });
+    hook.unmount();
+  });
 });
 
 describe("skin scope", () => {

@@ -1,7 +1,7 @@
 // Port of src/secs/rew_mdat/rew/adapters.py (SECS 2, GPL-3.0-only).
 use secs_jos::{ArrayData, Limits, Node, NodeId, Stream, Value};
 
-use crate::{MdatError, models::*};
+use crate::{AllocationBudget, MdatError, models::*};
 
 pub(crate) fn node_id(value: Option<&Value>) -> Option<NodeId> {
     match value {
@@ -97,18 +97,14 @@ fn unknown(stream: &Stream, obj: NodeId, known: &[&str]) -> Vec<String> {
         .collect()
 }
 
-struct Adapter<'a> {
+struct Adapter<'a, 'b> {
     stream: &'a Stream,
     limits: &'a Limits,
-    remaining: usize,
+    budget: &'b mut AllocationBudget,
 }
-impl<'a> Adapter<'a> {
+impl<'a> Adapter<'a, '_> {
     fn charge(&mut self, bytes: usize) -> Result<(), MdatError> {
-        self.remaining = self
-            .remaining
-            .checked_sub(bytes)
-            .ok_or_else(|| MdatError::Schema("adapted data exceeds allocation limit".into()))?;
-        Ok(())
+        self.budget.charge(bytes)
     }
 
     fn charge_object(&mut self, id: NodeId) -> Result<(), MdatError> {
@@ -155,13 +151,13 @@ impl<'a> Adapter<'a> {
             .ok_or_else(|| MdatError::Schema("array size overflow".into()))?;
         if n > self.limits.max_array_elements
             || bytes > self.limits.max_array_bytes
-            || bytes > self.remaining
+            || bytes > self.budget.remaining()
         {
             return Err(MdatError::Schema(
                 "adapted arrays exceed allocation limit".into(),
             ));
         }
-        self.remaining -= bytes;
+        self.charge(bytes)?;
         let mut result = Vec::new();
         result
             .try_reserve_exact(n)
@@ -390,6 +386,7 @@ pub(crate) fn adapt(
     stream: Stream,
     file_size: usize,
     limits: &Limits,
+    budget: &mut AllocationBudget,
 ) -> Result<MdatFile, MdatError> {
     if stream.values.len() < 4 {
         return Err(MdatError::Schema(
@@ -404,7 +401,7 @@ pub(crate) fn adapt(
     let mut adapter = Adapter {
         stream: &stream,
         limits,
-        remaining: limits.max_file_bytes,
+        budget,
     };
     adapter.charge(stream.values.len().saturating_mul(3 * size_of::<Value>()))?;
     for value in [stream.values.first(), stream.values.get(2)] {

@@ -60,6 +60,8 @@ const KIND_TEXT: Record<ExportKind, { title: MessageKey; body: MessageKey; run?:
 /** Why a filter format cannot carry this result: only these pairs occur (`exportBlock`). */
 const BLOCK_TEXT: Partial<Record<ExportKind, Partial<Record<ExportBlock, MessageKey>>>> = {
   filter_text: { subs: "export.blocked.filter_text.subs", mimo: "export.blocked.filter_text.mimo" },
+  staged_mdat: { stale_cache: "export.blocked.mdat.stale_cache" },
+  before_after_mdat: { stale_cache: "export.blocked.mdat.stale_cache" },
 };
 
 const MIMO_REASON: Record<Extract<MimoInclusion, { included: false }>["reason"], MessageKey> = {
@@ -69,7 +71,7 @@ const MIMO_REASON: Record<Extract<MimoInclusion, { included: false }>["reason"],
   stale: "export.result.mimo.stale",
 };
 
-export function modeText(t: Translate, mode: Mode, ultraMs: number, number: (value: number, digits?: number) => string): string {
+function modeText(t: Translate, mode: Mode, ultraMs: number, number: (value: number, digits?: number) => string): string {
   return mode === "ultra" ? t("export.mode.ultra", { ms: number(ultraMs) }) : t(MODE_TEXT[mode]);
 }
 
@@ -367,6 +369,7 @@ function ExportItem({ kind, view, actions }: { kind: ExportKind; view: ExportVie
   const block = exportBlock(view, kind);
   const blocked = block ? BLOCK_TEXT[kind]?.[block] : undefined;
   const blockedId = useId();
+  const recalibrateId = useId();
   return (
     <section className="export-item" data-ui={`export.kind.${kind}`} aria-labelledby={titleId}>
       <div className="export-item__text">
@@ -396,10 +399,30 @@ function ExportItem({ kind, view, actions }: { kind: ExportKind; view: ExportVie
       </div>
       {blocked && (
         // The format's scope, not a fault: the info icon and the muted text, never the warning hue.
-        <p className="export-item__blocked" id={blockedId} data-ui={`export.kind.${kind}.blocked`}>
-          <Icon name="info" size={18} />
-          <span>{t(blocked)}</span>
-        </p>
+        // A result restored from an older cache lifts with a new correction: the action follows its sentence.
+        <div className="export-item__blocked">
+          <p className="export-item__blocked-text" id={blockedId} data-ui={`export.kind.${kind}.blocked`}>
+            <Icon name="info" size={18} />
+            <span>{t(blocked)}</span>
+          </p>
+          {block === "stale_cache" && (
+            // Both mdat rows carry one: each is named for its format and described by its sentence.
+            // Off while an export runs, so the result does not change under it.
+            <Button
+              size="sm"
+              className="export-item__blocked-action"
+              id={recalibrateId}
+              data-ui={`export.kind.${kind}.recalibrate`}
+              aria-labelledby={`${recalibrateId} ${titleId}`}
+              aria-describedby={blockedId}
+              busy={view.recalibrating}
+              disabled={view.exporting !== null}
+              onClick={actions.recalibrate}
+            >
+              {t("export.blocked.mdat.recalibrate")}
+            </Button>
+          )}
+        </div>
       )}
       {run && <Outcome kind={kind} run={run} view={view} actions={actions} />}
     </section>

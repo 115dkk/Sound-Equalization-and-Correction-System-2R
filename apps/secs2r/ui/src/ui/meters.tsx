@@ -6,11 +6,11 @@
 import type { ReactNode } from "react";
 import { useNumber, useT } from "../i18n/react";
 
-export const METER_MIN = -60;
-export const METER_MAX = 0;
-export const METER_BAND: readonly [number, number] = [-30, -15];
+const METER_MIN = -60;
+const METER_MAX = 0;
+const METER_BAND: readonly [number, number] = [-30, -15];
 
-export type LevelState = "none" | "low" | "ok" | "high" | "clip";
+type LevelState = "none" | "low" | "ok" | "high" | "clip";
 
 export function levelState(dbfs: number | null, clipping = false): LevelState {
   if (clipping) return "clip";

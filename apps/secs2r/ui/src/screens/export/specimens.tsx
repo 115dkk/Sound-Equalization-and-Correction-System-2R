@@ -3,7 +3,7 @@
 // and BA) shows on the results with subs, with MIMO, and with RC alone.
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { PrefsScope, usePrefs } from "../../app/prefs";
-import { initialJobs, type JobsState } from "../../app/jobs/jobStore";
+import { initialLedger, type LedgerState } from "../../state/jobLedger";
 import { FrameBox, T0, replay } from "../../gallery/frameSpecimens";
 import type { SpecimenDef } from "../../gallery/Specimen";
 import { useT } from "../../i18n/react";
@@ -20,12 +20,14 @@ import {
   exportNoResult,
   exportRcOnly,
   exportReady,
+  exportRecalibrating,
   exportStale,
+  exportStaleCache,
   exportTutorial,
 } from "./fixtures";
 import type { ExportActions, ExportView } from "./types";
 
-export const noopExportActions: ExportActions = { exportFiles: () => {}, changeFolder: () => {}, openFolder: () => {}, goToCalibrate: () => {} };
+export const noopExportActions: ExportActions = { exportFiles: () => {}, changeFolder: () => {}, openFolder: () => {}, goToCalibrate: () => {}, recalibrate: () => {} };
 
 const exportJob = replay([{ type: "event", at: T0, event: { event: "started", job: 12, kind: "export" } }]);
 
@@ -58,16 +60,16 @@ function Scrolled({ to, children }: { to: string; children: ReactNode }) {
   return <div ref={ref}>{children}</div>;
 }
 
-export function ExportSpecimen({
+function ExportSpecimen({
   view,
-  jobs = initialJobs,
+  jobs = initialLedger,
   initialAdvanced,
   scrolled,
   fileName,
   children,
 }: {
   view: ExportView;
-  jobs?: JobsState;
+  jobs?: LedgerState;
   initialAdvanced?: boolean;
   /** Draw the content scrolled to its end, or to the element with this `data-ui`. */
   scrolled?: true | string;
@@ -102,6 +104,12 @@ export const exportSpecimens: SpecimenDef[] = [
   frame("screen.export.empty", "Export · no correction yet", () => <ExportSpecimen view={exportNoResult} />),
   frame("screen.export.computing", "Export · first correction computing", () => <ExportSpecimen view={exportComputingFirst} jobs={calibrateJob} />),
   frame("screen.export.stale", "Export · stale result (settings changed)", () => <ExportSpecimen view={exportStale} />),
+  frame("screen.export.stale-cache", "Export · reopened project, result from an earlier version: both mdat rows blocked, 재보정 after the sentence", () => (
+    <ExportSpecimen view={exportStaleCache} initialAdvanced scrolled="export.kind.before_after_mdat" />
+  )),
+  frame("screen.export.recalibrating", "Export · 재보정 running from an mdat row: the button busy, every export off", () => (
+    <ExportSpecimen view={exportRecalibrating} jobs={calibrateJob} initialAdvanced scrolled="export.kind.before_after_mdat" />
+  )),
   frame("screen.export.ready", "Export · ready, MIMO included", () => <ExportSpecimen view={exportReady} />),
   frame("screen.export.filters", "Export · subs and MIMO: the text and Equalizer APO rows say why they are off", () => (
     <ExportSpecimen view={exportReady} scrolled="export.files" />

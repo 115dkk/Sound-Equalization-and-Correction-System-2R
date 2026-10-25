@@ -23,7 +23,7 @@ export function clampPoint(point: TargetPoint): TargetPoint {
   };
 }
 
-export function sortPoints(points: readonly TargetPoint[]): TargetPoint[] {
+function sortPoints(points: readonly TargetPoint[]): TargetPoint[] {
   return [...points].sort((a, b) => a.hz - b.hz);
 }
 
