@@ -143,8 +143,9 @@ describe("useConnectScreen", () => {
     mock.failNext("rew_launch", "rew_failed", "not installed", { reason: "exe_not_found" });
     await perform(result.current.actions.launchRew);
     expect(result.current.view?.rew).toMatchObject({ launch: "idle", problem: "exe_not_found", problemDetail: "not installed" });
+    mock.calls.length = 0;
     await perform(result.current.actions.launchRew);
-    expect(mock.calls).toContainEqual({ method: "rew_launch" });
+    expect(mock.calls).toEqual([{ method: "rew_launch" }, { method: "measure_methods" }, { method: "rew_info" }]);
     expect(result.current.view?.rew.problem).toBeNull();
   });
 

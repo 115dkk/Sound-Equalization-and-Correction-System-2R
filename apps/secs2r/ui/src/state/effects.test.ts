@@ -38,7 +38,7 @@ it.each(reloadCases)("reload.%s refreshes its public store", async (key, request
     const previous = session.stores[key].getSnapshot();
     mock.calls.length = 0;
     await session.call(request); await session.settled();
-    expect(mock.calls.some((call) => call.method === getter)).toBe(true);
+    expect(mock.calls.filter((call) => call.method === getter)).toHaveLength(1);
     expect(session.stores[key].getSnapshot()).not.toBeNull();
     expect(session.stores[key].getSnapshot()).not.toBe(previous);
   } finally { session.dispose(); await session.settled(); mock.dispose(); }
@@ -333,6 +333,20 @@ it("resets a replaced project before reloads and restores its stored measurement
     await session.settled(); off();
     expect(duringReload).toMatchObject({ selected: null, channel: null, sweepRole: null, path: null, opened: 1 });
     expect(session.host.getSnapshot().path).toBe("mock");
+  } finally { session.dispose(); await session.settled(); mock.dispose(); }
+});
+
+it("reads but never configures a newly replaced tutorial's measurement method", async () => {
+  const mock = createMockService({ tickMs: 0 });
+  const session = createSession(mock);
+  try {
+    await session.start(); await session.settled();
+    mock.calls.length = 0;
+    await session.call({ method: "project_new", params: { path: "", preset: "7.1.4", sub_count: 3, sample: true, tutorial: true } });
+    await session.settled();
+    expect(mock.calls.filter((request) => request.method === "measure_config_get")).toHaveLength(1);
+    expect(mock.calls.some((request) => request.method === "measure_configure")).toBe(false);
+    expect(session.stores.measurementSettings.getSnapshot()?.method).toBe("none");
   } finally { session.dispose(); await session.settled(); mock.dispose(); }
 });
 

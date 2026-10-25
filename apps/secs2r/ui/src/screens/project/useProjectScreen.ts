@@ -42,9 +42,7 @@ export function useProjectScreen(close: () => Promise<void>) {
   }
   async function tutorial() {
     previous.current = session.stores.project.getSnapshot()?.path || null;
-    await session.monitor(false);
-    await session.call({ method: "project_new", params: { path: "", preset: "7.1.4", sub_count: 3, sample: true, tutorial: true } });
-    await session.configure({ method: "mock" });
+    await session.startTutorial();
     session.navigate("system"); show(null);
   }
   const actions: ProjectDialogsActions = {

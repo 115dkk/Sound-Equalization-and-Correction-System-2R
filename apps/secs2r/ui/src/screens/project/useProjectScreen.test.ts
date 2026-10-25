@@ -66,8 +66,20 @@ it("does not close when save picker is cancelled and starts tutorial with both f
     expect(close).not.toHaveBeenCalled();
     expect(hook.result.current.view.dialog?.kind).toBe("unsaved");
     act(() => hook.result.current.actions.cancel());
+    mock.calls.length = 0;
+    act(() => hook.result.current.offerTutorial());
+    expect(hook.result.current.view.dialog?.kind).toBe("tutorial");
     act(() => hook.result.current.actions.startTutorial()); act(() => hook.result.current.actions.discardAndContinue());
-    await waitFor(() => expect(session.stores.project.getSnapshot()?.tutorial).toBe(true));
-    expect(mock.calls.some((r) => r.method === "project_new" && r.params.sample && r.params.tutorial)).toBe(true);
+    await act(async () => { await session.settled(); });
+    await waitFor(() => expect(hook.result.current.view.dialog).toBeNull());
+    expect(session.stores.project.getSnapshot()?.tutorial).toBe(true);
+    expect(session.tutorialReady.getSnapshot()).toBe(true);
+    expect(mock.calls.filter((r) => r.method === "project_new")).toEqual([
+      { method: "project_new", params: { path: "", preset: "7.1.4", sub_count: 3, sample: true, tutorial: true } },
+    ]);
+    expect(mock.calls.filter((r) => r.method === "measure_configure")).toEqual([
+      { method: "measure_configure", params: expect.objectContaining({ method: "none" }) },
+    ]);
+    expect(session.stores.config.getSnapshot()?.speakers.find((speaker) => speaker.role === "SW3")?.bands[0]?.out).toBe(16);
   } finally { hook.unmount(); session.dispose(); mock.dispose(); }
 });

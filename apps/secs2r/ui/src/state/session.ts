@@ -17,6 +17,7 @@ import { createResource as resource, createStore, type Failure } from "./store";
 import { isActiveJob } from "./jobRetention";
 import { createJobLedger, type FinishedJob, type JobRequestContext, type LedgerJob } from "./jobLedger";
 import { effectsOf, projectEdits, type EffectContext } from "./effects";
+import { wrongOutput } from "../screens/tutorial/questHost";
 
 type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "mdat" | "warnings"> & {
   computeLoading: boolean; computeSaving: boolean; computeError: import("../ipc/bindings/IpcError").IpcError | null;
@@ -61,6 +62,8 @@ export function createSession(ipc: Ipc) {
   const host = { ...rawHost, set: (patch: Partial<HostState>) => rawHost.set({ ...rawHost.getSnapshot(), ...patch }) };
   const errors = createStore<Failure | null>(null);
   const ready = createStore(false);
+  const tutorialReady = createStore(false);
+  let tutorialStart: Promise<void> | null = null;
   let errorId = 0;
   let appSettingsFailure: number | null = null;
   const report = (error: unknown) => {
@@ -141,7 +144,7 @@ export function createSession(ipc: Ipc) {
       errors.set(null);
       const effects = effectsOf({ request: request.method });
       const ctx: EffectContext = { host, stores, jobs, call, configure, run, source: { request, data, methodBefore },
-        replaceProject: () => { jobs.replaceProject(); epoch = jobs.epoch; curveVersion++; curveState.set(null); },
+        replaceProject: () => { jobs.replaceProject(); epoch = jobs.epoch; curveVersion++; curveState.set(null); tutorialReady.set(false); },
       };
       for (const rule of effects.rules) rule.beforeReload?.(ctx);
       await reload(effects.reload);
@@ -167,6 +170,32 @@ export function createSession(ipc: Ipc) {
       output_channels: [], sweep_length: null, repetitions: null, sweep_level_dbfs: null, timing: null,
       loopback_input_channel: null, timing_ref_output: null, share_mode: null, ...patch,
     } });
+  }
+  function startTutorial({ quest }: { quest?: string } = {}): Promise<void> {
+    if (tutorialStart) return tutorialStart;
+    // A gallery/reopened tutorial already has its fixture data. Prepare it
+    // once without replacing it; a ready tutorial starts over on restart.
+    const prepareExisting = stores.project.getSnapshot()?.tutorial && !tutorialReady.getSnapshot();
+    tutorialReady.set(false);
+    tutorialStart = track(async () => {
+      let epoch = jobs.epoch;
+      await monitor(false);
+      if (epoch !== jobs.epoch) return;
+      if (!prepareExisting) {
+        await call({ method: "project_new", params: { path: "", preset: "7.1.4", sub_count: 3, sample: true, tutorial: true } });
+        epoch++;
+      }
+      if (epoch !== jobs.epoch || !stores.project.getSnapshot()?.tutorial) return;
+      const systemQuest = !quest || quest.startsWith("system.");
+      // No device or REW is opened as a side effect of a tutorial card.
+      await configure({ method: systemQuest || quest === "connect.retry" ? "none" : "mock" });
+      if (epoch !== jobs.epoch) return;
+      const config = stores.config.getSnapshot();
+      const index = systemQuest && config ? wrongOutput(config) : null;
+      if (index !== null) await call({ method: "config_set_speaker", params: { index, role: null, size: null, band_index: 0, out: 16, pol: null } });
+      if (epoch === jobs.epoch) tutorialReady.set(true);
+    }).finally(() => { tutorialStart = null; });
+    return tutorialStart;
   }
   function ensureSaved() { return track(async () => {
     if (stores.project.getSnapshot()?.path) return true;
@@ -348,7 +377,7 @@ export function createSession(ipc: Ipc) {
       startPromise = null;
     });
   }
-  return { ipc, stores, host, jobs, errors, ready, call, run, settled, configure, refreshCurves, ensureSaved, monitor, start, dispose,
+  return { ipc, stores, host, jobs, errors, ready, tutorialReady, call, run, settled, configure, startTutorial, refreshCurves, ensureSaved, monitor, start, dispose,
     hasPendingProjectEdits: () => pendingProjectEdits > 0,
     navigate: (current: StepId) => host.set({ current }) };
 }

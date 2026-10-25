@@ -81,11 +81,8 @@ export const RULES: readonly Rule[] = [
       ctx.stores.measurementSettings.set(null);
       ctx.host.set({ path: null, selected: null, mdat: null, warnings: [], runs: {}, channel: null, xoGroup: null, xoRecommendation: null, failure: null, sweepResult: null, sweepRole: null, opened: ctx.host.getSnapshot().opened + 1 });
     },
-    apply: async (ctx) => {
-      const { request } = ctx.source;
-      if (request?.method === "project_new" && request.params.tutorial) await ctx.configure({ method: "mock" });
-      else await ctx.call({ method: "measure_config_get" });
-    },
+    // Project replacement reads the stored method; tutorial setup owns writes.
+    apply: async ({ call }) => { await call({ method: "measure_config_get" }); },
   },
   {
     name: "sweep.invalidate", when: requested("measure_configure"),

@@ -97,7 +97,6 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
         try {
           const status = await session.call({ method: "rew_launch" });
           session.host.set({ rewLaunch: status.reachable ? "idle" : "launching" });
-          await Promise.all([session.stores.methods.load(), session.stores.rew.load()]);
         } catch (error) {
           const reason = error instanceof IpcFailure ? error.error.params.reason : null;
           const problem: RewProblem = reason === "exe_not_found" || reason === "cannot_launch" || reason === "timed_out" ? reason : "launch_failed";

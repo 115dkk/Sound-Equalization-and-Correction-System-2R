@@ -36,7 +36,6 @@ import { HelpPanel } from "./screens/help/HelpPanel";
 import { MicMeterPanel } from "./screens/connect/MicMeterPanel";
 import { TutorialLayer } from "./screens/tutorial/Tutorial";
 import { tutorialQuests, type TutorialView } from "./screens/tutorial/quests";
-import { wrongOutput } from "./screens/tutorial/questHost";
 
 function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
   const session = useSession();
@@ -150,22 +149,13 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
     window.addEventListener("keydown", key);
     return () => window.removeEventListener("keydown", key);
   }, []);
-  const [tutorialReady, setTutorialReady] = useState(false);
+  const tutorialReady = useSyncExternalStore(session.tutorialReady.subscribe, session.tutorialReady.getSnapshot);
   const preparing = useRef(false);
   useEffect(() => {
-    if (!project?.tutorial) { setTutorialReady(false); preparing.current = false; return; }
+    if (!project?.tutorial) { preparing.current = false; return; }
     if (!ready || !system.view || !connect.view || !calibrate.view || !exporting.view || preparing.current || tutorialReady) return;
     preparing.current = true;
-    session.run(async () => {
-      const index = tutorialStart && !tutorialStart.startsWith("system.") ? null : wrongOutput(session.stores.config.getSnapshot()!);
-      if (index !== null) {
-        await session.call({ method: "config_set_speaker", params: { index, role: null, size: null, band_index: 0, out: 16, pol: null } });
-      }
-      // The retry quest asks the user to choose the silent mock path. No real
-      // device or REW is opened as a side effect of a tutorial card.
-      await session.configure({ method: tutorialStart && !tutorialStart.startsWith("system.") && tutorialStart !== "connect.retry" ? "mock" : "none" });
-      setTutorialReady(true);
-    });
+    session.run(() => session.startTutorial(tutorialStart ? { quest: tutorialStart } : {}));
   }, [project?.tutorial, ready, system.view, connect.view, measure.view, calibrate.view, exporting.view, tutorialReady, tutorialStart, session]);
   const quests = useMemo(() => tutorialQuests({ system: system.actions, connect: connect.actions, measure: measure.actions, calibrate: calibrate.actions, goTo: navigate }),
     [system.actions, connect.actions, measure.actions, calibrate.actions, navigate]);
@@ -200,16 +190,10 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
     stepOpen={(_view, step) => canLeave(model.steps, step)}
     initial={tutorialStart ? { index: Math.max(0, kept.findIndex((q) => q.id === tutorialStart)) } : undefined}
     actions={{ goTo: navigate, finish: dialogs.finishTutorial, restart: () => {
-      setTutorialReady(false);
       preparing.current = true;
       session.run(async () => {
-        await session.monitor(false);
-        await session.call({ method: "project_new", params: { path: "", preset: "7.1.4", sub_count: 3, sample: true, tutorial: true } });
-        await session.configure({ method: "none" });
-        const index = wrongOutput(session.stores.config.getSnapshot()!);
-        if (index !== null) await session.call({ method: "config_set_speaker", params: { index, role: null, size: null, band_index: 0, out: 16, pol: null } });
+        await session.startTutorial();
         session.navigate("system");
-        setTutorialReady(true);
       });
     } }}>{body}</TutorialLayer> : body;
 }
