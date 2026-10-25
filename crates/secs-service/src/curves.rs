@@ -18,6 +18,7 @@ use secs_types::{
 use crate::{
     Service,
     calibration::{CalibrationRun, MimoResult, calibration_stale},
+    compute::ComputeIdentity,
     lock,
 };
 
@@ -66,10 +67,13 @@ fn offset(design: &Design) -> f64 {
         50.0,
     )
 }
+/// The MIMO result the graphs may draw: the same judgement as the results
+/// summary and export, including the compute environment (TD-33).
 fn fresh_mimo<'a>(
     run: &CalibrationRun,
     mimo: Option<&'a MimoResult>,
     project: &Project,
+    compute_key: &ComputeIdentity,
 ) -> Option<&'a MimoResult> {
     let settings = calibration_from_project(project);
     mimo.filter(|m| {
@@ -77,6 +81,7 @@ fn fresh_mimo<'a>(
             && !calibration_stale(run, project)
             && m.calibration_key == run.run_key
             && m.settings_key == settings.mimo_key()
+            && &m.compute_key == compute_key
     })
 }
 
@@ -147,6 +152,7 @@ impl Service {
                 "XO frequency must be finite and positive",
             ));
         }
+        let compute_key = ComputeIdentity::from(&self.acceleration().status);
         let mut session = lock(&self.session);
         let open = session.require_mut().map_err(IpcError::from)?;
         let state = lock(&self.results_state);
@@ -247,7 +253,7 @@ impl Service {
                         series("after", None, &score.spl_after, offset),
                         series("target", None, &project.target.sample(&result.grid), 0.0),
                     ];
-                    if let Some(mimo) = fresh_mimo(run, state.mimo.as_ref(), project)
+                    if let Some(mimo) = fresh_mimo(run, state.mimo.as_ref(), project, &compute_key)
                         && let Some((_, values)) =
                             mimo.run.spl_mimo.iter().find(|(r, _)| r == &score.role)
                     {
@@ -365,6 +371,7 @@ impl Service {
 
     fn result_lines(&self) -> Result<ResultLinesResult, IpcError> {
         let summary = self.results()?;
+        let compute_key = ComputeIdentity::from(&self.acceleration().status);
         let session = lock(&self.session);
         let project = session.require().map_err(IpcError::from)?.store.project();
         let state = lock(&self.results_state);
@@ -372,7 +379,7 @@ impl Service {
             || (false, Vec::new(), None, Vec::new()),
             |run| {
                 let design = &run.design;
-                let mimo = fresh_mimo(run, state.mimo.as_ref(), project);
+                let mimo = fresh_mimo(run, state.mimo.as_ref(), project, &compute_key);
                 let channels = design
                     .scores
                     .iter()

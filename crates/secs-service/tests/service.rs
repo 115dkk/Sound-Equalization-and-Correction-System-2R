@@ -2010,6 +2010,71 @@ fn staged_mdat_states_the_mimo_support_cap_like_upstream_live_and_cached() {
     fs::remove_dir_all(root).unwrap();
 }
 
+fn spl_has_mimo_curve(service: &Service) -> bool {
+    let Response::ResultCurves(curves) = call_ok(
+        service,
+        Request::ResultCurves(secs_types::ipc::ResultCurvesParams {
+            tab: secs_types::ipc::ResultTab::Spl,
+            channel: None,
+            group: None,
+            xo_hz: None,
+            corrected: None,
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!()
+    };
+    curves.curves.iter().any(|curve| curve.kind == "mimo")
+}
+
+fn support_counts(service: &Service) -> Vec<Option<usize>> {
+    let Response::ResultLines(lines) = call_ok(service, Request::ResultLines, Arc::new(NoEvents))
+    else {
+        panic!()
+    };
+    lines
+        .channels
+        .iter()
+        .map(|line| line.mimo_support_count)
+        .collect()
+}
+
+#[test]
+fn result_curves_and_lines_drop_mimo_after_the_compute_preference_changes() {
+    let root = temp_root("mimo-compute-curves");
+    fs::create_dir_all(&root).unwrap();
+    let (path, mut settings) = write_case(&root, "room_dba");
+    settings.mimo_on = true;
+    settings.mimo_max_supports = 1;
+    let service = service();
+    open(&service, &path);
+    calibrate_and_run_mimo(&service, &settings);
+    assert!(!read_results(&service).mimo.unwrap().stale);
+    assert!(spl_has_mimo_curve(&service));
+    assert!(support_counts(&service).iter().all(Option::is_some));
+
+    let Response::AppSettingsGet(mut app) =
+        call_ok(&service, Request::AppSettingsGet, Arc::new(NoEvents))
+    else {
+        panic!()
+    };
+    assert_ne!(app.compute, secs_types::compute::ComputePreference::Cpu);
+    app.compute = secs_types::compute::ComputePreference::Cpu;
+    call_ok(
+        &service,
+        Request::AppSettingsSet(secs_types::ipc::AppSettingsParams { settings: app }),
+        Arc::new(NoEvents),
+    );
+
+    assert!(read_results(&service).mimo.unwrap().stale);
+    assert!(!spl_has_mimo_curve(&service), "stale MIMO is still drawn");
+    assert!(
+        support_counts(&service).iter().all(Option::is_none),
+        "stale MIMO support counts are still listed"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn reopened_fresh_cache_keeps_mimo_in_mdat() {
     let root = temp_root("fresh-cached-mimo-mdat");
