@@ -31,7 +31,6 @@ const noopSystemActions: SystemActions = {
   setDspPreset: () => {},
   setDspFields: () => {},
   setArrangement: token,
-  setStartDelay: () => {},
   setTiming: () => {},
   undo: async () => {},
   next: () => {},

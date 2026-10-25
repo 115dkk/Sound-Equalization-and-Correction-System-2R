@@ -48,14 +48,17 @@ it("ports all 43 upstream entries once, in rail order and upstream order within 
   expect(quests.map((q) => q.upstreamLine).sort((a, b) => a - b)).toEqual(upstream);
   expect(new Set(quests.map((q) => q.id)).size).toBe(43);
   expect(quests.map((q) => q.upstreamLine)).toEqual([
-    304, 306, 307, 308, 314, 326, 327, 329, 332,
+    304, 306, 307, 308, 314, 326, 329, 332,
     288, 289, 293, 296, 297, 302, 316, 317, 324,
-    334, 335, 339, 341, 344,
+    327, 334, 335, 339, 341, 344,
     346, 349, 352, 356, 365, 370, 375, 379, 384, 389, 395, 400, 408, 415, 424, 430, 442, 449,
     451, 453,
   ]);
   // No counterpart is dropped. The two same-step next entries become looks;
   // export has no act upstream. The packet's count of 38 predates this tree.
+  // 327 (step 4's measurement options, here the start delay) opens 측정·가져오기,
+  // where the start delay is set (P58).
+  expect(quests.find((q) => q.upstreamLine === 327)).toMatchObject({ id: "measure.delay", step: "measure", targets: ["measure.options"] });
 });
 
 it("resolves every named quest message in both catalogs with matching placeholders", () => {

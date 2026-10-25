@@ -4,8 +4,9 @@ import { HelpTip } from "../../ui/HelpTip";
 //
 // Cards: 구성 (presets, sub count, the output patch sheet, the problems
 // config_validate reports), 방 배치도 (the room map synced with the sheet and
-// the chosen speaker's wiring), 측정 배치 (arrangement, start delay, timing
-// reference, the time estimate) and 내보낼 DSP (U2). Changes that clear
+// the chosen speaker's wiring), 측정 배치 (arrangement, the time estimate,
+// the timing reference) and 내보낼 DSP (U2). The start delay and the sweep
+// length are set on 측정·가져오기 only (P58). Changes that clear
 // measurements ask first and offer undo (U5).
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import type { PrimaryAction } from "../../app/StepHeader";
@@ -25,7 +26,6 @@ import {
   IconButton,
   NumberField,
   RoomMap,
-  Segmented,
   Select,
   StatusPill,
   Stepper,
@@ -37,7 +37,6 @@ import {
 import { ARRANGEMENT_COUNTS, PRESET_ROLES, ROLES, orderRoles, roleCode, roleKind, type MicPoint } from "../../ui/maps/geometry";
 import { DSP_NAME, GROUP_NAME, durationText, isKnownRole, noticeText, outputLabel, roleLabel, roleName } from "./text";
 import type { SystemActions, SystemView } from "./types";
-import { START_DELAYS as START_DELAY_VALUES } from "../measure/types";
 import "./system.css";
 
 /** Upstream preset buttons (model.PRESETS) with the 4.0, 4.1, 4.2 and 7.1 presets SECS 2R adds (U13), in order.
@@ -52,14 +51,6 @@ const PRESETS = PRESET_GROUPS.flat();
 
 /** Upstream FIR_TAP_CHOICES (step2_config.py). */
 const FIR_TAP_CHOICES = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536] as const;
-
-/** Stored start-delay values (`extra['start_delay']`, upstream bytes) and their option ids. */
-const START_DELAYS = [
-  { id: "off", stored: START_DELAY_VALUES[0], label: "system.start_delay.off" },
-  { id: "5", stored: START_DELAY_VALUES[1], label: "system.start_delay.5" },
-  { id: "10", stored: START_DELAY_VALUES[2], label: "system.start_delay.10" },
-  { id: "15", stored: START_DELAY_VALUES[3], label: "system.start_delay.15" },
-] as const;
 
 const DSP_ORDER = ["camilla", "tesira", "qsys", "minidsp", "custom"] as const;
 
@@ -647,7 +638,6 @@ function MeasureOptions({ view, actions }: { view: SystemView; actions: SystemAc
   const t = useT();
   const { layout, config, outputChannels, outputNames } = view;
   const timing = layout.timing;
-  const delay = START_DELAYS.find((d) => d.stored === layout.start_delay) ?? START_DELAYS[0];
   // Reference speakers in role order (upstream measurement_roles): every speaker's first band.
   const refs = orderRoles(config.speakers.map((s) => s.role))
     .map((role) => config.speakers.find((s) => s.role === role))
@@ -661,18 +651,26 @@ function MeasureOptions({ view, actions }: { view: SystemView; actions: SystemAc
   const bands = config.speakers.reduce((sum, s) => sum + s.bands.length, 0);
   const timingHint = { acoustic: "system.timing.acoustic.hint", loopback: "system.timing.loopback.hint", none: "system.timing.none.hint" } as const;
   const reference = timing.reference === "loopback" || timing.reference === "none" ? timing.reference : "acoustic";
+  // The estimate comes first; the timing reference (REW only) stays folded
+  // under 고급 at the end, where the other cards keep theirs.
   return (
     <div className="system-options" data-ui="system.options">
-      <Segmented
-        id="system.start_delay"
-        label={t("system.start_delay.label")}
-        value={delay.id}
-        options={START_DELAYS.map((d) => ({ value: d.id, label: t(d.label) }))}
-        onChange={(id) => {
-          const next = START_DELAYS.find((d) => d.id === id);
-          if (next) actions.setStartDelay(next.stored);
-        }}
-      />
+      <div className="system-estimate" data-ui="system.estimate">
+        <span className="ui-field__label">{t("system.estimate.label")}</span>
+        {view.estimate ? (
+          <>
+            <span className="system-estimate__main tabular">{t("system.estimate.per_position", { time: durationText(t, view.estimate.per_position_seconds) })}</span>
+            <span className="system-estimate__sub tabular">
+              {t("system.estimate.total", { count: view.estimate.positions, time: durationText(t, view.estimate.total_seconds) })}
+            </span>
+          </>
+        ) : (
+          <span className="system-estimate__sub">—</span>
+        )}
+        <span className="system-estimate__sub tabular" data-ui="system.sweeps">
+          {t("system.estimate.sweeps", { count: bands })}
+        </span>
+      </div>
       {/* Only REW needs a timing reference: it records each channel on its own.
           The default (the acoustic reference on R, else the first main speaker)
           suits most rooms, so the choice waits folded under 고급. */}
@@ -711,22 +709,6 @@ function MeasureOptions({ view, actions }: { view: SystemView; actions: SystemAc
           </div>
         </Advanced>
       )}
-      <div className="system-estimate" data-ui="system.estimate">
-        <span className="ui-field__label">{t("system.estimate.label")}</span>
-        {view.estimate ? (
-          <>
-            <span className="system-estimate__main tabular">{t("system.estimate.per_position", { time: durationText(t, view.estimate.per_position_seconds) })}</span>
-            <span className="system-estimate__sub tabular">
-              {t("system.estimate.total", { count: view.estimate.positions, time: durationText(t, view.estimate.total_seconds) })}
-            </span>
-          </>
-        ) : (
-          <span className="system-estimate__sub">—</span>
-        )}
-        <span className="system-estimate__sub tabular" data-ui="system.sweeps">
-          {t("system.estimate.sweeps", { count: bands })}
-        </span>
-      </div>
     </div>
   );
 }

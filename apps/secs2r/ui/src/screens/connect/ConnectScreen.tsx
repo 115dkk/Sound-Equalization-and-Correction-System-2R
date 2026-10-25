@@ -5,7 +5,8 @@ import { HelpTip } from "../../ui/HelpTip";
 // 측정 방식 comes first (자체 측정, REW, 모의 측정, or mdat files only, which
 // skips the step). REW gets its connection card; native and REW get the
 // device and mic fields; then the level check plays each channel in turn
-// while the mic meter shows what arrives.
+// while the mic meter shows what arrives. The sweep length is set on
+// 측정·가져오기 only (P58); REW's own appears here as a read-only fact.
 import { type ReactNode } from "react";
 import type { PrimaryAction } from "../../app/StepHeader";
 import { errorText } from "../../app/jobs/jobText";
@@ -16,13 +17,10 @@ import type { MeasureDevice } from "../../ipc/bindings/MeasureDevice";
 import { Advanced, Button, Card, ErrorNotice, Icon, IconButton, LevelMeter, NumberField, Section, Segmented, Select, StatusPill, type Option, type PillTone } from "../../ui";
 import { roleCode, roleKind } from "../../ui/maps/geometry";
 import { roleName } from "../system/text";
-import { sweepName } from "../measure/format";
 import { MicMeterPanel, type MicMeterView } from "./MicMeterPanel";
 import { levelRoles, levelsPassed, missingLevels, pathReady } from "./state";
 import type { ConnectActions, ConnectPath, ConnectView, RewProblem } from "./types";
 import "./connect.css";
-
-const DEFAULT_SWEEP = 262144;
 
 /** REW's audio drivers (`POST /audio/driver`); a name REW reports beyond these (Core Audio and the like) is shown as is. */
 const REW_DRIVERS = ["ASIO", "Java"] as const;
@@ -323,11 +321,6 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
   const names = rew ? (view.rew.details.inputChannelNames ?? []) : [];
   const channelCount = Math.max(names.length, inputDevice?.input_channels ?? 8, settings?.input_channel ?? 1, 1);
   const channelOptions = Array.from({ length: channelCount }, (_, i) => ({ value: String(i + 1), label: inputLabel(t, i + 1, names) }));
-  const sweep = settings?.sweep_length ?? DEFAULT_SWEEP;
-  const sweepOptions = (settings?.sweep_lengths ?? []).map((samples) => ({
-    value: String(samples),
-    label: t("connect.sweep.option", { name: sweepName(samples), seconds: number(samples / Math.max(1, view.sampleRate), 1) }),
-  }));
   const cal = view.rew.details.micCalibration;
   // REW mode lists REW's own devices by name and opens the chosen one in REW; the input channel stays REW's (R7).
   const current = view.rew.details.current;
@@ -472,14 +465,6 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
           <span className="ui-field__label">{t("connect.sample_rate")}</span>
           <span className="connect-readout tabular">{t("connect.sample_rate.value", { rate: number(view.sampleRate) })}</span>
         </div>
-        <Select
-          id="connect.sweep_length"
-          label={t("connect.sweep_length")}
-          value={String(sweep)}
-          options={sweepOptions}
-          help={t("connect.sweep_length.hint")}
-          onChange={(v) => actions.setSweepLength(Number(v))}
-        />
       </div>
       {!rew && (
         <Advanced id="connect.devices.details" label={t("connect.share_mode")} defaultOpen={!!settings?.share_mode && settings.share_mode !== "auto"}>

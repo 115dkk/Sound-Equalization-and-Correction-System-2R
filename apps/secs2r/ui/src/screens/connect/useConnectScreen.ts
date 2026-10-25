@@ -124,7 +124,6 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
         if (!await session.writers.measurement.edit({ output_device })) return;
         if (session.host.getSnapshot().path === "rew") await session.stores.rew.load();
       }),
-      setSweepLength: (sweep_length) => session.run(() => session.writers.measurement.edit({ sweep_length })),
       setShareMode: (share_mode) => session.run(() => session.writers.measurement.edit({ share_mode })),
       playLevel: (role) => play([role], false),
       stopLevel: () => session.run(stop),

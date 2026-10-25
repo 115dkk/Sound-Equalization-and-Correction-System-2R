@@ -10,7 +10,11 @@ import { systemStepState } from "./state";
 import { OUTPUT_LIMIT, SystemScreen, systemHeader } from "./SystemScreen";
 import type { SystemActions, SystemView } from "./types";
 
-/** Every id docs/M5-reach.md cites for 시스템 (sections 2 and 4), with a role or number filled in. */
+/**
+ * Every id docs/M5-reach.md cites for 시스템 (sections 2 and 4), with a role or
+ * number filled in. The start delay row there names `measure.options.delay`,
+ * which 측정·가져오기 draws (MeasureScreen.test.tsx).
+ */
 export const REACH_IDS = [
   "system.config",
   "system.preset",
@@ -54,7 +58,6 @@ export const REACH_IDS = [
   "system.arrangement.17",
   "system.arrangement.map",
   "system.arrangement.map.position.1",
-  "system.start_delay",
   "system.sweeps",
   "system.estimate",
   "system.timing.advanced",
@@ -82,7 +85,6 @@ function actionsMock(token: string | null = "undo-7") {
     setDspPreset: vi.fn(),
     setDspFields: vi.fn(),
     setArrangement: vi.fn(async () => token),
-    setStartDelay: vi.fn(),
     setTiming: vi.fn(),
     undo: vi.fn(async () => {}),
     next: vi.fn(),
@@ -302,10 +304,13 @@ describe("SystemScreen", () => {
     expect(must("system.dsp.note").textContent).toContain("1,365");
   });
 
-  it("sets the start delay and, folded under 고급 on the REW path, the timing reference", () => {
+  it("sets the timing reference folded under 고급 on the REW path, after the estimate", () => {
     const actions = setup(sampleView);
-    fireEvent.click(must("system.start_delay.10"));
-    expect(actions.setStartDelay).toHaveBeenCalledWith("10 초");
+    // The start delay is set on 측정·가져오기 only (P58).
+    expect(ui("system.start_delay")).toBeNull();
+    const options = must("system.options");
+    expect(options.firstElementChild).toBe(must("system.estimate"));
+    expect(options.lastElementChild?.contains(must("system.timing.advanced"))).toBe(true);
     expect(ui("system.timing")).toBeNull();
     fireEvent.click(must("system.timing.advanced"));
     fireEvent.change(must("system.timing.role"), { target: { value: "C" } });
@@ -316,7 +321,7 @@ describe("SystemScreen", () => {
 
   it("hides the timing reference unless REW measures: native keeps arrival times in one recording", () => {
     setup({ ...sampleView, rew: false });
-    expect(ui("system.start_delay")).not.toBeNull();
+    expect(ui("system.estimate")).not.toBeNull();
     expect(ui("system.timing.advanced")).toBeNull();
     expect(ui("system.timing")).toBeNull();
     expect(ui("system.timing.role")).toBeNull();

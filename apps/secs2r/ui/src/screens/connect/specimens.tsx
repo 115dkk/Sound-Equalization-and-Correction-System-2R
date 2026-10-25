@@ -38,7 +38,6 @@ const noopConnectActions: ConnectActions = {
   setInputDevice: () => {},
   setInputChannel: () => {},
   setOutputDevice: () => {},
-  setSweepLength: () => {},
   setShareMode: () => {},
   playLevel: () => {},
   stopLevel: () => {},

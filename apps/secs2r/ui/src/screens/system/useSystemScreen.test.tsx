@@ -129,11 +129,9 @@ describe("useSystemScreen", () => {
     await perform(() => a.setDspFields(fields));
     expect(mock.calls).toContainEqual({ method: "dsp_set", params: { preset: null, fields } });
     await perform(() => a.setArrangement(13));
-    await perform(() => a.setStartDelay("10 초"));
     const timing = session.stores.layout.getSnapshot()!.timing;
     await perform(() => a.setTiming(timing));
     expect(mock.calls).toContainEqual({ method: "layout_set", params: { count: 13, start_delay: null, timing: null, confirm: true } });
-    expect(mock.calls).toContainEqual({ method: "layout_set", params: { count: null, start_delay: "10 초", timing: null, confirm: false } });
     expect(mock.calls).toContainEqual({ method: "layout_set", params: { count: null, start_delay: null, timing, confirm: false } });
     await perform(a.next); expect(session.host.getSnapshot().current).toBe("connect");
     // The button says 연결·점검으로 on the mdat path too; that screen leads on to 측정·가져오기.

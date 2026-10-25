@@ -46,7 +46,6 @@ export function useSystemScreen(configureMeasurement?: () => void): { view: Syst
         session.run(() => session.writers.dsp.edit(patch));
       },
       setArrangement: async (count) => (await session.call({ method: "layout_set", params: { count, start_delay: null, timing: null, confirm: true } })).undo_token,
-      setStartDelay: (start_delay) => session.run(() => session.writers.layout.edit({ start_delay })),
       setTiming: (timing) => session.run(() => session.writers.layout.edit({ timing })),
       undo: async (token) => { await session.call({ method: "undo", params: { token } }); },
       // The label says 연결·점검; on the mdat path that screen shows the skipped note and leads on to 측정·가져오기.
