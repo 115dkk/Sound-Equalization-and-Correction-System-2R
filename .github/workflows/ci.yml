@@ -476,8 +476,10 @@ jobs:
       - name: cargo deny check
         run: cargo deny --all-features check
 
+  # The check name stays as the default branch's "Required checks" ruleset
+  # knows it; the job also runs secs-project's parsers (audit #92 TD-60).
   miri:
-    name: Miri (secs-jos, secs-mdat, secs-dirac, secs-project parsers)
+    name: Miri (secs-jos, secs-mdat, secs-dirac)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
