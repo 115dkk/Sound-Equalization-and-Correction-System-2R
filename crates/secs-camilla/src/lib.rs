@@ -22,12 +22,10 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Sample rate used by every exported FIR and delay.
-pub const SAMPLE_RATE: u32 = 48_000;
-/// Upstream Dolby LFE playback gain.
-pub const LFE_GAIN_DB: f64 = 10.0;
-/// Upstream Dolby LFE content low-pass frequency.
-pub const LFE_LP_HZ: f64 = 120.0;
+// The export graph owns the rate, the LFE defaults and the delay rounding
+// every writer shares; they stay reachable here under their old names.
+pub use secs_graph::{LFE_GAIN_DB, LFE_LP_HZ, SAMPLE_RATE, is_negative_delay, round_ties_even_i64};
+
 const CONFIG_DIR: &str = "configs";
 const COEFF_DIR: &str = "coeffs";
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -305,22 +303,6 @@ fn delay_samples(samples: i64) -> Json {
     )
 }
 
-/// Python/NumPy half-even rounding to an integer.
-pub fn round_ties_even_i64(value: f64) -> i64 {
-    let floor = value.floor();
-    let fraction = value - floor;
-    let rounded = if fraction < 0.5 {
-        floor
-    } else if fraction > 0.5 {
-        floor + 1.0
-    } else if (floor as i64) & 1 == 0 {
-        floor
-    } else {
-        floor + 1.0
-    };
-    rounded as i64
-}
-
 /// Serialize an IEEE-float, mono, 32-bit WAV exactly like upstream `write_wav`.
 ///
 /// Fails when a tap is not finite once narrowed to `f32` (`1e100` is a finite
@@ -444,14 +426,6 @@ fn finite(name: &str, value: f64) -> Result<(), CamillaError> {
     } else {
         Err(CamillaError::NonFinite(name.into()))
     }
-}
-
-/// Whether a delay is negative at the writers' resolution: below zero after
-/// the half-to-even rounding to whole 48 kHz samples. A smaller negative
-/// value is float noise that both writers emit as no delay. The Equalizer APO
-/// writer applies the same rule (#92 TD-94).
-pub fn is_negative_delay(milliseconds: f64) -> bool {
-    round_ties_even_i64(milliseconds * f64::from(SAMPLE_RATE) / 1000.0) < 0
 }
 
 /// A delay the writer emits: finite and not negative (#92 TD-94).

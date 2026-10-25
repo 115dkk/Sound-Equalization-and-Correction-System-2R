@@ -17,6 +17,7 @@ num-integer = "0.1.47"
 num-traits = "0.2.19"
 ryu = "=1.0.20"
 secs-dsp.workspace = true
+secs-graph.workspace = true
 secs-types.workspace = true
 thiserror.workspace = true
 
