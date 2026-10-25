@@ -86,6 +86,8 @@ BREAKING_RE = re.compile(r"^[a-z]+(\([^)]*\))?!:|BREAKING[ -]CHANGE", re.MULTILI
 
 CARGO_TOML = Path("Cargo.toml")
 CARGO_LOCK = Path("Cargo.lock")
+# The fuzz workspace (fuzz/Cargo.toml) locks the same path crates.
+FUZZ_LOCK = Path("fuzz/Cargo.lock")
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +212,32 @@ def set_lock_versions(lock: str, old: str, new: str) -> str:
     return new_lock
 
 
+def workspace_packages(lock: str, version: str) -> set[str]:
+    """Names of the workspace packages of a Cargo.lock at ``version``."""
+    return set(re.findall(
+        r'(?m)^\[\[package\]\]\r?\nname = "([^"]+)"\r?\nversion = "'
+        + re.escape(version) + r'"\r?\n(?!source = )',
+        lock,
+    ))
+
+
+def set_member_versions(lock: str, names: set[str], new: str) -> str:
+    """Set ``new`` for the named path packages of another Cargo.lock.
+
+    The fuzz workspace locks the path crates it fuzzes. Its lock was left at
+    an older version by earlier bumps, so the version it holds is replaced
+    whatever it is; its own package and registry packages stay as they are
+    (audit #92 TD-60).
+    """
+    pattern = re.compile(
+        r'(?m)^(\[\[package\]\]\r?\nname = "([^"]+)"\r?\nversion = ")[^"]*("\r?\n)(?!source = )'
+    )
+    return pattern.sub(
+        lambda m: m.group(1) + new + m.group(3) if m.group(2) in names else m.group(0),
+        lock,
+    )
+
+
 # ---------------------------------------------------------------------------
 # I/O wrapper (runs in CI)
 # ---------------------------------------------------------------------------
@@ -258,11 +286,17 @@ def fetch_remote_main(*, tags: bool = False) -> str:
 def _commit_bump(old: str, new: str, started_head: str) -> str | None:
     """Commit the bump and push it to main; None when main moved meanwhile."""
     _write(CARGO_TOML, set_workspace_version(_read(CARGO_TOML), new))
-    _write(CARGO_LOCK, set_lock_versions(_read(CARGO_LOCK), old, new))
+    lock = _read(CARGO_LOCK)
+    members = workspace_packages(lock, old)
+    _write(CARGO_LOCK, set_lock_versions(lock, old, new))
+    staged = [str(CARGO_TOML), str(CARGO_LOCK)]
+    if FUZZ_LOCK.exists():
+        _write(FUZZ_LOCK, set_member_versions(_read(FUZZ_LOCK), members, new))
+        staged.append(str(FUZZ_LOCK))
     _run("git", "config", "user.name", "github-actions[bot]")
     _run("git", "config", "user.email",
          "41898282+github-actions[bot]@users.noreply.github.com")
-    _run("git", "add", str(CARGO_TOML), str(CARGO_LOCK))
+    _run("git", "add", *staged)
     _run("git", "commit", "-m", bump_commit_message(new))
     # The push goes over SSH with the release deploy key (the gate's checkout),
     # which the default branch's "Required checks" ruleset lets through; the

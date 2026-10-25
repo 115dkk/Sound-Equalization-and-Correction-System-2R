@@ -477,7 +477,7 @@ jobs:
         run: cargo deny --all-features check
 
   miri:
-    name: Miri (secs-jos, secs-mdat, secs-dirac)
+    name: Miri (secs-jos, secs-mdat, secs-dirac, secs-project parsers)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -495,6 +495,15 @@ jobs:
       # they run natively in the test job.
       - name: cargo miri test
         run: cargo "+$NIGHTLY" miri test --locked -p secs-jos -p secs-mdat -p secs-dirac
+
+      # secs-project reads untrusted .secs text and IR WAVs. Its pure parsers
+      # run under Miri: the JSON reader (unit tests) and the WAV readers on
+      # hand-built byte fixtures. The store tests touch the file system and run
+      # natively in the test job (audit #92 TD-60).
+      - name: cargo miri test (secs-project parsers)
+        run: |
+          cargo "+$NIGHTLY" miri test --locked -p secs-project --lib
+          cargo "+$NIGHTLY" miri test --locked -p secs-project --test golden -- wav_reader truncated_wav_data
 
   fuzz:
     name: fuzz (parsers, 60 s per target)
@@ -524,15 +533,28 @@ jobs:
       - name: Build the fuzz targets
         run: cargo "+$NIGHTLY" fuzz build --target "$FUZZ_TARGET"
 
-      # Seeds: the bundled REW template, the mdat golden blobs and the
-      # synthetic Dirac Live project (sample projects hold personal data).
+      # Seeds per target, in the format each parser reads (audit #92 TD-60):
+      # the bundled REW template and the mdat golden blobs for the mdat and
+      # jos parsers, the synthetic Dirac Live project, the service golden
+      # .secs files and the project WAV goldens (the real sample projects
+      # hold personal data). An unknown target fails here so it gets seeds.
       - name: Run every target
         run: |
           for target in $(cargo "+$NIGHTLY" fuzz list); do
             mkdir -p "corpus/$target"
-            cp ../src/secs/rew_mdat/template_1.mdat "corpus/$target/template"
-            cp ../oracle/goldens/mdat/*.bin "corpus/$target/"
-            cp ../crates/secs-dirac/tests/data/*.liveproject "corpus/$target/"
+            case "$target" in
+              jos_parse|mdat_load|mdat_build_template)
+                cp ../src/secs/rew_mdat/template_1.mdat "corpus/$target/template"
+                cp ../oracle/goldens/mdat/*.bin "corpus/$target/" ;;
+              liveproject_parse)
+                cp ../crates/secs-dirac/tests/data/*.liveproject "corpus/$target/" ;;
+              project_load_text)
+                cp ../oracle/goldens/service_config/*.secs "corpus/$target/" ;;
+              wav_read)
+                cp ../oracle/goldens/project/wav_*.wav "corpus/$target/" ;;
+              *)
+                echo "::error::fuzz target $target has no seeds in ci.yml"; exit 1 ;;
+            esac
             echo "::group::$target"
             cargo "+$NIGHTLY" fuzz run --target "$FUZZ_TARGET" "$target" "corpus/$target" -- \
               -max_total_time=60 -rss_limit_mb=2048 -max_len=262144

@@ -37,11 +37,13 @@ python3 .github/scripts/check_feature_tests.py
 
 화면 의존성은 Node 24(npm 11)로 설치합니다. npm 10은 이 의존성 묶음에서 피어 해석이 실패합니다.
 
-신뢰할 수 없는 파일을 읽는 크레이트(`secs-jos`, `secs-mdat`, `secs-dirac`, 앞으로 `secs-project`)를 고치면 CI의 `miri`·`fuzz` 잡과 같은 것을 돌립니다. nightly는 `ci.yml`의 `NIGHTLY`로 고정합니다.
+신뢰할 수 없는 파일을 읽는 크레이트(`secs-jos`, `secs-mdat`, `secs-dirac`, `secs-project`)를 고치면 CI의 `miri`·`fuzz` 잡과 같은 것을 돌립니다. `secs-project`는 파일 시스템을 쓰지 않는 파서 테스트만 Miri로 돌립니다. nightly는 `ci.yml`의 `NIGHTLY`로 고정하고, fuzz 대상마다 넣는 seed는 `ci.yml`의 fuzz 잡에 있습니다(새 대상은 seed를 정해야 CI가 통과합니다).
 
 ```sh
 cargo +nightly-2026-10-01 miri test --locked -p secs-jos -p secs-mdat -p secs-dirac
-(cd fuzz && cargo +nightly-2026-10-01 fuzz run jos_parse -- -max_total_time=60)
+cargo +nightly-2026-10-01 miri test --locked -p secs-project --lib
+cargo +nightly-2026-10-01 miri test --locked -p secs-project --test golden -- wav_reader truncated_wav_data
+(cd fuzz && cargo +nightly-2026-10-01 fuzz run --target x86_64-unknown-linux-gnu wav_read -- -max_total_time=60)
 ```
 
 ## 브랜치와 릴리스
