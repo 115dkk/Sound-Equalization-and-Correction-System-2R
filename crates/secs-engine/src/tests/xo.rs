@@ -223,6 +223,40 @@ fn xo_parallel_order_progress_and_cancellation() {
 }
 
 #[test]
+fn xo_recommendation_reports_a_position_missing_a_sub() {
+    // TD-48: BA and RC only use complete positions, so the candidate designs
+    // succeed; scoring replays every position where a main was measured and
+    // used to panic there instead of reporting the incomplete measurement.
+    let mut case = cases::load("room");
+    let (_, roles) = case
+        .measurements
+        .positions
+        .iter_mut()
+        .find(|(p, _)| *p == 2)
+        .unwrap();
+    roles.retain(|(r, _)| r != "SW2");
+    let settings = serde_json::from_value(case.settings.clone()).unwrap();
+    let view = crate::ProjectView {
+        groups: &case.config.groups,
+        project_xo: &case.config.xo,
+        target: &case.config.target,
+    };
+    let result = recommend_xo(
+        &view,
+        &case.measurements,
+        &settings,
+        &case.tuning,
+        &[80.0],
+        &Context::serial(),
+    );
+    assert!(
+        matches!(&result, Err(crate::EngineError::Input(message))
+            if message == "position 2 L: missing SW2 for crossover scoring"),
+        "{result:?}"
+    );
+}
+
+#[test]
 fn xo_candidates_share_the_job_budget() {
     use secs_compute::{CancelToken, MemoryBudget, NoProgress};
     use std::sync::Arc;

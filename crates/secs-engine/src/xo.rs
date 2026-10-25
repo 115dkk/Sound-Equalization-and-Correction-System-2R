@@ -100,7 +100,8 @@ pub fn xo_groups(config: &EngineConfig) -> Vec<String> {
 ///
 /// `measurements` and `config` must be the valid inputs used for `design`.
 /// Panics if they are invalid or a scored main's required sub measurement is missing,
-/// as upstream does; recommendation propagates input errors before reaching here.
+/// as upstream does; recommendation checks both (`check_scored_positions`) and
+/// returns input errors before reaching here.
 pub fn xo_scores(
     design: &Design,
     measurements: &MeasurementSet,
@@ -109,6 +110,37 @@ pub fn xo_scores(
     let prepared = measurement::prepare(measurements, config, &Setup::new(config))
         .expect("measurements belonging to the design");
     xo_scores_prepared(design, measurements, config, &prepared, None)
+}
+
+/// What `xo_scores` replays (TD-48): every main it scores (a group member
+/// measured at the reference) at every position where that main was measured,
+/// through `stage_responses`, which needs every sub there whenever the main has
+/// a crossover. BA and RC only use complete positions, so a design succeeds
+/// without them. Recommendation gives every group a nonzero crossover, so each
+/// such position must hold every sub; the first one that does not is named.
+fn check_scored_positions(set: &MeasurementSet, config: &EngineConfig) -> Result<(), EngineError> {
+    let scored = config
+        .groups
+        .iter()
+        .filter(|(group, _)| group != "sub")
+        .flat_map(|(_, roles)| roles)
+        .filter(|role| {
+            config.mains.contains(role) && set.get(config.main_position, role).is_some()
+        });
+    for role in scored {
+        for (position, measured) in &set.positions {
+            let has = |r: &str| measured.iter().any(|(m, _)| m == r);
+            if !has(role) {
+                continue;
+            }
+            if let Some(sub) = config.subs.iter().find(|sub| !has(sub)) {
+                return Err(EngineError::Input(format!(
+                    "position {position} {role}: missing {sub} for crossover scoring"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 struct ScoreWindows {
@@ -283,6 +315,9 @@ pub fn recommend_xo(
             &Setup::new(&inputs.config),
         )?)
     };
+    if prepared.is_some() {
+        check_scored_positions(&inputs.measurements, &inputs.config)?;
+    }
     // Window lengths, taper, onset and time origin are all XO-independent.
     // Applying final sub filters here would not be: BA can change them.
     let windows = prepared
