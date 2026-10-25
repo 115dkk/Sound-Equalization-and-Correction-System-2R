@@ -145,6 +145,15 @@ async function inProgress(mock: MockService) {
   await measured(mock);
 }
 
+/** Corrected, a setting changed, saved and reopened: the result comes back from the project cache, no longer current. */
+async function staleCache(mock: MockService) {
+  await inProgress(mock);
+  await calibrated(mock);
+  await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mode", mode: "linear" } } });
+  await mock.request({ method: "project_save", params: { path: PROJECT_PATH } });
+  await mock.request({ method: "project_open", params: { path: PROJECT_PATH } });
+}
+
 /**
  * Answers one method with a fixed reply instead of the mock's. The tour
  * mounts the App on `mock.invoke` (looked up per call), so a setup can shape
@@ -621,6 +630,30 @@ export const TOUR_SCENES: TourScene[] = [
       await mimo(mock);
     },
     ops: [...choosePath("native", "export"), reveal(ui("export.files"))],
+  },
+  {
+    id: "export.stale-cache",
+    step: "export",
+    title: { ko: "구 버전 결과의 mdat", en: "mdat for a result from an earlier version" },
+    note: {
+      ko: "보정한 뒤 설정을 바꾸고 저장한 프로젝트를 다시 열어, 두 mdat 줄이 막히고 문장 뒤에 '재보정'이 섭니다.",
+      en: "A project saved after a settings change and reopened: both mdat rows are blocked, with 'Recalibrate' after the sentence.",
+    },
+    setup: staleCache,
+    ops: [...choosePath("native", "export"), click(ui("export.advanced")), reveal(ui("export.kind.before_after_mdat"))],
+  },
+  {
+    id: "export.recalibrating",
+    step: "export",
+    title: { ko: "mdat 줄에서 시작한 재보정", en: "Recalibrating from an mdat row" },
+    setup: staleCache,
+    ops: [
+      ...choosePath("native", "export"),
+      click(ui("export.advanced")),
+      reveal(ui("export.kind.before_after_mdat")),
+      click(ui("export.kind.before_after_mdat.recalibrate")),
+      page(flush),
+    ],
   },
   {
     id: "export.failed",

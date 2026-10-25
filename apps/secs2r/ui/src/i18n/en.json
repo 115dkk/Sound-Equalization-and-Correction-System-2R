@@ -1113,6 +1113,7 @@
   "export.blocked.filter_text.subs": "A result with subs (BA) cannot be exported as text. Export as a CamillaDSP or Equalizer APO configuration.",
   "export.blocked.filter_text.mimo": "A result with MIMO cannot be saved as text. Turn off MIMO in Correction to save it.",
   "export.blocked.mdat.stale_cache": "These values were measured with an earlier version. Recalibrate to export mdat.",
+  "export.blocked.mdat.recalibrate": "Recalibrate",
   "export.run.busy": "Saving",
   "export.run.done": "Files saved: {count} → {path}",
   "export.run.tutorial": "Not saved · tutorial",

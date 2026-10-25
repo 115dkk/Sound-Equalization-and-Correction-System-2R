@@ -57,6 +57,19 @@ export const exportStale: ExportView = {
   results: { calibration: { ...calibrationSummary, stale: true }, mimo: { ...exportMimo, stale: true } },
 };
 
+/**
+ * A reopened project whose result came from the project cache and no longer
+ * matches the inputs: CamillaDSP still exports it, both mdat formats need a
+ * new correction (`stale_cache`, #92 TD-09).
+ */
+export const exportStaleCache: ExportView = {
+  ...exportStale,
+  results: { ...exportStale.results, calibration: { ...calibrationSummary, stale: true, cached: true } },
+};
+
+/** The same, with the correction 재보정 started running. */
+export const exportRecalibrating: ExportView = { ...exportStaleCache, computing: true, recalibrating: true };
+
 export const exportExporting: ExportView = { ...exportReady, exporting: "before_after_mdat" };
 
 export const exportDone: ExportView = {

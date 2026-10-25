@@ -254,7 +254,7 @@
 .export-item__blocked {
   grid-column: 1 / -1;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border-radius: var(--radius-md);
@@ -262,9 +262,31 @@
   color: var(--text-muted);
 }
 
-.export-item__blocked .ui-icon {
+.export-item__blocked-text {
+  display: flex;
+  flex: 0 1 auto;
+  align-items: flex-start;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.export-item__blocked-text .ui-icon {
   flex: none;
   margin-top: 1px;
+}
+
+/* With the action that lifts it, the notice is as wide as its words and the
+   action (DESIGN.md §1, like .ui-error): the action closes the box at the
+   inset the icon opens it with, at the box's middle height, level with the
+   words it answers, not at the far edge of the row. */
+.export-item__blocked:has(> .export-item__blocked-action) {
+  justify-self: start;
+  max-width: 100%;
+}
+
+.export-item__blocked-action {
+  flex: none;
+  margin-left: var(--space-2);
 }
 
 .export-outcome {

@@ -20,7 +20,9 @@ import {
   exportNoResult,
   exportRcOnly,
   exportReady,
+  exportRecalibrating,
   exportStale,
+  exportStaleCache,
   exportTutorial,
 } from "./fixtures";
 import type { ExportActions, ExportView } from "./types";
@@ -102,6 +104,12 @@ export const exportSpecimens: SpecimenDef[] = [
   frame("screen.export.empty", "Export · no correction yet", () => <ExportSpecimen view={exportNoResult} />),
   frame("screen.export.computing", "Export · first correction computing", () => <ExportSpecimen view={exportComputingFirst} jobs={calibrateJob} />),
   frame("screen.export.stale", "Export · stale result (settings changed)", () => <ExportSpecimen view={exportStale} />),
+  frame("screen.export.stale-cache", "Export · reopened project, result from an earlier version: both mdat rows blocked, 재보정 after the sentence", () => (
+    <ExportSpecimen view={exportStaleCache} initialAdvanced scrolled="export.kind.before_after_mdat" />
+  )),
+  frame("screen.export.recalibrating", "Export · 재보정 running from an mdat row: the button busy, every export off", () => (
+    <ExportSpecimen view={exportRecalibrating} jobs={calibrateJob} initialAdvanced scrolled="export.kind.before_after_mdat" />
+  )),
   frame("screen.export.ready", "Export · ready, MIMO included", () => <ExportSpecimen view={exportReady} />),
   frame("screen.export.filters", "Export · subs and MIMO: the text and Equalizer APO rows say why they are off", () => (
     <ExportSpecimen view={exportReady} scrolled="export.files" />
