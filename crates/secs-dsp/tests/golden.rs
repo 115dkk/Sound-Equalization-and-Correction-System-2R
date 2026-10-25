@@ -230,6 +230,55 @@ fn golden_iir() {
         );
     }
 }
+/// TD-51: a wide odd-order band-pass turns the real prototype pole into two
+/// real digital poles, which SciPy's `zpk2sos(pairing='nearest')` pairs with
+/// each other. Expected rows from SciPy 1.18.1 (NumPy 2.5.4), printed with
+/// `repr` in a venv made by
+/// `python3 -m venv /tmp/scipy && /tmp/scipy/bin/pip install scipy==1.18.1 numpy`:
+///
+/// ```text
+/// /tmp/scipy/bin/python -c "from scipy import signal
+/// for n in (1, 3):
+///     print([[repr(float(v)) for v in r] for r in signal.butter(
+///         n, [1.0, 100.0], btype='bandpass', fs=600.0, output='sos')])"
+/// ```
+///
+/// Order 3 mixes the real pair (middle row) with two conjugate pairs. The
+/// tolerance is `golden_iir`'s coefficient budget.
+#[test]
+fn butter_wide_odd_bandpass_pairs_real_poles() {
+    let expected: [&[[f64; 6]]; 2] = [
+        &[[
+            0.36321547845888136,
+            0.0,
+            -0.36321547845888136,
+            1.0,
+            -1.26589218432734,
+            0.2735690430822371,
+        ]],
+        &[
+            [
+                0.06233479125291227,
+                0.12466958250582454,
+                0.06233479125291227,
+                1.0,
+                -0.7058461230278941,
+                0.4023915989582585,
+            ],
+            [1.0, 0.0, -1.0, 1.0, -1.26589218432734, 0.2735690430822371],
+            [1.0, -2.0, 1.0, 1.0, -1.9895692076840648, 0.9896792741673824],
+        ],
+    ];
+    for (order, rows) in [1, 3].into_iter().zip(expected) {
+        let sos = iir::butter(order, &[1.0, 100.0], iir::BType::Bandpass, 600.0).unwrap();
+        close(
+            &format!("butter bandpass order {order} 1-100 Hz at 600 Hz"),
+            &sos.0.iter().flatten().copied().collect::<Vec<_>>(),
+            &rows.iter().flatten().copied().collect::<Vec<_>>(),
+            1.5 * 1.2876814476858912e-16,
+        );
+    }
+}
 #[test]
 fn golden_firwin() {
     for fx in Fixture::all("dsp", "fir_") {
