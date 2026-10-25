@@ -38,8 +38,7 @@ impl Service {
         }
         let stale = calibration.is_some_and(crate::results::RunView::stale);
         let now = (self.deps.clock)();
-        let description =
-            crate::export_run::describe(&open.results, project, &compute_key, params.kind, now)?;
+        let description = crate::export_run::describe(&open.results, project, &compute_key, now)?;
         let mdat = matches!(
             params.kind,
             ExportKind::BeforeAfterMdat | ExportKind::StagedMdat
@@ -228,8 +227,6 @@ impl Service {
                     job.begin_commit()?;
                     let run = ExportRun {
                         design: &design,
-                        measurements: design.replay.measurements(),
-                        config: design.replay.config(),
                         settings: &settings,
                     };
                     let mut uuid = lock(&uuid);

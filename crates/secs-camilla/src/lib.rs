@@ -11,6 +11,7 @@
 //! [`ExportGraph`] validates the chain and its MIMO paths; the writer checks
 //! only its own options. Every check runs before the first file is written.
 
+pub mod note;
 pub mod pyfmt;
 
 use pyfmt::{format_fixed, format_g, format_i3, format_s30, repr_f64, round_ndigits};
@@ -94,17 +95,12 @@ pub struct Config {
 /// Labels needed by the calibration-level export wrapper.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RunLabels {
-    /// Correction mode.
+    /// Mode name ([`note::mode_name`]), also the configuration's file name.
     pub mode: String,
-    /// Ultra-mode latency budget.
-    pub ultra_ms: f64,
+    /// ASCII header note ([`note::camilla_note`]).
+    pub note: String,
     /// Total filter latency.
     pub latency_ms: f64,
-    /// Room-correction upper bound.
-    pub rc_hi_hz: f64,
-    /// Per-input MIMO support cap the run used, 0 for none
-    /// (upstream `MimoRun.max_supports`).
-    pub mimo_max_supports: usize,
 }
 
 /// CamillaDSP export failure.
@@ -1342,47 +1338,20 @@ pub fn export(
     labels: &RunLabels,
     mimo: Option<&MimoPaths>,
 ) -> Result<Vec<PathBuf>, CamillaError> {
-    finite("labels.ultra_ms", labels.ultra_ms)?;
     finite("labels.latency_ms", labels.latency_ms)?;
-    finite("labels.rc_hi_hz", labels.rc_hi_hz)?;
-    let mimo_note = mimo.filter(|paths| !paths.paths.is_empty()).map_or_else(
-        || "no MIMO".to_owned(),
-        |paths| {
-            let kind = if paths.paths.iter().any(|path| path.filter.is_fir()) {
-                "FIR"
-            } else {
-                "IIR"
-            };
-            let cap = if labels.mimo_max_supports == 0 {
-                String::new()
-            } else {
-                format!(", max {} per input", labels.mimo_max_supports)
-            };
-            format!(
-                "MIMO {kind} support paths {} (Fsiso {} Hz{cap})",
-                paths.paths.len(),
-                format_g(paths.fsiso, false)
-            )
-        },
-    );
-    let note = format!(
-        "mode {}, total latency {} ms, RC upper {} Hz; {mimo_note}",
-        labels.mode,
-        format_fixed(labels.latency_ms, 1, false),
-        format_fixed(labels.rc_hi_hz, 0, false)
-    );
-    let mode = if labels.mode == "ultra" {
-        format!("ultra{}", format_g(labels.ultra_ms, false))
-    } else {
-        labels.mode.clone()
-    };
     let options = Options {
-        note,
+        note: labels.note.clone(),
         latency_ms: Some(labels.latency_ms),
-        mode: mode.clone(),
+        mode: labels.mode.clone(),
         ..Options::default()
     };
-    write_config(chain, folder, &format!("secs_{mode}"), &options, mimo)
+    write_config(
+        chain,
+        folder,
+        &format!("secs_{}", labels.mode),
+        &options,
+        mimo,
+    )
 }
 
 #[cfg(test)]

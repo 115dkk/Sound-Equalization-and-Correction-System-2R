@@ -967,10 +967,9 @@ fn eqapo_public_exports_use_single_assignments_f11() {
             chain: &chain,
             mimo: None,
             mode: if fir { "mixed" } else { "zero" },
-            ultra_ms: 200.0,
+            note: &export_note(if fir { "mixed" } else { "zero" }, 0.0, 100.0, None),
             label: "Interop synthetic",
             latency_ms: 0.0,
-            rc_hi_hz: 100.0,
             rc_pieces: &[],
             stamp: "2026-10-21 00:00",
         };
@@ -1278,11 +1277,15 @@ fn public_wrappers_match_oracle_and_eqapo_carries_mimo_f12() {
     let run = FilterRun {
         chain: &rc_chain,
         mimo: None,
-        mode: run_value["mode"].as_str().unwrap(),
-        ultra_ms: number(&run_value["ultra_ms"]),
+        mode: &export_mode(run_value),
+        note: &export_note(
+            &export_mode(run_value),
+            number(&run_value["latency_ms"]),
+            number(&run_value["rc_hi_hz"]),
+            None,
+        ),
         label: &label,
         latency_ms: number(&run_value["latency_ms"]),
-        rc_hi_hz: number(&run_value["rc_hi_hz"]),
         rc_pieces: &rc_pieces,
         stamp: &stamp,
     };
@@ -1299,11 +1302,15 @@ fn public_wrappers_match_oracle_and_eqapo_carries_mimo_f12() {
     let run = FilterRun {
         chain: &ba_chain,
         mimo: None,
-        mode: value["mode"].as_str().unwrap(),
-        ultra_ms: number(&value["ultra_ms"]),
+        mode: &export_mode(value),
+        note: &export_note(
+            &export_mode(value),
+            number(&value["latency_ms"]),
+            number(&value["rc_hi_hz"]),
+            None,
+        ),
         label: &label,
         latency_ms: number(&value["latency_ms"]),
-        rc_hi_hz: number(&value["rc_hi_hz"]),
         rc_pieces: &rc_pieces,
         stamp: &stamp,
     };
@@ -1322,11 +1329,15 @@ fn public_wrappers_match_oracle_and_eqapo_carries_mimo_f12() {
     let run = FilterRun {
         chain: &chain,
         mimo: Some(&mimo),
-        mode: value["mode"].as_str().unwrap(),
-        ultra_ms: number(&value["ultra_ms"]),
+        mode: &export_mode(value),
+        note: &export_note(
+            &export_mode(value),
+            number(&value["latency_ms"]),
+            number(&value["rc_hi_hz"]),
+            Some(&mimo),
+        ),
         label: &label,
         latency_ms: number(&value["latency_ms"]),
-        rc_hi_hz: number(&value["rc_hi_hz"]),
         rc_pieces: &rc_pieces,
         stamp: &stamp,
     };
@@ -1385,11 +1396,15 @@ fn computed_public_wrappers_match_oracle_files() {
         let run = FilterRun {
             chain: &chain,
             mimo: None,
-            mode: value["mode"].as_str().unwrap(),
-            ultra_ms: number(&value["ultra_ms"]),
+            mode: &export_mode(value),
+            note: &export_note(
+                &export_mode(value),
+                number(&value["latency_ms"]),
+                number(&value["rc_hi_hz"]),
+                None,
+            ),
             label: &label,
             latency_ms: number(&value["latency_ms"]),
-            rc_hi_hz: number(&value["rc_hi_hz"]),
             rc_pieces: &rc_pieces,
             stamp: &stamp,
         };
@@ -1416,11 +1431,15 @@ fn computed_subwoofer_text_scope_matches_oracle() {
     let run = FilterRun {
         chain: &chain,
         mimo: None,
-        mode: value["mode"].as_str().unwrap(),
-        ultra_ms: number(&value["ultra_ms"]),
+        mode: &export_mode(value),
+        note: &export_note(
+            &export_mode(value),
+            number(&value["latency_ms"]),
+            number(&value["rc_hi_hz"]),
+            None,
+        ),
         label: &label,
         latency_ms: number(&value["latency_ms"]),
-        rc_hi_hz: number(&value["rc_hi_hz"]),
         rc_pieces: &rc_pieces,
         stamp: &stamp,
     };
@@ -1453,11 +1472,15 @@ fn invalid_values_write_nothing_and_existing_files_are_replaced_atomically() {
     let bad_run = FilterRun {
         chain: &bad_chain,
         mimo: None,
-        mode: value["mode"].as_str().unwrap(),
-        ultra_ms: number(&value["ultra_ms"]),
+        mode: &export_mode(value),
+        note: &export_note(
+            &export_mode(value),
+            number(&value["latency_ms"]),
+            number(&value["rc_hi_hz"]),
+            None,
+        ),
         label: &label,
         latency_ms: number(&value["latency_ms"]),
-        rc_hi_hz: number(&value["rc_hi_hz"]),
         rc_pieces: &rc_pieces,
         stamp: &stamp,
     };
@@ -1685,4 +1708,16 @@ fn filter_plans_refuse_roles_beyond_letters_and_digits() {
             "{role}: {error}"
         );
     }
+}
+
+fn export_mode(value: &Value) -> String {
+    secs_camilla::note::mode_name(
+        serde_json::from_value(value["mode"].clone()).unwrap(),
+        number(&value["ultra_ms"]),
+    )
+}
+
+fn export_note(mode: &str, latency: f64, rc_hi: f64, mimo: Option<&MimoPaths>) -> String {
+    let mimo = mimo.and_then(|paths| secs_camilla::note::MimoNote::for_paths(paths, 0));
+    secs_camilla::note::eqapo_note(mode, latency, rc_hi, mimo.as_ref())
 }

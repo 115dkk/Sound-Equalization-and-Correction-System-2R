@@ -110,7 +110,10 @@ pub fn store_calibration(project: &mut Project, settings: &CalibrationSettings) 
 
 fn calibration_json(settings: &CalibrationSettings) -> PyJson {
     let mut values = vec![
-        ("mode".into(), PyJson::Str(mode_name(settings.mode).into())),
+        (
+            "mode".into(),
+            PyJson::Str(secs_types::calibration::mode_tag(settings.mode).into()),
+        ),
         ("rc_lo".into(), PyJson::Float(settings.rc_lo)),
         ("rc_hi".into(), optional_float(settings.rc_hi)),
         (
@@ -389,13 +392,4 @@ fn f64_map(values: &[(String, f64)]) -> PyJson {
             .map(|(key, value)| (key.clone(), PyJson::Float(*value)))
             .collect(),
     )
-}
-
-fn mode_name(mode: Mode) -> &'static str {
-    match mode {
-        Mode::Zero => "zero",
-        Mode::Mixed => "mixed",
-        Mode::Linear => "linear",
-        Mode::Ultra => "ultra",
-    }
 }

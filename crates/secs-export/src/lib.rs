@@ -10,8 +10,7 @@ use std::{
 
 use secs_camilla::pyfmt::{format_fixed, format_g};
 use secs_engine::{
-    Design, EngineConfig, EngineError, ExportAxis, MeasurementSet, StageResponses,
-    input::LayoutKind, stage_responses,
+    Design, EngineError, ExportAxis, StageResponses, input::LayoutKind, stage_responses,
 };
 use secs_mdat::{MdatError, MeasurementInput, SourceInfo, TEMPLATE};
 use secs_types::{
@@ -28,8 +27,6 @@ pub type Sources = BTreeMap<u32, BTreeMap<String, SourceInfo>>;
 #[derive(Debug)]
 pub struct ExportRun<'a> {
     pub design: &'a Design,
-    pub measurements: &'a MeasurementSet,
-    pub config: &'a EngineConfig,
     pub settings: &'a CalibrationSettings,
 }
 
@@ -61,7 +58,7 @@ pub struct MimoResponses {
 
 /// Typed future seam for M3 MIMO stage responses.
 #[derive(Debug, Clone, Copy)]
-pub enum MimoExport<'a> {
+enum MimoExport<'a> {
     None,
     Responses(&'a MimoResponses),
 }
@@ -94,9 +91,12 @@ pub enum ExportError {
 }
 
 fn chain_text(run: &ExportRun<'_>) -> String {
-    let peq = run.config.peq_bands.unwrap_or(16);
-    if run.config.taps > 0 {
-        format!("PEQ {peq} + FIR {}", grouped(run.config.taps))
+    let peq = run.design.replay.config().peq_bands.unwrap_or(16);
+    if run.design.replay.config().taps > 0 {
+        format!(
+            "PEQ {peq} + FIR {}",
+            grouped(run.design.replay.config().taps)
+        )
     } else {
         format!("PEQ {peq}")
     }
@@ -325,24 +325,17 @@ fn item(
     }
 }
 
-fn replay_view(run: &ExportRun<'_>) -> Result<secs_engine::ExportView, EngineError> {
-    if !run.design.replay.matches(run.measurements, run.config) {
-        return Err(EngineError::Input(
-            "export inputs do not match the design replay".into(),
-        ));
-    }
-    run.design.replay.export_view(run.design)
-}
-
 fn stage_items_with_mimo(
     run: &ExportRun<'_>,
     mimo: MimoExport<'_>,
     label: Option<&str>,
 ) -> Result<Vec<MeasurementInput>, ExportError> {
-    let view = replay_view(run)?;
-    let position = run.config.main_position;
+    let view = run.design.replay.export_view(run.design)?;
+    let position = run.design.replay.config().main_position;
     let subs: Vec<_> = run
-        .config
+        .design
+        .replay
+        .config()
         .subs
         .iter()
         .filter_map(|role| view.spectra.get(position, role))
@@ -522,15 +515,15 @@ fn before_after_items_with_mimo(
     mimo: MimoExport<'_>,
     sources: Option<&Sources>,
 ) -> Result<Vec<MeasurementInput>, ExportError> {
-    let view = replay_view(run)?;
-    let position = run.config.main_position;
+    let view = run.design.replay.export_view(run.design)?;
+    let position = run.design.replay.config().main_position;
     let label = run.settings.label();
     let source_env = sources.and_then(|sources| sources.get(&position));
     let mut items = Vec::new();
     let mut seq = 0;
     for main in &run.design.chain.mains {
         seq += 1;
-        if let Some(measured) = run.measurements.get(position, &main.role) {
+        if let Some(measured) = run.design.replay.measurements().get(position, &main.role) {
             items.push(measured_item(
                 seq,
                 &main.role,
@@ -604,7 +597,7 @@ fn before_after_items_with_mimo(
         }
     }
     for sub in &run.design.chain.subs {
-        if let Some(measured) = run.measurements.get(position, &sub.role) {
+        if let Some(measured) = run.design.replay.measurements().get(position, &sub.role) {
             seq += 1;
             items.push(measured_item(
                 seq,
@@ -665,7 +658,7 @@ pub fn export_mdat(
     export_mdat_with_mimo(run, folder, None, spl_offset_db, now_ms)
 }
 
-pub fn export_mdat_with_mimo(
+fn export_mdat_with_mimo(
     run: &ExportRun<'_>,
     folder: &Path,
     mimo: Option<&MimoResponses>,
@@ -712,7 +705,7 @@ pub fn export_before_after_mdat(
     export_before_after_mdat_with_mimo(run, folder, None, sources, spl_offset_db, now_ms)
 }
 
-pub fn export_before_after_mdat_with_mimo(
+fn export_before_after_mdat_with_mimo(
     run: &ExportRun<'_>,
     folder: &Path,
     mimo: Option<&MimoResponses>,

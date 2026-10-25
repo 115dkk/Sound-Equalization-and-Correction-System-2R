@@ -668,17 +668,14 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
             ExportKind::CamillaDsp => {
                 let snapshot = snapshot_relative_files(&folder, &export.files);
                 let labels = secs_camilla::RunLabels {
-                    mode: match settings.mode {
-                        secs_types::calibration::Mode::Zero => "zero",
-                        secs_types::calibration::Mode::Mixed => "mixed",
-                        secs_types::calibration::Mode::Linear => "linear",
-                        secs_types::calibration::Mode::Ultra => "ultra",
-                    }
-                    .into(),
-                    ultra_ms: settings.ultra_ms,
+                    mode: export_mode(&settings),
+                    note: secs_camilla::note::camilla_note(
+                        settings.mode,
+                        direct.design.chain.latency_ms,
+                        direct.design.rc_hi,
+                        None,
+                    ),
                     latency_ms: direct.design.chain.latency_ms,
-                    rc_hi_hz: direct.design.rc_hi,
-                    mimo_max_supports: settings.mimo_max_supports.max(0) as usize,
                 };
                 let direct_files =
                     secs_camilla::export(&direct.design.chain, &folder, &labels, None).unwrap();
@@ -689,8 +686,6 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                 let direct_folder = root.join(format!("direct-{kind:?}"));
                 let run = secs_export::ExportRun {
                     design: &direct.design,
-                    measurements: &direct.measurements,
-                    config: &direct.config,
                     settings: &settings,
                 };
                 let mut uuid = || Ok(0x1234_5678_9abc_def0);
@@ -727,8 +722,6 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                 let direct_folder = folder.clone();
                 let export_run = secs_export::ExportRun {
                     design: &direct.design,
-                    measurements: &direct.measurements,
-                    config: &direct.config,
                     settings: &settings,
                 };
                 let rc_pieces = secs_export::rc_pieces(&export_run);
@@ -736,16 +729,15 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                 let filter_run = secs_filters::FilterRun {
                     chain: &direct.design.chain,
                     mimo: None,
-                    mode: match settings.mode {
-                        secs_types::calibration::Mode::Zero => "zero",
-                        secs_types::calibration::Mode::Mixed => "mixed",
-                        secs_types::calibration::Mode::Linear => "linear",
-                        secs_types::calibration::Mode::Ultra => "ultra",
-                    },
-                    ultra_ms: settings.ultra_ms,
+                    mode: &export_mode(&settings),
+                    note: &secs_camilla::note::eqapo_note(
+                        &export_mode(&settings),
+                        direct.design.chain.latency_ms,
+                        direct.design.rc_hi,
+                        None,
+                    ),
                     label: &label,
                     latency_ms: direct.design.chain.latency_ms,
-                    rc_hi_hz: direct.design.rc_hi,
                     rc_pieces: &rc_pieces,
                     stamp: "2024-01-02 03:04",
                 };
@@ -846,10 +838,9 @@ fn filter_text_export_matches_direct_and_reopened_bytes_without_redesign() {
         chain: &chain,
         mimo: None,
         mode: "mixed",
-        ultra_ms: settings.ultra_ms,
+        note: &secs_camilla::note::eqapo_note("mixed", summary.latency_ms, rc_hi_hz, None),
         label: &label,
         latency_ms: summary.latency_ms,
-        rc_hi_hz,
         rc_pieces: &rc_pieces,
         stamp: "2024-01-02 03:04",
     };
@@ -2670,4 +2661,8 @@ fn cache_save_failure_is_a_warning_on_a_successful_calculation() {
             .all(|notice| notice.code != "cache_save_failed")
     );
     fs::remove_dir_all(root).unwrap();
+}
+
+fn export_mode(settings: &CalibrationSettings) -> String {
+    secs_camilla::note::mode_name(settings.mode, settings.ultra_ms)
 }

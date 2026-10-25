@@ -1,7 +1,6 @@
 use super::*;
 use crate::{Deps, EventSink, NoEvents, Service, lock};
 use crate::{LocalTime, compute::ComputeIdentity};
-use secs_types::ipc::ExportKind;
 use secs_types::ipc::{CalibrateParams, Envelope, JobEvent, Request, Response};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
@@ -82,18 +81,10 @@ fn live_and_reopened_results_have_equal_descriptions_for_every_export_kind() {
     let live = live.require().unwrap();
     let cached = lock(&reopened.session);
     let cached = cached.require().unwrap();
-    for kind in [
-        ExportKind::CamillaDsp,
-        ExportKind::BeforeAfterMdat,
-        ExportKind::StagedMdat,
-        ExportKind::FilterText,
-        ExportKind::EqualizerApo,
-    ] {
-        assert_eq!(
-            describe(&live.results, live.store.project(), &compute, kind, now).unwrap(),
-            describe(&cached.results, cached.store.project(), &compute, kind, now).unwrap(),
-            "{kind:?}"
-        );
-    }
+    // One description serves every export kind of a result.
+    assert_eq!(
+        describe(&live.results, live.store.project(), &compute, now).unwrap(),
+        describe(&cached.results, cached.store.project(), &compute, now).unwrap(),
+    );
     std::fs::remove_dir_all(root).unwrap();
 }

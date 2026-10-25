@@ -3,6 +3,7 @@
 
 mod support;
 
+use secs_camilla::note;
 use secs_camilla::pyfmt::{format_fixed, format_g, repr_f64, round_ndigits};
 use secs_camilla::{
     CamillaError, Device, DeviceValue, Options, RunLabels, export, make_config, write_config,
@@ -230,13 +231,32 @@ fn direct_options(fixture: &Fixture) -> Options {
 }
 
 fn labels(fixture: &Fixture) -> RunLabels {
-    let labels = &fixture.inputs()["labels"];
+    let cap = fixture.inputs()["labels"]["mimo_max_supports"]
+        .as_u64()
+        .unwrap_or(0) as usize;
+    labels_with_cap(fixture, cap)
+}
+
+/// The labels the service gives this fixture's run, with `max_supports` as
+/// the run's per-input support cap.
+fn labels_with_cap(fixture: &Fixture, max_supports: usize) -> RunLabels {
+    let values = &fixture.inputs()["labels"];
+    let mode: secs_types::calibration::Mode =
+        serde_json::from_value(values["mode"].clone()).unwrap();
+    let mimo = fixture
+        .id
+        .starts_with("export_mimo/")
+        .then(|| note::MimoNote::for_paths(&mimo_paths(fixture), max_supports))
+        .flatten();
     RunLabels {
-        mode: labels["mode"].as_str().unwrap().into(),
-        ultra_ms: number(&labels["ultra_ms"]),
-        latency_ms: number(&labels["latency_ms"]),
-        rc_hi_hz: number(&labels["rc_hi_hz"]),
-        mimo_max_supports: labels["mimo_max_supports"].as_u64().unwrap_or(0) as usize,
+        mode: note::mode_name(mode, number(&values["ultra_ms"])),
+        note: note::camilla_note(
+            mode,
+            number(&values["latency_ms"]),
+            number(&values["rc_hi_hz"]),
+            mimo.as_ref(),
+        ),
+        latency_ms: number(&values["latency_ms"]),
     }
 }
 
@@ -732,8 +752,7 @@ fn mimo_note_names_the_support_cap() {
     let n = mimo.paths.len();
     for (cap, tail) in [(0, ")".to_owned()), (4, ", max 4 per input)".to_owned())] {
         let temp = TempDir::new(&format!("mimo_cap_{cap}"));
-        let mut labels = labels(&fixture);
-        labels.mimo_max_supports = cap;
+        let labels = labels_with_cap(&fixture, cap);
         let written = export(&chain(&fixture), &temp.0, &labels, Some(&mimo)).unwrap();
         let yaml = fs::read_to_string(&written[0]).unwrap();
         let fsiso = secs_camilla::pyfmt::format_g(mimo.fsiso, false);

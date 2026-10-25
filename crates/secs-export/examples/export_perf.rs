@@ -19,20 +19,17 @@ fn main() {
     let settings = serde_json::from_value(case.settings).unwrap();
     let run = secs_export::ExportRun {
         design: &case.design,
-        measurements: &case.measurements,
-        config: &case.config,
         settings: &settings,
     };
     let labels = secs_camilla::RunLabels {
-        mode: serde_json::to_value(settings.mode)
-            .unwrap()
-            .as_str()
-            .unwrap()
-            .into(),
-        ultra_ms: settings.ultra_ms,
+        mode: camilla::note::mode_name(settings.mode, settings.ultra_ms),
+        note: camilla::note::camilla_note(
+            settings.mode,
+            case.design.chain.latency_ms,
+            case.design.rc_hi,
+            None,
+        ),
         latency_ms: case.design.chain.latency_ms,
-        rc_hi_hz: case.design.rc_hi,
-        mimo_max_supports: 0,
     };
     if op == "profile_camilla" {
         use sha2::{Digest, Sha256};
@@ -48,12 +45,7 @@ fn main() {
             let stages = std::cell::RefCell::new(Vec::new());
             let previous = std::cell::Cell::new(start);
             let options = camilla::Options {
-                note: format!(
-                    "mode {}, total latency {} ms, RC upper {} Hz; no MIMO",
-                    labels.mode,
-                    camilla::pyfmt::format_fixed(labels.latency_ms, 1, false),
-                    camilla::pyfmt::format_fixed(labels.rc_hi_hz, 0, false)
-                ),
+                note: labels.note.clone(),
                 latency_ms: Some(labels.latency_ms),
                 mode: labels.mode.clone(),
                 ..camilla::Options::default()

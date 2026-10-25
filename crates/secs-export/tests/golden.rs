@@ -281,8 +281,6 @@ fn export_items_and_source_environments_match_oracle() {
         let settings: CalibrationSettings = serde_json::from_value(case.settings).unwrap();
         let run = ExportRun {
             design: &case.design,
-            measurements: &case.measurements,
-            config: &case.config,
             settings: &settings,
         };
         let fixture = Fixture::load("export_mdat", name);
@@ -317,7 +315,7 @@ fn export_items_and_source_environments_match_oracle() {
             &output["before_after"],
         );
         if let Some(sources) = sources {
-            let role_sources = &sources[&run.config.main_position];
+            let role_sources = &sources[&run.design.replay.config().main_position];
             assert!(before_after.iter().any(|item| item.source_info.is_some()));
             for (role, source) in role_sources {
                 let measured = before_after
@@ -357,8 +355,6 @@ fn mimo_items_match_four_oracles() {
         let settings: CalibrationSettings = serde_json::from_value(case.settings).unwrap();
         let run = ExportRun {
             design: &case.design,
-            measurements: &case.measurements,
-            config: &case.config,
             settings: &settings,
         };
         let mimo = mimo_responses(&fixture);
@@ -407,8 +403,6 @@ fn public_exports_use_oracle_filenames_and_replace_existing_files() {
     let settings: CalibrationSettings = serde_json::from_value(case.settings).unwrap();
     let run = ExportRun {
         design: &case.design,
-        measurements: &case.measurements,
-        config: &case.config,
         settings: &settings,
     };
     let fixture = Fixture::load("export_mdat", "room_filters");
@@ -431,36 +425,12 @@ fn public_exports_use_oracle_filenames_and_replace_existing_files() {
 }
 
 #[test]
-fn invalid_export_does_not_create_destination_folder() {
-    let mut case = replay_case("room_filters");
-    case.config.main_position = u32::MAX;
-    let settings: CalibrationSettings = serde_json::from_value(case.settings).unwrap();
-    let run = ExportRun {
-        design: &case.design,
-        measurements: &case.measurements,
-        config: &case.config,
-        settings: &settings,
-    };
-    let root = temp_folder();
-    let folder = root.join("missing");
-
-    assert!(matches!(
-        export_mdat(&run, &folder, None, 0),
-        Err(secs_export::ExportError::Engine(_))
-    ));
-    assert!(!folder.exists());
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
 fn invalid_build_does_not_create_destination_folder() {
     let mut case = replay_case("room_filters");
     case.design.chain.mains.clear();
     let settings: CalibrationSettings = serde_json::from_value(case.settings).unwrap();
     let run = ExportRun {
         design: &case.design,
-        measurements: &case.measurements,
-        config: &case.config,
         settings: &settings,
     };
     let root = temp_folder();
@@ -481,8 +451,6 @@ fn built_projects_match_oracle_structure_and_size() {
         let settings: CalibrationSettings = serde_json::from_value(case.settings).unwrap();
         let run = ExportRun {
             design: &case.design,
-            measurements: &case.measurements,
-            config: &case.config,
             settings: &settings,
         };
         let fixture = Fixture::load("export_mdat", name);

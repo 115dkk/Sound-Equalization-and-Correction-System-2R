@@ -11,7 +11,7 @@
 
 pub mod playback;
 
-use secs_camilla::pyfmt::{format_fixed, format_g, round_ndigits};
+use secs_camilla::pyfmt::{format_fixed, round_ndigits};
 use secs_dsp::Complex64;
 use secs_graph::files::{safe_name, wav_bytes, write_bundle_observed};
 use secs_graph::{
@@ -66,16 +66,14 @@ pub struct FilterRun<'a> {
     pub chain: &'a SignalChain,
     /// MIMO paths only when the run includes MIMO.
     pub mimo: Option<&'a MimoPaths>,
-    /// `zero`, `mixed`, `linear`, or `ultra`.
+    /// Mode name (`secs_camilla::note::mode_name`).
     pub mode: &'a str,
-    /// Ultra-mode budget in milliseconds.
-    pub ultra_ms: f64,
+    /// Equalizer APO's ASCII header note (`secs_camilla::note::eqapo_note`).
+    pub note: &'a str,
     /// Human-facing mode label.
     pub label: &'a str,
     /// Total filter latency.
     pub latency_ms: f64,
-    /// Room-correction upper frequency.
-    pub rc_hi_hz: f64,
     /// Upstream `rc_pieces(run)` strings.
     pub rc_pieces: &'a [String],
     /// Caller-supplied `%Y-%m-%d %H:%M` stamp.
@@ -1199,14 +1197,6 @@ pub fn write_eqapo_observed(
     Ok(written)
 }
 
-fn mode_name(run: &FilterRun<'_>) -> String {
-    if run.mode == "ultra" {
-        format!("ultra{}", format_g(run.ultra_ms, false))
-    } else {
-        run.mode.into()
-    }
-}
-
 /// Calibration-level filter-value export wrapper.
 pub fn export_filter_text(
     run: &FilterRun<'_>,
@@ -1221,7 +1211,7 @@ pub fn export_filter_text(
     }
     validate_run(run)?;
     let graph = ExportGraph::build(run.chain, run.mimo, LfeChoice::DOLBY)?;
-    let mode = mode_name(run);
+    let mode = run.mode;
     let info = vec![
         format!(
             "만든 때 {} · 전체 지연 {} ms · {}",
@@ -1252,32 +1242,13 @@ pub fn export_eqapo(run: &FilterRun<'_>, folder: &Path) -> Result<Vec<PathBuf>, 
     }
     validate_run(run)?;
     let graph = ExportGraph::build(run.chain, run.mimo, LfeChoice::DOLBY)?;
-    let mode = mode_name(run);
-    let mimo_note = if let Some(mimo) = run.mimo {
-        let kind = if mimo.paths.iter().any(|path| path.filter.is_fir()) {
-            "FIR"
-        } else {
-            "IIR"
-        };
-        format!(
-            "MIMO {kind} support paths {} (Fsiso {} Hz)",
-            graph.plan().mimo.len(),
-            format_g(mimo.fsiso, false)
-        )
-    } else {
-        "no MIMO".into()
-    };
-    let note = format!(
-        "mode {mode}, total latency {} ms, RC upper {} Hz; {mimo_note}",
-        format_fixed(run.latency_ms, 1, false),
-        format_fixed(run.rc_hi_hz, 0, false)
-    );
+    let mode = run.mode;
     write_eqapo(
         graph.plan(),
         folder,
         &format!("secs_{mode}"),
         run.label,
-        &note,
+        run.note,
         Some(run.latency_ms),
     )
 }
@@ -1361,9 +1332,7 @@ fn plain_roles(chain: &SignalChain, mimo: Option<&MimoPaths>) -> Result<(), Filt
 fn validate_run(run: &FilterRun<'_>) -> Result<(), FiltersError> {
     identifier("mode", run.mode)?;
     plain_roles(run.chain, run.mimo)?;
-    finite("ultra_ms", run.ultra_ms)?;
     finite("latency_ms", run.latency_ms)?;
-    finite("rc_hi_hz", run.rc_hi_hz)?;
     if run.label.contains(['\0', '/', '\\']) {
         return Err(FiltersError::Invalid(format!(
             "unsafe label {:?}",
