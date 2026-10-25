@@ -300,3 +300,59 @@ fn compute_info_and_process_overrides_are_json_and_missing_gpu_is_typed() {
     assert!(!reopened.contains("compute"));
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn import_mdat_position_applies_to_titles_without_a_position_tag() {
+    let root = root("import-mdat-position");
+    let project = root.join("room.secs");
+    let project_arg = project.to_string_lossy();
+    assert_success(
+        &run(&[
+            "project",
+            "new",
+            &project_arg,
+            "--preset",
+            "7.1.4",
+            "--subs",
+            "1",
+        ])
+        .0,
+    );
+    // Titles "L", "Tfl", "SW1": no position tag.
+    let mdat = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../oracle/goldens/mdat/build_3_real_48000_bytes.bin");
+    assert_success(
+        &run(&[
+            "import-mdat",
+            &project_arg,
+            &mdat.to_string_lossy(),
+            "--position",
+            "3",
+        ])
+        .0,
+    );
+    let saved: Value = serde_json::from_slice(&fs::read(&project).unwrap()).unwrap();
+    let recorded: Vec<(i64, Vec<String>)> = saved["measurements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|entry| {
+            let pos = entry["pos"]
+                .as_i64()
+                .or_else(|| entry["pos"].as_str()?.parse().ok())?;
+            let roles: Vec<String> = entry["ir"]
+                .as_object()?
+                .iter()
+                .filter(|(_, path)| path.as_str().is_some_and(|path| !path.is_empty()))
+                .map(|(role, _)| role.clone())
+                .collect();
+            (!roles.is_empty()).then_some((pos, roles))
+        })
+        .collect();
+    assert_eq!(
+        recorded,
+        [(3, vec!["L".into(), "Tfl".into(), "SW1".into()])],
+        "{saved}"
+    );
+    fs::remove_dir_all(root).unwrap();
+}

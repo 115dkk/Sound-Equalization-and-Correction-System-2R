@@ -424,7 +424,7 @@ fn run(action: Action, runner: &mut Runner) {
             let path = file.to_string_lossy().into_owned();
             let scan = runner.call(Request::MdatScan(MdatScanParams { path: path.clone() }));
             let assignments = match scan {
-                Some(Response::MdatScan(result)) => result.suggestions,
+                Some(Response::MdatScan(result)) => untagged_rows_use_position(result),
                 _ => Vec::new(),
             };
             runner.call(Request::MdatImport(MdatImportParams {
@@ -460,6 +460,25 @@ fn run(action: Action, runner: &mut Runner) {
             mimo,
         } => full_run(runner, &out, project.as_deref(), fill, mimo),
     }
+}
+
+/// Rows whose title names no position keep `--position` (TD-36): the scan's
+/// suggested position for them is only the current position guess.
+fn untagged_rows_use_position(scan: MdatScanResult) -> Vec<MdatAssignment> {
+    scan.suggestions
+        .into_iter()
+        .map(|mut assignment| {
+            let untagged = assignment.index.is_some_and(|index| {
+                scan.measurements
+                    .iter()
+                    .any(|row| row.index == index && !row.position_tagged)
+            });
+            if untagged {
+                assignment.position = None;
+            }
+            assignment
+        })
+        .collect()
 }
 
 fn check(runner: &mut Runner) {
