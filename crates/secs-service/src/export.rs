@@ -22,6 +22,7 @@ impl Service {
         let session = lock(&self.session);
         let state = lock(&self.results_state);
         let open = session.require().map_err(IpcError::from)?;
+        let project_identity = open.identity;
         let project = open.store.project();
         if open.tutorial {
             return Err(IpcError::new(
@@ -269,9 +270,16 @@ impl Service {
                         if let Some(values) = live_values.take() {
                             values
                         } else {
+                            job.report_progress("design", 0, 1);
                             let mut prepared = {
                                 let mut session = lock(&session_for_design);
                                 let open = session.require_mut().map_err(IpcError::from)?;
+                                if open.identity != project_identity {
+                                    return Err(IpcError::new(
+                                        ErrorCode::StaleInputs,
+                                        "project changed while exporting",
+                                    ));
+                                }
                                 let project = open.store.project().clone();
                                 let mut settings = secs_project::calibration_from_project(&project);
                                 if let Some(policy) = cached_sample_rate_policy {
@@ -290,7 +298,6 @@ impl Service {
                                         .map_err(super::calibration::engine_error)?;
                                 (settings, inputs.measurements, inputs.config, inputs.notes)
                             };
-                            job.report_progress("design", 0, 1);
                             let ctx = super::calibration::compute_context(&job, memory);
                             prepared.1 = secs_engine::normalize_measurements(
                                 &prepared.1,

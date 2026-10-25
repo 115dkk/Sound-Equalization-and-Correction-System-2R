@@ -1931,6 +1931,53 @@ fn calibration_preserves_settings_edited_while_the_job_runs() {
 }
 
 #[test]
+fn cached_mdat_export_rejects_project_replacement_before_writing() {
+    let root = temp_root("replace-cached-export");
+    fs::create_dir_all(&root).unwrap();
+    let (source, settings) = write_case(&root, "dolby");
+    let running = service();
+    open(&running, &source);
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&running, calibration_events.clone(), settings);
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+
+    let reopened = service();
+    open(&reopened, &source);
+    let folder = root.join("export");
+    let events = Arc::new(PausedProgress::default());
+    let Response::Export(started) = call_ok(
+        &reopened,
+        Request::Export(ExportParams {
+            kind: ExportKind::StagedMdat,
+            folder: folder.to_string_lossy().into_owned(),
+        }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    events.wait_until_paused();
+    call_ok(
+        &reopened,
+        Request::ProjectNew(ProjectNewParams {
+            path: root.join("replacement.secs").to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    events.release();
+    let finished = events.events.wait(started.job, Duration::from_secs(120));
+    assert!(
+        matches!(finished, JobEvent::Finished { status: JobStatus::Failed, error: Some(ref error), .. }
+            if error.code == ErrorCode::StaleInputs && error.detail == "project changed while exporting")
+    );
+    assert!(!folder.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn project_replacement_rejects_old_compute_commit_and_preserves_completion() {
     for mimo in [false, true] {
         let root = temp_root(if mimo {
