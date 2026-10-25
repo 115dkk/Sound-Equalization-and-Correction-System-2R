@@ -145,10 +145,16 @@ async function inProgress(mock: MockService) {
   await measured(mock);
 }
 
-/** Corrected, a setting changed, saved and reopened: the result comes back from the project cache, no longer current. */
+/**
+ * Corrected, a setting changed, saved and reopened: the result comes back
+ * from the project cache, no longer current. The built-in path is chosen
+ * before saving, since choosing it is an edit that would leave the reopened
+ * project unsaved; the scenes go straight to 내보내기.
+ */
 async function staleCache(mock: MockService) {
   await inProgress(mock);
   await calibrated(mock);
+  await mock.request({ method: "measure_configure", params: { ...MEASURE_DEFAULTS, method: "native" } });
   await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mode", mode: "linear" } } });
   await mock.request({ method: "project_save", params: { path: PROJECT_PATH } });
   await mock.request({ method: "project_open", params: { path: PROJECT_PATH } });
@@ -640,7 +646,7 @@ export const TOUR_SCENES: TourScene[] = [
       en: "A project saved after a settings change and reopened: both mdat rows are blocked, with 'Recalibrate' after the sentence.",
     },
     setup: staleCache,
-    ops: [...choosePath("native", "export"), click(ui("export.advanced")), reveal(ui("export.kind.before_after_mdat"))],
+    ops: [go("export"), click(ui("export.advanced")), reveal(ui("export.kind.before_after_mdat"))],
   },
   {
     id: "export.recalibrating",
@@ -648,7 +654,7 @@ export const TOUR_SCENES: TourScene[] = [
     title: { ko: "mdat 줄에서 시작한 재보정", en: "Recalibrating from an mdat row" },
     setup: staleCache,
     ops: [
-      ...choosePath("native", "export"),
+      go("export"),
       click(ui("export.advanced")),
       reveal(ui("export.kind.before_after_mdat")),
       click(ui("export.kind.before_after_mdat.recalibrate")),
