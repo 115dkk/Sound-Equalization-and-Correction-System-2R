@@ -21,9 +21,47 @@ pub(crate) struct OpenProject {
     pub store: MeasurementStore,
     pub dirty: bool,
     pub tutorial: bool,
+    /// A tutorial's private folder, removed with the session (TD-90).
+    pub tutorial_folder: Option<TutorialFolder>,
     pub cached: Option<crate::cache::CachedResults>,
     pub identity: u64,
     pub undo: std::collections::VecDeque<UndoEntry>,
+}
+
+/// The private folder a tutorial session writes its measurements and
+/// results into instead of the given path (`temp_dir()/secs2r-tutorial-<pid>-<n>`).
+/// Dropping it removes the folder, best effort, so closing, replacing or
+/// opening another project cleans up (TD-90).
+#[derive(Debug)]
+pub(crate) struct TutorialFolder {
+    folder: PathBuf,
+    /// The path the screen gave, reported back unchanged.
+    requested: PathBuf,
+}
+
+impl TutorialFolder {
+    fn create(requested: PathBuf) -> Result<Self, ServiceError> {
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let folder = std::env::temp_dir().join(format!(
+            "secs2r-tutorial-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        // A folder of that name can only be left by an earlier process with this id.
+        let _ = fs::remove_dir_all(&folder);
+        fs::create_dir_all(&folder)?;
+        Ok(Self { folder, requested })
+    }
+
+    fn project(&self) -> PathBuf {
+        self.folder.join("tutorial.secs")
+    }
+}
+
+impl Drop for TutorialFolder {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.folder);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +129,14 @@ impl Session {
             &mut project,
             vec![("method".into(), PyJson::Str("none".into()))],
         );
+        let tutorial_folder = if tutorial {
+            Some(TutorialFolder::create(path.clone())?)
+        } else {
+            None
+        };
+        let path = tutorial_folder
+            .as_ref()
+            .map_or(path, TutorialFolder::project);
         let mut store = MeasurementStore::new(&path, project);
         if !tutorial {
             store.save()?;
@@ -100,6 +146,7 @@ impl Session {
             store,
             dirty: false,
             tutorial,
+            tutorial_folder,
             cached: None,
             identity: next_identity(),
             undo: Default::default(),
@@ -115,6 +162,7 @@ impl Session {
             store,
             dirty: false,
             tutorial: false,
+            tutorial_folder: None,
             cached,
             identity: next_identity(),
             undo: Default::default(),
@@ -202,8 +250,12 @@ fn push_undo(open: &mut OpenProject, payload: UndoPayload) -> String {
 
 pub(crate) fn info(open: &OpenProject) -> ProjectInfo {
     let project = open.store.project();
+    let path = open
+        .tutorial_folder
+        .as_ref()
+        .map_or(&open.path, |folder| &folder.requested);
     ProjectInfo {
-        path: open.path.to_string_lossy().into_owned(),
+        path: path.to_string_lossy().into_owned(),
         name: project.name.clone(),
         preset: project.config.preset.clone(),
         sub_count: project.config.sub_count(),

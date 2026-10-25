@@ -619,7 +619,10 @@ pub struct ProjectNewParams {
     pub sub_count: u8,
     /// Whether to create the fixed 7.1.4 sample-room project.
     pub sample: bool,
-    /// Whether this is a non-writable tutorial session using the sample room.
+    /// Whether this is a tutorial session using the sample room. The session
+    /// cannot be saved or exported; its measurements and results live in a
+    /// temporary folder that is removed when the session ends, and `path` is
+    /// only reported back.
     #[serde(default)]
     pub tutorial: bool,
 }

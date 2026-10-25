@@ -1027,7 +1027,7 @@ id = "ipc.project_new"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::new_projects_match_upstream_bytes", "secs-service::tutorial_projects_block_save_without_writing"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::new_projects_match_upstream_bytes", "secs-service::tutorial_projects_block_save_without_writing", "secs-service::tutorial_measurements_and_results_stay_in_a_temporary_folder_removed_with_the_session"]
 
 [[feature]]
 id = "ipc.sample_load"

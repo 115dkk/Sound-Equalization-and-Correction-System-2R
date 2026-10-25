@@ -21,6 +21,9 @@ sub_count: number,
  */
 sample: boolean, 
 /**
- * Whether this is a non-writable tutorial session using the sample room.
+ * Whether this is a tutorial session using the sample room. The session
+ * cannot be saved or exported; its measurements and results live in a
+ * temporary folder that is removed when the session ends, and `path` is
+ * only reported back.
  */
 tutorial: boolean, };
