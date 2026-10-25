@@ -100,7 +100,7 @@ where
                 last.ok_or_else(|| MeasureError::Input("REW returned no level reading".into()))?;
             Ok(secs_audio::LevelReport {
                 input_dbfs: level.input_dbfs,
-                peak_dbfs: level.input_dbfs,
+                peak_dbfs: level.peak_dbfs,
                 clip: level.clip,
                 spl_db: level.spl_db,
             })

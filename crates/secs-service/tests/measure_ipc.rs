@@ -1291,3 +1291,85 @@ fn sample_load_positions_stop_at_the_largest_layout() {
     assert_eq!(info.positions, (1..=17).collect::<Vec<i64>>());
     fs::remove_dir_all(root).unwrap();
 }
+
+/// REW that answers a level subscription by posting one recorded reading to
+/// the callback URL, as REW does.
+#[derive(Debug)]
+struct LevelRewTransport {
+    level: serde_json::Value,
+}
+impl secs_rew::Transport for LevelRewTransport {
+    fn request(
+        &self,
+        request: &secs_rew::Request,
+    ) -> Result<secs_rew::Response, secs_rew::RewError> {
+        if request.path == "/input-levels/subscribe" {
+            let url = request.body.as_ref().unwrap()["url"]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            let body = self.level.to_string();
+            std::thread::spawn(move || post_repeatedly(&url, &body));
+        }
+        let body = match request.path.as_str() {
+            "/audio/driver" => json!({"driver":"Java"}),
+            "/audio/java/output-channels" => json!(["L", "R"]),
+            _ => json!({"message":"ok"}),
+        };
+        Ok(secs_rew::Response::ok(body))
+    }
+}
+
+fn post_repeatedly(url: &str, body: &str) {
+    use std::io::{Read, Write};
+    let rest = url.strip_prefix("http://").unwrap();
+    let (host, path) = rest.split_at(rest.find('/').unwrap());
+    for _ in 0..50 {
+        if let Ok(mut stream) = std::net::TcpStream::connect(host) {
+            let _ = write!(
+                stream,
+                "POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.read_to_end(&mut Vec::new());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn rew_level_check_reports_the_rew_peak() {
+    let root = root("rew-level-peak");
+    let path = root.join("room.secs");
+    let service = Service::new(Deps {
+        rew_transport: Arc::new(|| {
+            Box::new(LevelRewTransport {
+                level: json!({"unit":"dBFS","rms":[-30.0],"peak":[-1.0]}),
+            })
+        }),
+        ..Deps::default()
+    });
+    new(&service, &path);
+    call(
+        &service,
+        Request::MeasureConfigure(MeasureConfigureParams {
+            method: "rew".into(),
+            ..Default::default()
+        }),
+    );
+    let events = Arc::new(Events::default());
+    let Response::LevelCheck(job) = ok(
+        &service,
+        Request::LevelCheck(LevelCheckParams { role: "L".into() }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    let JobResult::Level(level) = succeeded(&events, job.job) else {
+        panic!()
+    };
+    assert_eq!(level.rms_dbfs, -30.0);
+    assert_eq!(level.peak_dbfs, -1.0);
+    fs::remove_dir_all(root).unwrap();
+}
