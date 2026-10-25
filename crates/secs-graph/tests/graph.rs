@@ -237,7 +237,7 @@ fn every_rule_rejects_its_input_and_names_the_field() {
         ),
         (
             "punctuated role",
-            |c, _, _| c.subs[0].role = "SW_1".into(),
+            |c, _, _| c.subs[0].role = "SW.1".into(),
             INVALID,
             "sub[0].role",
         ),
@@ -380,4 +380,16 @@ fn every_rule_rejects_its_input_and_names_the_field() {
         assert!(kind(&error), "{rule}: {error:?}");
         assert!(error.to_string().contains(field), "{rule}: {error}");
     }
+}
+
+/// CamillaDSP (and upstream's writer) takes `_` and `-` in role names; the
+/// text and Equalizer APO writers check their stricter letters-and-digits
+/// rule themselves (secs-filters).
+#[test]
+fn roles_with_underscores_and_hyphens_build() {
+    let mut chain = chain();
+    chain.mains[0].role = "L_top".into();
+    chain.subs[0].role = "SW-1".into();
+    let graph = ExportGraph::build(&chain, None, LfeChoice::Omit).unwrap();
+    assert!(graph.plan().outputs.iter().any(|role| role == "SW-1"));
 }

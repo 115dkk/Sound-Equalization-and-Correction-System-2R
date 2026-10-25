@@ -1670,3 +1670,19 @@ fn fir_responses_require_the_rfft_grid_td94() {
 fn _public_shapes(_: &SubFeed, _: &MimoFeed) {
     let _ = goldens();
 }
+
+/// The text and Equalizer APO formats keep letters and digits only in role
+/// names, although the export graph (and CamillaDSP) also takes `_` and `-`.
+#[test]
+fn filter_plans_refuse_roles_beyond_letters_and_digits() {
+    let fixture = Fixture::load("filters", "rc_mixed");
+    for (index, role) in [(0, "L_top"), (1, "R-2")] {
+        let mut chain = chain(&fixture);
+        chain.mains[index].role = role.into();
+        let error = make_plan_with_lfe(&chain, None, Some(10.0), 120.0).unwrap_err();
+        assert!(
+            matches!(&error, FiltersError::Invalid(message) if message.contains("unsafe main role")),
+            "{role}: {error}"
+        );
+    }
+}

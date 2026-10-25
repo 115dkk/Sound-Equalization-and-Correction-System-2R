@@ -30,12 +30,19 @@ fn non_negative_delay(name: &str, channel: &str, milliseconds: f64) -> Result<()
 }
 
 /// Roles become YAML keys, channel names and coefficient filenames, so an
-/// identifier is non-empty ASCII letters and digits.
+/// identifier is non-empty ASCII letters, digits, `_` and `-`: the CamillaDSP
+/// writer's rule, which upstream's writer also accepts. The text and
+/// Equalizer APO writers allow letters and digits only and check that
+/// themselves.
 fn identifier(name: &str, value: &str) -> Result<(), GraphError> {
     if !value.is_ascii() {
         return Err(GraphError::NonAscii(format!("{name} = {value:?}")));
     }
-    if value.is_empty() || !value.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+    if value.is_empty()
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
         return Err(GraphError::Invalid(format!(
             "unsafe identifier {name} = {value:?}"
         )));

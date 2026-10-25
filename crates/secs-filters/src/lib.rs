@@ -134,6 +134,7 @@ pub fn make_plan_with_lfe(
         gain_db,
         lp_hz: lfe_lp_hz,
     });
+    plain_roles(chain, mimo)?;
     let graph = ExportGraph::build(chain, mimo, lfe)?;
     // The low-pass stays a checked parameter even when no LFE input is built.
     finite("lfe_lp_hz", lfe_lp_hz)?;
@@ -1341,8 +1342,25 @@ fn identifier(name: &str, value: &str) -> Result<(), FiltersError> {
         Ok(())
     }
 }
+/// The text and Equalizer APO formats take roles as plain names: letters and
+/// digits only, stricter than the export graph's rule (`_` and `-`), which
+/// the CamillaDSP writer shares.
+fn plain_roles(chain: &SignalChain, mimo: Option<&MimoPaths>) -> Result<(), FiltersError> {
+    for main in &chain.mains {
+        identifier("main role", &main.role)?;
+    }
+    for sub in &chain.subs {
+        identifier("sub role", &sub.role)?;
+    }
+    for path in mimo.into_iter().flat_map(|mimo| &mimo.paths) {
+        identifier("MIMO input", &path.input)?;
+        identifier("MIMO support", &path.support)?;
+    }
+    Ok(())
+}
 fn validate_run(run: &FilterRun<'_>) -> Result<(), FiltersError> {
     identifier("mode", run.mode)?;
+    plain_roles(run.chain, run.mimo)?;
     finite("ultra_ms", run.ultra_ms)?;
     finite("latency_ms", run.latency_ms)?;
     finite("rc_hi_hz", run.rc_hi_hz)?;
