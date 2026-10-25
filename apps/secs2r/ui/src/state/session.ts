@@ -17,7 +17,15 @@ import { createResource as resource, createStore, type Failure } from "./store";
 import { isActiveJob } from "./jobRetention";
 import { createJobLedger, type FinishedJob, type JobRequestContext, type LedgerJob } from "./jobLedger";
 import { effectsOf, projectEdits, type EffectContext } from "./effects";
+import { createWriter, type Patch, type Writer, type WriterDeps } from "./writers";
+import type { AppSettings } from "../ipc/bindings/AppSettings";
+import type { DspFields } from "../ipc/bindings/DspFields";
+import type { LayoutSetParams } from "../ipc/bindings/LayoutSetParams";
 import { wrongOutput } from "../screens/tutorial/questHost";
+
+/** A DSP edit: a preset to select, or fields over the latest ones (`preset: null`). */
+type DspEdit = DspFields & { preset: string | null };
+type LayoutEdit = Pick<LayoutSetParams, "start_delay" | "timing">;
 
 type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "mdat" | "warnings"> & {
   computeLoading: boolean; computeSaving: boolean; computeError: import("../ipc/bindings/IpcError").IpcError | null;
@@ -164,13 +172,77 @@ export function createSession(ipc: Ipc) {
     }
   });
   const run = (work: () => Promise<unknown>) => { void track(work).catch(() => { /* call reports the typed cause once */ }); };
-  async function configure(patch: Partial<MeasureConfigureParams>) {
-    return call({ method: "measure_configure", params: {
-      method: stores.measurementSettings.getSnapshot()?.method ?? "none", input_device: null, output_device: null, input_channel: null,
-      output_channels: [], sweep_length: null, repetitions: null, sweep_level_dbfs: null, timing: null,
-      loopback_input_channel: null, timing_ref_output: null, share_mode: null, ...patch,
-    } });
+  // One ordered writer per settings bundle (A-80, TD-68; see writers.ts). A
+  // project bundle's edit counts as a pending project edit from the moment it
+  // is queued, and one queued for a project that has since been replaced is
+  // dropped (it resolves false) instead of landing in the new project.
+  function writer<T>(deps: WriterDeps<T>, projectBundle: boolean): Writer<T> {
+    const ordered = createWriter(deps);
+    return {
+      edit(patch) {
+        const epoch = jobs.epoch;
+        if (projectBundle) pendingProjectEdits++;
+        return track(async () => {
+          try {
+            return await ordered.edit((latest) => {
+              if (projectBundle && epoch !== jobs.epoch) throw new Error("the project was replaced before this edit was sent");
+              return typeof patch === "function" ? patch(latest) : patch;
+            });
+          } finally { if (projectBundle) pendingProjectEdits--; }
+        });
+      },
+    };
   }
+  // measure_configure and layout_set leave a field sent as null as stored, so
+  // their edits start from all-null params and carry only what they change.
+  const measurementParams = (): MeasureConfigureParams => ({
+    method: stores.measurementSettings.getSnapshot()?.method ?? "none", input_device: null, output_device: null, input_channel: null,
+    output_channels: [], sweep_length: null, repetitions: null, sweep_level_dbfs: null, timing: null,
+    loopback_input_channel: null, timing_ref_output: null, share_mode: null,
+  });
+  const layoutParams = (): LayoutEdit => ({ start_delay: null, timing: null });
+  const writers = {
+    /** app_settings_set replaces the whole object, which the compute choice, display settings and recent projects share. */
+    app: writer<AppSettings>({
+      latest: stores.appSettings.getSnapshot,
+      write: async (settings) => {
+        const accepted = await call({ method: "app_settings_set", params: { settings } });
+        stores.appSettings.set(accepted);
+        return accepted;
+      },
+    }, false),
+    /** dsp_set takes a preset or the complete fields: `{ preset }` selects one, a field edit applies to the latest fields. */
+    dsp: writer<DspEdit>({
+      latest: () => {
+        const dsp = stores.dsp.getSnapshot();
+        return dsp ? { ...dsp.fields, preset: null } : null;
+      },
+      write: async ({ preset, ...fields }) => {
+        const epoch = jobs.epoch;
+        const accepted = await call({ method: "dsp_set", params: preset === null ? { preset: null, fields } : { preset, fields: null } });
+        if (epoch === jobs.epoch) stores.dsp.set(accepted);
+        return { ...accepted.fields, preset: null };
+      },
+    }, true),
+    /** Start delay and timing reference; an arrangement change answers an undo token and stays a direct call. */
+    layout: writer<LayoutEdit>({
+      latest: layoutParams,
+      write: async ({ start_delay, timing }) => {
+        await call({ method: "layout_set", params: { count: null, start_delay, timing, confirm: false } });
+        return layoutParams();
+      },
+    }, true),
+    /** The method is the one the service last answered when the edit is sent. */
+    measurement: writer<MeasureConfigureParams>({
+      latest: measurementParams,
+      write: async (params) => {
+        await call({ method: "measure_configure", params });
+        return measurementParams();
+      },
+    }, true),
+  };
+  /** The measurement writer's edit, under the name its many callers use. */
+  function configure(patch: Patch<MeasureConfigureParams>) { return writers.measurement.edit(patch); }
   function startTutorial({ quest }: { quest?: string } = {}): Promise<void> {
     if (tutorialStart) return tutorialStart;
     // A gallery/reopened tutorial already has its fixture data. Prepare it
@@ -188,8 +260,10 @@ export function createSession(ipc: Ipc) {
       if (epoch !== jobs.epoch || !stores.project.getSnapshot()?.tutorial) return;
       const systemQuest = !quest || quest.startsWith("system.");
       // No device or REW is opened as a side effect of a tutorial card.
-      await configure({ method: systemQuest || quest === "connect.retry" ? "none" : "mock" });
+      const configured = await writers.measurement.edit({ method: systemQuest || quest === "connect.retry" ? "none" : "mock" });
       if (epoch !== jobs.epoch) return;
+      // The request reported its failure; the tutorial is not ready and can be started again.
+      if (!configured) throw new IpcFailure(errors.getSnapshot()?.error ?? { code: "internal", params: {}, retryable: true, detail: "tutorial measurement settings were not saved" });
       const config = stores.config.getSnapshot();
       const index = systemQuest && config ? wrongOutput(config) : null;
       if (index !== null) await call({ method: "config_set_speaker", params: { index, role: null, size: null, band_index: 0, out: 16, pol: null } });
@@ -377,7 +451,7 @@ export function createSession(ipc: Ipc) {
       startPromise = null;
     });
   }
-  return { ipc, stores, host, jobs, errors, ready, tutorialReady, call, run, settled, configure, startTutorial, refreshCurves, ensureSaved, monitor, start, dispose,
+  return { ipc, stores, host, jobs, errors, ready, tutorialReady, call, run, settled, writers, configure, startTutorial, refreshCurves, ensureSaved, monitor, start, dispose,
     hasPendingProjectEdits: () => pendingProjectEdits > 0,
     navigate: (current: StepId) => host.set({ current }) };
 }

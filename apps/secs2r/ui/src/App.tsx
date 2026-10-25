@@ -11,6 +11,7 @@ import type { RecoveryAction } from "./app/StepHeader";
 import { useFrameModel } from "./app/useFrameModel";
 import { pickLocale } from "./i18n";
 import { useT } from "./i18n/react";
+import type { AppSettings } from "./ipc/bindings/AppSettings";
 import type { IpcError } from "./ipc/bindings/IpcError";
 import type { Ipc } from "./ipc/context";
 import { createTauriIpc } from "./ipc/tauri";
@@ -220,13 +221,16 @@ function Preferences({ root, initialPrefs, tutorialStart }: { root: boolean; ini
   if (state.status !== "ready") return null;
   const settings = state.value;
   const initial: Prefs = initialPrefs ?? { locale: settings.language === "en" ? "en" : settings.language === "ko" ? "ko" : pickLocale(navigator.languages), theme: settings.theme, icon: settings.icon, skin: settings.skin, accent: "default" };
-  return <PrefsScope key="settings" initial={initial} root={root} onChange={(prefs) => {
-    const current = session.stores.appSettings.getSnapshot();
-    if (!current) return;
-    const icon = prefs.icon ?? current.icon;
-    if (current.language !== prefs.locale || current.theme !== prefs.theme || current.icon !== icon || current.skin !== (prefs.skin ?? "default")) {
-      session.run(() => session.call({ method: "app_settings_set", params: { settings: { ...current, language: prefs.locale, theme: prefs.theme, icon, skin: prefs.skin ?? "default" } } }));
-    }
+  return <PrefsScope key="settings" initial={initial} root={root} onChange={(patch) => {
+    // Only the changed display fields go to the app settings writer, which
+    // builds them on the latest settings (TD-68); the scope shows them once
+    // the service accepts. The tutorial accent stays in this window.
+    const edit: Partial<AppSettings> = {};
+    if (patch.locale !== undefined) edit.language = patch.locale;
+    if (patch.theme !== undefined) edit.theme = patch.theme;
+    if (patch.icon !== undefined) edit.icon = patch.icon;
+    if (patch.skin !== undefined) edit.skin = patch.skin;
+    return Object.keys(edit).length > 0 ? session.writers.app.edit(edit) : undefined;
   }}><Shell tutorialStart={tutorialStart} /></PrefsScope>;
 }
 

@@ -141,27 +141,6 @@ describe("useSystemScreen", () => {
     expect(session.host.getSnapshot().current).toBe("connect");
   });
 
-  it("rebases rapid DSP field edits after a delayed full replacement", async () => {
-    const { result } = renderHook(useSystemScreen, { wrapper });
-    const actions = result.current.actions;
-    const fields = result.current.view!.dsp.fields;
-    const original = mock.request;
-    let release!: () => void;
-    let writes = 0;
-    vi.spyOn(mock, "request").mockImplementation(async (request) => {
-      if (request.method === "dsp_set" && ++writes === 1) await new Promise<void>((resolve) => { release = resolve; });
-      return original(request);
-    });
-    await act(async () => {
-      actions.setDspFields({ ...fields, fir_taps: fields.fir_taps + 1 });
-      actions.setDspFields({ ...fields, fir_budget: fields.fir_budget + 1 });
-    });
-    expect(writes).toBe(1);
-    await perform(() => release());
-    expect(session.stores.dsp.getSnapshot()?.fields).toEqual({ ...fields, fir_taps: fields.fir_taps + 1, fir_budget: fields.fir_budget + 1 });
-    expect(writes).toBe(2);
-  });
-
   it("does not write a cancelled patch sheet; reports and rejects destructive failures", async () => {
     const { result } = renderHook(useSystemScreen, { wrapper });
     mock.queueDialog("dialog_save_file", null);

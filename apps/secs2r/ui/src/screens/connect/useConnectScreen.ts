@@ -89,7 +89,7 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
       choosePath: (path) => session.run(async () => {
         await stop();
         if (session.host.getSnapshot().path !== path) await session.monitor(false);
-        await session.configure({ method: path });
+        await session.writers.measurement.edit({ method: path });
       }),
       refreshMethods: () => session.run(() => session.stores.methods.load()),
       launchRew: () => session.run(async () => {
@@ -116,16 +116,16 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
       }),
       // On the REW path measure_configure also opens the device in REW; read REW again for its channels.
       setInputDevice: (input_device) => session.run(async () => {
-        await session.configure({ input_device });
+        if (!await session.writers.measurement.edit({ input_device })) return;
         if (session.host.getSnapshot().path === "rew") await session.stores.rew.load();
       }),
-      setInputChannel: (input_channel) => session.run(() => session.configure({ input_channel })),
+      setInputChannel: (input_channel) => session.run(() => session.writers.measurement.edit({ input_channel })),
       setOutputDevice: (output_device) => session.run(async () => {
-        await session.configure({ output_device });
+        if (!await session.writers.measurement.edit({ output_device })) return;
         if (session.host.getSnapshot().path === "rew") await session.stores.rew.load();
       }),
-      setSweepLength: (sweep_length) => session.run(() => session.configure({ sweep_length })),
-      setShareMode: (share_mode) => session.run(() => session.configure({ share_mode })),
+      setSweepLength: (sweep_length) => session.run(() => session.writers.measurement.edit({ sweep_length })),
+      setShareMode: (share_mode) => session.run(() => session.writers.measurement.edit({ share_mode })),
       playLevel: (role) => play([role], false),
       stopLevel: () => session.run(stop),
       playAllLevels: () => {

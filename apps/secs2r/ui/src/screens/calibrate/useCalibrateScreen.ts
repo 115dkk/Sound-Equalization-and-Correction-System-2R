@@ -47,7 +47,7 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
         const settings = session.stores.appSettings.getSnapshot();
         if (!settings || h.computeSaving || h.computeLoading || h.computeError || session.jobs.getSnapshot().jobs.some((job) => ["running", "cancel_requested"].includes(job.status) && !["status_watch", "level_monitor"].includes(job.kind))) return;
         session.host.set({ computeSaving: true });
-        try { await session.call({ method: "app_settings_set", params: { settings: { ...settings, compute } } }); }
+        try { await session.writers.app.edit({ compute }); }
         finally { session.host.set({ computeSaving: false }); }
       }),
       calibrate: () => session.run(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } })),

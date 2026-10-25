@@ -1,4 +1,4 @@
-import { useMemo, useRef } from "react";
+import { useMemo } from "react";
 import type { DspFields } from "../../ipc/bindings/DspFields";
 import type { ConfigSetSpeakerParams } from "../../ipc/bindings/ConfigSetSpeakerParams";
 import { useHost, useResource, useSession } from "../../state/react";
@@ -16,12 +16,7 @@ export function useSystemScreen(configureMeasurement?: () => void): { view: Syst
   const settings = useResource("measurementSettings");
   const methods = useResource("methods");
   const rew = useResource("rew");
-  const dspQueue = useRef(Promise.resolve());
   const actions = useMemo<SystemActions>(() => {
-    const editDsp = (work: () => Promise<unknown>) => session.run(() => {
-      dspQueue.current = dspQueue.current.catch(() => {}).then(async () => { await work(); });
-      return dspQueue.current;
-    });
     const speaker = (index: number, patch: Partial<ConfigSetSpeakerParams>) => session.run(() => session.call({
       method: "config_set_speaker", params: { index, role: null, size: null, band_index: null, out: null, pol: null, ...patch },
     }));
@@ -41,19 +36,18 @@ export function useSystemScreen(configureMeasurement?: () => void): { view: Syst
         const path = await session.call({ method: "dialog_save_file", params: { kind: "patch_sheet", suggested: "secs_patch_sheet.csv" } });
         if (path !== null) await session.call({ method: "patch_sheet_csv", params: { path } });
       }),
-      setDspPreset: (preset) => editDsp(() => session.call({ method: "dsp_set", params: { preset, fields: null } })),
+      setDspPreset: (preset) => session.run(() => session.writers.dsp.edit({ preset })),
       setDspFields: (fields) => {
-        // Controls submit a complete copy of this render's fields. Preserve only
-        // its edits, then rebase them on the previous queued write's result.
+        // Controls submit this render's full fields; the writer only needs its edits.
         const patch: Partial<DspFields> = {};
         for (const key of Object.keys(fields) as (keyof DspFields)[]) {
           if (fields[key] !== dsp?.fields[key]) patch[key] = fields[key];
         }
-        editDsp(() => session.call({ method: "dsp_set", params: { preset: null, fields: { ...(session.stores.dsp.getSnapshot()?.fields ?? fields), ...patch } } }));
+        session.run(() => session.writers.dsp.edit(patch));
       },
       setArrangement: async (count) => (await session.call({ method: "layout_set", params: { count, start_delay: null, timing: null, confirm: true } })).undo_token,
-      setStartDelay: (start_delay) => session.run(() => session.call({ method: "layout_set", params: { count: null, start_delay, timing: null, confirm: false } })),
-      setTiming: (timing) => session.run(() => session.call({ method: "layout_set", params: { count: null, start_delay: null, timing, confirm: false } })),
+      setStartDelay: (start_delay) => session.run(() => session.writers.layout.edit({ start_delay })),
+      setTiming: (timing) => session.run(() => session.writers.layout.edit({ timing })),
       undo: async (token) => { await session.call({ method: "undo", params: { token } }); },
       // The label says 연결·점검; on the mdat path that screen shows the skipped note and leads on to 측정·가져오기.
       next: () => session.navigate("connect"),

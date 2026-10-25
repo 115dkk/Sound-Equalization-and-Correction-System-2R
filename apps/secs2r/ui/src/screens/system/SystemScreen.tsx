@@ -37,6 +37,7 @@ import {
 import { ARRANGEMENT_COUNTS, PRESET_ROLES, ROLES, orderRoles, roleCode, roleKind, type MicPoint } from "../../ui/maps/geometry";
 import { DSP_NAME, GROUP_NAME, durationText, isKnownRole, noticeText, outputLabel, roleLabel, roleName } from "./text";
 import type { SystemActions, SystemView } from "./types";
+import { START_DELAYS as START_DELAY_VALUES } from "../measure/types";
 import "./system.css";
 
 /** Upstream preset buttons (model.PRESETS) with the 4.0, 4.1, 4.2 and 7.1 presets SECS 2R adds (U13), in order.
@@ -54,10 +55,10 @@ const FIR_TAP_CHOICES = [512, 1024, 2048, 4096, 8192, 16384, 32768, 65536] as co
 
 /** Stored start-delay values (`extra['start_delay']`, upstream bytes) and their option ids. */
 const START_DELAYS = [
-  { id: "off", stored: "끄기", label: "system.start_delay.off" },
-  { id: "5", stored: "5 초", label: "system.start_delay.5" },
-  { id: "10", stored: "10 초", label: "system.start_delay.10" },
-  { id: "15", stored: "15 초", label: "system.start_delay.15" },
+  { id: "off", stored: START_DELAY_VALUES[0], label: "system.start_delay.off" },
+  { id: "5", stored: START_DELAY_VALUES[1], label: "system.start_delay.5" },
+  { id: "10", stored: START_DELAY_VALUES[2], label: "system.start_delay.10" },
+  { id: "15", stored: START_DELAY_VALUES[3], label: "system.start_delay.15" },
 ] as const;
 
 const DSP_ORDER = ["camilla", "tesira", "qsys", "minidsp", "custom"] as const;

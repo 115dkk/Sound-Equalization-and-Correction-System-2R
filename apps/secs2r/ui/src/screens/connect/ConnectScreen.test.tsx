@@ -136,6 +136,12 @@ const ALL: [string, ConnectView][] = [
 ];
 
 describe("ConnectScreen", () => {
+  it("uses only the sweep lengths supplied by the service", () => {
+    setup({ ...nativeView, settings: { ...nativeView.settings!, sweep_lengths: [131072, 524288], sweep_length: 131072 } });
+    const select = must("connect.sweep_length") as HTMLSelectElement;
+    expect(Array.from(select.options, (option) => option.value)).toEqual(["131072", "524288"]);
+  });
+
   it.each(ALL)("renders the %s state in both languages", (_name, view) => {
     for (const locale of ["ko", "en"] as const) {
       const { unmount } = renderWith(<ConnectScreen view={view} actions={actionsMock()} />, { locale });

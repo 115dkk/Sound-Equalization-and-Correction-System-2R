@@ -203,7 +203,11 @@ describe("measurement settings", () => {
         }
         return value;
       });
-      const previous = method === "measure_configure" ? session.configure({ method: "rew" })
+      // configure() is the measurement writer and resolves true or false; the reply comes from call().
+      const previous = method === "measure_configure" ? session.call({ method, params: {
+        method: "rew", input_device: null, output_device: null, input_channel: null, output_channels: [], sweep_length: null, repetitions: null,
+        sweep_level_dbfs: null, timing: null, loopback_input_channel: null, timing_ref_output: null, share_mode: null,
+      } })
         : method === "level_apply" ? session.call({ method, params: { level: levelResult } }) : session.call({ method });
       await reached;
       await session.call({ method: "project_open", params: { path: "C:/rooms/next.secs" } });

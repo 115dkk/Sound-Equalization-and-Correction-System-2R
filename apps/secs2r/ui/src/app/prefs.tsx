@@ -32,6 +32,9 @@ export function usePrefs(): PrefsValue {
 /**
  * Provides prefs, catalogs, toasts and a portal layer for one themed scope.
  * `root` applies theme, accent and language to <html>; otherwise to a div.
+ * `onChange` gets each change; when it returns the save, the scope shows the
+ * change once the service accepts it and keeps the old value when the save
+ * fails, as the compute choice does (one failure policy for app settings, TD-68).
  */
 export function PrefsScope({
   initial,
@@ -41,7 +44,7 @@ export function PrefsScope({
   children,
 }: {
   initial: Prefs;
-  onChange?: (prefs: Prefs) => void;
+  onChange?: (patch: Partial<Prefs>) => void | Promise<boolean>;
   root?: boolean;
   className?: string;
   children: ReactNode;
@@ -51,9 +54,10 @@ export function PrefsScope({
     () => ({
       ...prefs,
       set: (patch) => {
-        const next = { ...prefs, ...patch };
-        setPrefs(next);
-        onChange?.(next);
+        const apply = () => setPrefs((latest) => ({ ...latest, ...patch }));
+        const saved = onChange?.(patch);
+        if (saved) void saved.then((accepted) => { if (accepted) apply(); }, () => {});
+        else apply();
       },
     }),
     [prefs, onChange],

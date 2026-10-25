@@ -25,9 +25,9 @@ export function useMeasureScreen(): { view: MeasureView | null; actions: Measure
     selectPosition: (selected) => session.host.set({ selected }),
     setGraphHidden: (graphHidden) => session.host.set({ graphHidden }),
     setPlotRange: (plotRange) => session.host.set({ plotRange }),
-    setStartDelay: (start_delay) => session.run(() => session.call({ method: "layout_set", params: { count: null, start_delay, timing: null, confirm: false } })),
-    setSweepLength: (sweep_length) => session.run(() => session.configure({ sweep_length })),
-    setRepetitions: (repetitions) => session.run(() => session.configure({ repetitions })),
+    setStartDelay: (start_delay) => session.run(() => session.writers.layout.edit({ start_delay })),
+    setSweepLength: (sweep_length) => session.run(() => session.writers.measurement.edit({ sweep_length })),
+    setRepetitions: (repetitions) => session.run(() => session.writers.measurement.edit({ repetitions })),
     pickMdat: (position) => session.run(async () => {
       const path = await session.call({ method: "dialog_pick_mdat" });
       if (path === null) return;

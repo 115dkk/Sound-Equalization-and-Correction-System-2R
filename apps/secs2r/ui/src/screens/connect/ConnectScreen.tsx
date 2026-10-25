@@ -16,21 +16,11 @@ import type { MeasureDevice } from "../../ipc/bindings/MeasureDevice";
 import { Advanced, Button, Card, ErrorNotice, Icon, IconButton, LevelMeter, NumberField, Section, Segmented, Select, StatusPill, type Option, type PillTone } from "../../ui";
 import { roleCode, roleKind } from "../../ui/maps/geometry";
 import { roleName } from "../system/text";
+import { sweepName } from "../measure/format";
 import { MicMeterPanel, type MicMeterView } from "./MicMeterPanel";
 import { levelRoles, levelsPassed, missingLevels, pathReady } from "./state";
 import type { ConnectActions, ConnectPath, ConnectView, RewProblem } from "./types";
 import "./connect.css";
-
-/** REW's sweep lengths (secs-project SWEEP_LENGTHS) in samples; 256k by default. */
-const SWEEP_LENGTHS = [
-  { samples: 65536, name: "64k" },
-  { samples: 131072, name: "128k" },
-  { samples: 262144, name: "256k" },
-  { samples: 524288, name: "512k" },
-  { samples: 1048576, name: "1M" },
-  { samples: 2097152, name: "2M" },
-  { samples: 4194304, name: "4M" },
-] as const;
 
 const DEFAULT_SWEEP = 262144;
 
@@ -334,9 +324,9 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
   const channelCount = Math.max(names.length, inputDevice?.input_channels ?? 8, settings?.input_channel ?? 1, 1);
   const channelOptions = Array.from({ length: channelCount }, (_, i) => ({ value: String(i + 1), label: inputLabel(t, i + 1, names) }));
   const sweep = settings?.sweep_length ?? DEFAULT_SWEEP;
-  const sweepOptions = SWEEP_LENGTHS.map((s) => ({
-    value: String(s.samples),
-    label: t("connect.sweep.option", { name: s.name, seconds: number(s.samples / Math.max(1, view.sampleRate), 1) }),
+  const sweepOptions = (settings?.sweep_lengths ?? []).map((samples) => ({
+    value: String(samples),
+    label: t("connect.sweep.option", { name: sweepName(samples), seconds: number(samples / Math.max(1, view.sampleRate), 1) }),
   }));
   const cal = view.rew.details.micCalibration;
   // REW mode lists REW's own devices by name and opens the chosen one in REW; the input channel stays REW's (R7).

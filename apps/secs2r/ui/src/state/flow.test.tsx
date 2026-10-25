@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeAll, expect, it } from "vitest";
+import { afterEach, beforeAll, expect, it, vi } from "vitest";
 import { App } from "../App";
 import { LOGOS } from "../app/logo";
 import { createMockService } from "../ipc/mock";
@@ -98,7 +98,8 @@ it("keeps the chosen logo in the app settings and shows it again on the next sta
     expect(ui("frame.settings.logo.expert").getAttribute("aria-checked")).toBe("true");
     fireEvent.click(ui("frame.settings.logo.civilian"));
     await waitFor(() => expect(mock.calls.some((r) => r.method === "app_settings_set" && r.params.settings.icon === "civilian")).toBe(true));
-    expect(logo()).toBe(LOGOS.civilian);
+    // A display choice shows once the service has accepted it (TD-68).
+    await waitFor(() => expect(logo()).toBe(LOGOS.civilian));
   } finally { first.unmount(); }
   const second = render(<App ipc={mock} />);
   try {
@@ -117,13 +118,43 @@ it("keeps the chosen skin in the app settings and applies it again on the next s
     expect(ui("frame.settings.skin.default").getAttribute("aria-checked")).toBe("true");
     fireEvent.click(ui("frame.settings.skin.rack"));
     await waitFor(() => expect(mock.calls.some((r) => r.method === "app_settings_set" && r.params.settings.skin === "rack")).toBe(true));
-    expect(document.documentElement.dataset.skin).toBe("rack");
+    await waitFor(() => expect(document.documentElement.dataset.skin).toBe("rack"));
   } finally { first.unmount(); delete document.documentElement.dataset.skin; }
   const second = render(<App ipc={mock} />);
   try {
     await waitFor(() => expect(document.querySelector('[data-ui="frame.settings"]')).not.toBeNull());
     expect(document.documentElement.dataset.skin).toBe("rack");
   } finally { second.unmount(); mock.dispose(); delete document.documentElement.dataset.skin; }
+});
+
+it("keeps the compute choice when the theme changes while that choice is being saved (TD-68)", async () => {
+  const mock = createMockService({ tickMs: 0 });
+  await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+  const original = mock.request;
+  let release!: () => void;
+  let entered!: () => void;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const reached = new Promise<void>((resolve) => { entered = resolve; });
+  let writes = 0;
+  // The service stores the compute choice at once; only its answer is late.
+  const slow = vi.spyOn(mock, "request").mockImplementation(async (request) => {
+    const data = await original(request);
+    if (request.method === "app_settings_set" && ++writes === 1) { entered(); await held; }
+    return data;
+  });
+  const rendered = render(<App ipc={mock} />);
+  try {
+    await waitFor(() => expect(document.querySelector('[data-ui="frame.rail.calibrate"]')).not.toBeNull());
+    fireEvent.click(ui("frame.rail.calibrate"));
+    await waitFor(() => expect((ui("calibrate.compute.preference") as HTMLSelectElement).disabled).toBe(false));
+    fireEvent.change(ui("calibrate.compute.preference"), { target: { value: "cpu" } });
+    await act(async () => { await reached; });
+    fireEvent.click(ui("frame.settings"));
+    fireEvent.click(ui("frame.settings.theme.dark"));
+    await act(async () => { release(); });
+    await waitFor(() => expect(document.documentElement.dataset.theme).toBe("dark"));
+    expect(await original({ method: "app_settings_get" })).toMatchObject({ compute: "cpu", theme: "dark" });
+  } finally { release(); rendered.unmount(); slow.mockRestore(); mock.dispose(); delete document.documentElement.dataset.theme; }
 });
 
 it("applies the saved matrix skin on startup before any user action", async () => {
