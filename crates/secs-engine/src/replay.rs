@@ -7,6 +7,14 @@ use crate::{
     setup::Setup,
 };
 
+/// Time origin for a REW export item. Corrected responses retain SECS 2's
+/// latency subtraction (D24 is deliberately not changed here).
+#[derive(Debug, Clone, Copy)]
+pub enum ExportAxis {
+    Measurement,
+    Corrected,
+}
+
 /// What a design was made from. Sample buffers and prepared spectra are shared,
 /// never copied. Long-window spectra are computed on request, never cached.
 #[derive(Debug)]
@@ -50,6 +58,27 @@ impl DesignReplay {
         self.export_view_until(design, &|| false)
     }
 
+    /// Converts a design-grid export response to REW samples and its time origin.
+    /// The spectrum comes from this replay's export view, stage responses, or
+    /// applied MIMO response. Keeping that view at the caller avoids rebuilding
+    /// the long window for every role and stage. `design` must own this replay.
+    pub fn export_ir(
+        &self,
+        design: &Design,
+        spectrum: &[crate::C],
+        axis: ExportAxis,
+    ) -> (Vec<f64>, f64) {
+        let samples = secs_dsp::fft::irfft(spectrum, crate::grid::N_FFT)
+            .into_iter()
+            .map(|sample| f64::from(sample as f32))
+            .collect();
+        let t0 = match axis {
+            ExportAxis::Measurement => self.base_s(),
+            ExportAxis::Corrected => self.base_s() - design.chain.latency_ms / 1000.0,
+        };
+        (samples, t0)
+    }
+
     pub(crate) fn export_view_until(
         &self,
         design: &Design,
@@ -66,7 +95,7 @@ impl DesignReplay {
     /// Legacy callers may supply a different input. Comparing shared storage
     /// avoids scanning samples; independently loaded equivalent inputs safely
     /// take the fresh-preparation path.
-    pub(crate) fn matches(&self, set: &MeasurementSet, config: &EngineConfig) -> bool {
+    pub fn matches(&self, set: &MeasurementSet, config: &EngineConfig) -> bool {
         self.config == *config
             && self.measurements.positions.len() == set.positions.len()
             && self

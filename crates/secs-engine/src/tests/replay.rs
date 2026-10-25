@@ -116,6 +116,57 @@ fn design_replay_mimo_responses_match_fresh_preparation_bits() {
     }
 }
 
+#[test]
+fn design_replay_export_ir_matches_fresh_preparation_bits() {
+    for name in ["dolby", "room_filters"] {
+        let case = test_support::replay_case(name);
+        let design = &case.design;
+        let fresh =
+            measurement::prepare(&case.measurements, &case.config, &Setup::new(&case.config))
+                .unwrap();
+        let expected =
+            crate::export_view::export_view_prepared(design, &case.measurements, &fresh, &|| false)
+                .unwrap();
+        let actual = design.replay.export_view(design).unwrap();
+        for &position in expected.spectra.positions() {
+            for role in expected.spectra.roles_at(position) {
+                let mut spectra = vec![(
+                    actual.spectra.get(position, role).unwrap().to_vec(),
+                    expected.spectra.get(position, role).unwrap().to_vec(),
+                )];
+                if let Some(a) = crate::stage_responses(design, role, &actual.spectra, position) {
+                    let b =
+                        crate::stage_responses(design, role, &expected.spectra, position).unwrap();
+                    spectra.extend([(a.top_xo, b.top_xo), (a.output, b.output)]);
+                    if let (Some(a), Some(b)) = (a.sub_xo, b.sub_xo) {
+                        spectra.push((a, b));
+                    }
+                }
+                for (actual, expected) in spectra {
+                    let expected: Vec<_> = secs_dsp::fft::irfft(&expected, crate::grid::N_FFT)
+                        .iter()
+                        .map(|v| f64::from(*v as f32).to_bits())
+                        .collect();
+                    for axis in [crate::ExportAxis::Measurement, crate::ExportAxis::Corrected] {
+                        let (samples, t0) = design.replay.export_ir(design, &actual, axis);
+                        assert_eq!(
+                            samples.iter().map(|v| v.to_bits()).collect::<Vec<_>>(),
+                            expected
+                        );
+                        let expected_t0 = match axis {
+                            crate::ExportAxis::Measurement => fresh.base_s,
+                            crate::ExportAxis::Corrected => {
+                                fresh.base_s - design.chain.latency_ms / 1000.0
+                            }
+                        };
+                        assert_eq!(t0.to_bits(), expected_t0.to_bits());
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn spectrum_bits(actual: &[C], expected: &[C]) {
     assert_eq!(actual.len(), expected.len());
     for (actual, expected) in actual.iter().zip(expected) {

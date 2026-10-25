@@ -10,7 +10,7 @@ use std::{
 
 use secs_camilla::pyfmt::{format_fixed, format_g};
 use secs_engine::{
-    Design, EngineConfig, EngineError, MeasurementSet, StageResponses, export_view,
+    Design, EngineConfig, EngineError, ExportAxis, MeasurementSet, StageResponses,
     input::LayoutKind, stage_responses,
 };
 use secs_mdat::{MdatError, MeasurementInput, SourceInfo, TEMPLATE};
@@ -19,7 +19,6 @@ use secs_types::{
     chain::{MimoPaths, SubChannel},
 };
 
-const N_FFT: usize = 1 << 17;
 const SR: u32 = 48_000;
 const SUB_GAIN_WARN_DB: f64 = 12.0;
 
@@ -306,19 +305,19 @@ pub fn sub_gain_warnings(design: &Design) -> Vec<SubWarning> {
         .collect()
 }
 
-fn ir(spectrum: &[secs_engine::C]) -> Vec<f64> {
-    secs_dsp::fft::irfft(spectrum, N_FFT)
-        .into_iter()
-        .map(|sample| f64::from(sample as f32))
-        .collect()
-}
-
-fn item(title: String, notes: String, spectrum: &[secs_engine::C], t0: f64) -> MeasurementInput {
+fn item(
+    design: &Design,
+    title: String,
+    notes: String,
+    spectrum: &[secs_engine::C],
+    axis: ExportAxis,
+) -> MeasurementInput {
+    let (samples, t0) = design.replay.export_ir(design, spectrum, axis);
     MeasurementInput {
         title,
         notes,
         sample_rate_hz: SR,
-        samples: ir(spectrum),
+        samples,
         start_time_s: t0,
         spl_offset_db: None,
         source_info: None,
@@ -326,12 +325,21 @@ fn item(title: String, notes: String, spectrum: &[secs_engine::C], t0: f64) -> M
     }
 }
 
+fn replay_view(run: &ExportRun<'_>) -> Result<secs_engine::ExportView, EngineError> {
+    if !run.design.replay.matches(run.measurements, run.config) {
+        return Err(EngineError::Input(
+            "export inputs do not match the design replay".into(),
+        ));
+    }
+    run.design.replay.export_view(run.design)
+}
+
 fn stage_items_with_mimo(
     run: &ExportRun<'_>,
     mimo: MimoExport<'_>,
     label: Option<&str>,
 ) -> Result<Vec<MeasurementInput>, ExportError> {
-    let view = export_view(run.design, run.measurements, run.config)?;
+    let view = replay_view(run)?;
     let position = run.config.main_position;
     let subs: Vec<_> = run
         .config
@@ -340,7 +348,6 @@ fn stage_items_with_mimo(
         .filter_map(|role| view.spectra.get(position, role))
         .collect();
     let label = label.map_or_else(|| run.settings.label(), str::to_owned);
-    let shifted = view.base_s - run.design.chain.latency_ms / 1000.0;
     let mut items = Vec::new();
     for (index, main) in run.design.chain.mains.iter().enumerate() {
         let seq = index + 1;
@@ -352,10 +359,11 @@ fn stage_items_with_mimo(
             .ok_or_else(|| ExportError::MissingResponse(main.role.clone()))?;
         let prefix = format!("SECS 보정 설계 · {label} · 청취 위치 {position} · 계산값 — ");
         items.push(item(
+            run.design,
             format!("{seq:02}_{}_1 보정 전 메인", main.role),
             format!("{prefix}메인 스피커 원 응답(2 s 창, 필터 없음)"),
             raw,
-            view.base_s,
+            ExportAxis::Measurement,
         ));
         if !subs.is_empty() {
             let mut sum = vec![secs_engine::C::new(0.0, 0.0); raw.len()];
@@ -370,22 +378,16 @@ fn stage_items_with_mimo(
                 "서브 원 응답의 단순 합(정렬 없음·필터 없음)"
             };
             items.push(item(
+                run.design,
                 format!("{seq:02}_{}_1 보정 전 서브", main.role),
                 format!("{prefix}{tail}"),
                 &sum,
-                view.base_s,
+                ExportAxis::Measurement,
             ));
         }
-        add_xo_items(
-            run,
-            &mut items,
-            seq,
-            main.role.as_str(),
-            &prefix,
-            &stages,
-            view.base_s,
-        );
+        add_xo_items(run, &mut items, seq, main.role.as_str(), &prefix, &stages);
         items.push(item(
+            run.design,
             format!("{seq:02}_{}_3 합 후 보정", main.role),
             format!(
                 "{prefix}2차: 탑+서브 합에 입력 보정({}) · 전체 지연 {} ms(시작 시각에서 뺌) · RC 상한 {} Hz",
@@ -394,7 +396,7 @@ fn stage_items_with_mimo(
                 format_fixed(run.design.rc_hi, 0, false)
             ),
             &stages.output,
-            shifted,
+            ExportAxis::Corrected,
         ));
         if let MimoExport::Responses(mimo) = mimo {
             let supports: Vec<_> = mimo
@@ -442,6 +444,7 @@ fn stage_items_with_mimo(
                     .collect::<Vec<_>>()
                     .join("; ");
                 items.push(item(
+                    run.design,
                     format!("{seq:02}_{}_4 MIMO 적용({})", main.role, mimo.kind.name()),
                     format!(
                         "{prefix}MIMO {} 서포트 {}개(Fsiso {} Hz{}) — {description}",
@@ -451,7 +454,7 @@ fn stage_items_with_mimo(
                         mimo.cap_text
                     ),
                     response,
-                    shifted,
+                    ExportAxis::Corrected,
                 ));
             }
         }
@@ -466,7 +469,6 @@ fn add_xo_items(
     role: &str,
     prefix: &str,
     stages: &StageResponses,
-    base_s: f64,
 ) {
     let Some(xo) = run
         .design
@@ -480,23 +482,25 @@ fn add_xo_items(
         return;
     };
     items.push(item(
+        run.design,
         format!("{seq:02}_{role}_2 XO 타겟 메인"),
         format!(
             "{prefix}1차: 게인·딜레이·출력 PEQ(음향 XO 타겟)·전기 HP {} Hz",
             format_g(xo, false)
         ),
         &stages.top_xo,
-        base_s,
+        ExportAxis::Measurement,
     ));
     if let Some(sub) = &stages.sub_xo {
         items.push(item(
+            run.design,
             format!("{seq:02}_{role}_2 XO 타겟 서브"),
             format!(
                 "{prefix}1차: BA(게인·지연·극성)·서브 버스 PEQ·전기 LP — {}",
                 sub_values_text(run)
             ),
             sub,
-            base_s,
+            ExportAxis::Measurement,
         ));
     }
 }
@@ -518,10 +522,9 @@ fn before_after_items_with_mimo(
     mimo: MimoExport<'_>,
     sources: Option<&Sources>,
 ) -> Result<Vec<MeasurementInput>, ExportError> {
-    let view = export_view(run.design, run.measurements, run.config)?;
+    let view = replay_view(run)?;
     let position = run.config.main_position;
     let label = run.settings.label();
-    let shifted = view.base_s - run.design.chain.latency_ms / 1000.0;
     let source_env = sources.and_then(|sources| sources.get(&position));
     let mut items = Vec::new();
     let mut seq = 0;
@@ -556,10 +559,11 @@ fn before_after_items_with_mimo(
             notes.push_str(&sub_values_text(run));
         }
         let mut corrected = item(
+            run.design,
             format!("{seq:02}_{}_2 보정 후 {label}", main.role),
             notes,
             &final_response,
-            shifted,
+            ExportAxis::Corrected,
         );
         corrected.source_info = source_env
             .and_then(|sources| sources.get(&main.role))
@@ -581,6 +585,7 @@ fn before_after_items_with_mimo(
                     .map(|(_, response)| response.as_slice())
                     .ok_or_else(|| ExportError::MissingResponse(main.role.clone()))?;
                 items.push(item(
+            run.design,
                     format!(
                         "{seq:02}_{}_3 보정 후 + MIMO({})",
                         main.role,
@@ -593,7 +598,7 @@ fn before_after_items_with_mimo(
                         mimo.cap_text
                     ),
                     response,
-                    shifted,
+                    ExportAxis::Corrected,
                 ));
             }
         }
