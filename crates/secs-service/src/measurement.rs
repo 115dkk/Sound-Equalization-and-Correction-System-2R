@@ -521,10 +521,11 @@ impl Service {
             let roles = plan_for(open.store.project(), &Default::default()).roles;
             (roles, open.identity)
         };
+        // 17 is the largest measurement layout (패밀리); checked before any allocation.
         let positions = match params.positions {
             None => vec![1],
-            Some(count) if count >= 2 => (1..=count).map(i64::from).collect(),
-            Some(_) => return Err(input("positions", "positions must be at least 2")),
+            Some(count @ 2..=17) => (1..=count).map(i64::from).collect(),
+            Some(_) => return Err(input("positions", "positions must be from 2 to 17")),
         };
         let embedded = params.positions.is_none();
         let session = self.session.clone();

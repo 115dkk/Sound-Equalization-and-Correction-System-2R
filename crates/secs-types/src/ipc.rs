@@ -627,7 +627,9 @@ pub struct ProjectNewParams {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
 #[ts(export)]
 pub struct SampleLoadParams {
-    /// Synthetic position count; absent loads the one-position embedded room.
+    /// Synthetic position count, 2 to 17 (the largest layout); absent loads
+    /// the one-position embedded room. Other counts are refused with
+    /// `measurement_input` (`field = positions`).
     pub positions: Option<u32>,
 }
 /// A project file path.

@@ -5,6 +5,8 @@
  */
 export type SampleLoadParams = { 
 /**
- * Synthetic position count; absent loads the one-position embedded room.
+ * Synthetic position count, 2 to 17 (the largest layout); absent loads
+ * the one-position embedded room. Other counts are refused with
+ * `measurement_input` (`field = positions`).
  */
 positions: number | null, };

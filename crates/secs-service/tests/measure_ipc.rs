@@ -1259,3 +1259,35 @@ fn configure_validates_fields_and_host_stub_reports_its_error() {
     assert_eq!(error.params["reason"], "cannot_launch");
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn sample_load_positions_stop_at_the_largest_layout() {
+    let root = root("sample-load-bound");
+    let path = root.join("bound.secs");
+    let service = Service::new(Deps::default());
+    new(&service, &path);
+    for positions in [18, u32::MAX] {
+        let started = std::time::Instant::now();
+        let error = service.call(
+            Request::SampleLoad(SampleLoadParams {
+                positions: Some(positions),
+            }),
+            Arc::new(NoEvents),
+        );
+        let Envelope::Err(error) = error else {
+            panic!("{positions} positions must be refused");
+        };
+        assert_eq!(error.code, ErrorCode::MeasurementInput, "{positions}");
+        assert_eq!(
+            error.params.get("field").map(String::as_str),
+            Some("positions")
+        );
+        assert!(started.elapsed() < Duration::from_secs(1), "{positions}");
+    }
+    let JobResult::Measurement(info) = sample_load(&service, Some(17), Arc::new(Events::default()))
+    else {
+        panic!("17 positions must load");
+    };
+    assert_eq!(info.positions, (1..=17).collect::<Vec<i64>>());
+    fs::remove_dir_all(root).unwrap();
+}
