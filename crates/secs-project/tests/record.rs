@@ -457,6 +457,35 @@ fn interrupted_save_leaves_old_secs_intact_f1() {
 }
 
 #[test]
+fn ir_wav_replacement_is_atomic_and_failed_rename_leaves_no_temporary_file_td15() {
+    let (directory, path, _store, _roles) = setup();
+    let irs = path.with_extension("irs");
+    fs::create_dir_all(&irs).unwrap();
+    let wav = irs.join("L_P1.wav");
+    let backup = directory.0.join("old.wav");
+    let old = write_wav_float32(&[0.25], 48_000);
+    fs::write(&wav, &old).unwrap();
+    fs::hard_link(&wav, &backup).unwrap();
+
+    save_ir(&path, "L", 1, &[0.5], 48_000).unwrap();
+    assert_eq!(fs::read(&backup).unwrap(), old);
+    assert_ne!(fs::read(&wav).unwrap(), old);
+
+    fs::remove_file(&wav).unwrap();
+    fs::create_dir(&wav).unwrap();
+    fs::write(wav.join("old"), &old).unwrap();
+    assert!(save_ir(&path, "L", 1, &[1.0], 48_000).is_err());
+    assert_eq!(fs::read(wav.join("old")).unwrap(), old);
+    assert!(fs::read_dir(&irs).unwrap().all(|entry| {
+        !entry
+            .unwrap()
+            .file_name()
+            .to_string_lossy()
+            .contains(".tmp-")
+    }));
+}
+
+#[test]
 fn f5_absolute_parent_and_symlink_escapes_are_rejected_but_in_tree_reads() {
     let (directory, path, _store, _roles) = setup();
     let irs = path.with_extension("irs");

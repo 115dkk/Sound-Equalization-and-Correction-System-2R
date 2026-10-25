@@ -1004,7 +1004,7 @@ fn cache_key(path: &Path) -> Result<CacheKey, ProjectError> {
     })
 }
 
-fn atomic_write(path: &Path, data: &[u8]) -> Result<(), ProjectError> {
+pub(crate) fn atomic_write(path: &Path, data: &[u8]) -> Result<(), ProjectError> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
     let stem = path

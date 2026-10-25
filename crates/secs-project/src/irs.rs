@@ -1,4 +1,4 @@
-use crate::ProjectError;
+use crate::{ProjectError, record::atomic_write};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -258,7 +258,7 @@ pub fn save_ir(
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(&path, try_write_wav_float32(samples, rate)?)?;
+    atomic_write(&path, &try_write_wav_float32(samples, rate)?)?;
     Ok(path)
 }
 pub fn load_ir(project: &Path, role: &str, pos: i64) -> Result<(Vec<f32>, u32), ProjectError> {
