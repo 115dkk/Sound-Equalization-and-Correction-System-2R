@@ -183,6 +183,8 @@ fn packet_continuity(
 #[derive(Clone, Copy, Debug, Default)]
 struct AppendedPacket {
     header: PacketHeader,
+    /// The packet did not fit in the room left in the queue and was dropped.
+    dropped: bool,
     raw_zero_runs: usize,
     raw_zero_frames: usize,
     silent_fill_frames: usize,
@@ -284,7 +286,14 @@ fn append_packet<S: PacketSource>(
             scratch.len()
         )));
     }
-    let (raw_zero_runs, raw_zero_frames, silent_fill_frames) = if header.flags.silent {
+    // This runs on the MMCSS thread, so the queue never grows here. A packet
+    // that does not fit in the room reserved at open is dropped, and the
+    // queue reports the loss as a discontinuity, as cpal's callback does on
+    // overflow.
+    let dropped = pending.capacity() - pending.len() < sample_count;
+    let (raw_zero_runs, raw_zero_frames, silent_fill_frames) = if dropped {
+        (0, 0, 0)
+    } else if header.flags.silent {
         pending.extend(std::iter::repeat_n(0.0, sample_count));
         (0, 0, header.frames)
     } else {
@@ -322,6 +331,7 @@ fn append_packet<S: PacketSource>(
     };
     Ok(AppendedPacket {
         header,
+        dropped,
         raw_zero_runs,
         raw_zero_frames,
         silent_fill_frames,
@@ -338,7 +348,29 @@ struct CaptureQueue {
     flags: PacketFlags,
 }
 
+/// Endpoint buffers of samples the capture queue may hold: up to one buffer
+/// waiting for the caller (the backlog check in `next_packet`) plus the packet
+/// read on top of it, which is at most one buffer.
+const CAPTURE_BACKLOG_BUFFERS: usize = 2;
+
 impl CaptureQueue {
+    /// A queue for an endpoint buffer of `buffer_samples` samples. The whole
+    /// allowed backlog is reserved here, when the session opens, so reading
+    /// packets on the MMCSS thread never grows the queue.
+    fn for_endpoint_buffer(buffer_samples: usize) -> Result<Self, AudioError> {
+        let samples = buffer_samples
+            .checked_mul(CAPTURE_BACKLOG_BUFFERS)
+            .ok_or_else(|| AudioError::Backend("capture queue size overflow".into()))?;
+        let mut pending = VecDeque::new();
+        pending
+            .try_reserve_exact(samples)
+            .map_err(|error| AudioError::Backend(format!("capture queue: {error}")))?;
+        Ok(Self {
+            pending,
+            flags: PacketFlags::default(),
+        })
+    }
+
     /// Move queued samples into `dst[*written..]`. Returns the flags that
     /// applied to the samples handed out (all false when nothing was queued)
     /// and clears the stored flags once the queue runs empty.
@@ -364,6 +396,7 @@ impl CaptureQueue {
     }
 
     /// Read one packet from `source` into the queue and remember its flags.
+    /// A packet the queue has no room for is dropped and marks a gap.
     fn push_packet<S: PacketSource>(
         &mut self,
         source: &mut S,
@@ -372,7 +405,11 @@ impl CaptureQueue {
         diagnose_zeros: bool,
     ) -> Result<AppendedPacket, AudioError> {
         let packet = append_packet(source, scratch, &mut self.pending, channels, diagnose_zeros)?;
-        self.flags.silent |= packet.header.flags.silent;
+        if packet.dropped {
+            self.flags.discontinuity = true;
+        } else {
+            self.flags.silent |= packet.header.flags.silent;
+        }
         Ok(packet)
     }
 
@@ -1654,12 +1691,7 @@ mod windows_backend {
             let (scratch, queue) = trace_stage(trace.as_ref(), "allocation", || {
                 Ok((
                     vec![0; scratch_len],
-                    CaptureQueue {
-                        pending: VecDeque::with_capacity(
-                            buffer_frames * usize::from(spec.channels),
-                        ),
-                        flags: PacketFlags::default(),
-                    },
+                    CaptureQueue::for_endpoint_buffer(scratch_len / size_of::<f32>())?,
                 ))
             })?;
             let realtime = RealtimeGuard::acquire(buffer_frames, spec.sample_rate, trace.as_ref())?;
@@ -2062,10 +2094,11 @@ mod windows_backend {
                         silent_fill_frames: Some(packet.silent_fill_frames),
                         queue_before: Some(queue_before),
                         queue_after: Some(self.queue.pending.len()),
-                        detail: if continuity.position_jump {
-                            "device_to_queue;position_jump"
-                        } else {
-                            "device_to_queue"
+                        detail: match (continuity.position_jump, packet.dropped) {
+                            (false, false) => "device_to_queue",
+                            (true, false) => "device_to_queue;position_jump",
+                            (false, true) => "device_to_queue;dropped_queue_full",
+                            (true, true) => "device_to_queue;position_jump;dropped_queue_full",
                         }
                         .into(),
                         ..TraceRecord::default()
@@ -2354,7 +2387,7 @@ mod tests {
             },
         };
         let mut scratch = vec![0; source.bytes.len()];
-        let mut pending = VecDeque::new();
+        let mut pending = VecDeque::with_capacity(source.bytes.len() / size_of::<f32>());
         let report = append_packet(&mut source, &mut scratch, &mut pending, 1, true).unwrap();
         assert!(report.header.flags.silent);
         assert_eq!(pending, VecDeque::from(vec![0.0; 4]));
@@ -2462,7 +2495,7 @@ mod tests {
             },
         };
         let mut scratch = vec![0; source.bytes.len()];
-        let mut queue = CaptureQueue::default();
+        let mut queue = CaptureQueue::for_endpoint_buffer(4).unwrap();
         queue
             .push_packet(&mut source, &mut scratch, 1, true)
             .unwrap();
@@ -2529,7 +2562,7 @@ mod tests {
             },
         };
         let mut scratch = vec![0; source.bytes.len()];
-        let mut pending = VecDeque::new();
+        let mut pending = VecDeque::with_capacity(source.bytes.len() / size_of::<f32>());
         let packet = append_packet(&mut source, &mut scratch, &mut pending, 1, true).unwrap();
         assert_eq!(packet.header.frames, 3);
         assert!(packet.header.flags.discontinuity);
@@ -2549,7 +2582,7 @@ mod tests {
             },
         };
         let mut scratch = vec![0; source.bytes.len()];
-        let mut pending = VecDeque::new();
+        let mut pending = VecDeque::with_capacity(source.bytes.len() / size_of::<f32>());
         let packet = append_packet(&mut source, &mut scratch, &mut pending, 1, true).unwrap();
         assert_eq!(packet.raw_zero_runs, 0);
         assert_eq!(packet.raw_zero_frames, 0);
@@ -2716,6 +2749,71 @@ mod tests {
         };
         assert!(is_stall(&error), "{error}");
         assert_eq!(endpoint.waits, waits_past_stall());
+    }
+
+    #[test]
+    fn capture_backlog_fits_the_reserved_queue() {
+        // An endpoint buffer of 8 mono frames. Once the destination is full,
+        // the loop keeps reading every ready packet until the backlog limit.
+        for (frames, packets_at_limit) in [(3, 3), (5, 2), (8, 2)] {
+            let clock = FakeClock::new();
+            let mut endpoint = FakeEndpoint::new(&clock, Some(0), frames);
+            let mut watch = StallWatch::start(&clock, "capture");
+            let mut queue = CaptureQueue::for_endpoint_buffer(8).unwrap();
+            let capacity = queue.pending.capacity();
+            let mut scratch = [0; 8 * size_of::<f32>()];
+            let mut packets = 0;
+            let error = loop {
+                match queue.next_packet(&mut endpoint, &mut watch, &mut scratch, 1, false, true) {
+                    Ok(CaptureStep::Packet { packet, .. }) => {
+                        assert!(!packet.dropped, "{frames}-frame packet {packets} dropped");
+                        packets += 1;
+                    }
+                    Ok(step) => panic!("unexpected {step:?}"),
+                    Err(error) => break error,
+                }
+                assert_eq!(queue.pending.capacity(), capacity, "{frames}-frame packets");
+                assert!(packets <= 8, "no backlog error");
+            };
+            assert!(
+                matches!(&error, AudioError::Backend(message) if message.contains("backlog")),
+                "{error}"
+            );
+            assert_eq!(packets, packets_at_limit, "{frames}-frame packets");
+            assert_eq!(queue.pending.len(), frames * packets_at_limit);
+        }
+    }
+
+    #[test]
+    fn packet_beyond_the_reserved_queue_is_dropped_as_a_gap() {
+        let mut queue = CaptureQueue::for_endpoint_buffer(4).unwrap();
+        let capacity = queue.pending.capacity();
+        let mut source = FakePacket {
+            bytes: f32_to_bytes(&vec![0.5; capacity + 1]),
+            flags: PacketFlags::default(),
+        };
+        let mut scratch = vec![0; source.bytes.len()];
+        let packet = queue
+            .push_packet(&mut source, &mut scratch, 1, true)
+            .unwrap();
+        assert!(packet.dropped);
+        assert!(queue.pending.is_empty());
+        assert_eq!(queue.pending.capacity(), capacity);
+
+        // The samples handed out after the drop report the lost audio.
+        let mut source = FakePacket {
+            bytes: f32_to_bytes(&[0.25, -0.25]),
+            flags: PacketFlags::default(),
+        };
+        let packet = queue
+            .push_packet(&mut source, &mut scratch, 1, true)
+            .unwrap();
+        assert!(!packet.dropped);
+        let mut dst = [0.0; 2];
+        let mut written = 0;
+        assert!(queue.drain_into(&mut dst, &mut written).discontinuity);
+        assert_eq!(dst, [0.25, -0.25]);
+        assert_eq!(queue.pending.capacity(), capacity);
     }
 
     #[test]
