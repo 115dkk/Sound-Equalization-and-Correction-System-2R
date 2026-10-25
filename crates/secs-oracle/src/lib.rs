@@ -148,7 +148,22 @@ impl Fixture {
             .first()
             .is_some_and(|first| first.get("file").is_some())
         {
-            return items.iter().flat_map(|part| self.sidecar(part)).collect();
+            return items
+                .iter()
+                .flat_map(|part| {
+                    if part.get("file").is_some() {
+                        self.sidecar(part)
+                    } else {
+                        part.as_array()
+                            .unwrap_or_else(|| {
+                                panic!("{}: not a float64 array chunk: {part}", self.id)
+                            })
+                            .iter()
+                            .map(number)
+                            .collect()
+                    }
+                })
+                .collect();
         }
         items.iter().map(number).collect()
     }
@@ -428,6 +443,30 @@ pub fn assert_same(name: &str, got: &[f64], expected: &[f64]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(label: &str) -> Self {
+            let id = TEMP_ID.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir()
+                .join(format!("secs_oracle_{label}_{}_{id}", std::process::id()));
+            if path.exists() {
+                fs::remove_dir_all(&path).unwrap();
+            }
+            fs::create_dir_all(&path).unwrap();
+            Self(path)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     #[test]
     fn libm_probe_reads_and_reports() {
@@ -475,6 +514,40 @@ mod tests {
         }
         println!("{fixtures} fixtures, {sidecars} sidecars and blobs checked");
         assert!(fixtures > 0);
+    }
+
+    #[test]
+    fn chunked_f64s_reads_an_inline_tail_td55() {
+        let temp = TempDir::new("inline_tail");
+        let sidecar = [1.25_f64, -2.5_f64];
+        let bytes: Vec<u8> = sidecar
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect();
+        fs::write(temp.0.join("chunk.f64le"), &bytes).unwrap();
+        let sha256: String = Sha256::digest(&bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        let fixture = Fixture {
+            id: "test/inline_tail".into(),
+            dir: temp.0.clone(),
+            value: serde_json::json!({
+                "inputs": {},
+                "outputs": {
+                    "values": [
+                        {"file": "chunk.f64le", "length": 2, "sha256": sha256},
+                        [3.75, "-inf"]
+                    ]
+                },
+                "meta": {}
+            }),
+        };
+
+        assert_eq!(
+            fixture.f64s(&fixture.outputs()["values"]),
+            vec![1.25, -2.5, 3.75, f64::NEG_INFINITY]
+        );
     }
 
     #[test]
