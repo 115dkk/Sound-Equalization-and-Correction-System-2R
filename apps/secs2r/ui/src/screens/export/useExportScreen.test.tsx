@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { createMockService } from "../../ipc/mock";
 import { SessionProvider } from "../../state/react";
 import { createSession } from "../../state/session";
-import { EXPORT_KINDS } from "./types";
+import { EXPORT_KINDS, exportBlock } from "./types";
 import { useExportScreen } from "./useExportScreen";
 
 let mock: ReturnType<typeof createMockService>;
@@ -60,6 +60,64 @@ describe("useExportScreen", () => {
       if (run?.status === "done") expect(mock.calls).toContainEqual({ method: "open_folder", params: { path: run.folder } });
       expect(result.current.view?.exporting).toBeNull();
     }
+  });
+
+  it("recalibrates a reopened stale cache and unblocks both mdat formats", async () => {
+    await perform(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } }));
+    await perform(mock.drain);
+    await perform(() => session.call({ method: "calibration_settings_edit", params: { edit: { kind: "mode", mode: "linear" } } }));
+    await perform(() => session.call({ method: "project_save", params: { path: "/projects/stale.secs" } }));
+    await perform(() => session.call({ method: "project_open", params: { path: "/projects/stale.secs" } }));
+    const { result } = renderHook(useExportScreen, { wrapper });
+    const mdatKinds = ["staged_mdat", "before_after_mdat"] as const;
+    expect(result.current.view?.results.calibration).toMatchObject({ cached: true, stale: true, mode: "mixed" });
+    for (const kind of mdatKinds) {
+      expect(exportBlock(result.current.view!, kind)).toBe("stale_cache");
+      await perform(() => result.current.actions.exportFiles(kind));
+      expect(session.errors.getSnapshot()?.error).toMatchObject({ code: "export_scope", params: { reason: "stale_cache" } });
+      expect(result.current.view?.exporting).toBeNull();
+    }
+    expect(result.current.view?.recalibrating).toBe(false);
+
+    mock.calls.length = 0;
+    await perform(result.current.actions.recalibrate);
+    expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false } });
+    expect(result.current.view?.recalibrating).toBe(true);
+    expect(result.current.view?.computing).toBe(true);
+    for (const kind of mdatKinds) expect(exportBlock(result.current.view!, kind)).toBe("stale_cache");
+    await perform(mock.drain);
+    expect(result.current.view?.recalibrating).toBe(false);
+    expect(result.current.view?.computing).toBe(false);
+    expect(result.current.view?.results.calibration).toMatchObject({ cached: false, stale: false, mode: "linear" });
+    for (const kind of mdatKinds) {
+      expect(exportBlock(result.current.view!, kind)).toBeNull();
+      await perform(() => result.current.actions.exportFiles(kind));
+      expect(result.current.view?.exporting).toBe(kind);
+      await perform(mock.drain);
+      expect(result.current.view?.runs[kind]?.status).toBe("done");
+    }
+  });
+
+  it.each(["failed", "cancelled"] as const)("clears recalibrating after a %s job without unblocking the stale cache", async (status) => {
+    await perform(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } }));
+    await perform(mock.drain);
+    await perform(() => session.call({ method: "project_save", params: { path: "/projects/cached.secs" } }));
+    await perform(() => session.call({ method: "project_open", params: { path: "/projects/cached.secs" } }));
+    await perform(() => session.call({ method: "calibration_settings_edit", params: { edit: { kind: "mode", mode: "linear" } } }));
+    const { result } = renderHook(useExportScreen, { wrapper });
+    if (status === "failed") mock.failJobs("calibrate", "engine_input");
+    await perform(result.current.actions.recalibrate);
+    expect(result.current.view?.recalibrating).toBe(true);
+    if (status === "cancelled") {
+      const job = session.host.getSnapshot().jobs.find((job) => job.kind === "calibrate" && job.status === "running")!;
+      await perform(() => session.call({ method: "job_cancel", params: { job: job.job } }));
+      expect(result.current.view?.recalibrating).toBe(true);
+    }
+    await perform(mock.drain);
+    expect(result.current.view?.recalibrating).toBe(false);
+    expect(result.current.view?.results.calibration).toMatchObject({ cached: true, stale: true });
+    expect(exportBlock(result.current.view!, "staged_mdat")).toBe("stale_cache");
+    expect(exportBlock(result.current.view!, "before_after_mdat")).toBe("stale_cache");
   });
 
   it("reports failed exports without opening a folder", async () => {

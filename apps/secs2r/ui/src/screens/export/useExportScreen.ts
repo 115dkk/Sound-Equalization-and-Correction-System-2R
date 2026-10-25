@@ -22,14 +22,16 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
     }),
     openFolder: (path) => session.run(() => session.call({ method: "open_folder", params: { path } })),
     goToCalibrate: () => session.navigate("calibrate"),
+    recalibrate: () => session.run(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } })),
   }), [session]);
   const jobs = host.jobs.filter((job) => job.status === "running" || job.status === "cancel_requested");
+  const recalibrating = jobs.some((job) => job.kind === "calibrate");
   const exporting = jobs.find((job) => job.kind === "export");
   const request = exporting ? host.jobRequests[exporting.job] : undefined;
   return { view: results && settings && project ? {
     results, settings: { mode: results.calibration?.mode ?? settings.mode, ultra_ms: results.calibration?.ultra_ms ?? settings.ultra_ms, mimo_on: settings.mimo_on },
     positions: project.positions.length, rc: lines?.rc ?? [], folder,
-    computing: jobs.some((job) => job.kind === "calibrate"),
+    computing: recalibrating, recalibrating,
     exporting: request?.method === "export" ? request.params.kind : null,
     runs: host.runs, tutorial: project.tutorial,
   } : null, actions };

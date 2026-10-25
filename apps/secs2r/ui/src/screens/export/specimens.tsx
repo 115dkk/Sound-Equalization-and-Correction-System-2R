@@ -25,7 +25,7 @@ import {
 } from "./fixtures";
 import type { ExportActions, ExportView } from "./types";
 
-export const noopExportActions: ExportActions = { exportFiles: () => {}, changeFolder: () => {}, openFolder: () => {}, goToCalibrate: () => {} };
+export const noopExportActions: ExportActions = { exportFiles: () => {}, changeFolder: () => {}, openFolder: () => {}, goToCalibrate: () => {}, recalibrate: () => {} };
 
 const exportJob = replay([{ type: "event", at: T0, event: { event: "started", job: 12, kind: "export" } }]);
 

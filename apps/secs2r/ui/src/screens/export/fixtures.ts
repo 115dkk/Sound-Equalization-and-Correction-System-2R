@@ -42,6 +42,7 @@ export const exportReady: ExportView = {
   rc: exportRc,
   folder: { folder: BASE, stored: false },
   computing: false,
+  recalibrating: false,
   exporting: null,
   runs: {},
   tutorial: false,
@@ -49,7 +50,7 @@ export const exportReady: ExportView = {
 
 export const exportNoResult: ExportView = { ...exportReady, results: noResults, rc: [] };
 
-export const exportComputingFirst: ExportView = { ...exportNoResult, computing: true };
+export const exportComputingFirst: ExportView = { ...exportNoResult, computing: true, recalibrating: true };
 
 export const exportStale: ExportView = {
   ...exportReady,

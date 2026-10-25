@@ -105,6 +105,7 @@ function actions() {
     changeFolder: vi.fn<ExportActions["changeFolder"]>(),
     openFolder: vi.fn<ExportActions["openFolder"]>(),
     goToCalibrate: vi.fn<ExportActions["goToCalibrate"]>(),
+    recalibrate: vi.fn<ExportActions["recalibrate"]>(),
   };
 }
 

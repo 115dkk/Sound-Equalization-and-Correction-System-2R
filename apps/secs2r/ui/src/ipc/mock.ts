@@ -387,8 +387,10 @@ export function createMockService(options: MockOptions = {}): MockService {
       }
       case "project_open": {
         const saved = savedProjects.get(req.params.path);
-        if (saved) restore(saved);
-        else reset({ ...fx.projectInfo, path: req.params.path, name: basename(req.params.path).replace(/\.secs$/i, ""), dirty: false });
+        if (saved) {
+          restore(saved);
+          if (results.calibration) results.calibration.cached = true;
+        } else reset({ ...fx.projectInfo, path: req.params.path, name: basename(req.params.path).replace(/\.secs$/i, ""), dirty: false });
         return { method: req.method, data: needProject() };
       }
       case "project_save": {
@@ -544,6 +546,9 @@ export function createMockService(options: MockOptions = {}): MockService {
         if (needProject().tutorial) throw new MockError(ipcError("tutorial_blocked"));
         if (!results.calibration) throw new MockError(ipcError("engine_input", "no calibration result to export"));
         const kind = req.params.kind;
+        if ((kind === "staged_mdat" || kind === "before_after_mdat") && results.calibration.cached && results.calibration.stale) {
+          throw new MockError(ipcError("export_scope", `${kind} requires a current calibration result`, { reason: "stale_cache" }));
+        }
         if (kind === "filter_text" || kind === "equalizer_apo") {
           const calibration = results.calibration;
           const hasMimo = settings.mimo_on && needProject().positions.length >= MIMO_MIN_POSITIONS && results.mimo !== null && !results.mimo.stale;

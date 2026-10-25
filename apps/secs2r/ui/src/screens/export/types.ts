@@ -46,6 +46,8 @@ export type ExportView = {
   folder: ExportFolderResult | null;
   /** A `calibrate` job runs (job events): the result is about to change. */
   computing: boolean;
+  /** A calibration job is running or awaiting cancellation; the recovery action stays busy until it finishes. */
+  recalibrating: boolean;
   /** The kind of the running `export` job, or null. Export jobs run one at a time. */
   exporting: ExportKind | null;
   /** The last export of each kind for the current result. P33 keeps it for the session and clears it when a new result arrives. */
@@ -68,6 +70,8 @@ export type ExportActions = {
   openFolder: (path: string) => void;
   /** Host: the frame goes to 보정. */
   goToCalibrate: () => void;
+  /** `calibrate { settings: null, subs_only: false }`: recompute with current settings without leaving export. */
+  recalibrate: () => void;
 };
 
 /** Whether MIMO goes into the export, and if not, why (upstream `show_mimo`: on, computed, current, three positions or more). */
