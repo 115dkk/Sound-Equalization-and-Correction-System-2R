@@ -1,0 +1,1342 @@
+[
+  {
+    "params": {
+      "preset": "2.0",
+      "confirm": false
+    },
+    "data": {
+      "config": {
+        "speakers": [
+          {
+            "role": "L",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 1,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "R",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 2,
+                "pol": "+"
+              }
+            ]
+          }
+        ],
+        "preset": "2.0",
+        "device": "",
+        "groups": [
+          {
+            "id": "front",
+            "key": "프론트",
+            "speaker_indices": [
+              0,
+              1
+            ]
+          }
+        ],
+        "summary": {
+          "speaker_count": 2,
+          "outputs": [
+            1,
+            2
+          ],
+          "max_channel": 2,
+          "duplicate_outputs": [],
+          "sub_count": 0
+        }
+      },
+      "undo_token": null
+    }
+  },
+  {
+    "params": {
+      "preset": "2.1",
+      "confirm": false
+    },
+    "data": {
+      "config": {
+        "speakers": [
+          {
+            "role": "L",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 1,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "R",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 2,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "SW1",
+            "size": "sub",
+            "bands": [
+              {
+                "band": "SUB",
+                "out": 3,
+                "pol": "+"
+              }
+            ]
+          }
+        ],
+        "preset": "2.1",
+        "device": "",
+        "groups": [
+          {
+            "id": "front",
+            "key": "프론트",
+            "speaker_indices": [
+              0,
+              1
+            ]
+          },
+          {
+            "id": "sub",
+            "key": "서브",
+            "speaker_indices": [
+              2
+            ]
+          }
+        ],
+        "summary": {
+          "speaker_count": 3,
+          "outputs": [
+            1,
+            2,
+            3
+          ],
+          "max_channel": 3,
+          "duplicate_outputs": [],
+          "sub_count": 1
+        }
+      },
+      "undo_token": null
+    }
+  },
+  {
+    "params": {
+      "preset": "2.2",
+      "confirm": false
+    },
+    "data": {
+      "config": {
+        "speakers": [
+          {
+            "role": "L",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 1,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "R",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 2,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "SW1",
+            "size": "sub",
+            "bands": [
+              {
+                "band": "SUB",
+                "out": 3,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "SW2",
+            "size": "sub",
+            "bands": [
+              {
+                "band": "SUB",
+                "out": 4,
+                "pol": "+"
+              }
+            ]
+          }
+        ],
+        "preset": "2.2",
+        "device": "",
+        "groups": [
+          {
+            "id": "front",
+            "key": "프론트",
+            "speaker_indices": [
+              0,
+              1
+            ]
+          },
+          {
+            "id": "sub",
+            "key": "서브",
+            "speaker_indices": [
+              2,
+              3
+            ]
+          }
+        ],
+        "summary": {
+          "speaker_count": 4,
+          "outputs": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "max_channel": 4,
+          "duplicate_outputs": [],
+          "sub_count": 2
+        }
+      },
+      "undo_token": null
+    }
+  },
+  {
+    "params": {
+      "preset": "4.0",
+      "confirm": false
+    },
+    "data": {
+      "config": {
+        "speakers": [
+          {
+            "role": "L",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 1,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "R",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 2,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Ls",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 3,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Rs",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 4,
+                "pol": "+"
+              }
+            ]
+          }
+        ],
+        "preset": "4.0",
+        "device": "",
+        "groups": [
+          {
+            "id": "front",
+            "key": "프론트",
+            "speaker_indices": [
+              0,
+              1
+            ]
+          },
+          {
+            "id": "surround",
+            "key": "서라운드",
+            "speaker_indices": [
+              2,
+              3
+            ]
+          }
+        ],
+        "summary": {
+          "speaker_count": 4,
+          "outputs": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "max_channel": 4,
+          "duplicate_outputs": [],
+          "sub_count": 0
+        }
+      },
+      "undo_token": null
+    }
+  },
+  {
+    "params": {
+      "preset": "4.1",
+      "confirm": false
+    },
+    "data": {
+      "config": {
+        "speakers": [
+          {
+            "role": "L",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 1,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "R",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 2,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "SW1",
+            "size": "sub",
+            "bands": [
+              {
+                "band": "SUB",
+                "out": 3,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Ls",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 4,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Rs",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 5,
+                "pol": "+"
+              }
+            ]
+          }
+        ],
+        "preset": "4.1",
+        "device": "",
+        "groups": [
+          {
+            "id": "front",
+            "key": "프론트",
+            "speaker_indices": [
+              0,
+              1
+            ]
+          },
+          {
+            "id": "sub",
+            "key": "서브",
+            "speaker_indices": [
+              2
+            ]
+          },
+          {
+            "id": "surround",
+            "key": "서라운드",
+            "speaker_indices": [
+              3,
+              4
+            ]
+          }
+        ],
+        "summary": {
+          "speaker_count": 5,
+          "outputs": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "max_channel": 5,
+          "duplicate_outputs": [],
+          "sub_count": 1
+        }
+      },
+      "undo_token": null
+    }
+  },
+  {
+    "params": {
+      "preset": "4.2",
+      "confirm": false
+    },
+    "data": {
+      "config": {
+        "speakers": [
+          {
+            "role": "L",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 1,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "R",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 2,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "SW1",
+            "size": "sub",
+            "bands": [
+              {
+                "band": "SUB",
+                "out": 3,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "SW2",
+            "size": "sub",
+            "bands": [
+              {
+                "band": "SUB",
+                "out": 4,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Ls",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 5,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Rs",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 6,
+                "pol": "+"
+              }
+            ]
+          }
+        ],
+        "preset": "4.2",
+        "device": "",
+        "groups": [
+          {
+            "id": "front",
+            "key": "프론트",
+            "speaker_indices": [
+              0,
+              1
+            ]
+          },
+          {
+            "id": "sub",
+            "key": "서브",
+            "speaker_indices": [
+              2,
+              3
+            ]
+          },
+          {
+            "id": "surround",
+            "key": "서라운드",
+            "speaker_indices": [
+              4,
+              5
+            ]
+          }
+        ],
+        "summary": {
+          "speaker_count": 6,
+          "outputs": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "max_channel": 6,
+          "duplicate_outputs": [],
+          "sub_count": 2
+        }
+      },
+      "undo_token": null
+    }
+  },
+  {
+    "params": {
+      "preset": "5.1",
+      "confirm": false
+    },
+    "data": {
+      "config": {
+        "speakers": [
+          {
+            "role": "L",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 1,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "R",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 2,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "C",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 3,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "SW1",
+            "size": "sub",
+            "bands": [
+              {
+                "band": "SUB",
+                "out": 4,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Ls",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 5,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Rs",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 6,
+                "pol": "+"
+              }
+            ]
+          }
+        ],
+        "preset": "5.1",
+        "device": "",
+        "groups": [
+          {
+            "id": "front",
+            "key": "프론트",
+            "speaker_indices": [
+              0,
+              1
+            ]
+          },
+          {
+            "id": "center",
+            "key": "센터",
+            "speaker_indices": [
+              2
+            ]
+          },
+          {
+            "id": "sub",
+            "key": "서브",
+            "speaker_indices": [
+              3
+            ]
+          },
+          {
+            "id": "surround",
+            "key": "서라운드",
+            "speaker_indices": [
+              4,
+              5
+            ]
+          }
+        ],
+        "summary": {
+          "speaker_count": 6,
+          "outputs": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6
+          ],
+          "max_channel": 6,
+          "duplicate_outputs": [],
+          "sub_count": 1
+        }
+      },
+      "undo_token": null
+    }
+  },
+  {
+    "params": {
+      "preset": "7.1",
+      "confirm": false
+    },
+    "data": {
+      "config": {
+        "speakers": [
+          {
+            "role": "L",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 1,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "R",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 2,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "C",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 3,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "SW1",
+            "size": "sub",
+            "bands": [
+              {
+                "band": "SUB",
+                "out": 4,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Ls",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 5,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Rs",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 6,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Lb",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 7,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Rb",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 8,
+                "pol": "+"
+              }
+            ]
+          }
+        ],
+        "preset": "7.1",
+        "device": "",
+        "groups": [
+          {
+            "id": "front",
+            "key": "프론트",
+            "speaker_indices": [
+              0,
+              1
+            ]
+          },
+          {
+            "id": "center",
+            "key": "센터",
+            "speaker_indices": [
+              2
+            ]
+          },
+          {
+            "id": "sub",
+            "key": "서브",
+            "speaker_indices": [
+              3
+            ]
+          },
+          {
+            "id": "surround",
+            "key": "서라운드",
+            "speaker_indices": [
+              4,
+              5
+            ]
+          },
+          {
+            "id": "back",
+            "key": "백",
+            "speaker_indices": [
+              6,
+              7
+            ]
+          }
+        ],
+        "summary": {
+          "speaker_count": 8,
+          "outputs": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "max_channel": 8,
+          "duplicate_outputs": [],
+          "sub_count": 1
+        }
+      },
+      "undo_token": null
+    }
+  },
+  {
+    "params": {
+      "preset": "7.1.4",
+      "confirm": false
+    },
+    "data": {
+      "config": {
+        "speakers": [
+          {
+            "role": "L",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 1,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "R",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 2,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "C",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 3,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "SW1",
+            "size": "sub",
+            "bands": [
+              {
+                "band": "SUB",
+                "out": 4,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Ls",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 5,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Rs",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 6,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Lb",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 7,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Rb",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 8,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Tfl",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 9,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Tfr",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 10,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Tbl",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 11,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Tbr",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 12,
+                "pol": "+"
+              }
+            ]
+          }
+        ],
+        "preset": "7.1.4",
+        "device": "",
+        "groups": [
+          {
+            "id": "front",
+            "key": "프론트",
+            "speaker_indices": [
+              0,
+              1
+            ]
+          },
+          {
+            "id": "center",
+            "key": "센터",
+            "speaker_indices": [
+              2
+            ]
+          },
+          {
+            "id": "sub",
+            "key": "서브",
+            "speaker_indices": [
+              3
+            ]
+          },
+          {
+            "id": "surround",
+            "key": "서라운드",
+            "speaker_indices": [
+              4,
+              5
+            ]
+          },
+          {
+            "id": "back",
+            "key": "백",
+            "speaker_indices": [
+              6,
+              7
+            ]
+          },
+          {
+            "id": "top",
+            "key": "탑",
+            "speaker_indices": [
+              8,
+              9,
+              10,
+              11
+            ]
+          }
+        ],
+        "summary": {
+          "speaker_count": 12,
+          "outputs": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12
+          ],
+          "max_channel": 12,
+          "duplicate_outputs": [],
+          "sub_count": 1
+        }
+      },
+      "undo_token": null
+    }
+  },
+  {
+    "params": {
+      "preset": "9.1.6",
+      "confirm": false
+    },
+    "data": {
+      "config": {
+        "speakers": [
+          {
+            "role": "L",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 1,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "R",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 2,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "C",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 3,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "SW1",
+            "size": "sub",
+            "bands": [
+              {
+                "band": "SUB",
+                "out": 4,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Ls",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 5,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Rs",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 6,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Lb",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 7,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Rb",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 8,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Lw",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 9,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Rw",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 10,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Tfl",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 11,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Tfr",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 12,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Tml",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 13,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Tmr",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 14,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Tbl",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 15,
+                "pol": "+"
+              }
+            ]
+          },
+          {
+            "role": "Tbr",
+            "size": "small",
+            "bands": [
+              {
+                "band": "FULL",
+                "out": 16,
+                "pol": "+"
+              }
+            ]
+          }
+        ],
+        "preset": "9.1.6",
+        "device": "",
+        "groups": [
+          {
+            "id": "front",
+            "key": "프론트",
+            "speaker_indices": [
+              0,
+              1
+            ]
+          },
+          {
+            "id": "center",
+            "key": "센터",
+            "speaker_indices": [
+              2
+            ]
+          },
+          {
+            "id": "sub",
+            "key": "서브",
+            "speaker_indices": [
+              3
+            ]
+          },
+          {
+            "id": "surround",
+            "key": "서라운드",
+            "speaker_indices": [
+              4,
+              5
+            ]
+          },
+          {
+            "id": "back",
+            "key": "백",
+            "speaker_indices": [
+              6,
+              7
+            ]
+          },
+          {
+            "id": "wide",
+            "key": "와이드",
+            "speaker_indices": [
+              8,
+              9
+            ]
+          },
+          {
+            "id": "top",
+            "key": "탑",
+            "speaker_indices": [
+              10,
+              11,
+              12,
+              13,
+              14,
+              15
+            ]
+          }
+        ],
+        "summary": {
+          "speaker_count": 16,
+          "outputs": [
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16
+          ],
+          "max_channel": 16,
+          "duplicate_outputs": [],
+          "sub_count": 1
+        }
+      },
+      "undo_token": null
+    }
+  },
+  {
+    "params": {
+      "preset": "custom",
+      "confirm": false
+    },
+    "data": {
+      "config": {
+        "speakers": [],
+        "preset": "custom",
+        "device": "",
+        "groups": [],
+        "summary": {
+          "speaker_count": 0,
+          "outputs": [],
+          "max_channel": 0,
+          "duplicate_outputs": [],
+          "sub_count": 0
+        }
+      },
+      "undo_token": null
+    }
+  }
+]

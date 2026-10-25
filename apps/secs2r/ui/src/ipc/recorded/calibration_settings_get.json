@@ -1,0 +1,29 @@
+[
+  {
+    "params": null,
+    "data": {
+      "mode": "mixed",
+      "sample_rate_policy": "reject",
+      "rc_lo": 20.0,
+      "rc_hi": null,
+      "room_volume_m3": null,
+      "room_dims_m": null,
+      "mimo_on": false,
+      "fsiso": 150.0,
+      "mimo_low": null,
+      "mimo_max_supports": 0,
+      "mimo_fir": true,
+      "xo": {},
+      "xo_rec": {},
+      "ultra_ms": 200.0,
+      "subs_manual": {},
+      "sub_main_delay_ms": 0.0,
+      "bundle_layouts": {},
+      "infra_boost_max_db": 24.0,
+      "xo_peq_on": true,
+      "boost_max_db": 10.0,
+      "xo_peq_lo": 0.0,
+      "xo_peq_hi": 0.0
+    }
+  }
+]

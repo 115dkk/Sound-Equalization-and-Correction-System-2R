@@ -1,0 +1,130 @@
+[
+  {
+    "params": {
+      "mode": "zero",
+      "ultra_ms": 200.0,
+      "mimo_fir": false
+    },
+    "data": {
+      "rc_filter": "iir",
+      "fir_taps": 0,
+      "peq_bands": 32,
+      "mimo_filter": "iir",
+      "lift_ms": 0.0,
+      "phase_frac": 6.0,
+      "max_latency_ms": 0.0
+    }
+  },
+  {
+    "params": {
+      "mode": "zero",
+      "ultra_ms": 200.0,
+      "mimo_fir": true
+    },
+    "data": {
+      "rc_filter": "iir",
+      "fir_taps": 0,
+      "peq_bands": 32,
+      "mimo_filter": "fir",
+      "lift_ms": 0.0,
+      "phase_frac": 6.0,
+      "max_latency_ms": 0.0
+    }
+  },
+  {
+    "params": {
+      "mode": "mixed",
+      "ultra_ms": 200.0,
+      "mimo_fir": false
+    },
+    "data": {
+      "rc_filter": "iir_fir",
+      "fir_taps": 2048,
+      "peq_bands": null,
+      "mimo_filter": "iir",
+      "lift_ms": 8.0,
+      "phase_frac": 6.0,
+      "max_latency_ms": 10.0
+    }
+  },
+  {
+    "params": {
+      "mode": "mixed",
+      "ultra_ms": 200.0,
+      "mimo_fir": true
+    },
+    "data": {
+      "rc_filter": "iir_fir",
+      "fir_taps": 2048,
+      "peq_bands": null,
+      "mimo_filter": "fir",
+      "lift_ms": 8.0,
+      "phase_frac": 6.0,
+      "max_latency_ms": 10.0
+    }
+  },
+  {
+    "params": {
+      "mode": "linear",
+      "ultra_ms": 200.0,
+      "mimo_fir": false
+    },
+    "data": {
+      "rc_filter": "iir_fir",
+      "fir_taps": 2048,
+      "peq_bands": null,
+      "mimo_filter": "iir",
+      "lift_ms": 28.0,
+      "phase_frac": 24.0,
+      "max_latency_ms": 30.0
+    }
+  },
+  {
+    "params": {
+      "mode": "linear",
+      "ultra_ms": 200.0,
+      "mimo_fir": true
+    },
+    "data": {
+      "rc_filter": "iir_fir",
+      "fir_taps": 2048,
+      "peq_bands": null,
+      "mimo_filter": "fir",
+      "lift_ms": 28.0,
+      "phase_frac": 24.0,
+      "max_latency_ms": 30.0
+    }
+  },
+  {
+    "params": {
+      "mode": "ultra",
+      "ultra_ms": 200.0,
+      "mimo_fir": false
+    },
+    "data": {
+      "rc_filter": "iir_fir",
+      "fir_taps": 16384,
+      "peq_bands": null,
+      "mimo_filter": "iir",
+      "lift_ms": 198.0,
+      "phase_frac": 24.0,
+      "max_latency_ms": 200.0
+    }
+  },
+  {
+    "params": {
+      "mode": "ultra",
+      "ultra_ms": 200.0,
+      "mimo_fir": true
+    },
+    "data": {
+      "rc_filter": "iir_fir",
+      "fir_taps": 16384,
+      "peq_bands": null,
+      "mimo_filter": "fir",
+      "lift_ms": 198.0,
+      "phase_frac": 24.0,
+      "max_latency_ms": 200.0
+    }
+  }
+]
