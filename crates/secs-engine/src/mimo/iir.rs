@@ -20,6 +20,8 @@ use crate::{
 };
 
 const FS: f64 = 600.0;
+/// Residuals of one support's seed fit: 160 frequencies, real and imaginary.
+const SEED_RESIDUALS: usize = 320;
 const N: usize = 720;
 const MU: f64 = 10.0;
 
@@ -280,7 +282,7 @@ pub(crate) fn fit_one(
     let cache = RefCell::new(Parts::default());
     let residual = |x: &[f64]| {
         if ctx.cancel().is_cancelled() {
-            return vec![0.0; 320];
+            return vec![0.0; SEED_RESIDUALS];
         }
         let mut cache = cache.borrow_mut();
         cache.response(x, polarity, &f, &z, t);
@@ -955,6 +957,35 @@ fn validate_request(req: &MimoRequest, t: &Tuning) -> Result<(), EngineError> {
             .any(|v| !v.is_finite() || *v < 0.0)
     {
         return Err(EngineError::Input("invalid MIMO IIR tuning".into()));
+    }
+    // Each support's seed fit solves `per(t)` = 2 + 3·K + 2·A parameters from
+    // its SEED_RESIDUALS residuals; more unknowns than that is not a fit the
+    // design supports, and the count must not overflow (TD-104).
+    let parameters = t
+        .mimo_k_bands
+        .checked_mul(3)
+        .zip(t.mimo_a_bands.checked_mul(2))
+        .and_then(|(k, a)| k.checked_add(a)?.checked_add(2));
+    if parameters.is_none_or(|n| n > SEED_RESIDUALS) {
+        return Err(EngineError::Input(format!(
+            "invalid MIMO IIR tuning: {} peaking and {} all-pass bands exceed {SEED_RESIDUALS} parameters per support",
+            t.mimo_k_bands, t.mimo_a_bands
+        )));
+    }
+    // The seed and joint fits clamp their start into [lb + 1e-6, ub - 1e-6],
+    // which needs every interval wider than 2e-6. The tuning sets the gain, Q
+    // and band-gain intervals; the frequency ones are at least ln 1.5 wide
+    // for any band `band_of` returns, so one representative band suffices.
+    // Every bound is finite after the checks above.
+    let (lb, ub) = bounds((15.0, 300.0), t);
+    if lb
+        .iter()
+        .zip(&ub)
+        .any(|(&l, &u)| u - l <= 2e-6 || l + 1e-6 > u - 1e-6)
+    {
+        return Err(EngineError::Input(
+            "invalid MIMO IIR tuning: a parameter range is not wider than 2e-6".into(),
+        ));
     }
     Ok(())
 }
@@ -1727,5 +1758,59 @@ mod operator_tests {
             )
             .is_err()
         );
+    }
+}
+
+#[cfg(test)]
+mod tuning_tests {
+    use super::*;
+
+    #[test]
+    fn iir_tuning_ranges_are_checked_at_entry() {
+        // TD-104: band counts beyond the seed fit's residuals, and bounds too
+        // narrow for the 1e-6 start margins (f64::clamp panics on min > max).
+        let req = MimoRequest::default();
+        let ok = |t: Tuning| validate_request(&req, &t).is_ok();
+        assert!(ok(Tuning::default()));
+        // 2 + 3·106 = 320 parameters per support: as many as residuals.
+        assert!(ok(Tuning {
+            mimo_k_bands: 106,
+            mimo_a_bands: 0,
+            ..Tuning::default()
+        }));
+        for (k, a) in [(106, 1), (0, 160), (usize::MAX, 0), (0, usize::MAX)] {
+            let t = Tuning {
+                mimo_k_bands: k,
+                mimo_a_bands: a,
+                ..Tuning::default()
+            };
+            assert!(
+                matches!(validate_request(&req, &t), Err(EngineError::Input(_))),
+                "{k} peaking and {a} all-pass bands"
+            );
+        }
+        assert!(ok(Tuning {
+            mimo_band_db: 2e-6,
+            ..Tuning::default()
+        }));
+        for t in [
+            Tuning {
+                mimo_band_db: 1e-6,
+                ..Tuning::default()
+            },
+            Tuning {
+                mimo_q_max: 0.5 * 1e-6f64.exp(),
+                ..Tuning::default()
+            },
+            Tuning {
+                mimo_gain_max_db: -80.0 + 1e-6,
+                ..Tuning::default()
+            },
+        ] {
+            assert!(
+                matches!(validate_request(&req, &t), Err(EngineError::Input(_))),
+                "{t:?}"
+            );
+        }
     }
 }
