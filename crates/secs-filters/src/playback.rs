@@ -12,14 +12,15 @@
 //! interpolation filters change the response from the historically cropped FIR.
 //! Both modes reuse transforms between routes and allocate only at construction.
 
-use secs_camilla::{pyfmt::round_ndigits, round_ties_even_i64};
+use secs_camilla::pyfmt::round_ndigits;
 use secs_dsp::{
     DspError,
     convolution::{FirRoute, MatrixConvolver},
-    fir::{lowrate_len_48k, lowrate_to_48k},
+    fir::lowrate_to_48k,
     iir::{BType, Sos, butter},
     multirate::MultirateMatrixConvolver,
 };
+use secs_graph::{ExportGraph, LfeChoice, round_ties_even_i64};
 use secs_types::chain::{BandType, MimoFilter, MimoPaths, SignalChain};
 use std::f64::consts::PI;
 
@@ -231,14 +232,18 @@ pub struct MimoFirPlayback {
 
 impl MimoFirPlayback {
     /// Build a renderer. IIR support routes are rejected rather than omitted.
-    /// Construction validates all routing and filter parameters before use.
+    /// The chain and paths are validated by building their [`ExportGraph`];
+    /// the renderer adds only its own limits (main inputs, block geometry,
+    /// high-pass range, delay buffer, FIR routes, multirate rate).
     pub fn new(
         chain: &SignalChain,
         mimo: &MimoPaths,
         mode: PlaybackMode,
     ) -> Result<Self, DspError> {
-        if chain.sample_rate != 48_000 || chain.mains.is_empty() {
-            return Err(invalid("playback requires a 48 kHz chain with main inputs"));
+        let graph = ExportGraph::build(chain, Some(mimo), LfeChoice::Omit)
+            .map_err(|error| invalid(&error.to_string()))?;
+        if chain.mains.is_empty() {
+            return Err(invalid("playback requires main inputs"));
         }
         if matches!(mode, PlaybackMode::Multirate { factor: 0, .. }) {
             return Err(invalid("multirate factor must be positive"));
@@ -255,45 +260,35 @@ impl MimoFirPlayback {
         if block_size == 0 {
             return Err(invalid("playback block size must be positive"));
         }
-        let inputs: Vec<_> = chain.mains.iter().map(|m| m.role.clone()).collect();
-        let outputs: Vec<_> = inputs
-            .iter()
-            .cloned()
-            .chain(chain.subs.iter().map(|s| s.role.clone()))
-            .collect();
-        for (i, role) in outputs.iter().enumerate() {
-            if role.is_empty() || outputs[..i].contains(role) {
-                return Err(invalid("playback roles must be nonempty and unique"));
+        let inputs = graph.plan().inputs.clone();
+        let outputs = graph.plan().outputs.clone();
+        // The graph groups support paths by output, family and exact low edge.
+        // The renderer applies the high-pass rounded to three places, as the
+        // CamillaDSP writer emits it, and one whole-sample delay per group: it
+        // joins graph groups whose rounded cutoff coincides and splits them by
+        // each path's rounded delay, in path order.
+        let mut support_group = vec![0; mimo.paths.len()];
+        for (index, group) in graph.support_groups().iter().enumerate() {
+            for &member in &group.members {
+                support_group[member] = index;
             }
         }
         let mut groups: Vec<Group> = Vec::new();
         let mut routes = Vec::with_capacity(mimo.paths.len());
-        for path in &mimo.paths {
-            if let MimoFilter::FirLowRate { taps_low, fs_low } = &path.filter
-                && (*fs_low > SAMPLE_RATE
-                    || lowrate_len_48k(taps_low.len(), *fs_low).is_none()
-                    || taps_low.iter().any(|tap| !tap.is_finite()))
-            {
-                return Err(invalid("invalid low-rate playback FIR recipe"));
-            }
+        for (path_index, path) in mimo.paths.iter().enumerate() {
+            let shared = &graph.support_groups()[support_group[path_index]];
             let input = inputs
                 .iter()
                 .position(|r| r == &path.input)
-                .ok_or_else(|| invalid("unknown MIMO playback input"))?;
-            let output = outputs
-                .iter()
-                .position(|r| r == &path.support)
-                .ok_or_else(|| invalid("unknown MIMO playback output"))?;
-            if !path.low_hz.is_finite()
-                || path.low_hz < 0.0
-                || path.low_hz >= SAMPLE_RATE / 2.0
-                || !path.delay_ms.is_finite()
-                || path.delay_ms < 0.0
+                .expect("validated MIMO input");
+            if shared.low_hz < 0.0
+                || shared.low_hz >= SAMPLE_RATE / 2.0
                 || path.delay_ms * 48.0 > MAX_OUTPUT_DELAY_SAMPLES as f64
             {
                 return Err(invalid("invalid playback high-pass or output delay"));
             }
-            let low_hz = round_ndigits(path.low_hz, 3);
+            let output = shared.output;
+            let low_hz = round_ndigits(shared.low_hz, 3);
             // Preserve the writer's floating-point evaluation order at half samples.
             let delay_samples = round_ties_even_i64(path.delay_ms * SAMPLE_RATE / 1000.0) as usize;
             let group = if let Some(index) = groups.iter().position(|g| {

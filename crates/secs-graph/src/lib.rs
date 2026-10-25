@@ -14,6 +14,7 @@
 //! the input rules both `export_camilladsp.py` and `export_filters.py`
 //! assumed without checking.
 
+pub mod files;
 mod plan;
 mod validate;
 

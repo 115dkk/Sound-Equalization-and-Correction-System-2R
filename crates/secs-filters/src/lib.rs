@@ -3,21 +3,23 @@
 //! Filter-value text and Equalizer APO configuration export.
 //!
 //! Upstream sources: `export_filters.py` and the calibration-level wrappers in
-//! `calibration.py`. The writer reads only [`SignalChain`] and optional
-//! [`MimoPaths`] values. Validation and serialization finish before the first
-//! filesystem change.
+//! `calibration.py`. The writers serialise the plan of an [`ExportGraph`],
+//! whose construction is the only validation of the [`SignalChain`] and its
+//! optional [`MimoPaths`]; a run's own label, stamp and numbers are checked
+//! here. Validation and serialization finish before the first filesystem
+//! change.
 
 pub mod playback;
 
-use secs_camilla::pyfmt::{format_fixed, format_g};
-use secs_camilla::{
-    LFE_GAIN_DB, LFE_LP_HZ, SAMPLE_RATE, is_negative_delay, round_ties_even_i64, safe_name,
-    wav_bytes, write_bundle_observed,
-};
+use secs_camilla::pyfmt::{format_fixed, format_g, round_ndigits};
 use secs_dsp::Complex64;
-use secs_graph::{ExportGraph, FirView, GraphError, LfeChoice};
+use secs_graph::files::{safe_name, wav_bytes, write_bundle_observed};
+use secs_graph::{
+    ExportGraph, FirView, GraphError, LFE_GAIN_DB, LFE_LP_HZ, LfeChoice, SAMPLE_RATE,
+    is_negative_delay, round_ties_even_i64,
+};
 pub use secs_graph::{FilterPlan, MimoFeed, Op, SubFeed};
-use secs_types::chain::{BandType, MimoFilter, MimoPaths, SignalChain};
+use secs_types::chain::{BandType, MimoPaths, SignalChain};
 use secs_types::ipc::{ExportBlock, ExportKind, filter_export_block};
 use std::borrow::Cow;
 
@@ -128,16 +130,14 @@ pub fn make_plan_with_lfe(
     lfe_gain_db: Option<f64>,
     lfe_lp_hz: f64,
 ) -> Result<FilterPlan, FiltersError> {
-    validate_chain(chain, mimo)?;
-    if let Some(gain) = lfe_gain_db {
-        finite("lfe_gain_db", gain)?;
-    }
-    finite("lfe_lp_hz", lfe_lp_hz)?;
     let lfe = lfe_gain_db.map_or(LfeChoice::Omit, |gain_db| LfeChoice::Include {
         gain_db,
         lp_hz: lfe_lp_hz,
     });
-    Ok(ExportGraph::build(chain, mimo, lfe)?.plan().clone())
+    let graph = ExportGraph::build(chain, mimo, lfe)?;
+    // The low-pass stays a checked parameter even when no LFE input is built.
+    finite("lfe_lp_hz", lfe_lp_hz)?;
+    Ok(graph.plan().clone())
 }
 
 /// [`secs_graph::plan_responses`]: electrical responses from one input to
@@ -826,7 +826,7 @@ pub fn eqapo_guide(
 }
 
 fn db(value: f64) -> String {
-    let rounded = secs_camilla::pyfmt::round_ndigits(value, 2) + 0.0;
+    let rounded = round_ndigits(value, 2) + 0.0;
     format_fixed(rounded, 2, true)
 }
 fn comma(value: usize) -> String {
@@ -1211,7 +1211,7 @@ pub fn export_filter_text(
         return Err(FiltersError::Scope(block));
     }
     validate_run(run)?;
-    let plan = make_plan(run.chain, run.mimo)?;
+    let graph = ExportGraph::build(run.chain, run.mimo, LfeChoice::DOLBY)?;
     let mode = mode_name(run);
     let info = vec![
         format!(
@@ -1223,7 +1223,7 @@ pub fn export_filter_text(
         "샘플레이트 48000 Hz(FIR wav · 딜레이 샘플 수 기준)".into(),
     ];
     write_text(
-        &plan,
+        graph.plan(),
         folder,
         &format!("SECS 필터 {}.txt", run.label),
         &format!("secs_{mode}"),
@@ -1242,7 +1242,7 @@ pub fn export_eqapo(run: &FilterRun<'_>, folder: &Path) -> Result<Vec<PathBuf>, 
         return Err(FiltersError::Scope(block));
     }
     validate_run(run)?;
-    let plan = make_plan(run.chain, run.mimo)?;
+    let graph = ExportGraph::build(run.chain, run.mimo, LfeChoice::DOLBY)?;
     let mode = mode_name(run);
     let mimo_note = if let Some(mimo) = run.mimo {
         let kind = if mimo.paths.iter().any(|path| path.filter.is_fir()) {
@@ -1252,7 +1252,7 @@ pub fn export_eqapo(run: &FilterRun<'_>, folder: &Path) -> Result<Vec<PathBuf>, 
         };
         format!(
             "MIMO {kind} support paths {} (Fsiso {} Hz)",
-            plan.mimo.len(),
+            graph.plan().mimo.len(),
             format_g(mimo.fsiso, false)
         )
     } else {
@@ -1264,7 +1264,7 @@ pub fn export_eqapo(run: &FilterRun<'_>, folder: &Path) -> Result<Vec<PathBuf>, 
         format_fixed(run.rc_hi_hz, 0, false)
     );
     write_eqapo(
-        &plan,
+        graph.plan(),
         folder,
         &format!("secs_{mode}"),
         run.label,
@@ -1280,8 +1280,8 @@ fn finite(name: &str, value: f64) -> Result<(), FiltersError> {
         Err(FiltersError::Invalid(format!("non-finite {name}")))
     }
 }
-/// A delay the writers emit: finite and not negative, by the CamillaDSP
-/// writer's rule ([`is_negative_delay`], #92 TD-94).
+/// A delay the writers emit: finite and not negative, by the export graph's
+/// rule ([`is_negative_delay`], #92 TD-94).
 fn emitted_delay(name: &str, channel: &str, ms: f64) -> Result<(), FiltersError> {
     if ms.is_finite() && !is_negative_delay(ms) {
         Ok(())
@@ -1292,7 +1292,8 @@ fn emitted_delay(name: &str, channel: &str, ms: f64) -> Result<(), FiltersError>
     }
 }
 /// Plans may be built by hand or revived from a cache, so the writers check
-/// every delay again before their first file.
+/// every delay again before their first file. A plan from
+/// [`ExportGraph::build`] always passes.
 fn validate_plan_delays(plan: &FilterPlan) -> Result<(), FiltersError> {
     let channels = plan
         .input_ops
@@ -1324,148 +1325,13 @@ fn validate_plan_delays(plan: &FilterPlan) -> Result<(), FiltersError> {
     }
     Ok(())
 }
+/// A run's mode names the export files.
 fn identifier(name: &str, value: &str) -> Result<(), FiltersError> {
     if value.is_empty() || !value.chars().all(|ch| ch.is_ascii_alphanumeric()) {
         Err(FiltersError::Invalid(format!("unsafe {name} {value:?}")))
     } else {
         Ok(())
     }
-}
-fn validate_peqs(name: &str, values: &[(f64, f64, f64)]) -> Result<(), FiltersError> {
-    for (index, &(frequency, q, gain)) in values.iter().enumerate() {
-        finite(&format!("{name}[{index}].frequency"), frequency)?;
-        finite(&format!("{name}[{index}].q"), q)?;
-        finite(&format!("{name}[{index}].gain"), gain)?;
-    }
-    Ok(())
-}
-fn validate_chain(chain: &SignalChain, mimo: Option<&MimoPaths>) -> Result<(), FiltersError> {
-    if chain.sample_rate != SAMPLE_RATE {
-        return Err(FiltersError::Invalid(format!(
-            "sample rate {}",
-            chain.sample_rate
-        )));
-    }
-    finite("chain.main_extra_ms", chain.main_extra_ms)?;
-    finite("chain.lift_ms", chain.lift_ms)?;
-    finite("chain.latency_ms", chain.latency_ms)?;
-    for main in &chain.mains {
-        identifier("main role", &main.role)?;
-        validate_peqs("main input PEQ", &main.input_peq)?;
-        validate_peqs("main top PEQ", &main.top_peq)?;
-        finite("main gain", main.gain_db)?;
-        finite("main delay", main.delay_ms)?;
-        emitted_delay("main delay", &main.role, main.delay_ms)?;
-        finite("main align delay", main.align_delay_ms)?;
-        if let Some(xo) = main.xo_hz {
-            finite("main XO", xo)?;
-        }
-        for &tap in &main.fir {
-            finite("main FIR", tap)?;
-        }
-    }
-    let mut roles = Vec::new();
-    for main in &chain.mains {
-        if roles.iter().any(|role| role == &main.role) || main.role == "LFE" {
-            return Err(FiltersError::Invalid(format!(
-                "duplicate or reserved role {:?}",
-                main.role
-            )));
-        }
-        roles.push(main.role.clone());
-    }
-    for sub in &chain.subs {
-        identifier("sub role", &sub.role)?;
-        if roles.iter().any(|role| role == &sub.role) || sub.role == "LFE" {
-            return Err(FiltersError::Invalid(format!(
-                "duplicate or reserved role {:?}",
-                sub.role
-            )));
-        }
-        roles.push(sub.role.clone());
-        finite("sub gain", sub.gain_db)?;
-        finite("sub delay", sub.delay_ms)?;
-        emitted_delay("sub delay", &sub.role, sub.delay_ms)?;
-        finite("sub HP", sub.hp_hz)?;
-        finite("sub LP", sub.lp_hz)?;
-        if !matches!(sub.polarity, -1 | 1) {
-            return Err(FiltersError::Invalid(format!(
-                "sub polarity {}",
-                sub.polarity
-            )));
-        }
-        validate_peqs("sub PEQ", &sub.peq)?;
-        for &(frequency, q) in &sub.allpass {
-            finite("sub allpass frequency", frequency)?;
-            finite("sub allpass Q", q)?;
-        }
-    }
-    validate_peqs("sub bus PEQ", &chain.sub_bus_peq)?;
-    if let Some(paths) = mimo {
-        finite("MIMO Fsiso", paths.fsiso)?;
-        for path in &paths.paths {
-            identifier("MIMO input", &path.input)?;
-            identifier("MIMO support", &path.support)?;
-            if !chain.mains.iter().any(|main| main.role == path.input) {
-                return Err(FiltersError::Invalid(format!(
-                    "MIMO input {:?} is not a main role",
-                    path.input
-                )));
-            }
-            if !chain.mains.iter().any(|main| main.role == path.support)
-                && !chain.subs.iter().any(|sub| sub.role == path.support)
-            {
-                return Err(FiltersError::Invalid(format!(
-                    "MIMO support {:?} is not an output role",
-                    path.support
-                )));
-            }
-            finite("MIMO low", path.low_hz)?;
-            finite("MIMO delay", path.delay_ms)?;
-            let channel = format!("{}->{}", path.input, path.support);
-            emitted_delay("MIMO delay", &channel, path.delay_ms)?;
-            match &path.filter {
-                MimoFilter::Fir { taps_48k } => {
-                    for &tap in taps_48k {
-                        finite("MIMO FIR", tap)?;
-                    }
-                }
-                MimoFilter::FirLowRate { taps_low, fs_low } => {
-                    finite("MIMO FIR sample rate", *fs_low)?;
-                    if *fs_low > f64::from(SAMPLE_RATE)
-                        || secs_dsp::fir::lowrate_len_48k(taps_low.len(), *fs_low).is_none()
-                    {
-                        return Err(FiltersError::Invalid(
-                            "invalid or oversized low-rate MIMO FIR".into(),
-                        ));
-                    }
-                    for &tap in taps_low {
-                        finite("MIMO FIR", tap)?;
-                    }
-                }
-                MimoFilter::Iir {
-                    gain_db,
-                    delay_ms,
-                    polarity,
-                    peq,
-                    allpass,
-                } => {
-                    finite("MIMO gain", *gain_db)?;
-                    finite("MIMO filter delay", *delay_ms)?;
-                    emitted_delay("MIMO filter delay", &channel, *delay_ms)?;
-                    if !matches!(polarity, -1 | 1) {
-                        return Err(FiltersError::Invalid(format!("MIMO polarity {polarity}")));
-                    }
-                    validate_peqs("MIMO PEQ", peq)?;
-                    for &(frequency, q) in allpass {
-                        finite("MIMO allpass frequency", frequency)?;
-                        finite("MIMO allpass Q", q)?;
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
 }
 fn validate_run(run: &FilterRun<'_>) -> Result<(), FiltersError> {
     identifier("mode", run.mode)?;
@@ -1484,7 +1350,7 @@ fn validate_run(run: &FilterRun<'_>) -> Result<(), FiltersError> {
             run.stamp
         )));
     }
-    validate_chain(run.chain, run.mimo)
+    Ok(())
 }
 
 #[cfg(test)]

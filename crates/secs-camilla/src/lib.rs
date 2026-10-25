@@ -13,22 +13,22 @@
 pub mod pyfmt;
 
 use pyfmt::{format_fixed, format_g, format_i3, format_s30, repr_f64, round_ndigits};
+use secs_graph::GraphError;
 use secs_types::chain::{
     BandType, MainChannel, MimoFilter, MimoPath, MimoPaths, Peq, SignalChain, SubChannel,
 };
 use std::borrow::Cow;
 use std::fmt::Write as _;
-use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
-// The export graph owns the rate, the LFE defaults and the delay rounding
-// every writer shares; they stay reachable here under their old names.
+// The export graph owns the rate, the LFE defaults, the delay rounding and
+// the file helpers every writer shares; they stay reachable here under their
+// old names.
+pub use secs_graph::files::{safe_name, wav_bytes, write_bundle_observed};
 pub use secs_graph::{LFE_GAIN_DB, LFE_LP_HZ, SAMPLE_RATE, is_negative_delay, round_ties_even_i64};
 
 const CONFIG_DIR: &str = "configs";
 const COEFF_DIR: &str = "coeffs";
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// A device map as CamillaDSP takes it, keys in insertion order.
 #[derive(Debug, Clone, PartialEq)]
@@ -123,6 +123,16 @@ pub enum CamillaError {
     /// Filesystem operation failed.
     #[error(transparent)]
     Io(#[from] std::io::Error),
+}
+
+impl From<GraphError> for CamillaError {
+    fn from(error: GraphError) -> Self {
+        match error {
+            GraphError::NonAscii(detail) => Self::NonAscii(detail),
+            GraphError::NonFinite(detail) => Self::NonFinite(detail),
+            GraphError::Invalid(detail) => Self::Invalid(detail),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -303,40 +313,11 @@ fn delay_samples(samples: i64) -> Json {
     )
 }
 
-/// Serialize an IEEE-float, mono, 32-bit WAV exactly like upstream `write_wav`.
-///
-/// Fails when a tap is not finite once narrowed to `f32` (`1e100` is a finite
-/// `f64` but an infinite `f32`), so both writers that share it reject the
-/// coefficients before their first file.
-pub fn wav_bytes(data: &[f64], rate: u32) -> Result<Vec<u8>, CamillaError> {
-    if let Some(index) = data.iter().position(|value| !(*value as f32).is_finite()) {
-        return Err(CamillaError::NonFinite(format!("fir[{index}] as f32")));
-    }
-    let data_len = u32::try_from(data.len() * 4).expect("FIR WAV fits u32");
-    let mut out = Vec::with_capacity(44 + data.len() * 4);
-    out.extend_from_slice(b"RIFF");
-    out.extend_from_slice(&(36 + data_len).to_le_bytes());
-    out.extend_from_slice(b"WAVEfmt ");
-    out.extend_from_slice(&16_u32.to_le_bytes());
-    out.extend_from_slice(&3_u16.to_le_bytes());
-    out.extend_from_slice(&1_u16.to_le_bytes());
-    out.extend_from_slice(&rate.to_le_bytes());
-    out.extend_from_slice(&(rate * 4).to_le_bytes());
-    out.extend_from_slice(&4_u16.to_le_bytes());
-    out.extend_from_slice(&32_u16.to_le_bytes());
-    out.extend_from_slice(b"data");
-    out.extend_from_slice(&data_len.to_le_bytes());
-    for value in data {
-        out.extend_from_slice(&(*value as f32).to_le_bytes());
-    }
-    Ok(out)
-}
-
 /// [`wav_bytes`] for one exported FIR, naming its owner in a range error.
 fn fir_wav(owner: &str, taps: &[f64]) -> Result<Vec<u8>, CamillaError> {
     wav_bytes(taps, SAMPLE_RATE).map_err(|error| match error {
-        CamillaError::NonFinite(name) => CamillaError::NonFinite(format!("{owner}.{name}")),
-        other => other,
+        GraphError::NonFinite(name) => CamillaError::NonFinite(format!("{owner}.{name}")),
+        other => other.into(),
     })
 }
 
@@ -1460,117 +1441,9 @@ pub fn make_config_observed(
     Ok(config)
 }
 
-/// Replace filename-unsafe or non-ASCII characters as upstream does.
-pub fn safe_name(name: &str) -> String {
-    let safe: String = name
-        .chars()
-        .map(|ch| {
-            if ch.is_ascii() && (ch.is_ascii_alphanumeric() || "-_.".contains(ch)) {
-                ch
-            } else {
-                '_'
-            }
-        })
-        .collect();
-    if safe.is_empty() {
-        "secs_calibration".into()
-    } else {
-        safe
-    }
-}
-
 /// Atomically replace one export file through a sibling temporary file.
 pub fn atomic_write(destination: &Path, bytes: &[u8]) -> Result<(), std::io::Error> {
     secs_types::fs::write_atomic_bytes(destination, bytes)
-}
-
-fn safe_bundle_path(path: &Path) -> bool {
-    !path.as_os_str().is_empty()
-        && path
-            .components()
-            .all(|component| matches!(component, Component::Normal(_)))
-}
-
-/// Stage a complete bundle beside its destination, then install its entry file last.
-#[doc(hidden)]
-pub fn write_bundle_observed(
-    root: &Path,
-    files: &[(PathBuf, Vec<u8>)],
-    entry: &Path,
-    after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
-) -> Result<(), std::io::Error> {
-    if !safe_bundle_path(entry)
-        || !files.iter().any(|(path, _)| path == entry)
-        || files.iter().any(|(path, _)| !safe_bundle_path(path))
-    {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "bundle paths must be relative file paths and include the entry",
-        ));
-    }
-    let parent = root.parent().unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(parent)?;
-    let folder = root
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("export");
-    let mut staging = None;
-    for _ in 0..100 {
-        let serial = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let candidate = parent.join(format!(".{folder}.stage-{}-{serial}", std::process::id()));
-        match fs::create_dir(&candidate) {
-            Ok(()) => {
-                staging = Some(candidate);
-                break;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(error),
-        }
-    }
-    let Some(staging) = staging else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::AlreadyExists,
-            "could not create export staging directory",
-        ));
-    };
-    let stage_result = (|| {
-        use std::io::Write as _;
-        for (index, (relative, bytes)) in files.iter().enumerate() {
-            let path = staging.join(relative);
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            let mut file = fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&path)?;
-            file.write_all(bytes)?;
-            file.sync_all()?;
-            after_stage_write(index, &path)?;
-        }
-        Ok::<(), std::io::Error>(())
-    })();
-    if let Err(error) = stage_result {
-        let _ = fs::remove_dir_all(&staging);
-        return Err(error);
-    }
-
-    fs::create_dir_all(root)?;
-    let install = |relative: &Path| -> Result<(), std::io::Error> {
-        let destination = root.join(relative);
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent)?;
-        }
-        fs::rename(staging.join(relative), destination)
-    };
-    let result = (|| {
-        for (relative, _) in files.iter().filter(|(path, _)| path != entry) {
-            install(relative)?;
-        }
-        install(entry)
-    })();
-    let _ = fs::remove_dir_all(&staging);
-    result
 }
 
 /// Write `configs/<name>.yml`, coefficient WAVs, and a placeholder `in.raw` when needed.
