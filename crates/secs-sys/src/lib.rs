@@ -75,6 +75,17 @@ pub fn set_large_icon(
     }
 }
 
+/// Bytes in the `CreateIcon` AND mask of a `width` x `height` icon. The mask
+/// is a monochrome bitmap whose rows are padded to 16-bit words, so each row
+/// takes `ceil(width / 16) * 2` bytes; `width` bytes per row would leave
+/// Windows reading past the buffer for a 1-pixel-wide icon.
+// Only the Windows taskbar leaf calls this; it lives here so that its test
+// runs on every system.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+fn and_mask_len(width: u32, height: u32) -> usize {
+    (width as usize).div_ceil(16) * 2 * height as usize
+}
+
 /// How long an open audio stream may go without progress before its backend
 /// reports it as stalled: no capture callback or packet, no render frame
 /// accepted and no fall in render padding. The cpal and WASAPI backends share
@@ -143,6 +154,15 @@ mod tests {
                 got: 15
             })
         );
+    }
+
+    #[test]
+    fn and_mask_rows_are_padded_to_words() {
+        for (width, row_bytes) in [(1, 2), (16, 2), (17, 4), (256, 32)] {
+            assert_eq!(and_mask_len(width, 1), row_bytes, "width {width}");
+            assert_eq!(and_mask_len(width, 3), 3 * row_bytes, "width {width}");
+        }
+        assert_eq!(and_mask_len(256, 256), 8192);
     }
 
     #[test]
