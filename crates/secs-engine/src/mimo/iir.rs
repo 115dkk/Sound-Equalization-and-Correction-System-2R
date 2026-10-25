@@ -5,7 +5,7 @@
 use std::{cell::RefCell, f64::consts::PI};
 
 use faer::{Accum, Mat, Par, linalg::matmul::matmul};
-use secs_compute::{Context, MapError, MemoryError};
+use secs_compute::Context;
 use secs_dsp::{
     DspError, fft, optimize,
     optimize::{JacobianOperator, NormalEquations, NormalOptions, OperatorOptions, XScale},
@@ -1061,8 +1061,11 @@ fn design_mimo_iir_prepared_with_options(
     }
     let spectra = &prepared.spectra;
     let positions = &design.spectra.positions;
-    let results = ctx
-        .try_map(inputs, |(input, supports)| {
+    let results = crate::memory::try_map(
+        ctx,
+        inputs,
+        0,
+        |(_, supports)| {
             let r = supports.len();
             let dim = r * per(t);
             let rows = 2 * positions.len() * N + 1 + 2 * r * (N + 1) + r * t.mimo_k_bands;
@@ -1081,13 +1084,9 @@ fn design_mimo_iir_prepared_with_options(
                     + 320 * per(t) * 4
                     + 32 * design_freqs().len()
                     + 32768);
-            let _permit =
-                ctx.budget()
-                    .acquire(bytes as u64, ctx.cancel())
-                    .map_err(|e| match e {
-                        MemoryError::Cancelled => EngineError::Cancelled,
-                        other => EngineError::Input(other.to_string()),
-                    })?;
+            bytes as u64
+        },
+        |(input, supports)| {
             let pb = build_problem(
                 design,
                 spectra,
@@ -1108,11 +1107,8 @@ fn design_mimo_iir_prepared_with_options(
                 .collect();
             progress.advance(1);
             Ok((input.clone(), paths, post.removed))
-        })
-        .map_err(|e| match e {
-            MapError::Cancelled => EngineError::Cancelled,
-            MapError::Item { error, .. } => error,
-        })?;
+        },
+    )?;
     let mut out = MimoIir::default();
     for (input, paths, removed) in results {
         out.supports.push((input.clone(), paths));

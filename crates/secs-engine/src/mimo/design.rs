@@ -19,7 +19,9 @@ const EARLY: usize = 36;
 
 use super::solve::solve;
 use crate::{EngineConfig, MeasurementSet};
-use secs_compute::{Context, MapError, MemoryError};
+#[cfg(test)]
+use secs_compute::MapError;
+use secs_compute::{Context, MemoryError};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct MimoRequest {
@@ -1185,39 +1187,35 @@ pub(crate) fn design_mimo_prepared_accelerated(
         .budget()
         .acquire(shared_bytes, ctx.cancel())
         .map_err(memory_error)?;
-    let low_paths = ctx
-        .try_map(pairs.clone(), |(p, r)| {
-            let _scratch = ctx
-                .budget()
-                .acquire(scratch_bytes, ctx.cancel())
-                .map_err(memory_error)?;
+    let low_paths = crate::memory::try_map(
+        ctx,
+        pairs.clone(),
+        shared_bytes,
+        |_| scratch_bytes,
+        |(p, r)| {
             let h = support_path(&out, r, spectra, p, &prepared.align_delay_ms)?;
             Ok::<_, EngineError>(secs_dsp::lowrate::to_low(&h, design_freqs(), 720)?)
-        })
-        .map_err(|e| match e {
-            MapError::Cancelled => EngineError::Cancelled,
-            MapError::Item { error, .. } => error,
-        })?;
+        },
+    )?;
     observe("shared_paths", started.elapsed());
     let started = std::time::Instant::now();
-    let results = ctx
-        .try_map(mains, |main| {
+    let results = crate::memory::try_map(
+        ctx,
+        mains,
+        shared_bytes,
+        |main| {
+            input_bytes(
+                positions.len(),
+                usable.iter().filter(|r| **r != main.role).count(),
+                req.taps_low,
+            ) as u64
+        },
+        |main| {
             let candidates: Vec<_> = usable
                 .iter()
                 .filter(|r| **r != main.role)
                 .cloned()
                 .collect();
-            // Normal equations, Householder reduction, possible fallback factor,
-            // and scratch (also covers the mapped blocks during construction),
-            // plus path/guard/design-grid buffers. Reserve before allocating.
-            let bytes = input_bytes(positions.len(), candidates.len(), req.taps_low);
-            let _permit =
-                ctx.budget()
-                    .acquire(bytes as u64, ctx.cancel())
-                    .map_err(|e| match e {
-                        MemoryError::Cancelled => EngineError::Cancelled,
-                        other => EngineError::Input(other.to_string()),
-                    })?;
             let started = std::time::Instant::now();
             let mut xs = Vec::new();
             let mut paths = Vec::new();
@@ -1254,11 +1252,8 @@ pub(crate) fn design_mimo_prepared_accelerated(
                 acceleration,
             )?;
             Ok((main.role.clone(), result))
-        })
-        .map_err(|e| match e {
-            MapError::Cancelled => EngineError::Cancelled,
-            MapError::Item { error, .. } => error,
-        })?;
+        },
+    )?;
     observe("inputs_wall", started.elapsed());
     let mut traces = Vec::new();
     for (role, result) in results {

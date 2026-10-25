@@ -29,6 +29,8 @@ mod input;
 mod levels;
 #[path = "../src/measurement.rs"]
 mod measurement;
+#[path = "../src/memory.rs"]
+mod memory;
 // The example re-includes the engine sources; it uses only part of the MIMO surface.
 #[allow(unused_imports)]
 #[path = "../src/mimo/mod.rs"]

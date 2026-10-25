@@ -1425,6 +1425,91 @@ fn mimo_shared_preparation_bit_identical() {
 }
 
 #[test]
+fn mimo_one_input_budget_completes_parallel_and_matches_unbounded() {
+    let case = cases::load("room_dba");
+    let mut d = design::replay("room_dba");
+    // Repeat the two recorded inputs so nested Rayon maps can steal another
+    // input even on a four-thread pool; the acoustic problem stays small.
+    d.mains = d
+        .mains
+        .iter()
+        .cycle()
+        .take(8)
+        .map(|m| crate::design::MainDesign {
+            role: m.role.clone(),
+            gain_db: m.gain_db,
+            xo_hz: m.xo_hz,
+            align_delay_ms: m.align_delay_ms,
+            top_response: m.top_response.clone(),
+            response: m.response.clone(),
+            phase_strength: m.phase_strength,
+            phase_band: m.phase_band,
+            phase_frac_used: m.phase_frac_used,
+            before: m.before.clone(),
+            combined: m.combined.clone(),
+            after: m.after.clone(),
+        })
+        .collect();
+    let req = MimoRequest {
+        taps_low: 8,
+        ..MimoRequest::default()
+    };
+    let expected = crate::design_mimo(
+        &d,
+        &case.measurements,
+        &case.config,
+        &req,
+        &Context::serial(),
+    )
+    .unwrap();
+    let usable: Vec<_> = expected
+        .ranges
+        .iter()
+        .filter(|(_, range)| range.is_some())
+        .map(|(r, _)| r)
+        .collect();
+    let positions = d.spectra.positions.len();
+    let candidates = d
+        .mains
+        .iter()
+        .map(|main| usable.iter().filter(|r| ***r != main.role).count())
+        .max()
+        .unwrap();
+    let dim = candidates * req.taps_low;
+    let input_bytes = 8
+        * (4 * dim * dim
+            + req.taps_low * req.taps_low
+            + positions * 720 * (4 * candidates + 8)
+            + 32 * crate::grid::design_freqs().len()
+            + 16 * dim
+            + 16384);
+    let shared_bytes = positions
+        * usable.len()
+        * (720 * 8 + std::mem::size_of::<Vec<f64>>() + 2 * std::mem::size_of::<(u32, &String)>());
+    let cancel = CancelToken::new();
+    let worker_cancel = cancel.clone();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let ctx = Context::new(
+            4,
+            MemoryBudget::new((shared_bytes + input_bytes) as u64),
+            Arc::new(NoProgress),
+            worker_cancel,
+        );
+        let result = crate::design_mimo(&d, &case.measurements, &case.config, &req, &ctx);
+        let _ = tx.send(result);
+    });
+    let result = rx.recv_timeout(std::time::Duration::from_secs(30));
+    cancel.cancel();
+    worker.join().unwrap();
+    let actual = result
+        .expect("MIMO timed out with a one-input memory budget")
+        .unwrap();
+    assert_eq!(actual, expected);
+    assert_eq!(design_bits(&actual), design_bits(&expected));
+}
+
+#[test]
 fn mimo_shared_paths_reject_combined_budget() {
     let case = cases::load("room");
     let d = design::replay("room");

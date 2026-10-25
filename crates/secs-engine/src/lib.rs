@@ -57,6 +57,7 @@ mod fit;
 mod levels;
 #[allow(dead_code)]
 mod measurement;
+mod memory;
 #[allow(dead_code)]
 pub mod mimo;
 mod normalize;
