@@ -20,6 +20,7 @@ mod jobs;
 pub mod mdat_import;
 pub mod measure;
 mod measurement;
+mod measurement_file;
 mod monitor;
 mod project_edit;
 mod session;

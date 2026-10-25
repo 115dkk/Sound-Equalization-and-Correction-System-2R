@@ -1,12 +1,10 @@
 //! Port of wizard/step5_measure.py and mdat_loader.py (SECS 2, GPL-3.0-only).
 use crate::measure::json::JsonExt;
-use crate::measure::{MeasureError, MeasurementSettings, plan_for, position_count};
-use secs_project::{MeasurementResult, MeasurementStore, Project, PyJson};
-use secs_types::role::{ROLES, role_code, role_from_title};
-use std::{
-    collections::BTreeSet,
-    path::{Path, PathBuf},
-};
+use crate::measure::{MeasureError, MeasurementSettings, plan_for};
+use crate::measurement_file::{self, FileRow, ImportedIr, MeasurementReader};
+use secs_project::{MeasurementStore, PyJson};
+use secs_types::role::{role_code, role_from_title};
+use std::{collections::BTreeSet, path::Path};
 
 pub fn split_position(title: &str) -> (String, i64) {
     let text = title.trim();
@@ -273,36 +271,16 @@ pub struct MdatScan {
     pub problems: String,
 }
 
-fn load(path: &Path) -> Result<secs_mdat::LoadedMdatProject, MeasureError> {
-    use std::io::Read;
-    // Bound input allocation before the parser's own graph/array budgets.
-    const LIMIT: u64 = 256 * 1024 * 1024;
-    let file = std::fs::File::open(path).map_err(|e| MeasureError::Input(e.to_string()))?;
-    let mut bytes = Vec::new();
-    file.take(LIMIT + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|e| MeasureError::Input(e.to_string()))?;
-    if bytes.len() as u64 > LIMIT {
-        return Err(MeasureError::Input("mdat exceeds file budget".into()));
-    }
-    secs_mdat::load_mdat_project(&bytes, &Default::default())
-        .map_err(|e| MeasureError::Input(e.to_string()))
-}
-pub fn scan(path: &Path) -> Result<MdatScan, MeasureError> {
-    scan_for(
-        path,
-        &ROLES.iter().map(|r| (*r).into()).collect::<Vec<_>>(),
-        None,
-        1,
-    )
-}
+/// Reads and classifies `path` like upstream `load_mdat` does before its
+/// dialog: positions from the titles (or `position`, or `current` when no
+/// title names one) and roles suggested per position.
 pub fn scan_for(
     path: &Path,
     roles: &[String],
     position: Option<i64>,
     current_position: i64,
 ) -> Result<MdatScan, MeasureError> {
-    Ok(scan_loaded(&load(path)?, roles, position, current_position))
+    Ok(MdatReader::read(path, roles, position, current_position)?.scan)
 }
 fn scan_loaded(
     loaded: &secs_mdat::LoadedMdatProject,
@@ -373,112 +351,109 @@ fn scan_loaded(
         problems: problem,
     }
 }
-/// Per-row positions let the assignment dialog override filename guesses.
-#[derive(Debug, Clone)]
-pub struct Assignment {
-    pub role: Option<String>,
-    pub position: Option<i64>,
-}
-/// An mdat file parsed and classified once, without the open store, so the
-/// session lock is needed only for [`record_import`] (TD-37).
+pub use crate::measurement_file::Assignment;
+
+/// An mdat file parsed and classified once, as the import flow's reader.
 #[derive(Debug)]
-pub(crate) struct ScannedImport {
+pub(crate) struct MdatReader {
     loaded: secs_mdat::LoadedMdatProject,
     scan: MdatScan,
-    name: String,
+    rows: Vec<FileRow>,
 }
 
-impl ScannedImport {
-    pub(crate) fn titles(&self) -> Vec<String> {
-        self.scan
+impl MdatReader {
+    /// Reads `path` (256 MiB limit) and classifies its rows (see [`scan_for`]).
+    pub(crate) fn read(
+        path: &Path,
+        roles: &[String],
+        position: Option<i64>,
+        current: i64,
+    ) -> Result<Self, MeasureError> {
+        let bytes = measurement_file::read(path, "mdat")?;
+        // The parser's own graph and array budgets apply on top.
+        let loaded = secs_mdat::load_mdat_project(&bytes, &Default::default())
+            .map_err(|e| MeasureError::Input(e.to_string()))?;
+        let scan = scan_loaded(&loaded, roles, position, current);
+        let rows = scan
             .measurements
             .iter()
-            .map(|m| m.info.title.clone())
-            .collect()
+            .map(|m| FileRow {
+                title: m.info.title.clone(),
+                position: m.position,
+                role: m.role.clone(),
+                looks_like_sub: m.looks_like_sub,
+                position_tagged: m.title_base != m.info.title.trim(),
+            })
+            .collect();
+        Ok(Self { loaded, scan, rows })
     }
 }
 
-/// Parses `path` and classifies its rows for `project`.
-pub(crate) fn scan_for_import(
-    path: &Path,
-    project: &Project,
-    position: Option<i64>,
-) -> Result<ScannedImport, MeasureError> {
-    let loaded = load(path)?;
-    let plan = plan_for(project, &MeasurementSettings::default());
-    let current = MeasurementStore::new(PathBuf::new(), project.clone())
-        .pending_positions(&plan.positions, &plan.roles)
-        .first()
-        .copied()
-        .unwrap_or(1);
-    let scan = scan_loaded(&loaded, &plan.roles, position, current);
-    let name = path
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned();
-    Ok(ScannedImport { loaded, scan, name })
+impl MeasurementReader for MdatReader {
+    fn rows(&self) -> &[FileRow] {
+        &self.rows
+    }
+
+    fn take(&self, row: usize) -> Result<ImportedIr, MeasureError> {
+        let info = &self
+            .scan
+            .measurements
+            .get(row)
+            .ok_or_else(|| MeasureError::Input("mdat measurement row does not exist".into()))?
+            .info;
+        let (ir, rate) = self
+            .loaded
+            .ir_provider
+            .get_ir(&info.uuid)
+            .ok_or_else(|| MeasureError::Input("mdat measurement has no IR".into()))?;
+        Ok(ImportedIr {
+            samples: ir.into_iter().map(|v| v as f32).collect(),
+            sample_rate: crate::measure::positive(rate, "sample rate")?,
+            t0_s: info.start_time_s,
+            uuid: info.uuid.clone(),
+            source_info: Some(info.source_info.clone()),
+        })
+    }
 }
 
+/// Upstream `load_mdat(path, assignment, position)` without its dialog:
+/// `assignment` is per row in file order (missing rows are skipped, as
+/// upstream pads it with `None`); without one every row takes its
+/// suggested role and position.
 pub fn import(
     store: &mut MeasurementStore,
     path: &Path,
     assignment: Option<&[Assignment]>,
     position: Option<i64>,
 ) -> Result<usize, MeasureError> {
-    let scanned = scan_for_import(path, store.project(), position)?;
-    record_import(store, &scanned, assignment)
-}
-
-/// Records the scanned rows into the open store.
-pub(crate) fn record_import(
-    store: &mut MeasurementStore,
-    scanned: &ScannedImport,
-    assignment: Option<&[Assignment]>,
-) -> Result<usize, MeasureError> {
-    let ScannedImport { loaded, scan, name } = scanned;
     let plan = plan_for(store.project(), &MeasurementSettings::default());
-    let count = position_count(store.project());
-    let mut used = BTreeSet::new();
-    let mut saved = 0;
-    for (i, m) in scan.measurements.iter().enumerate() {
-        let role = match assignment {
-            Some(a) => a.get(i).and_then(|a| a.role.as_ref()),
-            None => m.role.as_ref(),
-        };
-        let pos = assignment
-            .and_then(|a| a.get(i))
-            .and_then(|a| a.position)
-            .unwrap_or(m.position);
-        let Some(role) = role.filter(|r| plan.roles.contains(r)) else {
-            continue;
-        };
-        if pos > count || !used.insert((pos, role.clone())) {
-            continue;
-        }
-        let Some((ir, rate)) = loaded.ir_provider.get_ir(&m.info.uuid) else {
-            continue;
-        };
-        let rate = crate::measure::positive(rate, "sample rate")?;
-        store.record(
-            MeasurementResult {
-                role: role.clone(),
-                pos,
-                ir: ir.into_iter().map(|v| v as f32).collect(),
-                sample_rate: rate,
-                t0_s: m.info.start_time_s,
-                spl_db: None,
-                spl_offset_db: None,
-                snr_db: None,
-                uuid: Some(m.info.uuid.clone()),
-                source: Some(name.clone()),
-                source_info: Some(m.info.source_info.clone()),
+    let current = store
+        .pending_positions(&plan.positions, &plan.roles)
+        .first()
+        .copied()
+        .unwrap_or(1);
+    let reader = MdatReader::read(path, &plan.roles, position, current)?;
+    let assignments = reader
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(i, row)| match assignment {
+            Some(assignment) => assignment.get(i).cloned().unwrap_or(Assignment {
+                role: None,
+                position: None,
+            }),
+            None => Assignment {
+                role: row.role.clone(),
+                position: Some(row.position),
             },
-            Some(&plan.roles),
-        )?;
-        saved += 1;
-    }
-    Ok(saved)
+        })
+        .collect::<Vec<_>>();
+    measurement_file::import(
+        store,
+        &reader,
+        &measurement_file::file_name(path),
+        &assignments,
+    )
 }
 
 pub fn mdat_sources(store: &MeasurementStore) -> std::collections::BTreeMap<i64, String> {

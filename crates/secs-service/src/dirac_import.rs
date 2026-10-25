@@ -4,18 +4,16 @@
 //! documented in `docs/DIRAC_LIVEPROJECT.md`.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::Read;
 use std::path::Path;
 
 use secs_dirac::{ChannelKind, Limits, LiveProject};
-use secs_project::{MeasurementResult, MeasurementStore};
+use secs_project::MeasurementStore;
 use secs_types::role::SUB_ROLES;
 use sha2::{Digest, Sha256};
 
-use crate::mdat_import::{self, Assignment};
-use crate::measure::{MeasureError, MeasurementSettings, plan_for, position_count};
-
-const FILE_LIMIT: u64 = 256 * 1024 * 1024;
+use crate::mdat_import;
+use crate::measure::{MeasureError, MeasurementSettings, plan_for};
+use crate::measurement_file::{self, Assignment, FileRow, ImportedIr, MeasurementReader};
 
 fn content_uuid(samples: &[f64], sample_rate: u32, t0_s: f64) -> String {
     let mut hasher = Sha256::new();
@@ -57,42 +55,6 @@ pub fn is_liveproject(path: &Path) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("liveproject"))
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct DiracRow {
-    pub title: String,
-    pub position: i64,
-    pub channel: usize,
-    pub role: Option<String>,
-    pub looks_like_sub: Option<bool>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct DiracScan {
-    pub rows: Vec<DiracRow>,
-    pub sample_rate: u32,
-}
-
-fn load(path: &Path) -> Result<LiveProject, MeasureError> {
-    let file = std::fs::File::open(path).map_err(|error| MeasureError::Input(error.to_string()))?;
-    let mut bytes = Vec::new();
-    file.take(FILE_LIMIT + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| MeasureError::Input(error.to_string()))?;
-    if bytes.len() as u64 > FILE_LIMIT {
-        return Err(MeasureError::Input(
-            "Dirac project exceeds file budget".into(),
-        ));
-    }
-    secs_dirac::parse(&bytes, &Limits::default()).map_err(|error| {
-        let message = if error == secs_dirac::DiracError::NoMeasurements {
-            "Dirac project holds no measured impulse responses".into()
-        } else {
-            error.to_string()
-        };
-        MeasureError::Input(message)
-    })
-}
-
 fn words(name: &str) -> Vec<String> {
     let mut words = Vec::new();
     let mut word = String::new();
@@ -127,7 +89,7 @@ fn subwoofer_words(words: &[String]) -> bool {
 }
 
 /// Base role (an entry of `ROLES`) for a Dirac channel; subwoofers return `None`
-/// here and get their SW number from their order in [`scan`].
+/// here and get their SW number from their order in the file.
 pub fn base_role(name: &str) -> Option<&'static str> {
     let words = words(name);
     if words.is_empty() || subwoofer_words(&words) {
@@ -227,141 +189,105 @@ fn channel_titles(project: &LiveProject) -> Vec<String> {
         .collect()
 }
 
-fn scan_project(project: &LiveProject, roles: &[String]) -> DiracScan {
-    let channel_roles = channel_roles(project);
-    let channel_titles = channel_titles(project);
-    let mut used: BTreeMap<i64, BTreeSet<String>> = BTreeMap::new();
-    let rows = project
-        .measured()
-        .map(|measured| {
-            let position =
-                i64::try_from(measured.position).expect("Dirac position limit fits i64") + 1;
-            let used = used.entry(position).or_default();
-            let role = channel_roles[measured.channel].and_then(|base| {
-                let role = roles.iter().find(|role| {
-                    role.split(':').next() == Some(base) && !used.contains(role.as_str())
-                })?;
-                used.insert(role.clone());
-                Some(role.clone())
-            });
-            DiracRow {
-                title: format!("{} P{position}", channel_titles[measured.channel]),
-                position,
-                channel: measured.channel,
-                role,
-                looks_like_sub: Some(mdat_import::looks_like_sub(
-                    measured.samples,
-                    i64::from(project.sample_rate),
-                )),
-            }
-        })
-        .collect();
-    DiracScan {
-        rows,
-        sample_rate: project.sample_rate,
-    }
-}
-
-pub fn scan(path: &Path, roles: &[String]) -> Result<DiracScan, MeasureError> {
-    Ok(scan_project(&load(path)?, roles))
-}
-
-/// A Dirac project parsed and classified once, without the open store, so
-/// the session lock is needed only for [`record_import`] (TD-37).
+/// A Dirac project parsed and classified once, as the import flow's reader.
 #[derive(Debug)]
-pub(crate) struct ScannedImport {
+pub(crate) struct DiracReader {
     project: LiveProject,
-    rows: Vec<DiracRow>,
-    name: String,
+    rows: Vec<FileRow>,
+    /// The Dirac position (from 0) and channel of each row.
+    measured: Vec<(usize, usize)>,
 }
 
-impl ScannedImport {
-    pub(crate) fn titles(&self) -> Vec<String> {
-        self.rows.iter().map(|row| row.title.clone()).collect()
+impl DiracReader {
+    /// Reads `path` (256 MiB limit) and lists its measured channels per
+    /// position. Dirac position p is position p + 1; roles come from the
+    /// channel names, subwoofers from SW1 in order (ADR 0013).
+    pub(crate) fn read(path: &Path, roles: &[String]) -> Result<Self, MeasureError> {
+        let bytes = measurement_file::read(path, "Dirac project")?;
+        let project = secs_dirac::parse(&bytes, &Limits::default()).map_err(|error| {
+            let message = if error == secs_dirac::DiracError::NoMeasurements {
+                "Dirac project holds no measured impulse responses".into()
+            } else {
+                error.to_string()
+            };
+            MeasureError::Input(message)
+        })?;
+        let channel_roles = channel_roles(&project);
+        let channel_titles = channel_titles(&project);
+        let mut used: BTreeMap<i64, BTreeSet<String>> = BTreeMap::new();
+        let mut measured = Vec::new();
+        let rows = project
+            .measured()
+            .map(|row| {
+                let position =
+                    i64::try_from(row.position).expect("Dirac position limit fits i64") + 1;
+                let used = used.entry(position).or_default();
+                let role = channel_roles[row.channel].and_then(|base| {
+                    let role = roles.iter().find(|role| {
+                        role.split(':').next() == Some(base) && !used.contains(role.as_str())
+                    })?;
+                    used.insert(role.clone());
+                    Some(role.clone())
+                });
+                measured.push((row.position, row.channel));
+                FileRow {
+                    title: format!("{} P{position}", channel_titles[row.channel]),
+                    position,
+                    role,
+                    looks_like_sub: Some(mdat_import::looks_like_sub(
+                        row.samples,
+                        i64::from(project.sample_rate),
+                    )),
+                    position_tagged: true,
+                }
+            })
+            .collect();
+        Ok(Self {
+            project,
+            rows,
+            measured,
+        })
     }
 }
 
-/// Parses `path` and classifies its rows for `roles`.
-pub(crate) fn scan_for_import(
-    path: &Path,
-    roles: &[String],
-) -> Result<ScannedImport, MeasureError> {
-    let project = load(path)?;
-    let rows = scan_project(&project, roles).rows;
-    let name = path
-        .file_name()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .into_owned();
-    Ok(ScannedImport {
-        project,
-        rows,
-        name,
-    })
+impl MeasurementReader for DiracReader {
+    fn rows(&self) -> &[FileRow] {
+        &self.rows
+    }
+
+    fn take(&self, row: usize) -> Result<ImportedIr, MeasureError> {
+        let missing = || MeasureError::Input("Dirac measurement row is missing its IR".into());
+        let (position, channel) = *self.measured.get(row).ok_or_else(missing)?;
+        let samples = self
+            .project
+            .response(position, channel)
+            .ok_or_else(missing)?;
+        let sample_rate =
+            crate::measure::positive(i64::from(self.project.sample_rate), "sample rate")?;
+        let t0_s = -secs_dirac::NOMINAL_ARRIVAL_S;
+        Ok(ImportedIr {
+            samples: samples.iter().map(|sample| *sample as f32).collect(),
+            sample_rate,
+            t0_s,
+            uuid: content_uuid(samples, self.project.sample_rate, t0_s),
+            source_info: None,
+        })
+    }
 }
 
+/// Imports the assigned rows of the Dirac project at `path`, one
+/// assignment per row, through the measurement-file import flow.
 pub fn import(
     store: &mut MeasurementStore,
     path: &Path,
     assignments: &[Assignment],
 ) -> Result<usize, MeasureError> {
     let plan = plan_for(store.project(), &MeasurementSettings::default());
-    let scanned = scan_for_import(path, &plan.roles)?;
-    record_import(store, &scanned, assignments)
-}
-
-/// Records the assigned rows into the open store.
-pub(crate) fn record_import(
-    store: &mut MeasurementStore,
-    scanned: &ScannedImport,
-    assignments: &[Assignment],
-) -> Result<usize, MeasureError> {
-    let ScannedImport {
-        project,
-        rows,
-        name,
-    } = scanned;
-    let plan = plan_for(store.project(), &MeasurementSettings::default());
-    if assignments.len() != rows.len() {
-        return Err(MeasureError::Input(
-            "assignment count does not match Dirac measurement rows".into(),
-        ));
-    }
-    let position_count = position_count(store.project());
-    let sample_rate = crate::measure::positive(i64::from(project.sample_rate), "sample rate")?;
-    let mut used = BTreeSet::new();
-    let mut saved = 0;
-    for (row, assignment) in rows.iter().zip(assignments) {
-        let (Some(role), Some(position)) = (&assignment.role, assignment.position) else {
-            continue;
-        };
-        if !plan.roles.contains(role)
-            || !(1..=position_count).contains(&position)
-            || !used.insert((position, role.clone()))
-        {
-            continue;
-        }
-        let samples = project
-            .response((row.position - 1) as usize, row.channel)
-            .ok_or_else(|| MeasureError::Input("Dirac measurement row is missing its IR".into()))?;
-        let t0_s = -secs_dirac::NOMINAL_ARRIVAL_S;
-        store.record(
-            MeasurementResult {
-                role: role.clone(),
-                pos: position,
-                ir: samples.iter().map(|sample| *sample as f32).collect(),
-                sample_rate,
-                t0_s,
-                spl_db: None,
-                spl_offset_db: None,
-                snr_db: None,
-                uuid: Some(content_uuid(samples, project.sample_rate, t0_s)),
-                source: Some(name.clone()),
-                source_info: None,
-            },
-            Some(&plan.roles),
-        )?;
-        saved += 1;
-    }
-    Ok(saved)
+    let reader = DiracReader::read(path, &plan.roles)?;
+    measurement_file::import(
+        store,
+        &reader,
+        &measurement_file::file_name(path),
+        assignments,
+    )
 }

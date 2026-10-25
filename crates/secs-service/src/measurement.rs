@@ -8,7 +8,7 @@ use secs_types::ipc::*;
 
 use crate::measure::json::JsonExt;
 use crate::measure::{self, MeasureError, MeasurementSettings, Measurer, plan_for, store_devices};
-use crate::{Deps, EventSink, Service, dirac_import, lock, mdat_import, session};
+use crate::{Deps, EventSink, Service, lock, mdat_import, measurement_file, session};
 use secs_types::role::ROLES;
 
 struct Transport(Box<dyn secs_rew::Transport>);
@@ -923,86 +923,37 @@ impl Service {
         })
     }
     pub(crate) fn mdat_scan(&self, params: MdatScanParams) -> Result<MdatScanResult, IpcError> {
-        let path = Path::new(&params.path);
-        if dirac_import::is_liveproject(path) {
-            let roles = ROLES.into_iter().map(str::to_owned).collect::<Vec<_>>();
-            let scan = dirac_import::scan(path, &roles)
-                .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto, None))?;
-            let suggested_roles = scan
-                .rows
-                .iter()
-                .map(|row| row.role.clone())
-                .collect::<Vec<_>>();
-            let positions = scan.rows.iter().map(|row| row.position).collect::<Vec<_>>();
-            return Ok(MdatScanResult {
-                suggestions: scan
-                    .rows
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(index, row)| {
-                        row.role.as_ref().map(|role| MdatAssignment {
-                            measurement: row.title.clone(),
-                            role: role.clone(),
-                            index: Some(index),
-                            position: Some(row.position),
-                        })
-                    })
-                    .collect(),
-                problems: mdat_import::problem_notices(&suggested_roles, &positions),
-                measurements: scan
-                    .rows
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, row)| MdatScanMeasurement {
-                        index,
-                        title: row.title,
-                        role: row.role,
-                        position: row.position,
-                        position_tagged: true,
-                        looks_like_sub: row.looks_like_sub,
-                    })
-                    .collect(),
-            });
-        }
-        let scan = mdat_import::scan(path)
+        let roles = ROLES.into_iter().map(str::to_owned).collect::<Vec<_>>();
+        let reader = measurement_file::open(Path::new(&params.path), &roles, None, 1)
             .map_err(|e| measure_error(e, "path", secs_audio::SharePreference::Auto, None))?;
-        let roles = scan
-            .measurements
-            .iter()
-            .map(|m| m.role.clone())
-            .collect::<Vec<_>>();
-        let positions = scan
-            .measurements
-            .iter()
-            .map(|m| m.position)
-            .collect::<Vec<_>>();
+        let rows = reader.rows();
         Ok(MdatScanResult {
-            suggestions: scan
-                .measurements
+            suggestions: rows
                 .iter()
                 .enumerate()
-                .filter_map(|(index, m)| {
-                    m.role.as_ref().map(|role| MdatAssignment {
-                        measurement: m.info.title.clone(),
+                .filter_map(|(index, row)| {
+                    row.role.as_ref().map(|role| MdatAssignment {
+                        measurement: row.title.clone(),
                         role: role.clone(),
                         index: Some(index),
-                        position: Some(m.position),
+                        position: Some(row.position),
                     })
                 })
                 .collect(),
-            problems: mdat_import::problem_notices(&roles, &positions),
-            measurements: scan
-                .measurements
-                .into_iter()
+            problems: mdat_import::problem_notices(
+                &rows.iter().map(|row| row.role.clone()).collect::<Vec<_>>(),
+                &rows.iter().map(|row| row.position).collect::<Vec<_>>(),
+            ),
+            measurements: rows
+                .iter()
                 .enumerate()
-                .map(|(index, m)| MdatScanMeasurement {
+                .map(|(index, row)| MdatScanMeasurement {
                     index,
-                    position_tagged: mdat_import::split_position(&m.info.title).0
-                        != m.info.title.trim(),
-                    title: m.info.title,
-                    role: m.role,
-                    position: m.position,
-                    looks_like_sub: m.looks_like_sub,
+                    title: row.title.clone(),
+                    role: row.role.clone(),
+                    position: row.position,
+                    position_tagged: row.position_tagged,
+                    looks_like_sub: row.looks_like_sub,
                 })
                 .collect(),
         })
@@ -1021,31 +972,21 @@ impl Service {
         };
         let session = self.session.clone();
         self.jobs.start(JobKind::MdatImport, events, move |ctx| {
-            // Parse and classify once here, without the session lock; the
-            // lock is held only for the record loop below (TD-37).
-            enum Scanned {
-                Dirac(dirac_import::ScannedImport),
-                Mdat(mdat_import::ScannedImport),
-            }
+            // Read the file once here, without the session lock; the lock
+            // is held only for the import below (TD-37).
             let path = Path::new(&params.path);
             let plan = plan_for(&project, &Default::default());
             let path_error = |e| measure_error(e, "path", secs_audio::SharePreference::Auto, None);
-            let scanned = if dirac_import::is_liveproject(path) {
-                Scanned::Dirac(
-                    dirac_import::scan_for_import(path, &plan.roles).map_err(path_error)?,
-                )
-            } else {
-                Scanned::Mdat(
-                    mdat_import::scan_for_import(path, &project, Some(params.position))
-                        .map_err(path_error)?,
-                )
-            };
-            let titles = match &scanned {
-                Scanned::Dirac(scanned) => scanned.titles(),
-                Scanned::Mdat(scanned) => scanned.titles(),
-            };
+            let reader =
+                measurement_file::open(path, &plan.roles, Some(params.position), params.position)
+                    .map_err(path_error)?;
+            let titles = reader
+                .rows()
+                .iter()
+                .map(|row| row.title.as_str())
+                .collect::<Vec<_>>();
             let mut assignments = vec![
-                mdat_import::Assignment {
+                measurement_file::Assignment {
                     role: None,
                     position: None
                 };
@@ -1079,7 +1020,7 @@ impl Service {
                 if !(1..=measure::position_count(&project)).contains(&position) {
                     return Err(input("position", "position outside layout"));
                 }
-                assignments[index] = mdat_import::Assignment {
+                assignments[index] = measurement_file::Assignment {
                     role: Some(a.role),
                     position: Some(position),
                 };
@@ -1099,16 +1040,11 @@ impl Service {
                 error.params.extend(problem.params.clone());
                 return Err(error);
             }
+            let file_name = measurement_file::file_name(path);
             let (count, info) = session::commit(&session, ticket, &ctx, |open| {
-                let count = match &scanned {
-                    Scanned::Dirac(scanned) => {
-                        dirac_import::record_import(&mut open.store, scanned, &assignments)
-                    }
-                    Scanned::Mdat(scanned) => {
-                        mdat_import::record_import(&mut open.store, scanned, Some(&assignments))
-                    }
-                }
-                .map_err(path_error)?;
+                let count =
+                    measurement_file::import(&mut open.store, &*reader, &file_name, &assignments)
+                        .map_err(path_error)?;
                 // The import writes its records to disk.
                 open.dirty = false;
                 Ok(((count, session::info(open)), false))
