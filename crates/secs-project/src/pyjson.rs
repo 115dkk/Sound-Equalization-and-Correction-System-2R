@@ -1,5 +1,7 @@
 //! Python-compatible JSON values, parser, and pretty-printer.
 
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::fmt;
 
 /// A JSON value exactly as Python's `json` module reads and writes it.
@@ -197,6 +199,8 @@ impl Parser<'_> {
             self.pos += 1;
             return Ok(PyJson::Object(values));
         }
+        // Key -> position in `values`, only while this object is parsed.
+        let mut index: HashMap<String, usize> = HashMap::new();
         loop {
             if self.bytes.get(self.pos) != Some(&b'"') {
                 return Err(self.error("expecting property name"));
@@ -209,10 +213,14 @@ impl Parser<'_> {
             self.pos += 1;
             self.whitespace();
             let value = self.value(depth)?;
-            if let Some((_, old)) = values.iter_mut().find(|(name, _)| *name == key) {
-                *old = value;
-            } else {
-                values.push((key, value));
+            // Like a Python dict: a repeated key keeps its first position and
+            // takes the last value.
+            match index.entry(key) {
+                Entry::Occupied(slot) => values[*slot.get()].1 = value,
+                Entry::Vacant(slot) => {
+                    values.push((slot.key().clone(), value));
+                    slot.insert(values.len() - 1);
+                }
             }
             self.whitespace();
             match self.bytes.get(self.pos) {
