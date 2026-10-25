@@ -563,6 +563,54 @@ fn f5_absolute_parent_and_symlink_escapes_are_rejected_but_in_tree_reads() {
     }
 }
 
+#[test]
+fn project_sources_are_read_only_inside_the_irs_folder_td43() {
+    let directory = TempDir::new();
+    let project_directory = directory.0.join("project");
+    fs::create_dir_all(&project_directory).unwrap();
+    let path = project_directory.join("측정.secs");
+    let irs = path.with_extension("irs");
+    fs::create_dir_all(&irs).unwrap();
+    let info = SourceInfo {
+        strings: vec![("outputName".into(), "원 측정".into())],
+        ..SourceInfo::default()
+    };
+    let good = irs.join("good.wav");
+    fs::write(&good, write_wav_float32(&[0.25], 48_000)).unwrap();
+    save_source(&good, Some(&info)).unwrap();
+    let outside = directory.0.join("outside.wav");
+    fs::write(&outside, write_wav_float32(&[0.5], 48_000)).unwrap();
+    save_source(&outside, Some(&info)).unwrap();
+
+    // Only Unix adds the symlink rows below.
+    #[cfg_attr(not(unix), allow(unused_mut))]
+    let mut entries = vec![
+        entry_at(1, "측정.irs/good.wav"),
+        entry_at(2, "../outside.wav"),
+        entry_at(3, &outside.to_string_lossy()),
+    ];
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        // An in-tree IR whose sidecar links outside.
+        let linked_source = irs.join("linked.wav");
+        fs::write(&linked_source, write_wav_float32(&[0.75], 48_000)).unwrap();
+        symlink(source_path(&outside), source_path(&linked_source)).unwrap();
+        entries.push(entry_at(4, "측정.irs/linked.wav"));
+        // An IR that links outside, with an in-tree sidecar.
+        let linked_ir = irs.join("link.wav");
+        symlink(&outside, &linked_ir).unwrap();
+        save_source(&linked_ir, Some(&info)).unwrap();
+        entries.push(entry_at(5, "측정.irs/link.wav"));
+    }
+    let mut project = Project::from_preset("2.0").unwrap();
+    project.measurements = PyJson::Array(entries);
+
+    let sources = load_project_sources(&project, &path);
+    assert_eq!(sources.keys().copied().collect::<Vec<_>>(), vec![1]);
+    assert_eq!(sources[&1]["L"], info);
+}
+
 #[cfg(unix)]
 #[test]
 fn ir_writes_reject_symlinked_store_and_destination_td16() {
@@ -638,8 +686,12 @@ fn ir_cache_rereads_changed_file_and_evicts_to_cap() {
 }
 
 fn entry_with_path(path: &str) -> PyJson {
+    entry_at(1, path)
+}
+
+fn entry_at(pos: i64, path: &str) -> PyJson {
     PyJson::Object(vec![
-        ("pos".into(), PyJson::Int("1".into())),
+        ("pos".into(), PyJson::Int(pos.to_string())),
         (
             "ir".into(),
             PyJson::Object(vec![("L".into(), PyJson::Str(path.into()))]),

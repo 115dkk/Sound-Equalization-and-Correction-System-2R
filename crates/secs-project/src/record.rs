@@ -412,6 +412,12 @@ pub fn load_project_sources(
             } else {
                 base.join(path)
             };
+            // F5: neither the IR nor its sidecar may lead outside the `.irs`.
+            if confined_ir_path(project_path, &path).is_err()
+                || confined_ir_path(project_path, &source_path(&path)).is_err()
+            {
+                continue;
+            }
             if let Some(info) = load_source(&path) {
                 out.entry(pos)
                     .or_insert_with(BTreeMap::new)
