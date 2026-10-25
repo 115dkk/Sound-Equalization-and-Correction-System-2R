@@ -80,13 +80,18 @@ export type MimoInclusion =
   | { included: false; reason: "off" | "positions" | "none" | "stale" };
 
 export function mimoInclusion(view: ExportView): MimoInclusion {
-  const mimo = view.results.mimo;
-  if (!view.settings.mimo_on) return { included: false, reason: "off" };
-  if (view.positions < MIMO_MIN_POSITIONS) return { included: false, reason: "positions" };
-  if (!mimo) return { included: false, reason: "none" };
-  if (mimo.stale) return { included: false, reason: "stale" };
-  const channels = mimo.input_count;
-  return { included: true, kind: mimo.kind, supports: mimo.support_count, channels };
+  switch (view.results.mimo_export) {
+    case "off": return { included: false, reason: "off" };
+    case "too_few_positions": return { included: false, reason: "positions" };
+    case "none": return { included: false, reason: "none" };
+    case "stale": return { included: false, reason: "stale" };
+    // The existing screen shows current MIMO even when it has no support paths.
+    case "no_supports":
+    case "included": {
+      const mimo = view.results.mimo!;
+      return { included: true, kind: mimo.kind, supports: mimo.support_count, channels: mimo.input_count };
+    }
+  }
 }
 
 /**

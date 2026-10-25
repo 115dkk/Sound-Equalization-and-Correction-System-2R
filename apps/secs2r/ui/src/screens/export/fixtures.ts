@@ -36,7 +36,7 @@ const exportError: IpcError = {
 
 /** A current result with MIMO, nothing exported yet. */
 export const exportReady: ExportView = {
-  results: { calibration: calibrationSummary, mimo: exportMimo },
+  results: { calibration: calibrationSummary, mimo: exportMimo, mimo_export: "included" },
   settings: { mode: "mixed", ultra_ms: 200, mimo_on: true },
   positions: 9,
   rc: exportRc,
@@ -48,13 +48,13 @@ export const exportReady: ExportView = {
   tutorial: false,
 };
 
-export const exportNoResult: ExportView = { ...exportReady, results: noResults, rc: [] };
+export const exportNoResult: ExportView = { ...exportReady, results: { ...noResults, mimo_export: "none" }, rc: [] };
 
 export const exportComputingFirst: ExportView = { ...exportNoResult, computing: true, recalibrating: true };
 
 export const exportStale: ExportView = {
   ...exportReady,
-  results: { calibration: { ...calibrationSummary, stale: true }, mimo: { ...exportMimo, stale: true } },
+  results: { calibration: { ...calibrationSummary, stale: true }, mimo: { ...exportMimo, stale: true }, mimo_export: "stale" },
 };
 
 /**
@@ -100,7 +100,7 @@ const rcOnlySummary = { ...calibrationSummary, sub_roles: [] };
 /** No subs, MIMO off: all three filter formats are on. */
 export const exportRcOnly: ExportView = {
   ...exportReady,
-  results: { calibration: rcOnlySummary, mimo: null },
+  results: { calibration: rcOnlySummary, mimo: null, mimo_export: "off" },
   settings: { mode: "mixed", ultra_ms: 200, mimo_on: false },
 };
 
@@ -109,6 +109,7 @@ export const exportMimoNoSubs: ExportView = {
   ...exportRcOnly,
   results: {
     calibration: rcOnlySummary,
+    mimo_export: "included",
     mimo: {
       ...exportMimo,
       support_count: SAMPLE_MAINS.length * 2,
@@ -123,7 +124,7 @@ const EQAPO = "D:/Audio/거실 보정/SECS_eqapo_RC_BA_mixed_20261014-142233";
 /** Subs, no MIMO: the Equalizer APO configuration was saved (the files as the service lists them: config.txt first). */
 export const exportEqapoDone: ExportView = {
   ...exportReady,
-  results: { calibration: calibrationSummary, mimo: null },
+  results: { calibration: calibrationSummary, mimo: null, mimo_export: "off" },
   settings: { mode: "mixed", ultra_ms: 200, mimo_on: false },
   folder: { folder: "D:/Audio/거실 보정", stored: true },
   runs: {
@@ -141,7 +142,7 @@ export const exportEqapoDone: ExportView = {
 };
 
 /** Fewer than three positions: MIMO is left out and the mdat folder says RC_BA. */
-export const exportNoMimo: ExportView = { ...exportReady, positions: 1, results: { calibration: calibrationSummary, mimo: null }, settings: { mode: "linear", ultra_ms: 200, mimo_on: false } };
+export const exportNoMimo: ExportView = { ...exportReady, positions: 1, results: { calibration: calibrationSummary, mimo: null, mimo_export: "off" }, settings: { mode: "linear", ultra_ms: 200, mimo_on: false } };
 
 export const exportTutorial: ExportView = {
   ...exportNoMimo,

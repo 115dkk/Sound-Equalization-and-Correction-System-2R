@@ -1,13 +1,36 @@
 import { describe, expect, it } from "vitest";
 import type { ExportBlock } from "../../ipc/bindings/ExportBlock";
 import type { ExportKind } from "../../ipc/bindings/ExportKind";
+import type { MimoExportDecision } from "../../ipc/bindings/MimoExportDecision";
 import { exportMimoNoSubs, exportNoResult, exportRcOnly, exportReady, exportStale } from "./fixtures";
-import { EXPORT_KINDS, exportBlock, filterModeName, mimoInclusion, type ExportView } from "./types";
+import { EXPORT_KINDS, exportBlock, filterModeName, mimoInclusion, type ExportView, type MimoInclusion } from "./types";
 
 /** The sample result with its subs and MIMO switched off. */
-const subsOnly: ExportView = { ...exportReady, settings: { ...exportReady.settings, mimo_on: false } };
+const subsOnly: ExportView = { ...exportReady, settings: { ...exportReady.settings, mimo_on: false }, results: { ...exportReady.results, mimo_export: "off" } };
 
 const judged = (view: ExportView) => Object.fromEntries(EXPORT_KINDS.map((kind) => [kind, exportBlock(view, kind)])) as Record<ExportKind, ExportBlock | null>;
+
+describe("MIMO decision presentation", () => {
+  const expected = {
+    included: { included: true, kind: "iir", supports: 22, channels: 11 },
+    off: { included: false, reason: "off" },
+    none: { included: false, reason: "none" },
+    stale: { included: false, reason: "stale" },
+    too_few_positions: { included: false, reason: "positions" },
+    no_supports: { included: true, kind: "iir", supports: 0, channels: 11 },
+  } satisfies Record<MimoExportDecision, MimoInclusion>;
+
+  it.each(Object.entries(expected) as [MimoExportDecision, MimoInclusion][])("maps %s to the existing screen shape", (decision, inclusion) => {
+    const mimo = decision === "none" ? null : { ...exportReady.results.mimo!, support_count: decision === "no_supports" ? 0 : 22 };
+    // Deliberately conflicting local inputs: only the service decision selects the presentation.
+    expect(mimoInclusion({
+      ...exportReady,
+      settings: { ...exportReady.settings, mimo_on: false },
+      positions: 0,
+      results: { ...exportReady.results, mimo, mimo_export: decision },
+    })).toEqual(inclusion);
+  });
+});
 
 describe("export scope (the service's filter_export_block)", () => {
   it("lists the kinds in the order the screen draws them", () => {
@@ -31,8 +54,8 @@ describe("export scope (the service's filter_export_block)", () => {
 
   it("counts MIMO only when it goes into the export, and blocks stale cached mdat", () => {
     // Fewer than three positions, or a stale MIMO: left out, so it blocks nothing.
-    expect(exportBlock({ ...exportMimoNoSubs, positions: 2 }, "filter_text")).toBeNull();
-    expect(exportBlock({ ...exportMimoNoSubs, results: { ...exportMimoNoSubs.results, mimo: { ...exportMimoNoSubs.results.mimo!, stale: true } } }, "filter_text")).toBeNull();
+    expect(exportBlock({ ...exportMimoNoSubs, positions: 2, results: { ...exportMimoNoSubs.results, mimo_export: "too_few_positions" } }, "filter_text")).toBeNull();
+    expect(exportBlock({ ...exportMimoNoSubs, results: { ...exportMimoNoSubs.results, mimo: { ...exportMimoNoSubs.results.mimo!, stale: true }, mimo_export: "stale" } }, "filter_text")).toBeNull();
     expect(exportBlock(exportStale, "equalizer_apo")).toBeNull();
     const staleCached = {
       ...exportStale,

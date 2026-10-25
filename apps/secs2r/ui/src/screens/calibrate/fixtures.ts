@@ -318,7 +318,7 @@ const noLines: ResultLinesResult = { stale: false, channels: [], total_delay_ms:
 
 const base: CalibrateView = {
   compute: { preference: "auto", status: fx.computeStatus, loading: false, saving: false, error: null, locked: false },
-  results: { calibration: summary(), mimo: null },
+  results: { calibration: summary(), mimo: null, mimo_export: "off" },
   lines: lines(),
   curves: splResult(),
   settings: baseSettings,
@@ -375,14 +375,14 @@ export const baView: CalibrateView = {
   curves: baResult(),
   lines: lines({ ba: baWarnLines }),
   settings: { ...baseSettings, subs_manual: { SW2: { ...defaultSub(), mode: "fixed", gain_db: 13.4, delay_ms: 1.2, polarity: -1, hp_hz: 40, lp_hz: 60 } }, sub_main_delay_ms: 0.4 },
-  results: { calibration: summary(false, [NOTES[0]!, ...SW2_FILTERS, ...NOTES.slice(1)]), mimo: null },
+  results: { calibration: summary(false, [NOTES[0]!, ...SW2_FILTERS, ...NOTES.slice(1)]), mimo: null, mimo_export: "off" },
   // What sub_warnings answers for these settings: SW2's LP is below twice its HP.
   subWarnings: [{ code: "sub_narrow_band", params: { role: "SW2", hp_hz: "40", lp_hz: "60" } }],
 };
 
 export const staleView: CalibrateView = {
   ...base,
-  results: { calibration: summary(true), mimo: null },
+  results: { calibration: summary(true), mimo: null, mimo_export: "off" },
   lines: lines({ stale: true }),
   curves: { ...splResult(), stale: true },
   settings: { ...baseSettings, mode: "linear" },
@@ -409,7 +409,7 @@ export const subsOnlyView: CalibrateView = {
 
 export const mimoView: CalibrateView = {
   ...base,
-  results: { calibration: summary(), mimo: fx.mimoSummary },
+  results: { calibration: summary(), mimo: fx.mimoSummary, mimo_export: "included" },
   lines: lines({ mimo: true }),
   curves: splResult("L", { mimo: true }),
   settings: { ...baseSettings, mimo_on: true, mimo_max_supports: 4 },
@@ -434,7 +434,7 @@ export const ultraView: CalibrateView = {
   resultMode: { mode: "ultra", ultra_ms: 120 },
 };
 
-export const runningMimoView: CalibrateView = { ...mimoView, results: { calibration: summary(), mimo: { ...fx.mimoSummary, stale: true } }, running: "mimo" };
+export const runningMimoView: CalibrateView = { ...mimoView, results: { calibration: summary(), mimo: { ...fx.mimoSummary, stale: true }, mimo_export: "stale" }, running: "mimo" };
 
 /** R was chosen and its curves are on their way: L's curves are still the ones received. */
 export const loadingView: CalibrateView = { ...base, channel: "R", curvesLoading: true };

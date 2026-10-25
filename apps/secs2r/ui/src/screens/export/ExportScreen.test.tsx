@@ -399,9 +399,9 @@ describe("내보내기", () => {
 
   it("includes MIMO only when on, computed, current and with three positions", () => {
     expect(mimoInclusion(exportReady)).toEqual({ included: true, kind: "iir", supports: 22, channels: 11 });
-    expect(mimoInclusion({ ...exportReady, settings: { ...exportReady.settings, mimo_on: false } })).toEqual({ included: false, reason: "off" });
-    expect(mimoInclusion({ ...exportReady, positions: 2 })).toEqual({ included: false, reason: "positions" });
-    expect(mimoInclusion({ ...exportReady, results: { ...exportReady.results, mimo: null } })).toEqual({ included: false, reason: "none" });
+    expect(mimoInclusion({ ...exportReady, settings: { ...exportReady.settings, mimo_on: false }, results: { ...exportReady.results, mimo_export: "off" } })).toEqual({ included: false, reason: "off" });
+    expect(mimoInclusion({ ...exportReady, positions: 2, results: { ...exportReady.results, mimo_export: "too_few_positions" } })).toEqual({ included: false, reason: "positions" });
+    expect(mimoInclusion({ ...exportReady, results: { ...exportReady.results, mimo: null, mimo_export: "none" } })).toEqual({ included: false, reason: "none" });
     expect(mimoInclusion(exportStale)).toEqual({ included: false, reason: "stale" });
   });
 

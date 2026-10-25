@@ -207,8 +207,8 @@ export const mimoSummary: MimoSummary = {
   input_count: 0,
 };
 
-export const resultsSummary: ResultsSummary = { calibration: calibrationSummary, mimo: mimoSummary };
-export const noResults: ResultsSummary = { calibration: null, mimo: null };
+export const resultsSummary: ResultsSummary = { calibration: calibrationSummary, mimo: mimoSummary, mimo_export: "off" };
+export const noResults: ResultsSummary = { calibration: null, mimo: null, mimo_export: "off" };
 
 export const xoRecommendation: XoRecommendation = {
   best: [

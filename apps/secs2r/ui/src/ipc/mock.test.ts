@@ -7,6 +7,58 @@ import { createMockService } from "./mock";
 import { calibrationSettings, gpuComputeStatus, modeLabel, projectInfo, resultsSummary } from "./fixtures";
 import type { ExportKind } from "./bindings/ExportKind";
 import type { Mode } from "./bindings/Mode";
+import type { MimoExportDecision } from "./bindings/MimoExportDecision";
+
+describe("mock MIMO export decisions", () => {
+  it.each([
+    ["off", false, 2, false, true, 0],
+    ["too_few_positions", true, 2, false, true, 0],
+    ["none", true, 3, false, true, 0],
+    ["stale", true, 3, true, true, 0],
+    ["no_supports", true, 3, true, false, 0],
+    ["included", true, 3, true, false, 2],
+  ] satisfies [MimoExportDecision, boolean, number, boolean, boolean, number][])("returns %s in service precedence order", async (decision, on, positions, computed, stale, supports) => {
+    const mock = createMockService({ tickMs: 0, project: { ...projectInfo, positions: Array.from({ length: positions }, (_, i) => i + 1) } });
+    await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on } } });
+    mock.setResults({
+      ...resultsSummary,
+      calibration: { ...resultsSummary.calibration!, sub_roles: [] },
+      mimo: computed ? { ...resultsSummary.mimo!, stale, support_count: supports } : null,
+    });
+    expect((await mock.request({ method: "results" })).mimo_export).toBe(decision);
+    if (decision === "no_supports") {
+      await expect(mock.request({ method: "export", params: { kind: "filter_text", folder: "" } })).resolves.toMatchObject({ kind: "export" });
+      mock.drain();
+    }
+    mock.dispose();
+  });
+
+  it.each([false, true])("uses run positions for live results and project positions for cached results (cached: %s)", async (cached) => {
+    const mock = createMockService({ tickMs: 0, project: { ...projectInfo, positions: [1, 2, 3] } });
+    await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+    mock.setResults({ ...resultsSummary, calibration: { ...resultsSummary.calibration!, cached } });
+    await mock.request({ method: "position_clear", params: { position: 3 } });
+    expect((await mock.request({ method: "results" })).mimo_export).toBe(cached ? "too_few_positions" : "stale");
+    mock.dispose();
+  });
+
+  it("refreshes the decision after calibration, MIMO, compute changes and project replacement", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+    await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } });
+    mock.drain();
+    expect((await mock.request({ method: "results" })).mimo_export).toBe("none");
+    await mock.request({ method: "mimo", params: { settings: null } });
+    mock.drain();
+    expect((await mock.request({ method: "results" })).mimo_export).toBe("included");
+    const settings = await mock.request({ method: "app_settings_get" });
+    await mock.request({ method: "app_settings_set", params: { settings: { ...settings, compute: "cpu" } } });
+    expect((await mock.request({ method: "results" })).mimo_export).toBe("stale");
+    await mock.request({ method: "project_open", params: { path: "C:/another.secs" } });
+    expect((await mock.request({ method: "results" })).mimo_export).toBe("off");
+    mock.dispose();
+  });
+});
 
 describe("mock filter exports", () => {
   afterEach(() => vi.restoreAllMocks());

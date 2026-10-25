@@ -107,6 +107,15 @@ export function createMockService(options: MockOptions = {}): MockService {
   let records: PositionRecord[] = (project?.positions ?? []).map((position) => ({ position, roles: config.speakers.map((s) => s.role), done: true, sources: Object.fromEntries(config.speakers.map((s) => [s.role, "measured"])) }));
   let playing: { role: string; master: number; ticks: number } | null = null;
   let subsOnly = false;
+  let calibrationPositions: number | null = results.calibration && !results.calibration.cached ? project?.positions.length ?? 0 : null;
+  // ResultBook::mimo: live runs keep their measured positions; cached runs use the project.
+  const mimoExport = (): ResultsSummary["mimo_export"] => {
+    if (!settings.mimo_on) return "off";
+    if ((calibrationPositions ?? project?.positions.length ?? 0) < MIMO_MIN_POSITIONS) return "too_few_positions";
+    if (!results.mimo) return "none";
+    if (!results.calibration || results.calibration.stale || results.mimo.stale) return "stale";
+    return results.mimo.support_count === 0 ? "no_supports" : "included";
+  };
   let nextJob = 1;
   let nextUndo = 1;
   let timer: ReturnType<typeof setInterval> | null = null;
@@ -118,6 +127,7 @@ export function createMockService(options: MockOptions = {}): MockService {
   const dirty = (reason = "settings") => {
     project = { ...needProject(), dirty: true };
     results = {
+      ...results,
       calibration: results.calibration ? { ...results.calibration, stale: true, stale_reason: reason } : null,
       mimo: results.mimo ? { ...results.mimo, stale: true } : null,
     };
@@ -128,13 +138,13 @@ export function createMockService(options: MockOptions = {}): MockService {
     for (const record of records) record.done = measureConfig.roles.length > 0 && measureConfig.roles.every((role) => record.roles.includes(role));
   };
   syncMeasure();
-  const state = () => clone({ project: needProject(), results, config, dsp, layout, settings, target, measureConfig, levels, exportFolder, records, subsOnly });
+  const state = () => clone({ project: needProject(), results, config, dsp, layout, settings, target, measureConfig, levels, exportFolder, records, subsOnly, calibrationPositions });
   type State = ReturnType<typeof state>;
   const undos = new Map<string, State>();
   const savedProjects = new Map<string, State>();
   const savedTargets = new Map<string, typeof target>();
   const restore = (s: State) => {
-    ({ project, results, config, dsp, layout, settings, target, measureConfig, levels, exportFolder, records, subsOnly } = clone(s));
+    ({ project, results, config, dsp, layout, settings, target, measureConfig, levels, exportFolder, records, subsOnly, calibrationPositions } = clone(s));
   };
   const remember = () => {
     const token = `undo-${nextUndo++}`;
@@ -179,7 +189,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     measureConfig = clone(fx.measureConfig); levels = { levels: {}, spl: {} };
     results = clone(fx.noResults); exportFolder = { folder: "C:/Users/demo/Documents/SECS_export", stored: false };
     records = info.positions.map((position) => ({ position, roles: config.speakers.map((s) => s.role), sources: Object.fromEntries(config.speakers.map((s) => [s.role, "measured"])), done: true }));
-    undos.clear(); subsOnly = false; syncMeasure();
+    undos.clear(); subsOnly = false; calibrationPositions = null; syncMeasure();
   };
   const dialog = (method: DialogMethod, fallback: string): string | null => {
     const queue = dialogs.get(method);
@@ -408,6 +418,7 @@ export function createMockService(options: MockOptions = {}): MockService {
         if (saved) {
           restore(saved);
           if (results.calibration) results.calibration.cached = true;
+          calibrationPositions = null;
         } else reset({ ...fx.projectInfo, path: req.params.path, name: basename(req.params.path).replace(/\.secs$/i, ""), dirty: false });
         return { method: req.method, data: needProject() };
       }
@@ -420,7 +431,7 @@ export function createMockService(options: MockOptions = {}): MockService {
         savedProjects.set(path, state());
         return { method: req.method, data: project };
       }
-      case "results": return { method: req.method, data: results };
+      case "results": return { method: req.method, data: { ...results, mimo_export: mimoExport() } };
       case "jobs": return { method: req.method, data: [...jobs.values()].map(snapshot) };
       case "job_cancel": {
         const job = jobs.get(req.params.job);
@@ -520,6 +531,7 @@ export function createMockService(options: MockOptions = {}): MockService {
         needProject();
         if (req.params.settings) settings = clone(req.params.settings);
         const captured = clone(settings);
+        const positions = needProject().positions.length;
         return { method: req.method, data: start("calibrate", () => {
           const roles = config.speakers.filter((s) => !s.role.startsWith("SW")).map((s) => s.role);
           const summary = clone(fx.calibrationSummary);
@@ -531,7 +543,10 @@ export function createMockService(options: MockOptions = {}): MockService {
           summary.scorecard = roles.map((role, i) => ({ ...clone(fx.scorecard[i % fx.scorecard.length]!), role }));
           summary.main_roles = roles;
           summary.sub_roles = config.speakers.filter((s) => s.role.startsWith("SW")).map((s) => s.role);
-          if (!req.params.subs_only) results = { calibration: summary, mimo: results.mimo ? { ...results.mimo, stale: true } : null };
+          if (!req.params.subs_only) {
+            results = { ...results, calibration: summary, mimo: results.mimo ? { ...results.mimo, stale: true } : null };
+            calibrationPositions = positions;
+          }
           subsOnly = req.params.subs_only;
           return { kind: "calibration" };
         }) };
@@ -568,7 +583,7 @@ export function createMockService(options: MockOptions = {}): MockService {
           throw new MockError(ipcError("export_scope", `${kind} requires a current calibration result`, { reason: "stale_cache" }));
         }
         const calibration = results.calibration;
-        const hasMimo = settings.mimo_on && needProject().positions.length >= MIMO_MIN_POSITIONS && results.mimo !== null && !results.mimo.stale;
+        const hasMimo = mimoExport() === "included";
         if (kind === "filter_text" || kind === "equalizer_apo") {
           const reason = kind === "filter_text" ? calibration.sub_roles.length > 0 ? "subs" : hasMimo ? "mimo" : null : null;
           if (reason) throw new MockError(ipcError("export_scope", `${kind} cannot export a result with ${reason}`, { reason }));
@@ -742,7 +757,10 @@ export function createMockService(options: MockOptions = {}): MockService {
     queueDialog: (method, path) => { const queue = dialogs.get(method) ?? []; queue.push(path); dialogs.set(method, queue); },
     tick,
     drain: () => { for (let guard = 0; [...jobs.values()].some((j) => !monitor(j.kind) || j.cancelRequested) && guard < 1000; guard++) tick(); },
-    setResults: (next) => { results = clone(next); },
+    setResults: (next) => {
+      results = clone(next);
+      calibrationPositions = results.calibration && !results.calibration.cached ? project?.positions.length ?? 0 : null;
+    },
     dispose: () => { if (timer) clearInterval(timer); timer = null; jobs.clear(); playing = null; },
   };
 }
