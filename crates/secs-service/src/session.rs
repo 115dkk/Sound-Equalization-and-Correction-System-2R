@@ -140,7 +140,7 @@ impl Session {
             rewrite_ir_directory(open.store.project_mut(), &open.path, &path);
             open.path = path.clone();
             open.store = MeasurementStore::new(path, open.store.project().clone());
-            open.cached = None;
+            open.cached = crate::cache::load(&open.path).or_else(|| open.cached.take());
         }
         open.store.save()?;
         if let Err(error) = write_side_mdat(open, uuid, now_ms) {

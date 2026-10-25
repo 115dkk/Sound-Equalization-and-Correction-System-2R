@@ -982,6 +982,40 @@ fn exports_after_reopening_match_pre_close_bytes() {
 }
 
 #[test]
+fn save_as_preserves_reopened_cached_results_and_export() {
+    let root = temp_root("save-as-cache");
+    fs::create_dir_all(&root).unwrap();
+    let (source, settings) = write_case(&root, "dolby");
+    let target = root.join("saved-as.secs");
+    let service = deterministic_service();
+    open(&service, &source);
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&service, calibration_events.clone(), settings);
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+
+    open(&service, &source);
+    assert!(read_results(&service).calibration.is_some());
+    let Response::ProjectSave(info) = call_ok(
+        &service,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams {
+            path: Some(target.to_string_lossy().into_owned()),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("save as must succeed");
+    };
+    assert_eq!(info.path, target.to_string_lossy());
+    assert!(read_results(&service).calibration.is_some());
+    export_and_wait(
+        &service,
+        ExportKind::CamillaDsp,
+        &root.join("export"),
+        Arc::new(Events::default()),
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn stale_calibration_exports_with_flag_and_cache_survives_reopen() {
     let root = temp_root("stale-cache");
     fs::create_dir_all(&root).unwrap();
