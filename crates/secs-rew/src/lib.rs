@@ -14,7 +14,7 @@ pub mod launch;
 mod transport;
 mod types;
 
-pub use callback::{CallbackServer, MAX_CALLBACK_BODY};
+pub use callback::{CALLBACK_REQUEST_DEADLINE, CallbackServer, MAX_CALLBACK_BODY};
 pub use client::{RewClient, b64_be_f32, channel_name_for, level_payload, parse_progress};
 pub use fake::{FakeOptions, FakeRew, IrSource, fake_plan};
 pub use interfaces::{
