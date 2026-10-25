@@ -1,3 +1,4 @@
+use crate::pyjson::{Shape, merge_with_file};
 use crate::{
     DspProfile, ProjectError, PyJson, SpeakerConfig, TargetCurve, TargetJson, dumps, loads,
 };
@@ -211,7 +212,21 @@ pub struct Project {
     pub tesira: PyJson,
     pub snapshots: PyJson,
     pub extra: Vec<(String, PyJson)>,
+    /// The `config`, `dsp`, `target` and `calibration` values as the file
+    /// held them (after migration). Saving rebuilds those from the typed
+    /// fields and [`crate::store_calibration`], then keeps the keys this
+    /// version does not know from these (ADR 0004, docs/DEVIATIONS.md F16).
+    /// Empty for a project that was not read from a file.
+    pub loaded: Vec<(String, PyJson)>,
 }
+
+/// The fields rebuilt on save and the shape each meets its loaded value with.
+const REBUILT: [(&str, &Shape); 4] = [
+    ("config", &crate::config::CONFIG_SHAPE),
+    ("dsp", &crate::dsp_profile::DSP_SHAPE),
+    ("target", &crate::target::TARGET_SHAPE),
+    ("calibration", &crate::calibration::CALIBRATION_SHAPE),
+];
 
 impl Default for Project {
     fn default() -> Self {
@@ -249,6 +264,7 @@ impl Default for Project {
             ]),
             snapshots: PyJson::Array(vec![]),
             extra: Vec::new(),
+            loaded: Vec::new(),
         }
     }
 }
@@ -329,8 +345,30 @@ impl Project {
             }
         }
         project.migrate_legacy()?;
+        project.loaded = REBUILT
+            .iter()
+            .filter_map(|(key, _)| {
+                let value = if *key == "calibration" {
+                    get(&project.extra, key)
+                } else {
+                    get(object, key)
+                };
+                value.map(|value| ((*key).to_owned(), value.clone()))
+            })
+            .collect();
         let warnings = project.config.repair_output_numbers();
         Ok((project, warnings))
+    }
+
+    /// `value` merged with the loaded value of `key`, if the file had one.
+    fn keep_unknown(&self, key: &str, value: PyJson) -> PyJson {
+        match (
+            REBUILT.iter().find(|(name, _)| *name == key),
+            get(&self.loaded, key),
+        ) {
+            (Some((_, shape)), Some(old)) => merge_with_file(value, old, shape),
+            _ => value,
+        }
     }
 
     pub fn to_json(&self) -> PyJson {
@@ -338,14 +376,20 @@ impl Project {
             .extra
             .iter()
             .filter(|(key, _)| !PROJECT_KEYS.contains(&key.as_str()))
-            .cloned()
+            .map(|(key, value)| (key.clone(), self.keep_unknown(key, value.clone())))
             .collect::<Vec<_>>();
         out.extend([
             ("version".into(), PyJson::Int(self.version.to_string())),
             ("name".into(), PyJson::Str(self.name.clone())),
-            ("config".into(), self.config.to_json()),
-            ("dsp".into(), self.dsp.to_json()),
-            ("target".into(), self.target.to_json()),
+            (
+                "config".into(),
+                self.keep_unknown("config", self.config.to_json()),
+            ),
+            ("dsp".into(), self.keep_unknown("dsp", self.dsp.to_json())),
+            (
+                "target".into(),
+                self.keep_unknown("target", self.target.to_json()),
+            ),
             (
                 "curtain".into(),
                 PyJson::Array(vec![

@@ -4,8 +4,9 @@ use secs_mdat::{Boxed, CalInfo, SourceDate, SourceInfo};
 use secs_oracle::Fixture;
 use secs_project::{
     IrCache, LoadedIr, MAX_IR_BYTES, MAX_PROJECT_BYTES, MeasurementResult, MeasurementStore,
-    Project, ProjectError, PyJson, load_project_irs, load_project_sources, load_source, save_ir,
-    save_source, source_path, write_wav_float32,
+    Project, ProjectError, PyJson, TargetCurve, calibration_from_project, dumps, load_project_irs,
+    load_project_sources, load_source, loads, save_ir, save_source, source_path, store_calibration,
+    write_wav_float32,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -716,6 +717,156 @@ fn ir_cache_keeps_its_byte_cap_and_evicts_least_recently_used_td44() {
     cache.load(&c).unwrap();
     assert_eq!(cache.len(), 2);
     assert_eq!(cache.retained_bytes(), 8);
+}
+
+/// The member `key` of an object.
+fn member<'a>(value: &'a mut PyJson, key: &str) -> &'a mut PyJson {
+    &mut members(value)
+        .iter_mut()
+        .find(|(name, _)| name == key)
+        .unwrap_or_else(|| panic!("no member {key}"))
+        .1
+}
+
+fn members(value: &mut PyJson) -> &mut Vec<(String, PyJson)> {
+    match value {
+        PyJson::Object(fields) => fields,
+        _ => panic!("not an object"),
+    }
+}
+
+fn first(value: &mut PyJson) -> &mut PyJson {
+    match value {
+        PyJson::Array(items) => &mut items[0],
+        _ => panic!("not an array"),
+    }
+}
+
+fn keys(value: &PyJson) -> Vec<String> {
+    match value {
+        PyJson::Object(fields) => fields.iter().map(|(key, _)| key.clone()).collect(),
+        _ => panic!("not an object"),
+    }
+}
+
+fn followed_by(mut known: Vec<String>, unknown: &[&str]) -> Vec<String> {
+    known.extend(unknown.iter().map(|key| (*key).to_owned()));
+    known
+}
+
+#[test]
+fn unknown_nested_keys_survive_open_change_and_save_f16() {
+    let directory = TempDir::new();
+    let path = directory.0.join("future.secs");
+    let mut project = Project::from_preset("2.1").unwrap();
+    project.extra.push((
+        "calibration".into(),
+        loads(r#"{"subs_manual":{"SW1":{"mode":"fixed"}},"bundle_layouts":{"A":{"kind":"dba"}}}"#)
+            .unwrap(),
+    ));
+    let settings = calibration_from_project(&project);
+    store_calibration(&mut project, &settings);
+
+    // What SECS 2R writes, then what a newer SECS 2 adds to it.
+    let mut file = project.to_json();
+    let mut writer = file.clone();
+    let calibration = member(&mut file, "calibration");
+    members(calibration).insert(0, ("future_first".into(), PyJson::Str("a".into())));
+    members(calibration).push((
+        "future_last".into(),
+        loads(r#"{"nested":[1,{"deeper":true}]}"#).unwrap(),
+    ));
+    members(member(member(calibration, "subs_manual"), "SW1"))
+        .push(("future_sub".into(), PyJson::Bool(true)));
+    members(member(member(calibration, "bundle_layouts"), "A"))
+        .push(("future_layout".into(), PyJson::Int("7".into())));
+    let config = member(&mut file, "config");
+    members(config).push(("future_config".into(), PyJson::Str("c".into())));
+    let speaker = first(member(config, "speakers"));
+    members(speaker).insert(1, ("future_speaker".into(), loads(r#"{"x":1}"#).unwrap()));
+    members(first(member(speaker, "bands"))).push(("future_band".into(), PyJson::Str("b".into())));
+    members(member(&mut file, "dsp")).insert(0, ("future_dsp".into(), PyJson::Float(1.5)));
+    members(member(&mut file, "target")).push(("future_target".into(), loads("[[1, 2]]").unwrap()));
+    fs::write(&path, format!("{}\n", dumps(&file))).unwrap();
+
+    // Open, change a setting in each object, save.
+    let mut store = MeasurementStore::open(&path).unwrap();
+    let mut settings = calibration_from_project(store.project());
+    settings.rc_lo = 30.0;
+    store_calibration(store.project_mut(), &settings);
+    store.project_mut().config.speakers[0].size = "large".into();
+    store.project_mut().dsp.fir_taps = 4096;
+    store.project_mut().target = TargetCurve::new(vec![(20.0, 1.0), (20_000.0, -1.0)]);
+    store.save().unwrap();
+
+    let saved_text = fs::read_to_string(&path).unwrap();
+    let mut saved = loads(&saved_text).unwrap();
+    let calibration = member(&mut saved, "calibration");
+    let written_calibration = member(&mut writer, "calibration");
+    assert_eq!(
+        keys(calibration),
+        followed_by(keys(written_calibration), &["future_first", "future_last"])
+    );
+    assert_eq!(*member(calibration, "rc_lo"), PyJson::Float(30.0));
+    assert_eq!(
+        *member(calibration, "future_last"),
+        loads(r#"{"nested":[1,{"deeper":true}]}"#).unwrap()
+    );
+    let sub = member(member(calibration, "subs_manual"), "SW1");
+    assert_eq!(
+        keys(sub),
+        followed_by(
+            keys(member(member(written_calibration, "subs_manual"), "SW1")),
+            &["future_sub"]
+        )
+    );
+    let layout = member(member(calibration, "bundle_layouts"), "A");
+    assert_eq!(keys(layout), ["kind", "rear_trim_ms", "future_layout"]);
+    let config = member(&mut saved, "config");
+    assert_eq!(
+        keys(config),
+        [
+            "speakers",
+            "device",
+            "preset",
+            "biamp_default",
+            "future_config"
+        ]
+    );
+    let speaker = first(member(config, "speakers"));
+    assert_eq!(keys(speaker), ["role", "size", "bands", "future_speaker"]);
+    assert_eq!(*member(speaker, "size"), PyJson::Str("large".into()));
+    assert_eq!(
+        keys(first(member(speaker, "bands"))),
+        ["band", "out", "pol", "future_band"]
+    );
+    let dsp = member(&mut saved, "dsp");
+    assert_eq!(
+        keys(dsp),
+        followed_by(keys(member(&mut writer, "dsp")), &["future_dsp"])
+    );
+    assert_eq!(*member(dsp, "fir_taps"), PyJson::Int("4096".into()));
+    let target = member(&mut saved, "target");
+    assert_eq!(keys(target), ["points", "future_target"]);
+    assert_eq!(
+        *member(target, "points"),
+        loads("[[20.0, 1.0], [20000.0, -1.0]]").unwrap()
+    );
+
+    // Reopening and saving again changes nothing.
+    let mut reopened = MeasurementStore::open(&path).unwrap();
+    reopened.save().unwrap();
+    assert_eq!(fs::read_to_string(&path).unwrap(), saved_text);
+
+    // Entries the writer dropped stay dropped; the rest is still kept.
+    let mut settings = calibration_from_project(reopened.project());
+    settings.subs_manual.clear();
+    store_calibration(reopened.project_mut(), &settings);
+    reopened.save().unwrap();
+    let mut saved = loads(&fs::read_to_string(&path).unwrap()).unwrap();
+    let calibration = member(&mut saved, "calibration");
+    assert_eq!(*member(calibration, "subs_manual"), PyJson::Object(vec![]));
+    assert!(keys(calibration).ends_with(&["future_first".into(), "future_last".into()]));
 }
 
 fn entry_with_path(path: &str) -> PyJson {

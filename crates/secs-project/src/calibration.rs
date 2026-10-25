@@ -4,7 +4,28 @@ use secs_types::calibration::{
     BundleLayoutEntry, CalibrationSettings, Mode, SampleRatePolicy, SubEntry,
 };
 
+use crate::pyjson::Shape;
 use crate::{Project, PyJson};
+
+static SUB_ENTRY_SHAPE: Shape = Shape::Record {
+    optional: &[],
+    nested: &[],
+};
+static BUNDLE_LAYOUT_SHAPE: Shape = Shape::Record {
+    optional: &[],
+    nested: &[],
+};
+/// The `calibration` object [`store_calibration`] writes (F16). Its `xo` and
+/// `xo_rec` maps are replaced; `subs_manual` and `bundle_layouts` keep only
+/// the entries the settings still have.
+pub(crate) static CALIBRATION_SHAPE: Shape = Shape::Record {
+    // Written only for the resample policy, so a stored one must not return.
+    optional: &["sample_rate_policy"],
+    nested: &[
+        ("subs_manual", Shape::Map(&SUB_ENTRY_SHAPE)),
+        ("bundle_layouts", Shape::Map(&BUNDLE_LAYOUT_SHAPE)),
+    ],
+};
 
 pub fn calibration_from_project(project: &Project) -> CalibrationSettings {
     let Some(raw) = project

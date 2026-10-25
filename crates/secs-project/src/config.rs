@@ -1,4 +1,5 @@
 use crate::ProjectError;
+use crate::pyjson::Shape;
 use secs_types::ipc::Notice;
 use secs_types::role::{ROLES, RoleKind, SUB_ROLES, role_group, role_kind, role_order};
 use serde::{Deserialize, Serialize};
@@ -16,6 +17,20 @@ fn plus() -> String {
 }
 
 pub const MAX_OUTPUT_NUMBER: i64 = 256;
+
+static BAND_SHAPE: Shape = Shape::Record {
+    optional: &[],
+    nested: &[],
+};
+static SPEAKER_SHAPE: Shape = Shape::Record {
+    optional: &[],
+    nested: &[("bands", Shape::List(&BAND_SHAPE))],
+};
+/// The `config` object [`SpeakerConfig::to_json`] writes (F16).
+pub(crate) static CONFIG_SHAPE: Shape = Shape::Record {
+    optional: &[],
+    nested: &[("speakers", Shape::List(&SPEAKER_SHAPE))],
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Speaker {

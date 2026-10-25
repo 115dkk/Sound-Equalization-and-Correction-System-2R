@@ -416,7 +416,7 @@ id = "format.secs_project"
 kind = "format"
 milestone = "M1"
 status = "implemented"
-tests = ["secs-project::project_load_migrations_and_save_match_oracle", "secs-project::direct_project_preset_matches_oracle", "secs-project::project_edge_contracts_match_oracle", "secs-project::project_presets_save_exactly", "secs-project::pyjson_edge_cases_match_oracle", "secs-project::pyjson_scanner_edges_match_oracle", "secs-project::pyjson_regressions", "secs-project::dsp_tap_allocation_matches_oracle", "secs-project::target_curves_match_oracle"]
+tests = ["secs-project::project_load_migrations_and_save_match_oracle", "secs-project::direct_project_preset_matches_oracle", "secs-project::project_edge_contracts_match_oracle", "secs-project::project_presets_save_exactly", "secs-project::pyjson_edge_cases_match_oracle", "secs-project::pyjson_scanner_edges_match_oracle", "secs-project::pyjson_regressions", "secs-project::dsp_tap_allocation_matches_oracle", "secs-project::target_curves_match_oracle", "secs-project::unknown_nested_keys_survive_open_change_and_save_f16"]
 upstream = "model.py"
 note = ".secs versions 1-3 read and migrated while forward versions are preserved; written in SECS 2's key order and number format"
 
