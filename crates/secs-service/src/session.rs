@@ -136,13 +136,21 @@ impl Session {
         if let Some(path) = path
             && path != open.path
         {
-            carry_irs(&open.path, &path)?;
-            rewrite_ir_directory(open.store.project_mut(), &open.path, &path);
-            open.path = path.clone();
-            open.store = MeasurementStore::new(path, open.store.project().clone());
-            open.cached = crate::cache::load(&open.path).or_else(|| open.cached.take());
+            let previous_cached = open.cached.take();
+            let next = prepare_save_as(open, &path);
+            let next = match next {
+                Ok(next) => next,
+                Err(error) => {
+                    open.cached = previous_cached;
+                    return Err(error);
+                }
+            };
+            open.path = path;
+            open.store = next.finish();
+            open.cached = crate::cache::load(&open.path).or(previous_cached);
+        } else {
+            open.store.save()?;
         }
-        open.store.save()?;
         if let Err(error) = write_side_mdat(open, uuid, now_ms) {
             eprintln!("곁 mdat을 저장하지 못했습니다: {error}");
         }
@@ -215,22 +223,174 @@ pub(crate) fn info(open: &OpenProject) -> ProjectInfo {
     }
 }
 
-fn carry_irs(old: &Path, new: &Path) -> Result<(), std::io::Error> {
-    let source = old.with_extension("irs");
-    let destination = new.with_extension("irs");
-    if source == destination || !source.is_dir() {
-        return Ok(());
-    }
-    copy_tree(&source, &destination)
+struct PreparedSaveAs {
+    store: MeasurementStore,
+    old_project: Option<PathBuf>,
+    old_irs: Option<PathBuf>,
 }
 
-fn copy_tree(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
+impl PreparedSaveAs {
+    fn finish(self) -> MeasurementStore {
+        if let Some(path) = self.old_project {
+            let _ = remove_path(&path);
+        }
+        if let Some(path) = self.old_irs {
+            let _ = remove_path(&path);
+        }
+        self.store
+    }
+}
+
+fn prepare_save_as(open: &OpenProject, destination: &Path) -> Result<PreparedSaveAs, ServiceError> {
+    let source_irs = open.path.with_extension("irs");
+    let destination_irs = destination.with_extension("irs");
+    reject_nested_irs(&source_irs, &destination_irs)?;
+    if destination.exists() && !destination.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::IsADirectory,
+            "project destination is not a file",
+        )
+        .into());
+    }
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let temporary_irs = unique_sibling(&destination_irs, "tmp")?;
+    fs::create_dir(&temporary_irs)?;
+    let temporary_project = unique_sibling(destination, "tmp")?;
+    let result = (|| {
+        if source_irs.is_dir() {
+            copy_tree_contents(&source_irs, &temporary_irs)?;
+        }
+        let mut project = open.store.project().clone();
+        rewrite_ir_directory(&mut project, &open.path, destination);
+        let mut staged = MeasurementStore::new(&temporary_project, project.clone());
+        staged.save()?;
+
+        let old_project = swap_aside(destination, "old")?;
+        let old_irs = match swap_aside(&destination_irs, "old") {
+            Ok(path) => path,
+            Err(error) => {
+                restore_aside(destination, old_project.as_deref());
+                return Err(error);
+            }
+        };
+        if let Err(error) = fs::rename(&temporary_irs, &destination_irs) {
+            restore_aside(&destination_irs, old_irs.as_deref());
+            restore_aside(destination, old_project.as_deref());
+            return Err(error.into());
+        }
+        if let Err(error) = fs::rename(&temporary_project, destination) {
+            let _ = fs::rename(&destination_irs, &temporary_irs);
+            restore_aside(&destination_irs, old_irs.as_deref());
+            restore_aside(destination, old_project.as_deref());
+            return Err(error.into());
+        }
+        Ok(PreparedSaveAs {
+            store: MeasurementStore::new(destination, project),
+            old_project,
+            old_irs,
+        })
+    })();
+    if result.is_err() {
+        let _ = remove_path(&temporary_project);
+        let _ = remove_path(&temporary_irs);
+    }
+    result
+}
+
+fn reject_nested_irs(source: &Path, destination: &Path) -> Result<(), ServiceError> {
+    if !source.is_dir() {
+        return Ok(());
+    }
+    let source = source.canonicalize()?;
+    // The destination folder may not exist yet (it is created after this
+    // check): resolve its deepest existing ancestor and keep the rest as written.
+    let mut existing = destination;
+    let mut rest = Vec::new();
+    let resolved =
+        loop {
+            match existing.canonicalize() {
+                Ok(path) => break path,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    rest.push(existing.file_name().ok_or_else(|| {
+                        ServiceError::Project("invalid measurement folder".into())
+                    })?);
+                    existing = existing
+                        .parent()
+                        .filter(|p| !p.as_os_str().is_empty())
+                        .unwrap_or(Path::new("."));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        };
+    let destination = rest
+        .iter()
+        .rev()
+        .fold(resolved, |path, part| path.join(part));
+    if destination == source || destination.starts_with(&source) {
+        return Err(ServiceError::InvalidRequest(
+            "cannot save a project inside its own measurement folder".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn unique_sibling(path: &Path, kind: &str) -> Result<PathBuf, std::io::Error> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("project");
+    static TEMP: AtomicU64 = AtomicU64::new(0);
+    for _ in 0..100 {
+        let id = TEMP.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(".{name}.{kind}-{}-{id}", std::process::id()));
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        "could not reserve a project staging path",
+    ))
+}
+
+fn swap_aside(path: &Path, kind: &str) -> Result<Option<PathBuf>, ServiceError> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let aside = unique_sibling(path, kind)?;
+    fs::rename(path, &aside)?;
+    Ok(Some(aside))
+}
+
+fn restore_aside(path: &Path, aside: Option<&Path>) {
+    let _ = remove_path(path);
+    if let Some(aside) = aside {
+        let _ = fs::rename(aside, path);
+    }
+}
+
+fn remove_path(path: &Path) -> Result<(), std::io::Error> {
+    if path.is_dir() {
+        fs::remove_dir_all(path)
+    } else {
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+fn copy_tree_contents(source: &Path, destination: &Path) -> Result<(), std::io::Error> {
     fs::create_dir_all(destination)?;
     for entry in fs::read_dir(source)? {
         let entry = entry?;
         let target = destination.join(entry.file_name());
         if entry.file_type()?.is_dir() {
-            copy_tree(&entry.path(), &target)?;
+            fs::create_dir(&target)?;
+            copy_tree_contents(&entry.path(), &target)?;
         } else {
             fs::copy(entry.path(), target)?;
         }

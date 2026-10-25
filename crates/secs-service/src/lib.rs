@@ -279,6 +279,8 @@ pub(crate) enum ServiceError {
     ProjectNotOpen,
     #[error("tutorial sessions cannot write project data")]
     TutorialBlocked,
+    #[error("{0}")]
+    InvalidRequest(String),
     #[error("project I/O: {0}")]
     Project(String),
 }
@@ -301,6 +303,9 @@ impl From<ServiceError> for IpcError {
             }
             ServiceError::TutorialBlocked => {
                 IpcError::new(ErrorCode::TutorialBlocked, value.to_string())
+            }
+            ServiceError::InvalidRequest(_) => {
+                IpcError::new(ErrorCode::InvalidRequest, value.to_string())
             }
             ServiceError::Project(_) => IpcError::new(ErrorCode::ProjectIo, value.to_string()),
         }

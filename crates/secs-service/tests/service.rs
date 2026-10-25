@@ -982,6 +982,76 @@ fn exports_after_reopening_match_pre_close_bytes() {
 }
 
 #[test]
+fn save_as_failure_and_nested_destination_leave_projects_untouched() {
+    let root = temp_root("save-as-stage");
+    fs::create_dir_all(&root).unwrap();
+    let source = root.join("source.secs");
+    let service = service();
+    call_ok(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: source.to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    let source_irs = source.with_extension("irs");
+    fs::create_dir_all(&source_irs).unwrap();
+    fs::write(source_irs.join("marker"), b"source").unwrap();
+
+    let nested = source_irs.join("inner.secs");
+    let Envelope::Err(error) = service.call(
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams {
+            path: Some(nested.to_string_lossy().into_owned()),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("nested save as must fail");
+    };
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(
+        error.detail,
+        "cannot save a project inside its own measurement folder"
+    );
+    assert!(!nested.exists());
+    assert!(!nested.with_extension("irs").exists());
+
+    let target = root.join("target.secs");
+    fs::create_dir(&target).unwrap();
+    let target_irs = target.with_extension("irs");
+    fs::create_dir(&target_irs).unwrap();
+    fs::write(target_irs.join("marker"), b"destination").unwrap();
+    let Envelope::Err(error) = service.call(
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams {
+            path: Some(target.to_string_lossy().into_owned()),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("unwritable project path must fail");
+    };
+    assert_eq!(error.code, ErrorCode::ProjectIo);
+    let Response::ProjectInfo(info) = call_ok(&service, Request::ProjectInfo, Arc::new(NoEvents))
+    else {
+        panic!();
+    };
+    assert_eq!(info.path, source.to_string_lossy());
+    assert_eq!(fs::read(target_irs.join("marker")).unwrap(), b"destination");
+    assert_eq!(fs::read(source_irs.join("marker")).unwrap(), b"source");
+    assert_eq!(
+        fs::read_dir(&root)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".tmp-"))
+            .count(),
+        0
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn save_as_preserves_reopened_cached_results_and_export() {
     let root = temp_root("save-as-cache");
     fs::create_dir_all(&root).unwrap();
@@ -1946,4 +2016,41 @@ fn project_replacement_rejects_old_compute_commit_and_preserves_completion() {
         );
         fs::remove_dir_all(root).unwrap();
     }
+}
+
+#[test]
+fn save_as_into_a_folder_that_does_not_exist_yet_carries_the_measurements() {
+    let root = temp_root("save-as-new-folder");
+    fs::create_dir_all(&root).unwrap();
+    let source = root.join("source.secs");
+    let service = service();
+    call_ok(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: source.to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    let source_irs = source.with_extension("irs");
+    fs::create_dir_all(&source_irs).unwrap();
+    fs::write(source_irs.join("marker"), b"source").unwrap();
+
+    let target = root.join("new").join("deeper").join("copy.secs");
+    call_ok(
+        &service,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams {
+            path: Some(target.to_string_lossy().into_owned()),
+        }),
+        Arc::new(NoEvents),
+    );
+    assert!(target.is_file());
+    assert_eq!(
+        fs::read(target.with_extension("irs").join("marker")).unwrap(),
+        b"source"
+    );
+    fs::remove_dir_all(root).unwrap();
 }
