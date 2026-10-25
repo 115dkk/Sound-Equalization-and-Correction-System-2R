@@ -508,12 +508,17 @@ impl IrCache {
         let key = cache_key(path)?;
         self.remove_old_versions(&key.path, Some(&key));
         if let Some(value) = self.entries.get(&key) {
-            return Ok((value.samples.clone(), value.sample_rate));
+            let hit = (value.samples.clone(), value.sample_rate);
+            if let Some(index) = self.order.iter().position(|old_key| old_key == &key) {
+                let touched = self.order.remove(index).expect("index from position");
+                self.order.push_back(touched);
+            }
+            return Ok(hit);
         }
         let (samples, sample_rate) =
             read_mono_float_wav(&crate::irs::read_bounded(path, MAX_IR_BYTES, "WAV")?)
                 .map_err(|error| ProjectError::Wav(format!("{}: {error}", path.display())))?;
-        self.insert(key, samples.clone(), sample_rate);
+        self.insert(key, &samples, sample_rate);
         Ok((samples, sample_rate))
     }
 
@@ -525,7 +530,7 @@ impl IrCache {
     ) -> Result<(), ProjectError> {
         let key = cache_key(path)?;
         self.remove_old_versions(&key.path, Some(&key));
-        self.insert(key, samples.to_vec(), sample_rate);
+        self.insert(key, samples, sample_rate);
         Ok(())
     }
 
@@ -537,7 +542,14 @@ impl IrCache {
         self.entries.is_empty()
     }
 
-    fn insert(&mut self, key: CacheKey, samples: Vec<f32>, sample_rate: u32) {
+    /// Sample bytes the cache holds; never more than its cap.
+    pub fn retained_bytes(&self) -> usize {
+        self.bytes
+    }
+
+    /// Stores a copy unless it alone exceeds the cap, then evicts from the
+    /// least recently used end until the cache fits.
+    fn insert(&mut self, key: CacheKey, samples: &[f32], sample_rate: u32) {
         let size = samples.len().saturating_mul(std::mem::size_of::<f32>());
         if let Some(old) = self.entries.remove(&key) {
             self.bytes = self
@@ -545,19 +557,22 @@ impl IrCache {
                 .saturating_sub(old.samples.len().saturating_mul(4));
             self.order.retain(|old_key| old_key != &key);
         }
+        if size > self.cap {
+            return;
+        }
         self.bytes = self.bytes.saturating_add(size);
         self.order.push_back(key.clone());
         self.entries.insert(
             key,
             CacheValue {
-                samples,
+                samples: samples.to_vec(),
                 sample_rate,
             },
         );
-        while self.bytes > self.cap && self.entries.len() > 1 {
-            if let Some(old_key) = self.order.pop_front()
-                && let Some(old) = self.entries.remove(&old_key)
-            {
+        while self.bytes > self.cap
+            && let Some(old_key) = self.order.pop_front()
+        {
+            if let Some(old) = self.entries.remove(&old_key) {
                 self.bytes = self
                     .bytes
                     .saturating_sub(old.samples.len().saturating_mul(4));

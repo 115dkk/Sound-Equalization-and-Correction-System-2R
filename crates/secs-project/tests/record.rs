@@ -685,6 +685,39 @@ fn ir_cache_rereads_changed_file_and_evicts_to_cap() {
     assert_eq!(cache.load(&b).unwrap().0, vec![2.0, 2.0]);
 }
 
+#[test]
+fn ir_cache_keeps_its_byte_cap_and_evicts_least_recently_used_td44() {
+    let directory = TempDir::new();
+    let wav = |name: &str, samples: &[f32]| {
+        let path = directory.0.join(name);
+        fs::write(&path, write_wav_float32(samples, 48_000)).unwrap();
+        path
+    };
+
+    // 12 bytes of samples under an 8-byte cap: returned, not retained.
+    let large = wav("large.wav", &[1.0, 2.0, 3.0]);
+    let mut cache = IrCache::new(8);
+    assert_eq!(cache.load(&large).unwrap().0, vec![1.0, 2.0, 3.0]);
+    assert_eq!(cache.retained_bytes(), 0);
+    assert!(cache.is_empty());
+    cache.remember(&large, &[1.0, 2.0, 3.0], 48_000).unwrap();
+    assert_eq!(cache.retained_bytes(), 0);
+
+    // A (4 bytes), B (8 bytes), hit A, then C (4 bytes) under a 12-byte cap:
+    // B is the least recently used, so A and C (8 bytes) remain.
+    let a = wav("a.wav", &[1.0]);
+    let b = wav("b.wav", &[2.0, 2.0]);
+    let c = wav("c.wav", &[3.0]);
+    let mut cache = IrCache::new(12);
+    cache.load(&a).unwrap();
+    cache.load(&b).unwrap();
+    assert_eq!(cache.retained_bytes(), 12);
+    cache.load(&a).unwrap();
+    cache.load(&c).unwrap();
+    assert_eq!(cache.len(), 2);
+    assert_eq!(cache.retained_bytes(), 8);
+}
+
 fn entry_with_path(path: &str) -> PyJson {
     entry_at(1, path)
 }

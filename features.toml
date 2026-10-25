@@ -516,7 +516,7 @@ id = "project.measurement_store"
 kind = "project"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-project::test_run_plan_writes_secs_and_ir_files", "secs-project::test_reload_project_restores_irs_by_role_and_load_project_irs_roundtrip", "secs-project::interrupted_save_leaves_old_secs_intact_f1", "secs-project::test_cancel_then_resume_skips_done_positions_and_partial_position_is_not_done_f2", "secs-project::f5_absolute_parent_and_symlink_escapes_are_rejected_but_in_tree_reads", "secs-project::ir_cache_rereads_changed_file_and_evicts_to_cap"]
+tests = ["secs-project::test_run_plan_writes_secs_and_ir_files", "secs-project::test_reload_project_restores_irs_by_role_and_load_project_irs_roundtrip", "secs-project::interrupted_save_leaves_old_secs_intact_f1", "secs-project::test_cancel_then_resume_skips_done_positions_and_partial_position_is_not_done_f2", "secs-project::f5_absolute_parent_and_symlink_escapes_are_rejected_but_in_tree_reads", "secs-project::ir_cache_rereads_changed_file_and_evicts_to_cap", "secs-project::ir_cache_keeps_its_byte_cap_and_evicts_least_recently_used_td44"]
 upstream = "rewapi/session.py MeasurementSession, IrSaver, load_project_irs"
 
 [[feature]]
