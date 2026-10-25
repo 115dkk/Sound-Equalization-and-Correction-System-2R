@@ -120,6 +120,10 @@ where
         + secs_rew::Measurer
         + Send,
 {
+    fn commit_boundary(&self) -> CommitBoundary {
+        CommitBoundary::Role
+    }
+
     fn devices(&mut self) -> Result<Vec<Device>, MeasureError> {
         let mut out = self
             .client
@@ -304,6 +308,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rew_commits_each_role_as_it_arrives() {
+        let measurer = RewMeasurer::new(
+            secs_rew::FakeRew::new(super::super::sample::SampleSource),
+            SyncArc::new(|| 0),
+        );
+        assert_eq!(measurer.commit_boundary(), CommitBoundary::Role);
+    }
 
     #[test]
     fn link_observes_only_pro_required() {

@@ -618,9 +618,9 @@ impl Service {
         let rew = method(&project) == "rew";
         let rew_link = self.rew.clone();
         let mut m = measurer(&self.deps, &self.rew, method(&project), s)?;
+        let commit_boundary = m.commit_boundary();
         let session = self.session.clone();
         let uuid = self.deps.uuid.clone();
-        let atomic_position = method(&project) != "rew";
         self.jobs.start(JobKind::Measure, events, move |ctx| {
             let countdown_started = std::time::Instant::now();
             let mut seconds_passed = 0;
@@ -673,7 +673,7 @@ impl Service {
                         };
                         // An atomic method's position becomes non-cancellable
                         // with its first record; REW keeps every role it recorded.
-                        if first && atomic_position {
+                        if first && commit_boundary == measure::CommitBoundary::Position {
                             session::commit(&session, ticket, &ctx, record)?;
                         } else {
                             session::apply(&session, ticket, record)?;
