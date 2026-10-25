@@ -8,11 +8,13 @@
 //! are kept here, without a role-assignment or operating-system dependency.
 
 mod adapter;
+mod budget;
 mod builder;
 mod ir;
 mod models;
 pub mod source_info;
 
+pub use budget::AllocationBudget;
 pub use builder::{MeasurementInput, build};
 pub use ir::{LoadedMdatProject, MdatIRProvider, MeasurementInfo, extract_ir, load_mdat_project};
 pub use models::*;
@@ -35,7 +37,15 @@ pub enum MdatError {
 /// Adapted f64 arrays have per-array limits and a cumulative max_file_bytes
 /// allocation budget, including repeated references to the same raw array.
 pub fn load(bytes: &[u8], limits: &secs_jos::Limits) -> Result<MdatFile, MdatError> {
-    adapter::adapt(secs_jos::parse(bytes, limits)?, bytes.len(), limits)
+    load_with_budget(bytes, limits, &mut AllocationBudget::new(limits))
+}
+
+pub(crate) fn load_with_budget(
+    bytes: &[u8],
+    limits: &secs_jos::Limits,
+    budget: &mut AllocationBudget,
+) -> Result<MdatFile, MdatError> {
+    adapter::adapt(secs_jos::parse(bytes, limits)?, bytes.len(), limits, budget)
 }
 
 #[cfg(test)]

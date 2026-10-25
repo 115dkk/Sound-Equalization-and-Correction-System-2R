@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use crate::{MdatError, MdatFile, REW_MDAT_IR_SCALE, SourceInfo, source_info};
+use crate::{AllocationBudget, MdatError, MdatFile, REW_MDAT_IR_SCALE, SourceInfo, source_info};
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct MeasurementInfo {
@@ -41,18 +41,46 @@ pub struct LoadedMdatProject {
     pub ir_provider: MdatIRProvider,
 }
 
+/// Parse, adapt and extract. Adaptation and extraction each get a budget of
+/// `limits.max_file_bytes`: extraction copies what adaptation already holds
+/// (each IR once), so a file that adapts within the budget also extracts,
+/// while one array referenced hundreds of times still exceeds it (TD-18).
 pub fn load_mdat_project(
     bytes: &[u8],
     limits: &secs_jos::Limits,
 ) -> Result<LoadedMdatProject, MdatError> {
-    let mdat = crate::load(bytes, limits)?;
-    Ok(extract_ir(mdat))
+    let mdat = crate::load_with_budget(bytes, limits, &mut AllocationBudget::new(limits))?;
+    extract_ir(mdat, &mut AllocationBudget::new(limits))
 }
 
-pub fn extract_ir(mdat: MdatFile) -> LoadedMdatProject {
+/// Copy each measurement's metadata, source information and scaled IR out of
+/// the adapted file, charging `budget` before every copy. [`load_mdat_project`]
+/// passes a fresh budget of `max_file_bytes`; a budget that runs out returns
+/// the adapter's allocation-limit error.
+pub fn extract_ir(
+    mdat: MdatFile,
+    budget: &mut AllocationBudget,
+) -> Result<LoadedMdatProject, MdatError> {
+    budget.charge(
+        mdat.measurements
+            .len()
+            .saturating_mul(size_of::<MeasurementInfo>()),
+    )?;
     let mut measurements = Vec::with_capacity(mdat.measurements.len());
     let mut impulse_responses = BTreeMap::new();
     for (index, measurement) in mdat.measurements.iter().enumerate() {
+        let notes = &measurement.notes;
+        let samples = &measurement.impulse_response.samples;
+        // A fixed 1 KiB covers the uuid and its map key, a default title, the
+        // role and the provider entry. timing_reference keeps a (byte offset,
+        // char) pair and a folded byte per character, and returns at most
+        // notes.len() bytes. Source info charges its own copies.
+        budget.charge(1024)?;
+        budget.charge(measurement.name.len())?;
+        budget.charge(notes.len())?;
+        budget.charge(notes.len().saturating_mul(size_of::<(usize, char)>() + 1))?;
+        budget.charge(notes.len())?;
+        budget.charge(samples.len().saturating_mul(size_of::<f64>()))?;
         let uuid = format!("mdat:{index}");
         measurements.push(MeasurementInfo {
             uuid: uuid.clone(),
@@ -61,7 +89,7 @@ pub fn extract_ir(mdat: MdatFile) -> LoadedMdatProject {
             } else {
                 measurement.name.clone()
             },
-            notes: measurement.notes.clone(),
+            notes: notes.clone(),
             sample_rate: measurement.sample_rate_hz,
             start_freq: measurement.frequency_response.spacing.valid_start_hz,
             end_freq: measurement.frequency_response.spacing.valid_end_hz,
@@ -69,27 +97,26 @@ pub fn extract_ir(mdat: MdatFile) -> LoadedMdatProject {
             role: "Ignore".into(),
             start_time_s: measurement.impulse_response.start_time_s,
             measurement_delay_s: measurement.impulse_response.measurement_delay_s,
-            timing_reference: timing_reference(&measurement.notes),
+            timing_reference: timing_reference(notes),
             source_info: source_info::extract(
                 &mdat.stream,
                 measurement.source_object,
-                &measurement.notes,
-            ),
+                notes,
+                budget,
+            )?,
         });
         // NumPy 2 scalar promotion keeps this division in float32, not f64 x100.
-        let samples = measurement
-            .impulse_response
-            .samples
+        let samples = samples
             .iter()
             .map(|v| f64::from(*v as f32 / REW_MDAT_IR_SCALE as f32))
             .collect();
         impulse_responses.insert(uuid, (samples, measurement.sample_rate_hz));
     }
-    LoadedMdatProject {
+    Ok(LoadedMdatProject {
         mdat,
         measurements,
         ir_provider: MdatIRProvider { impulse_responses },
-    }
+    })
 }
 
 fn timing_reference(notes: &str) -> String {

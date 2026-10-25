@@ -5,7 +5,7 @@ use secs_jos::{
     ArrayData, ClassDescriptor, FieldDescriptor, JavaObject, Node, NodeId, Stream, Value,
 };
 
-use crate::MdatError;
+use crate::{AllocationBudget, MdatError};
 
 const STRING_FIELDS: [&str; 7] = [
     "outputName",
@@ -105,13 +105,6 @@ fn object(stream: &Stream, value: Option<&Value>) -> Option<NodeId> {
     matches!(stream.nodes.get(id), Some(Node::Object(_))).then_some(id)
 }
 
-fn string(stream: &Stream, value: Option<&Value>) -> Option<String> {
-    match node_id(value).and_then(|id| stream.nodes.get(id)) {
-        Some(Node::String { value, .. }) => Some(value.clone()),
-        _ => None,
-    }
-}
-
 fn boxed_value(stream: &Stream, value: Option<&Value>) -> Option<Boxed> {
     let id = object(stream, value)?;
     match (stream.class_name(id)?, stream.get(id, "value")?) {
@@ -122,17 +115,51 @@ fn boxed_value(stream: &Stream, value: Option<&Value>) -> Option<Boxed> {
     }
 }
 
-fn float_array(stream: &Stream, value: Option<&Value>) -> Option<Vec<f32>> {
+/// Copy a string node after charging its bytes.
+fn string(
+    stream: &Stream,
+    value: Option<&Value>,
+    budget: &mut AllocationBudget,
+) -> Result<Option<String>, MdatError> {
+    match node_id(value).and_then(|id| stream.nodes.get(id)) {
+        Some(Node::String { value, .. }) => {
+            budget.charge(value.len())?;
+            Ok(Some(value.clone()))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Copy a float array node after charging its bytes.
+fn float_array(
+    stream: &Stream,
+    value: Option<&Value>,
+    budget: &mut AllocationBudget,
+) -> Result<Option<Vec<f32>>, MdatError> {
     match node_id(value).and_then(|id| stream.nodes.get(id)) {
         Some(Node::Array {
             data: ArrayData::Float(values),
             ..
-        }) => Some(values.clone()),
-        _ => None,
+        }) => {
+            budget.charge(values.len().saturating_mul(size_of::<f32>()))?;
+            Ok(Some(values.clone()))
+        }
+        _ => Ok(None),
     }
 }
 
-pub fn extract(stream: &Stream, measurement: NodeId, notes: &str) -> SourceInfo {
+/// Copy one measurement's source information, charging `budget` before every
+/// string and array copy. Several measurements may reference the same
+/// calibration array; each copy is charged.
+pub fn extract(
+    stream: &Stream,
+    measurement: NodeId,
+    notes: &str,
+    budget: &mut AllocationBudget,
+) -> Result<SourceInfo, MdatError> {
+    // A fixed 4 KiB covers the field-name keys, boxed values, CalInfo records
+    // and their vector growth; strings and arrays are charged as copied.
+    budget.charge(4096)?;
     let mut info = SourceInfo::default();
     if let Some(Value::Long(value)) = stream.get(measurement, "sourceFileDate")
         && *value > 0
@@ -140,12 +167,13 @@ pub fn extract(stream: &Stream, measurement: NodeId, notes: &str) -> SourceInfo 
         info.date = Some(SourceDate::Int(*value));
     }
     if !notes.is_empty() {
+        budget.charge(notes.len())?;
         info.notes = Some(notes.to_owned());
     }
-    info.format = string(stream, stream.get(measurement, "sourceFileFormat"))
+    info.format = string(stream, stream.get(measurement, "sourceFileFormat"), budget)?
         .filter(|value| !value.is_empty());
     for name in STRING_FIELDS {
-        if let Some(value) = string(stream, stream.get(measurement, name)) {
+        if let Some(value) = string(stream, stream.get(measurement, name), budget)? {
             info.strings.push((name.into(), value));
         }
     }
@@ -160,9 +188,15 @@ pub fn extract(stream: &Stream, measurement: NodeId, notes: &str) -> SourceInfo 
         };
         let inverse_c_selected =
             matches!(stream.get(cal, "inverseCSelected"), Some(Value::Bool(true)));
-        let source_name = string(stream, stream.get(cal, "sourceName")).unwrap_or_default();
-        let source_path = string(stream, stream.get(cal, "sourcePath")).unwrap_or_default();
-        let arrays = CAL_ARRAYS.map(|key| float_array(stream, stream.get(cal, key)));
+        let source_name =
+            string(stream, stream.get(cal, "sourceName"), budget)?.unwrap_or_default();
+        let source_path =
+            string(stream, stream.get(cal, "sourcePath"), budget)?.unwrap_or_default();
+        let [freq, gain, phase] = [
+            float_array(stream, stream.get(cal, CAL_ARRAYS[0]), budget)?,
+            float_array(stream, stream.get(cal, CAL_ARRAYS[1]), budget)?,
+            float_array(stream, stream.get(cal, CAL_ARRAYS[2]), budget)?,
+        ];
         let mut boxed = Vec::new();
         for key in CAL_BOXED {
             if let Some(value) = boxed_value(stream, stream.get(cal, key)) {
@@ -175,14 +209,14 @@ pub fn extract(stream: &Stream, measurement: NodeId, notes: &str) -> SourceInfo 
                 inverse_c_selected,
                 source_name,
                 source_path,
-                freq: arrays[0].clone(),
-                gain: arrays[1].clone(),
-                phase: arrays[2].clone(),
+                freq,
+                gain,
+                phase,
                 boxed,
             },
         ));
     }
-    info
+    Ok(info)
 }
 
 fn put(stream: &mut Stream, object: NodeId, name: &str, value: Value) {
@@ -629,6 +663,69 @@ mod tests {
         assert_eq!(python_float("-Infinity"), Some(f64::NEG_INFINITY));
         assert!(python_float("+NaN").unwrap().is_nan());
         assert_eq!(python_float("1__0"), None);
+    }
+
+    #[test]
+    fn extract_charges_every_copy_of_a_shared_calibration_array() {
+        let mut stream = Stream::default();
+        let class = |stream: &mut Stream, name: &str| {
+            stream.push(Node::ClassDesc(ClassDescriptor {
+                name: name.into(),
+                ..ClassDescriptor::default()
+            }))
+        };
+        let float = class(&mut stream, "[F");
+        let cal_class = class(&mut stream, "roomeqwizard.CalData");
+        let measurement_class = class(&mut stream, "roomeqwizard.MeasData");
+        let array = stream.push(Node::Array {
+            classdesc: float,
+            data: ArrayData::Float(vec![0.5; 1024]),
+        });
+        let object = |stream: &mut Stream, classdesc, fields: &[(&str, NodeId)]| {
+            let name = stream.class_name(classdesc).unwrap().to_owned();
+            let fields = fields
+                .iter()
+                .map(|(field, id)| ((*field).to_owned(), Value::Node(*id)))
+                .collect();
+            stream.push(Node::Object(JavaObject {
+                classdesc,
+                field_data: BTreeMap::from([(name, fields)]),
+                annotations: BTreeMap::new(),
+            }))
+        };
+        let cal = object(
+            &mut stream,
+            cal_class,
+            &[("freqArray", array), ("gainArray", array)],
+        );
+        let measurement = object(
+            &mut stream,
+            measurement_class,
+            &[("meterCal", cal), ("scCal", cal)],
+        );
+
+        // The fixed allowance plus four 4 KiB copies of the one shared array.
+        let needed = 4096 + 4 * 1024 * size_of::<f32>();
+        let limits = |max_file_bytes| secs_jos::Limits {
+            max_file_bytes,
+            ..secs_jos::Limits::default()
+        };
+        let mut budget = AllocationBudget::new(&limits(needed));
+        let info = extract(&stream, measurement, "", &mut budget).unwrap();
+        assert_eq!(budget.remaining(), 0);
+        assert_eq!(info.cal.len(), 2);
+        for (_, cal) in &info.cal {
+            assert_eq!(cal.freq.as_deref(), Some(&[0.5; 1024][..]));
+            assert_eq!(cal.gain.as_deref(), Some(&[0.5; 1024][..]));
+            assert_eq!(cal.phase, None);
+        }
+
+        let mut budget = AllocationBudget::new(&limits(needed - 1));
+        assert!(matches!(
+            extract(&stream, measurement, "", &mut budget),
+            Err(MdatError::Schema(ref message)) if message == "adapted data exceeds allocation limit"
+        ));
+        assert_eq!(budget.remaining(), 4096 - 1);
     }
 
     #[test]
