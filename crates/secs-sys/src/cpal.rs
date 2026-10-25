@@ -27,8 +27,9 @@ use secs_audio::{
     OutputSession, PlaybackReport, ProbeResult, ShareMode, StreamSpec,
 };
 
+use crate::STALL;
+
 const POLL: Duration = Duration::from_millis(5);
-const STALL: Duration = Duration::from_secs(2);
 const PACKET_SAMPLES: usize = 1024;
 const QUEUE_PACKETS: usize = 256;
 

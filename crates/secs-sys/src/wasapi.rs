@@ -17,11 +17,14 @@
 //! HEnquist/wasapi-rs#65), so `forbid(unsafe_code)` keeps both out.
 
 use std::collections::VecDeque;
+use std::time::Instant;
 
 use secs_audio::{
     AudioBackend, AudioError, CancelToken, Direction, Endpoint, InputSession, OutputSession,
     PlaybackReport, ProbeResult, ShareMode, StreamSpec,
 };
+
+use crate::STALL;
 
 const HOST_API: &str = "Windows WASAPI";
 
@@ -189,6 +192,77 @@ trait PacketSource {
     fn read_packet(&mut self, scratch: &mut [u8]) -> Result<PacketHeader, AudioError>;
 }
 
+/// The capture endpoint as the read loop polls it.
+trait CaptureEndpoint: PacketSource {
+    /// Whether a packet is waiting to be read.
+    fn packet_ready(&mut self) -> Result<bool, AudioError>;
+    /// Blocks until the endpoint signals or a short timeout passes.
+    fn wait(&mut self) -> Result<(), AudioError>;
+}
+
+/// The monotonic time a [`StallWatch`] reads. The backend reads the system
+/// clock; the tests advance a fake one, so a stall takes no real time.
+trait Clock {
+    fn now(&self) -> Instant;
+}
+
+impl<C: Clock + ?Sized> Clock for &C {
+    fn now(&self) -> Instant {
+        (**self).now()
+    }
+}
+
+/// The system's monotonic clock.
+#[derive(Clone, Copy, Debug, Default)]
+struct SystemClock;
+
+impl Clock for SystemClock {
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
+}
+
+/// The last instant a stream made progress. A WASAPI event wait that times
+/// out is not an error, so a device that stops moving without a failing
+/// HRESULT would otherwise keep a loop waiting forever; past [`STALL`] the
+/// watch turns that silence into the error the cpal backend also returns.
+#[derive(Debug)]
+struct StallWatch<C> {
+    clock: C,
+    last_progress: Instant,
+    stream: &'static str,
+}
+
+impl<C: Clock> StallWatch<C> {
+    fn start(clock: C, stream: &'static str) -> Self {
+        let last_progress = clock.now();
+        Self {
+            clock,
+            last_progress,
+            stream,
+        }
+    }
+
+    fn progressed(&mut self) {
+        self.last_progress = self.clock.now();
+    }
+
+    fn check(&self) -> Result<(), AudioError> {
+        let idle = self
+            .clock
+            .now()
+            .saturating_duration_since(self.last_progress);
+        if idle > STALL {
+            return Err(AudioError::Backend(format!(
+                "WASAPI {} stalled: no progress for {} seconds",
+                self.stream,
+                STALL.as_secs()
+            )));
+        }
+        Ok(())
+    }
+}
+
 fn append_packet<S: PacketSource>(
     source: &mut S,
     scratch: &mut [u8],
@@ -305,6 +379,64 @@ impl CaptureQueue {
     fn mark_gap(&mut self, gap: bool) {
         self.flags.discontinuity |= gap;
     }
+
+    /// One step of the capture loop once the queue has been drained into the
+    /// caller's buffer: read the ready packet into the queue, or wait once
+    /// when none is ready. `watch` sees a packet with frames as progress.
+    fn next_packet<E: CaptureEndpoint, C: Clock>(
+        &mut self,
+        endpoint: &mut E,
+        watch: &mut StallWatch<C>,
+        scratch: &mut [u8],
+        channels: u16,
+        diagnose_zeros: bool,
+        dst_full: bool,
+    ) -> Result<CaptureStep, AudioError> {
+        if !endpoint.packet_ready()? {
+            // A wake may represent several packets. Return a full dst
+            // only after every available packet has been released.
+            if dst_full {
+                return Ok(CaptureStep::Full);
+            }
+            watch.check()?;
+            endpoint.wait()?;
+            return Ok(CaptureStep::Waited);
+        }
+        // Bound backlog to two endpoint buffers. A caller that cannot
+        // keep up gets an explicit failure, never silently dropped data.
+        if self.pending.len() > scratch.len() / size_of::<f32>() {
+            return Err(AudioError::Backend(
+                "capture backlog exceeded endpoint buffer".into(),
+            ));
+        }
+        let queue_before = self.pending.len();
+        let packet = self.push_packet(endpoint, scratch, channels, diagnose_zeros)?;
+        if packet.header.frames > 0 {
+            watch.progressed();
+        } else {
+            // An endpoint that keeps reporting a ready but empty packet never
+            // waits, so the watch has to be checked here as well.
+            watch.check()?;
+        }
+        Ok(CaptureStep::Packet {
+            packet,
+            queue_before,
+        })
+    }
+}
+
+/// What [`CaptureQueue::next_packet`] did.
+#[derive(Debug)]
+enum CaptureStep {
+    /// A packet was read from the endpoint into the queue.
+    Packet {
+        packet: AppendedPacket,
+        queue_before: usize,
+    },
+    /// No packet was ready; the endpoint was waited on once.
+    Waited,
+    /// No packet is ready and the caller's buffer is full: the read is done.
+    Full,
 }
 
 trait SampleSink {
@@ -324,8 +456,9 @@ trait SampleSink {
     fn stop(&mut self) -> Result<(), AudioError>;
 }
 
-fn play_with_sink<S: SampleSink>(
+fn play_with_sink<S: SampleSink, C: Clock>(
     sink: &mut S,
+    clock: C,
     interleaved: &[f32],
     channels: u16,
     mode: ShareMode,
@@ -337,6 +470,8 @@ fn play_with_sink<S: SampleSink>(
     let mut submitted = 0usize;
     let mut underruns = 0u32;
     let mut started = false;
+    // Progress is a write the endpoint accepted, or padding that fell.
+    let mut watch = StallWatch::start(clock, "render");
 
     while submitted < total_frames {
         if cancel.is_cancelled() {
@@ -358,6 +493,7 @@ fn play_with_sink<S: SampleSink>(
             underruns = underruns.saturating_add(1);
         }
         if capacity == 0 {
+            watch.check()?;
             sink.wait()?;
             continue;
         }
@@ -366,6 +502,7 @@ fn play_with_sink<S: SampleSink>(
         let last = first + frames * channels;
         sink.write_frames(&interleaved[first..last], (capacity, padding))?;
         submitted += frames;
+        watch.progressed();
         if !started {
             sink.start()?;
             started = true;
@@ -377,21 +514,31 @@ fn play_with_sink<S: SampleSink>(
         }
     }
 
-    while started && sink.padding_frames()? > 0 {
-        if cancel.is_cancelled() {
-            let padding = sink.padding_frames()?;
-            sink.stop()?;
-            return Ok(PlaybackReport {
-                frames_submitted: submitted as u64,
-                frames_drained: submitted.saturating_sub(padding) as u64,
-                mode,
-                underruns,
-                cancelled: true,
-            });
-        }
-        sink.wait()?;
-    }
     if started {
+        let mut previous_padding = None;
+        loop {
+            let padding = sink.padding_frames()?;
+            if padding == 0 {
+                break;
+            }
+            if cancel.is_cancelled() {
+                let padding = sink.padding_frames()?;
+                sink.stop()?;
+                return Ok(PlaybackReport {
+                    frames_submitted: submitted as u64,
+                    frames_drained: submitted.saturating_sub(padding) as u64,
+                    mode,
+                    underruns,
+                    cancelled: true,
+                });
+            }
+            if previous_padding.is_some_and(|previous| padding < previous) {
+                watch.progressed();
+            }
+            previous_padding = Some(padding);
+            watch.check()?;
+            sink.wait()?;
+        }
         sink.stop()?;
     }
     Ok(PlaybackReport {
@@ -1726,6 +1873,7 @@ mod windows_backend {
             };
             play_with_sink(
                 &mut sink,
+                SystemClock,
                 interleaved,
                 self.spec.channels,
                 self.mode,
@@ -1734,11 +1882,40 @@ mod windows_backend {
         }
     }
 
-    struct WasapiPacketSource<'a> {
+    /// The capture service, its client and the shared-mode event.
+    struct WasapiCaptureEndpoint<'a> {
         capture: &'a AudioCaptureClient,
+        client: &'a AudioClient,
+        event: Option<&'a wasapi::Handle>,
     }
 
-    impl PacketSource for WasapiPacketSource<'_> {
+    impl CaptureEndpoint for WasapiCaptureEndpoint<'_> {
+        fn packet_ready(&mut self) -> Result<bool, AudioError> {
+            match self
+                .capture
+                .get_next_packet_size()
+                .map_err(|err| backend_error("failed to query WASAPI capture packet", err))?
+            {
+                Some(frames) => Ok(frames > 0),
+                None => self
+                    .client
+                    .get_current_padding()
+                    .map(|frames| frames > 0)
+                    .map_err(|err| backend_error("failed to query WASAPI capture padding", err)),
+            }
+        }
+
+        fn wait(&mut self) -> Result<(), AudioError> {
+            if let Some(event) = self.event {
+                wait_event(event)
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                Ok(())
+            }
+        }
+    }
+
+    impl PacketSource for WasapiCaptureEndpoint<'_> {
         fn read_packet(&mut self, scratch: &mut [u8]) -> Result<PacketHeader, AudioError> {
             let (frames, info) = self
                 .capture
@@ -1781,21 +1958,6 @@ mod windows_backend {
         pub fn capture_stats(&self) -> CaptureStats {
             self.stats
         }
-
-        fn packet_ready(&self) -> Result<bool, AudioError> {
-            match self
-                .capture
-                .get_next_packet_size()
-                .map_err(|err| backend_error("failed to query WASAPI capture packet", err))?
-            {
-                Some(frames) => Ok(frames > 0),
-                None => self
-                    .client
-                    .get_current_padding()
-                    .map(|frames| frames > 0)
-                    .map_err(|err| backend_error("failed to query WASAPI capture padding", err)),
-            }
-        }
     }
 
     impl InputSession for WasapiInputSession {
@@ -1823,6 +1985,14 @@ mod windows_backend {
             let mut written = 0usize;
             let mut any_silent = false;
             let mut any_discontinuity = false;
+            let mut endpoint = WasapiCaptureEndpoint {
+                capture: &self.capture,
+                client: &self.client,
+                event: self.event.as_ref(),
+            };
+            // Started per call: time the caller spends between reads is not
+            // the device's.
+            let mut watch = StallWatch::start(SystemClock, "capture");
             while !dst.is_empty() {
                 let delivery_start = self.delivered_frames;
                 let queue_before = self.queue.pending.len();
@@ -1852,36 +2022,21 @@ mod windows_backend {
                 if cancel.is_cancelled() {
                     break;
                 }
-                if !self.packet_ready()? {
-                    // A wake may represent several packets. Return a full dst
-                    // only after every available packet has been released.
-                    if written == dst.len() {
-                        break;
-                    }
-                    if let Some(event) = &self.event {
-                        wait_event(event)?;
-                    } else {
-                        std::thread::sleep(std::time::Duration::from_millis(1));
-                    }
-                    continue;
-                }
-                // Bound backlog to two endpoint buffers. A caller that cannot
-                // keep up gets an explicit failure, never silently dropped data.
-                if self.queue.pending.len() > self.scratch.len() / size_of::<f32>() {
-                    return Err(AudioError::Backend(
-                        "capture backlog exceeded endpoint buffer".into(),
-                    ));
-                }
-                let mut source = WasapiPacketSource {
-                    capture: &self.capture,
-                };
-                let queue_before = self.queue.pending.len();
-                let packet = self.queue.push_packet(
-                    &mut source,
+                let (packet, queue_before) = match self.queue.next_packet(
+                    &mut endpoint,
+                    &mut watch,
                     &mut self.scratch,
                     self.spec.channels,
                     self.trace.is_some(),
-                )?;
+                    written == dst.len(),
+                )? {
+                    CaptureStep::Packet {
+                        packet,
+                        queue_before,
+                    } => (packet, queue_before),
+                    CaptureStep::Waited => continue,
+                    CaptureStep::Full => break,
+                };
                 let continuity =
                     packet_continuity(self.packet_ordinal, &packet.header, self.expected_position);
                 self.queue.mark_gap(continuity.gap);
@@ -2178,6 +2333,7 @@ mod tests {
         };
         let report = play_with_sink(
             &mut sink,
+            SystemClock,
             &[0.25; 8],
             2,
             ShareMode::SharedAutoConvert,
@@ -2449,10 +2605,258 @@ mod tests {
             padding: 0,
             started: false,
         };
-        let report =
-            play_with_sink(&mut sink, &[0.0; 16], 2, ShareMode::Exclusive, &cancel).unwrap();
+        let report = play_with_sink(
+            &mut sink,
+            SystemClock,
+            &[0.0; 16],
+            2,
+            ShareMode::Exclusive,
+            &cancel,
+        )
+        .unwrap();
         assert!(report.cancelled);
         assert_eq!(report.frames_submitted, 2);
         assert!(!sink.started);
+    }
+
+    /// A clock the fakes advance by hand, so a stall takes no real time.
+    struct FakeClock(std::cell::Cell<Instant>);
+
+    impl FakeClock {
+        fn new() -> Self {
+            Self(std::cell::Cell::new(Instant::now()))
+        }
+
+        fn advance(&self, by: std::time::Duration) {
+            self.0.set(self.0.get() + by);
+        }
+    }
+
+    impl Clock for FakeClock {
+        fn now(&self) -> Instant {
+            self.0.get()
+        }
+    }
+
+    /// One wait of the fakes below: the 10 ms timeout of the shared-mode event.
+    const FAKE_WAIT: std::time::Duration = std::time::Duration::from_millis(10);
+
+    /// The first wait count whose elapsed time is past `STALL`.
+    fn waits_past_stall() -> u32 {
+        (STALL.as_millis() / FAKE_WAIT.as_millis()) as u32 + 1
+    }
+
+    fn is_stall(error: &AudioError) -> bool {
+        matches!(error, AudioError::Backend(message) if message.contains("stalled"))
+    }
+
+    /// A mono capture endpoint whose packet of `frames` frames becomes ready
+    /// after `every` waits; `None` never delivers.
+    struct FakeEndpoint<'a> {
+        clock: &'a FakeClock,
+        every: Option<u32>,
+        frames: usize,
+        since_packet: u32,
+        waits: u32,
+    }
+
+    impl<'a> FakeEndpoint<'a> {
+        fn new(clock: &'a FakeClock, every: Option<u32>, frames: usize) -> Self {
+            Self {
+                clock,
+                every,
+                frames,
+                since_packet: 0,
+                waits: 0,
+            }
+        }
+    }
+
+    impl PacketSource for FakeEndpoint<'_> {
+        fn read_packet(&mut self, scratch: &mut [u8]) -> Result<PacketHeader, AudioError> {
+            self.since_packet = 0;
+            scratch[..self.frames * size_of::<f32>()].fill(0);
+            Ok(PacketHeader {
+                frames: self.frames,
+                ..PacketHeader::default()
+            })
+        }
+    }
+
+    impl CaptureEndpoint for FakeEndpoint<'_> {
+        fn packet_ready(&mut self) -> Result<bool, AudioError> {
+            Ok(self.every.is_some_and(|every| self.since_packet >= every))
+        }
+
+        fn wait(&mut self) -> Result<(), AudioError> {
+            self.clock.advance(FAKE_WAIT);
+            self.since_packet += 1;
+            self.waits += 1;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn capture_stalls_when_no_packet_arrives() {
+        let clock = FakeClock::new();
+        let mut endpoint = FakeEndpoint::new(&clock, None, 4);
+        let mut watch = StallWatch::start(&clock, "capture");
+        let mut queue = CaptureQueue {
+            pending: VecDeque::with_capacity(8),
+            ..CaptureQueue::default()
+        };
+        let mut scratch = [0; 16];
+        let error = loop {
+            assert!(endpoint.waits <= 10 * waits_past_stall(), "no stall error");
+            match queue.next_packet(&mut endpoint, &mut watch, &mut scratch, 1, false, false) {
+                Ok(CaptureStep::Waited) => {}
+                Ok(step) => panic!("unexpected {step:?}"),
+                Err(error) => break error,
+            }
+        };
+        assert!(is_stall(&error), "{error}");
+        assert_eq!(endpoint.waits, waits_past_stall());
+    }
+
+    #[test]
+    fn slow_capture_packets_do_not_stall() {
+        let clock = FakeClock::new();
+        let started = clock.now();
+        // A packet every 1.5 s: slow, but each one is progress.
+        let every = waits_past_stall() * 3 / 4;
+        let mut endpoint = FakeEndpoint::new(&clock, Some(every), 4);
+        let mut watch = StallWatch::start(&clock, "capture");
+        let mut queue = CaptureQueue {
+            pending: VecDeque::with_capacity(8),
+            ..CaptureQueue::default()
+        };
+        let mut scratch = [0; 16];
+        let mut packets = 0;
+        while packets < 4 {
+            match queue
+                .next_packet(&mut endpoint, &mut watch, &mut scratch, 1, false, false)
+                .unwrap()
+            {
+                CaptureStep::Packet { packet, .. } => {
+                    assert_eq!(packet.header.frames, 4);
+                    packets += 1;
+                    queue.pending.clear();
+                }
+                CaptureStep::Waited => {}
+                CaptureStep::Full => panic!("the destination is not full"),
+            }
+        }
+        assert!(clock.now() - started > STALL * 2);
+    }
+
+    /// A mono render endpoint of `buffer` frames that consumes one frame every
+    /// `every` waits; `None` never consumes.
+    struct FakeRender<'a> {
+        clock: &'a FakeClock,
+        buffer: usize,
+        every: Option<u32>,
+        padding: std::cell::Cell<usize>,
+        waits: std::cell::Cell<u32>,
+    }
+
+    impl<'a> FakeRender<'a> {
+        fn new(clock: &'a FakeClock, buffer: usize, every: Option<u32>) -> Self {
+            Self {
+                clock,
+                buffer,
+                every,
+                padding: std::cell::Cell::new(0),
+                waits: std::cell::Cell::new(0),
+            }
+        }
+    }
+
+    impl SampleSink for FakeRender<'_> {
+        fn wait(&self) -> Result<(), AudioError> {
+            self.clock.advance(FAKE_WAIT);
+            let waits = self.waits.get() + 1;
+            self.waits.set(waits);
+            if self.every.is_some_and(|every| waits.is_multiple_of(every)) {
+                self.padding.set(self.padding.get().saturating_sub(1));
+            }
+            Ok(())
+        }
+
+        fn capacity_frames(&self) -> Result<usize, AudioError> {
+            Ok(self.buffer - self.padding.get())
+        }
+
+        fn padding_frames(&self) -> Result<usize, AudioError> {
+            Ok(self.padding.get())
+        }
+
+        fn buffer_snapshot(&self) -> Result<(usize, usize), AudioError> {
+            Ok((self.buffer - self.padding.get(), self.padding.get()))
+        }
+
+        fn write_frames(&mut self, samples: &[f32], _: (usize, usize)) -> Result<(), AudioError> {
+            self.padding.set(self.padding.get() + samples.len());
+            Ok(())
+        }
+
+        fn start(&mut self) -> Result<(), AudioError> {
+            Ok(())
+        }
+
+        fn stop(&mut self) -> Result<(), AudioError> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn render_stalls_when_the_device_stops_consuming() {
+        // Priming: the buffer fills and never frees space for the rest.
+        let clock = FakeClock::new();
+        let mut sink = FakeRender::new(&clock, 4, None);
+        let error = play_with_sink(
+            &mut sink,
+            &clock,
+            &[0.0; 8],
+            1,
+            ShareMode::SharedAutoConvert,
+            &CancelToken::new(),
+        )
+        .unwrap_err();
+        assert!(is_stall(&error), "{error}");
+        assert_eq!(sink.waits.get(), waits_past_stall());
+
+        // Drain: everything was submitted but the padding never falls.
+        let clock = FakeClock::new();
+        let mut sink = FakeRender::new(&clock, 8, None);
+        let error = play_with_sink(
+            &mut sink,
+            &clock,
+            &[0.0; 4],
+            1,
+            ShareMode::SharedAutoConvert,
+            &CancelToken::new(),
+        )
+        .unwrap_err();
+        assert!(is_stall(&error), "{error}");
+        assert_eq!(sink.waits.get(), waits_past_stall());
+    }
+
+    #[test]
+    fn slow_render_progress_does_not_stall() {
+        // One frame every 1.5 s, both while priming and while draining.
+        let clock = FakeClock::new();
+        let started = clock.now();
+        let mut sink = FakeRender::new(&clock, 4, Some(waits_past_stall() * 3 / 4));
+        let report = play_with_sink(
+            &mut sink,
+            &clock,
+            &[0.0; 8],
+            1,
+            ShareMode::SharedAutoConvert,
+            &CancelToken::new(),
+        )
+        .unwrap();
+        assert_eq!(report.frames_drained, 8);
+        assert!(clock.now() - started > STALL * 4);
     }
 }

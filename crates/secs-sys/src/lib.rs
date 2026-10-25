@@ -75,6 +75,12 @@ pub fn set_large_icon(
     }
 }
 
+/// How long an open audio stream may go without progress before its backend
+/// reports it as stalled: no capture callback or packet, no render frame
+/// accepted and no fall in render padding. The cpal and WASAPI backends share
+/// it.
+const STALL: std::time::Duration = std::time::Duration::from_secs(2);
+
 #[cfg(not(target_os = "windows"))]
 pub mod cpal;
 pub mod wasapi;
