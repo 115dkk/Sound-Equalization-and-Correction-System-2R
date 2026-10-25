@@ -61,6 +61,19 @@ impl PyJson {
             _ => None,
         }
     }
+
+    /// Python's `bool(value)`: `None`, `False`, zero and empty containers are false.
+    pub(crate) fn is_truthy(&self) -> bool {
+        match self {
+            Self::Null => false,
+            Self::Bool(value) => *value,
+            Self::Int(value) => value != "0",
+            Self::Float(value) => *value != 0.0,
+            Self::Str(value) => !value.is_empty(),
+            Self::Array(value) => !value.is_empty(),
+            Self::Object(value) => !value.is_empty(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -86,15 +86,7 @@ pub(crate) fn string(value: Option<&PyJson>, default: &str) -> String {
 }
 
 pub(crate) fn optional_bool(value: Option<&PyJson>) -> Option<bool> {
-    value.map(|value| match value {
-        PyJson::Null => false,
-        PyJson::Bool(value) => *value,
-        PyJson::Int(value) => value != "0",
-        PyJson::Float(value) => *value != 0.0,
-        PyJson::Str(value) => !value.is_empty(),
-        PyJson::Array(value) => !value.is_empty(),
-        PyJson::Object(value) => !value.is_empty(),
-    })
+    value.map(PyJson::is_truthy)
 }
 
 fn get<'a>(object: &'a [(String, PyJson)], key: &str) -> Option<&'a PyJson> {

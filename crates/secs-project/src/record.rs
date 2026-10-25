@@ -251,7 +251,7 @@ impl MeasurementStore {
                 roles.iter().all(|role| {
                     nested_object(entry, "ir")
                         .and_then(|values| value_for(values, role))
-                        .is_some_and(py_truthy)
+                        .is_some_and(PyJson::is_truthy)
                 })
             },
         );
@@ -762,12 +762,13 @@ fn source_from_json(value: &PyJson) -> Option<SourceInfo> {
             info.cal.push((
                 name.clone(),
                 CalInfo {
-                    inverse_c_selected: value_for(cal, "inverseCSelected").is_some_and(py_truthy),
+                    inverse_c_selected: value_for(cal, "inverseCSelected")
+                        .is_some_and(PyJson::is_truthy),
                     source_name: value_for(cal, "sourceName")
-                        .filter(|value| py_truthy(value))
+                        .filter(|value| value.is_truthy())
                         .map_or_else(String::new, python_str),
                     source_path: value_for(cal, "sourcePath")
-                        .filter(|value| py_truthy(value))
+                        .filter(|value| value.is_truthy())
                         .map_or_else(String::new, python_str),
                     freq: value_for(cal, "freqArray").and_then(float_array_from_json),
                     gain: value_for(cal, "gainArray").and_then(float_array_from_json),
@@ -779,10 +780,10 @@ fn source_from_json(value: &PyJson) -> Option<SourceInfo> {
     }
     info.date = value_for(object, "date").and_then(date_from_json);
     info.notes = value_for(object, "notes")
-        .filter(|value| py_truthy(value))
+        .filter(|value| value.is_truthy())
         .map(python_str);
     info.format = value_for(object, "format")
-        .filter(|value| py_truthy(value))
+        .filter(|value| value.is_truthy())
         .map(python_str);
     Some(info)
 }
@@ -798,7 +799,7 @@ fn boxed_from_json(value: &PyJson) -> Option<Boxed> {
         "java.lang.Integer" => python_int(raw)
             .filter(|value| i32::try_from(*value).is_ok())
             .map(Boxed::Integer),
-        "java.lang.Boolean" => Some(Boxed::Boolean(py_truthy(raw))),
+        "java.lang.Boolean" => Some(Boxed::Boolean(raw.is_truthy())),
         _ => None,
     }
 }
@@ -1009,18 +1010,6 @@ fn setdefault_nested(object: &mut Vec<(String, PyJson)>, key: &str, role: &str, 
         .and_then(PyJson::object_mut)
         .expect("upstream setdefault requires an object");
     set_value(nested, role, value);
-}
-
-fn py_truthy(value: &PyJson) -> bool {
-    match value {
-        PyJson::Null => false,
-        PyJson::Bool(value) => *value,
-        PyJson::Int(value) => value != "0",
-        PyJson::Float(value) => *value != 0.0,
-        PyJson::Str(value) => !value.is_empty(),
-        PyJson::Array(value) => !value.is_empty(),
-        PyJson::Object(value) => !value.is_empty(),
-    }
 }
 
 fn cache_key(path: &Path) -> Result<CacheKey, ProjectError> {

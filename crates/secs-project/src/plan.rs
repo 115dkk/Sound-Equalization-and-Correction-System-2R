@@ -271,7 +271,7 @@ pub fn timing_settings(project: &Project) -> (TimingReference, Option<i64>) {
         TimingReference::Loopback => {
             let channel = devices.and_then(|value| value.get("timing_ref_output"));
             let output = channel
-                .filter(|value| py_truthy(value))
+                .filter(|value| value.is_truthy())
                 .map(|value| py_i64(Some(value), 0));
             (kind, output)
         }
@@ -361,16 +361,4 @@ fn py_f64(value: Option<&PyJson>, default: f64) -> f64 {
     value
         .and_then(|value| crate::project::float(value).ok())
         .unwrap_or(default)
-}
-
-fn py_truthy(value: &PyJson) -> bool {
-    match value {
-        PyJson::Null => false,
-        PyJson::Bool(value) => *value,
-        PyJson::Int(value) => value != "0",
-        PyJson::Float(value) => *value != 0.0,
-        PyJson::Str(value) => !value.is_empty(),
-        PyJson::Array(value) => !value.is_empty(),
-        PyJson::Object(value) => !value.is_empty(),
-    }
 }
