@@ -1,6 +1,10 @@
 name: CI
 
-# Gates every pull request and every push to main (docs/adr/0002, 0006).
+# Gates every pull request (docs/adr/0002, 0006). A merge does not run it
+# again: the pull request ran it on its merge with main, and release.yml tests
+# the release build before it packages. Without runs on main there is no
+# default-branch cache, so the first run of each pull request builds cold.
+# workflow_dispatch runs it by hand on any branch.
 #
 #   lint      fmt, clippy -D warnings (also for the Windows target, so
 #             cfg(windows) code is linted from Linux), the secs-policy gates,
@@ -38,8 +42,6 @@ name: CI
 
 on:
   pull_request:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:

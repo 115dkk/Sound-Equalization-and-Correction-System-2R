@@ -23,7 +23,7 @@ name: Release
 # bump is pushed over SSH with the RELEASE_DEPLOY_KEY deploy key, which the
 # default branch's "Required checks" ruleset lets through (the bump commit has
 # no checks of its own); its message carries [skip ci], so it does not start
-# this workflow or ci.yml again. The build jobs restore and save no cache:
+# this workflow again (ci.yml runs on pull requests only). The build jobs restore and save no cache:
 # whatever they compile cannot reach a cache another workflow on main would
 # trust (CodeQL actions/cache-poisoning), and a release is rare enough to
 # build cold.
