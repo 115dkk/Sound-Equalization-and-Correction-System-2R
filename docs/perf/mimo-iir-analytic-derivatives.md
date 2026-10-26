@@ -134,9 +134,7 @@ git apply docs/perf/mimo-iir-analytic-derivatives.patch
 
 main이 더 움직여 패치가 적용되지 않으면 위 네 자리만 손으로 옮기면 됩니다. 옮긴 뒤에는 3절의 늦은 에너지 표가 같은 값으로 나오는지 먼저 확인하십시오. 다른 변경이 MIMO 입력을 바꾸지 않았다면 비트까지 같아야 합니다.
 
-패치를 얹은 판에서 실패하는 테스트는 아래와 같습니다. 이 실험판은 앱과 CLI를 빌드해 실측에 쓰는 용도이니, 이 상태로 main에 머지하지 마십시오.
-
-- **`secs-engine::tests::mimo_iir::mimo_iir_joint_costs_within_spread`:** room_L의 결합 맞춤 비용이 상한을 넘습니다(3절).
+패치를 얹은 판으로 `cargo test --workspace --no-fail-fast`를 돌리면 `secs-engine::tests::mimo_iir::mimo_iir_joint_costs_within_spread` 하나만 실패합니다. room_L의 결합 맞춤 비용이 상한을 넘기 때문이고(3절), 나머지 테스트는 모두 통과합니다. 이 실험판은 앱과 CLI를 빌드해 실측에 쓰는 용도이니, 이 상태로 main에 머지하지 마십시오.
 
 패치는 앱 설정이나 IPC를 바꾸지 않으므로, 이 판으로 빌드한 앱과 CLI는 MIMO IIR을 켤 때 항상 해석적 미분을 씁니다. 기준판(main)과 실험판을 따로 빌드해 같은 측정에서 각각 보정값을 내보내십시오.
 
