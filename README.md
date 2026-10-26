@@ -6,7 +6,7 @@ SECS 2R은 룸 보정 설계 프로그램 [SECS 2](https://github.com/Kim-O-O/So
 
 ## 지금 상태
 
-개발 중입니다. M5까지 끝났습니다. 지금 나오는 0.x 판에는 SECS 2의 보정 엔진(레벨·딜레이, BA, XO, RC, MIMO, 성적표), 자체 측정과 REW 측정, mdat 가져오기, Dirac Live 프로젝트(`.liveproject`) 가져오기, 내보내기, 새 화면과 튜토리얼이 들어 있고, 같은 기계에서 SECS 2보다 빠릅니다([`docs/perf/engine.md`](docs/perf/engine.md)). 실제 방에서 측정부터 적용까지 확인하는 일(M6)은 남았습니다. 그 전에 실제 방에 적용할 보정이 필요하면 업스트림 SECS 2의 [Releases](https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2/releases)를 쓰세요.
+개발 중입니다. M5까지 끝났습니다. 지금 나오는 0.x 판에는 SECS 2의 보정 엔진(레벨·딜레이, BA, XO, RC, MIMO, 성적표), 자체 측정과 REW 측정, mdat 가져오기, Dirac Live 프로젝트(`.liveproject`) 가져오기, 내보내기, 새 화면과 튜토리얼이 들어 있고, 같은 기계에서 SECS 2보다 빠릅니다([`docs/perf/engine.md`](docs/perf/engine.md)). 실제 방에서 측정부터 적용까지 확인하는 일(M6)은 남았습니다.
 
 | 단계 | 내용 | 상태 |
 |---|---|---|
