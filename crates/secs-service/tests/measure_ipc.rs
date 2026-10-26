@@ -257,7 +257,7 @@ fn calibration(service: &Service) -> CalibrationSummary {
 }
 
 #[test]
-fn mock_flow_level_apply_and_calibration() {
+fn mock_flow_measurement_and_calibration() {
     let root = root("flow");
     let path = root.join("room.secs");
     let service = Service::new(Deps::default());
@@ -270,33 +270,6 @@ fn mock_flow_level_apply_and_calibration() {
     assert!(methods.methods.contains(&"mock".into()));
     assert_eq!(methods.mock_positions, [1]);
     assert_eq!(methods.mock_roles.len(), 14);
-    let events = Arc::new(Events::default());
-    let Response::LevelCheck(job) = ok(
-        &service,
-        Request::LevelCheck(LevelCheckParams { role: "L".into() }),
-        events.clone(),
-    ) else {
-        panic!()
-    };
-    let JobResult::Level(level) = succeeded(&events, job.job) else {
-        panic!()
-    };
-    assert!(level.rms_dbfs.is_finite());
-    assert!(level.peak_dbfs.is_finite());
-    assert_eq!(level.spl_db, None);
-    let Response::LevelApply(applied) = call(
-        &service,
-        Request::LevelApply(LevelApplyParams {
-            level: level.clone(),
-        }),
-    ) else {
-        panic!()
-    };
-    assert!((applied.sweep_level_dbfs.unwrap() - level.recommended_sweep_dbfs).abs() < 1e-10);
-    assert_eq!(
-        call(&service, Request::LevelApply(LevelApplyParams { level })),
-        Response::LevelApply(applied)
-    );
     let events = Arc::new(Events::default());
     let job = measure(&service, 1, events.clone());
     succeeded(&events, job);
@@ -1352,147 +1325,6 @@ fn sample_load_positions_stop_at_the_largest_layout() {
         panic!("17 positions must load");
     };
     assert_eq!(info.positions, (1..=17).collect::<Vec<i64>>());
-    fs::remove_dir_all(root).unwrap();
-}
-
-/// REW that answers a level subscription by posting one recorded reading to
-/// the callback URL, as REW does.
-#[derive(Debug)]
-struct LevelRewTransport {
-    level: serde_json::Value,
-}
-impl secs_rew::Transport for LevelRewTransport {
-    fn request(
-        &self,
-        request: &secs_rew::Request,
-    ) -> Result<secs_rew::Response, secs_rew::RewError> {
-        if request.path == "/input-levels/subscribe" {
-            let url = request.body.as_ref().unwrap()["url"]
-                .as_str()
-                .unwrap()
-                .to_owned();
-            let body = self.level.to_string();
-            std::thread::spawn(move || post_repeatedly(&url, &body));
-        }
-        let body = match request.path.as_str() {
-            "/audio/driver" => json!({"driver":"Java"}),
-            "/audio/java/output-channels" => json!(["L", "R"]),
-            _ => json!({"message":"ok"}),
-        };
-        Ok(secs_rew::Response::ok(body))
-    }
-}
-
-#[derive(Debug)]
-struct ProRequiredLevelRewTransport;
-impl secs_rew::Transport for ProRequiredLevelRewTransport {
-    fn request(
-        &self,
-        request: &secs_rew::Request,
-    ) -> Result<secs_rew::Response, secs_rew::RewError> {
-        if request.path == "/audio/java/output-channel" {
-            return Ok(secs_rew::Response {
-                status: 401,
-                body: json!({"message":"A Pro upgrade license is required for this action"}),
-            });
-        }
-        let body = match request.path.as_str() {
-            "/version" => json!({"message":"5.40 Beta 124 API 0.9.4"}),
-            "/audio/driver" => json!({"driver":"Java"}),
-            "/audio/java/output-channels" => json!(["L", "R"]),
-            _ => json!({"message":"ok"}),
-        };
-        Ok(secs_rew::Response::ok(body))
-    }
-}
-
-fn post_repeatedly(url: &str, body: &str) {
-    use std::io::{Read, Write};
-    let rest = url.strip_prefix("http://").unwrap();
-    let (host, path) = rest.split_at(rest.find('/').unwrap());
-    for _ in 0..50 {
-        if let Ok(mut stream) = std::net::TcpStream::connect(host) {
-            let _ = write!(
-                stream,
-                "POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\n\
-                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            );
-            let _ = stream.read_to_end(&mut Vec::new());
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-}
-
-#[test]
-fn rew_level_pro_required_is_visible_in_status() {
-    let root = root("rew-level-license");
-    let path = root.join("room.secs");
-    let service = Service::new(Deps {
-        rew_transport: Arc::new(|| Box::new(ProRequiredLevelRewTransport)),
-        ..Deps::default()
-    });
-    new(&service, &path);
-    configure(&service, "rew");
-    let events = Arc::new(Events::default());
-    let Response::LevelCheck(job) = ok(
-        &service,
-        Request::LevelCheck(LevelCheckParams { role: "L".into() }),
-        events.clone(),
-    ) else {
-        panic!()
-    };
-    assert!(matches!(
-        events.wait(job.job, Duration::from_secs(1)),
-        JobEvent::Finished {
-            status: JobStatus::Failed,
-            error: Some(IpcError {
-                code: ErrorCode::RewProRequired,
-                ..
-            }),
-            ..
-        }
-    ));
-    let Response::MeasureMethods(methods) = call(&service, Request::MeasureMethods) else {
-        panic!()
-    };
-    assert_eq!(methods.rew.pro, Some(false));
-    fs::remove_dir_all(root).unwrap();
-}
-
-#[test]
-fn rew_level_check_reports_the_rew_peak() {
-    let root = root("rew-level-peak");
-    let path = root.join("room.secs");
-    let service = Service::new(Deps {
-        rew_transport: Arc::new(|| {
-            Box::new(LevelRewTransport {
-                level: json!({"unit":"dBFS","rms":[-30.0],"peak":[-1.0]}),
-            })
-        }),
-        ..Deps::default()
-    });
-    new(&service, &path);
-    call(
-        &service,
-        Request::MeasureConfigure(MeasureConfigureParams {
-            method: "rew".into(),
-            ..Default::default()
-        }),
-    );
-    let events = Arc::new(Events::default());
-    let Response::LevelCheck(job) = ok(
-        &service,
-        Request::LevelCheck(LevelCheckParams { role: "L".into() }),
-        events.clone(),
-    ) else {
-        panic!()
-    };
-    let JobResult::Level(level) = succeeded(&events, job.job) else {
-        panic!()
-    };
-    assert_eq!(level.rms_dbfs, -30.0);
-    assert_eq!(level.peak_dbfs, -1.0);
     fs::remove_dir_all(root).unwrap();
 }
 

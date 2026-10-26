@@ -4,7 +4,7 @@ import type { Request } from "../ipc/bindings/Request";
 import type { RequestFn } from "../ipc/context";
 import { IpcFailure } from "../ipc/client";
 import { createMockService, ipcError } from "../ipc/mock";
-import { levelResult, resultsSummary, xoRecommendation } from "../ipc/fixtures";
+import { resultsSummary, xoRecommendation } from "../ipc/fixtures";
 import { createSession } from "./session";
 
 const newProject: Request = { method: "project_new", params: { path: "", preset: "2.0", sub_count: 0, sample: false, tutorial: false } };
@@ -92,21 +92,19 @@ describe("session completion ownership", () => {
     } finally { release(); session.dispose(); await session.settled(); mock.dispose(); }
   });
 
-  it("ignores old-project XO, level and failed compute side effects while preserving active lifecycle", async () => {
+  it("ignores old-project XO and failed compute side effects while preserving active lifecycle", async () => {
     const mock = createMockService({ tickMs: 0 });
     const session = createSession(mock);
     try {
       await session.start(); await session.settled();
       const xo = await session.call({ method: "recommend_xo" });
-      const level = await session.call({ method: "level_check", params: { role: "L" } });
       mock.events.emit({ event: "started", job: 1000, kind: "calibrate" });
       await session.call(newProject); await session.settled();
       mock.calls.length = 0;
       mock.events.emit({ event: "finished", job: xo.job, status: "succeeded", result: { kind: "xo", data: xoRecommendation }, error: null });
-      mock.events.emit({ event: "finished", job: level.job, status: "succeeded", result: { kind: "level", data: levelResult }, error: null });
       mock.events.emit({ event: "finished", job: 1000, status: "failed", result: null, error: ipcError("engine_input", "old") });
       await session.settled();
-      expect(session.host.getSnapshot()).toMatchObject({ xoRecommendation: null, sweepResult: null, failure: null });
+      expect(session.host.getSnapshot()).toMatchObject({ xoRecommendation: null, failure: null });
       expect(session.jobs.getSnapshot().jobs.every((job) => job.request === null)).toBe(true);
       expect(session.jobs.getSnapshot().jobs.find((job) => job.job === 1000)?.status).toBe("failed");
       expect(mock.calls.some((request) => request.method === "results")).toBe(false);

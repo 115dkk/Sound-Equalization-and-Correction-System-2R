@@ -41,7 +41,7 @@ export type SweepOption = { samples: number; seconds: number };
 
 /**
  * The running job of the service's device group (measure, sample_load,
- * mdat_import, level_check, level_monitor): only one runs at a time, and
+ * mdat_import, level_monitor): only one runs at a time, and
  * while it runs nothing on this screen may start another. P33 keeps it from
  * the `jobs` snapshot and the pushed `JobEvent`s.
  */
@@ -89,7 +89,7 @@ export type MeasureView = {
   layout: LayoutResult;
   /** `position_estimate`; null while unknown. */
   estimate: PositionEstimateResult | null;
-  /** `measure_configure` / `level_apply` result: method, roles in measuring order, sweep length, timing. */
+  /** `measure_configure` result: method, roles in measuring order, sweep length, timing. */
   config: MeasureConfigResult;
   /** See MeasurePath. */
   path: MeasurePath;
@@ -182,9 +182,9 @@ export function currentPosition(view: MeasureView): number | null {
 
 /**
  * The rail state of 측정·가져오기 (upstream `can_advance()` plus the path):
- * blocked while another step plays a level burst or runs a finite device
- * check (`device_busy`), done once every position is measured, blocked without a
- * measurement method unless on the import path (`no_path`), ready otherwise.
+ * blocked while another step plays a level burst (`device_busy`), done once
+ * every position is measured, blocked without a measurement method unless on
+ * the import path (`no_path`), ready otherwise.
  */
 /** Device jobs this screen starts: while one runs the step is still the
  * one being worked on (the primary action shows it busy), not blocked. */
@@ -192,9 +192,9 @@ export const OWN_JOBS: readonly JobKind[] = ["measure", "sample_load", "mdat_imp
 
 export function measureStepState(view: MeasureView): StepState {
   const blocked = (reason: BlockedReason): StepState => ({ status: "blocked", reason });
-  // Blocked means another step must act first: here, a device job another
-  // step started (a level check). This step's own jobs keep it ready.
-  if (view.playing || (isRunning(view.job) && view.job.kind === "level_check")) return blocked("device_busy");
+  // Blocked means another step must act first: here, a level burst
+  // 연결·점검 plays. This step's own jobs keep it ready.
+  if (view.playing) return blocked("device_busy");
   const done = new Set(donePositions(view));
   let complete = view.layout.count > 0;
   for (let position = 1; position <= view.layout.count; position++) if (!done.has(position)) complete = false;

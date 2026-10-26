@@ -1,14 +1,12 @@
 import { useEffect, useMemo, useRef } from "react";
 import { IpcFailure } from "../../ipc/client";
 import { useHost, useResource, useSession } from "../../state/react";
-import { useJobLedger } from "../../state/useJobLedger";
 import { levelRoles, pathReady } from "./state";
 import type { ConnectActions, ConnectView, RewProblem } from "./types";
 
 export function useConnectScreen(active: boolean): { view: ConnectView | null; actions: ConnectActions } {
   const session = useSession();
   const host = useHost();
-  const ledger = useJobLedger();
   const config = useResource("config");
   const methods = useResource("methods");
   const settings = useResource("measurementSettings");
@@ -16,14 +14,13 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
   const rew = useResource("rew");
   const queue = useRef(0);
   const cancelWait = useRef<(() => void) | null>(null);
-  const sweepRunning = ledger.jobs.some((job) => job.kind === "level_check" && (job.status === "running" || job.status === "cancel_requested"));
   const ready = host.path !== "mdat" && settings !== null && pathReady({ path: host.path, methods });
   useEffect(() => () => { queue.current++; cancelWait.current?.(); }, []);
   useEffect(() => {
     if (active) session.run(() => session.stores.rew.load());
   }, [active, session]);
   useEffect(() => {
-    if (!active || !ready || sweepRunning) return;
+    if (!active || !ready) return;
     session.run(() => session.monitor(true));
     return () => {
       queue.current++;
@@ -34,7 +31,7 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
         session.monitor(false),
       ]));
     };
-  }, [active, ready, host.path, sweepRunning, settings?.input_device, settings?.input_channel, settings?.output_device, settings?.share_mode, session]);
+  }, [active, ready, host.path, settings?.input_device, settings?.input_channel, settings?.output_device, settings?.share_mode, session]);
   useEffect(() => {
     if (methods?.rew.reachable && host.rewLaunch !== "idle") session.host.set({ rewLaunch: "idle", rewProblem: null, rewProblemDetail: null });
   }, [methods?.rew.reachable, host.rewLaunch, session]);
@@ -133,13 +130,6 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
       },
       setMasterLevel: (masterDbfs) => session.host.set({ masterDbfs }),
       skipLevels: () => session.run(() => session.call({ method: "levels_fill_defaults" })),
-      checkSweepLevel: (role) => session.run(async () => {
-        await stop();
-        await session.monitor(false);
-        session.host.set({ sweepRole: role, sweepResult: null });
-        await session.call({ method: "level_check", params: { role } });
-      }),
-      applySweepLevel: (level) => session.run(() => session.call({ method: "level_apply", params: { level } })),
       next: () => session.navigate("measure"),
     };
   }, [session]);
@@ -157,6 +147,5 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
     rew: { launch: host.rewLaunch, problem: host.rewProblem, problemDetail: host.rewProblemDetail, readingSettings: host.readingRew, switchingDriver: host.switchingRewDriver, details },
     levels: levels?.levels ?? {},
     level: { monitor: host.monitor, reading: host.meter, playing: host.playing, playingAll: host.playingAll, masterDbfs: host.masterDbfs },
-    sweepCheck: { running: sweepRunning, result: host.sweepResult, role: host.sweepRole },
   } : null, actions };
 }

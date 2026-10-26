@@ -18,7 +18,6 @@ import type { TargetResult } from "./bindings/TargetResult";
 import type { BootstrapInfo } from "./bindings/BootstrapInfo";
 import type { CalibrationSummary } from "./bindings/CalibrationSummary";
 import type { ChannelScore } from "./bindings/ChannelScore";
-import type { LevelResult } from "./bindings/LevelResult";
 import type { MeasureConfigResult } from "./bindings/MeasureConfigResult";
 import type { MeasureMethodsResult } from "./bindings/MeasureMethodsResult";
 import type { MetricsSummary } from "./bindings/MetricsSummary";
@@ -99,8 +98,6 @@ export const measureConfig: MeasureConfigResult = {
   timing_ref_output: 2,
   share_mode: "auto",
 };
-
-export const levelResult: LevelResult = { rms_dbfs: -22.4, peak_dbfs: -11.8, spl_db: 78.5, recommended_sweep_dbfs: -12 };
 
 const metrics = (seed: number, after: boolean): MetricsSummary => {
   const j = (k: number) => ((seed * 37 + k * 11) % 17) / 17;

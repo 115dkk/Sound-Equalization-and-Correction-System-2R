@@ -24,9 +24,7 @@ pub mod sim_room;
 pub use audio::*;
 pub use cached_backend::CachedBackend;
 pub use calibration::{MicCalibration, SplReference};
-pub use level::{
-    LevelInput, LevelOutput, LevelReport, LevelSignal, level_check, recommend_sweep_level,
-};
+pub use level::{LevelInput, LevelOutput, LevelReport, LevelSignal, level_check};
 pub use measurement::{
     MeasuredRole, MeasurementPlan, MeasurementWindow, PositionMeasurement, RoleOutput,
     measure_position,

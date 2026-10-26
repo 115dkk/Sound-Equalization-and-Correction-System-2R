@@ -748,7 +748,7 @@ id = "measure.native"
 kind = "measure"
 milestone = "M4"
 status = "partial"
-tests = ["secs-audio::sim_round_trip_rates_lengths_latencies_and_relative_arrivals", "secs-audio::dolby_golden_ir_round_trip", "secs-audio::loopback_recovers_absolute_latency", "secs-audio::snr_matches_known_white_noise_within_one_db", "secs-audio::cancellation_during_position_returns_no_roles", "secs-audio::session_starts_input_before_output", "secs-audio::measurement_rejects_recording_issues_in_priority_order", "secs-service::test_measure_two_positions_then_redo_last", "secs-service::level_check_mock_and_apply_recommended_level_u1"]
+tests = ["secs-audio::sim_round_trip_rates_lengths_latencies_and_relative_arrivals", "secs-audio::dolby_golden_ir_round_trip", "secs-audio::loopback_recovers_absolute_latency", "secs-audio::snr_matches_known_white_noise_within_one_db", "secs-audio::cancellation_during_position_returns_no_roles", "secs-audio::session_starts_input_before_output", "secs-audio::measurement_rejects_recording_issues_in_priority_order", "secs-service::test_measure_two_positions_then_redo_last"]
 note = "new: sweep/session/IR core, simulated room and native OS adapters; maintainer hardware run remains (docs/adr/0005, docs/HARDWARE.md)"
 
 [[feature]]
@@ -779,9 +779,9 @@ id = "measure.level_check"
 kind = "measure"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-audio::level_known_signals_clip_and_recommendation", "secs-audio::level_check_uses_simulated_capture_and_calibration", "secs-audio::level_check_rejects_each_recording_issue"]
+tests = ["secs-audio::level_known_signals_and_clipping", "secs-audio::level_check_uses_simulated_capture_and_calibration", "secs-audio::level_check_rejects_each_recording_issue"]
 upstream = "wizard/step3_level.py, wizard/mic_meter.py"
-note = "native pink/sine RMS, peak, clip and calibrated SPL; U1 sweep-level recommendation"
+note = "native pink/sine RMS, peak, clip and calibrated SPL"
 
 [[feature]]
 id = "measure.mic_calibration"
@@ -1155,20 +1155,6 @@ kind = "ipc"
 milestone = "M5"
 status = "implemented"
 tests = ["secs-service::level_stop_cancels_only_the_active_burst_and_is_idempotent", "secs-service::rew_level_stop_stops_generator_but_keeps_subscription_alive"]
-
-[[feature]]
-id = "ipc.level_check"
-kind = "ipc"
-milestone = "M4"
-status = "implemented"
-tests = ["secs-service::mock_flow_level_apply_and_calibration"]
-
-[[feature]]
-id = "ipc.level_apply"
-kind = "ipc"
-milestone = "M4"
-status = "implemented"
-tests = ["secs-service::mock_flow_level_apply_and_calibration"]
 
 [[feature]]
 id = "ipc.measure_position"

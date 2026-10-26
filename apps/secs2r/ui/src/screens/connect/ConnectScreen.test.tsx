@@ -68,9 +68,6 @@ export const REACH_IDS = [
   "connect.level.stop",
   "connect.level.play_all",
   "connect.level.skip",
-  "connect.level.advanced",
-  "connect.level.sweep.check",
-  "connect.level.sweep.apply",
   "connect.mic",
   "connect.mic.input",
   "connect.mic.meter",
@@ -98,8 +95,6 @@ function actionsMock() {
     playAllLevels: vi.fn(),
     setMasterLevel: vi.fn(),
     skipLevels: vi.fn(),
-    checkSweepLevel: vi.fn(),
-    applySweepLevel: vi.fn(),
     next: vi.fn(),
   } satisfies ConnectActions;
 }
@@ -349,16 +344,6 @@ describe("ConnectScreen", () => {
     expect(actions.skipLevels).toHaveBeenCalled();
   });
 
-  it("finds and applies the recommended sweep level under 고급 (U1)", () => {
-    const actions = setup(levelDoneView);
-    expect(ui("connect.level.skip")).toBeNull();
-    fireEvent.click(must("connect.level.advanced"));
-    fireEvent.click(must("connect.level.sweep.check"));
-    expect(actions.checkSweepLevel).toHaveBeenCalledWith("L");
-    fireEvent.click(must("connect.level.sweep.apply"));
-    expect(actions.applySweepLevel).toHaveBeenCalledWith(levelDoneView.sweepCheck.result);
-  });
-
   it("holds the mic peak until it is cleared and names clipping", () => {
     const reading = (rms: number, peak: number): MeterReading => ({ rms_dbfs: rms, peak_dbfs: peak, spl_db: null, clipping: false });
     const view = (r: MeterReading) => ({ input: "입력 1 · UMIK-1", monitor: "receiving" as const, reading: r });
@@ -419,28 +404,6 @@ describe("ConnectScreen", () => {
     expect(card.playAllLevels).toHaveBeenCalledOnce();
   });
 
-  it("turns every level play off while the sweep level is being found, and says why", () => {
-    const t = (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) => translate("ko", key, params);
-    const checking: ConnectView = { ...levelHalfView, level: { ...levelHalfView.level, playing: null, playingAll: false }, sweepCheck: { running: true, result: null, role: "L" } };
-    const header = connectHeader(checking, actionsMock(), t);
-    expect(header.primary).toMatchObject({ id: "connect.level.play_all", disabled: true, busy: false });
-    render(
-      <PrefsScope initial={{ locale: "ko", theme: "light", accent: "default" }}>
-        <StepHeader step="connect" state={connectStepState(checking)} primary={header.primary} status={header.status} />
-        <ConnectScreen view={checking} actions={actionsMock()} />
-      </PrefsScope>,
-    );
-    // The header's play-all is off and described by the pill beside the title.
-    const playAll = must("connect.level.play_all") as HTMLButtonElement;
-    expect(playAll.disabled).toBe(true);
-    expect(document.getElementById(playAll.getAttribute("aria-describedby")!)?.textContent).toBe(ko("connect.status.sweep_check"));
-    // Every channel's play is off too, and the card's play state says why.
-    for (const button of document.querySelectorAll<HTMLButtonElement>('[data-ui^="connect.level.play."]')) expect(button.disabled, button.dataset.ui).toBe(true);
-    expect(must("connect.level.playing").textContent).toBe(ko("connect.status.sweep_check"));
-    // Without the check the same view plays.
-    expect(connectHeader({ ...checking, sweepCheck: { running: false, result: null, role: null } }, actionsMock(), t).primary?.disabled).toBe(false);
-  });
-
   it("draws every reach id in at least one state", () => {
     const seen = new Set<string>();
     const collect = () => document.querySelectorAll("[data-ui]").forEach((node) => seen.add(node.getAttribute("data-ui") ?? ""));
@@ -457,7 +420,6 @@ describe("ConnectScreen", () => {
         </PrefsScope>,
       );
       collect();
-      if (ui("connect.level.advanced")) fireEvent.click(must("connect.level.advanced"));
       if (ui("connect.devices.details")) fireEvent.click(must("connect.devices.details"));
       collect();
       unmount();

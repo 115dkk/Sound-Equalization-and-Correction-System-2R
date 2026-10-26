@@ -178,8 +178,7 @@
   gap: var(--space-4);
 }
 
-.connect-fields .ui-select,
-.connect-sweep .ui-select {
+.connect-fields .ui-select {
   width: 100%;
 }
 
@@ -188,9 +187,8 @@
 }
 
 /* ── 레벨 점검 ─────────────────────────────────────────────────────────── */
-/* Wide: the rows on the left, output and mic, then skip and advanced, on
-   the right. Narrow: output and mic side by side above the rows, the rest
-   after them. */
+/* Wide: the rows on the left, output and mic, then skip, on the right.
+   Narrow: output and mic side by side above the rows, skip after them. */
 .connect-level {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -205,6 +203,19 @@
     grid-template-rows: auto 1fr;
     grid-template-areas: "rows controls" "rows extras";
     column-gap: var(--space-8);
+  }
+}
+
+/* Skip shows only while a channel has no level; without it the grid keeps
+   no empty row, so no gap trails the card. */
+.connect-level:not(:has(> .connect-level__extras)) {
+  grid-template-areas: "controls" "rows";
+}
+
+@container (min-width: 800px) {
+  .connect-level:not(:has(> .connect-level__extras)) {
+    grid-template-rows: auto;
+    grid-template-areas: "rows controls";
   }
 }
 
@@ -314,13 +325,6 @@
   align-items: center;
   gap: var(--space-2);
   min-height: var(--control-h-sm);
-}
-
-.connect-sweep {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-2);
 }
 
 /* ── Mic meter ─────────────────────────────────────────────────────────── */

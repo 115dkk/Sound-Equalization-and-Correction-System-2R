@@ -149,7 +149,6 @@ export const HELP_TABS: Record<StepId, readonly HelpTab[]> = {
             "help.connect.real.2",
             "help.connect.real.3",
             "help.connect.real.4",
-            "help.connect.real.5",
             "help.connect.real.6",
           ],
         },

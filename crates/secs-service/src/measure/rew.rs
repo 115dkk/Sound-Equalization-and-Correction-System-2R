@@ -3,8 +3,7 @@ use crate::{Deps, lock};
 use secs_project::{MeasurementPlan, MeasurementResult};
 use std::{
     fs,
-    sync::{Arc as SyncArc, Mutex, mpsc},
-    time::{Duration, Instant},
+    sync::{Arc as SyncArc, Mutex},
 };
 
 pub(crate) struct Transport(Box<dyn secs_rew::Transport>);
@@ -150,55 +149,6 @@ where
             version: self.client.version(),
             pro: None,
         })
-    }
-    fn level_check(
-        &mut self,
-        plan: &MeasurementPlan,
-        role: &str,
-        seconds: f64,
-        cancel: &CancelToken,
-    ) -> Result<secs_audio::LevelReport, MeasureError> {
-        if !seconds.is_finite()
-            || !(0.05..=30.0).contains(&seconds)
-            || !plan.roles.iter().any(|r| r == role)
-        {
-            return Err(MeasureError::Input("invalid level check".into()));
-        }
-        if cancel.is_cancelled() {
-            return Err(secs_rew::RewError::Cancelled.into());
-        }
-        let (tx, rx) = mpsc::sync_channel(32);
-        let result = (|| {
-            self.client.play_pink(
-                role,
-                positive(plan.output_for(role), "output")?,
-                plan.sweep_level_db,
-            )?;
-            self.client.start(Arc::new(move |level| {
-                let _ = tx.try_send(level);
-            }))?;
-            let start = Instant::now();
-            let mut last = None;
-            while start.elapsed().as_secs_f64() < seconds {
-                if cancel.is_cancelled() {
-                    return Err(MeasureError::Rew(secs_rew::RewError::Cancelled));
-                }
-                if let Ok(level) = rx.recv_timeout(Duration::from_millis(10)) {
-                    last = Some(level);
-                }
-            }
-            let level =
-                last.ok_or_else(|| MeasureError::Input("REW returned no level reading".into()))?;
-            Ok(secs_audio::LevelReport {
-                input_dbfs: level.input_dbfs,
-                peak_dbfs: level.peak_dbfs,
-                clip: level.clip,
-                spl_db: level.spl_db,
-            })
-        })();
-        self.client.stop_generator();
-        self.client.stop();
-        self.observe(result)
     }
     fn measure_recording(
         &mut self,

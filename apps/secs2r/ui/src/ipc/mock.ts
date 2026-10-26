@@ -197,7 +197,7 @@ export function createMockService(options: MockOptions = {}): MockService {
   };
   const methods = () => clone(fx.measureMethods);
 
-  const plan = (kind: JobKind, role?: string): { stages: Stage[]; logs: Log[] } => {
+  const plan = (kind: JobKind): { stages: Stage[]; logs: Log[] } => {
     const mains = config.speakers.filter((s) => !s.role.startsWith("SW")).length;
     switch (kind) {
       case "calibrate": return { stages: [{ stage: "engine.design", total: mains + 1 }], logs: [] };
@@ -206,7 +206,6 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "export": return { stages: [{ stage: "design", total: 1 }], logs: [] };
       case "sample_load": return { stages: [{ stage: null, total: 0, ticks: 3 }], logs: [] };
       case "mdat_import": return { stages: [{ stage: "mdat_import", total: 1 }], logs: [] };
-      case "level_check": return { stages: [{ stage: role ?? "L", total: 1 }], logs: [] };
       case "level_monitor": case "status_watch": return { stages: [], logs: [] };
       case "measure": return {
         stages: measureConfig.roles.map((r) => ({ stage: r, total: measureConfig.roles.length })),
@@ -262,10 +261,10 @@ export function createMockService(options: MockOptions = {}): MockService {
     }
   };
   const tick = () => { for (const job of [...jobs.values()]) step(job); };
-  const start = (kind: JobKind, complete: () => JobResult, role?: string) => {
+  const start = (kind: JobKind, complete: () => JobResult) => {
     if ([...jobs.values()].some((job) => job.kind === kind)) throw new MockError(ipcError("job_busy", `a ${kind} job is running`));
     const id = nextJob++;
-    jobs.set(id, { id, kind, ...plan(kind, role), stageIndex: 0, done: 0, ticks: 0, cancelRequested: false, complete });
+    jobs.set(id, { id, kind, ...plan(kind), stageIndex: 0, done: 0, ticks: 0, cancelRequested: false, complete });
     events.emit({ event: "started", job: id, kind });
     if (tickMs > 0 && !timer) timer = setInterval(tick, tickMs);
     return { job: id, kind };
@@ -489,10 +488,6 @@ export function createMockService(options: MockOptions = {}): MockService {
         }
         return { method: req.method, data: null };
       }
-      case "level_apply":
-        measureConfig.sweep_level_dbfs = req.params.level.recommended_sweep_dbfs;
-        project = { ...needProject(), dirty: true };
-        return { method: req.method, data: measureConfig };
       case "level_play": {
         needProject();
         if (playing) {
@@ -605,12 +600,6 @@ export function createMockService(options: MockOptions = {}): MockService {
         return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, stale: calibration.stale,
           files: kind === "camilla_dsp" ? [`${folder}/secs_camilladsp.yml`, `${folder}/fir_L.wav`] : [`${folder}/${kind}.mdat`] } })) };
       }
-      case "level_check":
-        return { method: req.method, data: start("level_check", () => {
-          levels.levels[req.params.role] = fx.levelResult.rms_dbfs;
-          if (fx.levelResult.spl_db !== null) levels.spl[req.params.role] = fx.levelResult.spl_db;
-          return { kind: "level", data: fx.levelResult };
-        }, req.params.role) };
       case "measure_position": {
         needProject(); const position = req.params.position; const roles = [...measureConfig.roles];
         if (!Number.isInteger(position) || position < 1 || position > layout.count) invalid("position is outside the arrangement");

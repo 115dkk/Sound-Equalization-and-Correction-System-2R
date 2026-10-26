@@ -46,7 +46,7 @@ export function useMeasureScreen(): { view: MeasureView | null; actions: Measure
     }),
     openCalibrate: () => session.navigate("calibrate"),
   }), [session]);
-  const running = ledger.jobs.find((job) => ["measure", "sample_load", "mdat_import", "level_check", "level_monitor"].includes(job.kind) && (job.status === "running" || job.status === "cancel_requested"));
+  const running = ledger.jobs.find((job) => ["measure", "sample_load", "mdat_import", "level_monitor"].includes(job.kind) && (job.status === "running" || job.status === "cancel_requested"));
   const request = running?.request;
   return { view: project && layout && config ? {
     project, layout, estimate, config, path: host.path === "mdat" ? "import" : host.path ? "measure" : "none",

@@ -660,22 +660,6 @@ fn failed_error(events: &Events, job: JobId) -> IpcError {
         .unwrap()
 }
 
-fn level_check_error(service: &Service, role: &str) -> IpcError {
-    let events = Arc::new(Events::default());
-    match service.call(
-        Request::LevelCheck(LevelCheckParams { role: role.into() }),
-        events.clone(),
-    ) {
-        Envelope::Err(error) => error,
-        Envelope::Ok(response) => {
-            let Response::LevelCheck(started) = *response else {
-                panic!()
-            };
-            failed_error(&events, started.job)
-        }
-    }
-}
-
 fn monitor_error(service: &Service, role: &str) -> IpcError {
     let events = Arc::new(Events::default());
     let Response::LevelMonitorStart(started) = call(
@@ -697,18 +681,20 @@ fn monitor_error(service: &Service, role: &str) -> IpcError {
 }
 
 #[test]
-fn monitor_errors_are_classified_like_level_check() {
+fn monitor_errors_are_classified() {
     // mock: a role outside the plan; native: no audio device (the null backend).
-    for (method, role) in [("mock", "Nope"), ("native", "L")] {
+    for (method, role, code, retryable) in [
+        ("mock", "Nope", ErrorCode::MeasurementInput, false),
+        ("native", "L", ErrorCode::DeviceUnavailable, true),
+    ] {
         let root = root();
         let service = Service::new(Default::default());
         configure(&service, &root.join("room.secs"), method);
-        let expected = level_check_error(&service, role);
         let got = monitor_error(&service, role);
         assert_eq!(
             (got.code, got.retryable),
-            (expected.code, expected.retryable),
-            "{method}: monitor {got:?}, level check {expected:?}"
+            (code, retryable),
+            "{method}: {got:?}"
         );
         fs::remove_dir_all(root).unwrap();
     }

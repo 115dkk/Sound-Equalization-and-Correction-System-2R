@@ -333,16 +333,6 @@ impl Measurer for MockMeasurer {
             pro: None,
         })
     }
-    fn level_check(
-        &mut self,
-        plan: &MeasurementPlan,
-        role: &str,
-        seconds: f64,
-        cancel: &CancelToken,
-    ) -> Result<secs_audio::LevelReport, MeasureError> {
-        let (mut native, plan, _) = self.native(plan, 1)?;
-        native.level_check(&plan, role, seconds, cancel)
-    }
     fn measure_position(
         &mut self,
         plan: &MeasurementPlan,

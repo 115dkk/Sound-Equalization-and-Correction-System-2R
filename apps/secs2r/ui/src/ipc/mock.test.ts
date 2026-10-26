@@ -249,7 +249,7 @@ describe("mock service", () => {
     mock.dispose();
   });
 
-  it("stores measured input levels rather than output or recommended levels", async () => {
+  it("stores measured input levels rather than output levels", async () => {
     const mock = createMockService({ tickMs: 0 });
     const events: JobEvent[] = [];
     mock.events.subscribe((event) => events.push(event));
@@ -259,12 +259,6 @@ describe("mock service", () => {
     const meter = events.find((event) => event.event === "meter");
     expect(meter).toMatchObject({ rms_dbfs: -30 });
     expect((await mock.request({ method: "levels_get" })).levels.L).toBe(-30);
-    await mock.request({ method: "level_monitor_stop" });
-    await mock.request({ method: "level_check", params: { role: "R" } });
-    mock.drain();
-    const finished = [...events].reverse().find((event) => event.event === "finished" && event.result?.kind === "level");
-    if (finished?.event !== "finished" || finished.result?.kind !== "level") throw new Error("Missing level result");
-    expect((await mock.request({ method: "levels_get" })).levels.R).toBe(finished.result.data.rms_dbfs);
     mock.dispose();
   });
 

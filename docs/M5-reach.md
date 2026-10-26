@@ -76,7 +76,6 @@
 | 떠 있는 마이크 미터(Ctrl+M; 단축키는 P33) | `frame.mic` (`MicMeterPanel`의 `floating`) | 없음 | P30 |
 | 진행 조건: 레벨이 없는 채널("레벨을 아직 못 잰 채널") | `connect.status` | 없음 | P30 |
 | [레벨 건너뛰기 (기본값 적용)] | `connect.level.skip` | 없음 | P30 |
-| 레벨 체크 결과로 측정 스윕 레벨 정하기(`level_check`, `level_apply`) | `connect.level.advanced`, `connect.level.sweep.check`, `connect.level.sweep.apply` | U1 | P30 |
 
 ## 4. 배치 (Step 4) — P30
 

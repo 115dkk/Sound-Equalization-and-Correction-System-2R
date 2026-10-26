@@ -1,4 +1,3 @@
-import { HelpTip } from "../../ui/HelpTip";
 // 연결·점검: choose how to measure, then check every channel's level
 // (upstream steps 1 and 3).
 //
@@ -109,30 +108,23 @@ export function connectHeader(view: ConnectView, actions: ConnectActions, t: Tra
   if (view.path === null || !pathReady(view)) return {};
   const roles = levelRoles(view);
   const missing = missingLevels(view).length;
-  // The sweep-level check holds the device (the service refuses a level play
-  // meanwhile): the primary is off and the pill beside the title says why.
-  const checking = view.sweepCheck.running;
-  const status = checking ? (
-    <StatusPill tone="busy" data-ui="connect.status">
-      {t("connect.status.sweep_check")}
+  const status = roles.length === 0 ? undefined : missing === 0 ? (
+    <StatusPill tone="success" data-ui="connect.status">
+      {t("connect.status.levels_done")}
     </StatusPill>
-  ) : roles.length === 0 ? undefined : missing === 0 ? (
-      <StatusPill tone="success" data-ui="connect.status">
-        {t("connect.status.levels_done")}
-      </StatusPill>
-    ) : (
-      <StatusPill tone="info" data-ui="connect.status">
-        {t("connect.status.levels", { done: roles.length - missing, total: roles.length })}
-      </StatusPill>
-    );
+  ) : (
+    <StatusPill tone="info" data-ui="connect.status">
+      {t("connect.status.levels", { done: roles.length - missing, total: roles.length })}
+    </StatusPill>
+  );
   // The check ended without a problem: the way on is measuring, here where
   // the check was (the rail is not where users look for it); checking all
   // again moves into the level card.
-  if (!checking && !view.level.playingAll && levelsPassed(view)) {
+  if (!view.level.playingAll && levelsPassed(view)) {
     return { primary: { id: "connect.next", label: t("connect.primary.measure"), onClick: actions.next }, status };
   }
   return {
-    primary: { id: "connect.level.play_all", label: t("frame.step.connect.primary"), onClick: actions.playAllLevels, busy: view.level.playingAll, disabled: checking },
+    primary: { id: "connect.level.play_all", label: t("frame.step.connect.primary"), onClick: actions.playAllLevels, busy: view.level.playingAll },
     status,
   };
 }
@@ -511,14 +503,12 @@ export function micInput(t: Translate, view: ConnectView): string | null {
 
 function LevelCard({ view, actions }: { view: ConnectView; actions: ConnectActions }) {
   const t = useT();
-  const number = useNumber();
   const roles = levelRoles(view);
   const missing = missingLevels(view).length;
   const ready = pathReady(view);
-  const { level, sweepCheck } = view;
-  const busy = level.playing !== null || level.playingAll || sweepCheck.running;
+  const { level } = view;
+  const busy = level.playing !== null || level.playingAll;
   const meter: MicMeterView = { input: micInput(t, view), monitor: level.monitor, reading: level.reading };
-  const firstMain = roles.find((role) => roleKind(role) !== "sub") ?? roles[0] ?? null;
   return (
     <Card title={t("connect.level.title")} help={t("connect.level.description")} description={t("connect.level.target")} data-ui="connect.level">
       <div className="connect-level">
@@ -576,11 +566,6 @@ function LevelCard({ view, actions }: { view: ConnectView; actions: ConnectActio
                 <StatusPill tone="busy" data-ui="connect.level.playing">
                   {t("connect.level.playing", { code: roleCode(level.playing) })}
                 </StatusPill>
-              ) : sweepCheck.running ? (
-                // Why the play buttons are off.
-                <StatusPill tone="busy" data-ui="connect.level.playing">
-                  {t("connect.status.sweep_check")}
-                </StatusPill>
               ) : (
                 <StatusPill data-ui="connect.level.playing">{t("connect.level.idle")}</StatusPill>
               )}
@@ -601,47 +586,16 @@ function LevelCard({ view, actions }: { view: ConnectView; actions: ConnectActio
             <MicMeterPanel view={meter} />
           </Section>
         </div>
-        <div className="connect-level__extras">
-          {missing > 0 && (
+        {missing > 0 && (
+          <div className="connect-level__extras">
             <Section title={t("connect.level.skip.title")}>
               <p className="connect-hint">{t("connect.level.skip.hint", { count: missing })}</p>
               <Button variant="quiet" size="sm" data-ui="connect.level.skip" disabled={busy} onClick={actions.skipLevels}>
                 {t("connect.level.skip")}
               </Button>
             </Section>
-          )}
-          <Advanced id="connect.level.advanced" count={1}>
-            <div className="connect-sweep" data-ui="connect.level.sweep">
-              <div className="ui-heading-help"><span className="ui-field__label" id="connect.sweep.title">{t("connect.sweep.title")}</span><HelpTip id="connect.sweep.help" labelledBy="connect.sweep.title" content={t("connect.sweep.hint")} /></div>
-              <span className="connect-readout tabular">
-                {view.settings?.sweep_level_dbfs == null ? t("connect.sweep.current.default") : t("connect.sweep.current", { value: number(view.settings.sweep_level_dbfs, 1) })}
-              </span>
-              <Button
-                size="sm"
-                data-ui="connect.level.sweep.check"
-                busy={sweepCheck.running}
-                disabled={!ready || firstMain === null || (busy && !sweepCheck.running)}
-                onClick={() => firstMain && actions.checkSweepLevel(firstMain)}
-              >
-                {t("connect.sweep.check", { code: firstMain ? roleCode(firstMain) : "—" })}
-              </Button>
-              {sweepCheck.result && (
-                <>
-                  <p className="connect-readout tabular" data-ui="connect.level.sweep.result">
-                    {t("connect.sweep.result", {
-                      code: roleCode(sweepCheck.role ?? firstMain ?? ""),
-                      level: number(sweepCheck.result.rms_dbfs, 1),
-                      recommended: number(sweepCheck.result.recommended_sweep_dbfs, 1),
-                    })}
-                  </p>
-                  <Button size="sm" data-ui="connect.level.sweep.apply" disabled={busy} onClick={() => sweepCheck.result && actions.applySweepLevel(sweepCheck.result)}>
-                    {t("connect.sweep.apply", { value: number(sweepCheck.result.recommended_sweep_dbfs, 1) })}
-                  </Button>
-                </>
-              )}
-            </div>
-          </Advanced>
-        </div>
+          </div>
+        )}
       </div>
     </Card>
   );

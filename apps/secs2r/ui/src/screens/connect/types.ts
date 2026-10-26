@@ -3,7 +3,6 @@
 // the user did through `ConnectActions`; P33 wires both to the service.
 import type { ConfigResult } from "../../ipc/bindings/ConfigResult";
 import type { JobEvent } from "../../ipc/bindings/JobEvent";
-import type { LevelResult } from "../../ipc/bindings/LevelResult";
 import type { MeasureConfigResult } from "../../ipc/bindings/MeasureConfigResult";
 import type { MeasureDevice } from "../../ipc/bindings/MeasureDevice";
 import type { MeasureMethodsResult } from "../../ipc/bindings/MeasureMethodsResult";
@@ -52,7 +51,7 @@ export type ConnectView = {
   path: ConnectPath | null;
   /** measure_methods, refreshed by MeasureStatus events while status_watch runs; null before the first answer. */
   methods: MeasureMethodsResult | null;
-  /** measure_configure / level_apply (the active measurement settings); null before the first answer. */
+  /** measure_configure (the active measurement settings); null before the first answer. */
   settings: MeasureConfigResult | null;
   /** config_get: the channels to check, in role order (upstream ordered_speakers). */
   config: ConfigResult;
@@ -83,8 +82,6 @@ export type ConnectView = {
     /** Master output for level_play, −40…0 dBFS (host state; −20 by default). */
     masterDbfs: number;
   };
-  /** level_check job and its result (U1: the recommended sweep level, applied with level_apply). */
-  sweepCheck: { running: boolean; result: LevelResult | null; role: string | null };
 };
 
 export type ConnectActions = {
@@ -116,10 +113,6 @@ export type ConnectActions = {
   setMasterLevel: (dbfs: number) => void;
   /** Fills the channels without a level with upstream's defaults (service gap: no method yet). */
   skipLevels: () => void;
-  /** level_check { role } job (U1). */
-  checkSweepLevel: (role: string) => void;
-  /** level_apply { level } (U1). */
-  applySweepLevel: (level: LevelResult) => void;
   /** Host: opens 측정·가져오기 (the header's primary action on the mdat path). */
   next: () => void;
 };

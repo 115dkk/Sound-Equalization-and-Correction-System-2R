@@ -107,23 +107,6 @@ impl Measurer for NativeMeasurer {
             pro: None,
         })
     }
-    fn level_check(
-        &mut self,
-        plan: &MeasurementPlan,
-        role: &str,
-        seconds: f64,
-        cancel: &CancelToken,
-    ) -> Result<secs_audio::LevelReport, MeasureError> {
-        let (output, input) = self.level_io(plan, role)?;
-        Ok(secs_audio::level::level_check_cancellable(
-            self.backend.as_ref(),
-            &output,
-            &input,
-            plan.sweep_level_db,
-            seconds,
-            &cancel.audio,
-        )?)
-    }
     fn measure_position(
         &mut self,
         plan: &MeasurementPlan,

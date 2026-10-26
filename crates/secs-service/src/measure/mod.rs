@@ -10,8 +10,7 @@ pub(crate) use rew::RewLink;
 pub use rew::RewMeasurer;
 pub use sample::MockMeasurer;
 pub use settings::{
-    MeasurementSettings, apply_level, plan_for, position_count, store_devices, to_audio_plan,
-    to_rew_plan,
+    MeasurementSettings, plan_for, position_count, store_devices, to_audio_plan, to_rew_plan,
 };
 
 use secs_project::{MeasurementPlan, MeasurementResult};
@@ -110,13 +109,6 @@ pub trait Measurer: Send {
 
     fn devices(&mut self) -> Result<Vec<Device>, MeasureError>;
     fn status(&mut self) -> Result<Status, MeasureError>;
-    fn level_check(
-        &mut self,
-        plan: &MeasurementPlan,
-        role: &str,
-        seconds: f64,
-        cancel: &CancelToken,
-    ) -> Result<secs_audio::LevelReport, MeasureError>;
     fn measure_position(
         &mut self,
         plan: &MeasurementPlan,

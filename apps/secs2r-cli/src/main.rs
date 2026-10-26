@@ -309,7 +309,6 @@ fn response_job(response: &Response) -> Option<JobStarted> {
         | Response::RecommendXo(value)
         | Response::Mimo(value)
         | Response::Export(value)
-        | Response::LevelCheck(value)
         | Response::MeasurePosition(value)
         | Response::MdatImport(value) => Some(value.clone()),
         _ => None,

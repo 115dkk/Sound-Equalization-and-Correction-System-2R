@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import { createMockService } from "../ipc/mock";
-import { levelResult } from "../ipc/fixtures";
 import { IpcFailure } from "../ipc/client";
 import { createSession } from "./session";
 import { createResource } from "./store";
@@ -182,7 +181,7 @@ describe("level monitor silence", () => {
 });
 
 describe("measurement settings", () => {
-  it.each(["measure_config_get", "measure_configure", "level_apply"] as const)("ignores an old %s reply after opening another project but returns it to the caller", async (method) => {
+  it.each(["measure_config_get", "measure_configure"] as const)("ignores an old %s reply after opening another project but returns it to the caller", async (method) => {
     const mock = createMockService({ tickMs: 0 });
     const session = createSession(mock);
     try {
@@ -208,7 +207,7 @@ describe("measurement settings", () => {
         method: "rew", input_device: null, output_device: null, input_channel: null, output_channels: [], sweep_length: null, repetitions: null,
         sweep_level_dbfs: null, timing: null, loopback_input_channel: null, timing_ref_output: null, share_mode: null,
       } })
-        : method === "level_apply" ? session.call({ method, params: { level: levelResult } }) : session.call({ method });
+        : session.call({ method });
       await reached;
       await session.call({ method: "project_open", params: { path: "C:/rooms/next.secs" } });
       expect(session.stores.measurementSettings.getSnapshot()?.method).toBe("mock");
@@ -368,35 +367,15 @@ describe("host state after jobs and switches", () => {
     } finally { session.dispose(); await session.settled(); mock.dispose(); }
   });
 
-  it("forgets the recommended sweep level with the input and the project", async () => {
+  it("takes REW's facts from a driver switch", async () => {
     const mock = createMockService({ tickMs: 0 });
     const session = createSession(mock);
     try {
       await session.start(); await session.settled();
       await session.configure({ method: "mock" });
-      await session.call({ method: "level_check", params: { role: "L" } }); mock.drain(); await session.settled();
-      expect(session.host.getSnapshot().sweepResult).not.toBeNull();
-      await session.configure({ input_channel: 2 });
-      expect(session.host.getSnapshot().sweepResult).toBeNull();
-      await session.call({ method: "level_check", params: { role: "L" } }); mock.drain(); await session.settled();
-      expect(session.host.getSnapshot().sweepResult).not.toBeNull();
-      await session.call({ method: "project_new", params: { path: "", preset: "2.0", sub_count: 0, sample: false, tutorial: false } });
-      expect(session.host.getSnapshot().sweepResult).toBeNull();
-    } finally { session.dispose(); await session.settled(); mock.dispose(); }
-  });
-
-  it("takes REW's facts from a driver switch and forgets the level measured through the old driver", async () => {
-    const mock = createMockService({ tickMs: 0 });
-    const session = createSession(mock);
-    try {
-      await session.start(); await session.settled();
-      await session.configure({ method: "mock" });
-      await session.call({ method: "level_check", params: { role: "L" } }); mock.drain(); await session.settled();
-      expect(session.host.getSnapshot().sweepResult).not.toBeNull();
       mock.calls.length = 0;
       await session.call({ method: "rew_driver_set", params: { driver: "ASIO" } });
       expect(session.stores.rew.getSnapshot()?.driver).toBe("ASIO");
-      expect(session.host.getSnapshot().sweepResult).toBeNull();
       expect(mock.calls.map((call) => call.method)).toEqual(["rew_driver_set", "measure_methods"]);
     } finally { session.dispose(); await session.settled(); mock.dispose(); }
   });

@@ -15,7 +15,7 @@ export type FinishedJob = Extract<JobEvent, { event: "finished" }>;
 export type JobRequestContext = (
   | Extract<Request, { method: "measure_position" | "export" }>
   | { method: "calibrate"; params: { subs_only: boolean } }
-  | { method: "sample_load" | "mdat_import" | "recommend_xo" | "mimo" | "level_check" }
+  | { method: "sample_load" | "mdat_import" | "recommend_xo" | "mimo" }
 ) & { epoch: number };
 export type LedgerJob = JobSnapshot & {
   epoch: number; request: JobRequestContext | null;
@@ -157,7 +157,7 @@ export type PendingStart = { context: JobRequestContext; kind: JobKind; observat
 const kindFor = (request: Request): JobKind | null => {
   switch (request.method) {
     case "measure_position": return "measure";
-    case "sample_load": case "mdat_import": case "calibrate": case "recommend_xo": case "mimo": case "export": case "level_check": return request.method;
+    case "sample_load": case "mdat_import": case "calibrate": case "recommend_xo": case "mimo": case "export": return request.method;
     default: return null;
   }
 };
@@ -165,7 +165,7 @@ const contextFor = (request: Request, epoch: number): JobRequestContext | null =
   switch (request.method) {
     case "measure_position": case "export": return { ...request, epoch };
     case "calibrate": return { method: request.method, params: { subs_only: request.params.subs_only }, epoch };
-    case "sample_load": case "mdat_import": case "recommend_xo": case "mimo": case "level_check": return { method: request.method, epoch };
+    case "sample_load": case "mdat_import": case "recommend_xo": case "mimo": return { method: request.method, epoch };
     default: return null;
   }
 };

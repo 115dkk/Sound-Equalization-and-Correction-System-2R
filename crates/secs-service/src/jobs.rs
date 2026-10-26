@@ -26,11 +26,9 @@ enum JobGroup {
 }
 fn group(kind: JobKind) -> JobGroup {
     match kind {
-        JobKind::LevelCheck
-        | JobKind::Measure
-        | JobKind::SampleLoad
-        | JobKind::MdatImport
-        | JobKind::LevelMonitor => JobGroup::Device,
+        JobKind::Measure | JobKind::SampleLoad | JobKind::MdatImport | JobKind::LevelMonitor => {
+            JobGroup::Device
+        }
         JobKind::Calibrate | JobKind::RecommendXo | JobKind::Mimo => JobGroup::Compute,
         JobKind::Export => JobGroup::Export,
         JobKind::StatusWatch => JobGroup::StatusWatch,

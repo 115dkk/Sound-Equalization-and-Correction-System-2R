@@ -71,10 +71,6 @@ pub enum Request {
     LevelsFillDefaults,
     /// Stops the current 2.5-second level burst without stopping its monitor.
     LevelStop,
-    /// The `LevelCheck` Request variant.
-    LevelCheck(LevelCheckParams),
-    /// The `LevelApply` Request variant.
-    LevelApply(LevelApplyParams),
     /// The `MeasurePosition` Request variant.
     MeasurePosition(MeasurePositionParams),
     /// The `PositionClear` Request variant.
@@ -242,10 +238,6 @@ pub enum Response {
     LevelsFillDefaults(LevelsResult),
     /// Confirms that the current level burst was stopped.
     LevelStop(()),
-    /// The `LevelCheck` Response variant.
-    LevelCheck(JobStarted),
-    /// The `LevelApply` Response variant.
-    LevelApply(MeasureConfigResult),
     /// The `MeasurePosition` Response variant.
     MeasurePosition(JobStarted),
     /// The `PositionClear` Response variant.
@@ -709,8 +701,6 @@ pub struct JobId(#[ts(type = "number")] pub u64);
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum JobKind {
-    /// Checks the level of one configured speaker role.
-    LevelCheck,
     /// Records all configured roles at one measurement position.
     Measure,
     /// Loads embedded or deterministic synthetic sample measurements.
@@ -848,8 +838,6 @@ pub enum JobResult {
     Mimo,
     /// Paths written by an exporter.
     Export(ExportResult),
-    /// Measured levels and recommended sweep level.
-    Level(LevelResult),
     /// Project state after a completed measurement.
     Measurement(ProjectInfo),
     /// Project state after an mdat import.
@@ -1349,33 +1337,6 @@ pub struct LevelsResult {
     pub levels: BTreeMap<String, f64>,
     /// Measured sound-pressure level in dB SPL by role.
     pub spl: BTreeMap<String, f64>,
-}
-/// The speaker role used for a level check.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
-#[ts(export)]
-pub struct LevelCheckParams {
-    /// Internal speaker role to check.
-    pub role: String,
-}
-/// A measured level to apply to sweep setup.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[ts(export)]
-pub struct LevelApplyParams {
-    /// Measured level result to apply.
-    pub level: LevelResult,
-}
-/// Measured signal levels and the recommended sweep level.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
-#[ts(export)]
-pub struct LevelResult {
-    /// Measured RMS level in dBFS.
-    pub rms_dbfs: f64,
-    /// Measured peak level in dBFS.
-    pub peak_dbfs: f64,
-    /// Optional measured sound pressure level in dB SPL.
-    pub spl_db: Option<f64>,
-    /// Recommended sweep level in dBFS.
-    pub recommended_sweep_dbfs: f64,
 }
 /// The measurement position to record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -2093,15 +2054,6 @@ mod tests {
             Request::LevelsGet,
             Request::LevelsFillDefaults,
             Request::LevelStop,
-            Request::LevelCheck(LevelCheckParams { role: "L".into() }),
-            Request::LevelApply(LevelApplyParams {
-                level: LevelResult {
-                    rms_dbfs: -20.0,
-                    peak_dbfs: -10.0,
-                    spl_db: None,
-                    recommended_sweep_dbfs: -20.0,
-                },
-            }),
             Request::MeasurePosition(MeasurePositionParams { position: 1 }),
             Request::PositionClear(PositionClearParams { position: 1 }),
             Request::Undo(UndoParams { token: "x".into() }),
