@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import plistlib
 import re
 import shutil
@@ -100,9 +101,15 @@ def run(cmd: list[str], **kwargs) -> subprocess.CompletedProcess:
 
 def copy_app(dmg: Path, work: Path) -> Path:
     mount = Path(tempfile.mkdtemp(prefix="secs2r-dmg-"))
-    attach = run(["hdiutil", "attach", "-nobrowse", "-readonly", "-noautoopen",
-                  "-mountpoint", str(mount), str(dmg)])
+    # The dmg shows the GPL as a license agreement (bundle.licenseFile), and
+    # hdiutil asks for the answer on stdin, as Finder asks a user.
+    cmd = ["hdiutil", "attach", "-nobrowse", "-readonly", "-noautoopen",
+           "-mountpoint", str(mount), str(dmg)]
+    print("$ " + " ".join(cmd), flush=True)
+    attach = subprocess.run(cmd, input="Y\n", capture_output=True, text=True,
+                            env={**os.environ, "PAGER": "cat"})
     if attach.returncode != 0:
+        print(attach.stderr.rstrip())
         raise SystemExit(f"cannot mount {dmg}")
     try:
         apps = sorted(mount.glob("*.app"))
