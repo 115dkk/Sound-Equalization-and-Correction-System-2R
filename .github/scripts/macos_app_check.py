@@ -9,8 +9,9 @@ bundle job, release.yml's build job, before the release is published):
    every architecture must carry a real signature, not only the one the
    linker adds. Apple Silicon calls a downloaded app with an unsigned bundle
    damaged and will not open it, whatever System Settings allows (0.27.1).
-3. Info.plist: NSMicrophoneUsageDescription. macOS ends an app that opens
-   the microphone without one, so measuring would close SECS 2R.
+3. Info.plist: NSMicrophoneUsageDescription, in English and Korean. macOS
+   ends an app that opens the microphone without one, so measuring would
+   close SECS 2R.
 4. Entitlements: under the hardened runtime macOS gives the microphone only
    to an app signed with com.apple.security.device.audio-input.
 5. The app is launched through Launch Services, as a double click does, with
@@ -35,9 +36,11 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from xml.parsers.expat import ExpatError
 
 AUDIO_INPUT = "com.apple.security.device.audio-input"
 SELF_TEST = "SECS2R_SELF_TEST"
+LOCALIZATIONS = ("en", "ko")
 EXPORTS = {
     "camilla-dsp": ".yml",
     "equalizer-apo": "config.txt",
@@ -67,6 +70,27 @@ def info_plist_problems(info: dict) -> list[str]:
     if not isinstance(usage, str) or not usage.strip():
         return ["Info.plist has no NSMicrophoneUsageDescription"]
     return []
+
+
+def localized_problems(strings: dict[str, bytes | None]) -> list[str]:
+    """`strings` maps a localization to its InfoPlist.strings, None when the
+    bundle has none."""
+    problems = []
+    for language in LOCALIZATIONS:
+        name = f"{language}.lproj/InfoPlist.strings"
+        data = strings.get(language)
+        if data is None:
+            problems.append(f"{name} is missing")
+            continue
+        try:
+            table = plistlib.loads(data)
+        except (ValueError, ExpatError):
+            problems.append(f"{name} is not a property list")
+            continue
+        usage = table.get("NSMicrophoneUsageDescription") if isinstance(table, dict) else None
+        if not isinstance(usage, str) or not usage.strip():
+            problems.append(f"{name} has no NSMicrophoneUsageDescription")
+    return problems
 
 
 def entitlement_problems(entitlements: dict, hardened: bool) -> list[str]:
@@ -151,7 +175,13 @@ def check_signature(app: Path) -> tuple[list[str], bool]:
 
 def check_info_plist(app: Path) -> list[str]:
     with open(app / "Contents" / "Info.plist", "rb") as handle:
-        return info_plist_problems(plistlib.load(handle))
+        problems = info_plist_problems(plistlib.load(handle))
+    resources = app / "Contents" / "Resources"
+    strings = {}
+    for language in LOCALIZATIONS:
+        path = resources / f"{language}.lproj" / "InfoPlist.strings"
+        strings[language] = path.read_bytes() if path.is_file() else None
+    return problems + localized_problems(strings)
 
 
 def check_entitlements(app: Path, hardened: bool) -> list[str]:

@@ -53,6 +53,15 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "macOS": {
+      "signingIdentity": "-",
+      "entitlements": "macos/Entitlements.plist",
+      "infoPlist": "macos/Info.plist",
+      "files": {
+        "Resources/en.lproj/InfoPlist.strings": "macos/en.lproj/InfoPlist.strings",
+        "Resources/ko.lproj/InfoPlist.strings": "macos/ko.lproj/InfoPlist.strings"
+      }
+    },
     "windows": {
       "nsis": {
         "installMode": "currentUser",

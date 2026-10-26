@@ -39,6 +39,16 @@ class BundleTest(unittest.TestCase):
         for info in ({}, {"NSMicrophoneUsageDescription": " "}, {"NSMicrophoneUsageDescription": 1}):
             self.assertEqual(m.info_plist_problems(info), ["Info.plist has no NSMicrophoneUsageDescription"])
 
+    def test_both_localizations_describe_the_microphone(self):
+        def table(text: str) -> bytes:
+            return m.plistlib.dumps({"NSMicrophoneUsageDescription": text})
+        self.assertEqual(m.localized_problems({"en": table("Measures."), "ko": table("측정합니다.")}), [])
+        self.assertEqual(m.localized_problems({"en": table("Measures.")}),
+                         ["ko.lproj/InfoPlist.strings is missing"])
+        self.assertEqual(m.localized_problems({"en": b"<plist", "ko": table(" ")}),
+                         ["en.lproj/InfoPlist.strings is not a property list",
+                          "ko.lproj/InfoPlist.strings has no NSMicrophoneUsageDescription"])
+
     def test_hardened_runtime_needs_the_audio_input_entitlement(self):
         self.assertEqual(m.entitlement_problems({}, hardened=False), [])
         self.assertEqual(m.entitlement_problems({m.AUDIO_INPUT: True}, hardened=True), [])
