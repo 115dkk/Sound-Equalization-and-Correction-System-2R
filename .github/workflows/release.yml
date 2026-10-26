@@ -12,7 +12,8 @@ name: Release
 #   build    tests in release mode, then the installers of each OS under
 #            stable names (.github/scripts/collect_bundles.py):
 #              Windows  NSIS installer and a portable zip (GUI-subsystem check)
-#              macOS    universal dmg
+#              macOS    universal dmg, which must open and calibrate before
+#                       it is uploaded (.github/scripts/macos_app_check.py)
 #              Linux    AppImage and deb (built on 22.04 for an older glibc)
 #   publish  SHA256SUMS.txt, notes from CHANGELOG.md, and the release itself
 #            (assets replaced when the tag exists)
@@ -155,6 +156,10 @@ jobs:
       - name: Collect installers
         shell: bash
         run: python .github/scripts/collect_bundles.py --name "${{ matrix.name }}" --target "${{ matrix.target }}" --version "${{ needs.gate.outputs.version }}" --out dist
+
+      - name: The macOS app opens and calibrates
+        if: runner.os == 'macOS'
+        run: python -u .github/scripts/macos_app_check.py --dmg dist/*.dmg --work "$RUNNER_TEMP/app-check"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

@@ -513,19 +513,46 @@ fn play_with_sink<S: SampleSink, C: Clock>(
     mode: ShareMode,
     cancel: &CancelToken,
 ) -> Result<PlaybackReport, AudioError> {
+    let mut started = false;
+    let result = render(
+        sink,
+        clock,
+        interleaved,
+        channels,
+        mode,
+        cancel,
+        &mut started,
+    );
+    // A failure after Start still stops the stream, so the endpoint never
+    // keeps playing once the caller has the error; the error it returns is
+    // the one that matters.
+    if result.is_err() && started {
+        let _ = sink.stop();
+    }
+    result
+}
+
+fn render<S: SampleSink, C: Clock>(
+    sink: &mut S,
+    clock: C,
+    interleaved: &[f32],
+    channels: u16,
+    mode: ShareMode,
+    cancel: &CancelToken,
+    started: &mut bool,
+) -> Result<PlaybackReport, AudioError> {
     validate_frame_aligned(interleaved.len(), channels)?;
     let channels = usize::from(channels);
     let total_frames = interleaved.len() / channels;
     let mut submitted = 0usize;
     let mut underruns = 0u32;
-    let mut started = false;
     // Progress is a write the endpoint accepted, or padding that fell.
     let mut watch = StallWatch::start(clock, "render");
 
     while submitted < total_frames {
         if cancel.is_cancelled() {
-            let padding = if started { sink.padding_frames()? } else { 0 };
-            if started {
+            let padding = if *started { sink.padding_frames()? } else { 0 };
+            if *started {
                 sink.stop()?;
             }
             return Ok(PlaybackReport {
@@ -538,7 +565,7 @@ fn play_with_sink<S: SampleSink, C: Clock>(
         }
 
         let (capacity, padding) = sink.buffer_snapshot()?;
-        if started && capacity > 0 && padding == 0 {
+        if *started && capacity > 0 && padding == 0 {
             underruns = underruns.saturating_add(1);
         }
         if capacity == 0 {
@@ -552,9 +579,9 @@ fn play_with_sink<S: SampleSink, C: Clock>(
         sink.write_frames(&interleaved[first..last], (capacity, padding))?;
         submitted += frames;
         watch.progressed();
-        if !started {
+        if !*started {
             sink.start()?;
-            started = true;
+            *started = true;
         }
         // After priming, wait for the engine before querying fresh padding.
         // In particular, do not refill a tiny fragment immediately after Start.
@@ -563,7 +590,7 @@ fn play_with_sink<S: SampleSink, C: Clock>(
         }
     }
 
-    if started {
+    if *started {
         let mut previous_padding = None;
         loop {
             let padding = sink.padding_frames()?;
@@ -2408,6 +2435,64 @@ mod tests {
         written = 0;
         assert!(queue.drain_into(&mut dst, &mut written).discontinuity);
         assert_eq!(dst, [0.25, -0.5]);
+    }
+
+    #[test]
+    fn render_stops_the_stream_when_playback_fails_after_start() {
+        struct FailingSink {
+            fail_in: &'static str,
+            started: bool,
+            stopped: bool,
+        }
+        impl FailingSink {
+            fn fail(&self, at: &str) -> Result<(), AudioError> {
+                if self.started && self.fail_in == at {
+                    Err(AudioError::Backend(format!("{at} failed")))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+        impl SampleSink for FailingSink {
+            fn wait(&self) -> Result<(), AudioError> {
+                self.fail("wait")
+            }
+            fn capacity_frames(&self) -> Result<usize, AudioError> {
+                Ok(2)
+            }
+            fn padding_frames(&self) -> Result<usize, AudioError> {
+                self.fail("padding").map(|()| 2)
+            }
+            fn write_frames(&mut self, _: &[f32], _: (usize, usize)) -> Result<(), AudioError> {
+                Ok(())
+            }
+            fn start(&mut self) -> Result<(), AudioError> {
+                self.started = true;
+                Ok(())
+            }
+            fn stop(&mut self) -> Result<(), AudioError> {
+                self.stopped = true;
+                Ok(())
+            }
+        }
+        // "wait" fails while filling, "padding" while draining the last buffer.
+        for fail_in in ["wait", "padding"] {
+            let mut sink = FailingSink {
+                fail_in,
+                started: false,
+                stopped: false,
+            };
+            let result = play_with_sink(
+                &mut sink,
+                SystemClock,
+                &[0.25; 8],
+                2,
+                ShareMode::Exclusive,
+                &CancelToken::new(),
+            );
+            assert!(result.is_err(), "{fail_in}");
+            assert!(sink.stopped, "{fail_in}: a started stream must be stopped");
+        }
     }
 
     #[test]

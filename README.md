@@ -6,7 +6,7 @@ SECS 2R은 룸 보정 설계 프로그램 [SECS 2](https://github.com/Kim-O-O/So
 
 ## 지금 상태
 
-개발 중입니다. M5까지 끝났습니다. 지금 나오는 0.x 판에는 SECS 2의 보정 엔진(레벨·딜레이, BA, XO, RC, MIMO, 성적표), 자체 측정과 REW 측정, mdat 가져오기, Dirac Live 프로젝트(`.liveproject`) 가져오기, 내보내기, 새 화면과 튜토리얼이 들어 있고, 같은 기계에서 SECS 2보다 빠릅니다([`docs/perf/engine.md`](docs/perf/engine.md)). 실제 방에서 측정부터 적용까지 확인하는 일(M6)은 남았습니다. 그 전에 실제 방에 적용할 보정이 필요하면 업스트림 SECS 2의 [Releases](https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2/releases)를 쓰세요.
+개발 중입니다. M5까지 끝났습니다. 지금 나오는 0.x 판에는 SECS 2의 보정 엔진(레벨·딜레이, BA, XO, RC, MIMO, 성적표), 자체 측정과 REW 측정, mdat 가져오기, Dirac Live 프로젝트(`.liveproject`) 가져오기, 내보내기, 새 화면과 튜토리얼이 들어 있고, 같은 기계에서 SECS 2보다 빠릅니다([`docs/perf/engine.md`](docs/perf/engine.md)). 실제 방에서 측정부터 적용까지 확인하는 일(M6)은 남았습니다.
 
 | 단계 | 내용 | 상태 |
 |---|---|---|
@@ -48,7 +48,9 @@ SECS 2R은 룸 보정 설계 프로그램 [SECS 2](https://github.com/Kim-O-O/So
 | macOS (Apple 실리콘, Intel) | `SECS2R-<버전>-macos-universal.dmg` | 한 파일이 두 종류 Mac에서 모두 돕니다. |
 | Linux (x86_64) | `SECS2R-<버전>-linux-x86_64.AppImage`, `SECS2R-<버전>-linux-amd64.deb` | AppImage는 필요한 라이브러리를 함께 담고, deb는 WebKitGTK 4.1 패키지를 씁니다. |
 
-코드 서명이 아직 없습니다. Windows에서 '알 수 없는 게시자' 경고가 뜨면 **추가 정보 → 실행**을 누르세요. macOS에서는 앱을 Control 키를 누른 채 클릭하고 **열기**를 고르세요.
+코드 서명 인증서가 아직 없습니다. Windows에서 '알 수 없는 게시자' 경고가 뜨면 **추가 정보 → 실행**을 누르세요.
+
+macOS 앱은 Apple 개발자 인증서 없이 임시 서명(ad-hoc)만 되어 있어, 처음 열면 Apple이 악성 코드 여부를 확인할 수 없다는 경고가 뜹니다. 경고 창을 닫은 뒤 **시스템 설정 → 개인정보 보호 및 보안**에서 **그래도 열기**를 누르고 암호를 넣으세요. macOS 14 이하에서는 앱을 Control 키를 누른 채 클릭하고 **열기**를 골라도 됩니다. 처음 측정할 때는 마이크 사용을 허락할지 묻습니다. 0.27.1까지의 macOS 판은 앱 번들에 서명이 없어 이 방법으로도 열리지 않으니 새 판을 받으세요.
 
 ## 책임의 한계
 
