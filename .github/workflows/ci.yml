@@ -15,7 +15,11 @@ name: CI
 #             English and the tutorial accent: no page error, no text under
 #             the 13 px floor, one PNG per data-gallery-id kept as an artifact
 #   bundle    the installers of every OS built as on release day, kept as run
-#             artifacts so a pull request can be installed and tried
+#             artifacts so a pull request can be installed and tried; the
+#             macOS dmg must open and calibrate (.github/scripts/
+#             macos_app_check.py: bundle signature, microphone permission,
+#             and a mock-room calibration through the app's own screen on
+#             Apple Silicon and under Rosetta)
 #   docs      rustdoc with warnings denied
 #   deny      cargo-deny: advisories, GPL-compatible licenses, bans, sources
 #   miri      the parsers of untrusted files (secs-jos, secs-mdat, secs-dirac)
@@ -428,6 +432,18 @@ jobs:
       - name: Collect installers
         shell: bash
         run: python .github/scripts/collect_bundles.py --name "${{ matrix.name }}" --target "${{ matrix.target }}" --version "0.0.0-ci.${{ github.run_number }}" --out dist
+
+      - name: The macOS app opens and calibrates
+        if: runner.os == 'macOS'
+        run: python -u .github/scripts/macos_app_check.py --dmg dist/*.dmg --work "$RUNNER_TEMP/app-check"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && runner.os == 'macOS'
+        with:
+          name: app-check-macos
+          path: ${{ runner.temp }}/app-check
+          if-no-files-found: ignore
+          retention-days: 14
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

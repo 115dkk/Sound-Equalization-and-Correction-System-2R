@@ -7,7 +7,9 @@
 //!
 //! A thin shell: one command, `secs_call`, hands the screen's request to
 //! [`secs_service::Service`] and returns its envelope. The command never
-//! rejects; failures travel inside the envelope (docs/adr/0003).
+//! rejects; failures travel inside the envelope (docs/adr/0003). The only
+//! other command reports the bundle self-test (`self_test`) and does nothing
+//! unless `SECS2R_SELF_TEST` armed one.
 
 use std::fmt;
 use std::sync::Arc;
@@ -15,6 +17,7 @@ use std::time::{Duration, SystemTime};
 
 mod host;
 mod icon;
+mod self_test;
 
 use secs_service::{Deps, EventSink, LocalTime, NoEvents, Service};
 use secs_types::ipc::{Envelope, ErrorCode, IpcError, JobEvent, Request, Response};
@@ -112,8 +115,10 @@ fn main() {
             {
                 icon::show(app.handle(), settings.icon);
             }
+            self_test::arm(app);
             Ok(())
         })
+        .on_page_load(self_test::on_page_load)
         // The screen may answer a close request with "save first?" and keep
         // the window, so jobs stop only once the window is really gone (as
         // upstream stops monitors, measurement and computation on close,
@@ -123,7 +128,10 @@ fn main() {
                 let _ = window.state::<Service>().shutdown(Duration::from_secs(3));
             }
         })
-        .invoke_handler(tauri::generate_handler![secs_call])
+        .invoke_handler(tauri::generate_handler![
+            secs_call,
+            self_test::secs_self_test_report
+        ])
         .run(tauri::generate_context!())
         .unwrap_or_else(|error| {
             eprintln!("SECS 2R could not start: {error}");
