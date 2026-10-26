@@ -368,27 +368,6 @@ fn test_cancel_before_start_measures_nothing() {
     assert_eq!(events.lock().unwrap().last().unwrap().phase, "cancelled");
 }
 #[test]
-fn level_check_mock_and_apply_recommended_level_u1() {
-    let mut project = project();
-    let p = plan();
-    let mut mock = MockMeasurer::new();
-    let report = mock
-        .level_check(&p, "L", 0.5, &CancelToken::default())
-        .unwrap();
-    assert!(report.input_dbfs.is_finite());
-    let level = apply_level(&mut project, report, p.sweep_level_db).unwrap();
-    let next = plan_for(&project, &MeasurementSettings::default());
-    assert_eq!(next.sweep_level_db, level);
-    let report = mock
-        .level_check(&next, "L", 0.5, &CancelToken::default())
-        .unwrap();
-    println!(
-        "U1 recommended {level:.4} dBFS; measured {:.4} dBFS",
-        report.input_dbfs
-    );
-    assert!((report.input_dbfs + 22.5).abs() < 1e-4);
-}
-#[test]
 fn native_plan_ignores_the_rew_only_timing_and_repetitions_u15() {
     // An REW setup leaves a cable reference and four repetitions behind. The
     // native path shows neither, records one sweep per channel and needs no

@@ -66,10 +66,6 @@ pub(crate) fn dispatch(
             .levels_fill_defaults()
             .map(Response::LevelsFillDefaults),
         Request::LevelStop => service.level_stop().map(Response::LevelStop),
-        Request::LevelCheck(params) => service
-            .start_level(params, events)
-            .map(Response::LevelCheck),
-        Request::LevelApply(params) => service.level_apply(params).map(Response::LevelApply),
         Request::MeasurePosition(params) => service
             .start_measure(params, events)
             .map(Response::MeasurePosition),

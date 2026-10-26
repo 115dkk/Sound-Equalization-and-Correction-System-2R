@@ -183,22 +183,6 @@ pub fn store_devices(project: &mut Project, values: Vec<(String, PyJson)>) {
         }
     }
 }
-pub fn apply_level(
-    project: &mut Project,
-    report: secs_audio::LevelReport,
-    played_dbfs: f64,
-) -> Result<f64, MeasureError> {
-    let level = secs_audio::recommend_sweep_level(
-        report.input_dbfs,
-        played_dbfs,
-        secs_audio::level::TARGET_WINDOW,
-    )?;
-    store_devices(
-        project,
-        vec![("sweep_level_db".into(), PyJson::Float(level))],
-    );
-    Ok(level)
-}
 pub fn to_rew_plan(p: &MeasurementPlan) -> Result<secs_rew::MeasurementPlan, MeasureError> {
     Ok(secs_rew::MeasurementPlan {
         roles: p.roles.clone(),

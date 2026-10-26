@@ -1602,8 +1602,8 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
 #[test]
 fn measurement_handlers_are_connected_and_fail_with_typed_errors() {
     use secs_types::ipc::{
-        LevelApplyParams, LevelCheckParams, LevelResult, MdatImportParams, MdatScanParams,
-        MeasureConfigureParams, MeasurePositionParams, PositionClearParams, UndoParams,
+        MdatImportParams, MdatScanParams, MeasureConfigureParams, MeasurePositionParams,
+        PositionClearParams, UndoParams,
     };
 
     let service = service();
@@ -1620,21 +1620,6 @@ fn measurement_handlers_are_connected_and_fail_with_typed_errors() {
         (
             Request::MeasureConfigure(MeasureConfigureParams::default()),
             Err((ErrorCode::MeasurementInput, Some(("field", "method")))),
-        ),
-        (
-            Request::LevelCheck(LevelCheckParams { role: "L".into() }),
-            not_open,
-        ),
-        (
-            Request::LevelApply(LevelApplyParams {
-                level: LevelResult {
-                    rms_dbfs: -20.0,
-                    peak_dbfs: -10.0,
-                    spl_db: None,
-                    recommended_sweep_dbfs: -20.0,
-                },
-            }),
-            not_open,
         ),
         (
             Request::MeasurePosition(MeasurePositionParams { position: 1 }),

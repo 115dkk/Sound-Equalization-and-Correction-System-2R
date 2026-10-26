@@ -1,5 +1,5 @@
 #![forbid(unsafe_code)]
-use secs_audio::level::{TARGET_WINDOW, analyse_level, level_signal};
+use secs_audio::level::{analyse_level, level_signal};
 use secs_audio::*;
 
 #[test]
@@ -55,7 +55,7 @@ fn malformed_calibrations_return_errors_without_panics() {
 }
 
 #[test]
-fn level_known_signals_clip_and_recommendation() {
+fn level_known_signals_and_clipping() {
     let sine = level_signal(LevelSignal::SubSine { frequency: 50.0 }, 48_000, -20.0, 1.0).unwrap();
     let report = analyse_level(&sine, 48_000, None, None).unwrap();
     assert!((report.input_dbfs + 20.0).abs() < 1e-10);
@@ -77,13 +77,6 @@ fn level_known_signals_clip_and_recommendation() {
         level_signal(LevelSignal::Pink, 48_000, -20.0, 1.0).unwrap()
     );
     assert!((analyse_level(&pink, 48_000, None, None).unwrap().input_dbfs + 20.0).abs() < 1e-10);
-    for measured in [-40.0, -25.0, -10.0] {
-        let next = recommend_sweep_level(measured, -30.0, TARGET_WINDOW).unwrap();
-        let predicted = measured + next + 30.0;
-        assert!((TARGET_WINDOW.0..=TARGET_WINDOW.1).contains(&predicted));
-    }
-    assert!(recommend_sweep_level(f64::NEG_INFINITY, -20.0, TARGET_WINDOW).is_err());
-    assert!(recommend_sweep_level(-100.0, -20.0, TARGET_WINDOW).is_err());
 }
 
 #[test]
@@ -104,8 +97,5 @@ fn level_check_uses_simulated_capture_and_calibration() {
     };
     let measured = level_check(&room, &output, &input, -20.0, 1.0).unwrap();
     assert!((measured.input_dbfs - (-20.0 + 20.0 * 0.5_f64.log10())).abs() < 1e-6);
-    let level = recommend_sweep_level(measured.input_dbfs, -20.0, TARGET_WINDOW).unwrap();
-    let second = level_check(&room, &output, &input, level, 1.0).unwrap();
-    assert!((second.input_dbfs + 22.5).abs() < 1e-6);
-    assert!((second.spl_db.unwrap() - 97.5).abs() < 1e-6);
+    assert!((measured.spl_db.unwrap() - 20.0 * 0.5_f64.log10() - 100.0).abs() < 1e-6);
 }

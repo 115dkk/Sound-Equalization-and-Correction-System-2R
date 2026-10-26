@@ -1,4 +1,4 @@
-//! Deterministic pink-noise / subwoofer sine level checks and U1 recommendation.
+//! Deterministic pink-noise and subwoofer-sine level checks.
 use crate::audio::*;
 use crate::calibration::{MicCalibration, SplReference};
 use crate::invalid;
@@ -267,26 +267,4 @@ pub fn level_check_streaming(
         input.calibration.as_ref(),
         input.spl_reference,
     )
-}
-
-/// Aim at the midpoint; reject impossible (>0 or <-120 dBFS) requests instead
-/// of returning a clamped level that silently misses the requested window.
-pub fn recommend_sweep_level(
-    measured: f64,
-    played: f64,
-    target_window: (f64, f64),
-) -> Result<f64, AudioError> {
-    let (low, high) = target_window;
-    if ![measured, played, low, high].iter().all(|x| x.is_finite())
-        || low >= high
-        || high > 0.0
-        || !(-120.0..=0.0).contains(&played)
-    {
-        return Err(invalid("invalid level recommendation"));
-    }
-    let suggested = played + (low + high) / 2.0 - measured;
-    if !(-120.0..=0.0).contains(&suggested) {
-        return Err(invalid("target requires unavailable output level"));
-    }
-    Ok(suggested)
 }

@@ -47,7 +47,7 @@ fn input(field: &str, detail: impl Into<String>) -> IpcError {
     IpcError::new(ErrorCode::MeasurementInput, detail).with_param("field", field)
 }
 
-/// The same classification as `level_check` (TD-34).
+/// Uses the shared measurement error classification (TD-34).
 fn level_error(
     error: crate::measure::MeasureError,
     field: &str,
