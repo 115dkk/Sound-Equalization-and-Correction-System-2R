@@ -15,7 +15,7 @@ const measurements = ["position_clear", "undo", "layout_set", ...config] as cons
 const settings = ["calibration_settings_set", "calibration_settings_edit", "sub_take_values"] as const;
 const target = ["target_set_points", "target_apply_preset", "target_load"] as const;
 const recorded = ["measure", "sample_load", "mdat_import"] as const;
-const inputs = [...measurements, ...settings, ...target, "dsp_set", "measure_configure", "level_apply"] as const;
+const inputs = [...measurements, ...settings, ...target, "dsp_set", "measure_configure"] as const;
 
 /** Project replacement reloads all project resources, including empty results. */
 const PROJECT_REPLACED = ["project_new", "project_open"] as const;
@@ -29,7 +29,7 @@ const reloads = {
   methods: { mutations: ["rew_launch", "rew_driver_set"], finished: [] },
   records: { mutations: measurements, finished: recorded },
   curves: { mutations: measurements, finished: recorded },
-  levels: { mutations: ["level_apply", "levels_fill_defaults", "level_play", ...config], finished: ["level_check"] },
+  levels: { mutations: ["levels_fill_defaults", "level_play", ...config], finished: [] },
   settings: { mutations: [...settings, ...config, "undo"], finished: ["recommend_xo"] },
   modeSpec: { mutations: settings, finished: [] },
   target: { mutations: target, finished: [] },
@@ -47,7 +47,7 @@ export type ResourceKey = keyof typeof reloads;
 export const projectEdits: readonly Request["method"][] = reloads.project.mutations;
 export type EffectContext = Pick<Session, "host" | "stores" | "jobs" | "call" | "configure" | "run"> & {
   source:
-    | { request: Request; data: unknown; methodBefore: string | undefined }
+    | { request: Request; data: unknown }
     | { job: LedgerJob; event: FinishedJob; request: JobRequestContext | null }
     | { job: LedgerJob; event: Extract<JobEvent, { event: "log" }>; request: JobRequestContext | null };
   replaceProject: () => void;
@@ -65,7 +65,7 @@ const requested = (...methods: Request["method"][]) => (trigger: Trigger) => "re
  * then apply follow-up requests in table order. The session owns epoch checks. */
 export const RULES: readonly Rule[] = [
   {
-    name: "measurement.response", when: requested("measure_configure", "measure_config_get", "level_apply"),
+    name: "measurement.response", when: requested("measure_configure", "measure_config_get"),
     beforeReload: ({ source, stores, host }) => {
       if (!("data" in source)) return;
       stores.measurementSettings.set(source.data as import("../ipc/bindings/MeasureConfigResult").MeasureConfigResult);
@@ -79,19 +79,10 @@ export const RULES: readonly Rule[] = [
     beforeReload: (ctx) => {
       ctx.replaceProject();
       ctx.stores.measurementSettings.set(null);
-      ctx.host.set({ path: null, selected: null, mdat: null, warnings: [], runs: {}, channel: null, xoGroup: null, xoRecommendation: null, failure: null, sweepResult: null, sweepRole: null, opened: ctx.host.getSnapshot().opened + 1 });
+      ctx.host.set({ path: null, selected: null, mdat: null, warnings: [], runs: {}, channel: null, xoGroup: null, xoRecommendation: null, failure: null, opened: ctx.host.getSnapshot().opened + 1 });
     },
     // Project replacement reads the stored method; tutorial setup owns writes.
     apply: async ({ call }) => { await call({ method: "measure_config_get" }); },
-  },
-  {
-    name: "sweep.invalidate", when: requested("measure_configure"),
-    beforeReload: ({ source, host }) => {
-      if (!("data" in source) || source.request.method !== "measure_configure") return;
-      const params = source.request.params;
-      // The recommended level belongs to one method, input device and channel.
-      if (params.method !== source.methodBefore || params.input_device !== null || params.input_channel !== null) host.set({ sweepResult: null, sweepRole: null });
-    },
   },
   {
     name: "warnings.replace-position", when: requested("measure_position", "position_clear", "mdat_import"),
@@ -107,10 +98,9 @@ export const RULES: readonly Rule[] = [
   { name: "warnings.replace-sample", when: requested("sample_load"), beforeReload: ({ host }) => { host.set({ warnings: [] }); } },
   {
     name: "rew.driver-response", when: requested("rew_driver_set"),
-    beforeReload: ({ source, stores, host }) => {
+    beforeReload: ({ source, stores }) => {
       if (!("data" in source)) return;
       stores.rew.set(source.data as import("../ipc/bindings/RewInfoResult").RewInfoResult);
-      host.set({ sweepResult: null, sweepRole: null });
     },
   },
   {
@@ -138,12 +128,6 @@ export const RULES: readonly Rule[] = [
     },
   },
   { name: "measurement.finished", when: (trigger) => "finished" in trigger && trigger.finished === "measure", beforeReload: ({ host }) => { host.set({ selected: null }); } },
-  {
-    name: "sweep.result", when: (trigger) => "finished" in trigger,
-    beforeReload: ({ source, host }) => {
-      if ("event" in source && source.event.event === "finished" && source.event.result?.kind === "level") host.set({ sweepResult: source.event.result.data });
-    },
-  },
   {
     name: "xo.result", when: (trigger) => "finished" in trigger,
     beforeReload: ({ source, host }) => {

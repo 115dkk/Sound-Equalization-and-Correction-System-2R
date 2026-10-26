@@ -415,10 +415,9 @@ describe("측정·가져오기 screen", () => {
     expect(measureStepState(emptyView)).toEqual({ status: "ready" });
     expect(measureStepState(partialView)).toEqual({ status: "ready" });
     expect(measureStepState(noPathView)).toEqual({ status: "blocked", reason: "no_path" });
-    // The step's own jobs keep it ready; another step's device job blocks it.
+    // The step's own jobs keep it ready.
     expect(measureStepState(measuringView)).toEqual({ status: "ready" });
     expect(measureStepState(sampleLoadingView)).toEqual({ status: "ready" });
-    expect(measureStepState({ ...measuringView, job: { ...measuringView.job!, kind: "level_check" } })).toEqual({ status: "blocked", reason: "device_busy" });
     expect(measureStepState(doneView)).toEqual({ status: "done" });
     expect(measureStepState(importedView)).toEqual({ status: "ready" });
     expect(measureStepState({ ...doneView, path: "none" })).toEqual({ status: "done" });

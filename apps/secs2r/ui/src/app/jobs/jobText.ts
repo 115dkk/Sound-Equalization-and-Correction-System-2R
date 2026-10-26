@@ -8,7 +8,6 @@ import type { JobKind } from "../../ipc/bindings/JobKind";
 import { roleCode } from "../../ui/maps/geometry";
 
 export const JOB_NAME: Record<JobKind, MessageKey> = {
-  level_check: "jobs.kind.level_check",
   measure: "jobs.kind.measure",
   sample_load: "jobs.kind.sample_load",
   mdat_import: "jobs.kind.mdat_import",
@@ -79,7 +78,6 @@ export function stageText(t: Translate, kind: JobKind, stage: string | null): st
   const key = `jobs.stage.${stage}`;
   if (isMessageKey(key)) return t(key);
   if (kind === "measure") return t("jobs.stage.measure_role", { code: roleCode(stage) });
-  if (kind === "level_check") return t("jobs.stage.level_role", { code: roleCode(stage) });
   return null;
 }
 

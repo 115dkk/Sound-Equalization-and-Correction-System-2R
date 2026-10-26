@@ -107,7 +107,7 @@ describe("useConnectScreen", () => {
     expect(mock.calls).toContainEqual({ method: "level_monitor_start", params: { role: null } });
   });
 
-  it("restarts monitoring on path and device changes and after failed sweep jobs", async () => {
+  it("restarts monitoring on path and device changes", async () => {
     await session.configure({ method: "mock" });
     const { result } = renderHook(() => useConnectScreen(true), { wrapper });
     await perform(() => {});
@@ -121,16 +121,6 @@ describe("useConnectScreen", () => {
     await perform(() => {});
     expect(mock.calls).toContainEqual({ method: "level_monitor_stop" });
     expect(mock.calls).toContainEqual({ method: "level_monitor_start", params: { role: null } });
-    await perform(() => result.current.actions.choosePath("mock"));
-    await perform(() => {});
-    mock.failJobs("level_check", "internal");
-    await perform(() => result.current.actions.checkSweepLevel("L"));
-    await perform(() => {});
-    expect(result.current.view?.sweepCheck.running).toBe(true);
-    await perform(mock.drain);
-    await perform(() => {});
-    expect(result.current.view?.sweepCheck).toMatchObject({ running: false, result: null });
-    expect(result.current.view?.level.monitor).toBe("starting");
   });
 
   it("loads REW details and handles typed launch failures without rejecting callbacks", async () => {
@@ -148,7 +138,7 @@ describe("useConnectScreen", () => {
     expect(result.current.view?.rew.problem).toBeNull();
   });
 
-  it("plays levels in row order, fills defaults and stops monitoring before sweep checks", async () => {
+  it("plays levels in row order and fills defaults", async () => {
     await session.configure({ method: "mock" });
     const { result } = renderHook(() => useConnectScreen(false), { wrapper });
     const a = result.current.actions;
@@ -174,17 +164,6 @@ describe("useConnectScreen", () => {
     expect(result.current.view?.level).toMatchObject({ playing: null, playingAll: false });
     await perform(a.skipLevels);
     expect(mock.calls).toContainEqual({ method: "levels_fill_defaults" });
-    await perform(() => a.checkSweepLevel("L"));
-    expect(mock.calls).toContainEqual({ method: "level_check", params: { role: "L" } });
-    expect(result.current.view?.sweepCheck).toMatchObject({ running: true, role: "L", result: null });
-    const methods = mock.calls.map((call) => call.method);
-    expect(methods.lastIndexOf("level_monitor_stop")).toBeLessThan(methods.lastIndexOf("level_check"));
-    await perform(mock.drain);
-    const level = result.current.view!.sweepCheck.result!;
-    expect(level).not.toBeNull();
-    await perform(() => a.applySweepLevel(level));
-    expect(mock.calls).toContainEqual({ method: "level_apply", params: { level } });
-    expect(result.current.view?.settings?.sweep_level_dbfs).toBe(level.recommended_sweep_dbfs);
   });
 
   it("moves on when the monitor reports the burst ended, and stop ends the wait", async () => {

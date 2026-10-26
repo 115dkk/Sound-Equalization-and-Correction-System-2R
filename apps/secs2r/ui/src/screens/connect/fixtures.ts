@@ -87,7 +87,6 @@ const base: ConnectView = {
   rew: { launch: "idle", problem: null, problemDetail: null, readingSettings: false, switchingDriver: false, details: {} },
   levels: {},
   level: { monitor: "off", reading: null, playing: null, playingAll: false, masterDbfs: -20 },
-  sweepCheck: { running: false, result: null, role: null },
 };
 
 /** Nothing chosen yet: REW is not running, native devices are there. */
@@ -183,12 +182,11 @@ export const levelHalfView: ConnectView = {
   level: { monitor: "receiving", reading: { rms_dbfs: -24.6, peak_dbfs: -13.9, spl_db: 76.8, clipping: false }, playing: "Rs", playingAll: true, masterDbfs: -20 },
 };
 
-/** Every channel has a level; the recommended sweep level was found. */
+/** Every channel has a level. */
 export const levelDoneView: ConnectView = {
   ...nativeView,
   levels: allLevels,
   level: { ...nativeView.level, reading: { rms_dbfs: -60.9, peak_dbfs: -11.2, spl_db: 37.1, clipping: false } },
-  sweepCheck: { running: false, result: { rms_dbfs: -22.4, peak_dbfs: -11.8, spl_db: 78.5, recommended_sweep_dbfs: -14.5 }, role: "L" },
 };
 
 /** Every channel in the recommended range: the check passed, the header goes on to measuring. */

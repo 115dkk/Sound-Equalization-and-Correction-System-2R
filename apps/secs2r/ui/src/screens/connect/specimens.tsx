@@ -44,8 +44,6 @@ const noopConnectActions: ConnectActions = {
   playAllLevels: () => {},
   setMasterLevel: () => {},
   skipLevels: () => {},
-  checkSweepLevel: () => {},
-  applySweepLevel: () => {},
   next: () => {},
 };
 

@@ -40,7 +40,6 @@ describe("P33 mock wiring", () => {
     const ended = events.findIndex((event) => event.event === "log" && event.job === monitor.job && event.code === "level_play_end");
     const lastMeter = events.reduce((index, event, current) => event.event === "meter" && event.job === monitor.job ? current : index, -1);
     expect(ended).toBeGreaterThan(lastMeter);
-    expect(await mock.request({ method: "level_apply", params: { level: { ...fx.levelResult, recommended_sweep_dbfs: -18 } } })).toMatchObject({ sweep_level_dbfs: -18, repetitions: 4 });
     await expect(mock.request({ method: "measure_configure", params: { ...configure, repetitions: 3 } })).rejects.toMatchObject({ error: { code: "invalid_request" } });
   });
 
@@ -153,7 +152,6 @@ describe("P33 mock wiring", () => {
       mimo: { method: "mimo", params: { settings: null } }, results: { method: "results" }, export: { method: "export", params: { kind: "before_after_mdat", folder: "" } },
       job_cancel: { method: "job_cancel", params: { job: 1 } }, jobs: { method: "jobs" }, measure_methods: { method: "measure_methods" }, measure_config_get: { method: "measure_config_get" }, measure_configure: { method: "measure_configure", params: configure },
       measurement_records: { method: "measurement_records" }, levels_get: { method: "levels_get" }, levels_fill_defaults: { method: "levels_fill_defaults" }, level_stop: { method: "level_stop" },
-      level_check: { method: "level_check", params: { role: "L" } }, level_apply: { method: "level_apply", params: { level: fx.levelResult } },
       measure_position: { method: "measure_position", params: { position: 4 } }, position_clear: { method: "position_clear", params: { position: 1 } }, undo: { method: "undo", params: { token: "undo-1" } },
       rew_launch: { method: "rew_launch" }, mdat_scan: { method: "mdat_scan", params: { path: "/room.mdat" } },
       mdat_import: { method: "mdat_import", params: { path: "/room.mdat", position: 1, assignments: [] } }, config_get: { method: "config_get" },

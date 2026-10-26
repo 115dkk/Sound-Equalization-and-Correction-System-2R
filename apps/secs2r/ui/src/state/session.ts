@@ -7,7 +7,6 @@ import type { MeasureConfigureParams } from "../ipc/bindings/MeasureConfigurePar
 import type { ResultCurvesParams } from "../ipc/bindings/ResultCurvesParams";
 import type { ResultCurvesResult } from "../ipc/bindings/ResultCurvesResult";
 import type { ExportKind } from "../ipc/bindings/ExportKind";
-import type { LevelResult } from "../ipc/bindings/LevelResult";
 import type { XoRecommendation } from "../ipc/bindings/XoRecommendation";
 import type { ConnectPath, MeterReading, MonitorState, RewProblem } from "../screens/connect/types";
 import type { CalibrateView } from "../screens/calibrate/types";
@@ -33,7 +32,6 @@ type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "m
   tab: CalibrateView["tab"]; channel: string | null; xoGroup: string | null; previewHz: number | null;
   targetEdit: CalibrateView["targetEdit"]; xoEdit: CalibrateView["xoEdit"];
   meter: MeterReading | null; monitor: MonitorState; playing: string | null; playingAll: boolean; masterDbfs: number;
-  sweepResult: LevelResult | null; sweepRole: string | null;
   xoRecommendation: XoRecommendation | null; runs: Partial<Record<ExportKind, ExportRun>>;
   failure: CalibrateView["failure"]; rewLaunch: "idle" | "checking" | "launching";
   rewProblem: RewProblem | null; rewProblemDetail: string | null; readingRew: boolean;
@@ -64,7 +62,7 @@ export function createSession(ipc: Ipc) {
     current: "system", path: null, selected: null, graphHidden: false, plotRange: { x: null, y: null },
     mdat: null, warnings: [], tab: "spl", channel: null, xoGroup: null, previewHz: null, targetEdit: "idle", xoEdit: "idle",
     meter: null, monitor: "off", playing: null, playingAll: false, masterDbfs: -20,
-    sweepResult: null, sweepRole: null, xoRecommendation: null, runs: {}, failure: null,
+    xoRecommendation: null, runs: {}, failure: null,
     rewLaunch: "idle", rewProblem: null, rewProblemDetail: null, readingRew: false, switchingRewDriver: false, opened: 0,
   });
   const host = { ...rawHost, set: (patch: Partial<HostState>) => rawHost.set({ ...rawHost.getSnapshot(), ...patch }) };
@@ -137,7 +135,6 @@ export function createSession(ipc: Ipc) {
     let epoch = jobs.epoch;
     const projectEdit = request.method !== "project_save" && projectEdits.includes(request.method);
     if (projectEdit) pendingProjectEdits++;
-    const methodBefore = stores.measurementSettings.getSnapshot()?.method;
     const pendingStart = jobs.begin(request);
     const edit = request.method === "target_set_points" ? "targetEdit" : request.method === "calibration_settings_edit" && (request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit.kind === "xo" ? "xoEdit" : null;
     if (edit) host.set({ [edit]: "saving" });
@@ -151,7 +148,7 @@ export function createSession(ipc: Ipc) {
       if (epoch !== jobs.epoch) return data;
       errors.set(null);
       const effects = effectsOf({ request: request.method });
-      const ctx: EffectContext = { host, stores, jobs, call, configure, run, source: { request, data, methodBefore },
+      const ctx: EffectContext = { host, stores, jobs, call, configure, run, source: { request, data },
         replaceProject: () => { jobs.replaceProject(); epoch = jobs.epoch; curveVersion++; curveState.set(null); tutorialReady.set(false); },
       };
       for (const rule of effects.rules) rule.beforeReload?.(ctx);

@@ -3,7 +3,7 @@ import { createMockService } from "../ipc/mock";
 import { createSession } from "./session";
 import { RULES, effectsOf, type ResourceKey, type Trigger } from "./effects";
 import type { Request } from "../ipc/bindings/Request";
-import { levelResult, xoRecommendation } from "../ipc/fixtures";
+import { xoRecommendation } from "../ipc/fixtures";
 
 const reloadCases: [ResourceKey, Request, Request["method"]][] = [
   ["project", { method: "project_save", params: { path: "/room.secs" } }, "project_info"],
@@ -225,11 +225,6 @@ const finishedCases = [
     expect(session.host.getSnapshot().selected).toBeNull();
     expect(session.stores.records.getSnapshot()).not.toBeNull();
   } },
-  { name: "sweep.result", trigger: { finished: "level_check", status: "succeeded" }, run: async (session, mock) => {
-    await session.call({ method: "level_check", params: { role: "L" } });
-    mock.drain(); await session.settled();
-    expect(session.host.getSnapshot().sweepResult).toEqual(levelResult);
-  } },
   { name: "xo.result", trigger: { finished: "recommend_xo", status: "succeeded" }, run: async (session, mock) => {
     await session.call({ method: "recommend_xo" });
     mock.drain(); await session.settled();
@@ -281,13 +276,6 @@ const responseCases = [
     expect(mock.calls.at(-1)?.method).toBe("measure_config_get");
     expect(session.stores.measurementSettings.getSnapshot()?.method).toBe("mock");
   } },
-  { name: "sweep.invalidate", trigger: { request: "measure_configure" }, run: async (session) => {
-    session.host.set({ sweepResult: levelResult, sweepRole: "L" });
-    await session.configure({ output_device: "output" });
-    expect(session.host.getSnapshot().sweepResult).toEqual(levelResult);
-    await session.configure({ input_channel: 2 });
-    expect(session.host.getSnapshot()).toMatchObject({ sweepResult: null, sweepRole: null });
-  } },
   { name: "warnings.replace-position", trigger: { request: "position_clear" }, run: async (session) => {
     session.host.set({ warnings: [{ position: 1, notices: [] }, { position: 4, notices: [] }] });
     await session.call({ method: "position_clear", params: { position: 4 } });
@@ -299,11 +287,9 @@ const responseCases = [
     expect(session.host.getSnapshot().warnings).toEqual([]);
   } },
   { name: "rew.driver-response", trigger: { request: "rew_driver_set" }, run: async (session, mock) => {
-    session.host.set({ sweepResult: levelResult, sweepRole: "L" });
     mock.calls.length = 0;
     await session.call({ method: "rew_driver_set", params: { driver: "ASIO" } });
     expect(session.stores.rew.getSnapshot()?.driver).toBe("ASIO");
-    expect(session.host.getSnapshot()).toMatchObject({ sweepResult: null, sweepRole: null });
     expect(mock.calls.map((request) => request.method)).toEqual(["rew_driver_set", "measure_methods"]);
   } },
 ] satisfies { name: string; trigger: Trigger; run: (session: ReturnType<typeof createSession>, mock: ReturnType<typeof createMockService>) => Promise<void> }[];
@@ -326,12 +312,12 @@ it("resets a replaced project before reloads and restores its stored measurement
     await session.start(); await session.settled();
     await session.configure({ method: "mock" });
     await session.call({ method: "project_save", params: { path: "/kept.secs" } });
-    session.host.set({ selected: 4, channel: "R", sweepRole: "L" });
+    session.host.set({ selected: 4, channel: "R" });
     let duringReload: unknown;
     const off = session.stores.project.subscribe(() => { duringReload = session.host.getSnapshot(); });
     await session.call({ method: "project_open", params: { path: "/kept.secs" } });
     await session.settled(); off();
-    expect(duringReload).toMatchObject({ selected: null, channel: null, sweepRole: null, path: null, opened: 1 });
+    expect(duringReload).toMatchObject({ selected: null, channel: null, path: null, opened: 1 });
     expect(session.host.getSnapshot().path).toBe("mock");
   } finally { session.dispose(); await session.settled(); mock.dispose(); }
 });
