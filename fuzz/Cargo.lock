@@ -595,14 +595,14 @@ dependencies = [
 
 [[package]]
 name = "secs-dirac"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "secs-dsp"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "faer",
  "faer-traits",
@@ -616,14 +616,14 @@ dependencies = [
 
 [[package]]
 name = "secs-jos"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "secs-mdat"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "secs-dsp",
  "secs-jos",
@@ -633,7 +633,7 @@ dependencies = [
 
 [[package]]
 name = "secs-project"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "ryu",
  "secs-mdat",
@@ -644,7 +644,7 @@ dependencies = [
 
 [[package]]
 name = "secs-types"
-version = "0.28.0"
+version = "0.29.0"
 dependencies = [
  "serde",
  "strum",
