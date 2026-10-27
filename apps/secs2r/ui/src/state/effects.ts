@@ -20,7 +20,7 @@ const inputs = [...measurements, ...settings, ...target, "dsp_set", "measure_con
 /** Project replacement reloads all project resources, including empty results. */
 const PROJECT_REPLACED = ["project_new", "project_open"] as const;
 const reloads = {
-  project: { mutations: [...inputs, "project_save", "levels_fill_defaults", "export_folder_set"], finished: [...recorded, "calibrate", "mimo"] },
+  project: { mutations: [...inputs, "project_save", "levels_fill_defaults", "export_folder_set", "mic_calibration_set", "mic_calibration_clear"], finished: [...recorded, "calibrate", "mimo"] },
   config: { mutations: [...config, "undo", "measure_configure"], finished: [] },
   notices: { mutations: [...config, "undo", "measure_configure"], finished: [] },
   dsp: { mutations: ["dsp_set"], finished: [] },
@@ -28,14 +28,15 @@ const reloads = {
   estimate: { mutations: [...config, "layout_set", "measure_configure", "undo"], finished: [] },
   methods: { mutations: ["rew_launch", "rew_driver_set"], finished: [] },
   records: { mutations: measurements, finished: recorded },
-  curves: { mutations: measurements, finished: recorded },
+  curves: { mutations: [...measurements, "mic_calibration_attach"], finished: recorded },
+  micCalibration: { mutations: ["mic_calibration_set", "mic_calibration_clear", "mic_calibration_attach", ...measurements], finished: recorded },
   levels: { mutations: ["levels_fill_defaults", "level_play", ...config], finished: [] },
   settings: { mutations: [...settings, ...config, "undo"], finished: ["recommend_xo"] },
   modeSpec: { mutations: settings, finished: [] },
   target: { mutations: target, finished: [] },
-  results: { mutations: [...inputs, "app_settings_set", "project_save"], finished: [...recorded, "calibrate", "mimo"] },
-  resultCurves: { mutations: [...inputs, "app_settings_set"], finished: [...recorded, "calibrate", "mimo"] },
-  lines: { mutations: [...inputs, "app_settings_set"], finished: [...recorded, "calibrate", "mimo"] },
+  results: { mutations: [...inputs, "app_settings_set", "project_save", "mic_calibration_attach"], finished: [...recorded, "calibrate", "mimo"] },
+  resultCurves: { mutations: [...inputs, "app_settings_set", "mic_calibration_attach"], finished: [...recorded, "calibrate", "mimo"] },
+  lines: { mutations: [...inputs, "app_settings_set", "mic_calibration_attach"], finished: [...recorded, "calibrate", "mimo"] },
   subWarnings: { mutations: [...settings, ...config, "undo"], finished: ["calibrate"] },
   rew: { mutations: ["rew_launch"], finished: [] },
   folder: { mutations: ["export_folder_set", "project_save"], finished: ["export"] },
@@ -79,7 +80,8 @@ export const RULES: readonly Rule[] = [
     beforeReload: (ctx) => {
       ctx.replaceProject();
       ctx.stores.measurementSettings.set(null);
-      ctx.host.set({ path: null, selected: null, mdat: null, warnings: [], runs: {}, channel: null, xoGroup: null, xoRecommendation: null, failure: null, opened: ctx.host.getSnapshot().opened + 1 });
+      ctx.stores.micCalibration.set(null);
+      ctx.host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, channel: null, xoGroup: null, xoRecommendation: null, failure: null, opened: ctx.host.getSnapshot().opened + 1 });
     },
     // Project replacement reads the stored method; tutorial setup owns writes.
     apply: async ({ call }) => { await call({ method: "measure_config_get" }); },

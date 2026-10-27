@@ -22,6 +22,7 @@ pub mod mdat_import;
 pub mod measure;
 mod measurement;
 mod measurement_file;
+mod mic_calibration;
 mod monitor;
 mod project_edit;
 mod results;

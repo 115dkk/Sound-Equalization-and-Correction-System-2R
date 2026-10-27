@@ -65,6 +65,14 @@ pub enum Request {
     MeasureConfigGet,
     /// Returns one recording-status entry per arranged position.
     MeasurementRecords,
+    /// Returns the project's microphone calibration and attachment counts.
+    MicCalibrationGet,
+    /// Reads, validates and stores a microphone calibration file in the project.
+    MicCalibrationSet(MicCalibrationSetParams),
+    /// Removes the project's selected microphone calibration file.
+    MicCalibrationClear,
+    /// Attaches the selected file to sweep measurements that have no mic curve.
+    MicCalibrationAttach,
     /// Returns stored per-role level and SPL values.
     LevelsGet,
     /// Fills only missing per-role level values with upstream defaults.
@@ -232,6 +240,14 @@ pub enum Response {
     MeasureConfigGet(MeasureConfigResult),
     /// Recording status for every arranged position.
     MeasurementRecords(MeasurementRecordsResult),
+    /// Selected microphone calibration and attachment counts.
+    MicCalibrationGet(MicCalibrationStatus),
+    /// Selected microphone calibration after storing a file.
+    MicCalibrationSet(MicCalibrationStatus),
+    /// Empty microphone calibration status after clearing the selection.
+    MicCalibrationClear(MicCalibrationStatus),
+    /// Microphone calibration status after attaching it to eligible sweeps.
+    MicCalibrationAttach(MicCalibrationStatus),
     /// Stored per-role level and SPL values.
     LevelsGet(LevelsResult),
     /// Stored values after filling missing level defaults.
@@ -1164,6 +1180,8 @@ pub struct DialogSaveFileParams {
 pub enum OpenFileKind {
     /// Target-curve JSON.
     Target,
+    /// Microphone response calibration text (`.txt`, `.cal` or `.frd`).
+    MicCalibration,
 }
 /// Typed open-file dialog parameters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1213,6 +1231,52 @@ pub struct ExportFolderResult {
 }
 
 // Measurement request and response types.
+/// A validated microphone calibration file selected for the open project.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MicCalibrationFile {
+    /// File name as selected by the user.
+    pub name: String,
+    /// Full selected path; the project retains the decoded text separately.
+    pub path: String,
+    /// miniDSP serial number from `SERNO`, when present.
+    pub serial: Option<String>,
+    /// USB microphone sensitivity factor in dB.
+    pub sens_factor_db: Option<f64>,
+    /// Analog input gain from `AGain`, in dB.
+    pub analog_gain_db: Option<f64>,
+    /// Analog microphone sensitivity at 94 dB SPL, in dBFS.
+    pub sensitivity_dbfs: Option<f64>,
+    /// Quoted metadata lines other than the sensitivity header.
+    pub notes: Vec<String>,
+    /// Number of frequency-response points.
+    pub points: u32,
+    /// Lowest tabulated frequency in Hz.
+    pub min_hz: f64,
+    /// Highest tabulated frequency in Hz.
+    pub max_hz: f64,
+    /// Whether any response point includes phase.
+    pub has_phase: bool,
+}
+/// Selected microphone calibration and recorded-measurement attachment counts.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MicCalibrationStatus {
+    /// The project's selected file, or absent when none is selected.
+    pub file: Option<MicCalibrationFile>,
+    /// Recorded position-role pairs whose sidecar attaches a `meterCal` curve.
+    pub attached: u32,
+    /// Sweep measurements without a `meterCal` curve that can receive the file.
+    pub attachable: u32,
+}
+/// A microphone calibration file selected by full path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MicCalibrationSetParams {
+    /// Full path selected by the user.
+    pub path: String,
+}
+
 /// Measurement methods available on this host.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
 #[ts(export)]
@@ -2051,6 +2115,12 @@ mod tests {
             Request::MeasureConfigure(MeasureConfigureParams::default()),
             Request::MeasureConfigGet,
             Request::MeasurementRecords,
+            Request::MicCalibrationGet,
+            Request::MicCalibrationSet(MicCalibrationSetParams {
+                path: "mic.txt".into(),
+            }),
+            Request::MicCalibrationClear,
+            Request::MicCalibrationAttach,
             Request::LevelsGet,
             Request::LevelsFillDefaults,
             Request::LevelStop,

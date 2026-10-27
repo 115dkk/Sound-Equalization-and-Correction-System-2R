@@ -8,14 +8,34 @@ use secs_project::{MeasurementPlan, Project, PyJson, TimingReference};
 /// with a native loopback input channel. The native path no longer reads that
 /// channel (U15): the screen shows the timing reference only for REW, and a
 /// native session already keeps every channel's arrival time on one clock.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct MeasurementSettings {
     pub positions: Option<Vec<i64>>,
     pub loopback_input_channel: Option<u16>,
     pub share: secs_audio::SharePreference,
     pub window: secs_audio::MeasurementWindow,
     pub calibration: Option<secs_audio::MicCalibration>,
+    pub calibration_file: Option<secs_mdat::CalFile>,
     pub spl_reference: Option<secs_audio::SplReference>,
+}
+impl Clone for MeasurementSettings {
+    fn clone(&self) -> Self {
+        Self {
+            positions: self.positions.clone(),
+            loopback_input_channel: self.loopback_input_channel,
+            share: self.share,
+            window: self.window,
+            calibration: self.calibration.clone(),
+            calibration_file: self
+                .calibration_file
+                .as_ref()
+                .map(|file| secs_mdat::CalFile {
+                    path: file.path.clone(),
+                    text: file.text.clone(),
+                }),
+            spl_reference: self.spl_reference,
+        }
+    }
 }
 impl Default for MeasurementSettings {
     fn default() -> Self {
@@ -25,6 +45,7 @@ impl Default for MeasurementSettings {
             share: secs_audio::SharePreference::Auto,
             window: Default::default(),
             calibration: None,
+            calibration_file: None,
             spl_reference: None,
         }
     }
@@ -57,6 +78,20 @@ impl MeasurementSettings {
         settings.window.noise_seconds = n("noise_seconds", settings.window.noise_seconds);
         if let Some(text) = get("mic_calibration").and_then(PyJson::str) {
             settings.calibration = Some(secs_audio::MicCalibration::parse(text)?);
+            let path = get("mic_calibration_path")
+                .and_then(PyJson::str)
+                .filter(|value| !value.is_empty())
+                .or_else(|| {
+                    get("mic_calibration_name")
+                        .and_then(PyJson::str)
+                        .filter(|value| !value.is_empty())
+                })
+                .unwrap_or("mic calibration")
+                .to_owned();
+            settings.calibration_file = Some(secs_mdat::CalFile {
+                path,
+                text: Some(text.as_bytes().to_vec()),
+            });
         }
         if let Some(v) = get("spl_offset_db") {
             let offset_db = number(Some(v), f64::NAN);

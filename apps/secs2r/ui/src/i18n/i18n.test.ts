@@ -31,6 +31,7 @@ const code = sources(src)
  */
 const BUILT: readonly { template: string; keys: RegExp }[] = [
   { template: "jobs.log.${code}", keys: /^jobs\.log\.[a-z_]+$/ },
+  { template: "connect.mic_cal.error.${issue}", keys: /^connect\.mic_cal\.error\.(?:unreadable|too_large|not_text|header|row|order|range|too_few_points|both_conventions|no_file)$/ },
   { template: "jobs.stage.${stage}", keys: /^jobs\.stage\.[a-z_.]+$/ },
   { template: "notice.${notice.code}", keys: /^notice\.[a-z_]+$/ },
   { template: "project.warning.${code}", keys: /^project\.warning\.[a-z_.]+$/ },

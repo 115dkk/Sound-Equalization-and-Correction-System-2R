@@ -61,6 +61,18 @@ pub(crate) fn dispatch(
         Request::MeasurementRecords => service
             .measurement_records()
             .map(Response::MeasurementRecords),
+        Request::MicCalibrationGet => service
+            .mic_calibration_get()
+            .map(Response::MicCalibrationGet),
+        Request::MicCalibrationSet(params) => service
+            .mic_calibration_set(params)
+            .map(Response::MicCalibrationSet),
+        Request::MicCalibrationClear => service
+            .mic_calibration_clear()
+            .map(Response::MicCalibrationClear),
+        Request::MicCalibrationAttach => service
+            .mic_calibration_attach()
+            .map(Response::MicCalibrationAttach),
         Request::LevelsGet => service.levels_get().map(Response::LevelsGet),
         Request::LevelsFillDefaults => service
             .levels_fill_defaults()

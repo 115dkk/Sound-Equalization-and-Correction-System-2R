@@ -13,9 +13,10 @@ import type { MessageKey } from "../../i18n";
 import type { Translate } from "../../i18n/react";
 import { useNumber, useT } from "../../i18n/react";
 import type { MeasureDevice } from "../../ipc/bindings/MeasureDevice";
-import { Advanced, Button, Card, ErrorNotice, Icon, IconButton, LevelMeter, NumberField, Section, Segmented, Select, StatusPill, type Option, type PillTone } from "../../ui";
+import { Advanced, Button, Card, ErrorNotice, HelpTip, Icon, IconButton, LevelMeter, NumberField, Section, Segmented, Select, StatusPill, type Option, type PillTone } from "../../ui";
 import { roleCode, roleKind } from "../../ui/maps/geometry";
 import { roleName } from "../system/text";
+import { MicCalibrationField } from "./MicCalibrationField";
 import { MicMeterPanel, type MicMeterView } from "./MicMeterPanel";
 import { levelRoles, levelsPassed, missingLevels, pathReady } from "./state";
 import type { ConnectActions, ConnectPath, ConnectView, RewProblem } from "./types";
@@ -418,8 +419,8 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
         )}
         {rew && (
           <div className="ui-field" data-ui="connect.mic_cal">
-            <span className="ui-field__label">{t("connect.mic_cal")}</span>
-            <span className="connect-readout">
+            <span className="ui-field__label" id="connect.mic_cal-label">{t("connect.mic_cal")}</span>
+            <span className="connect-readout connect-readout--help">
               {cal === "" ? (
                 <StatusPill tone="warning">{t("connect.mic_cal.none")}</StatusPill>
               ) : cal ? (
@@ -429,6 +430,7 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
               ) : (
                 <StatusPill>{t("connect.rew.unknown")}</StatusPill>
               )}
+              <HelpTip id="connect.mic_cal.help" labelledBy="connect.mic_cal-label" content={t("connect.mic_cal.rew_help")} />
             </span>
           </div>
         )}
@@ -457,6 +459,7 @@ function DevicesCard({ view, actions }: { view: ConnectView; actions: ConnectAct
           <span className="ui-field__label">{t("connect.sample_rate")}</span>
           <span className="connect-readout tabular">{t("connect.sample_rate.value", { rate: number(view.sampleRate) })}</span>
         </div>
+        {!rew && <MicCalibrationField view={view.micCalibration} actions={actions} />}
       </div>
       {!rew && (
         <Advanced id="connect.devices.details" label={t("connect.share_mode")} defaultOpen={!!settings?.share_mode && settings.share_mode !== "auto"}>

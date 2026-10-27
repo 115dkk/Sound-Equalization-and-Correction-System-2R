@@ -12,6 +12,7 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
   const settings = useResource("measurementSettings");
   const levels = useResource("levels");
   const rew = useResource("rew");
+  const micCalibration = useResource("micCalibration");
   const queue = useRef(0);
   const cancelWait = useRef<(() => void) | null>(null);
   const ready = host.path !== "mdat" && settings !== null && pathReady({ path: host.path, methods });
@@ -19,6 +20,9 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
   useEffect(() => {
     if (active) session.run(() => session.stores.rew.load());
   }, [active, session]);
+  useEffect(() => {
+    if (active && host.path === "native") session.run(() => session.stores.micCalibration.load());
+  }, [active, host.path, session]);
   useEffect(() => {
     if (!active || !ready) return;
     session.run(() => session.monitor(true));
@@ -82,7 +86,25 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
         }
       });
     };
+    const micCal = (busy: NonNullable<ConnectView["micCalibration"]["busy"]>, work: (epoch: number) => Promise<unknown>) => session.run(async () => {
+      if (session.host.getSnapshot().micCalBusy !== null) return;
+      const epoch = session.jobs.epoch;
+      session.host.set({ micCalBusy: busy, micCalError: null });
+      try { await work(epoch); }
+      catch (error) {
+        if (!(error instanceof IpcFailure)) throw error;
+        if (epoch === session.jobs.epoch) session.host.set({ micCalError: error.error });
+      } finally {
+        if (epoch === session.jobs.epoch) session.host.set({ micCalBusy: null });
+      }
+    });
     return {
+      pickMicCalibration: () => micCal("pick", async (epoch) => {
+        const path = await session.call({ method: "dialog_open_file", params: { kind: "mic_calibration" } });
+        if (path !== null && epoch === session.jobs.epoch) await session.call({ method: "mic_calibration_set", params: { path } });
+      }),
+      clearMicCalibration: () => micCal("clear", () => session.call({ method: "mic_calibration_clear" })),
+      attachMicCalibration: () => micCal("attach", () => session.call({ method: "mic_calibration_attach" })),
       choosePath: (path) => session.run(async () => {
         await stop();
         if (session.host.getSnapshot().path !== path) await session.monitor(false);
@@ -145,6 +167,7 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
   return { view: config ? {
     path: host.path, methods, settings, config, sampleRate: settings?.sample_rate ?? 48000,
     rew: { launch: host.rewLaunch, problem: host.rewProblem, problemDetail: host.rewProblemDetail, readingSettings: host.readingRew, switchingDriver: host.switchingRewDriver, details },
+    micCalibration: { status: micCalibration, busy: host.micCalBusy, error: host.micCalError },
     levels: levels?.levels ?? {},
     level: { monitor: host.monitor, reading: host.meter, playing: host.playing, playingAll: host.playingAll, masterDbfs: host.masterDbfs },
   } : null, actions };

@@ -153,10 +153,10 @@ fn measurer(
     settings: MeasurementSettings,
 ) -> Result<Box<dyn Measurer>, IpcError> {
     match method {
-        "native" => Ok(Box::new(measure::NativeMeasurer::from_backend(
-            (deps.audio_backend)(),
-            settings,
-        ))),
+        "native" => Ok(Box::new(
+            measure::NativeMeasurer::from_backend((deps.audio_backend)(), settings)
+                .with_clock(deps.unix_ms.clone()),
+        )),
         "mock" => Ok(Box::new((deps.mock_measurer)())),
         "rew" => Ok(Box::new(measure::RewMeasurer::linked(
             rew.client(),
@@ -794,7 +794,7 @@ impl Service {
 
     /// REW's driver and devices stay as they are while a measurement job
     /// sweeps through REW (TD-91).
-    fn refuse_while_measuring(&self) -> Result<(), IpcError> {
+    pub(crate) fn refuse_while_measuring(&self) -> Result<(), IpcError> {
         match self.jobs.running_measurement() {
             Some(kind) => Err(IpcError::new(
                 ErrorCode::JobBusy,

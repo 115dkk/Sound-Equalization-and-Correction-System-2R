@@ -4,6 +4,7 @@
 import type { IpcError } from "../../ipc/bindings/IpcError";
 import type { MeasureConfigResult } from "../../ipc/bindings/MeasureConfigResult";
 import type { MeasureMethodsResult } from "../../ipc/bindings/MeasureMethodsResult";
+import type { MicCalibrationFile } from "../../ipc/bindings/MicCalibrationFile";
 import { SAMPLE_ROLES } from "../../ipc/fixtures";
 import { sampleView } from "../system/fixtures";
 import type { ConnectView, RewDetails } from "./types";
@@ -85,8 +86,24 @@ const base: ConnectView = {
   config: sampleView.config,
   sampleRate: 48000,
   rew: { launch: "idle", problem: null, problemDetail: null, readingSettings: false, switchingDriver: false, details: {} },
+  micCalibration: { status: { file: null, attached: 0, attachable: 0 }, busy: null, error: null },
   levels: {},
   level: { monitor: "off", reading: null, playing: null, playingAll: false, masterDbfs: -20 },
+};
+
+/** A UMIK-1 90° file as the service describes it (serial and gains are invented). */
+export const umikFile: MicCalibrationFile = {
+  name: "7000001_90deg.txt",
+  path: "C:\\Users\\demo\\Documents\\UMIK-1\\7000001_90deg.txt",
+  serial: "7000001",
+  sens_factor_db: -0.7312,
+  analog_gain_db: null,
+  sensitivity_dbfs: null,
+  notes: ["Auto-generated 90-degree calibration file for use with nanoAVR DL"],
+  points: 615,
+  min_hz: 10.062,
+  max_hz: 20011.3,
+  has_phase: false,
 };
 
 /** Nothing chosen yet: REW is not running, native devices are there. */
@@ -158,6 +175,33 @@ export const nativeView: ConnectView = {
   path: "native",
   settings: settingsFor("native"),
   level: { ...base.level, monitor: "receiving", reading: { rms_dbfs: -61.8, peak_dbfs: -52.4, spl_db: 36.5, clipping: false } },
+};
+
+/** Native with the mic's file chosen: every sweep so far carries it. */
+export const micCalView: ConnectView = {
+  ...nativeView,
+  micCalibration: { status: { file: umikFile, attached: 26, attachable: 0 }, busy: null, error: null },
+};
+
+/** The file was chosen after the first positions were measured: those sweeps can take it now. */
+export const micCalAttachView: ConnectView = {
+  ...nativeView,
+  micCalibration: { status: { file: umikFile, attached: 0, attachable: 26 }, busy: null, error: null },
+};
+
+/** A text file that is not a calibration: the line that broke it is named. */
+export const micCalErrorView: ConnectView = {
+  ...nativeView,
+  micCalibration: {
+    status: { file: null, attached: 0, attachable: 0 },
+    busy: null,
+    error: {
+      code: "measurement_input",
+      params: { reason: "mic_calibration", issue: "row", line: "3", file: "readme.txt" },
+      retryable: false,
+      detail: "calibration Row at line Some(3)",
+    },
+  },
 };
 
 const enumerationError: IpcError = {

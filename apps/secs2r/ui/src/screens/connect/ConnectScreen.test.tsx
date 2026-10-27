@@ -14,6 +14,9 @@ import {
   levelPassedView,
   levelHalfView,
   mdatView,
+  micCalAttachView,
+  micCalErrorView,
+  micCalView,
   mockView,
   nativeErrorView,
   nativeView,
@@ -23,6 +26,7 @@ import {
   rewOffView,
   rewSwitchingView,
   rewUntestedView,
+  umikFile,
 } from "./fixtures";
 import { MicMeterPanel } from "./MicMeterPanel";
 import { connectStepState } from "./state";
@@ -90,6 +94,9 @@ function actionsMock() {
     setInputChannel: vi.fn(),
     setOutputDevice: vi.fn(),
     setShareMode: vi.fn(),
+    pickMicCalibration: vi.fn(),
+    clearMicCalibration: vi.fn(),
+    attachMicCalibration: vi.fn(),
     playLevel: vi.fn(),
     stopLevel: vi.fn(),
     playAllLevels: vi.fn(),
@@ -126,6 +133,9 @@ const ALL: [string, ConnectView][] = [
   ["REW not Pro", rewNotProView],
   ["native", nativeView],
   ["native error", nativeErrorView],
+  ["mic calibration file", micCalView],
+  ["mic calibration to attach", micCalAttachView],
+  ["mic calibration error", micCalErrorView],
   ["level half done", levelHalfView],
   ["levels done", levelDoneView],
   ["mock", mockView],
@@ -298,6 +308,62 @@ describe("ConnectScreen", () => {
     expect(must("connect.devices.details").getAttribute("aria-expanded")).toBe("true");
     expect(must(`connect.share_mode.${share_mode}`).getAttribute("aria-checked")).toBe("true");
     expect(actions.setShareMode).not.toHaveBeenCalled();
+  });
+
+  it("offers the mic calibration file on the native path, with nothing chosen yet", () => {
+    const actions = setup(nativeView);
+    expect(must("connect.mic_cal.none").textContent).toBe(ko("connect.mic_cal.none"));
+    expect(must("connect.mic_cal.pick").textContent).toBe(ko("connect.mic_cal.pick"));
+    expect(ui("connect.mic_cal.clear")).toBeNull();
+    expect(ui("connect.mic_cal.attachable")).toBeNull();
+    fireEvent.click(must("connect.mic_cal.pick"));
+    expect(actions.pickMicCalibration).toHaveBeenCalledTimes(1);
+  });
+
+  it("describes a chosen file and lets it be replaced or cleared", () => {
+    const actions = setup(micCalView);
+    const file = must("connect.mic_cal.file");
+    expect(file.textContent).toContain("7000001_90deg.txt");
+    expect(file.textContent).toContain(ko("connect.mic_cal.summary", { serial: "7000001", low: "10.1", high: "20k", points: 615 }));
+    expect(file.textContent).toContain("Auto-generated 90-degree calibration file");
+    expect(file.querySelector("[title]")?.getAttribute("title")).toBe(umikFile.path);
+    expect(must("connect.mic_cal.attached").textContent).toBe(ko("connect.mic_cal.attached", { count: 26 }));
+    expect(ui("connect.mic_cal.attachable")).toBeNull();
+    expect(must("connect.mic_cal.pick").textContent).toBe(ko("connect.mic_cal.replace"));
+    fireEvent.click(must("connect.mic_cal.pick"));
+    fireEvent.click(must("connect.mic_cal.clear"));
+    expect(actions.pickMicCalibration).toHaveBeenCalledTimes(1);
+    expect(actions.clearMicCalibration).toHaveBeenCalledTimes(1);
+  });
+
+  it("offers the file to sweeps measured before it was chosen", () => {
+    const actions = setup(micCalAttachView);
+    expect(must("connect.mic_cal.attachable").textContent).toContain(ko("connect.mic_cal.attachable", { count: 26 }));
+    expect(ui("connect.mic_cal.attached")).toBeNull();
+    fireEvent.click(must("connect.mic_cal.attach"));
+    expect(actions.attachMicCalibration).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the other mic calibration buttons still while one runs", () => {
+    setup({ ...micCalAttachView, micCalibration: { ...micCalAttachView.micCalibration, busy: "attach" } });
+    expect(must("connect.mic_cal").getAttribute("aria-busy")).toBe("true");
+    expect((must("connect.mic_cal.pick") as HTMLButtonElement).disabled).toBe(true);
+    expect((must("connect.mic_cal.clear") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("names the broken line of a file that is not a calibration, and what to do", () => {
+    setup(micCalErrorView);
+    const error = must("connect.mic_cal.error");
+    expect(error.textContent).toContain(ko("connect.mic_cal.error.row", { file: "readme.txt", line: "3" }));
+    expect(error.textContent).toContain(ko("connect.mic_cal.error.file.next"));
+    expect(must("connect.mic_cal.none")).not.toBeNull();
+  });
+
+  it("keeps REW's file read-only on the REW path", () => {
+    setup(rewNotProView);
+    expect(must("connect.mic_cal").textContent).toContain("7103946_90deg.txt");
+    expect(ui("connect.mic_cal.pick")).toBeNull();
+    expect(ui("connect.mic_cal.help")).not.toBeNull();
   });
 
   it("keeps native sharing controls out of REW device settings", () => {

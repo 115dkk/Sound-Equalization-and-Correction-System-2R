@@ -11,6 +11,105 @@ use std::time::UNIX_EPOCH;
 pub const IR_CACHE_LIMIT_BYTES: usize = 256 * 1024 * 1024;
 pub const MAX_PROJECT_BYTES: u64 = 64 * 1024 * 1024;
 
+/// Calibration curves a measurement source sidecar attaches (ADR 0015).
+/// `meterCal` precedes every `scCal`; only entries with equal `freq` and
+/// `gain` lengths of at least two points are attached.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttachedCalibration<'a> {
+    /// The valid `meterCal` entry, when present.
+    pub meter: Option<&'a CalInfo>,
+    /// Valid `scCal` entries in sidecar order.
+    pub others: Vec<&'a CalInfo>,
+    /// Whether the `meterCal` identifies a C-weighted SPL meter.
+    pub c_weighted: bool,
+}
+
+impl AttachedCalibration<'_> {
+    /// Whether neither a curve nor C weighting is attached.
+    pub fn is_empty(&self) -> bool {
+        self.meter.is_none() && self.others.is_empty() && !self.c_weighted
+    }
+}
+
+fn has_curve_arrays(cal: &CalInfo) -> bool {
+    matches!(
+        (&cal.freq, &cal.gain),
+        (Some(freq), Some(gain)) if freq.len() >= 2 && freq.len() == gain.len()
+    )
+}
+
+/// Selects the sidecar calibration that ADR 0015 applies.
+pub fn attached_calibration(info: &SourceInfo) -> AttachedCalibration<'_> {
+    let meter_entry = info.cal.iter().find(|(name, _)| name == "meterCal");
+    AttachedCalibration {
+        meter: info
+            .cal
+            .iter()
+            .find(|(name, cal)| name == "meterCal" && has_curve_arrays(cal))
+            .map(|(_, cal)| cal),
+        others: info
+            .cal
+            .iter()
+            .filter(|(name, cal)| name == "scCal" && has_curve_arrays(cal))
+            .map(|(_, cal)| cal)
+            .collect(),
+        c_weighted: meter_entry.is_some_and(|(_, cal)| cal.inverse_c_selected),
+    }
+}
+
+const FNV_OFFSET_BASIS_64: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME_64: u64 = 0x0000_0100_0000_01b3;
+
+fn fingerprint_bytes(hash: &mut u64, bytes: &[u8]) {
+    for &byte in bytes {
+        *hash ^= u64::from(byte);
+        *hash = hash.wrapping_mul(FNV_PRIME_64);
+    }
+}
+
+fn fingerprint_len(hash: &mut u64, len: usize) {
+    fingerprint_bytes(hash, &(len as u64).to_le_bytes());
+}
+
+fn fingerprint_array(hash: &mut u64, values: &[f32]) {
+    fingerprint_len(hash, values.len());
+    for value in values {
+        fingerprint_bytes(hash, &value.to_bits().to_le_bytes());
+    }
+}
+
+fn fingerprint_curve(hash: &mut u64, name: &str, cal: &CalInfo) {
+    fingerprint_len(hash, name.len());
+    fingerprint_bytes(hash, name.as_bytes());
+    fingerprint_array(hash, cal.freq.as_deref().unwrap_or_default());
+    fingerprint_array(hash, cal.gain.as_deref().unwrap_or_default());
+    match &cal.phase {
+        Some(phase) => {
+            fingerprint_bytes(hash, &[1]);
+            fingerprint_array(hash, phase);
+        }
+        None => fingerprint_bytes(hash, &[0]),
+    }
+}
+
+/// FNV-1a 64 fingerprint of attached curves and the C-weighting flag.
+/// Returns `None` when the sidecar attaches no response correction.
+pub fn calibration_fingerprint(info: &SourceInfo) -> Option<u64> {
+    let attached = attached_calibration(info);
+    if attached.is_empty() {
+        return None;
+    }
+    let mut hash = FNV_OFFSET_BASIS_64;
+    fingerprint_bytes(&mut hash, &[u8::from(attached.c_weighted)]);
+    if let Some(meter) = attached.meter {
+        fingerprint_curve(&mut hash, "meterCal", meter);
+    }
+    for cal in attached.others {
+        fingerprint_curve(&mut hash, "scCal", cal);
+    }
+    Some(hash)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MeasurementResult {
     pub role: String,
@@ -110,7 +209,16 @@ impl MeasurementStore {
         let text = String::from_utf8(bytes).map_err(|error| {
             ProjectError::Invalid(format!("project {} is not UTF-8: {error}", path.display()))
         })?;
-        let (project, warnings) = Project::from_json_with_warnings(loads(&text)?)?;
+        let (mut project, warnings) = Project::from_json_with_warnings(loads(&text)?)?;
+        for (pos, roles) in load_project_sources(&project, &path) {
+            for (role, info) in roles {
+                if let Some(fingerprint) = calibration_fingerprint(&info) {
+                    project
+                        .measurement_calibration
+                        .insert((i64::from(pos), role), fingerprint);
+                }
+            }
+        }
         let mut store = Self::new(path, project);
         store.warnings.extend(warnings);
         Ok(store)
@@ -224,6 +332,10 @@ impl MeasurementStore {
         result: MeasurementResult,
         plan_roles: Option<&[String]>,
     ) -> Result<MeasurementRecord, ProjectError> {
+        let source_fingerprint = result
+            .source_info
+            .as_ref()
+            .and_then(calibration_fingerprint);
         let path = save_ir(
             &self.path,
             &result.role,
@@ -286,6 +398,16 @@ impl MeasurementStore {
                 set_value(entry, "source", PyJson::Object(Vec::new()));
             }
             set_nested(entry, "source", &role, PyJson::Str(source));
+        }
+        let calibration_key = (result.pos, role.clone());
+        if let Some(fingerprint) = source_fingerprint {
+            self.project
+                .measurement_calibration
+                .insert(calibration_key, fingerprint);
+        } else {
+            self.project
+                .measurement_calibration
+                .remove(&calibration_key);
         }
         if let Some(value) = result.snr_db {
             self.snr_db.insert((result.pos, role), value);
@@ -396,6 +518,68 @@ impl MeasurementStore {
         self.cache.load(&path)
     }
 
+    /// Returns a recorded IR's source sidecar when both files are readable and
+    /// confined to the project's `.irs` directory.
+    pub fn source_of(&mut self, role: &str, pos: i64) -> Option<SourceInfo> {
+        let recorded = self
+            .entry_for(pos)
+            .and_then(|entry| entry.ir.get(role).cloned())
+            .is_some_and(|path| !path.is_empty());
+        if !recorded {
+            return None;
+        }
+        let path = self.ir_path_of(role, pos).ok()?;
+        if !path.is_file()
+            || confined_ir_path(&self.path, &path).is_err()
+            || confined_ir_path(&self.path, &source_path(&path)).is_err()
+        {
+            return None;
+        }
+        load_source(&path)
+    }
+
+    /// Rewrites a recorded IR's source sidecar and updates its in-memory
+    /// calibration fingerprint. The IR and measurement entry are unchanged.
+    pub fn replace_source(
+        &mut self,
+        role: &str,
+        pos: i64,
+        info: Option<&SourceInfo>,
+    ) -> Result<(), ProjectError> {
+        let recorded = self
+            .entry_for(pos)
+            .and_then(|entry| entry.ir.get(role).cloned())
+            .is_some_and(|path| !path.is_empty());
+        if !recorded {
+            return Err(ProjectError::Invalid(format!(
+                "position {pos}, role {role} has no recorded IR"
+            )));
+        }
+        let path = self.ir_path_of(role, pos)?;
+        if !path.is_file() {
+            return Err(ProjectError::Invalid(format!(
+                "recorded IR does not exist: {}",
+                path.display()
+            )));
+        }
+        if confined_ir_path(&self.path, &source_path(&path)).is_err() {
+            return Err(ProjectError::IrPath {
+                entry: format!("position {pos}, role {role} source"),
+                path: source_path(&path),
+            });
+        }
+        save_source(&path, info)?;
+        let key = (pos, role.to_owned());
+        if let Some(fingerprint) = info.and_then(calibration_fingerprint) {
+            self.project
+                .measurement_calibration
+                .insert(key, fingerprint);
+        } else {
+            self.project.measurement_calibration.remove(&key);
+        }
+        Ok(())
+    }
+
     pub fn t0_of(&self, role: &str, pos: i64) -> f64 {
         self.entry_for(pos)
             .and_then(|entry| entry.t0.get(role).copied())
@@ -501,7 +685,8 @@ pub fn load_project_sources(
                 base.join(path)
             };
             // F5: neither the IR nor its sidecar may lead outside the `.irs`.
-            if confined_ir_path(project_path, &path).is_err()
+            if !path.is_file()
+                || confined_ir_path(project_path, &path).is_err()
                 || confined_ir_path(project_path, &source_path(&path)).is_err()
             {
                 continue;

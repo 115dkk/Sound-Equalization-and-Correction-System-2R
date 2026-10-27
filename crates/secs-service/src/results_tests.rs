@@ -388,6 +388,37 @@ fn a_live_calibration_hides_the_cached_mimo_until_mimo_runs_again() {
 }
 
 #[test]
+fn calibration_signature_keeps_old_caches_without_curves() {
+    let mut current = project(1, false);
+    let identities = match &current.measurements {
+        secs_project::PyJson::Array(entries) => entries
+            .iter()
+            .map(|entry| match entry {
+                secs_project::PyJson::Object(fields) => fields
+                    .iter()
+                    .find(|(key, _)| key == "uuid")
+                    .map(|(_, value)| value),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        _ => vec![],
+    };
+    let old_signature = format!(
+        "{:?}:{identities:?}",
+        secs_project::measurement_signature(&current)
+    );
+    assert_eq!(signature_key(&current), old_signature);
+
+    let cached = cache(&current, 0, ComputeIdentity::default());
+    assert_eq!(cached_stale_reason(&cached, &current), None);
+    current
+        .measurement_calibration
+        .insert((1, "L".into()), 0x0123_4567_89ab_cdef);
+    assert_ne!(signature_key(&current), old_signature);
+    assert_eq!(cached_stale_reason(&cached, &current), Some("measurements"));
+}
+
+#[test]
 fn stale_reasons_prioritize_measurements_then_config_settings_and_target() {
     let project = Project::default();
     let signature = signature_key(&project);

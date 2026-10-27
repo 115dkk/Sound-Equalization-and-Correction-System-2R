@@ -8,6 +8,62 @@ import { calibrationSettings, gpuComputeStatus, modeLabel, projectInfo, resultsS
 import type { ExportKind } from "./bindings/ExportKind";
 import type { Mode } from "./bindings/Mode";
 import type { MimoExportDecision } from "./bindings/MimoExportDecision";
+import { umikFile } from "../screens/connect/fixtures";
+
+describe("mock mic calibration", () => {
+  it("selects the fixture with the chosen filename, keeps old attachments and isolates instances", async () => {
+    const mock = createMockService({ tickMs: 0, results: resultsSummary });
+    const other = createMockService({ tickMs: 0 });
+    try {
+      const before = await mock.request({ method: "mic_calibration_get" });
+      const records = (await mock.request({ method: "measurement_records" })).records;
+      const count = records.reduce((total, record) => total + record.roles.length, 0);
+      expect(before).toEqual({ file: null, attached: 0, attachable: count });
+      const path = "D:\\Microphones\\my-mic.cal";
+      const chosen = await mock.request({ method: "mic_calibration_set", params: { path } });
+      expect(chosen).toEqual({ ...before, file: { ...umikFile, path, name: "my-mic.cal" } });
+      expect((await mock.request({ method: "project_info" })).dirty).toBe(true);
+      expect((await mock.request({ method: "results" })).calibration?.stale).toBe(false);
+      chosen.file!.notes.push("do not mutate the fixture");
+      await mock.request({ method: "project_save", params: { path: "/saved.secs" } });
+      expect(await mock.request({ method: "mic_calibration_attach" })).toMatchObject({ attached: count, attachable: 0 });
+      expect((await mock.request({ method: "results" })).calibration).toMatchObject({ stale: true, stale_reason: "measurements" });
+      expect((await mock.request({ method: "project_info" })).dirty).toBe(false);
+      expect(await mock.request({ method: "mic_calibration_clear" })).toEqual({ file: null, attached: count, attachable: 0 });
+      expect((await mock.request({ method: "project_info" })).dirty).toBe(true);
+      const replacement = await mock.request({ method: "mic_calibration_set", params: { path: "/replacement.txt" } });
+      expect(replacement).toMatchObject({ file: { name: "replacement.txt", notes: umikFile.notes }, attached: count, attachable: 0 });
+      expect(await other.request({ method: "mic_calibration_get" })).toEqual(before);
+      expect(umikFile.notes).not.toContain("do not mutate the fixture");
+    } finally { mock.dispose(); other.dispose(); }
+  });
+
+  it("supports the new dialog kind, queued cancellation and the existing target kind", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      expect(await mock.request({ method: "dialog_open_file", params: { kind: "mic_calibration" } })).toBe("C:/Users/demo/Documents/UMIK-1/7000001_90deg.txt");
+      mock.queueDialog("dialog_open_file", null);
+      expect(await mock.request({ method: "dialog_open_file", params: { kind: "mic_calibration" } })).toBeNull();
+      expect(await mock.request({ method: "dialog_open_file", params: { kind: "target" } })).toBe("C:/Users/demo/Documents/SECS/target.json");
+    } finally { mock.dispose(); }
+  });
+
+  it("requires an open project and a selected file, and refuses edits while measuring", async () => {
+    const closed = createMockService({ tickMs: 0, project: null });
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      for (const request of [{ method: "mic_calibration_get" }, { method: "mic_calibration_set", params: { path: "/mic.txt" } }, { method: "mic_calibration_clear" }, { method: "mic_calibration_attach" }] as const) {
+        await expect(closed.request(request)).rejects.toMatchObject({ error: { code: "project_not_open" } });
+      }
+      await expect(mock.request({ method: "mic_calibration_attach" })).rejects.toMatchObject({ error: { code: "measurement_input", params: { reason: "mic_calibration", issue: "no_file" } } });
+      await mock.request({ method: "measure_position", params: { position: 1 } });
+      for (const request of [{ method: "mic_calibration_set", params: { path: "/mic.txt" } }, { method: "mic_calibration_clear" }, { method: "mic_calibration_attach" }] as const) {
+        await expect(mock.request(request)).rejects.toMatchObject({ error: { code: "job_busy" } });
+      }
+      expect((await mock.request({ method: "mic_calibration_get" })).file).toBeNull();
+    } finally { closed.dispose(); mock.dispose(); }
+  });
+});
 
 describe("mock MIMO export decisions", () => {
   it.each([

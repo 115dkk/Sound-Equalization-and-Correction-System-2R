@@ -26,6 +26,8 @@ import type { ExportFolderResult } from "./bindings/ExportFolderResult";
 import type { ResultCurvesResult } from "./bindings/ResultCurvesResult";
 import type { ResultLinesResult } from "./bindings/ResultLinesResult";
 import type { Notice } from "./bindings/Notice";
+import type { MicCalibrationStatus } from "./bindings/MicCalibrationStatus";
+import { umikFile } from "../screens/connect/fixtures";
 import type { ExportKind } from "./bindings/ExportKind";
 import { CALIBRATION_LIMITS as LIMITS, RECENT_PROJECTS_MAX } from "./bindings/rules";
 import { recorded } from "./recorded";
@@ -105,6 +107,22 @@ export function createMockService(options: MockOptions = {}): MockService {
   let levels: LevelsResult = { levels: {}, spl: {} };
   let exportFolder: ExportFolderResult = { folder: "C:/Users/demo/Documents/SECS_export", stored: false };
   let records: PositionRecord[] = (project?.positions ?? []).map((position) => ({ position, roles: config.speakers.map((s) => s.role), done: true, sources: Object.fromEntries(config.speakers.map((s) => [s.role, "measured"])) }));
+  let micCalFile: MicCalibrationStatus["file"] = null;
+  let micCalAttached = new Set<string>();
+  const micCalKey = (position: number, role: string) => `${position}:${role}`;
+  const micCalStatus = (): MicCalibrationStatus => {
+    needProject();
+    let attached = 0; let attachable = 0;
+    for (const record of records) for (const role of record.roles) {
+      if (micCalAttached.has(micCalKey(record.position, role))) attached++;
+      else if (record.sources[role] === "measured") attachable++;
+    }
+    return { file: micCalFile, attached, attachable };
+  };
+  const editMicCal = () => {
+    needProject();
+    if ([...jobs.values()].some((job) => job.kind === "measure")) throw new MockError(ipcError("job_busy", "a measurement is running"));
+  };
   let playing: { role: string; master: number; ticks: number } | null = null;
   let subsOnly = false;
   let calibrationPositions: number | null = results.calibration && !results.calibration.cached ? project?.positions.length ?? 0 : null;
@@ -138,13 +156,13 @@ export function createMockService(options: MockOptions = {}): MockService {
     for (const record of records) record.done = measureConfig.roles.length > 0 && measureConfig.roles.every((role) => record.roles.includes(role));
   };
   syncMeasure();
-  const state = () => clone({ project: needProject(), results, config, dsp, layout, settings, target, measureConfig, levels, exportFolder, records, subsOnly, calibrationPositions });
+  const state = () => clone({ project: needProject(), results, config, dsp, layout, settings, target, measureConfig, levels, exportFolder, records, micCalFile, micCalAttached, subsOnly, calibrationPositions });
   type State = ReturnType<typeof state>;
   const undos = new Map<string, State>();
   const savedProjects = new Map<string, State>();
   const savedTargets = new Map<string, typeof target>();
   const restore = (s: State) => {
-    ({ project, results, config, dsp, layout, settings, target, measureConfig, levels, exportFolder, records, subsOnly, calibrationPositions } = clone(s));
+    ({ project, results, config, dsp, layout, settings, target, measureConfig, levels, exportFolder, records, micCalFile, micCalAttached, subsOnly, calibrationPositions } = clone(s));
   };
   const remember = () => {
     const token = `undo-${nextUndo++}`;
@@ -156,7 +174,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     if (!records.length) return null;
     if (!confirm) throw new MockError(ipcError("confirm_required", "this edit clears measurements"));
     const token = remember();
-    records = [];
+    records = []; micCalAttached.clear();
     project = { ...needProject(), positions: [] };
     dirty("measurements");
     return token;
@@ -168,11 +186,14 @@ export function createMockService(options: MockOptions = {}): MockService {
     dirty();
     return config;
   };
-  const recordPosition = (position: number, roles = measureConfig.roles, source?: string) => {
+  const recordPosition = (position: number, roles = measureConfig.roles, source?: string, calibrated = false) => {
     const old = records.find((r) => r.position === position);
     const sources = { ...old?.sources };
     for (const role of roles) {
       sources[role] = source ? basename(source) : "measured";
+      const key = micCalKey(position, role);
+      if (calibrated) micCalAttached.add(key);
+      else micCalAttached.delete(key);
     }
     const merged = [...new Set([...(old?.roles ?? []), ...roles])];
     const record = { position, roles: merged, sources, done: measureConfig.roles.every((role) => merged.includes(role)) };
@@ -189,6 +210,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     measureConfig = clone(fx.measureConfig); levels = { levels: {}, spl: {} };
     results = clone(fx.noResults); exportFolder = { folder: "C:/Users/demo/Documents/SECS_export", stored: false };
     records = info.positions.map((position) => ({ position, roles: config.speakers.map((s) => s.role), sources: Object.fromEntries(config.speakers.map((s) => [s.role, "measured"])), done: true }));
+    micCalFile = null; micCalAttached.clear();
     undos.clear(); subsOnly = false; calibrationPositions = null; syncMeasure();
   };
   const dialog = (method: DialogMethod, fallback: string): string | null => {
@@ -470,6 +492,30 @@ export function createMockService(options: MockOptions = {}): MockService {
         project = { ...needProject(), dirty: true };
         return { method: req.method, data: measureConfig };
       }
+      case "mic_calibration_get": return { method: req.method, data: micCalStatus() };
+      case "mic_calibration_set":
+        editMicCal();
+        micCalFile = { ...clone(umikFile), name: basename(req.params.path), path: req.params.path };
+        project = { ...needProject(), dirty: true };
+        return { method: req.method, data: micCalStatus() };
+      case "mic_calibration_clear":
+        editMicCal(); micCalFile = null;
+        project = { ...needProject(), dirty: true };
+        return { method: req.method, data: micCalStatus() };
+      case "mic_calibration_attach": {
+        editMicCal();
+        if (!micCalFile) throw new MockError(ipcError("measurement_input", "no microphone calibration file is selected", { reason: "mic_calibration", issue: "no_file", file: "" }));
+        const changed = micCalStatus().attachable > 0;
+        for (const record of records) for (const role of record.roles) {
+          if (record.sources[role] === "measured") micCalAttached.add(micCalKey(record.position, role));
+        }
+        if (changed) results = {
+          ...results,
+          calibration: results.calibration ? { ...results.calibration, stale: true, stale_reason: "measurements" } : null,
+          mimo: results.mimo ? { ...results.mimo, stale: true } : null,
+        };
+        return { method: req.method, data: micCalStatus() };
+      }
       case "measurement_records": {
         needProject();
         const positions = [...new Set([...Array.from({ length: layout.count }, (_, i) => i + 1), ...records.map((r) => r.position)])].sort((a, b) => a - b);
@@ -509,6 +555,7 @@ export function createMockService(options: MockOptions = {}): MockService {
         return { method: req.method, data: clone(rew) };
       case "position_clear": {
         needProject(); const token = remember();
+        for (const role of records.find((r) => r.position === req.params.position)?.roles ?? []) micCalAttached.delete(micCalKey(req.params.position, role));
         records = records.filter((r) => r.position !== req.params.position);
         project = { ...needProject(), positions: records.map((r) => r.position) }; dirty("measurements");
         return { method: req.method, data: { token, project: needProject() } };
@@ -607,7 +654,8 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "measure_position": {
         needProject(); const position = req.params.position; const roles = [...measureConfig.roles];
         if (!Number.isInteger(position) || position < 1 || position > layout.count) invalid("position is outside the arrangement");
-        return { method: req.method, data: start("measure", () => { recordPosition(position, roles); return { kind: "measurement", data: needProject() }; }) };
+        const calibrated = measureConfig.method === "native" && micCalFile !== null;
+        return { method: req.method, data: start("measure", () => { recordPosition(position, roles, undefined, calibrated); return { kind: "measurement", data: needProject() }; }) };
       }
       case "mdat_scan":
         return { method: req.method, data: {
@@ -722,7 +770,7 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "dialog_pick_mdat": return { method: req.method, data: dialog(req.method, "C:/Users/demo/Documents/SECS/measurements.mdat") };
       case "dialog_pick_folder": return { method: req.method, data: dialog(req.method, req.params.start || exportFolder.folder) };
       case "dialog_save_file": return { method: req.method, data: dialog(req.method, `C:/Users/demo/Documents/SECS/${req.params.suggested || "target.json"}`) };
-      case "dialog_open_file": return { method: req.method, data: dialog(req.method, "C:/Users/demo/Documents/SECS/target.json") };
+      case "dialog_open_file": return { method: req.method, data: dialog(req.method, req.params.kind === "mic_calibration" ? "C:/Users/demo/Documents/UMIK-1/7000001_90deg.txt" : "C:/Users/demo/Documents/SECS/target.json") };
       case "open_folder": return { method: req.method, data: null };
       case "level_monitor_start": return { method: req.method, data: start("level_monitor", () => ({ kind: "stopped" })) };
       case "level_monitor_stop": return { method: req.method, data: stopMonitor("level_monitor") };

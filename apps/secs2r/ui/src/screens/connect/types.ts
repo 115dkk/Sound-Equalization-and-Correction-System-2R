@@ -2,10 +2,12 @@
 // (upstream steps 1 and 3). The screen draws `ConnectView` and reports what
 // the user did through `ConnectActions`; P33 wires both to the service.
 import type { ConfigResult } from "../../ipc/bindings/ConfigResult";
+import type { IpcError } from "../../ipc/bindings/IpcError";
 import type { JobEvent } from "../../ipc/bindings/JobEvent";
 import type { MeasureConfigResult } from "../../ipc/bindings/MeasureConfigResult";
 import type { MeasureDevice } from "../../ipc/bindings/MeasureDevice";
 import type { MeasureMethodsResult } from "../../ipc/bindings/MeasureMethodsResult";
+import type { MicCalibrationStatus } from "../../ipc/bindings/MicCalibrationStatus";
 
 /** The measurement path: the service's three methods, or mdat import only (skips this step). */
 export type ConnectPath = "native" | "rew" | "mock" | "mdat";
@@ -43,6 +45,20 @@ export type RewDetails = {
   settings?: { sample_rate: number; sweep_length: string; level_dbfs: number | null } | null | undefined;
 };
 
+/**
+ * The project's mic calibration file for native sweeps (ADR 0015). Each sweep
+ * measured after the file is chosen carries it, and the calculation removes
+ * the curve; measurements keep the curve they carry when the file changes.
+ */
+export type MicCalibrationView = {
+  /** mic_calibration_get; null before the first answer. */
+  status: MicCalibrationStatus | null;
+  /** What runs now: choosing a file (the dialog, then reading it), clearing it, or attaching it to sweeps without a curve. */
+  busy: "pick" | "clear" | "attach" | null;
+  /** The last failure of those three until the next attempt; null = none. */
+  error: IpcError | null;
+};
+
 /** Why the last REW launch did not end with REW answering (service gap: rew_launch does not tell these apart yet). */
 export type RewProblem = "exe_not_found" | "cannot_launch" | "timed_out" | "launch_failed";
 
@@ -69,6 +85,7 @@ export type ConnectView = {
     switchingDriver: boolean;
     details: RewDetails;
   };
+  micCalibration: MicCalibrationView;
   /** Stored level per role in dBFS (`extra['levels']`), pre-filling the rows (service gap: no method returns them). */
   levels: Readonly<Record<string, number>>;
   level: {
@@ -103,6 +120,12 @@ export type ConnectActions = {
   setOutputDevice: (id: string) => void;
   /** measure_configure { share_mode } (native only, in the device details). */
   setShareMode: (mode: "auto" | "exclusive" | "shared") => void;
+  /** dialog_open_file { kind: "mic_calibration" }, then mic_calibration_set { path }; a cancelled dialog changes nothing. */
+  pickMicCalibration: () => void;
+  /** mic_calibration_clear: the project no longer has a file; measurements keep the curves they carry. */
+  clearMicCalibration: () => void;
+  /** mic_calibration_attach: the project's file goes to the sweeps measured without a mic curve. */
+  attachMicCalibration: () => void;
   /** level_play { role, master_dbfs } (level_monitor_start first when the monitor is off); subs play 50 Hz, 2.5 s. */
   playLevel: (role: string) => void;
   /** Stops the playing channel and the queue (service gap: no early stop for one burst; level_monitor_stop and start again). */
