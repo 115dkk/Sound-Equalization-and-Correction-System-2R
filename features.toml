@@ -970,6 +970,23 @@ tests = ["secs-export::export_items_and_source_environments_match_oracle", "secs
 upstream = "calibration.py export_before_after_mdat"
 
 [[feature]]
+id = "export.rew_mdat_scope"
+kind = "export"
+milestone = "M5"
+status = "implemented"
+tests = [
+  "secs-export::rew_mdat_scopes_choose_items_and_names",
+  "secs-export::all_scope_takes_stored_originals_and_strips_curves_from_results",
+  "secs-export::measurement_scope_needs_measurements_not_a_result",
+  "secs-service::measurement_mdat_exports_every_position_without_a_result",
+  "secs-service::rew_mdat_scope_names_say_what_the_file_holds",
+  "secs-service::exported_measurements_keep_their_curves_and_results_drop_them",
+  "secs-service::mdat_scope_is_refused_for_other_kinds",
+]
+upstream = "calibration.py export_before_after_mdat (deviation F19)"
+note = "new: the REW mdat carries all (default), the original measurements of every position without a result, or the computed responses; file names say which. Original items use the stored WAV and its curves, computed items carry no curves (fixes the 0.29.0 double removal)."
+
+[[feature]]
 id = "export.staged_mdat"
 kind = "export"
 milestone = "M4"
@@ -1139,8 +1156,8 @@ id = "ipc.export"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration"]
-note = "Export IPC covers CamillaDSP, mdat, filter text, and Equalizer APO, including typed export_scope reasons."
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-types::mdat_scope_is_optional_on_the_wire", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration"]
+note = "Export IPC covers CamillaDSP, mdat, filter text, and Equalizer APO, including typed export_scope reasons and the REW mdat's optional mdat_scope."
 
 [[feature]]
 id = "ipc.job_cancel"

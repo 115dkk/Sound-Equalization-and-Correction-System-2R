@@ -31,7 +31,7 @@ import { umikFile } from "../screens/connect/fixtures";
 import type { ExportKind } from "./bindings/ExportKind";
 import { CALIBRATION_LIMITS as LIMITS, RECENT_PROJECTS_MAX } from "./bindings/rules";
 import { recorded } from "./recorded";
-import { filterModeName, MIMO_MIN_POSITIONS } from "../screens/export/types";
+import { filterModeName, mdatFileName, MIMO_MIN_POSITIONS } from "../screens/export/types";
 
 export type Method = Request["method"];
 type DialogMethod = Extract<Method, `dialog_${string}`>;
@@ -622,9 +622,20 @@ export function createMockService(options: MockOptions = {}): MockService {
           return { kind: "mimo" };
         }) };
       case "export": {
-        if (needProject().tutorial) throw new MockError(ipcError("tutorial_blocked"));
-        if (!results.calibration) throw new MockError(ipcError("engine_input", "no calibration result to export"));
+        const project = needProject();
+        if (project.tutorial) throw new MockError(ipcError("tutorial_blocked"));
         const kind = req.params.kind;
+        if (req.params.mdat_scope !== undefined && kind !== "before_after_mdat") {
+          throw new MockError(ipcError("invalid_request", "mdat_scope is only valid for REW mdat", { reason: "mdat_scope" }));
+        }
+        const scope = req.params.mdat_scope ?? "all";
+        if (kind === "before_after_mdat" && scope === "measurements") {
+          if (project.positions.length === 0) throw new MockError(ipcError("engine_input", "no measurements to export", { reason: "no_measurements" }));
+          const folder = req.params.folder || `${exportFolder.folder.replace(/[\\/]+$/, "")}/SECS_mdat_measurements_${stamp()}`;
+          const files = [`${folder}/${mdatFileName(scope, settings)}`];
+          return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: false } })) };
+        }
+        if (!results.calibration) throw new MockError(ipcError("engine_input", "no calibration result to export"));
         if ((kind === "staged_mdat" || kind === "before_after_mdat") && results.calibration.cached && results.calibration.stale) {
           throw new MockError(ipcError("export_scope", `${kind} requires a current calibration result`, { reason: "stale_cache" }));
         }
@@ -649,7 +660,7 @@ export function createMockService(options: MockOptions = {}): MockService {
           return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: calibration.stale } })) };
         }
         return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, stale: calibration.stale,
-          files: kind === "camilla_dsp" ? [`${folder}/secs_camilladsp.yml`, `${folder}/fir_L.wav`] : [`${folder}/${kind}.mdat`] } })) };
+          files: kind === "camilla_dsp" ? [`${folder}/secs_camilladsp.yml`, `${folder}/fir_L.wav`] : [kind === "before_after_mdat" ? `${folder}/${mdatFileName(scope, calibration)}` : `${folder}/${kind}.mdat`] } })) };
       }
       case "measure_position": {
         needProject(); const position = req.params.position; const roles = [...measureConfig.roles];

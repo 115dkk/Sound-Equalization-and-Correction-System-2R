@@ -339,3 +339,32 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/*
+ * The REW mdat chooses what it carries. The choice, the folder and the file's
+ * name run under the row's name in that order (the folder line leaves its
+ * fixed second row to follow the choice); the label sits beside the segments
+ * and a reason, when the choice is held, under them.
+ */
+.export-item--scoped .export-item__where {
+  grid-row: auto;
+}
+
+.export-item__scope {
+  grid-column: 1 / -1;
+}
+
+.export-item__scope > .ui-segmented-field {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-1-5) var(--space-3);
+}
+
+.export-item__scope .ui-field__hint {
+  grid-column: 2;
+}
+
+.export-item--scoped .export-item__file {
+  margin-top: calc(var(--space-1) * -1);
+}

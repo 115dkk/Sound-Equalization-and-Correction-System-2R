@@ -21,7 +21,7 @@ use secs_project::MeasurementResult;
 use secs_types::calibration::CalibrationSettings;
 use secs_types::ipc::{
     CalibrateParams, ExportKind, ExportParams, JobCancelParams, JobId, JobResult, JobStatus,
-    MimoParams, Response,
+    MdatScope, MimoParams, Response,
 };
 
 static TEMP: AtomicU64 = AtomicU64::new(0);
@@ -288,6 +288,7 @@ fn tutorial_projects_block_save_without_writing() {
         Request::Export(ExportParams {
             kind: ExportKind::CamillaDsp,
             folder: export_folder.to_string_lossy().into_owned(),
+            mdat_scope: None,
         }),
         Arc::new(NoEvents),
     ) else {
@@ -302,6 +303,29 @@ fn tutorial_projects_block_save_without_writing() {
 
 fn write_case(root: &Path, name: &str) -> (PathBuf, CalibrationSettings) {
     case_project::write(root, name)
+}
+
+fn stored_titles_and_rates(path: &Path) -> Vec<(u32, String, u32)> {
+    let mut store = secs_project::MeasurementStore::open(path).unwrap();
+    let mut records = store.records();
+    records.sort_by_key(|record| record.pos);
+    let plan_roles = secs_project::plan_from_project(store.project(), std::iter::empty()).roles;
+    let mut stored = Vec::new();
+    for record in records {
+        let position = u32::try_from(record.pos).unwrap();
+        let mut roles = record.ir.keys().cloned().collect::<Vec<_>>();
+        roles.sort_by_key(|role| {
+            plan_roles
+                .iter()
+                .position(|planned| planned == role)
+                .unwrap_or(plan_roles.len())
+        });
+        for role in roles {
+            let (_, sample_rate) = store.ir_of(&role, record.pos).unwrap();
+            stored.push((position, format!("{role}_P{position}"), sample_rate));
+        }
+    }
+    stored
 }
 
 fn open(service: &Service, path: &Path) {
@@ -388,11 +412,22 @@ fn export_and_wait(
     folder: &Path,
     events: Arc<Events>,
 ) -> secs_types::ipc::ExportResult {
+    export_scope_and_wait(service, kind, folder, None, events)
+}
+
+fn export_scope_and_wait(
+    service: &Service,
+    kind: ExportKind,
+    folder: &Path,
+    mdat_scope: Option<secs_types::ipc::MdatScope>,
+    events: Arc<Events>,
+) -> secs_types::ipc::ExportResult {
     let Response::Export(started) = call_ok(
         service,
         Request::Export(ExportParams {
             kind,
             folder: folder.to_string_lossy().into_owned(),
+            mdat_scope,
         }),
         events.clone(),
     ) else {
@@ -581,6 +616,7 @@ fn resampled_calibration_and_cached_mdat_export_preserve_original_ir() {
         Request::Export(ExportParams {
             kind: ExportKind::StagedMdat,
             folder: root.join("cached-mdat").to_string_lossy().into_owned(),
+            mdat_scope: None,
         }),
         Arc::new(NoEvents),
     ) else {
@@ -591,6 +627,28 @@ fn resampled_calibration_and_cached_mdat_export_preserve_original_ir() {
         error.params.get("reason").map(String::as_str),
         Some("stale_cache")
     );
+    let originals = export_scope_and_wait(
+        &reopened,
+        ExportKind::BeforeAfterMdat,
+        &root.join("cached-originals"),
+        Some(secs_types::ipc::MdatScope::Measurements),
+        Arc::new(Events::default()),
+    );
+    assert!(!originals.stale);
+    let loaded = secs_mdat::load_mdat_project(
+        &fs::read(&originals.files[0]).unwrap(),
+        &secs_jos::Limits::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        loaded
+            .measurements
+            .iter()
+            .find(|measurement| measurement.title == "L_P1")
+            .unwrap()
+            .sample_rate,
+        96_000
+    );
     assert_eq!(fs::read(&ir_path).unwrap(), original);
     assert_eq!(secs_project::read_wav_float32(&original).unwrap().1, 96_000);
     let saved_project: serde_json::Value =
@@ -598,6 +656,341 @@ fn resampled_calibration_and_cached_mdat_export_preserve_original_ir() {
     assert_eq!(
         saved_project["measurements"],
         original_project["measurements"]
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn measurement_mdat_exports_every_position_without_a_result() {
+    let root = temp_root("measurement-mdat");
+    fs::create_dir_all(&root).unwrap();
+    let (path, _) = write_case(&root, "room_dba");
+    let stored = stored_titles_and_rates(&path);
+    assert!(
+        stored
+            .iter()
+            .map(|(position, _, _)| *position)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            >= 2
+    );
+    let service = deterministic_service();
+    open(&service, &path);
+    assert!(read_results(&service).calibration.is_none());
+    let base = root.join("automatic");
+    call_ok(
+        &service,
+        Request::ExportFolderSet(secs_types::ipc::ExportFolderSetParams {
+            folder: base.to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    );
+    let result = export_scope_and_wait(
+        &service,
+        ExportKind::BeforeAfterMdat,
+        Path::new(""),
+        Some(MdatScope::Measurements),
+        Arc::new(Events::default()),
+    );
+    assert!(!result.stale);
+    let folder = PathBuf::from(&result.folder);
+    assert_eq!(folder.parent(), Some(base.as_path()));
+    assert_eq!(
+        folder.file_name().and_then(|name| name.to_str()),
+        Some("SECS_mdat_measurements_20240102-030405")
+    );
+    assert_eq!(result.files.len(), 1);
+    let file = Path::new(&result.files[0]);
+    assert_eq!(
+        file.file_name().and_then(|name| name.to_str()),
+        Some("SECS 원 측정.mdat")
+    );
+    assert!(!folder.join("compute-provenance.json").exists());
+    let loaded =
+        secs_mdat::load_mdat_project(&fs::read(file).unwrap(), &secs_jos::Limits::default())
+            .unwrap();
+    assert_eq!(loaded.measurements.len(), stored.len());
+    for (measurement, (_, title, sample_rate)) in loaded.measurements.iter().zip(&stored) {
+        assert_eq!(&measurement.title, title);
+        assert_eq!(measurement.sample_rate, i64::from(*sample_rate));
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn rew_mdat_scope_names_say_what_the_file_holds() {
+    let root = temp_root("rew-mdat-scopes");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room_dba");
+    let stored = stored_titles_and_rates(&path);
+    let service = deterministic_service();
+    open(&service, &path);
+    let events = Arc::new(Events::default());
+    let calibration = start_calibration(&service, events.clone(), settings.clone());
+    finished_result(events.wait(calibration, Duration::from_secs(120)));
+
+    let all = export_scope_and_wait(
+        &service,
+        ExportKind::BeforeAfterMdat,
+        &root.join("all"),
+        Some(MdatScope::All),
+        Arc::new(Events::default()),
+    );
+    let label = settings.label();
+    let all_filename = format!("SECS 원 측정+보정 결과 {label}.mdat");
+    assert_eq!(
+        Path::new(&all.files[0])
+            .file_name()
+            .and_then(|name| name.to_str()),
+        Some(all_filename.as_str())
+    );
+    let all_loaded = secs_mdat::load_mdat_project(
+        &fs::read(&all.files[0]).unwrap(),
+        &secs_jos::Limits::default(),
+    )
+    .unwrap();
+    let direct = secs_engine::test_support::production_case("room_dba", 1);
+    let run = secs_export::ExportRun {
+        design: &direct.design,
+        settings: &settings,
+    };
+    let main_position = direct.design.replay.config().main_position;
+    let before_after =
+        secs_export::rew_mdat_items(Some(&run), MdatScope::All, &[], None, None).unwrap();
+    assert_eq!(
+        all_loaded.measurements[..before_after.len()]
+            .iter()
+            .map(|measurement| measurement.title.as_str())
+            .collect::<Vec<_>>(),
+        before_after
+            .iter()
+            .map(|item| item.title.as_str())
+            .collect::<Vec<_>>()
+    );
+    let other_titles = stored
+        .iter()
+        .filter(|(position, _, _)| *position != main_position)
+        .map(|(_, title, _)| title.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        all_loaded.measurements[before_after.len()..]
+            .iter()
+            .map(|measurement| measurement.title.as_str())
+            .collect::<Vec<_>>(),
+        other_titles
+    );
+
+    let results = export_scope_and_wait(
+        &service,
+        ExportKind::BeforeAfterMdat,
+        &root.join("results"),
+        Some(MdatScope::Results),
+        Arc::new(Events::default()),
+    );
+    let results_filename = format!("SECS 보정 결과 {label}.mdat");
+    assert_eq!(
+        Path::new(&results.files[0])
+            .file_name()
+            .and_then(|name| name.to_str()),
+        Some(results_filename.as_str())
+    );
+    let results_loaded = secs_mdat::load_mdat_project(
+        &fs::read(&results.files[0]).unwrap(),
+        &secs_jos::Limits::default(),
+    )
+    .unwrap();
+    let expected_results =
+        secs_export::rew_mdat_items(Some(&run), MdatScope::Results, &[], None, None).unwrap();
+    assert_eq!(
+        results_loaded
+            .measurements
+            .iter()
+            .map(|measurement| measurement.title.as_str())
+            .collect::<Vec<_>>(),
+        expected_results
+            .iter()
+            .map(|item| item.title.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert!(results_loaded.measurements.iter().all(|measurement| {
+        !measurement.title.contains("_1 ")
+            && (measurement.title.contains("_2 ") || measurement.title.contains("_3 "))
+    }));
+
+    let default = export_scope_and_wait(
+        &service,
+        ExportKind::BeforeAfterMdat,
+        &root.join("default"),
+        None,
+        Arc::new(Events::default()),
+    );
+    assert_eq!(
+        fs::read(&default.files[0]).unwrap(),
+        fs::read(&all.files[0]).unwrap()
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn exported_measurements_keep_their_curves_and_results_drop_them() {
+    use secs_mdat::{CalInfo, SourceInfo};
+
+    let root = temp_root("rew-mdat-curves");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room_dba");
+    let direct = secs_engine::test_support::production_case("room_dba", 1);
+    let position = direct.design.replay.config().main_position;
+    let role = direct.design.chain.mains[0].role.clone();
+    let ir_path = secs_project::ir_file(&path, &role, i64::from(position));
+    let (raw, _) = secs_project::read_wav_float32(&fs::read(&ir_path).unwrap()).unwrap();
+    secs_project::save_source(
+        &ir_path,
+        Some(&SourceInfo {
+            strings: vec![("outputName".into(), "calibrated microphone".into())],
+            cal: vec![(
+                "meterCal".into(),
+                CalInfo {
+                    inverse_c_selected: false,
+                    source_name: "mic.cal".into(),
+                    source_path: "mic.cal".into(),
+                    freq: Some(vec![20.0, 20_000.0]),
+                    gain: Some(vec![6.0, 6.0]),
+                    phase: None,
+                    boxed: Vec::new(),
+                },
+            )],
+            ..SourceInfo::default()
+        }),
+    )
+    .unwrap();
+    let service = deterministic_service();
+    open(&service, &path);
+    let events = Arc::new(Events::default());
+    let calibration = start_calibration(&service, events.clone(), settings);
+    finished_result(events.wait(calibration, Duration::from_secs(120)));
+    let export = export_scope_and_wait(
+        &service,
+        ExportKind::BeforeAfterMdat,
+        &root.join("all"),
+        Some(MdatScope::All),
+        Arc::new(Events::default()),
+    );
+    let loaded = secs_mdat::load_mdat_project(
+        &fs::read(&export.files[0]).unwrap(),
+        &secs_jos::Limits::default(),
+    )
+    .unwrap();
+    let measured = loaded
+        .measurements
+        .iter()
+        .find(|measurement| measurement.title.contains(&format!("_{role}_1 ")))
+        .unwrap();
+    assert!(
+        measured
+            .source_info
+            .cal
+            .iter()
+            .any(|(name, _)| name == "meterCal")
+    );
+    let (exported, sample_rate) = loaded.ir_provider.get_ir(&measured.uuid).unwrap();
+    assert_eq!(sample_rate, 48_000);
+    let expected = raw
+        .iter()
+        .map(|&sample| f64::from((f64::from(sample) * 0.01) as f32 / 0.01_f32))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        exported
+            .iter()
+            .map(|sample| sample.to_bits())
+            .collect::<Vec<_>>(),
+        expected
+            .iter()
+            .map(|sample| sample.to_bits())
+            .collect::<Vec<_>>()
+    );
+    let computed = loaded
+        .measurements
+        .iter()
+        .find(|measurement| measurement.title.contains(&format!("_{role}_2 ")))
+        .unwrap();
+    let meter = computed
+        .source_info
+        .cal
+        .iter()
+        .find(|(name, _)| name == "meterCal")
+        .map(|(_, meter)| meter)
+        .unwrap();
+    assert!(meter.source_name.is_empty());
+    assert!(meter.source_path.is_empty());
+    assert!(meter.freq.is_none() && meter.gain.is_none() && meter.phase.is_none());
+    assert_eq!(
+        computed
+            .source_info
+            .strings
+            .iter()
+            .find(|(name, _)| name == "outputName")
+            .map(|(_, value)| value.as_str()),
+        Some("calibrated microphone")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn mdat_scope_is_refused_for_other_kinds() {
+    let root = temp_root("mdat-scope-invalid");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("room.secs");
+    let service = deterministic_service();
+    call_ok(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: path.to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    for kind in [
+        ExportKind::CamillaDsp,
+        ExportKind::StagedMdat,
+        ExportKind::FilterText,
+        ExportKind::EqualizerApo,
+    ] {
+        let Envelope::Err(error) = service.call(
+            Request::Export(ExportParams {
+                kind,
+                folder: root
+                    .join(format!("{kind:?}"))
+                    .to_string_lossy()
+                    .into_owned(),
+                mdat_scope: Some(MdatScope::All),
+            }),
+            Arc::new(NoEvents),
+        ) else {
+            panic!("{kind:?} must refuse mdat_scope");
+        };
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(
+            error.params.get("reason").map(String::as_str),
+            Some("mdat_scope")
+        );
+    }
+    let Envelope::Err(error) = service.call(
+        Request::Export(ExportParams {
+            kind: ExportKind::BeforeAfterMdat,
+            folder: root.join("empty").to_string_lossy().into_owned(),
+            mdat_scope: Some(MdatScope::Measurements),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("an empty project must refuse a measurement-only export");
+    };
+    assert_eq!(error.code, ErrorCode::EngineInput);
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("no_measurements")
     );
     fs::remove_dir_all(root).unwrap();
 }
@@ -636,6 +1029,7 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
         Request::Export(ExportParams {
             kind: ExportKind::FilterText,
             folder: blocked_folder.to_string_lossy().into_owned(),
+            mdat_scope: None,
         }),
         Arc::new(NoEvents),
     ) else {
@@ -710,6 +1104,7 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
             Request::Export(ExportParams {
                 kind,
                 folder: folder.to_string_lossy().into_owned(),
+                mdat_scope: None,
             }),
             events.clone(),
         ) else {
@@ -1217,6 +1612,7 @@ fn stale_calibration_exports_with_flag_and_cache_survives_reopen() {
         Request::Export(ExportParams {
             kind: ExportKind::StagedMdat,
             folder: root.join("stale-export").to_string_lossy().into_owned(),
+            mdat_scope: None,
         }),
         Arc::new(NoEvents),
     ) else {
@@ -1445,6 +1841,7 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
         Request::Export(ExportParams {
             kind: ExportKind::FilterText,
             folder: blocked_folder.to_string_lossy().into_owned(),
+            mdat_scope: None,
         }),
         Arc::new(NoEvents),
     ) else {
@@ -1591,6 +1988,7 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
                 Request::Export(ExportParams {
                     kind: ExportKind::CamillaDsp,
                     folder: String::new(),
+                    mdat_scope: None,
                 }),
                 events.clone(),
             ) else {
@@ -2247,6 +2645,7 @@ fn reopened_stale_cache_blocks_mdat_but_allows_camilla() {
         Request::Export(ExportParams {
             kind: ExportKind::StagedMdat,
             folder: root.join("blocked-mdat").to_string_lossy().into_owned(),
+            mdat_scope: None,
         }),
         Arc::new(NoEvents),
     ) else {
@@ -2288,6 +2687,7 @@ fn cached_mdat_export_rejects_project_replacement_before_writing() {
         Request::Export(ExportParams {
             kind: ExportKind::StagedMdat,
             folder: folder.to_string_lossy().into_owned(),
+            mdat_scope: None,
         }),
         events.clone(),
     ) else {

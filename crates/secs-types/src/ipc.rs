@@ -1045,7 +1045,8 @@ pub enum ExportKind {
     CamillaDsp,
     /// REW mdat containing the upstream staged responses.
     StagedMdat,
-    /// REW mdat containing before-and-after responses.
+    /// REW mdat containing the original measurements, the correction results
+    /// or both ([`ExportParams::mdat_scope`]; upstream's before-and-after mdat).
     BeforeAfterMdat,
     /// Per-channel filter values as text plus FIR WAV files (upstream
     /// `calibration.export_filter_text`). Results with RC only.
@@ -1116,6 +1117,24 @@ pub fn export_block(
         _ => filter_export_block(kind, has_subs, has_mimo),
     }
 }
+/// What the REW mdat export ([`ExportKind::BeforeAfterMdat`]) carries
+/// (docs/DEVIATIONS.md F19). The file name says which: `원 측정` for the
+/// measurements, `보정 결과` for the computed responses.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum MdatScope {
+    /// The main position's before-and-after responses (upstream's file) and
+    /// the original measurements of the other positions.
+    #[default]
+    All,
+    /// The original measurements of every position, as stored; needs no
+    /// correction result.
+    Measurements,
+    /// The computed responses at the main position only.
+    Results,
+}
+
 /// The export bundle and destination folder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -1125,6 +1144,11 @@ pub struct ExportParams {
     /// Destination folder path. An empty path uses the project's export folder
     /// and applies the upstream timestamped subfolder convention.
     pub folder: String,
+    /// What the REW mdat carries; absent means [`MdatScope::All`]. Only
+    /// [`ExportKind::BeforeAfterMdat`] takes it; other kinds refuse it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mdat_scope: Option<MdatScope>,
 }
 /// Files written by a completed export job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -2108,6 +2132,7 @@ mod tests {
             Request::Export(ExportParams {
                 kind: ExportKind::CamillaDsp,
                 folder: ".".into(),
+                mdat_scope: None,
             }),
             Request::JobCancel(JobCancelParams { job: JobId(1) }),
             Request::Jobs,
@@ -2259,6 +2284,25 @@ mod tests {
             let parsed: Request = serde_json::from_value(wire).unwrap();
             assert_eq!(parsed.method(), request.method());
         }
+    }
+    #[test]
+    fn mdat_scope_is_optional_on_the_wire() {
+        let old: ExportParams =
+            serde_json::from_str(r#"{"kind":"before_after_mdat","folder":""}"#).unwrap();
+        assert_eq!(old.mdat_scope, None);
+        assert_eq!(old.mdat_scope.unwrap_or_default(), MdatScope::All);
+        let wire = serde_json::to_value(&old).unwrap();
+        assert!(wire.get("mdat_scope").is_none());
+        let scoped = ExportParams {
+            mdat_scope: Some(MdatScope::Measurements),
+            ..old
+        };
+        let wire = serde_json::to_value(&scoped).unwrap();
+        assert_eq!(wire["mdat_scope"], "measurements");
+        assert_eq!(
+            serde_json::from_value::<ExportParams>(wire).unwrap(),
+            scoped
+        );
     }
     #[test]
     fn envelope_wire_shape() {

@@ -16,28 +16,97 @@ impl Service {
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
         let compute_key = crate::compute::ComputeIdentity::from(&self.acceleration().status);
-        let session = lock(&self.session);
-        let open = session.require().map_err(IpcError::from)?;
+        let mut session = lock(&self.session);
         let ticket = session.ticket()?;
-        let project = open.store.project();
+        let open = session.require_mut().map_err(IpcError::from)?;
         if open.tutorial {
             return Err(IpcError::new(
                 ErrorCode::TutorialBlocked,
                 "tutorial sessions cannot export",
             ));
         }
+        if params.mdat_scope.is_some() && params.kind != ExportKind::BeforeAfterMdat {
+            return Err(IpcError::new(
+                ErrorCode::InvalidRequest,
+                "mdat_scope only applies to REW mdat",
+            )
+            .with_param("reason", "mdat_scope"));
+        }
+        let mdat_scope = params.mdat_scope.unwrap_or_default();
+        let now = (self.deps.clock)();
+        if params.kind == ExportKind::BeforeAfterMdat
+            && mdat_scope == secs_export::MdatScope::Measurements
+        {
+            let originals = session::original_measurements(open).map_err(IpcError::from)?;
+            if originals.is_empty() {
+                return Err(IpcError::new(
+                    ErrorCode::EngineInput,
+                    "there are no measurements to export",
+                )
+                .with_param("reason", "no_measurements"));
+            }
+            let uuid = self.deps.uuid.clone();
+            let now_ms = (self.deps.unix_ms)();
+            drop(session);
+            let destination = if params.folder.is_empty() {
+                crate::export_folder::measurement_mdat_folder(&self.resolved_export_base()?, now)
+            } else {
+                Path::new(&params.folder).to_path_buf()
+            };
+            return self.jobs.start(JobKind::Export, events, move |job| {
+                job.cancel()
+                    .check()
+                    .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
+                job.begin_commit()?;
+                let folder = destination.as_path();
+                let mut uuid = lock(&uuid);
+                let destination = secs_export::export_rew_mdat_using(
+                    None,
+                    mdat_scope,
+                    &originals,
+                    folder,
+                    None,
+                    None,
+                    None,
+                    now_ms,
+                    uuid.as_mut(),
+                )
+                .map_err(rew_export_error)?;
+                let mut paths = vec![destination];
+                if let Some(path) = write_compute_provenance(folder, None)? {
+                    paths.push(path);
+                }
+                Ok(JobResult::Export(ExportResult {
+                    files: paths
+                        .into_iter()
+                        .map(|path| path.to_string_lossy().into_owned())
+                        .collect(),
+                    folder: folder.to_string_lossy().into_owned(),
+                    stale: false,
+                }))
+            });
+        }
+        let stale = {
+            let calibration = open.results.calibration(open.store.project());
+            if calibration.is_none() {
+                return Err(IpcError::new(
+                    ErrorCode::EngineInput,
+                    "calibration must run before export",
+                ));
+            }
+            calibration.is_some_and(crate::results::RunView::stale)
+        };
+        let originals = if params.kind == ExportKind::BeforeAfterMdat
+            && mdat_scope == secs_export::MdatScope::All
+        {
+            session::original_measurements(open).map_err(IpcError::from)?
+        } else {
+            Vec::new()
+        };
+        let project = open.store.project();
         let live = open.results.live_calibration();
         let cached = open.results.cached();
         let cached_sample_rate_policy = cached.map(|cache| cache.labels.sample_rate_policy);
-        let calibration = open.results.calibration(project);
-        if calibration.is_none() {
-            return Err(IpcError::new(
-                ErrorCode::EngineInput,
-                "calibration must run before export",
-            ));
-        }
-        let stale = calibration.is_some_and(crate::results::RunView::stale);
-        let now = (self.deps.clock)();
         let description = crate::export_run::describe(&open.results, project, &compute_key, now)?;
         let mdat = matches!(
             params.kind,
@@ -239,9 +308,12 @@ impl Service {
                             now_ms,
                             uuid.as_mut(),
                         )
+                        .map_err(export_error)?
                     } else {
-                        secs_export::export_before_after_mdat_with_mimo_using(
-                            &run,
+                        secs_export::export_rew_mdat_using(
+                            Some(&run),
+                            mdat_scope,
+                            &originals,
                             folder,
                             mimo.as_ref(),
                             Some(&sources),
@@ -249,8 +321,8 @@ impl Service {
                             now_ms,
                             uuid.as_mut(),
                         )
-                    }
-                    .map_err(export_error)?;
+                        .map_err(rew_export_error)?
+                    };
                     vec![destination]
                 }
             };
@@ -288,6 +360,20 @@ fn write_compute_provenance(
             Err(error) => return Err(export_error(error)),
         }
         Ok(None)
+    }
+}
+
+fn rew_export_error(error: secs_export::ExportError) -> IpcError {
+    match error {
+        secs_export::ExportError::NoMeasurements => IpcError::new(
+            ErrorCode::EngineInput,
+            "there are no measurements to export",
+        )
+        .with_param("reason", "no_measurements"),
+        secs_export::ExportError::NoResult => {
+            IpcError::new(ErrorCode::EngineInput, "calibration must run before export")
+        }
+        error => export_error(error),
     }
 }
 

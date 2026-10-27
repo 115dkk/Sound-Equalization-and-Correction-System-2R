@@ -9,11 +9,12 @@ use std::{
 
 use secs_engine::test_support::replay_case;
 use secs_export::{
-    ExportRun, MimoKind, MimoResponses, Sources, before_after_items, before_after_items_mimo,
-    export_before_after_mdat, export_mdat, layout_lines, rc_pieces, stage_items, stage_items_mimo,
+    ExportError, ExportRun, MdatScope, MimoKind, MimoResponses, Original, Sources,
+    before_after_items, before_after_items_mimo, export_before_after_mdat, export_mdat,
+    layout_lines, rc_pieces, rew_mdat_filename, rew_mdat_items, stage_items, stage_items_mimo,
     sub_values_text,
 };
-use secs_mdat::{MdatError, MeasurementInput, SourceInfo, TEMPLATE};
+use secs_mdat::{CalInfo, MdatError, MeasurementInput, SourceInfo, TEMPLATE};
 use secs_oracle::{Fixture, number};
 use secs_types::{
     calibration::CalibrationSettings,
@@ -223,6 +224,42 @@ fn sources(value: &Value) -> Option<Sources> {
     )
 }
 
+fn original(position: u32, role: &str, sample_rate_hz: u32, source: SourceInfo) -> Original {
+    Original {
+        position,
+        role: role.into(),
+        item: MeasurementInput {
+            title: format!("{role}_P{position}"),
+            notes: format!("SECS · 위치 {position} · 원 측정"),
+            sample_rate_hz,
+            samples: vec![0.25, -0.5, 0.125],
+            start_time_s: -0.001 * f64::from(position),
+            spl_offset_db: Some(113.0 + f64::from(position)),
+            source_info: Some(source),
+            computed: false,
+        },
+    }
+}
+
+fn meter_source() -> SourceInfo {
+    SourceInfo {
+        strings: vec![("outputName".into(), "stored device".into())],
+        cal: vec![(
+            "meterCal".into(),
+            CalInfo {
+                inverse_c_selected: false,
+                source_name: "mic.cal".into(),
+                source_path: "mic.cal".into(),
+                freq: Some(vec![20.0, 20_000.0]),
+                gain: Some(vec![6.0, 6.0]),
+                phase: None,
+                boxed: Vec::new(),
+            },
+        )],
+        ..SourceInfo::default()
+    }
+}
+
 fn verify_items(name: &str, actual: &[MeasurementInput], expected: &Value) {
     let expected = expected.as_array().expect("items");
     assert_eq!(actual.len(), expected.len(), "{name} count");
@@ -395,6 +432,153 @@ fn mimo_items_match_four_oracles() {
                 .all(|item| roles.iter().any(|role| item.title.contains(role)))
         );
     }
+}
+
+#[test]
+fn rew_mdat_scopes_choose_items_and_names() {
+    let case = replay_case("room_filters");
+    let settings: CalibrationSettings = serde_json::from_value(case.settings).unwrap();
+    let run = ExportRun {
+        design: &case.design,
+        settings: &settings,
+    };
+    let position = run.design.replay.config().main_position;
+    let role = run.design.chain.mains[0].role.as_str();
+    let originals = vec![
+        original(position, role, 96_000, SourceInfo::default()),
+        original(position + 1, role, 44_100, SourceInfo::default()),
+    ];
+    let measurements =
+        rew_mdat_items(None, MdatScope::Measurements, &originals, None, None).unwrap();
+    assert_eq!(
+        measurements
+            .iter()
+            .map(|item| item.title.as_str())
+            .collect::<Vec<_>>(),
+        [
+            originals[0].item.title.as_str(),
+            originals[1].item.title.as_str()
+        ]
+    );
+
+    let upstream = before_after_items(&run, None);
+    let all = rew_mdat_items(Some(&run), MdatScope::All, &originals, None, None).unwrap();
+    assert_eq!(all.len(), upstream.len() + 1);
+    assert_eq!(
+        all[..upstream.len()]
+            .iter()
+            .map(|item| item.title.as_str())
+            .collect::<Vec<_>>(),
+        upstream
+            .iter()
+            .map(|item| item.title.as_str())
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(all.last().unwrap().title, originals[1].item.title);
+
+    let results = rew_mdat_items(Some(&run), MdatScope::Results, &[], None, None).unwrap();
+    assert!(!results.is_empty());
+    assert!(results.iter().all(|item| item.computed));
+    assert!(results.iter().all(|item| item.title.contains("_2 ")));
+
+    let label = settings.label();
+    assert_eq!(
+        rew_mdat_filename(MdatScope::All, &label),
+        format!("SECS 원 측정+보정 결과 {label}.mdat")
+    );
+    assert_eq!(
+        rew_mdat_filename(MdatScope::Measurements, "unused"),
+        "SECS 원 측정.mdat"
+    );
+    assert_eq!(
+        rew_mdat_filename(MdatScope::Results, &label),
+        format!("SECS 보정 결과 {label}.mdat")
+    );
+}
+
+#[test]
+fn all_scope_takes_stored_originals_and_strips_curves_from_results() {
+    let case = replay_case("room_filters");
+    let settings: CalibrationSettings = serde_json::from_value(case.settings).unwrap();
+    let run = ExportRun {
+        design: &case.design,
+        settings: &settings,
+    };
+    let position = run.design.replay.config().main_position;
+    let role = run.design.chain.mains[0].role.clone();
+    let stored = original(position, &role, 96_000, meter_source());
+    let mut sources = Sources::default();
+    sources
+        .entry(position)
+        .or_default()
+        .insert(role.clone(), meter_source());
+
+    let all = rew_mdat_items(
+        Some(&run),
+        MdatScope::All,
+        std::slice::from_ref(&stored),
+        None,
+        Some(&sources),
+    )
+    .unwrap();
+    let measured = all
+        .iter()
+        .find(|item| item.title.contains(&format!("_{role}_1 ")))
+        .unwrap();
+    assert_eq!(measured.sample_rate_hz, 96_000);
+    assert_eq!(measured.samples, stored.item.samples);
+    assert_eq!(measured.start_time_s, stored.item.start_time_s);
+    assert_eq!(measured.spl_offset_db, stored.item.spl_offset_db);
+    assert_eq!(measured.source_info.as_ref().unwrap().cal[0].0, "meterCal");
+
+    let computed = all
+        .iter()
+        .find(|item| item.title.contains(&format!("_{role}_2 ")))
+        .unwrap();
+    let computed_source = computed.source_info.as_ref().unwrap();
+    assert!(computed_source.cal.is_empty());
+    assert_eq!(
+        computed_source
+            .strings
+            .iter()
+            .find(|(name, _)| name == "outputName")
+            .map(|(_, value)| value.as_str()),
+        Some("stored device")
+    );
+    assert!(all.iter().filter(|item| item.computed).all(|item| {
+        item.source_info
+            .as_ref()
+            .is_none_or(|source| source.cal.is_empty())
+    }));
+}
+
+#[test]
+fn measurement_scope_needs_measurements_not_a_result() {
+    assert!(matches!(
+        rew_mdat_items(None, MdatScope::Measurements, &[], None, None),
+        Err(ExportError::NoMeasurements)
+    ));
+    let measurement = original(1, "L", 48_000, SourceInfo::default());
+    assert_eq!(
+        rew_mdat_items(
+            None,
+            MdatScope::Measurements,
+            std::slice::from_ref(&measurement),
+            None,
+            None,
+        )
+        .unwrap()[0]
+            .title,
+        "L_P1"
+    );
+    assert!(matches!(
+        rew_mdat_items(None, MdatScope::All, &[], None, None),
+        Err(ExportError::NoResult)
+    ));
+    assert!(matches!(
+        rew_mdat_items(None, MdatScope::Results, &[], None, None),
+        Err(ExportError::NoResult)
+    ));
 }
 
 #[test]

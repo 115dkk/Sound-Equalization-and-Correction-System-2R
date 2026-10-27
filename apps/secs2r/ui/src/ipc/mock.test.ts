@@ -6,6 +6,7 @@ import type { JobEvent } from "./bindings/JobEvent";
 import { createMockService } from "./mock";
 import { calibrationSettings, gpuComputeStatus, modeLabel, projectInfo, resultsSummary } from "./fixtures";
 import type { ExportKind } from "./bindings/ExportKind";
+import type { ExportParams } from "./bindings/ExportParams";
 import type { Mode } from "./bindings/Mode";
 import type { MimoExportDecision } from "./bindings/MimoExportDecision";
 import { umikFile } from "../screens/connect/fixtures";
@@ -113,6 +114,98 @@ describe("mock MIMO export decisions", () => {
     await mock.request({ method: "project_open", params: { path: "C:/another.secs" } });
     expect((await mock.request({ method: "results" })).mimo_export).toBe("off");
     mock.dispose();
+  });
+});
+
+describe("mock REW mdat scopes", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  async function exported(mock: ReturnType<typeof createMockService>, params: ExportParams) {
+    const events: JobEvent[] = [];
+    const unsubscribe = mock.events.subscribe((event) => events.push(event));
+    try {
+      await mock.request({ method: "export", params });
+      mock.drain();
+      const last = events.at(-1);
+      if (last?.event !== "finished" || last.result?.kind !== "export") throw new Error("Missing export result");
+      return last.result.data;
+    } finally { unsubscribe(); }
+  }
+
+  it("exports measurements without a result into the measurement folder or an explicit folder", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(new Date(2026, 9, 15, 9, 41, 7).getTime());
+    const mock = createMockService({ tickMs: 0, project: { ...projectInfo, positions: [1, 2] } });
+    try {
+      expect((await mock.request({ method: "results" })).calibration).toBeNull();
+      await mock.request({ method: "export_folder_set", params: { folder: "C:/exports/" } });
+      const folder = "C:/exports/SECS_mdat_measurements_20261015-094107";
+      expect(await exported(mock, { kind: "before_after_mdat", folder: "", mdat_scope: "measurements" })).toEqual({
+        folder, files: [`${folder}/SECS 원 측정.mdat`], stale: false,
+      });
+      expect(await exported(mock, { kind: "before_after_mdat", folder: "C:/chosen", mdat_scope: "measurements" })).toEqual({
+        folder: "C:/chosen", files: ["C:/chosen/SECS 원 측정.mdat"], stale: false,
+      });
+    } finally { mock.dispose(); }
+  });
+
+  it("refuses empty measurements and tutorials before starting a job", async () => {
+    for (const tutorial of [false, true]) {
+      const mock = createMockService({ tickMs: 0, project: { ...projectInfo, positions: [], tutorial } });
+      try {
+        await expect(mock.request({ method: "export", params: { kind: "before_after_mdat", folder: "", mdat_scope: "measurements" } })).rejects.toMatchObject({
+          error: tutorial ? { code: "tutorial_blocked" } : { code: "engine_input", params: { reason: "no_measurements" } },
+        });
+        expect(await mock.request({ method: "jobs" })).toEqual([]);
+      } finally { mock.dispose(); }
+    }
+  });
+
+  it.each(["all", "results", undefined] as const)("requires a result for scope %s", async (scope) => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      await expect(mock.request({ method: "export", params: { kind: "before_after_mdat", folder: "", ...(scope ? { mdat_scope: scope } : {}) } })).rejects.toMatchObject({ error: { code: "engine_input" } });
+      expect(await mock.request({ method: "jobs" })).toEqual([]);
+    } finally { mock.dispose(); }
+  });
+
+  it("names each scope using the result's mode and ultra limit, leaving staged mdat unchanged", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(new Date(2026, 9, 15, 9, 41, 7).getTime());
+    const mock = createMockService({ tickMs: 0, results: { ...resultsSummary, calibration: { ...resultsSummary.calibration!, mode: "ultra", ultra_ms: 120 } } });
+    try {
+      expect((await mock.request({ method: "calibration_settings_get" })).mode).toBe("mixed");
+      await mock.request({ method: "export_folder_set", params: { folder: "C:/exports" } });
+      const folder = "C:/exports/SECS_mdat_RC_BA_ultra_20261015-094107";
+      for (const [scope, name] of [
+        ["all", "SECS 원 측정+보정 결과 초고지연 모드 120 ms.mdat"],
+        ["results", "SECS 보정 결과 초고지연 모드 120 ms.mdat"],
+        [undefined, "SECS 원 측정+보정 결과 초고지연 모드 120 ms.mdat"],
+      ] as const) {
+        expect(await exported(mock, { kind: "before_after_mdat", folder: "", ...(scope ? { mdat_scope: scope } : {}) })).toEqual({ folder, files: [`${folder}/${name}`], stale: false });
+      }
+      expect(await exported(mock, { kind: "staged_mdat", folder: "" })).toEqual({ folder, files: [`${folder}/staged_mdat.mdat`], stale: false });
+    } finally { mock.dispose(); }
+  });
+
+  it("allows measurements through a stale cache while refusing result-bearing mdat exports", async () => {
+    const mock = createMockService({ tickMs: 0, results: { ...resultsSummary, calibration: { ...resultsSummary.calibration!, cached: true, stale: true } } });
+    try {
+      for (const scope of ["all", "results", undefined] as const) {
+        await expect(mock.request({ method: "export", params: { kind: "before_after_mdat", folder: "", ...(scope ? { mdat_scope: scope } : {}) } })).rejects.toMatchObject({ error: { code: "export_scope", params: { reason: "stale_cache" } } });
+      }
+      expect(await exported(mock, { kind: "before_after_mdat", folder: "C:/chosen", mdat_scope: "measurements" })).toEqual({
+        folder: "C:/chosen", files: ["C:/chosen/SECS 원 측정.mdat"], stale: false,
+      });
+    } finally { mock.dispose(); }
+  });
+
+  it.each(["camilla_dsp", "filter_text", "equalizer_apo", "staged_mdat"] as const)("refuses mdat_scope for %s even without a result", async (kind) => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      for (const scope of ["all", "measurements", "results"] as const) {
+        await expect(mock.request({ method: "export", params: { kind, folder: "", mdat_scope: scope } })).rejects.toMatchObject({ error: { code: "invalid_request", params: { reason: "mdat_scope" } } });
+      }
+      expect(await mock.request({ method: "jobs" })).toEqual([]);
+    } finally { mock.dispose(); }
   });
 });
 

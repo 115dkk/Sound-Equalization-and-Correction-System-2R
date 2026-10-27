@@ -3,12 +3,16 @@
 // of step_calibration.py (staged mdat, U3).
 import type { StepState } from "../../app/model";
 import type { CalibrationSettings } from "../../ipc/bindings/CalibrationSettings";
+import type { CalibrationSummary } from "../../ipc/bindings/CalibrationSummary";
 import type { ExportBlock } from "../../ipc/bindings/ExportBlock";
 import type { ExportFolderResult } from "../../ipc/bindings/ExportFolderResult";
 import type { ExportKind } from "../../ipc/bindings/ExportKind";
 import type { IpcError } from "../../ipc/bindings/IpcError";
+import type { MdatScope } from "../../ipc/bindings/MdatScope";
+import type { Mode } from "../../ipc/bindings/Mode";
 import type { Notice } from "../../ipc/bindings/Notice";
 import type { ResultsSummary } from "../../ipc/bindings/ResultsSummary";
+import { CALIBRATION_LIMITS } from "../../ipc/bindings/rules";
 
 /**
  * The order the export kinds appear in: the filters for the DSP (the
@@ -16,6 +20,9 @@ import type { ResultsSummary } from "../../ipc/bindings/ResultsSummary";
  * the responses for REW (the staged mdat under 고급).
  */
 export const EXPORT_KINDS = ["camilla_dsp", "filter_text", "equalizer_apo", "before_after_mdat", "staged_mdat"] as const satisfies readonly ExportKind[];
+
+/** What the REW mdat can carry, in the order the choice shows them (`MdatScope`, DEVIATIONS F19). */
+export const MDAT_SCOPES = ["all", "measurements", "results"] as const satisfies readonly MdatScope[];
 
 /** Upstream `MIMO_MIN_POSITIONS`: MIMO needs three measured positions. */
 export const MIMO_MIN_POSITIONS = 3;
@@ -38,8 +45,10 @@ export type ExportView = {
    * and `results.calibration.ultra_ms`.
    */
   settings: Pick<CalibrationSettings, "mode" | "ultra_ms" | "mimo_on">;
-  /** `project_info().positions.length`: MIMO needs three positions or more. */
+  /** `project_info().positions.length`: MIMO needs three positions or more; none means nothing to put in the 원 측정 mdat. */
   positions: number;
+  /** The REW mdat's chosen contents (session host, `all` until changed; a new project starts at `all`). */
+  mdatScope: MdatScope;
   /** `result_lines().rc`: how the RC upper limit was set (`rc_limit`, `rc_room_volume`, `rc_no_room_volume`, `rc_auto_cap`). */
   rc: Notice[];
   /** `export_folder_get`; null until it arrives. */
@@ -58,12 +67,15 @@ export type ExportView = {
 
 export type ExportActions = {
   /**
-   * `export { kind, folder: "" }` (job; the service picks the subfolder). In
-   * the tutorial P33 records `{ status: "tutorial" }` instead. Upstream opened
-   * the written folder after a successful export: P33 follows with
+   * `export { kind, folder: "" }` (job; the service picks the subfolder). The
+   * REW mdat adds `mdat_scope: mdatScopeFor(results.calibration, mdatScope)`.
+   * In the tutorial P33 records `{ status: "tutorial" }` instead. Upstream
+   * opened the written folder after a successful export: P33 follows with
    * `open_folder { path: run.folder }`.
    */
   exportFiles: (kind: ExportKind) => void;
+  /** Host: what the REW mdat carries. */
+  setMdatScope: (scope: MdatScope) => void;
   /** `dialog_pick_folder { start: folder }`, then `export_folder_set { folder }` when one was picked. */
   changeFolder: () => void;
   /** `open_folder { path }`: the export folder, or the folder a run wrote. */
@@ -106,6 +118,8 @@ export function mimoInclusion(view: ExportView): MimoInclusion {
 export function exportBlock(view: ExportView, kind: ExportKind): ExportBlock | null {
   const result = view.results.calibration;
   if (!result) return null;
+  // The original measurements need no design, so an old cache does not stop them.
+  if (kind === "before_after_mdat" && mdatScopeFor(result, view.mdatScope) === "measurements") return null;
   if ((kind === "staged_mdat" || kind === "before_after_mdat") && result.cached && result.stale) return "stale_cache";
   const subs = result.sub_roles.length > 0;
   const mimo = mimoInclusion(view).included;
@@ -125,12 +139,39 @@ export function filterModeName(settings: Pick<CalibrationSettings, "mode" | "ult
 }
 
 /**
- * Whether the export buttons can start an export now (upstream `ready()`:
- * a result and no correction running). A stale result exports as it is, as
- * upstream does; the screen warns about it.
+ * The contents the REW mdat is written with: the choice, or the original
+ * measurements alone while there is no result to carry (the service needs
+ * none for them).
  */
-export function canExport(view: ExportView): boolean {
-  return !!view.results.calibration && !view.computing && view.exporting === null;
+export function mdatScopeFor(result: CalibrationSummary | null | undefined, chosen: MdatScope): MdatScope {
+  return result ? chosen : "measurements";
+}
+
+const MODE_LABEL: Record<Mode, string> = { zero: "최소 지연 모드", mixed: "저지연 모드", linear: "표준 모드", ultra: "초고지연 모드" };
+
+/**
+ * The REW mdat's file name (`secs_export::rew_mdat_filename`, DEVIATIONS
+ * F19): `원 측정` when it holds measurements, `보정 결과` when it holds
+ * computed responses, then the mode as `CalibrationSettings::label` writes
+ * it. The service writes Korean names in every language.
+ */
+export function mdatFileName(scope: MdatScope, settings: Pick<CalibrationSettings, "mode" | "ultra_ms">): string {
+  if (scope === "measurements") return "SECS 원 측정.mdat";
+  const [lo, hi] = CALIBRATION_LIMITS.ultra_ms;
+  const label = settings.mode === "ultra" ? `${MODE_LABEL.ultra} ${Number(Math.min(hi, Math.max(lo, settings.ultra_ms)).toPrecision(6))} ms` : MODE_LABEL[settings.mode];
+  return `SECS ${scope === "results" ? "보정 결과" : "원 측정+보정 결과"} ${label}.mdat`;
+}
+
+/**
+ * Whether `kind`'s button can start an export now (upstream `ready()`: a
+ * result and no correction running). A stale result exports as it is, as
+ * upstream does; the screen warns about it. The REW mdat of the original
+ * measurements needs measurements only. Export jobs run one at a time.
+ */
+export function canExport(view: ExportView, kind?: ExportKind): boolean {
+  if (view.exporting !== null) return false;
+  if (kind === "before_after_mdat" && mdatScopeFor(view.results.calibration, view.mdatScope) === "measurements") return view.positions > 0;
+  return !!view.results.calibration && !view.computing;
 }
 
 /** The rail state of 내보내기: blocked while there is no result or one is being computed, done after an export of the result. */

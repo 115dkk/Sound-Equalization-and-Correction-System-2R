@@ -39,6 +39,7 @@ export const exportReady: ExportView = {
   results: { calibration: calibrationSummary, mimo: exportMimo, mimo_export: "included" },
   settings: { mode: "mixed", ultra_ms: 200, mimo_on: true },
   positions: 9,
+  mdatScope: "all",
   rc: exportRc,
   folder: { folder: BASE, stored: false },
   computing: false,
@@ -87,10 +88,34 @@ export const exportDone: ExportView = {
     before_after_mdat: {
       status: "done",
       folder: "D:/Audio/거실 보정/SECS_mdat_RC_BA_MIMO_mixed_20261014-142233",
-      files: ["D:/Audio/거실 보정/SECS_mdat_RC_BA_MIMO_mixed_20261014-142233/SECS 보정 전후 저지연 모드.mdat"],
+      files: ["D:/Audio/거실 보정/SECS_mdat_RC_BA_MIMO_mixed_20261014-142233/SECS 원 측정+보정 결과 저지연 모드.mdat"],
     },
   },
 };
+
+/** The REW mdat set to carry the original measurements alone. */
+export const exportMeasurementsOnly: ExportView = { ...exportReady, mdatScope: "measurements" };
+
+/** The REW mdat set to carry the correction results alone. */
+export const exportResultsOnly: ExportView = { ...exportReady, mdatScope: "results" };
+
+/** No result yet: the REW mdat can carry the measurements, and says so. */
+export const exportMeasurementsDone: ExportView = {
+  ...exportNoResult,
+  runs: {
+    before_after_mdat: {
+      status: "done",
+      folder: `${BASE}/SECS_mdat_measurements_20261014-141502`,
+      files: [`${BASE}/SECS_mdat_measurements_20261014-141502/SECS 원 측정.mdat`],
+    },
+  },
+};
+
+/** No result and nothing measured: nothing to save. */
+export const exportNothingMeasured: ExportView = { ...exportNoResult, positions: 0 };
+
+/** The old cache blocks the results, not the original measurements. */
+export const exportStaleCacheMeasurements: ExportView = { ...exportStaleCache, mdatScope: "measurements" };
 
 export const exportFailed: ExportView = { ...exportReady, runs: { camilla_dsp: { status: "failed", error: exportError } } };
 

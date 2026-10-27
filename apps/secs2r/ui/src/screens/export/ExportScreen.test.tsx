@@ -16,14 +16,19 @@ import {
   exportEqapoDone,
   exportExporting,
   exportFailed,
+  exportMeasurementsDone,
+  exportMeasurementsOnly,
   exportMimoNoSubs,
   exportNoMimo,
   exportNoResult,
+  exportNothingMeasured,
   exportRcOnly,
   exportReady,
   exportRecalibrating,
+  exportResultsOnly,
   exportStale,
   exportStaleCache,
+  exportStaleCacheMeasurements,
   exportTutorial,
 } from "./fixtures";
 import { canExport, exportStepState, mimoInclusion, type ExportActions, type ExportView } from "./types";
@@ -53,6 +58,8 @@ const REACH_IDS = [
   "export.kind.before_after_mdat",
   "export.kind.staged_mdat",
   "export.kind.filter_text.blocked",
+  "export.mdat.scope",
+  "export.mdat.file",
   "export.advanced",
   "export.outcome.camilla_dsp",
   "export.outcome.camilla_dsp.open",
@@ -102,11 +109,17 @@ const STATES: Record<string, ExportView> = {
   mimoNoSubs: exportMimoNoSubs,
   eqapoDone: exportEqapoDone,
   tutorial: exportTutorial,
+  measurementsOnly: exportMeasurementsOnly,
+  resultsOnly: exportResultsOnly,
+  measurementsDone: exportMeasurementsDone,
+  nothingMeasured: exportNothingMeasured,
+  staleCacheMeasurements: exportStaleCacheMeasurements,
 };
 
 function actions() {
   return {
     exportFiles: vi.fn<ExportActions["exportFiles"]>(),
+    setMdatScope: vi.fn<ExportActions["setMdatScope"]>(),
     changeFolder: vi.fn<ExportActions["changeFolder"]>(),
     openFolder: vi.fn<ExportActions["openFolder"]>(),
     goToCalibrate: vi.fn<ExportActions["goToCalibrate"]>(),
@@ -230,7 +243,7 @@ describe("내보내기", () => {
       fireEvent.click(recalibrate!);
     }
     // Two buttons with one label: each one's name carries its format.
-    expect(screen.getByRole("button", { name: "재보정 보정 전후 REW mdat" })).toBe(ui("export.kind.before_after_mdat.recalibrate"));
+    expect(screen.getByRole("button", { name: "재보정 REW mdat" })).toBe(ui("export.kind.before_after_mdat.recalibrate"));
     expect(screen.getByRole("button", { name: "재보정 단계별 mdat" })).toBe(ui("export.kind.staged_mdat.recalibrate"));
     expect(act.recalibrate).toHaveBeenCalledTimes(2);
     expect(act.exportFiles).not.toHaveBeenCalled();
@@ -247,7 +260,7 @@ describe("내보내기", () => {
     unmountStale();
     renderWith(<Mounted view={exportStaleCache} act={actions()} advanced />, { locale: "en" });
     expect(ui("export.kind.staged_mdat.blocked")?.textContent).toBe("These values were measured with an earlier version. Recalibrate to export mdat.");
-    expect(screen.getByRole("button", { name: "Recalibrate Before and after REW mdat" })).toBe(ui("export.kind.before_after_mdat.recalibrate"));
+    expect(screen.getByRole("button", { name: "Recalibrate REW mdat" })).toBe(ui("export.kind.before_after_mdat.recalibrate"));
     expect(screen.getByRole("button", { name: "Recalibrate Staged mdat" })).toBe(ui("export.kind.staged_mdat.recalibrate"));
   });
 
@@ -306,16 +319,92 @@ describe("내보내기", () => {
     expect(screen.getByText(/파일 12개 저장/)).toBeTruthy();
   });
 
-  it("disables the exports without a result, while computing and while exporting", () => {
-    for (const view of [exportNoResult, exportComputingFirst, exportExporting, { ...exportRcOnly, computing: true }]) {
+  it("disables the exports without a result, while computing and while exporting; the REW mdat's measurements need measurements only", () => {
+    // Without a result the REW mdat still writes the original measurements; a running export stops it too.
+    const cases: [ExportView, boolean][] = [
+      [exportNoResult, true],
+      [exportComputingFirst, true],
+      [exportExporting, false],
+      [{ ...exportRcOnly, computing: true }, false],
+    ];
+    for (const [view, mdatOn] of cases) {
       const { unmount } = renderWith(<Mounted view={view} act={actions()} advanced />);
       for (const kind of ["camilla_dsp", "filter_text", "equalizer_apo", "before_after_mdat", "staged_mdat"]) {
-        expect((ui(`export.run.${kind}`) as HTMLButtonElement).disabled, kind).toBe(true);
+        expect((ui(`export.run.${kind}`) as HTMLButtonElement).disabled, kind).toBe(kind === "before_after_mdat" ? !mdatOn : true);
       }
       unmount();
     }
     expect(canExport(exportReady)).toBe(true);
     expect(canExport(exportTutorial)).toBe(true);
+    expect(canExport({ ...exportMeasurementsOnly, computing: true }, "before_after_mdat")).toBe(true);
+    expect(canExport({ ...exportReady, computing: true }, "before_after_mdat")).toBe(false);
+    expect(canExport(exportNothingMeasured, "before_after_mdat")).toBe(false);
+    expect(canExport({ ...exportMeasurementsOnly, exporting: "camilla_dsp" }, "before_after_mdat")).toBe(false);
+  });
+
+  it("chooses what the REW mdat carries, and its file name says which", () => {
+    const names: [ExportView, string, string][] = [
+      [exportReady, "모두", "SECS 원 측정+보정 결과 저지연 모드.mdat"],
+      [exportMeasurementsOnly, "원 측정만", "SECS 원 측정.mdat"],
+      [exportResultsOnly, "보정 결과만", "SECS 보정 결과 저지연 모드.mdat"],
+      [{ ...exportResultsOnly, settings: { ...exportResultsOnly.settings, mode: "ultra", ultra_ms: 123.456789 } }, "보정 결과만", "SECS 보정 결과 초고지연 모드 123.457 ms.mdat"],
+    ];
+    for (const [view, chosen, file] of names) {
+      const act = actions();
+      const { unmount } = renderWith(<Mounted view={view} act={act} />);
+      const group = screen.getByRole("radiogroup", { name: "저장할 내용" });
+      expect(group).toBe(ui("export.mdat.scope"));
+      expect(screen.getByRole("radio", { checked: true }).textContent).toBe(chosen);
+      expect(ui("export.mdat.file")?.textContent).toBe(file);
+      // The choice comes first, the file's name last; every option can be chosen while a result exists.
+      const row = ui("export.kind.before_after_mdat")!;
+      const order = [...row.querySelectorAll("[data-ui='export.mdat.scope'], .export-item__where")];
+      expect(order[0]).toBe(group);
+      expect(order.at(-1)).toBe(ui("export.mdat.file"));
+      expect(screen.getAllByRole("radio").every((radio) => !(radio as HTMLButtonElement).disabled)).toBe(true);
+      fireEvent.click(screen.getByRole("radio", { name: chosen === "보정 결과만" ? "모두" : "보정 결과만" }));
+      expect(act.setMdatScope).toHaveBeenLastCalledWith(chosen === "보정 결과만" ? "all" : "results");
+      fireEvent.click(ui("export.run.before_after_mdat")!);
+      expect(act.exportFiles).toHaveBeenCalledWith("before_after_mdat");
+      unmount();
+    }
+    // The measurements go to their own folder.
+    const { unmount } = renderWith(<Mounted view={exportMeasurementsOnly} act={actions()} />);
+    expect(ui("export.kind.before_after_mdat")?.querySelector(".export-item__where")?.textContent).toBe("SECS_mdat_measurements_<저장 시각> 폴더");
+    unmount();
+    renderWith(<Mounted view={exportReady} act={actions()} />, { locale: "en" });
+    // File names stay Korean in English: they are the names the service writes.
+    expect(ui("export.mdat.file")?.textContent).toBe("SECS 원 측정+보정 결과 저지연 모드.mdat");
+  });
+
+  it("holds the REW mdat at 원 측정만 without a result and says why", () => {
+    const act = actions();
+    const { unmount } = renderWith(<Mounted view={exportNoResult} act={act} />);
+    const group = ui("export.mdat.scope")!;
+    expect(screen.getByRole("radio", { checked: true }).textContent).toBe("원 측정만");
+    expect((screen.getByRole("radio", { name: "모두" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("radio", { name: "보정 결과만" }) as HTMLButtonElement).disabled).toBe(true);
+    const hint = document.getElementById(`${group.id}-hint`);
+    expect(hint?.textContent).toBe("보정 결과가 없어 원 측정만 저장할 수 있습니다.");
+    expect(group.getAttribute("aria-describedby")).toContain(hint!.id);
+    expect(ui("export.mdat.file")?.textContent).toBe("SECS 원 측정.mdat");
+    const run = ui("export.run.before_after_mdat") as HTMLButtonElement;
+    expect(run.disabled).toBe(false);
+    fireEvent.click(run);
+    expect(act.exportFiles).toHaveBeenCalledWith("before_after_mdat");
+    unmount();
+    renderWith(<Mounted view={exportNothingMeasured} act={actions()} />);
+    expect(document.getElementById(`${ui("export.mdat.scope")!.id}-hint`)?.textContent).toBe("저장할 측정이 없습니다.");
+    expect((ui("export.run.before_after_mdat") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("lets an old cache stop the results, not the original measurements", () => {
+    renderWith(<Mounted view={exportStaleCacheMeasurements} act={actions()} advanced />);
+    expect(ui("export.kind.before_after_mdat.blocked")).toBeNull();
+    expect((ui("export.run.before_after_mdat") as HTMLButtonElement).disabled).toBe(false);
+    // The staged mdat still needs a new correction.
+    expect(ui("export.kind.staged_mdat.blocked")).not.toBeNull();
+    expect((ui("export.run.staged_mdat") as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("runs one export at a time: the running row is busy, every other button is off", () => {

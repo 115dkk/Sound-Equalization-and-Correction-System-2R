@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { createMockService } from "../../ipc/mock";
 import { SessionProvider } from "../../state/react";
 import { createSession } from "../../state/session";
-import { EXPORT_KINDS, exportBlock } from "./types";
+import { EXPORT_KINDS, MDAT_SCOPES, exportBlock } from "./types";
 import { useExportScreen } from "./useExportScreen";
 
 let mock: ReturnType<typeof createMockService>;
@@ -50,7 +50,7 @@ describe("useExportScreen", () => {
         continue;
       }
       await perform(() => result.current.actions.exportFiles(kind));
-      expect(mock.calls).toContainEqual({ method: "export", params: { kind, folder: "" } });
+      expect(mock.calls).toContainEqual({ method: "export", params: { kind, folder: "", ...(kind === "before_after_mdat" ? { mdat_scope: "all" } : {}) } });
       expect(result.current.view?.exporting).toBe(kind);
       await perform(mock.drain);
       const run = result.current.view?.runs[kind];
@@ -58,6 +58,49 @@ describe("useExportScreen", () => {
       if (run?.status === "done") expect(mock.calls).toContainEqual({ method: "open_folder", params: { path: run.folder } });
       expect(result.current.view?.exporting).toBeNull();
     }
+  });
+
+  it("reads the latest scope and results when exporting and keeps the choice after calibration", async () => {
+    const { result } = renderHook(useExportScreen, { wrapper });
+    const actions = result.current.actions;
+    expect(result.current.view?.mdatScope).toBe("all");
+    await perform(() => actions.setMdatScope("results"));
+    expect(result.current.view?.mdatScope).toBe("results");
+    expect(session.host.getSnapshot().mdatScope).toBe("results");
+    await perform(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } }));
+    await perform(mock.drain);
+    expect(result.current.view?.mdatScope).toBe("results");
+    for (const scope of MDAT_SCOPES) {
+      await perform(() => actions.setMdatScope(scope));
+      expect(result.current.view?.mdatScope).toBe(scope);
+      mock.calls.length = 0;
+      await perform(() => actions.exportFiles("before_after_mdat"));
+      expect(mock.calls).toContainEqual({ method: "export", params: { kind: "before_after_mdat", folder: "", mdat_scope: scope } });
+      await perform(mock.drain);
+      expect(result.current.view?.runs.before_after_mdat?.status).toBe("done");
+    }
+    await perform(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } }));
+    await perform(mock.drain);
+    expect(result.current.view?.runs).toEqual({});
+    expect(result.current.view?.mdatScope).toBe("results");
+  });
+
+  it.each(MDAT_SCOPES)("sends measurements without a result when %s was chosen", async (scope) => {
+    const { result } = renderHook(useExportScreen, { wrapper });
+    expect(result.current.view?.results.calibration).toBeNull();
+    await perform(() => result.current.actions.setMdatScope(scope));
+    await perform(() => result.current.actions.exportFiles("before_after_mdat"));
+    expect(mock.calls).toContainEqual({ method: "export", params: { kind: "before_after_mdat", folder: "", mdat_scope: "measurements" } });
+    await perform(mock.drain);
+    expect(result.current.view?.runs.before_after_mdat?.status).toBe("done");
+    expect(result.current.view?.mdatScope).toBe(scope);
+  });
+
+  it.each(EXPORT_KINDS.filter((kind) => kind !== "before_after_mdat"))("never sends mdat_scope for %s", async (kind) => {
+    const { result } = renderHook(useExportScreen, { wrapper });
+    await perform(() => result.current.actions.setMdatScope("measurements"));
+    await perform(() => result.current.actions.exportFiles(kind));
+    expect(mock.calls.filter((call) => call.method === "export")).toEqual([{ method: "export", params: { kind, folder: "" } }]);
   });
 
   it("recalibrates a reopened stale cache and unblocks both mdat formats", async () => {

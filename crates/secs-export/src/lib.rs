@@ -18,6 +18,8 @@ use secs_types::{
     chain::{MimoPaths, SubChannel},
 };
 
+pub use secs_types::ipc::MdatScope;
+
 const SR: u32 = 48_000;
 const SUB_GAIN_WARN_DB: f64 = 12.0;
 
@@ -28,6 +30,14 @@ pub type Sources = BTreeMap<u32, BTreeMap<String, SourceInfo>>;
 pub struct ExportRun<'a> {
     pub design: &'a Design,
     pub settings: &'a CalibrationSettings,
+}
+
+/// One stored measurement, as the project's side mdat writes it.
+#[derive(Clone, Debug)]
+pub struct Original {
+    pub position: u32,
+    pub role: String,
+    pub item: MeasurementInput,
 }
 
 /// MIMO support-filter realization used in exported labels.
@@ -86,6 +96,10 @@ pub enum ExportError {
     Io(#[from] std::io::Error),
     #[error("operating-system randomness failed: {0}")]
     Random(String),
+    #[error("there are no stored measurements to export")]
+    NoMeasurements,
+    #[error("calibration must run before export")]
+    NoResult,
     #[error("missing export response for {0}")]
     MissingResponse(String),
 }
@@ -514,6 +528,7 @@ fn before_after_items_with_mimo(
     run: &ExportRun<'_>,
     mimo: MimoExport<'_>,
     sources: Option<&Sources>,
+    originals: Option<&[Original]>,
 ) -> Result<Vec<MeasurementInput>, ExportError> {
     let view = run.design.replay.export_view(run.design)?;
     let position = run.design.replay.config().main_position;
@@ -531,6 +546,7 @@ fn before_after_items_with_mimo(
                 measured,
                 "",
                 source_env.and_then(|sources| sources.get(&main.role)),
+                originals,
             ));
         }
         let final_response = stage_responses(run.design, &main.role, &view.spectra, position)
@@ -562,6 +578,9 @@ fn before_after_items_with_mimo(
             .and_then(|sources| sources.get(&main.role))
             .cloned();
         corrected.computed = true;
+        if originals.is_some() {
+            clear_curves(&mut corrected);
+        }
         items.push(corrected);
         if let MimoExport::Responses(mimo) = mimo {
             let support_count = mimo
@@ -577,8 +596,8 @@ fn before_after_items_with_mimo(
                     .find(|(role, _)| role == &main.role)
                     .map(|(_, response)| response.as_slice())
                     .ok_or_else(|| ExportError::MissingResponse(main.role.clone()))?;
-                items.push(item(
-            run.design,
+                let mut corrected = item(
+                    run.design,
                     format!(
                         "{seq:02}_{}_3 보정 후 + MIMO({})",
                         main.role,
@@ -592,7 +611,12 @@ fn before_after_items_with_mimo(
                     ),
                     response,
                     ExportAxis::Corrected,
-                ));
+                );
+                if originals.is_some() {
+                    corrected.computed = true;
+                    clear_curves(&mut corrected);
+                }
+                items.push(corrected);
             }
         }
     }
@@ -606,8 +630,17 @@ fn before_after_items_with_mimo(
                 measured,
                 &format!(" · DSP 값: {}", sub_value_text(sub)),
                 source_env.and_then(|sources| sources.get(&sub.role)),
+                originals,
             ));
         }
+    }
+    if let Some(originals) = originals {
+        items.extend(
+            originals
+                .iter()
+                .filter(|original| original.position != position)
+                .map(|original| original.item.clone()),
+        );
     }
     Ok(items)
 }
@@ -619,8 +652,9 @@ fn measured_item(
     measured: &secs_engine::Measurement,
     note: &str,
     source_info: Option<&SourceInfo>,
+    originals: Option<&[Original]>,
 ) -> MeasurementInput {
-    MeasurementInput {
+    let mut item = MeasurementInput {
         title: format!("{seq:02}_{role}_1 보정 전(원 측정)"),
         notes: format!("SECS · 청취 위치 {position} · 원 측정 그대로(필터 없음){note}"),
         sample_rate_hz: measured.sample_rate,
@@ -631,11 +665,34 @@ fn measured_item(
         spl_offset_db: None,
         source_info: source_info.cloned(),
         computed: false,
+    };
+    let Some(originals) = originals else {
+        return item;
+    };
+    if let Some(original) = originals
+        .iter()
+        .find(|original| original.position == position && original.role == role)
+    {
+        let title = item.title;
+        let notes = item.notes;
+        item = original.item.clone();
+        item.title = title;
+        item.notes = notes;
+        item.computed = false;
+    } else {
+        clear_curves(&mut item);
+    }
+    item
+}
+
+fn clear_curves(item: &mut MeasurementInput) {
+    if let Some(source_info) = &mut item.source_info {
+        source_info.cal.clear();
     }
 }
 
 pub fn before_after_items(run: &ExportRun<'_>, sources: Option<&Sources>) -> Vec<MeasurementInput> {
-    before_after_items_with_mimo(run, MimoExport::None, sources)
+    before_after_items_with_mimo(run, MimoExport::None, sources, None)
         .expect("validated engine export inputs")
 }
 
@@ -644,7 +701,46 @@ pub fn before_after_items_mimo(
     mimo: &MimoResponses,
     sources: Option<&Sources>,
 ) -> Result<Vec<MeasurementInput>, ExportError> {
-    before_after_items_with_mimo(run, MimoExport::Responses(mimo), sources)
+    before_after_items_with_mimo(run, MimoExport::Responses(mimo), sources, None)
+}
+
+/// Returns the REW mdat file name for the selected contents.
+pub fn rew_mdat_filename(scope: MdatScope, label: &str) -> String {
+    match scope {
+        MdatScope::All => format!("SECS 원 측정+보정 결과 {label}.mdat"),
+        MdatScope::Measurements => "SECS 원 측정.mdat".into(),
+        MdatScope::Results => format!("SECS 보정 결과 {label}.mdat"),
+    }
+}
+
+/// Builds the REW mdat items for the selected contents.
+pub fn rew_mdat_items(
+    run: Option<&ExportRun<'_>>,
+    scope: MdatScope,
+    originals: &[Original],
+    mimo: Option<&MimoResponses>,
+    sources: Option<&Sources>,
+) -> Result<Vec<MeasurementInput>, ExportError> {
+    if scope == MdatScope::Measurements {
+        if originals.is_empty() {
+            return Err(ExportError::NoMeasurements);
+        }
+        return Ok(originals
+            .iter()
+            .map(|original| original.item.clone())
+            .collect());
+    }
+    let run = run.ok_or(ExportError::NoResult)?;
+    let mut items = before_after_items_with_mimo(
+        run,
+        mimo.map_or(MimoExport::None, MimoExport::Responses),
+        sources,
+        Some(originals),
+    )?;
+    if scope == MdatScope::Results {
+        items.retain(|item| item.computed);
+    }
+    Ok(items)
 }
 
 /// `spl_offset_db` is the project's median REW SPL offset
@@ -739,10 +835,36 @@ pub fn export_before_after_mdat_with_mimo_using(
         run,
         mimo.map_or(MimoExport::None, MimoExport::Responses),
         sources,
+        None,
     )?;
     export_items_using(
         folder,
         &format!("SECS 보정 전후 {label}.mdat"),
+        &items,
+        spl_offset_db,
+        now_ms,
+        uuid,
+    )
+}
+
+/// Writes the selected measurements and correction results to one REW mdat.
+#[allow(clippy::too_many_arguments)] // Signature keeps the existing injected-writer API shape.
+pub fn export_rew_mdat_using(
+    run: Option<&ExportRun<'_>>,
+    scope: MdatScope,
+    originals: &[Original],
+    folder: &Path,
+    mimo: Option<&MimoResponses>,
+    sources: Option<&Sources>,
+    spl_offset_db: Option<f64>,
+    now_ms: i64,
+    uuid: &mut dyn FnMut() -> Result<u128, ExportError>,
+) -> Result<PathBuf, ExportError> {
+    let items = rew_mdat_items(run, scope, originals, mimo, sources)?;
+    let label = run.map(|run| run.settings.label()).unwrap_or_default();
+    export_items_using(
+        folder,
+        &rew_mdat_filename(scope, &label),
         &items,
         spl_offset_db,
         now_ms,
