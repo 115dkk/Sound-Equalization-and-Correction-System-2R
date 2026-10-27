@@ -15,19 +15,24 @@ import {
   exportEqapoDone,
   exportExporting,
   exportFailed,
+  exportMeasurementsDone,
+  exportMeasurementsOnly,
   exportMimoNoSubs,
   exportNoMimo,
   exportNoResult,
   exportRcOnly,
   exportReady,
+  exportNothingMeasured,
   exportRecalibrating,
+  exportResultsOnly,
   exportStale,
   exportStaleCache,
+  exportStaleCacheMeasurements,
   exportTutorial,
 } from "./fixtures";
 import type { ExportActions, ExportView } from "./types";
 
-export const noopExportActions: ExportActions = { exportFiles: () => {}, changeFolder: () => {}, openFolder: () => {}, goToCalibrate: () => {}, recalibrate: () => {} };
+export const noopExportActions: ExportActions = { exportFiles: () => {}, setMdatScope: () => {}, changeFolder: () => {}, openFolder: () => {}, goToCalibrate: () => {}, recalibrate: () => {} };
 
 const exportJob = replay([{ type: "event", at: T0, event: { event: "started", job: 12, kind: "export" } }]);
 
@@ -102,10 +107,22 @@ const frame = (id: string, title: string, render: () => ReactNode, size: { width
 
 export const exportSpecimens: SpecimenDef[] = [
   frame("screen.export.empty", "Export · no correction yet", () => <ExportSpecimen view={exportNoResult} />),
+  frame("screen.export.empty.mdat", "Export · no correction yet: the REW mdat holds 원 측정만 and says why, its button on", () => (
+    <ExportSpecimen view={exportNoResult} scrolled="export.kind.before_after_mdat" />
+  )),
+  frame("screen.export.empty.mdat-done", "Export · no correction yet, the measurements saved as 'SECS 원 측정.mdat'", () => (
+    <ExportSpecimen view={exportMeasurementsDone} jobs={exportHistory} scrolled="export.kind.before_after_mdat" />
+  )),
+  frame("screen.export.empty.nothing", "Export · nothing measured: the REW mdat has nothing to save", () => (
+    <ExportSpecimen view={exportNothingMeasured} scrolled="export.kind.before_after_mdat" />
+  )),
   frame("screen.export.computing", "Export · first correction computing", () => <ExportSpecimen view={exportComputingFirst} jobs={calibrateJob} />),
   frame("screen.export.stale", "Export · stale result (settings changed)", () => <ExportSpecimen view={exportStale} />),
   frame("screen.export.stale-cache", "Export · reopened project, result from an earlier version: both mdat rows blocked, 재보정 after the sentence", () => (
     <ExportSpecimen view={exportStaleCache} initialAdvanced scrolled="export.kind.before_after_mdat" />
+  )),
+  frame("screen.export.stale-cache.measurements", "Export · reopened project with an old cache, REW mdat set to 원 측정만: that row exports, the staged row stays blocked", () => (
+    <ExportSpecimen view={exportStaleCacheMeasurements} initialAdvanced scrolled="export.kind.before_after_mdat" />
   )),
   frame("screen.export.recalibrating", "Export · 재보정 running from an mdat row: the button busy, every export off", () => (
     <ExportSpecimen view={exportRecalibrating} jobs={calibrateJob} initialAdvanced scrolled="export.kind.before_after_mdat" />
@@ -113,6 +130,15 @@ export const exportSpecimens: SpecimenDef[] = [
   frame("screen.export.ready", "Export · ready, MIMO included", () => <ExportSpecimen view={exportReady} />),
   frame("screen.export.filters", "Export · subs and MIMO: the text and Equalizer APO rows say why they are off", () => (
     <ExportSpecimen view={exportReady} scrolled="export.files" />
+  )),
+  frame("screen.export.mdat.all", "Export · REW mdat 모두 (default): 'SECS 원 측정+보정 결과 <모드>.mdat'", () => (
+    <ExportSpecimen view={exportReady} scrolled="export.kind.before_after_mdat" />
+  )),
+  frame("screen.export.mdat.measurements", "Export · REW mdat 원 측정만: 'SECS 원 측정.mdat' in SECS_mdat_measurements_…", () => (
+    <ExportSpecimen view={exportMeasurementsOnly} scrolled="export.kind.before_after_mdat" />
+  )),
+  frame("screen.export.mdat.results", "Export · REW mdat 보정 결과만: 'SECS 보정 결과 <모드>.mdat'", () => (
+    <ExportSpecimen view={exportResultsOnly} scrolled="export.kind.before_after_mdat" />
   )),
   frame("screen.export.rc-only", "Export · RC only (no subs, no MIMO): all three filter formats on", () => <ExportSpecimen view={exportRcOnly} scrolled="export.files" />),
   frame("screen.export.mimo", "Export · MIMO included, no subs: the text and Equalizer APO rows blocked by MIMO", () => (

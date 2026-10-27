@@ -508,18 +508,19 @@ fn copy_tree_contents(source: &Path, destination: &Path) -> Result<(), std::io::
     Ok(())
 }
 
-fn write_side_mdat(
+pub(crate) fn original_measurements(
     open: &mut OpenProject,
-    uuid: &UuidSource,
-    now_ms: i64,
-) -> Result<(), ServiceError> {
+) -> Result<Vec<secs_export::Original>, ServiceError> {
     let mut records = open.store.records();
     records.sort_by_key(|record| record.pos);
     let project = open.store.project().clone();
     let plan_roles = plan_from_project(&project, std::iter::empty()).roles;
     let sources = load_project_sources(&project, &open.path);
-    let mut inputs = Vec::new();
+    let mut originals = Vec::new();
     for record in records {
+        let position = u32::try_from(record.pos).map_err(|_| {
+            ServiceError::Project(format!("invalid measurement position {}", record.pos))
+        })?;
         let mut roles = record.ir.keys().cloned().collect::<Vec<_>>();
         roles.sort_by_key(|role| {
             plan_roles
@@ -529,23 +530,39 @@ fn write_side_mdat(
         });
         for role in roles {
             let (samples, sample_rate) = open.store.ir_of(&role, record.pos)?;
-            let source_info = u32::try_from(record.pos)
-                .ok()
-                .and_then(|pos| sources.get(&pos))
+            let source_info = sources
+                .get(&position)
                 .and_then(|by_role| by_role.get(&role))
                 .cloned();
-            inputs.push(secs_mdat::MeasurementInput {
-                title: format!("{role}_P{}", record.pos),
-                notes: format!("SECS · 위치 {} · 원 측정", record.pos),
-                sample_rate_hz: sample_rate,
-                samples: samples.into_iter().map(f64::from).collect(),
-                start_time_s: record.t0.get(&role).copied().unwrap_or(0.0),
-                spl_offset_db: record.spl_offset.get(&role).copied(),
-                source_info,
-                computed: false,
+            originals.push(secs_export::Original {
+                position,
+                role: role.clone(),
+                item: secs_mdat::MeasurementInput {
+                    title: format!("{role}_P{}", record.pos),
+                    notes: format!("SECS · 위치 {} · 원 측정", record.pos),
+                    sample_rate_hz: sample_rate,
+                    samples: samples.into_iter().map(f64::from).collect(),
+                    start_time_s: record.t0.get(&role).copied().unwrap_or(0.0),
+                    spl_offset_db: record.spl_offset.get(&role).copied(),
+                    source_info,
+                    computed: false,
+                },
             });
         }
     }
+    Ok(originals)
+}
+
+fn write_side_mdat(
+    open: &mut OpenProject,
+    uuid: &UuidSource,
+    now_ms: i64,
+) -> Result<(), ServiceError> {
+    let originals = original_measurements(open)?;
+    let inputs = originals
+        .iter()
+        .map(|original| original.item.clone())
+        .collect::<Vec<_>>();
     let destination = open.path.with_extension("mdat");
     if inputs.is_empty() {
         match fs::remove_file(destination) {

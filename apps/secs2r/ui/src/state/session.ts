@@ -7,6 +7,7 @@ import type { MeasureConfigureParams } from "../ipc/bindings/MeasureConfigurePar
 import type { ResultCurvesParams } from "../ipc/bindings/ResultCurvesParams";
 import type { ResultCurvesResult } from "../ipc/bindings/ResultCurvesResult";
 import type { ExportKind } from "../ipc/bindings/ExportKind";
+import type { MdatScope } from "../ipc/bindings/MdatScope";
 import type { XoRecommendation } from "../ipc/bindings/XoRecommendation";
 import type { ConnectPath, MeterReading, MicCalibrationView, MonitorState, RewProblem } from "../screens/connect/types";
 import type { CalibrateView } from "../screens/calibrate/types";
@@ -32,7 +33,7 @@ type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "m
   tab: CalibrateView["tab"]; channel: string | null; xoGroup: string | null; previewHz: number | null;
   targetEdit: CalibrateView["targetEdit"]; xoEdit: CalibrateView["xoEdit"];
   meter: MeterReading | null; monitor: MonitorState; playing: string | null; playingAll: boolean; masterDbfs: number;
-  xoRecommendation: XoRecommendation | null; runs: Partial<Record<ExportKind, ExportRun>>;
+  xoRecommendation: XoRecommendation | null; runs: Partial<Record<ExportKind, ExportRun>>; mdatScope: MdatScope;
   failure: CalibrateView["failure"]; rewLaunch: "idle" | "checking" | "launching";
   rewProblem: RewProblem | null; rewProblemDetail: string | null; readingRew: boolean;
   switchingRewDriver: boolean;
@@ -63,7 +64,7 @@ export function createSession(ipc: Ipc) {
     current: "system", path: null, selected: null, graphHidden: false, plotRange: { x: null, y: null },
     mdat: null, warnings: [], tab: "spl", channel: null, xoGroup: null, previewHz: null, targetEdit: "idle", xoEdit: "idle",
     meter: null, monitor: "off", playing: null, playingAll: false, masterDbfs: -20,
-    xoRecommendation: null, runs: {}, failure: null,
+    xoRecommendation: null, runs: {}, mdatScope: "all", failure: null,
     micCalBusy: null, micCalError: null,
     rewLaunch: "idle", rewProblem: null, rewProblemDetail: null, readingRew: false, switchingRewDriver: false, opened: 0,
   });

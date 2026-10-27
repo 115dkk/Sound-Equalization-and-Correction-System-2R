@@ -1,7 +1,7 @@
 import { useMemo } from "react";
 import { useHost, useResource, useSession } from "../../state/react";
 import { useJobLedger } from "../../state/useJobLedger";
-import type { ExportActions, ExportView } from "./types";
+import { mdatScopeFor, type ExportActions, type ExportView } from "./types";
 
 export function useExportScreen(): { view: ExportView | null; actions: ExportActions } {
   const session = useSession();
@@ -16,8 +16,12 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
     exportFiles: (kind) => {
       if (session.stores.project.getSnapshot()?.tutorial) {
         session.host.set({ runs: { ...session.host.getSnapshot().runs, [kind]: { status: "tutorial" } } });
-      } else session.run(() => session.call({ method: "export", params: { kind, folder: "" } }));
+      } else session.run(() => session.call({ method: "export", params: {
+        kind, folder: "",
+        ...(kind === "before_after_mdat" ? { mdat_scope: mdatScopeFor(session.stores.results.getSnapshot()?.calibration, session.host.getSnapshot().mdatScope) } : {}),
+      } }));
     },
+    setMdatScope: (scope) => session.host.set({ mdatScope: scope }),
     changeFolder: () => session.run(async () => {
       const selected = await session.call({ method: "dialog_pick_folder", params: { start: session.stores.folder.getSnapshot()?.folder ?? null } });
       if (selected !== null) await session.call({ method: "export_folder_set", params: { folder: selected } });
@@ -35,6 +39,6 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
     positions: project.positions.length, rc: lines?.rc ?? [], folder,
     computing: recalibrating, recalibrating,
     exporting: request?.method === "export" ? request.params.kind : null,
-    runs: host.runs, tutorial: project.tutorial,
+    runs: host.runs, mdatScope: host.mdatScope, tutorial: project.tutorial,
   } : null, actions };
 }

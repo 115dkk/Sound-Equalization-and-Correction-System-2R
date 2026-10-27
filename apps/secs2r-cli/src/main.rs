@@ -76,6 +76,8 @@ enum Action {
         kind: ExportChoice,
         #[arg(long)]
         out: PathBuf,
+        #[arg(long, value_enum)]
+        mdat_scope: Option<MdatScopeChoice>,
     },
     /// Run creation, filling, calibration, and all exports.
     Run {
@@ -200,6 +202,22 @@ impl From<ExportChoice> for ExportKind {
             ExportChoice::BeforeAfterMdat => Self::BeforeAfterMdat,
             ExportChoice::FilterText => Self::FilterText,
             ExportChoice::EqualizerApo => Self::EqualizerApo,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum MdatScopeChoice {
+    All,
+    Measurements,
+    Results,
+}
+impl From<MdatScopeChoice> for MdatScope {
+    fn from(value: MdatScopeChoice) -> Self {
+        match value {
+            MdatScopeChoice::All => Self::All,
+            MdatScopeChoice::Measurements => Self::Measurements,
+            MdatScopeChoice::Results => Self::Results,
         }
     }
 }
@@ -334,10 +352,11 @@ impl Runner {
         }));
     }
 
-    fn export(&mut self, kind: ExportKind, folder: &Path) {
+    fn export(&mut self, kind: ExportKind, folder: &Path, mdat_scope: Option<MdatScope>) {
         self.call(Request::Export(ExportParams {
             kind,
             folder: folder.to_string_lossy().into_owned(),
+            mdat_scope,
         }));
     }
 }
@@ -527,9 +546,14 @@ fn run(action: Action, runner: &mut Runner) {
             runner.call(Request::Mimo(MimoParams::default()));
             runner.call(Request::Results);
         }
-        Action::Export { project, kind, out } => {
+        Action::Export {
+            project,
+            kind,
+            out,
+            mdat_scope,
+        } => {
             runner.open(&project);
-            runner.export(kind.into(), &out);
+            runner.export(kind.into(), &out, mdat_scope.map(Into::into));
         }
         Action::Run {
             out,
@@ -665,7 +689,7 @@ fn full_run(runner: &mut Runner, out: &Path, project: Option<&Path>, fill: FillC
             }}));
             continue;
         }
-        runner.export(kind, &out.join("export").join(folder));
+        runner.export(kind, &out.join("export").join(folder), None);
     }
 }
 

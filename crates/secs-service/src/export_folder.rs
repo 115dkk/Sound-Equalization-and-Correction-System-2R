@@ -79,6 +79,11 @@ pub fn mdat_folder(base: &Path, mimo: bool, mode: &str, now: LocalTime) -> PathB
     timestamped_folder(base, "mdat", mimo, mode, now)
 }
 
+/// Derives the timestamped original-measurement mdat destination below an export base.
+pub fn measurement_mdat_folder(base: &Path, now: LocalTime) -> PathBuf {
+    base.join(format!("SECS_mdat_measurements_{}", now.stamp()))
+}
+
 /// Derives the timestamped CamillaDSP destination below an export base.
 pub fn camilladsp_folder(base: &Path, mimo: bool, mode: &str, now: LocalTime) -> PathBuf {
     timestamped_folder(base, "camilla", mimo, mode, now).join("camilladsp")
@@ -131,5 +136,26 @@ fn set_stored_folder(project: &mut secs_project::Project, folder: &str) {
         *value = PyJson::Str(folder.to_owned());
     } else {
         fields.push(("folder".into(), PyJson::Str(folder.to_owned())));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn measurement_mdat_folder_uses_its_own_timestamped_name() {
+        let now = LocalTime {
+            year: 2024,
+            month: 1,
+            day: 2,
+            hour: 3,
+            minute: 4,
+            second: 5,
+        };
+        assert_eq!(
+            measurement_mdat_folder(Path::new("exports"), now),
+            PathBuf::from("exports/SECS_mdat_measurements_20240102-030405")
+        );
     }
 }

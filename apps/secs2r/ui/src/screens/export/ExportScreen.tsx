@@ -3,9 +3,10 @@ import { HelpTip } from "../../ui/HelpTip";
 // delay, channels, MIMO, RC range), where the files go, and the exports in
 // two groups: the filters for the DSP (the CamillaDSP configuration, the
 // step's primary action in the header; the filter values as text; the
-// Equalizer APO configuration) and the responses for REW (the before/after
-// mdat, and the staged mdat under 고급, U3). A filter format that cannot
-// carry the result says why in its row (upstream 1.3.0 `_filter_card`).
+// Equalizer APO configuration) and the responses for REW (the REW mdat with
+// what it carries, F19, and the staged mdat under 고급, U3). A filter format
+// that cannot carry the result says why in its row (upstream 1.3.0
+// `_filter_card`).
 // No 완료 button (U4): the step is done once the current result is exported.
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import type { PrimaryAction } from "../../app/StepHeader";
@@ -15,16 +16,20 @@ import { useNumber, useT, type Translate } from "../../i18n/react";
 import type { CalibrationSummary } from "../../ipc/bindings/CalibrationSummary";
 import type { ExportBlock } from "../../ipc/bindings/ExportBlock";
 import type { ExportKind } from "../../ipc/bindings/ExportKind";
+import type { MdatScope } from "../../ipc/bindings/MdatScope";
 import type { Mode } from "../../ipc/bindings/Mode";
 import type { Notice } from "../../ipc/bindings/Notice";
-import { Advanced, Button, Card, EmptyState, ErrorNotice, Icon, StatusPill } from "../../ui";
+import { Advanced, Button, Card, EmptyState, ErrorNotice, Icon, Segmented, StatusPill } from "../../ui";
 import { roleCode } from "../../ui/maps/geometry";
 import {
   EXPORT_KINDS,
+  MDAT_SCOPES,
   canExport,
   exportBlock,
   exportStepState,
   filterModeName,
+  mdatFileName,
+  mdatScopeFor,
   mimoInclusion,
   type ExportActions,
   type ExportRun,
@@ -62,6 +67,12 @@ const BLOCK_TEXT: Partial<Record<ExportKind, Partial<Record<ExportBlock, Message
   filter_text: { subs: "export.blocked.filter_text.subs", mimo: "export.blocked.filter_text.mimo" },
   staged_mdat: { stale_cache: "export.blocked.mdat.stale_cache" },
   before_after_mdat: { stale_cache: "export.blocked.mdat.stale_cache" },
+};
+
+const SCOPE_TEXT: Record<MdatScope, MessageKey> = {
+  all: "export.mdat.scope.all",
+  measurements: "export.mdat.scope.measurements",
+  results: "export.mdat.scope.results",
 };
 
 const MIMO_REASON: Record<Extract<MimoInclusion, { included: false }>["reason"], MessageKey> = {
@@ -355,9 +366,37 @@ function whereText(t: Translate, kind: ExportKind, view: ExportView): string {
   if (kind === "camilla_dsp") return t("export.kind.camilla_dsp.where");
   if (kind === "staged_mdat") return t("export.kind.staged_mdat.where");
   if (kind === "filter_text") return t("export.kind.filter_text.where", { mode: view.settings.mode });
+  if (kind === "before_after_mdat" && mdatScopeFor(view.results.calibration, view.mdatScope) === "measurements") {
+    return t("export.kind.before_after_mdat.where.measurements");
+  }
   const what = mimoInclusion(view).included ? "RC_BA_MIMO" : "RC_BA";
   if (kind === "equalizer_apo") return t("export.kind.equalizer_apo.where", { what, mode: view.settings.mode });
   return t("export.kind.before_after_mdat.where", { what, mode: view.settings.mode });
+}
+
+/**
+ * What the REW mdat carries, chosen before its button is pressed. With no
+ * result yet only the measurements can go, so the choice shows that and
+ * says why.
+ */
+function MdatScopeField({ view, actions }: { view: ExportView; actions: ExportActions }) {
+  const t = useT();
+  const result = view.results.calibration;
+  const scope = mdatScopeFor(result, view.mdatScope);
+  const hint = result ? undefined : t(view.positions > 0 ? "export.mdat.scope.no_result" : "export.mdat.scope.no_measurements");
+  return (
+    <div className="export-item__scope">
+      <Segmented<MdatScope>
+        id="export.mdat.scope"
+        label={t("export.mdat.scope")}
+        size="sm"
+        value={scope}
+        options={MDAT_SCOPES.map((value) => ({ value, label: t(SCOPE_TEXT[value]), disabled: !result && value !== "measurements" }))}
+        onChange={actions.setMdatScope}
+        hint={hint}
+      />
+    </div>
+  );
 }
 
 function ExportItem({ kind, view, actions }: { kind: ExportKind; view: ExportView; actions: ExportActions }) {
@@ -370,24 +409,33 @@ function ExportItem({ kind, view, actions }: { kind: ExportKind; view: ExportVie
   const blocked = block ? BLOCK_TEXT[kind]?.[block] : undefined;
   const blockedId = useId();
   const recalibrateId = useId();
+  const scoped = kind === "before_after_mdat";
   return (
-    <section className="export-item" data-ui={`export.kind.${kind}`} aria-labelledby={titleId}>
+    <section className={scoped ? "export-item export-item--scoped" : "export-item"} data-ui={`export.kind.${kind}`} aria-labelledby={titleId}>
       <div className="export-item__text">
         <div className="ui-heading-help">
           <h4 className="export-item__title" id={titleId}>{t(text.title)}</h4>
           <HelpTip id={`export.kind.${kind}.help`} labelledBy={titleId} content={t(text.body)} />
         </div>
+        {scoped && <MdatScopeField view={view} actions={actions} />}
         <p className="export-item__where">
           <Icon name="folder" size={16} />
           <span>{whereText(t, kind, view)}</span>
         </p>
+        {scoped && (
+          // The file's own name: it says whether the file holds measurements, results or both.
+          <p className="export-item__where export-item__file" data-ui="export.mdat.file">
+            <Icon name="file" size={16} />
+            <span>{mdatFileName(mdatScopeFor(view.results.calibration, view.mdatScope), view.settings)}</span>
+          </p>
+        )}
       </div>
       <div className="export-item__action">
         {text.run ? (
           <Button
             data-ui={`export.run.${kind}`}
             busy={running}
-            disabled={!canExport(view) || block !== null}
+            disabled={!canExport(view, kind) || block !== null}
             aria-describedby={blocked ? blockedId : undefined}
             onClick={() => actions.exportFiles(kind)}
           >
