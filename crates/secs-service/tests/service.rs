@@ -100,6 +100,64 @@ fn call_ok(service: &Service, request: Request, events: Arc<dyn EventSink>) -> R
     *response
 }
 
+#[test]
+fn analytic_derivative_edits_persist_and_mark_results_stale() {
+    use secs_types::settings_edit::SettingEdit;
+
+    let root = temp_root("analytic-derivatives");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room");
+    let initial = service();
+    open(&initial, &path);
+    let events = Arc::new(Events::default());
+    let job = start_calibration(&initial, events.clone(), settings);
+    finished_result(events.wait(job, Duration::from_secs(120)));
+    assert!(!read_results(&initial).calibration.unwrap().stale);
+
+    // Each part alone, as the CLI sends it; the screen sends both at once.
+    for edit in [
+        SettingEdit::AnalyticDerivatives {
+            peq: Some(true),
+            mimo_iir: None,
+        },
+        SettingEdit::AnalyticDerivatives {
+            peq: None,
+            mimo_iir: Some(true),
+        },
+    ] {
+        call_ok(
+            &initial,
+            Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+                edit,
+            }),
+            Arc::new(NoEvents),
+        );
+    }
+    let results = read_results(&initial);
+    let calibration = results.calibration.unwrap();
+    assert!(calibration.stale);
+    assert_eq!(calibration.stale_reason.as_deref(), Some("settings"));
+    call_ok(
+        &initial,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+        Arc::new(NoEvents),
+    );
+
+    let reopened = service();
+    open(&reopened, &path);
+    let Response::CalibrationSettingsGet(settings) = call_ok(
+        &reopened,
+        Request::CalibrationSettingsGet,
+        Arc::new(NoEvents),
+    ) else {
+        panic!("expected reopened settings")
+    };
+    assert!(settings.peq_analytic_derivatives);
+    assert!(settings.mimo_iir_analytic_derivatives);
+    assert!(read_results(&reopened).calibration.unwrap().stale);
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn read_results(service: &Service) -> secs_types::ipc::ResultsSummary {
     let Response::Results(results) = call_ok(service, Request::Results, Arc::new(NoEvents)) else {
         panic!()

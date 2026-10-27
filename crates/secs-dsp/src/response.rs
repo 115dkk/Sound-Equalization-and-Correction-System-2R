@@ -103,6 +103,55 @@ pub fn peaking_response_z(z: &[C], f0: f64, q: f64, gain_db: f64, sr: f64) -> Ve
         .collect()
 }
 
+/// Logarithmic transfer derivatives `(1/H) dH/d(ln(f0), ln(Q), gain_db)`.
+///
+/// The numerator and denominator use the same unnormalized RBJ arithmetic as
+/// `peaking_response_z`. Dividing them separately avoids dividing a cascade by
+/// a possibly very small band response. This is a complex logarithmic
+/// derivative; no branch of the complex logarithm is evaluated.
+pub fn peaking_log_derivatives_z(z: &[C], f0: f64, q: f64, gain_db: f64, sr: f64) -> [Vec<C>; 3] {
+    let a = 10_f64.powf(gain_db / 40.0);
+    let w = 2.0 * PI * f0 / sr;
+    let alpha = w.sin() / (2.0 * q);
+    let alpha_f = w * w.cos() / (2.0 * q);
+    let middle_f = 2.0 * w * w.sin();
+    let gain_f = 10_f64.ln() / 40.0;
+    let b = [1.0 + alpha * a, -2.0 * w.cos(), 1.0 - alpha * a];
+    let d = [1.0 + alpha / a, -2.0 * w.cos(), 1.0 - alpha / a];
+    let mut out: [Vec<C>; 3] = std::array::from_fn(|_| Vec::with_capacity(z.len()));
+    for &z in z {
+        let num = b[0] + b[1] * z + b[2] * z * z;
+        let den = d[0] + d[1] * z + d[2] * z * z;
+        let u = C::new(1.0, 0.0) - z * z;
+        let nf = alpha_f * a * u + middle_f * z;
+        let df = alpha_f / a * u + middle_f * z;
+        let nq = -alpha * a * u;
+        let dq = -alpha / a * u;
+        let ng = gain_f * alpha * a * u;
+        let dg = -gain_f * alpha / a * u;
+        for (column, (n, d)) in out.iter_mut().zip([(nf, df), (nq, dq), (ng, dg)]) {
+            column.push(divide(n, num) - divide(d, den));
+        }
+    }
+    out
+}
+
+/// Analog all-pass logarithmic derivatives with respect to `ln(f0), ln(Q)`.
+/// These differentiate `allpass2`, including its analog frequency convention.
+pub fn allpass_log_derivatives(f: &[f64], f0: f64, q: f64) -> [Vec<C>; 2] {
+    let mut out: [Vec<C>; 2] = std::array::from_fn(|_| Vec::with_capacity(f.len()));
+    for &f in f {
+        let s = C::new(0.0, f) * (1.0 / f0);
+        let s2 = s * s;
+        let t = s * (1.0 / q);
+        let num = s2 - t + 1.0;
+        let den = s2 + t + 1.0;
+        out[0].push(divide(-2.0 * s2 + t, num) - divide(-2.0 * s2 - t, den));
+        out[1].push(divide(t, num) - divide(-t, den));
+    }
+    out
+}
+
 pub fn peq_response(f: &[f64], bands: &[(f64, f64, f64)]) -> Vec<C> {
     let z: Vec<_> = f
         .iter()
@@ -233,4 +282,66 @@ pub fn gd_curve_with_peak(
         *v = -*v * 1000.;
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn peaking_and_analog_allpass_analytic_derivatives_match_central_differences() {
+        let f = [0.0, 15.0, 25.0, 49.0, 80.0, 120.0, 299.0, 2000.0, 24000.0];
+        let z: Vec<_> = f
+            .iter()
+            .map(|&f| C::from_polar(1.0, (-2.0 * PI * f) / 48000.0))
+            .collect();
+        for (f0, q, gain) in [
+            (15.0_f64, 0.3_f64, -25.0),
+            (50.0, 10.0, 6.0),
+            (120.0, 2.0, 0.0),
+            (2000.0, 20.0, -3.0),
+        ] {
+            let parameters = [f0.ln(), q.ln(), gain];
+            let h = peaking_response_z(&z, f0, q, gain, 48000.0);
+            let d = peaking_log_derivatives_z(&z, f0, q, gain, 48000.0);
+            for a in 0..3 {
+                let (mut up, mut down) = (parameters, parameters);
+                up[a] += 1e-5;
+                down[a] -= 1e-5;
+                let up = peaking_response_z(&z, up[0].exp(), up[1].exp(), up[2], 48000.0);
+                let down = peaking_response_z(&z, down[0].exp(), down[1].exp(), down[2], 48000.0);
+                let mut error = 0.0_f64;
+                let mut scale = 1.0_f64;
+                for i in 0..f.len() {
+                    let analytic = h[i] * d[a][i];
+                    error = error.max(magnitude(analytic - (up[i] - down[i]) / 2e-5));
+                    scale = scale.max(magnitude(analytic));
+                }
+                assert!(
+                    error / scale < 3e-6,
+                    "PEQ f0={f0}, q={q}, gain={gain}, parameter={a}: {error}/{scale}"
+                );
+            }
+            let h = allpass2(&f, f0, q);
+            let d = allpass_log_derivatives(&f, f0, q);
+            for a in 0..2 {
+                let (mut up, mut down) = ([f0.ln(), q.ln()], [f0.ln(), q.ln()]);
+                up[a] += 1e-6;
+                down[a] -= 1e-6;
+                let up = allpass2(&f, up[0].exp(), up[1].exp());
+                let down = allpass2(&f, down[0].exp(), down[1].exp());
+                for i in 0..f.len() {
+                    let analytic = h[i] * d[a][i];
+                    assert!(
+                        magnitude(analytic - (up[i] - down[i]) / 2e-6)
+                            < 2e-7 * magnitude(analytic).max(1.0)
+                    );
+                    assert!(
+                        d[a][i].re.abs() < 1e-12,
+                        "all-pass derivative must preserve magnitude"
+                    );
+                }
+            }
+        }
+    }
 }

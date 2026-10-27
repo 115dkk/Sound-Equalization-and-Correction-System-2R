@@ -1,0 +1,81 @@
+{
+  "fixture": "engine_mimo_iir/room_C",
+  "environment": {
+    "python": "3.12.14",
+    "numpy": "2.3.5",
+    "system": "Linux",
+    "machine": "x86_64",
+    "longdouble_epsilon": 1.0842021724855044e-19,
+    "blas_threads": 1
+  },
+  "shape": [
+    11565,
+    140
+  ],
+  "analytic_vs_preserved_oracle_h_relative_max": 2.6868180495807673e-06,
+  "steps": [
+    {
+      "central_difference_step": 0.0001,
+      "jacobian_relative_max_vs_analytic": 4.784958648335866e-07,
+      "jtj_relative_max_vs_analytic": 2.690772508739276e-06,
+      "jtj_relative_max_vs_preserved_oracle": 3.961688774652178e-09,
+      "worst_jtj_index": [
+        2,
+        2
+      ]
+    },
+    {
+      "central_difference_step": 1e-05,
+      "jacobian_relative_max_vs_analytic": 3.2125527079154043e-07,
+      "jtj_relative_max_vs_analytic": 3.3604213372549795e-07,
+      "jtj_relative_max_vs_preserved_oracle": 2.9497302519940178e-06,
+      "worst_jtj_index": [
+        41,
+        41
+      ]
+    },
+    {
+      "central_difference_step": 1e-06,
+      "jacobian_relative_max_vs_analytic": 3.0874720234645204e-06,
+      "jtj_relative_max_vs_analytic": 3.238083364519815e-06,
+      "jtj_relative_max_vs_preserved_oracle": 3.966884588365586e-06,
+      "worst_jtj_index": [
+        41,
+        41
+      ]
+    }
+  ],
+  "extended_section_precision": {
+    "section_scalar_epsilon": 1.0842021724855044e-19,
+    "analytic_extended_vs_f64_jtj_relative_max": 3.714412011548626e-11,
+    "steps": [
+      {
+        "central_difference_step": 0.0001,
+        "jacobian_relative_max_vs_analytic": 4.797743157780427e-07,
+        "jtj_relative_max_vs_analytic": 2.6698128261069514e-06,
+        "worst_jtj_index": [
+          2,
+          2
+        ]
+      },
+      {
+        "central_difference_step": 1e-05,
+        "jacobian_relative_max_vs_analytic": 4.7991388553702e-09,
+        "jtj_relative_max_vs_analytic": 2.6518115209790463e-08,
+        "worst_jtj_index": [
+          2,
+          2
+        ]
+      },
+      {
+        "central_difference_step": 1e-06,
+        "jacobian_relative_max_vs_analytic": 1.0536785498985417e-09,
+        "jtj_relative_max_vs_analytic": 9.85849235997518e-10,
+        "worst_jtj_index": [
+          2,
+          2
+        ]
+      }
+    ]
+  }
+}

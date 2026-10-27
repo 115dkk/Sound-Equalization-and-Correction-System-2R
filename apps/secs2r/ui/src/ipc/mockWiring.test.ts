@@ -135,9 +135,10 @@ describe("P33 mock wiring", () => {
       sub_band_type: { kind: "sub_band_type", role: "SW1", band: "hp", type: "off" }, main_delay: { kind: "main_delay", ms: 2 },
       mimo_on: { kind: "mimo_on", on: true }, fsiso: { kind: "fsiso", hz: 100 }, mimo_low: { kind: "mimo_low", hz: 20 },
       mimo_max: { kind: "mimo_max", count: 4 }, mimo_fir: { kind: "mimo_fir", on: true },
+      analytic_derivatives: { kind: "analytic_derivatives", peq: true, mimo_iir: true },
     } satisfies { [K in SettingEdit["kind"]]: Extract<SettingEdit, { kind: K }> };
     for (const edit of Object.values(edits)) await mock.request({ method: "calibration_settings_edit", params: { edit } });
-    expect(await mock.request({ method: "calibration_settings_get" })).toMatchObject({ mode: "ultra", sample_rate_policy: "resample", ultra_ms: CALIBRATION_LIMITS.ultra_ms[1], room_volume_m3: 60, room_dims_m: [5, 4, 3], mimo_on: true, mimo_fir: true, subs_manual: { SW1: { mode: "bundle", gain_db: -4, hp_hz: 0 } } });
+    expect(await mock.request({ method: "calibration_settings_get" })).toMatchObject({ mode: "ultra", sample_rate_policy: "resample", ultra_ms: CALIBRATION_LIMITS.ultra_ms[1], room_volume_m3: 60, room_dims_m: [5, 4, 3], mimo_on: true, mimo_fir: true, peq_analytic_derivatives: true, mimo_iir_analytic_derivatives: true, subs_manual: { SW1: { mode: "bundle", gain_db: -4, hp_hz: 0 } } });
   });
 
   it("answers every generated Request variant with its tagged typed response", async () => {

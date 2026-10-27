@@ -10,7 +10,8 @@ pub(crate) mod prepared;
 pub(crate) mod run;
 pub(crate) mod solve;
 pub use iir::{
-    IirSolveOptions, IirSolver, IirSupport, MimoIir, design_mimo_iir, design_mimo_iir_with_options,
+    IirDerivatives, IirSolveOptions, IirSolver, IirSupport, MimoIir, design_mimo_iir,
+    design_mimo_iir_with_options,
 };
 pub use run::{
     MimoKey, MimoRun, availability, cap_text, compute, compute_with_acceleration, estimate_seconds,

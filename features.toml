@@ -130,6 +130,26 @@ tests = [
 note = "Explicit IirSolveOptions API; Dense remains default. Jv/Jt-v with bounded reflective TRF and truncated CG; dense fallback reserves its own memory budget. No app/IPC enablement and no change to FIR ridge sweep."
 
 [[feature]]
+id = "engine.analytic_derivatives"
+kind = "engine"
+milestone = "M6"
+status = "implemented"
+upstream = "correction_engine.py fit_peq and mimo_iir.py numerical Jacobians; closed-form alternative is new"
+tests = [
+  "secs-dsp::peaking_and_analog_allpass_analytic_derivatives_match_central_differences",
+  "secs-engine::analytic_peq_jacobian_differentiates_the_weighted_residual",
+  "secs-engine::analytic_peq_jacobian_retains_the_additive_magnitude_floor",
+  "secs-engine::analytic_peq_results_within_secs2_spread",
+  "secs-engine::mimo_iir_functions_match_dense_oracle",
+  "secs-engine::iir_derivatives_default_is_central_difference",
+  "secs-types::analytic_derivative_settings_default_off_and_change_only_their_keys",
+  "secs-project::analytic_derivative_settings_round_trip_and_defaults_preserve_saved_bytes",
+  "secs-service::analytic_derivative_edits_persist_and_mark_results_stale",
+  "secs2r-cli::project_set_persists_analytic_derivative_choices",
+]
+note = "D43, D44 (docs/perf/analytic-derivatives.md): experimental CalibrationSettings.peq_analytic_derivatives and mimo_iir_analytic_derivatives, off by default with unchanged results, keys and saved bytes. The calibration screen's range Advanced offers one experimental choice (off, general PEQ, MIMO IIR, both) and `secs2r-cli project set` changes them; apps/secs2r/ui CalibrateScreen.test.tsx pins the choice. The XO envelope and joint-cost spread gates keep guarding the default."
+
+[[feature]]
 id = "perf.compact_mimo_fir"
 kind = "perf"
 milestone = "M6"

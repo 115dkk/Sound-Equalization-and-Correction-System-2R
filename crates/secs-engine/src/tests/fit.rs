@@ -270,6 +270,25 @@ fn peq_trf_replay() {
     }
 }
 
+/// The fit's cost at the returned bands, including the production ring-Q clamp.
+fn band_cost(req: &FitRequest<'_>, bands: &[(f64, f64, f64)]) -> f64 {
+    let response = secs_dsp::response::peq_response(req.g, bands);
+    0.5 * response
+        .iter()
+        .zip(req.g)
+        .zip(req.corr_db)
+        .map(|((&h, &g), &target)| {
+            let weight = if g >= req.lo && g <= req.hi {
+                1.0
+            } else {
+                0.15
+            };
+            let r = weight * (20.0 * (secs_dsp::response::magnitude(h) + 1e-12).log10() - target);
+            r * r
+        })
+        .sum::<f64>()
+}
+
 #[test]
 fn peq_results_within_secs2_spread() {
     let mut failures = Vec::new();
@@ -288,24 +307,7 @@ fn peq_results_within_secs2_spread() {
         )
         .unwrap();
         let bands = result_bands(&req, &result.x);
-        // Evaluate the returned bands, including the production ring-Q clamp.
-        let response = secs_dsp::response::peq_response(req.g, &bands);
-        let cost = 0.5
-            * response
-                .iter()
-                .zip(req.g)
-                .zip(req.corr_db)
-                .map(|((&h, &g), &target)| {
-                    let weight = if g >= req.lo && g <= req.hi {
-                        1.0
-                    } else {
-                        0.15
-                    };
-                    let r = weight
-                        * (20.0 * (secs_dsp::response::magnitude(h) + 1e-12).log10() - target);
-                    r * r
-                })
-                .sum::<f64>();
+        let cost = band_cost(&req, &bands);
         let c0 = number(&o["final_cost"]);
         let environments = o["environments"].as_array().unwrap();
         assert_eq!(environments.len(), 3);
@@ -423,6 +425,72 @@ fn peq_results_within_secs2_spread() {
     assert!(
         failures.is_empty(),
         "fits outside SECS 2 spread: {failures:?}"
+    );
+}
+
+/// The opt-in analytic path follows a different trajectory from the default
+/// finite-difference replay. Gate its end values by the same SECS 2 spread
+/// rule (ADR 0004, P07).
+#[test]
+fn analytic_peq_results_within_secs2_spread() {
+    let mut failures = Vec::new();
+    let (mut above_all, mut below_reference, mut calls) = (0_usize, 0_usize, 0_usize);
+    let mut ratios = Vec::new();
+    for fx in Fixture::all_calls("engine_fit", "fit_") {
+        let call = recorded(&fx);
+        let req = call.request();
+        let o = fx.outputs();
+        assert_eq!(
+            integer(&o["cap"]) as usize,
+            if req.ring_ms.is_some() { 150 } else { 400 }
+        );
+        let cost = band_cost(
+            &req,
+            &fit_peq_with(&req, &|| false, PeqDerivatives::Analytic),
+        );
+        let c0 = number(&o["final_cost"]);
+        let costs: Vec<_> = o["environments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .chain(o["perturbations"].as_array().unwrap())
+            .map(|env| number(&env["cost"]))
+            .collect();
+        let cmin = costs.iter().copied().fold(c0, f64::min);
+        let cmax = costs.iter().copied().fold(c0, f64::max);
+        let limit = c0 + 1.25 * (cmax - cmin).max(1e-6 * c0);
+        let gated = integer(&o["status"]) != 0 || oracle_libm();
+        let pass = cost.is_finite() && (cost <= limit || !gated);
+        above_all += usize::from(cost > cmax);
+        below_reference += usize::from(cost < c0);
+        calls += 1;
+        ratios.push(cost / c0);
+        println!(
+            "SPREAD_ANALYTIC {} rust_c0={:.17e} spread={:.17e} within={} pass={pass}",
+            fx.inputs()["id"].as_str().unwrap(),
+            cost / c0,
+            (cmax - cmin) / c0,
+            cost <= limit
+        );
+        if !pass {
+            failures.push(fx.inputs()["id"].as_str().unwrap().to_owned());
+        }
+    }
+    ratios.sort_by(f64::total_cmp);
+    println!(
+        "SPREAD_ANALYTIC_RANK above all twelve runs on {above_all} of {calls} calls, below the reference on {below_reference}, median cost ratio {:.6}",
+        ratios[ratios.len() / 2]
+    );
+    let p = 1.0 / 13.0;
+    let mean = calls as f64 * p;
+    let bound = (mean + 3.1 * (mean * (1.0 - p)).sqrt()).ceil() as usize;
+    assert!(
+        above_all <= bound,
+        "analytic fits above all twelve runs on {above_all} of {calls} calls (bound {bound})"
+    );
+    assert!(
+        failures.is_empty(),
+        "analytic fits outside SECS 2 spread: {failures:?}"
     );
 }
 

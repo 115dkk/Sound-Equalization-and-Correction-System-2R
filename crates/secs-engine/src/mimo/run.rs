@@ -8,9 +8,10 @@ use secs_types::{
     chain::{MimoFilter, MimoPath, MimoPaths},
 };
 
-use super::{IirSupport, MimoDesign, MimoRequest, support_path};
+use super::{IirDerivatives, IirSolveOptions, IirSupport, MimoDesign, MimoRequest, support_path};
 use crate::{
-    C, Design, EngineConfig, EngineError, MeasurementSet, Note, Tuning, grid::design_freqs,
+    C, Design, EngineConfig, EngineError, MeasurementSet, Note, PeqDerivatives, Tuning,
+    grid::design_freqs,
 };
 
 /// Low-rate taps a FIR support solves for (upstream `mimo.FIR_TAPS_LOW`):
@@ -278,6 +279,19 @@ fn compute_observed_accelerated(
         return Err(EngineError::Input(reason));
     }
     let key = MimoKey::from_settings(settings);
+    let iir = IirSolveOptions {
+        derivatives: if settings.mimo_iir_analytic_derivatives {
+            IirDerivatives::Analytic
+        } else {
+            IirDerivatives::CentralDifference
+        },
+        seed_peq_derivatives: if settings.peq_analytic_derivatives {
+            PeqDerivatives::Analytic
+        } else {
+            PeqDerivatives::TwoPoint
+        },
+        ..IirSolveOptions::default()
+    };
     // Capped IIR fitting amplifies even tiny changes in its ideal target.
     // Retain the exact reference target for IIR, including explicit GPU requests.
     let iir_reference = acceleration.filter(|_| !key.fir).map(|selection| {
@@ -313,16 +327,18 @@ fn compute_observed_accelerated(
     } else if ideal.supports.is_empty() {
         Vec::new()
     } else {
-        super::iir::design_mimo_iir_prepared(design, &prepared, &ideal, &req, tuning, ctx)?
-            .supports
-            .into_iter()
-            .map(|(r, s)| {
-                (
-                    r,
-                    s.into_iter().map(|(r, s)| (r, Support::Iir(s))).collect(),
-                )
-            })
-            .collect()
+        super::iir::design_mimo_iir_prepared_with_options(
+            design, &prepared, &ideal, &req, tuning, &iir, ctx,
+        )?
+        .supports
+        .into_iter()
+        .map(|(r, s)| {
+            (
+                r,
+                s.into_iter().map(|(r, s)| (r, Support::Iir(s))).collect(),
+            )
+        })
+        .collect()
     };
     observe("realization", started.elapsed());
     let started = std::time::Instant::now();

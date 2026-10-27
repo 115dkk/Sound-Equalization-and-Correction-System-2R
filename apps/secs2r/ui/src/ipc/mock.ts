@@ -350,6 +350,10 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "mimo_low": settings.mimo_low = edit.hz === null ? null : clamp(edit.hz, LIMITS.mimo_low); break;
       case "mimo_max": settings.mimo_max_supports = Math.round(clamp(edit.count, LIMITS.mimo_max)); break;
       case "mimo_fir": settings.mimo_fir = edit.on; break;
+      case "analytic_derivatives":
+        if (edit.peq !== undefined) settings.peq_analytic_derivatives = edit.peq;
+        if (edit.mimo_iir !== undefined) settings.mimo_iir_analytic_derivatives = edit.mimo_iir;
+        break;
     }
     dirty();
     return settings;

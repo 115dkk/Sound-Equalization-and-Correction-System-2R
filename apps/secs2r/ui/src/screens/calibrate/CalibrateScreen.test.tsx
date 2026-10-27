@@ -281,6 +281,26 @@ describe("보정 screen", () => {
     expect(actions.calibrate).not.toHaveBeenCalled();
   });
 
+  it("keeps the experimental derivative choice folded until used and sets both parts in one edit", () => {
+    let actions = setup(fx.emptyView);
+    expect(must("calibrate.range.advanced").getAttribute("aria-expanded")).toBe("false");
+    cleanup();
+    actions = setup({ ...fx.emptyView, settings: { ...fx.emptyView.settings, peq_analytic_derivatives: true } });
+    expect(must("calibrate.range.advanced").getAttribute("aria-expanded")).toBe("true");
+    expect(must("calibrate.analytic.peq").getAttribute("aria-checked")).toBe("true");
+    // MIMO is off in this view; only a choice that includes MIMO IIR says that part waits.
+    expect(screen.queryByText(translate("ko", "calibrate.analytic.mimo_unused"))).toBeNull();
+    fireEvent.click(must("calibrate.analytic.both"));
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "analytic_derivatives", peq: true, mimo_iir: true });
+    fireEvent.click(must("calibrate.analytic.off"));
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "analytic_derivatives", peq: false, mimo_iir: false });
+    expect(actions.calibrate).not.toHaveBeenCalled();
+    cleanup();
+    setup({ ...fx.emptyView, settings: { ...fx.emptyView.settings, mimo_iir_analytic_derivatives: true } });
+    expect(must("calibrate.analytic.mimo").getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByText(translate("ko", "calibrate.analytic.mimo_unused"))).toBeTruthy();
+  });
+
   it("sends unsupported resampling rates to measurements instead of reopening the conversion choice", () => {
     const actions = setup({ ...fx.emptyView, failure: { job: "recommend_xo", error: ipcError("engine_input", "unsupported rate", {
       reason: "unsupported_resampling_rate", position: "1", role: "SW3", actual_hz: "4000", min_hz: "8000", max_hz: "384000",

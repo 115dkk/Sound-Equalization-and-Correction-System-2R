@@ -496,6 +496,20 @@ export const TOUR_SCENES: TourScene[] = [
     ops: [...choosePath("native", "calibrate"), click(ui("calibrate.ba.advanced")), click(ui("calibrate.ba.edit.SW2")), reveal(`.ui-segmented-field:has(${ui("calibrate.ba.edit")})`)],
   },
   {
+    id: "calibrate.analytic",
+    step: "calibrate",
+    title: { ko: "해석적 미분 실험 설정", en: "Experimental analytic derivatives" },
+    note: {
+      ko: "보정 범위의 고급에서 '둘 다'를 고른 상태입니다. 실험 설정이 켜져 있어 고급이 펼쳐진 채 열리고, MIMO가 꺼져 있어 MIMO IIR 쪽이 쓰이지 않는다는 안내가 보입니다.",
+      en: "'Both' is chosen in the range card's Advanced. The section opens unfolded while an experiment is on, and MIMO is off, so a line says the MIMO IIR part is not used.",
+    },
+    setup: async (mock) => {
+      await inProgress(mock);
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "analytic_derivatives", peq: true, mimo_iir: true } } });
+    },
+    ops: [...choosePath("native", "calibrate"), reveal(ui("calibrate.range.advanced"))],
+  },
+  {
     id: "calibrate.sample-rate",
     step: "calibrate",
     title: { ko: "측정 샘플레이트 처리 설정", en: "Measurement sample-rate policy" },

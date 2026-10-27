@@ -40,6 +40,7 @@ const BUILT: readonly { template: string; keys: RegExp }[] = [
   { template: "calibrate.range.dims.${name}", keys: /^calibrate\.range\.dims\.[a-z]$/ },
   { template: "calibrate.ba.layout.${value}", keys: /^calibrate\.ba\.layout\.[a-z]+$/ },
   { template: "calibrate.ba.${band}", keys: /^calibrate\.ba\.(?:hp|lp)$/ },
+  { template: "calibrate.analytic.${scope}", keys: /^calibrate\.analytic\.(?:off|peq|mimo|both)$/ },
   { template: "frame.settings.logo.${icon}", keys: /^frame\.settings\.logo\.(?:expert|civilian)$/ },
 ];
 

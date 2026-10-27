@@ -179,10 +179,20 @@ function RoomDims({ settings, change }: { settings: CalibrationSettings; change:
   );
 }
 
+/** Where the experimental closed-form derivatives apply (D43, D44); two settings, one choice. */
+type AnalyticScope = "off" | "peq" | "mimo" | "both";
+const ANALYTIC_SCOPES: readonly AnalyticScope[] = ["off", "peq", "mimo", "both"];
+
+function analyticScope(s: CalibrationSettings): AnalyticScope {
+  if (s.peq_analytic_derivatives) return s.mimo_iir_analytic_derivatives ? "both" : "peq";
+  return s.mimo_iir_analytic_derivatives ? "mimo" : "off";
+}
+
 function RangeSection({ view, actions }: Props) {
   const t = useT();
   const number = useNumber();
   const s = view.settings;
+  const analytic = analyticScope(s);
   const auto = s.rc_hi === null;
   const rcLimit = view.lines.rc.find((n) => n.code === "rc_limit");
   const resolved = rcLimit ? Number(rcLimit.params.hz) : Number.NaN;
@@ -247,7 +257,8 @@ function RangeSection({ view, actions }: Props) {
           ))}
         </ul>
       )}
-      <Advanced id="calibrate.range.advanced" count={1}>
+      {/* An experiment left on stays in view: the section opens with it. */}
+      <Advanced id="calibrate.range.advanced" count={2} defaultOpen={analytic !== "off"}>
         <div className="calibrate-fields">
           <NumberField
             id="calibrate.range.boost"
@@ -262,6 +273,17 @@ function RangeSection({ view, actions }: Props) {
             onChange={(db) => actions.changeSetting({ kind: "boost_max", db })}
           />
         </div>
+        <Segmented<AnalyticScope>
+          id="calibrate.analytic"
+          label={t("calibrate.analytic.title")}
+          help={t("calibrate.analytic.help")}
+          hint={analytic !== "off" && analytic !== "peq" && (!s.mimo_on || s.mimo_fir) ? t("calibrate.analytic.mimo_unused") : undefined}
+          value={analytic}
+          options={ANALYTIC_SCOPES.map((scope) => ({ value: scope, label: t(`calibrate.analytic.${scope}`) }))}
+          onChange={(scope) =>
+            actions.changeSetting({ kind: "analytic_derivatives", peq: scope === "peq" || scope === "both", mimo_iir: scope === "mimo" || scope === "both" })
+          }
+        />
       </Advanced>
     </SettingsCard>
   );

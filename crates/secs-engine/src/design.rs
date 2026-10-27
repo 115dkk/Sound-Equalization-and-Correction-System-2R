@@ -18,7 +18,7 @@ use crate::{
     C, EngineConfig, EngineError, MeasurementSet, Tuning,
     ba::{self, BaInput, LayoutInfo, ManualPlan},
     chain::BaRow,
-    fit::{self, Fitter},
+    fit::{self, Fitter, PeqDerivatives},
     grid::{N_FFT, SR, design_freqs},
     levels,
     measurement::{self, Spectra},
@@ -36,12 +36,19 @@ pub enum FitStage<'a> {
 }
 pub type FitterFactory<'f> = dyn Fn(FitStage<'_>) -> Box<Fitter<'f>> + Sync + 'f;
 pub fn production_fitters(cancel: &CancelToken) -> Box<FitterFactory<'_>> {
+    production_fitters_with(cancel, PeqDerivatives::TwoPoint)
+}
+
+pub fn production_fitters_with(
+    cancel: &CancelToken,
+    derivatives: PeqDerivatives,
+) -> Box<FitterFactory<'_>> {
     Box::new(move |_| {
         Box::new(move |request| {
             if cancel.is_cancelled() {
                 Vec::new()
             } else {
-                fit::fit_peq_until(request, &|| cancel.is_cancelled())
+                fit::fit_peq_with(request, &|| cancel.is_cancelled(), derivatives)
             }
         })
     })

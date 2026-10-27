@@ -33,10 +33,18 @@ v0.24.3을 기준으로 쓴 리소스 최적화 패치를 받았습니다. 패�
 - **일반 PEQ 해석적 미분:** 운영 `fit_peq`로 오라클의 맞춤 97건을 다시 풀면 SECS 2 폭 안에 들고(12벌 모두보다 나쁜 경우 5건, 기준보다 낮은 비용 81건) 끝단 spread도 통과합니다. 하지만 XO 추천 범위 검사에서 room 센터 100 Hz의 GD 폭(34.46 ms, SECS 2는 32.23–32.60 ms)과 dolby 서라운드 100 Hz의 점수(86.54, SECS 2는 86.76–86.82)가 값별 상한인 폭의 3배를 넘었습니다. 0004는 오라클 libm에서 이 상한을 넘으면 결함으로 봅니다.
 - **MIMO IIR 해석적 미분:** `mimo_iir_joint_costs_within_spread`에서 room_L의 결합 맞춤 비용이 7.376×10⁻³으로 상한 7.298×10⁻³을 넘고 SECS 2 6벌 모두보다 나빴습니다.
 
-이 셋을 다시 넣으려면 판정 규칙이나 기준 실행을 바꾸는 별도 ADR이 먼저입니다. 해석적 미분이 맞춤 비용을 대체로 낮추는 것은 사실이지만, 지금 규칙은 SECS 2와 같은 궤적의 분포에서 벗어나는지를 보며 그 규칙 아래에서는 탈락입니다.
+이 셋을 다시 넣으려면 판정 규칙이나 기준 실행을 바꾸는 별도 ADR이 먼저입니다. 일반 PEQ 맞춤에서 해석적 미분이 비용을 대체로 낮추는 것은 사실이지만(97건 중 81건), 지금 규칙은 SECS 2와 같은 궤적의 분포에서 벗어나는지를 보며 그 규칙 아래에서는 탈락입니다.
 
 ## 결과
 
 - 보정 결과, MIMO 결과, 내보낸 필터의 전달함수는 이전 판과 같습니다. 바뀌는 것은 계산 시간과 메모리, CamillaDSP·APO 설정 파일의 배선과 바이트, 캐시 파일의 MIMO FIR 표현입니다.
 - CamillaDSP·APO 설정은 이전 판과 바이트가 다르므로, 같은 결과를 다시 내보내도 파일 비교 도구에서는 바뀐 것으로 보입니다.
 - 측정한 시간과 메모리, 실행한 검사는 [`docs/perf/resource-optimizations.md`](../perf/resource-optimizations.md)에 있습니다.
+
+## 보충: 해석적 미분 두 가지를 실험 설정으로 둡니다(2026-10-27)
+
+기본값으로 넣지 않은 일반 PEQ 맞춤과 MIMO IIR 맞춤의 해석적 미분을, 기본값을 바꾸지 않는 보정 설정으로 둡니다(D44, D43). 같은 측정에서 업스트림 방식과 해석적 미분의 결과를 내 Dirac Live ART의 실측과 비교하려는 것입니다. 식, 시뮬레이션 수치, 쓰는 법은 [`docs/perf/analytic-derivatives.md`](../perf/analytic-derivatives.md)에 있습니다.
+
+- 설정은 `CalibrationSettings::peq_analytic_derivatives`와 `mimo_iir_analytic_derivatives`이고 기본값은 둘 다 꺼짐입니다. 화면에서는 보정 범위 카드의 '고급' 안에 '해석적 미분 (실험)' 선택지 하나(쓰지 않음, 일반 PEQ, MIMO IIR, 둘 다)로 두고, CLI에서는 `project set`으로 바꿉니다.
+- 꺼져 있으면 결과, 설정 키, 캐시 바이트가 지금과 같습니다. 켜면 PEQ 설정은 보정 설정 키를, MIMO IIR 설정은 MIMO 설정 키를 바꾸므로 기존 결과는 다른 설정을 바꿨을 때와 같이 낡은 결과가 됩니다.
+- `xo_recommendation_production_envelope`와 `mimo_iir_joint_costs_within_spread`는 기본값만 지킵니다. 해석적 미분을 기본값으로 삼으려면 여전히 판정 규칙을 바꾸는 별도 ADR이 먼저입니다.

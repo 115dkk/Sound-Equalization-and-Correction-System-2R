@@ -380,6 +380,14 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
                 .round_ties_even() as i64
         }
         SettingEdit::MimoFir { on } => s.mimo_fir = on,
+        SettingEdit::AnalyticDerivatives { peq, mimo_iir } => {
+            if let Some(on) = peq {
+                s.peq_analytic_derivatives = on;
+            }
+            if let Some(on) = mimo_iir {
+                s.mimo_iir_analytic_derivatives = on;
+            }
+        }
     }
 }
 

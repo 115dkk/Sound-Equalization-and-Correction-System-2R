@@ -63,11 +63,11 @@ pub use calibration::{EngineInputs, ProjectView, engine_inputs};
 pub use chain::{BaRow, StageResponses, input_response, stage_responses};
 pub use design::{
     Design, DesignRequest, DesignSpectra, FitStage, FitterFactory, MainDesign, SubDesign, design,
-    production_fitters,
+    production_fitters, production_fitters_with,
 };
 pub use error::EngineError;
 pub use export_view::{ExportView, export_view};
-pub use fit::FitRequest;
+pub use fit::{FitRequest, PeqDerivatives};
 pub use input::{EngineConfig, Measurement, MeasurementSet, Samples, Tuning};
 pub use measurement::{Spectra, long_spectra};
 pub use mimo::{

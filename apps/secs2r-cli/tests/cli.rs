@@ -239,6 +239,59 @@ fn mimo_calibrates_in_a_fresh_process_before_computing_paths() {
 }
 
 #[test]
+fn project_set_persists_analytic_derivative_choices() {
+    let root = root("project-set-derivatives");
+    let project = root.join("derivatives.secs");
+    let project_arg = project.to_string_lossy();
+    assert_success(&run(&["project", "new", &project_arg, "--sample"]).0);
+    let set = assert_success(
+        &run(&[
+            "project",
+            "set",
+            &project_arg,
+            "--mimo",
+            "on",
+            "--mimo-supports",
+            "iir",
+            "--mimo-iir-derivatives",
+            "analytic",
+            "--peq-derivatives",
+            "analytic",
+        ])
+        .0,
+    );
+    let settings = set
+        .iter()
+        .rev()
+        .find(|line| line["reply"]["data"]["method"] == "calibration_settings_get")
+        .expect("project set must print settings");
+    assert_eq!(
+        settings["reply"]["data"]["data"]["peq_analytic_derivatives"],
+        true
+    );
+    assert_eq!(
+        settings["reply"]["data"]["data"]["mimo_iir_analytic_derivatives"],
+        true
+    );
+    assert_eq!(settings["reply"]["data"]["data"]["mimo_on"], true);
+    assert_eq!(settings["reply"]["data"]["data"]["mimo_fir"], false);
+    let printed = assert_success(&run(&["project", "set", &project_arg]).0);
+    let settings = printed
+        .iter()
+        .find(|line| line["reply"]["data"]["method"] == "calibration_settings_get")
+        .expect("project set without choices must print settings");
+    assert_eq!(
+        settings["reply"]["data"]["data"]["peq_analytic_derivatives"],
+        true
+    );
+    assert_eq!(
+        settings["reply"]["data"]["data"]["mimo_iir_analytic_derivatives"],
+        true
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn errors_exit_one_and_quiet_omits_events() {
     let root = root("errors-quiet");
     let missing = root.join("missing.secs");
