@@ -40,18 +40,19 @@ pub struct CalibrationError {
     pub line: Option<usize>,
 }
 
-impl From<CalibrationError> for AudioError {
-    fn from(error: CalibrationError) -> Self {
-        match error.issue {
-            CalibrationIssue::TooLarge => invalid("calibration file too large"),
-            CalibrationIssue::TooFewPoints | CalibrationIssue::BothConventions => {
-                invalid("calibration needs two ordered points and one sensitivity convention")
-            }
-            _ => invalid(&format!(
-                "invalid calibration line {}",
-                error.line.unwrap_or_default()
-            )),
+// A named conversion, not `From`: a second `From<_> for AudioError` makes
+// `?` on closures returning `Result<_, AudioError>` ambiguous downstream
+// (secs-sys's cpal playback loop).
+fn audio_error(error: CalibrationError) -> AudioError {
+    match error.issue {
+        CalibrationIssue::TooLarge => invalid("calibration file too large"),
+        CalibrationIssue::TooFewPoints | CalibrationIssue::BothConventions => {
+            invalid("calibration needs two ordered points and one sensitivity convention")
         }
+        _ => invalid(&format!(
+            "invalid calibration line {}",
+            error.line.unwrap_or_default()
+        )),
     }
 }
 
@@ -91,7 +92,7 @@ impl MicCalibration {
     /// Strict numeric rows with REW headings, comments and quoted USB metadata.
     /// Malformed numeric rows and sensitivity headers remain errors.
     pub fn parse(text: &str) -> Result<Self, AudioError> {
-        Self::parse_checked(text).map_err(AudioError::from)
+        Self::parse_checked(text).map_err(audio_error)
     }
 
     /// Like `parse`, with a structured issue and a one-based offending line.
