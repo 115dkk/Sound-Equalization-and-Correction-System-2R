@@ -4,4 +4,12 @@ import type { Mode } from "./Mode";
 import type { SampleRatePolicy } from "./SampleRatePolicy";
 import type { SubEntry } from "./SubEntry";
 
-export type CalibrationSettings = { mode: Mode, sample_rate_policy: SampleRatePolicy, rc_lo: number, rc_hi: number | null, room_volume_m3: number | null, room_dims_m: [number, number, number] | null, mimo_on: boolean, fsiso: number, mimo_low: number | null, mimo_max_supports: number, mimo_fir: boolean, xo: { [key in string]: number }, xo_rec: { [key in string]: number }, ultra_ms: number, subs_manual: { [key in string]: SubEntry }, sub_main_delay_ms: number, bundle_layouts: { [key in string]: BundleLayoutEntry }, infra_boost_max_db: number, xo_peq_on: boolean, boost_max_db: number, xo_peq_lo: number, xo_peq_hi: number, };
+export type CalibrationSettings = { mode: Mode, sample_rate_policy: SampleRatePolicy, rc_lo: number, rc_hi: number | null, room_volume_m3: number | null, room_dims_m: [number, number, number] | null, mimo_on: boolean, fsiso: number, mimo_low: number | null, mimo_max_supports: number, mimo_fir: boolean, 
+/**
+ * Experimental: PEQ fits use closed-form Jacobians (results leave SECS 2).
+ */
+peq_analytic_derivatives: boolean, 
+/**
+ * Experimental: MIMO IIR fits use closed-form derivatives (results leave SECS 2).
+ */
+mimo_iir_analytic_derivatives: boolean, xo: { [key in string]: number }, xo_rec: { [key in string]: number }, ultra_ms: number, subs_manual: { [key in string]: SubEntry }, sub_main_delay_ms: number, bundle_layouts: { [key in string]: BundleLayoutEntry }, infra_boost_max_db: number, xo_peq_on: boolean, boost_max_db: number, xo_peq_lo: number, xo_peq_hi: number, };

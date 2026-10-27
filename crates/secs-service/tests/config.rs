@@ -707,7 +707,16 @@ fn service_config_oracle_replays_values_and_saved_project_bytes() {
             Response::CalibrationSettingsSet(result) => {
                 let mut actual = serde_json::to_value(result).unwrap();
                 assert_eq!(actual["sample_rate_policy"], "reject", "{}", fixture.id);
-                actual.as_object_mut().unwrap().remove("sample_rate_policy");
+                let object = actual.as_object_mut().unwrap();
+                object.remove("sample_rate_policy");
+                assert_eq!(
+                    object.remove("peq_analytic_derivatives"),
+                    Some(false.into())
+                );
+                assert_eq!(
+                    object.remove("mimo_iir_analytic_derivatives"),
+                    Some(false.into())
+                );
                 assert_eq!(actual, fixture.outputs()["calibration"], "{}", fixture.id);
             }
             Response::PatchSheetCsv(_) => {}

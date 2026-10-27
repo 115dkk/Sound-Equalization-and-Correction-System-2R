@@ -19,8 +19,12 @@ static BUNDLE_LAYOUT_SHAPE: Shape = Shape::Record {
 /// `xo_rec` maps are replaced; `subs_manual` and `bundle_layouts` keep only
 /// the entries the settings still have.
 pub(crate) static CALIBRATION_SHAPE: Shape = Shape::Record {
-    // Written only for the resample policy, so a stored one must not return.
-    optional: &["sample_rate_policy"],
+    // Written only for non-default policies, so stored values must not return.
+    optional: &[
+        "sample_rate_policy",
+        "peq_analytic_derivatives",
+        "mimo_iir_analytic_derivatives",
+    ],
     nested: &[
         ("subs_manual", Shape::Map(&SUB_ENTRY_SHAPE)),
         ("bundle_layouts", Shape::Map(&BUNDLE_LAYOUT_SHAPE)),
@@ -66,6 +70,9 @@ pub fn calibration_from_project(project: &Project) -> CalibrationSettings {
     // Upstream 1.3.0: a stored calibration without the key predates FIR
     // supports (1.2.0) and stays IIR; an empty one keeps the FIR default.
     out.mimo_fir = get("mimo_fir").map_or(raw.is_empty(), PyJson::is_truthy);
+    out.peq_analytic_derivatives = get("peq_analytic_derivatives").is_some_and(PyJson::is_truthy);
+    out.mimo_iir_analytic_derivatives =
+        get("mimo_iir_analytic_derivatives").is_some_and(PyJson::is_truthy);
     out.xo = xo_map(get("xo"));
     out.xo_rec = xo_map(get("xo_rec"));
     out.ultra_ms = num(get("ultra_ms"), 30.0, 200.0).unwrap_or(200.0);
@@ -180,6 +187,12 @@ fn calibration_json(settings: &CalibrationSettings) -> PyJson {
     ];
     if settings.sample_rate_policy == SampleRatePolicy::Resample {
         values.push(("sample_rate_policy".into(), PyJson::Str("resample".into())));
+    }
+    if settings.peq_analytic_derivatives {
+        values.push(("peq_analytic_derivatives".into(), PyJson::Bool(true)));
+    }
+    if settings.mimo_iir_analytic_derivatives {
+        values.push(("mimo_iir_analytic_derivatives".into(), PyJson::Bool(true)));
     }
     PyJson::Object(values)
 }

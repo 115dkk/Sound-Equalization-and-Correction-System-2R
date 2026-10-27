@@ -1,5 +1,6 @@
 //! P16 stage-boundary and statistical gates; no tolerance depends on a run.
 use crate::{C, Tuning, mimo::iir::*};
+use faer::Mat;
 use secs_compute::{CancelToken, Context, MemoryBudget, NoProgress};
 use secs_dsp::optimize::NormalEquations;
 use secs_oracle::{Fixture, number, oracle_libm};
@@ -97,6 +98,10 @@ fn relative(got: &[f64], expected: &[f64], norm: bool) -> f64 {
     }
 }
 
+/// Measured maximum of the analytic normal equations against the recorded
+/// central-difference oracle over all fixtures, times 1.5 (ADR 0004).
+const ANALYTIC_ORACLE_BOUND: f64 = 1.5 * 2.92e-5;
+
 #[test]
 fn mimo_iir_functions_match_dense_oracle() {
     let t = Tuning::default();
@@ -108,22 +113,93 @@ fn mimo_iir_functions_match_dense_oracle() {
         let x = fx.f64s(&j["x0"]);
         let mut objective = Objective::new(&pb, &t, &ctx, &pols);
         let f = objective.residual(&x);
+        let flat = |h: Mat<f64>| {
+            (0..x.len())
+                .flat_map(|i| (0..x.len()).map(move |j| (i, j)))
+                .map(|(i, j)| h[(i, j)])
+                .collect::<Vec<_>>()
+        };
         let (h, g) = objective.normal(&x, &f).unwrap();
-        let h = (0..x.len())
-            .flat_map(|i| (0..x.len()).map(move |j| (i, j)))
-            .map(|(i, j)| h[(i, j)])
-            .collect::<Vec<_>>();
         for (name, got, expected, norm) in [
-            ("residual", f, fx.f64s(&j["residual"]), true),
-            ("jtj", h, fx.f64s(&j["jtj"]), false),
+            ("residual", f.clone(), fx.f64s(&j["residual"]), true),
+            ("jtj", flat(h), fx.f64s(&j["jtj"]), false),
             ("jtf", g, fx.f64s(&j["jtf"]), false),
         ] {
             let error = relative(&got, &expected, norm);
             eprintln!("MEASURE IIR {} {name} relative={error:.17e}", fx.id);
             assert!(error <= 1e-10, "{} {name}: {error:e}", fx.id);
         }
+        objective.set_derivatives(IirDerivatives::Analytic);
+        let (h, g) = objective.normal(&x, &f).unwrap();
+        for (name, got, expected) in [
+            ("jtj", flat(h), fx.f64s(&j["jtj"])),
+            ("jtf", g, fx.f64s(&j["jtf"])),
+        ] {
+            let error = relative(&got, &expected, false);
+            eprintln!(
+                "MEASURE IIR {} analytic {name} relative={error:.17e}",
+                fx.id
+            );
+            assert!(
+                error <= ANALYTIC_ORACLE_BOUND,
+                "{} analytic {name}: {error:e}",
+                fx.id
+            );
+        }
         assert_eq!(late_modes(&pb.xs, t.mimo_a_bands, 20.0, pb.fsiso), pb.modes);
     }
+}
+
+#[test]
+fn iir_derivatives_default_is_central_difference() {
+    assert_eq!(
+        IirSolveOptions::default().derivatives,
+        IirDerivatives::CentralDifference
+    );
+    assert_eq!(
+        IirSolveOptions::default().seed_peq_derivatives,
+        crate::PeqDerivatives::TwoPoint
+    );
+    let t = Tuning::default();
+    let ctx = context(1);
+    let fx = fixtures()
+        .into_iter()
+        .find(|fixture| fixture.id == "engine_mimo_iir/room_C")
+        .expect("room_C fixture");
+    let pb = problem(&fx);
+    let pols = pols(&fx);
+    let x0 = fx.f64s(&fx.outputs()["reference"]["joint"]["x0"]);
+    let expected = solve_joint(&pb, &t, &ctx, &x0, &pols).unwrap();
+    let default =
+        solve_joint_with_options(&pb, &t, &ctx, &x0, &pols, &IirSolveOptions::default()).unwrap();
+    assert_eq!(default.cost.to_bits(), expected.cost.to_bits());
+    assert!(
+        default
+            .x
+            .iter()
+            .zip(&expected.x)
+            .all(|(a, b)| a.to_bits() == b.to_bits())
+    );
+    let analytic = solve_joint_with_options(
+        &pb,
+        &t,
+        &ctx,
+        &x0,
+        &pols,
+        &IirSolveOptions {
+            derivatives: IirDerivatives::Analytic,
+            ..IirSolveOptions::default()
+        },
+    )
+    .unwrap();
+    assert!(analytic.cost.is_finite());
+    assert!(
+        analytic
+            .x
+            .iter()
+            .zip(&expected.x)
+            .any(|(a, b)| a.to_bits() != b.to_bits())
+    );
 }
 
 #[derive(Default)]
@@ -206,6 +282,8 @@ fn mimo_iir_seed_costs_within_spread() {
                 modes,
                 band_of(lo, hi, pb.fsiso, &t),
                 &t,
+                IirDerivatives::CentralDifference,
+                crate::PeqDerivatives::TwoPoint,
                 &ctx,
             )
             .unwrap();
@@ -605,7 +683,18 @@ fn mimo_iir_band_limits_match_upstream_1012() {
         *v += 0.01 * ((state >> 11) as f64 / (1u64 << 53) as f64 * 2.0 - 1.0);
     }
     let band = band_of(30.0, 150.0, 150.0, &t);
-    let seed = fit_one(&x, 30.0, 150.0, &[47.0], band, &t, &context(1)).unwrap();
+    let seed = fit_one(
+        &x,
+        30.0,
+        150.0,
+        &[47.0],
+        band,
+        &t,
+        IirDerivatives::CentralDifference,
+        crate::PeqDerivatives::TwoPoint,
+        &context(1),
+    )
+    .unwrap();
     let support = &unpack(&seed.x, &[seed.polarity], &t)[0];
     assert_eq!(support.peq.len(), t.mimo_k_bands);
     for &(f0, q, g) in &support.peq {

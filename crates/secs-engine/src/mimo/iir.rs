@@ -15,7 +15,7 @@ use secs_dsp::{
 use super::{MimoDesign, MimoRequest, design::third_octave_bands, support_path};
 use crate::{
     C, Design, EngineConfig, EngineError, MeasurementSet, Note, Tuning, decay,
-    fit::{FitRequest, fit_peq_until},
+    fit::{FitRequest, PeqDerivatives, fit_peq_with},
     grid::design_freqs,
 };
 
@@ -87,12 +87,26 @@ pub enum IirSolver {
     },
 }
 
+/// How MIMO IIR fits differentiate the complex seed refinement and joint fit.
+/// Gain and delay columns are exact either way; the initial PEQ fit is selected
+/// independently by [`IirSolveOptions::seed_peq_derivatives`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum IirDerivatives {
+    /// Upstream central differences (step 1e-4). Reproduces SECS 2.
+    #[default]
+    CentralDifference,
+    /// Closed-form logarithmic derivatives (experimental; results leave SECS 2).
+    Analytic,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct IirSolveOptions {
     pub solver: IirSolver,
     /// Retry the original dense Jac/Unit solvers after an operator error. The
     /// memory permit also includes dense workspaces when this is enabled.
     pub dense_fallback: bool,
+    pub derivatives: IirDerivatives,
+    pub seed_peq_derivatives: PeqDerivatives,
 }
 
 impl Default for IirSolveOptions {
@@ -100,6 +114,8 @@ impl Default for IirSolveOptions {
         Self {
             solver: IirSolver::Dense,
             dense_fallback: true,
+            derivatives: IirDerivatives::CentralDifference,
+            seed_peq_derivatives: PeqDerivatives::TwoPoint,
         }
     }
 }
@@ -209,6 +225,8 @@ pub(crate) fn fit_one(
     modes: &[f64],
     band: (f64, f64),
     t: &Tuning,
+    derivatives: IirDerivatives,
+    seed_peq_derivatives: PeqDerivatives,
     ctx: &Context,
 ) -> Result<SeedResult, EngineError> {
     check(ctx)?;
@@ -236,7 +254,7 @@ pub(crate) fn fit_one(
         .collect();
     let base = decay::median(&db);
     let corr: Vec<_> = db.iter().map(|v| v - base).collect();
-    let mut peq = fit_peq_until(
+    let mut peq = fit_peq_with(
         &FitRequest {
             g: &f,
             corr_db: &corr,
@@ -248,6 +266,7 @@ pub(crate) fn fit_one(
             f_max: None,
         },
         &|| ctx.cancel().is_cancelled(),
+        seed_peq_derivatives,
     );
     check(ctx)?;
     let middle = (lo * hi).sqrt();
@@ -297,7 +316,38 @@ pub(crate) fn fit_one(
             .chain(r.iter().map(|v| v.im))
             .collect::<Vec<_>>()
     };
-    let result = optimize::least_squares(residual, &x0, &lb, &ub, 300);
+    let result = match derivatives {
+        IirDerivatives::CentralDifference => optimize::least_squares(residual, &x0, &lb, &ub, 300),
+        IirDerivatives::Analytic => {
+            let jacobian = |x: &[f64]| {
+                if ctx.cancel().is_cancelled() {
+                    return Mat::zeros(SEED_RESIDUALS, x.len());
+                }
+                let mut cache = cache.borrow_mut();
+                cache.derivatives(x, polarity, &f, &z, t, IirDerivatives::Analytic);
+                let half = SEED_RESIDUALS / 2;
+                Mat::from_fn(SEED_RESIDUALS, x.len(), |i, j| {
+                    if i < half {
+                        cache.d[j][i].re / norm
+                    } else {
+                        cache.d[j][i - half].im / norm
+                    }
+                })
+            };
+            optimize::least_squares_analytic(
+                residual,
+                jacobian,
+                &x0,
+                &lb,
+                &ub,
+                optimize::Options {
+                    max_nfev: 300,
+                    ..optimize::Options::default()
+                },
+                None,
+            )
+        }
+    };
     check(ctx)?;
     Ok(match result {
         Ok(sol) => SeedResult {
@@ -354,12 +404,53 @@ impl Parts {
         self.d.clear();
     }
 
-    fn derivatives(&mut self, v: &[f64], pol: i8, f: &[f64], z: &[C], t: &Tuning) {
+    fn derivatives(
+        &mut self,
+        v: &[f64],
+        pol: i8,
+        f: &[f64],
+        z: &[C],
+        t: &Tuning,
+        derivatives: IirDerivatives,
+    ) {
         self.response(v, pol, f, z, t);
         if !self.d.is_empty() {
             return;
         }
-        self.d = finite_difference_derivatives(v, &self.s, f, t);
+        if derivatives == IirDerivatives::CentralDifference {
+            self.d = finite_difference_derivatives(v, &self.s, f, t);
+            return;
+        }
+        self.d = vec![vec![C::new(0.0, 0.0); f.len()]; per(t)];
+        for (k, &f) in f.iter().enumerate() {
+            self.d[0][k] = self.s[k] * 10f64.ln() / 20.0;
+            self.d[1][k] = self.s[k] * C::new(0.0, -2.0 * PI * f / 1000.0);
+        }
+        for k in 0..t.mimo_k_bands {
+            let base = 2 + 3 * k;
+            let derivatives = response::peaking_log_derivatives_z(
+                z,
+                v[base].exp(),
+                v[base + 1].exp(),
+                v[base + 2],
+                48000.0,
+            );
+            for (c, derivative) in derivatives.into_iter().enumerate() {
+                for (i, value) in derivative.into_iter().enumerate() {
+                    self.d[base + c][i] = self.s[i] * value;
+                }
+            }
+        }
+        for a in 0..t.mimo_a_bands {
+            let base = 2 + 3 * t.mimo_k_bands + 2 * a;
+            let derivatives =
+                response::allpass_log_derivatives(f, v[base].exp(), v[base + 1].exp());
+            for (c, derivative) in derivatives.into_iter().enumerate() {
+                for (i, value) in derivative.into_iter().enumerate() {
+                    self.d[base + c][i] = self.s[i] * value;
+                }
+            }
+        }
     }
 }
 
@@ -422,6 +513,7 @@ pub(crate) struct Objective<'a> {
     scale: f64,
     z: Vec<C>,
     cache: Vec<Parts>,
+    derivatives: IirDerivatives,
     operator: Option<OperatorState>,
 }
 
@@ -482,8 +574,17 @@ impl<'a> Objective<'a> {
             scale: energy.sqrt(),
             z: frequency_z(&pb.f),
             cache: (0..pb.roles.len()).map(|_| Parts::default()).collect(),
+            derivatives: IirDerivatives::CentralDifference,
             operator: None,
         }
+    }
+
+    pub(crate) fn set_derivatives(&mut self, derivatives: IirDerivatives) {
+        self.derivatives = derivatives;
+        for part in &mut self.cache {
+            part.d.clear();
+        }
+        self.operator = None;
     }
 
     fn evaluate(&mut self, x: &[f64]) {
@@ -504,7 +605,7 @@ impl<'a> Objective<'a> {
             .zip(x.chunks_exact(per(self.t)))
             .zip(self.pols)
         {
-            part.derivatives(v, pol, &self.pb.f, &self.z, self.t);
+            part.derivatives(v, pol, &self.pb.f, &self.z, self.t, self.derivatives);
         }
     }
 
@@ -541,7 +642,7 @@ pub(crate) fn solve_joint(
     solve_joint_with_options(pb, t, ctx, x0, pols, &IirSolveOptions::default())
 }
 
-fn solve_joint_with_options(
+pub(crate) fn solve_joint_with_options(
     pb: &Problem,
     t: &Tuning,
     ctx: &Context,
@@ -563,6 +664,7 @@ fn solve_joint_with_options(
         .map(|(k, &v)| v.clamp(lb[k] + 1e-6, ub[k] - 1e-6))
         .collect();
     let mut objective = Objective::new(pb, t, ctx, pols);
+    objective.derivatives = options.derivatives;
     if let IirSolver::MatrixFree {
         max_cg_iterations,
         cg_rtol,
@@ -646,6 +748,8 @@ fn solve_problem_with_options(
             modes,
             band_of(lo, hi, pb.fsiso, t),
             t,
+            options.derivatives,
+            options.seed_peq_derivatives,
             ctx,
         )?;
         starts.extend(seed.x);
@@ -1058,7 +1162,7 @@ pub(crate) fn design_mimo_iir_prepared(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn design_mimo_iir_prepared_with_options(
+pub(crate) fn design_mimo_iir_prepared_with_options(
     design: &Design,
     prepared: &super::prepared::Prepared<'_>,
     ideal: &MimoDesign,
@@ -1679,6 +1783,7 @@ mod operator_tests {
                 cg_rtol: 1e-4,
             },
             dense_fallback: false,
+            ..IirSolveOptions::default()
         };
         let result = solve_joint_with_options(&pb, &tuning, &ctx, &x, &pols, &options).unwrap();
         assert!(result.cost < initial * 0.95, "{initial} -> {}", result.cost);
@@ -1731,6 +1836,7 @@ mod operator_tests {
                 cg_rtol: 1e-3,
             },
             dense_fallback: true,
+            ..IirSolveOptions::default()
         };
         assert!(options.validate().is_err());
         let recovered = solve_joint_with_options(&pb, &tuning, &ctx, &x, &pols, &options).unwrap();

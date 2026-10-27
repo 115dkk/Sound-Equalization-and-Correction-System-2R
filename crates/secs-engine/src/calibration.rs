@@ -50,7 +50,16 @@ pub fn calibrate(
     req: &CalibrationRequest<'_>,
     ctx: &secs_compute::Context,
 ) -> Result<Calibration, EngineError> {
-    calibrate_with(req, ctx, &*crate::production_fitters(ctx.cancel()))
+    let derivatives = if req.settings.peq_analytic_derivatives {
+        crate::PeqDerivatives::Analytic
+    } else {
+        crate::PeqDerivatives::TwoPoint
+    };
+    calibrate_with(
+        req,
+        ctx,
+        &*crate::production_fitters_with(ctx.cancel(), derivatives),
+    )
 }
 
 /// The calibration entry point with caller-supplied fitters (oracle replay).

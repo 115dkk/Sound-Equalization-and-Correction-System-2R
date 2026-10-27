@@ -106,6 +106,12 @@ pub struct CalibrationSettings {
     #[ts(type = "number")]
     pub mimo_max_supports: i64,
     pub mimo_fir: bool,
+    /// Experimental: PEQ fits use closed-form Jacobians (results leave SECS 2).
+    #[serde(default)]
+    pub peq_analytic_derivatives: bool,
+    /// Experimental: MIMO IIR fits use closed-form derivatives (results leave SECS 2).
+    #[serde(default)]
+    pub mimo_iir_analytic_derivatives: bool,
     #[serde(with = "ordered_f64_map")]
     #[ts(as = "BTreeMap<String, f64>")]
     pub xo: Vec<(String, f64)>,
@@ -142,6 +148,8 @@ impl Default for CalibrationSettings {
             mimo_max_supports: 0,
             // Beta 1.3.0: MIMO supports start as FIR in a new project.
             mimo_fir: true,
+            peq_analytic_derivatives: false,
+            mimo_iir_analytic_derivatives: false,
             xo: Vec::new(),
             xo_rec: Vec::new(),
             ultra_ms: 200.0,
@@ -193,6 +201,9 @@ impl CalibrationSettings {
         // Keep existing cache fingerprints unchanged for the default policy.
         if self.sample_rate_policy == SampleRatePolicy::Resample {
             out.push_str("|sample_rate_policy=resample");
+        }
+        if self.peq_analytic_derivatives {
+            out.push_str("|peq_analytic_derivatives");
         }
         out
     }
@@ -288,6 +299,9 @@ impl CalibrationSettings {
             self.mimo_fir
         )
         .unwrap();
+        if self.mimo_iir_analytic_derivatives {
+            out.push_str("|mimo_iir_analytic_derivatives");
+        }
         out
     }
 }
@@ -529,6 +543,38 @@ mod tests {
         );
         resampled.sample_rate_policy = SampleRatePolicy::Reject;
         assert_eq!(resampled.engine_key(), legacy.engine_key());
+    }
+
+    #[test]
+    fn analytic_derivative_settings_default_off_and_change_only_their_keys() {
+        let baseline = CalibrationSettings::default();
+        let engine_key = baseline.engine_key();
+        let mimo_key = baseline.mimo_key();
+        let mut json = serde_json::to_value(&baseline).unwrap();
+        let object = json.as_object_mut().unwrap();
+        object.remove("peq_analytic_derivatives");
+        object.remove("mimo_iir_analytic_derivatives");
+        let legacy: CalibrationSettings = serde_json::from_value(json).unwrap();
+        assert!(!legacy.peq_analytic_derivatives);
+        assert!(!legacy.mimo_iir_analytic_derivatives);
+        assert_eq!(legacy.engine_key(), engine_key);
+        assert_eq!(legacy.mimo_key(), mimo_key);
+
+        let mut peq = legacy.clone();
+        peq.peq_analytic_derivatives = true;
+        assert_eq!(
+            peq.engine_key(),
+            format!("{engine_key}|peq_analytic_derivatives")
+        );
+        assert_eq!(peq.mimo_key(), mimo_key);
+
+        let mut mimo = legacy;
+        mimo.mimo_iir_analytic_derivatives = true;
+        assert_eq!(mimo.engine_key(), engine_key);
+        assert_eq!(
+            mimo.mimo_key(),
+            format!("{mimo_key}|mimo_iir_analytic_derivatives")
+        );
     }
 
     #[test]

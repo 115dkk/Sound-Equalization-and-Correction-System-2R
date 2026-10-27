@@ -13,6 +13,8 @@
       "mimo_low": null,
       "mimo_max_supports": 0,
       "mimo_fir": true,
+      "peq_analytic_derivatives": false,
+      "mimo_iir_analytic_derivatives": false,
       "xo": {},
       "xo_rec": {},
       "ultra_ms": 200.0,

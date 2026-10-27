@@ -12,7 +12,8 @@ use crate::{
     calibration::{engine_inputs, prepare_inputs, resolve_xo},
     chain::stage_responses,
     decay::late_db_20_150,
-    design::{DesignBytes, design_prepared_for_xo, production_fitters},
+    design::{DesignBytes, design_prepared_for_xo, production_fitters_with},
+    fit::PeqDerivatives,
     grid::design_freqs,
     levels, measurement, scorecard,
     setup::Setup,
@@ -307,6 +308,11 @@ pub fn recommend_xo(
     if !candidates.is_empty() {
         inputs = prepare_inputs(inputs, settings.sample_rate_policy, ctx)?.0;
     }
+    let peq_derivatives = if settings.peq_analytic_derivatives {
+        PeqDerivatives::Analytic
+    } else {
+        PeqDerivatives::TwoPoint
+    };
     let progress = ctx.stage("engine.xo_recommendation", candidates.len() as u64);
     // Reserve the shared preparation and score windows before allocating them
     // (TD-24); each batch of candidates reserves its designs out of the rest.
@@ -367,7 +373,7 @@ pub fn recommend_xo(
                     adapter_notes: &inputs.notes,
                 },
                 &inner,
-                &*production_fitters(inner.cancel()),
+                &*production_fitters_with(inner.cancel(), peq_derivatives),
                 prepared,
             )?;
             // Only the unfiltered windows are shared. The final multiplication
@@ -574,7 +580,7 @@ mod perf_tests {
                 subs_only: false,
                 adapter_notes: &[],
             };
-            let fitters = production_fitters(ctx.cancel());
+            let fitters = crate::design::production_fitters(ctx.cancel());
             let own = crate::design::design(&req, &ctx, &*fitters).unwrap();
             let shared =
                 crate::design::design_prepared(&req, &ctx, &*fitters, &prepared, &|_, _| {})

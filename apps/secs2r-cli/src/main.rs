@@ -104,6 +104,46 @@ enum ProjectAction {
     },
     /// Open a project and print its information.
     Info { path: PathBuf },
+    /// Set the calibration settings an experiment changes, then save the project.
+    Set {
+        path: PathBuf,
+        /// Compute MIMO support paths after calibrating.
+        #[arg(long, value_enum)]
+        mimo: Option<Switch>,
+        /// MIMO supports as FIR or as IIR (PEQ and all-pass) filters.
+        #[arg(long, value_enum)]
+        mimo_supports: Option<SupportKind>,
+        /// PEQ derivative method (experimental analytic results differ from SECS 2).
+        #[arg(long, value_enum)]
+        peq_derivatives: Option<PeqDerivativeChoice>,
+        /// MIMO IIR derivative method (experimental analytic results differ from SECS 2).
+        #[arg(long, value_enum)]
+        mimo_iir_derivatives: Option<MimoIirDerivativeChoice>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum Switch {
+    On,
+    Off,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum SupportKind {
+    Fir,
+    Iir,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum PeqDerivativeChoice {
+    TwoPoint,
+    Analytic,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum MimoIirDerivativeChoice {
+    Central,
+    Analytic,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -392,6 +432,45 @@ fn run(action: Action, runner: &mut Runner) {
             ProjectAction::Info { path } => {
                 runner.open(&path);
                 runner.call(Request::ProjectInfo);
+            }
+            ProjectAction::Set {
+                path,
+                mimo,
+                mimo_supports,
+                peq_derivatives,
+                mimo_iir_derivatives,
+            } => {
+                use secs_types::settings_edit::SettingEdit;
+                runner.open(&path);
+                let mut edits = Vec::new();
+                if let Some(mimo) = mimo {
+                    edits.push(SettingEdit::MimoOn {
+                        on: matches!(mimo, Switch::On),
+                    });
+                }
+                if let Some(kind) = mimo_supports {
+                    edits.push(SettingEdit::MimoFir {
+                        on: matches!(kind, SupportKind::Fir),
+                    });
+                }
+                if peq_derivatives.is_some() || mimo_iir_derivatives.is_some() {
+                    edits.push(SettingEdit::AnalyticDerivatives {
+                        peq: peq_derivatives
+                            .map(|choice| matches!(choice, PeqDerivativeChoice::Analytic)),
+                        mimo_iir: mimo_iir_derivatives
+                            .map(|choice| matches!(choice, MimoIirDerivativeChoice::Analytic)),
+                    });
+                }
+                let changed = !edits.is_empty();
+                for edit in edits {
+                    runner.call(Request::CalibrationSettingsEdit(
+                        CalibrationSettingsEditParams { edit },
+                    ));
+                }
+                if changed {
+                    runner.save();
+                }
+                runner.call(Request::CalibrationSettingsGet);
             }
         },
         Action::Sample { project, positions } => {

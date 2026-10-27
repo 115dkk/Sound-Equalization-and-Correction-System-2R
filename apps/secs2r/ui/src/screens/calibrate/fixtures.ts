@@ -83,6 +83,8 @@ export const baseSettings: CalibrationSettings = {
   mimo_low: null,
   mimo_max_supports: 0,
   mimo_fir: false,
+  peq_analytic_derivatives: false,
+  mimo_iir_analytic_derivatives: false,
   xo: XO,
   xo_rec: XO,
   ultra_ms: 200,

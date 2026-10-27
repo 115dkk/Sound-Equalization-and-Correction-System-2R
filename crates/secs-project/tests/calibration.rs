@@ -22,7 +22,16 @@ fn calibration_parse_store_and_saved_bytes_match_oracle() {
         let settings = calibration_from_project(&project);
         let mut actual = serde_json::to_value(&settings).unwrap();
         assert_eq!(actual["sample_rate_policy"], "reject");
-        actual.as_object_mut().unwrap().remove("sample_rate_policy");
+        let object = actual.as_object_mut().unwrap();
+        object.remove("sample_rate_policy");
+        assert_eq!(
+            object.remove("peq_analytic_derivatives"),
+            Some(false.into())
+        );
+        assert_eq!(
+            object.remove("mimo_iir_analytic_derivatives"),
+            Some(false.into())
+        );
         assert_eq!(actual, expected["settings"]);
         store_calibration(&mut project, &settings);
         assert_eq!(project.save_text(), expected["saved"].as_str().unwrap());
@@ -56,6 +65,32 @@ fn sample_rate_policy_round_trips_and_default_preserves_saved_bytes() {
         SampleRatePolicy::Resample
     );
     settings.sample_rate_policy = SampleRatePolicy::Reject;
+    store_calibration(&mut project, &settings);
+    assert_eq!(project.save_text(), default_text);
+}
+
+#[test]
+fn analytic_derivative_settings_round_trip_and_defaults_preserve_saved_bytes() {
+    let mut project = Project::from_preset("2.1").unwrap();
+    let mut settings = calibration_from_project(&project);
+    store_calibration(&mut project, &settings);
+    let default_text = project.save_text();
+    assert!(!settings.peq_analytic_derivatives);
+    assert!(!settings.mimo_iir_analytic_derivatives);
+
+    settings.peq_analytic_derivatives = true;
+    settings.mimo_iir_analytic_derivatives = true;
+    store_calibration(&mut project, &settings);
+    let saved = project.save_text();
+    assert!(saved.contains("peq_analytic_derivatives"));
+    assert!(saved.contains("mimo_iir_analytic_derivatives"));
+    let reopened = Project::from_json(loads(&saved).unwrap()).unwrap();
+    let reopened = calibration_from_project(&reopened);
+    assert!(reopened.peq_analytic_derivatives);
+    assert!(reopened.mimo_iir_analytic_derivatives);
+
+    settings.peq_analytic_derivatives = false;
+    settings.mimo_iir_analytic_derivatives = false;
     store_calibration(&mut project, &settings);
     assert_eq!(project.save_text(), default_text);
 }

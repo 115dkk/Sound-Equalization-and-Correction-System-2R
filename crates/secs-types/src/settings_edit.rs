@@ -185,6 +185,15 @@ pub enum SettingEdit {
     MimoFir {
         on: bool,
     },
+    /// Experimental closed-form derivatives (D43, D44); an absent part keeps its value.
+    AnalyticDerivatives {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        peq: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        mimo_iir: Option<bool>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

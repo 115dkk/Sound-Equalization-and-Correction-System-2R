@@ -3,12 +3,13 @@
 //! `fit_gd_cuts`, `CorrectionEngine._xo_target_peq`.
 
 use crate::grid::{SR_F, design_freqs};
+use faer::Mat;
 use secs_dsp::{
     Complex64 as C, optimize, response,
     smooth::{self, Fraction},
 };
 use secs_types::{chain::Peq, target::TargetCurve};
-use std::f64::consts::PI;
+use std::{cell::RefCell, f64::consts::PI};
 
 /// One `fit_peq` call's arguments. The grid and correction must have equal,
 /// nonzero length; frequencies, bounds and residuals must be finite and valid.
@@ -26,6 +27,16 @@ pub struct FitRequest<'a> {
 /// Production uses `fit_peq`; stage goldens inject recorded decisions here.
 /// Callers may reuse the result of an identical request across candidates.
 pub type Fitter<'f> = dyn FnMut(&FitRequest<'_>) -> Vec<Peq> + 'f;
+
+/// How PEQ fits differentiate their bands.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum PeqDerivatives {
+    /// SciPy's two-point differences, as upstream.
+    #[default]
+    TwoPoint,
+    /// Closed-form cascade Jacobian (experimental).
+    Analytic,
+}
 
 pub fn ring_q_cap(f0: f64, gain_db: f64, ring_ms: f64) -> f64 {
     PI * f0 * ring_ms / 1000.0 / 10_f64.powf(gain_db / 40.0)
@@ -171,6 +182,106 @@ impl ResidualCache {
     }
 }
 
+struct AnalyticBand {
+    key: [u64; 3],
+    response: Vec<C>,
+    logarithmic_derivatives: Option<[Vec<C>; 3]>,
+}
+
+/// Analytic response and derivative cache. The two-point path keeps using
+/// `ResidualCache`, so its arithmetic and cache behavior remain unchanged.
+struct AnalyticResidualCache {
+    z: Vec<C>,
+    bands: Vec<Option<AnalyticBand>>,
+    key: Vec<u64>,
+    cascade: Vec<C>,
+}
+
+impl AnalyticResidualCache {
+    fn new(g: &[f64], bands: usize) -> Self {
+        Self {
+            z: g.iter()
+                .map(|&f| C::from_polar(1.0, (-2.0 * PI * f) * (1.0 / 48000.0)))
+                .collect(),
+            bands: (0..bands).map(|_| None).collect(),
+            key: Vec::new(),
+            cascade: Vec::new(),
+        }
+    }
+
+    fn response(&mut self, x: &[f64]) {
+        if self.key.len() == x.len()
+            && self.key.iter().zip(x).all(|(&a, &b)| a == b.to_bits())
+            && !self.cascade.is_empty()
+        {
+            return;
+        }
+        self.cascade.clear();
+        self.cascade.resize(self.z.len(), C::new(1.0, 0.0));
+        for (cached, b) in self.bands.iter_mut().zip(x.as_chunks::<3>().0) {
+            let key = b.map(f64::to_bits);
+            if cached.as_ref().is_none_or(|old| old.key != key) {
+                *cached = Some(AnalyticBand {
+                    key,
+                    response: response::peaking_response_z(
+                        &self.z,
+                        b[0].exp(),
+                        b[1].exp(),
+                        b[2],
+                        48000.0,
+                    ),
+                    logarithmic_derivatives: None,
+                });
+            }
+            for (h, p) in self
+                .cascade
+                .iter_mut()
+                .zip(&cached.as_ref().unwrap().response)
+            {
+                *h *= p;
+            }
+        }
+        self.key.clear();
+        self.key.extend(x.iter().map(|v| v.to_bits()));
+    }
+
+    fn evaluate(&mut self, req: &FitRequest<'_>, x: &[f64]) -> Vec<f64> {
+        self.response(x);
+        weighted_residual(req, self.cascade.clone())
+    }
+
+    fn jacobian(&mut self, req: &FitRequest<'_>, x: &[f64]) -> Mat<f64> {
+        self.response(x);
+        let factors: Vec<_> = self
+            .cascade
+            .iter()
+            .enumerate()
+            .map(|(i, &h)| {
+                let weight = if req.g[i] >= req.lo && req.g[i] <= req.hi {
+                    1.0
+                } else {
+                    0.15
+                };
+                let magnitude = response::magnitude(h);
+                weight * (20.0 / 10_f64.ln()) * magnitude / (magnitude + 1e-12)
+            })
+            .collect();
+        let mut jac = Mat::zeros(req.g.len(), x.len());
+        for (k, (cached, b)) in self.bands.iter_mut().zip(x.as_chunks::<3>().0).enumerate() {
+            let cached = cached.as_mut().unwrap();
+            let derivatives = cached.logarithmic_derivatives.get_or_insert_with(|| {
+                response::peaking_log_derivatives_z(&self.z, b[0].exp(), b[1].exp(), b[2], 48000.0)
+            });
+            for c in 0..3 {
+                for i in 0..req.g.len() {
+                    jac[(i, 3 * k + c)] = factors[i] * derivatives[c][i].re;
+                }
+            }
+        }
+        jac
+    }
+}
+
 pub(crate) fn result_bands(req: &FitRequest<'_>, x: &[f64]) -> Vec<Peq> {
     x.as_chunks::<3>()
         .0
@@ -197,24 +308,65 @@ pub fn fit_peq(req: &FitRequest<'_>) -> Vec<Peq> {
 /// meaningless and the caller discards them. Until then the arithmetic is
 /// exactly `fit_peq`'s.
 pub fn fit_peq_until(req: &FitRequest<'_>, cancelled: &dyn Fn() -> bool) -> Vec<Peq> {
+    fit_peq_with(req, cancelled, PeqDerivatives::TwoPoint)
+}
+
+/// `fit_peq_until` with a chosen derivative; `TwoPoint` is the same arithmetic.
+pub fn fit_peq_with(
+    req: &FitRequest<'_>,
+    cancelled: &dyn Fn() -> bool,
+    derivatives: PeqDerivatives,
+) -> Vec<Peq> {
     let seed = seed(req);
     if seed.bands.is_empty() {
         return Vec::new();
     }
-    let mut cache = ResidualCache::new(req.g, seed.bands.len());
-    let sol = optimize::least_squares(
-        |x| {
-            if cancelled() {
-                vec![0.0; req.g.len()]
-            } else {
-                cache.evaluate(req, x)
-            }
-        },
-        &seed.x0,
-        &seed.lb,
-        &seed.ub,
-        if req.ring_ms.is_some() { 150 } else { 400 },
-    )
+    let max_nfev = if req.ring_ms.is_some() { 150 } else { 400 };
+    let sol = match derivatives {
+        PeqDerivatives::TwoPoint => {
+            let mut cache = ResidualCache::new(req.g, seed.bands.len());
+            optimize::least_squares(
+                |x| {
+                    if cancelled() {
+                        vec![0.0; req.g.len()]
+                    } else {
+                        cache.evaluate(req, x)
+                    }
+                },
+                &seed.x0,
+                &seed.lb,
+                &seed.ub,
+                max_nfev,
+            )
+        }
+        PeqDerivatives::Analytic => {
+            let cache = RefCell::new(AnalyticResidualCache::new(req.g, seed.bands.len()));
+            optimize::least_squares_analytic(
+                |x| {
+                    if cancelled() {
+                        vec![0.0; req.g.len()]
+                    } else {
+                        cache.borrow_mut().evaluate(req, x)
+                    }
+                },
+                |x| {
+                    if cancelled() {
+                        Mat::zeros(req.g.len(), x.len())
+                    } else {
+                        cache.borrow_mut().jacobian(req, x)
+                    }
+                },
+                &seed.x0,
+                &seed.lb,
+                &seed.ub,
+                optimize::Options {
+                    max_nfev,
+                    ..optimize::Options::default()
+                },
+                None,
+            )
+        }
+    }
     .expect("valid PEQ fit");
     result_bands(req, &sol.x)
 }
@@ -524,5 +676,91 @@ pub(crate) fn replay_fitter(
         );
         next += 1;
         call.result.clone()
+    }
+}
+
+#[cfg(test)]
+mod analytic_tests {
+    use super::*;
+
+    #[test]
+    fn analytic_peq_jacobian_differentiates_the_weighted_residual() {
+        let g = geomspace(15.0, 3000.0, 100);
+        let corr = vec![0.0; g.len()];
+        let req = FitRequest {
+            g: &g,
+            corr_db: &corr,
+            n: 3,
+            lo: 20.0,
+            hi: 250.0,
+            boost: 6.0,
+            ring_ms: None,
+            f_max: None,
+        };
+        let x = [
+            30.0_f64.ln(),
+            1.0_f64.ln(),
+            -10.0,
+            80.0_f64.ln(),
+            4.0_f64.ln(),
+            3.0,
+            200.0_f64.ln(),
+            2.0_f64.ln(),
+            -5.0,
+        ];
+        let mut cache = AnalyticResidualCache::new(&g, 3);
+        let jac = cache.jacobian(&req, &x);
+        for j in 0..x.len() {
+            let samples: Vec<_> = [-2.0, -1.0, 1.0, 2.0]
+                .iter()
+                .map(|multiple| {
+                    let mut probe = x;
+                    probe[j] += multiple * 1e-3;
+                    residual(&req, &probe)
+                })
+                .collect();
+            let error = (0..g.len())
+                .map(|i| {
+                    let central = (samples[0][i] - 8.0 * samples[1][i] + 8.0 * samples[2][i]
+                        - samples[3][i])
+                        / 0.012;
+                    (jac[(i, j)] - central).abs()
+                })
+                .fold(0.0_f64, f64::max);
+            let scale = (0..g.len())
+                .map(|i| jac[(i, j)].abs())
+                .fold(1.0_f64, f64::max);
+            assert!(error < 3e-6 * scale, "column {j}: {error}/{scale}");
+        }
+        let cached = cache.evaluate(&req, &x);
+        assert!(
+            cached
+                .iter()
+                .zip(residual(&req, &x))
+                .all(|(a, b)| a.to_bits() == b.to_bits())
+        );
+    }
+
+    #[test]
+    fn analytic_peq_jacobian_retains_the_additive_magnitude_floor() {
+        let g = [100.0];
+        let corr = [0.0];
+        let req = FitRequest {
+            g: &g,
+            corr_db: &corr,
+            n: 16,
+            lo: 20.0,
+            hi: 250.0,
+            boost: 6.0,
+            ring_ms: None,
+            f_max: None,
+        };
+        let x = [100.0_f64.ln(), 2.0_f64.ln(), -25.0].repeat(16);
+        let mut cache = AnalyticResidualCache::new(&g, 16);
+        let jac = cache.jacobian(&req, &x);
+        let magnitude = response::magnitude(cache.cascade[0]);
+        let expected = magnitude / (magnitude + 1e-12);
+        assert!(expected > 0.0 && expected < 1e-6);
+        assert!((jac[(0, 2)] / expected - 1.0).abs() < 1e-8);
     }
 }
