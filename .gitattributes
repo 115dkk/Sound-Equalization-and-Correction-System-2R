@@ -2,3 +2,7 @@
 # their line endings (Windows' core.autocrlf would turn LF into CRLF in the
 # text-like blobs and break their SHA-256 descriptors).
 oracle/goldens/** -text
+
+# Calibration file fixtures keep their vendor line endings (the UMIK-1 one is
+# CRLF on purpose; the parser test checks it).
+crates/secs-audio/tests/data/umik1_*_synthetic.txt -text

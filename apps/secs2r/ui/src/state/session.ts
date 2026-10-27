@@ -8,7 +8,7 @@ import type { ResultCurvesParams } from "../ipc/bindings/ResultCurvesParams";
 import type { ResultCurvesResult } from "../ipc/bindings/ResultCurvesResult";
 import type { ExportKind } from "../ipc/bindings/ExportKind";
 import type { XoRecommendation } from "../ipc/bindings/XoRecommendation";
-import type { ConnectPath, MeterReading, MonitorState, RewProblem } from "../screens/connect/types";
+import type { ConnectPath, MeterReading, MicCalibrationView, MonitorState, RewProblem } from "../screens/connect/types";
 import type { CalibrateView } from "../screens/calibrate/types";
 import type { ExportRun } from "../screens/export/types";
 import type { MeasureView } from "../screens/measure/types";
@@ -36,6 +36,7 @@ type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "m
   failure: CalibrateView["failure"]; rewLaunch: "idle" | "checking" | "launching";
   rewProblem: RewProblem | null; rewProblemDetail: string | null; readingRew: boolean;
   switchingRewDriver: boolean;
+  micCalBusy: MicCalibrationView["busy"]; micCalError: MicCalibrationView["error"];
   /** Projects opened or created in this window; screens reset what they hid for the previous one when it changes. */
   opened: number;
 };
@@ -63,6 +64,7 @@ export function createSession(ipc: Ipc) {
     mdat: null, warnings: [], tab: "spl", channel: null, xoGroup: null, previewHz: null, targetEdit: "idle", xoEdit: "idle",
     meter: null, monitor: "off", playing: null, playingAll: false, masterDbfs: -20,
     xoRecommendation: null, runs: {}, failure: null,
+    micCalBusy: null, micCalError: null,
     rewLaunch: "idle", rewProblem: null, rewProblemDetail: null, readingRew: false, switchingRewDriver: false, opened: 0,
   });
   const host = { ...rawHost, set: (patch: Partial<HostState>) => rawHost.set({ ...rawHost.getSnapshot(), ...patch }) };
@@ -97,6 +99,7 @@ export function createSession(ipc: Ipc) {
     measurementSettings: createStore<import("../ipc/bindings/MeasureConfigResult").MeasureConfigResult | null>(null),
     records: read({ method: "measurement_records" }), curves: read({ method: "measurement_curves", params: { positions: null, roles: null } }),
     levels: read({ method: "levels_get" }), settings: read({ method: "calibration_settings_get" }),
+    micCalibration: read({ method: "mic_calibration_get" }),
     modeSpec: createResource(async (): Promise<import("../ipc/bindings/ModeSpecResult").ModeSpecResult> => {
       const settings = stores.settings.getSnapshot();
       if (!settings) throw new Error("calibration settings have not loaded");
@@ -160,7 +163,11 @@ export function createSession(ipc: Ipc) {
     } catch (error) {
       if (epoch === jobs.epoch) {
         if (edit) host.set({ [edit]: "failed" });
-        report(error);
+        // The mic calibration field owns typed action failures, including its
+        // file dialog. Do not publish a second copy as a global notice.
+        const micCalAction = request.method === "mic_calibration_set" || request.method === "mic_calibration_clear" || request.method === "mic_calibration_attach"
+          || (request.method === "dialog_open_file" && (request as Extract<Request, { method: "dialog_open_file" }>).params.kind === "mic_calibration");
+        if (!micCalAction || !(error instanceof IpcFailure)) report(error);
       }
       throw error;
     } finally {

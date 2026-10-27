@@ -139,6 +139,117 @@ fn measurement_curves_match_oracle_and_selection() {
 }
 
 #[test]
+fn measurement_curves_use_the_corrected_ir() {
+    let root = root("measurement-calibration");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("room.secs");
+    let raw = {
+        let mut values = vec![0.0_f32; 4096];
+        values[0] = 1.0;
+        values
+    };
+    let calibration_points = vec![
+        secs_audio::CalibrationPoint {
+            frequency: 20.0,
+            gain_db: 0.0,
+            phase_degrees: None,
+        },
+        secs_audio::CalibrationPoint {
+            frequency: 1000.0,
+            gain_db: 12.0,
+            phase_degrees: None,
+        },
+        secs_audio::CalibrationPoint {
+            frequency: 20_000.0,
+            gain_db: 0.0,
+            phase_degrees: None,
+        },
+    ];
+    let source = secs_mdat::SourceInfo {
+        cal: vec![(
+            "meterCal".into(),
+            secs_mdat::CalInfo {
+                inverse_c_selected: false,
+                source_name: "shaped.cal".into(),
+                source_path: "shaped.cal".into(),
+                freq: Some(
+                    calibration_points
+                        .iter()
+                        .map(|point| point.frequency as f32)
+                        .collect(),
+                ),
+                gain: Some(
+                    calibration_points
+                        .iter()
+                        .map(|point| point.gain_db as f32)
+                        .collect(),
+                ),
+                phase: None,
+                boxed: vec![],
+            },
+        )],
+        ..Default::default()
+    };
+    let mut store = secs_project::MeasurementStore::new(&path, secs_project::Project::default());
+    store
+        .record(
+            secs_project::MeasurementResult {
+                role: "L".into(),
+                pos: 1,
+                ir: raw.clone(),
+                sample_rate: 48_000,
+                t0_s: 0.0,
+                spl_db: None,
+                spl_offset_db: None,
+                snr_db: None,
+                uuid: None,
+                source: None,
+                source_info: Some(source),
+            },
+            None,
+        )
+        .unwrap();
+    store.save().unwrap();
+
+    let curve = secs_audio::MicCalibration::from_points(calibration_points).unwrap();
+    let corrected = secs_audio::ResponseCorrection::new(Some(curve), vec![], false)
+        .apply(&raw, 48_000)
+        .unwrap();
+    let expected = secs_engine::display::magnitude_db(
+        &corrected
+            .iter()
+            .map(|sample| f64::from(*sample))
+            .collect::<Vec<_>>(),
+        48_000.0,
+    );
+
+    let service = Service::new(Deps::default());
+    open(&service, &path);
+    let Response::MeasurementCurves(result) =
+        call(&service, Request::MeasurementCurves(Default::default()))
+    else {
+        panic!()
+    };
+    assert_eq!(result.curves.len(), 1);
+    assert_eq!(result.curves[0].role, "L");
+    assert_eq!(result.curves[0].values, expected);
+    assert!(
+        result.curves[0]
+            .values
+            .iter()
+            .zip(secs_engine::display::magnitude_db(
+                &raw.iter()
+                    .map(|sample| f64::from(*sample))
+                    .collect::<Vec<_>>(),
+                48_000.0,
+            ))
+            .any(|(corrected, raw)| (corrected - raw).abs() > 1.0)
+    );
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn result_curves_lines_take_values_and_staleness() {
     let name = "room_dba";
     let root = root("results");

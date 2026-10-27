@@ -16,6 +16,7 @@ use secs_types::ipc::{
 };
 
 use crate::jobs::JobContext;
+use crate::measure::json::JsonExt;
 use crate::results::{CacheOwner, CalibrationRun, MimoResult, calibration_stale};
 use crate::session::{self, ProjectTicket};
 use crate::{EventSink, Service, lock};
@@ -335,6 +336,57 @@ pub(crate) fn load_measurements(
     load_measurements_cancellable(store, &secs_compute::CancelToken::new())
 }
 
+fn mic_curve(cal: &secs_mdat::CalInfo) -> Option<secs_audio::MicCalibration> {
+    let frequencies = cal.freq.as_ref()?;
+    let gains = cal.gain.as_ref()?;
+    if frequencies.len() != gains.len() {
+        return None;
+    }
+    let phase = cal
+        .phase
+        .as_ref()
+        .filter(|phase| phase.len() == frequencies.len());
+    let points = frequencies
+        .iter()
+        .zip(gains)
+        .enumerate()
+        .map(
+            |(index, (&frequency, &gain_db))| secs_audio::CalibrationPoint {
+                frequency: f64::from(frequency),
+                gain_db: f64::from(gain_db),
+                phase_degrees: phase.map(|values| f64::from(values[index])),
+            },
+        )
+        .collect();
+    secs_audio::MicCalibration::from_points(points).ok()
+}
+
+/// Loads a stored IR and removes the response curves attached to its source
+/// sidecar without changing the stored waveform (ADR 0015).
+pub(crate) fn measured_ir(
+    store: &mut secs_project::MeasurementStore,
+    role: &str,
+    pos: i64,
+) -> Result<(Vec<f32>, u32), crate::ServiceError> {
+    let (samples, sample_rate) = store.ir_of(role, pos)?;
+    let Some(info) = store.source_of(role, pos) else {
+        return Ok((samples, sample_rate));
+    };
+    let attached = secs_project::attached_calibration(&info);
+    let correction = secs_audio::ResponseCorrection::new(
+        attached.meter.and_then(mic_curve),
+        attached.others.into_iter().filter_map(mic_curve).collect(),
+        attached.c_weighted,
+    );
+    if correction.is_empty() {
+        return Ok((samples, sample_rate));
+    }
+    let corrected = correction.apply(&samples, sample_rate).map_err(|error| {
+        crate::ServiceError::Project(format!("measurement response correction: {error}"))
+    })?;
+    Ok((corrected, sample_rate))
+}
+
 fn load_measurements_cancellable(
     store: &mut secs_project::MeasurementStore,
     cancel: &secs_compute::CancelToken,
@@ -349,9 +401,7 @@ fn load_measurements_cancellable(
             if cancel.is_cancelled() {
                 return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
             }
-            let (samples, sample_rate) = store
-                .ir_of(role, record.pos)
-                .map_err(crate::ServiceError::from)?;
+            let (samples, sample_rate) = measured_ir(store, role, record.pos)?;
             roles.push((
                 role.clone(),
                 Measurement {
@@ -764,7 +814,46 @@ pub(crate) fn signature_key(project: &Project) -> String {
             .collect::<Vec<_>>(),
         _ => vec![],
     };
-    format!("{:?}:{identities:?}", measurement_signature(project))
+    let base = format!("{:?}:{identities:?}", measurement_signature(project));
+    let has_ir = |position: i64, role: &str| {
+        match &project.measurements {
+            secs_project::PyJson::Array(entries) => entries.as_slice(),
+            _ => &[],
+        }
+        .iter()
+        .any(|entry| {
+            let matches_position = match entry.get("pos") {
+                Some(secs_project::PyJson::Int(value) | secs_project::PyJson::Str(value)) => {
+                    value.parse() == Ok(position)
+                }
+                Some(secs_project::PyJson::Float(value)) => {
+                    value.is_finite() && value.trunc() == position as f64
+                }
+                Some(secs_project::PyJson::Bool(value)) => i64::from(*value) == position,
+                _ => false,
+            };
+            matches_position
+                    && entry
+                        .get("ir")
+                        .and_then(secs_project::PyJson::object)
+                        .and_then(|values| values.iter().find(|(name, _)| name == role))
+                        .is_some_and(|(_, value)| {
+                            matches!(value, secs_project::PyJson::Str(path) if !path.is_empty())
+                        })
+        })
+    };
+    let calibration = project
+        .measurement_calibration
+        .iter()
+        .filter_map(|((position, role), fingerprint)| {
+            has_ir(*position, role).then_some((*position, role.as_str(), *fingerprint))
+        })
+        .collect::<Vec<_>>();
+    if calibration.is_empty() {
+        base
+    } else {
+        format!("{base}:cal{calibration:?}")
+    }
 }
 pub(crate) fn target_key_string(project: &Project) -> String {
     format!("{:?}", target_key(project))
@@ -820,7 +909,116 @@ mod tests {
     use super::*;
     use secs_engine::Note;
     use secs_engine::SubFilter;
+    use secs_mdat::{CalInfo, SourceInfo};
+    use secs_project::{MeasurementResult, MeasurementStore};
     use secs_types::chain::BandType;
+
+    fn response_source(frequencies: Vec<f32>, gains: Vec<f32>) -> SourceInfo {
+        SourceInfo {
+            cal: vec![(
+                "meterCal".into(),
+                CalInfo {
+                    inverse_c_selected: false,
+                    source_name: "mic.cal".into(),
+                    source_path: "mic.cal".into(),
+                    freq: Some(frequencies),
+                    gain: Some(gains),
+                    phase: None,
+                    boxed: Vec::new(),
+                },
+            )],
+            ..SourceInfo::default()
+        }
+    }
+
+    fn stored_result(
+        role: &str,
+        position: i64,
+        samples: Vec<f32>,
+        source_info: Option<SourceInfo>,
+    ) -> MeasurementResult {
+        MeasurementResult {
+            role: role.into(),
+            pos: position,
+            ir: samples,
+            sample_rate: 48_000,
+            t0_s: 0.0,
+            spl_db: None,
+            spl_offset_db: None,
+            snr_db: None,
+            uuid: None,
+            source: None,
+            source_info,
+        }
+    }
+
+    #[test]
+    fn attached_calibration_is_removed_before_the_engine() {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "secs-service-calibration-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("room.secs");
+        let mut store = MeasurementStore::new(&path, Project::default());
+        let raw = vec![0.25, -0.5, 0.125, 0.75];
+        store
+            .record(
+                stored_result(
+                    "L",
+                    1,
+                    raw.clone(),
+                    Some(response_source(vec![20.0, 20_000.0], vec![6.0, 6.0])),
+                ),
+                None,
+            )
+            .unwrap();
+        let (corrected, rate) = measured_ir(&mut store, "L", 1).unwrap();
+        assert_eq!(rate, 48_000);
+        let scale = 10_f64.powf(-6.0 / 20.0);
+        for (&actual, &input) in corrected.iter().zip(&raw) {
+            let expected = f64::from(input) * scale;
+            assert!(
+                (f64::from(actual) - expected).abs() <= expected.abs() * 1e-6 + 1e-8,
+                "{actual} != {expected}"
+            );
+        }
+
+        store
+            .record(stored_result("R", 1, raw.clone(), None), None)
+            .unwrap();
+        let untouched = measured_ir(&mut store, "R", 1).unwrap().0;
+        assert_eq!(
+            untouched
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>(),
+            raw.iter().map(|value| value.to_bits()).collect::<Vec<_>>()
+        );
+
+        store
+            .record(
+                stored_result(
+                    "L",
+                    2,
+                    raw.clone(),
+                    Some(response_source(vec![100.0, 20.0], vec![6.0, 6.0])),
+                ),
+                None,
+            )
+            .unwrap();
+        let invalid = measured_ir(&mut store, "L", 2).unwrap().0;
+        assert_eq!(
+            invalid
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>(),
+            raw.iter().map(|value| value.to_bits()).collect::<Vec<_>>()
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn engine_measurement_errors_preserve_context_and_diagnostic_details() {

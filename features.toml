@@ -808,8 +808,37 @@ id = "measure.mic_calibration"
 kind = "measure"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-audio::calibration_files_and_rew_spl_reference", "secs-audio::malformed_calibrations_return_errors_without_panics"]
-note = "REW/miniDSP response and sensitivity parser; REW-default unmodified IR; USB SPL requires known device gain"
+tests = [
+  "secs-audio::calibration_files_and_rew_spl_reference",
+  "secs-audio::malformed_calibrations_return_errors_without_panics",
+  "secs-audio::umik1_files_parse_with_serial_gain_and_notes",
+  "secs-audio::rew_headings_are_skipped_and_broken_rows_still_fail",
+  "secs-audio::from_points_validates_like_the_parser",
+  "secs-service::native_sweeps_carry_the_project_mic_calibration",
+  "secs-service::mic_calibration_set_get_clear_and_errors",
+  "secs-service::mic_calibration_attach_gives_the_file_to_sweeps_only",
+]
+note = "REW/miniDSP response and sensitivity parser (UMIK 0° and 90° files, AGain, SERNO, REW headings skipped); the project's file is attached to native sweeps as meterCal, and to earlier sweeps on request (ADR 0015). Stored IRs stay unmodified; USB SPL requires known device gain"
+
+[[feature]]
+id = "engine.measurement_calibration_curves"
+kind = "engine"
+milestone = "M4"
+status = "implemented"
+tests = [
+  "secs-audio::empty_correction_is_bit_exact",
+  "secs-audio::flat_curve_scales_the_ir",
+  "secs-audio::correction_matches_the_curve_on_bins",
+  "secs-audio::phase_column_is_removed",
+  "secs-audio::c_weighting_matches_iec_table",
+  "secs-audio::bad_inputs_error_without_panics",
+  "secs-project::store_reads_and_updates_calibration_fingerprints",
+  "secs-service::attached_calibration_is_removed_before_the_engine",
+  "secs-service::measurement_curves_use_the_corrected_ir",
+  "secs-service::calibration_signature_keeps_old_caches_without_curves",
+]
+upstream = "new"
+note = "new (D45): calculation and measurement graphs remove each measurement's attached meterCal/scCal curves (and, for a C-weighted meter, C weighting outside the meter file's range, as REW) with a zero-phase filter, boost capped at 20 dB; the signature carries the curves' fingerprints only when some are attached (ADR 0015)."
 
 [[feature]]
 id = "measure.rew_api"
@@ -1565,6 +1594,38 @@ kind = "ipc"
 milestone = "M5"
 status = "implemented"
 tests = ["secs-service::export_folder_defaults_with_and_without_project"]
+
+[[feature]]
+id = "ipc.mic_calibration_get"
+kind = "ipc"
+milestone = "M4"
+status = "implemented"
+tests = ["secs-service::mic_calibration_set_get_clear_and_errors"]
+upstream = "new"
+
+[[feature]]
+id = "ipc.mic_calibration_set"
+kind = "ipc"
+milestone = "M4"
+status = "implemented"
+tests = ["secs-service::mic_calibration_set_get_clear_and_errors"]
+upstream = "new"
+
+[[feature]]
+id = "ipc.mic_calibration_clear"
+kind = "ipc"
+milestone = "M4"
+status = "implemented"
+tests = ["secs-service::mic_calibration_set_get_clear_and_errors"]
+upstream = "new"
+
+[[feature]]
+id = "ipc.mic_calibration_attach"
+kind = "ipc"
+milestone = "M4"
+status = "implemented"
+tests = ["secs-service::mic_calibration_attach_gives_the_file_to_sweeps_only"]
+upstream = "new"
 
 [[feature]]
 id = "ipc.export_folder_set"

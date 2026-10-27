@@ -7,6 +7,15 @@ pub type BackendFactory =
 pub struct NativeMeasurer {
     backend: Box<dyn AudioBackend>,
     pub settings: MeasurementSettings,
+    unix_ms: Arc<dyn Fn() -> i64 + Send + Sync>,
+}
+
+fn system_unix_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| {
+            i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
+        })
 }
 impl std::fmt::Debug for NativeMeasurer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -21,13 +30,20 @@ impl NativeMeasurer {
         factory: &BackendFactory,
         settings: MeasurementSettings,
     ) -> Result<Self, MeasureError> {
-        Ok(Self {
-            backend: factory()?,
-            settings,
-        })
+        Ok(Self::from_backend(factory()?, settings))
     }
     pub fn from_backend(backend: Box<dyn AudioBackend>, settings: MeasurementSettings) -> Self {
-        Self { backend, settings }
+        Self {
+            backend,
+            settings,
+            unix_ms: Arc::new(system_unix_ms),
+        }
+    }
+
+    /// Replaces the wall clock used in native sweep source sidecars.
+    pub fn with_clock(mut self, clock: Arc<dyn Fn() -> i64 + Send + Sync>) -> Self {
+        self.unix_ms = clock;
+        self
     }
 
     pub(crate) fn level_check_streaming(
@@ -142,6 +158,16 @@ impl Measurer for NativeMeasurer {
             }
             other => other?,
         };
+        let source_info = self
+            .settings
+            .calibration_file
+            .as_ref()
+            .map(|file| {
+                secs_mdat::from_rew_measurement(Some(file), "", "", "", (self.unix_ms)())
+                    .map_err(|error| MeasureError::Input(error.to_string()))
+            })
+            .transpose()?
+            .flatten();
         Ok(got
             .roles
             .into_iter()
@@ -158,7 +184,7 @@ impl Measurer for NativeMeasurer {
                     snr_db: Some(r.snr_db),
                     uuid: None,
                     source: None,
-                    source_info: None,
+                    source_info: source_info.clone(),
                 }
             })
             .collect())
@@ -168,6 +194,68 @@ impl Measurer for NativeMeasurer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_sweeps_carry_the_project_mic_calibration() {
+        let mut project = secs_project::Project::from_preset("2.0").unwrap();
+        let calibration = "Sens Factor = -1.337 dB\r\n20 -1.25 0.5\r\n1000 0.25\r\n";
+        crate::measure::store_devices(
+            &mut project,
+            vec![
+                (
+                    "mic_calibration".into(),
+                    secs_project::PyJson::Str(calibration.into()),
+                ),
+                (
+                    "mic_calibration_path".into(),
+                    secs_project::PyJson::Str("C:/microphones/umik-1.cal".into()),
+                ),
+            ],
+        );
+        let settings = MeasurementSettings::from_project(&project).unwrap();
+        let mut plan = crate::measure::plan_for(&project, &settings);
+        plan.sweep_length = "64k".into();
+        let (room, _) = crate::measure::sample::room(&plan, 1).unwrap();
+        let endpoint = room.endpoint();
+        plan.output_device = endpoint.id.clone();
+        plan.input_device = endpoint.id;
+        let mut measurer = NativeMeasurer::from_backend(Box::new(room), settings)
+            .with_clock(Arc::new(|| 1_704_164_645_123));
+        let results = measurer
+            .measure_position(&plan, 1, None, &CancelToken::default())
+            .unwrap();
+        assert_eq!(results.len(), 2);
+
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let root = std::env::temp_dir().join(format!(
+            "secs-native-calibration-{}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let mut store = secs_project::MeasurementStore::new(root.join("room.secs"), project);
+        for result in results {
+            store.record(result, Some(&plan.roles)).unwrap();
+        }
+        for role in &plan.roles {
+            let source = store.source_of(role, 1).unwrap();
+            assert_eq!(
+                source.date,
+                Some(secs_mdat::SourceDate::Int(1_704_164_645_123))
+            );
+            let meter = source
+                .cal
+                .iter()
+                .find(|(name, _)| name == "meterCal")
+                .map(|(_, value)| value)
+                .unwrap();
+            assert_eq!(meter.source_name, "umik-1.cal");
+            assert_eq!(meter.freq, Some(vec![20.0, 1000.0]));
+            assert_eq!(meter.gain, Some(vec![-1.25, 0.25]));
+            assert_eq!(meter.phase, Some(vec![0.5, 0.0]));
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn native_commits_a_position_at_once() {

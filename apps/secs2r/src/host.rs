@@ -45,6 +45,12 @@ impl TauriHost {
                 .dialog()
                 .file()
                 .add_filter("Target curve", &["json"]),
+            OpenFileKind::MicCalibration => self
+                .app
+                .dialog()
+                .file()
+                .add_filter("Mic calibration", &["txt", "cal", "frd"])
+                .add_filter("All files", &["*"]),
         }
     }
 

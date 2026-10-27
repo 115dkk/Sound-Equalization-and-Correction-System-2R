@@ -4,9 +4,9 @@ use secs_mdat::{Boxed, CalInfo, SourceDate, SourceInfo};
 use secs_oracle::Fixture;
 use secs_project::{
     IrCache, LoadedIr, MAX_IR_BYTES, MAX_PROJECT_BYTES, MeasurementResult, MeasurementStore,
-    Project, ProjectError, PyJson, TargetCurve, calibration_from_project, dumps, load_project_irs,
-    load_project_sources, load_source, loads, save_ir, save_source, source_path, store_calibration,
-    write_wav_float32,
+    Project, ProjectError, PyJson, TargetCurve, calibration_fingerprint, calibration_from_project,
+    dumps, load_project_irs, load_project_sources, load_source, loads, save_ir, save_source,
+    source_path, store_calibration, write_wav_float32,
 };
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -275,6 +275,97 @@ fn measurement_source_writes_exact_bytes_reads_and_deletes_stale_file() {
 
     store.record(result("L", 1, "two"), Some(&roles)).unwrap();
     assert!(!source.exists());
+}
+
+fn meter_source(gain_db: f32) -> SourceInfo {
+    SourceInfo {
+        cal: vec![(
+            "meterCal".into(),
+            CalInfo {
+                inverse_c_selected: false,
+                source_name: "mic.cal".into(),
+                source_path: "mic.cal".into(),
+                freq: Some(vec![20.0, 20_000.0]),
+                gain: Some(vec![gain_db, gain_db]),
+                phase: None,
+                boxed: Vec::new(),
+            },
+        )],
+        ..SourceInfo::default()
+    }
+}
+
+#[test]
+fn store_reads_and_updates_calibration_fingerprints() {
+    let (directory, path, mut store, roles) = setup();
+    let first = meter_source(3.0);
+    let first_fingerprint = calibration_fingerprint(&first).unwrap();
+    let mut measured = result("L", 1, "curve-one");
+    measured.source_info = Some(first.clone());
+    store.record(measured, Some(&roles)).unwrap();
+    assert_eq!(
+        store
+            .project()
+            .measurement_calibration
+            .get(&(1, "L".into())),
+        Some(&first_fingerprint)
+    );
+
+    let mut reopened = MeasurementStore::open(&path).unwrap();
+    assert_eq!(
+        reopened
+            .project()
+            .measurement_calibration
+            .get(&(1, "L".into())),
+        Some(&first_fingerprint)
+    );
+
+    reopened
+        .record(result("L", 1, "without-curve"), Some(&roles))
+        .unwrap();
+    assert!(
+        !reopened
+            .project()
+            .measurement_calibration
+            .contains_key(&(1, "L".into()))
+    );
+
+    let mut measured = result("L", 1, "curve-two");
+    measured.source_info = Some(first);
+    reopened.record(measured, Some(&roles)).unwrap();
+    let replacement = meter_source(-4.0);
+    let replacement_fingerprint = calibration_fingerprint(&replacement).unwrap();
+    reopened.replace_source("L", 1, Some(&replacement)).unwrap();
+    assert_eq!(
+        reopened
+            .project()
+            .measurement_calibration
+            .get(&(1, "L".into())),
+        Some(&replacement_fingerprint)
+    );
+    reopened.replace_source("L", 1, None).unwrap();
+    assert!(
+        !reopened
+            .project()
+            .measurement_calibration
+            .contains_key(&(1, "L".into()))
+    );
+
+    reopened.replace_source("L", 1, Some(&replacement)).unwrap();
+    let outside = directory.0.join("outside.wav");
+    fs::write(&outside, write_wav_float32(&[0.5], 48_000)).unwrap();
+    save_source(&outside, Some(&meter_source(12.0))).unwrap();
+    let PyJson::Array(entries) = &mut reopened.project_mut().measurements else {
+        panic!("measurements must be an array")
+    };
+    entries.push(entry_at(2, &outside.to_string_lossy()));
+    reopened.save().unwrap();
+
+    let reopened = MeasurementStore::open(&path).unwrap();
+    assert_eq!(
+        reopened.project().measurement_calibration,
+        [((1, "L".into()), replacement_fingerprint)].into()
+    );
 }
 
 #[test]

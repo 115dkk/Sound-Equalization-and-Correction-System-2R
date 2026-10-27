@@ -214,9 +214,8 @@ fn sampled_loop(
     let method = method(lock(session).require()?.store.project()).to_owned();
     let share = settings.share;
     let mut measurer = match method.as_str() {
-        "native" => SampledMeasurer::Native(crate::measure::NativeMeasurer::from_backend(
-            (deps.audio_backend)(),
-            settings,
+        "native" => SampledMeasurer::Native(Box::new(
+            crate::measure::NativeMeasurer::from_backend((deps.audio_backend)(), settings),
         )),
         "mock" => SampledMeasurer::Mock((deps.mock_measurer)()),
         _ => return Err(input("method", "unsupported sampled monitor")),
@@ -260,7 +259,7 @@ fn sampled_loop(
 }
 
 enum SampledMeasurer {
-    Native(crate::measure::NativeMeasurer),
+    Native(Box<crate::measure::NativeMeasurer>),
     Mock(crate::measure::MockMeasurer),
 }
 

@@ -212,6 +212,10 @@ pub struct Project {
     pub tesira: PyJson,
     pub snapshots: PyJson,
     pub extra: Vec<(String, PyJson)>,
+    /// Fingerprints of calibration attached to recorded measurements, keyed by
+    /// position and role. This runtime index is rebuilt from source sidecars and
+    /// is never written to the project file (ADR 0015).
+    pub measurement_calibration: std::collections::BTreeMap<(i64, String), u64>,
     /// The `config`, `dsp`, `target` and `calibration` values as the file
     /// held them (after migration). Saving rebuilds those from the typed
     /// fields and [`crate::store_calibration`], then keeps the keys this
@@ -264,6 +268,7 @@ impl Default for Project {
             ]),
             snapshots: PyJson::Array(vec![]),
             extra: Vec::new(),
+            measurement_calibration: std::collections::BTreeMap::new(),
             loaded: Vec::new(),
         }
     }

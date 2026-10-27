@@ -15,6 +15,7 @@ const reloadCases: [ResourceKey, Request, Request["method"]][] = [
   ["methods", { method: "rew_launch" }, "measure_methods"],
   ["records", { method: "position_clear", params: { position: 1 } }, "measurement_records"],
   ["curves", { method: "position_clear", params: { position: 1 } }, "measurement_curves"],
+  ["micCalibration", { method: "mic_calibration_set", params: { path: "/mic.txt" } }, "mic_calibration_get"],
   ["levels", { method: "levels_fill_defaults" }, "levels_get"],
   ["settings", { method: "calibration_settings_edit", params: { edit: { kind: "mimo_fir", on: true } } }, "calibration_settings_get"],
   ["modeSpec", { method: "calibration_settings_edit", params: { edit: { kind: "mimo_fir", on: true } } }, "mode_spec"],
@@ -49,9 +50,41 @@ it.each(["project_new", "project_open"] as const)("%s reloads every project reso
 });
 it.each(["measure", "sample_load", "mdat_import"] as const)("reloads committed data after %s regardless of terminal status", (finished) => {
   for (const status of ["succeeded", "failed", "cancelled"] as const) {
-    expect(effectsOf({ finished, status }).reload).toEqual(["project", "records", "curves", "results", "resultCurves", "lines"]);
+    expect(effectsOf({ finished, status }).reload).toEqual(["project", "records", "curves", "micCalibration", "results", "resultCurves", "lines"]);
   }
 });
+it("refreshes mic calibration counts after every measurement edit and only invalidates results on attachment", () => {
+  for (const request of ["position_clear", "undo", "layout_set", "config_apply_preset", "config_set_sub_count", "config_set_speaker", "config_add_speaker", "config_remove_speaker", "config_renumber"] as const) {
+    expect(effectsOf({ request }).reload, request).toContain("micCalibration");
+  }
+  for (const request of ["mic_calibration_set", "mic_calibration_clear"] as const) {
+    expect(effectsOf({ request }).reload).toEqual(["project", "micCalibration"]);
+  }
+  expect(effectsOf({ request: "mic_calibration_attach" }).reload).toEqual(["curves", "micCalibration", "results", "resultCurves", "lines"]);
+});
+
+it("reloads attached counts and stale results without making the project dirty", async () => {
+  const mock = createMockService({ tickMs: 0 });
+  const session = createSession(mock);
+  try {
+    await session.start(); await session.settled();
+    await session.call({ method: "mic_calibration_set", params: { path: "/mic.txt" } });
+    expect(session.stores.project.getSnapshot()?.dirty).toBe(true);
+    const count = session.stores.micCalibration.getSnapshot()!.attachable;
+    await session.call({ method: "calibrate", params: { settings: null, subs_only: false } });
+    mock.drain(); await session.settled();
+    await session.call({ method: "project_save", params: { path: "/mic.secs" } });
+    mock.calls.length = 0;
+    await session.call({ method: "mic_calibration_attach" });
+    expect(session.stores.micCalibration.getSnapshot()).toMatchObject({ attached: count, attachable: 0 });
+    expect(session.stores.results.getSnapshot()?.calibration).toMatchObject({ stale: true, stale_reason: "measurements" });
+    expect(session.stores.lines.getSnapshot()?.stale).toBe(true);
+    expect(session.stores.resultCurves.getSnapshot()?.curves?.stale).toBe(true);
+    expect(mock.calls.map((call) => call.method)).toEqual(expect.arrayContaining(["measurement_curves", "mic_calibration_get", "results", "result_curves", "result_lines"]));
+    expect(session.stores.project.getSnapshot()?.dirty).toBe(false);
+  } finally { session.dispose(); await session.settled(); mock.dispose(); }
+});
+
 it("covers settings, results, export and explicit mutations without timers", () => {
   expect(effectsOf({ request: "calibration_settings_edit" }).reload).toEqual(expect.arrayContaining(["settings", "modeSpec", "subWarnings", "project", "results"]));
   expect(effectsOf({ finished: "calibrate", status: "succeeded" }).reload).toEqual(expect.arrayContaining(["results", "resultCurves", "lines"]));
@@ -312,12 +345,12 @@ it("resets a replaced project before reloads and restores its stored measurement
     await session.start(); await session.settled();
     await session.configure({ method: "mock" });
     await session.call({ method: "project_save", params: { path: "/kept.secs" } });
-    session.host.set({ selected: 4, channel: "R" });
+    session.host.set({ selected: 4, channel: "R", micCalBusy: "pick", micCalError: { code: "measurement_input", params: {}, retryable: false, detail: "old project" } });
     let duringReload: unknown;
     const off = session.stores.project.subscribe(() => { duringReload = session.host.getSnapshot(); });
     await session.call({ method: "project_open", params: { path: "/kept.secs" } });
     await session.settled(); off();
-    expect(duringReload).toMatchObject({ selected: null, channel: null, path: null, opened: 1 });
+    expect(duringReload).toMatchObject({ selected: null, channel: null, path: null, micCalBusy: null, micCalError: null, opened: 1 });
     expect(session.host.getSnapshot().path).toBe("mock");
   } finally { session.dispose(); await session.settled(); mock.dispose(); }
 });

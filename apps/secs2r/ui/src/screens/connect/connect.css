@@ -186,6 +186,82 @@
   min-width: 0;
 }
 
+/* REW's file pill with its help mark beside it. */
+.connect-readout--help {
+  gap: var(--space-1-5);
+}
+
+/* ── 마이크 보정 파일 (native) ─────────────────────────────────────────── */
+/* A full row under the device fields: the file and its facts on the left,
+   choose and clear on the right; wraps under each other when narrow. */
+.connect-miccal {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.connect-miccal__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1-5);
+}
+
+.connect-miccal__body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-2) var(--space-4);
+}
+
+.connect-miccal__file {
+  display: flex;
+  flex: 1 1 280px;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  min-width: 0;
+}
+
+.connect-miccal__name {
+  font-weight: var(--weight-medium);
+  overflow-wrap: anywhere;
+}
+
+.connect-miccal__facts,
+.connect-miccal__note {
+  color: var(--text-muted);
+}
+
+.connect-miccal__note {
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.connect-miccal__actions {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* The sentence takes the room; the button keeps its width at the end. */
+.connect-miccal__attach {
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.connect-miccal__attach-text {
+  flex: 1 1 240px;
+  min-width: 0;
+  text-wrap: pretty;
+}
+
+.connect-miccal__attach .connect-note__icon {
+  margin-top: 0;
+}
+
 /* ── 레벨 점검 ─────────────────────────────────────────────────────────── */
 /* Wide: the rows on the left, output and mic, then skip, on the right.
    Narrow: output and mic side by side above the rows, skip after them. */

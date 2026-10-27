@@ -3,6 +3,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { createMockService } from "../../ipc/mock";
+import { IpcFailure } from "../../ipc/client";
 import { SessionProvider } from "../../state/react";
 import { createSession } from "../../state/session";
 import { levelRoles } from "./state";
@@ -22,6 +23,131 @@ beforeEach(async () => {
 afterEach(async () => {
   cleanup(); await session.settled();
   await session.monitor(false); session.dispose(); mock.dispose(); vi.restoreAllMocks(); vi.useRealTimers();
+});
+
+describe("useConnectScreen mic calibration", () => {
+  it("loads the file only on an active native path and exposes the resource", async () => {
+    await session.configure({ method: "native" });
+    session.stores.micCalibration.set(null);
+    mock.calls.length = 0;
+    const { result, rerender } = renderHook(({ active }) => useConnectScreen(active), { wrapper, initialProps: { active: false } });
+    expect(result.current.view?.micCalibration).toEqual({ status: null, busy: null, error: null });
+    expect(mock.calls).toEqual([]);
+    await perform(() => rerender({ active: true }));
+    expect(mock.calls.filter((call) => call.method === "mic_calibration_get")).toHaveLength(1);
+    expect(result.current.view?.micCalibration.status).toEqual(session.stores.micCalibration.getSnapshot());
+    await perform(() => rerender({ active: false }));
+    await perform(() => result.current.actions.choosePath("rew"));
+    mock.calls.length = 0;
+    await perform(() => rerender({ active: true }));
+    expect(mock.calls.some((call) => call.method === "mic_calibration_get")).toBe(false);
+    await perform(() => result.current.actions.choosePath("native"));
+    expect(mock.calls.filter((call) => call.method === "mic_calibration_get")).toHaveLength(1);
+  });
+
+  it("picks, attaches and clears a file while cancellation leaves it unchanged", async () => {
+    const { result } = renderHook(() => useConnectScreen(false), { wrapper });
+    const a = result.current.actions;
+    const count = result.current.view!.micCalibration.status!.attachable;
+    await perform(a.pickMicCalibration);
+    expect(mock.calls).toContainEqual({ method: "dialog_open_file", params: { kind: "mic_calibration" } });
+    expect(mock.calls).toContainEqual({ method: "mic_calibration_set", params: { path: "C:/Users/demo/Documents/UMIK-1/7000001_90deg.txt" } });
+    const selected = result.current.view!.micCalibration.status;
+    expect(selected?.file).toMatchObject({ name: "7000001_90deg.txt", points: 615 });
+    mock.queueDialog("dialog_open_file", null); mock.calls.length = 0;
+    await perform(a.pickMicCalibration);
+    expect(result.current.view?.micCalibration.status).toEqual(selected);
+    expect(mock.calls).toEqual([{ method: "dialog_open_file", params: { kind: "mic_calibration" } }]);
+    await perform(a.attachMicCalibration);
+    expect(result.current.view?.micCalibration.status).toMatchObject({ attached: count, attachable: 0 });
+    await perform(a.clearMicCalibration);
+    expect(result.current.view?.micCalibration).toEqual({ status: { file: null, attached: count, attachable: 0 }, busy: null, error: null });
+    expect(session.stores.project.getSnapshot()?.dirty).toBe(true);
+  });
+
+  it.each([
+    ["dialog_open_file", "pickMicCalibration"], ["mic_calibration_set", "pickMicCalibration"],
+    ["mic_calibration_clear", "clearMicCalibration"], ["mic_calibration_attach", "attachMicCalibration"],
+  ] as const)("keeps %s failures in the field, then clears them on the next attempt", async (method, action) => {
+    const { result } = renderHook(() => useConnectScreen(false), { wrapper });
+    await perform(result.current.actions.pickMicCalibration);
+    const globalErrors: unknown[] = [];
+    const off = session.errors.subscribe(() => { if (session.errors.getSnapshot()) globalErrors.push(session.errors.getSnapshot()); });
+    try {
+      mock.failNext(method, "measurement_input", "invalid mic curve", { reason: "mic_calibration", issue: "row", file: "bad.txt", line: "3" });
+      await perform(result.current.actions[action]);
+      expect(result.current.view?.micCalibration).toMatchObject({ busy: null, error: { code: "measurement_input", params: { issue: "row", line: "3" } } });
+      expect(globalErrors).toEqual([]);
+      await perform(result.current.actions[action]);
+      expect(result.current.view?.micCalibration).toMatchObject({ busy: null, error: null });
+    } finally { off(); }
+  });
+
+  it.each([
+    ["mic_calibration_set", "pickMicCalibration", "pick"],
+    ["mic_calibration_clear", "clearMicCalibration", "clear"],
+    ["mic_calibration_attach", "attachMicCalibration", "attach"],
+  ] as const)("holds %s busy until the reply and ignores duplicate actions", async (method, action, busy) => {
+    const { result } = renderHook(() => useConnectScreen(false), { wrapper });
+    await perform(result.current.actions.pickMicCalibration);
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    const original = mock.request;
+    vi.spyOn(mock, "request").mockImplementation(async (request) => {
+      if (request.method === method) await blocked;
+      return original(request);
+    });
+    mock.calls.length = 0;
+    try {
+      act(result.current.actions[action]);
+      expect(result.current.view?.micCalibration.busy).toBe(busy);
+      act(result.current.actions[action]);
+      await act(async () => { release(); await session.settled(); });
+      expect(mock.calls.filter((call) => call.method === method)).toHaveLength(1);
+      expect(result.current.view?.micCalibration.busy).toBeNull();
+    } finally { release(); }
+  });
+
+  it.each([false, true])("discards an old project's file dialog reply (failure: %s)", async (failed) => {
+    const { result } = renderHook(() => useConnectScreen(false), { wrapper });
+    const original = mock.request;
+    let release!: () => void;
+    const blocked = new Promise<void>((resolve) => { release = resolve; });
+    vi.spyOn(mock, "request").mockImplementation(async (request) => {
+      if (request.method === "dialog_open_file") {
+        await blocked;
+        if (failed) throw new IpcFailure({ code: "measurement_input", params: {}, retryable: false, detail: "old dialog" });
+      }
+      return original(request);
+    });
+    try {
+      act(result.current.actions.pickMicCalibration);
+      expect(result.current.view?.micCalibration.busy).toBe("pick");
+      await act(async () => { await session.call({ method: "project_new", params: { path: "/new.secs", preset: "2.0", sub_count: 0, sample: false, tutorial: false } }); });
+      expect(result.current.view?.micCalibration).toEqual({ status: { file: null, attached: 0, attachable: 0 }, busy: null, error: null });
+      await act(async () => { release(); await session.settled(); });
+      expect(mock.calls.some((call) => call.method === "mic_calibration_set")).toBe(false);
+      expect(result.current.view?.micCalibration.error).toBeNull();
+    } finally { release(); }
+  });
+
+  it("preserves reporting and rethrowing of unexpected errors", async () => {
+    const { result } = renderHook(() => useConnectScreen(false), { wrapper });
+    const error = new Error("unexpected failure");
+    const original = mock.request;
+    vi.spyOn(mock, "request").mockImplementation(async (request) => {
+      if (request.method === "mic_calibration_clear") throw error;
+      return original(request);
+    });
+    let work: Promise<unknown> | undefined;
+    vi.spyOn(session, "run").mockImplementation((run) => { work = run(); });
+    await act(async () => {
+      result.current.actions.clearMicCalibration();
+      await expect(work).rejects.toBe(error);
+    });
+    expect(result.current.view?.micCalibration).toMatchObject({ busy: null, error: null });
+    expect(session.errors.getSnapshot()?.error).toMatchObject({ code: "internal", detail: "Error: unexpected failure" });
+  });
 });
 
 describe("useConnectScreen", () => {

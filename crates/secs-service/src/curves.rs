@@ -83,10 +83,8 @@ impl Service {
                     if params.roles.as_ref().is_some_and(|r| !r.contains(role)) {
                         continue;
                     }
-                    let (samples, rate) = open
-                        .store
-                        .ir_of(role, record.pos)
-                        .map_err(crate::ServiceError::from)?;
+                    let (samples, rate) =
+                        crate::calibration::measured_ir(&mut open.store, role, record.pos)?;
                     inputs.push((role.clone(), record.pos, samples, rate));
                 }
             }
@@ -180,10 +178,8 @@ impl Service {
                 });
                 if let Some(role) = role.filter(|r| roles.contains_key(r)) {
                     let target = project.target.clone();
-                    let (samples, rate) = open
-                        .store
-                        .ir_of(&role, 1)
-                        .map_err(crate::ServiceError::from)?;
+                    let (samples, rate) =
+                        crate::calibration::measured_ir(&mut open.store, &role, 1)?;
                     let curve = display::measurement_spl(
                         &samples.iter().map(|&v| f64::from(v)).collect::<Vec<_>>(),
                         rate as f64,

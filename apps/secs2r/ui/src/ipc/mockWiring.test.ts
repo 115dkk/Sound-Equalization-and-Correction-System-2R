@@ -63,6 +63,43 @@ describe("P33 mock wiring", () => {
     await expect(mock.request({ method: "undo", params: { token: cleared.token } })).rejects.toMatchObject({ error: { code: "invalid_request" } });
   });
 
+  it("tracks mic curves across native sweeps, sample sweeps, imports, undo and project replacement", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      await mock.request(newProject(false));
+      expect(await mock.request({ method: "mic_calibration_get" })).toEqual({ file: null, attached: 0, attachable: 0 });
+      await mock.request({ method: "mic_calibration_set", params: { path: "/mic.txt" } });
+      await mock.request({ method: "measure_configure", params: { ...configure, method: "native" } });
+      await mock.request({ method: "measure_position", params: { position: 1 } }); mock.drain();
+      expect(await mock.request({ method: "mic_calibration_get" })).toMatchObject({ attached: 2, attachable: 0 });
+      await mock.request({ method: "mic_calibration_clear" });
+      await mock.request({ method: "measure_position", params: { position: 2 } }); mock.drain();
+      expect(await mock.request({ method: "mic_calibration_get" })).toEqual({ file: null, attached: 2, attachable: 2 });
+      await mock.request({ method: "mic_calibration_set", params: { path: "/next.txt" } });
+      await mock.request({ method: "mdat_import", params: { path: "/import.mdat", position: 2, assignments: [{ measurement: "L", role: "L", index: 0, position: null }] } }); mock.drain();
+      expect(await mock.request({ method: "mic_calibration_attach" })).toMatchObject({ attached: 3, attachable: 0 });
+      const cleared = await mock.request({ method: "position_clear", params: { position: 1 } });
+      expect(await mock.request({ method: "mic_calibration_get" })).toMatchObject({ attached: 1, attachable: 0 });
+      await mock.request({ method: "undo", params: { token: cleared.token } });
+      expect(await mock.request({ method: "mic_calibration_get" })).toMatchObject({ attached: 3, attachable: 0 });
+      await mock.request({ method: "project_save", params: { path: "/kept.secs" } });
+      await mock.request(newProject(false));
+      expect(await mock.request({ method: "mic_calibration_get" })).toEqual({ file: null, attached: 0, attachable: 0 });
+      await mock.request({ method: "project_open", params: { path: "/kept.secs" } });
+      expect(await mock.request({ method: "mic_calibration_get" })).toMatchObject({ file: { name: "next.txt" }, attached: 3, attachable: 0 });
+      // Sample sweeps stay uncalibrated even with a selected native file.
+      await mock.request({ method: "sample_load", params: { positions: 1 } }); mock.drain();
+      expect(await mock.request({ method: "mic_calibration_get" })).toMatchObject({ attached: 1, attachable: 2 });
+      await mock.request({ method: "measure_configure", params: configure });
+      await mock.request({ method: "measure_position", params: { position: 3 } }); mock.drain();
+      expect(await mock.request({ method: "mic_calibration_get" })).toMatchObject({ attached: 1, attachable: 4 });
+      const changed = await mock.request({ method: "config_apply_preset", params: { preset: "2.0", confirm: true } });
+      expect(await mock.request({ method: "mic_calibration_get" })).toMatchObject({ attached: 0, attachable: 0 });
+      await mock.request({ method: "undo", params: { token: changed.undo_token! } });
+      expect(await mock.request({ method: "mic_calibration_get" })).toMatchObject({ attached: 1, attachable: 4 });
+    } finally { mock.dispose(); }
+  });
+
   it("requires confirmation and restores exact configuration/layout with destructive undo tokens", async () => {
     const mock = createMockService({ tickMs: 0 });
     const config = await mock.request({ method: "config_get" });
@@ -152,6 +189,8 @@ describe("P33 mock wiring", () => {
       sample_load: { method: "sample_load", params: { positions: 1 } }, calibrate: { method: "calibrate", params: { settings: null, subs_only: false } }, recommend_xo: { method: "recommend_xo" },
       mimo: { method: "mimo", params: { settings: null } }, results: { method: "results" }, export: { method: "export", params: { kind: "before_after_mdat", folder: "" } },
       job_cancel: { method: "job_cancel", params: { job: 1 } }, jobs: { method: "jobs" }, measure_methods: { method: "measure_methods" }, measure_config_get: { method: "measure_config_get" }, measure_configure: { method: "measure_configure", params: configure },
+      mic_calibration_get: { method: "mic_calibration_get" }, mic_calibration_set: { method: "mic_calibration_set", params: { path: "/mic.txt" } },
+      mic_calibration_clear: { method: "mic_calibration_clear" }, mic_calibration_attach: { method: "mic_calibration_attach" },
       measurement_records: { method: "measurement_records" }, levels_get: { method: "levels_get" }, levels_fill_defaults: { method: "levels_fill_defaults" }, level_stop: { method: "level_stop" },
       measure_position: { method: "measure_position", params: { position: 4 } }, position_clear: { method: "position_clear", params: { position: 1 } }, undo: { method: "undo", params: { token: "undo-1" } },
       rew_launch: { method: "rew_launch" }, mdat_scan: { method: "mdat_scan", params: { path: "/room.mdat" } },
@@ -175,6 +214,7 @@ describe("P33 mock wiring", () => {
     } satisfies { [K in Request["method"]]: Extract<Request, { method: K }> };
     for (const request of Object.values(requests)) {
       const mock = createMockService({ tickMs: 0, results: fx.resultsSummary });
+      if (request.method === "mic_calibration_attach") await mock.request({ method: "mic_calibration_set", params: { path: "/mic.txt" } });
       if (request.method === "undo") await mock.request({ method: "position_clear", params: { position: 1 } });
       if (request.method === "job_cancel") await mock.request({ method: "sample_load", params: { positions: 1 } });
       expect(await mock.invoke("secs_call", { request }), request.method).toMatchObject({ ok: true, data: { method: request.method } });
