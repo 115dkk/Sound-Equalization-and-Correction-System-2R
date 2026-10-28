@@ -22,6 +22,8 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
       } }));
     },
     setMdatScope: (scope) => session.host.set({ mdatScope: scope }),
+    setDesignName: (name) => session.host.set({ designName: name }),
+    setCamillaDevices: (devices) => session.host.set({ camillaDevices: devices }),
     changeFolder: () => session.run(async () => {
       const selected = await session.call({ method: "dialog_pick_folder", params: { start: session.stores.folder.getSnapshot()?.folder ?? null } });
       if (selected !== null) await session.call({ method: "export_folder_set", params: { folder: selected } });
@@ -40,5 +42,7 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
     computing: recalibrating, recalibrating,
     exporting: request?.method === "export" ? request.params.kind : null,
     runs: host.runs, mdatScope: host.mdatScope, tutorial: project.tutorial,
+    // P103 (ASTRA) reads the WASAPI list from measure_methods().native_devices.
+    designName: host.designName, camillaDevices: host.camillaDevices, nativeDevices: null,
   } : null, actions };
 }

@@ -100,6 +100,7 @@
 .export-group,
 .export-group > .ui-advanced,
 .export-group > .ui-advanced > .ui-advanced__panel,
+.export-name,
 .export-item {
   display: grid;
   grid-column: 1 / -1;
@@ -190,6 +191,54 @@
 .export-group__title + .export-item {
   padding-top: 0;
   border-top: 0;
+}
+
+/*
+ * The design name, once above the filter rows: its label in the names'
+ * column, the box where the buttons stand, and what the name does (or why it
+ * cannot be a folder) under the box. The first row keeps its rule under it.
+ */
+.export-name {
+  row-gap: var(--space-1-5);
+}
+
+.export-name__label {
+  grid-column: 1;
+  grid-row: 1;
+  align-self: center;
+}
+
+.export-name__control {
+  display: flex;
+  grid-column: 2 / -1;
+  grid-row: 1;
+  min-width: 0;
+}
+
+.export-name__message {
+  grid-column: 2 / -1;
+  max-width: 72ch;
+}
+
+/* A one-line text box on the number field's box (and its skins), its text from the left. */
+.export-text {
+  width: min(100%, 20rem);
+}
+
+.export-text__input {
+  flex: 1;
+  align-self: stretch;
+  min-width: 0;
+  padding: 0 var(--space-1);
+  text-align: left;
+}
+
+.export-text__input::placeholder {
+  color: var(--text-faint);
+}
+
+.export-text-field .ui-field__control {
+  min-width: 0;
 }
 
 /* An export: its name and button on one line, where its files go under them. */
@@ -367,4 +416,80 @@
 
 .export-item--scoped .export-item__file {
   margin-top: calc(var(--space-1) * -1);
+}
+
+/*
+ * The CamillaDSP devices, folded under the row's folder line like 고급. The
+ * closed toggle reads the current choice in the text colour (a value, after
+ * the muted name); open, capture and playback stand side by side and stack
+ * when the row is narrow.
+ */
+.export-devices {
+  grid-column: 1 / -1;
+}
+
+.export-devices__summary {
+  min-width: 0;
+  color: var(--text);
+  font-weight: var(--weight-regular);
+  overflow-wrap: anywhere;
+}
+
+.export-devices__panel {
+  gap: var(--space-4);
+}
+
+.export-devices__sides {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(18rem, 1fr));
+  gap: var(--space-5) var(--space-6);
+  max-width: 60rem;
+}
+
+.export-device {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.export-device > * {
+  max-width: 100%;
+}
+
+.export-device__legend {
+  margin-bottom: var(--space-1);
+  padding: 0;
+  font-size: var(--text-ui);
+  font-weight: var(--weight-semibold);
+}
+
+.export-device .ui-field {
+  align-self: stretch;
+}
+
+.export-device .ui-select {
+  width: min(100%, 22rem);
+}
+
+/* Said when ASIO is chosen: a condition of the user's CamillaDSP, not a fault, so the info icon and muted words. */
+.export-devices__note {
+  display: flex;
+  align-items: flex-start;
+  align-self: flex-start;
+  gap: var(--space-2);
+  max-width: 72ch;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+
+.export-devices__note .ui-icon {
+  flex: none;
+  margin-top: 1px;
 }
