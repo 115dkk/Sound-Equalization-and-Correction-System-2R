@@ -2,6 +2,16 @@
 
 SECS 2R의 변경 기록입니다. 번호는 major.minor.patch이고, 0.x는 모두 사전 출시판이며 정식 출시는 1.0.0부터입니다(docs/adr/0006). 각 절의 내용이 그 버전의 릴리스 본문이 됩니다. 업스트림 SECS 2의 변경 기록은 [`docs/upstream/CHANGELOG.md`](docs/upstream/CHANGELOG.md)에 있습니다.
 
+## 0.32.0 - 2026-10-29
+
+SECS 2R을 바깥 프로그램에서 쓰는 판입니다. 실행 중인 앱을 같은 PC에서 조작하는 로컬 API가 생기고, 계산 엔진을 Rust 크레이트로 crates.io에 공개합니다. 보정 계산 결과와 내보낸 파일은 0.31.0과 같습니다.
+
+### 더한 것
+
+- 설정에 '로컬 API'를 더했습니다. 켜면(기본값은 꺼짐) 앱이 `http://127.0.0.1:4712`에서 화면과 같은 요청을 받습니다. `POST /v1/call`은 기능 실행, `GET /v1/status`는 열린 프로젝트·작업·성적표·마지막 내보내기를 한 번에 읽기, `GET /v1/events`는 작업과 상태 변경을 WebSocket으로 알리기입니다. 모든 요청에 앱 설정 폴더의 토큰(`local-api-token`)이 필요하고, 브라우저에서 온 요청과 창을 띄우는 요청은 거절합니다. 포트와 토큰은 '연결 정보'에서 바꾸고 복사합니다.
+- 로컬 API로 상태를 바꾸면 화면이 그 변화를 따라 다시 읽고, 바깥에서 시작한 계산도 작업 목록에 보입니다.
+- Rust 크레이트 [`sound-equalization-and-correction-system-rust-api`](https://crates.io/crates/sound-equalization-and-correction-system-rust-api) 0.1.0을 공개합니다. `engine` 기능은 앱 없이 프로젝트를 열고 보정, MIMO, 내보내기를 돌리고, `client` 기능은 실행 중인 앱의 로컬 API를 부릅니다. 라이선스는 GPL-3.0-only입니다. 크레이트는 앱과 따로 0.x 판을 쓰고, 이후 판은 릴리스 때 trusted publishing으로 올라갑니다.
+
 ## 0.30.0 - 2026-10-27
 
 REW mdat에 저장할 내용을 고르는 판입니다. 보정 계산 결과와 필터 파일은 0.29.0과 같고, REW mdat의 이름과 항목이 달라집니다.
