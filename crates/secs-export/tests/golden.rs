@@ -7,7 +7,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use secs_engine::test_support::replay_case;
+use secs_engine_testkit::replay_case;
 use secs_export::{
     ExportError, ExportRun, MdatScope, MimoKind, MimoResponses, Original, Sources,
     before_after_items, before_after_items_mimo, export_before_after_mdat, export_mdat,

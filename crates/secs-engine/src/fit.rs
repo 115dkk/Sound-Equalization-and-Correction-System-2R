@@ -595,8 +595,9 @@ pub fn xo_target_peq(
 }
 
 #[cfg(any(test, feature = "test-support"))]
+#[doc(hidden)]
 #[derive(Debug, Clone)]
-pub(crate) struct RecordedFit {
+pub struct RecordedFit {
     pub g: Vec<f64>,
     pub corr_db: Vec<f64>,
     pub n: usize,
@@ -623,7 +624,8 @@ impl RecordedFit {
     }
 }
 #[cfg(any(test, feature = "test-support"))]
-pub(crate) fn replay_fitter(
+#[doc(hidden)]
+pub fn replay_fitter(
     calls: Vec<RecordedFit>,
     rtol: f64,
 ) -> impl FnMut(&FitRequest<'_>) -> Vec<Peq> {

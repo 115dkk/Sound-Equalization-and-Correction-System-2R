@@ -20,7 +20,7 @@ secs-service.workspace = true
 secs-gpu = { path = "../../crates/secs-gpu" }
 secs-types.workspace = true
 secs-compute.workspace = true
-secs-rew = { path = "../../crates/secs-rew" }
+secs-rew.workspace = true
 secs-sys = { path = "../../crates/secs-sys" }
 clap.workspace = true
 rayon.workspace = true

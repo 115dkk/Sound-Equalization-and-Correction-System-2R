@@ -94,6 +94,7 @@ fn main() {
             let handle = app.handle().clone();
             let config_dir = app.path().app_config_dir()?;
             app.manage(Service::new(Deps {
+                app_version: env!("CARGO_PKG_VERSION").into(),
                 acceleration: Arc::new(secs_gpu::select),
                 audio_backend: Arc::new(secs_sys::audio::default_backend),
                 rew_transport: Arc::new(|| Box::new(secs_rew::HttpTransport::default())),

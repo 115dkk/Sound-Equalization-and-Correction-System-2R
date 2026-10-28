@@ -1,19 +1,23 @@
 [package]
 name = "secs-mdat"
 description = "REW .mdat schema over secs-jos: read measurements, build new projects from an embedded template."
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-publish.workspace = true
+homepage = "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R"
+readme = "README.md"
+keywords = ["audio", "rew", "mdat", "measurement"]
+categories = ["multimedia::audio", "encoding", "parser-implementations"]
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "data/**"]
 
 [lints]
 workspace = true
 
 [dependencies]
-secs-jos = { path = "../secs-jos" }
-secs-dsp = { path = "../secs-dsp" }
+secs-jos.workspace = true
+secs-dsp.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 

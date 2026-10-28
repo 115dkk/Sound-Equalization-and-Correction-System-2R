@@ -30,6 +30,7 @@ mod session;
 mod settings_edit;
 mod watch;
 
+use std::borrow::Cow;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
@@ -44,11 +45,11 @@ pub use clock::LocalTime;
 use jobs::JobRegistry;
 use session::Session;
 
-const UPSTREAM_TOML: &str = include_str!("../../../UPSTREAM.toml");
+const UPSTREAM_TOML: &str = include_str!("../UPSTREAM.toml");
 
 /// Product name shown to users.
 pub const APP_NAME: &str = "SECS 2R";
-/// The SECS 2R version (the workspace version).
+/// The `secs-service` library version.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(serde::Deserialize)]
@@ -167,6 +168,8 @@ pub type UuidSource = Arc<Mutex<Box<dyn FnMut() -> Result<u128, secs_export::Exp
 /// them here keeps platform crates out of this service.
 #[derive(Clone)]
 pub struct Deps {
+    /// Product version shown to users and written into exported files.
+    pub app_version: Cow<'static, str>,
     /// Resolves a requested compute policy without platform dependencies in the service.
     pub acceleration: Arc<
         dyn Fn(secs_types::compute::ComputePreference) -> secs_engine::mimo::AccelerationSelection
@@ -202,6 +205,7 @@ pub struct Deps {
 impl Debug for Deps {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Deps")
+            .field("app_version", &self.app_version)
             .field("acceleration", &"factory")
             .field("compute_override", &self.compute_override)
             .field("audio_backend", &"factory")
@@ -260,6 +264,7 @@ fn random_uuid() -> Result<u128, secs_export::ExportError> {
 impl Default for Deps {
     fn default() -> Self {
         Self {
+            app_version: Cow::Borrowed(VERSION),
             acceleration: Arc::new(compute::cpu_selection),
             compute_override: None,
             audio_backend: Arc::new(|| Box::new(secs_audio::NullBackend)),
@@ -367,8 +372,8 @@ impl Service {
     fn bootstrap(&self) -> BootstrapInfo {
         BootstrapInfo {
             app_name: APP_NAME.to_owned(),
-            version: VERSION.to_owned(),
-            prerelease: VERSION.starts_with("0."),
+            version: self.deps.app_version.to_string(),
+            prerelease: self.deps.app_version.starts_with("0."),
             upstream: upstream().clone(),
             platform: Platform {
                 os: std::env::consts::OS.to_owned(),

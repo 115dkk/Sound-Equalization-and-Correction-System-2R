@@ -1,12 +1,16 @@
 [package]
 name = "secs-engine"
 description = "The SECS 2 correction design: measurement, levels and delays, BA, XO, RC, decay, signal chain, MIMO and scorecard."
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-publish.workspace = true
+homepage = "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R"
+readme = "README.md"
+keywords = ["audio", "equalization", "correction", "mimo", "dsp"]
+categories = ["multimedia::audio", "science"]
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**"]
 
 [lints]
 workspace = true
@@ -16,15 +20,13 @@ name = "engine_perf"
 required-features = ["test-support"]
 
 [features]
-test-support = ["dep:secs-oracle", "dep:serde_json"]
+test-support = []
 
 [dependencies]
 faer.workspace = true
 secs-types.workspace = true
-secs-compute = { path = "../secs-compute" }
-secs-dsp = { path = "../secs-dsp" }
-secs-oracle = { workspace = true, optional = true }
-serde_json = { workspace = true, optional = true }
+secs-compute.workspace = true
+secs-dsp.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
