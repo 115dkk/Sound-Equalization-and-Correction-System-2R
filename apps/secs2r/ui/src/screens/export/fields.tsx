@@ -198,7 +198,10 @@ export function CamillaDevicesDisclosure({ view, actions, defaultOpen = false }:
         className="ui-advanced__toggle"
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
-        onClick={() => setOpen((value) => !value)}
+        onClick={() => {
+          if (!open) actions.refreshDevices();
+          setOpen(!open);
+        }}
       >
         <Icon name="chevronRight" size={16} className="ui-advanced__chevron" />
         <span>{t("export.devices")}</span>

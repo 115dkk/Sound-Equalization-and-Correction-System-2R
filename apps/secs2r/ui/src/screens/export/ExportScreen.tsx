@@ -28,6 +28,7 @@ import {
   MDAT_SCOPES,
   canExport,
   designNameFor,
+  designNameRejection,
   exportBlock,
   exportStepState,
   filterModeName,
@@ -532,6 +533,14 @@ function Outcome({ kind, run, view, actions }: { kind: ExportKind; run: ExportRu
   const t = useT();
   const id = `export.outcome.${kind}`;
   if (run.status === "failed") {
+    const problem = designNameRejection(run.error);
+    if (problem) {
+      return (
+        <div className="export-item__outcome" data-ui={id}>
+          <ErrorNotice cause={t(`export.design_name.problem.${problem}`)} code={run.error.code} />
+        </div>
+      );
+    }
     const text = errorText(t, run.error);
     return (
       <div className="export-item__outcome" data-ui={id}>

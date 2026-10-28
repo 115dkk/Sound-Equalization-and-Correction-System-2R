@@ -120,6 +120,8 @@ export type ExportActions = {
   setDesignName: (name: string) => void;
   /** Host: the CamillaDSP export's capture and playback. */
   setCamillaDevices: (devices: CamillaDevices) => void;
+  /** `measure_methods` again, when the devices disclosure opens: an interface plugged in since startup shows up. */
+  refreshDevices: () => void;
   /** `dialog_pick_folder { start: folder }`, then `export_folder_set { folder }` when one was picked. */
   changeFolder: () => void;
   /** `open_folder { path }`: the export folder, or the folder a run wrote. */
@@ -240,6 +242,18 @@ const RESERVED = /^(?:CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/;
  * name a folder. An empty field is no problem: it means no name, and the
  * filter exports go to timestamped folders as before.
  */
+/**
+ * The problem the service named when it refused a design name
+ * (`invalid_request` with `params.reason` `design_name_<problem>`), so the
+ * row can say what the field says; null for any other error.
+ */
+export function designNameRejection(error: IpcError): DesignNameProblem | null {
+  if (error.code !== "invalid_request") return null;
+  const reason = error.params.reason ?? "";
+  const problem = reason.startsWith("design_name_") ? reason.slice("design_name_".length) : "";
+  return (["length", "control", "character", "trailing", "reserved"] as const).find((value) => value === problem) ?? null;
+}
+
 export function designNameProblem(name: string): DesignNameProblem | null {
   if (name === "") return null;
   const value = name.replace(EDGE_SPACE, "");

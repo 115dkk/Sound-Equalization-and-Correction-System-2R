@@ -45,6 +45,7 @@ export const noopExportActions: ExportActions = {
   setMdatScope: () => {},
   setDesignName: () => {},
   setCamillaDevices: () => {},
+  refreshDevices: () => {},
   changeFolder: () => {},
   openFolder: () => {},
   goToCalibrate: () => {},

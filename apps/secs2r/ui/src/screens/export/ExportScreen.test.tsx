@@ -139,6 +139,7 @@ function actions() {
     setMdatScope: vi.fn<ExportActions["setMdatScope"]>(),
     setDesignName: vi.fn<ExportActions["setDesignName"]>(),
     setCamillaDevices: vi.fn<ExportActions["setCamillaDevices"]>(),
+    refreshDevices: vi.fn<ExportActions["refreshDevices"]>(),
     changeFolder: vi.fn<ExportActions["changeFolder"]>(),
     openFolder: vi.fn<ExportActions["openFolder"]>(),
     goToCalibrate: vi.fn<ExportActions["goToCalibrate"]>(),
@@ -688,6 +689,28 @@ describe("내보내기", () => {
     const panel = ui("export.kind.camilla_dsp")!;
     expect([...panel.querySelectorAll("[role='radio'][aria-checked='true']")].map((radio) => radio.textContent)).toEqual(["파일 자리표시", "파일 자리표시"]);
     expect(ui("export.devices.asio_note")).toBeNull();
+  });
+
+  it("reads the device list again each time the disclosure opens, not when it closes", () => {
+    const act = actions();
+    renderWith(<Mounted view={exportReady} act={act} />);
+    fireEvent.click(ui("export.devices")!);
+    expect(act.refreshDevices).toHaveBeenCalledTimes(1);
+    fireEvent.click(ui("export.devices")!);
+    expect(act.refreshDevices).toHaveBeenCalledTimes(1);
+    fireEvent.click(ui("export.devices")!);
+    expect(act.refreshDevices).toHaveBeenCalledTimes(2);
+  });
+
+  it("says in the row why the service refused a design name, as the field does", () => {
+    const refused: ExportView = {
+      ...exportReady,
+      runs: { convolution: { status: "failed", error: { code: "invalid_request", detail: "design_name_reserved", retryable: false, params: { reason: "design_name_reserved" } } } },
+    };
+    renderWith(<Mounted view={refused} act={actions()} />);
+    const outcome = ui("export.outcome.convolution")!;
+    expect(outcome.textContent).toContain("Windows 장치 이름");
+    expect(outcome.textContent).not.toContain("다시 시작");
   });
 
   it("chooses file placeholders, WASAPI or ASIO per side, starting WASAPI at the default device, shared, F32", () => {
