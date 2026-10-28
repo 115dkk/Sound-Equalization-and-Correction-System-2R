@@ -418,12 +418,31 @@ jobs:
         working-directory: apps/secs2r/ui
         run: npm ci --no-audit --no-fund
 
+      # As release.yml: built before tauri build, packed and run by
+      # collect_bundles.py.
+      - name: Build the CLI
+        shell: bash
+        run: |
+          if [ "${{ matrix.target }}" = "universal-apple-darwin" ]; then
+            cargo build --release --locked -p secs2r-cli --target aarch64-apple-darwin
+            cargo build --release --locked -p secs2r-cli --target x86_64-apple-darwin
+            mkdir -p target/universal-apple-darwin/release
+            lipo -create -output target/universal-apple-darwin/release/secs2r-cli \
+              target/aarch64-apple-darwin/release/secs2r-cli \
+              target/x86_64-apple-darwin/release/secs2r-cli
+          else
+            cargo build --release --locked -p secs2r-cli
+          fi
+
       - name: tauri build
         working-directory: apps/secs2r
         shell: bash
         run: |
           args=(build --ci --bundles "${{ matrix.bundles }}")
           if [ -n "${{ matrix.target }}" ]; then args+=(--target "${{ matrix.target }}"); fi
+          if [ "${{ matrix.name }}" = "windows" ]; then
+            args+=(--config '{"bundle":{"resources":{"../../target/release/secs2r-cli.exe":"secs2r-cli.exe"}}}')
+          fi
           node ui/node_modules/@tauri-apps/cli/tauri.js "${args[@]}"
 
       # Windows runners have `python`, not always `python3`.
@@ -431,9 +450,12 @@ jobs:
         with:
           python-version: "3.13"
 
+      # Asset names carry a CI version; the CLI reports the workspace version.
       - name: Collect installers
         shell: bash
-        run: python .github/scripts/collect_bundles.py --name "${{ matrix.name }}" --target "${{ matrix.target }}" --version "0.0.0-ci.${{ github.run_number }}" --out dist
+        run: |
+          cli_version="$(python -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])")"
+          python .github/scripts/collect_bundles.py --name "${{ matrix.name }}" --target "${{ matrix.target }}" --version "0.0.0-ci.${{ github.run_number }}" --cli-version "$cli_version" --out dist
 
       - name: The macOS app opens and calibrates
         if: runner.os == 'macOS'
