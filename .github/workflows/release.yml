@@ -11,10 +11,14 @@ name: Release
 #            github-actions[bot] and release that
 #   build    tests in release mode, then the installers of each OS under
 #            stable names (.github/scripts/collect_bundles.py):
-#              Windows  NSIS installer and a portable zip (GUI-subsystem check)
+#              Windows  NSIS installer and a portable zip (GUI-subsystem check),
+#                       both carrying secs2r-cli.exe, and a CLI zip
 #              macOS    universal dmg, which must open and calibrate before
-#                       it is uploaded (.github/scripts/macos_app_check.py)
+#                       it is uploaded (.github/scripts/macos_app_check.py),
+#                       and a universal CLI tar.gz
 #              Linux    AppImage and deb (built on 22.04 for an older glibc)
+#                       and a CLI tar.gz
+#            every CLI that ships is run once and must report the version
 #   publish  SHA256SUMS.txt, notes from CHANGELOG.md, and the release itself
 #            (assets replaced when the tag exists)
 #
@@ -123,6 +127,23 @@ jobs:
           SECS_ORACLE_FOREIGN_LIBM: "1"
         run: cargo test --workspace --release --locked
 
+      # Built before tauri build: the Windows installer takes the exe as a
+      # resource, and collect_bundles.py packs and runs it on every OS. The
+      # macOS CLI is one universal binary like the app.
+      - name: Build the CLI
+        shell: bash
+        run: |
+          if [ "${{ matrix.target }}" = "universal-apple-darwin" ]; then
+            cargo build --release --locked -p secs2r-cli --target aarch64-apple-darwin
+            cargo build --release --locked -p secs2r-cli --target x86_64-apple-darwin
+            mkdir -p target/universal-apple-darwin/release
+            lipo -create -output target/universal-apple-darwin/release/secs2r-cli \
+              target/aarch64-apple-darwin/release/secs2r-cli \
+              target/x86_64-apple-darwin/release/secs2r-cli
+          else
+            cargo build --release --locked -p secs2r-cli
+          fi
+
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"
@@ -137,6 +158,11 @@ jobs:
         run: |
           args=(build --ci --bundles "${{ matrix.bundles }}")
           if [ -n "${{ matrix.target }}" ]; then args+=(--target "${{ matrix.target }}"); fi
+          # The installer puts the CLI next to "SECS 2R.exe". Only here, not
+          # in tauri.conf.json, so a local tauri dev or build needs no CLI.
+          if [ "${{ matrix.name }}" = "windows" ]; then
+            args+=(--config '{"bundle":{"resources":{"../../target/release/secs2r-cli.exe":"secs2r-cli.exe"}}}')
+          fi
           node ui/node_modules/@tauri-apps/cli/tauri.js "${args[@]}"
 
       - name: Check the version the CLI reports
