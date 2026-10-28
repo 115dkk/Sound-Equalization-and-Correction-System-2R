@@ -78,6 +78,33 @@ enum Action {
         out: PathBuf,
         #[arg(long, value_enum)]
         mdat_scope: Option<MdatScopeChoice>,
+        /// Stable design name; a matching kind and name is replaced.
+        #[arg(long)]
+        design_name: Option<String>,
+        /// CamillaDSP capture backend.
+        #[arg(long, value_enum, default_value_t = CamillaBackendChoice::File)]
+        camilla_capture: CamillaBackendChoice,
+        /// CamillaDSP playback backend.
+        #[arg(long, value_enum, default_value_t = CamillaBackendChoice::File)]
+        camilla_playback: CamillaBackendChoice,
+        /// Capture endpoint or ASIO driver name.
+        #[arg(long)]
+        camilla_capture_device: Option<String>,
+        /// Playback endpoint or ASIO driver name.
+        #[arg(long)]
+        camilla_playback_device: Option<String>,
+        /// Wasapi capture sample format.
+        #[arg(long, value_enum, default_value_t = CamillaFormatChoice::F32)]
+        camilla_capture_format: CamillaFormatChoice,
+        /// Wasapi playback sample format.
+        #[arg(long, value_enum, default_value_t = CamillaFormatChoice::F32)]
+        camilla_playback_format: CamillaFormatChoice,
+        #[arg(long)]
+        camilla_capture_exclusive: bool,
+        #[arg(long)]
+        camilla_playback_exclusive: bool,
+        #[arg(long)]
+        camilla_capture_loopback: bool,
     },
     /// Run creation, filling, calibration, and all exports.
     Run {
@@ -154,6 +181,34 @@ enum ComputeChoice {
     Cpu,
     Gpu,
 }
+#[derive(Debug, Clone, Copy, ValueEnum, Default, PartialEq, Eq)]
+enum CamillaBackendChoice {
+    #[default]
+    File,
+    Wasapi,
+    Asio,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, Default)]
+enum CamillaFormatChoice {
+    S32,
+    S24,
+    S16,
+    #[default]
+    F32,
+}
+
+impl From<CamillaFormatChoice> for CamillaWasapiFormat {
+    fn from(value: CamillaFormatChoice) -> Self {
+        match value {
+            CamillaFormatChoice::S32 => Self::S32,
+            CamillaFormatChoice::S24 => Self::S24,
+            CamillaFormatChoice::S16 => Self::S16,
+            CamillaFormatChoice::F32 => Self::F32,
+        }
+    }
+}
+
 impl From<ComputeChoice> for secs_types::compute::ComputePreference {
     fn from(value: ComputeChoice) -> Self {
         match value {
@@ -186,7 +241,7 @@ enum FillChoice {
     Mock,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum ExportChoice {
     CamillaDsp,
     StagedMdat,
@@ -354,11 +409,20 @@ impl Runner {
         }));
     }
 
-    fn export(&mut self, kind: ExportKind, folder: &Path, mdat_scope: Option<MdatScope>) {
+    fn export(
+        &mut self,
+        kind: ExportKind,
+        folder: &Path,
+        mdat_scope: Option<MdatScope>,
+        design_name: Option<String>,
+        camilla_devices: Option<CamillaDevices>,
+    ) {
         self.call(Request::Export(ExportParams {
             kind,
             folder: folder.to_string_lossy().into_owned(),
             mdat_scope,
+            design_name,
+            camilla_devices,
         }));
     }
 }
@@ -553,9 +617,50 @@ fn run(action: Action, runner: &mut Runner) {
             kind,
             out,
             mdat_scope,
+            design_name,
+            camilla_capture,
+            camilla_playback,
+            camilla_capture_device,
+            camilla_playback_device,
+            camilla_capture_format,
+            camilla_playback_format,
+            camilla_capture_exclusive,
+            camilla_playback_exclusive,
+            camilla_capture_loopback,
         } => {
             runner.open(&project);
-            runner.export(kind.into(), &out, mdat_scope.map(Into::into));
+            let camilla_devices = (kind == ExportChoice::CamillaDsp).then(|| CamillaDevices {
+                capture: match camilla_capture {
+                    CamillaBackendChoice::File => CamillaCaptureDevice::File,
+                    CamillaBackendChoice::Wasapi => CamillaCaptureDevice::Wasapi {
+                        device: camilla_capture_device,
+                        format: camilla_capture_format.into(),
+                        exclusive: camilla_capture_exclusive,
+                        loopback: camilla_capture_loopback,
+                    },
+                    CamillaBackendChoice::Asio => CamillaCaptureDevice::Asio {
+                        device: camilla_capture_device.unwrap_or_default(),
+                    },
+                },
+                playback: match camilla_playback {
+                    CamillaBackendChoice::File => CamillaPlaybackDevice::File,
+                    CamillaBackendChoice::Wasapi => CamillaPlaybackDevice::Wasapi {
+                        device: camilla_playback_device,
+                        format: camilla_playback_format.into(),
+                        exclusive: camilla_playback_exclusive,
+                    },
+                    CamillaBackendChoice::Asio => CamillaPlaybackDevice::Asio {
+                        device: camilla_playback_device.unwrap_or_default(),
+                    },
+                },
+            });
+            runner.export(
+                kind.into(),
+                &out,
+                mdat_scope.map(Into::into),
+                design_name,
+                camilla_devices,
+            );
         }
         Action::Run {
             out,
@@ -692,7 +797,7 @@ fn full_run(runner: &mut Runner, out: &Path, project: Option<&Path>, fill: FillC
             }}));
             continue;
         }
-        runner.export(kind, &out.join("export").join(folder), None);
+        runner.export(kind, &out.join("export").join(folder), None, None, None);
     }
 }
 

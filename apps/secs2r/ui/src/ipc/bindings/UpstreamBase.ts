@@ -9,6 +9,10 @@ export type UpstreamBase = {
  */
 name: string, 
 /**
+ * Upstream repository URL from `UPSTREAM.toml`.
+ */
+repository: string, 
+/**
  * Upstream release version from `UPSTREAM.toml`.
  */
 version: string, 

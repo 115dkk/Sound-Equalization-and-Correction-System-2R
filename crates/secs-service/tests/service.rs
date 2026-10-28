@@ -11,6 +11,7 @@ use std::time::{Duration, Instant};
 
 use secs_service::{Deps, EventSink, LocalTime, NoEvents, Service, VERSION};
 use secs_types::ipc::{Envelope, ErrorCode, JobEvent, ProjectNewParams, Request};
+use sha2::{Digest, Sha256};
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
@@ -289,6 +290,8 @@ fn tutorial_projects_block_save_without_writing() {
             kind: ExportKind::CamillaDsp,
             folder: export_folder.to_string_lossy().into_owned(),
             mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
         }),
         Arc::new(NoEvents),
     ) else {
@@ -372,23 +375,37 @@ fn snapshot_relative_files(root: &Path, files: &[String]) -> Vec<(PathBuf, Vec<u
     snapshot
 }
 
+fn assert_snapshots_equal(left: &[(PathBuf, Vec<u8>)], right: &[(PathBuf, Vec<u8>)]) {
+    assert_eq!(
+        left.iter().map(|(path, _)| path).collect::<Vec<_>>(),
+        right.iter().map(|(path, _)| path).collect::<Vec<_>>()
+    );
+    for ((path, left_bytes), (_, right_bytes)) in left.iter().zip(right) {
+        assert!(left_bytes == right_bytes, "{} differs", path.display());
+    }
+}
+
 fn compare_snapshot(root: &Path, snapshot: &[(PathBuf, Vec<u8>)], direct_files: &[PathBuf]) {
     let mut direct_relative: Vec<_> = direct_files
         .iter()
         .map(|file| file.strip_prefix(root).unwrap().to_owned())
+        .filter(|relative| relative != Path::new("secs-design.json"))
         .collect();
     direct_relative.sort();
+    let comparable: Vec<_> = snapshot
+        .iter()
+        .filter(|(relative, _)| relative != Path::new("secs-design.json"))
+        .collect();
     assert_eq!(
-        snapshot
+        comparable
             .iter()
             .map(|(relative, _)| relative)
             .collect::<Vec<_>>(),
         direct_relative.iter().collect::<Vec<_>>()
     );
-    for (relative, expected) in snapshot {
-        assert_eq!(
-            expected,
-            &fs::read(root.join(relative)).unwrap(),
+    for (relative, expected) in comparable {
+        assert!(
+            expected == &fs::read(root.join(relative)).unwrap(),
             "{} differs",
             relative.display()
         );
@@ -428,6 +445,8 @@ fn export_scope_and_wait(
             kind,
             folder: folder.to_string_lossy().into_owned(),
             mdat_scope,
+            design_name: None,
+            camilla_devices: None,
         }),
         events.clone(),
     ) else {
@@ -617,6 +636,8 @@ fn resampled_calibration_and_cached_mdat_export_preserve_original_ir() {
             kind: ExportKind::StagedMdat,
             folder: root.join("cached-mdat").to_string_lossy().into_owned(),
             mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
         }),
         Arc::new(NoEvents),
     ) else {
@@ -967,6 +988,8 @@ fn mdat_scope_is_refused_for_other_kinds() {
                     .to_string_lossy()
                     .into_owned(),
                 mdat_scope: Some(MdatScope::All),
+                design_name: None,
+                camilla_devices: None,
             }),
             Arc::new(NoEvents),
         ) else {
@@ -983,6 +1006,8 @@ fn mdat_scope_is_refused_for_other_kinds() {
             kind: ExportKind::BeforeAfterMdat,
             folder: root.join("empty").to_string_lossy().into_owned(),
             mdat_scope: Some(MdatScope::Measurements),
+            design_name: None,
+            camilla_devices: None,
         }),
         Arc::new(NoEvents),
     ) else {
@@ -1031,6 +1056,8 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
             kind: ExportKind::FilterText,
             folder: blocked_folder.to_string_lossy().into_owned(),
             mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
         }),
         Arc::new(NoEvents),
     ) else {
@@ -1106,6 +1133,8 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                 kind,
                 folder: folder.to_string_lossy().into_owned(),
                 mdat_scope: None,
+                design_name: None,
+                camilla_devices: None,
             }),
             events.clone(),
         ) else {
@@ -1131,9 +1160,40 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                     ),
                     latency_ms: direct.design.chain.latency_ms,
                 };
-                let direct_files =
-                    secs_camilla::export(&direct.design.chain, &folder, &labels, None).unwrap();
-                assert_eq!(export.files.len(), direct_files.len());
+                let project_name = {
+                    let store = secs_project::MeasurementStore::open(&path).unwrap();
+                    (!store.project().name.trim().is_empty())
+                        .then(|| store.project().name.trim().to_owned())
+                };
+                let design_id = secs_graph::design::design_id(
+                    &direct.design.chain,
+                    None,
+                    secs_graph::LfeChoice::DOLBY,
+                )
+                .unwrap();
+                let direct_files = secs_camilla::export_with_options(
+                    &direct.design.chain,
+                    &folder,
+                    &labels,
+                    None,
+                    secs_camilla::Options {
+                        design: Some(secs_camilla::DesignLabels {
+                            project_name,
+                            design_name: secs_types::calibration::mode_label(
+                                settings.mode,
+                                Some(settings.ultra_ms),
+                            ),
+                            design_id,
+                            bypass: false,
+                        }),
+                        headroom: true,
+                        labels: true,
+                        bypass: true,
+                        ..secs_camilla::Options::default()
+                    },
+                )
+                .unwrap();
+                assert_eq!(export.files.len(), direct_files.len() + 1);
                 compare_snapshot(&folder, &snapshot, &direct_files);
             }
             ExportKind::StagedMdat | ExportKind::BeforeAfterMdat => {
@@ -1206,6 +1266,10 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                     })
                     .collect();
                 direct_snapshot.sort_by(|left, right| left.0.cmp(&right.0));
+                let snapshot: Vec<_> = snapshot
+                    .into_iter()
+                    .filter(|(path, _)| path != Path::new("secs-design.json"))
+                    .collect();
                 assert_eq!(snapshot, direct_snapshot);
             }
             ExportKind::FilterText | ExportKind::Convolution => unreachable!(),
@@ -1318,6 +1382,154 @@ fn filter_text_export_matches_direct_and_reopened_bytes_without_redesign() {
         !lock(&reopened_events.values).iter().any(|event| {
             matches!(event, JobEvent::Progress { stage, .. } if stage == "design")
         })
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn named_filter_bundles_replace_heal_index_hash_every_file_and_share_design_id() {
+    let root = temp_root("named-filter-bundles");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("stereo.secs");
+    let base = root.join("exports");
+    let service = deterministic_service();
+    call_ok(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: path.to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    call_ok(
+        &service,
+        Request::MeasureConfigure(secs_types::ipc::MeasureConfigureParams {
+            method: "mock".into(),
+            ..Default::default()
+        }),
+        Arc::new(NoEvents),
+    );
+    let measure_events = Arc::new(Events::default());
+    let Response::MeasurePosition(measure) = call_ok(
+        &service,
+        Request::MeasurePosition(secs_types::ipc::MeasurePositionParams { position: 1 }),
+        measure_events.clone(),
+    ) else {
+        panic!("measurement must start");
+    };
+    finished_result(measure_events.wait(measure.job, Duration::from_secs(120)));
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(
+        &service,
+        calibration_events.clone(),
+        CalibrationSettings::default(),
+    );
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+    call_ok(
+        &service,
+        Request::ExportFolderSet(secs_types::ipc::ExportFolderSetParams {
+            folder: base.to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    );
+
+    let Envelope::Err(error) = service.call(
+        Request::Export(ExportParams {
+            kind: ExportKind::FilterText,
+            folder: String::new(),
+            mdat_scope: None,
+            design_name: Some("bad/name".into()),
+            camilla_devices: None,
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("an invalid design name must fail synchronously");
+    };
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(
+        error.params.get("reason").map(String::as_str),
+        Some("design_name_character")
+    );
+    assert!(!base.exists());
+
+    let export = |kind, design_name: Option<&str>| {
+        let events = Arc::new(Events::default());
+        let Response::Export(started) = call_ok(
+            &service,
+            Request::Export(ExportParams {
+                kind,
+                folder: String::new(),
+                mdat_scope: None,
+                design_name: design_name.map(str::to_owned),
+                camilla_devices: None,
+            }),
+            events.clone(),
+        ) else {
+            panic!("filter export must start");
+        };
+        let JobResult::Export(result) =
+            finished_result(events.wait(started.job, Duration::from_secs(120)))
+        else {
+            panic!("filter export must finish");
+        };
+        result
+    };
+
+    let first = export(ExportKind::CamillaDsp, Some("Cinema"));
+    let named_folder = PathBuf::from(&first.folder);
+    fs::write(named_folder.join("obsolete.txt"), b"old").unwrap();
+    fs::write(base.join("designs.json"), b"corrupt").unwrap();
+    let second = export(ExportKind::CamillaDsp, Some("Cinema"));
+    assert_eq!(first.folder, second.folder);
+    assert!(!named_folder.join("obsolete.txt").exists());
+    let index: serde_json::Value =
+        serde_json::from_slice(&fs::read(base.join("designs.json")).unwrap()).unwrap();
+    assert_eq!(index.as_array().unwrap().len(), 1);
+    assert_eq!(index[0]["design_name"], "Cinema");
+
+    fn count_files(folder: &Path) -> usize {
+        fs::read_dir(folder)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .map(|path| if path.is_dir() { count_files(&path) } else { 1 })
+            .sum()
+    }
+
+    let mut design_ids = Vec::new();
+    for result in [
+        second,
+        export(ExportKind::FilterText, Some("Cinema")),
+        export(ExportKind::EqualizerApo, Some("Cinema")),
+        export(ExportKind::Convolution, Some("Cinema")),
+    ] {
+        let folder = PathBuf::from(&result.folder);
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&fs::read(folder.join("secs-design.json")).unwrap()).unwrap();
+        design_ids.push(manifest["design_id"].as_str().unwrap().to_owned());
+        let files = manifest["files"].as_array().unwrap();
+        assert_eq!(files.len() + 1, count_files(&folder));
+        for record in files {
+            let bytes = fs::read(folder.join(record["path"].as_str().unwrap())).unwrap();
+            assert_eq!(record["bytes"], bytes.len() as u64);
+            let hash: String = Sha256::digest(&bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect();
+            assert_eq!(record["sha256"], hash);
+        }
+    }
+    assert!(design_ids.windows(2).all(|pair| pair[0] == pair[1]));
+
+    let unnamed = export(ExportKind::FilterText, None);
+    assert!(
+        Path::new(&unnamed.folder)
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("20240102-030405")
     );
     fs::remove_dir_all(root).unwrap();
 }
@@ -1614,6 +1826,8 @@ fn stale_calibration_exports_with_flag_and_cache_survives_reopen() {
             kind: ExportKind::StagedMdat,
             folder: root.join("stale-export").to_string_lossy().into_owned(),
             mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
         }),
         Arc::new(NoEvents),
     ) else {
@@ -1870,7 +2084,7 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
     let (path, mut settings) = write_case(&root, "room_dba");
     settings.mimo_on = true;
     settings.mimo_max_supports = 1;
-    let service = service();
+    let service = deterministic_service();
     open(&service, &path);
     let calibration_events = Arc::new(Events::default());
     let calibration = start_calibration(&service, calibration_events.clone(), settings.clone());
@@ -1917,6 +2131,8 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
             kind: ExportKind::FilterText,
             folder: blocked_folder.to_string_lossy().into_owned(),
             mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
         }),
         Arc::new(NoEvents),
     ) else {
@@ -1962,7 +2178,7 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
         Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
         Arc::new(NoEvents),
     );
-    let reopened = Service::new(Deps::default());
+    let reopened = deterministic_service();
     open(&reopened, &path);
     let cached = export_and_wait(
         &reopened,
@@ -1970,7 +2186,10 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
         &folder,
         Arc::new(Events::default()),
     );
-    assert_eq!(live_bytes, snapshot_relative_files(&folder, &cached.files));
+    assert_snapshots_equal(
+        &live_bytes,
+        &snapshot_relative_files(&folder, &cached.files),
+    );
 
     // Preparation policy participates in the calibration identity for both
     // live and reopened results, and consequently invalidates their MIMO.
@@ -2064,6 +2283,8 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
                     kind: ExportKind::CamillaDsp,
                     folder: String::new(),
                     mdat_scope: None,
+                    design_name: None,
+                    camilla_devices: None,
                 }),
                 events.clone(),
             ) else {
@@ -2721,6 +2942,8 @@ fn reopened_stale_cache_blocks_mdat_but_allows_camilla() {
             kind: ExportKind::StagedMdat,
             folder: root.join("blocked-mdat").to_string_lossy().into_owned(),
             mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
         }),
         Arc::new(NoEvents),
     ) else {
@@ -2763,6 +2986,8 @@ fn cached_mdat_export_rejects_project_replacement_before_writing() {
             kind: ExportKind::StagedMdat,
             folder: folder.to_string_lossy().into_owned(),
             mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
         }),
         events.clone(),
     ) else {

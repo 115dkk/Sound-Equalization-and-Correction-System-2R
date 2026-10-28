@@ -4,7 +4,10 @@
 //! These are separate from the unchanged upstream formatting goldens.
 mod support;
 
-use secs_camilla::{Options, make_config, pyfmt::round_ndigits, round_ties_even_i64};
+use secs_camilla::{
+    DesignLabels, Device, DeviceValue, Options, make_config, pyfmt::round_ndigits,
+    round_ties_even_i64, write_config,
+};
 use secs_dsp::Complex64 as C;
 use secs_types::chain::{
     BandType, MainChannel, MimoFilter, MimoPath, MimoPaths, Peq, SignalChain, SubChannel,
@@ -328,6 +331,155 @@ fn factored_graph_preserves_every_input_to_output_transfer_and_integer_delay() {
         max_expected >= 1e-3,
         "expected optimized graph responses are all silent ({max_expected})"
     );
+}
+
+#[test]
+fn controller_metadata_headroom_bypass_labels_and_devices_follow_v4_schema() {
+    let (chain, mimo) = sample();
+    let out = std::env::temp_dir().join(format!("secs-camilla-controller-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&out);
+    std::fs::create_dir_all(&out).unwrap();
+    let design = DesignLabels {
+        project_name: Some("Oracle room".into()),
+        design_name: "저지연".into(),
+        design_id: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".into(),
+        bypass: false,
+    };
+    let baseline_options = Options {
+        headroom: true,
+        ..Options::default()
+    };
+    let baseline = make_config(
+        &chain,
+        &out,
+        &out.join("configs"),
+        "secs_",
+        &baseline_options,
+        Some(&mimo),
+    )
+    .unwrap();
+    let options = Options {
+        capture: Some(Device(vec![
+            ("type".into(), DeviceValue::Str("Wasapi".into())),
+            ("channels".into(), DeviceValue::Int(4)),
+            ("device".into(), DeviceValue::Str("Loopback".into())),
+            ("format".into(), DeviceValue::Str("F32".into())),
+            ("exclusive".into(), DeviceValue::Bool(false)),
+            ("loopback".into(), DeviceValue::Bool(true)),
+        ])),
+        playback: Some(Device(vec![
+            ("type".into(), DeviceValue::Str("Asio".into())),
+            ("channels".into(), DeviceValue::Int(5)),
+            ("device".into(), DeviceValue::Str("Test ASIO".into())),
+        ])),
+        design: Some(design),
+        headroom: true,
+        labels: true,
+        bypass: true,
+        ..Options::default()
+    };
+    let configured = make_config(
+        &chain,
+        &out,
+        &out.join("configs"),
+        "secs_",
+        &options,
+        Some(&mimo),
+    )
+    .unwrap();
+    assert!(
+        configured
+            .yaml
+            .contains("title: \"SECS 2R \\u00b7 Oracle room \\u00b7 \\uc800\\uc9c0\\uc5f0\"")
+    );
+    assert!(configured.yaml.contains("secs-design 0123456789abcdef"));
+    assert!(
+        configured
+            .yaml
+            .contains("\"labels\": [\"L\", \"R\", \"C\", \"LFE\"]")
+    );
+    assert!(configured.yaml.contains("\"type\": \"Wasapi\""));
+    assert!(configured.yaml.contains("\"format\": \"F32\""));
+    assert!(configured.yaml.contains("\"loopback\": true"));
+    assert!(configured.yaml.contains("\"type\": \"Asio\""));
+    assert!(configured.yaml.contains("asio-backend"));
+
+    let pipeline = configured
+        .yaml
+        .lines()
+        .filter_map(|line| line.strip_prefix("  - "))
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(pipeline[0]["description"], "secs:headroom");
+    assert_eq!(pipeline[0]["names"][0], "secs_headroom");
+    let correction = pipeline
+        .iter()
+        .filter(|step| step["description"] == "secs:correction")
+        .collect::<Vec<_>>();
+    assert!(!correction.is_empty());
+    assert!(correction.iter().all(|step| step["bypassed"] == false));
+    assert!(
+        correction
+            .iter()
+            .all(|step| step["names"].as_array().unwrap().len() == 1)
+    );
+    let support = pipeline
+        .iter()
+        .filter(|step| step["description"] == "secs:mimo")
+        .collect::<Vec<_>>();
+    assert!(!support.is_empty());
+    assert!(support.iter().all(|step| step.get("bypassed").is_none()));
+
+    for input in 0..4 {
+        for frequency in [20.0, 80.0, 1000.0, 20_000.0] {
+            let before = support::camilla_graph::transfer(
+                &baseline.yaml,
+                &|name| {
+                    baseline
+                        .coeffs
+                        .iter()
+                        .find(|(path, _)| path.file_name().unwrap() == name)
+                        .unwrap()
+                        .1
+                        .clone()
+                },
+                input,
+                frequency,
+            );
+            let after = support::camilla_graph::transfer(
+                &configured.yaml,
+                &|name| {
+                    configured
+                        .coeffs
+                        .iter()
+                        .find(|(path, _)| path.file_name().unwrap() == name)
+                        .unwrap()
+                        .1
+                        .clone()
+                },
+                input,
+                frequency,
+            );
+            assert_eq!(before, after);
+        }
+    }
+
+    let written = write_config(&chain, &out, "oracle", &options, Some(&mimo)).unwrap();
+    let bypass = written
+        .iter()
+        .find(|path| path.file_name().unwrap() == "oracle_bypass.yml")
+        .unwrap();
+    let bypass = std::fs::read_to_string(bypass).unwrap();
+    assert!(bypass.contains(" (\\uc6b0\\ud68c)\""));
+    assert!(bypass.contains(
+        "secs-design 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef bypass"
+    ));
+    assert!(!bypass.contains("secs:correction"));
+    assert!(!bypass.contains("secs:mimo"));
+    assert!(bypass.contains("main_L_delay"));
+    assert!(bypass.contains("main_L_hp"));
+    assert!(bypass.contains("sub_SW1_delay"));
+    std::fs::remove_dir_all(out).unwrap();
 }
 
 #[test]

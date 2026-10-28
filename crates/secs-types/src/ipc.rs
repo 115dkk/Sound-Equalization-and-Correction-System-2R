@@ -598,6 +598,8 @@ pub struct BootstrapInfo {
 pub struct UpstreamBase {
     /// Upstream product name from `UPSTREAM.toml`.
     pub name: String,
+    /// Upstream repository URL from `UPSTREAM.toml`.
+    pub repository: String,
     /// Upstream release version from `UPSTREAM.toml`.
     pub version: String,
     /// Forty-character upstream Git commit from `UPSTREAM.toml`.
@@ -1138,6 +1140,96 @@ pub enum MdatScope {
     Results,
 }
 
+/// Sample formats accepted by CamillaDSP's Wasapi backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub enum CamillaWasapiFormat {
+    /// Signed 32-bit integer.
+    #[serde(rename = "S32")]
+    S32,
+    /// Signed 24-bit integer.
+    #[serde(rename = "S24")]
+    S24,
+    /// Signed 16-bit integer.
+    #[serde(rename = "S16")]
+    S16,
+    /// 32-bit floating point.
+    #[serde(rename = "F32")]
+    F32,
+}
+
+impl CamillaWasapiFormat {
+    /// CamillaDSP configuration spelling.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::S32 => "S32",
+            Self::S24 => "S24",
+            Self::S16 => "S16",
+            Self::F32 => "F32",
+        }
+    }
+}
+
+/// CamillaDSP capture backend. Channel counts come from the export plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(export)]
+pub enum CamillaCaptureDevice {
+    /// File placeholder compatible with the existing export.
+    #[default]
+    File,
+    /// Windows Audio Session API capture.
+    Wasapi {
+        /// Endpoint name; absent selects the system default.
+        device: Option<String>,
+        /// Sample representation.
+        format: CamillaWasapiFormat,
+        /// Request exclusive access.
+        exclusive: bool,
+        /// Capture a playback endpoint in shared mode.
+        loopback: bool,
+    },
+    /// ASIO capture. Requires an `asio-backend` CamillaDSP build.
+    Asio {
+        /// ASIO driver name.
+        device: String,
+    },
+}
+
+/// CamillaDSP playback backend. Channel counts come from the export plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[serde(tag = "type", rename_all = "snake_case")]
+#[ts(export)]
+pub enum CamillaPlaybackDevice {
+    /// File placeholder compatible with the existing export.
+    #[default]
+    File,
+    /// Windows Audio Session API playback.
+    Wasapi {
+        /// Endpoint name; absent selects the system default.
+        device: Option<String>,
+        /// Sample representation.
+        format: CamillaWasapiFormat,
+        /// Request exclusive access.
+        exclusive: bool,
+    },
+    /// ASIO playback. Requires an `asio-backend` CamillaDSP build.
+    Asio {
+        /// ASIO driver name.
+        device: String,
+    },
+}
+
+/// Capture and playback backends for a CamillaDSP export.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct CamillaDevices {
+    /// Capture backend.
+    pub capture: CamillaCaptureDevice,
+    /// Playback backend.
+    pub playback: CamillaPlaybackDevice,
+}
+
 /// The export bundle and destination folder.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -1152,6 +1244,14 @@ pub struct ExportParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub mdat_scope: Option<MdatScope>,
+    /// Optional stable export name. Named exports replace the matching bundle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub design_name: Option<String>,
+    /// Optional CamillaDSP Windows backends. File placeholders are the default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub camilla_devices: Option<CamillaDevices>,
 }
 /// Files written by a completed export job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -2136,6 +2236,8 @@ mod tests {
                 kind: ExportKind::CamillaDsp,
                 folder: ".".into(),
                 mdat_scope: None,
+                design_name: None,
+                camilla_devices: None,
             }),
             Request::JobCancel(JobCancelParams { job: JobId(1) }),
             Request::Jobs,
@@ -2298,6 +2400,8 @@ mod tests {
         assert!(wire.get("mdat_scope").is_none());
         let scoped = ExportParams {
             mdat_scope: Some(MdatScope::Measurements),
+            design_name: None,
+            camilla_devices: None,
             ..old
         };
         let wire = serde_json::to_value(&scoped).unwrap();
@@ -2315,6 +2419,7 @@ mod tests {
             prerelease: true,
             upstream: UpstreamBase {
                 name: "SECS".into(),
+                repository: "https://example.invalid/secs".into(),
                 version: "Beta".into(),
                 commit: "0".repeat(40),
                 date: "2026-10-12".into(),

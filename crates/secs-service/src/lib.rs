@@ -11,6 +11,7 @@ mod calibration;
 mod clock;
 mod compute;
 mod curves;
+mod design_export;
 pub mod dirac_import;
 mod export;
 pub mod export_folder;
@@ -167,6 +168,8 @@ pub type UuidSource = Arc<Mutex<Box<dyn FnMut() -> Result<u128, secs_export::Exp
 /// them here keeps platform crates out of this service.
 #[derive(Clone)]
 pub struct Deps {
+    /// Application version recorded in exported design manifests.
+    pub app_version: String,
     /// Resolves a requested compute policy without platform dependencies in the service.
     pub acceleration: Arc<
         dyn Fn(secs_types::compute::ComputePreference) -> secs_engine::mimo::AccelerationSelection
@@ -202,6 +205,7 @@ pub struct Deps {
 impl Debug for Deps {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Deps")
+            .field("app_version", &self.app_version)
             .field("acceleration", &"factory")
             .field("compute_override", &self.compute_override)
             .field("audio_backend", &"factory")
@@ -260,6 +264,7 @@ fn random_uuid() -> Result<u128, secs_export::ExportError> {
 impl Default for Deps {
     fn default() -> Self {
         Self {
+            app_version: VERSION.into(),
             acceleration: Arc::new(compute::cpu_selection),
             compute_override: None,
             audio_backend: Arc::new(|| Box::new(secs_audio::NullBackend)),

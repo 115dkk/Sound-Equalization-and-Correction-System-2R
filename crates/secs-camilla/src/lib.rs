@@ -47,6 +47,19 @@ pub enum DeviceValue {
     Bool(bool),
 }
 
+/// Design identity shown by CamillaDSP controllers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesignLabels {
+    /// Open project name, omitted when unavailable.
+    pub project_name: Option<String>,
+    /// User-facing design name.
+    pub design_name: String,
+    /// Full lowercase SHA-256 design identity.
+    pub design_id: String,
+    /// Whether this is the correction-free companion configuration.
+    pub bypass: bool,
+}
+
 /// Export options (upstream `make_config` / `write_config` keyword arguments).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Options {
@@ -66,6 +79,14 @@ pub struct Options {
     pub latency_ms: Option<f64>,
     /// Mode shown in title and instructions.
     pub mode: String,
+    /// Design identity and controller-facing names. Absent preserves upstream bytes.
+    pub design: Option<DesignLabels>,
+    /// Add a stable rounded headroom gain as the first pipeline step.
+    pub headroom: bool,
+    /// Add capture-channel role labels.
+    pub labels: bool,
+    /// Write the correction-free companion configuration.
+    pub bypass: bool,
 }
 
 impl Default for Options {
@@ -79,6 +100,10 @@ impl Default for Options {
             lfe_lp_hz: 120.0,
             latency_ms: None,
             mode: String::new(),
+            design: None,
+            headroom: false,
+            labels: false,
+            bypass: false,
         }
     }
 }
@@ -229,21 +254,31 @@ fn json_into(value: &Json, out: &mut String) {
 }
 
 fn device_json(device: &Device) -> Json {
-    Json::Object(
-        device
-            .0
-            .iter()
-            .map(|(key, value)| {
-                let value = match value {
-                    DeviceValue::Str(value) => Json::Str(value.clone()),
-                    DeviceValue::Int(value) => Json::Int(*value),
-                    DeviceValue::Float(value) => Json::Float(*value),
-                    DeviceValue::Bool(value) => Json::Bool(*value),
-                };
-                (key.clone(), value)
-            })
-            .collect(),
-    )
+    device_json_with_labels(device, None)
+}
+
+fn device_json_with_labels(device: &Device, labels: Option<&[String]>) -> Json {
+    let mut values = device
+        .0
+        .iter()
+        .map(|(key, value)| {
+            let value = match value {
+                DeviceValue::Str(value) => Json::Str(value.clone()),
+                DeviceValue::Int(value) => Json::Int(*value),
+                DeviceValue::Float(value) => Json::Float(*value),
+                DeviceValue::Bool(value) => Json::Bool(*value),
+            };
+            (key.clone(), value)
+        })
+        .collect::<Vec<_>>();
+    if let Some(labels) = labels {
+        values.retain(|(key, _)| key != "labels");
+        values.push((
+            "labels".into(),
+            Json::Array(labels.iter().cloned().map(Json::Str).collect()),
+        ));
+    }
+    Json::Object(values)
 }
 
 fn one(dest: usize, channel: usize, inverted: bool) -> Json {
@@ -424,6 +459,26 @@ fn validate_options(options: &Options) -> Result<(), CamillaError> {
     if let Some(value) = options.latency_ms {
         finite("options.latency_ms", value)?;
     }
+    if let Some(design) = &options.design {
+        if design.design_name.chars().any(char::is_control)
+            || design
+                .project_name
+                .as_deref()
+                .is_some_and(|name| name.chars().any(char::is_control))
+        {
+            return Err(CamillaError::Invalid(
+                "control character in design labels".into(),
+            ));
+        }
+        if design.design_id.len() != 64
+            || !design
+                .design_id
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+        {
+            return Err(CamillaError::Invalid("invalid design id".into()));
+        }
+    }
     for device in [&options.capture, &options.playback].into_iter().flatten() {
         for (key, value) in &device.0 {
             if !key.is_ascii() {
@@ -486,20 +541,56 @@ fn fixed_filters(role: &str, sub: &SubChannel, filters: &mut Vec<(String, Json)>
 }
 
 fn pipeline_mixer(name: &str) -> Json {
-    object([
-        ("type", Json::Str("Mixer".into())),
-        ("name", Json::Str(name.into())),
-    ])
+    pipeline_mixer_meta(name, None)
+}
+
+fn pipeline_mixer_meta(name: &str, description: Option<&str>) -> Json {
+    let mut fields = vec![
+        ("type".into(), Json::Str("Mixer".into())),
+        ("name".into(), Json::Str(name.into())),
+    ];
+    if let Some(description) = description {
+        fields.push(("description".into(), Json::Str(description.into())));
+    }
+    Json::Object(fields)
 }
 
 fn pipeline_filter(channel: usize, names: Vec<String>) -> Json {
-    object([
-        ("type", Json::Str("Filter".into())),
-        ("channels", Json::Array(vec![int(channel)])),
+    pipeline_filter_meta(channel, names, None, None)
+}
+
+fn pipeline_filter_meta(
+    channel: usize,
+    names: Vec<String>,
+    description: Option<&str>,
+    bypassed: Option<bool>,
+) -> Json {
+    let mut fields = vec![
+        ("type".into(), Json::Str("Filter".into())),
+        ("channels".into(), Json::Array(vec![int(channel)])),
         (
-            "names",
+            "names".into(),
             Json::Array(names.into_iter().map(Json::Str).collect()),
         ),
+    ];
+    if let Some(description) = description {
+        fields.push(("description".into(), Json::Str(description.into())));
+    }
+    if let Some(bypassed) = bypassed {
+        fields.push(("bypassed".into(), Json::Bool(bypassed)));
+    }
+    Json::Object(fields)
+}
+
+fn pipeline_all_filter(name: &str, description: &str, channels: usize) -> Json {
+    Json::Object(vec![
+        ("type".into(), Json::Str("Filter".into())),
+        (
+            "channels".into(),
+            Json::Array((0..channels).map(int).collect()),
+        ),
+        ("names".into(), Json::Array(vec![Json::Str(name.into())])),
+        ("description".into(), Json::Str(description.into())),
     ])
 }
 
@@ -533,25 +624,48 @@ fn order_table(inputs: &[String], outputs: &[String]) -> Vec<String> {
     rows
 }
 
+fn device_is(device: &Device, kind: &str) -> bool {
+    device.0.iter().any(|(key, value)| {
+        key == "type" && matches!(value, DeviceValue::Str(value) if value == kind)
+    })
+}
+
 fn howto_lines(
     inputs: &[String],
     outputs: &[String],
     latency_ms: Option<f64>,
     mode: &str,
+    file_placeholders: bool,
+    asio: bool,
 ) -> Vec<String> {
     let mut lines = vec![
         "# ---- HOW TO USE (CamillaDSP 4.1.x + CamillaGUI 4.1) ----".into(),
         "# 1) Files: this file goes to camilladsp/configs, the wav files to camilladsp/coeffs".into(),
         "#    (same layout as this export). CamillaGUI: Files tab, upload the wav files under Filters FIRST,".into(),
         "#    then this file under Configs. FIR paths are relative to this file (../coeffs/...).".into(),
-        "# 2) Devices: capture/playback below are FILE placeholders (in.raw / out.raw) - change them:".into(),
-        "#    capture = loopback (Windows: Wasapi \"CABLE Output (VB-Audio Virtual Cable)\", Mac: CoreAudio".into(),
-        "#    \"BlackHole 16ch\"), playback = your audio interface. format: empty or F32 (F32_LE is for files only).".into(),
+    ];
+    if file_placeholders {
+        lines.extend([
+            "# 2) Devices: capture/playback below are FILE placeholders (in.raw / out.raw) - change them:".into(),
+            "#    capture = loopback (Windows: Wasapi \"CABLE Output (VB-Audio Virtual Cable)\", Mac: CoreAudio".into(),
+            "#    \"BlackHole 16ch\"), playback = your audio interface. format: empty or F32 (F32_LE is for files only).".into(),
+        ]);
+    } else {
+        lines.push(
+            "# 2) Devices: capture/playback below are the devices selected for this export.".into(),
+        );
+    }
+    lines.extend([
         "#    samplerate 48000 (Windows: set both devices' default format to 48000 Hz too).".into(),
         "#    Different clocks (loopback -> interface): enable_rate_adjust; Windows also resampler AsyncSinc.".into(),
         "#    Capture channels = route_in \"in\", playback channels = route_out \"out\".".into(),
+    ]);
+    if asio {
+        lines.push("#    ASIO requires a CamillaDSP build compiled with the asio-backend feature; released Windows binaries do not include it.".into());
+    }
+    lines.push(
         "# 3) Channel numbers start at 0 (interface output 1 = 0). Default routing is 1:1:".into(),
-    ];
+    );
     lines.extend(order_table(inputs, outputs));
     lines.extend([
         "#    To move a channel change only the Mixers route_in (source \"channel\") or route_out (\"dest\").".into(),
@@ -630,7 +744,22 @@ pub fn make_config_observed(
     let playback = options.playback.as_ref().unwrap_or(&default_playback);
 
     let mut filters: Vec<(String, Json)> = Vec::new();
-    let mut pipeline = vec![pipeline_mixer("route_in")];
+    let mut pipeline = Vec::new();
+    if options.headroom {
+        let headroom = (secs_graph::headroom_db(graph.plan())? * 2.0).ceil() / 2.0;
+        filters.push((
+            "secs_headroom".into(),
+            filter_spec(
+                "Gain",
+                object([
+                    ("gain", Json::Float(-headroom)),
+                    ("inverted", Json::Bool(false)),
+                ]),
+            ),
+        ));
+        pipeline.push(pipeline_all_filter("secs_headroom", "secs:headroom", n_in));
+    }
+    pipeline.push(pipeline_mixer("route_in"));
     let mut coeffs = Vec::new();
     let coeff_dir = out.join(COEFF_DIR);
     let fork = if paths.is_empty() {
@@ -646,7 +775,10 @@ pub fn make_config_observed(
                 one(n_in + index, input, false)
             }))
             .collect();
-        pipeline.push(pipeline_mixer("mimo_fork"));
+        pipeline.push(pipeline_mixer_meta(
+            "mimo_fork",
+            options.design.as_ref().map(|_| "secs:mimo"),
+        ));
         Some(object([
             ("channels", channels(n_in, n_in + n_paths)),
             ("mapping", Json::Array(mapping)),
@@ -683,7 +815,16 @@ pub fn make_config_observed(
             ));
             names.push(name);
         }
-        if !names.is_empty() {
+        if options.design.is_some() {
+            for name in names {
+                pipeline.push(pipeline_filter_meta(
+                    channel,
+                    vec![name],
+                    Some("secs:correction"),
+                    Some(false),
+                ));
+            }
+        } else if !names.is_empty() {
             pipeline.push(pipeline_filter(channel, names));
         }
     }
@@ -1007,7 +1148,11 @@ pub fn make_config_observed(
             }
         }
         if !names.is_empty() {
-            pipeline.push(pipeline_filter(n_out + index, names));
+            pipeline.push(if options.design.is_some() {
+                pipeline_filter_meta(n_out + index, names, Some("secs:mimo"), None)
+            } else {
+                pipeline_filter(n_out + index, names)
+            });
         }
     }
     if !groups.is_empty() {
@@ -1029,7 +1174,10 @@ pub fn make_config_observed(
                 ("mapping", Json::Array(mapping)),
             ]),
         ));
-        pipeline.push(pipeline_mixer("mimo_groups"));
+        pipeline.push(pipeline_mixer_meta(
+            "mimo_groups",
+            options.design.as_ref().map(|_| "secs:mimo"),
+        ));
         for (index, group) in groups.iter().enumerate() {
             let mut names = Vec::new();
             if group.delay_samples != 0 {
@@ -1055,7 +1203,11 @@ pub fn make_config_observed(
                 ));
                 names.push(name);
             }
-            pipeline.push(pipeline_filter(n_out + index, names));
+            pipeline.push(if options.design.is_some() {
+                pipeline_filter_meta(n_out + index, names, Some("secs:mimo"), None)
+            } else {
+                pipeline_filter(n_out + index, names)
+            });
         }
         let mapping = (0..n_out)
             .map(|output| {
@@ -1080,7 +1232,10 @@ pub fn make_config_observed(
                 ("mapping", Json::Array(mapping)),
             ]),
         ));
-        pipeline.push(pipeline_mixer("mimo_merge"));
+        pipeline.push(pipeline_mixer_meta(
+            "mimo_merge",
+            options.design.as_ref().map(|_| "secs:mimo"),
+        ));
     }
     // The fixed speaker filter belongs after base + support summation. It is
     // identical on both branches; apply it once to the physical output.
@@ -1202,21 +1357,35 @@ pub fn make_config_observed(
         outputs,
         options.latency_ms,
         &options.mode,
+        options.design.is_none() || (options.capture.is_none() && options.playback.is_none()),
+        options.design.is_some() && (device_is(capture, "Asio") || device_is(playback, "Asio")),
     ));
 
-    let title = format!(
-        "SECS 2{}{}",
-        if options.mode.is_empty() {
-            String::new()
+    let title = if let Some(design) = &options.design {
+        let base = design.project_name.as_deref().map_or_else(
+            || format!("SECS 2R · {}", design.design_name),
+            |project| format!("SECS 2R · {project} · {}", design.design_name),
+        );
+        if design.bypass {
+            format!("{base} (우회)")
         } else {
-            format!(" {}", options.mode)
-        },
-        options.latency_ms.map_or_else(String::new, |value| format!(
-            " ({} ms)",
-            format_fixed(value, 1, false)
-        ))
-    );
-    let description = format!(
+            base
+        }
+    } else {
+        format!(
+            "SECS 2{}{}",
+            if options.mode.is_empty() {
+                String::new()
+            } else {
+                format!(" {}", options.mode)
+            },
+            options.latency_ms.map_or_else(String::new, |value| format!(
+                " ({} ms)",
+                format_fixed(value, 1, false)
+            ))
+        )
+    };
+    let mut description = format!(
         "inputs {} | outputs {} | numbers start at 0, change routing in Mixers route_in / route_out | devices are file placeholders: set capture = loopback, playback = interface",
         inputs
             .iter()
@@ -1231,6 +1400,15 @@ pub fn make_config_observed(
             .collect::<Vec<_>>()
             .join(", ")
     );
+    if let Some(design) = &options.design {
+        write!(
+            description,
+            " | secs-design {}{}",
+            design.design_id,
+            if design.bypass { " bypass" } else { "" }
+        )
+        .expect("String write");
+    }
     boundary("build");
     lines.extend([
         format!("title: {}", json(&Json::Str(title))),
@@ -1238,7 +1416,14 @@ pub fn make_config_observed(
         "devices:".into(),
         format!("  samplerate: {SAMPLE_RATE}"),
         format!("  chunksize: {}", options.chunksize),
-        format!("  capture: {}", json(&device_json(capture))),
+        format!(
+            "  capture: {}",
+            json(&if options.labels {
+                device_json_with_labels(capture, Some(inputs))
+            } else {
+                device_json(capture)
+            })
+        ),
         format!("  playback: {}", json(&device_json(playback))),
         "filters:".into(),
     ]);
@@ -1273,6 +1458,15 @@ pub fn atomic_write(destination: &Path, bytes: &[u8]) -> Result<(), std::io::Err
     secs_types::fs::write_atomic_bytes(destination, bytes)
 }
 
+fn without_correction(chain: &SignalChain) -> SignalChain {
+    let mut chain = chain.clone();
+    for main in &mut chain.mains {
+        main.input_peq.clear();
+        main.fir = vec![1.0];
+    }
+    chain
+}
+
 /// Write `configs/<name>.yml`, coefficient WAVs, and a placeholder `in.raw` when needed.
 pub fn write_config(
     chain: &SignalChain,
@@ -1302,11 +1496,30 @@ pub fn write_config_observed(
     }
     let config_dir = out.join(CONFIG_DIR);
     let config = make_config(chain, out, &config_dir, &format!("{safe}_"), options, mimo)?;
+    let bypass = if options.bypass {
+        let bypass_chain = without_correction(chain);
+        let mut bypass_options = options.clone();
+        bypass_options.bypass = false;
+        if let Some(design) = &mut bypass_options.design {
+            design.bypass = true;
+        }
+        Some(make_config(
+            &bypass_chain,
+            out,
+            &config_dir,
+            &format!("{safe}_"),
+            &bypass_options,
+            None,
+        )?)
+    } else {
+        None
+    };
     let n_in =
         chain.mains.len() + usize::from(!chain.subs.is_empty() && options.lfe_gain_db.is_some());
 
     // All validation and pure construction have completed before the first write.
     let config_relative = PathBuf::from(CONFIG_DIR).join(format!("{safe}.yml"));
+    let bypass_relative = PathBuf::from(CONFIG_DIR).join(format!("{safe}_bypass.yml"));
     let mut bundle = Vec::new();
     if options.capture.is_none() && !out.join("in.raw").exists() {
         bundle.push((PathBuf::from("in.raw"), vec![0_u8; 1024 * n_in * 4]));
@@ -1320,11 +1533,22 @@ pub fn write_config_observed(
         })?;
         bundle.push((relative.to_path_buf(), bytes.clone()));
     }
+    if let Some(bypass) = &bypass {
+        if !bypass.coeffs.is_empty() {
+            return Err(CamillaError::Invalid(
+                "bypass configuration unexpectedly needs FIR coefficients".into(),
+            ));
+        }
+        bundle.push((bypass_relative.clone(), bypass.yaml.as_bytes().to_vec()));
+    }
     bundle.push((config_relative.clone(), config.yaml.into_bytes()));
     write_bundle_observed(out, &bundle, &config_relative, after_stage_write)?;
 
     let config_path = out.join(&config_relative);
     let mut written = vec![config_path];
+    if bypass.is_some() {
+        written.push(out.join(&bypass_relative));
+    }
     let mut coeff_paths: Vec<_> = config.coeffs.into_iter().map(|(path, _)| path).collect();
     coeff_paths.sort();
     written.extend(coeff_paths);
@@ -1338,13 +1562,21 @@ pub fn export(
     labels: &RunLabels,
     mimo: Option<&MimoPaths>,
 ) -> Result<Vec<PathBuf>, CamillaError> {
+    export_with_options(chain, folder, labels, mimo, Options::default())
+}
+
+/// Calibration-level export with service-selected devices and metadata.
+pub fn export_with_options(
+    chain: &SignalChain,
+    folder: &Path,
+    labels: &RunLabels,
+    mimo: Option<&MimoPaths>,
+    mut options: Options,
+) -> Result<Vec<PathBuf>, CamillaError> {
     finite("labels.latency_ms", labels.latency_ms)?;
-    let options = Options {
-        note: labels.note.clone(),
-        latency_ms: Some(labels.latency_ms),
-        mode: labels.mode.clone(),
-        ..Options::default()
-    };
+    options.note = labels.note.clone();
+    options.latency_ms = Some(labels.latency_ms);
+    options.mode = labels.mode.clone();
     write_config(
         chain,
         folder,
