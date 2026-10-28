@@ -587,6 +587,7 @@ export function createMockService(options: MockOptions = {}): MockService {
           summary.verdict.added_delay_ms = spec.max_latency_ms;
           summary.notes = [{ code: "rc_limit", params: { hz: String(captured.rc_hi ?? 310), auto: String(captured.rc_hi === null), schroeder_hz: "310" } }];
           summary.scorecard = roles.map((role, i) => ({ ...clone(fx.scorecard[i % fx.scorecard.length]!), role }));
+          summary.late_energy = [];
           summary.main_roles = roles;
           summary.sub_roles = config.speakers.filter((s) => s.role.startsWith("SW")).map((s) => s.role);
           if (!req.params.subs_only) {
@@ -618,7 +619,8 @@ export function createMockService(options: MockOptions = {}): MockService {
             stage: gpu ? "ideal_fir_sweep" : null, accelerated_systems: gpu ? 11 : 0, cpu_systems: gpu ? 0 : 11, fallbacks: 0, reason: settings.mimo_fir ? selected.reason : "iir_reference",
           };
           results = { ...results, mimo: { ...clone(fx.mimoSummary), compute, fsiso: settings.fsiso, kind: settings.mimo_fir ? "fir" : "iir",
-            support_count: supportCount, fir_taps_total: settings.mimo_fir ? 3 * supportCount : 0, input_count: supports > 0 ? inputs : 0 } };
+            support_count: supportCount, fir_taps_total: settings.mimo_fir ? 3 * supportCount : 0, input_count: supports > 0 ? inputs : 0,
+            scorecard: [], late_energy: [] } };
           return { kind: "mimo" };
         }) };
       case "export": {

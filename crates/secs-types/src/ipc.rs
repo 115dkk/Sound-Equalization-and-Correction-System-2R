@@ -938,6 +938,9 @@ pub struct CalibrationSummary {
     pub verdict: VerdictSummary,
     /// Per-channel before-and-after metrics.
     pub scorecard: Vec<ChannelScore>,
+    /// Late 20–150 Hz energy before and after correction at every measured position.
+    #[serde(default)]
+    pub late_energy: Vec<LateEnergy>,
     /// Total filter latency in milliseconds.
     pub latency_ms: f64,
     /// Informational codes and values translated by the screen.
@@ -974,6 +977,19 @@ pub struct ChannelScore {
     pub before: MetricsSummary,
     /// Metrics after correction.
     pub after: MetricsSummary,
+}
+/// Late 20–150 Hz energy for one main role at one measured position.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LateEnergy {
+    /// Internal speaker role.
+    pub role: String,
+    /// Measured position number.
+    pub position: u32,
+    /// Late-to-early energy before correction, in dB.
+    pub before_db: f64,
+    /// Late-to-early energy after correction, in dB.
+    pub after_db: f64,
 }
 /// The upstream `Metrics` fields for one response.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
@@ -1035,6 +1051,32 @@ pub struct MimoSummary {
     pub notes: Vec<Notice>,
     /// Number of distinct input roles with at least one generated support path.
     pub input_count: usize,
+    /// Per-channel metrics after MIMO at the main position.
+    #[serde(default)]
+    pub scorecard: Vec<MimoChannelScore>,
+    /// Late 20–150 Hz energy after MIMO at every measured position.
+    #[serde(default)]
+    pub late_energy: Vec<MimoLateEnergy>,
+}
+/// Scorecard metrics after MIMO for one main role.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MimoChannelScore {
+    /// Internal speaker role.
+    pub role: String,
+    /// Metrics after the MIMO support contributions are added.
+    pub after_mimo: MetricsSummary,
+}
+/// Late 20–150 Hz energy after MIMO for one main role and measured position.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MimoLateEnergy {
+    /// Internal speaker role.
+    pub role: String,
+    /// Measured position number.
+    pub position: u32,
+    /// Late-to-early energy after MIMO, in dB.
+    pub after_mimo_db: f64,
 }
 /// Crossover candidates and the best value for each group.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]

@@ -173,6 +173,7 @@ export const calibrationSummary: CalibrationSummary = {
     position_spread_db: 2.1,
   },
   scorecard,
+  late_energy: [],
   latency_ms: 9.8,
   notes: [{ code: "rc_limit", params: { hz: "310", auto: "true", schroeder_hz: "310" } }],
   main_roles: signalChain.mains.map((main) => main.role),
@@ -202,6 +203,8 @@ export const mimoSummary: MimoSummary = {
   fir_taps_total: 0,
   notes: [],
   input_count: 0,
+  scorecard: [],
+  late_energy: [],
 };
 
 export const resultsSummary: ResultsSummary = { calibration: calibrationSummary, mimo: mimoSummary, mimo_export: "off" };
