@@ -196,6 +196,19 @@ html[data-gallery-page] body {
   background: var(--rail-bg);
 }
 
+/* The settings popover drawn in place is wider than the rail. */
+.gal-rail-sample--popover {
+  width: 352px;
+}
+
+/* A popover and the dialog it opens, side by side. */
+.gal-pair {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-6);
+}
+
 .gal-note {
   color: var(--text-muted);
 }
