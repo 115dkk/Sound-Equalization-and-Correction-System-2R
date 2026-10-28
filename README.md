@@ -47,6 +47,7 @@ SECS 2R은 룸 보정 설계 프로그램 [SECS 2](https://github.com/Kim-O-O/So
 | Windows 10/11 (64비트) | `SECS2R-<버전>-windows-x64-portable.zip` | 설치 없이 압축을 푼 폴더에서 실행합니다. |
 | macOS (Apple 실리콘, Intel) | `SECS2R-<버전>-macos-universal.dmg` | 한 파일이 두 종류 Mac에서 모두 돕니다. |
 | Linux (x86_64) | `SECS2R-<버전>-linux-x86_64.AppImage`, `SECS2R-<버전>-linux-amd64.deb` | AppImage는 필요한 라이브러리를 함께 담고, deb는 WebKitGTK 4.1 패키지를 씁니다. |
+| CLI (화면 없이 쓰는 명령줄 도구) | `SECS2R-<버전>-windows-x64-cli.zip`, `SECS2R-<버전>-macos-universal-cli.tar.gz`, `SECS2R-<버전>-linux-x86_64-cli.tar.gz` | 앱과 같은 판의 `secs2r-cli`입니다. Windows 설치본과 포터블 zip에도 `SECS 2R.exe` 옆에 들어 있습니다. |
 
 코드 서명 인증서가 아직 없습니다. Windows에서 '알 수 없는 게시자' 경고가 뜨면 **추가 정보 → 실행**을 누르세요.
 
