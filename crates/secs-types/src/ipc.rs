@@ -1055,6 +1055,9 @@ pub enum ExportKind {
     /// and FIR WAV files (upstream `calibration.export_eqapo`). RC, BA and
     /// MIMO support paths, which upstream refuses (docs/DEVIATIONS.md F12).
     EqualizerApo,
+    /// One complete 48 kHz impulse response and response CSV per reachable
+    /// input-to-output path, including RC, BA, LFE and MIMO operations.
+    Convolution,
 }
 
 /// Why a filter export cannot carry the current result (upstream
@@ -1085,8 +1088,8 @@ impl ExportBlock {
 
 /// Upstream `filter_export_block`: whether `kind` can carry a result with
 /// subs (`has_subs`) and MIMO support paths (`has_mimo`). CamillaDSP, the
-/// mdat exports and Equalizer APO carry everything; filter text carries RC
-/// only (subs are checked first, as upstream). Upstream stops MIMO at
+/// mdat exports, Equalizer APO and convolution carry everything; filter text
+/// carries RC only (subs are checked first, as upstream). Upstream stops MIMO at
 /// Equalizer APO as well; its writer already routes the support paths, and
 /// `secs-filters/tests/eqapo_playback.rs` plays them through the engine
 /// (DEVIATIONS F12). The screen mirrors this rule (`screens/export/types.ts`).
@@ -2374,7 +2377,13 @@ mod tests {
     #[test]
     fn filter_export_scope_follows_upstream_but_eqapo_carries_mimo_f12() {
         use ExportKind::*;
-        for kind in [CamillaDsp, StagedMdat, BeforeAfterMdat, EqualizerApo] {
+        for kind in [
+            CamillaDsp,
+            StagedMdat,
+            BeforeAfterMdat,
+            EqualizerApo,
+            Convolution,
+        ] {
             for (subs, mimo) in [(false, false), (true, false), (false, true), (true, true)] {
                 assert_eq!(filter_export_block(kind, subs, mimo), None, "{kind:?}");
             }
@@ -2403,6 +2412,7 @@ mod tests {
         );
         assert_eq!(serde_json::to_value(FilterText).unwrap(), "filter_text");
         assert_eq!(serde_json::to_value(EqualizerApo).unwrap(), "equalizer_apo");
+        assert_eq!(serde_json::to_value(Convolution).unwrap(), "convolution");
         assert_eq!(
             serde_json::to_value(ExportBlock::Subs).unwrap(),
             ExportBlock::Subs.name()

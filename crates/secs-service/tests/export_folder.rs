@@ -108,6 +108,10 @@ fn derived_export_subfolders_use_the_fixed_clock() {
         secs_service::export_folder::eqapo_folder(base, true, "linear", now),
         base.join("SECS_eqapo_RC_BA_MIMO_linear_20240102-030405")
     );
+    assert_eq!(
+        secs_service::export_folder::convolution_folder(base, true, "mixed", now),
+        base.join("SECS_convolution_RC_BA_MIMO_mixed_20240102-030405")
+    );
 }
 
 #[test]

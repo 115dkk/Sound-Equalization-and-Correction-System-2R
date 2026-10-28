@@ -193,6 +193,7 @@ enum ExportChoice {
     BeforeAfterMdat,
     FilterText,
     EqualizerApo,
+    Convolution,
 }
 impl From<ExportChoice> for ExportKind {
     fn from(value: ExportChoice) -> Self {
@@ -202,6 +203,7 @@ impl From<ExportChoice> for ExportKind {
             ExportChoice::BeforeAfterMdat => Self::BeforeAfterMdat,
             ExportChoice::FilterText => Self::FilterText,
             ExportChoice::EqualizerApo => Self::EqualizerApo,
+            ExportChoice::Convolution => Self::Convolution,
         }
     }
 }
@@ -674,6 +676,7 @@ fn full_run(runner: &mut Runner, out: &Path, project: Option<&Path>, fill: FillC
         (ExportKind::BeforeAfterMdat, "before-after-mdat"),
         (ExportKind::FilterText, "filter-text"),
         (ExportKind::EqualizerApo, "equalizer-apo"),
+        (ExportKind::Convolution, "convolution"),
     ] {
         let stale_cache = results
             .as_ref()
@@ -700,6 +703,7 @@ fn export_kind_name(kind: ExportKind) -> &'static str {
         ExportKind::BeforeAfterMdat => "before-after-mdat",
         ExportKind::FilterText => "filter-text",
         ExportKind::EqualizerApo => "equalizer-apo",
+        ExportKind::Convolution => "convolution",
     }
 }
 

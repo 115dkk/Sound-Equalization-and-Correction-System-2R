@@ -179,7 +179,7 @@ impl Service {
         }
         let filter_values = matches!(
             params.kind,
-            ExportKind::FilterText | ExportKind::EqualizerApo
+            ExportKind::FilterText | ExportKind::EqualizerApo | ExportKind::Convolution
         )
         .then(|| (export_chain.clone(), export_mimo.take()));
         // One export reads the clock once; every mdat it builds gets that date.
@@ -202,6 +202,9 @@ impl Service {
                 }
                 ExportKind::EqualizerApo => {
                     crate::export_folder::eqapo_folder(&base, includes_mimo, mode_name, now)
+                }
+                ExportKind::Convolution => {
+                    crate::export_folder::convolution_folder(&base, includes_mimo, mode_name, now)
                 }
             }
         } else {
@@ -230,16 +233,17 @@ impl Service {
                     )
                     .map_err(export_error)?
                 }
-                ExportKind::FilterText | ExportKind::EqualizerApo => {
+                ExportKind::FilterText | ExportKind::EqualizerApo | ExportKind::Convolution => {
                     let values = filter_values.as_ref().ok_or_else(|| {
                         IpcError::new(ErrorCode::Internal, "filter export values disappeared")
                     })?;
                     let run = description.filters(&values.0, values.1.as_ref());
                     job.begin_commit()?;
-                    if params.kind == ExportKind::FilterText {
-                        secs_filters::export_filter_text(&run, folder)
-                    } else {
-                        secs_filters::export_eqapo(&run, folder)
+                    match params.kind {
+                        ExportKind::FilterText => secs_filters::export_filter_text(&run, folder),
+                        ExportKind::EqualizerApo => secs_filters::export_eqapo(&run, folder),
+                        ExportKind::Convolution => secs_filters::export_convolution(&run, folder),
+                        _ => unreachable!(),
                     }
                     .map_err(filter_error)?
                 }

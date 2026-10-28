@@ -957,6 +957,7 @@ fn mdat_scope_is_refused_for_other_kinds() {
         ExportKind::StagedMdat,
         ExportKind::FilterText,
         ExportKind::EqualizerApo,
+        ExportKind::Convolution,
     ] {
         let Envelope::Err(error) = service.call(
             Request::Export(ExportParams {
@@ -1207,7 +1208,7 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                 direct_snapshot.sort_by(|left, right| left.0.cmp(&right.0));
                 assert_eq!(snapshot, direct_snapshot);
             }
-            ExportKind::FilterText => unreachable!(),
+            ExportKind::FilterText | ExportKind::Convolution => unreachable!(),
         }
     }
     fs::remove_dir_all(root).unwrap();
@@ -1785,6 +1786,80 @@ fn old_cache_without_run_key_keeps_calibration_but_marks_mimo_stale() {
     assert!(!results.calibration.unwrap().stale);
     assert!(results.mimo.unwrap().stale);
 
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn convolution_export_with_subs_and_mimo_reopens_byte_identically() {
+    let root = temp_root("convolution-reopen");
+    fs::create_dir_all(&root).unwrap();
+    let (path, mut settings) = write_case(&root, "room_dba");
+    settings.mimo_on = true;
+    settings.mimo_max_supports = 1;
+    let service = deterministic_service();
+    open(&service, &path);
+    calibrate_and_run_mimo(&service, &settings);
+    call_ok(
+        &service,
+        Request::ExportFolderSet(secs_types::ipc::ExportFolderSetParams {
+            folder: root.join("automatic").to_string_lossy().into_owned(),
+        }),
+        Arc::new(NoEvents),
+    );
+    call_ok(
+        &service,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+        Arc::new(NoEvents),
+    );
+
+    let export = export_and_wait(
+        &service,
+        ExportKind::Convolution,
+        Path::new(""),
+        Arc::new(Events::default()),
+    );
+    let folder = PathBuf::from(&export.folder);
+    assert!(
+        folder
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("SECS_convolution_RC_BA_MIMO_")
+    );
+    let routing: serde_json::Value =
+        serde_json::from_slice(&fs::read(folder.join("routing.json")).unwrap()).unwrap();
+    assert!(
+        routing["inputs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|input| input == "LFE")
+    );
+    let paths = routing["paths"].as_array().unwrap();
+    assert!(paths.iter().any(|path| path["input"] == "LFE"));
+    assert!(
+        paths
+            .iter()
+            .any(|path| path["input"] != path["output"] && path["input"] != "LFE")
+    );
+    let before = snapshot_relative_files(&folder, &export.files);
+
+    let reopened = deterministic_service();
+    open(&reopened, &path);
+    let events = Arc::new(Events::default());
+    let after = export_and_wait(
+        &reopened,
+        ExportKind::Convolution,
+        Path::new(""),
+        events.clone(),
+    );
+    assert_eq!(Path::new(&after.folder), folder);
+    assert_eq!(before, snapshot_relative_files(&folder, &after.files));
+    assert!(
+        !lock(&events.values).iter().any(|event| {
+            matches!(event, JobEvent::Progress { stage, .. } if stage == "design")
+        })
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
