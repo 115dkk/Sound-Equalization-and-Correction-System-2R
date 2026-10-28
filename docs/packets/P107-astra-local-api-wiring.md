@@ -53,10 +53,25 @@ if anywhere), the bindings `LocalApiStatus.ts`, `LocalApiSettings.ts`,
    code. Keep both catalogs' key sets and placeholders identical and run the
    i18n tests and any font-subset gate.
 
+4. **The typecheck fails today** on five places that predate P106 and come
+   from P104's new types: `src/app/jobs/jobText.ts` (no text for the
+   `ui_only` error code), `src/ipc/fixtures.ts` (an `AppSettings` without
+   `local_api`), `src/ipc/mock.ts` (`local_api_status` and
+   `local_api_token_regenerate` fall through as `never`: make the mock answer
+   them with an off status on port 4712 and a stable fake token, and turn the
+   server "on" in its status when the mock's app settings enable it),
+   `src/ipc/mockWiring.test.ts`, `src/state/effects.test.ts`. Fix them.
+5. P106 notes that matter here: `useLocalApi(open)` is called by
+   `SettingsButton` in the gallery and in tests without a `SessionProvider`,
+   so the hook must work without a session (fixed off status, no calls);
+   read the status when `open` turns true. A busy port is recognised today
+   from the text of `LocalApiStatus.error` (`localApiState` in
+   `localApi.ts`); keep that working.
+
 ## Files
 
 You may edit: `apps/secs2r/ui/src/app/localApi.ts` (the hook body and its
-tests), `apps/secs2r/ui/src/state/**`, `apps/secs2r/ui/src/ipc/**` (not the
+tests), `apps/secs2r/ui/src/app/jobs/jobText.ts`, `apps/secs2r/ui/src/state/**`, `apps/secs2r/ui/src/ipc/**` (not the
 generated `bindings/`), `apps/secs2r/ui/src/i18n/ko.json`, `en.json`, tests
 that a text change breaks.
 

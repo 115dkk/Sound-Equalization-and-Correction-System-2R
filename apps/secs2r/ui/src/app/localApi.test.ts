@@ -2,6 +2,8 @@
 // request reference.
 import { describe, expect, it } from "vitest";
 import type { LocalApiStatus } from "../ipc/bindings/LocalApiStatus";
+import { translate } from "../i18n";
+import { errorText } from "./jobs/jobText";
 import { hostOf, localApiState, parsePort, portProblem, referenceText, type LocalApiView } from "./localApi";
 
 const status = (patch: Partial<LocalApiStatus> = {}): LocalApiStatus => ({
@@ -15,6 +17,15 @@ const status = (patch: Partial<LocalApiStatus> = {}): LocalApiStatus => ({
   ...patch,
 });
 const view = (patch: Partial<LocalApiView> = {}): LocalApiView => ({ status: status(), pending: null, error: null, ...patch });
+
+it("gives ui_only a specific cause and next action in both locales", () => {
+  for (const locale of ["ko", "en"] as const) {
+    const t = (key: Parameters<typeof translate>[1], params?: Parameters<typeof translate>[2]) => translate(locale, key, params);
+    expect(errorText(t, { code: "ui_only", params: {}, retryable: false, detail: "raw internal detail" })).toEqual({
+      cause: t("error.ui_only"), next: t("error.ui_only.next"), generic: false,
+    });
+  }
+});
 
 describe("portProblem", () => {
   it("accepts whole numbers from 1024 to 65535, spaces around them included", () => {

@@ -78,13 +78,13 @@ describe("settings popover row", () => {
     const toggle = screen.getByRole("switch", { name: "로컬 API" });
     expect(toggle.getAttribute("aria-checked")).toBe("true");
     const described = document.getElementById(toggle.getAttribute("aria-describedby") ?? "");
-    expect(described?.textContent).toBe("127.0.0.1:4712에서 받는 중");
+    expect(described?.textContent).toBe("127.0.0.1:4712에서 요청 대기 중");
     expect(screen.getByRole("button", { name: "연결 정보" })).toBeTruthy();
   });
 
   it("says the port is taken and offers to change it", () => {
     popover(makeApi({ status: status({ running: false, error: "local API port 4712 is busy" }) }));
-    expect(ui("frame.settings.local_api.row").textContent).toContain("4712번 포트를 다른 프로그램이 쓰고 있습니다.");
+    expect(ui("frame.settings.local_api.row").textContent).toContain("다른 프로그램에서 4712번 포트 사용 중");
     expect(screen.getByRole("button", { name: "포트 바꾸기…" })).toBeTruthy();
   });
 
@@ -109,7 +109,7 @@ describe("settings popover row", () => {
     expect(screen.queryByRole("switch", { name: "로컬 API" })).toBeNull();
     const box = screen.getByRole("dialog", { name: "로컬 API" });
     expect(document.activeElement).toBe(within(box).getByLabelText("포트"));
-    expect(box.textContent).toContain("다른 포트를 넣고 포트 바꾸기를 누르세요.");
+    expect(box.textContent).toContain("다른 포트를 입력한 뒤 포트 바꾸기를 누릅니다.");
   });
 });
 
@@ -118,7 +118,7 @@ describe("token", () => {
     const api = makeApi();
     const { box } = dialog(api);
     expect(box.textContent).not.toContain(TOKEN);
-    expect(ui("frame.local_api.token.value").textContent).toContain("숨긴 토큰");
+    expect(ui("frame.local_api.token.value").textContent).toContain("가린 토큰");
 
     fireEvent.click(within(box).getByRole("button", { name: "토큰 복사" }));
     expect(api.actions.copy).toHaveBeenCalledWith(TOKEN);
@@ -132,7 +132,7 @@ describe("token", () => {
   it("asks in one line before making a new token, and 취소 or Escape leaves it", () => {
     const api = makeApi();
     const { box, onClose } = dialog(api);
-    const confirmLine = "지금 토큰을 쓰는 프로그램에는 새 토큰을 다시 넣어야 합니다.";
+    const confirmLine = "새 토큰을 만들면 기존 토큰은 작동하지 않으므로 연결할 프로그램에도 새 토큰을 넣어야 합니다.";
 
     fireEvent.click(within(box).getByRole("button", { name: "새 토큰 만들기" }));
     expect(api.actions.regenerateToken).not.toHaveBeenCalled();
@@ -165,11 +165,11 @@ describe("port", () => {
 
     fireEvent.change(input, { target: { value: "80" } });
     expect(input.getAttribute("aria-invalid")).toBe("true");
-    expect(document.getElementById(input.getAttribute("aria-describedby") ?? "")?.textContent).toBe("1024–65535 사이의 포트를 넣으세요.");
+    expect(document.getElementById(input.getAttribute("aria-describedby") ?? "")?.textContent).toBe("포트 번호는 1024–65535 범위여야 합니다.");
     expect(apply.disabled).toBe(true);
 
     fireEvent.change(input, { target: { value: "47a" } });
-    expect(box.textContent).toContain("숫자만 넣으세요. 범위는 1024–65535입니다.");
+    expect(box.textContent).toContain("포트 번호는 숫자로만 입력해야 합니다. 범위는 1024–65535입니다.");
 
     fireEvent.change(input, { target: { value: "5000" } });
     expect(input.getAttribute("aria-invalid")).toBeNull();

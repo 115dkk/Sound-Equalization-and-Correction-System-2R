@@ -1,11 +1,12 @@
 // The local API (ADR 0016) as the settings popover and the 로컬 API dialog
 // see it: the view they draw, the actions they call, and the pure checks
 // both share (the state line, the port draft, the request reference).
-//
-// `useLocalApi` is a stub that answers a fixed off status and does nothing
-// (P106); P107 replaces its body with `local_api_status`, `app_settings_set`
-// and `local_api_token_regenerate`.
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { IpcFailure } from "../ipc/client";
+import { useOptionalSession } from "../state/react";
+import { useT } from "../i18n/react";
+import { useToast } from "../ui/Toast";
+import type { LocalApiSettings } from "../ipc/bindings/LocalApiSettings";
 import type { IpcError } from "../ipc/bindings/IpcError";
 import type { LocalApiStatus } from "../ipc/bindings/LocalApiStatus";
 
@@ -114,7 +115,7 @@ export function referenceText(url: string, lines: { what: (key: (typeof ENDPOINT
   return [url, ...ENDPOINTS.map((entry, index) => `${heads[index]!.padEnd(width)}${lines.what(entry.what)}`), lines.auth].join("\n");
 }
 
-/* ── Hook (stub until P107) ─────────────────────────────────────────────── */
+/* ── Hook ──────────────────────────────────────────────────────────────── */
 
 const STUB_STATUS: LocalApiStatus = {
   enabled: false,
@@ -134,9 +135,75 @@ const NO_ACTIONS: LocalApiActions = { setEnabled: () => {}, setPort: () => {}, r
  * true and after each change. The settings button calls this hook in the
  * gallery and in tests too, where there is no session, so it has to keep
  * working there (a fixed off status is enough).
- *
- * Stub (P106): a fixed off status and actions that do nothing.
  */
-export function useLocalApi(_open: boolean): LocalApi {
-  return useMemo(() => ({ view: { status: STUB_STATUS, pending: null, error: null }, actions: NO_ACTIONS }), []);
+export function useLocalApi(open: boolean): LocalApi {
+  const session = useOptionalSession();
+  const toast = useToast();
+  const t = useT();
+  const [view, setView] = useState<LocalApiView>({ status: session ? null : STUB_STATUS, pending: null, error: null });
+  const busy = useRef(false);
+  const generation = useRef(0);
+  const alive = useRef(false);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; generation.current++; };
+  }, [session]);
+
+  useEffect(() => {
+    if (!session || !open) return;
+    const refresh = async () => {
+      if (busy.current) return;
+      const ticket = ++generation.current;
+      setView((prior) => ({ ...prior, error: null }));
+      try {
+        const status = await session.call({ method: "local_api_status" });
+        if (alive.current && ticket === generation.current) setView({ status, pending: null, error: null });
+      } catch (error) {
+        if (alive.current && ticket === generation.current) setView({ status: null, pending: null, error: typedError(error) });
+      }
+    };
+    void refresh();
+    const off = session.stores.appSettings.subscribe(() => { void refresh(); });
+    return off;
+  }, [open, session]);
+
+  const actions = useMemo<LocalApiActions>(() => {
+    if (!session) return NO_ACTIONS;
+    const perform = (pending: LocalApiPending | null, work: () => Promise<LocalApiStatus | void>) => {
+      if (busy.current) return;
+      busy.current = true;
+      const ticket = ++generation.current;
+      setView((prior) => ({ ...prior, pending, error: null }));
+      void work().then((status) => {
+        if (alive.current && ticket === generation.current) setView((prior) => ({ status: status ?? prior.status, pending: null, error: null }));
+      }, (error: unknown) => {
+        if (alive.current && ticket === generation.current) setView((prior) => ({ ...prior, pending: null, error: typedError(error) }));
+      }).finally(() => {
+        busy.current = false;
+        if (alive.current) setView((prior) => ({ ...prior, pending: null }));
+      });
+    };
+    const save = async (patch: Partial<LocalApiSettings>) => {
+      if (!session.stores.appSettings.getSnapshot()) {
+        session.stores.appSettings.set(await session.call({ method: "app_settings_get" }));
+      }
+      const accepted = await session.writers.app.edit((latest) => ({ local_api: { ...latest.local_api, ...patch } }));
+      if (!accepted) throw new IpcFailure(session.errors.getSnapshot()?.error ?? typedError("App settings were not saved"));
+      return session.call({ method: "local_api_status" });
+    };
+    return {
+      setEnabled: (enabled) => perform("toggle", () => save({ enabled })),
+      setPort: (port) => perform("port", () => save({ port })),
+      regenerateToken: () => perform("token", () => session.call({ method: "local_api_token_regenerate" })),
+      copy: (text) => perform(null, async () => {
+        await navigator.clipboard.writeText(text);
+        if (alive.current) toast.show({ message: t("frame.local_api.copied"), tone: "neutral" });
+      }),
+    };
+  }, [session, toast, t]);
+  return { view, actions };
+}
+
+function typedError(error: unknown): IpcError {
+  return error instanceof IpcFailure ? error.error : { code: "internal", params: {}, retryable: false, detail: String(error) };
 }
