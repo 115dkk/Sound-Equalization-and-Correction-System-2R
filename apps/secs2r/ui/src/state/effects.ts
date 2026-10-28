@@ -81,7 +81,7 @@ export const RULES: readonly Rule[] = [
       ctx.replaceProject();
       ctx.stores.measurementSettings.set(null);
       ctx.stores.micCalibration.set(null);
-      ctx.host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, mdatScope: "all", channel: null, xoGroup: null, xoRecommendation: null, failure: null, opened: ctx.host.getSnapshot().opened + 1 });
+      ctx.host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, mdatScope: "all", designName: "", channel: null, xoGroup: null, xoRecommendation: null, failure: null, opened: ctx.host.getSnapshot().opened + 1 });
     },
     // Project replacement reads the stored method; tutorial setup owns writes.
     apply: async ({ call }) => { await call({ method: "measure_config_get" }); },

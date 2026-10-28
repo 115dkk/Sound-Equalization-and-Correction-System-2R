@@ -152,11 +152,37 @@ describe("P33 mock wiring", () => {
     await mock.request({ method: "export", params: { kind: "camilla_dsp", folder: "" } }); mock.drain();
     // export_folder.rs: a timestamped folder below the stored base, CamillaDSP in its `camilladsp`.
     const folder = expect.stringMatching(/^\/exports\/SECS_camilla_RC_BA_linear_\d{8}-\d{6}\/camilladsp$/);
-    expect(events.at(-1)).toMatchObject({ result: { kind: "export", data: { folder, files: [expect.stringMatching(/camilladsp\/secs_camilladsp\.yml$/), expect.stringMatching(/camilladsp\/fir_L\.wav$/)], stale: true } } });
+    expect(events.at(-1)).toMatchObject({ result: { kind: "export", data: { folder, files: expect.arrayContaining([
+      expect.stringMatching(/camilladsp\/configs\/secs_linear\.yml$/),
+      expect.stringMatching(/camilladsp\/configs\/secs_linear_bypass\.yml$/),
+      expect.stringMatching(/camilladsp\/coeffs\/secs_linear_L_fir\.wav$/),
+      expect.stringMatching(/camilladsp\/secs-design\.json$/),
+    ]), stale: true } } });
     mock.failJobs("measure", "device_unavailable");
     await mock.request({ method: "measure_position", params: { position: 7 } }); mock.drain();
     expect(events.at(-1)).toMatchObject({ status: "failed", error: { code: "device_unavailable" } });
     expect((await mock.request({ method: "project_info" })).positions).not.toContain(7);
+  });
+
+  it("exports a newly calibrated stereo project as named convolution pairs through job events", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    const events: JobEvent[] = [];
+    const off = mock.events.subscribe((event) => events.push(event));
+    try {
+      expect((await mock.request({ method: "bootstrap" })).upstream.repository).toBe("https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2");
+      await mock.request(newProject(false));
+      await mock.request({ method: "sample_load", params: { positions: 1 } }); mock.drain();
+      await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
+      await mock.request({ method: "export_folder_set", params: { folder: "/exports" } });
+      const { job } = await mock.request({ method: "export", params: { kind: "convolution", folder: "", design_name: "Stereo" } });
+      expect(events.at(-1)).toMatchObject({ event: "started", job, kind: "export" });
+      mock.drain();
+      const folder = "/exports/SECS_convolution_Stereo";
+      expect(events.at(-1)).toMatchObject({ event: "finished", job, status: "succeeded", result: { kind: "export", data: { folder, stale: false, files: [
+        `${folder}/L_to_L.wav`, `${folder}/L_to_L.csv`, `${folder}/R_to_R.wav`, `${folder}/R_to_R.csv`,
+        `${folder}/컨볼루션 적용 방법.txt`, `${folder}/routing.json`, `${folder}/secs-design.json`,
+      ] } } });
+    } finally { off(); mock.dispose(); }
   });
 
   it("applies every SettingEdit variant without a numerical engine", async () => {

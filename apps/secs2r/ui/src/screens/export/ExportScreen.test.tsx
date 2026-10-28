@@ -246,14 +246,14 @@ describe("내보내기", () => {
     renderWith(<Mounted view={exportRcOnly} act={actions()} advanced />);
     const files = ui("export.files")!;
     const groups = [...files.querySelectorAll<HTMLElement>("section.export-group")];
-    expect(groups.map((group) => document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent)).toEqual(["DSP와 플레이어에 넣을 필터", "REW에서 볼 응답"]);
+    expect(groups.map((group) => document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent)).toEqual(["DSP와 플레이어용 필터", "REW에서 볼 응답"]);
     expect(groups.map((group) => [...group.querySelectorAll("section[data-ui^='export.kind.']")].map((row) => row.getAttribute("data-ui")))).toEqual([
       ["export.kind.camilla_dsp", "export.kind.filter_text", "export.kind.equalizer_apo", "export.kind.convolution"],
       ["export.kind.before_after_mdat", "export.kind.staged_mdat"],
     ]);
     // h2 card, h3 group, h4 row.
     expect(files.querySelector("h2")?.textContent).toBe("파일 내보내기");
-    expect([...groups[0]!.querySelectorAll("h3")].map((h) => h.textContent)).toEqual(["DSP와 플레이어에 넣을 필터"]);
+    expect([...groups[0]!.querySelectorAll("h3")].map((h) => h.textContent)).toEqual(["DSP와 플레이어용 필터"]);
     expect([...groups[0]!.querySelectorAll("h4")].map((h) => h.textContent)).toEqual(["CamillaDSP 설정", "필터 값 텍스트", "Equalizer APO 설정", "컨볼루션 IR"]);
     fireEvent.click(ui("export.kind.camilla_dsp.help")!);
     expect(screen.getByRole("tooltip").textContent).toBe(t("export.kind.camilla_dsp.body"));
@@ -262,11 +262,11 @@ describe("내보내기", () => {
   it("turns off a filter format that cannot carry the result and says why in its row", () => {
     const cases: [ExportView, Record<"filter_text" | "equalizer_apo", string | null>][] = [
       // Subs and MIMO (the sample): text blocked by the subs first; Equalizer APO carries both (F12).
-      [exportReady, { filter_text: "서브(BA)가 있는 결과는 텍스트로 내보낼 수 없습니다. CamillaDSP나 Equalizer APO 설정으로 내보내세요.", equalizer_apo: null }],
+      [exportReady, { filter_text: "서브(BA)가 포함된 결과는 텍스트로 내보낼 수 없습니다. Equalizer APO, CamillaDSP, 컨볼루션 IR은 서브와 MIMO를 지원합니다.", equalizer_apo: null }],
       // Subs, MIMO left out: only the text.
-      [exportNoMimo, { filter_text: "서브(BA)가 있는 결과는 텍스트로 내보낼 수 없습니다. CamillaDSP나 Equalizer APO 설정으로 내보내세요.", equalizer_apo: null }],
+      [exportNoMimo, { filter_text: "서브(BA)가 포함된 결과는 텍스트로 내보낼 수 없습니다. Equalizer APO, CamillaDSP, 컨볼루션 IR은 서브와 MIMO를 지원합니다.", equalizer_apo: null }],
       // MIMO without subs: the text by MIMO.
-      [exportMimoNoSubs, { filter_text: "MIMO를 켠 결과는 텍스트로 내보낼 수 없습니다. 보정에서 MIMO를 끄면 내보낼 수 있습니다.", equalizer_apo: null }],
+      [exportMimoNoSubs, { filter_text: "MIMO가 포함된 결과는 텍스트로 내보낼 수 없습니다. Equalizer APO, CamillaDSP, 컨볼루션 IR은 서브와 MIMO를 지원합니다.", equalizer_apo: null }],
       // RC alone: everything on.
       [exportRcOnly, { filter_text: null, equalizer_apo: null }],
     ];
@@ -583,7 +583,7 @@ describe("내보내기", () => {
     const input = ui("export.design_name") as HTMLInputElement;
     expect(screen.getByLabelText("설계 이름")).toBe(input);
     expect(input.value).toBe("");
-    expect(ui("export.design_name.hint")?.textContent).toBe("비워 두면 내보낼 때마다 저장 시각을 붙인 새 폴더에 저장합니다.");
+    expect(ui("export.design_name.hint")?.textContent).toBe("이름을 비워 두면 내보낼 때마다 저장 시각이 붙은 새 폴더를 만듭니다.");
     expect(input.getAttribute("aria-describedby")).toBe("export.design_name-hint");
     expect(input.getAttribute("aria-invalid")).toBeNull();
     // Unnamed, the rows keep their timestamped folders.
@@ -593,7 +593,7 @@ describe("내보내기", () => {
     unmount();
     // Named: the one sentence before any export, and each filter row names its folder.
     renderWith(<Mounted view={{ ...exportNamed, designName: "  거실 영화 " }} act={actions()} />);
-    expect(ui("export.design_name.hint")?.textContent).toBe("같은 이름으로 다시 내보내면 SECS_<종류>_거실 영화 폴더를 새 파일로 바꾸며, 그 폴더에 직접 넣은 파일도 지워집니다.");
+    expect(ui("export.design_name.hint")?.textContent).toBe("같은 형식으로 거실 영화 설계를 다시 내보내면 기존 폴더를 새 폴더로 교체하고, 그 안에 따로 넣은 파일도 삭제합니다.");
     expect(ui("export.design_name.problem")).toBeNull();
     const where = (kind: string) => ui(`export.kind.${kind}`)?.querySelector(".export-item__where")?.textContent;
     expect(where("camilla_dsp")).toBe("SECS_camilla_dsp_거실 영화 폴더 · configs와 coeffs");
@@ -607,11 +607,11 @@ describe("내보내기", () => {
 
   it("turns off every filter export and the header's primary while the design name cannot be a folder, and says why under the field", () => {
     const messages: Record<DesignNameProblem, string> = {
-      length: "설계 이름은 1자에서 64자까지 쓸 수 있습니다.",
-      control: "줄바꿈이나 탭 같은 제어 문자는 쓸 수 없습니다.",
-      character: "\\ / : * ? \" < > | 기호는 폴더 이름에 쓸 수 없습니다.",
-      trailing: "이름 끝에 마침표나 공백을 둘 수 없습니다.",
-      reserved: "CON, PRN, AUX, NUL, COM1~COM9, LPT1~LPT9는 Windows의 장치 이름이라 첫 마침표 앞에 쓸 수 없습니다.",
+      length: "설계 이름은 1~64자로 입력해야 합니다.",
+      control: "설계 이름에 줄바꿈이나 탭 같은 제어 문자를 넣을 수 없습니다.",
+      character: "설계 이름에 \\ / : * ? \" < > | 기호를 넣을 수 없습니다.",
+      trailing: "설계 이름은 마침표나 공백으로 끝날 수 없습니다.",
+      reserved: "CON, PRN, AUX, NUL, COM1~COM9, LPT1~LPT9는 Windows 장치 이름이므로 설계 이름으로 쓸 수 없습니다. 뒤에 마침표와 글자를 붙여도 쓸 수 없습니다.",
     };
     for (const [problem, name] of Object.entries(DESIGN_NAME_SAMPLES) as [DesignNameProblem, string][]) {
       const act = actions();
@@ -635,8 +635,8 @@ describe("내보내기", () => {
       }
       const primary = ui("export.run.camilla_dsp") as HTMLButtonElement;
       expect(primary.getAttribute("aria-busy")).toBeNull();
-      expect(ui("export.status.problem")?.textContent, problem).toBe("설계 이름 확인 필요");
-      expect(document.getElementById(primary.getAttribute("aria-describedby") ?? "")?.textContent, problem).toBe("설계 이름 확인 필요");
+      expect(ui("export.status.problem")?.textContent, problem).toBe("설계 이름 수정 필요");
+      expect(document.getElementById(primary.getAttribute("aria-describedby") ?? "")?.textContent, problem).toBe("설계 이름 수정 필요");
       // The REW mdat takes no name and stays on.
       for (const kind of ["before_after_mdat", "staged_mdat"]) {
         expect((ui(`export.run.${kind}`) as HTMLButtonElement).disabled, `${problem} ${kind}`).toBe(false);
@@ -653,17 +653,17 @@ describe("내보내기", () => {
     expect(empty.primary?.disabled).toBe(false);
     // English names the problem too.
     renderWith(<Mounted view={{ ...exportRcOnly, designName: "거실/영화" }} act={actions()} />, { locale: "en" });
-    expect(ui("export.design_name.problem")?.textContent).toBe("The characters \\ / : * ? \" < > | cannot be used in a folder name.");
-    expect(ui("export.status.problem")?.textContent).toBe("Check the design name");
+    expect(ui("export.design_name.problem")?.textContent).toBe("Remove these characters from the design name: \\ / : * ? \" < > |");
+    expect(ui("export.status.problem")?.textContent).toBe("Design name needs correction");
   });
 
   it("folds the CamillaDSP devices in its row, closed, its summary reading the current choice", () => {
     const summaries: [ExportView, string, string][] = [
       [exportReady, "파일 자리표시", "File placeholders"],
-      [exportDevicesWasapi, "입력 WASAPI CABLE Output (VB-Audio Virtual Cable), 출력 WASAPI Speakers (Tesira)", "Capture WASAPI CABLE Output (VB-Audio Virtual Cable), playback WASAPI Speakers (Tesira)"],
-      [exportDevicesTyped, "입력 WASAPI 루프백 기본 장치, 출력 WASAPI Speakers (Tesira)", "Capture WASAPI loopback Default device, playback WASAPI Speakers (Tesira)"],
-      [exportDevicesAsio, "입력 파일 자리표시, 출력 ASIO Tesira ASIO", "Capture File placeholders, playback ASIO Tesira ASIO"],
-      [exportDevicesAsioUnnamed, "입력 ASIO 드라이버 이름 없음, 출력 ASIO Tesira ASIO", "Capture ASIO, no driver name, playback ASIO Tesira ASIO"],
+      [exportDevicesWasapi, "입력 WASAPI CABLE Output (VB-Audio Virtual Cable), 출력 WASAPI Speakers (Tesira)", "Input WASAPI CABLE Output (VB-Audio Virtual Cable), output WASAPI Speakers (Tesira)"],
+      [exportDevicesTyped, "입력 WASAPI 루프백 기본 장치, 출력 WASAPI Speakers (Tesira)", "Input WASAPI loopback Default device, output WASAPI Speakers (Tesira)"],
+      [exportDevicesAsio, "입력 파일 자리표시, 출력 ASIO Tesira ASIO", "Input File placeholders, output ASIO Tesira ASIO"],
+      [exportDevicesAsioUnnamed, "입력 ASIO 드라이버 이름 없음, 출력 ASIO Tesira ASIO", "Input ASIO driver not specified, output ASIO Tesira ASIO"],
       [{ ...exportReady, camillaDevices: { capture: { type: "asio", device: "Tesira ASIO" }, playback: { type: "asio", device: "Tesira ASIO" } } }, "ASIO Tesira ASIO", "ASIO Tesira ASIO"],
     ];
     for (const [view, ko, en] of summaries) {
@@ -673,7 +673,7 @@ describe("내보내기", () => {
         expect(toggle.getAttribute("aria-expanded")).toBe("false");
         expect(ui("export.devices.summary")?.textContent, `${locale} ${text}`).toBe(text);
         // The summary is part of the toggle's name; the fields are not drawn while closed.
-        expect(toggle.textContent).toBe(`${locale === "ko" ? "입출력 장치" : "Devices"}${text}`);
+        expect(toggle.textContent).toBe(`${locale === "ko" ? "입출력 장치" : "Input and output devices"}${text}`);
         expect(ui("export.devices.capture")).toBeNull();
         unmount();
       }
@@ -738,7 +738,7 @@ describe("내보내기", () => {
     const playback = ui("export.devices.playback.device") as HTMLInputElement;
     expect(playback.tagName).toBe("INPUT");
     expect(playback.value).toBe("Speakers (Tesira)");
-    expect(screen.getAllByText("Windows 소리 설정에 보이는 장치 이름을 그대로 입력하세요. 비워 두면 기본 장치를 엽니다.")).toHaveLength(2);
+    expect(screen.getAllByText("Windows 소리 설정의 장치 이름과 같아야 합니다. 비워 두면 기본 장치를 사용합니다.")).toHaveLength(2);
     const capture = ui("export.devices.capture.device") as HTMLInputElement;
     expect(capture.value).toBe("");
     expect(capture.placeholder).toBe("기본 장치");
@@ -752,13 +752,13 @@ describe("내보내기", () => {
     const exclusive = ui("export.devices.capture.exclusive") as HTMLButtonElement;
     expect(exclusive.disabled).toBe(true);
     expect(exclusive.getAttribute("aria-checked")).toBe("false");
-    expect(document.getElementById(exclusive.getAttribute("aria-describedby") ?? "")?.textContent).toBe("루프백은 공유 모드로만 받습니다.");
+    expect(document.getElementById(exclusive.getAttribute("aria-describedby") ?? "")?.textContent).toBe("루프백 녹음은 공유 모드에서만 가능합니다.");
     expect((ui("export.devices.playback.exclusive") as HTMLButtonElement).disabled).toBe(false);
   });
 
   it("says when ASIO is chosen that released CamillaDSP builds lack it, and holds CamillaDSP off until each ASIO side names its driver", () => {
     const { unmount } = renderWith(<Mounted view={exportDevicesAsio} act={actions()} devices />);
-    expect(ui("export.devices.asio_note")?.textContent).toBe("공개 배포된 Windows용 CamillaDSP에는 ASIO가 없습니다. asio-backend 기능으로 빌드한 CamillaDSP가 필요합니다.");
+    expect(ui("export.devices.asio_note")?.textContent).toBe("ASIO를 지원하도록 빌드한 CamillaDSP가 필요합니다. 공식 배포하는 Windows 실행 파일은 ASIO를 지원하지 않습니다.");
     expect((ui("export.devices.playback.asio") as HTMLInputElement).value).toBe("Tesira ASIO");
     expect((ui("export.run.camilla_dsp") as HTMLButtonElement).disabled).toBe(false);
     expect(ui("export.status.problem")).toBeNull();
@@ -768,7 +768,7 @@ describe("내보내기", () => {
     expect(document.querySelectorAll("[data-ui='export.devices.asio_note']")).toHaveLength(1);
     const driver = ui("export.devices.capture.asio") as HTMLInputElement;
     expect(driver.getAttribute("aria-invalid")).toBe("true");
-    expect(document.getElementById(driver.getAttribute("aria-describedby") ?? "")?.textContent).toBe("ASIO 드라이버 이름을 입력하세요.");
+    expect(document.getElementById(driver.getAttribute("aria-describedby") ?? "")?.textContent).toBe("ASIO 드라이버 이름을 입력해야 합니다.");
     const primary = ui("export.run.camilla_dsp") as HTMLButtonElement;
     expect(primary.disabled).toBe(true);
     expect(ui("export.status.problem")?.textContent).toBe("ASIO 드라이버 이름 필요");

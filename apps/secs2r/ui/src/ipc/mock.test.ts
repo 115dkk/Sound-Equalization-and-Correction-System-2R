@@ -220,10 +220,10 @@ describe("mock filter exports", () => {
     return results;
   }
 
-  async function exported(mock: ReturnType<typeof createMockService>, kind: ExportKind, folder = "") {
+  async function exported(mock: ReturnType<typeof createMockService>, kind: ExportKind, folder = "", extra: Pick<ExportParams, "design_name" | "camilla_devices"> = {}) {
     const events: JobEvent[] = [];
     const unsubscribe = mock.events.subscribe((event) => events.push(event));
-    await mock.request({ method: "export", params: { kind, folder } });
+    await mock.request({ method: "export", params: { kind, folder, ...extra } });
     mock.drain();
     unsubscribe();
     const last = events.at(-1);
@@ -299,6 +299,7 @@ describe("mock filter exports", () => {
         `${folder}/config.txt`, `${folder}/${prefix}/${prefix}.txt`, `${folder}/EqAPO 적용 방법.txt`,
       ];
       if (mode !== "zero") files.push(`${firFolder}/${prefix}_L_fir.wav`, `${firFolder}/${prefix}_R_fir.wav`);
+      files.push(`${folder}/secs-design.json`);
       expect(await exported(mock, kind)).toEqual({ folder, files, stale: false });
     }
     mock.dispose();
@@ -323,8 +324,97 @@ describe("mock filter exports", () => {
     expect(await exported(mock, "equalizer_apo", folder)).toEqual({ folder, stale: false, files: [
       `${folder}/config.txt`, `${folder}/secs_mixed/secs_mixed.txt`, `${folder}/EqAPO 적용 방법.txt`,
       ...results.calibration!.main_roles.map((role) => `${folder}/secs_mixed/secs_mixed_${role}_fir.wav`),
+      `${folder}/secs-design.json`,
     ] });
     mock.dispose();
+  });
+
+  it.each([false, true])("exports convolution WAV/CSV pairs, subs and LFE (MIMO: %s)", async (mimo) => {
+    vi.spyOn(Date, "now").mockReturnValue(new Date(2026, 9, 15, 9, 41, 7).getTime());
+    const results = resultWithoutSubs();
+    results.calibration!.sub_roles = ["SW1", "SW2"];
+    results.mimo = mimo ? structuredClone(resultsSummary.mimo) : null;
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: mimo } } });
+      mock.setResults(results);
+      await mock.request({ method: "export_folder_set", params: { folder: "C:/exports/" } });
+      const folder = `C:/exports/SECS_convolution_RC_BA${mimo ? "_MIMO" : ""}_mixed_20261015-094107`;
+      const pairs = ["L_to_L", "L_to_SW1", "L_to_SW2", "R_to_R", "R_to_SW1", "R_to_SW2", "LFE_to_SW1", "LFE_to_SW2"];
+      expect(await exported(mock, "convolution")).toEqual({ folder, stale: false, files: [
+        ...pairs.flatMap((pair) => [`${folder}/${pair}.wav`, `${folder}/${pair}.csv`]),
+        `${folder}/컨볼루션 적용 방법.txt`, `${folder}/routing.json`, `${folder}/secs-design.json`,
+      ] });
+    } finally { mock.dispose(); }
+  });
+
+  it("exports only the stereo chain's pairs without subs, including stale cached results", async () => {
+    const results = resultWithoutSubs();
+    results.calibration!.cached = true;
+    results.calibration!.stale = true;
+    const mock = createMockService({ tickMs: 0, results });
+    try {
+      const folder = "C:/chosen";
+      expect(await exported(mock, "convolution", folder)).toEqual({ folder, stale: true, files: [
+        `${folder}/L_to_L.wav`, `${folder}/L_to_L.csv`, `${folder}/R_to_R.wav`, `${folder}/R_to_R.csv`,
+        `${folder}/컨볼루션 적용 방법.txt`, `${folder}/routing.json`, `${folder}/secs-design.json`,
+      ] });
+    } finally { mock.dispose(); }
+  });
+
+  it.each(["camilla_dsp", "filter_text", "equalizer_apo", "convolution"] as const)("uses stable named folders and includes a design record for %s", async (kind) => {
+    const mock = createMockService({ tickMs: 0, results: resultWithoutSubs() });
+    try {
+      await mock.request({ method: "export_folder_set", params: { folder: "C:/exports/" } });
+      for (const explicit of ["", "D:/chosen/"]) {
+        const folder = `${explicit ? "D:/chosen" : "C:/exports"}/SECS_${kind}_Cinema`;
+        const first = await exported(mock, kind, explicit, { design_name: "\u0085 Cinema \u0085" });
+        expect(first.folder).toBe(folder);
+        expect(first.files).toContain(`${folder}/secs-design.json`);
+        expect(first.files.every((file) => file.startsWith(`${folder}/`))).toBe(true);
+        expect(await exported(mock, kind, explicit, { design_name: "Cinema" })).toEqual(first);
+        if (kind === "camilla_dsp") expect(first.files).toEqual([
+          `${folder}/configs/secs_mixed.yml`, `${folder}/configs/secs_mixed_bypass.yml`,
+          `${folder}/coeffs/secs_mixed_L_fir.wav`, `${folder}/coeffs/secs_mixed_R_fir.wav`, `${folder}/secs-design.json`,
+        ]);
+      }
+    } finally { mock.dispose(); }
+  });
+
+  it.each([
+    ["", "length"], [" ", "length"], ["a".repeat(65), "length"], ["bad\nname", "control"],
+    ["bad/name", "character"], ["bad.", "trailing"], ["con.txt", "reserved"],
+  ])("rejects design name %j before starting a job", async (design_name, problem) => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      await expect(mock.request({ method: "export", params: { kind: "convolution", folder: "", design_name } })).rejects.toMatchObject({ error: { code: "invalid_request", params: { reason: `design_name_${problem}` } } });
+      expect(await mock.request({ method: "jobs" })).toEqual([]);
+    } finally { mock.dispose(); }
+  });
+
+  it.each(["before_after_mdat", "staged_mdat"] as const)("refuses design names on %s", async (kind) => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      await expect(mock.request({ method: "export", params: { kind, folder: "", design_name: "Cinema" } })).rejects.toMatchObject({ error: { code: "invalid_request", params: { reason: "design_name" } } });
+      expect(await mock.request({ method: "jobs" })).toEqual([]);
+    } finally { mock.dispose(); }
+  });
+
+  it("validates CamillaDSP-only devices, ASIO names and loopback sharing before a job", async () => {
+    const mock = createMockService({ tickMs: 0, results: resultWithoutSubs() });
+    try {
+      const files = { capture: { type: "file" }, playback: { type: "file" } } as const;
+      for (const kind of ["filter_text", "equalizer_apo", "convolution", "before_after_mdat", "staged_mdat"] as const) {
+        await expect(mock.request({ method: "export", params: { kind, folder: "", camilla_devices: files } })).rejects.toMatchObject({ error: { code: "invalid_request", params: { reason: "camilla_devices" } } });
+      }
+      for (const side of ["capture", "playback"] as const) {
+        await expect(mock.request({ method: "export", params: { kind: "camilla_dsp", folder: "", camilla_devices: { ...files, [side]: { type: "asio", device: " " } } } })).rejects.toMatchObject({ error: { code: "invalid_request", params: { reason: "camilla_asio_device" } } });
+      }
+      await expect(mock.request({ method: "export", params: { kind: "camilla_dsp", folder: "", camilla_devices: { ...files, capture: { type: "wasapi", device: null, format: "F32", loopback: true, exclusive: true } } } })).rejects.toMatchObject({ error: { code: "invalid_request", params: { reason: "camilla_wasapi_loopback_exclusive" } } });
+      expect(await mock.request({ method: "jobs" })).toEqual([]);
+      const result = await exported(mock, "camilla_dsp", "C:/chosen", { camilla_devices: { capture: { type: "wasapi", device: null, format: "F32", loopback: true, exclusive: false }, playback: { type: "asio", device: "Tesira ASIO" } } });
+      expect(result.files).toContain("C:/chosen/configs/secs_mixed_bypass.yml");
+    } finally { mock.dispose(); }
   });
 
   it("matches the service's clamped, six-significant-digit ultra labels", () => {

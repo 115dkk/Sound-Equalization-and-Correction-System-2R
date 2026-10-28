@@ -31,7 +31,7 @@ import { umikFile } from "../screens/connect/fixtures";
 import type { ExportKind } from "./bindings/ExportKind";
 import { CALIBRATION_LIMITS as LIMITS, RECENT_PROJECTS_MAX } from "./bindings/rules";
 import { recorded } from "./recorded";
-import { filterModeName, mdatFileName, MIMO_MIN_POSITIONS } from "../screens/export/types";
+import { designNameFor, designNameProblem, filterModeName, isFilterKind, mdatFileName, MIMO_MIN_POSITIONS } from "../screens/export/types";
 
 export type Method = Request["method"];
 type DialogMethod = Extract<Method, `dialog_${string}`>;
@@ -72,7 +72,7 @@ const monitor = (kind: JobKind) => kind === "level_monitor" || kind === "status_
 const basename = (path: string) => path.split(/[\\/]/).at(-1) ?? path;
 /** The export kind in a timestamped folder name (export_folder.rs). */
 const EXPORT_FOLDER_TAG: Record<ExportKind, string> = {
-  camilla_dsp: "camilla", before_after_mdat: "mdat", staged_mdat: "mdat", filter_text: "text", equalizer_apo: "eqapo",
+  camilla_dsp: "camilla", before_after_mdat: "mdat", staged_mdat: "mdat", filter_text: "text", equalizer_apo: "eqapo", convolution: "convolution",
 };
 /** The folder stamp `20261015-094107` (clock.rs `stamp`) in local time; Date.now follows the tour's clock. */
 const stamp = () => {
@@ -625,6 +625,20 @@ export function createMockService(options: MockOptions = {}): MockService {
         const project = needProject();
         if (project.tutorial) throw new MockError(ipcError("tutorial_blocked"));
         const kind = req.params.kind;
+        const nameProblem = req.params.design_name === "" ? "length" : designNameProblem(req.params.design_name ?? "");
+        if (nameProblem) throw new MockError(ipcError("invalid_request", "invalid design name", { reason: `design_name_${nameProblem}` }));
+        const designName = designNameFor({ designName: req.params.design_name ?? "", tutorial: false });
+        if (designName !== null && !isFilterKind(kind)) throw new MockError(ipcError("invalid_request", "design_name only applies to filter exports", { reason: "design_name" }));
+        const devices = req.params.camilla_devices;
+        if (devices && kind !== "camilla_dsp") throw new MockError(ipcError("invalid_request", "camilla_devices only applies to CamillaDSP", { reason: "camilla_devices" }));
+        if (devices) {
+          if ([devices.capture, devices.playback].some((device) => device.type === "asio" && device.device.trim() === "")) {
+            throw new MockError(ipcError("invalid_request", "invalid CamillaDSP device options", { reason: "camilla_asio_device" }));
+          }
+          if (devices.capture.type === "wasapi" && devices.capture.loopback && devices.capture.exclusive) {
+            throw new MockError(ipcError("invalid_request", "invalid CamillaDSP device options", { reason: "camilla_wasapi_loopback_exclusive" }));
+          }
+        }
         if (req.params.mdat_scope !== undefined && kind !== "before_after_mdat") {
           throw new MockError(ipcError("invalid_request", "mdat_scope is only valid for REW mdat", { reason: "mdat_scope" }));
         }
@@ -648,7 +662,17 @@ export function createMockService(options: MockOptions = {}): MockService {
         // export_folder.rs: an explicit folder as is, else SECS_<kind>_<RC_BA[_MIMO]>_<the result's mode>_<stamp>
         // below the export base, with CamillaDSP in its own `camilladsp`.
         const timestamped = `${exportFolder.folder.replace(/[\\/]+$/, "")}/SECS_${EXPORT_FOLDER_TAG[kind]}_${hasMimo ? "RC_BA_MIMO" : "RC_BA"}_${calibration.mode}_${stamp()}`;
-        const folder = req.params.folder || (kind === "camilla_dsp" ? `${timestamped}/camilladsp` : timestamped);
+        const base = (req.params.folder || exportFolder.folder).replace(/[\\/]+$/, "");
+        const folder = designName !== null ? `${base}/SECS_${kind}_${designName}` : req.params.folder || (kind === "camilla_dsp" ? `${timestamped}/camilladsp` : timestamped);
+        if (kind === "convolution") {
+          // The synthetic chain feeds each main to itself and every sub;
+          // mock MIMO adds support to those same pairs. LFE feeds the subs.
+          const pairs = calibration.main_roles.flatMap((input) => [input, ...calibration.sub_roles].map((output) => `${input}_to_${output}`));
+          pairs.push(...calibration.sub_roles.map((output) => `LFE_to_${output}`));
+          const files = pairs.flatMap((pair) => [`${folder}/${pair}.wav`, `${folder}/${pair}.csv`]);
+          files.push(`${folder}/컨볼루션 적용 방법.txt`, `${folder}/routing.json`, `${folder}/secs-design.json`);
+          return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: calibration.stale } })) };
+        }
         if (kind === "filter_text" || kind === "equalizer_apo") {
           const mode = filterModeName(settings);
           const prefix = `secs_${mode}`;
@@ -657,10 +681,16 @@ export function createMockService(options: MockOptions = {}): MockService {
             ? [`${folder}/SECS 필터 ${fx.modeLabel(settings.mode, settings.ultra_ms)}.txt`]
             : [`${folder}/config.txt`, `${folder}/${prefix}/${prefix}.txt`, `${folder}/EqAPO 적용 방법.txt`];
           if (settings.mode !== "zero") files.push(...calibration.main_roles.map((role) => `${firFolder}/${prefix}_${role}_fir.wav`));
+          files.push(`${folder}/secs-design.json`);
           return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: calibration.stale } })) };
         }
-        return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, stale: calibration.stale,
-          files: kind === "camilla_dsp" ? [`${folder}/secs_camilladsp.yml`, `${folder}/fir_L.wav`] : [kind === "before_after_mdat" ? `${folder}/${mdatFileName(scope, calibration)}` : `${folder}/${kind}.mdat`] } })) };
+        const prefix = `secs_${filterModeName(calibration)}`;
+        const files = kind === "camilla_dsp" ? [
+          `${folder}/configs/${prefix}.yml`, `${folder}/configs/${prefix}_bypass.yml`,
+          ...(calibration.mode === "zero" ? [] : calibration.main_roles.map((role) => `${folder}/coeffs/${prefix}_${role}_fir.wav`).sort()),
+          `${folder}/secs-design.json`,
+        ] : [kind === "before_after_mdat" ? `${folder}/${mdatFileName(scope, calibration)}` : `${folder}/${kind}.mdat`];
+        return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: calibration.stale } })) };
       }
       case "measure_position": {
         needProject(); const position = req.params.position; const roles = [...measureConfig.roles];
