@@ -137,7 +137,11 @@ def _one(pattern: str, root: Path) -> Path:
     return found[0]
 
 
-def collect(name: str, target: str, version: str, out: Path, repo: Path) -> list[Path]:
+def collect(name: str, target: str, version: str, out: Path, repo: Path,
+            cli_version: str | None = None) -> list[Path]:
+    """Collect the bundles of `name`. `cli_version` is what the CLI must report
+    (default `version`; ci.yml names its assets with a CI version instead)."""
+    cli_version = cli_version or version
     release = repo / "target" / target / "release" if target else repo / "target" / "release"
     bundle = release / "bundle"
     license_file = repo / "LICENSE"
@@ -154,7 +158,7 @@ def collect(name: str, target: str, version: str, out: Path, repo: Path) -> list
         subsystem = pe_subsystem(cli.read_bytes())
         if subsystem != PE_SUBSYSTEM_WINDOWS_CUI:
             raise SystemExit(f"{cli} has PE subsystem {subsystem}, expected {PE_SUBSYSTEM_WINDOWS_CUI}")
-        check_cli(cli, version)
+        check_cli(cli, cli_version)
         setup = out / asset_name(version, "nsis")
         shutil.copy2(_one("nsis/*-setup.exe", bundle), setup)
         made.append(setup)
@@ -173,7 +177,7 @@ def collect(name: str, target: str, version: str, out: Path, repo: Path) -> list
         shutil.copy2(_one("dmg/*.dmg", bundle), dmg)
         made.append(dmg)
         cli = release / "secs2r-cli"
-        check_cli(cli, version)
+        check_cli(cli, cli_version)
         cli_tar = out / asset_name(version, "cli-macos")
         write_cli_tar(cli_tar, cli, license_file)
         made.append(cli_tar)
@@ -185,7 +189,7 @@ def collect(name: str, target: str, version: str, out: Path, repo: Path) -> list
         shutil.copy2(_one("deb/*.deb", bundle), deb)
         made += [appimage, deb]
         cli = release / "secs2r-cli"
-        check_cli(cli, version)
+        check_cli(cli, cli_version)
         cli_tar = out / asset_name(version, "cli-linux")
         write_cli_tar(cli_tar, cli, license_file)
         made.append(cli_tar)
@@ -202,9 +206,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--name", required=True, choices=["windows", "macos", "linux"])
     parser.add_argument("--target", default="")
     parser.add_argument("--version", required=True)
+    parser.add_argument("--cli-version", default=None,
+                        help="version the CLI must report (default: --version)")
     parser.add_argument("--out", type=Path, required=True)
     args = parser.parse_args(argv)
-    collect(args.name, args.target, args.version, args.out, Path.cwd())
+    collect(args.name, args.target, args.version, args.out, Path.cwd(), args.cli_version)
     return 0
 
 
