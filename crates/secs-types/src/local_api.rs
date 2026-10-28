@@ -52,6 +52,13 @@ pub struct LastExport {
     pub mimo: bool,
     /// Stable correction-mode name.
     pub mode: String,
+    /// The design name a filter export carried (`ExportParams::design_name`),
+    /// `None` for an unnamed or REW mdat export.
+    #[serde(default)]
+    pub design_name: Option<String>,
+    /// The design identity in `secs-design.json`, for a filter export.
+    #[serde(default)]
+    pub design_id: Option<String>,
     /// Completion time in UTC, formatted as RFC 3339.
     pub time: String,
 }

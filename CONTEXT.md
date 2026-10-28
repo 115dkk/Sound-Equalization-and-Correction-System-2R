@@ -32,7 +32,11 @@ SECS 2R이 쓰는 낱말의 목록입니다. 도메인 용어는 이 앱이 다�
 | 성적표 | `scorecard` | 보정 전후를 비교하는 지표 묶음입니다. ±1 dB·±2 dB 비율, 위상 바퀴 수, GD 폭, 1/24 옥타브 GD 봉우리, 앞울림이 있습니다. |
 | 신호 사슬 | `Chain` | 내보낼 DSP의 토폴로지 전체를 담은 값 하나입니다. 응답 시뮬레이터가 이 값을 읽습니다. MIMO 서포트 경로는 그 옆의 `MimoPaths` 값이 따로 담고, 내보내기 작성기는 둘을 묶은 내보내기 그래프를 읽습니다. |
 | 내보내기 그래프 | `ExportGraph` | 신호 사슬과 그 MIMO 경로를 한 번 검증해 묶은 값입니다(`secs-graph`). CamillaDSP·필터 텍스트·Equalizer APO 작성기와 FIR 재생기가 같은 입력·출력, 역할별 연산, 서브 공급, MIMO 공급, 서포트 묶음(같은 출력, 같은 필터 종류, 같은 보호 HP 하한의 서포트 경로)을 여기서 읽습니다. 이 값을 만드는 것이 사슬과 경로의 유일한 검증이고, 작성기는 자기 옵션만 확인합니다. |
-| 내보내기 | | 결과를 DSP와 측정 도구로 넘기는 파일입니다. CamillaDSP v4 설정과 FIR, 필터 값 텍스트, Equalizer APO 설정, REW mdat, 단계별 REW mdat이 있습니다. REW mdat은 원 측정, 보정 결과, 또는 둘 다를 담고 파일 이름에 그 말이 들어갑니다(F19). 원 측정만은 보정 결과 없이도 저장됩니다. |
+| 내보내기 | | 결과를 DSP와 측정 도구로 넘기는 파일입니다. CamillaDSP v4 설정과 FIR, 필터 값 텍스트, Equalizer APO 설정, 컨볼루션 IR, REW mdat, 단계별 REW mdat이 있습니다. REW mdat은 원 측정, 보정 결과, 또는 둘 다를 담고 파일 이름에 그 말이 들어갑니다(F19). 원 측정만은 보정 결과 없이도 저장됩니다. |
+| 컨볼루션 IR | `ExportKind::Convolution` | 입력과 출력 쌍마다 보정 전체를 하나로 합친 임펄스 응답 WAV입니다. 같은 이름의 CSV(주파수 응답)와 `routing.json`이 함께 나옵니다. 렌더러(`secs-filters::render`)는 EqAPO와 CamillaDSP가 쓰는 디지털 필터 그대로 임펄스를 통과시킵니다. |
+| 설계 ID | `design_id` | 신호 사슬, MIMO 서포트 구성, LFE 선택의 정규 JSON에 대한 SHA-256입니다. 같은 설계는 어느 형식으로 내보내도 같은 ID이고, `secs-design.json`과 CamillaDSP 설명에 적힙니다(F21). |
+| 설계 이름 | `design_name` | 사용자가 내보낼 때 붙이는 이름입니다. 주면 `SECS_<형식>_<이름>` 폴더를 슬롯처럼 바꾸고, 비우면 시각 폴더에 쓰며 기록에는 모드 이름이 들어갑니다. |
+| 우회 설정 | `<이름>_bypass.yml` | CamillaDSP 설정의 짝으로, RC와 MIMO만 빼고 레벨·딜레이·극성·라우팅·크로스오버·LFE를 남긴 설정입니다. 보정 단계는 `secs:correction`, MIMO 단계는 `secs:mimo`, 헤드룸은 `secs:headroom`이라는 설명을 답니다(F20). |
 | 자체 측정 | `measure.native` | REW 없이 SECS 2R이 스윕을 재생하고 녹음해 IR을 얻는 측정입니다(업스트림에 없는 기능). |
 | 공개 크레이트 | `sound-equalization-and-correction-system-rust-api` | crates.io에 올린 Rust API입니다(`crates/secs-api`, ADR 0016). `engine` 기능은 앱 없이 계산과 내보내기를 하고, `client` 기능은 실행 중인 앱의 로컬 API를 부릅니다. 판 호환을 약속하는 것은 이 크레이트뿐입니다. |
 | 라이브러리 판 | `api-vX.Y.Z` | crates.io 크레이트 16개가 함께 쓰는 판입니다. 앱 판과 따로 가고, 게시하면 `api-v` 태그를 답니다. |

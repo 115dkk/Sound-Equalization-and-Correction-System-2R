@@ -126,6 +126,8 @@ fn engine_oracle_flow_and_ordered_events() {
             kind: ExportKind::CamillaDsp,
             folder: export_root.to_string_lossy().into_owned(),
             mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
         }))
         .unwrap()
     else {

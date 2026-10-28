@@ -66,6 +66,8 @@
 //!     kind: ExportKind::CamillaDsp,
 //!     folder: "camilladsp".into(),
 //!     mdat_scope: None,
+//!     design_name: Some("Living room".into()),
+//!     camilla_devices: None,
 //! }))? else {
 //!     unreachable!("export has one response variant")
 //! };

@@ -9,8 +9,16 @@ import type { SpecimenDef } from "../../gallery/Specimen";
 import { useT } from "../../i18n/react";
 import { ExportScreen, exportHeader } from "./ExportScreen";
 import {
+  DESIGN_NAME_SAMPLES,
   exportComputingFirst,
+  exportConvolutionDone,
+  exportConvolutionFailed,
+  exportDevicesAsio,
+  exportDevicesAsioUnnamed,
+  exportDevicesTyped,
+  exportDevicesWasapi,
   exportFrame,
+  exportNamed,
   exportDone,
   exportEqapoDone,
   exportExporting,
@@ -30,9 +38,21 @@ import {
   exportStaleCacheMeasurements,
   exportTutorial,
 } from "./fixtures";
-import type { ExportActions, ExportView } from "./types";
+import type { DesignNameProblem, ExportActions, ExportView } from "./types";
 
-export const noopExportActions: ExportActions = { exportFiles: () => {}, setMdatScope: () => {}, changeFolder: () => {}, openFolder: () => {}, goToCalibrate: () => {}, recalibrate: () => {} };
+export const noopExportActions: ExportActions = {
+  exportFiles: () => {},
+  setMdatScope: () => {},
+  setDesignName: () => {},
+  setCamillaDevices: () => {},
+  refreshDevices: () => {},
+  changeFolder: () => {},
+  openFolder: () => {},
+  goToCalibrate: () => {},
+  recalibrate: () => {},
+};
+
+const NAME_PROBLEMS = Object.keys(DESIGN_NAME_SAMPLES) as DesignNameProblem[];
 
 const exportJob = replay([{ type: "event", at: T0, event: { event: "started", job: 12, kind: "export" } }]);
 
@@ -69,6 +89,7 @@ function ExportSpecimen({
   view,
   jobs = initialLedger,
   initialAdvanced,
+  initialDevices,
   scrolled,
   fileName,
   children,
@@ -76,13 +97,15 @@ function ExportSpecimen({
   view: ExportView;
   jobs?: LedgerState;
   initialAdvanced?: boolean;
+  /** Draw the CamillaDSP devices unfolded. */
+  initialDevices?: boolean;
   /** Draw the content scrolled to its end, or to the element with this `data-ui`. */
   scrolled?: true | string;
   fileName?: string;
   children?: ReactNode;
 }) {
   const t = useT();
-  const screen = <ExportScreen view={view} actions={noopExportActions} initialAdvanced={initialAdvanced ?? false} />;
+  const screen = <ExportScreen view={view} actions={noopExportActions} initialAdvanced={initialAdvanced ?? false} initialDevices={initialDevices ?? false} />;
   return (
     <>
       <FrameBox frame={exportFrame(view, fileName)} jobs={jobs} header={exportHeader(view, noopExportActions, t)}>
@@ -146,6 +169,42 @@ export const exportSpecimens: SpecimenDef[] = [
   )),
   frame("screen.export.eqapo-done", "Export · Equalizer APO configuration saved, with where to copy it", () => (
     <ExportSpecimen view={exportEqapoDone} jobs={exportHistory} scrolled="export.kind.equalizer_apo" />
+  )),
+  frame("screen.export.convolution", "Export · convolution IR row: subs and MIMO in, so it stays on while the text is off", () => (
+    <ExportSpecimen view={exportReady} scrolled="export.kind.equalizer_apo" />
+  )),
+  frame("screen.export.convolution.done", "Export · convolution IR saved: a WAV and a CSV per pair, with where the guide is", () => (
+    <ExportSpecimen view={exportConvolutionDone} jobs={exportHistory} scrolled="export.kind.equalizer_apo" />
+  )),
+  frame("screen.export.convolution.failed", "Export · convolution IR failed (disk full), the raw text behind 자세히", () => (
+    <ExportSpecimen view={exportConvolutionFailed} scrolled="export.kind.equalizer_apo" />
+  )),
+  frame("screen.export.name.empty", "Export · design name empty: timestamped folders, said under the field", () => <ExportSpecimen view={exportRcOnly} scrolled="export.files" />),
+  frame("screen.export.name.named", "Export · design name '거실 영화': each filter row names its SECS_<kind>_거실 영화 folder, the field says the next export replaces it", () => (
+    <ExportSpecimen view={exportNamed} scrolled="export.files" />
+  )),
+  ...NAME_PROBLEMS.map((problem) =>
+    frame(`screen.export.name.${problem}`, `Export · design name problem '${problem}': the message under the field, the filter buttons and the header's primary off`, () => (
+      <ExportSpecimen view={{ ...exportRcOnly, designName: DESIGN_NAME_SAMPLES[problem] }} scrolled="export.files" />
+    )),
+  ),
+  frame("screen.export.devices.closed", "Export · CamillaDSP devices folded, the summary reading WASAPI on both sides", () => (
+    <ExportSpecimen view={exportDevicesWasapi} scrolled="export.files" />
+  )),
+  frame("screen.export.devices.file", "Export · CamillaDSP devices open: file placeholders on both sides (the default)", () => (
+    <ExportSpecimen view={exportReady} initialDevices scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.devices.wasapi", "Export · CamillaDSP devices open: WASAPI chosen from the device list, playback exclusive S24", () => (
+    <ExportSpecimen view={exportDevicesWasapi} initialDevices scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.devices.typed", "Export · CamillaDSP devices open, no device list: playback name typed, capture by loopback (exclusive off)", () => (
+    <ExportSpecimen view={exportDevicesTyped} initialDevices scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.devices.asio", "Export · CamillaDSP devices open: ASIO playback, with the note that ASIO needs CamillaDSP's ASIO build", () => (
+    <ExportSpecimen view={exportDevicesAsio} initialDevices scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.devices.asio-unnamed", "Export · ASIO capture without a driver name: the field says so and the header's primary is off", () => (
+    <ExportSpecimen view={exportDevicesAsioUnnamed} initialDevices scrolled="export.kind.camilla_dsp" />
   )),
   frame("screen.export.exporting", "Export · REW mdat being saved", () => <ExportSpecimen view={exportExporting} jobs={exportJob} />),
   frame("screen.export.done", "Export · done, files written", () => <ExportSpecimen view={exportDone} jobs={exportHistory} fileName="거실 7.1.4.secs" />),

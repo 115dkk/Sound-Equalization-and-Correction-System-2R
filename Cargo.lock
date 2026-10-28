@@ -4056,6 +4056,7 @@ dependencies = [
  "secs-graph",
  "secs-oracle",
  "secs-types",
+ "serde",
  "serde_json",
  "thiserror 2.0.21",
 ]
@@ -4078,6 +4079,9 @@ version = "0.1.0"
 dependencies = [
  "secs-dsp",
  "secs-types",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
  "thiserror 2.0.21",
 ]
 
@@ -4161,6 +4165,7 @@ dependencies = [
 name = "secs-service"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "getrandom 0.3.4",
  "secs-audio",
  "secs-camilla",
@@ -4171,6 +4176,7 @@ dependencies = [
  "secs-engine-testkit",
  "secs-export",
  "secs-filters",
+ "secs-graph",
  "secs-jos",
  "secs-mdat",
  "secs-oracle",

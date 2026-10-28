@@ -169,6 +169,14 @@ impl ExportDescription {
         mode_tag(self.mode)
     }
 
+    pub(crate) fn label(&self) -> &str {
+        &self.label
+    }
+
+    pub(crate) fn latency_ms(&self) -> f64 {
+        self.latency_ms
+    }
+
     pub(crate) fn camilla(&self) -> RunLabels {
         RunLabels {
             mode: self.mode_name.clone(),

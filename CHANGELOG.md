@@ -12,6 +12,27 @@ SECS 2R을 바깥 프로그램에서 쓰는 판입니다. 실행 중인 앱을 �
 - 로컬 API로 상태를 바꾸면 화면이 그 변화를 따라 다시 읽고, 바깥에서 시작한 계산도 작업 목록에 보입니다.
 - Rust 크레이트 [`sound-equalization-and-correction-system-rust-api`](https://crates.io/crates/sound-equalization-and-correction-system-rust-api) 0.1.0을 공개합니다. `engine` 기능은 앱 없이 프로젝트를 열고 보정, MIMO, 내보내기를 돌리고, `client` 기능은 실행 중인 앱의 로컬 API를 부릅니다. 라이선스는 GPL-3.0-only입니다. 크레이트는 앱과 따로 0.x 판을 쓰고, 이후 판은 릴리스 때 trusted publishing으로 올라갑니다.
 
+## 0.31.0 - 2026-10-29
+
+컨볼루션 IR과 CSV를 내보내고, 내보낸 설계에 이름과 기록을 붙이는 판입니다. 보정 계산 결과는 0.30.0과 같습니다. CamillaDSP 설정의 제목, 설명, 헤드룸, 단계 구성이 달라지고, 릴리스에 CLI가 함께 들어갑니다.
+
+### 더한 것
+
+- 내보내기에 '컨볼루션 IR'을 더했습니다. 입력과 출력 쌍마다 보정 전체(FIR, PEQ, 크로스오버, 올패스, 게인, 극성, 딜레이)를 합친 48 kHz 32비트 float WAV 하나와 그 주파수 응답 CSV(Hz, dB, 위상)를 씁니다. 서브 합산, LFE, MIMO 서포트도 담고, 클리핑을 막는 헤드룸을 넣습니다. 어느 파일을 어디에 거는지는 `routing.json`과 `컨볼루션 적용 방법.txt`에 있습니다. Equalizer APO의 Convolution, Roon, JRiver, HQPlayer, foobar2000 같은 컨볼버에 쓸 수 있습니다.
+- 내보내기 화면에 '설계 이름'을 더했습니다. 이름을 주면 `SECS_<형식>_<이름>` 폴더에 쓰고, 같은 이름으로 다시 내보내면 그 폴더를 바꿉니다. 그 폴더에 직접 넣은 파일도 지워집니다. 비워 두면 지금처럼 시각이 붙은 새 폴더입니다.
+- 필터를 내보낼 때마다 `secs-design.json`을 함께 씁니다. 설계 ID(신호 사슬과 MIMO의 SHA-256), 프로젝트와 설계 이름, 앱 판, 업스트림 커밋, 시각, 포함 단계, 채널, 헤드룸, 묶음의 파일마다 SHA-256을 담습니다. 내보내기 폴더의 `designs.json`은 그 폴더의 설계 목록입니다.
+- CamillaDSP 내보내기에 '입출력 장치'를 더했습니다. 파일 자리표시(기본값), WASAPI(장치, 형식, 독점 모드, 루프백), ASIO(드라이버 이름)를 고릅니다. ASIO는 CamillaDSP의 ASIO 빌드(`camilladsp-windows-asio-amd64.zip`)에서만 쓸 수 있습니다.
+- CamillaDSP 내보내기가 보정만 뺀 짝 설정 `<이름>_bypass.yml`을 함께 씁니다. 레벨, 딜레이, 극성, 라우팅, 크로스오버, LFE는 남기고 RC와 MIMO만 뺍니다.
+- `secs2r-cli export`가 `--kind convolution`, `--design-name`, CamillaDSP 장치 선택을 받습니다.
+- 릴리스에 CLI가 들어갑니다. Windows 설치본과 포터블 zip의 `SECS 2R.exe` 옆에 `secs2r-cli.exe`가 있고, 운영체제마다 CLI만 담은 압축 파일(`windows-x64-cli.zip`, `macos-universal-cli.tar.gz`, `linux-x86_64-cli.tar.gz`)도 올립니다.
+
+### 바뀐 것
+
+- CamillaDSP 설정의 제목이 `SECS 2R · <프로젝트> · <설계 이름>`이고, 설명 끝에 설계 ID가 붙습니다. 입력 장치에 역할 이름을 채널 라벨로 넣습니다. 실행 중인 CamillaDSP를 바깥에서 지켜보는 프로그램이 어느 설계가 올라가 있는지 알 수 있습니다.
+- CamillaDSP 설정의 첫 단계가 헤드룸(`secs_headroom`)입니다. Equalizer APO 프리앰프와 같은 규칙으로, 필터가 가장 많이 올리는 만큼 미리 줄입니다. 지금까지 CamillaDSP 설정에는 헤드룸이 없어 크게 올리는 보정에서 클리핑이 날 수 있었습니다.
+- CamillaDSP 설정에서 RC의 FIR과 PEQ는 `secs:correction` 단계에 따로 있고 `bypassed: false`가 붙습니다. 이 단계만 끄면 보정을 끈 상태가 됩니다. 처리하는 신호는 같습니다.
+- 서브나 MIMO 때문에 필터 값 텍스트를 내보낼 수 없을 때, 대신 쓸 수 있는 형식(Equalizer APO, CamillaDSP, 컨볼루션 IR)을 함께 알립니다.
+
 ## 0.30.0 - 2026-10-27
 
 REW mdat에 저장할 내용을 고르는 판입니다. 보정 계산 결과와 필터 파일은 0.29.0과 같고, REW mdat의 이름과 항목이 달라집니다.

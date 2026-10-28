@@ -16,11 +16,13 @@ include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "data/**", "UPSTREAM.
 workspace = true
 
 [dependencies]
+chrono.workspace = true
 secs-camilla.workspace = true
 secs-compute.workspace = true
 secs-engine.workspace = true
 secs-export.workspace = true
 secs-filters.workspace = true
+secs-graph.workspace = true
 secs-mdat.workspace = true
 secs-project.workspace = true
 secs-audio.workspace = true

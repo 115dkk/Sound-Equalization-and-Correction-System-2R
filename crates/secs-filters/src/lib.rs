@@ -10,6 +10,9 @@
 //! change.
 
 pub mod playback;
+pub mod render;
+
+pub use render::{RenderedPath, RenderedPaths, render_paths};
 
 use secs_camilla::pyfmt::{format_fixed, round_ndigits};
 use secs_dsp::Complex64;
@@ -27,6 +30,10 @@ use std::path::{Path, PathBuf};
 
 /// Equalizer APO application guide filename.
 pub const EQAPO_GUIDE: &str = "EqAPO 적용 방법.txt";
+/// Complete convolution bundle application guide filename.
+pub const CONVOLUTION_GUIDE: &str = "컨볼루션 적용 방법.txt";
+/// Maximum impulse-response length of a convolution export.
+pub const CONVOLUTION_MAX_LEN: usize = 1 << 20;
 
 /// Band-filter family and the Q values of its second-order sections.
 #[allow(clippy::approx_constant)] // Upstream deliberately rounds these Q values to five decimals.
@@ -1251,6 +1258,194 @@ pub fn export_eqapo(run: &FilterRun<'_>, folder: &Path) -> Result<Vec<PathBuf>, 
         run.note,
         Some(run.latency_ms),
     )
+}
+
+#[derive(serde::Serialize)]
+struct ConvolutionRouting<'a> {
+    schema: u32,
+    sample_rate: u32,
+    length: usize,
+    format: &'static str,
+    headroom_db: f64,
+    inputs: &'a [String],
+    outputs: &'a [String],
+    paths: Vec<ConvolutionRoute>,
+}
+
+#[derive(serde::Serialize)]
+struct ConvolutionRoute {
+    input: String,
+    output: String,
+    wav: String,
+    csv: String,
+    peak_gain_db: f64,
+    delay_ms: f64,
+}
+
+fn convolution_grid() -> Vec<f64> {
+    let mut frequencies = Vec::new();
+    let mut index = 0_u32;
+    loop {
+        let frequency = 10.0 * 2_f64.powf(f64::from(index) / 48.0);
+        if frequency >= 24_000.0 {
+            break;
+        }
+        frequencies.push(frequency);
+        index += 1;
+    }
+    frequencies.push(24_000.0);
+    frequencies
+}
+
+fn exact_dtft(samples: &[f64], frequency: f64) -> Complex64 {
+    let step = Complex64::from_polar(
+        1.0,
+        -2.0 * std::f64::consts::PI * frequency / f64::from(SAMPLE_RATE),
+    );
+    let mut phase = Complex64::new(1.0, 0.0);
+    let mut response = Complex64::new(0.0, 0.0);
+    for &sample in samples {
+        response += phase * sample;
+        phase *= step;
+    }
+    response
+}
+
+fn convolution_csv(samples: &[f64], frequencies: &[f64]) -> String {
+    let mut text = String::from("frequency_hz,magnitude_db,phase_deg\n");
+    for &frequency in frequencies {
+        let response = exact_dtft(samples, frequency);
+        let magnitude = response.norm();
+        let magnitude_db = if magnitude == 0.0 {
+            -200.0
+        } else {
+            20.0 * magnitude.log10()
+        };
+        let mut phase = if magnitude == 0.0 {
+            0.0
+        } else {
+            response.arg().to_degrees()
+        };
+        if phase <= -180.0 {
+            phase += 360.0;
+        }
+        text.push_str(&format!(
+            "{frequency},{magnitude_db:.6},{:.3}\n",
+            phase + 0.0
+        ));
+    }
+    text
+}
+
+fn convolution_guide(length: usize, headroom_db: f64, paths: &[ConvolutionRoute]) -> String {
+    let mut lines = vec![
+        "SECS 2R 컨볼루션 IR".to_owned(),
+        String::new(),
+        "이 폴더의 WAV는 보정 필터 전체(FIR, PEQ, 크로스오버, 올패스, 게인, 극성, 딜레이)를 입력과 출력 쌍마다 하나로 합친 임펄스 응답입니다.".to_owned(),
+        format!("형식: 48000 Hz, 32비트 float, 모노. 모든 파일의 길이는 {length} 샘플로 같습니다."),
+        format!("헤드룸: 클리핑을 막으려고 모든 파일에 {headroom_db:.1} dB 감쇠를 넣었습니다. 컨볼버에서 따로 줄이지 않아도 됩니다."),
+        String::new(),
+        "거는 법".to_owned(),
+        "- 아래 표의 한 줄은 입력 채널 하나를 그 WAV로 컨볼루션해 출력 채널 하나로 보내는 연결입니다.".to_owned(),
+        "- 같은 출력으로 가는 줄이 여럿이면 결과를 더하십시오(서브 합산, LFE, MIMO 서포트).".to_owned(),
+        "- 입력과 출력의 이름이 같고 그 출력으로 가는 줄이 하나뿐이면 그 WAV 하나만 거십시오.".to_owned(),
+        "- 재생 장치와 컨볼버의 샘플레이트를 48000 Hz로 맞추십시오.".to_owned(),
+        String::new(),
+        "입력 → 출력 | 파일 | 최대 이득 | 지연".to_owned(),
+    ];
+    lines.extend(paths.iter().map(|path| {
+        format!(
+            "{} → {} | {} | {:+.1} dB | {:.2} ms",
+            path.input, path.output, path.wav, path.peak_gain_db, path.delay_ms
+        )
+    }));
+    lines.extend([
+        String::new(),
+        "같은 이름의 .csv에는 줄마다 주파수 응답(Hz, dB, 위상)이 있습니다. 기계가 읽는 표는 routing.json입니다.".to_owned(),
+    ]);
+    lines.join("\r\n") + "\r\n"
+}
+
+/// Write complete per-path convolution WAV, CSV, routing and guide files.
+pub fn export_convolution(
+    run: &FilterRun<'_>,
+    folder: &Path,
+) -> Result<Vec<PathBuf>, FiltersError> {
+    if let Some(block) = filter_export_block(
+        ExportKind::Convolution,
+        !run.chain.subs.is_empty(),
+        run.mimo.is_some(),
+    ) {
+        return Err(FiltersError::Scope(block));
+    }
+    validate_run(run)?;
+    let graph = ExportGraph::build(run.chain, run.mimo, LfeChoice::DOLBY)?;
+    let plan = graph.plan();
+    let rendered = render_paths(plan, CONVOLUTION_MAX_LEN)?;
+    let headroom_db = (headroom_db(plan)? * 2.0).ceil() / 2.0;
+    let attenuation = 10_f64.powf(-headroom_db / 20.0);
+    let frequencies = convolution_grid();
+    let mut files = Vec::new();
+    let mut routes = Vec::with_capacity(rendered.paths.len());
+    for path in &rendered.paths {
+        let stem = format!("{}_to_{}", path.input, path.output);
+        let wav = format!("{stem}.wav");
+        let csv = format!("{stem}.csv");
+        let written = path
+            .response
+            .iter()
+            .map(|sample| f64::from((*sample * attenuation) as f32))
+            .collect::<Vec<_>>();
+        let peak = frequencies
+            .iter()
+            .filter(|&&frequency| (20.0..=20_000.0).contains(&frequency))
+            .map(|frequency| exact_dtft(&path.response, *frequency).norm())
+            .fold(0.0_f64, f64::max);
+        let peak_gain_db = if peak == 0.0 {
+            -200.0
+        } else {
+            20.0 * peak.log10()
+        };
+        files.push((
+            PathBuf::from(&wav),
+            wav_bytes(&written, SAMPLE_RATE)
+                .map_err(|error| FiltersError::Invalid(format!("{stem}: {error}")))?,
+        ));
+        files.push((
+            PathBuf::from(&csv),
+            convolution_csv(&written, &frequencies).into_bytes(),
+        ));
+        routes.push(ConvolutionRoute {
+            input: path.input.clone(),
+            output: path.output.clone(),
+            wav,
+            csv,
+            peak_gain_db,
+            delay_ms: path.delay_ms,
+        });
+    }
+    let guide = convolution_guide(rendered.length, headroom_db, &routes);
+    files.push((PathBuf::from(CONVOLUTION_GUIDE), guide.into_bytes()));
+    let routing = ConvolutionRouting {
+        schema: 1,
+        sample_rate: SAMPLE_RATE,
+        length: rendered.length,
+        format: "f32",
+        headroom_db,
+        inputs: &rendered.inputs,
+        outputs: &rendered.outputs,
+        paths: routes,
+    };
+    let entry = PathBuf::from("routing.json");
+    let mut routing_bytes = serde_json::to_vec_pretty(&routing)
+        .map_err(|error| FiltersError::Invalid(format!("routing.json: {error}")))?;
+    routing_bytes.push(b'\n');
+    files.push((entry.clone(), routing_bytes));
+    write_bundle_observed(folder, &files, &entry, &|_, _| Ok(()))?;
+    Ok(files
+        .into_iter()
+        .map(|(relative, _)| folder.join(relative))
+        .collect())
 }
 
 fn finite(name: &str, value: f64) -> Result<(), FiltersError> {

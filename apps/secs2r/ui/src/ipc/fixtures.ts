@@ -40,7 +40,7 @@ export const bootstrapInfo: BootstrapInfo = {
   app_name: "SECS 2R",
   version: __BUILD_INFO__.version,
   prerelease: true,
-  upstream: { ...__BUILD_INFO__.upstream },
+  upstream: { ...__BUILD_INFO__.upstream, repository: "https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2" },
   platform: { os: "windows", arch: "x86_64" },
 };
 

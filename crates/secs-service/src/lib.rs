@@ -11,6 +11,7 @@ mod calibration;
 mod clock;
 mod compute;
 mod curves;
+mod design_export;
 pub mod dirac_import;
 mod export;
 pub mod export_folder;
@@ -177,7 +178,8 @@ pub type UuidSource = Arc<Mutex<Box<dyn FnMut() -> Result<u128, secs_export::Exp
 /// them here keeps platform crates out of this service.
 #[derive(Clone)]
 pub struct Deps {
-    /// Product version shown to users and written into exported files.
+    /// Product version shown to users and written into exported files
+    /// (bootstrap and the design manifests).
     pub app_version: Cow<'static, str>,
     /// Resolves a requested compute policy without platform dependencies in the service.
     pub acceleration: Arc<

@@ -929,8 +929,8 @@ id = "service.exports"
 kind = "service"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-service::project_session_create_open_save_and_save_as", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::filter_text_export_matches_direct_and_reopened_bytes_without_redesign", "secs-service::exports_after_reopening_match_pre_close_bytes", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::stale_calibration_exports_with_flag_and_cache_survives_reopen"]
-note = "Exports include CamillaDSP, staged and before/after mdat, filter text, and Equalizer APO; filter formats enforce subs/MIMO scope synchronously and reuse cached designs after reopening."
+tests = ["secs-service::project_session_create_open_save_and_save_as", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::filter_text_export_matches_direct_and_reopened_bytes_without_redesign", "secs-service::exports_after_reopening_match_pre_close_bytes", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::convolution_export_with_subs_and_mimo_reopens_byte_identically", "secs-service::stale_calibration_exports_with_flag_and_cache_survives_reopen"]
+note = "Exports include CamillaDSP, staged and before/after mdat, filter text, Equalizer APO, and complete convolution bundles; filter formats enforce subs/MIMO scope synchronously and reuse cached designs after reopening."
 
 [[feature]]
 id = "service.host"
@@ -999,8 +999,36 @@ id = "export.camilladsp"
 kind = "export"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-camilla::export_camilladsp_matches_oracle", "secs-camilla::invalid_values_write_nothing", "secs-camilla::fir_taps_that_overflow_f32_write_nothing_td45", "secs-camilla::duplicate_or_reserved_roles_write_nothing_td46", "secs-camilla::negative_delays_write_nothing_td94"]
+tests = ["secs-camilla::export_camilladsp_matches_oracle", "secs-camilla::invalid_values_write_nothing", "secs-camilla::fir_taps_that_overflow_f32_write_nothing_td45", "secs-camilla::duplicate_or_reserved_roles_write_nothing_td46", "secs-camilla::negative_delays_write_nothing_td94", "secs-camilla::controller_metadata_headroom_bypass_labels_and_devices_follow_v4_schema"]
 upstream = "calibration.py export_camilladsp"
+note = "The default writer remains byte-compatible with upstream. Service exports add design identity, capture labels, rounded headroom and controller-addressable correction/MIMO descriptions; these are new deviations from upstream."
+
+[[feature]]
+id = "export.design_manifest"
+kind = "export"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-graph::design_id_is_stable_and_changes_with_taps_delays_and_mimo", "secs-service::named_design_manifest_replaces_bundle_hashes_files_and_rebuilds_index", "secs-service::invalid_design_names_are_rejected_before_a_folder_is_chosen", "secs-service::named_filter_bundles_replace_heal_index_hash_every_file_and_share_design_id"]
+note = "New deviation from upstream: every filter bundle has a stable SHA-256 design identity, a hashed manifest and a rebuilt base-folder index; named bundles replace their prior contents."
+
+[[feature]]
+id = "export.camilla_bypass"
+kind = "export"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-camilla::controller_metadata_headroom_bypass_labels_and_devices_follow_v4_schema"]
+note = "New deviation from upstream: service exports include a correction-free, MIMO-free companion config while preserving routing, levels, delays, polarity, bass management and crossovers."
+
+[[feature]]
+id = "export.camilla_devices"
+kind = "export"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-camilla::controller_metadata_headroom_bypass_labels_and_devices_follow_v4_schema"]
+note = "New deviation from upstream: IPC and CLI select documented CamillaDSP v4 Wasapi or ASIO capture and playback blocks; file placeholders remain the default."
 
 [[feature]]
 id = "export.filter_text"
@@ -1017,6 +1045,20 @@ milestone = "M5"
 status = "implemented"
 tests = ["secs-filters::equalizer_apo_files_match_oracle_bytes", "secs-filters::public_wrappers_match_oracle_and_eqapo_carries_mimo_f12", "secs-filters::computed_public_wrappers_match_oracle_files", "secs-filters::eqapo_public_exports_use_single_assignments_f11", "secs-filters::eqapo_disabled_and_case_sensitive_mapping_f11", "secs-filters::exported_configs_play_as_designed", "secs-filters::fir_taps_that_overflow_f32_write_nothing_td45", "secs-filters::negative_delays_write_nothing_td94", "secs-filters::fir_responses_require_the_rfft_grid_td94"]
 upstream = "calibration.py export_eqapo; export_filters.py"
+
+[[feature]]
+id = "export.convolution"
+kind = "export"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = [
+  "secs-filters::rendered_oracle_paths_match_plan_responses",
+  "secs-filters::renderer_applies_every_operation_in_time_domain",
+  "secs-filters::convolution_bundle_contains_complete_paths_and_is_atomic",
+  "secs-service::convolution_export_with_subs_and_mimo_reopens_byte_identically",
+]
+note = "New: complete 48 kHz f32 convolution IRs fold FIR, PEQ, crossovers, all-pass, gain, polarity and delay into one WAV and exact-DTFT CSV per reachable input/output pair, with routing metadata and shared headroom."
 
 [[feature]]
 id = "export.camilla_mimo"
@@ -1157,7 +1199,7 @@ kind = "ipc"
 milestone = "M4"
 status = "implemented"
 tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-types::mdat_scope_is_optional_on_the_wire", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration"]
-note = "Export IPC covers CamillaDSP, mdat, filter text, and Equalizer APO, including typed export_scope reasons and the REW mdat's optional mdat_scope."
+note = "Export IPC covers CamillaDSP, mdat, filter text, Equalizer APO, and complete convolution bundles, including typed export_scope reasons and the REW mdat's optional mdat_scope."
 
 [[feature]]
 id = "ipc.job_cancel"

@@ -6,6 +6,7 @@ import type { JobEvent } from "../ipc/bindings/JobEvent";
 import type { MeasureConfigureParams } from "../ipc/bindings/MeasureConfigureParams";
 import type { ResultCurvesParams } from "../ipc/bindings/ResultCurvesParams";
 import type { ResultCurvesResult } from "../ipc/bindings/ResultCurvesResult";
+import type { CamillaDevices } from "../ipc/bindings/CamillaDevices";
 import type { ExportKind } from "../ipc/bindings/ExportKind";
 import type { MdatScope } from "../ipc/bindings/MdatScope";
 import type { XoRecommendation } from "../ipc/bindings/XoRecommendation";
@@ -35,6 +36,8 @@ type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "m
   targetEdit: CalibrateView["targetEdit"]; xoEdit: CalibrateView["xoEdit"];
   meter: MeterReading | null; monitor: MonitorState; playing: string | null; playingAll: boolean; masterDbfs: number;
   xoRecommendation: XoRecommendation | null; runs: Partial<Record<ExportKind, ExportRun>>; mdatScope: MdatScope;
+  /** 내보내기: the design name field's text (`""` = no name) and the CamillaDSP devices (file placeholders by default). */
+  designName: string; camillaDevices: CamillaDevices;
   failure: CalibrateView["failure"]; rewLaunch: "idle" | "checking" | "launching";
   rewProblem: RewProblem | null; rewProblemDetail: string | null; readingRew: boolean;
   switchingRewDriver: boolean;
@@ -66,6 +69,7 @@ export function createSession(ipc: Ipc) {
     mdat: null, warnings: [], tab: "spl", channel: null, xoGroup: null, previewHz: null, targetEdit: "idle", xoEdit: "idle",
     meter: null, monitor: "off", playing: null, playingAll: false, masterDbfs: -20,
     xoRecommendation: null, runs: {}, mdatScope: "all", failure: null,
+    designName: "", camillaDevices: { capture: { type: "file" }, playback: { type: "file" } },
     micCalBusy: null, micCalError: null,
     rewLaunch: "idle", rewProblem: null, rewProblemDetail: null, readingRew: false, switchingRewDriver: false, opened: 0,
   });
