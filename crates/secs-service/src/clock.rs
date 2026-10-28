@@ -55,6 +55,36 @@ impl LocalTime {
         )
     }
 
+    /// Returns this reading shifted by a signed number of seconds.
+    pub fn shift_seconds(&self, seconds: i32) -> Self {
+        let days = days_from_civil(self.year, self.month, self.day);
+        let of_day =
+            i64::from(self.hour) * 3600 + i64::from(self.minute) * 60 + i64::from(self.second);
+        let shifted = days
+            .saturating_mul(86_400)
+            .saturating_add(of_day)
+            .saturating_add(i64::from(seconds));
+        let (year, month, day) = civil_from_days(shifted.div_euclid(86_400));
+        let of_day = shifted.rem_euclid(86_400);
+        let part = |value: i64| u8::try_from(value).expect("time of day fits u8");
+        Self {
+            year,
+            month,
+            day,
+            hour: part(of_day / 3600),
+            minute: part(of_day % 3600 / 60),
+            second: part(of_day % 60),
+        }
+    }
+
+    /// RFC 3339 UTC timestamp used by the local API.
+    pub fn rfc3339_utc(&self) -> String {
+        format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+            self.year, self.month, self.day, self.hour, self.minute, self.second
+        )
+    }
+
     /// `20240102-030405`, the stamp of a before/after mdat folder.
     pub fn stamp(&self) -> String {
         format!(
@@ -62,6 +92,19 @@ impl LocalTime {
             self.year, self.month, self.day, self.hour, self.minute, self.second
         )
     }
+}
+
+/// Day count from 1970-01-01 for a proleptic Gregorian date (Howard Hinnant,
+/// "chrono-Compatible Low-Level Date Algorithms", public domain).
+fn days_from_civil(year: i64, month: u8, day: u8) -> i64 {
+    let year = year - i64::from(month <= 2);
+    let era = year.div_euclid(400);
+    let yoe = year.rem_euclid(400);
+    let month = i64::from(month);
+    let shifted_month = month + if month > 2 { -3 } else { 9 };
+    let doy = (153 * shifted_month + 2) / 5 + i64::from(day) - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
 }
 
 /// The proleptic Gregorian date of a day count from 1970-01-01 (Howard
@@ -108,6 +151,7 @@ mod tests {
         // Seoul is nine hours ahead; Los Angeles eight behind crosses midnight.
         assert_eq!(at(1_704_164_645, 9 * 3600).stamp(), "20240102-120405");
         assert_eq!(at(1_704_164_645, -8 * 3600).stamp(), "20240101-190405");
+        assert_eq!(at(1_704_164_645, 9 * 3600).shift_seconds(-9 * 3600), utc);
         assert_eq!(at(0, 0).stamp(), "19700101-000000");
         assert_eq!(at(-1, 0).stamp(), "19691231-235959");
         assert_eq!(at(951_782_400, 0).date(), "2000-02-29");

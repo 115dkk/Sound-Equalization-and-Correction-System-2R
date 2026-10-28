@@ -180,6 +180,40 @@ fn cached_paths(project: &Path) -> secs_types::chain::MimoPaths {
 }
 
 #[test]
+fn observer_receives_every_caller_event_in_the_same_order() {
+    let root = temp_root("observer");
+    fs::create_dir_all(&root).unwrap();
+    let observer = Arc::new(Events::default());
+    let service = Service::new(Deps {
+        observer: observer.clone(),
+        ..Deps::default()
+    });
+    call_ok(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: root.join("sample.secs").to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: true,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    let caller = Arc::new(Events::default());
+    let Response::SampleLoad(started) = call_ok(
+        &service,
+        Request::SampleLoad(Default::default()),
+        caller.clone(),
+    ) else {
+        panic!("sample load must start")
+    };
+    observer.wait(started.job, Duration::from_secs(10));
+    caller.wait(started.job, Duration::from_secs(10));
+    assert_eq!(*lock(&caller.values), *lock(&observer.values));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn new_projects_match_upstream_bytes() {
     let root = temp_root("new-projects");
     fs::create_dir_all(&root).unwrap();
@@ -1214,6 +1248,16 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
             ExportKind::FilterText => unreachable!(),
         }
     }
+    let status = service.status();
+    let last = status.last_export.expect("successful export is remembered");
+    assert_eq!(last.kind, ExportKind::EqualizerApo);
+    assert_eq!(
+        last.folder,
+        root.join("export-EqualizerApo").to_string_lossy()
+    );
+    assert!(!last.mimo);
+    assert_eq!(last.mode, "mixed");
+    assert_eq!(last.time, "2024-01-02T03:04:05Z");
     fs::remove_dir_all(root).unwrap();
 }
 

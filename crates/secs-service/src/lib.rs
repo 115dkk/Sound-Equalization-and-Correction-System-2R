@@ -38,7 +38,8 @@ use std::time::SystemTime;
 
 use secs_compute::MemoryProbe;
 use secs_types::ipc::{
-    BootstrapInfo, Envelope, ErrorCode, IpcError, JobEvent, Platform, Request, UpstreamBase,
+    BootstrapInfo, Envelope, ErrorCode, IpcError, JobEvent, LocalApiStatus, Platform, Request,
+    UpstreamBase,
 };
 
 pub use clock::LocalTime;
@@ -145,6 +146,14 @@ pub trait Host: Send + Sync + Debug {
             "host REW launch is not implemented".into(),
         ))
     }
+    /// Reports the app-owned local API server and token.
+    fn local_api_status(&self) -> Result<LocalApiStatus, IpcError> {
+        not_implemented("local API status")
+    }
+    /// Replaces the app-owned local API token.
+    fn local_api_regenerate_token(&self) -> Result<LocalApiStatus, IpcError> {
+        not_implemented("local API token regeneration")
+    }
 }
 
 fn not_implemented<T>(operation: &str) -> Result<T, IpcError> {
@@ -190,6 +199,8 @@ pub struct Deps {
     pub memory: Arc<dyn MemoryProbe>,
     /// Application host operations.
     pub host: Arc<dyn Host>,
+    /// Receives every job event in addition to the sink of the individual call.
+    pub observer: Arc<dyn EventSink>,
     /// Generates one UUID for each mdat measurement.
     pub uuid: UuidSource,
     /// Versioned application-settings file, or in-memory storage when absent.
@@ -197,6 +208,8 @@ pub struct Deps {
     /// The user's wall clock, for export folder names. The default reads UTC;
     /// the apps add the UTC offset `secs-sys` reports.
     pub clock: Arc<dyn Fn() -> LocalTime + Send + Sync>,
+    /// Offset east of UTC represented by [`Self::clock`], used to record UTC times.
+    pub clock_offset_seconds: Arc<dyn Fn() -> i32 + Send + Sync>,
     /// Milliseconds since the Unix epoch, for the measurement date REW reads
     /// from an mdat (upstream `time.time()`).
     pub unix_ms: Arc<dyn Fn() -> i64 + Send + Sync>,
@@ -213,9 +226,11 @@ impl Debug for Deps {
             .field("process", &"probe")
             .field("memory", &self.memory)
             .field("host", &self.host)
+            .field("observer", &self.observer)
             .field("uuid", &"source")
             .field("app_settings_path", &self.app_settings_path)
             .field("clock", &"source")
+            .field("clock_offset_seconds", &"source")
             .field("unix_ms", &"source")
             .finish()
     }
@@ -273,9 +288,11 @@ impl Default for Deps {
             process: Arc::new(NoProcesses),
             memory: Arc::new(secs_compute::FixedMemory(1024 * 1024 * 1024)),
             host: Arc::new(NullHost),
+            observer: Arc::new(NoEvents),
             uuid: Arc::new(Mutex::new(Box::new(random_uuid))),
             app_settings_path: None,
             clock: Arc::new(|| LocalTime::from_system(SystemTime::now(), 0)),
+            clock_offset_seconds: Arc::new(|| 0),
             unix_ms: Arc::new(|| unix_ms(SystemTime::now())),
         }
     }
@@ -320,6 +337,19 @@ impl From<ServiceError> for IpcError {
     }
 }
 
+#[derive(Debug)]
+struct ObservedEvents {
+    caller: Arc<dyn EventSink>,
+    observer: Arc<dyn EventSink>,
+}
+
+impl EventSink for ObservedEvents {
+    fn send(&self, event: JobEvent) {
+        self.caller.send(event.clone());
+        self.observer.send(event);
+    }
+}
+
 /// The application service. One instance lives as long as the app.
 #[derive(Debug)]
 pub struct Service {
@@ -350,7 +380,31 @@ impl Service {
 
     /// Handles one parsed request. Long work starts a job and pushes events.
     pub fn call(&self, request: Request, events: Arc<dyn EventSink>) -> Envelope {
+        let events = Arc::new(ObservedEvents {
+            caller: events,
+            observer: self.deps.observer.clone(),
+        });
         ipc::dispatch(self, request, events)
+    }
+
+    /// Returns the aggregate state used by the local status endpoint.
+    pub fn status(&self) -> secs_types::local_api::Status {
+        let session = lock(&self.session);
+        let project = session.info().ok();
+        let results = session.require().ok().map(|open| {
+            let compute = crate::compute::ComputeIdentity::from(&self.acceleration().status);
+            open.results.summary(open.store.project(), &compute)
+        });
+        secs_types::local_api::Status {
+            api: secs_types::local_api::API_VERSION,
+            app_name: APP_NAME.to_owned(),
+            app_version: self.deps.app_version.to_string(),
+            library_version: VERSION.to_owned(),
+            project,
+            jobs: self.jobs.snapshots(),
+            results,
+            last_export: session.last_export(),
+        }
     }
 
     /// Cancels every cancellable job and waits at most `timeout` for device access to stop.

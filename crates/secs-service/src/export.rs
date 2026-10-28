@@ -34,6 +34,10 @@ impl Service {
         }
         let mdat_scope = params.mdat_scope.unwrap_or_default();
         let now = (self.deps.clock)();
+        let project_mode = secs_types::calibration::mode_tag(
+            secs_project::calibration_from_project(open.store.project()).mode,
+        )
+        .to_owned();
         if params.kind == ExportKind::BeforeAfterMdat
             && mdat_scope == secs_export::MdatScope::Measurements
         {
@@ -47,6 +51,9 @@ impl Service {
             }
             let uuid = self.deps.uuid.clone();
             let now_ms = (self.deps.unix_ms)();
+            let export_session = self.session.clone();
+            let completion_clock = self.deps.clock.clone();
+            let completion_offset = self.deps.clock_offset_seconds.clone();
             drop(session);
             let destination = if params.folder.is_empty() {
                 crate::export_folder::measurement_mdat_folder(&self.resolved_export_base()?, now)
@@ -76,14 +83,24 @@ impl Service {
                 if let Some(path) = write_compute_provenance(folder, None)? {
                     paths.push(path);
                 }
-                Ok(JobResult::Export(ExportResult {
+                let result = ExportResult {
                     files: paths
                         .into_iter()
                         .map(|path| path.to_string_lossy().into_owned())
                         .collect(),
                     folder: folder.to_string_lossy().into_owned(),
                     stale: false,
-                }))
+                };
+                lock(&export_session).record_export(secs_types::local_api::LastExport {
+                    kind: ExportKind::BeforeAfterMdat,
+                    folder: result.folder.clone(),
+                    mimo: false,
+                    mode: project_mode,
+                    time: completion_clock()
+                        .shift_seconds(completion_offset().saturating_neg())
+                        .rfc3339_utc(),
+                });
+                Ok(JobResult::Export(result))
             });
         }
         let stale = {
@@ -136,6 +153,8 @@ impl Service {
         };
         let uuid = self.deps.uuid.clone();
         let session_for_design = self.session.clone();
+        let completion_clock = self.deps.clock.clone();
+        let completion_offset = self.deps.clock_offset_seconds.clone();
         let memory = self.deps.memory.available_bytes();
         let mode_name = description.mode();
         let mut mimo = live_mimo.filter(|_| mdat).map(|result| {
@@ -329,14 +348,24 @@ impl Service {
             if let Some(path) = write_compute_provenance(folder, compute_report.as_ref())? {
                 paths.push(path);
             }
-            Ok(JobResult::Export(ExportResult {
+            let result = ExportResult {
                 files: paths
                     .into_iter()
                     .map(|path| path.to_string_lossy().into_owned())
                     .collect(),
                 folder: folder.to_string_lossy().into_owned(),
                 stale,
-            }))
+            };
+            lock(&session_for_design).record_export(secs_types::local_api::LastExport {
+                kind: params.kind,
+                folder: result.folder.clone(),
+                mimo: folder_includes_mimo,
+                mode: mode_name.to_owned(),
+                time: completion_clock()
+                    .shift_seconds(completion_offset().saturating_neg())
+                    .rfc3339_utc(),
+            });
+            Ok(JobResult::Export(result))
         })
     }
 }

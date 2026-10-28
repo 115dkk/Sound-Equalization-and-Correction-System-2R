@@ -44,6 +44,8 @@ secs-service = { path = "crates/secs-service", version = "=0.1.0" }
 secs-oracle = { path = "crates/secs-oracle" }
 secs-engine-testkit = { path = "crates/secs-engine-testkit" }
 
+axum = { version = "0.8.9", features = ["ws"] }
+tokio = { version = "1.54.1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 serde = { version = "1.0.229", features = ["derive"] }
 # preserve_order: .secs files keep the key order SECS 2 wrote (docs/adr/0004).
 serde_json = { version = "1.0.152", features = ["preserve_order", "float_roundtrip"] }

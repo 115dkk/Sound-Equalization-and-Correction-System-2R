@@ -138,6 +138,16 @@ pub(crate) fn dispatch(
         Request::AppSettingsSet(params) => service
             .app_settings_set(params)
             .map(Response::AppSettingsSet),
+        Request::LocalApiStatus => service
+            .deps
+            .host
+            .local_api_status()
+            .map(Response::LocalApiStatus),
+        Request::LocalApiTokenRegenerate => service
+            .deps
+            .host
+            .local_api_regenerate_token()
+            .map(Response::LocalApiTokenRegenerate),
         request @ (Request::MeasurementCurves(_)
         | Request::ResultCurves(_)
         | Request::ResultLines

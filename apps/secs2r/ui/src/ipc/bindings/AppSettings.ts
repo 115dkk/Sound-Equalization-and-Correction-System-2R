@@ -3,6 +3,7 @@ import type { AppIcon } from "./AppIcon";
 import type { AppSkin } from "./AppSkin";
 import type { AppTheme } from "./AppTheme";
 import type { ComputePreference } from "./ComputePreference";
+import type { LocalApiSettings } from "./LocalApiSettings";
 
 /**
  * Application-local settings, independent of an open project.
@@ -28,6 +29,10 @@ icon: AppIcon,
  * Skin set the screen draws with.
  */
 skin: AppSkin, 
+/**
+ * Opt-in loopback API server.
+ */
+local_api: LocalApiSettings, 
 /**
  * Recently opened project paths, newest first (at most 10).
  */

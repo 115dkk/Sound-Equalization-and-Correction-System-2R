@@ -147,6 +147,10 @@ pub enum Request {
     AppSettingsGet,
     /// Stores application-local settings.
     AppSettingsSet(AppSettingsParams),
+    /// Reports the opt-in local API server and token.
+    LocalApiStatus,
+    /// Replaces the local API bearer token and restarts its server when needed.
+    LocalApiTokenRegenerate,
     /// Available compute devices and the effective application preference.
     ComputeStatus,
     /// Opens the official GPU runtime installation guide for this platform.
@@ -322,6 +326,10 @@ pub enum Response {
     AppSettingsGet(AppSettings),
     /// The `AppSettingsSet` Response variant.
     AppSettingsSet(AppSettings),
+    /// Current local API server and token state.
+    LocalApiStatus(LocalApiStatus),
+    /// Local API state after replacing its bearer token.
+    LocalApiTokenRegenerate(LocalApiStatus),
     /// Device capability and automatic-selection result.
     ComputeStatus(ComputeStatus),
     /// GPU installation documentation opened by the application host.
@@ -1947,6 +1955,24 @@ pub enum AppIcon {
     /// a measured response and its correction on the target.
     Civilian,
 }
+/// Opt-in loopback API settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LocalApiSettings {
+    /// Whether the app starts the local API server.
+    pub enabled: bool,
+    /// Loopback TCP port; zero asks the operating system for a free port.
+    pub port: u16,
+}
+impl Default for LocalApiSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: crate::local_api::DEFAULT_PORT,
+        }
+    }
+}
+
 /// Application-local settings, independent of an open project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -1965,6 +1991,9 @@ pub struct AppSettings {
     /// Skin set the screen draws with.
     #[serde(default)]
     pub skin: AppSkin,
+    /// Opt-in loopback API server.
+    #[serde(default)]
+    pub local_api: LocalApiSettings,
     /// Recently opened project paths, newest first (at most 10).
     pub recent_projects: Vec<String>,
     /// Last window size in logical pixels.
@@ -1978,6 +2007,7 @@ impl Default for AppSettings {
             theme: AppTheme::System,
             icon: AppIcon::Expert,
             skin: AppSkin::Default,
+            local_api: LocalApiSettings::default(),
             recent_projects: Vec::new(),
             last_window_size: None,
         }
@@ -1989,6 +2019,26 @@ impl Default for AppSettings {
 pub struct AppSettingsParams {
     /// The complete app settings to store.
     pub settings: AppSettings,
+}
+
+/// App-facing state of the opt-in local API server.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LocalApiStatus {
+    /// Configured enabled state.
+    pub enabled: bool,
+    /// Configured port, or the selected free port while running with port zero.
+    pub port: u16,
+    /// Whether a listener is currently running.
+    pub running: bool,
+    /// Most recent startup failure, when present.
+    pub error: Option<String>,
+    /// Loopback base URL.
+    pub url: String,
+    /// Current bearer token.
+    pub token: String,
+    /// Full token-file path.
+    pub token_path: String,
 }
 
 /// Why a call failed. The screen maps each code to a written message with the
@@ -2003,6 +2053,8 @@ pub enum ErrorCode {
     Internal,
     /// The method is registered but not connected yet.
     NotImplemented,
+    /// The method opens a window or program and is unavailable to local API clients.
+    UiOnly,
     /// The call requires an open project.
     ProjectNotOpen,
     /// Opening, reading, or writing project data failed.
@@ -2230,6 +2282,8 @@ mod tests {
             Request::AppSettingsSet(AppSettingsParams {
                 settings: AppSettings::default(),
             }),
+            Request::LocalApiStatus,
+            Request::LocalApiTokenRegenerate,
             Request::ComputeStatus,
             Request::OpenGpuHelp,
             Request::MeasurementCurves(MeasurementCurvesParams::default()),
@@ -2285,6 +2339,17 @@ mod tests {
             assert_eq!(parsed.method(), request.method());
         }
     }
+    #[test]
+    fn old_app_settings_without_local_api_use_the_disabled_default() {
+        let settings: AppSettings = serde_json::from_str(
+            r#"{"language":"ko","recent_projects":[],"last_window_size":null}"#,
+        )
+        .unwrap();
+        assert_eq!(settings.local_api, LocalApiSettings::default());
+        assert!(!settings.local_api.enabled);
+        assert_eq!(settings.local_api.port, crate::local_api::DEFAULT_PORT);
+    }
+
     #[test]
     fn mdat_scope_is_optional_on_the_wire() {
         let old: ExportParams =
