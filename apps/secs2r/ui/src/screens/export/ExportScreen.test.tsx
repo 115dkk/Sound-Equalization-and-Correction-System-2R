@@ -1,5 +1,6 @@
 // @vitest-environment happy-dom
 import { fireEvent, screen } from "@testing-library/react";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { AppFrame } from "../../app/AppFrame";
 import { JobTray } from "../../app/jobs/JobTray";
@@ -10,9 +11,17 @@ import { useT, type Translate } from "../../i18n/react";
 import { renderWith } from "../../test/render";
 import { ExportScreen, exportHeader, rcText } from "./ExportScreen";
 import {
+  DESIGN_NAME_SAMPLES,
   exportFrame,
   exportComputingFirst,
+  exportConvolutionDone,
+  exportConvolutionFailed,
+  exportDevicesAsio,
+  exportDevicesAsioUnnamed,
+  exportDevicesTyped,
+  exportDevicesWasapi,
   exportDone,
+  exportNamed,
   exportEqapoDone,
   exportExporting,
   exportFailed,
@@ -31,7 +40,7 @@ import {
   exportStaleCacheMeasurements,
   exportTutorial,
 } from "./fixtures";
-import { canExport, exportStepState, mimoInclusion, type ExportActions, type ExportView } from "./types";
+import { EXPORT_KINDS, FILTER_KINDS, canExport, exportStepState, mimoInclusion, type DesignNameProblem, type ExportActions, type ExportView } from "./types";
 import { translate } from "../../i18n";
 
 /** Every id docs/M5-reach.md §9 and §10 cite for this screen and the frame around it, and the filter formats' rows (P47). */
@@ -114,12 +123,23 @@ const STATES: Record<string, ExportView> = {
   measurementsDone: exportMeasurementsDone,
   nothingMeasured: exportNothingMeasured,
   staleCacheMeasurements: exportStaleCacheMeasurements,
+  convolutionDone: exportConvolutionDone,
+  convolutionFailed: exportConvolutionFailed,
+  named: exportNamed,
+  nameProblem: { ...exportRcOnly, designName: DESIGN_NAME_SAMPLES.character },
+  devicesWasapi: exportDevicesWasapi,
+  devicesTyped: exportDevicesTyped,
+  devicesAsio: exportDevicesAsio,
+  devicesAsioUnnamed: exportDevicesAsioUnnamed,
 };
 
 function actions() {
   return {
     exportFiles: vi.fn<ExportActions["exportFiles"]>(),
     setMdatScope: vi.fn<ExportActions["setMdatScope"]>(),
+    setDesignName: vi.fn<ExportActions["setDesignName"]>(),
+    setCamillaDevices: vi.fn<ExportActions["setCamillaDevices"]>(),
+    refreshDevices: vi.fn<ExportActions["refreshDevices"]>(),
     changeFolder: vi.fn<ExportActions["changeFolder"]>(),
     openFolder: vi.fn<ExportActions["openFolder"]>(),
     goToCalibrate: vi.fn<ExportActions["goToCalibrate"]>(),
@@ -128,7 +148,7 @@ function actions() {
 }
 
 /** The screen inside the frame with its header, as P33 will mount it. */
-function Mounted({ view, act, advanced = false }: { view: ExportView; act: ExportActions; advanced?: boolean }) {
+function Mounted({ view, act, advanced = false, devices = false }: { view: ExportView; act: ExportActions; advanced?: boolean; devices?: boolean }) {
   const t = useT();
   const header = exportHeader(view, act, t);
   return (
@@ -143,7 +163,7 @@ function Mounted({ view, act, advanced = false }: { view: ExportView; act: Expor
       tray={<div />}
       shortcuts={false}
     >
-      <ExportScreen view={view} actions={act} initialAdvanced={advanced} />
+      <ExportScreen view={view} actions={act} initialAdvanced={advanced} initialDevices={devices} />
     </AppFrame>
   );
 }
@@ -155,33 +175,87 @@ describe("내보내기", () => {
   it("renders every state in both languages", () => {
     for (const locale of ["ko", "en"] as const) {
       for (const [name, view] of Object.entries(STATES)) {
-        const { unmount } = renderWith(<Mounted view={view} act={actions()} advanced />, { locale });
+        // The device states draw their disclosure open.
+        const { unmount } = renderWith(<Mounted view={view} act={actions()} advanced devices={name.startsWith("devices")} />, { locale });
         expect(ui("export"), name).not.toBeNull();
         unmount();
       }
     }
-  });
+    // 54 full frames: about 3.5 s beside the rest of the suite on a desktop, so slower CI runners get room.
+  }, 15_000);
 
   it("exports each kind through its button; the header primary exports CamillaDSP", () => {
     const act = actions();
     renderWith(<Mounted view={exportRcOnly} act={act} advanced />);
-    for (const kind of ["camilla_dsp", "filter_text", "equalizer_apo", "before_after_mdat", "staged_mdat"]) fireEvent.click(ui(`export.run.${kind}`)!);
-    expect(act.exportFiles.mock.calls).toEqual([["camilla_dsp"], ["filter_text"], ["equalizer_apo"], ["before_after_mdat"], ["staged_mdat"]]);
+    for (const kind of EXPORT_KINDS) fireEvent.click(ui(`export.run.${kind}`)!);
+    expect(act.exportFiles.mock.calls).toEqual([["camilla_dsp"], ["filter_text"], ["equalizer_apo"], ["convolution"], ["before_after_mdat"], ["staged_mdat"]]);
   });
 
-  it("draws the filters for the DSP and the responses for REW as two titled groups between the card title and the rows", () => {
+  it("draws the rows in the order of EXPORT_KINDS: CamillaDSP, text, Equalizer APO, the convolution IR, then the REW mdat", () => {
+    renderWith(<Mounted view={exportReady} act={actions()} advanced />);
+    expect([...document.querySelectorAll("section[data-ui^='export.kind.']")].map((row) => row.getAttribute("data-ui"))).toEqual(EXPORT_KINDS.map((kind) => `export.kind.${kind}`));
+    // The design name sits once, above the filter rows and inside their group; no row has its own.
+    const filters = ui("export.kind.camilla_dsp")!.closest("section.export-group")!;
+    expect(filters.querySelectorAll("[data-ui='export.design_name']")).toHaveLength(1);
+    const field = ui("export.design_name.field")!;
+    expect(field.compareDocumentPosition(ui("export.kind.camilla_dsp")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(document.querySelectorAll("section[data-ui^='export.kind.'] [data-ui='export.design_name']")).toHaveLength(0);
+    // The CamillaDSP devices live in their row only.
+    expect(ui("export.kind.camilla_dsp")!.querySelector("[data-ui='export.devices']")).not.toBeNull();
+    expect(document.querySelectorAll("[data-ui='export.devices']")).toHaveLength(1);
+  });
+
+  it("reads the convolution IR row like its neighbours: what, where, its button, never blocked by subs or MIMO", () => {
+    const act = actions();
+    const { unmount } = renderWith(<Mounted view={exportReady} act={act} />);
+    const row = ui("export.kind.convolution")!;
+    expect(row.querySelector("h4")?.textContent).toBe("컨볼루션 IR");
+    expect(row.querySelector(".export-item__where")?.textContent).toBe("SECS_convolution_RC_BA_MIMO_mixed_<저장 시각> 폴더");
+    fireEvent.click(ui("export.kind.convolution.help")!);
+    expect(screen.getByRole("tooltip").textContent).toBe(t("export.kind.convolution.body"));
+    const run = ui("export.run.convolution") as HTMLButtonElement;
+    expect(run.textContent).toBe("컨볼루션 IR 저장");
+    // Subs and MIMO block the text, not the convolution IR.
+    expect(ui("export.kind.filter_text.blocked")).not.toBeNull();
+    expect(run.disabled).toBe(false);
+    expect(ui("export.kind.convolution.blocked")).toBeNull();
+    fireEvent.click(run);
+    expect(act.exportFiles.mock.calls).toEqual([["convolution"]]);
+    unmount();
+    // Running: busy in its row and in the header's pill.
+    const { unmount: unmountRunning } = renderWith(<Mounted view={{ ...exportReady, exporting: "convolution" }} act={actions()} />);
+    expect(ui("export.run.convolution")?.getAttribute("aria-busy")).toBe("true");
+    expect(screen.getByText("컨볼루션 IR 저장 중")).toBeTruthy();
+    unmountRunning();
+    // Done: the files, the folder, and where the guide says which file goes where.
+    const done = actions();
+    const { unmount: unmountDone } = renderWith(<Mounted view={exportConvolutionDone} act={done} />);
+    expect(ui("export.outcome.convolution")?.textContent).toContain("파일 29개 저장 → D:/Audio/거실 보정/SECS_convolution_RC_BA_MIMO_mixed_20261014-142233");
+    expect(ui("export.outcome.convolution.hint")?.textContent).toBe(t("export.outcome.convolution.hint"));
+    expect(ui("export.outcome.convolution.hint")?.textContent).toContain("컨볼루션 적용 방법.txt");
+    fireEvent.click(ui("export.outcome.convolution.open")!);
+    expect(done.openFolder.mock.calls).toEqual([["D:/Audio/거실 보정/SECS_convolution_RC_BA_MIMO_mixed_20261014-142233"]]);
+    unmountDone();
+    // Failed: the cause and next step, the raw text behind 자세히, and the header says so.
+    renderWith(<Mounted view={exportConvolutionFailed} act={actions()} />);
+    expect(ui("export.outcome.convolution")?.textContent).toContain("파일을 내보내지 못했습니다.");
+    expect(screen.getByText(/not enough space on the disk/)).toBeTruthy();
+    expect(screen.getByText("내보내기 실패")).toBeTruthy();
+  });
+
+  it("draws the filters for the DSP or player and the responses for REW as two titled groups between the card title and the rows", () => {
     renderWith(<Mounted view={exportRcOnly} act={actions()} advanced />);
     const files = ui("export.files")!;
     const groups = [...files.querySelectorAll<HTMLElement>("section.export-group")];
-    expect(groups.map((group) => document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent)).toEqual(["DSP에 넣을 필터", "REW에서 볼 응답"]);
+    expect(groups.map((group) => document.getElementById(group.getAttribute("aria-labelledby") ?? "")?.textContent)).toEqual(["DSP와 플레이어용 필터", "REW에서 볼 응답"]);
     expect(groups.map((group) => [...group.querySelectorAll("section[data-ui^='export.kind.']")].map((row) => row.getAttribute("data-ui")))).toEqual([
-      ["export.kind.camilla_dsp", "export.kind.filter_text", "export.kind.equalizer_apo"],
+      ["export.kind.camilla_dsp", "export.kind.filter_text", "export.kind.equalizer_apo", "export.kind.convolution"],
       ["export.kind.before_after_mdat", "export.kind.staged_mdat"],
     ]);
     // h2 card, h3 group, h4 row.
     expect(files.querySelector("h2")?.textContent).toBe("파일 내보내기");
-    expect([...groups[0]!.querySelectorAll("h3")].map((h) => h.textContent)).toEqual(["DSP에 넣을 필터"]);
-    expect([...groups[0]!.querySelectorAll("h4")].map((h) => h.textContent)).toEqual(["CamillaDSP 설정", "필터 값 텍스트", "Equalizer APO 설정"]);
+    expect([...groups[0]!.querySelectorAll("h3")].map((h) => h.textContent)).toEqual(["DSP와 플레이어용 필터"]);
+    expect([...groups[0]!.querySelectorAll("h4")].map((h) => h.textContent)).toEqual(["CamillaDSP 설정", "필터 값 텍스트", "Equalizer APO 설정", "컨볼루션 IR"]);
     fireEvent.click(ui("export.kind.camilla_dsp.help")!);
     expect(screen.getByRole("tooltip").textContent).toBe(t("export.kind.camilla_dsp.body"));
   });
@@ -189,11 +263,11 @@ describe("내보내기", () => {
   it("turns off a filter format that cannot carry the result and says why in its row", () => {
     const cases: [ExportView, Record<"filter_text" | "equalizer_apo", string | null>][] = [
       // Subs and MIMO (the sample): text blocked by the subs first; Equalizer APO carries both (F12).
-      [exportReady, { filter_text: "서브(BA)가 있는 결과는 텍스트로 내보낼 수 없습니다. CamillaDSP나 Equalizer APO 설정으로 내보내세요.", equalizer_apo: null }],
+      [exportReady, { filter_text: "서브(BA)가 포함된 결과는 텍스트로 내보낼 수 없습니다. Equalizer APO, CamillaDSP, 컨볼루션 IR은 서브와 MIMO를 지원합니다.", equalizer_apo: null }],
       // Subs, MIMO left out: only the text.
-      [exportNoMimo, { filter_text: "서브(BA)가 있는 결과는 텍스트로 내보낼 수 없습니다. CamillaDSP나 Equalizer APO 설정으로 내보내세요.", equalizer_apo: null }],
+      [exportNoMimo, { filter_text: "서브(BA)가 포함된 결과는 텍스트로 내보낼 수 없습니다. Equalizer APO, CamillaDSP, 컨볼루션 IR은 서브와 MIMO를 지원합니다.", equalizer_apo: null }],
       // MIMO without subs: the text by MIMO.
-      [exportMimoNoSubs, { filter_text: "MIMO를 켠 결과는 텍스트로 내보낼 수 없습니다. 보정에서 MIMO를 끄면 내보낼 수 있습니다.", equalizer_apo: null }],
+      [exportMimoNoSubs, { filter_text: "MIMO가 포함된 결과는 텍스트로 내보낼 수 없습니다. Equalizer APO, CamillaDSP, 컨볼루션 IR은 서브와 MIMO를 지원합니다.", equalizer_apo: null }],
       // RC alone: everything on.
       [exportRcOnly, { filter_text: null, equalizer_apo: null }],
     ];
@@ -210,8 +284,8 @@ describe("내보내기", () => {
         expect(reason?.getAttribute("role") ?? null).toBeNull();
         fireEvent.click(button);
       }
-      // CamillaDSP and the mdat exports carry every result.
-      for (const kind of ["camilla_dsp", "before_after_mdat", "staged_mdat"]) {
+      // CamillaDSP, the convolution IR and the mdat exports carry every result.
+      for (const kind of ["camilla_dsp", "convolution", "before_after_mdat", "staged_mdat"]) {
         expect((ui(`export.run.${kind}`) as HTMLButtonElement).disabled, kind).toBe(false);
         expect(ui(`export.kind.${kind}.blocked`), kind).toBeNull();
       }
@@ -302,10 +376,11 @@ describe("내보내기", () => {
     expect(ui("export.kind.equalizer_apo")?.textContent).toContain("SECS_eqapo_RC_BA_ultra_<save time> folder");
   });
 
-  it("adds the hint only to the Equalizer APO outcome", () => {
+  it("adds a hint only to the Equalizer APO and convolution IR outcomes", () => {
     renderWith(<Mounted view={exportDone} act={actions()} />);
     expect(ui("export.outcome.camilla_dsp")).not.toBeNull();
-    expect(document.querySelector("[data-ui$='.hint']")).toBeNull();
+    expect(ui("export.outcome.before_after_mdat")).not.toBeNull();
+    expect(document.querySelector("[data-ui^='export.outcome.'][data-ui$='.hint']")).toBeNull();
   });
 
   it("changes and opens the folder, and opens what a run wrote", () => {
@@ -329,7 +404,7 @@ describe("내보내기", () => {
     ];
     for (const [view, mdatOn] of cases) {
       const { unmount } = renderWith(<Mounted view={view} act={actions()} advanced />);
-      for (const kind of ["camilla_dsp", "filter_text", "equalizer_apo", "before_after_mdat", "staged_mdat"]) {
+      for (const kind of EXPORT_KINDS) {
         expect((ui(`export.run.${kind}`) as HTMLButtonElement).disabled, kind).toBe(kind === "before_after_mdat" ? !mdatOn : true);
       }
       unmount();
@@ -410,7 +485,7 @@ describe("내보내기", () => {
   it("runs one export at a time: the running row is busy, every other button is off", () => {
     for (const running of ["filter_text", "equalizer_apo"] as const) {
       const { unmount } = renderWith(<Mounted view={{ ...exportRcOnly, exporting: running }} act={actions()} advanced />);
-      for (const kind of ["camilla_dsp", "filter_text", "equalizer_apo", "before_after_mdat", "staged_mdat"]) {
+      for (const kind of EXPORT_KINDS) {
         const button = ui(`export.run.${kind}`) as HTMLButtonElement;
         expect(button.disabled, kind).toBe(true);
         // The header's primary is off, not spinning, while another export runs.
@@ -501,6 +576,251 @@ describe("내보내기", () => {
     expect(rcText(t, { code: "rc_limit", params: { hz: "250", auto: "false" } }, n)).toBe("RC 상한 250 Hz (직접 정함)");
     expect(rcText(t, { code: "rc_room_volume", params: { volume_m3: "62.5" } }, n)).toBe("방 부피 63 m³로 정함");
     expect(rcText(t, { code: "rc_auto_cap", params: { hz: "500" } }, n)).toBe("자동 상한은 최대 500 Hz");
+  });
+
+  it("says beside the empty design name where the files go, and beside a name that the next export replaces its folder", () => {
+    const act = actions();
+    const { unmount } = renderWith(<Mounted view={exportRcOnly} act={act} />);
+    const input = ui("export.design_name") as HTMLInputElement;
+    expect(screen.getByLabelText("설계 이름")).toBe(input);
+    expect(input.value).toBe("");
+    expect(ui("export.design_name.hint")?.textContent).toBe("이름을 비워 두면 내보낼 때마다 저장 시각이 붙은 새 폴더를 만듭니다.");
+    expect(input.getAttribute("aria-describedby")).toBe("export.design_name-hint");
+    expect(input.getAttribute("aria-invalid")).toBeNull();
+    // Unnamed, the rows keep their timestamped folders.
+    expect(ui("export.kind.filter_text")?.querySelector(".export-item__where")?.textContent).toBe("SECS_text_RC_BA_mixed_<저장 시각> 폴더");
+    fireEvent.change(input, { target: { value: "거실 영화" } });
+    expect(act.setDesignName.mock.calls).toEqual([["거실 영화"]]);
+    unmount();
+    // Named: the one sentence before any export, and each filter row names its folder.
+    renderWith(<Mounted view={{ ...exportNamed, designName: "  거실 영화 " }} act={actions()} />);
+    expect(ui("export.design_name.hint")?.textContent).toBe("같은 형식으로 거실 영화 설계를 다시 내보내면 기존 폴더를 새 폴더로 교체하고, 그 안에 따로 넣은 파일도 삭제합니다.");
+    expect(ui("export.design_name.problem")).toBeNull();
+    const where = (kind: string) => ui(`export.kind.${kind}`)?.querySelector(".export-item__where")?.textContent;
+    expect(where("camilla_dsp")).toBe("SECS_camilla_dsp_거실 영화 폴더 · configs와 coeffs");
+    expect(where("filter_text")).toBe("SECS_filter_text_거실 영화 폴더");
+    expect(where("equalizer_apo")).toBe("SECS_equalizer_apo_거실 영화 폴더");
+    expect(where("convolution")).toBe("SECS_convolution_거실 영화 폴더");
+    // The REW mdat takes no name.
+    expect(where("before_after_mdat")).toBe("SECS_mdat_RC_BA_mixed_<저장 시각> 폴더");
+    for (const kind of FILTER_KINDS) expect((ui(`export.run.${kind}`) as HTMLButtonElement).disabled, kind).toBe(false);
+  });
+
+  it("turns off every filter export and the header's primary while the design name cannot be a folder, and says why under the field", () => {
+    const messages: Record<DesignNameProblem, string> = {
+      length: "설계 이름은 1~64자로 입력해야 합니다.",
+      control: "설계 이름에 줄바꿈이나 탭 같은 제어 문자를 넣을 수 없습니다.",
+      character: "설계 이름에 \\ / : * ? \" < > | 기호를 넣을 수 없습니다.",
+      trailing: "설계 이름은 마침표나 공백으로 끝날 수 없습니다.",
+      reserved: "CON, PRN, AUX, NUL, COM1~COM9, LPT1~LPT9는 Windows 장치 이름이므로 설계 이름으로 쓸 수 없습니다. 뒤에 마침표와 글자를 붙여도 쓸 수 없습니다.",
+    };
+    for (const [problem, name] of Object.entries(DESIGN_NAME_SAMPLES) as [DesignNameProblem, string][]) {
+      const act = actions();
+      const { unmount } = renderWith(<Mounted view={{ ...exportRcOnly, designName: name }} act={act} advanced />);
+      const message = ui("export.design_name.problem")!;
+      expect(message.textContent, problem).toBe(messages[problem]);
+      expect(message.id).toBe("export.design_name-error");
+      // The field is invalid and described by its message, which replaces the hint.
+      const input = ui("export.design_name") as HTMLInputElement;
+      expect(input.getAttribute("aria-invalid"), problem).toBe("true");
+      expect(input.getAttribute("aria-describedby"), problem).toBe("export.design_name-error");
+      expect(ui("export.design_name.hint"), problem).toBeNull();
+      // Every filter button is off and names the message as its reason; the header's primary is off and its pill says why.
+      for (const kind of FILTER_KINDS) {
+        const button = ui(`export.run.${kind}`) as HTMLButtonElement;
+        expect(button.disabled, `${problem} ${kind}`).toBe(true);
+        fireEvent.click(button);
+      }
+      for (const kind of ["filter_text", "equalizer_apo", "convolution"]) {
+        expect(document.getElementById(ui(`export.run.${kind}`)!.getAttribute("aria-describedby") ?? ""), `${problem} ${kind}`).toBe(message);
+      }
+      const primary = ui("export.run.camilla_dsp") as HTMLButtonElement;
+      expect(primary.getAttribute("aria-busy")).toBeNull();
+      expect(ui("export.status.problem")?.textContent, problem).toBe("설계 이름 수정 필요");
+      expect(document.getElementById(primary.getAttribute("aria-describedby") ?? "")?.textContent, problem).toBe("설계 이름 수정 필요");
+      // The REW mdat takes no name and stays on.
+      for (const kind of ["before_after_mdat", "staged_mdat"]) {
+        expect((ui(`export.run.${kind}`) as HTMLButtonElement).disabled, `${problem} ${kind}`).toBe(false);
+      }
+      expect(act.exportFiles).not.toHaveBeenCalled();
+      unmount();
+    }
+    // A running export keeps the pill on what runs and its own button busy.
+    const running = exportHeader({ ...exportRcOnly, designName: "CON", exporting: "camilla_dsp" }, actions(), t);
+    expect(running.primary?.busy).toBe(true);
+    expect(running.primary?.disabled).toBe(false);
+    // An empty field is no problem.
+    const empty = exportHeader({ ...exportRcOnly, designName: "" }, actions(), t);
+    expect(empty.primary?.disabled).toBe(false);
+    // English names the problem too.
+    renderWith(<Mounted view={{ ...exportRcOnly, designName: "거실/영화" }} act={actions()} />, { locale: "en" });
+    expect(ui("export.design_name.problem")?.textContent).toBe("Remove these characters from the design name: \\ / : * ? \" < > |");
+    expect(ui("export.status.problem")?.textContent).toBe("Design name needs correction");
+  });
+
+  it("folds the CamillaDSP devices in its row, closed, its summary reading the current choice", () => {
+    const summaries: [ExportView, string, string][] = [
+      [exportReady, "파일 자리표시", "File placeholders"],
+      [exportDevicesWasapi, "입력 WASAPI CABLE Output (VB-Audio Virtual Cable), 출력 WASAPI Speakers (Tesira)", "Input WASAPI CABLE Output (VB-Audio Virtual Cable), output WASAPI Speakers (Tesira)"],
+      [exportDevicesTyped, "입력 WASAPI 루프백 기본 장치, 출력 WASAPI Speakers (Tesira)", "Input WASAPI loopback Default device, output WASAPI Speakers (Tesira)"],
+      [exportDevicesAsio, "입력 파일 자리표시, 출력 ASIO Tesira ASIO", "Input File placeholders, output ASIO Tesira ASIO"],
+      [exportDevicesAsioUnnamed, "입력 ASIO 드라이버 이름 없음, 출력 ASIO Tesira ASIO", "Input ASIO driver not specified, output ASIO Tesira ASIO"],
+      [{ ...exportReady, camillaDevices: { capture: { type: "asio", device: "Tesira ASIO" }, playback: { type: "asio", device: "Tesira ASIO" } } }, "ASIO Tesira ASIO", "ASIO Tesira ASIO"],
+    ];
+    for (const [view, ko, en] of summaries) {
+      for (const [locale, text] of [["ko", ko], ["en", en]] as const) {
+        const { unmount } = renderWith(<Mounted view={view} act={actions()} />, { locale });
+        const toggle = ui("export.devices")!;
+        expect(toggle.getAttribute("aria-expanded")).toBe("false");
+        expect(ui("export.devices.summary")?.textContent, `${locale} ${text}`).toBe(text);
+        // The summary is part of the toggle's name; the fields are not drawn while closed.
+        expect(toggle.textContent).toBe(`${locale === "ko" ? "입출력 장치" : "Input and output devices"}${text}`);
+        expect(ui("export.devices.capture")).toBeNull();
+        unmount();
+      }
+    }
+    // Opening shows both sides and drops the summary, which would repeat them.
+    renderWith(<Mounted view={exportReady} act={actions()} />);
+    fireEvent.click(ui("export.devices")!);
+    expect(ui("export.devices")?.getAttribute("aria-expanded")).toBe("true");
+    expect(ui("export.devices.summary")).toBeNull();
+    expect(screen.getByRole("group", { name: "입력 장치" })).toBe(ui("export.devices.capture"));
+    expect(screen.getByRole("group", { name: "출력 장치" })).toBe(ui("export.devices.playback"));
+    const panel = ui("export.kind.camilla_dsp")!;
+    expect([...panel.querySelectorAll("[role='radio'][aria-checked='true']")].map((radio) => radio.textContent)).toEqual(["파일 자리표시", "파일 자리표시"]);
+    expect(ui("export.devices.asio_note")).toBeNull();
+  });
+
+  it("reads the device list again each time the disclosure opens, not when it closes", () => {
+    const act = actions();
+    renderWith(<Mounted view={exportReady} act={act} />);
+    fireEvent.click(ui("export.devices")!);
+    expect(act.refreshDevices).toHaveBeenCalledTimes(1);
+    fireEvent.click(ui("export.devices")!);
+    expect(act.refreshDevices).toHaveBeenCalledTimes(1);
+    fireEvent.click(ui("export.devices")!);
+    expect(act.refreshDevices).toHaveBeenCalledTimes(2);
+  });
+
+  it("says in the row why the service refused a design name, as the field does", () => {
+    const refused: ExportView = {
+      ...exportReady,
+      runs: { convolution: { status: "failed", error: { code: "invalid_request", detail: "design_name_reserved", retryable: false, params: { reason: "design_name_reserved" } } } },
+    };
+    renderWith(<Mounted view={refused} act={actions()} />);
+    const outcome = ui("export.outcome.convolution")!;
+    expect(outcome.textContent).toContain("Windows 장치 이름");
+    expect(outcome.textContent).not.toContain("다시 시작");
+  });
+
+  it("chooses file placeholders, WASAPI or ASIO per side, starting WASAPI at the default device, shared, F32", () => {
+    const act = actions();
+    const { unmount } = renderWith(<Mounted view={exportReady} act={act} devices />);
+    fireEvent.click(ui("export.devices.capture.backend.wasapi")!);
+    fireEvent.click(ui("export.devices.playback.backend.asio")!);
+    expect(act.setCamillaDevices.mock.calls).toEqual([
+      [{ capture: { type: "wasapi", device: null, format: "F32", exclusive: false, loopback: false }, playback: { type: "file" } }],
+      [{ capture: { type: "file" }, playback: { type: "asio", device: "" } }],
+    ]);
+    unmount();
+    // With the list: capture lists inputs, playback outputs, each with its channels, after the default.
+    const wasapi = actions();
+    const { unmount: unmountWasapi } = renderWith(<Mounted view={exportDevicesWasapi} act={wasapi} devices />);
+    const options = (id: string) => [...(ui(id) as HTMLSelectElement).options].map((option) => option.textContent);
+    expect(options("export.devices.capture.device")).toEqual(["기본 장치", "CABLE Output (VB-Audio Virtual Cable) · 8채널", "Line (Tesira) · 8채널", "UMIK-1 · 2채널"]);
+    expect(options("export.devices.playback.device")).toEqual(["기본 장치", "Speakers (Tesira) · 8채널", "CABLE Input (VB-Audio Virtual Cable) · 8채널"]);
+    expect((ui("export.devices.playback.device") as HTMLSelectElement).value).toBe("Speakers (Tesira)");
+    fireEvent.change(ui("export.devices.playback.device")!, { target: { value: "" } });
+    fireEvent.click(ui("export.devices.playback.format.F32")!);
+    fireEvent.click(ui("export.devices.capture.exclusive")!);
+    expect(wasapi.setCamillaDevices.mock.calls.map(([devices]) => devices)).toEqual([
+      { ...exportDevicesWasapi.camillaDevices, playback: { type: "wasapi", device: null, format: "S24", exclusive: true } },
+      { ...exportDevicesWasapi.camillaDevices, playback: { type: "wasapi", device: "Speakers (Tesira)", format: "F32", exclusive: true } },
+      { ...exportDevicesWasapi.camillaDevices, capture: { type: "wasapi", device: "CABLE Output (VB-Audio Virtual Cable)", format: "F32", exclusive: true, loopback: false } },
+    ]);
+    // Loopback records an output in shared mode: exclusive goes off, and an input device leaves the choice.
+    wasapi.setCamillaDevices.mockClear();
+    fireEvent.click(ui("export.devices.capture.loopback")!);
+    expect(wasapi.setCamillaDevices.mock.calls[0]?.[0].capture).toEqual({ type: "wasapi", device: null, format: "F32", exclusive: false, loopback: true });
+    // Playback has no loopback; no ASIO note without ASIO.
+    expect(ui("export.devices.playback.loopback")).toBeNull();
+    expect(ui("export.devices.asio_note")).toBeNull();
+    unmountWasapi();
+    // A stored name the list no longer has stays chosen and says so.
+    const { unmount: unmountMissing } = renderWith(
+      <Mounted view={{ ...exportDevicesWasapi, camillaDevices: { ...exportDevicesWasapi.camillaDevices, playback: { type: "wasapi", device: "AVR (HDMI)", format: "F32", exclusive: false } } }} act={actions()} devices />,
+    );
+    expect(options("export.devices.playback.device").at(-1)).toBe("AVR (HDMI) · 목록에 없음");
+    expect((ui("export.devices.playback.device") as HTMLSelectElement).value).toBe("AVR (HDMI)");
+    unmountMissing();
+  });
+
+  it("lets the user type a WASAPI name when there is no device list, and holds exclusive off under loopback", () => {
+    const act = actions();
+    renderWith(<Mounted view={exportDevicesTyped} act={act} devices />);
+    const playback = ui("export.devices.playback.device") as HTMLInputElement;
+    expect(playback.tagName).toBe("INPUT");
+    expect(playback.value).toBe("Speakers (Tesira)");
+    expect(screen.getAllByText("Windows 소리 설정의 장치 이름과 같아야 합니다. 비워 두면 기본 장치를 사용합니다.")).toHaveLength(2);
+    const capture = ui("export.devices.capture.device") as HTMLInputElement;
+    expect(capture.value).toBe("");
+    expect(capture.placeholder).toBe("기본 장치");
+    fireEvent.change(capture, { target: { value: "Speakers (Tesira)" } });
+    fireEvent.change(playback, { target: { value: "   " } });
+    expect(act.setCamillaDevices.mock.calls.map(([devices]) => devices)).toEqual([
+      { ...exportDevicesTyped.camillaDevices, capture: { type: "wasapi", device: "Speakers (Tesira)", format: "F32", exclusive: false, loopback: true } },
+      // Blank means the default device.
+      { ...exportDevicesTyped.camillaDevices, playback: { type: "wasapi", device: null, format: "F32", exclusive: false } },
+    ]);
+    const exclusive = ui("export.devices.capture.exclusive") as HTMLButtonElement;
+    expect(exclusive.disabled).toBe(true);
+    expect(exclusive.getAttribute("aria-checked")).toBe("false");
+    expect(document.getElementById(exclusive.getAttribute("aria-describedby") ?? "")?.textContent).toBe("루프백 녹음은 공유 모드에서만 가능합니다.");
+    expect((ui("export.devices.playback.exclusive") as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("says when ASIO is chosen that released CamillaDSP builds lack it, and holds CamillaDSP off until each ASIO side names its driver", () => {
+    const { unmount } = renderWith(<Mounted view={exportDevicesAsio} act={actions()} devices />);
+    expect(ui("export.devices.asio_note")?.textContent).toBe("ASIO는 CamillaDSP의 ASIO 빌드에서만 쓸 수 있습니다. 일반 Windows 빌드에는 ASIO가 없습니다.");
+    expect((ui("export.devices.playback.asio") as HTMLInputElement).value).toBe("Tesira ASIO");
+    expect((ui("export.run.camilla_dsp") as HTMLButtonElement).disabled).toBe(false);
+    expect(ui("export.status.problem")).toBeNull();
+    unmount();
+    const act = actions();
+    renderWith(<Mounted view={exportDevicesAsioUnnamed} act={act} advanced devices />);
+    expect(document.querySelectorAll("[data-ui='export.devices.asio_note']")).toHaveLength(1);
+    const driver = ui("export.devices.capture.asio") as HTMLInputElement;
+    expect(driver.getAttribute("aria-invalid")).toBe("true");
+    expect(document.getElementById(driver.getAttribute("aria-describedby") ?? "")?.textContent).toBe("ASIO 드라이버 이름을 입력해야 합니다.");
+    const primary = ui("export.run.camilla_dsp") as HTMLButtonElement;
+    expect(primary.disabled).toBe(true);
+    expect(ui("export.status.problem")?.textContent).toBe("ASIO 드라이버 이름 필요");
+    fireEvent.click(primary);
+    expect(act.exportFiles).not.toHaveBeenCalled();
+    // Only CamillaDSP takes devices: the other exports stay on.
+    for (const kind of EXPORT_KINDS.filter((kind) => kind !== "camilla_dsp" && kind !== "filter_text")) {
+      expect((ui(`export.run.${kind}`) as HTMLButtonElement).disabled, kind).toBe(false);
+    }
+    fireEvent.change(driver, { target: { value: "Tesira ASIO" } });
+    expect(act.setCamillaDevices).toHaveBeenLastCalledWith({ capture: { type: "asio", device: "Tesira ASIO" }, playback: { type: "asio", device: "Tesira ASIO" } });
+  });
+
+  it("brings back what a side had when the user tries another backend and returns", () => {
+    // A controlled host: the screen gets back what it sets.
+    function Host() {
+      const [view, setView] = useState<ExportView>(exportDevicesWasapi);
+      const act = { ...actions(), setCamillaDevices: (camillaDevices: ExportView["camillaDevices"]) => setView((current) => ({ ...current, camillaDevices })) };
+      return <Mounted view={view} act={act} devices />;
+    }
+    renderWith(<Host />);
+    fireEvent.click(ui("export.devices.playback.backend.asio")!);
+    fireEvent.change(ui("export.devices.playback.asio")!, { target: { value: "Tesira ASIO" } });
+    fireEvent.click(ui("export.devices.playback.backend.file")!);
+    fireEvent.click(ui("export.devices.playback.backend.wasapi")!);
+    expect((ui("export.devices.playback.device") as HTMLSelectElement).value).toBe("Speakers (Tesira)");
+    expect(ui("export.devices.playback.format.S24")?.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(ui("export.devices.playback.backend.asio")!);
+    expect((ui("export.devices.playback.asio") as HTMLInputElement).value).toBe("Tesira ASIO");
   });
 
   it("draws every id the reach table cites in at least one state", () => {

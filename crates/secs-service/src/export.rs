@@ -1,10 +1,12 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use secs_camilla::{DesignLabels, Device, DeviceValue, Options as CamillaOptions};
 use secs_export::ExportRun;
 use secs_filters::FiltersError;
 use secs_types::ipc::{
-    ErrorCode, ExportKind, ExportParams, ExportResult, IpcError, JobKind, JobResult, JobStarted,
+    CamillaCaptureDevice, CamillaDevices, CamillaPlaybackDevice, ErrorCode, ExportKind,
+    ExportParams, ExportResult, IpcError, JobKind, JobResult, JobStarted,
 };
 
 use crate::{EventSink, Service, lock, results::MimoView, session};
@@ -24,6 +26,58 @@ impl Service {
                 ErrorCode::TutorialBlocked,
                 "tutorial sessions cannot export",
             ));
+        }
+        let requested_design_name = crate::design_export::validate_design_name(
+            params.design_name.as_deref(),
+        )
+        .map_err(|reason| {
+            IpcError::new(ErrorCode::InvalidRequest, "invalid design name")
+                .with_param("reason", reason)
+        })?;
+        if requested_design_name.is_some()
+            && matches!(
+                params.kind,
+                ExportKind::BeforeAfterMdat | ExportKind::StagedMdat
+            )
+        {
+            return Err(IpcError::new(
+                ErrorCode::InvalidRequest,
+                "design_name only applies to filter exports",
+            )
+            .with_param("reason", "design_name"));
+        }
+        if params.camilla_devices.is_some() && params.kind != ExportKind::CamillaDsp {
+            return Err(IpcError::new(
+                ErrorCode::InvalidRequest,
+                "camilla_devices only applies to CamillaDSP",
+            )
+            .with_param("reason", "camilla_devices"));
+        }
+        if let Some(devices) = &params.camilla_devices {
+            let invalid_asio = matches!(&devices.capture, CamillaCaptureDevice::Asio { device } if device.trim().is_empty())
+                || matches!(&devices.playback, CamillaPlaybackDevice::Asio { device } if device.trim().is_empty());
+            let invalid_loopback = matches!(
+                &devices.capture,
+                CamillaCaptureDevice::Wasapi {
+                    exclusive: true,
+                    loopback: true,
+                    ..
+                }
+            );
+            if invalid_asio || invalid_loopback {
+                return Err(IpcError::new(
+                    ErrorCode::InvalidRequest,
+                    "invalid CamillaDSP device options",
+                )
+                .with_param(
+                    "reason",
+                    if invalid_asio {
+                        "camilla_asio_device"
+                    } else {
+                        "camilla_wasapi_loopback_exclusive"
+                    },
+                ));
+            }
         }
         if params.mdat_scope.is_some() && params.kind != ExportKind::BeforeAfterMdat {
             return Err(IpcError::new(
@@ -104,6 +158,9 @@ impl Service {
             Vec::new()
         };
         let project = open.store.project();
+        let project_name =
+            (!project.name.trim().is_empty()).then(|| project.name.trim().to_owned());
+        let app_version = self.deps.app_version.clone();
         let live = open.results.live_calibration();
         let cached = open.results.cached();
         let cached_sample_rate_policy = cached.map(|cache| cache.labels.sample_rate_policy);
@@ -179,33 +236,97 @@ impl Service {
         }
         let filter_values = matches!(
             params.kind,
-            ExportKind::FilterText | ExportKind::EqualizerApo
+            ExportKind::FilterText | ExportKind::EqualizerApo | ExportKind::Convolution
         )
         .then(|| (export_chain.clone(), export_mimo.take()));
-        // One export reads the clock once; every mdat it builds gets that date.
+        // One export reads the clock once; every file in the bundle gets that date.
         let now_ms = (self.deps.unix_ms)();
+        let is_filter_export = matches!(
+            params.kind,
+            ExportKind::CamillaDsp
+                | ExportKind::FilterText
+                | ExportKind::EqualizerApo
+                | ExportKind::Convolution
+        );
+        let manifest_chain = is_filter_export.then(|| export_chain.clone());
+        let manifest_mimo = if is_filter_export {
+            filter_values
+                .as_ref()
+                .and_then(|(_, mimo)| mimo.clone())
+                .or_else(|| export_mimo.clone())
+        } else {
+            None
+        };
+        let created_utc = is_filter_export
+            .then(|| crate::design_export::created_utc(now_ms).map_err(export_error))
+            .transpose()?;
+        let display_design_name = requested_design_name
+            .clone()
+            .unwrap_or_else(|| description.label().to_owned());
+        let design_id = is_filter_export
+            .then(|| {
+                secs_graph::design::design_id(
+                    export_chain,
+                    manifest_mimo.as_ref(),
+                    secs_graph::LfeChoice::DOLBY,
+                )
+                .map_err(export_error)
+            })
+            .transpose()?;
+        let camilla_devices = params.camilla_devices.clone();
+        let explicit = (!params.folder.is_empty()).then(|| Path::new(&params.folder).to_path_buf());
         drop(session);
-        let destination = if params.folder.is_empty() {
-            let base = self.resolved_export_base()?;
+        let default_base = if explicit.is_none() || requested_design_name.is_some() {
+            Some(self.resolved_export_base()?)
+        } else {
+            None
+        };
+        let base = explicit
+            .clone()
+            .or(default_base.clone())
+            .unwrap_or_default();
+        let final_destination = if let Some(name) = requested_design_name.as_deref() {
+            crate::design_export::named_folder(&base, params.kind, name)
+        } else if let Some(explicit) = explicit {
+            explicit
+        } else {
+            let base = default_base.as_deref().expect("resolved export base");
             match params.kind {
                 ExportKind::CamillaDsp => crate::export_folder::camilladsp_folder(
-                    &base,
+                    base,
                     folder_includes_mimo,
                     mode_name,
                     now,
                 ),
                 ExportKind::BeforeAfterMdat | ExportKind::StagedMdat => {
-                    crate::export_folder::mdat_folder(&base, folder_includes_mimo, mode_name, now)
+                    crate::export_folder::mdat_folder(base, folder_includes_mimo, mode_name, now)
                 }
                 ExportKind::FilterText => {
-                    crate::export_folder::text_folder(&base, includes_mimo, mode_name, now)
+                    crate::export_folder::text_folder(base, includes_mimo, mode_name, now)
                 }
                 ExportKind::EqualizerApo => {
-                    crate::export_folder::eqapo_folder(&base, includes_mimo, mode_name, now)
+                    crate::export_folder::eqapo_folder(base, includes_mimo, mode_name, now)
+                }
+                ExportKind::Convolution => {
+                    crate::export_folder::convolution_folder(base, includes_mimo, mode_name, now)
                 }
             }
+        };
+        let destination = if requested_design_name.is_some() {
+            crate::design_export::staging_folder(&final_destination)
         } else {
-            Path::new(&params.folder).to_path_buf()
+            final_destination.clone()
+        };
+        let registry_base = if is_filter_export {
+            if requested_design_name.is_some() {
+                Some(base)
+            } else if let Some(base) = default_base {
+                Some(base)
+            } else {
+                final_destination.parent().map(Path::to_path_buf)
+            }
+        } else {
+            None
         };
         self.jobs.start(JobKind::Export, events, move |job| {
             job.cancel()
@@ -221,25 +342,46 @@ impl Service {
                             IpcError::new(ErrorCode::Internal, "run cache disappeared")
                         })?
                     };
+                    let (capture, playback) = camilla_options(
+                        camilla_devices.as_ref(),
+                        chain.mains.len() + usize::from(!chain.subs.is_empty()),
+                        chain.mains.len() + chain.subs.len(),
+                    );
+                    let options = CamillaOptions {
+                        capture,
+                        playback,
+                        design: Some(DesignLabels {
+                            project_name: project_name.clone(),
+                            design_name: display_design_name.clone(),
+                            design_id: design_id.clone().expect("filter export design id"),
+                            bypass: false,
+                        }),
+                        headroom: true,
+                        labels: true,
+                        bypass: true,
+                        ..CamillaOptions::default()
+                    };
                     job.begin_commit()?;
-                    secs_camilla::export(
+                    secs_camilla::export_with_options(
                         chain,
                         folder,
                         &description.camilla(),
                         export_mimo.as_ref(),
+                        options,
                     )
                     .map_err(export_error)?
                 }
-                ExportKind::FilterText | ExportKind::EqualizerApo => {
+                ExportKind::FilterText | ExportKind::EqualizerApo | ExportKind::Convolution => {
                     let values = filter_values.as_ref().ok_or_else(|| {
                         IpcError::new(ErrorCode::Internal, "filter export values disappeared")
                     })?;
                     let run = description.filters(&values.0, values.1.as_ref());
                     job.begin_commit()?;
-                    if params.kind == ExportKind::FilterText {
-                        secs_filters::export_filter_text(&run, folder)
-                    } else {
-                        secs_filters::export_eqapo(&run, folder)
+                    match params.kind {
+                        ExportKind::FilterText => secs_filters::export_filter_text(&run, folder),
+                        ExportKind::EqualizerApo => secs_filters::export_eqapo(&run, folder),
+                        ExportKind::Convolution => secs_filters::export_convolution(&run, folder),
+                        _ => unreachable!(),
                     }
                     .map_err(filter_error)?
                 }
@@ -329,16 +471,111 @@ impl Service {
             if let Some(path) = write_compute_provenance(folder, compute_report.as_ref())? {
                 paths.push(path);
             }
+            if is_filter_export {
+                let metadata = crate::design_export::DesignMetadata {
+                    design_name: display_design_name.clone(),
+                    project_name: project_name.clone(),
+                    app_version: app_version.clone(),
+                    created_utc: created_utc.clone().expect("filter export timestamp"),
+                    export_kind: params.kind,
+                    mode: mode_name.to_owned(),
+                    latency_ms: description.latency_ms(),
+                    chain: manifest_chain.clone().expect("filter export chain"),
+                    mimo: manifest_mimo.clone(),
+                    bypass_config: (params.kind == ExportKind::CamillaDsp)
+                        .then(|| format!("configs/secs_{}_bypass.yml", description.camilla().mode)),
+                };
+                let (manifest, _) = crate::design_export::write_manifest(folder, &metadata)
+                    .map_err(export_error)?;
+                paths.push(manifest);
+            }
+            if requested_design_name.is_some() {
+                crate::design_export::replace_folder(folder, &final_destination)
+                    .map_err(export_error)?;
+                for path in &mut paths {
+                    if let Ok(relative) = path.strip_prefix(folder) {
+                        *path = final_destination.join(relative);
+                    }
+                }
+            }
+            if let Some(base) = &registry_base {
+                crate::design_export::rebuild_index(base).map_err(export_error)?;
+            }
             Ok(JobResult::Export(ExportResult {
                 files: paths
                     .into_iter()
                     .map(|path| path.to_string_lossy().into_owned())
                     .collect(),
-                folder: folder.to_string_lossy().into_owned(),
+                folder: final_destination.to_string_lossy().into_owned(),
                 stale,
             }))
         })
     }
+}
+
+fn camilla_options(
+    devices: Option<&CamillaDevices>,
+    inputs: usize,
+    outputs: usize,
+) -> (Option<Device>, Option<Device>) {
+    let Some(devices) = devices else {
+        return (None, None);
+    };
+    let capture = match &devices.capture {
+        CamillaCaptureDevice::File => None,
+        CamillaCaptureDevice::Wasapi {
+            device,
+            format,
+            exclusive,
+            loopback,
+        } => {
+            let mut values = vec![
+                ("type".into(), DeviceValue::Str("Wasapi".into())),
+                ("channels".into(), DeviceValue::Int(inputs as i64)),
+            ];
+            if let Some(device) = device {
+                values.push(("device".into(), DeviceValue::Str(device.clone())));
+            }
+            values.extend([
+                ("format".into(), DeviceValue::Str(format.name().into())),
+                ("exclusive".into(), DeviceValue::Bool(*exclusive)),
+                ("loopback".into(), DeviceValue::Bool(*loopback)),
+            ]);
+            Some(Device(values))
+        }
+        CamillaCaptureDevice::Asio { device } => Some(Device(vec![
+            ("type".into(), DeviceValue::Str("Asio".into())),
+            ("channels".into(), DeviceValue::Int(inputs as i64)),
+            ("device".into(), DeviceValue::Str(device.clone())),
+        ])),
+    };
+    let playback = match &devices.playback {
+        CamillaPlaybackDevice::File => None,
+        CamillaPlaybackDevice::Wasapi {
+            device,
+            format,
+            exclusive,
+        } => {
+            let mut values = vec![
+                ("type".into(), DeviceValue::Str("Wasapi".into())),
+                ("channels".into(), DeviceValue::Int(outputs as i64)),
+            ];
+            if let Some(device) = device {
+                values.push(("device".into(), DeviceValue::Str(device.clone())));
+            }
+            values.extend([
+                ("format".into(), DeviceValue::Str(format.name().into())),
+                ("exclusive".into(), DeviceValue::Bool(*exclusive)),
+            ]);
+            Some(Device(values))
+        }
+        CamillaPlaybackDevice::Asio { device } => Some(Device(vec![
+            ("type".into(), DeviceValue::Str("Asio".into())),
+            ("channels".into(), DeviceValue::Int(outputs as i64)),
+            ("device".into(), DeviceValue::Str(device.clone())),
+        ])),
+    };
+    (capture, playback)
 }
 
 fn write_compute_provenance(

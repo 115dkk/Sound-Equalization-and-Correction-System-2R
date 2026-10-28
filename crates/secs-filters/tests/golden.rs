@@ -4,10 +4,10 @@
 mod support;
 
 use secs_filters::{
-    FilterPlan, FilterRun, FiltersError, MimoFeed, Op, SubFeed, eqapo_config, eqapo_filters,
-    eqapo_guide, export_eqapo, export_filter_text, filter_text, headroom_db, make_plan_with_lfe,
-    plan_responses, windows_channels, write_eqapo, write_eqapo_observed, write_text,
-    write_text_observed,
+    CONVOLUTION_GUIDE, FilterPlan, FilterRun, FiltersError, MimoFeed, Op, SECTION_Q, SubFeed,
+    eqapo_config, eqapo_filters, eqapo_guide, export_convolution, export_eqapo, export_filter_text,
+    filter_text, headroom_db, make_plan, make_plan_with_lfe, plan_responses, render_paths,
+    windows_channels, write_eqapo, write_eqapo_observed, write_text, write_text_observed,
 };
 use secs_oracle::{Fixture, assert_close, goldens, rtol};
 use secs_types::chain::{
@@ -1720,4 +1720,308 @@ fn export_mode(value: &Value) -> String {
 fn export_note(mode: &str, latency: f64, rc_hi: f64, mimo: Option<&MimoPaths>) -> String {
     let mimo = mimo.and_then(|paths| secs_camilla::note::MimoNote::for_paths(paths, 0));
     secs_camilla::note::eqapo_note(mode, latency, rc_hi, mimo.as_ref())
+}
+
+#[test]
+fn rendered_oracle_paths_match_plan_responses() {
+    const REL: f64 = 1e-2;
+    const ABS: f64 = 1e-3;
+    let mut largest_ratio = 0.0_f64;
+    let mut lengths = Vec::new();
+    for case in ["rc_mixed", "computed_dolby", "mimo_iir"] {
+        let fixture = Fixture::load("filters", case);
+        let chain = chain(&fixture);
+        let mimo = mimo(&fixture);
+        let plan = make_plan(&chain, mimo.as_ref()).unwrap();
+        let rendered = render_paths(&plan, 1 << 20).unwrap();
+        let mut reference_plan = plan.clone();
+        let round_delays = |ops: &mut Vec<Op>| {
+            for op in ops {
+                if let Op::Delay { ms, .. } = op {
+                    *ms = secs_graph::round_ties_even_i64(*ms * 48.0) as f64 / 48.0;
+                }
+            }
+        };
+        for (_, ops) in &mut reference_plan.input_ops {
+            round_delays(ops);
+        }
+        for (_, ops) in &mut reference_plan.main_ops {
+            round_delays(ops);
+        }
+        for (_, ops) in &mut reference_plan.send_ops {
+            round_delays(ops);
+        }
+        round_delays(&mut reference_plan.lfe_ops);
+        for (_, feed) in &mut reference_plan.subs {
+            round_delays(&mut feed.ops);
+        }
+        for feed in &mut reference_plan.mimo {
+            round_delays(&mut feed.ops);
+        }
+        lengths.push((case, rendered.length));
+        let frequencies = (0..=rendered.length / 2)
+            .map(|index| index as f64 * 48_000.0 / rendered.length as f64)
+            .collect::<Vec<_>>();
+        let actual_pairs = rendered
+            .paths
+            .iter()
+            .map(|path| (path.input.clone(), path.output.clone()))
+            .collect::<std::collections::BTreeSet<_>>();
+        let mut expected_pairs = std::collections::BTreeSet::new();
+        for input in &plan.inputs {
+            let expected = plan_responses(&reference_plan, &frequencies, input, false).unwrap();
+            let peak = expected
+                .iter()
+                .flat_map(|(_, response)| response)
+                .map(|value| value.norm())
+                .fold(0.0_f64, f64::max);
+            for (output, reference) in expected {
+                if !reference.iter().any(|value| value.norm() != 0.0) {
+                    continue;
+                }
+                expected_pairs.insert((input.clone(), output.clone()));
+                let path = rendered
+                    .paths
+                    .iter()
+                    .find(|path| path.input == *input && path.output == output)
+                    .unwrap_or_else(|| panic!("missing rendered path {case}/{input}->{output}"));
+                let actual = secs_dsp::fft::rfft(&path.response);
+                for (index, (got, expected)) in actual.iter().zip(&reference).enumerate() {
+                    let frequency = frequencies[index];
+                    if !(10.0..=20_000.0).contains(&frequency) {
+                        continue;
+                    }
+                    let error = (*got - *expected).norm();
+                    let bound = REL * expected.norm() + ABS * peak;
+                    let ratio = if bound == 0.0 { 0.0 } else { error / bound };
+                    largest_ratio = largest_ratio.max(ratio);
+                    assert!(
+                        ratio <= 1.0,
+                        "{case}/{input}->{output} at {frequency} Hz: {error} > {bound} ({ratio})"
+                    );
+                }
+            }
+        }
+        assert_eq!(actual_pairs, expected_pairs, "{case} path set");
+    }
+    eprintln!("convolution oracle lengths: {lengths:?}");
+    eprintln!("convolution largest error/bound: {largest_ratio:.9}");
+}
+
+fn first_coefficient(op: &Op) -> Vec<f64> {
+    let normalized = |b0: f64, a0: f64| b0 / a0;
+    match op {
+        Op::Peq {
+            frequency,
+            q,
+            gain_db,
+            ..
+        } => {
+            let w = 2.0 * std::f64::consts::PI * frequency / 48_000.0;
+            let alpha = w.sin() / (2.0 * q);
+            let gain = 10_f64.powf(gain_db / 40.0);
+            vec![normalized(1.0 + alpha * gain, 1.0 + alpha / gain)]
+        }
+        Op::Hp {
+            frequency, kind, ..
+        }
+        | Op::Lp {
+            frequency, kind, ..
+        } => {
+            let high_pass = matches!(op, Op::Hp { .. });
+            SECTION_Q
+                .iter()
+                .find(|(name, _)| *name == kind.name())
+                .unwrap()
+                .1
+                .iter()
+                .map(|q| {
+                    let w = 2.0 * std::f64::consts::PI * frequency / 48_000.0;
+                    let alpha = w.sin() / (2.0 * q);
+                    let b0 = if high_pass {
+                        (1.0 + w.cos()) / 2.0
+                    } else {
+                        (1.0 - w.cos()) / 2.0
+                    };
+                    normalized(b0, 1.0 + alpha)
+                })
+                .collect()
+        }
+        Op::Ap { frequency, q, .. } => {
+            let w = 2.0 * std::f64::consts::PI * frequency / 48_000.0;
+            let alpha = w.sin() / (2.0 * q);
+            vec![normalized(1.0 - alpha, 1.0 + alpha)]
+        }
+        _ => Vec::new(),
+    }
+}
+
+#[test]
+fn renderer_applies_every_operation_in_time_domain() {
+    let ops = vec![
+        Op::Peq {
+            frequency: 1_000.0,
+            q: 1.2,
+            gain_db: 3.0,
+            fixed: false,
+        },
+        Op::Fir {
+            name: "full".into(),
+            taps: vec![0.5, -0.25],
+            fixed: false,
+        },
+        Op::FirLowRate {
+            name: "low".into(),
+            taps_low: vec![1.0, 0.0],
+            fs_low: 48_000.0,
+            fixed: false,
+        },
+        Op::Gain {
+            db: 20.0 * 2.0_f64.log10(),
+            fixed: false,
+        },
+        Op::Invert { fixed: false },
+        Op::Hp {
+            frequency: 80.0,
+            kind: BandType::Lr24,
+            fixed: false,
+        },
+        Op::Lp {
+            frequency: 8_000.0,
+            kind: BandType::Bw24,
+            fixed: false,
+        },
+        Op::Ap {
+            frequency: 250.0,
+            q: 0.8,
+            fixed: false,
+        },
+        Op::Delay {
+            ms: 2.0 / 48.0,
+            fixed: false,
+        },
+    ];
+    let plan = FilterPlan {
+        inputs: vec!["X".into()],
+        outputs: vec!["X".into()],
+        input_ops: vec![("X".into(), ops.clone())],
+        main_ops: vec![("X".into(), Vec::new())],
+        send_ops: Vec::new(),
+        lfe_ops: Vec::new(),
+        subs: Vec::new(),
+        mimo: Vec::new(),
+    };
+    let rendered = render_paths(&plan, 1 << 16).unwrap();
+    let path = &rendered.paths[0];
+    assert_eq!(path.response[0], 0.0);
+    assert_eq!(path.response[1], 0.0);
+    assert!(
+        path.response[2] < 0.0,
+        "polarity and gain apply at the delay"
+    );
+    let materialized = secs_dsp::fir::lowrate_to_48k(&[1.0, 0.0], 48_000.0);
+    let sections = ops.iter().flat_map(first_coefficient).collect::<Vec<_>>();
+    assert_eq!(sections.len(), 6, "PEQ + LR24 + BW24 + all-pass sections");
+    let expected = -2.0 * 0.5 * materialized[0] * sections.iter().product::<f64>();
+    assert!((path.response[2] - expected).abs() <= expected.abs() * 1e-13);
+    assert_eq!(path.delay_ms, 2.0 / 48.0);
+}
+
+#[test]
+fn convolution_bundle_contains_complete_paths_and_is_atomic() {
+    let fixture = Fixture::load("filters", "computed_dolby");
+    let chain = chain(&fixture);
+    let run = FilterRun {
+        chain: &chain,
+        mimo: None,
+        mode: "mixed",
+        note: "",
+        label: "computed Dolby",
+        latency_ms: chain.latency_ms,
+        rc_pieces: &[],
+        stamp: "2026-10-28 00:00",
+    };
+    let root = TempDir::new("convolution_bundle");
+    let folder = root.0.join("bundle");
+    let files = export_convolution(&run, &folder).unwrap();
+    let routing: Value =
+        serde_json::from_slice(&fs::read(folder.join("routing.json")).unwrap()).unwrap();
+    assert_eq!(routing["schema"], 1);
+    assert_eq!(routing["sample_rate"], 48_000);
+    assert_eq!(routing["format"], "f32");
+    let length = routing["length"].as_u64().unwrap() as usize;
+    let routes = routing["paths"].as_array().unwrap();
+    assert_eq!(files.len(), routes.len() * 2 + 2);
+    assert!(length.is_power_of_two() && length >= 4096);
+
+    let plan = make_plan(&chain, None).unwrap();
+    let rendered = render_paths(&plan, 1 << 20).unwrap();
+    assert_eq!(length, rendered.length);
+    let headroom = (headroom_db(&plan).unwrap() * 2.0).ceil() / 2.0;
+    assert_eq!(routing["headroom_db"].as_f64().unwrap(), headroom);
+    let attenuation = 10_f64.powf(-headroom / 20.0);
+    for route in routes {
+        let wav_name = route["wav"].as_str().unwrap();
+        let csv_name = route["csv"].as_str().unwrap();
+        let bytes = fs::read(folder.join(wav_name)).unwrap();
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(&bytes[8..12], b"WAVE");
+        assert_eq!(u16::from_le_bytes(bytes[20..22].try_into().unwrap()), 3);
+        assert_eq!(u16::from_le_bytes(bytes[22..24].try_into().unwrap()), 1);
+        assert_eq!(
+            u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
+            48_000
+        );
+        assert_eq!(u16::from_le_bytes(bytes[34..36].try_into().unwrap()), 32);
+        assert_eq!(bytes.len(), 44 + length * 4);
+        let source = rendered
+            .paths
+            .iter()
+            .find(|path| {
+                path.input == route["input"].as_str().unwrap()
+                    && path.output == route["output"].as_str().unwrap()
+            })
+            .unwrap();
+        for (index, sample) in bytes[44..].as_chunks::<4>().0.iter().take(64).enumerate() {
+            let actual = f32::from_le_bytes(*sample);
+            let expected = (source.response[index] * attenuation) as f32;
+            assert_eq!(actual.to_bits(), expected.to_bits());
+        }
+        let csv = fs::read_to_string(folder.join(csv_name)).unwrap();
+        let rows = csv.lines().collect::<Vec<_>>();
+        assert_eq!(rows[0], "frequency_hz,magnitude_db,phase_deg");
+        assert_eq!(
+            rows[1].split(',').next().unwrap().parse::<f64>().unwrap(),
+            10.0
+        );
+        assert_eq!(
+            rows.last()
+                .unwrap()
+                .split(',')
+                .next()
+                .unwrap()
+                .parse::<f64>()
+                .unwrap(),
+            24_000.0
+        );
+    }
+    let guide = fs::read(folder.join(CONVOLUTION_GUIDE)).unwrap();
+    assert!(guide.windows(2).any(|bytes| bytes == b"\r\n"));
+    assert!(
+        guide
+            .iter()
+            .enumerate()
+            .all(|(index, byte)| *byte != b'\n' || index > 0 && guide[index - 1] == b'\r')
+    );
+
+    let mut invalid = chain.clone();
+    invalid.sample_rate = 44_100;
+    let invalid_run = FilterRun {
+        chain: &invalid,
+        ..run
+    };
+    let invalid_folder = root.0.join("invalid");
+    assert!(export_convolution(&invalid_run, &invalid_folder).is_err());
+    assert!(!invalid_folder.exists());
+    eprintln!("convolution bundle oracle length: {length}");
 }

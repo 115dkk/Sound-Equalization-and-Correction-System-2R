@@ -1812,6 +1812,11 @@
   content: "EQAPO" / "";
 }
 
+[data-skin="matrix"] [data-ui="export.kind.convolution"] .export-item__title::before {
+  content: "CONV";
+  content: "CONV" / "";
+}
+
 [data-skin="matrix"] [data-ui="export.kind.before_after_mdat"] .export-item__title::before {
   content: "MDAT";
   content: "MDAT" / "";

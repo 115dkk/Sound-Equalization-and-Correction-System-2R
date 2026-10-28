@@ -3,12 +3,26 @@
 // and the same room without subs for the filter formats' scope.
 import type { FrameModel } from "../../app/model";
 import type { IpcError } from "../../ipc/bindings/IpcError";
+import type { MeasureDevice } from "../../ipc/bindings/MeasureDevice";
 import type { MimoSummary } from "../../ipc/bindings/MimoSummary";
 import type { Notice } from "../../ipc/bindings/Notice";
 import { SAMPLE_MAINS, SAMPLE_SUBS, calibrationSummary, cpuComputeReport, noResults } from "../../ipc/fixtures";
-import { exportStepState, type ExportView } from "./types";
+import { FILE_DEVICES, exportStepState, type DesignNameProblem, type ExportView } from "./types";
 
 const BASE = "C:/Users/demo/Documents/SECS/SECS_export/2026-10-14 거실 7.1.4";
+
+/**
+ * WASAPI endpoints of a Windows PC that replaces a DSP processor: a virtual
+ * cable the player plays into, the processor's USB endpoints, and the
+ * measurement mic.
+ */
+export const EXPORT_DEVICES: MeasureDevice[] = [
+  { id: "wasapi:{0.0.0.00000000}.{tesira-out}", name: "Speakers (Tesira)", input_channels: 0, output_channels: 8 },
+  { id: "wasapi:{0.0.0.00000000}.{cable-in}", name: "CABLE Input (VB-Audio Virtual Cable)", input_channels: 0, output_channels: 8 },
+  { id: "wasapi:{0.0.1.00000000}.{cable-out}", name: "CABLE Output (VB-Audio Virtual Cable)", input_channels: 8, output_channels: 0 },
+  { id: "wasapi:{0.0.1.00000000}.{tesira-in}", name: "Line (Tesira)", input_channels: 8, output_channels: 0 },
+  { id: "wasapi:{0.0.1.00000000}.{mic}", name: "UMIK-1", input_channels: 2, output_channels: 0 },
+];
 
 const exportMimo: MimoSummary = {
   compute: cpuComputeReport,
@@ -47,6 +61,9 @@ export const exportReady: ExportView = {
   exporting: null,
   runs: {},
   tutorial: false,
+  designName: "",
+  camillaDevices: FILE_DEVICES,
+  nativeDevices: EXPORT_DEVICES,
 };
 
 export const exportNoResult: ExportView = { ...exportReady, results: { ...noResults, mimo_export: "none" }, rc: [] };
@@ -164,6 +181,80 @@ export const exportEqapoDone: ExportView = {
       ],
     },
   },
+};
+
+const CONVOLUTION = "D:/Audio/거실 보정/SECS_convolution_RC_BA_MIMO_mixed_20261014-142233";
+
+/** The convolution IR saved: a WAV and a CSV per input→output pair (subs fed from LFE), the guide, routing.json and the design record. */
+export const exportConvolutionDone: ExportView = {
+  ...exportReady,
+  folder: { folder: "D:/Audio/거실 보정", stored: true },
+  runs: {
+    convolution: {
+      status: "done",
+      folder: CONVOLUTION,
+      files: [
+        ...[...SAMPLE_MAINS.map((role) => `${role}_to_${role}`), ...SAMPLE_SUBS.map((role) => `LFE_to_${role}`)].flatMap((stem) => [`${CONVOLUTION}/${stem}.wav`, `${CONVOLUTION}/${stem}.csv`]),
+        `${CONVOLUTION}/컨볼루션 적용 방법.txt`,
+        `${CONVOLUTION}/routing.json`,
+        `${CONVOLUTION}/secs-design.json`,
+      ],
+    },
+  },
+};
+
+/** The convolution IR could not be written. */
+export const exportConvolutionFailed: ExportView = {
+  ...exportReady,
+  runs: {
+    convolution: {
+      status: "failed",
+      error: { code: "export_failed", params: {}, retryable: true, detail: `failed to write ${BASE}/SECS_convolution_RC_BA_MIMO_mixed_20261014-142233/Tfl_to_Tfl.wav: There is not enough space on the disk. (os error 112)` },
+    },
+  },
+};
+
+/** RC alone, every filter export on, with a design name: each goes to its own SECS_<kind>_거실 영화 folder. */
+export const exportNamed: ExportView = { ...exportRcOnly, designName: "거실 영화" };
+
+/** A design name for each rule the service checks. */
+export const DESIGN_NAME_SAMPLES: Record<DesignNameProblem, string> = {
+  length: "거실 7.1.4 영화 감상 ".repeat(5).trim(),
+  control: "거실\t영화",
+  character: "거실/영화",
+  trailing: "거실 영화.",
+  reserved: "COM1",
+};
+
+/** The CamillaDSP devices of a Dirac Live Processor replacement: the player's virtual cable in, the processor's USB endpoint out. */
+export const exportDevicesWasapi: ExportView = {
+  ...exportReady,
+  camillaDevices: {
+    capture: { type: "wasapi", device: "CABLE Output (VB-Audio Virtual Cable)", format: "F32", exclusive: false, loopback: false },
+    playback: { type: "wasapi", device: "Speakers (Tesira)", format: "S24", exclusive: true },
+  },
+};
+
+/** No device list (enumeration failed): the playback name typed as Windows shows it, the capture recording it by loopback. */
+export const exportDevicesTyped: ExportView = {
+  ...exportReady,
+  nativeDevices: null,
+  camillaDevices: {
+    capture: { type: "wasapi", device: null, format: "F32", exclusive: false, loopback: true },
+    playback: { type: "wasapi", device: "Speakers (Tesira)", format: "F32", exclusive: false },
+  },
+};
+
+/** Playback through an ASIO driver; capture stays a file placeholder. */
+export const exportDevicesAsio: ExportView = {
+  ...exportReady,
+  camillaDevices: { capture: { type: "file" }, playback: { type: "asio", device: "Tesira ASIO" } },
+};
+
+/** ASIO chosen on both sides, the capture driver not named yet: CamillaDSP stays off until it is. */
+export const exportDevicesAsioUnnamed: ExportView = {
+  ...exportReady,
+  camillaDevices: { capture: { type: "asio", device: "" }, playback: { type: "asio", device: "Tesira ASIO" } },
 };
 
 /** Fewer than three positions: MIMO is left out and the mdat folder says RC_BA. */
