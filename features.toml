@@ -1479,6 +1479,17 @@ status = "implemented"
 tests = ["secs-service::null_host_reports_not_implemented", "secs-local-api::token_is_persistent_lowercase_hex_and_invalid_files_are_replaced"]
 
 [[feature]]
+id = "api.public_crate"
+kind = "api"
+milestone = "M6"
+status = "implemented"
+tests = [
+  "sound-equalization-and-correction-system-rust-api::engine_bootstrap_and_invalid_json",
+  "sound-equalization-and-correction-system-rust-api::engine_oracle_flow_and_ordered_events",
+]
+note = "ADR 0016: one supported crates.io facade for embedding the file-based engine or driving a running app through the authenticated local API."
+
+[[feature]]
 id = "app.local_api"
 kind = "app"
 milestone = "M6"

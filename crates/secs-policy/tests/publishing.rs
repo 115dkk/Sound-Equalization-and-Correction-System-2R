@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const PUBLISHED: [&str; 15] = [
+const PUBLISHED: [&str; 16] = [
+    "sound-equalization-and-correction-system-rust-api",
     "secs-types",
     "secs-dsp",
     "secs-compute",
