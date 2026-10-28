@@ -1189,7 +1189,7 @@ pub enum CamillaCaptureDevice {
         /// Capture a playback endpoint in shared mode.
         loopback: bool,
     },
-    /// ASIO capture. Requires an `asio-backend` CamillaDSP build.
+    /// ASIO capture. Requires CamillaDSP's ASIO build (`camilladsp-windows-asio`).
     Asio {
         /// ASIO driver name.
         device: String,
@@ -1213,7 +1213,7 @@ pub enum CamillaPlaybackDevice {
         /// Request exclusive access.
         exclusive: bool,
     },
-    /// ASIO playback. Requires an `asio-backend` CamillaDSP build.
+    /// ASIO playback. Requires CamillaDSP's ASIO build (`camilladsp-windows-asio`).
     Asio {
         /// ASIO driver name.
         device: String,

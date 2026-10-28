@@ -1135,7 +1135,7 @@
   "export.devices.loopback": "Output device loopback",
   "export.devices.asio": "ASIO driver",
   "export.devices.asio.problem": "Enter an ASIO driver name.",
-  "export.devices.asio.note": "ASIO requires a CamillaDSP build with ASIO support. The released Windows binaries do not include ASIO support.",
+  "export.devices.asio.note": "ASIO works only with CamillaDSP's ASIO build. The plain Windows build has no ASIO.",
   "export.devices.summary.pair": "Input {capture}, output {playback}",
   "export.devices.summary.wasapi": "WASAPI {name}",
   "export.devices.summary.loopback": "WASAPI loopback {name}",

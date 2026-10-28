@@ -402,7 +402,7 @@ fn controller_metadata_headroom_bypass_labels_and_devices_follow_v4_schema() {
     assert!(configured.yaml.contains("\"format\": \"F32\""));
     assert!(configured.yaml.contains("\"loopback\": true"));
     assert!(configured.yaml.contains("\"type\": \"Asio\""));
-    assert!(configured.yaml.contains("asio-backend"));
+    assert!(configured.yaml.contains("camilladsp-windows-asio-amd64.zip"));
 
     let pipeline = configured
         .yaml

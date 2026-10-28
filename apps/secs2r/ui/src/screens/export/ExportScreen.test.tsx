@@ -781,7 +781,7 @@ describe("내보내기", () => {
 
   it("says when ASIO is chosen that released CamillaDSP builds lack it, and holds CamillaDSP off until each ASIO side names its driver", () => {
     const { unmount } = renderWith(<Mounted view={exportDevicesAsio} act={actions()} devices />);
-    expect(ui("export.devices.asio_note")?.textContent).toBe("ASIO를 지원하도록 빌드한 CamillaDSP가 필요합니다. 공식 배포하는 Windows 실행 파일은 ASIO를 지원하지 않습니다.");
+    expect(ui("export.devices.asio_note")?.textContent).toBe("ASIO는 CamillaDSP의 ASIO 빌드에서만 쓸 수 있습니다. 일반 Windows 빌드에는 ASIO가 없습니다.");
     expect((ui("export.devices.playback.asio") as HTMLInputElement).value).toBe("Tesira ASIO");
     expect((ui("export.run.camilla_dsp") as HTMLButtonElement).disabled).toBe(false);
     expect(ui("export.status.problem")).toBeNull();

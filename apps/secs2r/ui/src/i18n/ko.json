@@ -1135,7 +1135,7 @@
   "export.devices.loopback": "출력 장치 루프백",
   "export.devices.asio": "ASIO 드라이버",
   "export.devices.asio.problem": "ASIO 드라이버 이름을 입력해야 합니다.",
-  "export.devices.asio.note": "ASIO를 지원하도록 빌드한 CamillaDSP가 필요합니다. 공식 배포하는 Windows 실행 파일은 ASIO를 지원하지 않습니다.",
+  "export.devices.asio.note": "ASIO는 CamillaDSP의 ASIO 빌드에서만 쓸 수 있습니다. 일반 Windows 빌드에는 ASIO가 없습니다.",
   "export.devices.summary.pair": "입력 {capture}, 출력 {playback}",
   "export.devices.summary.wasapi": "WASAPI {name}",
   "export.devices.summary.loopback": "WASAPI 루프백 {name}",

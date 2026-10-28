@@ -200,7 +200,7 @@ export const exportSpecimens: SpecimenDef[] = [
   frame("screen.export.devices.typed", "Export · CamillaDSP devices open, no device list: playback name typed, capture by loopback (exclusive off)", () => (
     <ExportSpecimen view={exportDevicesTyped} initialDevices scrolled="export.kind.camilla_dsp" />
   )),
-  frame("screen.export.devices.asio", "Export · CamillaDSP devices open: ASIO playback, with the note that released builds have no ASIO", () => (
+  frame("screen.export.devices.asio", "Export · CamillaDSP devices open: ASIO playback, with the note that ASIO needs CamillaDSP's ASIO build", () => (
     <ExportSpecimen view={exportDevicesAsio} initialDevices scrolled="export.kind.camilla_dsp" />
   )),
   frame("screen.export.devices.asio-unnamed", "Export · ASIO capture without a driver name: the field says so and the header's primary is off", () => (

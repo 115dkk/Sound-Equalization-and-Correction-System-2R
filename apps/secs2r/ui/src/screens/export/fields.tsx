@@ -219,7 +219,7 @@ export function CamillaDevicesDisclosure({ view, actions, defaultOpen = false }:
             ))}
           </div>
           {asio && (
-            // Said only when ASIO is chosen: the released Windows binaries cannot open it.
+            // Said only when ASIO is chosen: only CamillaDSP's ASIO build can open it.
             <p className="export-devices__note" data-ui="export.devices.asio_note">
               <Icon name="info" size={18} />
               <span>{t("export.devices.asio.note")}</span>

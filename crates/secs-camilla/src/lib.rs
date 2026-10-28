@@ -661,7 +661,7 @@ fn howto_lines(
         "#    Capture channels = route_in \"in\", playback channels = route_out \"out\".".into(),
     ]);
     if asio {
-        lines.push("#    ASIO requires a CamillaDSP build compiled with the asio-backend feature; released Windows binaries do not include it.".into());
+        lines.push("#    ASIO opens only in CamillaDSP's ASIO build (camilladsp-windows-asio-amd64.zip in its releases); the plain Windows build has no ASIO.".into());
     }
     lines.push(
         "# 3) Channel numbers start at 0 (interface output 1 = 0). Default routing is 1:1:".into(),

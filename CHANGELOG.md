@@ -11,7 +11,7 @@ SECS 2R의 변경 기록입니다. 번호는 major.minor.patch이고, 0.x는 모
 - 내보내기에 '컨볼루션 IR'을 더했습니다. 입력과 출력 쌍마다 보정 전체(FIR, PEQ, 크로스오버, 올패스, 게인, 극성, 딜레이)를 합친 48 kHz 32비트 float WAV 하나와 그 주파수 응답 CSV(Hz, dB, 위상)를 씁니다. 서브 합산, LFE, MIMO 서포트도 담고, 클리핑을 막는 헤드룸을 넣습니다. 어느 파일을 어디에 거는지는 `routing.json`과 `컨볼루션 적용 방법.txt`에 있습니다. Equalizer APO의 Convolution, Roon, JRiver, HQPlayer, foobar2000 같은 컨볼버에 쓸 수 있습니다.
 - 내보내기 화면에 '설계 이름'을 더했습니다. 이름을 주면 `SECS_<형식>_<이름>` 폴더에 쓰고, 같은 이름으로 다시 내보내면 그 폴더를 바꿉니다. 그 폴더에 직접 넣은 파일도 지워집니다. 비워 두면 지금처럼 시각이 붙은 새 폴더입니다.
 - 필터를 내보낼 때마다 `secs-design.json`을 함께 씁니다. 설계 ID(신호 사슬과 MIMO의 SHA-256), 프로젝트와 설계 이름, 앱 판, 업스트림 커밋, 시각, 포함 단계, 채널, 헤드룸, 묶음의 파일마다 SHA-256을 담습니다. 내보내기 폴더의 `designs.json`은 그 폴더의 설계 목록입니다.
-- CamillaDSP 내보내기에 '입출력 장치'를 더했습니다. 파일 자리표시(기본값), WASAPI(장치, 형식, 독점 모드, 루프백), ASIO(드라이버 이름)를 고릅니다. ASIO는 ASIO를 지원하도록 빌드한 CamillaDSP가 있어야 합니다.
+- CamillaDSP 내보내기에 '입출력 장치'를 더했습니다. 파일 자리표시(기본값), WASAPI(장치, 형식, 독점 모드, 루프백), ASIO(드라이버 이름)를 고릅니다. ASIO는 CamillaDSP의 ASIO 빌드(`camilladsp-windows-asio-amd64.zip`)에서만 쓸 수 있습니다.
 - CamillaDSP 내보내기가 보정만 뺀 짝 설정 `<이름>_bypass.yml`을 함께 씁니다. 레벨, 딜레이, 극성, 라우팅, 크로스오버, LFE는 남기고 RC와 MIMO만 뺍니다.
 - `secs2r-cli export`가 `--kind convolution`, `--design-name`, CamillaDSP 장치 선택을 받습니다.
 - 릴리스에 CLI가 들어갑니다. Windows 설치본과 포터블 zip의 `SECS 2R.exe` 옆에 `secs2r-cli.exe`가 있고, 운영체제마다 CLI만 담은 압축 파일(`windows-x64-cli.zip`, `macos-universal-cli.tar.gz`, `linux-x86_64-cli.tar.gz`)도 올립니다.
