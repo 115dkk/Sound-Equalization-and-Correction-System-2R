@@ -1722,6 +1722,50 @@ fn export_note(mode: &str, latency: f64, rc_hi: f64, mimo: Option<&MimoPaths>) -
     secs_camilla::note::eqapo_note(mode, latency, rc_hi, mimo.as_ref())
 }
 
+/// Issue #106: with Dirac ART on a Denon receiver in Stereo mode, the
+/// receiver switches the centre and surround channels off before the filter,
+/// so a front's support speakers stay silent. SECS 2R forks a support signal
+/// inside the exported filter from the raw input, so a two-channel source
+/// (only L and R carry signal) must still reach every support speaker and
+/// every bass-managed sub of L and R.
+#[test]
+fn stereo_source_reaches_every_support_and_sub_of_its_inputs_i106() {
+    for case in ["computed_dolby", "mimo_iir"] {
+        let fixture = Fixture::load("filters", case);
+        let chain = chain(&fixture);
+        let mimo = mimo(&fixture);
+        let plan = make_plan(&chain, mimo.as_ref()).unwrap();
+        let rendered = render_paths(&plan, 1 << 20).unwrap();
+        let stereo = ["L", "R"];
+        let energy = |input: &str, output: &str| {
+            rendered
+                .paths
+                .iter()
+                .find(|path| path.input == input && path.output == output)
+                .map_or(0.0, |path| path.response.iter().map(|value| value * value).sum::<f64>())
+        };
+        let mut expected = Vec::new();
+        for feed in plan.mimo.iter().filter(|feed| stereo.contains(&feed.input.as_str())) {
+            expected.push((feed.input.clone(), feed.support.clone()));
+        }
+        for (sub, feed) in &plan.subs {
+            for input in stereo.iter().filter(|input| feed.sources.iter().any(|source| source == **input)) {
+                expected.push(((*input).to_owned(), sub.clone()));
+            }
+        }
+        assert!(!expected.is_empty(), "{case}: L and R reach no support or sub");
+        for (input, output) in &expected {
+            assert!(energy(input, output) > 0.0, "{case}: a stereo source leaves {input} -> {output} silent");
+        }
+        // What each such output plays with only L and R driven is the sum of
+        // those two inputs' responses, and it is not silent.
+        for (_, output) in &expected {
+            let driven = stereo.iter().map(|input| energy(input, output)).sum::<f64>();
+            assert!(driven > 0.0, "{case}: {output} is silent for a stereo source");
+        }
+    }
+}
+
 #[test]
 fn rendered_oracle_paths_match_plan_responses() {
     const REL: f64 = 1e-2;
