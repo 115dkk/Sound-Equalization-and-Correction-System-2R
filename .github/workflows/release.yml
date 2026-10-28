@@ -21,6 +21,10 @@ name: Release
 #            every CLI that ships is run once and must report the version
 #   publish  SHA256SUMS.txt, notes from CHANGELOG.md, and the release itself
 #            (assets replaced when the tag exists)
+#   crates   when the gate says so, the crates.io crates (docs/adr/0016) in
+#            dependency order through trusted publishing (a short-lived token
+#            from GitHub's OIDC; the repository keeps no crates.io token),
+#            then the api-v<version> tag on release_sha
 #
 # Every job checks out release_sha, the commit the gate decided on (the bump
 # commit when it bumped), so a push that lands meanwhile cannot slip in. The
@@ -67,6 +71,9 @@ jobs:
       prerelease: ${{ steps.gate.outputs.prerelease }}
       previous_tag: ${{ steps.gate.outputs.previous_tag }}
       release_sha: ${{ steps.gate.outputs.release_sha }}
+      api_publish: ${{ steps.gate.outputs.api_publish }}
+      api_version: ${{ steps.gate.outputs.api_version }}
+      api_tag: ${{ steps.gate.outputs.api_tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -239,3 +246,46 @@ jobs:
               --title "SECS 2R $VERSION" --notes-file notes.md "${flags[@]}"
           fi
           gh release view "$TAG" --json assets,isPrerelease -q '{prerelease: .isPrerelease, assets: [.assets[].name]}'
+
+  crates:
+    name: Publish the crates.io crates
+    needs: [gate, build]
+    if: needs.gate.outputs.should_release == 'true' && needs.gate.outputs.api_publish == 'true'
+    runs-on: ubuntu-latest
+    # crates.io accepts this job's OIDC token only from this workflow file and
+    # this environment (the trusted publisher of every published crate).
+    environment: crates-io
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      API_VERSION: ${{ needs.gate.outputs.api_version }}
+      API_TAG: ${{ needs.gate.outputs.api_tag }}
+      RELEASE_SHA: ${{ needs.gate.outputs.release_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.release_sha }}
+
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
+
+      - uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+        id: auth
+
+      # One crate at a time in dependency order; a version crates.io already
+      # has is skipped, so a run that stopped half way can be re-run.
+      - name: Publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: python3 .github/scripts/publish_crates.py --version "$API_VERSION"
+
+      - name: Tag the published version
+        run: |
+          set -euo pipefail
+          if gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${API_TAG}" >/dev/null 2>&1; then
+            echo "${API_TAG} already exists"
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${API_TAG}" -f sha="${RELEASE_SHA}"
+          fi
