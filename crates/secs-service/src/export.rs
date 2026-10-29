@@ -504,7 +504,12 @@ impl Service {
                             secs_filters::export_eqapo_with_options(&run, folder, &options)
                         }
                         ExportKind::Convolution => {
-                            secs_filters::export_convolution_with_options(&run, folder, &options)
+                            secs_filters::export_convolution_named_with_options(
+                                &run,
+                                folder,
+                                &options,
+                                requested_design_name.as_deref(),
+                            )
                         }
                         _ => unreachable!(),
                     }

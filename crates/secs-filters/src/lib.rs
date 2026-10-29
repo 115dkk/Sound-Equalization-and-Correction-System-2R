@@ -1597,11 +1597,68 @@ fn convolution_guide(
     lines.extend([
         String::new(),
         "같은 이름의 .csv에는 줄마다 주파수 응답(Hz, dB, 위상)이 있습니다. 기계가 읽는 표는 routing.json입니다.".to_owned(),
+        String::new(),
+        "REAPER에서는 secs2r_reaper.lua로 보정 트랙과 출력을 한 번에 연결합니다. Actions → Show action list → New action → Load ReaScript에서 이 파일을 불러온 뒤, 원본 트랙을 선택하고 실행하십시오. 원본의 채널 순서는 내보낸 입력 순서와 같아야 합니다. 원본의 마스터/상위 폴더 보내기는 꺼지고, 보정 신호만 출력합니다. 같은 원본을 선택해 다시 실행하면 이전 보정 트랙을 바꿉니다. WAV와 스크립트는 같은 폴더에 두십시오.".to_owned(),
     ]);
     lines.join("\r\n") + "\r\n"
 }
 
-/// Write complete per-path convolution WAV, CSV, routing and guide files.
+/// Quote UTF-8 for Lua without JSON-only escapes such as `\uXXXX`.
+fn lua_string(value: &str) -> String {
+    let mut quoted = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            ch if ch.is_control() => {
+                for byte in ch.to_string().bytes() {
+                    quoted.push_str(&format!("\\{byte:03}"));
+                }
+            }
+            ch => quoted.push(ch),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
+/// The routing table, not a second graph traversal, is the source of both exports.
+fn convolution_reaper(routing: &ConvolutionRouting<'_>, design_name: Option<&str>) -> String {
+    let name = design_name
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("보정");
+    let mut script = format!(
+        "local design_name = {}\nlocal input_channels = {}\nlocal output_channels = {}\nlocal paths = {{\n",
+        lua_string(name),
+        routing.inputs.len().max(2).next_multiple_of(2),
+        routing.outputs.len().max(2).next_multiple_of(2),
+    );
+    for path in &routing.paths {
+        let input = routing
+            .inputs
+            .iter()
+            .position(|input| input == &path.input)
+            .expect("rendered input")
+            + 1;
+        let output = routing
+            .outputs
+            .iter()
+            .position(|output| output == &path.output)
+            .expect("rendered output")
+            + 1;
+        script.push_str(&format!(
+            "  {{input = {input}, output = {output}, wav = {}, name = {}}},\n",
+            lua_string(&path.wav),
+            lua_string(&format!("{} → {}", path.input, path.output)),
+        ));
+    }
+    script.push_str("}\n\n");
+    // Git's Windows checkout may use CRLF; bundle bytes must not depend on it.
+    script.push_str(&include_str!("convolution_reaper.lua").replace("\r\n", "\n"));
+    script
+}
+
+/// Write complete per-path convolution WAV, CSV, routing, ReaScript and guide files.
 pub fn export_convolution(
     run: &FilterRun<'_>,
     folder: &Path,
@@ -1609,11 +1666,32 @@ pub fn export_convolution(
     export_convolution_with_options(run, folder, &Options::default())
 }
 
+/// Write a convolution bundle with an optional display name for its REAPER folder.
+/// The name is quoted as Lua data, never interpreted as script or a filename.
+pub fn export_convolution_named(
+    run: &FilterRun<'_>,
+    folder: &Path,
+    design_name: Option<&str>,
+) -> Result<Vec<PathBuf>, FiltersError> {
+    export_convolution_named_with_options(run, folder, &Options::default(), design_name)
+}
+
 /// Export convolution bundles at the main and additional output rates.
 pub fn export_convolution_with_options(
     run: &FilterRun<'_>,
     folder: &Path,
     options: &Options,
+) -> Result<Vec<PathBuf>, FiltersError> {
+    export_convolution_named_with_options(run, folder, options, None)
+}
+
+/// Export convolution bundles at the main and additional output rates, each
+/// rate folder with its own REAPER script named after `design_name`.
+pub fn export_convolution_named_with_options(
+    run: &FilterRun<'_>,
+    folder: &Path,
+    options: &Options,
+    design_name: Option<&str>,
 ) -> Result<Vec<PathBuf>, FiltersError> {
     validate_options(options, true)?;
     if let Some(block) = filter_export_block(
@@ -1695,6 +1773,10 @@ pub fn export_convolution_with_options(
             outputs: &rendered.outputs,
             paths: routes,
         };
+        files.push((
+            prefix.join("secs2r_reaper.lua"),
+            convolution_reaper(&routing, design_name).into_bytes(),
+        ));
         let entry = prefix.join("routing.json");
         let mut routing_bytes = serde_json::to_vec_pretty(&routing)
             .map_err(|error| FiltersError::Invalid(format!("routing.json: {error}")))?;
@@ -1806,3 +1888,5 @@ fn validate_run(run: &FilterRun<'_>) -> Result<(), FiltersError> {
 
 #[cfg(test)]
 mod optimization_tests;
+#[cfg(test)]
+mod reaper_tests;
