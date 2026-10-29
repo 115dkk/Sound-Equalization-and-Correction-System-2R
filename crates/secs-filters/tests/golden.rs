@@ -1951,7 +1951,8 @@ fn convolution_bundle_contains_complete_paths_and_is_atomic() {
     assert_eq!(routing["format"], "f32");
     let length = routing["length"].as_u64().unwrap() as usize;
     let routes = routing["paths"].as_array().unwrap();
-    assert_eq!(files.len(), routes.len() * 2 + 2);
+    assert_eq!(files.len(), routes.len() * 2 + 3);
+    assert!(files.contains(&folder.join("secs2r_reaper.lua")));
     assert!(length.is_power_of_two() && length >= 4096);
 
     let plan = make_plan(&chain, None).unwrap();
@@ -2012,6 +2013,54 @@ fn convolution_bundle_contains_complete_paths_and_is_atomic() {
             .iter()
             .enumerate()
             .all(|(index, byte)| *byte != b'\n' || index > 0 && guide[index - 1] == b'\r')
+    );
+
+    let script = fs::read_to_string(folder.join("secs2r_reaper.lua")).unwrap();
+    assert!(
+        !script.contains('\r'),
+        "script bytes do not depend on checkout line endings"
+    );
+    let inputs = routing["inputs"].as_array().unwrap();
+    let outputs = routing["outputs"].as_array().unwrap();
+    for route in routes {
+        let input = inputs
+            .iter()
+            .position(|value| value == &route["input"])
+            .unwrap()
+            + 1;
+        let output = outputs
+            .iter()
+            .position(|value| value == &route["output"])
+            .unwrap()
+            + 1;
+        let wav = route["wav"].as_str().unwrap();
+        assert_eq!(script.matches(wav).count(), 1);
+        assert!(script.contains(&format!(
+            "{{input = {input}, output = {output}, wav = \"{wav}\""
+        )));
+    }
+    let repeated = root.0.join("repeated");
+    let repeated_files = export_convolution(
+        &FilterRun {
+            stamp: "another stamp",
+            ..run
+        },
+        &repeated,
+    )
+    .unwrap();
+    assert_eq!(repeated_files.len(), files.len());
+    for original in &files {
+        assert_eq!(
+            fs::read(original).unwrap(),
+            fs::read(repeated.join(original.file_name().unwrap())).unwrap()
+        );
+    }
+    let named = root.0.join("named");
+    secs_filters::export_convolution_named(&run, &named, Some("거실 \"보정\"\\새 폴더\n다음"))
+        .unwrap();
+    let named_script = fs::read_to_string(named.join("secs2r_reaper.lua")).unwrap();
+    assert!(
+        named_script.starts_with("local design_name = \"거실 \\\"보정\\\"\\\\새 폴더\\010다음\"\n")
     );
 
     let mut invalid = chain.clone();

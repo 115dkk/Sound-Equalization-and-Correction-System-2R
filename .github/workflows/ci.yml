@@ -137,6 +137,13 @@ jobs:
         with:
           shared-key: test
 
+      - name: Lua compiler for generated REAPER scripts
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lua5.4
+          echo "SECS_LUAC=$(command -v luac5.4)" >> "$GITHUB_ENV"
+          echo "SECS_LUA=$(command -v lua5.4)" >> "$GITHUB_ENV"
+
       - name: cargo test --workspace
         run: cargo test --workspace --all-targets --locked
 
