@@ -38,7 +38,7 @@ python3 .github/scripts/check_feature_tests.py
 
 화면 의존성은 Node 24(npm 11)로 설치합니다. npm 10은 이 의존성 묶음에서 피어 해석이 실패합니다.
 
-crates.io 크레이트의 매니페스트나 의존을 고치면 `cargo publish --workspace --dry-run --locked --allow-dirty`도 돌려야 합니다. 이때 `CARGO_HOME`은 매번 새 빈 폴더로 주어야 합니다. Cargo는 같은 이름과 판의 패키지를 `CARGO_HOME\registry\src`에 풀어 둔 것이 있으면 그것을 다시 쓰므로, 두 번째 게시 연습부터는 옛 소스로 검증합니다. CI는 매번 빈 러너라 이 문제가 없습니다.
+crates.io 크레이트의 매니페스트나 의존을 고치면 `cargo publish --workspace --dry-run --locked --allow-dirty`도 돌려야 합니다. 그 전에 `python3 .github/scripts/api_dry_run.py`로 공개 크레이트의 판을 `<판>-dryrun`으로 바꿔야 합니다. 이미 crates.io에 있는 판과 이름이 같고 내용이 다르면 Cargo가 검증을 거부하기 때문입니다. 이 스크립트는 작업 트리를 고치므로 버릴 사본(`git worktree add --detach`)에서 돌려야 합니다. 이때 `CARGO_HOME`은 매번 새 빈 폴더로 주어야 합니다. Cargo는 같은 이름과 판의 패키지를 `CARGO_HOME\registry\src`에 풀어 둔 것이 있으면 그것을 다시 쓰므로, 두 번째 게시 연습부터는 옛 소스로 검증합니다. CI는 매번 빈 러너라 이 문제가 없습니다.
 
 신뢰할 수 없는 파일을 읽는 크레이트(`secs-jos`, `secs-mdat`, `secs-dirac`, `secs-project`)를 고치면 CI의 `miri`·`fuzz` 잡과 같은 것을 돌립니다. `secs-project`는 파일 시스템을 쓰지 않는 파서 테스트만 Miri로 돌립니다. nightly는 `ci.yml`의 `NIGHTLY`로 고정하고, fuzz 대상마다 넣는 seed는 `ci.yml`의 fuzz 잡에 있습니다(새 대상은 seed를 정해야 CI가 통과합니다).
 

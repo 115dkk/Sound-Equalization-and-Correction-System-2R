@@ -156,7 +156,12 @@ fn published_versions_and_dependencies_are_closed() {
             for (alias, specification) in dependencies {
                 let package = dependency_package(alias, specification, workspace);
                 if published.contains(package.as_str()) {
-                    if dependency_version(alias, specification, workspace) != Some(exact.as_str()) {
+                    let version = dependency_version(alias, specification, workspace);
+                    // A path-only dev-dependency (no version) is left out of the
+                    // published package, which is how a test-only edge back to a
+                    // crate that depends on this one avoids a publish cycle.
+                    let stripped = section == "dev-dependencies" && version.is_none();
+                    if !stripped && version != Some(exact.as_str()) {
                         violations.push(format!(
                             "{name} [{section}] {alias}: published dependency {package} must use {exact}"
                         ));
