@@ -102,6 +102,8 @@ impl Service {
                 mdat_scope: None,
                 design_name: None,
                 camilla_devices: params.camilla_devices,
+                // Applying writes one rate: the profile's output rate.
+                extra_rates: Vec::new(),
             },
             events,
             JobKind::Apply,
@@ -192,6 +194,8 @@ impl Service {
                 mdat_scope: None,
                 design_name: None,
                 camilla_devices: None,
+                // Applying writes one rate: the profile's output rate.
+                extra_rates: Vec::new(),
             },
             events,
             JobKind::Apply,

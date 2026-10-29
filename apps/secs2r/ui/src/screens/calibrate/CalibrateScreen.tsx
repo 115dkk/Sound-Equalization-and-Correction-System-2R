@@ -17,8 +17,8 @@ import "./calibrate.css";
 export type CalibrateScreenProps = {
   view: CalibrateView;
   actions: CalibrateActions;
-  /** Gallery and tests: start with the target menu open, or the BA 고급 part open on this sub. */
-  initial?: { targetMenu?: boolean | undefined; editSub?: string | undefined } | undefined;
+  /** Gallery and tests: start with the target menu open, the BA 고급 part open on this sub, or 위치별 늦은 저음 open. */
+  initial?: { targetMenu?: boolean | undefined; editSub?: string | undefined; latePositions?: boolean | undefined } | undefined;
   /** The step is blocked (the header says why); the screen's own rule when omitted. */
   blocked?: boolean | undefined;
 };
@@ -33,7 +33,7 @@ export function CalibrateScreen({ view, actions, initial, blocked }: CalibrateSc
       <div className={["calibrate-results", !computed && "calibrate-results--preview"].filter(Boolean).join(" ")}>
         {computed && (
           <div className="calibrate-scorecard-slot">
-            <Scorecard view={view} actions={actions} />
+            <Scorecard view={view} actions={actions} positionsOpen={initial?.latePositions} />
           </div>
         )}
         <ResultGraph view={view} actions={actions} menuOpen={initial?.targetMenu} />

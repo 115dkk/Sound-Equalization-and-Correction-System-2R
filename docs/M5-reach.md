@@ -7,6 +7,21 @@
 - **편차**는 업스트림과 다르게 닿는 자리입니다([`DEVIATIONS.md`](DEVIATIONS.md)의 번호). 없앤 기능(U4)은 id 칸에 `—`를 적고 편차 번호를 답니다.
 - **작업서**는 그 줄을 채운 작업서입니다. 연결(P33) 뒤에 id가 바뀌면 그 작업서가 고칩니다.
 
+### 출력 레이트의 갤러리 견본(P116, P117)
+
+| 견본 id | 확인할 상태 |
+|---|---|
+| `screen.system.dsp.rate-48k` | CamillaDSP의 출력 레이트 48 kHz, 변경 가능 |
+| `screen.system.dsp.rate-auto` | 자동을 골라도 CamillaDSP 프로파일 유지 |
+| `screen.system.dsp.rate-minidsp` | miniDSP의 출력 레이트 96 kHz 고정 |
+| `screen.export.rate.96k` | 필터 형식별 출력 레이트 96 kHz |
+| `screen.export.rate.extra` | 추가 레이트 목록 펼침, 44.1 kHz와 192 kHz 선택 |
+| `screen.export.rate.fallback` | 지원하지 않는 장치 레이트 대신 48 kHz로 저장, 시스템으로 이동 |
+| `screen.calibrate.mimo-budget-96k` | 96 kHz로 환산한 MIMO FIR의 예산 초과 |
+| `screen.calibrate.mode-fir-over-96k` | 96 kHz로 환산한 채널 FIR의 한도 초과 |
+
+화면 검증은 `screens/system/SystemScreen.test.tsx`, `screens/system/useSystemScreen.test.tsx`, `screens/system/outputRate.test.ts`, `screens/calibrate/CalibrateScreen.test.tsx`, `screens/calibrate/useCalibrateScreen.test.tsx`, `screens/export/ExportScreen.test.tsx`, `screens/export/useExportScreen.test.tsx`에서 합니다. 모의 서비스와 저장 순서는 `ipc/mock.test.ts`, `state/writers.test.ts`에서 확인합니다.
+
 ## 1. 장치·마이크 (Step 1) — P30
 
 | 항목 | id | 편차 | 작업서 |
@@ -58,7 +73,8 @@
 | 채널당 FIR 탭 512…65536 ("선형 위상 최대 x ms") | `system.dsp.advanced`, `system.dsp.fir_taps` | U2 | P30 |
 | 총 FIR 탭 예산 0–4,194,304, 1024 단계 | `system.dsp.fir_budget` | U2 | P30 |
 | IIR 밴드, 올패스 밴드, BM 경로 지연 0–64 | `system.dsp.iir_bands`, `system.dsp.allpass_bands`, `system.dsp.bm_path_delays` | U2 | P30 |
-| 직접 고치면 사용자 지정, "FIR 길이 ≈ x ms · 주파수 간격 ≈ y Hz" | `system.dsp.note` | U2 | P30 |
+| 출력 레이트 이외의 값을 직접 고치면 사용자 지정, "FIR 길이 ≈ x ms · 주파수 간격 ≈ y Hz" | `system.dsp.note` | U2 | P30, P117 |
+| 내보낼 DSP의 출력 레이트: CamillaDSP와 사용자 지정은 자동 또는 여섯 고정값, 나머지는 장치 고정값 | `system.dsp.output_rate` | ADR 0017 | P116, P117 |
 | 프리셋 값(탭 / 예산 / IIR / AP / BM) | `system.dsp.device` (`dsp_set { preset }`) | U2 | P30 |
 | 진행 조건: 스피커 하나 이상, `validate()` 통과 | `frame.header.blocked`, `system.next` | 없음 | P30 |
 
@@ -126,6 +142,8 @@
 | XO 탭의 XO 선 끌기(40–200 Hz, 끄는 동안 곡선이 따라오고 놓으면 저장) | `calibrate.xo.line.handle` | 없음 | P31b |
 | 탭별 범례(보정 전, 보정 후, 타겟, MIMO 적용, 메인, 서브, 합, 정렬 전, 정렬 후, 서브 합) | `calibrate.plot.legend.<key>` | 없음 | P31b |
 | 지표 줄 "±1 dB (20–200 Hz) a % → b %" · "GD 산포 (20–100 Hz) a → b ms"(판정 카드는 전체, 성적표는 채널별) | `calibrate.verdict.within`, `calibrate.verdict.gd`, `calibrate.verdict.spread`, `calibrate.scorecard` | 없음 | P31b |
+| 성적표: 보정 전·후·MIMO 후 비교 범례, 기준 위치의 늦은 저음(20–150 Hz, dB)과 설명(견본 `screen.calibrate.mimo-scorecard`, `screen.calibrate.mimo-stale-scorecard`, `screen.calibrate.mimo-scorecard.min`) | `calibrate.scorecard.key`, `calibrate.scorecard.late` | 없음 | P110, P111 |
+| 위치별 늦은 저음: 접힌 표, 위치 번호순과 기준 위치 표시, 현재 MIMO 결과가 있으면 세 값 비교(견본 `screen.calibrate.late-positions`, `screen.calibrate.one-position`) | `calibrate.scorecard.positions`, `calibrate.scorecard.positions.table` | 없음 | P110, P111 |
 | 필터 줄 "PEQ n · FIR n탭 \| FIR 없음 · XO n Hz · MIMO 서포트 n"(고른 채널) | `calibrate.plot.filters` | 없음 | P31b |
 | 전체 지연과 엔진 메모(메모는 접힌 목록, 업스트림처럼 늘 보임) | `calibrate.verdict.delay`, `calibrate.verdict.notes` | 없음 | P31b |
 | BA 탭: 서브 합 평탄도(lo–hi Hz), 좌석 편차 또는 한 위치 | `calibrate.ba.metrics` | 없음 | P31b |
@@ -136,6 +154,7 @@
 | 모드: 최소 지연(`zero`), 낮은 지연(`mixed`, 기본), 표준(`linear`) | `calibrate.mode.zero`, `calibrate.mode.mixed`, `calibrate.mode.linear` | 없음 | P31b |
 | 초고지연(`ultra`, 사양 줄 다섯 번 누르기로 열림)과 지연 한도 30–200 ms, 10 단위 | `calibrate.mode.ultra` (모드 목록에 항상 표시), `calibrate.mode.ultra_ms` | U9 | P31b, P58 |
 | 사양 줄(`cal.mode_spec`) | `calibrate.mode.spec` | 없음 | P31b |
+| 출력 레이트로 환산한 채널 FIR의 한도 초과와 FIR 없는 모드 안내 | `calibrate.mode.fir_over` | ADR 0017 | P116, P117 |
 | [계산](첫 계산에서 XO 추천이 없으면 추천부터, 서비스가 정함) | `calibrate.compute` | 없음 | P31b |
 | [취소](결과를 버림)와 XO·MIMO 카드의 취소 | `jobs.cancel.calibrate`, `jobs.cancel.recommend_xo`, `jobs.cancel.mimo` | U8 | P31b |
 | 상태 줄: 계산 중, XO 추천 중, 실패, 취소, 대기, 측정 없음, 측정 바뀜, 설정 바뀜, 완료 | `calibrate.running`, `calibrate.verdict.failed`, `calibrate.verdict.stale`, `calibrate.stale`, `calibrate.verdict.plan`, `jobs.history` | U8 | P31b |
@@ -207,6 +226,9 @@
 
 | 항목 | id | 편차 | 작업서 |
 |---|---|---|---|
+| 필터 형식별 출력 레이트: 48 kHz 이외의 고정값 또는 자동 선택 안내 | `export.kind.<kind>.rate` | ADR 0017 | P116, P117 |
+| 컨볼루션 IR의 추가 레이트: 접힌 요약, 펼친 목록, 레이트별 선택 | `export.extra_rates`, `export.extra_rates.summary`, `export.extra_rates.list`, `export.extra_rates.<rate>` | ADR 0017 | P116, P117 |
+| 자동으로 정한 출력 레이트, 48 kHz로 대신 저장한 이유와 시스템으로 이동 | `export.outcome.<kind>.rate`, `export.outcome.<kind>.rate_fallback`, `export.outcome.<kind>.go_system` | ADR 0017 | P116, P117 |
 | 결과 줄: 모드 · 총 지연 · 채널 N개 전후 · 서브 N개 측정 그대로 · MIMO 적용 N | `export.result.summary`, `export.result.mimo` | — | P32 |
 | 낡은 결과 알림(업스트림처럼 그래도 내보냄) | `export.result.stale`, `export.status.stale` | — | P32, P38 |
 | 내보낼 것이 없는 이유(보정으로 가는 길) | `export.result.empty`, `export.go_calibrate`, `frame.header.blocked` | — | P32 |

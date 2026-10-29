@@ -223,7 +223,7 @@
 /* Dense rows: the scorecard sits beside the graph. */
 .calibrate-scorecard .ui-table th[scope="col"],
 .calibrate-scorecard .ui-table td {
-  padding-inline: var(--space-2);
+  padding-inline: var(--space-1-5);
 }
 
 .calibrate-sort[aria-pressed="true"] {
@@ -245,6 +245,132 @@
 
 .calibrate-code {
   font-weight: var(--weight-semibold);
+}
+
+/* With the 늦은 저음 column a row holds three figures: the scorecard needs
+   about 460px in every skin and language with a classic scrollbar (Matrix's
+   monospaced figures under English heads are the widest; three positions in
+   its positions table fit too), so it takes more of the row, and the row
+   stacks (scorecard over the graph) before the graph beside it gets
+   narrower than about 440px. */
+.calibrate-results:has(.calibrate-scorecard--late) {
+  grid-template-columns: minmax(460px, 0.42fr) minmax(0, 1fr);
+}
+
+@container (max-width: 920px) {
+  .calibrate-results:has(.calibrate-scorecard--late) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* Over the graph the card has no graph height to take: room for the key
+   and a few channels. */
+.calibrate-scorecard-slot:has(> .calibrate-scorecard--late) {
+  min-height: 420px;
+}
+
+/* The figures' form follows the card's width, in the scorecard and in its
+   positions table alike. */
+.calibrate-scorecard {
+  container: calibrate-scorecard / inline-size;
+}
+
+/* The channel table takes what the card leaves after the key and the
+   positions summary, and scrolls inside it; a short table leaves the key
+   right under its last row. */
+.calibrate-scorecard__main {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* The hidden "보정 전 …, 보정 후 …" text stays inside its cell (and scrolls with it). */
+.calibrate-scorecard .ui-table td {
+  position: relative;
+}
+
+/* before → after, and → the MIMO value on a line of its own under the
+   after value; on one line where the card is wide (stacked over the graph). */
+.calibrate-score-change {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: var(--leading-tight);
+  white-space: nowrap;
+}
+
+@container calibrate-scorecard (min-width: 560px) {
+  .calibrate-score-change {
+    flex-direction: row;
+    align-items: baseline;
+    column-gap: 0.28em;
+  }
+}
+
+/* The MIMO value: underlined in the colour of the graph's MIMO curve (the
+   legend's swatch), so it reads as that curve's figure. Colour is not the
+   only cue: it is always third, and the key names it. */
+.calibrate-mimo {
+  text-decoration-line: underline;
+  text-decoration-color: var(--ch-4);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  text-decoration-skip-ink: none;
+}
+
+.calibrate-score-key {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-1);
+  color: var(--text-muted);
+}
+
+.calibrate-score-key p {
+  margin: 0;
+  text-wrap: pretty;
+}
+
+.calibrate-positions {
+  flex: none;
+  min-width: 0;
+}
+
+.ui-details.calibrate-positions summary {
+  margin-top: 0;
+}
+
+/* Position names on one line; the reference mark under its position. */
+.calibrate-positions .ui-table th[scope="col"] {
+  vertical-align: top;
+}
+
+.calibrate-th__mark {
+  font-weight: var(--weight-regular);
+}
+
+.calibrate-positions .ui-table-wrap {
+  margin-top: var(--space-2);
+}
+
+/* 위치별 늦은 저음 open: the card leaves the graph's height and grows down
+   with the positions table. The channel table keeps the height it had when
+   the summary was clicked (Scorecard measures it), so the summary stays
+   where it was and the positions open under it. The graph keeps its own
+   height. */
+.calibrate-scorecard-slot > .calibrate-scorecard:has(.calibrate-positions[open]) {
+  position: static;
+  min-height: 100%;
+}
+
+.calibrate-scorecard:has(.calibrate-positions[open]) .calibrate-scorecard__main {
+  flex: none;
+  height: var(--calibrate-score-main-h, auto);
+}
+
+.calibrate-results:has(.calibrate-positions[open]) > .calibrate-graph {
+  align-self: start;
 }
 
 .calibrate-graph__bar {
@@ -384,6 +510,19 @@
 
 .calibrate-hint--warning {
   color: var(--warning);
+}
+
+/* The mode's channel FIR does not fit the DSP: the icon carries the warning with the words, not the hue alone. */
+.calibrate-fir-over {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1-5);
+  text-wrap: pretty;
+}
+
+.calibrate-fir-over__icon {
+  flex: none;
+  margin-top: 2px;
 }
 
 .calibrate-ba {

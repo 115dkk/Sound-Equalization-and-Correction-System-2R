@@ -84,7 +84,7 @@ const must = (id: string) => {
   return element;
 };
 
-function setup(view: CalibrateView, options: { locale?: "ko" | "en"; initial?: { targetMenu?: boolean; editSub?: string } } = {}) {
+function setup(view: CalibrateView, options: { locale?: "ko" | "en"; initial?: { targetMenu?: boolean; editSub?: string; latePositions?: boolean } } = {}) {
   const actions = mockActions();
   renderWith(<CalibrateScreen view={view} actions={actions} initial={options.initial} />, { locale: options.locale ?? "ko" });
   return actions;
@@ -113,6 +113,8 @@ const STATES: Record<string, CalibrateView> = {
   failed: fx.failedView,
   subsOnly: fx.subsOnlyView,
   mimo: fx.mimoView,
+  mimoStale: fx.mimoStaleView,
+  onePosition: fx.onePositionView,
   noSubs: fx.noSubsView,
   ultra: fx.ultraView,
   runningMimo: fx.runningMimoView,
@@ -147,8 +149,8 @@ describe("보정 screen", () => {
 
   it("shows the verdict numbers and the plan before the first run", () => {
     setup(fx.splView);
-    expect(must("calibrate.verdict.within").textContent).toContain("82");
-    expect(must("calibrate.verdict.gd").textContent).toContain("22.9");
+    expect(must("calibrate.verdict.within").textContent).toContain("69");
+    expect(must("calibrate.verdict.gd").textContent).toContain("41.5");
     expect(must("calibrate.verdict.delay").textContent).toContain("9.8 ms");
     cleanupAll();
     setup(fx.emptyView);
@@ -528,6 +530,33 @@ describe("보정 screen", () => {
     }
   });
 
+  it("counts the FIR taps at the DSP's output rate before comparing them, and names a rate that is not 48 kHz (ADR 0017)", () => {
+    // miniDSP at 96 kHz: supports of 3,072 taps at 48 kHz become 6,144, past the 4,096 budget.
+    setup(fx.minidspView);
+    const budget = translate("ko", "calibrate.mimo.state.budget_over.rate", { taps: "6,144", budget: "4,096", rate: "96 kHz" });
+    expect(must("calibrate.mimo.state").textContent).toContain(budget);
+    // The mixed mode's 2,048 taps become 4,096, past 2,048 per channel: one warning line in the mode card.
+    const over = must("calibrate.mode.fir_over");
+    expect(over.closest("[data-ui='calibrate.settings.mode']")).not.toBeNull();
+    expect(over.textContent).toBe(translate("ko", "calibrate.mode.fir_over.rate", { rate: "96 kHz", taps: "4,096", limit: "2,048", mode: "최소 지연" }));
+    cleanupAll();
+    // The same supports at 48 kHz fit, and the line names no rate.
+    setup({ ...fx.minidspView, outputRate: 48000 });
+    expect(must("calibrate.mimo.state").textContent).toContain(translate("ko", "calibrate.mimo.state.budget", { taps: "3,072", budget: "4,096" }));
+    expect(ui("calibrate.mode.fir_over")).toBeNull();
+    cleanupAll();
+    // At 48 kHz a DSP with fewer taps than the mode still gets the warning, without a rate.
+    setup({ ...fx.minidspView, outputRate: 48000, firTaps: 1024 });
+    expect(must("calibrate.mode.fir_over").textContent).toBe(translate("ko", "calibrate.mode.fir_over", { taps: "2,048", limit: "1,024", mode: "최소 지연" }));
+    cleanupAll();
+    // A mode without FIR and an unknown DSP never warn.
+    setup({ ...fx.minidspView, modeSpec: { ...fx.minidspView.modeSpec, fir_taps: 0 } });
+    expect(ui("calibrate.mode.fir_over")).toBeNull();
+    cleanupAll();
+    setup({ ...fx.minidspView, firTaps: 0 });
+    expect(ui("calibrate.mode.fir_over")).toBeNull();
+  });
+
   it("requires recovery from an unavailable explicit GPU while Automatic remains calculable", () => {
     const actions = setup(fx.requestedGpuUnavailableView);
     expect((must("calibrate.mimo.compute") as HTMLButtonElement).disabled).toBe(true);
@@ -636,6 +665,111 @@ describe("보정 screen", () => {
     expect(calibrateStepState(fx.emptyView)).toEqual({ status: "ready" });
     expect(calibrateStepState(fx.staleView)).toEqual({ status: "ready" });
     expect(calibrateStepState(fx.splView)).toEqual({ status: "done" });
+  });
+});
+
+/* ── Scorecard: late bass and MIMO (P110) ───────────────────────────────── */
+
+/** What the screen reader hears in each figure cell of a scorecard row (the channel cell left out). */
+function heard(table: string, role: string): string[] {
+  const row = must(table).querySelector<HTMLElement>(`[data-row="${role}"]`);
+  if (!row) throw new Error(`no row ${role} in ${table}`);
+  return [...row.querySelectorAll("td")].slice(1).map((cell) => cell.querySelector(".visually-hidden")?.textContent ?? "");
+}
+
+describe("scorecard after MIMO", () => {
+  it("shows before → after → MIMO in all three figures with a current MIMO result, and a key that names the third", () => {
+    setup(fx.mimoView);
+    expect(heard("calibrate.scorecard", "L")).toEqual([
+      "보정 전 38, 보정 후 64, MIMO 후 54",
+      "보정 전 88.4, 보정 후 47.5, MIMO 후 41.1",
+      "보정 전 −23.9, 보정 후 −16.3, MIMO 후 −23.1",
+    ]);
+    expect(heard("calibrate.scorecard", "R")[2]).toBe("보정 전 −24.0, 보정 후 −17.0, MIMO 후 −21.6");
+    // The arrows and the MIMO mark are for the eye; the third value carries the MIMO curve's mark.
+    const cell = must("calibrate.scorecard").querySelector('[data-row="C"]')!.querySelectorAll("td")[1]!;
+    expect(cell.querySelector('[aria-hidden="true"]')?.textContent).toBe("36 → 62→ 55");
+    expect(cell.querySelector(".calibrate-mimo")?.textContent).toBe("55");
+    expect(must("calibrate.scorecard.key").textContent).toBe("보정 전 → 보정 후 → MIMO 후");
+    expect(must("calibrate.scorecard.key").querySelector(".calibrate-mimo")?.textContent).toBe("MIMO 후");
+    expect(must("calibrate.scorecard").querySelector("caption")?.textContent).toContain("MIMO 후");
+    cleanupAll();
+    setup(fx.mimoView, { locale: "en" });
+    expect(heard("calibrate.scorecard", "L")[0]).toBe("Before 38, after 64, after MIMO 54");
+    expect(must("calibrate.scorecard.key").textContent).toBe("Before → After → After MIMO");
+  });
+
+  it("keeps two values and does not mention MIMO when the MIMO result is stale or absent", () => {
+    for (const view of [fx.mimoStaleView, fx.splView, { ...fx.mimoView, results: { ...fx.mimoView.results, mimo_export: "off" as const } }]) {
+      setup(view);
+      expect(heard("calibrate.scorecard", "L")).toEqual(["보정 전 38, 보정 후 64", "보정 전 88.4, 보정 후 47.5", "보정 전 −23.9, 보정 후 −16.3"]);
+      const card = must("calibrate.scorecard.card");
+      expect(card.textContent).not.toContain("MIMO");
+      expect(card.querySelector(".calibrate-mimo")).toBeNull();
+      expect(ui("calibrate.scorecard.key")).toBeNull();
+      cleanupAll();
+    }
+  });
+
+  it("keeps 낮은 순 on the share after correction, not after MIMO", () => {
+    setup(fx.mimoView);
+    fireEvent.click(must("calibrate.scorecard.sort"));
+    const order = [...must("calibrate.scorecard").querySelectorAll<HTMLElement>("tbody tr")].map((row) => row.dataset.row);
+    // After correction C 62 < L 64 < R 65; after MIMO L 54 would come first.
+    expect(order.slice(0, 3)).toEqual(["C", "L", "R"]);
+  });
+
+  it("adds the 늦은 저음 column at the main position, explained once under the table", () => {
+    setup(fx.splView);
+    const heads = [...must("calibrate.scorecard").querySelectorAll("th[scope=col]")].map((th) => th.textContent);
+    expect(heads[3]).toBe("늦은 저음 (dB)20–150 Hz");
+    expect(heard("calibrate.scorecard", "C")[2]).toBe("보정 전 −17.0, 보정 후 −16.0");
+    expect(must("calibrate.scorecard.late").textContent).toContain("낮을수록 울림이 짧습니다.");
+    cleanupAll();
+    // A channel without an entry has an empty cell; without any entry there is no column.
+    const calibration = fx.splView.results.calibration!;
+    setup({ ...fx.splView, results: { ...fx.splView.results, calibration: { ...calibration, late_energy: calibration.late_energy.filter((e) => e.role !== "C") } } });
+    const empty = must("calibrate.scorecard").querySelector('[data-row="C"]')!.querySelectorAll("td")[3]!;
+    expect(empty.textContent).toBe("");
+    cleanupAll();
+    setup({ ...fx.splView, results: { ...fx.splView.results, calibration: { ...calibration, late_energy: [] } } });
+    expect(must("calibrate.scorecard").querySelectorAll("th[scope=col]")).toHaveLength(3);
+    expect(ui("calibrate.scorecard.late")).toBeNull();
+    expect(ui("calibrate.scorecard.positions")).toBeNull();
+  });
+
+  it("lists the late bass by position, collapsed, only with more than one position, the main position marked", () => {
+    setup(fx.mimoView);
+    const details = must("calibrate.scorecard.positions") as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    expect(details.querySelector("summary")?.textContent).toBe("위치별 늦은 저음");
+    const heads = [...must("calibrate.scorecard.positions.table").querySelectorAll("th[scope=col]")].map((th) => th.textContent);
+    expect(heads).toEqual(["채널", "위치 1기준", "위치 2", "위치 3"]);
+    // Rows in main_roles order; each position before → after → MIMO.
+    const rows = [...must("calibrate.scorecard.positions.table").querySelectorAll<HTMLElement>("tbody tr")].map((row) => row.dataset.row);
+    expect(rows).toEqual(fx.mimoView.results.calibration!.main_roles);
+    expect(heard("calibrate.scorecard.positions.table", "L")).toEqual([
+      "보정 전 −23.9, 보정 후 −16.3, MIMO 후 −23.1",
+      "보정 전 −22.2, 보정 후 −14.4, MIMO 후 −20.1",
+      "보정 전 −24.5, 보정 후 −15.8, MIMO 후 −22.0",
+    ]);
+    cleanupAll();
+    setup(fx.mimoStaleView);
+    expect(heard("calibrate.scorecard.positions.table", "L")[1]).toBe("보정 전 −22.2, 보정 후 −14.4");
+    cleanupAll();
+    setup(fx.onePositionView);
+    expect(ui("calibrate.scorecard.card")).not.toBeNull();
+    expect(ui("calibrate.scorecard.positions")).toBeNull();
+  });
+
+  it("opens the positions from the start when asked (gallery), the way a click does", async () => {
+    setup(fx.mimoView, { initial: { latePositions: true } });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect((must("calibrate.scorecard.positions") as HTMLDetailsElement).open).toBe(true);
+    // The channel table's height was kept before it opened.
+    expect(document.querySelector<HTMLElement>(".calibrate-scorecard__main")!.style.getPropertyValue("--calibrate-score-main-h")).toMatch(/px$/);
   });
 });
 

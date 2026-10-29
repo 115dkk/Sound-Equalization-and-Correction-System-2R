@@ -45,6 +45,9 @@ import {
   exportDone,
   exportEqapoDone,
   exportExporting,
+  exportExtraRates,
+  exportRate96k,
+  exportRateFallback,
   exportFailed,
   exportMeasurementsDone,
   exportMeasurementsOnly,
@@ -77,10 +80,12 @@ export const noopExportActions: ExportActions = {
   setMdatScope: () => {},
   setDesignName: () => {},
   setCamillaDevices: () => {},
+  setExtraRates: () => {},
   refreshDevices: () => {},
   changeFolder: () => {},
   openFolder: () => {},
   goToCalibrate: () => {},
+  goToSystem: () => {},
   recalibrate: () => {},
   setApplyLevel: () => {},
   setCamillaAddress: () => {},
@@ -141,6 +146,7 @@ function ExportSpecimen({
   jobs = initialLedger,
   initialAdvanced,
   initialDevices,
+  initialExtraRates,
   scrolled,
   fileName,
   children,
@@ -150,13 +156,23 @@ function ExportSpecimen({
   initialAdvanced?: boolean;
   /** Draw the CamillaDSP devices unfolded. */
   initialDevices?: boolean;
+  /** Draw the convolution IR's extra rates unfolded. */
+  initialExtraRates?: boolean;
   /** Draw the content scrolled to its end, or to the element with this `data-ui`. */
   scrolled?: true | string;
   fileName?: string;
   children?: ReactNode;
 }) {
   const t = useT();
-  const screen = <ExportScreen view={view} actions={noopExportActions} initialAdvanced={initialAdvanced ?? false} initialDevices={initialDevices ?? false} />;
+  const screen = (
+    <ExportScreen
+      view={view}
+      actions={noopExportActions}
+      initialAdvanced={initialAdvanced ?? false}
+      initialDevices={initialDevices ?? false}
+      initialExtraRates={initialExtraRates ?? false}
+    />
+  );
   return (
     <>
       <FrameBox frame={exportFrame(view, fileName)} jobs={jobs} header={exportHeader(view, noopExportActions, t)}>
@@ -274,6 +290,15 @@ export const exportSpecimens: SpecimenDef[] = [
   )),
   frame("screen.export.devices.asio-unnamed", "Export · ASIO capture without a driver name: the field says so and the header's primary is off", () => (
     <ExportSpecimen view={exportDevicesAsioUnnamed} initialDevices scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.rate.96k", "Export · DSP at 96 kHz: each filter row says '96 kHz로 씁니다', the REW mdat says nothing", () => (
+    <ExportSpecimen view={exportRate96k} scrolled="export.files" />
+  )),
+  frame("screen.export.rate.extra", "Export · convolution IR at 96 kHz with 추가 레이트 open, 44.1 and 192 kHz checked", () => (
+    <ExportSpecimen view={exportExtraRates} initialExtraRates scrolled="export.kind.equalizer_apo" />
+  )),
+  frame("screen.export.rate.fallback", "Export · 자동 fell back to 48 kHz (the device runs at 32 kHz): the CamillaDSP outcome warns and leads to 시스템", () => (
+    <ExportSpecimen view={exportRateFallback} jobs={exportHistory} scrolled="export.kind.camilla_dsp" />
   )),
   frame("screen.export.exporting", "Export · REW mdat being saved", () => <ExportSpecimen view={exportExporting} jobs={exportJob} />),
   frame("screen.export.done", "Export · done, files written", () => <ExportSpecimen view={exportDone} jobs={exportHistory} fileName="거실 7.1.4.secs" />),

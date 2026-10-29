@@ -426,6 +426,8 @@ mod tests {
                     files: vec![],
                     folder: String::new(),
                     stale: false,
+                    output_rate: 48_000,
+                    notes: Vec::new(),
                 }))
             })
             .unwrap();
@@ -475,6 +477,8 @@ mod tests {
                         folder,
                         files: vec!["filter.wav".into()],
                         stale: false,
+                        output_rate: 48_000,
+                        notes: Vec::new(),
                     }))
                 })
                 .unwrap();

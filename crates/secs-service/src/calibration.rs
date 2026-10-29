@@ -11,8 +11,8 @@ use secs_project::{
 use secs_types::calibration::CalibrationSettings;
 use secs_types::ipc::{
     CalibrateParams, CalibrationSummary, ChannelScore, ErrorCode, IpcError, JobKind, JobResult,
-    JobStarted, MetricsSummary, MimoParams, MimoSummary, Notice, ResultsSummary, VerdictSummary,
-    XoRecommendation,
+    JobStarted, LateEnergy, MetricsSummary, MimoChannelScore, MimoLateEnergy, MimoParams,
+    MimoSummary, Notice, ResultsSummary, VerdictSummary, XoRecommendation,
 };
 
 use crate::jobs::JobContext;
@@ -74,9 +74,11 @@ impl Service {
             )
             .map_err(engine_error)?;
             let design = calibration.design;
+            // The 2 s export view is built outside the session lock.
+            let late_energy = secs_engine::late_energy(&design).map_err(engine_error)?;
             let ticket = prepared.ticket;
             let (path, cached) = session::commit(&session, ticket, &job, |open| {
-                let mut summary = summarize(&design, &prepared.settings);
+                let mut summary = summarize(&design, &prepared.settings, &late_energy);
                 if calibration.resampled > 0 {
                     summary.notes.push(Notice {
                         code: "measurement_resampled".into(),
@@ -238,6 +240,23 @@ impl Service {
                         .map(|path| &path.input)
                         .collect::<std::collections::BTreeSet<_>>()
                         .len(),
+                    scorecard: run
+                        .scorecard
+                        .iter()
+                        .map(|score| MimoChannelScore {
+                            role: score.role.clone(),
+                            after_mimo: metrics(score.after_mimo),
+                        })
+                        .collect(),
+                    late_energy: run
+                        .late_energy
+                        .iter()
+                        .map(|row| MimoLateEnergy {
+                            role: row.role.clone(),
+                            position: row.position,
+                            after_mimo_db: row.after_mimo_db,
+                        })
+                        .collect(),
                     compute: run.compute.clone(),
                 };
                 open.results.commit_mimo(MimoResult {
@@ -422,7 +441,11 @@ fn load_measurements_cancellable(
     Ok(MeasurementSet { positions })
 }
 
-fn summarize(design: &Design, settings: &CalibrationSettings) -> CalibrationSummary {
+fn summarize(
+    design: &Design,
+    settings: &CalibrationSettings,
+    late_energy: &[secs_engine::RoleLateEnergy],
+) -> CalibrationSummary {
     let scorecard: Vec<_> = design
         .scores
         .iter()
@@ -430,6 +453,15 @@ fn summarize(design: &Design, settings: &CalibrationSettings) -> CalibrationSumm
             role: scores.role.clone(),
             before: metrics(scores.before),
             after: metrics(scores.after),
+        })
+        .collect();
+    let late_energy = late_energy
+        .iter()
+        .map(|row| LateEnergy {
+            role: row.role.clone(),
+            position: row.position,
+            before_db: row.before_db,
+            after_db: row.after_db,
         })
         .collect();
     let count = scorecard.len().max(1) as f64;
@@ -457,6 +489,7 @@ fn summarize(design: &Design, settings: &CalibrationSettings) -> CalibrationSumm
                 .unwrap_or(0.0),
         },
         scorecard,
+        late_energy,
         latency_ms: design.chain.latency_ms,
         notes: design.notes.iter().flat_map(notices).collect(),
         main_roles: design

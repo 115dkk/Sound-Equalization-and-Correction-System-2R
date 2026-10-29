@@ -27,8 +27,9 @@ import type { Mode } from "../../ipc/bindings/Mode";
 import type { Notice } from "../../ipc/bindings/Notice";
 import { Advanced, Button, Card, EmptyState, ErrorNotice, Icon, Segmented, StatusPill, type PillTone } from "../../ui";
 import { roleCode } from "../../ui/maps/geometry";
+import { DESIGN_RATE, rateText } from "../system/outputRate";
 import { ApplyBlock, eqapoReason } from "./apply";
-import { CamillaDevicesDisclosure, DESIGN_NAME_ID, DesignNameField } from "./fields";
+import { CamillaDevicesDisclosure, DESIGN_NAME_ID, DesignNameField, ExtraRatesDisclosure } from "./fields";
 import {
   EXPORT_KINDS,
   MDAT_SCOPES,
@@ -47,6 +48,7 @@ import {
   mdatFileName,
   mdatScopeFor,
   mimoInclusion,
+  rateFallback,
   type ApplyProblem,
   type ApplyTarget,
   type ExportActions,
@@ -170,6 +172,7 @@ export function ExportScreen({
   actions,
   initialAdvanced = false,
   initialDevices = false,
+  initialExtraRates = false,
   initialRevertConfirm = false,
 }: {
   view: ExportView;
@@ -178,6 +181,8 @@ export function ExportScreen({
   initialAdvanced?: boolean;
   /** Gallery: draw the CamillaDSP devices unfolded. The fold is the screen's own state. */
   initialDevices?: boolean;
+  /** Gallery: draw the convolution IR's extra rates unfolded. The fold is the screen's own state. */
+  initialExtraRates?: boolean;
   /** Gallery and tests: open with 빼기's confirm showing. The confirm is the screen's own state. */
   initialRevertConfirm?: boolean;
 }) {
@@ -204,7 +209,7 @@ export function ExportScreen({
   return (
     <div ref={rootRef} className="export-screen" data-ui="export">
       <ResultCard view={view} actions={actions} />
-      <FilesCard view={view} actions={actions} initialAdvanced={initialAdvanced} initialDevices={initialDevices} initialRevertConfirm={initialRevertConfirm} />
+      <FilesCard view={view} actions={actions} initialAdvanced={initialAdvanced} initialDevices={initialDevices} initialExtraRates={initialExtraRates} initialRevertConfirm={initialRevertConfirm} />
     </div>
   );
 }
@@ -400,12 +405,14 @@ function FilesCard({
   actions,
   initialAdvanced,
   initialDevices,
+  initialExtraRates,
   initialRevertConfirm,
 }: {
   view: ExportView;
   actions: ExportActions;
   initialAdvanced: boolean;
   initialDevices: boolean;
+  initialExtraRates: boolean;
   initialRevertConfirm: boolean;
 }) {
   const t = useT();
@@ -416,10 +423,10 @@ function FilesCard({
         <ExportGroup title={t("export.group.filters")}>
           {/* One name for every filter export, above their rows; the tutorial has no folder to name. */}
           {!view.tutorial && <DesignNameField view={view} actions={actions} />}
-          <ExportItem kind="camilla_dsp" view={view} actions={actions} initialDevices={initialDevices} />
+          <ExportItem kind="camilla_dsp" view={view} actions={actions} initialOpen={initialDevices} />
           <ExportItem kind="filter_text" view={view} actions={actions} />
           <ExportItem kind="equalizer_apo" view={view} actions={actions} initialRevertConfirm={initialRevertConfirm} />
-          <ExportItem kind="convolution" view={view} actions={actions} />
+          <ExportItem kind="convolution" view={view} actions={actions} initialOpen={initialExtraRates} />
         </ExportGroup>
         <ExportGroup title={t("export.group.rew")}>
           <ExportItem kind="before_after_mdat" view={view} actions={actions} />
@@ -516,6 +523,24 @@ function MdatScopeField({ view, actions }: { view: ExportView; actions: ExportAc
   );
 }
 
+/**
+ * The rate a filter export writes, said under its folder when it is not
+ * 48 kHz (ADR 0017); 자동 says it reads the playback device. The REW mdat
+ * stays at 48 kHz and says nothing.
+ */
+function RateLine({ kind, view }: { kind: ExportKind; view: ExportView }) {
+  const t = useT();
+  const number = useNumber();
+  const choice = view.outputRate;
+  if (!isFilterKind(kind) || !choice || (choice !== "auto" && choice.fixed === DESIGN_RATE)) return null;
+  return (
+    <p className="export-item__where export-item__rate" data-ui={`export.kind.${kind}.rate`}>
+      <Icon name="settings" size={16} />
+      <span>{choice === "auto" ? t("export.rate.auto") : t("export.rate.fixed", { rate: rateText(number, choice.fixed) })}</span>
+    </p>
+  );
+}
+
 /** The rows that choose 파일만 or 적용 (ADR 0018), and the target each applies to. */
 const APPLY_TARGET: Partial<Record<ExportKind, ApplyTarget>> = { camilla_dsp: "camilla", equalizer_apo: "eqapo" };
 
@@ -523,13 +548,13 @@ function ExportItem({
   kind,
   view,
   actions,
-  initialDevices = false,
+  initialOpen = false,
   initialRevertConfirm = false,
 }: {
   kind: ExportKind;
   view: ExportView;
   actions: ExportActions;
-  initialDevices?: boolean;
+  initialOpen?: boolean;
   initialRevertConfirm?: boolean;
 }) {
   const t = useT();
@@ -568,7 +593,9 @@ function ExportItem({
             <span>{mdatFileName(mdatScopeFor(view.results.calibration, view.mdatScope), view.settings)}</span>
           </p>
         )}
-        {kind === "camilla_dsp" && <CamillaDevicesDisclosure view={view} actions={actions} defaultOpen={initialDevices} />}
+        <RateLine kind={kind} view={view} />
+        {kind === "camilla_dsp" && <CamillaDevicesDisclosure view={view} actions={actions} defaultOpen={initialOpen} />}
+        {kind === "convolution" && <ExtraRatesDisclosure view={view} actions={actions} defaultOpen={initialOpen} />}
         {/* 파일만 or 적용, under the row's devices and folder: the setting before the results below. */}
         {target !== undefined && <ApplyBlock target={target} view={view} actions={actions} initialConfirm={initialRevertConfirm} />}
       </div>
@@ -633,8 +660,17 @@ function ExportItem({
   );
 }
 
+/** The `output_rate_fallback` note as a cause: the rate the device reported when there was one, else that it could not be read. */
+function fallbackText(t: Translate, number: (value: number, digits?: number) => string, note: Notice): string {
+  const rate = Number(note.params.rate);
+  return note.params.rate !== undefined && Number.isFinite(rate) && rate > 0
+    ? t("export.rate.fallback.unsupported", { rate: rateText(number, rate) })
+    : t("export.rate.fallback.unread");
+}
+
 function Outcome({ kind, run, view, actions }: { kind: ExportKind; run: ExportRun; view: ExportView; actions: ExportActions }) {
   const t = useT();
+  const number = useNumber();
   const id = `export.outcome.${kind}`;
   if (run.status === "failed") {
     const problem = designNameRejection(run.error);
@@ -661,6 +697,7 @@ function Outcome({ kind, run, view, actions }: { kind: ExportKind; run: ExportRu
     );
   }
   const hint = OUTCOME_HINT[kind];
+  const fallback = rateFallback(run);
   return (
     <div className="export-item__outcome export-done" data-ui={id} role="status">
       <div className="export-outcome">
@@ -672,6 +709,25 @@ function Outcome({ kind, run, view, actions }: { kind: ExportKind; run: ExportRu
           {t("export.folder.open")}
         </Button>
       </div>
+      {fallback ? (
+        // 자동 could not use the playback device's rate: what was written instead, and where the rate is set.
+        <ErrorNotice
+          id={`${id}.rate_fallback`}
+          tone="warning"
+          cause={fallbackText(t, number, fallback)}
+          next={t("export.rate.fallback.next")}
+          action={
+            <Button variant="secondary" size="sm" iconEnd="arrowRight" data-ui={`${id}.go_system`} onClick={actions.goToSystem}>
+              {t("export.go_system")}
+            </Button>
+          }
+        />
+      ) : view.outputRate === "auto" && isFilterKind(kind) ? (
+        // 자동 decided the rate when exporting: the row said it would read the device, the outcome says what it read.
+        <p className="export-done__hint tabular" data-ui={`${id}.rate`}>
+          {t("export.rate.written", { rate: rateText(number, run.rate) })}
+        </p>
+      ) : null}
       {hint && (
         // What to do with the folder: Equalizer APO's files go into its own config folder; the convolution IR's guide says which file goes where.
         <p className="export-done__hint" data-ui={`${id}.hint`}>

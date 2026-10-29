@@ -80,6 +80,9 @@ enum Action {
         out: PathBuf,
         #[arg(long, value_enum)]
         mdat_scope: Option<MdatScopeChoice>,
+        /// Additional comma-separated convolution output rates.
+        #[arg(long, value_delimiter = ',')]
+        extra_rates: Vec<u32>,
         /// Stable design name; a matching kind and name is replaced.
         #[arg(long)]
         design_name: Option<String>,
@@ -463,6 +466,7 @@ impl Runner {
         mdat_scope: Option<MdatScope>,
         design_name: Option<String>,
         camilla_devices: Option<CamillaDevices>,
+        extra_rates: Vec<u32>,
     ) {
         self.call(Request::Export(ExportParams {
             kind,
@@ -470,6 +474,7 @@ impl Runner {
             mdat_scope,
             design_name,
             camilla_devices,
+            extra_rates,
         }));
     }
 }
@@ -673,6 +678,7 @@ fn run(action: Action, runner: &mut Runner) {
             kind,
             out,
             mdat_scope,
+            extra_rates,
             design_name,
             camilla_capture,
             camilla_playback,
@@ -716,6 +722,7 @@ fn run(action: Action, runner: &mut Runner) {
                 mdat_scope.map(Into::into),
                 design_name,
                 camilla_devices,
+                extra_rates,
             );
         }
         Action::Apply { action } => match action {
@@ -901,7 +908,14 @@ fn full_run(runner: &mut Runner, out: &Path, project: Option<&Path>, fill: FillC
             }}));
             continue;
         }
-        runner.export(kind, &out.join("export").join(folder), None, None, None);
+        runner.export(
+            kind,
+            &out.join("export").join(folder),
+            None,
+            None,
+            None,
+            Vec::new(),
+        );
     }
 }
 
@@ -1052,5 +1066,25 @@ mod tests {
                 .contains("Include: SECS2R\\SECS.txt")
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn export_parses_comma_separated_extra_rates() {
+        let cli = Cli::try_parse_from([
+            "secs2r-cli",
+            "export",
+            "project.secs",
+            "--kind",
+            "convolution",
+            "--out",
+            "exports",
+            "--extra-rates",
+            "44100,96000",
+        ])
+        .unwrap();
+        let Action::Export { extra_rates, .. } = cli.action else {
+            panic!("export command must parse")
+        };
+        assert_eq!(extra_rates, [44_100, 96_000]);
     }
 }

@@ -6,7 +6,7 @@ use secs_types::chain::{MimoPaths, SignalChain};
 use secs_types::ipc::{CalibrationSummary, MimoSummary};
 use serde::{Deserialize, Serialize};
 
-const VERSION: u32 = 5;
+const VERSION: u32 = 6;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct CachedRunLabels {
@@ -64,7 +64,7 @@ fn valid_fir_recipes(results: &CachedResults) -> bool {
     })
 }
 
-// Only v5 can store design-rate FIRs; older layouts hold expanded taps.
+// v5 and later can store design-rate FIRs; older layouts hold expanded taps.
 fn has_lowrate_fir(results: &CachedResults) -> bool {
     results.mimo_paths.as_ref().is_some_and(|mimo| {
         mimo.paths.iter().any(|path| {
@@ -93,11 +93,12 @@ pub(crate) fn load(project_path: &Path) -> Option<CachedResults> {
     // Current caches deserialize directly into their owned DSP arrays. Only
     // legacy layouts need a temporary JSON tree for moving the old fields.
     if let Ok(file) = serde_json::from_slice::<CacheFile>(&bytes) {
-        // v4 contains already-expanded FIRs and needs no materializer. v5
-        // retains design-rate taps and pins their expansion algorithm.
+        // v4 contains already-expanded FIRs and needs no materializer. v5 and
+        // later retain design-rate taps and pin their expansion algorithm. v6
+        // adds result metrics; serde defaults those lists when reading v4/v5.
         return (valid_fir_recipes(&file.results)
             && ((file.version == 4 && !has_lowrate_fir(&file.results))
-                || (file.version == VERSION
+                || ([5, VERSION].contains(&file.version)
                     && file.fir_materialization_version
                         == secs_dsp::fir::LOWRATE_MATERIALIZATION_VERSION)))
             .then_some(file.results);
@@ -251,6 +252,7 @@ mod tests {
                     position_spread_db: 0.0,
                 },
                 scorecard: Vec::<ChannelScore>::new(),
+                late_energy: vec![],
                 latency_ms: 4.0,
                 notes: vec![],
                 main_roles: vec![],
@@ -420,6 +422,8 @@ mod tests {
             fir_taps_total: 0,
             notes: vec![],
             input_count: 0,
+            scorecard: vec![],
+            late_energy: vec![],
             compute: ComputeReport {
                 requested: ComputePreference::Gpu,
                 backend: ComputeBackend::Cuda,
@@ -499,6 +503,8 @@ mod tests {
             input_count: path_count.div_ceil(12),
             fir_taps_total: path_count * taps,
             notes: vec![],
+            scorecard: vec![],
+            late_energy: vec![],
         });
         result
     }
@@ -639,6 +645,35 @@ mod tests {
             (secs_dsp::fir::LOWRATE_MATERIALIZATION_VERSION + 1).into();
         fs::write(path(&project), serde_json::to_vec(&value).unwrap()).unwrap();
         assert!(load(&project).is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn old_cache_without_scorecard_fields_loads_empty_lists() {
+        let root =
+            std::env::temp_dir().join(format!("secs-cache-v5-scorecard-{}", std::process::id()));
+        let project = root.join("project.secs");
+        let mut value = serde_json::to_value(CacheFile {
+            version: 5,
+            fir_materialization_version: secs_dsp::fir::LOWRATE_MATERIALIZATION_VERSION,
+            results: fir_sample(1, 3),
+        })
+        .unwrap();
+        value["results"]["calibration"]
+            .as_object_mut()
+            .unwrap()
+            .remove("late_energy");
+        let mimo = value["results"]["mimo"].as_object_mut().unwrap();
+        mimo.remove("scorecard");
+        mimo.remove("late_energy");
+        fs::create_dir_all(project.with_extension("irs")).unwrap();
+        fs::write(path(&project), serde_json::to_vec(&value).unwrap()).unwrap();
+
+        let restored = load(&project).unwrap();
+        assert!(restored.calibration.late_energy.is_empty());
+        let mimo = restored.mimo.unwrap();
+        assert!(mimo.scorecard.is_empty());
+        assert!(mimo.late_energy.is_empty());
         fs::remove_dir_all(root).unwrap();
     }
 

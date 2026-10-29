@@ -157,6 +157,13 @@ jobs:
         with:
           shared-key: test
 
+      - name: Lua compiler for generated REAPER scripts
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq lua5.4
+          echo "SECS_LUAC=$(command -v luac5.4)" >> "$GITHUB_ENV"
+          echo "SECS_LUA=$(command -v lua5.4)" >> "$GITHUB_ENV"
+
       - name: cargo test --workspace
         run: cargo test --workspace --all-targets --locked
 
@@ -340,6 +347,54 @@ jobs:
         run: |
           report="$RUNNER_TEMP/camilla-report.md"
           if [ -f "$report" ]; then cat "$report" >> "$GITHUB_STEP_SUMMARY"; fi
+
+  reaper-playback:
+    name: REAPER convolution playback
+    needs: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Linux libraries, virtual display and Lua
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libgtk-3-0t64 libasound2t64 libx11-6 libxext6 libxrender1 libfreetype6 libfontconfig1 libcurl4t64 xvfb xauth lua5.4
+          echo "SECS_LUAC=$(command -v luac5.4)" >> "$GITHUB_ENV"
+          echo "SECS_LUA=$(command -v lua5.4)" >> "$GITHUB_ENV"
+
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: test
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Fetch the pinned official REAPER archive
+        run: python3 -I .github/scripts/reaper_engine.py fetch --dest "$RUNNER_TEMP/reaper-engine" --github-env "$GITHUB_ENV"
+
+      - name: Compile and model-test the generated ReaScript
+        run: cargo test -p secs-filters --locked reaper_script -- --nocapture
+
+      - name: Render oracle bundles through REAPER under xvfb
+        env:
+          SECS_REAPER_ARTIFACTS: ${{ runner.temp }}/reaper-artifacts
+        run: cargo test -p secs-filters --test reaper_playback --locked -- --ignored --nocapture
+
+      # The Rust test copies an explicit allowlist of dumps, render WAVs and logs.
+      # Never upload RUNNER_TEMP/reaper-engine (the official binary/archive).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: reaper-playback
+          path: ${{ runner.temp }}/reaper-artifacts
+          if-no-files-found: ignore
 
   manage-e2e:
     name: Manage end to end (Windows GUI)

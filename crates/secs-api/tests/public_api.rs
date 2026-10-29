@@ -128,6 +128,7 @@ fn engine_oracle_flow_and_ordered_events() {
             mdat_scope: None,
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }))
         .unwrap()
     else {

@@ -4,10 +4,12 @@
 mod support;
 
 use secs_filters::{
-    CONVOLUTION_GUIDE, FilterPlan, FilterRun, FiltersError, MimoFeed, Op, SECTION_Q, SubFeed,
-    eqapo_config, eqapo_filters, eqapo_guide, export_convolution, export_eqapo, export_filter_text,
-    filter_text, headroom_db, make_plan, make_plan_with_lfe, plan_responses, render_paths,
-    windows_channels, write_eqapo, write_eqapo_observed, write_text, write_text_observed,
+    CONVOLUTION_GUIDE, FilterPlan, FilterRun, FiltersError, MimoFeed, Op, Options, SECTION_Q,
+    SubFeed, eqapo_config, eqapo_filters, eqapo_guide, export_convolution,
+    export_convolution_with_options, export_eqapo, export_eqapo_with_options, export_filter_text,
+    export_filter_text_with_options, filter_text, headroom_db, make_plan, make_plan_with_lfe,
+    plan_responses, render_paths, windows_channels, write_eqapo, write_eqapo_observed, write_text,
+    write_text_observed,
 };
 use secs_oracle::{Fixture, assert_close, goldens, rtol};
 use secs_types::chain::{
@@ -983,6 +985,105 @@ fn eqapo_public_exports_use_single_assignments_f11() {
         assert!(guide.contains("\"Eval: outL = 1\""));
         assert!(!guide.contains("두 줄") && !guide.contains("; …"));
         dump_f11_export(case, &folder, &paths);
+    }
+}
+
+#[test]
+fn output_rates_change_eqapo_text_and_convolution_bundles() {
+    let mut chain = f11_synthetic_chain(true, true, false);
+    chain.mains[0].delay_ms = 1.25;
+    let run = FilterRun {
+        chain: &chain,
+        mimo: None,
+        mode: "mixed",
+        note: "output rate test",
+        label: "output rate test",
+        latency_ms: 0.0,
+        rc_pieces: &[],
+        stamp: "2026-10-29 00:00",
+    };
+    let options = Options {
+        output_rate: 96_000,
+        extra_rates: Vec::new(),
+    };
+    let root = TempDir::new("output_rates");
+
+    let eqapo = root.0.join("eqapo");
+    let eqapo_files = export_eqapo_with_options(&run, &eqapo, &options).unwrap();
+    let config = fs::read_to_string(eqapo.join("config.txt")).unwrap();
+    assert!(config.contains("# Device format: 96000 Hz"));
+    for path in eqapo_files
+        .iter()
+        .filter(|path| path.extension().is_some_and(|ext| ext == "wav"))
+    {
+        let bytes = fs::read(path).unwrap();
+        assert_eq!(
+            u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
+            96_000
+        );
+        assert_eq!((bytes.len() - 44) / 4, 6);
+    }
+
+    let text_folder = root.0.join("text");
+    let text_files = export_filter_text_with_options(&run, &text_folder, &options).unwrap();
+    let text_path = text_files
+        .iter()
+        .find(|path| path.extension().is_some_and(|ext| ext == "txt"))
+        .unwrap();
+    let text = String::from_utf8_lossy(&fs::read(text_path).unwrap()).into_owned();
+    assert!(text.contains("샘플레이트 96000 Hz"));
+    assert!(text.contains("(6 탭, 96 kHz)"));
+    assert!(text.contains("1.250 ms (120 샘플 @ 96 kHz)"));
+
+    let convolution = root.0.join("convolution");
+    let convolution_options = Options {
+        output_rate: 96_000,
+        extra_rates: vec![44_100],
+    };
+    export_convolution_with_options(&run, &convolution, &convolution_options).unwrap();
+    for (prefix, rate) in [(PathBuf::new(), 96_000), (PathBuf::from("44100Hz"), 44_100)] {
+        let routing: Value = serde_json::from_slice(
+            &fs::read(convolution.join(&prefix).join("routing.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(routing["sample_rate"], rate);
+        assert!(
+            convolution
+                .join(&prefix)
+                .join("secs2r_reaper.lua")
+                .is_file()
+        );
+        let route = &routing["paths"][0];
+        let wav = fs::read(
+            convolution
+                .join(&prefix)
+                .join(route["wav"].as_str().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(u32::from_le_bytes(wav[24..28].try_into().unwrap()), rate);
+        assert_eq!(
+            (wav.len() - 44) / 4,
+            routing["length"].as_u64().unwrap() as usize
+        );
+    }
+    let guide = fs::read_to_string(convolution.join(CONVOLUTION_GUIDE)).unwrap();
+    assert!(guide.contains("추가 샘플레이트 폴더: 44100Hz/"));
+
+    for invalid in [
+        Options {
+            output_rate: 96_000,
+            extra_rates: vec![96_000],
+        },
+        Options {
+            output_rate: 96_000,
+            extra_rates: vec![32_000],
+        },
+        Options {
+            output_rate: 96_000,
+            extra_rates: vec![44_100, 44_100],
+        },
+    ] {
+        assert!(export_convolution_with_options(&run, &root.0.join("invalid"), &invalid).is_err());
     }
 }
 
@@ -2016,7 +2117,8 @@ fn convolution_bundle_contains_complete_paths_and_is_atomic() {
     assert_eq!(routing["format"], "f32");
     let length = routing["length"].as_u64().unwrap() as usize;
     let routes = routing["paths"].as_array().unwrap();
-    assert_eq!(files.len(), routes.len() * 2 + 2);
+    assert_eq!(files.len(), routes.len() * 2 + 3);
+    assert!(files.contains(&folder.join("secs2r_reaper.lua")));
     assert!(length.is_power_of_two() && length >= 4096);
 
     let plan = make_plan(&chain, None).unwrap();
@@ -2079,6 +2181,54 @@ fn convolution_bundle_contains_complete_paths_and_is_atomic() {
             .all(|(index, byte)| *byte != b'\n' || index > 0 && guide[index - 1] == b'\r')
     );
 
+    let script = fs::read_to_string(folder.join("secs2r_reaper.lua")).unwrap();
+    assert!(
+        !script.contains('\r'),
+        "script bytes do not depend on checkout line endings"
+    );
+    let inputs = routing["inputs"].as_array().unwrap();
+    let outputs = routing["outputs"].as_array().unwrap();
+    for route in routes {
+        let input = inputs
+            .iter()
+            .position(|value| value == &route["input"])
+            .unwrap()
+            + 1;
+        let output = outputs
+            .iter()
+            .position(|value| value == &route["output"])
+            .unwrap()
+            + 1;
+        let wav = route["wav"].as_str().unwrap();
+        assert_eq!(script.matches(wav).count(), 1);
+        assert!(script.contains(&format!(
+            "{{input = {input}, output = {output}, wav = \"{wav}\""
+        )));
+    }
+    let repeated = root.0.join("repeated");
+    let repeated_files = export_convolution(
+        &FilterRun {
+            stamp: "another stamp",
+            ..run
+        },
+        &repeated,
+    )
+    .unwrap();
+    assert_eq!(repeated_files.len(), files.len());
+    for original in &files {
+        assert_eq!(
+            fs::read(original).unwrap(),
+            fs::read(repeated.join(original.file_name().unwrap())).unwrap()
+        );
+    }
+    let named = root.0.join("named");
+    secs_filters::export_convolution_named(&run, &named, Some("거실 \"보정\"\\새 폴더\n다음"))
+        .unwrap();
+    let named_script = fs::read_to_string(named.join("secs2r_reaper.lua")).unwrap();
+    assert!(
+        named_script.starts_with("local design_name = \"거실 \\\"보정\\\"\\\\새 폴더\\010다음\"\n")
+    );
+
     let mut invalid = chain.clone();
     invalid.sample_rate = 44_100;
     let invalid_run = FilterRun {
@@ -2089,4 +2239,423 @@ fn convolution_bundle_contains_complete_paths_and_is_atomic() {
     assert!(export_convolution(&invalid_run, &invalid_folder).is_err());
     assert!(!invalid_folder.exists());
     eprintln!("convolution bundle oracle length: {length}");
+}
+
+#[derive(Default, Debug)]
+struct RateDeviation {
+    db: f64,
+    db_hz: f64,
+    db_path: String,
+    degrees: f64,
+    phase_hz: f64,
+    phase_path: String,
+    out_ratio: f64,
+    out_hz: f64,
+    out_path: String,
+}
+
+impl RateDeviation {
+    fn observe_band(
+        &mut self,
+        got: secs_dsp::Complex64,
+        reference: secs_dsp::Complex64,
+        hz: f64,
+        path: &str,
+        peak: f64,
+    ) {
+        assert!(peak.is_finite() && peak > 0.0);
+        if reference.norm() < peak * 10_f64.powf(-30.0 / 20.0) {
+            let error = (got - reference).norm() / peak;
+            assert!(
+                error.is_finite(),
+                "undefined out-of-band response: {path}, {hz} Hz"
+            );
+            if error > self.out_ratio {
+                self.out_ratio = error;
+                self.out_hz = hz;
+                self.out_path = path.into();
+            }
+        } else {
+            self.observe(got, reference, hz, path);
+        }
+    }
+
+    fn observe(
+        &mut self,
+        got: secs_dsp::Complex64,
+        reference: secs_dsp::Complex64,
+        hz: f64,
+        path: &str,
+    ) {
+        let ratio = got / reference;
+        let db = (20.0 * ratio.norm().log10()).abs();
+        let degrees = ratio.arg().to_degrees().abs();
+        assert!(
+            db.is_finite() && degrees.is_finite(),
+            "undefined response: {path}, {hz} Hz"
+        );
+        if db > self.db {
+            self.db = db;
+            self.db_hz = hz;
+            self.db_path = path.into();
+        }
+        if degrees > self.degrees {
+            self.degrees = degrees;
+            self.phase_hz = hz;
+            self.phase_path = path.into();
+        }
+    }
+
+    fn passes(&self) -> bool {
+        self.db <= 0.1 && self.degrees <= 1.0 && self.out_ratio <= 10_f64.powf(-50.0 / 20.0)
+    }
+}
+
+fn rate_spectrum(taps: &[f64], rate: u32) -> Vec<secs_dsp::Complex64> {
+    let mut padded = taps.to_vec();
+    // Two seconds, with common 0.5-Hz bins at every output rate. There is no
+    // interpolation or fitted time shift. Explicit Delay ops are removed
+    // from both plans before rendering, as required by ADR 0017.
+    assert!(padded.len() <= 2 * rate as usize);
+    padded.resize(2 * rate as usize, 0.0);
+    secs_dsp::fft::rfft(&padded)
+}
+
+fn rate_path_has_short_fir(plan: &FilterPlan, input: &str, output: &str) -> bool {
+    let short = |ops: &[Op]| {
+        ops.iter()
+            .any(|op| matches!(op, Op::Fir { taps, .. } if taps.len() < 2048))
+    };
+    let role_short = |items: &[(String, Vec<Op>)], role: &str| {
+        items.iter().any(|(name, ops)| name == role && short(ops))
+    };
+    if input != "LFE"
+        && input == output
+        && (role_short(&plan.input_ops, input) || role_short(&plan.main_ops, input))
+    {
+        return true;
+    }
+    for (role, feed) in &plan.subs {
+        if role != output || !feed.sources.iter().any(|source| source == input) {
+            continue;
+        }
+        if input == "LFE" {
+            if short(&plan.lfe_ops) || short(&feed.ops) {
+                return true;
+            }
+        } else if let Some((_, send)) = plan.send_ops.iter().find(|(role, _)| role == input)
+            && (role_short(&plan.input_ops, input) || short(send) || short(&feed.ops))
+        {
+            return true;
+        }
+    }
+    plan.mimo
+        .iter()
+        .any(|feed| feed.input == input && feed.support == output && short(&feed.ops))
+}
+
+#[test]
+fn output_rate_real_design_paths_meet_band_aware_tolerance() {
+    use secs_dsp::rate::OUTPUT_RATES;
+    use secs_filters::render_paths_at;
+    let mut worst: [RateDeviation; 6] = std::array::from_fn(|_| RateDeviation::default());
+    let mut skipped_cases = std::collections::BTreeSet::new();
+    for case in [
+        "rc_mixed",
+        "computed_dolby",
+        "mimo_iir",
+        "computed_dolby_ultra",
+        "computed_room_rc_mixed",
+        "computed_room_rc_zero",
+    ] {
+        let fixture = Fixture::load("filters", case);
+        let chain = chain(&fixture);
+        let mimo = mimo(&fixture);
+        let mut plan = make_plan(&chain, mimo.as_ref()).unwrap();
+        // Compare the same chain without explicit integer Delay operations.
+        // FIR phase/time reference is untouched; nothing is fitted or aligned.
+        for ops in plan
+            .input_ops
+            .iter_mut()
+            .chain(&mut plan.main_ops)
+            .chain(&mut plan.send_ops)
+            .map(|(_, ops)| ops)
+            .chain(std::iter::once(&mut plan.lfe_ops))
+            .chain(plan.subs.iter_mut().map(|(_, feed)| &mut feed.ops))
+            .chain(plan.mimo.iter_mut().map(|feed| &mut feed.ops))
+        {
+            ops.retain(|op| !matches!(op, Op::Delay { .. }));
+        }
+        let baseline = render_paths(&plan, 1 << 20).unwrap();
+        assert_eq!(baseline, render_paths_at(&plan, 1 << 20, 48000).unwrap());
+        let references: Vec<_> = baseline
+            .paths
+            .iter()
+            .map(|p| rate_spectrum(&p.response, 48000))
+            .collect();
+        for (i, rate) in OUTPUT_RATES.into_iter().enumerate() {
+            let rendered = render_paths_at(&plan, 1 << 20, rate).unwrap();
+            assert_eq!(rendered.rate, rate);
+            assert_eq!(rendered.paths.len(), baseline.paths.len());
+            let mut local = RateDeviation::default();
+            let mut checked_paths = 0;
+            for ((got, reference), expected) in
+                rendered.paths.iter().zip(&baseline.paths).zip(&references)
+            {
+                assert_eq!(
+                    (&got.input, &got.output),
+                    (&reference.input, &reference.output)
+                );
+                let path = format!("{case}/{}->{}", got.input, got.output);
+                if rate_path_has_short_fir(&plan, &got.input, &got.output) {
+                    // Engine FIRs are at least 2048 taps. The synthetic upstream
+                    // rc_mixed fixture includes a 3-tap FIR: its 62.5-us duration
+                    // cannot retain the reconstruction's pre-ring and tail at
+                    // another rate. Keep its crop diagnostic, but do not apply
+                    // the engine-design tolerance to paths containing it.
+                    assert_eq!(case, "rc_mixed", "unexpected short engine FIR on {path}");
+                    skipped_cases.insert(case);
+                    eprintln!(
+                        "PATH skipped {path} at {rate}: synthetic FIR shorter than 2048 taps"
+                    );
+                    continue;
+                }
+                checked_paths += 1;
+                let h = rate_spectrum(&got.response, rate);
+                let peak = expected[40..=40000]
+                    .iter()
+                    .map(|h| h.norm())
+                    .fold(0.0_f64, f64::max);
+                for k in 40..=40000 {
+                    let hz = k as f64 * 0.5;
+                    local.observe_band(h[k], expected[k], hz, &path, peak);
+                    worst[i].observe_band(h[k], expected[k], hz, &path, peak);
+                }
+            }
+            // rc_mixed is wholly synthetic (a 3-tap and a 2-tap FIR), so every
+            // path of it is skipped; every engine design keeps at least one.
+            assert!(
+                checked_paths > 0 || case == "rc_mixed",
+                "no paths checked for {case} at {rate}"
+            );
+            eprintln!(
+                "PATH {case} {rate}: {local:?}; out-of-band error relative to peak={} dB",
+                20.0 * local.out_ratio.log10()
+            );
+        }
+        // The packet explicitly calls out digital PEQ cramping. Report both
+        // the inter-rate error and the unwarped analog-prototype error rather
+        // than concealing either behind a looser path tolerance.
+        let all_ops = plan
+            .input_ops
+            .iter()
+            .chain(&plan.main_ops)
+            .chain(&plan.send_ops)
+            .flat_map(|(_, ops)| ops)
+            .chain(&plan.lfe_ops)
+            .chain(plan.subs.iter().flat_map(|(_, feed)| &feed.ops))
+            .chain(plan.mimo.iter().flat_map(|feed| &feed.ops));
+        let f: Vec<_> = (20..=20000).map(f64::from).collect();
+        for op in all_ops {
+            let Op::Peq {
+                frequency,
+                q,
+                gain_db,
+                ..
+            } = op
+            else {
+                continue;
+            };
+            let reference =
+                secs_dsp::response::peaking_response(&f, *frequency, *q, *gain_db, 48000.0);
+            for rate in OUTPUT_RATES {
+                if rate == 48000 {
+                    continue;
+                }
+                let h = secs_dsp::response::peaking_response(
+                    &f,
+                    *frequency,
+                    *q,
+                    *gain_db,
+                    f64::from(rate),
+                );
+                let mut digital = RateDeviation::default();
+                let mut analog = RateDeviation::default();
+                for ((&f, &got), &expected) in f.iter().zip(&h).zip(&reference) {
+                    digital.observe(got, expected, f, case);
+                    let a = 10_f64.powf(*gain_db / 40.0);
+                    let s = secs_dsp::Complex64::new(0.0, f / frequency);
+                    let prototype = (s * s + s * (a / q) + 1.0) / (s * s + s / (a * q) + 1.0);
+                    analog.observe(got, prototype, f, case);
+                }
+                if !digital.passes() {
+                    eprintln!(
+                        "PEQ {case} f0={frequency} Q={q} gain={gain_db} {rate}: digital={digital:?}; analog={analog:?}"
+                    );
+                }
+            }
+        }
+    }
+    assert_eq!(
+        skipped_cases,
+        std::collections::BTreeSet::from(["rc_mixed"])
+    );
+    for (rate, error) in OUTPUT_RATES.into_iter().zip(&worst) {
+        eprintln!(
+            "PATH worst {rate}: {error:?}; out-of-band error relative to peak={} dB at {} Hz on {}",
+            20.0 * error.out_ratio.log10(),
+            error.out_hz,
+            error.out_path
+        );
+    }
+    assert!(
+        worst.iter().all(RateDeviation::passes),
+        "ADR 0017 complete-path tolerance not met"
+    );
+}
+
+#[test]
+fn output_rate_long_fir_conversion_timing() {
+    let mut taps = vec![0.0; 16384];
+    taps[8192] = 1.0;
+    for (i, value) in taps.iter_mut().enumerate() {
+        *value += 0.001 * (-(i as f64 - 8192.0).abs() / 300.0).exp();
+    }
+    let started = std::time::Instant::now();
+    // No worker pool: the conversion and its FFTs run on this one thread.
+    let result = secs_dsp::rate::fir_to_rate(&taps, 192000).unwrap();
+    let elapsed = started.elapsed();
+    assert_eq!(result.len(), 65536);
+    eprintln!("RATE TIMING 16384 -> 65536 taps at 192000 Hz, one thread, cold plans: {elapsed:?}");
+    if !cfg!(debug_assertions) {
+        assert!(
+            elapsed.as_secs_f64() < 2.0,
+            "output-rate conversion exceeds 2 seconds"
+        );
+    }
+}
+
+#[test]
+fn output_rate_renderer_rounds_delays_and_scales_bounds() {
+    let plan = FilterPlan {
+        inputs: vec!["L".into()],
+        outputs: vec!["L".into()],
+        input_ops: vec![("L".into(), vec![])],
+        main_ops: vec![(
+            "L".into(),
+            vec![Op::Delay {
+                ms: 1.0,
+                fixed: false,
+            }],
+        )],
+        send_ops: vec![],
+        lfe_ops: vec![],
+        subs: vec![],
+        mimo: vec![],
+    };
+    for rate in secs_dsp::rate::OUTPUT_RATES {
+        let got = secs_filters::render_paths_at(&plan, 8192, rate).unwrap();
+        let delay = secs_dsp::rate::delay_samples(1.0, rate) as usize;
+        assert_eq!(got.paths[0].response[delay], 1.0);
+        assert!(got.paths[0].response[..delay].iter().all(|&v| v == 0.0));
+        assert!(got.length <= secs_dsp::rate::taps_at(8192, rate));
+        assert_eq!(got.rate, rate);
+    }
+    assert!(secs_filters::render_paths_at(&plan, 8192, 32000).is_err());
+    assert!(secs_filters::render_paths_at(&plan, 4095, 96000).is_err());
+}
+
+#[test]
+fn output_rate_rc_mixed_crop_diagnostic() {
+    use secs_dsp::{Complex64 as C, fft, rate::*};
+    use std::f64::consts::PI;
+    let fixture = Fixture::load("filters", "rc_mixed");
+    let chain = chain(&fixture);
+    let taps = &chain
+        .mains
+        .iter()
+        .find(|main| main.role == "L")
+        .unwrap()
+        .fir;
+    let mut peak = 0;
+    for i in 1..taps.len() {
+        if taps[i].abs() > taps[peak].abs() {
+            peak = i;
+        }
+    }
+    let mut refined = peak as f64;
+    if peak > 0 && peak + 1 < taps.len() {
+        let left = taps[peak - 1].abs() / taps[peak].abs();
+        let right = taps[peak + 1].abs() / taps[peak].abs();
+        if left - 2.0 + right != 0.0 {
+            refined += (0.5 * (left - right) / (left - 2.0 + right)).clamp(-0.5, 0.5);
+        }
+    }
+    let energy: f64 = taps.iter().map(|v| v * v).sum();
+    let first: f64 = taps[..32.min(taps.len())].iter().map(|v| v * v).sum();
+    let last = (taps.len() as f64 * 0.1) as usize;
+    let tail: f64 = taps[taps.len() - last..].iter().map(|v| v * v).sum();
+    eprintln!(
+        "RATE CROP rc_mixed/L->L: taps={}, peak index={peak}, refined={refined}, first 32 energy share={}, last 10% energy share={}",
+        taps.len(),
+        first / energy,
+        tail / energy
+    );
+    for rate in OUTPUT_RATES.into_iter().filter(|&rate| rate != DESIGN_RATE) {
+        let length = taps_at(taps.len(), rate);
+        let nfft = (64 * length)
+            .max(taps_at(1 << 17, rate))
+            .next_power_of_two();
+        let step = f64::from(rate) / nfft as f64;
+        let end = 23000.0_f64.min(f64::from(rate) / 2.0);
+        let bins = (end / step).floor() as usize + 1;
+        let f: Vec<_> = (0..bins).map(|k| k as f64 * step).collect();
+        // Independent direct DTFT, not the production chirp convolution.
+        let mut target = fir_response(taps, DESIGN_RATE, &f);
+        let magnitude = fir_response(taps, DESIGN_RATE, &[20000.0])[0].norm();
+        let extension = |f: f64| C::from_polar(magnitude, -2.0 * PI * f * refined / 48000.0);
+        for (k, h) in target.iter_mut().enumerate() {
+            if f[k] > 20000.0 {
+                let weight = 0.5 * (1.0 - (PI * (f[k] - 20000.0) / (end - 20000.0)).cos());
+                *h = *h * (1.0 - weight) + extension(f[k]) * weight;
+            }
+        }
+        target.extend((bins..=nfft / 2).map(|k| extension(k as f64 * step)));
+        let full = fft::irfft(&target, nfft);
+        let converted = fir_to_rate(taps, rate).unwrap();
+        assert!(
+            converted
+                .iter()
+                .zip(&full)
+                .all(|(a, b)| (a - b).abs() < 1e-9)
+        );
+        // The second half of this very long inverse period represents t<0.
+        // Split the omitted samples into that pre-ring and the causal tail.
+        let mut before = full.clone();
+        before[..nfft / 2].fill(0.0);
+        let mut after = full;
+        after[..length].fill(0.0);
+        after[nfft / 2..].fill(0.0);
+        let before = fft::rfft(&before);
+        let after = fft::rfft(&after);
+        let first = (20.0 / step).ceil() as usize;
+        let last = (20000.0 / step).floor() as usize;
+        let peak = target[first..=last]
+            .iter()
+            .map(|h| h.norm())
+            .fold(0.0_f64, f64::max);
+        let mut worst = first;
+        for k in first..=last {
+            if (before[k] + after[k]).norm() > (before[worst] + after[worst]).norm() {
+                worst = k;
+            }
+        }
+        eprintln!(
+            "RATE CROP {rate}: worst complex crop error at {} Hz; pre-ring={} dB/peak, end={} dB/peak, combined={} dB/peak",
+            worst as f64 * step,
+            20.0 * (before[worst].norm() / peak).log10(),
+            20.0 * (after[worst].norm() / peak).log10(),
+            20.0 * ((before[worst] + after[worst]).norm() / peak).log10()
+        );
+    }
 }

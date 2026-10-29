@@ -974,6 +974,9 @@ pub struct CalibrationSummary {
     pub verdict: VerdictSummary,
     /// Per-channel before-and-after metrics.
     pub scorecard: Vec<ChannelScore>,
+    /// Late 20–150 Hz energy before and after correction at every measured position.
+    #[serde(default)]
+    pub late_energy: Vec<LateEnergy>,
     /// Total filter latency in milliseconds.
     pub latency_ms: f64,
     /// Informational codes and values translated by the screen.
@@ -1010,6 +1013,19 @@ pub struct ChannelScore {
     pub before: MetricsSummary,
     /// Metrics after correction.
     pub after: MetricsSummary,
+}
+/// Late 20–150 Hz energy for one main role at one measured position.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LateEnergy {
+    /// Internal speaker role.
+    pub role: String,
+    /// Measured position number.
+    pub position: u32,
+    /// Late-to-early energy before correction, in dB.
+    pub before_db: f64,
+    /// Late-to-early energy after correction, in dB.
+    pub after_db: f64,
 }
 /// The upstream `Metrics` fields for one response.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
@@ -1071,6 +1087,32 @@ pub struct MimoSummary {
     pub notes: Vec<Notice>,
     /// Number of distinct input roles with at least one generated support path.
     pub input_count: usize,
+    /// Per-channel metrics after MIMO at the main position.
+    #[serde(default)]
+    pub scorecard: Vec<MimoChannelScore>,
+    /// Late 20–150 Hz energy after MIMO at every measured position.
+    #[serde(default)]
+    pub late_energy: Vec<MimoLateEnergy>,
+}
+/// Scorecard metrics after MIMO for one main role.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MimoChannelScore {
+    /// Internal speaker role.
+    pub role: String,
+    /// Metrics after the MIMO support contributions are added.
+    pub after_mimo: MetricsSummary,
+}
+/// Late 20–150 Hz energy after MIMO for one main role and measured position.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MimoLateEnergy {
+    /// Internal speaker role.
+    pub role: String,
+    /// Measured position number.
+    pub position: u32,
+    /// Late-to-early energy after MIMO, in dB.
+    pub after_mimo_db: f64,
 }
 /// Crossover candidates and the best value for each group.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -1296,6 +1338,10 @@ pub struct ExportParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub camilla_devices: Option<CamillaDevices>,
+    /// Additional convolution output rates. Other export kinds refuse a non-empty list.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub extra_rates: Vec<u32>,
 }
 /// Files written by a completed export job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1303,6 +1349,11 @@ pub struct ExportParams {
 pub struct ExportResult {
     /// Paths of all files written by the exporter.
     pub files: Vec<String>,
+    /// Sample rate of the files in Hz. REW mdat always reports 48000.
+    pub output_rate: u32,
+    /// Informational notices produced while resolving the output rate.
+    #[serde(default)]
+    pub notes: Vec<Notice>,
     /// Actual export folder written by the job.
     pub folder: String,
     /// Whether the exported calibration differed from current project inputs.
@@ -1859,10 +1910,25 @@ pub struct ConfigMutationResult {
     /// Token for `undo` when the edit cleared measurements (U5).
     pub undo_token: Option<String>,
 }
-/// The five manually editable DSP profile fields.
+/// Output sample-rate selection stored with a DSP profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum OutputRateChoice {
+    /// Resolve the rate from the default output endpoint when exporting.
+    Auto,
+    /// Always export at this rate in Hz.
+    Fixed(u32),
+}
+
+/// The manually editable DSP profile fields.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct DspFields {
+    /// Output sample rate.
+    pub output_rate: OutputRateChoice,
+    /// Whether this profile permits changing the output rate.
+    pub output_rate_editable: bool,
     /// FIR taps per channel.
     pub fir_taps: i64,
     /// Total FIR taps the DSP can run across channels.
@@ -2662,6 +2728,7 @@ mod tests {
                 mdat_scope: None,
                 design_name: None,
                 camilla_devices: None,
+                extra_rates: Vec::new(),
             }),
             Request::JobCancel(JobCancelParams { job: JobId(1) }),
             Request::Jobs,
@@ -2840,6 +2907,7 @@ mod tests {
         let old: ExportParams =
             serde_json::from_str(r#"{"kind":"before_after_mdat","folder":""}"#).unwrap();
         assert_eq!(old.mdat_scope, None);
+        assert!(old.extra_rates.is_empty());
         assert_eq!(old.mdat_scope.unwrap_or_default(), MdatScope::All);
         let wire = serde_json::to_value(&old).unwrap();
         assert!(wire.get("mdat_scope").is_none());

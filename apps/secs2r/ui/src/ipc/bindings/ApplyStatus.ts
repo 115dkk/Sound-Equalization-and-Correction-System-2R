@@ -7,15 +7,15 @@ import type { ServiceState } from "./ServiceState";
 /**
  * Current state of both application targets.
  */
-export type ApplyStatus = { camilla: CamillaApplyStatus, eqapo: EqApoApplyStatus,
+export type ApplyStatus = { camilla: CamillaApplyStatus, eqapo: EqApoApplyStatus, 
 /**
  * Windows managed-host service state.
  */
-host: ServiceState,
+host: ServiceState, 
 /**
  * Detailed host state when the service is running and reachable.
  */
-host_status?: HostStatus,
+host_status?: HostStatus, 
 /**
  * Design ID of the current result, absent without one; the screen
  * compares Equalizer APO's `applied_design_id` with it.

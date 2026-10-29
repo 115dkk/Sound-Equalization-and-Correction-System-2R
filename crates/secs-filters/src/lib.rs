@@ -12,14 +12,14 @@
 pub mod playback;
 pub mod render;
 
-pub use render::{RenderedPath, RenderedPaths, render_paths};
+pub use render::{RenderedPath, RenderedPaths, render_paths, render_paths_at};
 
 use secs_camilla::pyfmt::{format_fixed, round_ndigits};
 use secs_dsp::Complex64;
 use secs_graph::files::{safe_name, wav_bytes, write_bundle_observed};
 use secs_graph::{
     ExportGraph, FirView, GraphError, LFE_GAIN_DB, LFE_LP_HZ, LfeChoice, SAMPLE_RATE,
-    is_negative_delay, round_ties_even_i64,
+    is_negative_delay,
 };
 pub use secs_graph::{FilterPlan, MimoFeed, Op, SubFeed};
 use secs_types::chain::{BandType, MimoPaths, SignalChain};
@@ -66,6 +66,24 @@ const WINDOWS_NAMES: [&str; 18] = [
     "TBL", "TBC", "TBR",
 ];
 
+/// Output-rate options for filter exporters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Options {
+    /// Main output sample rate in Hz.
+    pub output_rate: u32,
+    /// Additional rates written by convolution export into `<rate>Hz` folders.
+    pub extra_rates: Vec<u32>,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self {
+            output_rate: SAMPLE_RATE,
+            extra_rates: Vec::new(),
+        }
+    }
+}
+
 /// Values read by upstream's calibration-level filter export wrappers.
 #[derive(Debug, Clone, Copy)]
 pub struct FilterRun<'a> {
@@ -109,6 +127,33 @@ impl From<GraphError> for FiltersError {
             GraphError::Invalid(detail) => detail,
         })
     }
+}
+
+fn validate_options(options: &Options, convolution: bool) -> Result<(), FiltersError> {
+    if !secs_dsp::rate::is_output_rate(options.output_rate) {
+        return Err(FiltersError::Invalid(
+            "unsupported output sample rate".into(),
+        ));
+    }
+    if !convolution && !options.extra_rates.is_empty() {
+        return Err(FiltersError::Invalid(
+            "extra output rates only apply to convolution export".into(),
+        ));
+    }
+    let mut seen = std::collections::BTreeSet::new();
+    for &rate in &options.extra_rates {
+        if !secs_dsp::rate::is_output_rate(rate) {
+            return Err(FiltersError::Invalid(format!(
+                "unsupported extra output sample rate {rate}"
+            )));
+        }
+        if rate == options.output_rate || !seen.insert(rate) {
+            return Err(FiltersError::Invalid(format!(
+                "extra output sample rate {rate} must be distinct from the main rate and other extra rates"
+            )));
+        }
+    }
+    Ok(())
 }
 
 fn find_ops<'a>(items: &'a [(String, Vec<Op>)], role: &str) -> Option<&'a [Op]> {
@@ -706,6 +751,26 @@ pub fn eqapo_config(
     out_num: &[(String, usize)],
     latency_ms: Option<f64>,
 ) -> String {
+    eqapo_config_at(
+        plan,
+        include,
+        preamp_db,
+        in_num,
+        out_num,
+        latency_ms,
+        SAMPLE_RATE,
+    )
+}
+
+fn eqapo_config_at(
+    plan: &FilterPlan,
+    include: &str,
+    preamp_db: f64,
+    in_num: &[(String, usize)],
+    out_num: &[(String, usize)],
+    latency_ms: Option<f64>,
+    output_rate: u32,
+) -> String {
     let mut rows = plan
         .inputs
         .iter()
@@ -735,7 +800,7 @@ pub fn eqapo_config(
     let mut lines = vec!["# SECS 2 calibration - Equalizer APO config (generated)".into(),
         "# Copy everything in this folder into the Equalizer APO config folder".into(),
         "# (C:\\Program Files\\EqualizerAPO\\config) - keep the old config.txt somewhere first.".into(),
-        "# Device format: 48000 Hz (the FIR wav files are 48 kHz). Speaker setup: enough channels for the numbers below.".into(), "#".into(),
+        format!("# Device format: {output_rate} Hz (the FIR wav files are {} kHz). Speaker setup: enough channels for the numbers below.", format_rate_khz(output_rate)), "#".into(),
         "# Default channel numbers (1 = first channel of the device, Windows order FL FR FC LFE BL BR SL SR ...):".into()];
     lines.extend(rows);
     if let Some(ms) = latency_ms {
@@ -796,6 +861,29 @@ pub fn eqapo_guide(
     latency_ms: Option<f64>,
     preamp_db: f64,
 ) -> String {
+    eqapo_guide_at(
+        plan,
+        in_num,
+        out_num,
+        sub_dir,
+        mode_label,
+        latency_ms,
+        preamp_db,
+        SAMPLE_RATE,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn eqapo_guide_at(
+    plan: &FilterPlan,
+    in_num: &[(String, usize)],
+    out_num: &[(String, usize)],
+    sub_dir: &str,
+    mode_label: &str,
+    latency_ms: Option<f64>,
+    preamp_db: f64,
+    output_rate: u32,
+) -> String {
     let mut lines = vec![format!("SECS 2 보정 → Equalizer APO ({mode_label})"), String::new(), "■ 적용 순서".into(),
         "1. Equalizer APO 를 설치하고 Configurator 에서 쓸 출력 장치(오디오 인터페이스)에 체크한 뒤 재부팅합니다.".into(),
         "2. 윈도우 소리 설정에서 그 장치의 형식을 48000 Hz 로, 스피커 구성을 아래 번호가 다 들어가는 채널 수로 맞춥니다.".into(),
@@ -804,6 +892,15 @@ pub fn eqapo_guide(
         format!("4. 이 폴더 안의 것(config.txt 와 {sub_dir} 폴더)을 그대로 C:\\Program Files\\EqualizerAPO\\config 에 복사합니다."),
         "5. 끝 — EqAPO 는 저장하면 바로 다시 읽습니다. Editor 를 열어 config.txt 에 빨간 줄(오류)이 없는지 봅니다.".into(), String::new(),
         "■ 채널 번호(장치 채널, 1부터 — 윈도우 순서 FL FR FC LFE BL BR SL SR …)".into(), "   역할    입력  출력  윈도우 이름".into()];
+    if output_rate != SAMPLE_RATE {
+        lines[4] = format!(
+            "2. 윈도우 소리 설정에서 그 장치의 형식을 {output_rate} Hz로, 스피커 구성을 아래 번호가 모두 들어가는 채널 수로 맞추십시오."
+        );
+        lines[5] = format!(
+            "   (필터 파일은 {} kHz용이므로 샘플레이트가 다르면 적용되지 않습니다.)",
+            format_rate_khz(output_rate)
+        );
+    }
     for role in plan.inputs.iter().chain(
         plan.outputs
             .iter()
@@ -854,7 +951,14 @@ fn comma(value: usize) -> String {
     }
     out
 }
-fn text_ops(ops: &[Op], firs: &[(String, String)]) -> Vec<String> {
+fn format_rate_khz(rate: u32) -> String {
+    if rate.is_multiple_of(1000) {
+        (rate / 1000).to_string()
+    } else {
+        format!("{:.1}", f64::from(rate) / 1000.0)
+    }
+}
+fn text_ops(ops: &[Op], firs: &[(String, String)], output_rate: u32) -> Vec<String> {
     let mut lines = Vec::new();
     let mut peq = 0;
     for op in ops {
@@ -875,12 +979,13 @@ fn text_ops(ops: &[Op], firs: &[(String, String)]) -> Vec<String> {
                 ));
             }
             Op::Fir { name, taps, .. } => lines.push(format!(
-                "  FIR      {} ({} 탭, 48 kHz)",
+                "  FIR      {} ({} 탭, {} kHz)",
                 firs.iter()
                     .find(|(key, _)| key == name)
                     .expect("FIR name")
                     .1,
-                comma(taps.len())
+                comma(secs_dsp::rate::taps_at(taps.len(), output_rate)),
+                format_rate_khz(output_rate)
             )),
             Op::FirLowRate {
                 name,
@@ -888,12 +993,13 @@ fn text_ops(ops: &[Op], firs: &[(String, String)]) -> Vec<String> {
                 fs_low,
                 ..
             } => lines.push(format!(
-                "  FIR      {} ({} 탭, 48 kHz)",
+                "  FIR      {} ({} 탭, {} kHz)",
                 firs.iter()
                     .find(|(key, _)| key == name)
                     .expect("FIR name")
                     .1,
-                comma(FirView::LowRate(taps_low, *fs_low).len_48k())
+                comma((taps_low.len() as f64 * (f64::from(output_rate) / fs_low)).ceil() as usize),
+                format_rate_khz(output_rate)
             )),
             Op::Gain { db: value, .. } => lines.push(format!("  게인     {} dB", db(*value))),
             Op::Invert { .. } => lines.push("  극성     반전".into()),
@@ -919,9 +1025,10 @@ fn text_ops(ops: &[Op], firs: &[(String, String)]) -> Vec<String> {
                 format_fixed(*q, 3, false)
             )),
             Op::Delay { ms, .. } => lines.push(format!(
-                "  딜레이   {} ms ({} 샘플 @ 48 kHz)",
+                "  딜레이   {} ms ({} 샘플 @ {} kHz)",
                 format_fixed(*ms, 3, false),
-                round_ties_even_i64(*ms * f64::from(SAMPLE_RATE) / 1000.0)
+                secs_dsp::rate::delay_samples(*ms, output_rate),
+                format_rate_khz(output_rate)
             )),
         }
     }
@@ -939,6 +1046,16 @@ pub fn filter_text(
     title: &str,
     info: &[String],
 ) -> String {
+    filter_text_at(plan, firs, title, info, SAMPLE_RATE)
+}
+
+fn filter_text_at(
+    plan: &FilterPlan,
+    firs: &[(String, String)],
+    title: &str,
+    info: &[String],
+    output_rate: u32,
+) -> String {
     let mut lines = vec![title.into()];
     lines.extend_from_slice(info);
     lines.extend([
@@ -950,7 +1067,10 @@ pub fn filter_text(
         lines.extend(["· HP · LP: LR 24 = 링크위츠-라일리 24 dB/oct(버터워스 2차 Q 0.7071 두 개), LR 12 = 2차 Q 0.5 하나, LR 48 = 버터워스 4차 두 번, BW = 버터워스".into(), "· 올패스 = 2차 올패스: 중심 주파수 · Q".into()]);
     }
     lines.extend([
-        "· FIR = 같은 폴더의 wav(48 kHz, 32비트 float 모노)".into(),
+        format!(
+            "· FIR = 같은 폴더의 wav({} kHz, 32비트 float 모노)",
+            format_rate_khz(output_rate)
+        ),
         String::new(),
         "[신호 흐름]".into(),
     ]);
@@ -982,24 +1102,25 @@ pub fn filter_text(
             lines.push(format!("== {role} =="));
             let mut ops = input.clone();
             ops.extend_from_slice(find_ops(&plan.main_ops, role).expect("main ops"));
-            lines.extend(text_ops(&ops, firs));
+            lines.extend(text_ops(&ops, firs, output_rate));
         } else {
             lines.extend([format!("== 메인 {role} =="), "입력 보정".into()]);
-            lines.extend(text_ops(input, firs));
+            lines.extend(text_ops(input, firs, output_rate));
             lines.push("메인 경로".into());
             lines.extend(text_ops(
                 find_ops(&plan.main_ops, role).expect("main ops"),
                 firs,
+                output_rate,
             ));
             if let Some(send) = find_ops(&plan.send_ops, role) {
                 lines.push("서브 센드".into());
-                lines.extend(text_ops(send, firs));
+                lines.extend(text_ops(send, firs, output_rate));
             }
         }
     }
     if !plan.lfe_ops.is_empty() {
         lines.extend([String::new(), "== LFE 입력 ==".into()]);
-        lines.extend(text_ops(&plan.lfe_ops, firs));
+        lines.extend(text_ops(&plan.lfe_ops, firs, output_rate));
     }
     for (role, feed) in &plan.subs {
         let source = if feed.sources.is_empty() {
@@ -1031,7 +1152,7 @@ pub fn filter_text(
                 }
             ),
         ]);
-        lines.extend(text_ops(&feed.ops, firs));
+        lines.extend(text_ops(&feed.ops, firs, output_rate));
     }
     for (index, path) in plan.mimo.iter().enumerate() {
         lines.extend([
@@ -1043,7 +1164,7 @@ pub fn filter_text(
                 path.support
             ),
         ]);
-        lines.extend(text_ops(&path.ops, firs));
+        lines.extend(text_ops(&path.ops, firs, output_rate));
     }
     lines.join("\n") + "\n"
 }
@@ -1051,13 +1172,24 @@ pub fn filter_text(
 type FirNames = Vec<(String, String)>;
 type ExportFiles = Vec<(String, Vec<u8>)>;
 
-fn fir_files(plan: &FilterPlan, prefix: &str) -> Result<(FirNames, ExportFiles), FiltersError> {
+fn fir_files(
+    plan: &FilterPlan,
+    prefix: &str,
+    output_rate: u32,
+) -> Result<(FirNames, ExportFiles), FiltersError> {
     let mut names = Vec::new();
     let mut files = Vec::new();
     for (stem, taps) in plan.firs() {
         taps.validate()?;
         let filename = format!("{prefix}{stem}.wav");
-        let bytes = wav_bytes(&taps.materialize(), SAMPLE_RATE)
+        let materialized = match taps {
+            FirView::Full(taps) => secs_dsp::rate::fir_to_rate(taps, output_rate),
+            FirView::LowRate(taps, fs_low) => {
+                secs_dsp::rate::lowrate_to_rate(taps, fs_low, output_rate)
+            }
+        }
+        .map_err(|error| FiltersError::Invalid(format!("{stem}: {error}")))?;
+        let bytes = wav_bytes(&materialized, output_rate)
             .map_err(|error| FiltersError::Invalid(format!("{stem}: {error}")))?;
         files.push((filename.clone(), bytes));
         names.push((stem.to_owned(), filename));
@@ -1089,13 +1221,14 @@ pub fn write_text(
     title: &str,
     info: &[String],
 ) -> Result<Vec<PathBuf>, FiltersError> {
-    write_text_observed(
+    write_text_observed_at(
         plan,
         out,
         file_name,
         wav_prefix,
         title,
         info,
+        SAMPLE_RATE,
         &|_, _| Ok(()),
     )
 }
@@ -1111,6 +1244,29 @@ pub fn write_text_observed(
     info: &[String],
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
 ) -> Result<Vec<PathBuf>, FiltersError> {
+    write_text_observed_at(
+        plan,
+        out,
+        file_name,
+        wav_prefix,
+        title,
+        info,
+        SAMPLE_RATE,
+        after_stage_write,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_text_observed_at(
+    plan: &FilterPlan,
+    out: &Path,
+    file_name: &str,
+    wav_prefix: &str,
+    title: &str,
+    info: &[String],
+    output_rate: u32,
+    after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
+) -> Result<Vec<PathBuf>, FiltersError> {
     if file_name.contains(['/', '\\', '\0']) || matches!(file_name, "." | "..") {
         return Err(FiltersError::Invalid(format!(
             "unsafe text filename {file_name:?}"
@@ -1118,8 +1274,8 @@ pub fn write_text_observed(
     }
     let prefix = format!("{}_", ensure_safe_component(wav_prefix)?);
     validate_plan_delays(plan)?;
-    let (firs, wavs) = fir_files(plan, &prefix)?;
-    let text = utf8_bom(&filter_text(plan, &firs, title, info));
+    let (firs, wavs) = fir_files(plan, &prefix, output_rate)?;
+    let text = utf8_bom(&filter_text_at(plan, &firs, title, info, output_rate));
     let entry = PathBuf::from(file_name);
     let mut bundle = wavs
         .iter()
@@ -1142,13 +1298,14 @@ pub fn write_eqapo(
     note: &str,
     latency_ms: Option<f64>,
 ) -> Result<Vec<PathBuf>, FiltersError> {
-    write_eqapo_observed(
+    write_eqapo_observed_at(
         plan,
         out,
         name,
         mode_label,
         note,
         latency_ms,
+        SAMPLE_RATE,
         &|_, _| Ok(()),
     )
 }
@@ -1164,24 +1321,55 @@ pub fn write_eqapo_observed(
     latency_ms: Option<f64>,
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
 ) -> Result<Vec<PathBuf>, FiltersError> {
+    write_eqapo_observed_at(
+        plan,
+        out,
+        name,
+        mode_label,
+        note,
+        latency_ms,
+        SAMPLE_RATE,
+        after_stage_write,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn write_eqapo_observed_at(
+    plan: &FilterPlan,
+    out: &Path,
+    name: &str,
+    mode_label: &str,
+    note: &str,
+    latency_ms: Option<f64>,
+    output_rate: u32,
+    after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
+) -> Result<Vec<PathBuf>, FiltersError> {
     let safe = ensure_safe_component(name)?;
     validate_plan_delays(plan)?;
     let sub = out.join(&safe);
-    let (firs, wavs) = fir_files(plan, &format!("{safe}_"))?;
+    let (firs, wavs) = fir_files(plan, &format!("{safe}_"), output_rate)?;
     let body = eqapo_filters(plan, &firs, note).into_bytes();
     let (inputs, outputs) = windows_channels(plan);
     let preamp = (headroom_db(plan)? * 2.0).ceil() / 2.0;
-    let config = eqapo_config(
+    let config = eqapo_config_at(
         plan,
         &format!("{safe}\\{safe}.txt"),
         preamp,
         &inputs,
         &outputs,
         latency_ms,
+        output_rate,
     )
     .into_bytes();
-    let guide = utf8_bom(&eqapo_guide(
-        plan, &inputs, &outputs, &safe, mode_label, latency_ms, preamp,
+    let guide = utf8_bom(&eqapo_guide_at(
+        plan,
+        &inputs,
+        &outputs,
+        &safe,
+        mode_label,
+        latency_ms,
+        preamp,
+        output_rate,
     ));
     let body_relative = PathBuf::from(&safe).join(format!("{safe}.txt"));
     let guide_relative = PathBuf::from(EQAPO_GUIDE);
@@ -1209,6 +1397,16 @@ pub fn export_filter_text(
     run: &FilterRun<'_>,
     folder: &Path,
 ) -> Result<Vec<PathBuf>, FiltersError> {
+    export_filter_text_with_options(run, folder, &Options::default())
+}
+
+/// Export filter values at an explicit output rate.
+pub fn export_filter_text_with_options(
+    run: &FilterRun<'_>,
+    folder: &Path,
+    options: &Options,
+) -> Result<Vec<PathBuf>, FiltersError> {
+    validate_options(options, false)?;
     if let Some(block) = filter_export_block(
         ExportKind::FilterText,
         !run.chain.subs.is_empty(),
@@ -1226,20 +1424,35 @@ pub fn export_filter_text(
             format_fixed(run.latency_ms, 1, false),
             run.rc_pieces.join(" · ")
         ),
-        "샘플레이트 48000 Hz(FIR wav · 딜레이 샘플 수 기준)".into(),
+        format!(
+            "샘플레이트 {} Hz(FIR wav · 딜레이 샘플 수 기준)",
+            options.output_rate
+        ),
     ];
-    write_text(
+    write_text_observed_at(
         graph.plan(),
         folder,
         &format!("SECS 필터 {}.txt", run.label),
         &format!("secs_{mode}"),
         &format!("SECS 2 보정 필터 — {}", run.label),
         &info,
+        options.output_rate,
+        &|_, _| Ok(()),
     )
 }
 
 /// Calibration-level Equalizer APO export wrapper.
 pub fn export_eqapo(run: &FilterRun<'_>, folder: &Path) -> Result<Vec<PathBuf>, FiltersError> {
+    export_eqapo_with_options(run, folder, &Options::default())
+}
+
+/// Export Equalizer APO files at an explicit output rate.
+pub fn export_eqapo_with_options(
+    run: &FilterRun<'_>,
+    folder: &Path,
+    options: &Options,
+) -> Result<Vec<PathBuf>, FiltersError> {
+    validate_options(options, false)?;
     if let Some(block) = filter_export_block(
         ExportKind::EqualizerApo,
         !run.chain.subs.is_empty(),
@@ -1250,13 +1463,15 @@ pub fn export_eqapo(run: &FilterRun<'_>, folder: &Path) -> Result<Vec<PathBuf>, 
     validate_run(run)?;
     let graph = ExportGraph::build(run.chain, run.mimo, LfeChoice::DOLBY)?;
     let mode = run.mode;
-    write_eqapo(
+    write_eqapo_observed_at(
         graph.plan(),
         folder,
         &format!("secs_{mode}"),
         run.label,
         run.note,
         Some(run.latency_ms),
+        options.output_rate,
+        &|_, _| Ok(()),
     )
 }
 
@@ -1282,25 +1497,26 @@ struct ConvolutionRoute {
     delay_ms: f64,
 }
 
-fn convolution_grid() -> Vec<f64> {
+fn convolution_grid(rate: u32) -> Vec<f64> {
+    let end = f64::from(rate) / 2.0;
     let mut frequencies = Vec::new();
     let mut index = 0_u32;
     loop {
         let frequency = 10.0 * 2_f64.powf(f64::from(index) / 48.0);
-        if frequency >= 24_000.0 {
+        if frequency >= end {
             break;
         }
         frequencies.push(frequency);
         index += 1;
     }
-    frequencies.push(24_000.0);
+    frequencies.push(end);
     frequencies
 }
 
-fn exact_dtft(samples: &[f64], frequency: f64) -> Complex64 {
+fn exact_dtft(samples: &[f64], frequency: f64, rate: u32) -> Complex64 {
     let step = Complex64::from_polar(
         1.0,
-        -2.0 * std::f64::consts::PI * frequency / f64::from(SAMPLE_RATE),
+        -2.0 * std::f64::consts::PI * frequency / f64::from(rate),
     );
     let mut phase = Complex64::new(1.0, 0.0);
     let mut response = Complex64::new(0.0, 0.0);
@@ -1311,10 +1527,10 @@ fn exact_dtft(samples: &[f64], frequency: f64) -> Complex64 {
     response
 }
 
-fn convolution_csv(samples: &[f64], frequencies: &[f64]) -> String {
+fn convolution_csv(samples: &[f64], frequencies: &[f64], rate: u32) -> String {
     let mut text = String::from("frequency_hz,magnitude_db,phase_deg\n");
     for &frequency in frequencies {
-        let response = exact_dtft(samples, frequency);
+        let response = exact_dtft(samples, frequency, rate);
         let magnitude = response.norm();
         let magnitude_db = if magnitude == 0.0 {
             -200.0
@@ -1337,22 +1553,41 @@ fn convolution_csv(samples: &[f64], frequencies: &[f64]) -> String {
     text
 }
 
-fn convolution_guide(length: usize, headroom_db: f64, paths: &[ConvolutionRoute]) -> String {
+fn convolution_guide(
+    rate: u32,
+    length: usize,
+    headroom_db: f64,
+    paths: &[ConvolutionRoute],
+    extra_rates: &[u32],
+) -> String {
     let mut lines = vec![
         "SECS 2R 컨볼루션 IR".to_owned(),
         String::new(),
         "이 폴더의 WAV는 보정 필터 전체(FIR, PEQ, 크로스오버, 올패스, 게인, 극성, 딜레이)를 입력과 출력 쌍마다 하나로 합친 임펄스 응답입니다.".to_owned(),
-        format!("형식: 48000 Hz, 32비트 float, 모노. 모든 파일의 길이는 {length} 샘플로 같습니다."),
+        format!("형식: {rate} Hz, 32비트 float, 모노. 모든 파일의 길이는 {length} 샘플로 같습니다."),
         format!("헤드룸: 클리핑을 막으려고 모든 파일에 {headroom_db:.1} dB 감쇠를 넣었습니다. 컨볼버에서 따로 줄이지 않아도 됩니다."),
         String::new(),
         "거는 법".to_owned(),
         "- 아래 표의 한 줄은 입력 채널 하나를 그 WAV로 컨볼루션해 출력 채널 하나로 보내는 연결입니다.".to_owned(),
         "- 같은 출력으로 가는 줄이 여럿이면 결과를 더하십시오(서브 합산, LFE, MIMO 서포트).".to_owned(),
         "- 입력과 출력의 이름이 같고 그 출력으로 가는 줄이 하나뿐이면 그 WAV 하나만 거십시오.".to_owned(),
-        "- 재생 장치와 컨볼버의 샘플레이트를 48000 Hz로 맞추십시오.".to_owned(),
+        format!("- 재생 장치와 컨볼버의 샘플레이트를 {rate} Hz로 맞추십시오."),
         String::new(),
         "입력 → 출력 | 파일 | 최대 이득 | 지연".to_owned(),
     ];
+    if !extra_rates.is_empty() {
+        lines.extend([
+            String::new(),
+            format!(
+                "추가 샘플레이트 폴더: {}",
+                extra_rates
+                    .iter()
+                    .map(|rate| format!("{rate}Hz/"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        ]);
+    }
     lines.extend(paths.iter().map(|path| {
         format!(
             "{} → {} | {} | {:+.1} dB | {:.2} ms",
@@ -1362,15 +1597,103 @@ fn convolution_guide(length: usize, headroom_db: f64, paths: &[ConvolutionRoute]
     lines.extend([
         String::new(),
         "같은 이름의 .csv에는 줄마다 주파수 응답(Hz, dB, 위상)이 있습니다. 기계가 읽는 표는 routing.json입니다.".to_owned(),
+        String::new(),
+        "REAPER에서는 secs2r_reaper.lua로 보정 트랙과 출력을 한 번에 연결합니다. Actions → Show action list → New action → Load ReaScript에서 이 파일을 불러온 뒤, 원본 트랙을 선택하고 실행하십시오. 원본의 채널 순서는 내보낸 입력 순서와 같아야 합니다. 원본의 마스터/상위 폴더 보내기는 꺼지고, 보정 신호만 출력합니다. 같은 원본을 선택해 다시 실행하면 이전 보정 트랙을 바꿉니다. WAV와 스크립트는 같은 폴더에 두십시오.".to_owned(),
     ]);
     lines.join("\r\n") + "\r\n"
 }
 
-/// Write complete per-path convolution WAV, CSV, routing and guide files.
+/// Quote UTF-8 for Lua without JSON-only escapes such as `\uXXXX`.
+fn lua_string(value: &str) -> String {
+    let mut quoted = String::from("\"");
+    for ch in value.chars() {
+        match ch {
+            '"' => quoted.push_str("\\\""),
+            '\\' => quoted.push_str("\\\\"),
+            ch if ch.is_control() => {
+                for byte in ch.to_string().bytes() {
+                    quoted.push_str(&format!("\\{byte:03}"));
+                }
+            }
+            ch => quoted.push(ch),
+        }
+    }
+    quoted.push('"');
+    quoted
+}
+
+/// The routing table, not a second graph traversal, is the source of both exports.
+fn convolution_reaper(routing: &ConvolutionRouting<'_>, design_name: Option<&str>) -> String {
+    let name = design_name
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("보정");
+    let mut script = format!(
+        "local design_name = {}\nlocal input_channels = {}\nlocal output_channels = {}\nlocal paths = {{\n",
+        lua_string(name),
+        routing.inputs.len().max(2).next_multiple_of(2),
+        routing.outputs.len().max(2).next_multiple_of(2),
+    );
+    for path in &routing.paths {
+        let input = routing
+            .inputs
+            .iter()
+            .position(|input| input == &path.input)
+            .expect("rendered input")
+            + 1;
+        let output = routing
+            .outputs
+            .iter()
+            .position(|output| output == &path.output)
+            .expect("rendered output")
+            + 1;
+        script.push_str(&format!(
+            "  {{input = {input}, output = {output}, wav = {}, name = {}}},\n",
+            lua_string(&path.wav),
+            lua_string(&format!("{} → {}", path.input, path.output)),
+        ));
+    }
+    script.push_str("}\n\n");
+    // Git's Windows checkout may use CRLF; bundle bytes must not depend on it.
+    script.push_str(&include_str!("convolution_reaper.lua").replace("\r\n", "\n"));
+    script
+}
+
+/// Write complete per-path convolution WAV, CSV, routing, ReaScript and guide files.
 pub fn export_convolution(
     run: &FilterRun<'_>,
     folder: &Path,
 ) -> Result<Vec<PathBuf>, FiltersError> {
+    export_convolution_with_options(run, folder, &Options::default())
+}
+
+/// Write a convolution bundle with an optional display name for its REAPER folder.
+/// The name is quoted as Lua data, never interpreted as script or a filename.
+pub fn export_convolution_named(
+    run: &FilterRun<'_>,
+    folder: &Path,
+    design_name: Option<&str>,
+) -> Result<Vec<PathBuf>, FiltersError> {
+    export_convolution_named_with_options(run, folder, &Options::default(), design_name)
+}
+
+/// Export convolution bundles at the main and additional output rates.
+pub fn export_convolution_with_options(
+    run: &FilterRun<'_>,
+    folder: &Path,
+    options: &Options,
+) -> Result<Vec<PathBuf>, FiltersError> {
+    export_convolution_named_with_options(run, folder, options, None)
+}
+
+/// Export convolution bundles at the main and additional output rates, each
+/// rate folder with its own REAPER script named after `design_name`.
+pub fn export_convolution_named_with_options(
+    run: &FilterRun<'_>,
+    folder: &Path,
+    options: &Options,
+    design_name: Option<&str>,
+) -> Result<Vec<PathBuf>, FiltersError> {
+    validate_options(options, true)?;
     if let Some(block) = filter_export_block(
         ExportKind::Convolution,
         !run.chain.subs.is_empty(),
@@ -1381,66 +1704,86 @@ pub fn export_convolution(
     validate_run(run)?;
     let graph = ExportGraph::build(run.chain, run.mimo, LfeChoice::DOLBY)?;
     let plan = graph.plan();
-    let rendered = render_paths(plan, CONVOLUTION_MAX_LEN)?;
     let headroom_db = (headroom_db(plan)? * 2.0).ceil() / 2.0;
     let attenuation = 10_f64.powf(-headroom_db / 20.0);
-    let frequencies = convolution_grid();
     let mut files = Vec::new();
-    let mut routes = Vec::with_capacity(rendered.paths.len());
-    for path in &rendered.paths {
-        let stem = format!("{}_to_{}", path.input, path.output);
-        let wav = format!("{stem}.wav");
-        let csv = format!("{stem}.csv");
-        let written = path
-            .response
+    for (rate, prefix) in std::iter::once((options.output_rate, PathBuf::new())).chain(
+        options
+            .extra_rates
             .iter()
-            .map(|sample| f64::from((*sample * attenuation) as f32))
-            .collect::<Vec<_>>();
-        let peak = frequencies
-            .iter()
-            .filter(|&&frequency| (20.0..=20_000.0).contains(&frequency))
-            .map(|frequency| exact_dtft(&path.response, *frequency).norm())
-            .fold(0.0_f64, f64::max);
-        let peak_gain_db = if peak == 0.0 {
-            -200.0
-        } else {
-            20.0 * peak.log10()
+            .map(|&rate| (rate, PathBuf::from(format!("{rate}Hz")))),
+    ) {
+        let rendered = render_paths_at(plan, CONVOLUTION_MAX_LEN, rate)?;
+        let frequencies = convolution_grid(rate);
+        let mut routes = Vec::with_capacity(rendered.paths.len());
+        for path in &rendered.paths {
+            let stem = format!("{}_to_{}", path.input, path.output);
+            let wav = format!("{stem}.wav");
+            let csv = format!("{stem}.csv");
+            let written = path
+                .response
+                .iter()
+                .map(|sample| f64::from((*sample * attenuation) as f32))
+                .collect::<Vec<_>>();
+            let peak = frequencies
+                .iter()
+                .filter(|&&frequency| (20.0..=20_000.0).contains(&frequency))
+                .map(|frequency| exact_dtft(&path.response, *frequency, rate).norm())
+                .fold(0.0_f64, f64::max);
+            let peak_gain_db = if peak == 0.0 {
+                -200.0
+            } else {
+                20.0 * peak.log10()
+            };
+            files.push((
+                prefix.join(&wav),
+                wav_bytes(&written, rate)
+                    .map_err(|error| FiltersError::Invalid(format!("{stem}: {error}")))?,
+            ));
+            files.push((
+                prefix.join(&csv),
+                convolution_csv(&written, &frequencies, rate).into_bytes(),
+            ));
+            routes.push(ConvolutionRoute {
+                input: path.input.clone(),
+                output: path.output.clone(),
+                wav,
+                csv,
+                peak_gain_db,
+                delay_ms: path.delay_ms,
+            });
+        }
+        if prefix.as_os_str().is_empty() {
+            let guide = convolution_guide(
+                rate,
+                rendered.length,
+                headroom_db,
+                &routes,
+                &options.extra_rates,
+            );
+            files.push((PathBuf::from(CONVOLUTION_GUIDE), guide.into_bytes()));
+        }
+        let routing = ConvolutionRouting {
+            schema: 1,
+            sample_rate: rate,
+            length: rendered.length,
+            format: "f32",
+            headroom_db,
+            inputs: &rendered.inputs,
+            outputs: &rendered.outputs,
+            paths: routes,
         };
         files.push((
-            PathBuf::from(&wav),
-            wav_bytes(&written, SAMPLE_RATE)
-                .map_err(|error| FiltersError::Invalid(format!("{stem}: {error}")))?,
+            prefix.join("secs2r_reaper.lua"),
+            convolution_reaper(&routing, design_name).into_bytes(),
         ));
-        files.push((
-            PathBuf::from(&csv),
-            convolution_csv(&written, &frequencies).into_bytes(),
-        ));
-        routes.push(ConvolutionRoute {
-            input: path.input.clone(),
-            output: path.output.clone(),
-            wav,
-            csv,
-            peak_gain_db,
-            delay_ms: path.delay_ms,
-        });
+        let entry = prefix.join("routing.json");
+        let mut routing_bytes = serde_json::to_vec_pretty(&routing)
+            .map_err(|error| FiltersError::Invalid(format!("routing.json: {error}")))?;
+        routing_bytes.push(b'\n');
+        files.push((entry, routing_bytes));
     }
-    let guide = convolution_guide(rendered.length, headroom_db, &routes);
-    files.push((PathBuf::from(CONVOLUTION_GUIDE), guide.into_bytes()));
-    let routing = ConvolutionRouting {
-        schema: 1,
-        sample_rate: SAMPLE_RATE,
-        length: rendered.length,
-        format: "f32",
-        headroom_db,
-        inputs: &rendered.inputs,
-        outputs: &rendered.outputs,
-        paths: routes,
-    };
     let entry = PathBuf::from("routing.json");
-    let mut routing_bytes = serde_json::to_vec_pretty(&routing)
-        .map_err(|error| FiltersError::Invalid(format!("routing.json: {error}")))?;
-    routing_bytes.push(b'\n');
-    files.push((entry.clone(), routing_bytes));
     write_bundle_observed(folder, &files, &entry, &|_, _| Ok(()))?;
     Ok(files
         .into_iter()
@@ -1545,3 +1888,5 @@ fn validate_run(run: &FilterRun<'_>) -> Result<(), FiltersError> {
 
 #[cfg(test)]
 mod optimization_tests;
+#[cfg(test)]
+mod reaper_tests;

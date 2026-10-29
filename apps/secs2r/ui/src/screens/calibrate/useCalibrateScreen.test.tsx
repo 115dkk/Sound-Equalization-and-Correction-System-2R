@@ -21,6 +21,16 @@ beforeEach(async () => {
 afterEach(async () => { cleanup(); await session.monitor(false); session.dispose(); mock.dispose(); vi.restoreAllMocks(); });
 
 describe("useCalibrateScreen", () => {
+  it("reads the DSP's taps, budget and output rate, counting 자동 as 48 kHz", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    expect(result.current.view).toMatchObject({ firTaps: 65536, firBudget: 2097152, outputRate: 48000 });
+    await perform(() => session.writers.dsp.edit({ preset: "minidsp" }));
+    expect(result.current.view).toMatchObject({ firTaps: 2048, firBudget: 4096, outputRate: 96000 });
+    await perform(() => session.writers.dsp.edit({ preset: "camilla" }));
+    await perform(() => session.writers.dsp.edit({ output_rate: "auto" }));
+    expect(result.current.view?.outputRate).toBe(48000);
+  });
+
   it("edits the center crossover after selecting C on SPL and opening XO", async () => {
     const { result } = renderHook(useCalibrateScreen, { wrapper });
     await perform(() => result.current.actions.selectChannel("C", null));

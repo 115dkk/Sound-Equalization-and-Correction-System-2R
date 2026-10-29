@@ -155,6 +155,53 @@ describe("useExportScreen", () => {
     expect(reopened.result.current.view).toMatchObject({ designName: "", camillaDevices: devices });
   });
 
+  it("sends the chosen extra rates with the convolution IR only, without the rate the files are written at", async () => {
+    await perform(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } }));
+    await perform(mock.drain);
+    const { result } = renderHook(useExportScreen, { wrapper });
+    expect(result.current.view).toMatchObject({ outputRate: { fixed: 48000 }, extraRates: [] });
+    await perform(() => result.current.actions.setExtraRates([192000, 44100]));
+    expect(result.current.view?.extraRates).toEqual([192000, 44100]);
+    expect(session.host.getSnapshot().extraRates).toEqual([192000, 44100]);
+    mock.calls.length = 0;
+    for (const kind of ["camilla_dsp", "convolution"] as const) {
+      await perform(() => result.current.actions.exportFiles(kind));
+      await perform(mock.drain);
+    }
+    expect(mock.calls.filter((call) => call.method === "export")).toEqual([
+      { method: "export", params: { kind: "camilla_dsp", folder: "" } },
+      { method: "export", params: { kind: "convolution", folder: "", extra_rates: [44100, 192000] } },
+    ]);
+    expect(result.current.view?.runs.convolution).toMatchObject({ status: "done", rate: 48000, notes: [] });
+    // At 44.1 kHz the files are written at 44.1 kHz: only 192 kHz goes as an extra rate.
+    await perform(() => session.writers.dsp.edit({ output_rate: { fixed: 44100 } }));
+    expect(result.current.view?.outputRate).toEqual({ fixed: 44100 });
+    mock.calls.length = 0;
+    await perform(() => result.current.actions.exportFiles("convolution"));
+    expect(mock.calls.filter((call) => call.method === "export")).toEqual([{ method: "export", params: { kind: "convolution", folder: "", extra_rates: [192000] } }]);
+    await perform(mock.drain);
+    expect(result.current.view?.runs.convolution).toMatchObject({ status: "done", rate: 44100 });
+    // Kept for the session, across projects.
+    await perform(() => session.call({ method: "project_new", params: { path: "", preset: "2.0", sub_count: 0, sample: false, tutorial: false } }));
+    expect(result.current.view?.extraRates).toEqual([192000, 44100]);
+  });
+
+  it("records the service's output-rate fallback note on the row's run", async () => {
+    mock.dispose();
+    session.dispose();
+    mock = createMockService({ tickMs: 0, playbackRate: null }); session = createSession(mock); await session.start();
+    await perform(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } }));
+    await perform(mock.drain);
+    await perform(() => session.writers.dsp.edit({ output_rate: "auto" }));
+    const { result } = renderHook(useExportScreen, { wrapper });
+    expect(result.current.view?.outputRate).toBe("auto");
+    await perform(() => result.current.actions.exportFiles("camilla_dsp"));
+    await perform(mock.drain);
+    expect(result.current.view?.runs.camilla_dsp).toMatchObject({ status: "done", rate: 48000, notes: [{ code: "output_rate_fallback", params: {} }] });
+    await perform(result.current.actions.goToSystem);
+    expect(session.host.getSnapshot().current).toBe("system");
+  });
+
   it("uses the session's device list without repeated reads and follows enumeration updates", async () => {
     const { result, rerender } = renderHook(useExportScreen, { wrapper });
     expect(result.current.view?.nativeDevices).toEqual(measureMethods.native_devices);

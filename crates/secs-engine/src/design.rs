@@ -134,6 +134,59 @@ pub struct RoleScores {
     pub gd_before: Vec<f64>,
     pub gd_after: Vec<f64>,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RoleLateEnergy {
+    pub role: String,
+    pub position: u32,
+    pub before_db: f64,
+    pub after_db: f64,
+}
+
+/// Late energy on the same per-position responses used by the scorecard at the
+/// main position and by the mdat's before/after items elsewhere: the 2 s export
+/// view, which MIMO also starts from. The fitting spectra (`spectra.used`) are
+/// not used; their late tail differs from those items by up to about 1 dB.
+/// Rows are position major, with main roles in chain order.
+pub fn late_energy(design: &Design) -> Result<Vec<RoleLateEnergy>, EngineError> {
+    let view = design.replay.export_view(design)?;
+    let mut rows = Vec::new();
+    for &position in &design.spectra.positions {
+        for channel in &design.chain.mains {
+            let (before_db, after_db) = if position == design.spectra.main_position {
+                let Some(main) = design.mains.iter().find(|main| main.role == channel.role) else {
+                    continue;
+                };
+                (
+                    crate::decay::late_db_20_150(&main.before),
+                    crate::decay::late_db_20_150(&main.after),
+                )
+            } else {
+                let Some(before) = view.spectra.get(position, &channel.role) else {
+                    continue;
+                };
+                let Some(after) =
+                    crate::stage_responses(design, &channel.role, &view.spectra, position)
+                        .map(|stages| stages.output)
+                else {
+                    continue;
+                };
+                (
+                    crate::decay::late_db_20_150(before),
+                    crate::decay::late_db_20_150(&after),
+                )
+            };
+            rows.push(RoleLateEnergy {
+                role: channel.role.clone(),
+                position,
+                before_db,
+                after_db,
+            });
+        }
+    }
+    Ok(rows)
+}
+
 fn check(ctx: &Context) -> Result<(), EngineError> {
     ctx.cancel().check().map_err(|_| EngineError::Cancelled)
 }

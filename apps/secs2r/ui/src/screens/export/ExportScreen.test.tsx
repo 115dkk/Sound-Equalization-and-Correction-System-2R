@@ -24,6 +24,7 @@ import {
   exportNamed,
   exportEqapoDone,
   exportExporting,
+  exportExtraRates,
   exportFailed,
   exportMeasurementsDone,
   exportMeasurementsOnly,
@@ -31,6 +32,8 @@ import {
   exportNoMimo,
   exportNoResult,
   exportNothingMeasured,
+  exportRateFallback,
+  exportRate96k,
   exportRcOnly,
   exportReady,
   exportRecalibrating,
@@ -131,6 +134,9 @@ const STATES: Record<string, ExportView> = {
   devicesTyped: exportDevicesTyped,
   devicesAsio: exportDevicesAsio,
   devicesAsioUnnamed: exportDevicesAsioUnnamed,
+  rate96k: exportRate96k,
+  extraRates: exportExtraRates,
+  rateFallback: exportRateFallback,
 };
 
 function actions() {
@@ -139,10 +145,12 @@ function actions() {
     setMdatScope: vi.fn<ExportActions["setMdatScope"]>(),
     setDesignName: vi.fn<ExportActions["setDesignName"]>(),
     setCamillaDevices: vi.fn<ExportActions["setCamillaDevices"]>(),
+    setExtraRates: vi.fn<ExportActions["setExtraRates"]>(),
     refreshDevices: vi.fn<ExportActions["refreshDevices"]>(),
     changeFolder: vi.fn<ExportActions["changeFolder"]>(),
     openFolder: vi.fn<ExportActions["openFolder"]>(),
     goToCalibrate: vi.fn<ExportActions["goToCalibrate"]>(),
+    goToSystem: vi.fn<ExportActions["goToSystem"]>(),
     recalibrate: vi.fn<ExportActions["recalibrate"]>(),
     setApplyLevel: vi.fn<ExportActions["setApplyLevel"]>(),
     setCamillaAddress: vi.fn<ExportActions["setCamillaAddress"]>(),
@@ -160,7 +168,7 @@ function actions() {
 }
 
 /** The screen inside the frame with its header, as P33 will mount it. */
-function Mounted({ view, act, advanced = false, devices = false }: { view: ExportView; act: ExportActions; advanced?: boolean; devices?: boolean }) {
+function Mounted({ view, act, advanced = false, devices = false, rates = false }: { view: ExportView; act: ExportActions; advanced?: boolean; devices?: boolean; rates?: boolean }) {
   const t = useT();
   const header = exportHeader(view, act, t);
   return (
@@ -175,7 +183,7 @@ function Mounted({ view, act, advanced = false, devices = false }: { view: Expor
       tray={<div />}
       shortcuts={false}
     >
-      <ExportScreen view={view} actions={act} initialAdvanced={advanced} initialDevices={devices} />
+      <ExportScreen view={view} actions={act} initialAdvanced={advanced} initialDevices={devices} initialExtraRates={rates} />
     </AppFrame>
   );
 }
@@ -834,6 +842,95 @@ describe("내보내기", () => {
     expect(ui("export.devices.playback.format.S24")?.getAttribute("aria-checked")).toBe("true");
     fireEvent.click(ui("export.devices.playback.backend.asio")!);
     expect((ui("export.devices.playback.asio") as HTMLInputElement).value).toBe("Tesira ASIO");
+  });
+
+  it("names the rate each filter row writes when it is not 48 kHz; the REW mdat says nothing (ADR 0017)", () => {
+    const { unmount } = renderWith(<Mounted view={exportReady} act={actions()} advanced />);
+    expect(document.querySelectorAll("[data-ui$='.rate']")).toHaveLength(0);
+    unmount();
+    const rows = (view: ExportView) => {
+      const { unmount } = renderWith(<Mounted view={view} act={actions()} advanced />);
+      const text = EXPORT_KINDS.map((kind) => ui(`export.kind.${kind}.rate`)?.textContent ?? null);
+      unmount();
+      return text;
+    };
+    const filter = (kind: string) => FILTER_KINDS.some((candidate) => candidate === kind);
+    const fixed = translate("ko", "export.rate.fixed", { rate: "96 kHz" });
+    expect(fixed).toBe("출력 레이트 96 kHz");
+    expect(rows(exportRate96k)).toEqual(EXPORT_KINDS.map((kind) => (filter(kind) ? fixed : null)));
+    const auto = translate("ko", "export.rate.auto");
+    expect(rows({ ...exportReady, outputRate: "auto" })).toEqual(EXPORT_KINDS.map((kind) => (filter(kind) ? auto : null)));
+    expect(rows({ ...exportReady, outputRate: { fixed: 44100 } })[0]).toBe(translate("ko", "export.rate.fixed", { rate: "44.1 kHz" }));
+    // Before the DSP arrives the rows say nothing.
+    expect(rows({ ...exportReady, outputRate: null }).every((text) => text === null)).toBe(true);
+  });
+
+  it("folds the convolution IR's extra rates under its row, closed, and checks the rates other than the written one", () => {
+    const act = actions();
+    const { unmount } = renderWith(<Mounted view={exportRate96k} act={act} />);
+    const toggle = ui("export.extra_rates")!;
+    expect(toggle.closest("[data-ui='export.kind.convolution']")).not.toBeNull();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(ui("export.extra_rates.summary")?.textContent).toBe(translate("ko", "export.extra_rates.none"));
+    expect(ui("export.extra_rates.44100")).toBeNull();
+    fireEvent.click(toggle);
+    const boxes = [...document.querySelectorAll<HTMLInputElement>("input[type='checkbox'][data-ui^='export.extra_rates.']")];
+    expect(boxes.map((box) => box.getAttribute("data-ui"))).toEqual([44100, 48000, 88200, 176400, 192000].map((rate) => `export.extra_rates.${rate}`));
+    expect(boxes.every((box) => !box.checked)).toBe(true);
+    expect(boxes[0]!.closest("label")?.textContent).toBe("44.1 kHz");
+    fireEvent.click(ui("export.extra_rates.44100")!);
+    expect(act.setExtraRates).toHaveBeenLastCalledWith([44100]);
+    unmount();
+
+    const chosen = actions();
+    const view = { ...exportExtraRates, extraRates: [96000, ...exportExtraRates.extraRates] };
+    renderWith(<Mounted view={view} act={chosen} />);
+    // The written rate is never an extra one: 96 kHz stays chosen behind it for when the DSP's rate changes.
+    expect(ui("export.extra_rates.summary")?.textContent).toBe("44.1 kHz, 192 kHz");
+    fireEvent.click(ui("export.extra_rates")!);
+    expect((ui("export.extra_rates.44100") as HTMLInputElement).checked).toBe(true);
+    expect((ui("export.extra_rates.192000") as HTMLInputElement).checked).toBe(true);
+    expect((ui("export.extra_rates.48000") as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(ui("export.extra_rates.192000")!);
+    expect(chosen.setExtraRates).toHaveBeenLastCalledWith([96000, 44100]);
+    fireEvent.click(ui("export.extra_rates.48000")!);
+    expect(chosen.setExtraRates).toHaveBeenLastCalledWith([96000, 44100, 192000, 48000]);
+  });
+
+  it("checks the extra rates against 48 kHz under 자동, the rate it falls back to", () => {
+    renderWith(<Mounted view={{ ...exportReady, outputRate: "auto" }} act={actions()} rates />);
+    expect(ui("export.extra_rates.48000")).toBeNull();
+    expect(ui("export.extra_rates.96000")).not.toBeNull();
+  });
+
+  it("warns on the outcome when 자동 fell back to 48 kHz, with the cause, what to do and the way to 시스템", () => {
+    const act = actions();
+    const { unmount } = renderWith(<Mounted view={exportRateFallback} act={act} />);
+    const warning = ui("export.outcome.camilla_dsp.rate_fallback")!;
+    expect(warning.closest("[data-ui='export.outcome.camilla_dsp']")).not.toBeNull();
+    expect(warning.textContent).toContain(translate("ko", "export.rate.fallback.unsupported", { rate: "32 kHz" }));
+    expect(warning.textContent).toContain(translate("ko", "export.rate.fallback.next"));
+    expect(ui("export.outcome.camilla_dsp.rate")).toBeNull();
+    fireEvent.click(ui("export.outcome.camilla_dsp.go_system")!);
+    expect(act.goToSystem).toHaveBeenCalledOnce();
+    unmount();
+
+    const run = exportRateFallback.runs.camilla_dsp!;
+    if (run.status !== "done") throw new Error("the fixture's run is done");
+    const unread = renderWith(<Mounted view={{ ...exportRateFallback, runs: { camilla_dsp: { ...run, notes: [{ code: "output_rate_fallback", params: {} }] } } }} act={actions()} />);
+    expect(ui("export.outcome.camilla_dsp.rate_fallback")?.textContent).toContain(translate("ko", "export.rate.fallback.unread"));
+    unread.unmount();
+
+    // 자동 that read the device: the outcome names the rate it wrote, without a warning.
+    const read = renderWith(<Mounted view={{ ...exportRateFallback, runs: { camilla_dsp: { ...run, rate: 44100, notes: [] } } }} act={actions()} />);
+    expect(ui("export.outcome.camilla_dsp.rate_fallback")).toBeNull();
+    expect(ui("export.outcome.camilla_dsp.rate")?.textContent).toBe(translate("ko", "export.rate.written", { rate: "44.1 kHz" }));
+    read.unmount();
+
+    // A fixed rate says nothing more after the export: the row already said it.
+    renderWith(<Mounted view={{ ...exportRate96k, runs: { camilla_dsp: { ...run, rate: 96000, notes: [] } } }} act={actions()} />);
+    expect(ui("export.outcome.camilla_dsp.rate")).toBeNull();
+    expect(ui("export.outcome.camilla_dsp.rate_fallback")).toBeNull();
   });
 
   it("draws every id the reach table cites in at least one state", () => {

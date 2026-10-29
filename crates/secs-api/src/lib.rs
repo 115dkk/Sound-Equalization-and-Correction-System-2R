@@ -68,6 +68,7 @@
 //!     mdat_scope: None,
 //!     design_name: Some("Living room".into()),
 //!     camilla_devices: None,
+//!     extra_rates: Vec::new(),
 //! }))? else {
 //!     unreachable!("export has one response variant")
 //! };

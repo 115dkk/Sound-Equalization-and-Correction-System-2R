@@ -39,6 +39,8 @@ type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "m
   xoRecommendation: XoRecommendation | null; runs: Partial<Record<ExportKind, ExportRun>>; mdatScope: MdatScope;
   /** 내보내기: the design name field's text (`""` = no name) and the CamillaDSP devices (file placeholders by default). */
   designName: string; camillaDevices: CamillaDevices;
+  /** 내보내기: the convolution IR's extra rates in Hz (none by default); like the devices, kept for the session across projects. */
+  extraRates: number[];
   /** 내보내기의 적용 (ADR 0018): how each target's last apply ended, the CamillaDSP address field's unsaved text, an apply_status read and a revert_eqapo in flight. */
   applyRuns: Partial<Record<ApplyTarget, ApplyRun>>; applyAddressDraft: string | null; applyChecking: boolean; applyReverting: boolean;
   /** 관리: the CamillaDSP executable field's unsaved text, a host_install or host_stop_managing in flight, and the last of them that failed. */
@@ -74,7 +76,7 @@ export function createSession(ipc: Ipc) {
     mdat: null, warnings: [], tab: "spl", channel: null, xoGroup: null, previewHz: null, targetEdit: "idle", xoEdit: "idle",
     meter: null, monitor: "off", playing: null, playingAll: false, masterDbfs: -20,
     xoRecommendation: null, runs: {}, mdatScope: "all", failure: null,
-    designName: "", camillaDevices: { capture: { type: "file" }, playback: { type: "file" } },
+    designName: "", camillaDevices: { capture: { type: "file" }, playback: { type: "file" } }, extraRates: [],
     applyRuns: {}, applyAddressDraft: null, applyChecking: false, applyReverting: false,
     applyExeDraft: null, hostInstalling: false, hostStopping: false, hostFailure: null,
     micCalBusy: null, micCalError: null,

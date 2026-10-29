@@ -1,0 +1,6 @@
+# Official Linux engine used by ci.yml reaper-playback. Downloaded on the runner;
+# neither this archive nor its extracted files are published as artifacts.
+version = "7.84"
+url = "https://www.reaper.fm/files/7.x/reaper784_linux_x86_64.tar.xz"
+sha256 = "d87b39862bec6a82bbb530731ae1fa36bba4bc9954ff72518a187420eed9ec7d"
+format = "tar.xz"

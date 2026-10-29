@@ -152,6 +152,25 @@ export const calibrateSpecimens: SpecimenDef[] = [
   frame("failed", "failed run: cause, next step, 자세히", () => <CalibrateFrame view={fx.failedView} jobs={failedJobs} />),
   frame("subs-only", "subs-only result on BA (DBA group)", () => <CalibrateFrame view={fx.subsOnlyView} />),
   frame("mimo", "MIMO computed: SPL with the MIMO curve", () => <CalibrateFrame view={fx.mimoView} />),
+  frame("mimo-scorecard", "scorecard after MIMO: before → after → MIMO in each figure, the key and the late bass", () => (
+    <CalibrateFrame view={fx.mimoView} scrollTo="calibrate.scorecard.card" />
+  )),
+  frame("late-positions", "위치별 늦은 저음 open: three positions, position 1 the reference, with MIMO", () => (
+    <CalibrateFrame view={fx.mimoView} initial={{ latePositions: true }} scrollTo="calibrate.scorecard.positions" />
+  )),
+  frame("mimo-stale-scorecard", "MIMO stale: the scorecard compares before and after only", () => (
+    <CalibrateFrame view={fx.mimoStaleView} scrollTo="calibrate.scorecard.card" />
+  )),
+  frame("one-position", "one measured position: late bass there, no positions table", () => (
+    <CalibrateFrame view={fx.onePositionView} scrollTo="calibrate.scorecard.card" />
+  )),
+  {
+    id: "screen.calibrate.mimo-scorecard.min",
+    title: "보정 · scorecard after MIMO at the smallest window (1024 × 700): over the graph, figures on one line",
+    width: 1024,
+    height: 700,
+    render: () => <CalibrateFrame view={fx.mimoView} scrollTo="calibrate.scorecard.card" />,
+  },
   frame("mimo-settings", "MIMO section after a run", () => <CalibrateFrame view={fx.mimoView} scrollTo="calibrate.settings.mimo" />),
   frame("gpu-auto", "automatic GPU selection and actual GPU result", () => <CalibrateFrame view={fx.gpuView} scrollTo="calibrate.settings.mimo" />),
   frame("gpu-selected", "manual GPU preference", () => <CalibrateFrame view={fx.gpuSelectedView} scrollTo="calibrate.settings.mimo" />),
@@ -165,6 +184,12 @@ export const calibrateSpecimens: SpecimenDef[] = [
   frame("gpu-fallback", "GPU selected but previous result recovered on CPU", () => <CalibrateFrame view={fx.gpuFallbackView} scrollTo="calibrate.settings.mimo" />),
   { id: "screen.calibrate.gpu.min", title: "보정 · GPU at the smallest window", width: 1024, height: 700,
     render: () => <CalibrateFrame view={fx.gpuView} scrollTo="calibrate.settings.mimo" /> },
+  frame("mimo-budget-96k", "MIMO FIR supports counted at the miniDSP's 96 kHz: past its FIR budget, the rate named in the line", () => (
+    <CalibrateFrame view={fx.minidspView} scrollTo="calibrate.settings.mimo" />
+  )),
+  frame("mode-fir-over-96k", "mixed mode at the miniDSP's 96 kHz: the channel FIR past its taps per channel, one warning line", () => (
+    <CalibrateFrame view={fx.minidspView} scrollTo="calibrate.settings.mode" />
+  )),
   frame("mimo-running", "MIMO computing: 보정 계산 and the other jobs are off", () => (
     <CalibrateFrame view={fx.runningMimoView} jobs={runningJobs("mimo", "engine.mimo_iir", 11)} scrollTo="calibrate.settings.ba" />
   )),

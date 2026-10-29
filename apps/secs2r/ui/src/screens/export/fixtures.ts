@@ -52,6 +52,8 @@ const exportMimo: MimoSummary = {
   fir_taps_total: 0,
   notes: [],
   input_count: SAMPLE_MAINS.length,
+  scorecard: [],
+  late_energy: [],
 };
 
 const exportRc: Notice[] = [
@@ -107,6 +109,8 @@ export const exportReady: ExportView = {
   designName: "",
   camillaDevices: FILE_DEVICES,
   nativeDevices: EXPORT_DEVICES,
+  outputRate: { fixed: 48000 },
+  extraRates: [],
   apply: applyIdle,
 };
 
@@ -140,6 +144,8 @@ export const exportDone: ExportView = {
   runs: {
     camilla_dsp: {
       status: "done",
+      rate: 48000,
+      notes: [],
       folder: "D:/Audio/거실 보정/camilladsp",
       files: [
         "D:/Audio/거실 보정/camilladsp/configs/secs_mixed.yml",
@@ -148,6 +154,8 @@ export const exportDone: ExportView = {
     },
     before_after_mdat: {
       status: "done",
+      rate: 48000,
+      notes: [],
       folder: "D:/Audio/거실 보정/SECS_mdat_RC_BA_MIMO_mixed_20261014-142233",
       files: ["D:/Audio/거실 보정/SECS_mdat_RC_BA_MIMO_mixed_20261014-142233/SECS 원 측정+보정 결과 저지연 모드.mdat"],
     },
@@ -166,6 +174,8 @@ export const exportMeasurementsDone: ExportView = {
   runs: {
     before_after_mdat: {
       status: "done",
+      rate: 48000,
+      notes: [],
       folder: `${BASE}/SECS_mdat_measurements_20261014-141502`,
       files: [`${BASE}/SECS_mdat_measurements_20261014-141502/SECS 원 측정.mdat`],
     },
@@ -216,6 +226,8 @@ export const exportEqapoDone: ExportView = {
   runs: {
     equalizer_apo: {
       status: "done",
+      rate: 48000,
+      notes: [],
       folder: EQAPO,
       files: [
         `${EQAPO}/config.txt`,
@@ -236,6 +248,8 @@ export const exportConvolutionDone: ExportView = {
   runs: {
     convolution: {
       status: "done",
+      rate: 48000,
+      notes: [],
       folder: CONVOLUTION,
       files: [
         ...[...SAMPLE_MAINS.map((role) => `${role}_to_${role}`), ...SAMPLE_SUBS.map((role) => `LFE_to_${role}`)].flatMap((stem) => [`${CONVOLUTION}/${stem}.wav`, `${CONVOLUTION}/${stem}.csv`]),
@@ -254,6 +268,37 @@ export const exportConvolutionFailed: ExportView = {
     convolution: {
       status: "failed",
       error: { code: "export_failed", params: {}, retryable: true, detail: `failed to write ${BASE}/SECS_convolution_RC_BA_MIMO_mixed_20261014-142233/Tfl_to_Tfl.wav: There is not enough space on the disk. (os error 112)` },
+    },
+  },
+};
+
+/** A DSP at 96 kHz (ADR 0017): every filter row says it writes 96 kHz; the REW mdat stays at 48 kHz and says nothing. */
+export const exportRate96k: ExportView = { ...exportReady, outputRate: { fixed: 96000 } };
+
+/** The same, the convolution IR also written at 44.1 and 192 kHz for a convolver that follows the playing rate. */
+export const exportExtraRates: ExportView = { ...exportRate96k, extraRates: [44100, 192000] };
+
+/**
+ * 자동 on a PC whose default playback device runs at 32 kHz: the CamillaDSP
+ * configuration went out at 48 kHz with the service's `output_rate_fallback`
+ * note, and its row says why and where the rate is set.
+ */
+export const exportRateFallback: ExportView = {
+  ...exportReady,
+  outputRate: "auto",
+  folder: { folder: "D:/Audio/거실 보정", stored: true },
+  runs: {
+    camilla_dsp: {
+      status: "done",
+      rate: 48000,
+      notes: [{ code: "output_rate_fallback", params: { rate: "32000" } }],
+      folder: "D:/Audio/거실 보정/camilladsp",
+      files: [
+        "D:/Audio/거실 보정/camilladsp/configs/secs_mixed.yml",
+        "D:/Audio/거실 보정/camilladsp/configs/secs_mixed_bypass.yml",
+        ...SAMPLE_MAINS.map((role) => `D:/Audio/거실 보정/camilladsp/coeffs/secs_mixed_${role}_fir.wav`),
+        "D:/Audio/거실 보정/camilladsp/secs-design.json",
+      ],
     },
   },
 };

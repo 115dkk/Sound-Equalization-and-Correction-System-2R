@@ -145,7 +145,7 @@ export const RULES: readonly Rule[] = [
       const h = host.getSnapshot();
       if (event.result?.kind === "export") {
         const result = event.result.data;
-        host.set({ runs: { ...h.runs, [request.params.kind]: { status: "done", files: result.files, folder: result.folder } } });
+        host.set({ runs: { ...h.runs, [request.params.kind]: { status: "done", files: result.files, folder: result.folder, rate: result.output_rate, notes: result.notes } } });
         run(() => call({ method: "open_folder", params: { path: result.folder } }));
       } else if (event.status === "failed" && event.error) host.set({ runs: { ...h.runs, [request.params.kind]: { status: "failed", error: event.error } } });
     },
