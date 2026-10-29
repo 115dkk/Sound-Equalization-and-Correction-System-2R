@@ -527,15 +527,19 @@ mod tests {
             ServiceState::Running,
             vec![Ok(HostResponse::Log(Vec::new()))],
         );
-        let shell = HostShell::new(fake, PathBuf::from(r"C:\SECS 2R\secs2r-host-shell.exe"));
+        // Built from parts: a backslash is no separator off Windows, and the
+        // service has no .exe suffix there.
+        let folder = PathBuf::from("SECS 2R");
+        let shell_path = folder.join("secs2r-host-shell.exe");
+        let shell = HostShell::new(fake, shell_path.clone());
         assert!(shell.log(0).unwrap().is_empty());
         shell.install().unwrap();
         assert_eq!(
             shell.platform.actions(),
             [
-                "Log { lines: 1 }",
-                r"install:C:\SECS 2R\secs2r-host.exe",
-                r"autostart:C:\SECS 2R\secs2r-host-shell.exe",
+                "Log { lines: 1 }".to_owned(),
+                format!("install:{}", folder.join(HOST_EXECUTABLE).display()),
+                format!("autostart:{}", shell_path.display()),
             ]
         );
     }
