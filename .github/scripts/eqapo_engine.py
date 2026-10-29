@@ -23,7 +23,9 @@ class EngineError(RuntimeError):
     """A manifest, download, extraction, or registration failure."""
 
 
-def load_manifest(path: Path, engine: str) -> dict[str, str]:
+def load_manifest(
+    path: Path, engine: str, formats: set[str] = FORMATS
+) -> dict[str, str]:
     with path.open("rb") as stream:
         manifest = tomllib.load(stream)
     if engine not in manifest or not isinstance(manifest[engine], dict):
@@ -38,8 +40,9 @@ def load_manifest(path: Path, engine: str) -> dict[str, str]:
     digest = entry["sha256"]
     if len(digest) != 64 or any(ch not in "0123456789abcdef" for ch in digest):
         raise EngineError(f"engine {engine!r} sha256 must be 64 lowercase hex digits")
-    if entry["format"] not in FORMATS:
-        raise EngineError(f"engine {engine!r} format must be nupkg or nsis")
+    if entry["format"] not in formats:
+        choices = " or ".join(sorted(formats))
+        raise EngineError(f"engine {engine!r} format must be {choices}")
     return {key: entry[key] for key in required}
 
 
