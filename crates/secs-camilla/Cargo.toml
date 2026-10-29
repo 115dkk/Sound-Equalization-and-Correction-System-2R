@@ -1,7 +1,7 @@
 [package]
 name = "secs-camilla"
 description = "CamillaDSP v4 configuration and FIR coefficient writer, reading the engine's signal-chain value."
-version = "0.1.0"
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -26,5 +26,8 @@ secs-types.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+# Path only, no version: Cargo leaves this dev-dependency out of the published
+# package, so secs-filters (which depends on this crate) does not form a cycle.
+secs-filters = { path = "../secs-filters" }
 secs-oracle.workspace = true
 serde_json.workspace = true
