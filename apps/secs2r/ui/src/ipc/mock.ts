@@ -793,6 +793,12 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "mode_spec": return { method: req.method, data: fx.modeSpec(req.params.mode, req.params.mimo_fir ?? false) };
       case "open_gpu_help": return { method: req.method, data: null };
       case "compute_status": return { method: req.method, data: computeStatus() };
+      case "local_api_status":
+      case "local_api_token_regenerate": return { method: req.method, data: {
+        ...appSettings.local_api, running: appSettings.local_api.enabled, error: null,
+        url: `http://127.0.0.1:${appSettings.local_api.port}`,
+        token: "mock-local-api-token", token_path: "C:/Users/demo/AppData/Roaming/SECS2R/local-api-token",
+      } };
       case "app_settings_get": return { method: req.method, data: appSettings };
       case "app_settings_set": {
         if (req.params.settings.compute === "gpu" && !availableCompute.gpu_available) throw new MockError(ipcError("compute_unavailable"));

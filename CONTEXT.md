@@ -38,6 +38,9 @@ SECS 2R이 쓰는 낱말의 목록입니다. 도메인 용어는 이 앱이 다�
 | 설계 이름 | `design_name` | 사용자가 내보낼 때 붙이는 이름입니다. 주면 `SECS_<형식>_<이름>` 폴더를 슬롯처럼 바꾸고, 비우면 시각 폴더에 쓰며 기록에는 모드 이름이 들어갑니다. |
 | 우회 설정 | `<이름>_bypass.yml` | CamillaDSP 설정의 짝으로, RC와 MIMO만 빼고 레벨·딜레이·극성·라우팅·크로스오버·LFE를 남긴 설정입니다. 보정 단계는 `secs:correction`, MIMO 단계는 `secs:mimo`, 헤드룸은 `secs:headroom`이라는 설명을 답니다(F20). |
 | 자체 측정 | `measure.native` | REW 없이 SECS 2R이 스윕을 재생하고 녹음해 IR을 얻는 측정입니다(업스트림에 없는 기능). |
+| 공개 크레이트 | `sound-equalization-and-correction-system-rust-api` | crates.io에 올린 Rust API입니다(`crates/secs-api`, ADR 0016). `engine` 기능은 앱 없이 계산과 내보내기를 하고, `client` 기능은 실행 중인 앱의 로컬 API를 부릅니다. 판 호환을 약속하는 것은 이 크레이트뿐입니다. |
+| 라이브러리 판 | `api-vX.Y.Z` | crates.io 크레이트 16개가 함께 쓰는 판입니다. 앱 판과 따로 가고, 게시하면 `api-v` 태그를 답니다. |
+| 로컬 API | `secs-local-api` | 앱 설정에서 켜면 127.0.0.1(기본 포트 4712)에서 화면과 같은 요청을 받는 HTTP·WebSocket 입구입니다. 토큰을 요구하고, 창을 띄우는 요청은 거절합니다. |
 | 측정 방식 | | 서비스의 측정 seam에 붙는 셋입니다. 자체 측정, REW API, 모의 측정. |
 | Dirac 프로젝트 | `.liveproject` | Dirac Live가 저장하는 프로젝트 파일입니다. SECS 2R은 그 안의 측정 IR(마이크 보정 포함)만 읽어 mdat 가져오기와 같은 흐름으로 가져옵니다(ADR 0013, 업스트림에 없는 기능). |
 | 마이크 보정 곡선 | `meterCal`, `scCal` | 측정마다 원 측정 환경 파일(`*.source.json`)에 붙은 마이크와 사운드카드의 응답 곡선입니다. REW 측정과 mdat는 REW가 붙이고, 자체 측정은 프로젝트에서 고른 마이크 보정 파일이 붙습니다. 저장된 IR은 받은 그대로 두고, 계산과 측정 그래프에 넣을 때만 곡선을 뺍니다(ADR 0015). |

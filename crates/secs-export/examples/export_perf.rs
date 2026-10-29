@@ -15,7 +15,7 @@ fn main() {
         .ok()
         .map(|v| v.parse().unwrap())
         .unwrap_or_else(|| std::thread::available_parallelism().unwrap().get());
-    let case = secs_engine::test_support::production_case(name, threads);
+    let case = secs_engine_testkit::production_case(name, threads);
     let settings = serde_json::from_value(case.settings).unwrap();
     let run = secs_export::ExportRun {
         design: &case.design,

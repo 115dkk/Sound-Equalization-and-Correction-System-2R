@@ -14,6 +14,7 @@ pub mod chain;
 pub mod compute;
 pub mod fs;
 pub mod ipc;
+pub mod local_api;
 pub mod role;
 pub mod rules;
 pub mod settings_edit;

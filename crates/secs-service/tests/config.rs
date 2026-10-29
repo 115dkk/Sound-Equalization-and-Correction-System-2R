@@ -753,6 +753,7 @@ fn app_settings_are_versioned_bounded_and_capped() {
         theme: AppTheme::Dark,
         icon: AppIcon::Civilian,
         skin: AppSkin::Rack,
+        local_api: LocalApiSettings::default(),
         recent_projects: (0..12).map(|index| format!("{index}.secs")).collect(),
         last_window_size: Some((1280, 720)),
     };
@@ -852,6 +853,7 @@ fn legacy_expert_preference_is_ignored_without_resetting_other_settings() {
                 theme: AppTheme::Dark,
                 icon,
                 skin: AppSkin::Default,
+                local_api: LocalApiSettings::default(),
                 recent_projects: vec!["living-room.secs".into(), "studio.secs".into()],
                 last_window_size: Some((1440, 900)),
             };

@@ -5,8 +5,11 @@ const Context = createContext<Session | null>(null);
 export function SessionProvider({ value, children }: { value: Session; children: ReactNode }) {
   return createElement(Context.Provider, { value }, children);
 }
+export function useOptionalSession() {
+  return useContext(Context);
+}
 export function useSession() {
-  const session = useContext(Context);
+  const session = useOptionalSession();
   if (!session) throw new Error("useSession requires SessionProvider");
   return session;
 }

@@ -10,7 +10,7 @@ fn compare(label: &str, actual: &[f64], expected: &[f64]) {
 #[test]
 fn sub_gain_warning_codes_match_settings_edit_oracle() {
     let fx = Fixture::load("service_settings_edit", "gain_warnings");
-    let mut case = secs_engine::test_support::replay_case("dolby");
+    let mut case = secs_engine_testkit::replay_case("dolby");
     let template = case.design.chain.subs[0].clone();
     case.design.chain.subs = fx.inputs()["gains"]
         .as_array()
@@ -45,7 +45,7 @@ fn sub_gain_warning_codes_match_settings_edit_oracle() {
 #[test]
 fn result_display_matches_replayed_oracle() {
     for name in ["dolby", "room_dba"] {
-        let case = secs_engine::test_support::replay_case(name);
+        let case = secs_engine_testkit::replay_case(name);
         let fx = Fixture::load("service_curves", name);
         let out = fx.outputs();
         let offset = offset(&case.design);
