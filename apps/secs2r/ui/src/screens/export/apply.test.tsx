@@ -147,7 +147,7 @@ describe("적용", () => {
     const group = ui("export.apply.eqapo.level")!;
     const apply = within(group).getByRole("radio", { name: "적용" }) as HTMLButtonElement;
     expect(apply.disabled).toBe(true);
-    expect(document.getElementById(`${group.id}-hint`)?.textContent).toBe("Equalizer APO는 Windows에서만 적용할 수 있습니다.");
+    expect(document.getElementById(`${group.id}-hint`)?.textContent).toBe("Equalizer APO 적용은 Windows에서만 지원합니다.");
     expect(group.getAttribute("aria-describedby")).toContain(`${group.id}-hint`);
     // CamillaDSP's websocket works anywhere.
     expect((within(ui("export.apply.camilla.level")!).getByRole("radio", { name: "적용" }) as HTMLButtonElement).disabled).toBe(false);
@@ -213,10 +213,10 @@ describe("적용", () => {
     renderWith(<Mounted view={applyEqapoMissing} act={missing} />);
     const off = button("export.apply.eqapo");
     expect(off.disabled).toBe(true);
-    expect(described(off)).toBe("이 컴퓨터에서 Equalizer APO를 찾지 못해 적용할 수 없습니다. 설치한 뒤 '다시 확인'을 누르세요.");
+    expect(described(off)).toBe("Equalizer APO가 없어 적용할 수 없습니다. 설치한 뒤 '다시 확인'을 누르십시오.");
     // 적용 stays chosen.
     expect(within(ui("export.apply.eqapo.level")!).getByRole("radio", { checked: true }).textContent).toBe("적용");
-    expect(ui("export.apply.eqapo.state")?.textContent).toBe("설치되지 않음");
+    expect(ui("export.apply.eqapo.state")?.textContent).toBe("미설치");
     fireEvent.click(ui("export.apply.eqapo.refresh")!);
     expect(missing.refreshApplyStatus).toHaveBeenCalledTimes(1);
   });
@@ -242,7 +242,7 @@ describe("적용", () => {
     const field = ui("export.apply.camilla.address") as HTMLInputElement;
     expect(field.value).toBe("192.168.0.40");
     expect(field.getAttribute("aria-invalid")).toBe("true");
-    expect(ui("export.apply.camilla.address.problem")?.textContent).toBe("127.0.0.1:1234처럼 호스트와 포트를 콜론(:)으로 이어 입력하세요.");
+    expect(ui("export.apply.camilla.address.problem")?.textContent).toBe("주소와 포트를 127.0.0.1:1234 형식으로 입력하십시오.");
     expect(described(field)).toBe(ui("export.apply.camilla.address.problem")?.textContent);
     const primary = button("export.apply.camilla");
     expect(primary.disabled).toBe(true);
@@ -259,7 +259,7 @@ describe("적용", () => {
     // Another computer: one line on what that means.
     renderWith(<Mounted view={applyCamillaRemote} act={actions()} />);
     expect(ui("export.apply.camilla.address.remote")?.textContent).toBe(t("export.apply.camilla.address.remote"));
-    expect(ui("export.apply.camilla.reason")?.textContent).toContain("192.168.0.40:1234에서 CamillaDSP에 연결하지 못했습니다.");
+    expect(ui("export.apply.camilla.reason")?.textContent).toContain("192.168.0.40:1234의 CamillaDSP에 연결하지 못했습니다.");
   });
 
   it("says why CamillaDSP does not answer, keeps the raw text behind 자세히, and reads it again quietly", () => {
@@ -267,7 +267,7 @@ describe("적용", () => {
     const { unmount } = renderWith(<Mounted view={applyCamillaUnreachable} act={act} />);
     expect(ui("export.apply.camilla.state")?.textContent).toBe("연결 안 됨");
     expect(ui("export.apply.camilla.reason")?.textContent).toBe(
-      "127.0.0.1:1234에서 CamillaDSP에 연결하지 못했습니다. CamillaDSP를 웹소켓 포트를 열어(-p 1234) 실행했는지, 주소가 맞는지 확인한 뒤 '다시 확인'을 누르세요.",
+      "127.0.0.1:1234의 CamillaDSP에 연결하지 못했습니다. CamillaDSP의 실행 여부, 웹소켓 포트와 주소를 확인한 뒤 '다시 확인'을 누르십시오.",
     );
     // The raw text is not the message.
     expect(ui("export.apply.camilla.reason")?.textContent).not.toContain("os error");
@@ -297,7 +297,7 @@ describe("적용", () => {
     expect(ui("export.apply.camilla.design")?.textContent).toBe("다른 설계");
     // Its title on a line of its own: the title has middle dots of its own.
     expect(ui("export.apply.camilla.design.title")?.textContent).toBe("SECS 2R · 거실 영화 · 표준 모드");
-    expect(ui("export.apply.camilla.clipped")?.textContent).toBe("1,204 샘플");
+    expect(ui("export.apply.camilla.clipped")?.textContent).toBe("샘플 1,204개");
     unmountOther();
     // An unknown state shows as CamillaDSP wrote it; an unknown design says so.
     const odd: ExportView = {
@@ -310,7 +310,7 @@ describe("적용", () => {
     unmountOdd();
     renderWith(<Mounted view={applyCamillaOther} act={actions()} />, { locale: "en" });
     expect(ui("export.apply.camilla.state")?.textContent).toBe("CamillaDSP 4.1.3 · Running");
-    expect(ui("export.apply.camilla.clipped")?.textContent).toBe("1,204 samples");
+    expect(ui("export.apply.camilla.clipped")?.textContent).toBe("Samples: 1,204");
   });
 
   it("reads Equalizer APO's edition, folder, SECS 2R's line and the design applied there against this one", () => {
@@ -318,8 +318,8 @@ describe("적용", () => {
       [applyEqapoAbsent, "Equalizer APO XT", "SECS 2R 줄 없음", "없음"],
       [applyEqapoPresent, "Equalizer APO XT", "SECS 2R 줄 있음", "이 설계"],
       [applyEqapoOther, "Equalizer APO XT", "SECS 2R 줄 있음", "다른 설계"],
-      [applyEqapoOfficialUnknown, "Equalizer APO 공식판", "SECS 2R 줄 있음", "있음 · 이 설계인지 알 수 없음"],
-      [applyEqapoDamaged, "Equalizer APO XT", "SECS 2R 줄 손상", "있음 · 이 설계인지 알 수 없음"],
+      [applyEqapoOfficialUnknown, "Equalizer APO 공식판", "SECS 2R 줄 있음", "설계 비교 불가"],
+      [applyEqapoDamaged, "Equalizer APO XT", "SECS 2R 줄 손상", "다른 설계"],
     ];
     for (const [view, edition, line, design] of cases) {
       const { unmount } = renderWith(<Mounted view={view} act={actions()} />);
@@ -348,7 +348,7 @@ describe("적용", () => {
     const dialog = screen.getByRole("dialog");
     expect(dialog).toBe(ui("export.apply.eqapo.revert.confirm"));
     expect(within(dialog).getByRole("heading").textContent).toBe("config.txt에서 SECS 2R 줄 빼기");
-    expect(dialog.querySelector(".ui-dialog__body")?.textContent).toBe("Equalizer APO가 SECS 2R의 필터를 더 이상 쓰지 않습니다. 필터 파일은 SECS2R 폴더에 그대로 있습니다.");
+    expect(dialog.querySelector(".ui-dialog__body")?.textContent).toBe("Equalizer APO는 SECS 2R 필터 사용을 중단하며, 필터 파일은 SECS2R 폴더에 남습니다.");
     // Cancel leaves config.txt alone.
     fireEvent.click(ui("export.apply.eqapo.revert.confirm.cancel")!);
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -365,24 +365,24 @@ describe("적용", () => {
     expect(ui("export.apply.eqapo.revert.confirm")).not.toBeNull();
     unmount();
     renderWith(<Mounted view={applyEqapoReverted} act={actions()} />);
-    expect(ui("export.apply.eqapo.outcome")?.textContent).toBe("config.txt에서 SECS 2R 줄을 뺌");
+    expect(ui("export.apply.eqapo.outcome")?.textContent).toBe("config.txt의 SECS 2R 줄 제거 완료");
   });
 
   it("writes each outcome in the row's words: applied, rolled back with CamillaDSP's error, no write access with the folder", () => {
     const act = actions();
     const { unmount } = renderWith(<Mounted view={applyCamillaApplied} act={act} />);
-    expect(ui("export.apply.camilla.outcome")?.textContent).toContain("CamillaDSP에 적용함");
+    expect(ui("export.apply.camilla.outcome")?.textContent).toContain("CamillaDSP 적용 완료");
     fireEvent.click(ui("export.apply.camilla.outcome.open")!);
     expect(act.openFolder.mock.calls).toEqual([["C:/Users/demo/AppData/Roaming/SECS2R/applied/camilladsp"]]);
     expect(ui("export.status.problem")).toBeNull();
-    expect(screen.getByText("적용함")).toBeTruthy();
+    expect(screen.getByText("적용 완료")).toBeTruthy();
     unmount();
     // Rolled back: CamillaDSP's own words stay in sight; the header says it failed.
     const { unmount: unmountRolled } = renderWith(<Mounted view={applyCamillaRolledBack} act={actions()} />);
     const rolled = ui("export.apply.camilla.outcome")!;
     expect(rolled.textContent).toContain("CamillaDSP가 새 설정을 읽지 못해 이전 설정으로 되돌렸습니다.");
     expect(ui("export.apply.camilla.outcome.camilla_error")?.textContent).toBe("Reload: Playback error: could not open device 'Speakers (Tesira)': the device is in use by another application");
-    expect(rolled.textContent).toContain("오류에 나온 입출력 장치나 설정을 고친 뒤 다시 적용하세요.");
+    expect(rolled.textContent).toContain("오류에 표시된 장치나 설정을 고친 뒤 다시 적용하십시오.");
     expect(screen.getByText("적용 실패")).toBeTruthy();
     unmountRolled();
     // No write access: the folder, and that it needs write access; no elevation offered.
@@ -390,11 +390,11 @@ describe("적용", () => {
     const denied = ui("export.apply.eqapo.outcome")!;
     expect(denied.textContent).toContain("Equalizer APO 설정 폴더에 쓸 권한이 없습니다.");
     expect(ui("export.apply.eqapo.outcome.path")?.textContent).toBe("C:/Program Files/EqualizerAPO/config/SECS2R");
-    expect(denied.textContent).toContain("이 폴더에 현재 사용자의 쓰기 권한을 준 뒤 다시 적용하세요.");
+    expect(denied.textContent).toContain("현재 계정에 이 폴더의 쓰기 권한을 부여한 뒤 다시 적용하십시오.");
     expect(denied.querySelector("details pre")?.textContent).toBe("[permission_denied] Access is denied. (os error 5)");
     expect(within(denied).queryAllByRole("button")).toEqual([]);
     unmountDenied();
     renderWith(<Mounted view={applyEqapoDenied} act={actions()} />, { locale: "en" });
-    expect(ui("export.apply.eqapo.outcome")?.textContent).toContain("There is no write access to Equalizer APO's config folder.");
+    expect(ui("export.apply.eqapo.outcome")?.textContent).toContain("You do not have write access to Equalizer APO's config folder.");
   });
 });

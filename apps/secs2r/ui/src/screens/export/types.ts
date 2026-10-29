@@ -259,11 +259,12 @@ export function canApply(view: ExportView, target: ApplyTarget): boolean {
 }
 
 /**
- * The current result's design id, when this session has seen it: from an
- * apply of it, or from CamillaDSP running it. The service does not report it
- * otherwise, so Equalizer APO's design can only be compared after one of those.
+ * The current result's design id from apply_status. Only when it is absent,
+ * fall back to an apply in this session or CamillaDSP running this design.
  */
 export function currentDesignId(view: Pick<ExportView, "apply">): string | null {
+  const current = view.apply.status?.current_design_id;
+  if (current != null) return current;
   for (const target of ["camilla", "eqapo"] as const) {
     const run = view.apply.runs[target];
     if (run?.status === "applied") return run.designId;

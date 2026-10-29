@@ -268,6 +268,21 @@ describe("P33 mock wiring", () => {
     expect((await createMockService({ tickMs: 0, applyStatus: { ...fx.applyStatus, eqapo: fx.eqapoXt } }).request({ method: "apply_status" })).eqapo.installed).toBe(true);
   });
 
+  it("reports the current design as soon as a result exists, without an apply job", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    expect((await mock.request({ method: "apply_status" })).current_design_id).toBeNull();
+    await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
+    expect((await mock.request({ method: "apply_status" })).current_design_id).toBe(fx.MOCK_DESIGN_ID);
+    await mock.request({ method: "target_apply_preset", params: { preset: "flat" } });
+    expect((await mock.request({ method: "apply_status" })).current_design_id).toBe(fx.MOCK_DESIGN_ID);
+    await mock.request(newProject(false));
+    expect((await mock.request({ method: "apply_status" })).current_design_id).toBeNull();
+    mock.dispose();
+    const reopened = createMockService({ tickMs: 0, results: { ...fx.resultsSummary, calibration: { ...fx.resultsSummary.calibration!, cached: true } } });
+    expect((await reopened.request({ method: "apply_status" })).current_design_id).toBe(fx.MOCK_DESIGN_ID);
+    reopened.dispose();
+  });
+
   it("stores and echoes ApplySettings, refusing an address the service refuses", async () => {
     const mock = createMockService({ tickMs: 0 });
     const settings = { camilla: { level: "apply", address: "192.168.0.40:1234" }, eqapo: { level: "files" } } as const;

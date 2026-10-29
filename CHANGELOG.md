@@ -8,7 +8,7 @@ SECS 2R을 바깥 프로그램에서 쓰는 판입니다. 실행 중인 앱을 �
 
 ### 더한 것
 
-- CamillaDSP와 Equalizer APO에 보정을 바로 적용하는 IPC와 CLI를 더했습니다. CamillaDSP는 설정을 검증하고 다시 읽으며, 실패하면 이전 설정으로 되돌립니다. Equalizer APO는 설치 폴더를 감지해 `SECS2R` 묶음과 관리 표식을 원자적으로 고칩니다.
+- CamillaDSP와 Equalizer APO에 보정을 바로 적용하는 IPC와 CLI를 더했습니다. CamillaDSP는 설정을 검증하고 다시 읽으며, 실패하면 이전 설정으로 되돌립니다. Equalizer APO는 설치 폴더를 감지해 `SECS2R` 묶음과 관리 표식을 원자적으로 고칩니다. 내보내기 화면에서 '파일만'과 '적용'을 고르고 연결·설치 상태와 설계 일치 여부를 확인하며, Equalizer APO의 config.txt에서 SECS 2R 줄을 뺄 수 있습니다.
 - 설정에 '로컬 API'를 더했습니다. 켜면(기본값은 꺼짐) 앱이 `http://127.0.0.1:4712`에서 화면과 같은 요청을 받습니다. `POST /v1/call`은 기능 실행, `GET /v1/status`는 열린 프로젝트·작업·성적표·마지막 내보내기를 한 번에 읽기, `GET /v1/events`는 작업과 상태 변경을 WebSocket으로 알리기입니다. 모든 요청에 앱 설정 폴더의 토큰(`local-api-token`)이 필요하고, 브라우저에서 온 요청과 창을 띄우는 요청은 거절합니다. 포트와 토큰은 '연결 정보'에서 바꾸고 복사합니다.
 - 로컬 API로 상태를 바꾸면 화면이 그 변화를 따라 다시 읽고, 바깥에서 시작한 계산도 작업 목록에 보입니다.
 - Rust 크레이트 [`sound-equalization-and-correction-system-rust-api`](https://crates.io/crates/sound-equalization-and-correction-system-rust-api) 0.1.0을 공개합니다. `engine` 기능은 앱 없이 프로젝트를 열고 보정, MIMO, 내보내기를 돌리고, `client` 기능은 실행 중인 앱의 로컬 API를 부릅니다. 라이선스는 GPL-3.0-only입니다. 크레이트는 앱과 따로 0.x 판을 쓰고, 이후 판은 릴리스 때 trusted publishing으로 올라갑니다.

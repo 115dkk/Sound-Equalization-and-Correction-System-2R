@@ -334,7 +334,7 @@ const camillaRunning = (design: CamillaApplyStatus["design"], clipped = 0): Cami
   design,
 });
 
-const status = (camilla: CamillaApplyStatus, eqapo = eqapoMissing): ApplyStatus => ({ camilla, eqapo });
+const status = (camilla: CamillaApplyStatus, eqapo = eqapoMissing, current_design_id: string | null = MOCK_DESIGN_ID): ApplyStatus => ({ camilla, eqapo, current_design_id });
 
 /** Another design's title as the service names it (`SECS 2R · <project> · <label>`). */
 const OTHER_TITLE = "SECS 2R · 거실 영화 · 표준 모드";
@@ -408,20 +408,19 @@ export const applyEqapoMissing: ExportView = eqapoApply({ status: status(camilla
 /** Equalizer APO XT installed, SECS 2R's line not in config.txt yet. */
 export const applyEqapoAbsent: ExportView = eqapoApply({});
 
-/** The line present and this design applied (by an apply in this session). */
+/** The line present with this design, known from apply_status without an apply in this session. */
 export const applyEqapoPresent: ExportView = eqapoApply({
   status: status(camillaUnreachable, { ...eqapoXt, include: "present", applied_design_id: MOCK_DESIGN_ID }),
-  runs: { eqapo: { status: "applied", designId: MOCK_DESIGN_ID, folder: `${eqapoXt.config_path}/SECS2R` } },
 });
 
-/** The line present with a design this session has not applied, while CamillaDSP runs this one: another design. */
+/** Another design according to apply_status, without a session apply; CamillaDSP runs this one. */
 export const applyEqapoOther: ExportView = eqapoApply({
   status: status(camillaRunning({ kind: "this", design_id: MOCK_DESIGN_ID }), { ...eqapoXt, include: "present", applied_design_id: "0c1f9e7a" }),
 });
 
-/** The official edition, the line present, and no way yet to tell whose design it is. */
+/** The official edition, the line present, but apply_status has no current design id to compare. */
 export const applyEqapoOfficialUnknown: ExportView = eqapoApply({
-  status: status(camillaUnreachable, { ...eqapoXt, variant: "official", config_path: "C:/Program Files/EqualizerAPO/config", include: "present", applied_design_id: "0c1f9e7a" }),
+  status: status(camillaUnreachable, { ...eqapoXt, variant: "official", config_path: "C:/Program Files/EqualizerAPO/config", include: "present", applied_design_id: "0c1f9e7a" }, null),
 });
 
 /** One of the two marked lines edited by hand: 적용 repairs them. */

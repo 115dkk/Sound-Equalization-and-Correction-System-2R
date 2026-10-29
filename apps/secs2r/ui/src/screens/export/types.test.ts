@@ -311,13 +311,46 @@ describe("적용 (ADR 0018)", () => {
     expect(canExport({ ...exportReady, apply: { ...exportReady.apply, applying: "eqapo" } }, "convolution")).toBe(false);
   });
 
-  it("compares Equalizer APO's design with this one only once this session knows this one's id", () => {
+  it("compares Equalizer APO's design from apply_status without an apply in this session", () => {
     expect(eqapoDesign(applyEqapoAbsent)).toBe("none");
     expect(eqapoDesign(applyEqapoPresent)).toBe("this");
     expect(eqapoDesign(applyEqapoOther)).toBe("other");
     expect(eqapoDesign(applyEqapoOfficialUnknown)).toBe("unknown");
+    expect(applyEqapoPresent.apply.runs).toEqual({});
+    expect(applyEqapoPresent.apply.status!.camilla.reachable).toBe(false);
     expect(currentDesignId(applyCamillaThis)).toBe(MOCK_DESIGN_ID);
-    expect(currentDesignId(applyCamillaOther)).toBeNull();
+    expect(currentDesignId(applyCamillaOther)).toBe(MOCK_DESIGN_ID);
+    const other: ExportView = { ...applyEqapoPresent, apply: { ...applyEqapoPresent.apply, status: { ...applyEqapoPresent.apply.status!, current_design_id: "another-design" } } };
+    expect(eqapoDesign(other)).toBe("other");
+  });
+
+  it("prefers the service's current design over earlier session applies and CamillaDSP's design", () => {
+    const view: ExportView = {
+      ...applyEqapoPresent,
+      apply: {
+        ...applyEqapoPresent.apply,
+        status: { ...applyEqapoPresent.apply.status!, camilla: applyCamillaThis.apply.status!.camilla, current_design_id: "new-design" },
+        runs: { camilla: { status: "applied", designId: MOCK_DESIGN_ID, folder: "/camilla" }, eqapo: { status: "applied", designId: MOCK_DESIGN_ID, folder: "/eqapo" } },
+      },
+    };
+    expect(currentDesignId(view)).toBe("new-design");
+    expect(eqapoDesign(view)).toBe("other");
+  });
+
+  it("uses session applies or CamillaDSP only when apply_status has no current design id", () => {
+    const view: ExportView = { ...applyEqapoPresent, apply: { ...applyEqapoPresent.apply, status: { ...applyEqapoPresent.apply.status!, current_design_id: null } } };
+    expect(currentDesignId(view)).toBeNull();
+    expect(eqapoDesign(view)).toBe("unknown");
+    for (const target of ["camilla", "eqapo"] as const) {
+      const applied: ExportView = { ...view, apply: { ...view.apply, runs: { [target]: { status: "applied", designId: MOCK_DESIGN_ID, folder: "/applied" } } } };
+      expect(currentDesignId(applied)).toBe(MOCK_DESIGN_ID);
+      expect(eqapoDesign(applied)).toBe("this");
+    }
+    const running: ExportView = { ...view, apply: { ...view.apply, status: { ...view.apply.status!, camilla: applyCamillaThis.apply.status!.camilla } } };
+    expect(currentDesignId(running)).toBe(MOCK_DESIGN_ID);
+    expect(eqapoDesign(running)).toBe("this");
+    expect(currentDesignId(exportReady)).toBeNull();
+    expect(eqapoDesign(exportReady)).toBe("none");
   });
 
   it("counts an apply as finishing the step, like an export", () => {

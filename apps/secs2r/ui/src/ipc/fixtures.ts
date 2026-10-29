@@ -315,7 +315,7 @@ export const eqapoMissing: EqApoApplyStatus = { installed: false, variant: "unkn
 /** Equalizer APO XT installed (Velopack package `EqualizerAPO-XT-x64`), SECS 2R's line not added yet. */
 export const eqapoXt: EqApoApplyStatus = { installed: true, variant: "xt", config_path: "C:/Program Files/EqualizerAPO-XT-x64/config", include: "absent", applied_design_id: null };
 /** `apply_status` on a PC with neither: what the mock answers until a test or specimen flips it. */
-export const applyStatus: ApplyStatus = { camilla: camillaUnreachable, eqapo: eqapoMissing };
+export const applyStatus: ApplyStatus = { camilla: camillaUnreachable, eqapo: eqapoMissing, current_design_id: null };
 /** The design id the mock's apply jobs report (`secs_graph::design::design_id`: lowercase hex SHA-256 of the design). */
 export const MOCK_DESIGN_ID = "9f3c2a61d0b84e5713a6c0f2e8d47b95c1a0e3f6d82b4c7a5e9f01d3b6c8a2e4";
 export const rewInfo: RewInfoResult = {

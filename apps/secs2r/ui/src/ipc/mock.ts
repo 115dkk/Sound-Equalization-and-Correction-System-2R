@@ -820,7 +820,7 @@ export function createMockService(options: MockOptions = {}): MockService {
         return { method: req.method, data: appSettings };
       }
       // 적용 (ADR 0018, crates/secs-service/src/apply.rs): the order of the service's checks.
-      case "apply_status": return { method: req.method, data: clone(applyStatus) };
+      case "apply_status": return { method: req.method, data: clone({ ...applyStatus, current_design_id: results.calibration ? fx.MOCK_DESIGN_ID : null }) };
       case "apply_settings_set": {
         const address = req.params.camilla.address;
         if (address !== address.trim() || addressProblem(address)) throw new MockError(ipcError("invalid_request", "CamillaDSP address must be host:port", { field: "camilla.address" }));
