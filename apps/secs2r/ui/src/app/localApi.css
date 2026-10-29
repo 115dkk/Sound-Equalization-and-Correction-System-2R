@@ -1,0 +1,245 @@
+/* The local API row in the settings popover and the 로컬 API dialog
+   (LocalApiDialog.tsx). Tokens only. */
+
+/* ── State line ────────────────────────────────────────────────────────── */
+/* The glyph box is one text line tall, so a wrapped sentence keeps its
+   glyph on the first line and the words in one column. */
+.local-api-state {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--space-1-5);
+  color: var(--text-muted);
+  font-size: var(--text-ui);
+}
+
+.local-api-state__glyph {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: calc(var(--text-ui) * var(--leading-ui));
+}
+
+.local-api-state__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.local-api-state--on .local-api-state__glyph {
+  color: var(--success);
+}
+
+/* Off is the same dot, dimmed. */
+.local-api-state--off .local-api-state__glyph {
+  color: var(--text-faint);
+}
+
+.local-api-state--busy .local-api-state__glyph {
+  color: var(--info);
+}
+
+.local-api-state--problem {
+  color: var(--text);
+}
+
+.local-api-state--problem .local-api-state__glyph {
+  color: var(--warning);
+}
+
+.local-api-state__text {
+  min-width: 0;
+  text-wrap: pretty;
+}
+
+/* ── Popover row ───────────────────────────────────────────────────────── */
+/* A line between the display settings and the local API, which is another
+   kind of setting. */
+.local-api-row {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  border-top: var(--border-w) solid var(--border-subtle);
+}
+
+/* The switch and the button share the first line; the switch's state line
+   (its hint, which describes it) takes the whole second line, so a
+   sentence such as the taken port does not wrap under the button. */
+.local-api-row__line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-1) var(--space-2);
+}
+
+.local-api-row__line > .ui-toggle-row {
+  display: contents;
+}
+
+.local-api-row__line .ui-toggle__hint {
+  grid-row: 2;
+  grid-column: 1 / -1;
+}
+
+.local-api-row__open {
+  grid-row: 1;
+  grid-column: 2;
+}
+
+/* ── Dialog ────────────────────────────────────────────────────────────── */
+/* Wide enough for the token in two lines and the reference without wraps. */
+[data-ui="frame.local_api"] {
+  --dialog-w: 600px;
+}
+
+.local-api {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+}
+
+.local-api__intro {
+  text-wrap: pretty;
+}
+
+/* Name, value, and the buttons in one column right after the longest value. */
+.local-api__fields {
+  display: grid;
+  grid-template-columns: max-content minmax(0, max-content) max-content;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.local-api__entry {
+  display: contents;
+}
+
+.local-api__key {
+  grid-column: 1;
+  color: var(--text-muted);
+}
+
+.local-api__value,
+.local-api__actions {
+  min-width: 0;
+  margin: 0;
+}
+
+.local-api__value {
+  grid-column: 2;
+}
+
+/* A row without buttons (the state, the port, the new-token line) spans
+   the value and button columns but does not size them: without the
+   containment its width would widen the button column and narrow the
+   values. */
+.local-api__value--wide {
+  grid-column: 2 / -1;
+  contain: inline-size;
+}
+
+.local-api__actions {
+  display: flex;
+  grid-column: 3;
+  gap: var(--space-2);
+}
+
+.local-api__stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-1-5);
+}
+
+.local-api__note {
+  color: var(--text-muted);
+}
+
+/* Values the user reads off or selects by hand: the address, the token, the path. */
+.local-api__text {
+  font-family: var(--font-mono);
+  font-size: var(--text-ui);
+  overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Hex: break anywhere, so the two lines come out even. */
+.local-api__text--token {
+  word-break: break-all;
+}
+
+.local-api__mask {
+  color: var(--text-muted);
+  letter-spacing: 0.12em;
+}
+
+.local-api__port {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* The one-line confirm before a new token: as wide as its sentence and its
+   two buttons, the buttons level with the middle of the box. Radius =
+   button radius + inset. */
+.local-api__confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  width: fit-content;
+  max-width: 100%;
+  padding: var(--space-2) var(--space-2) var(--space-2) var(--space-3);
+  border-radius: calc(var(--radius-sm) + var(--space-2));
+  background: var(--surface-sunken);
+}
+
+.local-api__confirm-text {
+  flex: 1 1 20ch;
+  min-width: 0;
+  text-wrap: pretty;
+}
+
+.local-api__confirm-actions {
+  display: flex;
+  flex: none;
+  gap: var(--space-2);
+}
+
+/* ── Request reference ─────────────────────────────────────────────────── */
+.local-api__reference {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.local-api__reference-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.local-api__heading {
+  font-size: var(--text-ui);
+  font-weight: var(--weight-semibold);
+}
+
+.local-api__code {
+  margin: 0;
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--text-ui);
+  line-height: var(--leading-ui);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
+}

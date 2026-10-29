@@ -8,7 +8,8 @@ name: CI
 #
 #   lint      fmt, clippy -D warnings (also for the Windows target, so
 #             cfg(windows) code is linted from Linux), the secs-policy gates,
-#             the CI scripts' unit tests, and the upstream Python tree check
+#             the CI scripts' unit tests, the upstream Python tree check, and
+#             a dry run of publishing the crates.io crates
 #   test      cargo test on Linux, Windows and macOS (the engine also in
 #             release mode on the foreign-libm path, as release.yml tests it);
 #             on Linux also that every test features.toml names is one Cargo
@@ -114,6 +115,18 @@ jobs:
 
       - name: Upstream Python tree is untouched (docs/adr/0001)
         run: python3 .github/scripts/upstream.py check-tree
+
+      # The crates.io crates (docs/adr/0016) build from their packaged files
+      # alone, every one against the packages of the others. A fresh runner
+      # has no extracted copies of earlier packages in CARGO_HOME to reuse.
+      # Once a version is on crates.io, a crate changed since keeps that
+      # version until the release gate bumps it, and Cargo will not verify a
+      # local package whose name and version crates.io has with another
+      # checksum; api_dry_run.py moves them to <version>-dryrun first.
+      - name: crates.io packages build (cargo publish --dry-run)
+        run: |
+          python3 .github/scripts/api_dry_run.py
+          cargo publish --workspace --dry-run --locked --allow-dirty
 
   test:
     name: cargo test (${{ matrix.os }})

@@ -12,11 +12,12 @@ publish.workspace = true
 workspace = true
 
 [dependencies]
-secs-engine = { path = "../secs-engine" }
+secs-engine.workspace = true
 secs-cuda-sys = { path = "../secs-cuda-sys" }
 secs-types.workspace = true
 secs-compute.workspace = true
 
 [dev-dependencies]
 serde_json.workspace = true
-secs-engine = { path = "../secs-engine", features = ["test-support"] }
+secs-engine = { workspace = true, features = ["test-support"] }
+secs-engine-testkit.workspace = true

@@ -1,7 +1,8 @@
 //! End-to-end acoustic comparison with actual production fitters and CUDA.
 #![forbid(unsafe_code)]
 use secs_compute::{CancelToken, Context, MemoryBudget, NoProgress};
-use secs_engine::{Tuning, mimo, test_support};
+use secs_engine::{Tuning, mimo};
+use secs_engine_testkit as test_support;
 use secs_types::{calibration::CalibrationSettings, compute::ComputePreference};
 use std::{sync::Arc, time::Instant};
 

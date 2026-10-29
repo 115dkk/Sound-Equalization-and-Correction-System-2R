@@ -23,6 +23,7 @@ const ERROR_TEXT: Record<ErrorCode, { cause: MessageKey; next: MessageKey }> = {
   invalid_request: { cause: "error.invalid_request", next: "error.invalid_request.next" },
   internal: { cause: "error.internal", next: "error.internal.next" },
   not_implemented: { cause: "error.not_implemented", next: "error.not_implemented.next" },
+  ui_only: { cause: "error.ui_only", next: "error.ui_only.next" },
   project_not_open: { cause: "error.project_not_open", next: "error.project_not_open.next" },
   project_io: { cause: "error.project_io", next: "error.project_io.next" },
   job_busy: { cause: "error.job_busy", next: "error.job_busy.next" },

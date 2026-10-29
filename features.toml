@@ -1507,6 +1507,49 @@ status = "implemented"
 tests = ["secs-service::app_settings_are_versioned_bounded_and_capped"]
 
 [[feature]]
+id = "ipc.local_api_status"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+tests = ["secs-service::null_host_reports_not_implemented", "secs-local-api::status_has_protocol_version_and_empty_session"]
+
+[[feature]]
+id = "ipc.local_api_token_regenerate"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+tests = ["secs-service::null_host_reports_not_implemented", "secs-local-api::token_is_persistent_lowercase_hex_and_invalid_files_are_replaced"]
+
+[[feature]]
+id = "api.public_crate"
+kind = "api"
+milestone = "M6"
+status = "implemented"
+tests = [
+  "sound-equalization-and-correction-system-rust-api::engine_bootstrap_and_invalid_json",
+  "sound-equalization-and-correction-system-rust-api::engine_oracle_flow_and_ordered_events",
+]
+note = "ADR 0016: one supported crates.io facade for embedding the file-based engine or driving a running app through the authenticated local API."
+
+[[feature]]
+id = "app.local_api"
+kind = "app"
+milestone = "M6"
+status = "implemented"
+tests = [
+  "secs-types::access_table_covers_every_request_method_exactly",
+  "secs-types::old_app_settings_without_local_api_use_the_disabled_default",
+  "secs-service::observer_receives_every_caller_event_in_the_same_order",
+  "secs-service::oracle_project_calibrates_recommends_xo_and_exports",
+  "secs-local-api::authentication_host_origin_and_body_limit_are_enforced",
+  "secs-local-api::call_matches_service_and_ui_only_never_reaches_the_host",
+  "secs-local-api::websocket_receives_changed_and_ordered_job_events",
+  "secs-local-api::stop_frees_the_port_and_busy_port_is_typed",
+  "secs2r::local_api_lifecycle_follows_enabled_and_port_changes",
+]
+note = "ADR 0016: opt-in 127.0.0.1 HTTP/WebSocket API with bearer authentication, shared service dispatch, status aggregation, events, and app-owned lifecycle."
+
+[[feature]]
 id = "service.config_edit"
 kind = "service"
 milestone = "M5"

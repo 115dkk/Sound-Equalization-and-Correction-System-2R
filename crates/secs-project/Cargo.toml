@@ -1,18 +1,22 @@
 [package]
 name = "secs-project"
 description = ".secs project files, migrations, role vocabulary, measurement plans and the .irs store."
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-publish.workspace = true
+homepage = "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R"
+readme = "README.md"
+keywords = ["audio", "equalization", "project", "measurement"]
+categories = ["multimedia::audio", "config", "encoding"]
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**"]
 
 [lints]
 workspace = true
 
 [dependencies]
-secs-mdat = { path = "../secs-mdat" }
+secs-mdat.workspace = true
 secs-types.workspace = true
 serde.workspace = true
 thiserror.workspace = true

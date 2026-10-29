@@ -9,7 +9,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
-use secs_service::{Deps, EventSink, LocalTime, NoEvents, Service, VERSION};
+use secs_service::{Deps, EventSink, LocalTime, NoEvents, Service};
 use secs_types::ipc::{Envelope, ErrorCode, JobEvent, ProjectNewParams, Request};
 use sha2::{Digest, Sha256};
 
@@ -178,6 +178,40 @@ fn cached_chain(project: &Path) -> secs_types::chain::SignalChain {
 }
 fn cached_paths(project: &Path) -> secs_types::chain::MimoPaths {
     cached_field(project, "mimo_paths")
+}
+
+#[test]
+fn observer_receives_every_caller_event_in_the_same_order() {
+    let root = temp_root("observer");
+    fs::create_dir_all(&root).unwrap();
+    let observer = Arc::new(Events::default());
+    let service = Service::new(Deps {
+        observer: observer.clone(),
+        ..Deps::default()
+    });
+    call_ok(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: root.join("sample.secs").to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: true,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    let caller = Arc::new(Events::default());
+    let Response::SampleLoad(started) = call_ok(
+        &service,
+        Request::SampleLoad(Default::default()),
+        caller.clone(),
+    ) else {
+        panic!("sample load must start")
+    };
+    observer.wait(started.job, Duration::from_secs(10));
+    caller.wait(started.job, Duration::from_secs(10));
+    assert_eq!(*lock(&caller.values), *lock(&observer.values));
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -529,7 +563,10 @@ fn automatic_camilla_has_mimo(service: &Service, root: &Path) -> bool {
 
 #[test]
 fn bootstrap_reports_version_and_upstream_base() {
-    let service = service();
+    let service = Service::new(Deps {
+        app_version: "42.0.0".into(),
+        ..Deps::default()
+    });
     let Envelope::Ok(response) = service.call(Request::Bootstrap, Arc::new(NoEvents)) else {
         panic!("bootstrap must succeed");
     };
@@ -537,7 +574,8 @@ fn bootstrap_reports_version_and_upstream_base() {
         panic!("bootstrap response must match the request");
     };
     assert_eq!(info.app_name, "SECS 2R");
-    assert_eq!(info.version, VERSION);
+    assert_eq!(info.version, "42.0.0");
+    assert!(!info.prerelease);
     assert_eq!(info.upstream.commit.len(), 40);
 }
 
@@ -770,7 +808,7 @@ fn rew_mdat_scope_names_say_what_the_file_holds() {
         &secs_jos::Limits::default(),
     )
     .unwrap();
-    let direct = secs_engine::test_support::production_case("room_dba", 1);
+    let direct = secs_engine_testkit::production_case("room_dba", 1);
     let run = secs_export::ExportRun {
         design: &direct.design,
         settings: &settings,
@@ -859,7 +897,7 @@ fn exported_measurements_keep_their_curves_and_results_drop_them() {
     let root = temp_root("rew-mdat-curves");
     fs::create_dir_all(&root).unwrap();
     let (path, settings) = write_case(&root, "room_dba");
-    let direct = secs_engine::test_support::production_case("room_dba", 1);
+    let direct = secs_engine_testkit::production_case("room_dba", 1);
     let position = direct.design.replay.config().main_position;
     let role = direct.design.chain.mains[0].role.clone();
     let ir_path = secs_project::ir_file(&path, &role, i64::from(position));
@@ -1048,7 +1086,7 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
             .all(|notice| notice.code != "measurement_resampled")
     );
     assert_eq!(results.calibration.as_ref().unwrap().main_roles.len(), 11);
-    let direct = secs_engine::test_support::production_case("dolby", 1);
+    let direct = secs_engine_testkit::production_case("dolby", 1);
     assert_eq!(cached_chain(&path), direct.design.chain);
     let blocked_folder = root.join("blocked-filter-text-subs");
     let Envelope::Err(error) = service.call(
@@ -1275,6 +1313,16 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
             ExportKind::FilterText | ExportKind::Convolution => unreachable!(),
         }
     }
+    let status = service.status();
+    let last = status.last_export.expect("successful export is remembered");
+    assert_eq!(last.kind, ExportKind::EqualizerApo);
+    assert_eq!(
+        last.folder,
+        root.join("export-EqualizerApo").to_string_lossy()
+    );
+    assert!(!last.mimo);
+    assert_eq!(last.mode, "mixed");
+    assert_eq!(last.time, "2024-01-02T03:04:05Z");
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2106,7 +2154,7 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
     };
     let summary = read_results(&service).mimo.unwrap();
     assert!(!summary.stale);
-    let direct = secs_engine::test_support::production_case("room_dba", 1);
+    let direct = secs_engine_testkit::production_case("room_dba", 1);
     let ctx = secs_compute::Context::new(
         1,
         secs_compute::MemoryBudget::new(u64::MAX),

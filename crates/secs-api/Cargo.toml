@@ -1,0 +1,38 @@
+[package]
+name = "sound-equalization-and-correction-system-rust-api"
+description = "The supported Rust API for embedding SECS 2R or controlling its authenticated local API."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage = "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R"
+readme = "README.md"
+keywords = ["audio", "equalization", "room-correction", "dsp"]
+categories = ["multimedia::audio", "science"]
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**"]
+
+[lints]
+workspace = true
+
+[features]
+default = ["engine"]
+engine = ["dep:secs-audio", "dep:secs-rew", "dep:secs-service"]
+client = ["dep:tungstenite", "dep:ureq"]
+
+[dependencies]
+secs-audio = { workspace = true, optional = true }
+secs-rew = { workspace = true, optional = true }
+secs-service = { workspace = true, optional = true }
+secs-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tungstenite = { workspace = true, optional = true }
+ureq = { workspace = true, optional = true }
+
+[dev-dependencies]
+secs-engine.workspace = true
+secs-engine-testkit.workspace = true
+secs-local-api = { path = "../secs-local-api" }
+secs-project.workspace = true
+secs-service.workspace = true

@@ -1,12 +1,15 @@
 // The project menu (새로 만들기, 열기, 저장, 다른 이름으로 저장) and the
-// display settings (언어, 테마, 스킨, 로고). Shortcut hints come from the
-// shortcut registry.
+// settings popover: the display settings (언어, 테마, 스킨, 로고), then the
+// local API (its switch, its state and the 로컬 API dialog). Shortcut hints
+// come from the shortcut registry.
 import { useRef, useState } from "react";
 import { useT } from "../i18n/react";
 import { Icon } from "../ui/Icon";
 import { Menu, Popover } from "../ui/Popover";
 import { Segmented } from "../ui/controls";
 import type { AppIcon } from "../ipc/bindings/AppIcon";
+import { LocalApiDialog, LocalApiRow, type LocalApiFocus } from "./LocalApiDialog";
+import { useLocalApi, type LocalApi } from "./localApi";
 import { DEFAULT_LOGO, SMALL_LOGOS } from "./logo";
 import { usePrefs, type SkinChoice, type ThemeChoice } from "./prefs";
 import { shortcutText } from "./shortcuts";
@@ -75,11 +78,25 @@ export function ProjectMenu({
   );
 }
 
-export function SettingsButton({ initiallyOpen = false, inline = false }: { initiallyOpen?: boolean; inline?: boolean }) {
+export function SettingsButton({
+  initiallyOpen = false,
+  inline = false,
+  localApi,
+}: {
+  initiallyOpen?: boolean;
+  inline?: boolean;
+  /** A fixed local API view and actions (gallery specimens, tests); the app reads the live ones. */
+  localApi?: LocalApi;
+}) {
   const t = useT();
   const prefs = usePrefs();
   const anchor = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(initiallyOpen);
+  // The dialog replaces the popover: it opens as the popover closes, and
+  // focus goes back to 설정 when it closes.
+  const [dialog, setDialog] = useState<LocalApiFocus | null>(null);
+  const live = useLocalApi(open || dialog !== null);
+  const api = localApi ?? live;
   return (
     <>
       <button
@@ -140,7 +157,15 @@ export function SettingsButton({ initiallyOpen = false, inline = false }: { init
           }))}
           onChange={(icon) => prefs.set({ icon })}
         />
+        <LocalApiRow
+          api={api}
+          onOpen={(focus) => {
+            setOpen(false);
+            setDialog(focus);
+          }}
+        />
       </Popover>
+      {dialog && <LocalApiDialog api={api} focus={dialog} onClose={() => setDialog(null)} />}
     </>
   );
 }
