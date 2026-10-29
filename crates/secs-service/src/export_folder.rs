@@ -99,6 +99,11 @@ pub fn eqapo_folder(base: &Path, mimo: bool, mode: &str, now: LocalTime) -> Path
     timestamped_folder(base, "eqapo", mimo, mode, now)
 }
 
+/// Derives the timestamped complete-convolution destination below an export base.
+pub fn convolution_folder(base: &Path, mimo: bool, mode: &str, now: LocalTime) -> PathBuf {
+    timestamped_folder(base, "convolution", mimo, mode, now)
+}
+
 fn timestamped_folder(base: &Path, kind: &str, mimo: bool, mode: &str, now: LocalTime) -> PathBuf {
     let what = if mimo { "RC_BA_MIMO" } else { "RC_BA" };
     base.join(format!("SECS_{kind}_{what}_{mode}_{}", now.stamp()))

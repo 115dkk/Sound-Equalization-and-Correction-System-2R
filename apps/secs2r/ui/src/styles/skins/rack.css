@@ -1830,6 +1830,11 @@
   --skin-screw-b: 33deg;
 }
 
+[data-skin="rack"] [data-ui="export.kind.convolution"] {
+  --skin-screw-a: -23deg;
+  --skin-screw-b: 46deg;
+}
+
 [data-skin="rack"] [data-ui="export.kind.before_after_mdat"] {
   --skin-screw-a: 58deg;
   --skin-screw-b: -9deg;

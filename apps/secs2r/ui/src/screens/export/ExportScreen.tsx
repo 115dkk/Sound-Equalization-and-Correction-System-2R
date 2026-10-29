@@ -1,12 +1,13 @@
 import { HelpTip } from "../../ui/HelpTip";
-// 내보내기: write what the DSP and REW need. What the correction is (mode,
-// delay, channels, MIMO, RC range), where the files go, and the exports in
-// two groups: the filters for the DSP (the CamillaDSP configuration, the
-// step's primary action in the header; the filter values as text; the
-// Equalizer APO configuration) and the responses for REW (the REW mdat with
-// what it carries, F19, and the staged mdat under 고급, U3). A filter format
-// that cannot carry the result says why in its row (upstream 1.3.0
-// `_filter_card`).
+// 내보내기: write what the DSP, the player and REW need. What the correction
+// is (mode, delay, channels, MIMO, RC range), where the files go, and the
+// exports in two groups: the filters for the DSP or player (the design name
+// once above them, F21; the CamillaDSP configuration, the step's primary
+// action in the header, with its devices folded in its row, F20; the filter
+// values as text; the Equalizer APO configuration; the convolution IR) and
+// the responses for REW (the REW mdat with what it carries, F19, and the
+// staged mdat under 고급, U3). A filter format that cannot carry the result
+// says why in its row (upstream 1.3.0 `_filter_card`).
 // No 완료 button (U4): the step is done once the current result is exported.
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import type { PrimaryAction } from "../../app/StepHeader";
@@ -21,19 +22,25 @@ import type { Mode } from "../../ipc/bindings/Mode";
 import type { Notice } from "../../ipc/bindings/Notice";
 import { Advanced, Button, Card, EmptyState, ErrorNotice, Icon, Segmented, StatusPill } from "../../ui";
 import { roleCode } from "../../ui/maps/geometry";
+import { CamillaDevicesDisclosure, DESIGN_NAME_ID, DesignNameField } from "./fields";
 import {
   EXPORT_KINDS,
   MDAT_SCOPES,
   canExport,
+  designNameFor,
+  designNameRejection,
   exportBlock,
   exportStepState,
   filterModeName,
+  inputProblem,
+  isFilterKind,
   mdatFileName,
   mdatScopeFor,
   mimoInclusion,
   type ExportActions,
   type ExportRun,
   type ExportView,
+  type InputProblem,
   type MimoInclusion,
 } from "./types";
 import "./export.css";
@@ -60,6 +67,25 @@ const KIND_TEXT: Record<ExportKind, { title: MessageKey; body: MessageKey; run?:
     run: "export.kind.equalizer_apo.run",
     exporting: "export.status.exporting.equalizer_apo",
   },
+  convolution: {
+    title: "export.kind.convolution",
+    body: "export.kind.convolution.body",
+    run: "export.kind.convolution.run",
+    exporting: "export.status.exporting.convolution",
+  },
+};
+
+/** What a done export says next about its folder: where the files go (Equalizer APO) or how to hang them (the convolution IR). */
+const OUTCOME_HINT: Partial<Record<ExportKind, MessageKey>> = {
+  equalizer_apo: "export.outcome.equalizer_apo.hint",
+  convolution: "export.outcome.convolution.hint",
+};
+
+/** The header's pill when the primary is off for a field on this screen. */
+const INPUT_PROBLEM_STATUS: Record<InputProblem["field"], MessageKey> = {
+  design_name: "export.status.design_name",
+  capture: "export.status.asio_device",
+  playback: "export.status.asio_device",
 };
 
 /** Why a filter format cannot carry this result: only these pairs occur (`exportBlock`). */
@@ -111,11 +137,14 @@ export function ExportScreen({
   view,
   actions,
   initialAdvanced = false,
+  initialDevices = false,
 }: {
   view: ExportView;
   actions: ExportActions;
   /** Gallery: draw 고급 unfolded. The fold is the screen's own state. */
   initialAdvanced?: boolean;
+  /** Gallery: draw the CamillaDSP devices unfolded. The fold is the screen's own state. */
+  initialDevices?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const runsRef = useRef(view.runs);
@@ -131,7 +160,7 @@ export function ExportScreen({
   return (
     <div ref={rootRef} className="export-screen" data-ui="export">
       <ResultCard view={view} actions={actions} />
-      <FilesCard view={view} actions={actions} initialAdvanced={initialAdvanced} />
+      <FilesCard view={view} actions={actions} initialAdvanced={initialAdvanced} initialDevices={initialDevices} />
     </div>
   );
 }
@@ -150,17 +179,25 @@ function revealInside(el: HTMLElement) {
 
 /**
  * The step header: the primary exports the CamillaDSP configuration; the
- * pill says what runs, that an export failed, that the result is stale, or
- * that the step is done.
+ * pill says what runs, which field holds the primary off, that an export
+ * failed, that the result is stale, or that the step is done.
  */
 export function exportHeader(view: ExportView, actions: ExportActions, t: Translate): { primary?: PrimaryAction; status?: ReactNode } {
   const state = exportStepState(view);
+  // A design name that cannot be a folder, or an ASIO side without a driver,
+  // holds the primary off; the pill is its reason (StepHeader describes the
+  // primary by it) and the field below says what to change.
+  const problem = inputProblem(view, "camilla_dsp");
   // A blocked step already says why under the title; the pill adds what runs,
   // that an export failed (its row may be below the fold), that the result
   // no longer matches the inputs (it still exports), or that it is exported.
   const failed = EXPORT_KINDS.some((kind) => view.runs[kind]?.status === "failed");
   const status = view.exporting ? (
     <StatusPill tone="busy">{t(KIND_TEXT[view.exporting].exporting)}</StatusPill>
+  ) : problem ? (
+    <StatusPill tone="warning" data-ui="export.status.problem">
+      {t(INPUT_PROBLEM_STATUS[problem.field])}
+    </StatusPill>
   ) : failed ? (
     <StatusPill tone="danger">{t("export.status.failed")}</StatusPill>
   ) : view.results.calibration?.stale ? (
@@ -175,9 +212,10 @@ export function exportHeader(view: ExportView, actions: ExportActions, t: Transl
       id: "export.run.camilla_dsp",
       label: t("frame.step.export.primary"),
       onClick: () => actions.exportFiles("camilla_dsp"),
-      // Export jobs run one at a time: busy while this one runs, off while another does.
+      // Export jobs run one at a time: busy while this one runs, off while
+      // another does, and off while a field on this screen needs changing.
       busy: view.exporting === "camilla_dsp",
-      disabled: view.exporting !== null && view.exporting !== "camilla_dsp",
+      disabled: view.exporting !== null ? view.exporting !== "camilla_dsp" : problem !== null,
     },
     status,
   };
@@ -300,16 +338,19 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 
 /* ── The files ──────────────────────────────────────────────────────────── */
 
-function FilesCard({ view, actions, initialAdvanced }: { view: ExportView; actions: ExportActions; initialAdvanced: boolean }) {
+function FilesCard({ view, actions, initialAdvanced, initialDevices }: { view: ExportView; actions: ExportActions; initialAdvanced: boolean; initialDevices: boolean }) {
   const t = useT();
   return (
     <Card title={t("export.files.title")} data-ui="export.files">
       <FolderRow view={view} actions={actions} />
       <div className="export-groups">
         <ExportGroup title={t("export.group.filters")}>
-          <ExportItem kind="camilla_dsp" view={view} actions={actions} />
+          {/* One name for every filter export, above their rows; the tutorial has no folder to name. */}
+          {!view.tutorial && <DesignNameField view={view} actions={actions} />}
+          <ExportItem kind="camilla_dsp" view={view} actions={actions} initialDevices={initialDevices} />
           <ExportItem kind="filter_text" view={view} actions={actions} />
           <ExportItem kind="equalizer_apo" view={view} actions={actions} />
+          <ExportItem kind="convolution" view={view} actions={actions} />
         </ExportGroup>
         <ExportGroup title={t("export.group.rew")}>
           <ExportItem kind="before_after_mdat" view={view} actions={actions} />
@@ -361,8 +402,14 @@ function FolderRow({ view, actions }: { view: ExportView; actions: ExportActions
   );
 }
 
-/** Where a kind's files land below the export folder (the service's folder rules, `export_folder.rs`). */
+/**
+ * Where a kind's files land below the export folder (the service's folder
+ * rules, `export_folder.rs`; a named filter export goes to
+ * `SECS_<kind>_<name>`, `design_export.rs` `named_folder`).
+ */
 function whereText(t: Translate, kind: ExportKind, view: ExportView): string {
+  const name = isFilterKind(kind) ? designNameFor(view) : null;
+  if (name !== null) return kind === "camilla_dsp" ? t("export.kind.camilla_dsp.where.named", { name }) : t("export.kind.where.named", { kind, name });
   if (kind === "camilla_dsp") return t("export.kind.camilla_dsp.where");
   if (kind === "staged_mdat") return t("export.kind.staged_mdat.where");
   if (kind === "filter_text") return t("export.kind.filter_text.where", { mode: view.settings.mode });
@@ -371,6 +418,7 @@ function whereText(t: Translate, kind: ExportKind, view: ExportView): string {
   }
   const what = mimoInclusion(view).included ? "RC_BA_MIMO" : "RC_BA";
   if (kind === "equalizer_apo") return t("export.kind.equalizer_apo.where", { what, mode: view.settings.mode });
+  if (kind === "convolution") return t("export.kind.convolution.where", { what, mode: view.settings.mode });
   return t("export.kind.before_after_mdat.where", { what, mode: view.settings.mode });
 }
 
@@ -399,7 +447,7 @@ function MdatScopeField({ view, actions }: { view: ExportView; actions: ExportAc
   );
 }
 
-function ExportItem({ kind, view, actions }: { kind: ExportKind; view: ExportView; actions: ExportActions }) {
+function ExportItem({ kind, view, actions, initialDevices = false }: { kind: ExportKind; view: ExportView; actions: ExportActions; initialDevices?: boolean }) {
   const t = useT();
   const text = KIND_TEXT[kind];
   const run = view.runs[kind];
@@ -410,6 +458,9 @@ function ExportItem({ kind, view, actions }: { kind: ExportKind; view: ExportVie
   const blockedId = useId();
   const recalibrateId = useId();
   const scoped = kind === "before_after_mdat";
+  // A design name that cannot be a folder holds the filter buttons off; the field's message is the reason.
+  const problem = inputProblem(view, kind);
+  const describedBy = blocked ? blockedId : problem?.field === "design_name" ? `${DESIGN_NAME_ID}-error` : undefined;
   return (
     <section className={scoped ? "export-item export-item--scoped" : "export-item"} data-ui={`export.kind.${kind}`} aria-labelledby={titleId}>
       <div className="export-item__text">
@@ -429,14 +480,15 @@ function ExportItem({ kind, view, actions }: { kind: ExportKind; view: ExportVie
             <span>{mdatFileName(mdatScopeFor(view.results.calibration, view.mdatScope), view.settings)}</span>
           </p>
         )}
+        {kind === "camilla_dsp" && <CamillaDevicesDisclosure view={view} actions={actions} defaultOpen={initialDevices} />}
       </div>
       <div className="export-item__action">
         {text.run ? (
           <Button
             data-ui={`export.run.${kind}`}
             busy={running}
-            disabled={!canExport(view, kind) || block !== null}
-            aria-describedby={blocked ? blockedId : undefined}
+            disabled={!canExport(view, kind) || block !== null || problem !== null}
+            aria-describedby={describedBy}
             onClick={() => actions.exportFiles(kind)}
           >
             {t(text.run)}
@@ -481,6 +533,14 @@ function Outcome({ kind, run, view, actions }: { kind: ExportKind; run: ExportRu
   const t = useT();
   const id = `export.outcome.${kind}`;
   if (run.status === "failed") {
+    const problem = designNameRejection(run.error);
+    if (problem) {
+      return (
+        <div className="export-item__outcome" data-ui={id}>
+          <ErrorNotice cause={t(`export.design_name.problem.${problem}`)} code={run.error.code} />
+        </div>
+      );
+    }
     const text = errorText(t, run.error);
     return (
       <div className="export-item__outcome" data-ui={id}>
@@ -496,6 +556,7 @@ function Outcome({ kind, run, view, actions }: { kind: ExportKind; run: ExportRu
       </p>
     );
   }
+  const hint = OUTCOME_HINT[kind];
   return (
     <div className="export-item__outcome export-done" data-ui={id} role="status">
       <div className="export-outcome">
@@ -507,10 +568,10 @@ function Outcome({ kind, run, view, actions }: { kind: ExportKind; run: ExportRu
           {t("export.folder.open")}
         </Button>
       </div>
-      {kind === "equalizer_apo" && (
-        // What to do with the folder: the files go into Equalizer APO's own config folder.
+      {hint && (
+        // What to do with the folder: Equalizer APO's files go into its own config folder; the convolution IR's guide says which file goes where.
         <p className="export-done__hint" data-ui={`${id}.hint`}>
-          {t("export.outcome.equalizer_apo.hint", { mode: filterModeName(view.settings) })}
+          {t(hint, { mode: filterModeName(view.settings) })}
         </p>
       )}
     </div>

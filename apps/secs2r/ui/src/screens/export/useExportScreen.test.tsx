@@ -1,11 +1,14 @@
 // @vitest-environment happy-dom
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ReactNode } from "react";
+import { StrictMode, type ReactNode } from "react";
 import { createMockService } from "../../ipc/mock";
 import { SessionProvider } from "../../state/react";
 import { createSession } from "../../state/session";
-import { EXPORT_KINDS, MDAT_SCOPES, exportBlock } from "./types";
+import { EXPORT_KINDS, FILTER_KINDS, MDAT_SCOPES, exportBlock } from "./types";
+import type { CamillaDevices } from "../../ipc/bindings/CamillaDevices";
+import { measureMethods } from "../../ipc/fixtures";
+import { IpcFailure } from "../../ipc/client";
 import { useExportScreen } from "./useExportScreen";
 
 let mock: ReturnType<typeof createMockService>;
@@ -101,6 +104,105 @@ describe("useExportScreen", () => {
     await perform(() => result.current.actions.setMdatScope("measurements"));
     await perform(() => result.current.actions.exportFiles(kind));
     expect(mock.calls.filter((call) => call.method === "export")).toEqual([{ method: "export", params: { kind, folder: "" } }]);
+  });
+
+  it.each(EXPORT_KINDS)("sends the current trimmed design name only for filter kind %s", async (kind) => {
+    const { result } = renderHook(useExportScreen, { wrapper });
+    const actions = result.current.actions;
+    await perform(() => actions.setDesignName("\u0085 거실 영화 \u0085"));
+    expect(result.current.view?.designName).toBe("\u0085 거실 영화 \u0085");
+    await perform(() => actions.exportFiles(kind));
+    expect(mock.calls.filter((call) => call.method === "export")).toEqual([{ method: "export", params: {
+      kind, folder: "",
+      ...(FILTER_KINDS.some((filter) => filter === kind) ? { design_name: "거실 영화" } : {}),
+      ...(kind === "before_after_mdat" ? { mdat_scope: "measurements" } : {}),
+    } }]);
+  });
+
+  it.each(["", "  ", "a".repeat(65), "bad\nname", "bad/name", "bad.", "con.txt"])("omits an unset or invalid design name %j", async (name) => {
+    const { result } = renderHook(useExportScreen, { wrapper });
+    await perform(() => result.current.actions.setDesignName(name));
+    for (const kind of FILTER_KINDS) await perform(() => result.current.actions.exportFiles(kind));
+    expect(mock.calls.filter((call) => call.method === "export")).toEqual(FILTER_KINDS.map((kind) => ({ method: "export", params: { kind, folder: "" } })));
+  });
+
+  it.each(["capture", "playback"] as const)("sends devices only to CamillaDSP when %s is not file", async (side) => {
+    const { result } = renderHook(useExportScreen, { wrapper });
+    const actions = result.current.actions;
+    const devices: CamillaDevices = { capture: { type: "file" }, playback: { type: "file" }, [side]: { type: "asio", device: "Tesira ASIO" } };
+    await perform(() => actions.setCamillaDevices(devices));
+    expect(result.current.view?.camillaDevices).toEqual(devices);
+    for (const kind of EXPORT_KINDS) await perform(() => actions.exportFiles(kind));
+    expect(mock.calls.filter((call) => call.method === "export")).toEqual(EXPORT_KINDS.map((kind) => ({ method: "export", params: {
+      kind, folder: "", ...(kind === "camilla_dsp" ? { camilla_devices: devices } : {}),
+      ...(kind === "before_after_mdat" ? { mdat_scope: "measurements" } : {}),
+    } })));
+  });
+
+  it.each(["project_open", "project_new"] as const)("resets the name but preserves CamillaDSP devices after %s", async (method) => {
+    const { result, unmount } = renderHook(useExportScreen, { wrapper });
+    const devices: CamillaDevices = { capture: { type: "file" }, playback: { type: "wasapi", device: "Speakers (Tesira)", format: "S24", exclusive: true } };
+    await perform(() => { result.current.actions.setDesignName("Cinema"); result.current.actions.setCamillaDevices(devices); });
+    unmount();
+    const reopened = renderHook(useExportScreen, { wrapper });
+    expect(reopened.result.current.view).toMatchObject({ designName: "Cinema", camillaDevices: devices });
+    await perform(() => session.call({ method: "project_save", params: { path: "/projects/cinema.secs" } }));
+    expect(reopened.result.current.view?.designName).toBe("Cinema");
+    await perform(() => session.call(method === "project_open"
+      ? { method, params: { path: "/projects/cinema.secs" } }
+      : { method, params: { path: "", preset: "2.0", sub_count: 0, sample: false, tutorial: false } }));
+    expect(reopened.result.current.view).toMatchObject({ designName: "", camillaDevices: devices });
+  });
+
+  it("uses the session's device list without repeated reads and follows enumeration updates", async () => {
+    const { result, rerender } = renderHook(useExportScreen, { wrapper });
+    expect(result.current.view?.nativeDevices).toEqual(measureMethods.native_devices);
+    rerender();
+    expect(mock.calls.filter((call) => call.method === "measure_methods")).toEqual([]);
+    await perform(() => mock.events.emit({ event: "measure_status", job: 0, status: { ...measureMethods, native_devices: [measureMethods.native_devices[0]!] } }));
+    expect(result.current.view?.nativeDevices).toEqual([measureMethods.native_devices[0]]);
+    await perform(() => session.stores.methods.set({ ...measureMethods, native_error: { code: "device_unavailable", params: {}, detail: "enumeration failed", retryable: true } }));
+    expect(result.current.view?.nativeDevices).toBeNull();
+    await perform(() => session.stores.methods.set({ ...measureMethods, native_devices: [] }));
+    expect(result.current.view?.nativeDevices).toBeNull();
+    await perform(() => {
+      session.stores.methods.set(measureMethods);
+      session.stores.bootstrap.set({ ...session.stores.bootstrap.getSnapshot()!, platform: { os: "linux", arch: "x86_64" } });
+    });
+    expect(result.current.view?.nativeDevices).toBeNull();
+  });
+
+  it.each([false, true])("reads unavailable methods once on mount (failed: %s)", async (failed) => {
+    session.stores.methods.set(null);
+    if (failed) mock.failNext("measure_methods", "device_unavailable");
+    const { result, rerender } = renderHook(useExportScreen, { wrapper: ({ children }: { children: ReactNode }) => <StrictMode><SessionProvider value={session}>{children}</SessionProvider></StrictMode> });
+    expect(result.current.view?.nativeDevices).toBeNull();
+    await perform(() => {});
+    expect(result.current.view?.nativeDevices).toEqual(failed ? null : measureMethods.native_devices);
+    rerender();
+    expect(mock.calls.filter((call) => call.method === "measure_methods")).toHaveLength(1);
+  });
+
+  it.each(["length", "control", "character", "trailing", "reserved"])("records a pre-job design-name %s rejection in the requested row", async (problem) => {
+    const { result } = renderHook(useExportScreen, { wrapper });
+    const reason = `design_name_${problem}`;
+    mock.failNext("export", "invalid_request", "invalid design name", { reason });
+    await perform(() => result.current.actions.exportFiles("convolution"));
+    expect(result.current.view?.runs.convolution).toMatchObject({ status: "failed", error: { code: "invalid_request", params: { reason } } });
+    expect(result.current.view?.exporting).toBeNull();
+    expect(mock.calls.some((call) => call.method === "open_folder")).toBe(false);
+  });
+
+  it("does not put a late design-name rejection into a replacement project", async () => {
+    const { result } = renderHook(useExportScreen, { wrapper });
+    let reject!: (error: unknown) => void;
+    const original = mock.request;
+    vi.spyOn(mock, "request").mockImplementation((request) => request.method === "export"
+      ? new Promise((_, fail) => { reject = fail; }) : original(request));
+    act(() => result.current.actions.exportFiles("convolution"));
+    await act(async () => { await session.call({ method: "project_open", params: { path: "/projects/next.secs" } }); });
+    await perform(() => reject(new IpcFailure({ code: "invalid_request", params: { reason: "design_name_reserved" }, detail: "invalid design name", retryable: false })));
+    expect(result.current.view?.runs).toEqual({});
   });
 
   it("recalibrates a reopened stale cache and unblocks both mdat formats", async () => {

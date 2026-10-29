@@ -2,8 +2,27 @@ import { describe, expect, it } from "vitest";
 import type { ExportBlock } from "../../ipc/bindings/ExportBlock";
 import type { ExportKind } from "../../ipc/bindings/ExportKind";
 import type { MimoExportDecision } from "../../ipc/bindings/MimoExportDecision";
-import { exportMimoNoSubs, exportNoResult, exportRcOnly, exportReady, exportStale } from "./fixtures";
-import { EXPORT_KINDS, MDAT_SCOPES, exportBlock, filterModeName, mdatFileName, mdatScopeFor, mimoInclusion, type ExportView, type MimoInclusion } from "./types";
+import { DESIGN_NAME_SAMPLES, EXPORT_DEVICES, exportMimoNoSubs, exportNoResult, exportRcOnly, exportReady, exportStale } from "./fixtures";
+import {
+  EXPORT_KINDS,
+  FILTER_KINDS,
+  MDAT_SCOPES,
+  canExport,
+  designNameFor,
+  designNameProblem,
+  deviceProblem,
+  devicesFor,
+  exportBlock,
+  filterModeName,
+  inputProblem,
+  isFilterKind,
+  mdatFileName,
+  mdatScopeFor,
+  mimoInclusion,
+  type DesignNameProblem,
+  type ExportView,
+  type MimoInclusion,
+} from "./types";
 
 /** The sample result with its subs and MIMO switched off. */
 const subsOnly: ExportView = { ...exportReady, settings: { ...exportReady.settings, mimo_on: false }, results: { ...exportReady.results, mimo_export: "off" } };
@@ -34,10 +53,13 @@ describe("MIMO decision presentation", () => {
 
 describe("export scope (the service's filter_export_block)", () => {
   it("lists the kinds in the order the screen draws them", () => {
-    expect(EXPORT_KINDS).toEqual(["camilla_dsp", "filter_text", "equalizer_apo", "before_after_mdat", "staged_mdat"]);
+    expect(EXPORT_KINDS).toEqual(["camilla_dsp", "filter_text", "equalizer_apo", "convolution", "before_after_mdat", "staged_mdat"]);
+    // The filter exports (a design name, secs-design.json) lead in the same order; the REW mdat follow.
+    expect(FILTER_KINDS).toEqual(EXPORT_KINDS.slice(0, 4));
+    expect(EXPORT_KINDS.filter(isFilterKind)).toEqual(FILTER_KINDS);
   });
 
-  it("judges every kind for subs × MIMO: text carries RC only (subs first), Equalizer APO everything (F12)", () => {
+  it("judges every kind for subs × MIMO: text carries RC only (subs first), Equalizer APO and the convolution IR everything (F12)", () => {
     // The four fixtures are the four combinations.
     expect([subsOnly, exportReady, exportRcOnly, exportMimoNoSubs].map((view) => [view.results.calibration!.sub_roles.length > 0, mimoInclusion(view).included])).toEqual([
       [true, false],
@@ -45,7 +67,7 @@ describe("export scope (the service's filter_export_block)", () => {
       [false, false],
       [false, true],
     ]);
-    const open = { camilla_dsp: null, before_after_mdat: null, staged_mdat: null };
+    const open = { camilla_dsp: null, convolution: null, before_after_mdat: null, staged_mdat: null };
     expect(judged(subsOnly)).toEqual({ ...open, filter_text: "subs", equalizer_apo: null });
     expect(judged(exportReady)).toEqual({ ...open, filter_text: "subs", equalizer_apo: null });
     expect(judged(exportRcOnly)).toEqual({ ...open, filter_text: null, equalizer_apo: null });
@@ -65,6 +87,7 @@ describe("export scope (the service's filter_export_block)", () => {
       camilla_dsp: null,
       filter_text: "subs",
       equalizer_apo: null,
+      convolution: null,
       before_after_mdat: "stale_cache",
       staged_mdat: "stale_cache",
     });
@@ -74,6 +97,7 @@ describe("export scope (the service's filter_export_block)", () => {
       camilla_dsp: null,
       filter_text: "subs",
       equalizer_apo: null,
+      convolution: null,
       before_after_mdat: null,
       staged_mdat: "stale_cache",
     });
@@ -103,6 +127,90 @@ describe("export scope (the service's filter_export_block)", () => {
       expect(name.includes("원 측정"), scope).toBe(scope !== "results");
       expect(name.includes("보정 결과"), scope).toBe(scope !== "measurements");
     }
+  });
+
+  it("checks a design name by the service's rules, in its order, one problem per rule", () => {
+    // secs-service::invalid_design_names_are_rejected_before_a_folder_is_chosen, plus the field's empty text.
+    const cases: [string, DesignNameProblem | null][] = [
+      ["", null],
+      ["Cinema", null],
+      ["  Cinema  ", null],
+      ["거실 영화", null],
+      ["x".repeat(64), null],
+      ["거".repeat(64), null],
+      // Code points, not UTF-16 units: 64 astral characters fit.
+      ["𝄞".repeat(64), null],
+      ["CONCERT", null],
+      ["COM10", null],
+      ["COM0", null],
+      ["LPT", null],
+      ["a.CON", null],
+      [" ", "length"],
+      ["\t\n", "length"],
+      ["x".repeat(65), "length"],
+      ["𝄞".repeat(65), "length"],
+      ["line\nfeed", "control"],
+      ["tab\there", "control"],
+      ["del\u007fete", "control"],
+      ...[..."\\/:*?\"<>|"].map((ch): [string, DesignNameProblem] => [`bad${ch}name`, "character"]),
+      ["trailing.", "trailing"],
+      ["trailing.  ", "trailing"],
+      ["CON", "reserved"],
+      ["con", "reserved"],
+      ["CON.txt", "reserved"],
+      ["Nul.거실", "reserved"],
+      ["prn", "reserved"],
+      ["aux", "reserved"],
+      ["COM1", "reserved"],
+      ["com9", "reserved"],
+      ["LPT1", "reserved"],
+      ["lpt9.wav", "reserved"],
+    ];
+    for (const [name, problem] of cases) expect(designNameProblem(name), JSON.stringify(name)).toBe(problem);
+    // The rules apply in the service's order: length before characters, characters before the ending.
+    expect(designNameProblem(`${"/".repeat(65)}`)).toBe("length");
+    expect(designNameProblem("a\n/b")).toBe("control");
+    expect(designNameProblem("a/b.")).toBe("character");
+    expect(designNameProblem("CON.")).toBe("trailing");
+    // The samples the gallery and the screen tests draw, one per rule.
+    for (const [problem, name] of Object.entries(DESIGN_NAME_SAMPLES)) expect(designNameProblem(name), problem).toBe(problem);
+  });
+
+  it("uses the trimmed name the service will use, and none in the tutorial or with a problem", () => {
+    expect(designNameFor({ designName: "", tutorial: false })).toBeNull();
+    expect(designNameFor({ designName: "  거실 영화 ", tutorial: false })).toBe("거실 영화");
+    expect(designNameFor({ designName: "거실/영화", tutorial: false })).toBeNull();
+    expect(designNameFor({ designName: "거실 영화", tutorial: true })).toBeNull();
+  });
+
+  it("holds the filter exports for a bad design name and CamillaDSP for an unnamed ASIO driver", () => {
+    const named = { ...exportRcOnly, designName: "거실/영화" };
+    for (const kind of EXPORT_KINDS) {
+      expect(inputProblem(named, kind), kind).toEqual(isFilterKind(kind) ? { field: "design_name", problem: "character" } : null);
+      // canExport is about the result and the jobs; the field holds the buttons separately.
+      expect(canExport(named, kind), kind).toBe(true);
+    }
+    expect(FILTER_KINDS.map((kind) => inputProblem({ ...exportRcOnly, designName: "" }, kind))).toEqual([null, null, null, null]);
+    // The tutorial has no name field and writes nothing.
+    expect(inputProblem({ ...named, tutorial: true }, "filter_text")).toBeNull();
+    const asio: ExportView = { ...exportRcOnly, camillaDevices: { capture: { type: "asio", device: "  " }, playback: { type: "asio", device: "" } } };
+    expect(inputProblem(asio, "camilla_dsp")).toEqual({ field: "capture", problem: "asio_device" });
+    expect(inputProblem({ ...asio, camillaDevices: { ...asio.camillaDevices, capture: { type: "file" } } }, "camilla_dsp")).toEqual({ field: "playback", problem: "asio_device" });
+    for (const kind of EXPORT_KINDS.filter((kind) => kind !== "camilla_dsp")) expect(inputProblem(asio, kind), kind).toBeNull();
+    // The name comes first.
+    expect(inputProblem({ ...asio, designName: "COM1" }, "camilla_dsp")).toEqual({ field: "design_name", problem: "reserved" });
+    expect(deviceProblem({ type: "asio", device: "Tesira ASIO" })).toBeNull();
+    expect(deviceProblem({ type: "wasapi", device: null, format: "F32", exclusive: false })).toBeNull();
+    expect(deviceProblem({ type: "file" })).toBeNull();
+  });
+
+  it("lists inputs for capture, outputs for playback and for loopback capture, one per name", () => {
+    const names = (side: "capture" | "playback", loopback = false) => devicesFor(EXPORT_DEVICES, side, loopback).map((device) => device.name);
+    expect(names("capture")).toEqual(["CABLE Output (VB-Audio Virtual Cable)", "Line (Tesira)", "UMIK-1"]);
+    expect(names("playback")).toEqual(["Speakers (Tesira)", "CABLE Input (VB-Audio Virtual Cable)"]);
+    expect(names("capture", true)).toEqual(names("playback"));
+    const twice = [...EXPORT_DEVICES, { ...EXPORT_DEVICES[0]!, id: "wasapi:other" }];
+    expect(devicesFor(twice, "playback").map((device) => device.name)).toEqual(names("playback"));
   });
 
   it("names the filter files' mode as upstream _filter_plan does", () => {
