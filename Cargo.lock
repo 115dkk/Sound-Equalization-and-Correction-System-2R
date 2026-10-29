@@ -3941,7 +3941,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "secs-audio"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "secs-dsp",
  "secs-oracle",
@@ -3951,7 +3951,7 @@ dependencies = [
 
 [[package]]
 name = "secs-camilla"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "num-bigint",
  "num-integer",
@@ -3968,7 +3968,7 @@ dependencies = [
 
 [[package]]
 name = "secs-compute"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "rayon",
  "thiserror 2.0.21",
@@ -3976,7 +3976,7 @@ dependencies = [
 
 [[package]]
 name = "secs-cuda-sys"
-version = "0.34.0"
+version = "0.35.0"
 dependencies = [
  "libloading 0.9.0",
  "thiserror 2.0.21",
@@ -3984,14 +3984,14 @@ dependencies = [
 
 [[package]]
 name = "secs-dirac"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "secs-dsp"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "faer",
  "faer-traits",
@@ -4007,7 +4007,7 @@ dependencies = [
 
 [[package]]
 name = "secs-engine"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "faer",
  "secs-compute",
@@ -4020,7 +4020,7 @@ dependencies = [
 
 [[package]]
 name = "secs-engine-testkit"
-version = "0.34.0"
+version = "0.35.0"
 dependencies = [
  "secs-compute",
  "secs-dsp",
@@ -4032,7 +4032,7 @@ dependencies = [
 
 [[package]]
 name = "secs-export"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "getrandom 0.3.4",
  "secs-camilla",
@@ -4050,7 +4050,7 @@ dependencies = [
 
 [[package]]
 name = "secs-filters"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "secs-camilla",
  "secs-dsp",
@@ -4064,7 +4064,7 @@ dependencies = [
 
 [[package]]
 name = "secs-gpu"
-version = "0.34.0"
+version = "0.35.0"
 dependencies = [
  "secs-compute",
  "secs-cuda-sys",
@@ -4076,7 +4076,7 @@ dependencies = [
 
 [[package]]
 name = "secs-graph"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "secs-dsp",
  "secs-types",
@@ -4088,7 +4088,7 @@ dependencies = [
 
 [[package]]
 name = "secs-jos"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "secs-oracle",
  "thiserror 2.0.21",
@@ -4096,7 +4096,7 @@ dependencies = [
 
 [[package]]
 name = "secs-local-api"
-version = "0.34.0"
+version = "0.35.0"
 dependencies = [
  "axum",
  "futures-util",
@@ -4111,7 +4111,7 @@ dependencies = [
 
 [[package]]
 name = "secs-mdat"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "secs-dsp",
  "secs-jos",
@@ -4123,7 +4123,7 @@ dependencies = [
 
 [[package]]
 name = "secs-oracle"
-version = "0.34.0"
+version = "0.35.0"
 dependencies = [
  "serde_json",
  "sha2 0.11.1",
@@ -4131,7 +4131,7 @@ dependencies = [
 
 [[package]]
 name = "secs-policy"
-version = "0.34.0"
+version = "0.35.0"
 dependencies = [
  "secs-types",
  "serde",
@@ -4140,7 +4140,7 @@ dependencies = [
 
 [[package]]
 name = "secs-project"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ryu",
  "secs-mdat",
@@ -4153,7 +4153,7 @@ dependencies = [
 
 [[package]]
 name = "secs-rew"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -4164,7 +4164,7 @@ dependencies = [
 
 [[package]]
 name = "secs-service"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chrono",
  "getrandom 0.3.4",
@@ -4193,7 +4193,7 @@ dependencies = [
 
 [[package]]
 name = "secs-sys"
-version = "0.34.0"
+version = "0.35.0"
 dependencies = [
  "audio_thread_priority",
  "chrono",
@@ -4210,7 +4210,7 @@ dependencies = [
 
 [[package]]
 name = "secs-types"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -4220,7 +4220,7 @@ dependencies = [
 
 [[package]]
 name = "secs2r"
-version = "0.34.0"
+version = "0.35.0"
 dependencies = [
  "secs-gpu",
  "secs-local-api",
@@ -4237,7 +4237,7 @@ dependencies = [
 
 [[package]]
 name = "secs2r-cli"
-version = "0.34.0"
+version = "0.35.0"
 dependencies = [
  "clap",
  "rayon",
@@ -4604,7 +4604,7 @@ dependencies = [
 
 [[package]]
 name = "sound-equalization-and-correction-system-rust-api"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "secs-audio",
  "secs-engine",
