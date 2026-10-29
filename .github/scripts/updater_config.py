@@ -10,6 +10,9 @@ Kept out of tauri.conf.json on purpose (ADR 0020, ADR 0018):
   key in the environment variable NAME when it is set and not empty. ci.yml
   signs each pull request run with a key made for that run; release.yml never
   passes this, so a release always carries the key in tauri.conf.json.
+* ``--insecure-transport`` lets the updater read an ``http://`` endpoint. Only
+  the older build of ci.yml's update test passes it, to update from a server
+  on the runner; signatures are checked as always.
 
 The pure function is unit-tested in ``test_updater_config.py``.
 """
@@ -29,12 +32,18 @@ WINDOWS_RESOURCES = {
 }
 
 
-def overlay(windows_resources: bool, pubkey: str | None) -> dict:
+def overlay(windows_resources: bool, pubkey: str | None,
+            insecure_transport: bool = False) -> dict:
     config: dict = {}
     if windows_resources:
         config["bundle"] = {"resources": dict(WINDOWS_RESOURCES)}
+    updater: dict = {}
     if pubkey:
-        config["plugins"] = {"updater": {"pubkey": pubkey}}
+        updater["pubkey"] = pubkey
+    if insecure_transport:
+        updater["dangerousInsecureTransportProtocol"] = True
+    if updater:
+        config["plugins"] = {"updater": updater}
     return config
 
 
@@ -44,9 +53,12 @@ def main(argv: list[str] | None = None) -> int:
                         help="ship the CLI, the host service, the shell and the service manifest")
     parser.add_argument("--pubkey-env", metavar="NAME",
                         help="take the updater public key from this environment variable")
+    parser.add_argument("--insecure-transport", action="store_true",
+                        help="allow an http:// update endpoint (the update test's older build only)")
     args = parser.parse_args(argv)
     pubkey = os.environ.get(args.pubkey_env, "").strip() if args.pubkey_env else ""
-    print(json.dumps(overlay(args.windows_resources, pubkey or None), separators=(",", ":")))
+    config = overlay(args.windows_resources, pubkey or None, args.insecure_transport)
+    print(json.dumps(config, separators=(",", ":")))
     return 0
 
 

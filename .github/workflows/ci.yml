@@ -494,6 +494,82 @@ jobs:
             "## Manage end to end (Windows GUI)`n`nNOT RUN: a prerequisite failed; see the environment and preceding steps." | Add-Content $env:GITHUB_STEP_SUMMARY
           }
 
+  update-e2e:
+    name: Update end to end (Windows GUI)
+    needs: bundle
+    # As manage-e2e: only the Windows installers matter here.
+    if: ${{ !cancelled() && needs.bundle.result != 'skipped' }}
+    runs-on: windows-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: |
+          rustup toolchain install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup show active-toolchain
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: manage-e2e
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: installers-windows
+          path: ${{ runner.temp }}/update-new
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: update-old-windows
+          path: ${{ runner.temp }}/update-old
+
+      - name: Require an interactive console and report the environment
+        run: python -I .github/scripts/manage_e2e.py env --artifacts "$env:RUNNER_TEMP\update-e2e" --report "$env:RUNNER_TEMP\update-env.md"
+
+      - name: Install tauri-driver 2.1.0 and a signed matching Edge driver
+        run: |
+          cargo install tauri-driver --locked --version 2.1.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -I -c "import runpy,sys; runpy.run_path(sys.argv[1])['prepare_edge'](sys.argv[2],sys.argv[3])" "$env:GITHUB_WORKSPACE\.github\scripts\manage_e2e.py" "$env:RUNNER_TEMP\update-edge" "$env:RUNNER_TEMP\update-e2e"
+
+      - name: Install the old build and let it update itself
+        run: |
+          $version = python -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])"
+          python -I .github/scripts/update_e2e.py run --old "$env:RUNNER_TEMP\update-old" --new "$env:RUNNER_TEMP\update-new" --version "$version" --asset-version "0.0.0-ci.${{ github.run_number }}" --tauri-driver "$env:USERPROFILE\.cargo\bin\tauri-driver.exe" --msedgedriver "$env:SECS_MSEDGEDRIVER" --artifacts "$env:RUNNER_TEMP\update-e2e" --report "$env:RUNNER_TEMP\update-e2e-report.md"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: update-e2e
+          path: |
+            ${{ runner.temp }}/update-e2e/**
+            ${{ runner.temp }}/update-env.md
+            ${{ runner.temp }}/update-e2e-report.md
+            !${{ runner.temp }}/update-e2e/**/*.exe
+            !${{ runner.temp }}/update-e2e/**/*.dll
+            !${{ runner.temp }}/update-e2e/**/*.zip
+            !${{ runner.temp }}/update-e2e/**/*.sig
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Report
+        if: always()
+        run: |
+          $report = Join-Path $env:RUNNER_TEMP "update-e2e-report.md"
+          if (Test-Path $report) {
+            Get-Content -Raw $report | Add-Content $env:GITHUB_STEP_SUMMARY
+          } else {
+            "## Update end to end (Windows GUI)`n`nNOT RUN: a prerequisite failed; see the environment and preceding steps." | Add-Content $env:GITHUB_STEP_SUMMARY
+          }
+
   frontend:
     name: screen (typecheck, tests, build, IPC bindings)
     runs-on: ubuntu-latest
@@ -703,6 +779,35 @@ jobs:
         run: |
           cli_version="$(python -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])")"
           python .github/scripts/collect_bundles.py --name "${{ matrix.name }}" --target "${{ matrix.target }}" --version "0.0.0-ci.${{ github.run_number }}" --cli-version "$cli_version" --out dist
+
+      # update-e2e installs this older build and watches it update itself to
+      # the one above (ADR 0020): the same sources and per-run key as version
+      # 0.0.1, allowed to read the runner's own http server on 127.0.0.1 (the
+      # maintainer approved this for this build only, 2026-10-30). Only the
+      # three app crates change version, so the rest is not rebuilt.
+      - name: Older build for the update test
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          python .github/scripts/update_e2e.py set-version --version 0.0.1
+          cargo build --release -p secs2r-host
+          python .github/scripts/updater_manifest.py host --exe target/release/secs2r-host.exe --version 0.0.1 --out target/release/secs2r-host.json
+          node apps/secs2r/ui/node_modules/@tauri-apps/cli/tauri.js signer sign --app-version 0.0.1 target/release/secs2r-host.json
+          overlay="$(python .github/scripts/updater_config.py --pubkey-env SECS2R_UPDATER_PUBKEY --insecure-transport)"
+          (cd apps/secs2r-host-shell && node ../secs2r/ui/node_modules/@tauri-apps/cli/tauri.js build --ci --no-bundle --config "$overlay")
+          overlay="$(python .github/scripts/updater_config.py --pubkey-env SECS2R_UPDATER_PUBKEY --insecure-transport --windows-resources)"
+          (cd apps/secs2r && node ui/node_modules/@tauri-apps/cli/tauri.js build --ci --bundles nsis --config "$overlay")
+          mkdir -p update-old
+          cp target/release/bundle/nsis/*_0.0.1_*-setup.exe update-old/SECS2R-0.0.1-windows-x64-setup.exe
+          git checkout -- apps/secs2r/Cargo.toml apps/secs2r-host/Cargo.toml apps/secs2r-host-shell/Cargo.toml Cargo.lock
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: runner.os == 'Windows'
+        with:
+          name: update-old-windows
+          path: update-old/*
+          if-no-files-found: error
+          retention-days: 7
 
       - name: Prepare macOS playback and recording
         if: runner.os == 'macOS'

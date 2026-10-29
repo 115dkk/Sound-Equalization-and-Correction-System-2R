@@ -23,6 +23,11 @@ class OverlayTest(unittest.TestCase):
         self.assertEqual(m.overlay(False, None), {})
         self.assertEqual(m.overlay(False, "KEY"), {"plugins": {"updater": {"pubkey": "KEY"}}})
 
+    def test_insecure_transport_joins_the_key(self):
+        self.assertEqual(m.overlay(False, "KEY", True), {"plugins": {"updater": {
+            "pubkey": "KEY", "dangerousInsecureTransportProtocol": True}}})
+        self.assertEqual(m.overlay(False, None, False), {})
+
     def test_cli_reads_the_named_variable_and_ignores_blank(self):
         for value, expected in (("KEY\n", {"plugins": {"updater": {"pubkey": "KEY"}}}), ("  ", {})):
             with patch.dict(os.environ, {"TEST_PUBKEY": value}):
