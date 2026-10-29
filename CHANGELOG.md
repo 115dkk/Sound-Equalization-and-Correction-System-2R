@@ -2,13 +2,23 @@
 
 SECS 2R의 변경 기록입니다. 번호는 major.minor.patch이고, 0.x는 모두 사전 출시판이며 정식 출시는 1.0.0부터입니다(docs/adr/0006). 각 절의 내용이 그 버전의 릴리스 본문이 됩니다. 업스트림 SECS 2의 변경 기록은 [`docs/upstream/CHANGELOG.md`](docs/upstream/CHANGELOG.md)에 있습니다.
 
+## 0.36.0 - 2026-10-29
+
+실행 중인 CamillaDSP와 설치된 Equalizer APO에 보정을 바로 적용하는 판입니다. 보정 계산 결과와 내보낸 파일은 0.35.0과 같습니다.
+
+### 더한 것
+
+- 내보내기 화면의 CamillaDSP 줄과 Equalizer APO 줄에서 적용 방식('파일만', '적용')을 고릅니다. '적용'을 고르면 CamillaDSP의 연결 상태와 올라간 설계, Equalizer APO의 설치 상태와 config.txt 줄 상태를 보여 주고, 줄의 기본 동작이 'CamillaDSP에 적용', 'Equalizer APO에 적용'으로 바뀝니다.
+- CamillaDSP에 적용하면 설정을 검증하고 경로를 바꿔 다시 읽게 하며, 새 설정을 읽지 못하면 이전 설정으로 되돌립니다. CamillaDSP의 웹소켓 포트를 열어(`-p 1234`) 실행해 두어야 합니다.
+- Equalizer APO에 적용하면 설정 폴더의 `SECS2R` 폴더에 필터를 쓰고 config.txt 끝에 표식 붙은 `Include` 한 줄을 더합니다. config.txt의 다른 줄은 바꾸지 않고, 처음 바꿀 때 원본을 `config.txt.secs2r-backup`으로 남깁니다. 'config.txt에서 빼기'는 그 줄만 지웁니다. 공식판과 XT 모두 됩니다.
+- `secs2r-cli apply status`, `apply camilla <프로젝트>`, `apply eqapo <프로젝트>`, `apply eqapo --revert`를 더했습니다.
+
 ## 0.32.0 - 2026-10-29
 
 SECS 2R을 바깥 프로그램에서 쓰는 판입니다. 실행 중인 앱을 같은 PC에서 조작하는 로컬 API가 생기고, 계산 엔진을 Rust 크레이트로 crates.io에 공개합니다. 보정 계산 결과와 내보낸 파일은 0.31.0과 같습니다.
 
 ### 더한 것
 
-- CamillaDSP와 Equalizer APO에 보정을 바로 적용하는 IPC와 CLI를 더했습니다. CamillaDSP는 설정을 검증하고 다시 읽으며, 실패하면 이전 설정으로 되돌립니다. Equalizer APO는 설치 폴더를 감지해 `SECS2R` 묶음과 관리 표식을 원자적으로 고칩니다. 내보내기 화면에서 '파일만'과 '적용'을 고르고 연결·설치 상태와 설계 일치 여부를 확인하며, Equalizer APO의 config.txt에서 SECS 2R 줄을 뺄 수 있습니다.
 - 설정에 '로컬 API'를 더했습니다. 켜면(기본값은 꺼짐) 앱이 `http://127.0.0.1:4712`에서 화면과 같은 요청을 받습니다. `POST /v1/call`은 기능 실행, `GET /v1/status`는 열린 프로젝트·작업·성적표·마지막 내보내기를 한 번에 읽기, `GET /v1/events`는 작업과 상태 변경을 WebSocket으로 알리기입니다. 모든 요청에 앱 설정 폴더의 토큰(`local-api-token`)이 필요하고, 브라우저에서 온 요청과 창을 띄우는 요청은 거절합니다. 포트와 토큰은 '연결 정보'에서 바꾸고 복사합니다.
 - 로컬 API로 상태를 바꾸면 화면이 그 변화를 따라 다시 읽고, 바깥에서 시작한 계산도 작업 목록에 보입니다.
 - Rust 크레이트 [`sound-equalization-and-correction-system-rust-api`](https://crates.io/crates/sound-equalization-and-correction-system-rust-api) 0.1.0을 공개합니다. `engine` 기능은 앱 없이 프로젝트를 열고 보정, MIMO, 내보내기를 돌리고, `client` 기능은 실행 중인 앱의 로컬 API를 부릅니다. 라이선스는 GPL-3.0-only입니다. 크레이트는 앱과 따로 0.x 판을 쓰고, 이후 판은 릴리스 때 trusted publishing으로 올라갑니다.
