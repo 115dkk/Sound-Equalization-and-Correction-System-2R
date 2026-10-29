@@ -12,7 +12,7 @@
 pub mod playback;
 pub mod render;
 
-pub use render::{RenderedPath, RenderedPaths, render_paths};
+pub use render::{RenderedPath, RenderedPaths, render_paths, render_paths_at};
 
 use secs_camilla::pyfmt::{format_fixed, round_ndigits};
 use secs_dsp::Complex64;
