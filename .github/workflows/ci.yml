@@ -38,6 +38,11 @@ name: CI
 #             Equalizer APO, pinned in .github/eqapo-engines.toml; every
 #             input-to-output response must match the designed one
 #             (crates/secs-filters/tests/eqapo_playback.rs, DEVIATIONS F12)
+#   camilla-playback  CamillaDSP exports and their bypass configs played
+#             through the official CamillaDSP release pinned in
+#             .github/camilladsp-engines.toml, with the same bounds as the
+#             Equalizer APO check (crates/secs-camilla/tests/camilla_playback.rs,
+#             issue #107)
 #
 # Pin macOS 15 ARM64 after repeated macOS 26 runner allocation failures.
 
@@ -288,6 +293,45 @@ jobs:
         run: |
           $report = Join-Path $env:RUNNER_TEMP "eqapo-report.md"
           if (Test-Path $report) { Get-Content $report | Add-Content $env:GITHUB_STEP_SUMMARY }
+
+  camilla-playback:
+    name: CamillaDSP playback
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: |
+          rustup toolchain install
+          rustup show active-toolchain
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: test
+
+      - name: Fetch CamillaDSP (.github/camilladsp-engines.toml)
+        run: python3 .github/scripts/camilla_engine.py fetch --engine linux --dest "$RUNNER_TEMP/camilladsp" --github-env "$GITHUB_ENV"
+
+      - name: Play the exports through CamillaDSP
+        env:
+          SECS_CAMILLA_REPORT: ${{ runner.temp }}/camilla-report.md
+          SECS_CAMILLA_ARTIFACTS: ${{ runner.temp }}/camilla-artifacts
+        run: cargo test -p secs-camilla --test camilla_playback --locked -- --ignored --nocapture
+
+      # The configs, excitation, output and CamillaDSP log of every case.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: camilla-playback
+          path: ${{ runner.temp }}/camilla-artifacts
+          if-no-files-found: ignore
+
+      - name: Report
+        if: always()
+        run: |
+          report="$RUNNER_TEMP/camilla-report.md"
+          if [ -f "$report" ]; then cat "$report" >> "$GITHUB_STEP_SUMMARY"; fi
 
   frontend:
     name: screen (typecheck, tests, build, IPC bindings)
