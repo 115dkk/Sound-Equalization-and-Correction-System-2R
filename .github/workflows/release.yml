@@ -190,9 +190,26 @@ jobs:
         shell: bash
         run: python .github/scripts/collect_bundles.py --name "${{ matrix.name }}" --target "${{ matrix.target }}" --version "${{ needs.gate.outputs.version }}" --out dist
 
+      - name: Prepare macOS playback and recording
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/app-check"
+          python -I -u .github/scripts/blackhole.py install --dest "$RUNNER_TEMP/blackhole" 2>&1 | tee "$RUNNER_TEMP/app-check/audio-setup.log"
+          bundle_id="$(python -c 'import json; print(json.load(open("apps/secs2r/tauri.conf.json"))["identifier"])')"
+          python -I -u .github/scripts/blackhole.py grant-microphone --bundle-id "$bundle_id" 2>&1 | tee -a "$RUNNER_TEMP/app-check/audio-setup.log"
+
       - name: The macOS app opens and calibrates
         if: runner.os == 'macOS'
-        run: python -u .github/scripts/macos_app_check.py --dmg dist/*.dmg --work "$RUNNER_TEMP/app-check"
+        run: python -I -u .github/scripts/macos_app_check.py --dmg dist/*.dmg --work "$RUNNER_TEMP/app-check" --audio-device "BlackHole 2ch"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always() && runner.os == 'macOS'
+        with:
+          name: app-check-macos
+          path: ${{ runner.temp }}/app-check
+          if-no-files-found: ignore
+          retention-days: 14
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

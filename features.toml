@@ -1162,7 +1162,7 @@ kind = "release"
 milestone = "M0"
 status = "partial"
 tests = []
-note = "release.yml: Windows NSIS + portable zip, macOS dmg, Linux AppImage + deb, shipping every prerelease since 0.0.1. The gate is tested by .github/scripts/test_release_gate.py, which this registry cannot reference (it lists cargo tests), so the entry stays partial. Before upload the macOS dmg is launched and must measure a mock room, calibrate and export through its own screen (.github/scripts/macos_app_check.py, apps/secs2r/src/self_test.rs)."
+note = "release.yml: Windows NSIS + portable zip, macOS dmg, Linux AppImage + deb, shipping every prerelease since 0.0.1. The gate is tested by .github/scripts/test_release_gate.py, which this registry cannot reference (it lists cargo tests), so the entry stays partial. Before upload the macOS dmg is launched and must measure a mock room, calibrate and export through its own screen; the native launch must also play and record both stereo channels through pinned BlackHole, with stored levels and loopback impulses checked (.github/scripts/macos_app_check.py, test_macos_app_check.py, blackhole.py, test_blackhole.py, apps/secs2r/src/self_test.rs)."
 
 [[feature]]
 id = "release.updater"
