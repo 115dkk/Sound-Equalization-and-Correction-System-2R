@@ -29,3 +29,6 @@ serde_json.workspace = true
 tauri = { version = "2.12", features = [] }
 tauri-plugin-dialog = "=2.6.0"
 tauri-plugin-opener = "=2.5.0"
+# Without "zip": that feature only reads the v1 `.nsis.zip` and `.AppImage.tar.gz`
+# artifacts (RUSTSEC-2026-0367..0369 in zip 4); ADR 0020 ships the v2 ones.
+tauri-plugin-updater = { version = "=2.14.0", default-features = false, features = ["rustls-tls", "system-proxy"] }

@@ -19,6 +19,10 @@ path = "src/main.rs"
 secs-apply.workspace = true
 secs-sys = { path = "../../crates/secs-sys" }
 secs-types.workspace = true
+base64.workspace = true
+minisign-verify = "=0.3.0"
+semver = "1"
+sha2.workspace = true
 chrono.workspace = true
 clap.workspace = true
 serde.workspace = true
