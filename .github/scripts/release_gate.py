@@ -28,6 +28,14 @@ second version for the same change). A failed release is retried with
 gate pushes its bump, the push is rejected and the gate releases nothing for
 the same reason, instead of rebasing later commits into this release.
 
+The crates.io crates (docs/adr/0016) carry a version of their own, read from
+``crates/secs-api/Cargo.toml`` and tagged ``api-v<version>`` once published.
+When the app releases, the same rules apply to them: an untagged version is
+published as is, and files of their packages changed since the tag bump
+every published crate together (and their exact ``=`` requirements and lock
+entries) in the same bump commit. release.yml publishes them after the
+installers built.
+
 The bump is minor when a commit that touched shipped files has a ``feat``
 subject (``feat:``, ``feat(scope):``, ``feat!:``) or says ``BREAKING CHANGE``,
 and patch otherwise. Before 1.0 a breaking change is still a minor bump.
@@ -88,6 +96,12 @@ CARGO_TOML = Path("Cargo.toml")
 CARGO_LOCK = Path("Cargo.lock")
 # The fuzz workspace (fuzz/Cargo.toml) locks the same path crates.
 FUZZ_LOCK = Path("fuzz/Cargo.lock")
+
+# The crates.io crates (ADR 0016) share one version of their own, kept by the
+# public crate's manifest and tagged api-vX.Y.Z when published. Files under
+# these directories of a published crate are not in its package.
+API_MANIFEST = Path("crates/secs-api/Cargo.toml")
+API_NOT_PACKAGED_DIRS = ("tests", "examples", "benches")
 
 
 # ---------------------------------------------------------------------------
@@ -195,6 +209,92 @@ def set_workspace_version(cargo_toml: str, new: str) -> str:
     raise ValueError("no [workspace.package] version in Cargo.toml")
 
 
+def _package_lines(manifest: str):
+    """(index, line) of the lines in a manifest's [package] table."""
+    section = None
+    for i, line in enumerate(manifest.splitlines(keepends=True)):
+        header = re.match(r"^\s*\[([^\]]+)\]\s*$", line)
+        if header:
+            section = header.group(1).strip()
+            continue
+        if section == "package":
+            yield i, line
+
+
+def manifest_publishes(manifest: str) -> bool:
+    """Whether cargo may publish a crate: its [package] says neither
+    ``publish = false`` nor ``publish.workspace = true`` (the workspace's
+    ``publish`` is false)."""
+    for _, line in _package_lines(manifest):
+        if re.match(r"^\s*publish\s*=\s*false\b", line) or re.match(
+                r"^\s*publish\s*(\.\s*workspace\s*=\s*true|=\s*\{\s*workspace\s*=\s*true)", line):
+            return False
+    return True
+
+
+def package_field(manifest: str, field: str) -> str:
+    """A literal string field (``name``, ``version``) of [package]."""
+    for _, line in _package_lines(manifest):
+        m = re.match(rf'^\s*{field}\s*=\s*"([^"]+)"', line)
+        if m:
+            return m.group(1)
+    raise ValueError(f"no literal [package] {field}")
+
+
+def set_package_version(manifest: str, new: str) -> str:
+    lines = manifest.splitlines(keepends=True)
+    for i, line in _package_lines(manifest):
+        if re.match(r'^\s*version\s*=\s*"', line):
+            lines[i] = re.sub(r'"[^"]+"', f'"{new}"', line, count=1)
+            return "".join(lines)
+    raise ValueError("no literal [package] version")
+
+
+def set_exact_requirements(cargo_toml: str, names, old: str, new: str) -> str:
+    """Move the ``=old`` requirements of the named crates in
+    [workspace.dependencies] to ``=new``; other lines stay as they are."""
+    lines = cargo_toml.splitlines(keepends=True)
+    section = None
+    for i, line in enumerate(lines):
+        header = re.match(r"^\s*\[([^\]]+)\]\s*$", line)
+        if header:
+            section = header.group(1).strip()
+            continue
+        m = re.match(r"^\s*([A-Za-z0-9_-]+)\s*=", line)
+        if section == "workspace.dependencies" and m and m.group(1) in names:
+            lines[i] = line.replace(f'"={old}"', f'"={new}"')
+    return "".join(lines)
+
+
+def api_files(changed, crate_dirs) -> list:
+    """Changed files that are in a published crate's package."""
+    out = []
+    for path in changed:
+        for crate in crate_dirs:
+            if path.startswith(crate + "/"):
+                inside = path[len(crate) + 1:].split("/")[:-1]
+                if not any(part in API_NOT_PACKAGED_DIRS for part in inside):
+                    out.append(path)
+                break
+    return out
+
+
+def api_decide(version: str, tags, changed: list, messages):
+    """``(action, version)`` for the crates.io crates: ``publish`` a version
+    that has no ``api-v`` tag yet (the first release, or a publish that
+    stopped half way), ``bump`` when packaged files changed since the tag,
+    else ``none``. The bump follows ``bump_kind``; before 1.0 a minor bump is
+    the one that may break callers."""
+    if f"api-v{version}" not in tags:
+        return "publish", version
+    if not changed:
+        return "none", version
+    candidate = bumped(version, bump_kind(messages))
+    while f"api-v{candidate}" in tags:
+        candidate = bumped(candidate, "patch")
+    return "bump", candidate
+
+
 def set_lock_versions(lock: str, old: str, new: str) -> str:
     """Rewrite ``old`` to ``new`` for the workspace packages of a Cargo.lock.
 
@@ -262,12 +362,14 @@ def _write(path: Path, text: str) -> None:
         fh.write(text)
 
 
-def bump_commit_message(new: str) -> str:
+def bump_commit_message(new: str, api: str | None = None) -> str:
     """Message of the bump commit. The bump is pushed with the release deploy
     key, which starts push workflows (the workflow token did not), so the body
     carries ``[skip ci]``: the bump commit starts neither release.yml nor
-    ci.yml, and the release it belongs to is built by the run that made it."""
-    return f"chore(release): v{new}\n\n[skip ci]"
+    ci.yml, and the release it belongs to is built by the run that made it.
+    ``api`` is the crates.io version the same commit moves to, if any."""
+    body = f"api v{api}\n\n[skip ci]" if api else "[skip ci]"
+    return f"chore(release): v{new}\n\n{body}"
 
 
 def fetch_remote_main(*, tags: bool = False) -> str:
@@ -283,21 +385,41 @@ def fetch_remote_main(*, tags: bool = False) -> str:
     return _git("rev-parse", "origin/main")
 
 
-def _commit_bump(old: str, new: str, started_head: str) -> str | None:
-    """Commit the bump and push it to main; None when main moved meanwhile."""
-    _write(CARGO_TOML, set_workspace_version(_read(CARGO_TOML), new))
-    lock = _read(CARGO_LOCK)
-    members = workspace_packages(lock, old)
-    _write(CARGO_LOCK, set_lock_versions(lock, old, new))
+def _commit_bump(old: str, new: str, started_head: str,
+                 api: tuple[str, str, dict[str, Path]] | None = None) -> str | None:
+    """Commit the bump and push it to main; None when main moved meanwhile.
+
+    ``old == new`` leaves the app version alone. ``api`` is ``(old, new,
+    {name: manifest})`` of the crates.io crates when they move too."""
     staged = [str(CARGO_TOML), str(CARGO_LOCK)]
-    if FUZZ_LOCK.exists():
-        _write(FUZZ_LOCK, set_member_versions(_read(FUZZ_LOCK), members, new))
+    cargo_toml = _read(CARGO_TOML)
+    lock = _read(CARGO_LOCK)
+    fuzz_lock = _read(FUZZ_LOCK) if FUZZ_LOCK.exists() else None
+    if old != new:
+        cargo_toml = set_workspace_version(cargo_toml, new)
+        members = workspace_packages(lock, old)
+        lock = set_lock_versions(lock, old, new)
+        if fuzz_lock is not None:
+            fuzz_lock = set_member_versions(fuzz_lock, members, new)
+    if api is not None:
+        api_old, api_new, manifests = api
+        for manifest in manifests.values():
+            _write(manifest, set_package_version(_read(manifest), api_new))
+            staged.append(str(manifest))
+        cargo_toml = set_exact_requirements(cargo_toml, set(manifests), api_old, api_new)
+        lock = set_member_versions(lock, set(manifests), api_new)
+        if fuzz_lock is not None:
+            fuzz_lock = set_member_versions(fuzz_lock, set(manifests), api_new)
+    _write(CARGO_TOML, cargo_toml)
+    _write(CARGO_LOCK, lock)
+    if fuzz_lock is not None:
+        _write(FUZZ_LOCK, fuzz_lock)
         staged.append(str(FUZZ_LOCK))
     _run("git", "config", "user.name", "github-actions[bot]")
     _run("git", "config", "user.email",
          "41898282+github-actions[bot]@users.noreply.github.com")
     _run("git", "add", *staged)
-    _run("git", "commit", "-m", bump_commit_message(new))
+    _run("git", "commit", "-m", bump_commit_message(new, api[1] if api else None))
     # The push goes over SSH with the release deploy key (the gate's checkout),
     # which the default branch's "Required checks" ruleset lets through; the
     # bump commit has no checks of its own. A rejected push is tolerated only
@@ -346,13 +468,41 @@ def main(argv=None) -> int:
     print(f"shipped changes: {shipped[:20]}")
     print(f"decision: {action} {new_version}")
 
+    # The crates.io crates publish only with an app release: a packaged file
+    # of theirs is always a shipped file of the app.
+    api_action, api_version, api_manifests = "none", None, {}
+    if API_MANIFEST.exists():
+        api_version = package_field(_read(API_MANIFEST), "version")
+        api_manifests = {
+            package_field(_read(m), "name"): m
+            for m in sorted(Path("crates").glob("*/Cargo.toml"))
+            if manifest_publishes(_read(m))
+        }
+        if action != "none":
+            api_tags = set(_git("tag", "-l", "api-v*").splitlines())
+            api_changed, api_messages = [], []
+            if f"api-v{api_version}" in api_tags:
+                crate_dirs = [m.parent.as_posix() for m in api_manifests.values()]
+                api_changed = api_files(_git("diff", "--no-renames", "--name-only",
+                                             f"api-v{api_version}", head).splitlines(), crate_dirs)
+                if api_changed:
+                    log = _git("log", "--no-merges", "--format=%B%x00", f"api-v{api_version}..{head}",
+                               "--", *api_changed)
+                    api_messages = [m for m in log.split("\x00") if m.strip()]
+            api_action, new_api = api_decide(api_version, api_tags, api_changed, api_messages)
+            print(f"crates.io: {api_action} {new_api} (changed: {api_changed[:20]})")
+            if api_action == "bump":
+                api_bump = (api_version, new_api, api_manifests)
+            api_version = new_api
+
     release_sha = head
-    if action == "bump":
+    if action == "bump" or api_action == "bump":
         if os.environ.get("GITHUB_REF", "refs/heads/main") != "refs/heads/main":
             raise SystemExit("a bump commits to main; run on main")
-        bumped_sha = _commit_bump(version, new_version, head)
+        bumped_sha = _commit_bump(version, new_version, head,
+                                  api_bump if api_action == "bump" else None)
         if bumped_sha is None:
-            action, new_version = "none", version
+            action, new_version, api_action = "none", version, "none"
         else:
             release_sha = bumped_sha
             print(f"bumped to v{new_version}; release_sha={release_sha}")
@@ -364,6 +514,9 @@ def main(argv=None) -> int:
         f"prerelease={'true' if is_prerelease(new_version) else 'false'}\n"
         f"previous_tag={previous or ''}\n"
         f"release_sha={release_sha}\n"
+        f"api_publish={'true' if action != 'none' and api_action != 'none' else 'false'}\n"
+        f"api_version={api_version or ''}\n"
+        f"api_tag={'api-v' + api_version if api_version else ''}\n"
     )
     out = os.environ.get("GITHUB_OUTPUT")
     if out:

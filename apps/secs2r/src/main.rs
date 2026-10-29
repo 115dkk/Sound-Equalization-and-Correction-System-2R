@@ -17,6 +17,7 @@ use std::time::{Duration, SystemTime};
 
 mod host;
 mod icon;
+mod local_api;
 mod self_test;
 
 use secs_service::{Deps, EventSink, LocalTime, NoEvents, Service};
@@ -56,11 +57,30 @@ async fn secs_call(
         .map(|id| Arc::new(EventChannel(id.channel_on(webview))) as Arc<dyn EventSink>)
         .unwrap_or_else(|| Arc::new(NoEvents));
     tauri::async_runtime::spawn_blocking(move || {
-        let envelope = handle(&app.state::<Service>(), request, events);
+        let service = app.state::<Arc<Service>>();
+        let changes_settings = request
+            .as_ref()
+            .and_then(|value| value.get("method"))
+            .and_then(serde_json::Value::as_str)
+            == Some("app_settings_set");
+        let old_local_api = changes_settings.then(|| {
+            match service.call(Request::AppSettingsGet, Arc::new(NoEvents)) {
+                Envelope::Ok(response) => match *response {
+                    Response::AppSettingsGet(settings) => settings.local_api,
+                    _ => unreachable!("app_settings_get response matches its request"),
+                },
+                Envelope::Err(_) => unreachable!("app_settings_get cannot fail"),
+            }
+        });
+        let envelope = handle(service.as_ref(), request, events);
         if let Envelope::Ok(response) = &envelope
             && let Response::AppSettingsSet(settings) = response.as_ref()
         {
             icon::show(&app, settings.icon);
+            app.state::<local_api::Manager>().apply_settings(
+                old_local_api.expect("settings request captured its old value"),
+                settings.local_api,
+            );
         }
         envelope
     })
@@ -93,27 +113,37 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
             let config_dir = app.path().app_config_dir()?;
-            app.manage(Service::new(Deps {
+            let hub = secs_local_api::EventHub::default();
+            let service = Arc::new(Service::new(Deps {
+                app_version: env!("CARGO_PKG_VERSION").into(),
                 acceleration: Arc::new(secs_gpu::select),
                 audio_backend: Arc::new(secs_sys::audio::default_backend),
                 rew_transport: Arc::new(|| Box::new(secs_rew::HttpTransport::default())),
                 process: Arc::new(secs_sys::process::OsProcessProbe),
                 memory: Arc::new(secs_sys::memory::OsMemoryProbe),
-                host: Arc::new(host::TauriHost::new(handle)),
+                host: Arc::new(host::TauriHost::new(handle.clone())),
+                observer: Arc::new(hub.clone()),
                 clock: Arc::new(|| {
                     let now = SystemTime::now();
                     LocalTime::from_system(now, secs_sys::clock::utc_offset_seconds(now))
                 }),
+                clock_offset_seconds: Arc::new(|| {
+                    secs_sys::clock::utc_offset_seconds(SystemTime::now())
+                }),
                 app_settings_path: Some(config_dir.join("settings.json")),
                 ..Deps::default()
             }));
+            let local_api = local_api::Manager::new(config_dir, service.clone(), hub, handle);
+            app.manage(service.clone());
+            app.manage(local_api);
             app.manage(icon::Shown::default());
-            let service = app.state::<Service>();
             if let Envelope::Ok(response) =
                 service.call(Request::AppSettingsGet, Arc::new(NoEvents))
                 && let Response::AppSettingsGet(settings) = *response
             {
                 icon::show(app.handle(), settings.icon);
+                app.state::<local_api::Manager>()
+                    .startup(settings.local_api);
             }
             self_test::arm(app);
             Ok(())
@@ -125,7 +155,9 @@ fn main() {
         // waiting up to 3 s for the device).
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
-                let _ = window.state::<Service>().shutdown(Duration::from_secs(3));
+                let _ = window
+                    .state::<Arc<Service>>()
+                    .shutdown(Duration::from_secs(3));
             }
         })
         .invoke_handler(tauri::generate_handler![

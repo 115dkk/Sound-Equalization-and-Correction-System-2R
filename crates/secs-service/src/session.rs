@@ -15,6 +15,7 @@ use crate::{ServiceError, UuidSource, lock};
 #[derive(Debug, Default)]
 pub(crate) struct Session {
     open: Option<OpenProject>,
+    last_export: Option<secs_types::local_api::LastExport>,
 }
 
 #[derive(Debug)]
@@ -203,6 +204,14 @@ impl Session {
     pub fn info(&self) -> Result<ProjectInfo, ServiceError> {
         let open = self.require()?;
         Ok(info(open))
+    }
+
+    pub(crate) fn last_export(&self) -> Option<secs_types::local_api::LastExport> {
+        self.last_export.clone()
+    }
+
+    pub(crate) fn record_export(&mut self, export: secs_types::local_api::LastExport) {
+        self.last_export = Some(export);
     }
 
     pub fn require(&self) -> Result<&OpenProject, ServiceError> {
@@ -812,6 +821,7 @@ mod commit_tests {
     fn opened() -> Arc<Mutex<Session>> {
         Arc::new(Mutex::new(Session {
             open: Some(project()),
+            last_export: None,
         }))
     }
 

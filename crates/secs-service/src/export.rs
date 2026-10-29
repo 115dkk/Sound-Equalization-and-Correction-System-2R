@@ -88,6 +88,10 @@ impl Service {
         }
         let mdat_scope = params.mdat_scope.unwrap_or_default();
         let now = (self.deps.clock)();
+        let project_mode = secs_types::calibration::mode_tag(
+            secs_project::calibration_from_project(open.store.project()).mode,
+        )
+        .to_owned();
         if params.kind == ExportKind::BeforeAfterMdat
             && mdat_scope == secs_export::MdatScope::Measurements
         {
@@ -101,6 +105,9 @@ impl Service {
             }
             let uuid = self.deps.uuid.clone();
             let now_ms = (self.deps.unix_ms)();
+            let export_session = self.session.clone();
+            let completion_clock = self.deps.clock.clone();
+            let completion_offset = self.deps.clock_offset_seconds.clone();
             drop(session);
             let destination = if params.folder.is_empty() {
                 crate::export_folder::measurement_mdat_folder(&self.resolved_export_base()?, now)
@@ -130,14 +137,26 @@ impl Service {
                 if let Some(path) = write_compute_provenance(folder, None)? {
                     paths.push(path);
                 }
-                Ok(JobResult::Export(ExportResult {
+                let result = ExportResult {
                     files: paths
                         .into_iter()
                         .map(|path| path.to_string_lossy().into_owned())
                         .collect(),
                     folder: folder.to_string_lossy().into_owned(),
                     stale: false,
-                }))
+                };
+                lock(&export_session).record_export(secs_types::local_api::LastExport {
+                    kind: ExportKind::BeforeAfterMdat,
+                    folder: result.folder.clone(),
+                    mimo: false,
+                    mode: project_mode,
+                    design_name: None,
+                    design_id: None,
+                    time: completion_clock()
+                        .shift_seconds(completion_offset().saturating_neg())
+                        .rfc3339_utc(),
+                });
+                Ok(JobResult::Export(result))
             });
         }
         let stale = {
@@ -160,7 +179,7 @@ impl Service {
         let project = open.store.project();
         let project_name =
             (!project.name.trim().is_empty()).then(|| project.name.trim().to_owned());
-        let app_version = self.deps.app_version.clone();
+        let app_version = self.deps.app_version.to_string();
         let live = open.results.live_calibration();
         let cached = open.results.cached();
         let cached_sample_rate_policy = cached.map(|cache| cache.labels.sample_rate_policy);
@@ -193,6 +212,8 @@ impl Service {
         };
         let uuid = self.deps.uuid.clone();
         let session_for_design = self.session.clone();
+        let completion_clock = self.deps.clock.clone();
+        let completion_offset = self.deps.clock_offset_seconds.clone();
         let memory = self.deps.memory.available_bytes();
         let mode_name = description.mode();
         let mut mimo = live_mimo.filter(|_| mdat).map(|result| {
@@ -471,6 +492,7 @@ impl Service {
             if let Some(path) = write_compute_provenance(folder, compute_report.as_ref())? {
                 paths.push(path);
             }
+            let mut design_id = None;
             if is_filter_export {
                 let metadata = crate::design_export::DesignMetadata {
                     design_name: display_design_name.clone(),
@@ -485,9 +507,10 @@ impl Service {
                     bypass_config: (params.kind == ExportKind::CamillaDsp)
                         .then(|| format!("configs/secs_{}_bypass.yml", description.camilla().mode)),
                 };
-                let (manifest, _) = crate::design_export::write_manifest(folder, &metadata)
+                let (manifest, id) = crate::design_export::write_manifest(folder, &metadata)
                     .map_err(export_error)?;
                 paths.push(manifest);
+                design_id = Some(id);
             }
             if requested_design_name.is_some() {
                 crate::design_export::replace_folder(folder, &final_destination)
@@ -501,14 +524,26 @@ impl Service {
             if let Some(base) = &registry_base {
                 crate::design_export::rebuild_index(base).map_err(export_error)?;
             }
-            Ok(JobResult::Export(ExportResult {
+            let result = ExportResult {
                 files: paths
                     .into_iter()
                     .map(|path| path.to_string_lossy().into_owned())
                     .collect(),
                 folder: final_destination.to_string_lossy().into_owned(),
                 stale,
-            }))
+            };
+            lock(&session_for_design).record_export(secs_types::local_api::LastExport {
+                kind: params.kind,
+                folder: result.folder.clone(),
+                mimo: folder_includes_mimo,
+                mode: mode_name.to_owned(),
+                design_name: requested_design_name.clone(),
+                design_id,
+                time: completion_clock()
+                    .shift_seconds(completion_offset().saturating_neg())
+                    .rfc3339_utc(),
+            });
+            Ok(JobResult::Export(result))
         })
     }
 }

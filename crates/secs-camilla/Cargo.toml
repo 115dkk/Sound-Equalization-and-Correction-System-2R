@@ -1,12 +1,16 @@
 [package]
 name = "secs-camilla"
 description = "CamillaDSP v4 configuration and FIR coefficient writer, reading the engine's signal-chain value."
-version.workspace = true
+version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-publish.workspace = true
+homepage = "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R"
+readme = "README.md"
+keywords = ["audio", "camilladsp", "equalization", "fir"]
+categories = ["multimedia::audio", "config"]
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**"]
 
 [lints]
 workspace = true

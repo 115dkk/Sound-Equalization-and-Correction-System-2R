@@ -188,6 +188,85 @@ class DecideTest(unittest.TestCase):
         # The subject still reads as a patch-level message for bump_kind.
         self.assertEqual(g.bump_kind([message]), "patch")
 
+    def test_bump_commit_names_the_crates_version(self):
+        message = g.bump_commit_message("0.31.0", "0.2.0")
+        subject, _, body = message.partition("\n\n")
+        self.assertEqual(subject, "chore(release): v0.31.0")
+        self.assertIn("api v0.2.0", body)
+        self.assertIn("[skip ci]", body)
+        self.assertEqual(g.bump_kind([message]), "patch")
+
+
+class ApiTest(unittest.TestCase):
+    PUBLISHED = (
+        '[package]\nname = "secs-types"\nversion = "0.1.0"\nedition.workspace = true\n'
+        '\n[dependencies]\nserde.workspace = true\n'
+    )
+    UNPUBLISHED = (
+        '[package]\nname = "secs-sys"\nversion.workspace = true\npublish.workspace = true\n'
+    )
+    WORKSPACE = (
+        '[workspace.package]\nversion = "0.30.0"\n\n[workspace.dependencies]\n'
+        'secs-types = { path = "crates/secs-types", version = "=0.1.0" }\n'
+        'secs-oracle = { path = "crates/secs-oracle" }\n'
+        'other = { version = "=0.1.0" }\n'
+    )
+
+    def test_publishing_follows_the_package_table(self):
+        self.assertTrue(g.manifest_publishes(self.PUBLISHED))
+        self.assertFalse(g.manifest_publishes(self.UNPUBLISHED))
+        self.assertFalse(g.manifest_publishes('[package]\nname = "a"\npublish = false\n'))
+        self.assertFalse(g.manifest_publishes('[package]\nname = "a"\npublish = { workspace = true }\n'))
+
+    def test_reads_and_sets_the_literal_version(self):
+        self.assertEqual(g.package_field(self.PUBLISHED, "name"), "secs-types")
+        self.assertEqual(g.package_field(self.PUBLISHED, "version"), "0.1.0")
+        moved = g.set_package_version(self.PUBLISHED, "0.2.0")
+        self.assertEqual(g.package_field(moved, "version"), "0.2.0")
+        self.assertIn("serde.workspace = true", moved)
+        with self.assertRaises(ValueError):
+            g.package_field(self.UNPUBLISHED, "version")
+
+    def test_moves_only_the_named_exact_requirements(self):
+        moved = g.set_exact_requirements(self.WORKSPACE, {"secs-types"}, "0.1.0", "0.2.0")
+        self.assertIn('secs-types = { path = "crates/secs-types", version = "=0.2.0" }', moved)
+        self.assertIn('other = { version = "=0.1.0" }', moved)
+        self.assertIn('version = "0.30.0"', moved)
+
+    def test_packaged_files_exclude_tests_examples_and_benches(self):
+        changed = [
+            "crates/secs-types/src/ipc.rs",
+            "crates/secs-types/tests/wire.rs",
+            "crates/secs-types/README.md",
+            "crates/secs-service/examples/support/case.rs",
+            "crates/secs-sys/src/lib.rs",
+            "apps/secs2r/src/main.rs",
+        ]
+        self.assertEqual(
+            g.api_files(changed, ["crates/secs-types", "crates/secs-service"]),
+            ["crates/secs-types/src/ipc.rs", "crates/secs-types/README.md"])
+
+    def test_api_decision(self):
+        self.assertEqual(g.api_decide("0.1.0", set(), [], []), ("publish", "0.1.0"))
+        self.assertEqual(g.api_decide("0.1.0", {"api-v0.1.0"}, [], []), ("none", "0.1.0"))
+        self.assertEqual(g.api_decide("0.1.0", {"api-v0.1.0"}, ["crates/x/src/a.rs"], ["fix: a"]),
+                         ("bump", "0.1.1"))
+        self.assertEqual(g.api_decide("0.1.0", {"api-v0.1.0"}, ["crates/x/src/a.rs"], ["feat: a"]),
+                         ("bump", "0.2.0"))
+        self.assertEqual(g.api_decide("0.1.0", {"api-v0.1.0", "api-v0.1.1"},
+                                      ["crates/x/src/a.rs"], ["fix: a"]), ("bump", "0.1.2"))
+
+    def test_lock_entries_of_the_crates_move_together(self):
+        lock = (
+            '[[package]]\nname = "secs-types"\nversion = "0.1.0"\ndependencies = []\n\n'
+            '[[package]]\nname = "secs2r"\nversion = "0.30.0"\n\n'
+            '[[package]]\nname = "serde"\nversion = "0.1.0"\nsource = "registry+https://x"\n'
+        )
+        moved = g.set_member_versions(lock, {"secs-types"}, "0.2.0")
+        self.assertIn('name = "secs-types"\nversion = "0.2.0"', moved)
+        self.assertIn('name = "secs2r"\nversion = "0.30.0"', moved)
+        self.assertIn('name = "serde"\nversion = "0.1.0"', moved)
+
 
 class GitFailureTest(unittest.TestCase):
     @staticmethod
