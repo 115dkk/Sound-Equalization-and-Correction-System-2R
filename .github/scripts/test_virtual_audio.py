@@ -90,7 +90,19 @@ class EndpointTest(unittest.TestCase):
         command = run.call_args.args[0]
         self.assertIn("-NonInteractive", command)
         self.assertIn("$ErrorActionPreference='Stop'", base64.b64decode(command[-1]).decode("utf-16le"))
-        self.assertTrue(run.call_args.kwargs["check"])
+        failed = subprocess.CompletedProcess([], 1, "", "Get-AuthenticodeSignature: module could not be loaded\n")
+        with mock.patch.object(v.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(v.EngineError, "module could not be loaded"):
+                v.powershell("test")
+
+    def test_windows_powershell_does_not_inherit_the_pwsh_module_path(self):
+        env = v.windows_powershell_env({"PSModulePath": "C:/pwsh/Modules", "Path": "C:/bin"})
+        self.assertEqual(env, {"Path": "C:/bin"})
+        self.assertEqual(v.windows_powershell_env({"PSMODULEPATH": "x"}), {})
+        with mock.patch.object(v.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")) as run, \
+                mock.patch.dict(v.os.environ, {"PSModulePath": "C:/pwsh/Modules"}):
+            v.powershell("test")
+        self.assertNotIn("PSMODULEPATH", {key.upper() for key in run.call_args.kwargs["env"]})
 
 
 class InstallTest(unittest.TestCase):

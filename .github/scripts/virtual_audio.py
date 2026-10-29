@@ -100,11 +100,23 @@ def runner_only():
         raise EngineError("Virtual audio installation runs only on a disposable GitHub-hosted Windows runner")
 
 
+def windows_powershell_env(environ=None):
+    """The environment for Windows PowerShell 5.1 started from a PowerShell 7
+    step: without PowerShell 7's PSModulePath, which keeps 5.1 from autoloading
+    its own modules (Microsoft.PowerShell.Security holds Get-AuthenticodeSignature)."""
+    source = os.environ if environ is None else environ
+    return {key: value for key, value in source.items() if key.upper() != "PSMODULEPATH"}
+
+
 def powershell(script):
     preamble = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new();\n"
     encoded = base64.b64encode((preamble + script).encode("utf-16le")).decode("ascii")
     result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90, check=True)
+                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90,
+                            check=False, env=windows_powershell_env())
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "no output"
+        raise EngineError(f"PowerShell exited {result.returncode}: {detail}")
     return result.stdout.strip()
 
 

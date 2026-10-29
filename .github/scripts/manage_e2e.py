@@ -329,20 +329,28 @@ def runner_only():
         require(not os.environ.get(variable), f"real installed-service check refuses {variable}")
 
 
-def command(args, timeout=30, check=True):
+def command(args, timeout=30, check=True, env=None):
     result = subprocess.run([str(arg) for arg in args], capture_output=True, text=True,
-                            encoding="utf-8", errors="replace", timeout=timeout, check=False)
+                            encoding="utf-8", errors="replace", timeout=timeout, check=False, env=env)
     if check:
         require(result.returncode == 0,
                 f"{args!r} exited {result.returncode}: {result.stdout}\n{result.stderr}")
     return result
 
 
+def windows_powershell_env(environ=None):
+    """The environment for Windows PowerShell 5.1 started from a PowerShell 7
+    step: without PowerShell 7's PSModulePath, which keeps 5.1 from autoloading
+    its own modules (Microsoft.PowerShell.Security holds Get-AuthenticodeSignature)."""
+    source = os.environ if environ is None else environ
+    return {key: value for key, value in source.items() if key.upper() != "PSMODULEPATH"}
+
+
 def powershell(script, timeout=30):
     preamble = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new();\n"
     encoded = base64.b64encode((preamble + script).encode("utf-16le")).decode("ascii")
     return command(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-                   timeout=timeout).stdout.strip()
+                   timeout=timeout, env=windows_powershell_env()).stdout.strip()
 
 
 def ps_string(value):
