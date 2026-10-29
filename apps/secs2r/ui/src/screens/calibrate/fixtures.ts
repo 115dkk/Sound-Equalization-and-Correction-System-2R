@@ -7,6 +7,7 @@ import type { CalibrationSettings } from "../../ipc/bindings/CalibrationSettings
 import type { CalibrationSummary } from "../../ipc/bindings/CalibrationSummary";
 import type { ChannelResultLine } from "../../ipc/bindings/ChannelResultLine";
 import type { ConfigResult } from "../../ipc/bindings/ConfigResult";
+import type { MimoSummary } from "../../ipc/bindings/MimoSummary";
 import type { ModeSpecResult } from "../../ipc/bindings/ModeSpecResult";
 import type { Notice } from "../../ipc/bindings/Notice";
 import type { ResultCurve } from "../../ipc/bindings/ResultCurve";
@@ -221,17 +222,82 @@ function baResult({ subsOnly = false }: { subsOnly?: boolean } = {}): ResultCurv
   return curvesResult("ba", grid, curves, { subs_only: subsOnly });
 }
 
+/* ── Scorecard figures ──────────────────────────────────────────────────── */
+
+/**
+ * Per main role: ±1 dB share (%), GD spread (ms) and late 20–150 Hz energy
+ * (dB) at position 1, each before correction, after it and after MIMO. L, R
+ * and C are the reference case: MIMO gives up a little flatness for shorter
+ * ringing. The others are shaped like them.
+ */
+const FIGURES: Record<string, { within: [number, number, number]; gd: [number, number, number]; late: [number, number, number] }> = {
+  L: { within: [38, 64, 54], gd: [88.4, 47.5, 41.1], late: [-23.9, -16.3, -23.1] },
+  R: { within: [41, 65, 56], gd: [85.2, 47.3, 45.2], late: [-24.0, -17.0, -21.6] },
+  C: { within: [36, 62, 55], gd: [90.6, 47.7, 45.1], late: [-17.0, -16.0, -18.7] },
+  Ls: { within: [44, 71, 66], gd: [76.3, 39.8, 36.2], late: [-21.4, -18.2, -22.5] },
+  Rs: { within: [42, 69, 63], gd: [79.1, 41.2, 37.9], late: [-20.8, -17.6, -21.9] },
+  Lb: { within: [39, 67, 61], gd: [82.5, 43.6, 40.3], late: [-19.7, -16.9, -20.4] },
+  Rb: { within: [40, 66, 60], gd: [81.0, 44.1, 41.0], late: [-20.2, -17.3, -20.8] },
+  Tfl: { within: [47, 74, 70], gd: [68.4, 35.2, 33.6], late: [-22.6, -19.8, -22.1] },
+  Tfr: { within: [46, 73, 69], gd: [70.2, 36.0, 34.1], late: [-22.1, -19.4, -21.7] },
+  Tbl: { within: [43, 70, 67], gd: [72.9, 37.4, 35.8], late: [-21.0, -18.7, -20.9] },
+  Tbr: { within: [45, 72, 68], gd: [71.5, 36.8, 35.0], late: [-21.3, -18.9, -21.2] },
+};
+
+const round1 = (value: number) => Math.round(value * 10) / 10;
+
+/** The ChannelScore metrics with this role's ±1 dB share and GD spread (before, after); the rest as the IPC fixture has them. */
+const scorecard: CalibrationSummary["scorecard"] = fx.scorecard.map((score) => {
+  const figures = FIGURES[score.role];
+  if (!figures) return score;
+  return {
+    ...score,
+    before: { ...score.before, in1_20: figures.within[0], gd_20: figures.gd[0] },
+    after: { ...score.after, in1_20: figures.within[1], gd_20: figures.gd[1] },
+  };
+});
+
+/**
+ * Away from position 1 the room rings differently and the correction and
+ * MIMO help less: each figure a few dB apart, deterministic per role and
+ * position.
+ */
+function lateAt(role: string, position: number): [number, number, number] {
+  const [before, after, mimo] = FIGURES[role]!.late;
+  if (position === 1) return [before, after, mimo];
+  const k = fx.SAMPLE_MAINS.indexOf(role as (typeof fx.SAMPLE_MAINS)[number]);
+  const shift = [0, 2.1, -1.4, 1.2][position - 1]! + (((k * 7 + position * 3) % 5) - 2) * 0.4;
+  return [round1(before + shift), round1(after + shift * 0.6 + 0.9), round1(mimo + shift * 0.8 + 1.6)];
+}
+
+const lateEnergy = (positions: readonly number[]): CalibrationSummary["late_energy"] =>
+  positions.flatMap((position) => fx.SAMPLE_MAINS.map((role) => {
+    const [before_db, after_db] = lateAt(role, position);
+    return { role, position, before_db, after_db };
+  }));
+
+/** The MIMO result with its scorecard and late energy at the three measured positions. */
+const mimoSummary: MimoSummary = {
+  ...fx.mimoSummary,
+  input_count: fx.SAMPLE_MAINS.length,
+  scorecard: scorecard.map((score) => ({
+    role: score.role,
+    after_mimo: { ...score.after, in1_20: FIGURES[score.role]!.within[2], gd_20: FIGURES[score.role]!.gd[2] },
+  })),
+  late_energy: [1, 2, 3].flatMap((position) => fx.SAMPLE_MAINS.map((role) => ({ role, position, after_mimo_db: lateAt(role, position)[2] }))),
+};
+
 /* ── Results and lines ──────────────────────────────────────────────────── */
 
 const groupXo = (role: string) => XO[GROUP_OF[role] as keyof typeof XO] ?? null;
 
 function channelLines(roles: readonly string[], mimo: boolean): ChannelResultLine[] {
   return roles.map((role, i) => {
-    const score = fx.scorecard.find((s) => s.role === role) ?? fx.scorecard[i % fx.scorecard.length]!;
+    const score = scorecard.find((s) => s.role === role) ?? scorecard[i % scorecard.length]!;
     return {
       role,
-      within_1db_pct: [Math.round(score.before.in1_20 * 10) / 10, Math.round(score.after.in1_20 * 10) / 10],
-      gd_spread_ms: [Math.round(score.before.gd_20 * 10) / 10, Math.round(score.after.gd_20 * 10) / 10],
+      within_1db_pct: [round1(score.before.in1_20), round1(score.after.in1_20)],
+      gd_spread_ms: [round1(score.before.gd_20), round1(score.after.gd_20)],
       peq_count: 3 + ((i * 5) % 6),
       fir_taps: 2048,
       xo_hz: groupXo(role),
@@ -304,10 +370,14 @@ const SW2_FILTERS: Notice[] = [
   { code: "sub_filter_peq", params: { role: "SW2", index: "0", hz: "38", q: "5", gain_db: "-4" } },
 ];
 
-const summary = (stale = false, notes: readonly Notice[] = NOTES): CalibrationSummary => ({
+const summary = (stale = false, notes: readonly Notice[] = NOTES, positions: readonly number[] = [1, 2, 3]): CalibrationSummary => ({
   ...fx.calibrationSummary,
   stale,
   notes: [...notes],
+  // The verdict sums up the channels below it (about their mean).
+  verdict: { ...fx.calibrationSummary.verdict, within_1db_before_pct: 41.9, within_1db_after_pct: 68.6, low_band_time_spread_before_ms: 78.7, low_band_time_spread_after_ms: 41.5 },
+  scorecard,
+  late_energy: lateEnergy(positions),
 });
 
 function lines({ roles = fx.SAMPLE_MAINS, mimo = false, stale = false, ba = baLines as SubResultLines | null }: { roles?: readonly string[]; mimo?: boolean; stale?: boolean; ba?: SubResultLines | null } = {}): ResultLinesResult {
@@ -413,10 +483,26 @@ export const subsOnlyView: CalibrateView = {
 
 export const mimoView: CalibrateView = {
   ...base,
-  results: { calibration: summary(), mimo: fx.mimoSummary, mimo_export: "included" },
+  results: { calibration: summary(), mimo: mimoSummary, mimo_export: "included" },
   lines: lines({ mimo: true }),
   curves: splResult("L", { mimo: true }),
   settings: { ...baseSettings, mimo_on: true, mimo_max_supports: 4 },
+};
+
+/** MIMO computed on an earlier correction: the scorecard compares before and after only, and the graph draws no MIMO curve. */
+export const mimoStaleView: CalibrateView = {
+  ...mimoView,
+  results: { calibration: summary(), mimo: { ...mimoSummary, stale: true }, mimo_export: "stale" },
+  lines: lines(),
+  curves: splResult(),
+};
+
+/** One measured position: the late bass there only, so no positions table (and no MIMO, which needs three). */
+export const onePositionView: CalibrateView = {
+  ...base,
+  positions: [1],
+  results: { calibration: summary(false, NOTES, [1]), mimo: null, mimo_export: "off" },
+  lines: lines({ ba: { ...baLines, positions: 1 } }),
 };
 
 export const noSubsView: CalibrateView = {
@@ -438,7 +524,7 @@ export const ultraView: CalibrateView = {
   resultMode: { mode: "ultra", ultra_ms: 120 },
 };
 
-export const runningMimoView: CalibrateView = { ...mimoView, results: { calibration: summary(), mimo: { ...fx.mimoSummary, stale: true }, mimo_export: "stale" }, running: "mimo" };
+export const runningMimoView: CalibrateView = { ...mimoView, results: { calibration: summary(), mimo: { ...mimoSummary, stale: true }, mimo_export: "stale" }, running: "mimo" };
 
 /** R was chosen and its curves are on their way: L's curves are still the ones received. */
 export const loadingView: CalibrateView = { ...base, channel: "R", curvesLoading: true };
@@ -459,8 +545,8 @@ function defaultSub() {
   return { mode: "auto", bundle: "A", gain_db: 0, delay_ms: 0, polarity: 1, allpass: [] as [number, number][], mimo_support: true, hp_hz: 0, lp_hz: 0, peq: [] as [number, number, number][], hp_type: "LR24", lp_type: "LR24", dba_row: "front" };
 }
 
-const firMimoSummary: import("../../ipc/bindings/MimoSummary").MimoSummary = {
-  ...fx.mimoSummary, kind: "fir", support_count: 2, fir_taps_total: 16000,
+const firMimoSummary: MimoSummary = {
+  ...mimoSummary, kind: "fir", support_count: 2, fir_taps_total: 16000,
   input_count: 1,
 };
 
@@ -506,7 +592,7 @@ export const requestedGpuUnavailableView: CalibrateView = { ...runtimeMissingVie
 /** The saved GPU preference does not change the CPU reference used for IIR. */
 export const gpuIirReferenceView: CalibrateView = {
   ...mimoView, compute: gpuSelectedView.compute,
-  results: { ...mimoView.results, mimo: { ...fx.mimoSummary, compute: {
+  results: { ...mimoView.results, mimo: { ...mimoSummary, compute: {
     ...fx.cpuComputeReport, requested: "gpu", reason: "iir_reference",
   } } },
 };

@@ -11,7 +11,7 @@ use secs_types::{
 use super::{IirDerivatives, IirSolveOptions, IirSupport, MimoDesign, MimoRequest, support_path};
 use crate::{
     C, Design, EngineConfig, EngineError, MeasurementSet, Note, PeqDerivatives, Tuning,
-    grid::design_freqs,
+    grid::design_freqs, scorecard::Metrics,
 };
 
 /// Low-rate taps a FIR support solves for (upstream `mimo.FIR_TAPS_LOW`):
@@ -71,12 +71,30 @@ impl MimoKey {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct MimoRoleScore {
+    pub role: String,
+    pub after_mimo: Metrics,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MimoRoleLateEnergy {
+    pub role: String,
+    pub position: u32,
+    pub after_mimo_db: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct MimoRun {
     pub key: MimoKey,
     pub ideal: MimoDesign,
     pub paths: MimoPaths,
     pub final_resp: Vec<(String, Vec<C>)>,
+    /// Main-position responses consumed by the `보정 후 + MIMO` mdat items.
     pub applied: Vec<(String, Vec<C>)>,
+    /// Scorecard metrics computed from those exact main-position responses.
+    pub scorecard: Vec<MimoRoleScore>,
+    /// Late energy after MIMO, position-major and in main-chain order.
+    pub late_energy: Vec<MimoRoleLateEnergy>,
     /// Upstream's 1390-point geometric SPL grid, 5–20,000 Hz, smoothed at 1/24 octave.
     pub spl_mimo: Vec<(String, Vec<f64>)>,
     pub notes: Vec<Note>,
@@ -367,6 +385,58 @@ pub(crate) fn assemble(
     assemble_prepared(design, &prepared, ideal, supports, key, ctx)
 }
 
+struct ResponseAt<'a> {
+    role: &'a str,
+    position: u32,
+}
+
+fn applied_response(
+    design: &Design,
+    prepared: &super::prepared::Prepared<'_>,
+    ideal: &MimoDesign,
+    supports: &Supports,
+    lp: &[C],
+    at: ResponseAt<'_>,
+    ctx: &Context,
+) -> Result<(Vec<C>, Vec<C>), EngineError> {
+    check(ctx)?;
+    let f = design_freqs();
+    let base = crate::stage_responses(design, at.role, &prepared.spectra, at.position)
+        .ok_or_else(|| {
+            EngineError::Input(format!(
+                "missing MIMO final response {}/{}",
+                at.position, at.role
+            ))
+        })?
+        .output;
+    let mut extra = vec![C::new(0.0, 0.0); f.len()];
+    if let Some((_, sups)) = supports.iter().find(|(input, _)| input == at.role) {
+        for (support, realization) in sups {
+            check(ctx)?;
+            let path = support_path(
+                ideal,
+                support,
+                &prepared.spectra,
+                at.position,
+                &prepared.align_delay_ms,
+            )?;
+            let response = match realization {
+                Support::Iir(support) => support.response(f),
+                Support::Fir { taps, fs_low } => fir_response(taps, *fs_low, f),
+            };
+            for index in 0..f.len() {
+                extra[index] += path[index] * lp[index] * response[index];
+            }
+        }
+    }
+    let applied = base
+        .iter()
+        .zip(extra)
+        .map(|(base, extra)| base + extra)
+        .collect();
+    Ok((base, applied))
+}
+
 pub(crate) fn assemble_prepared(
     design: &Design,
     prepared: &super::prepared::Prepared<'_>,
@@ -376,7 +446,6 @@ pub(crate) fn assemble_prepared(
     ctx: &Context,
 ) -> Result<MimoRun, EngineError> {
     check(ctx)?;
-    let spectra = &prepared.spectra;
     let f = design_freqs();
     let mut paths = Vec::new();
     for (input, sups) in &supports {
@@ -439,40 +508,43 @@ pub(crate) fn assemble_prepared(
         lr4(f, key.fsiso, "LP")
     };
     let spl_grid = crate::design::geomspace(5.0, 20000.0, 1390);
+    let target = design.target.sample(
+        &f.iter()
+            .map(|frequency| frequency.max(1.0))
+            .collect::<Vec<_>>(),
+    );
     let mut final_resp = Vec::new();
     let mut applied = Vec::new();
+    let mut scorecard = Vec::new();
+    let mut late_energy = Vec::new();
     let mut spl_mimo = Vec::new();
-    for main in &design.chain.mains {
-        check(ctx)?;
-        let role = &main.role;
-        let base = crate::stage_responses(design, role, spectra, design.spectra.main_position)
-            .ok_or_else(|| EngineError::Input(format!("missing MIMO final response {role}")))?
-            .output;
-        let mut extra = vec![C::new(0.0, 0.0); f.len()];
-        if let Some((_, sups)) = supports.iter().find(|(r, _)| r == role) {
-            for (support, sp) in sups {
-                check(ctx)?;
-                let path = support_path(
-                    &ideal,
-                    support,
-                    spectra,
-                    design.spectra.main_position,
-                    &prepared.align_delay_ms,
-                )?;
-                let response = match sp {
-                    Support::Iir(s) => s.response(f),
-                    Support::Fir { taps, fs_low } => fir_response(taps, *fs_low, f),
-                };
-                for k in 0..f.len() {
-                    extra[k] += path[k] * lp[k] * response[k];
-                }
+    for &position in &design.spectra.positions {
+        for main in &design.chain.mains {
+            let role = &main.role;
+            let (base, sum) = applied_response(
+                design,
+                prepared,
+                &ideal,
+                &supports,
+                &lp,
+                ResponseAt { role, position },
+                ctx,
+            )?;
+            late_energy.push(MimoRoleLateEnergy {
+                role: role.clone(),
+                position,
+                after_mimo_db: crate::decay::late_db_20_150(&sum),
+            });
+            if position == design.spectra.main_position {
+                scorecard.push(MimoRoleScore {
+                    role: role.clone(),
+                    after_mimo: crate::scorecard::metrics(&sum, f, &target, (100.0, 400.0)),
+                });
+                spl_mimo.push((role.clone(), crate::design::spl_db(&sum, &spl_grid)));
+                final_resp.push((role.clone(), base));
+                applied.push((role.clone(), sum));
             }
         }
-        let sum: Vec<_> = base.iter().zip(extra).map(|(b, e)| b + e).collect();
-        let spl = crate::design::spl_db(&sum, &spl_grid);
-        final_resp.push((role.clone(), base));
-        applied.push((role.clone(), sum));
-        spl_mimo.push((role.clone(), spl));
     }
     check(ctx)?;
     Ok(MimoRun {
@@ -485,6 +557,8 @@ pub(crate) fn assemble_prepared(
         },
         final_resp,
         applied,
+        scorecard,
+        late_energy,
         spl_mimo,
         fir: key.fir,
         key,

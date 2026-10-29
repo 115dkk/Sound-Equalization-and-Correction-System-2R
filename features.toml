@@ -1221,6 +1221,14 @@ status = "implemented"
 tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::stale_calibration_exports_with_flag_and_cache_survives_reopen"]
 
 [[feature]]
+id = "results.mimo_scorecard"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-engine::mimo_scorecard_matches_applied_response_and_reports_late_energy", "secs-engine::mimo_scorecard_and_late_energy_are_deterministic_across_threads", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::old_cache_without_scorecard_fields_loads_empty_lists"]
+note = "Adds post-MIMO scorecard metrics and per-position 20–150 Hz late energy; this result summary is new in SECS 2R and is not upstream."
+
+[[feature]]
 id = "ipc.export"
 kind = "ipc"
 milestone = "M4"
