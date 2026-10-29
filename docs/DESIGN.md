@@ -279,6 +279,11 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 | 작업 트레이 | `jobs.tray`, `jobs.job.<kind>`, `jobs.cancel.<kind>`, `jobs.history`, `jobs.history.toggle`, `jobs.history.clear` |
 | 그래프 | `<id>`, `<id>.axes`, `<id>.legend.role.<role>`, `<id>.legend.position.<n>`, `<id>.point.<n>` |
 | 배치도 | `<id>.speaker.<role>`, `<id>.unassigned.<n>`, `<id>.position.<n>` |
+| 내보낼 DSP의 출력 레이트(P116, ADR 0017) | `system.dsp.output_rate` |
+| 필터 형식별 출력 레이트(P116) | `export.kind.<kind>.rate` |
+| 컨볼루션 IR의 추가 레이트(P116) | `export.extra_rates`, `export.extra_rates.summary`, `export.extra_rates.list`, `export.extra_rates.<rate>` |
+| 내보낸 출력 레이트와 자동 선택 실패(P116) | `export.outcome.<kind>.rate`, `export.outcome.<kind>.rate_fallback`, `export.outcome.<kind>.go_system` |
+| 채널 FIR 한도 초과(P116) | `calibrate.mode.fir_over` |
 
 단계 id는 `system`, `connect`, `measure`, `calibrate`, `export`입니다.
 
@@ -292,6 +297,19 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 - **리뷰 이슈**: `ui-gallery.yml`이 화면 PR(`apps/secs2r/ui/**`)과 수동 실행에서 투어와 견본을 찍어 `ui-gallery` 브랜치에 올리고, PR마다 리뷰 이슈 하나(`화면 갤러리 리뷰: PR #N`, 라벨 `ui-gallery`)를 열거나 댓글로 갱신합니다. 이슈 글은 `.github/scripts/gallery_issue.py`가 짓습니다(본문은 투어, 댓글은 한국어·밝게 견본). 브랜치에는 장면 전부와 한국어·밝게 견본만 올리고(나머지 견본 변형은 실행 아티팩트), 최근 4번의 실행만 남기도록 매번 다시 쓰므로 저장소를 복제해도 스크린숏이 쌓이지 않고, 더 오래된 이슈는 이미지를 잃습니다. 이슈는 머지를 막지 않습니다.
 - Playwright에는 `locale`을 주어야 합니다. 브라우저 언어 태그가 잘못되면(`en-US@posix`처럼) uPlot이 `Intl.NumberFormat`에서 멈춥니다.
 - **모의 서비스**(`ipc/mock.ts`): `createMockService({ tickMs, project, results })`는 `makeClient`에 넘길 `invoke`와 그 클라이언트, 잡 이벤트 버스를 줍니다. 생성된 바인딩으로 타입을 맞춘 고정값(`ipc/fixtures.ts`)으로 답하고, 잡은 타이머(또는 `tick()`, `drain()`)로 진행·로그·완료 이벤트를 보냅니다. `failNext`, `failAlways`, `failJobs`로 실패시킬 수 있고, 받은 요청은 `calls`에 남습니다. 같은 종류의 잡이 돌면 `job_busy`, 없는 잡을 취소하면 `job_not_found`입니다.
+
+출력 레이트의 견본(P116, P117)은 다음 여덟 개입니다. 자동을 고른 견본도 CamillaDSP 프로파일을 유지합니다.
+
+| 견본 id | 상태 |
+|---|---|
+| `screen.system.dsp.rate-48k` | CamillaDSP의 출력 레이트 48 kHz, 변경 가능 |
+| `screen.system.dsp.rate-auto` | CamillaDSP의 출력 레이트 자동, 장치 조회와 48 kHz 대체 안내 |
+| `screen.system.dsp.rate-minidsp` | miniDSP의 출력 레이트 96 kHz 고정, 해당 레이트로 계산한 FIR 길이 |
+| `screen.export.rate.96k` | 필터 형식별 출력 레이트 96 kHz, REW mdat은 기존 레이트 유지 |
+| `screen.export.rate.extra` | 추가 레이트 목록 펼침, 44.1 kHz와 192 kHz 선택 |
+| `screen.export.rate.fallback` | 자동 선택에서 32 kHz를 지원하지 않아 48 kHz로 저장, 시스템으로 이동 |
+| `screen.calibrate.mimo-budget-96k` | 96 kHz에서 MIMO FIR 예산 초과 |
+| `screen.calibrate.mode-fir-over-96k` | 96 kHz에서 채널당 FIR 한도 초과 |
 
 ## 13. 검사
 

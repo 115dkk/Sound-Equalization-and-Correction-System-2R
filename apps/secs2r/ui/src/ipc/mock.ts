@@ -661,7 +661,7 @@ export function createMockService(options: MockOptions = {}): MockService {
         const outputRate = rated.output_rate;
         for (const [index, rate] of extraRates.entries()) {
           if (!(OUTPUT_RATES as readonly number[]).includes(rate)) throw new MockError(ipcError("invalid_request", "unsupported extra output sample rate", { rate: String(rate) }));
-          if (rate === outputRate || extraRates.indexOf(rate) !== index) {
+          if ((rate === outputRate && dsp.fields.output_rate !== "auto") || extraRates.indexOf(rate) !== index) {
             throw new MockError(ipcError("invalid_request", "extra output sample rates must be distinct from the main rate and each other", { rate: String(rate) }));
           }
         }
@@ -693,7 +693,7 @@ export function createMockService(options: MockOptions = {}): MockService {
           const pairs = calibration.main_roles.flatMap((input) => [input, ...calibration.sub_roles].map((output) => `${input}_to_${output}`));
           pairs.push(...calibration.sub_roles.map((output) => `LFE_to_${output}`));
           // secs-filters: the extra rates go into `<rate>Hz` folders beside the output rate's files.
-          const files = ["", ...extraRates.map((rate) => `/${rate}Hz`)].flatMap((sub) => pairs.flatMap((pair) => [`${folder}${sub}/${pair}.wav`, `${folder}${sub}/${pair}.csv`]));
+          const files = ["", ...extraRates.filter((rate) => rate !== outputRate).map((rate) => `/${rate}Hz`)].flatMap((sub) => pairs.flatMap((pair) => [`${folder}${sub}/${pair}.wav`, `${folder}${sub}/${pair}.csv`]));
           files.push(`${folder}/컨볼루션 적용 방법.txt`, `${folder}/routing.json`, `${folder}/secs-design.json`);
           return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: calibration.stale, ...rated } })) };
         }
@@ -786,7 +786,7 @@ export function createMockService(options: MockOptions = {}): MockService {
         if (req.params.preset !== null && !preset) invalid("unknown DSP preset");
         if (preset) dsp = { ...dsp, profile: preset.key, name: preset.name, fields: clone(preset.fields) };
         const fields = req.params.fields;
-        // project_edit.rs dsp_set: a supported rate, changed only on a profile that chooses it; any manual edit makes the profile custom.
+        // project_edit.rs dsp_set: only editable profiles accept a rate change; changing other fields makes the profile custom.
         if (fields) {
           if (fields.output_rate !== "auto" && !(OUTPUT_RATES as readonly number[]).includes(fields.output_rate.fixed)) {
             throw new MockError(ipcError("invalid_request", "unsupported output sample rate", { reason: "output_rate" }));
@@ -797,7 +797,10 @@ export function createMockService(options: MockOptions = {}): MockService {
         }
         // The output rate stays out of the design (ADR 0017): changing it alone leaves the result current.
         const rateOnly = !!fields && (Object.keys(fields) as (keyof typeof fields)[]).every((key) => key === "output_rate" || key === "output_rate_editable" || fields[key] === dsp.fields[key]);
-        if (fields) dsp = { ...dsp, profile: "custom", fields: { ...clone(fields), output_rate_editable: true } };
+        if (fields) {
+          const profile = rateOnly ? dsp.profile : "custom";
+          dsp = { ...dsp, profile, fields: { ...clone(fields), output_rate_editable: profile === "camilla" || profile === "custom" } };
+        }
         dsp.window_ms = (dsp.fields.fir_taps / countedRate(dsp.fields.output_rate)) * 1000; dsp.resolution_hz = 48000 / Math.max(1, dsp.fields.fir_taps);
         if (rateOnly) project = { ...needProject(), dirty: true }; else dirty();
         return { method: req.method, data: dsp };

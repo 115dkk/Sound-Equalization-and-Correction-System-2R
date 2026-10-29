@@ -162,9 +162,9 @@ describe("useSystemScreen", () => {
     expect(fields).toMatchObject({ output_rate: { fixed: 48000 }, output_rate_editable: true });
     await perform(() => result.current.actions.setDspFields({ ...fields, output_rate: { fixed: 96000 } }));
     expect(mock.calls.filter((call) => call.method === "dsp_set")).toEqual([{ method: "dsp_set", params: { preset: null, fields: { ...fields, output_rate: { fixed: 96000 } } } }]);
-    expect(result.current.view?.dsp.fields.output_rate).toEqual({ fixed: 96000 });
+    expect(result.current.view?.dsp).toMatchObject({ profile: "camilla", fields: { output_rate: { fixed: 96000 }, output_rate_editable: true } });
     await perform(() => result.current.actions.setDspFields({ ...result.current.view!.dsp.fields, output_rate: "auto" }));
     expect(mock.calls.filter((call) => call.method === "dsp_set").at(-1)).toMatchObject({ method: "dsp_set", params: { preset: null, fields: { output_rate: "auto" } } });
-    expect(result.current.view?.dsp.fields.output_rate).toBe("auto");
+    expect(result.current.view?.dsp).toMatchObject({ profile: "camilla", fields: { output_rate: "auto", output_rate_editable: true } });
   });
 });

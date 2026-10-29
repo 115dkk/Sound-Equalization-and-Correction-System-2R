@@ -400,17 +400,49 @@ describe("mock filter exports", () => {
     } finally { mock.dispose(); }
   });
 
+  it.each([44100, 32000, null])("skips an extra rate matching the automatic rate, including fallback from %s Hz", async (playbackRate) => {
+    const mock = createMockService({ tickMs: 0, results: resultWithoutSubs(), playbackRate });
+    try {
+      const dsp = await mock.request({ method: "dsp_get" });
+      await mock.request({ method: "dsp_set", params: { preset: null, fields: { ...dsp.fields, output_rate: "auto" } } });
+      const rate = playbackRate === 44100 ? 44100 : 48000;
+      const output = await rated(mock, "convolution", "C:/out", { extra_rates: [rate, 96000] });
+      expect(output.output_rate).toBe(rate);
+      expect(output.files).toContain("C:/out/L_to_L.wav");
+      expect(output.files).toContain("C:/out/96000Hz/L_to_L.wav");
+      expect(output.files.some((file) => file.includes(`/${rate}Hz/`))).toBe(false);
+      const mainOnly = await rated(mock, "convolution", "C:/out", { extra_rates: [rate] });
+      expect(mainOnly.files).toEqual((await rated(mock, "convolution", "C:/out")).files);
+      for (const rates of [[rate, rate], [96000, 96000], [32000]]) {
+        await expect(mock.request({ method: "export", params: { kind: "convolution", folder: "", extra_rates: rates } })).rejects.toMatchObject({ error: { code: "invalid_request" } });
+      }
+    } finally { mock.dispose(); }
+  });
+
+  it.each(["fir_taps", "fir_budget", "iir_bands", "allpass_bands", "bm_path_delays"] as const)("makes the profile custom when %s changes along with the output rate", async (field) => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      const dsp = await mock.request({ method: "dsp_get" });
+      const edited = await mock.request({ method: "dsp_set", params: { preset: null, fields: { ...dsp.fields, [field]: dsp.fields[field] + 1, output_rate: "auto" } } });
+      expect(edited).toMatchObject({ profile: "custom", fields: { [field]: dsp.fields[field] + 1, output_rate: "auto", output_rate_editable: true } });
+    } finally { mock.dispose(); }
+  });
+
   it("changes the output rate only where the profile chooses it, without making the result stale", async () => {
     const mock = createMockService({ tickMs: 0, results: resultWithoutSubs() });
     try {
       const camilla = await mock.request({ method: "dsp_get" });
       expect(camilla.fields).toMatchObject({ output_rate: { fixed: 48000 }, output_rate_editable: true });
       const pc = await mock.request({ method: "dsp_set", params: { preset: null, fields: { ...camilla.fields, output_rate: { fixed: 96000 } } } });
-      expect(pc).toMatchObject({ profile: "custom", fields: { output_rate: { fixed: 96000 }, output_rate_editable: true }, window_ms: (camilla.fields.fir_taps / 96000) * 1000 });
+      expect(pc).toMatchObject({ profile: "camilla", fields: { output_rate: { fixed: 96000 }, output_rate_editable: true }, window_ms: (camilla.fields.fir_taps / 96000) * 1000 });
+      expect((await mock.request({ method: "results" })).calibration?.stale).toBe(false);
+      const automatic = await mock.request({ method: "dsp_set", params: { preset: null, fields: { ...pc.fields, output_rate: "auto" } } });
+      expect(automatic).toMatchObject({ profile: "camilla", name: camilla.name, fields: { output_rate: "auto", output_rate_editable: true } });
       expect((await mock.request({ method: "results" })).calibration?.stale).toBe(false);
       await expect(mock.request({ method: "dsp_set", params: { preset: null, fields: { ...camilla.fields, output_rate: { fixed: 32000 } } } })).rejects.toMatchObject({ error: { code: "invalid_request", params: { reason: "output_rate" } } });
       const minidsp = await mock.request({ method: "dsp_set", params: { preset: "minidsp", fields: null } });
       expect(minidsp.fields).toMatchObject({ output_rate: { fixed: 96000 }, output_rate_editable: false });
+      expect(await mock.request({ method: "dsp_set", params: { preset: null, fields: { ...minidsp.fields, output_rate_editable: true } } })).toMatchObject({ profile: "minidsp", fields: { output_rate_editable: false } });
       await expect(mock.request({ method: "dsp_set", params: { preset: null, fields: { ...minidsp.fields, output_rate: { fixed: 44100 } } } })).rejects.toMatchObject({ error: { code: "invalid_request", params: { reason: "output_rate" } } });
     } finally { mock.dispose(); }
   });

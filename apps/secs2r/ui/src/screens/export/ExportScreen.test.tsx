@@ -843,7 +843,7 @@ describe("내보내기", () => {
     };
     const filter = (kind: string) => FILTER_KINDS.some((candidate) => candidate === kind);
     const fixed = translate("ko", "export.rate.fixed", { rate: "96 kHz" });
-    expect(fixed).toBe("96 kHz로 씁니다");
+    expect(fixed).toBe("출력 레이트 96 kHz");
     expect(rows(exportRate96k)).toEqual(EXPORT_KINDS.map((kind) => (filter(kind) ? fixed : null)));
     const auto = translate("ko", "export.rate.auto");
     expect(rows({ ...exportReady, outputRate: "auto" })).toEqual(EXPORT_KINDS.map((kind) => (filter(kind) ? auto : null)));

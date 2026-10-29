@@ -318,6 +318,7 @@ describe("SystemScreen", () => {
     expect(actions.setDspFields).toHaveBeenLastCalledWith({ ...sampleView.dsp.fields, output_rate: "auto" });
     cleanup();
     setup(autoRateView);
+    expect((must("system.dsp.device") as HTMLSelectElement).value).toBe("camilla");
     expect((must("system.dsp.output_rate") as HTMLSelectElement).value).toBe("auto");
     expect(document.getElementById("system.dsp.output_rate-hint")?.textContent).toBe(translate("ko", "system.dsp.output_rate.auto.hint"));
   });

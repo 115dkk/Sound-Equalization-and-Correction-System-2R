@@ -1105,6 +1105,15 @@ tests = []
 note = "five-stage flow, results first, three disclosure levels (docs/ARCHITECTURE.md, Screens). P29 landed the foundation: tokens, the frame with the step rail and status, the job tray, the component kit, the uPlot graphs, the SVG maps, the mock service and the gallery (docs/DESIGN.md). Its vitest tests live in apps/secs2r/ui, which this registry cannot reference (it lists cargo tests). P33 connects the P30-P32 screens through typed stores, explicit mutation/job invalidation, per-call Tauri channels, project/close dialogs and lifecycle hooks. src/state/flow.test.tsx walks a non-tutorial sample project through mock measure_position jobs, calibration and CamillaDSP export; per-screen hook tests pin action IPC params. app.live exercises the full mock app. P35 supplies the complete tutorial quests. P55 moves static setting explanations into contextual help while retaining live state, recommendations and recovery inline; labels and both locales are revised, with pointer/keyboard/touch and disabled-control coverage in the UI tests."
 
 [[feature]]
+id = "ui.output_rate"
+kind = "ui"
+milestone = "M6"
+status = "partial"
+tests = ["secs-service::dsp_output_rate_follows_presets_and_only_camilla_or_custom_is_editable", "secs-service::changing_only_output_rate_keeps_calibration_fresh_for_export"]
+upstream = "new; docs/adr/0017-output-sample-rate.md"
+note = "P116-P117: System selects the export DSP's output rate, or shows its device-fixed rate. Correction counts channel FIR taps and the MIMO FIR budget at that rate. Export names non-default rates, selects extra convolution rates and reports automatic-rate fallback with a System action. Rate-only edits keep the DSP profile; automatic export skips an extra rate matching the resolved rate. Like ui.skins, this entry stays partial because the registry lists Cargo tests, not the screen's Vitest tests. The listed service tests cover the DSP contract; UI coverage is in apps/secs2r/ui/src/screens/system/{SystemScreen,useSystemScreen}.test.tsx, screens/system/outputRate.test.ts, screens/calibrate/{CalibrateScreen,useCalibrateScreen}.test.tsx, screens/export/{ExportScreen,useExportScreen}.test.tsx, ipc/mock.test.ts and state/writers.test.ts. Eight specimens and stable ids are recorded in docs/DESIGN.md and docs/M5-reach.md."
+
+[[feature]]
 id = "ui.skins"
 kind = "ui"
 milestone = "M6"

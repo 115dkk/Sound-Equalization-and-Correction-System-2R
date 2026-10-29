@@ -185,14 +185,10 @@ const invalidNotices: Notice[] = [
   { code: "main_with_sub_band", params: { role: "Tbl" } },
 ];
 
-/**
- * The sample room exporting to a PC convolver that follows the playback
- * device (자동). Any manual DSP edit, the output rate too, makes the profile
- * `custom` (the service's `dsp_set`).
- */
+/** The sample room following the playback device (자동); a rate-only edit keeps the CamillaDSP profile. */
 export const autoRateView: SystemView = {
   ...sampleView,
-  dsp: dspOf("custom", { ...DSP_PRESETS[0]!.fields, output_rate: "auto" }),
+  dsp: dspOf("camilla", { ...DSP_PRESETS[0]!.fields, output_rate: "auto" }),
 };
 
 /** The sample room exporting to a miniDSP Flex: 96 kHz, fixed by the device. */
