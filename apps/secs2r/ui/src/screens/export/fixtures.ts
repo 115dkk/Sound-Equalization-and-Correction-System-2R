@@ -34,6 +34,8 @@ const exportMimo: MimoSummary = {
   fir_taps_total: 0,
   notes: [],
   input_count: SAMPLE_MAINS.length,
+  scorecard: [],
+  late_energy: [],
 };
 
 const exportRc: Notice[] = [

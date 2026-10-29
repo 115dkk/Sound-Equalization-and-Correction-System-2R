@@ -126,6 +126,8 @@
 | XO 탭의 XO 선 끌기(40–200 Hz, 끄는 동안 곡선이 따라오고 놓으면 저장) | `calibrate.xo.line.handle` | 없음 | P31b |
 | 탭별 범례(보정 전, 보정 후, 타겟, MIMO 적용, 메인, 서브, 합, 정렬 전, 정렬 후, 서브 합) | `calibrate.plot.legend.<key>` | 없음 | P31b |
 | 지표 줄 "±1 dB (20–200 Hz) a % → b %" · "GD 산포 (20–100 Hz) a → b ms"(판정 카드는 전체, 성적표는 채널별) | `calibrate.verdict.within`, `calibrate.verdict.gd`, `calibrate.verdict.spread`, `calibrate.scorecard` | 없음 | P31b |
+| 성적표: 보정 전·후·MIMO 후 비교 범례, 기준 위치의 늦은 저음(20–150 Hz, dB)과 설명(견본 `screen.calibrate.mimo-scorecard`, `screen.calibrate.mimo-stale-scorecard`, `screen.calibrate.mimo-scorecard.min`) | `calibrate.scorecard.key`, `calibrate.scorecard.late` | 없음 | P110, P111 |
+| 위치별 늦은 저음: 접힌 표, 위치 번호순과 기준 위치 표시, 현재 MIMO 결과가 있으면 세 값 비교(견본 `screen.calibrate.late-positions`, `screen.calibrate.one-position`) | `calibrate.scorecard.positions`, `calibrate.scorecard.positions.table` | 없음 | P110, P111 |
 | 필터 줄 "PEQ n · FIR n탭 \| FIR 없음 · XO n Hz · MIMO 서포트 n"(고른 채널) | `calibrate.plot.filters` | 없음 | P31b |
 | 전체 지연과 엔진 메모(메모는 접힌 목록, 업스트림처럼 늘 보임) | `calibrate.verdict.delay`, `calibrate.verdict.notes` | 없음 | P31b |
 | BA 탭: 서브 합 평탄도(lo–hi Hz), 좌석 편차 또는 한 위치 | `calibrate.ba.metrics` | 없음 | P31b |
