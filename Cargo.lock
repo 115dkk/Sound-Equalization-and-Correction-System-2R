@@ -3976,7 +3976,7 @@ dependencies = [
 
 [[package]]
 name = "secs-cuda-sys"
-version = "0.35.0"
+version = "0.35.1"
 dependencies = [
  "libloading 0.9.0",
  "thiserror 2.0.21",
@@ -4020,7 +4020,7 @@ dependencies = [
 
 [[package]]
 name = "secs-engine-testkit"
-version = "0.35.0"
+version = "0.35.1"
 dependencies = [
  "secs-compute",
  "secs-dsp",
@@ -4064,7 +4064,7 @@ dependencies = [
 
 [[package]]
 name = "secs-gpu"
-version = "0.35.0"
+version = "0.35.1"
 dependencies = [
  "secs-compute",
  "secs-cuda-sys",
@@ -4096,7 +4096,7 @@ dependencies = [
 
 [[package]]
 name = "secs-local-api"
-version = "0.35.0"
+version = "0.35.1"
 dependencies = [
  "axum",
  "futures-util",
@@ -4123,7 +4123,7 @@ dependencies = [
 
 [[package]]
 name = "secs-oracle"
-version = "0.35.0"
+version = "0.35.1"
 dependencies = [
  "serde_json",
  "sha2 0.11.1",
@@ -4131,7 +4131,7 @@ dependencies = [
 
 [[package]]
 name = "secs-policy"
-version = "0.35.0"
+version = "0.35.1"
 dependencies = [
  "secs-types",
  "serde",
@@ -4193,7 +4193,7 @@ dependencies = [
 
 [[package]]
 name = "secs-sys"
-version = "0.35.0"
+version = "0.35.1"
 dependencies = [
  "audio_thread_priority",
  "chrono",
@@ -4220,7 +4220,7 @@ dependencies = [
 
 [[package]]
 name = "secs2r"
-version = "0.35.0"
+version = "0.35.1"
 dependencies = [
  "secs-gpu",
  "secs-local-api",
@@ -4237,7 +4237,7 @@ dependencies = [
 
 [[package]]
 name = "secs2r-cli"
-version = "0.35.0"
+version = "0.35.1"
 dependencies = [
  "clap",
  "rayon",
