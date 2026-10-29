@@ -81,9 +81,14 @@ and `apps/secs2r-cli/src/main.rs` (where `Deps` are built),
 4. **CLI.** `secs2r-cli apply camilla [--address host:port]`,
    `secs2r-cli apply eqapo`, `secs2r-cli apply eqapo --revert`,
    `secs2r-cli apply status`.
-5. **Local API.** Nothing to do if the local API forwards every `Request`
-   (check `secs-local-api` once `main` has it; this branch may not); say
-   what you found.
+5. **Local API.** This branch now has `crates/secs-local-api` (merged from
+   `claude/public-api`). Nothing to do if it forwards every `Request`;
+   check and say what you found.
+6. **One fix in `secs-apply`.** In `Camilla::apply`, when the rollback's
+   `SetConfigFilePath` or `Reload` fails, the `?` returns that error and the
+   original reload error is lost. Return an error that carries both (for
+   example `ApplyError::Rejected { command: "Reload", message: "<reload
+   error>; rollback failed: <rollback error>" }`) and test it.
 
 ## Tests
 

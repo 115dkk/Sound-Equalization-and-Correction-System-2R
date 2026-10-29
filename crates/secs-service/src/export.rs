@@ -17,6 +17,22 @@ impl Service {
         params: ExportParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
+        self.start_export_with(params, events, JobKind::Export, true, |result, _| {
+            Ok(JobResult::Export(result))
+        })
+    }
+
+    pub(crate) fn start_export_with<F>(
+        &self,
+        params: ExportParams,
+        events: Arc<dyn EventSink>,
+        job_kind: JobKind,
+        record_export: bool,
+        complete: F,
+    ) -> Result<JobStarted, IpcError>
+    where
+        F: FnOnce(ExportResult, Option<String>) -> Result<JobResult, IpcError> + Send + 'static,
+    {
         let compute_key = crate::compute::ComputeIdentity::from(&self.acceleration().status);
         let mut session = lock(&self.session);
         let ticket = session.ticket()?;
@@ -349,7 +365,7 @@ impl Service {
         } else {
             None
         };
-        self.jobs.start(JobKind::Export, events, move |job| {
+        self.jobs.start(job_kind, events, move |job| {
             job.cancel()
                 .check()
                 .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
@@ -532,18 +548,20 @@ impl Service {
                 folder: final_destination.to_string_lossy().into_owned(),
                 stale,
             };
-            lock(&session_for_design).record_export(secs_types::local_api::LastExport {
-                kind: params.kind,
-                folder: result.folder.clone(),
-                mimo: folder_includes_mimo,
-                mode: mode_name.to_owned(),
-                design_name: requested_design_name.clone(),
-                design_id,
-                time: completion_clock()
-                    .shift_seconds(completion_offset().saturating_neg())
-                    .rfc3339_utc(),
-            });
-            Ok(JobResult::Export(result))
+            if record_export {
+                lock(&session_for_design).record_export(secs_types::local_api::LastExport {
+                    kind: params.kind,
+                    folder: result.folder.clone(),
+                    mimo: folder_includes_mimo,
+                    mode: mode_name.to_owned(),
+                    design_name: requested_design_name.clone(),
+                    design_id: design_id.clone(),
+                    time: completion_clock()
+                        .shift_seconds(completion_offset().saturating_neg())
+                        .rfc3339_utc(),
+                });
+            }
+            complete(result, design_id)
         })
     }
 }

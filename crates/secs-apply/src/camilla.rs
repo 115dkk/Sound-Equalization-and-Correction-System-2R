@@ -12,6 +12,7 @@ pub enum Command {
     GetState,
     GetStopReason,
     GetConfigTitle,
+    GetConfigDescription,
     GetConfigFilePath,
     GetCaptureRate,
     GetClippedSamples,
@@ -29,6 +30,7 @@ impl Command {
             Self::GetState => "GetState",
             Self::GetStopReason => "GetStopReason",
             Self::GetConfigTitle => "GetConfigTitle",
+            Self::GetConfigDescription => "GetConfigDescription",
             Self::GetConfigFilePath => "GetConfigFilePath",
             Self::GetCaptureRate => "GetCaptureRate",
             Self::GetClippedSamples => "GetClippedSamples",
@@ -212,6 +214,7 @@ pub struct CamillaStatus {
     pub state: String,
     pub stop_reason: Option<String>,
     pub title: Option<String>,
+    pub description: Option<String>,
     pub config_path: Option<String>,
     pub capture_rate: Option<u32>,
     pub clipped_samples: Option<u64>,
@@ -276,6 +279,10 @@ impl<T: Transport> Camilla<T> {
             self.optional_command(&Command::GetConfigTitle)?,
             &Command::GetConfigTitle,
         )?;
+        let description = optional_string(
+            self.optional_command(&Command::GetConfigDescription)?,
+            &Command::GetConfigDescription,
+        )?;
         let config_path = optional_string(
             self.optional_command(&Command::GetConfigFilePath)?,
             &Command::GetConfigFilePath,
@@ -309,6 +316,7 @@ impl<T: Transport> Camilla<T> {
             state,
             stop_reason,
             title,
+            description,
             config_path,
             capture_rate,
             clipped_samples,
@@ -334,8 +342,15 @@ impl<T: Transport> Camilla<T> {
             Err(reload_error) => {
                 let error = reload_error.to_string();
                 if let Some(path) = &previous_path {
-                    self.command(&Command::SetConfigFilePath(path.clone()))?;
-                    self.command(&Command::Reload)?;
+                    let rollback = self
+                        .command(&Command::SetConfigFilePath(path.clone()))
+                        .and_then(|_| self.command(&Command::Reload));
+                    if let Err(rollback_error) = rollback {
+                        return Err(ApplyError::Rejected {
+                            command: "Reload".into(),
+                            message: format!("{error}; rollback failed: {rollback_error}"),
+                        });
+                    }
                 }
                 Ok(ApplyOutcome::RolledBack {
                     error,
@@ -463,6 +478,7 @@ mod tests {
             (Command::GetState, "\"GetState\""),
             (Command::GetStopReason, "\"GetStopReason\""),
             (Command::GetConfigTitle, "\"GetConfigTitle\""),
+            (Command::GetConfigDescription, "\"GetConfigDescription\""),
             (Command::GetConfigFilePath, "\"GetConfigFilePath\""),
             (Command::GetCaptureRate, "\"GetCaptureRate\""),
             (Command::GetClippedSamples, "\"GetClippedSamples\""),
@@ -527,6 +543,10 @@ mod tests {
             ok("GetState", serde_json::json!("Running")),
             ok("GetStopReason", serde_json::json!("None")),
             ok("GetConfigTitle", serde_json::json!("SECS room")),
+            ok(
+                "GetConfigDescription",
+                serde_json::json!("secs-design 0123"),
+            ),
             ok("GetConfigFilePath", serde_json::json!("room.yml")),
             ok("GetCaptureRate", serde_json::json!(48000)),
             ok("GetClippedSamples", serde_json::json!(7)),
@@ -549,6 +569,7 @@ mod tests {
                 state: "Running".into(),
                 stop_reason: Some("None".into()),
                 title: Some("SECS room".into()),
+                description: Some("secs-design 0123".into()),
                 config_path: Some("room.yml".into()),
                 capture_rate: Some(48_000),
                 clipped_samples: Some(7),
@@ -566,6 +587,7 @@ mod tests {
             ok("GetState", serde_json::json!("Running")),
             unknown.clone(),
             unknown.clone(),
+            unknown.clone(),
             ok("GetConfigFilePath", Value::Null),
             unknown.clone(),
             unknown.clone(),
@@ -580,6 +602,7 @@ mod tests {
                 state: "Running".into(),
                 stop_reason: None,
                 title: None,
+                description: None,
                 config_path: None,
                 capture_rate: None,
                 clipped_samples: None,
@@ -648,6 +671,26 @@ mod tests {
             &camilla.transport.sent[4..],
             [r#"{"SetConfigFilePath":"old.yml"}"#, r#""Reload""#]
         );
+    }
+
+    #[test]
+    fn failed_rollback_carries_both_reload_errors() {
+        let replies = [
+            ok("ValidateConfig", serde_json::json!("validated")),
+            ok("GetConfigFilePath", serde_json::json!("old.yml")),
+            ok_without_value("SetConfigFilePath"),
+            r#"{"Reload":{"result":"Error","value":"cannot start"}}"#.to_owned(),
+            r#"{"SetConfigFilePath":{"result":"Error","value":"cannot restore"}}"#.to_owned(),
+        ];
+        let mut camilla = Camilla::new(FakeTransport::from_replies(replies));
+        assert!(matches!(
+            camilla.apply("new.yml", "title: new"),
+            Err(ApplyError::Rejected { command, message })
+                if command == "Reload"
+                    && message.contains("cannot start")
+                    && message.contains("rollback failed")
+                    && message.contains("cannot restore")
+        ));
     }
 
     #[test]

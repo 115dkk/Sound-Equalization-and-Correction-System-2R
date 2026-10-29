@@ -1076,6 +1076,46 @@ status = "implemented"
 tests = ["secs-export::mimo_items_match_four_oracles"]
 upstream = "calibration.py stage_items, before_after_items"
 
+[[feature]]
+id = "ipc.apply_status"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::eqapo_status_reads_injected_install_and_applied_manifest", "secs-service::apply_camilla_covers_success_rejection_rollback_folder_and_design_matches"]
+
+[[feature]]
+id = "ipc.apply_camilla"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::apply_camilla_covers_success_rejection_rollback_folder_and_design_matches", "secs-apply::failed_rollback_carries_both_reload_errors"]
+
+[[feature]]
+id = "ipc.apply_eqapo"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::apply_eqapo_installs_reapplies_repairs_once_and_removes_stale_files"]
+
+[[feature]]
+id = "ipc.revert_eqapo"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::revert_eqapo_removes_only_the_managed_pair_and_keeps_bundle"]
+
+[[feature]]
+id = "ipc.apply_settings_set"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::apply_settings_round_trip_and_legacy_defaults", "secs-service::apply_settings_rejects_addresses_without_a_port", "secs2r-cli::apply_commands_parse", "secs-sys::equalizer_apo_variant_follows_the_install_folder_name"]
+
 # ---- Screens (M5) ----
 
 [[feature]]

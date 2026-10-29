@@ -33,7 +33,7 @@
 
 ### Equalizer APO 적용
 
-- 설치는 레지스트리 `HKLM\SOFTWARE\EqualizerAPO`의 `ConfigPath`와 `InstallPath`로 감지합니다. 공식판과 XT가 같은 키를 쓰는지, XT를 구별할 값이 무엇인지는 구현할 때 XT 소스와 설치본으로 확인해 이 ADR에 적습니다.
+- 설치는 레지스트리 `HKLM\SOFTWARE\EqualizerAPO`의 `ConfigPath`와 `InstallPath`로 감지합니다. XT도 같은 키와 값 이름을 씁니다. XT는 Velopack 패키지 ID를 `EqualizerAPO-XT-<아키텍처>`로 정하므로 `InstallPath`의 디렉터리 이름에 `EqualizerAPO-XT`가 들어가고, 공식판은 `EqualizerAPO` 디렉터리를 씁니다. 이 이름으로 XT와 공식판을 구별하고 어느 쪽도 아니면 판을 알 수 없음으로 둡니다. XT는 `Include`와 `Convolution`의 상대 경로를 각 줄이 들어 있는 설정 파일의 디렉터리에서 풉니다(`IncludeFilterFactory.cpp`, `ConfigFileReference.cpp`). 따라서 `SECS2R\SECS.txt`가 다시 포함하는 필터 본문과 그 본문이 가리키는 FIR은 묶음 안의 상대 경로를 그대로 씁니다.
 - 감지하면 `ConfigPath\SECS2R\`에 FIR WAV와 `SECS.txt`를 쓰고, `config.txt` 끝에 다음 두 줄을 더합니다. 표식 주석이 있는 줄만 SECS 2R의 것으로 봅니다. 표식은 Equalizer APO가 어느 판이든, 파일 인코딩이 무엇이든 그대로 다룰 수 있게 ASCII로 씁니다.
 
   ```text

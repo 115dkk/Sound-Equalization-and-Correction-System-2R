@@ -30,7 +30,7 @@ fn group(kind: JobKind) -> JobGroup {
             JobGroup::Device
         }
         JobKind::Calibrate | JobKind::RecommendXo | JobKind::Mimo => JobGroup::Compute,
-        JobKind::Export => JobGroup::Export,
+        JobKind::Export | JobKind::Apply => JobGroup::Export,
         JobKind::StatusWatch => JobGroup::StatusWatch,
     }
 }

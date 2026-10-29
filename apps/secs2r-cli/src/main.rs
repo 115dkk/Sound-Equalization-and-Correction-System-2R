@@ -4,6 +4,8 @@
 //!
 //! Commands call the application service and write JSON Lines to standard output.
 
+mod apply;
+
 use clap::{Parser, Subcommand, ValueEnum};
 use secs_service::{Deps, EventSink, LocalTime, Service};
 use secs_types::ipc::*;
@@ -106,6 +108,11 @@ enum Action {
         #[arg(long)]
         camilla_capture_loopback: bool,
     },
+    /// Apply or inspect the current design through an external processor.
+    Apply {
+        #[command(subcommand)]
+        action: ApplyAction,
+    },
     /// Run creation, filling, calibration, and all exports.
     Run {
         #[arg(long)]
@@ -117,6 +124,29 @@ enum Action {
         #[arg(long)]
         mimo: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum ApplyAction {
+    /// Export the current design and reload CamillaDSP.
+    Camilla {
+        /// Project whose current design is applied.
+        project: PathBuf,
+        /// Override the CamillaDSP websocket address for this process.
+        #[arg(long)]
+        address: Option<String>,
+    },
+    /// Export the current design to Equalizer APO, or remove its include.
+    Eqapo {
+        /// Project whose current design is applied; omitted when reverting.
+        #[arg(required_unless_present = "revert")]
+        project: Option<PathBuf>,
+        /// Remove the managed include instead of applying.
+        #[arg(long, conflicts_with = "project")]
+        revert: bool,
+    },
+    /// Print CamillaDSP and Equalizer APO application state.
+    Status,
 }
 
 #[derive(Debug, Subcommand)]
@@ -434,6 +464,8 @@ fn response_job(response: &Response) -> Option<JobStarted> {
         | Response::RecommendXo(value)
         | Response::Mimo(value)
         | Response::Export(value)
+        | Response::ApplyCamilla(value)
+        | Response::ApplyEqapo(value)
         | Response::MeasurePosition(value)
         | Response::MdatImport(value) => Some(value.clone()),
         _ => None,
@@ -449,6 +481,11 @@ fn deps(deterministic: bool, compute: Option<ComputeChoice>) -> Deps {
         rew_transport: Arc::new(|| Box::new(secs_rew::HttpTransport::default())),
         process: Arc::new(secs_sys::process::OsProcessProbe),
         memory: Arc::new(secs_sys::memory::OsMemoryProbe),
+        app_data_path: std::env::current_dir()
+            .unwrap_or_else(|_| std::env::temp_dir())
+            .join(".secs2r"),
+        eqapo_install: Arc::new(secs_sys::eqapo_install),
+        apply: Arc::new(apply::NativeApply),
         clock: Arc::new(|| {
             let now = SystemTime::now();
             LocalTime::from_system(now, secs_sys::clock::utc_offset_seconds(now))
@@ -663,6 +700,40 @@ fn run(action: Action, runner: &mut Runner) {
                 camilla_devices,
             );
         }
+        Action::Apply { action } => match action {
+            ApplyAction::Camilla { project, address } => {
+                runner.open(&project);
+                let mut settings = ApplySettings::default();
+                settings.camilla.level = ApplyLevel::Apply;
+                if let Some(address) = address {
+                    settings.camilla.address = address;
+                }
+                runner.call(Request::ApplySettingsSet(settings));
+                runner.call(Request::ApplyCamilla(ApplyCamillaParams::default()));
+            }
+            ApplyAction::Eqapo {
+                project: None,
+                revert: true,
+            } => {
+                runner.call(Request::RevertEqapo);
+            }
+            ApplyAction::Eqapo {
+                project: Some(project),
+                revert: false,
+            } => {
+                runner.open(&project);
+                let mut settings = ApplySettings::default();
+                settings.eqapo.level = ApplyLevel::Apply;
+                runner.call(Request::ApplySettingsSet(settings));
+                runner.call(Request::ApplyEqapo);
+            }
+            ApplyAction::Eqapo { .. } => {
+                unreachable!("clap requires exactly one of project and --revert")
+            }
+            ApplyAction::Status => {
+                runner.call(Request::ApplyStatus);
+            }
+        },
         Action::Run {
             out,
             project,
@@ -817,5 +888,124 @@ fn print_json(value: &impl Serialize) {
     match serde_json::to_string(value) {
         Ok(line) => println!("{line}"),
         Err(error) => eprintln!("secs2r-cli: could not serialize output: {error}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::*;
+
+    static TEMP: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn apply_commands_parse() {
+        assert!(matches!(
+            Cli::try_parse_from([
+                "secs2r-cli",
+                "apply",
+                "camilla",
+                "room.secs",
+                "--address",
+                "localhost:1234"
+            ])
+            .unwrap()
+            .action,
+            Action::Apply {
+                action: ApplyAction::Camilla {
+                    project,
+                    address: Some(_)
+                }
+            } if project == Path::new("room.secs")
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["secs2r-cli", "apply", "eqapo", "room.secs"])
+                .unwrap()
+                .action,
+            Action::Apply {
+                action: ApplyAction::Eqapo {
+                    project: Some(project),
+                    revert: false
+                }
+            } if project == Path::new("room.secs")
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["secs2r-cli", "apply", "eqapo", "--revert"])
+                .unwrap()
+                .action,
+            Action::Apply {
+                action: ApplyAction::Eqapo {
+                    project: None,
+                    revert: true
+                }
+            }
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["secs2r-cli", "apply", "status"])
+                .unwrap()
+                .action,
+            Action::Apply {
+                action: ApplyAction::Status
+            }
+        ));
+        assert!(Cli::try_parse_from(["secs2r-cli", "apply", "eqapo"]).is_err());
+    }
+
+    #[test]
+    fn apply_eqapo_opens_the_project_and_uses_the_injected_install() {
+        let root = std::env::temp_dir().join(format!(
+            "secs2r-cli-apply-{}-{}",
+            std::process::id(),
+            TEMP.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let config = root.join("eqapo");
+        fs::create_dir_all(&config).unwrap();
+        fs::write(config.join("config.txt"), b"Preamp: -3 dB\n").unwrap();
+        let install = EqApoInstall {
+            config_path: config.to_string_lossy().into_owned(),
+            install_path: "EqualizerAPO-XT/current".into(),
+            variant: EqApoVariant::Xt,
+        };
+        let mut injected = deps(true, None);
+        injected.app_data_path = root.join("app-data");
+        injected.eqapo_install = Arc::new(move || Some(install.clone()));
+        let mut runner = Runner {
+            service: Service::new(injected),
+            quiet: true,
+            ok: true,
+        };
+        let project = root.join("room.secs");
+        runner.call(Request::ProjectNew(ProjectNewParams {
+            path: project.to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: true,
+            tutorial: false,
+        }));
+        runner.call(Request::SampleLoad(SampleLoadParams::default()));
+        runner.calibrate(None);
+        assert!(runner.ok, "oracle sample project preparation failed");
+
+        run(
+            Action::Apply {
+                action: ApplyAction::Eqapo {
+                    project: Some(project),
+                    revert: false,
+                },
+            },
+            &mut runner,
+        );
+        assert!(runner.ok);
+        assert!(config.join("SECS2R/SECS.txt").is_file());
+        assert!(config.join("SECS2R/secs-design.json").is_file());
+        assert!(
+            fs::read_to_string(config.join("config.txt"))
+                .unwrap()
+                .contains("Include: SECS2R\\SECS.txt")
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 }
