@@ -105,7 +105,7 @@ jobs:
       # too. The Tauri app is left out: its build script compiles Windows
       # resources, which needs the Windows SDK.
       - name: cargo clippy for Windows x64 (deny warnings)
-        run: cargo clippy --workspace --exclude secs2r --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
+        run: cargo clippy --workspace --exclude secs2r --exclude secs2r-host-shell --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
 
       - name: Policy gates (crates/secs-policy)
         run: cargo test -p secs-policy --locked -- --nocapture
@@ -494,6 +494,11 @@ jobs:
             cargo build --release --locked -p secs2r-host
           fi
 
+      - name: Build the host shell
+        if: runner.os == 'Windows'
+        working-directory: apps/secs2r-host-shell
+        run: node ../secs2r/ui/node_modules/@tauri-apps/cli/tauri.js build --ci --no-bundle
+
       - name: tauri build
         working-directory: apps/secs2r
         shell: bash
@@ -501,7 +506,7 @@ jobs:
           args=(build --ci --bundles "${{ matrix.bundles }}")
           if [ -n "${{ matrix.target }}" ]; then args+=(--target "${{ matrix.target }}"); fi
           if [ "${{ matrix.name }}" = "windows" ]; then
-            args+=(--config '{"bundle":{"resources":{"../../target/release/secs2r-cli.exe":"secs2r-cli.exe","../../target/release/secs2r-host.exe":"secs2r-host.exe"}}}')
+            args+=(--config '{"bundle":{"resources":{"../../target/release/secs2r-cli.exe":"secs2r-cli.exe","../../target/release/secs2r-host.exe":"secs2r-host.exe","../../target/release/secs2r-host-shell.exe":"secs2r-host-shell.exe"}}}')
           fi
           node ui/node_modules/@tauri-apps/cli/tauri.js "${args[@]}"
 
@@ -516,9 +521,6 @@ jobs:
         run: |
           cli_version="$(python -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])")"
           python .github/scripts/collect_bundles.py --name "${{ matrix.name }}" --target "${{ matrix.target }}" --version "0.0.0-ci.${{ github.run_number }}" --cli-version "$cli_version" --out dist
-          if [ "${{ matrix.name }}" = "windows" ]; then
-            python -c "import glob,zipfile; p=glob.glob('dist/*-portable.zip')[0]; z=zipfile.ZipFile(p,'a',zipfile.ZIP_DEFLATED); z.write('target/release/secs2r-host.exe','SECS 2R/secs2r-host.exe'); z.close()"
-          fi
 
       - name: The macOS app opens and calibrates
         if: runner.os == 'macOS'

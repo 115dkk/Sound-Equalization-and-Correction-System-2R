@@ -15,6 +15,7 @@ SECS 2R의 변경 기록입니다. 번호는 major.minor.patch이고, 0.x는 모
 - Windows에서는 '관리'를 고르면 자동 시작 LocalSystem 서비스 `secs2r-host`가 CamillaDSP를 로그인한 사용자 계정으로 실행하고, 멈추면 다시 실행합니다. Equalizer APO의 `config.txt`도 지켜보다가 SECS 2R 줄이 빠지거나 손상되면 고칩니다. 서비스는 앱과 포터블 압축 파일에 함께 들어가며 사용자가 설치를 선택하기 전에는 등록하지 않습니다.
 - 내보내기 화면의 적용 방식에 '관리'를 더했습니다. CamillaDSP 실행 파일을 고르고, 서비스 상태(설치 안 됨, 정지, 실행 중)와 CamillaDSP 상태(실행 중, 다시 시작 대기, 다시 시작 중단, 로그인 대기, 다른 사용자 사용 중), Equalizer APO 줄 복구 시각을 보여 줍니다. 줄의 기본 동작은 'CamillaDSP 관리 시작', 'Equalizer APO 관리 시작'이고, '관리 끄기'는 한 번 확인한 뒤 끕니다. CamillaDSP가 돌고 있지 않아도 관리를 시작하면 서비스가 이 설계로 띄우고, 같은 포트에 다른 CamillaDSP가 있으면 서비스가 그것을 끝내고 자기 것을 띄웁니다.
 - `secs2r-cli host status|install|uninstall|stop-managing`으로 관리 서비스 상태를 확인하고 등록, 제거, 관리 중지를 실행할 수 있습니다.
+- 관리 서비스와 함께 시작하는 알림 영역 앱을 더했습니다. 서비스 상태와 최근 기록을 보여 주며, 서비스를 설치하거나 제거하고 SECS 2R을 열 수 있습니다.
 
 ## 0.32.0 - 2026-10-29
 

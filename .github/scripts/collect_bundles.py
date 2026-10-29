@@ -14,11 +14,12 @@ product-name-based file names:
     SECS2R-<version>-linux-amd64.deb
     SECS2R-<version>-linux-x86_64-cli.tar.gz
 
-On Windows the release exe must be a GUI-subsystem executable (no console
-window behind the app) and the CLI a console-subsystem one; the check reads
-the PE headers. The portable zip and the installer carry the CLI next to the
-app (release.yml adds it to the installer's resources). Every CLI archive is
-checked by running the binary it holds: `--version` must name this version.
+On Windows the release exe and host shell must be GUI-subsystem executables
+(no console window behind either app), while the CLI and host service use the
+console subsystem; the check reads the PE headers. The portable zip and the
+installer carry all three companions next to the app (release.yml adds them to
+the installer's resources). Every CLI archive is checked by running the binary
+it holds: `--version` must name this version.
 
 The pure functions are unit-tested in ``test_collect_bundles.py``.
 """
@@ -43,12 +44,14 @@ PORTABLE_README = """SECS 2R portable
 압축을 푼 폴더에서 "SECS 2R.exe"를 실행합니다. 설치가 필요 없고, 이 판은
 자동 업데이트를 하지 않습니다. Windows 10/11에 포함된 Microsoft Edge
 WebView2 런타임을 씁니다. 화면 없이 쓰는 CLI는 같은 폴더의
-secs2r-cli.exe입니다(secs2r-cli.exe --help).
+secs2r-cli.exe입니다(secs2r-cli.exe --help). 관리 기능을 설치하면
+secs2r-host.exe와 secs2r-host-shell.exe를 사용합니다.
 
 Unzip and run "SECS 2R.exe". Nothing is installed and this build does not
 update itself. It uses the Microsoft Edge WebView2 runtime that ships with
 Windows 10 and 11. The command-line tool is secs2r-cli.exe in the same
-folder (secs2r-cli.exe --help).
+folder (secs2r-cli.exe --help). Installing managed mode uses secs2r-host.exe
+and secs2r-host-shell.exe.
 
 License: GPL-3.0-only (LICENSE.txt). Source:
 https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R
@@ -94,9 +97,33 @@ def pe_subsystem(data: bytes) -> int:
     return subsystem
 
 
+def check_pe_subsystem(path: Path, expected: int) -> None:
+    """Require one PE executable with the subsystem assigned to its role."""
+    if not path.is_file():
+        raise SystemExit(f"required Windows executable is missing: {path}")
+    try:
+        subsystem = pe_subsystem(path.read_bytes())
+    except (OSError, ValueError, struct.error) as error:
+        raise SystemExit(f"could not inspect {path}: {error}") from error
+    if subsystem != expected:
+        raise SystemExit(f"{path} has PE subsystem {subsystem}, expected {expected}")
+
+
 def expected_cli_version(version: str) -> str:
     """What `secs2r-cli --version` prints for this release."""
     return f"secs2r-cli {version}"
+
+
+def write_portable_zip(path: Path, exe: Path, cli: Path, host: Path,
+                       shell: Path, license_file: Path) -> None:
+    """Write the portable app with every Windows companion executable."""
+    with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.write(exe, "SECS 2R/SECS 2R.exe")
+        zf.write(cli, "SECS 2R/secs2r-cli.exe")
+        zf.write(host, "SECS 2R/secs2r-host.exe")
+        zf.write(shell, "SECS 2R/secs2r-host-shell.exe")
+        zf.write(license_file, "SECS 2R/LICENSE.txt")
+        zf.writestr("SECS 2R/README.txt", PORTABLE_README)
 
 
 def write_cli_zip(path: Path, exe: Path, license_file: Path) -> None:
@@ -150,24 +177,19 @@ def collect(name: str, target: str, version: str, out: Path, repo: Path,
 
     if name == "windows":
         exe = release / "secs2r.exe"
-        subsystem = pe_subsystem(exe.read_bytes())
-        if subsystem != PE_SUBSYSTEM_WINDOWS_GUI:
-            raise SystemExit(f"{exe} has PE subsystem {subsystem}, expected {PE_SUBSYSTEM_WINDOWS_GUI} "
-                             "(keep windows_subsystem = \"windows\" in apps/secs2r/src/main.rs)")
         cli = release / "secs2r-cli.exe"
-        subsystem = pe_subsystem(cli.read_bytes())
-        if subsystem != PE_SUBSYSTEM_WINDOWS_CUI:
-            raise SystemExit(f"{cli} has PE subsystem {subsystem}, expected {PE_SUBSYSTEM_WINDOWS_CUI}")
+        host = release / "secs2r-host.exe"
+        shell = release / "secs2r-host-shell.exe"
+        check_pe_subsystem(exe, PE_SUBSYSTEM_WINDOWS_GUI)
+        check_pe_subsystem(cli, PE_SUBSYSTEM_WINDOWS_CUI)
+        check_pe_subsystem(host, PE_SUBSYSTEM_WINDOWS_CUI)
+        check_pe_subsystem(shell, PE_SUBSYSTEM_WINDOWS_GUI)
         check_cli(cli, cli_version)
         setup = out / asset_name(version, "nsis")
         shutil.copy2(_one("nsis/*-setup.exe", bundle), setup)
         made.append(setup)
         portable = out / asset_name(version, "portable")
-        with zipfile.ZipFile(portable, "w", compression=zipfile.ZIP_DEFLATED) as zf:
-            zf.write(exe, "SECS 2R/SECS 2R.exe")
-            zf.write(cli, "SECS 2R/secs2r-cli.exe")
-            zf.write(license_file, "SECS 2R/LICENSE.txt")
-            zf.writestr("SECS 2R/README.txt", PORTABLE_README)
+        write_portable_zip(portable, exe, cli, host, shell, license_file)
         made.append(portable)
         cli_zip = out / asset_name(version, "cli-windows")
         write_cli_zip(cli_zip, cli, license_file)

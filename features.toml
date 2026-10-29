@@ -1148,6 +1148,19 @@ status = "implemented"
 upstream = "new"
 tests = ["secs2r-host::state_file_round_trip_missing_and_corrupt_handling", "secs2r-host::exit_logon_and_logoff_choose_supervision_actions", "secs2r-host::file_change_repairs_only_absent_or_damaged_pairs", "secs2r-host::log_rotates_once_at_the_size_cap"]
 
+[[feature]]
+id = "host.shell"
+kind = "app"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = [
+  "secs2r-host-shell::status_composition_marks_pipe_failures_unreachable",
+  "secs2r-host-shell::log_line_clamp_stays_between_one_and_two_hundred",
+  "secs2r-host-shell::main_app_selection_prefers_portable_name",
+  "secs2r-host-shell::hidden_argument_is_order_independent",
+]
+
 # ---- Screens (M5) ----
 
 [[feature]]

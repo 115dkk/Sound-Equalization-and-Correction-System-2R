@@ -51,24 +51,44 @@ impl ManagedHostAdapter for NativeManagedHost {
     }
 
     fn install(&self) -> Result<(), IpcError> {
-        secs_sys::host::install_service_elevated(&host_executable()?)
+        let current = application_executable()?;
+        secs_sys::host::install_service_elevated(&host_executable(&current))?;
+        let shell = shell_executable(&current);
+        if shell.is_file() {
+            secs_sys::host::set_shell_autostart(Some(&shell))?;
+            secs_sys::host::spawn_detached(&shell, &["--hidden"])?;
+        }
+        Ok(())
     }
 
     fn uninstall(&self) -> Result<(), IpcError> {
-        secs_sys::host::uninstall_service_elevated(&host_executable()?)
+        let current = application_executable()?;
+        secs_sys::host::uninstall_service_elevated(&host_executable(&current))?;
+        secs_sys::host::set_shell_autostart(None)
     }
 }
 
-fn host_executable() -> Result<std::path::PathBuf, IpcError> {
-    let current = std::env::current_exe().map_err(|error| {
+fn application_executable() -> Result<std::path::PathBuf, IpcError> {
+    std::env::current_exe().map_err(|error| {
         IpcError::new(
             ErrorCode::ApplyFailed,
             format!("find application executable: {error}"),
         )
-    })?;
-    Ok(current.with_file_name(if cfg!(target_os = "windows") {
+    })
+}
+
+fn host_executable(current: &Path) -> std::path::PathBuf {
+    current.with_file_name(if cfg!(target_os = "windows") {
         "secs2r-host.exe"
     } else {
         "secs2r-host"
-    }))
+    })
+}
+
+fn shell_executable(current: &Path) -> std::path::PathBuf {
+    current.with_file_name(if cfg!(target_os = "windows") {
+        "secs2r-host-shell.exe"
+    } else {
+        "secs2r-host-shell"
+    })
 }

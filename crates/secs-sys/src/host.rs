@@ -608,6 +608,77 @@ fn elevated(executable: &Path, argument: &str) -> Result<(), IpcError> {
     }
 }
 
+#[cfg(target_os = "windows")]
+const SHELL_AUTOSTART_VALUE: &str = "SECS2RHostShell";
+#[cfg(target_os = "windows")]
+const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+
+/// Builds the per-user Run value used to start the host shell without its window.
+#[must_use]
+pub fn shell_autostart_value(executable: &Path) -> String {
+    format!(r#""{}" --hidden"#, executable.display())
+}
+
+/// Enables or disables the current user's host-shell logon start.
+#[cfg(target_os = "windows")]
+pub fn set_shell_autostart(executable: Option<&Path>) -> Result<(), IpcError> {
+    const ERROR_FILE_NOT_FOUND: u32 = 0x8007_0002;
+
+    match executable {
+        Some(executable) => {
+            let key = windows_registry::CURRENT_USER
+                .create(RUN_KEY)
+                .map_err(|error| ipc_error(format!("open host-shell Run key: {error}")))?;
+            key.set_string(SHELL_AUTOSTART_VALUE, shell_autostart_value(executable))
+                .map_err(|error| ipc_error(format!("enable host-shell logon start: {error}")))
+        }
+        None => {
+            let key = match windows_registry::CURRENT_USER.open(RUN_KEY) {
+                Ok(key) => key,
+                Err(error) if error.code().0 as u32 == ERROR_FILE_NOT_FOUND => return Ok(()),
+                Err(error) => {
+                    return Err(ipc_error(format!("open host-shell Run key: {error}")));
+                }
+            };
+            match key.remove_value(SHELL_AUTOSTART_VALUE) {
+                Ok(()) => Ok(()),
+                Err(error) if error.code().0 as u32 == ERROR_FILE_NOT_FOUND => Ok(()),
+                Err(error) => Err(ipc_error(format!(
+                    "disable host-shell logon start: {error}"
+                ))),
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn set_shell_autostart(_executable: Option<&Path>) -> Result<(), IpcError> {
+    Err(unsupported("host-shell logon start"))
+}
+
+/// Starts a GUI companion without a shell and returns after process creation.
+#[cfg(target_os = "windows")]
+pub fn spawn_detached(executable: &Path, args: &[&str]) -> Result<(), IpcError> {
+    use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    Command::new(executable)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| ipc_error(format!("start {}: {error}", executable.display())))
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn spawn_detached(_executable: &Path, _args: &[&str]) -> Result<(), IpcError> {
+    Err(unsupported("detached process launch"))
+}
+
 /// Stops the existing host service before its protected executable is replaced.
 /// Returns whether the service was registered.
 #[cfg(target_os = "windows")]
@@ -883,6 +954,14 @@ pub fn run_service(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shell_autostart_value_quotes_the_executable_and_hides_the_window() {
+        assert_eq!(
+            shell_autostart_value(Path::new(r"C:\Program Files\SECS 2R\secs2r-host-shell.exe")),
+            r#""C:\Program Files\SECS 2R\secs2r-host-shell.exe" --hidden"#
+        );
+    }
 
     #[test]
     fn framing_round_trips_and_rejects_bad_lengths() {
