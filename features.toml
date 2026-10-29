@@ -999,7 +999,7 @@ id = "export.camilladsp"
 kind = "export"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-camilla::export_camilladsp_matches_oracle", "secs-camilla::invalid_values_write_nothing", "secs-camilla::fir_taps_that_overflow_f32_write_nothing_td45", "secs-camilla::duplicate_or_reserved_roles_write_nothing_td46", "secs-camilla::negative_delays_write_nothing_td94", "secs-camilla::controller_metadata_headroom_bypass_labels_and_devices_follow_v4_schema"]
+tests = ["secs-camilla::export_camilladsp_matches_oracle", "secs-camilla::invalid_values_write_nothing", "secs-camilla::fir_taps_that_overflow_f32_write_nothing_td45", "secs-camilla::duplicate_or_reserved_roles_write_nothing_td46", "secs-camilla::negative_delays_write_nothing_td94", "secs-camilla::controller_metadata_headroom_bypass_labels_and_devices_follow_v4_schema", "secs-camilla::camilla_exports_play_as_designed"]
 upstream = "calibration.py export_camilladsp"
 note = "The default writer remains byte-compatible with upstream. Service exports add design identity, capture labels, rounded headroom and controller-addressable correction/MIMO descriptions; these are new deviations from upstream."
 

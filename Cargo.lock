@@ -3817,6 +3817,7 @@ dependencies = [
  "num-traits",
  "ryu",
  "secs-dsp",
+ "secs-filters",
  "secs-graph",
  "secs-oracle",
  "secs-types",
