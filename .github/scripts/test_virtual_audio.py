@@ -140,9 +140,10 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["timeout"], 120)
         self.assertIn("'AudioEndpointBuilder','Audiosrv'", shell.call_args_list[0].args[0])
         self.assertIn("Start-Service", shell.call_args_list[0].args[0])
-        self.assertEqual(len(shell.call_args_list), 3)
+        self.assertEqual(len(shell.call_args_list), 2)
         self.assertIn("Get-AuthenticodeSignature", shell.call_args_list[1].args[0])
-        self.assertIn("scream.cat", shell.call_args_list[2].args[0])
+        self.assertIn("scream.cat", shell.call_args_list[1].args[0])
+        self.assertNotIn("devcon", shell.call_args_list[1].args[0])
 
     def test_nonzero_and_reboot_results_fail(self):
         for code in (1, 2, 3):

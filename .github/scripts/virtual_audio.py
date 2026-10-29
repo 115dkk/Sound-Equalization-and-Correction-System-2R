@@ -168,11 +168,15 @@ def install(args):
     powershell("foreach ($name in @('AudioEndpointBuilder','Audiosrv')) { "
                "Set-Service -Name $name -StartupType Automatic; Start-Service -Name $name; "
                "(Get-Service $name).WaitForStatus('Running',[TimeSpan]::FromSeconds(30)) }")
-    # Validate the signed catalog and helper; never enable test signing or change Secure Boot.
-    for path in (devcon, inf.with_name("scream.cat")):
-        signature = powershell(f"(Get-AuthenticodeSignature -LiteralPath {ps_string(path)}).Status.ToString()")
-        if signature != "Valid":
-            raise EngineError(f"Scream package signature is not valid: {path}: {signature}")
+    # The driver catalog must carry a valid signature; never enable test signing
+    # or change Secure Boot. devcon-x64.exe in release 4.0 has no Authenticode
+    # signature (the first real run on a runner reported NotSigned); it is
+    # trusted as part of the archive whose SHA-256 is pinned above, as the
+    # release's own Install-x64.bat runs it.
+    catalog = inf.with_name("scream.cat")
+    signature = powershell(f"(Get-AuthenticodeSignature -LiteralPath {ps_string(catalog)}).Status.ToString()")
+    if signature != "Valid":
+        raise EngineError(f"Scream package signature is not valid: {catalog}: {signature}")
     # Same devcon install command as release 4.0's Install-x64.bat, without pause.
     # A fresh hosted runner has no old Scream device to remove. Do not force a reboot.
     result = subprocess.run([str(devcon), "install", str(inf), "*Scream"], stdin=subprocess.DEVNULL,
