@@ -3,6 +3,9 @@
 //! `secs2r-host`: the Windows service for ADR 0018's managed apply level.
 
 #[cfg(any(target_os = "windows", test))]
+// The service runs only on Windows; elsewhere main is a stub and only the
+// rules' unit tests use this module.
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 mod rules;
 
 #[cfg(target_os = "windows")]

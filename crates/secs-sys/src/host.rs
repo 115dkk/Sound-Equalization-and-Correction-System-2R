@@ -13,6 +13,7 @@ pub const PIPE_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GRGW;;;IU)";
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 pub const PIPE_TIMEOUT: Duration = Duration::from_secs(5);
 
+#[cfg(any(target_os = "windows", test))]
 fn ipc_error(detail: impl Into<String>) -> IpcError {
     IpcError::new(ErrorCode::ApplyFailed, detail)
 }

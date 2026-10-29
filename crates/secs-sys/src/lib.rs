@@ -30,11 +30,14 @@ use std::path::Path;
 use std::time::Duration;
 
 use raw_window_handle::HasWindowHandle;
+#[cfg(any(target_os = "windows", test))]
+use secs_types::ipc::EqApoVariant;
 use secs_types::ipc::{
-    ApplyOutcome, CamillaStatus, EqApoInstall, EqApoVariant, ErrorCode, IncludeState, IpcError,
+    ApplyOutcome, CamillaStatus, EqApoInstall, ErrorCode, IncludeState, IpcError,
 };
 use thiserror::Error;
 
+#[cfg(any(target_os = "windows", test))]
 fn eqapo_variant(install_path: &str) -> EqApoVariant {
     let normalized = install_path.replace('/', "\\").to_ascii_lowercase();
     if normalized

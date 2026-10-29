@@ -82,11 +82,14 @@ impl ApplyAdapter for NativeApply {
     }
 }
 
+/// Only the Windows-only manage tests below use this adapter.
+#[cfg(target_os = "windows")]
 #[derive(Debug)]
 struct FixedApply {
     result: Result<ApplyOutcome, IpcError>,
 }
 
+#[cfg(target_os = "windows")]
 impl ApplyAdapter for FixedApply {
     fn camilla_status(
         &self,
