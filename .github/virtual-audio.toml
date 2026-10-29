@@ -1,0 +1,8 @@
+# Official Scream 4.0 release (MS-PL); used only on disposable Windows CI runners.
+# Install/Install-x64.bat invokes helpers/devcon-x64 install Scream.inf *Scream.
+# The helper uses that command without the batch file's interactive pause.
+[scream]
+version = "4.0"
+url = "https://github.com/duncanthrax/scream/releases/download/4.0/Scream4.0.zip"
+sha256 = "fa33e25f9a46c61e4e0cd83362c51c3d2a45c6fe4091aad7507e240e40f1a520"
+format = "zip"

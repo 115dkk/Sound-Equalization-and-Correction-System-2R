@@ -43,6 +43,8 @@ name: CI
 #             .github/camilladsp-engines.toml, with the same bounds as the
 #             Equalizer APO check (crates/secs-camilla/tests/camilla_playback.rs,
 #             issue #107)
+#   manage-e2e  installed Windows app and shell driven through WebDriver:
+#             real service takeover, restart, Equalizer APO repair and removal
 #
 # Pin macOS 15 ARM64 after repeated macOS 26 runner allocation failures.
 
@@ -338,6 +340,100 @@ jobs:
         run: |
           report="$RUNNER_TEMP/camilla-report.md"
           if [ -f "$report" ]; then cat "$report" >> "$GITHUB_STEP_SUMMARY"; fi
+
+  manage-e2e:
+    name: Manage end to end (Windows GUI)
+    needs: bundle
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: |
+          rustup toolchain install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup show active-toolchain
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: manage-e2e
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: installers-windows
+          path: ${{ runner.temp }}/manage-installers
+
+      # Official Scream 4.0, hash-pinned in virtual-audio.toml. Driver/downloads
+      # stay outside artifacts; no test-signing or Secure Boot changes.
+      - name: Start Windows Audio and install pinned Scream
+        run: python -I .github/scripts/virtual_audio.py --dest "$env:RUNNER_TEMP\manage-scream"
+
+      - name: Require an interactive console and report the environment
+        run: python -I .github/scripts/manage_e2e.py env --artifacts "$env:RUNNER_TEMP\manage-e2e" --report "$env:RUNNER_TEMP\manage-env.md"
+
+      - name: Install SECS 2R silently and resolve its uninstall entry
+        run: |
+          python -I -c "import runpy,sys; runpy.run_path(sys.argv[1])['install_app'](sys.argv[2])" "$env:GITHUB_WORKSPACE\.github\scripts\manage_e2e.py" "$env:RUNNER_TEMP\manage-installers"
+
+      - name: Fetch pinned CamillaDSP for Windows
+        run: python .github/scripts/camilla_engine.py fetch --engine windows --dest "$env:RUNNER_TEMP\manage-camilla" --github-env "$env:GITHUB_ENV"
+
+      # XT's own v2.60.4 Install-ReleaseBuild.ps1 uses Setup.exe --silent.
+      # Unlike --register (the Benchmark-only job), this requires the installer's
+      # real HKLM ConfigPath and InstallPath and never invents registry values.
+      - name: Install pinned Equalizer APO XT silently
+        run: python .github/scripts/eqapo_engine.py fetch --engine xt --install-xt --dest "$env:RUNNER_TEMP\manage-xt" --github-env "$env:GITHUB_ENV"
+
+      - name: Install tauri-driver 2.1.0 and a signed matching Edge driver
+        run: |
+          # 2.1.0 was released 2026-09-26, over two weeks before this pin.
+          cargo install tauri-driver --locked --version 2.1.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -I -c "import runpy,sys; runpy.run_path(sys.argv[1])['prepare_edge'](sys.argv[2],sys.argv[3])" "$env:GITHUB_WORKSPACE\.github\scripts\manage_e2e.py" "$env:RUNNER_TEMP\manage-edge" "$env:RUNNER_TEMP\manage-e2e"
+
+      - name: Drive the installed app and shell
+        run: |
+          python -I .github/scripts/manage_e2e.py run --installed-folder "$env:SECS_MANAGE_INSTALL" --camilla "$env:SECS_CAMILLADSP" --eqapo-config "$env:SECS_EQAPO_CONFIG_DIR" --tauri-driver "$env:USERPROFILE\.cargo\bin\tauri-driver.exe" --msedgedriver "$env:SECS_MSEDGEDRIVER" --artifacts "$env:RUNNER_TEMP\manage-e2e" --report "$env:RUNNER_TEMP\manage-e2e-report.md"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: manage-e2e
+          path: |
+            ${{ runner.temp }}/manage-e2e/**
+            ${{ runner.temp }}/manage-env.md
+            ${{ runner.temp }}/manage-e2e-report.md
+            !${{ runner.temp }}/manage-e2e/**/*.exe
+            !${{ runner.temp }}/manage-e2e/**/*.dll
+            !${{ runner.temp }}/manage-e2e/**/*.zip
+            !${{ runner.temp }}/manage-e2e/**/*.nupkg
+            !${{ runner.temp }}/manage-e2e/**/*.7z
+            !${{ runner.temp }}/manage-e2e/**/*.tar
+            !${{ runner.temp }}/manage-e2e/**/*.gz
+            !${{ runner.temp }}/manage-e2e/**/*.msi
+            !${{ runner.temp }}/manage-e2e/**/*.sys
+            !${{ runner.temp }}/manage-e2e/**/*.cat
+            !${{ runner.temp }}/manage-e2e/**/*.inf
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Report
+        if: always()
+        run: |
+          $report = Join-Path $env:RUNNER_TEMP "manage-e2e-report.md"
+          if (Test-Path $report) {
+            Get-Content -Raw $report | Add-Content $env:GITHUB_STEP_SUMMARY
+          } else {
+            "## Manage end to end (Windows GUI)`n`nNOT RUN: a prerequisite failed; see the environment and preceding steps." | Add-Content $env:GITHUB_STEP_SUMMARY
+          }
 
   frontend:
     name: screen (typecheck, tests, build, IPC bindings)
