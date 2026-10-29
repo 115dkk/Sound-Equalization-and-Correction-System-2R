@@ -19,6 +19,7 @@
 //! adapters into the seams of `secs-audio` and `secs-compute`.
 
 pub mod clock;
+pub mod host;
 pub mod memory;
 pub mod process;
 pub mod rew;
@@ -137,11 +138,22 @@ pub fn eqapo_without_include(config_text: &str) -> Option<String> {
 }
 
 fn camilla_error(error: secs_apply::ApplyError) -> IpcError {
+    let connection_refused = matches!(
+        &error,
+        secs_apply::ApplyError::Connect {
+            connection_refused: true,
+            ..
+        }
+    );
     let mut ipc = IpcError::new(ErrorCode::ApplyFailed, error.to_string());
     ipc.retryable = matches!(
         error,
         secs_apply::ApplyError::Connect { .. } | secs_apply::ApplyError::Transport(_)
     );
+    if connection_refused {
+        ipc.params
+            .insert("reason".to_owned(), "connection_refused".to_owned());
+    }
     ipc
 }
 

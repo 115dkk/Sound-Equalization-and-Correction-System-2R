@@ -46,9 +46,19 @@ impl Service {
                 design: DesignMatch::Unknown,
             },
         };
+        let host = self.deps.managed_host.service_state();
+        let host_status = (host == ServiceState::Running)
+            .then(|| self.deps.managed_host.call(&HostRequest::Status).ok())
+            .flatten()
+            .and_then(|response| match response {
+                HostResponse::Status(status) => Some(status),
+                HostResponse::Ok | HostResponse::Log(_) | HostResponse::Error(_) => None,
+            });
         ApplyStatus {
             camilla,
             eqapo: self.eqapo_status(),
+            host,
+            host_status,
             current_design_id: current.map(|(design_id, _)| design_id),
         }
     }
@@ -59,13 +69,32 @@ impl Service {
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
         let settings = lock(&self.app_settings).apply.camilla.clone();
+        let managed_exe = if settings.level == ApplyLevel::Manage {
+            Some(
+                settings
+                    .exe_path
+                    .clone()
+                    .filter(|path| !path.trim().is_empty())
+                    .ok_or_else(|| {
+                        IpcError::new(
+                            ErrorCode::InvalidRequest,
+                            "managed CamillaDSP needs an executable path",
+                        )
+                        .with_param("field", "apply.camilla.exe_path")
+                    })?,
+            )
+        } else {
+            None
+        };
         check_level(settings.level, "camilladsp")?;
+        let managed_port = port_from_address(&settings.address)?;
         let final_folder = self.app_data_path().join("applied/camilladsp");
         let stage = crate::design_export::staging_folder(&final_folder);
         remove_stage(&stage)?;
         let address = settings.address;
         let final_for_job = final_folder.clone();
         let apply = self.deps.apply.clone();
+        let managed_host = self.deps.managed_host.clone();
         self.start_export_with(
             ExportParams {
                 kind: ExportKind::CamillaDsp,
@@ -101,7 +130,33 @@ impl Service {
                 crate::design_export::replace_folder(&stage, &final_for_job)
                     .map_err(|error| io_error(final_for_job.clone(), error))?;
                 let config = final_for_job.join(relative);
-                let outcome = apply.camilla_apply(&address, &config, &text, TIMEOUT)?;
+                let outcome = match apply.camilla_apply(&address, &config, &text, TIMEOUT) {
+                    Ok(outcome) => outcome,
+                    Err(error)
+                        if managed_exe.is_some()
+                            && error
+                                .params
+                                .get("reason")
+                                .is_some_and(|reason| reason == "connection_refused") =>
+                    {
+                        ApplyOutcome::HandedOver
+                    }
+                    Err(error) => return Err(error),
+                };
+                if matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::HandedOver)
+                    && let Some(exe_path) = managed_exe
+                {
+                    expect_host_ok(managed_host.call(&HostRequest::SetManaged(HostManaged {
+                        camilla: Some(ManagedCamilla {
+                            exe_path,
+                            config_path: config.to_string_lossy().into_owned(),
+                            port: managed_port,
+                            design_id: design_id.clone(),
+                        }),
+                        eqapo: None,
+                        ..HostManaged::default()
+                    }))?)?;
+                }
                 Ok(JobResult::Apply(ApplyResult {
                     outcome,
                     design_id,
@@ -128,6 +183,8 @@ impl Service {
         remove_stage(&stage)?;
         let final_for_job = final_folder.clone();
         let apply = self.deps.apply.clone();
+        let managed = settings.level == ApplyLevel::Manage;
+        let managed_host = self.deps.managed_host.clone();
         self.start_export_with(
             ExportParams {
                 kind: ExportKind::EqualizerApo,
@@ -147,6 +204,16 @@ impl Service {
                 deploy_eqapo_bundle(&stage, &final_for_job)?;
                 let config = config_root.join("config.txt");
                 ensure_eqapo_include(&config, apply.as_ref())?;
+                if managed {
+                    expect_host_ok(managed_host.call(&HostRequest::SetManaged(HostManaged {
+                        camilla: None,
+                        eqapo: Some(ManagedEqApo {
+                            config_path: config_root.to_string_lossy().into_owned(),
+                            design_id: design_id.clone(),
+                        }),
+                        ..HostManaged::default()
+                    }))?)?;
+                }
                 fs::remove_dir_all(&stage).map_err(|error| io_error(stage.clone(), error))?;
                 Ok(JobResult::Apply(ApplyResult {
                     outcome: ApplyOutcome::Applied,
@@ -180,6 +247,18 @@ impl Service {
         app.apply = settings.clone();
         self.app_settings_set(AppSettingsParams { settings: app })?;
         Ok(settings)
+    }
+
+    pub(crate) fn host_install(&self) -> Result<(), IpcError> {
+        self.deps.managed_host.install()
+    }
+
+    pub(crate) fn host_uninstall(&self) -> Result<(), IpcError> {
+        self.deps.managed_host.uninstall()
+    }
+
+    pub(crate) fn host_stop_managing(&self) -> Result<(), IpcError> {
+        expect_host_ok(self.deps.managed_host.call(&HostRequest::StopManaging)?)
     }
 
     fn app_data_path(&self) -> PathBuf {
@@ -260,6 +339,31 @@ fn check_level(level: ApplyLevel, target: &str) -> Result<(), IpcError> {
         .with_param("target", target));
     }
     Ok(())
+}
+
+fn port_from_address(address: &str) -> Result<u16, IpcError> {
+    validate_address(address)?;
+    address
+        .rsplit_once(':')
+        .and_then(|(_, port)| port.parse().ok())
+        .ok_or_else(|| {
+            IpcError::new(
+                ErrorCode::InvalidRequest,
+                "CamillaDSP address must end in a port",
+            )
+            .with_param("field", "camilla.address")
+        })
+}
+
+fn expect_host_ok(response: HostResponse) -> Result<(), IpcError> {
+    match response {
+        HostResponse::Ok => Ok(()),
+        HostResponse::Error(error) => Err(error),
+        HostResponse::Status(_) | HostResponse::Log(_) => Err(IpcError::new(
+            ErrorCode::ApplyFailed,
+            "managed host returned the wrong response",
+        )),
+    }
 }
 
 fn validate_address(address: &str) -> Result<(), IpcError> {

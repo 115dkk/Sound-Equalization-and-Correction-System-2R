@@ -4,12 +4,16 @@ import type { ApplyLevel } from "./ApplyLevel";
 /**
  * CamillaDSP application settings.
  */
-export type CamillaApply = { 
+export type CamillaApply = {
 /**
  * Selected control level.
  */
-level: ApplyLevel, 
+level: ApplyLevel,
 /**
  * Plain websocket address in `host:port` form.
  */
-address: string, };
+address: string,
+/**
+ * CamillaDSP executable selected by the user for managed operation.
+ */
+exe_path?: string, };

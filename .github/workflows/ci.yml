@@ -477,7 +477,7 @@ jobs:
 
       # As release.yml: built before tauri build, packed and run by
       # collect_bundles.py.
-      - name: Build the CLI
+      - name: Build companion binaries
         shell: bash
         run: |
           if [ "${{ matrix.target }}" = "universal-apple-darwin" ]; then
@@ -490,6 +490,9 @@ jobs:
           else
             cargo build --release --locked -p secs2r-cli
           fi
+          if [ "${{ matrix.name }}" = "windows" ]; then
+            cargo build --release --locked -p secs2r-host
+          fi
 
       - name: tauri build
         working-directory: apps/secs2r
@@ -498,7 +501,7 @@ jobs:
           args=(build --ci --bundles "${{ matrix.bundles }}")
           if [ -n "${{ matrix.target }}" ]; then args+=(--target "${{ matrix.target }}"); fi
           if [ "${{ matrix.name }}" = "windows" ]; then
-            args+=(--config '{"bundle":{"resources":{"../../target/release/secs2r-cli.exe":"secs2r-cli.exe"}}}')
+            args+=(--config '{"bundle":{"resources":{"../../target/release/secs2r-cli.exe":"secs2r-cli.exe","../../target/release/secs2r-host.exe":"secs2r-host.exe"}}}')
           fi
           node ui/node_modules/@tauri-apps/cli/tauri.js "${args[@]}"
 
@@ -513,6 +516,9 @@ jobs:
         run: |
           cli_version="$(python -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])")"
           python .github/scripts/collect_bundles.py --name "${{ matrix.name }}" --target "${{ matrix.target }}" --version "0.0.0-ci.${{ github.run_number }}" --cli-version "$cli_version" --out dist
+          if [ "${{ matrix.name }}" = "windows" ]; then
+            python -c "import glob,zipfile; p=glob.glob('dist/*-portable.zip')[0]; z=zipfile.ZipFile(p,'a',zipfile.ZIP_DEFLATED); z.write('target/release/secs2r-host.exe','SECS 2R/secs2r-host.exe'); z.close()"
+          fi
 
       - name: The macOS app opens and calibrates
         if: runner.os == 'macOS'

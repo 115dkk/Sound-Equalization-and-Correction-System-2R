@@ -9,7 +9,11 @@ pub mod supervise;
 #[derive(Debug, thiserror::Error)]
 pub enum ApplyError {
     #[error("connect {addr}: {message}")]
-    Connect { addr: String, message: String },
+    Connect {
+        addr: String,
+        message: String,
+        connection_refused: bool,
+    },
     #[error("websocket: {0}")]
     Transport(String),
     #[error("{command}: {message}")]

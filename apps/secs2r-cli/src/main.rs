@@ -113,6 +113,11 @@ enum Action {
         #[command(subcommand)]
         action: ApplyAction,
     },
+    /// Inspect or administer the Windows managed-host service.
+    Host {
+        #[command(subcommand)]
+        action: HostAction,
+    },
     /// Run creation, filling, calibration, and all exports.
     Run {
         #[arg(long)]
@@ -147,6 +152,18 @@ enum ApplyAction {
     },
     /// Print CamillaDSP and Equalizer APO application state.
     Status,
+}
+
+#[derive(Debug, Subcommand)]
+enum HostAction {
+    /// Print service registration and managed-target status.
+    Status,
+    /// Register the automatic LocalSystem service through UAC.
+    Install,
+    /// Stop and remove the service through UAC.
+    Uninstall,
+    /// Clear every target kept by the service.
+    StopManaging,
 }
 
 #[derive(Debug, Subcommand)]
@@ -486,6 +503,7 @@ fn deps(deterministic: bool, compute: Option<ComputeChoice>) -> Deps {
             .join(".secs2r"),
         eqapo_install: Arc::new(secs_sys::eqapo_install),
         apply: Arc::new(apply::NativeApply),
+        managed_host: Arc::new(apply::NativeManagedHost),
         clock: Arc::new(|| {
             let now = SystemTime::now();
             LocalTime::from_system(now, secs_sys::clock::utc_offset_seconds(now))
@@ -734,6 +752,20 @@ fn run(action: Action, runner: &mut Runner) {
                 runner.call(Request::ApplyStatus);
             }
         },
+        Action::Host { action } => match action {
+            HostAction::Status => {
+                runner.call(Request::ApplyStatus);
+            }
+            HostAction::Install => {
+                runner.call(Request::HostInstall);
+            }
+            HostAction::Uninstall => {
+                runner.call(Request::HostUninstall);
+            }
+            HostAction::StopManaging => {
+                runner.call(Request::HostStopManaging);
+            }
+        },
         Action::Run {
             out,
             project,
@@ -951,6 +983,19 @@ mod tests {
             }
         ));
         assert!(Cli::try_parse_from(["secs2r-cli", "apply", "eqapo"]).is_err());
+        for (command, expected) in [
+            ("status", HostAction::Status),
+            ("install", HostAction::Install),
+            ("uninstall", HostAction::Uninstall),
+            ("stop-managing", HostAction::StopManaging),
+        ] {
+            assert!(matches!(
+                Cli::try_parse_from(["secs2r-cli", "host", command])
+                    .unwrap()
+                    .action,
+                Action::Host { action } if std::mem::discriminant(&action) == std::mem::discriminant(&expected)
+            ));
+        }
     }
 
     #[test]

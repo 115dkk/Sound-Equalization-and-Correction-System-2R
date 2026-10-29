@@ -4,4 +4,4 @@ import type { IpcError } from "./IpcError";
 /**
  * Result of applying an exported design.
  */
-export type ApplyOutcome = { "kind": "applied" } | { "kind": "rolled_back", error: IpcError, };
+export type ApplyOutcome = { "kind": "applied" } | { "kind": "handed_over" } | { "kind": "rolled_back", error: IpcError, };

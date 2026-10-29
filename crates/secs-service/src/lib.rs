@@ -192,6 +192,49 @@ pub trait ApplyAdapter: Send + Sync + Debug {
     fn eqapo_without_include(&self, config_text: &str) -> Result<Option<String>, IpcError>;
 }
 
+/// Managed-host operations supplied by an app at the operating-system boundary.
+pub trait ManagedHostAdapter: Send + Sync + Debug {
+    fn service_state(&self) -> secs_types::ipc::ServiceState;
+    fn call(
+        &self,
+        request: &secs_types::ipc::HostRequest,
+    ) -> Result<secs_types::ipc::HostResponse, IpcError>;
+    fn install(&self) -> Result<(), IpcError>;
+    fn uninstall(&self) -> Result<(), IpcError>;
+}
+
+#[derive(Debug, Default)]
+struct NoManagedHost;
+impl ManagedHostAdapter for NoManagedHost {
+    fn service_state(&self) -> secs_types::ipc::ServiceState {
+        secs_types::ipc::ServiceState::NotInstalled
+    }
+
+    fn call(
+        &self,
+        _request: &secs_types::ipc::HostRequest,
+    ) -> Result<secs_types::ipc::HostResponse, IpcError> {
+        Err(IpcError::new(
+            ErrorCode::Unsupported,
+            "no managed-host adapter was injected",
+        ))
+    }
+
+    fn install(&self) -> Result<(), IpcError> {
+        Err(IpcError::new(
+            ErrorCode::Unsupported,
+            "managed host installation is unavailable",
+        ))
+    }
+
+    fn uninstall(&self) -> Result<(), IpcError> {
+        Err(IpcError::new(
+            ErrorCode::Unsupported,
+            "managed host removal is unavailable",
+        ))
+    }
+}
+
 #[derive(Debug, Default)]
 struct NoApplyAdapter;
 impl ApplyAdapter for NoApplyAdapter {
@@ -280,6 +323,8 @@ pub struct Deps {
     pub eqapo_install: Arc<dyn Fn() -> Option<secs_types::ipc::EqApoInstall> + Send + Sync>,
     /// Connects the service to the unpublished application protocol crate.
     pub apply: Arc<dyn ApplyAdapter>,
+    /// Connects the service to the Windows managed host.
+    pub managed_host: Arc<dyn ManagedHostAdapter>,
     /// The user's wall clock, for export folder names. The default reads UTC;
     /// the apps add the UTC offset `secs-sys` reports.
     pub clock: Arc<dyn Fn() -> LocalTime + Send + Sync>,
@@ -307,6 +352,7 @@ impl Debug for Deps {
             .field("app_data_path", &self.app_data_path)
             .field("eqapo_install", &"detector")
             .field("apply", &self.apply)
+            .field("managed_host", &self.managed_host)
             .field("clock", &"source")
             .field("clock_offset_seconds", &"source")
             .field("unix_ms", &"source")
@@ -372,6 +418,7 @@ impl Default for Deps {
             app_data_path: std::env::temp_dir().join("secs2r"),
             eqapo_install: Arc::new(|| None),
             apply: Arc::new(NoApplyAdapter),
+            managed_host: Arc::new(NoManagedHost),
             clock: Arc::new(|| LocalTime::from_system(SystemTime::now(), 0)),
             clock_offset_seconds: Arc::new(|| 0),
             unix_ms: Arc::new(|| unix_ms(SystemTime::now())),

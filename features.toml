@@ -1116,6 +1116,38 @@ status = "implemented"
 upstream = "new"
 tests = ["secs-service::apply_settings_round_trip_and_legacy_defaults", "secs-service::apply_settings_rejects_addresses_without_a_port", "secs2r-cli::apply_commands_parse", "secs-sys::equalizer_apo_variant_follows_the_install_folder_name"]
 
+[[feature]]
+id = "ipc.host_install"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::managed_host_status_and_missing_camilla_executable_are_typed"]
+
+[[feature]]
+id = "ipc.host_uninstall"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::managed_host_status_and_missing_camilla_executable_are_typed"]
+
+[[feature]]
+id = "ipc.host_stop_managing"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::managed_host_status_and_missing_camilla_executable_are_typed"]
+
+[[feature]]
+id = "apply.managed_host"
+kind = "service"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs2r-host::state_file_round_trip_missing_and_corrupt_handling", "secs2r-host::exit_logon_and_logoff_choose_supervision_actions", "secs2r-host::file_change_repairs_only_absent_or_damaged_pairs", "secs2r-host::log_rotates_once_at_the_size_cap"]
+
 # ---- Screens (M5) ----
 
 [[feature]]

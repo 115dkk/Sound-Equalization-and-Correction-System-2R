@@ -21,6 +21,7 @@ pub enum Command {
     ValidateConfig(String),
     SetConfigFilePath(String),
     Reload,
+    Exit,
 }
 
 impl Command {
@@ -39,6 +40,7 @@ impl Command {
             Self::ValidateConfig(_) => "ValidateConfig",
             Self::SetConfigFilePath(_) => "SetConfigFilePath",
             Self::Reload => "Reload",
+            Self::Exit => "Exit",
         }
     }
 
@@ -144,6 +146,7 @@ impl WsTransport {
             .map_err(|error| ApplyError::Connect {
                 addr: addr.to_owned(),
                 message: error.to_string(),
+                connection_refused: false,
             })?;
         let mut last_error = None;
         let mut stream = None;
@@ -156,12 +159,16 @@ impl WsTransport {
                 Err(error) => last_error = Some(error),
             }
         }
+        let connection_refused = last_error
+            .as_ref()
+            .is_some_and(|error| error.kind() == std::io::ErrorKind::ConnectionRefused);
         let stream = stream.ok_or_else(|| ApplyError::Connect {
             addr: addr.to_owned(),
             message: last_error.map_or_else(
                 || "address resolved to no socket addresses".to_owned(),
                 |error| error.to_string(),
             ),
+            connection_refused,
         })?;
         stream
             .set_read_timeout(Some(timeout))
@@ -169,11 +176,13 @@ impl WsTransport {
             .map_err(|error| ApplyError::Connect {
                 addr: addr.to_owned(),
                 message: error.to_string(),
+                connection_refused: false,
             })?;
         let (socket, _) = tungstenite::client(format!("ws://{addr}"), stream).map_err(|error| {
             ApplyError::Connect {
                 addr: addr.to_owned(),
                 message: error.to_string(),
+                connection_refused: false,
             }
         })?;
         Ok(Self { socket })
@@ -323,6 +332,16 @@ impl<T: Transport> Camilla<T> {
             processing_load_pct,
             playback_peak_db,
         })
+    }
+
+    /// Reads the CamillaDSP version as a small identity probe.
+    pub fn version(&mut self) -> Result<String, ApplyError> {
+        self.required_string(&Command::GetVersion)
+    }
+
+    /// Asks the connected CamillaDSP process to exit.
+    pub fn exit(&mut self) -> Result<(), ApplyError> {
+        self.command(&Command::Exit).map(|_| ())
     }
 
     /// Validates, selects, and reloads a configuration, restoring the previous

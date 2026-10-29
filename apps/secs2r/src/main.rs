@@ -135,6 +135,7 @@ fn main() {
                 app_data_path: config_dir.clone(),
                 eqapo_install: Arc::new(secs_sys::eqapo_install),
                 apply: Arc::new(apply::NativeApply),
+                managed_host: Arc::new(apply::NativeManagedHost),
                 ..Deps::default()
             }));
             let local_api = local_api::Manager::new(config_dir, service.clone(), hub, handle);

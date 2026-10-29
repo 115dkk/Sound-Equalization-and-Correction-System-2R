@@ -157,6 +157,12 @@ pub enum Request {
     RevertEqapo,
     /// Validates and stores application settings for both apply targets.
     ApplySettingsSet(ApplySettings),
+    /// Installs the Windows managed host service with an elevation prompt.
+    HostInstall,
+    /// Stops and removes the Windows managed host service with an elevation prompt.
+    HostUninstall,
+    /// Clears every target persisted by the managed host service.
+    HostStopManaging,
     /// Reports the opt-in local API server and token.
     LocalApiStatus,
     /// Replaces the local API bearer token and restarts its server when needed.
@@ -346,6 +352,12 @@ pub enum Response {
     RevertEqapo(()),
     /// Stored application settings for both targets.
     ApplySettingsSet(ApplySettings),
+    /// Confirms that the Windows managed host service installer was started.
+    HostInstall(()),
+    /// Confirms that the Windows managed host service uninstaller was started.
+    HostUninstall(()),
+    /// Confirms that every managed target was cleared.
+    HostStopManaging(()),
     /// Current local API server and token state.
     LocalApiStatus(LocalApiStatus),
     /// Local API state after replacing its bearer token.
@@ -1341,6 +1353,8 @@ pub enum OpenFileKind {
     Target,
     /// Microphone response calibration text (`.txt`, `.cal` or `.frd`).
     MicCalibration,
+    /// CamillaDSP executable selected for managed launching.
+    CamillaExe,
 }
 /// Typed open-file dialog parameters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -2122,12 +2136,17 @@ pub struct CamillaApply {
     pub level: ApplyLevel,
     /// Plain websocket address in `host:port` form.
     pub address: String,
+    /// CamillaDSP executable selected by the user for managed operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub exe_path: Option<String>,
 }
 impl Default for CamillaApply {
     fn default() -> Self {
         Self {
             level: ApplyLevel::Files,
             address: "127.0.0.1:1234".into(),
+            exe_path: None,
         }
     }
 }
@@ -2197,6 +2216,135 @@ pub enum IncludeState {
     Damaged,
 }
 
+/// One CamillaDSP process kept running by the host service.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ManagedCamilla {
+    pub exe_path: String,
+    pub config_path: String,
+    pub port: u16,
+    pub design_id: String,
+}
+
+/// One Equalizer APO include kept intact by the host service.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ManagedEqApo {
+    pub config_path: String,
+    pub design_id: String,
+}
+
+/// Targets persisted by the host service.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct HostManaged {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub camilla: Option<ManagedCamilla>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub eqapo: Option<ManagedEqApo>,
+    /// Interactive session that selected these targets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(skip)]
+    pub owner_session_id: Option<u32>,
+    /// Stable SID bytes of that session's user token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(skip)]
+    pub owner_user_sid: Option<String>,
+}
+
+/// A request sent over the local managed-host pipe.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "method", content = "params", rename_all = "snake_case")]
+#[ts(export)]
+pub enum HostRequest {
+    Status,
+    SetManaged(HostManaged),
+    StopManaging,
+    Log { lines: u32 },
+}
+
+/// One JSON Lines entry from the managed host log.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct HostLogLine {
+    /// UTC timestamp in RFC 3339 form.
+    pub timestamp: String,
+    /// Stable machine-readable event name.
+    pub event: String,
+    /// Event-specific string values such as a PID, path, or reason.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fields: BTreeMap<String, String>,
+}
+
+/// Why a managed CamillaDSP process is not simply running.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum ManagedProcessState {
+    Running,
+    BackingOff { until: String },
+    GivenUp { reason: String },
+    Stopped,
+    NoSession,
+    OtherUser,
+}
+
+/// Current CamillaDSP supervision state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ManagedProcess {
+    pub state: ManagedProcessState,
+    #[ts(type = "number | null")]
+    pub pid: Option<u32>,
+    pub restarts_in_window: u32,
+}
+
+impl Default for ManagedProcess {
+    fn default() -> Self {
+        Self {
+            state: ManagedProcessState::Stopped,
+            pid: None,
+            restarts_in_window: 0,
+        }
+    }
+}
+
+/// Status returned by the managed host service.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct HostStatus {
+    pub version: String,
+    pub managed: HostManaged,
+    pub camilla: ManagedProcess,
+    pub eqapo_include: IncludeState,
+    pub last_repair: Option<String>,
+}
+
+/// One response returned over the local managed-host pipe.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
+#[ts(export)]
+pub enum HostResponse {
+    Status(Box<HostStatus>),
+    Ok,
+    Log(Vec<HostLogLine>),
+    Error(IpcError),
+}
+
+/// Windows service state visible to the app before a pipe call.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ServiceState {
+    #[default]
+    NotInstalled,
+    Stopped,
+    Running,
+    Unreachable,
+}
+
 /// How the running CamillaDSP configuration compares with the current result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -2254,6 +2402,13 @@ pub struct EqApoApplyStatus {
 pub struct ApplyStatus {
     pub camilla: CamillaApplyStatus,
     pub eqapo: EqApoApplyStatus,
+    /// Windows managed-host service state.
+    #[serde(default)]
+    pub host: ServiceState,
+    /// Detailed host state when the service is running and reachable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub host_status: Option<Box<HostStatus>>,
     /// Design ID of the current result, absent without one; the screen
     /// compares Equalizer APO's `applied_design_id` with it.
     #[serde(default)]
@@ -2267,6 +2422,8 @@ pub struct ApplyStatus {
 pub enum ApplyOutcome {
     /// The target accepted the design.
     Applied,
+    /// No CamillaDSP was running; the managed host will start it with the design.
+    HandedOver,
     /// CamillaDSP rejected reload and the previous path was restored.
     RolledBack { error: IpcError },
 }
@@ -2607,6 +2764,9 @@ mod tests {
             Request::ApplyEqapo,
             Request::RevertEqapo,
             Request::ApplySettingsSet(ApplySettings::default()),
+            Request::HostInstall,
+            Request::HostUninstall,
+            Request::HostStopManaging,
             Request::LocalApiStatus,
             Request::LocalApiTokenRegenerate,
             Request::ComputeStatus,

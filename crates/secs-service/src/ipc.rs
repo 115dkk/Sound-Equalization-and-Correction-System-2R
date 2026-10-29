@@ -147,6 +147,9 @@ pub(crate) fn dispatch(
         Request::ApplySettingsSet(settings) => service
             .apply_settings_set(settings)
             .map(Response::ApplySettingsSet),
+        Request::HostInstall => service.host_install().map(Response::HostInstall),
+        Request::HostUninstall => service.host_uninstall().map(Response::HostUninstall),
+        Request::HostStopManaging => service.host_stop_managing().map(Response::HostStopManaging),
         Request::LocalApiStatus => service
             .deps
             .host

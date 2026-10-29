@@ -11,7 +11,9 @@ use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use secs_service::{ApplyAdapter, Deps, EventSink, LocalTime, NoEvents, Service};
+use secs_service::{
+    ApplyAdapter, Deps, EventSink, LocalTime, ManagedHostAdapter, NoEvents, Service,
+};
 use secs_types::ipc::*;
 use tungstenite::Message;
 
@@ -80,12 +82,100 @@ impl ApplyAdapter for NativeApply {
     }
 }
 
+#[derive(Debug)]
+struct FixedApply {
+    result: Result<ApplyOutcome, IpcError>,
+}
+
+impl ApplyAdapter for FixedApply {
+    fn camilla_status(
+        &self,
+        _address: &str,
+        _timeout: Duration,
+    ) -> Result<CamillaStatus, IpcError> {
+        Err(IpcError::new(ErrorCode::NotImplemented, "unused status"))
+    }
+
+    fn camilla_apply(
+        &self,
+        _address: &str,
+        _config_path: &Path,
+        _config_text: &str,
+        _timeout: Duration,
+    ) -> Result<ApplyOutcome, IpcError> {
+        self.result.clone()
+    }
+
+    fn eqapo_include_state(&self, config_text: &str) -> IncludeState {
+        NativeApply.eqapo_include_state(config_text)
+    }
+
+    fn eqapo_with_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
+        NativeApply.eqapo_with_include(config_text)
+    }
+
+    fn eqapo_without_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
+        NativeApply.eqapo_without_include(config_text)
+    }
+}
+
+#[derive(Debug)]
+struct RecordingManagedHost {
+    state: ServiceState,
+    status: HostStatus,
+    requests: Arc<Mutex<Vec<HostRequest>>>,
+}
+
+impl ManagedHostAdapter for RecordingManagedHost {
+    fn service_state(&self) -> ServiceState {
+        self.state
+    }
+
+    fn call(&self, request: &HostRequest) -> Result<HostResponse, IpcError> {
+        lock(&self.requests).push(request.clone());
+        match request {
+            HostRequest::Status => Ok(HostResponse::Status(Box::new(self.status.clone()))),
+            HostRequest::SetManaged(_) | HostRequest::StopManaging => Ok(HostResponse::Ok),
+            HostRequest::Log { .. } => Ok(HostResponse::Log(Vec::new())),
+        }
+    }
+
+    fn install(&self) -> Result<(), IpcError> {
+        Ok(())
+    }
+
+    fn uninstall(&self) -> Result<(), IpcError> {
+        Ok(())
+    }
+}
+
+fn host_status() -> HostStatus {
+    HostStatus {
+        version: "test".into(),
+        managed: HostManaged::default(),
+        camilla: ManagedProcess::default(),
+        eqapo_include: IncludeState::Absent,
+        last_repair: None,
+    }
+}
+
 fn camilla_error(error: secs_apply::ApplyError) -> IpcError {
+    let connection_refused = matches!(
+        &error,
+        secs_apply::ApplyError::Connect {
+            connection_refused: true,
+            ..
+        }
+    );
     let mut ipc = IpcError::new(ErrorCode::ApplyFailed, error.to_string());
     ipc.retryable = matches!(
         error,
         secs_apply::ApplyError::Connect { .. } | secs_apply::ApplyError::Transport(_)
     );
+    if connection_refused {
+        ipc.params
+            .insert("reason".to_owned(), "connection_refused".to_owned());
+    }
     ipc
 }
 
@@ -167,9 +257,17 @@ fn succeeded(event: JobEvent) -> JobResult {
     }
 }
 
-fn calibrated_service(root: &Path, mut deps: Deps) -> Service {
+fn calibrated_service(root: &Path, deps: Deps) -> Service {
+    calibrated_service_with_apply(root, deps, Arc::new(NativeApply))
+}
+
+fn calibrated_service_with_apply(
+    root: &Path,
+    mut deps: Deps,
+    apply: Arc<dyn ApplyAdapter>,
+) -> Service {
     deps.app_data_path = root.join("app-data");
-    deps.apply = Arc::new(NativeApply);
+    deps.apply = apply;
     deps.clock = Arc::new(|| LocalTime {
         year: 2024,
         month: 1,
@@ -310,6 +408,7 @@ fn apply_settings_round_trip_and_legacy_defaults() {
         camilla: CamillaApply {
             level: ApplyLevel::Manage,
             address: "localhost:4321".into(),
+            exe_path: Some("camilladsp.exe".into()),
         },
         eqapo: EqApoApply {
             level: ApplyLevel::Apply,
@@ -350,6 +449,188 @@ fn apply_settings_rejects_addresses_without_a_port() {
 }
 
 #[test]
+fn managed_host_status_and_missing_camilla_executable_are_typed() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let expected = host_status();
+    let service = Service::new(Deps {
+        managed_host: Arc::new(RecordingManagedHost {
+            state: ServiceState::Running,
+            status: expected.clone(),
+            requests: requests.clone(),
+        }),
+        ..Deps::default()
+    });
+    let Response::ApplyStatus(status) = ok(&service, Request::ApplyStatus) else {
+        panic!()
+    };
+    assert_eq!(status.host, ServiceState::Running);
+    assert_eq!(status.host_status, Some(Box::new(expected)));
+    assert_eq!(
+        ok(&service, Request::HostInstall),
+        Response::HostInstall(())
+    );
+    assert_eq!(
+        ok(&service, Request::HostUninstall),
+        Response::HostUninstall(())
+    );
+    assert_eq!(
+        ok(&service, Request::HostStopManaging),
+        Response::HostStopManaging(())
+    );
+    assert_eq!(
+        *lock(&requests),
+        vec![HostRequest::Status, HostRequest::StopManaging]
+    );
+
+    let mut settings = ApplySettings::default();
+    settings.camilla.level = ApplyLevel::Manage;
+    ok(&service, Request::ApplySettingsSet(settings));
+    let Envelope::Err(error) = service.call(
+        Request::ApplyCamilla(ApplyCamillaParams::default()),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("missing managed executable must fail before starting a job")
+    };
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert_eq!(
+        error.params.get("field").map(String::as_str),
+        Some("apply.camilla.exe_path")
+    );
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn manage_camilla_sends_the_applied_target_to_the_host() {
+    let root = root("managed-camilla");
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let service = calibrated_service(
+        &root,
+        Deps {
+            managed_host: Arc::new(RecordingManagedHost {
+                state: ServiceState::Running,
+                status: host_status(),
+                requests: requests.clone(),
+            }),
+            ..Deps::default()
+        },
+    );
+    let (address, server) = ws_server(vec![
+        reply("ValidateConfig", serde_json::json!("validated")),
+        reply("GetConfigFilePath", serde_json::json!("old.yml")),
+        reply_ok("SetConfigFilePath"),
+        reply_ok("Reload"),
+    ]);
+    let expected_port = address
+        .rsplit_once(':')
+        .and_then(|(_, port)| port.parse::<u16>().ok())
+        .unwrap();
+    set_apply(
+        &service,
+        CamillaApply {
+            level: ApplyLevel::Manage,
+            address,
+            exe_path: Some(r"C:\CamillaDSP\camilladsp.exe".into()),
+        },
+        EqApoApply::default(),
+    );
+    let events = Arc::new(Events::default());
+    let job = apply_camilla(&service, events.clone());
+    succeeded(events.wait(job.job));
+    server.join().unwrap();
+    let calls = lock(&requests);
+    assert!(matches!(
+        calls.as_slice(),
+        [HostRequest::SetManaged(HostManaged {
+            camilla: Some(ManagedCamilla { port, .. }),
+            eqapo: None,
+            ..
+        })] if *port == expected_port
+    ));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+fn managed_camilla_hands_over_only_when_nothing_is_listening() {
+    let root = root("managed-handover");
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let host = Arc::new(RecordingManagedHost {
+        state: ServiceState::Running,
+        status: host_status(),
+        requests: requests.clone(),
+    });
+    let refused = IpcError::new(ErrorCode::ApplyFailed, "connection refused")
+        .with_param("reason", "connection_refused");
+    let service = calibrated_service_with_apply(
+        &root,
+        Deps {
+            managed_host: host.clone(),
+            ..Deps::default()
+        },
+        Arc::new(FixedApply {
+            result: Err(refused),
+        }),
+    );
+    set_apply(
+        &service,
+        CamillaApply {
+            level: ApplyLevel::Manage,
+            address: "127.0.0.1:12345".into(),
+            exe_path: Some(r"C:\CamillaDSP\camilladsp.exe".into()),
+        },
+        EqApoApply::default(),
+    );
+    let events = Arc::new(Events::default());
+    let started = apply_camilla(&service, events.clone());
+    let JobResult::Apply(result) = succeeded(events.wait(started.job)) else {
+        panic!("managed apply result is absent")
+    };
+    assert_eq!(result.outcome, ApplyOutcome::HandedOver);
+    assert!(matches!(
+        lock(&requests).as_slice(),
+        [HostRequest::SetManaged(HostManaged {
+            camilla: Some(_),
+            ..
+        })]
+    ));
+
+    lock(&requests).clear();
+    let rejected = calibrated_service_with_apply(
+        &root,
+        Deps {
+            managed_host: host,
+            ..Deps::default()
+        },
+        Arc::new(FixedApply {
+            result: Err(IpcError::new(
+                ErrorCode::ApplyFailed,
+                "listening CamillaDSP rejected the design",
+            )),
+        }),
+    );
+    set_apply(
+        &rejected,
+        CamillaApply {
+            level: ApplyLevel::Manage,
+            address: "127.0.0.1:12345".into(),
+            exe_path: Some(r"C:\CamillaDSP\camilladsp.exe".into()),
+        },
+        EqApoApply::default(),
+    );
+    let events = Arc::new(Events::default());
+    let started = apply_camilla(&rejected, events.clone());
+    assert!(matches!(
+        events.wait(started.job),
+        JobEvent::Finished {
+            status: JobStatus::Failed,
+            ..
+        }
+    ));
+    assert!(lock(&requests).is_empty());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn apply_camilla_covers_success_rejection_rollback_folder_and_design_matches() {
     let root = root("camilla");
     let service = calibrated_service(&root, Deps::default());
@@ -368,6 +649,7 @@ fn apply_camilla_covers_success_rejection_rollback_folder_and_design_matches() {
         CamillaApply {
             level: ApplyLevel::Apply,
             address,
+            exe_path: None,
         },
         EqApoApply::default(),
     );
@@ -405,6 +687,7 @@ fn apply_camilla_covers_success_rejection_rollback_folder_and_design_matches() {
         CamillaApply {
             level: ApplyLevel::Apply,
             address,
+            exe_path: None,
         },
         EqApoApply::default(),
     );
@@ -436,6 +719,7 @@ fn apply_camilla_covers_success_rejection_rollback_folder_and_design_matches() {
         CamillaApply {
             level: ApplyLevel::Apply,
             address,
+            exe_path: None,
         },
         EqApoApply::default(),
     );
@@ -478,6 +762,7 @@ fn apply_camilla_covers_success_rejection_rollback_folder_and_design_matches() {
             CamillaApply {
                 level: ApplyLevel::Apply,
                 address,
+                exe_path: None,
             },
             EqApoApply::default(),
         );
