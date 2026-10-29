@@ -1,0 +1,43 @@
+[build-system]
+requires = ["maturin>=1.15,<2"]
+build-backend = "maturin"
+
+[project]
+name = "secs2r"
+dynamic = ["version"]
+description = "Python bindings for the SECS 2R room-correction engine and local API client."
+readme = "README.md"
+requires-python = ">=3.9"
+license = "GPL-3.0-only"
+authors = [{ name = "SECS 2R contributors" }]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: End Users/Desktop",
+  "Intended Audience :: Science/Research",
+  "Operating System :: MacOS",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Programming Language :: Python :: 3.14",
+  "Programming Language :: Rust",
+  "Topic :: Multimedia :: Sound/Audio",
+  "Typing :: Typed",
+]
+
+[project.urls]
+Homepage = "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R"
+Repository = "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R"
+Issues = "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R/issues"
+Changelog = "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R/blob/main/CHANGELOG.md"
+
+[tool.maturin]
+bindings = "pyo3"
+python-source = "."
+module-name = "secs2r._secs2r"
+strip = true
