@@ -1692,3 +1692,27 @@ kind = "ipc"
 milestone = "M5"
 status = "implemented"
 tests = ["secs-service::stored_export_folder_survives_save_and_open"]
+
+[[feature]]
+id = "apply.camilla_ws"
+kind = "apply"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-apply::camilla_ws"]
+
+[[feature]]
+id = "apply.eqapo_config"
+kind = "apply"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-apply::eqapo_config"]
+
+[[feature]]
+id = "apply.supervise"
+kind = "apply"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-apply::supervise"]

@@ -37,11 +37,13 @@ secs-dirac = { path = "crates/secs-dirac" }
 secs-camilla = { path = "crates/secs-camilla" }
 secs-filters = { path = "crates/secs-filters" }
 secs-graph = { path = "crates/secs-graph" }
+secs-apply = { path = "crates/secs-apply" }
 
 serde = { version = "1.0.229", features = ["derive"] }
 # preserve_order: .secs files keep the key order SECS 2 wrote (docs/adr/0004).
 serde_json = { version = "1.0.152", features = ["preserve_order", "float_roundtrip"] }
 thiserror = "2.0.21"
+tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
 ureq = { version = "3.4.2", default-features = false }
 base64 = "0.22.1"
 toml = "1.1.8"
