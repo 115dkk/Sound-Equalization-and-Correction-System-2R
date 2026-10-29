@@ -324,6 +324,28 @@ pub fn launch_eqapo_repair(
     Err(unsupported("Equalizer APO repair launch"))
 }
 
+/// Whether one of the named executables runs in the caller's interactive session.
+#[cfg(target_os = "windows")]
+pub fn process_running_in_current_session(names: &[&str]) -> Result<bool, IpcError> {
+    let session = win_custody::current_session_id()
+        .map_err(|error| ipc_error(format!("read current session: {error}")))?;
+    let processes = win_custody::session_processes()
+        .map_err(|error| ipc_error(format!("enumerate session processes: {error}")))?;
+    Ok(processes.iter().any(|process| {
+        process.session_id == session
+            && process.name.as_deref().is_some_and(|name| {
+                names
+                    .iter()
+                    .any(|candidate| name.eq_ignore_ascii_case(candidate))
+            })
+    }))
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn process_running_in_current_session(_names: &[&str]) -> Result<bool, IpcError> {
+    Ok(false)
+}
+
 #[must_use]
 pub fn active_console_session() -> Option<u32> {
     #[cfg(target_os = "windows")]
@@ -787,6 +809,28 @@ pub fn register_service(executable: &Path, service_exists: bool) -> Result<(), I
 #[cfg(not(target_os = "windows"))]
 pub fn register_service(_executable: &Path, _service_exists: bool) -> Result<(), IpcError> {
     Err(unsupported("service registration"))
+}
+
+/// Starts the already registered host service without changing its configuration.
+#[cfg(target_os = "windows")]
+pub fn start_service() -> Result<(), IpcError> {
+    use std::ffi::OsStr;
+    use windows_service::service::ServiceAccess;
+    use windows_service::service_manager::{ServiceManager, ServiceManagerAccess};
+
+    let manager = ServiceManager::local_computer(None::<&str>, ServiceManagerAccess::CONNECT)
+        .map_err(|error| ipc_error(format!("open service manager: {error}")))?;
+    let service = manager
+        .open_service(SERVICE_NAME, ServiceAccess::START)
+        .map_err(|error| ipc_error(format!("open {SERVICE_NAME}: {error}")))?;
+    service
+        .start::<&OsStr>(&[])
+        .map_err(|error| ipc_error(format!("start {SERVICE_NAME}: {error}")))
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn start_service() -> Result<(), IpcError> {
+    Err(unsupported("service start"))
 }
 
 /// Stops and deletes the service. The caller must already be elevated.

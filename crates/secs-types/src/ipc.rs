@@ -2348,10 +2348,14 @@ pub enum HostRequest {
     Status,
     SetManaged(HostManaged),
     StopManaging,
-    Log { lines: u32 },
+    Log {
+        lines: u32,
+    },
     /// Replaces the service with the signed `secs2r-host.exe` next to
     /// `secs2r-host.json` in `from_dir` (ADR 0020).
-    UpdateSelf { from_dir: String },
+    UpdateSelf {
+        from_dir: String,
+    },
 }
 
 /// One JSON Lines entry from the managed host log.

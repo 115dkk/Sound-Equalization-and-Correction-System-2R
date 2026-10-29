@@ -4,7 +4,7 @@ import type { Request } from "./bindings/Request";
 import type { MeasureConfigureParams } from "./bindings/MeasureConfigureParams";
 import type { SettingEdit } from "./bindings/SettingEdit";
 import { CALIBRATION_LIMITS } from "./bindings/rules";
-import { createMockService } from "./mock";
+import { createMockService, updateStates } from "./mock";
 import * as fx from "./fixtures";
 import { CAMILLA_EXE_FILE } from "../screens/export/types";
 import { mimoView } from "../screens/calibrate/fixtures";
@@ -274,6 +274,8 @@ describe("P33 mock wiring", () => {
       calibration_settings_set: { method: "calibration_settings_set", params: { settings: fx.calibrationSettings } }, calibration_settings_edit: { method: "calibration_settings_edit", params: { edit: { kind: "mode", mode: "zero" } } },
       sub_warnings: { method: "sub_warnings" }, rew_info: { method: "rew_info" }, rew_driver_set: { method: "rew_driver_set", params: { driver: "ASIO" } }, mode_spec: { method: "mode_spec", params: { mode: "mixed", ultra_ms: null, mimo_fir: true } },
       local_api_status: { method: "local_api_status" }, local_api_token_regenerate: { method: "local_api_token_regenerate" },
+      update_status: { method: "update_status" }, update_check: { method: "update_check" }, update_download: { method: "update_download" },
+      update_restart: { method: "update_restart" }, update_notice_dismiss: { method: "update_notice_dismiss" },
       app_settings_get: { method: "app_settings_get" }, app_settings_set: { method: "app_settings_set", params: { settings: fx.appSettings } },
       apply_status: { method: "apply_status" }, apply_settings_set: { method: "apply_settings_set", params: fx.appSettings.apply },
       apply_camilla: { method: "apply_camilla", params: {} }, apply_eqapo: { method: "apply_eqapo" }, revert_eqapo: { method: "revert_eqapo" },
@@ -287,6 +289,8 @@ describe("P33 mock wiring", () => {
     } satisfies { [K in Request["method"]]: Extract<Request, { method: K }> };
     for (const request of Object.values(requests)) {
       const mock = createMockService({ tickMs: 0, results: fx.resultsSummary });
+      if (request.method === "update_download") mock.setUpdateStatus(updateStates.available);
+      if (request.method === "update_restart") mock.setUpdateStatus(updateStates.readyOnExit);
       if (request.method === "mic_calibration_attach") await mock.request({ method: "mic_calibration_set", params: { path: "/mic.txt" } });
       if (request.method === "undo") await mock.request({ method: "position_clear", params: { position: 1 } });
       if (request.method === "job_cancel") await mock.request({ method: "sample_load", params: { positions: 1 } });
@@ -300,6 +304,36 @@ describe("P33 mock wiring", () => {
       expect(await mock.invoke("secs_call", { request }), request.method).toMatchObject({ ok: true, data: { method: request.method } });
       mock.drain(); mock.dispose();
     }
+  });
+
+  it("scripts updater states and guards downloads and restarts", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      for (const state of Object.values(updateStates)) {
+        mock.setUpdateStatus(state);
+        expect(await mock.request({ method: "update_status" })).toEqual(state);
+      }
+      for (const state of [updateStates.upToDate, updateStates.portable, updateStates.failed, updateStates.downloading]) {
+        mock.setUpdateStatus(state);
+        await expect(mock.request({ method: "update_download" })).rejects.toMatchObject({ error: { code: "invalid_request" } });
+        await expect(mock.request({ method: "update_restart" })).rejects.toMatchObject({ error: { code: "invalid_request" } });
+      }
+      mock.setUpdateStatus(updateStates.available);
+      expect(await mock.request({ method: "update_download" })).toMatchObject({ phase: { kind: "downloading", received: 0 } });
+      for (const state of [updateStates.readyOnExit, updateStates.readyOnRequest]) {
+        mock.setUpdateStatus(state);
+        expect(await mock.request({ method: "update_restart" })).toBeNull();
+        expect(await mock.request({ method: "update_status" })).toMatchObject({ phase: { kind: "installing" } });
+      }
+      mock.setUpdateStatus(updateStates.skippedNotice);
+      expect(await mock.request({ method: "update_notice_dismiss" })).toMatchObject({ notice: null });
+      await mock.request({ method: "app_settings_set", params: { settings: { ...fx.appSettings, updates: "off" } } });
+      expect(await mock.request({ method: "update_status" })).toMatchObject({ policy: "off", phase: { kind: "off" } });
+      expect(await mock.request({ method: "update_check" })).toMatchObject({ policy: "off", phase: { kind: "checking" } });
+      mock.setUpdateStatus(updateStates.available);
+      await mock.request({ method: "app_settings_set", params: { settings: fx.appSettings } });
+      expect(await mock.request({ method: "update_status" })).toMatchObject({ policy: "auto", phase: { kind: "downloading" } });
+    } finally { mock.dispose(); }
   });
 
   it("reads no CamillaDSP and no Equalizer APO until a test or specimen flips the status", async () => {

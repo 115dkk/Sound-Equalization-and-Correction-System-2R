@@ -353,7 +353,7 @@ export const subEntry: SubEntry = {
   mode: "auto", bundle: "A", gain_db: 0, delay_ms: 0, polarity: 1, allpass: [], mimo_support: true,
   hp_hz: 0, lp_hz: 0, peq: [], hp_type: "LR24", lp_type: "LR24", dba_row: "front",
 };
-export const appSettings: AppSettings = { compute: "auto", language: "ko", theme: "system", icon: "expert", skin: "default", local_api: { enabled: false, port: 4712 }, apply: { camilla: { level: "files", address: "127.0.0.1:1234" }, eqapo: { level: "files" } }, recent_projects: [], last_window_size: null };
+export const appSettings: AppSettings = { updates: "auto", compute: "auto", language: "ko", theme: "system", icon: "expert", skin: "default", local_api: { enabled: false, port: 4712 }, apply: { camilla: { level: "files", address: "127.0.0.1:1234" }, eqapo: { level: "files" } }, recent_projects: [], last_window_size: null };
 /** CamillaDSP is not running at the default address (`secs_apply::ApplyError::Connect` as `apply_failed`). */
 export const camillaUnreachable: CamillaApplyStatus = {
   reachable: false,

@@ -12,6 +12,54 @@
 # "new" marks what SECS 2 does not have.
 
 [[feature]]
+id = "app.updater"
+kind = "app"
+milestone = "M6"
+status = "implemented"
+upstream = "new; ADR 0020"
+tests = ["secs2r::update_policy_and_portable_decisions", "secs2r::update_endpoint_override_preserves_nonempty_address", "secs2r::update_notice_matches_running_version_and_tracks_skipped_releases", "secs2r::update_actions_reject_wrong_phases", "secs2r::updater_config_requires_signed_version"]
+
+[[feature]]
+id = "ipc.update_status"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new; ADR 0020"
+tests = ["secs2r::update_policy_and_portable_decisions"]
+
+[[feature]]
+id = "ipc.update_check"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new; ADR 0020"
+tests = ["secs2r::update_endpoint_override_preserves_nonempty_address"]
+
+[[feature]]
+id = "ipc.update_download"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new; ADR 0020"
+tests = ["secs2r::update_actions_reject_wrong_phases"]
+
+[[feature]]
+id = "ipc.update_restart"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new; ADR 0020"
+tests = ["secs2r::update_actions_reject_wrong_phases"]
+
+[[feature]]
+id = "ipc.update_notice_dismiss"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new; ADR 0020"
+tests = ["secs2r::update_notice_matches_running_version_and_tracks_skipped_releases"]
+
+[[feature]]
 id = "engine.peq_fit"
 kind = "engine"
 milestone = "M2"
