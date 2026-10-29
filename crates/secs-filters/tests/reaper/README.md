@@ -7,7 +7,68 @@ It is a model of the host API, not an audio or plug-in compatibility test.
 in its existing test job. With neither installed, the two optional Rust tests
 print `SKIP` and return; explicitly configured executables must work.
 
-## Real-host check
+## CI audio playback
+
+The `reaper-playback` job in `.github/workflows/ci.yml` downloads the official
+Linux x86_64 REAPER 7.84 archive pinned in `.github/reaper.toml`. The downloader
+verifies SHA-256 before extracting regular files/directories into a disposable
+runner directory. It rejects archive traversal, links and special files, exports
+`SECS_REAPER`, and never runs an installer. The engine and archive are neither
+committed nor uploaded.
+
+After installing Linux libraries, Xvfb and Lua 5.4, CI runs the script syntax/mock
+checks and this ignored real-host test:
+
+```sh
+python3 -I .github/scripts/reaper_engine.py fetch \
+  --dest "$RUNNER_TEMP/reaper-engine" --github-env "$GITHUB_ENV"
+# Subsequent CI steps receive SECS_REAPER from GITHUB_ENV.
+cargo test -p secs-filters --locked reaper_script -- --nocapture
+SECS_REAPER_ARTIFACTS="$RUNNER_TEMP/reaper-artifacts" \
+  cargo test -p secs-filters --test reaper_playback --locked -- --ignored --nocapture
+```
+
+`reaper_playback.rs` exports the `computed_dolby` (subwoofers) and `mimo_iir`
+(MIMO supports) oracle plans. Each input gets one unit impulse, separated by the
+IR length plus 4096 silent frames, in a multichannel 48 kHz float source WAV.
+`playback.lua` checks its disposable resource directory and project, applies the
+bundle, dumps routing and ReaVerb state, and renders only the output bus as a
+multichannel 32-bit float WAV. It reapplies the bundle, checks replacement by
+track count and a changed folder GUID, then discards the scratch project and
+quits. GNU `timeout` limits each engine process group to 180 seconds, with a
+10-second kill grace period. `HOME`, the XDG directories and `-cfgfile` all point
+to the disposable case; no user license or evaluation-state files are copied.
+
+The Rust comparison checks every rendered sample against the corresponding
+exported path WAV at the exact input impulse timestamp. Channel count, sample
+rate and frame count must match. There is no fitted gain or time alignment;
+unreachable outputs, padded channels and guard intervals must remain silent
+within the absolute tolerance. The bound is `1e-7 + 2e-6 * abs(expected)` per
+sample. This checkout has no CamillaDSP float-host playback test to reuse; its
+CamillaDSP optimized-graph test compares mathematical transfer functions, not
+float-engine samples. The REAPER bound is therefore explicit and separately
+tested against gain, delay, leakage and nonfinite errors.
+
+With `SECS_REAPER_ARTIFACTS` set, the test copies only `dump.txt`, `result.txt`,
+`render.wav`, `stdout.log`, `stderr.log`, `splash.log` and `comparison.log` for each
+case. CI uploads this allowlisted directory even after failure. It never uploads
+the engine, its archive, resource/configuration directory or scratch projects.
+Engine failures include its output in the test failure; a timeout does not count
+as a skipped or passing test. First-launch or render dialogs are not dismissed
+by changing license state: if one prevents completion, the timeout fails CI.
+
+The nonignored tests exercise WAV handling, exact comparison, oracle export,
+source impulses and silent-route expectations without starting REAPER:
+
+```sh
+cargo test -p secs-filters --test reaper_playback --locked
+python3 -m unittest discover -s .github/scripts -p 'test_reaper_engine.py'
+```
+
+Only a successful ignored test in the real host establishes playback parity;
+the mock, syntax check and nonignored tests do not.
+
+## Manual real-host state check
 
 Use an **existing REAPER installation** and a fresh, disposable directory. Do not
 run the harness in your normal REAPER instance. No SWS or other extensions are

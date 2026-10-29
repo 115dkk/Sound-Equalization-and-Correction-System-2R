@@ -118,6 +118,10 @@ fn reaper_script_compiles_when_luac_is_available() {
             env!("CARGO_MANIFEST_DIR"),
             "/tests/reaper/harness.lua"
         ))
+        .arg(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/reaper/playback.lua"
+        ))
         .output()
         .unwrap();
     assert!(

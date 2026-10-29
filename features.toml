@@ -1070,6 +1070,7 @@ tests = [
   "secs-filters::reaper_script_uses_routing_order_and_quotes_names",
   "secs-filters::reaper_script_compiles_when_luac_is_available",
   "secs-filters::reaper_script_replaces_tracks_and_restores_failed_builds",
+  "secs-filters::reaper_plays_convolution_bundles_as_written",
   "secs-filters::convolution_bundle_contains_complete_paths_and_is_atomic",
   "secs-service::convolution_export_with_subs_and_mimo_reopens_byte_identically",
 ]

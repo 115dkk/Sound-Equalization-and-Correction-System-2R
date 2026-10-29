@@ -42,6 +42,7 @@ def listed_tests(terse_list: str) -> set[str]:
 # These ignored tests run in the named CI job with ``--ignored``.
 IGNORED_CI_TESTS = {
     "secs-filters::exported_configs_play_as_designed": "eqapo-playback",
+    "secs-filters::reaper_plays_convolution_bundles_as_written": "reaper-playback",
 }
 
 
