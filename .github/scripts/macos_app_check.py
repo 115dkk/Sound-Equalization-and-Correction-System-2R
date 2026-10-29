@@ -218,6 +218,15 @@ def audio_problems(audio: object, device: str) -> list[str]:
     return problems
 
 
+def audio_retries(audio: object) -> list[str]:
+    """One line per native audio attempt that the self-test retried."""
+    retries = audio.get("retries", []) if isinstance(audio, dict) else []
+    if not isinstance(retries, list):
+        return []
+    return [f"retried {entry.get('stage')} after attempt {entry.get('attempt')}: {entry.get('error')}"
+            for entry in retries if isinstance(entry, dict)]
+
+
 def report_problems(label: str, report: dict | None, work: Path,
                     audio_device: str | None = None) -> list[str]:
     """What is wrong with one self-test run: its report and its exports."""
@@ -364,6 +373,9 @@ def self_test(app: Path, arch: str, work: Path, timeout: int,
         report.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(data, indent=2, ensure_ascii=False))
     print("::endgroup::", flush=True)
+    if data is not None:
+        for note in audio_retries(data.get("facts", {}).get("audio")):
+            print(f"::warning::{label}: {note}", flush=True)
     return problems
 
 
