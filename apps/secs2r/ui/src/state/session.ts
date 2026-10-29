@@ -12,7 +12,7 @@ import type { MdatScope } from "../ipc/bindings/MdatScope";
 import type { XoRecommendation } from "../ipc/bindings/XoRecommendation";
 import type { ConnectPath, MeterReading, MicCalibrationView, MonitorState, RewProblem } from "../screens/connect/types";
 import type { CalibrateView } from "../screens/calibrate/types";
-import type { ApplyRun, ApplyTarget, ExportRun } from "../screens/export/types";
+import type { ApplyRun, ApplyTarget, ExportRun, HostFailure } from "../screens/export/types";
 import type { MeasureView } from "../screens/measure/types";
 import { createResource as resource, createStore, type Failure } from "./store";
 import { isActiveJob } from "./jobRetention";
@@ -41,6 +41,8 @@ type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "m
   designName: string; camillaDevices: CamillaDevices;
   /** 내보내기의 적용 (ADR 0018): how each target's last apply ended, the CamillaDSP address field's unsaved text, an apply_status read and a revert_eqapo in flight. */
   applyRuns: Partial<Record<ApplyTarget, ApplyRun>>; applyAddressDraft: string | null; applyChecking: boolean; applyReverting: boolean;
+  /** 관리: the CamillaDSP executable field's unsaved text, a host_install or host_stop_managing in flight, and the last of them that failed. */
+  applyExeDraft: string | null; hostInstalling: boolean; hostStopping: boolean; hostFailure: HostFailure | null;
   failure: CalibrateView["failure"]; rewLaunch: "idle" | "checking" | "launching";
   rewProblem: RewProblem | null; rewProblemDetail: string | null; readingRew: boolean;
   switchingRewDriver: boolean;
@@ -74,6 +76,7 @@ export function createSession(ipc: Ipc) {
     xoRecommendation: null, runs: {}, mdatScope: "all", failure: null,
     designName: "", camillaDevices: { capture: { type: "file" }, playback: { type: "file" } },
     applyRuns: {}, applyAddressDraft: null, applyChecking: false, applyReverting: false,
+    applyExeDraft: null, hostInstalling: false, hostStopping: false, hostFailure: null,
     micCalBusy: null, micCalError: null,
     rewLaunch: "idle", rewProblem: null, rewProblemDetail: null, readingRew: false, switchingRewDriver: false, opened: 0,
   });
@@ -186,7 +189,9 @@ export function createSession(ipc: Ipc) {
         // file dialog. Do not publish a second copy as a global notice.
         const micCalAction = request.method === "mic_calibration_set" || request.method === "mic_calibration_clear" || request.method === "mic_calibration_attach"
           || (request.method === "dialog_open_file" && (request as Extract<Request, { method: "dialog_open_file" }>).params.kind === "mic_calibration");
-        if (!micCalAction || !(error instanceof IpcFailure)) report(error);
+        // The export screen's service block owns the host actions' typed failures the same way.
+        const hostAction = request.method === "host_install" || request.method === "host_uninstall" || request.method === "host_stop_managing";
+        if (!(micCalAction || hostAction) || !(error instanceof IpcFailure)) report(error);
       }
       throw error;
     } finally {

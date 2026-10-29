@@ -5,7 +5,7 @@ import { StrictMode, type ReactNode } from "react";
 import { createMockService } from "../../ipc/mock";
 import { SessionProvider } from "../../state/react";
 import { createSession } from "../../state/session";
-import { EXPORT_KINDS, FILTER_KINDS, MDAT_SCOPES, canExport, exportBlock } from "./types";
+import { CAMILLA_EXE_FILE, EXPORT_KINDS, FILTER_KINDS, MDAT_SCOPES, canApply, canExport, exportBlock } from "./types";
 import type { CamillaDevices } from "../../ipc/bindings/CamillaDevices";
 import * as fx from "../../ipc/fixtures";
 import { measureMethods } from "../../ipc/fixtures";
@@ -439,5 +439,105 @@ describe("useExportScreen 적용", () => {
     await perform(() => session.call({ method: "project_open", params: { path: "/projects/next.secs" } }));
     expect(result.current.view?.apply.runs).toEqual({});
     expect(result.current.view?.apply.settings.camilla.level).toBe("apply");
+  });
+});
+
+describe("useExportScreen 관리", () => {
+  const applySets = () => mock.calls.flatMap((call) => (call.method === "apply_settings_set" ? [call.params] : []));
+  async function withResult() {
+    await session.call({ method: "calibrate", params: { settings: null, subs_only: false } });
+    mock.drain(); await session.stores.results.load(); await session.settled();
+    mock.calls.length = 0;
+  }
+
+  it("writes 관리 into the whole ApplySettings, picks camilladsp.exe into it, and keeps it through other changes", async () => {
+    const { result } = renderHook(useExportScreen, { wrapper });
+    await perform(() => result.current.actions.setApplyLevel("camilla", "manage"));
+    expect(applySets()).toEqual([{ camilla: { level: "manage", address: "127.0.0.1:1234" }, eqapo: { level: "files" } }]);
+    expect(result.current.view?.apply.settings.camilla.level).toBe("manage");
+    // 관리 reads the status, which carries the service's state.
+    expect(result.current.view?.apply.host).toMatchObject({ service: "not_installed", status: null, installing: false, stopping: false, failure: null });
+    await perform(result.current.actions.pickCamillaExe);
+    expect(mock.calls).toContainEqual({ method: "dialog_open_file", params: { kind: CAMILLA_EXE_FILE } });
+    expect(applySets().at(-1)).toEqual({ camilla: { level: "manage", address: "127.0.0.1:1234", exe_path: fx.CAMILLA_EXE }, eqapo: { level: "files" } });
+    expect(result.current.view?.apply.settings.camilla.exe_path).toBe(fx.CAMILLA_EXE);
+    // Another level change and the address keep the executable.
+    await perform(() => result.current.actions.setApplyLevel("eqapo", "manage"));
+    await perform(() => result.current.actions.setCamillaAddress("127.0.0.1:1300"));
+    await perform(result.current.actions.saveCamillaAddress);
+    expect(applySets().at(-1)).toEqual({ camilla: { level: "manage", address: "127.0.0.1:1300", exe_path: fx.CAMILLA_EXE }, eqapo: { level: "manage" } });
+    // A cancelled dialog changes nothing.
+    const before = applySets().length;
+    mock.queueDialog("dialog_open_file", null);
+    await perform(result.current.actions.pickCamillaExe);
+    expect(applySets()).toHaveLength(before);
+  });
+
+  it("keeps a typed executable as a draft, stores it trimmed, and stores none for an empty field", async () => {
+    const { result } = renderHook(useExportScreen, { wrapper });
+    await perform(() => result.current.actions.setApplyLevel("camilla", "manage"));
+    mock.calls.length = 0;
+    await perform(() => result.current.actions.setCamillaExe("  D:/CamillaDSP/camilladsp.exe "));
+    expect(result.current.view?.apply.exeDraft).toBe("  D:/CamillaDSP/camilladsp.exe ");
+    expect(applySets()).toEqual([]);
+    await perform(result.current.actions.saveCamillaExe);
+    expect(applySets()).toEqual([{ camilla: { level: "manage", address: "127.0.0.1:1234", exe_path: "D:/CamillaDSP/camilladsp.exe" }, eqapo: { level: "files" } }]);
+    expect(result.current.view?.apply.exeDraft).toBeNull();
+    // Typing the stored path back is no draft; leaving the field unchanged stores nothing.
+    await perform(() => result.current.actions.setCamillaExe("D:/CamillaDSP/camilladsp.exe"));
+    expect(result.current.view?.apply.exeDraft).toBeNull();
+    await perform(result.current.actions.saveCamillaExe);
+    expect(applySets()).toHaveLength(1);
+    // Emptied: the setting goes.
+    await perform(() => result.current.actions.setCamillaExe(""));
+    await perform(result.current.actions.saveCamillaExe);
+    expect(applySets().at(-1)).toEqual({ camilla: { level: "manage", address: "127.0.0.1:1234" }, eqapo: { level: "files" } });
+    expect(result.current.view?.apply.settings.camilla.exe_path).toBeUndefined();
+  });
+
+  it("installs the service from a row, then 관리 시작 stores a typed executable, applies and hands over, and 관리 끄기 lets go", async () => {
+    await withResult();
+    const { result } = renderHook(useExportScreen, { wrapper });
+    await perform(() => result.current.actions.setApplyLevel("camilla", "manage"));
+    await perform(() => result.current.actions.setCamillaExe(fx.CAMILLA_EXE));
+    expect(applySets().at(-1)?.camilla.exe_path).toBeUndefined();
+    mock.calls.length = 0;
+    await perform(() => result.current.actions.installHost("camilla"));
+    expect(mock.calls.map((call) => call.method)).toEqual(["host_install", "apply_status"]);
+    expect(result.current.view?.apply.host).toMatchObject({ service: "running", status: fx.hostIdle, installing: false, failure: null });
+    expect(canApply(result.current.view!, "camilla")).toBe(true);
+    mock.calls.length = 0;
+    await perform(result.current.actions.applyCamilla);
+    const methods = mock.calls.map((call) => call.method);
+    // The typed executable is stored before the apply starts.
+    expect(methods.indexOf("apply_settings_set")).toBeLessThan(methods.indexOf("apply_camilla"));
+    expect(applySets().at(-1)?.camilla.exe_path).toBe(fx.CAMILLA_EXE);
+    expect(result.current.view?.apply.applying).toBe("camilla");
+    await perform(mock.drain);
+    // No CamillaDSP answered: the design went to the service, which starts CamillaDSP with it.
+    expect(result.current.view?.apply.runs.camilla).toMatchObject({ status: "applied", handedOver: true });
+    expect(result.current.view?.apply.host.status).toMatchObject({ managed: { camilla: { exe_path: fx.CAMILLA_EXE } }, camilla: { state: { kind: "running" }, pid: 4812 } });
+    mock.calls.length = 0;
+    await perform(() => result.current.actions.stopManaging("camilla"));
+    expect(mock.calls.map((call) => call.method)).toEqual(["host_stop_managing", "apply_status"]);
+    expect(result.current.view?.apply.host.status).toMatchObject({ managed: {}, camilla: { state: { kind: "stopped" } } });
+    expect(result.current.view?.apply.host.stopping).toBe(false);
+  });
+
+  it("keeps a failed host action in the row it came from, without the global notice", async () => {
+    const { result } = renderHook(useExportScreen, { wrapper });
+    await perform(() => result.current.actions.setApplyLevel("eqapo", "manage"));
+    mock.failNext("host_install", "apply_failed", "elevated install: The operation was canceled by the user. (os error 1223)");
+    await perform(() => result.current.actions.installHost("eqapo"));
+    expect(result.current.view?.apply.host).toMatchObject({ service: "not_installed", installing: false, failure: { action: "install", target: "eqapo", error: { code: "apply_failed" } } });
+    expect(session.errors.getSnapshot()).toBeNull();
+    // The next try clears it.
+    await perform(() => result.current.actions.installHost("eqapo"));
+    expect(result.current.view?.apply.host).toMatchObject({ service: "running", failure: null });
+    // 관리 끄기 that cannot reach the service says so in its row too.
+    await perform(() => mock.request({ method: "host_uninstall" }));
+    await perform(() => result.current.actions.stopManaging("eqapo"));
+    expect(result.current.view?.apply.host.failure).toMatchObject({ action: "stop", target: "eqapo" });
+    expect(session.errors.getSnapshot()).toBeNull();
   });
 });

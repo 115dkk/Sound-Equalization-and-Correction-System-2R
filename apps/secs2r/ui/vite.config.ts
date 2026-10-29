@@ -27,10 +27,13 @@ const buildInfo = {
 // Tauri serves the built files from ui/dist; the dev server must sit on the
 // port tauri.conf.json's devUrl names.
 //
-// Two entries: index.html (the app) and gallery.html (the screen gallery,
-// docs/DESIGN.md §7). `vite build` builds both; `vite build --mode app`
-// (npm run build, which Tauri runs) builds the app alone so the gallery and
-// its fixtures never ship in the installer.
+// Three entries: index.html (the app), host.html (the SECS 2R Host shell's
+// window, ADR 0018) and gallery.html (the screen gallery, docs/DESIGN.md §7).
+// `vite build` builds all three; `vite build --mode app` (npm run build,
+// which Tauri runs) builds the app and the shell's page alone so the gallery
+// and its fixtures never ship in the installer.
+const shipped = { main: resolve(import.meta.dirname, "index.html"), host: resolve(import.meta.dirname, "host.html") };
+
 export default defineConfig(({ mode }) => ({
   plugins: [react()],
   define: { __BUILD_INFO__: JSON.stringify(buildInfo) },
@@ -44,10 +47,7 @@ export default defineConfig(({ mode }) => ({
     emptyOutDir: true,
     sourcemap: false,
     rollupOptions: {
-      input:
-        mode === "app"
-          ? { main: resolve(import.meta.dirname, "index.html") }
-          : { main: resolve(import.meta.dirname, "index.html"), gallery: resolve(import.meta.dirname, "gallery.html") },
+      input: mode === "app" ? shipped : { ...shipped, gallery: resolve(import.meta.dirname, "gallery.html") },
       // The libraries and the two catalogs go in their own chunks so no chunk
       // passes the 500 kB warning. All are static imports: the app still
       // loads at once, with nothing lazy to wait for.

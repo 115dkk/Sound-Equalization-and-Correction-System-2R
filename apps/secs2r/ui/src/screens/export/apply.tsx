@@ -8,10 +8,16 @@
 // the row's own button applies. Each block ends with how the last apply
 // ended. The keys stand in the rows' name column and the values where the
 // buttons stand (the export grid's subgrid), like the design name above.
+// 관리 (Windows) applies the same way and hands the design to the SECS 2R
+// Host service: CamillaDSP's row adds the executable the service runs, and
+// both rows add the service block (installed or not, what it does with the
+// target now, and the quiet 관리 끄기 with its one confirm sentence).
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { errorText } from "../../app/jobs/jobText";
+import { CAMILLA_TEXT, SERVICE_TEXT, camillaDetail, camillaManaged, clockText, serviceView, type HostState, type ServiceView } from "../../host/model";
+import { StopManagingConfirm } from "../../host/parts";
 import type { MessageKey } from "../../i18n";
-import { useNumber, useT, type Translate } from "../../i18n/react";
+import { useLocale, useNumber, useT, type Translate } from "../../i18n/react";
 import type { CamillaApplyStatus } from "../../ipc/bindings/CamillaApplyStatus";
 import type { EqApoApplyStatus } from "../../ipc/bindings/EqApoApplyStatus";
 import type { EqApoVariant } from "../../ipc/bindings/EqApoVariant";
@@ -27,6 +33,8 @@ import {
   applyLevel,
   applyProblem,
   eqapoDesign,
+  exeText,
+  exportGroupBusy,
   isLoopback,
   type AddressProblem,
   type ApplyRun,
@@ -34,6 +42,7 @@ import {
   type EqApoDesign,
   type ExportActions,
   type ExportView,
+  type HostFailure,
   type ScreenApplyLevel,
 } from "./types";
 
@@ -41,8 +50,12 @@ import {
 export const ADDRESS_ID = "export.apply.camilla.address";
 /** Why Equalizer APO's 적용 is off (not installed); its button points here. */
 export const EQAPO_REASON_ID = "export.apply.eqapo.reason";
+/** The CamillaDSP executable field (관리). */
+export const EXE_ID = "export.manage.camilla.exe";
+/** Why the service cannot take `target` over (not installed, stopped, not answering); the row's 관리 button points here. */
+export const serviceReasonId = (target: ApplyTarget) => `export.manage.${target}.service.reason`;
 
-const LEVEL_TEXT: Record<ScreenApplyLevel, MessageKey> = { files: "export.apply.level.files", apply: "export.apply.level.apply" };
+const LEVEL_TEXT: Record<ScreenApplyLevel, MessageKey> = { files: "export.apply.level.files", apply: "export.apply.level.apply", manage: "export.apply.level.manage" };
 
 const ADDRESS_PROBLEM_TEXT: Record<AddressProblem, MessageKey> = {
   format: "export.apply.camilla.address.format",
@@ -103,10 +116,10 @@ function Entry({ label, children }: { label: ReactNode; children: ReactNode }) {
   );
 }
 
-function Refresh({ target, view, actions }: { target: ApplyTarget; view: ExportView; actions: ExportActions }) {
+function Refresh({ target, view, actions, id = `export.apply.${target}.refresh` }: { target: ApplyTarget; view: ExportView; actions: ExportActions; id?: string }) {
   const t = useT();
   return (
-    <Button size="sm" variant="quiet" static className="export-apply__refresh" data-ui={`export.apply.${target}.refresh`} busy={view.apply.checking} onClick={actions.refreshApplyStatus}>
+    <Button size="sm" variant="quiet" static className="export-apply__refresh" data-ui={id} busy={view.apply.checking} onClick={actions.refreshApplyStatus}>
       {t("export.apply.refresh")}
     </Button>
   );
@@ -136,25 +149,31 @@ function Unread({ target, view, actions }: { target: ApplyTarget; view: ExportVi
 /* ── The block ──────────────────────────────────────────────────────────── */
 
 /**
- * 파일만 or 적용 for one target, and with 적용 what it reaches and how the
- * last apply ended. Not drawn in the tutorial, which writes nothing.
+ * 파일만, 적용 or 관리 for one target; with 적용 what it reaches, with 관리
+ * also what the service does, and how the last apply ended. Not drawn in
+ * the tutorial, which writes nothing.
  */
 export function ApplyBlock({ target, view, actions, initialConfirm = false }: { target: ApplyTarget; view: ExportView; actions: ExportActions; initialConfirm?: boolean }) {
   const level = applyLevel(view, target);
+  // A 관리 stored off Windows keeps its choice in sight, off with the reason; the service block needs Windows.
+  const managed = level === "manage" && view.apply.windows;
   return (
     <div className="export-apply" data-ui={`export.apply.${target}.panel`}>
       <LevelField target={target} view={view} actions={actions} />
-      {level === "apply" && target === "camilla" && <CamillaApply view={view} actions={actions} />}
-      {level === "apply" && target === "eqapo" && <EqApoApply view={view} actions={actions} initialConfirm={initialConfirm} />}
-      {level === "apply" && view.apply.runs[target] && <ApplyOutcome target={target} run={view.apply.runs[target]!} view={view} actions={actions} />}
+      {level !== "files" && target === "camilla" && <CamillaApply view={view} actions={actions} managed={managed} />}
+      {level !== "files" && target === "eqapo" && <EqApoApply view={view} actions={actions} initialConfirm={initialConfirm} />}
+      {managed && <ManageFacts target={target} view={view} actions={actions} />}
+      {level !== "files" && view.apply.runs[target] && <ApplyOutcome target={target} run={view.apply.runs[target]!} view={view} actions={actions} />}
     </div>
   );
 }
 
 function LevelField({ target, view, actions }: { target: ApplyTarget; view: ExportView; actions: ExportActions }) {
   const t = useT();
-  // Equalizer APO lives on Windows only: 적용 stays in sight, off, with the reason.
-  const unavailable = target === "eqapo" && !view.apply.windows;
+  // Equalizer APO lives on Windows only: 적용 and 관리 stay in sight, off, with the reason.
+  // 관리 runs a Windows service: off Windows CamillaDSP keeps 적용 and says why 관리 is off.
+  const windows = view.apply.windows;
+  const hint = windows ? undefined : t(target === "eqapo" ? "export.apply.eqapo.windows_only" : "export.apply.manage.windows_only");
   return (
     <div className="export-apply__level">
       <Segmented<ScreenApplyLevel>
@@ -162,9 +181,9 @@ function LevelField({ target, view, actions }: { target: ApplyTarget; view: Expo
         label={t("export.apply.level")}
         size="sm"
         value={applyLevel(view, target)}
-        options={APPLY_LEVELS.map((value) => ({ value, label: t(LEVEL_TEXT[value]), disabled: value === "apply" && unavailable }))}
+        options={APPLY_LEVELS.map((value) => ({ value, label: t(LEVEL_TEXT[value]), disabled: !windows && (value === "manage" || (value === "apply" && target === "eqapo")) }))}
         onChange={(level) => actions.setApplyLevel(target, level)}
-        hint={unavailable ? t("export.apply.eqapo.windows_only") : undefined}
+        hint={hint}
         help={t(target === "camilla" ? "export.apply.camilla.help" : "export.apply.eqapo.help")}
       />
     </div>
@@ -173,13 +192,14 @@ function LevelField({ target, view, actions }: { target: ApplyTarget; view: Expo
 
 /* ── CamillaDSP ─────────────────────────────────────────────────────────── */
 
-function CamillaApply({ view, actions }: { view: ExportView; actions: ExportActions }) {
+function CamillaApply({ view, actions, managed }: { view: ExportView; actions: ExportActions; managed: boolean }) {
   const t = useT();
   const devices = view.camillaDevices;
   const placeholders = devices.capture.type === "file" && devices.playback.type === "file";
   return (
     <>
       <AddressField view={view} actions={actions} />
+      {managed && <ExeField view={view} actions={actions} />}
       {placeholders && (
         // File placeholders read and write files, not sound: said where 적용 is chosen.
         <p className="export-apply__note export-apply__value" data-ui="export.apply.camilla.devices_note">
@@ -243,6 +263,44 @@ function AddressField({ view, actions }: { view: ExportView; actions: ExportActi
         <p className="export-apply__note export-apply__value" id={`${ADDRESS_ID}-hint`} data-ui="export.apply.camilla.address.remote">
           <Icon name="info" size={18} />
           <span>{t("export.apply.camilla.address.remote")}</span>
+        </p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 관리: the camilladsp.exe the service runs, typed or picked, stored like
+ * the address (Enter or leaving the field; the pick at once). Without one
+ * the field says so and the header's primary stays off.
+ */
+function ExeField({ view, actions }: { view: ExportView; actions: ExportActions }) {
+  const t = useT();
+  const text = exeText(view);
+  const missing = text.trim() === "";
+  const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      actions.saveCamillaExe();
+    } else if (event.key === "Escape" && view.apply.exeDraft !== null) {
+      event.stopPropagation();
+      actions.setCamillaExe(view.apply.settings.camilla.exe_path ?? "");
+    }
+  };
+  return (
+    <div className="export-apply__address" data-ui="export.manage.camilla.exe.field">
+      <label className="ui-field__label export-apply__key export-apply__key--control" htmlFor={EXE_ID} id={`${EXE_ID}-label`}>
+        {t("export.manage.camilla.exe")}
+      </label>
+      <div className="export-apply__value export-apply__control export-apply__exe">
+        <TextBox id={EXE_ID} value={text} onChange={actions.setCamillaExe} onBlur={actions.saveCamillaExe} onKeyDown={onKeyDown} describedBy={missing ? `${EXE_ID}-hint` : undefined} />
+        <Button size="sm" data-ui="export.manage.camilla.exe.browse" aria-describedby={`${EXE_ID}-label`} onClick={actions.pickCamillaExe}>
+          {t("export.manage.camilla.exe.browse")}
+        </Button>
+      </div>
+      {missing && (
+        <p className="ui-field__hint export-apply__value" id={`${EXE_ID}-hint`} data-ui="export.manage.camilla.exe.missing">
+          {t("export.manage.camilla.exe.missing")}
         </p>
       )}
     </div>
@@ -327,11 +385,15 @@ function camillaReason(t: Translate, error: IpcError | null, address: string): {
 
 /** The raw text behind 자세히, as ErrorNotice keeps it. */
 function Details({ error }: { error: IpcError }) {
+  return <RawDetails text={[`[${error.code}]`, error.detail].filter(Boolean).join(" ")} />;
+}
+
+function RawDetails({ text }: { text: string }) {
   const t = useT();
   return (
     <details className="ui-details export-apply__details">
       <summary>{t("ui.details")}</summary>
-      <pre className="ui-details__raw">{[`[${error.code}]`, error.detail].filter(Boolean).join(" ")}</pre>
+      <pre className="ui-details__raw">{text}</pre>
     </details>
   );
 }
@@ -450,9 +512,145 @@ export function RevertConfirm({ open, onClose, onConfirm, inline }: { open: bool
   );
 }
 
+/* ── 관리: the SECS 2R Host service ─────────────────────────────────────── */
+
+/** The service's state as a glyph, and the sentence under it that says why the row needs it or what to do. */
+const SERVICE_GLYPH: Record<ServiceView, Glyph> = { checking: "busy", not_installed: "off", stopped: "warning", unreachable: "warning", running: "on" };
+const SERVICE_REASON: Partial<Record<ServiceView, MessageKey>> = {
+  not_installed: "host.install.why",
+  stopped: "host.stopped.next",
+  unreachable: "host.unreachable.next",
+};
+
+/**
+ * 관리's facts under a row: the service (with 서비스 설치 while it is not
+ * installed), and while it runs what it does with this target, with the
+ * quiet 관리 끄기 after it. A host action that failed from this row says so
+ * under them.
+ */
+function ManageFacts({ target, view, actions }: { target: ApplyTarget; view: ExportView; actions: ExportActions }) {
+  const host = view.apply.host;
+  const service = serviceView(host.service, host.status);
+  return (
+    <>
+      <dl className="export-apply__facts" data-ui={`export.manage.${target}`}>
+        <ServiceEntry target={target} service={service} view={view} actions={actions} />
+        {service === "running" && host.status && (target === "camilla" ? <CamillaManagedEntry status={host.status} view={view} actions={actions} /> : <EqApoManagedEntries status={host.status} view={view} actions={actions} />)}
+      </dl>
+      {host.failure?.target === target && <HostFailureNotice failure={host.failure} />}
+    </>
+  );
+}
+
+function ServiceEntry({ target, service, view, actions }: { target: ApplyTarget; service: ServiceView; view: ExportView; actions: ExportActions }) {
+  const t = useT();
+  const installing = view.apply.host.installing;
+  const reason = installing ? "host.install.waiting" : SERVICE_REASON[service];
+  return (
+    <Entry label={t("host.service")}>
+      <span className="export-apply__line-value">
+        {/* While Windows asks, the service is still not installed: the state says so and the busy button carries the progress. */}
+        <State glyph={SERVICE_GLYPH[service]} id={`export.manage.${target}.service`} live>
+          {t(SERVICE_TEXT[service])}
+        </State>
+        {(service === "not_installed" || installing) && (
+          // Registering the service is the one step that needs administrator approval; the reason says so before the click.
+          <Button size="sm" data-ui={`export.manage.${target}.install`} busy={installing} aria-describedby={serviceReasonId(target)} onClick={() => actions.installHost(target)}>
+            {t("host.install")}
+          </Button>
+        )}
+        {(service === "stopped" || service === "unreachable") && <Refresh target={target} view={view} actions={actions} id={`export.manage.${target}.refresh`} />}
+      </span>
+      {reason && (
+        <p className="export-apply__reason" id={serviceReasonId(target)} data-ui={serviceReasonId(target)}>
+          {t(reason)}
+        </p>
+      )}
+    </Entry>
+  );
+}
+
+/** What the service does with CamillaDSP: nothing yet, or the process it keeps running and why it is not running now. */
+function CamillaManagedEntry({ status, view, actions }: { status: HostState; view: ExportView; actions: ExportActions }) {
+  const t = useT();
+  const locale = useLocale();
+  const managed = camillaManaged(status);
+  const text = CAMILLA_TEXT[managed.kind];
+  const detail = camillaDetail(t, managed, (iso) => clockText(iso, view.apply.host.now, locale), "host.camilla.given_up.next");
+  return (
+    <Entry label={t("host.camilla")}>
+      <span className="export-apply__line-value">
+        <State glyph={text.glyph} id="export.manage.camilla.state" live>
+          {t(text.text)}
+          {managed.kind === "running" && managed.pid !== null && <span className="export-apply__pid tabular">{t("host.camilla.pid", { pid: managed.pid })}</span>}
+        </State>
+        {managed.kind !== "unmanaged" && <StopManaging target="camilla" view={view} actions={actions} />}
+      </span>
+      {detail && (
+        <p className="export-apply__reason" data-ui="export.manage.camilla.reason">
+          {detail}
+        </p>
+      )}
+      {managed.kind === "given_up" && managed.reason && <RawDetails text={managed.reason} />}
+    </Entry>
+  );
+}
+
+/** What the service does with Equalizer APO: whether it keeps SECS 2R's line, and when it last put the line back. */
+function EqApoManagedEntries({ status, view, actions }: { status: HostState; view: ExportView; actions: ExportActions }) {
+  const t = useT();
+  const locale = useLocale();
+  const managed = !!status.managed.eqapo;
+  return (
+    <>
+      <Entry label={t("host.eqapo")}>
+        <span className="export-apply__line-value">
+          <State glyph={managed ? "on" : "off"} id="export.manage.eqapo.state" live>
+            {t(managed ? "host.eqapo.on" : "host.eqapo.off")}
+          </State>
+          {managed && <StopManaging target="eqapo" view={view} actions={actions} />}
+        </span>
+      </Entry>
+      {managed && (
+        <Entry label={t("host.eqapo.repair")}>
+          <span className="tabular" data-ui="export.manage.eqapo.repair">
+            {status.last_repair ? <time dateTime={status.last_repair}>{clockText(status.last_repair, view.apply.host.now, locale)}</time> : t("host.eqapo.repair.none")}
+          </span>
+        </Entry>
+      )}
+    </>
+  );
+}
+
+/** 관리 끄기: quiet, after the state it ends, and asked once in one sentence (the service lets go of both targets). */
+function StopManaging({ target, view, actions }: { target: ApplyTarget; view: ExportView; actions: ExportActions }) {
+  const t = useT();
+  const [confirming, setConfirming] = useState(false);
+  return (
+    <>
+      <Button size="sm" variant="quiet" data-ui={`export.manage.${target}.stop`} busy={view.apply.host.stopping} disabled={exportGroupBusy(view)} onClick={() => setConfirming(true)}>
+        {t("host.stop")}
+      </Button>
+      <StopManagingConfirm id={`export.manage.${target}.stop.confirm`} open={confirming} host={view.apply.host.status} onClose={() => setConfirming(false)} onConfirm={() => actions.stopManaging(target)} />
+    </>
+  );
+}
+
+function HostFailureNotice({ failure }: { failure: HostFailure }) {
+  const t = useT();
+  const text = failure.action === "install" ? { cause: t("host.install.failed"), next: t("host.install.failed.next") } : { cause: t("host.stop.failed"), next: t("host.stop.failed.next") };
+  return (
+    <div className="export-apply__full" data-ui={`export.manage.${failure.target}.failure`}>
+      <ErrorNotice cause={text.cause} next={text.next} detail={failure.error.detail} code={failure.error.code} />
+    </div>
+  );
+}
+
 /* ── How it ended ───────────────────────────────────────────────────────── */
 
 const APPLIED_TEXT: Record<ApplyTarget, MessageKey> = { camilla: "export.apply.camilla.applied", eqapo: "export.apply.eqapo.applied" };
+/** 관리 applied and handed over: what the service now does with the app closed. */
+const MANAGED_TEXT: Record<ApplyTarget, MessageKey> = { camilla: "export.manage.camilla.applied", eqapo: "export.manage.eqapo.applied" };
 
 function ApplyOutcome({ target, run, view, actions }: { target: ApplyTarget; run: ApplyRun; view: ExportView; actions: ExportActions }) {
   const t = useT();
@@ -461,7 +659,7 @@ function ApplyOutcome({ target, run, view, actions }: { target: ApplyTarget; run
     return (
       <div className="export-apply__full export-outcome" data-ui={id} role="status">
         <Icon name="check" size={18} weight="semibold" className="export-outcome__icon" />
-        <p className="export-outcome__text">{t(APPLIED_TEXT[target])}</p>
+        <p className="export-outcome__text">{t(run.handedOver ? "export.manage.camilla.handed_over" : applyLevel(view, target) === "manage" ? MANAGED_TEXT[target] : APPLIED_TEXT[target])}</p>
         <Button size="sm" variant="quiet" icon="folder" data-ui={`${id}.open`} onClick={() => actions.openFolder(run.folder)}>
           {t("export.folder.open")}
         </Button>
@@ -532,11 +730,16 @@ export function failureText(t: Translate, target: ApplyTarget, error: IpcError):
       : { cause: t("export.apply.camilla.permission"), next: t("export.apply.camilla.permission.next") };
   }
   if (target === "eqapo" && error.code === "unsupported") return { cause: t("export.apply.eqapo.not_installed.cause"), next: t("export.apply.eqapo.not_installed.next") };
+  // 관리 without camilladsp.exe (the service checks before any job starts).
+  if (error.code === "invalid_request" && error.params.field === "apply.camilla.exe_path") return { cause: t("export.manage.camilla.exe.missing.cause"), next: t("export.manage.camilla.exe.missing.next") };
   const text = errorText(t, error);
   return { cause: text.cause, next: text.next };
 }
 
-/** Whether the row's apply problem is the missing install (its button points at the reason). */
-export function eqapoMissing(view: ExportView): boolean {
-  return applyProblem(view, "eqapo")?.problem === "not_installed";
+/** The sentence that says why Equalizer APO's row button is off: the missing install, or the service; its button points there. */
+export function eqapoReason(view: ExportView): string | undefined {
+  const problem = applyProblem(view, "eqapo");
+  if (problem?.field === "eqapo" && problem.problem === "not_installed") return EQAPO_REASON_ID;
+  if (problem?.field === "host" && problem.problem !== "checking") return serviceReasonId("eqapo");
+  return undefined;
 }

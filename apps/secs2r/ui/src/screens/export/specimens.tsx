@@ -1,7 +1,8 @@
 // 내보내기 in each state, 1280×800 through FrameBox, plus the densest state
 // at 1024×700. The filter formats' scope (text: RC only; Equalizer APO: RC
 // and BA) shows on the results with subs, with MIMO, and with RC alone.
-// 적용 (ADR 0018) shows each CamillaDSP and Equalizer APO state under its row.
+// 적용 (ADR 0018) shows each CamillaDSP and Equalizer APO state under its row,
+// and 관리 the SECS 2R Host service's states in the same rows.
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { PrefsScope, usePrefs } from "../../app/prefs";
 import { initialLedger, type LedgerState } from "../../state/jobLedger";
@@ -9,6 +10,7 @@ import { FrameBox, T0, replay } from "../../gallery/frameSpecimens";
 import type { SpecimenDef } from "../../gallery/Specimen";
 import { useT } from "../../i18n/react";
 import { ExportScreen, exportHeader } from "./ExportScreen";
+import { StopManagingConfirm } from "../../host/parts";
 import { RevertConfirm } from "./apply";
 import {
   applyCamillaApplied,
@@ -58,6 +60,15 @@ import {
   exportStaleCache,
   exportStaleCacheMeasurements,
   exportTutorial,
+  manageCamillaGivenUp,
+  manageCamillaInstalling,
+  manageCamillaNoExe,
+  manageCamillaNotInstalled,
+  manageCamillaOtherUser,
+  manageCamillaRestarting,
+  manageCamillaRunning,
+  manageEqapoRepaired,
+  manageNotWindows,
 } from "./fixtures";
 import type { DesignNameProblem, ExportActions, ExportView } from "./types";
 
@@ -78,6 +89,11 @@ export const noopExportActions: ExportActions = {
   applyCamilla: () => {},
   applyEqapo: () => {},
   revertEqapo: () => {},
+  setCamillaExe: () => {},
+  saveCamillaExe: () => {},
+  pickCamillaExe: () => {},
+  installHost: () => {},
+  stopManaging: () => {},
 };
 
 const NAME_PROBLEMS = Object.keys(DESIGN_NAME_SAMPLES) as DesignNameProblem[];
@@ -156,6 +172,15 @@ function RevertOverlay() {
   return (
     <div style={{ position: "absolute", inset: 0, zIndex: "var(--z-dialog)", display: "grid", placeItems: "center", background: "var(--scrim)" }}>
       <RevertConfirm inline open onClose={() => {}} onConfirm={() => {}} />
+    </div>
+  );
+}
+
+/** 관리 끄기's confirm as it opens over the screen, for what the view's service manages. */
+function StopOverlay({ view }: { view: ExportView }) {
+  return (
+    <div style={{ position: "absolute", inset: 0, zIndex: "var(--z-dialog)", display: "grid", placeItems: "center", background: "var(--scrim)" }}>
+      <StopManagingConfirm id="export.manage.camilla.stop.confirm" inline open host={view.apply.host.status} onClose={() => {}} onConfirm={() => {}} />
     </div>
   );
 }
@@ -321,6 +346,38 @@ export const exportSpecimens: SpecimenDef[] = [
     <ExportSpecimen view={applyEqapoPresent} scrolled="export.kind.equalizer_apo">
       <RevertOverlay />
     </ExportSpecimen>
+  )),
+  frame("screen.export.manage.camilla.no-exe", "Manage · CamillaDSP 관리 without camilladsp.exe: the field says so, the header's primary is off", () => (
+    <ExportSpecimen view={manageCamillaNoExe} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.manage.camilla.not-installed", "Manage · the service not installed: why it is needed, 서비스 설치, Windows asks once", () => (
+    <ExportSpecimen view={manageCamillaNotInstalled} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.manage.camilla.installing", "Manage · 서비스 설치 waiting for Windows's administrator approval", () => (
+    <ExportSpecimen view={manageCamillaInstalling} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.manage.camilla.running", "Manage · the service runs CamillaDSP (PID 4812) with this design, the quiet 관리 끄기 after it", () => (
+    <ExportSpecimen view={manageCamillaRunning} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.manage.camilla.restarting", "Manage · CamillaDSP stopped, the service restarts it at a stated time (restart 2 within 5 minutes)", () => (
+    <ExportSpecimen view={manageCamillaRestarting} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.manage.camilla.given-up", "Manage · CamillaDSP kept stopping, the service no longer restarts it: what to do, the reason behind 자세히", () => (
+    <ExportSpecimen view={manageCamillaGivenUp} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.manage.camilla.other-user", "Manage · another user at the console: the service waits for the user who started managing", () => (
+    <ExportSpecimen view={manageCamillaOtherUser} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.manage.eqapo.repaired", "Manage · Equalizer APO's line repair on, SECS 2R's line put back 2 minutes ago", () => (
+    <ExportSpecimen view={manageEqapoRepaired} scrolled="export.kind.equalizer_apo" />
+  )),
+  frame("screen.export.manage.stop-confirm", "Manage · 관리 끄기 asks in one sentence (both targets managed)", () => (
+    <ExportSpecimen view={manageCamillaRunning} scrolled="export.kind.camilla_dsp">
+      <StopOverlay view={manageCamillaRunning} />
+    </ExportSpecimen>
+  )),
+  frame("screen.export.manage.not-windows", "Manage · not Windows: 관리 off with the reason in both rows, CamillaDSP on 적용", () => (
+    <ExportSpecimen view={manageNotWindows} scrolled="export.kind.camilla_dsp" />
   )),
   frame("screen.export.done.min", "Export · done, 고급 open, scrolled to the end, smallest window (1024 × 700)", () => <ExportSpecimen view={exportDone} jobs={exportHistory} initialAdvanced scrolled />, { width: 1024, height: 700 }),
   frame("screen.export.failed.min", "Export · failed from the header, smallest window (1024 × 700): the outcome scrolls into view", () => <AfterRun from={exportReady} to={exportFailed} />, { width: 1024, height: 700 }),

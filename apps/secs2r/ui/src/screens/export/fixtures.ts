@@ -8,8 +8,24 @@ import type { MimoSummary } from "../../ipc/bindings/MimoSummary";
 import type { Notice } from "../../ipc/bindings/Notice";
 import type { ApplyStatus } from "../../ipc/bindings/ApplyStatus";
 import type { CamillaApplyStatus } from "../../ipc/bindings/CamillaApplyStatus";
-import { MOCK_DESIGN_ID, SAMPLE_MAINS, SAMPLE_SUBS, calibrationSummary, camillaUnreachable, cpuComputeReport, eqapoMissing, eqapoXt, noResults } from "../../ipc/fixtures";
-import { DEFAULT_APPLY, FILE_DEVICES, exportStepState, type ApplyView, type DesignNameProblem, type ExportView } from "./types";
+import type { ServiceState } from "../../ipc/bindings/ServiceState";
+import { HOST_NOW, hostEqapoRepaired, hostGivenUp, hostOtherUser, hostRestarting } from "../../host/fixtures";
+import type { HostState } from "../../host/model";
+import {
+  CAMILLA_EXE,
+  MOCK_DESIGN_ID,
+  SAMPLE_MAINS,
+  SAMPLE_SUBS,
+  calibrationSummary,
+  camillaUnreachable,
+  cpuComputeReport,
+  eqapoMissing,
+  eqapoXt,
+  hostIdle,
+  hostManaging,
+  noResults,
+} from "../../ipc/fixtures";
+import { DEFAULT_APPLY, FILE_DEVICES, exportStepState, type ApplyView, type DesignNameProblem, type ExportView, type HostView } from "./types";
 
 const BASE = "C:/Users/demo/Documents/SECS/SECS_export/2026-10-14 거실 7.1.4";
 
@@ -50,10 +66,23 @@ const exportError: IpcError = {
   detail: "failed to create C:/Users/demo/Documents/SECS/SECS_export/2026-10-14 거실 7.1.4/camilladsp/configs: Access is denied. (os error 5)",
 };
 
+/** The service as the screen sees it: `service` and its status, nothing in flight, drawn at the specimens' fixed time. */
+const hostView = (service: ServiceState | null, status: HostState | null = null, patch: Partial<HostView> = {}): HostView => ({
+  service,
+  status: service === "running" ? status : null,
+  installing: false,
+  stopping: false,
+  failure: null,
+  now: HOST_NOW,
+  ...patch,
+});
+
 /** 파일만 on both targets (the default), on Windows, nothing read or applied. */
 export const applyIdle: ApplyView = {
   settings: DEFAULT_APPLY,
   addressDraft: null,
+  exeDraft: null,
+  host: hostView(null),
   status: null,
   checking: false,
   windows: true,
@@ -334,7 +363,7 @@ const camillaRunning = (design: CamillaApplyStatus["design"], clipped = 0): Cami
   design,
 });
 
-const status = (camilla: CamillaApplyStatus, eqapo = eqapoMissing, current_design_id: string | null = MOCK_DESIGN_ID): ApplyStatus => ({ camilla, eqapo, current_design_id });
+const status = (camilla: CamillaApplyStatus, eqapo = eqapoMissing, current_design_id: string | null = MOCK_DESIGN_ID, host: ServiceState = "not_installed"): ApplyStatus => ({ camilla, eqapo, host, current_design_id });
 
 /** Another design's title as the service names it (`SECS 2R · <project> · <label>`). */
 const OTHER_TITLE = "SECS 2R · 거실 영화 · 표준 모드";
@@ -437,3 +466,84 @@ export const applyEqapoReverted: ExportView = eqapoApply({ runs: { eqapo: { stat
 
 /** Not Windows: Equalizer APO's 적용 is off with the reason. */
 export const applyEqapoNotWindows: ExportView = { ...exportReady, nativeDevices: null, apply: { ...applyIdle, windows: false } };
+
+/* ── 관리 (ADR 0018) ────────────────────────────────────────────────────── */
+
+const thisDesign = camillaRunning({ kind: "this", design_id: MOCK_DESIGN_ID });
+
+/**
+ * CamillaDSP set to 관리 with camilladsp.exe chosen and the Dirac Live
+ * Processor replacement's devices; the service, and what CamillaDSP itself
+ * answers, per state below.
+ */
+const camillaManage = (host: HostView, apply: Partial<ApplyView> = {}, camilla: CamillaApplyStatus = thisDesign): ExportView => ({
+  ...exportReady,
+  camillaDevices: exportDevicesWasapi.camillaDevices,
+  apply: {
+    ...applyIdle,
+    settings: { ...DEFAULT_APPLY, camilla: { level: "manage", address: "127.0.0.1:1234", exe_path: CAMILLA_EXE } },
+    status: status(camilla, eqapoMissing, MOCK_DESIGN_ID, host.service ?? "not_installed"),
+    host,
+    ...apply,
+  },
+});
+
+/** 관리 chosen, camilladsp.exe not yet: the field says so and the header's primary is off. The service runs, managing nothing. */
+export const manageCamillaNoExe: ExportView = camillaManage(hostView("running", hostIdle), { settings: { ...DEFAULT_APPLY, camilla: { level: "manage", address: "127.0.0.1:1234" } } }, camillaUnreachable);
+
+/** The service is not installed: why it is needed, and 서비스 설치 (Windows asks once). */
+export const manageCamillaNotInstalled: ExportView = camillaManage(hostView("not_installed"), {}, camillaUnreachable);
+
+/** 서비스 설치 pressed: Windows's administrator approval is open. */
+export const manageCamillaInstalling: ExportView = camillaManage(hostView("not_installed", null, { installing: true }), {}, camillaUnreachable);
+
+/** The approval was declined: the install failed in this row. */
+export const manageCamillaInstallFailed: ExportView = camillaManage(
+  hostView("not_installed", null, { failure: { action: "install", target: "camilla", error: { code: "apply_failed", params: {}, retryable: false, detail: "elevated install: The operation was canceled by the user. (os error 1223)" } } }),
+  {},
+  camillaUnreachable,
+);
+
+/** The service is registered but stopped. */
+export const manageCamillaStopped: ExportView = camillaManage(hostView("stopped"), {}, camillaUnreachable);
+
+/** The service manages both targets: CamillaDSP running this design (PID 4812). */
+export const manageCamillaRunning: ExportView = camillaManage(hostView("running", hostManaging));
+
+/** CamillaDSP stopped; the service starts it again in four seconds, its second restart within five minutes. */
+export const manageCamillaRestarting: ExportView = camillaManage(hostView("running", hostRestarting), {}, camillaUnreachable);
+
+/** CamillaDSP stopped five times within five minutes: the service no longer starts it. */
+export const manageCamillaGivenUp: ExportView = camillaManage(hostView("running", hostGivenUp), {}, camillaUnreachable);
+
+/** Another user is signed in at the console: the service waits for the user who started managing. */
+export const manageCamillaOtherUser: ExportView = camillaManage(hostView("running", hostOtherUser), {}, camillaUnreachable);
+
+/** 관리 started from this row: applied and handed to the service. */
+export const manageCamillaApplied: ExportView = camillaManage(hostView("running", hostManaging), {
+  runs: { camilla: { status: "applied", designId: MOCK_DESIGN_ID, folder: "C:/Users/demo/AppData/Roaming/SECS2R/applied/camilladsp" } },
+});
+
+/** 관리 started while no CamillaDSP ran: the design was handed to the service, which starts CamillaDSP with it. */
+export const manageCamillaHandedOver: ExportView = camillaManage(hostView("running", hostManaging), {
+  runs: { camilla: { status: "applied", designId: MOCK_DESIGN_ID, folder: "C:/Users/demo/AppData/Roaming/SECS2R/applied/camilladsp", handedOver: true } },
+}, camillaUnreachable);
+
+/** Equalizer APO set to 관리 on the XT install with this design; the service put SECS 2R's line back two minutes ago. */
+export const manageEqapoRepaired: ExportView = {
+  ...exportReady,
+  apply: {
+    ...applyIdle,
+    settings: { ...DEFAULT_APPLY, eqapo: { level: "manage" } },
+    status: status(camillaUnreachable, { ...eqapoXt, include: "present", applied_design_id: MOCK_DESIGN_ID }, MOCK_DESIGN_ID, "running"),
+    host: hostView("running", hostEqapoRepaired),
+  },
+};
+
+/** Not Windows: CamillaDSP set to 적용 (its websocket works anywhere), 관리 off with the reason on both rows. */
+export const manageNotWindows: ExportView = {
+  ...exportReady,
+  nativeDevices: null,
+  camillaDevices: exportDevicesWasapi.camillaDevices,
+  apply: { ...applyIdle, windows: false, settings: { ...DEFAULT_APPLY, camilla: { level: "apply", address: "127.0.0.1:1234" } }, status: status(thisDesign) },
+};

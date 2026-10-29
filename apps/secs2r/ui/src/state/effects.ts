@@ -162,7 +162,9 @@ export const RULES: readonly Rule[] = [
         const h = host.getSnapshot();
         if (event.result?.kind === "apply") {
           const { outcome, design_id, folder } = event.result.data;
-          host.set({ applyRuns: { ...h.applyRuns, [target]: outcome.kind === "applied" ? { status: "applied", designId: design_id, folder } : { status: "rolled_back", error: outcome.error } } });
+          // 관리 with no CamillaDSP running hands the design to the service, which starts one with it.
+          const run = outcome.kind === "rolled_back" ? { status: "rolled_back" as const, error: outcome.error } : { status: "applied" as const, designId: design_id, folder, ...(outcome.kind === "handed_over" ? { handedOver: true as const } : {}) };
+          host.set({ applyRuns: { ...h.applyRuns, [target]: run } });
         } else if (event.status === "failed" && event.error) host.set({ applyRuns: { ...h.applyRuns, [target]: { status: "failed", error: event.error } } });
       }
       run(() => stores.applyStatus.load());

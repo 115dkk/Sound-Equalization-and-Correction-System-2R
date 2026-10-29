@@ -1,0 +1,313 @@
+/* The host shell's window (host.html). Tokens only (styles/tokens.css). */
+
+/*
+ * One column in a small window (about 420 × 560, never smaller): the
+ * service's state at the top, what it manages and its log in the middle,
+ * which scrolls, and the actions at the foot, always in reach.
+ */
+.host-shell {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 420px;
+  height: 100%;
+  min-height: 560px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.host-shell__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-5) var(--space-5) var(--space-4);
+}
+
+.host-shell__heading {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-0-5);
+  min-width: 0;
+}
+
+.host-shell__title {
+  font-size: var(--text-title-s);
+}
+
+.host-shell__version {
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+}
+
+.host-shell__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  min-height: 0;
+  padding: 0 var(--space-5) var(--space-5);
+  overflow-y: auto;
+}
+
+.host-shell__foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  border-top: var(--border-w) solid var(--border-subtle);
+  background: var(--surface);
+}
+
+.host-shell__actions {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* What to do about a service that does not run: the muted note, like the export screen's notes. */
+.host-note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+
+.host-note__next {
+  color: var(--text);
+}
+
+/* One managed target: its name, then its facts as names and values. */
+.host-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+}
+
+.host-card__title {
+  font-size: var(--text-ui);
+  font-weight: var(--weight-semibold);
+}
+
+.host-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-2) var(--space-4);
+  margin: 0;
+}
+
+.host-facts dt {
+  color: var(--text-muted);
+}
+
+.host-facts dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.host-facts__reason {
+  margin-top: var(--space-1);
+  color: var(--text-muted);
+}
+
+/* Paths and ids are read to compare them: the UI size, not the caption size code gets. */
+.host-path {
+  font-family: var(--font-mono);
+  font-size: var(--text-ui);
+  overflow-wrap: anywhere;
+}
+
+.host-raw {
+  background: var(--surface-sunken);
+}
+
+/*
+ * A state in words with its glyph (the export screen's `export-apply-state`):
+ * the glyph box is one text line tall, so a wrapped sentence keeps its glyph
+ * on the first line.
+ */
+.host-state {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1-5);
+  min-width: 0;
+}
+
+.host-state__glyph {
+  display: inline-flex;
+  flex: none;
+  align-self: flex-start;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: calc(var(--text-ui) * var(--leading-ui));
+}
+
+.host-state__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.host-state--on .host-state__glyph {
+  color: var(--success);
+}
+
+.host-state--off .host-state__glyph {
+  color: var(--text-faint);
+}
+
+.host-state--busy .host-state__glyph {
+  color: var(--info);
+}
+
+.host-state--warning .host-state__glyph {
+  color: var(--warning);
+}
+
+.host-state--danger .host-state__glyph {
+  color: var(--danger);
+}
+
+.host-state__text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.host-state__pid {
+  margin-left: var(--space-2);
+  color: var(--text-muted);
+}
+
+/*
+ * A section of the window (what is managed, the log): a quiet heading, an
+ * action of the section at its end, level with it, and the section's cards.
+ */
+.host-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.host-section__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  min-height: var(--control-h-sm);
+}
+
+.host-section__title {
+  color: var(--text-muted);
+  font-size: var(--text-ui);
+  font-weight: var(--weight-semibold);
+}
+
+/* A quiet action's words end where the cards end (optical alignment); its hover fill may run past them. */
+.host-section__head > .ui-button--quiet {
+  margin-right: calc(var(--space-3) * -1);
+}
+
+.host-shell__foot > .ui-button--quiet {
+  margin-right: calc(var(--space-4) * -1);
+}
+
+.host-section > .host-card + .host-card {
+  margin-top: var(--space-2);
+}
+
+/*
+ * The log: one row per line, newest first, a time and a sentence. A row
+ * opens to its raw line. Rows are as tall as a hit area; the first and the
+ * last follow the list's corners when hovered.
+ */
+
+.host-log__empty {
+  color: var(--text-muted);
+}
+
+.host-log__list {
+  margin: 0;
+  padding: 0;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  box-shadow: var(--shadow-card);
+  list-style: none;
+}
+
+.host-log__entry + .host-log__entry {
+  border-top: var(--border-w) solid var(--border-subtle);
+}
+
+.host-log__summary {
+  display: grid;
+  grid-template-columns: 16px max-content minmax(0, 1fr);
+  align-items: baseline;
+  gap: var(--space-2);
+  min-height: var(--hit-min);
+  padding: var(--space-2-5) var(--space-3);
+  cursor: pointer;
+  list-style: none;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.host-log__summary::-webkit-details-marker {
+  display: none;
+}
+
+.host-log__summary:hover {
+  background: var(--surface-hover);
+}
+
+.host-log__entry:first-child .host-log__summary {
+  border-radius: var(--radius-md) var(--radius-md) 0 0;
+}
+
+.host-log__entry:last-child .host-log__summary {
+  border-radius: 0 0 var(--radius-md) var(--radius-md);
+}
+
+.host-log__entry:only-child .host-log__summary {
+  border-radius: var(--radius-md);
+}
+
+.host-log__entry:last-child .host-log__details[open] .host-log__summary {
+  border-radius: 0;
+}
+
+.host-log__chevron {
+  align-self: center;
+  color: var(--text-muted);
+  transition: rotate var(--dur-base) var(--ease-out);
+}
+
+.host-log__details[open] .host-log__chevron {
+  rotate: 90deg;
+}
+
+/* A time is metadata (DESIGN.md §4): the caption size, in the muted colour. */
+.host-log__time {
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+}
+
+.host-log__text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.host-log__text--unknown {
+  color: var(--text-muted);
+}
+
+.host-log__raw {
+  margin: 0 var(--space-3) var(--space-3);
+}

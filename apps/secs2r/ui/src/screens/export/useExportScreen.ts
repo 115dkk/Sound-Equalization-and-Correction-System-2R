@@ -4,7 +4,7 @@ import { IpcFailure } from "../../ipc/client";
 import { useHost, useResource, useSession } from "../../state/react";
 import { useJobLedger } from "../../state/useJobLedger";
 import type { Patch } from "../../state/writers";
-import { DEFAULT_APPLY, addressProblem, applyWanted, designNameFor, isFilterKind, mdatScopeFor, type ApplyTarget, type ExportActions, type ExportView } from "./types";
+import { CAMILLA_EXE_FILE, DEFAULT_APPLY, addressProblem, applyWanted, designNameFor, isFilterKind, mdatScopeFor, withExePath, type ApplyTarget, type ExportActions, type ExportView, type HostFailure } from "./types";
 
 const DESIGN_NAME_REASONS = new Set(["design_name_length", "design_name_control", "design_name_character", "design_name_trailing", "design_name_reserved"]);
 
@@ -57,6 +57,31 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
       if (address !== storedAddress() && !(await editApply((latest) => ({ camilla: { ...latest.camilla, address } })))) return;
       if (session.host.getSnapshot().applyAddressDraft === draft) session.host.set({ applyAddressDraft: null });
     };
+    const storedExe = () => session.stores.appSettings.getSnapshot()?.apply.camilla.exe_path ?? "";
+    // 관리's executable: typed freely, stored trimmed (an empty field stores none); any text is a path to the service.
+    const saveExe = async (): Promise<void> => {
+      const draft = session.host.getSnapshot().applyExeDraft;
+      if (draft === null) return;
+      const path = draft.trim();
+      if (path !== storedExe() && !(await editApply((latest) => ({ camilla: withExePath(latest.camilla, path) })))) return;
+      if (session.host.getSnapshot().applyExeDraft === draft) session.host.set({ applyExeDraft: null });
+    };
+    // A host action in flight, and its typed failure kept for the row it was started from (session.call does not raise the global notice for it).
+    // The button stays busy until the status has been read again, so the row never shows the state from before the action.
+    const hostAction = (action: HostFailure["action"], target: ApplyTarget, call: () => Promise<unknown>) => session.run(async () => {
+      const busy = (on: boolean) => session.host.set(action === "install" ? { hostInstalling: on } : { hostStopping: on });
+      session.host.set({ hostFailure: null });
+      busy(true);
+      try {
+        await call();
+      } catch (error) {
+        if (error instanceof IpcFailure) session.host.set({ hostFailure: { action, target, error: error.error } });
+        throw error;
+      } finally {
+        await session.stores.applyStatus.load();
+        busy(false);
+      }
+    });
     // A refusal before any job starts (no write access, not installed, …) has no
     // finished event to land in the row. Never attach an old project's.
     const refused = (target: ApplyTarget, epoch: number, error: unknown) => {
@@ -108,8 +133,9 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
       refreshApplyStatus: () => void session.stores.applyStatus.load(),
       applyCamilla: () => session.run(async () => {
         const epoch = session.jobs.epoch;
-        // Leaving the address field for this button already saves it; Enter-less keyboard paths save here.
+        // Leaving the address or executable field for this button already saves it; Enter-less keyboard paths save here.
         await saveAddress();
+        await saveExe();
         await saving;
         const devices = session.host.getSnapshot().camillaDevices;
         try {
@@ -143,6 +169,16 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
           await session.stores.applyStatus.load();
         }
       }),
+      setCamillaExe: (text) => session.host.set({ applyExeDraft: text === storedExe() ? null : text }),
+      saveCamillaExe: () => void saveExe(),
+      pickCamillaExe: () => session.run(async () => {
+        const picked = await session.call({ method: "dialog_open_file", params: { kind: CAMILLA_EXE_FILE } });
+        if (picked === null) return;
+        session.host.set({ applyExeDraft: null });
+        await editApply((latest) => ({ camilla: withExePath(latest.camilla, picked) }));
+      }),
+      installHost: (target) => hostAction("install", target, () => session.call({ method: "host_install" })),
+      stopManaging: (target) => hostAction("stop", target, () => session.call({ method: "host_stop_managing" })),
     };
   }, [session]);
   const jobs = ledger.jobs.filter((job) => job.status === "running" || job.status === "cancel_requested");
@@ -159,7 +195,11 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
     designName: host.designName, camillaDevices: host.camillaDevices,
     nativeDevices: bootstrap?.platform.os === "windows" && !methods?.native_error && methods?.native_devices.length ? methods.native_devices : null,
     apply: {
-      settings: applySettings, addressDraft: host.applyAddressDraft, status: applyStatus, checking: host.applyChecking, windows,
+      settings: applySettings, addressDraft: host.applyAddressDraft, exeDraft: host.applyExeDraft, status: applyStatus, checking: host.applyChecking, windows,
+      host: {
+        service: applyStatus?.host ?? null, status: applyStatus?.host === "running" ? applyStatus.host_status ?? null : null,
+        installing: host.hostInstalling, stopping: host.hostStopping, failure: host.hostFailure, now: Date.now(),
+      },
       applying: applyRequest?.method === "apply_camilla" ? "camilla" : applyRequest?.method === "apply_eqapo" ? "eqapo" : null,
       reverting: host.applyReverting, runs: host.applyRuns,
     },

@@ -75,6 +75,11 @@ function actions() {
     applyCamilla: vi.fn<ExportActions["applyCamilla"]>(),
     applyEqapo: vi.fn<ExportActions["applyEqapo"]>(),
     revertEqapo: vi.fn<ExportActions["revertEqapo"]>(),
+    setCamillaExe: vi.fn<ExportActions["setCamillaExe"]>(),
+    saveCamillaExe: vi.fn<ExportActions["saveCamillaExe"]>(),
+    pickCamillaExe: vi.fn<ExportActions["pickCamillaExe"]>(),
+    installHost: vi.fn<ExportActions["installHost"]>(),
+    stopManaging: vi.fn<ExportActions["stopManaging"]>(),
   };
 }
 
@@ -117,28 +122,29 @@ describe("적용", () => {
     }
   }, 15_000);
 
-  it("offers 파일만 and 적용 under the CamillaDSP and Equalizer APO rows and writes the choice", () => {
+  it("offers 파일만, 적용 and 관리 under the CamillaDSP and Equalizer APO rows and writes the choice", () => {
     const act = actions();
     const { unmount } = renderWith(<Mounted view={exportReady} act={act} />);
     for (const target of ["camilla", "eqapo"] as const) {
       const row = ui(target === "camilla" ? "export.kind.camilla_dsp" : "export.kind.equalizer_apo")!;
       const group = within(row).getByRole("radiogroup", { name: "적용 방식" });
       expect(group).toBe(ui(`export.apply.${target}.level`));
-      expect(within(group).getAllByRole("radio").map((radio) => radio.textContent)).toEqual(["파일만", "적용"]);
-      // 파일만 is the default; 관리 is not offered yet.
+      expect(within(group).getAllByRole("radio").map((radio) => radio.textContent)).toEqual(["파일만", "적용", "관리"]);
+      // 파일만 is the default.
       expect(within(group).getByRole("radio", { checked: true }).textContent).toBe("파일만");
       fireEvent.click(within(group).getByRole("radio", { name: "적용" }));
+      fireEvent.click(within(group).getByRole("radio", { name: "관리" }));
     }
-    expect(act.setApplyLevel.mock.calls).toEqual([["camilla", "apply"], ["eqapo", "apply"]]);
+    expect(act.setApplyLevel.mock.calls).toEqual([["camilla", "apply"], ["camilla", "manage"], ["eqapo", "apply"], ["eqapo", "manage"]]);
     // 파일만 draws nothing else: no address, no status.
     expect(ui("export.apply.camilla.address")).toBeNull();
     expect(ui("export.apply.eqapo.state")).toBeNull();
     // The other filter rows have no choice.
     for (const kind of ["filter_text", "convolution", "before_after_mdat"]) expect(ui(`export.kind.${kind}`)!.querySelector("[data-ui$='.level']"), kind).toBeNull();
     unmount();
-    // 관리 stored by another client reads as 적용 here.
+    // 관리 stored by another client reads as 관리.
     renderWith(<Mounted view={{ ...applyCamillaThis, apply: { ...applyCamillaThis.apply, settings: { ...applyCamillaThis.apply.settings, camilla: { level: "manage", address: "127.0.0.1:1234" } } } }} act={actions()} />);
-    expect(within(ui("export.apply.camilla.level")!).getByRole("radio", { checked: true }).textContent).toBe("적용");
+    expect(within(ui("export.apply.camilla.level")!).getByRole("radio", { checked: true }).textContent).toBe("관리");
   });
 
   it("holds Equalizer APO's 적용 off with the reason off Windows, and draws no choice in the tutorial", () => {

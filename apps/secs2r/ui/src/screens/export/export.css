@@ -689,3 +689,25 @@
   overflow-wrap: anywhere;
   text-wrap: pretty;
 }
+
+/*
+ * 관리 (ADR 0018). The CamillaDSP executable: a box wide enough for a path,
+ * and the picker right after it. A process id follows its state, muted.
+ */
+.export-apply__exe {
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.export-apply__exe .export-text {
+  width: min(100%, 32rem);
+}
+
+.export-apply__exe > .ui-button {
+  flex: none;
+}
+
+.export-apply__pid {
+  margin-left: var(--space-2);
+  color: var(--text-muted);
+}

@@ -8,10 +8,11 @@ import { HelpTip } from "../../ui/HelpTip";
 // the responses for REW (the REW mdat with what it carries, F19, and the
 // staged mdat under 고급, U3). A filter format that cannot carry the result
 // says why in its row (upstream 1.3.0 `_filter_card`).
-// The CamillaDSP and Equalizer APO rows choose 파일만 or 적용 (ADR 0018,
+// The CamillaDSP and Equalizer APO rows choose 파일만, 적용 or 관리 (ADR 0018,
 // apply.tsx): with 적용 the header's primary applies to CamillaDSP and the
 // row keeps its export as a secondary button; Equalizer APO's row applies
-// with its own button and keeps its export beside it, quiet.
+// with its own button and keeps its export beside it, quiet. With 관리 the
+// same actions apply and then hand the design to the SECS 2R Host service.
 // No 완료 button (U4): the step is done once the current result is exported.
 import { useEffect, useId, useRef, type ReactNode } from "react";
 import type { PrimaryAction } from "../../app/StepHeader";
@@ -24,9 +25,9 @@ import type { ExportKind } from "../../ipc/bindings/ExportKind";
 import type { MdatScope } from "../../ipc/bindings/MdatScope";
 import type { Mode } from "../../ipc/bindings/Mode";
 import type { Notice } from "../../ipc/bindings/Notice";
-import { Advanced, Button, Card, EmptyState, ErrorNotice, Icon, Segmented, StatusPill } from "../../ui";
+import { Advanced, Button, Card, EmptyState, ErrorNotice, Icon, Segmented, StatusPill, type PillTone } from "../../ui";
 import { roleCode } from "../../ui/maps/geometry";
-import { ApplyBlock, EQAPO_REASON_ID, eqapoMissing } from "./apply";
+import { ApplyBlock, eqapoReason } from "./apply";
 import { CamillaDevicesDisclosure, DESIGN_NAME_ID, DesignNameField } from "./fields";
 import {
   EXPORT_KINDS,
@@ -51,6 +52,7 @@ import {
   type ExportActions,
   type ExportRun,
   type ExportView,
+  type HostProblem,
   type InputProblem,
   type MimoInclusion,
 } from "./types";
@@ -92,15 +94,31 @@ const OUTCOME_HINT: Partial<Record<ExportKind, MessageKey>> = {
   convolution: "export.outcome.convolution.hint",
 };
 
-/** The header's pill when the primary is off for a field on this screen. */
-const INPUT_PROBLEM_STATUS: Record<InputProblem["field"] | Exclude<ApplyProblem["field"], "eqapo">, MessageKey> = {
+/** The header's pill when the primary is off for something on this screen: a field to change, or 관리's Windows or service. */
+const PROBLEM_STATUS: Record<Exclude<InputProblem["field"] | ApplyProblem["field"], "eqapo" | "host">, MessageKey> = {
   design_name: "export.status.design_name",
   capture: "export.status.asio_device",
   playback: "export.status.asio_device",
   address: "export.status.address",
+  exe_path: "export.status.exe_path",
+  manage: "export.status.windows_only",
 };
 
+const HOST_STATUS: Record<HostProblem, { text: MessageKey; tone: PillTone }> = {
+  checking: { text: "export.status.host.checking", tone: "busy" },
+  not_installed: { text: "export.status.host.not_installed", tone: "warning" },
+  stopped: { text: "export.status.host.stopped", tone: "warning" },
+  unreachable: { text: "export.status.host.unreachable", tone: "warning" },
+};
+
+function problemStatus(problem: InputProblem | ApplyProblem): { text: MessageKey; tone: PillTone } | null {
+  if (problem.field === "eqapo") return null;
+  if (problem.field === "host") return HOST_STATUS[problem.problem];
+  return { text: PROBLEM_STATUS[problem.field], tone: "warning" };
+}
+
 const APPLYING_TEXT: Record<ApplyTarget, MessageKey> = { camilla: "export.status.applying.camilla", eqapo: "export.status.applying.eqapo" };
+const MANAGING_TEXT: Record<ApplyTarget, MessageKey> = { camilla: "export.status.managing.camilla", eqapo: "export.status.managing.eqapo" };
 
 /** Why a filter format cannot carry this result: only these pairs occur (`exportBlock`). */
 const BLOCK_TEXT: Partial<Record<ExportKind, Partial<Record<ExportBlock, MessageKey>>>> = {
@@ -204,20 +222,24 @@ function revealInside(el: HTMLElement) {
 }
 
 /**
- * The step header: the primary exports the CamillaDSP configuration, or with
- * CamillaDSP set to 적용 applies it to the running CamillaDSP; the pill says
- * what runs, which field holds the primary off, that an export or an apply
- * failed, that the result is stale, or that the step is done.
+ * The step header: the primary exports the CamillaDSP configuration, with
+ * CamillaDSP set to 적용 applies it to the running CamillaDSP, and with 관리
+ * also hands it to the service; the pill says what runs, what holds the
+ * primary off, that an export or an apply failed, that the result is stale,
+ * or that the step is done.
  */
 export function exportHeader(view: ExportView, actions: ExportActions, t: Translate): { primary?: PrimaryAction; status?: ReactNode } {
   const state = exportStepState(view);
-  const applying = applyLevel(view, "camilla") === "apply";
-  // A field that holds the primary off makes the pill its reason (StepHeader
-  // describes the primary by it) and the field below says what to change:
+  const level = applyLevel(view, "camilla");
+  const applying = level !== "files";
+  // What holds the primary off makes the pill its reason (StepHeader
+  // describes the primary by it) and the row below says what to change:
   // for the export a design name that cannot be a folder or an ASIO side
-  // without a driver, for 적용 the address or that ASIO side.
+  // without a driver, for 적용 the address or that ASIO side, for 관리 also
+  // Windows, the executable and the service.
   const problem = applying ? applyProblem(view, "camilla") : inputProblem(view, "camilla_dsp");
-  const problemField = problem && problem.field !== "eqapo" ? problem.field : null;
+  const problemPill = problem ? problemStatus(problem) : null;
+  const applyingTarget = view.apply.applying;
   // A blocked step already says why under the title; the pill adds what runs,
   // that an export or an apply failed (its row may be below the fold), that
   // the result no longer matches the inputs (it still exports), or that it
@@ -227,11 +249,11 @@ export function exportHeader(view: ExportView, actions: ExportActions, t: Transl
   const applied = Object.values(view.apply.runs).some((run) => run?.status === "applied");
   const status = view.exporting ? (
     <StatusPill tone="busy">{t(KIND_TEXT[view.exporting].exporting)}</StatusPill>
-  ) : view.apply.applying ? (
-    <StatusPill tone="busy">{t(APPLYING_TEXT[view.apply.applying])}</StatusPill>
-  ) : problemField ? (
-    <StatusPill tone="warning" data-ui="export.status.problem">
-      {t(INPUT_PROBLEM_STATUS[problemField])}
+  ) : applyingTarget ? (
+    <StatusPill tone="busy">{t((applyLevel(view, applyingTarget) === "manage" ? MANAGING_TEXT : APPLYING_TEXT)[applyingTarget])}</StatusPill>
+  ) : problemPill ? (
+    <StatusPill tone={problemPill.tone} data-ui="export.status.problem">
+      {t(problemPill.text)}
     </StatusPill>
   ) : failed ? (
     <StatusPill tone="danger">{t("export.status.failed")}</StatusPill>
@@ -250,7 +272,7 @@ export function exportHeader(view: ExportView, actions: ExportActions, t: Transl
   const disabled = busy ? false : exportGroupBusy(view) || problem !== null;
   return {
     primary: applying
-      ? { id: "export.apply.camilla", label: t("export.apply.camilla.run"), onClick: actions.applyCamilla, busy, disabled }
+      ? { id: "export.apply.camilla", label: t(level === "manage" ? "export.manage.camilla.run" : "export.apply.camilla.run"), onClick: actions.applyCamilla, busy, disabled }
       : { id: "export.run.camilla_dsp", label: t("frame.step.export.primary"), onClick: () => actions.exportFiles("camilla_dsp"), busy, disabled },
     status,
   };
@@ -516,7 +538,8 @@ function ExportItem({
   const running = view.exporting === kind;
   // The tutorial writes nothing, so it applies nothing either.
   const target = view.tutorial ? undefined : APPLY_TARGET[kind];
-  const applying = target !== undefined && applyLevel(view, target) === "apply";
+  const level = target === undefined ? "files" : applyLevel(view, target);
+  const applying = level !== "files";
   const titleId = `export.kind.${kind}.title`;
   const block = exportBlock(view, kind);
   const blocked = block ? BLOCK_TEXT[kind]?.[block] : undefined;
@@ -551,15 +574,15 @@ function ExportItem({
       </div>
       <div className="export-item__action">
         {applying && target === "eqapo" && (
-          // The row's own primary: Equalizer APO's 적용, off with the reason while it is not installed.
+          // The row's own primary: Equalizer APO's 적용 or 관리, off with the reason while it is not installed or the service cannot take it.
           <Button
             data-ui="export.apply.eqapo"
             busy={view.apply.applying === "eqapo"}
             disabled={!canApply(view, "eqapo")}
-            aria-describedby={blocked ? blockedId : eqapoMissing(view) ? EQAPO_REASON_ID : undefined}
+            aria-describedby={blocked ? blockedId : eqapoReason(view)}
             onClick={actions.applyEqapo}
           >
-            {t("export.apply.eqapo.run")}
+            {t(level === "manage" ? "export.manage.eqapo.run" : "export.apply.eqapo.run")}
           </Button>
         )}
         {text.run || applying ? (

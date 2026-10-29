@@ -6,6 +6,7 @@ import type { SettingEdit } from "./bindings/SettingEdit";
 import { CALIBRATION_LIMITS } from "./bindings/rules";
 import { createMockService } from "./mock";
 import * as fx from "./fixtures";
+import { CAMILLA_EXE_FILE } from "../screens/export/types";
 
 const configure: MeasureConfigureParams = {
   method: "mock", input_device: null, output_device: null, input_channel: null, output_channels: [], sweep_length: null,
@@ -234,6 +235,7 @@ describe("P33 mock wiring", () => {
       app_settings_get: { method: "app_settings_get" }, app_settings_set: { method: "app_settings_set", params: { settings: fx.appSettings } },
       apply_status: { method: "apply_status" }, apply_settings_set: { method: "apply_settings_set", params: fx.appSettings.apply },
       apply_camilla: { method: "apply_camilla", params: {} }, apply_eqapo: { method: "apply_eqapo" }, revert_eqapo: { method: "revert_eqapo" },
+      host_install: { method: "host_install" }, host_uninstall: { method: "host_uninstall" }, host_stop_managing: { method: "host_stop_managing" },
       measurement_curves: { method: "measurement_curves", params: { positions: null, roles: null } }, result_curves: { method: "result_curves", params: { tab: "spl", channel: null, group: null, xo_hz: null, corrected: null } },
       result_lines: { method: "result_lines" }, sub_take_values: { method: "sub_take_values" }, dialog_open_project: { method: "dialog_open_project" }, dialog_save_project: { method: "dialog_save_project", params: { suggested: "new.secs" } },
       dialog_pick_mdat: { method: "dialog_pick_mdat" }, dialog_pick_folder: { method: "dialog_pick_folder", params: { start: null } }, dialog_save_file: { method: "dialog_save_file", params: { kind: "target", suggested: "target.json" } },
@@ -251,6 +253,8 @@ describe("P33 mock wiring", () => {
         await mock.request({ method: "apply_settings_set", params: { camilla: { level: "apply", address: "127.0.0.1:1234" }, eqapo: { level: "apply" } } });
         mock.setApplyStatus({ ...fx.applyStatus, eqapo: fx.eqapoXt });
       }
+      // 관리 끄기 needs a service to reach.
+      if (request.method === "host_stop_managing") mock.setApplyStatus({ ...fx.applyStatus, host: "running", host_status: fx.hostManaging });
       expect(await mock.invoke("secs_call", { request }), request.method).toMatchObject({ ok: true, data: { method: request.method } });
       mock.drain(); mock.dispose();
     }
@@ -329,6 +333,46 @@ describe("P33 mock wiring", () => {
     const denied = await mock.request({ method: "apply_eqapo" });
     mock.drain();
     expect(events.find((event) => event.event === "finished" && event.job === denied.job)).toMatchObject({ status: "failed", error: { code: "permission_denied", params: { path: "C:/Program Files/EqualizerAPO/config/SECS2R" } } });
+  });
+
+  it("installs, hands over, stops managing and removes the SECS 2R Host service as the service does (관리)", async () => {
+    const mock = createMockService({ tickMs: 0, results: fx.resultsSummary });
+    const events: JobEvent[] = []; mock.events.subscribe((event) => events.push(event));
+    const status = () => mock.request({ method: "apply_status" });
+    expect((await status()).host).toBe("not_installed");
+    // 관리 끄기 cannot reach a service that is not there.
+    await expect(mock.request({ method: "host_stop_managing" })).rejects.toMatchObject({ error: { code: "apply_failed" } });
+    // 관리 without camilladsp.exe is refused before any job, naming the setting.
+    await mock.request({ method: "apply_settings_set", params: { camilla: { level: "manage", address: "127.0.0.1:1300" }, eqapo: { level: "manage" } } });
+    await expect(mock.request({ method: "apply_camilla", params: {} })).rejects.toMatchObject({ error: { code: "invalid_request", params: { field: "apply.camilla.exe_path" } } });
+    // With it but no service, 적용 runs and the hand-over fails the job.
+    await mock.request({ method: "apply_settings_set", params: { camilla: { level: "manage", address: "127.0.0.1:1300", exe_path: fx.CAMILLA_EXE }, eqapo: { level: "manage" } } });
+    const refused = await mock.request({ method: "apply_camilla", params: {} });
+    mock.drain();
+    expect(events.find((event) => event.event === "finished" && event.job === refused.job)).toMatchObject({ status: "failed", error: { code: "apply_failed" } });
+    // Installing starts the service, managing nothing yet.
+    expect(await mock.request({ method: "host_install" })).toBeNull();
+    expect(await status()).toMatchObject({ host: "running", host_status: fx.hostIdle });
+    const camilla = await mock.request({ method: "apply_camilla", params: {} });
+    mock.drain();
+    // No CamillaDSP answers: the design is handed over, and the service starts CamillaDSP with it.
+    expect(events.find((event) => event.event === "finished" && event.job === camilla.job)).toMatchObject({ status: "succeeded", result: { kind: "apply", data: { outcome: { kind: "handed_over" } } } });
+    expect((await status()).host_status).toMatchObject({ managed: { camilla: { exe_path: fx.CAMILLA_EXE, port: 1300, design_id: fx.MOCK_DESIGN_ID } }, camilla: { state: { kind: "running" }, pid: 4812 } });
+    mock.setApplyStatus({ ...(await status()), eqapo: fx.eqapoXt });
+    await mock.request({ method: "apply_eqapo" });
+    mock.drain();
+    expect((await status()).host_status).toMatchObject({ managed: { camilla: { exe_path: fx.CAMILLA_EXE }, eqapo: { config_path: fx.eqapoXt.config_path, design_id: fx.MOCK_DESIGN_ID } }, eqapo_include: "present" });
+    // 관리 끄기 lets go of both targets; the service keeps running.
+    expect(await mock.request({ method: "host_stop_managing" })).toBeNull();
+    expect(await status()).toMatchObject({ host: "running", host_status: { managed: {}, camilla: { state: { kind: "stopped" }, pid: null } } });
+    // Removing it forgets its status.
+    expect(await mock.request({ method: "host_uninstall" })).toBeNull();
+    const removed = await status();
+    expect(removed.host).toBe("not_installed");
+    expect(removed.host_status).toBeUndefined();
+    // The open-file dialog picks camilladsp.exe for 관리.
+    expect(await mock.request({ method: "dialog_open_file", params: { kind: CAMILLA_EXE_FILE } })).toBe(fx.CAMILLA_EXE);
+    mock.dispose();
   });
 
   it("supports dialog cancellation and independent service instances without fixture mutation", async () => {

@@ -151,6 +151,11 @@ function actions() {
     applyCamilla: vi.fn<ExportActions["applyCamilla"]>(),
     applyEqapo: vi.fn<ExportActions["applyEqapo"]>(),
     revertEqapo: vi.fn<ExportActions["revertEqapo"]>(),
+    setCamillaExe: vi.fn<ExportActions["setCamillaExe"]>(),
+    saveCamillaExe: vi.fn<ExportActions["saveCamillaExe"]>(),
+    pickCamillaExe: vi.fn<ExportActions["pickCamillaExe"]>(),
+    installHost: vi.fn<ExportActions["installHost"]>(),
+    stopManaging: vi.fn<ExportActions["stopManaging"]>(),
   };
 }
 

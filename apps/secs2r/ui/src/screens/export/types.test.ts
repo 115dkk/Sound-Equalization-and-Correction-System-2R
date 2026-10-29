@@ -6,6 +6,12 @@ import type { MimoExportDecision } from "../../ipc/bindings/MimoExportDecision";
 import { MOCK_DESIGN_ID } from "../../ipc/fixtures";
 import {
   DESIGN_NAME_SAMPLES,
+  manageCamillaInstalling,
+  manageCamillaNoExe,
+  manageCamillaNotInstalled,
+  manageCamillaRunning,
+  manageCamillaStopped,
+  manageEqapoRepaired,
   EXPORT_DEVICES,
   applyCamillaApplied,
   applyCamillaBadAddress,
@@ -37,6 +43,9 @@ import {
   canApply,
   canExport,
   currentDesignId,
+  exeText,
+  hostProblem,
+  withExePath,
   eqapoDesign,
   exportGroupBusy,
   exportStepState,
@@ -275,12 +284,15 @@ describe("적용 (ADR 0018)", () => {
     for (const address of ["192.168.0.40:1234", "camilla.local:1234", "0.0.0.0:1234", "[fe80::1]:1234", "128.0.0.1:1234"]) expect(isLoopback(address), address).toBe(false);
   });
 
-  it("draws 관리 as 적용, Equalizer APO off Windows and anything in the tutorial as 파일만", () => {
-    expect(APPLY_LEVELS).toEqual(["files", "apply"]);
+  it("draws each stored level, Equalizer APO off Windows and anything in the tutorial as 파일만", () => {
+    expect(APPLY_LEVELS).toEqual(["files", "apply", "manage"]);
     const at = (camilla: ApplyLevel, eqapo: ApplyLevel, windows = true, tutorial = false): ExportView => ({
       ...exportReady, tutorial, apply: { ...exportReady.apply, windows, settings: { camilla: { level: camilla, address: "127.0.0.1:1234" }, eqapo: { level: eqapo } } },
     });
-    expect([applyLevel(at("manage", "manage"), "camilla"), applyLevel(at("manage", "manage"), "eqapo")]).toEqual(["apply", "apply"]);
+    expect([applyLevel(at("manage", "manage"), "camilla"), applyLevel(at("manage", "manage"), "eqapo")]).toEqual(["manage", "manage"]);
+    // A 관리 stored off Windows stays 관리 for CamillaDSP (its action off with the reason); Equalizer APO reads 파일만 there.
+    expect([applyLevel(at("manage", "manage", false), "camilla"), applyLevel(at("manage", "manage", false), "eqapo")]).toEqual(["manage", "files"]);
+    expect(applyWanted(at("manage", "files"))).toBe(true);
     expect([applyLevel(at("apply", "apply", false), "camilla"), applyLevel(at("apply", "apply", false), "eqapo")]).toEqual(["apply", "files"]);
     expect([applyLevel(at("apply", "apply", true, true), "camilla"), applyLevel(at("apply", "apply", true, true), "eqapo")]).toEqual(["files", "files"]);
     expect(applyWanted(at("files", "files"))).toBe(false);
@@ -357,5 +369,43 @@ describe("적용 (ADR 0018)", () => {
     expect(exportStepState(applyCamillaThis)).toEqual({ status: "ready" });
     expect(exportStepState(applyCamillaApplied)).toEqual({ status: "done" });
     expect(exportStepState(applyCamillaRolledBack)).toEqual({ status: "ready" });
+  });
+});
+
+describe("관리 (ADR 0018)", () => {
+  it("holds 관리 for Windows, camilladsp.exe and the service, after what holds 적용", () => {
+    expect(applyProblem(manageCamillaRunning, "camilla")).toBeNull();
+    expect(canApply(manageCamillaRunning, "camilla")).toBe(true);
+    expect(applyProblem(manageCamillaNoExe, "camilla")).toEqual({ field: "exe_path", problem: "missing" });
+    // A typed path counts before it is stored (the apply stores it first); spaces alone do not.
+    expect(applyProblem({ ...manageCamillaNoExe, apply: { ...manageCamillaNoExe.apply, exeDraft: "D:/camilladsp/camilladsp.exe" } }, "camilla")).toBeNull();
+    expect(applyProblem({ ...manageCamillaRunning, apply: { ...manageCamillaRunning.apply, exeDraft: "   " } }, "camilla")).toEqual({ field: "exe_path", problem: "missing" });
+    expect(applyProblem(manageCamillaNotInstalled, "camilla")).toEqual({ field: "host", problem: "not_installed" });
+    expect(applyProblem(manageCamillaInstalling, "camilla")).toEqual({ field: "host", problem: "not_installed" });
+    expect(applyProblem(manageCamillaStopped, "camilla")).toEqual({ field: "host", problem: "stopped" });
+    // Running but not answering over its pipe, or not read yet.
+    const silent = { ...manageCamillaRunning, apply: { ...manageCamillaRunning.apply, host: { ...manageCamillaRunning.apply.host, status: null } } };
+    expect(applyProblem(silent, "camilla")).toEqual({ field: "host", problem: "unreachable" });
+    expect(hostProblem({ ...manageCamillaRunning.apply.host, service: null })).toBe("checking");
+    // What holds 적용 comes first.
+    expect(applyProblem({ ...manageCamillaNotInstalled, apply: { ...manageCamillaNotInstalled.apply, addressDraft: "camilla" } }, "camilla")).toEqual({ field: "address", problem: "format" });
+    // Off Windows a stored 관리 says so before anything else of its own.
+    expect(applyProblem({ ...manageCamillaNoExe, apply: { ...manageCamillaNoExe.apply, windows: false } }, "camilla")).toEqual({ field: "manage", problem: "windows" });
+    // Equalizer APO: the install first, then the service.
+    expect(applyProblem(manageEqapoRepaired, "eqapo")).toBeNull();
+    expect(applyProblem({ ...manageEqapoRepaired, apply: { ...manageEqapoRepaired.apply, host: manageCamillaStopped.apply.host } }, "eqapo")).toEqual({ field: "host", problem: "stopped" });
+    expect(applyProblem({ ...manageEqapoRepaired, apply: { ...manageEqapoRepaired.apply, status: { ...manageEqapoRepaired.apply.status!, eqapo: applyEqapoMissing.apply.status!.eqapo } } }, "eqapo")).toEqual({ field: "eqapo", problem: "not_installed" });
+    // 적용 needs none of it.
+    expect(applyProblem({ ...manageCamillaNotInstalled, apply: { ...manageCamillaNotInstalled.apply, settings: { ...manageCamillaNotInstalled.apply.settings, camilla: { level: "apply", address: "127.0.0.1:1234" } } } }, "camilla")).toBeNull();
+  });
+
+  it("reads the executable from the draft or the stored path, and stores none for an empty one", () => {
+    expect(exeText(manageCamillaRunning)).toBe("C:/Program Files/CamillaDSP/camilladsp.exe");
+    expect(exeText(manageCamillaNoExe)).toBe("");
+    expect(exeText({ ...manageCamillaRunning, apply: { ...manageCamillaRunning.apply, exeDraft: "" } })).toBe("");
+    const camilla = { level: "manage" as const, address: "127.0.0.1:1234", exe_path: "C:/old/camilladsp.exe" };
+    expect(withExePath(camilla, "D:/camilladsp.exe")).toEqual({ ...camilla, exe_path: "D:/camilladsp.exe" });
+    expect(withExePath(camilla, "")).toEqual({ level: "manage", address: "127.0.0.1:1234" });
+    expect("exe_path" in withExePath(camilla, "")).toBe(false);
   });
 });
