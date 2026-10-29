@@ -4,10 +4,12 @@
 mod support;
 
 use secs_filters::{
-    CONVOLUTION_GUIDE, FilterPlan, FilterRun, FiltersError, MimoFeed, Op, SECTION_Q, SubFeed,
-    eqapo_config, eqapo_filters, eqapo_guide, export_convolution, export_eqapo, export_filter_text,
-    filter_text, headroom_db, make_plan, make_plan_with_lfe, plan_responses, render_paths,
-    windows_channels, write_eqapo, write_eqapo_observed, write_text, write_text_observed,
+    CONVOLUTION_GUIDE, FilterPlan, FilterRun, FiltersError, MimoFeed, Op, Options, SECTION_Q,
+    SubFeed, eqapo_config, eqapo_filters, eqapo_guide, export_convolution,
+    export_convolution_with_options, export_eqapo, export_eqapo_with_options, export_filter_text,
+    export_filter_text_with_options, filter_text, headroom_db, make_plan, make_plan_with_lfe,
+    plan_responses, render_paths, windows_channels, write_eqapo, write_eqapo_observed, write_text,
+    write_text_observed,
 };
 use secs_oracle::{Fixture, assert_close, goldens, rtol};
 use secs_types::chain::{
@@ -983,6 +985,99 @@ fn eqapo_public_exports_use_single_assignments_f11() {
         assert!(guide.contains("\"Eval: outL = 1\""));
         assert!(!guide.contains("두 줄") && !guide.contains("; …"));
         dump_f11_export(case, &folder, &paths);
+    }
+}
+
+#[test]
+fn output_rates_change_eqapo_text_and_convolution_bundles() {
+    let mut chain = f11_synthetic_chain(true, true, false);
+    chain.mains[0].delay_ms = 1.25;
+    let run = FilterRun {
+        chain: &chain,
+        mimo: None,
+        mode: "mixed",
+        note: "output rate test",
+        label: "output rate test",
+        latency_ms: 0.0,
+        rc_pieces: &[],
+        stamp: "2026-10-29 00:00",
+    };
+    let options = Options {
+        output_rate: 96_000,
+        extra_rates: Vec::new(),
+    };
+    let root = TempDir::new("output_rates");
+
+    let eqapo = root.0.join("eqapo");
+    let eqapo_files = export_eqapo_with_options(&run, &eqapo, &options).unwrap();
+    let config = fs::read_to_string(eqapo.join("config.txt")).unwrap();
+    assert!(config.contains("# Device format: 96000 Hz"));
+    for path in eqapo_files
+        .iter()
+        .filter(|path| path.extension().is_some_and(|ext| ext == "wav"))
+    {
+        let bytes = fs::read(path).unwrap();
+        assert_eq!(
+            u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
+            96_000
+        );
+        assert_eq!((bytes.len() - 44) / 4, 6);
+    }
+
+    let text_folder = root.0.join("text");
+    let text_files = export_filter_text_with_options(&run, &text_folder, &options).unwrap();
+    let text_path = text_files
+        .iter()
+        .find(|path| path.extension().is_some_and(|ext| ext == "txt"))
+        .unwrap();
+    let text = String::from_utf8_lossy(&fs::read(text_path).unwrap()).into_owned();
+    assert!(text.contains("샘플레이트 96000 Hz"));
+    assert!(text.contains("(6 탭, 96 kHz)"));
+    assert!(text.contains("1.250 ms (120 샘플 @ 96 kHz)"));
+
+    let convolution = root.0.join("convolution");
+    let convolution_options = Options {
+        output_rate: 96_000,
+        extra_rates: vec![44_100],
+    };
+    export_convolution_with_options(&run, &convolution, &convolution_options).unwrap();
+    for (prefix, rate) in [(PathBuf::new(), 96_000), (PathBuf::from("44100Hz"), 44_100)] {
+        let routing: Value = serde_json::from_slice(
+            &fs::read(convolution.join(&prefix).join("routing.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(routing["sample_rate"], rate);
+        let route = &routing["paths"][0];
+        let wav = fs::read(
+            convolution
+                .join(&prefix)
+                .join(route["wav"].as_str().unwrap()),
+        )
+        .unwrap();
+        assert_eq!(u32::from_le_bytes(wav[24..28].try_into().unwrap()), rate);
+        assert_eq!(
+            (wav.len() - 44) / 4,
+            routing["length"].as_u64().unwrap() as usize
+        );
+    }
+    let guide = fs::read_to_string(convolution.join(CONVOLUTION_GUIDE)).unwrap();
+    assert!(guide.contains("추가 샘플레이트 폴더: 44100Hz/"));
+
+    for invalid in [
+        Options {
+            output_rate: 96_000,
+            extra_rates: vec![96_000],
+        },
+        Options {
+            output_rate: 96_000,
+            extra_rates: vec![32_000],
+        },
+        Options {
+            output_rate: 96_000,
+            extra_rates: vec![44_100, 44_100],
+        },
+    ] {
+        assert!(export_convolution_with_options(&run, &root.0.join("invalid"), &invalid).is_err());
     }
 }
 

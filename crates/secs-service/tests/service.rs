@@ -21,8 +21,8 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 use secs_project::MeasurementResult;
 use secs_types::calibration::CalibrationSettings;
 use secs_types::ipc::{
-    CalibrateParams, ExportKind, ExportParams, JobCancelParams, JobId, JobResult, JobStatus,
-    MdatScope, MimoParams, Response,
+    CalibrateParams, DspSetParams, ExportKind, ExportParams, JobCancelParams, JobId, JobResult,
+    JobStatus, MdatScope, MimoParams, OutputRateChoice, Response,
 };
 
 static TEMP: AtomicU64 = AtomicU64::new(0);
@@ -240,8 +240,15 @@ fn new_projects_match_upstream_bytes() {
         let mut created =
             secs_project::Project::load_text(&fs::read_to_string(&path).unwrap()).unwrap();
         created.extra.retain(|(key, _)| key != "devices");
+        let saved = created.save_text();
+        let legacy = saved
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("\"output_rate\":"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
         assert_eq!(
-            created.save_text().into_bytes(),
+            legacy.into_bytes(),
             fixture.blob(&fixture.outputs()["project"]),
             "{}",
             fixture.id
@@ -326,6 +333,7 @@ fn tutorial_projects_block_save_without_writing() {
             mdat_scope: None,
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         Arc::new(NoEvents),
     ) else {
@@ -481,6 +489,7 @@ fn export_scope_and_wait(
             mdat_scope,
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         events.clone(),
     ) else {
@@ -492,6 +501,61 @@ fn export_scope_and_wait(
         panic!("export result must be returned");
     };
     result
+}
+
+#[test]
+fn changing_only_output_rate_keeps_calibration_fresh_for_export() {
+    let root = temp_root("output-rate-fresh");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "dolby");
+    let service = deterministic_service();
+    open(&service, &path);
+
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&service, calibration_events.clone(), settings);
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+
+    let Response::DspSet(camilla) = call_ok(
+        &service,
+        Request::DspSet(DspSetParams {
+            preset: Some("camilla".into()),
+            fields: None,
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("CamillaDSP preset must be selected")
+    };
+    let mut fields = camilla.fields;
+    fields.output_rate = OutputRateChoice::Fixed(96_000);
+    let Response::DspSet(changed) = call_ok(
+        &service,
+        Request::DspSet(DspSetParams {
+            preset: None,
+            fields: Some(fields),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("output rate must change")
+    };
+    assert_eq!(changed.fields.output_rate, OutputRateChoice::Fixed(96_000));
+
+    let result = export_and_wait(
+        &service,
+        ExportKind::CamillaDsp,
+        &root.join("export"),
+        Arc::new(Events::default()),
+    );
+    assert!(!result.stale);
+    assert_eq!(result.output_rate, 96_000);
+    assert!(result.notes.is_empty());
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(Path::new(&result.folder).join("secs-design.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["sample_rate"], 96_000);
+    assert_eq!(manifest["design_sample_rate"], 48_000);
+    assert_eq!(manifest["output_rate_auto"], false);
+    fs::remove_dir_all(root).unwrap();
 }
 
 fn calibrate_and_run_mimo(service: &Service, settings: &CalibrationSettings) {
@@ -676,6 +740,7 @@ fn resampled_calibration_and_cached_mdat_export_preserve_original_ir() {
             mdat_scope: None,
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         Arc::new(NoEvents),
     ) else {
@@ -752,6 +817,8 @@ fn measurement_mdat_exports_every_position_without_a_result() {
         Arc::new(Events::default()),
     );
     assert!(!result.stale);
+    assert_eq!(result.output_rate, 48_000);
+    assert!(result.notes.is_empty());
     let folder = PathBuf::from(&result.folder);
     assert_eq!(folder.parent(), Some(base.as_path()));
     assert_eq!(
@@ -1028,6 +1095,7 @@ fn mdat_scope_is_refused_for_other_kinds() {
                 mdat_scope: Some(MdatScope::All),
                 design_name: None,
                 camilla_devices: None,
+                extra_rates: Vec::new(),
             }),
             Arc::new(NoEvents),
         ) else {
@@ -1046,6 +1114,7 @@ fn mdat_scope_is_refused_for_other_kinds() {
             mdat_scope: Some(MdatScope::Measurements),
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         Arc::new(NoEvents),
     ) else {
@@ -1096,6 +1165,7 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
             mdat_scope: None,
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         Arc::new(NoEvents),
     ) else {
@@ -1173,6 +1243,7 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                 mdat_scope: None,
                 design_name: None,
                 camilla_devices: None,
+                extra_rates: Vec::new(),
             }),
             events.clone(),
         ) else {
@@ -1491,6 +1562,7 @@ fn named_filter_bundles_replace_heal_index_hash_every_file_and_share_design_id()
             mdat_scope: None,
             design_name: Some("bad/name".into()),
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         Arc::new(NoEvents),
     ) else {
@@ -1513,6 +1585,7 @@ fn named_filter_bundles_replace_heal_index_hash_every_file_and_share_design_id()
                 mdat_scope: None,
                 design_name: design_name.map(str::to_owned),
                 camilla_devices: None,
+                extra_rates: Vec::new(),
             }),
             events.clone(),
         ) else {
@@ -1553,9 +1626,14 @@ fn named_filter_bundles_replace_heal_index_hash_every_file_and_share_design_id()
         export(ExportKind::EqualizerApo, Some("Cinema")),
         export(ExportKind::Convolution, Some("Cinema")),
     ] {
+        assert_eq!(result.output_rate, 48_000);
+        assert!(result.notes.is_empty());
         let folder = PathBuf::from(&result.folder);
         let manifest: serde_json::Value =
             serde_json::from_slice(&fs::read(folder.join("secs-design.json")).unwrap()).unwrap();
+        assert_eq!(manifest["sample_rate"], 48_000);
+        assert_eq!(manifest["design_sample_rate"], 48_000);
+        assert_eq!(manifest["output_rate_auto"], false);
         design_ids.push(manifest["design_id"].as_str().unwrap().to_owned());
         let files = manifest["files"].as_array().unwrap();
         assert_eq!(files.len() + 1, count_files(&folder));
@@ -1876,6 +1954,7 @@ fn stale_calibration_exports_with_flag_and_cache_survives_reopen() {
             mdat_scope: None,
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         Arc::new(NoEvents),
     ) else {
@@ -2181,6 +2260,7 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
             mdat_scope: None,
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         Arc::new(NoEvents),
     ) else {
@@ -2333,6 +2413,7 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
                     mdat_scope: None,
                     design_name: None,
                     camilla_devices: None,
+                    extra_rates: Vec::new(),
                 }),
                 events.clone(),
             ) else {
@@ -2992,6 +3073,7 @@ fn reopened_stale_cache_blocks_mdat_but_allows_camilla() {
             mdat_scope: None,
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         Arc::new(NoEvents),
     ) else {
@@ -3036,6 +3118,7 @@ fn cached_mdat_export_rejects_project_replacement_before_writing() {
             mdat_scope: None,
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         events.clone(),
     ) else {

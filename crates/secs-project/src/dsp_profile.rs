@@ -1,5 +1,6 @@
 use crate::pyjson::Shape;
 use crate::{ProjectError, PyJson, SpeakerConfig};
+use secs_types::ipc::OutputRateChoice;
 use std::collections::BTreeMap;
 
 /// The `dsp` object [`DspProfile::to_json`] writes (F16).
@@ -8,9 +9,47 @@ pub(crate) static DSP_SHAPE: Shape = Shape::Record {
     nested: &[],
 };
 
+/// The output rate a preset runs at (ADR 0017): miniDSP 96 kHz, every other
+/// preset and any unknown profile 48 kHz.
+fn preset_output_rate(profile: &str) -> OutputRateChoice {
+    OutputRateChoice::Fixed(if profile == "minidsp" { 96_000 } else { 48_000 })
+}
+
+fn output_rate(
+    value: Option<&PyJson>,
+    fallback: OutputRateChoice,
+) -> Result<OutputRateChoice, ProjectError> {
+    let choice = match value {
+        None => fallback,
+        Some(PyJson::Str(value)) if value == "auto" => OutputRateChoice::Auto,
+        Some(PyJson::Int(value)) => {
+            value
+                .parse::<u32>()
+                .map(OutputRateChoice::Fixed)
+                .map_err(|_| {
+                    ProjectError::Invalid("dsp.output_rate must be 'auto' or an integer".into())
+                })?
+        }
+        Some(_) => {
+            return Err(ProjectError::Invalid(
+                "dsp.output_rate must be 'auto' or an integer".into(),
+            ));
+        }
+    };
+    if let OutputRateChoice::Fixed(rate) = choice
+        && ![44_100, 48_000, 88_200, 96_000, 176_400, 192_000].contains(&rate)
+    {
+        return Err(ProjectError::Invalid(format!(
+            "dsp.output_rate {rate} is not supported; expected 44100, 48000, 88200, 96000, 176400, or 192000"
+        )));
+    }
+    Ok(choice)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct DspProfile {
     pub profile: String,
+    pub output_rate: OutputRateChoice,
     pub fir_taps: i64,
     pub fir_budget: i64,
     pub iir_bands: i64,
@@ -32,6 +71,7 @@ impl Default for DspProfile {
     fn default() -> Self {
         Self {
             profile: "tesira".into(),
+            output_rate: OutputRateChoice::Fixed(48_000),
             fir_taps: 2048,
             fir_budget: 32768,
             iir_bands: 16,
@@ -132,6 +172,7 @@ impl DspProfile {
                         key,
                         Self {
                             profile: key.into(),
+                            output_rate: preset_output_rate(key),
                             fir_taps: taps,
                             fir_taps_max: taps,
                             fir_budget: budget,
@@ -195,8 +236,20 @@ impl DspProfile {
         )
     }
     pub fn to_json(&self) -> PyJson {
-        PyJson::Object(vec![
-            ("profile".into(), PyJson::Str(self.profile.clone())),
+        let mut fields = vec![("profile".into(), PyJson::Str(self.profile.clone()))];
+        // Written only when it differs from the preset's rate, so a project
+        // that keeps the default saves the same bytes as upstream (ADR 0004)
+        // and loads back to the same rate.
+        if self.output_rate != preset_output_rate(&self.profile) {
+            fields.push((
+                "output_rate".into(),
+                match self.output_rate {
+                    OutputRateChoice::Auto => PyJson::Str("auto".into()),
+                    OutputRateChoice::Fixed(rate) => PyJson::Int(rate.to_string()),
+                },
+            ));
+        }
+        fields.extend(vec![
             ("fir_taps".into(), PyJson::Int(self.fir_taps.to_string())),
             (
                 "fir_taps_max".into(),
@@ -249,7 +302,8 @@ impl DspProfile {
                 PyJson::Bool(self.support_taps_auto.unwrap_or(false)),
             ),
             ("name".into(), PyJson::Str(self.name.clone())),
-        ])
+        ]);
+        PyJson::Object(fields)
     }
     pub fn from_json(value: PyJson) -> Result<Self, ProjectError> {
         let object = value
@@ -267,6 +321,7 @@ impl DspProfile {
         let fallback = preset.as_ref().cloned().unwrap_or_default();
         Ok(Self {
             profile,
+            output_rate: output_rate(get("output_rate"), fallback.output_rate)?,
             fir_taps,
             fir_taps_max: crate::project::integer(
                 get("fir_taps_max"),
@@ -338,5 +393,71 @@ impl DspProfile {
         [("chan", chan), ("sup", sup), ("total", chan + sup)]
             .into_iter()
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn object(fields: Vec<(&str, PyJson)>) -> PyJson {
+        PyJson::Object(
+            fields
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value))
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn output_rate_defaults_follow_presets_and_unknown_profiles_use_48k() {
+        for (profile, expected) in [
+            ("camilla", 48_000),
+            ("tesira", 48_000),
+            ("qsys", 48_000),
+            ("minidsp", 96_000),
+            ("custom", 48_000),
+            ("future", 48_000),
+        ] {
+            let dsp =
+                DspProfile::from_json(object(vec![("profile", PyJson::Str(profile.to_owned()))]))
+                    .unwrap();
+            assert_eq!(
+                dsp.output_rate,
+                OutputRateChoice::Fixed(expected),
+                "{profile}"
+            );
+        }
+    }
+
+    #[test]
+    fn output_rate_round_trips_auto_and_every_fixed_rate() {
+        let choices = std::iter::once(OutputRateChoice::Auto).chain(
+            [44_100, 48_000, 88_200, 96_000, 176_400, 192_000]
+                .into_iter()
+                .map(OutputRateChoice::Fixed),
+        );
+        for choice in choices {
+            let dsp = DspProfile {
+                output_rate: choice,
+                ..DspProfile::default()
+            };
+            let restored = DspProfile::from_json(dsp.to_json()).unwrap();
+            assert_eq!(restored.output_rate, choice);
+        }
+    }
+
+    #[test]
+    fn output_rate_rejects_unsupported_values() {
+        let error = DspProfile::from_json(object(vec![
+            ("profile", PyJson::Str("camilla".into())),
+            ("output_rate", PyJson::Int("32000".into())),
+        ]))
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("dsp.output_rate 32000 is not supported")
+        );
     }
 }
