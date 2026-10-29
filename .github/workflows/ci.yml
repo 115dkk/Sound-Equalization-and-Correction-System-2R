@@ -630,6 +630,27 @@ jobs:
         working-directory: apps/secs2r/ui
         run: npm ci --no-audit --no-fund
 
+      # Windows runners have `python`, not always `python3`.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      # Pull requests cannot read the updater-signing environment (main only).
+      # Each run makes its own updater key and builds the app, the shell and
+      # the service with its public key (ADR 0020), so the updater files are
+      # signed as in a release; nothing signed with it outlives the run.
+      - name: Temporary updater key
+        shell: bash
+        run: |
+          key="$RUNNER_TEMP/updater.key"
+          node apps/secs2r/ui/node_modules/@tauri-apps/cli/tauri.js signer generate --ci -w "$key" -p ci-run
+          echo "::add-mask::$(cat "$key")"
+          {
+            echo "TAURI_SIGNING_PRIVATE_KEY=$(cat "$key")"
+            echo "TAURI_SIGNING_PRIVATE_KEY_PASSWORD=ci-run"
+            echo "SECS2R_UPDATER_PUBKEY=$(cat "$key.pub")"
+          } >> "$GITHUB_ENV"
+
       # As release.yml: built before tauri build, packed and run by
       # collect_bundles.py.
       - name: Build companion binaries
@@ -649,10 +670,21 @@ jobs:
             cargo build --release --locked -p secs2r-host
           fi
 
+      - name: Signed service manifest
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          version="$(python -c "import tomllib; print(tomllib.load(open('Cargo.toml', 'rb'))['workspace']['package']['version'])")"
+          python .github/scripts/updater_manifest.py host --exe target/release/secs2r-host.exe --version "$version" --out target/release/secs2r-host.json
+          node apps/secs2r/ui/node_modules/@tauri-apps/cli/tauri.js signer sign --app-version "$version" target/release/secs2r-host.json
+
       - name: Build the host shell
         if: runner.os == 'Windows'
         working-directory: apps/secs2r-host-shell
-        run: node ../secs2r/ui/node_modules/@tauri-apps/cli/tauri.js build --ci --no-bundle
+        shell: bash
+        run: |
+          overlay="$(python ../../.github/scripts/updater_config.py --pubkey-env SECS2R_UPDATER_PUBKEY)"
+          node ../secs2r/ui/node_modules/@tauri-apps/cli/tauri.js build --ci --no-bundle --config "$overlay"
 
       - name: tauri build
         working-directory: apps/secs2r
@@ -660,15 +692,10 @@ jobs:
         run: |
           args=(build --ci --bundles "${{ matrix.bundles }}")
           if [ -n "${{ matrix.target }}" ]; then args+=(--target "${{ matrix.target }}"); fi
-          if [ "${{ matrix.name }}" = "windows" ]; then
-            args+=(--config '{"bundle":{"resources":{"../../target/release/secs2r-cli.exe":"secs2r-cli.exe","../../target/release/secs2r-host.exe":"secs2r-host.exe","../../target/release/secs2r-host-shell.exe":"secs2r-host-shell.exe"}}}')
-          fi
+          overlay=(--pubkey-env SECS2R_UPDATER_PUBKEY)
+          if [ "${{ matrix.name }}" = "windows" ]; then overlay+=(--windows-resources); fi
+          args+=(--config "$(python ../../.github/scripts/updater_config.py "${overlay[@]}")")
           node ui/node_modules/@tauri-apps/cli/tauri.js "${args[@]}"
-
-      # Windows runners have `python`, not always `python3`.
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: "3.13"
 
       # Asset names carry a CI version; the CLI reports the workspace version.
       - name: Collect installers
