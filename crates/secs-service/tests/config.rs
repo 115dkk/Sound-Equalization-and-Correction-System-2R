@@ -252,6 +252,8 @@ fn project_edit_surface_round_trips_dsp_layout_target_and_calibration() {
         Request::DspSet(DspSetParams {
             preset: None,
             fields: Some(DspFields {
+                output_rate: OutputRateChoice::Fixed(48_000),
+                output_rate_editable: false,
                 fir_taps: 96_000,
                 fir_budget: 48_000,
                 iir_bands: 8,
@@ -373,6 +375,82 @@ fn project_edit_surface_round_trips_dsp_layout_target_and_calibration() {
     };
     assert!(spec.fir_taps > 0);
     assert!(spec.max_latency_ms >= spec.lift_ms);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn dsp_output_rate_follows_presets_and_only_camilla_or_custom_is_editable() {
+    let root = root("dsp-output-rate");
+    let project = root.join("dsp-output-rate.secs");
+    let service = Service::new(Deps::default());
+    new_project(&service, &project, "2.0");
+
+    let Response::DspSet(minidsp) = call(
+        &service,
+        Request::DspSet(DspSetParams {
+            preset: Some("minidsp".into()),
+            fields: None,
+        }),
+    ) else {
+        panic!()
+    };
+    assert_eq!(minidsp.fields.output_rate, OutputRateChoice::Fixed(96_000));
+    assert!(!minidsp.fields.output_rate_editable);
+
+    let mut refused = minidsp.fields.clone();
+    refused.output_rate = OutputRateChoice::Fixed(44_100);
+    let invalid = error(
+        &service,
+        Request::DspSet(DspSetParams {
+            preset: None,
+            fields: Some(refused),
+        }),
+    );
+    assert_eq!(invalid.code, ErrorCode::InvalidRequest);
+    assert_eq!(
+        invalid.params.get("field").map(String::as_str),
+        Some("output_rate")
+    );
+
+    let Response::DspSet(camilla) = call(
+        &service,
+        Request::DspSet(DspSetParams {
+            preset: Some("camilla".into()),
+            fields: None,
+        }),
+    ) else {
+        panic!()
+    };
+    assert!(camilla.fields.output_rate_editable);
+    // Changing only the rate keeps the preset.
+    let mut editable = camilla.fields;
+    editable.output_rate = OutputRateChoice::Auto;
+    let Response::DspSet(auto) = call(
+        &service,
+        Request::DspSet(DspSetParams {
+            preset: None,
+            fields: Some(editable.clone()),
+        }),
+    ) else {
+        panic!()
+    };
+    assert_eq!(auto.profile, "camilla");
+    assert_eq!(auto.fields.output_rate, OutputRateChoice::Auto);
+    assert!(auto.fields.output_rate_editable);
+    // Any other field makes it custom, keeping the chosen rate.
+    editable.fir_budget += 1024;
+    let Response::DspSet(custom) = call(
+        &service,
+        Request::DspSet(DspSetParams {
+            preset: None,
+            fields: Some(editable),
+        }),
+    ) else {
+        panic!()
+    };
+    assert_eq!(custom.profile, "custom");
+    assert_eq!(custom.fields.output_rate, OutputRateChoice::Auto);
+    assert!(custom.fields.output_rate_editable);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -551,6 +629,8 @@ fn service_config_oracle_replays_values_and_saved_project_bytes() {
                 Request::DspSet(DspSetParams {
                     preset: None,
                     fields: Some(DspFields {
+                        output_rate: OutputRateChoice::Fixed(48_000),
+                        output_rate_editable: false,
                         fir_taps: 96_000,
                         fir_budget: 48_000,
                         iir_bands: 8,
@@ -660,7 +740,27 @@ fn service_config_oracle_replays_values_and_saved_project_bytes() {
                     fixture.id
                 );
                 assert_eq!(
-                    serde_json::to_value(&result.fields).unwrap(),
+                    result.fields.output_rate,
+                    OutputRateChoice::Fixed(if result.profile == "minidsp" {
+                        96_000
+                    } else {
+                        48_000
+                    }),
+                    "{}",
+                    fixture.id
+                );
+                assert_eq!(
+                    result.fields.output_rate_editable,
+                    matches!(result.profile.as_str(), "camilla" | "custom"),
+                    "{}",
+                    fixture.id
+                );
+                let mut fields = serde_json::to_value(&result.fields).unwrap();
+                let object = fields.as_object_mut().unwrap();
+                object.remove("output_rate");
+                object.remove("output_rate_editable");
+                assert_eq!(
+                    fields,
                     serde_json::json!({
                         "fir_taps": fixture.outputs()["dsp"]["fir_taps"],
                         "fir_budget": fixture.outputs()["dsp"]["fir_budget"],
@@ -729,8 +829,15 @@ fn service_config_oracle_replays_values_and_saved_project_bytes() {
             ),
             Response::ProjectSave(_)
         ));
+        let saved = fs::read_to_string(&path).unwrap();
+        let legacy = saved
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("\"output_rate\":"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
         assert_eq!(
-            fs::read(&path).unwrap(),
+            legacy.as_bytes(),
             fixture.blob(&fixture.outputs()["project"]),
             "{}",
             fixture.id

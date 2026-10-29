@@ -479,3 +479,21 @@ button.system-choice:active:not([aria-pressed="true"]) {
 .system-dsp__note {
   color: var(--text-muted);
 }
+
+/* A rate the device fixes: the value where a choice would stand, as tall as
+   the select a PC profile shows, so switching devices does not move the card. */
+.system-dsp__rate-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  min-height: var(--control-h);
+}
+
+.system-dsp__rate-text {
+  font-weight: var(--weight-semibold);
+}
+
+.system-dsp__rate-reason {
+  color: var(--text-muted);
+}

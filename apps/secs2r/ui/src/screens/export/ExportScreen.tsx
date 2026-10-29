@@ -22,7 +22,8 @@ import type { Mode } from "../../ipc/bindings/Mode";
 import type { Notice } from "../../ipc/bindings/Notice";
 import { Advanced, Button, Card, EmptyState, ErrorNotice, Icon, Segmented, StatusPill } from "../../ui";
 import { roleCode } from "../../ui/maps/geometry";
-import { CamillaDevicesDisclosure, DESIGN_NAME_ID, DesignNameField } from "./fields";
+import { DESIGN_RATE, rateText } from "../system/outputRate";
+import { CamillaDevicesDisclosure, DESIGN_NAME_ID, DesignNameField, ExtraRatesDisclosure } from "./fields";
 import {
   EXPORT_KINDS,
   MDAT_SCOPES,
@@ -37,6 +38,7 @@ import {
   mdatFileName,
   mdatScopeFor,
   mimoInclusion,
+  rateFallback,
   type ExportActions,
   type ExportRun,
   type ExportView,
@@ -138,6 +140,7 @@ export function ExportScreen({
   actions,
   initialAdvanced = false,
   initialDevices = false,
+  initialExtraRates = false,
 }: {
   view: ExportView;
   actions: ExportActions;
@@ -145,6 +148,8 @@ export function ExportScreen({
   initialAdvanced?: boolean;
   /** Gallery: draw the CamillaDSP devices unfolded. The fold is the screen's own state. */
   initialDevices?: boolean;
+  /** Gallery: draw the convolution IR's extra rates unfolded. The fold is the screen's own state. */
+  initialExtraRates?: boolean;
 }) {
   const rootRef = useRef<HTMLDivElement>(null);
   const runsRef = useRef(view.runs);
@@ -160,7 +165,7 @@ export function ExportScreen({
   return (
     <div ref={rootRef} className="export-screen" data-ui="export">
       <ResultCard view={view} actions={actions} />
-      <FilesCard view={view} actions={actions} initialAdvanced={initialAdvanced} initialDevices={initialDevices} />
+      <FilesCard view={view} actions={actions} initialAdvanced={initialAdvanced} initialDevices={initialDevices} initialExtraRates={initialExtraRates} />
     </div>
   );
 }
@@ -338,7 +343,19 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 
 /* ── The files ──────────────────────────────────────────────────────────── */
 
-function FilesCard({ view, actions, initialAdvanced, initialDevices }: { view: ExportView; actions: ExportActions; initialAdvanced: boolean; initialDevices: boolean }) {
+function FilesCard({
+  view,
+  actions,
+  initialAdvanced,
+  initialDevices,
+  initialExtraRates,
+}: {
+  view: ExportView;
+  actions: ExportActions;
+  initialAdvanced: boolean;
+  initialDevices: boolean;
+  initialExtraRates: boolean;
+}) {
   const t = useT();
   return (
     <Card title={t("export.files.title")} data-ui="export.files">
@@ -347,10 +364,10 @@ function FilesCard({ view, actions, initialAdvanced, initialDevices }: { view: E
         <ExportGroup title={t("export.group.filters")}>
           {/* One name for every filter export, above their rows; the tutorial has no folder to name. */}
           {!view.tutorial && <DesignNameField view={view} actions={actions} />}
-          <ExportItem kind="camilla_dsp" view={view} actions={actions} initialDevices={initialDevices} />
+          <ExportItem kind="camilla_dsp" view={view} actions={actions} initialOpen={initialDevices} />
           <ExportItem kind="filter_text" view={view} actions={actions} />
           <ExportItem kind="equalizer_apo" view={view} actions={actions} />
-          <ExportItem kind="convolution" view={view} actions={actions} />
+          <ExportItem kind="convolution" view={view} actions={actions} initialOpen={initialExtraRates} />
         </ExportGroup>
         <ExportGroup title={t("export.group.rew")}>
           <ExportItem kind="before_after_mdat" view={view} actions={actions} />
@@ -447,7 +464,25 @@ function MdatScopeField({ view, actions }: { view: ExportView; actions: ExportAc
   );
 }
 
-function ExportItem({ kind, view, actions, initialDevices = false }: { kind: ExportKind; view: ExportView; actions: ExportActions; initialDevices?: boolean }) {
+/**
+ * The rate a filter export writes, said under its folder when it is not
+ * 48 kHz (ADR 0017); 자동 says it reads the playback device. The REW mdat
+ * stays at 48 kHz and says nothing.
+ */
+function RateLine({ kind, view }: { kind: ExportKind; view: ExportView }) {
+  const t = useT();
+  const number = useNumber();
+  const choice = view.outputRate;
+  if (!isFilterKind(kind) || !choice || (choice !== "auto" && choice.fixed === DESIGN_RATE)) return null;
+  return (
+    <p className="export-item__where export-item__rate" data-ui={`export.kind.${kind}.rate`}>
+      <Icon name="settings" size={16} />
+      <span>{choice === "auto" ? t("export.rate.auto") : t("export.rate.fixed", { rate: rateText(number, choice.fixed) })}</span>
+    </p>
+  );
+}
+
+function ExportItem({ kind, view, actions, initialOpen = false }: { kind: ExportKind; view: ExportView; actions: ExportActions; initialOpen?: boolean }) {
   const t = useT();
   const text = KIND_TEXT[kind];
   const run = view.runs[kind];
@@ -480,7 +515,9 @@ function ExportItem({ kind, view, actions, initialDevices = false }: { kind: Exp
             <span>{mdatFileName(mdatScopeFor(view.results.calibration, view.mdatScope), view.settings)}</span>
           </p>
         )}
-        {kind === "camilla_dsp" && <CamillaDevicesDisclosure view={view} actions={actions} defaultOpen={initialDevices} />}
+        <RateLine kind={kind} view={view} />
+        {kind === "camilla_dsp" && <CamillaDevicesDisclosure view={view} actions={actions} defaultOpen={initialOpen} />}
+        {kind === "convolution" && <ExtraRatesDisclosure view={view} actions={actions} defaultOpen={initialOpen} />}
       </div>
       <div className="export-item__action">
         {text.run ? (
@@ -529,8 +566,17 @@ function ExportItem({ kind, view, actions, initialDevices = false }: { kind: Exp
   );
 }
 
+/** The `output_rate_fallback` note as a cause: the rate the device reported when there was one, else that it could not be read. */
+function fallbackText(t: Translate, number: (value: number, digits?: number) => string, note: Notice): string {
+  const rate = Number(note.params.rate);
+  return note.params.rate !== undefined && Number.isFinite(rate) && rate > 0
+    ? t("export.rate.fallback.unsupported", { rate: rateText(number, rate) })
+    : t("export.rate.fallback.unread");
+}
+
 function Outcome({ kind, run, view, actions }: { kind: ExportKind; run: ExportRun; view: ExportView; actions: ExportActions }) {
   const t = useT();
+  const number = useNumber();
   const id = `export.outcome.${kind}`;
   if (run.status === "failed") {
     const problem = designNameRejection(run.error);
@@ -557,6 +603,7 @@ function Outcome({ kind, run, view, actions }: { kind: ExportKind; run: ExportRu
     );
   }
   const hint = OUTCOME_HINT[kind];
+  const fallback = rateFallback(run);
   return (
     <div className="export-item__outcome export-done" data-ui={id} role="status">
       <div className="export-outcome">
@@ -568,6 +615,25 @@ function Outcome({ kind, run, view, actions }: { kind: ExportKind; run: ExportRu
           {t("export.folder.open")}
         </Button>
       </div>
+      {fallback ? (
+        // 자동 could not use the playback device's rate: what was written instead, and where the rate is set.
+        <ErrorNotice
+          id={`${id}.rate_fallback`}
+          tone="warning"
+          cause={fallbackText(t, number, fallback)}
+          next={t("export.rate.fallback.next")}
+          action={
+            <Button variant="secondary" size="sm" iconEnd="arrowRight" data-ui={`${id}.go_system`} onClick={actions.goToSystem}>
+              {t("export.go_system")}
+            </Button>
+          }
+        />
+      ) : view.outputRate === "auto" && isFilterKind(kind) ? (
+        // 자동 decided the rate when exporting: the row said it would read the device, the outcome says what it read.
+        <p className="export-done__hint tabular" data-ui={`${id}.rate`}>
+          {t("export.rate.written", { rate: rateText(number, run.rate) })}
+        </p>
+      ) : null}
       {hint && (
         // What to do with the folder: Equalizer APO's files go into its own config folder; the convolution IR's guide says which file goes where.
         <p className="export-done__hint" data-ui={`${id}.hint`}>

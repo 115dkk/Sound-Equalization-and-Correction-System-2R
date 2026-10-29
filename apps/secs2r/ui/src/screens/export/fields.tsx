@@ -4,13 +4,14 @@
 // border, focus ring and skins.
 import { useId, useRef, useState } from "react";
 import type { MessageKey } from "../../i18n";
-import { useT, type Translate } from "../../i18n/react";
+import { useNumber, useT, type Translate } from "../../i18n/react";
 import type { CamillaCaptureDevice } from "../../ipc/bindings/CamillaCaptureDevice";
 import type { CamillaDevices } from "../../ipc/bindings/CamillaDevices";
 import type { CamillaPlaybackDevice } from "../../ipc/bindings/CamillaPlaybackDevice";
 import type { MeasureDevice } from "../../ipc/bindings/MeasureDevice";
 import { Icon, Segmented, Select, Toggle, type Option } from "../../ui";
 import { Field, describedBy } from "../../ui/Field";
+import { DESIGN_RATE, OUTPUT_RATES, countedRate, extraRatesFor, rateText } from "../system/outputRate";
 import {
   WASAPI_FORMATS,
   designNameFor,
@@ -323,6 +324,75 @@ function WasapiFields({ side, device, nativeDevices, onChange }: { side: DeviceS
         />
       )}
     </>
+  );
+}
+
+/* ── The convolution IR's extra rates ───────────────────────────────────── */
+
+/**
+ * More rates for the convolution IR, folded under its row like the CamillaDSP
+ * devices: for convolvers that pick a filter by the playing rate. Closed, the
+ * toggle reads the chosen rates; open, one checkbox per rate other than the
+ * one the files are written at (48 kHz for 자동).
+ */
+export function ExtraRatesDisclosure({ view, actions, defaultOpen = false }: { view: ExportView; actions: ExportActions; defaultOpen?: boolean }) {
+  const t = useT();
+  const number = useNumber();
+  const [open, setOpen] = useState(defaultOpen);
+  const panelId = useId();
+  const rate = view.outputRate ? countedRate(view.outputRate) : DESIGN_RATE;
+  const chosen = extraRatesFor(rate, view.extraRates);
+  const toggle = (value: number, on: boolean) => {
+    // Rates hidden behind the written one stay chosen for when the DSP's rate changes back.
+    const rest = view.extraRates.filter((other) => other !== value);
+    actions.setExtraRates(on ? [...rest, value] : rest);
+  };
+  return (
+    <div className={["ui-advanced", "export-devices", open && "ui-advanced--open"].filter(Boolean).join(" ")}>
+      <button
+        type="button"
+        id="export.extra_rates"
+        data-ui="export.extra_rates"
+        className="ui-advanced__toggle"
+        aria-expanded={open}
+        aria-controls={open ? panelId : undefined}
+        onClick={() => setOpen(!open)}
+      >
+        <Icon name="chevronRight" size={16} className="ui-advanced__chevron" />
+        <span>{t("export.extra_rates")}</span>
+        {!open && (
+          <span className="export-devices__summary tabular" data-ui="export.extra_rates.summary">
+            {chosen.length > 0 ? chosen.map((value) => rateText(number, value)).join(", ") : t("export.extra_rates.none")}
+          </span>
+        )}
+      </button>
+      {open && (
+        <div id={panelId} className="ui-advanced__panel export-devices__panel">
+          <fieldset className="export-rates" data-ui="export.extra_rates.list">
+            <legend className="visually-hidden">{t("export.extra_rates")}</legend>
+            {OUTPUT_RATES.filter((value) => value !== rate).map((value) => (
+              <label key={value} className="export-rate">
+                <input
+                  type="checkbox"
+                  className="export-rate__input"
+                  data-ui={`export.extra_rates.${value}`}
+                  checked={chosen.includes(value)}
+                  aria-describedby="export.extra_rates-hint"
+                  onChange={(event) => toggle(value, event.target.checked)}
+                />
+                <span className="export-rate__box" aria-hidden="true">
+                  <Icon name="check" size={14} weight="semibold" />
+                </span>
+                <span className="export-rate__label tabular">{rateText(number, value)}</span>
+              </label>
+            ))}
+          </fieldset>
+          <p className="ui-field__hint" id="export.extra_rates-hint">
+            {t("export.extra_rates.hint")}
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 

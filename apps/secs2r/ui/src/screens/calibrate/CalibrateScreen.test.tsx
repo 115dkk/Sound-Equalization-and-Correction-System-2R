@@ -530,6 +530,33 @@ describe("보정 screen", () => {
     }
   });
 
+  it("counts the FIR taps at the DSP's output rate before comparing them, and names a rate that is not 48 kHz (ADR 0017)", () => {
+    // miniDSP at 96 kHz: supports of 3,072 taps at 48 kHz become 6,144, past the 4,096 budget.
+    setup(fx.minidspView);
+    const budget = translate("ko", "calibrate.mimo.state.budget_over.rate", { taps: "6,144", budget: "4,096", rate: "96 kHz" });
+    expect(must("calibrate.mimo.state").textContent).toContain(budget);
+    // The mixed mode's 2,048 taps become 4,096, past 2,048 per channel: one warning line in the mode card.
+    const over = must("calibrate.mode.fir_over");
+    expect(over.closest("[data-ui='calibrate.settings.mode']")).not.toBeNull();
+    expect(over.textContent).toBe(translate("ko", "calibrate.mode.fir_over.rate", { rate: "96 kHz", taps: "4,096", limit: "2,048", mode: "최소 지연" }));
+    cleanupAll();
+    // The same supports at 48 kHz fit, and the line names no rate.
+    setup({ ...fx.minidspView, outputRate: 48000 });
+    expect(must("calibrate.mimo.state").textContent).toContain(translate("ko", "calibrate.mimo.state.budget", { taps: "3,072", budget: "4,096" }));
+    expect(ui("calibrate.mode.fir_over")).toBeNull();
+    cleanupAll();
+    // At 48 kHz a DSP with fewer taps than the mode still gets the warning, without a rate.
+    setup({ ...fx.minidspView, outputRate: 48000, firTaps: 1024 });
+    expect(must("calibrate.mode.fir_over").textContent).toBe(translate("ko", "calibrate.mode.fir_over", { taps: "2,048", limit: "1,024", mode: "최소 지연" }));
+    cleanupAll();
+    // A mode without FIR and an unknown DSP never warn.
+    setup({ ...fx.minidspView, modeSpec: { ...fx.minidspView.modeSpec, fir_taps: 0 } });
+    expect(ui("calibrate.mode.fir_over")).toBeNull();
+    cleanupAll();
+    setup({ ...fx.minidspView, firTaps: 0 });
+    expect(ui("calibrate.mode.fir_over")).toBeNull();
+  });
+
   it("requires recovery from an unavailable explicit GPU while Automatic remains calculable", () => {
     const actions = setup(fx.requestedGpuUnavailableView);
     expect((must("calibrate.mimo.compute") as HTMLButtonElement).disabled).toBe(true);

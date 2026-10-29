@@ -512,6 +512,19 @@
   color: var(--warning);
 }
 
+/* The mode's channel FIR does not fit the DSP: the icon carries the warning with the words, not the hue alone. */
+.calibrate-fir-over {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-1-5);
+  text-wrap: pretty;
+}
+
+.calibrate-fir-over__icon {
+  flex: none;
+  margin-top: 2px;
+}
+
 .calibrate-ba {
   display: flex;
   flex-direction: column;

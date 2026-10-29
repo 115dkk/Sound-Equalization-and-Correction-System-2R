@@ -28,4 +28,8 @@ design_name?: string,
 /**
  * Optional CamillaDSP Windows backends. File placeholders are the default.
  */
-camilla_devices?: CamillaDevices, };
+camilla_devices?: CamillaDevices, 
+/**
+ * Additional convolution output rates. Other export kinds refuse a non-empty list.
+ */
+extra_rates?: Array<number>, };

@@ -3,6 +3,7 @@ import { useHost, useResource, useSession } from "../../state/react";
 import { useJobLedger } from "../../state/useJobLedger";
 import type { CalibrateActions, CalibrateJob, CalibrateView } from "./types";
 import { groupOf, xoGroups } from "./text";
+import { DESIGN_RATE, countedRate } from "../system/outputRate";
 
 export function useCalibrateScreen(goToMeasurements?: () => void): { view: CalibrateView | null; actions: CalibrateActions } {
   const session = useSession();
@@ -95,7 +96,8 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
       locked: jobs.some((job) => !["status_watch", "level_monitor"].includes(job.kind)) },
     results, lines, curves: curves?.curves ?? null, settings, modeSpec, target, config, positions: project.positions,
     measuredRoles: config.speakers.map((speaker) => speaker.role).filter((role) => measuredRoles.has(role)),
-    firBudget: dsp?.fields.fir_budget ?? 0, xoRecommendation: host.xoRecommendation, running,
+    firBudget: dsp?.fields.fir_budget ?? 0, firTaps: dsp?.fields.fir_taps ?? 0, outputRate: dsp ? countedRate(dsp.fields.output_rate) : DESIGN_RATE,
+    xoRecommendation: host.xoRecommendation, running,
     measuring: jobs.some((job) => ["measure", "sample_load", "mdat_import"].includes(job.kind)),
     failure: host.failure, targetEdit: host.targetEdit, xoEdit: host.xoEdit,
     staleReason: results.calibration?.stale_reason === "settings" || results.calibration?.stale_reason === "target" || results.calibration?.stale_reason === "measurements" || results.calibration?.stale_reason === "config" ? results.calibration.stale_reason : null,

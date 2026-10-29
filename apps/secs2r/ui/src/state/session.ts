@@ -38,6 +38,8 @@ type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "m
   xoRecommendation: XoRecommendation | null; runs: Partial<Record<ExportKind, ExportRun>>; mdatScope: MdatScope;
   /** 내보내기: the design name field's text (`""` = no name) and the CamillaDSP devices (file placeholders by default). */
   designName: string; camillaDevices: CamillaDevices;
+  /** 내보내기: the convolution IR's extra rates in Hz (none by default); like the devices, kept for the session across projects. */
+  extraRates: number[];
   failure: CalibrateView["failure"]; rewLaunch: "idle" | "checking" | "launching";
   rewProblem: RewProblem | null; rewProblemDetail: string | null; readingRew: boolean;
   switchingRewDriver: boolean;
@@ -69,7 +71,7 @@ export function createSession(ipc: Ipc) {
     mdat: null, warnings: [], tab: "spl", channel: null, xoGroup: null, previewHz: null, targetEdit: "idle", xoEdit: "idle",
     meter: null, monitor: "off", playing: null, playingAll: false, masterDbfs: -20,
     xoRecommendation: null, runs: {}, mdatScope: "all", failure: null,
-    designName: "", camillaDevices: { capture: { type: "file" }, playback: { type: "file" } },
+    designName: "", camillaDevices: { capture: { type: "file" }, playback: { type: "file" } }, extraRates: [],
     micCalBusy: null, micCalError: null,
     rewLaunch: "idle", rewProblem: null, rewProblemDetail: null, readingRew: false, switchingRewDriver: false, opened: 0,
   });

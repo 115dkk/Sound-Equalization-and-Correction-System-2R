@@ -184,6 +184,12 @@ export const calibrateSpecimens: SpecimenDef[] = [
   frame("gpu-fallback", "GPU selected but previous result recovered on CPU", () => <CalibrateFrame view={fx.gpuFallbackView} scrollTo="calibrate.settings.mimo" />),
   { id: "screen.calibrate.gpu.min", title: "보정 · GPU at the smallest window", width: 1024, height: 700,
     render: () => <CalibrateFrame view={fx.gpuView} scrollTo="calibrate.settings.mimo" /> },
+  frame("mimo-budget-96k", "MIMO FIR supports counted at the miniDSP's 96 kHz: past its FIR budget, the rate named in the line", () => (
+    <CalibrateFrame view={fx.minidspView} scrollTo="calibrate.settings.mimo" />
+  )),
+  frame("mode-fir-over-96k", "mixed mode at the miniDSP's 96 kHz: the channel FIR past its taps per channel, one warning line", () => (
+    <CalibrateFrame view={fx.minidspView} scrollTo="calibrate.settings.mode" />
+  )),
   frame("mimo-running", "MIMO computing: 보정 계산 and the other jobs are off", () => (
     <CalibrateFrame view={fx.runningMimoView} jobs={runningJobs("mimo", "engine.mimo_iir", 11)} scrollTo="calibrate.settings.ba" />
   )),

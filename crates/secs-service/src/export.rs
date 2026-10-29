@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -6,10 +7,79 @@ use secs_export::ExportRun;
 use secs_filters::FiltersError;
 use secs_types::ipc::{
     CamillaCaptureDevice, CamillaDevices, CamillaPlaybackDevice, ErrorCode, ExportKind,
-    ExportParams, ExportResult, IpcError, JobKind, JobResult, JobStarted,
+    ExportParams, ExportResult, IpcError, JobKind, JobResult, JobStarted, Notice, OutputRateChoice,
 };
 
 use crate::{EventSink, Service, lock, results::MimoView, session};
+
+fn fallback_notice(rate: Option<f64>) -> Notice {
+    let mut params = BTreeMap::new();
+    if let Some(rate) = rate {
+        params.insert("rate".into(), rate.to_string());
+    }
+    Notice {
+        code: "output_rate_fallback".into(),
+        params,
+    }
+}
+
+fn resolve_output_rate(
+    choice: OutputRateChoice,
+    backend: &dyn Fn() -> Box<dyn secs_audio::AudioBackend>,
+) -> (u32, Vec<Notice>) {
+    match choice {
+        OutputRateChoice::Fixed(rate) => return (rate, Vec::new()),
+        OutputRateChoice::Auto => {}
+    }
+    let endpoints = match backend().enumerate() {
+        Ok(endpoints) => endpoints,
+        Err(_) => return (48_000, vec![fallback_notice(None)]),
+    };
+    let Some(rate) = endpoints
+        .iter()
+        .find(|endpoint| endpoint.is_default_output)
+        .map(|endpoint| endpoint.default_samplerate)
+    else {
+        return (48_000, vec![fallback_notice(None)]);
+    };
+    if rate.is_finite()
+        && rate.fract() == 0.0
+        && (0.0..=f64::from(u32::MAX)).contains(&rate)
+        && secs_dsp::rate::is_output_rate(rate as u32)
+    {
+        (rate as u32, Vec::new())
+    } else {
+        (48_000, vec![fallback_notice(Some(rate))])
+    }
+}
+
+/// The extra convolution rates to write. A rate equal to the main rate is
+/// refused when the user chose that rate, and dropped when `Auto` resolved to
+/// it: the screen cannot know the device's rate before the export starts.
+fn extra_rates_for(rates: &[u32], output_rate: u32, auto: bool) -> Result<Vec<u32>, IpcError> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for &rate in rates {
+        if !secs_dsp::rate::is_output_rate(rate) {
+            return Err(IpcError::new(
+                ErrorCode::InvalidRequest,
+                "unsupported extra output sample rate",
+            )
+            .with_param("rate", rate.to_string()));
+        }
+        if !seen.insert(rate) || (rate == output_rate && !auto) {
+            return Err(IpcError::new(
+                ErrorCode::InvalidRequest,
+                "extra output sample rates must be distinct from the main rate and each other",
+            )
+            .with_param("rate", rate.to_string()));
+        }
+        if rate != output_rate {
+            out.push(rate);
+        }
+    }
+    Ok(out)
+}
 
 impl Service {
     pub(crate) fn start_export(
@@ -86,12 +156,33 @@ impl Service {
             )
             .with_param("reason", "mdat_scope"));
         }
+        if !params.extra_rates.is_empty() && params.kind != ExportKind::Convolution {
+            return Err(IpcError::new(
+                ErrorCode::InvalidRequest,
+                "extra_rates only applies to convolution export",
+            )
+            .with_param("reason", "extra_rates"));
+        }
         let mdat_scope = params.mdat_scope.unwrap_or_default();
         let now = (self.deps.clock)();
         let project_mode = secs_types::calibration::mode_tag(
             secs_project::calibration_from_project(open.store.project()).mode,
         )
         .to_owned();
+        let output_rate_auto = open.store.project().dsp.output_rate == OutputRateChoice::Auto;
+        let (output_rate, output_rate_notes) = if matches!(
+            params.kind,
+            ExportKind::BeforeAfterMdat | ExportKind::StagedMdat
+        ) {
+            (48_000, Vec::new())
+        } else {
+            resolve_output_rate(
+                open.store.project().dsp.output_rate,
+                self.deps.audio_backend.as_ref(),
+            )
+        };
+        let mut params = params;
+        params.extra_rates = extra_rates_for(&params.extra_rates, output_rate, output_rate_auto)?;
         if params.kind == ExportKind::BeforeAfterMdat
             && mdat_scope == secs_export::MdatScope::Measurements
         {
@@ -142,6 +233,8 @@ impl Service {
                         .into_iter()
                         .map(|path| path.to_string_lossy().into_owned())
                         .collect(),
+                    output_rate: 48_000,
+                    notes: Vec::new(),
                     folder: folder.to_string_lossy().into_owned(),
                     stale: false,
                 };
@@ -371,6 +464,7 @@ impl Service {
                     let options = CamillaOptions {
                         capture,
                         playback,
+                        output_rate,
                         design: Some(DesignLabels {
                             project_name: project_name.clone(),
                             design_name: display_design_name.clone(),
@@ -397,15 +491,26 @@ impl Service {
                         IpcError::new(ErrorCode::Internal, "filter export values disappeared")
                     })?;
                     let run = description.filters(&values.0, values.1.as_ref());
+                    let options = secs_filters::Options {
+                        output_rate,
+                        extra_rates: params.extra_rates.clone(),
+                    };
                     job.begin_commit()?;
                     match params.kind {
-                        ExportKind::FilterText => secs_filters::export_filter_text(&run, folder),
-                        ExportKind::EqualizerApo => secs_filters::export_eqapo(&run, folder),
-                        ExportKind::Convolution => secs_filters::export_convolution_named(
-                            &run,
-                            folder,
-                            requested_design_name.as_deref(),
-                        ),
+                        ExportKind::FilterText => {
+                            secs_filters::export_filter_text_with_options(&run, folder, &options)
+                        }
+                        ExportKind::EqualizerApo => {
+                            secs_filters::export_eqapo_with_options(&run, folder, &options)
+                        }
+                        ExportKind::Convolution => {
+                            secs_filters::export_convolution_named_with_options(
+                                &run,
+                                folder,
+                                &options,
+                                requested_design_name.as_deref(),
+                            )
+                        }
                         _ => unreachable!(),
                     }
                     .map_err(filter_error)?
@@ -506,6 +611,8 @@ impl Service {
                     export_kind: params.kind,
                     mode: mode_name.to_owned(),
                     latency_ms: description.latency_ms(),
+                    output_rate,
+                    output_rate_auto,
                     chain: manifest_chain.clone().expect("filter export chain"),
                     mimo: manifest_mimo.clone(),
                     bypass_config: (params.kind == ExportKind::CamillaDsp)
@@ -533,6 +640,8 @@ impl Service {
                     .into_iter()
                     .map(|path| path.to_string_lossy().into_owned())
                     .collect(),
+                output_rate,
+                notes: output_rate_notes.clone(),
                 folder: final_destination.to_string_lossy().into_owned(),
                 stale,
             };
@@ -668,6 +777,136 @@ fn filter_error(error: FiltersError) -> IpcError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use secs_audio::{
+        AudioBackend, AudioError, Direction, Endpoint, InputSession, OutputSession, ProbeResult,
+        ShareMode, StreamSpec,
+    };
+
+    struct FakeBackend {
+        endpoints: Vec<Endpoint>,
+        fail: bool,
+    }
+
+    impl AudioBackend for FakeBackend {
+        fn name(&self) -> &'static str {
+            "output-rate-test"
+        }
+
+        fn enumerate(&self) -> Result<Vec<Endpoint>, AudioError> {
+            if self.fail {
+                Err(AudioError::Backend("test failure".into()))
+            } else {
+                Ok(self.endpoints.clone())
+            }
+        }
+
+        fn probe(
+            &self,
+            _: &Endpoint,
+            _: Direction,
+            _: StreamSpec,
+            _: ShareMode,
+        ) -> Result<ProbeResult, AudioError> {
+            unreachable!("the output-rate resolver only enumerates endpoints")
+        }
+
+        fn open_output(
+            &self,
+            _: &Endpoint,
+            _: StreamSpec,
+            _: ShareMode,
+        ) -> Result<Box<dyn OutputSession>, AudioError> {
+            unreachable!("the output-rate resolver only enumerates endpoints")
+        }
+
+        fn open_input(
+            &self,
+            _: &Endpoint,
+            _: StreamSpec,
+            _: ShareMode,
+        ) -> Result<Box<dyn InputSession>, AudioError> {
+            unreachable!("the output-rate resolver only enumerates endpoints")
+        }
+    }
+
+    fn endpoint(rate: f64, is_default_output: bool) -> Endpoint {
+        Endpoint {
+            id: rate.to_string(),
+            name: "test".into(),
+            host_api: "test".into(),
+            max_input_channels: 0,
+            max_output_channels: 2,
+            default_samplerate: rate,
+            is_default_input: false,
+            is_default_output,
+        }
+    }
+
+    fn resolved(
+        choice: OutputRateChoice,
+        endpoints: Vec<Endpoint>,
+        fail: bool,
+    ) -> (u32, Vec<Notice>) {
+        resolve_output_rate(choice, &move || {
+            Box::new(FakeBackend {
+                endpoints: endpoints.clone(),
+                fail,
+            })
+        })
+    }
+
+    #[test]
+    fn output_rate_resolver_uses_fixed_and_supported_default_rates() {
+        assert_eq!(
+            resolved(OutputRateChoice::Fixed(192_000), Vec::new(), true),
+            (192_000, Vec::new())
+        );
+        for rate in [44_100.0, 96_000.0] {
+            assert_eq!(
+                resolved(OutputRateChoice::Auto, vec![endpoint(rate, true)], false),
+                (rate as u32, Vec::new())
+            );
+        }
+    }
+
+    #[test]
+    fn extra_rates_drop_the_resolved_auto_rate_and_refuse_a_chosen_one() {
+        // Auto resolved to 44.1 kHz: the screen could not know, so it is dropped.
+        assert_eq!(
+            extra_rates_for(&[44_100, 96_000], 44_100, true).unwrap(),
+            vec![96_000]
+        );
+        // A fixed main rate repeated as an extra rate is the user's mistake.
+        assert!(extra_rates_for(&[48_000], 48_000, false).is_err());
+        assert!(extra_rates_for(&[96_000, 96_000], 48_000, true).is_err());
+        assert!(extra_rates_for(&[32_000], 48_000, false).is_err());
+        assert_eq!(
+            extra_rates_for(&[], 48_000, false).unwrap(),
+            Vec::<u32>::new()
+        );
+    }
+
+    #[test]
+    fn output_rate_resolver_falls_back_for_bad_missing_and_failed_defaults() {
+        let (rate, notes) = resolved(
+            OutputRateChoice::Auto,
+            vec![endpoint(32_000.0, true)],
+            false,
+        );
+        assert_eq!(rate, 48_000);
+        assert_eq!(notes[0].code, "output_rate_fallback");
+        assert_eq!(
+            notes[0].params.get("rate").map(String::as_str),
+            Some("32000")
+        );
+
+        for (endpoints, fail) in [(vec![endpoint(96_000.0, false)], false), (Vec::new(), true)] {
+            let (rate, notes) = resolved(OutputRateChoice::Auto, endpoints, fail);
+            assert_eq!(rate, 48_000);
+            assert_eq!(notes[0].code, "output_rate_fallback");
+            assert!(notes[0].params.is_empty());
+        }
+    }
 
     #[test]
     fn provenance_records_actual_acceleration_and_clears_previous_gpu_metadata() {

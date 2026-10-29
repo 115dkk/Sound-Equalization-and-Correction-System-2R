@@ -32,6 +32,7 @@ import type { ExportKind } from "./bindings/ExportKind";
 import { CALIBRATION_LIMITS as LIMITS, RECENT_PROJECTS_MAX } from "./bindings/rules";
 import { recorded } from "./recorded";
 import { designNameFor, designNameProblem, filterModeName, isFilterKind, mdatFileName, MIMO_MIN_POSITIONS } from "../screens/export/types";
+import { DESIGN_RATE, OUTPUT_RATES, countedRate, sameRate } from "../screens/system/outputRate";
 
 export type Method = Request["method"];
 type DialogMethod = Extract<Method, `dialog_${string}`>;
@@ -59,7 +60,11 @@ export type MockService = {
   setResults: (results: ResultsSummary) => void;
   dispose: () => void;
 };
-type MockOptions = { computeStatus?: import("./bindings/ComputeStatus").ComputeStatus; tickMs?: number; project?: ProjectInfo | null; results?: ResultsSummary };
+type MockOptions = {
+  computeStatus?: import("./bindings/ComputeStatus").ComputeStatus; tickMs?: number; project?: ProjectInfo | null; results?: ResultsSummary;
+  /** The default playback device's rate that 자동 reads when exporting (48000 by default); null when it cannot be read. */
+  playbackRate?: number | null;
+};
 export const ipcError = (code: ErrorCode, detail = "", params: Record<string, string> = {}): IpcError => ({
   code, params, retryable: code === "job_busy" || code === "rew_unreachable" || code === "device_unavailable", detail,
 });
@@ -648,12 +653,30 @@ export function createMockService(options: MockOptions = {}): MockService {
         if (req.params.mdat_scope !== undefined && kind !== "before_after_mdat") {
           throw new MockError(ipcError("invalid_request", "mdat_scope is only valid for REW mdat", { reason: "mdat_scope" }));
         }
+        const extraRates = req.params.extra_rates ?? [];
+        if (extraRates.length > 0 && kind !== "convolution") {
+          throw new MockError(ipcError("invalid_request", "extra_rates only applies to convolution export", { reason: "extra_rates" }));
+        }
+        // export.rs resolve_output_rate: the REW mdat stays at 48 kHz; 자동 reads the default playback device
+        // (`playbackRate`) and writes 48 kHz with an `output_rate_fallback` note when it cannot use that rate.
+        const playback = options.playbackRate === undefined ? DESIGN_RATE : options.playbackRate;
+        const rated = kind === "before_after_mdat" || kind === "staged_mdat" ? { output_rate: DESIGN_RATE, notes: [] as Notice[] }
+          : dsp.fields.output_rate !== "auto" ? { output_rate: dsp.fields.output_rate.fixed, notes: [] as Notice[] }
+          : playback !== null && (OUTPUT_RATES as readonly number[]).includes(playback) ? { output_rate: playback, notes: [] as Notice[] }
+          : { output_rate: DESIGN_RATE, notes: [{ code: "output_rate_fallback", params: playback === null ? {} : { rate: String(playback) } }] as Notice[] };
+        const outputRate = rated.output_rate;
+        for (const [index, rate] of extraRates.entries()) {
+          if (!(OUTPUT_RATES as readonly number[]).includes(rate)) throw new MockError(ipcError("invalid_request", "unsupported extra output sample rate", { rate: String(rate) }));
+          if ((rate === outputRate && dsp.fields.output_rate !== "auto") || extraRates.indexOf(rate) !== index) {
+            throw new MockError(ipcError("invalid_request", "extra output sample rates must be distinct from the main rate and each other", { rate: String(rate) }));
+          }
+        }
         const scope = req.params.mdat_scope ?? "all";
         if (kind === "before_after_mdat" && scope === "measurements") {
           if (project.positions.length === 0) throw new MockError(ipcError("engine_input", "no measurements to export", { reason: "no_measurements" }));
           const folder = req.params.folder || `${exportFolder.folder.replace(/[\\/]+$/, "")}/SECS_mdat_measurements_${stamp()}`;
           const files = [`${folder}/${mdatFileName(scope, settings)}`];
-          return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: false } })) };
+          return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: false, ...rated } })) };
         }
         if (!results.calibration) throw new MockError(ipcError("engine_input", "no calibration result to export"));
         if ((kind === "staged_mdat" || kind === "before_after_mdat") && results.calibration.cached && results.calibration.stale) {
@@ -675,9 +698,10 @@ export function createMockService(options: MockOptions = {}): MockService {
           // mock MIMO adds support to those same pairs. LFE feeds the subs.
           const pairs = calibration.main_roles.flatMap((input) => [input, ...calibration.sub_roles].map((output) => `${input}_to_${output}`));
           pairs.push(...calibration.sub_roles.map((output) => `LFE_to_${output}`));
-          const files = pairs.flatMap((pair) => [`${folder}/${pair}.wav`, `${folder}/${pair}.csv`]);
+          // secs-filters: the extra rates go into `<rate>Hz` folders beside the output rate's files.
+          const files = ["", ...extraRates.filter((rate) => rate !== outputRate).map((rate) => `/${rate}Hz`)].flatMap((sub) => pairs.flatMap((pair) => [`${folder}${sub}/${pair}.wav`, `${folder}${sub}/${pair}.csv`]));
           files.push(`${folder}/컨볼루션 적용 방법.txt`, `${folder}/routing.json`, `${folder}/secs-design.json`);
-          return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: calibration.stale } })) };
+          return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: calibration.stale, ...rated } })) };
         }
         if (kind === "filter_text" || kind === "equalizer_apo") {
           const mode = filterModeName(settings);
@@ -688,7 +712,7 @@ export function createMockService(options: MockOptions = {}): MockService {
             : [`${folder}/config.txt`, `${folder}/${prefix}/${prefix}.txt`, `${folder}/EqAPO 적용 방법.txt`];
           if (settings.mode !== "zero") files.push(...calibration.main_roles.map((role) => `${firFolder}/${prefix}_${role}_fir.wav`));
           files.push(`${folder}/secs-design.json`);
-          return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: calibration.stale } })) };
+          return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: calibration.stale, ...rated } })) };
         }
         const prefix = `secs_${filterModeName(calibration)}`;
         const files = kind === "camilla_dsp" ? [
@@ -696,7 +720,7 @@ export function createMockService(options: MockOptions = {}): MockService {
           ...(calibration.mode === "zero" ? [] : calibration.main_roles.map((role) => `${folder}/coeffs/${prefix}_${role}_fir.wav`).sort()),
           `${folder}/secs-design.json`,
         ] : [kind === "before_after_mdat" ? `${folder}/${mdatFileName(scope, calibration)}` : `${folder}/${kind}.mdat`];
-        return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: calibration.stale } })) };
+        return { method: req.method, data: start("export", () => ({ kind: "export", data: { folder, files, stale: calibration.stale, ...rated } })) };
       }
       case "measure_position": {
         needProject(); const position = req.params.position; const roles = [...measureConfig.roles];
@@ -767,9 +791,25 @@ export function createMockService(options: MockOptions = {}): MockService {
         const preset = dsp.presets.find((p) => p.key === req.params.preset);
         if (req.params.preset !== null && !preset) invalid("unknown DSP preset");
         if (preset) dsp = { ...dsp, profile: preset.key, name: preset.name, fields: clone(preset.fields) };
-        if (req.params.fields) dsp = { ...dsp, profile: "custom", fields: clone(req.params.fields) };
-        dsp.window_ms = dsp.fields.fir_taps / 48; dsp.resolution_hz = 48000 / Math.max(1, dsp.fields.fir_taps);
-        dirty(); return { method: req.method, data: dsp };
+        const fields = req.params.fields;
+        // project_edit.rs dsp_set: only editable profiles accept a rate change; changing other fields makes the profile custom.
+        if (fields) {
+          if (fields.output_rate !== "auto" && !(OUTPUT_RATES as readonly number[]).includes(fields.output_rate.fixed)) {
+            throw new MockError(ipcError("invalid_request", "unsupported output sample rate", { reason: "output_rate" }));
+          }
+          if (!sameRate(fields.output_rate, dsp.fields.output_rate) && !dsp.fields.output_rate_editable) {
+            throw new MockError(ipcError("invalid_request", "this DSP preset has a fixed output sample rate", { reason: "output_rate" }));
+          }
+        }
+        // The output rate stays out of the design (ADR 0017): changing it alone leaves the result current.
+        const rateOnly = !!fields && (Object.keys(fields) as (keyof typeof fields)[]).every((key) => key === "output_rate" || key === "output_rate_editable" || fields[key] === dsp.fields[key]);
+        if (fields) {
+          const profile = rateOnly ? dsp.profile : "custom";
+          dsp = { ...dsp, profile, fields: { ...clone(fields), output_rate_editable: profile === "camilla" || profile === "custom" } };
+        }
+        dsp.window_ms = (dsp.fields.fir_taps / countedRate(dsp.fields.output_rate)) * 1000; dsp.resolution_hz = 48000 / Math.max(1, dsp.fields.fir_taps);
+        if (rateOnly) project = { ...needProject(), dirty: true }; else dirty();
+        return { method: req.method, data: dsp };
       }
       case "layout_get": return { method: req.method, data: layout };
       case "layout_set": {

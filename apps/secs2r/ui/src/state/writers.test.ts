@@ -174,6 +174,25 @@ describe("session writers", () => {
     } finally { release(); hook.unmount(); session.dispose(); await session.settled(); mock.dispose(); }
   });
 
+  it("dsp: keeps the CamillaDSP profile through queued output-rate edits", async () => {
+    const { mock, session, sent, reached, release } = slowAnswer("dsp_set");
+    try {
+      await session.start(); await session.settled();
+      const dsp = session.stores.dsp.getSnapshot()!;
+      const fixed = session.writers.dsp.edit({ output_rate: { fixed: 96000 } });
+      await reached;
+      const automatic = session.writers.dsp.edit({ output_rate: "auto" });
+      release();
+      expect(await Promise.all([fixed, automatic])).toEqual([true, true]);
+      await session.settled();
+      expect(sent.map((request) => request.params)).toEqual([
+        { preset: null, fields: { ...dsp.fields, output_rate: { fixed: 96000 } } },
+        { preset: null, fields: { ...dsp.fields, output_rate: "auto" } },
+      ]);
+      expect(session.stores.dsp.getSnapshot()).toMatchObject({ profile: "camilla", name: dsp.name, fields: { ...dsp.fields, output_rate: "auto" } });
+    } finally { release(); session.dispose(); await session.settled(); mock.dispose(); }
+  });
+
   it("dsp: builds a field edit queued behind a preset from that preset's fields", async () => {
     const { mock, session, sent, reached, release } = slowAnswer("dsp_set");
     try {
@@ -188,7 +207,8 @@ describe("session writers", () => {
       await session.settled();
       const edited = { ...preset.fields, iir_bands: preset.fields.iir_bands + 1 };
       expect(sent.map((request) => request.params)).toEqual([{ preset: preset.key, fields: null }, { preset: null, fields: edited }]);
-      expect(session.stores.dsp.getSnapshot()).toMatchObject({ profile: "custom", fields: edited });
+      // A non-rate edit makes the profile custom, which permits output-rate changes (ADR 0017).
+      expect(session.stores.dsp.getSnapshot()).toMatchObject({ profile: "custom", fields: { ...edited, output_rate_editable: true } });
     } finally { release(); session.dispose(); await session.settled(); mock.dispose(); }
   });
 

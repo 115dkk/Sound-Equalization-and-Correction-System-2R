@@ -234,7 +234,14 @@ fn service_mdat_every_oracle_value_and_imported_secs_bytes() {
                 out["import_count"].as_u64().unwrap()
             );
             if let Some(text) = out["secs"].as_str() {
-                assert_eq!(std::fs::read_to_string(&target).unwrap(), text, "{name}");
+                let saved = std::fs::read_to_string(&target).unwrap();
+                let legacy = saved
+                    .lines()
+                    .filter(|line| !line.trim_start().starts_with("\"output_rate\":"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    + "\n";
+                assert_eq!(legacy, text, "{name}");
             }
         }
         count += 1;

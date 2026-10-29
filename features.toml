@@ -1058,7 +1058,25 @@ tests = [
   "secs-filters::convolution_bundle_contains_complete_paths_and_is_atomic",
   "secs-service::convolution_export_with_subs_and_mimo_reopens_byte_identically",
 ]
-note = "New: complete 48 kHz f32 convolution IRs fold FIR, PEQ, crossovers, all-pass, gain, polarity and delay into one WAV and exact-DTFT CSV per reachable input/output pair, with routing metadata and shared headroom."
+note = "New: complete f32 convolution IRs fold FIR, PEQ, crossovers, all-pass, gain, polarity and delay into one WAV and exact-DTFT CSV per reachable input/output pair, with routing metadata and shared headroom. Additional output rates are written into rate-named subfolders."
+
+[[feature]]
+id = "export.output_rate"
+kind = "export"
+milestone = "M6"
+status = "implemented"
+upstream = "new (miniDSP differs from upstream)"
+tests = [
+  "secs-project::output_rate_defaults_follow_presets_and_unknown_profiles_use_48k",
+  "secs-project::output_rate_round_trips_auto_and_every_fixed_rate",
+  "secs-service::output_rate_resolver_uses_fixed_and_supported_default_rates",
+  "secs-service::output_rate_resolver_falls_back_for_bad_missing_and_failed_defaults",
+  "secs-camilla::output_rates_change_camilla_samplerate_delays_and_fir_wavs",
+  "secs-camilla::output_rates_resize_full_and_low_rate_mimo_firs",
+  "secs-filters::output_rates_change_eqapo_text_and_convolution_bundles",
+  "secs-service::changing_only_output_rate_keeps_calibration_fresh_for_export",
+]
+note = "Projects keep a fixed or automatic output sample rate outside calibration identity. Export resolves automatic mode from the default output device, falls back to 48 kHz with a notice, converts every filter bundle explicitly, and keeps REW mdat at 48 kHz. The miniDSP preset uses 96 kHz; convolution exports may include distinct additional supported rates."
 
 [[feature]]
 id = "export.convolution_reaper"
@@ -1101,6 +1119,15 @@ milestone = "M5"
 status = "partial"
 tests = []
 note = "five-stage flow, results first, three disclosure levels (docs/ARCHITECTURE.md, Screens). P29 landed the foundation: tokens, the frame with the step rail and status, the job tray, the component kit, the uPlot graphs, the SVG maps, the mock service and the gallery (docs/DESIGN.md). Its vitest tests live in apps/secs2r/ui, which this registry cannot reference (it lists cargo tests). P33 connects the P30-P32 screens through typed stores, explicit mutation/job invalidation, per-call Tauri channels, project/close dialogs and lifecycle hooks. src/state/flow.test.tsx walks a non-tutorial sample project through mock measure_position jobs, calibration and CamillaDSP export; per-screen hook tests pin action IPC params. app.live exercises the full mock app. P35 supplies the complete tutorial quests. P55 moves static setting explanations into contextual help while retaining live state, recommendations and recovery inline; labels and both locales are revised, with pointer/keyboard/touch and disabled-control coverage in the UI tests."
+
+[[feature]]
+id = "ui.output_rate"
+kind = "ui"
+milestone = "M6"
+status = "partial"
+tests = ["secs-service::dsp_output_rate_follows_presets_and_only_camilla_or_custom_is_editable", "secs-service::changing_only_output_rate_keeps_calibration_fresh_for_export"]
+upstream = "new; docs/adr/0017-output-sample-rate.md"
+note = "P116-P117: System selects the export DSP's output rate, or shows its device-fixed rate. Correction counts channel FIR taps and the MIMO FIR budget at that rate. Export names non-default rates, selects extra convolution rates and reports automatic-rate fallback with a System action. Rate-only edits keep the DSP profile; automatic export skips an extra rate matching the resolved rate. Like ui.skins, this entry stays partial because the registry lists Cargo tests, not the screen's Vitest tests. The listed service tests cover the DSP contract; UI coverage is in apps/secs2r/ui/src/screens/system/{SystemScreen,useSystemScreen}.test.tsx, screens/system/outputRate.test.ts, screens/calibrate/{CalibrateScreen,useCalibrateScreen}.test.tsx, screens/export/{ExportScreen,useExportScreen}.test.tsx, ipc/mock.test.ts and state/writers.test.ts. Eight specimens and stable ids are recorded in docs/DESIGN.md and docs/M5-reach.md."
 
 [[feature]]
 id = "ui.skins"
@@ -1222,8 +1249,8 @@ id = "ipc.export"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-types::mdat_scope_is_optional_on_the_wire", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration"]
-note = "Export IPC covers CamillaDSP, mdat, filter text, Equalizer APO, and complete convolution bundles, including typed export_scope reasons and the REW mdat's optional mdat_scope."
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-types::mdat_scope_is_optional_on_the_wire", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::output_rate_resolver_falls_back_for_bad_missing_and_failed_defaults", "secs-service::changing_only_output_rate_keeps_calibration_fresh_for_export"]
+note = "Export IPC covers CamillaDSP, mdat, filter text, Equalizer APO, and complete convolution bundles, including typed export_scope reasons, the REW mdat's optional mdat_scope, additional convolution rates, the resolved output rate, and automatic-rate fallback notices."
 
 [[feature]]
 id = "ipc.job_cancel"
@@ -1398,14 +1425,16 @@ id = "ipc.dsp_get"
 kind = "ipc"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-service::project_edit_surface_round_trips_dsp_layout_target_and_calibration"]
+tests = ["secs-service::project_edit_surface_round_trips_dsp_layout_target_and_calibration", "secs-service::dsp_output_rate_follows_presets_and_only_camilla_or_custom_is_editable"]
+note = "DSP fields include the fixed or automatic output rate and whether the selected profile permits editing it."
 
 [[feature]]
 id = "ipc.dsp_set"
 kind = "ipc"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-service::service_config_oracle_replays_values_and_saved_project_bytes"]
+tests = ["secs-service::service_config_oracle_replays_values_and_saved_project_bytes", "secs-service::dsp_output_rate_follows_presets_and_only_camilla_or_custom_is_editable"]
+note = "Preset selection applies its output rate. Manual rate changes accept automatic mode or a supported fixed rate only while CamillaDSP or custom is selected."
 
 [[feature]]
 id = "ipc.layout_get"

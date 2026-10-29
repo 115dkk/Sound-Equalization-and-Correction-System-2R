@@ -72,7 +72,11 @@ export type SystemActions = {
   savePatchSheet: () => void;
   /** dsp_set { preset }. */
   setDspPreset: (key: string) => void;
-  /** dsp_set { fields } (a manual edit makes the profile `custom`). */
+  /**
+   * dsp_set { fields } through the DSP writer (a manual edit makes the profile
+   * `custom`). The output rate is one of the fields: `"auto"` or `{ fixed: Hz }`,
+   * written only when `output_rate_editable`.
+   */
   setDspFields: (fields: DspFields) => void;
   /** layout_set { count, confirm: true }; asked first like applyPreset. Resolves the undo token or null. */
   setArrangement: (count: number) => Promise<string | null>;

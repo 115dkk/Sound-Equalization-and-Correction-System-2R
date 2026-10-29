@@ -128,7 +128,10 @@ describe("mock REW mdat scopes", () => {
       mock.drain();
       const last = events.at(-1);
       if (last?.event !== "finished" || last.result?.kind !== "export") throw new Error("Missing export result");
-      return last.result.data;
+      // The REW mdat is always written at 48 kHz (ADR 0017).
+      const { output_rate, notes, ...written } = last.result.data;
+      expect({ output_rate, notes }).toEqual({ output_rate: 48000, notes: [] });
+      return written;
     } finally { unsubscribe(); }
   }
 
@@ -220,7 +223,14 @@ describe("mock filter exports", () => {
     return results;
   }
 
-  async function exported(mock: ReturnType<typeof createMockService>, kind: ExportKind, folder = "", extra: Pick<ExportParams, "design_name" | "camilla_devices"> = {}) {
+  /** The export's result without its rate, which `rated` returns: these exports run on the default DSP at 48 kHz. */
+  async function exported(mock: ReturnType<typeof createMockService>, kind: ExportKind, folder = "", extra: Pick<ExportParams, "design_name" | "camilla_devices" | "extra_rates"> = {}) {
+    const { output_rate, notes, ...written } = await rated(mock, kind, folder, extra);
+    expect({ output_rate, notes }).toEqual({ output_rate: 48000, notes: [] });
+    return written;
+  }
+
+  async function rated(mock: ReturnType<typeof createMockService>, kind: ExportKind, folder = "", extra: Pick<ExportParams, "design_name" | "camilla_devices" | "extra_rates"> = {}) {
     const events: JobEvent[] = [];
     const unsubscribe = mock.events.subscribe((event) => events.push(event));
     await mock.request({ method: "export", params: { kind, folder, ...extra } });
@@ -359,6 +369,81 @@ describe("mock filter exports", () => {
         `${folder}/L_to_L.wav`, `${folder}/L_to_L.csv`, `${folder}/R_to_R.wav`, `${folder}/R_to_R.csv`,
         `${folder}/컨볼루션 적용 방법.txt`, `${folder}/routing.json`, `${folder}/secs-design.json`,
       ] });
+    } finally { mock.dispose(); }
+  });
+
+  it("writes filters at the DSP's output rate, the REW mdat at 48 kHz, extra convolution rates in <rate>Hz folders", async () => {
+    const mock = createMockService({ tickMs: 0, results: resultWithoutSubs() });
+    try {
+      await mock.request({ method: "dsp_set", params: { preset: "minidsp", fields: null } });
+      for (const kind of ["camilla_dsp", "equalizer_apo", "convolution"] as const) expect(await rated(mock, kind, "C:/out")).toMatchObject({ output_rate: 96000, notes: [] });
+      expect(await rated(mock, "before_after_mdat", "C:/out")).toMatchObject({ output_rate: 48000, notes: [] });
+      const extra = await rated(mock, "convolution", "C:/out", { extra_rates: [44100, 192000] });
+      expect(extra.files).toEqual(expect.arrayContaining(["C:/out/L_to_L.wav", "C:/out/44100Hz/L_to_L.wav", "C:/out/192000Hz/R_to_R.csv"]));
+      for (const [kind, rates] of [["convolution", [96000]], ["convolution", [44100, 44100]], ["convolution", [32000]], ["camilla_dsp", [44100]]] as const) {
+        await expect(mock.request({ method: "export", params: { kind, folder: "", extra_rates: [...rates] } })).rejects.toMatchObject({ error: { code: "invalid_request" } });
+      }
+    } finally { mock.dispose(); }
+  });
+
+  it.each([
+    [44100, 44100, []],
+    [32000, 48000, [{ code: "output_rate_fallback", params: { rate: "32000" } }]],
+    [null, 48000, [{ code: "output_rate_fallback", params: {} }]],
+  ] as const)("자동 on a %s Hz playback device writes %s Hz with notes %j", async (playbackRate, rate, notes) => {
+    const mock = createMockService({ tickMs: 0, results: resultWithoutSubs(), playbackRate });
+    try {
+      const dsp = await mock.request({ method: "dsp_get" });
+      await mock.request({ method: "dsp_set", params: { preset: null, fields: { ...dsp.fields, output_rate: "auto" } } });
+      expect(await rated(mock, "camilla_dsp", "C:/out")).toMatchObject({ output_rate: rate, notes });
+      expect(await rated(mock, "staged_mdat", "C:/out")).toMatchObject({ output_rate: 48000, notes: [] });
+    } finally { mock.dispose(); }
+  });
+
+  it.each([44100, 32000, null])("skips an extra rate matching the automatic rate, including fallback from %s Hz", async (playbackRate) => {
+    const mock = createMockService({ tickMs: 0, results: resultWithoutSubs(), playbackRate });
+    try {
+      const dsp = await mock.request({ method: "dsp_get" });
+      await mock.request({ method: "dsp_set", params: { preset: null, fields: { ...dsp.fields, output_rate: "auto" } } });
+      const rate = playbackRate === 44100 ? 44100 : 48000;
+      const output = await rated(mock, "convolution", "C:/out", { extra_rates: [rate, 96000] });
+      expect(output.output_rate).toBe(rate);
+      expect(output.files).toContain("C:/out/L_to_L.wav");
+      expect(output.files).toContain("C:/out/96000Hz/L_to_L.wav");
+      expect(output.files.some((file) => file.includes(`/${rate}Hz/`))).toBe(false);
+      const mainOnly = await rated(mock, "convolution", "C:/out", { extra_rates: [rate] });
+      expect(mainOnly.files).toEqual((await rated(mock, "convolution", "C:/out")).files);
+      for (const rates of [[rate, rate], [96000, 96000], [32000]]) {
+        await expect(mock.request({ method: "export", params: { kind: "convolution", folder: "", extra_rates: rates } })).rejects.toMatchObject({ error: { code: "invalid_request" } });
+      }
+    } finally { mock.dispose(); }
+  });
+
+  it.each(["fir_taps", "fir_budget", "iir_bands", "allpass_bands", "bm_path_delays"] as const)("makes the profile custom when %s changes along with the output rate", async (field) => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      const dsp = await mock.request({ method: "dsp_get" });
+      const edited = await mock.request({ method: "dsp_set", params: { preset: null, fields: { ...dsp.fields, [field]: dsp.fields[field] + 1, output_rate: "auto" } } });
+      expect(edited).toMatchObject({ profile: "custom", fields: { [field]: dsp.fields[field] + 1, output_rate: "auto", output_rate_editable: true } });
+    } finally { mock.dispose(); }
+  });
+
+  it("changes the output rate only where the profile chooses it, without making the result stale", async () => {
+    const mock = createMockService({ tickMs: 0, results: resultWithoutSubs() });
+    try {
+      const camilla = await mock.request({ method: "dsp_get" });
+      expect(camilla.fields).toMatchObject({ output_rate: { fixed: 48000 }, output_rate_editable: true });
+      const pc = await mock.request({ method: "dsp_set", params: { preset: null, fields: { ...camilla.fields, output_rate: { fixed: 96000 } } } });
+      expect(pc).toMatchObject({ profile: "camilla", fields: { output_rate: { fixed: 96000 }, output_rate_editable: true }, window_ms: (camilla.fields.fir_taps / 96000) * 1000 });
+      expect((await mock.request({ method: "results" })).calibration?.stale).toBe(false);
+      const automatic = await mock.request({ method: "dsp_set", params: { preset: null, fields: { ...pc.fields, output_rate: "auto" } } });
+      expect(automatic).toMatchObject({ profile: "camilla", name: camilla.name, fields: { output_rate: "auto", output_rate_editable: true } });
+      expect((await mock.request({ method: "results" })).calibration?.stale).toBe(false);
+      await expect(mock.request({ method: "dsp_set", params: { preset: null, fields: { ...camilla.fields, output_rate: { fixed: 32000 } } } })).rejects.toMatchObject({ error: { code: "invalid_request", params: { reason: "output_rate" } } });
+      const minidsp = await mock.request({ method: "dsp_set", params: { preset: "minidsp", fields: null } });
+      expect(minidsp.fields).toMatchObject({ output_rate: { fixed: 96000 }, output_rate_editable: false });
+      expect(await mock.request({ method: "dsp_set", params: { preset: null, fields: { ...minidsp.fields, output_rate_editable: true } } })).toMatchObject({ profile: "minidsp", fields: { output_rate_editable: false } });
+      await expect(mock.request({ method: "dsp_set", params: { preset: null, fields: { ...minidsp.fields, output_rate: { fixed: 44100 } } } })).rejects.toMatchObject({ error: { code: "invalid_request", params: { reason: "output_rate" } } });
     } finally { mock.dispose(); }
   });
 
