@@ -2,6 +2,9 @@
 // src/secs/wizard/step8_mdat.py (the export step) and the hidden export card
 // of step_calibration.py (staged mdat, U3).
 import type { StepState } from "../../app/model";
+import type { ApplyLevel } from "../../ipc/bindings/ApplyLevel";
+import type { ApplySettings } from "../../ipc/bindings/ApplySettings";
+import type { ApplyStatus } from "../../ipc/bindings/ApplyStatus";
 import type { CalibrationSettings } from "../../ipc/bindings/CalibrationSettings";
 import type { CamillaCaptureDevice } from "../../ipc/bindings/CamillaCaptureDevice";
 import type { CamillaDevices } from "../../ipc/bindings/CamillaDevices";
@@ -103,7 +106,182 @@ export type ExportView = {
    * user then types a device name.
    */
   nativeDevices: MeasureDevice[] | null;
+  /** 적용 (ADR 0018): CamillaDSP and Equalizer APO beyond writing files. */
+  apply: ApplyView;
 };
+
+/* ── 적용 (ADR 0018) ────────────────────────────────────────────────────── */
+
+/** The two programs 적용 reaches: a running CamillaDSP, an installed Equalizer APO. */
+export type ApplyTarget = "camilla" | "eqapo";
+
+/** The levels this screen offers, in the order the choice shows them. 관리 comes later. */
+export const APPLY_LEVELS = ["files", "apply"] as const satisfies readonly ApplyLevel[];
+export type ScreenApplyLevel = (typeof APPLY_LEVELS)[number];
+
+/** `secs_types` `ApplySettings::default()`: both targets write files only, CamillaDSP on its default port. */
+export const DEFAULT_APPLY: ApplySettings = { camilla: { level: "files", address: "127.0.0.1:1234" }, eqapo: { level: "files" } };
+
+/** How the last 적용 (or 빼기) of a target ended, for the current result. */
+export type ApplyRun =
+  /** `ApplyResult` with `outcome: applied`: the design now runs there, its files in `folder`. */
+  | { status: "applied"; designId: string; folder: string }
+  /** CamillaDSP refused the new configuration and went back to the previous one (`outcome: rolled_back`). */
+  | { status: "rolled_back"; error: IpcError }
+  /** The job failed, or the service refused the call before a job started (`permission_denied`, `apply_failed`, `unsupported`, …). */
+  | { status: "failed"; error: IpcError }
+  /** `revert_eqapo` took SECS 2R's lines out of `config.txt`. */
+  | { status: "reverted" };
+
+export type ApplyView = {
+  /** `AppSettings.apply`: each target's level and CamillaDSP's websocket address. */
+  settings: ApplySettings;
+  /** The address field's text while it differs from the stored address (session host), or null. */
+  addressDraft: string | null;
+  /** `apply_status`, read while a target is set to 적용; null until the first answer. */
+  status: ApplyStatus | null;
+  /** `apply_status` is being read. */
+  checking: boolean;
+  /** Equalizer APO runs on Windows only (`bootstrap.platform.os`). */
+  windows: boolean;
+  /** The target of the running `apply` job, or null. It shares the export jobs' one-at-a-time rule (`JobGroup::Export`). */
+  applying: ApplyTarget | null;
+  /** `revert_eqapo` is in flight. */
+  reverting: boolean;
+  /** The last 적용 of each target for the current result (session host; cleared with the export runs). */
+  runs: Partial<Record<ApplyTarget, ApplyRun>>;
+};
+
+/**
+ * The level the screen draws for `target`: 관리 (not offered yet) reads as
+ * 적용, Equalizer APO off Windows and anything in the tutorial as 파일만.
+ */
+type LevelInputs = { tutorial: boolean; apply: Pick<ApplyView, "settings" | "windows"> };
+
+export function applyLevel(view: LevelInputs, target: ApplyTarget): ScreenApplyLevel {
+  if (view.tutorial || (target === "eqapo" && !view.apply.windows)) return "files";
+  return view.apply.settings[target].level === "files" ? "files" : "apply";
+}
+
+/** Whether either target is set to 적용, so its status is worth reading. */
+export function applyWanted(view: LevelInputs): boolean {
+  return applyLevel(view, "camilla") === "apply" || applyLevel(view, "eqapo") === "apply";
+}
+
+/**
+ * Why a typed CamillaDSP address cannot be stored, checked on the trimmed
+ * text like the service's `validate_address` (crates/secs-service/src/apply.rs):
+ * `host:port`, or `[host]:port` for IPv6, with a host and a port 1–65535.
+ */
+export type AddressProblem = "format" | "port";
+
+/** Rust's `u16::from_str`: ASCII digits after an optional `+`. */
+const PORT = /^\+?\d+$/;
+
+export function addressProblem(text: string): AddressProblem | null {
+  const value = text.trim();
+  let host: string;
+  let port: string;
+  if (value.startsWith("[")) {
+    const end = value.indexOf("]:");
+    if (end < 0) return "format";
+    host = value.slice(1, end);
+    port = value.slice(end + 2);
+  } else {
+    const colon = value.lastIndexOf(":");
+    if (colon < 0) return "format";
+    host = value.slice(0, colon);
+    port = value.slice(colon + 1);
+    if (host.includes(":") || /\s/.test(host)) return "format";
+  }
+  if (host === "") return "format";
+  if (!PORT.test(port)) return port === "" ? "format" : "port";
+  const number = Number(port);
+  return number >= 1 && number <= 65535 ? null : "port";
+}
+
+/** Whether a valid address stays on this computer (`localhost`, `127.x.x.x`, `[::1]`). */
+export function isLoopback(address: string): boolean {
+  const value = address.trim();
+  const host = value.startsWith("[") ? value.slice(1, value.indexOf("]")) : value.slice(0, value.lastIndexOf(":"));
+  const lower = host.toLowerCase();
+  return lower === "localhost" || /^127(?:\.\d{1,3}){3}$/.test(lower) || lower === "::1" || lower === "0:0:0:0:0:0:0:1";
+}
+
+/** The address the CamillaDSP field shows: the draft while there is one, else the stored address. */
+export function addressText(view: Pick<ExportView, "apply">): string {
+  return view.apply.addressDraft ?? view.apply.settings.camilla.address;
+}
+
+/**
+ * What holds `target`'s 적용 off, or null when nothing on this screen does.
+ * CamillaDSP: the address field, then an ASIO side without a driver (the
+ * design name does not matter: 적용 writes to its own folder). Equalizer
+ * APO: Windows only, then the install, while the status is unknown or says
+ * it is missing.
+ */
+export type ApplyProblem =
+  | { field: "address"; problem: AddressProblem }
+  | { field: DeviceSide; problem: DeviceProblem }
+  | { field: "eqapo"; problem: "windows" | "checking" | "not_installed" };
+
+export function applyProblem(view: ExportView, target: ApplyTarget): ApplyProblem | null {
+  if (target === "camilla") {
+    const address = view.apply.addressDraft === null ? null : addressProblem(view.apply.addressDraft);
+    if (address) return { field: "address", problem: address };
+    for (const side of ["capture", "playback"] as const) {
+      const problem = deviceProblem(view.camillaDevices[side]);
+      if (problem) return { field: side, problem };
+    }
+    return null;
+  }
+  if (!view.apply.windows) return { field: "eqapo", problem: "windows" };
+  const eqapo = view.apply.status?.eqapo;
+  if (!eqapo) return { field: "eqapo", problem: "checking" };
+  return eqapo.installed ? null : { field: "eqapo", problem: "not_installed" };
+}
+
+/** An export or an apply job runs (one at a time, `JobGroup::Export`), or `config.txt` is being edited. */
+export function exportGroupBusy(view: ExportView): boolean {
+  return view.exporting !== null || view.apply.applying !== null || view.apply.reverting;
+}
+
+/**
+ * Whether `target`'s 적용 can start now: it is set to 적용, there is a
+ * result and nothing computes it, no export or apply job runs, the format
+ * can carry the result, and nothing on this screen holds it off.
+ */
+export function canApply(view: ExportView, target: ApplyTarget): boolean {
+  if (applyLevel(view, target) !== "apply" || exportGroupBusy(view)) return false;
+  if (!view.results.calibration || view.computing) return false;
+  if (exportBlock(view, target === "camilla" ? "camilla_dsp" : "equalizer_apo") !== null) return false;
+  return applyProblem(view, target) === null;
+}
+
+/**
+ * The current result's design id, when this session has seen it: from an
+ * apply of it, or from CamillaDSP running it. The service does not report it
+ * otherwise, so Equalizer APO's design can only be compared after one of those.
+ */
+export function currentDesignId(view: Pick<ExportView, "apply">): string | null {
+  for (const target of ["camilla", "eqapo"] as const) {
+    const run = view.apply.runs[target];
+    if (run?.status === "applied") return run.designId;
+  }
+  const design = view.apply.status?.camilla.design;
+  return design?.kind === "this" ? design.design_id : null;
+}
+
+/** The design in Equalizer APO's SECS2R folder against this one: none there, this one, another one, or not known yet. */
+export type EqApoDesign = "none" | "this" | "other" | "unknown";
+
+export function eqapoDesign(view: Pick<ExportView, "apply">): EqApoDesign {
+  const applied = view.apply.status?.eqapo.applied_design_id ?? null;
+  if (applied === null) return "none";
+  const current = currentDesignId(view);
+  if (current === null) return "unknown";
+  return applied === current ? "this" : "other";
+}
 
 export type ExportActions = {
   /**
@@ -130,6 +308,20 @@ export type ExportActions = {
   goToCalibrate: () => void;
   /** `calibrate { settings: null, subs_only: false }`: recompute with current settings without leaving export. */
   recalibrate: () => void;
+  /** `apply_settings_set` with the whole `ApplySettings`, `target`'s level changed (the latest settings, ordered). */
+  setApplyLevel: (target: ApplyTarget, level: ScreenApplyLevel) => void;
+  /** Host: the CamillaDSP address field's text, as typed. */
+  setCamillaAddress: (text: string) => void;
+  /** `apply_settings_set` with the address field's trimmed text, when it is valid and differs from the stored one (Enter, leaving the field). */
+  saveCamillaAddress: () => void;
+  /** `apply_status` again (the quiet 다시 확인). */
+  refreshApplyStatus: () => void;
+  /** `apply_camilla { camilla_devices }` (job `apply`) after any pending address or level save. */
+  applyCamilla: () => void;
+  /** `apply_eqapo` (job `apply`) after any pending level save. */
+  applyEqapo: () => void;
+  /** `revert_eqapo`, after the screen's one-sentence confirm. */
+  revertEqapo: () => void;
 };
 
 /** Whether MIMO goes into the export, and if not, why (upstream `show_mimo`: on, computed, current, three positions or more). */
@@ -216,7 +408,7 @@ export function mdatFileName(scope: MdatScope, settings: Pick<CalibrationSetting
  * measurements needs measurements only. Export jobs run one at a time.
  */
 export function canExport(view: ExportView, kind?: ExportKind): boolean {
-  if (view.exporting !== null) return false;
+  if (view.exporting !== null || view.apply.applying !== null) return false;
   if (kind === "before_after_mdat" && mdatScopeFor(view.results.calibration, view.mdatScope) === "measurements") return view.positions > 0;
   return !!view.results.calibration && !view.computing;
 }
@@ -323,11 +515,12 @@ export function devicesFor(devices: readonly MeasureDevice[], side: DeviceSide, 
   });
 }
 
-/** The rail state of 내보내기: blocked while there is no result or one is being computed, done after an export of the result. */
+/** The rail state of 내보내기: blocked while there is no result or one is being computed, done after an export or an apply of the result. */
 export function exportStepState(view: ExportView): StepState {
   const result = view.results.calibration;
   if (view.computing) return { status: "blocked", reason: "computing" };
   if (!result) return { status: "blocked", reason: "no_result" };
   if (Object.values(view.runs).some((run) => run?.status === "done")) return { status: "done" };
+  if (Object.values(view.apply.runs).some((run) => run?.status === "applied")) return { status: "done" };
   return { status: "ready" };
 }

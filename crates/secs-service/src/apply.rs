@@ -49,6 +49,7 @@ impl Service {
         ApplyStatus {
             camilla,
             eqapo: self.eqapo_status(),
+            current_design_id: current.map(|(design_id, _)| design_id),
         }
     }
 

@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef } from "react";
+import type { ApplySettings } from "../../ipc/bindings/ApplySettings";
 import { IpcFailure } from "../../ipc/client";
 import { useHost, useResource, useSession } from "../../state/react";
 import { useJobLedger } from "../../state/useJobLedger";
-import { designNameFor, isFilterKind, mdatScopeFor, type ExportActions, type ExportView } from "./types";
+import type { Patch } from "../../state/writers";
+import { DEFAULT_APPLY, addressProblem, applyWanted, designNameFor, isFilterKind, mdatScopeFor, type ApplyTarget, type ExportActions, type ExportView } from "./types";
 
 const DESIGN_NAME_REASONS = new Set(["design_name_length", "design_name_control", "design_name_character", "design_name_trailing", "design_name_reserved"]);
 
@@ -17,6 +19,8 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
   const folder = useResource("folder");
   const methods = useResource("methods");
   const bootstrap = useResource("bootstrap");
+  const appSettings = useResource("appSettings");
+  const applyStatus = useResource("applyStatus");
   const methodsRead = useRef<typeof session | null>(null);
   useEffect(() => {
     // Session startup normally reads this already. A screen with no snapshot
@@ -25,48 +29,127 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
     methodsRead.current = session;
     if (!session.stores.methods.getSnapshot()) void session.stores.methods.load();
   }, [session]);
-  const actions = useMemo<ExportActions>(() => ({
-    exportFiles: (kind) => {
-      if (session.stores.project.getSnapshot()?.tutorial) {
-        session.host.set({ runs: { ...session.host.getSnapshot().runs, [kind]: { status: "tutorial" } } });
-      } else session.run(async () => {
-        const current = session.host.getSnapshot();
-        const epoch = session.jobs.epoch;
-        const name = isFilterKind(kind) ? designNameFor({ designName: current.designName, tutorial: false }) : null;
-        const devices = current.camillaDevices;
-        try {
-          await session.call({ method: "export", params: {
-            kind, folder: "",
-            ...(name !== null ? { design_name: name } : {}),
-            ...(kind === "camilla_dsp" && (devices.capture.type !== "file" || devices.playback.type !== "file") ? { camilla_devices: devices } : {}),
-            ...(kind === "before_after_mdat" ? { mdat_scope: mdatScopeFor(session.stores.results.getSnapshot()?.calibration, current.mdatScope) } : {}),
-          } });
-        } catch (error) {
-          // Name validation fails before a job starts, so no finished event
-          // will record it in the row. Never attach an old project's failure.
-          if (epoch === session.jobs.epoch && error instanceof IpcFailure && error.error.code === "invalid_request" && DESIGN_NAME_REASONS.has(error.error.params.reason ?? "")) {
-            session.host.set({ runs: { ...session.host.getSnapshot().runs, [kind]: { status: "failed", error: error.error } } });
+  const applySettings = appSettings?.apply ?? DEFAULT_APPLY;
+  const windows = bootstrap?.platform.os === "windows";
+  const tutorial = project?.tutorial ?? false;
+  // 적용's status is read only while a target is set to 적용 (it probes
+  // CamillaDSP's websocket and Equalizer APO's install): when the screen
+  // opens, when a target turns to 적용, when the address changes, and for a
+  // new result (CamillaDSP may now run this design or another).
+  const statusWanted = applyWanted({ tutorial, apply: { settings: applySettings, windows } });
+  const calibration = results?.calibration;
+  useEffect(() => {
+    if (statusWanted) void session.stores.applyStatus.load();
+  }, [session, statusWanted, applySettings.camilla.address, calibration]);
+  const actions = useMemo<ExportActions>(() => {
+    // The last ApplySettings save: an apply waits for it, so the service applies with the level and address on screen.
+    let saving: Promise<unknown> = Promise.resolve();
+    const editApply = (patch: Patch<ApplySettings>): Promise<boolean> => {
+      const edit = session.writers.apply.edit(patch);
+      saving = edit;
+      return edit;
+    };
+    const storedAddress = () => session.stores.appSettings.getSnapshot()?.apply.camilla.address ?? DEFAULT_APPLY.camilla.address;
+    const saveAddress = async (): Promise<void> => {
+      const draft = session.host.getSnapshot().applyAddressDraft;
+      if (draft === null || addressProblem(draft)) return;
+      const address = draft.trim();
+      if (address !== storedAddress() && !(await editApply((latest) => ({ camilla: { ...latest.camilla, address } })))) return;
+      if (session.host.getSnapshot().applyAddressDraft === draft) session.host.set({ applyAddressDraft: null });
+    };
+    // A refusal before any job starts (no write access, not installed, …) has no
+    // finished event to land in the row. Never attach an old project's.
+    const refused = (target: ApplyTarget, epoch: number, error: unknown) => {
+      if (epoch !== session.jobs.epoch || !(error instanceof IpcFailure)) return;
+      session.host.set({ applyRuns: { ...session.host.getSnapshot().applyRuns, [target]: { status: "failed", error: error.error } } });
+    };
+    return {
+      exportFiles: (kind) => {
+        if (session.stores.project.getSnapshot()?.tutorial) {
+          session.host.set({ runs: { ...session.host.getSnapshot().runs, [kind]: { status: "tutorial" } } });
+        } else session.run(async () => {
+          const current = session.host.getSnapshot();
+          const epoch = session.jobs.epoch;
+          const name = isFilterKind(kind) ? designNameFor({ designName: current.designName, tutorial: false }) : null;
+          const devices = current.camillaDevices;
+          try {
+            await session.call({ method: "export", params: {
+              kind, folder: "",
+              ...(name !== null ? { design_name: name } : {}),
+              ...(kind === "camilla_dsp" && (devices.capture.type !== "file" || devices.playback.type !== "file") ? { camilla_devices: devices } : {}),
+              ...(kind === "before_after_mdat" ? { mdat_scope: mdatScopeFor(session.stores.results.getSnapshot()?.calibration, current.mdatScope) } : {}),
+            } });
+          } catch (error) {
+            // Name validation fails before a job starts, so no finished event
+            // will record it in the row. Never attach an old project's failure.
+            if (epoch === session.jobs.epoch && error instanceof IpcFailure && error.error.code === "invalid_request" && DESIGN_NAME_REASONS.has(error.error.params.reason ?? "")) {
+              session.host.set({ runs: { ...session.host.getSnapshot().runs, [kind]: { status: "failed", error: error.error } } });
+            }
+            throw error;
           }
+        });
+      },
+      setMdatScope: (scope) => session.host.set({ mdatScope: scope }),
+      setDesignName: (name) => session.host.set({ designName: name }),
+      setCamillaDevices: (devices) => session.host.set({ camillaDevices: devices }),
+      refreshDevices: () => void session.stores.methods.load(),
+      changeFolder: () => session.run(async () => {
+        const selected = await session.call({ method: "dialog_pick_folder", params: { start: session.stores.folder.getSnapshot()?.folder ?? null } });
+        if (selected !== null) await session.call({ method: "export_folder_set", params: { folder: selected } });
+      }),
+      openFolder: (path) => session.run(() => session.call({ method: "open_folder", params: { path } })),
+      goToCalibrate: () => session.navigate("calibrate"),
+      recalibrate: () => session.run(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } })),
+      setApplyLevel: (target, level) => {
+        void editApply((latest) => (target === "camilla" ? { camilla: { ...latest.camilla, level } } : { eqapo: { ...latest.eqapo, level } }));
+      },
+      setCamillaAddress: (text) => session.host.set({ applyAddressDraft: text === storedAddress() ? null : text }),
+      saveCamillaAddress: () => void saveAddress(),
+      refreshApplyStatus: () => void session.stores.applyStatus.load(),
+      applyCamilla: () => session.run(async () => {
+        const epoch = session.jobs.epoch;
+        // Leaving the address field for this button already saves it; Enter-less keyboard paths save here.
+        await saveAddress();
+        await saving;
+        const devices = session.host.getSnapshot().camillaDevices;
+        try {
+          await session.call({ method: "apply_camilla", params: devices.capture.type !== "file" || devices.playback.type !== "file" ? { camilla_devices: devices } : {} });
+        } catch (error) {
+          refused("camilla", epoch, error);
           throw error;
         }
-      });
-    },
-    setMdatScope: (scope) => session.host.set({ mdatScope: scope }),
-    setDesignName: (name) => session.host.set({ designName: name }),
-    setCamillaDevices: (devices) => session.host.set({ camillaDevices: devices }),
-    refreshDevices: () => void session.stores.methods.load(),
-    changeFolder: () => session.run(async () => {
-      const selected = await session.call({ method: "dialog_pick_folder", params: { start: session.stores.folder.getSnapshot()?.folder ?? null } });
-      if (selected !== null) await session.call({ method: "export_folder_set", params: { folder: selected } });
-    }),
-    openFolder: (path) => session.run(() => session.call({ method: "open_folder", params: { path } })),
-    goToCalibrate: () => session.navigate("calibrate"),
-    recalibrate: () => session.run(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } })),
-  }), [session]);
+      }),
+      applyEqapo: () => session.run(async () => {
+        const epoch = session.jobs.epoch;
+        await saving;
+        try {
+          await session.call({ method: "apply_eqapo" });
+        } catch (error) {
+          refused("eqapo", epoch, error);
+          throw error;
+        }
+      }),
+      revertEqapo: () => session.run(async () => {
+        const epoch = session.jobs.epoch;
+        session.host.set({ applyReverting: true });
+        try {
+          await session.call({ method: "revert_eqapo" });
+          if (epoch === session.jobs.epoch) session.host.set({ applyRuns: { ...session.host.getSnapshot().applyRuns, eqapo: { status: "reverted" } } });
+        } catch (error) {
+          refused("eqapo", epoch, error);
+          throw error;
+        } finally {
+          session.host.set({ applyReverting: false });
+          await session.stores.applyStatus.load();
+        }
+      }),
+    };
+  }, [session]);
   const jobs = ledger.jobs.filter((job) => job.status === "running" || job.status === "cancel_requested");
   const recalibrating = jobs.some((job) => job.kind === "calibrate");
   const exporting = jobs.find((job) => job.kind === "export");
   const request = exporting?.request;
+  const applyRequest = jobs.find((job) => job.kind === "apply")?.request;
   return { view: results && settings && project ? {
     results, settings: { mode: results.calibration?.mode ?? settings.mode, ultra_ms: results.calibration?.ultra_ms ?? settings.ultra_ms, mimo_on: settings.mimo_on },
     positions: project.positions.length, rc: lines?.rc ?? [], folder,
@@ -75,5 +158,10 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
     runs: host.runs, mdatScope: host.mdatScope, tutorial: project.tutorial,
     designName: host.designName, camillaDevices: host.camillaDevices,
     nativeDevices: bootstrap?.platform.os === "windows" && !methods?.native_error && methods?.native_devices.length ? methods.native_devices : null,
+    apply: {
+      settings: applySettings, addressDraft: host.applyAddressDraft, status: applyStatus, checking: host.applyChecking, windows,
+      applying: applyRequest?.method === "apply_camilla" ? "camilla" : applyRequest?.method === "apply_eqapo" ? "eqapo" : null,
+      reverting: host.applyReverting, runs: host.applyRuns,
+    },
   } : null, actions };
 }

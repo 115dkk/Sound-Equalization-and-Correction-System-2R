@@ -101,7 +101,8 @@
 .export-group > .ui-advanced,
 .export-group > .ui-advanced > .ui-advanced__panel,
 .export-name,
-.export-item {
+.export-item,
+.export-apply {
   display: grid;
   grid-column: 1 / -1;
   grid-template-columns: max-content auto minmax(0, 1fr);
@@ -292,6 +293,7 @@
   grid-column: 2;
   grid-row: 1;
   align-self: center;
+  gap: var(--space-2);
   min-width: 0;
 }
 
@@ -492,4 +494,198 @@
 .export-devices__note .ui-icon {
   flex: none;
   margin-top: 1px;
+}
+
+/*
+ * 적용 (ADR 0018), under the CamillaDSP and Equalizer APO rows. The block is
+ * one more level of the subgrid: each fact's name stands in the names'
+ * column under the row's title, its value where the buttons stand, and a
+ * note, a reason or an outcome runs under the value. The wrappers (the
+ * choice, the address, the list of facts) step aside so their parts land in
+ * those columns. Names sit level with the first line of their value.
+ */
+.export-apply {
+  row-gap: var(--space-2);
+  padding-top: var(--space-1);
+}
+
+.export-apply__level,
+.export-apply__level > .ui-segmented-field,
+.export-apply__address,
+.export-apply__facts,
+.export-apply__entry {
+  display: contents;
+}
+
+.export-apply__key,
+.export-apply__level .ui-field__label {
+  grid-column: 1;
+  align-self: baseline;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--text-ui);
+  font-weight: var(--weight-regular);
+}
+
+/* Beside a box or a set of segments, the name centres on it. */
+.export-apply__key--control,
+.export-apply__level .ui-field__label {
+  align-self: center;
+}
+
+.export-apply__value,
+.export-apply__level .ui-control-help-row,
+.export-apply__level .ui-field__hint {
+  grid-column: 2 / -1;
+  align-self: baseline;
+  min-width: 0;
+  margin: 0;
+}
+
+.export-apply__level .ui-control-help-row {
+  align-self: center;
+  justify-self: start;
+}
+
+.export-apply__level .ui-field__hint,
+.export-apply__value.ui-field__error,
+.export-apply__value.ui-field__hint {
+  max-width: 72ch;
+}
+
+.export-apply__control {
+  display: flex;
+  align-self: center;
+}
+
+.export-apply__full {
+  grid-column: 1 / -1;
+}
+
+/* A state and the quiet action that answers it, on one line; the action follows the words, on their baseline. */
+.export-apply__line-value {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-1) var(--space-3);
+  max-width: 100%;
+}
+
+/* Why a state is what it is, and what to do: under the state, in the muted colour. */
+.export-apply__reason {
+  max-width: 72ch;
+  margin-top: var(--space-1);
+  color: var(--text-muted);
+  text-wrap: pretty;
+}
+
+/* The other design's title under 다른 설계, in line with its words after the glyph. */
+.export-apply__title {
+  margin-top: var(--space-0-5);
+  padding-left: calc(16px + var(--space-1-5));
+  overflow-wrap: anywhere;
+}
+
+.export-apply__details .ui-details__raw {
+  background: var(--surface-sunken);
+}
+
+/* A condition of the user's setup, not a fault: the info icon and muted words, like the ASIO note. */
+.export-apply__note {
+  display: flex;
+  align-items: flex-start;
+  justify-self: start;
+  gap: var(--space-2);
+  max-width: 72ch;
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  background: var(--surface-sunken);
+  color: var(--text-muted);
+}
+
+.export-apply__note .ui-icon {
+  flex: none;
+  margin-top: 1px;
+}
+
+/* CamillaDSP's own words in a rolled-back notice, and the folder a failure could not write. */
+.export-apply__said {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-0-5) var(--space-2);
+  margin-bottom: var(--space-1);
+}
+
+.export-apply__said-label {
+  font-weight: var(--weight-medium);
+}
+
+/* Read to act on (the device to fix, the folder to open up), so the UI size, not the caption size code gets. */
+.export-apply__said-text {
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-ui);
+  overflow-wrap: anywhere;
+}
+
+.export-apply__said-next {
+  display: block;
+}
+
+/*
+ * A state in words with its glyph: the glyph box is one text line tall, so a
+ * wrapped sentence keeps its glyph on the first line. A filled dot is on
+ * (success), dimmed off, or danger (clipping); the warning sign asks to look.
+ */
+/* The words carry the baseline (the glyph has none), so the state lines up with its name and its action. */
+.export-apply-state {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-1-5);
+  min-width: 0;
+  color: var(--text);
+}
+
+.export-apply-state__glyph {
+  display: inline-flex;
+  flex: none;
+  align-self: flex-start;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: calc(var(--text-ui) * var(--leading-ui));
+}
+
+.export-apply-state__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.export-apply-state--on .export-apply-state__glyph {
+  color: var(--success);
+}
+
+.export-apply-state--off .export-apply-state__glyph {
+  color: var(--text-faint);
+}
+
+.export-apply-state--busy .export-apply-state__glyph {
+  color: var(--info);
+}
+
+.export-apply-state--warning .export-apply-state__glyph {
+  color: var(--warning);
+}
+
+.export-apply-state--danger .export-apply-state__glyph {
+  color: var(--danger);
+}
+
+.export-apply-state__text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
 }

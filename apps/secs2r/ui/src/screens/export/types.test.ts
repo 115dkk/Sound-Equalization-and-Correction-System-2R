@@ -1,13 +1,46 @@
 import { describe, expect, it } from "vitest";
+import type { ApplyLevel } from "../../ipc/bindings/ApplyLevel";
 import type { ExportBlock } from "../../ipc/bindings/ExportBlock";
 import type { ExportKind } from "../../ipc/bindings/ExportKind";
 import type { MimoExportDecision } from "../../ipc/bindings/MimoExportDecision";
-import { DESIGN_NAME_SAMPLES, EXPORT_DEVICES, exportMimoNoSubs, exportNoResult, exportRcOnly, exportReady, exportStale } from "./fixtures";
+import { MOCK_DESIGN_ID } from "../../ipc/fixtures";
 import {
+  DESIGN_NAME_SAMPLES,
+  EXPORT_DEVICES,
+  applyCamillaApplied,
+  applyCamillaBadAddress,
+  applyCamillaOther,
+  applyCamillaRolledBack,
+  applyCamillaThis,
+  applyEqapoAbsent,
+  applyEqapoMissing,
+  applyEqapoNotWindows,
+  applyEqapoOfficialUnknown,
+  applyEqapoOther,
+  applyEqapoPresent,
+  exportDevicesAsioUnnamed,
+  exportMimoNoSubs,
+  exportNoResult,
+  exportRcOnly,
+  exportReady,
+  exportStale,
+} from "./fixtures";
+import {
+  APPLY_LEVELS,
   EXPORT_KINDS,
   FILTER_KINDS,
   MDAT_SCOPES,
+  addressProblem,
+  applyLevel,
+  applyProblem,
+  applyWanted,
+  canApply,
   canExport,
+  currentDesignId,
+  eqapoDesign,
+  exportGroupBusy,
+  exportStepState,
+  isLoopback,
   designNameFor,
   designNameProblem,
   deviceProblem,
@@ -19,6 +52,7 @@ import {
   mdatFileName,
   mdatScopeFor,
   mimoInclusion,
+  type AddressProblem,
   type DesignNameProblem,
   type ExportView,
   type MimoInclusion,
@@ -219,5 +253,76 @@ describe("export scope (the service's filter_export_block)", () => {
     expect(filterModeName({ mode: "ultra", ultra_ms: 200 })).toBe("ultra200");
     expect(filterModeName({ mode: "ultra", ultra_ms: 62.5 })).toBe("ultra62.5");
     expect(filterModeName({ mode: "ultra", ultra_ms: 30 })).toBe("ultra30");
+  });
+});
+
+describe("적용 (ADR 0018)", () => {
+  it("checks a CamillaDSP address by the service's validate_address rules, on the trimmed text", () => {
+    // crates/secs-service/src/apply.rs `addresses_require_a_nonzero_port`.
+    for (const address of ["127.0.0.1:1234", "localhost:1", "[::1]:1234", "camilla.local:65535", "+host:+80", " 127.0.0.1:1234 "]) {
+      expect(addressProblem(address), address).toBeNull();
+    }
+    const problems: [string, AddressProblem][] = [
+      ["localhost", "format"], [":1234", "format"], ["host:", "format"], ["a:b:1", "format"], ["my host:1234", "format"],
+      ["[::1]", "format"], ["[]:1234", "format"], ["", "format"],
+      ["host:0", "port"], ["host:no", "port"], ["host:65536", "port"], ["host:-1", "port"], ["[::1]:0", "port"],
+    ];
+    for (const [address, problem] of problems) expect(addressProblem(address), address).toBe(problem);
+  });
+
+  it("says which addresses stay on this computer", () => {
+    for (const address of ["127.0.0.1:1234", "127.10.0.3:1", "localhost:1234", "LOCALHOST:1", "[::1]:1234"]) expect(isLoopback(address), address).toBe(true);
+    for (const address of ["192.168.0.40:1234", "camilla.local:1234", "0.0.0.0:1234", "[fe80::1]:1234", "128.0.0.1:1234"]) expect(isLoopback(address), address).toBe(false);
+  });
+
+  it("draws 관리 as 적용, Equalizer APO off Windows and anything in the tutorial as 파일만", () => {
+    expect(APPLY_LEVELS).toEqual(["files", "apply"]);
+    const at = (camilla: ApplyLevel, eqapo: ApplyLevel, windows = true, tutorial = false): ExportView => ({
+      ...exportReady, tutorial, apply: { ...exportReady.apply, windows, settings: { camilla: { level: camilla, address: "127.0.0.1:1234" }, eqapo: { level: eqapo } } },
+    });
+    expect([applyLevel(at("manage", "manage"), "camilla"), applyLevel(at("manage", "manage"), "eqapo")]).toEqual(["apply", "apply"]);
+    expect([applyLevel(at("apply", "apply", false), "camilla"), applyLevel(at("apply", "apply", false), "eqapo")]).toEqual(["apply", "files"]);
+    expect([applyLevel(at("apply", "apply", true, true), "camilla"), applyLevel(at("apply", "apply", true, true), "eqapo")]).toEqual(["files", "files"]);
+    expect(applyWanted(at("files", "files"))).toBe(false);
+    expect(applyWanted(at("files", "apply", false))).toBe(false);
+    expect(applyWanted(at("files", "apply"))).toBe(true);
+  });
+
+  it("holds 적용 for the address, an unnamed ASIO driver, Windows and the install, and while the export group is busy", () => {
+    expect(canApply(applyCamillaThis, "camilla")).toBe(true);
+    expect(applyProblem(applyCamillaBadAddress, "camilla")).toEqual({ field: "address", problem: "format" });
+    expect(canApply(applyCamillaBadAddress, "camilla")).toBe(false);
+    expect(applyProblem({ ...applyCamillaThis, camillaDevices: exportDevicesAsioUnnamed.camillaDevices }, "camilla")).toEqual({ field: "capture", problem: "asio_device" });
+    // The design name is the export's business, not 적용's.
+    expect(canApply({ ...applyCamillaThis, designName: "CON" }, "camilla")).toBe(true);
+    expect(applyProblem(applyEqapoNotWindows, "eqapo")).toEqual({ field: "eqapo", problem: "windows" });
+    expect(applyProblem({ ...applyEqapoAbsent, apply: { ...applyEqapoAbsent.apply, status: null } }, "eqapo")).toEqual({ field: "eqapo", problem: "checking" });
+    expect(applyProblem(applyEqapoMissing, "eqapo")).toEqual({ field: "eqapo", problem: "not_installed" });
+    expect(canApply(applyEqapoAbsent, "eqapo")).toBe(true);
+    // Not set to 적용, no result, computing, or another export-group job.
+    expect(canApply(exportReady, "camilla")).toBe(false);
+    expect(canApply({ ...applyCamillaThis, results: exportNoResult.results }, "camilla")).toBe(false);
+    expect(canApply({ ...applyCamillaThis, computing: true }, "camilla")).toBe(false);
+    expect(canApply({ ...applyCamillaThis, exporting: "convolution" }, "camilla")).toBe(false);
+    expect(canApply({ ...applyEqapoAbsent, apply: { ...applyEqapoAbsent.apply, applying: "camilla" } }, "eqapo")).toBe(false);
+    expect(canApply({ ...applyEqapoAbsent, apply: { ...applyEqapoAbsent.apply, reverting: true } }, "eqapo")).toBe(false);
+    expect(exportGroupBusy({ ...exportReady, apply: { ...exportReady.apply, applying: "eqapo" } })).toBe(true);
+    // An apply job holds every export off, as another export does.
+    expect(canExport({ ...exportReady, apply: { ...exportReady.apply, applying: "eqapo" } }, "convolution")).toBe(false);
+  });
+
+  it("compares Equalizer APO's design with this one only once this session knows this one's id", () => {
+    expect(eqapoDesign(applyEqapoAbsent)).toBe("none");
+    expect(eqapoDesign(applyEqapoPresent)).toBe("this");
+    expect(eqapoDesign(applyEqapoOther)).toBe("other");
+    expect(eqapoDesign(applyEqapoOfficialUnknown)).toBe("unknown");
+    expect(currentDesignId(applyCamillaThis)).toBe(MOCK_DESIGN_ID);
+    expect(currentDesignId(applyCamillaOther)).toBeNull();
+  });
+
+  it("counts an apply as finishing the step, like an export", () => {
+    expect(exportStepState(applyCamillaThis)).toEqual({ status: "ready" });
+    expect(exportStepState(applyCamillaApplied)).toEqual({ status: "done" });
+    expect(exportStepState(applyCamillaRolledBack)).toEqual({ status: "ready" });
   });
 });

@@ -5,8 +5,9 @@ import { StrictMode, type ReactNode } from "react";
 import { createMockService } from "../../ipc/mock";
 import { SessionProvider } from "../../state/react";
 import { createSession } from "../../state/session";
-import { EXPORT_KINDS, FILTER_KINDS, MDAT_SCOPES, exportBlock } from "./types";
+import { EXPORT_KINDS, FILTER_KINDS, MDAT_SCOPES, canExport, exportBlock } from "./types";
 import type { CamillaDevices } from "../../ipc/bindings/CamillaDevices";
+import * as fx from "../../ipc/fixtures";
 import { measureMethods } from "../../ipc/fixtures";
 import { IpcFailure } from "../../ipc/client";
 import { useExportScreen } from "./useExportScreen";
@@ -288,5 +289,155 @@ describe("useExportScreen", () => {
     expect(mock.calls).toContainEqual({ method: "open_folder", params: { path: "/exports" } });
     await perform(result.current.actions.goToCalibrate);
     expect(session.host.getSnapshot().current).toBe("calibrate");
+  });
+});
+
+describe("useExportScreen 적용", () => {
+  const applySets = () => mock.calls.filter((call) => call.method === "apply_settings_set").map((call) => call.method === "apply_settings_set" ? call.params : null);
+  const statusReads = () => mock.calls.filter((call) => call.method === "apply_status").length;
+  async function withResult() {
+    await session.call({ method: "calibrate", params: { settings: null, subs_only: false } });
+    mock.drain(); await session.stores.results.load(); await session.settled();
+    mock.calls.length = 0;
+  }
+
+  it("reads no status while both targets write files, and writes the whole ApplySettings when a level changes", async () => {
+    const { result } = renderHook(useExportScreen, { wrapper });
+    await perform(() => {});
+    expect(statusReads()).toBe(0);
+    expect(result.current.view?.apply).toMatchObject({ settings: fx.appSettings.apply, status: null, windows: true, applying: null, runs: {} });
+    await perform(() => result.current.actions.setApplyLevel("camilla", "apply"));
+    expect(applySets()).toEqual([{ camilla: { level: "apply", address: "127.0.0.1:1234" }, eqapo: { level: "files" } }]);
+    expect(result.current.view?.apply.settings.camilla.level).toBe("apply");
+    expect(session.stores.appSettings.getSnapshot()?.apply.camilla.level).toBe("apply");
+    // Turning to 적용 reads the status once.
+    expect(statusReads()).toBe(1);
+    expect(result.current.view?.apply.status).toEqual(fx.applyStatus);
+    expect(result.current.view?.apply.checking).toBe(false);
+    await perform(() => result.current.actions.setApplyLevel("eqapo", "apply"));
+    expect(applySets().at(-1)).toEqual({ camilla: { level: "apply", address: "127.0.0.1:1234" }, eqapo: { level: "apply" } });
+    await perform(() => result.current.actions.setApplyLevel("camilla", "files"));
+    expect(applySets().at(-1)).toEqual({ camilla: { level: "files", address: "127.0.0.1:1234" }, eqapo: { level: "apply" } });
+    // The quiet 다시 확인 reads it again.
+    const before = statusReads();
+    await perform(result.current.actions.refreshApplyStatus);
+    expect(statusReads()).toBe(before + 1);
+  });
+
+  it("builds each level change from the latest stored settings, so a change elsewhere is kept", async () => {
+    const { result } = renderHook(useExportScreen, { wrapper });
+    // Another client stores a new address after this screen read the settings.
+    await mock.request({ method: "apply_settings_set", params: { camilla: { level: "files", address: "10.0.0.5:1234" }, eqapo: { level: "files" } } });
+    mock.calls.length = 0;
+    await perform(() => result.current.actions.setApplyLevel("eqapo", "apply"));
+    expect(applySets()).toEqual([{ camilla: { level: "files", address: "10.0.0.5:1234" }, eqapo: { level: "apply" } }]);
+  });
+
+  it("keeps the typed address as a draft, stores it trimmed once it is valid, and never stores an invalid one", async () => {
+    const { result } = renderHook(useExportScreen, { wrapper });
+    await perform(() => result.current.actions.setApplyLevel("camilla", "apply"));
+    mock.calls.length = 0;
+    await perform(() => result.current.actions.setCamillaAddress("192.168.0.40"));
+    expect(result.current.view?.apply.addressDraft).toBe("192.168.0.40");
+    await perform(result.current.actions.saveCamillaAddress);
+    expect(applySets()).toEqual([]);
+    await perform(() => result.current.actions.setCamillaAddress(" 192.168.0.40:1234 "));
+    await perform(result.current.actions.saveCamillaAddress);
+    expect(applySets()).toEqual([{ camilla: { level: "apply", address: "192.168.0.40:1234" }, eqapo: { level: "files" } }]);
+    expect(result.current.view?.apply.addressDraft).toBeNull();
+    expect(result.current.view?.apply.settings.camilla.address).toBe("192.168.0.40:1234");
+    // A new address reads the status again.
+    expect(mock.calls.filter((call) => call.method === "apply_status").length).toBeGreaterThan(0);
+    // Typing the stored address back is no draft; saving it again sends nothing.
+    await perform(() => result.current.actions.setCamillaAddress("192.168.0.40:1234"));
+    expect(result.current.view?.apply.addressDraft).toBeNull();
+    mock.calls.length = 0;
+    await perform(result.current.actions.saveCamillaAddress);
+    expect(applySets()).toEqual([]);
+  });
+
+  it("stores a pending address before applying, sends the row's devices, and runs one export-group job at a time", async () => {
+    await withResult();
+    const { result } = renderHook(useExportScreen, { wrapper });
+    await perform(() => result.current.actions.setApplyLevel("camilla", "apply"));
+    const devices: CamillaDevices = { capture: { type: "file" }, playback: { type: "wasapi", device: "Speakers (Tesira)", format: "S24", exclusive: true } };
+    await perform(() => { result.current.actions.setCamillaDevices(devices); result.current.actions.setCamillaAddress("127.0.0.1:1300"); });
+    mock.calls.length = 0;
+    await perform(result.current.actions.applyCamilla);
+    const methods = mock.calls.map((call) => call.method);
+    expect(methods.indexOf("apply_settings_set")).toBeLessThan(methods.indexOf("apply_camilla"));
+    expect(applySets()).toEqual([{ camilla: { level: "apply", address: "127.0.0.1:1300" }, eqapo: { level: "files" } }]);
+    expect(mock.calls).toContainEqual({ method: "apply_camilla", params: { camilla_devices: devices } });
+    // The job runs like an export: the row knows it, every export waits.
+    expect(result.current.view?.apply.applying).toBe("camilla");
+    expect(canExport(result.current.view!, "camilla_dsp")).toBe(false);
+    expect(session.jobs.getSnapshot().jobs.find((job) => job.kind === "apply")?.status).toBe("running");
+    mock.calls.length = 0;
+    await perform(mock.drain);
+    expect(result.current.view?.apply.applying).toBeNull();
+    expect(result.current.view?.apply.runs.camilla).toEqual({ status: "applied", designId: fx.MOCK_DESIGN_ID, folder: "C:/Users/demo/AppData/Roaming/SECS2R/applied/camilladsp" });
+    expect(mock.calls.some((call) => call.method === "apply_status")).toBe(true);
+    expect(mock.calls.some((call) => call.method === "open_folder")).toBe(false);
+    // File placeholders send no devices.
+    await perform(() => result.current.actions.setCamillaDevices({ capture: { type: "file" }, playback: { type: "file" } }));
+    mock.calls.length = 0;
+    await perform(result.current.actions.applyCamilla);
+    expect(mock.calls).toContainEqual({ method: "apply_camilla", params: {} });
+    await perform(mock.drain);
+  });
+
+  it("records a refusal before any job in its row, and applies once Equalizer APO is there", async () => {
+    await withResult();
+    const { result } = renderHook(useExportScreen, { wrapper });
+    await perform(() => result.current.actions.setApplyLevel("eqapo", "apply"));
+    expect(result.current.view?.apply.status?.eqapo.installed).toBe(false);
+    await perform(result.current.actions.applyEqapo);
+    expect(result.current.view?.apply.runs.eqapo).toMatchObject({ status: "failed", error: { code: "unsupported", params: { target: "equalizer_apo" } } });
+    mock.setApplyStatus({ ...fx.applyStatus, eqapo: fx.eqapoXt });
+    await perform(result.current.actions.refreshApplyStatus);
+    expect(result.current.view?.apply.status?.eqapo).toEqual(fx.eqapoXt);
+    await perform(result.current.actions.applyEqapo);
+    expect(result.current.view?.apply.applying).toBe("eqapo");
+    await perform(mock.drain);
+    expect(result.current.view?.apply.runs.eqapo).toMatchObject({ status: "applied", folder: `${fx.eqapoXt.config_path}/SECS2R` });
+    expect(result.current.view?.apply.status?.eqapo).toMatchObject({ include: "present", applied_design_id: fx.MOCK_DESIGN_ID });
+    // A failed job lands in the row with its folder.
+    mock.failJobs("apply", "permission_denied", "Access is denied. (os error 5)", { path: "C:/Program Files/EqualizerAPO/config/SECS2R" });
+    await perform(result.current.actions.applyEqapo);
+    await perform(mock.drain);
+    expect(result.current.view?.apply.runs.eqapo).toMatchObject({ status: "failed", error: { code: "permission_denied", params: { path: "C:/Program Files/EqualizerAPO/config/SECS2R" } } });
+  });
+
+  it("takes SECS 2R's line out of config.txt, says so in the row and reads the status again", async () => {
+    await withResult();
+    mock.setApplyStatus({ ...fx.applyStatus, eqapo: { ...fx.eqapoXt, include: "present", applied_design_id: fx.MOCK_DESIGN_ID } });
+    const { result } = renderHook(useExportScreen, { wrapper });
+    await perform(() => result.current.actions.setApplyLevel("eqapo", "apply"));
+    mock.calls.length = 0;
+    await perform(result.current.actions.revertEqapo);
+    expect(mock.calls.map((call) => call.method)).toEqual(["revert_eqapo", "apply_status"]);
+    expect(result.current.view?.apply.reverting).toBe(false);
+    expect(result.current.view?.apply.runs.eqapo).toEqual({ status: "reverted" });
+    expect(result.current.view?.apply.status?.eqapo).toMatchObject({ include: "absent", applied_design_id: fx.MOCK_DESIGN_ID });
+    // A refusal stays in the row too.
+    mock.setApplyStatus(fx.applyStatus);
+    await perform(result.current.actions.revertEqapo);
+    expect(result.current.view?.apply.runs.eqapo).toMatchObject({ status: "failed", error: { code: "unsupported" } });
+  });
+
+  it("clears the apply outcomes for a new result and a new project, and keeps the levels", async () => {
+    await withResult();
+    const { result } = renderHook(useExportScreen, { wrapper });
+    await perform(() => result.current.actions.setApplyLevel("camilla", "apply"));
+    await perform(result.current.actions.applyCamilla);
+    await perform(mock.drain);
+    expect(result.current.view?.apply.runs.camilla?.status).toBe("applied");
+    await perform(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } }));
+    await perform(mock.drain);
+    expect(result.current.view?.apply.runs).toEqual({});
+    session.host.set({ applyRuns: { camilla: { status: "reverted" } } });
+    await perform(() => session.call({ method: "project_open", params: { path: "/projects/next.secs" } }));
+    expect(result.current.view?.apply.runs).toEqual({});
+    expect(result.current.view?.apply.settings.camilla.level).toBe("apply");
   });
 });

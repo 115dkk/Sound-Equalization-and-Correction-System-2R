@@ -2254,6 +2254,10 @@ pub struct EqApoApplyStatus {
 pub struct ApplyStatus {
     pub camilla: CamillaApplyStatus,
     pub eqapo: EqApoApplyStatus,
+    /// Design ID of the current result, absent without one; the screen
+    /// compares Equalizer APO's `applied_design_id` with it.
+    #[serde(default)]
+    pub current_design_id: Option<String>,
 }
 
 /// Result of applying an exported design.

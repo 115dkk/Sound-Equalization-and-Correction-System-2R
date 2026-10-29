@@ -5,6 +5,9 @@
 // come from the generated `bindings/rules`, presets, mode specs and new-project
 // settings from the responses the service recorded (`./recorded`).
 import type { AppSettings } from "./bindings/AppSettings";
+import type { ApplyStatus } from "./bindings/ApplyStatus";
+import type { CamillaApplyStatus } from "./bindings/CamillaApplyStatus";
+import type { EqApoApplyStatus } from "./bindings/EqApoApplyStatus";
 import type { CalibrationSettings } from "./bindings/CalibrationSettings";
 import type { ConfigResult } from "./bindings/ConfigResult";
 import type { ConfigSpeaker } from "./bindings/ConfigSpeaker";
@@ -300,6 +303,21 @@ export const subEntry: SubEntry = {
   hp_hz: 0, lp_hz: 0, peq: [], hp_type: "LR24", lp_type: "LR24", dba_row: "front",
 };
 export const appSettings: AppSettings = { compute: "auto", language: "ko", theme: "system", icon: "expert", skin: "default", local_api: { enabled: false, port: 4712 }, apply: { camilla: { level: "files", address: "127.0.0.1:1234" }, eqapo: { level: "files" } }, recent_projects: [], last_window_size: null };
+/** CamillaDSP is not running at the default address (`secs_apply::ApplyError::Connect` as `apply_failed`). */
+export const camillaUnreachable: CamillaApplyStatus = {
+  reachable: false,
+  error: { code: "apply_failed", params: {}, retryable: true, detail: "connect 127.0.0.1:1234: No connection could be made because the target machine actively refused it. (os error 10061)" },
+  status: null,
+  design: { kind: "unknown" },
+};
+/** No Equalizer APO install in the registry. */
+export const eqapoMissing: EqApoApplyStatus = { installed: false, variant: "unknown", config_path: null, include: "absent", applied_design_id: null };
+/** Equalizer APO XT installed (Velopack package `EqualizerAPO-XT-x64`), SECS 2R's line not added yet. */
+export const eqapoXt: EqApoApplyStatus = { installed: true, variant: "xt", config_path: "C:/Program Files/EqualizerAPO-XT-x64/config", include: "absent", applied_design_id: null };
+/** `apply_status` on a PC with neither: what the mock answers until a test or specimen flips it. */
+export const applyStatus: ApplyStatus = { camilla: camillaUnreachable, eqapo: eqapoMissing };
+/** The design id the mock's apply jobs report (`secs_graph::design::design_id`: lowercase hex SHA-256 of the design). */
+export const MOCK_DESIGN_ID = "9f3c2a61d0b84e5713a6c0f2e8d47b95c1a0e3f6d82b4c7a5e9f01d3b6c8a2e4";
 export const rewInfo: RewInfoResult = {
   executable_path: "C:/Program Files/REW/roomeqwizard.exe", ...rewStatus, version: "5.40", driver: "Java", blocking: false,
   input_device: "UMIK-1", output_device: "AVR (HDMI)", input: "Input 1",

@@ -6,8 +6,10 @@ import type { IpcError } from "../../ipc/bindings/IpcError";
 import type { MeasureDevice } from "../../ipc/bindings/MeasureDevice";
 import type { MimoSummary } from "../../ipc/bindings/MimoSummary";
 import type { Notice } from "../../ipc/bindings/Notice";
-import { SAMPLE_MAINS, SAMPLE_SUBS, calibrationSummary, cpuComputeReport, noResults } from "../../ipc/fixtures";
-import { FILE_DEVICES, exportStepState, type DesignNameProblem, type ExportView } from "./types";
+import type { ApplyStatus } from "../../ipc/bindings/ApplyStatus";
+import type { CamillaApplyStatus } from "../../ipc/bindings/CamillaApplyStatus";
+import { MOCK_DESIGN_ID, SAMPLE_MAINS, SAMPLE_SUBS, calibrationSummary, camillaUnreachable, cpuComputeReport, eqapoMissing, eqapoXt, noResults } from "../../ipc/fixtures";
+import { DEFAULT_APPLY, FILE_DEVICES, exportStepState, type ApplyView, type DesignNameProblem, type ExportView } from "./types";
 
 const BASE = "C:/Users/demo/Documents/SECS/SECS_export/2026-10-14 거실 7.1.4";
 
@@ -48,6 +50,18 @@ const exportError: IpcError = {
   detail: "failed to create C:/Users/demo/Documents/SECS/SECS_export/2026-10-14 거실 7.1.4/camilladsp/configs: Access is denied. (os error 5)",
 };
 
+/** 파일만 on both targets (the default), on Windows, nothing read or applied. */
+export const applyIdle: ApplyView = {
+  settings: DEFAULT_APPLY,
+  addressDraft: null,
+  status: null,
+  checking: false,
+  windows: true,
+  applying: null,
+  reverting: false,
+  runs: {},
+};
+
 /** A current result with MIMO, nothing exported yet. */
 export const exportReady: ExportView = {
   results: { calibration: calibrationSummary, mimo: exportMimo, mimo_export: "included" },
@@ -64,6 +78,7 @@ export const exportReady: ExportView = {
   designName: "",
   camillaDevices: FILE_DEVICES,
   nativeDevices: EXPORT_DEVICES,
+  apply: applyIdle,
 };
 
 export const exportNoResult: ExportView = { ...exportReady, results: { ...noResults, mimo_export: "none" }, rc: [] };
@@ -297,3 +312,129 @@ export function exportFrame(view: ExportView, fileName = "거실 7.1.4.secs"): F
     },
   };
 }
+
+/* ── 적용 (ADR 0018) ────────────────────────────────────────────────────── */
+
+/** CamillaDSP 4.1.3 at the default address, processing. */
+const camillaRunning = (design: CamillaApplyStatus["design"], clipped = 0): CamillaApplyStatus => ({
+  reachable: true,
+  error: null,
+  status: {
+    version: "4.1.3",
+    state: "Running",
+    stop_reason: null,
+    title: design.kind === "other" ? design.title : "SECS 2R · 거실 7.1.4 · 저지연 모드",
+    description: design.kind === "this" ? `secs-design ${design.design_id}` : null,
+    config_path: "C:/Users/demo/AppData/Roaming/SECS2R/applied/camilladsp/configs/secs_mixed.yml",
+    capture_rate: 48000,
+    clipped_samples: clipped,
+    processing_load_pct: 18.4,
+    playback_peak_db: [-14.2, -13.8],
+  },
+  design,
+});
+
+const status = (camilla: CamillaApplyStatus, eqapo = eqapoMissing): ApplyStatus => ({ camilla, eqapo });
+
+/** Another design's title as the service names it (`SECS 2R · <project> · <label>`). */
+const OTHER_TITLE = "SECS 2R · 거실 영화 · 표준 모드";
+
+/**
+ * CamillaDSP set to 적용, with the Dirac Live Processor replacement's
+ * devices so it has real endpoints to open; one apply view per state below.
+ */
+const camillaApply = (apply: Partial<ApplyView>): ExportView => ({
+  ...exportReady,
+  camillaDevices: exportDevicesWasapi.camillaDevices,
+  apply: { ...applyIdle, settings: { ...DEFAULT_APPLY, camilla: { level: "apply", address: "127.0.0.1:1234" } }, status: status(camillaUnreachable), ...apply },
+});
+
+/** CamillaDSP 적용 with file placeholders still on both sides: the row says to choose devices. */
+export const applyCamillaPlaceholders: ExportView = { ...camillaApply({}), camillaDevices: FILE_DEVICES };
+
+/** CamillaDSP 적용, nothing answering at 127.0.0.1:1234 (the mock's default). */
+export const applyCamillaUnreachable: ExportView = camillaApply({});
+
+/** CamillaDSP 적용 while the status is first read. */
+export const applyCamillaChecking: ExportView = camillaApply({ status: null, checking: true });
+
+/** CamillaDSP runs this design. */
+export const applyCamillaThis: ExportView = camillaApply({ status: status(camillaRunning({ kind: "this", design_id: MOCK_DESIGN_ID })) });
+
+/** CamillaDSP runs another design and has clipped. */
+export const applyCamillaOther: ExportView = camillaApply({ status: status(camillaRunning({ kind: "other", title: OTHER_TITLE }, 1204)) });
+
+/** The header's 적용 running. */
+export const applyCamillaApplying: ExportView = camillaApply({ status: status(camillaRunning({ kind: "other", title: OTHER_TITLE })), applying: "camilla" });
+
+/** Applied: CamillaDSP now runs this design. */
+export const applyCamillaApplied: ExportView = camillaApply({
+  status: status(camillaRunning({ kind: "this", design_id: MOCK_DESIGN_ID })),
+  runs: { camilla: { status: "applied", designId: MOCK_DESIGN_ID, folder: "C:/Users/demo/AppData/Roaming/SECS2R/applied/camilladsp" } },
+});
+
+/** CamillaDSP refused the new configuration on Reload and went back to the previous one. */
+export const applyCamillaRolledBack: ExportView = camillaApply({
+  status: status(camillaRunning({ kind: "other", title: OTHER_TITLE })),
+  runs: {
+    camilla: {
+      status: "rolled_back",
+      error: { code: "apply_failed", params: {}, retryable: false, detail: "Reload: Playback error: could not open device 'Speakers (Tesira)': the device is in use by another application" },
+    },
+  },
+});
+
+/** An address being typed that cannot be stored (no port): the field says why, the header's primary is off. */
+export const applyCamillaBadAddress: ExportView = camillaApply({ addressDraft: "192.168.0.40" });
+
+/** An address on another computer: the row says the configuration file must be readable there at the same path. */
+export const applyCamillaRemote: ExportView = camillaApply({
+  settings: { ...DEFAULT_APPLY, camilla: { level: "apply", address: "192.168.0.40:1234" } },
+  status: status({
+    ...camillaUnreachable,
+    error: { ...camillaUnreachable.error!, detail: "connect 192.168.0.40:1234: A connection attempt failed because the connected party did not properly respond after a period of time. (os error 10060)" },
+  }),
+});
+
+/** Equalizer APO set to 적용 on an XT install; one apply view per state below. CamillaDSP stays 파일만. */
+const eqapoApply = (apply: Partial<ApplyView>): ExportView => ({
+  ...exportReady,
+  apply: { ...applyIdle, settings: { ...DEFAULT_APPLY, eqapo: { level: "apply" } }, status: status(camillaUnreachable, eqapoXt), ...apply },
+});
+
+/** Equalizer APO 적용, not installed: 적용 stays chosen, its button off with the reason. */
+export const applyEqapoMissing: ExportView = eqapoApply({ status: status(camillaUnreachable, eqapoMissing) });
+
+/** Equalizer APO XT installed, SECS 2R's line not in config.txt yet. */
+export const applyEqapoAbsent: ExportView = eqapoApply({});
+
+/** The line present and this design applied (by an apply in this session). */
+export const applyEqapoPresent: ExportView = eqapoApply({
+  status: status(camillaUnreachable, { ...eqapoXt, include: "present", applied_design_id: MOCK_DESIGN_ID }),
+  runs: { eqapo: { status: "applied", designId: MOCK_DESIGN_ID, folder: `${eqapoXt.config_path}/SECS2R` } },
+});
+
+/** The line present with a design this session has not applied, while CamillaDSP runs this one: another design. */
+export const applyEqapoOther: ExportView = eqapoApply({
+  status: status(camillaRunning({ kind: "this", design_id: MOCK_DESIGN_ID }), { ...eqapoXt, include: "present", applied_design_id: "0c1f9e7a" }),
+});
+
+/** The official edition, the line present, and no way yet to tell whose design it is. */
+export const applyEqapoOfficialUnknown: ExportView = eqapoApply({
+  status: status(camillaUnreachable, { ...eqapoXt, variant: "official", config_path: "C:/Program Files/EqualizerAPO/config", include: "present", applied_design_id: "0c1f9e7a" }),
+});
+
+/** One of the two marked lines edited by hand: 적용 repairs them. */
+export const applyEqapoDamaged: ExportView = eqapoApply({ status: status(camillaUnreachable, { ...eqapoXt, include: "damaged", applied_design_id: "0c1f9e7a" }) });
+
+/** The official edition's config folder under Program Files, not writable for this user. */
+export const applyEqapoDenied: ExportView = eqapoApply({
+  status: status(camillaUnreachable, { ...eqapoXt, variant: "official", config_path: "C:/Program Files/EqualizerAPO/config" }),
+  runs: { eqapo: { status: "failed", error: { code: "permission_denied", params: { path: "C:/Program Files/EqualizerAPO/config/SECS2R" }, retryable: false, detail: "Access is denied. (os error 5)" } } },
+});
+
+/** 빼기 done: the line is gone, the filter files stay in SECS2R. */
+export const applyEqapoReverted: ExportView = eqapoApply({ runs: { eqapo: { status: "reverted" } } });
+
+/** Not Windows: Equalizer APO's 적용 is off with the reason. */
+export const applyEqapoNotWindows: ExportView = { ...exportReady, nativeDevices: null, apply: { ...applyIdle, windows: false } };

@@ -5,4 +5,9 @@ import type { EqApoApplyStatus } from "./EqApoApplyStatus";
 /**
  * Current state of both application targets.
  */
-export type ApplyStatus = { camilla: CamillaApplyStatus, eqapo: EqApoApplyStatus, };
+export type ApplyStatus = { camilla: CamillaApplyStatus, eqapo: EqApoApplyStatus, 
+/**
+ * Design ID of the current result, absent without one; the screen
+ * compares Equalizer APO's `applied_design_id` with it.
+ */
+current_design_id: string | null, };
