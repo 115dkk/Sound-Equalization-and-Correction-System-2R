@@ -129,3 +129,17 @@ python3 .github/scripts/check_feature_tests.py   # Windows lists one known secs-
 The host protocol as built, the secs-sys host API, how the release ships
 the binary, the dependency and licence changes, files changed, and the
 commands' last lines.
+
+## Addendum: end-to-end check comes next
+
+The maintainer approved this service on 2026-10-29 and requires that it be
+proven in CI by driving the real app's GUI on a Windows runner (P125, after
+the shell and screen): the runner installs the app and `secs2r-host`,
+chooses 관리 in the screen, lets the service launch the pinned CamillaDSP and
+checks it, kills CamillaDSP and checks the restart, and removes SECS 2R's
+line from an installed Equalizer APO XT's `config.txt` and checks the
+repair. Build for that now: every path the service uses (state file, log,
+pipe name) must be overridable by an environment variable or flag read only
+by `secs2r-host.exe` itself, the service must log each launch, exit,
+restart and repair as one machine-readable line, and `secs2r-host status`
+must print the status JSON so CI can assert on it.
