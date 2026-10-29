@@ -34,10 +34,10 @@
 ### Equalizer APO 적용
 
 - 설치는 레지스트리 `HKLM\SOFTWARE\EqualizerAPO`의 `ConfigPath`와 `InstallPath`로 감지합니다. 공식판과 XT가 같은 키를 쓰는지, XT를 구별할 값이 무엇인지는 구현할 때 XT 소스와 설치본으로 확인해 이 ADR에 적습니다.
-- 감지하면 `ConfigPath\SECS2R\`에 FIR WAV와 `SECS.txt`를 쓰고, `config.txt` 끝에 다음 두 줄을 더합니다. 표식 주석이 있는 줄만 SECS 2R의 것으로 봅니다.
+- 감지하면 `ConfigPath\SECS2R\`에 FIR WAV와 `SECS.txt`를 쓰고, `config.txt` 끝에 다음 두 줄을 더합니다. 표식 주석이 있는 줄만 SECS 2R의 것으로 봅니다. 표식은 Equalizer APO가 어느 판이든, 파일 인코딩이 무엇이든 그대로 다룰 수 있게 ASCII로 씁니다.
 
   ```text
-  # SECS 2R: 이 줄과 다음 줄은 SECS 2R이 관리합니다.
+  # SECS2R: managed by SECS 2R (this line and the next)
   Include: SECS2R\SECS.txt
   ```
 
