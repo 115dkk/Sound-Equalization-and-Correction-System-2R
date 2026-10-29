@@ -35,6 +35,8 @@ type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "m
   tab: CalibrateView["tab"]; channel: string | null; xoGroup: string | null; previewHz: number | null;
   targetEdit: CalibrateView["targetEdit"]; xoEdit: CalibrateView["xoEdit"];
   meter: MeterReading | null; monitor: MonitorState; playing: string | null; playingAll: boolean; masterDbfs: number;
+  /** Why the level monitor job failed (the level check shows it); null once the monitor starts again or is switched off. */
+  monitorError: import("../ipc/bindings/IpcError").IpcError | null;
   xoRecommendation: XoRecommendation | null; runs: Partial<Record<ExportKind, ExportRun>>; mdatScope: MdatScope;
   /** 내보내기: the design name field's text (`""` = no name) and the CamillaDSP devices (file placeholders by default). */
   designName: string; camillaDevices: CamillaDevices;
@@ -69,7 +71,7 @@ export function createSession(ipc: Ipc) {
     computeLoading: true, computeSaving: false, computeError: null,
     current: "system", path: null, selected: null, graphHidden: false, plotRange: { x: null, y: null },
     mdat: null, warnings: [], tab: "spl", channel: null, xoGroup: null, previewHz: null, targetEdit: "idle", xoEdit: "idle",
-    meter: null, monitor: "off", playing: null, playingAll: false, masterDbfs: -20,
+    meter: null, monitor: "off", playing: null, playingAll: false, masterDbfs: -20, monitorError: null,
     xoRecommendation: null, runs: {}, mdatScope: "all", failure: null,
     designName: "", camillaDevices: { capture: { type: "file" }, playback: { type: "file" } }, extraRates: [],
     micCalBusy: null, micCalError: null,
@@ -322,6 +324,8 @@ export function createSession(ipc: Ipc) {
   // level callbacks); the native and mock monitors read only during a play,
   // so silence there is normal and never restarts them.
   const staleMeterMs = 1000;
+  /** A failed monitor finish that carries no error of its own. */
+  const unknownMonitorFailure: import("../ipc/bindings/IpcError").IpcError = { code: "internal", params: {}, retryable: true, detail: "level monitor failed without an error" };
   function clearMeterTimer() { clearTimeout(meterTimer); meterTimer = undefined; }
   function armMeterTimer() {
     clearMeterTimer();
@@ -382,12 +386,13 @@ export function createSession(ipc: Ipc) {
       if (active && (!monitorWanted || epoch !== monitorEpoch)) return;
       if (active && monitoring) return;
       if (active) {
-        host.set({ monitor: "starting" });
+        // Starting again (a play pressed while offline) drops the last failure.
+        host.set({ monitor: "starting", monitorError: null });
         try { await startMonitor(); }
         catch (error) { host.set({ monitor: "offline" }); throw error; }
       } else {
         await stopMonitor();
-        host.set({ monitor: "off", meter: null, playing: null, playingAll: false });
+        host.set({ monitor: "off", meter: null, playing: null, playingAll: false, monitorError: null });
       }
     });
     return track(() => monitorQueue);
@@ -418,7 +423,12 @@ export function createSession(ipc: Ipc) {
     if (job.kind === "level_monitor" && event.job === monitorJob) {
       monitoring = false;
       clearMeterTimer();
-      if (!restartingMonitor) host.set({ monitor: event.status === "failed" ? "offline" : "off" });
+      if (event.status === "failed") {
+        // Nothing plays any more and the last reading is not current; the
+        // job's error says why on the level check (#120). Not a global
+        // notice: the monitor is hidden from the job tray and the panel owns it.
+        host.set({ monitor: "offline", monitorError: event.error ?? unknownMonitorFailure, meter: null, playing: null, playingAll: false });
+      } else if (!restartingMonitor) host.set({ monitor: "off" });
     }
     if ((request?.epoch ?? job.epoch) !== jobs.epoch) return;
     const effects = effectsOf({ finished: job.kind, status: event.status });

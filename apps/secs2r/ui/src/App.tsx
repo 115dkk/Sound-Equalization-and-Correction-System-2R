@@ -181,7 +181,7 @@ function Shell({ tutorialStart }: { tutorialStart?: string | undefined }) {
       version={info ? { version: info.version, prerelease: info.prerelease } : null} tray={<JobTray api={jobs} />} onRemeasure={remeasure} onOpenPatch={openPatch}
       aside={helpOpen || meterOpen ? <>
         {helpOpen && <HelpPanel view={{ step: host.current, tutorial: project?.tutorial ?? false }} actions={{ close: () => setHelpOpen(false), startTutorial: dialogs.offerTutorial }} />}
-        {meterOpen && <div className="app-mic"><MicMeterPanel id="app.mic" floating view={{ input: connect.view ? micInput(t, connect.view) : null, monitor: host.monitor, reading: host.meter }} onClose={() => setMeterOpen(false)} /></div>}
+        {meterOpen && <div className="app-mic"><MicMeterPanel id="app.mic" floating view={{ input: connect.view ? micInput(t, connect.view) : null, monitor: host.monitor, reading: host.meter, error: host.monitorError, path: connect.view?.path }} onClose={() => setMeterOpen(false)} /></div>}
       </> : null}>
       {error && failure && <ErrorNotice id="app.error" cause={error.cause} next={error.next} detail={failure.error.detail} code={failure.error.code} />}
       {content ?? (ready && !project ? <EmptyState id="app.project.empty" title={t("project.new.title")} action={<Button variant="primary" onClick={dialogs.menu.onNew}>{t("frame.project.new")}</Button>} /> : null)}

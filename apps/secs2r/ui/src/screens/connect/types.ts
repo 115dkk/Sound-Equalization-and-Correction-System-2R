@@ -90,6 +90,8 @@ export type ConnectView = {
   levels: Readonly<Record<string, number>>;
   level: {
     monitor: MonitorState;
+    /** Why the level monitor job failed (with `offline`); null again once the monitor starts or is switched off. */
+    error: IpcError | null;
     /** The latest Meter event; null before the first. */
     reading: MeterReading | null;
     /** The role level_play is playing (2.5 s), or null. */
@@ -126,7 +128,7 @@ export type ConnectActions = {
   clearMicCalibration: () => void;
   /** mic_calibration_attach: the project's file goes to the sweeps measured without a mic curve. */
   attachMicCalibration: () => void;
-  /** level_play { role, master_dbfs } (level_monitor_start first when the monitor is off); subs play 50 Hz, 2.5 s. */
+  /** level_play { role, master_dbfs } (level_monitor_start first when the monitor is off or failed); subs play 50 Hz, 2.5 s. */
   playLevel: (role: string) => void;
   /** Stops the playing channel and the queue (service gap: no early stop for one burst; level_monitor_stop and start again). */
   stopLevel: () => void;

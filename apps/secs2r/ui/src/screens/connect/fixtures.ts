@@ -88,7 +88,7 @@ const base: ConnectView = {
   rew: { launch: "idle", problem: null, problemDetail: null, readingSettings: false, switchingDriver: false, details: {} },
   micCalibration: { status: { file: null, attached: 0, attachable: 0 }, busy: null, error: null },
   levels: {},
-  level: { monitor: "off", reading: null, playing: null, playingAll: false, masterDbfs: -20 },
+  level: { monitor: "off", error: null, reading: null, playing: null, playingAll: false, masterDbfs: -20 },
 };
 
 /** A UMIK-1 90° file as the service describes it (serial and gains are invented). */
@@ -223,7 +223,25 @@ export const nativeErrorView: ConnectView = {
 export const levelHalfView: ConnectView = {
   ...nativeView,
   levels: halfLevels,
-  level: { monitor: "receiving", reading: { rms_dbfs: -24.6, peak_dbfs: -13.9, spl_db: 76.8, clipping: false }, playing: "Rs", playingAll: true, masterDbfs: -20 },
+  level: { monitor: "receiving", error: null, reading: { rms_dbfs: -24.6, peak_dbfs: -13.9, spl_db: 76.8, clipping: false }, playing: "Rs", playingAll: true, masterDbfs: -20 },
+};
+
+/**
+ * The native monitor stopped while L played: the output could not open with
+ * the project's 16 channels (#120). Nothing plays; the panel says why.
+ */
+export const levelMonitorFailedView: ConnectView = {
+  ...nativeView,
+  level: {
+    ...base.level,
+    monitor: "offline",
+    error: {
+      code: "measurement_input",
+      params: { field: "level" },
+      retryable: false,
+      detail: "format not supported: native Output 48000 Hz / 16 channels unavailable",
+    },
+  },
 };
 
 /** Every channel has a level. */

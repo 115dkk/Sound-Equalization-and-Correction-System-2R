@@ -323,6 +323,39 @@ describe("useConnectScreen", () => {
     expect(result.current.view?.level).toMatchObject({ playing: null, playingAll: false });
   });
 
+  it("clears the playing row when the monitor job fails, keeps its error, and a play restarts the monitor first", async () => {
+    await session.configure({ method: "native" });
+    const plays = () => mock.calls.filter((call) => call.method === "level_play");
+    const { result } = renderHook(() => useConnectScreen(false), { wrapper });
+    mock.failLevelPlay("measurement_input", "format not supported: native Output 48000 Hz / 16 channels unavailable", { field: "level" });
+    act(result.current.actions.playAllLevels);
+    await waitFor(() => expect(plays()).toHaveLength(1));
+    expect(result.current.view?.level).toMatchObject({ playing: "L", playingAll: true, error: null });
+    // The output cannot open: the job fails without ending the burst.
+    await act(async () => { mock.tick(); });
+    await perform(() => {});
+    expect(result.current.view?.level).toMatchObject({
+      monitor: "offline", playing: null, playingAll: false, reading: null,
+      error: { code: "measurement_input", params: { field: "level" }, detail: "format not supported: native Output 48000 Hz / 16 channels unavailable" },
+    });
+    // The queue stopped at once (no 8 s wait, no level_play for R), and the panel alone shows the failure.
+    expect(plays()).toHaveLength(1);
+    expect(session.errors.getSnapshot()).toBeNull();
+    // A play pressed while offline starts the monitor before it plays, and that clears the error.
+    mock.calls.length = 0;
+    act(() => result.current.actions.playLevel("R"));
+    await waitFor(() => expect(plays()).toHaveLength(1));
+    const methods = mock.calls.map((call) => call.method);
+    expect(methods.indexOf("level_monitor_start")).toBeGreaterThanOrEqual(0);
+    expect(methods.indexOf("level_monitor_start")).toBeLessThan(methods.indexOf("level_play"));
+    expect(result.current.view?.level).toMatchObject({ playing: "R", error: null });
+    // The restarted monitor plays the burst through.
+    await act(async () => { ticks(5); });
+    await perform(() => {});
+    expect(result.current.view?.level).toMatchObject({ monitor: "receiving", playing: null, error: null });
+    expect(result.current.view?.levels.R).toBeTypeOf("number");
+  });
+
   it("awaits each blocking burst and a stop cancels the remaining local queue", async () => {
     await session.configure({ method: "mock" });
     const original = mock.request;
