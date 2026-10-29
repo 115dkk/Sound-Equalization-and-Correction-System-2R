@@ -794,8 +794,23 @@ impl Service {
         if let Some(path) = self.deps.app_settings_path.as_deref() {
             atomic_write(path, &bytes)?;
         }
+        let policy_changed = current.updates != params.settings.updates;
         *current = params.settings.clone();
+        drop(current);
+        if policy_changed {
+            self.deps.updates.set_policy(params.settings.updates);
+        }
         Ok(params.settings)
+    }
+
+    /// Adds what the service owns to an adapter's update status.
+    pub(crate) fn update_status(
+        &self,
+        mut status: secs_types::ipc::UpdateStatus,
+    ) -> secs_types::ipc::UpdateStatus {
+        status.current = self.deps.app_version.to_string();
+        status.policy = self.app_settings_get().updates;
+        status
     }
 }
 

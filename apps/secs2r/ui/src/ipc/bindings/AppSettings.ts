@@ -5,6 +5,7 @@ import type { AppTheme } from "./AppTheme";
 import type { ApplySettings } from "./ApplySettings";
 import type { ComputePreference } from "./ComputePreference";
 import type { LocalApiSettings } from "./LocalApiSettings";
+import type { UpdatePolicy } from "./UpdatePolicy";
 
 /**
  * Application-local settings, independent of an open project.
@@ -38,6 +39,10 @@ local_api: LocalApiSettings,
  * Applying designs to CamillaDSP and Equalizer APO.
  */
 apply: ApplySettings, 
+/**
+ * When to look for and install new releases.
+ */
+updates: UpdatePolicy, 
 /**
  * Recently opened project paths, newest first (at most 10).
  */

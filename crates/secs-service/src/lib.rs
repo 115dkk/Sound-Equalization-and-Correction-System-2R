@@ -41,7 +41,8 @@ use std::time::{Duration, SystemTime};
 use secs_compute::MemoryProbe;
 use secs_types::ipc::{
     ApplyOutcome, BootstrapInfo, CamillaStatus, Envelope, ErrorCode, IncludeState, IpcError,
-    JobEvent, LocalApiStatus, Platform, Request, UpstreamBase,
+    JobEvent, LocalApiStatus, Platform, Request, UpdatePhase, UpdatePolicy, UpdateStatus,
+    UpstreamBase,
 };
 
 pub use clock::LocalTime;
@@ -203,6 +204,61 @@ pub trait ManagedHostAdapter: Send + Sync + Debug {
     fn uninstall(&self) -> Result<(), IpcError>;
 }
 
+/// Application updates supplied by an app that carries an updater (ADR 0020).
+///
+/// The service fills [`UpdateStatus::current`] from [`Deps::app_version`] and
+/// [`UpdateStatus::policy`] from the stored app settings; adapters report the
+/// rest.
+pub trait UpdateAdapter: Send + Sync + Debug {
+    /// The current phase, last check time and pending notice.
+    fn status(&self) -> UpdateStatus;
+    /// Starts a check now, whatever the policy.
+    fn check(&self) -> Result<UpdateStatus, IpcError>;
+    /// Starts downloading the release found by the last check.
+    fn download(&self) -> Result<UpdateStatus, IpcError>;
+    /// Installs the downloaded release and starts the new version.
+    fn restart(&self) -> Result<(), IpcError>;
+    /// Drops the one-time "updated" notice.
+    fn dismiss_notice(&self) -> UpdateStatus;
+    /// Called after the stored policy changed.
+    fn set_policy(&self, policy: UpdatePolicy);
+}
+
+#[derive(Debug, Default)]
+struct NoUpdates;
+impl UpdateAdapter for NoUpdates {
+    fn status(&self) -> UpdateStatus {
+        UpdateStatus {
+            current: String::new(),
+            policy: UpdatePolicy::Off,
+            phase: UpdatePhase::Off,
+            checked_at: None,
+            notice: None,
+        }
+    }
+
+    fn check(&self) -> Result<UpdateStatus, IpcError> {
+        Err(IpcError::new(
+            ErrorCode::Unsupported,
+            "this build has no updater",
+        ))
+    }
+
+    fn download(&self) -> Result<UpdateStatus, IpcError> {
+        self.check()
+    }
+
+    fn restart(&self) -> Result<(), IpcError> {
+        self.check().map(|_| ())
+    }
+
+    fn dismiss_notice(&self) -> UpdateStatus {
+        self.status()
+    }
+
+    fn set_policy(&self, _policy: UpdatePolicy) {}
+}
+
 #[derive(Debug, Default)]
 struct NoManagedHost;
 impl ManagedHostAdapter for NoManagedHost {
@@ -325,6 +381,8 @@ pub struct Deps {
     pub apply: Arc<dyn ApplyAdapter>,
     /// Connects the service to the Windows managed host.
     pub managed_host: Arc<dyn ManagedHostAdapter>,
+    /// Connects the service to the app's updater.
+    pub updates: Arc<dyn UpdateAdapter>,
     /// The user's wall clock, for export folder names. The default reads UTC;
     /// the apps add the UTC offset `secs-sys` reports.
     pub clock: Arc<dyn Fn() -> LocalTime + Send + Sync>,
@@ -353,6 +411,7 @@ impl Debug for Deps {
             .field("eqapo_install", &"detector")
             .field("apply", &self.apply)
             .field("managed_host", &self.managed_host)
+            .field("updates", &self.updates)
             .field("clock", &"source")
             .field("clock_offset_seconds", &"source")
             .field("unix_ms", &"source")
@@ -419,6 +478,7 @@ impl Default for Deps {
             eqapo_install: Arc::new(|| None),
             apply: Arc::new(NoApplyAdapter),
             managed_host: Arc::new(NoManagedHost),
+            updates: Arc::new(NoUpdates),
             clock: Arc::new(|| LocalTime::from_system(SystemTime::now(), 0)),
             clock_offset_seconds: Arc::new(|| 0),
             unix_ms: Arc::new(|| unix_ms(SystemTime::now())),

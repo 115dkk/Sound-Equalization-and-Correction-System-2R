@@ -189,6 +189,11 @@ impl Core {
                 let start = self.logs.len().saturating_sub(keep);
                 HostResponse::Log(self.logs[start..].to_vec())
             }
+            // Replacing the executable is the pipe handler's job (P133).
+            HostRequest::UpdateSelf { .. } => HostResponse::Error(IpcError::new(
+                ErrorCode::Unsupported,
+                "the service cannot update itself yet",
+            )),
         }
     }
 

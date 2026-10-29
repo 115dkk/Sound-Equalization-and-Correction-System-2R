@@ -150,6 +150,23 @@ pub(crate) fn dispatch(
         Request::HostInstall => service.host_install().map(Response::HostInstall),
         Request::HostUninstall => service.host_uninstall().map(Response::HostUninstall),
         Request::HostStopManaging => service.host_stop_managing().map(Response::HostStopManaging),
+        Request::UpdateStatus => Ok(Response::UpdateStatus(
+            service.update_status(service.deps.updates.status()),
+        )),
+        Request::UpdateCheck => service
+            .deps
+            .updates
+            .check()
+            .map(|status| Response::UpdateCheck(service.update_status(status))),
+        Request::UpdateDownload => service
+            .deps
+            .updates
+            .download()
+            .map(|status| Response::UpdateDownload(service.update_status(status))),
+        Request::UpdateRestart => service.deps.updates.restart().map(Response::UpdateRestart),
+        Request::UpdateNoticeDismiss => Ok(Response::UpdateNoticeDismiss(
+            service.update_status(service.deps.updates.dismiss_notice()),
+        )),
         Request::LocalApiStatus => service
             .deps
             .host
