@@ -361,7 +361,7 @@ struct CallbackState {
     cursor: AtomicUsize,
     final_ns: AtomicU64,
     final_period_ns: AtomicU64,
-    #[cfg(any(target_os = "macos", test))]
+    #[cfg(target_os = "macos")]
     overload_notices: AtomicUsize,
     #[cfg(any(target_os = "macos", test))]
     timestamp_gaps: AtomicUsize,
@@ -386,7 +386,7 @@ impl CallbackState {
             cursor: AtomicUsize::new(0),
             final_ns: AtomicU64::new(0),
             final_period_ns: AtomicU64::new(0),
-            #[cfg(any(target_os = "macos", test))]
+            #[cfg(target_os = "macos")]
             overload_notices: AtomicUsize::new(0),
             #[cfg(any(target_os = "macos", test))]
             timestamp_gaps: AtomicUsize::new(0),
