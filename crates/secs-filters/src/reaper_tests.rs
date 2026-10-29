@@ -1,27 +1,6 @@
 use super::{ConvolutionRoute, ConvolutionRouting, convolution_reaper, lua_string};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-static TEMP_ID: AtomicU64 = AtomicU64::new(0);
-
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new() -> Self {
-        let id = TEMP_ID.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!("secs_reaper_{}_{id}", std::process::id()));
-        fs::create_dir_all(&path).unwrap();
-        Self(path)
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
 
 fn example(name: Option<&str>) -> String {
     let inputs = vec!["L".to_owned(), "R".to_owned()];
@@ -82,76 +61,4 @@ fn reaper_script_uses_routing_order_and_quotes_names() {
             fs::write(folder.join(file), &bytes).unwrap();
         }
     }
-}
-
-fn executable(variable: &str, names: &[&str]) -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os(variable) {
-        return Some(PathBuf::from(path));
-    }
-    names.iter().find_map(|name| {
-        Command::new(name)
-            .arg("-v")
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .map(|_| PathBuf::from(name))
-    })
-}
-
-#[test]
-fn reaper_script_compiles_when_luac_is_available() {
-    let Some(compiler) = executable("SECS_LUAC", &["luac5.4", "luac"]) else {
-        eprintln!("SKIP: no Lua compiler; set SECS_LUAC (required by Linux CI)");
-        return;
-    };
-    let temp = TempDir::new();
-    let script = temp.0.join("secs2r_reaper.lua");
-    fs::write(&script, example(Some("\"\\\n\r\t\0한글9 ]=]"))).unwrap();
-    let output = Command::new(compiler)
-        .arg("-p")
-        .arg(script)
-        .arg(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/reaper/mock.lua"
-        ))
-        .arg(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/reaper/harness.lua"
-        ))
-        .arg(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/reaper/playback.lua"
-        ))
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-#[test]
-fn reaper_script_replaces_tracks_and_restores_failed_builds() {
-    let Some(lua) = executable("SECS_LUA", &["lua5.4", "lua"]) else {
-        eprintln!("SKIP: no Lua interpreter; set SECS_LUA (required by Linux CI)");
-        return;
-    };
-    let temp = TempDir::new();
-    let script = temp.0.join("secs2r_reaper.lua");
-    fs::write(&script, example(Some("거실"))).unwrap();
-    let output = Command::new(lua)
-        .arg(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/reaper/mock.lua"
-        ))
-        .arg(script)
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success(),
-        "stdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr),
-    );
 }

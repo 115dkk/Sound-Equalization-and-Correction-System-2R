@@ -3,6 +3,11 @@
 `mock.lua` tests routing, channel rounding, replacement by persistent track tags,
 per-source ownership, missing IRs, plug-in/configuration/send failures and cleanup.
 It is a model of the host API, not an audio or plug-in compatibility test.
+The subprocess checks live in `tests/reaper_lua.rs`, outside the library sources.
+They export a real bundle through `export_convolution_named`; the mock receives
+expected channel mappings from `routing.json`. Its fixture keeps two mains,
+one subwoofer and the LFE input, testing odd input/output counts rounded up to
+four host channels. No test-only public generator is needed.
 `SECS_LUA` selects Lua 5.4; `SECS_LUAC` selects its compiler. Linux CI installs both
 in its existing test job. With neither installed, the two optional Rust tests
 print `SKIP` and return; explicitly configured executables must work.

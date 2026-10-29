@@ -1,5 +1,15 @@
 -- REAPER-free control-flow tests, not a substitute for the real host harness.
 local script = assert(arg[1])
+local inputs = assert(tonumber(arg[2]))
+local outputs = assert(tonumber(arg[3]))
+local paths = {}
+for input, output in assert(arg[4]):gmatch("(%d+):(%d+)") do
+  paths[#paths + 1] = {input = tonumber(input), output = tonumber(output)}
+end
+assert(#paths > 0)
+local input_channels = math.max(2, math.ceil(inputs / 2) * 2)
+local output_channels = math.max(2, math.ceil(outputs / 2) * 2)
+local total = #paths + 4 -- source, folder, paths, bus, unrelated track
 local tracks, selected, messages, refresh, begins, ends, failure
 local marker = "P_EXT:SECS2R_CONVOLUTION"
 local names = {"Wet", "Dry", "Pre-verb", "Max FFT size", "Width", "Pan", "ZL mode", "LL mode", ":wet"}
@@ -95,23 +105,25 @@ local function run()
   assert(refresh == 0 and begins == ends, "unbalanced UI or undo block")
 end
 local function verify()
-  assert(#tracks == 6 and #selected.sends == 2)
-  assert(selected.B_MAINSEND == 0 and selected.I_NCHAN == 2)
-  local folder, first, second, bus = tracks[2], tracks[3], tracks[4], tracks[5]
+  assert(#tracks == total and #selected.sends == #paths)
+  assert(selected.B_MAINSEND == 0 and selected.I_NCHAN == input_channels)
+  local folder, bus = tracks[2], tracks[total - 1]
   assert(folder.P_NAME == "SECS 2R 거실" and folder.I_FOLDERDEPTH == 1)
-  assert(folder.I_NCHAN == 4 and folder.B_MUTE == 0 and folder.B_MAINSEND == 1)
-  assert(bus.I_FOLDERDEPTH == -1 and bus.I_NCHAN == 4 and bus.B_MAINSEND == 1)
-  assert(tracks[6].P_NAME == "Unrelated")
-  for _, t in ipairs({folder, first, second, bus}) do
+  assert(folder.I_NCHAN == output_channels and folder.B_MUTE == 0 and folder.B_MAINSEND == 1)
+  assert(bus.I_FOLDERDEPTH == -1 and bus.I_NCHAN == output_channels and bus.B_MAINSEND == 1)
+  assert(tracks[total].P_NAME == "Unrelated")
+  for i = 2, total - 1 do
+    local t = tracks[i]
     assert(t[marker] == selected.guid and t.D_VOL == 1 and t.D_PANLAW == 1)
   end
-  for i, t in ipairs({first, second}) do
+  for i, path in ipairs(paths) do
+    local t = tracks[i + 2]
     local input = selected.sends[i]
     local output = t.sends[1]
-    assert(input.to == t and input.I_SRCCHAN == (i == 1 and 1025 or 1024))
+    assert(input.to == t and input.I_SRCCHAN == 1024 + path.input - 1)
     assert(input.I_DSTCHAN == 1024 and input.I_MIDIFLAGS == 31)
     assert(output.to == bus and output.I_SRCCHAN == 1024)
-    assert(output.I_DSTCHAN == (i == 1 and 1026 or 1024))
+    assert(output.I_DSTCHAN == 1024 + path.output - 1)
     assert(input.I_SENDMODE == 3 and output.I_SENDMODE == 3)
     assert(input.D_VOL == 1 and output.D_VOL == 1)
     assert(t.B_MAINSEND == 0 and t.enabled)
@@ -134,8 +146,8 @@ old_folder.P_NAME = "Renamed by the user"
 run(); verify()
 assert(tracks[2] ~= old_folder and begins == 2)
 -- Another source gets its own set without deleting this source's correction.
-selected = tracks[6]; run()
-assert(#tracks == 10 and #selected.sends == 2)
+selected = tracks[total]; run()
+assert(#tracks == 2 * total - 2 and #selected.sends == #paths)
 -- A failure never removes an earlier working set.
 for _, mode in ipairs({"fx", "config", "parameter", "send"}) do
   reset(); run(); verify()
@@ -151,8 +163,8 @@ reset(); run()
 table.insert(tracks, 3, track("User's audio"))
 local before = begins
 run()
-assert(#tracks == 7 and begins == before and tracks[3].P_NAME == "User's audio")
+assert(#tracks == total + 1 and begins == before and tracks[3].P_NAME == "User's audio")
 -- Do not let a generated bus become the source on a second run.
-reset(); run(); selected = tracks[5]; before = begins; run()
-assert(#tracks == 6 and begins == before)
+reset(); run(); selected = tracks[total - 1]; before = begins; run()
+assert(#tracks == total and begins == before)
 print("REAPER mock: routing, replacement, ownership, errors and undo/UI cleanup passed")
