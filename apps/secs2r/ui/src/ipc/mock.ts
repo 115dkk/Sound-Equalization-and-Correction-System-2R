@@ -55,6 +55,12 @@ export type MockService = {
   failAlways: (method: Method, code: ErrorCode, detail?: string) => void;
   clearFailures: () => void;
   failJobs: (kind: JobKind, code: ErrorCode, detail?: string, params?: Record<string, string>) => void;
+  /**
+   * The level monitor fails on its next tick while a burst plays, once: the
+   * native monitor opens its output only to play (#120). A monitor started
+   * again afterwards runs normally.
+   */
+  failLevelPlay: (code: ErrorCode, detail?: string, params?: Record<string, string>) => void;
   /** A null answer simulates cancelling the next matching host dialog. */
   queueDialog: (method: DialogMethod, path: string | null) => void;
   tick: () => void;
@@ -103,6 +109,7 @@ export function createMockService(options: MockOptions = {}): MockService {
   const calls: Request[] = [];
   const failures = new Map<Method, { error: IpcError; once: boolean }>();
   const jobFailures = new Map<JobKind, IpcError>();
+  let playFailure: IpcError | null = null;
   const dialogs = new Map<DialogMethod, (string | null)[]>();
   const jobs = new Map<JobId, SimJob>();
   let project = clone(options.project === undefined ? fx.projectInfo : options.project);
@@ -300,6 +307,12 @@ export function createMockService(options: MockOptions = {}): MockService {
     if (monitor(job.kind)) {
       const failure = jobFailures.get(job.kind);
       if (failure) { finish(job, "failed", failure); return; }
+      if (job.kind === "level_monitor" && playing && playFailure) {
+        // No level_play_end: the burst never played.
+        const error = playFailure; playFailure = null; playing = null;
+        finish(job, "failed", error);
+        return;
+      }
       if (job.kind === "status_watch") events.emit({ event: "measure_status", job: job.id, status: methods() });
       else {
         events.emit({ event: "meter", job: job.id, rms_dbfs: playing ? playing.master - 10 : -62, peak_dbfs: playing ? playing.master : -49, spl_db: playing ? 78.5 : 32, clipping: false });
@@ -1000,6 +1013,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     failNext: (method, code, detail = "", params = {}) => failures.set(method, { error: ipcError(code, detail, params), once: true }),
     failAlways: (method, code, detail = "") => failures.set(method, { error: ipcError(code, detail), once: false }),
     clearFailures: () => failures.clear(), failJobs: (kind, code, detail = "", params = {}) => jobFailures.set(kind, ipcError(code, detail, params)),
+    failLevelPlay: (code, detail = "", params = {}) => { playFailure = ipcError(code, detail, params); },
     queueDialog: (method, path) => { const queue = dialogs.get(method) ?? []; queue.push(path); dialogs.set(method, queue); },
     tick,
     drain: () => { for (let guard = 0; [...jobs.values()].some((j) => !monitor(j.kind) || j.cancelRequested) && guard < 1000; guard++) tick(); },

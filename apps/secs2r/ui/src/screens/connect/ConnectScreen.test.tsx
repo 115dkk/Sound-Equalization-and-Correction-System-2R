@@ -13,6 +13,7 @@ import {
   levelDoneView,
   levelPassedView,
   levelHalfView,
+  levelMonitorFailedView,
   mdatView,
   micCalAttachView,
   micCalErrorView,
@@ -138,6 +139,7 @@ const ALL: [string, ConnectView][] = [
   ["mic calibration error", micCalErrorView],
   ["level half done", levelHalfView],
   ["levels done", levelDoneView],
+  ["level monitor failed", levelMonitorFailedView],
   ["mock", mockView],
   ["mdat only", mdatView],
 ];
@@ -424,6 +426,52 @@ describe("ConnectScreen", () => {
     fireEvent.click(must("connect.mic.clear_peak"));
     expect(must("connect.mic.peak").textContent).toBe(ko("connect.mic.peak.none"));
     expect(must("connect.mic.state").textContent).toBe(ko("connect.mic.receiving"));
+  });
+
+  it("says why the native monitor stopped in place of the offline hint, with the raw text folded under 자세히", () => {
+    const actions = setup(levelMonitorFailedView);
+    expect(must("connect.mic.state").textContent).toBe(ko("connect.mic.failed"));
+    const notice = must("connect.mic.error");
+    expect(notice.getAttribute("role")).toBe("alert");
+    expect(notice.querySelector(".ui-error__cause")?.textContent).toBe(ko("error.measurement_input"));
+    expect(notice.querySelector(".ui-error__next")?.textContent).toBe(ko("error.measurement_input.next"));
+    const details = notice.querySelector("details")!;
+    expect(details.open).toBe(false);
+    expect(details.textContent).toContain("[measurement_input] format not supported: native Output 48000 Hz / 16 channels unavailable");
+    // Native has no REW to start, and the failure replaces the generic hint.
+    expect(ui("connect.mic.hint")).toBeNull();
+    expect(must("connect.mic").textContent).not.toContain("REW");
+    // Nothing is playing, and a play button is there to try again.
+    expect(must("connect.level.playing").textContent).toBe(ko("connect.level.idle"));
+    expect(ui("connect.level.stop")).toBeNull();
+    const play = must("connect.level.play.L") as HTMLButtonElement;
+    expect(play.getAttribute("aria-label")).toBe(ko("connect.level.play.aria", { code: "L" }));
+    expect(play.disabled).toBe(false);
+    fireEvent.click(play);
+    expect(actions.playLevel).toHaveBeenCalledWith("L");
+    cleanupScreen();
+    setup(levelMonitorFailedView, { locale: "en" });
+    expect(must("connect.mic.error").textContent).toContain(translate("en", "error.measurement_input"));
+  });
+
+  it("names an unknown monitor failure as the monitor stopping, and keeps the offline hints to their method", () => {
+    const unknown = { ...levelMonitorFailedView.level, error: { code: "audio_gone", params: {}, retryable: true, detail: "new failure" } } as unknown as ConnectView["level"];
+    setup({ ...levelMonitorFailedView, level: unknown });
+    expect(must("connect.mic.error").querySelector(".ui-error__cause")?.textContent).toBe(ko("connect.mic.failed.cause"));
+    expect(must("connect.mic.error").textContent).toContain("[audio_gone] new failure");
+    cleanupScreen();
+    // Offline without a failed job (the start was refused and reported): the native hint, without REW.
+    setup({ ...nativeView, level: { ...nativeView.level, monitor: "offline", reading: null } });
+    expect(must("connect.mic.state").textContent).toBe(ko("connect.mic.offline"));
+    expect(must("connect.mic.hint").textContent).toBe(ko("connect.mic.offline.next.native"));
+    expect(ui("connect.mic.error")).toBeNull();
+    cleanupScreen();
+    setup({ ...rewJavaView, level: { ...rewJavaView.level, monitor: "offline" } });
+    expect(must("connect.mic.hint").textContent).toBe(ko("connect.mic.offline.next"));
+    cleanupScreen();
+    // A meter that does not know the path (the floating copy) keeps the hint that names both.
+    renderWith(<MicMeterPanel view={{ input: null, monitor: "offline", reading: null }} />);
+    expect(must("connect.mic.hint").textContent).toBe(ko("connect.mic.offline.next"));
   });
 
   it("decides the step state from the path and the levels", () => {

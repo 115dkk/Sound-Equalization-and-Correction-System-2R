@@ -1,14 +1,18 @@
 // The mic input meter (upstream mic_meter.py): level, held peak with a clip
-// line, whether readings arrive, and a control that clears the peak. It sits
+// line, whether readings arrive (and why not, when the monitor job failed),
+// and a control that clears the peak. It sits
 // in the level check, and the frame can float it as a small panel (upstream
 // Ctrl+M; P33 wires the shortcut). The held peak is the highest Meter peak
 // since the panel appeared or since 피크 지우기. The floating panel is not
 // modal: it takes the focus when it opens (its close button, or its title),
 // Esc inside it closes it, and the focus goes back where it was.
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { errorText } from "../../app/jobs/jobText";
+import type { MessageKey } from "../../i18n";
 import { useNumber, useT } from "../../i18n/react";
-import { Button, IconButton, LevelMeter, StatusPill, type PillTone } from "../../ui";
-import type { MeterReading, MonitorState } from "./types";
+import type { IpcError } from "../../ipc/bindings/IpcError";
+import { Button, ErrorNotice, IconButton, LevelMeter, StatusPill, type PillTone } from "../../ui";
+import type { ConnectPath, MeterReading, MonitorState } from "./types";
 import "./connect.css";
 
 export type MicMeterView = {
@@ -16,18 +20,40 @@ export type MicMeterView = {
   input: string | null;
   monitor: MonitorState;
   reading: MeterReading | null;
+  /** Why the monitor job failed; shown in place of the offline hint. Undefined or null: no failure known. */
+  error?: IpcError | null | undefined;
+  /** The measurement path, for the offline hint: only REW's mentions REW. Undefined: not known (the hint names both). */
+  path?: ConnectPath | null | undefined;
 };
 
 /** Upstream shows "클립" when the held peak passes −1 dBFS. */
 const CLIP_DBFS = -1;
 
-const MONITOR: Record<MonitorState, { tone: PillTone; key: "connect.mic.off" | "connect.mic.starting" | "connect.mic.receiving" | "connect.mic.stalled" | "connect.mic.offline" }> = {
+const MONITOR: Record<MonitorState, { tone: PillTone; key: MessageKey }> = {
   off: { tone: "neutral", key: "connect.mic.off" },
   starting: { tone: "busy", key: "connect.mic.starting" },
   receiving: { tone: "success", key: "connect.mic.receiving" },
   stalled: { tone: "warning", key: "connect.mic.stalled" },
   offline: { tone: "danger", key: "connect.mic.offline" },
 };
+
+/** An offline monitor whose job failed: it answered, with an error. */
+const FAILED = { tone: "danger", key: "connect.mic.failed" } as const satisfies { tone: PillTone; key: MessageKey };
+
+/** Why the monitor stopped, from its error code; the service's own text sits behind 자세히. */
+function MonitorFailure({ id, error }: { id: string; error: IpcError }) {
+  const t = useT();
+  const text = errorText(t, error);
+  return (
+    <ErrorNotice
+      id={id}
+      cause={text.generic ? t("connect.mic.failed.cause") : text.cause}
+      next={text.next}
+      detail={error.detail}
+      code={error.code}
+    />
+  );
+}
 
 export function MicMeterPanel({
   view,
@@ -66,7 +92,10 @@ export function MicMeterPanel({
     if (reading && Number.isFinite(reading.peak_dbfs) && reading.peak_dbfs > -200) setPeak((held) => (held === null ? reading.peak_dbfs : Math.max(held, reading.peak_dbfs)));
   }, [reading]);
   const clipped = (peak !== null && peak > CLIP_DBFS) || reading?.clipping === true;
-  const state = MONITOR[view.monitor];
+  const failure = view.monitor === "offline" ? (view.error ?? null) : null;
+  const state = failure ? FAILED : MONITOR[view.monitor];
+  // The native and simulated monitors have no REW to start; only REW's hint (or an unknown path's) names it.
+  const offlineHint: MessageKey = view.path === "rew" || view.path === undefined ? "connect.mic.offline.next" : "connect.mic.offline.next.native";
   const body = (
     <div className="connect-mic" data-ui={id}>
       <p className="connect-mic__input" data-ui={`${id}.input`}>
@@ -90,7 +119,15 @@ export function MicMeterPanel({
       <StatusPill tone={state.tone} data-ui={`${id}.state`}>
         {t(state.key)}
       </StatusPill>
-      {view.monitor === "offline" && <p className="connect-hint">{t("connect.mic.offline.next")}</p>}
+      {failure ? (
+        <MonitorFailure id={`${id}.error`} error={failure} />
+      ) : (
+        view.monitor === "offline" && (
+          <p className="connect-hint" data-ui={`${id}.hint`}>
+            {t(offlineHint)}
+          </p>
+        )
+      )}
     </div>
   );
   if (!floating) return body;

@@ -17,8 +17,10 @@ bundle job, release.yml's build job, before the release is published):
 5. The app is launched through Launch Services, as a double click does, with
    SECS2R_SELF_TEST set (apps/secs2r/src/self_test.rs): the screen must
    render, and a mock-room measurement, a calibration and two exports must
-   succeed through the screen's own command. Again for the Intel slice under
-   Rosetta when the runner has it.
+   succeed through the screen's own command. With --audio-device, the native
+   launch must also play and record L/R through that loopback endpoint, read
+   back all three channel configurations, and save non-silent loopback IRs.
+   Again for the Intel slice under Rosetta when the runner has it (mock-only).
 
 Every check runs even after one has failed, so one run reports every problem.
 The pure functions are unit-tested in ``test_macos_app_check.py``.
@@ -27,10 +29,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import plistlib
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -40,6 +44,7 @@ from xml.parsers.expat import ExpatError
 
 AUDIO_INPUT = "com.apple.security.device.audio-input"
 SELF_TEST = "SECS2R_SELF_TEST"
+SELF_TEST_AUDIO = "SECS2R_SELF_TEST_AUDIO"
 LOCALIZATIONS = ("en", "ko")
 EXPORTS = {
     "camilla-dsp": ".yml",
@@ -99,7 +104,122 @@ def entitlement_problems(entitlements: dict, hardened: bool) -> list[str]:
     return []
 
 
-def report_problems(label: str, report: dict | None, work: Path) -> list[str]:
+def finite(value: object) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def impulse_facts(data: bytes, t0: float) -> dict:
+    """Read only the mono float32 layout our IR writer emits, not arbitrary WAVs.
+
+    Curves IPC normalizes away amplitude and has no time axis. The records IPC
+    proves that L/R were measured; their saved IRs prove amplitude and timing.
+    Native measurement crops at onset - 10 ms, preserving 2 s after onset.
+    """
+    if (len(data) < 44 or data[:4] != b"RIFF" or data[8:16] != b"WAVEfmt " or
+            data[36:40] != b"data"):
+        raise ValueError("native IR is not the expected RIFF/float32 WAV")
+    size, tag, channels, rate, byte_rate, align, bits = struct.unpack_from("<IHHIIHH", data, 16)
+    payload = struct.unpack_from("<I", data, 40)[0]
+    if (size != 16 or tag != 3 or channels != 1 or rate != 48000 or
+            byte_rate != rate * 4 or align != 4 or bits != 32 or
+            payload != len(data) - 44 or payload == 0 or payload % 4 or
+            struct.unpack_from("<I", data, 4)[0] != len(data) - 8):
+        raise ValueError("native IR must be a complete mono 48 kHz float32 WAV")
+    samples = [sample[0] for sample in struct.iter_unpack("<f", data[44:])]
+    if not finite(t0) or not all(finite(sample) for sample in samples):
+        raise ValueError("native IR or its time origin is non-finite")
+    peak = max(range(len(samples)), key=lambda index: abs(samples[index]))
+    energy = math.fsum(sample * sample for sample in samples)
+    radius = round(rate * 0.001)
+    direct = math.fsum(sample * sample for sample in samples[max(0, peak - radius):peak + radius + 1])
+    return {
+        "sample_rate": rate, "frames": len(samples), "peak_amplitude": abs(samples[peak]),
+        "peak_ms": peak * 1000 / rate, "arrival_ms": (t0 + peak / rate) * 1000,
+        "direct_energy_fraction": direct / energy if energy else 0,
+    }
+
+
+def read_audio_impulses(work: Path) -> dict:
+    project = json.loads((work / "audio.secs").read_text(encoding="utf-8"))
+    records = [record for record in project["measurements"] if record["pos"] == 1]
+    if len(records) != 1 or records[0].get("done") is not True:
+        raise ValueError("project_save: native position 1 is missing or incomplete")
+    record = records[0]
+    facts = {}
+    for role in ("L", "R"):
+        path = work / "audio.irs" / f"{role}_P1.wav"
+        if (work / record["ir"][role]).resolve() != path.resolve():
+            raise ValueError(f"project_save: {role} does not reference its native IR")
+        if path.stat().st_size > 4 * 48000 * 3 + 44:
+            raise ValueError(f"project_save: {role} native IR exceeds the 3 s check budget")
+        facts[role] = impulse_facts(path.read_bytes(), record["t0"][role])
+    return facts
+
+
+def audio_problems(audio: object, device: str) -> list[str]:
+    if not isinstance(audio, dict) or audio.get("ok") is not True:
+        return [f"native audio step did not pass: {audio}"]
+    problems = []
+    if audio.get("device") != device:
+        problems.append("native audio used the wrong device")
+    configurations = audio.get("configurations", [])
+    expected = [("level_L", 1, [1, 2]), ("level_R", 2, [1, 2]), ("sweep", 1, [1, 1])]
+    if not isinstance(configurations, list) or len(configurations) != 3:
+        problems.append("measure_config_get: all three native configurations must be read back")
+    else:
+        for entry, (stage, channel, outputs) in zip(configurations, expected):
+            config = entry.get("config", {}) if isinstance(entry, dict) else {}
+            wanted = {
+                "method": "native", "input_device": audio.get("input_device"),
+                "output_device": audio.get("output_device"), "input_channel": channel,
+                "output_channels": outputs, "roles": ["L", "R"], "sample_rate": 48000,
+                "sweep_length": 65536, "repetitions": 1, "sweep_level_dbfs": -20,
+                "share_mode": "shared", "timing": "none",
+            }
+            if (not isinstance(entry, dict) or entry.get("stage") != stage or
+                    not isinstance(config, dict) or
+                    any(config.get(key) != value for key, value in wanted.items()) or
+                    not config.get("input_device") or not config.get("output_device")):
+                problems.append(f"measure_config_get: wrong {stage} configuration")
+    if audio.get("played_dbfs") != -20:
+        problems.append("level_play: the native test must play at -20 dBFS")
+    levels = audio.get("levels", {})
+    for role in ("L", "R"):
+        value = levels.get(role) if isinstance(levels, dict) else None
+        if not finite(value) or abs(value - (-20)) > 6:
+            problems.append(f"levels_get: {role} must be within 6 dB of -20 dBFS, got {value}")
+    records = audio.get("records", {})
+    records = records.get("records", []) if isinstance(records, dict) else []
+    record = next((entry for entry in records if isinstance(entry, dict) and entry.get("position") == 1), {})
+    if (record.get("done") is not True or
+            any(role not in record.get("roles", []) or record.get("sources", {}).get(role) != "measured"
+                for role in ("L", "R"))):
+        problems.append("measurement_records: native position 1 needs measured L and R")
+    impulses = audio.get("impulses", {})
+    arrivals = []
+    for role in ("L", "R"):
+        ir = impulses.get(role, {}) if isinstance(impulses, dict) else {}
+        if not isinstance(ir, dict):
+            ir = {}
+        limits = {
+            "peak_amplitude": (10 ** (-6 / 20), 10 ** (6 / 20)),
+            "peak_ms": (9, 11), "arrival_ms": (-1, 500), "direct_energy_fraction": (0.9, 1),
+        }
+        if (ir.get("sample_rate") != 48000 or ir.get("frames") != 96480 or
+                any(not finite(ir.get(key)) or not low <= ir[key] <= high
+                    for key, (low, high) in limits.items())):
+            problems.append(f"measure_position/project_save: {role} has no unity loopback impulse at the 10 ms pre-roll: {ir}")
+        if finite(ir.get("arrival_ms")):
+            arrivals.append(ir["arrival_ms"])
+    if len(arrivals) == 2 and abs(arrivals[0] - arrivals[1]) > 1:
+        problems.append("measure_position: L and R loopback arrivals differ by more than 1 ms")
+    if audio.get("impulse_error"):
+        problems.append(f"measure_position/project_save: {audio['impulse_error']}")
+    return problems
+
+
+def report_problems(label: str, report: dict | None, work: Path,
+                    audio_device: str | None = None) -> list[str]:
     """What is wrong with one self-test run: its report and its exports."""
     if report is None:
         return [f"{label}: the app wrote no self-test report"]
@@ -111,6 +231,10 @@ def report_problems(label: str, report: dict | None, work: Path) -> list[str]:
         if not any(path.name.endswith(wanted) for path in files):
             problems.append(f"{label}: the {folder} export has no {wanted} file")
         problems += [f"{label}: {path} is empty" for path in files if path.stat().st_size == 0]
+    if audio_device is not None:
+        problems += [f"{label}: {problem}" for problem in audio_problems(
+            report.get("facts", {}).get("audio"), audio_device
+        )]
     return problems
 
 
@@ -196,7 +320,8 @@ def rosetta() -> bool:
     return subprocess.run(["arch", "-x86_64", "/usr/bin/true"], capture_output=True).returncode == 0
 
 
-def self_test(app: Path, arch: str, work: Path, timeout: int) -> list[str]:
+def self_test(app: Path, arch: str, work: Path, timeout: int,
+              audio_device: str | None = None) -> list[str]:
     label = f"self-test ({arch})"
     report = work / f"self-test-{arch}.json"
     log = work / f"self-test-{arch}.log"
@@ -204,7 +329,10 @@ def self_test(app: Path, arch: str, work: Path, timeout: int) -> list[str]:
     for stale in (report, log):
         stale.unlink(missing_ok=True)
     shutil.rmtree(test_work, ignore_errors=True)
+    # Explicitly clear the variable for Rosetta (and mock-only invocations),
+    # even when the parent runner's environment happens to contain it.
     cmd = ["open", "-n", "-W", "--env", f"{SELF_TEST}={report}",
+           "--env", f"{SELF_TEST_AUDIO}={audio_device or ''}",
            "--stdout", str(log), "--stderr", str(log)]
     if arch == "x86_64":
         cmd += ["--arch", "x86_64"]
@@ -217,9 +345,26 @@ def self_test(app: Path, arch: str, work: Path, timeout: int) -> list[str]:
     if log.exists():
         print(log.read_text(errors="replace"))
     data = json.loads(report.read_text()) if report.exists() else None
+    if audio_device and data is not None:
+        audio = data.get("facts", {}).get("audio")
+        if isinstance(audio, dict) and audio.get("ok") is True:
+            try:
+                audio["impulses"] = read_audio_impulses(test_work)
+            except (OSError, ValueError, KeyError, TypeError, struct.error) as error:
+                audio["impulse_error"] = str(error)
+    problems = report_problems(label, data, test_work, audio_device)
+    if data is not None and audio_device:
+        data["check_problems"] = problems
+        if problems:
+            data["ok"] = False
+            data["error"] = "; ".join(problems)
+            audio = data.get("facts", {}).get("audio")
+            if isinstance(audio, dict):
+                audio["ok"] = False
+        report.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(data, indent=2, ensure_ascii=False))
     print("::endgroup::", flush=True)
-    return report_problems(label, data, test_work)
+    return problems
 
 
 def crash_reports(since: float, work: Path) -> None:
@@ -232,14 +377,14 @@ def crash_reports(since: float, work: Path) -> None:
             print("::endgroup::")
 
 
-def check(dmg: Path, work: Path, timeout: int) -> list[str]:
+def check(dmg: Path, work: Path, timeout: int, audio_device: str | None = None) -> list[str]:
     started = time.time()
     work.mkdir(parents=True, exist_ok=True)
     app = copy_app(dmg, work)
     problems, hardened = check_signature(app)
     problems += check_info_plist(app)
     problems += check_entitlements(app, hardened)
-    problems += self_test(app, "arm64", work, timeout)
+    problems += self_test(app, "arm64", work, timeout, audio_device)
     if rosetta():
         problems += self_test(app, "x86_64", work, timeout)
     else:
@@ -255,10 +400,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--work", type=Path, required=True,
                         help="folder for the copied app, the reports and the logs")
     parser.add_argument("--timeout", type=int, default=600, help="seconds per launch")
+    parser.add_argument("--audio-device", help="also play and record through this native loopback device")
     args = parser.parse_args(argv)
     if sys.platform != "darwin":
         raise SystemExit("macos_app_check.py runs on macOS")
-    problems = check(args.dmg.resolve(), args.work.resolve(), args.timeout)
+    problems = check(args.dmg.resolve(), args.work.resolve(), args.timeout, args.audio_device)
     for problem in problems:
         print(f"::error::{problem}")
     print("the app opens and calibrates" if not problems else f"{len(problems)} problem(s)")

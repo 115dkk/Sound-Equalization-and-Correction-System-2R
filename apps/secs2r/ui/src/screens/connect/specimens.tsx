@@ -13,6 +13,7 @@ import {
   levelDoneView,
   levelPassedView,
   levelHalfView,
+  levelMonitorFailedView,
   mdatView,
   micCalAttachView,
   micCalErrorView,
@@ -136,6 +137,8 @@ export const connectSpecimens: SpecimenDef[] = [
   frame("screen.connect.level_half", "Connect · level check half done, Rs playing in turn", levelHalfView),
   frame("screen.connect.level_done", "Connect · every channel has a level", levelDoneView),
   frame("screen.connect.level_passed", "Connect · every level in range: the header goes on to 측정하기", levelPassedView),
+  // Tall enough for the level check under the method and device cards.
+  { ...frame("screen.connect.monitor_failed", "Connect · the native level monitor stopped: its output could not open (#120)", levelMonitorFailedView), height: 1600 },
   frame("screen.connect.mock", "Connect · simulated room", mockView, { fileName: "샘플 7.1.4.secs", dirty: false }),
   frame("screen.connect.mdat", "Connect · mdat import only (step skipped)", mdatView),
   {
