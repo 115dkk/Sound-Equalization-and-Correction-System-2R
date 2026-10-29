@@ -165,6 +165,33 @@ describe("level monitor silence", () => {
     } finally { session.dispose(); await session.settled(); mock.dispose(); vi.restoreAllMocks(); vi.useRealTimers(); }
   });
 
+  it("keeps a failed monitor's error and drops what it was playing until the monitor starts again or is switched off", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    const session = createSession(mock);
+    try {
+      await session.start(); await session.settled(); await session.configure({ method: "native" }); await session.monitor(true);
+      mock.tick(); await session.settled();
+      expect(session.host.getSnapshot().meter).not.toBeNull();
+      session.host.set({ playing: "L", playingAll: true });
+      mock.failJobs("level_monitor", "device_unavailable", "CPAL: device disconnected", { device: "backend" });
+      mock.tick(); await session.settled();
+      expect(session.host.getSnapshot()).toMatchObject({
+        monitor: "offline", meter: null, playing: null, playingAll: false,
+        monitorError: { code: "device_unavailable", params: { device: "backend" }, detail: "CPAL: device disconnected" },
+      });
+      expect(session.errors.getSnapshot()).toBeNull();
+      await session.monitor(false);
+      expect(session.host.getSnapshot()).toMatchObject({ monitor: "off", monitorError: null });
+      await session.monitor(true);
+      mock.tick(); await session.settled();
+      expect(session.host.getSnapshot().monitorError).toMatchObject({ code: "device_unavailable" });
+      // Wanted all along, so only a start (a play's) runs it again; the start drops the error.
+      await session.monitor(true);
+      expect(session.host.getSnapshot()).toMatchObject({ monitor: "starting", monitorError: null });
+      expect(mock.calls.filter((call) => call.method === "level_monitor_start")).toHaveLength(3);
+    } finally { session.dispose(); await session.settled(); mock.dispose(); }
+  });
+
   it("cancels pending restarts when a project is replaced", async () => {
     vi.useFakeTimers();
     const mock = createMockService({ tickMs: 0 });

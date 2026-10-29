@@ -1,0 +1,9 @@
+# Official BlackHole 2ch installer, for disposable macOS CI runners only.
+# GitHub's v0.7.1 release has no assets; the maintainer serves the pkg here.
+# Cross-checked against Homebrew/homebrew-cask Casks/b/blackhole-2ch.rb.
+# GPL-3.0; never include this package or its driver in uploaded artifacts.
+[blackhole]
+version = "0.7.1"
+url = "https://existential.audio/downloads/BlackHole2ch-0.7.1.pkg"
+sha256 = "57b540f27a3e29c37e310e01bee0fdfab76733087e47f997ef9dccf851400dcf"
+format = "pkg"

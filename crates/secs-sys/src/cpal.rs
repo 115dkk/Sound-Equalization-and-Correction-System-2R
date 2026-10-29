@@ -5,9 +5,11 @@
 //! (ADR 0005); this module and its `cpal` dependency are not built there.
 //!
 //! ShareMode is ignored by CPAL, but retained as request/report metadata. The
-//! requested rate and channel count must be natively supported: no remapping or
-//! resampling. Device ids are names, scoped by host_api; duplicate names within
-//! one host are therefore inherently ambiguous in the shared Endpoint contract.
+//! The requested rate must be natively supported. Streams use the device's
+//! smallest supported channel count that can carry the request, map requested
+//! channels to the first device channels, and do not resample. Device ids are
+//! names, scoped by host_api; duplicate names within one host are therefore
+//! inherently ambiguous in the shared Endpoint contract.
 //!
 //! CPAL has no drain API. Completion waits two full final callback periods after
 //! the callback that consumes the last sample (one for that buffer, one extra).
@@ -114,30 +116,37 @@ fn pcm(format: SampleFormat) -> bool {
     )
 }
 
+fn choose_config(
+    supported: &[cpal::SupportedStreamConfigRange],
+    spec: StreamSpec,
+) -> Option<cpal::SupportedStreamConfig> {
+    supported
+        .iter()
+        .filter(|range| {
+            range.channels() >= spec.channels
+                && range.min_sample_rate() <= spec.sample_rate
+                && spec.sample_rate <= range.max_sample_rate()
+                && pcm(range.sample_format())
+        })
+        // Exact channel counts come first, followed by the narrowest wider
+        // transport. Prefer float only among otherwise equal choices.
+        .min_by_key(|range| (range.channels(), range.sample_format() != SampleFormat::F32))
+        .copied()
+        .map(|range| range.with_sample_rate(spec.sample_rate))
+}
+
 fn select_config(
     device: &cpal::Device,
     direction: Direction,
     spec: StreamSpec,
 ) -> Result<cpal::SupportedStreamConfig, AudioError> {
     validate(spec)?;
-    let mut supported = ranges(device, direction)?;
-    // Prefer float transport, avoiding needless integer quantization.
-    supported.sort_by_key(|r| r.sample_format() != SampleFormat::F32);
-    supported
-        .into_iter()
-        .find(|r| {
-            r.channels() == spec.channels
-                && r.min_sample_rate() <= spec.sample_rate
-                && spec.sample_rate <= r.max_sample_rate()
-                && pcm(r.sample_format())
-        })
-        .map(|r| r.with_sample_rate(spec.sample_rate))
-        .ok_or_else(|| {
-            AudioError::UnsupportedFormat(format!(
-                "native {:?} {} Hz / {} channels unavailable",
-                direction, spec.sample_rate, spec.channels
-            ))
-        })
+    choose_config(&ranges(device, direction)?, spec).ok_or_else(|| {
+        AudioError::UnsupportedFormat(format!(
+            "native {:?} {} Hz with at least {} channels unavailable",
+            direction, spec.sample_rate, spec.channels
+        ))
+    })
 }
 
 // All branches use CPAL/dasp's native equilibrium and numeric conversions.
@@ -247,16 +256,30 @@ impl AudioBackend for CpalBackend {
         mode: ShareMode,
     ) -> Result<ProbeResult, AudioError> {
         let device = find_device(endpoint)?;
-        let (supported, detail) = match select_config(&device, direction, spec) {
-            Ok(_) => (true, "native tuple; CPAL ignores ShareMode".into()),
-            Err(AudioError::UnsupportedFormat(detail)) => (false, detail),
-            Err(e) => return Err(e),
-        };
+        let (supported, native_sample_rate, native_channels, detail) =
+            match select_config(&device, direction, spec) {
+                Ok(config) => {
+                    let detail = if config.channels() > spec.channels {
+                        format!(
+                            "device has {} channels; using the first {}; CPAL ignores ShareMode",
+                            config.channels(),
+                            spec.channels
+                        )
+                    } else {
+                        "native tuple; CPAL ignores ShareMode".into()
+                    };
+                    (true, config.sample_rate(), config.channels(), detail)
+                }
+                Err(AudioError::UnsupportedFormat(detail)) => {
+                    (false, spec.sample_rate, spec.channels, detail)
+                }
+                Err(e) => return Err(e),
+            };
         Ok(ProbeResult {
             supported,
             mode,
-            native_sample_rate: spec.sample_rate,
-            native_channels: spec.channels,
+            native_sample_rate,
+            native_channels,
             detail,
         })
     }
@@ -292,7 +315,8 @@ impl AudioBackend for CpalBackend {
             &device,
             config.config(),
             tx,
-            state.clone()
+            state.clone(),
+            spec
         )?;
         Ok(Box::new(CpalInputSession {
             stream: Some(stream),
@@ -414,18 +438,37 @@ fn render<T: Sample + FromSample<f32>>(
     source: &[f32],
     state: &CallbackState,
     spec: StreamSpec,
+    device_channels: usize,
 ) {
     let now = state.now_ns();
     let previous = state.last_callback_ns.swap(now, Ordering::AcqRel);
-    let cursor = state.cursor.load(Ordering::Relaxed);
-    let count = dst.len().min(source.len().saturating_sub(cursor));
-    for (out, &sample) in dst[..count].iter_mut().zip(&source[cursor..cursor + count]) {
-        *out = T::from_sample(sample.clamp(-1.0, 1.0));
+    dst.fill(T::EQUILIBRIUM);
+
+    let source_channels = usize::from(spec.channels);
+    if source_channels == 0
+        || device_channels < source_channels
+        || !dst.len().is_multiple_of(device_channels)
+        || !source.len().is_multiple_of(source_channels)
+    {
+        state.failed.store(true, Ordering::Release);
+        return;
     }
-    dst[count..].fill(T::EQUILIBRIUM);
+
+    let cursor = state.cursor.load(Ordering::Relaxed);
+    let remaining_frames = source.len().saturating_sub(cursor) / source_channels;
+    let count_frames = (dst.len() / device_channels).min(remaining_frames);
+    for frame in 0..count_frames {
+        let source_start = cursor + frame * source_channels;
+        let device_start = frame * device_channels;
+        for channel in 0..source_channels {
+            dst[device_start + channel] =
+                T::from_sample(source[source_start + channel].clamp(-1.0, 1.0));
+        }
+    }
+    let count = count_frames * source_channels;
     if cursor < source.len() && cursor + count == source.len() {
         let nominal = Duration::from_secs_f64(
-            dst.len() as f64 / f64::from(spec.channels) / f64::from(spec.sample_rate),
+            (dst.len() / device_channels) as f64 / f64::from(spec.sample_rate),
         );
         let observed = if previous == 0 {
             0
@@ -451,10 +494,13 @@ where
     T: SizedSample + FromSample<f32>,
 {
     let errors = state.clone();
+    let device_channels = usize::from(config.channels);
     device
         .build_output_stream(
             config,
-            move |dst: &mut [T], _| render(dst, &source, &state, spec),
+            move |dst: &mut [T], _| {
+                render(dst, &source, &state, spec, device_channels);
+            },
             move |error| errors.stream_error(error),
             Some(STALL),
         )
@@ -542,30 +588,43 @@ fn capture<T: Sample>(
     source: &[T],
     tx: &mpsc::SyncSender<Packet>,
     state: &CallbackState,
-    channels: usize,
+    device_channels: usize,
+    kept_channels: usize,
 ) where
     f32: FromSample<T>,
 {
     state
         .last_callback_ns
         .store(state.now_ns(), Ordering::Release);
-    if channels == 0 || channels > PACKET_SAMPLES || !source.len().is_multiple_of(channels) {
+    if kept_channels == 0
+        || kept_channels > PACKET_SAMPLES
+        || device_channels < kept_channels
+        || !source.len().is_multiple_of(device_channels)
+    {
         state.failed.store(true, Ordering::Release);
         return;
     }
     // Drop whole frames on overflow: otherwise e.g. three-channel packets would
     // shift the channel positions in subsequent packets. Fixed Copy packets do
     // not allocate, destroy heap storage, or use blocking send in the callback.
-    let packet_samples = PACKET_SAMPLES / channels * channels;
-    for chunk in source.chunks(packet_samples) {
+    let packet_frames = PACKET_SAMPLES / kept_channels;
+    let source_samples_per_packet = packet_frames * device_channels;
+    for chunk in source.chunks(source_samples_per_packet) {
+        let frames = chunk.len() / device_channels;
         let mut packet = Packet {
             samples: [0.0; PACKET_SAMPLES],
-            len: chunk.len(),
+            len: frames * kept_channels,
             silent: true,
         };
-        for (dst, &sample) in packet.samples.iter_mut().zip(chunk) {
-            *dst = f32::from_sample(sample);
-            packet.silent &= *dst == 0.0;
+        for (frame, device_frame) in chunk.chunks_exact(device_channels).enumerate() {
+            let packet_start = frame * kept_channels;
+            for (dst, &sample) in packet.samples[packet_start..packet_start + kept_channels]
+                .iter_mut()
+                .zip(device_frame)
+            {
+                *dst = f32::from_sample(sample);
+                packet.silent &= *dst == 0.0;
+            }
         }
         match tx.try_send(packet) {
             Ok(()) => (),
@@ -585,17 +644,21 @@ fn build_input<T>(
     config: cpal::StreamConfig,
     tx: mpsc::SyncSender<Packet>,
     state: Arc<CallbackState>,
+    spec: StreamSpec,
 ) -> Result<cpal::Stream, AudioError>
 where
     T: SizedSample,
     f32: FromSample<T>,
 {
     let errors = state.clone();
-    let channels = usize::from(config.channels);
+    let device_channels = usize::from(config.channels);
+    let kept_channels = usize::from(spec.channels);
     device
         .build_input_stream(
             config,
-            move |src: &[T], _| capture(src, &tx, &state, channels),
+            move |src: &[T], _| {
+                capture(src, &tx, &state, device_channels, kept_channels);
+            },
             move |error| errors.stream_error(error),
             Some(STALL),
         )
@@ -692,37 +755,199 @@ impl InputSession for CpalInputSession {
 mod tests {
     use super::*;
 
+    fn config_range(
+        channels: u16,
+        min_sample_rate: u32,
+        max_sample_rate: u32,
+        sample_format: SampleFormat,
+    ) -> cpal::SupportedStreamConfigRange {
+        cpal::SupportedStreamConfigRange::new(
+            channels,
+            min_sample_rate,
+            max_sample_rate,
+            cpal::SupportedBufferSize::Unknown,
+            sample_format,
+        )
+    }
+
+    fn stream_spec(sample_rate: u32, channels: u16) -> StreamSpec {
+        StreamSpec {
+            sample_rate,
+            channels,
+        }
+    }
+
     #[test]
-    fn callback_output_zero_fills_and_measures_final_period() {
+    fn config_choice_prefers_exact_channels_before_wider_float() {
+        let supported = [
+            config_range(4, 44100, 96000, SampleFormat::F32),
+            config_range(2, 44100, 96000, SampleFormat::I16),
+        ];
+        let chosen = choose_config(&supported, stream_spec(48000, 2)).unwrap();
+        assert_eq!(chosen.channels(), 2);
+        assert_eq!(chosen.sample_format(), SampleFormat::I16);
+    }
+
+    #[test]
+    fn config_choice_uses_the_fewest_wider_channels() {
+        let supported = [
+            config_range(8, 44100, 96000, SampleFormat::F32),
+            config_range(4, 44100, 96000, SampleFormat::I16),
+        ];
+        let chosen = choose_config(&supported, stream_spec(48000, 2)).unwrap();
+        assert_eq!(chosen.channels(), 4);
+    }
+
+    #[test]
+    fn config_choice_rejects_narrow_channels_and_rates_outside_the_range() {
+        assert!(
+            choose_config(
+                &[config_range(1, 44100, 96000, SampleFormat::F32)],
+                stream_spec(48000, 2),
+            )
+            .is_none()
+        );
+        assert!(
+            choose_config(
+                &[config_range(2, 44100, 44100, SampleFormat::F32)],
+                stream_spec(48000, 2),
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn config_choice_prefers_f32_among_equal_channel_counts() {
+        let supported = [
+            config_range(2, 44100, 96000, SampleFormat::I16),
+            config_range(2, 44100, 96000, SampleFormat::F32),
+        ];
+        let chosen = choose_config(&supported, stream_spec(48000, 2)).unwrap();
+        assert_eq!(chosen.sample_format(), SampleFormat::F32);
+    }
+
+    #[test]
+    fn callback_output_maps_one_channel_to_two_and_completes() {
         let state = CallbackState::new();
-        let mut dst = [1.0; 8];
-        let spec = StreamSpec {
-            sample_rate: 1000,
-            channels: 2,
-        };
-        render(&mut dst, &[0.25, -0.25], &state, spec);
-        assert_eq!(dst, [0.25, -0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        let mut dst = [1.0; 6];
+        let spec = stream_spec(1000, 1);
+        render(&mut dst, &[0.25, -0.25], &state, spec, 2);
+        assert_eq!(dst, [0.25, 0.0, -0.25, 0.0, 0.0, 0.0]);
         assert_eq!(state.cursor.load(Ordering::Acquire), 2);
-        assert_eq!(state.final_period_ns.load(Ordering::Acquire), 4_000_000);
+        assert_eq!(state.final_period_ns.load(Ordering::Acquire), 3_000_000);
         let final_ns = state.final_ns.load(Ordering::Acquire);
-        render(&mut dst, &[0.25, -0.25], &state, spec);
-        assert_eq!(dst, [0.0; 8]);
+        assert!(final_ns > 0);
+        render(&mut dst, &[0.25, -0.25], &state, spec, 2);
+        assert_eq!(dst, [0.0; 6]);
         assert_eq!(state.final_ns.load(Ordering::Acquire), final_ns);
+    }
+
+    #[test]
+    fn callback_output_maps_two_channels_to_eight_and_completes() {
+        let state = CallbackState::new();
+        let mut dst = [1.0; 16];
+        render(
+            &mut dst,
+            &[0.25, -0.25, 0.5, -0.5],
+            &state,
+            stream_spec(1000, 2),
+            8,
+        );
+        assert_eq!(
+            dst,
+            [
+                0.25, -0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.5, -0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+            ]
+        );
+        assert_eq!(state.cursor.load(Ordering::Acquire), 4);
+        assert_eq!(state.final_period_ns.load(Ordering::Acquire), 2_000_000);
+        assert!(state.final_ns.load(Ordering::Acquire) > 0);
+    }
+
+    #[test]
+    fn callback_output_keeps_three_channels_and_completes() {
+        let state = CallbackState::new();
+        let mut dst = [1.0; 9];
+        render(
+            &mut dst,
+            &[0.25, -0.25, 0.5],
+            &state,
+            stream_spec(1000, 3),
+            3,
+        );
+        assert_eq!(dst, [0.25, -0.25, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(state.cursor.load(Ordering::Acquire), 3);
+        assert_eq!(state.final_period_ns.load(Ordering::Acquire), 3_000_000);
+        assert!(state.final_ns.load(Ordering::Acquire) > 0);
     }
 
     #[test]
     fn callback_capture_is_bounded_and_reports_overflow() {
         let state = CallbackState::new();
         let (tx, rx) = mpsc::sync_channel(1);
-        capture(&[0_i16; PACKET_SAMPLES + 7], &tx, &state, 1);
+        capture(&[0_i16; PACKET_SAMPLES + 7], &tx, &state, 1, 1);
         let packet = rx.try_recv().unwrap();
         assert_eq!(packet.len, PACKET_SAMPLES);
         assert!(packet.silent);
         assert!(state.discontinuity.load(Ordering::Acquire));
         assert!(rx.try_recv().is_err());
         drop(rx);
-        capture(&[1_i16], &tx, &state, 1);
+        capture(&[1_i16], &tx, &state, 1, 1);
         assert!(state.failed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn callback_capture_keeps_the_first_channel_of_stereo_frames() {
+        let state = CallbackState::new();
+        let (tx, rx) = mpsc::sync_channel(1);
+        capture(&[0.25_f32, 0.75, -0.5, 1.0], &tx, &state, 2, 1);
+        let packet = rx.recv().unwrap();
+        assert_eq!(packet.len, 2);
+        assert_eq!(&packet.samples[..2], &[0.25, -0.5]);
+    }
+
+    #[test]
+    fn callback_capture_accepts_a_device_frame_wider_than_packet_storage() {
+        let state = CallbackState::new();
+        let (tx, rx) = mpsc::sync_channel(1);
+        let mut source = vec![0.0_f32; PACKET_SAMPLES + 1];
+        source[0] = 0.25;
+        capture(&source, &tx, &state, PACKET_SAMPLES + 1, 1);
+        let packet = rx.recv().unwrap();
+        assert_eq!(packet.len, 1);
+        assert_eq!(packet.samples[0], 0.25);
+        assert!(!state.failed.load(Ordering::Acquire));
+    }
+
+    #[test]
+    fn callback_capture_maps_eight_to_three_across_packet_boundaries() {
+        let state = CallbackState::new();
+        let (tx, rx) = mpsc::sync_channel(2);
+        let mut source = Vec::new();
+        for frame in 0..343 {
+            source.extend([
+                frame as f32,
+                frame as f32 + 0.25,
+                frame as f32 + 0.5,
+                -1.0,
+                -2.0,
+                -3.0,
+                -4.0,
+                -5.0,
+            ]);
+        }
+        capture(&source, &tx, &state, 8, 3);
+        let first = rx.recv().unwrap();
+        let second = rx.recv().unwrap();
+        assert_eq!(first.len, 1023);
+        assert_eq!(&first.samples[..3], &[0.0, 0.25, 0.5]);
+        assert_eq!(&first.samples[1020..1023], &[340.0, 340.25, 340.5]);
+        assert_eq!(second.len, 6);
+        assert_eq!(
+            &second.samples[..6],
+            &[341.0, 341.25, 341.5, 342.0, 342.25, 342.5]
+        );
+        assert!(!state.discontinuity.load(Ordering::Acquire));
     }
 
     #[test]
@@ -737,23 +962,26 @@ mod tests {
                 sample_rate: 48000,
                 channels: 1,
             },
+            1,
         );
         assert_eq!(dst, [0, 32768, 49152, 32768]);
         let (tx, rx) = mpsc::sync_channel(1);
-        capture(&dst, &tx, &state, 1);
+        capture(&dst, &tx, &state, 1, 1);
         assert_eq!(&rx.recv().unwrap().samples[..4], &[-1.0, 0.0, 0.5, 0.0]);
     }
 
     #[test]
-    fn callback_overflow_preserves_three_channel_alignment() {
+    fn callback_overflow_drops_whole_mapped_frames() {
         let state = CallbackState::new();
         let (tx, rx) = mpsc::sync_channel(1);
-        let samples: Vec<f32> = (0..2052).map(|i| (i % 3) as f32 / 4.0).collect();
-        capture(&samples, &tx, &state, 3);
+        let samples: Vec<f32> = (0..343)
+            .flat_map(|frame| [0.0, 0.25, 0.5, frame as f32, -1.0, -2.0, -3.0, -4.0])
+            .collect();
+        capture(&samples, &tx, &state, 8, 3);
         let packet = rx.recv().unwrap();
         assert_eq!(packet.len, 1023);
         assert!(state.discontinuity.load(Ordering::Acquire));
-        capture(&samples[..6], &tx, &state, 3);
+        capture(&samples[..16], &tx, &state, 8, 3);
         assert_eq!(
             &rx.recv().unwrap().samples[..6],
             &[0.0, 0.25, 0.5, 0.0, 0.25, 0.5]
@@ -777,8 +1005,8 @@ mod tests {
             started: true,
             _not_send: PhantomData,
         };
-        capture(&[0.0_f32; 6], &tx, &state, 2);
-        capture(&[0.25_f32, 0.5], &tx, &state, 2);
+        capture(&[0.0_f32; 6], &tx, &state, 2, 2);
+        capture(&[0.25_f32, 0.5], &tx, &state, 2, 2);
         state.discontinuity.store(true, Ordering::Release);
         let cancel = CancelToken::new();
         let mut first = [1.0; 4];

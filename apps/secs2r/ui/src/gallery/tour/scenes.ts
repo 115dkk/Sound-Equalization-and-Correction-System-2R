@@ -343,6 +343,17 @@ export const TOUR_SCENES: TourScene[] = [
     ops: choosePath("native"),
   },
   {
+    id: "connect.monitor-failed",
+    step: "connect",
+    title: { ko: "레벨 모니터 실패", en: "Level monitor failed" },
+    note: { ko: "L을 재생하려다 출력을 열지 못해 모니터가 멈췄습니다.", en: "The monitor stopped when L's output could not open." },
+    setup: async (mock) => {
+      await devices(mock);
+      mock.failLevelPlay("measurement_input", "format not supported: native Output 48000 Hz / 16 channels unavailable", { field: "level" });
+    },
+    ops: [...choosePath("native"), reveal(ui("connect.level")), click(ui("connect.level.play.L")), tick(2)],
+  },
+  {
     id: "connect.meter",
     step: "connect",
     title: { ko: "떠 있는 마이크 미터", en: "Floating mic meter" },
