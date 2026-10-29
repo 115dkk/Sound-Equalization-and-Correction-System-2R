@@ -1,14 +1,14 @@
 // What the correction achieved, first (ARCHITECTURE §7): the verdict card
 // (is it good, is it current) and the per-channel scorecard whose rows pick
 // the channel the graph shows.
-import { useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { errorText } from "../../app/jobs/jobText";
 import { useNumber, useT } from "../../i18n/react";
-import type { ChannelResultLine } from "../../ipc/bindings/ChannelResultLine";
 import { Button, Card, DataTable, ErrorNotice, Spinner, StatusPill, type Column } from "../../ui";
 import { roleCode } from "../../ui/maps/geometry";
 import { Stat } from "./controls";
 import { availableTabs } from "./ResultGraph";
+import { scorecardModel, type ChangeValues, type LatePositions, type ScoreRow } from "./scorecard";
 import { FAILED_TEXT, groupOf, modeName, noteLines } from "./text";
 import type { CalibrateActions, CalibrateView, StaleReason } from "./types";
 
@@ -225,43 +225,139 @@ export function Verdict({ view, actions, blocked, onSampleRateSettings }: { view
   );
 }
 
-export function Scorecard({ view, actions }: { view: CalibrateView; actions: CalibrateActions }) {
-  const t = useT();
-  const number = useNumber();
-  // The worst channels first, on request; the configuration order otherwise (it matches the channel list).
-  const [worstFirst, setWorstFirst] = useState(false);
-  const result = view.results.calibration;
-  const tabs = availableTabs(view);
-  const tab = tabs.includes(view.tab) ? view.tab : "spl";
-  const rows = worstFirst ? [...view.lines.channels].sort((a, b) => a.within_1db_pct[1] - b.within_1db_pct[1]) : view.lines.channels;
-  const channel = view.channel ?? view.lines.channels[0]?.role ?? null;
-  const head = (label: string, band: string) => (
+/** A column head: the measure, and its band on a second, smaller line. */
+function Head({ label, band }: { label: string; band: string }) {
+  return (
     <span className="calibrate-th">
       <span>{label}</span>
       <span className="calibrate-th__band">{band}</span>
     </span>
   );
-  const columns: Column<ChannelResultLine>[] = [
-    { key: "channel", header: t("calibrate.score.channel"), cell: (r) => <strong className="calibrate-code">{roleCode(r.role)}</strong>, width: "3.5rem" },
-    {
-      key: "within",
-      header: head(t("calibrate.score.within"), t("calibrate.verdict.within.band")),
+}
+
+/**
+ * One scorecard figure: before → after, then → the MIMO value when the
+ * screen shows one. The MIMO value is underlined in the colour of the
+ * graph's MIMO curve, and the scorecard's key names it. The screen reader
+ * hears "보정 전 …, 보정 후 …, MIMO 후 …" instead of the arrows.
+ */
+function ScoreChange({ values, digits = 0 }: { values: ChangeValues; digits?: number }) {
+  const t = useT();
+  const number = useNumber();
+  const before = number(values.before, digits);
+  const after = number(values.after, digits);
+  const mimo = values.mimo === null ? null : number(values.mimo, digits);
+  return (
+    <>
+      <span className="visually-hidden">{mimo === null ? t("calibrate.change.aria", { before, after }) : t("calibrate.change.aria.mimo", { before, after, mimo })}</span>
+      <span className="calibrate-score-change" aria-hidden="true">
+        <span>{t("calibrate.score.change", { before, after })}</span>
+        {mimo !== null && (
+          <span className="calibrate-score-change__mimo">
+            → <span className="calibrate-mimo">{mimo}</span>
+          </span>
+        )}
+      </span>
+    </>
+  );
+}
+
+type PositionRow = LatePositions["rows"][number];
+
+/**
+ * The late bass at every measured position, collapsed at the scorecard's
+ * end: does the ringing go down at the other seats too. Columns are the
+ * positions in ascending order; the main position, whose figures the
+ * scorecard shows, is marked as the reference.
+ */
+function LateByPosition({ table, main, defaultOpen, onOpen }: { table: LatePositions; main: number | null; defaultOpen: boolean; onOpen: () => void }) {
+  const t = useT();
+  const details = useRef<HTMLDetailsElement>(null);
+  // Opened from the start (gallery, tests): the way a click opens it, once the graph beside the card has
+  // its height (it decides the card's), so the layout is the one a user gets. Only on mount.
+  useEffect(() => {
+    if (!defaultOpen) return;
+    const frame = requestAnimationFrame(() => {
+      if (!details.current || details.current.open) return;
+      onOpen();
+      details.current.open = true;
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  const columns: Column<PositionRow>[] = [
+    { key: "channel", header: t("calibrate.score.channel"), cell: (r) => <strong className="calibrate-code">{roleCode(r.role)}</strong>, width: "3rem" },
+    ...table.positions.map((position, i): Column<PositionRow> => ({
+      key: `position.${position}`,
+      // The reference mark is read, not a band: on its own line at the table's size.
+      header:
+        position === main ? (
+          <span className="calibrate-th">
+            <span>{t("calibrate.score.position", { n: position })}</span>
+            <span className="calibrate-th__mark">{t("calibrate.score.position.main")}</span>
+          </span>
+        ) : (
+          t("calibrate.score.position", { n: position })
+        ),
       numeric: true,
-      cell: (r) => t("calibrate.score.change", { before: number(r.within_1db_pct[0]), after: number(r.within_1db_pct[1]) }),
-    },
-    {
-      key: "gd",
-      header: head(t("calibrate.score.gd"), t("calibrate.verdict.gd.band")),
-      numeric: true,
-      cell: (r) => t("calibrate.score.change", { before: number(r.gd_spread_ms[0], 1), after: number(r.gd_spread_ms[1], 1) }),
-    },
+      cell: (r) => {
+        const values = r.cells[i];
+        return values ? <ScoreChange values={values} digits={1} /> : null;
+      },
+    })),
   ];
+  return (
+    <details ref={details} className="ui-details calibrate-positions" data-ui="calibrate.scorecard.positions">
+      {/* A click opens it after this handler: the scorecard keeps its table's height first. */}
+      <summary onClick={() => !details.current?.open && onOpen()}>{t("calibrate.score.positions")}</summary>
+      <DataTable
+        id="calibrate.scorecard.positions.table"
+        caption={t("calibrate.score.positions.caption")}
+        columns={columns}
+        groups={[{ id: "roles", label: "", rows: table.rows }]}
+        rowKey={(r) => r.role}
+      />
+    </details>
+  );
+}
+
+export function Scorecard({ view, actions, positionsOpen = false }: { view: CalibrateView; actions: CalibrateActions; positionsOpen?: boolean | undefined }) {
+  const t = useT();
+  // The worst channels first, on request; the configuration order otherwise (it matches the channel list).
+  const [worstFirst, setWorstFirst] = useState(false);
+  const main = useRef<HTMLDivElement>(null);
+  const result = view.results.calibration;
+  const model = scorecardModel(view.results, view.lines.channels);
+  const tabs = availableTabs(view);
+  const tab = tabs.includes(view.tab) ? view.tab : "spl";
+  // By the share after correction, as before MIMO existed: MIMO is the comparison, not the ranking.
+  const rows = worstFirst ? [...model.rows].sort((a, b) => a.within.after - b.within.after) : model.rows;
+  const channel = view.channel ?? view.lines.channels[0]?.role ?? null;
+  const columns: Column<ScoreRow>[] = [
+    { key: "channel", header: t("calibrate.score.channel"), cell: (r) => <strong className="calibrate-code">{roleCode(r.role)}</strong>, width: "3rem" },
+    { key: "within", header: <Head label={t("calibrate.score.within")} band={t("calibrate.verdict.within.band")} />, numeric: true, cell: (r) => <ScoreChange values={r.within} /> },
+    { key: "gd", header: <Head label={t("calibrate.score.gd")} band={t("calibrate.verdict.gd.band")} />, numeric: true, cell: (r) => <ScoreChange values={r.gd} digits={1} /> },
+  ];
+  if (model.late) {
+    columns.push({
+      key: "late",
+      header: <Head label={t("calibrate.score.late")} band={t("calibrate.score.late.band")} />,
+      numeric: true,
+      cell: (r) => (r.late ? <ScoreChange values={r.late} digits={1} /> : null),
+    });
+  }
+  // The positions table can show MIMO values only for roles the scorecard shows them for, but the key covers both.
+  const mimo = model.mimo || !!model.positions?.mimo;
+  // Opening the positions lets the card grow below the graph; the channel table keeps the height it has now, so the summary stays under the pointer.
+  const keepMainHeight = () => {
+    const element = main.current;
+    if (element) element.style.setProperty("--calibrate-score-main-h", `${element.getBoundingClientRect().height}px`);
+  };
   return (
     <Card
       title={t("calibrate.score.title")}
       dense
       stale={!!result?.stale}
-      className="calibrate-scorecard"
+      className={["calibrate-scorecard", model.late && "calibrate-scorecard--late"].filter(Boolean).join(" ")}
       data-ui="calibrate.scorecard.card"
       actions={
         <Button
@@ -276,15 +372,29 @@ export function Scorecard({ view, actions }: { view: CalibrateView; actions: Cal
         </Button>
       }
     >
-      <DataTable
-        id="calibrate.scorecard"
-        caption={t("calibrate.score.caption")}
-        columns={columns}
-        groups={[{ id: "channels", label: "", rows }]}
-        rowKey={(r) => r.role}
-        selectedKey={tab === "ba" ? null : channel}
-        {...(tab === "ba" ? {} : { onSelect: (r: ChannelResultLine) => actions.selectChannel(r.role, tab === "xo" ? groupOf(view.config, r.role) : null) })}
-      />
+      <div ref={main} className="calibrate-scorecard__main">
+        <DataTable
+          id="calibrate.scorecard"
+          caption={t(model.mimo ? "calibrate.score.caption.mimo" : "calibrate.score.caption")}
+          columns={columns}
+          groups={[{ id: "channels", label: "", rows }]}
+          rowKey={(r) => r.role}
+          selectedKey={tab === "ba" ? null : channel}
+          {...(tab === "ba" ? {} : { onSelect: (r: ScoreRow) => actions.selectChannel(r.role, tab === "xo" ? groupOf(view.config, r.role) : null) })}
+        />
+      </div>
+      {(mimo || model.late) && (
+        <div className="calibrate-score-key">
+          {mimo && (
+            <p data-ui="calibrate.scorecard.key">
+              {t("calibrate.legend.before")} <span aria-hidden="true">→</span> {t("calibrate.legend.after")} <span aria-hidden="true">→</span>{" "}
+              <span className="calibrate-mimo">{t("calibrate.score.mimo")}</span>
+            </p>
+          )}
+          {model.late && <p data-ui="calibrate.scorecard.late">{t("calibrate.score.late.note")}</p>}
+        </div>
+      )}
+      {model.positions && <LateByPosition table={model.positions} main={model.mainPosition} defaultOpen={positionsOpen} onOpen={keepMainHeight} />}
     </Card>
   );
 }

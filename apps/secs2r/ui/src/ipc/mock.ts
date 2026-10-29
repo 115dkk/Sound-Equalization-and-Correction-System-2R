@@ -586,8 +586,8 @@ export function createMockService(options: MockOptions = {}): MockService {
           summary.latency_ms = spec.max_latency_ms;
           summary.verdict.added_delay_ms = spec.max_latency_ms;
           summary.notes = [{ code: "rc_limit", params: { hz: String(captured.rc_hi ?? 310), auto: String(captured.rc_hi === null), schroeder_hz: "310" } }];
-          summary.scorecard = roles.map((role, i) => ({ ...clone(fx.scorecard[i % fx.scorecard.length]!), role }));
-          summary.late_energy = [];
+          summary.scorecard = roles.map((role) => ({ ...clone(fx.scorecard.find((score) => score.role === role) ?? fx.scorecard[0]!), role }));
+          summary.late_energy = fx.lateEnergy(roles, needProject().positions);
           summary.main_roles = roles;
           summary.sub_roles = config.speakers.filter((s) => s.role.startsWith("SW")).map((s) => s.role);
           if (!req.params.subs_only) {
@@ -620,7 +620,11 @@ export function createMockService(options: MockOptions = {}): MockService {
           };
           results = { ...results, mimo: { ...clone(fx.mimoSummary), compute, fsiso: settings.fsiso, kind: settings.mimo_fir ? "fir" : "iir",
             support_count: supportCount, fir_taps_total: settings.mimo_fir ? 3 * supportCount : 0, input_count: supports > 0 ? inputs : 0,
-            scorecard: [], late_energy: [] } };
+            scorecard: results.calibration?.scorecard.map((score) => ({ role: score.role, after_mimo: supports > 0
+              ? { ...score.after, in1_20: fx.scoreFigures(score.role).within[2], gd_20: fx.scoreFigures(score.role).gd[2] }
+              : { ...score.after } })) ?? [],
+            late_energy: results.calibration?.late_energy.map(({ role, position, after_db }) => ({ role, position,
+              after_mimo_db: supports > 0 ? fx.lateAt(role, position)[2] : after_db })) ?? [] } };
           return { kind: "mimo" };
         }) };
       case "export": {
