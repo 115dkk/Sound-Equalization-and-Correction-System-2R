@@ -9,7 +9,7 @@ export type Patch<T> = Partial<T> | ((latest: T) => Partial<T>);
 
 export type WriterDeps<T> = {
   /** The store snapshot the service last answered; null before it has loaded. */
-  latest: () => T | null;
+  latest: () => T | null | Promise<T | null>;
   /** Sends `next`; resolves with the service's answer once `latest` shows it. */
   write: (next: T) => Promise<T>;
 };
@@ -26,7 +26,7 @@ export function createWriter<T>(deps: WriterDeps<T>): Writer<T> {
   return {
     edit(patch) {
       const done = queue.then(async () => {
-        const latest = deps.latest();
+        const latest = await deps.latest();
         if (latest === null) return false;
         await deps.write({ ...latest, ...(typeof patch === "function" ? patch(latest) : patch) });
         return true;

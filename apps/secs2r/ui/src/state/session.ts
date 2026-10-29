@@ -23,6 +23,7 @@ import type { AppSettings } from "../ipc/bindings/AppSettings";
 import type { DspFields } from "../ipc/bindings/DspFields";
 import type { LayoutSetParams } from "../ipc/bindings/LayoutSetParams";
 import { wrongOutput } from "../screens/tutorial/questHost";
+import { coalesceExternalChanges, externalRefresh } from "./externalChanges";
 
 /** A DSP edit: a preset to select, or fields over the latest ones (`preset: null`). */
 type DspEdit = DspFields & { preset: string | null };
@@ -213,7 +214,14 @@ export function createSession(ipc: Ipc) {
   const writers = {
     /** app_settings_set replaces the whole object, which the compute choice, display settings and recent projects share. */
     app: writer<AppSettings>({
-      latest: stores.appSettings.getSnapshot,
+      latest: async () => {
+        if (!stores.appSettings.getSnapshot()) return null;
+        // External clients can save between notifications. Read inside the
+        // ordered writer, so queued UI edits also use the current settings.
+        const latest = await call({ method: "app_settings_get" });
+        stores.appSettings.set(latest);
+        return latest;
+      },
       write: async (settings) => {
         const accepted = await call({ method: "app_settings_set", params: { settings } });
         stores.appSettings.set(accepted);
@@ -418,8 +426,35 @@ export function createSession(ipc: Ipc) {
       for (const rule of effects.rules) rule.beforeReload?.(ctx);
       await reload(effects.reload);
       if (job.epoch !== jobs.epoch) return;
-      for (const rule of effects.rules) if (rule.apply) await rule.apply(ctx);
+      // External jobs refresh state, but do not repeat the UI's chained writes.
+      if (request) for (const rule of effects.rules) if (rule.apply) await rule.apply(ctx);
     });
+  }
+
+  let externalBatch: ReturnType<typeof coalesceExternalChanges> | null = null;
+  let offExternal: (() => void) | null = null;
+  let externalPoll: ReturnType<typeof setTimeout> | undefined;
+  const hasExternalJobs = () => jobs.getSnapshot().jobs.some((job) => job.epoch === jobs.epoch && !job.request && isActiveJob(job.status) && !["status_watch", "level_monitor"].includes(job.kind));
+  async function refreshExternal(methods: readonly string[]) {
+    clearTimeout(externalPoll);
+    const plans = methods.map(externalRefresh);
+    if (plans.some((plan) => plan.replaceProject)) {
+      jobs.replaceProject(); curveVersion++; curveState.set(null); tutorialReady.set(false);
+      for (const store of Object.values(stores)) if ("invalidate" in store) store.invalidate();
+      stores.measurementSettings.set(null); stores.micCalibration.set(null);
+      host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, mdatScope: "all", channel: null, xoGroup: null, xoRecommendation: null, failure: null, opened: host.getSnapshot().opened + 1 });
+    }
+    const keys = [...new Set(plans.flatMap((plan) => plan.resources))];
+    await Promise.all([
+      reload(keys),
+      call({ method: "measure_config_get" }).catch(() => {}),
+      jobs.readSnapshots({ external: true }).catch(report),
+    ]);
+    // The shell sends external mutations, but external jobs have no UI
+    // Channel. Poll only while such jobs run, to recover their final results.
+    if (externalBatch && hasExternalJobs()) {
+      externalPoll = setTimeout(() => externalBatch?.push("jobs"), 1000);
+    }
   }
 
   let off: (() => void) | null = null;
@@ -430,6 +465,11 @@ export function createSession(ipc: Ipc) {
     if (startPromise) return startPromise;
     off = ipc.events.subscribe(event);
     startPromise = track(async () => {
+      if (ipc.externalChanges) {
+        externalBatch = coalesceExternalChanges((methods) => track(() => refreshExternal(methods)), report);
+        try { offExternal = await ipc.externalChanges.subscribe((method) => externalBatch?.push(method)); }
+        catch (error) { report(error); }
+      }
       await Promise.all([stores.bootstrap.load(), stores.appSettings.load(), stores.computeStatus.load(), stores.methods.load(),
         jobs.readSnapshots().catch(report),
       ]);
@@ -442,6 +482,7 @@ export function createSession(ipc: Ipc) {
         await call({ method: "measure_config_get" }).catch(() => {});
       }
       ready.set(true);
+      if (hasExternalJobs()) externalBatch?.push("jobs");
       run(() => call({ method: "status_watch_start" }));
     });
     return startPromise;
@@ -455,6 +496,9 @@ export function createSession(ipc: Ipc) {
       await Promise.resolve(startPromise).catch(() => {});
       if (ticket !== lifecycle) return;
       off?.(); off = null;
+      offExternal?.(); offExternal = null;
+      externalBatch?.dispose(); externalBatch = null;
+      clearTimeout(externalPoll); externalPoll = undefined;
       await monitor(false).catch(() => {});
       await ipc.request({ method: "status_watch_stop" }).catch(() => {});
       startPromise = null;

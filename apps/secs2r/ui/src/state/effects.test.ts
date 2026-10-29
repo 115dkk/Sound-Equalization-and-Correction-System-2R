@@ -26,7 +26,7 @@ const reloadCases: [ResourceKey, Request, Request["method"]][] = [
   ["subWarnings", { method: "config_renumber" }, "sub_warnings"],
   ["rew", { method: "rew_launch" }, "rew_info"],
   ["folder", { method: "export_folder_set", params: { folder: "/exports" } }, "export_folder_get"],
-  ["computeStatus", { method: "app_settings_set", params: { settings: { language: "ko", theme: "system", icon: "expert", skin: "default", compute: "cpu", recent_projects: [], last_window_size: null } } }, "compute_status"],
+  ["computeStatus", { method: "app_settings_set", params: { settings: { language: "ko", theme: "system", icon: "expert", skin: "default", compute: "cpu", local_api: { enabled: false, port: 4712 }, recent_projects: [], last_window_size: null } } }, "compute_status"],
   ["appSettings", { method: "project_save", params: { path: "/room.secs" } }, "app_settings_get"],
 ];
 it.each(reloadCases)("reload.%s refreshes its public store", async (key, request, getter) => {

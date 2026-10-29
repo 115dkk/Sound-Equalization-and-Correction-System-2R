@@ -168,6 +168,14 @@ fn null_host_reports_not_implemented() {
     )
     .unwrap_err();
     assert_eq!(error.code, ErrorCode::NotImplemented);
+    let error = call(&Service::new(Deps::default()), Request::LocalApiStatus).unwrap_err();
+    assert_eq!(error.code, ErrorCode::NotImplemented);
+    let error = call(
+        &Service::new(Deps::default()),
+        Request::LocalApiTokenRegenerate,
+    )
+    .unwrap_err();
+    assert_eq!(error.code, ErrorCode::NotImplemented);
 }
 
 #[test]

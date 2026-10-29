@@ -1,12 +1,16 @@
 [package]
 name = "secs-rew"
 description = "REW API backend (real REW over HTTP and a fake) behind one measurement seam."
-version.workspace = true
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-publish.workspace = true
+homepage = "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R"
+readme = "README.md"
+keywords = ["audio", "rew", "measurement", "api"]
+categories = ["multimedia::audio", "api-bindings"]
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**"]
 
 [lints]
 workspace = true

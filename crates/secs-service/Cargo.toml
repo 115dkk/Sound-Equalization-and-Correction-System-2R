@@ -1,29 +1,33 @@
 [package]
 name = "secs-service"
 description = "The application service: project session, requests, jobs, stage cache and staleness, export assembly."
-version.workspace = true
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-publish.workspace = true
+homepage = "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R"
+readme = "README.md"
+keywords = ["audio", "equalization", "correction", "service"]
+categories = ["multimedia::audio"]
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**", "data/**", "UPSTREAM.toml"]
 
 [lints]
 workspace = true
 
 [dependencies]
 chrono.workspace = true
-secs-camilla = { path = "../secs-camilla" }
-secs-compute = { path = "../secs-compute" }
-secs-engine = { path = "../secs-engine" }
-secs-export = { path = "../secs-export" }
+secs-camilla.workspace = true
+secs-compute.workspace = true
+secs-engine.workspace = true
+secs-export.workspace = true
 secs-filters.workspace = true
 secs-graph.workspace = true
-secs-mdat = { path = "../secs-mdat" }
-secs-project = { path = "../secs-project" }
-secs-audio = { path = "../secs-audio" }
+secs-mdat.workspace = true
+secs-project.workspace = true
+secs-audio.workspace = true
 getrandom = "0.3"
-secs-rew = { path = "../secs-rew" }
+secs-rew.workspace = true
 secs-dsp.workspace = true
 secs-dirac.workspace = true
 secs-types.workspace = true
@@ -35,6 +39,6 @@ toml.workspace = true
 
 [dev-dependencies]
 secs-dirac = { workspace = true, features = ["test-support"] }
-secs-engine = { path = "../secs-engine", features = ["test-support"] }
-secs-jos = { path = "../secs-jos" }
-secs-oracle = { path = "../secs-oracle" }
+secs-engine-testkit.workspace = true
+secs-jos.workspace = true
+secs-oracle.workspace = true

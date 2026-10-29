@@ -1,18 +1,22 @@
 [package]
 name = "secs-audio"
 description = "Native sweep measurement: sweep design, play-and-record sessions, deconvolution, level check."
-version.workspace = true
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-publish.workspace = true
+homepage = "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R"
+readme = "README.md"
+keywords = ["audio", "measurement", "sweep", "deconvolution"]
+categories = ["multimedia::audio", "science"]
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**"]
 
 [lints]
 workspace = true
 
 [dependencies]
-secs-dsp = { path = "../secs-dsp" }
+secs-dsp.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 

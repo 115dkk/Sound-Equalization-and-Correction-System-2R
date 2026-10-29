@@ -18,7 +18,7 @@ pub fn write_with(
     name: &str,
     adjust: impl FnOnce(&mut CalibrationSettings),
 ) -> (PathBuf, CalibrationSettings) {
-    let case = secs_engine::test_support::replay_case(name);
+    let case = secs_engine_testkit::replay_case(name);
     let mut settings: CalibrationSettings = serde_json::from_value(case.settings).unwrap();
     adjust(&mut settings);
     let roles: Vec<_> = case

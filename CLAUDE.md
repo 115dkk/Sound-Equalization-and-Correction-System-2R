@@ -14,6 +14,7 @@
 - 병렬은 map만 쓰고 부동소수점 누적은 원래 순서로 합니다. faer는 `std` 기능 없이, `Par::Seq`로 씁니다(ADR 0007).
 - 화면은 make-interfaces-feel-better 규칙을 따릅니다. 문장은 합니다체, 상태와 라벨은 명사구, 효과를 말하는 라벨, 화면마다 채운 기본 동작 하나, UI 글자 14px 하한. 화면의 새 문구는 키를 정하고 `ko`와 `en` 카탈로그를 함께 고칩니다.
 - 다른 저장소에서 코드를 가져오면 파일 머리에 출처와 라이선스를 적고 `docs/THIRD_PARTY.md`에 더합니다.
+- crates.io 크레이트 16개(ADR 0016)는 자기 디렉터리 밖의 파일을 읽지 않습니다. `crates/secs-service/UPSTREAM.toml`, `crates/secs-mdat/data/template_1.mdat`, 크레이트마다의 `LICENSE`는 원본의 사본이므로, 업스트림을 병합해 원본이 바뀌면 사본도 함께 고쳐야 합니다(`secs-policy` publishing 게이트가 확인합니다). 라이브러리 판은 릴리스 게이트가 올리므로 손으로 고치지 않습니다.
 
 ## 작업 분배
 
@@ -27,7 +28,7 @@
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo clippy --workspace --exclude secs2r --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
-cargo test --workspace --locked
+cargo test --workspace --all-targets --locked
 cargo deny --all-features check
 python3 -m unittest discover -s .github/scripts -p "test_*.py"
 python3 .github/scripts/upstream.py check-tree
@@ -36,6 +37,8 @@ python3 .github/scripts/check_feature_tests.py
 ```
 
 화면 의존성은 Node 24(npm 11)로 설치합니다. npm 10은 이 의존성 묶음에서 피어 해석이 실패합니다.
+
+crates.io 크레이트의 매니페스트나 의존을 고치면 `cargo publish --workspace --dry-run --locked --allow-dirty`도 돌려야 합니다. 그 전에 `python3 .github/scripts/api_dry_run.py`로 공개 크레이트의 판을 `<판>-dryrun`으로 바꿔야 합니다. 이미 crates.io에 있는 판과 이름이 같고 내용이 다르면 Cargo가 검증을 거부하기 때문입니다. 이 스크립트는 작업 트리를 고치므로 버릴 사본(`git worktree add --detach`)에서 돌려야 합니다. 이때 `CARGO_HOME`은 매번 새 빈 폴더로 주어야 합니다. Cargo는 같은 이름과 판의 패키지를 `CARGO_HOME\registry\src`에 풀어 둔 것이 있으면 그것을 다시 쓰므로, 두 번째 게시 연습부터는 옛 소스로 검증합니다. CI는 매번 빈 러너라 이 문제가 없습니다.
 
 신뢰할 수 없는 파일을 읽는 크레이트(`secs-jos`, `secs-mdat`, `secs-dirac`, `secs-project`)를 고치면 CI의 `miri`·`fuzz` 잡과 같은 것을 돌립니다. `secs-project`는 파일 시스템을 쓰지 않는 파서 테스트만 Miri로 돌립니다. nightly는 `ci.yml`의 `NIGHTLY`로 고정하고, fuzz 대상마다 넣는 seed는 `ci.yml`의 fuzz 잡에 있습니다(새 대상은 seed를 정해야 CI가 통과합니다).
 

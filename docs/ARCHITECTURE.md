@@ -37,9 +37,12 @@ crates/
   secs-camilla/           CamillaDSP v4 설정과 FIR
   secs-filters/           필터 값 텍스트와 Equalizer APO 설정
   secs-service/           애플리케이션 서비스 (깊은 모듈)
+  secs-local-api/         127.0.0.1 로컬 HTTP·WebSocket API 서버 (앱이 띄움, ADR 0016)
+  secs-api/               공개 크레이트 sound-equalization-and-correction-system-rust-api: Engine과 로컬 API Client (ADR 0016)
   secs-sys/               격리 크레이트: WASAPI, cpal, 운영체제 조회
   secs-policy/            게이트 테스트
   secs-oracle/            골든 읽기 (테스트 전용, 출하하지 않음)
+  secs-engine-testkit/    오라클로 엔진 사례를 만드는 테스트 도구 (테스트 전용, 게시하지 않음)
 apps/
   secs2r/                 Tauri 2 셸 (커맨드 하나)
   secs2r/ui/              React 19 + TypeScript + Vite 화면
@@ -71,12 +74,17 @@ ui ──IPC──> secs2r ─┬─> secs-service ─┬─> secs-engine ─┬
                     │        └───────> secs-cuda-sys (선택적 네이티브 라이브러리)
                     ├─> secs-sys ─────> wasapi, cpal, OS 조회 크레이트
                     │        └───────> secs-audio, secs-rew, secs-compute (어댑터가 구현하는 seam)
+                    ├─> secs-local-api ─> secs-service, secs-types, axum, tokio
                     └─> secs-rew, secs-types
 secs2r-cli ─────────> secs-service, secs-sys, secs-gpu, secs-rew, secs-compute, secs-types
+secs-api ───────────> secs-types; engine 기능: secs-service, secs-audio, secs-rew;
+                      client 기능: ureq, tungstenite
 secs-graph ─────────> secs-dsp, secs-types (작성기를 의존하지 않음)
 secs-policy ────────> (파일 시스템만 읽음; 테스트가 IPC 메서드 목록 때문에 secs-types)
-secs-engine ┄┄┄┄┄┄┄┄> secs-oracle (`test-support` 기능에서만; 출하하지 않음)
+secs-engine-testkit ─> secs-engine, secs-oracle (테스트와 예제만 의존; 출하하지 않음)
 ```
+
+crates.io에 올리는 크레이트는 `secs-api`와 `secs-types`, `secs-dsp`, `secs-compute`, `secs-engine`, `secs-jos`, `secs-mdat`, `secs-project`, `secs-dirac`, `secs-export`, `secs-graph`, `secs-camilla`, `secs-filters`, `secs-rew`, `secs-audio`, `secs-service`의 16개입니다. 이들은 앱과 따로 한 판을 쓰고 서로 정확한 판(`=X.Y.Z`)으로 의존하며, 게시하지 않는 크레이트를 의존하지 않습니다(ADR 0016, `secs-policy` publishing 게이트).
 
 ## 4. seam과 어댑터
 

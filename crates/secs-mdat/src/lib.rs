@@ -20,7 +20,7 @@ pub use ir::{LoadedMdatProject, MdatIRProvider, MeasurementInfo, extract_ir, loa
 pub use models::*;
 pub use source_info::{Boxed, CalFile, CalInfo, SourceDate, SourceInfo, from_rew_measurement};
 
-pub const TEMPLATE: &[u8] = include_bytes!("../../../src/secs/rew_mdat/template_1.mdat");
+pub const TEMPLATE: &[u8] = include_bytes!("../data/template_1.mdat");
 pub const REW_MDAT_IR_SCALE: f64 = 0.01;
 
 #[derive(Debug, thiserror::Error)]

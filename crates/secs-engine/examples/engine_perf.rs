@@ -59,7 +59,9 @@ mod tests;
 mod xo;
 
 pub use ba::{LayoutInfo, ManualPlan};
-pub use calibration::{EngineInputs, ProjectView, engine_inputs};
+pub use calibration::{
+    CalibrationRequest, EngineInputs, ProjectView, calibrate_with, engine_inputs,
+};
 pub use chain::{BaRow, StageResponses, input_response, stage_responses};
 pub use design::{
     Design, DesignRequest, DesignSpectra, FitStage, FitterFactory, MainDesign, SubDesign, design,

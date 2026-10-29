@@ -1,12 +1,16 @@
 [package]
 name = "secs-jos"
 description = "Java Object Serialization stream reader and writer, byte-identical round trip."
-version.workspace = true
+version = "0.1.1"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-publish.workspace = true
+homepage = "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R"
+readme = "README.md"
+keywords = ["java", "serialization", "parser", "encoding"]
+categories = ["encoding", "parser-implementations"]
+include = ["Cargo.toml", "README.md", "LICENSE", "src/**"]
 
 [lints]
 workspace = true

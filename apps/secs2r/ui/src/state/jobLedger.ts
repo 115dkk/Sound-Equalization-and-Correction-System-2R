@@ -249,9 +249,11 @@ export function createJobLedger(deps: {
     if (!known.request && owner?.observation) owner.observation.finished = { event, job: terminal };
     else deps.finished(terminal, event, known.request);
   }
-  /** One fenced startup read; reconcile is reserved for the monitor's 5 s stop timeout. */
-  async function readSnapshots(options?: { reconcile: JobId }) {
+  /** Startup reads preserve pushed events. External jobs have no UI request
+   * channel, so their snapshots also reconcile progress and completion. */
+  async function readSnapshots(options?: { reconcile: JobId } | { external: true }) {
     const projectEpoch = epoch;
+    const externalKnown = options && "external" in options ? state.jobs.filter((job) => !job.request && isActiveJob(job.status)).map((job) => job.job) : [];
     const read = { fence: snapshotFence(state.retention, state.jobs.map((job) => job.job), observationOrder), finished: new Map<JobId, SnapshotFinish>() };
     snapshotReads.add(read);
     try {
@@ -262,7 +264,19 @@ export function createJobLedger(deps: {
       dispatch({ type: "snapshots", jobs, at: deps.now(), epoch: projectEpoch, fence: read.fence, finished: [...read.finished.values()] });
       // TD-102: an explicit monitor-stop timeout may reconcile its one job.
       // Ordinary startup reads never overwrite events observed during the read.
-      if (options) {
+      if (options && "external" in options) {
+        for (const id of externalKnown) {
+          const known = state.jobs.find((job) => job.job === id);
+          if (known && !known.request && isActiveJob(known.status) && !jobs.some((job) => job.job === id)) dispatch({ type: "missing", job: id });
+        }
+        for (const current of jobs) {
+          const known = state.jobs.find((job) => job.job === current.job);
+          if (!known || known.request || !isActiveJob(known.status)) continue;
+          if (!isActiveJob(current.status)) event({ event: "finished", job: current.job, status: current.status, error: current.error, result: null });
+          else if (current.progress) event({ event: "progress", job: current.job, ...current.progress });
+        }
+      }
+      if (options && "reconcile" in options) {
         const current = jobs.find((job) => job.job === options.reconcile);
         const known = state.jobs.find((job) => job.job === options.reconcile);
         if (known && isActiveJob(known.status)) {

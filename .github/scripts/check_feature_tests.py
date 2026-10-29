@@ -43,6 +43,7 @@ def listed_tests(terse_list: str) -> set[str]:
 IGNORED_CI_TESTS = {
     "secs-filters::exported_configs_play_as_designed": "eqapo-playback",
     "secs-filters::reaper_plays_convolution_bundles_as_written": "reaper-playback",
+    "secs-camilla::camilla_exports_play_as_designed": "camilla-playback",
 }
 
 

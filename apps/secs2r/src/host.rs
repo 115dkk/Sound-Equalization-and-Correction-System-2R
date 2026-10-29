@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use secs_service::{Host, RewLaunchError};
-use secs_types::ipc::{ErrorCode, IpcError, OpenFileKind, SaveFileKind};
+use secs_types::ipc::{ErrorCode, IpcError, LocalApiStatus, OpenFileKind, SaveFileKind};
 use tauri::{AppHandle, Manager, Wry};
 use tauri_plugin_dialog::{DialogExt, FileDialogBuilder, FilePath};
 use tauri_plugin_opener::OpenerExt;
@@ -153,6 +153,16 @@ impl Host for TauriHost {
                 RewLaunchError::LaunchFailed(error.to_string())
             }
         })
+    }
+
+    fn local_api_status(&self) -> Result<LocalApiStatus, IpcError> {
+        self.app.state::<crate::local_api::Manager>().status()
+    }
+
+    fn local_api_regenerate_token(&self) -> Result<LocalApiStatus, IpcError> {
+        self.app
+            .state::<crate::local_api::Manager>()
+            .regenerate_token()
     }
 }
 

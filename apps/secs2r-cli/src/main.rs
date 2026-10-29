@@ -442,6 +442,7 @@ fn response_job(response: &Response) -> Option<JobStarted> {
 
 fn deps(deterministic: bool, compute: Option<ComputeChoice>) -> Deps {
     let mut deps = Deps {
+        app_version: env!("CARGO_PKG_VERSION").into(),
         acceleration: Arc::new(secs_gpu::select),
         compute_override: compute.map(Into::into),
         audio_backend: Arc::new(secs_sys::audio::default_backend),
