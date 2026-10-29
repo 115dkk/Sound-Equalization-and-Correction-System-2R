@@ -442,6 +442,97 @@ describe("useExportScreen 적용", () => {
   });
 });
 
+describe("useExportScreen 관리 갱신", () => {
+  const reads = () => mock.calls.filter((call) => call.method === "apply_status").length;
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+  });
+  afterEach(() => vi.useRealTimers());
+  const tick = (ms = 3000) => act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+
+  it.each(["camilla", "eqapo"] as const)("polls every three seconds for %s management and stops on unmount", async (target) => {
+    const { result, unmount } = renderHook(useExportScreen, { wrapper });
+    await perform(() => result.current.actions.setApplyLevel(target, "manage"));
+    const initial = reads();
+    await tick(2999);
+    expect(reads()).toBe(initial);
+    await tick(1);
+    expect(reads()).toBe(initial + 1);
+    await tick();
+    expect(reads()).toBe(initial + 2);
+    unmount();
+    await tick(9000);
+    expect(reads()).toBe(initial + 2);
+  });
+
+  it("pauses while hidden and refreshes immediately when visible again", async () => {
+    const visibility = vi.spyOn(document, "visibilityState", "get");
+    const { result } = renderHook(useExportScreen, { wrapper });
+    await perform(() => result.current.actions.setApplyLevel("camilla", "manage"));
+    const initial = reads();
+    await act(async () => { visibility.mockReturnValue("hidden"); document.dispatchEvent(new Event("visibilitychange")); });
+    await tick(9000);
+    expect(reads()).toBe(initial);
+    await perform(() => { visibility.mockReturnValue("visible"); document.dispatchEvent(new Event("visibilitychange")); });
+    expect(reads()).toBe(initial + 1);
+    await tick();
+    expect(reads()).toBe(initial + 2);
+  });
+
+  it("does not read when mounted hidden and starts when shown", async () => {
+    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    const settings = session.stores.appSettings.getSnapshot()!;
+    session.stores.appSettings.set({ ...settings, apply: { ...settings.apply, camilla: { ...settings.apply.camilla, level: "manage" } } });
+    renderHook(useExportScreen, { wrapper });
+    await tick(9000);
+    expect(reads()).toBe(0);
+    await perform(() => { visibility.mockReturnValue("visible"); document.dispatchEvent(new Event("visibilitychange")); });
+    expect(reads()).toBe(1);
+  });
+
+  it("keeps polling when one of two managed targets switches to files", async () => {
+    const { result } = renderHook(useExportScreen, { wrapper });
+    await perform(() => result.current.actions.setApplyLevel("camilla", "manage"));
+    await perform(() => result.current.actions.setApplyLevel("eqapo", "manage"));
+    await perform(() => result.current.actions.setApplyLevel("camilla", "files"));
+    const initial = reads();
+    await tick();
+    expect(reads()).toBe(initial + 1);
+  });
+
+  it.each(["files", "apply"] as const)("stops polling when both targets use %s", async (level) => {
+    const { result } = renderHook(useExportScreen, { wrapper });
+    await perform(() => result.current.actions.setApplyLevel("camilla", "manage"));
+    await perform(() => result.current.actions.setApplyLevel("eqapo", level));
+    await perform(() => result.current.actions.setApplyLevel("camilla", level));
+    const initial = reads();
+    await tick(9000);
+    await perform(() => document.dispatchEvent(new Event("visibilitychange")));
+    expect(reads()).toBe(initial);
+  });
+
+  it("skips ticks and visibility refreshes while another status request is in flight", async () => {
+    const { result } = renderHook(useExportScreen, { wrapper });
+    await perform(() => result.current.actions.setApplyLevel("camilla", "manage"));
+    const request = mock.request.bind(mock);
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => { release = resolve; });
+    let inFlightReads = 0;
+    vi.spyOn(mock, "request").mockImplementation(async (call) => {
+      if (call.method === "apply_status") { inFlightReads++; await pending; }
+      return request(call);
+    });
+    await act(async () => result.current.actions.refreshApplyStatus());
+    await tick(9000);
+    await act(async () => document.dispatchEvent(new Event("visibilitychange")));
+    expect(inFlightReads).toBe(1);
+    await perform(release);
+    await tick();
+    expect(inFlightReads).toBe(2);
+  });
+});
+
 describe("useExportScreen 관리", () => {
   const applySets = () => mock.calls.flatMap((call) => (call.method === "apply_settings_set" ? [call.params] : []));
   async function withResult() {

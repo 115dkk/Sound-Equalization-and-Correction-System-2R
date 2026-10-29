@@ -37,10 +37,32 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
   // opens, when a target turns to 적용, when the address changes, and for a
   // new result (CamillaDSP may now run this design or another).
   const statusWanted = applyWanted({ tutorial, apply: { settings: applySettings, windows } });
+  const managing = statusWanted && (applySettings.camilla.level === "manage" || applySettings.eqapo.level === "manage");
   const calibration = results?.calibration;
   useEffect(() => {
-    if (statusWanted) void session.stores.applyStatus.load();
-  }, [session, statusWanted, applySettings.camilla.address, calibration]);
+    if (statusWanted && (!managing || (document.visibilityState === "visible" && !session.host.getSnapshot().applyChecking))) void session.stores.applyStatus.load();
+  }, [session, statusWanted, managing, applySettings.camilla.address, calibration]);
+  useEffect(() => {
+    if (!managing) return;
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const refresh = () => {
+      // Other refreshes share this busy flag; a slow read never adds polling requests.
+      if (document.visibilityState === "visible" && !session.host.getSnapshot().applyChecking) void session.stores.applyStatus.load();
+    };
+    const restart = () => {
+      clearInterval(timer);
+      if (document.visibilityState !== "visible") return;
+      refresh();
+      timer = setInterval(refresh, 3000);
+    };
+    // The effect above already reads on mount. Showing the page again reads at once.
+    if (document.visibilityState === "visible") timer = setInterval(refresh, 3000);
+    document.addEventListener("visibilitychange", restart);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", restart);
+    };
+  }, [session, managing]);
   const actions = useMemo<ExportActions>(() => {
     // The last ApplySettings save: an apply waits for it, so the service applies with the level and address on screen.
     let saving: Promise<unknown> = Promise.resolve();

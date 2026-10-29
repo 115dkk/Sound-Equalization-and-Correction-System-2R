@@ -68,7 +68,7 @@ export function HostShellPage({ view, actions }: { view: HostShellView; actions:
           <h1 className="host-shell__title">{t("host.shell.title")}</h1>
           {view.host && <p className="host-shell__version tabular">{t("host.shell.version", { version: view.host.version })}</p>}
         </div>
-        <StatusPill tone={SERVICE_TONE[service]} data-ui="host.service" role="status">
+        <StatusPill tone={SERVICE_TONE[service]} data-ui="host.service" data-state={service} role="status">
           {t(SERVICE_TEXT[service])}
         </StatusPill>
       </header>
@@ -196,9 +196,10 @@ function Fact({ label, children }: { label: string; children: ReactNode }) {
 }
 
 /** A state in words after its glyph, as the export screen draws it. */
-function State({ glyph, id, children }: { glyph: Glyph; id: string; children: ReactNode }) {
+/** `state` and `pid` mirror the shown state as attributes, for checks that must not read the catalog text. */
+function State({ glyph, id, state, pid, children }: { glyph: Glyph; id: string; state?: string; pid?: number | null; children: ReactNode }) {
   return (
-    <span className={`host-state host-state--${glyph}`} data-ui={id}>
+    <span className={`host-state host-state--${glyph}`} data-ui={id} data-state={state} data-pid={pid ?? undefined}>
       <span className="host-state__glyph" aria-hidden="true">
         {glyph === "busy" ? <Spinner size={14} /> : glyph === "warning" ? <Icon name="warning" size={16} /> : <span className="host-state__dot" />}
       </span>
@@ -217,7 +218,7 @@ function CamillaCard({ host, now }: { host: HostState; now: number }) {
   return (
     <Card id="host.camilla" title={t("host.shell.camilla")}>
       <Fact label={t("export.apply.status")}>
-        <State glyph={text.glyph} id="host.camilla.state">
+        <State glyph={text.glyph} id="host.camilla.state" state={managed.kind} pid={managed.kind === "running" ? managed.pid : null}>
           {t(text.text)}
           {managed.kind === "running" && managed.pid !== null && <span className="host-state__pid tabular">{t("host.camilla.pid", { pid: managed.pid })}</span>}
         </State>
@@ -257,7 +258,7 @@ function EqApoCard({ host, now }: { host: HostState; now: number }) {
   return (
     <Card id="host.eqapo" title={t("host.shell.eqapo")}>
       <Fact label={t("export.apply.eqapo.line")}>
-        <State glyph={line.glyph} id="host.eqapo.line">
+        <State glyph={line.glyph} id="host.eqapo.line" state={host.eqapo_include}>
           {t(line.text)}
         </State>
       </Fact>

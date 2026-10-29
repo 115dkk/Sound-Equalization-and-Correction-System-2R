@@ -95,9 +95,10 @@ const EQAPO_DESIGN_TEXT: Record<EqApoDesign, { text: MessageKey; glyph: Glyph }>
 type Glyph = "on" | "off" | "busy" | "warning" | "danger";
 
 /** A state in words with a glyph before it: a filled dot (success, dimmed, danger), a spinner, or the warning sign. */
-function State({ glyph, id, live, children }: { glyph: Glyph; id: string; live?: boolean; children: ReactNode }) {
+/** `state` and `pid` mirror the shown state as attributes, for checks that must not read the catalog text. */
+function State({ glyph, id, live, state, pid, children }: { glyph: Glyph; id: string; live?: boolean; state?: string; pid?: number | null; children: ReactNode }) {
   return (
-    <span className={`export-apply-state export-apply-state--${glyph}`} id={id} data-ui={id} role={live ? "status" : undefined}>
+    <span className={`export-apply-state export-apply-state--${glyph}`} id={id} data-ui={id} data-state={state} data-pid={pid ?? undefined} role={live ? "status" : undefined}>
       <span className="export-apply-state__glyph" aria-hidden="true">
         {glyph === "busy" ? <Spinner size={14} /> : glyph === "warning" ? <Icon name="warning" size={16} /> : <span className="export-apply-state__dot" />}
       </span>
@@ -550,7 +551,7 @@ function ServiceEntry({ target, service, view, actions }: { target: ApplyTarget;
     <Entry label={t("host.service")}>
       <span className="export-apply__line-value">
         {/* While Windows asks, the service is still not installed: the state says so and the busy button carries the progress. */}
-        <State glyph={SERVICE_GLYPH[service]} id={`export.manage.${target}.service`} live>
+        <State glyph={SERVICE_GLYPH[service]} id={`export.manage.${target}.service`} state={service} live>
           {t(SERVICE_TEXT[service])}
         </State>
         {(service === "not_installed" || installing) && (
@@ -580,7 +581,7 @@ function CamillaManagedEntry({ status, view, actions }: { status: HostState; vie
   return (
     <Entry label={t("host.camilla")}>
       <span className="export-apply__line-value">
-        <State glyph={text.glyph} id="export.manage.camilla.state" live>
+        <State glyph={text.glyph} id="export.manage.camilla.state" state={managed.kind} pid={managed.kind === "running" ? managed.pid : null} live>
           {t(text.text)}
           {managed.kind === "running" && managed.pid !== null && <span className="export-apply__pid tabular">{t("host.camilla.pid", { pid: managed.pid })}</span>}
         </State>
@@ -605,7 +606,7 @@ function EqApoManagedEntries({ status, view, actions }: { status: HostState; vie
     <>
       <Entry label={t("host.eqapo")}>
         <span className="export-apply__line-value">
-          <State glyph={managed ? "on" : "off"} id="export.manage.eqapo.state" live>
+          <State glyph={managed ? "on" : "off"} id="export.manage.eqapo.state" state={managed ? "on" : "off"} live>
             {t(managed ? "host.eqapo.on" : "host.eqapo.off")}
           </State>
           {managed && <StopManaging target="eqapo" view={view} actions={actions} />}
@@ -657,7 +658,7 @@ function ApplyOutcome({ target, run, view, actions }: { target: ApplyTarget; run
   const id = `export.apply.${target}.outcome`;
   if (run.status === "applied") {
     return (
-      <div className="export-apply__full export-outcome" data-ui={id} role="status">
+      <div className="export-apply__full export-outcome" data-ui={id} data-outcome={run.handedOver ? "handed_over" : "applied"} role="status">
         <Icon name="check" size={18} weight="semibold" className="export-outcome__icon" />
         <p className="export-outcome__text">{t(run.handedOver ? "export.manage.camilla.handed_over" : applyLevel(view, target) === "manage" ? MANAGED_TEXT[target] : APPLIED_TEXT[target])}</p>
         <Button size="sm" variant="quiet" icon="folder" data-ui={`${id}.open`} onClick={() => actions.openFolder(run.folder)}>
