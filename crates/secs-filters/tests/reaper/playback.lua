@@ -21,12 +21,22 @@ end
 local original_console = reaper.ShowConsoleMsg
 reaper.ShowConsoleMsg = function(text) log("CONSOLE " .. text) end
 
+local function channel_settings(label, track)
+  log(label .. " guid=" .. reaper.GetTrackGUID(track))
+  for _, key in ipairs({"I_NCHAN", "C_MAINSEND_NCH", "C_MAINSEND_OFFS", "B_MAINSEND"}) do
+    log(label .. " " .. key .. "=" .. reaper.GetMediaTrackInfo_Value(track, key))
+  end
+end
 local function dump(label)
   log(label .. " tracks=" .. reaper.CountTracks(project))
+  local master = reaper.GetMasterTrack(project)
+  channel_settings("MASTER", master)
   for i = 0, reaper.CountTracks(project) - 1 do
     local track = reaper.GetTrack(project, i)
     local _, name = reaper.GetTrackName(track)
     log(string.format("TRACK %d %q guid=%s", i + 1, name, reaper.GetTrackGUID(track)))
+    channel_settings("TRACK_CHANNELS", track)
+    channel_settings("PARENT_CHANNELS", reaper.GetParentTrack(track) or master)
     for _, key in ipairs({"I_NCHAN", "I_FOLDERDEPTH", "B_MAINSEND", "D_VOL", "D_PANLAW", "B_MUTE"}) do
       log(key .. "=" .. reaper.GetMediaTrackInfo_Value(track, key))
     end
@@ -72,6 +82,12 @@ local ok, detail = xpcall(function()
   local channels = assert(tonumber(os.getenv("SECS_REAPER_OUTPUTS")))
   local paths = assert(tonumber(os.getenv("SECS_REAPER_PATHS")))
   local frames = assert(tonumber(os.getenv("SECS_REAPER_FRAMES")))
+  -- Only this guarded scratch project is changed, never a user's master.
+  local master = reaper.GetMasterTrack(project)
+  assert(reaper.SetMediaTrackInfo_Value(master, "I_NCHAN", channels))
+  assert(reaper.GetMediaTrackInfo_Value(master, "I_NCHAN") == channels)
+  assert(reaper.SetMediaTrackInfo_Value(master, "D_VOL", 1))
+  assert(reaper.SetMediaTrackInfo_Value(master, "D_PAN", 0))
   assert(reaper.CountTracks(project) == 1, "source project must contain one track")
   local source = reaper.GetTrack(project, 0)
   assert(reaper.CountTrackMediaItems(source) == 1, "source impulse item missing")
@@ -103,14 +119,18 @@ local ok, detail = xpcall(function()
   end
   local folder, bus = build("FIRST")
   local first_guid = reaper.GetTrackGUID(folder)
-  reaper.SetOnlyTrackSelected(bus)
-  -- Selected-track stems, preserving all track channels (not the stereo master).
-  local render = {RENDER_SETTINGS = 2 | 4, RENDER_BOUNDSFLAG = 0,
-    RENDER_STARTPOS = 0, RENDER_ENDPOS = frames / 48000,
+  -- Assert the user's full path: path tracks -> bus -> folder -> master.
+  -- Bus and individual-path stems below are diagnostics, not the assertion.
+  -- The first CI render ended at 9.386s instead of 9.386666...s (32 frames
+  -- short), consistent with millisecond truncation in the render action. Use
+  -- explicit whole-second custom bounds beyond the source, not project length.
+  -- Rust still rejects any missing expected frame and checks the extra silence.
+  local render_end = math.ceil(frames / 48000) + 1
+  local render = {RENDER_SETTINGS = 0, RENDER_BOUNDSFLAG = 0,
+    RENDER_STARTPOS = 0, RENDER_ENDPOS = render_end,
     RENDER_CHANNELS = channels, RENDER_SRATE = 48000,
     RENDER_TAILFLAG = 0, RENDER_TAILMS = 0, RENDER_ADDTOPROJ = 0,
     RENDER_DITHER = 16, RENDER_NORMALIZE = 0}
-  for key, value in pairs(render) do reaper.GetSetProjectInfo(project, key, value, true) end
   assert(reaper.GetSetProjectInfo_String(project, "RENDER_FILE", root, true))
   assert(reaper.GetSetProjectInfo_String(project, "RENDER_PATTERN", "render", true))
   -- Sink bytes: 'evaw', 0x20, 0, 0, 0. In the pinned REAPER the WAV depth
@@ -118,11 +138,42 @@ local ok, detail = xpcall(function()
   -- Rust independently requires IEEE_FLOAT/EXTENSIBLE_FLOAT in the actual WAV.
   assert(reaper.GetSetProjectInfo_String(project, "RENDER_FORMAT", "ZXZhdyAAAAA=", true))
   assert(reaper.GetSetProjectInfo_String(project, "RENDER_FORMAT2", "", true))
-  local _, targets = reaper.GetSetProjectInfo_String(project, "RENDER_TARGETS", "", false)
-  log("RENDER_TARGETS " .. targets)
-  reaper.Main_OnCommand(42230, 0) -- Render using current settings, auto-close render window.
-  assert(reaper.file_exists(root .. "/render.wav"), "render output is missing")
-  log("RENDER_COMPLETE")
+  local function render_settings(label, check)
+    log(label .. " expected_frames=" .. frames .. " requested_end=" .. render_end)
+    for key, value in pairs(render) do
+      local actual = reaper.GetSetProjectInfo(project, key, 0, false)
+      log(string.format("%s=%.17g requested=%.17g", key, actual, value))
+      if check then assert(actual == value, "render setting was not retained: " .. key) end
+    end
+  end
+  local function render_file(pattern, settings, count, track)
+    if track then reaper.SetOnlyTrackSelected(track) end
+    render.RENDER_SETTINGS = settings
+    render.RENDER_CHANNELS = count
+    assert(reaper.GetSetProjectInfo_String(project, "RENDER_PATTERN", pattern, true))
+    for key, value in pairs(render) do reaper.GetSetProjectInfo(project, key, value, true) end
+    render_settings(pattern .. " BEFORE_RENDER", true)
+    local _, targets = reaper.GetSetProjectInfo_String(project, "RENDER_TARGETS", "", false)
+    log("RENDER_TARGETS " .. targets)
+    reaper.Main_OnCommand(42230, 0) -- Render using current settings, auto-close render window.
+    render_settings(pattern .. " AFTER_RENDER", false)
+    assert(reaper.file_exists(root .. "/" .. pattern .. ".wav"), "render output is missing: " .. pattern)
+    log(pattern .. " RENDER_COMPLETE")
+  end
+  render_file("render", 0, channels) -- Master mix is the only audio assertion.
+  render_file("stem_bus", 2 | 4, channels, bus)
+  local center, left
+  for i = 0, reaper.CountTracks(project) - 1 do
+    local track = reaper.GetTrack(project, i)
+    local _, name = reaper.GetTrackName(track)
+    if name == "C → C" then center = track end
+    if name == "L → L" then left = track end
+  end
+  -- mimo_iir has only L and SW1 outputs, so it has no C -> C path.
+  local diagnostic_path = assert(center or left, "diagnostic direct path is missing")
+  local _, diagnostic_name = reaper.GetTrackName(diagnostic_path)
+  log("DIAGNOSTIC_PATH " .. diagnostic_name)
+  render_file("stem_path", 2 | 4, reaper.GetMediaTrackInfo_Value(diagnostic_path, "I_NCHAN"), diagnostic_path)
   local replacement = build("SECOND")
   assert(reaper.GetTrackGUID(replacement) ~= first_guid, "previous folder was not replaced")
   assert(#messages == 2, "unexpected bundle messages")

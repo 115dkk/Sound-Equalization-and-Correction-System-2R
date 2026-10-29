@@ -10,7 +10,7 @@ assert(#paths > 0)
 local input_channels = math.max(2, math.ceil(inputs / 2) * 2)
 local output_channels = math.max(2, math.ceil(outputs / 2) * 2)
 local total = #paths + 4 -- source, folder, paths, bus, unrelated track
-local tracks, selected, messages, refresh, begins, ends, failure
+local tracks, selected, messages, refresh, begins, ends, failure, master
 local marker = "P_EXT:SECS2R_CONVOLUTION"
 local names = {"Wet", "Dry", "Pre-verb", "Max FFT size", "Width", "Pan", "ZL mode", "LL mode", ":wet"}
 local function track(name)
@@ -19,10 +19,12 @@ local function track(name)
 end
 local function reset()
   tracks = {track("Source"), track("Unrelated")}
+  master = track("Master")
   selected, messages, refresh, begins, ends, failure = tracks[1], {}, 0, 0, 0, nil
 end
 reaper = {}
 function reaper.GetSelectedTrack() return selected end
+function reaper.GetMasterTrack() return master end
 function reaper.GetSetMediaTrackInfo_String(t, key, value, write)
   if write then t[key] = value end
   return true, t[key] or ""
@@ -82,7 +84,19 @@ function reaper.TrackFX_GetParamName(_, _, index)
   if failure == "parameter" and index == 6 then return true, "unknown" end
   return true, names[index + 1]
 end
+function reaper.TrackFX_FormatParamValueNormalized(_, _, index, value)
+  assert(index == 0)
+  if failure == "wet-format" then return false, "" end
+  local text = string.format("%.1f", 20 * math.log(2 * value, 10))
+  if failure == "wet-comma" then return true, text:gsub("%.", ",") .. " dB" end
+  return true, text
+end
+function reaper.TrackFX_GetFormattedParamValue(t, fx, index)
+  if failure == "wet-readback" then return true, "+6.0" end
+  return reaper.TrackFX_FormatParamValueNormalized(t, fx, index, t.params.Wet)
+end
 function reaper.TrackFX_SetParamNormalized(t, _, index, value)
+  if failure == "wet-set" and index == 0 then return false end
   t.params[names[index + 1]] = value; return true
 end
 function reaper.TrackFX_GetParamNormalized(t, _, index) return t.params[names[index + 1]] end
@@ -127,7 +141,7 @@ local function verify()
     assert(input.I_SENDMODE == 3 and output.I_SENDMODE == 3)
     assert(input.D_VOL == 1 and output.D_VOL == 1)
     assert(t.B_MAINSEND == 0 and t.enabled)
-    assert(t.params.Wet == 1 and t.params.Dry == 0 and t.params["ZL mode"] == 1)
+    assert(t.params.Wet == 0.5 and t.params.Dry == 0 and t.params["ZL mode"] == 1)
     assert(t.params["Pre-verb"] == 0 and t.params.Width == 1 and t.params.Pan == 0.5)
     assert(t.params[":wet"] == 1 and t.config.DONE == "" and not t.config.ITEM1)
     assert(t.config.ITEM0:match('^FILELDR ".*" 60$'))
@@ -149,7 +163,7 @@ assert(tracks[2] ~= old_folder and begins == 2)
 selected = tracks[total]; run()
 assert(#tracks == 2 * total - 2 and #selected.sends == #paths)
 -- A failure never removes an earlier working set.
-for _, mode in ipairs({"fx", "config", "parameter", "send"}) do
+for _, mode in ipairs({"fx", "config", "parameter", "send", "wet-format", "wet-readback", "wet-set"}) do
   reset(); run(); verify()
   local folder = tracks[2]
   failure = mode; run(); verify()
@@ -157,7 +171,18 @@ for _, mode in ipairs({"fx", "config", "parameter", "send"}) do
   reset(); selected.I_NCHAN = 8; failure = mode; run()
   assert(#tracks == 2 and #selected.sends == 0)
   assert(selected.I_NCHAN == 8 and selected.B_MAINSEND == 1)
+  if mode:find("wet-", 1, true) then
+    assert(messages[#messages]:find("Wet level could not be set to 0 dB", 1, true))
+  end
 end
+-- Warn without modifying a narrower master; omit the warning when it fits.
+reset(); run(); verify()
+assert(master.I_NCHAN == 2)
+assert(messages[#messages]:find("Channels beyond 2 do not reach the master", 1, true))
+reset(); master.I_NCHAN = output_channels; run(); verify()
+assert(master.I_NCHAN == output_channels)
+assert(not messages[#messages]:find("do not reach the master", 1, true))
+reset(); failure = "wet-comma"; run(); verify()
 -- Do not delete a user's track inserted into the generated folder.
 reset(); run()
 table.insert(tracks, 3, track("User's audio"))

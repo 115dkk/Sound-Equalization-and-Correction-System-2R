@@ -37,8 +37,14 @@ SECS_REAPER_ARTIFACTS="$RUNNER_TEMP/reaper-artifacts" \
 (MIMO supports) oracle plans. Each input gets one unit impulse, separated by the
 IR length plus 4096 silent frames, in a multichannel 48 kHz float source WAV.
 `playback.lua` checks its disposable resource directory and project, applies the
-bundle, dumps routing and ReaVerb state, and renders only the output bus as a
-multichannel 32-bit float WAV. It reapplies the bundle, checks replacement by
+bundle and dumps routing, ReaVerb state and every track's parent-channel settings.
+Only in this guarded scratch project, it raises the master's channel count to
+match the bus and renders the master mix as a multichannel 32-bit float WAV.
+This tests path tracks → output bus → folder → master. Separate `stem_bus.wav`
+and `stem_path.wav` renders are diagnostics only; the latter is `C → C` for
+`computed_dolby`, or `L → L` for `mimo_iir` (which has no C channel). Each render
+dumps its settings before and after the action. The sample assertion always
+uses the master mix, `render.wav`. It reapplies the bundle, checks replacement by
 track count and a changed folder GUID, then discards the scratch project and
 quits. GNU `timeout` limits each engine process group to 180 seconds, with a
 10-second kill grace period. `HOME`, the XDG directories and `-cfgfile` all point
@@ -46,20 +52,26 @@ to the disposable case; no user license or evaluation-state files are copied.
 
 The Rust comparison checks every rendered sample against the corresponding
 exported path WAV at the exact input impulse timestamp. Channel count, sample
-rate and frame count must match. There is no fitted gain or time alignment;
-unreachable outputs, padded channels and guard intervals must remain silent
-within the absolute tolerance. The bound is `1e-7 + 2e-6 * abs(expected)` per
+rate must match, and a render shorter than the expected signal always fails.
+Custom render bounds start at zero and end at `ceil(source duration) + 1` seconds,
+independent of project/item length. Whole-second bounds avoid the fractional
+millisecond truncation observed in the first CI render. Settings are read back
+before rendering and dumped both before and after the render action.
+Every expected sample must match; every extra sample must have absolute value
+at most `1e-7`. There is no fitted gain or time alignment; unreachable outputs,
+padded channels and guard intervals must remain silent within the absolute tolerance. The bound is `1e-7 + 2e-6 * abs(expected)` per
 sample. This checkout has no CamillaDSP float-host playback test to reuse; its
 CamillaDSP optimized-graph test compares mathematical transfer functions, not
 float-engine samples. The REAPER bound is therefore explicit and separately
 tested against gain, delay, leakage and nonfinite errors.
 
 With `SECS_REAPER_ARTIFACTS` set, the test copies only `dump.txt`, `result.txt`,
-`render.wav`, `stdout.log`, `stderr.log`, `splash.log` and `comparison.log` for each
-case. CI uploads this allowlisted directory even after failure. It never uploads
+`render.wav`, `stem_bus.wav`, `stem_path.wav`, `stdout.log`, `stderr.log`,
+`splash.log` and `comparison.log` for each case. CI uploads this allowlisted directory even after failure. It never uploads
 the engine, its archive, resource/configuration directory or scratch projects.
-Engine failures include its output in the test failure; a timeout does not count
-as a skipped or passing test. First-launch or render dialogs are not dismissed
+Both cases run even if the first fails or panics, and the final failure includes
+every case's result. Engine failures include their output in the test failure;
+a timeout does not count as a skipped or passing test. First-launch or render dialogs are not dismissed
 by changing license state: if one prevents completion, the timeout fails CI.
 
 The nonignored tests exercise WAV handling, exact comparison, oracle export,
@@ -121,8 +133,11 @@ unit impulses. Each dump should contain five tracks:
 | SECS 2R Output | 4 | -1 | on | all channels to the folder |
 
 The sends have unity gain, no MIDI and mode 3 (post-FX, pre-fader). ReaVerb has one
-`FILELDR` entry, Wet=1 (0 dB), Dry=0, Pre-verb=0, Width=1, Pan=0.5 (centre),
-ZL=1 and LL=0 in normalized parameter units; host FX wet is 1. Only the first
+`FILELDR` entry. Its first Wet parameter is set by searching the plug-in's
+formatted dB scale, then reading it back and requiring 0 dB within 0.05 dB.
+Normalized 1 is **+6 dB**, not unity, in REAPER 7.84; normalized 0.5 formats as
+0 dB. The separate host FX wet remains at 1 (100%). Dry=0, Pre-verb=0, Width=1,
+Pan=0.5 (centre), ZL=1 and LL=0 use normalized parameter units. Only the first
 input/output FX pin maps to track channel 1. Check the formatted values and
 `ITEM0`, `ITEM1`, `pdc`, pin mappings and raw state in the dump. This harness does
 not prove the audio transfer function: an audio render comparison is still needed
@@ -144,8 +159,12 @@ before claiming sample-accurate playback parity with the WAVs.
   The API reference does not specify the numeric file-loader flags. The 60 value
   is the published script's value and the default file-loader flag in the
   [official REAPER 7.84 Linux distribution](https://www.reaper.fm/files/7.x/reaper784_linux_x86_64.tar.xz).
-  Static inspection of that distribution confirms the Wet/Dry linear-amplitude
-  conversion and parameter names/ranges. It is not a real-host execution test.
+  The first CI host dump showed that Wet normalized=1 formats as +6.0 dB;
+  the rendered first two channels also had twice the exported WAV amplitude.
+  The exporter therefore verifies the plug-in's formatted Wet level instead
+  of equating normalized units with amplitude. `TrackFX_FormatParamValueNormalized`
+  requires Cockos VST extensions, which the built-in ReaVerb provides; unsupported
+  formatting or a nonzero readback aborts the build and restores the old setup.
 - The script resets ReaVerb to the factory preset, requires an empty module list,
   inserts exactly one file loader, verifies the configuration readback, sets the
   required parameters by name and checks their values. It fails and removes its
@@ -153,7 +172,10 @@ before claiming sample-accurate playback parity with the WAVs.
 - Existing source effects are retained. The source's fader/pan is deliberately
   not applied again. Its master/parent send is disabled only after successful
   construction. Existing hardware sends and other user-created sends are not
-  changed. A source that is itself a folder parent is rejected to avoid an audio
+  changed. The user's master is never changed: when it has fewer channels than
+  the output bus, the completion message warns that higher channels do not reach
+  the master and asks the user to raise its channel count or route the bus to
+  hardware outputs. A source that is itself a folder parent is rejected to avoid an audio
   feedback loop through the generated folder's parent send. User tracks inserted
   inside the previous generated folder also stop replacement rather than being
   deleted.

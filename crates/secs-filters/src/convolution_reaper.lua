@@ -59,6 +59,7 @@ if depth ~= 0 then
 end
 
 local created = {}
+local failure_message
 local original_channels = reaper.GetMediaTrackInfo_Value(source, "I_NCHAN")
 local original_main = reaper.GetMediaTrackInfo_Value(source, "B_MAINSEND")
 local function set_track(track, key, value)
@@ -97,6 +98,30 @@ local function send(from, to, input, output)
     assert(reaper.SetTrackSendInfo_Value(from, 0, index, key, value), "send setting: " .. key)
   end
 end
+local function decibels(text)
+  local number = text:gsub(",", "."):match("^%s*([%+%-]?%d+%.?%d*)%s*[dD]?[bB]?%s*$")
+  return number and tonumber(number)
+end
+local function unity_wet(track, fx, parameter)
+  failure_message = "ReaVerb's Wet level could not be set to 0 dB. The new tracks were removed and the source settings restored."
+  -- Normalized 1 is +6 dB in ReaVerb 7.84, not unity amplitude. Search the
+  -- plug-in's own formatted dB scale; never infer gain from normalized units.
+  local low, high, value = 0, 1, nil
+  for _ = 1, 32 do
+    local candidate = (low + high) / 2
+    local found, text = reaper.TrackFX_FormatParamValueNormalized(track, fx, parameter, candidate)
+    local db = found and decibels(text)
+    assert(db, "ReaVerb Wet format is not a dB value")
+    if math.abs(db) <= 0.05 then value = candidate; break end
+    if db < 0 then low = candidate else high = candidate end
+  end
+  assert(value and reaper.TrackFX_SetParamNormalized(track, fx, parameter, value), "ReaVerb Wet unity setting")
+  local found, text = reaper.TrackFX_GetFormattedParamValue(track, fx, parameter)
+  local db = found and decibels(text)
+  assert(db and math.abs(db) <= 0.05, "ReaVerb Wet is not 0 dB")
+  assert(math.abs(reaper.TrackFX_GetParamNormalized(track, fx, parameter) - value) < 1e-7)
+  failure_message = nil
+end
 local function convolver(track, file)
   local fx = reaper.TrackFX_AddByName(track, "ReaVerb (Cockos)", false, -1)
   assert(fx >= 0, "ReaVerb unavailable")
@@ -113,22 +138,27 @@ local function convolver(track, file)
   local has_extra, extra = reaper.TrackFX_GetNamedConfigParm(track, fx, "ITEM1")
   assert(not has_extra or extra == "", "extra ReaVerb module")
 
-  -- ReaVerb uses linear amplitude for Wet/Dry, not dB: 1 is 0 dB, 0 is off.
-  -- Resolve parameter names rather than assuming indices. Reject incompatible FX.
-  local settings = {Wet = 1, Dry = 0, ["Pre-verb"] = 0, Width = 1,
+  -- Resolve parameter names rather than assuming indices. The first Wet is
+  -- ReaVerb's dB control; the separate host :wet control remains at 100%.
+  local plugin_wet = false
+  local settings = {Dry = 0, ["Pre-verb"] = 0, Width = 1,
     Pan = 0.5, ["ZL mode"] = 1, ["LL mode"] = 0}
   for i = 0, reaper.TrackFX_GetNumParams(track, fx) - 1 do
     local found, name = reaper.TrackFX_GetParamName(track, fx, i, "")
-    if found and settings[name] ~= nil then
+    if found and name == "Wet" and not plugin_wet then
+      unity_wet(track, fx, i)
+      plugin_wet = true
+    elseif found and settings[name] ~= nil then
       local expected = settings[name]
       assert(reaper.TrackFX_SetParamNormalized(track, fx, i, expected))
       assert(math.abs(reaper.TrackFX_GetParamNormalized(track, fx, i) - expected) < 1e-7)
       settings[name] = nil
     end
   end
-  assert(next(settings) == nil, "ReaVerb parameters unavailable")
+  assert(plugin_wet and next(settings) == nil, "ReaVerb parameters unavailable")
   local wet = reaper.TrackFX_GetParamFromIdent(track, fx, ":wet")
   assert(wet >= 0 and reaper.TrackFX_SetParamNormalized(track, fx, wet, 1))
+  assert(math.abs(reaper.TrackFX_GetParamNormalized(track, fx, wet) - 1) < 1e-7)
   reaper.TrackFX_SetEnabled(track, fx, true)
   -- Only channel 1 enters and leaves this mono path; no stereo summing gain.
   for pin = 0, 1 do
@@ -180,7 +210,13 @@ reaper.TrackList_AdjustWindows(false)
 reaper.UpdateArrange()
 reaper.Undo_EndBlock("SECS 2R convolution routing", -1)
 if ok then
-  message("Correction tracks are ready. The source track's master/parent send is now off. Route the SECS 2R Output bus to your outputs and use a 48000 Hz project and audio device. Run this script again with the same source selected to replace the correction.")
+  local text = "Correction tracks are ready. The source track's master/parent send is now off. Route the SECS 2R Output bus to your outputs and use a 48000 Hz project and audio device. Run this script again with the same source selected to replace the correction."
+  local master = reaper.GetMasterTrack(0)
+  local master_channels = reaper.GetMediaTrackInfo_Value(master, "I_NCHAN")
+  if master_channels < output_channels then
+    text = text .. string.format("\n\nThe master has %d channels, but the output bus has %d. Channels beyond %d do not reach the master. Raise the master's channel count or route the output bus directly to hardware outputs. The master settings were not changed.", master_channels, output_channels, master_channels)
+  end
+  message(text)
 else
-  message("The correction could not be loaded. The new tracks were removed and the source settings restored. Check that ReaVerb is available; details are in the ReaScript console.")
+  message(failure_message or "The correction could not be loaded. The new tracks were removed and the source settings restored. Check that ReaVerb is available; details are in the ReaScript console.")
 end

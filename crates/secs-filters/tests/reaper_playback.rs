@@ -261,7 +261,7 @@ fn expected(routing: &Routing, bundle: &Path) -> Wav {
 fn compare(actual: &Wav, expected: &Wav) -> Result<f64, String> {
     if actual.channels != expected.channels
         || actual.rate != expected.rate
-        || actual.samples.len() != expected.samples.len()
+        || actual.samples.len() < expected.samples.len()
     {
         return Err(format!(
             "WAV shape mismatch: actual {}ch/{}Hz/{}samples, expected {}ch/{}Hz/{}samples",
@@ -274,7 +274,14 @@ fn compare(actual: &Wav, expected: &Wav) -> Result<f64, String> {
         ));
     }
     let mut max_error = 0.0_f64;
-    for (index, (&got, &want)) in actual.samples.iter().zip(&expected.samples).enumerate() {
+    // A longer render is permitted only when every extra sample is silent.
+    // Zero-extension is after the expected signal, never before or within it.
+    let reference = expected
+        .samples
+        .iter()
+        .copied()
+        .chain(std::iter::repeat(0.0));
+    for (index, (&got, want)) in actual.samples.iter().zip(reference).enumerate() {
         let error = (f64::from(got) - f64::from(want)).abs();
         let bound = ABS + REL * f64::from(want).abs();
         if !got.is_finite() || error > bound {
@@ -301,6 +308,8 @@ fn collect_artifacts(root: &Path, name: &str) {
         "dump.txt",
         "result.txt",
         "render.wav",
+        "stem_bus.wav",
+        "stem_path.wav",
         "stdout.log",
         "stderr.log",
         "splash.log",
@@ -369,6 +378,32 @@ fn run_engine(root: &Path, routing: &Routing, executable: &Path) -> Result<(), S
     Ok(())
 }
 
+fn run_cases(mut run: impl FnMut(&str) -> Result<String, String>) -> Result<String, String> {
+    let mut report = String::new();
+    let mut failed = false;
+    for name in ["computed_dolby", "mimo_iir"] {
+        // Keep the next case running even if fixture preparation or artifact I/O
+        // panics, as well as when the engine or sample comparison returns Err.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(name)))
+            .unwrap_or_else(|panic| {
+                let message = panic
+                    .downcast_ref::<String>()
+                    .map(String::as_str)
+                    .or_else(|| panic.downcast_ref::<&str>().copied())
+                    .unwrap_or("non-string panic");
+                Err(format!("panic: {message}"))
+            });
+        match result {
+            Ok(text) => report.push_str(&format!("{name}: PASS {text}\n")),
+            Err(error) => {
+                failed = true;
+                report.push_str(&format!("{name}: FAIL {error}\n"));
+            }
+        }
+    }
+    if failed { Err(report) } else { Ok(report) }
+}
+
 #[test]
 #[ignore = "REAPER is required; CI runs this test with --ignored"]
 fn reaper_plays_convolution_bundles_as_written() {
@@ -382,14 +417,15 @@ fn reaper_plays_convolution_bundles_as_written() {
     );
     assert!(executable.is_absolute() && executable.is_file());
     let temporary = TempDir::new();
-    for name in ["computed_dolby", "mimo_iir"] {
+    let report = run_cases(|name| {
         let root = temporary.0.join(name);
         let routing = prepare(&root, name);
         let result = run_engine(&root, &routing, &executable).and_then(|()| {
             let actual = read_wav(&fs::read(root.join("render.wav")).map_err(|error| error.to_string())?)?;
             let error = compare(&actual, &expected(&routing, &root.join("bundle")))?;
-            Ok(format!("{name}: {} inputs, {} outputs, {} paths; max sample error={error:.9e}; REL={REL} ABS={ABS}; no alignment/gain fitting\n",
-                routing.inputs.len(), routing.outputs.len(), routing.paths.len()))
+            Ok(format!("{} inputs, {} outputs, {} paths; rendered_frames={}; expected_frames={}; max sample error={error:.9e}; REL={REL} ABS={ABS}; no alignment/gain fitting",
+                routing.inputs.len(), routing.outputs.len(), routing.paths.len(),
+                actual.samples.len() / actual.channels, source_samples(&routing).0))
         });
         fs::write(
             root.join("comparison.log"),
@@ -399,10 +435,11 @@ fn reaper_plays_convolution_bundles_as_written() {
         )
         .unwrap();
         collect_artifacts(&root, name);
-        match result {
-            Ok(text) => eprint!("{text}"),
-            Err(error) => panic!("{name}: {error}"),
-        }
+        result
+    });
+    match report {
+        Ok(text) => eprint!("{text}"),
+        Err(errors) => panic!("REAPER playback results:\n{errors}"),
     }
 }
 
@@ -450,6 +487,77 @@ fn reaper_playback_comparison_rejects_gain_delay_leaks_and_nonfinite() {
             .is_err()
         );
     }
+}
+
+#[test]
+fn reaper_playback_comparison_requires_full_prefix_and_silent_extra_frames() {
+    let expected = Wav {
+        channels: 2,
+        rate: RATE,
+        samples: vec![1.0, 0.0, 0.0, 0.0],
+    };
+    // Even missing all-zero expected frames is a failure.
+    let short = Wav {
+        channels: 2,
+        rate: RATE,
+        samples: vec![1.0, 0.0],
+    };
+    assert!(
+        compare(&short, &expected)
+            .unwrap_err()
+            .contains("shape mismatch")
+    );
+    let mut longer = Wav {
+        channels: 2,
+        rate: RATE,
+        samples: vec![1.0, 0.0, 0.0, 0.0, 0.0, (ABS * 0.5) as f32],
+    };
+    assert!(compare(&longer, &expected).is_ok());
+    for tail in [
+        (ABS * 2.0) as f32,
+        -(ABS * 2.0) as f32,
+        f32::NAN,
+        f32::INFINITY,
+    ] {
+        longer.samples[5] = tail;
+        assert!(
+            compare(&longer, &expected)
+                .unwrap_err()
+                .contains("frame 2 channel 2")
+        );
+    }
+    longer.samples[5] = 0.0;
+    longer.samples[0] = 2.0;
+    assert!(
+        compare(&longer, &expected)
+            .unwrap_err()
+            .contains("frame 0 channel 1")
+    );
+}
+
+#[test]
+fn reaper_playback_reports_all_cases_after_errors_and_panics() {
+    let mut visited = Vec::new();
+    let error = run_cases(|name| {
+        visited.push(name.to_owned());
+        Err(format!("bad render for {name}"))
+    })
+    .unwrap_err();
+    assert_eq!(visited, ["computed_dolby", "mimo_iir"]);
+    for name in &visited {
+        assert!(error.contains(&format!("{name}: FAIL bad render for {name}")));
+    }
+    let error = run_cases(|name| {
+        if name == "computed_dolby" {
+            panic!("fixture failure")
+        }
+        Ok("comparison passed".into())
+    })
+    .unwrap_err();
+    assert!(error.contains("computed_dolby: FAIL panic: fixture failure"));
+    assert!(error.contains("mimo_iir: PASS comparison passed"));
+    let report = run_cases(|_| Ok("comparison passed".into())).unwrap();
+    assert!(report.contains("computed_dolby: PASS") && report.contains("mimo_iir: PASS"));
 }
 
 #[test]
