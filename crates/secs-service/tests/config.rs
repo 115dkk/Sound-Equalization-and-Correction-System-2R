@@ -422,8 +422,23 @@ fn dsp_output_rate_follows_presets_and_only_camilla_or_custom_is_editable() {
         panic!()
     };
     assert!(camilla.fields.output_rate_editable);
+    // Changing only the rate keeps the preset.
     let mut editable = camilla.fields;
     editable.output_rate = OutputRateChoice::Auto;
+    let Response::DspSet(auto) = call(
+        &service,
+        Request::DspSet(DspSetParams {
+            preset: None,
+            fields: Some(editable.clone()),
+        }),
+    ) else {
+        panic!()
+    };
+    assert_eq!(auto.profile, "camilla");
+    assert_eq!(auto.fields.output_rate, OutputRateChoice::Auto);
+    assert!(auto.fields.output_rate_editable);
+    // Any other field makes it custom, keeping the chosen rate.
+    editable.fir_budget += 1024;
     let Response::DspSet(custom) = call(
         &service,
         Request::DspSet(DspSetParams {

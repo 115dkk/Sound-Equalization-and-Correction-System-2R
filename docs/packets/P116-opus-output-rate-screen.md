@@ -77,8 +77,15 @@ result stale; exporting again is enough.
 
 You may edit: `apps/secs2r/ui/src/screens/system/**`,
 `screens/export/**`, `screens/calibrate/**` (budget line only),
-`state/session.ts`, `src/i18n/ko.json`, `en.json`, gallery registration if
-needed, `ipc/mock.ts` and `ipc/fixtures.ts` (fixture values only).
+`state/**` (including `jobLedger.test.ts`), `src/i18n/ko.json`, `en.json`,
+gallery registration if needed, `ipc/mock.ts` and `ipc/fixtures.ts`.
+
+`npm run typecheck` fails right now because P115 added
+`DspFields.output_rate`, `DspFields.output_rate_editable`,
+`ExportResult.output_rate` and `ExportResult.notes`: the fixtures and mocks
+lack them, and `screens/system/useSystemScreen.ts` (around line 44) assigns
+through an index that the new `OutputRateChoice` union no longer fits. Fix
+those as part of this work.
 
 Do not touch: Rust, manifests, bindings, other screens, `.github/`, `docs/`.
 

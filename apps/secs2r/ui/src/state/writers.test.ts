@@ -188,7 +188,8 @@ describe("session writers", () => {
       await session.settled();
       const edited = { ...preset.fields, iir_bands: preset.fields.iir_bands + 1 };
       expect(sent.map((request) => request.params)).toEqual([{ preset: preset.key, fields: null }, { preset: null, fields: edited }]);
-      expect(session.stores.dsp.getSnapshot()).toMatchObject({ profile: "custom", fields: edited });
+      // A manual edit makes the profile custom, and a custom profile chooses its output rate (ADR 0017).
+      expect(session.stores.dsp.getSnapshot()).toMatchObject({ profile: "custom", fields: { ...edited, output_rate_editable: true } });
     } finally { release(); session.dispose(); await session.settled(); mock.dispose(); }
   });
 

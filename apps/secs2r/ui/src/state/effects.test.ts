@@ -264,7 +264,7 @@ const finishedCases = [
     expect(session.host.getSnapshot().xoRecommendation).toEqual(xoRecommendation);
   } },
   { name: "export.invalidate", trigger: { finished: "calibrate", status: "succeeded" }, run: async (session, mock) => {
-    session.host.set({ runs: { camilla_dsp: { status: "done", files: ["old.yml"], folder: "/old" } } });
+    session.host.set({ runs: { camilla_dsp: { status: "done", files: ["old.yml"], folder: "/old", rate: 48000, notes: [] } } });
     await session.call({ method: "calibrate", params: { settings: null, subs_only: false } });
     mock.drain(); await session.settled();
     expect(session.host.getSnapshot().runs).toEqual({});

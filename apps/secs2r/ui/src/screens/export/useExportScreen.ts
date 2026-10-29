@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { IpcFailure } from "../../ipc/client";
 import { useHost, useResource, useSession } from "../../state/react";
 import { useJobLedger } from "../../state/useJobLedger";
+import { DESIGN_RATE, countedRate, extraRatesFor } from "../system/outputRate";
 import { designNameFor, isFilterKind, mdatScopeFor, type ExportActions, type ExportView } from "./types";
 
 const DESIGN_NAME_REASONS = new Set(["design_name_length", "design_name_control", "design_name_character", "design_name_trailing", "design_name_reserved"]);
@@ -17,6 +18,7 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
   const folder = useResource("folder");
   const methods = useResource("methods");
   const bootstrap = useResource("bootstrap");
+  const dsp = useResource("dsp");
   const methodsRead = useRef<typeof session | null>(null);
   useEffect(() => {
     // Session startup normally reads this already. A screen with no snapshot
@@ -34,12 +36,16 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
         const epoch = session.jobs.epoch;
         const name = isFilterKind(kind) ? designNameFor({ designName: current.designName, tutorial: false }) : null;
         const devices = current.camillaDevices;
+        // The rates other than the one the files are written at (48 kHz for 자동), as the DSP stands now.
+        const choice = session.stores.dsp.getSnapshot()?.fields.output_rate;
+        const extra = kind === "convolution" ? extraRatesFor(choice ? countedRate(choice) : DESIGN_RATE, current.extraRates) : [];
         try {
           await session.call({ method: "export", params: {
             kind, folder: "",
             ...(name !== null ? { design_name: name } : {}),
             ...(kind === "camilla_dsp" && (devices.capture.type !== "file" || devices.playback.type !== "file") ? { camilla_devices: devices } : {}),
             ...(kind === "before_after_mdat" ? { mdat_scope: mdatScopeFor(session.stores.results.getSnapshot()?.calibration, current.mdatScope) } : {}),
+            ...(extra.length > 0 ? { extra_rates: extra } : {}),
           } });
         } catch (error) {
           // Name validation fails before a job starts, so no finished event
@@ -54,6 +60,7 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
     setMdatScope: (scope) => session.host.set({ mdatScope: scope }),
     setDesignName: (name) => session.host.set({ designName: name }),
     setCamillaDevices: (devices) => session.host.set({ camillaDevices: devices }),
+    setExtraRates: (rates) => session.host.set({ extraRates: rates }),
     refreshDevices: () => void session.stores.methods.load(),
     changeFolder: () => session.run(async () => {
       const selected = await session.call({ method: "dialog_pick_folder", params: { start: session.stores.folder.getSnapshot()?.folder ?? null } });
@@ -61,6 +68,7 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
     }),
     openFolder: (path) => session.run(() => session.call({ method: "open_folder", params: { path } })),
     goToCalibrate: () => session.navigate("calibrate"),
+    goToSystem: () => session.navigate("system"),
     recalibrate: () => session.run(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } })),
   }), [session]);
   const jobs = ledger.jobs.filter((job) => job.status === "running" || job.status === "cancel_requested");
@@ -75,5 +83,6 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
     runs: host.runs, mdatScope: host.mdatScope, tutorial: project.tutorial,
     designName: host.designName, camillaDevices: host.camillaDevices,
     nativeDevices: bootstrap?.platform.os === "windows" && !methods?.native_error && methods?.native_devices.length ? methods.native_devices : null,
+    outputRate: dsp?.fields.output_rate ?? null, extraRates: host.extraRates,
   } : null, actions };
 }

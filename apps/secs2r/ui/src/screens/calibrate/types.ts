@@ -69,8 +69,16 @@ export type CalibrateView = {
    * `measurement_curves { positions: [1] }` (service gap: no cheap list).
    */
   measuredRoles: string[];
-  /** `dsp_get().fields.fir_budget`: the FIR budget of the DSP being exported to (U2); 0 when unknown. */
+  /** `dsp_get().fields.fir_budget`: the FIR budget of the DSP being exported to (U2), in taps at its output rate; 0 when unknown. */
   firBudget: number;
+  /** `dsp_get().fields.fir_taps`: the DSP's FIR taps per channel at its output rate; 0 when unknown. */
+  firTaps: number;
+  /**
+   * `dsp_get().fields.output_rate` as the screens count it (ADR 0017): the
+   * fixed rate, or 48000 for 자동 and while unknown. The design's 48 kHz
+   * taps are converted to it before they are compared with the DSP.
+   */
+  outputRate: number;
   /** The last `recommend_xo` result (`JobResult` kind `xo`) of this session; null before one. */
   xoRecommendation: XoRecommendation | null;
   /** Which of this screen's jobs runs (from `jobs` and the job events); null when none. */

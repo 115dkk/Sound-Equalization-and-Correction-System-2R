@@ -166,7 +166,7 @@ fn dsp_result(project: &Project) -> DspResult {
             })
             .collect(),
         window_ms: taps as f64 / f64::from(output_rate) * 1000.0,
-        resolution_hz: 48_000.0 / taps.max(1) as f64,
+        resolution_hz: f64::from(output_rate) / taps.max(1) as f64,
     }
 }
 
@@ -562,8 +562,17 @@ impl Service {
             {
                 return Err(invalid("fields", "DSP fields must be non-negative"));
             }
+            // Changing only the output rate keeps the preset (camilla stays
+            // camilla); any other field makes the profile custom.
+            let only_rate = fields.fir_taps == current.fir_taps
+                && fields.fir_budget == current.fir_budget
+                && fields.iir_bands == current.iir_bands
+                && fields.allpass_bands == current.allpass_bands
+                && fields.bm_path_delays == current.bm_path_delays;
             let dsp = &mut open.store.project_mut().dsp;
-            dsp.profile = "custom".into();
+            if !only_rate {
+                dsp.profile = "custom".into();
+            }
             dsp.output_rate = fields.output_rate;
             dsp.fir_taps = fields.fir_taps;
             dsp.fir_budget = fields.fir_budget;

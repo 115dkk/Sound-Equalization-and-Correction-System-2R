@@ -30,6 +30,7 @@ import {
   subValuesApply,
 } from "./settingsView";
 import { FAILED_TEXT, MODES, MODE_EFFECT, MODE_NAME, bandTypeText, filterSpec, groupName, modeSpecText, noticeText, subRoles, xoGroups } from "./text";
+import { DESIGN_RATE, rateText, tapsAt } from "../system/outputRate";
 import type { BandTypeChoice, CalibrateActions, CalibrateJob, CalibrateView, SettingEdit, SubLayout, SubModeChoice } from "./types";
 
 type Props = { view: CalibrateView; actions: CalibrateActions };
@@ -134,7 +135,27 @@ function ModeSection({ view, actions }: Props) {
           />
         </div>
       )}
+      <ChannelFirOver view={view} />
     </SettingsCard>
+  );
+}
+
+/**
+ * The mode's channel FIR against the DSP's taps per channel, both at the
+ * DSP's output rate (ADR 0017): one warning line when it does not fit, with
+ * the rate named when it is not 48 kHz.
+ */
+function ChannelFirOver({ view }: { view: CalibrateView }) {
+  const t = useT();
+  const number = useNumber();
+  const taps = tapsAt(view.modeSpec.fir_taps, view.outputRate);
+  if (view.firTaps <= 0 || taps <= view.firTaps) return null;
+  const params = { taps: number(taps), limit: number(view.firTaps), rate: rateText(number, view.outputRate), mode: t(MODE_NAME.zero) };
+  return (
+    <p className="calibrate-hint calibrate-hint--warning calibrate-fir-over" data-ui="calibrate.mode.fir_over">
+      <Icon name="warning" size={16} className="calibrate-fir-over__icon" />
+      <span>{view.outputRate === DESIGN_RATE ? t("calibrate.mode.fir_over", params) : t("calibrate.mode.fir_over.rate", params)}</span>
+    </p>
   );
 }
 
@@ -763,9 +784,14 @@ function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
     const parts = [t("calibrate.mimo.state.done", { kind: mimo.kind.toUpperCase(), count: mimo.support_count })];
     if (s.mimo_max_supports > 0) parts.push(t("calibrate.mimo.state.cap", { cap: s.mimo_max_supports }));
     if (mimo.kind === "fir" && view.firBudget > 0) {
-      const taps = mimo.fir_taps_total;
+      // The supports are designed at 48 kHz; the DSP's budget counts taps at its output rate.
+      const taps = tapsAt(mimo.fir_taps_total, view.outputRate);
+      const over = taps > view.firBudget;
+      const params = { taps: number(taps), budget: number(view.firBudget), rate: rateText(number, view.outputRate) };
       parts.push(
-        t(taps <= view.firBudget ? "calibrate.mimo.state.budget" : "calibrate.mimo.state.budget_over", { taps: number(taps), budget: number(view.firBudget) }),
+        view.outputRate === DESIGN_RATE
+          ? t(over ? "calibrate.mimo.state.budget_over" : "calibrate.mimo.state.budget", params)
+          : t(over ? "calibrate.mimo.state.budget_over.rate" : "calibrate.mimo.state.budget.rate", params),
       );
     }
     return (

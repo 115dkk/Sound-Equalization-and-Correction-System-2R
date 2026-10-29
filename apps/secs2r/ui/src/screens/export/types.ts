@@ -16,6 +16,7 @@ import type { MdatScope } from "../../ipc/bindings/MdatScope";
 import type { MeasureDevice } from "../../ipc/bindings/MeasureDevice";
 import type { Mode } from "../../ipc/bindings/Mode";
 import type { Notice } from "../../ipc/bindings/Notice";
+import type { OutputRateChoice } from "../../ipc/bindings/OutputRateChoice";
 import type { ResultsSummary } from "../../ipc/bindings/ResultsSummary";
 import { CALIBRATION_LIMITS } from "../../ipc/bindings/rules";
 
@@ -55,8 +56,13 @@ export const MIMO_MIN_POSITIONS = 3;
 
 /** How the last export of one kind ended, for the current result. */
 export type ExportRun =
-  /** `ExportResult.files`, and the folder they went to (the common parent of the files). */
-  | { status: "done"; files: string[]; folder: string }
+  /**
+   * `ExportResult.files`, the folder they went to (the common parent of the
+   * files), the rate they were written at (`output_rate`; 48000 for the REW
+   * mdat) and what the service noted while it decided that rate (`notes`:
+   * `output_rate_fallback` when 자동 could not use the playback device's rate).
+   */
+  | { status: "done"; files: string[]; folder: string; rate: number; notes: Notice[] }
   /** The job's `IpcError` (export_failed, stale_inputs, cancelled, …). */
   | { status: "failed"; error: IpcError }
   /** In the tutorial nothing is written (upstream `trial`): P33 records this instead of calling `export`. */
@@ -103,12 +109,25 @@ export type ExportView = {
    * user then types a device name.
    */
   nativeDevices: MeasureDevice[] | null;
+  /**
+   * `dsp_get().fields.output_rate` (ADR 0017): the rate the filter exports
+   * write, `"auto"` for the playback device's rate when exporting; null
+   * until it arrives. The REW mdat stays at 48 kHz.
+   */
+  outputRate: OutputRateChoice | null;
+  /**
+   * The convolution IR's extra rates (session host, none until changed; kept
+   * across projects for the session, like the CamillaDSP devices). Only the
+   * ones other than the written rate go out (`extraRatesFor`).
+   */
+  extraRates: number[];
 };
 
 export type ExportActions = {
   /**
    * `export { kind, folder: "" }` (job; the service picks the subfolder). The
-   * REW mdat adds `mdat_scope: mdatScopeFor(results.calibration, mdatScope)`.
+   * REW mdat adds `mdat_scope: mdatScopeFor(results.calibration, mdatScope)`;
+   * the convolution IR adds `extra_rates` when any other rate is chosen.
    * In the tutorial P33 records `{ status: "tutorial" }` instead. Upstream
    * opened the written folder after a successful export: P33 follows with
    * `open_folder { path: run.folder }`.
@@ -120,6 +139,8 @@ export type ExportActions = {
   setDesignName: (name: string) => void;
   /** Host: the CamillaDSP export's capture and playback. */
   setCamillaDevices: (devices: CamillaDevices) => void;
+  /** Host: the convolution IR's extra rates, in Hz. */
+  setExtraRates: (rates: number[]) => void;
   /** `measure_methods` again, when the devices disclosure opens: an interface plugged in since startup shows up. */
   refreshDevices: () => void;
   /** `dialog_pick_folder { start: folder }`, then `export_folder_set { folder }` when one was picked. */
@@ -128,6 +149,8 @@ export type ExportActions = {
   openFolder: (path: string) => void;
   /** Host: the frame goes to 보정. */
   goToCalibrate: () => void;
+  /** Host: the frame goes to 시스템, where the DSP card sets the output rate. */
+  goToSystem: () => void;
   /** `calibrate { settings: null, subs_only: false }`: recompute with current settings without leaving export. */
   recalibrate: () => void;
 };
@@ -321,6 +344,15 @@ export function devicesFor(devices: readonly MeasureDevice[], side: DeviceSide, 
     seen.add(device.name);
     return true;
   });
+}
+
+/**
+ * The `output_rate_fallback` note of a finished export, or null: 자동 could
+ * not read the playback device's rate, or read one the DSP cannot run at,
+ * and the files were written at 48 kHz.
+ */
+export function rateFallback(run: ExportRun | undefined): Notice | null {
+  return run?.status === "done" ? run.notes.find((note) => note.code === "output_rate_fallback") ?? null : null;
 }
 
 /** The rail state of 내보내기: blocked while there is no result or one is being computed, done after an export of the result. */

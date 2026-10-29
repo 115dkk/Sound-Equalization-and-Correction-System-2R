@@ -268,15 +268,18 @@ export function configPreset(preset: string, subs: number): ConfigResult {
   return configOf(preset, roles.map((role, i) => speaker(role, i + 1)));
 }
 
+/** Output rates of the presets (ADR 0017): `camilla` and `custom` choose theirs, the hardware DSPs run at their own. */
+const pcRate = { output_rate: { fixed: 48000 }, output_rate_editable: true } as const;
+const deviceRate = (fixed: number) => ({ output_rate: { fixed }, output_rate_editable: false });
 export const dsp: DspResult = {
   profile: "camilla", name: "PC · CamillaDSP",
-  fields: { fir_taps: 65536, fir_budget: 2097152, iir_bands: 64, allpass_bands: 64, bm_path_delays: 64 },
+  fields: { ...pcRate, fir_taps: 65536, fir_budget: 2097152, iir_bands: 64, allpass_bands: 64, bm_path_delays: 64 },
   presets: [
-    { key: "camilla", name: "PC · CamillaDSP", fields: { fir_taps: 65536, fir_budget: 2097152, iir_bands: 64, allpass_bands: 64, bm_path_delays: 64 } },
-    { key: "custom", name: "Custom", fields: { fir_taps: 2048, fir_budget: 32768, iir_bands: 16, allpass_bands: 16, bm_path_delays: 16 } },
-    { key: "minidsp", name: "miniDSP Flex / 2x4 HD", fields: { fir_taps: 2048, fir_budget: 4096, iir_bands: 10, allpass_bands: 0, bm_path_delays: 0 } },
-    { key: "qsys", name: "Q-SYS Core", fields: { fir_taps: 16384, fir_budget: 65536, iir_bands: 24, allpass_bands: 16, bm_path_delays: 16 } },
-    { key: "tesira", name: "Biamp Tesira", fields: { fir_taps: 2048, fir_budget: 51200, iir_bands: 16, allpass_bands: 16, bm_path_delays: 16 } },
+    { key: "camilla", name: "PC · CamillaDSP", fields: { ...pcRate, fir_taps: 65536, fir_budget: 2097152, iir_bands: 64, allpass_bands: 64, bm_path_delays: 64 } },
+    { key: "custom", name: "Custom", fields: { ...pcRate, fir_taps: 2048, fir_budget: 32768, iir_bands: 16, allpass_bands: 16, bm_path_delays: 16 } },
+    { key: "minidsp", name: "miniDSP Flex / 2x4 HD", fields: { ...deviceRate(96000), fir_taps: 2048, fir_budget: 4096, iir_bands: 10, allpass_bands: 0, bm_path_delays: 0 } },
+    { key: "qsys", name: "Q-SYS Core", fields: { ...deviceRate(48000), fir_taps: 16384, fir_budget: 65536, iir_bands: 24, allpass_bands: 16, bm_path_delays: 16 } },
+    { key: "tesira", name: "Biamp Tesira", fields: { ...deviceRate(48000), fir_taps: 2048, fir_budget: 51200, iir_bands: 16, allpass_bands: 16, bm_path_delays: 16 } },
   ],
   window_ms: 65536 / 48, resolution_hz: 48000 / 65536,
 };

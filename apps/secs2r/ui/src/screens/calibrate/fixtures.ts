@@ -333,6 +333,8 @@ const base: CalibrateView = {
   subWarnings: [],
   curvesLoading: false,
   firBudget: 2097152,
+  firTaps: 65536,
+  outputRate: 48000,
   xoRecommendation: fx.xoRecommendation,
   running: null,
   measuring: false,
@@ -460,6 +462,21 @@ function defaultSub() {
 const firMimoSummary: import("../../ipc/bindings/MimoSummary").MimoSummary = {
   ...fx.mimoSummary, kind: "fir", support_count: 2, fir_taps_total: 16000,
   input_count: 1,
+};
+
+/**
+ * Exporting to a miniDSP Flex, which runs at 96 kHz (ADR 0017). The mixed
+ * mode's 2,048 taps become 4,096, past its 2,048 per channel; two FIR
+ * supports of 3,072 taps at 48 kHz, inside its 4,096 budget at 48 kHz,
+ * become 6,144 and go past it.
+ */
+export const minidspView: CalibrateView = {
+  ...mimoView,
+  settings: { ...mimoView.settings, mimo_fir: true },
+  results: { ...mimoView.results, mimo: { ...fx.mimoSummary, kind: "fir", support_count: 2, fir_taps_total: 3072, input_count: 1 } },
+  firBudget: 4096,
+  firTaps: 2048,
+  outputRate: 96000,
 };
 export const gpuView: CalibrateView = {
   ...mimoView, settings: { ...mimoView.settings, mimo_fir: true }, compute: { ...base.compute, status: fx.gpuComputeStatus },

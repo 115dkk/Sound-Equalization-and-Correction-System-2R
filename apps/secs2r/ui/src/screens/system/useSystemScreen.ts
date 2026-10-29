@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { DspFields } from "../../ipc/bindings/DspFields";
 import type { ConfigSetSpeakerParams } from "../../ipc/bindings/ConfigSetSpeakerParams";
 import { useHost, useResource, useSession } from "../../state/react";
+import { sameRate } from "./outputRate";
 import type { SystemActions, SystemView } from "./types";
 
 export function useSystemScreen(configureMeasurement?: () => void): { view: SystemView | null; actions: SystemActions } {
@@ -38,11 +39,12 @@ export function useSystemScreen(configureMeasurement?: () => void): { view: Syst
       }),
       setDspPreset: (preset) => session.run(() => session.writers.dsp.edit({ preset })),
       setDspFields: (fields) => {
-        // Controls submit this render's full fields; the writer only needs its edits.
-        const patch: Partial<DspFields> = {};
-        for (const key of Object.keys(fields) as (keyof DspFields)[]) {
-          if (fields[key] !== dsp?.fields[key]) patch[key] = fields[key];
-        }
+        // Controls submit this render's full fields; the writer only needs its
+        // edits. The output rate is a value ("auto" or { fixed }), compared by value.
+        const current = dsp?.fields;
+        const changed = (key: keyof DspFields) => !current
+          || (key === "output_rate" ? !sameRate(fields.output_rate, current.output_rate) : fields[key] !== current[key]);
+        const patch: Partial<DspFields> = Object.fromEntries((Object.keys(fields) as (keyof DspFields)[]).filter(changed).map((key) => [key, fields[key]]));
         session.run(() => session.writers.dsp.edit(patch));
       },
       setArrangement: async (count) => (await session.call({ method: "layout_set", params: { count, start_delay: null, timing: null, confirm: true } })).undo_token,

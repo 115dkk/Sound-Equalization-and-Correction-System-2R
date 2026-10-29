@@ -53,8 +53,12 @@ fn resolve_output_rate(
     }
 }
 
-fn validate_extra_rates(rates: &[u32], output_rate: u32) -> Result<(), IpcError> {
+/// The extra convolution rates to write. A rate equal to the main rate is
+/// refused when the user chose that rate, and dropped when `Auto` resolved to
+/// it: the screen cannot know the device's rate before the export starts.
+fn extra_rates_for(rates: &[u32], output_rate: u32, auto: bool) -> Result<Vec<u32>, IpcError> {
     let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
     for &rate in rates {
         if !secs_dsp::rate::is_output_rate(rate) {
             return Err(IpcError::new(
@@ -63,15 +67,18 @@ fn validate_extra_rates(rates: &[u32], output_rate: u32) -> Result<(), IpcError>
             )
             .with_param("rate", rate.to_string()));
         }
-        if rate == output_rate || !seen.insert(rate) {
+        if !seen.insert(rate) || (rate == output_rate && !auto) {
             return Err(IpcError::new(
                 ErrorCode::InvalidRequest,
                 "extra output sample rates must be distinct from the main rate and each other",
             )
             .with_param("rate", rate.to_string()));
         }
+        if rate != output_rate {
+            out.push(rate);
+        }
     }
-    Ok(())
+    Ok(out)
 }
 
 impl Service {
@@ -174,7 +181,8 @@ impl Service {
                 self.deps.audio_backend.as_ref(),
             )
         };
-        validate_extra_rates(&params.extra_rates, output_rate)?;
+        let mut params = params;
+        params.extra_rates = extra_rates_for(&params.extra_rates, output_rate, output_rate_auto)?;
         if params.kind == ExportKind::BeforeAfterMdat
             && mdat_scope == secs_export::MdatScope::Measurements
         {
@@ -854,6 +862,23 @@ mod tests {
                 (rate as u32, Vec::new())
             );
         }
+    }
+
+    #[test]
+    fn extra_rates_drop_the_resolved_auto_rate_and_refuse_a_chosen_one() {
+        // Auto resolved to 44.1 kHz: the screen could not know, so it is dropped.
+        assert_eq!(
+            extra_rates_for(&[44_100, 96_000], 44_100, true).unwrap(),
+            vec![96_000]
+        );
+        // A fixed main rate repeated as an extra rate is the user's mistake.
+        assert!(extra_rates_for(&[48_000], 48_000, false).is_err());
+        assert!(extra_rates_for(&[96_000, 96_000], 48_000, true).is_err());
+        assert!(extra_rates_for(&[32_000], 48_000, false).is_err());
+        assert_eq!(
+            extra_rates_for(&[], 48_000, false).unwrap(),
+            Vec::<u32>::new()
+        );
     }
 
     #[test]

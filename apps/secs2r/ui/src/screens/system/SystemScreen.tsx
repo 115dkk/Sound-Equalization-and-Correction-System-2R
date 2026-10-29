@@ -14,6 +14,7 @@ import type { Translate } from "../../i18n/react";
 import { useNumber, useT } from "../../i18n/react";
 import type { ConfigSpeaker } from "../../ipc/bindings/ConfigSpeaker";
 import type { DspFields } from "../../ipc/bindings/DspFields";
+import type { OutputRateChoice } from "../../ipc/bindings/OutputRateChoice";
 import {
   Advanced,
   ArrangementMap,
@@ -35,6 +36,7 @@ import {
   type RowGroup,
 } from "../../ui";
 import { ARRANGEMENT_COUNTS, PRESET_ROLES, ROLES, orderRoles, roleCode, roleKind, type MicPoint } from "../../ui/maps/geometry";
+import { OUTPUT_RATES, countedRate, rateChoice, rateText, rateValue } from "./outputRate";
 import { DSP_NAME, GROUP_NAME, durationText, isKnownRole, noticeText, outputLabel, roleLabel, roleName } from "./text";
 import type { SystemActions, SystemView } from "./types";
 import "./system.css";
@@ -131,7 +133,16 @@ function CellKeys({ children }: { children: ReactNode }) {
   );
 }
 
-export function SystemScreen({ view, actions }: { view: SystemView; actions: SystemActions }) {
+export function SystemScreen({
+  view,
+  actions,
+  initialDspAdvanced = false,
+}: {
+  view: SystemView;
+  actions: SystemActions;
+  /** Gallery: draw the DSP card's 고급 unfolded. The fold is the card's own state. */
+  initialDspAdvanced?: boolean;
+}) {
   const { ask, dialog } = useClearingChange(view, actions);
   const speakers = view.config.speakers;
   const [picked, setPicked] = useState<number | null>(speakers.length > 0 ? 0 : null);
@@ -142,7 +153,7 @@ export function SystemScreen({ view, actions }: { view: SystemView; actions: Sys
         <ConfigCard view={view} actions={actions} ask={ask} selected={selected} onSelect={setPicked} />
         <RoomCard view={view} selected={selected} onSelect={setPicked} />
         <ArrangementCard view={view} actions={actions} ask={ask} />
-        <DspCard view={view} actions={actions} />
+        <DspCard view={view} actions={actions} initialAdvanced={initialDspAdvanced} />
       </div>
       {dialog}
     </div>
@@ -715,7 +726,7 @@ function MeasureOptions({ view, actions }: { view: SystemView; actions: SystemAc
 
 /* ── 내보낼 DSP (U2) ────────────────────────────────────────────────────── */
 
-function DspCard({ view, actions }: { view: SystemView; actions: SystemActions }) {
+function DspCard({ view, actions, initialAdvanced }: { view: SystemView; actions: SystemActions; initialAdvanced: boolean }) {
   const t = useT();
   const number = useNumber();
   const { dsp } = view;
@@ -726,8 +737,10 @@ function DspCard({ view, actions }: { view: SystemView; actions: SystemActions }
   };
   const edit = (patch: Partial<DspFields>) => actions.setDspFields({ ...dsp.fields, ...patch });
   const taps = FIR_TAP_CHOICES.includes(dsp.fields.fir_taps as (typeof FIR_TAP_CHOICES)[number]) ? [...FIR_TAP_CHOICES] : [...FIR_TAP_CHOICES, dsp.fields.fir_taps].sort((a, b) => a - b);
-  // Upstream fir_tap_label: the linear-phase delay of N taps at 48 kHz, (N − 1) / 2 samples.
-  const tapLabel = (n: number) => t("system.dsp.taps.option", { taps: number(n), ms: number(((n - 1) / 48000 / 2) * 1000, 1) });
+  // Upstream fir_tap_label: the linear-phase delay of N taps, (N − 1) / 2
+  // samples. The DSP's taps run at its output rate (48 kHz for 자동).
+  const rate = countedRate(dsp.fields.output_rate);
+  const tapLabel = (n: number) => t("system.dsp.taps.option", { taps: number(n), ms: number(((n - 1) / rate / 2) * 1000, 1) });
   return (
     <Card className="system-dsp" title={t("system.dsp.title")} help={<>{t("system.dsp.description")}<p>{t("system.dsp.use")}</p></>} data-ui="system.dsp">
       <Select
@@ -738,7 +751,8 @@ function DspCard({ view, actions }: { view: SystemView; actions: SystemActions }
         options={keys.map((key) => ({ value: key, label: presetName(key) }))}
         onChange={(key) => actions.setDspPreset(key)}
       />
-      <Advanced id="system.dsp.advanced" count={5}>
+      <OutputRate fields={dsp.fields} onChange={(output_rate) => edit({ output_rate })} />
+      <Advanced id="system.dsp.advanced" count={5} defaultOpen={initialAdvanced}>
         <div className="system-dsp__fields">
           <Select id="system.dsp.fir_taps" label={t("system.dsp.fir_taps")} value={String(dsp.fields.fir_taps)} options={taps.map((n) => ({ value: String(n), label: tapLabel(n) }))} onChange={(v) => edit({ fir_taps: Number(v) })} />
           <NumberField id="system.dsp.fir_budget" label={t("system.dsp.fir_budget")} value={dsp.fields.fir_budget} min={0} max={4194304} step={1024} unit={t("system.dsp.unit.taps")} size={9} onChange={(v) => edit({ fir_budget: v })} />
@@ -751,5 +765,42 @@ function DspCard({ view, actions }: { view: SystemView; actions: SystemActions }
         </p>
       </Advanced>
     </Card>
+  );
+}
+
+/**
+ * The rate the exported filters are written at (ADR 0017). A PC profile
+ * chooses it, 자동 included; a hardware DSP runs at its own rate, so the
+ * value stands as text with the reason and no control.
+ */
+function OutputRate({ fields, onChange }: { fields: DspFields; onChange: (choice: OutputRateChoice) => void }) {
+  const t = useT();
+  const number = useNumber();
+  const choice = fields.output_rate;
+  if (!fields.output_rate_editable) {
+    return (
+      <div className="ui-field system-dsp__rate">
+        <span className="ui-field__label">{t("system.dsp.output_rate")}</span>
+        <p className="system-dsp__rate-value" data-ui="system.dsp.output_rate">
+          <span className="system-dsp__rate-text tabular">{choice === "auto" ? t("system.dsp.output_rate.auto") : rateText(number, choice.fixed)}</span>
+          <span className="system-dsp__rate-reason">{t("system.dsp.output_rate.fixed")}</span>
+        </p>
+      </div>
+    );
+  }
+  return (
+    <Select
+      id="system.dsp.output_rate"
+      label={t("system.dsp.output_rate")}
+      help={t("system.dsp.output_rate.help")}
+      value={rateValue(choice)}
+      options={[
+        { value: "auto", label: t("system.dsp.output_rate.auto") },
+        ...OUTPUT_RATES.map((rate) => ({ value: String(rate), label: rateText(number, rate) })),
+      ]}
+      // Said only while 자동 is chosen: what it reads, and what it falls back to.
+      hint={choice === "auto" ? t("system.dsp.output_rate.auto.hint") : undefined}
+      onChange={(value) => onChange(rateChoice(value))}
+    />
   );
 }
