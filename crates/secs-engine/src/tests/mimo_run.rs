@@ -289,6 +289,220 @@ fn mimo_run_assemble_recorded_supports_matches_oracle() {
     }
 }
 
+#[test]
+fn mimo_scorecard_matches_applied_response_and_reports_late_energy() {
+    let name = "room_dba";
+    let case = cases::load(name);
+    let design = design::replay(name);
+    let fixture = Fixture::load("engine_mimo_run", "room_dba_iir");
+    let ideal = ideal(&fixture);
+    let run = run::assemble(
+        &design,
+        &case.measurements,
+        &case.config,
+        &ideal,
+        supports(&fixture, &ideal),
+        mimo::MimoKey::from_settings(&settings(false)),
+        &Context::serial(),
+    )
+    .unwrap();
+    let frequencies = crate::grid::design_freqs();
+    let target = design.target.sample(
+        &frequencies
+            .iter()
+            .map(|frequency| frequency.max(1.0))
+            .collect::<Vec<_>>(),
+    );
+    assert_eq!(run.scorecard.len(), design.chain.mains.len());
+    for (score, (role, response)) in run.scorecard.iter().zip(&run.applied) {
+        assert_eq!(&score.role, role);
+        assert_eq!(
+            score.after_mimo,
+            crate::scorecard::metrics(response, frequencies, &target, (100.0, 400.0)),
+            "the scorecard must use the exact response exported to the MIMO mdat"
+        );
+    }
+    assert!(run.scorecard.iter().any(|mimo| {
+        let after = design
+            .scores
+            .iter()
+            .find(|score| score.role == mimo.role)
+            .unwrap()
+            .after;
+        mimo.after_mimo != after
+    }));
+
+    let calibration_late = crate::late_energy(&design).unwrap();
+    let expected_rows = design.spectra.positions.len() * design.chain.mains.len();
+    assert_eq!(calibration_late.len(), expected_rows);
+    assert_eq!(run.late_energy.len(), expected_rows);
+    let main_position = design.spectra.main_position;
+    let expected_order: Vec<_> = design
+        .spectra
+        .positions
+        .iter()
+        .flat_map(|position| {
+            design
+                .chain
+                .mains
+                .iter()
+                .map(move |main| (*position, main.role.as_str()))
+        })
+        .collect();
+    assert_eq!(
+        calibration_late
+            .iter()
+            .map(|row| (row.position, row.role.as_str()))
+            .collect::<Vec<_>>(),
+        expected_order
+    );
+    assert_eq!(
+        run.late_energy
+            .iter()
+            .map(|row| (row.position, row.role.as_str()))
+            .collect::<Vec<_>>(),
+        expected_order
+    );
+    for main in &design.mains {
+        let row = calibration_late
+            .iter()
+            .find(|row| row.position == main_position && row.role == main.role)
+            .unwrap();
+        assert_eq!(
+            row.before_db.to_bits(),
+            crate::decay::late_db_20_150(&main.before).to_bits()
+        );
+        assert_eq!(
+            row.after_db.to_bits(),
+            crate::decay::late_db_20_150(&main.after).to_bits()
+        );
+    }
+    // Away from the main position the rows read the 2 s export view, as the
+    // mdat's before/after items and MIMO do, not the fitting spectra.
+    let view = design.replay.export_view(&design).unwrap();
+    for row in calibration_late
+        .iter()
+        .filter(|row| row.position != main_position)
+    {
+        let before = view.spectra.get(row.position, &row.role).unwrap();
+        let after = crate::stage_responses(&design, &row.role, &view.spectra, row.position)
+            .unwrap()
+            .output;
+        assert_eq!(
+            row.before_db.to_bits(),
+            crate::decay::late_db_20_150(before).to_bits()
+        );
+        assert_eq!(
+            row.after_db.to_bits(),
+            crate::decay::late_db_20_150(&after).to_bits()
+        );
+    }
+    // MIMO's response without its supports is the calibration's `after`, so
+    // `after_mimo_db - after_db` is the effect of MIMO alone.
+    for (role, base) in &run.final_resp {
+        let after = calibration_late
+            .iter()
+            .find(|row| row.position == main_position && &row.role == role)
+            .unwrap();
+        let base_db = crate::decay::late_db_20_150(base);
+        assert!(
+            (base_db - after.after_db).abs() < 1e-4,
+            "{role}: {base_db} vs {}",
+            after.after_db
+        );
+    }
+    let supported: std::collections::BTreeSet<_> = run
+        .paths
+        .paths
+        .iter()
+        .map(|path| path.input.as_str())
+        .collect();
+    for role in supported {
+        let after = calibration_late
+            .iter()
+            .find(|row| row.position == main_position && row.role == role)
+            .unwrap();
+        let after_mimo = run
+            .late_energy
+            .iter()
+            .find(|row| row.position == main_position && row.role == role)
+            .unwrap();
+        assert!(
+            after_mimo.after_mimo_db < after.after_db,
+            "{role}: {} !< {}",
+            after_mimo.after_mimo_db,
+            after.after_db
+        );
+    }
+
+    eprintln!(
+        "role\tin1_20_after\tin1_20_after_mimo\tgd_20_after\tgd_20_after_mimo\tlate_before\tlate_after\tlate_after_mimo"
+    );
+    for score in &design.scores {
+        let mimo = run
+            .scorecard
+            .iter()
+            .find(|row| row.role == score.role)
+            .unwrap();
+        let late = calibration_late
+            .iter()
+            .find(|row| row.position == main_position && row.role == score.role)
+            .unwrap();
+        let mimo_late = run
+            .late_energy
+            .iter()
+            .find(|row| row.position == main_position && row.role == score.role)
+            .unwrap();
+        eprintln!(
+            "{}\t{:.9}\t{:.9}\t{:.9}\t{:.9}\t{:.9}\t{:.9}\t{:.9}",
+            score.role,
+            score.after.in1_20,
+            mimo.after_mimo.in1_20,
+            score.after.gd_20,
+            mimo.after_mimo.gd_20,
+            late.before_db,
+            late.after_db,
+            mimo_late.after_mimo_db,
+        );
+    }
+}
+
+#[test]
+fn mimo_scorecard_and_late_energy_are_deterministic_across_threads() {
+    let name = "room_dba";
+    let case = cases::load(name);
+    let design = design::replay(name);
+    let fixture = Fixture::load("engine_mimo_run", "room_dba_iir");
+    let ideal = ideal(&fixture);
+    let recorded_supports = supports(&fixture, &ideal);
+    let default_threads = std::thread::available_parallelism().map_or(1, usize::from);
+    let mut expected = None;
+    for threads in [1, default_threads, 7] {
+        let context = Context::new(
+            threads,
+            MemoryBudget::new(u64::MAX),
+            Arc::new(secs_compute::NoProgress),
+            CancelToken::new(),
+        );
+        let run = run::assemble(
+            &design,
+            &case.measurements,
+            &case.config,
+            &ideal,
+            recorded_supports.clone(),
+            mimo::MimoKey::from_settings(&settings(false)),
+            &context,
+        )
+        .unwrap();
+        let fields = (run.scorecard, run.late_energy);
+        if let Some(expected) = &expected {
+            assert_eq!(&fields, expected, "threads={threads}");
+        } else {
+            expected = Some(fields);
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct Events(Mutex<Vec<Progress>>);
 impl ProgressSink for Events {

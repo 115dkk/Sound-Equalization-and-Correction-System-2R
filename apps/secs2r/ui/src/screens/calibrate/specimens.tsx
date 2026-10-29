@@ -152,6 +152,25 @@ export const calibrateSpecimens: SpecimenDef[] = [
   frame("failed", "failed run: cause, next step, 자세히", () => <CalibrateFrame view={fx.failedView} jobs={failedJobs} />),
   frame("subs-only", "subs-only result on BA (DBA group)", () => <CalibrateFrame view={fx.subsOnlyView} />),
   frame("mimo", "MIMO computed: SPL with the MIMO curve", () => <CalibrateFrame view={fx.mimoView} />),
+  frame("mimo-scorecard", "scorecard after MIMO: before → after → MIMO in each figure, the key and the late bass", () => (
+    <CalibrateFrame view={fx.mimoView} scrollTo="calibrate.scorecard.card" />
+  )),
+  frame("late-positions", "위치별 늦은 저음 open: three positions, position 1 the reference, with MIMO", () => (
+    <CalibrateFrame view={fx.mimoView} initial={{ latePositions: true }} scrollTo="calibrate.scorecard.positions" />
+  )),
+  frame("mimo-stale-scorecard", "MIMO stale: the scorecard compares before and after only", () => (
+    <CalibrateFrame view={fx.mimoStaleView} scrollTo="calibrate.scorecard.card" />
+  )),
+  frame("one-position", "one measured position: late bass there, no positions table", () => (
+    <CalibrateFrame view={fx.onePositionView} scrollTo="calibrate.scorecard.card" />
+  )),
+  {
+    id: "screen.calibrate.mimo-scorecard.min",
+    title: "보정 · scorecard after MIMO at the smallest window (1024 × 700): over the graph, figures on one line",
+    width: 1024,
+    height: 700,
+    render: () => <CalibrateFrame view={fx.mimoView} scrollTo="calibrate.scorecard.card" />,
+  },
   frame("mimo-settings", "MIMO section after a run", () => <CalibrateFrame view={fx.mimoView} scrollTo="calibrate.settings.mimo" />),
   frame("gpu-auto", "automatic GPU selection and actual GPU result", () => <CalibrateFrame view={fx.gpuView} scrollTo="calibrate.settings.mimo" />),
   frame("gpu-selected", "manual GPU preference", () => <CalibrateFrame view={fx.gpuSelectedView} scrollTo="calibrate.settings.mimo" />),

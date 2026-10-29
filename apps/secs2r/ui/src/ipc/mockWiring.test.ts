@@ -6,6 +6,8 @@ import type { SettingEdit } from "./bindings/SettingEdit";
 import { CALIBRATION_LIMITS } from "./bindings/rules";
 import { createMockService } from "./mock";
 import * as fx from "./fixtures";
+import { mimoView } from "../screens/calibrate/fixtures";
+import { scorecardModel } from "../screens/calibrate/scorecard";
 
 const configure: MeasureConfigureParams = {
   method: "mock", input_device: null, output_device: null, input_channel: null, output_channels: [], sweep_length: null,
@@ -134,6 +136,46 @@ describe("P33 mock wiring", () => {
     await mock.request({ method: "status_watch_stop" });
     expect(events.at(-1)).toMatchObject({ event: "finished", job: watch.job, result: { kind: "stopped" } });
     expect(await mock.request({ method: "jobs" })).toEqual([]);
+  });
+
+  it("matches the gallery's scorecard and late bass before and after a MIMO run", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      expect(fx.calibrationSummary.scorecard).toEqual(mimoView.results.calibration!.scorecard);
+      expect(fx.calibrationSummary.late_energy).toEqual(mimoView.results.calibration!.late_energy);
+      expect(fx.mimoSummary.scorecard).toEqual(mimoView.results.mimo!.scorecard);
+      expect(fx.mimoSummary.late_energy).toEqual(mimoView.results.mimo!.late_energy);
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+      await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
+      const before = await mock.request({ method: "results" });
+      const lines = await mock.request({ method: "result_lines" });
+      expect(before.calibration!.late_energy).toEqual(fx.calibrationSummary.late_energy);
+      expect(scorecardModel(before, lines.channels)).toMatchObject({ late: true, mimo: false });
+      await mock.request({ method: "mimo", params: { settings: null } }); mock.drain();
+      const after = await mock.request({ method: "results" });
+      expect(after.mimo_export).toBe("included");
+      expect(after.mimo!.scorecard).toEqual(fx.mimoSummary.scorecard);
+      expect(after.mimo!.late_energy).toEqual(fx.mimoSummary.late_energy);
+      expect(scorecardModel(after, lines.channels)).toEqual(scorecardModel(mimoView.results, mimoView.lines.channels));
+      await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
+      expect(scorecardModel(await mock.request({ method: "results" }), lines.channels)).toMatchObject({ late: true, mimo: false });
+    } finally { mock.dispose(); }
+  });
+
+  it.each([[1], [2, 7, 9]])("limits late bass to the project's measured positions %j", async (...positions) => {
+    const mock = createMockService({ tickMs: 0, project: { ...fx.projectInfo, preset: "2.0", sub_count: 0, positions } });
+    try {
+      await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
+      const calibration = (await mock.request({ method: "results" })).calibration!;
+      expect(calibration.main_roles).toEqual(["L", "R"]);
+      expect(calibration.late_energy.map(({ role, position }) => [role, position])).toEqual(positions.flatMap((position) => [["L", position], ["R", position]]));
+      expect(calibration.late_energy.every((entry) => Number.isFinite(entry.before_db) && Number.isFinite(entry.after_db))).toBe(true);
+      await mock.request({ method: "mimo", params: { settings: null } }); mock.drain();
+      const mimo = (await mock.request({ method: "results" })).mimo!;
+      expect(mimo.support_count).toBe(0);
+      expect(mimo.scorecard).toEqual(calibration.scorecard.map((score) => ({ role: score.role, after_mimo: score.after })));
+      expect(mimo.late_energy).toEqual(calibration.late_energy.map(({ role, position, after_db }) => ({ role, position, after_mimo_db: after_db })));
+    } finally { mock.dispose(); }
   });
 
   it("updates calibration, MIMO and export results, and preserves job failure injection", async () => {

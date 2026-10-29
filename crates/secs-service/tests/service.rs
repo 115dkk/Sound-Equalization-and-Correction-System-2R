@@ -2152,7 +2152,9 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
     else {
         panic!("MIMO completion must be returned");
     };
-    let summary = read_results(&service).mimo.unwrap();
+    let results = read_results(&service);
+    let calibration_summary = results.calibration.unwrap();
+    let summary = results.mimo.unwrap();
     assert!(!summary.stale);
     let direct = secs_engine_testkit::production_case("room_dba", 1);
     let ctx = secs_compute::Context::new(
@@ -2172,6 +2174,45 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
     .unwrap();
     assert_eq!(cached_paths(&path), direct_mimo.paths);
     assert!(summary.support_count > 0);
+    let expected_rows = direct.design.spectra.positions.len() * direct.design.chain.mains.len();
+    assert_eq!(calibration_summary.late_energy.len(), expected_rows);
+    assert_eq!(summary.scorecard.len(), direct.design.chain.mains.len());
+    assert_eq!(summary.late_energy.len(), expected_rows);
+    for score in &direct_mimo.scorecard {
+        let restored = summary
+            .scorecard
+            .iter()
+            .find(|row| row.role == score.role)
+            .unwrap();
+        assert_eq!(
+            restored.after_mimo.in1_20.to_bits(),
+            score.after_mimo.in1_20.to_bits()
+        );
+        assert_eq!(
+            restored.after_mimo.gd_20.to_bits(),
+            score.after_mimo.gd_20.to_bits()
+        );
+    }
+    let main_position = direct.design.spectra.main_position;
+    for role in direct_mimo
+        .paths
+        .paths
+        .iter()
+        .map(|path| path.input.as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        let after = calibration_summary
+            .late_energy
+            .iter()
+            .find(|row| row.position == main_position && row.role == role)
+            .unwrap();
+        let after_mimo = summary
+            .late_energy
+            .iter()
+            .find(|row| row.position == main_position && row.role == role)
+            .unwrap();
+        assert!(after_mimo.after_mimo_db < after.after_db);
+    }
 
     let blocked_folder = root.join("blocked-mimo-FilterText");
     let Envelope::Err(error) = service.call(
@@ -2228,6 +2269,14 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
     );
     let reopened = deterministic_service();
     open(&reopened, &path);
+    let reopened_results = read_results(&reopened);
+    assert_eq!(
+        reopened_results.calibration.unwrap().late_energy,
+        calibration_summary.late_energy
+    );
+    let reopened_mimo = reopened_results.mimo.unwrap();
+    assert_eq!(reopened_mimo.scorecard, summary.scorecard);
+    assert_eq!(reopened_mimo.late_energy, summary.late_energy);
     let cached = export_and_wait(
         &reopened,
         ExportKind::CamillaDsp,
