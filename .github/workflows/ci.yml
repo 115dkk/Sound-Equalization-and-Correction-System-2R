@@ -399,6 +399,10 @@ jobs:
   manage-e2e:
     name: Manage end to end (Windows GUI)
     needs: bundle
+    # Needs only the Windows installer: a failed macOS or Linux leg of the
+    # bundle matrix must not skip this job. A missing Windows artifact fails
+    # the download step below.
+    if: ${{ !cancelled() && needs.bundle.result != 'skipped' }}
     runs-on: windows-latest
     timeout-minutes: 40
     defaults:
