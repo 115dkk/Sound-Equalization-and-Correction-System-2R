@@ -1061,6 +1061,22 @@ tests = [
 note = "New: complete 48 kHz f32 convolution IRs fold FIR, PEQ, crossovers, all-pass, gain, polarity and delay into one WAV and exact-DTFT CSV per reachable input/output pair, with routing metadata and shared headroom."
 
 [[feature]]
+id = "export.convolution_reaper"
+kind = "export"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = [
+  "secs-filters::reaper_script_uses_routing_order_and_quotes_names",
+  "secs-filters::reaper_script_compiles_when_luac_is_available",
+  "secs-filters::reaper_script_replaces_tracks_and_restores_failed_builds",
+  "secs-filters::reaper_plays_convolution_bundles_as_written",
+  "secs-filters::convolution_bundle_contains_complete_paths_and_is_atomic",
+  "secs-service::convolution_export_with_subs_and_mimo_reopens_byte_identically",
+]
+note = "New: a relocatable ReaScript builds mono per-path ReaVerb tracks and an output bus, replaces its previous tagged tracks, and disables the source master send. No extensions required."
+
+[[feature]]
 id = "export.camilla_mimo"
 kind = "export"
 milestone = "M3"

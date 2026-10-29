@@ -401,7 +401,11 @@ impl Service {
                     match params.kind {
                         ExportKind::FilterText => secs_filters::export_filter_text(&run, folder),
                         ExportKind::EqualizerApo => secs_filters::export_eqapo(&run, folder),
-                        ExportKind::Convolution => secs_filters::export_convolution(&run, folder),
+                        ExportKind::Convolution => secs_filters::export_convolution_named(
+                            &run,
+                            folder,
+                            requested_design_name.as_deref(),
+                        ),
                         _ => unreachable!(),
                     }
                     .map_err(filter_error)?
