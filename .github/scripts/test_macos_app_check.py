@@ -130,6 +130,14 @@ class AudioReportTest(unittest.TestCase):
             report["facts"] = {"audio": passing_audio()}
             self.assertEqual(m.report_problems("run", report, work, "BlackHole 2ch"), [])
 
+    def test_retried_attempts_become_notes_and_do_not_fail(self):
+        audio = passing_audio()
+        audio["retries"] = [{"stage": "level_R", "attempt": 1, "error": "level_play: gap"}]
+        self.assertEqual(m.audio_problems(audio, "BlackHole 2ch"), [])
+        self.assertEqual(m.audio_retries(audio), ["retried level_R after attempt 1: level_play: gap"])
+        self.assertEqual(m.audio_retries(None), [])
+        self.assertEqual(m.audio_retries({"retries": "x"}), [])
+
     def test_missing_channel_silence_nan_or_bad_level_fails(self):
         for role in ("L", "R"):
             for value in (None, -120, -26.01, -13.99, float("nan"), float("inf"), True):
