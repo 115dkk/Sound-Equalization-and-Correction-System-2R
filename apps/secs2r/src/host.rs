@@ -139,6 +139,13 @@ impl Host for TauriHost {
             .map_err(host_error)
     }
 
+    fn open_release_page(&self, url: &str) -> Result<(), IpcError> {
+        self.app
+            .opener()
+            .open_url(url, None::<&str>)
+            .map_err(host_error)
+    }
+
     fn open_folder(&self, path: &Path) -> Result<(), IpcError> {
         self.app
             .opener()

@@ -135,6 +135,11 @@ pub trait Host: Send + Sync + Debug {
     fn open_gpu_help(&self) -> Result<(), IpcError> {
         not_implemented("GPU installation help")
     }
+    /// Opens a release page of this repository in the system browser. The
+    /// service builds `url` from a checked version (ADR 0020).
+    fn open_release_page(&self, _url: &str) -> Result<(), IpcError> {
+        not_implemented("release page")
+    }
     /// Reveals a folder in the operating-system file manager.
     fn open_folder(&self, _path: &Path) -> Result<(), IpcError> {
         not_implemented("open folder")

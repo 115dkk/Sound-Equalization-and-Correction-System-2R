@@ -159,6 +159,7 @@ const ACCESS: &[(&str, MethodAccess)] = &[
     entry("update_download", true, true),
     entry("update_restart", true, true),
     entry("update_notice_dismiss", true, true),
+    entry("update_open_release", true, false),
     entry("compute_status", false, false),
     entry("open_gpu_help", true, false),
     entry("measurement_curves", false, false),

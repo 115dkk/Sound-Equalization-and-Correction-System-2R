@@ -276,6 +276,7 @@ describe("P33 mock wiring", () => {
       local_api_status: { method: "local_api_status" }, local_api_token_regenerate: { method: "local_api_token_regenerate" },
       update_status: { method: "update_status" }, update_check: { method: "update_check" }, update_download: { method: "update_download" },
       update_restart: { method: "update_restart" }, update_notice_dismiss: { method: "update_notice_dismiss" },
+      update_open_release: { method: "update_open_release", params: { version: "0.36.0" } },
       app_settings_get: { method: "app_settings_get" }, app_settings_set: { method: "app_settings_set", params: { settings: fx.appSettings } },
       apply_status: { method: "apply_status" }, apply_settings_set: { method: "apply_settings_set", params: fx.appSettings.apply },
       apply_camilla: { method: "apply_camilla", params: {} }, apply_eqapo: { method: "apply_eqapo" }, revert_eqapo: { method: "revert_eqapo" },

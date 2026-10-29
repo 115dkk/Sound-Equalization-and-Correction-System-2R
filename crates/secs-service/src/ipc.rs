@@ -167,6 +167,9 @@ pub(crate) fn dispatch(
         Request::UpdateNoticeDismiss => Ok(Response::UpdateNoticeDismiss(
             service.update_status(service.deps.updates.dismiss_notice()),
         )),
+        Request::UpdateOpenRelease(params) => service
+            .open_release_page(&params.version)
+            .map(Response::UpdateOpenRelease),
         Request::LocalApiStatus => service
             .deps
             .host

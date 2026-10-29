@@ -173,6 +173,8 @@ pub enum Request {
     UpdateRestart,
     /// Marks the one-time "updated" notice as shown.
     UpdateNoticeDismiss,
+    /// Opens one release's page in the system browser.
+    UpdateOpenRelease(UpdateOpenReleaseParams),
     /// Reports the opt-in local API server and token.
     LocalApiStatus,
     /// Replaces the local API bearer token and restarts its server when needed.
@@ -378,6 +380,8 @@ pub enum Response {
     UpdateRestart(()),
     /// Update state without the notice.
     UpdateNoticeDismiss(UpdateStatus),
+    /// Confirms that the release page was handed to the system browser.
+    UpdateOpenRelease(()),
     /// Current local API server and token state.
     LocalApiStatus(LocalApiStatus),
     /// Local API state after replacing its bearer token.
@@ -2665,6 +2669,14 @@ pub struct UpdateNotice {
     pub release_url: String,
 }
 
+/// The release whose page [`Request::UpdateOpenRelease`] opens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct UpdateOpenReleaseParams {
+    /// A release version such as `0.36.0`, without the `v` of its tag.
+    pub version: String,
+}
+
 /// Application update state for the screen.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -2979,6 +2991,9 @@ mod tests {
             Request::UpdateDownload,
             Request::UpdateRestart,
             Request::UpdateNoticeDismiss,
+            Request::UpdateOpenRelease(UpdateOpenReleaseParams {
+                version: "0.36.0".into(),
+            }),
             Request::LocalApiStatus,
             Request::LocalApiTokenRegenerate,
             Request::ComputeStatus,

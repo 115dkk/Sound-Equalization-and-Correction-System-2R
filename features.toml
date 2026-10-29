@@ -60,6 +60,14 @@ upstream = "new; ADR 0020"
 tests = ["secs2r::update_notice_matches_running_version_and_tracks_skipped_releases"]
 
 [[feature]]
+id = "ipc.update_open_release"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new; ADR 0020"
+tests = ["secs-service::only_plain_release_versions_reach_the_release_url"]
+
+[[feature]]
 id = "engine.peq_fit"
 kind = "engine"
 milestone = "M2"

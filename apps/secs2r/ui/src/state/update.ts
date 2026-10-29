@@ -46,6 +46,11 @@ export function useUpdate() {
   const check = useCallback(() => request("update_check"), [request]);
   const download = useCallback(() => request("update_download"), [request]);
   const dismiss = useCallback(() => request("update_notice_dismiss"), [request]);
+  const openRelease = useCallback(async (version: string) => {
+    try {
+      await session.call({ method: "update_open_release", params: { version } });
+    } catch { /* session.call reports the typed error */ }
+  }, [session]);
   const restart = useCallback(async () => {
     ++generation.current;
     actions.current++;
@@ -62,5 +67,5 @@ export function useUpdate() {
     return saved;
   }, [session, request]);
 
-  return { status, check, download, restart, dismiss, setPolicy };
+  return { status, check, download, restart, dismiss, setPolicy, openRelease };
 }

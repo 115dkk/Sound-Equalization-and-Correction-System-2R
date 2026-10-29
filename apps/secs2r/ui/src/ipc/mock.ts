@@ -941,6 +941,9 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "update_notice_dismiss":
         updateStatus = { ...updateStatus, notice: null };
         return { method: req.method, data: updateStatus };
+      case "update_open_release":
+        if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$/.test(req.params.version)) return invalid("Not a release version");
+        return { method: req.method, data: null };
       case "app_settings_get": return { method: req.method, data: appSettings };
       case "app_settings_set": {
         if (req.params.settings.compute === "gpu" && !availableCompute.gpu_available) throw new MockError(ipcError("compute_unavailable"));
