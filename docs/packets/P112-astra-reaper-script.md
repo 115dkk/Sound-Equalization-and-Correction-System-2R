@@ -106,3 +106,54 @@ python3 .github/scripts/check_feature_tests.py
 How ReaVerb's IR is set (with sources), the generated script for a two-path
 example, files changed, whether REAPER ran locally and what the dump showed,
 and the commands' last lines.
+
+## Addendum (2026-10-29): run REAPER itself in CI
+
+The maintainer wants CI to install the real REAPER on a runner and prove the
+script works there, as the Equalizer APO and CamillaDSP playback jobs do with
+their engines. The REAPER binary must never be committed or uploaded as an
+artifact; the job downloads it from reaper.fm at run time.
+
+1. **Pin.** `.github/reaper.toml` with the Linux x86_64 build you inspected
+   (`version`, `url` on reaper.fm, `sha256`, `format = "tar.xz"`).
+   `.github/scripts/reaper_engine.py fetch --dest <dir> --github-env <file>`
+   downloads, checks the SHA-256, extracts into `<dir>` without running any
+   installer that writes outside it, and exports `SECS_REAPER=<path to the
+   reaper executable>`. Unit-test it like `test_eqapo_engine.py` (manifest
+   validation, digest mismatch, extraction stays inside `<dir>`).
+2. **Run.** An ignored Rust test `crates/secs-filters/tests/reaper_playback.rs`
+   (`#[ignore = "REAPER is required; CI runs this test with --ignored"]`):
+   - Export convolution bundles from at least two oracle plans: one with
+     subs (`computed_dolby`) and one with MIMO supports (`mimo_iir`).
+   - Write a multichannel 32-bit float source WAV with one unit impulse per
+     input channel at non-overlapping times, and a scratch project (in a temp
+     dir) whose one track holds it with the right channel count.
+   - Start REAPER headless with an isolated configuration (its own ini or
+     resource path in the temp dir; never the runner user's default), under
+     `xvfb-run` on Linux, running a harness script that: selects the source
+     track, runs the bundle's `secs2r_reaper.lua`, dumps tracks, sends,
+     channel counts, ReaVerb state, then renders the output bus (all its
+     channels, 32-bit float WAV, the project's 48 kHz) to the temp dir, runs
+     the script a second time and dumps again, and quits without saving.
+     Fail with REAPER's own output if it does not quit within a timeout.
+   - Assert: the second run replaced the folder (same track count, no
+     duplicates); every output channel's rendered response to each input
+     impulse equals that path's WAV (unity gain, zero added latency) within
+     the same tolerance the CamillaDSP playback test uses for float engines,
+     and outputs with no path from an input stay silent for that impulse.
+3. **CI job** `reaper-playback` in `ci.yml` (ubuntu-latest, `needs: lint`,
+   actions pinned by SHA like the others): install the libraries REAPER's
+   Linux build needs plus `xvfb`, fetch, run the test with `--ignored
+   --nocapture`, and upload only the dumps, rendered WAVs and logs as
+   artifacts (`if: always()`), never the REAPER folder. Add
+   `secs-filters::<test name>` to `IGNORED_CI_TESTS` in
+   `.github/scripts/check_feature_tests.py` as `"reaper-playback"` and point
+   `export.convolution_reaper` in `features.toml` at it.
+4. **Docs.** Update `crates/secs-filters/tests/reaper/README.md` and
+   `docs/REAPER.md` (if you made it) with how CI runs it.
+
+You cannot run CI yourself. Make every part you can check locally pass
+(Rust unit parts, Python tests, `cargo test` of the non-ignored tests,
+`luac -p` if you can get a Lua compiler without running REAPER); the caller
+pushes and runs the CI job, and sends you its log if it fails. Do not run the
+REAPER binary on this machine.
