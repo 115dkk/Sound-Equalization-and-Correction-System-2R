@@ -164,7 +164,7 @@ describe("calculation notes", () => {
       "Low-end protection (SW1): no boost below 22 Hz, 16 Hz high-pass",
       "Low-end protection (SW2): no boost below 28 Hz, 25 Hz high-pass",
       "Low-end protection (L): no boost below 30 Hz",
-      "Low-end protection (SW1 + SW2): the boost below 22 Hz could not be held back, so the original filters were kept.",
+      "Low-end protection (SW1 + SW2): boost below 22 Hz could not be limited, so the original filters were kept.",
     ]);
     // The engine's roll-offs are unrounded; each role reads as the screen's code, in a group too.
     expect(lines("ko", [n("low_protect", { role: "Lb", rolloff_hz: "31.498026247371826", limited: "true" })])).toEqual(["극저역 보호(Lrs): 31 Hz 아래 부스트 안 함"]);
@@ -172,7 +172,7 @@ describe("calculation notes", () => {
     // Only the bus that kept its fit is a warning, never a success line; it says what to do.
     expect(lowProtectFailures(lowProtectNotes)).toEqual([lowProtectNotes[3]]);
     const { t } = words("ko");
-    expect(t(LOW_PROTECT_NEXT)).toBe("부스트 상한을 낮추거나 RC 하한을 올린 뒤 다시 보정하세요.");
-    expect(words("en").t(LOW_PROTECT_NEXT)).toBe("Lower the boost limit or raise the RC lower limit, then correct again.");
+    expect(t(LOW_PROTECT_NEXT)).toBe("부스트 상한을 낮추거나 RC 하한을 올린 뒤 '다시 보정하기'를 누르십시오.");
+    expect(words("en").t(LOW_PROTECT_NEXT)).toBe("Lower the boost limit or raise the RC lower limit, then press 'Correct again'.");
   });
 });

@@ -1192,7 +1192,7 @@ describe("극저역 보호 (ADR 0022)", () => {
     const warning = must("calibrate.verdict.low_protect");
     expect(warning.className).toContain("ui-error--warning");
     expect(warning.textContent).toContain("극저역 보호(SW1 + SW2): 22 Hz 아래 부스트를 막지 못해 원래 필터를 그대로 썼습니다.");
-    expect(warning.textContent).toContain("부스트 상한을 낮추거나 RC 하한을 올린 뒤 다시 보정하세요.");
+    expect(warning.textContent).toContain("부스트 상한을 낮추거나 RC 하한을 올린 뒤 '다시 보정하기'를 누르십시오.");
     const lines = [...must("calibrate.verdict.notes").querySelectorAll("li")].map((li) => li.textContent ?? "");
     expect(lines).toContain("극저역 보호(SW1): 22 Hz 아래 부스트 안 함, 16 Hz 하이패스");
     expect(lines).toContain("극저역 보호(L): 28 Hz 아래 부스트 안 함");
@@ -1206,7 +1206,7 @@ describe("극저역 보호 (ADR 0022)", () => {
     expect(must("calibrate.verdict.notes").querySelector("summary")?.textContent).toBe("계산 메모 18개");
     cleanupAll();
     setup(fx.lowProtectViews.unheld, { locale: "en" });
-    expect(must("calibrate.verdict.low_protect").textContent).toContain("Lower the boost limit or raise the RC lower limit, then correct again.");
+    expect(must("calibrate.verdict.low_protect").textContent).toContain("Lower the boost limit or raise the RC lower limit, then press 'Correct again'.");
   });
 
   it("opens the notes and the range card's 고급 from the start when asked (gallery)", () => {
