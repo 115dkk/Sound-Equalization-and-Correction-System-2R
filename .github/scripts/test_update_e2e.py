@@ -105,6 +105,17 @@ class UpdateJsonTest(unittest.TestCase):
                 u.check_update_json(path, "0.0.1", "0.4.0")
 
 
+class ShellLogonStartTest(unittest.TestCase):
+    def test_value_matches_the_one_the_app_registers(self):
+        # secs_sys::host::shell_autostart_value_quotes_the_executable_and_hides_the_window
+        self.assertEqual(
+            u.shell_autostart_value(PureWindowsPath(r"C:\Program Files\SECS 2R\secs2r-host-shell.exe")),
+            r'"C:\Program Files\SECS 2R\secs2r-host-shell.exe" --hidden',
+        )
+        self.assertEqual((u.RUN_KEY, u.SHELL_RUN_VALUE),
+                         (r"Software\Microsoft\Windows\CurrentVersion\Run", "SECS2RHostShell"))
+
+
 class AppCloseTest(unittest.TestCase):
     def scenario(self):
         scenario = object.__new__(u.UpdateScenario)

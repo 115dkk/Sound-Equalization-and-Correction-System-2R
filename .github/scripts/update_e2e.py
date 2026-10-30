@@ -47,6 +47,8 @@ ENDPOINT = "http://127.0.0.1:8765/latest.json"
 BASE_URL = "http://127.0.0.1:8765/"
 OLD_VERSION = "0.0.1"
 PRODUCT = "SECS2R"
+RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
+SHELL_RUN_VALUE = "SECS2RHostShell"
 MANIFESTS = (
     Path("apps/secs2r/Cargo.toml"),
     Path("apps/secs2r-host/Cargo.toml"),
@@ -211,6 +213,18 @@ def uninstaller_path(entry: dict[str, str]) -> Path:
     windows = PureWindowsPath(match.group(1))
     require(windows.is_absolute(), f"uninstaller is not absolute: {value!r}")
     return Path(str(windows))
+
+
+def shell_autostart_value(executable: Path) -> str:
+    """The Run value `secs_sys::host::shell_autostart_value` writes."""
+    return f'"{executable}" --hidden'
+
+
+def set_shell_logon_start(value: str) -> None:
+    import winreg
+
+    with winreg.CreateKeyEx(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
+        winreg.SetValueEx(key, SHELL_RUN_VALUE, 0, winreg.REG_SZ, value)
 
 
 def check_update_json(path: Path, previous: str, target: str) -> dict:
@@ -410,7 +424,14 @@ class UpdateScenario:
             timeout=60,
             interval=1,
         )
-        return f"DisplayVersion={version}; service status version={status['version']}; install={folder}"
+        # Turning 관리 on in the app also registers the shell's logon start
+        # (apps/secs2r/src/apply.rs). The installer relaunches the shell after an
+        # update only when that value exists, and the shell is what asks the
+        # service to update itself; `secs2r-host install` alone leaves it unset.
+        shell_value = shell_autostart_value(folder / "secs2r-host-shell.exe")
+        set_shell_logon_start(shell_value)
+        return (f"DisplayVersion={version}; service status version={status['version']}; "
+                f"install={folder}; logon start {SHELL_RUN_VALUE}={shell_value}")
 
     def start_driver(self) -> None:
         require(self.args.tauri_driver.is_file(),
