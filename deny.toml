@@ -56,7 +56,9 @@ exceptions = [
 ]
 
 [licenses.private]
-# Unpublished workspace crates are publish = false and inherit GPL-3.0-only.
+# Unpublished workspace crates are publish = false and inherit GPL-3.0-only,
+# except secs-py, which PyPI ships as secs2r under AGPL-3.0-only (docs/adr/0019,
+# 0023); crates/secs-policy checks both.
 ignore = true
 
 [advisories]

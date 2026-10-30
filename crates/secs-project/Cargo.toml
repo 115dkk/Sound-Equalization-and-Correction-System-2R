@@ -1,7 +1,7 @@
 [package]
 name = "secs-project"
 description = ".secs project files, migrations, role vocabulary, measurement plans and the .irs store."
-version = "0.8.0"
+version = "0.9.0"
 edition.workspace = true
 rust-version.workspace = true
 license = "AGPL-3.0-only"

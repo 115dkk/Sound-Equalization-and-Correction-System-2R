@@ -28,13 +28,13 @@ second version for the same change). A failed release is retried with
 gate pushes its bump, the push is rejected and the gate releases nothing for
 the same reason, instead of rebasing later commits into this release.
 
-The crates.io crates (docs/adr/0016) carry a version of their own, read from
-``crates/secs-api/Cargo.toml`` and tagged ``api-v<version>`` once published.
-When the app releases, the same rules apply to them: an untagged version is
-published as is, and files of their packages changed since the tag bump
-every published crate together (and their exact ``=`` requirements and lock
-entries) in the same bump commit. release.yml publishes them after the
-installers built.
+The crates.io crates (docs/adr/0016) and the ``secs2r`` Python package
+(docs/adr/0019) carry a shared version, read from ``crates/secs-api/Cargo.toml``
+and tagged ``api-v<version>`` once published. When the app releases, the same
+rules apply to them: an untagged version is published as is, and packaged files
+changed since the tag bump every published Rust crate and ``secs-py`` together
+(and their exact ``=`` requirements and lock entries) in the same bump commit.
+release.yml publishes them after the installers built.
 
 The bump is minor when a commit that touched shipped files has a ``feat``
 subject (``feat:``, ``feat(scope):``, ``feat!:``) or says ``BREAKING CHANGE``,
@@ -61,6 +61,7 @@ from pathlib import Path
 SHIP = (
     "crates/*",
     "apps/*",
+    "bindings/python/*",
     "Cargo.toml",
     "Cargo.lock",
     "rust-toolchain.toml",
@@ -101,6 +102,7 @@ FUZZ_LOCK = Path("fuzz/Cargo.lock")
 # public crate's manifest and tagged api-vX.Y.Z when published. Files under
 # these directories of a published crate are not in its package.
 API_MANIFEST = Path("crates/secs-api/Cargo.toml")
+PYTHON_MANIFEST = Path("bindings/python/Cargo.toml")
 API_NOT_PACKAGED_DIRS = ("tests", "examples", "benches")
 
 
@@ -266,6 +268,20 @@ def set_exact_requirements(cargo_toml: str, names, old: str, new: str) -> str:
     return "".join(lines)
 
 
+def set_dependency_versions(manifest: str, old: str, new: str) -> str:
+    """Move exact API requirements in one package's [dependencies] table."""
+    lines = manifest.splitlines(keepends=True)
+    section = None
+    for i, line in enumerate(lines):
+        header = re.match(r"^\s*\[([^\]]+)\]\s*$", line)
+        if header:
+            section = header.group(1).strip()
+            continue
+        if section == "dependencies":
+            lines[i] = line.replace(f'"={old}"', f'"={new}"')
+    return "".join(lines)
+
+
 def api_files(changed, crate_dirs) -> list:
     """Changed files that are in a published crate's package."""
     out = []
@@ -404,7 +420,9 @@ def _commit_bump(old: str, new: str, started_head: str,
     if api is not None:
         api_old, api_new, manifests = api
         for manifest in manifests.values():
-            _write(manifest, set_package_version(_read(manifest), api_new))
+            updated = set_package_version(_read(manifest), api_new)
+            updated = set_dependency_versions(updated, api_old, api_new)
+            _write(manifest, updated)
             staged.append(str(manifest))
         cargo_toml = set_exact_requirements(cargo_toml, set(manifests), api_old, api_new)
         lock = set_member_versions(lock, set(manifests), api_new)
@@ -478,21 +496,31 @@ def main(argv=None) -> int:
             for m in sorted(Path("crates").glob("*/Cargo.toml"))
             if manifest_publishes(_read(m))
         }
+        version_manifests = dict(api_manifests)
+        package_dirs = [manifest.parent.as_posix() for manifest in api_manifests.values()]
+        if PYTHON_MANIFEST.exists():
+            python_manifest = _read(PYTHON_MANIFEST)
+            python_version = package_field(python_manifest, "version")
+            if python_version != api_version:
+                raise SystemExit(
+                    f"{PYTHON_MANIFEST} version {python_version} does not match API {api_version}"
+                )
+            version_manifests[package_field(python_manifest, "name")] = PYTHON_MANIFEST
+            package_dirs.append(PYTHON_MANIFEST.parent.as_posix())
         if action != "none":
             api_tags = set(_git("tag", "-l", "api-v*").splitlines())
             api_changed, api_messages = [], []
             if f"api-v{api_version}" in api_tags:
-                crate_dirs = [m.parent.as_posix() for m in api_manifests.values()]
                 api_changed = api_files(_git("diff", "--no-renames", "--name-only",
-                                             f"api-v{api_version}", head).splitlines(), crate_dirs)
+                                             f"api-v{api_version}", head).splitlines(), package_dirs)
                 if api_changed:
                     log = _git("log", "--no-merges", "--format=%B%x00", f"api-v{api_version}..{head}",
                                "--", *api_changed)
                     api_messages = [m for m in log.split("\x00") if m.strip()]
             api_action, new_api = api_decide(api_version, api_tags, api_changed, api_messages)
-            print(f"crates.io: {api_action} {new_api} (changed: {api_changed[:20]})")
+            print(f"public API: {api_action} {new_api} (changed: {api_changed[:20]})")
             if api_action == "bump":
-                api_bump = (api_version, new_api, api_manifests)
+                api_bump = (api_version, new_api, version_manifests)
             api_version = new_api
 
     release_sha = head
