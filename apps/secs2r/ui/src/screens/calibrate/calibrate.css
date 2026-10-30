@@ -631,6 +631,22 @@
   color: var(--text-muted);
 }
 
+/* The upper limit's controls for each basis share one place: the hidden ones
+   still take their room, so the card keeps the height of the tallest and
+   choosing a basis moves nothing below it (the RC lines stay put). */
+.calibrate-upper {
+  display: grid;
+}
+
+.calibrate-upper__panel {
+  grid-area: 1 / 1;
+  min-width: 0;
+}
+
+.calibrate-upper__panel[inert] {
+  visibility: hidden;
+}
+
 .calibrate-sub-modes {
   display: flex;
   flex-wrap: wrap;

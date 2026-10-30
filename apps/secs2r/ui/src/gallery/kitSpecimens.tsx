@@ -183,7 +183,7 @@ function Choices() {
       <div className="gal-stack">
         <Stepper id="gallery.stepper.subs" label={t("gallery.sample.subs")} value={subs} min={0} max={8} onChange={setSubs} />
         <Stepper id="gallery.stepper.min" label={t("gallery.sample.subs")} value={0} min={0} max={8} onChange={() => {}} />
-        <Toggle id="gallery.toggle.auto" label={t("calibrate.range.upper_auto")} help={t("calibrate.range.upper_auto.hint")} checked={autoLimit} onChange={setAutoLimit} />
+        <Toggle id="gallery.toggle.auto" label={t("calibrate.mimo.low_auto")} help={t("calibrate.mimo.low_auto.hint")} checked={autoLimit} onChange={setAutoLimit} />
         <Toggle id="gallery.toggle.on" label={t("gallery.sample.xo_peq")} checked onChange={() => {}} />
         <Toggle id="gallery.toggle.disabled" label={t("gallery.sample.mimo")} hint={t("gallery.sample.mimo.disabled")} checked={false} disabled onChange={() => {}} />
         <Segmented

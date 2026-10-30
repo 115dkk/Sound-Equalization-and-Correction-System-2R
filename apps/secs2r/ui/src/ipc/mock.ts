@@ -41,6 +41,8 @@ type Log = { atTick: number; code: string; params: Record<string, string> };
 type SimJob = {
   id: JobId; kind: JobKind; stages: Stage[]; stageIndex: number; done: number;
   ticks: number; logs: Log[]; cancelRequested: boolean; complete: () => JobResult;
+  /** The job fails with this when it ends, as the service fails one its input does not allow. */
+  error?: IpcError | undefined;
 };
 
 export type MockService = {
@@ -85,6 +87,51 @@ const basename = (path: string) => path.split(/[\\/]/).at(-1) ?? path;
 const EXPORT_FOLDER_TAG: Record<ExportKind, string> = {
   camilla_dsp: "camilla", before_after_mdat: "mdat", staged_mdat: "mdat", filter_text: "text", equalizer_apo: "eqapo", convolution: "convolution",
 };
+/**
+ * The RC upper limit a calibration notes (secs-engine `Note::RcLimit`, ADR
+ * 0021), with synthetic evidence: ADR 0021's examples, a strict Schroeder
+ * frequency of 154 Hz, the lenient 200 Hz band at T60 0.50 s and agreement
+ * at 287 Hz. A Schroeder basis needs a room volume (500 Hz without one, no
+ * factor); the factor multiplies within 100 Hz and 500 Hz × factor.
+ */
+function rcLimitNote(settings: CalibrationSettings, positions: number): Notice {
+  const params: Record<string, string> = { auto: String(settings.rc_hi === null), basis: settings.rc_hi_basis, factor: String(settings.rc_hi_transition) };
+  if (settings.rc_hi !== null) return { code: "rc_limit", params: { ...params, hz: String(settings.rc_hi) } };
+  const volume = (settings.room_volume_m3 ?? 0) > 0;
+  if (volume) params.schroeder_hz = "154";
+  const factor = settings.rc_hi_transition;
+  let hz = 500;
+  if (settings.rc_hi_basis === "agreement") {
+    hz = 287;
+    params.positions = String(positions);
+  } else if (volume) {
+    const lenient = settings.rc_hi_basis === "lenient";
+    if (lenient) Object.assign(params, { band_hz: "200", band_t60_s: "0.5" });
+    hz = clamp((lenient ? 200 : 154) * factor, [100, 500 * factor]);
+  }
+  return { code: "rc_limit", params: { ...params, hz: String(hz) } };
+}
+
+/**
+ * `result_lines().rc` after a calibration (secs-service curves.rs): its
+ * rc_limit note, then how the room volume set an automatic Schroeder limit.
+ * The agreement basis uses no volume.
+ */
+function rcLines(limit: Notice | undefined, volume: number | null): Notice[] {
+  if (!limit) return [];
+  if (limit.params.auto !== "true" || limit.params.basis === "agreement") return [limit];
+  return [limit, volume ? { code: "rc_room_volume", params: { volume_m3: String(volume) } } : { code: "rc_no_room_volume", params: {} }];
+}
+
+/** The RC lines the mock's calibration leaves for these settings at this many measured positions (gallery views). */
+export const mockRcLines = (settings: CalibrationSettings, positions: number): Notice[] => rcLines(rcLimitNote(settings, positions), settings.room_volume_m3);
+
+/** The service fails a calibration on the agreement basis below three measured positions (secs-service `check_rc_agreement`). */
+const rcAgreementError = (settings: CalibrationSettings, positions: number): IpcError | undefined =>
+  settings.rc_hi === null && settings.rc_hi_basis === "agreement" && positions < 3
+    ? ipcError("engine_input", "RC agreement requires at least 3 measured positions", { reason: "rc_agreement_positions", measured: String(positions), required: "3" })
+    : undefined;
+
 /** The folder stamp `20261015-094107` (clock.rs `stamp`) in local time; Date.now follows the tour's clock. */
 const stamp = () => {
   const date = new Date(Date.now());
@@ -296,15 +343,15 @@ export function createMockService(options: MockOptions = {}): MockService {
       }
     }
     if (job.stageIndex >= job.stages.length) {
-      const failure = jobFailures.get(job.kind);
+      const failure = job.error ?? jobFailures.get(job.kind);
       finish(job, failure ? "failed" : "succeeded", failure ?? null);
     }
   };
   const tick = () => { for (const job of [...jobs.values()]) step(job); };
-  const start = (kind: JobKind, complete: () => JobResult) => {
+  const start = (kind: JobKind, complete: () => JobResult, error?: IpcError) => {
     if ([...jobs.values()].some((job) => job.kind === kind)) throw new MockError(ipcError("job_busy", `a ${kind} job is running`));
     const id = nextJob++;
-    jobs.set(id, { id, kind, ...plan(kind), stageIndex: 0, done: 0, ticks: 0, cancelRequested: false, complete });
+    jobs.set(id, { id, kind, ...plan(kind), stageIndex: 0, done: 0, ticks: 0, cancelRequested: false, complete, error });
     events.emit({ event: "started", job: id, kind });
     if (tickMs > 0 && !timer) timer = setInterval(tick, tickMs);
     return { job: id, kind };
@@ -333,6 +380,10 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "ultra_ms": settings.ultra_ms = clamp(edit.ms, LIMITS.ultra_ms); break;
       case "rc_lo": settings.rc_lo = clamp(edit.hz, LIMITS.rc_lo); break;
       case "rc_hi": settings.rc_hi = edit.hz === null ? null : clamp(edit.hz, LIMITS.rc_hi); break;
+      case "rc_hi_basis": settings.rc_hi_basis = edit.basis; break;
+      case "rc_hi_transition":
+        if (edit.factor !== 1 && edit.factor !== 2 && edit.factor !== 4) throw new MockError(ipcError("invalid_request", "RC transition factor must be 1, 2 or 4", { field: "rc_hi_transition" }));
+        settings.rc_hi_transition = edit.factor; break;
       case "room_volume": settings.room_volume_m3 = edit.m3 > LIMITS.volume[0] ? Math.min(edit.m3, LIMITS.volume[1]) : null; settings.room_dims_m = null; break;
       case "room_dims": {
         const dims = edit.dims.map((n) => clamp(n, LIMITS.dim)) as [number, number, number];
@@ -408,7 +459,8 @@ export function createMockService(options: MockOptions = {}): MockService {
     stale: results.calibration?.stale ?? false,
     channels: results.calibration?.scorecard.map((s) => ({ role: s.role, within_1db_pct: [s.before.in1_20, s.after.in1_20], gd_spread_ms: [s.before.gd_20, s.after.gd_20], peq_count: 2,
       fir_taps: fx.modeSpec(results.calibration!.mode).fir_taps, xo_hz: settings.xo[fx.GROUP_KEYS[fx.groupOf(s.role)]!] ?? null, mimo_support_count: results.mimo ? 2 : null })) ?? [],
-    total_delay_ms: results.calibration?.latency_ms ?? null, notes: results.calibration?.notes ?? [], rc: results.calibration?.notes ?? [],
+    total_delay_ms: results.calibration?.latency_ms ?? null, notes: results.calibration?.notes ?? [],
+    rc: rcLines(results.calibration?.notes.find((note) => note.code === "rc_limit"), settings.room_volume_m3),
     ba: results.calibration && results.calibration.sub_roles.length >= 2 ? {
       stale: results.calibration.stale, subs_only: subsOnly, band_hz: [20, 200], flatness_db: [6.2, 1.8], seat_spread_db: [4.5, 2.1], positions: records.length,
       rows: resultSubs().map((s) => ({ role: s.role, mode: s.mode, gain_db: s.gain_db, delay_ms: s.delay_ms, polarity: s.polarity,
@@ -603,7 +655,7 @@ export function createMockService(options: MockOptions = {}): MockService {
           const spec = fx.modeSpec(captured.mode);
           summary.latency_ms = spec.max_latency_ms;
           summary.verdict.added_delay_ms = spec.max_latency_ms;
-          summary.notes = [{ code: "rc_limit", params: { hz: String(captured.rc_hi ?? 310), auto: String(captured.rc_hi === null), schroeder_hz: "310" } }];
+          summary.notes = [rcLimitNote(captured, positions)];
           summary.scorecard = roles.map((role) => ({ ...clone(fx.scorecard.find((score) => score.role === role) ?? fx.scorecard[0]!), role }));
           summary.late_energy = fx.lateEnergy(roles, needProject().positions);
           summary.main_roles = roles;
@@ -614,7 +666,7 @@ export function createMockService(options: MockOptions = {}): MockService {
           }
           subsOnly = req.params.subs_only;
           return { kind: "calibration" };
-        }) };
+        }, rcAgreementError(captured, positions)) };
       }
       case "recommend_xo":
         needProject();

@@ -708,8 +708,10 @@ pub struct CalibrateParams {
     /// kept apart and shown by the BA tab until the next full run.
     #[serde(default)]
     pub subs_only: bool,
-    /// Computes MIMO after the correction in the same job.
+    /// Computes MIMO after the correction in the same job. Absent on the
+    /// wire means false, so the TypeScript field is optional.
     #[serde(default)]
+    #[ts(as = "Option<bool>", optional)]
     pub mimo: bool,
 }
 /// Optional settings for a MIMO run.

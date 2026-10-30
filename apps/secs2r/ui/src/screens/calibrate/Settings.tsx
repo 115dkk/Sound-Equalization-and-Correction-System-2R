@@ -16,20 +16,27 @@ import { Icon } from "../../ui/Icon";
 import { roleCode } from "../../ui/maps/geometry";
 import { colorTokens } from "../../ui/plot/series";
 import {
+  AGREEMENT_MIN_POSITIONS,
   BAND_TYPES,
   INFRA_DEFAULT_HZ,
   LIMITS,
   SUB_LIMITS,
   MIMO_MIN_POSITIONS,
   ALLPASS_Q_DEFAULT,
+  TRANSITION_FACTORS,
+  UPPER_CHOICES,
   infraState,
   layoutOf,
   roomVolume,
   subModeChoice,
   subOf,
   subValuesApply,
+  upperChoice,
+  upperEdits,
+  usesSchroeder,
+  type UpperChoice,
 } from "./settingsView";
-import { FAILED_TEXT, MODES, MODE_EFFECT, MODE_NAME, bandTypeText, filterSpec, groupName, modeSpecText, noticeText, subRoles, xoGroups } from "./text";
+import { FAILED_TEXT, MODES, MODE_EFFECT, MODE_NAME, bandTypeText, filterSpec, groupName, modeSpecText, noticeText, rangeNotices, subRoles, xoGroups } from "./text";
 import { DESIGN_RATE, rateText, tapsAt } from "../system/outputRate";
 import type { BandTypeChoice, CalibrateActions, CalibrateJob, CalibrateView, SettingEdit, SubLayout, SubModeChoice } from "./types";
 
@@ -209,16 +216,67 @@ function analyticScope(s: CalibrationSettings): AnalyticScope {
   return s.mimo_iir_analytic_derivatives ? "mimo" : "off";
 }
 
+const UPPER_NAME = {
+  strict: "calibrate.range.basis.strict",
+  lenient: "calibrate.range.basis.lenient",
+  agreement: "calibrate.range.basis.agreement",
+  manual: "calibrate.range.basis.manual",
+} as const satisfies Record<UpperChoice, string>;
+
+const UPPER_EFFECT = {
+  strict: "calibrate.range.basis.strict.effect",
+  lenient: "calibrate.range.basis.lenient.effect",
+  agreement: "calibrate.range.basis.agreement.effect",
+  manual: "calibrate.range.basis.manual.effect",
+} as const satisfies Record<UpperChoice, string>;
+
+/** Each basis in one sentence by its effect, then what a higher limit costs (ADR 0021 결과). */
+function BasisHelp() {
+  const t = useT();
+  return (
+    <>
+      <ul>
+        {UPPER_CHOICES.map((choice) => (
+          <li key={choice}>
+            <strong>{t(UPPER_NAME[choice])}</strong>: {t(UPPER_EFFECT[choice], { min: AGREEMENT_MIN_POSITIONS })}
+          </li>
+        ))}
+      </ul>
+      <p>{t("calibrate.range.basis.raise")}</p>
+    </>
+  );
+}
+
+/**
+ * One basis's controls in the place every basis shares. The others stay laid
+ * out but hidden and inert, so the card keeps the height of the tallest and
+ * choosing a basis moves nothing below it.
+ */
+function UpperPanel({ shown, id, children }: { shown: boolean; id: string; children: ReactNode }) {
+  return (
+    <div className="calibrate-upper__panel" data-ui={id} inert={!shown}>
+      {children}
+    </div>
+  );
+}
+
 function RangeSection({ view, actions }: Props) {
   const t = useT();
   const number = useNumber();
   const s = view.settings;
   const analytic = analyticScope(s);
-  const auto = s.rc_hi === null;
+  const choice = upperChoice(s);
   const rcLimit = view.lines.rc.find((n) => n.code === "rc_limit");
   const resolved = rcLimit ? Number(rcLimit.params.hz) : Number.NaN;
   const shownHi = Number.isFinite(resolved) ? Math.round(Math.min(LIMITS.rc_hi[1], Math.max(LIMITS.rc_hi[0], resolved))) : 500;
-  const notes = view.lines.rc.map((n) => noticeText(t, number, n)).filter((text): text is string => !!text);
+  const notes = rangeNotices(view.lines.rc).map((n) => noticeText(t, number, n)).filter((text): text is string => !!text);
+  // The measured positions the project reports (project_info.positions), as MIMO counts them.
+  const count = view.positions.length;
+  const short = count < AGREEMENT_MIN_POSITIONS;
+  const choose = async (next: UpperChoice) => {
+    for (const edit of upperEdits(s, next, shownHi)) if (!(await actions.changeSetting(edit))) return;
+  };
+  const shortText = { count, min: AGREEMENT_MIN_POSITIONS };
   return (
     <SettingsCard id="range" title={t("calibrate.range.title")} help={t("calibrate.range.description")}>
       <div className="calibrate-fields">
@@ -233,44 +291,75 @@ function RangeSection({ view, actions }: Props) {
           showRange
           onChange={(hz) => actions.changeSetting({ kind: "rc_lo", hz })}
         />
-        {!auto && (
-          <NumberField
-            id="calibrate.range.upper"
-            label={t("calibrate.range.upper")}
-            value={s.rc_hi ?? shownHi}
-            min={LIMITS.rc_hi[0]}
-            max={LIMITS.rc_hi[1]}
-            step={50}
-            unit="Hz"
-            showRange
-            onChange={(hz) => actions.changeSetting({ kind: "rc_hi", hz })}
-          />
-        )}
+        <Segmented<UpperChoice>
+          id="calibrate.range.basis"
+          label={t("calibrate.range.basis")}
+          help={<BasisHelp />}
+          // A chosen agreement stays selectable (one tab stop) and says what to do; otherwise it is off with the reason.
+          hint={
+            !short ? undefined : choice === "agreement" ? (
+              <span className="calibrate-hint--warning calibrate-fir-over">
+                <Icon name="warning" size={16} className="calibrate-fir-over__icon" />
+                <span>{t("calibrate.range.basis.agreement_short", shortText)}</span>
+              </span>
+            ) : (
+              t("calibrate.range.basis.agreement_unavailable", shortText)
+            )
+          }
+          value={choice}
+          options={UPPER_CHOICES.map((value) => ({
+            value,
+            label: t(UPPER_NAME[value]),
+            disabled: value === "agreement" && short && choice !== "agreement",
+          }))}
+          onChange={(next) => void choose(next)}
+        />
       </div>
-      <Toggle
-        id="calibrate.range.upper_auto"
-        label={t("calibrate.range.upper_auto")}
-        help={t("calibrate.range.upper_auto.hint")}
-        checked={auto}
-        onChange={(on) => actions.changeSetting({ kind: "rc_hi", hz: on ? null : shownHi })}
-      />
-      {auto && (
-        <div className="calibrate-fields">
-          <NumberField
-            id="calibrate.range.volume"
-            label={t("calibrate.range.volume")}
-            value={s.room_volume_m3 ?? 0}
-            min={LIMITS.volume[0]}
-            max={LIMITS.volume[1]}
-            step={10}
-            digits={1}
-            unit="m³"
-            help={t("calibrate.range.volume.hint")}
-            onChange={(m3) => actions.changeSetting({ kind: "room_volume", m3 })}
-          />
-          <RoomDims settings={s} change={actions.changeSetting} />
-        </div>
-      )}
+      <div className="calibrate-upper">
+        <UpperPanel id="calibrate.range.schroeder" shown={usesSchroeder(choice)}>
+          <div className="calibrate-fields">
+            <Segmented
+              id="calibrate.range.transition"
+              label={t("calibrate.range.transition")}
+              help={t("calibrate.range.transition.help")}
+              value={String(s.rc_hi_transition)}
+              options={TRANSITION_FACTORS.map((factor) => ({ value: String(factor), label: `×${number(factor)}` }))}
+              onChange={(factor) => actions.changeSetting({ kind: "rc_hi_transition", factor: Number(factor) })}
+            />
+            <NumberField
+              id="calibrate.range.volume"
+              label={t("calibrate.range.volume")}
+              value={s.room_volume_m3 ?? 0}
+              min={LIMITS.volume[0]}
+              max={LIMITS.volume[1]}
+              step={10}
+              digits={1}
+              unit="m³"
+              help={t("calibrate.range.volume.hint")}
+              onChange={(m3) => actions.changeSetting({ kind: "room_volume", m3 })}
+            />
+            <RoomDims settings={s} change={actions.changeSetting} />
+          </div>
+        </UpperPanel>
+        <UpperPanel id="calibrate.range.agreement" shown={choice === "agreement"}>
+          <p className="calibrate-hint">{t("calibrate.range.agreement.note")}</p>
+        </UpperPanel>
+        <UpperPanel id="calibrate.range.manual" shown={choice === "manual"}>
+          <div className="calibrate-fields">
+            <NumberField
+              id="calibrate.range.upper"
+              label={t("calibrate.range.upper")}
+              value={s.rc_hi ?? shownHi}
+              min={LIMITS.rc_hi[0]}
+              max={LIMITS.rc_hi[1]}
+              step={50}
+              unit="Hz"
+              showRange
+              onChange={(hz) => actions.changeSetting({ kind: "rc_hi", hz })}
+            />
+          </div>
+        </UpperPanel>
+      </div>
       {notes.length > 0 && (
         <ul className="calibrate-notes-list" data-ui="calibrate.range.notes">
           {notes.map((note) => (

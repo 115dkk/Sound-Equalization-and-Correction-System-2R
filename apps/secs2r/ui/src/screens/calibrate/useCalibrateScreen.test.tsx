@@ -167,6 +167,31 @@ describe("useCalibrateScreen", () => {
     expect(result.current.view?.failure).toMatchObject({ job: "mimo", error: { code: "internal" } });
   });
 
+  it("stores the RC upper limit's basis and factor, and reads their evidence after a run (ADR 0021)", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    const a = result.current.actions;
+    await perform(() => a.changeSetting({ kind: "rc_hi_basis", basis: "lenient" }));
+    await perform(() => a.changeSetting({ kind: "rc_hi_transition", factor: 2 }));
+    expect(result.current.view?.settings).toMatchObject({ rc_hi: null, rc_hi_basis: "lenient", rc_hi_transition: 2 });
+    await perform(a.calibrate);
+    await perform(mock.drain);
+    expect(result.current.view?.lines.rc[0]).toEqual({
+      code: "rc_limit",
+      params: { hz: "400", auto: "true", basis: "lenient", factor: "2", schroeder_hz: "154", band_hz: "200", band_t60_s: "0.5" },
+    });
+    // Agreement with three measured positions: its evidence, and no room volume line.
+    await perform(() => a.changeSetting({ kind: "rc_hi_basis", basis: "agreement" }));
+    await perform(a.calibrate);
+    await perform(mock.drain);
+    expect(result.current.view?.lines.rc).toEqual([{ code: "rc_limit", params: { hz: "287", auto: "true", basis: "agreement", factor: "2", schroeder_hz: "154", positions: "3" } }]);
+    // With two, the run fails the way the service fails it.
+    await perform(() => session.call({ method: "position_clear", params: { position: 3 } }));
+    expect(result.current.view?.positions).toEqual([1, 2]);
+    await perform(a.calibrate);
+    await perform(mock.drain);
+    expect(result.current.view?.failure).toMatchObject({ job: "calibrate", error: { code: "engine_input", params: { reason: "rc_agreement_positions", measured: "2", required: "3" } } });
+  });
+
   it("refreshes exact curve selections and keeps preview out of persisted settings", async () => {
     const { result } = renderHook(useCalibrateScreen, { wrapper });
     const a = result.current.actions;

@@ -231,6 +231,7 @@ describe("P33 mock wiring", () => {
     const mock = createMockService({ tickMs: 0 });
     const edits = {
       mode: { kind: "mode", mode: "ultra" }, ultra_ms: { kind: "ultra_ms", ms: 999 }, rc_lo: { kind: "rc_lo", hz: 25 }, rc_hi: { kind: "rc_hi", hz: 500 },
+      rc_hi_basis: { kind: "rc_hi_basis", basis: "lenient" }, rc_hi_transition: { kind: "rc_hi_transition", factor: 4 },
       sample_rate_policy: { kind: "sample_rate_policy", policy: "resample" },
       room_volume: { kind: "room_volume", m3: 60 }, room_dims: { kind: "room_dims", dims: [5, 4, 3] }, boost_max: { kind: "boost_max", db: 6 },
       xo: { kind: "xo", group: "front", hz: 100 }, xo_peq: { kind: "xo_peq", on: false, lo: 30, hi: 150 },
@@ -243,7 +244,9 @@ describe("P33 mock wiring", () => {
       analytic_derivatives: { kind: "analytic_derivatives", peq: true, mimo_iir: true },
     } satisfies { [K in SettingEdit["kind"]]: Extract<SettingEdit, { kind: K }> };
     for (const edit of Object.values(edits)) await mock.request({ method: "calibration_settings_edit", params: { edit } });
-    expect(await mock.request({ method: "calibration_settings_get" })).toMatchObject({ mode: "ultra", sample_rate_policy: "resample", ultra_ms: CALIBRATION_LIMITS.ultra_ms[1], room_volume_m3: 60, room_dims_m: [5, 4, 3], mimo_on: true, mimo_fir: true, peq_analytic_derivatives: true, mimo_iir_analytic_derivatives: true, subs_manual: { SW1: { mode: "bundle", gain_db: -4, hp_hz: 0 } } });
+    // The service takes only the transition factors 1, 2 and 4 (ADR 0021).
+    await expect(mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_hi_transition", factor: 3 } } })).rejects.toMatchObject({ error: { code: "invalid_request", params: { field: "rc_hi_transition" } } });
+    expect(await mock.request({ method: "calibration_settings_get" })).toMatchObject({ mode: "ultra", sample_rate_policy: "resample", ultra_ms: CALIBRATION_LIMITS.ultra_ms[1], rc_hi: 500, rc_hi_basis: "lenient", rc_hi_transition: 4, room_volume_m3: 60, room_dims_m: [5, 4, 3], mimo_on: true, mimo_fir: true, peq_analytic_derivatives: true, mimo_iir_analytic_derivatives: true, subs_manual: { SW1: { mode: "bundle", gain_db: -4, hp_hz: 0 } } });
   });
 
   it("answers every generated Request variant with its tagged typed response", async () => {

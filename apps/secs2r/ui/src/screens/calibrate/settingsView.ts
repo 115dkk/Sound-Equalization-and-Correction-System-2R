@@ -6,9 +6,10 @@
 // (`calibration_settings_edit`), which applies upstream's rules.
 import type { BandType } from "../../ipc/bindings/BandType";
 import type { CalibrationSettings } from "../../ipc/bindings/CalibrationSettings";
+import type { RcHiBasis } from "../../ipc/bindings/RcHiBasis";
 import type { SubEntry } from "../../ipc/bindings/SubEntry";
 import { CALIBRATION_LIMITS } from "../../ipc/bindings/rules";
-import type { SubLayout, SubModeChoice } from "./types";
+import type { SettingEdit, SubLayout, SubModeChoice } from "./types";
 
 /** Limits of every value the service clamps on an edit (generated from secs_types::rules). */
 export const LIMITS = CALIBRATION_LIMITS;
@@ -31,6 +32,39 @@ const SUB_BUNDLES = ["A", "B"] as const;
 export const INFRA_DEFAULT_HZ = 25;
 export const MIMO_MIN_POSITIONS = 3;
 export const ALLPASS_Q_DEFAULT = 0.71;
+
+/* ── RC upper limit (ADR 0021) ──────────────────────────────────────────── */
+
+/** The upper limit as the range card offers it: an automatic basis, or 직접 입력 (`rc_hi` set). */
+export type UpperChoice = RcHiBasis | "manual";
+export const UPPER_CHOICES: readonly UpperChoice[] = ["strict", "lenient", "agreement", "manual"];
+/** The Schroeder bases' transition factors; the service rejects any other. */
+export const TRANSITION_FACTORS = [1, 2, 4] as const;
+/** Measured positions the agreement basis needs (secs-service `check_rc_agreement`). */
+export const AGREEMENT_MIN_POSITIONS = 3;
+
+export function upperChoice(settings: CalibrationSettings): UpperChoice {
+  return settings.rc_hi === null ? settings.rc_hi_basis : "manual";
+}
+
+/** Whether the room volume and the transition factor apply: the two Schroeder bases. */
+export const usesSchroeder = (choice: UpperChoice) => choice === "strict" || choice === "lenient";
+
+/**
+ * The edits that choose `choice`, in the order to send them. 직접 입력 starts
+ * from the limit in force (`shownHi`); leaving it stores the basis first, so
+ * the card never shows the old basis in between, then clears `rc_hi`. The
+ * current choice needs none.
+ */
+export function upperEdits(settings: CalibrationSettings, choice: UpperChoice, shownHi: number): SettingEdit[] {
+  if (choice === upperChoice(settings)) return [];
+  if (choice === "manual") return [{ kind: "rc_hi", hz: shownHi }];
+  if (settings.rc_hi === null) return [{ kind: "rc_hi_basis", basis: choice }];
+  return [
+    { kind: "rc_hi_basis", basis: choice },
+    { kind: "rc_hi", hz: null },
+  ];
+}
 
 
 const clamp = (value: number, [lo, hi]: readonly [number, number]) => Math.min(hi, Math.max(lo, value));

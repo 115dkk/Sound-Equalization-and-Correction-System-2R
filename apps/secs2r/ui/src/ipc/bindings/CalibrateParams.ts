@@ -15,6 +15,7 @@ settings: CalibrationSettings | null,
  */
 subs_only: boolean, 
 /**
- * Computes MIMO after the correction in the same job.
+ * Computes MIMO after the correction in the same job. Absent on the
+ * wire means false, so the TypeScript field is optional.
  */
-mimo: boolean, };
+mimo?: boolean, };

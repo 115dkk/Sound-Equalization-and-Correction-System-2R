@@ -171,8 +171,9 @@
 | 항목 | id | 편차 | 작업서 |
 |---|---|---|---|
 | RC 하한 10–200 Hz, 5 단위, 기본 20 | `calibrate.range.lower` | 없음 | P31b |
-| RC 상한 자동(슈뢰더, 최대 500 Hz), 기본 켬 | `calibrate.range.upper_auto` | 없음 | P31b |
-| RC 상한 100–20000 Hz, 50 단위(자동이 꺼졌을 때) | `calibrate.range.upper` | 없음 | P31b |
+| RC 상한 기준(엄격한·너그러운 슈뢰더, 측정 위치 일치도, 직접 입력), 기본 엄격한 슈뢰더 | `calibrate.range.basis` | 없음 | P140 (ADR 0021) |
+| RC 전이 구간 ×1·×2·×4(슈뢰더 기준일 때), 기본 ×1 | `calibrate.range.transition` | 없음 | P140 (ADR 0021) |
+| RC 상한 100–20000 Hz, 50 단위(직접 입력일 때) | `calibrate.range.upper` | 없음 | P31b |
 | 룸 볼륨 0–100000 m³(0 = 없음) | `calibrate.range.volume` | 없음 | P31b |
 | 방 치수 가로 × 세로 × 높이 0–100 m, 0.1 단위(셋 다 넣으면 볼륨) | `calibrate.range.dims.w`, `calibrate.range.dims.d`, `calibrate.range.dims.h` | 없음 | P31b |
 | 부스트 상한 0–10 dB, 기본 10 | `calibrate.range.boost` | 없음 | P31b |

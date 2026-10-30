@@ -169,11 +169,7 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
       Object.assign(params, { count: f("count"), target_hz: f("target_hz") });
       break;
     case "rc_limit":
-      params.hz = f("hz");
-      if (p.auto === "true" && p.schroeder_hz !== undefined) {
-        key = "notice.rc_limit.schroeder";
-        params.schroeder_hz = f("schroeder_hz");
-      } else key = p.auto === "true" ? "notice.rc_limit.auto" : "notice.rc_limit.manual";
+      key = rcLimit(p, params, f);
       break;
     case "rc_room_volume":
       params.volume_m3 = f("volume_m3");
@@ -252,6 +248,50 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
       break;
   }
   return isMessageKey(key) ? t(key, params) : null;
+}
+
+/** The RC lines about the room volume that follow an automatic upper limit (secs-service `result_lines().rc`). */
+const VOLUME_LINES: ReadonlySet<string> = new Set(["rc_room_volume", "rc_no_room_volume", "rc_auto_cap"]);
+
+/**
+ * The range card's RC lines. The agreement basis uses no room volume, so the
+ * volume lines that follow an automatic limit do not apply to it.
+ */
+export function rangeNotices(rc: readonly Notice[]): Notice[] {
+  const limit = rc.find((n) => n.code === "rc_limit");
+  const agreement = limit?.params.auto === "true" && limit.params.basis === "agreement";
+  return agreement ? rc.filter((n) => !VOLUME_LINES.has(n.code)) : [...rc];
+}
+
+/**
+ * The RC upper limit with what set it (ADR 0021): the basis and its evidence
+ * from the note's `basis`, `factor`, `schroeder_hz`, `band_hz`, `band_t60_s`
+ * and `positions`. The lenient basis never goes below the strict value, so
+ * its line names the band only where the band set the limit. A Schroeder
+ * basis without a room volume, a manual limit and a note from before the
+ * bases (no `basis`) keep their earlier lines.
+ */
+function rcLimit(p: Notice["params"], params: MessageParams, f: (key: string, digits?: number) => string): string {
+  params.hz = f("hz");
+  if (p.auto !== "true") return "notice.rc_limit.manual";
+  const factor = num(p.factor);
+  const times = Number.isFinite(factor) && factor > 1;
+  if (times) params.factor = f("factor");
+  const strict = num(p.schroeder_hz);
+  const band = num(p.band_hz);
+  if (p.basis === "agreement" && p.positions !== undefined) {
+    params.positions = f("positions");
+    return "notice.rc_limit.agreement";
+  }
+  if (p.basis === "lenient" && Number.isFinite(band) && !(band < strict)) {
+    Object.assign(params, { band_hz: f("band_hz"), t60: f("band_t60_s", 2) });
+    return times ? "notice.rc_limit.lenient.factor" : "notice.rc_limit.lenient";
+  }
+  if (!Number.isFinite(strict)) return "notice.rc_limit.auto";
+  params.schroeder_hz = f("schroeder_hz");
+  if (p.basis === "lenient") return times ? "notice.rc_limit.lenient_strict.factor" : "notice.rc_limit.lenient_strict";
+  if (p.basis === "strict") return times ? "notice.rc_limit.strict.factor" : "notice.rc_limit.strict";
+  return "notice.rc_limit.schroeder";
 }
 
 /* ── Subs ───────────────────────────────────────────────────────────────── */

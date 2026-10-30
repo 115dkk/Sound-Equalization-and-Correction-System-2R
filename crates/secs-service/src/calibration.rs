@@ -774,7 +774,7 @@ fn notices(note: &secs_engine::Note) -> Vec<Notice> {
     }
 }
 
-fn scalar_notice(note: &secs_engine::Note) -> Notice {
+pub(crate) fn scalar_notice(note: &secs_engine::Note) -> Notice {
     use secs_engine::Note;
 
     let mut params = std::collections::BTreeMap::new();

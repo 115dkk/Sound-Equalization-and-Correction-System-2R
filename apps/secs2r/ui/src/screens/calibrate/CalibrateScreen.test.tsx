@@ -461,7 +461,7 @@ describe("보정 screen", () => {
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "mode", mode: "linear" });
     commitNumber("calibrate.range.lower", "30");
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_lo", hz: 30 });
-    fireEvent.click(must("calibrate.range.upper_auto"));
+    fireEvent.click(must("calibrate.range.basis.manual"));
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi", hz: 310 });
     commitNumber("calibrate.range.volume", "80");
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "room_volume", m3: 80 });
@@ -773,6 +773,135 @@ describe("scorecard after MIMO", () => {
   });
 });
 
+/* ── RC upper limit basis (ADR 0021, P140) ──────────────────────────────── */
+
+/** Laid out but hidden: inside an inert panel of the upper limit's shared place. */
+const inert = (id: string) => must(id).closest("[inert]") !== null;
+const checked = (id: string) => must(id).getAttribute("aria-checked") === "true";
+const basisHint = () => document.getElementById("calibrate.range.basis-hint")?.textContent ?? null;
+
+describe("RC upper limit basis", () => {
+  it("offers four bases and sends each one's edits", async () => {
+    let actions = setup(fx.rangeViews.strict);
+    expect(checked("calibrate.range.basis.strict")).toBe(true);
+    fireEvent.click(must("calibrate.range.basis.lenient"));
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi_basis", basis: "lenient" });
+    fireEvent.click(must("calibrate.range.basis.agreement"));
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi_basis", basis: "agreement" });
+    // 직접 입력 starts from the limit in force, the RC line's 154 Hz.
+    fireEvent.click(must("calibrate.range.basis.manual"));
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi", hz: 154 });
+    // The current basis sends nothing.
+    actions.changeSetting.mockClear();
+    fireEvent.click(must("calibrate.range.basis.strict"));
+    expect(actions.changeSetting).not.toHaveBeenCalled();
+    cleanupAll();
+    // 직접 입력: the field sends the number; a basis sends the basis, then clears the limit.
+    actions = setup(fx.rangeViews.manual);
+    expect(checked("calibrate.range.basis.manual")).toBe(true);
+    commitNumber("calibrate.range.upper", "400");
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi", hz: 400 });
+    actions.changeSetting.mockClear();
+    await act(async () => {
+      fireEvent.click(must("calibrate.range.basis.strict"));
+    });
+    expect(actions.changeSetting.mock.calls).toEqual([[{ kind: "rc_hi_basis", basis: "strict" }], [{ kind: "rc_hi", hz: null }]]);
+    // A refused basis keeps the manual limit.
+    actions.changeSetting.mockClear();
+    actions.changeSetting.mockResolvedValueOnce(false);
+    await act(async () => {
+      fireEvent.click(must("calibrate.range.basis.lenient"));
+    });
+    expect(actions.changeSetting.mock.calls).toEqual([[{ kind: "rc_hi_basis", basis: "lenient" }]]);
+  });
+
+  it("shows the room volume and the transition only for the Schroeder bases, ×1 by default", () => {
+    const actions = setup(fx.rangeViews.strict);
+    for (const id of ["calibrate.range.transition", "calibrate.range.volume", "calibrate.range.dims.w"]) expect(inert(id), id).toBe(false);
+    expect(inert("calibrate.range.upper")).toBe(true);
+    expect(checked("calibrate.range.transition.1")).toBe(true);
+    expect(must("calibrate.range.transition").textContent).toBe("×1×2×4");
+    fireEvent.click(must("calibrate.range.transition.2"));
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi_transition", factor: 2 });
+    fireEvent.click(must("calibrate.range.transition.4"));
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi_transition", factor: 4 });
+    cleanupAll();
+    setup(fx.rangeViews.lenientTimes2);
+    expect(inert("calibrate.range.transition")).toBe(false);
+    expect(checked("calibrate.range.transition.2")).toBe(true);
+    cleanupAll();
+    setup(fx.rangeViews.strictTimes4);
+    expect(checked("calibrate.range.transition.4")).toBe(true);
+    cleanupAll();
+    for (const view of [fx.rangeViews.agreement, fx.rangeViews.manual]) {
+      setup(view);
+      expect(inert("calibrate.range.transition")).toBe(true);
+      expect(inert("calibrate.range.volume")).toBe(true);
+      cleanupAll();
+    }
+    setup(fx.rangeViews.manual);
+    expect(inert("calibrate.range.upper")).toBe(false);
+    cleanupAll();
+    setup(fx.rangeViews.agreement);
+    expect(inert("calibrate.range.agreement")).toBe(false);
+    expect(must("calibrate.range.agreement").textContent).toBe(t("calibrate.range.agreement.note"));
+  });
+
+  it("keeps the card's height: every basis's controls share one place, the others hidden and inert", () => {
+    const panels = () => [...document.querySelectorAll(".calibrate-upper > .calibrate-upper__panel")].map((panel) => [panel.getAttribute("data-ui"), panel.hasAttribute("inert")]);
+    setup(fx.rangeViews.strict);
+    expect(panels()).toEqual([["calibrate.range.schroeder", false], ["calibrate.range.agreement", true], ["calibrate.range.manual", true]]);
+    cleanupAll();
+    setup(fx.rangeViews.manual);
+    expect(panels()).toEqual([["calibrate.range.schroeder", true], ["calibrate.range.agreement", true], ["calibrate.range.manual", false]]);
+  });
+
+  it("turns agreement off below three measured positions with the reason, and keeps a chosen agreement working", () => {
+    setup(fx.rangeViews.agreementUnavailable);
+    expect((must("calibrate.range.basis.agreement") as HTMLButtonElement).disabled).toBe(true);
+    expect(basisHint()).toBe("측정 위치가 2곳입니다. 측정 위치 일치도는 3곳 이상 필요합니다.");
+    expect(must("calibrate.range.basis").getAttribute("aria-describedby")).toContain("calibrate.range.basis-hint");
+    cleanupAll();
+    // Chosen before a position was cleared: still chosen and the group's tab stop, with what to do.
+    const actions = setup(fx.rangeViews.agreementShort);
+    const chosen = must("calibrate.range.basis.agreement") as HTMLButtonElement;
+    expect(chosen.disabled).toBe(false);
+    expect(chosen.getAttribute("aria-checked")).toBe("true");
+    expect(chosen.tabIndex).toBe(0);
+    expect(basisHint()).toBe("측정 위치가 2곳이라 측정 위치 일치도로는 보정을 계산할 수 없습니다. 위치를 3곳 이상 측정하거나 다른 기준을 고르세요.");
+    fireEvent.click(must("calibrate.range.basis.strict"));
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi_basis", basis: "strict" });
+    cleanupAll();
+    // Three positions: on, and no reason.
+    setup(fx.rangeViews.strict);
+    expect((must("calibrate.range.basis.agreement") as HTMLButtonElement).disabled).toBe(false);
+    expect(basisHint()).toBeNull();
+    cleanupAll();
+    setup(fx.rangeViews.agreementUnavailable, { locale: "en" });
+    expect(basisHint()).toBe("Measured positions: 2. Position agreement needs 3 or more.");
+  });
+
+  it("states the evidence for each basis in the RC line, and keeps the lines of a manual limit, a missing volume and an older note", () => {
+    const lines = (view: CalibrateView) => {
+      setup(view);
+      const text = [...must("calibrate.range.notes").querySelectorAll("li")].map((li) => li.textContent);
+      cleanupAll();
+      return text;
+    };
+    const volume = t("notice.rc_room_volume", { volume_m3: "63" });
+    expect(lines(fx.rangeViews.strict)).toEqual(["RC 상한 154 Hz(엄격한 슈뢰더 154 Hz)", volume]);
+    expect(lines(fx.rangeViews.strictTimes2)).toEqual(["RC 상한 308 Hz(엄격한 슈뢰더 154 Hz × 2)", volume]);
+    expect(lines(fx.rangeViews.strictTimes4)[0]).toBe("RC 상한 616 Hz(엄격한 슈뢰더 154 Hz × 4)");
+    expect(lines(fx.rangeViews.lenient)[0]).toBe("RC 상한 200 Hz(너그러운 슈뢰더, 200 Hz 대역 T60 0.50초)");
+    expect(lines(fx.rangeViews.lenientTimes2)[0]).toBe("RC 상한 400 Hz(너그러운 슈뢰더 200 Hz × 2, 대역 T60 0.50초)");
+    // Agreement needs no room volume: no volume line follows it.
+    expect(lines(fx.rangeViews.agreement)).toEqual(["RC 상한 287 Hz(위치 9곳 일치도)"]);
+    expect(lines(fx.rangeViews.manual)).toEqual(["RC 상한 300 Hz (직접 정함)"]);
+    expect(lines(fx.rangeViews.noVolume)).toEqual(["RC 상한 500 Hz (자동)", t("notice.rc_no_room_volume")]);
+    expect(lines(fx.splView)[0]).toBe("RC 상한 310 Hz (자동 · 슈뢰더 310 Hz)");
+  });
+});
+
 /* ── Reach table (docs/M5-reach.md §6–8, P31b rows) ─────────────────────── */
 
 // Every id the reach rows cite, with <role>, <n> and <key> filled in.
@@ -823,7 +952,8 @@ const REACH_IDS = [
   "calibrate.mode.ultra_ms",
   "calibrate.mode.spec",
   "calibrate.range.lower",
-  "calibrate.range.upper_auto",
+  ...["", ".strict", ".lenient", ".agreement", ".manual"].map((option) => `calibrate.range.basis${option}`),
+  ...["", ".1", ".2", ".4"].map((option) => `calibrate.range.transition${option}`),
   "calibrate.range.upper",
   "calibrate.range.volume",
   "calibrate.range.dims.w",

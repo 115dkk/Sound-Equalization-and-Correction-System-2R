@@ -7,9 +7,11 @@ import type { CalibrationState, FrameModel } from "../../app/model";
 import { PrefsScope, usePrefs } from "../../app/prefs";
 import { FrameBox, T0, replay } from "../../gallery/frameSpecimens";
 import type { SpecimenDef } from "../../gallery/Specimen";
-import { useT } from "../../i18n/react";
+import { useNumber, useT } from "../../i18n/react";
+import { Card } from "../../ui";
 import { CalibrateScreen, calibrateHeader, type CalibrateScreenProps } from "./CalibrateScreen";
 import * as fx from "./fixtures";
+import { noticeText } from "./text";
 import { calibrateStepState, type CalibrateActions, type CalibrateView } from "./types";
 
 const noop = () => {};
@@ -137,6 +139,35 @@ function Scoped({ tutorial, children }: { tutorial?: boolean; children: ReactNod
 
 const frame = (id: string, title: string, render: () => ReactNode): SpecimenDef => ({ id: `screen.calibrate.${id}`, title: `보정 · ${title}`, width: 1280, height: 800, render });
 
+/** The range card on each upper-limit basis (ADR 0021), its RC line from the mock's calibration. */
+const RANGE_SPECIMENS: [string, string, CalibrateView][] = [
+  ["strict", "strict Schroeder ×1 (default) with the room volume and the transition", fx.rangeViews.strict],
+  ["strict-x2", "strict Schroeder ×2", fx.rangeViews.strictTimes2],
+  ["strict-x4", "strict Schroeder ×4", fx.rangeViews.strictTimes4],
+  ["lenient", "lenient Schroeder, its band's T60 in the line", fx.rangeViews.lenient],
+  ["lenient-x2", "lenient Schroeder ×2", fx.rangeViews.lenientTimes2],
+  ["agreement", "position agreement at nine positions: no room volume, the time it takes", fx.rangeViews.agreement],
+  ["agreement-unavailable", "two measured positions: agreement off, with the reason", fx.rangeViews.agreementUnavailable],
+  ["agreement-short", "agreement chosen, a position cleared since: still chosen, with what to do", fx.rangeViews.agreementShort],
+  ["manual", "직접 입력: the number field", fx.rangeViews.manual],
+  ["no-volume", "strict Schroeder without a room volume: 500 Hz and the hint to enter it", fx.rangeViews.noVolume],
+];
+
+/** Every kind of RC line in the range card's list. */
+function RcLines() {
+  const t = useT();
+  const number = useNumber();
+  return (
+    <Card title={t("calibrate.range.title")} className="calibrate-settings__card">
+      <ul className="calibrate-notes-list" data-ui="calibrate.range.notes">
+        {fx.rcLimitNotes.map((note, i) => (
+          <li key={i}>{noticeText(t, number, note)}</li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 export const calibrateSpecimens: SpecimenDef[] = [
   frame("empty", "no result yet: plan, position-1 preview and target", () => <CalibrateFrame view={fx.emptyView} />),
   ...Object.entries(fx.planViews).map(([name, view]) => frame(`plan-${name}`, `calculation plan: ${name}`, () => <CalibrateFrame view={view} />)),
@@ -200,6 +231,15 @@ export const calibrateSpecimens: SpecimenDef[] = [
     <CalibrateFrame view={fx.baView} scrollTo="calibrate.ba.values" initial={{ editSub: "SW2" }} />
   )),
   frame("ultra", "초고지연 mode and its delay limit", () => <CalibrateFrame view={fx.ultraView} scrollTo="calibrate.settings.mode" />),
+  ...RANGE_SPECIMENS.map(([id, title, view]) => frame(`range-${id}`, `RC upper limit: ${title}`, () => <CalibrateFrame view={view} scrollTo="calibrate.settings.range" />)),
+  {
+    id: "screen.calibrate.range.min",
+    title: "보정 · RC upper limit at the smallest window (1024 × 700): lenient Schroeder ×2, the row wraps",
+    width: 1024,
+    height: 700,
+    render: () => <CalibrateFrame view={fx.rangeViews.lenientTimes2} scrollTo="calibrate.settings.range" />,
+  },
+  { id: "screen.calibrate.rc-lines", title: "보정 · the RC line for each kind of evidence, then a missing volume and a note from before the bases", width: 720, render: () => <RcLines /> },
   frame("tutorial", "tutorial accent", () => (
     <Scoped tutorial>
       <CalibrateFrame view={fx.splView} fileName="튜토리얼.secs" />

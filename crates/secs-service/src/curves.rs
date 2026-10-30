@@ -380,25 +380,49 @@ impl Service {
                         })
                     })
                     .collect();
-                let mut rc = vec![notice(
-                    "rc_limit",
-                    [
-                        ("hz", design.rc_hi.to_string()),
-                        ("auto", design.rc_auto.to_string()),
-                    ],
-                )];
-                if let Some(hz) = design.schroeder_hz {
-                    rc[0].params.insert("schroeder_hz".into(), hz.to_string());
-                }
-                if design.rc_auto {
+                // The design's own rc_limit note carries the basis and its
+                // evidence (ADR 0021); a design without one gets today's line.
+                let rc_note = design
+                    .notes
+                    .iter()
+                    .find(|note| matches!(note, secs_engine::Note::RcLimit { .. }));
+                let mut rc = vec![match rc_note {
+                    Some(note) => crate::calibration::scalar_notice(note),
+                    None => {
+                        let mut line = notice(
+                            "rc_limit",
+                            [
+                                ("hz", design.rc_hi.to_string()),
+                                ("auto", design.rc_auto.to_string()),
+                            ],
+                        );
+                        if let Some(hz) = design.schroeder_hz {
+                            line.params.insert("schroeder_hz".into(), hz.to_string());
+                        }
+                        line
+                    }
+                }];
+                let band_hz = match rc_note {
+                    Some(secs_engine::Note::RcLimit { band_hz, .. }) => *band_hz,
+                    _ => None,
+                };
+                // The room volume decides only the two Schroeder bases.
+                if design.rc_auto
+                    && run.settings.rc_hi_basis != secs_types::calibration::RcHiBasis::Agreement
+                {
                     rc.push(match run.settings.room_volume_m3.filter(|v| *v != 0.0) {
                         Some(volume) => {
                             notice("rc_room_volume", [("volume_m3", volume.to_string())])
                         }
                         None => notice("rc_no_room_volume", []),
                     });
+                    let factor = f64::from(run.settings.rc_hi_transition);
+                    let value = match (design.schroeder_hz, band_hz) {
+                        (Some(strict), Some(band)) => Some(strict.max(band)),
+                        (strict, band) => strict.or(band),
+                    };
                     if run.settings.room_volume_m3.is_some_and(|v| v != 0.0)
-                        && design.schroeder_hz.is_some_and(|v| v > design.rc_hi + 0.5)
+                        && value.is_some_and(|v| v * factor > design.rc_hi + 0.5)
                     {
                         rc.push(notice("rc_auto_cap", [("hz", design.rc_hi.to_string())]));
                     }

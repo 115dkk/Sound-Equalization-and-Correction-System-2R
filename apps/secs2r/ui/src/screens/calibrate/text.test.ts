@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { translate, type Locale } from "../../i18n";
 import type { Translate } from "../../i18n/react";
 import type { Notice } from "../../ipc/bindings/Notice";
-import { noteLines, noticeText, type FormatNumber } from "./text";
+import { rcLimitNotes } from "./fixtures";
+import { noteLines, noticeText, rangeNotices, type FormatNumber } from "./text";
 
 // The calculation notes as secs-service sends them (calibration.rs `notices`:
 // one record per role, filter or mode, scalar string params), turned into the
@@ -95,6 +96,55 @@ describe("calculation notes", () => {
       "2웨이 서브(SW1·SW2): 저역 서브 게인 −1.0 dB, 크로스오버 50 Hz",
     ]);
     expect(lines("en", notes)[0]).toBe("Boost limited to 3.0 dB at long-ringing room modes: 2 (40 Hz, 63 Hz).");
+  });
+
+  it("rc_limit: the upper limit with its basis and evidence (ADR 0021), older notes as before", () => {
+    const text = (locale: Locale) => {
+      const { t, number } = words(locale);
+      return rcLimitNotes.map((note) => noticeText(t, number, note));
+    };
+    expect(text("ko")).toEqual([
+      "RC 상한 154 Hz(엄격한 슈뢰더 154 Hz)",
+      "RC 상한 308 Hz(엄격한 슈뢰더 154 Hz × 2)",
+      "RC 상한 1,242 Hz(엄격한 슈뢰더 310 Hz × 4)",
+      "RC 상한 200 Hz(너그러운 슈뢰더, 200 Hz 대역 T60 0.50초)",
+      "RC 상한 400 Hz(너그러운 슈뢰더 200 Hz × 2, 대역 T60 0.50초)",
+      // The band (160 Hz) is below the strict value, which the lenient basis keeps.
+      "RC 상한 250 Hz(너그러운 슈뢰더, 엄격한 값 250 Hz)",
+      "RC 상한 500 Hz(너그러운 슈뢰더, 엄격한 값 250 Hz × 2)",
+      "RC 상한 287 Hz(위치 9곳 일치도)",
+      "RC 상한 300 Hz (직접 정함)",
+      // No room volume: the earlier line, and the hint to enter the volume after it.
+      "RC 상한 500 Hz (자동)",
+      "방 부피가 없어 자동 상한은 500 Hz입니다. 방 크기를 넣으면 슈뢰더 주파수로 정해집니다.",
+      // A note from before the bases keeps its line.
+      "RC 상한 310 Hz (자동 · 슈뢰더 310 Hz)",
+    ]);
+    expect(text("en").slice(0, 8)).toEqual([
+      "RC upper limit 154 Hz (strict Schroeder 154 Hz)",
+      "RC upper limit 308 Hz (strict Schroeder 154 Hz × 2)",
+      "RC upper limit 1,242 Hz (strict Schroeder 310 Hz × 4)",
+      "RC upper limit 200 Hz (lenient Schroeder, T60 0.50 s in the 200 Hz band)",
+      "RC upper limit 400 Hz (lenient Schroeder 200 Hz × 2, band T60 0.50 s)",
+      "RC upper limit 250 Hz (lenient Schroeder, strict value 250 Hz)",
+      "RC upper limit 500 Hz (lenient Schroeder, strict value 250 Hz × 2)",
+      "RC upper limit 287 Hz (agreement of 9 positions)",
+    ]);
+    // Without a band the lenient basis falls back to the strict value; a strict note's band is not evidence.
+    const { t, number } = words("ko");
+    expect(noticeText(t, number, n("rc_limit", { hz: "200", auto: "true", basis: "lenient", factor: "1", band_hz: "200", band_t60_s: "0.5" }))).toBe("RC 상한 200 Hz(너그러운 슈뢰더, 200 Hz 대역 T60 0.50초)");
+    expect(noticeText(t, number, n("rc_limit", { hz: "154", auto: "true", schroeder_hz: "154", basis: "strict", factor: "1", band_hz: "200", band_t60_s: "0.5" }))).toBe("RC 상한 154 Hz(엄격한 슈뢰더 154 Hz)");
+  });
+
+  it("drops the room volume lines from the range card when agreement set the limit", () => {
+    const volume = [n("rc_room_volume", { volume_m3: "62.6" }), n("rc_no_room_volume", {}), n("rc_auto_cap", { hz: "287" })];
+    const agreement = n("rc_limit", { hz: "287", auto: "true", basis: "agreement", factor: "1", positions: "9", schroeder_hz: "400" });
+    expect(rangeNotices([agreement, ...volume])).toEqual([agreement]);
+    const strict = n("rc_limit", { hz: "154", auto: "true", basis: "strict", factor: "1", schroeder_hz: "154" });
+    expect(rangeNotices([strict, volume[0]!])).toEqual([strict, volume[0]]);
+    // A manual limit on the agreement basis keeps whatever follows it.
+    const manual = n("rc_limit", { hz: "300", auto: "false", basis: "agreement", factor: "1" });
+    expect(rangeNotices([manual, volume[0]!])).toEqual([manual, volume[0]]);
   });
 
   it("shows a code the catalog has no sentence for as an unknown notice, never raw", () => {

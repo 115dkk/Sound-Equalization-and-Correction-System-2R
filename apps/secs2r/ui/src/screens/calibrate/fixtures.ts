@@ -16,7 +16,7 @@ import type { ResultLinesResult } from "../../ipc/bindings/ResultLinesResult";
 import type { SubResultLines } from "../../ipc/bindings/SubResultLines";
 import type { TargetResult } from "../../ipc/bindings/TargetResult";
 import * as fx from "../../ipc/fixtures";
-import { ipcError } from "../../ipc/mock";
+import { ipcError, mockRcLines } from "../../ipc/mock";
 import { targetAt } from "../../ui/plot/targetEdit";
 import type { CalibrateView } from "./types";
 
@@ -77,6 +77,8 @@ export const baseSettings: CalibrationSettings = {
   mode: "mixed",
   rc_lo: 20,
   rc_hi: null,
+  rc_hi_basis: "strict",
+  rc_hi_transition: 1,
   room_volume_m3: 62.6,
   room_dims_m: [5.2, 4.3, 2.8],
   mimo_on: false,
@@ -540,6 +542,54 @@ export const noPosition1View: CalibrateView = {
 
 /** The first tab's curves are on their way and none are here yet. */
 export const loadingEmptyView: CalibrateView = { ...base, curves: null, curvesLoading: true };
+
+/* ── RC upper limit (ADR 0021) ──────────────────────────────────────────── */
+
+const NINE_POSITIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+
+/**
+ * The range card on one upper-limit basis, its RC lines as the mock service's
+ * calibration leaves them for these settings (`mockRcLines`). `ranOn` names
+ * the settings of the run when they differ from the ones shown (an edit since).
+ */
+function rangeView(patch: Partial<CalibrationSettings>, positions: number[] = [1, 2, 3], ranOn: Partial<CalibrationSettings> = patch): CalibrateView {
+  const settings = { ...baseSettings, ...patch };
+  return { ...base, positions, settings, lines: { ...base.lines, rc: mockRcLines({ ...baseSettings, ...ranOn }, positions.length) } };
+}
+
+export const rangeViews = {
+  strict: rangeView({}),
+  strictTimes2: rangeView({ rc_hi_transition: 2 }),
+  strictTimes4: rangeView({ rc_hi_transition: 4 }),
+  lenient: rangeView({ rc_hi_basis: "lenient" }),
+  lenientTimes2: rangeView({ rc_hi_basis: "lenient", rc_hi_transition: 2 }),
+  agreement: rangeView({ rc_hi_basis: "agreement" }, NINE_POSITIONS),
+  /** Two measured positions: agreement is off, with the reason. */
+  agreementUnavailable: rangeView({}, [1, 2]),
+  /** Agreement chosen earlier, a position cleared since: still chosen, with what to do. */
+  agreementShort: rangeView({ rc_hi_basis: "agreement" }, [1, 2], {}),
+  manual: rangeView({ rc_hi: 300, rc_hi_basis: "lenient" }),
+  noVolume: rangeView({ room_volume_m3: null, room_dims_m: null }),
+} satisfies Record<string, CalibrateView>;
+
+/**
+ * The RC line for every kind of evidence the service's rc_limit note carries
+ * (secs-service `scalar_notice`), and a note from before the bases.
+ */
+export const rcLimitNotes: Notice[] = [
+  { code: "rc_limit", params: { hz: "154", auto: "true", schroeder_hz: "154", basis: "strict", factor: "1" } },
+  { code: "rc_limit", params: { hz: "308", auto: "true", schroeder_hz: "154", basis: "strict", factor: "2" } },
+  { code: "rc_limit", params: { hz: "1241.68", auto: "true", schroeder_hz: "310.42", basis: "strict", factor: "4" } },
+  { code: "rc_limit", params: { hz: "200", auto: "true", schroeder_hz: "154", basis: "lenient", factor: "1", band_hz: "200", band_t60_s: "0.5" } },
+  { code: "rc_limit", params: { hz: "400", auto: "true", schroeder_hz: "154", basis: "lenient", factor: "2", band_hz: "200", band_t60_s: "0.5" } },
+  { code: "rc_limit", params: { hz: "250", auto: "true", schroeder_hz: "250", basis: "lenient", factor: "1", band_hz: "160", band_t60_s: "0.31" } },
+  { code: "rc_limit", params: { hz: "500", auto: "true", schroeder_hz: "250", basis: "lenient", factor: "2" } },
+  { code: "rc_limit", params: { hz: "287", auto: "true", schroeder_hz: "154", basis: "agreement", factor: "1", positions: "9" } },
+  { code: "rc_limit", params: { hz: "300", auto: "false", basis: "strict", factor: "1" } },
+  { code: "rc_limit", params: { hz: "500", auto: "true", basis: "strict", factor: "2" } },
+  { code: "rc_no_room_volume", params: {} },
+  { code: "rc_limit", params: { hz: "310.42", auto: "true", schroeder_hz: "310.42" } },
+];
 
 function defaultSub() {
   return { mode: "auto", bundle: "A", gain_db: 0, delay_ms: 0, polarity: 1, allpass: [] as [number, number][], mimo_support: true, hp_hz: 0, lp_hz: 0, peq: [] as [number, number, number][], hp_type: "LR24", lp_type: "LR24", dba_row: "front" };
