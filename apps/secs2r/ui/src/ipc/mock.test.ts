@@ -780,3 +780,118 @@ describe("mock calibrate with MIMO (P141, P142)", () => {
     } finally { mock.dispose(); }
   });
 });
+
+describe("mock measurement graph reference (#127, U17)", () => {
+  const all = { positions: null, roles: null };
+  const mean = (grid: readonly number[], values: readonly number[], lo: number, hi: number) => {
+    const band = values.filter((_, i) => grid[i]! >= lo && grid[i]! <= hi);
+    return band.reduce((sum, value) => sum + value, 0) / band.length;
+  };
+
+  it("shifts every curve by the first main's position-1 mean over 200–2000 Hz and returns that reference", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      const result = await mock.request({ method: "measurement_curves", params: all });
+      expect(result.reference).toEqual({ role: "L", position: 1, band: "mid" });
+      expect(result.axes).toEqual({ frequency_hz: [5, 22000], value: [-35, 20], unit: "db" });
+      const reference = result.curves.find((curve) => curve.role === "L" && curve.position === 1)!;
+      expect(mean(result.grid, reference.values, 200, 2000)).toBeCloseTo(0, 9);
+      // Not each curve to its own midrange: another main keeps its own level there.
+      const other = result.curves.find((curve) => curve.role === "R" && curve.position === 2)!;
+      expect(Math.abs(mean(result.grid, other.values, 200, 2000))).toBeGreaterThan(0.01);
+      // The service's kinds, and subs in their pass band near the mains instead of tens of dB above them.
+      expect(new Set(result.curves.map((curve) => curve.kind))).toEqual(new Set(["main", "sub", "top"]));
+      const sub = result.curves.find((curve) => curve.role === "SW1" && curve.position === 1)!;
+      expect(Math.abs(mean(result.grid, sub.values, 40, 80))).toBeLessThan(10);
+    } finally { mock.dispose(); }
+  });
+
+  it("picks the reference before the request's filter, so a filtered curve keeps its values", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      const full = await mock.request({ method: "measurement_curves", params: all });
+      const filtered = await mock.request({ method: "measurement_curves", params: { positions: [2], roles: ["R"] } });
+      expect(filtered.reference).toEqual(full.reference);
+      expect(filtered.curves).toEqual(full.curves.filter((curve) => curve.role === "R" && curve.position === 2));
+    } finally { mock.dispose(); }
+  });
+
+  it("falls back to the main's lowest position, then to the first sub over 40–120 Hz, and to none", async () => {
+    const mock = createMockService({ tickMs: 0, project: { ...projectInfo, positions: [] } });
+    const reference = async () => (await mock.request({ method: "measurement_curves", params: all })).reference;
+    const assign = async (role: string, position: number) => {
+      await mock.request({ method: "mdat_import", params: { path: "/room.mdat", position, assignments: [{ measurement: role, role, index: 0, position }] } });
+      mock.drain();
+    };
+    try {
+      expect(await reference()).toBeNull();
+      await assign("SW2", 3);
+      await assign("SW1", 4);
+      expect(await reference()).toEqual({ role: "SW1", position: 4, band: "sub" });
+      const subs = await mock.request({ method: "measurement_curves", params: all });
+      const sw1 = subs.curves.find((curve) => curve.role === "SW1")!;
+      expect(mean(subs.grid, sw1.values, 40, 120)).toBeCloseTo(0, 9);
+      await assign("R", 2);
+      await assign("R", 5);
+      expect(await reference()).toEqual({ role: "R", position: 2, band: "mid" });
+      await assign("L", 3);
+      expect(await reference()).toEqual({ role: "L", position: 3, band: "mid" });
+      await assign("L", 1);
+      expect(await reference()).toEqual({ role: "L", position: 1, band: "mid" });
+    } finally { mock.dispose(); }
+  });
+});
+
+describe("mock 극저역 보호 (ADR 0022)", () => {
+  const calibrate = async (mock: ReturnType<typeof createMockService>) => {
+    await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } });
+    mock.drain();
+    return (await mock.request({ method: "results" })).calibration!.notes.filter((note) => note.code === "low_protect");
+  };
+
+  it("applies the edit, marks the result stale and leaves no notes while off", async () => {
+    const mock = createMockService({ tickMs: 0, results: resultsSummary });
+    try {
+      expect((await mock.request({ method: "calibration_settings_get" })).low_protect).toBe(false);
+      expect(await calibrate(mock)).toEqual([]);
+      const settings = await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "low_protect", on: true } } });
+      expect(settings.low_protect).toBe(true);
+      expect((await mock.request({ method: "results" })).calibration).toMatchObject({ stale: true, stale_reason: "settings" });
+    } finally { mock.dispose(); }
+  });
+
+  it("notes every channel's roll-off and each sub's high-pass after a calibration with it on", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "low_protect", on: true } } });
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "sub", role: "SW2", patch: { hp_hz: 25 } } } });
+      const notes = await calibrate(mock);
+      const roles = (await mock.request({ method: "config_get" })).speakers.map((speaker) => speaker.role);
+      expect(notes.map((note) => note.params.role)).toEqual(roles);
+      expect(notes.every((note) => note.params.limited === "true" && Number(note.params.rolloff_hz) >= 20)).toBe(true);
+      expect(notes.find((note) => note.params.role === "L")!.params).not.toHaveProperty("hp_hz");
+      // A sub without a high-pass of its own gets one at the roll-off over √2; SW2 keeps the user's.
+      const sw1 = notes.find((note) => note.params.role === "SW1")!.params;
+      expect(Number(sw1.hp_hz)).toBeCloseTo(Number(sw1.rolloff_hz) / Math.SQRT2, 9);
+      expect(notes.find((note) => note.params.role === "SW2")!.params.hp_hz).toBe("25");
+    } finally { mock.dispose(); }
+  });
+
+  it("reports the sub bus it cannot hold with the RC lower limit below 20 Hz, until that limit rises or the boost limit falls", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    const edit = (edit: import("./bindings/SettingEdit").SettingEdit) => mock.request({ method: "calibration_settings_edit", params: { edit } });
+    try {
+      await edit({ kind: "low_protect", on: true });
+      expect((await calibrate(mock)).some((note) => note.params.limited === "false")).toBe(false);
+      await edit({ kind: "rc_lo", hz: 15 });
+      expect((await calibrate(mock)).filter((note) => note.params.limited === "false")).toEqual([
+        { code: "low_protect", params: { role: "SW1 + SW2", rolloff_hz: "22", limited: "false" } },
+      ]);
+      await edit({ kind: "boost_max", db: 6 });
+      expect((await calibrate(mock)).some((note) => note.params.limited === "false")).toBe(false);
+      await edit({ kind: "boost_max", db: 10 });
+      await edit({ kind: "rc_lo", hz: 20 });
+      expect((await calibrate(mock)).some((note) => note.params.limited === "false")).toBe(false);
+    } finally { mock.dispose(); }
+  });
+});

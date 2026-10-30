@@ -261,7 +261,8 @@ function UpperPanel({ shown, id, children }: { shown: boolean; id: string; child
   );
 }
 
-function RangeSection({ view, actions }: Props) {
+/** `advancedOpen`: gallery and tests start with 고급 open. */
+function RangeSection({ view, actions, advancedOpen = false }: Props & { advancedOpen?: boolean | undefined }) {
   const t = useT();
   const number = useNumber();
   const s = view.settings;
@@ -368,8 +369,8 @@ function RangeSection({ view, actions }: Props) {
           ))}
         </ul>
       )}
-      {/* An experiment left on stays in view: the section opens with it. */}
-      <Advanced id="calibrate.range.advanced" count={2} defaultOpen={analytic !== "off"}>
+      {/* An experiment or the low-end protection left on stays in view: the section opens with it. */}
+      <Advanced id="calibrate.range.advanced" count={3} defaultOpen={advancedOpen || analytic !== "off" || s.low_protect}>
         <div className="calibrate-fields">
           <NumberField
             id="calibrate.range.boost"
@@ -384,6 +385,14 @@ function RangeSection({ view, actions }: Props) {
             onChange={(db) => actions.changeSetting({ kind: "boost_max", db })}
           />
         </div>
+        {/* 극저역 보호 (ADR 0022): beside the boost limit it holds below each channel's roll-off. */}
+        <Toggle
+          id="calibrate.range.low_protect"
+          label={t("calibrate.range.low_protect")}
+          help={t("calibrate.range.low_protect.help")}
+          checked={s.low_protect}
+          onChange={(on) => actions.changeSetting({ kind: "low_protect", on })}
+        />
         <Segmented<AnalyticScope>
           id="calibrate.analytic"
           label={t("calibrate.analytic.title")}
@@ -975,7 +984,14 @@ function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
   );
 }
 
-export function Settings({ view, actions, editSub, sampleRateRequest, onSampleRateSettings }: FailureProps & { editSub?: string | undefined; sampleRateRequest: number }) {
+export function Settings({
+  view,
+  actions,
+  editSub,
+  rangeAdvanced,
+  sampleRateRequest,
+  onSampleRateSettings,
+}: FailureProps & { editSub?: string | undefined; rangeAdvanced?: boolean | undefined; sampleRateRequest: number }) {
   const t = useT();
   return (
     <section className="calibrate-settings" aria-labelledby="calibrate.settings.title" data-ui="calibrate.settings">
@@ -987,7 +1003,7 @@ export function Settings({ view, actions, editSub, sampleRateRequest, onSampleRa
       </header>
       <SampleRateSettings view={view} actions={actions} request={sampleRateRequest} />
       <ModeSection view={view} actions={actions} />
-      <RangeSection view={view} actions={actions} />
+      <RangeSection view={view} actions={actions} advancedOpen={rangeAdvanced} />
       <XoSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} />
       <BaSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} editSub={editSub} />
       <MimoSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} />

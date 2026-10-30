@@ -29,7 +29,10 @@ import type { Notice } from "./bindings/Notice";
 import type { MicCalibrationStatus } from "./bindings/MicCalibrationStatus";
 import { umikFile } from "../screens/connect/fixtures";
 import type { ExportKind } from "./bindings/ExportKind";
+import type { CurveReference } from "./bindings/CurveReference";
+import type { MeasurementCurve } from "./bindings/MeasurementCurve";
 import { CALIBRATION_LIMITS as LIMITS, RECENT_PROJECTS_MAX } from "./bindings/rules";
+import { isSubRole, roleKind } from "../ui/maps/geometry";
 import { recorded } from "./recorded";
 import { designNameFor, designNameProblem, filterModeName, isFilterKind, mdatFileName, MIMO_MIN_POSITIONS } from "../screens/export/types";
 import { DESIGN_RATE, OUTPUT_RATES, countedRate, sameRate } from "../screens/system/outputRate";
@@ -131,6 +134,89 @@ function rcLines(limit: Notice | undefined, volume: number | null): Notice[] {
 
 /** The RC lines the mock's calibration leaves for these settings at this many measured positions (gallery views). */
 export const mockRcLines = (settings: CalibrationSettings, positions: number): Notice[] => rcLines(rcLimitNote(settings, positions), settings.room_volume_m3);
+
+/**
+ * Zero dB of the measurement graph (secs-service `measurement_reference`,
+ * U17): the first main in configuration order, at position 1 when it was
+ * measured there and otherwise at its lowest measured position, over
+ * 200–2000 Hz; with no main measured, the first sub at its lowest measured
+ * position over 40–120 Hz. `order` is the configuration's roles.
+ */
+export function measurementReference(order: readonly string[], measured: readonly { role: string; position: number }[]): CurveReference | null {
+  const lowest = (role: string) => {
+    const positions = measured.filter((curve) => curve.role === role).map((curve) => curve.position);
+    return positions.length ? Math.min(...positions) : null;
+  };
+  for (const sub of [false, true]) {
+    for (const role of order) {
+      if (isSubRole(role) !== sub) continue;
+      const low = lowest(role);
+      if (low === null) continue;
+      const position = !sub && measured.some((curve) => curve.role === role && curve.position === 1) ? 1 : low;
+      return { role, position, band: sub ? "sub" : "mid" };
+    }
+  }
+  return null;
+}
+
+/**
+ * The curves shifted by one value, the reference curve's mean over its band,
+ * and that reference (secs-service `measurement_curves`). Every curve keeps
+ * its level against the others; the reference is chosen from all of them,
+ * before any request filter.
+ */
+export function shiftToReference<C extends { role: string; position: number; values: number[] }>(
+  grid: ArrayLike<number>,
+  curves: readonly C[],
+  order: readonly string[],
+): { curves: C[]; reference: CurveReference | null } {
+  const reference = measurementReference(order, curves);
+  const source = reference && curves.find((curve) => curve.role === reference.role && curve.position === reference.position);
+  if (!reference || !source) return { curves: [...curves], reference };
+  const [lo, hi] = reference.band === "mid" ? [200, 2000] : [40, 120];
+  const band = source.values.filter((_, i) => (grid[i] ?? 0) >= lo && (grid[i] ?? 0) <= hi);
+  const mean = band.reduce((sum, value) => sum + value, 0) / Math.max(1, band.length);
+  return { curves: curves.map((curve) => ({ ...curve, values: curve.values.map((value) => value - mean) })), reference };
+}
+
+/**
+ * A measured response at the microphone in dB SPL: about 78 dB with synthetic
+ * ripple, mains falling below about 45 Hz, subs low-passed near 95 Hz.
+ * Deterministic per seed.
+ */
+const mockMeasurement = (role: string, seed: number): number[] =>
+  fx.curveValues(seed).map((value, i) => {
+    const hz = fx.curveGrid[i]!;
+    const shape = isSubRole(role) ? -24 * Math.log2(Math.max(1, hz / 95)) : -12 * Math.log2(Math.max(1, 45 / hz));
+    return 78 + value + shape;
+  });
+
+/** The curve kind the service names (secs-service `measurement_curves`). */
+const measurementKind = (role: string): MeasurementCurve["kind"] => (roleKind(role) === "height" ? "top" : roleKind(role));
+
+/**
+ * The 극저역 보호 notes a calibration with `low_protect` leaves (ADR 0022,
+ * secs-service `scalar_notice`), with synthetic roll-offs: about 30 Hz for
+ * the mains, about 22 Hz for the subs. Each sub gets its own high-pass, or
+ * keeps the one set by the user. With the RC lower limit below the 20 Hz
+ * measurement band and more than 6 dB of boost allowed, the sub bus PEQ
+ * cannot hold its boost below the roll-off and keeps its fit (`limited`
+ * false); raising the lower limit or lowering the boost limit clears it.
+ */
+export function mockLowProtectNotes(settings: CalibrationSettings, roles: readonly string[]): Notice[] {
+  if (!settings.low_protect) return [];
+  const subs = roles.filter(isSubRole);
+  const notes: Notice[] = roles.map((role, i) => {
+    if (!isSubRole(role)) return { code: "low_protect", params: { role, rolloff_hz: String(28 + ((i * 3) % 7)), limited: "true" } };
+    const rolloff = 22 + 2 * subs.indexOf(role);
+    const user = settings.subs_manual[role]?.hp_hz ?? 0;
+    return { code: "low_protect", params: { role, rolloff_hz: String(rolloff), hp_hz: String(user > 0 ? user : rolloff / Math.SQRT2), limited: "true" } };
+  });
+  if (subs.length > 0 && settings.rc_lo < 20 && settings.boost_max_db > 6) {
+    notes.push({ code: "low_protect", params: { role: subs.join(" + "), rolloff_hz: "22", limited: "false" } });
+  }
+  return notes;
+}
 
 /** Settings edits that change only the MIMO result (secs-types `mimo_key`). */
 const MIMO_ONLY_EDITS: ReadonlySet<SettingEdit["kind"]> = new Set(["fsiso", "mimo_low", "mimo_max", "mimo_fir"]);
@@ -399,6 +485,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     switch (edit.kind) {
       case "mode": settings.mode = edit.mode; break;
       case "sample_rate_policy": settings.sample_rate_policy = edit.policy; break;
+      case "low_protect": settings.low_protect = edit.on; break;
       case "ultra_ms": settings.ultra_ms = clamp(edit.ms, LIMITS.ultra_ms); break;
       case "rc_lo": settings.rc_lo = clamp(edit.hz, LIMITS.rc_lo); break;
       case "rc_hi": settings.rc_hi = edit.hz === null ? null : clamp(edit.hz, LIMITS.rc_hi); break;
@@ -650,10 +737,15 @@ export function createMockService(options: MockOptions = {}): MockService {
         const positions = [...new Set([...Array.from({ length: layout.count }, (_, i) => i + 1), ...records.map((r) => r.position)])].sort((a, b) => a - b);
         return { method: req.method, data: { records: positions.map((position) => records.find((r) => r.position === position) ?? { position, roles: [], done: false, sources: {} }) } };
       }
-      case "measurement_curves":
+      case "measurement_curves": {
         needProject();
-        return { method: req.method, data: { grid: [...fx.curveGrid], axes: { frequency_hz: [5, 20000], value: [30, 110], unit: "db" },
-          curves: records.filter((r) => !req.params.positions || req.params.positions.includes(r.position)).flatMap((r) => r.roles.filter((role) => !req.params.roles || req.params.roles.includes(role)).map((role, i) => ({ position: r.position, role, kind: "measurement", values: fx.curveValues(i + r.position).map((v) => v + 78) }))) } };
+        // One reference for every curve, chosen before the request's filter (U17).
+        const measured = records.flatMap((r) => r.roles.map((role, i) => ({ position: r.position, role, kind: measurementKind(role), values: mockMeasurement(role, i + r.position) })));
+        const { curves, reference } = shiftToReference(fx.curveGrid, measured, config.speakers.map((s) => s.role));
+        const { positions, roles } = req.params;
+        return { method: req.method, data: { grid: [...fx.curveGrid], axes: { frequency_hz: [5, 22000], value: [-35, 20], unit: "db" }, reference,
+          curves: curves.filter((c) => (!positions || positions.includes(c.position)) && (!roles || roles.includes(c.role))) } };
+      }
       case "levels_get": return { method: req.method, data: levels };
       case "levels_fill_defaults":
         for (const role of measureConfig.roles) levels.levels[role] ??= -12;
@@ -718,7 +810,7 @@ export function createMockService(options: MockOptions = {}): MockService {
           const spec = fx.modeSpec(captured.mode);
           summary.latency_ms = spec.max_latency_ms;
           summary.verdict.added_delay_ms = spec.max_latency_ms;
-          summary.notes = [rcLimitNote(captured, positions)];
+          summary.notes = [rcLimitNote(captured, positions), ...mockLowProtectNotes(captured, config.speakers.map((s) => s.role))];
           summary.scorecard = roles.map((role) => ({ ...clone(fx.scorecard.find((score) => score.role === role) ?? fx.scorecard[0]!), role }));
           summary.late_energy = fx.lateEnergy(roles, needProject().positions);
           summary.main_roles = roles;

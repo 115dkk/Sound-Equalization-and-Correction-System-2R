@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import { translate, type Locale } from "../../i18n";
 import type { Translate } from "../../i18n/react";
 import type { Notice } from "../../ipc/bindings/Notice";
-import { rcLimitNotes } from "./fixtures";
-import { noteLines, noticeText, rangeNotices, type FormatNumber } from "./text";
+import { lowProtectNotes, rcLimitNotes } from "./fixtures";
+import { LOW_PROTECT_NEXT, lowProtectFailures, noteLines, noticeText, rangeNotices, type FormatNumber } from "./text";
 
 // The calculation notes as secs-service sends them (calibration.rs `notices`:
 // one record per role, filter or mode, scalar string params), turned into the
@@ -150,5 +150,29 @@ describe("calculation notes", () => {
   it("shows a code the catalog has no sentence for as an unknown notice, never raw", () => {
     expect(lines("ko", [n("made_up_note", { role: "L", value: "1" })])).toEqual(["알 수 없는 알림"]);
     expect(lines("en", [n("made_up_note", { role: "L", value: "1" })])).toEqual(["Unknown notice"]);
+  });
+
+  it("states 극저역 보호 per channel: the roll-off, a sub's high-pass, and the bus that could not hold as a warning (ADR 0022)", () => {
+    // A sub with the high-pass the engine adds (the roll-off over √2), a sub keeping the user's, a main, the bus.
+    expect(lines("ko", lowProtectNotes)).toEqual([
+      "극저역 보호(SW1): 22 Hz 아래 부스트 안 함, 16 Hz 하이패스",
+      "극저역 보호(SW2): 28 Hz 아래 부스트 안 함, 25 Hz 하이패스",
+      "극저역 보호(L): 30 Hz 아래 부스트 안 함",
+      "극저역 보호(SW1 + SW2): 22 Hz 아래 부스트를 막지 못해 원래 필터를 그대로 썼습니다.",
+    ]);
+    expect(lines("en", lowProtectNotes)).toEqual([
+      "Low-end protection (SW1): no boost below 22 Hz, 16 Hz high-pass",
+      "Low-end protection (SW2): no boost below 28 Hz, 25 Hz high-pass",
+      "Low-end protection (L): no boost below 30 Hz",
+      "Low-end protection (SW1 + SW2): the boost below 22 Hz could not be held back, so the original filters were kept.",
+    ]);
+    // The engine's roll-offs are unrounded; each role reads as the screen's code, in a group too.
+    expect(lines("ko", [n("low_protect", { role: "Lb", rolloff_hz: "31.498026247371826", limited: "true" })])).toEqual(["극저역 보호(Lrs): 31 Hz 아래 부스트 안 함"]);
+    expect(lines("ko", [n("low_protect", { role: "Tfl + Tfr", rolloff_hz: "40", limited: "false" })])).toEqual(["극저역 보호(Ltf + Rtf): 40 Hz 아래 부스트를 막지 못해 원래 필터를 그대로 썼습니다."]);
+    // Only the bus that kept its fit is a warning, never a success line; it says what to do.
+    expect(lowProtectFailures(lowProtectNotes)).toEqual([lowProtectNotes[3]]);
+    const { t } = words("ko");
+    expect(t(LOW_PROTECT_NEXT)).toBe("부스트 상한을 낮추거나 RC 하한을 올린 뒤 다시 보정하세요.");
+    expect(words("en").t(LOW_PROTECT_NEXT)).toBe("Lower the boost limit or raise the RC lower limit, then correct again.");
   });
 });

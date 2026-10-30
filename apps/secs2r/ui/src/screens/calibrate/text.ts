@@ -246,9 +246,30 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
     case "layout":
       params.value = p.value ?? "";
       break;
+    case "low_protect":
+      // A sub bus or group note names its subs joined by ' + ' (secs-engine ba.rs).
+      Object.assign(params, { code: (p.role ?? "").split(" + ").map(roleCode).join(" + "), rolloff_hz: f("rolloff_hz") });
+      if (p.limited === "false") key = "notice.low_protect.limited";
+      else if (p.hp_hz !== undefined) {
+        key = "notice.low_protect.hp";
+        params.hp_hz = f("hp_hz");
+      } else key = "notice.low_protect";
+      break;
   }
   return isMessageKey(key) ? t(key, params) : null;
 }
+
+/**
+ * 극저역 보호 notes whose boost could not be held below the roll-off even
+ * with every eligible boost removed, so the original fit was kept (ADR 0022,
+ * `limited` "false"): a warning with what to do, never a calculation note.
+ */
+export function lowProtectFailures(notices: readonly Notice[]): Notice[] {
+  return notices.filter((n) => n.code === "low_protect" && n.params.limited === "false");
+}
+
+/** The warning's next step for `lowProtectFailures`. */
+export const LOW_PROTECT_NEXT: MessageKey = "notice.low_protect.limited.next";
 
 /** The RC lines about the room volume that follow an automatic upper limit (secs-service `result_lines().rc`). */
 const VOLUME_LINES: ReadonlySet<string> = new Set(["rc_room_volume", "rc_no_room_volume", "rc_auto_cap"]);

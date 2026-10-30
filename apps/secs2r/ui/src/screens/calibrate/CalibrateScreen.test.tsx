@@ -84,7 +84,7 @@ const must = (id: string) => {
   return element;
 };
 
-function setup(view: CalibrateView, options: { locale?: "ko" | "en"; initial?: { targetMenu?: boolean; editSub?: string; latePositions?: boolean } } = {}) {
+function setup(view: CalibrateView, options: { locale?: "ko" | "en"; initial?: { targetMenu?: boolean; editSub?: string; latePositions?: boolean; rangeAdvanced?: boolean; notesOpen?: boolean } } = {}) {
   const actions = mockActions();
   renderWith(<CalibrateScreen view={view} actions={actions} initial={options.initial} />, { locale: options.locale ?? "ko" });
   return actions;
@@ -126,6 +126,8 @@ const STATES: Record<string, CalibrateView> = {
   computingMimo: fx.computingMimoView,
   mimoFailed: fx.mimoFailedView,
   mimoBehindCorrection: fx.mimoBehindCorrectionView,
+  lowProtect: fx.lowProtectViews.on,
+  lowProtectUnheld: fx.lowProtectViews.unheld,
 };
 
 describe("보정 screen", () => {
@@ -1156,6 +1158,63 @@ function idsOf(node: ReactNode): Set<string> {
   unmount();
   return ids;
 }
+
+describe("극저역 보호 (ADR 0022)", () => {
+  it("sits beside the boost limit in the range card's 고급, off by default, and sends its edit", () => {
+    const actions = setup(fx.lowProtectViews.off);
+    // Off, 고급 stays folded as before; opened, the switch follows the boost limit.
+    expect(ui("calibrate.range.low_protect")).toBeNull();
+    openAdvanced();
+    const range = must("calibrate.settings.range");
+    const toggle = within(range).getByRole("switch", { name: "롤오프 아래 부스트 막기" });
+    expect(toggle.getAttribute("data-ui")).toBe("calibrate.range.low_protect");
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(must("calibrate.range.boost").compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(ui("calibrate.range.low_protect.help")).not.toBeNull();
+    fireEvent.click(toggle);
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "low_protect", on: true });
+  });
+
+  it("opens 고급 with the switch on, so a protected result's cause stays in view, and turns it off", () => {
+    const actions = setup(fx.lowProtectViews.on);
+    const toggle = must("calibrate.range.low_protect");
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(toggle);
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "low_protect", on: false });
+    cleanupAll();
+    setup(fx.lowProtectViews.off, { locale: "en" });
+    openAdvanced();
+    expect(must("calibrate.range.low_protect").textContent).toBe("Block boost below roll-off");
+  });
+
+  it("lists each protected channel in the collapsed notes, and puts the bus that could not hold in a warning with what to do", () => {
+    setup(fx.lowProtectViews.unheld);
+    const warning = must("calibrate.verdict.low_protect");
+    expect(warning.className).toContain("ui-error--warning");
+    expect(warning.textContent).toContain("극저역 보호(SW1 + SW2): 22 Hz 아래 부스트를 막지 못해 원래 필터를 그대로 썼습니다.");
+    expect(warning.textContent).toContain("부스트 상한을 낮추거나 RC 하한을 올린 뒤 다시 보정하세요.");
+    const lines = [...must("calibrate.verdict.notes").querySelectorAll("li")].map((li) => li.textContent ?? "");
+    expect(lines).toContain("극저역 보호(SW1): 22 Hz 아래 부스트 안 함, 16 Hz 하이패스");
+    expect(lines).toContain("극저역 보호(L): 28 Hz 아래 부스트 안 함");
+    expect(lines.filter((line) => line.startsWith("극저역 보호"))).toHaveLength(13);
+    // The warning is not repeated as a note.
+    expect(lines.some((line) => line.includes("SW1 + SW2"))).toBe(false);
+    cleanupAll();
+    // Every channel held: no warning.
+    setup(fx.lowProtectViews.on);
+    expect(ui("calibrate.verdict.low_protect")).toBeNull();
+    expect(must("calibrate.verdict.notes").querySelector("summary")?.textContent).toBe("계산 메모 18개");
+    cleanupAll();
+    setup(fx.lowProtectViews.unheld, { locale: "en" });
+    expect(must("calibrate.verdict.low_protect").textContent).toContain("Lower the boost limit or raise the RC lower limit, then correct again.");
+  });
+
+  it("opens the notes and the range card's 고급 from the start when asked (gallery)", () => {
+    setup(fx.lowProtectViews.off, { initial: { rangeAdvanced: true, notesOpen: true } });
+    expect(must("calibrate.range.low_protect").getAttribute("aria-checked")).toBe("false");
+    expect((must("calibrate.verdict.notes") as HTMLDetailsElement).open).toBe(true);
+  });
+});
 
 describe("reach table", () => {
   it("draws every id the P31b reach rows cite in at least one state", () => {

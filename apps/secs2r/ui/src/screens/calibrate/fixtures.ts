@@ -16,7 +16,7 @@ import type { ResultLinesResult } from "../../ipc/bindings/ResultLinesResult";
 import type { SubResultLines } from "../../ipc/bindings/SubResultLines";
 import type { TargetResult } from "../../ipc/bindings/TargetResult";
 import * as fx from "../../ipc/fixtures";
-import { ipcError, mockRcLines } from "../../ipc/mock";
+import { ipcError, mockLowProtectNotes, mockRcLines } from "../../ipc/mock";
 import { targetAt } from "../../ui/plot/targetEdit";
 import type { CalibrateView } from "./types";
 
@@ -75,6 +75,7 @@ const XO = { 프론트: 80, 센터: 100, 서라운드: 80, 백: 80, 탑: 100 };
 export const baseSettings: CalibrationSettings = {
   sample_rate_policy: "reject",
   mode: "mixed",
+  low_protect: false,
   rc_lo: 20,
   rc_hi: null,
   rc_hi_basis: "strict",
@@ -607,6 +608,39 @@ export const rangeViews = {
   manual: rangeView({ rc_hi: 300, rc_hi_basis: "lenient" }),
   noVolume: rangeView({ room_volume_m3: null, room_dims_m: null }),
 } satisfies Record<string, CalibrateView>;
+
+/* ── 극저역 보호 (ADR 0022) ─────────────────────────────────────────────── */
+
+/**
+ * A current result calculated with 극저역 보호, its notes as the mock
+ * service's calibration leaves them for these settings (`mockLowProtectNotes`).
+ */
+function lowProtectView(patch: Partial<CalibrationSettings>): CalibrateView {
+  const settings = { ...baseSettings, ...patch };
+  const notes = [...NOTES, ...mockLowProtectNotes(settings, fx.SAMPLE_ROLES)];
+  return { ...base, settings, results: { calibration: summary(false, notes), mimo: null, mimo_export: "off" }, lines: { ...lines(), notes } };
+}
+
+export const lowProtectViews = {
+  /** The switch off (the default): the results as before. */
+  off: base,
+  /** On: every channel's roll-off, and a high-pass for each sub. */
+  on: lowProtectView({ low_protect: true }),
+  /** On with the RC lower limit at 15 Hz: the sub bus cannot hold its boost below the roll-off, a warning with what to do. */
+  unheld: lowProtectView({ low_protect: true, rc_lo: 15 }),
+} satisfies Record<string, CalibrateView>;
+
+/**
+ * The 극저역 보호 notes for each case the service sends (secs-service
+ * `scalar_notice`): a sub with its high-pass, a sub keeping the one the user
+ * set, a main, and a sub bus that could not hold its boost.
+ */
+export const lowProtectNotes: Notice[] = [
+  { code: "low_protect", params: { role: "SW1", rolloff_hz: "22", hp_hz: String(22 / Math.SQRT2), limited: "true" } },
+  { code: "low_protect", params: { role: "SW2", rolloff_hz: "28", hp_hz: "25", limited: "true" } },
+  { code: "low_protect", params: { role: "L", rolloff_hz: "30", limited: "true" } },
+  { code: "low_protect", params: { role: "SW1 + SW2", rolloff_hz: "22", limited: "false" } },
+];
 
 /**
  * The RC line for every kind of evidence the service's rc_limit note carries

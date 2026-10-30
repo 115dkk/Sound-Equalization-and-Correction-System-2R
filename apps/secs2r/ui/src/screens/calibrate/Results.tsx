@@ -10,7 +10,7 @@ import { Stat } from "./controls";
 import { availableTabs } from "./ResultGraph";
 import { scorecardModel, type ChangeValues, type LatePositions, type ScoreRow } from "./scorecard";
 import { MIMO_MIN_POSITIONS, mimoIncluded } from "./settingsView";
-import { FAILED_TEXT, groupOf, modeName, noteLines } from "./text";
+import { FAILED_TEXT, LOW_PROTECT_NEXT, groupOf, lowProtectFailures, modeName, noteLines, noticeText } from "./text";
 import type { CalibrateActions, CalibrateView, StaleReason } from "./types";
 
 const STALE_TEXT: Record<StaleReason | "unknown", "calibrate.stale.settings" | "calibrate.stale.target" | "calibrate.stale.measurements" | "calibrate.stale.config" | "calibrate.stale.unknown"> = {
@@ -138,7 +138,20 @@ function planKey(view: CalibrateView) {
   return view.positions.length === 1 ? "calibrate.verdict.plan.one" : "calibrate.verdict.plan";
 }
 
-export function Verdict({ view, actions, blocked, onSampleRateSettings }: { view: CalibrateView; actions: CalibrateActions; blocked: boolean; onSampleRateSettings: () => void }) {
+export function Verdict({
+  view,
+  actions,
+  blocked,
+  onSampleRateSettings,
+  notesOpen = false,
+}: {
+  view: CalibrateView;
+  actions: CalibrateActions;
+  blocked: boolean;
+  onSampleRateSettings: () => void;
+  /** Gallery: start with the calculation notes open. */
+  notesOpen?: boolean | undefined;
+}) {
   const t = useT();
   const number = useNumber();
   const result = view.results.calibration;
@@ -206,8 +219,10 @@ export function Verdict({ view, actions, blocked, onSampleRateSettings }: { view
         : mimo.stale
           ? t("frame.status.calibration.stale")
           : t("calibrate.verdict.mimo.done", { kind: mimo.kind.toUpperCase(), count: mimo.support_count });
+  // 극저역 보호 that could not hold its boost is a warning with what to do (ADR 0022), not a note.
+  const unprotected = lowProtectFailures(result.notes);
   // The engine notes as sentences, for everyone, as upstream shows them; rc_limit is the RC card's line.
-  const notes = noteLines(t, number, result.notes.filter((note) => note.code !== "rc_limit"));
+  const notes = noteLines(t, number, result.notes.filter((note) => note.code !== "rc_limit" && !unprotected.includes(note)));
 
   return (
     <Card
@@ -225,6 +240,14 @@ export function Verdict({ view, actions, blocked, onSampleRateSettings }: { view
           tone="warning"
           cause={t(STALE_TEXT[view.staleReason ?? "unknown"])}
           next={t("calibrate.stale.next")}
+        />
+      )}
+      {unprotected.length > 0 && (
+        <ErrorNotice
+          id="calibrate.verdict.low_protect"
+          tone="warning"
+          cause={unprotected.map((note) => noticeText(t, number, note)).join(" ")}
+          next={t(LOW_PROTECT_NEXT)}
         />
       )}
       <div className="calibrate-figures">
@@ -250,7 +273,7 @@ export function Verdict({ view, actions, blocked, onSampleRateSettings }: { view
         </div>
         {/* With the figures, as upstream shows them beside the total latency; collapsed. */}
         {notes.length > 0 && (
-          <details className="ui-details calibrate-notes" data-ui="calibrate.verdict.notes">
+          <details className="ui-details calibrate-notes" data-ui="calibrate.verdict.notes" open={notesOpen || undefined}>
             <summary>{t("calibrate.verdict.notes", { count: notes.length })}</summary>
             <ul>
               {notes.map((line, i) => (

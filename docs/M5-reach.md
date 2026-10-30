@@ -177,6 +177,7 @@
 | 룸 볼륨 0–100000 m³(0 = 없음) | `calibrate.range.volume` | 없음 | P31b |
 | 방 치수 가로 × 세로 × 높이 0–100 m, 0.1 단위(셋 다 넣으면 볼륨) | `calibrate.range.dims.w`, `calibrate.range.dims.d`, `calibrate.range.dims.h` | 없음 | P31b |
 | 부스트 상한 0–10 dB, 기본 10 | `calibrate.range.boost` | 없음 | P31b |
+| 롤오프 아래 부스트 막기(극저역 보호), 기본 꺼짐 | `calibrate.range.low_protect`, 근거 줄은 계산 메모, 막지 못한 채널은 `calibrate.verdict.low_protect` 경고 | 없음 | P145 (ADR 0022) |
 | RC 상한이 정해진 방법(엔진 메모와 룸 볼륨) | `calibrate.range.notes` | 없음 | P31b |
 | XO 그룹 | `calibrate.xo.group` | 없음 | P31b |
 | XO 40–200 Hz, 5 단위, 기본 80 | `calibrate.xo.hz` | 없음 | P31b |
@@ -210,7 +211,7 @@
 
 | 항목 | id | 편차 | 작업서 |
 |---|---|---|---|
-| 측정 그래프: 로그 x 5–22000 Hz와 고정 눈금, y −35…+20 dB, 이동·확대 없음, (역할, 위치)마다 곡선, 280점 1/12 옥타브, 200–2000 Hz 평균 정규화 | `measure.plot` | 평활과 정규화는 서비스(`measurement_curves`)가 하고 화면은 그리기만 | P31a |
+| 측정 그래프: 로그 x 5–22000 Hz와 고정 눈금, y −35…+20 dB, 이동·확대 없음, (역할, 위치)마다 곡선, 280점 1/12 옥타브, 모든 곡선에 같은 기준(위치 1의 첫 메인의 200–2000 Hz 평균, 서브만 있으면 첫 서브의 40–120 Hz 평균)을 적용하고 그 뜻을 `measure.plot.reference`에 표시 | `measure.plot`, `measure.plot.reference` | 업스트림은 곡선마다 자기 200–2000 Hz 평균으로 정규화(U17, #127). 평활과 정규화는 서비스(`measurement_curves`)가 하고 화면은 그리기만 | P31a, P143, P145 |
 | 측정 곡선의 선 규칙: 채널 색, 서브 굵게, 위치 1 굵게, 다른 위치 가늘고 옅게, 칩에 커서를 대면 강조 | `measure.plot.legend.role.<role>`, `measure.plot.legend.position.<n>` | — | P31a |
 | 측정 그래프의 축 범위 팝오버: 주파수·레벨 하한과 상한, [자동], [적용], "하한은 상한보다 낮아야", 실행 동안 기억 | `measure.plot.axes` | 범위는 `view.plotRange`이고 바꾸면 `setPlotRange`로 알림. P33이 실행 동안 보관(그래프를 숨기거나 단계를 옮겨도 유지) | P31a, P38 |
 | 배치도 ArrayLayoutView (5단계) | `measure.map` | — | P31a |

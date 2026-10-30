@@ -13,6 +13,7 @@ import { JOB_NAME } from "../../app/jobs/jobText";
 import { usePrefs } from "../../app/prefs";
 import type { PrimaryAction } from "../../app/StepHeader";
 import { useNumber, useT, type Translate } from "../../i18n/react";
+import type { CurveReference } from "../../ipc/bindings/CurveReference";
 import type { Notice } from "../../ipc/bindings/Notice";
 import {
   Advanced,
@@ -439,6 +440,18 @@ function PositionsCard({
 
 /* ── What was measured ──────────────────────────────────────────────────── */
 
+/**
+ * What 0 dB means on the graph: the service shifts every curve by the mean
+ * of one stored measurement over its band (U17), so the line names that
+ * measurement and band. It comes with the data, not the drawn curves, so it
+ * stays while the legend hides the reference curve; null draws nothing.
+ */
+export function referenceText(t: Translate, reference: CurveReference | null): string | null {
+  if (!reference) return null;
+  const params = { code: roleCode(reference.role), n: reference.position };
+  return t(reference.band === "sub" ? "measure.graph.reference.sub" : "measure.graph.reference.mid", params);
+}
+
 function GraphCard({ view, actions }: { view: MeasureView; actions: MeasureActions }) {
   const t = useT();
   const data = view.curves;
@@ -460,6 +473,7 @@ function GraphCard({ view, actions }: { view: MeasureView; actions: MeasureActio
     [data],
   );
   const positions = useMemo(() => [...new Set(curves.map((curve) => curve.position ?? 1))].sort((a, b) => a - b), [curves]);
+  const zero = referenceText(t, data?.reference ?? null);
   return (
     <Card
       dense
@@ -470,20 +484,27 @@ function GraphCard({ view, actions }: { view: MeasureView; actions: MeasureActio
       help={curves.length > 0 ? t("measure.graph.description") : undefined}
     >
       {data && curves.length > 0 ? (
-        <Graph
-          id="measure.plot"
-          label={t("plot.measurement.title")}
-          freqs={data.grid}
-          curves={curves}
-          channels={channels}
-          roleOrder={roleOrder}
-          positions={positions}
-          xRange={data.axes.frequency_hz}
-          yRange={data.axes.value}
-          range={view.plotRange}
-          onRangeChange={actions.setPlotRange}
-          height={300}
-        />
+        <>
+          <Graph
+            id="measure.plot"
+            label={t("plot.measurement.title")}
+            freqs={data.grid}
+            curves={curves}
+            channels={channels}
+            roleOrder={roleOrder}
+            positions={positions}
+            xRange={data.axes.frequency_hz}
+            yRange={data.axes.value}
+            range={view.plotRange}
+            onRangeChange={actions.setPlotRange}
+            height={300}
+          />
+          {zero && (
+            <p className="measure-graph__reference" data-ui="measure.plot.reference">
+              {zero}
+            </p>
+          )}
+        </>
       ) : (
         <EmptyState id="measure.graph.empty" title={t("measure.graph.empty.title")} description={t("measure.graph.empty.body")} />
       )}

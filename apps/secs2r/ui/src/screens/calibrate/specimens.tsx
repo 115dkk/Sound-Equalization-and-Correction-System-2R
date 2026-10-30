@@ -174,6 +174,21 @@ function RcLines() {
   );
 }
 
+/** The 극저역 보호 line for each case: a sub's high-pass, a sub keeping the user's, a main, and the warning. */
+function LowProtectLines() {
+  const t = useT();
+  const number = useNumber();
+  return (
+    <Card title={t("calibrate.verdict.title")} className="calibrate-settings__card">
+      <ul className="calibrate-notes-list" data-ui="calibrate.verdict.low_protect.lines">
+        {fx.lowProtectNotes.map((note, i) => (
+          <li key={i}>{noticeText(t, number, note)}</li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 export const calibrateSpecimens: SpecimenDef[] = [
   frame("empty", "no result yet: plan, position-1 preview and target", () => <CalibrateFrame view={fx.emptyView} />),
   ...Object.entries(fx.planViews).map(([name, view]) => frame(`plan-${name}`, `calculation plan: ${name}`, () => <CalibrateFrame view={view} />)),
@@ -268,6 +283,14 @@ export const calibrateSpecimens: SpecimenDef[] = [
     render: () => <CalibrateFrame view={fx.rangeViews.lenientTimes2} scrollTo="calibrate.settings.range" />,
   },
   { id: "screen.calibrate.rc-lines", title: "보정 · the RC line for each kind of evidence, then a missing volume and a note from before the bases", width: 720, render: () => <RcLines /> },
+  frame("low-protect-off", "극저역 보호 off (the default) beside the boost limit, 고급 open", () => (
+    <CalibrateFrame view={fx.lowProtectViews.off} scrollTo="calibrate.settings.range" initial={{ rangeAdvanced: true }} />
+  )),
+  frame("low-protect-on", "극저역 보호 on: 고급 opens with it", () => <CalibrateFrame view={fx.lowProtectViews.on} scrollTo="calibrate.settings.range" />),
+  frame("low-protect-result", "극저역 보호 on with the RC lower limit at 15 Hz: the sub bus warning and the notes open, a line per channel", () => (
+    <CalibrateFrame view={fx.lowProtectViews.unheld} initial={{ notesOpen: true }} />
+  )),
+  { id: "screen.calibrate.low-protect-lines", title: "보정 · the 극저역 보호 line for a sub's high-pass, a sub keeping the user's, a main, and the bus warning", width: 720, render: () => <LowProtectLines /> },
   frame("tutorial", "tutorial accent", () => (
     <Scoped tutorial>
       <CalibrateFrame view={fx.splView} fileName="튜토리얼.secs" />

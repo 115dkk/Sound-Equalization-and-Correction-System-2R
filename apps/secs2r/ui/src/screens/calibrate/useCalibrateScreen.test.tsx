@@ -1,11 +1,14 @@
 // @vitest-environment happy-dom
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, fireEvent, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { gpuComputeStatus, resultsSummary } from "../../ipc/fixtures";
 import { createMockService } from "../../ipc/mock";
 import { SessionProvider } from "../../state/react";
 import { createSession } from "../../state/session";
+import { installFakeCanvas } from "../../test/canvas";
+import { renderWith } from "../../test/render";
+import { CalibrateScreen } from "./CalibrateScreen";
 import { useCalibrateScreen } from "./useCalibrateScreen";
 
 let mock: ReturnType<typeof createMockService>;
@@ -230,6 +233,35 @@ describe("useCalibrateScreen", () => {
     await perform(a.calibrate);
     await perform(mock.drain);
     expect(result.current.view?.failure).toMatchObject({ job: "calibrate", error: { code: "engine_input", params: { reason: "rc_agreement_positions", measured: "2", required: "3" } } });
+  });
+
+  it("turns 극저역 보호 on from the range card's switch, then shows each channel's roll-off and the bus warning after runs (ADR 0022)", async () => {
+    installFakeCanvas();
+    function Live() {
+      const { view, actions } = useCalibrateScreen();
+      return view ? <CalibrateScreen view={view} actions={actions} /> : null;
+    }
+    renderWith(<Live />, { session });
+    const at = (id: string) => document.querySelector<HTMLElement>(`[data-ui="${id}"]`);
+    const range = at("calibrate.settings.range")!;
+    fireEvent.click(range.querySelector<HTMLElement>(".ui-advanced__toggle")!);
+    const toggle = at("calibrate.range.low_protect")!;
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    await perform(() => fireEvent.click(toggle));
+    expect(mock.calls).toContainEqual({ method: "calibration_settings_edit", params: { edit: { kind: "low_protect", on: true } } });
+    expect(at("calibrate.range.low_protect")!.getAttribute("aria-checked")).toBe("true");
+    await perform(() => fireEvent.click(at("calibrate.compute")!));
+    await perform(mock.drain);
+    const lines = () => [...at("calibrate.verdict.notes")!.querySelectorAll("li")].map((li) => li.textContent ?? "");
+    expect(lines()).toContain("극저역 보호(SW1): 22 Hz 아래 부스트 안 함, 16 Hz 하이패스");
+    expect(lines()).toContain("극저역 보호(L): 28 Hz 아래 부스트 안 함");
+    expect(at("calibrate.verdict.low_protect")).toBeNull();
+    // Below the 20 Hz band with the default boost limit the sub bus keeps its fit: a warning, not a note.
+    await perform(() => session.call({ method: "calibration_settings_edit", params: { edit: { kind: "rc_lo", hz: 15 } } }));
+    await perform(() => fireEvent.click(at("calibrate.compute")!));
+    await perform(mock.drain);
+    expect(at("calibrate.verdict.low_protect")!.textContent).toContain("극저역 보호(SW1 + SW2): 22 Hz 아래 부스트를 막지 못해 원래 필터를 그대로 썼습니다.");
+    expect(lines().some((line) => line.includes("SW1 + SW2"))).toBe(false);
   });
 
   it("refreshes exact curve selections and keeps preview out of persisted settings", async () => {

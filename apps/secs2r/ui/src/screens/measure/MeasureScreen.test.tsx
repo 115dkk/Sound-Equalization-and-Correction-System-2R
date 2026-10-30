@@ -20,11 +20,13 @@ import {
   measuringView,
   noPathView,
   partialView,
+  referenceMidView,
+  referenceSubView,
   sampleLoadingView,
   tutorialView,
 } from "./fixtures";
 import { MdatFilesDialog, assignmentProblems } from "./MdatDialogs";
-import { MeasureOptions, MeasureScreen, measureHeader } from "./MeasureScreen";
+import { MeasureOptions, MeasureScreen, measureHeader, referenceText } from "./MeasureScreen";
 import { currentPosition, measureStepState, type MeasureActions, type MeasureView } from "./types";
 
 /**
@@ -214,6 +216,50 @@ describe("측정·가져오기 screen", () => {
     expect(ui("measure.graph.toggle").textContent).toBe("그래프 보기");
     fireEvent.click(ui("measure.graph.toggle"));
     expect(actions.setGraphHidden).toHaveBeenCalledWith(false);
+  });
+
+  it("says what 0 dB is: the reference measurement and its band, or nothing without one (U17)", () => {
+    renderStep(referenceMidView);
+    expect(ui("measure.plot.reference").textContent).toBe("0 dB = L 위치 1 곡선의 200~2000 Hz 평균");
+    // It reads with the legend, below it, inside the graph card.
+    expect(ui("measure.plot.legend").compareDocumentPosition(ui("measure.plot.reference")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(ui("measure.graph").contains(ui("measure.plot.reference"))).toBe(true);
+    cleanup();
+    renderStep(referenceSubView);
+    expect(ui("measure.plot.reference").textContent).toBe("0 dB = SW1 위치 1 곡선의 40~120 Hz 평균");
+    cleanup();
+    renderStep(referenceSubView, makeActions(), { locale: "en" });
+    expect(ui("measure.plot.reference").textContent).toBe("0 dB = average of SW1 at position 1 over 40–120 Hz");
+    cleanup();
+    renderStep(partialView, makeActions(), { locale: "en" });
+    expect(ui("measure.plot.reference").textContent).toBe("0 dB = average of L at position 1 over 200–2000 Hz");
+    cleanup();
+    // No reference (nothing measured, or a service that sends none): no line.
+    renderStep(emptyView);
+    expect(byUi("measure.plot.reference")).toBeNull();
+    cleanup();
+    renderStep({ ...partialView, curves: { ...partialView.curves!, reference: null } });
+    expect(byUi("measure.plot")).not.toBeNull();
+    expect(byUi("measure.plot.reference")).toBeNull();
+    // The role as the screen writes it, at the position the service picked.
+    expect(referenceText(t, { role: "Tfl", position: 3, band: "mid" })).toBe("0 dB = Ltf 위치 3 곡선의 200~2000 Hz 평균");
+    expect(referenceText(t, null)).toBeNull();
+  });
+
+  it("keeps the 0 dB line when the legend hides the reference curve, its channel or its position", () => {
+    renderStep(referenceMidView);
+    const before = ui("measure.plot.reference").textContent;
+    fireEvent.click(ui("measure.plot.legend.role.L"));
+    expect(ui("measure.plot.legend.role.L").getAttribute("aria-pressed")).toBe("false");
+    expect(ui("measure.plot.reference").textContent).toBe(before);
+    fireEvent.click(ui("measure.plot.legend.position.1"));
+    expect(ui("measure.plot.legend.position.1").getAttribute("aria-pressed")).toBe("false");
+    expect(ui("measure.plot.reference").textContent).toBe(before);
+    cleanup();
+    // A service answer filtered to other curves still names the reference it shifted them by.
+    const filtered = { ...referenceMidView.curves!, curves: referenceMidView.curves!.curves.filter((curve) => curve.role === "SW1") };
+    renderStep({ ...referenceMidView, curves: filtered });
+    expect(ui("measure.plot.reference").textContent).toBe(before);
   });
 
   it("draws the axis range P33 keeps for the run and reports the user's pick", () => {
