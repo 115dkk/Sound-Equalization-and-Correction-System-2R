@@ -4,6 +4,7 @@ import type { Request } from "../ipc/bindings/Request";
 import type { Session } from "./session";
 import type { FinishedJob, JobRequestContext, LedgerJob } from "./jobLedger";
 import type { JobEvent } from "../ipc/bindings/JobEvent";
+import { mimoIncluded } from "../screens/calibrate/settingsView";
 
 export type Trigger =
   | { request: Request["method"] }
@@ -153,7 +154,12 @@ export const RULES: readonly Rule[] = [
   {
     name: "xo.recalibrate", when: (trigger) => "finished" in trigger && trigger.finished === "recommend_xo" && trigger.status === "succeeded",
     // Recommended settings must be reloaded before starting the full calibration.
-    apply: async ({ call }) => { await call({ method: "calibrate", params: { settings: null, subs_only: false } }); },
+    // The same MIMO choice 보정 계산 sends (P142): on, with three or more positions.
+    apply: async ({ call, stores }) => {
+      const settings = stores.settings.getSnapshot();
+      const mimo = !!settings && mimoIncluded(settings, stores.project.getSnapshot()?.positions.length ?? 0);
+      await call({ method: "calibrate", params: { settings: null, subs_only: false, mimo } });
+    },
   },
   ...(Object.keys(reloads) as ResourceKey[]).map((key): Rule => {
     const row: { mutations: readonly Request["method"][]; finished: readonly JobKind[] } = reloads[key];

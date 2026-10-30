@@ -47,13 +47,14 @@ export function CalibrateScreen({ view, actions, initial, blocked }: CalibrateSc
  * The step header: beside the title, the job of this screen that runs or
  * the stale result. 보정 계산 is not here but in the result card, beside
  * what it computes from (DESIGN.md §1); it is off while another of this
- * screen's jobs runs (XO 추천, 서브만, MIMO), and this pill names that job.
+ * screen's jobs runs (XO 추천, 서브만, MIMO), and this pill names that job,
+ * and names MIMO too while 보정 계산 computes it.
  */
 export function calibrateHeader(view: CalibrateView, t: Translate): { primary?: PrimaryAction; status?: ReactNode } {
   const running = view.running;
   const status = running ? (
     <StatusPill tone="busy" data-ui="calibrate.running">
-      {t(RUNNING_TEXT[running])}
+      {t(running === "calibrate" && view.runningMimo ? "calibrate.running.calibrate_mimo" : RUNNING_TEXT[running])}
     </StatusPill>
   ) : view.results.calibration?.stale ? (
     <StatusPill tone="warning" data-ui="calibrate.stale">

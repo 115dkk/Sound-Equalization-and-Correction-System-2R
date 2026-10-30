@@ -33,6 +33,13 @@ export const INFRA_DEFAULT_HZ = 25;
 export const MIMO_MIN_POSITIONS = 3;
 export const ALLPASS_Q_DEFAULT = 0.71;
 
+/**
+ * Whether 보정 계산 computes MIMO in the same job (`calibrate { mimo }`,
+ * P141): MIMO on and enough measured positions. The service refuses the
+ * request otherwise, so the screen never asks for it then.
+ */
+export const mimoIncluded = (settings: Pick<CalibrationSettings, "mimo_on">, positions: number) => settings.mimo_on && positions >= MIMO_MIN_POSITIONS;
+
 /* ── RC upper limit (ADR 0021) ──────────────────────────────────────────── */
 
 /** The upper limit as the range card offers it: an automatic basis, or 직접 입력 (`rc_hi` set). */

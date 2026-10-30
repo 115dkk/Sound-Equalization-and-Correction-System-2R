@@ -151,8 +151,9 @@ describe("useCalibrateScreen", () => {
     expect(result.current.view?.running).toBe("calibrate_subs");
     await perform(mock.drain);
     await perform(a.calibrate);
-    expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false } });
+    expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false, mimo: false } });
     expect(result.current.view?.running).toBe("calibrate");
+    expect(result.current.view?.runningMimo).toBe(false);
     await perform(mock.drain);
     expect(result.current.view?.running).toBeNull();
     expect(result.current.view?.resultMode).toEqual({ mode: session.stores.results.getSnapshot()!.calibration!.mode, ultra_ms: session.stores.results.getSnapshot()!.calibration!.ultra_ms });
@@ -165,6 +166,45 @@ describe("useCalibrateScreen", () => {
     expect(mock.calls).toContainEqual({ method: "mimo", params: { settings: null } });
     await perform(mock.drain);
     expect(result.current.view?.failure).toMatchObject({ job: "mimo", error: { code: "internal" } });
+  });
+
+  it("computes MIMO with 보정 계산 only when it is on with three positions, and puts a MIMO failure in the MIMO card (P142)", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    const a = result.current.actions;
+    const calibrateCall = (mimo: boolean) => ({ method: "calibrate", params: { settings: null, subs_only: false, mimo } });
+    // On with three positions: one job computes both.
+    await perform(() => a.changeSetting({ kind: "mimo_on", on: true }));
+    await perform(a.calibrate);
+    expect(mock.calls).toContainEqual(calibrateCall(true));
+    expect(result.current.view).toMatchObject({ running: "calibrate", runningMimo: true });
+    await perform(mock.drain);
+    expect(result.current.view?.running).toBeNull();
+    expect(result.current.view?.results.calibration?.stale).toBe(false);
+    expect(result.current.view?.results.mimo?.stale).toBe(false);
+    // MIMO fails after the correction: the correction is the new one, and the failure is MIMO's, without the stage.
+    mock.failJobs("mimo", "engine_input", "MIMO support design produced nonfinite filters");
+    await perform(() => a.changeSetting({ kind: "boost_max", db: 6 }));
+    expect(result.current.view?.results.calibration?.stale).toBe(true);
+    await perform(a.calibrate);
+    await perform(mock.drain);
+    expect(result.current.view?.failure).toEqual({ job: "mimo", error: expect.objectContaining({ code: "engine_input", params: {} }) });
+    expect(session.host.getSnapshot().failure?.error.params.stage).toBe("mimo");
+    expect(result.current.view?.results.calibration?.stale).toBe(false);
+    // Off, and below three positions with MIMO on: the correction alone.
+    mock.calls.length = 0;
+    await perform(() => a.changeSetting({ kind: "mimo_on", on: false }));
+    await perform(a.calibrate);
+    expect(mock.calls).toContainEqual(calibrateCall(false));
+    expect(result.current.view?.runningMimo).toBe(false);
+    await perform(mock.drain);
+    await perform(() => a.changeSetting({ kind: "mimo_on", on: true }));
+    await perform(() => session.call({ method: "position_clear", params: { position: 3 } }));
+    mock.calls.length = 0;
+    await perform(a.calibrate);
+    expect(mock.calls).toContainEqual(calibrateCall(false));
+    expect(result.current.view?.runningMimo).toBe(false);
+    await perform(mock.drain);
+    expect(result.current.view?.failure).toBeNull();
   });
 
   it("stores the RC upper limit's basis and factor, and reads their evidence after a run (ADR 0021)", async () => {

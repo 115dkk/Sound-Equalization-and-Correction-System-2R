@@ -409,6 +409,7 @@ const base: CalibrateView = {
   outputRate: 48000,
   xoRecommendation: fx.xoRecommendation,
   running: null,
+  runningMimo: false,
   measuring: false,
   failure: null,
   staleReason: null,
@@ -438,6 +439,32 @@ export const planViews: Record<"unmeasured" | "oneSub" | "threeSubs" | "noSubs",
 };
 
 export const computingView: CalibrateView = { ...emptyView, running: "calibrate" };
+
+/* ── MIMO 함께 계산 (P142) ──────────────────────────────────────────────── */
+
+/** Before the first run with MIMO on and three positions: 보정 계산 computes MIMO too. */
+export const readyMimoView: CalibrateView = { ...emptyView, settings: { ...emptyView.settings, mimo_on: true } };
+
+/** MIMO on but two measured positions: MIMO 함께 계산 is off and says why; 보정 계산 corrects only. */
+export const readyMimoTwoView: CalibrateView = { ...readyMimoView, positions: [1, 2] };
+
+/** The first run computing the correction and then MIMO in one job. */
+export const computingMimoView: CalibrateView = { ...readyMimoView, running: "calibrate", runningMimo: true };
+
+/**
+ * The combined run failed in its MIMO part: the correction is current, MIMO
+ * has no result, and the failure is the MIMO card's (the screen's view of a
+ * `calibrate` error with `stage: "mimo"`).
+ */
+export const mimoFailedView: CalibrateView = {
+  ...base,
+  results: { ...base.results, mimo_export: "none" },
+  settings: { ...baseSettings, mimo_on: true },
+  failure: { job: "mimo", error: ipcError("engine_input", "invalid input: MIMO support design produced nonfinite filters") },
+};
+
+/** That failure as the job reports it (the tray's entry). */
+export const mimoStageError = ipcError("engine_input", "invalid input: MIMO support design produced nonfinite filters", { stage: "mimo" });
 
 export const splView: CalibrateView = base;
 
@@ -497,6 +524,15 @@ export const mimoStaleView: CalibrateView = {
   results: { calibration: summary(), mimo: { ...mimoSummary, stale: true }, mimo_export: "stale" },
   lines: lines(),
   curves: splResult(),
+};
+
+/** MIMO behind a stale correction: '다시 보정하기' computes both, and 'MIMO만 계산' is off (`mimoStaleView` has the correction current). */
+export const mimoBehindCorrectionView: CalibrateView = {
+  ...mimoStaleView,
+  results: { calibration: summary(true), mimo: { ...mimoSummary, stale: true }, mimo_export: "stale" },
+  lines: lines({ stale: true }),
+  curves: { ...splResult(), stale: true },
+  staleReason: "settings",
 };
 
 /** One measured position: the late bass there only, so no positions table (and no MIMO, which needs three). */

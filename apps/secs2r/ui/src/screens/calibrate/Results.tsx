@@ -4,11 +4,12 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { errorText } from "../../app/jobs/jobText";
 import { useNumber, useT } from "../../i18n/react";
-import { Button, Card, DataTable, ErrorNotice, Spinner, StatusPill, type Column } from "../../ui";
+import { Button, Card, DataTable, ErrorNotice, Spinner, StatusPill, Toggle, type Column } from "../../ui";
 import { roleCode } from "../../ui/maps/geometry";
 import { Stat } from "./controls";
 import { availableTabs } from "./ResultGraph";
 import { scorecardModel, type ChangeValues, type LatePositions, type ScoreRow } from "./scorecard";
+import { MIMO_MIN_POSITIONS, mimoIncluded } from "./settingsView";
 import { FAILED_TEXT, groupOf, modeName, noteLines } from "./text";
 import type { CalibrateActions, CalibrateView, StaleReason } from "./types";
 
@@ -58,14 +59,39 @@ function Change({ before, after, figure }: { before: string; after: string; figu
 }
 
 /**
+ * MIMO 함께 계산 (P142): whether 보정 계산 also computes MIMO, right before
+ * the button it changes. It is the MIMO card's `mimo_on`, so the two
+ * switches move together. Below three measured positions it is off and says
+ * why at the end of its own line, so the row keeps its height.
+ */
+function MimoChoice({ view, actions }: { view: CalibrateView; actions: CalibrateActions }) {
+  const t = useT();
+  const available = view.positions.length >= MIMO_MIN_POSITIONS;
+  return (
+    <div className="calibrate-run__mimo">
+      <Toggle
+        id="calibrate.run.mimo"
+        label={t("calibrate.run.mimo")}
+        help={t("calibrate.run.mimo.help")}
+        hint={available ? undefined : t("calibrate.run.mimo.unavailable", { min: MIMO_MIN_POSITIONS })}
+        checked={available && view.settings.mimo_on}
+        disabled={!available}
+        onChange={(on) => void actions.changeSetting({ kind: "mimo_on", on })}
+      />
+    </div>
+  );
+}
+
+/**
  * The correction run lives in this card (DESIGN.md §1: the button beside
- * what it acts on). Before a result: the plan sentence and 보정 계산 after
- * it; while the correction runs: a spinner and what it computes from; with
- * a result: the figures and, after them, 다시 측정하기 and 다시 보정하기, and
- * on a current result 보정값 내보내기 last. The same inputs give the same
- * result here (upstream's runs could differ), so measuring again is the one
- * that can change it and carries the emphasis; the way on to 내보내기 is in
- * the go colour, apart from it (the rail is not where users look for it).
+ * what it acts on). Before a result: the plan sentence, MIMO 함께 계산 and
+ * 보정 계산 after it; while the correction runs: a spinner and what it
+ * computes, in the controls' height; with a result: the figures and, after
+ * them, 다시 측정하기, MIMO 함께 계산 and 다시 보정하기, and on a current
+ * result 보정값 내보내기 last. The same inputs give the same result here
+ * (upstream's runs could differ), so measuring again is the one that can
+ * change it and carries the emphasis; the way on to 내보내기 is in the go
+ * colour, apart from it (the rail is not where users look for it).
  * `blocked` is the step's blocked state (the header says why).
  */
 function RunControls({ view, actions, blocked, again, current = false }: { view: CalibrateView; actions: CalibrateActions; blocked: boolean; again: boolean; current?: boolean }) {
@@ -75,17 +101,21 @@ function RunControls({ view, actions, blocked, again, current = false }: { view:
     return (
       <p className="calibrate-run__busy" role="status" data-ui="calibrate.verdict.computing">
         <Spinner size={18} />
-        <span>{t("calibrate.verdict.computing", { count })}</span>
+        <span>{t(view.runningMimo ? "calibrate.verdict.computing.mimo" : "calibrate.verdict.computing", { count })}</span>
       </p>
     );
   }
   // Another of this screen's jobs runs: the header pill names it, as the step's blocked reason names a block.
   const off = blocked || view.running !== null || count === 0;
   const reason = blocked ? "frame.header.calibrate.blocked" : view.running !== null ? "frame.header.calibrate.status" : undefined;
+  // MIMO 함께 계산 and the button it changes wrap as one.
   const compute = (
-    <Button variant={again ? "secondary" : "primary"} id="calibrate.compute" data-ui="calibrate.compute" disabled={off} aria-describedby={reason} onClick={actions.calibrate}>
-      {t(again ? "calibrate.verdict.recompute" : "frame.step.calibrate.primary")}
-    </Button>
+    <div className="calibrate-run__compute">
+      <MimoChoice view={view} actions={actions} />
+      <Button variant={again ? "secondary" : "primary"} id="calibrate.compute" data-ui="calibrate.compute" disabled={off} aria-describedby={reason} onClick={actions.calibrate}>
+        {t(again ? "calibrate.verdict.recompute" : "frame.step.calibrate.primary")}
+      </Button>
+    </div>
   );
   return again ? (
     <div className="calibrate-run__actions">
@@ -100,6 +130,12 @@ function RunControls({ view, actions, blocked, again, current = false }: { view:
       )}
     </div>
   ) : compute;
+}
+
+/** The plan sentence before the first run: how many positions it corrects from, and MIMO when 보정 계산 computes it too. */
+function planKey(view: CalibrateView) {
+  if (mimoIncluded(view.settings, view.positions.length)) return "calibrate.verdict.plan.mimo";
+  return view.positions.length === 1 ? "calibrate.verdict.plan.one" : "calibrate.verdict.plan";
 }
 
 export function Verdict({ view, actions, blocked, onSampleRateSettings }: { view: CalibrateView; actions: CalibrateActions; blocked: boolean; onSampleRateSettings: () => void }) {
@@ -148,7 +184,7 @@ export function Verdict({ view, actions, blocked, onSampleRateSettings }: { view
             <p>{t("calibrate.verdict.plan.no_measurements")}</p>
           ) : (
             <>
-              {view.running !== "calibrate" && <p>{t(view.positions.length === 1 ? "calibrate.verdict.plan.one" : "calibrate.verdict.plan", { count: view.positions.length })}</p>}
+              {view.running !== "calibrate" && <p>{t(planKey(view), { count: view.positions.length })}</p>}
               <RunControls view={view} actions={actions} blocked={blocked} again={false} />
             </>
           )}
@@ -160,13 +196,16 @@ export function Verdict({ view, actions, blocked, onSampleRateSettings }: { view
   const v = result.verdict;
   const pct = (value: number) => t("calibrate.unit.percent", { value: number(value) });
   const ms = (value: number) => t("calibrate.unit.ms", { value: number(value, 1) });
+  // A failed MIMO run says so here too: its notice is in the MIMO card, far below.
   const mimoText = !view.settings.mimo_on
     ? t("calibrate.verdict.mimo.off")
-    : !mimo
-      ? t("calibrate.verdict.mimo.none")
-      : mimo.stale
-        ? t("frame.status.calibration.stale")
-        : t("calibrate.verdict.mimo.done", { kind: mimo.kind.toUpperCase(), count: mimo.support_count });
+    : view.failure?.job === "mimo"
+      ? t("calibrate.verdict.mimo.failed")
+      : !mimo
+        ? t("calibrate.verdict.mimo.none")
+        : mimo.stale
+          ? t("frame.status.calibration.stale")
+          : t("calibrate.verdict.mimo.done", { kind: mimo.kind.toUpperCase(), count: mimo.support_count });
   // The engine notes as sentences, for everyone, as upstream shows them; rc_limit is the RC card's line.
   const notes = noteLines(t, number, result.notes.filter((note) => note.code !== "rc_limit"));
 

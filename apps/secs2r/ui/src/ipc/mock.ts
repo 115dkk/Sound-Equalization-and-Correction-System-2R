@@ -43,6 +43,12 @@ type SimJob = {
   ticks: number; logs: Log[]; cancelRequested: boolean; complete: () => JobResult;
   /** The job fails with this when it ends, as the service fails one its input does not allow. */
   error?: IpcError | undefined;
+  /**
+   * `calibrate` with `mimo` (P141): when its correction stages end, the
+   * correction is stored (or the job fails there with `error`), and the MIMO
+   * stages that follow fail with `next()` when one is asked for.
+   */
+  phase?: { at: number; commit: () => void; next: () => IpcError | undefined } | undefined;
 };
 
 export type MockService = {
@@ -125,6 +131,9 @@ function rcLines(limit: Notice | undefined, volume: number | null): Notice[] {
 
 /** The RC lines the mock's calibration leaves for these settings at this many measured positions (gallery views). */
 export const mockRcLines = (settings: CalibrationSettings, positions: number): Notice[] => rcLines(rcLimitNote(settings, positions), settings.room_volume_m3);
+
+/** Settings edits that change only the MIMO result (secs-types `mimo_key`). */
+const MIMO_ONLY_EDITS: ReadonlySet<SettingEdit["kind"]> = new Set(["fsiso", "mimo_low", "mimo_max", "mimo_fir"]);
 
 /** The service fails a calibration on the agreement basis below three measured positions (secs-service `check_rc_agreement`). */
 const rcAgreementError = (settings: CalibrationSettings, positions: number): IpcError | undefined =>
@@ -342,16 +351,29 @@ export function createMockService(options: MockOptions = {}): MockService {
         else if (job.done >= stage.total) { job.stageIndex++; job.done = 0; }
       }
     }
+    if (job.phase && job.stageIndex >= job.phase.at) {
+      const phase = job.phase;
+      job.phase = undefined;
+      const failure = job.error ?? jobFailures.get(job.kind);
+      if (failure) { finish(job, "failed", failure); return; }
+      // Stored before MIMO runs: a MIMO failure or a cancel from here on keeps it.
+      phase.commit();
+      job.error = phase.next();
+    }
     if (job.stageIndex >= job.stages.length) {
       const failure = job.error ?? jobFailures.get(job.kind);
       finish(job, failure ? "failed" : "succeeded", failure ?? null);
     }
   };
   const tick = () => { for (const job of [...jobs.values()]) step(job); };
-  const start = (kind: JobKind, complete: () => JobResult, error?: IpcError) => {
+  /** `then`: stages that follow the kind's own, reached through `phase` (the combined calibrate). */
+  const start = (kind: JobKind, complete: () => JobResult, error?: IpcError, then?: { stages: Stage[]; phase: Omit<NonNullable<SimJob["phase"]>, "at"> }) => {
     if ([...jobs.values()].some((job) => job.kind === kind)) throw new MockError(ipcError("job_busy", `a ${kind} job is running`));
     const id = nextJob++;
-    jobs.set(id, { id, kind, ...plan(kind), stageIndex: 0, done: 0, ticks: 0, cancelRequested: false, complete, error });
+    const own = plan(kind);
+    const stages = then ? [...own.stages, ...then.stages] : own.stages;
+    const phase = then ? { ...then.phase, at: own.stages.length } : undefined;
+    jobs.set(id, { id, kind, stages, logs: own.logs, stageIndex: 0, done: 0, ticks: 0, cancelRequested: false, complete, error, phase });
     events.emit({ event: "started", job: id, kind });
     if (tickMs > 0 && !timer) timer = setInterval(tick, tickMs);
     return { job: id, kind };
@@ -446,11 +468,48 @@ export function createMockService(options: MockOptions = {}): MockService {
         if (edit.mimo_iir !== undefined) settings.mimo_iir_analytic_derivatives = edit.mimo_iir;
         break;
     }
-    dirty();
+    // MIMO's own settings are not in the correction's key (secs-types `engine_key`, `mimo_key`): they
+    // leave the correction current and only MIMO behind, which is what 'MIMO만 계산' is for. Turning
+    // MIMO on or off is in neither key.
+    if (edit.kind === "mimo_on") project = { ...needProject(), dirty: true };
+    else if (MIMO_ONLY_EDITS.has(edit.kind)) {
+      project = { ...needProject(), dirty: true };
+      results = { ...results, mimo: results.mimo ? { ...results.mimo, stale: true } : null };
+    } else dirty();
     return settings;
   };
   const warnings = (): Notice[] => Object.entries(settings.subs_manual).flatMap(([role, sub]) => sub.hp_hz > 0 && sub.lp_hz > 0 && sub.lp_hz < 2 * sub.hp_hz
     ? [{ code: "sub_narrow_band", params: { role, hp_hz: String(sub.hp_hz), lp_hz: String(sub.lp_hz) } }] : []);
+  /** A MIMO result on the current correction, from these settings (a `mimo` run, or the MIMO part of `calibrate`). */
+  const commitMimo = (s: CalibrationSettings) => {
+    const inputs = config.speakers.filter((speaker) => !speaker.role.startsWith("SW")).length;
+    const supports = config.speakers.filter((speaker) => speaker.role.startsWith("SW")).length;
+    const supportCount = inputs * supports;
+    const selected = computeStatus();
+    const gpu = s.mimo_fir && selected.selected === "cuda";
+    const compute: import("./bindings/ComputeReport").ComputeReport = {
+      requested: appSettings.compute, backend: gpu ? "cuda" : "cpu", device: gpu ? selected.device?.name ?? null : null,
+      stage: gpu ? "ideal_fir_sweep" : null, accelerated_systems: gpu ? 11 : 0, cpu_systems: gpu ? 0 : 11, fallbacks: 0, reason: s.mimo_fir ? selected.reason : "iir_reference",
+    };
+    results = { ...results, mimo: { ...clone(fx.mimoSummary), compute, fsiso: s.fsiso, kind: s.mimo_fir ? "fir" : "iir",
+      support_count: supportCount, fir_taps_total: s.mimo_fir ? 3 * supportCount : 0, input_count: supports > 0 ? inputs : 0,
+      scorecard: results.calibration?.scorecard.map((score) => ({ role: score.role, after_mimo: supports > 0
+        ? { ...score.after, in1_20: fx.scoreFigures(score.role).within[2], gd_20: fx.scoreFigures(score.role).gd[2] }
+        : { ...score.after } })) ?? [],
+      late_energy: results.calibration?.late_energy.map(({ role, position, after_db }) => ({ role, position,
+        after_mimo_db: supports > 0 ? fx.lateAt(role, position)[2] : after_db })) ?? [] } };
+  };
+  /**
+   * Why `calibrate { mimo: true }` cannot start, in the service's order
+   * (start_calibration: the explicit GPU, then check_mimo_preconditions).
+   */
+  const mimoRefusal = (s: CalibrationSettings, positions: number): IpcError | undefined => {
+    const status = computeStatus();
+    if (status.preference === "gpu" && !status.gpu_available) return ipcError("compute_unavailable", "no supported GPU is available", { reason: status.reason });
+    if (!s.mimo_on) return ipcError("engine_input", "invalid input: MIMO is disabled");
+    if (positions < MIMO_MIN_POSITIONS) return ipcError("engine_input", `invalid input: MIMO needs ${MIMO_MIN_POSITIONS} measured positions, the project has ${positions}`);
+    return undefined;
+  };
   // Mock-only design values: compact wire summaries carry roles, not DSP filters.
   const resultSubs = () => results.calibration?.sub_roles.map((role, i) => ({
     ...clone(fx.signalChain.subs[i % fx.signalChain.subs.length]!), role,
@@ -648,7 +707,11 @@ export function createMockService(options: MockOptions = {}): MockService {
         if (req.params.settings) settings = clone(req.params.settings);
         const captured = clone(settings);
         const positions = needProject().positions.length;
-        return { method: req.method, data: start("calibrate", () => {
+        const withMimo = !!req.params.mimo && !req.params.subs_only;
+        // start_calibration refuses a MIMO it cannot run before the job starts.
+        const refusal = withMimo ? mimoRefusal(captured, positions) : undefined;
+        if (refusal) throw new MockError(refusal);
+        const commit = () => {
           const roles = config.speakers.filter((s) => !s.role.startsWith("SW")).map((s) => s.role);
           const summary = clone(fx.calibrationSummary);
           summary.mode = captured.mode; summary.ultra_ms = captured.ultra_ms;
@@ -665,8 +728,15 @@ export function createMockService(options: MockOptions = {}): MockService {
             calibrationPositions = positions;
           }
           subsOnly = req.params.subs_only;
-          return { kind: "calibration" };
-        }, rcAgreementError(captured, positions)) };
+        };
+        const error = rcAgreementError(captured, positions);
+        if (!withMimo) return { method: req.method, data: start("calibrate", () => { commit(); return { kind: "calibration" }; }, error) };
+        // MIMO follows in the same job on the stored correction; it fails as a separate MIMO run would, with `stage: "mimo"`.
+        const next = () => {
+          const failure = jobFailures.get("mimo");
+          return failure ? { ...failure, params: { ...failure.params, stage: "mimo" } } : undefined;
+        };
+        return { method: req.method, data: start("calibrate", () => { commitMimo(captured); return { kind: "calibration" }; }, error, { stages: plan("mimo").stages, phase: { commit, next } }) };
       }
       case "recommend_xo":
         needProject();
@@ -679,22 +749,7 @@ export function createMockService(options: MockOptions = {}): MockService {
         needProject();
         if (req.params.settings) settings = clone(req.params.settings);
         return { method: req.method, data: start("mimo", () => {
-          const inputs = config.speakers.filter((speaker) => !speaker.role.startsWith("SW")).length;
-          const supports = config.speakers.filter((speaker) => speaker.role.startsWith("SW")).length;
-          const supportCount = inputs * supports;
-          const selected = computeStatus();
-          const gpu = settings.mimo_fir && selected.selected === "cuda";
-          const compute: import("./bindings/ComputeReport").ComputeReport = {
-            requested: appSettings.compute, backend: gpu ? "cuda" : "cpu", device: gpu ? selected.device?.name ?? null : null,
-            stage: gpu ? "ideal_fir_sweep" : null, accelerated_systems: gpu ? 11 : 0, cpu_systems: gpu ? 0 : 11, fallbacks: 0, reason: settings.mimo_fir ? selected.reason : "iir_reference",
-          };
-          results = { ...results, mimo: { ...clone(fx.mimoSummary), compute, fsiso: settings.fsiso, kind: settings.mimo_fir ? "fir" : "iir",
-            support_count: supportCount, fir_taps_total: settings.mimo_fir ? 3 * supportCount : 0, input_count: supports > 0 ? inputs : 0,
-            scorecard: results.calibration?.scorecard.map((score) => ({ role: score.role, after_mimo: supports > 0
-              ? { ...score.after, in1_20: fx.scoreFigures(score.role).within[2], gd_20: fx.scoreFigures(score.role).gd[2] }
-              : { ...score.after } })) ?? [],
-            late_energy: results.calibration?.late_energy.map(({ role, position, after_db }) => ({ role, position,
-              after_mimo_db: supports > 0 ? fx.lateAt(role, position)[2] : after_db })) ?? [] } };
+          commitMimo(settings);
           return { kind: "mimo" };
         }) };
       case "export": {

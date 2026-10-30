@@ -586,6 +586,16 @@ describe("내보내기", () => {
     expect(rcText(t, { code: "rc_auto_cap", params: { hz: "500" } }, n)).toBe("자동 상한은 최대 500 Hz");
   });
 
+  it("states the RC upper limit's basis and evidence as the 보정 screen's RC line does (ADR 0021)", () => {
+    const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) => translate("ko", key, params);
+    const n = (value: number, digits = 0) => value.toFixed(digits);
+    const line = (params: Record<string, string>) => rcText(t, { code: "rc_limit", params: { auto: "true", ...params } }, n);
+    expect(line({ hz: "308", schroeder_hz: "154", basis: "strict", factor: "2" })).toBe("RC 상한 308 Hz(엄격한 슈뢰더 154 Hz × 2)");
+    expect(line({ hz: "200", schroeder_hz: "154", basis: "lenient", factor: "1", band_hz: "200", band_t60_s: "0.5" })).toBe("RC 상한 200 Hz(너그러운 슈뢰더, 200 Hz 대역 T60 0.50초)");
+    expect(line({ hz: "287", schroeder_hz: "154", basis: "agreement", factor: "1", positions: "9" })).toBe("RC 상한 287 Hz(위치 9곳 일치도)");
+    expect(line({ hz: "500", basis: "strict", factor: "1" })).toBe("RC 상한 500 Hz (자동)");
+  });
+
   it("says beside the empty design name where the files go, and beside a name that the next export replaces its folder", () => {
     const act = actions();
     const { unmount } = renderWith(<Mounted view={exportRcOnly} act={act} />);

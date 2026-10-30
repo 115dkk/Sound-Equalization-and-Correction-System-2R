@@ -664,3 +664,119 @@ describe("mock service", () => {
     expect(results.calibration?.stale).toBe(false);
   });
 });
+
+describe("mock calibrate with MIMO (P141, P142)", () => {
+  const withMimo = { settings: null, subs_only: false, mimo: true } as const;
+  async function mimoOn(mock: ReturnType<typeof createMockService>) {
+    await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+  }
+
+  it("runs the MIMO stages after the correction's in the same job and stores both", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      const events: JobEvent[] = [];
+      mock.events.subscribe((event) => events.push(event));
+      await mimoOn(mock);
+      const started = await mock.request({ method: "calibrate", params: withMimo });
+      expect(started.kind).toBe("calibrate");
+      mock.drain();
+      const stages = [...new Set(events.flatMap((event) => (event.event === "progress" ? [event.stage] : [])))];
+      expect(stages).toEqual(["engine.design", "engine.mimo", "engine.mimo_iir"]);
+      expect(events.at(-1)).toMatchObject({ event: "finished", job: started.job, status: "succeeded", result: { kind: "calibration" } });
+      const results = await mock.request({ method: "results" });
+      expect(results.calibration?.stale).toBe(false);
+      expect(results.mimo?.stale).toBe(false);
+      expect(results.mimo_export).toBe("included");
+    } finally { mock.dispose(); }
+  });
+
+  it("refuses before a job when MIMO is off or below three positions", async () => {
+    const off = createMockService({ tickMs: 0 });
+    const two = createMockService({ tickMs: 0, project: { ...projectInfo, positions: [1, 2] } });
+    try {
+      await expect(off.request({ method: "calibrate", params: withMimo })).rejects.toMatchObject({ error: { code: "engine_input" } });
+      await mimoOn(two);
+      await expect(two.request({ method: "calibrate", params: withMimo })).rejects.toMatchObject({ error: { code: "engine_input" } });
+      expect(await off.request({ method: "jobs" })).toEqual([]);
+      expect(await two.request({ method: "jobs" })).toEqual([]);
+      // Without MIMO, and with subs only, the same projects calibrate as before.
+      await expect(two.request({ method: "calibrate", params: { ...withMimo, mimo: false } })).resolves.toMatchObject({ kind: "calibrate" });
+      two.drain();
+      await expect(off.request({ method: "calibrate", params: { ...withMimo, subs_only: true } })).resolves.toMatchObject({ kind: "calibrate" });
+      off.drain();
+    } finally { off.dispose(); two.dispose(); }
+  });
+
+  it("keeps the correction when MIMO fails after it, and marks the failure with stage mimo", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      const events: JobEvent[] = [];
+      mock.events.subscribe((event) => events.push(event));
+      await mimoOn(mock);
+      mock.failJobs("mimo", "engine_input", "MIMO support design produced nonfinite filters", { detail_param: "x" });
+      await mock.request({ method: "calibrate", params: withMimo });
+      mock.drain();
+      expect(events.at(-1)).toMatchObject({ event: "finished", status: "failed", result: null, error: { code: "engine_input", params: { stage: "mimo", detail_param: "x" } } });
+      const results = await mock.request({ method: "results" });
+      expect(results.calibration).toMatchObject({ stale: false });
+      expect(results.mimo).toBeNull();
+    } finally { mock.dispose(); }
+  });
+
+  it("fails a correction failure before storing anything, without the MIMO stages", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      const events: JobEvent[] = [];
+      mock.events.subscribe((event) => events.push(event));
+      await mimoOn(mock);
+      mock.failJobs("calibrate", "engine_input", "invalid input: position 1 SW3: empty or nonfinite IR", { reason: "invalid_measurement", position: "1", role: "SW3" });
+      await mock.request({ method: "calibrate", params: withMimo });
+      mock.drain();
+      expect(events.some((event) => event.event === "progress" && event.stage.startsWith("engine.mimo"))).toBe(false);
+      expect(events.at(-1)).toMatchObject({ event: "finished", status: "failed", error: { params: { reason: "invalid_measurement" } } });
+      expect(events.at(-1)).not.toHaveProperty("error.params.stage");
+      expect((await mock.request({ method: "results" })).calibration).toBeNull();
+    } finally { mock.dispose(); }
+  });
+
+  it("keeps the new correction and no MIMO result when cancelled during the MIMO stages", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      const events: JobEvent[] = [];
+      mock.events.subscribe((event) => events.push(event));
+      await mimoOn(mock);
+      const { job } = await mock.request({ method: "calibrate", params: withMimo });
+      while (!events.some((event) => event.event === "progress" && event.stage === "engine.mimo")) mock.tick();
+      await mock.request({ method: "job_cancel", params: { job } });
+      mock.tick();
+      expect(events.at(-1)).toMatchObject({ event: "finished", status: "cancelled" });
+      const results = await mock.request({ method: "results" });
+      expect(results.calibration).toMatchObject({ stale: false });
+      expect(results.mimo).toBeNull();
+    } finally { mock.dispose(); }
+  });
+
+  it("leaves the correction current after a MIMO-only edit, so MIMO alone can follow", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      await mimoOn(mock);
+      await mock.request({ method: "calibrate", params: withMimo });
+      mock.drain();
+      for (const edit of [{ kind: "fsiso", hz: 120 }, { kind: "mimo_low", hz: 25 }, { kind: "mimo_max", count: 2 }, { kind: "mimo_fir", on: true }] as const) {
+        await mock.request({ method: "calibration_settings_edit", params: { edit } });
+        const results = await mock.request({ method: "results" });
+        expect(results.calibration?.stale, edit.kind).toBe(false);
+        expect(results.mimo?.stale, edit.kind).toBe(true);
+        await mock.request({ method: "mimo", params: { settings: null } });
+        mock.drain();
+        expect((await mock.request({ method: "results" })).mimo?.stale, edit.kind).toBe(false);
+      }
+      // Turning MIMO off and on changes neither result; a correction setting makes both stale.
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: false } } });
+      await mimoOn(mock);
+      expect(await mock.request({ method: "results" })).toMatchObject({ calibration: { stale: false }, mimo: { stale: false } });
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "boost_max", db: 6 } } });
+      expect(await mock.request({ method: "results" })).toMatchObject({ calibration: { stale: true }, mimo: { stale: true } });
+    } finally { mock.dispose(); }
+  });
+});

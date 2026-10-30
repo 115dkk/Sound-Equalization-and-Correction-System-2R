@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { act } from "react";
+import { act, useState } from "react";
 import { describe, expect, it, vi, type Mock } from "vitest";
 import { JobTray } from "../../app/jobs/JobTray";
 import { PrefsScope } from "../../app/prefs";
@@ -121,6 +121,11 @@ const STATES: Record<string, CalibrateView> = {
   loading: fx.loadingView,
   loadingEmpty: fx.loadingEmptyView,
   noPosition1: fx.noPosition1View,
+  readyMimo: fx.readyMimoView,
+  readyMimoTwo: fx.readyMimoTwoView,
+  computingMimo: fx.computingMimoView,
+  mimoFailed: fx.mimoFailedView,
+  mimoBehindCorrection: fx.mimoBehindCorrectionView,
 };
 
 describe("보정 screen", () => {
@@ -570,7 +575,7 @@ describe("보정 screen", () => {
 
   it("asks for a result and three positions before MIMO", () => {
     setup({ ...fx.emptyView, settings: { ...fx.emptyView.settings, mimo_on: true } });
-    expect(must("calibrate.mimo.reason").textContent).toContain("먼저 보정 계산");
+    expect(must("calibrate.mimo.reason").textContent).toBe("보정 계산을 누르면 MIMO도 함께 계산합니다.");
     cleanupAll();
     setup({ ...fx.splView, positions: [1, 2] });
     const toggle = must("calibrate.mimo.on") as HTMLButtonElement;
@@ -629,7 +634,9 @@ describe("보정 screen", () => {
     const onward = must("calibrate.export");
     expect(onward.textContent).toBe("보정값 내보내기");
     expect(onward.className).toContain("ui-button--go");
-    expect(onward.previousElementSibling).toBe(again);
+    // After 다시 보정하기 and MIMO 함께 계산, which wrap together.
+    expect(onward.previousElementSibling).toBe(again.closest(".calibrate-run__compute"));
+    expect(again.nextElementSibling).toBeNull();
     fireEvent.click(onward);
     expect(actions.goToExport).toHaveBeenCalledOnce();
     cleanupAll();
@@ -665,6 +672,131 @@ describe("보정 screen", () => {
     expect(calibrateStepState(fx.emptyView)).toEqual({ status: "ready" });
     expect(calibrateStepState(fx.staleView)).toEqual({ status: "ready" });
     expect(calibrateStepState(fx.splView)).toEqual({ status: "done" });
+  });
+});
+
+/* ── MIMO 함께 계산 (P142) ──────────────────────────────────────────────── */
+
+/** The screen with its settings held in state: changeSetting applies mimo_on, as the service's reply would. */
+function SettingsHarness({ initial, actions }: { initial: CalibrateView; actions: MockActions }) {
+  const [view, setView] = useState(initial);
+  const changeSetting: CalibrateActions["changeSetting"] = async (edit) => {
+    await actions.changeSetting(edit);
+    if (edit.kind === "mimo_on") setView((v) => ({ ...v, settings: { ...v.settings, mimo_on: edit.on } }));
+    return true;
+  };
+  return <CalibrateScreen view={view} actions={{ ...actions, changeSetting }} />;
+}
+
+describe("MIMO 함께 계산", () => {
+  it("sits right before 보정 계산, names MIMO in the plan and switches mimo_on", () => {
+    const actions = setup(fx.readyMimoView);
+    const toggle = must("calibrate.run.mimo") as HTMLButtonElement;
+    expect(toggle.getAttribute("role")).toBe("switch");
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    expect(toggle.disabled).toBe(false);
+    expect(toggle.textContent).toBe("MIMO 함께 계산");
+    expect(toggle.closest(".calibrate-run__mimo")?.nextElementSibling).toBe(must("calibrate.compute"));
+    expect(toggle.closest("[data-ui='calibrate.verdict.plan']")).not.toBeNull();
+    expect(ui("calibrate.run.mimo.help")).not.toBeNull();
+    expect(must("calibrate.verdict.plan").querySelector("p")?.textContent).toBe("3곳에서 측정한 값으로 보정하고 MIMO를 함께 계산합니다.");
+    fireEvent.click(toggle);
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "mimo_on", on: false });
+    cleanupAll();
+    // Off: the plan is the correction's alone.
+    setup(fx.emptyView);
+    expect(must("calibrate.run.mimo").getAttribute("aria-checked")).toBe("false");
+    expect(must("calibrate.verdict.plan").querySelector("p")?.textContent).toBe("3곳에서 측정한 값으로 보정합니다.");
+  });
+
+  it("sits right before 다시 보정하기 after a result, after 다시 측정하기", () => {
+    const actions = setup(fx.splView);
+    const toggle = must("calibrate.run.mimo");
+    const slot = toggle.closest(".calibrate-run__mimo");
+    // One unit with the button it changes, after 다시 측정하기.
+    expect(slot?.previousElementSibling).toBeNull();
+    expect(slot?.nextElementSibling).toBe(must("calibrate.compute"));
+    expect(slot?.parentElement?.previousElementSibling).toBe(must("calibrate.remeasure"));
+    expect(must("calibrate.compute").textContent).toBe("다시 보정하기");
+    fireEvent.click(toggle);
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "mimo_on", on: true });
+  });
+
+  it("is off below three positions and says why on its own line, and 보정 계산 stays on", () => {
+    const actions = setup(fx.readyMimoTwoView);
+    const toggle = must("calibrate.run.mimo") as HTMLButtonElement;
+    expect(toggle.disabled).toBe(true);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    const hint = document.getElementById("calibrate.run.mimo-hint");
+    expect(hint?.textContent).toBe("측정 위치 3곳 이상 필요");
+    expect(hint?.closest(".calibrate-run__mimo")).toBe(toggle.closest(".calibrate-run__mimo"));
+    expect(toggle.getAttribute("aria-describedby")).toContain("calibrate.run.mimo-hint");
+    expect(must("calibrate.verdict.plan").querySelector("p")?.textContent).toBe("2곳에서 측정한 값으로 보정합니다.");
+    fireEvent.click(toggle);
+    expect(actions.changeSetting).not.toHaveBeenCalled();
+    fireEvent.click(must("calibrate.compute"));
+    expect(actions.calibrate).toHaveBeenCalledOnce();
+    cleanupAll();
+    // In English too, and after a result with one position.
+    setup(fx.onePositionView, { locale: "en" });
+    expect((must("calibrate.run.mimo") as HTMLButtonElement).disabled).toBe(true);
+    expect(document.getElementById("calibrate.run.mimo-hint")?.textContent).toBe("Needs 3 or more positions");
+  });
+
+  it("is the MIMO card's switch: either one moves both", async () => {
+    const actions = mockActions();
+    renderWith(<SettingsHarness initial={fx.splView} actions={actions} />, { locale: "ko" });
+    const run = () => must("calibrate.run.mimo").getAttribute("aria-checked");
+    const card = () => must("calibrate.mimo.on").getAttribute("aria-checked");
+    expect([run(), card()]).toEqual(["false", "false"]);
+    await act(async () => { fireEvent.click(must("calibrate.run.mimo")); });
+    expect([run(), card()]).toEqual(["true", "true"]);
+    await act(async () => { fireEvent.click(must("calibrate.mimo.on")); });
+    expect([run(), card()]).toEqual(["false", "false"]);
+    expect(actions.changeSetting.mock.calls).toEqual([[{ kind: "mimo_on", on: true }], [{ kind: "mimo_on", on: false }]]);
+  });
+
+  it("names MIMO in the busy line and the header pill while 보정 계산 computes it, in the controls' place", () => {
+    setup(fx.computingMimoView);
+    expect(must("calibrate.verdict.computing").textContent).toBe("3점 측정값을 기반으로 보정과 MIMO를 계산하는 중…");
+    expect(must("calibrate.verdict.computing").className).toBe("calibrate-run__busy");
+    expect(ui("calibrate.run.mimo")).toBeNull();
+    // The button (the MIMO card's compute device block shares its data-ui).
+    expect(document.getElementById("calibrate.compute")).toBeNull();
+    // The MIMO card's state line waits for the run.
+    expect(ui("calibrate.mimo.state")).toBeNull();
+    cleanupAll();
+    renderWith(<>{calibrateHeader(fx.computingMimoView, t).status}</>);
+    expect(must("calibrate.running").textContent).toBe("보정과 MIMO 계산 중");
+    cleanupAll();
+    renderWith(<>{calibrateHeader(fx.computingView, t).status}</>);
+    expect(must("calibrate.running").textContent).toBe("보정 계산 중");
+  });
+
+  it("shows a MIMO failure after the correction in the MIMO card, with the result kept", () => {
+    setup(fx.mimoFailedView);
+    expect(ui("calibrate.verdict.failed")).toBeNull();
+    expect(ui("calibrate.scorecard.card")).not.toBeNull();
+    expect(must("calibrate.verdict.mimo").textContent).toContain("계산 실패");
+    const failed = must("calibrate.mimo.failed");
+    expect(failed.closest("[data-ui='calibrate.settings.mimo']")).not.toBeNull();
+    expect(failed.querySelector(".ui-error__cause")?.textContent).toBe("MIMO 계산이 실패했습니다.");
+    expect(failed.querySelector("details")?.textContent).toContain("MIMO support design produced nonfinite filters");
+    expect(ui("calibrate.mimo.state")).toBeNull();
+  });
+
+  it("recomputes MIMO alone after a MIMO-only change, and asks for 다시 보정하기 when the correction changed", () => {
+    const actions = setup(fx.mimoStaleView);
+    const alone = must("calibrate.mimo.compute") as HTMLButtonElement;
+    expect(alone.textContent).toBe("MIMO만 계산");
+    expect(alone.disabled).toBe(false);
+    expect(must("calibrate.mimo.state").textContent).toBe("MIMO를 계산한 뒤 MIMO 설정이나 보정 결과가 바뀌었습니다. 'MIMO만 계산'을 누르세요.");
+    fireEvent.click(alone);
+    expect(actions.computeMimo).toHaveBeenCalledOnce();
+    cleanupAll();
+    setup(fx.mimoBehindCorrectionView);
+    expect((must("calibrate.mimo.compute") as HTMLButtonElement).disabled).toBe(true);
+    expect(must("calibrate.mimo.state").textContent).toBe("보정 결과부터 다시 계산해야 합니다. '다시 보정하기'를 누르면 MIMO도 함께 계산합니다.");
   });
 });
 

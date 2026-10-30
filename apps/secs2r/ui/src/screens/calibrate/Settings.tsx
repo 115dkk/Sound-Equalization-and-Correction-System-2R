@@ -3,7 +3,8 @@ import { HelpTip } from "../../ui/HelpTip";
 // they change: 모드, 보정 범위, 크로스오버, 서브 정렬 (BA), MIMO. Every
 // change goes through `changeSetting` (calibration_settings_set) and only
 // marks the result stale. Detail sits under 고급; every correction mode is
-// available in the mode selector.
+// available in the mode selector. MIMO is chosen beside 보정 계산 too
+// (MIMO 함께 계산, P142); its card keeps the details and MIMO만 계산.
 import { ComputeControl, ComputeResult } from "./ComputeControl";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { errorText } from "../../app/jobs/jobText";
@@ -860,13 +861,14 @@ function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
   const mimo = view.results.mimo;
   const busy = view.running !== null;
   const state = (): ReactNode => {
-    if (view.running === "mimo" || view.failure?.job === "mimo") return null;
+    if (view.running === "mimo" || view.runningMimo || view.failure?.job === "mimo") return null;
     if (!result) return <p className="calibrate-hint" data-ui="calibrate.mimo.reason">{t("calibrate.mimo.needs_result")}</p>;
     if (!mimo) return <p className="calibrate-hint" data-ui="calibrate.mimo.state">{t("calibrate.mimo.state.none")}</p>;
     if (mimo.stale) {
+      // A changed correction needs 다시 보정하기, which computes MIMO with it; with the correction current only MIMO is behind.
       return (
         <p className="calibrate-hint calibrate-hint--warning" data-ui="calibrate.mimo.state">
-          {t("calibrate.mimo.state.stale")}
+          {t(result.stale ? "calibrate.mimo.state.stale.calibration" : "calibrate.mimo.state.stale")}
         </p>
       );
     }
@@ -890,7 +892,7 @@ function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
     );
   };
   return (
-    <SettingsCard id="mimo" title={t("calibrate.mimo.title")} help={t("calibrate.mimo.description")}>
+    <SettingsCard id="mimo" title={t("calibrate.mimo.title")} help={<>{t("calibrate.mimo.description")}<p>{t("calibrate.mimo.compute.help")}</p></>}>
       <Toggle
         id="calibrate.mimo.on"
         label={t("calibrate.mimo.on")}
@@ -917,7 +919,8 @@ function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
             />
           </div>
           <div className="calibrate-actions">
-            <Button id="calibrate.mimo.compute" data-ui="calibrate.mimo.compute" busy={view.running === "mimo"} disabled={busy || !result || view.compute.saving || (view.compute.preference === "gpu" && view.compute.status?.gpu_available === false)} onClick={actions.computeMimo}>
+            {/* MIMO alone, on the current correction: the service refuses it on a stale one (다시 보정하기 computes both). */}
+            <Button id="calibrate.mimo.compute" data-ui="calibrate.mimo.compute" busy={view.running === "mimo"} disabled={busy || !result || result.stale || view.compute.saving || (view.compute.preference === "gpu" && view.compute.status?.gpu_available === false)} onClick={actions.computeMimo}>
               {t("calibrate.mimo.compute")}
             </Button>
             <JobFailure view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} job="mimo" id="calibrate.mimo" />

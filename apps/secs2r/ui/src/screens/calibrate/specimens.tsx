@@ -86,6 +86,12 @@ const failedJobs = replay([
   },
 ] satisfies LedgerAction[]);
 
+/** 보정 계산 with MIMO that failed in its MIMO part (`stage: "mimo"`): the tray's entry says the correction finished. */
+const mimoFailedJobs = replay([
+  { type: "event", at: T0, event: { event: "started", job: 7, kind: "calibrate" } },
+  { type: "event", at: T0 + 24000, event: { event: "finished", job: 7, status: "failed", result: null, error: fx.mimoStageError } },
+] satisfies LedgerAction[]);
+
 /** Scrolls the frame's content so `target` sits at the top (settings specimens). */
 function ScrollTo({ target }: { target: string }) {
   const marker = useRef<HTMLSpanElement>(null);
@@ -172,6 +178,28 @@ export const calibrateSpecimens: SpecimenDef[] = [
   frame("empty", "no result yet: plan, position-1 preview and target", () => <CalibrateFrame view={fx.emptyView} />),
   ...Object.entries(fx.planViews).map(([name, view]) => frame(`plan-${name}`, `calculation plan: ${name}`, () => <CalibrateFrame view={view} />)),
   frame("computing", "first run computing (busy primary, job in the tray)", () => <CalibrateFrame view={fx.computingView} jobs={runningJobs("calibrate", "engine.design", 11)} />),
+  frame("ready-mimo", "before the first run, MIMO on with three positions: MIMO 함께 계산 right before 보정 계산, the plan names MIMO", () => <CalibrateFrame view={fx.readyMimoView} />),
+  frame("ready-mimo-two", "before the first run with two positions: MIMO 함께 계산 off, the reason on its line", () => <CalibrateFrame view={fx.readyMimoTwoView} />),
+  {
+    id: "screen.calibrate.ready-mimo.min",
+    title: "보정 · MIMO 함께 계산 before the first run at the smallest window (1024 × 700)",
+    width: 1024,
+    height: 700,
+    render: () => <CalibrateFrame view={fx.readyMimoTwoView} />,
+  },
+  frame("computing-mimo", "first run computing the correction and MIMO: the busy line and the pill name both, the tray at the MIMO stage", () => (
+    <CalibrateFrame view={fx.computingMimoView} jobs={runningJobs("calibrate", "engine.mimo_iir", 11)} />
+  )),
+  frame("mimo-failed", "MIMO failed after the correction: the result stays, the MIMO figure says 계산 실패", () => <CalibrateFrame view={fx.mimoFailedView} jobs={mimoFailedJobs} />),
+  frame("mimo-failed-card", "MIMO failed after the correction: the MIMO card's notice, not the result card's", () => (
+    <CalibrateFrame view={fx.mimoFailedView} jobs={mimoFailedJobs} scrollTo="calibrate.settings.mimo" />
+  )),
+  frame("mimo-stale-correction", "MIMO behind a changed correction: 다시 보정하기 computes both, MIMO만 계산 off", () => (
+    <CalibrateFrame view={fx.mimoBehindCorrectionView} scrollTo="calibrate.settings.mimo" />
+  )),
+  frame("mimo-stale-settings", "MIMO behind its own settings on a current correction: MIMO만 계산", () => (
+    <CalibrateFrame view={fx.mimoStaleView} scrollTo="calibrate.settings.mimo" />
+  )),
   frame("spl", "current result, SPL with target handles and the RC band", () => <CalibrateFrame view={fx.splView} />),
   frame("target-menu", "target menu open (presets, 사용자 지정, save, load)", () => <CalibrateFrame view={fx.splView} initial={{ targetMenu: true }} />),
   frame("gd", "current result, GD with the RC band", () => <CalibrateFrame view={fx.gdView} />),

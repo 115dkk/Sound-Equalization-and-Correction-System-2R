@@ -130,15 +130,9 @@
   }
 }
 
-/* The smallest window: the two buttons stack so they still fit beside the
-   figures. */
-@container (min-width: 640.02px) and (max-width: 899.98px) {
-  .calibrate-run .calibrate-run__actions {
-    flex-direction: column;
-    align-items: stretch;
-  }
-}
-
+/* The buttons stand beside the figures when the card has room for both, and
+   on the next line under them otherwise (MIMO 함께 계산 made the row too wide
+   to stack beside the figures in the smallest window). */
 .calibrate-run__actions {
   display: flex;
   flex: none;
@@ -147,10 +141,45 @@
   gap: var(--space-2);
 }
 
+/* MIMO 함께 계산 and the button it changes (보정 계산, 다시 보정하기, P142):
+   one unit that wraps together, the switch closer to its button than to
+   다시 측정하기 before it. */
+.calibrate-run__compute {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-1);
+}
+
+.calibrate-run__actions > .calibrate-run__compute {
+  margin-left: var(--space-3);
+}
+
+/* MIMO 함께 계산's reason (fewer than three positions) follows its label on
+   the same line, so the run keeps its height whether the switch can be used
+   or not. */
+.calibrate-run__mimo .ui-toggle-row {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: var(--space-2);
+}
+
+/* The help button's hit area already spaces the switch from its button;
+   the reason, which is text to its edge, needs that room itself. */
+.calibrate-run__mimo .ui-toggle__hint {
+  margin: 0 var(--space-2) 0 0;
+  padding-left: 0;
+}
+
+/* The spinner line takes the place of the controls at their height (the
+   buttons, and the help button's hit area beside MIMO 함께 계산), so the card
+   does not move when a run starts or ends. */
 .calibrate-run__busy {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
+  min-height: max(var(--control-h), var(--hit-min));
   margin: 0;
 }
 
