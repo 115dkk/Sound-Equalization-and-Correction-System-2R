@@ -80,7 +80,7 @@ node ui/node_modules/@tauri-apps/cli/tauri.js build            # 설치본 만�
 
 SECS 2R 앱은 업스트림을 따라 **GNU General Public License v3**(GPL-3.0-only)입니다. 전문은 [`LICENSE`](LICENSE)에 있습니다.
 
-crates.io에 올리는 크레이트 16개(공개 API 크레이트 `sound-equalization-and-correction-system-rust-api`와 그것이 의존하는 `secs-*` 크레이트)와 PyPI 패키지 `secs2r`는 **GNU Affero General Public License v3**(AGPL-3.0-only)입니다. 전문은 [`LICENSE-AGPL`](LICENSE-AGPL)에 있습니다. 업스트림 저작자 KIM-O-O(스피커 갤러리 김ㅇㅇ)께서 이 재라이선스를 허락해 주셨습니다(2026-10-30, [ADR 0023](docs/adr/0023-agpl-for-published-crates.md)). 이 크레이트나 패키지를 고쳐 네트워크 서비스로 제공하면 그 서비스의 사용자에게 수정한 소스를 제공해야 합니다. 다른 저장소에서 가져온 코드와 그 라이선스는 [`docs/THIRD_PARTY.md`](docs/THIRD_PARTY.md)에 있습니다.
+crates.io에 올리는 크레이트 16개(공개 API 크레이트 `sound-equalization-and-correction-system-rust-api`와 그것이 의존하는 `secs-*` 크레이트)와 PyPI 패키지 `secs2r`는 **GNU Affero General Public License v3**(AGPL-3.0-only)입니다. 전문은 [`LICENSE-AGPL`](LICENSE-AGPL)에 있습니다. 업스트림 저작자 KIM-O-O(스피커 갤러리 김ㅇㅇ)께서 이 재라이선스를 허락해 주셨습니다(2026-10-30, [허가 글](docs/licensing/SECS2-AGPL-PERMISSION.md), [ADR 0023](docs/adr/0023-agpl-for-published-crates.md)). 이 크레이트나 패키지를 고쳐 네트워크 서비스로 제공하면 그 서비스의 사용자에게 수정한 소스를 제공해야 합니다. 다른 저장소에서 가져온 코드와 그 라이선스는 [`docs/THIRD_PARTY.md`](docs/THIRD_PARTY.md)에 있습니다.
 
 ## 도움 주신 분들
 
