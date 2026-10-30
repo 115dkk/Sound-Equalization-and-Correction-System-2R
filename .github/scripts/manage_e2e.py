@@ -830,7 +830,18 @@ class Scenario:
     def open_project(self):
         self.click("frame.project")
         self.click("frame.project.open")
-        self.click("project.open.recent.1")
+        # After the setup reload the service may still hold the project: the
+        # dialog then marks the recent entry as the open one (a status pill)
+        # and disables it. Opening it again is not possible nor needed.
+        recent = self.shown(ui("project.open.recent.1"))
+        already_open = self.driver.execute(
+            "const e = arguments[0]; return e.disabled && e.querySelector('.ui-pill') !== null;",
+            {ELEMENT: recent})
+        if already_open:
+            self.log("project_already_open")
+            self.click("project.open.cancel")
+        else:
+            self.click("project.open.recent.1")
         self.shown(ui("frame.status.file"))
         self.click("frame.rail.export")
         self.shown(ui("export.result.summary"))
