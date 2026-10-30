@@ -77,8 +77,7 @@ pub fn eqapo_install() -> Option<EqApoInstall> {
 
 /// Reads CamillaDSP through the platform-neutral application protocol client.
 pub fn camilla_status(address: &str, timeout: Duration) -> Result<CamillaStatus, IpcError> {
-    let transport =
-        secs_apply::camilla::WsTransport::connect(address, timeout).map_err(camilla_error)?;
+    let transport = camilla_connect(address, timeout)?;
     let status = secs_apply::camilla::Camilla::new(transport)
         .status()
         .map_err(camilla_error)?;
@@ -103,8 +102,7 @@ pub fn camilla_apply(
     config_text: &str,
     timeout: Duration,
 ) -> Result<ApplyOutcome, IpcError> {
-    let transport =
-        secs_apply::camilla::WsTransport::connect(address, timeout).map_err(camilla_error)?;
+    let transport = camilla_connect(address, timeout)?;
     match secs_apply::camilla::Camilla::new(transport)
         .apply(&config_path.to_string_lossy(), config_text)
         .map_err(camilla_error)?
@@ -138,6 +136,53 @@ pub fn eqapo_with_include(config_text: &str) -> Option<String> {
 #[must_use]
 pub fn eqapo_without_include(config_text: &str) -> Option<String> {
     secs_apply::eqapo::without_include(config_text)
+}
+
+fn camilla_connect(
+    address: &str,
+    timeout: Duration,
+) -> Result<secs_apply::camilla::WsTransport, IpcError> {
+    secs_apply::camilla::WsTransport::connect(address, timeout).map_err(|error| {
+        let free = loopback_port_is_free(address, &error);
+        let mut ipc = camilla_error(error);
+        if free {
+            ipc.params
+                .insert("reason".to_owned(), "connection_refused".to_owned());
+        }
+        ipc
+    })
+}
+
+/// Whether a failed connect to a loopback address found nothing listening.
+/// Windows retries a refused loopback SYN for about two seconds, so a short
+/// connect to a free port times out instead of being refused; netstat
+/// settles it, as the managed host does (`host::tcp_listener_pid`).
+#[cfg(target_os = "windows")]
+fn loopback_port_is_free(address: &str, error: &secs_apply::ApplyError) -> bool {
+    use std::net::ToSocketAddrs;
+
+    if !matches!(
+        error,
+        secs_apply::ApplyError::Connect {
+            connection_refused: false,
+            ..
+        }
+    ) {
+        return false;
+    }
+    let Some(socket) = address
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut all| all.next())
+    else {
+        return false;
+    };
+    socket.ip().is_loopback() && matches!(host::tcp_listener_pid(socket.port()), Ok(None))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn loopback_port_is_free(_address: &str, _error: &secs_apply::ApplyError) -> bool {
+    false
 }
 
 fn camilla_error(error: secs_apply::ApplyError) -> IpcError {
