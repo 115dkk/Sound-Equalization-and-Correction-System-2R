@@ -2,6 +2,15 @@
 
 SECS 2R의 변경 기록입니다. 번호는 major.minor.patch이고, 0.x는 모두 사전 출시판이며 정식 출시는 1.0.0부터입니다(docs/adr/0006). 각 절의 내용이 그 버전의 릴리스 본문이 됩니다. 업스트림 SECS 2의 변경 기록은 [`docs/upstream/CHANGELOG.md`](docs/upstream/CHANGELOG.md)에 있습니다.
 
+## 0.37.0 - 2026-10-30
+
+crates.io에 올리는 크레이트와 PyPI 패키지의 라이선스를 AGPL-3.0-only로 바꾸는 판입니다. 앱의 라이선스와 계산 결과는 그대로입니다.
+
+### 바뀐 것
+
+- 공개 API 크레이트 `sound-equalization-and-correction-system-rust-api`와 그것이 의존하는 `secs-*` 크레이트 15개는 다음 라이브러리 판부터 GNU Affero General Public License v3(AGPL-3.0-only)입니다. 이 크레이트를 고쳐 네트워크 서비스로 제공하면 그 서비스의 사용자에게 수정한 소스를 제공해야 합니다. 업스트림 저작자 KIM-O-O(스피커 갤러리 김ㅇㅇ)께서 이 재라이선스를 허락해 주셨습니다(docs/adr/0023). 이미 올린 판(api-v0.4.1까지)은 GPL-3.0-only 그대로이고, 라이선스가 바뀌므로 라이브러리 판은 minor를 올립니다.
+- SECS 2R 앱과 crates.io에 올리지 않는 크레이트는 지금처럼 GPL-3.0-only입니다.
+
 ## 0.35.2 - 2026-10-30
 
 ### 고친 것

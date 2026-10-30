@@ -128,6 +128,28 @@ fn dependency_tables(value: &toml::Value) -> Vec<(&str, &toml::Table)> {
     tables
 }
 
+/// ADR 0023: the app and the unpublished crates keep the workspace licence
+/// (GPL-3.0-only); only the published crates are AGPL-3.0-only.
+#[test]
+fn unpublished_packages_keep_the_workspace_gpl() {
+    let workspace = manifest(&root().join("Cargo.toml"));
+    assert_eq!(
+        workspace["workspace"]["package"]["license"].as_str(),
+        Some("GPL-3.0-only")
+    );
+    let violations: Vec<_> = packages()
+        .into_iter()
+        .filter(|(_, (_, value))| !publish_allowed(value))
+        .filter(|(_, (_, value))| {
+            let license = &value["package"]["license"];
+            license.get("workspace").and_then(toml::Value::as_bool) != Some(true)
+        })
+        .map(|(name, _)| format!("{name}: license must be license.workspace = true"))
+        .collect();
+    assert!(violations.is_empty(), "{}", violations.join("
+"));
+}
+
 #[test]
 fn published_versions_and_dependencies_are_closed() {
     let packages = packages();
@@ -180,7 +202,9 @@ fn published_versions_and_dependencies_are_closed() {
 #[test]
 fn published_packages_carry_required_metadata_and_files() {
     let root = root();
-    let root_license = fs::read(root.join("LICENSE")).expect("root LICENSE");
+    // ADR 0023: the published crates are AGPL-3.0-only; the app and the
+    // unpublished crates stay GPL-3.0-only under the root LICENSE.
+    let root_license = fs::read(root.join("LICENSE-AGPL")).expect("root LICENSE-AGPL");
     let packages = packages();
     let mut violations = Vec::new();
 
@@ -198,9 +222,12 @@ fn published_packages_carry_required_metadata_and_files() {
         if !dir.join("README.md").is_file() {
             violations.push(format!("{name}: README.md is missing"));
         }
+        if package.get("license").and_then(toml::Value::as_str) != Some("AGPL-3.0-only") {
+            violations.push(format!("{name}: license must be AGPL-3.0-only (ADR 0023)"));
+        }
         match fs::read(dir.join("LICENSE")) {
             Ok(license) if license == root_license => {}
-            Ok(_) => violations.push(format!("{name}: LICENSE differs from root LICENSE")),
+            Ok(_) => violations.push(format!("{name}: LICENSE differs from root LICENSE-AGPL")),
             Err(error) => violations.push(format!("{name}: LICENSE: {error}")),
         }
         let includes = package

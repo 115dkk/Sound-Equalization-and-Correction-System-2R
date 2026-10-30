@@ -78,7 +78,9 @@ node ui/node_modules/@tauri-apps/cli/tauri.js build            # 설치본 만�
 
 ## 라이선스
 
-SECS 2R은 업스트림을 따라 **GNU General Public License v3**(GPL-3.0-only)입니다. 전문은 [`LICENSE`](LICENSE)에 있습니다. 다른 저장소에서 가져온 코드와 그 라이선스는 [`docs/THIRD_PARTY.md`](docs/THIRD_PARTY.md)에 있습니다.
+SECS 2R 앱은 업스트림을 따라 **GNU General Public License v3**(GPL-3.0-only)입니다. 전문은 [`LICENSE`](LICENSE)에 있습니다.
+
+crates.io에 올리는 크레이트 16개(공개 API 크레이트 `sound-equalization-and-correction-system-rust-api`와 그것이 의존하는 `secs-*` 크레이트)와 PyPI 패키지 `secs2r`는 **GNU Affero General Public License v3**(AGPL-3.0-only)입니다. 전문은 [`LICENSE-AGPL`](LICENSE-AGPL)에 있습니다. 업스트림 저작자 KIM-O-O(스피커 갤러리 김ㅇㅇ)께서 이 재라이선스를 허락해 주셨습니다(2026-10-30, [ADR 0023](docs/adr/0023-agpl-for-published-crates.md)). 이 크레이트나 패키지를 고쳐 네트워크 서비스로 제공하면 그 서비스의 사용자에게 수정한 소스를 제공해야 합니다. 다른 저장소에서 가져온 코드와 그 라이선스는 [`docs/THIRD_PARTY.md`](docs/THIRD_PARTY.md)에 있습니다.
 
 ## 도움 주신 분들
 
@@ -90,4 +92,4 @@ SECS 2는 한국 오디오 커뮤니티 스피커 갤러리의 Sound Equalizatio
 
 SECS 2R is a fork of [SECS 2](https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2), a room correction designer, rewritten with a Rust core and a Tauri user interface. It designs room correction (RC), bass alignment (BA) and MIMO bass-decay correction from speaker measurements and exports CamillaDSP and Equalizer APO configurations, filter values as text, and REW mdat files.
 
-It is under development: milestones M0 to M5 are done. The 0.x prereleases carry the SECS 2 correction engine (levels and delays, BA, XO, RC, MIMO, scorecard), native and REW measurement, mdat import, Dirac Live project (`.liveproject`) import, the exports, the new screens and the tutorial; checking the whole path on real hardware (M6) is still ahead. Every upstream feature is being ported; the upstream Python tree stays untouched in this repository as the reference the port is checked against, and deliberate differences are listed in [`docs/DEVIATIONS.md`](docs/DEVIATIONS.md). Pull requests and issues are welcome. License: GPL-3.0-only.
+It is under development: milestones M0 to M5 are done. The 0.x prereleases carry the SECS 2 correction engine (levels and delays, BA, XO, RC, MIMO, scorecard), native and REW measurement, mdat import, Dirac Live project (`.liveproject`) import, the exports, the new screens and the tutorial; checking the whole path on real hardware (M6) is still ahead. Every upstream feature is being ported; the upstream Python tree stays untouched in this repository as the reference the port is checked against, and deliberate differences are listed in [`docs/DEVIATIONS.md`](docs/DEVIATIONS.md). Pull requests and issues are welcome. License: the app is GPL-3.0-only; the 16 crates published to crates.io and the PyPI package are AGPL-3.0-only, relicensed with the upstream author's permission (docs/adr/0023).
