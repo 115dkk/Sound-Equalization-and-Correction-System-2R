@@ -1064,7 +1064,7 @@ mod tests {
             tutorial: false,
         }));
         runner.call(Request::SampleLoad(SampleLoadParams::default()));
-        runner.calibrate(None);
+        runner.calibrate(None, false);
         assert!(runner.ok, "oracle sample project preparation failed");
 
         run(
