@@ -36,8 +36,20 @@
       "freezePrototype": true
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENCRThGOTI4NTc2RUYyRUUKUldUdThtNVhLUG5veTJ0eHM0dzZ4V1ArNlNRWjRJbzJrVE96NGpESXZIY1VtVHg2SWp1Qk85QloK",
+      "requireSignedVersion": true,
+      "endpoints": [
+        "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R/releases/latest/download/latest.json",
+        "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R/releases/download/updater/latest.json"
+      ],
+      "windows": { "installMode": "quiet" }
+    }
+  },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "publisher": "SECS 2R contributors",
     "category": "Utility",
@@ -66,7 +78,8 @@
       "nsis": {
         "installMode": "currentUser",
         "languages": ["Korean", "English"],
-        "displayLanguageSelector": false
+        "displayLanguageSelector": false,
+        "installerHooks": "windows/hooks.nsh"
       }
     },
     "linux": {

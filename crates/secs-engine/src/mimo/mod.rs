@@ -14,8 +14,8 @@ pub use iir::{
     design_mimo_iir_with_options,
 };
 pub use run::{
-    MimoKey, MimoRun, availability, cap_text, compute, compute_with_acceleration, estimate_seconds,
-    fir_budget_text, fir_to_48k, kind_text,
+    MimoKey, MimoRoleLateEnergy, MimoRoleScore, MimoRun, availability, cap_text, compute,
+    compute_with_acceleration, estimate_seconds, fir_budget_text, fir_to_48k, kind_text,
 };
 
 pub use design::{

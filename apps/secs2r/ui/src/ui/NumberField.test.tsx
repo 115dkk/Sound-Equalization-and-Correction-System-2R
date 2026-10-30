@@ -46,7 +46,7 @@ describe("number field", () => {
     fireEvent.blur(input);
     expect(input.getAttribute("aria-invalid")).toBe("true");
     const error = document.getElementById("rc_lo-error");
-    expect(error?.textContent).toBe("10–200 Hz 사이의 값을 넣으세요.");
+    expect(error?.textContent).toBe("10–200 Hz 사이의 값을 넣으십시오.");
     expect(input.getAttribute("aria-describedby")).toContain("rc_lo-error");
     expect(onChange).not.toHaveBeenCalled();
   });

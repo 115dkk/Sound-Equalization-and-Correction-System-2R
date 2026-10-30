@@ -14,8 +14,10 @@ export type FinishedJob = Extract<JobEvent, { event: "finished" }>;
 /** Only the request fields that a screen or completion action actually needs. */
 export type JobRequestContext = (
   | Extract<Request, { method: "measure_position" | "export" }>
-  | { method: "calibrate"; params: { subs_only: boolean } }
+  | { method: "calibrate"; params: { subs_only: boolean; mimo: boolean } }
   | { method: "sample_load" | "mdat_import" | "recommend_xo" | "mimo" }
+  /** 적용 (ADR 0018): which target the `apply` job pushes to. */
+  | { method: "apply_camilla" | "apply_eqapo" }
 ) & { epoch: number };
 export type LedgerJob = JobSnapshot & {
   epoch: number; request: JobRequestContext | null;
@@ -158,14 +160,15 @@ const kindFor = (request: Request): JobKind | null => {
   switch (request.method) {
     case "measure_position": return "measure";
     case "sample_load": case "mdat_import": case "calibrate": case "recommend_xo": case "mimo": case "export": return request.method;
+    case "apply_camilla": case "apply_eqapo": return "apply";
     default: return null;
   }
 };
 const contextFor = (request: Request, epoch: number): JobRequestContext | null => {
   switch (request.method) {
     case "measure_position": case "export": return { ...request, epoch };
-    case "calibrate": return { method: request.method, params: { subs_only: request.params.subs_only }, epoch };
-    case "sample_load": case "mdat_import": case "recommend_xo": case "mimo": return { method: request.method, epoch };
+    case "calibrate": return { method: request.method, params: { subs_only: request.params.subs_only, mimo: request.params.mimo ?? false }, epoch };
+    case "sample_load": case "mdat_import": case "recommend_xo": case "mimo": case "apply_camilla": case "apply_eqapo": return { method: request.method, epoch };
     default: return null;
   }
 };

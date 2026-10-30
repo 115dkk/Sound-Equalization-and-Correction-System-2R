@@ -49,36 +49,43 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
     const play = (roles: string[], all: boolean) => {
       const epoch = ++queue.current;
       cancelWait.current?.();
+      // A stop, another play, or the monitor job failing ends the queue; the
+      // failure stays on the mic panel until the monitor starts again.
+      const ended = () => epoch !== queue.current || session.host.getSnapshot().monitorError !== null;
       session.run(async () => {
         session.host.set({ playingAll: all });
         try {
           await session.call({ method: "level_stop" });
           if (epoch !== queue.current) return;
+          // Also restarts a monitor that failed, which clears its error.
           await session.monitor(true);
           for (const role of roles) {
-            if (epoch !== queue.current) break;
+            if (ended()) break;
             session.host.set({ playing: role });
             // level_play only enqueues the 2.5 s burst; the monitor job says
             // when it ended (level_play_end), after storing the level. Listen
             // before asking, and give up after 8 s so a lost event cannot stall the queue.
+            // A failed monitor sends no end: its failure ends the wait.
             let release = () => {};
-            const ended = new Promise<void>((resolve) => {
+            const burst = new Promise<void>((resolve) => {
               let timer: ReturnType<typeof setTimeout> | undefined;
               let off = () => {};
-              const finish = () => { off(); clearTimeout(timer); if (cancelWait.current === finish) cancelWait.current = null; resolve(); };
+              let offFailure = () => {};
+              const finish = () => { off(); offFailure(); clearTimeout(timer); if (cancelWait.current === finish) cancelWait.current = null; resolve(); };
               release = finish;
               off = session.ipc.events.subscribe((event) => {
                 if (event.event === "log" && event.code === "level_play_end" && event.params.role === role) finish();
               });
+              offFailure = session.host.subscribe(() => { if (session.host.getSnapshot().monitorError !== null) finish(); });
               timer = setTimeout(finish, 8000);
               cancelWait.current = finish;
             });
             try {
               await session.call({ method: "level_play", params: { role, master_dbfs: session.host.getSnapshot().masterDbfs } });
-              if (epoch !== queue.current) break;
-              await ended;
+              if (ended()) break;
+              await burst;
             } finally { release(); }
-            if (epoch !== queue.current) break;
+            if (ended()) break;
             await Promise.all([session.stores.levels.load(), session.stores.project.load()]);
           }
         } finally {
@@ -169,6 +176,6 @@ export function useConnectScreen(active: boolean): { view: ConnectView | null; a
     rew: { launch: host.rewLaunch, problem: host.rewProblem, problemDetail: host.rewProblemDetail, readingSettings: host.readingRew, switchingDriver: host.switchingRewDriver, details },
     micCalibration: { status: micCalibration, busy: host.micCalBusy, error: host.micCalError },
     levels: levels?.levels ?? {},
-    level: { monitor: host.monitor, reading: host.meter, playing: host.playing, playingAll: host.playingAll, masterDbfs: host.masterDbfs },
+    level: { monitor: host.monitor, error: host.monitorError, reading: host.meter, playing: host.playing, playingAll: host.playingAll, masterDbfs: host.masterDbfs },
   } : null, actions };
 }

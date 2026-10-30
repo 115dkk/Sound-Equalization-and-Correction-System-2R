@@ -10,6 +10,7 @@ use secs_dsp::{
     smooth::{self, Fraction},
 };
 use secs_types::{
+    calibration::RcHiBasis,
     chain::{BandType, MainChannel, SignalChain, SubChannel},
     target::TargetCurve,
 };
@@ -53,9 +54,6 @@ pub fn production_fitters_with(
         })
     })
 }
-
-/// `correction_engine.py:34`, automatic RC ceiling.
-const RC_AUTO_MAX_HZ: f64 = 500.0;
 
 #[derive(Debug)]
 pub struct DesignRequest<'a> {
@@ -134,6 +132,59 @@ pub struct RoleScores {
     pub gd_before: Vec<f64>,
     pub gd_after: Vec<f64>,
 }
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct RoleLateEnergy {
+    pub role: String,
+    pub position: u32,
+    pub before_db: f64,
+    pub after_db: f64,
+}
+
+/// Late energy on the same per-position responses used by the scorecard at the
+/// main position and by the mdat's before/after items elsewhere: the 2 s export
+/// view, which MIMO also starts from. The fitting spectra (`spectra.used`) are
+/// not used; their late tail differs from those items by up to about 1 dB.
+/// Rows are position major, with main roles in chain order.
+pub fn late_energy(design: &Design) -> Result<Vec<RoleLateEnergy>, EngineError> {
+    let view = design.replay.export_view(design)?;
+    let mut rows = Vec::new();
+    for &position in &design.spectra.positions {
+        for channel in &design.chain.mains {
+            let (before_db, after_db) = if position == design.spectra.main_position {
+                let Some(main) = design.mains.iter().find(|main| main.role == channel.role) else {
+                    continue;
+                };
+                (
+                    crate::decay::late_db_20_150(&main.before),
+                    crate::decay::late_db_20_150(&main.after),
+                )
+            } else {
+                let Some(before) = view.spectra.get(position, &channel.role) else {
+                    continue;
+                };
+                let Some(after) =
+                    crate::stage_responses(design, &channel.role, &view.spectra, position)
+                        .map(|stages| stages.output)
+                else {
+                    continue;
+                };
+                (
+                    crate::decay::late_db_20_150(before),
+                    crate::decay::late_db_20_150(&after),
+                )
+            };
+            rows.push(RoleLateEnergy {
+                role: channel.role.clone(),
+                position,
+                before_db,
+                after_db,
+            });
+        }
+    }
+    Ok(rows)
+}
+
 fn check(ctx: &Context) -> Result<(), EngineError> {
     ctx.cancel().check().map_err(|_| EngineError::Cancelled)
 }
@@ -192,7 +243,9 @@ impl DesignBytes {
     ) -> Self {
         let positions = set.positions.len() as u64;
         let subs = config.subs.len() as u64;
-        let mains = if subs_only {
+        let mains = if subs_only
+            && !(config.rc_range.1.is_none() && config.rc_hi_basis == RcHiBasis::Agreement)
+        {
             0
         } else {
             config.mains.len() as u64
@@ -371,6 +424,80 @@ fn design_prepared_scored(
     include_scores: bool,
     reserve: ChannelBytes,
 ) -> Result<Design, EngineError> {
+    if req.config.rc_range.1.is_none() && req.config.rc_hi_basis == RcHiBasis::Agreement {
+        let count = agreement_positions(req.measurements, req.config);
+        if count < 3 {
+            return Err(EngineError::Input(format!(
+                "RC agreement requires at least 3 measured positions; found {count}"
+            )));
+        }
+        let (probe, limits) = design_pass(
+            req,
+            ctx,
+            fitters,
+            prepared,
+            observed,
+            false,
+            reserve,
+            RcPass::Probe,
+        )?;
+        let limit = levels::median(limits).clamp(100.0, 2000.0);
+        drop(probe);
+        check(ctx)?;
+        return design_pass(
+            req,
+            ctx,
+            fitters,
+            prepared,
+            observed,
+            include_scores,
+            reserve,
+            RcPass::Final(limit),
+        )
+        .map(|(design, _)| design);
+    }
+    design_pass(
+        req,
+        ctx,
+        fitters,
+        prepared,
+        observed,
+        include_scores,
+        reserve,
+        RcPass::Normal,
+    )
+    .map(|(design, _)| design)
+}
+
+pub(crate) fn agreement_positions(set: &MeasurementSet, config: &EngineConfig) -> usize {
+    set.positions
+        .iter()
+        .filter(|(_, roles)| {
+            roles
+                .iter()
+                .any(|(role, m)| config.mains.contains(role) && !m.samples.is_empty())
+        })
+        .count()
+}
+
+#[derive(Clone, Copy)]
+enum RcPass {
+    Normal,
+    Probe,
+    Final(f64),
+}
+
+#[allow(clippy::too_many_arguments)]
+fn design_pass(
+    req: &DesignRequest<'_>,
+    ctx: &Context,
+    fitters: &FitterFactory<'_>,
+    prepared: &measurement::Prepared,
+    observed: &(dyn Fn(&str, std::time::Duration) + Sync),
+    include_scores: bool,
+    reserve: ChannelBytes,
+    pass: RcPass,
+) -> Result<(Design, Vec<f64>), EngineError> {
     check(ctx)?;
     check_taps(req.config)?;
     let config = req.config;
@@ -392,13 +519,33 @@ fn design_prepared_scored(
     let schroeder_hz = rc_auto
         .then(|| levels::schroeder_hz(req.measurements, config))
         .flatten();
+    let lenient = (rc_auto && config.rc_hi_basis == RcHiBasis::Lenient)
+        .then(|| levels::lenient_schroeder_hz(req.measurements, config))
+        .flatten();
     if rc_auto {
-        setup.rc_hi = schroeder_hz.map_or(RC_AUTO_MAX_HZ, |f| f.clamp(100.0, RC_AUTO_MAX_HZ));
+        if !matches!(config.rc_hi_transition, 1 | 2 | 4) {
+            return Err(EngineError::Input(
+                "RC transition factor must be 1, 2 or 4".into(),
+            ));
+        }
+        setup.rc_hi = match pass {
+            RcPass::Probe => 2000.0,
+            RcPass::Final(hz) => hz,
+            RcPass::Normal => {
+                levels::schroeder_limit(schroeder_hz, lenient.map(|v| v.0), config.rc_hi_transition)
+            }
+        };
     }
     notes.push(Note::RcLimit {
         hz: setup.rc_hi,
         auto: rc_auto,
         schroeder_hz,
+        basis: config.rc_hi_basis,
+        factor: config.rc_hi_transition,
+        band_hz: lenient.map(|v| v.0),
+        band_t60_s: lenient.map(|v| v.1),
+        positions: (rc_auto && config.rc_hi_basis == RcHiBasis::Agreement)
+            .then(|| agreement_positions(req.measurements, config)),
     });
     let xo_of: Vec<_> = config
         .groups
@@ -568,7 +715,7 @@ fn design_prepared_scored(
             .unwrap_or(0.0))
         .max(0.0)
     };
-    let roles = if req.subs_only {
+    let roles = if req.subs_only && !matches!(pass, RcPass::Probe) {
         vec![]
     } else {
         config.mains.iter().collect()
@@ -622,21 +769,20 @@ fn design_prepared_scored(
                 })
                 .collect();
             let mut fitter = fitters(FitStage::Rc(role));
-            let result = rc::channel(
-                &RcInput {
-                    role,
-                    comb: &comb,
-                    main_position: config.main_position,
-                    level_db: ref_level,
-                    setup: &setup,
-                    config,
-                    tuning: req.tuning,
-                    positions: &positions,
-                },
-                &mut *fitter,
-                &|| ctx.cancel().is_cancelled(),
-            )?;
+            let rc_input = RcInput {
+                role,
+                comb: &comb,
+                main_position: config.main_position,
+                level_db: ref_level,
+                setup: &setup,
+                config,
+                tuning: req.tuning,
+                positions: &positions,
+            };
+            let result = rc::channel(&rc_input, &mut *fitter, &|| ctx.cancel().is_cancelled())?;
             check(ctx)?;
+            let agreement = matches!(pass, RcPass::Probe)
+                .then(|| rc::agreement_limit(&rc_input, &result.response));
             let combined = comb
                 .iter()
                 .find(|(p, _)| *p == config.main_position)
@@ -687,13 +833,17 @@ fn design_prepared_scored(
             let elapsed = rc_started.elapsed();
             #[cfg(not(test))]
             let elapsed = ();
-            Ok(Some((channel, main, result.out.notes, elapsed)))
+            Ok(Some((channel, main, result.out.notes, elapsed, agreement)))
         },
     )?;
     observed("rc_all", rc_all_started.elapsed());
     let mut channels = Vec::new();
     let mut mains = Vec::new();
-    for (channel, main, channel_notes, _elapsed) in outputs.into_iter().flatten() {
+    let mut agreement_limits = Vec::new();
+    for (channel, main, channel_notes, _elapsed, agreement) in outputs.into_iter().flatten() {
+        if let Some(limit) = agreement {
+            agreement_limits.push(limit);
+        }
         #[cfg(test)]
         timings.push((format!("RC {}", main.role), _elapsed));
         channels.push(channel);
@@ -739,6 +889,28 @@ fn design_prepared_scored(
             sub.lp_hz = f.lp_hz;
             sub.lp_type = f.lp_type;
             sub.peq = f.peq.clone();
+        }
+        if config.low_protect {
+            let by_pos: Vec<_> = positions
+                .iter()
+                .filter_map(|&p| used.get(p, role).map(|h| (p, h.clone())))
+                .collect();
+            if let Some(hz) = crate::low_protect::rolloff(
+                &by_pos,
+                config.main_position,
+                Some((sub.hp_hz, sub.lp_hz)),
+            ) {
+                if sub.hp_hz == 0.0 {
+                    sub.hp_hz = hz / 2.0_f64.sqrt();
+                    sub.hp_type = BandType::Lr24;
+                }
+                notes.push(Note::LowProtect {
+                    role: role.clone(),
+                    rolloff_hz: hz,
+                    hp_hz: Some(sub.hp_hz),
+                    limited: true,
+                });
+            }
         }
         subs.push(sub);
     }
@@ -824,43 +996,46 @@ fn design_prepared_scored(
             .collect(),
     ));
     check(ctx)?;
-    Ok(Design {
-        chain: SignalChain {
-            sample_rate: SR,
-            mains: channels,
-            subs,
-            sub_bus_peq: alignment.bus_peq,
-            main_extra_ms: shift,
-            lift_ms: setup.lift_ms,
-            latency_ms,
+    Ok((
+        Design {
+            chain: SignalChain {
+                sample_rate: SR,
+                mains: channels,
+                subs,
+                sub_bus_peq: alignment.bus_peq,
+                main_extra_ms: shift,
+                lift_ms: setup.lift_ms,
+                latency_ms,
+            },
+            mains,
+            subs: sub,
+            ref_level,
+            rc_hi: setup.rc_hi,
+            rc_auto,
+            schroeder_hz,
+            target_display: spl_grid.iter().map(|&g| interp(g, f, &target_db)).collect(),
+            target_db,
+            spectra: DesignSpectra {
+                raw: Arc::new(prepared.h0.clone()),
+                used: Arc::new(used),
+                main_position: config.main_position,
+                positions,
+            },
+            notes,
+            adapter_notes: req.adapter_notes.to_vec(),
+            groups: config.groups.clone(),
+            target: config.target.clone(),
+            xo: config.xo.clone(),
+            scores,
+            replay: Arc::new(crate::DesignReplay::new(
+                req.measurements,
+                config,
+                setup,
+                prepared,
+            )),
+            #[cfg(test)]
+            timings,
         },
-        mains,
-        subs: sub,
-        ref_level,
-        rc_hi: setup.rc_hi,
-        rc_auto,
-        schroeder_hz,
-        target_display: spl_grid.iter().map(|&g| interp(g, f, &target_db)).collect(),
-        target_db,
-        spectra: DesignSpectra {
-            raw: Arc::new(prepared.h0.clone()),
-            used: Arc::new(used),
-            main_position: config.main_position,
-            positions,
-        },
-        notes,
-        adapter_notes: req.adapter_notes.to_vec(),
-        groups: config.groups.clone(),
-        target: config.target.clone(),
-        xo: config.xo.clone(),
-        scores,
-        replay: Arc::new(crate::DesignReplay::new(
-            req.measurements,
-            config,
-            setup,
-            prepared,
-        )),
-        #[cfg(test)]
-        timings,
-    })
+        agreement_limits,
+    ))
 }

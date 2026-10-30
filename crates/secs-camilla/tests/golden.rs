@@ -719,6 +719,114 @@ fn mimo_camilladsp_matches_four_oracles() {
 }
 
 #[test]
+fn output_rates_change_camilla_samplerate_delays_and_fir_wavs() {
+    let fixture = Fixture::load("camilla", "direct_no_subs");
+    let chain = chain(&fixture);
+    for rate in [44_100, 96_000] {
+        let temp = TempDir::new(&format!("output_rate_{rate}"));
+        let mut options = direct_options(&fixture);
+        options.output_rate = rate;
+        let config = make_config(&chain, &temp.0, &temp.0, "", &options, None).unwrap();
+        assert!(config.yaml.contains(&format!("  samplerate: {rate}")));
+        let filters = yaml_filters(&config.yaml);
+        for main in &chain.mains {
+            assert_eq!(
+                filter_delay(&filters, &format!("main_{}_delay", main.role)),
+                Some(secs_dsp::rate::delay_samples(main.delay_ms, rate))
+            );
+            let suffix = format!("{}_fir.wav", main.role);
+            let bytes = &config
+                .coeffs
+                .iter()
+                .find(|(path, _)| path.to_string_lossy().ends_with(&suffix))
+                .unwrap()
+                .1;
+            assert_eq!(u32::from_le_bytes(bytes[24..28].try_into().unwrap()), rate);
+            assert_eq!(
+                (bytes.len() - 44) / 4,
+                secs_dsp::rate::taps_at(main.fir.len(), rate)
+            );
+        }
+    }
+}
+
+#[test]
+fn output_rates_resize_full_and_low_rate_mimo_firs() {
+    let fixture = Fixture::all("export_mimo", "")
+        .into_iter()
+        .find(|fixture| {
+            mimo_paths(fixture)
+                .paths
+                .iter()
+                .any(|path| matches!(path.filter, MimoFilter::Fir { .. }))
+        })
+        .unwrap();
+    let chain = chain(&fixture);
+    let mut mimo = mimo_paths(&fixture);
+    let regular = mimo
+        .paths
+        .iter()
+        .find(|path| matches!(path.filter, MimoFilter::Fir { .. }))
+        .unwrap()
+        .clone();
+    let temp = TempDir::new("mimo_output_rate");
+    let options = Options {
+        output_rate: 96_000,
+        ..Options::default()
+    };
+    let config = make_config(&chain, &temp.0, &temp.0, "", &options, Some(&mimo)).unwrap();
+    let suffix = format!("mimo_{}_{}.wav", regular.input, regular.support);
+    let bytes = &config
+        .coeffs
+        .iter()
+        .find(|(path, _)| path.to_string_lossy().ends_with(&suffix))
+        .unwrap()
+        .1;
+    let MimoFilter::Fir { taps_48k } = &regular.filter else {
+        unreachable!()
+    };
+    assert_eq!(
+        u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
+        96_000
+    );
+    assert_eq!(
+        (bytes.len() - 44) / 4,
+        secs_dsp::rate::taps_at(taps_48k.len(), 96_000)
+    );
+
+    let low = mimo
+        .paths
+        .iter_mut()
+        .find(|path| path.input == regular.input && path.support == regular.support)
+        .unwrap();
+    low.filter = MimoFilter::FirLowRate {
+        taps_low: vec![1.0, 0.5, 0.0, -0.25],
+        fs_low: 12_000.0,
+    };
+    let options = Options {
+        output_rate: 44_100,
+        ..Options::default()
+    };
+    let config = make_config(&chain, &temp.0, &temp.0, "", &options, Some(&mimo)).unwrap();
+    let bytes = &config
+        .coeffs
+        .iter()
+        .find(|(path, _)| path.to_string_lossy().ends_with(&suffix))
+        .unwrap()
+        .1;
+    assert_eq!(
+        u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
+        44_100
+    );
+    assert_eq!(
+        (bytes.len() - 44) / 4,
+        secs_dsp::rate::lowrate_to_rate(&[1.0, 0.5, 0.0, -0.25], 12_000.0, 44_100)
+            .unwrap()
+            .len()
+    );
+}
+
+#[test]
 fn empty_mimo_is_byte_identical_to_none() {
     let fixture = Fixture::load("camilla", "direct_no_subs");
     let temp = TempDir::new("empty_mimo");

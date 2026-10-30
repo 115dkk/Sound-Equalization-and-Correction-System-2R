@@ -1,6 +1,9 @@
 """Unit tests for macos_app_check.py (python -m unittest, no dependencies)."""
+import json
+import struct
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 import macos_app_check as m
@@ -80,6 +83,159 @@ class ReportTest(unittest.TestCase):
         problems = m.report_problems("run", {"ok": True}, self.work)
         self.assertEqual(len(problems), 1)
         self.assertIn("filter.txt is empty", problems[0])
+
+
+def passing_audio():
+    configs = []
+    for stage, channel, outputs in (("level_L", 1, [1, 2]), ("level_R", 2, [1, 2]), ("sweep", 1, [1, 1])):
+        configs.append({"stage": stage, "config": {
+            "method": "native", "input_device": "blackhole-in", "output_device": "blackhole-out",
+            "input_channel": channel, "output_channels": outputs, "roles": ["L", "R"],
+            "sample_rate": 48000, "sweep_length": 65536, "repetitions": 1,
+            "sweep_level_dbfs": -20, "share_mode": "shared", "timing": "none",
+        }})
+    return {
+        "ok": True, "device": "BlackHole 2ch", "input_device": "blackhole-in", "output_device": "blackhole-out",
+        "configurations": configs, "idle_meter": {"events": 5, "first_ms": 100},
+        "played_dbfs": -20, "levels": {"L": -20, "R": -20.01},
+        "records": {"records": [{"position": 1, "done": True, "roles": ["L", "R"],
+                                  "sources": {"L": "measured", "R": "measured"}}]},
+        "impulses": {role: {"sample_rate": 48000, "frames": 96480, "peak_amplitude": 0.9,
+                            "peak_ms": 10.02, "arrival_ms": 30, "direct_energy_fraction": 0.99}
+                     for role in ("L", "R")},
+    }
+
+
+def float_wav(samples):
+    payload = struct.pack(f"<{len(samples)}f", *samples)
+    return (b"RIFF" + struct.pack("<I", 36 + len(payload)) + b"WAVEfmt " +
+            struct.pack("<IHHIIHH", 16, 3, 1, 48000, 192000, 4, 32) +
+            b"data" + struct.pack("<I", len(payload)) + payload)
+
+
+class AudioReportTest(unittest.TestCase):
+    def test_three_configurations_and_both_real_channels_pass(self):
+        self.assertEqual(m.audio_problems(passing_audio(), "BlackHole 2ch"), [])
+
+    def test_at_least_five_idle_meter_events_are_required(self):
+        for value in (None, 4, True, 5.0):
+            audio = passing_audio()
+            if value is None:
+                audio.pop("idle_meter")
+            else:
+                audio["idle_meter"]["events"] = value
+            self.assertTrue(any("idle meter events" in issue
+                                for issue in m.audio_problems(audio, "BlackHole 2ch")))
+        audio = passing_audio()
+        audio["idle_meter"]["events"] = 6
+        self.assertEqual(m.audio_problems(audio, "BlackHole 2ch"), [])
+
+    def test_audio_is_required_only_when_requested(self):
+        with tempfile.TemporaryDirectory() as folder:
+            work = Path(folder)
+            for name, suffix in m.EXPORTS.items():
+                path = work / "export" / name / f"export{suffix}"
+                path.parent.mkdir(parents=True)
+                path.write_bytes(b"export")
+            report = {"ok": True}
+            self.assertEqual(m.report_problems("run", report, work), [])
+            self.assertIn("native audio step did not pass",
+                          m.report_problems("run", report, work, "BlackHole 2ch")[0])
+            report["facts"] = {"audio": passing_audio()}
+            self.assertEqual(m.report_problems("run", report, work, "BlackHole 2ch"), [])
+
+    def test_retried_attempts_become_notes_and_do_not_fail(self):
+        audio = passing_audio()
+        audio["retries"] = [{"stage": "level_R", "attempt": 1, "error": "level_play: gap"}]
+        self.assertEqual(m.audio_problems(audio, "BlackHole 2ch"), [])
+        self.assertEqual(m.audio_retries(audio), ["retried level_R after attempt 1: level_play: gap"])
+        self.assertEqual(m.audio_retries(None), [])
+        self.assertEqual(m.audio_retries({"retries": "x"}), [])
+
+    def test_missing_channel_silence_nan_or_bad_level_fails(self):
+        for role in ("L", "R"):
+            for value in (None, -120, -26.01, -13.99, float("nan"), float("inf"), True):
+                audio = passing_audio()
+                audio["levels"][role] = value
+                self.assertTrue(any("levels_get" in issue for issue in m.audio_problems(audio, "BlackHole 2ch")))
+        audio = passing_audio()
+        audio["levels"] = {"L": -26, "R": -14}
+        self.assertEqual(m.audio_problems(audio, "BlackHole 2ch"), [])
+
+    def test_wrong_channel_mapping_mock_method_and_unread_config_fail(self):
+        for index, field, value in ((0, "method", "mock"), (1, "input_channel", 1),
+                                    (2, "output_channels", [1, 2]), (0, "input_device", "default"),
+                                    (0, "roles", ["R", "L"])):
+            audio = passing_audio()
+            audio["configurations"][index]["config"][field] = value
+            self.assertTrue(any("measure_config_get" in issue for issue in m.audio_problems(audio, "BlackHole 2ch")))
+        audio = passing_audio()
+        audio["configurations"].pop()
+        self.assertTrue(m.audio_problems(audio, "BlackHole 2ch"))
+        self.assertTrue(m.audio_problems(passing_audio(), "Other Device"))
+        self.assertTrue(m.audio_problems({"ok": False}, "BlackHole 2ch"))
+
+    def test_both_roles_must_be_recorded_by_the_native_measurement(self):
+        for change in ({"done": False}, {"roles": ["L"]}, {"sources": {"L": "sample", "R": "measured"}}):
+            audio = passing_audio()
+            audio["records"]["records"][0].update(change)
+            self.assertTrue(any("measurement_records" in issue for issue in m.audio_problems(audio, "BlackHole 2ch")))
+
+    def test_silent_delayed_diffuse_truncated_or_missing_impulses_fail(self):
+        for role in ("L", "R"):
+            for field, value in (("peak_amplitude", 0), ("peak_amplitude", 0.01), ("peak_ms", 500),
+                                 ("arrival_ms", 600), ("arrival_ms", 40), ("frames", 48000),
+                                 ("direct_energy_fraction", 0.1), ("peak_amplitude", float("nan"))):
+                audio = passing_audio()
+                audio["impulses"][role][field] = value
+                self.assertTrue(m.audio_problems(audio, "BlackHole 2ch"), (role, field, value))
+            audio = passing_audio()
+            del audio["impulses"][role]
+            self.assertTrue(m.audio_problems(audio, "BlackHole 2ch"))
+
+    def test_the_real_saved_wav_is_used_for_impulse_facts(self):
+        samples = [0.0] * 96480
+        samples[480] = 1.0
+        wav = float_wav(samples)
+        facts = m.impulse_facts(wav, 0.020)
+        self.assertEqual(facts["peak_ms"], 10)
+        self.assertEqual(facts["arrival_ms"], 30)
+        self.assertEqual(facts["peak_amplitude"], 1)
+        self.assertEqual(facts["direct_energy_fraction"], 1)
+        with tempfile.TemporaryDirectory() as folder:
+            work = Path(folder)
+            (work / "audio.irs").mkdir()
+            for role in ("L", "R"):
+                (work / "audio.irs" / f"{role}_P1.wav").write_bytes(wav)
+            project = {"measurements": [{"pos": 1, "done": True,
+                                        "ir": {role: f"audio.irs/{role}_P1.wav" for role in ("L", "R")},
+                                        "t0": {"L": 0.020, "R": 0.020}}]}
+            (work / "audio.secs").write_text(json.dumps(project))
+            self.assertEqual(m.read_audio_impulses(work), {"L": facts, "R": facts})
+            project["measurements"][0]["ir"]["R"] = "sample.irs/R_P1.wav"
+            (work / "audio.secs").write_text(json.dumps(project))
+            with self.assertRaisesRegex(ValueError, "does not reference its native IR"):
+                m.read_audio_impulses(work)
+
+    def test_bad_wav_and_nonfinite_time_are_rejected(self):
+        valid = float_wav([0.0, 1.0])
+        for data in (b"", valid[:-1], float_wav([float("nan")]), valid.replace(b"WAVE", b"FAIL")):
+            with self.assertRaises(ValueError):
+                m.impulse_facts(data, 0)
+        with self.assertRaises(ValueError):
+            m.impulse_facts(valid, float("nan"))
+
+    def test_only_native_launch_receives_audio_device(self):
+        with tempfile.TemporaryDirectory() as folder:
+            work = Path(folder)
+            with patch.object(m, "run") as run:
+                m.self_test(Path("app.app"), "arm64", work, 1, "BlackHole 2ch")
+                native = run.call_args.args[0]
+                m.self_test(Path("app.app"), "x86_64", work, 1)
+                rosetta = run.call_args.args[0]
+            self.assertIn("SECS2R_SELF_TEST_AUDIO=BlackHole 2ch", native)
+            self.assertIn("SECS2R_SELF_TEST_AUDIO=", rosetta)
+            self.assertIn("--arch", rosetta)
 
 
 if __name__ == "__main__":

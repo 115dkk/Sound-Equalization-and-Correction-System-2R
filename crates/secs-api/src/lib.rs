@@ -26,9 +26,12 @@
 //!
 //! # Licence
 //!
-//! This crate is GPL-3.0-only. A program that links this crate forms a combined
-//! work and must be distributed under GPL-3.0-only-compatible terms when it is
-//! conveyed to others.
+//! This crate and the internal `secs-*` crates it depends on are
+//! AGPL-3.0-only. A program that links this crate forms a combined work and
+//! must be distributed under AGPL-3.0-only-compatible terms when it is conveyed
+//! to others, and a modified version that users interact with over a network
+//! must offer those users its source code (AGPL section 13). The SECS 2R
+//! desktop app remains GPL-3.0-only.
 //!
 //! # Embedded engine example
 //!
@@ -68,6 +71,7 @@
 //!     mdat_scope: None,
 //!     design_name: Some("Living room".into()),
 //!     camilla_devices: None,
+//!     extra_rates: Vec::new(),
 //! }))? else {
 //!     unreachable!("export has one response variant")
 //! };

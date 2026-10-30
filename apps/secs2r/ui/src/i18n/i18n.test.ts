@@ -72,9 +72,10 @@ describe("catalogs", () => {
     }
   });
 
-  it("keeps the Korean register: 합니다체 sentences, no 해요체 statements", () => {
-    // -세요 instructions are allowed; statements ending in -어요/-아요/-해요/-예요 are not.
-    const friendly = /(?:어요|아요|해요|여요|예요|에요|래요|네요|군요|지요|죠)[.!?]?$/;
+  it("keeps the Korean register: 하십시오체 throughout, no 해요체", () => {
+    // Statements end in -ㅂ니다 and instructions in -십시오 (maintainer, 2026-10-30);
+    // -세요 instructions and statements ending in -어요/-아요/-해요/-예요 are not allowed.
+    const friendly = /(?:세요|어요|아요|해요|여요|예요|에요|래요|네요|군요|지요|죠)[.!?]?$/;
     const offenders = Object.entries(catalogs.ko).filter(([, text]) => text.split(/(?<=[.!?])\s+/).some((sentence) => friendly.test(sentence.trim())));
     expect(offenders).toEqual([]);
   });

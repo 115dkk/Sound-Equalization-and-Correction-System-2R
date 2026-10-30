@@ -108,11 +108,40 @@ fn measurement_curves_match_oracle_and_selection() {
                 .iter()
                 .find(|v| v["role"] == curve.role && v["position"].as_i64() == Some(curve.position))
                 .unwrap();
+            let (samples, rate) =
+                secs_project::load_ir(&path, &curve.role, curve.position).unwrap();
+            let upstream = secs_engine::display::magnitude_db(
+                &samples
+                    .iter()
+                    .map(|&sample| f64::from(sample))
+                    .collect::<Vec<_>>(),
+                f64::from(rate),
+            );
             compare(
-                &format!("{name}/measurement/{}/{}", curve.role, curve.position),
-                &curve.values,
+                &format!(
+                    "{name}/upstream_measurement/{}/{}",
+                    curve.role, curve.position
+                ),
+                &upstream,
                 &fx.f64s(&want["values"]),
                 1e-9,
+            );
+            // U17 preserves upstream's curve shape while sharing one reference:
+            // applying its per-curve midrange reference recovers magnitude_db.
+            let own_reference = secs_engine::display::midrange_reference(&curve.values);
+            let normalized: Vec<_> = curve
+                .values
+                .iter()
+                .map(|value| value - own_reference)
+                .collect();
+            compare(
+                &format!(
+                    "{name}/shared_measurement/{}/{}",
+                    curve.role, curve.position
+                ),
+                &normalized,
+                &upstream,
+                1e-12,
             );
         }
         let one = &result.curves[0];
@@ -126,6 +155,7 @@ fn measurement_curves_match_oracle_and_selection() {
             panic!()
         };
         assert_eq!(filtered.curves, vec![one.clone()]);
+        assert_eq!(filtered.reference, result.reference);
         let preview = graph(&service, ResultTab::Spl, Some("L"));
         assert_eq!(preview.grid.len(), 1390);
         assert_eq!(preview.curves.len(), 2);
@@ -136,6 +166,177 @@ fn measurement_curves_match_oracle_and_selection() {
         );
         std::fs::remove_dir_all(root).unwrap();
     }
+}
+
+fn record_ir(
+    store: &mut secs_project::MeasurementStore,
+    role: &str,
+    position: i64,
+    samples: Vec<f32>,
+) {
+    store
+        .record(
+            secs_project::MeasurementResult {
+                role: role.into(),
+                pos: position,
+                ir: samples,
+                sample_rate: 48_000,
+                t0_s: 0.0,
+                spl_db: None,
+                spl_offset_db: None,
+                snr_db: None,
+                uuid: None,
+                source: None,
+                source_info: None,
+            },
+            None,
+        )
+        .unwrap();
+}
+
+fn curve_at<'a>(
+    result: &'a MeasurementCurvesResult,
+    role: &str,
+    position: i64,
+) -> &'a MeasurementCurve {
+    result
+        .curves
+        .iter()
+        .find(|curve| curve.role == role && curve.position == position)
+        .unwrap()
+}
+
+fn value_on_grid(grid: &[f64], values: &[f64], frequency: f64) -> f64 {
+    let index = grid
+        .iter()
+        .enumerate()
+        .min_by(|(_, left), (_, right)| {
+            (**left - frequency)
+                .abs()
+                .total_cmp(&(**right - frequency).abs())
+        })
+        .unwrap()
+        .0;
+    values[index]
+}
+
+fn value_at(result: &MeasurementCurvesResult, curve: &MeasurementCurve, frequency: f64) -> f64 {
+    value_on_grid(&result.grid, &curve.values, frequency)
+}
+
+#[test]
+fn measurement_curves_share_the_configured_reference() {
+    let root = root("measurement-shared-reference");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let path = root.join("room.secs");
+    let project = secs_project::Project::from_preset("2.1").unwrap();
+    let mut store = secs_project::MeasurementStore::new(&path, project);
+
+    let mut impulse = vec![0.0; 16_384];
+    impulse[0] = 1.0;
+    let lowpass =
+        secs_dsp::iir::butter(2, &[100.0], secs_dsp::iir::BType::Lowpass, 48_000.0).unwrap();
+    let sub = secs_dsp::iir::sosfilt(&lowpass, &impulse).unwrap();
+    let sub_f32: Vec<_> = sub.iter().map(|&sample| sample as f32).collect();
+    let minus_ten = 10.0_f64.powf(-10.0 / 20.0) as f32;
+
+    // Storage order differs from configuration order. L has no position-one
+    // measurement, so its lowest position must remain the reference instead of R.
+    record_ir(&mut store, "SW1", 1, sub_f32.clone());
+    record_ir(
+        &mut store,
+        "R",
+        1,
+        impulse
+            .iter()
+            .map(|&sample| sample as f32 * minus_ten)
+            .collect(),
+    );
+    record_ir(
+        &mut store,
+        "L",
+        2,
+        impulse.iter().map(|&sample| sample as f32).collect(),
+    );
+    store.save().unwrap();
+
+    let service = Service::new(Deps::default());
+    open(&service, &path);
+    let Response::MeasurementCurves(result) =
+        call(&service, Request::MeasurementCurves(Default::default()))
+    else {
+        panic!()
+    };
+    assert_eq!(
+        result.reference,
+        Some(CurveReference {
+            role: "L".into(),
+            position: 2,
+            band: CurveReferenceBand::Mid,
+        })
+    );
+    let sub_curve = curve_at(&result, "SW1", 1);
+    let sub_passband = value_at(&result, sub_curve, 40.0);
+    assert!((-1.0..0.5).contains(&sub_passband), "{sub_passband}");
+    let upstream_sub = secs_engine::display::magnitude_db(
+        &sub_f32
+            .iter()
+            .map(|&sample| f64::from(sample))
+            .collect::<Vec<_>>(),
+        48_000.0,
+    );
+    let upstream_passband = value_on_grid(&result.grid, &upstream_sub, 40.0);
+    assert!(upstream_passband > 20.0, "{upstream_passband}");
+    let scaled = value_at(&result, curve_at(&result, "R", 1), 1000.0);
+    assert!((scaled + 10.0).abs() < 1e-5, "{scaled}");
+
+    let Response::MeasurementCurves(filtered) = call(
+        &service,
+        Request::MeasurementCurves(MeasurementCurvesParams {
+            positions: Some(vec![1]),
+            roles: Some(vec!["SW1".into()]),
+        }),
+    ) else {
+        panic!()
+    };
+    assert_eq!(filtered.reference, result.reference);
+    assert_eq!(filtered.curves, vec![sub_curve.clone()]);
+
+    let sub_path = root.join("sub-only.secs");
+    let mut sub_project = secs_project::Project::from_preset("2.1").unwrap();
+    sub_project
+        .config
+        .speakers
+        .retain(|speaker| speaker.role == "SW1");
+    let mut sub_store = secs_project::MeasurementStore::new(&sub_path, sub_project);
+    record_ir(&mut sub_store, "SW1", 4, sub_f32);
+    sub_store.save().unwrap();
+    let sub_service = Service::new(Deps::default());
+    open(&sub_service, &sub_path);
+    let Response::MeasurementCurves(sub_only) =
+        call(&sub_service, Request::MeasurementCurves(Default::default()))
+    else {
+        panic!()
+    };
+    assert_eq!(
+        sub_only.reference,
+        Some(CurveReference {
+            role: "SW1".into(),
+            position: 4,
+            band: CurveReferenceBand::Sub,
+        })
+    );
+    let sub_curve = curve_at(&sub_only, "SW1", 4);
+    let band: Vec<_> = sub_only
+        .grid
+        .iter()
+        .zip(&sub_curve.values)
+        .filter(|(frequency, _)| (40.0..=120.0).contains(*frequency))
+        .map(|(_, value)| *value)
+        .collect();
+    assert!((secs_dsp::pairwise_sum(&band) / band.len() as f64).abs() < 1e-12);
+    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -191,7 +392,10 @@ fn measurement_curves_use_the_corrected_ir() {
         )],
         ..Default::default()
     };
-    let mut store = secs_project::MeasurementStore::new(&path, secs_project::Project::default());
+    let mut store = secs_project::MeasurementStore::new(
+        &path,
+        secs_project::Project::from_preset("2.0").unwrap(),
+    );
     store
         .record(
             secs_project::MeasurementResult {

@@ -138,6 +138,38 @@ pub(crate) fn dispatch(
         Request::AppSettingsSet(params) => service
             .app_settings_set(params)
             .map(Response::AppSettingsSet),
+        Request::ApplyStatus => Ok(Response::ApplyStatus(service.apply_status())),
+        Request::ApplyCamilla(params) => service
+            .start_apply_camilla(params, events)
+            .map(Response::ApplyCamilla),
+        Request::ApplyEqapo => service.start_apply_eqapo(events).map(Response::ApplyEqapo),
+        Request::RevertEqapo => service.revert_eqapo().map(Response::RevertEqapo),
+        Request::ApplySettingsSet(settings) => service
+            .apply_settings_set(settings)
+            .map(Response::ApplySettingsSet),
+        Request::HostInstall => service.host_install().map(Response::HostInstall),
+        Request::HostUninstall => service.host_uninstall().map(Response::HostUninstall),
+        Request::HostStopManaging => service.host_stop_managing().map(Response::HostStopManaging),
+        Request::UpdateStatus => Ok(Response::UpdateStatus(
+            service.update_status(service.deps.updates.status()),
+        )),
+        Request::UpdateCheck => service
+            .deps
+            .updates
+            .check()
+            .map(|status| Response::UpdateCheck(service.update_status(status))),
+        Request::UpdateDownload => service
+            .deps
+            .updates
+            .download()
+            .map(|status| Response::UpdateDownload(service.update_status(status))),
+        Request::UpdateRestart => service.deps.updates.restart().map(Response::UpdateRestart),
+        Request::UpdateNoticeDismiss => Ok(Response::UpdateNoticeDismiss(
+            service.update_status(service.deps.updates.dismiss_notice()),
+        )),
+        Request::UpdateOpenRelease(params) => service
+            .open_release_page(&params.version)
+            .map(Response::UpdateOpenRelease),
         Request::LocalApiStatus => service
             .deps
             .host

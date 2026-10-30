@@ -21,8 +21,8 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 use secs_project::MeasurementResult;
 use secs_types::calibration::CalibrationSettings;
 use secs_types::ipc::{
-    CalibrateParams, ExportKind, ExportParams, JobCancelParams, JobId, JobResult, JobStatus,
-    MdatScope, MimoParams, Response,
+    CalibrateParams, DspSetParams, ExportKind, ExportParams, JobCancelParams, JobId, JobResult,
+    JobStatus, MdatScope, MimoParams, OutputRateChoice, Response,
 };
 
 static TEMP: AtomicU64 = AtomicU64::new(0);
@@ -99,6 +99,52 @@ fn call_ok(service: &Service, request: Request, events: Arc<dyn EventSink>) -> R
         panic!("request must succeed");
     };
     *response
+}
+
+#[test]
+fn low_protect_edits_persist_and_mark_results_stale() {
+    let root = temp_root("low-protect");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room");
+    let initial = service();
+    open(&initial, &path);
+    let events = Arc::new(Events::default());
+    let job = start_calibration(&initial, events.clone(), settings);
+    finished_result(events.wait(job, Duration::from_secs(120)));
+    assert!(!read_results(&initial).calibration.unwrap().stale);
+    call_ok(
+        &initial,
+        Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+            edit: secs_types::settings_edit::SettingEdit::LowProtect { on: true },
+        }),
+        Arc::new(NoEvents),
+    );
+    assert!(read_results(&initial).calibration.unwrap().stale);
+    call_ok(
+        &initial,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+        Arc::new(NoEvents),
+    );
+    let reopened = service();
+    open(&reopened, &path);
+    let Response::CalibrationSettingsGet(settings) = call_ok(
+        &reopened,
+        Request::CalibrationSettingsGet,
+        Arc::new(NoEvents),
+    ) else {
+        panic!()
+    };
+    assert!(settings.low_protect);
+    assert!(read_results(&reopened).calibration.unwrap().stale);
+    call_ok(
+        &reopened,
+        Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+            edit: secs_types::settings_edit::SettingEdit::LowProtect { on: false },
+        }),
+        Arc::new(NoEvents),
+    );
+    assert!(!read_results(&reopened).calibration.unwrap().stale);
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -240,8 +286,15 @@ fn new_projects_match_upstream_bytes() {
         let mut created =
             secs_project::Project::load_text(&fs::read_to_string(&path).unwrap()).unwrap();
         created.extra.retain(|(key, _)| key != "devices");
+        let saved = created.save_text();
+        let legacy = saved
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("\"output_rate\":"))
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n";
         assert_eq!(
-            created.save_text().into_bytes(),
+            legacy.into_bytes(),
             fixture.blob(&fixture.outputs()["project"]),
             "{}",
             fixture.id
@@ -326,6 +379,7 @@ fn tutorial_projects_block_save_without_writing() {
             mdat_scope: None,
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         Arc::new(NoEvents),
     ) else {
@@ -481,6 +535,7 @@ fn export_scope_and_wait(
             mdat_scope,
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         events.clone(),
     ) else {
@@ -492,6 +547,61 @@ fn export_scope_and_wait(
         panic!("export result must be returned");
     };
     result
+}
+
+#[test]
+fn changing_only_output_rate_keeps_calibration_fresh_for_export() {
+    let root = temp_root("output-rate-fresh");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "dolby");
+    let service = deterministic_service();
+    open(&service, &path);
+
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&service, calibration_events.clone(), settings);
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+
+    let Response::DspSet(camilla) = call_ok(
+        &service,
+        Request::DspSet(DspSetParams {
+            preset: Some("camilla".into()),
+            fields: None,
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("CamillaDSP preset must be selected")
+    };
+    let mut fields = camilla.fields;
+    fields.output_rate = OutputRateChoice::Fixed(96_000);
+    let Response::DspSet(changed) = call_ok(
+        &service,
+        Request::DspSet(DspSetParams {
+            preset: None,
+            fields: Some(fields),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("output rate must change")
+    };
+    assert_eq!(changed.fields.output_rate, OutputRateChoice::Fixed(96_000));
+
+    let result = export_and_wait(
+        &service,
+        ExportKind::CamillaDsp,
+        &root.join("export"),
+        Arc::new(Events::default()),
+    );
+    assert!(!result.stale);
+    assert_eq!(result.output_rate, 96_000);
+    assert!(result.notes.is_empty());
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &fs::read(Path::new(&result.folder).join("secs-design.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(manifest["sample_rate"], 96_000);
+    assert_eq!(manifest["design_sample_rate"], 48_000);
+    assert_eq!(manifest["output_rate_auto"], false);
+    fs::remove_dir_all(root).unwrap();
 }
 
 fn calibrate_and_run_mimo(service: &Service, settings: &CalibrationSettings) {
@@ -676,6 +786,7 @@ fn resampled_calibration_and_cached_mdat_export_preserve_original_ir() {
             mdat_scope: None,
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         Arc::new(NoEvents),
     ) else {
@@ -752,6 +863,8 @@ fn measurement_mdat_exports_every_position_without_a_result() {
         Arc::new(Events::default()),
     );
     assert!(!result.stale);
+    assert_eq!(result.output_rate, 48_000);
+    assert!(result.notes.is_empty());
     let folder = PathBuf::from(&result.folder);
     assert_eq!(folder.parent(), Some(base.as_path()));
     assert_eq!(
@@ -1028,6 +1141,7 @@ fn mdat_scope_is_refused_for_other_kinds() {
                 mdat_scope: Some(MdatScope::All),
                 design_name: None,
                 camilla_devices: None,
+                extra_rates: Vec::new(),
             }),
             Arc::new(NoEvents),
         ) else {
@@ -1046,6 +1160,7 @@ fn mdat_scope_is_refused_for_other_kinds() {
             mdat_scope: Some(MdatScope::Measurements),
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         Arc::new(NoEvents),
     ) else {
@@ -1096,6 +1211,7 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
             mdat_scope: None,
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         Arc::new(NoEvents),
     ) else {
@@ -1173,6 +1289,7 @@ fn oracle_project_calibrates_recommends_xo_and_exports() {
                 mdat_scope: None,
                 design_name: None,
                 camilla_devices: None,
+                extra_rates: Vec::new(),
             }),
             events.clone(),
         ) else {
@@ -1491,6 +1608,7 @@ fn named_filter_bundles_replace_heal_index_hash_every_file_and_share_design_id()
             mdat_scope: None,
             design_name: Some("bad/name".into()),
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         Arc::new(NoEvents),
     ) else {
@@ -1513,6 +1631,7 @@ fn named_filter_bundles_replace_heal_index_hash_every_file_and_share_design_id()
                 mdat_scope: None,
                 design_name: design_name.map(str::to_owned),
                 camilla_devices: None,
+                extra_rates: Vec::new(),
             }),
             events.clone(),
         ) else {
@@ -1553,9 +1672,14 @@ fn named_filter_bundles_replace_heal_index_hash_every_file_and_share_design_id()
         export(ExportKind::EqualizerApo, Some("Cinema")),
         export(ExportKind::Convolution, Some("Cinema")),
     ] {
+        assert_eq!(result.output_rate, 48_000);
+        assert!(result.notes.is_empty());
         let folder = PathBuf::from(&result.folder);
         let manifest: serde_json::Value =
             serde_json::from_slice(&fs::read(folder.join("secs-design.json")).unwrap()).unwrap();
+        assert_eq!(manifest["sample_rate"], 48_000);
+        assert_eq!(manifest["design_sample_rate"], 48_000);
+        assert_eq!(manifest["output_rate_auto"], false);
         design_ids.push(manifest["design_id"].as_str().unwrap().to_owned());
         let files = manifest["files"].as_array().unwrap();
         assert_eq!(files.len() + 1, count_files(&folder));
@@ -1876,6 +2000,7 @@ fn stale_calibration_exports_with_flag_and_cache_survives_reopen() {
             mdat_scope: None,
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         Arc::new(NoEvents),
     ) else {
@@ -1968,6 +2093,244 @@ fn cancelled_calibration_preserves_previous_results() {
         other => panic!("unexpected results response: {other:?}"),
     };
     assert_eq!(current, previous);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn calibrate_with_mimo_matches_separate_runs_and_orders_progress() {
+    let root = temp_root("calibrate-with-mimo");
+    fs::create_dir_all(&root).unwrap();
+    let (path, mut settings) = write_case(&root, "room_dba");
+    settings.mimo_on = true;
+    settings.mimo_max_supports = 1;
+    let service = deterministic_service();
+    open(&service, &path);
+
+    let combined_events = Arc::new(Events::default());
+    let Response::Calibrate(started) = call_ok(
+        &service,
+        Request::Calibrate(CalibrateParams {
+            settings: Some(settings.clone()),
+            mimo: true,
+            ..Default::default()
+        }),
+        combined_events.clone(),
+    ) else {
+        panic!("combined calibration must start")
+    };
+    assert_eq!(
+        finished_result(combined_events.wait(started.job, Duration::from_secs(120))),
+        JobResult::Calibration
+    );
+    let stages: Vec<_> = lock(&combined_events.values)
+        .iter()
+        .filter_map(|event| match event {
+            JobEvent::Progress { stage, .. } => Some(stage.clone()),
+            _ => None,
+        })
+        .collect();
+    let calibration_stage = stages
+        .iter()
+        .position(|stage| *stage == "engine.design")
+        .expect("calibration progress");
+    let mimo_stage = stages
+        .iter()
+        .position(|stage| *stage == "engine.mimo")
+        .expect("MIMO progress");
+    assert!(calibration_stage < mimo_stage);
+    let combined = read_results(&service);
+    assert!(!combined.calibration.as_ref().unwrap().stale);
+    assert!(!combined.mimo.as_ref().unwrap().stale);
+
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&service, calibration_events.clone(), settings.clone());
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+    let mimo_events = Arc::new(Events::default());
+    let Response::Mimo(mimo) = call_ok(
+        &service,
+        Request::Mimo(MimoParams {
+            settings: Some(settings),
+        }),
+        mimo_events.clone(),
+    ) else {
+        panic!("separate MIMO must start")
+    };
+    finished_result(mimo_events.wait(mimo.job, Duration::from_secs(120)));
+    let separate = read_results(&service);
+    assert_eq!(combined.calibration, separate.calibration);
+    assert_eq!(combined.mimo, separate.mimo);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn calibrate_with_mimo_refuses_disabled_and_too_few_positions_before_starting() {
+    let root = temp_root("calibrate-mimo-preconditions");
+    fs::create_dir_all(&root).unwrap();
+
+    let (disabled_path, disabled_settings) = write_case(&root, "room_dba");
+    let disabled = service();
+    open(&disabled, &disabled_path);
+    let Envelope::Err(error) = disabled.call(
+        Request::Calibrate(CalibrateParams {
+            settings: Some(disabled_settings),
+            mimo: true,
+            ..Default::default()
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("disabled MIMO must be refused")
+    };
+    assert_eq!(error.code, ErrorCode::EngineInput);
+    assert!(error.params.is_empty());
+    assert_eq!(error.detail, "invalid input: MIMO is disabled");
+    let Response::Jobs(jobs) = call_ok(&disabled, Request::Jobs, Arc::new(NoEvents)) else {
+        panic!()
+    };
+    assert!(jobs.is_empty());
+
+    let few_root = root.join("few");
+    fs::create_dir_all(&few_root).unwrap();
+    let (few_path, mut settings) = write_case(&few_root, "room_dba");
+    let mut store = secs_project::MeasurementStore::open(&few_path).unwrap();
+    let secs_project::PyJson::Array(measurements) = &mut store.project_mut().measurements else {
+        panic!("measurements must be an array")
+    };
+    measurements.truncate(2);
+    store.save().unwrap();
+    settings.mimo_on = true;
+    let few = service();
+    open(&few, &few_path);
+    let Envelope::Err(error) = few.call(
+        Request::Calibrate(CalibrateParams {
+            settings: Some(settings),
+            mimo: true,
+            ..Default::default()
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("two positions must be refused")
+    };
+    assert_eq!(error.code, ErrorCode::EngineInput);
+    assert!(error.params.is_empty());
+    assert!(error.detail.contains("MIMO 는 3곳 이상 필요"));
+    let Response::Jobs(jobs) = call_ok(&few, Request::Jobs, Arc::new(NoEvents)) else {
+        panic!()
+    };
+    assert!(jobs.is_empty());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[derive(Debug)]
+struct CancelOnMimo {
+    service: Arc<Service>,
+    events: Events,
+    requested: std::sync::atomic::AtomicBool,
+}
+
+impl EventSink for CancelOnMimo {
+    fn send(&self, event: JobEvent) {
+        self.events.send(event.clone());
+        if matches!(&event, JobEvent::Progress { stage, done: 0, .. } if stage == "engine.mimo")
+            && !self.requested.swap(true, Ordering::SeqCst)
+        {
+            let job = match event {
+                JobEvent::Progress { job, .. } => job,
+                _ => unreachable!(),
+            };
+            let response = self.service.call(
+                Request::JobCancel(JobCancelParams { job }),
+                Arc::new(NoEvents),
+            );
+            assert!(matches!(response, Envelope::Ok(_)));
+        }
+    }
+}
+
+#[test]
+fn cancelling_calibrate_during_mimo_keeps_only_the_new_calibration() {
+    let root = temp_root("cancel-calibrate-mimo");
+    fs::create_dir_all(&root).unwrap();
+    let (path, mut settings) = write_case(&root, "room_dba");
+    settings.mimo_on = true;
+    settings.mimo_max_supports = 1;
+    let service = Arc::new(service());
+    open(&service, &path);
+    let events = Arc::new(CancelOnMimo {
+        service: service.clone(),
+        events: Events::default(),
+        requested: std::sync::atomic::AtomicBool::new(false),
+    });
+    let Response::Calibrate(started) = call_ok(
+        &service,
+        Request::Calibrate(CalibrateParams {
+            settings: Some(settings),
+            mimo: true,
+            ..Default::default()
+        }),
+        events.clone(),
+    ) else {
+        panic!("combined calibration must start")
+    };
+    let finished = events.events.wait(started.job, Duration::from_secs(120));
+    assert!(matches!(
+        finished,
+        JobEvent::Finished {
+            status: JobStatus::Cancelled,
+            ..
+        }
+    ));
+    assert!(events.requested.load(Ordering::SeqCst));
+    let results = read_results(&service);
+    assert!(!results.calibration.unwrap().stale);
+    assert!(results.mimo.is_none());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn mimo_failure_after_combined_calibration_keeps_calibration_and_marks_stage() {
+    let root = temp_root("failed-calibrate-mimo");
+    fs::create_dir_all(&root).unwrap();
+    let (path, mut settings) = write_case(&root, "room_dba");
+    let mut store = secs_project::MeasurementStore::open(&path).unwrap();
+    store
+        .project_mut()
+        .config
+        .speakers
+        .retain(|speaker| speaker.role == "L");
+    store.project_mut().config.preset = "custom".into();
+    store.save().unwrap();
+    settings.mimo_on = true;
+    settings.mimo_max_supports = 1;
+    let service = service();
+    open(&service, &path);
+    let events = Arc::new(Events::default());
+    let Response::Calibrate(started) = call_ok(
+        &service,
+        Request::Calibrate(CalibrateParams {
+            settings: Some(settings),
+            mimo: true,
+            ..Default::default()
+        }),
+        events.clone(),
+    ) else {
+        panic!("combined calibration must start")
+    };
+    let JobEvent::Finished {
+        status,
+        result,
+        error: Some(error),
+        ..
+    } = events.wait(started.job, Duration::from_secs(120))
+    else {
+        panic!("combined job must fail")
+    };
+    assert_eq!(status, JobStatus::Failed);
+    assert!(result.is_none());
+    assert_eq!(error.code, ErrorCode::EngineInput);
+    assert_eq!(error.params.get("stage").map(String::as_str), Some("mimo"));
+    let results = read_results(&service);
+    assert!(!results.calibration.unwrap().stale);
+    assert!(results.mimo.is_none());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -2152,7 +2515,9 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
     else {
         panic!("MIMO completion must be returned");
     };
-    let summary = read_results(&service).mimo.unwrap();
+    let results = read_results(&service);
+    let calibration_summary = results.calibration.unwrap();
+    let summary = results.mimo.unwrap();
     assert!(!summary.stale);
     let direct = secs_engine_testkit::production_case("room_dba", 1);
     let ctx = secs_compute::Context::new(
@@ -2172,6 +2537,45 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
     .unwrap();
     assert_eq!(cached_paths(&path), direct_mimo.paths);
     assert!(summary.support_count > 0);
+    let expected_rows = direct.design.spectra.positions.len() * direct.design.chain.mains.len();
+    assert_eq!(calibration_summary.late_energy.len(), expected_rows);
+    assert_eq!(summary.scorecard.len(), direct.design.chain.mains.len());
+    assert_eq!(summary.late_energy.len(), expected_rows);
+    for score in &direct_mimo.scorecard {
+        let restored = summary
+            .scorecard
+            .iter()
+            .find(|row| row.role == score.role)
+            .unwrap();
+        assert_eq!(
+            restored.after_mimo.in1_20.to_bits(),
+            score.after_mimo.in1_20.to_bits()
+        );
+        assert_eq!(
+            restored.after_mimo.gd_20.to_bits(),
+            score.after_mimo.gd_20.to_bits()
+        );
+    }
+    let main_position = direct.design.spectra.main_position;
+    for role in direct_mimo
+        .paths
+        .paths
+        .iter()
+        .map(|path| path.input.as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        let after = calibration_summary
+            .late_energy
+            .iter()
+            .find(|row| row.position == main_position && row.role == role)
+            .unwrap();
+        let after_mimo = summary
+            .late_energy
+            .iter()
+            .find(|row| row.position == main_position && row.role == role)
+            .unwrap();
+        assert!(after_mimo.after_mimo_db < after.after_db);
+    }
 
     let blocked_folder = root.join("blocked-mimo-FilterText");
     let Envelope::Err(error) = service.call(
@@ -2181,6 +2585,7 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
             mdat_scope: None,
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         Arc::new(NoEvents),
     ) else {
@@ -2228,6 +2633,14 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
     );
     let reopened = deterministic_service();
     open(&reopened, &path);
+    let reopened_results = read_results(&reopened);
+    assert_eq!(
+        reopened_results.calibration.unwrap().late_energy,
+        calibration_summary.late_energy
+    );
+    let reopened_mimo = reopened_results.mimo.unwrap();
+    assert_eq!(reopened_mimo.scorecard, summary.scorecard);
+    assert_eq!(reopened_mimo.late_energy, summary.late_energy);
     let cached = export_and_wait(
         &reopened,
         ExportKind::CamillaDsp,
@@ -2333,6 +2746,7 @@ fn room_dba_mimo_runs_and_becomes_stale_after_recalibration() {
                     mdat_scope: None,
                     design_name: None,
                     camilla_devices: None,
+                    extra_rates: Vec::new(),
                 }),
                 events.clone(),
             ) else {
@@ -2992,6 +3406,7 @@ fn reopened_stale_cache_blocks_mdat_but_allows_camilla() {
             mdat_scope: None,
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         Arc::new(NoEvents),
     ) else {
@@ -3036,6 +3451,7 @@ fn cached_mdat_export_rejects_project_replacement_before_writing() {
             mdat_scope: None,
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }),
         events.clone(),
     ) else {
@@ -3456,4 +3872,79 @@ fn cache_save_failure_is_a_warning_on_a_successful_calculation() {
 
 fn export_mode(settings: &CalibrationSettings) -> String {
     secs_camilla::note::mode_name(settings.mode, settings.ultra_ms)
+}
+
+#[test]
+fn rc_agreement_calibration_fails_with_typed_position_reason() {
+    let root = temp_root("rc-agreement");
+    fs::create_dir_all(&root).unwrap();
+    let service = service();
+    call_ok(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: root.join("empty.secs").to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    let events = Arc::new(Events::default());
+    let job = start_calibration(
+        &service,
+        events.clone(),
+        CalibrationSettings {
+            rc_hi_basis: secs_types::calibration::RcHiBasis::Agreement,
+            ..Default::default()
+        },
+    );
+    let JobEvent::Finished {
+        error: Some(error), ..
+    } = events.wait(job, Duration::from_secs(30))
+    else {
+        panic!("agreement must fail without measured positions")
+    };
+    assert_eq!(error.code, ErrorCode::EngineInput);
+    assert_eq!(error.params["reason"], "rc_agreement_positions");
+    assert_eq!(error.params["measured"], "0");
+    assert_eq!(error.params["required"], "3");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn rc_upper_edits_mark_calibration_stale() {
+    use secs_types::{calibration::RcHiBasis, settings_edit::SettingEdit};
+    let root = temp_root("rc-upper-stale");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room");
+    let service = service();
+    open(&service, &path);
+    let events = Arc::new(Events::default());
+    let job = start_calibration(&service, events.clone(), settings.clone());
+    finished_result(events.wait(job, Duration::from_secs(120)));
+    for edit in [
+        SettingEdit::RcHiBasis {
+            basis: RcHiBasis::Lenient,
+        },
+        SettingEdit::RcHiTransition { factor: 2 },
+    ] {
+        call_ok(
+            &service,
+            Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+                edit,
+            }),
+            Arc::new(NoEvents),
+        );
+        assert!(read_results(&service).calibration.unwrap().stale);
+        call_ok(
+            &service,
+            Request::CalibrationSettingsSet(secs_types::ipc::CalibrationSettingsParams {
+                settings: settings.clone(),
+            }),
+            Arc::new(NoEvents),
+        );
+        assert!(!read_results(&service).calibration.unwrap().stale);
+    }
+    fs::remove_dir_all(root).unwrap();
 }

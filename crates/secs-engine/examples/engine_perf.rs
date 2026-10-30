@@ -28,6 +28,8 @@ mod grid;
 mod input;
 #[path = "../src/levels.rs"]
 mod levels;
+#[path = "../src/low_protect.rs"]
+mod low_protect;
 #[path = "../src/measurement.rs"]
 mod measurement;
 #[path = "../src/memory.rs"]
@@ -64,8 +66,8 @@ pub use calibration::{
 };
 pub use chain::{BaRow, StageResponses, input_response, stage_responses};
 pub use design::{
-    Design, DesignRequest, DesignSpectra, FitStage, FitterFactory, MainDesign, SubDesign, design,
-    production_fitters, production_fitters_with,
+    Design, DesignRequest, DesignSpectra, FitStage, FitterFactory, MainDesign, RoleLateEnergy,
+    SubDesign, design, late_energy, production_fitters, production_fitters_with,
 };
 pub use error::EngineError;
 pub use export_view::{ExportView, export_view};

@@ -144,6 +144,9 @@ pub fn load_fixture(fx: &Fixture) -> Case {
         max_latency_ms: optional(&v["max_latency_ms"]),
         rc_range: (number(&v["rc_range"][0]), optional(&v["rc_range"][1])),
         room_volume_m3: optional(&v["room_volume_m3"]),
+        rc_hi_basis: secs_types::calibration::RcHiBasis::Strict,
+        rc_hi_transition: 1,
+        low_protect: false,
         phase_frac: number(&v["phase_frac"]),
         sub_manual: pairs(&v["sub_manual"])
             .map(|(r, m)| (r.to_owned(), manual(m)))

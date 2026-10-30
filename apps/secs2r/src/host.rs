@@ -51,6 +51,15 @@ impl TauriHost {
                 .file()
                 .add_filter("Mic calibration", &["txt", "cal", "frd"])
                 .add_filter("All files", &["*"]),
+            OpenFileKind::CamillaExe => {
+                let dialog = self.app.dialog().file();
+                let extensions = camilla_executable_extensions(std::env::consts::OS);
+                if extensions.is_empty() {
+                    dialog
+                } else {
+                    dialog.add_filter("Executable", extensions)
+                }
+            }
         }
     }
 
@@ -130,6 +139,13 @@ impl Host for TauriHost {
             .map_err(host_error)
     }
 
+    fn open_release_page(&self, url: &str) -> Result<(), IpcError> {
+        self.app
+            .opener()
+            .open_url(url, None::<&str>)
+            .map_err(host_error)
+    }
+
     fn open_folder(&self, path: &Path) -> Result<(), IpcError> {
         self.app
             .opener()
@@ -171,6 +187,10 @@ fn host_error(error: impl std::fmt::Display) -> IpcError {
 }
 
 // No URL is accepted from IPC. Only the operating system chooses a fixed guide.
+fn camilla_executable_extensions(os: &str) -> &'static [&'static str] {
+    if os == "windows" { &["exe"] } else { &[] }
+}
+
 fn gpu_help_url(os: &str) -> Option<&'static str> {
     match os {
         "windows" => Some(
@@ -184,6 +204,13 @@ fn gpu_help_url(os: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn camilla_executable_filter_is_windows_only() {
+        assert_eq!(camilla_executable_extensions("windows"), &["exe"]);
+        assert!(camilla_executable_extensions("linux").is_empty());
+        assert!(camilla_executable_extensions("macos").is_empty());
+    }
 
     #[test]
     fn gpu_help_only_opens_the_two_fixed_official_platform_guides() {

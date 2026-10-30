@@ -5,6 +5,12 @@
 // come from the generated `bindings/rules`, presets, mode specs and new-project
 // settings from the responses the service recorded (`./recorded`).
 import type { AppSettings } from "./bindings/AppSettings";
+import type { ApplyStatus } from "./bindings/ApplyStatus";
+import type { CamillaApplyStatus } from "./bindings/CamillaApplyStatus";
+import type { EqApoApplyStatus } from "./bindings/EqApoApplyStatus";
+import type { HostStatus } from "./bindings/HostStatus";
+import type { ManagedCamilla } from "./bindings/ManagedCamilla";
+import type { ManagedEqApo } from "./bindings/ManagedEqApo";
 import type { CalibrationSettings } from "./bindings/CalibrationSettings";
 import type { ConfigResult } from "./bindings/ConfigResult";
 import type { ConfigSpeaker } from "./bindings/ConfigSpeaker";
@@ -122,7 +128,47 @@ const metrics = (seed: number, after: boolean): MetricsSummary => {
   };
 };
 
-export const scorecard: ChannelScore[] = SAMPLE_MAINS.map((role, index) => ({ role, before: metrics(index + 1, false), after: metrics(index + 1, true) }));
+// Same reference figures as screens/calibrate/fixtures.ts: before, after, after MIMO.
+const FIGURES: Record<string, { within: [number, number, number]; gd: [number, number, number]; late: [number, number, number] }> = {
+  L: { within: [38, 64, 54], gd: [88.4, 47.5, 41.1], late: [-23.9, -16.3, -23.1] },
+  R: { within: [41, 65, 56], gd: [85.2, 47.3, 45.2], late: [-24.0, -17.0, -21.6] },
+  C: { within: [36, 62, 55], gd: [90.6, 47.7, 45.1], late: [-17.0, -16.0, -18.7] },
+  Ls: { within: [44, 71, 66], gd: [76.3, 39.8, 36.2], late: [-21.4, -18.2, -22.5] },
+  Rs: { within: [42, 69, 63], gd: [79.1, 41.2, 37.9], late: [-20.8, -17.6, -21.9] },
+  Lb: { within: [39, 67, 61], gd: [82.5, 43.6, 40.3], late: [-19.7, -16.9, -20.4] },
+  Rb: { within: [40, 66, 60], gd: [81.0, 44.1, 41.0], late: [-20.2, -17.3, -20.8] },
+  Tfl: { within: [47, 74, 70], gd: [68.4, 35.2, 33.6], late: [-22.6, -19.8, -22.1] },
+  Tfr: { within: [46, 73, 69], gd: [70.2, 36.0, 34.1], late: [-22.1, -19.4, -21.7] },
+  Tbl: { within: [43, 70, 67], gd: [72.9, 37.4, 35.8], late: [-21.0, -18.7, -20.9] },
+  Tbr: { within: [45, 72, 68], gd: [71.5, 36.8, 35.0], late: [-21.3, -18.9, -21.2] },
+};
+
+/** Roles outside the sample room use L's synthetic figures. */
+export const scoreFigures = (role: string) => FIGURES[role] ?? FIGURES.L!;
+const round1 = (value: number) => Math.round(value * 10) / 10;
+
+export const scorecard: ChannelScore[] = SAMPLE_MAINS.map((role, index) => {
+  const figures = scoreFigures(role);
+  return { role,
+    before: { ...metrics(index + 1, false), in1_20: figures.within[0], gd_20: figures.gd[0] },
+    after: { ...metrics(index + 1, true), in1_20: figures.within[1], gd_20: figures.gd[1] },
+  };
+});
+
+/** Late bass before, after and after MIMO; the gallery's offsets repeat for larger arrangements. */
+export function lateAt(role: string, position: number): [number, number, number] {
+  const [before, after, mimo] = scoreFigures(role).late;
+  if (position === 1) return [before, after, mimo];
+  const k = Math.max(0, SAMPLE_MAINS.indexOf(role as (typeof SAMPLE_MAINS)[number]));
+  const shift = [2.1, -1.4, 1.2][(position - 2) % 3]! + (((k * 7 + position * 3) % 5) - 2) * 0.4;
+  return [round1(before + shift), round1(after + shift * 0.6 + 0.9), round1(mimo + shift * 0.8 + 1.6)];
+}
+
+export const lateEnergy = (roles: readonly string[], positions: readonly number[]): CalibrationSummary["late_energy"] =>
+  positions.flatMap((position) => roles.map((role) => {
+    const [before_db, after_db] = lateAt(role, position);
+    return { role, position, before_db, after_db };
+  }));
 
 export const signalChain: SignalChain = {
   sample_rate: 48000,
@@ -165,14 +211,15 @@ export const calibrationSummary: CalibrationSummary = {
   mode: "mixed",
   ultra_ms: 100,
   verdict: {
-    within_1db_before_pct: 34.2,
-    within_1db_after_pct: 81.6,
-    low_band_time_spread_before_ms: 71.4,
-    low_band_time_spread_after_ms: 22.9,
+    within_1db_before_pct: 41.9,
+    within_1db_after_pct: 68.6,
+    low_band_time_spread_before_ms: 78.7,
+    low_band_time_spread_after_ms: 41.5,
     added_delay_ms: 9.8,
     position_spread_db: 2.1,
   },
   scorecard,
+  late_energy: lateEnergy(SAMPLE_MAINS, projectInfo.positions),
   latency_ms: 9.8,
   notes: [{ code: "rc_limit", params: { hz: "310", auto: "true", schroeder_hz: "310" } }],
   main_roles: signalChain.mains.map((main) => main.role),
@@ -201,7 +248,11 @@ export const mimoSummary: MimoSummary = {
   support_count: 24,
   fir_taps_total: 0,
   notes: [],
-  input_count: 0,
+  input_count: SAMPLE_MAINS.length,
+  scorecard: scorecard.map((score) => ({ role: score.role,
+    after_mimo: { ...score.after, in1_20: scoreFigures(score.role).within[2], gd_20: scoreFigures(score.role).gd[2] },
+  })),
+  late_energy: projectInfo.positions.flatMap((position) => SAMPLE_MAINS.map((role) => ({ role, position, after_mimo_db: lateAt(role, position)[2] }))),
 };
 
 export const resultsSummary: ResultsSummary = { calibration: calibrationSummary, mimo: mimoSummary, mimo_export: "off" };
@@ -268,15 +319,18 @@ export function configPreset(preset: string, subs: number): ConfigResult {
   return configOf(preset, roles.map((role, i) => speaker(role, i + 1)));
 }
 
+/** Output rates of the presets (ADR 0017): `camilla` and `custom` choose theirs, the hardware DSPs run at their own. */
+const pcRate = { output_rate: { fixed: 48000 }, output_rate_editable: true } as const;
+const deviceRate = (fixed: number) => ({ output_rate: { fixed }, output_rate_editable: false });
 export const dsp: DspResult = {
   profile: "camilla", name: "PC · CamillaDSP",
-  fields: { fir_taps: 65536, fir_budget: 2097152, iir_bands: 64, allpass_bands: 64, bm_path_delays: 64 },
+  fields: { ...pcRate, fir_taps: 65536, fir_budget: 2097152, iir_bands: 64, allpass_bands: 64, bm_path_delays: 64 },
   presets: [
-    { key: "camilla", name: "PC · CamillaDSP", fields: { fir_taps: 65536, fir_budget: 2097152, iir_bands: 64, allpass_bands: 64, bm_path_delays: 64 } },
-    { key: "custom", name: "Custom", fields: { fir_taps: 2048, fir_budget: 32768, iir_bands: 16, allpass_bands: 16, bm_path_delays: 16 } },
-    { key: "minidsp", name: "miniDSP Flex / 2x4 HD", fields: { fir_taps: 2048, fir_budget: 4096, iir_bands: 10, allpass_bands: 0, bm_path_delays: 0 } },
-    { key: "qsys", name: "Q-SYS Core", fields: { fir_taps: 16384, fir_budget: 65536, iir_bands: 24, allpass_bands: 16, bm_path_delays: 16 } },
-    { key: "tesira", name: "Biamp Tesira", fields: { fir_taps: 2048, fir_budget: 51200, iir_bands: 16, allpass_bands: 16, bm_path_delays: 16 } },
+    { key: "camilla", name: "PC · CamillaDSP", fields: { ...pcRate, fir_taps: 65536, fir_budget: 2097152, iir_bands: 64, allpass_bands: 64, bm_path_delays: 64 } },
+    { key: "custom", name: "Custom", fields: { ...pcRate, fir_taps: 2048, fir_budget: 32768, iir_bands: 16, allpass_bands: 16, bm_path_delays: 16 } },
+    { key: "minidsp", name: "miniDSP Flex / 2x4 HD", fields: { ...deviceRate(96000), fir_taps: 2048, fir_budget: 4096, iir_bands: 10, allpass_bands: 0, bm_path_delays: 0 } },
+    { key: "qsys", name: "Q-SYS Core", fields: { ...deviceRate(48000), fir_taps: 16384, fir_budget: 65536, iir_bands: 24, allpass_bands: 16, bm_path_delays: 16 } },
+    { key: "tesira", name: "Biamp Tesira", fields: { ...deviceRate(48000), fir_taps: 2048, fir_budget: 51200, iir_bands: 16, allpass_bands: 16, bm_path_delays: 16 } },
   ],
   window_ms: 65536 / 48, resolution_hz: 48000 / 65536,
 };
@@ -299,7 +353,48 @@ export const subEntry: SubEntry = {
   mode: "auto", bundle: "A", gain_db: 0, delay_ms: 0, polarity: 1, allpass: [], mimo_support: true,
   hp_hz: 0, lp_hz: 0, peq: [], hp_type: "LR24", lp_type: "LR24", dba_row: "front",
 };
-export const appSettings: AppSettings = { compute: "auto", language: "ko", theme: "system", icon: "expert", skin: "default", local_api: { enabled: false, port: 4712 }, recent_projects: [], last_window_size: null };
+export const appSettings: AppSettings = { updates: "auto", compute: "auto", language: "ko", theme: "system", icon: "expert", skin: "default", local_api: { enabled: false, port: 4712 }, apply: { camilla: { level: "files", address: "127.0.0.1:1234" }, eqapo: { level: "files" } }, recent_projects: [], last_window_size: null };
+/** CamillaDSP is not running at the default address (`secs_apply::ApplyError::Connect` as `apply_failed`). */
+export const camillaUnreachable: CamillaApplyStatus = {
+  reachable: false,
+  error: { code: "apply_failed", params: {}, retryable: true, detail: "connect 127.0.0.1:1234: No connection could be made because the target machine actively refused it. (os error 10061)" },
+  status: null,
+  design: { kind: "unknown" },
+};
+/** No Equalizer APO install in the registry. */
+export const eqapoMissing: EqApoApplyStatus = { installed: false, variant: "unknown", config_path: null, include: "absent", applied_design_id: null };
+/** Equalizer APO XT installed (Velopack package `EqualizerAPO-XT-x64`), SECS 2R's line not added yet. */
+export const eqapoXt: EqApoApplyStatus = { installed: true, variant: "xt", config_path: "C:/Program Files/EqualizerAPO-XT-x64/config", include: "absent", applied_design_id: null };
+/** `apply_status` on a PC with neither: what the mock answers until a test or specimen flips it. */
+export const applyStatus: ApplyStatus = { camilla: camillaUnreachable, eqapo: eqapoMissing, host: "not_installed", current_design_id: null };
+/** The design id the mock's apply jobs report (`secs_graph::design::design_id`: lowercase hex SHA-256 of the design). */
+export const MOCK_DESIGN_ID = "9f3c2a61d0b84e5713a6c0f2e8d47b95c1a0e3f6d82b4c7a5e9f01d3b6c8a2e4";
+/** The camilladsp.exe the mock's open-file dialog picks for 관리. */
+export const CAMILLA_EXE = "C:/Program Files/CamillaDSP/camilladsp.exe";
+/** The SECS 2R Host service right after `host_install` (ADR 0018): running, nothing managed yet. */
+export const hostIdle: HostStatus = {
+  version: __BUILD_INFO__.version,
+  managed: {},
+  camilla: { state: { kind: "stopped" }, pid: null, restarts_in_window: 0 },
+  eqapo_include: "absent",
+  last_repair: null,
+};
+/** The CamillaDSP the service runs once 관리 starts: the chosen executable, the applied configuration and the address's port. */
+export const managedCamilla: ManagedCamilla = {
+  exe_path: CAMILLA_EXE,
+  config_path: "C:/Users/demo/AppData/Roaming/SECS2R/applied/camilladsp/configs/secs_mixed.yml",
+  port: 1234,
+  design_id: MOCK_DESIGN_ID,
+};
+/** The Equalizer APO config folder the service keeps SECS 2R's line in. */
+export const managedEqapo: ManagedEqApo = { config_path: eqapoXt.config_path!, design_id: MOCK_DESIGN_ID };
+/** The service managing both targets: CamillaDSP running, SECS 2R's line in config.txt. */
+export const hostManaging: HostStatus = {
+  ...hostIdle,
+  managed: { camilla: managedCamilla, eqapo: managedEqapo },
+  camilla: { state: { kind: "running" }, pid: 4812, restarts_in_window: 0 },
+  eqapo_include: "present",
+};
 export const rewInfo: RewInfoResult = {
   executable_path: "C:/Program Files/REW/roomeqwizard.exe", ...rewStatus, version: "5.40", driver: "Java", blocking: false,
   input_device: "UMIK-1", output_device: "AVR (HDMI)", input: "Input 1",

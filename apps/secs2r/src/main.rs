@@ -15,10 +15,12 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+mod apply;
 mod host;
 mod icon;
 mod local_api;
 mod self_test;
+mod update;
 
 use secs_service::{Deps, EventSink, LocalTime, NoEvents, Service};
 use secs_types::ipc::{Envelope, ErrorCode, IpcError, JobEvent, Request, Response};
@@ -103,7 +105,9 @@ fn handle(
 }
 
 fn main() {
+    let context = tauri::generate_context!();
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(
             tauri_plugin_opener::Builder::new()
@@ -113,6 +117,7 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
             let config_dir = app.path().app_config_dir()?;
+            let updates = Arc::new(update::TauriUpdates::new(handle.clone(), &config_dir));
             let hub = secs_local_api::EventHub::default();
             let service = Arc::new(Service::new(Deps {
                 app_version: env!("CARGO_PKG_VERSION").into(),
@@ -131,6 +136,11 @@ fn main() {
                     secs_sys::clock::utc_offset_seconds(SystemTime::now())
                 }),
                 app_settings_path: Some(config_dir.join("settings.json")),
+                app_data_path: config_dir.clone(),
+                eqapo_install: Arc::new(secs_sys::eqapo_install),
+                apply: Arc::new(apply::NativeApply),
+                managed_host: Arc::new(apply::NativeManagedHost),
+                updates: updates.clone(),
                 ..Deps::default()
             }));
             let local_api = local_api::Manager::new(config_dir, service.clone(), hub, handle);
@@ -141,10 +151,12 @@ fn main() {
                 service.call(Request::AppSettingsGet, Arc::new(NoEvents))
                 && let Response::AppSettingsGet(settings) = *response
             {
+                updates.start(settings.updates);
                 icon::show(app.handle(), settings.icon);
                 app.state::<local_api::Manager>()
                     .startup(settings.local_api);
             }
+            app.manage(updates);
             self_test::arm(app);
             Ok(())
         })
@@ -164,10 +176,15 @@ fn main() {
             secs_call,
             self_test::secs_self_test_report
         ])
-        .run(tauri::generate_context!())
+        .build(context)
         .unwrap_or_else(|error| {
             eprintln!("SECS 2R could not start: {error}");
             std::process::exit(1);
+        })
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<Arc<update::TauriUpdates>>().on_exit();
+            }
         });
 }
 

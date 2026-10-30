@@ -1,7 +1,10 @@
 //! Time-domain rendering of complete export-plan input-to-output paths.
 
 use crate::{FiltersError, SECTION_Q};
-use secs_graph::{FilterPlan, FirView, Op, SAMPLE_RATE, round_ties_even_i64};
+use secs_dsp::rate::{
+    DESIGN_RATE, delay_samples, fir_to_rate, is_output_rate, lowrate_to_rate, taps_at,
+};
+use secs_graph::{FilterPlan, FirView, Op};
 use std::f64::consts::PI;
 
 const FLOOR_RATIO: f64 = 1e-6;
@@ -15,7 +18,7 @@ pub struct RenderedPath {
     pub input: String,
     /// Output role.
     pub output: String,
-    /// Complete f64 impulse response at 48 kHz.
+    /// Complete f64 impulse response at `RenderedPaths::rate`.
     pub response: Vec<f64>,
     /// Sum of the plan's delay operations along the route that arrives first
     /// (a pair fed by several routes, such as a bass-managed sub that is also
@@ -26,6 +29,8 @@ pub struct RenderedPath {
 /// Every non-zero path of a filter plan, in input order and then output order.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderedPaths {
+    /// Sample rate of all responses, in hertz.
+    pub rate: u32,
     /// Plan input roles in their original order.
     pub inputs: Vec<String>,
     /// Plan output roles in their original order.
@@ -62,8 +67,8 @@ impl Biquad {
         })
     }
 
-    fn peaking(frequency: f64, q: f64, gain_db: f64) -> Result<Self, FiltersError> {
-        let w = 2.0 * PI * frequency / f64::from(SAMPLE_RATE);
+    fn peaking(frequency: f64, q: f64, gain_db: f64, rate: u32) -> Result<Self, FiltersError> {
+        let w = 2.0 * PI * frequency / f64::from(rate);
         let alpha = w.sin() / (2.0 * q);
         let gain = 10_f64.powf(gain_db / 40.0);
         Self::normalized(
@@ -72,8 +77,8 @@ impl Biquad {
         )
     }
 
-    fn band(frequency: f64, q: f64, high_pass: bool) -> Result<Self, FiltersError> {
-        let w = 2.0 * PI * frequency / f64::from(SAMPLE_RATE);
+    fn band(frequency: f64, q: f64, high_pass: bool, rate: u32) -> Result<Self, FiltersError> {
+        let w = 2.0 * PI * frequency / f64::from(rate);
         let alpha = w.sin() / (2.0 * q);
         let cosine = w.cos();
         let edge = if high_pass {
@@ -88,8 +93,8 @@ impl Biquad {
         )
     }
 
-    fn all_pass(frequency: f64, q: f64) -> Result<Self, FiltersError> {
-        let w = 2.0 * PI * frequency / f64::from(SAMPLE_RATE);
+    fn all_pass(frequency: f64, q: f64, rate: u32) -> Result<Self, FiltersError> {
+        let w = 2.0 * PI * frequency / f64::from(rate);
         let alpha = w.sin() / (2.0 * q);
         let middle = -2.0 * w.cos();
         Self::normalized(
@@ -127,6 +132,7 @@ impl Route {
         input: &str,
         output: &str,
         max_len: usize,
+        rate: u32,
     ) -> Result<Self, FiltersError> {
         let mut route = Self {
             fir: vec![1.0],
@@ -144,22 +150,20 @@ impl Route {
                     ..
                 } => route
                     .biquads
-                    .push(Biquad::peaking(*frequency, *q, *gain_db)?),
+                    .push(Biquad::peaking(*frequency, *q, *gain_db, rate)?),
                 Op::Fir { taps, .. } => {
-                    route.fir = convolve(&route.fir, taps, max_len, input, output)?;
+                    let taps = fir_to_rate(taps, rate)
+                        .map_err(|error| FiltersError::Invalid(error.to_string()))?;
+                    route.fir = convolve(&route.fir, &taps, max_len, input, output)?;
                 }
                 Op::FirLowRate {
                     taps_low, fs_low, ..
                 } => {
                     let view = FirView::LowRate(taps_low, *fs_low);
                     view.validate()?;
-                    route.fir = convolve(
-                        &route.fir,
-                        view.materialize().as_ref(),
-                        max_len,
-                        input,
-                        output,
-                    )?;
+                    let taps = lowrate_to_rate(taps_low, *fs_low, rate)
+                        .map_err(|error| FiltersError::Invalid(error.to_string()))?;
+                    route.fir = convolve(&route.fir, &taps, max_len, input, output)?;
                 }
                 Op::Gain { db, .. } => route.gain *= 10_f64.powf(db / 20.0),
                 Op::Invert { .. } => route.gain = -route.gain,
@@ -176,14 +180,16 @@ impl Route {
                         .expect("known band type")
                         .1;
                     for &q in values {
-                        route.biquads.push(Biquad::band(*frequency, q, high_pass)?);
+                        route
+                            .biquads
+                            .push(Biquad::band(*frequency, q, high_pass, rate)?);
                     }
                 }
                 Op::Ap { frequency, q, .. } => {
-                    route.biquads.push(Biquad::all_pass(*frequency, *q)?)
+                    route.biquads.push(Biquad::all_pass(*frequency, *q, rate)?)
                 }
                 Op::Delay { ms, .. } => {
-                    let samples = round_ties_even_i64(*ms * f64::from(SAMPLE_RATE) / 1000.0);
+                    let samples = delay_samples(*ms, rate);
                     if samples < 0 {
                         return Err(FiltersError::Invalid(format!(
                             "negative delay on {input} -> {output}"
@@ -295,7 +301,11 @@ fn find_ops<'a>(items: &'a [(String, Vec<Op>)], role: &str) -> Option<&'a [Op]> 
         .map(|(_, ops)| ops.as_slice())
 }
 
-fn collect_routes(plan: &FilterPlan, max_len: usize) -> Result<Vec<PairRoutes>, FiltersError> {
+fn collect_routes(
+    plan: &FilterPlan,
+    max_len: usize,
+    rate: u32,
+) -> Result<Vec<PairRoutes>, FiltersError> {
     let mut pairs = plan
         .inputs
         .iter()
@@ -325,6 +335,7 @@ fn collect_routes(plan: &FilterPlan, max_len: usize) -> Result<Vec<PairRoutes>, 
             &pair.input,
             &pair.output,
             max_len,
+            rate,
         )?);
         Ok(())
     };
@@ -374,19 +385,39 @@ fn collect_routes(plan: &FilterPlan, max_len: usize) -> Result<Vec<PairRoutes>, 
 /// the largest sample, then rounded up to a power of two with a 4096-sample
 /// minimum. `max_len` is a hard bound on both finite operations and IIR tails.
 pub fn render_paths(plan: &FilterPlan, max_len: usize) -> Result<RenderedPaths, FiltersError> {
-    if max_len < MIN_LENGTH {
+    render_paths_at(plan, max_len, DESIGN_RATE)
+}
+
+/// Render at an output rate, rebuilding FIRs and RBJ sections and rounding
+/// delays at that rate. The length bound is specified in 48 kHz samples.
+/// Minimum length and tail guard retain their duration; the final response
+/// length is rounded up to a power of two, within the scaled bound.
+pub fn render_paths_at(
+    plan: &FilterPlan,
+    max_len_48k: usize,
+    rate: u32,
+) -> Result<RenderedPaths, FiltersError> {
+    if !is_output_rate(rate) {
+        return Err(FiltersError::Invalid(
+            "unsupported output sample rate".into(),
+        ));
+    }
+    let max_len = taps_at(max_len_48k, rate);
+    let min_length = taps_at(MIN_LENGTH, rate);
+    let tail_guard = taps_at(TAIL_GUARD, rate);
+    if max_len_48k < MIN_LENGTH {
         return Err(FiltersError::Invalid(format!(
             "max_len {max_len} is below the minimum {MIN_LENGTH}"
         )));
     }
-    let pairs = collect_routes(plan, max_len)?;
+    let pairs = collect_routes(plan, max_len, rate)?;
     let finite_end = pairs
         .iter()
         .flat_map(|pair| &pair.routes)
         .map(|route| route.delay_samples + route.fir.len())
         .max()
         .unwrap_or(1);
-    let mut candidate = MIN_LENGTH.max(finite_end.next_power_of_two()).min(max_len);
+    let mut candidate = min_length.max(finite_end.next_power_of_two()).min(max_len);
 
     loop {
         let mut rendered = Vec::with_capacity(pairs.len());
@@ -405,10 +436,11 @@ pub fn render_paths(plan: &FilterPlan, max_len: usize) -> Result<RenderedPaths, 
         }
         if peak == 0.0 {
             return Ok(RenderedPaths {
+                rate,
                 inputs: plan.inputs.clone(),
                 outputs: plan.outputs.clone(),
                 paths: Vec::new(),
-                length: MIN_LENGTH,
+                length: min_length,
             });
         }
         let threshold = peak * FLOOR_RATIO;
@@ -429,7 +461,7 @@ pub fn render_paths(plan: &FilterPlan, max_len: usize) -> Result<RenderedPaths, 
             .find(|(_, (pair, last))| {
                 last.is_some()
                     && pair.routes.iter().any(|route| !route.biquads.is_empty())
-                    && candidate.saturating_sub(last.unwrap() + 1) < TAIL_GUARD
+                    && candidate.saturating_sub(last.unwrap() + 1) < tail_guard
             })
             .map(|(index, _)| index);
         if let Some(unguarded) = unguarded {
@@ -443,7 +475,7 @@ pub fn render_paths(plan: &FilterPlan, max_len: usize) -> Result<RenderedPaths, 
             candidate = candidate.saturating_mul(2).min(max_len);
             continue;
         }
-        let length = MIN_LENGTH.max((last + 1).next_power_of_two());
+        let length = min_length.max((last + 1).next_power_of_two());
         if length > max_len {
             let pair = &pairs[pair_index];
             return Err(FiltersError::Invalid(format!(
@@ -468,6 +500,7 @@ pub fn render_paths(plan: &FilterPlan, max_len: usize) -> Result<RenderedPaths, 
             }
         }
         return Ok(RenderedPaths {
+            rate,
             inputs: plan.inputs.clone(),
             outputs: plan.outputs.clone(),
             paths,

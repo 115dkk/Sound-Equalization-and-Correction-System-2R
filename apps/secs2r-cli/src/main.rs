@@ -4,6 +4,8 @@
 //!
 //! Commands call the application service and write JSON Lines to standard output.
 
+mod apply;
+
 use clap::{Parser, Subcommand, ValueEnum};
 use secs_service::{Deps, EventSink, LocalTime, Service};
 use secs_types::ipc::*;
@@ -64,7 +66,12 @@ enum Action {
         position: i64,
     },
     /// Compute a calibration.
-    Calibrate { project: PathBuf },
+    Calibrate {
+        project: PathBuf,
+        /// Compute MIMO after the correction in the same job.
+        #[arg(long)]
+        mimo: bool,
+    },
     /// Recommend crossover frequencies.
     RecommendXo { project: PathBuf },
     /// Calibrate first, then compute MIMO support paths.
@@ -78,6 +85,9 @@ enum Action {
         out: PathBuf,
         #[arg(long, value_enum)]
         mdat_scope: Option<MdatScopeChoice>,
+        /// Additional comma-separated convolution output rates.
+        #[arg(long, value_delimiter = ',')]
+        extra_rates: Vec<u32>,
         /// Stable design name; a matching kind and name is replaced.
         #[arg(long)]
         design_name: Option<String>,
@@ -106,6 +116,16 @@ enum Action {
         #[arg(long)]
         camilla_capture_loopback: bool,
     },
+    /// Apply or inspect the current design through an external processor.
+    Apply {
+        #[command(subcommand)]
+        action: ApplyAction,
+    },
+    /// Inspect or administer the Windows managed-host service.
+    Host {
+        #[command(subcommand)]
+        action: HostAction,
+    },
     /// Run creation, filling, calibration, and all exports.
     Run {
         #[arg(long)]
@@ -117,6 +137,41 @@ enum Action {
         #[arg(long)]
         mimo: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+enum ApplyAction {
+    /// Export the current design and reload CamillaDSP.
+    Camilla {
+        /// Project whose current design is applied.
+        project: PathBuf,
+        /// Override the CamillaDSP websocket address for this process.
+        #[arg(long)]
+        address: Option<String>,
+    },
+    /// Export the current design to Equalizer APO, or remove its include.
+    Eqapo {
+        /// Project whose current design is applied; omitted when reverting.
+        #[arg(required_unless_present = "revert")]
+        project: Option<PathBuf>,
+        /// Remove the managed include instead of applying.
+        #[arg(long, conflicts_with = "project")]
+        revert: bool,
+    },
+    /// Print CamillaDSP and Equalizer APO application state.
+    Status,
+}
+
+#[derive(Debug, Subcommand)]
+enum HostAction {
+    /// Print service registration and managed-target status.
+    Status,
+    /// Register the automatic LocalSystem service through UAC.
+    Install,
+    /// Stop and remove the service through UAC.
+    Uninstall,
+    /// Clear every target kept by the service.
+    StopManaging,
 }
 
 #[derive(Debug, Subcommand)]
@@ -139,6 +194,9 @@ enum ProjectAction {
         /// Compute MIMO support paths after calibrating.
         #[arg(long, value_enum)]
         mimo: Option<Switch>,
+        /// Prevent boosts below measured rolloff and protect sub outputs.
+        #[arg(long, value_enum)]
+        low_protect: Option<Switch>,
         /// MIMO supports as FIR or as IIR (PEQ and all-pass) filters.
         #[arg(long, value_enum)]
         mimo_supports: Option<SupportKind>,
@@ -402,9 +460,14 @@ impl Runner {
         }));
     }
 
-    fn calibrate(&mut self, settings: Option<secs_types::calibration::CalibrationSettings>) {
+    fn calibrate(
+        &mut self,
+        settings: Option<secs_types::calibration::CalibrationSettings>,
+        mimo: bool,
+    ) {
         self.call(Request::Calibrate(CalibrateParams {
             settings,
+            mimo,
             ..Default::default()
         }));
     }
@@ -416,6 +479,7 @@ impl Runner {
         mdat_scope: Option<MdatScope>,
         design_name: Option<String>,
         camilla_devices: Option<CamillaDevices>,
+        extra_rates: Vec<u32>,
     ) {
         self.call(Request::Export(ExportParams {
             kind,
@@ -423,6 +487,7 @@ impl Runner {
             mdat_scope,
             design_name,
             camilla_devices,
+            extra_rates,
         }));
     }
 }
@@ -434,6 +499,8 @@ fn response_job(response: &Response) -> Option<JobStarted> {
         | Response::RecommendXo(value)
         | Response::Mimo(value)
         | Response::Export(value)
+        | Response::ApplyCamilla(value)
+        | Response::ApplyEqapo(value)
         | Response::MeasurePosition(value)
         | Response::MdatImport(value) => Some(value.clone()),
         _ => None,
@@ -449,6 +516,12 @@ fn deps(deterministic: bool, compute: Option<ComputeChoice>) -> Deps {
         rew_transport: Arc::new(|| Box::new(secs_rew::HttpTransport::default())),
         process: Arc::new(secs_sys::process::OsProcessProbe),
         memory: Arc::new(secs_sys::memory::OsMemoryProbe),
+        app_data_path: std::env::current_dir()
+            .unwrap_or_else(|_| std::env::temp_dir())
+            .join(".secs2r"),
+        eqapo_install: Arc::new(secs_sys::eqapo_install),
+        apply: Arc::new(apply::NativeApply),
+        managed_host: Arc::new(apply::NativeManagedHost),
         clock: Arc::new(|| {
             let now = SystemTime::now();
             LocalTime::from_system(now, secs_sys::clock::utc_offset_seconds(now))
@@ -523,6 +596,7 @@ fn run(action: Action, runner: &mut Runner) {
                 path,
                 mimo,
                 mimo_supports,
+                low_protect,
                 peq_derivatives,
                 mimo_iir_derivatives,
             } => {
@@ -545,6 +619,11 @@ fn run(action: Action, runner: &mut Runner) {
                             .map(|choice| matches!(choice, PeqDerivativeChoice::Analytic)),
                         mimo_iir: mimo_iir_derivatives
                             .map(|choice| matches!(choice, MimoIirDerivativeChoice::Analytic)),
+                    });
+                }
+                if let Some(value) = low_protect {
+                    edits.push(SettingEdit::LowProtect {
+                        on: matches!(value, Switch::On),
                     });
                 }
                 let changed = !edits.is_empty();
@@ -598,9 +677,9 @@ fn run(action: Action, runner: &mut Runner) {
             }));
             runner.save();
         }
-        Action::Calibrate { project } => {
+        Action::Calibrate { project, mimo } => {
             runner.open(&project);
-            runner.calibrate(None);
+            runner.calibrate(None, mimo);
             runner.call(Request::Results);
         }
         Action::RecommendXo { project } => {
@@ -609,7 +688,7 @@ fn run(action: Action, runner: &mut Runner) {
         }
         Action::Mimo { project } => {
             runner.open(&project);
-            runner.calibrate(None);
+            runner.calibrate(None, false);
             runner.call(Request::Mimo(MimoParams::default()));
             runner.call(Request::Results);
         }
@@ -618,6 +697,7 @@ fn run(action: Action, runner: &mut Runner) {
             kind,
             out,
             mdat_scope,
+            extra_rates,
             design_name,
             camilla_capture,
             camilla_playback,
@@ -661,8 +741,57 @@ fn run(action: Action, runner: &mut Runner) {
                 mdat_scope.map(Into::into),
                 design_name,
                 camilla_devices,
+                extra_rates,
             );
         }
+        Action::Apply { action } => match action {
+            ApplyAction::Camilla { project, address } => {
+                runner.open(&project);
+                let mut settings = ApplySettings::default();
+                settings.camilla.level = ApplyLevel::Apply;
+                if let Some(address) = address {
+                    settings.camilla.address = address;
+                }
+                runner.call(Request::ApplySettingsSet(settings));
+                runner.call(Request::ApplyCamilla(ApplyCamillaParams::default()));
+            }
+            ApplyAction::Eqapo {
+                project: None,
+                revert: true,
+            } => {
+                runner.call(Request::RevertEqapo);
+            }
+            ApplyAction::Eqapo {
+                project: Some(project),
+                revert: false,
+            } => {
+                runner.open(&project);
+                let mut settings = ApplySettings::default();
+                settings.eqapo.level = ApplyLevel::Apply;
+                runner.call(Request::ApplySettingsSet(settings));
+                runner.call(Request::ApplyEqapo);
+            }
+            ApplyAction::Eqapo { .. } => {
+                unreachable!("clap requires exactly one of project and --revert")
+            }
+            ApplyAction::Status => {
+                runner.call(Request::ApplyStatus);
+            }
+        },
+        Action::Host { action } => match action {
+            HostAction::Status => {
+                runner.call(Request::ApplyStatus);
+            }
+            HostAction::Install => {
+                runner.call(Request::HostInstall);
+            }
+            HostAction::Uninstall => {
+                runner.call(Request::HostUninstall);
+            }
+            HostAction::StopManaging => {
+                runner.call(Request::HostStopManaging);
+            }
+        },
         Action::Run {
             out,
             project,
@@ -761,7 +890,7 @@ fn full_run(runner: &mut Runner, out: &Path, project: Option<&Path>, fill: FillC
         runner.save();
     }
     // The project's own calibration settings apply; the CLI changes none.
-    runner.calibrate(None);
+    runner.calibrate(None, false);
     if mimo {
         runner.call(Request::Mimo(MimoParams { settings: None }));
     }
@@ -798,7 +927,14 @@ fn full_run(runner: &mut Runner, out: &Path, project: Option<&Path>, fill: FillC
             }}));
             continue;
         }
-        runner.export(kind, &out.join("export").join(folder), None, None, None);
+        runner.export(
+            kind,
+            &out.join("export").join(folder),
+            None,
+            None,
+            None,
+            Vec::new(),
+        );
     }
 }
 
@@ -817,5 +953,168 @@ fn print_json(value: &impl Serialize) {
     match serde_json::to_string(value) {
         Ok(line) => println!("{line}"),
         Err(error) => eprintln!("secs2r-cli: could not serialize output: {error}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    use super::*;
+
+    static TEMP: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn apply_commands_parse() {
+        assert!(matches!(
+            Cli::try_parse_from([
+                "secs2r-cli",
+                "apply",
+                "camilla",
+                "room.secs",
+                "--address",
+                "localhost:1234"
+            ])
+            .unwrap()
+            .action,
+            Action::Apply {
+                action: ApplyAction::Camilla {
+                    project,
+                    address: Some(_)
+                }
+            } if project == Path::new("room.secs")
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["secs2r-cli", "apply", "eqapo", "room.secs"])
+                .unwrap()
+                .action,
+            Action::Apply {
+                action: ApplyAction::Eqapo {
+                    project: Some(project),
+                    revert: false
+                }
+            } if project == Path::new("room.secs")
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["secs2r-cli", "apply", "eqapo", "--revert"])
+                .unwrap()
+                .action,
+            Action::Apply {
+                action: ApplyAction::Eqapo {
+                    project: None,
+                    revert: true
+                }
+            }
+        ));
+        assert!(matches!(
+            Cli::try_parse_from(["secs2r-cli", "apply", "status"])
+                .unwrap()
+                .action,
+            Action::Apply {
+                action: ApplyAction::Status
+            }
+        ));
+        assert!(Cli::try_parse_from(["secs2r-cli", "apply", "eqapo"]).is_err());
+        for (command, expected) in [
+            ("status", HostAction::Status),
+            ("install", HostAction::Install),
+            ("uninstall", HostAction::Uninstall),
+            ("stop-managing", HostAction::StopManaging),
+        ] {
+            assert!(matches!(
+                Cli::try_parse_from(["secs2r-cli", "host", command])
+                    .unwrap()
+                    .action,
+                Action::Host { action } if std::mem::discriminant(&action) == std::mem::discriminant(&expected)
+            ));
+        }
+    }
+
+    #[test]
+    fn apply_eqapo_opens_the_project_and_uses_the_injected_install() {
+        let root = std::env::temp_dir().join(format!(
+            "secs2r-cli-apply-{}-{}",
+            std::process::id(),
+            TEMP.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = fs::remove_dir_all(&root);
+        let config = root.join("eqapo");
+        fs::create_dir_all(&config).unwrap();
+        fs::write(config.join("config.txt"), b"Preamp: -3 dB\n").unwrap();
+        let install = EqApoInstall {
+            config_path: config.to_string_lossy().into_owned(),
+            install_path: "EqualizerAPO-XT/current".into(),
+            variant: EqApoVariant::Xt,
+        };
+        let mut injected = deps(true, None);
+        injected.app_data_path = root.join("app-data");
+        injected.eqapo_install = Arc::new(move || Some(install.clone()));
+        let mut runner = Runner {
+            service: Service::new(injected),
+            quiet: true,
+            ok: true,
+        };
+        let project = root.join("room.secs");
+        runner.call(Request::ProjectNew(ProjectNewParams {
+            path: project.to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: true,
+            tutorial: false,
+        }));
+        runner.call(Request::SampleLoad(SampleLoadParams::default()));
+        runner.calibrate(None, false);
+        assert!(runner.ok, "oracle sample project preparation failed");
+
+        run(
+            Action::Apply {
+                action: ApplyAction::Eqapo {
+                    project: Some(project),
+                    revert: false,
+                },
+            },
+            &mut runner,
+        );
+        assert!(runner.ok);
+        assert!(config.join("SECS2R/SECS.txt").is_file());
+        assert!(config.join("SECS2R/secs-design.json").is_file());
+        assert!(
+            fs::read_to_string(config.join("config.txt"))
+                .unwrap()
+                .contains("Include: SECS2R\\SECS.txt")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn calibrate_parses_mimo_flag() {
+        let cli =
+            Cli::try_parse_from(["secs2r-cli", "calibrate", "project.secs", "--mimo"]).unwrap();
+        let Action::Calibrate { project, mimo } = cli.action else {
+            panic!("calibrate command must parse")
+        };
+        assert_eq!(project, PathBuf::from("project.secs"));
+        assert!(mimo);
+    }
+
+    #[test]
+    fn export_parses_comma_separated_extra_rates() {
+        let cli = Cli::try_parse_from([
+            "secs2r-cli",
+            "export",
+            "project.secs",
+            "--kind",
+            "convolution",
+            "--out",
+            "exports",
+            "--extra-rates",
+            "44100,96000",
+        ])
+        .unwrap();
+        let Action::Export { extra_rates, .. } = cli.action else {
+            panic!("export command must parse")
+        };
+        assert_eq!(extra_rates, [44_100, 96_000]);
     }
 }

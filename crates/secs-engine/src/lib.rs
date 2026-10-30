@@ -55,6 +55,7 @@ pub mod export_view;
 mod fit;
 #[allow(dead_code)]
 mod levels;
+mod low_protect;
 #[allow(dead_code)]
 mod measurement;
 mod memory;
@@ -91,8 +92,8 @@ pub use calibration::{
 };
 pub use chain::{BaRow, StageResponses, input_response, stage_responses};
 pub use design::{
-    Design, DesignRequest, DesignSpectra, FitStage, FitterFactory, MainDesign, RoleScores,
-    SubDesign, design, production_fitters, production_fitters_with,
+    Design, DesignRequest, DesignSpectra, FitStage, FitterFactory, MainDesign, RoleLateEnergy,
+    RoleScores, SubDesign, design, late_energy, production_fitters, production_fitters_with,
 };
 pub use error::EngineError;
 pub use export_view::{ExportView, export_view};
@@ -101,7 +102,8 @@ pub use input::{EngineConfig, Measurement, MeasurementSet, Samples, Tuning};
 pub use measurement::{Spectra, long_spectra};
 pub use mimo::{
     IirDerivatives, IirSolveOptions, IirSolver, IirSupport, MimoDesign, MimoIir, MimoKey,
-    MimoRequest, MimoRun, design_mimo, design_mimo_iir, design_mimo_iir_with_options,
+    MimoRequest, MimoRoleLateEnergy, MimoRoleScore, MimoRun, design_mimo, design_mimo_iir,
+    design_mimo_iir_with_options,
 };
 pub use normalize::normalize_measurements;
 pub use notes::{MimoNote, Note};

@@ -5,7 +5,7 @@ import { PrefsScope } from "../../app/prefs";
 import { StepHeader } from "../../app/StepHeader";
 import { translate } from "../../i18n";
 import { renderWith } from "../../test/render";
-import { configOf, invalidView, newProjectView, sampleView, speaker } from "./fixtures";
+import { autoRateView, configOf, invalidView, minidspView, newProjectView, sampleView, speaker } from "./fixtures";
 import { systemStepState } from "./state";
 import { OUTPUT_LIMIT, SystemScreen, systemHeader } from "./SystemScreen";
 import type { SystemActions, SystemView } from "./types";
@@ -302,6 +302,38 @@ describe("SystemScreen", () => {
     fireEvent.keyDown(iir, { key: "Enter" });
     expect(actions.setDspFields).toHaveBeenLastCalledWith({ ...sampleView.dsp.fields, iir_bands: 24 });
     expect(must("system.dsp.note").textContent).toContain("1,365");
+  });
+
+  it("writes the output rate a PC profile chooses: a fixed rate, or 자동 with its line (ADR 0017)", () => {
+    const actions = setup(sampleView);
+    const select = must("system.dsp.output_rate") as HTMLSelectElement;
+    expect(select.tagName).toBe("SELECT");
+    expect(select.value).toBe("48000");
+    expect([...select.options].map((option) => option.textContent)).toEqual(["자동", "44.1 kHz", "48 kHz", "88.2 kHz", "96 kHz", "176.4 kHz", "192 kHz"]);
+    // The 자동 line is said only while 자동 is chosen.
+    expect(document.getElementById("system.dsp.output_rate-hint")).toBeNull();
+    fireEvent.change(select, { target: { value: "96000" } });
+    expect(actions.setDspFields).toHaveBeenLastCalledWith({ ...sampleView.dsp.fields, output_rate: { fixed: 96000 } });
+    fireEvent.change(select, { target: { value: "auto" } });
+    expect(actions.setDspFields).toHaveBeenLastCalledWith({ ...sampleView.dsp.fields, output_rate: "auto" });
+    cleanup();
+    setup(autoRateView);
+    expect((must("system.dsp.device") as HTMLSelectElement).value).toBe("camilla");
+    expect((must("system.dsp.output_rate") as HTMLSelectElement).value).toBe("auto");
+    expect(document.getElementById("system.dsp.output_rate-hint")?.textContent).toBe(translate("ko", "system.dsp.output_rate.auto.hint"));
+  });
+
+  it("shows a rate the device fixes as text with its reason, and counts the taps at it", () => {
+    const actions = setup(minidspView);
+    const rate = must("system.dsp.output_rate");
+    expect(rate.tagName).not.toBe("SELECT");
+    expect(rate.querySelector("select, input, button")).toBeNull();
+    expect(rate.textContent).toBe(`96 kHz${translate("ko", "system.dsp.output_rate.fixed")}`);
+    fireEvent.click(must("system.dsp.advanced"));
+    // 2048 taps at 96 kHz: (2048 − 1) / 96000 / 2 = 10.7 ms of linear-phase delay, not the 21.3 ms they take at 48 kHz.
+    const taps = must("system.dsp.fir_taps") as HTMLSelectElement;
+    expect(taps.selectedOptions[0]?.textContent).toBe(translate("ko", "system.dsp.taps.option", { taps: "2,048", ms: "10.7" }));
+    expect(actions.setDspFields).not.toHaveBeenCalled();
   });
 
   it("sets the timing reference folded under 고급 on the REW path, after the estimate", () => {

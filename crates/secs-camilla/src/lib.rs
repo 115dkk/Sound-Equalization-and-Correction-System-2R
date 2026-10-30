@@ -17,7 +17,6 @@ pub mod pyfmt;
 use pyfmt::{format_fixed, format_g, format_i3, format_s30, repr_f64, round_ndigits};
 use secs_graph::{ExportGraph, GraphError, LfeChoice};
 use secs_types::chain::{BandType, MimoFilter, MimoPath, MimoPaths, SignalChain, SubChannel};
-use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::path::{Component, Path, PathBuf};
 
@@ -67,6 +66,8 @@ pub struct Options {
     pub capture: Option<Device>,
     /// Playback device; `None` selects a file placeholder.
     pub playback: Option<Device>,
+    /// Output sample rate in Hz.
+    pub output_rate: u32,
     /// CamillaDSP chunksize.
     pub chunksize: u32,
     /// ASCII head-comment note (non-ASCII characters are dropped).
@@ -94,6 +95,7 @@ impl Default for Options {
         Self {
             capture: None,
             playback: None,
+            output_rate: SAMPLE_RATE,
             chunksize: 1024,
             note: String::new(),
             lfe_gain_db: Some(10.0),
@@ -326,10 +328,8 @@ fn combo(kind: &str, frequency: f64, order: i64) -> Json {
     )
 }
 
-fn delay(milliseconds: f64) -> Json {
-    delay_samples(round_ties_even_i64(
-        milliseconds * f64::from(SAMPLE_RATE) / 1000.0,
-    ))
+fn delay(milliseconds: f64, rate: u32) -> Json {
+    delay_samples(secs_dsp::rate::delay_samples(milliseconds, rate))
 }
 
 fn delay_samples(samples: i64) -> Json {
@@ -344,8 +344,8 @@ fn delay_samples(samples: i64) -> Json {
 }
 
 /// [`wav_bytes`] for one exported FIR, naming its owner in a range error.
-fn fir_wav(owner: &str, taps: &[f64]) -> Result<Vec<u8>, CamillaError> {
-    wav_bytes(taps, SAMPLE_RATE).map_err(|error| match error {
+fn fir_wav(owner: &str, taps: &[f64], rate: u32) -> Result<Vec<u8>, CamillaError> {
+    wav_bytes(taps, rate).map_err(|error| match error {
         GraphError::NonFinite(name) => CamillaError::NonFinite(format!("{owner}.{name}")),
         other => other.into(),
     })
@@ -443,6 +443,11 @@ fn finite(name: &str, value: f64) -> Result<(), CamillaError> {
 /// The writer's own options; the chain and its MIMO paths are the export
 /// graph's to check.
 fn validate_options(options: &Options) -> Result<(), CamillaError> {
+    if !secs_dsp::rate::is_output_rate(options.output_rate) {
+        return Err(CamillaError::Invalid(
+            "unsupported output sample rate".into(),
+        ));
+    }
     finite("options.lfe_lp_hz", options.lfe_lp_hz)?;
     if !options.mode.is_ascii() {
         return Err(CamillaError::NonAscii(options.mode.clone()));
@@ -635,6 +640,7 @@ fn howto_lines(
     outputs: &[String],
     latency_ms: Option<f64>,
     mode: &str,
+    output_rate: u32,
     file_placeholders: bool,
     asio: bool,
 ) -> Vec<String> {
@@ -656,7 +662,7 @@ fn howto_lines(
         );
     }
     lines.extend([
-        "#    samplerate 48000 (Windows: set both devices' default format to 48000 Hz too).".into(),
+        format!("#    samplerate {output_rate} (Windows: set both devices' default format to {output_rate} Hz too)."),
         "#    Different clocks (loopback -> interface): enable_rate_adjust; Windows also resampler AsyncSinc.".into(),
         "#    Capture channels = route_in \"in\", playback channels = route_out \"out\".".into(),
     ]);
@@ -801,7 +807,12 @@ pub fn make_config_observed(
                 )));
             }
             let filename = posix(&relative(&file, config_dir)?);
-            coeffs.push((file, fir_wav(&format!("main.{}", main.role), &main.fir)?));
+            let taps = secs_dsp::rate::fir_to_rate(&main.fir, options.output_rate)
+                .map_err(|error| CamillaError::Invalid(error.to_string()))?;
+            coeffs.push((
+                file,
+                fir_wav(&format!("main.{}", main.role), &taps, options.output_rate)?,
+            ));
             let name = format!("in_{}_fir", main.role);
             filters.push((
                 name.clone(),
@@ -934,7 +945,7 @@ pub fn make_config_observed(
             names.push(high);
         }
         let name = format!("main_{}_delay", main.role);
-        filters.push((name.clone(), delay(main.delay_ms)));
+        filters.push((name.clone(), delay(main.delay_ms, options.output_rate)));
         names.push(name);
         pipeline.push(pipeline_filter(channel, names));
     }
@@ -1016,7 +1027,7 @@ pub fn make_config_observed(
             names.push(name);
         }
         let name = format!("sub_{}_delay", sub.role);
-        filters.push((name.clone(), delay(sub.delay_ms)));
+        filters.push((name.clone(), delay(sub.delay_ms, options.output_rate)));
         names.push(name);
         pipeline.push(pipeline_filter(n_main + sub_index, names));
     }
@@ -1036,7 +1047,7 @@ pub fn make_config_observed(
                 _ => 0.0,
             };
             // Round the old complete delay exactly once, then factor integer samples.
-            round_ties_even_i64((path.delay_ms + extra) * f64::from(SAMPLE_RATE) / 1000.0)
+            secs_dsp::rate::delay_samples(path.delay_ms + extra, options.output_rate)
         })
         .collect();
     // The graph groups support paths by output, family and exact low edge.
@@ -1088,12 +1099,15 @@ pub fn make_config_observed(
         match &path.filter {
             MimoFilter::Fir { .. } | MimoFilter::FirLowRate { .. } => {
                 let taps = match &path.filter {
-                    MimoFilter::Fir { taps_48k } => Cow::Borrowed(taps_48k.as_slice()),
+                    MimoFilter::Fir { taps_48k } => {
+                        secs_dsp::rate::fir_to_rate(taps_48k, options.output_rate)
+                    }
                     MimoFilter::FirLowRate { taps_low, fs_low } => {
-                        Cow::Owned(secs_dsp::fir::lowrate_to_48k(taps_low, *fs_low))
+                        secs_dsp::rate::lowrate_to_rate(taps_low, *fs_low, options.output_rate)
                     }
                     MimoFilter::Iir { .. } => unreachable!(),
-                };
+                }
+                .map_err(|error| CamillaError::Invalid(error.to_string()))?;
                 let file = coeff_dir.join(format!("{fir_prefix}{tag}.wav"));
                 if file.parent() != Some(coeff_dir.as_path()) {
                     return Err(CamillaError::Invalid(format!(
@@ -1102,7 +1116,10 @@ pub fn make_config_observed(
                     )));
                 }
                 let filename = posix(&relative(&file, config_dir)?);
-                coeffs.push((file, fir_wav(&format!("mimo.paths[{index}]"), &taps)?));
+                coeffs.push((
+                    file,
+                    fir_wav(&format!("mimo.paths[{index}]"), &taps, options.output_rate)?,
+                ));
                 let name = format!("{tag}_fir");
                 filters.push((
                     name.clone(),
@@ -1357,6 +1374,7 @@ pub fn make_config_observed(
         outputs,
         options.latency_ms,
         &options.mode,
+        options.output_rate,
         options.design.is_none() || (options.capture.is_none() && options.playback.is_none()),
         options.design.is_some() && (device_is(capture, "Asio") || device_is(playback, "Asio")),
     ));
@@ -1414,7 +1432,7 @@ pub fn make_config_observed(
         format!("title: {}", json(&Json::Str(title))),
         format!("description: {}", json(&Json::Str(description))),
         "devices:".into(),
-        format!("  samplerate: {SAMPLE_RATE}"),
+        format!("  samplerate: {}", options.output_rate),
         format!("  chunksize: {}", options.chunksize),
         format!(
             "  capture: {}",

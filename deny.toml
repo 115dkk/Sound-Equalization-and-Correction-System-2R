@@ -6,8 +6,10 @@ all-features = true
 [licenses]
 # SECS 2R ships under GPL-3.0-only (docs/adr/0001). Every dependency must be
 # compatible with distributing the combined binaries under it: permissive
-# licenses, weak copyleft (MPL-2.0, LGPL) and GPL-3.0 itself. GPL-2.0-only and
-# AGPL are not compatible in that direction and stay out.
+# licenses, weak copyleft (MPL-2.0, LGPL) and GPL-3.0 itself. GPL-2.0-only is
+# not compatible and stays out. AGPL-3.0-only is allowed only for this
+# workspace's own published crates (docs/adr/0023, `exceptions` below), which
+# GPLv3 section 13 lets the app combine with; third-party AGPL stays out.
 allow = [
     "0BSD",
     "Apache-2.0",
@@ -33,8 +35,28 @@ allow = [
 confidence-threshold = 0.9
 unused-allowed-license = "allow"
 
+# The 16 crates published to crates.io (docs/adr/0016) are AGPL-3.0-only.
+exceptions = [
+    { crate = "sound-equalization-and-correction-system-rust-api", allow = ["AGPL-3.0-only"] },
+    { crate = "secs-audio", allow = ["AGPL-3.0-only"] },
+    { crate = "secs-camilla", allow = ["AGPL-3.0-only"] },
+    { crate = "secs-compute", allow = ["AGPL-3.0-only"] },
+    { crate = "secs-dirac", allow = ["AGPL-3.0-only"] },
+    { crate = "secs-dsp", allow = ["AGPL-3.0-only"] },
+    { crate = "secs-engine", allow = ["AGPL-3.0-only"] },
+    { crate = "secs-export", allow = ["AGPL-3.0-only"] },
+    { crate = "secs-filters", allow = ["AGPL-3.0-only"] },
+    { crate = "secs-graph", allow = ["AGPL-3.0-only"] },
+    { crate = "secs-jos", allow = ["AGPL-3.0-only"] },
+    { crate = "secs-mdat", allow = ["AGPL-3.0-only"] },
+    { crate = "secs-project", allow = ["AGPL-3.0-only"] },
+    { crate = "secs-rew", allow = ["AGPL-3.0-only"] },
+    { crate = "secs-service", allow = ["AGPL-3.0-only"] },
+    { crate = "secs-types", allow = ["AGPL-3.0-only"] },
+]
+
 [licenses.private]
-# Workspace crates are publish = false and inherit GPL-3.0-only.
+# Unpublished workspace crates are publish = false and inherit GPL-3.0-only.
 ignore = true
 
 [advisories]

@@ -11,8 +11,8 @@ use secs_project::{
 use secs_types::calibration::CalibrationSettings;
 use secs_types::ipc::{
     CalibrateParams, CalibrationSummary, ChannelScore, ErrorCode, IpcError, JobKind, JobResult,
-    JobStarted, MetricsSummary, MimoParams, MimoSummary, Notice, ResultsSummary, VerdictSummary,
-    XoRecommendation,
+    JobStarted, LateEnergy, MetricsSummary, MimoChannelScore, MimoLateEnergy, MimoParams,
+    MimoSummary, Notice, ResultsSummary, VerdictSummary, XoRecommendation,
 };
 
 use crate::jobs::JobContext;
@@ -50,7 +50,12 @@ impl Service {
         params: CalibrateParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
+        let run_mimo = params.mimo && !params.subs_only;
+        let selection = run_mimo.then(|| self.require_acceleration()).transpose()?;
         let snapshot = self.snapshot(params.settings)?;
+        if run_mimo {
+            check_mimo_preconditions(&snapshot.project, &snapshot.settings)?;
+        }
         let subs_only = params.subs_only;
         let session = self.session.clone();
         let memory = self.deps.memory.available_bytes();
@@ -73,10 +78,18 @@ impl Service {
                 &ctx,
             )
             .map_err(engine_error)?;
-            let design = calibration.design;
+            let design = Arc::new(calibration.design);
+            // The 2 s export view is built outside the session lock.
+            let late_energy = secs_engine::late_energy(&design).map_err(engine_error)?;
             let ticket = prepared.ticket;
-            let (path, cached) = session::commit(&session, ticket, &job, |open| {
-                let mut summary = summarize(&design, &prepared.settings);
+            let calibration_key = run_key(
+                &prepared.signature,
+                &prepared.target_key,
+                &prepared.settings.engine_key(),
+                &prepared.config_key,
+            );
+            let commit_calibration = |open: &mut session::OpenProject| {
+                let mut summary = summarize(&design, &prepared.settings, &late_energy);
                 if calibration.resampled > 0 {
                     summary.notes.push(Notice {
                         code: "measurement_resampled".into(),
@@ -87,20 +100,14 @@ impl Service {
                         .into(),
                     });
                 }
-                let run_key = run_key(
-                    &prepared.signature,
-                    &prepared.target_key,
-                    &prepared.settings.engine_key(),
-                    &prepared.config_key,
-                );
                 let run = CalibrationRun::new(
                     summary,
                     prepared.settings.clone(),
                     prepared.signature,
                     prepared.target_key,
                     prepared.config_key,
-                    run_key,
-                    Arc::new(design),
+                    calibration_key.clone(),
+                    design.clone(),
                 );
                 open.results.commit_calibration(run, subs_only);
                 let stores_settings =
@@ -112,13 +119,30 @@ impl Service {
                     (open.path.clone(), open.results.cache_snapshot()),
                     stores_settings,
                 ))
-            })?;
+            };
+            let (path, cached) = if run_mimo {
+                session::commit_phase(&session, ticket, &job, commit_calibration)?
+            } else {
+                session::commit(&session, ticket, &job, commit_calibration)?
+            };
             let owner = if subs_only {
                 CacheOwner::Subs
             } else {
                 CacheOwner::Calibration
             };
             persist_cache(cached, &path, ticket, &session, owner);
+            if let Some(selection) = selection {
+                compute_and_commit_mimo(
+                    &session,
+                    ticket,
+                    &job,
+                    memory,
+                    design,
+                    prepared.settings,
+                    selection,
+                    calibration_key,
+                )?;
+            }
             Ok(JobResult::Calibration)
         })
     }
@@ -171,13 +195,13 @@ impl Service {
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
         let selection = self.require_acceleration()?;
-        let compute_key = crate::compute::ComputeIdentity::from(&selection.status);
         let session_guard = lock(&self.session);
         let open = session_guard.require().map_err(IpcError::from)?;
         let ticket = session_guard.ticket()?;
         let settings = params
             .settings
             .unwrap_or_else(|| calibration_from_project(open.store.project()));
+        check_mimo_preconditions(open.store.project(), &settings)?;
         let calibration = open.results.live_calibration().ok_or_else(|| {
             IpcError::new(ErrorCode::EngineInput, "calibration must run before MIMO")
         })?;
@@ -199,57 +223,16 @@ impl Service {
         let memory = self.deps.memory.available_bytes();
         let session = self.session.clone();
         self.jobs.start(JobKind::Mimo, events, move |job| {
-            let ctx = compute_context(&job, memory);
-            let run = secs_engine::mimo::compute_with_acceleration(
-                &design,
-                design.replay.measurements(),
-                design.replay.config(),
-                &settings,
-                &Tuning::default(),
-                &ctx,
-                &selection,
-            )
-            .map_err(engine_error)?;
-            let (path, cached) = session::commit(&session, ticket, &job, |open| {
-                let summary = MimoSummary {
-                    stale: false,
-                    kind: if run.fir { "fir" } else { "iir" }.into(),
-                    fsiso: run.paths.fsiso,
-                    support_count: run.paths.paths.len(),
-                    fir_taps_total: run
-                        .paths
-                        .paths
-                        .iter()
-                        .map(|path| path.filter.fir_len_48k())
-                        .sum(),
-                    notes: run
-                        .notes
-                        .iter()
-                        .flat_map(notices)
-                        .chain((run.compute.fallbacks > 0).then(|| Notice {
-                            code: "compute_fallback".into(),
-                            params: [("count".into(), run.compute.fallbacks.to_string())].into(),
-                        }))
-                        .collect(),
-                    input_count: run
-                        .paths
-                        .paths
-                        .iter()
-                        .map(|path| &path.input)
-                        .collect::<std::collections::BTreeSet<_>>()
-                        .len(),
-                    compute: run.compute.clone(),
-                };
-                open.results.commit_mimo(MimoResult {
-                    summary,
-                    settings_key: settings.mimo_key(),
-                    compute_key,
-                    calibration_key,
-                    run,
-                });
-                Ok(((open.path.clone(), open.results.cache_snapshot()), false))
-            })?;
-            persist_cache(cached, &path, ticket, &session, CacheOwner::Mimo);
+            compute_and_commit_mimo(
+                &session,
+                ticket,
+                &job,
+                memory,
+                design,
+                settings,
+                selection,
+                calibration_key,
+            )?;
             Ok(JobResult::Mimo)
         })
     }
@@ -283,12 +266,117 @@ impl Service {
     }
 }
 
+fn check_mimo_preconditions(
+    project: &Project,
+    settings: &CalibrationSettings,
+) -> Result<(), IpcError> {
+    if !settings.mimo_on {
+        return Err(engine_error(secs_engine::EngineError::Input(
+            "MIMO is disabled".into(),
+        )));
+    }
+    let positions = secs_project::measured_positions(project).len();
+    let (available, reason) = secs_engine::mimo::availability(positions);
+    if !available {
+        return Err(engine_error(secs_engine::EngineError::Input(reason)));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_and_commit_mimo(
+    session: &Arc<std::sync::Mutex<session::Session>>,
+    ticket: ProjectTicket,
+    job: &JobContext,
+    memory: u64,
+    design: Arc<Design>,
+    settings: CalibrationSettings,
+    selection: secs_engine::mimo::AccelerationSelection,
+    calibration_key: String,
+) -> Result<(), IpcError> {
+    let compute_key = crate::compute::ComputeIdentity::from(&selection.status);
+    let ctx = compute_context(job, memory);
+    let run = secs_engine::mimo::compute_with_acceleration(
+        &design,
+        design.replay.measurements(),
+        design.replay.config(),
+        &settings,
+        &Tuning::default(),
+        &ctx,
+        &selection,
+    )
+    .map_err(|error| engine_error(error).with_param("stage", "mimo"))?;
+    let (path, cached) = session::commit(session, ticket, job, |open| {
+        let summary = summarize_mimo(&run);
+        open.results.commit_mimo(MimoResult {
+            summary,
+            settings_key: settings.mimo_key(),
+            compute_key,
+            calibration_key,
+            run,
+        });
+        Ok(((open.path.clone(), open.results.cache_snapshot()), false))
+    })?;
+    persist_cache(cached, &path, ticket, session, CacheOwner::Mimo);
+    Ok(())
+}
+
+fn summarize_mimo(run: &secs_engine::mimo::MimoRun) -> MimoSummary {
+    MimoSummary {
+        stale: false,
+        kind: if run.fir { "fir" } else { "iir" }.into(),
+        fsiso: run.paths.fsiso,
+        support_count: run.paths.paths.len(),
+        fir_taps_total: run
+            .paths
+            .paths
+            .iter()
+            .map(|path| path.filter.fir_len_48k())
+            .sum(),
+        notes: run
+            .notes
+            .iter()
+            .flat_map(notices)
+            .chain((run.compute.fallbacks > 0).then(|| Notice {
+                code: "compute_fallback".into(),
+                params: [("count".into(), run.compute.fallbacks.to_string())].into(),
+            }))
+            .collect(),
+        input_count: run
+            .paths
+            .paths
+            .iter()
+            .map(|path| &path.input)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        scorecard: run
+            .scorecard
+            .iter()
+            .map(|score| MimoChannelScore {
+                role: score.role.clone(),
+                after_mimo: metrics(score.after_mimo),
+            })
+            .collect(),
+        late_energy: run
+            .late_energy
+            .iter()
+            .map(|row| MimoLateEnergy {
+                role: row.role.clone(),
+                position: row.position,
+                after_mimo_db: row.after_mimo_db,
+            })
+            .collect(),
+        compute: run.compute.clone(),
+    }
+}
+
 impl Snapshot {
     /// Reads every IR of the snapshot without the session lock, checking for
     /// cancellation between files. The commit checks the ticket.
     pub(crate) fn load(self, job: &JobContext) -> Result<Prepared, IpcError> {
         let mut store = secs_project::MeasurementStore::new(&self.path, self.project.clone());
         let measurements = load_measurements_cancellable(&mut store, job.cancel())?;
+        check_rc_agreement(&self.project, &self.settings, &measurements)?;
         let project = self.project;
         Ok(Prepared {
             ticket: self.ticket,
@@ -301,6 +389,42 @@ impl Snapshot {
             measurements,
         })
     }
+}
+
+fn check_rc_agreement(
+    project: &Project,
+    settings: &CalibrationSettings,
+    measurements: &MeasurementSet,
+) -> Result<(), IpcError> {
+    if settings.rc_hi.is_some()
+        || settings.rc_hi_basis != secs_types::calibration::RcHiBasis::Agreement
+    {
+        return Ok(());
+    }
+    let mains: Vec<_> = project_groups(project)
+        .into_iter()
+        .filter(|(group, _)| group != "sub")
+        .flat_map(|(_, roles)| roles)
+        .collect();
+    let measured = measurements
+        .positions
+        .iter()
+        .filter(|(_, roles)| {
+            roles
+                .iter()
+                .any(|(role, m)| mains.contains(role) && !m.samples.is_empty())
+        })
+        .count();
+    if measured < 3 {
+        return Err(IpcError::new(
+            ErrorCode::EngineInput,
+            "RC agreement requires at least 3 measured positions",
+        )
+        .with_param("reason", "rc_agreement_positions")
+        .with_param("measured", measured.to_string())
+        .with_param("required", "3"));
+    }
+    Ok(())
 }
 
 pub(crate) fn compute_context(job: &JobContext, available: u64) -> Context {
@@ -422,7 +546,11 @@ fn load_measurements_cancellable(
     Ok(MeasurementSet { positions })
 }
 
-fn summarize(design: &Design, settings: &CalibrationSettings) -> CalibrationSummary {
+fn summarize(
+    design: &Design,
+    settings: &CalibrationSettings,
+    late_energy: &[secs_engine::RoleLateEnergy],
+) -> CalibrationSummary {
     let scorecard: Vec<_> = design
         .scores
         .iter()
@@ -430,6 +558,15 @@ fn summarize(design: &Design, settings: &CalibrationSettings) -> CalibrationSumm
             role: scores.role.clone(),
             before: metrics(scores.before),
             after: metrics(scores.after),
+        })
+        .collect();
+    let late_energy = late_energy
+        .iter()
+        .map(|row| LateEnergy {
+            role: row.role.clone(),
+            position: row.position,
+            before_db: row.before_db,
+            after_db: row.after_db,
         })
         .collect();
     let count = scorecard.len().max(1) as f64;
@@ -457,6 +594,7 @@ fn summarize(design: &Design, settings: &CalibrationSettings) -> CalibrationSumm
                 .unwrap_or(0.0),
         },
         scorecard,
+        late_energy,
         latency_ms: design.chain.latency_ms,
         notes: design.notes.iter().flat_map(notices).collect(),
         main_roles: design
@@ -636,11 +774,25 @@ fn notices(note: &secs_engine::Note) -> Vec<Notice> {
     }
 }
 
-fn scalar_notice(note: &secs_engine::Note) -> Notice {
+pub(crate) fn scalar_notice(note: &secs_engine::Note) -> Notice {
     use secs_engine::Note;
 
     let mut params = std::collections::BTreeMap::new();
     let code = match note {
+        Note::LowProtect {
+            role,
+            rolloff_hz,
+            hp_hz,
+            limited,
+        } => {
+            params.insert("role".into(), role.clone());
+            params.insert("rolloff_hz".into(), rolloff_hz.to_string());
+            params.insert("limited".into(), limited.to_string());
+            if let Some(hz) = hp_hz {
+                params.insert("hp_hz".into(), hz.to_string());
+            }
+            "low_protect"
+        }
         Note::LiftCapped {
             from_ms,
             taps,
@@ -655,11 +807,27 @@ fn scalar_notice(note: &secs_engine::Note) -> Notice {
             hz,
             auto,
             schroeder_hz,
+            basis,
+            factor,
+            band_hz,
+            band_t60_s,
+            positions,
         } => {
             params.insert("hz".into(), hz.to_string());
             params.insert("auto".into(), auto.to_string());
             if let Some(value) = schroeder_hz {
                 params.insert("schroeder_hz".into(), value.to_string());
+            }
+            params.insert("basis".into(), basis.as_str().into());
+            params.insert("factor".into(), factor.to_string());
+            if let Some(value) = band_hz {
+                params.insert("band_hz".into(), value.to_string());
+            }
+            if let Some(value) = band_t60_s {
+                params.insert("band_t60_s".into(), value.to_string());
+            }
+            if let Some(value) = positions {
+                params.insert("positions".into(), value.to_string());
             }
             "rc_limit"
         }
@@ -913,6 +1081,73 @@ mod tests {
     use secs_project::{MeasurementResult, MeasurementStore};
     use secs_types::chain::BandType;
 
+    #[test]
+    fn rc_agreement_counts_measured_mains_and_respects_manual_upper_limit() {
+        let project = Project::from_preset("2.0").unwrap();
+        let mut settings = CalibrationSettings {
+            rc_hi_basis: secs_types::calibration::RcHiBasis::Agreement,
+            ..Default::default()
+        };
+        let measurement = Measurement {
+            samples: Samples::F64(vec![1.0].into()),
+            sample_rate: 48000,
+            t0: 0.0,
+        };
+        let mut measurements = MeasurementSet {
+            positions: vec![
+                (1, vec![("L".into(), measurement.clone())]),
+                (2, vec![("L".into(), measurement.clone())]),
+                (3, vec![("SW1".into(), measurement.clone())]),
+            ],
+        };
+        let error = check_rc_agreement(&project, &settings, &measurements).unwrap_err();
+        assert_eq!(error.code, ErrorCode::EngineInput);
+        assert_eq!(error.params["reason"], "rc_agreement_positions");
+        assert_eq!(error.params["measured"], "2");
+        settings.rc_hi = Some(900.0);
+        assert!(check_rc_agreement(&project, &settings, &measurements).is_ok());
+        settings.rc_hi = None;
+        measurements.positions[2].1.push(("L".into(), measurement));
+        assert!(check_rc_agreement(&project, &settings, &measurements).is_ok());
+    }
+
+    #[test]
+    fn rc_limit_notices_keep_legacy_fields_and_add_basis_evidence() {
+        use secs_types::calibration::RcHiBasis;
+        let note = scalar_notice(&Note::RcLimit {
+            hz: 400.0,
+            auto: true,
+            schroeder_hz: Some(154.0),
+            basis: RcHiBasis::Lenient,
+            factor: 2,
+            band_hz: Some(200.0),
+            band_t60_s: Some(0.8),
+            positions: None,
+        });
+        assert_eq!(note.code, "rc_limit");
+        assert_eq!(note.params["hz"], "400");
+        assert_eq!(note.params["auto"], "true");
+        assert_eq!(note.params["schroeder_hz"], "154");
+        assert_eq!(note.params["basis"], "lenient");
+        assert_eq!(note.params["factor"], "2");
+        assert_eq!(note.params["band_hz"], "200");
+        assert_eq!(note.params["band_t60_s"], "0.8");
+        assert!(!note.params.contains_key("positions"));
+        let note = scalar_notice(&Note::RcLimit {
+            hz: 287.0,
+            auto: true,
+            schroeder_hz: None,
+            basis: RcHiBasis::Agreement,
+            factor: 1,
+            band_hz: None,
+            band_t60_s: None,
+            positions: Some(9),
+        });
+        assert_eq!(note.params["basis"], "agreement");
+        assert_eq!(note.params["positions"], "9");
+        assert!(!note.params.contains_key("band_hz"));
+    }
+
     fn response_source(frequencies: Vec<f32>, gains: Vec<f32>) -> SourceInfo {
         SourceInfo {
             cal: vec![(
@@ -1154,6 +1389,34 @@ mod tests {
     }
 
     #[test]
+    fn low_protect_notices_include_outcome_and_optional_highpass() {
+        let note = Note::LowProtect {
+            role: "SW1".into(),
+            rolloff_hz: 28.0,
+            hp_hz: Some(20.0),
+            limited: true,
+        };
+        assert_eq!(
+            serde_json::to_value(notices(&note)).unwrap(),
+            serde_json::json!([
+                {"code":"low_protect","params":{"role":"SW1","rolloff_hz":"28","hp_hz":"20","limited":"true"}}
+            ])
+        );
+        let note = Note::LowProtect {
+            role: "L".into(),
+            rolloff_hz: 30.0,
+            hp_hz: None,
+            limited: false,
+        };
+        assert_eq!(
+            serde_json::to_value(notices(&note)).unwrap(),
+            serde_json::json!([
+                {"code":"low_protect","params":{"role":"L","rolloff_hz":"30","limited":"false"}}
+            ])
+        );
+    }
+
+    #[test]
     fn flat_notice_schemas_preserve_scalar_values_and_order() {
         use secs_engine::MimoNote;
         use serde_json::json;
@@ -1228,6 +1491,12 @@ mod tests {
     #[test]
     fn every_engine_note_maps_to_a_notice_code_and_params() {
         let notes = vec![
+            Note::LowProtect {
+                role: "SW1".into(),
+                rolloff_hz: 28.0,
+                hp_hz: Some(20.0),
+                limited: true,
+            },
             Note::LiftCapped {
                 from_ms: 2.0,
                 taps: 3,
@@ -1247,6 +1516,11 @@ mod tests {
                 hz: 300.0,
                 auto: true,
                 schroeder_hz: Some(250.0),
+                basis: secs_types::calibration::RcHiBasis::Strict,
+                factor: 1,
+                band_hz: None,
+                band_t60_s: None,
+                positions: None,
             },
             Note::Latency {
                 latency_ms: 10.0,
@@ -1288,6 +1562,7 @@ mod tests {
         assert_eq!(
             codes,
             [
+                "low_protect",
                 "lift_capped",
                 "sub_filters",
                 "sub_filter_peq",
@@ -1308,7 +1583,7 @@ mod tests {
                 "mimo_support_limit",
             ]
         );
-        assert_eq!(notices(&notes[0])[0].params["from_ms"], "2");
-        assert_eq!(notices(&notes[13])[0].params["role"], "SW1");
+        assert_eq!(notices(&notes[1])[0].params["from_ms"], "2");
+        assert_eq!(notices(&notes[14])[0].params["role"], "SW1");
     }
 }

@@ -7,6 +7,21 @@
 - **편차**는 업스트림과 다르게 닿는 자리입니다([`DEVIATIONS.md`](DEVIATIONS.md)의 번호). 없앤 기능(U4)은 id 칸에 `—`를 적고 편차 번호를 답니다.
 - **작업서**는 그 줄을 채운 작업서입니다. 연결(P33) 뒤에 id가 바뀌면 그 작업서가 고칩니다.
 
+### 출력 레이트의 갤러리 견본(P116, P117)
+
+| 견본 id | 확인할 상태 |
+|---|---|
+| `screen.system.dsp.rate-48k` | CamillaDSP의 출력 레이트 48 kHz, 변경 가능 |
+| `screen.system.dsp.rate-auto` | 자동을 골라도 CamillaDSP 프로파일 유지 |
+| `screen.system.dsp.rate-minidsp` | miniDSP의 출력 레이트 96 kHz 고정 |
+| `screen.export.rate.96k` | 필터 형식별 출력 레이트 96 kHz |
+| `screen.export.rate.extra` | 추가 레이트 목록 펼침, 44.1 kHz와 192 kHz 선택 |
+| `screen.export.rate.fallback` | 지원하지 않는 장치 레이트 대신 48 kHz로 저장, 시스템으로 이동 |
+| `screen.calibrate.mimo-budget-96k` | 96 kHz로 환산한 MIMO FIR의 예산 초과 |
+| `screen.calibrate.mode-fir-over-96k` | 96 kHz로 환산한 채널 FIR의 한도 초과 |
+
+화면 검증은 `screens/system/SystemScreen.test.tsx`, `screens/system/useSystemScreen.test.tsx`, `screens/system/outputRate.test.ts`, `screens/calibrate/CalibrateScreen.test.tsx`, `screens/calibrate/useCalibrateScreen.test.tsx`, `screens/export/ExportScreen.test.tsx`, `screens/export/useExportScreen.test.tsx`에서 합니다. 모의 서비스와 저장 순서는 `ipc/mock.test.ts`, `state/writers.test.ts`에서 확인합니다.
+
 ## 1. 장치·마이크 (Step 1) — P30
 
 | 항목 | id | 편차 | 작업서 |
@@ -58,7 +73,8 @@
 | 채널당 FIR 탭 512…65536 ("선형 위상 최대 x ms") | `system.dsp.advanced`, `system.dsp.fir_taps` | U2 | P30 |
 | 총 FIR 탭 예산 0–4,194,304, 1024 단계 | `system.dsp.fir_budget` | U2 | P30 |
 | IIR 밴드, 올패스 밴드, BM 경로 지연 0–64 | `system.dsp.iir_bands`, `system.dsp.allpass_bands`, `system.dsp.bm_path_delays` | U2 | P30 |
-| 직접 고치면 사용자 지정, "FIR 길이 ≈ x ms · 주파수 간격 ≈ y Hz" | `system.dsp.note` | U2 | P30 |
+| 출력 레이트 이외의 값을 직접 고치면 사용자 지정, "FIR 길이 ≈ x ms · 주파수 간격 ≈ y Hz" | `system.dsp.note` | U2 | P30, P117 |
+| 내보낼 DSP의 출력 레이트: CamillaDSP와 사용자 지정은 자동 또는 여섯 고정값, 나머지는 장치 고정값 | `system.dsp.output_rate` | ADR 0017 | P116, P117 |
 | 프리셋 값(탭 / 예산 / IIR / AP / BM) | `system.dsp.device` (`dsp_set { preset }`) | U2 | P30 |
 | 진행 조건: 스피커 하나 이상, `validate()` 통과 | `frame.header.blocked`, `system.next` | 없음 | P30 |
 
@@ -126,6 +142,8 @@
 | XO 탭의 XO 선 끌기(40–200 Hz, 끄는 동안 곡선이 따라오고 놓으면 저장) | `calibrate.xo.line.handle` | 없음 | P31b |
 | 탭별 범례(보정 전, 보정 후, 타겟, MIMO 적용, 메인, 서브, 합, 정렬 전, 정렬 후, 서브 합) | `calibrate.plot.legend.<key>` | 없음 | P31b |
 | 지표 줄 "±1 dB (20–200 Hz) a % → b %" · "GD 산포 (20–100 Hz) a → b ms"(판정 카드는 전체, 성적표는 채널별) | `calibrate.verdict.within`, `calibrate.verdict.gd`, `calibrate.verdict.spread`, `calibrate.scorecard` | 없음 | P31b |
+| 성적표: 보정 전·후·MIMO 후 비교 범례, 기준 위치의 늦은 저음(20–150 Hz, dB)과 설명(견본 `screen.calibrate.mimo-scorecard`, `screen.calibrate.mimo-stale-scorecard`, `screen.calibrate.mimo-scorecard.min`) | `calibrate.scorecard.key`, `calibrate.scorecard.late` | 없음 | P110, P111 |
+| 위치별 늦은 저음: 접힌 표, 위치 번호순과 기준 위치 표시, 현재 MIMO 결과가 있으면 세 값 비교(견본 `screen.calibrate.late-positions`, `screen.calibrate.one-position`) | `calibrate.scorecard.positions`, `calibrate.scorecard.positions.table` | 없음 | P110, P111 |
 | 필터 줄 "PEQ n · FIR n탭 \| FIR 없음 · XO n Hz · MIMO 서포트 n"(고른 채널) | `calibrate.plot.filters` | 없음 | P31b |
 | 전체 지연과 엔진 메모(메모는 접힌 목록, 업스트림처럼 늘 보임) | `calibrate.verdict.delay`, `calibrate.verdict.notes` | 없음 | P31b |
 | BA 탭: 서브 합 평탄도(lo–hi Hz), 좌석 편차 또는 한 위치 | `calibrate.ba.metrics` | 없음 | P31b |
@@ -136,6 +154,7 @@
 | 모드: 최소 지연(`zero`), 낮은 지연(`mixed`, 기본), 표준(`linear`) | `calibrate.mode.zero`, `calibrate.mode.mixed`, `calibrate.mode.linear` | 없음 | P31b |
 | 초고지연(`ultra`, 사양 줄 다섯 번 누르기로 열림)과 지연 한도 30–200 ms, 10 단위 | `calibrate.mode.ultra` (모드 목록에 항상 표시), `calibrate.mode.ultra_ms` | U9 | P31b, P58 |
 | 사양 줄(`cal.mode_spec`) | `calibrate.mode.spec` | 없음 | P31b |
+| 출력 레이트로 환산한 채널 FIR의 한도 초과와 FIR 없는 모드 안내 | `calibrate.mode.fir_over` | ADR 0017 | P116, P117 |
 | [계산](첫 계산에서 XO 추천이 없으면 추천부터, 서비스가 정함) | `calibrate.compute` | 없음 | P31b |
 | [취소](결과를 버림)와 XO·MIMO 카드의 취소 | `jobs.cancel.calibrate`, `jobs.cancel.recommend_xo`, `jobs.cancel.mimo` | U8 | P31b |
 | 상태 줄: 계산 중, XO 추천 중, 실패, 취소, 대기, 측정 없음, 측정 바뀜, 설정 바뀜, 완료 | `calibrate.running`, `calibrate.verdict.failed`, `calibrate.verdict.stale`, `calibrate.stale`, `calibrate.verdict.plan`, `jobs.history` | U8 | P31b |
@@ -152,11 +171,13 @@
 | 항목 | id | 편차 | 작업서 |
 |---|---|---|---|
 | RC 하한 10–200 Hz, 5 단위, 기본 20 | `calibrate.range.lower` | 없음 | P31b |
-| RC 상한 자동(슈뢰더, 최대 500 Hz), 기본 켬 | `calibrate.range.upper_auto` | 없음 | P31b |
-| RC 상한 100–20000 Hz, 50 단위(자동이 꺼졌을 때) | `calibrate.range.upper` | 없음 | P31b |
+| RC 상한 기준(엄격한·너그러운 슈뢰더, 측정 위치 일치도, 직접 입력), 기본 엄격한 슈뢰더 | `calibrate.range.basis` | 없음 | P140 (ADR 0021) |
+| RC 전이 구간 ×1·×2·×4(슈뢰더 기준일 때), 기본 ×1 | `calibrate.range.transition` | 없음 | P140 (ADR 0021) |
+| RC 상한 100–20000 Hz, 50 단위(직접 입력일 때) | `calibrate.range.upper` | 없음 | P31b |
 | 룸 볼륨 0–100000 m³(0 = 없음) | `calibrate.range.volume` | 없음 | P31b |
 | 방 치수 가로 × 세로 × 높이 0–100 m, 0.1 단위(셋 다 넣으면 볼륨) | `calibrate.range.dims.w`, `calibrate.range.dims.d`, `calibrate.range.dims.h` | 없음 | P31b |
 | 부스트 상한 0–10 dB, 기본 10 | `calibrate.range.boost` | 없음 | P31b |
+| 롤오프 아래 부스트 막기(극저역 보호), 기본 꺼짐 | `calibrate.range.low_protect`, 근거 줄은 계산 메모, 막지 못한 채널은 `calibrate.verdict.low_protect` 경고 | 없음 | P145 (ADR 0022) |
 | RC 상한이 정해진 방법(엔진 메모와 룸 볼륨) | `calibrate.range.notes` | 없음 | P31b |
 | XO 그룹 | `calibrate.xo.group` | 없음 | P31b |
 | XO 40–200 Hz, 5 단위, 기본 80 | `calibrate.xo.hz` | 없음 | P31b |
@@ -190,7 +211,7 @@
 
 | 항목 | id | 편차 | 작업서 |
 |---|---|---|---|
-| 측정 그래프: 로그 x 5–22000 Hz와 고정 눈금, y −35…+20 dB, 이동·확대 없음, (역할, 위치)마다 곡선, 280점 1/12 옥타브, 200–2000 Hz 평균 정규화 | `measure.plot` | 평활과 정규화는 서비스(`measurement_curves`)가 하고 화면은 그리기만 | P31a |
+| 측정 그래프: 로그 x 5–22000 Hz와 고정 눈금, y −35…+20 dB, 이동·확대 없음, (역할, 위치)마다 곡선, 280점 1/12 옥타브, 모든 곡선에 같은 기준(위치 1의 첫 메인의 200–2000 Hz 평균, 서브만 있으면 첫 서브의 40–120 Hz 평균)을 적용하고 그 뜻을 `measure.plot.reference`에 표시 | `measure.plot`, `measure.plot.reference` | 업스트림은 곡선마다 자기 200–2000 Hz 평균으로 정규화(U17, #127). 평활과 정규화는 서비스(`measurement_curves`)가 하고 화면은 그리기만 | P31a, P143, P145 |
 | 측정 곡선의 선 규칙: 채널 색, 서브 굵게, 위치 1 굵게, 다른 위치 가늘고 옅게, 칩에 커서를 대면 강조 | `measure.plot.legend.role.<role>`, `measure.plot.legend.position.<n>` | — | P31a |
 | 측정 그래프의 축 범위 팝오버: 주파수·레벨 하한과 상한, [자동], [적용], "하한은 상한보다 낮아야", 실행 동안 기억 | `measure.plot.axes` | 범위는 `view.plotRange`이고 바꾸면 `setPlotRange`로 알림. P33이 실행 동안 보관(그래프를 숨기거나 단계를 옮겨도 유지) | P31a, P38 |
 | 배치도 ArrayLayoutView (5단계) | `measure.map` | — | P31a |
@@ -207,6 +228,9 @@
 
 | 항목 | id | 편차 | 작업서 |
 |---|---|---|---|
+| 필터 형식별 출력 레이트: 48 kHz 이외의 고정값 또는 자동 선택 안내 | `export.kind.<kind>.rate` | ADR 0017 | P116, P117 |
+| 컨볼루션 IR의 추가 레이트: 접힌 요약, 펼친 목록, 레이트별 선택 | `export.extra_rates`, `export.extra_rates.summary`, `export.extra_rates.list`, `export.extra_rates.<rate>` | ADR 0017 | P116, P117 |
+| 자동으로 정한 출력 레이트, 48 kHz로 대신 저장한 이유와 시스템으로 이동 | `export.outcome.<kind>.rate`, `export.outcome.<kind>.rate_fallback`, `export.outcome.<kind>.go_system` | ADR 0017 | P116, P117 |
 | 결과 줄: 모드 · 총 지연 · 채널 N개 전후 · 서브 N개 측정 그대로 · MIMO 적용 N | `export.result.summary`, `export.result.mimo` | — | P32 |
 | 낡은 결과 알림(업스트림처럼 그래도 내보냄) | `export.result.stale`, `export.status.stale` | — | P32, P38 |
 | 내보낼 것이 없는 이유(보정으로 가는 길) | `export.result.empty`, `export.go_calibrate`, `frame.header.blocked` | — | P32 |
@@ -226,6 +250,23 @@
 | 기본 폴더 `<프로젝트 폴더>/SECS_export/<날짜> <이름>/`, 없으면 `~/Documents/SECS_export/<날짜>` | `export.folder.path` | — | P32 |
 | MIMO는 켜고, 계산했고, 위치 3곳 이상일 때만 포함 | `export.result.mimo` | — | P32 |
 | 아무 일도 하지 않는 [완료] 단추 | — | U4 | P32 |
+| CamillaDSP·Equalizer APO 적용 방식: 파일만 / 적용 | `export.apply.<target>.panel`, `export.apply.<target>.level`, `export.apply.<target>.level.files`, `export.apply.<target>.level.apply` (`<target>`은 `camilla` 또는 `eqapo`) | 업스트림에 없음, ADR 0018 | P121, P122 |
+| [CamillaDSP에 적용], 적용 방식이 '적용'이면 설정 저장은 행의 보조 동작 | `export.apply.camilla`, `export.run.camilla_dsp`, `export.status.problem` | 업스트림에 없음, ADR 0018 | P121, P122 |
+| CamillaDSP 주소·포트 검사, 다른 컴퓨터의 주소 안내, 실제 입출력 장치 안내 | `export.apply.camilla.address.field`, `export.apply.camilla.address`, `export.apply.camilla.address.problem`, `export.apply.camilla.address.remote`, `export.apply.camilla.devices_note` | 업스트림에 없음, ADR 0018 | P121, P122 |
+| CamillaDSP 연결·버전·상태, 이 설계 / 다른 설계 / 알 수 없음, 클리핑, [다시 확인] | `export.apply.camilla.state`, `export.apply.camilla.reason`, `export.apply.camilla.refresh`, `export.apply.camilla.design`, `export.apply.camilla.design.title`, `export.apply.camilla.clipped` | 업스트림에 없음, ADR 0018 | P121, P122 |
+| [Equalizer APO에 적용], Windows가 아니거나 설치되지 않았으면 끄고 이유 표시 | `export.apply.eqapo`, `export.apply.eqapo.level`, `export.apply.eqapo.state`, `export.apply.eqapo.reason`, `export.apply.eqapo.refresh` | 업스트림에 없음, ADR 0018 | P121, P122 |
+| Equalizer APO 판·설정 폴더·config.txt 줄 상태, 현재 결과와 적용한 설계 비교 | `export.apply.eqapo.state`, `export.apply.eqapo.folder`, `export.apply.eqapo.line`, `export.apply.eqapo.line_note`, `export.apply.eqapo.design` | 업스트림에 없음, ADR 0018 | P121, P122 |
+| [config.txt에서 빼기], 한 문장으로 확인한 뒤 SECS 2R 줄만 제거 | `export.apply.eqapo.revert`, `export.apply.eqapo.revert.confirm`, `export.apply.eqapo.revert.confirm.cancel`, `export.apply.eqapo.revert.confirm.confirm` | 업스트림에 없음, ADR 0018 | P121, P122 |
+| 적용 완료·실패·이전 설정 복구·줄 제거 완료, 쓰기 권한 없는 폴더 표시 | `export.apply.<target>.outcome`, `export.apply.<target>.outcome.open`, `export.apply.<target>.outcome.path`, `export.apply.camilla.outcome.camilla_error` | 업스트림에 없음, ADR 0018 | P121, P122 |
+
+적용 견본(P121, P122)은 다음 21개이며 [`DESIGN.md`](DESIGN.md) 12절과 같습니다.
+
+- CamillaDSP 파일만·장치 안내·확인 중·연결 실패: `screen.export.apply.camilla.files`, `screen.export.apply.camilla.placeholders`, `screen.export.apply.camilla.checking`, `screen.export.apply.camilla.unreachable`
+- CamillaDSP 설계·진행·결과: `screen.export.apply.camilla.this`, `screen.export.apply.camilla.other`, `screen.export.apply.camilla.applying`, `screen.export.apply.camilla.applied`, `screen.export.apply.camilla.rolled-back`
+- CamillaDSP 주소 오류·다른 컴퓨터: `screen.export.apply.camilla.address`, `screen.export.apply.camilla.remote`
+- Equalizer APO 운영체제·설치·줄 없음: `screen.export.apply.eqapo.not-windows`, `screen.export.apply.eqapo.missing`, `screen.export.apply.eqapo.absent`
+- Equalizer APO 설계 비교·줄 손상: `screen.export.apply.eqapo.present`, `screen.export.apply.eqapo.other`, `screen.export.apply.eqapo.official`, `screen.export.apply.eqapo.damaged`
+- Equalizer APO 권한·줄 제거·확인: `screen.export.apply.eqapo.denied`, `screen.export.apply.eqapo.reverted`, `screen.export.apply.eqapo.revert-confirm`
 
 ## 10. 화면 전체 (inventory §2) — P29, P32
 

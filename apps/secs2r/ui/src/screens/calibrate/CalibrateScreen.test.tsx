@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { act } from "react";
+import { act, useState } from "react";
 import { describe, expect, it, vi, type Mock } from "vitest";
 import { JobTray } from "../../app/jobs/JobTray";
 import { PrefsScope } from "../../app/prefs";
@@ -84,7 +84,7 @@ const must = (id: string) => {
   return element;
 };
 
-function setup(view: CalibrateView, options: { locale?: "ko" | "en"; initial?: { targetMenu?: boolean; editSub?: string } } = {}) {
+function setup(view: CalibrateView, options: { locale?: "ko" | "en"; initial?: { targetMenu?: boolean; editSub?: string; latePositions?: boolean; rangeAdvanced?: boolean; notesOpen?: boolean } } = {}) {
   const actions = mockActions();
   renderWith(<CalibrateScreen view={view} actions={actions} initial={options.initial} />, { locale: options.locale ?? "ko" });
   return actions;
@@ -113,12 +113,21 @@ const STATES: Record<string, CalibrateView> = {
   failed: fx.failedView,
   subsOnly: fx.subsOnlyView,
   mimo: fx.mimoView,
+  mimoStale: fx.mimoStaleView,
+  onePosition: fx.onePositionView,
   noSubs: fx.noSubsView,
   ultra: fx.ultraView,
   runningMimo: fx.runningMimoView,
   loading: fx.loadingView,
   loadingEmpty: fx.loadingEmptyView,
   noPosition1: fx.noPosition1View,
+  readyMimo: fx.readyMimoView,
+  readyMimoTwo: fx.readyMimoTwoView,
+  computingMimo: fx.computingMimoView,
+  mimoFailed: fx.mimoFailedView,
+  mimoBehindCorrection: fx.mimoBehindCorrectionView,
+  lowProtect: fx.lowProtectViews.on,
+  lowProtectUnheld: fx.lowProtectViews.unheld,
 };
 
 describe("보정 screen", () => {
@@ -147,8 +156,8 @@ describe("보정 screen", () => {
 
   it("shows the verdict numbers and the plan before the first run", () => {
     setup(fx.splView);
-    expect(must("calibrate.verdict.within").textContent).toContain("82");
-    expect(must("calibrate.verdict.gd").textContent).toContain("22.9");
+    expect(must("calibrate.verdict.within").textContent).toContain("69");
+    expect(must("calibrate.verdict.gd").textContent).toContain("41.5");
     expect(must("calibrate.verdict.delay").textContent).toContain("9.8 ms");
     cleanupAll();
     setup(fx.emptyView);
@@ -459,7 +468,7 @@ describe("보정 screen", () => {
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "mode", mode: "linear" });
     commitNumber("calibrate.range.lower", "30");
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_lo", hz: 30 });
-    fireEvent.click(must("calibrate.range.upper_auto"));
+    fireEvent.click(must("calibrate.range.basis.manual"));
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi", hz: 310 });
     commitNumber("calibrate.range.volume", "80");
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "room_volume", m3: 80 });
@@ -528,6 +537,33 @@ describe("보정 screen", () => {
     }
   });
 
+  it("counts the FIR taps at the DSP's output rate before comparing them, and names a rate that is not 48 kHz (ADR 0017)", () => {
+    // miniDSP at 96 kHz: supports of 3,072 taps at 48 kHz become 6,144, past the 4,096 budget.
+    setup(fx.minidspView);
+    const budget = translate("ko", "calibrate.mimo.state.budget_over.rate", { taps: "6,144", budget: "4,096", rate: "96 kHz" });
+    expect(must("calibrate.mimo.state").textContent).toContain(budget);
+    // The mixed mode's 2,048 taps become 4,096, past 2,048 per channel: one warning line in the mode card.
+    const over = must("calibrate.mode.fir_over");
+    expect(over.closest("[data-ui='calibrate.settings.mode']")).not.toBeNull();
+    expect(over.textContent).toBe(translate("ko", "calibrate.mode.fir_over.rate", { rate: "96 kHz", taps: "4,096", limit: "2,048", mode: "최소 지연" }));
+    cleanupAll();
+    // The same supports at 48 kHz fit, and the line names no rate.
+    setup({ ...fx.minidspView, outputRate: 48000 });
+    expect(must("calibrate.mimo.state").textContent).toContain(translate("ko", "calibrate.mimo.state.budget", { taps: "3,072", budget: "4,096" }));
+    expect(ui("calibrate.mode.fir_over")).toBeNull();
+    cleanupAll();
+    // At 48 kHz a DSP with fewer taps than the mode still gets the warning, without a rate.
+    setup({ ...fx.minidspView, outputRate: 48000, firTaps: 1024 });
+    expect(must("calibrate.mode.fir_over").textContent).toBe(translate("ko", "calibrate.mode.fir_over", { taps: "2,048", limit: "1,024", mode: "최소 지연" }));
+    cleanupAll();
+    // A mode without FIR and an unknown DSP never warn.
+    setup({ ...fx.minidspView, modeSpec: { ...fx.minidspView.modeSpec, fir_taps: 0 } });
+    expect(ui("calibrate.mode.fir_over")).toBeNull();
+    cleanupAll();
+    setup({ ...fx.minidspView, firTaps: 0 });
+    expect(ui("calibrate.mode.fir_over")).toBeNull();
+  });
+
   it("requires recovery from an unavailable explicit GPU while Automatic remains calculable", () => {
     const actions = setup(fx.requestedGpuUnavailableView);
     expect((must("calibrate.mimo.compute") as HTMLButtonElement).disabled).toBe(true);
@@ -541,7 +577,7 @@ describe("보정 screen", () => {
 
   it("asks for a result and three positions before MIMO", () => {
     setup({ ...fx.emptyView, settings: { ...fx.emptyView.settings, mimo_on: true } });
-    expect(must("calibrate.mimo.reason").textContent).toContain("먼저 보정 계산");
+    expect(must("calibrate.mimo.reason").textContent).toBe("'보정 계산'을 누르면 MIMO도 함께 계산합니다.");
     cleanupAll();
     setup({ ...fx.splView, positions: [1, 2] });
     const toggle = must("calibrate.mimo.on") as HTMLButtonElement;
@@ -600,7 +636,9 @@ describe("보정 screen", () => {
     const onward = must("calibrate.export");
     expect(onward.textContent).toBe("보정값 내보내기");
     expect(onward.className).toContain("ui-button--go");
-    expect(onward.previousElementSibling).toBe(again);
+    // After 다시 보정하기 and MIMO 함께 계산, which wrap together.
+    expect(onward.previousElementSibling).toBe(again.closest(".calibrate-run__compute"));
+    expect(again.nextElementSibling).toBeNull();
     fireEvent.click(onward);
     expect(actions.goToExport).toHaveBeenCalledOnce();
     cleanupAll();
@@ -636,6 +674,365 @@ describe("보정 screen", () => {
     expect(calibrateStepState(fx.emptyView)).toEqual({ status: "ready" });
     expect(calibrateStepState(fx.staleView)).toEqual({ status: "ready" });
     expect(calibrateStepState(fx.splView)).toEqual({ status: "done" });
+  });
+});
+
+/* ── MIMO 함께 계산 (P142) ──────────────────────────────────────────────── */
+
+/** The screen with its settings held in state: changeSetting applies mimo_on, as the service's reply would. */
+function SettingsHarness({ initial, actions }: { initial: CalibrateView; actions: MockActions }) {
+  const [view, setView] = useState(initial);
+  const changeSetting: CalibrateActions["changeSetting"] = async (edit) => {
+    await actions.changeSetting(edit);
+    if (edit.kind === "mimo_on") setView((v) => ({ ...v, settings: { ...v.settings, mimo_on: edit.on } }));
+    return true;
+  };
+  return <CalibrateScreen view={view} actions={{ ...actions, changeSetting }} />;
+}
+
+describe("MIMO 함께 계산", () => {
+  it("sits right before 보정 계산, names MIMO in the plan and switches mimo_on", () => {
+    const actions = setup(fx.readyMimoView);
+    const toggle = must("calibrate.run.mimo") as HTMLButtonElement;
+    expect(toggle.getAttribute("role")).toBe("switch");
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    expect(toggle.disabled).toBe(false);
+    expect(toggle.textContent).toBe("MIMO 함께 계산");
+    expect(toggle.closest(".calibrate-run__mimo")?.nextElementSibling).toBe(must("calibrate.compute"));
+    expect(toggle.closest("[data-ui='calibrate.verdict.plan']")).not.toBeNull();
+    expect(ui("calibrate.run.mimo.help")).not.toBeNull();
+    expect(must("calibrate.verdict.plan").querySelector("p")?.textContent).toBe("3곳에서 측정한 값으로 보정하고 MIMO를 함께 계산합니다.");
+    fireEvent.click(toggle);
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "mimo_on", on: false });
+    cleanupAll();
+    // Off: the plan is the correction's alone.
+    setup(fx.emptyView);
+    expect(must("calibrate.run.mimo").getAttribute("aria-checked")).toBe("false");
+    expect(must("calibrate.verdict.plan").querySelector("p")?.textContent).toBe("3곳에서 측정한 값으로 보정합니다.");
+  });
+
+  it("sits right before 다시 보정하기 after a result, after 다시 측정하기", () => {
+    const actions = setup(fx.splView);
+    const toggle = must("calibrate.run.mimo");
+    const slot = toggle.closest(".calibrate-run__mimo");
+    // One unit with the button it changes, after 다시 측정하기.
+    expect(slot?.previousElementSibling).toBeNull();
+    expect(slot?.nextElementSibling).toBe(must("calibrate.compute"));
+    expect(slot?.parentElement?.previousElementSibling).toBe(must("calibrate.remeasure"));
+    expect(must("calibrate.compute").textContent).toBe("다시 보정하기");
+    fireEvent.click(toggle);
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "mimo_on", on: true });
+  });
+
+  it("is off below three positions and says why on its own line, and 보정 계산 stays on", () => {
+    const actions = setup(fx.readyMimoTwoView);
+    const toggle = must("calibrate.run.mimo") as HTMLButtonElement;
+    expect(toggle.disabled).toBe(true);
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    const hint = document.getElementById("calibrate.run.mimo-hint");
+    expect(hint?.textContent).toBe("측정 위치 3곳 이상 필요");
+    expect(hint?.closest(".calibrate-run__mimo")).toBe(toggle.closest(".calibrate-run__mimo"));
+    expect(toggle.getAttribute("aria-describedby")).toContain("calibrate.run.mimo-hint");
+    expect(must("calibrate.verdict.plan").querySelector("p")?.textContent).toBe("2곳에서 측정한 값으로 보정합니다.");
+    fireEvent.click(toggle);
+    expect(actions.changeSetting).not.toHaveBeenCalled();
+    fireEvent.click(must("calibrate.compute"));
+    expect(actions.calibrate).toHaveBeenCalledOnce();
+    cleanupAll();
+    // In English too, and after a result with one position.
+    setup(fx.onePositionView, { locale: "en" });
+    expect((must("calibrate.run.mimo") as HTMLButtonElement).disabled).toBe(true);
+    expect(document.getElementById("calibrate.run.mimo-hint")?.textContent).toBe("Needs 3 or more positions");
+  });
+
+  it("is the MIMO card's switch: either one moves both", async () => {
+    const actions = mockActions();
+    renderWith(<SettingsHarness initial={fx.splView} actions={actions} />, { locale: "ko" });
+    const run = () => must("calibrate.run.mimo").getAttribute("aria-checked");
+    const card = () => must("calibrate.mimo.on").getAttribute("aria-checked");
+    expect([run(), card()]).toEqual(["false", "false"]);
+    await act(async () => { fireEvent.click(must("calibrate.run.mimo")); });
+    expect([run(), card()]).toEqual(["true", "true"]);
+    await act(async () => { fireEvent.click(must("calibrate.mimo.on")); });
+    expect([run(), card()]).toEqual(["false", "false"]);
+    expect(actions.changeSetting.mock.calls).toEqual([[{ kind: "mimo_on", on: true }], [{ kind: "mimo_on", on: false }]]);
+  });
+
+  it("names MIMO in the busy line and the header pill while 보정 계산 computes it, in the controls' place", () => {
+    setup(fx.computingMimoView);
+    expect(must("calibrate.verdict.computing").textContent).toBe("3곳의 측정값으로 보정과 MIMO 계산 중…");
+    expect(must("calibrate.verdict.computing").className).toBe("calibrate-run__busy");
+    expect(ui("calibrate.run.mimo")).toBeNull();
+    // The button (the MIMO card's compute device block shares its data-ui).
+    expect(document.getElementById("calibrate.compute")).toBeNull();
+    // The MIMO card's state line waits for the run.
+    expect(ui("calibrate.mimo.state")).toBeNull();
+    cleanupAll();
+    renderWith(<>{calibrateHeader(fx.computingMimoView, t).status}</>);
+    expect(must("calibrate.running").textContent).toBe("보정과 MIMO 계산 중");
+    cleanupAll();
+    renderWith(<>{calibrateHeader(fx.computingView, t).status}</>);
+    expect(must("calibrate.running").textContent).toBe("보정 계산 중");
+  });
+
+  it("shows a MIMO failure after the correction in the MIMO card, with the result kept", () => {
+    setup(fx.mimoFailedView);
+    expect(ui("calibrate.verdict.failed")).toBeNull();
+    expect(ui("calibrate.scorecard.card")).not.toBeNull();
+    expect(must("calibrate.verdict.mimo").textContent).toContain("계산 실패");
+    const failed = must("calibrate.mimo.failed");
+    expect(failed.closest("[data-ui='calibrate.settings.mimo']")).not.toBeNull();
+    expect(failed.querySelector(".ui-error__cause")?.textContent).toBe("MIMO 계산이 실패했습니다.");
+    expect(failed.querySelector("details")?.textContent).toContain("MIMO support design produced nonfinite filters");
+    expect(ui("calibrate.mimo.state")).toBeNull();
+  });
+
+  it("recomputes MIMO alone after a MIMO-only change, and asks for 다시 보정하기 when the correction changed", () => {
+    const actions = setup(fx.mimoStaleView);
+    const alone = must("calibrate.mimo.compute") as HTMLButtonElement;
+    expect(alone.textContent).toBe("MIMO만 계산");
+    expect(alone.disabled).toBe(false);
+    expect(must("calibrate.mimo.state").textContent).toBe("MIMO를 계산한 뒤 MIMO 설정이나 보정 결과가 바뀌었습니다. 'MIMO만 계산'을 누르십시오.");
+    fireEvent.click(alone);
+    expect(actions.computeMimo).toHaveBeenCalledOnce();
+    cleanupAll();
+    setup(fx.mimoBehindCorrectionView);
+    expect((must("calibrate.mimo.compute") as HTMLButtonElement).disabled).toBe(true);
+    expect(must("calibrate.mimo.state").textContent).toBe("보정 결과부터 다시 계산해야 합니다. '다시 보정하기'를 누르면 MIMO도 함께 계산합니다.");
+  });
+});
+
+/* ── Scorecard: late bass and MIMO (P110) ───────────────────────────────── */
+
+/** What the screen reader hears in each figure cell of a scorecard row (the channel cell left out). */
+function heard(table: string, role: string): string[] {
+  const row = must(table).querySelector<HTMLElement>(`[data-row="${role}"]`);
+  if (!row) throw new Error(`no row ${role} in ${table}`);
+  return [...row.querySelectorAll("td")].slice(1).map((cell) => cell.querySelector(".visually-hidden")?.textContent ?? "");
+}
+
+describe("scorecard after MIMO", () => {
+  it("shows before → after → MIMO in all three figures with a current MIMO result, and a key that names the third", () => {
+    setup(fx.mimoView);
+    expect(heard("calibrate.scorecard", "L")).toEqual([
+      "보정 전 38, 보정 후 64, MIMO 후 54",
+      "보정 전 88.4, 보정 후 47.5, MIMO 후 41.1",
+      "보정 전 −23.9, 보정 후 −16.3, MIMO 후 −23.1",
+    ]);
+    expect(heard("calibrate.scorecard", "R")[2]).toBe("보정 전 −24.0, 보정 후 −17.0, MIMO 후 −21.6");
+    // The arrows and the MIMO mark are for the eye; the third value carries the MIMO curve's mark.
+    const cell = must("calibrate.scorecard").querySelector('[data-row="C"]')!.querySelectorAll("td")[1]!;
+    expect(cell.querySelector('[aria-hidden="true"]')?.textContent).toBe("36 → 62→ 55");
+    expect(cell.querySelector(".calibrate-mimo")?.textContent).toBe("55");
+    expect(must("calibrate.scorecard.key").textContent).toBe("보정 전 → 보정 후 → MIMO 후");
+    expect(must("calibrate.scorecard.key").querySelector(".calibrate-mimo")?.textContent).toBe("MIMO 후");
+    expect(must("calibrate.scorecard").querySelector("caption")?.textContent).toContain("MIMO 후");
+    cleanupAll();
+    setup(fx.mimoView, { locale: "en" });
+    expect(heard("calibrate.scorecard", "L")[0]).toBe("Before 38, after 64, after MIMO 54");
+    expect(must("calibrate.scorecard.key").textContent).toBe("Before → After → After MIMO");
+  });
+
+  it("keeps two values and does not mention MIMO when the MIMO result is stale or absent", () => {
+    for (const view of [fx.mimoStaleView, fx.splView, { ...fx.mimoView, results: { ...fx.mimoView.results, mimo_export: "off" as const } }]) {
+      setup(view);
+      expect(heard("calibrate.scorecard", "L")).toEqual(["보정 전 38, 보정 후 64", "보정 전 88.4, 보정 후 47.5", "보정 전 −23.9, 보정 후 −16.3"]);
+      const card = must("calibrate.scorecard.card");
+      expect(card.textContent).not.toContain("MIMO");
+      expect(card.querySelector(".calibrate-mimo")).toBeNull();
+      expect(ui("calibrate.scorecard.key")).toBeNull();
+      cleanupAll();
+    }
+  });
+
+  it("keeps 낮은 순 on the share after correction, not after MIMO", () => {
+    setup(fx.mimoView);
+    fireEvent.click(must("calibrate.scorecard.sort"));
+    const order = [...must("calibrate.scorecard").querySelectorAll<HTMLElement>("tbody tr")].map((row) => row.dataset.row);
+    // After correction C 62 < L 64 < R 65; after MIMO L 54 would come first.
+    expect(order.slice(0, 3)).toEqual(["C", "L", "R"]);
+  });
+
+  it("adds the 늦은 저음 column at the main position, explained once under the table", () => {
+    setup(fx.splView);
+    const heads = [...must("calibrate.scorecard").querySelectorAll("th[scope=col]")].map((th) => th.textContent);
+    expect(heads[3]).toBe("늦은 저음 (dB)20–150 Hz");
+    expect(heard("calibrate.scorecard", "C")[2]).toBe("보정 전 −17.0, 보정 후 −16.0");
+    expect(must("calibrate.scorecard.late").textContent).toContain("낮을수록 울림이 짧습니다.");
+    cleanupAll();
+    // A channel without an entry has an empty cell; without any entry there is no column.
+    const calibration = fx.splView.results.calibration!;
+    setup({ ...fx.splView, results: { ...fx.splView.results, calibration: { ...calibration, late_energy: calibration.late_energy.filter((e) => e.role !== "C") } } });
+    const empty = must("calibrate.scorecard").querySelector('[data-row="C"]')!.querySelectorAll("td")[3]!;
+    expect(empty.textContent).toBe("");
+    cleanupAll();
+    setup({ ...fx.splView, results: { ...fx.splView.results, calibration: { ...calibration, late_energy: [] } } });
+    expect(must("calibrate.scorecard").querySelectorAll("th[scope=col]")).toHaveLength(3);
+    expect(ui("calibrate.scorecard.late")).toBeNull();
+    expect(ui("calibrate.scorecard.positions")).toBeNull();
+  });
+
+  it("lists the late bass by position, collapsed, only with more than one position, the main position marked", () => {
+    setup(fx.mimoView);
+    const details = must("calibrate.scorecard.positions") as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    expect(details.querySelector("summary")?.textContent).toBe("위치별 늦은 저음");
+    const heads = [...must("calibrate.scorecard.positions.table").querySelectorAll("th[scope=col]")].map((th) => th.textContent);
+    expect(heads).toEqual(["채널", "위치 1기준", "위치 2", "위치 3"]);
+    // Rows in main_roles order; each position before → after → MIMO.
+    const rows = [...must("calibrate.scorecard.positions.table").querySelectorAll<HTMLElement>("tbody tr")].map((row) => row.dataset.row);
+    expect(rows).toEqual(fx.mimoView.results.calibration!.main_roles);
+    expect(heard("calibrate.scorecard.positions.table", "L")).toEqual([
+      "보정 전 −23.9, 보정 후 −16.3, MIMO 후 −23.1",
+      "보정 전 −22.2, 보정 후 −14.4, MIMO 후 −20.1",
+      "보정 전 −24.5, 보정 후 −15.8, MIMO 후 −22.0",
+    ]);
+    cleanupAll();
+    setup(fx.mimoStaleView);
+    expect(heard("calibrate.scorecard.positions.table", "L")[1]).toBe("보정 전 −22.2, 보정 후 −14.4");
+    cleanupAll();
+    setup(fx.onePositionView);
+    expect(ui("calibrate.scorecard.card")).not.toBeNull();
+    expect(ui("calibrate.scorecard.positions")).toBeNull();
+  });
+
+  it("opens the positions from the start when asked (gallery), the way a click does", async () => {
+    setup(fx.mimoView, { initial: { latePositions: true } });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    });
+    expect((must("calibrate.scorecard.positions") as HTMLDetailsElement).open).toBe(true);
+    // The channel table's height was kept before it opened.
+    expect(document.querySelector<HTMLElement>(".calibrate-scorecard__main")!.style.getPropertyValue("--calibrate-score-main-h")).toMatch(/px$/);
+  });
+});
+
+/* ── RC upper limit basis (ADR 0021, P140) ──────────────────────────────── */
+
+/** Laid out but hidden: inside an inert panel of the upper limit's shared place. */
+const inert = (id: string) => must(id).closest("[inert]") !== null;
+const checked = (id: string) => must(id).getAttribute("aria-checked") === "true";
+const basisHint = () => document.getElementById("calibrate.range.basis-hint")?.textContent ?? null;
+
+describe("RC upper limit basis", () => {
+  it("offers four bases and sends each one's edits", async () => {
+    let actions = setup(fx.rangeViews.strict);
+    expect(checked("calibrate.range.basis.strict")).toBe(true);
+    fireEvent.click(must("calibrate.range.basis.lenient"));
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi_basis", basis: "lenient" });
+    fireEvent.click(must("calibrate.range.basis.agreement"));
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi_basis", basis: "agreement" });
+    // 직접 입력 starts from the limit in force, the RC line's 154 Hz.
+    fireEvent.click(must("calibrate.range.basis.manual"));
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi", hz: 154 });
+    // The current basis sends nothing.
+    actions.changeSetting.mockClear();
+    fireEvent.click(must("calibrate.range.basis.strict"));
+    expect(actions.changeSetting).not.toHaveBeenCalled();
+    cleanupAll();
+    // 직접 입력: the field sends the number; a basis sends the basis, then clears the limit.
+    actions = setup(fx.rangeViews.manual);
+    expect(checked("calibrate.range.basis.manual")).toBe(true);
+    commitNumber("calibrate.range.upper", "400");
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi", hz: 400 });
+    actions.changeSetting.mockClear();
+    await act(async () => {
+      fireEvent.click(must("calibrate.range.basis.strict"));
+    });
+    expect(actions.changeSetting.mock.calls).toEqual([[{ kind: "rc_hi_basis", basis: "strict" }], [{ kind: "rc_hi", hz: null }]]);
+    // A refused basis keeps the manual limit.
+    actions.changeSetting.mockClear();
+    actions.changeSetting.mockResolvedValueOnce(false);
+    await act(async () => {
+      fireEvent.click(must("calibrate.range.basis.lenient"));
+    });
+    expect(actions.changeSetting.mock.calls).toEqual([[{ kind: "rc_hi_basis", basis: "lenient" }]]);
+  });
+
+  it("shows the room volume and the transition only for the Schroeder bases, ×1 by default", () => {
+    const actions = setup(fx.rangeViews.strict);
+    for (const id of ["calibrate.range.transition", "calibrate.range.volume", "calibrate.range.dims.w"]) expect(inert(id), id).toBe(false);
+    expect(inert("calibrate.range.upper")).toBe(true);
+    expect(checked("calibrate.range.transition.1")).toBe(true);
+    expect(must("calibrate.range.transition").textContent).toBe("×1×2×4");
+    fireEvent.click(must("calibrate.range.transition.2"));
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi_transition", factor: 2 });
+    fireEvent.click(must("calibrate.range.transition.4"));
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi_transition", factor: 4 });
+    cleanupAll();
+    setup(fx.rangeViews.lenientTimes2);
+    expect(inert("calibrate.range.transition")).toBe(false);
+    expect(checked("calibrate.range.transition.2")).toBe(true);
+    cleanupAll();
+    setup(fx.rangeViews.strictTimes4);
+    expect(checked("calibrate.range.transition.4")).toBe(true);
+    cleanupAll();
+    for (const view of [fx.rangeViews.agreement, fx.rangeViews.manual]) {
+      setup(view);
+      expect(inert("calibrate.range.transition")).toBe(true);
+      expect(inert("calibrate.range.volume")).toBe(true);
+      cleanupAll();
+    }
+    setup(fx.rangeViews.manual);
+    expect(inert("calibrate.range.upper")).toBe(false);
+    cleanupAll();
+    setup(fx.rangeViews.agreement);
+    expect(inert("calibrate.range.agreement")).toBe(false);
+    expect(must("calibrate.range.agreement").textContent).toBe(t("calibrate.range.agreement.note"));
+  });
+
+  it("keeps the card's height: every basis's controls share one place, the others hidden and inert", () => {
+    const panels = () => [...document.querySelectorAll(".calibrate-upper > .calibrate-upper__panel")].map((panel) => [panel.getAttribute("data-ui"), panel.hasAttribute("inert")]);
+    setup(fx.rangeViews.strict);
+    expect(panels()).toEqual([["calibrate.range.schroeder", false], ["calibrate.range.agreement", true], ["calibrate.range.manual", true]]);
+    cleanupAll();
+    setup(fx.rangeViews.manual);
+    expect(panels()).toEqual([["calibrate.range.schroeder", true], ["calibrate.range.agreement", true], ["calibrate.range.manual", false]]);
+  });
+
+  it("turns agreement off below three measured positions with the reason, and keeps a chosen agreement working", () => {
+    setup(fx.rangeViews.agreementUnavailable);
+    expect((must("calibrate.range.basis.agreement") as HTMLButtonElement).disabled).toBe(true);
+    expect(basisHint()).toBe("측정 위치가 2곳입니다. 측정 위치 일치도는 3곳 이상 필요합니다.");
+    expect(must("calibrate.range.basis").getAttribute("aria-describedby")).toContain("calibrate.range.basis-hint");
+    cleanupAll();
+    // Chosen before a position was cleared: still chosen and the group's tab stop, with what to do.
+    const actions = setup(fx.rangeViews.agreementShort);
+    const chosen = must("calibrate.range.basis.agreement") as HTMLButtonElement;
+    expect(chosen.disabled).toBe(false);
+    expect(chosen.getAttribute("aria-checked")).toBe("true");
+    expect(chosen.tabIndex).toBe(0);
+    expect(basisHint()).toBe("측정 위치가 2곳이라 측정 위치 일치도로는 보정을 계산할 수 없습니다. 위치를 3곳 이상 측정하거나 다른 기준을 고르십시오.");
+    fireEvent.click(must("calibrate.range.basis.strict"));
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi_basis", basis: "strict" });
+    cleanupAll();
+    // Three positions: on, and no reason.
+    setup(fx.rangeViews.strict);
+    expect((must("calibrate.range.basis.agreement") as HTMLButtonElement).disabled).toBe(false);
+    expect(basisHint()).toBeNull();
+    cleanupAll();
+    setup(fx.rangeViews.agreementUnavailable, { locale: "en" });
+    expect(basisHint()).toBe("Measured positions: 2. Position agreement needs 3 or more.");
+  });
+
+  it("states the evidence for each basis in the RC line, and keeps the lines of a manual limit, a missing volume and an older note", () => {
+    const lines = (view: CalibrateView) => {
+      setup(view);
+      const text = [...must("calibrate.range.notes").querySelectorAll("li")].map((li) => li.textContent);
+      cleanupAll();
+      return text;
+    };
+    const volume = t("notice.rc_room_volume", { volume_m3: "63" });
+    expect(lines(fx.rangeViews.strict)).toEqual(["RC 상한 154 Hz(엄격한 슈뢰더 154 Hz)", volume]);
+    expect(lines(fx.rangeViews.strictTimes2)).toEqual(["RC 상한 308 Hz(엄격한 슈뢰더 154 Hz × 2)", volume]);
+    expect(lines(fx.rangeViews.strictTimes4)[0]).toBe("RC 상한 616 Hz(엄격한 슈뢰더 154 Hz × 4)");
+    expect(lines(fx.rangeViews.lenient)[0]).toBe("RC 상한 200 Hz(너그러운 슈뢰더, 200 Hz 대역 T60 0.50초)");
+    expect(lines(fx.rangeViews.lenientTimes2)[0]).toBe("RC 상한 400 Hz(너그러운 슈뢰더 200 Hz × 2, 대역 T60 0.50초)");
+    // Agreement needs no room volume: no volume line follows it.
+    expect(lines(fx.rangeViews.agreement)).toEqual(["RC 상한 287 Hz(위치 9곳 일치도)"]);
+    expect(lines(fx.rangeViews.manual)).toEqual(["RC 상한 300 Hz(직접 입력)"]);
+    expect(lines(fx.rangeViews.noVolume)).toEqual(["RC 상한 500 Hz(자동)", t("notice.rc_no_room_volume")]);
+    expect(lines(fx.splView)[0]).toBe("RC 상한 310 Hz(자동, 슈뢰더 310 Hz)");
   });
 });
 
@@ -689,7 +1086,8 @@ const REACH_IDS = [
   "calibrate.mode.ultra_ms",
   "calibrate.mode.spec",
   "calibrate.range.lower",
-  "calibrate.range.upper_auto",
+  ...["", ".strict", ".lenient", ".agreement", ".manual"].map((option) => `calibrate.range.basis${option}`),
+  ...["", ".1", ".2", ".4"].map((option) => `calibrate.range.transition${option}`),
   "calibrate.range.upper",
   "calibrate.range.volume",
   "calibrate.range.dims.w",
@@ -760,6 +1158,63 @@ function idsOf(node: ReactNode): Set<string> {
   unmount();
   return ids;
 }
+
+describe("극저역 보호 (ADR 0022)", () => {
+  it("sits beside the boost limit in the range card's 고급, off by default, and sends its edit", () => {
+    const actions = setup(fx.lowProtectViews.off);
+    // Off, 고급 stays folded as before; opened, the switch follows the boost limit.
+    expect(ui("calibrate.range.low_protect")).toBeNull();
+    openAdvanced();
+    const range = must("calibrate.settings.range");
+    const toggle = within(range).getByRole("switch", { name: "롤오프 아래 부스트 막기" });
+    expect(toggle.getAttribute("data-ui")).toBe("calibrate.range.low_protect");
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(must("calibrate.range.boost").compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(ui("calibrate.range.low_protect.help")).not.toBeNull();
+    fireEvent.click(toggle);
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "low_protect", on: true });
+  });
+
+  it("opens 고급 with the switch on, so a protected result's cause stays in view, and turns it off", () => {
+    const actions = setup(fx.lowProtectViews.on);
+    const toggle = must("calibrate.range.low_protect");
+    expect(toggle.getAttribute("aria-checked")).toBe("true");
+    fireEvent.click(toggle);
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "low_protect", on: false });
+    cleanupAll();
+    setup(fx.lowProtectViews.off, { locale: "en" });
+    openAdvanced();
+    expect(must("calibrate.range.low_protect").textContent).toBe("Block boost below roll-off");
+  });
+
+  it("lists each protected channel in the collapsed notes, and puts the bus that could not hold in a warning with what to do", () => {
+    setup(fx.lowProtectViews.unheld);
+    const warning = must("calibrate.verdict.low_protect");
+    expect(warning.className).toContain("ui-error--warning");
+    expect(warning.textContent).toContain("극저역 보호(SW1 + SW2): 22 Hz 아래 부스트를 막지 못해 원래 필터를 그대로 썼습니다.");
+    expect(warning.textContent).toContain("부스트 상한을 낮추거나 RC 하한을 올린 뒤 '다시 보정하기'를 누르십시오.");
+    const lines = [...must("calibrate.verdict.notes").querySelectorAll("li")].map((li) => li.textContent ?? "");
+    expect(lines).toContain("극저역 보호(SW1): 22 Hz 아래 부스트 안 함, 16 Hz 하이패스");
+    expect(lines).toContain("극저역 보호(L): 28 Hz 아래 부스트 안 함");
+    expect(lines.filter((line) => line.startsWith("극저역 보호"))).toHaveLength(13);
+    // The warning is not repeated as a note.
+    expect(lines.some((line) => line.includes("SW1 + SW2"))).toBe(false);
+    cleanupAll();
+    // Every channel held: no warning.
+    setup(fx.lowProtectViews.on);
+    expect(ui("calibrate.verdict.low_protect")).toBeNull();
+    expect(must("calibrate.verdict.notes").querySelector("summary")?.textContent).toBe("계산 메모 18개");
+    cleanupAll();
+    setup(fx.lowProtectViews.unheld, { locale: "en" });
+    expect(must("calibrate.verdict.low_protect").textContent).toContain("Lower the boost limit or raise the RC lower limit, then press 'Correct again'.");
+  });
+
+  it("opens the notes and the range card's 고급 from the start when asked (gallery)", () => {
+    setup(fx.lowProtectViews.off, { initial: { rangeAdvanced: true, notesOpen: true } });
+    expect(must("calibrate.range.low_protect").getAttribute("aria-checked")).toBe("false");
+    expect((must("calibrate.verdict.notes") as HTMLDetailsElement).open).toBe(true);
+  });
+});
 
 describe("reach table", () => {
   it("draws every id the P31b reach rows cite in at least one state", () => {

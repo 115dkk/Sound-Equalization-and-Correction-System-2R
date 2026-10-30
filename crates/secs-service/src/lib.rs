@@ -6,6 +6,7 @@
 //! and export assembly. Applications provide platform dependencies and an event
 //! sink; they do not implement domain policy.
 
+mod apply;
 mod cache;
 mod calibration;
 mod clock;
@@ -35,11 +36,12 @@ use std::borrow::Cow;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use secs_compute::MemoryProbe;
 use secs_types::ipc::{
-    BootstrapInfo, Envelope, ErrorCode, IpcError, JobEvent, LocalApiStatus, Platform, Request,
+    ApplyOutcome, BootstrapInfo, CamillaStatus, Envelope, ErrorCode, IncludeState, IpcError,
+    JobEvent, LocalApiStatus, Platform, Request, UpdatePhase, UpdatePolicy, UpdateStatus,
     UpstreamBase,
 };
 
@@ -133,6 +135,11 @@ pub trait Host: Send + Sync + Debug {
     fn open_gpu_help(&self) -> Result<(), IpcError> {
         not_implemented("GPU installation help")
     }
+    /// Opens a release page of this repository in the system browser. The
+    /// service builds `url` from a checked version (ADR 0020).
+    fn open_release_page(&self, _url: &str) -> Result<(), IpcError> {
+        not_implemented("release page")
+    }
     /// Reveals a folder in the operating-system file manager.
     fn open_folder(&self, _path: &Path) -> Result<(), IpcError> {
         not_implemented("open folder")
@@ -171,6 +178,170 @@ impl Host for NullHost {}
 /// A shared, stateful source of UUIDs for mdat measurements.
 pub type UuidSource = Arc<Mutex<Box<dyn FnMut() -> Result<u128, secs_export::ExportError> + Send>>>;
 
+/// Application protocol operations supplied by non-published app shells.
+pub trait ApplyAdapter: Send + Sync + Debug {
+    /// Reads one CamillaDSP instance with the given I/O timeout.
+    fn camilla_status(&self, address: &str, timeout: Duration) -> Result<CamillaStatus, IpcError>;
+    /// Validates, selects, and reloads one CamillaDSP configuration.
+    fn camilla_apply(
+        &self,
+        address: &str,
+        config_path: &Path,
+        config_text: &str,
+        timeout: Duration,
+    ) -> Result<ApplyOutcome, IpcError>;
+    /// Classifies SECS 2R's managed Equalizer APO lines.
+    fn eqapo_include_state(&self, config_text: &str) -> IncludeState;
+    /// Adds or repairs SECS 2R's managed Equalizer APO lines.
+    fn eqapo_with_include(&self, config_text: &str) -> Result<Option<String>, IpcError>;
+    /// Removes SECS 2R's managed Equalizer APO lines.
+    fn eqapo_without_include(&self, config_text: &str) -> Result<Option<String>, IpcError>;
+}
+
+/// Managed-host operations supplied by an app at the operating-system boundary.
+pub trait ManagedHostAdapter: Send + Sync + Debug {
+    fn service_state(&self) -> secs_types::ipc::ServiceState;
+    fn call(
+        &self,
+        request: &secs_types::ipc::HostRequest,
+    ) -> Result<secs_types::ipc::HostResponse, IpcError>;
+    fn install(&self) -> Result<(), IpcError>;
+    fn uninstall(&self) -> Result<(), IpcError>;
+}
+
+/// Application updates supplied by an app that carries an updater (ADR 0020).
+///
+/// The service fills [`UpdateStatus::current`] from [`Deps::app_version`] and
+/// [`UpdateStatus::policy`] from the stored app settings; adapters report the
+/// rest.
+pub trait UpdateAdapter: Send + Sync + Debug {
+    /// The current phase, last check time and pending notice.
+    fn status(&self) -> UpdateStatus;
+    /// Starts a check now, whatever the policy.
+    fn check(&self) -> Result<UpdateStatus, IpcError>;
+    /// Starts downloading the release found by the last check.
+    fn download(&self) -> Result<UpdateStatus, IpcError>;
+    /// Installs the downloaded release and starts the new version.
+    fn restart(&self) -> Result<(), IpcError>;
+    /// Drops the one-time "updated" notice.
+    fn dismiss_notice(&self) -> UpdateStatus;
+    /// Called after the stored policy changed.
+    fn set_policy(&self, policy: UpdatePolicy);
+}
+
+#[derive(Debug, Default)]
+struct NoUpdates;
+impl UpdateAdapter for NoUpdates {
+    fn status(&self) -> UpdateStatus {
+        UpdateStatus {
+            current: String::new(),
+            policy: UpdatePolicy::Off,
+            phase: UpdatePhase::Off,
+            checked_at: None,
+            notice: None,
+        }
+    }
+
+    fn check(&self) -> Result<UpdateStatus, IpcError> {
+        Err(IpcError::new(
+            ErrorCode::Unsupported,
+            "this build has no updater",
+        ))
+    }
+
+    fn download(&self) -> Result<UpdateStatus, IpcError> {
+        self.check()
+    }
+
+    fn restart(&self) -> Result<(), IpcError> {
+        self.check().map(|_| ())
+    }
+
+    fn dismiss_notice(&self) -> UpdateStatus {
+        self.status()
+    }
+
+    fn set_policy(&self, _policy: UpdatePolicy) {}
+}
+
+#[derive(Debug, Default)]
+struct NoManagedHost;
+impl ManagedHostAdapter for NoManagedHost {
+    fn service_state(&self) -> secs_types::ipc::ServiceState {
+        secs_types::ipc::ServiceState::NotInstalled
+    }
+
+    fn call(
+        &self,
+        _request: &secs_types::ipc::HostRequest,
+    ) -> Result<secs_types::ipc::HostResponse, IpcError> {
+        Err(IpcError::new(
+            ErrorCode::Unsupported,
+            "no managed-host adapter was injected",
+        ))
+    }
+
+    fn install(&self) -> Result<(), IpcError> {
+        Err(IpcError::new(
+            ErrorCode::Unsupported,
+            "managed host installation is unavailable",
+        ))
+    }
+
+    fn uninstall(&self) -> Result<(), IpcError> {
+        Err(IpcError::new(
+            ErrorCode::Unsupported,
+            "managed host removal is unavailable",
+        ))
+    }
+}
+
+#[derive(Debug, Default)]
+struct NoApplyAdapter;
+impl ApplyAdapter for NoApplyAdapter {
+    fn camilla_status(
+        &self,
+        _address: &str,
+        _timeout: Duration,
+    ) -> Result<CamillaStatus, IpcError> {
+        Err(IpcError::new(
+            ErrorCode::Unsupported,
+            "no application protocol adapter was injected",
+        ))
+    }
+
+    fn camilla_apply(
+        &self,
+        _address: &str,
+        _config_path: &Path,
+        _config_text: &str,
+        _timeout: Duration,
+    ) -> Result<ApplyOutcome, IpcError> {
+        Err(IpcError::new(
+            ErrorCode::Unsupported,
+            "no application protocol adapter was injected",
+        ))
+    }
+
+    fn eqapo_include_state(&self, _config_text: &str) -> IncludeState {
+        IncludeState::Absent
+    }
+
+    fn eqapo_with_include(&self, _config_text: &str) -> Result<Option<String>, IpcError> {
+        Err(IpcError::new(
+            ErrorCode::Unsupported,
+            "no application protocol adapter was injected",
+        ))
+    }
+
+    fn eqapo_without_include(&self, _config_text: &str) -> Result<Option<String>, IpcError> {
+        Err(IpcError::new(
+            ErrorCode::Unsupported,
+            "no application protocol adapter was injected",
+        ))
+    }
+}
+
 /// Factories supplied by an application at the operating-system boundary.
 ///
 /// P23a uses the memory probe for compute budgets. P23c connects the typed
@@ -207,6 +378,16 @@ pub struct Deps {
     pub uuid: UuidSource,
     /// Versioned application-settings file, or in-memory storage when absent.
     pub app_settings_path: Option<PathBuf>,
+    /// Application-owned data directory used for applied bundles.
+    pub app_data_path: PathBuf,
+    /// Detects the machine-wide Equalizer APO installation.
+    pub eqapo_install: Arc<dyn Fn() -> Option<secs_types::ipc::EqApoInstall> + Send + Sync>,
+    /// Connects the service to the unpublished application protocol crate.
+    pub apply: Arc<dyn ApplyAdapter>,
+    /// Connects the service to the Windows managed host.
+    pub managed_host: Arc<dyn ManagedHostAdapter>,
+    /// Connects the service to the app's updater.
+    pub updates: Arc<dyn UpdateAdapter>,
     /// The user's wall clock, for export folder names. The default reads UTC;
     /// the apps add the UTC offset `secs-sys` reports.
     pub clock: Arc<dyn Fn() -> LocalTime + Send + Sync>,
@@ -231,6 +412,11 @@ impl Debug for Deps {
             .field("observer", &self.observer)
             .field("uuid", &"source")
             .field("app_settings_path", &self.app_settings_path)
+            .field("app_data_path", &self.app_data_path)
+            .field("eqapo_install", &"detector")
+            .field("apply", &self.apply)
+            .field("managed_host", &self.managed_host)
+            .field("updates", &self.updates)
             .field("clock", &"source")
             .field("clock_offset_seconds", &"source")
             .field("unix_ms", &"source")
@@ -293,6 +479,11 @@ impl Default for Deps {
             observer: Arc::new(NoEvents),
             uuid: Arc::new(Mutex::new(Box::new(random_uuid))),
             app_settings_path: None,
+            app_data_path: std::env::temp_dir().join("secs2r"),
+            eqapo_install: Arc::new(|| None),
+            apply: Arc::new(NoApplyAdapter),
+            managed_host: Arc::new(NoManagedHost),
+            updates: Arc::new(NoUpdates),
             clock: Arc::new(|| LocalTime::from_system(SystemTime::now(), 0)),
             clock_offset_seconds: Arc::new(|| 0),
             unix_ms: Arc::new(|| unix_ms(SystemTime::now())),

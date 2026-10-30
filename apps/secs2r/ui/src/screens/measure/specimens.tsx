@@ -21,6 +21,8 @@ import {
   measuringView,
   noPathView,
   partialView,
+  referenceMidView,
+  referenceSubView,
   sampleLoadingView,
   tutorialView,
 } from "./fixtures";
@@ -171,6 +173,8 @@ const measureSpecimens: SpecimenDef[] = [
   frame("screen.measure.measuring.min", "Measure · measuring position 4 at 1024 × 700", () => <MeasureFrame view={measuringView} jobs={measuringJobs} now={T0 + 52000} />, "min"),
   frame("screen.measure.countdown", "Measure · start delay counting down", () => <MeasureFrame view={countdownView} jobs={countdownJobs} now={T0 + 3500} />),
   frame("screen.measure.done", "Measure · every position measured", () => <MeasureFrame view={doneView} />),
+  frame("screen.measure.reference-mid", "Measure · 2.1 project: one sub and the mains, 0 dB = L at position 1 over 200~2000 Hz", () => <MeasureFrame view={referenceMidView} />),
+  frame("screen.measure.reference-sub", "Measure · subs-only project: 0 dB = SW1 at position 1 over 40~120 Hz", () => <MeasureFrame view={referenceSubView} />),
   frame("screen.measure.graph-hidden", "Measure · graph hidden, map enlarged", () => <MeasureFrame view={graphHiddenView} />),
   frame("screen.measure.graph-hidden.min", "Measure · graph hidden at 1024 × 700", () => <MeasureFrame view={graphHiddenView} />, "min"),
   frame("screen.measure.low-snr", "Measure · low S/N warning on position 4", () => <MeasureFrame view={lowSnrView} jobs={lowSnrJobs} now={T0 + 110000} />),

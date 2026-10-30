@@ -12,9 +12,9 @@
 - 기능을 더하면 `features.toml`에 등록하고, `implemented`로 표시할 때는 실제로 있는 테스트를 가리킵니다. 화면이 부르는 IPC 메서드는 `ipc.<메서드>`로 등록합니다.
 - IPC 타입은 `secs-types`에서만 정의합니다. 바꾼 뒤 `cargo test -p secs-types`로 `apps/secs2r/ui/src/ipc/bindings/`를 다시 생성해 함께 커밋합니다.
 - 병렬은 map만 쓰고 부동소수점 누적은 원래 순서로 합니다. faer는 `std` 기능 없이, `Par::Seq`로 씁니다(ADR 0007).
-- 화면은 make-interfaces-feel-better 규칙을 따릅니다. 문장은 합니다체, 상태와 라벨은 명사구, 효과를 말하는 라벨, 화면마다 채운 기본 동작 하나, UI 글자 14px 하한. 화면의 새 문구는 키를 정하고 `ko`와 `en` 카탈로그를 함께 고칩니다.
+- 화면은 make-interfaces-feel-better 규칙을 따릅니다. 문장은 하십시오체(서술은 -ㅂ니다, 지시는 -십시오), 상태와 라벨은 명사구, 효과를 말하는 라벨, 화면마다 채운 기본 동작 하나, UI 글자 14px 하한. 화면의 새 문구는 키를 정하고 `ko`와 `en` 카탈로그를 함께 고칩니다.
 - 다른 저장소에서 코드를 가져오면 파일 머리에 출처와 라이선스를 적고 `docs/THIRD_PARTY.md`에 더합니다.
-- crates.io 크레이트 16개(ADR 0016)는 자기 디렉터리 밖의 파일을 읽지 않습니다. `crates/secs-service/UPSTREAM.toml`, `crates/secs-mdat/data/template_1.mdat`, 크레이트마다의 `LICENSE`는 원본의 사본이므로, 업스트림을 병합해 원본이 바뀌면 사본도 함께 고쳐야 합니다(`secs-policy` publishing 게이트가 확인합니다). 라이브러리 판은 릴리스 게이트가 올리므로 손으로 고치지 않습니다.
+- crates.io 크레이트 16개(ADR 0016)는 자기 디렉터리 밖의 파일을 읽지 않습니다. `crates/secs-service/UPSTREAM.toml`, `crates/secs-mdat/data/template_1.mdat`, 크레이트마다의 `LICENSE`(루트 `LICENSE-AGPL`, ADR 0023)는 원본의 사본이므로, 업스트림을 병합해 원본이 바뀌면 사본도 함께 고쳐야 합니다(`secs-policy` publishing 게이트가 확인합니다). 라이브러리 판은 릴리스 게이트가 올리므로 손으로 고치지 않습니다.
 
 ## 작업 분배
 
@@ -27,7 +27,7 @@
 ```sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo clippy --workspace --exclude secs2r --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
+cargo clippy --workspace --exclude secs2r --exclude secs2r-host-shell --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
 cargo test --workspace --all-targets --locked
 cargo deny --all-features check
 python3 -m unittest discover -s .github/scripts -p "test_*.py"

@@ -8,7 +8,7 @@ use secs_engine::{
     Design, display,
     preview::{XoPreview, sub_combine},
 };
-use secs_project::{Project, calibration_from_project, store_calibration};
+use secs_project::{MeasurementRecord, Project, calibration_from_project, store_calibration};
 use secs_types::{
     calibration::CalibrationSettings,
     ipc::*,
@@ -62,40 +62,90 @@ fn offset(design: &Design) -> f64 {
         50.0,
     )
 }
+
+fn lowest_measured_position(records: &[MeasurementRecord], role: &str) -> Option<i64> {
+    records
+        .iter()
+        .filter(|record| record.ir.contains_key(role))
+        .map(|record| record.pos)
+        .min()
+}
+
+fn measurement_reference(
+    project: &Project,
+    records: &[MeasurementRecord],
+) -> Option<CurveReference> {
+    let groups = crate::calibration::project_groups(project);
+    if let Some((role, position)) = groups
+        .iter()
+        .filter(|(group, _)| group != "sub")
+        .flat_map(|(_, roles)| roles)
+        .find_map(|role| {
+            lowest_measured_position(records, role).map(|lowest| {
+                let at_main = records
+                    .iter()
+                    .any(|record| record.pos == 1 && record.ir.contains_key(role));
+                let position = if at_main { 1 } else { lowest };
+                (role.clone(), position)
+            })
+        })
+    {
+        return Some(CurveReference {
+            role,
+            position,
+            band: CurveReferenceBand::Mid,
+        });
+    }
+    groups
+        .iter()
+        .filter(|(group, _)| group == "sub")
+        .flat_map(|(_, roles)| roles)
+        .find_map(|role| {
+            lowest_measured_position(records, role).map(|position| CurveReference {
+                role: role.clone(),
+                position,
+                band: CurveReferenceBand::Sub,
+            })
+        })
+}
+
+fn sub_reference(curve: &[f64]) -> f64 {
+    let band: Vec<_> = display::measurement_grid()
+        .into_iter()
+        .zip(curve)
+        .filter(|(frequency, _)| (40.0..=120.0).contains(frequency))
+        .map(|(_, value)| *value)
+        .collect();
+    secs_dsp::pairwise_sum(&band) / band.len() as f64
+}
+
 impl Service {
     fn measurement_curves(
         &self,
         params: MeasurementCurvesParams,
     ) -> Result<MeasurementCurvesResult, IpcError> {
-        let mut inputs = Vec::new();
-        {
+        let (inputs, reference) = {
+            let mut inputs = Vec::new();
             let mut session = lock(&self.session);
             let open = session.require_mut().map_err(IpcError::from)?;
-            for record in open.store.records() {
-                if params
-                    .positions
-                    .as_ref()
-                    .is_some_and(|p| !p.contains(&record.pos))
-                {
-                    continue;
-                }
+            let records = open.store.records();
+            let reference = measurement_reference(open.store.project(), &records);
+            for record in records {
                 for role in record.ir.keys() {
-                    if params.roles.as_ref().is_some_and(|r| !r.contains(role)) {
-                        continue;
-                    }
                     let (samples, rate) =
                         crate::calibration::measured_ir(&mut open.store, role, record.pos)?;
                     inputs.push((role.clone(), record.pos, samples, rate));
                 }
             }
-        }
+            (inputs, reference)
+        };
         let context = secs_compute::Context::new(
             std::thread::available_parallelism().map_or(1, |v| v.get()),
             secs_compute::MemoryBudget::new(self.deps.memory.available_bytes() / 2),
             Arc::new(secs_compute::NoProgress),
             secs_compute::CancelToken::new(),
         );
-        let curves = context
+        let mut curves = context
             .map(inputs, |(role, position, samples, rate)| {
                 let kind = match role_kind(&role) {
                     RoleKind::Main => "main",
@@ -106,16 +156,40 @@ impl Service {
                     kind: kind.into(),
                     role,
                     position,
-                    values: display::magnitude_db(
+                    values: display::smoothed_db(
                         &samples.iter().map(|&v| f64::from(v)).collect::<Vec<_>>(),
                         rate as f64,
                     ),
                 }
             })
             .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
+        if let Some(value) = reference.as_ref().and_then(|reference| {
+            curves
+                .iter()
+                .find(|curve| curve.role == reference.role && curve.position == reference.position)
+                .map(|curve| match reference.band {
+                    CurveReferenceBand::Mid => display::midrange_reference(&curve.values),
+                    CurveReferenceBand::Sub => sub_reference(&curve.values),
+                })
+        }) {
+            for curve in &mut curves {
+                curve.values.iter_mut().for_each(|sample| *sample -= value);
+            }
+        }
+        curves.retain(|curve| {
+            params
+                .positions
+                .as_ref()
+                .is_none_or(|positions| positions.contains(&curve.position))
+                && params
+                    .roles
+                    .as_ref()
+                    .is_none_or(|roles| roles.contains(&curve.role))
+        });
         Ok(MeasurementCurvesResult {
             grid: display::measurement_grid(),
             curves,
+            reference,
             axes: axes([5.0, 22000.0], [-35.0, 20.0], "db"),
         })
     }
@@ -380,25 +454,49 @@ impl Service {
                         })
                     })
                     .collect();
-                let mut rc = vec![notice(
-                    "rc_limit",
-                    [
-                        ("hz", design.rc_hi.to_string()),
-                        ("auto", design.rc_auto.to_string()),
-                    ],
-                )];
-                if let Some(hz) = design.schroeder_hz {
-                    rc[0].params.insert("schroeder_hz".into(), hz.to_string());
-                }
-                if design.rc_auto {
+                // The design's own rc_limit note carries the basis and its
+                // evidence (ADR 0021); a design without one gets today's line.
+                let rc_note = design
+                    .notes
+                    .iter()
+                    .find(|note| matches!(note, secs_engine::Note::RcLimit { .. }));
+                let mut rc = vec![match rc_note {
+                    Some(note) => crate::calibration::scalar_notice(note),
+                    None => {
+                        let mut line = notice(
+                            "rc_limit",
+                            [
+                                ("hz", design.rc_hi.to_string()),
+                                ("auto", design.rc_auto.to_string()),
+                            ],
+                        );
+                        if let Some(hz) = design.schroeder_hz {
+                            line.params.insert("schroeder_hz".into(), hz.to_string());
+                        }
+                        line
+                    }
+                }];
+                let band_hz = match rc_note {
+                    Some(secs_engine::Note::RcLimit { band_hz, .. }) => *band_hz,
+                    _ => None,
+                };
+                // The room volume decides only the two Schroeder bases.
+                if design.rc_auto
+                    && run.settings.rc_hi_basis != secs_types::calibration::RcHiBasis::Agreement
+                {
                     rc.push(match run.settings.room_volume_m3.filter(|v| *v != 0.0) {
                         Some(volume) => {
                             notice("rc_room_volume", [("volume_m3", volume.to_string())])
                         }
                         None => notice("rc_no_room_volume", []),
                     });
+                    let factor = f64::from(run.settings.rc_hi_transition);
+                    let value = match (design.schroeder_hz, band_hz) {
+                        (Some(strict), Some(band)) => Some(strict.max(band)),
+                        (strict, band) => strict.or(band),
+                    };
                     if run.settings.room_volume_m3.is_some_and(|v| v != 0.0)
-                        && design.schroeder_hz.is_some_and(|v| v > design.rc_hi + 0.5)
+                        && value.is_some_and(|v| v * factor > design.rc_hi + 0.5)
                     {
                         rc.push(notice("rc_auto_cap", [("hz", design.rc_hi.to_string())]));
                     }

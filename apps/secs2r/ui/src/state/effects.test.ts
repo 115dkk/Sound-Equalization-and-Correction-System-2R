@@ -3,7 +3,7 @@ import { createMockService } from "../ipc/mock";
 import { createSession } from "./session";
 import { RULES, effectsOf, type ResourceKey, type Trigger } from "./effects";
 import type { Request } from "../ipc/bindings/Request";
-import { xoRecommendation } from "../ipc/fixtures";
+import { MOCK_DESIGN_ID, applyStatus, eqapoXt, xoRecommendation } from "../ipc/fixtures";
 
 const reloadCases: [ResourceKey, Request, Request["method"]][] = [
   ["project", { method: "project_save", params: { path: "/room.secs" } }, "project_info"],
@@ -26,7 +26,7 @@ const reloadCases: [ResourceKey, Request, Request["method"]][] = [
   ["subWarnings", { method: "config_renumber" }, "sub_warnings"],
   ["rew", { method: "rew_launch" }, "rew_info"],
   ["folder", { method: "export_folder_set", params: { folder: "/exports" } }, "export_folder_get"],
-  ["computeStatus", { method: "app_settings_set", params: { settings: { language: "ko", theme: "system", icon: "expert", skin: "default", compute: "cpu", local_api: { enabled: false, port: 4712 }, recent_projects: [], last_window_size: null } } }, "compute_status"],
+  ["computeStatus", { method: "app_settings_set", params: { settings: { updates: "auto", language: "ko", theme: "system", icon: "expert", skin: "default", compute: "cpu", local_api: { enabled: false, port: 4712 }, apply: { camilla: { level: "files", address: "127.0.0.1:1234" }, eqapo: { level: "files" } }, recent_projects: [], last_window_size: null } } }, "compute_status"],
   ["appSettings", { method: "project_save", params: { path: "/room.secs" } }, "app_settings_get"],
 ];
 it.each(reloadCases)("reload.%s refreshes its public store", async (key, request, getter) => {
@@ -264,10 +264,30 @@ const finishedCases = [
     expect(session.host.getSnapshot().xoRecommendation).toEqual(xoRecommendation);
   } },
   { name: "export.invalidate", trigger: { finished: "calibrate", status: "succeeded" }, run: async (session, mock) => {
-    session.host.set({ runs: { camilla_dsp: { status: "done", files: ["old.yml"], folder: "/old" } } });
+    session.host.set({ runs: { camilla_dsp: { status: "done", files: ["old.yml"], folder: "/old", rate: 48000, notes: [] } }, applyRuns: { camilla: { status: "applied", designId: "old", folder: "/applied" } } });
     await session.call({ method: "calibrate", params: { settings: null, subs_only: false } });
     mock.drain(); await session.settled();
     expect(session.host.getSnapshot().runs).toEqual({});
+    expect(session.host.getSnapshot().applyRuns).toEqual({});
+  } },
+  { name: "apply.finished", trigger: { finished: "apply", status: "succeeded" }, run: async (session, mock) => {
+    await session.call({ method: "calibrate", params: { settings: null, subs_only: false } });
+    mock.drain(); await session.settled();
+    await session.call({ method: "apply_settings_set", params: { camilla: { level: "apply", address: "127.0.0.1:1234" }, eqapo: { level: "apply" } } });
+    mock.calls.length = 0;
+    await session.call({ method: "apply_camilla", params: {} });
+    mock.drain(); await session.settled();
+    // The row records how it ended and the status is read again; nothing is opened.
+    expect(session.host.getSnapshot().applyRuns.camilla).toMatchObject({ status: "applied", designId: MOCK_DESIGN_ID });
+    expect(mock.calls.filter((call) => call.method === "apply_status")).toHaveLength(1);
+    expect(mock.calls.some((call) => call.method === "open_folder")).toBe(false);
+    // A failed job lands in its target's row.
+    mock.setApplyStatus({ ...applyStatus, eqapo: eqapoXt });
+    mock.failJobs("apply", "permission_denied", "Access is denied. (os error 5)", { path: "C:/Program Files/EqualizerAPO/config/SECS2R" });
+    await session.call({ method: "apply_eqapo" });
+    mock.drain(); await session.settled();
+    expect(session.host.getSnapshot().applyRuns.eqapo).toMatchObject({ status: "failed", error: { code: "permission_denied" } });
+    expect(session.host.getSnapshot().applyRuns.camilla?.status).toBe("applied");
   } },
   { name: "export.finished", trigger: { finished: "export", status: "succeeded" }, run: async (session, mock) => {
     await session.call({ method: "calibrate", params: { settings: null, subs_only: false } });
@@ -281,7 +301,7 @@ const finishedCases = [
     await session.call({ method: "recommend_xo" });
     mock.drain(); await session.settled();
     expect(session.stores.settings.getSnapshot()?.xo).toMatchObject({ "프론트": 80, "센터": 100 });
-    expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false } });
+    expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false, mimo: false } });
     expect(session.jobs.getSnapshot().jobs.some((job) => job.kind === "calibrate" && job.status === "running")).toBe(true);
   } },
 ] satisfies { name: string; trigger: Trigger; run: (session: ReturnType<typeof createSession>, mock: ReturnType<typeof createMockService>) => Promise<void> }[];
@@ -293,6 +313,24 @@ it.each(finishedCases)("$name applies its completion effect", async ({ name, tri
   try {
     await session.start(); await session.configure({ method: "mock" }); await session.settled();
     await run(session, mock); await session.settled();
+  } finally { session.dispose(); await session.settled(); mock.dispose(); }
+});
+
+it("xo.recalibrate sends the MIMO choice 보정 계산 would send and the ledger keeps it", async () => {
+  const mock = createMockService({ tickMs: 0 });
+  const session = createSession(mock);
+  try {
+    await session.start(); await session.configure({ method: "mock" }); await session.settled();
+    const positions = session.stores.project.getSnapshot()?.positions.length ?? 0;
+    await session.call({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+    await session.settled();
+    await session.call({ method: "recommend_xo" });
+    mock.drain(); await session.settled();
+    expect(positions).toBeGreaterThanOrEqual(3);
+    const mimo = true;
+    expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false, mimo } });
+    const job = session.jobs.getSnapshot().jobs.find((entry) => entry.kind === "calibrate");
+    expect(job?.request).toMatchObject({ method: "calibrate", params: { subs_only: false, mimo } });
   } finally { session.dispose(); await session.settled(); mock.dispose(); }
 });
 

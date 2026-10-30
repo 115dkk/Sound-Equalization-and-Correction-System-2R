@@ -136,6 +136,8 @@ fn config_result(project: &Project) -> ConfigResult {
 
 fn dsp_fields(profile: &DspProfile) -> DspFields {
     DspFields {
+        output_rate: profile.output_rate,
+        output_rate_editable: matches!(profile.profile.as_str(), "camilla" | "custom"),
         fir_taps: profile.fir_taps,
         fir_budget: profile.fir_budget,
         iir_bands: profile.iir_bands,
@@ -147,6 +149,10 @@ fn dsp_fields(profile: &DspProfile) -> DspFields {
 fn dsp_result(project: &Project) -> DspResult {
     let fields = dsp_fields(&project.dsp);
     let taps = project.dsp.fir_taps;
+    let output_rate = match project.dsp.output_rate {
+        OutputRateChoice::Auto => 48_000,
+        OutputRateChoice::Fixed(rate) => rate,
+    };
     DspResult {
         profile: project.dsp.profile.clone(),
         name: project.dsp.name.clone(),
@@ -159,8 +165,8 @@ fn dsp_result(project: &Project) -> DspResult {
                 fields: dsp_fields(&preset),
             })
             .collect(),
-        window_ms: taps as f64 / 48_000.0 * 1000.0,
-        resolution_hz: 48_000.0 / taps.max(1) as f64,
+        window_ms: taps as f64 / f64::from(output_rate) * 1000.0,
+        resolution_hz: f64::from(output_rate) / taps.max(1) as f64,
     }
 }
 
@@ -530,6 +536,20 @@ impl Service {
                 .remove(preset.as_str())
                 .ok_or_else(|| invalid("preset", "unknown DSP preset"))?;
         } else if let Some(fields) = params.fields {
+            if let OutputRateChoice::Fixed(rate) = fields.output_rate
+                && !secs_dsp::rate::is_output_rate(rate)
+            {
+                return Err(invalid("output_rate", "unsupported output sample rate"));
+            }
+            let current = &open.store.project().dsp;
+            if fields.output_rate != current.output_rate
+                && !matches!(current.profile.as_str(), "camilla" | "custom")
+            {
+                return Err(invalid(
+                    "output_rate",
+                    "this DSP preset has a fixed output sample rate",
+                ));
+            }
             if [
                 fields.fir_taps,
                 fields.fir_budget,
@@ -542,8 +562,18 @@ impl Service {
             {
                 return Err(invalid("fields", "DSP fields must be non-negative"));
             }
+            // Changing only the output rate keeps the preset (camilla stays
+            // camilla); any other field makes the profile custom.
+            let only_rate = fields.fir_taps == current.fir_taps
+                && fields.fir_budget == current.fir_budget
+                && fields.iir_bands == current.iir_bands
+                && fields.allpass_bands == current.allpass_bands
+                && fields.bm_path_delays == current.bm_path_delays;
             let dsp = &mut open.store.project_mut().dsp;
-            dsp.profile = "custom".into();
+            if !only_rate {
+                dsp.profile = "custom".into();
+            }
+            dsp.output_rate = fields.output_rate;
             dsp.fir_taps = fields.fir_taps;
             dsp.fir_budget = fields.fir_budget;
             dsp.iir_bands = fields.iir_bands;
@@ -764,8 +794,34 @@ impl Service {
         if let Some(path) = self.deps.app_settings_path.as_deref() {
             atomic_write(path, &bytes)?;
         }
+        let policy_changed = current.updates != params.settings.updates;
         *current = params.settings.clone();
+        drop(current);
+        if policy_changed {
+            self.deps.updates.set_policy(params.settings.updates);
+        }
         Ok(params.settings)
+    }
+
+    /// Opens `releases/tag/v<version>` of this repository. Only a plain
+    /// release version reaches the URL, so the screen cannot open anything else.
+    pub(crate) fn open_release_page(&self, version: &str) -> Result<(), IpcError> {
+        if !is_release_version(version) {
+            return Err(invalid("version", "not a release version"));
+        }
+        self.deps.host.open_release_page(&format!(
+            "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R/releases/tag/v{version}"
+        ))
+    }
+
+    /// Adds what the service owns to an adapter's update status.
+    pub(crate) fn update_status(
+        &self,
+        mut status: secs_types::ipc::UpdateStatus,
+    ) -> secs_types::ipc::UpdateStatus {
+        status.current = self.deps.app_version.to_string();
+        status.policy = self.app_settings_get().updates;
+        status
     }
 }
 
@@ -791,4 +847,53 @@ pub(crate) fn load_app_settings(path: Option<&Path>) -> AppSettings {
     let mut settings = file.settings;
     settings.recent_projects.truncate(RECENT_PROJECTS_MAX);
     settings
+}
+
+/// `MAJOR.MINOR.PATCH`, optionally followed by `-` and dot-separated
+/// alphanumeric identifiers: the versions release.yml tags.
+fn is_release_version(version: &str) -> bool {
+    let (core, pre) = match version.split_once('-') {
+        Some((core, pre)) => (core, Some(pre)),
+        None => (version, None),
+    };
+    let parts: Vec<&str> = core.split('.').collect();
+    parts.len() == 3
+        && parts.iter().all(|part| {
+            !part.is_empty() && part.len() <= 9 && part.bytes().all(|b| b.is_ascii_digit())
+        })
+        && pre.is_none_or(|pre| {
+            !pre.is_empty()
+                && pre.len() <= 32
+                && pre
+                    .split('.')
+                    .all(|id| !id.is_empty() && id.bytes().all(|b| b.is_ascii_alphanumeric()))
+        })
+}
+
+#[cfg(test)]
+mod release_version_tests {
+    use super::is_release_version;
+
+    #[test]
+    fn only_plain_release_versions_reach_the_release_url() {
+        for ok in ["0.36.0", "1.0.0", "1.2.3-rc.1", "10.20.30"] {
+            assert!(is_release_version(ok), "{ok}");
+        }
+        for bad in [
+            "",
+            "v0.36.0",
+            "0.36",
+            "0.36.0.1",
+            "0.36.0-",
+            "0.36.0-rc..1",
+            "0.36.0/../x",
+            "0.36.0?x",
+            "0.36.0#x",
+            "0.36.0-rc 1",
+            "a.b.c",
+            "0.36.0+build",
+        ] {
+            assert!(!is_release_version(bad), "{bad}");
+        }
+    }
 }

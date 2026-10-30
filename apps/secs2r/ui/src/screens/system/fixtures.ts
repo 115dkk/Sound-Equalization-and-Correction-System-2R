@@ -8,9 +8,11 @@ import type { DspFields } from "../../ipc/bindings/DspFields";
 import type { DspResult } from "../../ipc/bindings/DspResult";
 import type { LayoutResult } from "../../ipc/bindings/LayoutResult";
 import type { Notice } from "../../ipc/bindings/Notice";
+import type { OutputRateChoice } from "../../ipc/bindings/OutputRateChoice";
 import type { PositionEstimateResult } from "../../ipc/bindings/PositionEstimateResult";
 import { SAMPLE_ROLES } from "../../ipc/fixtures";
 import { ARRANGEMENT_COUNTS, arrangementPoints, roleKind } from "../../ui/maps/geometry";
+import { countedRate } from "./outputRate";
 import type { SystemView } from "./types";
 
 const GROUP_ORDER = ["front", "center", "sub", "surround", "back", "wide", "top", "height", "other"] as const;
@@ -66,7 +68,18 @@ export function configOf(preset: string, speakers: ConfigSpeaker[], device: stri
   };
 }
 
-const fields = (fir_taps: number, fir_budget: number, iir_bands: number, allpass_bands: number, bm_path_delays: number): DspFields => ({
+/** A profile's fields; the output rate is 48 kHz and the profile's own unless given (ADR 0017: only `camilla` and `custom` choose it). */
+const fields = (
+  fir_taps: number,
+  fir_budget: number,
+  iir_bands: number,
+  allpass_bands: number,
+  bm_path_delays: number,
+  output_rate: OutputRateChoice = { fixed: 48000 },
+  output_rate_editable = true,
+): DspFields => ({
+  output_rate,
+  output_rate_editable,
   fir_taps,
   fir_budget,
   iir_bands,
@@ -78,11 +91,12 @@ const fields = (fir_taps: number, fir_budget: number, iir_bands: number, allpass
 const DSP_PRESETS: DspResult["presets"] = [
   { key: "camilla", name: "PC · CamillaDSP", fields: fields(65536, 2097152, 64, 64, 64) },
   { key: "custom", name: "사용자 정의", fields: fields(2048, 32768, 16, 16, 16) },
-  { key: "minidsp", name: "miniDSP Flex / 2x4 HD", fields: fields(2048, 4096, 10, 0, 0) },
-  { key: "qsys", name: "Q-SYS Core 8 Flex / 110f", fields: fields(16384, 65536, 24, 16, 16) },
-  { key: "tesira", name: "Biamp Tesira SERVER (DSP-2 ×3)", fields: fields(2048, 51200, 16, 16, 16) },
+  { key: "minidsp", name: "miniDSP Flex / 2x4 HD", fields: fields(2048, 4096, 10, 0, 0, { fixed: 96000 }, false) },
+  { key: "qsys", name: "Q-SYS Core 8 Flex / 110f", fields: fields(16384, 65536, 24, 16, 16, { fixed: 48000 }, false) },
+  { key: "tesira", name: "Biamp Tesira SERVER (DSP-2 ×3)", fields: fields(2048, 51200, 16, 16, 16, { fixed: 48000 }, false) },
 ];
 
+/** dsp_get as the service answers it: the window at the output rate (48 kHz for 자동), the resolution at 48 kHz. */
 function dspOf(profile: string, override?: DspFields): DspResult {
   const preset = DSP_PRESETS.find((p) => p.key === profile) ?? DSP_PRESETS[0]!;
   const current = override ?? preset.fields;
@@ -91,7 +105,7 @@ function dspOf(profile: string, override?: DspFields): DspResult {
     name: preset.name,
     fields: current,
     presets: DSP_PRESETS,
-    window_ms: (current.fir_taps / 48000) * 1000,
+    window_ms: (current.fir_taps / countedRate(current.output_rate)) * 1000,
     resolution_hz: 48000 / Math.max(1, current.fir_taps),
   };
 }
@@ -170,6 +184,15 @@ const invalidNotices: Notice[] = [
   { code: "band_combination", params: { role: "Hfr", bands: "LF/MF" } },
   { code: "main_with_sub_band", params: { role: "Tbl" } },
 ];
+
+/** The sample room following the playback device (자동); a rate-only edit keeps the CamillaDSP profile. */
+export const autoRateView: SystemView = {
+  ...sampleView,
+  dsp: dspOf("camilla", { ...DSP_PRESETS[0]!.fields, output_rate: "auto" }),
+};
+
+/** The sample room exporting to a miniDSP Flex: 96 kHz, fixed by the device. */
+export const minidspView: SystemView = { ...sampleView, dsp: dspOf("minidsp") };
 
 /** A custom config with problems: a duplicate output, outputs past the device's 12, a speaker without a band. */
 export const invalidView: SystemView = {

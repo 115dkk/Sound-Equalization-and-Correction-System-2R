@@ -4,8 +4,11 @@ import type { Request } from "./bindings/Request";
 import type { MeasureConfigureParams } from "./bindings/MeasureConfigureParams";
 import type { SettingEdit } from "./bindings/SettingEdit";
 import { CALIBRATION_LIMITS } from "./bindings/rules";
-import { createMockService } from "./mock";
+import { createMockService, updateStates } from "./mock";
 import * as fx from "./fixtures";
+import { CAMILLA_EXE_FILE } from "../screens/export/types";
+import { mimoView } from "../screens/calibrate/fixtures";
+import { scorecardModel } from "../screens/calibrate/scorecard";
 
 const configure: MeasureConfigureParams = {
   method: "mock", input_device: null, output_device: null, input_channel: null, output_channels: [], sweep_length: null,
@@ -136,6 +139,46 @@ describe("P33 mock wiring", () => {
     expect(await mock.request({ method: "jobs" })).toEqual([]);
   });
 
+  it("matches the gallery's scorecard and late bass before and after a MIMO run", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      expect(fx.calibrationSummary.scorecard).toEqual(mimoView.results.calibration!.scorecard);
+      expect(fx.calibrationSummary.late_energy).toEqual(mimoView.results.calibration!.late_energy);
+      expect(fx.mimoSummary.scorecard).toEqual(mimoView.results.mimo!.scorecard);
+      expect(fx.mimoSummary.late_energy).toEqual(mimoView.results.mimo!.late_energy);
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+      await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
+      const before = await mock.request({ method: "results" });
+      const lines = await mock.request({ method: "result_lines" });
+      expect(before.calibration!.late_energy).toEqual(fx.calibrationSummary.late_energy);
+      expect(scorecardModel(before, lines.channels)).toMatchObject({ late: true, mimo: false });
+      await mock.request({ method: "mimo", params: { settings: null } }); mock.drain();
+      const after = await mock.request({ method: "results" });
+      expect(after.mimo_export).toBe("included");
+      expect(after.mimo!.scorecard).toEqual(fx.mimoSummary.scorecard);
+      expect(after.mimo!.late_energy).toEqual(fx.mimoSummary.late_energy);
+      expect(scorecardModel(after, lines.channels)).toEqual(scorecardModel(mimoView.results, mimoView.lines.channels));
+      await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
+      expect(scorecardModel(await mock.request({ method: "results" }), lines.channels)).toMatchObject({ late: true, mimo: false });
+    } finally { mock.dispose(); }
+  });
+
+  it.each([[1], [2, 7, 9]])("limits late bass to the project's measured positions %j", async (...positions) => {
+    const mock = createMockService({ tickMs: 0, project: { ...fx.projectInfo, preset: "2.0", sub_count: 0, positions } });
+    try {
+      await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
+      const calibration = (await mock.request({ method: "results" })).calibration!;
+      expect(calibration.main_roles).toEqual(["L", "R"]);
+      expect(calibration.late_energy.map(({ role, position }) => [role, position])).toEqual(positions.flatMap((position) => [["L", position], ["R", position]]));
+      expect(calibration.late_energy.every((entry) => Number.isFinite(entry.before_db) && Number.isFinite(entry.after_db))).toBe(true);
+      await mock.request({ method: "mimo", params: { settings: null } }); mock.drain();
+      const mimo = (await mock.request({ method: "results" })).mimo!;
+      expect(mimo.support_count).toBe(0);
+      expect(mimo.scorecard).toEqual(calibration.scorecard.map((score) => ({ role: score.role, after_mimo: score.after })));
+      expect(mimo.late_energy).toEqual(calibration.late_energy.map(({ role, position, after_db }) => ({ role, position, after_mimo_db: after_db })));
+    } finally { mock.dispose(); }
+  });
+
   it("updates calibration, MIMO and export results, and preserves job failure injection", async () => {
     const mock = createMockService({ tickMs: 0 });
     const events: JobEvent[] = []; mock.events.subscribe((event) => events.push(event));
@@ -189,7 +232,8 @@ describe("P33 mock wiring", () => {
     const mock = createMockService({ tickMs: 0 });
     const edits = {
       mode: { kind: "mode", mode: "ultra" }, ultra_ms: { kind: "ultra_ms", ms: 999 }, rc_lo: { kind: "rc_lo", hz: 25 }, rc_hi: { kind: "rc_hi", hz: 500 },
-      sample_rate_policy: { kind: "sample_rate_policy", policy: "resample" },
+      rc_hi_basis: { kind: "rc_hi_basis", basis: "lenient" }, rc_hi_transition: { kind: "rc_hi_transition", factor: 4 },
+      sample_rate_policy: { kind: "sample_rate_policy", policy: "resample" }, low_protect: { kind: "low_protect", on: true },
       room_volume: { kind: "room_volume", m3: 60 }, room_dims: { kind: "room_dims", dims: [5, 4, 3] }, boost_max: { kind: "boost_max", db: 6 },
       xo: { kind: "xo", group: "front", hz: 100 }, xo_peq: { kind: "xo_peq", on: false, lo: 30, hi: 150 },
       infra: { kind: "infra", role: "SW1", hz: 40, type: "LR24", subs: ["SW1", "SW2"] }, infra_boost: { kind: "infra_boost", db: 18 },
@@ -201,7 +245,9 @@ describe("P33 mock wiring", () => {
       analytic_derivatives: { kind: "analytic_derivatives", peq: true, mimo_iir: true },
     } satisfies { [K in SettingEdit["kind"]]: Extract<SettingEdit, { kind: K }> };
     for (const edit of Object.values(edits)) await mock.request({ method: "calibration_settings_edit", params: { edit } });
-    expect(await mock.request({ method: "calibration_settings_get" })).toMatchObject({ mode: "ultra", sample_rate_policy: "resample", ultra_ms: CALIBRATION_LIMITS.ultra_ms[1], room_volume_m3: 60, room_dims_m: [5, 4, 3], mimo_on: true, mimo_fir: true, peq_analytic_derivatives: true, mimo_iir_analytic_derivatives: true, subs_manual: { SW1: { mode: "bundle", gain_db: -4, hp_hz: 0 } } });
+    // The service takes only the transition factors 1, 2 and 4 (ADR 0021).
+    await expect(mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_hi_transition", factor: 3 } } })).rejects.toMatchObject({ error: { code: "invalid_request", params: { field: "rc_hi_transition" } } });
+    expect(await mock.request({ method: "calibration_settings_get" })).toMatchObject({ mode: "ultra", sample_rate_policy: "resample", low_protect: true, ultra_ms: CALIBRATION_LIMITS.ultra_ms[1], rc_hi: 500, rc_hi_basis: "lenient", rc_hi_transition: 4, room_volume_m3: 60, room_dims_m: [5, 4, 3], mimo_on: true, mimo_fir: true, peq_analytic_derivatives: true, mimo_iir_analytic_derivatives: true, subs_manual: { SW1: { mode: "bundle", gain_db: -4, hp_hz: 0 } } });
   });
 
   it("answers every generated Request variant with its tagged typed response", async () => {
@@ -231,7 +277,13 @@ describe("P33 mock wiring", () => {
       calibration_settings_set: { method: "calibration_settings_set", params: { settings: fx.calibrationSettings } }, calibration_settings_edit: { method: "calibration_settings_edit", params: { edit: { kind: "mode", mode: "zero" } } },
       sub_warnings: { method: "sub_warnings" }, rew_info: { method: "rew_info" }, rew_driver_set: { method: "rew_driver_set", params: { driver: "ASIO" } }, mode_spec: { method: "mode_spec", params: { mode: "mixed", ultra_ms: null, mimo_fir: true } },
       local_api_status: { method: "local_api_status" }, local_api_token_regenerate: { method: "local_api_token_regenerate" },
+      update_status: { method: "update_status" }, update_check: { method: "update_check" }, update_download: { method: "update_download" },
+      update_restart: { method: "update_restart" }, update_notice_dismiss: { method: "update_notice_dismiss" },
+      update_open_release: { method: "update_open_release", params: { version: "0.36.0" } },
       app_settings_get: { method: "app_settings_get" }, app_settings_set: { method: "app_settings_set", params: { settings: fx.appSettings } },
+      apply_status: { method: "apply_status" }, apply_settings_set: { method: "apply_settings_set", params: fx.appSettings.apply },
+      apply_camilla: { method: "apply_camilla", params: {} }, apply_eqapo: { method: "apply_eqapo" }, revert_eqapo: { method: "revert_eqapo" },
+      host_install: { method: "host_install" }, host_uninstall: { method: "host_uninstall" }, host_stop_managing: { method: "host_stop_managing" },
       measurement_curves: { method: "measurement_curves", params: { positions: null, roles: null } }, result_curves: { method: "result_curves", params: { tab: "spl", channel: null, group: null, xo_hz: null, corrected: null } },
       result_lines: { method: "result_lines" }, sub_take_values: { method: "sub_take_values" }, dialog_open_project: { method: "dialog_open_project" }, dialog_save_project: { method: "dialog_save_project", params: { suggested: "new.secs" } },
       dialog_pick_mdat: { method: "dialog_pick_mdat" }, dialog_pick_folder: { method: "dialog_pick_folder", params: { start: null } }, dialog_save_file: { method: "dialog_save_file", params: { kind: "target", suggested: "target.json" } },
@@ -241,12 +293,166 @@ describe("P33 mock wiring", () => {
     } satisfies { [K in Request["method"]]: Extract<Request, { method: K }> };
     for (const request of Object.values(requests)) {
       const mock = createMockService({ tickMs: 0, results: fx.resultsSummary });
+      if (request.method === "update_download") mock.setUpdateStatus(updateStates.available);
+      if (request.method === "update_restart") mock.setUpdateStatus(updateStates.readyOnExit);
       if (request.method === "mic_calibration_attach") await mock.request({ method: "mic_calibration_set", params: { path: "/mic.txt" } });
       if (request.method === "undo") await mock.request({ method: "position_clear", params: { position: 1 } });
       if (request.method === "job_cancel") await mock.request({ method: "sample_load", params: { positions: 1 } });
+      // 적용 needs its target set to 적용, and Equalizer APO an install.
+      if (request.method === "apply_camilla" || request.method === "apply_eqapo" || request.method === "revert_eqapo") {
+        await mock.request({ method: "apply_settings_set", params: { camilla: { level: "apply", address: "127.0.0.1:1234" }, eqapo: { level: "apply" } } });
+        mock.setApplyStatus({ ...fx.applyStatus, eqapo: fx.eqapoXt });
+      }
+      // 관리 끄기 needs a service to reach.
+      if (request.method === "host_stop_managing") mock.setApplyStatus({ ...fx.applyStatus, host: "running", host_status: fx.hostManaging });
       expect(await mock.invoke("secs_call", { request }), request.method).toMatchObject({ ok: true, data: { method: request.method } });
       mock.drain(); mock.dispose();
     }
+  });
+
+  it("scripts updater states and guards downloads and restarts", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      for (const state of Object.values(updateStates)) {
+        mock.setUpdateStatus(state);
+        expect(await mock.request({ method: "update_status" })).toEqual(state);
+      }
+      for (const state of [updateStates.upToDate, updateStates.portable, updateStates.failed, updateStates.downloading]) {
+        mock.setUpdateStatus(state);
+        await expect(mock.request({ method: "update_download" })).rejects.toMatchObject({ error: { code: "invalid_request" } });
+        await expect(mock.request({ method: "update_restart" })).rejects.toMatchObject({ error: { code: "invalid_request" } });
+      }
+      mock.setUpdateStatus(updateStates.available);
+      expect(await mock.request({ method: "update_download" })).toMatchObject({ phase: { kind: "downloading", received: 0 } });
+      for (const state of [updateStates.readyOnExit, updateStates.readyOnRequest]) {
+        mock.setUpdateStatus(state);
+        expect(await mock.request({ method: "update_restart" })).toBeNull();
+        expect(await mock.request({ method: "update_status" })).toMatchObject({ phase: { kind: "installing" } });
+      }
+      mock.setUpdateStatus(updateStates.skippedNotice);
+      expect(await mock.request({ method: "update_notice_dismiss" })).toMatchObject({ notice: null });
+      await mock.request({ method: "app_settings_set", params: { settings: { ...fx.appSettings, updates: "off" } } });
+      expect(await mock.request({ method: "update_status" })).toMatchObject({ policy: "off", phase: { kind: "off" } });
+      expect(await mock.request({ method: "update_check" })).toMatchObject({ policy: "off", phase: { kind: "checking" } });
+      mock.setUpdateStatus(updateStates.available);
+      await mock.request({ method: "app_settings_set", params: { settings: fx.appSettings } });
+      expect(await mock.request({ method: "update_status" })).toMatchObject({ policy: "auto", phase: { kind: "downloading" } });
+    } finally { mock.dispose(); }
+  });
+
+  it("reads no CamillaDSP and no Equalizer APO until a test or specimen flips the status", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    expect(await mock.request({ method: "apply_status" })).toEqual(fx.applyStatus);
+    expect(fx.applyStatus).toMatchObject({ camilla: { reachable: false, error: { code: "apply_failed" }, status: null, design: { kind: "unknown" } }, eqapo: { installed: false } });
+    mock.setApplyStatus({ ...fx.applyStatus, eqapo: fx.eqapoXt });
+    expect((await mock.request({ method: "apply_status" })).eqapo).toEqual(fx.eqapoXt);
+    // The answer is a copy: changing it does not change the next one.
+    (await mock.request({ method: "apply_status" })).eqapo.include = "damaged";
+    expect((await mock.request({ method: "apply_status" })).eqapo.include).toBe("absent");
+    expect((await createMockService({ tickMs: 0, applyStatus: { ...fx.applyStatus, eqapo: fx.eqapoXt } }).request({ method: "apply_status" })).eqapo.installed).toBe(true);
+  });
+
+  it("reports the current design as soon as a result exists, without an apply job", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    expect((await mock.request({ method: "apply_status" })).current_design_id).toBeNull();
+    await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
+    expect((await mock.request({ method: "apply_status" })).current_design_id).toBe(fx.MOCK_DESIGN_ID);
+    await mock.request({ method: "target_apply_preset", params: { preset: "flat" } });
+    expect((await mock.request({ method: "apply_status" })).current_design_id).toBe(fx.MOCK_DESIGN_ID);
+    await mock.request(newProject(false));
+    expect((await mock.request({ method: "apply_status" })).current_design_id).toBeNull();
+    mock.dispose();
+    const reopened = createMockService({ tickMs: 0, results: { ...fx.resultsSummary, calibration: { ...fx.resultsSummary.calibration!, cached: true } } });
+    expect((await reopened.request({ method: "apply_status" })).current_design_id).toBe(fx.MOCK_DESIGN_ID);
+    reopened.dispose();
+  });
+
+  it("stores and echoes ApplySettings, refusing an address the service refuses", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    const settings = { camilla: { level: "apply", address: "192.168.0.40:1234" }, eqapo: { level: "files" } } as const;
+    expect(await mock.request({ method: "apply_settings_set", params: settings })).toEqual(settings);
+    expect((await mock.request({ method: "app_settings_get" })).apply).toEqual(settings);
+    for (const address of ["localhost", ":1234", "host:0", "host:no", "a:b:1", " 127.0.0.1:1234"]) {
+      await expect(mock.request({ method: "apply_settings_set", params: { ...settings, camilla: { level: "apply", address } } }), address)
+        .rejects.toMatchObject({ error: { code: "invalid_request", params: { field: "camilla.address" } } });
+    }
+    expect((await mock.request({ method: "app_settings_get" })).apply).toEqual(settings);
+  });
+
+  it("applies through `apply` jobs that finish with an Applied result, one export-group job at a time", async () => {
+    const mock = createMockService({ tickMs: 0, results: fx.resultsSummary });
+    const events: JobEvent[] = []; mock.events.subscribe((event) => events.push(event));
+    // 파일만 refuses before any job, naming the target.
+    await expect(mock.request({ method: "apply_camilla", params: {} })).rejects.toMatchObject({ error: { code: "unsupported", params: { target: "camilladsp" } } });
+    await mock.request({ method: "apply_settings_set", params: { camilla: { level: "apply", address: "127.0.0.1:1234" }, eqapo: { level: "apply" } } });
+    await expect(mock.request({ method: "apply_eqapo" })).rejects.toMatchObject({ error: { code: "unsupported", params: { target: "equalizer_apo" } } });
+    await expect(mock.request({ method: "revert_eqapo" })).rejects.toMatchObject({ error: { code: "unsupported" } });
+
+    const camilla = await mock.request({ method: "apply_camilla", params: {} });
+    expect(camilla.kind).toBe("apply");
+    // Export and apply share the export group.
+    await expect(mock.request({ method: "export", params: { kind: "camilla_dsp", folder: "" } })).rejects.toMatchObject({ error: { code: "job_busy" } });
+    mock.drain();
+    expect(events.find((event) => event.event === "finished" && event.job === camilla.job)).toMatchObject({
+      status: "succeeded", result: { kind: "apply", data: { outcome: { kind: "applied" }, design_id: fx.MOCK_DESIGN_ID, folder: expect.stringContaining("applied/camilladsp") } },
+    });
+
+    mock.setApplyStatus({ ...fx.applyStatus, eqapo: fx.eqapoXt });
+    const eqapo = await mock.request({ method: "apply_eqapo" });
+    await expect(mock.request({ method: "apply_camilla", params: {} })).rejects.toMatchObject({ error: { code: "job_busy" } });
+    mock.drain();
+    expect(events.find((event) => event.event === "finished" && event.job === eqapo.job)).toMatchObject({
+      status: "succeeded", result: { kind: "apply", data: { outcome: { kind: "applied" }, folder: `${fx.eqapoXt.config_path}/SECS2R` } },
+    });
+    expect((await mock.request({ method: "apply_status" })).eqapo).toMatchObject({ include: "present", applied_design_id: fx.MOCK_DESIGN_ID });
+    // 빼기 takes the lines out; the SECS2R folder and its design stay.
+    expect(await mock.request({ method: "revert_eqapo" })).toBeNull();
+    expect((await mock.request({ method: "apply_status" })).eqapo).toMatchObject({ include: "absent", applied_design_id: fx.MOCK_DESIGN_ID });
+    // A failing apply job carries its error like an export.
+    mock.failJobs("apply", "permission_denied", "Access is denied. (os error 5)", { path: "C:/Program Files/EqualizerAPO/config/SECS2R" });
+    const denied = await mock.request({ method: "apply_eqapo" });
+    mock.drain();
+    expect(events.find((event) => event.event === "finished" && event.job === denied.job)).toMatchObject({ status: "failed", error: { code: "permission_denied", params: { path: "C:/Program Files/EqualizerAPO/config/SECS2R" } } });
+  });
+
+  it("installs, hands over, stops managing and removes the SECS 2R Host service as the service does (관리)", async () => {
+    const mock = createMockService({ tickMs: 0, results: fx.resultsSummary });
+    const events: JobEvent[] = []; mock.events.subscribe((event) => events.push(event));
+    const status = () => mock.request({ method: "apply_status" });
+    expect((await status()).host).toBe("not_installed");
+    // 관리 끄기 cannot reach a service that is not there.
+    await expect(mock.request({ method: "host_stop_managing" })).rejects.toMatchObject({ error: { code: "apply_failed" } });
+    // 관리 without camilladsp.exe is refused before any job, naming the setting.
+    await mock.request({ method: "apply_settings_set", params: { camilla: { level: "manage", address: "127.0.0.1:1300" }, eqapo: { level: "manage" } } });
+    await expect(mock.request({ method: "apply_camilla", params: {} })).rejects.toMatchObject({ error: { code: "invalid_request", params: { field: "apply.camilla.exe_path" } } });
+    // With it but no service, 적용 runs and the hand-over fails the job.
+    await mock.request({ method: "apply_settings_set", params: { camilla: { level: "manage", address: "127.0.0.1:1300", exe_path: fx.CAMILLA_EXE }, eqapo: { level: "manage" } } });
+    const refused = await mock.request({ method: "apply_camilla", params: {} });
+    mock.drain();
+    expect(events.find((event) => event.event === "finished" && event.job === refused.job)).toMatchObject({ status: "failed", error: { code: "apply_failed" } });
+    // Installing starts the service, managing nothing yet.
+    expect(await mock.request({ method: "host_install" })).toBeNull();
+    expect(await status()).toMatchObject({ host: "running", host_status: fx.hostIdle });
+    const camilla = await mock.request({ method: "apply_camilla", params: {} });
+    mock.drain();
+    // No CamillaDSP answers: the design is handed over, and the service starts CamillaDSP with it.
+    expect(events.find((event) => event.event === "finished" && event.job === camilla.job)).toMatchObject({ status: "succeeded", result: { kind: "apply", data: { outcome: { kind: "handed_over" } } } });
+    expect((await status()).host_status).toMatchObject({ managed: { camilla: { exe_path: fx.CAMILLA_EXE, port: 1300, design_id: fx.MOCK_DESIGN_ID } }, camilla: { state: { kind: "running" }, pid: 4812 } });
+    mock.setApplyStatus({ ...(await status()), eqapo: fx.eqapoXt });
+    await mock.request({ method: "apply_eqapo" });
+    mock.drain();
+    expect((await status()).host_status).toMatchObject({ managed: { camilla: { exe_path: fx.CAMILLA_EXE }, eqapo: { config_path: fx.eqapoXt.config_path, design_id: fx.MOCK_DESIGN_ID } }, eqapo_include: "present" });
+    // 관리 끄기 lets go of both targets; the service keeps running.
+    expect(await mock.request({ method: "host_stop_managing" })).toBeNull();
+    expect(await status()).toMatchObject({ host: "running", host_status: { managed: {}, camilla: { state: { kind: "stopped" }, pid: null } } });
+    // Removing it forgets its status.
+    expect(await mock.request({ method: "host_uninstall" })).toBeNull();
+    const removed = await status();
+    expect(removed.host).toBe("not_installed");
+    expect(removed.host_status).toBeUndefined();
+    // The open-file dialog picks camilladsp.exe for 관리.
+    expect(await mock.request({ method: "dialog_open_file", params: { kind: CAMILLA_EXE_FILE } })).toBe(fx.CAMILLA_EXE);
+    mock.dispose();
   });
 
   it("supports dialog cancellation and independent service instances without fixture mutation", async () => {

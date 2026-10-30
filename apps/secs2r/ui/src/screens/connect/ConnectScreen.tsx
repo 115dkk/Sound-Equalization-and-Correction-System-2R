@@ -511,7 +511,7 @@ function LevelCard({ view, actions }: { view: ConnectView; actions: ConnectActio
   const ready = pathReady(view);
   const { level } = view;
   const busy = level.playing !== null || level.playingAll;
-  const meter: MicMeterView = { input: micInput(t, view), monitor: level.monitor, reading: level.reading };
+  const meter: MicMeterView = { input: micInput(t, view), monitor: level.monitor, reading: level.reading, error: level.error, path: view.path };
   return (
     <Card title={t("connect.level.title")} help={t("connect.level.description")} description={t("connect.level.target")} data-ui="connect.level">
       <div className="connect-level">

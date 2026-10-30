@@ -1,0 +1,53 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SECS 2R Host",
+  "mainBinaryName": "secs2r-host-shell",
+  "identifier": "io.github.115dkk.secs2r.hostshell",
+  "build": {
+    "frontendDist": "../secs2r/ui/dist",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeDevCommand": { "script": "npm run dev", "cwd": "../secs2r/ui", "wait": false },
+    "beforeBuildCommand": { "script": "npm run build", "cwd": "../secs2r/ui" }
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data: blob:",
+        "font-src": "'self' data:",
+        "connect-src": "ipc: http://ipc.localhost",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'",
+        "frame-ancestors": "'none'"
+      },
+      "freezePrototype": true
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENCRThGOTI4NTc2RUYyRUUKUldUdThtNVhLUG5veTJ0eHM0dzZ4V1ArNlNRWjRJbzJrVE96NGpESXZIY1VtVHg2SWp1Qk85QloK",
+      "endpoints": [
+        "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R/releases/latest/download/latest.json",
+        "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R/releases/download/updater/latest.json"
+      ],
+      "requireSignedVersion": true,
+      "windows": {
+        "installMode": "quiet"
+      }
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "../secs2r/icons/32x32.png",
+      "../secs2r/icons/128x128.png",
+      "../secs2r/icons/128x128@2x.png",
+      "../secs2r/icons/icon.icns",
+      "../secs2r/icons/icon.ico"
+    ]
+  }
+}

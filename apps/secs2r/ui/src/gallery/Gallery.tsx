@@ -10,6 +10,8 @@ import { Segmented } from "../ui/controls";
 import { frameSpecimens, trayAndMenuSpecimens } from "./frameSpecimens";
 import { kitSpecimens } from "./kitSpecimens";
 import { localApiSpecimens } from "./localApiSpecimens";
+import { updateSpecimens } from "./updateSpecimens";
+import { hostShellSpecimens } from "../host/specimens";
 import { mapSpecimens, plotSpecimens } from "./plotSpecimens";
 import { screenSections } from "../screens/specimens";
 import { Specimen, type SectionDef } from "./Specimen";
@@ -20,10 +22,12 @@ const SECTIONS: SectionDef[] = [
   { id: "app", title: "Application", specimens: [...appSpecimens, ...tutorialLiveSpecimens] },
   { id: "frame", title: "App frame", specimens: frameSpecimens },
   { id: "jobs", title: "Job tray and frame menus", specimens: [...trayAndMenuSpecimens, ...localApiSpecimens] },
+  { id: "update", title: "Updates", specimens: updateSpecimens },
   { id: "kit", title: "Component kit", specimens: kitSpecimens },
   { id: "plot", title: "Graphs", specimens: plotSpecimens },
   { id: "maps", title: "Maps", specimens: mapSpecimens },
   ...screenSections,
+  { id: "host", title: "Host shell (host.html)", specimens: hostShellSpecimens },
 ];
 
 function readParams(): { prefs: Prefs; only: string[] } {

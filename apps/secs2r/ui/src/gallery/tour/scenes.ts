@@ -145,6 +145,15 @@ async function inProgress(mock: MockService) {
   await measured(mock);
 }
 
+/** In progress at the nine-position chair with `count` positions measured and MIMO switched on (P142). */
+async function withMimo(mock: MockService, count: number) {
+  await devices(mock);
+  await levels(mock);
+  await chair(mock);
+  await measured(mock, count);
+  await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+}
+
 /**
  * Corrected, a setting changed, saved and reopened: the result comes back
  * from the project cache, no longer current. The built-in path is chosen
@@ -343,6 +352,17 @@ export const TOUR_SCENES: TourScene[] = [
     ops: choosePath("native"),
   },
   {
+    id: "connect.monitor-failed",
+    step: "connect",
+    title: { ko: "레벨 모니터 실패", en: "Level monitor failed" },
+    note: { ko: "L을 재생하려다 출력을 열지 못해 모니터가 멈췄습니다.", en: "The monitor stopped when L's output could not open." },
+    setup: async (mock) => {
+      await devices(mock);
+      mock.failLevelPlay("measurement_input", "format not supported: native Output 48000 Hz / 16 channels unavailable", { field: "level" });
+    },
+    ops: [...choosePath("native"), reveal(ui("connect.level")), click(ui("connect.level.play.L")), tick(2)],
+  },
+  {
     id: "connect.meter",
     step: "connect",
     title: { ko: "떠 있는 마이크 미터", en: "Floating mic meter" },
@@ -445,8 +465,43 @@ export const TOUR_SCENES: TourScene[] = [
     id: "calibrate.ready",
     step: "calibrate",
     title: { ko: "계산 전 보정 설정", en: "Correction settings before calculating" },
-    setup: inProgress,
+    note: {
+      ko: "세 위치를 측정하고 MIMO를 켠 상태입니다. 'MIMO 함께 계산'이 '보정 계산' 바로 앞에 있습니다.",
+      en: "Three positions are measured and MIMO is on. 'Calculate MIMO too' sits right before 'Calculate correction'.",
+    },
+    setup: (mock) => withMimo(mock, 3),
     ops: choosePath("native", "calibrate"),
+  },
+  {
+    id: "calibrate.ready-two",
+    step: "calibrate",
+    title: { ko: "MIMO를 쓸 수 없는 계산 전 화면", en: "Before calculating, too few positions for MIMO" },
+    note: {
+      ko: "두 위치만 측정해 'MIMO 함께 계산'이 꺼져 있고, 그 까닭이 같은 줄에 있습니다.",
+      en: "Only two positions are measured, so 'Calculate MIMO too' is off with the reason on its line.",
+    },
+    setup: (mock) => withMimo(mock, 2),
+    ops: choosePath("native", "calibrate"),
+  },
+  {
+    id: "calibrate.running-mimo",
+    step: "calibrate",
+    title: { ko: "보정과 MIMO 계산 진행 중", en: "Calculating the correction and MIMO" },
+    note: { ko: "보정 단계를 마치고 같은 작업에서 MIMO를 계산하는 중입니다.", en: "The correction stages are done and the same job is calculating MIMO." },
+    setup: (mock) => withMimo(mock, 3),
+    // 7.1.4: 12 correction ticks, then the two MIMO stages. With MIMO on the MIMO card's compute device block shares the id, so the button is named.
+    ops: [...choosePath("native", "calibrate"), click(`button${ui("calibrate.compute")}`), tick(15)],
+  },
+  {
+    id: "calibrate.mimo-failed",
+    step: "calibrate",
+    title: { ko: "보정 뒤 MIMO 계산 실패", en: "MIMO failed after the correction" },
+    note: { ko: "보정 결과는 남고, 실패는 MIMO 카드에 보입니다.", en: "The correction result stays, and the failure shows in the MIMO card." },
+    setup: async (mock) => {
+      await withMimo(mock, 3);
+      mock.failJobs("mimo", "engine_input", "invalid input: MIMO support design produced nonfinite filters");
+    },
+    ops: [...choosePath("native", "calibrate"), click(`button${ui("calibrate.compute")}`), drain, reveal(ui("calibrate.settings.mimo"))],
   },
   {
     id: "calibrate.ultra",

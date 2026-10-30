@@ -40,6 +40,30 @@ fn engine_bootstrap_and_invalid_json() {
 
 #[cfg(feature = "engine")]
 #[test]
+fn engine_calibrate_passes_the_mimo_flag() {
+    use sound_equalization_and_correction_system_rust_api::types::compute::ComputePreference;
+    use sound_equalization_and_correction_system_rust_api::types::ipc::CalibrateParams;
+    use sound_equalization_and_correction_system_rust_api::{
+        EngineBuilder, Error, ErrorCode, Request, Secs,
+    };
+
+    let engine = EngineBuilder::default()
+        .compute_preference(ComputePreference::Gpu)
+        .build();
+    let error = engine
+        .call(Request::Calibrate(CalibrateParams {
+            mimo: true,
+            ..Default::default()
+        }))
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::Api(error) if error.code == ErrorCode::ComputeUnavailable
+    ));
+}
+
+#[cfg(feature = "engine")]
+#[test]
 fn engine_oracle_flow_and_ordered_events() {
     use std::fs;
     use std::time::Duration;
@@ -128,6 +152,7 @@ fn engine_oracle_flow_and_ordered_events() {
             mdat_scope: None,
             design_name: None,
             camilla_devices: None,
+            extra_rates: Vec::new(),
         }))
         .unwrap()
     else {

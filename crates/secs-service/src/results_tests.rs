@@ -56,6 +56,7 @@ fn calibration_summary() -> CalibrationSummary {
             position_spread_db: 0.0,
         },
         scorecard: vec![],
+        late_energy: vec![],
         latency_ms: 0.0,
         notes: vec![],
         main_roles: vec!["L".into()],
@@ -73,6 +74,8 @@ fn mimo_summary(supports: usize) -> MimoSummary {
         fir_taps_total: 0,
         notes: vec![],
         input_count: usize::from(supports > 0),
+        scorecard: vec![],
+        late_energy: vec![],
     }
 }
 
@@ -180,6 +183,8 @@ fn live_book_with_settings(
             paths: paths(supports),
             final_resp: vec![],
             applied: vec![],
+            scorecard: vec![],
+            late_energy: vec![],
             spl_mimo: vec![],
             notes: vec![],
             fir: false,

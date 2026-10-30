@@ -3,7 +3,8 @@ import { HelpTip } from "../../ui/HelpTip";
 // they change: 모드, 보정 범위, 크로스오버, 서브 정렬 (BA), MIMO. Every
 // change goes through `changeSetting` (calibration_settings_set) and only
 // marks the result stale. Detail sits under 고급; every correction mode is
-// available in the mode selector.
+// available in the mode selector. MIMO is chosen beside 보정 계산 too
+// (MIMO 함께 계산, P142); its card keeps the details and MIMO만 계산.
 import { ComputeControl, ComputeResult } from "./ComputeControl";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { errorText } from "../../app/jobs/jobText";
@@ -16,20 +17,28 @@ import { Icon } from "../../ui/Icon";
 import { roleCode } from "../../ui/maps/geometry";
 import { colorTokens } from "../../ui/plot/series";
 import {
+  AGREEMENT_MIN_POSITIONS,
   BAND_TYPES,
   INFRA_DEFAULT_HZ,
   LIMITS,
   SUB_LIMITS,
   MIMO_MIN_POSITIONS,
   ALLPASS_Q_DEFAULT,
+  TRANSITION_FACTORS,
+  UPPER_CHOICES,
   infraState,
   layoutOf,
   roomVolume,
   subModeChoice,
   subOf,
   subValuesApply,
+  upperChoice,
+  upperEdits,
+  usesSchroeder,
+  type UpperChoice,
 } from "./settingsView";
-import { FAILED_TEXT, MODES, MODE_EFFECT, MODE_NAME, bandTypeText, filterSpec, groupName, modeSpecText, noticeText, subRoles, xoGroups } from "./text";
+import { FAILED_TEXT, MODES, MODE_EFFECT, MODE_NAME, bandTypeText, filterSpec, groupName, modeSpecText, noticeText, rangeNotices, subRoles, xoGroups } from "./text";
+import { DESIGN_RATE, rateText, tapsAt } from "../system/outputRate";
 import type { BandTypeChoice, CalibrateActions, CalibrateJob, CalibrateView, SettingEdit, SubLayout, SubModeChoice } from "./types";
 
 type Props = { view: CalibrateView; actions: CalibrateActions };
@@ -134,7 +143,27 @@ function ModeSection({ view, actions }: Props) {
           />
         </div>
       )}
+      <ChannelFirOver view={view} />
     </SettingsCard>
+  );
+}
+
+/**
+ * The mode's channel FIR against the DSP's taps per channel, both at the
+ * DSP's output rate (ADR 0017): one warning line when it does not fit, with
+ * the rate named when it is not 48 kHz.
+ */
+function ChannelFirOver({ view }: { view: CalibrateView }) {
+  const t = useT();
+  const number = useNumber();
+  const taps = tapsAt(view.modeSpec.fir_taps, view.outputRate);
+  if (view.firTaps <= 0 || taps <= view.firTaps) return null;
+  const params = { taps: number(taps), limit: number(view.firTaps), rate: rateText(number, view.outputRate), mode: t(MODE_NAME.zero) };
+  return (
+    <p className="calibrate-hint calibrate-hint--warning calibrate-fir-over" data-ui="calibrate.mode.fir_over">
+      <Icon name="warning" size={16} className="calibrate-fir-over__icon" />
+      <span>{view.outputRate === DESIGN_RATE ? t("calibrate.mode.fir_over", params) : t("calibrate.mode.fir_over.rate", params)}</span>
+    </p>
   );
 }
 
@@ -188,16 +217,68 @@ function analyticScope(s: CalibrationSettings): AnalyticScope {
   return s.mimo_iir_analytic_derivatives ? "mimo" : "off";
 }
 
-function RangeSection({ view, actions }: Props) {
+const UPPER_NAME = {
+  strict: "calibrate.range.basis.strict",
+  lenient: "calibrate.range.basis.lenient",
+  agreement: "calibrate.range.basis.agreement",
+  manual: "calibrate.range.basis.manual",
+} as const satisfies Record<UpperChoice, string>;
+
+const UPPER_EFFECT = {
+  strict: "calibrate.range.basis.strict.effect",
+  lenient: "calibrate.range.basis.lenient.effect",
+  agreement: "calibrate.range.basis.agreement.effect",
+  manual: "calibrate.range.basis.manual.effect",
+} as const satisfies Record<UpperChoice, string>;
+
+/** Each basis in one sentence by its effect, then what a higher limit costs (ADR 0021 결과). */
+function BasisHelp() {
+  const t = useT();
+  return (
+    <>
+      <ul>
+        {UPPER_CHOICES.map((choice) => (
+          <li key={choice}>
+            <strong>{t(UPPER_NAME[choice])}</strong>: {t(UPPER_EFFECT[choice], { min: AGREEMENT_MIN_POSITIONS })}
+          </li>
+        ))}
+      </ul>
+      <p>{t("calibrate.range.basis.raise")}</p>
+    </>
+  );
+}
+
+/**
+ * One basis's controls in the place every basis shares. The others stay laid
+ * out but hidden and inert, so the card keeps the height of the tallest and
+ * choosing a basis moves nothing below it.
+ */
+function UpperPanel({ shown, id, children }: { shown: boolean; id: string; children: ReactNode }) {
+  return (
+    <div className="calibrate-upper__panel" data-ui={id} inert={!shown}>
+      {children}
+    </div>
+  );
+}
+
+/** `advancedOpen`: gallery and tests start with 고급 open. */
+function RangeSection({ view, actions, advancedOpen = false }: Props & { advancedOpen?: boolean | undefined }) {
   const t = useT();
   const number = useNumber();
   const s = view.settings;
   const analytic = analyticScope(s);
-  const auto = s.rc_hi === null;
+  const choice = upperChoice(s);
   const rcLimit = view.lines.rc.find((n) => n.code === "rc_limit");
   const resolved = rcLimit ? Number(rcLimit.params.hz) : Number.NaN;
   const shownHi = Number.isFinite(resolved) ? Math.round(Math.min(LIMITS.rc_hi[1], Math.max(LIMITS.rc_hi[0], resolved))) : 500;
-  const notes = view.lines.rc.map((n) => noticeText(t, number, n)).filter((text): text is string => !!text);
+  const notes = rangeNotices(view.lines.rc).map((n) => noticeText(t, number, n)).filter((text): text is string => !!text);
+  // The measured positions the project reports (project_info.positions), as MIMO counts them.
+  const count = view.positions.length;
+  const short = count < AGREEMENT_MIN_POSITIONS;
+  const choose = async (next: UpperChoice) => {
+    for (const edit of upperEdits(s, next, shownHi)) if (!(await actions.changeSetting(edit))) return;
+  };
+  const shortText = { count, min: AGREEMENT_MIN_POSITIONS };
   return (
     <SettingsCard id="range" title={t("calibrate.range.title")} help={t("calibrate.range.description")}>
       <div className="calibrate-fields">
@@ -212,44 +293,75 @@ function RangeSection({ view, actions }: Props) {
           showRange
           onChange={(hz) => actions.changeSetting({ kind: "rc_lo", hz })}
         />
-        {!auto && (
-          <NumberField
-            id="calibrate.range.upper"
-            label={t("calibrate.range.upper")}
-            value={s.rc_hi ?? shownHi}
-            min={LIMITS.rc_hi[0]}
-            max={LIMITS.rc_hi[1]}
-            step={50}
-            unit="Hz"
-            showRange
-            onChange={(hz) => actions.changeSetting({ kind: "rc_hi", hz })}
-          />
-        )}
+        <Segmented<UpperChoice>
+          id="calibrate.range.basis"
+          label={t("calibrate.range.basis")}
+          help={<BasisHelp />}
+          // A chosen agreement stays selectable (one tab stop) and says what to do; otherwise it is off with the reason.
+          hint={
+            !short ? undefined : choice === "agreement" ? (
+              <span className="calibrate-hint--warning calibrate-fir-over">
+                <Icon name="warning" size={16} className="calibrate-fir-over__icon" />
+                <span>{t("calibrate.range.basis.agreement_short", shortText)}</span>
+              </span>
+            ) : (
+              t("calibrate.range.basis.agreement_unavailable", shortText)
+            )
+          }
+          value={choice}
+          options={UPPER_CHOICES.map((value) => ({
+            value,
+            label: t(UPPER_NAME[value]),
+            disabled: value === "agreement" && short && choice !== "agreement",
+          }))}
+          onChange={(next) => void choose(next)}
+        />
       </div>
-      <Toggle
-        id="calibrate.range.upper_auto"
-        label={t("calibrate.range.upper_auto")}
-        help={t("calibrate.range.upper_auto.hint")}
-        checked={auto}
-        onChange={(on) => actions.changeSetting({ kind: "rc_hi", hz: on ? null : shownHi })}
-      />
-      {auto && (
-        <div className="calibrate-fields">
-          <NumberField
-            id="calibrate.range.volume"
-            label={t("calibrate.range.volume")}
-            value={s.room_volume_m3 ?? 0}
-            min={LIMITS.volume[0]}
-            max={LIMITS.volume[1]}
-            step={10}
-            digits={1}
-            unit="m³"
-            help={t("calibrate.range.volume.hint")}
-            onChange={(m3) => actions.changeSetting({ kind: "room_volume", m3 })}
-          />
-          <RoomDims settings={s} change={actions.changeSetting} />
-        </div>
-      )}
+      <div className="calibrate-upper">
+        <UpperPanel id="calibrate.range.schroeder" shown={usesSchroeder(choice)}>
+          <div className="calibrate-fields">
+            <Segmented
+              id="calibrate.range.transition"
+              label={t("calibrate.range.transition")}
+              help={t("calibrate.range.transition.help")}
+              value={String(s.rc_hi_transition)}
+              options={TRANSITION_FACTORS.map((factor) => ({ value: String(factor), label: `×${number(factor)}` }))}
+              onChange={(factor) => actions.changeSetting({ kind: "rc_hi_transition", factor: Number(factor) })}
+            />
+            <NumberField
+              id="calibrate.range.volume"
+              label={t("calibrate.range.volume")}
+              value={s.room_volume_m3 ?? 0}
+              min={LIMITS.volume[0]}
+              max={LIMITS.volume[1]}
+              step={10}
+              digits={1}
+              unit="m³"
+              help={t("calibrate.range.volume.hint")}
+              onChange={(m3) => actions.changeSetting({ kind: "room_volume", m3 })}
+            />
+            <RoomDims settings={s} change={actions.changeSetting} />
+          </div>
+        </UpperPanel>
+        <UpperPanel id="calibrate.range.agreement" shown={choice === "agreement"}>
+          <p className="calibrate-hint">{t("calibrate.range.agreement.note")}</p>
+        </UpperPanel>
+        <UpperPanel id="calibrate.range.manual" shown={choice === "manual"}>
+          <div className="calibrate-fields">
+            <NumberField
+              id="calibrate.range.upper"
+              label={t("calibrate.range.upper")}
+              value={s.rc_hi ?? shownHi}
+              min={LIMITS.rc_hi[0]}
+              max={LIMITS.rc_hi[1]}
+              step={50}
+              unit="Hz"
+              showRange
+              onChange={(hz) => actions.changeSetting({ kind: "rc_hi", hz })}
+            />
+          </div>
+        </UpperPanel>
+      </div>
       {notes.length > 0 && (
         <ul className="calibrate-notes-list" data-ui="calibrate.range.notes">
           {notes.map((note) => (
@@ -257,8 +369,8 @@ function RangeSection({ view, actions }: Props) {
           ))}
         </ul>
       )}
-      {/* An experiment left on stays in view: the section opens with it. */}
-      <Advanced id="calibrate.range.advanced" count={2} defaultOpen={analytic !== "off"}>
+      {/* An experiment or the low-end protection left on stays in view: the section opens with it. */}
+      <Advanced id="calibrate.range.advanced" count={3} defaultOpen={advancedOpen || analytic !== "off" || s.low_protect}>
         <div className="calibrate-fields">
           <NumberField
             id="calibrate.range.boost"
@@ -273,6 +385,14 @@ function RangeSection({ view, actions }: Props) {
             onChange={(db) => actions.changeSetting({ kind: "boost_max", db })}
           />
         </div>
+        {/* 극저역 보호 (ADR 0022): beside the boost limit it holds below each channel's roll-off. */}
+        <Toggle
+          id="calibrate.range.low_protect"
+          label={t("calibrate.range.low_protect")}
+          help={t("calibrate.range.low_protect.help")}
+          checked={s.low_protect}
+          onChange={(on) => actions.changeSetting({ kind: "low_protect", on })}
+        />
         <Segmented<AnalyticScope>
           id="calibrate.analytic"
           label={t("calibrate.analytic.title")}
@@ -750,22 +870,28 @@ function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
   const mimo = view.results.mimo;
   const busy = view.running !== null;
   const state = (): ReactNode => {
-    if (view.running === "mimo" || view.failure?.job === "mimo") return null;
+    if (view.running === "mimo" || view.runningMimo || view.failure?.job === "mimo") return null;
     if (!result) return <p className="calibrate-hint" data-ui="calibrate.mimo.reason">{t("calibrate.mimo.needs_result")}</p>;
     if (!mimo) return <p className="calibrate-hint" data-ui="calibrate.mimo.state">{t("calibrate.mimo.state.none")}</p>;
     if (mimo.stale) {
+      // A changed correction needs 다시 보정하기, which computes MIMO with it; with the correction current only MIMO is behind.
       return (
         <p className="calibrate-hint calibrate-hint--warning" data-ui="calibrate.mimo.state">
-          {t("calibrate.mimo.state.stale")}
+          {t(result.stale ? "calibrate.mimo.state.stale.calibration" : "calibrate.mimo.state.stale")}
         </p>
       );
     }
     const parts = [t("calibrate.mimo.state.done", { kind: mimo.kind.toUpperCase(), count: mimo.support_count })];
     if (s.mimo_max_supports > 0) parts.push(t("calibrate.mimo.state.cap", { cap: s.mimo_max_supports }));
     if (mimo.kind === "fir" && view.firBudget > 0) {
-      const taps = mimo.fir_taps_total;
+      // The supports are designed at 48 kHz; the DSP's budget counts taps at its output rate.
+      const taps = tapsAt(mimo.fir_taps_total, view.outputRate);
+      const over = taps > view.firBudget;
+      const params = { taps: number(taps), budget: number(view.firBudget), rate: rateText(number, view.outputRate) };
       parts.push(
-        t(taps <= view.firBudget ? "calibrate.mimo.state.budget" : "calibrate.mimo.state.budget_over", { taps: number(taps), budget: number(view.firBudget) }),
+        view.outputRate === DESIGN_RATE
+          ? t(over ? "calibrate.mimo.state.budget_over" : "calibrate.mimo.state.budget", params)
+          : t(over ? "calibrate.mimo.state.budget_over.rate" : "calibrate.mimo.state.budget.rate", params),
       );
     }
     return (
@@ -775,7 +901,7 @@ function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
     );
   };
   return (
-    <SettingsCard id="mimo" title={t("calibrate.mimo.title")} help={t("calibrate.mimo.description")}>
+    <SettingsCard id="mimo" title={t("calibrate.mimo.title")} help={<>{t("calibrate.mimo.description")}<p>{t("calibrate.mimo.compute.help")}</p></>}>
       <Toggle
         id="calibrate.mimo.on"
         label={t("calibrate.mimo.on")}
@@ -802,7 +928,8 @@ function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
             />
           </div>
           <div className="calibrate-actions">
-            <Button id="calibrate.mimo.compute" data-ui="calibrate.mimo.compute" busy={view.running === "mimo"} disabled={busy || !result || view.compute.saving || (view.compute.preference === "gpu" && view.compute.status?.gpu_available === false)} onClick={actions.computeMimo}>
+            {/* MIMO alone, on the current correction: the service refuses it on a stale one (다시 보정하기 computes both). */}
+            <Button id="calibrate.mimo.compute" data-ui="calibrate.mimo.compute" busy={view.running === "mimo"} disabled={busy || !result || result.stale || view.compute.saving || (view.compute.preference === "gpu" && view.compute.status?.gpu_available === false)} onClick={actions.computeMimo}>
               {t("calibrate.mimo.compute")}
             </Button>
             <JobFailure view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} job="mimo" id="calibrate.mimo" />
@@ -857,7 +984,14 @@ function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
   );
 }
 
-export function Settings({ view, actions, editSub, sampleRateRequest, onSampleRateSettings }: FailureProps & { editSub?: string | undefined; sampleRateRequest: number }) {
+export function Settings({
+  view,
+  actions,
+  editSub,
+  rangeAdvanced,
+  sampleRateRequest,
+  onSampleRateSettings,
+}: FailureProps & { editSub?: string | undefined; rangeAdvanced?: boolean | undefined; sampleRateRequest: number }) {
   const t = useT();
   return (
     <section className="calibrate-settings" aria-labelledby="calibrate.settings.title" data-ui="calibrate.settings">
@@ -869,7 +1003,7 @@ export function Settings({ view, actions, editSub, sampleRateRequest, onSampleRa
       </header>
       <SampleRateSettings view={view} actions={actions} request={sampleRateRequest} />
       <ModeSection view={view} actions={actions} />
-      <RangeSection view={view} actions={actions} />
+      <RangeSection view={view} actions={actions} advancedOpen={rangeAdvanced} />
       <XoSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} />
       <BaSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} editSub={editSub} />
       <MimoSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} />

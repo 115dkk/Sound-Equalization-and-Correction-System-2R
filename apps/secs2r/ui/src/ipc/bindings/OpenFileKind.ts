@@ -3,4 +3,4 @@
 /**
  * The kind of file a host open dialog accepts.
  */
-export type OpenFileKind = "target" | "mic_calibration";
+export type OpenFileKind = "target" | "mic_calibration" | "camilla_exe";

@@ -65,6 +65,82 @@ fn main_response<'a>(input: &'a RcInput<'_>) -> &'a [C] {
 fn smooth(x: &[f64], fraction: f64) -> Vec<f64> {
     smooth::smooth_power(design_freqs(), x, Fraction::Scalar(fraction)).expect("design grid")
 }
+/// The magnitude estimate used both by RC fitting and the agreement probe.
+fn smoothed_db(power: &[f64]) -> Vec<f64> {
+    let f = design_freqs();
+    let frac = secs_dsp::grid::frac_for(f);
+    let sm = smooth::smooth_power(f, power, Fraction::PerBin(&frac)).expect("design grid");
+    let sm3 = smooth(power, 3.0);
+    sm.iter()
+        .zip(sm3)
+        .map(|(sm, sm3)| (10.0 * (sm + 1e-30).log10()).max(10.0 * (sm3 + 1e-30).log10() - 3.0))
+        .collect()
+}
+
+/// Evaluate the actual pass-1 RC response against each position's target error.
+/// Position weights apply to gains, not to spectra averaged before scoring.
+pub(crate) fn agreement_limit(input: &RcInput<'_>, correction: &[C]) -> f64 {
+    let f = design_freqs();
+    let width = 2.0_f64.powf(1.0 / 6.0);
+    let bands: Vec<_> = levels::RC_BAND_CENTRES
+        .iter()
+        .map(|fc| f.partition_point(|f| *f < fc / width)..f.partition_point(|f| *f <= fc * width))
+        .collect();
+    let target = levels::target_db(
+        &input.config.target,
+        &f.iter().map(|v| v.max(1.0)).collect::<Vec<_>>(),
+    );
+    // Use the same power-to-dB floor as the measured curve. The fitting
+    // helper `db` adds 1e-12 to magnitude, making unity look like a tiny
+    // improvement for a negative error instead of the required zero gain.
+    let correction: Vec<_> = correction
+        .iter()
+        .map(|&h| {
+            let m = magnitude(h);
+            10.0 * (m * m + 1e-30).log10()
+        })
+        .collect();
+    let weights = levels::weights(input.positions, input.main_position);
+    let mut gains = [0.0; 14];
+    let mut total = 0.0;
+    for (position, h) in input.comb {
+        let weight = weights[input
+            .positions
+            .iter()
+            .position(|p| p == position)
+            .expect("engine position")];
+        let power: Vec<_> = h
+            .iter()
+            .map(|v| {
+                let m = magnitude(*v);
+                m * m
+            })
+            .collect();
+        let measured = smoothed_db(&power);
+        for (gain, band) in gains.iter_mut().zip(&bands) {
+            let mut before = 0.0;
+            let mut after = 0.0;
+            for i in band.clone() {
+                let error = measured[i] - target[i] - input.level_db;
+                before += error;
+                after += error + correction[i];
+            }
+            *gain += weight * (before.abs() - after.abs()) / band.len() as f64;
+        }
+        total += weight;
+    }
+    let mut limit = 100.0;
+    for (fc, gain) in levels::RC_BAND_CENTRES.iter().zip(gains) {
+        if (gain / total).partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
+            break;
+        }
+        limit = fc * width;
+    }
+    // Clamp only after taking the median over mains. Clamping each main here
+    // would lower the median of an even-sized set near the 2 kHz boundary.
+    limit
+}
+
 fn geomspace(lo: f64, hi: f64, n: usize) -> Vec<f64> {
     let start = lo.log10();
     let step = (hi.log10() - start) / (n - 1) as f64;
@@ -319,15 +395,13 @@ fn prepare_correction(
     for (p, w) in power.iter_mut().zip(total) {
         *p /= w;
     }
-    let frac = secs_dsp::grid::frac_for(f);
-    let sm = smooth::smooth_power(f, &power, Fraction::PerBin(&frac)).expect("design grid");
-    let sm3 = smooth(&power, 3.0);
+    let sm = smoothed_db(&power);
     let target = c
         .target
         .sample(&f.iter().map(|v| v.max(1.0)).collect::<Vec<_>>());
     let mut corr: Vec<_> = (0..BINS)
         .map(|i| {
-            let sm = (10.0 * (sm[i] + 1e-30).log10()).max(10.0 * (sm3[i] + 1e-30).log10() - 3.0);
+            let sm = sm[i];
             (target[i] + input.level_db - sm).clamp(
                 -25.0,
                 if f[i] > 16000.0 {
@@ -339,7 +413,17 @@ fn prepare_correction(
         })
         .collect();
     let mut notes = Vec::new();
-    let nb = no_boost_mask(input);
+    let mut nb = no_boost_mask(input);
+    let rolloff = input
+        .config
+        .low_protect
+        .then(|| crate::low_protect::rolloff(input.comb, input.main_position, None))
+        .flatten();
+    if let Some(hz) = rolloff {
+        for (masked, &f) in nb.iter_mut().zip(f) {
+            *masked |= f < hz;
+        }
+    }
     let lm = long_mode_mask(input, &mut notes);
     check(cancelled)?;
     trace.no_boost = nb.clone();
@@ -395,6 +479,9 @@ fn prepare_correction(
             fitter,
         ));
         check(cancelled)?;
+        if let Some(hz) = rolloff {
+            crate::low_protect::clamp_centres(&mut peq, hz);
+        }
         return Ok(RcPreparation::Complete(RcOutput {
             fir: vec![1.0],
             response: response::peq_response(f, &peq),
@@ -420,6 +507,9 @@ fn prepare_correction(
             fitter,
         );
         check(cancelled)?;
+        if let Some(hz) = rolloff {
+            crate::low_protect::clamp_centres(&mut peq, hz);
+        }
         p = response::peq_response(f, &peq);
         for i in 0..BINS {
             corr[i] =
@@ -434,6 +524,7 @@ fn prepare_correction(
     )
     .expect("magnitude");
     let weights = levels::weights(input.positions, input.main_position);
+    let frac = secs_dsp::grid::frac_for(f);
     let mut u = vec![C::new(0.0, 0.0); BINS];
     let mut total = 0.0;
     for (pos, h) in input.comb {
@@ -735,6 +826,22 @@ pub(crate) fn channel_with_cuts(
     } else {
         Vec::new()
     };
+    if input.config.low_protect
+        && let Some(hz) = crate::low_protect::rolloff(input.comb, input.main_position, None)
+    {
+        let mut padded = out.fir.clone();
+        padded.resize(N_FFT, 0.0);
+        let fir = fft::rfft(&padded);
+        let fixed = multiply(&fir, &response::peq_response(design_freqs(), &gd_cuts));
+        let limited = crate::low_protect::limit(&mut out.peq, &fixed, hz);
+        out.response = multiply(&fir, &response::peq_response(design_freqs(), &out.peq));
+        out.notes.push(Note::LowProtect {
+            role: input.role.to_owned(),
+            rolloff_hz: hz,
+            hp_hz: None,
+            limited,
+        });
+    }
     let response = if gd_cuts.is_empty() {
         out.response.clone()
     } else {

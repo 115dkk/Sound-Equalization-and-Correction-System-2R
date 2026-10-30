@@ -15,6 +15,7 @@ export const JOB_NAME: Record<JobKind, MessageKey> = {
   recommend_xo: "jobs.kind.recommend_xo",
   mimo: "jobs.kind.mimo",
   export: "jobs.kind.export",
+  apply: "jobs.kind.apply",
   level_monitor: "jobs.kind.level_monitor",
   status_watch: "jobs.kind.status_watch",
 };
@@ -24,6 +25,9 @@ const ERROR_TEXT: Record<ErrorCode, { cause: MessageKey; next: MessageKey }> = {
   internal: { cause: "error.internal", next: "error.internal.next" },
   not_implemented: { cause: "error.not_implemented", next: "error.not_implemented.next" },
   ui_only: { cause: "error.ui_only", next: "error.ui_only.next" },
+  unsupported: { cause: "error.unsupported", next: "error.unsupported.next" },
+  permission_denied: { cause: "error.permission_denied", next: "error.permission_denied.next" },
+  apply_failed: { cause: "error.apply_failed", next: "error.apply_failed.next" },
   project_not_open: { cause: "error.project_not_open", next: "error.project_not_open.next" },
   project_io: { cause: "error.project_io", next: "error.project_io.next" },
   job_busy: { cause: "error.job_busy", next: "error.job_busy.next" },
@@ -52,14 +56,31 @@ const ENGINE_INPUT_TEXT = {
   duplicate_measurement: { cause: "error.engine_input.duplicate_measurement", next: "error.engine_input.duplicate_measurement.next", required: ["position", "role"] },
   missing_reference_position: { cause: "error.engine_input.missing_reference_position", next: "error.engine_input.missing_reference_position.next", required: ["position"] },
   missing_main_measurement: { cause: "error.engine_input.missing_main_measurement", next: "error.engine_input.missing_main_measurement.next", required: ["position"] },
+  // The RC upper limit's agreement basis below its positions (secs-service `check_rc_agreement`, ADR 0021).
+  rc_agreement_positions: { cause: "error.engine_input.rc_agreement_positions", next: "error.engine_input.rc_agreement_positions.next", required: ["measured", "required"] },
 } as const satisfies Record<string, { cause: MessageKey; next: MessageKey; required: readonly string[] }>;
 
 const isU32 = (value: string | undefined): boolean => typeof value === "string" && /^(0|[1-9]\d*)$/.test(value) && Number(value) <= 4_294_967_295;
 // Both supported locales (ko-KR/en-US) group these unsigned integers with commas.
 const integer = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
-/** A generic cause can be replaced with the caller's named task failure. */
+/**
+ * A generic cause can be replaced with the caller's named task failure. A
+ * `calibrate` that failed in its MIMO part (`stage: "mimo"`, P141) kept the
+ * correction: the cause says so first, and the next step after a cause that
+ * names nothing is MIMO alone.
+ */
 export function errorText(t: Translate, error: IpcError): { cause: string; next: string; generic: boolean } {
+  const text = codeText(t, error);
+  if (error.params.stage !== "mimo") return text;
+  return {
+    cause: text.generic ? t("error.stage.mimo") : `${t("error.stage.mimo")} ${text.cause}`,
+    next: text.generic ? t("error.stage.mimo.next") : text.next,
+    generic: false,
+  };
+}
+
+function codeText(t: Translate, error: IpcError): { cause: string; next: string; generic: boolean } {
   const reason = error.params.reason;
   if (error.code === "engine_input" && reason && Object.hasOwn(ENGINE_INPUT_TEXT, reason)) {
     const keys = ENGINE_INPUT_TEXT[reason as keyof typeof ENGINE_INPUT_TEXT];

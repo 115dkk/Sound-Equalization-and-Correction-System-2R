@@ -1,7 +1,8 @@
 // The project menu (새로 만들기, 열기, 저장, 다른 이름으로 저장) and the
 // settings popover: the display settings (언어, 테마, 스킨, 로고), then the
-// local API (its switch, its state and the 로컬 API dialog). Shortcut hints
-// come from the shortcut registry.
+// local API (its switch, its state and the 로컬 API dialog), then updates
+// (inside the frame's update scope). Shortcut hints come from the shortcut
+// registry.
 import { useRef, useState } from "react";
 import { useT } from "../i18n/react";
 import { Icon } from "../ui/Icon";
@@ -13,6 +14,8 @@ import { useLocalApi, type LocalApi } from "./localApi";
 import { DEFAULT_LOGO, SMALL_LOGOS } from "./logo";
 import { usePrefs, type SkinChoice, type ThemeChoice } from "./prefs";
 import { shortcutText } from "./shortcuts";
+import { useUpdateApi } from "./update/scope";
+import { UpdateSettings } from "./update/UpdateSettings";
 
 export type ProjectActions = {
   onNew: () => void;
@@ -97,6 +100,7 @@ export function SettingsButton({
   const [dialog, setDialog] = useState<LocalApiFocus | null>(null);
   const live = useLocalApi(open || dialog !== null);
   const api = localApi ?? live;
+  const update = useUpdateApi();
   return (
     <>
       <button
@@ -164,6 +168,7 @@ export function SettingsButton({
             setDialog(focus);
           }}
         />
+        {update && <UpdateSettings api={update} />}
       </Popover>
       {dialog && <LocalApiDialog api={api} focus={dialog} onClose={() => setDialog(null)} />}
     </>

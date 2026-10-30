@@ -118,14 +118,23 @@
   border-top: var(--border-w) solid var(--border);
 }
 
+/* 설정 and 도움말, with the update badge above them while it is drawn: the
+   footer then grows up into the scrolling middle and nothing else moves.
+   8 px between the badge's action and the tools keeps their hit areas apart. */
 .app-rail__footer {
   display: flex;
-  gap: var(--space-1);
+  flex-direction: column;
+  gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
   border-top: var(--border-w) solid var(--border-subtle);
 }
 
-.app-rail__footer > * {
+.app-rail__tools {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.app-rail__tools > * {
   flex: 1 1 auto;
   width: auto;
 }

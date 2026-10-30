@@ -13,7 +13,7 @@ SECS 2R의 사용자는 그래프와 숫자를 읽는 애호가와 설치 기사
 - **단추는 그것이 가리키는 글 바로 옆에 둡니다.** 이름이나 문장은 왼쪽에 있는데 단추가 넓은 카드의 오른쪽 끝에 있으면, 사용자는 줄마다 눈을 화면 끝에서 끝까지 굴려야 합니다. 여러 줄의 단추는 가장 긴 이름 바로 뒤의 한 열에 세우고(내보내기의 subgrid), 알림의 동작은 문장 바로 뒤에 둡니다. 결과를 만드는 동작은 단계 머리가 아니라 그 결과 바로 옆에 둡니다(보정 결과 카드의 '보정 계산', 결과 뒤의 '다시 측정하기'·'다시 보정하기'). 동작이 있는 알림은 문장과 동작만큼만 넓어져 동작이 아이콘과 같은 안쪽 여백으로 상자를 닫고, 동작은 상자 높이의 가운데에 섭니다. 넓은 상자 안에 떠 있거나 첫 줄에 붙은 단추는 대칭이 어긋나 보입니다. 줄의 남는 너비는 스킨의 장식이 씁니다. EqualizerAPO-XT v2.42.0의 판례(27인치 화면 제보, '내용은 왼쪽에 있는데 버튼은 오른쪽에 있어 눈을 많이 굴린다')를 따릅니다.
 - **바뀌는 숫자는 `tabular-nums`.** 진행, 경과 시간, 레벨, 표의 숫자 칸이 해당합니다.
 - **긴 계산은 화면을 막지 않습니다.** 잡은 작업 트레이 한 곳에 보이고, 취소하면 실제로 멈춥니다(U8).
-- **문장은 합니다체, 상태와 라벨은 명사구.** 지시는 -세요로 씁니다. 오류는 원인과 다음 행동을 적고, 원문은 '자세히'에 둡니다.
+- **문장은 하십시오체, 상태와 라벨은 명사구.** 서술은 -ㅂ니다, 지시는 -십시오로 씁니다(유지보수자 결정 2026-10-30, -세요를 쓰지 않습니다). 오류는 원인과 다음 행동을 적고, 원문은 '자세히'에 둡니다.
 - **설정은 설명 없이 읽힙니다.** 라벨·선택지·단위·현재값으로 선택할 수 있게 씁니다. 정적 보충 설명은 항목이나 묶음의 도움말로 열고, 필요한 경우에만 효과·선택 기준·손익을 1–2문장으로 설명합니다. 현재 상태와 추천값, 오류, 사용 불가 사유와 복구 행동은 화면에 유지합니다.
 
 ## 2. 색
@@ -208,7 +208,10 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 - **단계 머리**: 제목, 해당 단계의 도움말, 주 동작 하나. 목적 설명은 제목 옆 도움말로 엽니다. 막혔으면 이유와 갈 곳을 화면에 적고 주 동작을 끕니다(`aria-describedby`로 이유를 잇습니다). 화면이 주 동작을 끌 수도 있습니다(`PrimaryAction.disabled`, 같은 화면의 다른 잡이 돌 때). 이때는 제목 옆 상태 알약이 이유이고 `aria-describedby`가 알약을 가리킵니다. 진행 중(`busy`)은 주 동작 자신의 잡에만 씁니다.
 - **곁 패널 자리**(`AppFrame aside`): 단계 머리와 작업 트레이 사이의 상자(`.app-body`)가 패널의 기준 상자입니다. 도움말 패널은 그 오른쪽에 놓여 주 동작과 트레이의 취소를 가리지 않고, 트레이 기록을 펴면 함께 줄어듭니다.
 - **프로젝트 상태**: 구성("7.1.4 · 서브 2 · 출력 13"), 측정 위치(k/N), 보정(결과 없음, 계산 중, 완료, 다시 계산 필요, 실패), 측정 경로(REW·자체 측정·모의 측정과 연결 상태), 파일(이름 또는 저장 전, 미저장 변경 사항). 그 아래에 프로젝트를 읽으며 생긴 경고(`ProjectInfo.migration_warnings`, 편차 F5)를 경고 상자 하나로 둡니다. 코드마다 문장 하나(`project.warning.<code>`, 키가 없는 코드는 '알 수 없는 경고'와 '자세히'의 원문), 그 아래 위치마다 한 줄과 그 위치에서 빠진 역할 코드, 다시 측정하면 풀리는 경고에는 그 위치를 고른 채 측정·가져오기를 여는 '다시 측정'(측정 파일 가져오기 경로에서는 '다시 가져오기')이 섭니다. 닫기는 지금 보이는 경고만 숨기고, 같은 프로젝트에서 새로 생긴 경고와 다음에 연 프로젝트의 경고는 다시 보입니다(`app/ProjectStatus.tsx`, 감사 #92 TD-65).
-- **프로젝트 메뉴**: 새로 만들기, 열기…, 저장, 다른 이름으로 저장…. **설정**: 언어, 테마(시스템·밝게·어둡게), 스킨(기본·하드웨어 랙·시그널 매트릭스), 로고. 세부 항목은 해당 기능에서 펼치며 전역 숙련도 설정은 두지 않습니다(P58).
+- **프로젝트 메뉴**: 새로 만들기, 열기…, 저장, 다른 이름으로 저장…. **설정**: 언어, 테마(시스템·밝게·어둡게), 스킨(기본·하드웨어 랙·시그널 매트릭스), 로고, 로컬 API, 업데이트. 세부 항목은 해당 기능에서 펼치며 전역 숙련도 설정은 두지 않습니다(P58).
+- **업데이트 표시**(ADR 0020, `app/update/`): 레일 아래 칸의 '설정'과 '도움말' 위에 두 줄짜리 상태가 섭니다. 받기 전의 새 판(알림만), 받는 중, 받은 판, 포터블 판의 새 판에서만 보이고, 실패와 설치 중은 사용자가 '지금 확인', '받아서 설치', '지금 다시 시작'을 누른 결과일 때만 보입니다. 첫 줄은 상태의 점과 명사구('다음 실행 때 1.2.0 적용')이고, 둘째 줄은 작은 단추 높이의 막대 또는 보조 단추 하나('받아서 설치', '지금 다시 시작', deb에서는 '지금 설치', '릴리스 페이지', '다시 확인')입니다. 나타나면 아래 칸이 위로 자라고 가운데의 스크롤 영역만 그만큼 줄어, 단계와 단계 머리, 내용은 움직이지 않습니다. '지금 다시 시작'은 닫기 흐름의 저장 확인을 거치지 않으므로, 저장하지 않은 변경 사항이 있거나 작업이 돌고 있으면 확인 대화상자 하나로 먼저 알립니다.
+- **업데이트 알림**: 새 판을 처음 실행할 때 한 번 열리는 대화상자입니다. 제목은 '1.2.0 업데이트 완료'이고, 본문은 그 판의 CHANGELOG 절(`###` 제목, `-` 항목과 이어지는 줄, 문단, 코드, 굵게, 링크는 글자만)입니다. 건너뛴 판이 있으면 '릴리스 페이지 열기'가 붙습니다. '닫기', Esc, 닫기 단추가 `update_notice_dismiss`를 부르고 창은 곧바로 닫힙니다. 시작할 때 함께 열리는 '새 프로젝트' 같은 대화상자 위에 쌓이고(`Dialog`의 `above`) 초점을 지키지만, 확인 대화상자(`ConfirmDialog`)가 열려 있으면 그것이 닫힐 때까지 기다립니다.
+- **설정의 업데이트**: 설정 팝오버의 로컬 API 아래에 정책('자동 설치', '알림만', '확인 안 함', 각각의 효과는 라벨 옆 도움말), 상태와 '지금 확인', 상태가 요구하는 동작('받아서 설치', 포터블 판의 설명과 '릴리스 페이지', 실패 원인은 '자세히'), 현재 판과 마지막 확인 시각이 있습니다. 릴리스 페이지는 어디서든 `update_open_release`로 시스템 브라우저에서 엽니다.
 - **단축키**는 `app/shortcuts.ts` 한 곳에 있고 메뉴의 힌트도 여기서 읽습니다. macOS에서는 Ctrl 대신 ⌘입니다. 한글 자판에서도 물리 키(`code`)로 맞춥니다.
 
 | 키 | 동작 |
@@ -240,7 +243,7 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 | `LevelMeter` | 측정 전, 낮음, 적정(−30…−15 띠), 높음, 클리핑; 최고값 표시 | `role="meter"`, 값과 상태를 `aria-valuetext`로 |
 | `ProgressBar` | 확정, 불확정 | `role="progressbar"` |
 | `ToastProvider`, `useToast` | neutral, success, warning, danger; 동작 하나(되돌리기) | `aria-live="polite"`, 커서·초점이 있는 동안 멈춤 |
-| `Dialog`, `ConfirmDialog`, `useConfirmAndUndo` | 확인, 위험 동작 | `role="dialog"`, 초점 가둠, Esc와 닫기 단추, 연 단추로 초점 복귀 |
+| `Dialog`, `ConfirmDialog`, `useConfirmAndUndo` | 확인, 위험 동작; `above`(다른 대화상자 위에 쌓임), `useConfirmOpen`(열린 확인 대화상자가 있는지) | `role="dialog"`, 초점 가둠, Esc와 닫기 단추, 연 단추로 초점 복귀 |
 | `Tooltip`, `HelpTip` | hover 400 ms 뒤 열림, 키보드 초점은 즉시, 도움말 클릭·터치로 고정/해제, 폭 420px 및 창 안으로 제한 | `role="tooltip"`, `aria-describedby`, 도움말 단추는 항목 이름과 연결, 설명 위 hover 유지, Esc는 도움말부터 닫음 |
 | `Popover`, `Menu` | 열림, 닫힘; 메뉴 항목의 고름(`checked`, 강조색 확인 표시), 상태만 알리는 고름(`checked` + `disabled`, 글자색 유지), 구분선(`separator`) | `dialog` / `menu`, 고름은 `menuitemradio` + `aria-checked`, 화살표·Home·End(끈 항목은 건너뜀), Esc와 바깥 클릭으로 닫힘 |
 | `EmptyState`, `ErrorNotice` | 빈 곳(이름, 채우는 법, 동작 하나); 오류·경고(원인, 다음 행동, 자세히) | 오류는 `role="alert"` |
@@ -264,7 +267,7 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 - 키는 도달표(`docs/M5-reach.md`)가 인용할 안정된 id입니다: `frame.*`(틀), `jobs.*`(작업 트레이), `error.<code>`·`error.<code>.next`(오류 코드의 원인과 다음 행동), `ui.*`(구성 요소), `plot.*`, `map.*`, `shortcut.*`.
 - 서비스의 코드는 타입 있는 표로 키에 잇습니다: `JOB_NAME`, `JOB_STATUS`, `ERROR_TEXT`(`ErrorCode` 17개 모두), 단계 `jobs.stage.<stage>`, 알림 `jobs.log.<code>`. 모르는 알림 코드는 "알 수 없는 알림"과 '자세히'의 원문으로 보입니다.
 - `gallery.sample.*`는 갤러리 견본에만 쓰는 문구입니다. 앱은 쓰지 않지만 갤러리가 쓰므로 '쓰이지 않는 키 없음' 검사(`i18n.test.ts`)는 이 키들을 쓰인 것으로 셉니다. 화면 용어는 [`UI-TERMS.md`](UI-TERMS.md)를 따릅니다.
-- 문장은 합니다체이고 지시는 -세요입니다. 해요체 문장과 느낌표가 없음을 `i18n.test.ts`가 확인합니다. 상태와 라벨은 명사구("다시 계산 필요", "미저장 변경 사항")입니다.
+- 문장은 하십시오체이고 지시는 -십시오입니다. -세요 지시, 해요체 문장, 느낌표가 없음을 `i18n.test.ts`가 확인합니다. 상태와 라벨은 명사구("다시 계산 필요", "미저장 변경 사항")입니다.
 
 ## 11. 안정 id
 
@@ -279,6 +282,20 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 | 작업 트레이 | `jobs.tray`, `jobs.job.<kind>`, `jobs.cancel.<kind>`, `jobs.history`, `jobs.history.toggle`, `jobs.history.clear` |
 | 그래프 | `<id>`, `<id>.axes`, `<id>.legend.role.<role>`, `<id>.legend.position.<n>`, `<id>.point.<n>` |
 | 배치도 | `<id>.speaker.<role>`, `<id>.unassigned.<n>`, `<id>.position.<n>` |
+| 내보내기 적용 방식(P121, P122) | `export.apply.<target>.panel`, `export.apply.<target>.level`, `export.apply.<target>.level.files`, `export.apply.<target>.level.apply` (`<target>`은 `camilla` 또는 `eqapo`) |
+| 적용 동작·입력 오류 | `export.apply.camilla`(단계 머리), `export.apply.eqapo`(Equalizer APO 행), `export.run.camilla_dsp`('적용'에서는 행의 설정 저장), `export.status.problem` |
+| CamillaDSP 주소·장치 안내 | `export.apply.camilla.address.field`, `export.apply.camilla.address`, `export.apply.camilla.address.problem`, `export.apply.camilla.address.remote`, `export.apply.camilla.devices_note` |
+| 적용 상태·설계 | `export.apply.<target>.state`, `export.apply.<target>.refresh`, `export.apply.<target>.reason`, `export.apply.<target>.design`, `export.apply.camilla.design.title`, `export.apply.camilla.clipped` |
+| Equalizer APO 설정·빼기 | `export.apply.eqapo.folder`, `export.apply.eqapo.line`, `export.apply.eqapo.line_note`, `export.apply.eqapo.revert`, `export.apply.eqapo.revert.confirm`, `export.apply.eqapo.revert.confirm.cancel`, `export.apply.eqapo.revert.confirm.confirm` |
+| 적용 결과 | `export.apply.<target>.outcome`, `export.apply.<target>.outcome.open`, `export.apply.<target>.outcome.path`, `export.apply.camilla.outcome.camilla_error` |
+| 내보낼 DSP의 출력 레이트(P116, ADR 0017) | `system.dsp.output_rate` |
+| 필터 형식별 출력 레이트(P116) | `export.kind.<kind>.rate` |
+| 컨볼루션 IR의 추가 레이트(P116) | `export.extra_rates`, `export.extra_rates.summary`, `export.extra_rates.list`, `export.extra_rates.<rate>` |
+| 내보낸 출력 레이트와 자동 선택 실패(P116) | `export.outcome.<kind>.rate`, `export.outcome.<kind>.rate_fallback`, `export.outcome.<kind>.go_system` |
+| 채널 FIR 한도 초과(P116) | `calibrate.mode.fir_over` |
+| 업데이트 표시(ADR 0020) | `update.badge`(`data-state`, `data-version`), `update.badge.download`, `update.restart`, `update.restart.confirm`, `update.restart.confirm.cancel`, `update.restart.confirm.confirm`, `update.portable`, `update.badge.retry` |
+| 업데이트 알림 | `update.notice`, `update.notice.notes`, `update.notice.release`, `update.notice.dismiss` |
+| 업데이트 설정 | `settings.updates`(정책 묶음), `settings.updates.auto`, `settings.updates.notify`, `settings.updates.off`, `settings.updates.help`, `settings.updates.state`(`data-state`), `update.check`, `update.download`, `settings.updates.release`, `settings.updates.reason`, `settings.updates.meta` |
 
 단계 id는 `system`, `connect`, `measure`, `calibrate`, `export`입니다.
 
@@ -287,11 +304,29 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 - `gallery.html`은 두 번째 Vite 입구입니다. `vite build`는 앱과 갤러리를 함께 짓고, `npm run build`(Tauri가 부름)는 `--mode app`으로 앱만 지어 갤러리와 고정값이 설치본에 들어가지 않습니다. 갤러리만 지으려면 `npm run build:gallery`입니다.
 - 주소 인자: `gallery.html?theme=light|dark&lang=ko|en&accent=default|tutorial&skin=default|rack|matrix&only=<id 접두어,…>`. 견본마다 `data-gallery-id`가 있어 CI가 하나씩 찍을 수 있습니다. 상자 크기와 시각·진행 값이 고정이라 찍을 때마다 같습니다. 예외는 불확정 진행 막대의 움직이는 띠(CI는 `prefers-reduced-motion: reduce`로 찍으면 멈춥니다), `frame.live`, `plot.dense`의 시간 표시입니다.
 - 견본: `frame.empty`, `frame.normal`, `frame.busy`, `frame.stale`, `frame.error`, `frame.warnings`, `frame.blocked`, `frame.tutorial`, `frame.skipped`, `frame.aside`(곁 패널 자리의 도움말, 트레이 기록 펼침), `frame.settings-failed`(앱 설정을 읽지 못한 시작 화면), `frame.live`(모의 서비스에서 실제로 돌고 취소됨), `jobs.idle`, `jobs.running`, `jobs.history`, `frame.project-menu`, `frame.settings`, `ui.button`, `ui.card`, `ui.pill`, `ui.number`, `ui.choice`, `ui.table`, `ui.table.empty`, `ui.meter`, `ui.toast`, `ui.dialog`, `ui.tooltip`, `ui.states`, `plot.measure`, `plot.highlight`, `plot.target`, `plot.xo`, `plot.axes`, `plot.stale`, `plot.dense`, `map.room`, `map.room.unassigned`, `map.arrangement.9`, `map.arrangement.17`, `map.arrangement.13`, `map.thumbs`.
+- 내보내기 적용 견본(P121, P122)은 21개입니다. CamillaDSP는 `screen.export.apply.camilla.files`, `screen.export.apply.camilla.placeholders`, `screen.export.apply.camilla.checking`, `screen.export.apply.camilla.unreachable`, `screen.export.apply.camilla.this`, `screen.export.apply.camilla.other`, `screen.export.apply.camilla.applying`, `screen.export.apply.camilla.applied`, `screen.export.apply.camilla.rolled-back`, `screen.export.apply.camilla.address`, `screen.export.apply.camilla.remote`입니다. 파일만, 파일 자리표시 안내, 상태 확인 중, 연결 실패, 이 설계, 다른 설계와 클리핑, 적용 중, 완료, 이전 설정 복구, 주소 오류, 다른 컴퓨터의 주소를 보여 줍니다.
+- Equalizer APO는 `screen.export.apply.eqapo.not-windows`, `screen.export.apply.eqapo.missing`, `screen.export.apply.eqapo.absent`, `screen.export.apply.eqapo.present`, `screen.export.apply.eqapo.other`, `screen.export.apply.eqapo.official`, `screen.export.apply.eqapo.damaged`, `screen.export.apply.eqapo.denied`, `screen.export.apply.eqapo.reverted`, `screen.export.apply.eqapo.revert-confirm`입니다. Windows가 아닌 환경, 미설치, XT의 config.txt 줄 없음, 이 설계, 다른 설계, 공식판의 설계 비교 불가, 줄 손상, 쓰기 권한 없음, 줄 제거 완료와 제거 확인을 보여 줍니다. 설계 비교 견본은 `ApplyStatus.current_design_id`를 쓰며, 이 세션에서 적용한 기록이 없어도 비교합니다. 현재 설계 ID가 없을 때만 세션 기록이나 CamillaDSP의 '이 설계' 상태를 씁니다.
+- 업데이트 견본(P134, ADR 0020)은 21개입니다. 표시는 `update.badge.available`, `update.badge.downloading`, `update.badge.downloading-unknown`, `update.badge.ready-on-exit`, `update.badge.ready-on-request`, `update.badge.installing`, `update.badge.portable`, `update.badge.failed`, 틀은 `update.frame.ready`(1280×800), `update.frame.min`(1024×700), 알림은 `update.notice`, `update.notice.skipped`, 설정은 `update.settings.auto`, `update.settings.notify`, `update.settings.off`, `update.settings.idle`, `update.settings.checking`, `update.settings.downloading`, `update.settings.ready`, `update.settings.portable`, `update.settings.failed`입니다. 상태는 모의 서비스의 `updateStatus`로 고르고, 알림 견본은 Markdown으로 쓴 CHANGELOG 절 견본을 씁니다.
 - 찍기: `npm run build:gallery && npm run gallery:shots`가 `gallery-shots/`에 견본마다 PNG를 남깁니다(밝게·어둡게 × 한국어·영어, 튜토리얼 강조색, 그리고 Rack·Matrix 스킨의 밝게·어둡게 한국어: 9개 변형). 이 컨테이너처럼 Chromium이 이미 있으면 `CHROMIUM_PATH`로 가리키고, 없으면 `npx playwright install chromium`으로 받습니다(`playwright`는 개발 의존성으로 고정).
 - **화면 투어**: `gallery.html?tour=<장면 id>&theme=light|dark&lang=ko|en`은 견본 대신 실제 `App`을 모의 서비스 위에 창 전체로 띄우고, 장면 표(`gallery/tour/`)의 준비(`setup`, 마운트 전 모의 서비스 조작)와 조작(`ops`, 마운트 뒤 키·누르기·페이지 안 함수)으로 정한 상태에서 멈춥니다. 모의 서비스는 자동 틱 없이(`tickMs: 0`) 돌아 찍을 때마다 같은 그림이 납니다. `node scripts/screen-tour.mjs`가 장면마다 1280×800 창(`tauri.conf.json`의 기본 창)을 밝게·어둡게, 한국어·영어로, 그리고 Rack·Matrix 스킨의 어두운 한국어로 찍어(6개 변형) `screen-shots/`에 PNG와 `manifest.json`을 남깁니다. 실장비 없이는 닿지 않는 상태(측정·계산 중, 실패, 결과, 내보내기 완료)도 실제 화면 코드로 그립니다. 화면을 바꿔 장면의 조작이 맞지 않게 되면 그 PR에서 장면 표를 고칩니다.
 - **리뷰 이슈**: `ui-gallery.yml`이 화면 PR(`apps/secs2r/ui/**`)과 수동 실행에서 투어와 견본을 찍어 `ui-gallery` 브랜치에 올리고, PR마다 리뷰 이슈 하나(`화면 갤러리 리뷰: PR #N`, 라벨 `ui-gallery`)를 열거나 댓글로 갱신합니다. 이슈 글은 `.github/scripts/gallery_issue.py`가 짓습니다(본문은 투어, 댓글은 한국어·밝게 견본). 브랜치에는 장면 전부와 한국어·밝게 견본만 올리고(나머지 견본 변형은 실행 아티팩트), 최근 4번의 실행만 남기도록 매번 다시 쓰므로 저장소를 복제해도 스크린숏이 쌓이지 않고, 더 오래된 이슈는 이미지를 잃습니다. 이슈는 머지를 막지 않습니다.
 - Playwright에는 `locale`을 주어야 합니다. 브라우저 언어 태그가 잘못되면(`en-US@posix`처럼) uPlot이 `Intl.NumberFormat`에서 멈춥니다.
+- **측정 그래프 기준과 극저역 보호 견본**(P145): `screen.measure.reference-mid`(2.1, 기준 L 위치 1의 200~2000 Hz), `screen.measure.reference-sub`(서브만 있는 프로젝트, 기준 SW1 위치 1의 40~120 Hz), `screen.calibrate.low-protect-off`, `screen.calibrate.low-protect-on`, `screen.calibrate.low-protect-result`(막지 못한 서브 묶음 경고와 채널별 메모), `screen.calibrate.low-protect-lines`(네 경우의 안내 문장). 화면 id는 `measure.plot.reference`, `calibrate.range.low_protect`, `calibrate.verdict.low_protect`입니다.
+- **MIMO 성적표 견본**(P110, P111): `screen.calibrate.mimo-scorecard`(보정 전·후·MIMO 후), `screen.calibrate.late-positions`(위치 3곳의 늦은 저음 표를 펼침), `screen.calibrate.mimo-stale-scorecard`(MIMO 재계산 필요, 보정 전후만 비교), `screen.calibrate.one-position`(위치 1곳, 위치별 표 없음), `screen.calibrate.mimo-scorecard.min`(최소 창 1024×700). 화면 id는 비교 범례 `calibrate.scorecard.key`, 늦은 저음 설명 `calibrate.scorecard.late`, 위치별 펼침 `calibrate.scorecard.positions`, 표 `calibrate.scorecard.positions.table`입니다. 모의 서비스와 견본은 같은 기준값을 씁니다.
 - **모의 서비스**(`ipc/mock.ts`): `createMockService({ tickMs, project, results })`는 `makeClient`에 넘길 `invoke`와 그 클라이언트, 잡 이벤트 버스를 줍니다. 생성된 바인딩으로 타입을 맞춘 고정값(`ipc/fixtures.ts`)으로 답하고, 잡은 타이머(또는 `tick()`, `drain()`)로 진행·로그·완료 이벤트를 보냅니다. `failNext`, `failAlways`, `failJobs`로 실패시킬 수 있고, 받은 요청은 `calls`에 남습니다. 같은 종류의 잡이 돌면 `job_busy`, 없는 잡을 취소하면 `job_not_found`입니다.
+
+출력 레이트의 견본(P116, P117)은 다음 여덟 개입니다. 자동을 고른 견본도 CamillaDSP 프로파일을 유지합니다.
+
+| 견본 id | 상태 |
+|---|---|
+| `screen.system.dsp.rate-48k` | CamillaDSP의 출력 레이트 48 kHz, 변경 가능 |
+| `screen.system.dsp.rate-auto` | CamillaDSP의 출력 레이트 자동, 장치 조회와 48 kHz 대체 안내 |
+| `screen.system.dsp.rate-minidsp` | miniDSP의 출력 레이트 96 kHz 고정, 해당 레이트로 계산한 FIR 길이 |
+| `screen.export.rate.96k` | 필터 형식별 출력 레이트 96 kHz, REW mdat은 기존 레이트 유지 |
+| `screen.export.rate.extra` | 추가 레이트 목록 펼침, 44.1 kHz와 192 kHz 선택 |
+| `screen.export.rate.fallback` | 자동 선택에서 32 kHz를 지원하지 않아 48 kHz로 저장, 시스템으로 이동 |
+| `screen.calibrate.mimo-budget-96k` | 96 kHz에서 MIMO FIR 예산 초과 |
+| `screen.calibrate.mode-fir-over-96k` | 96 kHz에서 채널당 FIR 한도 초과 |
 
 ## 13. 검사
 
@@ -300,7 +335,7 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 | 14px 하한(캡션 13px), 모든 `font-size`가 토큰, `transition: all` 없음, 어두운 테마 두 벌 일치, 밝게·어둡게 같은 토큰 집합, 줄인 움직임에서 시간 0, 구성 요소 CSS에 색 값 없음(토큰 파일과 스킨 파일만 예외) | `styles/tokens.test.ts` |
 | 묶인 글꼴 파일이 `manifest.json`과 바이트까지 일치, `fonts.css`가 그 파일만 참조, 실은 글꼴은 모두 스타일시트가 쓰는 것, 전체 6 MiB 이하, 카탈로그의 모든 글자가 Pretendard·Sarasa Mono K에 있고 모든 한글 음절이 Orbit에 있음 | `fonts/fonts.test.ts` |
 | 측정한 대비(글자 4.5:1, 테두리·초점·글리프 3:1), 강조색이 상태색과 15° 이상, 중립색의 한 기운, 순흑·순백 없음, 스킨 파일의 어두운 두 벌 일치와 밝게·어둡게 색 토큰 집합 일치, 모든 스킨 × 테마 | `styles/contrast.test.ts` |
-| 카탈로그 키와 자리표시자 일치, 해요체 문장과 느낌표 없음 | `i18n/i18n.test.ts` |
+| 카탈로그 키와 자리표시자 일치, -세요 지시와 해요체 문장과 느낌표 없음 | `i18n/i18n.test.ts` |
 | 레일 상태와 막힌 이유, 주 동작 끄기(막힘, 화면이 끔), 곁 패널 자리, 단축키, 상태 요약, 영어 | `app/AppFrame.test.tsx` |
 | 이벤트로 그리는 잡, `job_cancel`, 기록의 원인·다음 행동·자세히 | `app/jobs/JobTray.test.tsx`, `jobStore.test.ts` |
 | 숫자 칸 범위·단계·확정 | `ui/NumberField.test.tsx` |
@@ -310,5 +345,6 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 | 선 규칙, 색은 역할을 따름, 고정 눈금 | `ui/plot/series.test.ts` |
 | 배치도 키보드 선택, 역할 미지정 | `ui/maps/ArrangementMap.test.tsx` |
 | 모의 서비스 계약 | `ipc/mock.test.ts` |
+| 업데이트 표시가 그 상태에서만 보임, 사용자가 누른 결과만 실패로 보임, 다시 시작 전 확인, 알림은 한 번만 열리고 확인 대화상자를 기다림, 정책 저장, 릴리스 페이지는 `update_open_release`, 고정 id | `app/update/update.test.tsx` |
 | 갤러리의 모든 견본이 Chromium에서 오류 없이 그려지고 13px 미만 글자가 없음, 견본마다 PNG(밝게·어둡게, 한국어·영어, 튜토리얼 강조색, Rack·Matrix 스킨) | `scripts/gallery-shots.mjs`, `ci.yml`의 `gallery` 잡 |
 | 화면 투어의 모든 장면이 오류 없이 그려지고 13px 미만 글자가 없음, 장면마다 PNG 여섯 장(밝게·어둡게, 한국어·영어, Rack·Matrix 스킨의 어두운 한국어), 장면 표의 형식 | `scripts/screen-tour.mjs`, `ui-gallery.yml`의 `shots` 잡, `gallery/tour/scenes.test.ts` |

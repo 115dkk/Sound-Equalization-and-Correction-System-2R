@@ -17,8 +17,20 @@ import "./calibrate.css";
 export type CalibrateScreenProps = {
   view: CalibrateView;
   actions: CalibrateActions;
-  /** Gallery and tests: start with the target menu open, or the BA 고급 part open on this sub. */
-  initial?: { targetMenu?: boolean | undefined; editSub?: string | undefined } | undefined;
+  /**
+   * Gallery and tests: start with the target menu open, the BA 고급 part open
+   * on this sub, 위치별 늦은 저음 open, the range card's 고급 open, or the
+   * result card's calculation notes open.
+   */
+  initial?:
+    | {
+        targetMenu?: boolean | undefined;
+        editSub?: string | undefined;
+        latePositions?: boolean | undefined;
+        rangeAdvanced?: boolean | undefined;
+        notesOpen?: boolean | undefined;
+      }
+    | undefined;
   /** The step is blocked (the header says why); the screen's own rule when omitted. */
   blocked?: boolean | undefined;
 };
@@ -29,16 +41,29 @@ export function CalibrateScreen({ view, actions, initial, blocked }: CalibrateSc
   const openSampleRateSettings = () => setSampleRateRequest((request) => request + 1);
   return (
     <div className="calibrate" data-ui="calibrate">
-      <Verdict view={view} actions={actions} blocked={blocked ?? calibrateStepState(view).status === "blocked"} onSampleRateSettings={openSampleRateSettings} />
+      <Verdict
+        view={view}
+        actions={actions}
+        blocked={blocked ?? calibrateStepState(view).status === "blocked"}
+        onSampleRateSettings={openSampleRateSettings}
+        notesOpen={initial?.notesOpen}
+      />
       <div className={["calibrate-results", !computed && "calibrate-results--preview"].filter(Boolean).join(" ")}>
         {computed && (
           <div className="calibrate-scorecard-slot">
-            <Scorecard view={view} actions={actions} />
+            <Scorecard view={view} actions={actions} positionsOpen={initial?.latePositions} />
           </div>
         )}
         <ResultGraph view={view} actions={actions} menuOpen={initial?.targetMenu} />
       </div>
-      <Settings view={view} actions={actions} editSub={initial?.editSub} sampleRateRequest={sampleRateRequest} onSampleRateSettings={openSampleRateSettings} />
+      <Settings
+        view={view}
+        actions={actions}
+        editSub={initial?.editSub}
+        rangeAdvanced={initial?.rangeAdvanced}
+        sampleRateRequest={sampleRateRequest}
+        onSampleRateSettings={openSampleRateSettings}
+      />
     </div>
   );
 }
@@ -47,13 +72,14 @@ export function CalibrateScreen({ view, actions, initial, blocked }: CalibrateSc
  * The step header: beside the title, the job of this screen that runs or
  * the stale result. 보정 계산 is not here but in the result card, beside
  * what it computes from (DESIGN.md §1); it is off while another of this
- * screen's jobs runs (XO 추천, 서브만, MIMO), and this pill names that job.
+ * screen's jobs runs (XO 추천, 서브만, MIMO), and this pill names that job,
+ * and names MIMO too while 보정 계산 computes it.
  */
 export function calibrateHeader(view: CalibrateView, t: Translate): { primary?: PrimaryAction; status?: ReactNode } {
   const running = view.running;
   const status = running ? (
     <StatusPill tone="busy" data-ui="calibrate.running">
-      {t(RUNNING_TEXT[running])}
+      {t(running === "calibrate" && view.runningMimo ? "calibrate.running.calibrate_mimo" : RUNNING_TEXT[running])}
     </StatusPill>
   ) : view.results.calibration?.stale ? (
     <StatusPill tone="warning" data-ui="calibrate.stale">

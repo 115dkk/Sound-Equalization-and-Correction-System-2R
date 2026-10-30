@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { AppFrame } from "../../app/AppFrame";
@@ -24,6 +24,7 @@ import {
   exportNamed,
   exportEqapoDone,
   exportExporting,
+  exportExtraRates,
   exportFailed,
   exportMeasurementsDone,
   exportMeasurementsOnly,
@@ -31,6 +32,8 @@ import {
   exportNoMimo,
   exportNoResult,
   exportNothingMeasured,
+  exportRateFallback,
+  exportRate96k,
   exportRcOnly,
   exportReady,
   exportRecalibrating,
@@ -131,6 +134,9 @@ const STATES: Record<string, ExportView> = {
   devicesTyped: exportDevicesTyped,
   devicesAsio: exportDevicesAsio,
   devicesAsioUnnamed: exportDevicesAsioUnnamed,
+  rate96k: exportRate96k,
+  extraRates: exportExtraRates,
+  rateFallback: exportRateFallback,
 };
 
 function actions() {
@@ -139,16 +145,30 @@ function actions() {
     setMdatScope: vi.fn<ExportActions["setMdatScope"]>(),
     setDesignName: vi.fn<ExportActions["setDesignName"]>(),
     setCamillaDevices: vi.fn<ExportActions["setCamillaDevices"]>(),
+    setExtraRates: vi.fn<ExportActions["setExtraRates"]>(),
     refreshDevices: vi.fn<ExportActions["refreshDevices"]>(),
     changeFolder: vi.fn<ExportActions["changeFolder"]>(),
     openFolder: vi.fn<ExportActions["openFolder"]>(),
     goToCalibrate: vi.fn<ExportActions["goToCalibrate"]>(),
+    goToSystem: vi.fn<ExportActions["goToSystem"]>(),
     recalibrate: vi.fn<ExportActions["recalibrate"]>(),
+    setApplyLevel: vi.fn<ExportActions["setApplyLevel"]>(),
+    setCamillaAddress: vi.fn<ExportActions["setCamillaAddress"]>(),
+    saveCamillaAddress: vi.fn<ExportActions["saveCamillaAddress"]>(),
+    refreshApplyStatus: vi.fn<ExportActions["refreshApplyStatus"]>(),
+    applyCamilla: vi.fn<ExportActions["applyCamilla"]>(),
+    applyEqapo: vi.fn<ExportActions["applyEqapo"]>(),
+    revertEqapo: vi.fn<ExportActions["revertEqapo"]>(),
+    setCamillaExe: vi.fn<ExportActions["setCamillaExe"]>(),
+    saveCamillaExe: vi.fn<ExportActions["saveCamillaExe"]>(),
+    pickCamillaExe: vi.fn<ExportActions["pickCamillaExe"]>(),
+    installHost: vi.fn<ExportActions["installHost"]>(),
+    stopManaging: vi.fn<ExportActions["stopManaging"]>(),
   };
 }
 
 /** The screen inside the frame with its header, as P33 will mount it. */
-function Mounted({ view, act, advanced = false, devices = false }: { view: ExportView; act: ExportActions; advanced?: boolean; devices?: boolean }) {
+function Mounted({ view, act, advanced = false, devices = false, rates = false }: { view: ExportView; act: ExportActions; advanced?: boolean; devices?: boolean; rates?: boolean }) {
   const t = useT();
   const header = exportHeader(view, act, t);
   return (
@@ -163,7 +183,7 @@ function Mounted({ view, act, advanced = false, devices = false }: { view: Expor
       tray={<div />}
       shortcuts={false}
     >
-      <ExportScreen view={view} actions={act} initialAdvanced={advanced} initialDevices={devices} />
+      <ExportScreen view={view} actions={act} initialAdvanced={advanced} initialDevices={devices} initialExtraRates={rates} />
     </AppFrame>
   );
 }
@@ -365,7 +385,7 @@ describe("내보내기", () => {
     const { unmount } = renderWith(<Mounted view={exportEqapoDone} act={act} />);
     expect(ui("export.outcome.equalizer_apo")?.textContent).toContain("파일 14개 저장 → D:/Audio/거실 보정/SECS_eqapo_RC_BA_mixed_20261014-142233");
     expect(ui("export.outcome.equalizer_apo.hint")?.textContent).toBe(
-      "Equalizer APO의 기존 config.txt를 다른 이름으로 보관한 뒤, 내보낸 config.txt와 secs_mixed 폴더를 config 폴더에 복사하세요. 적용 순서는 'EqAPO 적용 방법.txt'를 확인하세요.",
+      "Equalizer APO의 기존 config.txt를 다른 이름으로 보관한 뒤, 내보낸 config.txt와 secs_mixed 폴더를 config 폴더에 복사하십시오. 적용 순서는 'EqAPO 적용 방법.txt'를 확인하십시오.",
     );
     fireEvent.click(ui("export.outcome.equalizer_apo.open")!);
     expect(act.openFolder.mock.calls).toEqual([["D:/Audio/거실 보정/SECS_eqapo_RC_BA_mixed_20261014-142233"]]);
@@ -429,15 +449,16 @@ describe("내보내기", () => {
       const { unmount } = renderWith(<Mounted view={view} act={act} />);
       const group = screen.getByRole("radiogroup", { name: "저장할 내용" });
       expect(group).toBe(ui("export.mdat.scope"));
-      expect(screen.getByRole("radio", { checked: true }).textContent).toBe(chosen);
+      // The rows' 적용 choices are radios too: these are the REW mdat's.
+      expect(within(group).getByRole("radio", { checked: true }).textContent).toBe(chosen);
       expect(ui("export.mdat.file")?.textContent).toBe(file);
       // The choice comes first, the file's name last; every option can be chosen while a result exists.
       const row = ui("export.kind.before_after_mdat")!;
       const order = [...row.querySelectorAll("[data-ui='export.mdat.scope'], .export-item__where")];
       expect(order[0]).toBe(group);
       expect(order.at(-1)).toBe(ui("export.mdat.file"));
-      expect(screen.getAllByRole("radio").every((radio) => !(radio as HTMLButtonElement).disabled)).toBe(true);
-      fireEvent.click(screen.getByRole("radio", { name: chosen === "보정 결과만" ? "모두" : "보정 결과만" }));
+      expect(within(group).getAllByRole("radio").every((radio) => !(radio as HTMLButtonElement).disabled)).toBe(true);
+      fireEvent.click(within(group).getByRole("radio", { name: chosen === "보정 결과만" ? "모두" : "보정 결과만" }));
       expect(act.setMdatScope).toHaveBeenLastCalledWith(chosen === "보정 결과만" ? "all" : "results");
       fireEvent.click(ui("export.run.before_after_mdat")!);
       expect(act.exportFiles).toHaveBeenCalledWith("before_after_mdat");
@@ -456,9 +477,9 @@ describe("내보내기", () => {
     const act = actions();
     const { unmount } = renderWith(<Mounted view={exportNoResult} act={act} />);
     const group = ui("export.mdat.scope")!;
-    expect(screen.getByRole("radio", { checked: true }).textContent).toBe("원 측정만");
-    expect((screen.getByRole("radio", { name: "모두" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("radio", { name: "보정 결과만" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(within(group).getByRole("radio", { checked: true }).textContent).toBe("원 측정만");
+    expect((within(group).getByRole("radio", { name: "모두" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(group).getByRole("radio", { name: "보정 결과만" }) as HTMLButtonElement).disabled).toBe(true);
     const hint = document.getElementById(`${group.id}-hint`);
     expect(hint?.textContent).toBe("보정 결과가 없어 원 측정만 저장할 수 있습니다.");
     expect(group.getAttribute("aria-describedby")).toContain(hint!.id);
@@ -572,10 +593,20 @@ describe("내보내기", () => {
   it("writes the RC notices as phrases with whole numbers", () => {
     const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) => translate("ko", key, params);
     const n = (value: number) => String(Math.round(value));
-    expect(rcText(t, { code: "rc_limit", params: { hz: "310.4", auto: "true", schroeder_hz: "310.4" } }, n)).toBe("RC 상한 310 Hz (자동 · 슈뢰더 310 Hz)");
-    expect(rcText(t, { code: "rc_limit", params: { hz: "250", auto: "false" } }, n)).toBe("RC 상한 250 Hz (직접 정함)");
+    expect(rcText(t, { code: "rc_limit", params: { hz: "310.4", auto: "true", schroeder_hz: "310.4" } }, n)).toBe("RC 상한 310 Hz(자동, 슈뢰더 310 Hz)");
+    expect(rcText(t, { code: "rc_limit", params: { hz: "250", auto: "false" } }, n)).toBe("RC 상한 250 Hz(직접 입력)");
     expect(rcText(t, { code: "rc_room_volume", params: { volume_m3: "62.5" } }, n)).toBe("방 부피 63 m³로 정함");
     expect(rcText(t, { code: "rc_auto_cap", params: { hz: "500" } }, n)).toBe("자동 상한은 최대 500 Hz");
+  });
+
+  it("states the RC upper limit's basis and evidence as the 보정 screen's RC line does (ADR 0021)", () => {
+    const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) => translate("ko", key, params);
+    const n = (value: number, digits = 0) => value.toFixed(digits);
+    const line = (params: Record<string, string>) => rcText(t, { code: "rc_limit", params: { auto: "true", ...params } }, n);
+    expect(line({ hz: "308", schroeder_hz: "154", basis: "strict", factor: "2" })).toBe("RC 상한 308 Hz(엄격한 슈뢰더 154 Hz × 2)");
+    expect(line({ hz: "200", schroeder_hz: "154", basis: "lenient", factor: "1", band_hz: "200", band_t60_s: "0.5" })).toBe("RC 상한 200 Hz(너그러운 슈뢰더, 200 Hz 대역 T60 0.50초)");
+    expect(line({ hz: "287", schroeder_hz: "154", basis: "agreement", factor: "1", positions: "9" })).toBe("RC 상한 287 Hz(위치 9곳 일치도)");
+    expect(line({ hz: "500", basis: "strict", factor: "1" })).toBe("RC 상한 500 Hz(자동)");
   });
 
   it("says beside the empty design name where the files go, and beside a name that the next export replaces its folder", () => {
@@ -686,7 +717,7 @@ describe("내보내기", () => {
     expect(ui("export.devices.summary")).toBeNull();
     expect(screen.getByRole("group", { name: "입력 장치" })).toBe(ui("export.devices.capture"));
     expect(screen.getByRole("group", { name: "출력 장치" })).toBe(ui("export.devices.playback"));
-    const panel = ui("export.kind.camilla_dsp")!;
+    const panel = ui("export.kind.camilla_dsp")!.querySelector(".export-devices")!;
     expect([...panel.querySelectorAll("[role='radio'][aria-checked='true']")].map((radio) => radio.textContent)).toEqual(["파일 자리표시", "파일 자리표시"]);
     expect(ui("export.devices.asio_note")).toBeNull();
   });
@@ -821,6 +852,95 @@ describe("내보내기", () => {
     expect(ui("export.devices.playback.format.S24")?.getAttribute("aria-checked")).toBe("true");
     fireEvent.click(ui("export.devices.playback.backend.asio")!);
     expect((ui("export.devices.playback.asio") as HTMLInputElement).value).toBe("Tesira ASIO");
+  });
+
+  it("names the rate each filter row writes when it is not 48 kHz; the REW mdat says nothing (ADR 0017)", () => {
+    const { unmount } = renderWith(<Mounted view={exportReady} act={actions()} advanced />);
+    expect(document.querySelectorAll("[data-ui$='.rate']")).toHaveLength(0);
+    unmount();
+    const rows = (view: ExportView) => {
+      const { unmount } = renderWith(<Mounted view={view} act={actions()} advanced />);
+      const text = EXPORT_KINDS.map((kind) => ui(`export.kind.${kind}.rate`)?.textContent ?? null);
+      unmount();
+      return text;
+    };
+    const filter = (kind: string) => FILTER_KINDS.some((candidate) => candidate === kind);
+    const fixed = translate("ko", "export.rate.fixed", { rate: "96 kHz" });
+    expect(fixed).toBe("출력 레이트 96 kHz");
+    expect(rows(exportRate96k)).toEqual(EXPORT_KINDS.map((kind) => (filter(kind) ? fixed : null)));
+    const auto = translate("ko", "export.rate.auto");
+    expect(rows({ ...exportReady, outputRate: "auto" })).toEqual(EXPORT_KINDS.map((kind) => (filter(kind) ? auto : null)));
+    expect(rows({ ...exportReady, outputRate: { fixed: 44100 } })[0]).toBe(translate("ko", "export.rate.fixed", { rate: "44.1 kHz" }));
+    // Before the DSP arrives the rows say nothing.
+    expect(rows({ ...exportReady, outputRate: null }).every((text) => text === null)).toBe(true);
+  });
+
+  it("folds the convolution IR's extra rates under its row, closed, and checks the rates other than the written one", () => {
+    const act = actions();
+    const { unmount } = renderWith(<Mounted view={exportRate96k} act={act} />);
+    const toggle = ui("export.extra_rates")!;
+    expect(toggle.closest("[data-ui='export.kind.convolution']")).not.toBeNull();
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    expect(ui("export.extra_rates.summary")?.textContent).toBe(translate("ko", "export.extra_rates.none"));
+    expect(ui("export.extra_rates.44100")).toBeNull();
+    fireEvent.click(toggle);
+    const boxes = [...document.querySelectorAll<HTMLInputElement>("input[type='checkbox'][data-ui^='export.extra_rates.']")];
+    expect(boxes.map((box) => box.getAttribute("data-ui"))).toEqual([44100, 48000, 88200, 176400, 192000].map((rate) => `export.extra_rates.${rate}`));
+    expect(boxes.every((box) => !box.checked)).toBe(true);
+    expect(boxes[0]!.closest("label")?.textContent).toBe("44.1 kHz");
+    fireEvent.click(ui("export.extra_rates.44100")!);
+    expect(act.setExtraRates).toHaveBeenLastCalledWith([44100]);
+    unmount();
+
+    const chosen = actions();
+    const view = { ...exportExtraRates, extraRates: [96000, ...exportExtraRates.extraRates] };
+    renderWith(<Mounted view={view} act={chosen} />);
+    // The written rate is never an extra one: 96 kHz stays chosen behind it for when the DSP's rate changes.
+    expect(ui("export.extra_rates.summary")?.textContent).toBe("44.1 kHz, 192 kHz");
+    fireEvent.click(ui("export.extra_rates")!);
+    expect((ui("export.extra_rates.44100") as HTMLInputElement).checked).toBe(true);
+    expect((ui("export.extra_rates.192000") as HTMLInputElement).checked).toBe(true);
+    expect((ui("export.extra_rates.48000") as HTMLInputElement).checked).toBe(false);
+    fireEvent.click(ui("export.extra_rates.192000")!);
+    expect(chosen.setExtraRates).toHaveBeenLastCalledWith([96000, 44100]);
+    fireEvent.click(ui("export.extra_rates.48000")!);
+    expect(chosen.setExtraRates).toHaveBeenLastCalledWith([96000, 44100, 192000, 48000]);
+  });
+
+  it("checks the extra rates against 48 kHz under 자동, the rate it falls back to", () => {
+    renderWith(<Mounted view={{ ...exportReady, outputRate: "auto" }} act={actions()} rates />);
+    expect(ui("export.extra_rates.48000")).toBeNull();
+    expect(ui("export.extra_rates.96000")).not.toBeNull();
+  });
+
+  it("warns on the outcome when 자동 fell back to 48 kHz, with the cause, what to do and the way to 시스템", () => {
+    const act = actions();
+    const { unmount } = renderWith(<Mounted view={exportRateFallback} act={act} />);
+    const warning = ui("export.outcome.camilla_dsp.rate_fallback")!;
+    expect(warning.closest("[data-ui='export.outcome.camilla_dsp']")).not.toBeNull();
+    expect(warning.textContent).toContain(translate("ko", "export.rate.fallback.unsupported", { rate: "32 kHz" }));
+    expect(warning.textContent).toContain(translate("ko", "export.rate.fallback.next"));
+    expect(ui("export.outcome.camilla_dsp.rate")).toBeNull();
+    fireEvent.click(ui("export.outcome.camilla_dsp.go_system")!);
+    expect(act.goToSystem).toHaveBeenCalledOnce();
+    unmount();
+
+    const run = exportRateFallback.runs.camilla_dsp!;
+    if (run.status !== "done") throw new Error("the fixture's run is done");
+    const unread = renderWith(<Mounted view={{ ...exportRateFallback, runs: { camilla_dsp: { ...run, notes: [{ code: "output_rate_fallback", params: {} }] } } }} act={actions()} />);
+    expect(ui("export.outcome.camilla_dsp.rate_fallback")?.textContent).toContain(translate("ko", "export.rate.fallback.unread"));
+    unread.unmount();
+
+    // 자동 that read the device: the outcome names the rate it wrote, without a warning.
+    const read = renderWith(<Mounted view={{ ...exportRateFallback, runs: { camilla_dsp: { ...run, rate: 44100, notes: [] } } }} act={actions()} />);
+    expect(ui("export.outcome.camilla_dsp.rate_fallback")).toBeNull();
+    expect(ui("export.outcome.camilla_dsp.rate")?.textContent).toBe(translate("ko", "export.rate.written", { rate: "44.1 kHz" }));
+    read.unmount();
+
+    // A fixed rate says nothing more after the export: the row already said it.
+    renderWith(<Mounted view={{ ...exportRate96k, runs: { camilla_dsp: { ...run, rate: 96000, notes: [] } } }} act={actions()} />);
+    expect(ui("export.outcome.camilla_dsp.rate")).toBeNull();
+    expect(ui("export.outcome.camilla_dsp.rate_fallback")).toBeNull();
   });
 
   it("draws every id the reach table cites in at least one state", () => {

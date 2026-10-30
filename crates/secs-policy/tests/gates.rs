@@ -990,7 +990,11 @@ fn dependency_package(
 
 /// OS-facing packages. Only the isolation crate may name them, so every other
 /// crate builds and tests on any OS without audio hardware (docs/adr/0002).
-const OS_PACKAGES: [&str; 12] = [
+const OS_PACKAGES: [&str; 16] = [
+    "windows-service",
+    "win-custody",
+    "notify",
+    "runas",
     "windows",
     "windows-sys",
     "windows-core",
@@ -1163,8 +1167,10 @@ fn no_assembly_kernels_that_leave_avx_state_dirty() {
     );
 }
 
-/// Files that may start other processes: the REW launcher only.
-const SUBPROCESS_ALLOWLIST: [&str; 1] = ["crates/secs-sys/src/rew.rs"];
+/// Files that may start other processes: the REW launcher and ADR 0018's
+/// managed-host launcher/elevation boundary.
+const SUBPROCESS_ALLOWLIST: [&str; 2] =
+    ["crates/secs-sys/src/rew.rs", "crates/secs-sys/src/host.rs"];
 
 fn contains_command_constructor(source: &str) -> bool {
     source.match_indices("Command").any(|(index, _)| {

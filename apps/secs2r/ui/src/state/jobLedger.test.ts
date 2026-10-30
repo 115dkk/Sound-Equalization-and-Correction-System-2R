@@ -29,7 +29,7 @@ describe("job ledger", () => {
     ledger.reply(pending, { job: 1, kind: "export" }); ledger.settle(pending);
     await ledger.cancel(1);
     expect(state().jobs[0]?.status).toBe("succeeded");
-    const outcome: FinishedJob = { event: "finished", job: 1, status: "succeeded", result: { kind: "export", data: { files: ["room.yml"], folder: "C:/room", stale: false } }, error: null };
+    const outcome: FinishedJob = { event: "finished", job: 1, status: "succeeded", result: { kind: "export", data: { files: ["room.yml"], folder: "C:/room", stale: false, output_rate: 48000, notes: [] } }, error: null };
     ledger.event(outcome);
     expect(complete).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ job: 1, request: null }), outcome, expect.objectContaining({ method: "export" }));
     expect(state().history.filter((entry) => entry.type === "finished")).toHaveLength(1);
@@ -216,7 +216,7 @@ describe("job ledger", () => {
       request: { method: "export", epoch: 0, params: { kind: "camilla_dsp", folder: "C:/old" } } });
     ledger.event({ event: "started", job: 50, kind: "export" });
     expect(started.mock.calls.filter(([job]) => job.job === 50)).toHaveLength(1);
-    const outcome: FinishedJob = { event: "finished", job: 50, status: "succeeded", result: { kind: "export", data: { files: ["old.yml"], folder: "C:/old", stale: false } }, error: null };
+    const outcome: FinishedJob = { event: "finished", job: 50, status: "succeeded", result: { kind: "export", data: { files: ["old.yml"], folder: "C:/old", stale: false, output_rate: 48000, notes: [] } }, error: null };
     ledger.event(outcome); ledger.event(outcome);
     const completions = complete.mock.calls.filter(([job]) => job.job === 50);
     expect(completions).toHaveLength(1);

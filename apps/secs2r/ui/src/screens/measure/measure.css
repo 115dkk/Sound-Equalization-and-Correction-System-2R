@@ -313,6 +313,14 @@
   display: none;
 }
 
+/* What 0 dB means, read with the legend: the graph's own gap, not the card's. */
+.measure-graph__reference {
+  margin: calc(var(--space-3) - var(--space-4)) 0 0;
+  color: var(--text-muted);
+  font-size: var(--text-ui);
+  overflow-wrap: anywhere;
+}
+
 .measure-options__advanced {
   display: flex;
   flex-direction: column;

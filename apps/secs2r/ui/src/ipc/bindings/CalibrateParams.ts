@@ -13,4 +13,9 @@ settings: CalibrationSettings | null,
  * Designs the subwoofers only (upstream [서브만 계산]); the result is
  * kept apart and shown by the BA tab until the next full run.
  */
-subs_only: boolean, };
+subs_only: boolean, 
+/**
+ * Computes MIMO after the correction in the same job. Absent on the
+ * wire means false, so the TypeScript field is optional.
+ */
+mimo?: boolean, };

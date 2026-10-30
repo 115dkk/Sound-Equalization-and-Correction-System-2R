@@ -1225,6 +1225,11 @@
   animation: ui-fade-in var(--dur-base) var(--ease-out);
 }
 
+/* One step over the other dialogs (Dialog `above`), still under toasts. */
+.ui-dialog-backdrop--above {
+  z-index: calc(var(--z-dialog) + 1);
+}
+
 /* Never taller than the window less the backdrop's margin: the head and the
    buttons stay put and the body scrolls (Dialog.tsx). */
 .ui-dialog {

@@ -147,6 +147,34 @@ pub enum Request {
     AppSettingsGet,
     /// Stores application-local settings.
     AppSettingsSet(AppSettingsParams),
+    /// Reads CamillaDSP and Equalizer APO application state.
+    ApplyStatus,
+    /// Exports and applies the current design to CamillaDSP.
+    ApplyCamilla(ApplyCamillaParams),
+    /// Exports and applies the current design to Equalizer APO.
+    ApplyEqapo,
+    /// Removes SECS 2R's managed Equalizer APO include.
+    RevertEqapo,
+    /// Validates and stores application settings for both apply targets.
+    ApplySettingsSet(ApplySettings),
+    /// Installs the Windows managed host service with an elevation prompt.
+    HostInstall,
+    /// Stops and removes the Windows managed host service with an elevation prompt.
+    HostUninstall,
+    /// Clears every target persisted by the managed host service.
+    HostStopManaging,
+    /// Reports the application update state and the one-time "updated" notice.
+    UpdateStatus,
+    /// Checks for a newer release now, whatever the stored policy.
+    UpdateCheck,
+    /// Downloads the newer release found by the last check.
+    UpdateDownload,
+    /// Installs the downloaded release and starts the new version.
+    UpdateRestart,
+    /// Marks the one-time "updated" notice as shown.
+    UpdateNoticeDismiss,
+    /// Opens one release's page in the system browser.
+    UpdateOpenRelease(UpdateOpenReleaseParams),
     /// Reports the opt-in local API server and token.
     LocalApiStatus,
     /// Replaces the local API bearer token and restarts its server when needed.
@@ -326,6 +354,34 @@ pub enum Response {
     AppSettingsGet(AppSettings),
     /// The `AppSettingsSet` Response variant.
     AppSettingsSet(AppSettings),
+    /// Current state of both application targets.
+    ApplyStatus(ApplyStatus),
+    /// The CamillaDSP application job.
+    ApplyCamilla(JobStarted),
+    /// The Equalizer APO application job.
+    ApplyEqapo(JobStarted),
+    /// Confirms removal of the managed Equalizer APO include.
+    RevertEqapo(()),
+    /// Stored application settings for both targets.
+    ApplySettingsSet(ApplySettings),
+    /// Confirms that the Windows managed host service installer was started.
+    HostInstall(()),
+    /// Confirms that the Windows managed host service uninstaller was started.
+    HostUninstall(()),
+    /// Confirms that every managed target was cleared.
+    HostStopManaging(()),
+    /// Application update state.
+    UpdateStatus(UpdateStatus),
+    /// Update state after the check finished.
+    UpdateCheck(UpdateStatus),
+    /// Update state once the download started.
+    UpdateDownload(UpdateStatus),
+    /// Confirms that installing and restarting started.
+    UpdateRestart(()),
+    /// Update state without the notice.
+    UpdateNoticeDismiss(UpdateStatus),
+    /// Confirms that the release page was handed to the system browser.
+    UpdateOpenRelease(()),
     /// Current local API server and token state.
     LocalApiStatus(LocalApiStatus),
     /// Local API state after replacing its bearer token.
@@ -382,7 +438,7 @@ pub struct MeasurementCurvesParams {
     /// Speaker roles to include.
     pub roles: Option<Vec<String>>,
 }
-/// A measurement curve, already smoothed and normalized to the mid-band mean.
+/// A smoothed measurement curve shifted by the result's shared reference.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct MeasurementCurve {
@@ -407,6 +463,28 @@ pub struct CurveAxes {
     /// Vertical unit: db or ms.
     pub unit: String,
 }
+/// Frequency band used to set zero dB on the measurement graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum CurveReferenceBand {
+    /// 200–2000 Hz mean of a main speaker.
+    Mid,
+    /// 40–120 Hz mean of a subwoofer.
+    Sub,
+}
+/// The stored measurement that sets zero dB for every displayed curve.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CurveReference {
+    /// Configured speaker role.
+    pub role: String,
+    /// Measurement position.
+    #[ts(type = "number")]
+    pub position: i64,
+    /// Frequency band used for the mean.
+    pub band: CurveReferenceBand,
+}
 /// Measurement graph data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -415,6 +493,8 @@ pub struct MeasurementCurvesResult {
     pub grid: Vec<f64>,
     /// One curve per recorded role and position.
     pub curves: Vec<MeasurementCurve>,
+    /// Stored curve and band that set zero dB, or absent when nothing is measured.
+    pub reference: Option<CurveReference>,
     /// Upstream default axis bounds.
     pub axes: CurveAxes,
 }
@@ -708,6 +788,11 @@ pub struct CalibrateParams {
     /// kept apart and shown by the BA tab until the next full run.
     #[serde(default)]
     pub subs_only: bool,
+    /// Computes MIMO after the correction in the same job. Absent on the
+    /// wire means false, so the TypeScript field is optional.
+    #[serde(default)]
+    #[ts(as = "Option<bool>", optional)]
+    pub mimo: bool,
 }
 /// Optional settings for a MIMO run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
@@ -741,6 +826,8 @@ pub enum JobKind {
     Mimo,
     /// Writes one selected export bundle.
     Export,
+    /// Exports and applies the current design to a running target.
+    Apply,
     /// Streams microphone levels and controls level-check playback.
     LevelMonitor,
     /// Watches measurement-method status changes.
@@ -864,6 +951,8 @@ pub enum JobResult {
     Mimo,
     /// Paths written by an exporter.
     Export(ExportResult),
+    /// A design applied to CamillaDSP or Equalizer APO.
+    Apply(ApplyResult),
     /// Project state after a completed measurement.
     Measurement(ProjectInfo),
     /// Project state after an mdat import.
@@ -938,6 +1027,9 @@ pub struct CalibrationSummary {
     pub verdict: VerdictSummary,
     /// Per-channel before-and-after metrics.
     pub scorecard: Vec<ChannelScore>,
+    /// Late 20–150 Hz energy before and after correction at every measured position.
+    #[serde(default)]
+    pub late_energy: Vec<LateEnergy>,
     /// Total filter latency in milliseconds.
     pub latency_ms: f64,
     /// Informational codes and values translated by the screen.
@@ -974,6 +1066,19 @@ pub struct ChannelScore {
     pub before: MetricsSummary,
     /// Metrics after correction.
     pub after: MetricsSummary,
+}
+/// Late 20–150 Hz energy for one main role at one measured position.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct LateEnergy {
+    /// Internal speaker role.
+    pub role: String,
+    /// Measured position number.
+    pub position: u32,
+    /// Late-to-early energy before correction, in dB.
+    pub before_db: f64,
+    /// Late-to-early energy after correction, in dB.
+    pub after_db: f64,
 }
 /// The upstream `Metrics` fields for one response.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
@@ -1035,6 +1140,32 @@ pub struct MimoSummary {
     pub notes: Vec<Notice>,
     /// Number of distinct input roles with at least one generated support path.
     pub input_count: usize,
+    /// Per-channel metrics after MIMO at the main position.
+    #[serde(default)]
+    pub scorecard: Vec<MimoChannelScore>,
+    /// Late 20–150 Hz energy after MIMO at every measured position.
+    #[serde(default)]
+    pub late_energy: Vec<MimoLateEnergy>,
+}
+/// Scorecard metrics after MIMO for one main role.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MimoChannelScore {
+    /// Internal speaker role.
+    pub role: String,
+    /// Metrics after the MIMO support contributions are added.
+    pub after_mimo: MetricsSummary,
+}
+/// Late 20–150 Hz energy after MIMO for one main role and measured position.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct MimoLateEnergy {
+    /// Internal speaker role.
+    pub role: String,
+    /// Measured position number.
+    pub position: u32,
+    /// Late-to-early energy after MIMO, in dB.
+    pub after_mimo_db: f64,
 }
 /// Crossover candidates and the best value for each group.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
@@ -1260,6 +1391,10 @@ pub struct ExportParams {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub camilla_devices: Option<CamillaDevices>,
+    /// Additional convolution output rates. Other export kinds refuse a non-empty list.
+    #[serde(default)]
+    #[ts(optional = nullable)]
+    pub extra_rates: Vec<u32>,
 }
 /// Files written by a completed export job.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1267,6 +1402,11 @@ pub struct ExportParams {
 pub struct ExportResult {
     /// Paths of all files written by the exporter.
     pub files: Vec<String>,
+    /// Sample rate of the files in Hz. REW mdat always reports 48000.
+    pub output_rate: u32,
+    /// Informational notices produced while resolving the output rate.
+    #[serde(default)]
+    pub notes: Vec<Notice>,
     /// Actual export folder written by the job.
     pub folder: String,
     /// Whether the exported calibration differed from current project inputs.
@@ -1317,6 +1457,8 @@ pub enum OpenFileKind {
     Target,
     /// Microphone response calibration text (`.txt`, `.cal` or `.frd`).
     MicCalibration,
+    /// CamillaDSP executable selected for managed launching.
+    CamillaExe,
 }
 /// Typed open-file dialog parameters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -1821,10 +1963,25 @@ pub struct ConfigMutationResult {
     /// Token for `undo` when the edit cleared measurements (U5).
     pub undo_token: Option<String>,
 }
-/// The five manually editable DSP profile fields.
+/// Output sample-rate selection stored with a DSP profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum OutputRateChoice {
+    /// Resolve the rate from the default output endpoint when exporting.
+    Auto,
+    /// Always export at this rate in Hz.
+    Fixed(u32),
+}
+
+/// The manually editable DSP profile fields.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct DspFields {
+    /// Output sample rate.
+    pub output_rate: OutputRateChoice,
+    /// Whether this profile permits changing the output rate.
+    pub output_rate_editable: bool,
     /// FIR taps per channel.
     pub fir_taps: i64,
     /// Total FIR taps the DSP can run across channels.
@@ -2076,6 +2233,337 @@ impl Default for LocalApiSettings {
     }
 }
 
+/// How far SECS 2R controls one application target.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ApplyLevel {
+    /// Only write ordinary export files.
+    #[default]
+    Files,
+    /// Apply on explicit request while the app is running.
+    Apply,
+    /// Keep the applied design active through the managed service.
+    Manage,
+}
+
+/// CamillaDSP application settings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CamillaApply {
+    /// Selected control level.
+    pub level: ApplyLevel,
+    /// Plain websocket address in `host:port` form.
+    pub address: String,
+    /// CamillaDSP executable selected by the user for managed operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub exe_path: Option<String>,
+}
+impl Default for CamillaApply {
+    fn default() -> Self {
+        Self {
+            level: ApplyLevel::Files,
+            address: "127.0.0.1:1234".into(),
+            exe_path: None,
+        }
+    }
+}
+
+/// Equalizer APO application settings.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct EqApoApply {
+    /// Selected control level.
+    pub level: ApplyLevel,
+}
+
+/// Settings for applying designs to external processors.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ApplySettings {
+    /// CamillaDSP settings.
+    pub camilla: CamillaApply,
+    /// Equalizer APO settings.
+    pub eqapo: EqApoApply,
+}
+
+/// Optional device choices for a CamillaDSP application export.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ApplyCamillaParams {
+    /// Capture and playback choices; absent keeps file placeholders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub camilla_devices: Option<CamillaDevices>,
+}
+
+/// Equalizer APO edition detected from its installed path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum EqApoVariant {
+    /// The SourceForge Equalizer APO release.
+    Official,
+    /// EqualizerAPO-XT.
+    Xt,
+    /// An installation whose path does not identify either edition.
+    Unknown,
+}
+
+/// Equalizer APO installation values supplied by the operating-system adapter.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EqApoInstall {
+    /// Equalizer APO configuration directory.
+    pub config_path: String,
+    /// Equalizer APO installation directory.
+    pub install_path: String,
+    /// Detected edition.
+    pub variant: EqApoVariant,
+}
+
+/// State of SECS 2R's managed lines in Equalizer APO's `config.txt`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum IncludeState {
+    /// No managed marker exists.
+    Absent,
+    /// The marker and include line form one intact pair.
+    Present,
+    /// A marker exists without exactly one intact include pair.
+    Damaged,
+}
+
+/// One CamillaDSP process kept running by the host service.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ManagedCamilla {
+    pub exe_path: String,
+    pub config_path: String,
+    pub port: u16,
+    pub design_id: String,
+}
+
+/// One Equalizer APO include kept intact by the host service.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ManagedEqApo {
+    pub config_path: String,
+    pub design_id: String,
+}
+
+/// Targets persisted by the host service.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct HostManaged {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub camilla: Option<ManagedCamilla>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub eqapo: Option<ManagedEqApo>,
+    /// Interactive session that selected these targets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(skip)]
+    pub owner_session_id: Option<u32>,
+    /// Stable SID bytes of that session's user token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(skip)]
+    pub owner_user_sid: Option<String>,
+}
+
+/// A request sent over the local managed-host pipe.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "method", content = "params", rename_all = "snake_case")]
+#[ts(export)]
+pub enum HostRequest {
+    Status,
+    SetManaged(HostManaged),
+    StopManaging,
+    Log {
+        lines: u32,
+    },
+    /// Replaces the service with the signed `secs2r-host.exe` next to
+    /// `secs2r-host.json` in `from_dir` (ADR 0020).
+    UpdateSelf {
+        from_dir: String,
+    },
+}
+
+/// One JSON Lines entry from the managed host log.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct HostLogLine {
+    /// UTC timestamp in RFC 3339 form.
+    pub timestamp: String,
+    /// Stable machine-readable event name.
+    pub event: String,
+    /// Event-specific string values such as a PID, path, or reason.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fields: BTreeMap<String, String>,
+}
+
+/// Why a managed CamillaDSP process is not simply running.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum ManagedProcessState {
+    Running,
+    BackingOff { until: String },
+    GivenUp { reason: String },
+    Stopped,
+    NoSession,
+    OtherUser,
+}
+
+/// Current CamillaDSP supervision state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ManagedProcess {
+    pub state: ManagedProcessState,
+    #[ts(type = "number | null")]
+    pub pid: Option<u32>,
+    pub restarts_in_window: u32,
+}
+
+impl Default for ManagedProcess {
+    fn default() -> Self {
+        Self {
+            state: ManagedProcessState::Stopped,
+            pid: None,
+            restarts_in_window: 0,
+        }
+    }
+}
+
+/// Status returned by the managed host service.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct HostStatus {
+    pub version: String,
+    pub managed: HostManaged,
+    pub camilla: ManagedProcess,
+    pub eqapo_include: IncludeState,
+    pub last_repair: Option<String>,
+}
+
+/// One response returned over the local managed-host pipe.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
+#[ts(export)]
+pub enum HostResponse {
+    Status(Box<HostStatus>),
+    Ok,
+    Log(Vec<HostLogLine>),
+    Error(IpcError),
+}
+
+/// Windows service state visible to the app before a pipe call.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ServiceState {
+    #[default]
+    NotInstalled,
+    Stopped,
+    Running,
+    Unreachable,
+}
+
+/// How the running CamillaDSP configuration compares with the current result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum DesignMatch {
+    /// The title and embedded identity match the current design.
+    This { design_id: String },
+    /// CamillaDSP runs another titled configuration.
+    Other { title: String },
+    /// There is not enough information to identify the running design.
+    Unknown,
+}
+
+/// CamillaDSP status mirrored from the platform-neutral application client.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CamillaStatus {
+    pub version: String,
+    pub state: String,
+    pub stop_reason: Option<String>,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub config_path: Option<String>,
+    pub capture_rate: Option<u32>,
+    #[ts(type = "number | null")]
+    pub clipped_samples: Option<u64>,
+    pub processing_load_pct: Option<f64>,
+    pub playback_peak_db: Option<Vec<f64>>,
+}
+
+/// Reachability and running design reported by CamillaDSP.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CamillaApplyStatus {
+    pub reachable: bool,
+    pub error: Option<IpcError>,
+    pub status: Option<CamillaStatus>,
+    pub design: DesignMatch,
+}
+
+/// Installed and applied state of Equalizer APO.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct EqApoApplyStatus {
+    pub installed: bool,
+    pub variant: EqApoVariant,
+    pub config_path: Option<String>,
+    pub include: IncludeState,
+    pub applied_design_id: Option<String>,
+}
+
+/// Current state of both application targets.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ApplyStatus {
+    pub camilla: CamillaApplyStatus,
+    pub eqapo: EqApoApplyStatus,
+    /// Windows managed-host service state.
+    #[serde(default)]
+    pub host: ServiceState,
+    /// Detailed host state when the service is running and reachable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub host_status: Option<Box<HostStatus>>,
+    /// Design ID of the current result, absent without one; the screen
+    /// compares Equalizer APO's `applied_design_id` with it.
+    #[serde(default)]
+    pub current_design_id: Option<String>,
+}
+
+/// Result of applying an exported design.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum ApplyOutcome {
+    /// The target accepted the design.
+    Applied,
+    /// No CamillaDSP was running; the managed host will start it with the design.
+    HandedOver,
+    /// CamillaDSP rejected reload and the previous path was restored.
+    RolledBack { error: IpcError },
+}
+
+/// Completed application job result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ApplyResult {
+    pub outcome: ApplyOutcome,
+    pub design_id: String,
+    pub folder: String,
+    pub stale: bool,
+}
+
 /// Application-local settings, independent of an open project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -2097,6 +2585,12 @@ pub struct AppSettings {
     /// Opt-in loopback API server.
     #[serde(default)]
     pub local_api: LocalApiSettings,
+    /// Applying designs to CamillaDSP and Equalizer APO.
+    #[serde(default)]
+    pub apply: ApplySettings,
+    /// When to look for and install new releases.
+    #[serde(default)]
+    pub updates: UpdatePolicy,
     /// Recently opened project paths, newest first (at most 10).
     pub recent_projects: Vec<String>,
     /// Last window size in logical pixels.
@@ -2111,6 +2605,8 @@ impl Default for AppSettings {
             icon: AppIcon::Expert,
             skin: AppSkin::Default,
             local_api: LocalApiSettings::default(),
+            apply: ApplySettings::default(),
+            updates: UpdatePolicy::Auto,
             recent_projects: Vec::new(),
             last_window_size: None,
         }
@@ -2122,6 +2618,123 @@ impl Default for AppSettings {
 pub struct AppSettingsParams {
     /// The complete app settings to store.
     pub settings: AppSettings,
+}
+
+/// When SECS 2R looks for and installs new releases (ADR 0020).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum UpdatePolicy {
+    /// Check, download in the background and install when the app closes.
+    #[default]
+    Auto,
+    /// Check and report a newer release; download only on request.
+    Notify,
+    /// Never contact the release server.
+    Off,
+}
+
+/// When a downloaded release is installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum UpdateInstall {
+    /// When the app closes, or at once with a restart.
+    OnExit,
+    /// Only when the user asks (a package that needs an administrator password).
+    OnRequest,
+}
+
+/// Where the application update stands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum UpdatePhase {
+    /// The policy is `off`, or this build has no updater.
+    Off,
+    /// No check has finished since the app started.
+    Idle,
+    /// A check is running.
+    Checking,
+    /// The last check found no newer release.
+    UpToDate,
+    /// A newer release waits for a download request (policy `notify`).
+    Available { version: String },
+    /// A newer release is being downloaded.
+    Downloading {
+        version: String,
+        #[ts(type = "number")]
+        received: u64,
+        #[ts(type = "number | null")]
+        total: Option<u64>,
+    },
+    /// A newer release is downloaded and verified.
+    Ready {
+        version: String,
+        install: UpdateInstall,
+    },
+    /// The installer is starting; the app closes next.
+    Installing { version: String },
+    /// A newer release exists, but this portable copy is replaced by hand.
+    Portable { version: String, url: String },
+    /// The last check, download or install failed.
+    Failed { reason: String },
+}
+
+/// Shown once when the app starts a newer version than it ran last time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct UpdateNotice {
+    /// Version that downloaded the update.
+    pub from: String,
+    /// Version now running.
+    pub to: String,
+    /// The release's CHANGELOG section (Markdown).
+    pub notes: String,
+    /// Releases between `from` and `to` were skipped; their notes are only on
+    /// the release page.
+    pub skipped: bool,
+    /// The release page of `to`.
+    pub release_url: String,
+}
+
+/// The release whose page [`Request::UpdateOpenRelease`] opens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct UpdateOpenReleaseParams {
+    /// A release version such as `0.36.0`, without the `v` of its tag.
+    pub version: String,
+}
+
+/// Application update state for the screen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct UpdateStatus {
+    /// Version now running.
+    pub current: String,
+    /// Stored policy.
+    pub policy: UpdatePolicy,
+    pub phase: UpdatePhase,
+    /// When the last check finished, RFC 3339 UTC.
+    pub checked_at: Option<String>,
+    /// The one-time "updated" notice, until dismissed.
+    pub notice: Option<UpdateNotice>,
+}
+
+/// A downloaded release waiting for its first start: `update.json` in the
+/// app's config folder, written by the app or the host shell and read by the
+/// app on its next start. Not sent over IPC.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingUpdate {
+    /// Version that downloaded the update.
+    pub from: String,
+    /// Version that will run after the install.
+    pub to: String,
+    /// The release's CHANGELOG section (Markdown).
+    pub notes: String,
+    /// The release before `to`, from the update manifest's `previous` field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<String>,
 }
 
 /// App-facing state of the opt-in local API server.
@@ -2158,6 +2771,12 @@ pub enum ErrorCode {
     NotImplemented,
     /// The method opens a window or program and is unavailable to local API clients.
     UiOnly,
+    /// The selected operation or control level is unavailable on this host.
+    Unsupported,
+    /// A target file could not be changed because access was denied.
+    PermissionDenied,
+    /// CamillaDSP or Equalizer APO refused or failed an application request.
+    ApplyFailed,
     /// The call requires an open project.
     ProjectNotOpen,
     /// Opening, reading, or writing project data failed.
@@ -2290,6 +2909,7 @@ mod tests {
                 mdat_scope: None,
                 design_name: None,
                 camilla_devices: None,
+                extra_rates: Vec::new(),
             }),
             Request::JobCancel(JobCancelParams { job: JobId(1) }),
             Request::Jobs,
@@ -2387,6 +3007,22 @@ mod tests {
             Request::AppSettingsSet(AppSettingsParams {
                 settings: AppSettings::default(),
             }),
+            Request::ApplyStatus,
+            Request::ApplyCamilla(ApplyCamillaParams::default()),
+            Request::ApplyEqapo,
+            Request::RevertEqapo,
+            Request::ApplySettingsSet(ApplySettings::default()),
+            Request::HostInstall,
+            Request::HostUninstall,
+            Request::HostStopManaging,
+            Request::UpdateStatus,
+            Request::UpdateCheck,
+            Request::UpdateDownload,
+            Request::UpdateRestart,
+            Request::UpdateNoticeDismiss,
+            Request::UpdateOpenRelease(UpdateOpenReleaseParams {
+                version: "0.36.0".into(),
+            }),
             Request::LocalApiStatus,
             Request::LocalApiTokenRegenerate,
             Request::ComputeStatus,
@@ -2456,10 +3092,25 @@ mod tests {
     }
 
     #[test]
+    fn calibrate_mimo_defaults_false_on_the_wire() {
+        let old: CalibrateParams =
+            serde_json::from_str(r#"{"settings":null,"subs_only":false}"#).unwrap();
+        assert!(!old.mimo);
+        assert_eq!(CalibrateParams::default(), old);
+        let wire = serde_json::to_value(CalibrateParams {
+            mimo: true,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(wire["mimo"], true);
+    }
+
+    #[test]
     fn mdat_scope_is_optional_on_the_wire() {
         let old: ExportParams =
             serde_json::from_str(r#"{"kind":"before_after_mdat","folder":""}"#).unwrap();
         assert_eq!(old.mdat_scope, None);
+        assert!(old.extra_rates.is_empty());
         assert_eq!(old.mdat_scope.unwrap_or_default(), MdatScope::All);
         let wire = serde_json::to_value(&old).unwrap();
         assert!(wire.get("mdat_scope").is_none());

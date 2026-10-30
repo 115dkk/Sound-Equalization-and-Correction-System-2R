@@ -2,6 +2,10 @@
 """Release notes for release.yml: the CHANGELOG.md section of the version,
 or the commit subjects since the previous tag when the section is missing.
 
+With ``--section-only`` it prints the section alone (empty when missing): the
+notes of the updater manifest, which installed copies show after updating
+(ADR 0020).
+
 The pure function is unit-tested in ``test_release_notes.py``.
 """
 from __future__ import annotations
@@ -45,8 +49,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--version", required=True)
     parser.add_argument("--previous", default="")
-    parser.add_argument("--sha", required=True)
+    parser.add_argument("--sha")
+    parser.add_argument("--section-only", action="store_true",
+                        help="print only the CHANGELOG section, empty when it is missing")
     args = parser.parse_args(argv)
+    if args.section_only:
+        section = changelog_section(Path("CHANGELOG.md").read_text(encoding="utf-8"), args.version)
+        print(section or "")
+        return 0
+    if not args.sha:
+        parser.error("--sha is required without --section-only")
 
     with open("UPSTREAM.toml", "rb") as fh:
         upstream_version = tomllib.load(fh)["upstream"]["version"]

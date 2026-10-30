@@ -12,6 +12,62 @@
 # "new" marks what SECS 2 does not have.
 
 [[feature]]
+id = "app.updater"
+kind = "app"
+milestone = "M6"
+status = "implemented"
+upstream = "new; ADR 0020"
+tests = ["secs2r::update_policy_and_portable_decisions", "secs2r::update_endpoint_override_preserves_nonempty_address", "secs2r::update_notice_matches_running_version_and_tracks_skipped_releases", "secs2r::update_actions_reject_wrong_phases", "secs2r::updater_config_requires_signed_version"]
+
+[[feature]]
+id = "ipc.update_status"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new; ADR 0020"
+tests = ["secs2r::update_policy_and_portable_decisions"]
+
+[[feature]]
+id = "ipc.update_check"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new; ADR 0020"
+tests = ["secs2r::update_endpoint_override_preserves_nonempty_address"]
+
+[[feature]]
+id = "ipc.update_download"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new; ADR 0020"
+tests = ["secs2r::update_actions_reject_wrong_phases"]
+
+[[feature]]
+id = "ipc.update_restart"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new; ADR 0020"
+tests = ["secs2r::update_actions_reject_wrong_phases"]
+
+[[feature]]
+id = "ipc.update_notice_dismiss"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new; ADR 0020"
+tests = ["secs2r::update_notice_matches_running_version_and_tracks_skipped_releases"]
+
+[[feature]]
+id = "ipc.update_open_release"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new; ADR 0020"
+tests = ["secs-service::only_plain_release_versions_reach_the_release_url"]
+
+[[feature]]
 id = "engine.peq_fit"
 kind = "engine"
 milestone = "M2"
@@ -768,7 +824,7 @@ id = "measure.native"
 kind = "measure"
 milestone = "M4"
 status = "partial"
-tests = ["secs-audio::sim_round_trip_rates_lengths_latencies_and_relative_arrivals", "secs-audio::dolby_golden_ir_round_trip", "secs-audio::loopback_recovers_absolute_latency", "secs-audio::snr_matches_known_white_noise_within_one_db", "secs-audio::cancellation_during_position_returns_no_roles", "secs-audio::session_starts_input_before_output", "secs-audio::measurement_rejects_recording_issues_in_priority_order", "secs-service::test_measure_two_positions_then_redo_last"]
+tests = ["secs-audio::sim_round_trip_rates_lengths_latencies_and_relative_arrivals", "secs-audio::dolby_golden_ir_round_trip", "secs-audio::loopback_recovers_absolute_latency", "secs-audio::snr_matches_known_white_noise_within_one_db", "secs-audio::cancellation_during_position_returns_no_roles", "secs-audio::session_starts_input_before_output", "secs-audio::measurement_rejects_recording_issues_in_priority_order", "secs-audio::input_meter_reports_selected_channel_and_tolerates_skipped_windows", "secs-service::test_measure_two_positions_then_redo_last"]
 note = "new: sweep/session/IR core, simulated room and native OS adapters; maintainer hardware run remains (docs/adr/0005, docs/HARDWARE.md)"
 
 [[feature]]
@@ -892,7 +948,7 @@ id = "cli.commands"
 kind = "cli"
 milestone = "M4"
 status = "implemented"
-tests = ["secs2r-cli::bootstrap_and_check_are_json_lines", "secs2r-cli::deterministic_run_and_sample_flow", "secs2r-cli::errors_exit_one_and_quiet_omits_events"]
+tests = ["secs2r-cli::bootstrap_and_check_are_json_lines", "secs2r-cli::deterministic_run_and_sample_flow", "secs2r-cli::errors_exit_one_and_quiet_omits_events", "secs2r-cli::calibrate_parses_mimo_flag"]
 
 [[feature]]
 id = "service.jobs"
@@ -944,8 +1000,8 @@ id = "service.level_monitor"
 kind = "service"
 milestone = "M5"
 status = "partial"
-tests = ["secs-service::mock_monitor_emits_stores_excludes_and_stops", "secs-service::generic_cancel_ends_monitor_during_an_active_burst"]
-note = "mock readings arrive about ten times a second and REW readings at its callback rate (about six) while a role plays; the native path reads real samples but sends them after the capture ends, and no path meters the idle mic before level_play. A streaming input session in secs-audio/secs-sys finishes it."
+tests = ["secs-service::mock_monitor_emits_stores_excludes_and_stops", "secs-service::native_monitor_meters_while_idle_and_closes_it_before_a_play", "secs-service::generic_cancel_ends_monitor_during_an_active_burst"]
+note = "mock readings arrive during a play, REW readings arrive at its callback rate, and the native path meters the idle input in 0.1 s windows while closing that input before each play."
 
 [[feature]]
 id = "service.status_watch"
@@ -1058,7 +1114,41 @@ tests = [
   "secs-filters::convolution_bundle_contains_complete_paths_and_is_atomic",
   "secs-service::convolution_export_with_subs_and_mimo_reopens_byte_identically",
 ]
-note = "New: complete 48 kHz f32 convolution IRs fold FIR, PEQ, crossovers, all-pass, gain, polarity and delay into one WAV and exact-DTFT CSV per reachable input/output pair, with routing metadata and shared headroom."
+note = "New: complete f32 convolution IRs fold FIR, PEQ, crossovers, all-pass, gain, polarity and delay into one WAV and exact-DTFT CSV per reachable input/output pair, with routing metadata and shared headroom. Additional output rates are written into rate-named subfolders."
+
+[[feature]]
+id = "export.output_rate"
+kind = "export"
+milestone = "M6"
+status = "implemented"
+upstream = "new (miniDSP differs from upstream)"
+tests = [
+  "secs-project::output_rate_defaults_follow_presets_and_unknown_profiles_use_48k",
+  "secs-project::output_rate_round_trips_auto_and_every_fixed_rate",
+  "secs-service::output_rate_resolver_uses_fixed_and_supported_default_rates",
+  "secs-service::output_rate_resolver_falls_back_for_bad_missing_and_failed_defaults",
+  "secs-camilla::output_rates_change_camilla_samplerate_delays_and_fir_wavs",
+  "secs-camilla::output_rates_resize_full_and_low_rate_mimo_firs",
+  "secs-filters::output_rates_change_eqapo_text_and_convolution_bundles",
+  "secs-service::changing_only_output_rate_keeps_calibration_fresh_for_export",
+]
+note = "Projects keep a fixed or automatic output sample rate outside calibration identity. Export resolves automatic mode from the default output device, falls back to 48 kHz with a notice, converts every filter bundle explicitly, and keeps REW mdat at 48 kHz. The miniDSP preset uses 96 kHz; convolution exports may include distinct additional supported rates."
+
+[[feature]]
+id = "export.convolution_reaper"
+kind = "export"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = [
+  "secs-filters::reaper_script_uses_routing_order_and_quotes_names",
+  "secs-filters::reaper_script_compiles_when_luac_is_available",
+  "secs-filters::reaper_script_replaces_tracks_and_restores_failed_builds",
+  "secs-filters::reaper_plays_convolution_bundles_as_written",
+  "secs-filters::convolution_bundle_contains_complete_paths_and_is_atomic",
+  "secs-service::convolution_export_with_subs_and_mimo_reopens_byte_identically",
+]
+note = "New: a relocatable ReaScript builds mono per-path ReaVerb tracks and an output bus, replaces its previous tagged tracks, and disables the source master send. No extensions required."
 
 [[feature]]
 id = "export.camilla_mimo"
@@ -1076,6 +1166,91 @@ status = "implemented"
 tests = ["secs-export::mimo_items_match_four_oracles"]
 upstream = "calibration.py stage_items, before_after_items"
 
+[[feature]]
+id = "ipc.apply_status"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::eqapo_status_reads_injected_install_and_applied_manifest", "secs-service::apply_camilla_covers_success_rejection_rollback_folder_and_design_matches"]
+
+[[feature]]
+id = "ipc.apply_camilla"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::apply_camilla_covers_success_rejection_rollback_folder_and_design_matches", "secs-apply::failed_rollback_carries_both_reload_errors"]
+
+[[feature]]
+id = "ipc.apply_eqapo"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::apply_eqapo_installs_reapplies_repairs_once_and_removes_stale_files"]
+
+[[feature]]
+id = "ipc.revert_eqapo"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::revert_eqapo_removes_only_the_managed_pair_and_keeps_bundle"]
+
+[[feature]]
+id = "ipc.apply_settings_set"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::apply_settings_round_trip_and_legacy_defaults", "secs-service::apply_settings_rejects_addresses_without_a_port", "secs2r-cli::apply_commands_parse", "secs-sys::equalizer_apo_variant_follows_the_install_folder_name"]
+
+[[feature]]
+id = "ipc.host_install"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::managed_host_status_and_missing_camilla_executable_are_typed"]
+
+[[feature]]
+id = "ipc.host_uninstall"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::managed_host_status_and_missing_camilla_executable_are_typed"]
+
+[[feature]]
+id = "ipc.host_stop_managing"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::managed_host_status_and_missing_camilla_executable_are_typed"]
+
+[[feature]]
+id = "apply.managed_host"
+kind = "service"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs2r-host::state_file_round_trip_missing_and_corrupt_handling", "secs2r-host::exit_logon_and_logoff_choose_supervision_actions", "secs2r-host::file_change_repairs_only_absent_or_damaged_pairs", "secs2r-host::log_rotates_once_at_the_size_cap"]
+
+[[feature]]
+id = "host.shell"
+kind = "app"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = [
+  "secs2r-host-shell::status_composition_marks_pipe_failures_unreachable",
+  "secs2r-host-shell::log_line_clamp_stays_between_one_and_two_hundred",
+  "secs2r-host-shell::main_app_selection_prefers_portable_name",
+  "secs2r-host-shell::hidden_argument_is_order_independent",
+]
+
 # ---- Screens (M5) ----
 
 [[feature]]
@@ -1085,6 +1260,15 @@ milestone = "M5"
 status = "partial"
 tests = []
 note = "five-stage flow, results first, three disclosure levels (docs/ARCHITECTURE.md, Screens). P29 landed the foundation: tokens, the frame with the step rail and status, the job tray, the component kit, the uPlot graphs, the SVG maps, the mock service and the gallery (docs/DESIGN.md). Its vitest tests live in apps/secs2r/ui, which this registry cannot reference (it lists cargo tests). P33 connects the P30-P32 screens through typed stores, explicit mutation/job invalidation, per-call Tauri channels, project/close dialogs and lifecycle hooks. src/state/flow.test.tsx walks a non-tutorial sample project through mock measure_position jobs, calibration and CamillaDSP export; per-screen hook tests pin action IPC params. app.live exercises the full mock app. P35 supplies the complete tutorial quests. P55 moves static setting explanations into contextual help while retaining live state, recommendations and recovery inline; labels and both locales are revised, with pointer/keyboard/touch and disabled-control coverage in the UI tests."
+
+[[feature]]
+id = "ui.output_rate"
+kind = "ui"
+milestone = "M6"
+status = "partial"
+tests = ["secs-service::dsp_output_rate_follows_presets_and_only_camilla_or_custom_is_editable", "secs-service::changing_only_output_rate_keeps_calibration_fresh_for_export"]
+upstream = "new; docs/adr/0017-output-sample-rate.md"
+note = "P116-P117: System selects the export DSP's output rate, or shows its device-fixed rate. Correction counts channel FIR taps and the MIMO FIR budget at that rate. Export names non-default rates, selects extra convolution rates and reports automatic-rate fallback with a System action. Rate-only edits keep the DSP profile; automatic export skips an extra rate matching the resolved rate. Like ui.skins, this entry stays partial because the registry lists Cargo tests, not the screen's Vitest tests. The listed service tests cover the DSP contract; UI coverage is in apps/secs2r/ui/src/screens/system/{SystemScreen,useSystemScreen}.test.tsx, screens/system/outputRate.test.ts, screens/calibrate/{CalibrateScreen,useCalibrateScreen}.test.tsx, screens/export/{ExportScreen,useExportScreen}.test.tsx, ipc/mock.test.ts and state/writers.test.ts. Eight specimens and stable ids are recorded in docs/DESIGN.md and docs/M5-reach.md."
 
 [[feature]]
 id = "ui.skins"
@@ -1119,7 +1303,7 @@ kind = "release"
 milestone = "M0"
 status = "partial"
 tests = []
-note = "release.yml: Windows NSIS + portable zip, macOS dmg, Linux AppImage + deb, shipping every prerelease since 0.0.1. The gate is tested by .github/scripts/test_release_gate.py, which this registry cannot reference (it lists cargo tests), so the entry stays partial. Before upload the macOS dmg is launched and must measure a mock room, calibrate and export through its own screen (.github/scripts/macos_app_check.py, apps/secs2r/src/self_test.rs)."
+note = "release.yml: Windows NSIS + portable zip, macOS dmg, Linux AppImage + deb, shipping every prerelease since 0.0.1. The gate is tested by .github/scripts/test_release_gate.py, which this registry cannot reference (it lists cargo tests), so the entry stays partial. Before upload the macOS dmg is launched and must measure a mock room, calibrate and export through its own screen; the native launch must also play and record both stereo channels through pinned BlackHole, with stored levels and loopback impulses checked (.github/scripts/macos_app_check.py, test_macos_app_check.py, blackhole.py, test_blackhole.py, apps/secs2r/src/self_test.rs)."
 
 [[feature]]
 id = "release.updater"
@@ -1170,7 +1354,7 @@ id = "ipc.calibrate"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::cancelled_calibration_preserves_previous_results"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-types::calibrate_mimo_defaults_false_on_the_wire", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::cancelled_calibration_preserves_previous_results", "secs-service::calibrate_with_mimo_matches_separate_runs_and_orders_progress", "secs-service::calibrate_with_mimo_refuses_disabled_and_too_few_positions_before_starting", "secs-service::cancelling_calibrate_during_mimo_keeps_only_the_new_calibration", "secs-service::mimo_failure_after_combined_calibration_keeps_calibration_and_marks_stage", "sound-equalization-and-correction-system-rust-api::engine_calibrate_passes_the_mimo_flag", "secs2r-cli::calibrate_parses_mimo_flag"]
 
 [[feature]]
 id = "ipc.recommend_xo"
@@ -1194,12 +1378,20 @@ status = "implemented"
 tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::stale_calibration_exports_with_flag_and_cache_survives_reopen"]
 
 [[feature]]
+id = "results.mimo_scorecard"
+kind = "ipc"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-engine::mimo_scorecard_matches_applied_response_and_reports_late_energy", "secs-engine::mimo_scorecard_and_late_energy_are_deterministic_across_threads", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::old_cache_without_scorecard_fields_loads_empty_lists"]
+note = "Adds post-MIMO scorecard metrics and per-position 20–150 Hz late energy; this result summary is new in SECS 2R and is not upstream."
+
+[[feature]]
 id = "ipc.export"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-types::mdat_scope_is_optional_on_the_wire", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration"]
-note = "Export IPC covers CamillaDSP, mdat, filter text, Equalizer APO, and complete convolution bundles, including typed export_scope reasons and the REW mdat's optional mdat_scope."
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-types::mdat_scope_is_optional_on_the_wire", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::room_dba_mimo_runs_and_becomes_stale_after_recalibration", "secs-service::output_rate_resolver_falls_back_for_bad_missing_and_failed_defaults", "secs-service::changing_only_output_rate_keeps_calibration_fresh_for_export"]
+note = "Export IPC covers CamillaDSP, mdat, filter text, Equalizer APO, and complete convolution bundles, including typed export_scope reasons, the REW mdat's optional mdat_scope, additional convolution rates, the resolved output rate, and automatic-rate fallback notices."
 
 [[feature]]
 id = "ipc.job_cancel"
@@ -1374,14 +1566,16 @@ id = "ipc.dsp_get"
 kind = "ipc"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-service::project_edit_surface_round_trips_dsp_layout_target_and_calibration"]
+tests = ["secs-service::project_edit_surface_round_trips_dsp_layout_target_and_calibration", "secs-service::dsp_output_rate_follows_presets_and_only_camilla_or_custom_is_editable"]
+note = "DSP fields include the fixed or automatic output rate and whether the selected profile permits editing it."
 
 [[feature]]
 id = "ipc.dsp_set"
 kind = "ipc"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-service::service_config_oracle_replays_values_and_saved_project_bytes"]
+tests = ["secs-service::service_config_oracle_replays_values_and_saved_project_bytes", "secs-service::dsp_output_rate_follows_presets_and_only_camilla_or_custom_is_editable"]
+note = "Preset selection applies its output rate. Manual rate changes accept automatic mode or a supported fixed rate only while CamillaDSP or custom is selected."
 
 [[feature]]
 id = "ipc.layout_get"
@@ -1579,7 +1773,8 @@ kind = "ipc"
 milestone = "M5"
 status = "implemented"
 upstream = "step5_measure.py magnitude_db"
-tests = ["secs-service::measurement_curves_match_oracle_and_selection"]
+tests = ["secs-engine::split_measurement_transform_preserves_upstream_normalization", "secs-service::measurement_curves_match_oracle_and_selection", "secs-service::measurement_curves_share_the_configured_reference"]
+note = "U17: every displayed curve uses one stored main measurement reference, or a 40-120 Hz sub reference in sub-only projects; request filters do not change it"
 
 [[feature]]
 id = "ipc.result_curves"
@@ -1611,7 +1806,7 @@ kind = "service"
 milestone = "M5"
 status = "implemented"
 upstream = "step5_measure.py and step_calibration.py display curves and result lines"
-tests = ["secs-service::measurement_curves_match_oracle_and_selection", "secs-service::result_display_matches_replayed_oracle", "secs-service::result_curves_lines_take_values_and_staleness", "secs-service::curve_requests_validate_and_require_project", "secs-service::subs_only_run_feeds_the_ba_tab_until_the_next_full_run"]
+tests = ["secs-service::measurement_curves_match_oracle_and_selection", "secs-service::measurement_curves_share_the_configured_reference", "secs-service::result_display_matches_replayed_oracle", "secs-service::result_curves_lines_take_values_and_staleness", "secs-service::curve_requests_validate_and_require_project", "secs-service::subs_only_run_feeds_the_ba_tab_until_the_next_full_run"]
 # ---- Host and live service IPC (M5) ----
 
 [[feature]]
@@ -1743,3 +1938,92 @@ kind = "ipc"
 milestone = "M5"
 status = "implemented"
 tests = ["secs-service::stored_export_folder_survives_save_and_open"]
+
+[[feature]]
+id = "engine.rc_hi_basis"
+kind = "engine"
+milestone = "M5"
+status = "implemented"
+upstream = "correction_engine.py schroeder_hz; ADR 0021 (D46)"
+tests = ["secs-engine::rc_lenient_synthetic_decay_bands_follow_room_treatment", "secs-engine::rc_lenient_uses_every_main_and_position_without_reference_weighting", "secs-engine::rc_agreement_stops_at_first_non_improving_band_and_weights_positions", "secs-engine::rc_agreement_design_runs_two_passes_and_preserves_manual_override", "secs-project::rc_upper_round_trip_and_legacy_unknown_defaults", "secs-service::rc_agreement_calibration_fails_with_typed_position_reason", "secs-service::rc_limit_notices_keep_legacy_fields_and_add_basis_evidence"]
+
+[[feature]]
+id = "engine.rc_hi_transition"
+kind = "engine"
+milestone = "M5"
+status = "implemented"
+upstream = "wizard/step_calibration.py RC range; ADR 0021 (D46)"
+tests = ["secs-engine::rc_transition_multiplies_then_clamps_and_requires_volume", "secs-engine::rc_schroeder_design_applies_basis_factor_and_evidence", "secs-types::rc_upper_defaults_and_each_setting_change_engine_key", "secs-project::rc_upper_round_trip_and_legacy_unknown_defaults"]
+
+[[feature]]
+id = "calibration.edit_rc_hi_basis"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "ADR 0021; calibration_settings_edit RcHiBasis"
+tests = ["secs-service::rc_upper_edits_persist_and_reject_invalid_factors", "secs-service::rc_upper_edits_mark_calibration_stale"]
+
+[[feature]]
+id = "calibration.edit_rc_hi_transition"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "ADR 0021; calibration_settings_edit RcHiTransition"
+tests = ["secs-service::rc_upper_edits_persist_and_reject_invalid_factors", "secs-service::rc_upper_edits_mark_calibration_stale"]
+
+[[feature]]
+id = "engine.low_protect"
+kind = "engine"
+milestone = "M5"
+status = "implemented"
+upstream = "new; ADR 0022 (D47), correction_engine.py RC and sub PEQ"
+tests = [
+  "secs-engine::low_protect_rolloff_uses_weighted_power_and_filtered_passband",
+  "secs-engine::low_protect_realized_guard_scales_leaking_boosts_and_reports_infeasible",
+  "secs-engine::low_protect_rc_realized_response_in_peq_and_fir_modes",
+  "secs-engine::low_protect_sub_export_bus_bundle_and_user_highpass",
+  "secs-engine::low_protect_flat_channels_leave_the_design_unchanged",
+  "secs-types::low_protect_defaults_off_and_preserves_legacy_engine_key",
+  "secs-project::low_protect_round_trip_and_legacy_default",
+]
+note = "Default off. Weighted-power rolloff, target mask, realized +0.5 dB guard and export-only LR24 sub protection; no change to MIMO's range finder."
+
+[[feature]]
+id = "calibration.edit_low_protect"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "new; ADR 0022, calibration_settings_edit LowProtect"
+tests = ["secs-service::low_protect_edits_persist_and_mark_results_stale", "secs-service::low_protect_notices_include_outcome_and_optional_highpass"]
+
+[[feature]]
+id = "cli.low_protect"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "new; project set --low-protect on|off"
+tests = ["secs2r-cli::project_set_persists_low_protect_switch"]
+
+[[feature]]
+id = "apply.camilla_ws"
+kind = "apply"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-apply::camilla_ws"]
+
+[[feature]]
+id = "apply.eqapo_config"
+kind = "apply"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-apply::eqapo_config"]
+
+[[feature]]
+id = "apply.supervise"
+kind = "apply"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-apply::supervise"]
