@@ -17,7 +17,7 @@ GPL은 프로그램을 배포할 때만 소스 공개를 요구합니다. 엔진
 - **앱과 게시하지 않는 크레이트는 GPL-3.0-only 그대로입니다.** `apps/` 아래 앱, `secs-sys`, `secs-gpu`, `secs-cuda-sys`, `secs-local-api`, `secs-policy`, `secs-oracle`, `secs-engine-testkit`이 그렇습니다. 앱은 GPLv3 13조에 따라 AGPL 크레이트와 하나로 결합해 배포할 수 있고, 결합한 작품 가운데 AGPL 크레이트 부분에는 AGPL의 조건이 그대로 적용됩니다. 앱의 로컬 API는 127.0.0.1에서만 열리므로 다른 사람에게 네트워크 서비스를 제공하는 경우에 해당하지 않습니다.
 - **원문과 사본.** 저장소 루트에 AGPL-3.0 원문 `LICENSE-AGPL`(https://www.gnu.org/licenses/agpl-3.0.txt, SHA-256 `0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0`)을 둡니다. 루트 `LICENSE`(GPL-3.0)는 업스트림 파일이므로 그대로 둡니다. 게시 크레이트마다의 `LICENSE`는 `LICENSE-AGPL`의 사본이고, `secs-policy`의 게시 검사가 사본과 원문이 같은지, 게시 크레이트의 `license`가 `AGPL-3.0-only`인지, 게시하지 않는 크레이트가 작업 공간의 GPL을 따르는지 확인합니다.
 - **의존성 검사.** `cargo deny`의 라이선스 허용 목록에는 AGPL을 넣지 않고, 우리 게시 크레이트 16개에만 예외로 허용합니다. 서드파티 AGPL 크레이트는 지금처럼 들이지 않습니다.
-- **이미 올린 판은 그대로입니다.** crates.io에 이미 올린 판(api-v0.4.1까지)은 GPL-3.0-only로 남고, 다음 라이브러리 판부터 AGPL-3.0-only입니다.
+- **이미 올린 판은 그대로입니다.** crates.io에 이미 올린 판(api-v0.5.0까지)은 GPL-3.0-only로 남고, 다음 라이브러리 판부터 AGPL-3.0-only입니다.
 
 ## 결과
 

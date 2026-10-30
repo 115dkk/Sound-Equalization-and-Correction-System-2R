@@ -8,7 +8,7 @@ crates.io에 올리는 크레이트와 PyPI 패키지의 라이선스를 AGPL-3.
 
 ### 바뀐 것
 
-- 공개 API 크레이트 `sound-equalization-and-correction-system-rust-api`와 그것이 의존하는 `secs-*` 크레이트 15개는 다음 라이브러리 판부터 GNU Affero General Public License v3(AGPL-3.0-only)입니다. 이 크레이트를 고쳐 네트워크 서비스로 제공하면 그 서비스의 사용자에게 수정한 소스를 제공해야 합니다. 업스트림 저작자 KIM-O-O(스피커 갤러리 김ㅇㅇ)께서 이 재라이선스를 허락해 주셨습니다(docs/adr/0023). 이미 올린 판(api-v0.4.1까지)은 GPL-3.0-only 그대로이고, 라이선스가 바뀌므로 라이브러리 판은 minor를 올립니다.
+- 공개 API 크레이트 `sound-equalization-and-correction-system-rust-api`와 그것이 의존하는 `secs-*` 크레이트 15개는 다음 라이브러리 판부터 GNU Affero General Public License v3(AGPL-3.0-only)입니다. 이 크레이트를 고쳐 네트워크 서비스로 제공하면 그 서비스의 사용자에게 수정한 소스를 제공해야 합니다. 업스트림 저작자 KIM-O-O(스피커 갤러리 김ㅇㅇ)께서 이 재라이선스를 허락해 주셨습니다(docs/adr/0023). 이미 올린 판(api-v0.5.0까지)은 GPL-3.0-only 그대로이고, 라이선스가 바뀌므로 라이브러리 판은 minor를 올립니다.
 - SECS 2R 앱과 crates.io에 올리지 않는 크레이트는 지금처럼 GPL-3.0-only입니다.
 
 ## 0.36.0 - 2026-10-30
