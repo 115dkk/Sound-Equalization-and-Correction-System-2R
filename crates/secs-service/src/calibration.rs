@@ -50,7 +50,12 @@ impl Service {
         params: CalibrateParams,
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
+        let run_mimo = params.mimo && !params.subs_only;
+        let selection = run_mimo.then(|| self.require_acceleration()).transpose()?;
         let snapshot = self.snapshot(params.settings)?;
+        if run_mimo {
+            check_mimo_preconditions(&snapshot.project, &snapshot.settings)?;
+        }
         let subs_only = params.subs_only;
         let session = self.session.clone();
         let memory = self.deps.memory.available_bytes();
@@ -73,11 +78,17 @@ impl Service {
                 &ctx,
             )
             .map_err(engine_error)?;
-            let design = calibration.design;
+            let design = Arc::new(calibration.design);
             // The 2 s export view is built outside the session lock.
             let late_energy = secs_engine::late_energy(&design).map_err(engine_error)?;
             let ticket = prepared.ticket;
-            let (path, cached) = session::commit(&session, ticket, &job, |open| {
+            let calibration_key = run_key(
+                &prepared.signature,
+                &prepared.target_key,
+                &prepared.settings.engine_key(),
+                &prepared.config_key,
+            );
+            let commit_calibration = |open: &mut session::OpenProject| {
                 let mut summary = summarize(&design, &prepared.settings, &late_energy);
                 if calibration.resampled > 0 {
                     summary.notes.push(Notice {
@@ -89,20 +100,14 @@ impl Service {
                         .into(),
                     });
                 }
-                let run_key = run_key(
-                    &prepared.signature,
-                    &prepared.target_key,
-                    &prepared.settings.engine_key(),
-                    &prepared.config_key,
-                );
                 let run = CalibrationRun::new(
                     summary,
                     prepared.settings.clone(),
                     prepared.signature,
                     prepared.target_key,
                     prepared.config_key,
-                    run_key,
-                    Arc::new(design),
+                    calibration_key.clone(),
+                    design.clone(),
                 );
                 open.results.commit_calibration(run, subs_only);
                 let stores_settings =
@@ -114,13 +119,30 @@ impl Service {
                     (open.path.clone(), open.results.cache_snapshot()),
                     stores_settings,
                 ))
-            })?;
+            };
+            let (path, cached) = if run_mimo {
+                session::commit_phase(&session, ticket, &job, commit_calibration)?
+            } else {
+                session::commit(&session, ticket, &job, commit_calibration)?
+            };
             let owner = if subs_only {
                 CacheOwner::Subs
             } else {
                 CacheOwner::Calibration
             };
             persist_cache(cached, &path, ticket, &session, owner);
+            if let Some(selection) = selection {
+                compute_and_commit_mimo(
+                    &session,
+                    ticket,
+                    &job,
+                    memory,
+                    design,
+                    prepared.settings,
+                    selection,
+                    calibration_key,
+                )?;
+            }
             Ok(JobResult::Calibration)
         })
     }
@@ -173,13 +195,13 @@ impl Service {
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
         let selection = self.require_acceleration()?;
-        let compute_key = crate::compute::ComputeIdentity::from(&selection.status);
         let session_guard = lock(&self.session);
         let open = session_guard.require().map_err(IpcError::from)?;
         let ticket = session_guard.ticket()?;
         let settings = params
             .settings
             .unwrap_or_else(|| calibration_from_project(open.store.project()));
+        check_mimo_preconditions(open.store.project(), &settings)?;
         let calibration = open.results.live_calibration().ok_or_else(|| {
             IpcError::new(ErrorCode::EngineInput, "calibration must run before MIMO")
         })?;
@@ -201,74 +223,16 @@ impl Service {
         let memory = self.deps.memory.available_bytes();
         let session = self.session.clone();
         self.jobs.start(JobKind::Mimo, events, move |job| {
-            let ctx = compute_context(&job, memory);
-            let run = secs_engine::mimo::compute_with_acceleration(
-                &design,
-                design.replay.measurements(),
-                design.replay.config(),
-                &settings,
-                &Tuning::default(),
-                &ctx,
-                &selection,
-            )
-            .map_err(engine_error)?;
-            let (path, cached) = session::commit(&session, ticket, &job, |open| {
-                let summary = MimoSummary {
-                    stale: false,
-                    kind: if run.fir { "fir" } else { "iir" }.into(),
-                    fsiso: run.paths.fsiso,
-                    support_count: run.paths.paths.len(),
-                    fir_taps_total: run
-                        .paths
-                        .paths
-                        .iter()
-                        .map(|path| path.filter.fir_len_48k())
-                        .sum(),
-                    notes: run
-                        .notes
-                        .iter()
-                        .flat_map(notices)
-                        .chain((run.compute.fallbacks > 0).then(|| Notice {
-                            code: "compute_fallback".into(),
-                            params: [("count".into(), run.compute.fallbacks.to_string())].into(),
-                        }))
-                        .collect(),
-                    input_count: run
-                        .paths
-                        .paths
-                        .iter()
-                        .map(|path| &path.input)
-                        .collect::<std::collections::BTreeSet<_>>()
-                        .len(),
-                    scorecard: run
-                        .scorecard
-                        .iter()
-                        .map(|score| MimoChannelScore {
-                            role: score.role.clone(),
-                            after_mimo: metrics(score.after_mimo),
-                        })
-                        .collect(),
-                    late_energy: run
-                        .late_energy
-                        .iter()
-                        .map(|row| MimoLateEnergy {
-                            role: row.role.clone(),
-                            position: row.position,
-                            after_mimo_db: row.after_mimo_db,
-                        })
-                        .collect(),
-                    compute: run.compute.clone(),
-                };
-                open.results.commit_mimo(MimoResult {
-                    summary,
-                    settings_key: settings.mimo_key(),
-                    compute_key,
-                    calibration_key,
-                    run,
-                });
-                Ok(((open.path.clone(), open.results.cache_snapshot()), false))
-            })?;
-            persist_cache(cached, &path, ticket, &session, CacheOwner::Mimo);
+            compute_and_commit_mimo(
+                &session,
+                ticket,
+                &job,
+                memory,
+                design,
+                settings,
+                selection,
+                calibration_key,
+            )?;
             Ok(JobResult::Mimo)
         })
     }
@@ -299,6 +263,110 @@ impl Service {
             project_settings,
             settings,
         })
+    }
+}
+
+fn check_mimo_preconditions(
+    project: &Project,
+    settings: &CalibrationSettings,
+) -> Result<(), IpcError> {
+    if !settings.mimo_on {
+        return Err(engine_error(secs_engine::EngineError::Input(
+            "MIMO is disabled".into(),
+        )));
+    }
+    let positions = secs_project::measured_positions(project).len();
+    let (available, reason) = secs_engine::mimo::availability(positions);
+    if !available {
+        return Err(engine_error(secs_engine::EngineError::Input(reason)));
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn compute_and_commit_mimo(
+    session: &Arc<std::sync::Mutex<session::Session>>,
+    ticket: ProjectTicket,
+    job: &JobContext,
+    memory: u64,
+    design: Arc<Design>,
+    settings: CalibrationSettings,
+    selection: secs_engine::mimo::AccelerationSelection,
+    calibration_key: String,
+) -> Result<(), IpcError> {
+    let compute_key = crate::compute::ComputeIdentity::from(&selection.status);
+    let ctx = compute_context(job, memory);
+    let run = secs_engine::mimo::compute_with_acceleration(
+        &design,
+        design.replay.measurements(),
+        design.replay.config(),
+        &settings,
+        &Tuning::default(),
+        &ctx,
+        &selection,
+    )
+    .map_err(|error| engine_error(error).with_param("stage", "mimo"))?;
+    let (path, cached) = session::commit(session, ticket, job, |open| {
+        let summary = summarize_mimo(&run);
+        open.results.commit_mimo(MimoResult {
+            summary,
+            settings_key: settings.mimo_key(),
+            compute_key,
+            calibration_key,
+            run,
+        });
+        Ok(((open.path.clone(), open.results.cache_snapshot()), false))
+    })?;
+    persist_cache(cached, &path, ticket, session, CacheOwner::Mimo);
+    Ok(())
+}
+
+fn summarize_mimo(run: &secs_engine::mimo::MimoRun) -> MimoSummary {
+    MimoSummary {
+        stale: false,
+        kind: if run.fir { "fir" } else { "iir" }.into(),
+        fsiso: run.paths.fsiso,
+        support_count: run.paths.paths.len(),
+        fir_taps_total: run
+            .paths
+            .paths
+            .iter()
+            .map(|path| path.filter.fir_len_48k())
+            .sum(),
+        notes: run
+            .notes
+            .iter()
+            .flat_map(notices)
+            .chain((run.compute.fallbacks > 0).then(|| Notice {
+                code: "compute_fallback".into(),
+                params: [("count".into(), run.compute.fallbacks.to_string())].into(),
+            }))
+            .collect(),
+        input_count: run
+            .paths
+            .paths
+            .iter()
+            .map(|path| &path.input)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        scorecard: run
+            .scorecard
+            .iter()
+            .map(|score| MimoChannelScore {
+                role: score.role.clone(),
+                after_mimo: metrics(score.after_mimo),
+            })
+            .collect(),
+        late_energy: run
+            .late_energy
+            .iter()
+            .map(|row| MimoLateEnergy {
+                role: row.role.clone(),
+                position: row.position,
+                after_mimo_db: row.after_mimo_db,
+            })
+            .collect(),
+        compute: run.compute.clone(),
     }
 }
 

@@ -50,7 +50,7 @@ fn live_and_reopened_results_have_equal_descriptions_for_every_export_kind() {
     open(&service);
     let completion = Arc::new(Completion::default());
     assert!(
-        matches!(service.call(Request::Calibrate(CalibrateParams { settings: Some(settings), subs_only: false }), completion.clone()), Envelope::Ok(response) if matches!(*response, Response::Calibrate(_)))
+        matches!(service.call(Request::Calibrate(CalibrateParams { settings: Some(settings), ..Default::default() }), completion.clone()), Envelope::Ok(response) if matches!(*response, Response::Calibrate(_)))
     );
     let (event, wait) = completion
         .ready

@@ -892,7 +892,7 @@ id = "cli.commands"
 kind = "cli"
 milestone = "M4"
 status = "implemented"
-tests = ["secs2r-cli::bootstrap_and_check_are_json_lines", "secs2r-cli::deterministic_run_and_sample_flow", "secs2r-cli::errors_exit_one_and_quiet_omits_events"]
+tests = ["secs2r-cli::bootstrap_and_check_are_json_lines", "secs2r-cli::deterministic_run_and_sample_flow", "secs2r-cli::errors_exit_one_and_quiet_omits_events", "secs2r-cli::calibrate_parses_mimo_flag"]
 
 [[feature]]
 id = "service.jobs"
@@ -1213,7 +1213,7 @@ id = "ipc.calibrate"
 kind = "ipc"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::cancelled_calibration_preserves_previous_results"]
+tests = ["secs-types::every_method_name_is_listed_and_parses", "secs-types::calibrate_mimo_defaults_false_on_the_wire", "secs-service::oracle_project_calibrates_recommends_xo_and_exports", "secs-service::cancelled_calibration_preserves_previous_results", "secs-service::calibrate_with_mimo_matches_separate_runs_and_orders_progress", "secs-service::calibrate_with_mimo_refuses_disabled_and_too_few_positions_before_starting", "secs-service::cancelling_calibrate_during_mimo_keeps_only_the_new_calibration", "secs-service::mimo_failure_after_combined_calibration_keeps_calibration_and_marks_stage", "sound-equalization-and-correction-system-rust-api::engine_calibrate_passes_the_mimo_flag", "secs2r-cli::calibrate_parses_mimo_flag"]
 
 [[feature]]
 id = "ipc.recommend_xo"

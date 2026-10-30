@@ -64,7 +64,12 @@ enum Action {
         position: i64,
     },
     /// Compute a calibration.
-    Calibrate { project: PathBuf },
+    Calibrate {
+        project: PathBuf,
+        /// Compute MIMO after the correction in the same job.
+        #[arg(long)]
+        mimo: bool,
+    },
     /// Recommend crossover frequencies.
     RecommendXo { project: PathBuf },
     /// Calibrate first, then compute MIMO support paths.
@@ -405,9 +410,14 @@ impl Runner {
         }));
     }
 
-    fn calibrate(&mut self, settings: Option<secs_types::calibration::CalibrationSettings>) {
+    fn calibrate(
+        &mut self,
+        settings: Option<secs_types::calibration::CalibrationSettings>,
+        mimo: bool,
+    ) {
         self.call(Request::Calibrate(CalibrateParams {
             settings,
+            mimo,
             ..Default::default()
         }));
     }
@@ -603,9 +613,9 @@ fn run(action: Action, runner: &mut Runner) {
             }));
             runner.save();
         }
-        Action::Calibrate { project } => {
+        Action::Calibrate { project, mimo } => {
             runner.open(&project);
-            runner.calibrate(None);
+            runner.calibrate(None, mimo);
             runner.call(Request::Results);
         }
         Action::RecommendXo { project } => {
@@ -614,7 +624,7 @@ fn run(action: Action, runner: &mut Runner) {
         }
         Action::Mimo { project } => {
             runner.open(&project);
-            runner.calibrate(None);
+            runner.calibrate(None, false);
             runner.call(Request::Mimo(MimoParams::default()));
             runner.call(Request::Results);
         }
@@ -768,7 +778,7 @@ fn full_run(runner: &mut Runner, out: &Path, project: Option<&Path>, fill: FillC
         runner.save();
     }
     // The project's own calibration settings apply; the CLI changes none.
-    runner.calibrate(None);
+    runner.calibrate(None, false);
     if mimo {
         runner.call(Request::Mimo(MimoParams { settings: None }));
     }
@@ -837,6 +847,17 @@ fn print_json(value: &impl Serialize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calibrate_parses_mimo_flag() {
+        let cli =
+            Cli::try_parse_from(["secs2r-cli", "calibrate", "project.secs", "--mimo"]).unwrap();
+        let Action::Calibrate { project, mimo } = cli.action else {
+            panic!("calibrate command must parse")
+        };
+        assert_eq!(project, PathBuf::from("project.secs"));
+        assert!(mimo);
+    }
 
     #[test]
     fn export_parses_comma_separated_extra_rates() {

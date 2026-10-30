@@ -124,16 +124,22 @@ fn unsupported_auto_is_normal_cpu_and_explicit_gpu_has_typed_error() {
                 },
             }),
         );
-        let Envelope::Err(error) =
-            service.call(Request::Mimo(MimoParams::default()), Arc::new(NoEvents))
-        else {
-            panic!()
-        };
-        assert_eq!(error.code, ErrorCode::ComputeUnavailable);
-        assert_eq!(
-            error.params["reason"],
-            serde_json::to_value(reason).unwrap().as_str().unwrap()
-        );
+        for request in [
+            Request::Mimo(MimoParams::default()),
+            Request::Calibrate(CalibrateParams {
+                mimo: true,
+                ..Default::default()
+            }),
+        ] {
+            let Envelope::Err(error) = service.call(request, Arc::new(NoEvents)) else {
+                panic!()
+            };
+            assert_eq!(error.code, ErrorCode::ComputeUnavailable);
+            assert_eq!(
+                error.params["reason"],
+                serde_json::to_value(reason).unwrap().as_str().unwrap()
+            );
+        }
     }
 }
 

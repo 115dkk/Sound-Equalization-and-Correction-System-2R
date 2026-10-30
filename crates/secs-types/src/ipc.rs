@@ -708,6 +708,9 @@ pub struct CalibrateParams {
     /// kept apart and shown by the BA tab until the next full run.
     #[serde(default)]
     pub subs_only: bool,
+    /// Computes MIMO after the correction in the same job.
+    #[serde(default)]
+    pub mimo: bool,
 }
 /// Optional settings for a MIMO run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
@@ -2520,6 +2523,20 @@ mod tests {
         assert_eq!(settings.local_api, LocalApiSettings::default());
         assert!(!settings.local_api.enabled);
         assert_eq!(settings.local_api.port, crate::local_api::DEFAULT_PORT);
+    }
+
+    #[test]
+    fn calibrate_mimo_defaults_false_on_the_wire() {
+        let old: CalibrateParams =
+            serde_json::from_str(r#"{"settings":null,"subs_only":false}"#).unwrap();
+        assert!(!old.mimo);
+        assert_eq!(CalibrateParams::default(), old);
+        let wire = serde_json::to_value(CalibrateParams {
+            mimo: true,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(wire["mimo"], true);
     }
 
     #[test]
