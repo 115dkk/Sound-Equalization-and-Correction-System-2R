@@ -204,8 +204,9 @@ class ConfigTest(unittest.TestCase):
 
     def test_base_is_infinite_and_plays_into_the_virtual_cable(self):
         text = m.base_config()
-        self.assertIn('capture:\n    type: Wasapi\n    channels: 2\n    device: "CABLE Output (VB-Audio Virtual Cable)"\n'
-                      '    format: F32\n    exclusive: false\n', text)
+        self.assertIn('capture:\n    type: Wasapi\n    channels: 2\n    device: "CABLE Input (VB-Audio Virtual Cable)"\n'
+                      '    format: F32\n    exclusive: false\n    loopback: true\n', text)
+        self.assertNotIn("CABLE Output", text)
         self.assertNotIn("SignalGenerator", text)
         self.assertIn('type: Wasapi\n    channels: 2\n    device: "CABLE Input (VB-Audio Virtual Cable)"\n'
                       '    format: F32\n    exclusive: false\n', text)
