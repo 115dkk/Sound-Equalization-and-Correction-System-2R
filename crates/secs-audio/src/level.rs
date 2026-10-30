@@ -3,10 +3,13 @@ use crate::audio::*;
 use crate::calibration::{MicCalibration, SplReference};
 use crate::invalid;
 use crate::measurement::power;
+use crate::policy::open_input_with_preference;
 use crate::session::{PlaybackBuffer, SessionRequest, play_and_record};
 use crate::sim_room::Noise;
 use secs_dsp::fft;
 use std::f64::consts::PI;
+use std::panic::{AssertUnwindSafe, catch_unwind, resume_unwind};
+use std::time::Duration;
 
 pub const TARGET_WINDOW: (f64, f64) = (-30.0, -15.0);
 
@@ -125,6 +128,102 @@ pub fn analyse_level(
         clip: samples.iter().any(|x| x.abs() > 10_f64.powf(-1.0 / 20.0)),
         spl_db,
     })
+}
+
+/// Reports consecutive 0.1-second windows from one input channel until
+/// cancellation or `stop_when` requests a normal stop.
+///
+/// Capture discontinuities and windows containing non-finite samples are
+/// skipped. The callback runs on this function's caller, never in a backend
+/// audio callback.
+pub fn input_meter(
+    backend: &dyn AudioBackend,
+    input: &LevelInput,
+    sample_rate: u32,
+    share: SharePreference,
+    cancel: &CancelToken,
+    stop_when: &mut dyn FnMut() -> bool,
+    on_level: &mut dyn FnMut(LevelReport),
+) -> Result<(), AudioError> {
+    crate::check_cancel(cancel)?;
+    if !(1_000..=384_000).contains(&sample_rate)
+        || input.channel == 0
+        || input.channel > input.endpoint.max_input_channels
+        || input.channel > 64
+    {
+        return Err(invalid("invalid input meter format"));
+    }
+    let channels = usize::from(input.channel);
+    let window_frames = usize::try_from(sample_rate / 10)
+        .map_err(|_| invalid("input meter window exceeds usize"))?
+        .max(1);
+    let sample_count = window_frames
+        .checked_mul(channels)
+        .ok_or_else(|| invalid("input meter buffer overflow"))?;
+    let mut interleaved = vec![0.0; sample_count];
+    let mut window = Vec::new();
+    window
+        .try_reserve_exact(window_frames)
+        .map_err(|error| AudioError::Backend(format!("input meter allocation: {error}")))?;
+    let (mut session, _) = open_input_with_preference(
+        backend,
+        &input.endpoint,
+        StreamSpec {
+            sample_rate,
+            channels: input.channel,
+        },
+        share,
+    )?;
+    let captured = catch_unwind(AssertUnwindSafe(|| -> Result<(), AudioError> {
+        session.start()?;
+        let mut skip_window = false;
+        loop {
+            crate::check_cancel(cancel)?;
+            if stop_when() {
+                return Ok(());
+            }
+            let read = session.read_into(&mut interleaved, cancel)?;
+            if read.frames > window_frames {
+                return Err(AudioError::Backend(
+                    "capture backend returned too many frames".into(),
+                ));
+            }
+            skip_window |= read.discontinuity;
+            for frame in interleaved[..read.frames * channels].chunks_exact(channels) {
+                window.push(f64::from(frame[channels - 1]));
+                if window.len() == window_frames {
+                    if !skip_window && window.iter().all(|sample| sample.is_finite()) {
+                        on_level(analyse_level(
+                            &window,
+                            sample_rate,
+                            input.calibration.as_ref(),
+                            input.spl_reference,
+                        )?);
+                    }
+                    window.clear();
+                    skip_window = false;
+                    crate::check_cancel(cancel)?;
+                    if stop_when() {
+                        return Ok(());
+                    }
+                }
+            }
+            if read.frames == 0 {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+    }));
+    let stopped = session.stop();
+    match captured {
+        Ok(result) => {
+            result?;
+            stopped
+        }
+        Err(payload) => {
+            let _ = stopped;
+            resume_unwind(payload)
+        }
+    }
 }
 
 pub fn level_check(

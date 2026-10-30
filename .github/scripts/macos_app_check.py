@@ -181,6 +181,11 @@ def audio_problems(audio: object, device: str) -> list[str]:
                     any(config.get(key) != value for key, value in wanted.items()) or
                     not config.get("input_device") or not config.get("output_device")):
                 problems.append(f"measure_config_get: wrong {stage} configuration")
+    idle_meter = audio.get("idle_meter", {})
+    idle_events = idle_meter.get("events") if isinstance(idle_meter, dict) else None
+    if (not isinstance(idle_events, int) or isinstance(idle_events, bool) or
+            idle_events < 5):
+        problems.append(f"level_monitor_start: expected at least five idle meter events, got {idle_events}")
     if audio.get("played_dbfs") != -20:
         problems.append("level_play: the native test must play at -20 dBFS")
     levels = audio.get("levels", {})
