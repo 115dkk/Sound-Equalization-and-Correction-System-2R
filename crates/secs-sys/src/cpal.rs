@@ -34,6 +34,25 @@ use crate::STALL;
 const POLL: Duration = Duration::from_millis(5);
 const PACKET_SAMPLES: usize = 1024;
 const QUEUE_PACKETS: usize = 256;
+#[cfg(any(target_os = "macos", test))]
+const TIMESTAMP_TOLERANCE_FLOOR_NS: u64 = 2_000_000;
+
+#[cfg(any(target_os = "macos", test))]
+fn timestamp_has_gap(
+    previous_ns: u64,
+    previous_frames: usize,
+    sample_rate: u32,
+    current_ns: u64,
+) -> bool {
+    if sample_rate == 0 {
+        return true;
+    }
+    let previous_duration_ns = ((previous_frames as u128 * 1_000_000_000) / u128::from(sample_rate))
+        .min(u128::from(u64::MAX)) as u64;
+    let expected_ns = previous_ns.saturating_add(previous_duration_ns);
+    let tolerance_ns = TIMESTAMP_TOLERANCE_FLOOR_NS.max(previous_duration_ns / 2);
+    current_ns.abs_diff(expected_ns) > tolerance_ns
+}
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CpalBackend;
@@ -335,12 +354,23 @@ struct CallbackState {
     epoch: Instant,
     failed: AtomicBool,
     error_kind: AtomicUsize,
+    #[cfg(not(target_os = "macos"))]
     xruns: AtomicUsize,
     discontinuity: AtomicBool,
     last_callback_ns: AtomicU64,
     cursor: AtomicUsize,
     final_ns: AtomicU64,
     final_period_ns: AtomicU64,
+    #[cfg(target_os = "macos")]
+    overload_notices: AtomicUsize,
+    #[cfg(any(target_os = "macos", test))]
+    timestamp_gaps: AtomicUsize,
+    #[cfg(any(target_os = "macos", test))]
+    timestamp_initialized: AtomicBool,
+    #[cfg(any(target_os = "macos", test))]
+    previous_timestamp_ns: AtomicU64,
+    #[cfg(any(target_os = "macos", test))]
+    previous_timestamp_frames: AtomicUsize,
 }
 
 impl CallbackState {
@@ -349,21 +379,34 @@ impl CallbackState {
             epoch: Instant::now(),
             failed: AtomicBool::new(false),
             error_kind: AtomicUsize::new(0),
+            #[cfg(not(target_os = "macos"))]
             xruns: AtomicUsize::new(0),
             discontinuity: AtomicBool::new(false),
             last_callback_ns: AtomicU64::new(0),
             cursor: AtomicUsize::new(0),
             final_ns: AtomicU64::new(0),
             final_period_ns: AtomicU64::new(0),
+            #[cfg(target_os = "macos")]
+            overload_notices: AtomicUsize::new(0),
+            #[cfg(any(target_os = "macos", test))]
+            timestamp_gaps: AtomicUsize::new(0),
+            #[cfg(any(target_os = "macos", test))]
+            timestamp_initialized: AtomicBool::new(false),
+            #[cfg(any(target_os = "macos", test))]
+            previous_timestamp_ns: AtomicU64::new(0),
+            #[cfg(any(target_os = "macos", test))]
+            previous_timestamp_frames: AtomicUsize::new(0),
         }
     }
     fn stream_error(&self, error: cpal::Error) {
-        // WASAPI capture continues after reporting a discontinuity as Xrun.
-        // Preserve that diagnostic, as the direct WASAPI backend does, rather
-        // than treating a recoverable packet discontinuity as stream failure.
         if error.kind() == cpal::ErrorKind::Xrun {
-            self.xruns.fetch_add(1, Ordering::Relaxed);
-            self.discontinuity.store(true, Ordering::Release);
+            #[cfg(target_os = "macos")]
+            self.overload_notices.fetch_add(1, Ordering::Relaxed);
+            #[cfg(not(target_os = "macos"))]
+            {
+                self.xruns.fetch_add(1, Ordering::Relaxed);
+                self.discontinuity.store(true, Ordering::Release);
+            }
             return;
         }
         // Keep error callbacks allocation-free; format the diagnostic on caller.
@@ -391,6 +434,31 @@ impl CallbackState {
     }
     fn now_ns(&self) -> u64 {
         (self.epoch.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64).saturating_add(1)
+    }
+    #[cfg(any(target_os = "macos", test))]
+    fn record_timestamp(&self, current_ns: u64, frames: usize, sample_rate: u32) {
+        let previous_ns = self
+            .previous_timestamp_ns
+            .swap(current_ns, Ordering::AcqRel);
+        let previous_frames = self
+            .previous_timestamp_frames
+            .swap(frames, Ordering::AcqRel);
+        if self.timestamp_initialized.swap(true, Ordering::AcqRel)
+            && timestamp_has_gap(previous_ns, previous_frames, sample_rate, current_ns)
+        {
+            self.timestamp_gaps.fetch_add(1, Ordering::Relaxed);
+            self.discontinuity.store(true, Ordering::Release);
+        }
+    }
+    #[cfg(target_os = "macos")]
+    fn print_diagnostics(&self, stream: &str) {
+        let overloads = self.overload_notices.load(Ordering::Relaxed);
+        let gaps = self.timestamp_gaps.load(Ordering::Relaxed);
+        if overloads > 0 || gaps > 0 {
+            eprintln!(
+                "secs-sys cpal: {stream} stream: {overloads} overload notices, {gaps} timestamp gaps"
+            );
+        }
     }
     fn check(&self, cancel: &CancelToken) -> Result<(), AudioError> {
         if cancel.is_cancelled() {
@@ -439,6 +507,7 @@ fn render<T: Sample + FromSample<f32>>(
     state: &CallbackState,
     spec: StreamSpec,
     device_channels: usize,
+    _callback: Option<&cpal::OutputCallbackInfo>,
 ) {
     let now = state.now_ns();
     let previous = state.last_callback_ns.swap(now, Ordering::AcqRel);
@@ -452,6 +521,16 @@ fn render<T: Sample + FromSample<f32>>(
     {
         state.failed.store(true, Ordering::Release);
         return;
+    }
+
+    #[cfg(target_os = "macos")]
+    if let Some(callback) = _callback {
+        let playback_ns = callback
+            .timestamp()
+            .playback
+            .as_nanos()
+            .min(u128::from(u64::MAX)) as u64;
+        state.record_timestamp(playback_ns, dst.len() / device_channels, spec.sample_rate);
     }
 
     let cursor = state.cursor.load(Ordering::Relaxed);
@@ -498,8 +577,8 @@ where
     device
         .build_output_stream(
             config,
-            move |dst: &mut [T], _| {
-                render(dst, &source, &state, spec, device_channels);
+            move |dst: &mut [T], callback| {
+                render(dst, &source, &state, spec, device_channels, Some(callback));
             },
             move |error| errors.stream_error(error),
             Some(STALL),
@@ -566,12 +645,18 @@ impl OutputSession for CpalOutputSession {
         })();
         // Drop is the portable stop operation (pause is unsupported by some hosts).
         drop(stream);
+        #[cfg(target_os = "macos")]
+        state.print_diagnostics("output");
         result?;
+        #[cfg(target_os = "macos")]
+        let underruns = state.timestamp_gaps.load(Ordering::Relaxed);
+        #[cfg(not(target_os = "macos"))]
+        let underruns = state.xruns.load(Ordering::Relaxed);
         Ok(PlaybackReport {
             frames_submitted: frames,
             frames_drained: frames,
             mode: self.mode,
-            underruns: state.xruns.load(Ordering::Relaxed).min(u32::MAX as usize) as u32,
+            underruns: underruns.min(u32::MAX as usize) as u32,
             cancelled: false,
         })
     }
@@ -590,6 +675,8 @@ fn capture<T: Sample>(
     state: &CallbackState,
     device_channels: usize,
     kept_channels: usize,
+    _sample_rate: u32,
+    _callback: Option<&cpal::InputCallbackInfo>,
 ) where
     f32: FromSample<T>,
 {
@@ -603,6 +690,15 @@ fn capture<T: Sample>(
     {
         state.failed.store(true, Ordering::Release);
         return;
+    }
+    #[cfg(target_os = "macos")]
+    if let Some(callback) = _callback {
+        let capture_ns = callback
+            .timestamp()
+            .capture
+            .as_nanos()
+            .min(u128::from(u64::MAX)) as u64;
+        state.record_timestamp(capture_ns, source.len() / device_channels, _sample_rate);
     }
     // Drop whole frames on overflow: otherwise e.g. three-channel packets would
     // shift the channel positions in subsequent packets. Fixed Copy packets do
@@ -656,8 +752,16 @@ where
     device
         .build_input_stream(
             config,
-            move |src: &[T], _| {
-                capture(src, &tx, &state, device_channels, kept_channels);
+            move |src: &[T], callback| {
+                capture(
+                    src,
+                    &tx,
+                    &state,
+                    device_channels,
+                    kept_channels,
+                    spec.sample_rate,
+                    Some(callback),
+                );
             },
             move |error| errors.stream_error(error),
             Some(STALL),
@@ -742,8 +846,15 @@ impl InputSession for CpalInputSession {
     fn stop(&mut self) -> Result<(), AudioError> {
         // Consuming the stream is portable; some hosts do not implement pause.
         // Stop is terminal and idempotent. Destruction remains on this worker.
-        drop(self.stream.take());
+        let stream = self.stream.take();
+        #[cfg(target_os = "macos")]
+        let stopped = stream.is_some();
+        drop(stream);
         self.started = false;
+        #[cfg(target_os = "macos")]
+        if stopped {
+            self.state.print_diagnostics("input");
+        }
         if self.state.failed.load(Ordering::Acquire) {
             return Err(self.state.failure());
         }
@@ -775,6 +886,55 @@ mod tests {
             sample_rate,
             channels,
         }
+    }
+
+    #[test]
+    fn timestamp_gap_accepts_exact_continuation() {
+        assert!(!timestamp_has_gap(
+            1_000_000_000,
+            480,
+            48_000,
+            1_010_000_000
+        ));
+    }
+
+    #[test]
+    fn timestamp_gap_accepts_small_jitter() {
+        assert!(!timestamp_has_gap(
+            1_000_000_000,
+            480,
+            48_000,
+            1_014_999_999
+        ));
+        assert!(!timestamp_has_gap(
+            1_000_000_000,
+            480,
+            48_000,
+            1_005_000_001
+        ));
+    }
+
+    #[test]
+    fn timestamp_gap_rejects_late_and_early_jumps() {
+        assert!(timestamp_has_gap(1_000_000_000, 480, 48_000, 1_015_000_001));
+        assert!(timestamp_has_gap(1_000_000_000, 480, 48_000, 1_004_999_999));
+    }
+
+    #[test]
+    fn timestamp_gap_tolerance_has_two_millisecond_floor() {
+        assert!(!timestamp_has_gap(1_000_000_000, 48, 48_000, 1_003_000_000));
+        assert!(timestamp_has_gap(1_000_000_000, 48, 48_000, 1_003_000_001));
+    }
+
+    #[test]
+    fn first_timestamp_only_sets_the_baseline() {
+        let state = CallbackState::new();
+        state.record_timestamp(9_000_000_000, 480, 48_000);
+        assert_eq!(state.timestamp_gaps.load(Ordering::Relaxed), 0);
+        assert!(!state.discontinuity.load(Ordering::Acquire));
+        state.record_timestamp(9_010_000_000, 480, 48_000);
+        assert_eq!(state.timestamp_gaps.load(Ordering::Relaxed), 0);
+        assert!(!state.discontinuity.load(Ordering::Acquire));
     }
 
     #[test]
@@ -831,13 +991,13 @@ mod tests {
         let state = CallbackState::new();
         let mut dst = [1.0; 6];
         let spec = stream_spec(1000, 1);
-        render(&mut dst, &[0.25, -0.25], &state, spec, 2);
+        render(&mut dst, &[0.25, -0.25], &state, spec, 2, None);
         assert_eq!(dst, [0.25, 0.0, -0.25, 0.0, 0.0, 0.0]);
         assert_eq!(state.cursor.load(Ordering::Acquire), 2);
         assert_eq!(state.final_period_ns.load(Ordering::Acquire), 3_000_000);
         let final_ns = state.final_ns.load(Ordering::Acquire);
         assert!(final_ns > 0);
-        render(&mut dst, &[0.25, -0.25], &state, spec, 2);
+        render(&mut dst, &[0.25, -0.25], &state, spec, 2, None);
         assert_eq!(dst, [0.0; 6]);
         assert_eq!(state.final_ns.load(Ordering::Acquire), final_ns);
     }
@@ -852,6 +1012,7 @@ mod tests {
             &state,
             stream_spec(1000, 2),
             8,
+            None,
         );
         assert_eq!(
             dst,
@@ -874,6 +1035,7 @@ mod tests {
             &state,
             stream_spec(1000, 3),
             3,
+            None,
         );
         assert_eq!(dst, [0.25, -0.25, 0.5, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
         assert_eq!(state.cursor.load(Ordering::Acquire), 3);
@@ -885,14 +1047,22 @@ mod tests {
     fn callback_capture_is_bounded_and_reports_overflow() {
         let state = CallbackState::new();
         let (tx, rx) = mpsc::sync_channel(1);
-        capture(&[0_i16; PACKET_SAMPLES + 7], &tx, &state, 1, 1);
+        capture(
+            &[0_i16; PACKET_SAMPLES + 7],
+            &tx,
+            &state,
+            1,
+            1,
+            48_000,
+            None,
+        );
         let packet = rx.try_recv().unwrap();
         assert_eq!(packet.len, PACKET_SAMPLES);
         assert!(packet.silent);
         assert!(state.discontinuity.load(Ordering::Acquire));
         assert!(rx.try_recv().is_err());
         drop(rx);
-        capture(&[1_i16], &tx, &state, 1, 1);
+        capture(&[1_i16], &tx, &state, 1, 1, 48_000, None);
         assert!(state.failed.load(Ordering::Acquire));
     }
 
@@ -900,7 +1070,15 @@ mod tests {
     fn callback_capture_keeps_the_first_channel_of_stereo_frames() {
         let state = CallbackState::new();
         let (tx, rx) = mpsc::sync_channel(1);
-        capture(&[0.25_f32, 0.75, -0.5, 1.0], &tx, &state, 2, 1);
+        capture(
+            &[0.25_f32, 0.75, -0.5, 1.0],
+            &tx,
+            &state,
+            2,
+            1,
+            48_000,
+            None,
+        );
         let packet = rx.recv().unwrap();
         assert_eq!(packet.len, 2);
         assert_eq!(&packet.samples[..2], &[0.25, -0.5]);
@@ -912,7 +1090,7 @@ mod tests {
         let (tx, rx) = mpsc::sync_channel(1);
         let mut source = vec![0.0_f32; PACKET_SAMPLES + 1];
         source[0] = 0.25;
-        capture(&source, &tx, &state, PACKET_SAMPLES + 1, 1);
+        capture(&source, &tx, &state, PACKET_SAMPLES + 1, 1, 48_000, None);
         let packet = rx.recv().unwrap();
         assert_eq!(packet.len, 1);
         assert_eq!(packet.samples[0], 0.25);
@@ -936,7 +1114,7 @@ mod tests {
                 -5.0,
             ]);
         }
-        capture(&source, &tx, &state, 8, 3);
+        capture(&source, &tx, &state, 8, 3, 48_000, None);
         let first = rx.recv().unwrap();
         let second = rx.recv().unwrap();
         assert_eq!(first.len, 1023);
@@ -963,10 +1141,11 @@ mod tests {
                 channels: 1,
             },
             1,
+            None,
         );
         assert_eq!(dst, [0, 32768, 49152, 32768]);
         let (tx, rx) = mpsc::sync_channel(1);
-        capture(&dst, &tx, &state, 1, 1);
+        capture(&dst, &tx, &state, 1, 1, 48_000, None);
         assert_eq!(&rx.recv().unwrap().samples[..4], &[-1.0, 0.0, 0.5, 0.0]);
     }
 
@@ -977,11 +1156,11 @@ mod tests {
         let samples: Vec<f32> = (0..343)
             .flat_map(|frame| [0.0, 0.25, 0.5, frame as f32, -1.0, -2.0, -3.0, -4.0])
             .collect();
-        capture(&samples, &tx, &state, 8, 3);
+        capture(&samples, &tx, &state, 8, 3, 48_000, None);
         let packet = rx.recv().unwrap();
         assert_eq!(packet.len, 1023);
         assert!(state.discontinuity.load(Ordering::Acquire));
-        capture(&samples[..16], &tx, &state, 8, 3);
+        capture(&samples[..16], &tx, &state, 8, 3, 48_000, None);
         assert_eq!(
             &rx.recv().unwrap().samples[..6],
             &[0.0, 0.25, 0.5, 0.0, 0.25, 0.5]
@@ -1005,8 +1184,8 @@ mod tests {
             started: true,
             _not_send: PhantomData,
         };
-        capture(&[0.0_f32; 6], &tx, &state, 2, 2);
-        capture(&[0.25_f32, 0.5], &tx, &state, 2, 2);
+        capture(&[0.0_f32; 6], &tx, &state, 2, 2, 48_000, None);
+        capture(&[0.25_f32, 0.5], &tx, &state, 2, 2, 48_000, None);
         state.discontinuity.store(true, Ordering::Release);
         let cancel = CancelToken::new();
         let mut first = [1.0; 4];
@@ -1031,8 +1210,20 @@ mod tests {
         assert!(session.read_into(&mut first, &CancelToken::new()).is_err());
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
-    fn callback_xrun_records_discontinuity_without_stopping() {
+    fn callback_xrun_is_only_an_overload_notice_on_macos() {
+        let state = CallbackState::new();
+        state.stream_error(cpal::ErrorKind::Xrun.into());
+        state.check(&CancelToken::new()).unwrap();
+        assert_eq!(state.overload_notices.load(Ordering::Relaxed), 1);
+        assert_eq!(state.timestamp_gaps.load(Ordering::Relaxed), 0);
+        assert!(!state.discontinuity.load(Ordering::Acquire));
+    }
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    #[test]
+    fn callback_xrun_records_discontinuity_on_other_hosts() {
         let state = CallbackState::new();
         state.stream_error(cpal::ErrorKind::Xrun.into());
         state.check(&CancelToken::new()).unwrap();

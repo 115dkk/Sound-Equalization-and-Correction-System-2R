@@ -10,10 +10,21 @@ pub enum Note {
         lift_ms: f64,
     },
     SubFilters(Vec<(String, crate::setup::SubFilter)>),
+    LowProtect {
+        role: String,
+        rolloff_hz: f64,
+        hp_hz: Option<f64>,
+        limited: bool,
+    },
     RcLimit {
         hz: f64,
         auto: bool,
         schroeder_hz: Option<f64>,
+        basis: secs_types::calibration::RcHiBasis,
+        factor: u8,
+        band_hz: Option<f64>,
+        band_t60_s: Option<f64>,
+        positions: Option<usize>,
     },
     Latency {
         latency_ms: f64,

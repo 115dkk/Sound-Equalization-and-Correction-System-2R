@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Install pinned Scream only on disposable Windows runners; enumerate WASAPI endpoints."""
+"""Install pinned VB-CABLE only on disposable Windows runners; enumerate WASAPI endpoints."""
 from __future__ import annotations
 
 import argparse
 import base64
 import json
 import os
+import re
 import runpy
 import stat
 import subprocess
@@ -20,11 +21,26 @@ EngineError = _engine["EngineError"]
 fetch_file = _engine["fetch_file"]
 load_manifest = _engine["load_manifest"]
 DEFAULT_MANIFEST = Path(__file__).resolve().parent.parent / "virtual-audio.toml"
+OFFICIAL_URL = "https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip"
+INSTALLER = "VBCABLE_Setup_x64.exe"
+CATALOG = "vbaudio_cable64_win10.cat"
+RENDER_NAME = "CABLE Input (VB-Audio Virtual Cable)"
+# Pack45 listing from OFFICIAL_URL. The vendor manual (October 2024, p. 4)
+# requires the complete pack beside setup, not just its executable.
+# https://vb-audio.com/Cable/VBCABLE_ReferenceManual.pdf
 MEMBERS = (
-    "Install/helpers/devcon-x64.exe",
-    "Install/driver/x64/Scream.inf",
-    "Install/driver/x64/Scream.sys",
-    "Install/driver/x64/scream.cat",
+    "vbMmeCable64_win10.inf", "pin_in.ico", "pin_out.ico", "readme.txt",
+    "vbaudio_cable_2003.cat", "vbaudio_cable_2003.sys",
+    "vbaudio_cable_vista.cat", "vbaudio_cable_vista.sys",
+    "vbaudio_cable_win7.cat", "vbaudio_cable_win7.sys",
+    "vbaudio_cable_xp.cat", "vbaudio_cable_xp.sys",
+    "vbaudio_cable64_2003.cat", "vbaudio_cable64_2003.sys",
+    "vbaudio_cable64_vista.cat", "vbaudio_cable64_vista.sys",
+    "vbaudio_cable64_win7.cat", "vbaudio_cable64_win7.sys",
+    CATALOG, "vbaudio_cable64_win10.sys", "vbaudio_cable64arm_win10.sys",
+    "VBCABLE_ControlPanel.exe", "VBCABLE_Setup.exe", INSTALLER,
+    "vbMmeCable_2003.inf", "vbMmeCable_vista.inf", "vbMmeCable_win7.inf", "vbMmeCable_xp.inf",
+    "vbMmeCable64_2003.inf", "vbMmeCable64_vista.inf", "vbMmeCable64_win7.inf",
 )
 
 # Original interop declarations for the read-only MMDevice API, not registry guesses.
@@ -100,11 +116,23 @@ def runner_only():
         raise EngineError("Virtual audio installation runs only on a disposable GitHub-hosted Windows runner")
 
 
+def windows_powershell_env(environ=None):
+    """The environment for Windows PowerShell 5.1 started from a PowerShell 7
+    step: without PowerShell 7's PSModulePath, which keeps 5.1 from autoloading
+    its own modules (Microsoft.PowerShell.Security holds Get-AuthenticodeSignature)."""
+    source = os.environ if environ is None else environ
+    return {key: value for key, value in source.items() if key.upper() != "PSMODULEPATH"}
+
+
 def powershell(script):
     preamble = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new();\n"
     encoded = base64.b64encode((preamble + script).encode("utf-16le")).decode("ascii")
     result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90, check=True)
+                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90,
+                            check=False, env=windows_powershell_env())
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "no output"
+        raise EngineError(f"PowerShell exited {result.returncode}: {detail}")
     return result.stdout.strip()
 
 
@@ -117,10 +145,12 @@ def endpoints():
     return value
 
 
-def scream_endpoint(value):
-    matches = [device for device in value["render"] if "scream" in device["name"].lower()]
+def virtual_output_endpoint(value):
+    # Pack45 also exposes CABLE In 16ch; choose only the ordinary speaker pin.
+    # Vendor manual pp. 6-8: the two playback pins cannot be used together.
+    matches = [device for device in value["render"] if device["name"].casefold() == RENDER_NAME.casefold()]
     if len(matches) != 1:
-        raise EngineError(f"Expected one active Scream WASAPI render endpoint, found {len(matches)}: {value}")
+        raise EngineError(f"Expected one active VB-CABLE WASAPI render endpoint, found {len(matches)}: {value}")
     return matches[0]
 
 
@@ -132,47 +162,107 @@ def extract_package(package, destination):
         for name in MEMBERS:
             entries = [item for item in archive.infolist() if item.filename == name]
             if len(entries) != 1 or stat.S_ISLNK(entries[0].external_attr >> 16):
-                raise EngineError(f"missing, duplicate or linked Scream member: {name}")
+                raise EngineError(f"missing, duplicate or linked VB-CABLE member: {name}")
         for name in MEMBERS:
             output = destination / name
             output.parent.mkdir(parents=True, exist_ok=True)
             output.write_bytes(archive.read(name))
-    return destination / MEMBERS[0], destination / MEMBERS[1]
+    return destination / INSTALLER, destination / CATALOG
 
 
 def ps_string(value):
     return "'" + str(value).replace("'", "''") + "'"
 
 
+def verify_signature(path):
+    facts = json.loads(powershell(
+        f"$s = Get-AuthenticodeSignature -LiteralPath {ps_string(path)}; "
+        "$trusted = $false; if ($null -ne $s.SignerCertificate) { "
+        "$trusted = Test-Path -LiteralPath ('Cert:\\LocalMachine\\TrustedPublisher\\' + $s.SignerCertificate.Thumbprint) }; "
+        "[pscustomobject]@{status=$s.Status.ToString(); message=$s.StatusMessage; "
+        "signer=[string]$s.SignerCertificate.Subject; thumbprint=[string]$s.SignerCertificate.Thumbprint; "
+        "publisher_trusted=$trusted; timestamper=[string]$s.TimeStamperCertificate.Subject} | ConvertTo-Json -Compress"))
+    print(f"Authenticode {path.name}: {json.dumps(facts, ensure_ascii=False)}")
+    if facts.get("status") != "Valid":
+        raise EngineError(f"VB-CABLE package signature is not valid: {path}: {facts.get('status')}: "
+                          f"{facts.get('message')} (signer: {facts.get('signer')}, "
+                          f"timestamper: {facts.get('timestamper')})")
+    if not facts.get("signer") or not re.fullmatch(r"[0-9A-Fa-f]{40}", facts.get("thumbprint", "")):
+        raise EngineError(f"VB-CABLE signature has no signer certificate: {path}: {facts}")
+    return facts
+
+
+def needs_publisher_trust(facts):
+    # Windows signing authorities and previously trusted publishers install
+    # without a consent prompt; Valid Authenticode alone does not imply this.
+    # https://learn.microsoft.com/en-us/windows-hardware/drivers/install/signature-categories-and-driver-installation
+    subject = facts["signer"]
+    windows_signer = (
+        re.search(r"(?:^|,\s*)O=Microsoft Corporation(?:,|$)", subject) is not None
+        and re.search(r"(?:^|,\s*)CN=Microsoft Windows(?: Hardware Compatibility Publisher)?(?:,|$)", subject) is not None
+    )
+    return not windows_signer and facts.get("publisher_trusted") is not True
+
+
+def trust_catalog_publisher(catalog, facts):
+    runner_only()
+    if not needs_publisher_trust(facts):
+        print(f"TrustedPublisher unchanged: catalog publisher already trusted or Windows-signed ({facts['signer']})")
+        return
+    # Only the end-entity signer of this verified catalog, never a bundled CER
+    # or a root/chain certificate. LABSN's Pack43 CI helper pre-trusts a bundled
+    # certificate; here derive it from the pinned pack and revalidate first.
+    # https://github.com/LABSN/sound-ci-helpers/blob/main/windows/setup_sound.ps1
+    # https://learn.microsoft.com/en-us/windows-hardware/drivers/install/trusted-publishers-certificate-store
+    result = powershell(f"""
+$s = Get-AuthenticodeSignature -LiteralPath {ps_string(catalog)}
+if ($s.Status -ne 'Valid') {{
+    throw ("VB-CABLE catalog signature is not valid: {{0}}: {{1}} (signer: {{2}})" -f $s.Status,$s.StatusMessage,$s.SignerCertificate.Subject)
+}}
+if ($null -eq $s.SignerCertificate -or $s.SignerCertificate.Thumbprint -ne {ps_string(facts['thumbprint'])}) {{
+    throw 'VB-CABLE catalog signer changed before TrustedPublisher import'
+}}
+$store = [Security.Cryptography.X509Certificates.X509Store]::new('TrustedPublisher','LocalMachine')
+try {{
+    $store.Open([Security.Cryptography.X509Certificates.OpenFlags]::ReadWrite)
+    $store.Add($s.SignerCertificate)
+    [pscustomobject]@{{action='added'; store='LocalMachine\\TrustedPublisher'; signer=$s.SignerCertificate.Subject; thumbprint=$s.SignerCertificate.Thumbprint}} | ConvertTo-Json -Compress
+}} finally {{ $store.Close() }}
+""")
+    print(f"TrustedPublisher: {result}")
+
+
 def install(args):
-    runner_only()  # Before network, services, extraction or driver execution.
-    entry = load_manifest(Path(args.manifest), "scream", {"zip"})
-    if entry["url"] != f"https://github.com/duncanthrax/scream/releases/download/{entry['version']}/Scream{entry['version']}.zip":
-        raise EngineError("Scream must come from its official GitHub release")
+    runner_only()  # Before network, services, extraction, trust or driver execution.
+    entry = load_manifest(Path(args.manifest), "vbcable", {"zip"})
+    if entry["url"] != OFFICIAL_URL or entry["version"] != "Pack45":
+        raise EngineError("VB-CABLE must be the approved official Pack45 download")
     destination = Path(args.dest).resolve()
-    package = destination / "download" / f"Scream{entry['version']}.zip"
+    package = destination / "download" / "VBCABLE_Driver_Pack45.zip"
     fetch_file(entry["url"], entry["sha256"], package)
-    devcon, inf = extract_package(package, destination / "driver")
+    installer, catalog = extract_package(package, destination / "driver")
+    # Require BOTH signatures before any service or certificate-store change.
+    verify_signature(installer)
+    catalog_facts = verify_signature(catalog)
+    trust_catalog_publisher(catalog, catalog_facts)
     powershell("foreach ($name in @('AudioEndpointBuilder','Audiosrv')) { "
                "Set-Service -Name $name -StartupType Automatic; Start-Service -Name $name; "
                "(Get-Service $name).WaitForStatus('Running',[TimeSpan]::FromSeconds(30)) }")
-    # Validate the signed catalog and helper; never enable test signing or change Secure Boot.
-    for path in (devcon, inf.with_name("scream.cat")):
-        signature = powershell(f"(Get-AuthenticodeSignature -LiteralPath {ps_string(path)}).Status.ToString()")
-        if signature != "Valid":
-            raise EngineError(f"Scream package signature is not valid: {path}: {signature}")
-    # Same devcon install command as release 4.0's Install-x64.bat, without pause.
-    # A fresh hosted runner has no old Scream device to remove. Do not force a reboot.
-    result = subprocess.run([str(devcon), "install", str(inf), "*Scream"], stdin=subprocess.DEVNULL,
+    # -i installs; -h hides setup. Run beside the complete pack (manual p. 4).
+    # Observed client contract, not an official exit-code table:
+    # https://github.com/jodagreyhame/SoundBoard/blob/v1.1.1/internal/setup/install.go
+    # Accept only zero, then require an active endpoint. Never force a reboot,
+    # enable test signing, or change Secure Boot if the driver cannot load.
+    result = subprocess.run([str(installer), "-i", "-h"], cwd=installer.parent, stdin=subprocess.DEVNULL,
                             capture_output=True, text=True, timeout=120, check=False)
     print(result.stdout)
     if result.returncode != 0:
-        raise EngineError(f"Scream installation failed or requires reboot ({result.returncode}): {result.stderr}")
+        raise EngineError(f"VB-CABLE installation failed or requires reboot ({result.returncode}): {result.stderr}")
     deadline = time.monotonic() + 60
     while True:
         value = endpoints()
         try:
-            device = scream_endpoint(value)
+            device = virtual_output_endpoint(value)
             break
         except EngineError:
             if time.monotonic() >= deadline:

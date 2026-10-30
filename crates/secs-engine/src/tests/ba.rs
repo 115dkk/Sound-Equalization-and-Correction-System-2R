@@ -437,7 +437,7 @@ fn ba_oracle_auto_manual_bus() {
             vec![read_recorded_fit(&fx, &last["inputs"], &last["result"])],
             1e-12,
         );
-        out.bus_peq = bus_fit(&input, &out.sub_sum_by_pos, &mut fitter);
+        out.bus_peq = bus_fit(&input, &out.sub_sum_by_pos, &mut fitter).0;
         let p = response::peq_response(design_freqs(), &out.bus_peq);
         for (_, h) in &mut out.sub_sum_by_pos {
             *h = h.iter().zip(&p).map(|(v, p)| v * p).collect();

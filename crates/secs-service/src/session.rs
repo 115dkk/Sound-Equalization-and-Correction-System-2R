@@ -262,6 +262,24 @@ pub(crate) fn commit<T>(
     run_change(open, change)
 }
 
+/// Commits one completed phase while leaving a multi-phase job cancellable.
+/// The project ticket and cancellation token are checked under the session
+/// lock before `change` runs. A cancellation after this commit stops the next
+/// phase without undoing this one.
+pub(crate) fn commit_phase<T>(
+    session: &Mutex<Session>,
+    ticket: ProjectTicket,
+    job: &JobContext,
+    change: impl FnOnce(&mut OpenProject) -> Result<(T, bool), IpcError>,
+) -> Result<T, IpcError> {
+    let mut session = lock(session);
+    let open = session.holding(ticket)?;
+    if job.cancel().is_cancelled() {
+        return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
+    }
+    run_change(open, change)
+}
+
 /// The same check for a job that keeps running and writes as it goes (the
 /// level monitor): the ticket check only, no `begin_commit`, so the job
 /// stays cancellable.

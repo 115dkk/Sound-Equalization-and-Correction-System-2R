@@ -96,7 +96,8 @@ def passing_audio():
         }})
     return {
         "ok": True, "device": "BlackHole 2ch", "input_device": "blackhole-in", "output_device": "blackhole-out",
-        "configurations": configs, "played_dbfs": -20, "levels": {"L": -20, "R": -20.01},
+        "configurations": configs, "idle_meter": {"events": 5, "first_ms": 100},
+        "played_dbfs": -20, "levels": {"L": -20, "R": -20.01},
         "records": {"records": [{"position": 1, "done": True, "roles": ["L", "R"],
                                   "sources": {"L": "measured", "R": "measured"}}]},
         "impulses": {role: {"sample_rate": 48000, "frames": 96480, "peak_amplitude": 0.9,
@@ -116,6 +117,19 @@ class AudioReportTest(unittest.TestCase):
     def test_three_configurations_and_both_real_channels_pass(self):
         self.assertEqual(m.audio_problems(passing_audio(), "BlackHole 2ch"), [])
 
+    def test_at_least_five_idle_meter_events_are_required(self):
+        for value in (None, 4, True, 5.0):
+            audio = passing_audio()
+            if value is None:
+                audio.pop("idle_meter")
+            else:
+                audio["idle_meter"]["events"] = value
+            self.assertTrue(any("idle meter events" in issue
+                                for issue in m.audio_problems(audio, "BlackHole 2ch")))
+        audio = passing_audio()
+        audio["idle_meter"]["events"] = 6
+        self.assertEqual(m.audio_problems(audio, "BlackHole 2ch"), [])
+
     def test_audio_is_required_only_when_requested(self):
         with tempfile.TemporaryDirectory() as folder:
             work = Path(folder)
@@ -129,6 +143,14 @@ class AudioReportTest(unittest.TestCase):
                           m.report_problems("run", report, work, "BlackHole 2ch")[0])
             report["facts"] = {"audio": passing_audio()}
             self.assertEqual(m.report_problems("run", report, work, "BlackHole 2ch"), [])
+
+    def test_retried_attempts_become_notes_and_do_not_fail(self):
+        audio = passing_audio()
+        audio["retries"] = [{"stage": "level_R", "attempt": 1, "error": "level_play: gap"}]
+        self.assertEqual(m.audio_problems(audio, "BlackHole 2ch"), [])
+        self.assertEqual(m.audio_retries(audio), ["retried level_R after attempt 1: level_play: gap"])
+        self.assertEqual(m.audio_retries(None), [])
+        self.assertEqual(m.audio_retries({"retries": "x"}), [])
 
     def test_missing_channel_silence_nan_or_bad_level_fails(self):
         for role in ("L", "R"):

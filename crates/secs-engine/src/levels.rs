@@ -42,7 +42,7 @@ pub fn target_db(target: &TargetCurve, f: &[f64]) -> Vec<f64> {
     target.sample(f)
 }
 
-fn median(mut values: Vec<f64>) -> f64 {
+pub(crate) fn median(mut values: Vec<f64>) -> f64 {
     if values.is_empty() || values.iter().any(|v| v.is_nan()) {
         return f64::NAN;
     }
@@ -143,4 +143,69 @@ pub fn schroeder_hz(set: &MeasurementSet, config: &EngineConfig) -> Option<f64> 
     } else {
         Some(2000.0 * (median(t60s) / volume).sqrt())
     }
+}
+
+/// Nominal base-10 third-octave centres used by ADR 0021.
+pub(crate) const RC_BAND_CENTRES: [f64; 14] = [
+    100.0, 125.0, 160.0, 200.0, 250.0, 315.0, 400.0, 500.0, 630.0, 800.0, 1000.0, 1250.0, 1600.0,
+    2000.0,
+];
+
+/// Highest low-frequency band whose local Schroeder estimate reaches its centre.
+/// Evidence is (band centre Hz, median T60 s, local Schroeder Hz).
+pub fn lenient_schroeder_hz(
+    set: &MeasurementSet,
+    config: &EngineConfig,
+) -> Option<(f64, f64, f64)> {
+    let volume = config
+        .room_volume_m3
+        .filter(|v| v.is_finite() && *v > 0.0)?;
+    let width = 2.0_f64.powf(1.0 / 6.0);
+    let mut chosen = None;
+    for fc in RC_BAND_CENTRES.into_iter().take(8) {
+        let sos = iir::butter(4, &[fc / width, fc * width], BType::Bandpass, SR_F).ok()?;
+        let mut t60s = Vec::new();
+        for (position, _) in &set.positions {
+            for role in &config.mains {
+                let Some(m) = set.get(*position, role).filter(|m| !m.samples.is_empty()) else {
+                    continue;
+                };
+                let ir: Vec<_> = (0..m.samples.len()).map(|i| m.samples.at(i)).collect();
+                let y = iir::sosfilt(&sos, &ir).ok()?;
+                let mut energy = vec![0.0; y.len()];
+                let mut sum = 0.0;
+                for (e, y) in energy.iter_mut().zip(&y).rev() {
+                    sum += y * y;
+                    *e = sum;
+                }
+                let origin = energy[0] + 1e-30;
+                let db: Vec<_> = energy
+                    .iter()
+                    .map(|e| 10.0 * (e / origin + 1e-30).log10())
+                    .collect();
+                let i5 = db.iter().position(|v| *v < -5.0).unwrap_or(0);
+                let i25 = db.iter().position(|v| *v < -25.0).unwrap_or(0);
+                if i25 > i5 && i5 > 0 {
+                    t60s.push(3.0 * (i25 - i5) as f64 / SR_F);
+                }
+            }
+        }
+        if !t60s.is_empty() {
+            let t60 = median(t60s);
+            let g = 2000.0 * (t60 / volume).sqrt();
+            if g >= fc {
+                chosen = Some((fc, t60, g));
+            }
+        }
+    }
+    chosen
+}
+
+pub(crate) fn schroeder_limit(strict: Option<f64>, band: Option<f64>, factor: u8) -> f64 {
+    let value = match (strict, band) {
+        (Some(s), Some(l)) => Some(s.max(l)),
+        (s, l) => s.or(l),
+    };
+    let factor = f64::from(factor);
+    value.map_or(500.0, |v| (v * factor).clamp(100.0, 500.0 * factor))
 }

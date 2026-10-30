@@ -30,9 +30,9 @@ fn spectrum(samples: &[f64], sample_rate: f64, minimum: usize) -> (Vec<f64>, Vec
     (frequencies, fft::rfft(&padded))
 }
 
-/// Unwindowed measurement FFT, log interpolation, nearest-edge Gaussian smoothing
-/// at 1/12 octave and a zero mean over 200–2000 Hz, exactly as step 5 displays it.
-pub fn magnitude_db(samples: &[f64], sample_rate: f64) -> Vec<f64> {
+/// Unwindowed measurement FFT, log interpolation and nearest-edge Gaussian
+/// smoothing at 1/12 octave, before choosing a graph level reference.
+pub fn smoothed_db(samples: &[f64], sample_rate: f64) -> Vec<f64> {
     let grid = measurement_grid();
     if samples.is_empty() {
         return vec![0.0; grid.len()];
@@ -54,7 +54,7 @@ pub fn magnitude_db(samples: &[f64], sample_rate: f64) -> Vec<f64> {
         .collect();
     let total = pairwise_sum(&weights);
     weights.iter_mut().for_each(|w| *w /= total);
-    let mut smoothed: Vec<_> = (0..grid.len())
+    (0..grid.len())
         .map(|i| {
             (-radius..=radius)
                 .zip(&weights)
@@ -63,14 +63,25 @@ pub fn magnitude_db(samples: &[f64], sample_rate: f64) -> Vec<f64> {
                 })
                 .sum::<f64>()
         })
-        .collect();
-    let mid: Vec<_> = grid
-        .iter()
-        .zip(&smoothed)
-        .filter(|(f, _)| (200.0..=2000.0).contains(*f))
+        .collect()
+}
+
+/// Mean of a measurement-grid curve over 200–2000 Hz.
+pub fn midrange_reference(curve: &[f64]) -> f64 {
+    let mid: Vec<_> = measurement_grid()
+        .into_iter()
+        .zip(curve)
+        .filter(|(f, _)| (200.0..=2000.0).contains(f))
         .map(|(_, v)| *v)
         .collect();
-    let reference = pairwise_sum(&mid) / mid.len() as f64;
+    pairwise_sum(&mid) / mid.len() as f64
+}
+
+/// Smoothed measurement response with a zero mean over 200–2000 Hz, exactly
+/// as upstream step 5 displays each curve independently.
+pub fn magnitude_db(samples: &[f64], sample_rate: f64) -> Vec<f64> {
+    let mut smoothed = smoothed_db(samples, sample_rate);
+    let reference = midrange_reference(&smoothed);
     smoothed.iter_mut().for_each(|v| *v -= reference);
     smoothed
 }
@@ -99,4 +110,23 @@ pub fn percentile(values: &[f64], percent: f64) -> f64 {
     let lo = index.floor() as usize;
     let hi = index.ceil() as usize;
     values[lo] + (values[hi] - values[lo]) * index.fract()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn split_measurement_transform_preserves_upstream_normalization() {
+        let samples: Vec<_> = (0..4096)
+            .map(|index| {
+                let time = index as f64 / 48_000.0;
+                (2.0 * std::f64::consts::PI * 997.0 * time).sin() * (-30.0 * time).exp()
+            })
+            .collect();
+        let mut split = smoothed_db(&samples, 48_000.0);
+        let reference = midrange_reference(&split);
+        split.iter_mut().for_each(|value| *value -= reference);
+        assert_eq!(split, magnitude_db(&samples, 48_000.0));
+    }
 }

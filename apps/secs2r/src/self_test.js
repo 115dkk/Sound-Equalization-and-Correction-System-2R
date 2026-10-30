@@ -11,9 +11,19 @@
   const facts = {};
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  async function send(method, params) {
+  function eventChannel(onmessage) {
+    const id = internals.transformCallback((frame) => {
+      const message = frame && typeof frame === "object" && Object.hasOwn(frame, "message")
+        ? frame.message : frame;
+      onmessage(message);
+    });
+    return `__CHANNEL__:${id}`;
+  }
+
+  async function send(method, params, events) {
     const request = params === undefined ? { method } : { method, params };
-    const envelope = await internals.invoke("secs_call", { request });
+    const args = events === undefined ? { request } : { request, events };
+    const envelope = await internals.invoke("secs_call", args);
     if (!envelope.ok) {
       throw new Error(`${method}: ${envelope.error.code}: ${envelope.error.message}`);
     }
@@ -37,12 +47,34 @@
         steps.push({ method, ms: Date.now() - at, status: snapshot.status });
         if (snapshot.status !== "succeeded") {
           const error = snapshot.error ? `${snapshot.error.code}: ${snapshot.error.message}` : "no error";
-          throw new Error(`${method} job ${snapshot.status}: ${error}`);
+          throw jobError(`${method} job ${snapshot.status}: ${error}`, snapshot.error);
         }
         return;
       }
       if (Date.now() - at > 240000) throw new Error(`${method} job did not finish in 240 s`);
       await sleep(200);
+    }
+  }
+
+  // A failed job's error, marked for a retry when the backend says a new
+  // recording may succeed (a dropped capture cycle, for example).
+  function jobError(message, error) {
+    const failure = new Error(message);
+    failure.retryable = error?.code === "recording_failed" && error.retryable === true;
+    return failure;
+  }
+
+  // Runs one native audio stage, retrying a retryable recording failure as a
+  // user would press the button again: at most three attempts, and every
+  // failed attempt stays in the report.
+  async function attempts(stage, run) {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await run();
+      } catch (failure) {
+        if (!failure.retryable || attempt === 3) throw failure;
+        facts.audio.retries.push({ stage, attempt, error: failure.message });
+      }
     }
   }
 
@@ -58,9 +90,12 @@
   // The native run is separate from the mock project and never fills default
   // levels. A stored level appears only after the 2.5 s burst was captured and
   // level_check_streaming returned; polling it waits for playback completion.
-  async function audioCall(method, params) {
+  async function audioCall(method, params, events) {
     facts.audio.request = params === undefined ? { method } : { method, params };
-    return call(method, params);
+    const at = Date.now();
+    const data = await send(method, params, events);
+    steps.push({ method, ms: Date.now() - at });
+    return data;
   }
 
   async function stopMonitor(id) {
@@ -79,7 +114,7 @@
 
   async function nativeAudio() {
     const audio = facts.audio = {
-      ok: false, device: audioDevice, configurations: [], levels: {}, played_dbfs: -20,
+      ok: false, device: audioDevice, configurations: [], levels: {}, played_dbfs: -20, retries: [],
     };
     await audioCall("project_new", {
       path: `${work}/audio.secs`, preset: "2.0", sub_count: 0, sample: false, tutorial: false,
@@ -114,46 +149,66 @@
     }
     for (const [role, channel] of [["L", 1], ["R", 2]]) {
       await configure(`level_${role}`, channel, [1, 2]);
-      const { job: id } = await audioCall("level_monitor_start", { role });
-      // Let the monitor enter its loop before submitting a burst.
-      const at = Date.now();
-      for (;;) {
-        const state = (await audioCall("jobs")).find((entry) => entry.job === id);
-        if (state?.status === "running") break;
-        if (state && ["failed", "cancelled", "succeeded"].includes(state.status)) {
-          throw new Error(`level_monitor_start: ${JSON.stringify(state)}`);
-        }
-        if (Date.now() - at > 30000) throw new Error("level_monitor_start: not running in 30 s");
-        await sleep(100);
-      }
-      await audioCall("level_play", { role, master_dbfs: audio.played_dbfs });
-      const played = Date.now();
-      for (;;) {
-        const levels = await audioCall("levels_get");
-        if (Object.hasOwn(levels.levels, role)) {
-          audio.levels[role] = levels.levels[role];
-          // level_signal normalizes signal RMS to master_dbfs; the monitor
-          // stores 10*log10(mean(samples^2)), rounded to 0.01 dB. A unity
-          // loopback must therefore be within 6 dB of -20 dBFS, not peak dBFS.
-          if (!Number.isFinite(audio.levels[role]) || Math.abs(audio.levels[role] - audio.played_dbfs) > 6) {
-            throw new Error(`levels_get: ${role} is ${audio.levels[role]} dBFS, expected ${audio.played_dbfs} +/- 6 dB`);
+      await attempts(`level_${role}`, async () => {
+        const monitorEvents = [];
+        const monitorStarted = Date.now();
+        const events = eventChannel((message) => monitorEvents.push({ message, at: Date.now() }));
+        const { job: id } = await audioCall("level_monitor_start", { role }, events);
+        // Let the monitor enter its loop before submitting a burst.
+        const at = Date.now();
+        for (;;) {
+          const state = (await audioCall("jobs")).find((entry) => entry.job === id);
+          if (state?.status === "running") break;
+          if (state && ["failed", "cancelled", "succeeded"].includes(state.status)) {
+            throw jobError(`level_monitor_start: ${JSON.stringify(state)}`, state.error);
           }
-          break;
+          if (Date.now() - at > 30000) throw new Error("level_monitor_start: not running in 30 s");
+          await sleep(100);
         }
-        const state = (await audioCall("jobs")).find((entry) => entry.job === id);
-        if (state && ["failed", "cancelled", "succeeded"].includes(state.status)) {
-          throw new Error(`level_play: ${role} monitor ended without a stored level: ${JSON.stringify(state)}`);
+        if (role === "L") {
+          const deadline = Date.now() + 5000;
+          for (;;) {
+            const meters = monitorEvents.filter(({ message }) => message?.event === "meter" && message.job === id);
+            if (meters.length >= 5) {
+              audio.idle_meter = { events: meters.length, first_ms: meters[0].at - monitorStarted };
+              break;
+            }
+            if (Date.now() >= deadline) {
+              throw new Error(`level_monitor_start: received ${meters.length} idle meter events in 5 s`);
+            }
+            await sleep(25);
+          }
         }
-        if (Date.now() - played > 30000) throw new Error(`level_play: ${role} did not finish in 30 s`);
-        await sleep(200);
-      }
-      await stopMonitor(id);
+        await audioCall("level_play", { role, master_dbfs: audio.played_dbfs });
+        const played = Date.now();
+        for (;;) {
+          const levels = await audioCall("levels_get");
+          if (Object.hasOwn(levels.levels, role)) {
+            audio.levels[role] = levels.levels[role];
+            // level_signal normalizes signal RMS to master_dbfs; the monitor
+            // stores 10*log10(mean(samples^2)), rounded to 0.01 dB. A unity
+            // loopback must therefore be within 6 dB of -20 dBFS, not peak dBFS.
+            if (!Number.isFinite(audio.levels[role]) || Math.abs(audio.levels[role] - audio.played_dbfs) > 6) {
+              throw new Error(`levels_get: ${role} is ${audio.levels[role]} dBFS, expected ${audio.played_dbfs} +/- 6 dB`);
+            }
+            break;
+          }
+          const state = (await audioCall("jobs")).find((entry) => entry.job === id);
+          if (state && ["failed", "cancelled", "succeeded"].includes(state.status)) {
+            // A failed monitor has already ended; the next attempt starts a new one.
+            throw jobError(`level_play: ${role} monitor ended without a stored level: ${JSON.stringify(state)}`, state.error);
+          }
+          if (Date.now() - played > 30000) throw new Error(`level_play: ${role} did not finish in 30 s`);
+          await sleep(200);
+        }
+        await stopMonitor(id);
+      });
     }
     // BlackHole never sums channels. Sweep L and R sequentially through the
     // same wire so input 1 captures both roles in one position measurement.
     await configure("sweep", 1, [1, 1]);
     audio.request = { method: "measure_position", params: { position: 1 } };
-    await job("measure_position", { position: 1 });
+    await attempts("sweep", () => job("measure_position", { position: 1 }));
     audio.records = await audioCall("measurement_records");
     const record = audio.records.records.find((entry) => entry.position === 1);
     if (!record?.done || !["L", "R"].every((role) => record.roles.includes(role) && record.sources[role] === "measured")) {

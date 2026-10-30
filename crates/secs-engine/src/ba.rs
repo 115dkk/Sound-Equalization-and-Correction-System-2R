@@ -765,26 +765,38 @@ fn target_peq(
     boost: f64,
     fmax: Option<f64>,
     fitter: &mut Fitter<'_>,
-) -> Vec<Peq> {
+) -> (Vec<Peq>, Option<f64>) {
+    let rolloff = input
+        .config
+        .low_protect
+        .then(|| crate::low_protect::rolloff(by_pos, input.config.main_position, Some((0.0, 0.0))))
+        .flatten();
     let by_pos: Vec<_> = by_pos
         .iter()
         .map(|(p, h)| (weight(*p, input.config.main_position), h.as_ref()))
         .collect();
-    xo_target_peq(
+    let mut peq = xo_target_peq(
         &by_pos,
         &input.config.target,
         lvl,
-        20.0,
+        rolloff.unwrap_or(20.0),
         hi,
         bands,
         boost,
         fmax,
         fitter,
-    )
+    );
+    let failed = rolloff
+        .filter(|&hz| !crate::low_protect::limit(&mut peq, &vec![C::new(1.0, 0.0); BINS], hz));
+    (peq, failed)
 }
-fn bus_fit(input: &BaInput<'_>, by_pos: &[(u32, Arc<[C]>)], fitter: &mut Fitter<'_>) -> Vec<Peq> {
+fn bus_fit(
+    input: &BaInput<'_>,
+    by_pos: &[(u32, Arc<[C]>)],
+    fitter: &mut Fitter<'_>,
+) -> (Vec<Peq>, Option<f64>) {
     if !input.tuning.xo_stage || input.xo_of.is_empty() {
-        return vec![];
+        return (vec![], None);
     }
     let xo: Vec<_> = input.xo_of.iter().map(|(_, v)| *v).collect();
     let hi = if input.tuning.sub_bus_fix {
@@ -830,7 +842,7 @@ fn bus_response(
             *h = h.iter().map(|v| *v * C::new(gain, 0.0)).collect();
         }
     }
-    let peq = bus_fit(input, &by_pos, fitter);
+    let (peq, _) = bus_fit(input, &by_pos, fitter);
     check(input)?;
     Ok((!peq.is_empty()).then(|| response::peq_response(design_freqs(), &peq)))
 }
@@ -1033,7 +1045,7 @@ fn layout_stage(
             &(0..BINS).collect::<Vec<_>>(),
             &positions,
         );
-        let peq = target_peq(
+        let (peq, failed) = target_peq(
             input,
             &by_pos,
             level(input, &by_pos),
@@ -1044,6 +1056,14 @@ fn layout_stage(
             fitter,
         );
         check(input)?;
+        if let Some(hz) = failed {
+            out.notes.push(Note::LowProtect {
+                role: lay.members.join(" + "),
+                rolloff_hz: hz,
+                hp_hz: None,
+                limited: false,
+            });
+        }
         if !peq.is_empty() {
             let response = response::peq_response(f, &peq);
             for r in &lay.members {
@@ -1328,7 +1348,16 @@ fn align_with(
     for (_, h) in &mut out.sub_sum_by_pos {
         *h = h.iter().map(|v| *v * C::new(out.bus_gain, 0.0)).collect();
     }
-    out.bus_peq = bus_fit(input, &out.sub_sum_by_pos, fitter);
+    let (peq, failed) = bus_fit(input, &out.sub_sum_by_pos, fitter);
+    out.bus_peq = peq;
+    if let Some(hz) = failed {
+        out.notes.push(Note::LowProtect {
+            role: input.config.subs.join(" + "),
+            rolloff_hz: hz,
+            hp_hz: None,
+            limited: false,
+        });
+    }
     check(input)?;
     if input.tuning.xo_stage && !input.xo_of.is_empty() {
         let p = response::peq_response(design_freqs(), &out.bus_peq);

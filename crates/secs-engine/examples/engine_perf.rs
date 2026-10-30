@@ -28,6 +28,8 @@ mod grid;
 mod input;
 #[path = "../src/levels.rs"]
 mod levels;
+#[path = "../src/low_protect.rs"]
+mod low_protect;
 #[path = "../src/measurement.rs"]
 mod measurement;
 #[path = "../src/memory.rs"]

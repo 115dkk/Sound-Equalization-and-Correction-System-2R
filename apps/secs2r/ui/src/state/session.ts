@@ -353,9 +353,10 @@ export function createSession(ipc: Ipc) {
   let restartingMonitor = false;
   let meterTimer: ReturnType<typeof setTimeout> | undefined;
   // upstream wizard/mic_meter.py: POLL_S (0.25) * STALE_POLLS (4). Only REW
-  // streams readings while idle (monitor.rs rew_loop forwards its 0.25 s
-  // level callbacks); the native and mock monitors read only during a play,
-  // so silence there is normal and never restarts them.
+  // restarts on silence (monitor.rs rew_loop forwards its 0.25 s level
+  // callbacks). The native monitor streams 0.1 s readings while idle (P138)
+  // but pauses them for the length of a play, and the mock reads only during
+  // a play, so a gap there is normal and never restarts them.
   const staleMeterMs = 1000;
   /** A failed monitor finish that carries no error of its own. */
   const unknownMonitorFailure: import("../ipc/bindings/IpcError").IpcError = { code: "internal", params: {}, retryable: true, detail: "level monitor failed without an error" };

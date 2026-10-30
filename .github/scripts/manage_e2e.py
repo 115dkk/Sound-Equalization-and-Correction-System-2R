@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import base64
 import ctypes
+import hashlib
 import json
 import os
 import re
@@ -78,6 +79,11 @@ def ui(name):
     return f'[data-ui="{name}"]'
 
 
+# Creating a session launches the app and its WebView2; on a fresh runner that
+# took longer than the 30 s of other commands (2026-10-30).
+SESSION_TIMEOUT = 180
+
+
 class WebDriver:
     def __init__(self, url="http://127.0.0.1:4444", timeout=30):
         self.url = url.rstrip("/")
@@ -86,13 +92,13 @@ class WebDriver:
         # Local driver traffic must not go through a runner's HTTP proxy.
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-    def request(self, method, path, body=None):
+    def request(self, method, path, body=None, timeout=None):
         data = None if body is None else json.dumps(body).encode("utf-8")
         request = urllib.request.Request(self.url + path, data=data, method=method,
                                          headers={"Content-Type": "application/json"})
         failed = False
         try:
-            response = self.opener.open(request, timeout=self.timeout)
+            response = self.opener.open(request, timeout=timeout or self.timeout)
         except urllib.error.HTTPError as error:
             response = error
             failed = True
@@ -117,7 +123,7 @@ class WebDriver:
         result = self.request("POST", "/session", {"capabilities": {"alwaysMatch": {
             "tauri:options": {"application": str(application), "args": list(args),
                               "webviewOptions": {}},
-        }}})
+        }}}, timeout=SESSION_TIMEOUT)
         self.session = result["sessionId"]
         self.command("POST", "/timeouts", {"implicit": 0, "pageLoad": 30000, "script": 10000})
         return result
@@ -192,22 +198,46 @@ def parse_log(text):
 
 
 def remove_managed_lines(data):
-    """Remove only a complete marker pair; preserve all other bytes and newlines."""
+    """Remove only a complete marker pair; preserve all other bytes and newlines.
+
+    An unterminated include ends the file: SECS2R ended the original's last
+    line for the pair, so that line ending goes with it.
+    """
     lines = data.splitlines(keepends=True)
     result = []
     index = 0
     pairs = 0
+    unterminated = False
     while index < len(lines):
         if lines[index].rstrip(b"\r\n") == MARKER:
             require(index + 1 < len(lines) and lines[index + 1].rstrip(b"\r\n") == INCLUDE,
                     "damaged SECS2R marker pair")
+            unterminated = index + 2 == len(lines) and lines[index + 1] == INCLUDE
             index += 2
             pairs += 1
         else:
             result.append(lines[index])
             index += 1
     require(pairs == 1, f"expected one SECS2R marker pair, found {pairs}")
-    return b"".join(result)
+    text = b"".join(result)
+    if unterminated and result:
+        text = text[:-2] if text.endswith(b"\r\n") else text[:-1] if text.endswith(b"\n") else text
+    return text
+
+
+def listener_pid(listing, port):
+    """The PID listening on 127.0.0.1 or 0.0.0.0 `port` in `netstat -ano -p TCP`.
+
+    A connect probe cannot tell: Windows retries a refused loopback SYN for
+    about two seconds, so a free port times out a short connect.
+    """
+    wanted = {f"127.0.0.1:{port}", f"0.0.0.0:{port}"}
+    for line in listing.splitlines():
+        fields = line.split()
+        if (len(fields) >= 4 and fields[0].upper() == "TCP" and fields[1] in wanted
+                and fields[2] == "0.0.0.0:0" and fields[-1].isdigit()):
+            return int(fields[-1])
+    return None
 
 
 def check_config_bytes(before, after):
@@ -215,28 +245,39 @@ def check_config_bytes(before, after):
             "Equalizer APO changed bytes outside SECS2R's two lines")
 
 
+VIRTUAL_OUTPUT = "CABLE Input (VB-Audio Virtual Cable)"
+
+
+
 def base_config():
-    # SignalGenerator is endless; File -> NUL discards samples without unbounded
-    # output or audio hardware. This config is NEVER substituted for app output.
-    # Device contract: CamillaDSP v4.1.3 README, SignalGenerator and File sections.
-    return """devices:
+    # A plain WASAPI pass-through on the runner's VB-CABLE (format F32, as the
+    # app exports it): it reaches Running and exits on the takeover's Exit.
+    # With SignalGenerator capture CamillaDSP 4.1.3 never reports Running and
+    # stayed alive after Exit, so the service saw the port busy (2026-10-30).
+    # Capture is the loopback of CABLE Input, as in the managed configs: the
+    # CABLE Output recording device is denied by Windows' microphone privacy
+    # for desktop apps on the runner (0x80070005). The cable is silent, so
+    # playing its own loopback back does not build up.
+    # This config is NEVER substituted for app output.
+    return f"""devices:
   samplerate: 48000
   chunksize: 1024
   queuelimit: 2
   capture:
-    type: SignalGenerator
+    type: Wasapi
     channels: 2
-    signal:
-      type: Sine
-      freq: 997
-      level: -60
+    device: "{VIRTUAL_OUTPUT}"
+    format: F32
+    exclusive: false
+    loopback: true
   playback:
-    type: File
+    type: Wasapi
     channels: 2
-    filename: NUL
-    format: F32_LE
-filters: {}
-mixers: {}
+    device: "{VIRTUAL_OUTPUT}"
+    format: F32
+    exclusive: false
+filters: {{}}
+mixers: {{}}
 pipeline: []
 """
 
@@ -329,20 +370,28 @@ def runner_only():
         require(not os.environ.get(variable), f"real installed-service check refuses {variable}")
 
 
-def command(args, timeout=30, check=True):
+def command(args, timeout=30, check=True, env=None):
     result = subprocess.run([str(arg) for arg in args], capture_output=True, text=True,
-                            encoding="utf-8", errors="replace", timeout=timeout, check=False)
+                            encoding="utf-8", errors="replace", timeout=timeout, check=False, env=env)
     if check:
         require(result.returncode == 0,
                 f"{args!r} exited {result.returncode}: {result.stdout}\n{result.stderr}")
     return result
 
 
+def windows_powershell_env(environ=None):
+    """The environment for Windows PowerShell 5.1 started from a PowerShell 7
+    step: without PowerShell 7's PSModulePath, which keeps 5.1 from autoloading
+    its own modules (Microsoft.PowerShell.Security holds Get-AuthenticodeSignature)."""
+    source = os.environ if environ is None else environ
+    return {key: value for key, value in source.items() if key.upper() != "PSMODULEPATH"}
+
+
 def powershell(script, timeout=30):
     preamble = "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new();\n"
     encoded = base64.b64encode((preamble + script).encode("utf-16le")).decode("ascii")
     return command(["powershell.exe", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded],
-                   timeout=timeout).stdout.strip()
+                   timeout=timeout, env=windows_powershell_env()).stdout.strip()
 
 
 def ps_string(value):
@@ -488,30 +537,89 @@ def prepare_edge(destination, artifacts):
     print(json.dumps(facts, indent=2))
 
 
+WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+
+def websocket_exchange(text, port=1234, timeout=4.0):
+    """One text request and its text reply over RFC 6455, stdlib only.
+
+    The app's CSP forbids ws://, so the check talks to CamillaDSP from here.
+    (Windows PowerShell's ClientWebSocket returned an empty string on the
+    runner, 2026-10-30, so the client is plain Python.)"""
+    key = base64.b64encode(os.urandom(16)).decode("ascii")
+    expected = base64.b64encode(hashlib.sha1((key + WEBSOCKET_GUID).encode("ascii")).digest()).decode("ascii")
+    with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
+        sock.sendall((f"GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\n"
+                      f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode("ascii"))
+        reader = sock.makefile("rb")
+        head = []
+        while True:
+            line = reader.readline(8192)
+            if not line:
+                raise CheckError("WebSocket closed during the handshake")
+            if line in (b"\r\n", b"\n"):
+                break
+            head.append(line.decode("latin-1").strip())
+            require(len(head) < 64, "WebSocket handshake headers too long")
+        require(head and head[0].split(" ")[1:2] == ["101"], f"WebSocket handshake refused: {head[:1]}")
+        accept = [line.split(":", 1)[1].strip() for line in head[1:] if line.lower().startswith("sec-websocket-accept:")]
+        require(accept == [expected], "WebSocket handshake has a wrong Sec-WebSocket-Accept")
+
+        def send(opcode, payload):
+            mask = os.urandom(4)
+            header = bytes([0x80 | opcode])
+            length = len(payload)
+            if length < 126:
+                header += bytes([0x80 | length])
+            elif length < 1 << 16:
+                header += bytes([0x80 | 126]) + length.to_bytes(2, "big")
+            else:
+                header += bytes([0x80 | 127]) + length.to_bytes(8, "big")
+            sock.sendall(header + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+
+        def exact(count):
+            data = reader.read(count)
+            require(data is not None and len(data) == count, "WebSocket closed before the reply")
+            return data
+
+        send(0x1, text.encode("utf-8"))
+        message = b""
+        while True:
+            first, second = exact(2)
+            opcode, length = first & 0x0F, second & 0x7F
+            if length == 126:
+                length = int.from_bytes(exact(2), "big")
+            elif length == 127:
+                length = int.from_bytes(exact(8), "big")
+            require(length <= 1 << 20, "WebSocket response too large")
+            mask = exact(4) if second & 0x80 else None
+            payload = exact(length)
+            if mask:
+                payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+            if opcode == 0x8:
+                raise CheckError("WebSocket closed before the reply")
+            if opcode == 0x9:
+                send(0xA, payload)
+                continue
+            if opcode in (0x1, 0x0):
+                message += payload
+                require(len(message) <= 1 << 20, "WebSocket response too large")
+                if first & 0x80:
+                    break
+        try:
+            send(0x8, (1000).to_bytes(2, "big"))
+        except OSError:
+            pass
+    return message.decode("utf-8")
+
+
 def websocket(command_name):
-    # .NET implements RFC 6455; Python invokes it using only stdlib. App CSP
-    # forbids ws://, so do not weaken CSP or probe through the page.
-    payload = base64.b64encode(json.dumps(command_name).encode()).decode()
-    script = f"""
-$ws=[Net.WebSockets.ClientWebSocket]::new()
-$cancel=[Threading.CancellationTokenSource]::new(4000)
-try {{
-  $ws.ConnectAsync([Uri]'ws://127.0.0.1:1234',$cancel.Token).GetAwaiter().GetResult()
-  $bytes=[Convert]::FromBase64String('{payload}')
-  $ws.SendAsync([ArraySegment[byte]]::new($bytes),[Net.WebSockets.WebSocketMessageType]::Text,$true,$cancel.Token).GetAwaiter().GetResult()
-  $buffer=New-Object byte[] 65536
-  $data=[IO.MemoryStream]::new()
-  do {{
-    $part=$ws.ReceiveAsync([ArraySegment[byte]]::new($buffer),$cancel.Token).GetAwaiter().GetResult()
-    if ($part.MessageType -eq [Net.WebSockets.WebSocketMessageType]::Close) {{ throw 'WebSocket closed before reply' }}
-    $data.Write($buffer,0,$part.Count)
-    if ($data.Length -gt 1048576) {{ throw 'WebSocket response too large' }}
-  }} until ($part.EndOfMessage)
-  [Text.Encoding]::UTF8.GetString($data.ToArray())
-}} finally {{ $ws.Dispose(); $cancel.Dispose() }}
-"""
-    value = json.loads(powershell(script, timeout=10))
-    reply = value.get(command_name, {})
+    raw = websocket_exchange(json.dumps(command_name))
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        raise CheckError(f"CamillaDSP {command_name}: reply is not JSON: {raw[:200]!r}") from None
+    reply = value.get(command_name, {}) if isinstance(value, dict) else {}
     require(reply.get("result") == "Ok", f"CamillaDSP {command_name}: {value}")
     return reply.get("value")
 
@@ -542,6 +650,16 @@ def desktop_screenshot(path):
                "} finally { $g.Dispose(); $b.Dispose() }")
 
 
+PAGE_PROBLEMS = r"""
+const texts = [];
+for (const node of document.querySelectorAll('[role="alert"], [data-ui$=".problem"], [data-ui$=".reason"], details')) {
+  const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
+  if (text && !texts.includes(text)) texts.push(text);
+}
+return texts.join(' | ').slice(0, 2000);
+"""
+
+
 SETUP_CALL = """
 return window.__TAURI_INTERNALS__.invoke('secs_call', {request: arguments[0]}).then(envelope => {
   if (!envelope.ok) throw new Error(JSON.stringify(envelope.error));
@@ -556,8 +674,8 @@ class Scenario:
         self.artifacts = args.artifacts
         self.driver = WebDriver()
         self.records = []
-        self.notes = ["Base: SignalGenerator sine -> File NUL, no hardware and no growing output file.",
-                      "Applied configs are unchanged: stereo design, Scream WASAPI loopback -> shared WASAPI, F32.",
+        self.notes = ["Base: shared WASAPI pass-through, VB-CABLE Input loopback -> VB-CABLE Input (silent), no growing output file.",
+                      "Applied configs are unchanged: stereo design, VB-CABLE WASAPI loopback -> shared WASAPI, F32.",
                       "tauri-driver 2.1.0 (released 2026-09-26); Edge build/signature in webdriver-version.json.",
                       "Equalizer APO XT: pinned 2.60.4 x64-sse2 Setup.exe --silent; require installer registry values."]
         self.host_root = Path(os.environ["ProgramData"]) / "SECS2R"
@@ -632,6 +750,17 @@ class Scenario:
         config = self.args.eqapo_config / "config.txt"
         if config.is_file():
             shutil.copy2(config, self.artifacts / "config-current.txt")
+        # Who holds the CamillaDSP port, for a failed takeover.
+        try:
+            listing = command(["netstat", "-ano", "-p", "TCP"], timeout=20, check=False).stdout
+            rows = [line for line in listing.splitlines() if ":1234 " in line]
+            pids = sorted({row.split()[-1] for row in rows if row.split() and row.split()[-1].isdigit()})
+            processes = [powershell(f"(Get-Process -Id {pid} -ErrorAction SilentlyContinue | "
+                                    "Select-Object Id,ProcessName,Path | ConvertTo-Json -Compress)", timeout=20)
+                         for pid in pids]
+            (self.artifacts / "port-1234.txt").write_text("\n".join(rows + processes) + "\n", encoding="utf-8")
+        except (CheckError, OSError, subprocess.SubprocessError) as error:
+            self.log("port_facts_error", detail=str(error))
 
     def status(self):
         value = parse_status(command([self.host, "status"], timeout=8).stdout)
@@ -658,13 +787,18 @@ class Scenario:
         return wait_for(selector, rendered)
 
     def click(self, name):
+        # Retried as a whole: right after a project opens the rail re-lays out,
+        # and a click then lands on the status block ("element click
+        # intercepted", which clicks nothing) or on a replaced element.
         selector = ui(name)
-        def enabled():
+        def attempt():
             element = self.driver.find(selector)
-            return element if self.driver.attribute(element, "disabled") is None else None
-        element = wait_for(f"enabled {name}", enabled)
+            if self.driver.attribute(element, "disabled") is not None:
+                return False
+            self.driver.click(element)
+            return True
         self.log("click", selector=selector)
-        self.driver.click(element)
+        wait_for(f"click {name}", attempt)
 
     def type(self, name, value):
         element = self.shown(ui(name))
@@ -675,9 +809,10 @@ class Scenario:
                  lambda current: current == value)
         self.log("type", selector=ui(name), value=value)
 
-    def choose_scream(self):
-        devices = [device for device in self.facts["wasapi"]["render"] if "scream" in device["name"].lower()]
-        require(len(devices) == 1, f"Expected one Scream render endpoint: {devices}")
+    def choose_virtual_output(self):
+        devices = [device for device in self.facts["wasapi"]["render"]
+                   if device["name"].casefold() == VIRTUAL_OUTPUT.casefold()]
+        require(len(devices) == 1, f"Expected one VB-CABLE render endpoint: {devices}")
         name = devices[0]["name"]
         disclosure = self.shown(ui("export.devices"))
         if self.driver.attribute(disclosure, "aria-expanded") != "true":
@@ -700,8 +835,8 @@ class Scenario:
             def option():
                 return next((item for item in self.driver.find_all(selector + " option")
                              if self.driver.attribute(item, "value") == name), None)
-            self.driver.click(wait_for(f"Scream option for {side}", option))
-            wait_for(f"Scream selected for {side}",
+            self.driver.click(wait_for(f"VB-CABLE option for {side}", option))
+            wait_for(f"VB-CABLE selected for {side}",
                      lambda: self.driver.execute("return arguments[0].value;", {ELEMENT: select}),
                      lambda value: value == name)
         self.log("gui_devices", capture="WASAPI loopback", playback="WASAPI shared", device=name, format="F32")
@@ -719,7 +854,18 @@ class Scenario:
     def open_project(self):
         self.click("frame.project")
         self.click("frame.project.open")
-        self.click("project.open.recent.1")
+        # After the setup reload the service may still hold the project: the
+        # dialog then marks the recent entry as the open one (a status pill)
+        # and disables it. Opening it again is not possible nor needed.
+        recent = self.shown(ui("project.open.recent.1"))
+        already_open = self.driver.execute(
+            "const e = arguments[0]; return e.disabled && e.querySelector('.ui-pill') !== null;",
+            {ELEMENT: recent})
+        if already_open:
+            self.log("project_already_open")
+            self.click("project.open.cancel")
+        else:
+            self.click("project.open.recent.1")
         self.shown(ui("frame.status.file"))
         self.click("frame.rail.export")
         self.shown(ui("export.result.summary"))
@@ -737,7 +883,7 @@ class Scenario:
             require(result["status"] == "succeeded", f"setup {method}: {result}")
         self.project.parent.mkdir(parents=True, exist_ok=False)
         call("project_new", {"path": str(self.project), "preset": "2.0", "sub_count": 0,
-                             "sample": True, "tutorial": False})
+                             "sample": False, "tutorial": False})
         call("measure_configure", {"method": "mock"})
         job("measure_position", {"position": 1})
         job("calibrate", {"settings": None, "subs_only": False})
@@ -754,9 +900,19 @@ class Scenario:
         wait_for("reload", lambda: self.driver.execute("return performance.timeOrigin;"), lambda value: value != previous)
         self.shown(ui("frame"))
 
+    def page_problems(self):
+        """The screen's error texts, including collapsed details, for a report."""
+        try:
+            return self.driver.execute(PAGE_PROBLEMS)
+        except CheckError as error:
+            return f"(page problems unreadable: {error})"
+
     def gui_apply(self, target, outcome=None):
         self.click(f"export.apply.{target}")
-        element = self.shown(ui(f"export.apply.{target}.outcome") + '[data-outcome]')
+        try:
+            element = self.shown(ui(f"export.apply.{target}.outcome") + '[data-outcome]')
+        except CheckError as error:
+            raise CheckError(f"{error}; screen: {self.page_problems()}") from None
         kind = wait_for(f"GUI apply {target}", lambda: self.driver.attribute(element, "data-outcome"),
                         lambda value: value in {"applied", "handed_over"}, timeout=120)
         if outcome:
@@ -804,7 +960,7 @@ class Scenario:
             require(self.base.poll() is None, "base CamillaDSP exited; another process may own port 1234")
             require(os.path.normcase(websocket("GetConfigFilePath")) == os.path.normcase(str(path)),
                     "port 1234 does not serve the base configuration")
-            record["detail"] = f"base PID {self.base.pid}; SignalGenerator -> NUL"
+            record["detail"] = f"base PID {self.base.pid}; VB-CABLE Input loopback -> VB-CABLE Input"
         with self.step(2) as record:
             output = (self.artifacts / "tauri-driver.log").open("wb")
             self.handles.append(output)
@@ -817,7 +973,7 @@ class Scenario:
             record["detail"] = f"mock-room measurement and calibration saved to {self.project}"
         with self.step(3) as record:
             self.open_project()
-            self.choose_scream()
+            self.choose_virtual_output()
             self.click("export.apply.camilla.level.manage")
             self.type("export.apply.camilla.address", "127.0.0.1:1234")
             self.type("export.manage.camilla.exe", str(self.args.camilla))
@@ -827,7 +983,7 @@ class Scenario:
             button = self.driver.find(ui("export.apply.camilla"))
             require(self.driver.attribute(button, "disabled") is not None,
                     "Manage must be disabled before service installation")
-            record["detail"] = "GUI saved Scream loopback/shared WASAPI and address/executable/manage; action awaits service installation (P123 policy)"
+            record["detail"] = "GUI saved VB-CABLE loopback/shared WASAPI and address/executable/manage; action awaits service installation (P123 policy)"
         with self.step(4) as record:
             self.click("export.manage.camilla.install")
             wait_for("SCM RUNNING", lambda: command(["sc.exe", "query", "SECS2RHost"], check=False).stdout,
@@ -916,12 +1072,10 @@ class Scenario:
         with self.step(9) as record:
             self.start_session()
             self.open_project()
-            self.choose_scream()
-            try:
-                with socket.create_connection(("127.0.0.1", 1234), timeout=2):
-                    raise CheckError("CamillaDSP is still listening before the cold-start check")
-            except ConnectionRefusedError:
-                pass
+            self.choose_virtual_output()
+            listing = command(["netstat", "-ano", "-p", "TCP"], timeout=20).stdout
+            holder = listener_pid(listing, 1234)
+            require(holder is None, f"PID {holder} still listens on 1234 before the cold-start check")
             result = self.gui_apply("camilla", "handed_over")
             third = self.running(p2)
             p3 = third["camilla"]["pid"]
@@ -933,11 +1087,15 @@ class Scenario:
             self.shown(ui("host.service") + '[data-state="running"]')
             self.click("host.uninstall")
             self.click("host.uninstall.confirm.confirm")
-            wait_for("service deleted", lambda: command(["sc.exe", "query", "SECS2RHost"], check=False).returncode,
-                     lambda code: code == 1060)
-            wait_for("P3 exited", lambda: process_facts(p3), lambda value: value is None)
-            wait_for("Program Files copy removed", copy.exists, lambda value: not value)
-            wait_for("Run value removed", lambda: registry_value(winreg.HKEY_CURRENT_USER, RUN_KEY, "SECS2RHostShell"), lambda value: value is None)
+            try:
+                wait_for("service deleted", lambda: command(["sc.exe", "query", "SECS2RHost"], check=False).returncode,
+                         lambda code: code == 1060)
+                wait_for("P3 exited", lambda: process_facts(p3), lambda value: value is None)
+                wait_for("Program Files copy removed", copy.exists, lambda value: not value)
+                wait_for("Run value removed", lambda: registry_value(winreg.HKEY_CURRENT_USER, RUN_KEY, "SECS2RHostShell"),
+                         lambda value: value is None)
+            except CheckError as error:
+                raise CheckError(f"{error}; screen: {self.page_problems()}") from None
             self.shown(ui("host.install"))
             record["detail"] = f"SCM 1060; P3={p3} exited; Program Files copy and HKCU Run value absent"
 

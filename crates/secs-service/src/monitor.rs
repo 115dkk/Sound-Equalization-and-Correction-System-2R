@@ -224,7 +224,30 @@ fn sampled_loop(
     while !job.cancel().is_cancelled() {
         let play = lock(state).play.clone();
         let Some(play) = play.filter(|play| play.generation != handled_generation) else {
-            std::thread::sleep(Duration::from_millis(50));
+            match &mut measurer {
+                SampledMeasurer::Native(measurer) => {
+                    let metered = measurer.input_meter(
+                        &plan,
+                        job.measurement_cancel(),
+                        &mut || {
+                            job.cancel().is_cancelled()
+                                || lock(state)
+                                    .play
+                                    .as_ref()
+                                    .is_some_and(|play| play.generation != handled_generation)
+                        },
+                        &mut |report| send_meter(job, report),
+                    );
+                    match metered {
+                        Ok(()) => (),
+                        Err(crate::measure::MeasureError::Audio(
+                            secs_audio::AudioError::Cancelled,
+                        )) if job.cancel().is_cancelled() => break,
+                        Err(error) => return Err(level_error(error, "level", share)),
+                    }
+                }
+                SampledMeasurer::Mock(_) => std::thread::sleep(Duration::from_millis(50)),
+            }
             continue;
         };
         let mut play_plan = plan.clone();

@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    calibration::{Mode, SampleRatePolicy},
+    calibration::{Mode, RcHiBasis, SampleRatePolicy},
     chain::BandType,
 };
 
@@ -105,11 +105,20 @@ pub enum SettingEdit {
     UltraMs {
         ms: f64,
     },
+    LowProtect {
+        on: bool,
+    },
     RcLo {
         hz: f64,
     },
     RcHi {
         hz: Option<f64>,
+    },
+    RcHiBasis {
+        basis: RcHiBasis,
+    },
+    RcHiTransition {
+        factor: u8,
     },
     RoomVolume {
         m3: f64,

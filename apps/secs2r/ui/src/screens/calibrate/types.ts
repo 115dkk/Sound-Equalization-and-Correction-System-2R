@@ -83,9 +83,15 @@ export type CalibrateView = {
   xoRecommendation: XoRecommendation | null;
   /** Which of this screen's jobs runs (from `jobs` and the job events); null when none. */
   running: CalibrateJob | null;
+  /** The running `calibrate` computes MIMO after the correction (`mimo: true`, P141). */
+  runningMimo: boolean;
   /** A measurement job runs (the step is blocked with `measuring`). */
   measuring: boolean;
-  /** The last of this screen's jobs that failed, until the next one starts. */
+  /**
+   * The last of this screen's jobs that failed, until the next one starts. A
+   * `calibrate` that failed in its MIMO part (`stage: "mimo"`, the correction
+   * kept) is the MIMO card's, as `mimo`, its error without the stage.
+   */
   failure: { job: CalibrateJob; error: IpcError } | null;
   /** `results.calibration.stale_reason`; null shows the general sentence. */
   staleReason: StaleReason | null;
@@ -122,7 +128,7 @@ export type CalibrateActions = {
   changeCompute: (preference: ComputePreference) => void;
   refreshCompute: () => void;
   openGpuHelp: () => void;
-  /** calibrate { settings: null, subs_only: false } */
+  /** calibrate { settings: null, subs_only: false, mimo }: `mimo` when MIMO is on with three or more positions (`mimoIncluded`) */
   calibrate: () => void;
   /** calibrate { settings: null, subs_only: true } */
   calibrateSubs: () => void;

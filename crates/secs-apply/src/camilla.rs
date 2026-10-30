@@ -1,4 +1,5 @@
 use std::net::{TcpStream, ToSocketAddrs};
+use std::path::Path;
 use std::time::Duration;
 
 use serde_json::Value;
@@ -351,7 +352,11 @@ impl<T: Transport> Camilla<T> {
         config_path: &str,
         config_text: &str,
     ) -> Result<ApplyOutcome, ApplyError> {
-        self.command(&Command::ValidateConfig(config_text.to_owned()))?;
+        let config_dir = Path::new(config_path).parent().unwrap_or(Path::new(""));
+        self.command(&Command::ValidateConfig(with_absolute_filenames(
+            config_text,
+            config_dir,
+        )))?;
         let previous_value = self.command(&Command::GetConfigFilePath)?;
         let previous_path = value_as_optional_string(previous_value, &Command::GetConfigFilePath)?;
         self.command(&Command::SetConfigFilePath(config_path.to_owned()))?;
@@ -447,6 +452,44 @@ fn optional_playback_peak(
         })
         .collect::<Result<Vec<_>, _>>()
         .map(Some)
+}
+
+/// Returns `config_text` with every relative `"filename":"…"` made absolute
+/// under `config_dir`.
+///
+/// The exporter writes coefficient paths relative to the config file so a
+/// bundle can move (`secs-camilla`). CamillaDSP resolves them against the
+/// config file's folder when it loads the file (`SetConfigFilePath`,
+/// `Reload`), but `ValidateConfig` receives only text and resolves them
+/// against its own working directory, which failed every FIR filter with
+/// "The system cannot find the path specified" (manage-e2e, 2026-10-30).
+/// Only the validated copy changes; the file on disk keeps relative paths.
+pub fn with_absolute_filenames(config_text: &str, config_dir: &Path) -> String {
+    const KEY: &str = "\"filename\":";
+    let mut out = String::with_capacity(config_text.len());
+    let mut rest = config_text;
+    while let Some(at) = rest.find(KEY) {
+        let (before, after_key) = rest.split_at(at + KEY.len());
+        out.push_str(before);
+        let trimmed = after_key.trim_start_matches(' ');
+        out.push_str(&after_key[..after_key.len() - trimmed.len()]);
+        let mut stream = serde_json::Deserializer::from_str(trimmed).into_iter::<String>();
+        match stream.next() {
+            Some(Ok(value)) if !Path::new(&value).is_absolute() && !value.is_empty() => {
+                let absolute = value
+                    .split('/')
+                    .fold(config_dir.to_path_buf(), |path, part| path.join(part));
+                out.push_str(
+                    &serde_json::to_string(&absolute.to_string_lossy())
+                        .expect("a string serializes"),
+                );
+                rest = &trimmed[stream.byte_offset()..];
+            }
+            _ => rest = trimmed,
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 #[cfg(test)]
@@ -775,5 +818,38 @@ mod tests {
         ));
         assert!(started.elapsed() < Duration::from_secs(2));
         server.join().unwrap();
+    }
+
+    #[test]
+    fn validation_text_gets_absolute_coefficient_paths() {
+        let dir = Path::new("/cfg");
+        let text = "filters:\n  in_L_fir: {\"type\":\"Conv\",\"parameters\":{\"type\":\"Wav\",\"filename\":\"filters/secs_mixed_L.wav\",\"channel\":0}}\n  in_R_fir: {\"type\":\"Conv\",\"parameters\":{\"type\":\"Wav\",\"filename\": \"/abs/R.wav\"}}\n";
+        let fixed = with_absolute_filenames(text, dir);
+        let expected = serde_json::to_string(
+            &Path::new("/cfg")
+                .join("filters")
+                .join("secs_mixed_L.wav")
+                .to_string_lossy(),
+        )
+        .unwrap();
+        assert!(
+            fixed.contains(&format!("\"filename\":{expected},\"channel\":0")),
+            "{fixed}"
+        );
+        let kept = serde_json::to_string(
+            &std::env::temp_dir()
+                .join("abs")
+                .join("R.wav")
+                .to_string_lossy(),
+        )
+        .unwrap();
+        let text = format!("{{\"filename\": {kept}}}");
+        assert_eq!(with_absolute_filenames(&text, dir), text);
+        assert_eq!(fixed.matches("\"filename\":").count(), 2);
+        assert_eq!(with_absolute_filenames("title: x\n", dir), "title: x\n");
+        assert_eq!(
+            with_absolute_filenames("{\"filename\":12}", dir),
+            "{\"filename\":12}"
+        );
     }
 }

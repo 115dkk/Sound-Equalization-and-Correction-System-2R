@@ -355,7 +355,7 @@ describe("XO recommendation completion", () => {
       mock.drain(); await session.settled();
       expect(session.stores.settings.getSnapshot()?.xo_rec).toMatchObject({ "프론트": 80, "센터": 100 });
       expect(session.stores.settings.getSnapshot()?.xo).toMatchObject({ "프론트": 80, "센터": 100 });
-      expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false } });
+      expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false, mimo: false } });
       expect(session.jobs.getSnapshot().jobs.some((job) => job.kind === "calibrate" && job.status === "running")).toBe(true);
       mock.drain(); await session.settled();
       expect(session.stores.results.getSnapshot()?.calibration?.stale).toBe(false);

@@ -144,12 +144,25 @@ fn run(cli: Cli) -> Result<(), IpcError> {
             let paths = rules::host_install_paths(&program_files_root()?);
             validate_service_directory_if_present(&paths.directory)?;
             secs_sys::host::unregister_service()?;
-            rules::remove_host_copy(&paths).map_err(|error| {
-                IpcError::new(
-                    ErrorCode::ApplyFailed,
-                    format!("remove {}: {error}", paths.executable.display()),
-                )
-            })
+            // A scanner or the exiting service can hold the file briefly.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                match rules::remove_host_copy(&paths) {
+                    Ok(()) => return Ok(()),
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::PermissionDenied
+                            && Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(250));
+                    }
+                    Err(error) => {
+                        return Err(IpcError::new(
+                            ErrorCode::ApplyFailed,
+                            format!("remove {}: {error}", paths.executable.display()),
+                        ));
+                    }
+                }
+            }
         }
         Action::Run => {
             let paths = Paths::from_env();
@@ -392,7 +405,12 @@ fn service_loop(
     {
         mark_other_user(&mut core, paths, session)?;
     }
-    let mut process_rules = ProcessRules::new(active_session.is_some());
+    // Whether anyone is logged on to the console, not whether that user owns
+    // the targets: a freshly installed service has no owner yet, and taking
+    // the owner check here made it ignore every later exit of the CamillaDSP
+    // it launched (no restart; manage-e2e step 6, 2026-10-30). Launches
+    // still check the owner through managing_session.
+    let mut process_rules = ProcessRules::new(secs_sys::host::active_console_session().is_some());
     let mut restart_at = None;
     if core.managed.camilla.is_some()
         && let Some(session) = active_session
@@ -544,7 +562,7 @@ fn service_loop(
             }
         }
 
-        secs_sys::host::pipe_server(
+        let served = secs_sys::host::pipe_server(
             &paths.pipe,
             Duration::from_millis(100),
             |identity, request| {
@@ -562,7 +580,14 @@ fn service_loop(
                 )
                 .unwrap_or_else(HostResponse::Error)
             },
-        )?;
+        );
+        // One client's failure (it left before the answer, a broken frame)
+        // must not stop the service; the next loop serves the next client.
+        if let Err(error) = served {
+            let line = rules::log_line("pipe_error", [("detail".to_owned(), error.detail)]);
+            let _ = rules::append_log(&paths.log, &line, rules::LOG_LIMIT);
+            std::thread::sleep(Duration::from_millis(100));
+        }
         if stop_after_response {
             if let Some(running) = child.take() {
                 let _ = running.stop();
@@ -784,70 +809,105 @@ fn configure_watcher(
 }
 
 #[cfg(target_os = "windows")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum PortTakeover {
     Free,
     TakenOver,
-    Busy,
+    /// The old CamillaDSP ignored `Exit`; the service ended this PID.
+    Terminated(u32),
+    /// Why the port stayed busy, for the `port_busy` log line.
+    Busy(&'static str, String),
 }
 
 #[cfg(target_os = "windows")]
 fn takeover_port(port: u16) -> PortTakeover {
-    use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
-
-    let socket = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
-    match TcpStream::connect_timeout(&socket.into(), Duration::from_secs(1)) {
-        Ok(stream) => drop(stream),
-        Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
+    // netstat, not a connect probe, says whether anything listens (see
+    // `tcp_listener_pid`: a free loopback port times out a short connect).
+    match secs_sys::host::tcp_listener_pid(port) {
+        Ok(None) => {
             return match rules::takeover_decision(false, Some(rules::PortObservation::Empty)) {
                 rules::TakeoverDecision::Launch => PortTakeover::Free,
-                _ => PortTakeover::Busy,
+                _ => PortTakeover::Busy("refused", String::new()),
             };
         }
-        Err(_) => {
-            return match rules::takeover_decision(false, Some(rules::PortObservation::OtherProcess))
-            {
-                rules::TakeoverDecision::PortBusy => PortTakeover::Busy,
-                _ => PortTakeover::Free,
-            };
-        }
+        Ok(Some(_)) => {}
+        Err(error) => return PortTakeover::Busy("netstat", error.detail),
     }
 
     let address = format!("127.0.0.1:{port}");
     let transport =
-        match secs_apply::camilla::WsTransport::connect(&address, Duration::from_secs(1)) {
+        match secs_apply::camilla::WsTransport::connect(&address, Duration::from_secs(3)) {
             Ok(transport) => transport,
             Err(secs_apply::ApplyError::Connect {
                 connection_refused: true,
                 ..
             }) => return PortTakeover::Free,
-            Err(_) => return PortTakeover::Busy,
+            Err(error) => {
+                return match rules::takeover_decision(
+                    false,
+                    Some(rules::PortObservation::OtherProcess),
+                ) {
+                    rules::TakeoverDecision::PortBusy => {
+                        PortTakeover::Busy("not_camilla", error.to_string())
+                    }
+                    _ => PortTakeover::Free,
+                };
+            }
         };
     if rules::takeover_decision(false, Some(rules::PortObservation::CamillaDsp))
         != rules::TakeoverDecision::RequestExit
     {
-        return PortTakeover::Busy;
+        return PortTakeover::Busy("policy", String::new());
     }
     let mut camilla = secs_apply::camilla::Camilla::new(transport);
-    if camilla.version().and_then(|_| camilla.exit()).is_err() {
-        return PortTakeover::Busy;
+    if let Err(error) = camilla.version().and_then(|_| camilla.exit()) {
+        return PortTakeover::Busy("exit_request", error.to_string());
     }
 
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        match TcpStream::connect_timeout(&socket.into(), Duration::from_millis(100)) {
-            Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
+        match secs_sys::host::tcp_listener_pid(port) {
+            Ok(None) => {
                 return match rules::after_exit_decision(false) {
                     rules::TakeoverDecision::Launch => PortTakeover::TakenOver,
-                    _ => PortTakeover::Busy,
+                    _ => PortTakeover::Busy("policy", String::new()),
                 };
             }
             _ if Instant::now() >= deadline => {
-                return match rules::after_exit_decision(true) {
-                    rules::TakeoverDecision::PortBusy => PortTakeover::Busy,
-                    _ => PortTakeover::TakenOver,
+                if rules::after_exit_decision(true) != rules::TakeoverDecision::PortBusy {
+                    return PortTakeover::TakenOver;
+                }
+                // CamillaDSP 4.1.3 stops processing on Exit but keeps the
+                // port when a capture thread blocks (a silent loopback).
+                return match secs_sys::host::terminate_camilla_listener(port) {
+                    Ok(secs_sys::host::ListenerOutcome::Terminated(pid)) => {
+                        if port_closes(port, Duration::from_secs(5)) {
+                            PortTakeover::Terminated(pid)
+                        } else {
+                            PortTakeover::Busy("still_open", format!("ended {pid}"))
+                        }
+                    }
+                    // The listener went away between the last poll and now.
+                    Ok(secs_sys::host::ListenerOutcome::NotFound) => PortTakeover::TakenOver,
+                    Ok(secs_sys::host::ListenerOutcome::NotCamilla { pid, image }) => {
+                        PortTakeover::Busy("other_program", format!("{pid} {image}"))
+                    }
+                    Err(error) => PortTakeover::Busy("terminate_failed", error.detail),
                 };
             }
+            _ => std::thread::sleep(Duration::from_millis(100)),
+        }
+    }
+}
+
+/// Whether netstat stops showing a listener on `port` within `within`.
+#[cfg(target_os = "windows")]
+fn port_closes(port: u16, within: Duration) -> bool {
+    let deadline = Instant::now() + within;
+    loop {
+        match secs_sys::host::tcp_listener_pid(port) {
+            Ok(None) => return true,
+            _ if Instant::now() >= deadline => return false,
             _ => std::thread::sleep(Duration::from_millis(100)),
         }
     }
@@ -879,11 +939,31 @@ fn launch(
                 rules::log_line("takeover", [("port".to_owned(), managed.port.to_string())]),
             )?;
         }
-        PortTakeover::Busy => {
+        PortTakeover::Terminated(pid) => {
             record(
                 core,
                 paths,
-                rules::log_line("port_busy", [("port".to_owned(), managed.port.to_string())]),
+                rules::log_line(
+                    "takeover_terminated",
+                    [
+                        ("port".to_owned(), managed.port.to_string()),
+                        ("pid".to_owned(), pid.to_string()),
+                    ],
+                ),
+            )?;
+        }
+        PortTakeover::Busy(reason, detail) => {
+            record(
+                core,
+                paths,
+                rules::log_line(
+                    "port_busy",
+                    [
+                        ("port".to_owned(), managed.port.to_string()),
+                        ("reason".to_owned(), reason.to_owned()),
+                        ("detail".to_owned(), detail),
+                    ],
+                ),
             )?;
             match process_rules.apply(ProcessEvent::Exit, Instant::now()) {
                 ProcessAction::RestartAfter(delay) => {

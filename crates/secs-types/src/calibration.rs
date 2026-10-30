@@ -24,6 +24,31 @@ pub enum Mode {
     Ultra,
 }
 
+/// Evidence used to choose an automatic room-correction ceiling (ADR 0021).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum RcHiBasis {
+    #[default]
+    Strict,
+    Lenient,
+    Agreement,
+}
+
+impl RcHiBasis {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Strict => "strict",
+            Self::Lenient => "lenient",
+            Self::Agreement => "agreement",
+        }
+    }
+}
+
+fn default_rc_hi_transition() -> u8 {
+    1
+}
+
 /// How non-48 kHz measurement responses are prepared for calculation.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -96,8 +121,14 @@ pub struct CalibrationSettings {
     pub mode: Mode,
     #[serde(default)]
     pub sample_rate_policy: SampleRatePolicy,
+    #[serde(default)]
+    pub low_protect: bool,
     pub rc_lo: f64,
     pub rc_hi: Option<f64>,
+    #[serde(default)]
+    pub rc_hi_basis: RcHiBasis,
+    #[serde(default = "default_rc_hi_transition")]
+    pub rc_hi_transition: u8,
     pub room_volume_m3: Option<f64>,
     pub room_dims_m: Option<[f64; 3]>,
     pub mimo_on: bool,
@@ -138,8 +169,11 @@ impl Default for CalibrationSettings {
         Self {
             mode: Mode::Mixed,
             sample_rate_policy: SampleRatePolicy::Reject,
+            low_protect: false,
             rc_lo: 20.0,
             rc_hi: None,
+            rc_hi_basis: RcHiBasis::Strict,
+            rc_hi_transition: 1,
             room_volume_m3: None,
             room_dims_m: None,
             mimo_on: false,
@@ -198,9 +232,19 @@ impl CalibrationSettings {
             number(self.boost_max_db)
         )
         .unwrap();
+        // Preserve upstream keys for strict ×1, including existing caches.
+        if self.rc_hi_basis != RcHiBasis::Strict {
+            write!(&mut out, "|rc_hi_basis={}", self.rc_hi_basis.as_str()).unwrap();
+        }
+        if self.rc_hi_transition != 1 {
+            write!(&mut out, "|rc_hi_transition={}", self.rc_hi_transition).unwrap();
+        }
         // Keep existing cache fingerprints unchanged for the default policy.
         if self.sample_rate_policy == SampleRatePolicy::Resample {
             out.push_str("|sample_rate_policy=resample");
+        }
+        if self.low_protect {
+            out.push_str("|low_protect");
         }
         if self.peq_analytic_derivatives {
             out.push_str("|peq_analytic_derivatives");
@@ -527,6 +571,36 @@ mod tests {
     use super::*;
 
     #[test]
+    fn rc_upper_defaults_and_each_setting_change_engine_key() {
+        let baseline = CalibrationSettings::default();
+        let mut json = serde_json::to_value(&baseline).unwrap();
+        json.as_object_mut().unwrap().remove("rc_hi_basis");
+        json.as_object_mut().unwrap().remove("rc_hi_transition");
+        let legacy: CalibrationSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(legacy, baseline);
+        for basis in [RcHiBasis::Lenient, RcHiBasis::Agreement] {
+            let settings = CalibrationSettings {
+                rc_hi_basis: basis,
+                ..baseline.clone()
+            };
+            assert_ne!(settings.engine_key(), baseline.engine_key());
+            assert_eq!(settings.mimo_key(), baseline.mimo_key());
+            assert_eq!(
+                serde_json::to_value(&settings).unwrap()["rc_hi_basis"],
+                basis.as_str()
+            );
+        }
+        for factor in [2, 4] {
+            let settings = CalibrationSettings {
+                rc_hi_transition: factor,
+                ..baseline.clone()
+            };
+            assert_ne!(settings.engine_key(), baseline.engine_key());
+            assert_eq!(settings.mimo_key(), baseline.mimo_key());
+        }
+    }
+
+    #[test]
     fn sample_rate_policy_defaults_for_legacy_settings_and_changes_engine_key() {
         let baseline = CalibrationSettings::default();
         let mut json = serde_json::to_value(&baseline).unwrap();
@@ -543,6 +617,28 @@ mod tests {
         );
         resampled.sample_rate_policy = SampleRatePolicy::Reject;
         assert_eq!(resampled.engine_key(), legacy.engine_key());
+    }
+
+    #[test]
+    fn low_protect_defaults_off_and_preserves_legacy_engine_key() {
+        let baseline = CalibrationSettings::default();
+        assert!(!baseline.low_protect);
+        let key = baseline.engine_key();
+        assert!(!key.contains("low_protect"));
+        let mut json = serde_json::to_value(&baseline).unwrap();
+        json.as_object_mut().unwrap().remove("low_protect");
+        let mut legacy: CalibrationSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(legacy, baseline);
+        legacy.low_protect = true;
+        assert_eq!(legacy.engine_key(), format!("{key}|low_protect"));
+        legacy.low_protect = false;
+        assert_eq!(legacy.engine_key(), key);
+        let edit: crate::settings_edit::SettingEdit =
+            serde_json::from_value(serde_json::json!({"kind":"low_protect","on":true})).unwrap();
+        assert_eq!(
+            edit,
+            crate::settings_edit::SettingEdit::LowProtect { on: true }
+        );
     }
 
     #[test]

@@ -1,11 +1,14 @@
 // Views of 측정·가져오기 for the gallery and the tests: the sample 7.1.4 room
 // (two subs, 13 roles, the 9-position single-chair arrangement) in every
-// state the specimens draw. Curves come from the gallery's synthetic room.
+// state the specimens draw, and a 2.1 and a subs-only project for the graph's
+// 0 dB reference. Curves come from the gallery's synthetic room, shifted by
+// one reference as the service sends them (U17).
 import { logGrid, response } from "../../gallery/data";
 import type { LayoutResult } from "../../ipc/bindings/LayoutResult";
 import type { MdatScanMeasurement } from "../../ipc/bindings/MdatScanMeasurement";
 import type { MeasurementCurvesResult } from "../../ipc/bindings/MeasurementCurvesResult";
 import { SAMPLE_ROLES, measureConfig, projectInfo } from "../../ipc/fixtures";
+import { shiftToReference } from "../../ipc/mock";
 import { ARRANGEMENT_COUNTS, arrangementPoints, isSubRole, roleKind } from "../../ui/maps/geometry";
 import type { MeasureView, PositionRecord, SweepOption } from "./types";
 
@@ -13,20 +16,30 @@ const ROLES: string[] = [...SAMPLE_ROLES];
 
 const GRID = Array.from(logGrid(5, 22000, 280));
 
-function curvesAt(positions: readonly number[], roles: readonly string[] = ROLES): MeasurementCurvesResult {
+/**
+ * The curves of these measured positions, each with its roles, shifted by the
+ * reference the service would pick for a project whose roles are `order`.
+ */
+function curvesFor(measured: readonly { position: number; roles: readonly string[] }[], order: readonly string[] = ROLES): MeasurementCurvesResult {
+  const raw = measured.flatMap(({ position, roles }) =>
+    roles.map((role) => ({
+      role,
+      position,
+      kind: isSubRole(role) ? "sub" : roleKind(role) === "top" ? "top" : "main",
+      values: Array.from(response(GRID, role, position, isSubRole(role))),
+    })),
+  );
+  const { curves, reference } = shiftToReference(GRID, raw, order);
   return {
     grid: GRID,
-    curves: positions.flatMap((position) =>
-      roles.map((role) => ({
-        role,
-        position,
-        kind: isSubRole(role) ? "sub" : roleKind(role) === "top" ? "top" : "main",
-        values: Array.from(response(GRID, role, position, isSubRole(role)), (v) => Math.round(v * 100) / 100),
-      })),
-    ),
+    curves: curves.map((curve) => ({ ...curve, values: curve.values.map((v) => Math.round(v * 100) / 100) })),
+    reference,
     axes: { frequency_hz: [5, 22000], value: [-35, 20], unit: "db" },
   };
 }
+
+const curvesAt = (positions: readonly number[], roles: readonly string[] = ROLES): MeasurementCurvesResult =>
+  curvesFor(positions.map((position) => ({ position, roles })));
 
 const layout: LayoutResult = {
   count: 9,
@@ -44,8 +57,8 @@ const sweepOptions: SweepOption[] = [65536, 131072, 262144, 524288, 1048576, 209
   seconds: Math.round((samples / 48000) * 10) / 10,
 }));
 
-const measured = (positions: readonly number[], sources: Record<string, string> = Object.fromEntries(ROLES.map((role) => [role, "measured"]))): PositionRecord[] =>
-  positions.map((position) => ({ position, done: true, roles: [...ROLES], sources: { ...sources } }));
+const measured = (positions: readonly number[], sources: Record<string, string> = Object.fromEntries(ROLES.map((role) => [role, "measured"])), roles: readonly string[] = ROLES): PositionRecord[] =>
+  positions.map((position) => ({ position, done: true, roles: [...roles], sources: { ...sources } }));
 
 const fromFile = (file: string): Record<string, string> => Object.fromEntries(ROLES.map((role) => [role, file]));
 
@@ -173,7 +186,7 @@ export const filesView: MeasureView = {
     ...measured([1, 2, 3]),
     { position: 5, done: false, roles: ROLES.slice(0, 8), sources: Object.fromEntries(ROLES.slice(0, 8).map((role) => [role, "거실 위치 5.mdat"])) },
   ],
-  curves: { ...curvesAt([1, 2, 3]), curves: [...curvesAt([1, 2, 3]).curves, ...curvesAt([5], ROLES.slice(0, 8)).curves] },
+  curves: curvesFor([...[1, 2, 3].map((position) => ({ position, roles: ROLES })), { position: 5, roles: ROLES.slice(0, 8) }]),
 };
 
 /** The mdat path: 연결·점검 skipped, positions 1–6 imported from one file. */
@@ -202,6 +215,26 @@ export const sampleLoadingView: MeasureView = {
   job: { job: 3, kind: "sample_load", status: "running", position: null, progress: null },
 };
 
+/** A project with one sub and two mains, three positions measured: 0 dB is L at position 1 over 200~2000 Hz. */
+const ROLES_21 = ["L", "R", "SW1"];
+export const referenceMidView: MeasureView = {
+  ...base,
+  project: { ...projectInfo, path: "C:/Users/demo/Documents/SECS/서재 2.1.secs", name: "서재 2.1", preset: "2.1", sub_count: 1, positions: [1, 2, 3] },
+  config: { ...base.config, roles: ROLES_21 },
+  records: measured([1, 2, 3], Object.fromEntries(ROLES_21.map((role) => [role, "measured"])), ROLES_21),
+  curves: curvesFor([1, 2, 3].map((position) => ({ position, roles: ROLES_21 })), ROLES_21),
+};
+
+/** A project of two subs and no mains, three positions measured: 0 dB is SW1 at position 1 over 40~120 Hz. */
+const SUB_ROLES = ["SW1", "SW2"];
+export const referenceSubView: MeasureView = {
+  ...base,
+  project: { ...projectInfo, path: "C:/Users/demo/Documents/SECS/서브 정렬.secs", name: "서브 정렬", preset: "custom", sub_count: 2, positions: [1, 2, 3] },
+  config: { ...base.config, roles: SUB_ROLES },
+  records: measured([1, 2, 3], Object.fromEntries(SUB_ROLES.map((role) => [role, "measured"])), SUB_ROLES),
+  curves: curvesFor([1, 2, 3].map((position) => ({ position, roles: SUB_ROLES })), SUB_ROLES),
+};
+
 export const MEASURE_FIXTURES = {
   empty: emptyView,
   partial: partialView,
@@ -216,4 +249,6 @@ export const MEASURE_FIXTURES = {
   noPath: noPathView,
   tutorial: tutorialView,
   sampleLoading: sampleLoadingView,
+  referenceMid: referenceMidView,
+  referenceSub: referenceSubView,
 } satisfies Record<string, MeasureView>;

@@ -53,8 +53,18 @@ fn without_managed_lines(text: &str) -> Option<String> {
         if is_marker(&lines[index]) {
             changed = true;
             index += 1;
-            if lines.get(index).is_some_and(is_include) {
+            if let Some(include) = lines.get(index).filter(|line| is_include(line)) {
                 index += 1;
+                // An unterminated include ends the file: `with_include` ended
+                // the original's last line for it, so that ending goes too.
+                if include.raw == include.content && index == lines.len() {
+                    let end = result
+                        .strip_suffix("\r\n")
+                        .or_else(|| result.strip_suffix('\n'));
+                    if let Some(end) = end.filter(|end| end.len() > bom.len()) {
+                        result.truncate(end.len());
+                    }
+                }
             }
         } else {
             result.push_str(lines[index].raw);
@@ -100,13 +110,19 @@ pub fn with_include(config_txt: &str) -> Option<String> {
     let ending = line_ending(config_txt);
     let mut result = without_managed_lines(config_txt).unwrap_or_else(|| config_txt.to_owned());
     let body_is_empty = split_bom(&result).1.is_empty();
-    if !body_is_empty && !result.ends_with('\n') {
+    // A file whose last line has no ending (Equalizer APO's own default) gets
+    // the ending before the pair and none after it, so removing the pair
+    // restores every original byte.
+    let unterminated = !body_is_empty && !result.ends_with('\n');
+    if unterminated {
         result.push_str(ending);
     }
     result.push_str(MARKER);
     result.push_str(ending);
     result.push_str(INCLUDE);
-    result.push_str(ending);
+    if !unterminated {
+        result.push_str(ending);
+    }
     Some(result)
 }
 
@@ -140,7 +156,13 @@ mod tests {
         );
         assert_eq!(
             with_include("Preamp: -3 dB"),
-            Some(format!("Preamp: -3 dB\n{}", pair("\n")))
+            Some(format!("Preamp: -3 dB\n{MARKER}\n{INCLUDE}"))
+        );
+        assert_eq!(
+            with_include("Preamp: -3 dB\r\nInclude: example.txt"),
+            Some(format!(
+                "Preamp: -3 dB\r\nInclude: example.txt\r\n{MARKER}\r\n{INCLUDE}"
+            ))
         );
     }
 
@@ -184,9 +206,19 @@ mod tests {
     }
 
     #[test]
-    fn adding_then_removing_round_trips_files_ending_in_a_newline() {
-        for original in ["", "one\n", "one\r\n", "\u{feff}one\n"] {
+    fn adding_then_removing_round_trips_every_byte() {
+        for original in [
+            "",
+            "one\n",
+            "one\r\n",
+            "\u{feff}one\n",
+            "one",
+            "one\r\ntwo",
+            "\u{feff}one",
+            "\u{feff}",
+        ] {
             let added = with_include(original).expect("pair is initially absent");
+            assert_eq!(include_state(&added), IncludeState::Present);
             assert_eq!(without_include(&added).as_deref(), Some(original));
         }
     }

@@ -12,6 +12,11 @@ pub const DEFAULT_PIPE_NAME: &str = r"\\.\pipe\secs2r-host";
 pub const PIPE_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GRGW;;;IU)";
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 pub const PIPE_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long a client waits for the service's answer once its request is
+/// written. Some requests work for seconds first: taking over a busy port
+/// waits up to 5 s for the old CamillaDSP to exit before the service starts
+/// its own, so the 5 s of [`PIPE_TIMEOUT`] made every takeover time out.
+pub const PIPE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[cfg(any(target_os = "windows", test))]
 fn ipc_error(detail: impl Into<String>) -> IpcError {
@@ -172,6 +177,92 @@ pub fn pipe_server(
     Err(unsupported("managed-host pipe server"))
 }
 
+/// The PID listening on TCP `port` of 127.0.0.1 or every IPv4 address, read
+/// from `netstat -ano -p TCP`. Only the address columns are matched (a
+/// listener's foreign address is `0.0.0.0:0`); the state column is
+/// translated on localized Windows.
+#[cfg(any(target_os = "windows", test))]
+pub fn listener_pid_from_netstat(text: &str, port: u16) -> Option<u32> {
+    let wanted = [format!("127.0.0.1:{port}"), format!("0.0.0.0:{port}")];
+    text.lines().find_map(|line| {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 4
+            || !fields[0].eq_ignore_ascii_case("TCP")
+            || !wanted.iter().any(|address| address == fields[1])
+            || fields[2] != "0.0.0.0:0"
+        {
+            return None;
+        }
+        fields.last()?.parse().ok()
+    })
+}
+
+/// The PID listening on TCP `port`, from netstat. A connect probe cannot
+/// tell: Windows retries a refused loopback SYN for about two seconds, so a
+/// free port and a hung listener both time out under a short deadline.
+#[cfg(target_os = "windows")]
+pub fn tcp_listener_pid(port: u16) -> Result<Option<u32>, IpcError> {
+    use std::process::{Command, Stdio};
+
+    let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+    let netstat = std::path::PathBuf::from(root)
+        .join("System32")
+        .join("NETSTAT.EXE");
+    let output = Command::new(&netstat)
+        .args(["-ano", "-p", "TCP"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|error| ipc_error(format!("run {}: {error}", netstat.display())))?;
+    Ok(listener_pid_from_netstat(
+        &String::from_utf8_lossy(&output.stdout),
+        port,
+    ))
+}
+
+/// What [`terminate_camilla_listener`] found on the port.
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListenerOutcome {
+    /// The CamillaDSP with this PID was ended.
+    Terminated(u32),
+    /// netstat showed no listener on the port.
+    NotFound,
+    /// Another program listens there; it is left alone.
+    NotCamilla { pid: u32, image: String },
+}
+
+/// Ends the process listening on `port` if, and only if, its image is
+/// `camilladsp.exe` (maintainer's decision, 2026-10-30: a CamillaDSP that
+/// ignored `Exit` keeps the port, as 4.1.3 does when a capture thread
+/// blocks).
+#[cfg(target_os = "windows")]
+pub fn terminate_camilla_listener(port: u16) -> Result<ListenerOutcome, IpcError> {
+    let Some(pid) = tcp_listener_pid(port)? else {
+        return Ok(ListenerOutcome::NotFound);
+    };
+    let process = win_custody::Process::open(pid, win_custody::ProcessAccess::Terminate)
+        .map_err(|error| ipc_error(format!("open port {port} owner {pid}: {error}")))?;
+    let image = process
+        .image_path()
+        .map_err(|error| ipc_error(format!("read port {port} owner {pid} image: {error}")))?;
+    let is_camilla = image
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("camilladsp.exe"));
+    if !is_camilla {
+        return Ok(ListenerOutcome::NotCamilla {
+            pid,
+            image: image.display().to_string(),
+        });
+    }
+    process
+        .terminate(1)
+        .map_err(|error| ipc_error(format!("terminate CamillaDSP {pid}: {error}")))?;
+    let _ = process.wait(Some(Duration::from_secs(5)));
+    Ok(ListenerOutcome::Terminated(pid))
+}
+
 /// Makes one request and reads one response from the default host pipe.
 pub fn pipe_call(request: &HostRequest) -> Result<HostResponse, IpcError> {
     pipe_call_at(DEFAULT_PIPE_NAME, request)
@@ -184,26 +275,47 @@ pub fn pipe_call_at(pipe_name: &str, request: &HostRequest) -> Result<HostRespon
     use win_custody::{PipeAccess, PipeClient, PipeWait};
 
     let deadline = Instant::now() + PIPE_TIMEOUT;
-    let client = PipeClient::open(
-        pipe_name,
-        PipeAccess::ReadWrite,
-        deadline,
-        Duration::from_millis(10),
-    )
-    .map_err(|error| ipc_error(format!("open managed-host pipe: {error}")))?;
-    client
-        .server_process_id()
-        .map_err(|error| ipc_error(format!("identify managed-host server: {error}")))?;
-    let wait = PipeWait::until(deadline);
-    client
-        .write_all(&frame(request)?, &wait)
-        .map_err(|error| ipc_error(format!("write managed-host request: {error}")))?;
-    let response = read_frame(|buffer| {
+    let request = frame(request)?;
+    // The server closes its pipe instance when an accept poll times out; a
+    // client that connected in that instant finds the pipe closing before
+    // the server read anything. Only those attempts are made again: a failed
+    // write, or a pipe that ends before the first response byte.
+    loop {
+        let client = PipeClient::open(
+            pipe_name,
+            PipeAccess::ReadWrite,
+            deadline,
+            Duration::from_millis(10),
+        )
+        .map_err(|error| ipc_error(format!("open managed-host pipe: {error}")))?;
         client
-            .read(buffer, &wait)
-            .map_err(|error| ipc_error(format!("read managed-host response: {error}")))
-    })?;
-    parse_frame(&response)
+            .server_process_id()
+            .map_err(|error| ipc_error(format!("identify managed-host server: {error}")))?;
+        let wait = PipeWait::until(deadline);
+        if let Err(error) = client.write_all(&request, &wait) {
+            if Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+                continue;
+            }
+            return Err(ipc_error(format!("write managed-host request: {error}")));
+        }
+        let answer_wait = PipeWait::until(Instant::now() + PIPE_RESPONSE_TIMEOUT);
+        let mut received = 0;
+        let response = read_frame(|buffer| {
+            let count = client
+                .read(buffer, &answer_wait)
+                .map_err(|error| ipc_error(format!("read managed-host response: {error}")))?;
+            received += count;
+            Ok(count)
+        });
+        match response {
+            Ok(response) => return parse_frame(&response),
+            Err(_) if received == 0 && Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -656,7 +768,13 @@ pub fn set_shell_autostart(executable: Option<&Path>) -> Result<(), IpcError> {
                 .map_err(|error| ipc_error(format!("enable host-shell logon start: {error}")))
         }
         None => {
-            let key = match windows_registry::CURRENT_USER.open(RUN_KEY) {
+            // `open` grants read access only, and removing a value needs write.
+            let key = match windows_registry::CURRENT_USER
+                .options()
+                .read()
+                .write()
+                .open(RUN_KEY)
+            {
                 Ok(key) => key,
                 Err(error) if error.code().0 as u32 == ERROR_FILE_NOT_FOUND => return Ok(()),
                 Err(error) => {
@@ -851,12 +969,15 @@ pub fn unregister_service() -> Result<(), IpcError> {
         }
         Err(error) => return Err(ipc_error(format!("open {SERVICE_NAME}: {error}"))),
     };
-    if service
+    let status = service
         .query_status()
-        .map_err(|error| ipc_error(format!("query {SERVICE_NAME}: {error}")))?
-        .current_state
-        != windows_service::service::ServiceState::Stopped
-    {
+        .map_err(|error| ipc_error(format!("query {SERVICE_NAME}: {error}")))?;
+    // SCM reports Stopped before the process has exited; its executable
+    // cannot be deleted until then.
+    let process = status.process_id.and_then(|pid| {
+        win_custody::Process::open(pid, win_custody::ProcessAccess::Synchronize).ok()
+    });
+    if status.current_state != windows_service::service::ServiceState::Stopped {
         service
             .stop()
             .map_err(|error| ipc_error(format!("stop {SERVICE_NAME}: {error}")))?;
@@ -877,6 +998,9 @@ pub fn unregister_service() -> Result<(), IpcError> {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
+    }
+    if let Some(process) = process {
+        let _ = process.wait(Some(Duration::from_secs(10)));
     }
     service
         .delete()
@@ -1086,5 +1210,17 @@ mod tests {
         let started = std::time::Instant::now();
         assert!(pipe_call_at(&name, &HostRequest::Status).is_err());
         assert!(started.elapsed() < Duration::from_secs(7));
+    }
+
+    #[test]
+    fn netstat_listener_is_found_by_its_address_columns_only() {
+        let text = "\r\nActive Connections\r\n\r\n  Proto  Local Address          Foreign Address        State           PID\r\n  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1012\r\n  TCP    127.0.0.1:1234         127.0.0.1:50000        ESTABLISHED     4484\r\n  TCP    127.0.0.1:1234         0.0.0.0:0              \u{c218}\u{c2e0} \u{b300}\u{ae30}       4484\r\n  TCP    [::]:1234              [::]:0                 LISTENING       99\r\n";
+        assert_eq!(listener_pid_from_netstat(text, 1234), Some(4484));
+        assert_eq!(listener_pid_from_netstat(text, 135), Some(1012));
+        assert_eq!(listener_pid_from_netstat(text, 4321), None);
+        assert_eq!(
+            listener_pid_from_netstat("  TCP    0.0.0.0:1234   0.0.0.0:0   LISTENING   x\n", 1234),
+            None
+        );
     }
 }

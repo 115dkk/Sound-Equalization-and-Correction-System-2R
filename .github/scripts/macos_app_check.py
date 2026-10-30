@@ -181,6 +181,11 @@ def audio_problems(audio: object, device: str) -> list[str]:
                     any(config.get(key) != value for key, value in wanted.items()) or
                     not config.get("input_device") or not config.get("output_device")):
                 problems.append(f"measure_config_get: wrong {stage} configuration")
+    idle_meter = audio.get("idle_meter", {})
+    idle_events = idle_meter.get("events") if isinstance(idle_meter, dict) else None
+    if (not isinstance(idle_events, int) or isinstance(idle_events, bool) or
+            idle_events < 5):
+        problems.append(f"level_monitor_start: expected at least five idle meter events, got {idle_events}")
     if audio.get("played_dbfs") != -20:
         problems.append("level_play: the native test must play at -20 dBFS")
     levels = audio.get("levels", {})
@@ -216,6 +221,15 @@ def audio_problems(audio: object, device: str) -> list[str]:
     if audio.get("impulse_error"):
         problems.append(f"measure_position/project_save: {audio['impulse_error']}")
     return problems
+
+
+def audio_retries(audio: object) -> list[str]:
+    """One line per native audio attempt that the self-test retried."""
+    retries = audio.get("retries", []) if isinstance(audio, dict) else []
+    if not isinstance(retries, list):
+        return []
+    return [f"retried {entry.get('stage')} after attempt {entry.get('attempt')}: {entry.get('error')}"
+            for entry in retries if isinstance(entry, dict)]
 
 
 def report_problems(label: str, report: dict | None, work: Path,
@@ -364,6 +378,9 @@ def self_test(app: Path, arch: str, work: Path, timeout: int,
         report.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
     print(json.dumps(data, indent=2, ensure_ascii=False))
     print("::endgroup::", flush=True)
+    if data is not None:
+        for note in audio_retries(data.get("facts", {}).get("audio")):
+            print(f"::warning::{label}: {note}", flush=True)
     return problems
 
 
