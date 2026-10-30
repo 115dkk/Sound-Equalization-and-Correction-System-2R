@@ -198,7 +198,7 @@ fn rc_agreement_design_runs_two_passes_and_preserves_manual_override() {
     config.rc_hi_transition = 4; // Agreement ignores the multiplier.
     let tuning = Tuning::default();
     let calls = std::sync::atomic::AtomicUsize::new(0);
-    let fitters = |stage: crate::FitStage<'_>| -> Box<crate::Fitter<'_>> {
+    let fitters = |stage: crate::FitStage<'_>| -> Box<crate::fit::Fitter<'_>> {
         if matches!(stage, crate::FitStage::Rc(_)) {
             calls.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
@@ -252,7 +252,7 @@ fn rc_schroeder_design_applies_basis_factor_and_evidence() {
     let set = room(0.8, 0.12, 1);
     let mut config = config(&set);
     let tuning = Tuning::default();
-    let fitters = |_: crate::FitStage<'_>| -> Box<crate::Fitter<'_>> { Box::new(|_| vec![]) };
+    let fitters = |_: crate::FitStage<'_>| -> Box<crate::fit::Fitter<'_>> { Box::new(|_| vec![]) };
     let run = |config: &EngineConfig| {
         crate::design(
             &DesignRequest {
