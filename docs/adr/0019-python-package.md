@@ -1,6 +1,6 @@
 # 0019. PyPI 패키지 secs2r
 
-상태: 채택, 2026-10-29
+상태: 채택, 2026-10-29. 2026-10-31에 라이선스와 판을 고쳤습니다.
 
 ## 배경
 
@@ -18,9 +18,9 @@ Python 바인딩은 PyO3로 만듭니다. PyO3 0.30.1의 `#[pymodule]`, `#[pyfun
   - 오류는 `secs2r.SecsError`(코드, 메시지, 세부)로 올립니다. 오래 걸리는 호출은 GIL을 놓고 기다립니다.
   - 타입 힌트(`.pyi`, `py.typed`)를 함께 싣습니다.
 - **빌드.** maturin과 abi3(Python 3.9 이상)로, Windows x64, macOS(x86_64와 arm64), Linux manylinux x86_64 휠과 sdist를 만듭니다. PR에서는 바인딩이나 그 의존이 바뀔 때 세 운영체제에서 휠을 빌드하고 가져오기 시험을 돌립니다.
-- **판.** PyPI 판은 crates.io 공개 크레이트의 판(`api-v<판>` 태그)과 같습니다. 첫 판은 0.1.0입니다.
+- **판.** PyPI 판은 crates.io 공개 크레이트의 판(`api-v<판>` 태그)과 같습니다. 릴리스 게이트가 `secs-py`의 판과 공개 API에 거는 `=` 요구 판을 공개 크레이트와 함께 올리고, `secs-policy`가 셋이 같은지 확인합니다.
 - **게시.** 첫 0.1.0은 CI가 빌드한 휠을 받아 유지보수자의 일회용 토큰으로 한 번 올립니다. 그 뒤로는 `release.yml`의 `pypi` 잡이 crates 잡 뒤에 돌며, 환경 `pypi`에서 GitHub OIDC(`id-token: write`)로 `pypa/gh-action-pypi-publish`를 써서 올리고, PyPI에 이미 있는 판은 건너뜁니다. 저장소에는 PyPI 토큰을 두지 않습니다.
-- **라이선스.** GPL-3.0-only입니다. 패키지 메타데이터와 README에 적습니다.
+- **라이선스.** 공개 Rust 크레이트와 같은 AGPL-3.0-only입니다(ADR 0023). `Cargo.toml`과 `pyproject.toml`, README에 적고, 루트 `LICENSE-AGPL`의 사본을 `bindings/python/LICENSE`로 휠과 sdist에 싣습니다. `secs-policy`가 사본이 원문과 같은지 확인합니다.
 
 ## 결과
 

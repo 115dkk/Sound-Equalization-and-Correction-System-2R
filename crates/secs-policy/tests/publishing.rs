@@ -128,6 +128,43 @@ fn dependency_tables(value: &toml::Value) -> Vec<(&str, &toml::Table)> {
     tables
 }
 
+/// ADR 0019 and 0023: PyPI ships `secs-py` as `secs2r`, under the published
+/// crates' licence and version. The release gate moves its version and its
+/// exact API requirement only when both match the API crate's version.
+#[test]
+fn python_package_follows_the_public_crate() {
+    let root = root();
+    let python = root.join("bindings/python");
+    let cargo = manifest(&python.join("Cargo.toml"));
+    let pyproject = manifest(&python.join("pyproject.toml"));
+    let api = manifest(&root.join("crates/secs-api/Cargo.toml"));
+    let api_version = api["package"]["version"].as_str().expect("API version");
+    let mut violations = Vec::new();
+
+    if cargo["package"]["license"].as_str() != Some("AGPL-3.0-only") {
+        violations.push("bindings/python/Cargo.toml: license must be AGPL-3.0-only".to_owned());
+    }
+    if pyproject["project"]["license"].as_str() != Some("AGPL-3.0-only") {
+        violations.push("bindings/python/pyproject.toml: license must be AGPL-3.0-only".to_owned());
+    }
+    let root_license = fs::read(root.join("LICENSE-AGPL")).expect("root LICENSE-AGPL");
+    if fs::read(python.join("LICENSE")).ok().as_deref() != Some(root_license.as_slice()) {
+        violations.push("bindings/python/LICENSE must equal the root LICENSE-AGPL".to_owned());
+    }
+    if cargo["package"]["version"].as_str() != Some(api_version) {
+        violations.push(format!(
+            "bindings/python/Cargo.toml: version must equal the API crate's {api_version}"
+        ));
+    }
+    let requirement = cargo["dependencies"]["secs"]["version"].as_str();
+    if requirement != Some(format!("={api_version}").as_str()) {
+        violations.push(format!(
+            "bindings/python/Cargo.toml: the API requirement must be ={api_version}, found {requirement:?}"
+        ));
+    }
+    assert!(violations.is_empty(), "{}", violations.join("\n"));
+}
+
 /// ADR 0023: the app and the unpublished crates keep the workspace licence
 /// (GPL-3.0-only); only the published crates are AGPL-3.0-only.
 #[test]
