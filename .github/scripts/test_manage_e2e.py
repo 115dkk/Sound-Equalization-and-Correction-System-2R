@@ -343,5 +343,75 @@ class ReportTest(unittest.TestCase):
         self.assertIn("run", m.parser().format_help())
 
 
+
+class WebSocketTest(unittest.TestCase):
+    """A one-shot RFC 6455 server on 127.0.0.1, like CamillaDSP's."""
+
+    def serve(self, reply_frames):
+        import hashlib
+        import socket
+        import threading
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        port = server.getsockname()[1]
+        seen = {}
+
+        def run():
+            conn, _ = server.accept()
+            with conn:
+                data = b""
+                while b"\r\n\r\n" not in data:
+                    data += conn.recv(4096)
+                key = [l.split(":", 1)[1].strip() for l in data.decode().split("\r\n") if l.lower().startswith("sec-websocket-key:")][0]
+                accept = base64.b64encode(hashlib.sha1((key + m.WEBSOCKET_GUID).encode()).digest()).decode()
+                conn.sendall(f"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n".encode())
+                head = conn.recv(2)
+                length = head[1] & 0x7F
+                mask = conn.recv(4)
+                payload = bytes(b ^ mask[i % 4] for i, b in enumerate(conn.recv(length)))
+                seen["request"] = payload.decode()
+                seen["masked"] = bool(head[1] & 0x80)
+                for frame in reply_frames:
+                    conn.sendall(frame)
+                try:
+                    conn.recv(64)
+                except OSError:
+                    pass
+            server.close()
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        return port, seen, thread
+
+    @staticmethod
+    def frame(opcode, payload, fin=True):
+        return bytes([(0x80 if fin else 0) | opcode, len(payload)]) + payload
+
+    def test_request_is_masked_and_the_text_reply_is_read(self):
+        reply = json.dumps({"GetState": {"result": "Ok", "value": "Running"}}).encode()
+        port, seen, thread = self.serve([self.frame(0x9, b"hi"), self.frame(0x1, reply[:10], fin=False),
+                                         self.frame(0x0, reply[10:])])
+        self.assertEqual(m.websocket_exchange(json.dumps("GetState"), port=port), reply.decode())
+        thread.join(5)
+        self.assertEqual(seen["request"], '"GetState"')
+        self.assertTrue(seen["masked"])
+
+    def test_websocket_returns_the_value_and_rejects_errors_and_non_json(self):
+        with mock.patch.object(m, "websocket_exchange", return_value='{"GetState": {"result": "Ok", "value": "Running"}}'):
+            self.assertEqual(m.websocket("GetState"), "Running")
+        with mock.patch.object(m, "websocket_exchange", return_value='{"GetState": {"result": "Error", "value": "x"}}'):
+            with self.assertRaises(m.CheckError):
+                m.websocket("GetState")
+        with mock.patch.object(m, "websocket_exchange", return_value=""):
+            with self.assertRaisesRegex(m.CheckError, "not JSON"):
+                m.websocket("GetState")
+
+    def test_close_before_reply_fails(self):
+        port, _, thread = self.serve([self.frame(0x8, b"")])
+        with self.assertRaisesRegex(m.CheckError, "closed before the reply"):
+            m.websocket_exchange('"GetState"', port=port)
+        thread.join(5)
+
 if __name__ == "__main__":
     unittest.main()

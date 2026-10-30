@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import base64
 import ctypes
+import hashlib
 import json
 import os
 import re
@@ -496,30 +497,89 @@ def prepare_edge(destination, artifacts):
     print(json.dumps(facts, indent=2))
 
 
+WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+
+
+def websocket_exchange(text, port=1234, timeout=4.0):
+    """One text request and its text reply over RFC 6455, stdlib only.
+
+    The app's CSP forbids ws://, so the check talks to CamillaDSP from here.
+    (Windows PowerShell's ClientWebSocket returned an empty string on the
+    runner, 2026-10-30, so the client is plain Python.)"""
+    key = base64.b64encode(os.urandom(16)).decode("ascii")
+    expected = base64.b64encode(hashlib.sha1((key + WEBSOCKET_GUID).encode("ascii")).digest()).decode("ascii")
+    with socket.create_connection(("127.0.0.1", port), timeout=timeout) as sock:
+        sock.sendall((f"GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nUpgrade: websocket\r\n"
+                      f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode("ascii"))
+        reader = sock.makefile("rb")
+        head = []
+        while True:
+            line = reader.readline(8192)
+            if not line:
+                raise CheckError("WebSocket closed during the handshake")
+            if line in (b"\r\n", b"\n"):
+                break
+            head.append(line.decode("latin-1").strip())
+            require(len(head) < 64, "WebSocket handshake headers too long")
+        require(head and head[0].split(" ")[1:2] == ["101"], f"WebSocket handshake refused: {head[:1]}")
+        accept = [line.split(":", 1)[1].strip() for line in head[1:] if line.lower().startswith("sec-websocket-accept:")]
+        require(accept == [expected], "WebSocket handshake has a wrong Sec-WebSocket-Accept")
+
+        def send(opcode, payload):
+            mask = os.urandom(4)
+            header = bytes([0x80 | opcode])
+            length = len(payload)
+            if length < 126:
+                header += bytes([0x80 | length])
+            elif length < 1 << 16:
+                header += bytes([0x80 | 126]) + length.to_bytes(2, "big")
+            else:
+                header += bytes([0x80 | 127]) + length.to_bytes(8, "big")
+            sock.sendall(header + mask + bytes(b ^ mask[i % 4] for i, b in enumerate(payload)))
+
+        def exact(count):
+            data = reader.read(count)
+            require(data is not None and len(data) == count, "WebSocket closed before the reply")
+            return data
+
+        send(0x1, text.encode("utf-8"))
+        message = b""
+        while True:
+            first, second = exact(2)
+            opcode, length = first & 0x0F, second & 0x7F
+            if length == 126:
+                length = int.from_bytes(exact(2), "big")
+            elif length == 127:
+                length = int.from_bytes(exact(8), "big")
+            require(length <= 1 << 20, "WebSocket response too large")
+            mask = exact(4) if second & 0x80 else None
+            payload = exact(length)
+            if mask:
+                payload = bytes(b ^ mask[i % 4] for i, b in enumerate(payload))
+            if opcode == 0x8:
+                raise CheckError("WebSocket closed before the reply")
+            if opcode == 0x9:
+                send(0xA, payload)
+                continue
+            if opcode in (0x1, 0x0):
+                message += payload
+                require(len(message) <= 1 << 20, "WebSocket response too large")
+                if first & 0x80:
+                    break
+        try:
+            send(0x8, (1000).to_bytes(2, "big"))
+        except OSError:
+            pass
+    return message.decode("utf-8")
+
+
 def websocket(command_name):
-    # .NET implements RFC 6455; Python invokes it using only stdlib. App CSP
-    # forbids ws://, so do not weaken CSP or probe through the page.
-    payload = base64.b64encode(json.dumps(command_name).encode()).decode()
-    script = f"""
-$ws=[Net.WebSockets.ClientWebSocket]::new()
-$cancel=[Threading.CancellationTokenSource]::new(4000)
-try {{
-  $ws.ConnectAsync([Uri]'ws://127.0.0.1:1234',$cancel.Token).GetAwaiter().GetResult()
-  $bytes=[Convert]::FromBase64String('{payload}')
-  $ws.SendAsync([ArraySegment[byte]]::new($bytes),[Net.WebSockets.WebSocketMessageType]::Text,$true,$cancel.Token).GetAwaiter().GetResult()
-  $buffer=New-Object byte[] 65536
-  $data=[IO.MemoryStream]::new()
-  do {{
-    $part=$ws.ReceiveAsync([ArraySegment[byte]]::new($buffer),$cancel.Token).GetAwaiter().GetResult()
-    if ($part.MessageType -eq [Net.WebSockets.WebSocketMessageType]::Close) {{ throw 'WebSocket closed before reply' }}
-    $data.Write($buffer,0,$part.Count)
-    if ($data.Length -gt 1048576) {{ throw 'WebSocket response too large' }}
-  }} until ($part.EndOfMessage)
-  [Text.Encoding]::UTF8.GetString($data.ToArray())
-}} finally {{ $ws.Dispose(); $cancel.Dispose() }}
-"""
-    value = json.loads(powershell(script, timeout=10))
-    reply = value.get(command_name, {})
+    raw = websocket_exchange(json.dumps(command_name))
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        raise CheckError(f"CamillaDSP {command_name}: reply is not JSON: {raw[:200]!r}") from None
+    reply = value.get(command_name, {}) if isinstance(value, dict) else {}
     require(reply.get("result") == "Ok", f"CamillaDSP {command_name}: {value}")
     return reply.get("value")
 
