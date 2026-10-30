@@ -451,12 +451,14 @@ def environment_facts():
     }
 
 
-def validate_environment(facts):
+def validate_environment(facts, audio=True):
+    """`audio=False` (update-e2e, `env --no-audio`) still records the endpoints but needs none."""
     require(bool(facts["console_user"]), "There is no user in the active console session.")
     require(facts["process_session"] == facts["active_console_session"],
             "The runner process is not in the active console session; GUI mutations would be rejected")
     require(facts["elevated"], "The runner is not elevated; unattended UAC cannot be automated by WebDriver")
-    require(bool(facts["wasapi"]["render"]), "There is no active WASAPI render endpoint.")
+    if audio:
+        require(bool(facts["wasapi"]["render"]), "There is no active WASAPI render endpoint.")
 
 
 def env(args):
@@ -471,7 +473,7 @@ def env(args):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
             stream.write(report)
     try:
-        validate_environment(facts)
+        validate_environment(facts, audio=not args.no_audio)
     except CheckError as error:
         with args.report.open("a", encoding="utf-8") as stream:
             stream.write(f"\nFAILED: {error}\n")
@@ -1143,6 +1145,8 @@ def parser():
         child.add_argument("--report", type=Path, required=True)
     for name in ("installed-folder", "camilla", "eqapo-config", "tauri-driver", "msedgedriver"):
         scenario.add_argument("--" + name, type=Path, required=True)
+    environment.add_argument("--no-audio", action="store_true",
+                             help="do not require a WASAPI render endpoint (update-e2e plays no audio)")
     environment.set_defaults(function=env)
     scenario.set_defaults(function=run)
     return result
