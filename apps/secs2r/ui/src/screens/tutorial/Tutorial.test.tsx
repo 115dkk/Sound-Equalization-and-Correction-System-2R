@@ -298,7 +298,7 @@ describe("tutorial layer", () => {
     fireEvent.pointerDown(ui("other")!);
     fireEvent.click(ui("other")!);
     expect(h.other).not.toHaveBeenCalled();
-    expect(ui("tutorial.toast")?.textContent).toContain("강조한 테두리 안을 누르세요.");
+    expect(ui("tutorial.toast")?.textContent).toContain("강조한 테두리 안을 누르십시오.");
     expect(ui("tutorial.coach")?.className).toContain("tutorial-coach--shake");
     fireEvent.click(ui("frame.help")!);
     await tick();
@@ -471,7 +471,7 @@ describe("tutorial layer", () => {
     expect(coach.tabIndex).toBe(-1);
     const name = (coach.getAttribute("aria-labelledby") ?? "").split(" ").map((id) => document.getElementById(id)?.textContent).join(" ");
     expect(name).toBe("시스템 · 2 / 2 도움말 열기");
-    expect(document.getElementById(coach.getAttribute("aria-describedby")!)?.textContent).toContain("도움말을 여세요.");
+    expect(document.getElementById(coach.getAttribute("aria-describedby")!)?.textContent).toContain("도움말을 여십시오.");
     const tab = (shiftKey = false) => fireEvent.keyDown(document.activeElement!, { key: "Tab", shiftKey });
     const order = ["tutorial.coach.pause", "tutorial.coach.prev", "tutorial.coach.next", "frame.help", "tutorial.panel.fold", "tutorial.panel.restart", "tutorial.panel.end"];
     for (const id of order) {

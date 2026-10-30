@@ -295,7 +295,7 @@ describe("측정·가져오기 screen", () => {
     const text = ui("measure.warning").textContent?.replace(/\u00a0/g, " ");
     expect(text).toContain("기준 20 dB");
     expect(text).toContain("SW2 17.2 dB, Rtr 18.6 dB");
-    expect(text).toContain("다시 측정하세요");
+    expect(text).toContain("다시 측정하십시오");
     cleanup();
     const one = { ...lowSnrView, warnings: [{ position: 4, notices: lowSnrView.warnings[0]!.notices.slice(0, 1) }] };
     renderStep(one);

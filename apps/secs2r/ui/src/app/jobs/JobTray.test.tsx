@@ -76,7 +76,7 @@ describe("job tray", () => {
     const text = tray().textContent ?? "";
     expect(text).toContain("SW2 신호 대 잡음비 17.2 dB");
     expect(text).toContain("측정 실패: REW에 연결하지 못했습니다.");
-    expect(text).toContain("REW를 API 모드로 실행한 뒤 다시 시도하세요.");
+    expect(text).toContain("REW를 API 모드로 실행한 뒤 다시 시도하십시오.");
     expect(screen.getByText("자세히")).toBeTruthy();
     expect(text).toContain("connection refused (os error 10061)");
   });

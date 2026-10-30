@@ -373,7 +373,7 @@ describe("내보내기", () => {
     const { unmount } = renderWith(<Mounted view={exportEqapoDone} act={act} />);
     expect(ui("export.outcome.equalizer_apo")?.textContent).toContain("파일 14개 저장 → D:/Audio/거실 보정/SECS_eqapo_RC_BA_mixed_20261014-142233");
     expect(ui("export.outcome.equalizer_apo.hint")?.textContent).toBe(
-      "Equalizer APO의 기존 config.txt를 다른 이름으로 보관한 뒤, 내보낸 config.txt와 secs_mixed 폴더를 config 폴더에 복사하세요. 적용 순서는 'EqAPO 적용 방법.txt'를 확인하세요.",
+      "Equalizer APO의 기존 config.txt를 다른 이름으로 보관한 뒤, 내보낸 config.txt와 secs_mixed 폴더를 config 폴더에 복사하십시오. 적용 순서는 'EqAPO 적용 방법.txt'를 확인하십시오.",
     );
     fireEvent.click(ui("export.outcome.equalizer_apo.open")!);
     expect(act.openFolder.mock.calls).toEqual([["D:/Audio/거실 보정/SECS_eqapo_RC_BA_mixed_20261014-142233"]]);

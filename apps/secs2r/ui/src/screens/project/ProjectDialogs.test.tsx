@@ -171,7 +171,7 @@ describe("프로젝트 대화상자", () => {
       />,
     );
     expect(screen.getByText("프로젝트 파일을 읽거나 쓰지 못했습니다.")).toBeTruthy();
-    expect(screen.getByText("파일 위치와 쓰기 권한을 확인하고 다시 시도하세요.")).toBeTruthy();
+    expect(screen.getByText("파일 위치와 쓰기 권한을 확인하고 다시 시도하십시오.")).toBeTruthy();
   });
 
   it("draws every id the reach table cites", () => {

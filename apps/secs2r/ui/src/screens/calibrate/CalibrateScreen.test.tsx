@@ -792,7 +792,7 @@ describe("MIMO 함께 계산", () => {
     const alone = must("calibrate.mimo.compute") as HTMLButtonElement;
     expect(alone.textContent).toBe("MIMO만 계산");
     expect(alone.disabled).toBe(false);
-    expect(must("calibrate.mimo.state").textContent).toBe("MIMO를 계산한 뒤 MIMO 설정이나 보정 결과가 바뀌었습니다. 'MIMO만 계산'을 누르세요.");
+    expect(must("calibrate.mimo.state").textContent).toBe("MIMO를 계산한 뒤 MIMO 설정이나 보정 결과가 바뀌었습니다. 'MIMO만 계산'을 누르십시오.");
     fireEvent.click(alone);
     expect(actions.computeMimo).toHaveBeenCalledOnce();
     cleanupAll();
@@ -1002,7 +1002,7 @@ describe("RC upper limit basis", () => {
     expect(chosen.disabled).toBe(false);
     expect(chosen.getAttribute("aria-checked")).toBe("true");
     expect(chosen.tabIndex).toBe(0);
-    expect(basisHint()).toBe("측정 위치가 2곳이라 측정 위치 일치도로는 보정을 계산할 수 없습니다. 위치를 3곳 이상 측정하거나 다른 기준을 고르세요.");
+    expect(basisHint()).toBe("측정 위치가 2곳이라 측정 위치 일치도로는 보정을 계산할 수 없습니다. 위치를 3곳 이상 측정하거나 다른 기준을 고르십시오.");
     fireEvent.click(must("calibrate.range.basis.strict"));
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_hi_basis", basis: "strict" });
     cleanupAll();
