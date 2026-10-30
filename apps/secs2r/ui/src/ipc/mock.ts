@@ -8,6 +8,9 @@ import type { Invoke } from "./client";
 import { makeClient } from "./client";
 import { createEventBus, type JobEventBus } from "./events";
 import * as fx from "./fixtures";
+import type { ApplyStatus } from "./bindings/ApplyStatus";
+import type { HostManaged } from "./bindings/HostManaged";
+import type { HostStatus } from "./bindings/HostStatus";
 import type { ErrorCode } from "./bindings/ErrorCode";
 import type { IpcError } from "./bindings/IpcError";
 import type { JobId } from "./bindings/JobId";
@@ -31,7 +34,7 @@ import { umikFile } from "../screens/connect/fixtures";
 import type { ExportKind } from "./bindings/ExportKind";
 import { CALIBRATION_LIMITS as LIMITS, RECENT_PROJECTS_MAX } from "./bindings/rules";
 import { recorded } from "./recorded";
-import { designNameFor, designNameProblem, filterModeName, isFilterKind, mdatFileName, MIMO_MIN_POSITIONS } from "../screens/export/types";
+import { CAMILLA_EXE_FILE, addressProblem, designNameFor, designNameProblem, filterModeName, isFilterKind, mdatFileName, MIMO_MIN_POSITIONS } from "../screens/export/types";
 import { DESIGN_RATE, OUTPUT_RATES, countedRate, sameRate } from "../screens/system/outputRate";
 
 export type Method = Request["method"];
@@ -64,10 +67,14 @@ export type MockService = {
   /** Drains finite jobs (and cancellation), leaving live monitors running. */
   drain: () => void;
   setResults: (results: ResultsSummary) => void;
+  /** What `apply_status` answers from now on: a running CamillaDSP, an Equalizer APO install (specimens and tests flip it). */
+  setApplyStatus: (status: ApplyStatus) => void;
   dispose: () => void;
 };
 type MockOptions = {
   computeStatus?: import("./bindings/ComputeStatus").ComputeStatus; tickMs?: number; project?: ProjectInfo | null; results?: ResultsSummary;
+  /** `apply_status` until `setApplyStatus`; CamillaDSP unreachable and no Equalizer APO by default. */
+  applyStatus?: ApplyStatus;
   /** The default playback device's rate that 자동 reads when exporting (48000 by default); null when it cannot be read. */
   playbackRate?: number | null;
 };
@@ -80,6 +87,10 @@ class MockError extends Error {
 const clone = <T,>(value: T): T => structuredClone(value);
 const clamp = (value: number, [lo, hi]: readonly [number, number]) => Math.min(hi, Math.max(lo, value));
 const monitor = (kind: JobKind) => kind === "level_monitor" || kind === "status_watch";
+/** `JobGroup::Export` (jobs.rs): an apply job is an export job too, one at a time. */
+const jobGroup = (kind: JobKind): JobKind => kind === "apply" ? "export" : kind;
+/** Where the service writes what it applies to CamillaDSP (`app_data_path/applied/camilladsp`). */
+const APPLIED_CAMILLA = "C:/Users/demo/AppData/Roaming/SECS2R/applied/camilladsp";
 const basename = (path: string) => path.split(/[\\/]/).at(-1) ?? path;
 /** The export kind in a timestamped folder name (export_folder.rs). */
 const EXPORT_FOLDER_TAG: Record<ExportKind, string> = {
@@ -109,6 +120,7 @@ export function createMockService(options: MockOptions = {}): MockService {
   let settings = clone(fx.calibrationSettings);
   let target = clone(fx.target);
   let appSettings = clone(fx.appSettings);
+  let applyStatus = clone(options.applyStatus ?? fx.applyStatus);
   const availableCompute = clone(options.computeStatus ?? fx.computeStatus);
   const computeStatus = () => ({ ...availableCompute, preference: appSettings.compute,
     ...(appSettings.compute === "cpu" ? { selected: "cpu" as const, reason: "user_cpu" as const } :
@@ -154,6 +166,24 @@ export function createMockService(options: MockOptions = {}): MockService {
     return project;
   };
   const invalid: (detail: string) => never = (detail) => { throw new MockError(ipcError("invalid_request", detail)); };
+  /** The service's status over its pipe; one that is not running cannot be reached (`secs_sys::host::pipe_call`). */
+  const hostReached = (): HostStatus => {
+    if (applyStatus.host !== "running" || !applyStatus.host_status) throw new MockError(ipcError("apply_failed", "connect secs2r-host pipe: The system cannot find the file specified. (os error 2)"));
+    return applyStatus.host_status;
+  };
+  /** `HostRequest::SetManaged`: the service takes the target over; CamillaDSP starts at once, the line is kept. */
+  const manage = (update: HostManaged) => {
+    const host = hostReached();
+    applyStatus = {
+      ...applyStatus,
+      host_status: {
+        ...host,
+        managed: { ...host.managed, ...update },
+        ...(update.camilla ? { camilla: { state: { kind: "running" as const }, pid: 4812, restarts_in_window: 0 } } : {}),
+        ...(update.eqapo ? { eqapo_include: "present" as const } : {}),
+      },
+    };
+  };
   const dirty = (reason = "settings") => {
     project = { ...needProject(), dirty: true };
     results = {
@@ -237,7 +267,7 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "calibrate": return { stages: [{ stage: "engine.design", total: mains + 1 }], logs: [] };
       case "recommend_xo": return { stages: [{ stage: "engine.xo_recommendation", total: 4 }], logs: [] };
       case "mimo": return { stages: [{ stage: "engine.mimo", total: 2 }, { stage: "engine.mimo_iir", total: Math.max(1, mains) }], logs: [] };
-      case "export": return { stages: [{ stage: "design", total: 1 }], logs: [] };
+      case "export": case "apply": return { stages: [{ stage: "design", total: 1 }], logs: [] };
       case "sample_load": return { stages: [{ stage: null, total: 0, ticks: 3 }], logs: [] };
       case "mdat_import": return { stages: [{ stage: "mdat_import", total: 1 }], logs: [] };
       case "level_monitor": case "status_watch": return { stages: [], logs: [] };
@@ -252,9 +282,20 @@ export function createMockService(options: MockOptions = {}): MockService {
     return { job: job.id, kind: job.kind, status: job.cancelRequested ? "cancel_requested" : "running", cancellable: true,
       progress: stage && stage.total > 0 ? { stage: stage.stage ?? "", done: job.done, total: stage.total } : null, error: null };
   };
-  const finish = (job: SimJob, status: "succeeded" | "failed" | "cancelled", error: IpcError | null): JobSnapshot => {
+  const finish = (job: SimJob, ended: "succeeded" | "failed" | "cancelled", reason: IpcError | null): JobSnapshot => {
     jobs.delete(job.id);
-    const result = status === "succeeded" ? clone(job.complete()) : null;
+    let status = ended;
+    let error = reason;
+    let result: JobResult | null = null;
+    // A completion may still refuse (관리 hands over to a service that is not there): the job fails with that error.
+    if (status === "succeeded") {
+      try { result = clone(job.complete()); }
+      catch (thrown) {
+        if (!(thrown instanceof MockError)) throw thrown;
+        status = "failed";
+        error = thrown.error;
+      }
+    }
     const done: JobSnapshot = { ...snapshot(job), status, error, cancellable: false };
     events.emit({ event: "finished", job: job.id, status, result, error });
     if (jobs.size === 0 && timer) { clearInterval(timer); timer = null; }
@@ -302,7 +343,7 @@ export function createMockService(options: MockOptions = {}): MockService {
   };
   const tick = () => { for (const job of [...jobs.values()]) step(job); };
   const start = (kind: JobKind, complete: () => JobResult) => {
-    if ([...jobs.values()].some((job) => job.kind === kind)) throw new MockError(ipcError("job_busy", `a ${kind} job is running`));
+    if ([...jobs.values()].some((job) => jobGroup(job.kind) === jobGroup(kind))) throw new MockError(ipcError("job_busy", `a ${kind} job is running`));
     const id = nextJob++;
     jobs.set(id, { id, kind, ...plan(kind), stageIndex: 0, done: 0, ticks: 0, cancelRequested: false, complete });
     events.emit({ event: "started", job: id, kind });
@@ -866,6 +907,74 @@ export function createMockService(options: MockOptions = {}): MockService {
         appSettings.recent_projects = appSettings.recent_projects.slice(0, RECENT_PROJECTS_MAX);
         return { method: req.method, data: appSettings };
       }
+      // 적용 (ADR 0018, crates/secs-service/src/apply.rs): the order of the service's checks.
+      case "apply_status": return { method: req.method, data: clone({ ...applyStatus, current_design_id: results.calibration ? fx.MOCK_DESIGN_ID : null }) };
+      case "apply_settings_set": {
+        const address = req.params.camilla.address;
+        if (address !== address.trim() || addressProblem(address)) throw new MockError(ipcError("invalid_request", "CamillaDSP address must be host:port", { field: "camilla.address" }));
+        appSettings = { ...appSettings, apply: clone(req.params) };
+        return { method: req.method, data: clone(req.params) };
+      }
+      case "apply_camilla": {
+        const camilla = appSettings.apply.camilla;
+        // 관리 needs camilladsp.exe before anything else (apply.rs `start_apply_camilla`).
+        if (camilla.level === "manage" && !camilla.exe_path?.trim()) throw new MockError(ipcError("invalid_request", "managed CamillaDSP needs an executable path", { field: "apply.camilla.exe_path" }));
+        if (camilla.level === "files") throw new MockError(ipcError("unsupported", "the target is configured for file export only", { target: "camilladsp" }));
+        if (needProject().tutorial) throw new MockError(ipcError("tutorial_blocked", "tutorial sessions cannot export"));
+        const devices = req.params.camilla_devices;
+        if (devices && [devices.capture, devices.playback].some((device) => device.type === "asio" && device.device.trim() === "")) {
+          throw new MockError(ipcError("invalid_request", "invalid CamillaDSP device options", { reason: "camilla_asio_device" }));
+        }
+        if (!results.calibration) throw new MockError(ipcError("engine_input", "no calibration result to export"));
+        const stale = results.calibration.stale;
+        const exePath = camilla.level === "manage" ? camilla.exe_path ?? null : null;
+        const port = Number(camilla.address.slice(camilla.address.lastIndexOf(":") + 1));
+        return { method: req.method, data: start("apply", () => {
+          // 관리 hands the design to the service after 적용, or instead of it when no CamillaDSP answers
+          // (`handed_over`: the service starts one with the design); without a running service the job fails.
+          const handedOver = exePath !== null && !applyStatus.camilla.reachable;
+          if (exePath !== null) manage({ camilla: { ...fx.managedCamilla, exe_path: exePath, port } });
+          // Mock only: a CamillaDSP that answers now runs this design.
+          if (applyStatus.camilla.reachable) applyStatus = { ...applyStatus, camilla: { ...applyStatus.camilla, design: { kind: "this", design_id: fx.MOCK_DESIGN_ID } } };
+          return { kind: "apply", data: { outcome: { kind: handedOver ? "handed_over" : "applied" }, design_id: fx.MOCK_DESIGN_ID, folder: APPLIED_CAMILLA, stale } };
+        }) };
+      }
+      case "apply_eqapo": {
+        if (appSettings.apply.eqapo.level === "files") throw new MockError(ipcError("unsupported", "the target is configured for file export only", { target: "equalizer_apo" }));
+        const install = applyStatus.eqapo;
+        if (!install.installed || install.config_path === null) throw new MockError(ipcError("unsupported", "Equalizer APO is not installed", { target: "equalizer_apo" }));
+        if (needProject().tutorial) throw new MockError(ipcError("tutorial_blocked", "tutorial sessions cannot export"));
+        if (!results.calibration) throw new MockError(ipcError("engine_input", "no calibration result to export"));
+        const stale = results.calibration.stale;
+        const folder = `${install.config_path}/SECS2R`;
+        const managed = appSettings.apply.eqapo.level === "manage";
+        const configPath = install.config_path;
+        return { method: req.method, data: start("apply", () => {
+          if (managed) manage({ eqapo: { config_path: configPath, design_id: fx.MOCK_DESIGN_ID } });
+          applyStatus = { ...applyStatus, eqapo: { ...applyStatus.eqapo, include: "present", applied_design_id: fx.MOCK_DESIGN_ID } };
+          return { kind: "apply", data: { outcome: { kind: "applied" }, design_id: fx.MOCK_DESIGN_ID, folder, stale } };
+        }) };
+      }
+      case "revert_eqapo":
+        if (!applyStatus.eqapo.installed) throw new MockError(ipcError("unsupported", "Equalizer APO is not installed", { target: "equalizer_apo" }));
+        // Only the two marked lines go; the SECS2R folder and its secs-design.json stay.
+        applyStatus = { ...applyStatus, eqapo: { ...applyStatus.eqapo, include: "absent" } };
+        return { method: req.method, data: null };
+      // 관리 (ADR 0018). Installing registers the service and it starts at once (automatic start); Windows's approval is not modelled.
+      case "host_install":
+        applyStatus = { ...applyStatus, host: "running", host_status: clone(applyStatus.host_status ?? fx.hostIdle) };
+        return { method: req.method, data: null };
+      case "host_uninstall": {
+        const { host_status: _hostStatus, ...withoutHostStatus } = applyStatus;
+        applyStatus = { ...withoutHostStatus, host: "not_installed" };
+        return { method: req.method, data: null };
+      }
+      case "host_stop_managing": {
+        // StopManaging forgets both targets and ends CamillaDSP; config.txt keeps its line.
+        const host = hostReached();
+        applyStatus = { ...applyStatus, host_status: { ...host, managed: {}, camilla: clone(fx.hostIdle.camilla), eqapo_include: "absent" } };
+        return { method: req.method, data: null };
+      }
       case "result_curves": return { method: req.method, data: resultCurves(req.params) };
       case "result_lines": return { method: req.method, data: resultLines() };
       case "sub_take_values":
@@ -876,7 +985,10 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "dialog_pick_mdat": return { method: req.method, data: dialog(req.method, "C:/Users/demo/Documents/SECS/measurements.mdat") };
       case "dialog_pick_folder": return { method: req.method, data: dialog(req.method, req.params.start || exportFolder.folder) };
       case "dialog_save_file": return { method: req.method, data: dialog(req.method, `C:/Users/demo/Documents/SECS/${req.params.suggested || "target.json"}`) };
-      case "dialog_open_file": return { method: req.method, data: dialog(req.method, req.params.kind === "mic_calibration" ? "C:/Users/demo/Documents/UMIK-1/7000001_90deg.txt" : "C:/Users/demo/Documents/SECS/target.json") };
+      case "dialog_open_file": {
+        const fallback = req.params.kind === CAMILLA_EXE_FILE ? fx.CAMILLA_EXE : req.params.kind === "mic_calibration" ? "C:/Users/demo/Documents/UMIK-1/7000001_90deg.txt" : "C:/Users/demo/Documents/SECS/target.json";
+        return { method: req.method, data: dialog(req.method, fallback) };
+      }
       case "open_folder": return { method: req.method, data: null };
       case "level_monitor_start": return { method: req.method, data: start("level_monitor", () => ({ kind: "stopped" })) };
       case "level_monitor_stop": return { method: req.method, data: stopMonitor("level_monitor") };
@@ -905,6 +1017,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     queueDialog: (method, path) => { const queue = dialogs.get(method) ?? []; queue.push(path); dialogs.set(method, queue); },
     tick,
     drain: () => { for (let guard = 0; [...jobs.values()].some((j) => !monitor(j.kind) || j.cancelRequested) && guard < 1000; guard++) tick(); },
+    setApplyStatus: (next) => { applyStatus = clone(next); },
     setResults: (next) => {
       results = clone(next);
       calibrationPositions = results.calibration && !results.calibration.cached ? project?.positions.length ?? 0 : null;

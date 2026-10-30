@@ -1,13 +1,55 @@
 import { describe, expect, it } from "vitest";
+import type { ApplyLevel } from "../../ipc/bindings/ApplyLevel";
 import type { ExportBlock } from "../../ipc/bindings/ExportBlock";
 import type { ExportKind } from "../../ipc/bindings/ExportKind";
 import type { MimoExportDecision } from "../../ipc/bindings/MimoExportDecision";
-import { DESIGN_NAME_SAMPLES, EXPORT_DEVICES, exportMimoNoSubs, exportNoResult, exportRcOnly, exportReady, exportStale } from "./fixtures";
+import { MOCK_DESIGN_ID } from "../../ipc/fixtures";
 import {
+  DESIGN_NAME_SAMPLES,
+  manageCamillaInstalling,
+  manageCamillaNoExe,
+  manageCamillaNotInstalled,
+  manageCamillaRunning,
+  manageCamillaStopped,
+  manageEqapoRepaired,
+  EXPORT_DEVICES,
+  applyCamillaApplied,
+  applyCamillaBadAddress,
+  applyCamillaOther,
+  applyCamillaRolledBack,
+  applyCamillaThis,
+  applyEqapoAbsent,
+  applyEqapoMissing,
+  applyEqapoNotWindows,
+  applyEqapoOfficialUnknown,
+  applyEqapoOther,
+  applyEqapoPresent,
+  exportDevicesAsioUnnamed,
+  exportMimoNoSubs,
+  exportNoResult,
+  exportRcOnly,
+  exportReady,
+  exportStale,
+} from "./fixtures";
+import {
+  APPLY_LEVELS,
   EXPORT_KINDS,
   FILTER_KINDS,
   MDAT_SCOPES,
+  addressProblem,
+  applyLevel,
+  applyProblem,
+  applyWanted,
+  canApply,
   canExport,
+  currentDesignId,
+  exeText,
+  hostProblem,
+  withExePath,
+  eqapoDesign,
+  exportGroupBusy,
+  exportStepState,
+  isLoopback,
   designNameFor,
   designNameProblem,
   deviceProblem,
@@ -19,6 +61,7 @@ import {
   mdatFileName,
   mdatScopeFor,
   mimoInclusion,
+  type AddressProblem,
   type DesignNameProblem,
   type ExportView,
   type MimoInclusion,
@@ -219,5 +262,150 @@ describe("export scope (the service's filter_export_block)", () => {
     expect(filterModeName({ mode: "ultra", ultra_ms: 200 })).toBe("ultra200");
     expect(filterModeName({ mode: "ultra", ultra_ms: 62.5 })).toBe("ultra62.5");
     expect(filterModeName({ mode: "ultra", ultra_ms: 30 })).toBe("ultra30");
+  });
+});
+
+describe("적용 (ADR 0018)", () => {
+  it("checks a CamillaDSP address by the service's validate_address rules, on the trimmed text", () => {
+    // crates/secs-service/src/apply.rs `addresses_require_a_nonzero_port`.
+    for (const address of ["127.0.0.1:1234", "localhost:1", "[::1]:1234", "camilla.local:65535", "+host:+80", " 127.0.0.1:1234 "]) {
+      expect(addressProblem(address), address).toBeNull();
+    }
+    const problems: [string, AddressProblem][] = [
+      ["localhost", "format"], [":1234", "format"], ["host:", "format"], ["a:b:1", "format"], ["my host:1234", "format"],
+      ["[::1]", "format"], ["[]:1234", "format"], ["", "format"],
+      ["host:0", "port"], ["host:no", "port"], ["host:65536", "port"], ["host:-1", "port"], ["[::1]:0", "port"],
+    ];
+    for (const [address, problem] of problems) expect(addressProblem(address), address).toBe(problem);
+  });
+
+  it("says which addresses stay on this computer", () => {
+    for (const address of ["127.0.0.1:1234", "127.10.0.3:1", "localhost:1234", "LOCALHOST:1", "[::1]:1234"]) expect(isLoopback(address), address).toBe(true);
+    for (const address of ["192.168.0.40:1234", "camilla.local:1234", "0.0.0.0:1234", "[fe80::1]:1234", "128.0.0.1:1234"]) expect(isLoopback(address), address).toBe(false);
+  });
+
+  it("draws each stored level, Equalizer APO off Windows and anything in the tutorial as 파일만", () => {
+    expect(APPLY_LEVELS).toEqual(["files", "apply", "manage"]);
+    const at = (camilla: ApplyLevel, eqapo: ApplyLevel, windows = true, tutorial = false): ExportView => ({
+      ...exportReady, tutorial, apply: { ...exportReady.apply, windows, settings: { camilla: { level: camilla, address: "127.0.0.1:1234" }, eqapo: { level: eqapo } } },
+    });
+    expect([applyLevel(at("manage", "manage"), "camilla"), applyLevel(at("manage", "manage"), "eqapo")]).toEqual(["manage", "manage"]);
+    // A 관리 stored off Windows stays 관리 for CamillaDSP (its action off with the reason); Equalizer APO reads 파일만 there.
+    expect([applyLevel(at("manage", "manage", false), "camilla"), applyLevel(at("manage", "manage", false), "eqapo")]).toEqual(["manage", "files"]);
+    expect(applyWanted(at("manage", "files"))).toBe(true);
+    expect([applyLevel(at("apply", "apply", false), "camilla"), applyLevel(at("apply", "apply", false), "eqapo")]).toEqual(["apply", "files"]);
+    expect([applyLevel(at("apply", "apply", true, true), "camilla"), applyLevel(at("apply", "apply", true, true), "eqapo")]).toEqual(["files", "files"]);
+    expect(applyWanted(at("files", "files"))).toBe(false);
+    expect(applyWanted(at("files", "apply", false))).toBe(false);
+    expect(applyWanted(at("files", "apply"))).toBe(true);
+  });
+
+  it("holds 적용 for the address, an unnamed ASIO driver, Windows and the install, and while the export group is busy", () => {
+    expect(canApply(applyCamillaThis, "camilla")).toBe(true);
+    expect(applyProblem(applyCamillaBadAddress, "camilla")).toEqual({ field: "address", problem: "format" });
+    expect(canApply(applyCamillaBadAddress, "camilla")).toBe(false);
+    expect(applyProblem({ ...applyCamillaThis, camillaDevices: exportDevicesAsioUnnamed.camillaDevices }, "camilla")).toEqual({ field: "capture", problem: "asio_device" });
+    // The design name is the export's business, not 적용's.
+    expect(canApply({ ...applyCamillaThis, designName: "CON" }, "camilla")).toBe(true);
+    expect(applyProblem(applyEqapoNotWindows, "eqapo")).toEqual({ field: "eqapo", problem: "windows" });
+    expect(applyProblem({ ...applyEqapoAbsent, apply: { ...applyEqapoAbsent.apply, status: null } }, "eqapo")).toEqual({ field: "eqapo", problem: "checking" });
+    expect(applyProblem(applyEqapoMissing, "eqapo")).toEqual({ field: "eqapo", problem: "not_installed" });
+    expect(canApply(applyEqapoAbsent, "eqapo")).toBe(true);
+    // Not set to 적용, no result, computing, or another export-group job.
+    expect(canApply(exportReady, "camilla")).toBe(false);
+    expect(canApply({ ...applyCamillaThis, results: exportNoResult.results }, "camilla")).toBe(false);
+    expect(canApply({ ...applyCamillaThis, computing: true }, "camilla")).toBe(false);
+    expect(canApply({ ...applyCamillaThis, exporting: "convolution" }, "camilla")).toBe(false);
+    expect(canApply({ ...applyEqapoAbsent, apply: { ...applyEqapoAbsent.apply, applying: "camilla" } }, "eqapo")).toBe(false);
+    expect(canApply({ ...applyEqapoAbsent, apply: { ...applyEqapoAbsent.apply, reverting: true } }, "eqapo")).toBe(false);
+    expect(exportGroupBusy({ ...exportReady, apply: { ...exportReady.apply, applying: "eqapo" } })).toBe(true);
+    // An apply job holds every export off, as another export does.
+    expect(canExport({ ...exportReady, apply: { ...exportReady.apply, applying: "eqapo" } }, "convolution")).toBe(false);
+  });
+
+  it("compares Equalizer APO's design from apply_status without an apply in this session", () => {
+    expect(eqapoDesign(applyEqapoAbsent)).toBe("none");
+    expect(eqapoDesign(applyEqapoPresent)).toBe("this");
+    expect(eqapoDesign(applyEqapoOther)).toBe("other");
+    expect(eqapoDesign(applyEqapoOfficialUnknown)).toBe("unknown");
+    expect(applyEqapoPresent.apply.runs).toEqual({});
+    expect(applyEqapoPresent.apply.status!.camilla.reachable).toBe(false);
+    expect(currentDesignId(applyCamillaThis)).toBe(MOCK_DESIGN_ID);
+    expect(currentDesignId(applyCamillaOther)).toBe(MOCK_DESIGN_ID);
+    const other: ExportView = { ...applyEqapoPresent, apply: { ...applyEqapoPresent.apply, status: { ...applyEqapoPresent.apply.status!, current_design_id: "another-design" } } };
+    expect(eqapoDesign(other)).toBe("other");
+  });
+
+  it("prefers the service's current design over earlier session applies and CamillaDSP's design", () => {
+    const view: ExportView = {
+      ...applyEqapoPresent,
+      apply: {
+        ...applyEqapoPresent.apply,
+        status: { ...applyEqapoPresent.apply.status!, camilla: applyCamillaThis.apply.status!.camilla, current_design_id: "new-design" },
+        runs: { camilla: { status: "applied", designId: MOCK_DESIGN_ID, folder: "/camilla" }, eqapo: { status: "applied", designId: MOCK_DESIGN_ID, folder: "/eqapo" } },
+      },
+    };
+    expect(currentDesignId(view)).toBe("new-design");
+    expect(eqapoDesign(view)).toBe("other");
+  });
+
+  it("uses session applies or CamillaDSP only when apply_status has no current design id", () => {
+    const view: ExportView = { ...applyEqapoPresent, apply: { ...applyEqapoPresent.apply, status: { ...applyEqapoPresent.apply.status!, current_design_id: null } } };
+    expect(currentDesignId(view)).toBeNull();
+    expect(eqapoDesign(view)).toBe("unknown");
+    for (const target of ["camilla", "eqapo"] as const) {
+      const applied: ExportView = { ...view, apply: { ...view.apply, runs: { [target]: { status: "applied", designId: MOCK_DESIGN_ID, folder: "/applied" } } } };
+      expect(currentDesignId(applied)).toBe(MOCK_DESIGN_ID);
+      expect(eqapoDesign(applied)).toBe("this");
+    }
+    const running: ExportView = { ...view, apply: { ...view.apply, status: { ...view.apply.status!, camilla: applyCamillaThis.apply.status!.camilla } } };
+    expect(currentDesignId(running)).toBe(MOCK_DESIGN_ID);
+    expect(eqapoDesign(running)).toBe("this");
+    expect(currentDesignId(exportReady)).toBeNull();
+    expect(eqapoDesign(exportReady)).toBe("none");
+  });
+
+  it("counts an apply as finishing the step, like an export", () => {
+    expect(exportStepState(applyCamillaThis)).toEqual({ status: "ready" });
+    expect(exportStepState(applyCamillaApplied)).toEqual({ status: "done" });
+    expect(exportStepState(applyCamillaRolledBack)).toEqual({ status: "ready" });
+  });
+});
+
+describe("관리 (ADR 0018)", () => {
+  it("holds 관리 for Windows, camilladsp.exe and the service, after what holds 적용", () => {
+    expect(applyProblem(manageCamillaRunning, "camilla")).toBeNull();
+    expect(canApply(manageCamillaRunning, "camilla")).toBe(true);
+    expect(applyProblem(manageCamillaNoExe, "camilla")).toEqual({ field: "exe_path", problem: "missing" });
+    // A typed path counts before it is stored (the apply stores it first); spaces alone do not.
+    expect(applyProblem({ ...manageCamillaNoExe, apply: { ...manageCamillaNoExe.apply, exeDraft: "D:/camilladsp/camilladsp.exe" } }, "camilla")).toBeNull();
+    expect(applyProblem({ ...manageCamillaRunning, apply: { ...manageCamillaRunning.apply, exeDraft: "   " } }, "camilla")).toEqual({ field: "exe_path", problem: "missing" });
+    expect(applyProblem(manageCamillaNotInstalled, "camilla")).toEqual({ field: "host", problem: "not_installed" });
+    expect(applyProblem(manageCamillaInstalling, "camilla")).toEqual({ field: "host", problem: "not_installed" });
+    expect(applyProblem(manageCamillaStopped, "camilla")).toEqual({ field: "host", problem: "stopped" });
+    // Running but not answering over its pipe, or not read yet.
+    const silent = { ...manageCamillaRunning, apply: { ...manageCamillaRunning.apply, host: { ...manageCamillaRunning.apply.host, status: null } } };
+    expect(applyProblem(silent, "camilla")).toEqual({ field: "host", problem: "unreachable" });
+    expect(hostProblem({ ...manageCamillaRunning.apply.host, service: null })).toBe("checking");
+    // What holds 적용 comes first.
+    expect(applyProblem({ ...manageCamillaNotInstalled, apply: { ...manageCamillaNotInstalled.apply, addressDraft: "camilla" } }, "camilla")).toEqual({ field: "address", problem: "format" });
+    // Off Windows a stored 관리 says so before anything else of its own.
+    expect(applyProblem({ ...manageCamillaNoExe, apply: { ...manageCamillaNoExe.apply, windows: false } }, "camilla")).toEqual({ field: "manage", problem: "windows" });
+    // Equalizer APO: the install first, then the service.
+    expect(applyProblem(manageEqapoRepaired, "eqapo")).toBeNull();
+    expect(applyProblem({ ...manageEqapoRepaired, apply: { ...manageEqapoRepaired.apply, host: manageCamillaStopped.apply.host } }, "eqapo")).toEqual({ field: "host", problem: "stopped" });
+    expect(applyProblem({ ...manageEqapoRepaired, apply: { ...manageEqapoRepaired.apply, status: { ...manageEqapoRepaired.apply.status!, eqapo: applyEqapoMissing.apply.status!.eqapo } } }, "eqapo")).toEqual({ field: "eqapo", problem: "not_installed" });
+    // 적용 needs none of it.
+    expect(applyProblem({ ...manageCamillaNotInstalled, apply: { ...manageCamillaNotInstalled.apply, settings: { ...manageCamillaNotInstalled.apply.settings, camilla: { level: "apply", address: "127.0.0.1:1234" } } } }, "camilla")).toBeNull();
+  });
+
+  it("reads the executable from the draft or the stored path, and stores none for an empty one", () => {
+    expect(exeText(manageCamillaRunning)).toBe("C:/Program Files/CamillaDSP/camilladsp.exe");
+    expect(exeText(manageCamillaNoExe)).toBe("");
+    expect(exeText({ ...manageCamillaRunning, apply: { ...manageCamillaRunning.apply, exeDraft: "" } })).toBe("");
+    const camilla = { level: "manage" as const, address: "127.0.0.1:1234", exe_path: "C:/old/camilladsp.exe" };
+    expect(withExePath(camilla, "D:/camilladsp.exe")).toEqual({ ...camilla, exe_path: "D:/camilladsp.exe" });
+    expect(withExePath(camilla, "")).toEqual({ level: "manage", address: "127.0.0.1:1234" });
+    expect("exe_path" in withExePath(camilla, "")).toBe(false);
   });
 });

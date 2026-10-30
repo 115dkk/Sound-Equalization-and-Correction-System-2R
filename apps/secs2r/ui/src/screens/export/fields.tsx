@@ -2,7 +2,7 @@
 // F21) and the CamillaDSP devices inside its row (F20). The kit has no text
 // field, so the box borrows the number field's box (`ui-number`): the same
 // border, focus ring and skins.
-import { useId, useRef, useState } from "react";
+import { useId, useRef, useState, type KeyboardEvent } from "react";
 import type { MessageKey } from "../../i18n";
 import { useNumber, useT, type Translate } from "../../i18n/react";
 import type { CamillaCaptureDevice } from "../../ipc/bindings/CamillaCaptureDevice";
@@ -38,10 +38,12 @@ const NAME_PROBLEM_TEXT: Record<DesignNameProblem, MessageKey> = {
 
 /* ── A one-line text box ────────────────────────────────────────────────── */
 
-function TextBox({
+export function TextBox({
   id,
   value,
   onChange,
+  onBlur,
+  onKeyDown,
   invalid,
   describedBy: described,
   placeholder,
@@ -49,6 +51,9 @@ function TextBox({
   id: string;
   value: string;
   onChange: (value: string) => void;
+  /** Leaving the box (the CamillaDSP address saves then). */
+  onBlur?: () => void;
+  onKeyDown?: (event: KeyboardEvent<HTMLInputElement>) => void;
   invalid?: boolean;
   describedBy?: string | undefined;
   placeholder?: string;
@@ -67,6 +72,8 @@ function TextBox({
         aria-invalid={invalid || undefined}
         aria-describedby={described}
         onChange={(event) => onChange(event.target.value)}
+        onBlur={onBlur}
+        onKeyDown={onKeyDown}
       />
     </div>
   );

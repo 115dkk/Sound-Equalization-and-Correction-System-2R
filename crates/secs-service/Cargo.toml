@@ -1,7 +1,7 @@
 [package]
 name = "secs-service"
 description = "The application service: project session, requests, jobs, stage cache and staleness, export assembly."
-version = "0.4.1"
+version = "0.5.0"
 edition.workspace = true
 rust-version.workspace = true
 license = "AGPL-3.0-only"
@@ -38,7 +38,9 @@ thiserror.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
+secs-apply.workspace = true
 secs-dirac = { workspace = true, features = ["test-support"] }
 secs-engine-testkit.workspace = true
 secs-jos.workspace = true
 secs-oracle.workspace = true
+tungstenite.workspace = true

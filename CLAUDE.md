@@ -27,7 +27,7 @@
 ```sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
-cargo clippy --workspace --exclude secs2r --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
+cargo clippy --workspace --exclude secs2r --exclude secs2r-host-shell --all-targets --locked --target x86_64-pc-windows-msvc -- -D warnings
 cargo test --workspace --all-targets --locked
 cargo deny --all-features check
 python3 -m unittest discover -s .github/scripts -p "test_*.py"

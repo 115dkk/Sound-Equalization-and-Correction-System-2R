@@ -3,4 +3,4 @@
 /**
  * The operation performed by a long-running job.
  */
-export type JobKind = "measure" | "sample_load" | "mdat_import" | "calibrate" | "recommend_xo" | "mimo" | "export" | "level_monitor" | "status_watch";
+export type JobKind = "measure" | "sample_load" | "mdat_import" | "calibrate" | "recommend_xo" | "mimo" | "export" | "apply" | "level_monitor" | "status_watch";

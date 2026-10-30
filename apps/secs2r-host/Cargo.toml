@@ -1,0 +1,25 @@
+[package]
+name = "secs2r-host"
+description = "Windows service that keeps managed CamillaDSP and Equalizer APO configurations active."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "secs2r-host"
+path = "src/main.rs"
+
+[dependencies]
+secs-apply.workspace = true
+secs-sys = { path = "../../crates/secs-sys" }
+secs-types.workspace = true
+chrono.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true

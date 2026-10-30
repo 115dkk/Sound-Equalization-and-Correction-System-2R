@@ -1,0 +1,10 @@
+# Official VB-CABLE Pack45 (October 2024), VB-Audio Donationware.
+# https://vb-audio.com/Cable/ ; https://vb-audio.com/Services/licensing.htm
+# Used only on disposable Windows CI runners; never upload or redistribute files.
+# Business/organization use requires paid licenses; no CI-specific exemption is stated.
+# SHA-256 computed from this official download on 2026-10-30.
+[vbcable]
+version = "Pack45"
+url = "https://download.vb-audio.com/Download_CABLE/VBCABLE_Driver_Pack45.zip"
+sha256 = "b950e39f01af1d04ea623c8f6d8eb9b6ea5c477c637295fabf20631c85116bfb"
+format = "zip"

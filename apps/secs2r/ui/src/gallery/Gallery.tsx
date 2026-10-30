@@ -10,6 +10,7 @@ import { Segmented } from "../ui/controls";
 import { frameSpecimens, trayAndMenuSpecimens } from "./frameSpecimens";
 import { kitSpecimens } from "./kitSpecimens";
 import { localApiSpecimens } from "./localApiSpecimens";
+import { hostShellSpecimens } from "../host/specimens";
 import { mapSpecimens, plotSpecimens } from "./plotSpecimens";
 import { screenSections } from "../screens/specimens";
 import { Specimen, type SectionDef } from "./Specimen";
@@ -24,6 +25,7 @@ const SECTIONS: SectionDef[] = [
   { id: "plot", title: "Graphs", specimens: plotSpecimens },
   { id: "maps", title: "Maps", specimens: mapSpecimens },
   ...screenSections,
+  { id: "host", title: "Host shell (host.html)", specimens: hostShellSpecimens },
 ];
 
 function readParams(): { prefs: Prefs; only: string[] } {
