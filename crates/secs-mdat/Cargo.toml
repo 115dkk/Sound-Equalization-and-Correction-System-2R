@@ -1,10 +1,10 @@
 [package]
 name = "secs-mdat"
 description = "REW .mdat schema over secs-jos: read measurements, build new projects from an embedded template."
-version = "0.5.0"
+version = "0.6.0"
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+license = "AGPL-3.0-only"
 repository.workspace = true
 homepage = "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R"
 readme = "README.md"

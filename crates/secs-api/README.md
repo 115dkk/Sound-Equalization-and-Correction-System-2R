@@ -77,7 +77,7 @@ This public crate follows its own 0.x release line. A minor release in the 0.x l
 
 ## Licence and repository
 
-This crate is licensed under GPL-3.0-only. Programs that link it form a combined work and must use GPL-3.0-only-compatible distribution terms when conveyed to others.
+This crate is licensed under AGPL-3.0-only (GNU Affero General Public License v3), as are the internal `secs-*` crates it depends on. Programs that link it form a combined work and must use AGPL-3.0-only-compatible terms when conveyed to others, and a modified version that users interact with over a network must offer those users its source code (AGPL section 13). The SECS 2R desktop app itself remains GPL-3.0-only.
 
 Repository: <https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R>
 
@@ -102,4 +102,4 @@ fn main() -> secs::Result<()> {
 }
 ```
 
-이 공개 크레이트는 별도의 0.x 판을 따릅니다. 내부 `secs-*` 크레이트의 호환성은 보장하지 않습니다. 라이선스는 GPL-3.0-only이며 저장소는 <https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R>입니다.
+이 공개 크레이트는 별도의 0.x 판을 따릅니다. 내부 `secs-*` 크레이트의 호환성은 보장하지 않습니다. 라이선스는 AGPL-3.0-only(GNU Affero GPL v3)이며, 네트워크로 사용자에게 서비스하는 수정판은 그 사용자에게 소스 코드를 제공해야 합니다. SECS 2R 데스크톱 앱은 지금처럼 GPL-3.0-only입니다. 저장소는 <https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R>입니다.
