@@ -618,6 +618,8 @@ fn configure_watcher(
 enum PortTakeover {
     Free,
     TakenOver,
+    /// The old CamillaDSP ignored `Exit`; the service ended this PID.
+    Terminated(u32),
     Busy,
 }
 
@@ -673,11 +675,31 @@ fn takeover_port(port: u16) -> PortTakeover {
                 };
             }
             _ if Instant::now() >= deadline => {
-                return match rules::after_exit_decision(true) {
-                    rules::TakeoverDecision::PortBusy => PortTakeover::Busy,
-                    _ => PortTakeover::TakenOver,
+                if rules::after_exit_decision(true) != rules::TakeoverDecision::PortBusy {
+                    return PortTakeover::TakenOver;
+                }
+                // CamillaDSP 4.1.3 stops processing on Exit but keeps the
+                // port when a capture thread blocks (a silent loopback).
+                return match secs_sys::host::terminate_camilla_listener(port) {
+                    Ok(Some(pid)) if port_closes(socket, Duration::from_secs(5)) => {
+                        PortTakeover::Terminated(pid)
+                    }
+                    _ => PortTakeover::Busy,
                 };
             }
+            _ => std::thread::sleep(Duration::from_millis(100)),
+        }
+    }
+}
+
+/// Whether connecting to `socket` is refused within `within`.
+#[cfg(target_os = "windows")]
+fn port_closes(socket: std::net::SocketAddrV4, within: Duration) -> bool {
+    let deadline = Instant::now() + within;
+    loop {
+        match std::net::TcpStream::connect_timeout(&socket.into(), Duration::from_millis(100)) {
+            Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => return true,
+            _ if Instant::now() >= deadline => return false,
             _ => std::thread::sleep(Duration::from_millis(100)),
         }
     }
@@ -707,6 +729,19 @@ fn launch(
                 core,
                 paths,
                 rules::log_line("takeover", [("port".to_owned(), managed.port.to_string())]),
+            )?;
+        }
+        PortTakeover::Terminated(pid) => {
+            record(
+                core,
+                paths,
+                rules::log_line(
+                    "takeover_terminated",
+                    [
+                        ("port".to_owned(), managed.port.to_string()),
+                        ("pid".to_owned(), pid.to_string()),
+                    ],
+                ),
             )?;
         }
         PortTakeover::Busy => {

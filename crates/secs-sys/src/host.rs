@@ -177,6 +177,68 @@ pub fn pipe_server(
     Err(unsupported("managed-host pipe server"))
 }
 
+/// The PID listening on TCP `port` of 127.0.0.1 or every IPv4 address, read
+/// from `netstat -ano -p TCP`. Only the address columns are matched (a
+/// listener's foreign address is `0.0.0.0:0`); the state column is
+/// translated on localized Windows.
+#[cfg(any(target_os = "windows", test))]
+pub fn listener_pid_from_netstat(text: &str, port: u16) -> Option<u32> {
+    let wanted = [format!("127.0.0.1:{port}"), format!("0.0.0.0:{port}")];
+    text.lines().find_map(|line| {
+        let fields: Vec<&str> = line.split_whitespace().collect();
+        if fields.len() < 4
+            || !fields[0].eq_ignore_ascii_case("TCP")
+            || !wanted.iter().any(|address| address == fields[1])
+            || fields[2] != "0.0.0.0:0"
+        {
+            return None;
+        }
+        fields.last()?.parse().ok()
+    })
+}
+
+/// Ends the process listening on `port` if, and only if, its image is
+/// `camilladsp.exe` (maintainer's decision, 2026-10-30: a CamillaDSP that
+/// ignored `Exit` keeps the port, as 4.1.3 does when a capture thread
+/// blocks). Returns its PID, or `None` when nothing or something else
+/// listens there.
+#[cfg(target_os = "windows")]
+pub fn terminate_camilla_listener(port: u16) -> Result<Option<u32>, IpcError> {
+    use std::process::{Command, Stdio};
+
+    let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+    let netstat = std::path::PathBuf::from(root)
+        .join("System32")
+        .join("NETSTAT.EXE");
+    let output = Command::new(&netstat)
+        .args(["-ano", "-p", "TCP"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|error| ipc_error(format!("run {}: {error}", netstat.display())))?;
+    let Some(pid) = listener_pid_from_netstat(&String::from_utf8_lossy(&output.stdout), port)
+    else {
+        return Ok(None);
+    };
+    let process = win_custody::Process::open(pid, win_custody::ProcessAccess::Terminate)
+        .map_err(|error| ipc_error(format!("open port {port} owner {pid}: {error}")))?;
+    let image = process
+        .image_path()
+        .map_err(|error| ipc_error(format!("read port {port} owner {pid} image: {error}")))?;
+    let is_camilla = image
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("camilladsp.exe"));
+    if !is_camilla {
+        return Ok(None);
+    }
+    process
+        .terminate(1)
+        .map_err(|error| ipc_error(format!("terminate CamillaDSP {pid}: {error}")))?;
+    let _ = process.wait(Some(Duration::from_secs(5)));
+    Ok(Some(pid))
+}
+
 /// Makes one request and reads one response from the default host pipe.
 pub fn pipe_call(request: &HostRequest) -> Result<HostResponse, IpcError> {
     pipe_call_at(DEFAULT_PIPE_NAME, request)
@@ -1048,5 +1110,17 @@ mod tests {
         let started = std::time::Instant::now();
         assert!(pipe_call_at(&name, &HostRequest::Status).is_err());
         assert!(started.elapsed() < Duration::from_secs(7));
+    }
+
+    #[test]
+    fn netstat_listener_is_found_by_its_address_columns_only() {
+        let text = "\r\nActive Connections\r\n\r\n  Proto  Local Address          Foreign Address        State           PID\r\n  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1012\r\n  TCP    127.0.0.1:1234         127.0.0.1:50000        ESTABLISHED     4484\r\n  TCP    127.0.0.1:1234         0.0.0.0:0              \u{c218}\u{c2e0} \u{b300}\u{ae30}       4484\r\n  TCP    [::]:1234              [::]:0                 LISTENING       99\r\n";
+        assert_eq!(listener_pid_from_netstat(text, 1234), Some(4484));
+        assert_eq!(listener_pid_from_netstat(text, 135), Some(1012));
+        assert_eq!(listener_pid_from_netstat(text, 4321), None);
+        assert_eq!(
+            listener_pid_from_netstat("  TCP    0.0.0.0:1234   0.0.0.0:0   LISTENING   x\n", 1234),
+            None
+        );
     }
 }
