@@ -16,6 +16,8 @@ name: CI
 #             compiles and runs
 #   frontend  typecheck, unit tests and build of the screen, and the IPC
 #             bindings regenerated from secs-types must match the committed copy
+#   python-wheels  when the Python package or its Rust dependencies change,
+#             build and test its wheel on Linux, Windows and macOS
 #   gallery   every gallery specimen in Chromium, light and dark, Korean and
 #             English and the tutorial accent: no page error, no text under
 #             the 13 px floor, one PNG per data-gallery-id kept as an artifact
@@ -184,6 +186,81 @@ jobs:
       - name: features.toml names tests Cargo runs
         if: runner.os == 'Linux'
         run: python3 .github/scripts/check_feature_tests.py
+
+  python-changes:
+    name: Python package changes
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.filter.outputs.python }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            python:
+              - 'bindings/python/**'
+              - 'crates/**'
+              - 'Cargo.lock'
+              - '.github/workflows/ci.yml'
+
+  python-wheels:
+    name: Python wheel (${{ matrix.name }})
+    needs: python-changes
+    if: github.event_name == 'workflow_dispatch' || needs.python-changes.outputs.changed == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            manylinux: ""
+            python: "3.9"
+          - name: macos
+            os: macos-15
+            target: universal2-apple-darwin
+            manylinux: ""
+            python: "3.13"
+          - name: linux
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            manylinux: "2_17"
+            python: "3.9"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          command: build
+          args: --release --locked --out dist
+          maturin-version: v1.15.0
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          rust-toolchain: "1.99.0"
+          working-directory: bindings/python
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install and test the wheel in a fresh environment
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/python-wheel-test"
+          py="$RUNNER_TEMP/python-wheel-test/bin/python"
+          if [ "$RUNNER_OS" = Windows ]; then py="$RUNNER_TEMP/python-wheel-test/Scripts/python.exe"; fi
+          "$py" -m pip install pytest bindings/python/dist/*.whl
+          "$py" -m pytest bindings/python/tests -q
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: secs2r-wheels-${{ matrix.name }}
+          path: bindings/python/dist/*.whl
+          if-no-files-found: error
+          retention-days: 7
 
   integrity:
     name: integrity (${{ matrix.os }}, 1 / default / 7 threads)

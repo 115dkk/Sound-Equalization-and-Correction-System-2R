@@ -1726,6 +1726,14 @@ tests = [
 note = "ADR 0016: one supported crates.io facade for embedding the file-based engine or driving a running app through the authenticated local API."
 
 [[feature]]
+id = "api.python"
+kind = "api"
+milestone = "M6"
+status = "implemented"
+tests = ["sound-equalization-and-correction-system-rust-api::engine_bootstrap_and_invalid_json"]
+note = "ADR 0019: PyPI package secs2r exposes the embedded engine and authenticated local API client. bindings/python/tests/test_secs2r.py verifies the installed wheel, structured errors, closed-port failure and an optional oracle-project round trip."
+
+[[feature]]
 id = "app.local_api"
 kind = "app"
 milestone = "M6"

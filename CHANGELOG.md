@@ -2,6 +2,14 @@
 
 SECS 2R의 변경 기록입니다. 번호는 major.minor.patch이고, 0.x는 모두 사전 출시판이며 정식 출시는 1.0.0부터입니다(docs/adr/0006). 각 절의 내용이 그 버전의 릴리스 본문이 됩니다. 업스트림 SECS 2의 변경 기록은 [`docs/upstream/CHANGELOG.md`](docs/upstream/CHANGELOG.md)에 있습니다.
 
+## 0.40.0 - 2026-10-31
+
+Python에서 SECS 2R 엔진을 쓰는 PyPI 패키지를 처음 내는 판입니다. 앱과 계산 결과는 0.39.0과 같습니다.
+
+### 추가한 것
+
+- PyPI 패키지 [`secs2r`](https://pypi.org/project/secs2r/)를 공개합니다. Python 3.9 이상에서 앱 없이 프로젝트를 열고 보정과 내보내기를 실행하는 엔진, 그리고 실행 중인 앱의 로컬 API 클라이언트를 JSON 모양의 `dict`로 부르며, 타입 힌트를 함께 설치합니다. Windows x64, macOS(Intel과 Apple Silicon), Linux x86_64 휠을 냅니다. 판과 라이선스(AGPL-3.0-only)는 crates.io의 공개 Rust 크레이트와 같습니다(docs/adr/0019).
+
 ## 0.39.0 - 2026-10-31
 
 앱이 새 판을 스스로 받아 설치하는 판입니다. 보정 계산 결과와 내보낸 파일은 0.38.0과 같습니다. 0.38.0까지의 판에는 업데이터가 없으므로, 이 판만은 릴리스 페이지에서 손으로 받아야 합니다.

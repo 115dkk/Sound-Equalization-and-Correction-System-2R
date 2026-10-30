@@ -27,6 +27,10 @@ class ShipsTest(unittest.TestCase):
             "apps/secs2r-cli/src/main.rs",
             "apps/secs2r/icons/icon.ico",
             "apps/secs2r/icons/window/bubble-32.png",
+            "bindings/python/Cargo.toml",
+            "bindings/python/pyproject.toml",
+            "bindings/python/src/lib.rs",
+            "bindings/python/secs2r/__init__.py",
             "Cargo.toml",
             "Cargo.lock",
             "rust-toolchain.toml",
@@ -51,6 +55,8 @@ class ShipsTest(unittest.TestCase):
             "apps/secs2r/ui/src/gallery/tour/scenes.ts",
             "apps/secs2r/ui/scripts/screen-tour.mjs",
             "apps/secs2r/icons/render_icons.py",
+            "bindings/python/tests/test_secs2r.py",
+            "bindings/python/README.md",
             "features.toml",
             "unsafe-budget.toml",
             "deny.toml",
@@ -211,6 +217,11 @@ class ApiTest(unittest.TestCase):
         'secs-oracle = { path = "crates/secs-oracle" }\n'
         'other = { version = "=0.1.0" }\n'
     )
+    PYTHON = (
+        '[package]\nname = "secs-py"\nversion = "0.1.0"\n\n[dependencies]\n'
+        'secs = { package = "api", version = "=0.1.0" }\n'
+        'pyo3 = { version = "0.30.1" }\n'
+    )
 
     def test_publishing_follows_the_package_table(self):
         self.assertTrue(g.manifest_publishes(self.PUBLISHED))
@@ -233,6 +244,13 @@ class ApiTest(unittest.TestCase):
         self.assertIn('other = { version = "=0.1.0" }', moved)
         self.assertIn('version = "0.30.0"', moved)
 
+    def test_python_manifest_follows_the_api_version(self):
+        moved = g.set_package_version(self.PYTHON, "0.2.0")
+        moved = g.set_dependency_versions(moved, "0.1.0", "0.2.0")
+        self.assertEqual(g.package_field(moved, "version"), "0.2.0")
+        self.assertIn('secs = { package = "api", version = "=0.2.0" }', moved)
+        self.assertIn('pyo3 = { version = "0.30.1" }', moved)
+
     def test_packaged_files_exclude_tests_examples_and_benches(self):
         changed = [
             "crates/secs-types/src/ipc.rs",
@@ -241,10 +259,20 @@ class ApiTest(unittest.TestCase):
             "crates/secs-service/examples/support/case.rs",
             "crates/secs-sys/src/lib.rs",
             "apps/secs2r/src/main.rs",
+            "bindings/python/src/lib.rs",
+            "bindings/python/tests/test_secs2r.py",
         ]
         self.assertEqual(
-            g.api_files(changed, ["crates/secs-types", "crates/secs-service"]),
-            ["crates/secs-types/src/ipc.rs", "crates/secs-types/README.md"])
+            g.api_files(
+                changed,
+                ["crates/secs-types", "crates/secs-service", "bindings/python"],
+            ),
+            [
+                "crates/secs-types/src/ipc.rs",
+                "crates/secs-types/README.md",
+                "bindings/python/src/lib.rs",
+            ],
+        )
 
     def test_api_decision(self):
         self.assertEqual(g.api_decide("0.1.0", set(), [], []), ("publish", "0.1.0"))
