@@ -185,6 +185,13 @@ class StatusTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             m.parse_log('{"event":')
 
+    def test_log_line_without_fields_reads_as_empty_fields(self):
+        # HostLogLine's serde skips an empty `fields` map.
+        self.assertEqual(m.parse_log('{"timestamp":"2026-10-30T19:16:00Z","event":"update_done"}\n'),
+                         [{"timestamp": "2026-10-30T19:16:00Z", "event": "update_done", "fields": {}}])
+        with self.assertRaises(m.CheckError):
+            m.parse_log('{"timestamp":"t","event":"update_done","fields":[]}')
+
 
 class ConfigTest(unittest.TestCase):
     def test_removes_only_marker_pair_and_preserves_other_bytes(self):

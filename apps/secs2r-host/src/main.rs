@@ -214,13 +214,16 @@ fn finish_update() -> Result<(), IpcError> {
     })?;
     let update_paths = rules::host_update_paths(directory);
     let paths = Paths::from_env();
+    // The service starts the verified copy as this helper, so its own version
+    // is the one being installed.
+    let version = || ("version".to_owned(), env!("CARGO_PKG_VERSION").to_owned());
     let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         if secs_sys::host::service_state() == secs_types::ipc::ServiceState::Stopped {
             break;
         }
         if Instant::now() >= deadline {
-            let line = rules::log_line("update_timeout", []);
+            let line = rules::log_line("update_timeout", [version()]);
             let _ = rules::append_log(&paths.log, &line, rules::LOG_LIMIT);
             if secs_sys::host::service_state() == secs_types::ipc::ServiceState::Stopped {
                 secs_sys::host::start_service()?;
@@ -246,13 +249,13 @@ fn finish_update() -> Result<(), IpcError> {
     };
     match &result {
         Ok(()) => {
-            let line = rules::log_line("update_done", []);
+            let line = rules::log_line("update_done", [version()]);
             let _ = rules::append_log(&paths.log, &line, rules::LOG_LIMIT);
         }
         Err(error) => {
             let line = rules::log_line(
                 "update_failed",
-                [("reason".to_owned(), error.detail.clone())],
+                [version(), ("reason".to_owned(), error.detail.clone())],
             );
             let _ = rules::append_log(&paths.log, &line, rules::LOG_LIMIT);
         }

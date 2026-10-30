@@ -190,6 +190,9 @@ def parse_log(text):
         if not line.strip():
             continue
         value = json.loads(line)
+        # HostLogLine omits `fields` when it is empty and reads it back as empty.
+        if isinstance(value, dict):
+            value.setdefault("fields", {})
         require(isinstance(value, dict) and isinstance(value.get("timestamp"), str)
                 and isinstance(value.get("event"), str) and isinstance(value.get("fields"), dict),
                 f"invalid host.log line {index}")
