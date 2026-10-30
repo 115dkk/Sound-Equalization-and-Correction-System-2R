@@ -451,7 +451,7 @@ fn service_loop(
             }
         }
 
-        secs_sys::host::pipe_server(
+        let served = secs_sys::host::pipe_server(
             &paths.pipe,
             Duration::from_millis(100),
             |identity, request| {
@@ -468,7 +468,14 @@ fn service_loop(
                 )
                 .unwrap_or_else(HostResponse::Error)
             },
-        )?;
+        );
+        // One client's failure (it left before the answer, a broken frame)
+        // must not stop the service; the next loop serves the next client.
+        if let Err(error) = served {
+            let line = rules::log_line("pipe_error", [("detail".to_owned(), error.detail)]);
+            let _ = rules::append_log(&paths.log, &line, rules::LOG_LIMIT);
+            std::thread::sleep(Duration::from_millis(100));
+        }
         let _ = &watcher;
     }
 }

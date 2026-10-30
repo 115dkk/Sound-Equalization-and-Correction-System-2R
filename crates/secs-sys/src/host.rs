@@ -12,6 +12,11 @@ pub const DEFAULT_PIPE_NAME: &str = r"\\.\pipe\secs2r-host";
 pub const PIPE_SDDL: &str = "D:P(A;;GA;;;SY)(A;;GRGW;;;IU)";
 pub const MAX_MESSAGE_BYTES: usize = 1024 * 1024;
 pub const PIPE_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long a client waits for the service's answer once its request is
+/// written. Some requests work for seconds first: taking over a busy port
+/// waits up to 5 s for the old CamillaDSP to exit before the service starts
+/// its own, so the 5 s of [`PIPE_TIMEOUT`] made every takeover time out.
+pub const PIPE_RESPONSE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[cfg(any(target_os = "windows", test))]
 fn ipc_error(detail: impl Into<String>) -> IpcError {
@@ -198,9 +203,10 @@ pub fn pipe_call_at(pipe_name: &str, request: &HostRequest) -> Result<HostRespon
     client
         .write_all(&frame(request)?, &wait)
         .map_err(|error| ipc_error(format!("write managed-host request: {error}")))?;
+    let answer_wait = PipeWait::until(Instant::now() + PIPE_RESPONSE_TIMEOUT);
     let response = read_frame(|buffer| {
         client
-            .read(buffer, &wait)
+            .read(buffer, &answer_wait)
             .map_err(|error| ipc_error(format!("read managed-host response: {error}")))
     })?;
     parse_frame(&response)
