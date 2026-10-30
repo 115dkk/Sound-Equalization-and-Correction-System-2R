@@ -472,12 +472,33 @@ ConvertTo-Json -InputObject $rows -Compress
         require(isinstance(value, list), "installer process query did not return an array")
         return value
 
+    def app_processes(self) -> list[dict]:
+        """Running `secs2r.exe` processes: the app, not the service or the shell."""
+        script = r"""
+$rows = @(Get-CimInstance Win32_Process -Filter "Name='secs2r.exe'" | ForEach-Object {
+  [ordered]@{ pid=$_.ProcessId; path=$_.ExecutablePath } })
+ConvertTo-Json -InputObject $rows -Compress
+"""
+        value = json.loads(powershell(script) or "[]")
+        if isinstance(value, dict):
+            value = [value]
+        require(isinstance(value, list), "app process query did not return an array")
+        return value
+
     def close_app_window(self) -> None:
-        """Use WebDriver's Close Window command so Tauri runs its close handler."""
+        """Send WM_CLOSE to the app's main window, as its title-bar close button does.
+
+        Tauri then runs CloseRequested, the screen's close flow, Destroyed and
+        RunEvent::Exit, where the app installs a ready update. WebDriver's Close
+        Window acts on the WebView2 page instead; after it, CI run 41099199514
+        saw no installation within 240 s. The WebDriver session ends with the app.
+        """
         try:
-            self.driver.command("DELETE", "/window")
+            apps = self.app_processes()
+            require(len(apps) == 1, f"expected one running secs2r.exe, found {apps}")
+            closed = powershell(f"(Get-Process -Id {int(apps[0]['pid'])}).CloseMainWindow()")
+            require(closed == "True", f"secs2r.exe PID {apps[0]['pid']} has no main window to close")
         finally:
-            # Closing the sole top-level context deletes the WebDriver session.
             self.driver.session = None
 
     def install_on_close(self) -> str:
@@ -487,7 +508,8 @@ ConvertTo-Json -InputObject $rows -Compress
             version = installed_version_or_none()
             processes = self.installer_processes()
             notice = check_update_json(self.update_json, OLD_VERSION, self.args.version)
-            return {"version": version, "installer_processes": processes, "notice": notice}
+            return {"version": version, "installer_processes": processes, "notice": notice,
+                    "app_processes": self.app_processes()}
 
         evidence = wait_for(
             "app close update installation",
@@ -558,6 +580,8 @@ ConvertTo-Json -InputObject $rows -Compress
 
         wait_for("dismissed update notice", dismissed, timeout=30)
         self.close_app_window()
+        # The shell checks for updates only while SECS 2R is not running.
+        wait_for("app B exit", self.app_processes, lambda value: not value, timeout=60, interval=1)
         return (
             f"{ui('update.notice')} named {self.args.version}; "
             f"{ui('update.notice.dismiss')} hid it and removed {self.update_json}; "

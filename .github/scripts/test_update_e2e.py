@@ -105,14 +105,33 @@ class UpdateJsonTest(unittest.TestCase):
                 u.check_update_json(path, "0.0.1", "0.4.0")
 
 
-class WebDriverCloseTest(unittest.TestCase):
-    def test_close_window_runs_the_tauri_close_handler_and_retires_session(self):
+class AppCloseTest(unittest.TestCase):
+    def scenario(self):
         scenario = object.__new__(u.UpdateScenario)
         scenario.driver = mock.Mock()
         scenario.driver.session = "session-1"
-        scenario.close_app_window()
-        scenario.driver.command.assert_called_once_with("DELETE", "/window")
+        return scenario
+
+    def test_close_sends_wm_close_to_the_one_app_and_retires_the_session(self):
+        scenario = self.scenario()
+        replies = iter(['{"pid":4242,"path":"C:\\\\Users\\\\runner\\\\SECS2R\\\\secs2r.exe"}', "True"])
+        with mock.patch.object(u, "powershell", side_effect=lambda script: next(replies)) as shell:
+            scenario.close_app_window()
+        self.assertIn("Name='secs2r.exe'", shell.call_args_list[0].args[0])
+        self.assertEqual(shell.call_args_list[1].args[0], "(Get-Process -Id 4242).CloseMainWindow()")
+        scenario.driver.command.assert_not_called()
         self.assertIsNone(scenario.driver.session)
+
+    def test_close_fails_without_exactly_one_app_or_a_main_window(self):
+        for replies, message in ((["[]"], "expected one running secs2r.exe"),
+                                 (['[{"pid":1,"path":"a"},{"pid":2,"path":"b"}]'], "expected one running"),
+                                 (['{"pid":7,"path":"a"}', "False"], "has no main window")):
+            scenario = self.scenario()
+            answers = iter(replies)
+            with mock.patch.object(u, "powershell", side_effect=lambda script: next(answers)):
+                with self.assertRaisesRegex(u.CheckError, message):
+                    scenario.close_app_window()
+            self.assertIsNone(scenario.driver.session)
 
 
 class ReportTest(unittest.TestCase):
