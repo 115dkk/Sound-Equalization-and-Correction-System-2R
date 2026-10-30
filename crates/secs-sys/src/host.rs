@@ -197,6 +197,29 @@ pub fn listener_pid_from_netstat(text: &str, port: u16) -> Option<u32> {
     })
 }
 
+/// The PID listening on TCP `port`, from netstat. A connect probe cannot
+/// tell: Windows retries a refused loopback SYN for about two seconds, so a
+/// free port and a hung listener both time out under a short deadline.
+#[cfg(target_os = "windows")]
+pub fn tcp_listener_pid(port: u16) -> Result<Option<u32>, IpcError> {
+    use std::process::{Command, Stdio};
+
+    let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+    let netstat = std::path::PathBuf::from(root)
+        .join("System32")
+        .join("NETSTAT.EXE");
+    let output = Command::new(&netstat)
+        .args(["-ano", "-p", "TCP"])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|error| ipc_error(format!("run {}: {error}", netstat.display())))?;
+    Ok(listener_pid_from_netstat(
+        &String::from_utf8_lossy(&output.stdout),
+        port,
+    ))
+}
+
 /// What [`terminate_camilla_listener`] found on the port.
 #[cfg(target_os = "windows")]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -215,20 +238,7 @@ pub enum ListenerOutcome {
 /// blocks).
 #[cfg(target_os = "windows")]
 pub fn terminate_camilla_listener(port: u16) -> Result<ListenerOutcome, IpcError> {
-    use std::process::{Command, Stdio};
-
-    let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
-    let netstat = std::path::PathBuf::from(root)
-        .join("System32")
-        .join("NETSTAT.EXE");
-    let output = Command::new(&netstat)
-        .args(["-ano", "-p", "TCP"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .map_err(|error| ipc_error(format!("run {}: {error}", netstat.display())))?;
-    let Some(pid) = listener_pid_from_netstat(&String::from_utf8_lossy(&output.stdout), port)
-    else {
+    let Some(pid) = tcp_listener_pid(port)? else {
         return Ok(ListenerOutcome::NotFound);
     };
     let process = win_custody::Process::open(pid, win_custody::ProcessAccess::Terminate)

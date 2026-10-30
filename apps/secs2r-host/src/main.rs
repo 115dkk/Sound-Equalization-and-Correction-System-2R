@@ -631,35 +631,38 @@ enum PortTakeover {
 
 #[cfg(target_os = "windows")]
 fn takeover_port(port: u16) -> PortTakeover {
-    use std::net::{Ipv4Addr, SocketAddrV4, TcpStream};
-
-    let socket = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
-    match TcpStream::connect_timeout(&socket.into(), Duration::from_secs(1)) {
-        Ok(stream) => drop(stream),
-        Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
+    // netstat, not a connect probe, says whether anything listens (see
+    // `tcp_listener_pid`: a free loopback port times out a short connect).
+    match secs_sys::host::tcp_listener_pid(port) {
+        Ok(None) => {
             return match rules::takeover_decision(false, Some(rules::PortObservation::Empty)) {
                 rules::TakeoverDecision::Launch => PortTakeover::Free,
                 _ => PortTakeover::Busy("refused", String::new()),
             };
         }
-        Err(error) => {
-            return match rules::takeover_decision(false, Some(rules::PortObservation::OtherProcess))
-            {
-                rules::TakeoverDecision::PortBusy => PortTakeover::Busy("probe", error.to_string()),
-                _ => PortTakeover::Free,
-            };
-        }
+        Ok(Some(_)) => {}
+        Err(error) => return PortTakeover::Busy("netstat", error.detail),
     }
 
     let address = format!("127.0.0.1:{port}");
     let transport =
-        match secs_apply::camilla::WsTransport::connect(&address, Duration::from_secs(1)) {
+        match secs_apply::camilla::WsTransport::connect(&address, Duration::from_secs(3)) {
             Ok(transport) => transport,
             Err(secs_apply::ApplyError::Connect {
                 connection_refused: true,
                 ..
             }) => return PortTakeover::Free,
-            Err(error) => return PortTakeover::Busy("not_camilla", error.to_string()),
+            Err(error) => {
+                return match rules::takeover_decision(
+                    false,
+                    Some(rules::PortObservation::OtherProcess),
+                ) {
+                    rules::TakeoverDecision::PortBusy => {
+                        PortTakeover::Busy("not_camilla", error.to_string())
+                    }
+                    _ => PortTakeover::Free,
+                };
+            }
         };
     if rules::takeover_decision(false, Some(rules::PortObservation::CamillaDsp))
         != rules::TakeoverDecision::RequestExit
@@ -673,8 +676,8 @@ fn takeover_port(port: u16) -> PortTakeover {
 
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        match TcpStream::connect_timeout(&socket.into(), Duration::from_millis(100)) {
-            Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
+        match secs_sys::host::tcp_listener_pid(port) {
+            Ok(None) => {
                 return match rules::after_exit_decision(false) {
                     rules::TakeoverDecision::Launch => PortTakeover::TakenOver,
                     _ => PortTakeover::Busy("policy", String::new()),
@@ -688,15 +691,13 @@ fn takeover_port(port: u16) -> PortTakeover {
                 // port when a capture thread blocks (a silent loopback).
                 return match secs_sys::host::terminate_camilla_listener(port) {
                     Ok(secs_sys::host::ListenerOutcome::Terminated(pid)) => {
-                        if port_closes(socket, Duration::from_secs(5)) {
+                        if port_closes(port, Duration::from_secs(5)) {
                             PortTakeover::Terminated(pid)
                         } else {
                             PortTakeover::Busy("still_open", format!("ended {pid}"))
                         }
                     }
-                    // The old process closed its listener but is still ending:
-                    // connects then hang instead of being refused. Nothing
-                    // listens, so the new CamillaDSP can bind the port.
+                    // The listener went away between the last poll and now.
                     Ok(secs_sys::host::ListenerOutcome::NotFound) => PortTakeover::TakenOver,
                     Ok(secs_sys::host::ListenerOutcome::NotCamilla { pid, image }) => {
                         PortTakeover::Busy("other_program", format!("{pid} {image}"))
@@ -709,13 +710,13 @@ fn takeover_port(port: u16) -> PortTakeover {
     }
 }
 
-/// Whether connecting to `socket` is refused within `within`.
+/// Whether netstat stops showing a listener on `port` within `within`.
 #[cfg(target_os = "windows")]
-fn port_closes(socket: std::net::SocketAddrV4, within: Duration) -> bool {
+fn port_closes(port: u16, within: Duration) -> bool {
     let deadline = Instant::now() + within;
     loop {
-        match std::net::TcpStream::connect_timeout(&socket.into(), Duration::from_millis(100)) {
-            Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => return true,
+        match secs_sys::host::tcp_listener_pid(port) {
+            Ok(None) => return true,
             _ if Instant::now() >= deadline => return false,
             _ => std::thread::sleep(Duration::from_millis(100)),
         }
