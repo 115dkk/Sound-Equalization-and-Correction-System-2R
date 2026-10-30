@@ -113,12 +113,12 @@ describe("calculation notes", () => {
       "RC 상한 250 Hz(너그러운 슈뢰더, 엄격한 값 250 Hz)",
       "RC 상한 500 Hz(너그러운 슈뢰더, 엄격한 값 250 Hz × 2)",
       "RC 상한 287 Hz(위치 9곳 일치도)",
-      "RC 상한 300 Hz (직접 정함)",
+      "RC 상한 300 Hz(직접 입력)",
       // No room volume: the earlier line, and the hint to enter the volume after it.
-      "RC 상한 500 Hz (자동)",
+      "RC 상한 500 Hz(자동)",
       "방 부피가 없어 자동 상한은 500 Hz입니다. 방 크기를 넣으면 슈뢰더 주파수로 정해집니다.",
       // A note from before the bases keeps its line.
-      "RC 상한 310 Hz (자동 · 슈뢰더 310 Hz)",
+      "RC 상한 310 Hz(자동, 슈뢰더 310 Hz)",
     ]);
     expect(text("en").slice(0, 8)).toEqual([
       "RC upper limit 154 Hz (strict Schroeder 154 Hz)",

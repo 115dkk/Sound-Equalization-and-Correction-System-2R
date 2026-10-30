@@ -575,7 +575,7 @@ describe("보정 screen", () => {
 
   it("asks for a result and three positions before MIMO", () => {
     setup({ ...fx.emptyView, settings: { ...fx.emptyView.settings, mimo_on: true } });
-    expect(must("calibrate.mimo.reason").textContent).toBe("보정 계산을 누르면 MIMO도 함께 계산합니다.");
+    expect(must("calibrate.mimo.reason").textContent).toBe("'보정 계산'을 누르면 MIMO도 함께 계산합니다.");
     cleanupAll();
     setup({ ...fx.splView, positions: [1, 2] });
     const toggle = must("calibrate.mimo.on") as HTMLButtonElement;
@@ -758,7 +758,7 @@ describe("MIMO 함께 계산", () => {
 
   it("names MIMO in the busy line and the header pill while 보정 계산 computes it, in the controls' place", () => {
     setup(fx.computingMimoView);
-    expect(must("calibrate.verdict.computing").textContent).toBe("3점 측정값을 기반으로 보정과 MIMO를 계산하는 중…");
+    expect(must("calibrate.verdict.computing").textContent).toBe("3곳의 측정값으로 보정과 MIMO 계산 중…");
     expect(must("calibrate.verdict.computing").className).toBe("calibrate-run__busy");
     expect(ui("calibrate.run.mimo")).toBeNull();
     // The button (the MIMO card's compute device block shares its data-ui).
@@ -1028,9 +1028,9 @@ describe("RC upper limit basis", () => {
     expect(lines(fx.rangeViews.lenientTimes2)[0]).toBe("RC 상한 400 Hz(너그러운 슈뢰더 200 Hz × 2, 대역 T60 0.50초)");
     // Agreement needs no room volume: no volume line follows it.
     expect(lines(fx.rangeViews.agreement)).toEqual(["RC 상한 287 Hz(위치 9곳 일치도)"]);
-    expect(lines(fx.rangeViews.manual)).toEqual(["RC 상한 300 Hz (직접 정함)"]);
-    expect(lines(fx.rangeViews.noVolume)).toEqual(["RC 상한 500 Hz (자동)", t("notice.rc_no_room_volume")]);
-    expect(lines(fx.splView)[0]).toBe("RC 상한 310 Hz (자동 · 슈뢰더 310 Hz)");
+    expect(lines(fx.rangeViews.manual)).toEqual(["RC 상한 300 Hz(직접 입력)"]);
+    expect(lines(fx.rangeViews.noVolume)).toEqual(["RC 상한 500 Hz(자동)", t("notice.rc_no_room_volume")]);
+    expect(lines(fx.splView)[0]).toBe("RC 상한 310 Hz(자동, 슈뢰더 310 Hz)");
   });
 });
 
