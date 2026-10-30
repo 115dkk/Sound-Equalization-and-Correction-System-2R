@@ -121,6 +121,8 @@ pub struct CalibrationSettings {
     pub mode: Mode,
     #[serde(default)]
     pub sample_rate_policy: SampleRatePolicy,
+    #[serde(default)]
+    pub low_protect: bool,
     pub rc_lo: f64,
     pub rc_hi: Option<f64>,
     #[serde(default)]
@@ -167,6 +169,7 @@ impl Default for CalibrationSettings {
         Self {
             mode: Mode::Mixed,
             sample_rate_policy: SampleRatePolicy::Reject,
+            low_protect: false,
             rc_lo: 20.0,
             rc_hi: None,
             rc_hi_basis: RcHiBasis::Strict,
@@ -239,6 +242,9 @@ impl CalibrationSettings {
         // Keep existing cache fingerprints unchanged for the default policy.
         if self.sample_rate_policy == SampleRatePolicy::Resample {
             out.push_str("|sample_rate_policy=resample");
+        }
+        if self.low_protect {
+            out.push_str("|low_protect");
         }
         if self.peq_analytic_derivatives {
             out.push_str("|peq_analytic_derivatives");
@@ -611,6 +617,28 @@ mod tests {
         );
         resampled.sample_rate_policy = SampleRatePolicy::Reject;
         assert_eq!(resampled.engine_key(), legacy.engine_key());
+    }
+
+    #[test]
+    fn low_protect_defaults_off_and_preserves_legacy_engine_key() {
+        let baseline = CalibrationSettings::default();
+        assert!(!baseline.low_protect);
+        let key = baseline.engine_key();
+        assert!(!key.contains("low_protect"));
+        let mut json = serde_json::to_value(&baseline).unwrap();
+        json.as_object_mut().unwrap().remove("low_protect");
+        let mut legacy: CalibrationSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(legacy, baseline);
+        legacy.low_protect = true;
+        assert_eq!(legacy.engine_key(), format!("{key}|low_protect"));
+        legacy.low_protect = false;
+        assert_eq!(legacy.engine_key(), key);
+        let edit: crate::settings_edit::SettingEdit =
+            serde_json::from_value(serde_json::json!({"kind":"low_protect","on":true})).unwrap();
+        assert_eq!(
+            edit,
+            crate::settings_edit::SettingEdit::LowProtect { on: true }
+        );
     }
 
     #[test]

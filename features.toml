@@ -1624,7 +1624,8 @@ kind = "ipc"
 milestone = "M5"
 status = "implemented"
 upstream = "step5_measure.py magnitude_db"
-tests = ["secs-service::measurement_curves_match_oracle_and_selection"]
+tests = ["secs-engine::split_measurement_transform_preserves_upstream_normalization", "secs-service::measurement_curves_match_oracle_and_selection", "secs-service::measurement_curves_share_the_configured_reference"]
+note = "U17: every displayed curve uses one stored main measurement reference, or a 40-120 Hz sub reference in sub-only projects; request filters do not change it"
 
 [[feature]]
 id = "ipc.result_curves"
@@ -1656,7 +1657,7 @@ kind = "service"
 milestone = "M5"
 status = "implemented"
 upstream = "step5_measure.py and step_calibration.py display curves and result lines"
-tests = ["secs-service::measurement_curves_match_oracle_and_selection", "secs-service::result_display_matches_replayed_oracle", "secs-service::result_curves_lines_take_values_and_staleness", "secs-service::curve_requests_validate_and_require_project", "secs-service::subs_only_run_feeds_the_ba_tab_until_the_next_full_run"]
+tests = ["secs-service::measurement_curves_match_oracle_and_selection", "secs-service::measurement_curves_share_the_configured_reference", "secs-service::result_display_matches_replayed_oracle", "secs-service::result_curves_lines_take_values_and_staleness", "secs-service::curve_requests_validate_and_require_project", "secs-service::subs_only_run_feeds_the_ba_tab_until_the_next_full_run"]
 # ---- Host and live service IPC (M5) ----
 
 [[feature]]
@@ -1820,3 +1821,36 @@ milestone = "M5"
 status = "implemented"
 upstream = "ADR 0021; calibration_settings_edit RcHiTransition"
 tests = ["secs-service::rc_upper_edits_persist_and_reject_invalid_factors", "secs-service::rc_upper_edits_mark_calibration_stale"]
+
+[[feature]]
+id = "engine.low_protect"
+kind = "engine"
+milestone = "M5"
+status = "implemented"
+upstream = "new; ADR 0022 (D47), correction_engine.py RC and sub PEQ"
+tests = [
+  "secs-engine::low_protect_rolloff_uses_weighted_power_and_filtered_passband",
+  "secs-engine::low_protect_realized_guard_scales_leaking_boosts_and_reports_infeasible",
+  "secs-engine::low_protect_rc_realized_response_in_peq_and_fir_modes",
+  "secs-engine::low_protect_sub_export_bus_bundle_and_user_highpass",
+  "secs-engine::low_protect_flat_channels_leave_the_design_unchanged",
+  "secs-types::low_protect_defaults_off_and_preserves_legacy_engine_key",
+  "secs-project::low_protect_round_trip_and_legacy_default",
+]
+note = "Default off. Weighted-power rolloff, target mask, realized +0.5 dB guard and export-only LR24 sub protection; no change to MIMO's range finder."
+
+[[feature]]
+id = "calibration.edit_low_protect"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "new; ADR 0022, calibration_settings_edit LowProtect"
+tests = ["secs-service::low_protect_edits_persist_and_mark_results_stale", "secs-service::low_protect_notices_include_outcome_and_optional_highpass"]
+
+[[feature]]
+id = "cli.low_protect"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "new; project set --low-protect on|off"
+tests = ["secs2r-cli::project_set_persists_low_protect_switch"]

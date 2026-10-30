@@ -147,6 +147,9 @@ enum ProjectAction {
         /// Compute MIMO support paths after calibrating.
         #[arg(long, value_enum)]
         mimo: Option<Switch>,
+        /// Prevent boosts below measured rolloff and protect sub outputs.
+        #[arg(long, value_enum)]
+        low_protect: Option<Switch>,
         /// MIMO supports as FIR or as IIR (PEQ and all-pass) filters.
         #[arg(long, value_enum)]
         mimo_supports: Option<SupportKind>,
@@ -538,6 +541,7 @@ fn run(action: Action, runner: &mut Runner) {
                 path,
                 mimo,
                 mimo_supports,
+                low_protect,
                 peq_derivatives,
                 mimo_iir_derivatives,
             } => {
@@ -560,6 +564,11 @@ fn run(action: Action, runner: &mut Runner) {
                             .map(|choice| matches!(choice, PeqDerivativeChoice::Analytic)),
                         mimo_iir: mimo_iir_derivatives
                             .map(|choice| matches!(choice, MimoIirDerivativeChoice::Analytic)),
+                    });
+                }
+                if let Some(value) = low_protect {
+                    edits.push(SettingEdit::LowProtect {
+                        on: matches!(value, Switch::On),
                     });
                 }
                 let changed = !edits.is_empty();

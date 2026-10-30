@@ -36,6 +36,14 @@ fn note_value(note: &crate::notes::Note) -> Value {
     use crate::notes::Note;
     use serde_json::json;
     match note {
+        Note::LowProtect {
+            role,
+            rolloff_hz,
+            hp_hz,
+            limited,
+        } => {
+            json!({"LowProtect": {"role":role,"rolloff_hz":rolloff_hz,"hp_hz":hp_hz,"limited":limited}})
+        }
         Note::LiftCapped {
             from_ms,
             taps,
@@ -574,6 +582,7 @@ fn design_matches_recorded_stages() {
             .notes
             .iter()
             .map(|n| match n {
+                crate::notes::Note::LowProtect { .. } => "LowProtect",
                 crate::notes::Note::LiftCapped { .. } => "LiftCapped",
                 crate::notes::Note::SubFilters(_) => "SubFilters",
                 crate::notes::Note::RcLimit { .. } => "RcLimit",

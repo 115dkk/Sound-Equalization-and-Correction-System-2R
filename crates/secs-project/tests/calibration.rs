@@ -26,6 +26,7 @@ fn calibration_parse_store_and_saved_bytes_match_oracle() {
         object.remove("sample_rate_policy");
         assert_eq!(object.remove("rc_hi_basis"), Some("strict".into()));
         assert_eq!(object.remove("rc_hi_transition"), Some(1.into()));
+        assert_eq!(object.remove("low_protect"), Some(false.into()));
         assert_eq!(
             object.remove("peq_analytic_derivatives"),
             Some(false.into())
@@ -40,6 +41,24 @@ fn calibration_parse_store_and_saved_bytes_match_oracle() {
         let json: Value = serde_json::from_str(&dumps(&project.to_json())).unwrap();
         assert_eq!(json["keep"], expected["extra_keep"]);
     }
+}
+
+#[test]
+fn low_protect_round_trip_and_legacy_default() {
+    let mut project = Project::from_preset("2.1").unwrap();
+    let mut settings = calibration_from_project(&project);
+    assert!(!settings.low_protect);
+    store_calibration(&mut project, &settings);
+    let baseline = project.save_text();
+    assert!(!baseline.contains("low_protect"));
+    settings.low_protect = true;
+    store_calibration(&mut project, &settings);
+    let mut reopened = Project::from_json(loads(&project.save_text()).unwrap()).unwrap();
+    let mut parsed = calibration_from_project(&reopened);
+    assert!(parsed.low_protect);
+    parsed.low_protect = false;
+    store_calibration(&mut reopened, &parsed);
+    assert_eq!(reopened.save_text(), baseline);
 }
 
 #[test]

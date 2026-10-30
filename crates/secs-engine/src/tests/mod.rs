@@ -11,6 +11,7 @@ mod decay;
 mod design;
 mod e2e;
 pub(crate) mod fit;
+mod low_protect;
 mod mimo;
 mod mimo_iir;
 mod mimo_run;

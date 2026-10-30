@@ -779,6 +779,20 @@ pub(crate) fn scalar_notice(note: &secs_engine::Note) -> Notice {
 
     let mut params = std::collections::BTreeMap::new();
     let code = match note {
+        Note::LowProtect {
+            role,
+            rolloff_hz,
+            hp_hz,
+            limited,
+        } => {
+            params.insert("role".into(), role.clone());
+            params.insert("rolloff_hz".into(), rolloff_hz.to_string());
+            params.insert("limited".into(), limited.to_string());
+            if let Some(hz) = hp_hz {
+                params.insert("hp_hz".into(), hz.to_string());
+            }
+            "low_protect"
+        }
         Note::LiftCapped {
             from_ms,
             taps,
@@ -1375,6 +1389,34 @@ mod tests {
     }
 
     #[test]
+    fn low_protect_notices_include_outcome_and_optional_highpass() {
+        let note = Note::LowProtect {
+            role: "SW1".into(),
+            rolloff_hz: 28.0,
+            hp_hz: Some(20.0),
+            limited: true,
+        };
+        assert_eq!(
+            serde_json::to_value(notices(&note)).unwrap(),
+            serde_json::json!([
+                {"code":"low_protect","params":{"role":"SW1","rolloff_hz":"28","hp_hz":"20","limited":"true"}}
+            ])
+        );
+        let note = Note::LowProtect {
+            role: "L".into(),
+            rolloff_hz: 30.0,
+            hp_hz: None,
+            limited: false,
+        };
+        assert_eq!(
+            serde_json::to_value(notices(&note)).unwrap(),
+            serde_json::json!([
+                {"code":"low_protect","params":{"role":"L","rolloff_hz":"30","limited":"false"}}
+            ])
+        );
+    }
+
+    #[test]
     fn flat_notice_schemas_preserve_scalar_values_and_order() {
         use secs_engine::MimoNote;
         use serde_json::json;
@@ -1449,6 +1491,12 @@ mod tests {
     #[test]
     fn every_engine_note_maps_to_a_notice_code_and_params() {
         let notes = vec![
+            Note::LowProtect {
+                role: "SW1".into(),
+                rolloff_hz: 28.0,
+                hp_hz: Some(20.0),
+                limited: true,
+            },
             Note::LiftCapped {
                 from_ms: 2.0,
                 taps: 3,
@@ -1514,6 +1562,7 @@ mod tests {
         assert_eq!(
             codes,
             [
+                "low_protect",
                 "lift_capped",
                 "sub_filters",
                 "sub_filter_peq",
@@ -1534,7 +1583,7 @@ mod tests {
                 "mimo_support_limit",
             ]
         );
-        assert_eq!(notices(&notes[0])[0].params["from_ms"], "2");
-        assert_eq!(notices(&notes[13])[0].params["role"], "SW1");
+        assert_eq!(notices(&notes[1])[0].params["from_ms"], "2");
+        assert_eq!(notices(&notes[14])[0].params["role"], "SW1");
     }
 }

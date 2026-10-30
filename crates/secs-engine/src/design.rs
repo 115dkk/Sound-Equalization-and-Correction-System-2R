@@ -890,6 +890,28 @@ fn design_pass(
             sub.lp_type = f.lp_type;
             sub.peq = f.peq.clone();
         }
+        if config.low_protect {
+            let by_pos: Vec<_> = positions
+                .iter()
+                .filter_map(|&p| used.get(p, role).map(|h| (p, h.clone())))
+                .collect();
+            if let Some(hz) = crate::low_protect::rolloff(
+                &by_pos,
+                config.main_position,
+                Some((sub.hp_hz, sub.lp_hz)),
+            ) {
+                if sub.hp_hz == 0.0 {
+                    sub.hp_hz = hz / 2.0_f64.sqrt();
+                    sub.hp_type = BandType::Lr24;
+                }
+                notes.push(Note::LowProtect {
+                    role: role.clone(),
+                    rolloff_hz: hz,
+                    hp_hz: Some(sub.hp_hz),
+                    limited: true,
+                });
+            }
+        }
         subs.push(sub);
     }
     let sub = if config.subs.is_empty() {

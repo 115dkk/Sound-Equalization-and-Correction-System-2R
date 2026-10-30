@@ -413,7 +413,17 @@ fn prepare_correction(
         })
         .collect();
     let mut notes = Vec::new();
-    let nb = no_boost_mask(input);
+    let mut nb = no_boost_mask(input);
+    let rolloff = input
+        .config
+        .low_protect
+        .then(|| crate::low_protect::rolloff(input.comb, input.main_position, None))
+        .flatten();
+    if let Some(hz) = rolloff {
+        for (masked, &f) in nb.iter_mut().zip(f) {
+            *masked |= f < hz;
+        }
+    }
     let lm = long_mode_mask(input, &mut notes);
     check(cancelled)?;
     trace.no_boost = nb.clone();
@@ -469,6 +479,9 @@ fn prepare_correction(
             fitter,
         ));
         check(cancelled)?;
+        if let Some(hz) = rolloff {
+            crate::low_protect::clamp_centres(&mut peq, hz);
+        }
         return Ok(RcPreparation::Complete(RcOutput {
             fir: vec![1.0],
             response: response::peq_response(f, &peq),
@@ -494,6 +507,9 @@ fn prepare_correction(
             fitter,
         );
         check(cancelled)?;
+        if let Some(hz) = rolloff {
+            crate::low_protect::clamp_centres(&mut peq, hz);
+        }
         p = response::peq_response(f, &peq);
         for i in 0..BINS {
             corr[i] =
@@ -810,6 +826,22 @@ pub(crate) fn channel_with_cuts(
     } else {
         Vec::new()
     };
+    if input.config.low_protect
+        && let Some(hz) = crate::low_protect::rolloff(input.comb, input.main_position, None)
+    {
+        let mut padded = out.fir.clone();
+        padded.resize(N_FFT, 0.0);
+        let fir = fft::rfft(&padded);
+        let fixed = multiply(&fir, &response::peq_response(design_freqs(), &gd_cuts));
+        let limited = crate::low_protect::limit(&mut out.peq, &fixed, hz);
+        out.response = multiply(&fir, &response::peq_response(design_freqs(), &out.peq));
+        out.notes.push(Note::LowProtect {
+            role: input.role.to_owned(),
+            rolloff_hz: hz,
+            hp_hz: None,
+            limited,
+        });
+    }
     let response = if gd_cuts.is_empty() {
         out.response.clone()
     } else {

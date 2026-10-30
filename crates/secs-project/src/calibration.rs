@@ -22,6 +22,7 @@ pub(crate) static CALIBRATION_SHAPE: Shape = Shape::Record {
     // Written only for non-default policies, so stored values must not return.
     optional: &[
         "sample_rate_policy",
+        "low_protect",
         "rc_hi_basis",
         "rc_hi_transition",
         "peq_analytic_derivatives",
@@ -60,6 +61,7 @@ pub fn calibration_from_project(project: &Project) -> CalibrationSettings {
         Some("resample") => SampleRatePolicy::Resample,
         _ => SampleRatePolicy::Reject,
     };
+    out.low_protect = get("low_protect").is_some_and(PyJson::is_truthy);
     out.rc_lo = num(get("rc_lo"), 10.0, 200.0).unwrap_or(20.0);
     out.rc_hi = num(get("rc_hi"), 100.0, 20_000.0);
     out.rc_hi_basis = match get("rc_hi_basis").and_then(PyJson::str) {
@@ -202,6 +204,9 @@ fn calibration_json(settings: &CalibrationSettings) -> PyJson {
         ("xo_peq_hi".into(), PyJson::Float(settings.xo_peq_hi)),
     ];
     // Omit defaults to preserve the upstream saved-byte goldens.
+    if settings.low_protect {
+        values.push(("low_protect".into(), PyJson::Bool(true)));
+    }
     if settings.rc_hi_basis != RcHiBasis::Strict {
         values.push((
             "rc_hi_basis".into(),

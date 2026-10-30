@@ -4,6 +4,7 @@
     "data": {
       "mode": "mixed",
       "sample_rate_policy": "reject",
+      "low_protect": false,
       "rc_lo": 20.0,
       "rc_hi": null,
       "rc_hi_basis": "strict",

@@ -105,6 +105,9 @@ pub enum SettingEdit {
     UltraMs {
         ms: f64,
     },
+    LowProtect {
+        on: bool,
+    },
     RcLo {
         hz: f64,
     },
