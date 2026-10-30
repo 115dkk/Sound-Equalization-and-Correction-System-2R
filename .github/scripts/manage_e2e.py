@@ -752,13 +752,18 @@ class Scenario:
         return wait_for(selector, rendered)
 
     def click(self, name):
+        # Retried as a whole: right after a project opens the rail re-lays out,
+        # and a click then lands on the status block ("element click
+        # intercepted", which clicks nothing) or on a replaced element.
         selector = ui(name)
-        def enabled():
+        def attempt():
             element = self.driver.find(selector)
-            return element if self.driver.attribute(element, "disabled") is None else None
-        element = wait_for(f"enabled {name}", enabled)
+            if self.driver.attribute(element, "disabled") is not None:
+                return False
+            self.driver.click(element)
+            return True
         self.log("click", selector=selector)
-        self.driver.click(element)
+        wait_for(f"click {name}", attempt)
 
     def type(self, name, value):
         element = self.shown(ui(name))

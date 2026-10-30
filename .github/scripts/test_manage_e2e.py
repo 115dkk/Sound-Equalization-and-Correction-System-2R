@@ -434,5 +434,29 @@ class WebSocketTest(unittest.TestCase):
             m.websocket_exchange('"GetState"', port=port)
         thread.join(5)
 
+
+class ClickTest(unittest.TestCase):
+    def test_an_intercepted_click_is_retried_until_it_lands(self):
+        class Driver:
+            def __init__(self):
+                self.clicks = 0
+
+            def find(self, selector):
+                return {"selector": selector}
+
+            def attribute(self, element, name):
+                return None
+
+            def click(self, element):
+                self.clicks += 1
+                if self.clicks == 1:
+                    raise m.WebDriverError("element click intercepted", "status block")
+
+        scenario = object.__new__(m.Scenario)
+        scenario.driver = Driver()
+        scenario.log = lambda *args, **kwargs: None
+        scenario.click("frame.rail.export")
+        self.assertEqual(scenario.driver.clicks, 2)
+
 if __name__ == "__main__":
     unittest.main()
