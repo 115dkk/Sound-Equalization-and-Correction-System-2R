@@ -146,8 +146,7 @@ fn unpublished_packages_keep_the_workspace_gpl() {
         })
         .map(|(name, _)| format!("{name}: license must be license.workspace = true"))
         .collect();
-    assert!(violations.is_empty(), "{}", violations.join("
-"));
+    assert!(violations.is_empty(), "{}", violations.join("\n"));
 }
 
 #[test]
