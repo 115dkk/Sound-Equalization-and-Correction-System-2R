@@ -403,7 +403,11 @@ jobs:
     # bundle matrix must not skip this job. A missing Windows artifact fails
     # the download step below.
     if: ${{ !cancelled() && needs.bundle.result != 'skipped' }}
-    runs-on: windows-latest
+    # msedgedriver cannot start WebView2 apps on runtime 133 and later
+    # ("DevToolsActivePort file doesn't exist"; MicrosoftEdge/WebView2Feedback#5415,
+    # actions/runner-images#14738). windows-2025 carries 152; windows-2022
+    # still carries 131, until its Evergreen runtime rolls forward.
+    runs-on: windows-2022
     timeout-minutes: 40
     defaults:
       run:
