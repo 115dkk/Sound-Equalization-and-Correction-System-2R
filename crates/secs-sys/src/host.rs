@@ -275,27 +275,47 @@ pub fn pipe_call_at(pipe_name: &str, request: &HostRequest) -> Result<HostRespon
     use win_custody::{PipeAccess, PipeClient, PipeWait};
 
     let deadline = Instant::now() + PIPE_TIMEOUT;
-    let client = PipeClient::open(
-        pipe_name,
-        PipeAccess::ReadWrite,
-        deadline,
-        Duration::from_millis(10),
-    )
-    .map_err(|error| ipc_error(format!("open managed-host pipe: {error}")))?;
-    client
-        .server_process_id()
-        .map_err(|error| ipc_error(format!("identify managed-host server: {error}")))?;
-    let wait = PipeWait::until(deadline);
-    client
-        .write_all(&frame(request)?, &wait)
-        .map_err(|error| ipc_error(format!("write managed-host request: {error}")))?;
-    let answer_wait = PipeWait::until(Instant::now() + PIPE_RESPONSE_TIMEOUT);
-    let response = read_frame(|buffer| {
+    let request = frame(request)?;
+    // The server closes its pipe instance when an accept poll times out; a
+    // client that connected in that instant finds the pipe closing before
+    // the server read anything. Only those attempts are made again: a failed
+    // write, or a pipe that ends before the first response byte.
+    loop {
+        let client = PipeClient::open(
+            pipe_name,
+            PipeAccess::ReadWrite,
+            deadline,
+            Duration::from_millis(10),
+        )
+        .map_err(|error| ipc_error(format!("open managed-host pipe: {error}")))?;
         client
-            .read(buffer, &answer_wait)
-            .map_err(|error| ipc_error(format!("read managed-host response: {error}")))
-    })?;
-    parse_frame(&response)
+            .server_process_id()
+            .map_err(|error| ipc_error(format!("identify managed-host server: {error}")))?;
+        let wait = PipeWait::until(deadline);
+        if let Err(error) = client.write_all(&request, &wait) {
+            if Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(10));
+                continue;
+            }
+            return Err(ipc_error(format!("write managed-host request: {error}")));
+        }
+        let answer_wait = PipeWait::until(Instant::now() + PIPE_RESPONSE_TIMEOUT);
+        let mut received = 0;
+        let response = read_frame(|buffer| {
+            let count = client
+                .read(buffer, &answer_wait)
+                .map_err(|error| ipc_error(format!("read managed-host response: {error}")))?;
+            received += count;
+            Ok(count)
+        });
+        match response {
+            Ok(response) => return parse_frame(&response),
+            Err(_) if received == 0 && Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }
 
 #[cfg(not(target_os = "windows"))]
