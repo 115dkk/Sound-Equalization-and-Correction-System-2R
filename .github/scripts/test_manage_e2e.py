@@ -187,13 +187,14 @@ class ConfigTest(unittest.TestCase):
             with self.assertRaises(m.CheckError):
                 m.remove_managed_lines(data)
 
-    def test_base_is_infinite_hardware_free_and_discards_output(self):
+    def test_base_is_infinite_and_plays_into_the_virtual_cable(self):
         text = m.base_config()
         self.assertIn("type: SignalGenerator\n", text)
         self.assertIn("signal:\n      type: Sine\n", text)
-        self.assertIn("type: File\n    channels: 2\n    filename: NUL\n    format: F32_LE", text)
-        self.assertIn("pipeline: []\n", text)
-        self.assertNotIn("Wasapi", text)
+        self.assertIn('type: Wasapi\n    channels: 2\n    device: "CABLE Input (VB-Audio Virtual Cable)"\n'
+                      '    format: F32\n    exclusive: false\n', text)
+        self.assertIn("filters: {}\nmixers: {}\npipeline: []\n", text)
+        self.assertNotIn("type: File", text)
         self.assertNotIn("in.raw", text)
 
 

@@ -216,11 +216,15 @@ def check_config_bytes(before, after):
             "Equalizer APO changed bytes outside SECS2R's two lines")
 
 
+VIRTUAL_OUTPUT = "CABLE Input (VB-Audio Virtual Cable)"
+
+
 def base_config():
-    # SignalGenerator is endless; File -> NUL discards samples without unbounded
-    # output or audio hardware. This config is NEVER substituted for app output.
-    # Device contract: CamillaDSP v4.1.3 README, SignalGenerator and File sections.
-    return """devices:
+    # SignalGenerator is endless and plays, paced by the device, into the
+    # runner's VB-CABLE input through shared WASAPI (format F32, as the app
+    # exports it). File -> NUL stayed in "Starting" on the runner (CamillaDSP
+    # 4.1.3, 2026-10-30). This config is NEVER substituted for app output.
+    return f"""devices:
   samplerate: 48000
   chunksize: 1024
   queuelimit: 2
@@ -232,12 +236,13 @@ def base_config():
       freq: 997
       level: -60
   playback:
-    type: File
+    type: Wasapi
     channels: 2
-    filename: NUL
-    format: F32_LE
-filters: {}
-mixers: {}
+    device: "{VIRTUAL_OUTPUT}"
+    format: F32
+    exclusive: false
+filters: {{}}
+mixers: {{}}
 pipeline: []
 """
 
@@ -624,7 +629,7 @@ class Scenario:
         self.artifacts = args.artifacts
         self.driver = WebDriver()
         self.records = []
-        self.notes = ["Base: SignalGenerator sine -> File NUL, no hardware and no growing output file.",
+        self.notes = ["Base: SignalGenerator sine -> shared WASAPI on VB-CABLE Input, no growing output file.",
                       "Applied configs are unchanged: stereo design, VB-CABLE WASAPI loopback -> shared WASAPI, F32.",
                       "tauri-driver 2.1.0 (released 2026-09-26); Edge build/signature in webdriver-version.json.",
                       "Equalizer APO XT: pinned 2.60.4 x64-sse2 Setup.exe --silent; require installer registry values."]
@@ -745,7 +750,7 @@ class Scenario:
 
     def choose_virtual_output(self):
         devices = [device for device in self.facts["wasapi"]["render"]
-                   if device["name"].casefold() == "cable input (vb-audio virtual cable)"]
+                   if device["name"].casefold() == VIRTUAL_OUTPUT.casefold()]
         require(len(devices) == 1, f"Expected one VB-CABLE render endpoint: {devices}")
         name = devices[0]["name"]
         disclosure = self.shown(ui("export.devices"))
@@ -873,7 +878,7 @@ class Scenario:
             require(self.base.poll() is None, "base CamillaDSP exited; another process may own port 1234")
             require(os.path.normcase(websocket("GetConfigFilePath")) == os.path.normcase(str(path)),
                     "port 1234 does not serve the base configuration")
-            record["detail"] = f"base PID {self.base.pid}; SignalGenerator -> NUL"
+            record["detail"] = f"base PID {self.base.pid}; SignalGenerator -> VB-CABLE Input"
         with self.step(2) as record:
             output = (self.artifacts / "tauri-driver.log").open("wb")
             self.handles.append(output)
