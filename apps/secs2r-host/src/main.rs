@@ -300,7 +300,12 @@ fn service_loop(
     {
         mark_other_user(&mut core, paths, session)?;
     }
-    let mut process_rules = ProcessRules::new(active_session.is_some());
+    // Whether anyone is logged on to the console, not whether that user owns
+    // the targets: a freshly installed service has no owner yet, and taking
+    // the owner check here made it ignore every later exit of the CamillaDSP
+    // it launched (no restart; manage-e2e step 6, 2026-10-30). Launches
+    // still check the owner through managing_session.
+    let mut process_rules = ProcessRules::new(secs_sys::host::active_console_session().is_some());
     let mut restart_at = None;
     if core.managed.camilla.is_some()
         && let Some(session) = active_session
