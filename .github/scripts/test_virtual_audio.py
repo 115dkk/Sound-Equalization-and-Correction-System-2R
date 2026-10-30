@@ -119,7 +119,7 @@ class InstallTest(unittest.TestCase):
             fetch.assert_not_called()
             shell.assert_not_called()
 
-    def install_with_mocks(self, code=0, signature="Valid", endpoint=None):
+    def install_with_mocks(self, code=0, signature='{"status":"Valid","message":"Signature verified.","signer":"CN=x","timestamper":""}', endpoint=None):
         devcon, inf = self.root / "devcon-x64.exe", self.root / "Scream.inf"
         facts = endpoint if endpoint is not None else {"render": [{"id": "id", "name": "Speakers (Scream (WDM))"}], "capture": []}
         with mock.patch.object(v, "runner_only"), mock.patch.object(v, "fetch_file") as fetch, \
@@ -140,19 +140,20 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["timeout"], 120)
         self.assertIn("'AudioEndpointBuilder','Audiosrv'", shell.call_args_list[0].args[0])
         self.assertIn("Start-Service", shell.call_args_list[0].args[0])
-        self.assertEqual(len(shell.call_args_list), 2)
+        self.assertEqual(len(shell.call_args_list), 3)
         self.assertIn("Get-AuthenticodeSignature", shell.call_args_list[1].args[0])
-        self.assertIn("scream.cat", shell.call_args_list[1].args[0])
-        self.assertNotIn("devcon", shell.call_args_list[1].args[0])
+        self.assertIn("devcon-x64.exe", shell.call_args_list[1].args[0])
+        self.assertIn("scream.cat", shell.call_args_list[2].args[0])
 
     def test_nonzero_and_reboot_results_fail(self):
         for code in (1, 2, 3):
             with self.subTest(code=code), self.assertRaisesRegex(v.EngineError, "failed or requires reboot"):
                 self.install_with_mocks(code=code)
 
-    def test_untrusted_signature_and_missing_endpoint_fail(self):
-        with self.assertRaisesRegex(v.EngineError, "signature is not valid"):
-            self.install_with_mocks(signature="NotTrusted")
+    def test_untrusted_catalog_reports_the_reason_and_missing_endpoint_fails(self):
+        untrusted = '{"status":"UnknownError","message":"A certificate chain could not be built","signer":"CN=x","timestamper":""}'
+        with self.assertRaisesRegex(v.EngineError, "UnknownError: A certificate chain could not be built .signer: CN=x"):
+            self.install_with_mocks(signature=untrusted)
         with self.assertRaisesRegex(v.EngineError, "Expected one active Scream"):
             self.install_with_mocks(endpoint={"render": [], "capture": []})
 

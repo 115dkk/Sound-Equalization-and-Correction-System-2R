@@ -172,11 +172,21 @@ def install(args):
     # or change Secure Boot. devcon-x64.exe in release 4.0 has no Authenticode
     # signature (the first real run on a runner reported NotSigned); it is
     # trusted as part of the archive whose SHA-256 is pinned above, as the
-    # release's own Install-x64.bat runs it.
+    # release's own Install-x64.bat runs it, and its facts are only logged.
+    # The catalog read UnknownError on a runner (2026-10-30); the failure now
+    # carries Windows' message and the signer so the cause can be judged.
     catalog = inf.with_name("scream.cat")
-    signature = powershell(f"(Get-AuthenticodeSignature -LiteralPath {ps_string(catalog)}).Status.ToString()")
-    if signature != "Valid":
-        raise EngineError(f"Scream package signature is not valid: {catalog}: {signature}")
+    for path in (devcon, catalog):
+        facts = json.loads(powershell(
+            f"$s = Get-AuthenticodeSignature -LiteralPath {ps_string(path)}; "
+            "[pscustomobject]@{status=$s.Status.ToString(); message=$s.StatusMessage; "
+            "signer=[string]$s.SignerCertificate.Subject; "
+            "timestamper=[string]$s.TimeStamperCertificate.Subject} | ConvertTo-Json -Compress"))
+        print(f"Authenticode {path.name}: {json.dumps(facts, ensure_ascii=False)}")
+        if path == catalog and facts.get("status") != "Valid":
+            raise EngineError(f"Scream package signature is not valid: {path}: {facts.get('status')}: "
+                              f"{facts.get('message')} (signer: {facts.get('signer')}, "
+                              f"timestamper: {facts.get('timestamper')})")
     # Same devcon install command as release 4.0's Install-x64.bat, without pause.
     # A fresh hosted runner has no old Scream device to remove. Do not force a reboot.
     result = subprocess.run([str(devcon), "install", str(inf), "*Scream"], stdin=subprocess.DEVNULL,
