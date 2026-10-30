@@ -308,6 +308,7 @@ impl Snapshot {
     pub(crate) fn load(self, job: &JobContext) -> Result<Prepared, IpcError> {
         let mut store = secs_project::MeasurementStore::new(&self.path, self.project.clone());
         let measurements = load_measurements_cancellable(&mut store, job.cancel())?;
+        check_rc_agreement(&self.project, &self.settings, &measurements)?;
         let project = self.project;
         Ok(Prepared {
             ticket: self.ticket,
@@ -320,6 +321,42 @@ impl Snapshot {
             measurements,
         })
     }
+}
+
+fn check_rc_agreement(
+    project: &Project,
+    settings: &CalibrationSettings,
+    measurements: &MeasurementSet,
+) -> Result<(), IpcError> {
+    if settings.rc_hi.is_some()
+        || settings.rc_hi_basis != secs_types::calibration::RcHiBasis::Agreement
+    {
+        return Ok(());
+    }
+    let mains: Vec<_> = project_groups(project)
+        .into_iter()
+        .filter(|(group, _)| group != "sub")
+        .flat_map(|(_, roles)| roles)
+        .collect();
+    let measured = measurements
+        .positions
+        .iter()
+        .filter(|(_, roles)| {
+            roles
+                .iter()
+                .any(|(role, m)| mains.contains(role) && !m.samples.is_empty())
+        })
+        .count();
+    if measured < 3 {
+        return Err(IpcError::new(
+            ErrorCode::EngineInput,
+            "RC agreement requires at least 3 measured positions",
+        )
+        .with_param("reason", "rc_agreement_positions")
+        .with_param("measured", measured.to_string())
+        .with_param("required", "3"));
+    }
+    Ok(())
 }
 
 pub(crate) fn compute_context(job: &JobContext, available: u64) -> Context {
@@ -688,11 +725,27 @@ fn scalar_notice(note: &secs_engine::Note) -> Notice {
             hz,
             auto,
             schroeder_hz,
+            basis,
+            factor,
+            band_hz,
+            band_t60_s,
+            positions,
         } => {
             params.insert("hz".into(), hz.to_string());
             params.insert("auto".into(), auto.to_string());
             if let Some(value) = schroeder_hz {
                 params.insert("schroeder_hz".into(), value.to_string());
+            }
+            params.insert("basis".into(), basis.as_str().into());
+            params.insert("factor".into(), factor.to_string());
+            if let Some(value) = band_hz {
+                params.insert("band_hz".into(), value.to_string());
+            }
+            if let Some(value) = band_t60_s {
+                params.insert("band_t60_s".into(), value.to_string());
+            }
+            if let Some(value) = positions {
+                params.insert("positions".into(), value.to_string());
             }
             "rc_limit"
         }
@@ -945,6 +998,73 @@ mod tests {
     use secs_mdat::{CalInfo, SourceInfo};
     use secs_project::{MeasurementResult, MeasurementStore};
     use secs_types::chain::BandType;
+
+    #[test]
+    fn rc_agreement_counts_measured_mains_and_respects_manual_upper_limit() {
+        let project = Project::from_preset("2.0").unwrap();
+        let mut settings = CalibrationSettings {
+            rc_hi_basis: secs_types::calibration::RcHiBasis::Agreement,
+            ..Default::default()
+        };
+        let measurement = Measurement {
+            samples: Samples::F64(vec![1.0].into()),
+            sample_rate: 48000,
+            t0: 0.0,
+        };
+        let mut measurements = MeasurementSet {
+            positions: vec![
+                (1, vec![("L".into(), measurement.clone())]),
+                (2, vec![("L".into(), measurement.clone())]),
+                (3, vec![("SW1".into(), measurement.clone())]),
+            ],
+        };
+        let error = check_rc_agreement(&project, &settings, &measurements).unwrap_err();
+        assert_eq!(error.code, ErrorCode::EngineInput);
+        assert_eq!(error.params["reason"], "rc_agreement_positions");
+        assert_eq!(error.params["measured"], "2");
+        settings.rc_hi = Some(900.0);
+        assert!(check_rc_agreement(&project, &settings, &measurements).is_ok());
+        settings.rc_hi = None;
+        measurements.positions[2].1.push(("L".into(), measurement));
+        assert!(check_rc_agreement(&project, &settings, &measurements).is_ok());
+    }
+
+    #[test]
+    fn rc_limit_notices_keep_legacy_fields_and_add_basis_evidence() {
+        use secs_types::calibration::RcHiBasis;
+        let note = scalar_notice(&Note::RcLimit {
+            hz: 400.0,
+            auto: true,
+            schroeder_hz: Some(154.0),
+            basis: RcHiBasis::Lenient,
+            factor: 2,
+            band_hz: Some(200.0),
+            band_t60_s: Some(0.8),
+            positions: None,
+        });
+        assert_eq!(note.code, "rc_limit");
+        assert_eq!(note.params["hz"], "400");
+        assert_eq!(note.params["auto"], "true");
+        assert_eq!(note.params["schroeder_hz"], "154");
+        assert_eq!(note.params["basis"], "lenient");
+        assert_eq!(note.params["factor"], "2");
+        assert_eq!(note.params["band_hz"], "200");
+        assert_eq!(note.params["band_t60_s"], "0.8");
+        assert!(!note.params.contains_key("positions"));
+        let note = scalar_notice(&Note::RcLimit {
+            hz: 287.0,
+            auto: true,
+            schroeder_hz: None,
+            basis: RcHiBasis::Agreement,
+            factor: 1,
+            band_hz: None,
+            band_t60_s: None,
+            positions: Some(9),
+        });
+        assert_eq!(note.params["basis"], "agreement");
+        assert_eq!(note.params["positions"], "9");
+        assert!(!note.params.contains_key("band_hz"));
+    }
 
     fn response_source(frequencies: Vec<f32>, gains: Vec<f32>) -> SourceInfo {
         SourceInfo {
@@ -1280,6 +1400,11 @@ mod tests {
                 hz: 300.0,
                 auto: true,
                 schroeder_hz: Some(250.0),
+                basis: secs_types::calibration::RcHiBasis::Strict,
+                factor: 1,
+                band_hz: None,
+                band_t60_s: None,
+                positions: None,
             },
             Note::Latency {
                 latency_ms: 10.0,

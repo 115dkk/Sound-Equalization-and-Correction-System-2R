@@ -49,6 +49,7 @@ fn note_value(note: &crate::notes::Note) -> Value {
             hz,
             auto,
             schroeder_hz,
+            ..
         } => json!({"RcLimit": {"hz": hz, "auto": auto, "schroeder_hz": schroeder_hz}}),
         Note::Latency {
             latency_ms,

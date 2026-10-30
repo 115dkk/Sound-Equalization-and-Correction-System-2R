@@ -24,6 +24,8 @@ fn calibration_parse_store_and_saved_bytes_match_oracle() {
         assert_eq!(actual["sample_rate_policy"], "reject");
         let object = actual.as_object_mut().unwrap();
         object.remove("sample_rate_policy");
+        assert_eq!(object.remove("rc_hi_basis"), Some("strict".into()));
+        assert_eq!(object.remove("rc_hi_transition"), Some(1.into()));
         assert_eq!(
             object.remove("peq_analytic_derivatives"),
             Some(false.into())
@@ -120,5 +122,64 @@ fn invalid_or_unknown_sample_rate_policy_uses_reject() {
             !project.save_text().contains("sample_rate_policy"),
             "{value}"
         );
+    }
+}
+
+#[test]
+fn rc_upper_round_trip_and_legacy_unknown_defaults() {
+    use secs_types::calibration::{CalibrationSettings, RcHiBasis};
+    for basis in [RcHiBasis::Strict, RcHiBasis::Lenient, RcHiBasis::Agreement] {
+        for factor in [1, 2, 4] {
+            let mut project = Project::from_preset("2.0").unwrap();
+            let settings = CalibrationSettings {
+                rc_hi_basis: basis,
+                rc_hi_transition: factor,
+                ..Default::default()
+            };
+            store_calibration(&mut project, &settings);
+            let saved = project.save_text();
+            let reopened = Project::from_json(loads(&saved).unwrap()).unwrap();
+            assert_eq!(calibration_from_project(&reopened), settings);
+            // The upstream writer ignores unknown calibration keys. Removing
+            // the two additions reproduces its strict ×1 interpretation.
+            let mut upstream = reopened;
+            let (_, secs_project::PyJson::Object(fields)) = upstream
+                .extra
+                .iter_mut()
+                .find(|(key, _)| key == "calibration")
+                .unwrap()
+            else {
+                panic!()
+            };
+            fields.retain(|(key, _)| key != "rc_hi_basis" && key != "rc_hi_transition");
+            let legacy = calibration_from_project(&upstream);
+            assert_eq!(legacy.rc_hi_basis, RcHiBasis::Strict);
+            assert_eq!(legacy.rc_hi_transition, 1);
+        }
+    }
+    for (basis, factor) in [
+        ("\"future\"", "3"),
+        ("null", "null"),
+        ("[]", "[]"),
+        ("true", "true"),
+        ("1", "\"2\""),
+        ("\"LENIENT\"", "2.5"),
+        ("{}", "-4"),
+        ("\"strict\"", "256"),
+    ] {
+        let mut project = Project::from_preset("2.0").unwrap();
+        project.extra.push((
+            "calibration".into(),
+            loads(&format!(
+                "{{\"rc_hi_basis\":{basis},\"rc_hi_transition\":{factor}}}"
+            ))
+            .unwrap(),
+        ));
+        let settings = calibration_from_project(&project);
+        assert_eq!(settings.rc_hi_basis, RcHiBasis::Strict);
+        assert_eq!(settings.rc_hi_transition, 1);
+        store_calibration(&mut project, &settings);
+        assert!(!project.save_text().contains("rc_hi_basis"));
+        assert!(!project.save_text().contains("rc_hi_transition"));
     }
 }

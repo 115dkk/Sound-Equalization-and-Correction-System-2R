@@ -6,6 +6,8 @@
       "sample_rate_policy": "reject",
       "rc_lo": 20.0,
       "rc_hi": null,
+      "rc_hi_basis": "strict",
+      "rc_hi_transition": 1,
       "room_volume_m3": null,
       "room_dims_m": null,
       "mimo_on": false,

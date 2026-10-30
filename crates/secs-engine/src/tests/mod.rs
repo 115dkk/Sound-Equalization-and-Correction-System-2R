@@ -17,6 +17,7 @@ mod mimo_run;
 mod prep;
 mod preview;
 mod rc;
+mod rc_upper;
 mod replay;
 mod replay_cached_mimo;
 mod scorecard;

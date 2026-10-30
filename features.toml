@@ -1788,3 +1788,35 @@ kind = "ipc"
 milestone = "M5"
 status = "implemented"
 tests = ["secs-service::stored_export_folder_survives_save_and_open"]
+
+[[feature]]
+id = "engine.rc_hi_basis"
+kind = "engine"
+milestone = "M5"
+status = "implemented"
+upstream = "correction_engine.py schroeder_hz; ADR 0021 (D46)"
+tests = ["secs-engine::rc_lenient_synthetic_decay_bands_follow_room_treatment", "secs-engine::rc_lenient_uses_every_main_and_position_without_reference_weighting", "secs-engine::rc_agreement_stops_at_first_non_improving_band_and_weights_positions", "secs-engine::rc_agreement_design_runs_two_passes_and_preserves_manual_override", "secs-project::rc_upper_round_trip_and_legacy_unknown_defaults", "secs-service::rc_agreement_calibration_fails_with_typed_position_reason", "secs-service::rc_limit_notices_keep_legacy_fields_and_add_basis_evidence"]
+
+[[feature]]
+id = "engine.rc_hi_transition"
+kind = "engine"
+milestone = "M5"
+status = "implemented"
+upstream = "wizard/step_calibration.py RC range; ADR 0021 (D46)"
+tests = ["secs-engine::rc_transition_multiplies_then_clamps_and_requires_volume", "secs-engine::rc_schroeder_design_applies_basis_factor_and_evidence", "secs-types::rc_upper_defaults_and_each_setting_change_engine_key", "secs-project::rc_upper_round_trip_and_legacy_unknown_defaults"]
+
+[[feature]]
+id = "calibration.edit_rc_hi_basis"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "ADR 0021; calibration_settings_edit RcHiBasis"
+tests = ["secs-service::rc_upper_edits_persist_and_reject_invalid_factors", "secs-service::rc_upper_edits_mark_calibration_stale"]
+
+[[feature]]
+id = "calibration.edit_rc_hi_transition"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "ADR 0021; calibration_settings_edit RcHiTransition"
+tests = ["secs-service::rc_upper_edits_persist_and_reject_invalid_factors", "secs-service::rc_upper_edits_mark_calibration_stale"]

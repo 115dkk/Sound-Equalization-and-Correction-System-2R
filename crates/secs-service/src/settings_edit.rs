@@ -13,6 +13,15 @@ impl Service {
         &self,
         params: CalibrationSettingsEditParams,
     ) -> Result<CalibrationSettings, IpcError> {
+        if let SettingEdit::RcHiTransition { factor } = params.edit
+            && !matches!(factor, 1 | 2 | 4)
+        {
+            return Err(IpcError::new(
+                secs_types::ipc::ErrorCode::InvalidRequest,
+                "RC transition factor must be 1, 2 or 4",
+            )
+            .with_param("field", "rc_hi_transition"));
+        }
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
         let mut settings = calibration_from_project(open.store.project());
@@ -263,6 +272,8 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
         SettingEdit::UltraMs { ms } => s.ultra_ms = ms.clamp(LIMITS.ultra_ms.0, LIMITS.ultra_ms.1),
         SettingEdit::RcLo { hz } => s.rc_lo = hz.clamp(LIMITS.rc_lo.0, LIMITS.rc_lo.1),
         SettingEdit::RcHi { hz } => s.rc_hi = hz.map(|v| v.clamp(LIMITS.rc_hi.0, LIMITS.rc_hi.1)),
+        SettingEdit::RcHiBasis { basis } => s.rc_hi_basis = basis,
+        SettingEdit::RcHiTransition { factor } => s.rc_hi_transition = factor,
         SettingEdit::RoomVolume { m3 } => {
             s.room_volume_m3 = (m3 > LIMITS.volume.0).then_some(m3.min(LIMITS.volume.1));
             if !volume(s.room_dims_m)

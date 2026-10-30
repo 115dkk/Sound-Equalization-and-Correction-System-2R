@@ -3589,3 +3589,78 @@ fn cache_save_failure_is_a_warning_on_a_successful_calculation() {
 fn export_mode(settings: &CalibrationSettings) -> String {
     secs_camilla::note::mode_name(settings.mode, settings.ultra_ms)
 }
+
+#[test]
+fn rc_agreement_calibration_fails_with_typed_position_reason() {
+    let root = temp_root("rc-agreement");
+    fs::create_dir_all(&root).unwrap();
+    let service = service();
+    call_ok(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: root.join("empty.secs").to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    let events = Arc::new(Events::default());
+    let job = start_calibration(
+        &service,
+        events.clone(),
+        CalibrationSettings {
+            rc_hi_basis: secs_types::calibration::RcHiBasis::Agreement,
+            ..Default::default()
+        },
+    );
+    let JobEvent::Finished {
+        error: Some(error), ..
+    } = events.wait(job, Duration::from_secs(30))
+    else {
+        panic!("agreement must fail without measured positions")
+    };
+    assert_eq!(error.code, ErrorCode::EngineInput);
+    assert_eq!(error.params["reason"], "rc_agreement_positions");
+    assert_eq!(error.params["measured"], "0");
+    assert_eq!(error.params["required"], "3");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn rc_upper_edits_mark_calibration_stale() {
+    use secs_types::{calibration::RcHiBasis, settings_edit::SettingEdit};
+    let root = temp_root("rc-upper-stale");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room");
+    let service = service();
+    open(&service, &path);
+    let events = Arc::new(Events::default());
+    let job = start_calibration(&service, events.clone(), settings.clone());
+    finished_result(events.wait(job, Duration::from_secs(120)));
+    for edit in [
+        SettingEdit::RcHiBasis {
+            basis: RcHiBasis::Lenient,
+        },
+        SettingEdit::RcHiTransition { factor: 2 },
+    ] {
+        call_ok(
+            &service,
+            Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+                edit,
+            }),
+            Arc::new(NoEvents),
+        );
+        assert!(read_results(&service).calibration.unwrap().stale);
+        call_ok(
+            &service,
+            Request::CalibrationSettingsSet(secs_types::ipc::CalibrationSettingsParams {
+                settings: settings.clone(),
+            }),
+            Arc::new(NoEvents),
+        );
+        assert!(!read_results(&service).calibration.unwrap().stale);
+    }
+    fs::remove_dir_all(root).unwrap();
+}

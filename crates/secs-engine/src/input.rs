@@ -181,6 +181,10 @@ pub struct EngineConfig {
     pub rc_range: (f64, Option<f64>),
     /// Room volume in m³, for the Schroeder frequency.
     pub room_volume_m3: Option<f64>,
+    /// Automatic upper-limit evidence; ignored for a manual RC range.
+    pub rc_hi_basis: secs_types::calibration::RcHiBasis,
+    /// Schroeder transition multiplier: 1, 2 or 4.
+    pub rc_hi_transition: u8,
     /// Octave fraction of the excess-phase smoothing (6, or 24 in linear mode).
     pub phase_frac: f64,
     /// Manual sub settings by role, in the order the settings hold them.

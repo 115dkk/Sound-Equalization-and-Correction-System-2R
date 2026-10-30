@@ -14,6 +14,11 @@ pub enum Note {
         hz: f64,
         auto: bool,
         schroeder_hz: Option<f64>,
+        basis: secs_types::calibration::RcHiBasis,
+        factor: u8,
+        band_hz: Option<f64>,
+        band_t60_s: Option<f64>,
+        positions: Option<usize>,
     },
     Latency {
         latency_ms: f64,
