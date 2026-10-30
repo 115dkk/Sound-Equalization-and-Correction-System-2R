@@ -1,0 +1,16 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "The host shell window may use core APIs and the seven managed-host commands only.",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "allow-host-status",
+    "allow-host-log",
+    "allow-host-install",
+    "allow-host-uninstall",
+    "allow-host-stop-managing",
+    "allow-open-app",
+    "allow-tray-labels"
+  ]
+}

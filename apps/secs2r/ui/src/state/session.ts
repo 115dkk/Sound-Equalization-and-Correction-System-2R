@@ -12,7 +12,7 @@ import type { MdatScope } from "../ipc/bindings/MdatScope";
 import type { XoRecommendation } from "../ipc/bindings/XoRecommendation";
 import type { ConnectPath, MeterReading, MicCalibrationView, MonitorState, RewProblem } from "../screens/connect/types";
 import type { CalibrateView } from "../screens/calibrate/types";
-import type { ExportRun } from "../screens/export/types";
+import type { ApplyRun, ApplyTarget, ExportRun, HostFailure } from "../screens/export/types";
 import type { MeasureView } from "../screens/measure/types";
 import { createResource as resource, createStore, type Failure } from "./store";
 import { isActiveJob } from "./jobRetention";
@@ -20,6 +20,7 @@ import { createJobLedger, type FinishedJob, type JobRequestContext, type LedgerJ
 import { effectsOf, projectEdits, type EffectContext } from "./effects";
 import { createWriter, type Patch, type Writer, type WriterDeps } from "./writers";
 import type { AppSettings } from "../ipc/bindings/AppSettings";
+import type { ApplySettings } from "../ipc/bindings/ApplySettings";
 import type { DspFields } from "../ipc/bindings/DspFields";
 import type { LayoutSetParams } from "../ipc/bindings/LayoutSetParams";
 import { wrongOutput } from "../screens/tutorial/questHost";
@@ -42,6 +43,10 @@ type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "m
   designName: string; camillaDevices: CamillaDevices;
   /** 내보내기: the convolution IR's extra rates in Hz (none by default); like the devices, kept for the session across projects. */
   extraRates: number[];
+  /** 내보내기의 적용 (ADR 0018): how each target's last apply ended, the CamillaDSP address field's unsaved text, an apply_status read and a revert_eqapo in flight. */
+  applyRuns: Partial<Record<ApplyTarget, ApplyRun>>; applyAddressDraft: string | null; applyChecking: boolean; applyReverting: boolean;
+  /** 관리: the CamillaDSP executable field's unsaved text, a host_install or host_stop_managing in flight, and the last of them that failed. */
+  applyExeDraft: string | null; hostInstalling: boolean; hostStopping: boolean; hostFailure: HostFailure | null;
   failure: CalibrateView["failure"]; rewLaunch: "idle" | "checking" | "launching";
   rewProblem: RewProblem | null; rewProblemDetail: string | null; readingRew: boolean;
   switchingRewDriver: boolean;
@@ -74,6 +79,8 @@ export function createSession(ipc: Ipc) {
     meter: null, monitor: "off", playing: null, playingAll: false, masterDbfs: -20, monitorError: null,
     xoRecommendation: null, runs: {}, mdatScope: "all", failure: null,
     designName: "", camillaDevices: { capture: { type: "file" }, playback: { type: "file" } }, extraRates: [],
+    applyRuns: {}, applyAddressDraft: null, applyChecking: false, applyReverting: false,
+    applyExeDraft: null, hostInstalling: false, hostStopping: false, hostFailure: null,
     micCalBusy: null, micCalError: null,
     rewLaunch: "idle", rewProblem: null, rewProblemDetail: null, readingRew: false, switchingRewDriver: false, opened: 0,
   });
@@ -93,6 +100,7 @@ export function createSession(ipc: Ipc) {
   let curveVersion = 0;
   const resultCurves = { ...curveState, load: () => refreshCurves(curveParams()) };
   let computeVersion = 0;
+  let applyVersion = 0;
   const stores = {
     computeStatus: createResource(async () => {
       const ticket = ++computeVersion;
@@ -119,6 +127,14 @@ export function createSession(ipc: Ipc) {
     resultCurves,
     lines: read({ method: "result_lines" }), subWarnings: read({ method: "sub_warnings" }), rew: read({ method: "rew_info" }),
     folder: read({ method: "export_folder_get" }),
+    // Read only while a target is set to 적용 (the export screen asks), never at startup:
+    // it probes CamillaDSP's websocket and Equalizer APO's install.
+    applyStatus: createResource(async () => {
+      const ticket = ++applyVersion;
+      host.set({ applyChecking: true });
+      try { return await ipc.request({ method: "apply_status" }); }
+      finally { if (ticket === applyVersion) host.set({ applyChecking: false }); }
+    }, report),
     // The settings-failed screen retries this read: once it succeeds, the
     // notice its own earlier failure raised is withdrawn (a newer one stays).
     appSettings: createResource(async () => {
@@ -177,7 +193,9 @@ export function createSession(ipc: Ipc) {
         // file dialog. Do not publish a second copy as a global notice.
         const micCalAction = request.method === "mic_calibration_set" || request.method === "mic_calibration_clear" || request.method === "mic_calibration_attach"
           || (request.method === "dialog_open_file" && (request as Extract<Request, { method: "dialog_open_file" }>).params.kind === "mic_calibration");
-        if (!micCalAction || !(error instanceof IpcFailure)) report(error);
+        // The export screen's service block owns the host actions' typed failures the same way.
+        const hostAction = request.method === "host_install" || request.method === "host_uninstall" || request.method === "host_stop_managing";
+        if (!(micCalAction || hostAction) || !(error instanceof IpcFailure)) report(error);
       }
       throw error;
     } finally {
@@ -229,6 +247,21 @@ export function createSession(ipc: Ipc) {
       write: async (settings) => {
         const accepted = await call({ method: "app_settings_set", params: { settings } });
         stores.appSettings.set(accepted);
+        return accepted;
+      },
+    }, false),
+    /** apply_settings_set replaces AppSettings.apply as a whole: levels and the CamillaDSP address, built from the latest stored value. */
+    apply: writer<ApplySettings>({
+      latest: async () => {
+        if (!stores.appSettings.getSnapshot()) return null;
+        const latest = await call({ method: "app_settings_get" });
+        stores.appSettings.set(latest);
+        return latest.apply;
+      },
+      write: async (settings) => {
+        const accepted = await call({ method: "apply_settings_set", params: settings });
+        const current = stores.appSettings.getSnapshot();
+        if (current) stores.appSettings.set({ ...current, apply: accepted });
         return accepted;
       },
     }, false),
@@ -455,7 +488,7 @@ export function createSession(ipc: Ipc) {
       jobs.replaceProject(); curveVersion++; curveState.set(null); tutorialReady.set(false);
       for (const store of Object.values(stores)) if ("invalidate" in store) store.invalidate();
       stores.measurementSettings.set(null); stores.micCalibration.set(null);
-      host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, mdatScope: "all", channel: null, xoGroup: null, xoRecommendation: null, failure: null, opened: host.getSnapshot().opened + 1 });
+      host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, applyRuns: {}, mdatScope: "all", channel: null, xoGroup: null, xoRecommendation: null, failure: null, opened: host.getSnapshot().opened + 1 });
     }
     const keys = [...new Set(plans.flatMap((plan) => plan.resources))];
     await Promise.all([
@@ -489,7 +522,7 @@ export function createSession(ipc: Ipc) {
       try { stores.project.set(await ipc.request({ method: "project_info" })); }
       catch (error) { report(error); }
       if (stores.project.getSnapshot()) {
-        await reload(Object.keys(stores).filter((key) => !["bootstrap", "measurementSettings", "appSettings", "computeStatus", "methods", "rew"].includes(key)) as (keyof typeof stores)[]);
+        await reload(Object.keys(stores).filter((key) => !["bootstrap", "measurementSettings", "appSettings", "computeStatus", "methods", "rew", "applyStatus"].includes(key)) as (keyof typeof stores)[]);
         // A window reloaded over a project the service still holds reads its
         // stored method, as opening it does; call() reports a failure.
         await call({ method: "measure_config_get" }).catch(() => {});

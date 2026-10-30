@@ -27,6 +27,21 @@ RC 상한을 정하는 기준과 극저역 보호를 고르고, MIMO를 보정 �
 - 화면의 안내 문장에서 지시의 어미를 '-세요'에서 '-십시오'로 바꿔, 서술(-ㅂ니다)과 같은 하십시오체로 맞췄습니다.
 - 프로젝트 파일의 보정 설정에 `rc_hi_basis`와 `rc_hi_transition`을 저장합니다. 기본값이면 저장하지 않으므로 기존 파일은 바뀌지 않습니다. 업스트림 SECS 2는 이 값을 무시하고 엄격한 슈뢰더 ×1로 계산합니다(D46).
 
+## 0.36.0 - 2026-10-30
+
+실행 중인 CamillaDSP와 설치된 Equalizer APO에 보정을 바로 적용하는 판입니다. 보정 계산 결과와 내보낸 파일은 0.35.2와 같습니다.
+
+### 더한 것
+
+- 내보내기 화면의 CamillaDSP 줄과 Equalizer APO 줄에서 적용 방식('파일만', '적용')을 고릅니다. '적용'을 고르면 CamillaDSP의 연결 상태와 올라간 설계, Equalizer APO의 설치 상태와 config.txt 줄 상태를 보여 주고, 줄의 기본 동작이 'CamillaDSP에 적용', 'Equalizer APO에 적용'으로 바뀝니다.
+- CamillaDSP에 적용하면 설정을 검증하고 경로를 바꿔 다시 읽게 하며, 새 설정을 읽지 못하면 이전 설정으로 되돌립니다. CamillaDSP의 웹소켓 포트를 열어(`-p 1234`) 실행해 두어야 합니다.
+- Equalizer APO에 적용하면 설정 폴더의 `SECS2R` 폴더에 필터를 쓰고 config.txt 끝에 표식 붙은 `Include` 한 줄을 더합니다. config.txt의 다른 줄은 바꾸지 않고, 처음 바꿀 때 원본을 `config.txt.secs2r-backup`으로 남깁니다. 'config.txt에서 빼기'는 그 줄만 지웁니다. 공식판과 XT 모두 됩니다.
+- `secs2r-cli apply status`, `apply camilla <프로젝트>`, `apply eqapo <프로젝트>`, `apply eqapo --revert`를 더했습니다.
+- Windows에서는 '관리'를 고르면 자동 시작 LocalSystem 서비스 `secs2r-host`가 CamillaDSP를 로그인한 사용자 계정으로 실행하고, 멈추면 다시 실행합니다. Equalizer APO의 `config.txt`도 지켜보다가 SECS 2R 줄이 빠지거나 손상되면 고칩니다. 서비스는 앱과 포터블 압축 파일에 함께 들어가며 사용자가 설치를 선택하기 전에는 등록하지 않습니다.
+- 내보내기 화면의 적용 방식에 '관리'를 더했습니다. CamillaDSP 실행 파일을 고르고, 서비스 상태(설치 안 됨, 정지, 실행 중)와 CamillaDSP 상태(실행 중, 다시 시작 대기, 다시 시작 중단, 로그인 대기, 다른 사용자 사용 중), Equalizer APO 줄 복구 시각을 보여 주고, 화면이 보이는 동안 3초마다 다시 읽습니다. 줄의 기본 동작은 'CamillaDSP 관리 시작', 'Equalizer APO 관리 시작'이고, '관리 끄기'는 한 번 확인한 뒤 끕니다. CamillaDSP가 돌고 있지 않아도 관리를 시작하면 서비스가 이 설계로 띄우고, 같은 포트에 다른 CamillaDSP가 있으면 서비스가 그것을 끝내고 자기 것을 띄웁니다.
+- `secs2r-cli host status|install|uninstall|stop-managing`으로 관리 서비스 상태를 확인하고 등록, 제거, 관리 중지를 실행할 수 있습니다.
+- 관리 서비스와 함께 시작하는 알림 영역 앱을 더했습니다. 서비스 상태와 최근 기록을 보여 주며, 서비스를 설치하거나 제거하고 SECS 2R을 열 수 있습니다.
+
 ## 0.35.2 - 2026-10-30
 
 ### 고친 것

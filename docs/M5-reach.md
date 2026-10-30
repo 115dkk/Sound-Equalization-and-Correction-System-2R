@@ -250,6 +250,23 @@
 | 기본 폴더 `<프로젝트 폴더>/SECS_export/<날짜> <이름>/`, 없으면 `~/Documents/SECS_export/<날짜>` | `export.folder.path` | — | P32 |
 | MIMO는 켜고, 계산했고, 위치 3곳 이상일 때만 포함 | `export.result.mimo` | — | P32 |
 | 아무 일도 하지 않는 [완료] 단추 | — | U4 | P32 |
+| CamillaDSP·Equalizer APO 적용 방식: 파일만 / 적용 | `export.apply.<target>.panel`, `export.apply.<target>.level`, `export.apply.<target>.level.files`, `export.apply.<target>.level.apply` (`<target>`은 `camilla` 또는 `eqapo`) | 업스트림에 없음, ADR 0018 | P121, P122 |
+| [CamillaDSP에 적용], 적용 방식이 '적용'이면 설정 저장은 행의 보조 동작 | `export.apply.camilla`, `export.run.camilla_dsp`, `export.status.problem` | 업스트림에 없음, ADR 0018 | P121, P122 |
+| CamillaDSP 주소·포트 검사, 다른 컴퓨터의 주소 안내, 실제 입출력 장치 안내 | `export.apply.camilla.address.field`, `export.apply.camilla.address`, `export.apply.camilla.address.problem`, `export.apply.camilla.address.remote`, `export.apply.camilla.devices_note` | 업스트림에 없음, ADR 0018 | P121, P122 |
+| CamillaDSP 연결·버전·상태, 이 설계 / 다른 설계 / 알 수 없음, 클리핑, [다시 확인] | `export.apply.camilla.state`, `export.apply.camilla.reason`, `export.apply.camilla.refresh`, `export.apply.camilla.design`, `export.apply.camilla.design.title`, `export.apply.camilla.clipped` | 업스트림에 없음, ADR 0018 | P121, P122 |
+| [Equalizer APO에 적용], Windows가 아니거나 설치되지 않았으면 끄고 이유 표시 | `export.apply.eqapo`, `export.apply.eqapo.level`, `export.apply.eqapo.state`, `export.apply.eqapo.reason`, `export.apply.eqapo.refresh` | 업스트림에 없음, ADR 0018 | P121, P122 |
+| Equalizer APO 판·설정 폴더·config.txt 줄 상태, 현재 결과와 적용한 설계 비교 | `export.apply.eqapo.state`, `export.apply.eqapo.folder`, `export.apply.eqapo.line`, `export.apply.eqapo.line_note`, `export.apply.eqapo.design` | 업스트림에 없음, ADR 0018 | P121, P122 |
+| [config.txt에서 빼기], 한 문장으로 확인한 뒤 SECS 2R 줄만 제거 | `export.apply.eqapo.revert`, `export.apply.eqapo.revert.confirm`, `export.apply.eqapo.revert.confirm.cancel`, `export.apply.eqapo.revert.confirm.confirm` | 업스트림에 없음, ADR 0018 | P121, P122 |
+| 적용 완료·실패·이전 설정 복구·줄 제거 완료, 쓰기 권한 없는 폴더 표시 | `export.apply.<target>.outcome`, `export.apply.<target>.outcome.open`, `export.apply.<target>.outcome.path`, `export.apply.camilla.outcome.camilla_error` | 업스트림에 없음, ADR 0018 | P121, P122 |
+
+적용 견본(P121, P122)은 다음 21개이며 [`DESIGN.md`](DESIGN.md) 12절과 같습니다.
+
+- CamillaDSP 파일만·장치 안내·확인 중·연결 실패: `screen.export.apply.camilla.files`, `screen.export.apply.camilla.placeholders`, `screen.export.apply.camilla.checking`, `screen.export.apply.camilla.unreachable`
+- CamillaDSP 설계·진행·결과: `screen.export.apply.camilla.this`, `screen.export.apply.camilla.other`, `screen.export.apply.camilla.applying`, `screen.export.apply.camilla.applied`, `screen.export.apply.camilla.rolled-back`
+- CamillaDSP 주소 오류·다른 컴퓨터: `screen.export.apply.camilla.address`, `screen.export.apply.camilla.remote`
+- Equalizer APO 운영체제·설치·줄 없음: `screen.export.apply.eqapo.not-windows`, `screen.export.apply.eqapo.missing`, `screen.export.apply.eqapo.absent`
+- Equalizer APO 설계 비교·줄 손상: `screen.export.apply.eqapo.present`, `screen.export.apply.eqapo.other`, `screen.export.apply.eqapo.official`, `screen.export.apply.eqapo.damaged`
+- Equalizer APO 권한·줄 제거·확인: `screen.export.apply.eqapo.denied`, `screen.export.apply.eqapo.reverted`, `screen.export.apply.eqapo.revert-confirm`
 
 ## 10. 화면 전체 (inventory §2) — P29, P32
 

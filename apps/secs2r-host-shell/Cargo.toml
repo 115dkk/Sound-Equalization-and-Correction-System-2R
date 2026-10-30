@@ -1,0 +1,27 @@
+[package]
+name = "secs2r-host-shell"
+description = "Tray shell for the SECS 2R managed host service."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[[bin]]
+name = "secs2r-host-shell"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+secs-sys = { path = "../../crates/secs-sys" }
+secs-types.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2.12", features = ["tray-icon"] }
+tauri-plugin-single-instance = "=2.5.4"

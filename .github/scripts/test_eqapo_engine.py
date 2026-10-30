@@ -158,5 +158,67 @@ class EnvironmentTest(unittest.TestCase):
             e.register_config(Path("unused"))
 
 
+class SilentInstallTest(unittest.TestCase):
+    def test_option_defaults_off_and_requires_xt(self):
+        args = e.parser().parse_args(["fetch", "--engine", "original", "--dest", "unused", "--install-xt"])
+        with mock.patch.object(e, "fetch_file") as download:
+            with self.assertRaisesRegex(e.EngineError, "requires --engine xt"):
+                e.fetch(args)
+            download.assert_not_called()
+        self.assertFalse(e.parser().parse_args(["fetch", "--engine", "xt", "--dest", "unused"]).install_xt)
+
+    def test_refuses_workstation_before_download_or_execution(self):
+        with mock.patch.dict(e.os.environ, {}, clear=True), mock.patch.object(e, "fetch_file") as download:
+            with self.assertRaisesRegex(e.EngineError, "disposable"):
+                e.install_xt(e.XT_SETUP_VERSION, Path("unused"))
+            download.assert_not_called()
+
+    def test_pinned_silent_install_and_registry_detection_are_required(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            installed = root / "EqualizerAPO-XT-x64-sse2" / "current"
+            installed.mkdir(parents=True)
+            benchmark = installed / "Benchmark.exe"
+            benchmark.write_bytes(b"fixture, never executed")
+            config = root / "config"
+            with (mock.patch.object(e.sys, "platform", "win32"),
+                  mock.patch.dict(e.os.environ, {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}),
+                  mock.patch.object(e, "fetch_file") as download,
+                  mock.patch.object(e.subprocess, "run", return_value=mock.Mock(returncode=0)) as run,
+                  mock.patch.object(e, "xt_registered_paths", return_value=(installed, config)) as registry):
+                self.assertEqual(e.install_xt(e.XT_SETUP_VERSION, root), (benchmark.resolve(), config))
+                setup = root / "setup-download" / "EqualizerAPO-XT-Setup.exe"
+                download.assert_called_once_with(e.XT_SETUP_URL, e.XT_SETUP_SHA256, setup)
+                run.assert_called_once_with([str(setup), "--silent"], capture_output=True, text=True,
+                                            timeout=240, check=False)
+                registry.assert_called_once_with()
+                with self.assertRaisesRegex(e.EngineError, "manifest changed"):
+                    e.install_xt("9.9.9", root)
+
+    def test_nonzero_installer_exit_and_missing_registration_fail(self):
+        with (mock.patch.object(e.sys, "platform", "win32"),
+              mock.patch.dict(e.os.environ, {"GITHUB_ACTIONS": "true", "RUNNER_ENVIRONMENT": "github-hosted"}),
+              mock.patch.object(e, "fetch_file"),
+              mock.patch.object(e.subprocess, "run", return_value=mock.Mock(returncode=5, stdout="", stderr="denied")) as run):
+            with self.assertRaisesRegex(e.EngineError, "exited 5"):
+                e.install_xt(e.XT_SETUP_VERSION, Path("unused"))
+            run.return_value.returncode = 0
+            with (mock.patch.object(e, "xt_registered_paths", side_effect=FileNotFoundError("ConfigPath")),
+                  mock.patch.object(e.time, "monotonic", side_effect=[0, 61])):
+                with self.assertRaisesRegex(e.EngineError, "did not register"):
+                    e.install_xt(e.XT_SETUP_VERSION, Path("unused"))
+
+    def test_install_option_exports_real_installed_paths_without_extraction(self):
+        args = e.parser().parse_args(["fetch", "--engine", "xt", "--dest", "unused", "--install-xt", "--github-env", "env"])
+        benchmark, config = Path("installed/Benchmark.exe"), Path("installed/config")
+        with (mock.patch.object(e, "install_xt", return_value=(benchmark, config)) as install,
+              mock.patch.object(e, "extract_package") as extract,
+              mock.patch.object(e, "write_github_env") as environment):
+            e.fetch(args)
+            install.assert_called_once()
+            extract.assert_not_called()
+            environment.assert_called_once_with(Path("env"), benchmark, "xt", config)
+
+
 if __name__ == "__main__":
     unittest.main()

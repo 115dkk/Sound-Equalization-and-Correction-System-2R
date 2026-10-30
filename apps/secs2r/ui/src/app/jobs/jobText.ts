@@ -15,6 +15,7 @@ export const JOB_NAME: Record<JobKind, MessageKey> = {
   recommend_xo: "jobs.kind.recommend_xo",
   mimo: "jobs.kind.mimo",
   export: "jobs.kind.export",
+  apply: "jobs.kind.apply",
   level_monitor: "jobs.kind.level_monitor",
   status_watch: "jobs.kind.status_watch",
 };
@@ -24,6 +25,9 @@ const ERROR_TEXT: Record<ErrorCode, { cause: MessageKey; next: MessageKey }> = {
   internal: { cause: "error.internal", next: "error.internal.next" },
   not_implemented: { cause: "error.not_implemented", next: "error.not_implemented.next" },
   ui_only: { cause: "error.ui_only", next: "error.ui_only.next" },
+  unsupported: { cause: "error.unsupported", next: "error.unsupported.next" },
+  permission_denied: { cause: "error.permission_denied", next: "error.permission_denied.next" },
+  apply_failed: { cause: "error.apply_failed", next: "error.apply_failed.next" },
   project_not_open: { cause: "error.project_not_open", next: "error.project_not_open.next" },
   project_io: { cause: "error.project_io", next: "error.project_io.next" },
   job_busy: { cause: "error.job_busy", next: "error.job_busy.next" },

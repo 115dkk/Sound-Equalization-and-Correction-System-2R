@@ -1110,6 +1110,91 @@ status = "implemented"
 tests = ["secs-export::mimo_items_match_four_oracles"]
 upstream = "calibration.py stage_items, before_after_items"
 
+[[feature]]
+id = "ipc.apply_status"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::eqapo_status_reads_injected_install_and_applied_manifest", "secs-service::apply_camilla_covers_success_rejection_rollback_folder_and_design_matches"]
+
+[[feature]]
+id = "ipc.apply_camilla"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::apply_camilla_covers_success_rejection_rollback_folder_and_design_matches", "secs-apply::failed_rollback_carries_both_reload_errors"]
+
+[[feature]]
+id = "ipc.apply_eqapo"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::apply_eqapo_installs_reapplies_repairs_once_and_removes_stale_files"]
+
+[[feature]]
+id = "ipc.revert_eqapo"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::revert_eqapo_removes_only_the_managed_pair_and_keeps_bundle"]
+
+[[feature]]
+id = "ipc.apply_settings_set"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::apply_settings_round_trip_and_legacy_defaults", "secs-service::apply_settings_rejects_addresses_without_a_port", "secs2r-cli::apply_commands_parse", "secs-sys::equalizer_apo_variant_follows_the_install_folder_name"]
+
+[[feature]]
+id = "ipc.host_install"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::managed_host_status_and_missing_camilla_executable_are_typed"]
+
+[[feature]]
+id = "ipc.host_uninstall"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::managed_host_status_and_missing_camilla_executable_are_typed"]
+
+[[feature]]
+id = "ipc.host_stop_managing"
+kind = "ipc"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-service::managed_host_status_and_missing_camilla_executable_are_typed"]
+
+[[feature]]
+id = "apply.managed_host"
+kind = "service"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs2r-host::state_file_round_trip_missing_and_corrupt_handling", "secs2r-host::exit_logon_and_logoff_choose_supervision_actions", "secs2r-host::file_change_repairs_only_absent_or_damaged_pairs", "secs2r-host::log_rotates_once_at_the_size_cap"]
+
+[[feature]]
+id = "host.shell"
+kind = "app"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = [
+  "secs2r-host-shell::status_composition_marks_pipe_failures_unreachable",
+  "secs2r-host-shell::log_line_clamp_stays_between_one_and_two_hundred",
+  "secs2r-host-shell::main_app_selection_prefers_portable_name",
+  "secs2r-host-shell::hidden_argument_is_order_independent",
+]
+
 # ---- Screens (M5) ----
 
 [[feature]]
@@ -1854,3 +1939,27 @@ milestone = "M5"
 status = "implemented"
 upstream = "new; project set --low-protect on|off"
 tests = ["secs2r-cli::project_set_persists_low_protect_switch"]
+
+[[feature]]
+id = "apply.camilla_ws"
+kind = "apply"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-apply::camilla_ws"]
+
+[[feature]]
+id = "apply.eqapo_config"
+kind = "apply"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-apply::eqapo_config"]
+
+[[feature]]
+id = "apply.supervise"
+kind = "apply"
+milestone = "M6"
+status = "implemented"
+upstream = "new"
+tests = ["secs-apply::supervise"]

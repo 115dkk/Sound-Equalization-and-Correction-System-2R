@@ -2,6 +2,7 @@
 import type { AppIcon } from "./AppIcon";
 import type { AppSkin } from "./AppSkin";
 import type { AppTheme } from "./AppTheme";
+import type { ApplySettings } from "./ApplySettings";
 import type { ComputePreference } from "./ComputePreference";
 import type { LocalApiSettings } from "./LocalApiSettings";
 
@@ -33,6 +34,10 @@ skin: AppSkin,
  * Opt-in loopback API server.
  */
 local_api: LocalApiSettings, 
+/**
+ * Applying designs to CamillaDSP and Equalizer APO.
+ */
+apply: ApplySettings, 
 /**
  * Recently opened project paths, newest first (at most 10).
  */

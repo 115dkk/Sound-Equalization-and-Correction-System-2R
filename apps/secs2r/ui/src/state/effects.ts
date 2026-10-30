@@ -42,7 +42,7 @@ const reloads = {
   rew: { mutations: ["rew_launch"], finished: [] },
   folder: { mutations: ["export_folder_set", "project_save"], finished: ["export"] },
   computeStatus: { mutations: ["app_settings_set"], finished: [] },
-  appSettings: { mutations: ["app_settings_set", "project_open", "project_save", "project_new"], finished: [] },
+  appSettings: { mutations: ["app_settings_set", "apply_settings_set", "project_open", "project_save", "project_new"], finished: [] },
 } as const satisfies Record<string, { mutations: readonly Request["method"][]; finished: readonly JobKind[] }>;
 
 export type ResourceKey = keyof typeof reloads;
@@ -82,7 +82,7 @@ export const RULES: readonly Rule[] = [
       ctx.replaceProject();
       ctx.stores.measurementSettings.set(null);
       ctx.stores.micCalibration.set(null);
-      ctx.host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, mdatScope: "all", designName: "", channel: null, xoGroup: null, xoRecommendation: null, failure: null, opened: ctx.host.getSnapshot().opened + 1 });
+      ctx.host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, applyRuns: {}, mdatScope: "all", designName: "", channel: null, xoGroup: null, xoRecommendation: null, failure: null, opened: ctx.host.getSnapshot().opened + 1 });
     },
     // Project replacement reads the stored method; tutorial setup owns writes.
     apply: async ({ call }) => { await call({ method: "measure_config_get" }); },
@@ -137,7 +137,7 @@ export const RULES: readonly Rule[] = [
       if ("event" in source && source.event.event === "finished" && source.event.result?.kind === "xo") host.set({ xoRecommendation: source.event.result.data });
     },
   },
-  { name: "export.invalidate", when: (trigger) => "finished" in trigger && trigger.status === "succeeded" && ["calibrate", "mimo"].includes(trigger.finished), beforeReload: ({ host }) => { host.set({ runs: {} }); } },
+  { name: "export.invalidate", when: (trigger) => "finished" in trigger && trigger.status === "succeeded" && ["calibrate", "mimo"].includes(trigger.finished), beforeReload: ({ host }) => { host.set({ runs: {}, applyRuns: {} }); } },
   {
     name: "export.finished", when: (trigger) => "finished" in trigger,
     beforeReload: ({ source, host, run, call }) => {
@@ -149,6 +149,26 @@ export const RULES: readonly Rule[] = [
         host.set({ runs: { ...h.runs, [request.params.kind]: { status: "done", files: result.files, folder: result.folder, rate: result.output_rate, notes: result.notes } } });
         run(() => call({ method: "open_folder", params: { path: result.folder } }));
       } else if (event.status === "failed" && event.error) host.set({ runs: { ...h.runs, [request.params.kind]: { status: "failed", error: event.error } } });
+    },
+  },
+  {
+    // 적용 (ADR 0018): the row records how it ended; the status is read again
+    // either way, also after an apply another client started.
+    name: "apply.finished", when: (trigger) => "finished" in trigger && trigger.finished === "apply",
+    beforeReload: ({ source, host, run, stores }) => {
+      if (!("event" in source) || source.event.event !== "finished") return;
+      const { event, request } = source;
+      if (request?.method === "apply_camilla" || request?.method === "apply_eqapo") {
+        const target = request.method === "apply_camilla" ? "camilla" : "eqapo";
+        const h = host.getSnapshot();
+        if (event.result?.kind === "apply") {
+          const { outcome, design_id, folder } = event.result.data;
+          // 관리 with no CamillaDSP running hands the design to the service, which starts one with it.
+          const run = outcome.kind === "rolled_back" ? { status: "rolled_back" as const, error: outcome.error } : { status: "applied" as const, designId: design_id, folder, ...(outcome.kind === "handed_over" ? { handedOver: true as const } : {}) };
+          host.set({ applyRuns: { ...h.applyRuns, [target]: run } });
+        } else if (event.status === "failed" && event.error) host.set({ applyRuns: { ...h.applyRuns, [target]: { status: "failed", error: event.error } } });
+      }
+      run(() => stores.applyStatus.load());
     },
   },
   {
