@@ -503,9 +503,10 @@ jobs:
   update-e2e:
     name: Update end to end (Windows GUI)
     needs: bundle
-    # As manage-e2e: only the Windows installers matter here.
+    # As manage-e2e: only the Windows installers matter here, and the same
+    # WebView2 runtime limit of msedgedriver keeps it on windows-2022.
     if: ${{ !cancelled() && needs.bundle.result != 'skipped' }}
-    runs-on: windows-latest
+    runs-on: windows-2022
     timeout-minutes: 45
     defaults:
       run:
