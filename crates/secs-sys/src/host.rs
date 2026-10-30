@@ -197,13 +197,24 @@ pub fn listener_pid_from_netstat(text: &str, port: u16) -> Option<u32> {
     })
 }
 
+/// What [`terminate_camilla_listener`] found on the port.
+#[cfg(target_os = "windows")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListenerOutcome {
+    /// The CamillaDSP with this PID was ended.
+    Terminated(u32),
+    /// netstat showed no listener on the port.
+    NotFound,
+    /// Another program listens there; it is left alone.
+    NotCamilla { pid: u32, image: String },
+}
+
 /// Ends the process listening on `port` if, and only if, its image is
 /// `camilladsp.exe` (maintainer's decision, 2026-10-30: a CamillaDSP that
 /// ignored `Exit` keeps the port, as 4.1.3 does when a capture thread
-/// blocks). Returns its PID, or `None` when nothing or something else
-/// listens there.
+/// blocks).
 #[cfg(target_os = "windows")]
-pub fn terminate_camilla_listener(port: u16) -> Result<Option<u32>, IpcError> {
+pub fn terminate_camilla_listener(port: u16) -> Result<ListenerOutcome, IpcError> {
     use std::process::{Command, Stdio};
 
     let root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
@@ -218,7 +229,7 @@ pub fn terminate_camilla_listener(port: u16) -> Result<Option<u32>, IpcError> {
         .map_err(|error| ipc_error(format!("run {}: {error}", netstat.display())))?;
     let Some(pid) = listener_pid_from_netstat(&String::from_utf8_lossy(&output.stdout), port)
     else {
-        return Ok(None);
+        return Ok(ListenerOutcome::NotFound);
     };
     let process = win_custody::Process::open(pid, win_custody::ProcessAccess::Terminate)
         .map_err(|error| ipc_error(format!("open port {port} owner {pid}: {error}")))?;
@@ -230,13 +241,16 @@ pub fn terminate_camilla_listener(port: u16) -> Result<Option<u32>, IpcError> {
         .and_then(|name| name.to_str())
         .is_some_and(|name| name.eq_ignore_ascii_case("camilladsp.exe"));
     if !is_camilla {
-        return Ok(None);
+        return Ok(ListenerOutcome::NotCamilla {
+            pid,
+            image: image.display().to_string(),
+        });
     }
     process
         .terminate(1)
         .map_err(|error| ipc_error(format!("terminate CamillaDSP {pid}: {error}")))?;
     let _ = process.wait(Some(Duration::from_secs(5)));
-    Ok(Some(pid))
+    Ok(ListenerOutcome::Terminated(pid))
 }
 
 /// Makes one request and reads one response from the default host pipe.

@@ -614,13 +614,14 @@ fn configure_watcher(
 }
 
 #[cfg(target_os = "windows")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum PortTakeover {
     Free,
     TakenOver,
     /// The old CamillaDSP ignored `Exit`; the service ended this PID.
     Terminated(u32),
-    Busy,
+    /// Why the port stayed busy, for the `port_busy` log line.
+    Busy(&'static str, String),
 }
 
 #[cfg(target_os = "windows")]
@@ -633,13 +634,13 @@ fn takeover_port(port: u16) -> PortTakeover {
         Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
             return match rules::takeover_decision(false, Some(rules::PortObservation::Empty)) {
                 rules::TakeoverDecision::Launch => PortTakeover::Free,
-                _ => PortTakeover::Busy,
+                _ => PortTakeover::Busy("refused", String::new()),
             };
         }
-        Err(_) => {
+        Err(error) => {
             return match rules::takeover_decision(false, Some(rules::PortObservation::OtherProcess))
             {
-                rules::TakeoverDecision::PortBusy => PortTakeover::Busy,
+                rules::TakeoverDecision::PortBusy => PortTakeover::Busy("probe", error.to_string()),
                 _ => PortTakeover::Free,
             };
         }
@@ -653,16 +654,16 @@ fn takeover_port(port: u16) -> PortTakeover {
                 connection_refused: true,
                 ..
             }) => return PortTakeover::Free,
-            Err(_) => return PortTakeover::Busy,
+            Err(error) => return PortTakeover::Busy("not_camilla", error.to_string()),
         };
     if rules::takeover_decision(false, Some(rules::PortObservation::CamillaDsp))
         != rules::TakeoverDecision::RequestExit
     {
-        return PortTakeover::Busy;
+        return PortTakeover::Busy("policy", String::new());
     }
     let mut camilla = secs_apply::camilla::Camilla::new(transport);
-    if camilla.version().and_then(|_| camilla.exit()).is_err() {
-        return PortTakeover::Busy;
+    if let Err(error) = camilla.version().and_then(|_| camilla.exit()) {
+        return PortTakeover::Busy("exit_request", error.to_string());
     }
 
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -671,7 +672,7 @@ fn takeover_port(port: u16) -> PortTakeover {
             Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => {
                 return match rules::after_exit_decision(false) {
                     rules::TakeoverDecision::Launch => PortTakeover::TakenOver,
-                    _ => PortTakeover::Busy,
+                    _ => PortTakeover::Busy("policy", String::new()),
                 };
             }
             _ if Instant::now() >= deadline => {
@@ -681,10 +682,20 @@ fn takeover_port(port: u16) -> PortTakeover {
                 // CamillaDSP 4.1.3 stops processing on Exit but keeps the
                 // port when a capture thread blocks (a silent loopback).
                 return match secs_sys::host::terminate_camilla_listener(port) {
-                    Ok(Some(pid)) if port_closes(socket, Duration::from_secs(5)) => {
-                        PortTakeover::Terminated(pid)
+                    Ok(secs_sys::host::ListenerOutcome::Terminated(pid)) => {
+                        if port_closes(socket, Duration::from_secs(5)) {
+                            PortTakeover::Terminated(pid)
+                        } else {
+                            PortTakeover::Busy("still_open", format!("ended {pid}"))
+                        }
                     }
-                    _ => PortTakeover::Busy,
+                    Ok(secs_sys::host::ListenerOutcome::NotFound) => {
+                        PortTakeover::Busy("no_listener", String::new())
+                    }
+                    Ok(secs_sys::host::ListenerOutcome::NotCamilla { pid, image }) => {
+                        PortTakeover::Busy("other_program", format!("{pid} {image}"))
+                    }
+                    Err(error) => PortTakeover::Busy("terminate_failed", error.detail),
                 };
             }
             _ => std::thread::sleep(Duration::from_millis(100)),
@@ -744,11 +755,18 @@ fn launch(
                 ),
             )?;
         }
-        PortTakeover::Busy => {
+        PortTakeover::Busy(reason, detail) => {
             record(
                 core,
                 paths,
-                rules::log_line("port_busy", [("port".to_owned(), managed.port.to_string())]),
+                rules::log_line(
+                    "port_busy",
+                    [
+                        ("port".to_owned(), managed.port.to_string()),
+                        ("reason".to_owned(), reason.to_owned()),
+                        ("detail".to_owned(), detail),
+                    ],
+                ),
             )?;
             match process_rules.apply(ProcessEvent::Exit, Instant::now()) {
                 ProcessAction::RestartAfter(delay) => {

@@ -726,6 +726,17 @@ class Scenario:
         config = self.args.eqapo_config / "config.txt"
         if config.is_file():
             shutil.copy2(config, self.artifacts / "config-current.txt")
+        # Who holds the CamillaDSP port, for a failed takeover.
+        try:
+            listing = command(["netstat", "-ano", "-p", "TCP"], timeout=20, check=False).stdout
+            rows = [line for line in listing.splitlines() if ":1234 " in line]
+            pids = sorted({row.split()[-1] for row in rows if row.split() and row.split()[-1].isdigit()})
+            processes = [powershell(f"(Get-Process -Id {pid} -ErrorAction SilentlyContinue | "
+                                    "Select-Object Id,ProcessName,Path | ConvertTo-Json -Compress)", timeout=20)
+                         for pid in pids]
+            (self.artifacts / "port-1234.txt").write_text("\n".join(rows + processes) + "\n", encoding="utf-8")
+        except (CheckError, OSError, subprocess.SubprocessError) as error:
+            self.log("port_facts_error", detail=str(error))
 
     def status(self):
         value = parse_status(command([self.host, "status"], timeout=8).stdout)
