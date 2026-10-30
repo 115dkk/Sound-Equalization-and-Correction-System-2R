@@ -32,7 +32,10 @@ and quote the compiler error in the report.
   `serde_json`. No OS dependencies, no GPU.
 - `bindings/python/pyproject.toml` for maturin: name `secs2r`, version
   taken from the crate (which follows the API version, 0.1.0), license
-  `GPL-3.0-only`, `requires-python = ">=3.9"`, a README (`bindings/python/README.md`,
+  `AGPL-3.0-only` from the first upload (ADR 0023, the upstream author's
+  permission is in `docs/licensing/SECS2-AGPL-PERMISSION.md`), with a copy of
+  the root `LICENSE-AGPL` as `bindings/python/LICENSE` in the sdist and wheels,
+  `requires-python = ">=3.9"`, a README (`bindings/python/README.md`,
   English, short: what it is, install, the two examples below, licence;
   then a `## 한국어` section like `crates/secs-api/README.md`'s that ends
   with its `### 도움 주신 분들` paragraph copied word for word, because
