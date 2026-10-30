@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
 import tempfile
 import threading
@@ -184,6 +185,13 @@ class StatusTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             m.parse_log('{"event":')
 
+    def test_log_line_without_fields_reads_as_empty_fields(self):
+        # HostLogLine's serde skips an empty `fields` map.
+        self.assertEqual(m.parse_log('{"timestamp":"2026-10-30T19:16:00Z","event":"update_done"}\n'),
+                         [{"timestamp": "2026-10-30T19:16:00Z", "event": "update_done", "fields": {}}])
+        with self.assertRaises(m.CheckError):
+            m.parse_log('{"timestamp":"t","event":"update_done","fields":[]}')
+
 
 class ConfigTest(unittest.TestCase):
     def test_removes_only_marker_pair_and_preserves_other_bytes(self):
@@ -284,8 +292,15 @@ class InstallationTest(unittest.TestCase):
         facts["wasapi"] = {"render": [], "capture": []}
         with self.assertRaisesRegex(m.CheckError, "There is no active WASAPI render endpoint"):
             m.validate_environment(facts)
+        m.validate_environment(facts, audio=False)
         facts["wasapi"]["render"].append({"id": "render-id", "name": "CABLE Input (VB-Audio Virtual Cable)"})
         m.validate_environment(facts)
+
+    def test_env_takes_no_audio_only_as_a_flag(self):
+        self.assertFalse(m.parser().parse_args(["env", "--artifacts", "a", "--report", "r"]).no_audio)
+        self.assertTrue(m.parser().parse_args(["env", "--artifacts", "a", "--report", "r", "--no-audio"]).no_audio)
+        with self.assertRaises(SystemExit), mock.patch.object(m.sys, "stderr", io.StringIO()):
+            m.parser().parse_args(["run", "--artifacts", "a", "--report", "r", "--no-audio"])
 
     def test_runtime_guard_refuses_a_workstation_and_path_overrides(self):
         with mock.patch.dict(m.os.environ, {}, clear=True):

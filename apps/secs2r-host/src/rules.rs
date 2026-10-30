@@ -1,19 +1,329 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::io::Write;
-use std::path::Path;
-use std::time::Instant;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
+use base64::Engine;
 use secs_apply::supervise::{Decision, RestartPolicy, Supervisor};
 use secs_types::ipc::{
     ErrorCode, HostLogLine, HostManaged, HostRequest, HostResponse, HostStatus, IncludeState,
     IpcError, ManagedProcess, ManagedProcessState,
 };
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
 
 pub const LOG_LIMIT: u64 = 256 * 1024;
 pub const INSTALLED_HOST_DIRECTORY: &str = "SECS 2R Host";
 pub const INSTALLED_HOST_EXECUTABLE: &str = "secs2r-host.exe";
 pub const STAGED_HOST_EXECUTABLE: &str = ".secs2r-host.exe.tmp";
+pub const UPDATE_MANIFEST: &str = "secs2r-host.json";
+pub const UPDATE_SIGNATURE: &str = "secs2r-host.json.sig";
+pub const UPDATE_STAGED_EXECUTABLE: &str = "secs2r-host.new.exe";
+pub const UPDATE_OLD_EXECUTABLE: &str = "secs2r-host.old.exe";
+pub const MANIFEST_LIMIT: u64 = 64 * 1024;
+pub const HOST_EXECUTABLE_LIMIT: u64 = 64 * 1024 * 1024;
+
+/// Base64 of the complete minisign public-key file used by release builds.
+pub const UPDATER_PUBKEY: &str = "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENCRThGOTI4NTc2RUYyRUUKUldUdThtNVhLUG5veTJ0eHM0dzZ4V1ArNlNRWjRJbzJrVE96NGpESXZIY1VtVHg2SWp1Qk85QloK";
+
+/// PR builds use a temporary signing key because they cannot read the
+/// `updater-signing` environment. `ci.yml` supplies its matching public key
+/// through this variable; `release.yml` does not set it and uses the checked-in key.
+pub fn updater_pubkey() -> &'static str {
+    match option_env!("SECS2R_UPDATER_PUBKEY") {
+        Some(key) if !key.is_empty() => key,
+        _ => UPDATER_PUBKEY,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostManifest {
+    pub version: String,
+    pub sha256: String,
+    pub file: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpdateReject {
+    BadSignature,
+    UnsignedVersion,
+    BadManifest(String),
+    NotNewer { own: String, offered: String },
+    HashMismatch,
+    TooLarge,
+    Io(String),
+}
+
+impl UpdateReject {
+    pub fn log_reason(&self) -> &'static str {
+        match self {
+            Self::BadSignature => "bad_signature",
+            Self::UnsignedVersion => "unsigned_version",
+            Self::BadManifest(_) => "bad_manifest",
+            Self::NotNewer { .. } => "not_newer",
+            Self::HashMismatch => "hash_mismatch",
+            Self::TooLarge => "too_large",
+            Self::Io(_) => "io",
+        }
+    }
+
+    pub fn detail(&self) -> String {
+        match self {
+            Self::BadSignature => "the host update manifest signature is invalid".into(),
+            Self::UnsignedVersion => {
+                "the signed version does not match the host update manifest".into()
+            }
+            Self::BadManifest(detail) => format!("invalid host update manifest: {detail}"),
+            Self::NotNewer { own, offered } => {
+                format!("host update {offered} is not newer than {own}")
+            }
+            Self::HashMismatch => "the staged host executable hash does not match".into(),
+            Self::TooLarge => "the host update file exceeds its size limit".into(),
+            Self::Io(detail) => format!("host update I/O failed: {detail}"),
+        }
+    }
+}
+
+pub fn verify_manifest(
+    pubkey: &str,
+    manifest_bytes: &[u8],
+    signature_text: &str,
+) -> Result<HostManifest, UpdateReject> {
+    let decoded_key = base64::engine::general_purpose::STANDARD
+        .decode(pubkey.trim())
+        .map_err(|_| UpdateReject::BadSignature)?;
+    let decoded_key = std::str::from_utf8(&decoded_key).map_err(|_| UpdateReject::BadSignature)?;
+    let key_line = decoded_key
+        .lines()
+        .nth(1)
+        .ok_or(UpdateReject::BadSignature)?;
+    let public_key = minisign_verify::PublicKey::from_base64(key_line)
+        .map_err(|_| UpdateReject::BadSignature)?;
+
+    let decoded_signature = base64::engine::general_purpose::STANDARD
+        .decode(signature_text.trim())
+        .map_err(|_| UpdateReject::BadSignature)?;
+    let decoded_signature =
+        std::str::from_utf8(&decoded_signature).map_err(|_| UpdateReject::BadSignature)?;
+    let signature = minisign_verify::Signature::decode(decoded_signature)
+        .map_err(|_| UpdateReject::BadSignature)?;
+    public_key
+        .verify(manifest_bytes, &signature, true)
+        .map_err(|_| UpdateReject::BadSignature)?;
+
+    let manifest = serde_json::from_slice::<HostManifest>(manifest_bytes)
+        .map_err(|error| UpdateReject::BadManifest(error.to_string()))?;
+    let offered = semver::Version::parse(&manifest.version)
+        .map_err(|error| UpdateReject::BadManifest(error.to_string()))?;
+    if manifest.file != INSTALLED_HOST_EXECUTABLE {
+        return Err(UpdateReject::BadManifest(
+            "file must be secs2r-host.exe".into(),
+        ));
+    }
+    if manifest.sha256.len() != 64
+        || !manifest
+            .sha256
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        return Err(UpdateReject::BadManifest(
+            "sha256 must be 64 lowercase hexadecimal characters".into(),
+        ));
+    }
+
+    let signed_version = signature
+        .trusted_comment()
+        .split('\t')
+        .find_map(|field| field.strip_prefix("version:"))
+        .and_then(|version| semver::Version::parse(version.trim_start_matches('v')).ok());
+    if signed_version.as_ref() != Some(&offered) {
+        return Err(UpdateReject::UnsignedVersion);
+    }
+
+    Ok(manifest)
+}
+
+pub fn accept_update(
+    own: &str,
+    manifest: &HostManifest,
+    staged_sha256: &str,
+) -> Result<(), UpdateReject> {
+    let own_version = semver::Version::parse(own)
+        .map_err(|error| UpdateReject::BadManifest(format!("running version: {error}")))?;
+    let offered = semver::Version::parse(&manifest.version)
+        .map_err(|error| UpdateReject::BadManifest(error.to_string()))?;
+    if offered.cmp_precedence(&own_version).is_le() {
+        return Err(UpdateReject::NotNewer {
+            own: own.to_owned(),
+            offered: manifest.version.clone(),
+        });
+    }
+    if staged_sha256 != manifest.sha256 {
+        return Err(UpdateReject::HashMismatch);
+    }
+    Ok(())
+}
+
+/// Checks the folder a caller names for `update_self`: a local folder on a
+/// drive, never a UNC share or a device path, which the service (SYSTEM) would
+/// otherwise open on the caller's behalf.
+pub fn validate_update_source(from_dir: &str) -> Result<(), UpdateReject> {
+    let bytes = from_dir.as_bytes();
+    let drive_absolute = bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/');
+    if drive_absolute {
+        Ok(())
+    } else {
+        Err(UpdateReject::Io(format!(
+            "the update folder must be a local absolute path: {from_dir}"
+        )))
+    }
+}
+
+/// Reads a regular file of at most `limit` bytes. The service reads these for
+/// a caller, so a directory, a pipe or a device is refused before it is opened.
+pub fn read_bounded(path: &Path, limit: u64) -> Result<Vec<u8>, UpdateReject> {
+    let metadata = fs::metadata(path).map_err(|error| UpdateReject::Io(error.to_string()))?;
+    if !metadata.is_file() {
+        return Err(UpdateReject::Io(format!(
+            "{} is not a regular file",
+            path.display()
+        )));
+    }
+    if metadata.len() > limit {
+        return Err(UpdateReject::TooLarge);
+    }
+    let file = fs::File::open(path).map_err(|error| UpdateReject::Io(error.to_string()))?;
+    let mut bytes = Vec::new();
+    file.take(limit + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| UpdateReject::Io(error.to_string()))?;
+    if bytes.len() as u64 > limit {
+        Err(UpdateReject::TooLarge)
+    } else {
+        Ok(bytes)
+    }
+}
+
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let digest = Sha256::digest(bytes);
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        hex.push(char::from(DIGITS[usize::from(byte >> 4)]));
+        hex.push(char::from(DIGITS[usize::from(byte & 0x0f)]));
+    }
+    hex
+}
+
+/// Writes the staged executable. Called only with bytes whose hash already
+/// matched the signed manifest: the protected folder inherits read access for
+/// users, so nothing unverified may be written there even for a moment.
+pub fn write_staged(destination: &Path, bytes: &[u8]) -> Result<(), UpdateReject> {
+    match fs::remove_file(destination) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(UpdateReject::Io(error.to_string())),
+    }
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(destination)
+            .map_err(|error| UpdateReject::Io(error.to_string()))?;
+        file.write_all(bytes)
+            .map_err(|error| UpdateReject::Io(error.to_string()))?;
+        file.sync_all()
+            .map_err(|error| UpdateReject::Io(error.to_string()))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(destination);
+    }
+    result
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostUpdatePaths {
+    pub executable: PathBuf,
+    pub staged: PathBuf,
+    pub old: PathBuf,
+}
+
+pub fn host_update_paths(directory: &Path) -> HostUpdatePaths {
+    HostUpdatePaths {
+        executable: directory.join(INSTALLED_HOST_EXECUTABLE),
+        staged: directory.join(UPDATE_STAGED_EXECUTABLE),
+        old: directory.join(UPDATE_OLD_EXECUTABLE),
+    }
+}
+
+pub trait UpdateFileOps {
+    fn remove_file(&mut self, path: &Path) -> std::io::Result<()>;
+    fn rename(&mut self, from: &Path, to: &Path) -> std::io::Result<()>;
+    fn wait_before_retry(&mut self, duration: Duration);
+}
+
+pub struct RealUpdateFileOps;
+
+impl UpdateFileOps for RealUpdateFileOps {
+    fn remove_file(&mut self, path: &Path) -> std::io::Result<()> {
+        fs::remove_file(path)
+    }
+
+    fn rename(&mut self, from: &Path, to: &Path) -> std::io::Result<()> {
+        fs::rename(from, to)
+    }
+
+    fn wait_before_retry(&mut self, duration: Duration) {
+        std::thread::sleep(duration);
+    }
+}
+
+fn rename_with_retry(
+    files: &mut impl UpdateFileOps,
+    from: &Path,
+    to: &Path,
+) -> std::io::Result<()> {
+    const RETRIES: usize = 50;
+    for attempt in 0..=RETRIES {
+        match files.rename(from, to) {
+            Ok(()) => return Ok(()),
+            Err(error) if attempt < RETRIES => {
+                files.wait_before_retry(Duration::from_millis(100));
+                let _ = error;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("the retry loop always returns")
+}
+
+/// Replaces the stopped service executable and restores it if the second rename fails.
+pub fn replace_staged_update(
+    files: &mut impl UpdateFileOps,
+    paths: &HostUpdatePaths,
+) -> std::io::Result<()> {
+    match files.remove_file(&paths.old) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+    rename_with_retry(files, &paths.executable, &paths.old)?;
+    if let Err(update_error) = rename_with_retry(files, &paths.staged, &paths.executable) {
+        if let Err(restore_error) = rename_with_retry(files, &paths.old, &paths.executable) {
+            return Err(std::io::Error::new(
+                restore_error.kind(),
+                format!("install new host: {update_error}; restore old host: {restore_error}"),
+            ));
+        }
+        return Err(update_error);
+    }
+    Ok(())
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostInstallPaths {
@@ -189,6 +499,11 @@ impl Core {
                 let start = self.logs.len().saturating_sub(keep);
                 HostResponse::Log(self.logs[start..].to_vec())
             }
+            // Replacing the executable is the pipe handler's job (P133).
+            HostRequest::UpdateSelf { .. } => HostResponse::Error(IpcError::new(
+                ErrorCode::Unsupported,
+                "the service cannot update itself yet",
+            )),
         }
     }
 
@@ -468,6 +783,222 @@ mod tests {
             owner_session_id: Some(7),
             owner_user_sid: Some("sid-a".into()),
         }
+    }
+
+    struct TestUpdateFiles {
+        operations: Vec<String>,
+        fail_staged_renames: usize,
+    }
+
+    impl TestUpdateFiles {
+        fn operation(name: &str, first: &Path, second: Option<&Path>) -> String {
+            match second {
+                Some(second) => format!(
+                    "{name}:{}:{}",
+                    first.file_name().unwrap().to_string_lossy(),
+                    second.file_name().unwrap().to_string_lossy()
+                ),
+                None => format!("{name}:{}", first.file_name().unwrap().to_string_lossy()),
+            }
+        }
+    }
+
+    impl UpdateFileOps for TestUpdateFiles {
+        fn remove_file(&mut self, path: &Path) -> std::io::Result<()> {
+            self.operations.push(Self::operation("remove", path, None));
+            fs::remove_file(path)
+        }
+
+        fn rename(&mut self, from: &Path, to: &Path) -> std::io::Result<()> {
+            self.operations
+                .push(Self::operation("rename", from, Some(to)));
+            if from.file_name() == Some(std::ffi::OsStr::new(UPDATE_STAGED_EXECUTABLE))
+                && self.fail_staged_renames > 0
+            {
+                self.fail_staged_renames -= 1;
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "injected lock",
+                ));
+            }
+            fs::rename(from, to)
+        }
+
+        fn wait_before_retry(&mut self, _duration: Duration) {}
+    }
+
+    #[test]
+    fn updater_key_matches_the_app_configuration() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../../secs2r/tauri.conf.json")).unwrap();
+        assert_eq!(config["plugins"]["updater"]["pubkey"], UPDATER_PUBKEY);
+        assert_eq!(
+            updater_pubkey(),
+            option_env!("SECS2R_UPDATER_PUBKEY")
+                .filter(|key| !key.is_empty())
+                .unwrap_or(UPDATER_PUBKEY)
+        );
+    }
+
+    #[test]
+    fn signed_manifest_requires_valid_bytes_shape_and_signed_version() {
+        let public_key = include_str!("../tests/data/signed-host-manifest.pub").trim();
+        let manifest_bytes = include_bytes!("../tests/data/signed-host-manifest.json");
+        let signature = include_str!("../tests/data/signed-host-manifest.json.sig");
+        let manifest = verify_manifest(public_key, manifest_bytes, signature).unwrap();
+        assert_eq!(manifest.version, "9.8.7");
+        assert_eq!(manifest.file, INSTALLED_HOST_EXECUTABLE);
+
+        let wrong_version = include_str!("../tests/data/signed-host-manifest-wrong-version.sig");
+        assert_eq!(
+            verify_manifest(public_key, manifest_bytes, wrong_version),
+            Err(UpdateReject::UnsignedVersion)
+        );
+        let mut tampered = manifest_bytes.to_vec();
+        tampered[0] ^= 1;
+        assert_eq!(
+            verify_manifest(public_key, &tampered, signature),
+            Err(UpdateReject::BadSignature)
+        );
+    }
+
+    #[test]
+    fn update_acceptance_uses_semver_and_the_copied_hash() {
+        let manifest = HostManifest {
+            version: "1.2.0".into(),
+            sha256: "a".repeat(64),
+            file: INSTALLED_HOST_EXECUTABLE.into(),
+        };
+        assert_eq!(accept_update("1.1.9", &manifest, &"a".repeat(64)), Ok(()));
+        assert_eq!(
+            accept_update("1.2.0", &manifest, &"a".repeat(64)),
+            Err(UpdateReject::NotNewer {
+                own: "1.2.0".into(),
+                offered: "1.2.0".into(),
+            })
+        );
+        assert_eq!(
+            accept_update("1.1.9", &manifest, &"b".repeat(64)),
+            Err(UpdateReject::HashMismatch)
+        );
+        let build_metadata = HostManifest {
+            version: "1.2.0+build.2".into(),
+            ..manifest
+        };
+        assert_eq!(
+            accept_update("1.2.0+build.1", &build_metadata, &"a".repeat(64)),
+            Err(UpdateReject::NotNewer {
+                own: "1.2.0+build.1".into(),
+                offered: "1.2.0+build.2".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn bounded_reads_take_regular_files_only_and_staging_writes_verified_bytes() {
+        let root = root("bounded-read");
+        let source = root.join("source.exe");
+        let destination = root.join(UPDATE_STAGED_EXECUTABLE);
+        fs::write(&source, b"host bytes").unwrap();
+        let bytes = read_bounded(&source, 10).unwrap();
+        assert_eq!(
+            sha256_hex(&bytes),
+            "43bcde663fb99877d335d8d1c06c25386bb8528a324218f1a9e8424f50d3cb03"
+        );
+        assert_eq!(read_bounded(&source, 9), Err(UpdateReject::TooLarge));
+        assert!(matches!(
+            read_bounded(&root, 1024),
+            Err(UpdateReject::Io(_))
+        ));
+        assert!(matches!(
+            read_bounded(&root.join("missing.exe"), 1024),
+            Err(UpdateReject::Io(_))
+        ));
+        write_staged(&destination, &bytes).unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"host bytes");
+        write_staged(&destination, b"newer").unwrap();
+        assert_eq!(fs::read(&destination).unwrap(), b"newer");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn update_source_must_be_a_local_drive_folder() {
+        for accepted in [r"C:\Users\a\AppData\Local\SECS 2R", "D:/apps/SECS 2R"] {
+            assert_eq!(validate_update_source(accepted), Ok(()), "{accepted}");
+        }
+        for refused in [
+            r"\\server\share\SECS 2R",
+            r"\\.\pipe\secs2r",
+            r"\\?\C:\SECS 2R",
+            r"relative\SECS 2R",
+            "C:",
+            "",
+        ] {
+            assert!(
+                matches!(validate_update_source(refused), Err(UpdateReject::Io(_))),
+                "{refused}"
+            );
+        }
+    }
+
+    #[test]
+    fn finish_update_replaces_in_order_and_retries_locked_rename() {
+        let root = root("finish-success");
+        let paths = host_update_paths(&root);
+        fs::write(&paths.executable, b"old").unwrap();
+        fs::write(&paths.staged, b"new").unwrap();
+        fs::write(&paths.old, b"older").unwrap();
+        let mut files = TestUpdateFiles {
+            operations: Vec::new(),
+            fail_staged_renames: 2,
+        };
+
+        replace_staged_update(&mut files, &paths).unwrap();
+
+        assert_eq!(fs::read(&paths.executable).unwrap(), b"new");
+        assert_eq!(fs::read(&paths.old).unwrap(), b"old");
+        assert_eq!(
+            &files.operations[..3],
+            [
+                "remove:secs2r-host.old.exe",
+                "rename:secs2r-host.exe:secs2r-host.old.exe",
+                "rename:secs2r-host.new.exe:secs2r-host.exe",
+            ]
+        );
+        assert_eq!(
+            files
+                .operations
+                .iter()
+                .filter(
+                    |operation| operation.as_str() == "rename:secs2r-host.new.exe:secs2r-host.exe"
+                )
+                .count(),
+            3
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn finish_update_restores_old_executable_when_new_rename_never_succeeds() {
+        let root = root("finish-restore");
+        let paths = host_update_paths(&root);
+        fs::write(&paths.executable, b"old").unwrap();
+        fs::write(&paths.staged, b"new").unwrap();
+        let mut files = TestUpdateFiles {
+            operations: Vec::new(),
+            fail_staged_renames: 51,
+        };
+
+        assert!(replace_staged_update(&mut files, &paths).is_err());
+
+        assert_eq!(fs::read(&paths.executable).unwrap(), b"old");
+        assert_eq!(fs::read(&paths.staged).unwrap(), b"new");
+        assert!(!paths.old.exists());
+        assert_eq!(
+            files.operations.last().map(String::as_str),
+            Some("rename:secs2r-host.old.exe:secs2r-host.exe")
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

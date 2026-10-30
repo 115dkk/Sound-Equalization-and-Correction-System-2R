@@ -3,6 +3,10 @@
 // primary action, the step's content, the job tray at the bottom) and a
 // slot for a panel over the content's right side (도움말). The frame draws
 // what it is given; screens and the IPC wiring decide the model.
+//
+// Inside a session the frame also carries the updater (ADR 0020): the
+// update badge above 설정 and 도움말, the settings popover's updates
+// section and the one notice after an update, all from one update scope.
 import type { ReactNode } from "react";
 import { useT } from "../i18n/react";
 import { Icon } from "../ui/Icon";
@@ -15,6 +19,9 @@ import { ProjectStatus } from "./ProjectStatus";
 import { StepHeader, type PrimaryAction, type RecoveryAction } from "./StepHeader";
 import { StepRail } from "./StepRail";
 import { shortcutText, useShortcuts } from "./shortcuts";
+import { UpdateScope } from "./update/scope";
+import { RailUpdateBadge } from "./update/UpdateBadge";
+import { FrameUpdateNotice } from "./update/UpdateNotice";
 import "./app.css";
 
 type AppFrameProps = {
@@ -84,51 +91,57 @@ export function AppFrame({
   );
 
   return (
-    <div className="app-frame" data-ui="frame">
-      <aside className="app-rail">
-        <div className="app-rail__top">
-          <div className="app-rail__brand">
-            <img className="app-rail__mark" src={LOGOS[prefs.icon ?? DEFAULT_LOGO]} alt="" width={36} height={36} draggable={false} data-ui="frame.logo" />
-            <span className="app-rail__name">SECS 2R</span>
-            <span className="app-rail__meta">
-              {version && (
-                <span className="app-rail__version tabular">
-                  {t(version.prerelease ? "app.prerelease" : "app.release", { version: version.version })}
-                </span>
-              )}
-              {prefs.accent === "tutorial" && <StatusPill className="app-rail__mode">{t("frame.tutorial")}</StatusPill>}
-            </span>
+    <UpdateScope>
+      <div className="app-frame" data-ui="frame">
+        <aside className="app-rail">
+          <div className="app-rail__top">
+            <div className="app-rail__brand">
+              <img className="app-rail__mark" src={LOGOS[prefs.icon ?? DEFAULT_LOGO]} alt="" width={36} height={36} draggable={false} data-ui="frame.logo" />
+              <span className="app-rail__name">SECS 2R</span>
+              <span className="app-rail__meta">
+                {version && (
+                  <span className="app-rail__version tabular">
+                    {t(version.prerelease ? "app.prerelease" : "app.release", { version: version.version })}
+                  </span>
+                )}
+                {prefs.accent === "tutorial" && <StatusPill className="app-rail__mode">{t("frame.tutorial")}</StatusPill>}
+              </span>
+            </div>
+            <ProjectMenu name={model.project.fileName} dirty={model.project.dirty} actions={projectActions} />
           </div>
-          <ProjectMenu name={model.project.fileName} dirty={model.project.dirty} actions={projectActions} />
-        </div>
-        <div className="app-rail__middle">
-          <StepRail model={model} onNavigate={go} />
-          <section className="app-rail__status" aria-labelledby="frame.status.heading">
-            <h2 className="app-rail__heading" id="frame.status.heading">
-              {t("frame.status")}
-            </h2>
-            <ProjectStatus project={model.project} onRemeasure={onRemeasure} onOpenPatch={onOpenPatch} />
-          </section>
-        </div>
-        <div className="app-rail__footer">
-          <SettingsButton />
-          <button type="button" className="rail-tool" onClick={onHelp} data-ui="frame.help" id="frame.help">
-            <Icon name="help" size={18} />
-            <span>{t("frame.help")}</span>
-            <kbd className="ui-kbd rail-tool__key">{shortcutText("help")}</kbd>
-          </button>
-        </div>
-      </aside>
-      <main className="app-main" aria-labelledby="frame.header.title">
-        <StepHeader step={model.current} state={model.steps[model.current]} primary={primary} status={headerStatus} recovery={recovery} />
-        <div className="app-body">
-          <div className="app-content" id="frame.content" data-ui="frame.content">
-            {children}
+          <div className="app-rail__middle">
+            <StepRail model={model} onNavigate={go} />
+            <section className="app-rail__status" aria-labelledby="frame.status.heading">
+              <h2 className="app-rail__heading" id="frame.status.heading">
+                {t("frame.status")}
+              </h2>
+              <ProjectStatus project={model.project} onRemeasure={onRemeasure} onOpenPatch={onOpenPatch} />
+            </section>
           </div>
-          {aside}
-        </div>
-        {tray}
-      </main>
-    </div>
+          <div className="app-rail__footer">
+            <RailUpdateBadge />
+            <div className="app-rail__tools">
+              <SettingsButton />
+              <button type="button" className="rail-tool" onClick={onHelp} data-ui="frame.help" id="frame.help">
+                <Icon name="help" size={18} />
+                <span>{t("frame.help")}</span>
+                <kbd className="ui-kbd rail-tool__key">{shortcutText("help")}</kbd>
+              </button>
+            </div>
+          </div>
+        </aside>
+        <main className="app-main" aria-labelledby="frame.header.title">
+          <StepHeader step={model.current} state={model.steps[model.current]} primary={primary} status={headerStatus} recovery={recovery} />
+          <div className="app-body">
+            <div className="app-content" id="frame.content" data-ui="frame.content">
+              {children}
+            </div>
+            {aside}
+          </div>
+          {tray}
+        </main>
+        <FrameUpdateNotice />
+      </div>
+    </UpdateScope>
   );
 }

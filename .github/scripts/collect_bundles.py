@@ -6,12 +6,17 @@ updater depend on them), so they are fixed here and not left to Tauri's
 product-name-based file names:
 
     SECS2R-<version>-windows-x64-setup.exe
+    SECS2R-<version>-windows-x64-setup.exe.sig
     SECS2R-<version>-windows-x64-portable.zip
     SECS2R-<version>-windows-x64-cli.zip
     SECS2R-<version>-macos-universal.dmg
+    SECS2R-<version>-macos-universal.app.tar.gz
+    SECS2R-<version>-macos-universal.app.tar.gz.sig
     SECS2R-<version>-macos-universal-cli.tar.gz
     SECS2R-<version>-linux-x86_64.AppImage
+    SECS2R-<version>-linux-x86_64.AppImage.sig
     SECS2R-<version>-linux-amd64.deb
+    SECS2R-<version>-linux-amd64.deb.sig
     SECS2R-<version>-linux-x86_64-cli.tar.gz
 
 On Windows the release exe and host shell must be GUI-subsystem executables
@@ -42,14 +47,15 @@ PE_SUBSYSTEM_WINDOWS_CUI = 3
 PORTABLE_README = """SECS 2R portable
 
 압축을 푼 폴더에서 "SECS 2R.exe"를 실행합니다. 설치가 필요 없고, 이 판은
-자동 업데이트를 하지 않습니다. Windows 10/11에 포함된 Microsoft Edge
-WebView2 런타임을 씁니다. 화면 없이 쓰는 CLI는 같은 폴더의
+자동 업데이트를 하지 않지만 새 판이 나오면 알려 줍니다. Windows 10/11에 포함된
+Microsoft Edge WebView2 런타임을 씁니다. 화면 없이 쓰는 CLI는 같은 폴더의
 secs2r-cli.exe입니다(secs2r-cli.exe --help). 관리 기능을 설치하면
 secs2r-host.exe와 secs2r-host-shell.exe를 사용합니다.
 
 Unzip and run "SECS 2R.exe". Nothing is installed and this build does not
-update itself. It uses the Microsoft Edge WebView2 runtime that ships with
-Windows 10 and 11. The command-line tool is secs2r-cli.exe in the same
+update itself, but it tells you when a new release is available. It uses the
+Microsoft Edge WebView2 runtime that ships with Windows 10 and 11. The
+command-line tool is secs2r-cli.exe in the same
 folder (secs2r-cli.exe --help). Installing managed mode uses secs2r-host.exe
 and secs2r-host-shell.exe.
 
@@ -74,12 +80,17 @@ https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R
 def asset_name(version: str, kind: str) -> str:
     names = {
         "nsis": f"{PRODUCT}-{version}-windows-x64-setup.exe",
+        "nsis-sig": f"{PRODUCT}-{version}-windows-x64-setup.exe.sig",
         "portable": f"{PRODUCT}-{version}-windows-x64-portable.zip",
         "cli-windows": f"{PRODUCT}-{version}-windows-x64-cli.zip",
         "dmg": f"{PRODUCT}-{version}-macos-universal.dmg",
+        "updater-macos": f"{PRODUCT}-{version}-macos-universal.app.tar.gz",
+        "updater-macos-sig": f"{PRODUCT}-{version}-macos-universal.app.tar.gz.sig",
         "cli-macos": f"{PRODUCT}-{version}-macos-universal-cli.tar.gz",
         "appimage": f"{PRODUCT}-{version}-linux-x86_64.AppImage",
+        "appimage-sig": f"{PRODUCT}-{version}-linux-x86_64.AppImage.sig",
         "deb": f"{PRODUCT}-{version}-linux-amd64.deb",
+        "deb-sig": f"{PRODUCT}-{version}-linux-amd64.deb.sig",
         "cli-linux": f"{PRODUCT}-{version}-linux-x86_64-cli.tar.gz",
     }
     return names[kind]
@@ -115,14 +126,18 @@ def expected_cli_version(version: str) -> str:
 
 
 def write_portable_zip(path: Path, exe: Path, cli: Path, host: Path,
-                       shell: Path, license_file: Path) -> None:
-    """Write the portable app with every Windows companion executable."""
+                       shell: Path, license_file: Path, host_manifest: Path,
+                       host_manifest_signature: Path) -> None:
+    """Write the portable app with every Windows companion and update file."""
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         zf.write(exe, "SECS 2R/SECS 2R.exe")
         zf.write(cli, "SECS 2R/secs2r-cli.exe")
         zf.write(host, "SECS 2R/secs2r-host.exe")
+        zf.write(host_manifest, "SECS 2R/secs2r-host.json")
+        zf.write(host_manifest_signature, "SECS 2R/secs2r-host.json.sig")
         zf.write(shell, "SECS 2R/secs2r-host-shell.exe")
         zf.write(license_file, "SECS 2R/LICENSE.txt")
+        zf.writestr("SECS 2R/portable", b"")
         zf.writestr("SECS 2R/README.txt", PORTABLE_README)
 
 
@@ -187,9 +202,17 @@ def collect(name: str, target: str, version: str, out: Path, repo: Path,
         check_cli(cli, cli_version)
         setup = out / asset_name(version, "nsis")
         shutil.copy2(_one("nsis/*-setup.exe", bundle), setup)
-        made.append(setup)
+        setup_signature = out / asset_name(version, "nsis-sig")
+        shutil.copy2(_one("nsis/*-setup.exe.sig", bundle), setup_signature)
+        made += [setup, setup_signature]
+        host_manifest = release / "secs2r-host.json"
+        host_manifest_signature = release / "secs2r-host.json.sig"
+        for required in (host_manifest, host_manifest_signature):
+            if not required.is_file():
+                raise SystemExit(f"required Windows host update file is missing: {required}")
         portable = out / asset_name(version, "portable")
-        write_portable_zip(portable, exe, cli, host, shell, license_file)
+        write_portable_zip(portable, exe, cli, host, shell, license_file,
+                           host_manifest, host_manifest_signature)
         made.append(portable)
         cli_zip = out / asset_name(version, "cli-windows")
         write_cli_zip(cli_zip, cli, license_file)
@@ -197,7 +220,11 @@ def collect(name: str, target: str, version: str, out: Path, repo: Path,
     elif name == "macos":
         dmg = out / asset_name(version, "dmg")
         shutil.copy2(_one("dmg/*.dmg", bundle), dmg)
-        made.append(dmg)
+        updater = out / asset_name(version, "updater-macos")
+        shutil.copy2(_one("macos/*.app.tar.gz", bundle), updater)
+        updater_signature = out / asset_name(version, "updater-macos-sig")
+        shutil.copy2(_one("macos/*.app.tar.gz.sig", bundle), updater_signature)
+        made += [dmg, updater, updater_signature]
         cli = release / "secs2r-cli"
         check_cli(cli, cli_version)
         cli_tar = out / asset_name(version, "cli-macos")
@@ -207,9 +234,13 @@ def collect(name: str, target: str, version: str, out: Path, repo: Path,
         appimage = out / asset_name(version, "appimage")
         shutil.copy2(_one("appimage/*.AppImage", bundle), appimage)
         appimage.chmod(0o755)
+        appimage_signature = out / asset_name(version, "appimage-sig")
+        shutil.copy2(_one("appimage/*.AppImage.sig", bundle), appimage_signature)
         deb = out / asset_name(version, "deb")
         shutil.copy2(_one("deb/*.deb", bundle), deb)
-        made += [appimage, deb]
+        deb_signature = out / asset_name(version, "deb-sig")
+        shutil.copy2(_one("deb/*.deb.sig", bundle), deb_signature)
+        made += [appimage, appimage_signature, deb, deb_signature]
         cli = release / "secs2r-cli"
         check_cli(cli, cli_version)
         cli_tar = out / asset_name(version, "cli-linux")

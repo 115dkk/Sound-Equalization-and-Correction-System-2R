@@ -27,6 +27,19 @@
       "freezePrototype": true
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENCRThGOTI4NTc2RUYyRUUKUldUdThtNVhLUG5veTJ0eHM0dzZ4V1ArNlNRWjRJbzJrVE96NGpESXZIY1VtVHg2SWp1Qk85QloK",
+      "endpoints": [
+        "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R/releases/latest/download/latest.json",
+        "https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R/releases/download/updater/latest.json"
+      ],
+      "requireSignedVersion": true,
+      "windows": {
+        "installMode": "quiet"
+      }
+    }
+  },
   "bundle": {
     "active": false,
     "icon": [

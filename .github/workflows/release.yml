@@ -18,9 +18,12 @@ name: Release
 #                       and a universal CLI tar.gz
 #              Linux    AppImage and deb (built on 22.04 for an older glibc)
 #                       and a CLI tar.gz
-#            every CLI that ships is run once and must report the version
-#   publish  SHA256SUMS.txt, notes from CHANGELOG.md, and the release itself
-#            (assets replaced when the tag exists)
+#            every CLI that ships is run once and must report the version;
+#            the updater bundles and the service manifest are signed with the
+#            key in the updater-signing environment (docs/adr/0020)
+#   publish  latest.json for the updater, SHA256SUMS.txt, notes from
+#            CHANGELOG.md, and the release itself (assets replaced when the
+#            tag exists); then latest.json on the fixed `updater` release
 #   crates   when the gate says so, the crates.io crates (docs/adr/0016) in
 #            dependency order through trusted publishing (a short-lived token
 #            from GitHub's OIDC; the repository keeps no crates.io token),
@@ -105,6 +108,9 @@ jobs:
             bundles: appimage,deb
             target: ""
     runs-on: ${{ matrix.os }}
+    # The updater signing key (ADR 0020). The environment deploys from main
+    # only, so no pull request run can read it.
+    environment: updater-signing
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -162,21 +168,44 @@ jobs:
         working-directory: apps/secs2r/ui
         run: npm ci --no-audit --no-fund
 
+      # Windows runners have `python`, not always `python3`.
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      # The service replaces itself only with a copy whose hash this signed
+      # manifest names (ADR 0020).
+      - name: Signed service manifest
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          VERSION: ${{ needs.gate.outputs.version }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          python .github/scripts/updater_manifest.py host --exe target/release/secs2r-host.exe --version "$VERSION" --out target/release/secs2r-host.json
+          node apps/secs2r/ui/node_modules/@tauri-apps/cli/tauri.js signer sign --app-version "$VERSION" target/release/secs2r-host.json
+
       - name: Build the host shell
         if: runner.os == 'Windows'
         working-directory: apps/secs2r-host-shell
         run: node ../secs2r/ui/node_modules/@tauri-apps/cli/tauri.js build --ci --no-bundle
 
+      # createUpdaterArtifacts signs each updater bundle with the key.
       - name: tauri build
         working-directory: apps/secs2r
         shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           args=(build --ci --bundles "${{ matrix.bundles }}")
           if [ -n "${{ matrix.target }}" ]; then args+=(--target "${{ matrix.target }}"); fi
-          # The installer puts the CLI next to "SECS 2R.exe". Only here, not
-          # in tauri.conf.json, so a local tauri dev or build needs no CLI.
+          # The installer puts the companions next to "SECS 2R.exe". Only
+          # here, not in tauri.conf.json, so a local tauri dev or build needs
+          # none of them.
           if [ "${{ matrix.name }}" = "windows" ]; then
-            args+=(--config '{"bundle":{"resources":{"../../target/release/secs2r-cli.exe":"secs2r-cli.exe","../../target/release/secs2r-host.exe":"secs2r-host.exe","../../target/release/secs2r-host-shell.exe":"secs2r-host-shell.exe"}}}')
+            args+=(--config "$(python ../../.github/scripts/updater_config.py --windows-resources)")
           fi
           node ui/node_modules/@tauri-apps/cli/tauri.js "${args[@]}"
 
@@ -188,11 +217,6 @@ jobs:
         run: |
           reported="$(cargo run -q --release --locked -p secs2r-cli -- --version)"
           test "$reported" = "secs2r-cli $VERSION" || { echo "::error::CLI reports '$reported'"; exit 1; }
-
-      # Windows runners have `python`, not always `python3`.
-      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
-        with:
-          python-version: "3.13"
 
       - name: Collect installers
         shell: bash
@@ -255,9 +279,16 @@ jobs:
           pattern: release-*
           merge-multiple: true
 
-      - name: Checksums and notes
+      # latest.json is what installed copies read (ADR 0020). Its notes are
+      # the version's CHANGELOG section, the release body without its header.
+      - name: Updater manifest, checksums and notes
         run: |
           set -euo pipefail
+          python3 .github/scripts/release_notes.py --version "$VERSION" --section-only > updater-notes.md
+          python3 .github/scripts/updater_manifest.py latest --version "$VERSION" --previous "${PREVIOUS#v}" \
+            --notes-file updater-notes.md --assets release \
+            --base-url "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/" \
+            --pub-date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --out release/latest.json
           (cd release && sha256sum -- * > SHA256SUMS.txt && cat SHA256SUMS.txt)
           python3 .github/scripts/release_notes.py --version "$VERSION" --previous "$PREVIOUS" --sha "$RELEASE_SHA" > notes.md
           cat notes.md
@@ -275,6 +306,26 @@ jobs:
               --title "SECS 2R $VERSION" --notes-file notes.md "${flags[@]}"
           fi
           gh release view "$TAG" --json assets,isPrerelease -q '{prerelease: .isPrerelease, assets: [.assets[].name]}'
+
+      # While every release is a prerelease, releases/latest answers 404, so
+      # installed copies read the fixed `updater` release next (ADR 0020).
+      # From 1.0.0 the official releases keep it current as well; a
+      # prerelease after 1.0.0 never goes there.
+      - name: Point the updater release at this version
+        run: |
+          set -euo pipefail
+          if [ "$PRERELEASE" = "true" ] && [ "${VERSION%%.*}" != "0" ]; then
+            echo "a prerelease after 1.0.0 does not move the updater release"
+            exit 0
+          fi
+          if gh release view updater >/dev/null 2>&1; then
+            gh release upload updater release/latest.json --clobber
+          else
+            gh release create updater release/latest.json --target "$RELEASE_SHA" --prerelease --latest=false \
+              --title "Updater manifest" \
+              --notes "Installed copies of SECS 2R read latest.json here while releases/latest has no official release (docs/adr/0020-automatic-updates.md). Not a release; download from the versioned releases."
+          fi
+          gh release view updater --json assets -q '[.assets[].name]'
 
   crates:
     name: Publish the crates.io crates

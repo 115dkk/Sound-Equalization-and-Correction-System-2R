@@ -138,7 +138,9 @@ impl ManagedHostAdapter for RecordingManagedHost {
         lock(&self.requests).push(request.clone());
         match request {
             HostRequest::Status => Ok(HostResponse::Status(Box::new(self.status.clone()))),
-            HostRequest::SetManaged(_) | HostRequest::StopManaging => Ok(HostResponse::Ok),
+            HostRequest::SetManaged(_)
+            | HostRequest::StopManaging
+            | HostRequest::UpdateSelf { .. } => Ok(HostResponse::Ok),
             HostRequest::Log { .. } => Ok(HostResponse::Log(Vec::new())),
         }
     }

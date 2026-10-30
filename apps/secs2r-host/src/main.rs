@@ -44,6 +44,9 @@ enum Action {
     /// Repair Equalizer APO as the interactive user. Service-internal.
     #[command(hide = true)]
     RepairEqapo { config_folder: std::path::PathBuf },
+    /// Finish replacing the stopped service executable. Service-internal.
+    #[command(hide = true)]
+    FinishUpdate,
 }
 
 #[cfg(target_os = "windows")]
@@ -191,7 +194,73 @@ fn run(cli: Cli) -> Result<(), IpcError> {
             Ok(())
         }
         Action::RepairEqapo { config_folder } => repair_eqapo_as_user(&config_folder),
+        Action::FinishUpdate => finish_update(),
     }
+}
+
+#[cfg(target_os = "windows")]
+fn finish_update() -> Result<(), IpcError> {
+    let current = std::env::current_exe().map_err(|error| {
+        IpcError::new(
+            ErrorCode::ApplyFailed,
+            format!("find update helper executable: {error}"),
+        )
+    })?;
+    let directory = current.parent().ok_or_else(|| {
+        IpcError::new(
+            ErrorCode::ApplyFailed,
+            "update helper executable has no parent directory",
+        )
+    })?;
+    let update_paths = rules::host_update_paths(directory);
+    let paths = Paths::from_env();
+    // The service starts the verified copy as this helper, so its own version
+    // is the one being installed.
+    let version = || ("version".to_owned(), env!("CARGO_PKG_VERSION").to_owned());
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        if secs_sys::host::service_state() == secs_types::ipc::ServiceState::Stopped {
+            break;
+        }
+        if Instant::now() >= deadline {
+            let line = rules::log_line("update_timeout", [version()]);
+            let _ = rules::append_log(&paths.log, &line, rules::LOG_LIMIT);
+            if secs_sys::host::service_state() == secs_types::ipc::ServiceState::Stopped {
+                secs_sys::host::start_service()?;
+            }
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+
+    let replace_result = rules::replace_staged_update(&mut rules::RealUpdateFileOps, &update_paths)
+        .map_err(|error| {
+            IpcError::new(
+                ErrorCode::ApplyFailed,
+                format!("finish host update: {error}"),
+            )
+        });
+    let result = match replace_result {
+        Ok(()) => secs_sys::host::start_service(),
+        Err(error) => {
+            let _ = secs_sys::host::start_service();
+            Err(error)
+        }
+    };
+    match &result {
+        Ok(()) => {
+            let line = rules::log_line("update_done", [version()]);
+            let _ = rules::append_log(&paths.log, &line, rules::LOG_LIMIT);
+        }
+        Err(error) => {
+            let line = rules::log_line(
+                "update_failed",
+                [version(), ("reason".to_owned(), error.detail.clone())],
+            );
+            let _ = rules::append_log(&paths.log, &line, rules::LOG_LIMIT);
+        }
+    }
+    result
 }
 
 #[cfg(target_os = "windows")]
@@ -284,10 +353,36 @@ fn mark_other_user(core: &mut Core, paths: &Paths, session: u32) -> Result<(), I
 }
 
 #[cfg(target_os = "windows")]
+fn remove_old_host_copy(paths: &Paths) {
+    let old = std::env::current_exe()
+        .ok()
+        .and_then(|executable| executable.parent().map(rules::host_update_paths))
+        .map(|paths| paths.old);
+    let Some(old) = old else {
+        return;
+    };
+    match std::fs::remove_file(&old) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            let line = rules::log_line(
+                "old_cleanup_failed",
+                [
+                    ("path".to_owned(), old.to_string_lossy().into_owned()),
+                    ("reason".to_owned(), error.to_string()),
+                ],
+            );
+            let _ = rules::append_log(&paths.log, &line, rules::LOG_LIMIT);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
 fn service_loop(
     paths: &Paths,
     service_events: &mpsc::Receiver<secs_sys::host::ServiceEvent>,
 ) -> Result<(), IpcError> {
+    remove_old_host_copy(paths);
     let managed = match rules::load_state(&paths.state) {
         Ok(managed) => managed,
         Err(error) => {
@@ -336,6 +431,7 @@ fn service_loop(
         repair_eqapo(&mut core, paths, session)?;
     }
 
+    let mut stop_after_response = false;
     loop {
         while let Ok(event) = service_events.try_recv() {
             match event {
@@ -483,6 +579,7 @@ fn service_loop(
                     &mut restart_at,
                     &config_sender,
                     paths,
+                    &mut stop_after_response,
                 )
                 .unwrap_or_else(HostResponse::Error)
             },
@@ -493,6 +590,12 @@ fn service_loop(
             let line = rules::log_line("pipe_error", [("detail".to_owned(), error.detail)]);
             let _ = rules::append_log(&paths.log, &line, rules::LOG_LIMIT);
             std::thread::sleep(Duration::from_millis(100));
+        }
+        if stop_after_response {
+            if let Some(running) = child.take() {
+                let _ = running.stop();
+            }
+            return Ok(());
         }
         let _ = &watcher;
     }
@@ -510,6 +613,7 @@ fn handle_request(
     restart_at: &mut Option<Instant>,
     config_sender: &mpsc::Sender<()>,
     paths: &Paths,
+    stop_after_response: &mut bool,
 ) -> Result<HostResponse, IpcError> {
     match request {
         HostRequest::SetManaged(mut update) => {
@@ -553,8 +657,84 @@ fn handle_request(
             }
             Ok(response)
         }
+        HostRequest::UpdateSelf { from_dir } => {
+            authorize_mutation(identity)?;
+            let install_paths = rules::host_install_paths(&program_files_root()?);
+            validate_service_directory(&install_paths.directory)?;
+            let update_paths = rules::host_update_paths(&install_paths.directory);
+            let staged = stage_host_update(Path::new(&from_dir), &update_paths.staged);
+            let manifest = match staged {
+                Ok(manifest) => manifest,
+                Err(rejection) => {
+                    let _ = std::fs::remove_file(&update_paths.staged);
+                    record_update_rejection(core, paths, &rejection);
+                    return Ok(HostResponse::Error(update_rejection_error(&rejection)));
+                }
+            };
+            if let Err(error) =
+                secs_sys::host::spawn_detached(&update_paths.staged, &["finish-update"])
+            {
+                let rejection = rules::UpdateReject::Io(error.detail);
+                let _ = std::fs::remove_file(&update_paths.staged);
+                record_update_rejection(core, paths, &rejection);
+                return Ok(HostResponse::Error(update_rejection_error(&rejection)));
+            }
+            let line = rules::log_line("update_staged", [("version".to_owned(), manifest.version)]);
+            let _ = record(core, paths, line);
+            *stop_after_response = true;
+            Ok(HostResponse::Ok)
+        }
         other => Ok(core.handle(other)),
     }
+}
+
+#[cfg(target_os = "windows")]
+fn stage_host_update(
+    from_dir: &Path,
+    staged_executable: &Path,
+) -> Result<rules::HostManifest, rules::UpdateReject> {
+    rules::validate_update_source(&from_dir.to_string_lossy())?;
+    let manifest_bytes = rules::read_bounded(
+        &from_dir.join(rules::UPDATE_MANIFEST),
+        rules::MANIFEST_LIMIT,
+    )?;
+    let signature_bytes = rules::read_bounded(
+        &from_dir.join(rules::UPDATE_SIGNATURE),
+        rules::MANIFEST_LIMIT,
+    )?;
+    let signature_text =
+        std::str::from_utf8(&signature_bytes).map_err(|_| rules::UpdateReject::BadSignature)?;
+    let manifest =
+        rules::verify_manifest(rules::updater_pubkey(), &manifest_bytes, signature_text)?;
+    // Read, then check the version and hash, then write: the protected folder
+    // must never hold bytes the signed manifest does not name.
+    let executable =
+        rules::read_bounded(&from_dir.join(&manifest.file), rules::HOST_EXECUTABLE_LIMIT)?;
+    rules::accept_update(
+        env!("CARGO_PKG_VERSION"),
+        &manifest,
+        &rules::sha256_hex(&executable),
+    )?;
+    rules::write_staged(staged_executable, &executable)?;
+    Ok(manifest)
+}
+
+#[cfg(target_os = "windows")]
+fn update_rejection_error(rejection: &rules::UpdateReject) -> IpcError {
+    IpcError::new(ErrorCode::ApplyFailed, rejection.detail())
+        .with_param("reason", rejection.log_reason())
+}
+
+#[cfg(target_os = "windows")]
+fn record_update_rejection(core: &mut Core, paths: &Paths, rejection: &rules::UpdateReject) {
+    let line = rules::log_line(
+        "update_rejected",
+        [
+            ("reason".to_owned(), rejection.log_reason().to_owned()),
+            ("detail".to_owned(), rejection.detail()),
+        ],
+    );
+    let _ = record(core, paths, line);
 }
 
 #[cfg(target_os = "windows")]
@@ -1007,6 +1187,12 @@ mod tests {
             Action::RepairEqapo {
                 config_folder: std::path::PathBuf::from(r"C:\apo")
             }
+        );
+        assert_eq!(
+            Cli::try_parse_from(["secs2r-host", "finish-update"])
+                .unwrap()
+                .action,
+            Action::FinishUpdate
         );
     }
 }

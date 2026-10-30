@@ -4,4 +4,4 @@ import type { HostManaged } from "./HostManaged";
 /**
  * A request sent over the local managed-host pipe.
  */
-export type HostRequest = { "method": "status" } | { "method": "set_managed", "params": HostManaged } | { "method": "stop_managing" } | { "method": "log", "params": { lines: number, } };
+export type HostRequest = { "method": "status" } | { "method": "set_managed", "params": HostManaged } | { "method": "stop_managing" } | { "method": "log", "params": { lines: number, } } | { "method": "update_self", "params": { from_dir: string, } };

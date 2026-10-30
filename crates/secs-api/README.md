@@ -103,3 +103,7 @@ fn main() -> secs::Result<()> {
 ```
 
 이 공개 크레이트는 별도의 0.x 판을 따릅니다. 내부 `secs-*` 크레이트의 호환성은 보장하지 않습니다. 라이선스는 AGPL-3.0-only(GNU Affero GPL v3)이며, 네트워크로 사용자에게 서비스하는 수정판은 그 사용자에게 소스 코드를 제공해야 합니다. SECS 2R 데스크톱 앱은 지금처럼 GPL-3.0-only입니다. 저장소는 <https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R>입니다.
+
+### 도움 주신 분들
+
+SECS는 한국 오디오 커뮤니티 스피커 갤러리의 Sound Equalization and Correction System 프로젝트에서 시작했습니다. 그 뒤를 이은 [SECS 2](https://github.com/Kim-O-O/Sound-Equalization-and-Correction-System-2)가 소스를 GPL v3로 공개한 덕분에 SECS 2R과 이 크레이트가 있습니다. 보정 계산은 SECS 2의 방법을 그대로 따릅니다. SECS와 SECS 2를 만든 스피커 갤러리 여러분과 업스트림 저작자께 감사드립니다. SECS 2의 저작자 KIM-O-O(스피커 갤러리 김ㅇㅇ)님은 이 크레이트와 이 크레이트가 쓰는 `secs-*` 크레이트를 AGPL-3.0-only로 내도록 허락해 주셨습니다(저장소의 `docs/licensing/SECS2-AGPL-PERMISSION.md`).

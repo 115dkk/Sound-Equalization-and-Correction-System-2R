@@ -9,6 +9,7 @@ import { makeClient } from "./client";
 import { createEventBus, type JobEventBus } from "./events";
 import * as fx from "./fixtures";
 import type { ApplyStatus } from "./bindings/ApplyStatus";
+import type { UpdateStatus } from "./bindings/UpdateStatus";
 import type { HostManaged } from "./bindings/HostManaged";
 import type { HostStatus } from "./bindings/HostStatus";
 import type { ErrorCode } from "./bindings/ErrorCode";
@@ -80,12 +81,15 @@ export type MockService = {
   setResults: (results: ResultsSummary) => void;
   /** What `apply_status` answers from now on: a running CamillaDSP, an Equalizer APO install (specimens and tests flip it). */
   setApplyStatus: (status: ApplyStatus) => void;
+  /** Script the updater's next state; requests never contact a release server. */
+  setUpdateStatus: (status: UpdateStatus) => void;
   dispose: () => void;
 };
 type MockOptions = {
   computeStatus?: import("./bindings/ComputeStatus").ComputeStatus; tickMs?: number; project?: ProjectInfo | null; results?: ResultsSummary;
   /** `apply_status` until `setApplyStatus`; CamillaDSP unreachable and no Equalizer APO by default. */
   applyStatus?: ApplyStatus;
+  updateStatus?: UpdateStatus;
   /** The default playback device's rate that 자동 reads when exporting (48000 by default); null when it cannot be read. */
   playbackRate?: number | null;
 };
@@ -245,6 +249,23 @@ const stamp = () => {
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`;
 };
 
+const updateBase: UpdateStatus = { current: fx.bootstrapInfo.version, policy: "auto", phase: { kind: "up_to_date" }, checked_at: "2026-10-30T09:00:00Z", notice: null };
+const updateVersion = "1.2.0";
+const updateUrl = `https://github.com/115dkk/Sound-Equalization-and-Correction-System-2R/releases/tag/v${updateVersion}`;
+const updateNotice = { from: "1.1.0", to: updateVersion, notes: "Update notes", skipped: false, release_url: updateUrl };
+/** Fixed updater specimens. Use setUpdateStatus to advance checking/downloading in tests. */
+export const updateStates = {
+  upToDate: updateBase,
+  downloading: { ...updateBase, phase: { kind: "downloading", version: updateVersion, received: 40, total: 100 } },
+  readyOnExit: { ...updateBase, phase: { kind: "ready", version: updateVersion, install: "on_exit" } },
+  readyOnRequest: { ...updateBase, phase: { kind: "ready", version: updateVersion, install: "on_request" } },
+  available: { ...updateBase, policy: "notify", phase: { kind: "available", version: updateVersion } },
+  portable: { ...updateBase, phase: { kind: "portable", version: updateVersion, url: updateUrl } },
+  failed: { ...updateBase, phase: { kind: "failed", reason: "Could not check for updates" } },
+  notice: { ...updateBase, current: updateVersion, notice: updateNotice },
+  skippedNotice: { ...updateBase, current: updateVersion, notice: { ...updateNotice, from: "1.0.0", skipped: true } },
+} satisfies Record<string, UpdateStatus>;
+
 export function createMockService(options: MockOptions = {}): MockService {
   const tickMs = options.tickMs ?? 450;
   const events = createEventBus();
@@ -263,6 +284,8 @@ export function createMockService(options: MockOptions = {}): MockService {
   let target = clone(fx.target);
   let appSettings = clone(fx.appSettings);
   let applyStatus = clone(options.applyStatus ?? fx.applyStatus);
+  let updateStatus: UpdateStatus = clone(options.updateStatus ?? updateStates.upToDate);
+  appSettings.updates = updateStatus.policy;
   const availableCompute = clone(options.computeStatus ?? fx.computeStatus);
   const computeStatus = () => ({ ...availableCompute, preference: appSettings.compute,
     ...(appSettings.compute === "cpu" ? { selected: "cpu" as const, reason: "user_cpu" as const } :
@@ -1098,10 +1121,41 @@ export function createMockService(options: MockOptions = {}): MockService {
         url: `http://127.0.0.1:${appSettings.local_api.port}`,
         token: "mock-local-api-token", token_path: "C:/Users/demo/AppData/Roaming/SECS2R/local-api-token",
       } };
+      case "update_status": return { method: req.method, data: updateStatus };
+      case "update_check":
+        updateStatus = { ...updateStatus, phase: { kind: "checking" } };
+        return { method: req.method, data: updateStatus };
+      case "update_download": {
+        const phase = updateStatus.phase;
+        if (phase.kind !== "available") return invalid("No update is available to download");
+        updateStatus = { ...updateStatus, phase: { kind: "downloading", version: phase.version, received: 0, total: null } };
+        return { method: req.method, data: updateStatus };
+      }
+      case "update_restart": {
+        const phase = updateStatus.phase;
+        if (phase.kind !== "ready") return invalid("No update is ready to install");
+        updateStatus = { ...updateStatus, phase: { kind: "installing", version: phase.version } };
+        return { method: req.method, data: null };
+      }
+      case "update_notice_dismiss":
+        updateStatus = { ...updateStatus, notice: null };
+        return { method: req.method, data: updateStatus };
+      case "update_open_release":
+        if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z]+(\.[0-9A-Za-z]+)*)?$/.test(req.params.version)) return invalid("Not a release version");
+        return { method: req.method, data: null };
       case "app_settings_get": return { method: req.method, data: appSettings };
       case "app_settings_set": {
         if (req.params.settings.compute === "gpu" && !availableCompute.gpu_available) throw new MockError(ipcError("compute_unavailable"));
         if (req.params.settings.compute !== appSettings.compute && results.mimo) results = { ...results, mimo: { ...results.mimo, stale: true } };
+        if (req.params.settings.updates !== appSettings.updates) {
+          const policy = req.params.settings.updates;
+          const phase = updateStatus.phase;
+          updateStatus = { ...updateStatus, policy, phase: phase.kind === "installing" ? phase
+            : policy === "off" ? { kind: "off" }
+            : policy === "auto" && phase.kind === "available" ? { kind: "downloading", version: phase.version, received: 0, total: null }
+            : policy === "notify" && phase.kind === "downloading" ? { kind: "available", version: phase.version }
+            : phase.kind === "off" ? { kind: "checking" } : phase };
+        }
         appSettings = clone(req.params.settings);
         appSettings.recent_projects = appSettings.recent_projects.slice(0, RECENT_PROJECTS_MAX);
         return { method: req.method, data: appSettings };
@@ -1217,6 +1271,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     tick,
     drain: () => { for (let guard = 0; [...jobs.values()].some((j) => !monitor(j.kind) || j.cancelRequested) && guard < 1000; guard++) tick(); },
     setApplyStatus: (next) => { applyStatus = clone(next); },
+    setUpdateStatus: (next) => { updateStatus = clone(next); appSettings.updates = next.policy; },
     setResults: (next) => {
       results = clone(next);
       calibrationPositions = results.calibration && !results.calibration.cached ? project?.positions.length ?? 0 : null;

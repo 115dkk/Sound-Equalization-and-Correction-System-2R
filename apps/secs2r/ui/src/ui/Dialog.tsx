@@ -7,7 +7,7 @@
 // Actions that clear measurements use confirm-and-undo (U5): the dialog
 // confirms, the action runs, and a toast offers 되돌리기 with the undo token
 // the service returned.
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent, type ReactNode } from "react";
 import { useT } from "../i18n/react";
 import { Button } from "./Button";
 import { Icon } from "./Icon";
@@ -16,6 +16,41 @@ import { Portal } from "./layer";
 import { useToast } from "./Toast";
 
 const FOCUSABLE = 'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/* ── Open confirm dialogs ───────────────────────────────────────────────── */
+// A confirm asks for a decision in the middle of a task (지우기, 관리 끄기).
+// Something that opens on its own (the update notice) waits while one is
+// open instead of covering it. Inline confirms (gallery) do not count.
+
+const openConfirms = new Set<symbol>();
+const confirmListeners = new Set<() => void>();
+const announceConfirms = () => {
+  for (const listener of confirmListeners) listener();
+};
+const subscribeConfirms = (listener: () => void) => {
+  confirmListeners.add(listener);
+  return () => {
+    confirmListeners.delete(listener);
+  };
+};
+
+/** Whether a confirm dialog is open anywhere in the window. */
+export function useConfirmOpen(): boolean {
+  return useSyncExternalStore(subscribeConfirms, () => openConfirms.size > 0, () => false);
+}
+
+function useRegisterConfirm(open: boolean) {
+  useEffect(() => {
+    if (!open) return;
+    const token = Symbol("confirm");
+    openConfirms.add(token);
+    announceConfirms();
+    return () => {
+      openConfirms.delete(token);
+      announceConfirms();
+    };
+  }, [open]);
+}
 
 export function Dialog({
   open,
@@ -27,6 +62,7 @@ export function Dialog({
   id,
   tone,
   inline,
+  above,
 }: {
   open: boolean;
   onClose: () => void;
@@ -38,6 +74,11 @@ export function Dialog({
   tone?: "danger" | undefined;
   /** Render in place without a backdrop (gallery specimens). */
   inline?: boolean | undefined;
+  /**
+   * Stack over the other dialogs whatever order they opened in (the update
+   * notice, which opens on its own at start beside 새 프로젝트).
+   */
+  above?: boolean | undefined;
 }) {
   const t = useT();
   const titleId = useId();
@@ -125,7 +166,7 @@ export function Dialog({
   if (inline) return <div className="ui-dialog-inline">{box}</div>;
   return (
     <Portal>
-      <div className="ui-dialog-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <div className={["ui-dialog-backdrop", above && "ui-dialog-backdrop--above"].filter(Boolean).join(" ")} onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
         {box}
       </div>
     </Portal>
@@ -153,6 +194,7 @@ export function ConfirmDialog({
   inline?: boolean | undefined;
 }) {
   const t = useT();
+  useRegisterConfirm(open && !inline);
   return (
     <Dialog
       open={open}

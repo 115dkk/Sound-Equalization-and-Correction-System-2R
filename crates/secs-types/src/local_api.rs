@@ -153,6 +153,13 @@ const ACCESS: &[(&str, MethodAccess)] = &[
     entry("host_install", true, true),
     entry("host_uninstall", true, true),
     entry("host_stop_managing", false, true),
+    // Installing a release replaces the app; only its own screen asks for it.
+    entry("update_status", false, false),
+    entry("update_check", true, false),
+    entry("update_download", true, true),
+    entry("update_restart", true, true),
+    entry("update_notice_dismiss", true, true),
+    entry("update_open_release", true, false),
     entry("compute_status", false, false),
     entry("open_gpu_help", true, false),
     entry("measurement_curves", false, false),

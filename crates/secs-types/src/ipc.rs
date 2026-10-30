@@ -163,6 +163,18 @@ pub enum Request {
     HostUninstall,
     /// Clears every target persisted by the managed host service.
     HostStopManaging,
+    /// Reports the application update state and the one-time "updated" notice.
+    UpdateStatus,
+    /// Checks for a newer release now, whatever the stored policy.
+    UpdateCheck,
+    /// Downloads the newer release found by the last check.
+    UpdateDownload,
+    /// Installs the downloaded release and starts the new version.
+    UpdateRestart,
+    /// Marks the one-time "updated" notice as shown.
+    UpdateNoticeDismiss,
+    /// Opens one release's page in the system browser.
+    UpdateOpenRelease(UpdateOpenReleaseParams),
     /// Reports the opt-in local API server and token.
     LocalApiStatus,
     /// Replaces the local API bearer token and restarts its server when needed.
@@ -358,6 +370,18 @@ pub enum Response {
     HostUninstall(()),
     /// Confirms that every managed target was cleared.
     HostStopManaging(()),
+    /// Application update state.
+    UpdateStatus(UpdateStatus),
+    /// Update state after the check finished.
+    UpdateCheck(UpdateStatus),
+    /// Update state once the download started.
+    UpdateDownload(UpdateStatus),
+    /// Confirms that installing and restarting started.
+    UpdateRestart(()),
+    /// Update state without the notice.
+    UpdateNoticeDismiss(UpdateStatus),
+    /// Confirms that the release page was handed to the system browser.
+    UpdateOpenRelease(()),
     /// Current local API server and token state.
     LocalApiStatus(LocalApiStatus),
     /// Local API state after replacing its bearer token.
@@ -2357,7 +2381,14 @@ pub enum HostRequest {
     Status,
     SetManaged(HostManaged),
     StopManaging,
-    Log { lines: u32 },
+    Log {
+        lines: u32,
+    },
+    /// Replaces the service with the signed `secs2r-host.exe` next to
+    /// `secs2r-host.json` in `from_dir` (ADR 0020).
+    UpdateSelf {
+        from_dir: String,
+    },
 }
 
 /// One JSON Lines entry from the managed host log.
@@ -2557,6 +2588,9 @@ pub struct AppSettings {
     /// Applying designs to CamillaDSP and Equalizer APO.
     #[serde(default)]
     pub apply: ApplySettings,
+    /// When to look for and install new releases.
+    #[serde(default)]
+    pub updates: UpdatePolicy,
     /// Recently opened project paths, newest first (at most 10).
     pub recent_projects: Vec<String>,
     /// Last window size in logical pixels.
@@ -2572,6 +2606,7 @@ impl Default for AppSettings {
             skin: AppSkin::Default,
             local_api: LocalApiSettings::default(),
             apply: ApplySettings::default(),
+            updates: UpdatePolicy::Auto,
             recent_projects: Vec::new(),
             last_window_size: None,
         }
@@ -2583,6 +2618,123 @@ impl Default for AppSettings {
 pub struct AppSettingsParams {
     /// The complete app settings to store.
     pub settings: AppSettings,
+}
+
+/// When SECS 2R looks for and installs new releases (ADR 0020).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum UpdatePolicy {
+    /// Check, download in the background and install when the app closes.
+    #[default]
+    Auto,
+    /// Check and report a newer release; download only on request.
+    Notify,
+    /// Never contact the release server.
+    Off,
+}
+
+/// When a downloaded release is installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum UpdateInstall {
+    /// When the app closes, or at once with a restart.
+    OnExit,
+    /// Only when the user asks (a package that needs an administrator password).
+    OnRequest,
+}
+
+/// Where the application update stands.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum UpdatePhase {
+    /// The policy is `off`, or this build has no updater.
+    Off,
+    /// No check has finished since the app started.
+    Idle,
+    /// A check is running.
+    Checking,
+    /// The last check found no newer release.
+    UpToDate,
+    /// A newer release waits for a download request (policy `notify`).
+    Available { version: String },
+    /// A newer release is being downloaded.
+    Downloading {
+        version: String,
+        #[ts(type = "number")]
+        received: u64,
+        #[ts(type = "number | null")]
+        total: Option<u64>,
+    },
+    /// A newer release is downloaded and verified.
+    Ready {
+        version: String,
+        install: UpdateInstall,
+    },
+    /// The installer is starting; the app closes next.
+    Installing { version: String },
+    /// A newer release exists, but this portable copy is replaced by hand.
+    Portable { version: String, url: String },
+    /// The last check, download or install failed.
+    Failed { reason: String },
+}
+
+/// Shown once when the app starts a newer version than it ran last time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct UpdateNotice {
+    /// Version that downloaded the update.
+    pub from: String,
+    /// Version now running.
+    pub to: String,
+    /// The release's CHANGELOG section (Markdown).
+    pub notes: String,
+    /// Releases between `from` and `to` were skipped; their notes are only on
+    /// the release page.
+    pub skipped: bool,
+    /// The release page of `to`.
+    pub release_url: String,
+}
+
+/// The release whose page [`Request::UpdateOpenRelease`] opens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct UpdateOpenReleaseParams {
+    /// A release version such as `0.36.0`, without the `v` of its tag.
+    pub version: String,
+}
+
+/// Application update state for the screen.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct UpdateStatus {
+    /// Version now running.
+    pub current: String,
+    /// Stored policy.
+    pub policy: UpdatePolicy,
+    pub phase: UpdatePhase,
+    /// When the last check finished, RFC 3339 UTC.
+    pub checked_at: Option<String>,
+    /// The one-time "updated" notice, until dismissed.
+    pub notice: Option<UpdateNotice>,
+}
+
+/// A downloaded release waiting for its first start: `update.json` in the
+/// app's config folder, written by the app or the host shell and read by the
+/// app on its next start. Not sent over IPC.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PendingUpdate {
+    /// Version that downloaded the update.
+    pub from: String,
+    /// Version that will run after the install.
+    pub to: String,
+    /// The release's CHANGELOG section (Markdown).
+    pub notes: String,
+    /// The release before `to`, from the update manifest's `previous` field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous: Option<String>,
 }
 
 /// App-facing state of the opt-in local API server.
@@ -2863,6 +3015,14 @@ mod tests {
             Request::HostInstall,
             Request::HostUninstall,
             Request::HostStopManaging,
+            Request::UpdateStatus,
+            Request::UpdateCheck,
+            Request::UpdateDownload,
+            Request::UpdateRestart,
+            Request::UpdateNoticeDismiss,
+            Request::UpdateOpenRelease(UpdateOpenReleaseParams {
+                version: "0.36.0".into(),
+            }),
             Request::LocalApiStatus,
             Request::LocalApiTokenRegenerate,
             Request::ComputeStatus,
