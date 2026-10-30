@@ -11,9 +11,19 @@
   const facts = {};
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  async function send(method, params) {
+  function eventChannel(onmessage) {
+    const id = internals.transformCallback((frame) => {
+      const message = frame && typeof frame === "object" && Object.hasOwn(frame, "message")
+        ? frame.message : frame;
+      onmessage(message);
+    });
+    return `__CHANNEL__:${id}`;
+  }
+
+  async function send(method, params, events) {
     const request = params === undefined ? { method } : { method, params };
-    const envelope = await internals.invoke("secs_call", { request });
+    const args = events === undefined ? { request } : { request, events };
+    const envelope = await internals.invoke("secs_call", args);
     if (!envelope.ok) {
       throw new Error(`${method}: ${envelope.error.code}: ${envelope.error.message}`);
     }
@@ -80,9 +90,12 @@
   // The native run is separate from the mock project and never fills default
   // levels. A stored level appears only after the 2.5 s burst was captured and
   // level_check_streaming returned; polling it waits for playback completion.
-  async function audioCall(method, params) {
+  async function audioCall(method, params, events) {
     facts.audio.request = params === undefined ? { method } : { method, params };
-    return call(method, params);
+    const at = Date.now();
+    const data = await send(method, params, events);
+    steps.push({ method, ms: Date.now() - at });
+    return data;
   }
 
   async function stopMonitor(id) {
@@ -137,7 +150,10 @@
     for (const [role, channel] of [["L", 1], ["R", 2]]) {
       await configure(`level_${role}`, channel, [1, 2]);
       await attempts(`level_${role}`, async () => {
-        const { job: id } = await audioCall("level_monitor_start", { role });
+        const monitorEvents = [];
+        const monitorStarted = Date.now();
+        const events = eventChannel((message) => monitorEvents.push({ message, at: Date.now() }));
+        const { job: id } = await audioCall("level_monitor_start", { role }, events);
         // Let the monitor enter its loop before submitting a burst.
         const at = Date.now();
         for (;;) {
@@ -148,6 +164,20 @@
           }
           if (Date.now() - at > 30000) throw new Error("level_monitor_start: not running in 30 s");
           await sleep(100);
+        }
+        if (role === "L") {
+          const deadline = Date.now() + 5000;
+          for (;;) {
+            const meters = monitorEvents.filter(({ message }) => message?.event === "meter" && message.job === id);
+            if (meters.length >= 5) {
+              audio.idle_meter = { events: meters.length, first_ms: meters[0].at - monitorStarted };
+              break;
+            }
+            if (Date.now() >= deadline) {
+              throw new Error(`level_monitor_start: received ${meters.length} idle meter events in 5 s`);
+            }
+            await sleep(25);
+          }
         }
         await audioCall("level_play", { role, master_dbfs: audio.played_dbfs });
         const played = Date.now();
