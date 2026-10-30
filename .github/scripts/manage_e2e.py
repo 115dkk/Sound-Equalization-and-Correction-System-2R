@@ -219,6 +219,12 @@ def check_config_bytes(before, after):
 VIRTUAL_OUTPUT = "CABLE Input (VB-Audio Virtual Cable)"
 
 
+def base_is_processing(rms):
+    """Two channels of the base's -60 dBFS sine (RMS about -63 dB), not silence."""
+    return (isinstance(rms, list) and len(rms) == 2
+            and all(isinstance(value, (int, float)) and -80 < value < -50 for value in rms))
+
+
 def base_config():
     # SignalGenerator is endless and plays, paced by the device, into the
     # runner's VB-CABLE input through shared WASAPI (format F32, as the app
@@ -874,7 +880,12 @@ class Scenario:
             self.handles.append(output)
             self.base = subprocess.Popen([str(self.args.camilla), "-p", "1234", "-a", "127.0.0.1", str(path)],
                                          stdout=output, stderr=subprocess.STDOUT)
-            wait_for("base GetState", lambda: websocket("GetState"), lambda value: value == "Running")
+            # CamillaDSP 4.1.3's SignalGenerator never sets the Running state
+            # (src/generatordevice.rs writes only Inactive), so GetState stays
+            # "Starting" while it plays. It does update the capture signal level
+            # of every chunk: the -60 dBFS sine there proves the base processes.
+            wait_for("base capture signal", lambda: websocket("GetCaptureSignalRms"), base_is_processing)
+            require(websocket("GetState") in {"Running", "Starting"}, "base CamillaDSP is not processing")
             require(self.base.poll() is None, "base CamillaDSP exited; another process may own port 1234")
             require(os.path.normcase(websocket("GetConfigFilePath")) == os.path.normcase(str(path)),
                     "port 1234 does not serve the base configuration")
