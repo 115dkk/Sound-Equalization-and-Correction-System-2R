@@ -1087,11 +1087,15 @@ class Scenario:
             self.shown(ui("host.service") + '[data-state="running"]')
             self.click("host.uninstall")
             self.click("host.uninstall.confirm.confirm")
-            wait_for("service deleted", lambda: command(["sc.exe", "query", "SECS2RHost"], check=False).returncode,
-                     lambda code: code == 1060)
-            wait_for("P3 exited", lambda: process_facts(p3), lambda value: value is None)
-            wait_for("Program Files copy removed", copy.exists, lambda value: not value)
-            wait_for("Run value removed", lambda: registry_value(winreg.HKEY_CURRENT_USER, RUN_KEY, "SECS2RHostShell"), lambda value: value is None)
+            try:
+                wait_for("service deleted", lambda: command(["sc.exe", "query", "SECS2RHost"], check=False).returncode,
+                         lambda code: code == 1060)
+                wait_for("P3 exited", lambda: process_facts(p3), lambda value: value is None)
+                wait_for("Program Files copy removed", copy.exists, lambda value: not value)
+                wait_for("Run value removed", lambda: registry_value(winreg.HKEY_CURRENT_USER, RUN_KEY, "SECS2RHostShell"),
+                         lambda value: value is None)
+            except CheckError as error:
+                raise CheckError(f"{error}; screen: {self.page_problems()}") from None
             self.shown(ui("host.install"))
             record["detail"] = f"SCM 1060; P3={p3} exited; Program Files copy and HKCU Run value absent"
 

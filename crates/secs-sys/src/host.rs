@@ -899,12 +899,15 @@ pub fn unregister_service() -> Result<(), IpcError> {
         }
         Err(error) => return Err(ipc_error(format!("open {SERVICE_NAME}: {error}"))),
     };
-    if service
+    let status = service
         .query_status()
-        .map_err(|error| ipc_error(format!("query {SERVICE_NAME}: {error}")))?
-        .current_state
-        != windows_service::service::ServiceState::Stopped
-    {
+        .map_err(|error| ipc_error(format!("query {SERVICE_NAME}: {error}")))?;
+    // SCM reports Stopped before the process has exited; its executable
+    // cannot be deleted until then.
+    let process = status.process_id.and_then(|pid| {
+        win_custody::Process::open(pid, win_custody::ProcessAccess::Synchronize).ok()
+    });
+    if status.current_state != windows_service::service::ServiceState::Stopped {
         service
             .stop()
             .map_err(|error| ipc_error(format!("stop {SERVICE_NAME}: {error}")))?;
@@ -925,6 +928,9 @@ pub fn unregister_service() -> Result<(), IpcError> {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
+    }
+    if let Some(process) = process {
+        let _ = process.wait(Some(Duration::from_secs(10)));
     }
     service
         .delete()

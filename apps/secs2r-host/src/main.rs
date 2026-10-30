@@ -141,12 +141,25 @@ fn run(cli: Cli) -> Result<(), IpcError> {
             let paths = rules::host_install_paths(&program_files_root()?);
             validate_service_directory_if_present(&paths.directory)?;
             secs_sys::host::unregister_service()?;
-            rules::remove_host_copy(&paths).map_err(|error| {
-                IpcError::new(
-                    ErrorCode::ApplyFailed,
-                    format!("remove {}: {error}", paths.executable.display()),
-                )
-            })
+            // A scanner or the exiting service can hold the file briefly.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            loop {
+                match rules::remove_host_copy(&paths) {
+                    Ok(()) => return Ok(()),
+                    Err(error)
+                        if error.kind() == std::io::ErrorKind::PermissionDenied
+                            && Instant::now() < deadline =>
+                    {
+                        std::thread::sleep(Duration::from_millis(250));
+                    }
+                    Err(error) => {
+                        return Err(IpcError::new(
+                            ErrorCode::ApplyFailed,
+                            format!("remove {}: {error}", paths.executable.display()),
+                        ));
+                    }
+                }
+            }
         }
         Action::Run => {
             let paths = Paths::from_env();
