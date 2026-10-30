@@ -689,9 +689,10 @@ fn takeover_port(port: u16) -> PortTakeover {
                             PortTakeover::Busy("still_open", format!("ended {pid}"))
                         }
                     }
-                    Ok(secs_sys::host::ListenerOutcome::NotFound) => {
-                        PortTakeover::Busy("no_listener", String::new())
-                    }
+                    // The old process closed its listener but is still ending:
+                    // connects then hang instead of being refused. Nothing
+                    // listens, so the new CamillaDSP can bind the port.
+                    Ok(secs_sys::host::ListenerOutcome::NotFound) => PortTakeover::TakenOver,
                     Ok(secs_sys::host::ListenerOutcome::NotCamilla { pid, image }) => {
                         PortTakeover::Busy("other_program", format!("{pid} {image}"))
                     }
