@@ -626,6 +626,16 @@ def desktop_screenshot(path):
                "} finally { $g.Dispose(); $b.Dispose() }")
 
 
+PAGE_PROBLEMS = r"""
+const texts = [];
+for (const node of document.querySelectorAll('[role="alert"], [data-ui$=".problem"], [data-ui$=".reason"], details')) {
+  const text = (node.textContent || '').replace(/\s+/g, ' ').trim();
+  if (text && !texts.includes(text)) texts.push(text);
+}
+return texts.join(' | ').slice(0, 2000);
+"""
+
+
 SETUP_CALL = """
 return window.__TAURI_INTERNALS__.invoke('secs_call', {request: arguments[0]}).then(envelope => {
   if (!envelope.ok) throw new Error(JSON.stringify(envelope.error));
@@ -822,7 +832,7 @@ class Scenario:
             require(result["status"] == "succeeded", f"setup {method}: {result}")
         self.project.parent.mkdir(parents=True, exist_ok=False)
         call("project_new", {"path": str(self.project), "preset": "2.0", "sub_count": 0,
-                             "sample": True, "tutorial": False})
+                             "sample": False, "tutorial": False})
         call("measure_configure", {"method": "mock"})
         job("measure_position", {"position": 1})
         job("calibrate", {"settings": None, "subs_only": False})
@@ -839,9 +849,19 @@ class Scenario:
         wait_for("reload", lambda: self.driver.execute("return performance.timeOrigin;"), lambda value: value != previous)
         self.shown(ui("frame"))
 
+    def page_problems(self):
+        """The screen's error texts, including collapsed details, for a report."""
+        try:
+            return self.driver.execute(PAGE_PROBLEMS)
+        except CheckError as error:
+            return f"(page problems unreadable: {error})"
+
     def gui_apply(self, target, outcome=None):
         self.click(f"export.apply.{target}")
-        element = self.shown(ui(f"export.apply.{target}.outcome") + '[data-outcome]')
+        try:
+            element = self.shown(ui(f"export.apply.{target}.outcome") + '[data-outcome]')
+        except CheckError as error:
+            raise CheckError(f"{error}; screen: {self.page_problems()}") from None
         kind = wait_for(f"GUI apply {target}", lambda: self.driver.attribute(element, "data-outcome"),
                         lambda value: value in {"applied", "handed_over"}, timeout=120)
         if outcome:
