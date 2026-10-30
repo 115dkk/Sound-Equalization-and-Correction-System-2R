@@ -1,0 +1,8 @@
+.
+:!*.md
+:!*.txt
+:!*.rst
+:!docs/**
+:!LICENSE*
+:!.gitignore
+:!.gitattributes
