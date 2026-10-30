@@ -196,6 +196,13 @@ class ConfigTest(unittest.TestCase):
             with self.assertRaisesRegex(m.CheckError, "outside SECS2R"):
                 m.check_config_bytes(before, before.replace(b"-3", b"-2") + pair)
 
+    def test_unterminated_last_line_round_trips(self):
+        # Equalizer APO's default config.txt has no ending after its last line.
+        before = b"Preamp: -6 dB\r\nGraphicEQ: 25 0; 16000 0"
+        after = before + b"\r\n" + m.MARKER + b"\r\n" + m.INCLUDE
+        self.assertEqual(m.remove_managed_lines(after), before)
+        m.check_config_bytes(before, after)
+
     def test_missing_damaged_and_duplicate_pairs_fail(self):
         for data in (b"Preamp: 0 dB\n", m.MARKER + b"\nwrong\n",
                      (m.MARKER + b"\n" + m.INCLUDE + b"\n") * 2):

@@ -198,22 +198,31 @@ def parse_log(text):
 
 
 def remove_managed_lines(data):
-    """Remove only a complete marker pair; preserve all other bytes and newlines."""
+    """Remove only a complete marker pair; preserve all other bytes and newlines.
+
+    An unterminated include ends the file: SECS2R ended the original's last
+    line for the pair, so that line ending goes with it.
+    """
     lines = data.splitlines(keepends=True)
     result = []
     index = 0
     pairs = 0
+    unterminated = False
     while index < len(lines):
         if lines[index].rstrip(b"\r\n") == MARKER:
             require(index + 1 < len(lines) and lines[index + 1].rstrip(b"\r\n") == INCLUDE,
                     "damaged SECS2R marker pair")
+            unterminated = index + 2 == len(lines) and lines[index + 1] == INCLUDE
             index += 2
             pairs += 1
         else:
             result.append(lines[index])
             index += 1
     require(pairs == 1, f"expected one SECS2R marker pair, found {pairs}")
-    return b"".join(result)
+    text = b"".join(result)
+    if unterminated and result:
+        text = text[:-2] if text.endswith(b"\r\n") else text[:-1] if text.endswith(b"\n") else text
+    return text
 
 
 def check_config_bytes(before, after):
