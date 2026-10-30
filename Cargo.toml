@@ -3,7 +3,7 @@ resolver = "3"
 members = ["crates/*", "apps/*"]
 
 [workspace.package]
-version = "0.37.0"
+version = "0.38.0"
 edition = "2024"
 rust-version = "1.99"
 license = "GPL-3.0-only"
@@ -26,21 +26,21 @@ missing_safety_doc = "deny"
 dbg_macro = "deny"
 
 [workspace.dependencies]
-secs-types = { path = "crates/secs-types", version = "=0.6.0" }
-secs-dsp = { path = "crates/secs-dsp", version = "=0.6.0" }
-secs-compute = { path = "crates/secs-compute", version = "=0.6.0" }
-secs-engine = { path = "crates/secs-engine", version = "=0.6.0" }
-secs-jos = { path = "crates/secs-jos", version = "=0.6.0" }
-secs-mdat = { path = "crates/secs-mdat", version = "=0.6.0" }
-secs-project = { path = "crates/secs-project", version = "=0.6.0" }
-secs-dirac = { path = "crates/secs-dirac", version = "=0.6.0" }
-secs-export = { path = "crates/secs-export", version = "=0.6.0" }
-secs-graph = { path = "crates/secs-graph", version = "=0.6.0" }
-secs-camilla = { path = "crates/secs-camilla", version = "=0.6.0" }
-secs-filters = { path = "crates/secs-filters", version = "=0.6.0" }
-secs-rew = { path = "crates/secs-rew", version = "=0.6.0" }
-secs-audio = { path = "crates/secs-audio", version = "=0.6.0" }
-secs-service = { path = "crates/secs-service", version = "=0.6.0" }
+secs-types = { path = "crates/secs-types", version = "=0.7.0" }
+secs-dsp = { path = "crates/secs-dsp", version = "=0.7.0" }
+secs-compute = { path = "crates/secs-compute", version = "=0.7.0" }
+secs-engine = { path = "crates/secs-engine", version = "=0.7.0" }
+secs-jos = { path = "crates/secs-jos", version = "=0.7.0" }
+secs-mdat = { path = "crates/secs-mdat", version = "=0.7.0" }
+secs-project = { path = "crates/secs-project", version = "=0.7.0" }
+secs-dirac = { path = "crates/secs-dirac", version = "=0.7.0" }
+secs-export = { path = "crates/secs-export", version = "=0.7.0" }
+secs-graph = { path = "crates/secs-graph", version = "=0.7.0" }
+secs-camilla = { path = "crates/secs-camilla", version = "=0.7.0" }
+secs-filters = { path = "crates/secs-filters", version = "=0.7.0" }
+secs-rew = { path = "crates/secs-rew", version = "=0.7.0" }
+secs-audio = { path = "crates/secs-audio", version = "=0.7.0" }
+secs-service = { path = "crates/secs-service", version = "=0.7.0" }
 secs-oracle = { path = "crates/secs-oracle" }
 secs-engine-testkit = { path = "crates/secs-engine-testkit" }
 secs-apply = { path = "crates/secs-apply" }
