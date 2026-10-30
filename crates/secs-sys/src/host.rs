@@ -746,7 +746,13 @@ pub fn set_shell_autostart(executable: Option<&Path>) -> Result<(), IpcError> {
                 .map_err(|error| ipc_error(format!("enable host-shell logon start: {error}")))
         }
         None => {
-            let key = match windows_registry::CURRENT_USER.open(RUN_KEY) {
+            // `open` grants read access only, and removing a value needs write.
+            let key = match windows_registry::CURRENT_USER
+                .options()
+                .read()
+                .write()
+                .open(RUN_KEY)
+            {
                 Ok(key) => key,
                 Err(error) if error.code().0 as u32 == ERROR_FILE_NOT_FOUND => return Ok(()),
                 Err(error) => {
