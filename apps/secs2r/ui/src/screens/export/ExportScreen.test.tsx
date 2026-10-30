@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { fireEvent, screen } from "@testing-library/react";
+import { fireEvent, screen, within } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { AppFrame } from "../../app/AppFrame";
@@ -152,6 +152,18 @@ function actions() {
     goToCalibrate: vi.fn<ExportActions["goToCalibrate"]>(),
     goToSystem: vi.fn<ExportActions["goToSystem"]>(),
     recalibrate: vi.fn<ExportActions["recalibrate"]>(),
+    setApplyLevel: vi.fn<ExportActions["setApplyLevel"]>(),
+    setCamillaAddress: vi.fn<ExportActions["setCamillaAddress"]>(),
+    saveCamillaAddress: vi.fn<ExportActions["saveCamillaAddress"]>(),
+    refreshApplyStatus: vi.fn<ExportActions["refreshApplyStatus"]>(),
+    applyCamilla: vi.fn<ExportActions["applyCamilla"]>(),
+    applyEqapo: vi.fn<ExportActions["applyEqapo"]>(),
+    revertEqapo: vi.fn<ExportActions["revertEqapo"]>(),
+    setCamillaExe: vi.fn<ExportActions["setCamillaExe"]>(),
+    saveCamillaExe: vi.fn<ExportActions["saveCamillaExe"]>(),
+    pickCamillaExe: vi.fn<ExportActions["pickCamillaExe"]>(),
+    installHost: vi.fn<ExportActions["installHost"]>(),
+    stopManaging: vi.fn<ExportActions["stopManaging"]>(),
   };
 }
 
@@ -437,15 +449,16 @@ describe("내보내기", () => {
       const { unmount } = renderWith(<Mounted view={view} act={act} />);
       const group = screen.getByRole("radiogroup", { name: "저장할 내용" });
       expect(group).toBe(ui("export.mdat.scope"));
-      expect(screen.getByRole("radio", { checked: true }).textContent).toBe(chosen);
+      // The rows' 적용 choices are radios too: these are the REW mdat's.
+      expect(within(group).getByRole("radio", { checked: true }).textContent).toBe(chosen);
       expect(ui("export.mdat.file")?.textContent).toBe(file);
       // The choice comes first, the file's name last; every option can be chosen while a result exists.
       const row = ui("export.kind.before_after_mdat")!;
       const order = [...row.querySelectorAll("[data-ui='export.mdat.scope'], .export-item__where")];
       expect(order[0]).toBe(group);
       expect(order.at(-1)).toBe(ui("export.mdat.file"));
-      expect(screen.getAllByRole("radio").every((radio) => !(radio as HTMLButtonElement).disabled)).toBe(true);
-      fireEvent.click(screen.getByRole("radio", { name: chosen === "보정 결과만" ? "모두" : "보정 결과만" }));
+      expect(within(group).getAllByRole("radio").every((radio) => !(radio as HTMLButtonElement).disabled)).toBe(true);
+      fireEvent.click(within(group).getByRole("radio", { name: chosen === "보정 결과만" ? "모두" : "보정 결과만" }));
       expect(act.setMdatScope).toHaveBeenLastCalledWith(chosen === "보정 결과만" ? "all" : "results");
       fireEvent.click(ui("export.run.before_after_mdat")!);
       expect(act.exportFiles).toHaveBeenCalledWith("before_after_mdat");
@@ -464,9 +477,9 @@ describe("내보내기", () => {
     const act = actions();
     const { unmount } = renderWith(<Mounted view={exportNoResult} act={act} />);
     const group = ui("export.mdat.scope")!;
-    expect(screen.getByRole("radio", { checked: true }).textContent).toBe("원 측정만");
-    expect((screen.getByRole("radio", { name: "모두" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("radio", { name: "보정 결과만" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(within(group).getByRole("radio", { checked: true }).textContent).toBe("원 측정만");
+    expect((within(group).getByRole("radio", { name: "모두" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((within(group).getByRole("radio", { name: "보정 결과만" }) as HTMLButtonElement).disabled).toBe(true);
     const hint = document.getElementById(`${group.id}-hint`);
     expect(hint?.textContent).toBe("보정 결과가 없어 원 측정만 저장할 수 있습니다.");
     expect(group.getAttribute("aria-describedby")).toContain(hint!.id);
@@ -694,7 +707,7 @@ describe("내보내기", () => {
     expect(ui("export.devices.summary")).toBeNull();
     expect(screen.getByRole("group", { name: "입력 장치" })).toBe(ui("export.devices.capture"));
     expect(screen.getByRole("group", { name: "출력 장치" })).toBe(ui("export.devices.playback"));
-    const panel = ui("export.kind.camilla_dsp")!;
+    const panel = ui("export.kind.camilla_dsp")!.querySelector(".export-devices")!;
     expect([...panel.querySelectorAll("[role='radio'][aria-checked='true']")].map((radio) => radio.textContent)).toEqual(["파일 자리표시", "파일 자리표시"]);
     expect(ui("export.devices.asio_note")).toBeNull();
   });

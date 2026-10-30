@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { translate, type Locale } from "../../i18n";
 import { ipcError } from "../../ipc/mock";
-import { errorText } from "./jobText";
+import { failureText } from "../../screens/export/apply";
+import { JOB_NAME, errorText } from "./jobText";
 
 const cases = [
   { reason: "measurement_sample_rate", params: { position: "3", role: "Tfl", actual_hz: "44100", expected_hz: "48000" }, required: ["position", "role", "actual_hz", "expected_hz"], shown: ["3", "Ltf", "44,100", "48,000"] },
@@ -45,5 +46,30 @@ describe.each(["ko", "en"] as const)("structured calculation errors (%s)", (loca
       expect(words(locale, params).generic).toBe(true);
       expect(words(locale, params).cause).toBe(translate(locale, "error.engine_input"));
     }
+  });
+});
+
+describe.each(["ko", "en"] as const)("적용's job and error codes (%s)", (locale) => {
+  const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) => translate(locale, key, params);
+
+  it("names the apply job in the tray", () => {
+    expect(t(JOB_NAME.apply)).toBe(locale === "ko" ? "보정 적용" : "Apply correction");
+  });
+
+  it.each(["apply_failed", "permission_denied", "unsupported"] as const)("writes %s as a cause and a next step, never the raw text", (code) => {
+    const text = errorText(t, ipcError(code, "Access is denied. (os error 5)", { path: "C:/Program Files/EqualizerAPO/config/SECS2R", target: "equalizer_apo" }));
+    expect(text.generic).toBe(false);
+    expect(text.cause).toBe(t(`error.${code}`));
+    expect(text.next).toBe(t(`error.${code}.next`));
+    expect(`${text.cause} ${text.next}`).not.toMatch(/[{}]|os error|Program Files/);
+  });
+
+  it("writes the row's own words for an apply that failed", () => {
+    const denied = ipcError("permission_denied", "Access is denied. (os error 5)", { path: "C:/Program Files/EqualizerAPO/config/SECS2R" });
+    expect(failureText(t, "eqapo", denied)).toEqual({ cause: t("export.apply.eqapo.permission"), next: t("export.apply.eqapo.permission.next") });
+    expect(failureText(t, "camilla", denied)).toEqual({ cause: t("export.apply.camilla.permission"), next: t("export.apply.camilla.permission.next") });
+    expect(failureText(t, "eqapo", ipcError("unsupported", "Equalizer APO is not installed", { target: "equalizer_apo" })))
+      .toEqual({ cause: t("export.apply.eqapo.not_installed.cause"), next: t("export.apply.eqapo.not_installed.next") });
+    expect(failureText(t, "camilla", ipcError("apply_failed", "connect 127.0.0.1:1234: refused"))).toEqual({ cause: t("error.apply_failed"), next: t("error.apply_failed.next") });
   });
 });

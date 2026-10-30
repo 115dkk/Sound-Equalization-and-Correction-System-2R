@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-host-stop-managing"
+description = "Enables the host_stop_managing command without any pre-configured scope."
+commands.allow = ["host_stop_managing"]
+
+[[permission]]
+identifier = "deny-host-stop-managing"
+description = "Denies the host_stop_managing command without any pre-configured scope."
+commands.deny = ["host_stop_managing"]

@@ -137,7 +137,7 @@ jobs:
       # Built before tauri build: the Windows installer takes the exe as a
       # resource, and collect_bundles.py packs and runs it on every OS. The
       # macOS CLI is one universal binary like the app.
-      - name: Build the CLI
+      - name: Build companion binaries
         shell: bash
         run: |
           if [ "${{ matrix.target }}" = "universal-apple-darwin" ]; then
@@ -150,6 +150,9 @@ jobs:
           else
             cargo build --release --locked -p secs2r-cli
           fi
+          if [ "${{ matrix.name }}" = "windows" ]; then
+            cargo build --release --locked -p secs2r-host
+          fi
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -158,6 +161,11 @@ jobs:
       - name: npm ci
         working-directory: apps/secs2r/ui
         run: npm ci --no-audit --no-fund
+
+      - name: Build the host shell
+        if: runner.os == 'Windows'
+        working-directory: apps/secs2r-host-shell
+        run: node ../secs2r/ui/node_modules/@tauri-apps/cli/tauri.js build --ci --no-bundle
 
       - name: tauri build
         working-directory: apps/secs2r
@@ -168,7 +176,7 @@ jobs:
           # The installer puts the CLI next to "SECS 2R.exe". Only here, not
           # in tauri.conf.json, so a local tauri dev or build needs no CLI.
           if [ "${{ matrix.name }}" = "windows" ]; then
-            args+=(--config '{"bundle":{"resources":{"../../target/release/secs2r-cli.exe":"secs2r-cli.exe"}}}')
+            args+=(--config '{"bundle":{"resources":{"../../target/release/secs2r-cli.exe":"secs2r-cli.exe","../../target/release/secs2r-host.exe":"secs2r-host.exe","../../target/release/secs2r-host-shell.exe":"secs2r-host-shell.exe"}}}')
           fi
           node ui/node_modules/@tauri-apps/cli/tauri.js "${args[@]}"
 
@@ -188,7 +196,8 @@ jobs:
 
       - name: Collect installers
         shell: bash
-        run: python .github/scripts/collect_bundles.py --name "${{ matrix.name }}" --target "${{ matrix.target }}" --version "${{ needs.gate.outputs.version }}" --out dist
+        run: |
+          python .github/scripts/collect_bundles.py --name "${{ matrix.name }}" --target "${{ matrix.target }}" --version "${{ needs.gate.outputs.version }}" --out dist
 
       - name: Prepare macOS playback and recording
         if: runner.os == 'macOS'

@@ -90,6 +90,7 @@ fn host_requests_forward_parameters_and_cancellation() {
         Some("exports"),
         Some("patch.csv"),
         None,
+        None,
     ]));
     let service = Service::new(Deps {
         host: host.clone(),
@@ -132,6 +133,16 @@ fn host_requests_forward_parameters_and_cancellation() {
         .unwrap(),
         Response::DialogOpenFile(None)
     );
+    assert_eq!(
+        call(
+            &service,
+            Request::DialogOpenFile(DialogOpenFileParams {
+                kind: OpenFileKind::CamillaExe,
+            }),
+        )
+        .unwrap(),
+        Response::DialogOpenFile(None)
+    );
     // open_folder makes a missing folder first (upstream `_open_folder`).
     let exports = std::env::temp_dir().join(format!("secs-host-{}/exports", std::process::id()));
     let _ = std::fs::remove_dir_all(exports.parent().unwrap());
@@ -153,6 +164,7 @@ fn host_requests_forward_parameters_and_cancellation() {
             "pick_folder:/start",
             "save_file:PatchSheet:sheet.csv",
             "open_file:Target",
+            "open_file:CamillaExe",
             format!("open_folder:{}", exports.display()).as_str(),
         ]
     );

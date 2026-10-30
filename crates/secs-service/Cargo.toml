@@ -38,7 +38,9 @@ thiserror.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
+secs-apply.workspace = true
 secs-dirac = { workspace = true, features = ["test-support"] }
 secs-engine-testkit.workspace = true
 secs-jos.workspace = true
 secs-oracle.workspace = true
+tungstenite.workspace = true

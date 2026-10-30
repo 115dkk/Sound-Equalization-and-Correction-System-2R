@@ -43,6 +43,7 @@ secs-audio = { path = "crates/secs-audio", version = "=0.4.1" }
 secs-service = { path = "crates/secs-service", version = "=0.4.1" }
 secs-oracle = { path = "crates/secs-oracle" }
 secs-engine-testkit = { path = "crates/secs-engine-testkit" }
+secs-apply = { path = "crates/secs-apply" }
 
 axum = { version = "0.8.9", features = ["ws"] }
 tokio = { version = "1.54.1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
@@ -50,8 +51,8 @@ serde = { version = "1.0.229", features = ["derive"] }
 # preserve_order: .secs files keep the key order SECS 2 wrote (docs/adr/0004).
 serde_json = { version = "1.0.152", features = ["preserve_order", "float_roundtrip"] }
 thiserror = "2.0.21"
-ureq = { version = "3.4.2", default-features = false }
 tungstenite = { version = "0.30.0", default-features = false, features = ["handshake"] }
+ureq = { version = "3.4.2", default-features = false }
 base64 = "0.22.1"
 toml = "1.1.8"
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }

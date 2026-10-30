@@ -20,13 +20,17 @@ missing_safety_doc = "deny"
 dbg_macro = "deny"
 
 [dependencies]
+secs-apply.workspace = true
 secs-audio.workspace = true
 secs-rew.workspace = true
 secs-compute.workspace = true
+secs-types.workspace = true
 sysinfo.workspace = true
 chrono.workspace = true
 raw-window-handle = "0.6"
 thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 
 [target.'cfg(not(target_os = "windows"))'.dependencies]
 cpal = "0.18"
@@ -34,4 +38,9 @@ cpal = "0.18"
 [target.'cfg(target_os = "windows")'.dependencies]
 wasapi = "0.25"
 audio_thread_priority = { version = "0.37.0", default-features = false }
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_UI_WindowsAndMessaging"] }
+windows-registry = "0.100.0"
+windows-service = "0.8.1"
+win-custody = "0.1.2"
+notify = "8.2.1"
+runas = "1.2.0"

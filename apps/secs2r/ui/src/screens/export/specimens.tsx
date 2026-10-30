@@ -1,6 +1,8 @@
 // 내보내기 in each state, 1280×800 through FrameBox, plus the densest state
 // at 1024×700. The filter formats' scope (text: RC only; Equalizer APO: RC
 // and BA) shows on the results with subs, with MIMO, and with RC alone.
+// 적용 (ADR 0018) shows each CamillaDSP and Equalizer APO state under its row,
+// and 관리 the SECS 2R Host service's states in the same rows.
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { PrefsScope, usePrefs } from "../../app/prefs";
 import { initialLedger, type LedgerState } from "../../state/jobLedger";
@@ -8,7 +10,28 @@ import { FrameBox, T0, replay } from "../../gallery/frameSpecimens";
 import type { SpecimenDef } from "../../gallery/Specimen";
 import { useT } from "../../i18n/react";
 import { ExportScreen, exportHeader } from "./ExportScreen";
+import { StopManagingConfirm } from "../../host/parts";
+import { RevertConfirm } from "./apply";
 import {
+  applyCamillaApplied,
+  applyCamillaApplying,
+  applyCamillaBadAddress,
+  applyCamillaChecking,
+  applyCamillaOther,
+  applyCamillaPlaceholders,
+  applyCamillaRemote,
+  applyCamillaRolledBack,
+  applyCamillaThis,
+  applyCamillaUnreachable,
+  applyEqapoAbsent,
+  applyEqapoDamaged,
+  applyEqapoDenied,
+  applyEqapoMissing,
+  applyEqapoNotWindows,
+  applyEqapoOfficialUnknown,
+  applyEqapoOther,
+  applyEqapoPresent,
+  applyEqapoReverted,
   DESIGN_NAME_SAMPLES,
   exportComputingFirst,
   exportConvolutionDone,
@@ -40,6 +63,15 @@ import {
   exportStaleCache,
   exportStaleCacheMeasurements,
   exportTutorial,
+  manageCamillaGivenUp,
+  manageCamillaInstalling,
+  manageCamillaNoExe,
+  manageCamillaNotInstalled,
+  manageCamillaOtherUser,
+  manageCamillaRestarting,
+  manageCamillaRunning,
+  manageEqapoRepaired,
+  manageNotWindows,
 } from "./fixtures";
 import type { DesignNameProblem, ExportActions, ExportView } from "./types";
 
@@ -55,6 +87,18 @@ export const noopExportActions: ExportActions = {
   goToCalibrate: () => {},
   goToSystem: () => {},
   recalibrate: () => {},
+  setApplyLevel: () => {},
+  setCamillaAddress: () => {},
+  saveCamillaAddress: () => {},
+  refreshApplyStatus: () => {},
+  applyCamilla: () => {},
+  applyEqapo: () => {},
+  revertEqapo: () => {},
+  setCamillaExe: () => {},
+  saveCamillaExe: () => {},
+  pickCamillaExe: () => {},
+  installHost: () => {},
+  stopManaging: () => {},
 };
 
 const NAME_PROBLEMS = Object.keys(DESIGN_NAME_SAMPLES) as DesignNameProblem[];
@@ -64,6 +108,13 @@ const exportJob = replay([{ type: "event", at: T0, event: { event: "started", jo
 const calibrateJob = replay([
   { type: "event", at: T0, event: { event: "started", job: 11, kind: "calibrate" } },
   { type: "event", at: T0 + 2000, event: { event: "progress", job: 11, stage: "engine.design", done: 4, total: 11 } },
+]);
+
+const applyJob = replay([{ type: "event", at: T0, event: { event: "started", job: 14, kind: "apply" } }]);
+
+const applyHistory = replay([
+  { type: "event", at: T0, event: { event: "started", job: 14, kind: "apply" } },
+  { type: "event", at: T0 + 2000, event: { event: "finished", job: 14, status: "succeeded", result: null, error: null } },
 ]);
 
 const exportHistory = replay([
@@ -129,6 +180,24 @@ function ExportSpecimen({
       </FrameBox>
       {children}
     </>
+  );
+}
+
+/** 빼기's confirm as it opens over the screen (drawn in place so other specimens stay uncovered). */
+function RevertOverlay() {
+  return (
+    <div style={{ position: "absolute", inset: 0, zIndex: "var(--z-dialog)", display: "grid", placeItems: "center", background: "var(--scrim)" }}>
+      <RevertConfirm inline open onClose={() => {}} onConfirm={() => {}} />
+    </div>
+  );
+}
+
+/** 관리 끄기's confirm as it opens over the screen, for what the view's service manages. */
+function StopOverlay({ view }: { view: ExportView }) {
+  return (
+    <div style={{ position: "absolute", inset: 0, zIndex: "var(--z-dialog)", display: "grid", placeItems: "center", background: "var(--scrim)" }}>
+      <StopManagingConfirm id="export.manage.camilla.stop.confirm" inline open host={view.apply.host.status} onClose={() => {}} onConfirm={() => {}} />
+    </div>
   );
 }
 
@@ -239,6 +308,101 @@ export const exportSpecimens: SpecimenDef[] = [
     <TutorialAccent>
       <ExportSpecimen view={exportTutorial} fileName="튜토리얼.secs" />
     </TutorialAccent>
+  )),
+  frame("screen.export.apply.camilla.files", "Apply · CamillaDSP 파일만 (the default): the choice under its devices, the header's primary exports", () => (
+    <ExportSpecimen view={exportReady} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.apply.camilla.placeholders", "Apply · CamillaDSP 적용 with file placeholders: the row says to choose devices", () => (
+    <ExportSpecimen view={applyCamillaPlaceholders} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.apply.camilla.checking", "Apply · CamillaDSP 적용, the status being read", () => (
+    <ExportSpecimen view={applyCamillaChecking} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.apply.camilla.unreachable", "Apply · CamillaDSP 적용, nothing at 127.0.0.1:1234: why, what to check, the raw text behind 자세히; the header's primary applies, the row keeps its export", () => (
+    <ExportSpecimen view={applyCamillaUnreachable} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.apply.camilla.this", "Apply · CamillaDSP 4.1.3 processing this design", () => <ExportSpecimen view={applyCamillaThis} scrolled="export.kind.camilla_dsp" />),
+  frame("screen.export.apply.camilla.other", "Apply · CamillaDSP running another design (its title) with 1,204 clipped samples", () => (
+    <ExportSpecimen view={applyCamillaOther} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.apply.camilla.applying", "Apply · CamillaDSP에 적용 running: the header's primary busy, every export off, the tray shows the job", () => (
+    <ExportSpecimen view={applyCamillaApplying} jobs={applyJob} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.apply.camilla.applied", "Apply · applied to CamillaDSP, now running this design", () => (
+    <ExportSpecimen view={applyCamillaApplied} jobs={applyHistory} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.apply.camilla.rolled-back", "Apply · CamillaDSP refused the new configuration and went back: its error in sight", () => (
+    <ExportSpecimen view={applyCamillaRolledBack} jobs={applyHistory} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.apply.camilla.address", "Apply · an address without a port: the field says why, the header's primary is off", () => (
+    <ExportSpecimen view={applyCamillaBadAddress} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.apply.camilla.remote", "Apply · CamillaDSP on another computer: the one-line note under the address", () => (
+    <ExportSpecimen view={applyCamillaRemote} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.apply.eqapo.not-windows", "Apply · not Windows: Equalizer APO's 적용 off with the reason", () => (
+    <ExportSpecimen view={applyEqapoNotWindows} scrolled="export.kind.equalizer_apo" />
+  )),
+  frame("screen.export.apply.eqapo.missing", "Apply · Equalizer APO not installed: 적용 stays chosen, its button off with the reason", () => (
+    <ExportSpecimen view={applyEqapoMissing} scrolled="export.kind.equalizer_apo" />
+  )),
+  frame("screen.export.apply.eqapo.absent", "Apply · Equalizer APO XT installed, SECS 2R's line absent: what 적용 does to config.txt", () => (
+    <ExportSpecimen view={applyEqapoAbsent} scrolled="export.kind.equalizer_apo" />
+  )),
+  frame("screen.export.apply.eqapo.present", "Apply · the line present with this design, the quiet config.txt에서 빼기 after it", () => (
+    <ExportSpecimen view={applyEqapoPresent} jobs={applyHistory} scrolled="export.kind.equalizer_apo" />
+  )),
+  frame("screen.export.apply.eqapo.other", "Apply · the line present with another design (CamillaDSP runs this one)", () => (
+    <ExportSpecimen view={applyEqapoOther} scrolled="export.kind.equalizer_apo" />
+  )),
+  frame("screen.export.apply.eqapo.official", "Apply · the official edition, a design whose match is not known yet", () => (
+    <ExportSpecimen view={applyEqapoOfficialUnknown} scrolled="export.kind.equalizer_apo" />
+  )),
+  frame("screen.export.apply.eqapo.damaged", "Apply · one of SECS 2R's two lines edited by hand: 적용 repairs them", () => (
+    <ExportSpecimen view={applyEqapoDamaged} scrolled="export.kind.equalizer_apo" />
+  )),
+  frame("screen.export.apply.eqapo.denied", "Apply · no write access to the config folder: the folder, and that it needs write access", () => (
+    <ExportSpecimen view={applyEqapoDenied} scrolled="export.kind.equalizer_apo" />
+  )),
+  frame("screen.export.apply.eqapo.reverted", "Apply · SECS 2R's line taken out of config.txt", () => (
+    <ExportSpecimen view={applyEqapoReverted} scrolled="export.kind.equalizer_apo" />
+  )),
+  frame("screen.export.apply.eqapo.revert-confirm", "Apply · config.txt에서 빼기 asks in one sentence", () => (
+    <ExportSpecimen view={applyEqapoPresent} scrolled="export.kind.equalizer_apo">
+      <RevertOverlay />
+    </ExportSpecimen>
+  )),
+  frame("screen.export.manage.camilla.no-exe", "Manage · CamillaDSP 관리 without camilladsp.exe: the field says so, the header's primary is off", () => (
+    <ExportSpecimen view={manageCamillaNoExe} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.manage.camilla.not-installed", "Manage · the service not installed: why it is needed, 서비스 설치, Windows asks once", () => (
+    <ExportSpecimen view={manageCamillaNotInstalled} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.manage.camilla.installing", "Manage · 서비스 설치 waiting for Windows's administrator approval", () => (
+    <ExportSpecimen view={manageCamillaInstalling} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.manage.camilla.running", "Manage · the service runs CamillaDSP (PID 4812) with this design, the quiet 관리 끄기 after it", () => (
+    <ExportSpecimen view={manageCamillaRunning} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.manage.camilla.restarting", "Manage · CamillaDSP stopped, the service restarts it at a stated time (restart 2 within 5 minutes)", () => (
+    <ExportSpecimen view={manageCamillaRestarting} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.manage.camilla.given-up", "Manage · CamillaDSP kept stopping, the service no longer restarts it: what to do, the reason behind 자세히", () => (
+    <ExportSpecimen view={manageCamillaGivenUp} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.manage.camilla.other-user", "Manage · another user at the console: the service waits for the user who started managing", () => (
+    <ExportSpecimen view={manageCamillaOtherUser} scrolled="export.kind.camilla_dsp" />
+  )),
+  frame("screen.export.manage.eqapo.repaired", "Manage · Equalizer APO's line repair on, SECS 2R's line put back 2 minutes ago", () => (
+    <ExportSpecimen view={manageEqapoRepaired} scrolled="export.kind.equalizer_apo" />
+  )),
+  frame("screen.export.manage.stop-confirm", "Manage · 관리 끄기 asks in one sentence (both targets managed)", () => (
+    <ExportSpecimen view={manageCamillaRunning} scrolled="export.kind.camilla_dsp">
+      <StopOverlay view={manageCamillaRunning} />
+    </ExportSpecimen>
+  )),
+  frame("screen.export.manage.not-windows", "Manage · not Windows: 관리 off with the reason in both rows, CamillaDSP on 적용", () => (
+    <ExportSpecimen view={manageNotWindows} scrolled="export.kind.camilla_dsp" />
   )),
   frame("screen.export.done.min", "Export · done, 고급 open, scrolled to the end, smallest window (1024 × 700)", () => <ExportSpecimen view={exportDone} jobs={exportHistory} initialAdvanced scrolled />, { width: 1024, height: 700 }),
   frame("screen.export.failed.min", "Export · failed from the header, smallest window (1024 × 700): the outcome scrolls into view", () => <AfterRun from={exportReady} to={exportFailed} />, { width: 1024, height: 700 }),

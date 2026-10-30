@@ -138,6 +138,18 @@ pub(crate) fn dispatch(
         Request::AppSettingsSet(params) => service
             .app_settings_set(params)
             .map(Response::AppSettingsSet),
+        Request::ApplyStatus => Ok(Response::ApplyStatus(service.apply_status())),
+        Request::ApplyCamilla(params) => service
+            .start_apply_camilla(params, events)
+            .map(Response::ApplyCamilla),
+        Request::ApplyEqapo => service.start_apply_eqapo(events).map(Response::ApplyEqapo),
+        Request::RevertEqapo => service.revert_eqapo().map(Response::RevertEqapo),
+        Request::ApplySettingsSet(settings) => service
+            .apply_settings_set(settings)
+            .map(Response::ApplySettingsSet),
+        Request::HostInstall => service.host_install().map(Response::HostInstall),
+        Request::HostUninstall => service.host_uninstall().map(Response::HostUninstall),
+        Request::HostStopManaging => service.host_stop_managing().map(Response::HostStopManaging),
         Request::LocalApiStatus => service
             .deps
             .host

@@ -147,6 +147,22 @@ pub enum Request {
     AppSettingsGet,
     /// Stores application-local settings.
     AppSettingsSet(AppSettingsParams),
+    /// Reads CamillaDSP and Equalizer APO application state.
+    ApplyStatus,
+    /// Exports and applies the current design to CamillaDSP.
+    ApplyCamilla(ApplyCamillaParams),
+    /// Exports and applies the current design to Equalizer APO.
+    ApplyEqapo,
+    /// Removes SECS 2R's managed Equalizer APO include.
+    RevertEqapo,
+    /// Validates and stores application settings for both apply targets.
+    ApplySettingsSet(ApplySettings),
+    /// Installs the Windows managed host service with an elevation prompt.
+    HostInstall,
+    /// Stops and removes the Windows managed host service with an elevation prompt.
+    HostUninstall,
+    /// Clears every target persisted by the managed host service.
+    HostStopManaging,
     /// Reports the opt-in local API server and token.
     LocalApiStatus,
     /// Replaces the local API bearer token and restarts its server when needed.
@@ -326,6 +342,22 @@ pub enum Response {
     AppSettingsGet(AppSettings),
     /// The `AppSettingsSet` Response variant.
     AppSettingsSet(AppSettings),
+    /// Current state of both application targets.
+    ApplyStatus(ApplyStatus),
+    /// The CamillaDSP application job.
+    ApplyCamilla(JobStarted),
+    /// The Equalizer APO application job.
+    ApplyEqapo(JobStarted),
+    /// Confirms removal of the managed Equalizer APO include.
+    RevertEqapo(()),
+    /// Stored application settings for both targets.
+    ApplySettingsSet(ApplySettings),
+    /// Confirms that the Windows managed host service installer was started.
+    HostInstall(()),
+    /// Confirms that the Windows managed host service uninstaller was started.
+    HostUninstall(()),
+    /// Confirms that every managed target was cleared.
+    HostStopManaging(()),
     /// Current local API server and token state.
     LocalApiStatus(LocalApiStatus),
     /// Local API state after replacing its bearer token.
@@ -741,6 +773,8 @@ pub enum JobKind {
     Mimo,
     /// Writes one selected export bundle.
     Export,
+    /// Exports and applies the current design to a running target.
+    Apply,
     /// Streams microphone levels and controls level-check playback.
     LevelMonitor,
     /// Watches measurement-method status changes.
@@ -864,6 +898,8 @@ pub enum JobResult {
     Mimo,
     /// Paths written by an exporter.
     Export(ExportResult),
+    /// A design applied to CamillaDSP or Equalizer APO.
+    Apply(ApplyResult),
     /// Project state after a completed measurement.
     Measurement(ProjectInfo),
     /// Project state after an mdat import.
@@ -1368,6 +1404,8 @@ pub enum OpenFileKind {
     Target,
     /// Microphone response calibration text (`.txt`, `.cal` or `.frd`).
     MicCalibration,
+    /// CamillaDSP executable selected for managed launching.
+    CamillaExe,
 }
 /// Typed open-file dialog parameters.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -2142,6 +2180,330 @@ impl Default for LocalApiSettings {
     }
 }
 
+/// How far SECS 2R controls one application target.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ApplyLevel {
+    /// Only write ordinary export files.
+    #[default]
+    Files,
+    /// Apply on explicit request while the app is running.
+    Apply,
+    /// Keep the applied design active through the managed service.
+    Manage,
+}
+
+/// CamillaDSP application settings.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CamillaApply {
+    /// Selected control level.
+    pub level: ApplyLevel,
+    /// Plain websocket address in `host:port` form.
+    pub address: String,
+    /// CamillaDSP executable selected by the user for managed operation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub exe_path: Option<String>,
+}
+impl Default for CamillaApply {
+    fn default() -> Self {
+        Self {
+            level: ApplyLevel::Files,
+            address: "127.0.0.1:1234".into(),
+            exe_path: None,
+        }
+    }
+}
+
+/// Equalizer APO application settings.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct EqApoApply {
+    /// Selected control level.
+    pub level: ApplyLevel,
+}
+
+/// Settings for applying designs to external processors.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ApplySettings {
+    /// CamillaDSP settings.
+    pub camilla: CamillaApply,
+    /// Equalizer APO settings.
+    pub eqapo: EqApoApply,
+}
+
+/// Optional device choices for a CamillaDSP application export.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ApplyCamillaParams {
+    /// Capture and playback choices; absent keeps file placeholders.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub camilla_devices: Option<CamillaDevices>,
+}
+
+/// Equalizer APO edition detected from its installed path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum EqApoVariant {
+    /// The SourceForge Equalizer APO release.
+    Official,
+    /// EqualizerAPO-XT.
+    Xt,
+    /// An installation whose path does not identify either edition.
+    Unknown,
+}
+
+/// Equalizer APO installation values supplied by the operating-system adapter.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EqApoInstall {
+    /// Equalizer APO configuration directory.
+    pub config_path: String,
+    /// Equalizer APO installation directory.
+    pub install_path: String,
+    /// Detected edition.
+    pub variant: EqApoVariant,
+}
+
+/// State of SECS 2R's managed lines in Equalizer APO's `config.txt`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum IncludeState {
+    /// No managed marker exists.
+    Absent,
+    /// The marker and include line form one intact pair.
+    Present,
+    /// A marker exists without exactly one intact include pair.
+    Damaged,
+}
+
+/// One CamillaDSP process kept running by the host service.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ManagedCamilla {
+    pub exe_path: String,
+    pub config_path: String,
+    pub port: u16,
+    pub design_id: String,
+}
+
+/// One Equalizer APO include kept intact by the host service.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ManagedEqApo {
+    pub config_path: String,
+    pub design_id: String,
+}
+
+/// Targets persisted by the host service.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct HostManaged {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub camilla: Option<ManagedCamilla>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub eqapo: Option<ManagedEqApo>,
+    /// Interactive session that selected these targets.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(skip)]
+    pub owner_session_id: Option<u32>,
+    /// Stable SID bytes of that session's user token.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(skip)]
+    pub owner_user_sid: Option<String>,
+}
+
+/// A request sent over the local managed-host pipe.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "method", content = "params", rename_all = "snake_case")]
+#[ts(export)]
+pub enum HostRequest {
+    Status,
+    SetManaged(HostManaged),
+    StopManaging,
+    Log { lines: u32 },
+}
+
+/// One JSON Lines entry from the managed host log.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct HostLogLine {
+    /// UTC timestamp in RFC 3339 form.
+    pub timestamp: String,
+    /// Stable machine-readable event name.
+    pub event: String,
+    /// Event-specific string values such as a PID, path, or reason.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub fields: BTreeMap<String, String>,
+}
+
+/// Why a managed CamillaDSP process is not simply running.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum ManagedProcessState {
+    Running,
+    BackingOff { until: String },
+    GivenUp { reason: String },
+    Stopped,
+    NoSession,
+    OtherUser,
+}
+
+/// Current CamillaDSP supervision state.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ManagedProcess {
+    pub state: ManagedProcessState,
+    #[ts(type = "number | null")]
+    pub pid: Option<u32>,
+    pub restarts_in_window: u32,
+}
+
+impl Default for ManagedProcess {
+    fn default() -> Self {
+        Self {
+            state: ManagedProcessState::Stopped,
+            pid: None,
+            restarts_in_window: 0,
+        }
+    }
+}
+
+/// Status returned by the managed host service.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct HostStatus {
+    pub version: String,
+    pub managed: HostManaged,
+    pub camilla: ManagedProcess,
+    pub eqapo_include: IncludeState,
+    pub last_repair: Option<String>,
+}
+
+/// One response returned over the local managed-host pipe.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", content = "data", rename_all = "snake_case")]
+#[ts(export)]
+pub enum HostResponse {
+    Status(Box<HostStatus>),
+    Ok,
+    Log(Vec<HostLogLine>),
+    Error(IpcError),
+}
+
+/// Windows service state visible to the app before a pipe call.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum ServiceState {
+    #[default]
+    NotInstalled,
+    Stopped,
+    Running,
+    Unreachable,
+}
+
+/// How the running CamillaDSP configuration compares with the current result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum DesignMatch {
+    /// The title and embedded identity match the current design.
+    This { design_id: String },
+    /// CamillaDSP runs another titled configuration.
+    Other { title: String },
+    /// There is not enough information to identify the running design.
+    Unknown,
+}
+
+/// CamillaDSP status mirrored from the platform-neutral application client.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CamillaStatus {
+    pub version: String,
+    pub state: String,
+    pub stop_reason: Option<String>,
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub config_path: Option<String>,
+    pub capture_rate: Option<u32>,
+    #[ts(type = "number | null")]
+    pub clipped_samples: Option<u64>,
+    pub processing_load_pct: Option<f64>,
+    pub playback_peak_db: Option<Vec<f64>>,
+}
+
+/// Reachability and running design reported by CamillaDSP.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CamillaApplyStatus {
+    pub reachable: bool,
+    pub error: Option<IpcError>,
+    pub status: Option<CamillaStatus>,
+    pub design: DesignMatch,
+}
+
+/// Installed and applied state of Equalizer APO.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct EqApoApplyStatus {
+    pub installed: bool,
+    pub variant: EqApoVariant,
+    pub config_path: Option<String>,
+    pub include: IncludeState,
+    pub applied_design_id: Option<String>,
+}
+
+/// Current state of both application targets.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ApplyStatus {
+    pub camilla: CamillaApplyStatus,
+    pub eqapo: EqApoApplyStatus,
+    /// Windows managed-host service state.
+    #[serde(default)]
+    pub host: ServiceState,
+    /// Detailed host state when the service is running and reachable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub host_status: Option<Box<HostStatus>>,
+    /// Design ID of the current result, absent without one; the screen
+    /// compares Equalizer APO's `applied_design_id` with it.
+    #[serde(default)]
+    pub current_design_id: Option<String>,
+}
+
+/// Result of applying an exported design.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+#[ts(export)]
+pub enum ApplyOutcome {
+    /// The target accepted the design.
+    Applied,
+    /// No CamillaDSP was running; the managed host will start it with the design.
+    HandedOver,
+    /// CamillaDSP rejected reload and the previous path was restored.
+    RolledBack { error: IpcError },
+}
+
+/// Completed application job result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ApplyResult {
+    pub outcome: ApplyOutcome,
+    pub design_id: String,
+    pub folder: String,
+    pub stale: bool,
+}
+
 /// Application-local settings, independent of an open project.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -2163,6 +2525,9 @@ pub struct AppSettings {
     /// Opt-in loopback API server.
     #[serde(default)]
     pub local_api: LocalApiSettings,
+    /// Applying designs to CamillaDSP and Equalizer APO.
+    #[serde(default)]
+    pub apply: ApplySettings,
     /// Recently opened project paths, newest first (at most 10).
     pub recent_projects: Vec<String>,
     /// Last window size in logical pixels.
@@ -2177,6 +2542,7 @@ impl Default for AppSettings {
             icon: AppIcon::Expert,
             skin: AppSkin::Default,
             local_api: LocalApiSettings::default(),
+            apply: ApplySettings::default(),
             recent_projects: Vec::new(),
             last_window_size: None,
         }
@@ -2224,6 +2590,12 @@ pub enum ErrorCode {
     NotImplemented,
     /// The method opens a window or program and is unavailable to local API clients.
     UiOnly,
+    /// The selected operation or control level is unavailable on this host.
+    Unsupported,
+    /// A target file could not be changed because access was denied.
+    PermissionDenied,
+    /// CamillaDSP or Equalizer APO refused or failed an application request.
+    ApplyFailed,
     /// The call requires an open project.
     ProjectNotOpen,
     /// Opening, reading, or writing project data failed.
@@ -2454,6 +2826,14 @@ mod tests {
             Request::AppSettingsSet(AppSettingsParams {
                 settings: AppSettings::default(),
             }),
+            Request::ApplyStatus,
+            Request::ApplyCamilla(ApplyCamillaParams::default()),
+            Request::ApplyEqapo,
+            Request::RevertEqapo,
+            Request::ApplySettingsSet(ApplySettings::default()),
+            Request::HostInstall,
+            Request::HostUninstall,
+            Request::HostStopManaging,
             Request::LocalApiStatus,
             Request::LocalApiTokenRegenerate,
             Request::ComputeStatus,

@@ -15,6 +15,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+mod apply;
 mod host;
 mod icon;
 mod local_api;
@@ -131,6 +132,10 @@ fn main() {
                     secs_sys::clock::utc_offset_seconds(SystemTime::now())
                 }),
                 app_settings_path: Some(config_dir.join("settings.json")),
+                app_data_path: config_dir.clone(),
+                eqapo_install: Arc::new(secs_sys::eqapo_install),
+                apply: Arc::new(apply::NativeApply),
+                managed_host: Arc::new(apply::NativeManagedHost),
                 ..Deps::default()
             }));
             let local_api = local_api::Manager::new(config_dir, service.clone(), hub, handle);

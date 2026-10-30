@@ -19,14 +19,191 @@
 //! adapters into the seams of `secs-audio` and `secs-compute`.
 
 pub mod clock;
+pub mod host;
 pub mod memory;
 pub mod process;
 pub mod rew;
 #[cfg(target_os = "windows")]
 mod taskbar;
 
+use std::path::Path;
+use std::time::Duration;
+
 use raw_window_handle::HasWindowHandle;
+#[cfg(any(target_os = "windows", test))]
+use secs_types::ipc::EqApoVariant;
+use secs_types::ipc::{
+    ApplyOutcome, CamillaStatus, EqApoInstall, ErrorCode, IncludeState, IpcError,
+};
 use thiserror::Error;
+
+#[cfg(any(target_os = "windows", test))]
+fn eqapo_variant(install_path: &str) -> EqApoVariant {
+    let normalized = install_path.replace('/', "\\").to_ascii_lowercase();
+    if normalized
+        .split('\\')
+        .any(|part| part.starts_with("equalizerapo-xt"))
+    {
+        EqApoVariant::Xt
+    } else if normalized.split('\\').any(|part| part == "equalizerapo") {
+        EqApoVariant::Official
+    } else {
+        EqApoVariant::Unknown
+    }
+}
+
+/// Reads Equalizer APO's machine-wide installation values. Missing, denied, or
+/// non-string values mean that no usable installation was detected.
+#[must_use]
+pub fn eqapo_install() -> Option<EqApoInstall> {
+    #[cfg(target_os = "windows")]
+    {
+        let key = windows_registry::LOCAL_MACHINE
+            .open(r"SOFTWARE\EqualizerAPO")
+            .ok()?;
+        let config_path = key.get_string("ConfigPath").ok()?;
+        let install_path = key.get_string("InstallPath").ok()?;
+        Some(EqApoInstall {
+            variant: eqapo_variant(&install_path),
+            config_path,
+            install_path,
+        })
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        None
+    }
+}
+
+/// Reads CamillaDSP through the platform-neutral application protocol client.
+pub fn camilla_status(address: &str, timeout: Duration) -> Result<CamillaStatus, IpcError> {
+    let transport = camilla_connect(address, timeout)?;
+    let status = secs_apply::camilla::Camilla::new(transport)
+        .status()
+        .map_err(camilla_error)?;
+    Ok(CamillaStatus {
+        version: status.version,
+        state: status.state,
+        stop_reason: status.stop_reason,
+        title: status.title,
+        description: status.description,
+        config_path: status.config_path,
+        capture_rate: status.capture_rate,
+        clipped_samples: status.clipped_samples,
+        processing_load_pct: status.processing_load_pct,
+        playback_peak_db: status.playback_peak_db,
+    })
+}
+
+/// Validates, selects, and reloads one CamillaDSP configuration.
+pub fn camilla_apply(
+    address: &str,
+    config_path: &Path,
+    config_text: &str,
+    timeout: Duration,
+) -> Result<ApplyOutcome, IpcError> {
+    let transport = camilla_connect(address, timeout)?;
+    match secs_apply::camilla::Camilla::new(transport)
+        .apply(&config_path.to_string_lossy(), config_text)
+        .map_err(camilla_error)?
+    {
+        secs_apply::camilla::ApplyOutcome::Applied { .. } => Ok(ApplyOutcome::Applied),
+        secs_apply::camilla::ApplyOutcome::RolledBack { error, .. } => {
+            Ok(ApplyOutcome::RolledBack {
+                error: IpcError::new(ErrorCode::ApplyFailed, error),
+            })
+        }
+    }
+}
+
+/// Classifies SECS 2R's managed Equalizer APO lines.
+#[must_use]
+pub fn eqapo_include_state(config_text: &str) -> IncludeState {
+    match secs_apply::eqapo::include_state(config_text) {
+        secs_apply::eqapo::IncludeState::Absent => IncludeState::Absent,
+        secs_apply::eqapo::IncludeState::Present => IncludeState::Present,
+        secs_apply::eqapo::IncludeState::Damaged => IncludeState::Damaged,
+    }
+}
+
+/// Adds or repairs SECS 2R's managed Equalizer APO lines.
+#[must_use]
+pub fn eqapo_with_include(config_text: &str) -> Option<String> {
+    secs_apply::eqapo::with_include(config_text)
+}
+
+/// Removes SECS 2R's managed Equalizer APO lines.
+#[must_use]
+pub fn eqapo_without_include(config_text: &str) -> Option<String> {
+    secs_apply::eqapo::without_include(config_text)
+}
+
+fn camilla_connect(
+    address: &str,
+    timeout: Duration,
+) -> Result<secs_apply::camilla::WsTransport, IpcError> {
+    secs_apply::camilla::WsTransport::connect(address, timeout).map_err(|error| {
+        let free = loopback_port_is_free(address, &error);
+        let mut ipc = camilla_error(error);
+        if free {
+            ipc.params
+                .insert("reason".to_owned(), "connection_refused".to_owned());
+        }
+        ipc
+    })
+}
+
+/// Whether a failed connect to a loopback address found nothing listening.
+/// Windows retries a refused loopback SYN for about two seconds, so a short
+/// connect to a free port times out instead of being refused; netstat
+/// settles it, as the managed host does (`host::tcp_listener_pid`).
+#[cfg(target_os = "windows")]
+fn loopback_port_is_free(address: &str, error: &secs_apply::ApplyError) -> bool {
+    use std::net::ToSocketAddrs;
+
+    if !matches!(
+        error,
+        secs_apply::ApplyError::Connect {
+            connection_refused: false,
+            ..
+        }
+    ) {
+        return false;
+    }
+    let Some(socket) = address
+        .to_socket_addrs()
+        .ok()
+        .and_then(|mut all| all.next())
+    else {
+        return false;
+    };
+    socket.ip().is_loopback() && matches!(host::tcp_listener_pid(socket.port()), Ok(None))
+}
+
+#[cfg(not(target_os = "windows"))]
+fn loopback_port_is_free(_address: &str, _error: &secs_apply::ApplyError) -> bool {
+    false
+}
+
+fn camilla_error(error: secs_apply::ApplyError) -> IpcError {
+    let connection_refused = matches!(
+        &error,
+        secs_apply::ApplyError::Connect {
+            connection_refused: true,
+            ..
+        }
+    );
+    let mut ipc = IpcError::new(ErrorCode::ApplyFailed, error.to_string());
+    ipc.retryable = matches!(
+        error,
+        secs_apply::ApplyError::Connect { .. } | secs_apply::ApplyError::Transport(_)
+    );
+    if connection_refused {
+        ipc.params
+            .insert("reason".to_owned(), "connection_refused".to_owned());
+    }
+    ipc
+}
 
 /// A checked failure while setting a window's large icon.
 #[derive(Debug, Error, PartialEq, Eq)]
@@ -125,6 +302,19 @@ mod tests {
         fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
             Err(HandleError::Unavailable)
         }
+    }
+
+    #[test]
+    fn equalizer_apo_variant_follows_the_install_folder_name() {
+        assert_eq!(
+            eqapo_variant(r"C:\Users\me\AppData\Local\EqualizerAPO-XT\current"),
+            EqApoVariant::Xt
+        );
+        assert_eq!(
+            eqapo_variant(r"C:\Program Files\EqualizerAPO"),
+            EqApoVariant::Official
+        );
+        assert_eq!(eqapo_variant(r"D:\Audio\APO"), EqApoVariant::Unknown);
     }
 
     #[test]

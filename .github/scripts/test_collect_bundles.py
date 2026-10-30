@@ -47,6 +47,51 @@ class PeTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             c.pe_subsystem(bytes(broken))
 
+    def test_subsystem_check_rejects_missing_and_wrong_executables(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            path = root / "app.exe"
+            with self.assertRaises(SystemExit):
+                c.check_pe_subsystem(path, c.PE_SUBSYSTEM_WINDOWS_GUI)
+            path.write_bytes(fake_pe(c.PE_SUBSYSTEM_WINDOWS_CUI))
+            with self.assertRaises(SystemExit):
+                c.check_pe_subsystem(path, c.PE_SUBSYSTEM_WINDOWS_GUI)
+            c.check_pe_subsystem(path, c.PE_SUBSYSTEM_WINDOWS_CUI)
+
+
+class PortableArchiveTest(unittest.TestCase):
+    def test_zip_holds_the_app_cli_service_and_gui_shell(self):
+        with tempfile.TemporaryDirectory() as name:
+            root = Path(name)
+            files = {}
+            for filename in [
+                "secs2r.exe",
+                "secs2r-cli.exe",
+                "secs2r-host.exe",
+                "secs2r-host-shell.exe",
+                "LICENSE",
+            ]:
+                files[filename] = root / filename
+                files[filename].write_bytes(filename.encode())
+            path = root / "portable.zip"
+            c.write_portable_zip(
+                path,
+                files["secs2r.exe"],
+                files["secs2r-cli.exe"],
+                files["secs2r-host.exe"],
+                files["secs2r-host-shell.exe"],
+                files["LICENSE"],
+            )
+            with zipfile.ZipFile(path) as zf:
+                self.assertEqual(sorted(zf.namelist()), [
+                    "SECS 2R/LICENSE.txt",
+                    "SECS 2R/README.txt",
+                    "SECS 2R/SECS 2R.exe",
+                    "SECS 2R/secs2r-cli.exe",
+                    "SECS 2R/secs2r-host-shell.exe",
+                    "SECS 2R/secs2r-host.exe",
+                ])
+
 
 class CliArchiveTest(unittest.TestCase):
     def setUp(self):
