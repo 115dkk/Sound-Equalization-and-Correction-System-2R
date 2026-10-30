@@ -565,7 +565,7 @@ class Scenario:
         self.driver = WebDriver()
         self.records = []
         self.notes = ["Base: SignalGenerator sine -> File NUL, no hardware and no growing output file.",
-                      "Applied configs are unchanged: stereo design, Scream WASAPI loopback -> shared WASAPI, F32.",
+                      "Applied configs are unchanged: stereo design, VB-CABLE WASAPI loopback -> shared WASAPI, F32.",
                       "tauri-driver 2.1.0 (released 2026-09-26); Edge build/signature in webdriver-version.json.",
                       "Equalizer APO XT: pinned 2.60.4 x64-sse2 Setup.exe --silent; require installer registry values."]
         self.host_root = Path(os.environ["ProgramData"]) / "SECS2R"
@@ -683,9 +683,10 @@ class Scenario:
                  lambda current: current == value)
         self.log("type", selector=ui(name), value=value)
 
-    def choose_scream(self):
-        devices = [device for device in self.facts["wasapi"]["render"] if "scream" in device["name"].lower()]
-        require(len(devices) == 1, f"Expected one Scream render endpoint: {devices}")
+    def choose_virtual_output(self):
+        devices = [device for device in self.facts["wasapi"]["render"]
+                   if device["name"].casefold() == "cable input (vb-audio virtual cable)"]
+        require(len(devices) == 1, f"Expected one VB-CABLE render endpoint: {devices}")
         name = devices[0]["name"]
         disclosure = self.shown(ui("export.devices"))
         if self.driver.attribute(disclosure, "aria-expanded") != "true":
@@ -708,8 +709,8 @@ class Scenario:
             def option():
                 return next((item for item in self.driver.find_all(selector + " option")
                              if self.driver.attribute(item, "value") == name), None)
-            self.driver.click(wait_for(f"Scream option for {side}", option))
-            wait_for(f"Scream selected for {side}",
+            self.driver.click(wait_for(f"VB-CABLE option for {side}", option))
+            wait_for(f"VB-CABLE selected for {side}",
                      lambda: self.driver.execute("return arguments[0].value;", {ELEMENT: select}),
                      lambda value: value == name)
         self.log("gui_devices", capture="WASAPI loopback", playback="WASAPI shared", device=name, format="F32")
@@ -825,7 +826,7 @@ class Scenario:
             record["detail"] = f"mock-room measurement and calibration saved to {self.project}"
         with self.step(3) as record:
             self.open_project()
-            self.choose_scream()
+            self.choose_virtual_output()
             self.click("export.apply.camilla.level.manage")
             self.type("export.apply.camilla.address", "127.0.0.1:1234")
             self.type("export.manage.camilla.exe", str(self.args.camilla))
@@ -835,7 +836,7 @@ class Scenario:
             button = self.driver.find(ui("export.apply.camilla"))
             require(self.driver.attribute(button, "disabled") is not None,
                     "Manage must be disabled before service installation")
-            record["detail"] = "GUI saved Scream loopback/shared WASAPI and address/executable/manage; action awaits service installation (P123 policy)"
+            record["detail"] = "GUI saved VB-CABLE loopback/shared WASAPI and address/executable/manage; action awaits service installation (P123 policy)"
         with self.step(4) as record:
             self.click("export.manage.camilla.install")
             wait_for("SCM RUNNING", lambda: command(["sc.exe", "query", "SECS2RHost"], check=False).stdout,
@@ -924,7 +925,7 @@ class Scenario:
         with self.step(9) as record:
             self.start_session()
             self.open_project()
-            self.choose_scream()
+            self.choose_virtual_output()
             try:
                 with socket.create_connection(("127.0.0.1", 1234), timeout=2):
                     raise CheckError("CamillaDSP is still listening before the cold-start check")

@@ -249,7 +249,7 @@ class InstallationTest(unittest.TestCase):
         facts["wasapi"] = {"render": [], "capture": []}
         with self.assertRaisesRegex(m.CheckError, "There is no active WASAPI render endpoint"):
             m.validate_environment(facts)
-        facts["wasapi"]["render"].append({"id": "render-id", "name": "Speakers (Scream (WDM))"})
+        facts["wasapi"]["render"].append({"id": "render-id", "name": "CABLE Input (VB-Audio Virtual Cable)"})
         m.validate_environment(facts)
 
     def test_runtime_guard_refuses_a_workstation_and_path_overrides(self):
@@ -283,32 +283,42 @@ class GuiContractTest(unittest.TestCase):
         with self.assertRaisesRegex(m.CheckError, "expected handed_over"):
             scenario.gui_apply("camilla", "handed_over")
 
-    def test_scream_is_selected_by_option_value_through_real_controls(self):
+    def test_vbcable_is_selected_by_option_value_through_real_controls(self):
         scenario = self.scenario()
-        name = "Speakers (Scream (WDM))"
-        scenario.facts = {"wasapi": {"render": [{"name": name, "id": "opaque"}], "capture": []}}
-        scenario.driver.find_all.return_value = ["default", "scream"]
+        name = "CABLE Input (VB-Audio Virtual Cable)"
+        scenario.facts = {"wasapi": {"render": [
+            {"name": "CABLE In 16ch (VB-Audio Virtual Cable)", "id": "16ch"},
+            {"name": name, "id": "opaque"}], "capture": [
+            {"name": "CABLE Output (VB-Audio Virtual Cable)", "id": "capture"}]}}
+        scenario.driver.find_all.return_value = ["default", "vbcable"]
         scenario.driver.attribute.side_effect = lambda element, attribute: (
-            name if element == "scream" else "" if attribute == "value" else "false")
+            name if element == "vbcable" else "" if attribute == "value" else "false")
         scenario.driver.execute.return_value = name
-        scenario.choose_scream()
+        scenario.choose_virtual_output()
         clicks = [call.args[0] for call in scenario.click.call_args_list]
         self.assertEqual(clicks, ["export.devices", "export.devices.capture.backend.wasapi",
                                  "export.devices.capture.loopback", "export.devices.capture.format.F32",
                                  "export.devices.playback.backend.wasapi", "export.devices.playback.format.F32"])
-        self.assertEqual(scenario.driver.click.call_args_list, [mock.call("scream"), mock.call("scream")])
+        self.assertEqual(scenario.driver.click.call_args_list, [mock.call("vbcable"), mock.call("vbcable")])
         for side in ("capture", "playback"):
             scenario.shown.assert_any_call("select" + m.ui(f"export.devices.{side}.device"))
             scenario.shown.assert_any_call(m.ui(f"export.devices.{side}.exclusive") + '[aria-checked="false"]')
         for call in scenario.driver.execute.call_args_list:
             self.assertEqual(call.args[0], "return arguments[0].value;")
 
-    def test_missing_scream_never_uses_default_or_file_devices(self):
-        scenario = self.scenario()
-        scenario.facts = {"wasapi": {"render": [{"name": "Hardware"}], "capture": []}}
-        with self.assertRaisesRegex(m.CheckError, "Expected one Scream"):
-            scenario.choose_scream()
-        scenario.click.assert_not_called()
+    def test_missing_or_ambiguous_vbcable_never_uses_another_device(self):
+        name = "CABLE Input (VB-Audio Virtual Cable)"
+        for names in ([], ["Hardware"], ["Speakers (Scream (WDM))"],
+                      ["CABLE In 16ch (VB-Audio Virtual Cable)"],
+                      ["CABLE Output (VB-Audio Virtual Cable)"], [name, name],
+                      ["CABLE-A Input (VB-Audio Cable A)"], [name + " impostor"]):
+            with self.subTest(names=names):
+                scenario = self.scenario()
+                scenario.facts = {"wasapi": {"render": [{"name": item} for item in names],
+                                            "capture": [{"name": name}]}}
+                with self.assertRaisesRegex(m.CheckError, "Expected one VB-CABLE"):
+                    scenario.choose_virtual_output()
+                scenario.click.assert_not_called()
 
 
 class ReportTest(unittest.TestCase):

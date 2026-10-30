@@ -430,10 +430,12 @@ jobs:
           name: installers-windows
           path: ${{ runner.temp }}/manage-installers
 
-      # Official Scream 4.0, hash-pinned in virtual-audio.toml. Driver/downloads
-      # stay outside artifacts; no test-signing or Secure Boot changes.
-      - name: Start Windows Audio and install pinned Scream
-        run: python -I .github/scripts/virtual_audio.py --dest "$env:RUNNER_TEMP\manage-scream"
+      # Official VB-CABLE Pack45, hash-pinned in virtual-audio.toml, with a
+      # valid signature required on its installer and driver catalog (Scream
+      # 4.0's catalog certificate has expired). Downloads stay outside
+      # artifacts; no test-signing or Secure Boot changes.
+      - name: Start Windows Audio and install pinned VB-CABLE
+        run: python -I .github/scripts/virtual_audio.py --dest "$env:RUNNER_TEMP\manage-vbcable"
 
       - name: Require an interactive console and report the environment
         run: python -I .github/scripts/manage_e2e.py env --artifacts "$env:RUNNER_TEMP\manage-e2e" --report "$env:RUNNER_TEMP\manage-env.md"
