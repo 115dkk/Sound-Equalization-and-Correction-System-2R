@@ -155,3 +155,71 @@ fn sample_rate_policy_edit_persists_across_reopen_and_marks_project_dirty() {
     }
     fs::remove_dir_all(root).unwrap();
 }
+
+#[test]
+fn rc_upper_edits_persist_and_reject_invalid_factors() {
+    use secs_types::{calibration::RcHiBasis, settings_edit::SettingEdit};
+    let root = std::env::temp_dir().join(format!("secs-rc-upper-{}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("rc.secs").to_string_lossy().into_owned();
+    let service = Service::new(Deps::default());
+    call(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: path.clone(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        }),
+    );
+    for basis in [RcHiBasis::Lenient, RcHiBasis::Agreement, RcHiBasis::Strict] {
+        let Response::CalibrationSettingsEdit(settings) = call(
+            &service,
+            Request::CalibrationSettingsEdit(CalibrationSettingsEditParams {
+                edit: SettingEdit::RcHiBasis { basis },
+            }),
+        ) else {
+            panic!()
+        };
+        assert_eq!(settings.rc_hi_basis, basis);
+        assert_eq!(settings.rc_hi, None);
+    }
+    for factor in [2, 1, 4] {
+        let Response::CalibrationSettingsEdit(settings) = call(
+            &service,
+            Request::CalibrationSettingsEdit(CalibrationSettingsEditParams {
+                edit: SettingEdit::RcHiTransition { factor },
+            }),
+        ) else {
+            panic!()
+        };
+        assert_eq!(settings.rc_hi_transition, factor);
+    }
+    for factor in [0, 3, 5, 255] {
+        let Envelope::Err(error) = service.call(
+            Request::CalibrationSettingsEdit(CalibrationSettingsEditParams {
+                edit: SettingEdit::RcHiTransition { factor },
+            }),
+            Arc::new(NoEvents),
+        ) else {
+            panic!()
+        };
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(error.params["field"], "rc_hi_transition");
+    }
+    call(
+        &service,
+        Request::ProjectSave(ProjectSaveParams { path: None }),
+    );
+    let reopened = Service::new(Deps::default());
+    call(&reopened, Request::ProjectOpen(ProjectPathParams { path }));
+    let Response::CalibrationSettingsGet(settings) =
+        call(&reopened, Request::CalibrationSettingsGet)
+    else {
+        panic!()
+    };
+    assert_eq!(settings.rc_hi_transition, 4);
+    assert_eq!(settings.rc_hi_basis, RcHiBasis::Strict);
+    fs::remove_dir_all(root).unwrap();
+}

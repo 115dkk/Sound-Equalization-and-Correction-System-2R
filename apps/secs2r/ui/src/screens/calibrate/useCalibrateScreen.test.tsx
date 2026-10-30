@@ -1,11 +1,14 @@
 // @vitest-environment happy-dom
-import { act, cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, fireEvent, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
 import { gpuComputeStatus, resultsSummary } from "../../ipc/fixtures";
 import { createMockService } from "../../ipc/mock";
 import { SessionProvider } from "../../state/react";
 import { createSession } from "../../state/session";
+import { installFakeCanvas } from "../../test/canvas";
+import { renderWith } from "../../test/render";
+import { CalibrateScreen } from "./CalibrateScreen";
 import { useCalibrateScreen } from "./useCalibrateScreen";
 
 let mock: ReturnType<typeof createMockService>;
@@ -151,8 +154,9 @@ describe("useCalibrateScreen", () => {
     expect(result.current.view?.running).toBe("calibrate_subs");
     await perform(mock.drain);
     await perform(a.calibrate);
-    expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false } });
+    expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false, mimo: false } });
     expect(result.current.view?.running).toBe("calibrate");
+    expect(result.current.view?.runningMimo).toBe(false);
     await perform(mock.drain);
     expect(result.current.view?.running).toBeNull();
     expect(result.current.view?.resultMode).toEqual({ mode: session.stores.results.getSnapshot()!.calibration!.mode, ultra_ms: session.stores.results.getSnapshot()!.calibration!.ultra_ms });
@@ -165,6 +169,99 @@ describe("useCalibrateScreen", () => {
     expect(mock.calls).toContainEqual({ method: "mimo", params: { settings: null } });
     await perform(mock.drain);
     expect(result.current.view?.failure).toMatchObject({ job: "mimo", error: { code: "internal" } });
+  });
+
+  it("computes MIMO with 보정 계산 only when it is on with three positions, and puts a MIMO failure in the MIMO card (P142)", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    const a = result.current.actions;
+    const calibrateCall = (mimo: boolean) => ({ method: "calibrate", params: { settings: null, subs_only: false, mimo } });
+    // On with three positions: one job computes both.
+    await perform(() => a.changeSetting({ kind: "mimo_on", on: true }));
+    await perform(a.calibrate);
+    expect(mock.calls).toContainEqual(calibrateCall(true));
+    expect(result.current.view).toMatchObject({ running: "calibrate", runningMimo: true });
+    await perform(mock.drain);
+    expect(result.current.view?.running).toBeNull();
+    expect(result.current.view?.results.calibration?.stale).toBe(false);
+    expect(result.current.view?.results.mimo?.stale).toBe(false);
+    // MIMO fails after the correction: the correction is the new one, and the failure is MIMO's, without the stage.
+    mock.failJobs("mimo", "engine_input", "MIMO support design produced nonfinite filters");
+    await perform(() => a.changeSetting({ kind: "boost_max", db: 6 }));
+    expect(result.current.view?.results.calibration?.stale).toBe(true);
+    await perform(a.calibrate);
+    await perform(mock.drain);
+    expect(result.current.view?.failure).toEqual({ job: "mimo", error: expect.objectContaining({ code: "engine_input", params: {} }) });
+    expect(session.host.getSnapshot().failure?.error.params.stage).toBe("mimo");
+    expect(result.current.view?.results.calibration?.stale).toBe(false);
+    // Off, and below three positions with MIMO on: the correction alone.
+    mock.calls.length = 0;
+    await perform(() => a.changeSetting({ kind: "mimo_on", on: false }));
+    await perform(a.calibrate);
+    expect(mock.calls).toContainEqual(calibrateCall(false));
+    expect(result.current.view?.runningMimo).toBe(false);
+    await perform(mock.drain);
+    await perform(() => a.changeSetting({ kind: "mimo_on", on: true }));
+    await perform(() => session.call({ method: "position_clear", params: { position: 3 } }));
+    mock.calls.length = 0;
+    await perform(a.calibrate);
+    expect(mock.calls).toContainEqual(calibrateCall(false));
+    expect(result.current.view?.runningMimo).toBe(false);
+    await perform(mock.drain);
+    expect(result.current.view?.failure).toBeNull();
+  });
+
+  it("stores the RC upper limit's basis and factor, and reads their evidence after a run (ADR 0021)", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    const a = result.current.actions;
+    await perform(() => a.changeSetting({ kind: "rc_hi_basis", basis: "lenient" }));
+    await perform(() => a.changeSetting({ kind: "rc_hi_transition", factor: 2 }));
+    expect(result.current.view?.settings).toMatchObject({ rc_hi: null, rc_hi_basis: "lenient", rc_hi_transition: 2 });
+    await perform(a.calibrate);
+    await perform(mock.drain);
+    expect(result.current.view?.lines.rc[0]).toEqual({
+      code: "rc_limit",
+      params: { hz: "400", auto: "true", basis: "lenient", factor: "2", schroeder_hz: "154", band_hz: "200", band_t60_s: "0.5" },
+    });
+    // Agreement with three measured positions: its evidence, and no room volume line.
+    await perform(() => a.changeSetting({ kind: "rc_hi_basis", basis: "agreement" }));
+    await perform(a.calibrate);
+    await perform(mock.drain);
+    expect(result.current.view?.lines.rc).toEqual([{ code: "rc_limit", params: { hz: "287", auto: "true", basis: "agreement", factor: "2", schroeder_hz: "154", positions: "3" } }]);
+    // With two, the run fails the way the service fails it.
+    await perform(() => session.call({ method: "position_clear", params: { position: 3 } }));
+    expect(result.current.view?.positions).toEqual([1, 2]);
+    await perform(a.calibrate);
+    await perform(mock.drain);
+    expect(result.current.view?.failure).toMatchObject({ job: "calibrate", error: { code: "engine_input", params: { reason: "rc_agreement_positions", measured: "2", required: "3" } } });
+  });
+
+  it("turns 극저역 보호 on from the range card's switch, then shows each channel's roll-off and the bus warning after runs (ADR 0022)", async () => {
+    installFakeCanvas();
+    function Live() {
+      const { view, actions } = useCalibrateScreen();
+      return view ? <CalibrateScreen view={view} actions={actions} /> : null;
+    }
+    renderWith(<Live />, { session });
+    const at = (id: string) => document.querySelector<HTMLElement>(`[data-ui="${id}"]`);
+    const range = at("calibrate.settings.range")!;
+    fireEvent.click(range.querySelector<HTMLElement>(".ui-advanced__toggle")!);
+    const toggle = at("calibrate.range.low_protect")!;
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    await perform(() => fireEvent.click(toggle));
+    expect(mock.calls).toContainEqual({ method: "calibration_settings_edit", params: { edit: { kind: "low_protect", on: true } } });
+    expect(at("calibrate.range.low_protect")!.getAttribute("aria-checked")).toBe("true");
+    await perform(() => fireEvent.click(at("calibrate.compute")!));
+    await perform(mock.drain);
+    const lines = () => [...at("calibrate.verdict.notes")!.querySelectorAll("li")].map((li) => li.textContent ?? "");
+    expect(lines()).toContain("극저역 보호(SW1): 22 Hz 아래 부스트 안 함, 16 Hz 하이패스");
+    expect(lines()).toContain("극저역 보호(L): 28 Hz 아래 부스트 안 함");
+    expect(at("calibrate.verdict.low_protect")).toBeNull();
+    // Below the 20 Hz band with the default boost limit the sub bus keeps its fit: a warning, not a note.
+    await perform(() => session.call({ method: "calibration_settings_edit", params: { edit: { kind: "rc_lo", hz: 15 } } }));
+    await perform(() => fireEvent.click(at("calibrate.compute")!));
+    await perform(mock.drain);
+    expect(at("calibrate.verdict.low_protect")!.textContent).toContain("극저역 보호(SW1 + SW2): 22 Hz 아래 부스트를 막지 못해 원래 필터를 그대로 썼습니다.");
+    expect(lines().some((line) => line.includes("SW1 + SW2"))).toBe(false);
   });
 
   it("refreshes exact curve selections and keeps preview out of persisted settings", async () => {

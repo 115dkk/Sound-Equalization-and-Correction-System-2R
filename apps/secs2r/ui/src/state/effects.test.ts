@@ -301,7 +301,7 @@ const finishedCases = [
     await session.call({ method: "recommend_xo" });
     mock.drain(); await session.settled();
     expect(session.stores.settings.getSnapshot()?.xo).toMatchObject({ "프론트": 80, "센터": 100 });
-    expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false } });
+    expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false, mimo: false } });
     expect(session.jobs.getSnapshot().jobs.some((job) => job.kind === "calibrate" && job.status === "running")).toBe(true);
   } },
 ] satisfies { name: string; trigger: Trigger; run: (session: ReturnType<typeof createSession>, mock: ReturnType<typeof createMockService>) => Promise<void> }[];
@@ -313,6 +313,24 @@ it.each(finishedCases)("$name applies its completion effect", async ({ name, tri
   try {
     await session.start(); await session.configure({ method: "mock" }); await session.settled();
     await run(session, mock); await session.settled();
+  } finally { session.dispose(); await session.settled(); mock.dispose(); }
+});
+
+it("xo.recalibrate sends the MIMO choice 보정 계산 would send and the ledger keeps it", async () => {
+  const mock = createMockService({ tickMs: 0 });
+  const session = createSession(mock);
+  try {
+    await session.start(); await session.configure({ method: "mock" }); await session.settled();
+    const positions = session.stores.project.getSnapshot()?.positions.length ?? 0;
+    await session.call({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+    await session.settled();
+    await session.call({ method: "recommend_xo" });
+    mock.drain(); await session.settled();
+    expect(positions).toBeGreaterThanOrEqual(3);
+    const mimo = true;
+    expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false, mimo } });
+    const job = session.jobs.getSnapshot().jobs.find((entry) => entry.kind === "calibrate");
+    expect(job?.request).toMatchObject({ method: "calibrate", params: { subs_only: false, mimo } });
   } finally { session.dispose(); await session.settled(); mock.dispose(); }
 });
 

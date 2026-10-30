@@ -13,7 +13,7 @@ SECS 2R의 사용자는 그래프와 숫자를 읽는 애호가와 설치 기사
 - **단추는 그것이 가리키는 글 바로 옆에 둡니다.** 이름이나 문장은 왼쪽에 있는데 단추가 넓은 카드의 오른쪽 끝에 있으면, 사용자는 줄마다 눈을 화면 끝에서 끝까지 굴려야 합니다. 여러 줄의 단추는 가장 긴 이름 바로 뒤의 한 열에 세우고(내보내기의 subgrid), 알림의 동작은 문장 바로 뒤에 둡니다. 결과를 만드는 동작은 단계 머리가 아니라 그 결과 바로 옆에 둡니다(보정 결과 카드의 '보정 계산', 결과 뒤의 '다시 측정하기'·'다시 보정하기'). 동작이 있는 알림은 문장과 동작만큼만 넓어져 동작이 아이콘과 같은 안쪽 여백으로 상자를 닫고, 동작은 상자 높이의 가운데에 섭니다. 넓은 상자 안에 떠 있거나 첫 줄에 붙은 단추는 대칭이 어긋나 보입니다. 줄의 남는 너비는 스킨의 장식이 씁니다. EqualizerAPO-XT v2.42.0의 판례(27인치 화면 제보, '내용은 왼쪽에 있는데 버튼은 오른쪽에 있어 눈을 많이 굴린다')를 따릅니다.
 - **바뀌는 숫자는 `tabular-nums`.** 진행, 경과 시간, 레벨, 표의 숫자 칸이 해당합니다.
 - **긴 계산은 화면을 막지 않습니다.** 잡은 작업 트레이 한 곳에 보이고, 취소하면 실제로 멈춥니다(U8).
-- **문장은 합니다체, 상태와 라벨은 명사구.** 지시는 -세요로 씁니다. 오류는 원인과 다음 행동을 적고, 원문은 '자세히'에 둡니다.
+- **문장은 하십시오체, 상태와 라벨은 명사구.** 서술은 -ㅂ니다, 지시는 -십시오로 씁니다(유지보수자 결정 2026-10-30, -세요를 쓰지 않습니다). 오류는 원인과 다음 행동을 적고, 원문은 '자세히'에 둡니다.
 - **설정은 설명 없이 읽힙니다.** 라벨·선택지·단위·현재값으로 선택할 수 있게 씁니다. 정적 보충 설명은 항목이나 묶음의 도움말로 열고, 필요한 경우에만 효과·선택 기준·손익을 1–2문장으로 설명합니다. 현재 상태와 추천값, 오류, 사용 불가 사유와 복구 행동은 화면에 유지합니다.
 
 ## 2. 색
@@ -264,7 +264,7 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 - 키는 도달표(`docs/M5-reach.md`)가 인용할 안정된 id입니다: `frame.*`(틀), `jobs.*`(작업 트레이), `error.<code>`·`error.<code>.next`(오류 코드의 원인과 다음 행동), `ui.*`(구성 요소), `plot.*`, `map.*`, `shortcut.*`.
 - 서비스의 코드는 타입 있는 표로 키에 잇습니다: `JOB_NAME`, `JOB_STATUS`, `ERROR_TEXT`(`ErrorCode` 17개 모두), 단계 `jobs.stage.<stage>`, 알림 `jobs.log.<code>`. 모르는 알림 코드는 "알 수 없는 알림"과 '자세히'의 원문으로 보입니다.
 - `gallery.sample.*`는 갤러리 견본에만 쓰는 문구입니다. 앱은 쓰지 않지만 갤러리가 쓰므로 '쓰이지 않는 키 없음' 검사(`i18n.test.ts`)는 이 키들을 쓰인 것으로 셉니다. 화면 용어는 [`UI-TERMS.md`](UI-TERMS.md)를 따릅니다.
-- 문장은 합니다체이고 지시는 -세요입니다. 해요체 문장과 느낌표가 없음을 `i18n.test.ts`가 확인합니다. 상태와 라벨은 명사구("다시 계산 필요", "미저장 변경 사항")입니다.
+- 문장은 하십시오체이고 지시는 -십시오입니다. -세요 지시, 해요체 문장, 느낌표가 없음을 `i18n.test.ts`가 확인합니다. 상태와 라벨은 명사구("다시 계산 필요", "미저장 변경 사항")입니다.
 
 ## 11. 안정 id
 
@@ -304,6 +304,7 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 - **화면 투어**: `gallery.html?tour=<장면 id>&theme=light|dark&lang=ko|en`은 견본 대신 실제 `App`을 모의 서비스 위에 창 전체로 띄우고, 장면 표(`gallery/tour/`)의 준비(`setup`, 마운트 전 모의 서비스 조작)와 조작(`ops`, 마운트 뒤 키·누르기·페이지 안 함수)으로 정한 상태에서 멈춥니다. 모의 서비스는 자동 틱 없이(`tickMs: 0`) 돌아 찍을 때마다 같은 그림이 납니다. `node scripts/screen-tour.mjs`가 장면마다 1280×800 창(`tauri.conf.json`의 기본 창)을 밝게·어둡게, 한국어·영어로, 그리고 Rack·Matrix 스킨의 어두운 한국어로 찍어(6개 변형) `screen-shots/`에 PNG와 `manifest.json`을 남깁니다. 실장비 없이는 닿지 않는 상태(측정·계산 중, 실패, 결과, 내보내기 완료)도 실제 화면 코드로 그립니다. 화면을 바꿔 장면의 조작이 맞지 않게 되면 그 PR에서 장면 표를 고칩니다.
 - **리뷰 이슈**: `ui-gallery.yml`이 화면 PR(`apps/secs2r/ui/**`)과 수동 실행에서 투어와 견본을 찍어 `ui-gallery` 브랜치에 올리고, PR마다 리뷰 이슈 하나(`화면 갤러리 리뷰: PR #N`, 라벨 `ui-gallery`)를 열거나 댓글로 갱신합니다. 이슈 글은 `.github/scripts/gallery_issue.py`가 짓습니다(본문은 투어, 댓글은 한국어·밝게 견본). 브랜치에는 장면 전부와 한국어·밝게 견본만 올리고(나머지 견본 변형은 실행 아티팩트), 최근 4번의 실행만 남기도록 매번 다시 쓰므로 저장소를 복제해도 스크린숏이 쌓이지 않고, 더 오래된 이슈는 이미지를 잃습니다. 이슈는 머지를 막지 않습니다.
 - Playwright에는 `locale`을 주어야 합니다. 브라우저 언어 태그가 잘못되면(`en-US@posix`처럼) uPlot이 `Intl.NumberFormat`에서 멈춥니다.
+- **측정 그래프 기준과 극저역 보호 견본**(P145): `screen.measure.reference-mid`(2.1, 기준 L 위치 1의 200~2000 Hz), `screen.measure.reference-sub`(서브만 있는 프로젝트, 기준 SW1 위치 1의 40~120 Hz), `screen.calibrate.low-protect-off`, `screen.calibrate.low-protect-on`, `screen.calibrate.low-protect-result`(막지 못한 서브 묶음 경고와 채널별 메모), `screen.calibrate.low-protect-lines`(네 경우의 안내 문장). 화면 id는 `measure.plot.reference`, `calibrate.range.low_protect`, `calibrate.verdict.low_protect`입니다.
 - **MIMO 성적표 견본**(P110, P111): `screen.calibrate.mimo-scorecard`(보정 전·후·MIMO 후), `screen.calibrate.late-positions`(위치 3곳의 늦은 저음 표를 펼침), `screen.calibrate.mimo-stale-scorecard`(MIMO 재계산 필요, 보정 전후만 비교), `screen.calibrate.one-position`(위치 1곳, 위치별 표 없음), `screen.calibrate.mimo-scorecard.min`(최소 창 1024×700). 화면 id는 비교 범례 `calibrate.scorecard.key`, 늦은 저음 설명 `calibrate.scorecard.late`, 위치별 펼침 `calibrate.scorecard.positions`, 표 `calibrate.scorecard.positions.table`입니다. 모의 서비스와 견본은 같은 기준값을 씁니다.
 - **모의 서비스**(`ipc/mock.ts`): `createMockService({ tickMs, project, results })`는 `makeClient`에 넘길 `invoke`와 그 클라이언트, 잡 이벤트 버스를 줍니다. 생성된 바인딩으로 타입을 맞춘 고정값(`ipc/fixtures.ts`)으로 답하고, 잡은 타이머(또는 `tick()`, `drain()`)로 진행·로그·완료 이벤트를 보냅니다. `failNext`, `failAlways`, `failJobs`로 실패시킬 수 있고, 받은 요청은 `calls`에 남습니다. 같은 종류의 잡이 돌면 `job_busy`, 없는 잡을 취소하면 `job_not_found`입니다.
 
@@ -327,7 +328,7 @@ WCAG 대비는 추정하지 않고 계산합니다. `styles/contrast.test.ts`가
 | 14px 하한(캡션 13px), 모든 `font-size`가 토큰, `transition: all` 없음, 어두운 테마 두 벌 일치, 밝게·어둡게 같은 토큰 집합, 줄인 움직임에서 시간 0, 구성 요소 CSS에 색 값 없음(토큰 파일과 스킨 파일만 예외) | `styles/tokens.test.ts` |
 | 묶인 글꼴 파일이 `manifest.json`과 바이트까지 일치, `fonts.css`가 그 파일만 참조, 실은 글꼴은 모두 스타일시트가 쓰는 것, 전체 6 MiB 이하, 카탈로그의 모든 글자가 Pretendard·Sarasa Mono K에 있고 모든 한글 음절이 Orbit에 있음 | `fonts/fonts.test.ts` |
 | 측정한 대비(글자 4.5:1, 테두리·초점·글리프 3:1), 강조색이 상태색과 15° 이상, 중립색의 한 기운, 순흑·순백 없음, 스킨 파일의 어두운 두 벌 일치와 밝게·어둡게 색 토큰 집합 일치, 모든 스킨 × 테마 | `styles/contrast.test.ts` |
-| 카탈로그 키와 자리표시자 일치, 해요체 문장과 느낌표 없음 | `i18n/i18n.test.ts` |
+| 카탈로그 키와 자리표시자 일치, -세요 지시와 해요체 문장과 느낌표 없음 | `i18n/i18n.test.ts` |
 | 레일 상태와 막힌 이유, 주 동작 끄기(막힘, 화면이 끔), 곁 패널 자리, 단축키, 상태 요약, 영어 | `app/AppFrame.test.tsx` |
 | 이벤트로 그리는 잡, `job_cancel`, 기록의 원인·다음 행동·자세히 | `app/jobs/JobTray.test.tsx`, `jobStore.test.ts` |
 | 숫자 칸 범위·단계·확정 | `ui/NumberField.test.tsx` |

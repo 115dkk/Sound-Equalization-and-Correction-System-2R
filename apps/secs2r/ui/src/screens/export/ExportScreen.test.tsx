@@ -385,7 +385,7 @@ describe("내보내기", () => {
     const { unmount } = renderWith(<Mounted view={exportEqapoDone} act={act} />);
     expect(ui("export.outcome.equalizer_apo")?.textContent).toContain("파일 14개 저장 → D:/Audio/거실 보정/SECS_eqapo_RC_BA_mixed_20261014-142233");
     expect(ui("export.outcome.equalizer_apo.hint")?.textContent).toBe(
-      "Equalizer APO의 기존 config.txt를 다른 이름으로 보관한 뒤, 내보낸 config.txt와 secs_mixed 폴더를 config 폴더에 복사하세요. 적용 순서는 'EqAPO 적용 방법.txt'를 확인하세요.",
+      "Equalizer APO의 기존 config.txt를 다른 이름으로 보관한 뒤, 내보낸 config.txt와 secs_mixed 폴더를 config 폴더에 복사하십시오. 적용 순서는 'EqAPO 적용 방법.txt'를 확인하십시오.",
     );
     fireEvent.click(ui("export.outcome.equalizer_apo.open")!);
     expect(act.openFolder.mock.calls).toEqual([["D:/Audio/거실 보정/SECS_eqapo_RC_BA_mixed_20261014-142233"]]);
@@ -593,10 +593,20 @@ describe("내보내기", () => {
   it("writes the RC notices as phrases with whole numbers", () => {
     const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) => translate("ko", key, params);
     const n = (value: number) => String(Math.round(value));
-    expect(rcText(t, { code: "rc_limit", params: { hz: "310.4", auto: "true", schroeder_hz: "310.4" } }, n)).toBe("RC 상한 310 Hz (자동 · 슈뢰더 310 Hz)");
-    expect(rcText(t, { code: "rc_limit", params: { hz: "250", auto: "false" } }, n)).toBe("RC 상한 250 Hz (직접 정함)");
+    expect(rcText(t, { code: "rc_limit", params: { hz: "310.4", auto: "true", schroeder_hz: "310.4" } }, n)).toBe("RC 상한 310 Hz(자동, 슈뢰더 310 Hz)");
+    expect(rcText(t, { code: "rc_limit", params: { hz: "250", auto: "false" } }, n)).toBe("RC 상한 250 Hz(직접 입력)");
     expect(rcText(t, { code: "rc_room_volume", params: { volume_m3: "62.5" } }, n)).toBe("방 부피 63 m³로 정함");
     expect(rcText(t, { code: "rc_auto_cap", params: { hz: "500" } }, n)).toBe("자동 상한은 최대 500 Hz");
+  });
+
+  it("states the RC upper limit's basis and evidence as the 보정 screen's RC line does (ADR 0021)", () => {
+    const t = (key: Parameters<typeof translate>[1], params?: Record<string, string | number>) => translate("ko", key, params);
+    const n = (value: number, digits = 0) => value.toFixed(digits);
+    const line = (params: Record<string, string>) => rcText(t, { code: "rc_limit", params: { auto: "true", ...params } }, n);
+    expect(line({ hz: "308", schroeder_hz: "154", basis: "strict", factor: "2" })).toBe("RC 상한 308 Hz(엄격한 슈뢰더 154 Hz × 2)");
+    expect(line({ hz: "200", schroeder_hz: "154", basis: "lenient", factor: "1", band_hz: "200", band_t60_s: "0.5" })).toBe("RC 상한 200 Hz(너그러운 슈뢰더, 200 Hz 대역 T60 0.50초)");
+    expect(line({ hz: "287", schroeder_hz: "154", basis: "agreement", factor: "1", positions: "9" })).toBe("RC 상한 287 Hz(위치 9곳 일치도)");
+    expect(line({ hz: "500", basis: "strict", factor: "1" })).toBe("RC 상한 500 Hz(자동)");
   });
 
   it("says beside the empty design name where the files go, and beside a name that the next export replaces its folder", () => {

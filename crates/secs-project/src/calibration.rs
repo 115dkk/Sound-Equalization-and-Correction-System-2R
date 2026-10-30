@@ -1,7 +1,7 @@
 //! Read and write the calibration half of an upstream-compatible `.secs` file.
 
 use secs_types::calibration::{
-    BundleLayoutEntry, CalibrationSettings, Mode, SampleRatePolicy, SubEntry,
+    BundleLayoutEntry, CalibrationSettings, Mode, RcHiBasis, SampleRatePolicy, SubEntry,
 };
 
 use crate::pyjson::Shape;
@@ -22,6 +22,9 @@ pub(crate) static CALIBRATION_SHAPE: Shape = Shape::Record {
     // Written only for non-default policies, so stored values must not return.
     optional: &[
         "sample_rate_policy",
+        "low_protect",
+        "rc_hi_basis",
+        "rc_hi_transition",
         "peq_analytic_derivatives",
         "mimo_iir_analytic_derivatives",
     ],
@@ -58,8 +61,23 @@ pub fn calibration_from_project(project: &Project) -> CalibrationSettings {
         Some("resample") => SampleRatePolicy::Resample,
         _ => SampleRatePolicy::Reject,
     };
+    out.low_protect = get("low_protect").is_some_and(PyJson::is_truthy);
     out.rc_lo = num(get("rc_lo"), 10.0, 200.0).unwrap_or(20.0);
     out.rc_hi = num(get("rc_hi"), 100.0, 20_000.0);
+    out.rc_hi_basis = match get("rc_hi_basis").and_then(PyJson::str) {
+        Some("lenient") => RcHiBasis::Lenient,
+        Some("agreement") => RcHiBasis::Agreement,
+        _ => RcHiBasis::Strict,
+    };
+    out.rc_hi_transition = match get("rc_hi_transition") {
+        Some(PyJson::Int(value)) => value.parse::<u8>().ok(),
+        Some(PyJson::Float(1.0)) => Some(1),
+        Some(PyJson::Float(2.0)) => Some(2),
+        Some(PyJson::Float(4.0)) => Some(4),
+        _ => None,
+    }
+    .filter(|value| matches!(value, 1 | 2 | 4))
+    .unwrap_or(1);
     out.room_volume_m3 = num(get("room_volume_m3"), 5.0, 100_000.0);
     out.room_dims_m = room_dims(get("room_dims_m"));
     out.mimo_on = get("mimo_on").is_some_and(PyJson::is_truthy);
@@ -185,6 +203,22 @@ fn calibration_json(settings: &CalibrationSettings) -> PyJson {
         ("xo_peq_lo".into(), PyJson::Float(settings.xo_peq_lo)),
         ("xo_peq_hi".into(), PyJson::Float(settings.xo_peq_hi)),
     ];
+    // Omit defaults to preserve the upstream saved-byte goldens.
+    if settings.low_protect {
+        values.push(("low_protect".into(), PyJson::Bool(true)));
+    }
+    if settings.rc_hi_basis != RcHiBasis::Strict {
+        values.push((
+            "rc_hi_basis".into(),
+            PyJson::Str(settings.rc_hi_basis.as_str().into()),
+        ));
+    }
+    if settings.rc_hi_transition != 1 {
+        values.push((
+            "rc_hi_transition".into(),
+            PyJson::Int(settings.rc_hi_transition.to_string()),
+        ));
+    }
     if settings.sample_rate_policy == SampleRatePolicy::Resample {
         values.push(("sample_rate_policy".into(), PyJson::Str("resample".into())));
     }

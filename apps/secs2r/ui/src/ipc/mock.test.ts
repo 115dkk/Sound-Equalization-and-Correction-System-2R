@@ -664,3 +664,234 @@ describe("mock service", () => {
     expect(results.calibration?.stale).toBe(false);
   });
 });
+
+describe("mock calibrate with MIMO (P141, P142)", () => {
+  const withMimo = { settings: null, subs_only: false, mimo: true } as const;
+  async function mimoOn(mock: ReturnType<typeof createMockService>) {
+    await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+  }
+
+  it("runs the MIMO stages after the correction's in the same job and stores both", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      const events: JobEvent[] = [];
+      mock.events.subscribe((event) => events.push(event));
+      await mimoOn(mock);
+      const started = await mock.request({ method: "calibrate", params: withMimo });
+      expect(started.kind).toBe("calibrate");
+      mock.drain();
+      const stages = [...new Set(events.flatMap((event) => (event.event === "progress" ? [event.stage] : [])))];
+      expect(stages).toEqual(["engine.design", "engine.mimo", "engine.mimo_iir"]);
+      expect(events.at(-1)).toMatchObject({ event: "finished", job: started.job, status: "succeeded", result: { kind: "calibration" } });
+      const results = await mock.request({ method: "results" });
+      expect(results.calibration?.stale).toBe(false);
+      expect(results.mimo?.stale).toBe(false);
+      expect(results.mimo_export).toBe("included");
+    } finally { mock.dispose(); }
+  });
+
+  it("refuses before a job when MIMO is off or below three positions", async () => {
+    const off = createMockService({ tickMs: 0 });
+    const two = createMockService({ tickMs: 0, project: { ...projectInfo, positions: [1, 2] } });
+    try {
+      await expect(off.request({ method: "calibrate", params: withMimo })).rejects.toMatchObject({ error: { code: "engine_input" } });
+      await mimoOn(two);
+      await expect(two.request({ method: "calibrate", params: withMimo })).rejects.toMatchObject({ error: { code: "engine_input" } });
+      expect(await off.request({ method: "jobs" })).toEqual([]);
+      expect(await two.request({ method: "jobs" })).toEqual([]);
+      // Without MIMO, and with subs only, the same projects calibrate as before.
+      await expect(two.request({ method: "calibrate", params: { ...withMimo, mimo: false } })).resolves.toMatchObject({ kind: "calibrate" });
+      two.drain();
+      await expect(off.request({ method: "calibrate", params: { ...withMimo, subs_only: true } })).resolves.toMatchObject({ kind: "calibrate" });
+      off.drain();
+    } finally { off.dispose(); two.dispose(); }
+  });
+
+  it("keeps the correction when MIMO fails after it, and marks the failure with stage mimo", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      const events: JobEvent[] = [];
+      mock.events.subscribe((event) => events.push(event));
+      await mimoOn(mock);
+      mock.failJobs("mimo", "engine_input", "MIMO support design produced nonfinite filters", { detail_param: "x" });
+      await mock.request({ method: "calibrate", params: withMimo });
+      mock.drain();
+      expect(events.at(-1)).toMatchObject({ event: "finished", status: "failed", result: null, error: { code: "engine_input", params: { stage: "mimo", detail_param: "x" } } });
+      const results = await mock.request({ method: "results" });
+      expect(results.calibration).toMatchObject({ stale: false });
+      expect(results.mimo).toBeNull();
+    } finally { mock.dispose(); }
+  });
+
+  it("fails a correction failure before storing anything, without the MIMO stages", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      const events: JobEvent[] = [];
+      mock.events.subscribe((event) => events.push(event));
+      await mimoOn(mock);
+      mock.failJobs("calibrate", "engine_input", "invalid input: position 1 SW3: empty or nonfinite IR", { reason: "invalid_measurement", position: "1", role: "SW3" });
+      await mock.request({ method: "calibrate", params: withMimo });
+      mock.drain();
+      expect(events.some((event) => event.event === "progress" && event.stage.startsWith("engine.mimo"))).toBe(false);
+      expect(events.at(-1)).toMatchObject({ event: "finished", status: "failed", error: { params: { reason: "invalid_measurement" } } });
+      expect(events.at(-1)).not.toHaveProperty("error.params.stage");
+      expect((await mock.request({ method: "results" })).calibration).toBeNull();
+    } finally { mock.dispose(); }
+  });
+
+  it("keeps the new correction and no MIMO result when cancelled during the MIMO stages", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      const events: JobEvent[] = [];
+      mock.events.subscribe((event) => events.push(event));
+      await mimoOn(mock);
+      const { job } = await mock.request({ method: "calibrate", params: withMimo });
+      while (!events.some((event) => event.event === "progress" && event.stage === "engine.mimo")) mock.tick();
+      await mock.request({ method: "job_cancel", params: { job } });
+      mock.tick();
+      expect(events.at(-1)).toMatchObject({ event: "finished", status: "cancelled" });
+      const results = await mock.request({ method: "results" });
+      expect(results.calibration).toMatchObject({ stale: false });
+      expect(results.mimo).toBeNull();
+    } finally { mock.dispose(); }
+  });
+
+  it("leaves the correction current after a MIMO-only edit, so MIMO alone can follow", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      await mimoOn(mock);
+      await mock.request({ method: "calibrate", params: withMimo });
+      mock.drain();
+      for (const edit of [{ kind: "fsiso", hz: 120 }, { kind: "mimo_low", hz: 25 }, { kind: "mimo_max", count: 2 }, { kind: "mimo_fir", on: true }] as const) {
+        await mock.request({ method: "calibration_settings_edit", params: { edit } });
+        const results = await mock.request({ method: "results" });
+        expect(results.calibration?.stale, edit.kind).toBe(false);
+        expect(results.mimo?.stale, edit.kind).toBe(true);
+        await mock.request({ method: "mimo", params: { settings: null } });
+        mock.drain();
+        expect((await mock.request({ method: "results" })).mimo?.stale, edit.kind).toBe(false);
+      }
+      // Turning MIMO off and on changes neither result; a correction setting makes both stale.
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: false } } });
+      await mimoOn(mock);
+      expect(await mock.request({ method: "results" })).toMatchObject({ calibration: { stale: false }, mimo: { stale: false } });
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "boost_max", db: 6 } } });
+      expect(await mock.request({ method: "results" })).toMatchObject({ calibration: { stale: true }, mimo: { stale: true } });
+    } finally { mock.dispose(); }
+  });
+});
+
+describe("mock measurement graph reference (#127, U17)", () => {
+  const all = { positions: null, roles: null };
+  const mean = (grid: readonly number[], values: readonly number[], lo: number, hi: number) => {
+    const band = values.filter((_, i) => grid[i]! >= lo && grid[i]! <= hi);
+    return band.reduce((sum, value) => sum + value, 0) / band.length;
+  };
+
+  it("shifts every curve by the first main's position-1 mean over 200–2000 Hz and returns that reference", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      const result = await mock.request({ method: "measurement_curves", params: all });
+      expect(result.reference).toEqual({ role: "L", position: 1, band: "mid" });
+      expect(result.axes).toEqual({ frequency_hz: [5, 22000], value: [-35, 20], unit: "db" });
+      const reference = result.curves.find((curve) => curve.role === "L" && curve.position === 1)!;
+      expect(mean(result.grid, reference.values, 200, 2000)).toBeCloseTo(0, 9);
+      // Not each curve to its own midrange: another main keeps its own level there.
+      const other = result.curves.find((curve) => curve.role === "R" && curve.position === 2)!;
+      expect(Math.abs(mean(result.grid, other.values, 200, 2000))).toBeGreaterThan(0.01);
+      // The service's kinds, and subs in their pass band near the mains instead of tens of dB above them.
+      expect(new Set(result.curves.map((curve) => curve.kind))).toEqual(new Set(["main", "sub", "top"]));
+      const sub = result.curves.find((curve) => curve.role === "SW1" && curve.position === 1)!;
+      expect(Math.abs(mean(result.grid, sub.values, 40, 80))).toBeLessThan(10);
+    } finally { mock.dispose(); }
+  });
+
+  it("picks the reference before the request's filter, so a filtered curve keeps its values", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      const full = await mock.request({ method: "measurement_curves", params: all });
+      const filtered = await mock.request({ method: "measurement_curves", params: { positions: [2], roles: ["R"] } });
+      expect(filtered.reference).toEqual(full.reference);
+      expect(filtered.curves).toEqual(full.curves.filter((curve) => curve.role === "R" && curve.position === 2));
+    } finally { mock.dispose(); }
+  });
+
+  it("falls back to the main's lowest position, then to the first sub over 40–120 Hz, and to none", async () => {
+    const mock = createMockService({ tickMs: 0, project: { ...projectInfo, positions: [] } });
+    const reference = async () => (await mock.request({ method: "measurement_curves", params: all })).reference;
+    const assign = async (role: string, position: number) => {
+      await mock.request({ method: "mdat_import", params: { path: "/room.mdat", position, assignments: [{ measurement: role, role, index: 0, position }] } });
+      mock.drain();
+    };
+    try {
+      expect(await reference()).toBeNull();
+      await assign("SW2", 3);
+      await assign("SW1", 4);
+      expect(await reference()).toEqual({ role: "SW1", position: 4, band: "sub" });
+      const subs = await mock.request({ method: "measurement_curves", params: all });
+      const sw1 = subs.curves.find((curve) => curve.role === "SW1")!;
+      expect(mean(subs.grid, sw1.values, 40, 120)).toBeCloseTo(0, 9);
+      await assign("R", 2);
+      await assign("R", 5);
+      expect(await reference()).toEqual({ role: "R", position: 2, band: "mid" });
+      await assign("L", 3);
+      expect(await reference()).toEqual({ role: "L", position: 3, band: "mid" });
+      await assign("L", 1);
+      expect(await reference()).toEqual({ role: "L", position: 1, band: "mid" });
+    } finally { mock.dispose(); }
+  });
+});
+
+describe("mock 극저역 보호 (ADR 0022)", () => {
+  const calibrate = async (mock: ReturnType<typeof createMockService>) => {
+    await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } });
+    mock.drain();
+    return (await mock.request({ method: "results" })).calibration!.notes.filter((note) => note.code === "low_protect");
+  };
+
+  it("applies the edit, marks the result stale and leaves no notes while off", async () => {
+    const mock = createMockService({ tickMs: 0, results: resultsSummary });
+    try {
+      expect((await mock.request({ method: "calibration_settings_get" })).low_protect).toBe(false);
+      expect(await calibrate(mock)).toEqual([]);
+      const settings = await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "low_protect", on: true } } });
+      expect(settings.low_protect).toBe(true);
+      expect((await mock.request({ method: "results" })).calibration).toMatchObject({ stale: true, stale_reason: "settings" });
+    } finally { mock.dispose(); }
+  });
+
+  it("notes every channel's roll-off and each sub's high-pass after a calibration with it on", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "low_protect", on: true } } });
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "sub", role: "SW2", patch: { hp_hz: 25 } } } });
+      const notes = await calibrate(mock);
+      const roles = (await mock.request({ method: "config_get" })).speakers.map((speaker) => speaker.role);
+      expect(notes.map((note) => note.params.role)).toEqual(roles);
+      expect(notes.every((note) => note.params.limited === "true" && Number(note.params.rolloff_hz) >= 20)).toBe(true);
+      expect(notes.find((note) => note.params.role === "L")!.params).not.toHaveProperty("hp_hz");
+      // A sub without a high-pass of its own gets one at the roll-off over √2; SW2 keeps the user's.
+      const sw1 = notes.find((note) => note.params.role === "SW1")!.params;
+      expect(Number(sw1.hp_hz)).toBeCloseTo(Number(sw1.rolloff_hz) / Math.SQRT2, 9);
+      expect(notes.find((note) => note.params.role === "SW2")!.params.hp_hz).toBe("25");
+    } finally { mock.dispose(); }
+  });
+
+  it("reports the sub bus it cannot hold with the RC lower limit below 20 Hz, until that limit rises or the boost limit falls", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    const edit = (edit: import("./bindings/SettingEdit").SettingEdit) => mock.request({ method: "calibration_settings_edit", params: { edit } });
+    try {
+      await edit({ kind: "low_protect", on: true });
+      expect((await calibrate(mock)).some((note) => note.params.limited === "false")).toBe(false);
+      await edit({ kind: "rc_lo", hz: 15 });
+      expect((await calibrate(mock)).filter((note) => note.params.limited === "false")).toEqual([
+        { code: "low_protect", params: { role: "SW1 + SW2", rolloff_hz: "22", limited: "false" } },
+      ]);
+      await edit({ kind: "boost_max", db: 6 });
+      expect((await calibrate(mock)).some((note) => note.params.limited === "false")).toBe(false);
+      await edit({ kind: "boost_max", db: 10 });
+      await edit({ kind: "rc_lo", hz: 20 });
+      expect((await calibrate(mock)).some((note) => note.params.limited === "false")).toBe(false);
+    } finally { mock.dispose(); }
+  });
+});

@@ -414,7 +414,7 @@ pub struct MeasurementCurvesParams {
     /// Speaker roles to include.
     pub roles: Option<Vec<String>>,
 }
-/// A measurement curve, already smoothed and normalized to the mid-band mean.
+/// A smoothed measurement curve shifted by the result's shared reference.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct MeasurementCurve {
@@ -439,6 +439,28 @@ pub struct CurveAxes {
     /// Vertical unit: db or ms.
     pub unit: String,
 }
+/// Frequency band used to set zero dB on the measurement graph.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export)]
+pub enum CurveReferenceBand {
+    /// 200–2000 Hz mean of a main speaker.
+    Mid,
+    /// 40–120 Hz mean of a subwoofer.
+    Sub,
+}
+/// The stored measurement that sets zero dB for every displayed curve.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct CurveReference {
+    /// Configured speaker role.
+    pub role: String,
+    /// Measurement position.
+    #[ts(type = "number")]
+    pub position: i64,
+    /// Frequency band used for the mean.
+    pub band: CurveReferenceBand,
+}
 /// Measurement graph data.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -447,6 +469,8 @@ pub struct MeasurementCurvesResult {
     pub grid: Vec<f64>,
     /// One curve per recorded role and position.
     pub curves: Vec<MeasurementCurve>,
+    /// Stored curve and band that set zero dB, or absent when nothing is measured.
+    pub reference: Option<CurveReference>,
     /// Upstream default axis bounds.
     pub axes: CurveAxes,
 }
@@ -740,6 +764,11 @@ pub struct CalibrateParams {
     /// kept apart and shown by the BA tab until the next full run.
     #[serde(default)]
     pub subs_only: bool,
+    /// Computes MIMO after the correction in the same job. Absent on the
+    /// wire means false, so the TypeScript field is optional.
+    #[serde(default)]
+    #[ts(as = "Option<bool>", optional)]
+    pub mimo: bool,
 }
 /// Optional settings for a MIMO run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
@@ -2900,6 +2929,20 @@ mod tests {
         assert_eq!(settings.local_api, LocalApiSettings::default());
         assert!(!settings.local_api.enabled);
         assert_eq!(settings.local_api.port, crate::local_api::DEFAULT_PORT);
+    }
+
+    #[test]
+    fn calibrate_mimo_defaults_false_on_the_wire() {
+        let old: CalibrateParams =
+            serde_json::from_str(r#"{"settings":null,"subs_only":false}"#).unwrap();
+        assert!(!old.mimo);
+        assert_eq!(CalibrateParams::default(), old);
+        let wire = serde_json::to_value(CalibrateParams {
+            mimo: true,
+            ..Default::default()
+        })
+        .unwrap();
+        assert_eq!(wire["mimo"], true);
     }
 
     #[test]

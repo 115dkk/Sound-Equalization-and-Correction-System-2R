@@ -27,6 +27,7 @@ import type { Mode } from "../../ipc/bindings/Mode";
 import type { Notice } from "../../ipc/bindings/Notice";
 import { Advanced, Button, Card, EmptyState, ErrorNotice, Icon, Segmented, StatusPill, type PillTone } from "../../ui";
 import { roleCode } from "../../ui/maps/geometry";
+import { noticeText } from "../calibrate/text";
 import { DESIGN_RATE, rateText } from "../system/outputRate";
 import { ApplyBlock, eqapoReason } from "./apply";
 import { CamillaDevicesDisclosure, DESIGN_NAME_ID, DesignNameField, ExtraRatesDisclosure } from "./fields";
@@ -146,16 +147,17 @@ function modeText(t: Translate, mode: Mode, ultraMs: number, number: (value: num
   return mode === "ultra" ? t("export.mode.ultra", { ms: number(ultraMs) }) : t(MODE_TEXT[mode]);
 }
 
-/** One RC notice from `result_lines().rc` as a phrase; numbers arrive as strings and are rounded to whole Hz and m³. */
+/**
+ * One RC notice from `result_lines().rc` as a phrase; numbers arrive as
+ * strings and are rounded to whole Hz and m³. The upper limit is the 보정
+ * screen's RC line: its basis and the evidence for it (ADR 0021).
+ */
 export function rcText(t: Translate, notice: Notice, number: (value: number, digits?: number) => string): string {
   const p = notice.params;
   const whole = (value: string | undefined) => (value === undefined || Number.isNaN(Number(value)) ? value ?? "" : number(Number(value)));
   switch (notice.code) {
     case "rc_limit":
-      if (p.auto !== "true") return t("export.rc.rc_limit.manual", { hz: whole(p.hz) });
-      return p.schroeder_hz !== undefined
-        ? t("export.rc.rc_limit.schroeder", { hz: whole(p.hz), schroeder_hz: whole(p.schroeder_hz) })
-        : t("export.rc.rc_limit.auto", { hz: whole(p.hz) });
+      return noticeText(t, number, notice) ?? t("jobs.log.unknown");
     case "rc_room_volume":
       return t("export.rc.rc_room_volume", { volume_m3: whole(p.volume_m3) });
     case "rc_no_room_volume":

@@ -7,9 +7,11 @@ import type { CalibrationState, FrameModel } from "../../app/model";
 import { PrefsScope, usePrefs } from "../../app/prefs";
 import { FrameBox, T0, replay } from "../../gallery/frameSpecimens";
 import type { SpecimenDef } from "../../gallery/Specimen";
-import { useT } from "../../i18n/react";
+import { useNumber, useT } from "../../i18n/react";
+import { Card } from "../../ui";
 import { CalibrateScreen, calibrateHeader, type CalibrateScreenProps } from "./CalibrateScreen";
 import * as fx from "./fixtures";
+import { noticeText } from "./text";
 import { calibrateStepState, type CalibrateActions, type CalibrateView } from "./types";
 
 const noop = () => {};
@@ -84,6 +86,12 @@ const failedJobs = replay([
   },
 ] satisfies LedgerAction[]);
 
+/** 보정 계산 with MIMO that failed in its MIMO part (`stage: "mimo"`): the tray's entry says the correction finished. */
+const mimoFailedJobs = replay([
+  { type: "event", at: T0, event: { event: "started", job: 7, kind: "calibrate" } },
+  { type: "event", at: T0 + 24000, event: { event: "finished", job: 7, status: "failed", result: null, error: fx.mimoStageError } },
+] satisfies LedgerAction[]);
+
 /** Scrolls the frame's content so `target` sits at the top (settings specimens). */
 function ScrollTo({ target }: { target: string }) {
   const marker = useRef<HTMLSpanElement>(null);
@@ -137,10 +145,76 @@ function Scoped({ tutorial, children }: { tutorial?: boolean; children: ReactNod
 
 const frame = (id: string, title: string, render: () => ReactNode): SpecimenDef => ({ id: `screen.calibrate.${id}`, title: `보정 · ${title}`, width: 1280, height: 800, render });
 
+/** The range card on each upper-limit basis (ADR 0021), its RC line from the mock's calibration. */
+const RANGE_SPECIMENS: [string, string, CalibrateView][] = [
+  ["strict", "strict Schroeder ×1 (default) with the room volume and the transition", fx.rangeViews.strict],
+  ["strict-x2", "strict Schroeder ×2", fx.rangeViews.strictTimes2],
+  ["strict-x4", "strict Schroeder ×4", fx.rangeViews.strictTimes4],
+  ["lenient", "lenient Schroeder, its band's T60 in the line", fx.rangeViews.lenient],
+  ["lenient-x2", "lenient Schroeder ×2", fx.rangeViews.lenientTimes2],
+  ["agreement", "position agreement at nine positions: no room volume, the time it takes", fx.rangeViews.agreement],
+  ["agreement-unavailable", "two measured positions: agreement off, with the reason", fx.rangeViews.agreementUnavailable],
+  ["agreement-short", "agreement chosen, a position cleared since: still chosen, with what to do", fx.rangeViews.agreementShort],
+  ["manual", "직접 입력: the number field", fx.rangeViews.manual],
+  ["no-volume", "strict Schroeder without a room volume: 500 Hz and the hint to enter it", fx.rangeViews.noVolume],
+];
+
+/** Every kind of RC line in the range card's list. */
+function RcLines() {
+  const t = useT();
+  const number = useNumber();
+  return (
+    <Card title={t("calibrate.range.title")} className="calibrate-settings__card">
+      <ul className="calibrate-notes-list" data-ui="calibrate.range.notes">
+        {fx.rcLimitNotes.map((note, i) => (
+          <li key={i}>{noticeText(t, number, note)}</li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
+/** The 극저역 보호 line for each case: a sub's high-pass, a sub keeping the user's, a main, and the warning. */
+function LowProtectLines() {
+  const t = useT();
+  const number = useNumber();
+  return (
+    <Card title={t("calibrate.verdict.title")} className="calibrate-settings__card">
+      <ul className="calibrate-notes-list" data-ui="calibrate.verdict.low_protect.lines">
+        {fx.lowProtectNotes.map((note, i) => (
+          <li key={i}>{noticeText(t, number, note)}</li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 export const calibrateSpecimens: SpecimenDef[] = [
   frame("empty", "no result yet: plan, position-1 preview and target", () => <CalibrateFrame view={fx.emptyView} />),
   ...Object.entries(fx.planViews).map(([name, view]) => frame(`plan-${name}`, `calculation plan: ${name}`, () => <CalibrateFrame view={view} />)),
   frame("computing", "first run computing (busy primary, job in the tray)", () => <CalibrateFrame view={fx.computingView} jobs={runningJobs("calibrate", "engine.design", 11)} />),
+  frame("ready-mimo", "before the first run, MIMO on with three positions: MIMO 함께 계산 right before 보정 계산, the plan names MIMO", () => <CalibrateFrame view={fx.readyMimoView} />),
+  frame("ready-mimo-two", "before the first run with two positions: MIMO 함께 계산 off, the reason on its line", () => <CalibrateFrame view={fx.readyMimoTwoView} />),
+  {
+    id: "screen.calibrate.ready-mimo.min",
+    title: "보정 · MIMO 함께 계산 before the first run at the smallest window (1024 × 700)",
+    width: 1024,
+    height: 700,
+    render: () => <CalibrateFrame view={fx.readyMimoTwoView} />,
+  },
+  frame("computing-mimo", "first run computing the correction and MIMO: the busy line and the pill name both, the tray at the MIMO stage", () => (
+    <CalibrateFrame view={fx.computingMimoView} jobs={runningJobs("calibrate", "engine.mimo_iir", 11)} />
+  )),
+  frame("mimo-failed", "MIMO failed after the correction: the result stays, the MIMO figure says 계산 실패", () => <CalibrateFrame view={fx.mimoFailedView} jobs={mimoFailedJobs} />),
+  frame("mimo-failed-card", "MIMO failed after the correction: the MIMO card's notice, not the result card's", () => (
+    <CalibrateFrame view={fx.mimoFailedView} jobs={mimoFailedJobs} scrollTo="calibrate.settings.mimo" />
+  )),
+  frame("mimo-stale-correction", "MIMO behind a changed correction: 다시 보정하기 computes both, MIMO만 계산 off", () => (
+    <CalibrateFrame view={fx.mimoBehindCorrectionView} scrollTo="calibrate.settings.mimo" />
+  )),
+  frame("mimo-stale-settings", "MIMO behind its own settings on a current correction: MIMO만 계산", () => (
+    <CalibrateFrame view={fx.mimoStaleView} scrollTo="calibrate.settings.mimo" />
+  )),
   frame("spl", "current result, SPL with target handles and the RC band", () => <CalibrateFrame view={fx.splView} />),
   frame("target-menu", "target menu open (presets, 사용자 지정, save, load)", () => <CalibrateFrame view={fx.splView} initial={{ targetMenu: true }} />),
   frame("gd", "current result, GD with the RC band", () => <CalibrateFrame view={fx.gdView} />),
@@ -200,6 +274,23 @@ export const calibrateSpecimens: SpecimenDef[] = [
     <CalibrateFrame view={fx.baView} scrollTo="calibrate.ba.values" initial={{ editSub: "SW2" }} />
   )),
   frame("ultra", "초고지연 mode and its delay limit", () => <CalibrateFrame view={fx.ultraView} scrollTo="calibrate.settings.mode" />),
+  ...RANGE_SPECIMENS.map(([id, title, view]) => frame(`range-${id}`, `RC upper limit: ${title}`, () => <CalibrateFrame view={view} scrollTo="calibrate.settings.range" />)),
+  {
+    id: "screen.calibrate.range.min",
+    title: "보정 · RC upper limit at the smallest window (1024 × 700): lenient Schroeder ×2, the row wraps",
+    width: 1024,
+    height: 700,
+    render: () => <CalibrateFrame view={fx.rangeViews.lenientTimes2} scrollTo="calibrate.settings.range" />,
+  },
+  { id: "screen.calibrate.rc-lines", title: "보정 · the RC line for each kind of evidence, then a missing volume and a note from before the bases", width: 720, render: () => <RcLines /> },
+  frame("low-protect-off", "극저역 보호 off (the default) beside the boost limit, 고급 open", () => (
+    <CalibrateFrame view={fx.lowProtectViews.off} scrollTo="calibrate.settings.range" initial={{ rangeAdvanced: true }} />
+  )),
+  frame("low-protect-on", "극저역 보호 on: 고급 opens with it", () => <CalibrateFrame view={fx.lowProtectViews.on} scrollTo="calibrate.settings.range" />),
+  frame("low-protect-result", "극저역 보호 on with the RC lower limit at 15 Hz: the sub bus warning and the notes open, a line per channel", () => (
+    <CalibrateFrame view={fx.lowProtectViews.unheld} initial={{ notesOpen: true }} />
+  )),
+  { id: "screen.calibrate.low-protect-lines", title: "보정 · the 극저역 보호 line for a sub's high-pass, a sub keeping the user's, a main, and the bus warning", width: 720, render: () => <LowProtectLines /> },
   frame("tutorial", "tutorial accent", () => (
     <Scoped tutorial>
       <CalibrateFrame view={fx.splView} fileName="튜토리얼.secs" />
