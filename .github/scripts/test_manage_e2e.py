@@ -196,6 +196,16 @@ class ConfigTest(unittest.TestCase):
             with self.assertRaisesRegex(m.CheckError, "outside SECS2R"):
                 m.check_config_bytes(before, before.replace(b"-3", b"-2") + pair)
 
+    def test_listener_is_found_by_its_address_columns(self):
+        listing = ("  Proto  Local Address          Foreign Address        State           PID\n"
+                   "  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1012\n"
+                   "  TCP    127.0.0.1:1234         0.0.0.0:0              ABHÖREN         4484\n"
+                   "  TCP    127.0.0.1:50000        127.0.0.1:1234         TIME_WAIT       0\n")
+        self.assertEqual(m.listener_pid(listing, 1234), 4484)
+        self.assertEqual(m.listener_pid(listing, 135), 1012)
+        self.assertIsNone(m.listener_pid(listing, 4321))
+        self.assertIsNone(m.listener_pid(listing.replace("4484", ""), 1234))
+
     def test_unterminated_last_line_round_trips(self):
         # Equalizer APO's default config.txt has no ending after its last line.
         before = b"Preamp: -6 dB\r\nGraphicEQ: 25 0; 16000 0"

@@ -225,6 +225,21 @@ def remove_managed_lines(data):
     return text
 
 
+def listener_pid(listing, port):
+    """The PID listening on 127.0.0.1 or 0.0.0.0 `port` in `netstat -ano -p TCP`.
+
+    A connect probe cannot tell: Windows retries a refused loopback SYN for
+    about two seconds, so a free port times out a short connect.
+    """
+    wanted = {f"127.0.0.1:{port}", f"0.0.0.0:{port}"}
+    for line in listing.splitlines():
+        fields = line.split()
+        if (len(fields) >= 4 and fields[0].upper() == "TCP" and fields[1] in wanted
+                and fields[2] == "0.0.0.0:0" and fields[-1].isdigit()):
+            return int(fields[-1])
+    return None
+
+
 def check_config_bytes(before, after):
     require(remove_managed_lines(after) == before,
             "Equalizer APO changed bytes outside SECS2R's two lines")
@@ -1058,11 +1073,9 @@ class Scenario:
             self.start_session()
             self.open_project()
             self.choose_virtual_output()
-            try:
-                with socket.create_connection(("127.0.0.1", 1234), timeout=2):
-                    raise CheckError("CamillaDSP is still listening before the cold-start check")
-            except ConnectionRefusedError:
-                pass
+            listing = command(["netstat", "-ano", "-p", "TCP"], timeout=20).stdout
+            holder = listener_pid(listing, 1234)
+            require(holder is None, f"PID {holder} still listens on 1234 before the cold-start check")
             result = self.gui_apply("camilla", "handed_over")
             third = self.running(p2)
             p3 = third["camilla"]["pid"]
