@@ -79,6 +79,11 @@ def ui(name):
     return f'[data-ui="{name}"]'
 
 
+# Creating a session launches the app and its WebView2; on a fresh runner that
+# took longer than the 30 s of other commands (2026-10-30).
+SESSION_TIMEOUT = 180
+
+
 class WebDriver:
     def __init__(self, url="http://127.0.0.1:4444", timeout=30):
         self.url = url.rstrip("/")
@@ -87,13 +92,13 @@ class WebDriver:
         # Local driver traffic must not go through a runner's HTTP proxy.
         self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
-    def request(self, method, path, body=None):
+    def request(self, method, path, body=None, timeout=None):
         data = None if body is None else json.dumps(body).encode("utf-8")
         request = urllib.request.Request(self.url + path, data=data, method=method,
                                          headers={"Content-Type": "application/json"})
         failed = False
         try:
-            response = self.opener.open(request, timeout=self.timeout)
+            response = self.opener.open(request, timeout=timeout or self.timeout)
         except urllib.error.HTTPError as error:
             response = error
             failed = True
@@ -118,7 +123,7 @@ class WebDriver:
         result = self.request("POST", "/session", {"capabilities": {"alwaysMatch": {
             "tauri:options": {"application": str(application), "args": list(args),
                               "webviewOptions": {}},
-        }}})
+        }}}, timeout=SESSION_TIMEOUT)
         self.session = result["sessionId"]
         self.command("POST", "/timeouts", {"implicit": 0, "pageLoad": 30000, "script": 10000})
         return result

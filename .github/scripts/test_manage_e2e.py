@@ -47,6 +47,21 @@ class WebDriverTest(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=5)
 
+    def test_session_creation_waits_longer_than_other_commands(self):
+        seen = []
+        original = self.client.opener.open
+
+        def recording_open(request, timeout=None):
+            seen.append((request.get_method(), request.full_url.rsplit("/", 1)[-1], timeout))
+            return original(request, timeout=timeout)
+
+        self.client.opener.open = recording_open
+        self.replies = [(200, {"sessionId": "new", "capabilities": {}}), (200, None)]
+        self.client.start(r"C:\Installed\secs2r.exe")
+        self.assertEqual(seen[0], ("POST", "session", m.SESSION_TIMEOUT))
+        self.assertEqual(seen[1][2], 30)
+        self.assertGreaterEqual(m.SESSION_TIMEOUT, 120)
+
     def test_session_capabilities_and_delete(self):
         self.replies = [(200, {"sessionId": "new", "capabilities": {}}), (200, None), (200, None)]
         self.client.start(r"C:\Installed\secs2r.exe", ["--example"])
