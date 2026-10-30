@@ -66,6 +66,38 @@ impl NativeMeasurer {
         )?)
     }
 
+    pub(crate) fn input_meter(
+        &mut self,
+        plan: &MeasurementPlan,
+        cancel: &CancelToken,
+        stop_when: &mut dyn FnMut() -> bool,
+        on_level: &mut dyn FnMut(secs_audio::LevelReport),
+    ) -> Result<(), MeasureError> {
+        let audio = self.audio_plan(plan)?;
+        let input = LevelInput {
+            endpoint: audio.input,
+            channel: audio.input_channel,
+            calibration: self.settings.calibration.clone(),
+            spl_reference: self.settings.spl_reference,
+        };
+        Ok(secs_audio::input_meter(
+            self.backend.as_ref(),
+            &input,
+            audio.sample_rate,
+            audio.share,
+            &cancel.audio,
+            stop_when,
+            on_level,
+        )?)
+    }
+
+    fn audio_plan(
+        &self,
+        plan: &MeasurementPlan,
+    ) -> Result<secs_audio::MeasurementPlan, MeasureError> {
+        to_audio_plan(plan, &self.backend.enumerate()?, &self.settings)
+    }
+
     fn level_io(
         &self,
         plan: &MeasurementPlan,
@@ -74,7 +106,7 @@ impl NativeMeasurer {
         if !plan.roles.iter().any(|candidate| candidate == role) {
             return Err(MeasureError::Input("unknown measurement role".into()));
         }
-        let audio = to_audio_plan(plan, &self.backend.enumerate()?, &self.settings)?;
+        let audio = self.audio_plan(plan)?;
         let channel = audio
             .roles
             .iter()

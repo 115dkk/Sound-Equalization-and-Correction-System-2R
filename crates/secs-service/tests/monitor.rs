@@ -120,6 +120,212 @@ fn configure_mock(service: &Service, path: &std::path::Path) {
     configure(service, path, "mock");
 }
 
+#[derive(Debug, Default)]
+struct NativeAudioState {
+    history: Vec<&'static str>,
+    active_inputs_during_play: Vec<usize>,
+    active_inputs: usize,
+}
+
+#[derive(Clone, Debug, Default)]
+struct NativeAudio {
+    state: Arc<Mutex<NativeAudioState>>,
+}
+
+impl NativeAudio {
+    fn endpoint() -> secs_audio::Endpoint {
+        secs_audio::Endpoint {
+            id: "native-fake".into(),
+            name: "native-fake".into(),
+            host_api: "fake".into(),
+            max_input_channels: 1,
+            max_output_channels: 2,
+            default_samplerate: 48_000.0,
+            is_default_input: true,
+            is_default_output: true,
+        }
+    }
+}
+
+impl secs_audio::AudioBackend for NativeAudio {
+    fn name(&self) -> &'static str {
+        "native-monitor-fake"
+    }
+
+    fn enumerate(&self) -> Result<Vec<secs_audio::Endpoint>, secs_audio::AudioError> {
+        Ok(vec![Self::endpoint()])
+    }
+
+    fn probe(
+        &self,
+        _endpoint: &secs_audio::Endpoint,
+        _direction: secs_audio::Direction,
+        spec: secs_audio::StreamSpec,
+        mode: secs_audio::ShareMode,
+    ) -> Result<secs_audio::ProbeResult, secs_audio::AudioError> {
+        Ok(secs_audio::ProbeResult {
+            supported: true,
+            mode,
+            native_sample_rate: spec.sample_rate,
+            native_channels: spec.channels,
+            detail: String::new(),
+        })
+    }
+
+    fn open_output(
+        &self,
+        _endpoint: &secs_audio::Endpoint,
+        spec: secs_audio::StreamSpec,
+        mode: secs_audio::ShareMode,
+    ) -> Result<Box<dyn secs_audio::OutputSession>, secs_audio::AudioError> {
+        self.state.lock().unwrap().history.push("output open");
+        Ok(Box::new(NativeOutput {
+            state: self.state.clone(),
+            spec,
+            mode,
+        }))
+    }
+
+    fn open_input(
+        &self,
+        _endpoint: &secs_audio::Endpoint,
+        spec: secs_audio::StreamSpec,
+        _mode: secs_audio::ShareMode,
+    ) -> Result<Box<dyn secs_audio::InputSession>, secs_audio::AudioError> {
+        self.state.lock().unwrap().history.push("input open");
+        Ok(Box::new(NativeInput {
+            state: self.state.clone(),
+            spec,
+            started: false,
+        }))
+    }
+}
+
+struct NativeInput {
+    state: Arc<Mutex<NativeAudioState>>,
+    spec: secs_audio::StreamSpec,
+    started: bool,
+}
+
+impl secs_audio::InputSession for NativeInput {
+    fn start(&mut self) -> Result<(), secs_audio::AudioError> {
+        self.started = true;
+        let mut state = self.state.lock().unwrap();
+        state.active_inputs += 1;
+        state.history.push("input start");
+        Ok(())
+    }
+
+    fn read_into(
+        &mut self,
+        dst: &mut [f32],
+        cancel: &secs_audio::CancelToken,
+    ) -> Result<secs_audio::CaptureRead, secs_audio::AudioError> {
+        if cancel.is_cancelled() {
+            return Err(secs_audio::AudioError::Cancelled);
+        }
+        dst.fill(0.1);
+        std::thread::sleep(Duration::from_millis(2));
+        Ok(secs_audio::CaptureRead {
+            frames: dst.len() / usize::from(self.spec.channels),
+            discontinuity: false,
+            silent: false,
+        })
+    }
+
+    fn stop(&mut self) -> Result<(), secs_audio::AudioError> {
+        let mut state = self.state.lock().unwrap();
+        if self.started {
+            state.active_inputs -= 1;
+            self.started = false;
+        }
+        state.history.push("input stop");
+        Ok(())
+    }
+}
+
+struct NativeOutput {
+    state: Arc<Mutex<NativeAudioState>>,
+    spec: secs_audio::StreamSpec,
+    mode: secs_audio::ShareMode,
+}
+
+impl secs_audio::OutputSession for NativeOutput {
+    fn play_to_completion(
+        &mut self,
+        data: &[f32],
+        cancel: &secs_audio::CancelToken,
+    ) -> Result<secs_audio::PlaybackReport, secs_audio::AudioError> {
+        if cancel.is_cancelled() {
+            return Err(secs_audio::AudioError::Cancelled);
+        }
+        let mut state = self.state.lock().unwrap();
+        let active_inputs = state.active_inputs;
+        state.active_inputs_during_play.push(active_inputs);
+        state.history.push("output play");
+        drop(state);
+        let frames = (data.len() / usize::from(self.spec.channels)) as u64;
+        Ok(secs_audio::PlaybackReport {
+            frames_submitted: frames,
+            frames_drained: frames,
+            mode: self.mode,
+            underruns: 0,
+            cancelled: false,
+        })
+    }
+}
+
+#[test]
+fn native_monitor_meters_while_idle_and_closes_it_before_a_play() {
+    let root = root();
+    let audio = NativeAudio::default();
+    let injected = audio.clone();
+    let service = Service::new(Deps {
+        audio_backend: Arc::new(move || Box::new(injected.clone())),
+        ..Default::default()
+    });
+    configure(&service, &root.join("room.secs"), "native");
+    let events = Arc::new(Events::default());
+    let Response::LevelMonitorStart(started) = call(
+        &service,
+        Request::LevelMonitorStart(LevelMonitorStartParams::default()),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    events.wait_meters(started.job, 5, Duration::from_secs(2));
+    call(
+        &service,
+        Request::LevelPlay(LevelPlayParams {
+            role: "L".into(),
+            master_dbfs: -30.0,
+        }),
+        Arc::new(NoEvents),
+    );
+    events.wait_play_end(started.job, "L", "done", Duration::from_secs(10));
+    call(&service, Request::LevelMonitorStop, Arc::new(NoEvents));
+    assert_eq!(
+        events.wait_finished(started.job, Duration::from_secs(2)),
+        JobStatus::Cancelled
+    );
+
+    let state = audio.state.lock().unwrap();
+    let idle_stop = state
+        .history
+        .iter()
+        .position(|entry| *entry == "input stop")
+        .unwrap();
+    let output_open = state
+        .history
+        .iter()
+        .position(|entry| *entry == "output open")
+        .unwrap();
+    assert!(idle_stop < output_open, "{:?}", state.history);
+    assert_eq!(state.active_inputs_during_play, [1]);
+    drop(state);
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn mock_monitor_emits_stores_excludes_and_stops() {
     let root = root();
@@ -660,7 +866,7 @@ fn failed_error(events: &Events, job: JobId) -> IpcError {
         .unwrap()
 }
 
-fn monitor_error(service: &Service, role: &str) -> IpcError {
+fn monitor_error(service: &Service, role: &str, play: bool) -> IpcError {
     let events = Arc::new(Events::default());
     let Response::LevelMonitorStart(started) = call(
         service,
@@ -669,14 +875,16 @@ fn monitor_error(service: &Service, role: &str) -> IpcError {
     ) else {
         panic!()
     };
-    call(
-        service,
-        Request::LevelPlay(LevelPlayParams {
-            role: role.into(),
-            master_dbfs: -30.0,
-        }),
-        Arc::new(NoEvents),
-    );
+    if play {
+        call(
+            service,
+            Request::LevelPlay(LevelPlayParams {
+                role: role.into(),
+                master_dbfs: -30.0,
+            }),
+            Arc::new(NoEvents),
+        );
+    }
     failed_error(&events, started.job)
 }
 
@@ -690,7 +898,7 @@ fn monitor_errors_are_classified() {
         let root = root();
         let service = Service::new(Default::default());
         configure(&service, &root.join("room.secs"), method);
-        let got = monitor_error(&service, role);
+        let got = monitor_error(&service, role, method == "mock");
         assert_eq!(
             (got.code, got.retryable),
             (code, retryable),
