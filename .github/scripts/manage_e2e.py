@@ -224,28 +224,27 @@ def check_config_bytes(before, after):
 VIRTUAL_OUTPUT = "CABLE Input (VB-Audio Virtual Cable)"
 
 
-def base_is_processing(rms):
-    """Two channels of the base's -60 dBFS sine (RMS about -63 dB), not silence."""
-    return (isinstance(rms, list) and len(rms) == 2
-            and all(isinstance(value, (int, float)) and -80 < value < -50 for value in rms))
+
+VIRTUAL_INPUT = "CABLE Output (VB-Audio Virtual Cable)"
 
 
 def base_config():
-    # SignalGenerator is endless and plays, paced by the device, into the
-    # runner's VB-CABLE input through shared WASAPI (format F32, as the app
-    # exports it). File -> NUL stayed in "Starting" on the runner (CamillaDSP
-    # 4.1.3, 2026-10-30). This config is NEVER substituted for app output.
+    # A plain WASAPI pass-through on the runner's VB-CABLE (format F32, as the
+    # app exports it): it reaches Running and exits on the takeover's Exit.
+    # With SignalGenerator capture CamillaDSP 4.1.3 never reports Running and
+    # stayed alive after Exit, so the service saw the port busy (2026-10-30).
+    # The cable is silent, so playing its own output back does not build up.
+    # This config is NEVER substituted for app output.
     return f"""devices:
   samplerate: 48000
   chunksize: 1024
   queuelimit: 2
   capture:
-    type: SignalGenerator
+    type: Wasapi
     channels: 2
-    signal:
-      type: Sine
-      freq: 997
-      level: -60
+    device: "{VIRTUAL_INPUT}"
+    format: F32
+    exclusive: false
   playback:
     type: Wasapi
     channels: 2
@@ -650,7 +649,7 @@ class Scenario:
         self.artifacts = args.artifacts
         self.driver = WebDriver()
         self.records = []
-        self.notes = ["Base: SignalGenerator sine -> shared WASAPI on VB-CABLE Input, no growing output file.",
+        self.notes = ["Base: shared WASAPI pass-through, VB-CABLE Output -> VB-CABLE Input (silent), no growing output file.",
                       "Applied configs are unchanged: stereo design, VB-CABLE WASAPI loopback -> shared WASAPI, F32.",
                       "tauri-driver 2.1.0 (released 2026-09-26); Edge build/signature in webdriver-version.json.",
                       "Equalizer APO XT: pinned 2.60.4 x64-sse2 Setup.exe --silent; require installer registry values."]
@@ -910,16 +909,11 @@ class Scenario:
             self.handles.append(output)
             self.base = subprocess.Popen([str(self.args.camilla), "-p", "1234", "-a", "127.0.0.1", str(path)],
                                          stdout=output, stderr=subprocess.STDOUT)
-            # CamillaDSP 4.1.3's SignalGenerator never sets the Running state
-            # (src/generatordevice.rs writes only Inactive), so GetState stays
-            # "Starting" while it plays. It does update the capture signal level
-            # of every chunk: the -60 dBFS sine there proves the base processes.
-            wait_for("base capture signal", lambda: websocket("GetCaptureSignalRms"), base_is_processing)
-            require(websocket("GetState") in {"Running", "Starting"}, "base CamillaDSP is not processing")
+            wait_for("base GetState", lambda: websocket("GetState"), lambda value: value == "Running")
             require(self.base.poll() is None, "base CamillaDSP exited; another process may own port 1234")
             require(os.path.normcase(websocket("GetConfigFilePath")) == os.path.normcase(str(path)),
                     "port 1234 does not serve the base configuration")
-            record["detail"] = f"base PID {self.base.pid}; SignalGenerator -> VB-CABLE Input"
+            record["detail"] = f"base PID {self.base.pid}; VB-CABLE Output -> VB-CABLE Input"
         with self.step(2) as record:
             output = (self.artifacts / "tauri-driver.log").open("wb")
             self.handles.append(output)

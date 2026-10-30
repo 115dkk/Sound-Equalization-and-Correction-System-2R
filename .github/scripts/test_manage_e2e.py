@@ -202,15 +202,11 @@ class ConfigTest(unittest.TestCase):
             with self.assertRaises(m.CheckError):
                 m.remove_managed_lines(data)
 
-    def test_base_processing_is_judged_from_the_capture_signal(self):
-        self.assertTrue(m.base_is_processing([-63.0, -63.0]))
-        for rms in ([], [-63.0], [-1000.0, -1000.0], [-20.0, -63.0], None, "Starting", [-63.0, None]):
-            self.assertFalse(m.base_is_processing(rms), rms)
-
     def test_base_is_infinite_and_plays_into_the_virtual_cable(self):
         text = m.base_config()
-        self.assertIn("type: SignalGenerator\n", text)
-        self.assertIn("signal:\n      type: Sine\n", text)
+        self.assertIn('capture:\n    type: Wasapi\n    channels: 2\n    device: "CABLE Output (VB-Audio Virtual Cable)"\n'
+                      '    format: F32\n    exclusive: false\n', text)
+        self.assertNotIn("SignalGenerator", text)
         self.assertIn('type: Wasapi\n    channels: 2\n    device: "CABLE Input (VB-Audio Virtual Cable)"\n'
                       '    format: F32\n    exclusive: false\n', text)
         self.assertIn("filters: {}\nmixers: {}\npipeline: []\n", text)
