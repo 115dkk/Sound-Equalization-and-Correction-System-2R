@@ -36,8 +36,9 @@ def dry_run_version(version: str) -> str:
     return f"{version}-{SUFFIX}"
 
 
-def set_exact_dependencies(manifest: str, old: str, new: str) -> str:
-    """Rewrite ``"=old"`` requirements in every dependency table of a member manifest."""
+def set_exact_dependencies(manifest: str, names, old: str, new: str) -> str:
+    """Rewrite the named crates' ``"=old"`` requirements in every dependency
+    table of a member manifest (by package name, gate.dependency_package)."""
     lines = manifest.splitlines(keepends=True)
     section = None
     for i, line in enumerate(lines):
@@ -45,7 +46,8 @@ def set_exact_dependencies(manifest: str, old: str, new: str) -> str:
         if header:
             section = header.group(1).strip()
             continue
-        if section is not None and section.split(".")[-1].endswith("dependencies"):
+        if (section is not None and section.split(".")[-1].endswith("dependencies")
+                and gate.dependency_package(line) in names):
             lines[i] = line.replace(f'"={old}"', f'"={new}"')
     return "".join(lines)
 
@@ -64,7 +66,7 @@ def main() -> int:
     for pattern in MEMBER_GLOBS:
         for manifest in sorted(root.glob(pattern)):
             text = gate._read(manifest)
-            updated = set_exact_dependencies(text, old, new)
+            updated = set_exact_dependencies(text, set(published), old, new)
             if updated != text:
                 gate._write(manifest, updated)
     cargo_toml = gate._read(gate.CARGO_TOML)

@@ -252,6 +252,21 @@ def set_package_version(manifest: str, new: str) -> str:
     raise ValueError("no literal [package] version")
 
 
+def dependency_package(line: str):
+    """The package a one-line dependency entry points at: its ``package`` key
+    when it renames the crate, else its own key; None for other lines.
+
+    A version string alone says nothing about whose version it is: a
+    third-party crate pinned with ``=`` can share the API's version number
+    (``libloading = "=0.9.0"`` beside API 0.9.0), so every rewrite of exact
+    requirements goes by the package name."""
+    key = re.match(r"^\s*([A-Za-z0-9_-]+)\s*=", line)
+    if not key:
+        return None
+    renamed = re.search(r'\bpackage\s*=\s*"([^"]+)"', line)
+    return renamed.group(1) if renamed else key.group(1)
+
+
 def set_exact_requirements(cargo_toml: str, names, old: str, new: str) -> str:
     """Move the ``=old`` requirements of the named crates in
     [workspace.dependencies] to ``=new``; other lines stay as they are."""
@@ -262,14 +277,14 @@ def set_exact_requirements(cargo_toml: str, names, old: str, new: str) -> str:
         if header:
             section = header.group(1).strip()
             continue
-        m = re.match(r"^\s*([A-Za-z0-9_-]+)\s*=", line)
-        if section == "workspace.dependencies" and m and m.group(1) in names:
+        if section == "workspace.dependencies" and dependency_package(line) in names:
             lines[i] = line.replace(f'"={old}"', f'"={new}"')
     return "".join(lines)
 
 
-def set_dependency_versions(manifest: str, old: str, new: str) -> str:
-    """Move exact API requirements in one package's [dependencies] table."""
+def set_dependency_versions(manifest: str, names, old: str, new: str) -> str:
+    """Move the named crates' exact requirements in one package's
+    [dependencies] table."""
     lines = manifest.splitlines(keepends=True)
     section = None
     for i, line in enumerate(lines):
@@ -277,7 +292,7 @@ def set_dependency_versions(manifest: str, old: str, new: str) -> str:
         if header:
             section = header.group(1).strip()
             continue
-        if section == "dependencies":
+        if section == "dependencies" and dependency_package(line) in names:
             lines[i] = line.replace(f'"={old}"', f'"={new}"')
     return "".join(lines)
 
@@ -421,7 +436,7 @@ def _commit_bump(old: str, new: str, started_head: str,
         api_old, api_new, manifests = api
         for manifest in manifests.values():
             updated = set_package_version(_read(manifest), api_new)
-            updated = set_dependency_versions(updated, api_old, api_new)
+            updated = set_dependency_versions(updated, set(manifests), api_old, api_new)
             _write(manifest, updated)
             staged.append(str(manifest))
         cargo_toml = set_exact_requirements(cargo_toml, set(manifests), api_old, api_new)

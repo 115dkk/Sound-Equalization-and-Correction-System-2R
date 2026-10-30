@@ -246,10 +246,31 @@ class ApiTest(unittest.TestCase):
 
     def test_python_manifest_follows_the_api_version(self):
         moved = g.set_package_version(self.PYTHON, "0.2.0")
-        moved = g.set_dependency_versions(moved, "0.1.0", "0.2.0")
+        moved = g.set_dependency_versions(moved, {"api", "secs-py"}, "0.1.0", "0.2.0")
         self.assertEqual(g.package_field(moved, "version"), "0.2.0")
         self.assertIn('secs = { package = "api", version = "=0.2.0" }', moved)
         self.assertIn('pyo3 = { version = "0.30.1" }', moved)
+
+    def test_exact_requirements_move_by_package_name_not_by_version(self):
+        # A third-party crate pinned at the API's version number stays put.
+        manifest = (
+            '[package]\nname = "secs-py"\nversion = "0.9.0"\n\n[dependencies]\n'
+            'secs = { package = "api", version = "=0.9.0" }\n'
+            'libloading = "=0.9.0"\n'
+        )
+        moved = g.set_dependency_versions(manifest, {"api"}, "0.9.0", "0.10.0")
+        self.assertIn('secs = { package = "api", version = "=0.10.0" }', moved)
+        self.assertIn('libloading = "=0.9.0"', moved)
+        workspace = (
+            '[workspace.dependencies]\n'
+            'secs-types = { path = "crates/secs-types", version = "=0.9.0" }\n'
+            'libloading = "=0.9.0"\n'
+        )
+        moved = g.set_exact_requirements(workspace, {"secs-types"}, "0.9.0", "0.10.0")
+        self.assertIn('secs-types = { path = "crates/secs-types", version = "=0.10.0" }', moved)
+        self.assertIn('libloading = "=0.9.0"', moved)
+        self.assertEqual(g.dependency_package('secs = { package = "api", path = "a" }'), "api")
+        self.assertEqual(g.dependency_package("[dependencies]"), None)
 
     def test_packaged_files_exclude_tests_examples_and_benches(self):
         changed = [
