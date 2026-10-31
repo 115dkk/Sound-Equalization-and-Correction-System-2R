@@ -994,11 +994,11 @@ function BaSection({ view, actions, onSampleRateSettings, editSub }: FailureProp
 /* ── 저음 도착과 울림 (ADR 0025) ────────────────────────────────────────── */
 
 /**
- * Two official alternatives on the main screen, both off by default. Zero
- * mode does not change phase, so 저음 도착 맞추기 is off there with the
- * reason; the stored choice is kept and comes back with another mode. In
- * Mixed mode its short delay aligns only part of the way, which the switch
- * says while it is on.
+ * Three official alternatives on the main screen, all off by default. Zero
+ * mode does not change phase, so 저음 도착 맞추기 and 고역 위상 맞추기 are off
+ * there with the reason; the stored choice is kept and comes back with
+ * another mode. In Mixed mode the short delay aligns the bass only part of the
+ * way, which its switch says while it is on.
  */
 function LfSection({ view, actions }: Props) {
   const t = useT();
@@ -1010,6 +1010,9 @@ function LfSection({ view, actions }: Props) {
   ) : align && s.mode === "mixed" ? (
     <span data-ui="calibrate.lf_align.partial">{t("calibrate.lf_align.mixed", { mode: t(MODE_NAME.mixed) })}</span>
   ) : undefined;
+  const phaseHint = zero ? (
+    <span data-ui="calibrate.hf_phase.unavailable">{t("calibrate.hf_phase.unavailable_zero", { mode: t(MODE_NAME.zero) })}</span>
+  ) : undefined;
   return (
     <SettingsCard id="lf" title={t("calibrate.lf.title")} help={t("calibrate.lf.description")}>
       <Toggle
@@ -1020,6 +1023,15 @@ function LfSection({ view, actions }: Props) {
         checked={align}
         disabled={zero}
         onChange={(on) => actions.changeSetting({ kind: "lf_align", on })}
+      />
+      <Toggle
+        id="calibrate.hf_phase"
+        label={t("calibrate.hf_phase")}
+        help={t("calibrate.hf_phase.help")}
+        hint={phaseHint}
+        checked={!zero && s.hf_phase}
+        disabled={zero}
+        onChange={(on) => actions.changeSetting({ kind: "hf_phase", on })}
       />
       <Toggle
         id="calibrate.mode_decay"

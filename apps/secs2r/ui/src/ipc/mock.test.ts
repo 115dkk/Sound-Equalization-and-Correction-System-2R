@@ -922,7 +922,7 @@ describe("mock 극저역 보호 (ADR 0022)", () => {
   });
 });
 
-describe("mock 저음 도착 맞추기 and 방 울림 줄이기 (ADR 0025)", () => {
+describe("mock 저음 도착 맞추기, 고역 위상 맞추기 and 방 울림 줄이기 (ADR 0025, 0030)", () => {
   it("applies each switch in every mode, Zero included, and marks the result stale", async () => {
     const mock = createMockService({ tickMs: 0, results: resultsSummary });
     const edit = (edit: import("./bindings/SettingEdit").SettingEdit) => mock.request({ method: "calibration_settings_edit", params: { edit } });
@@ -935,6 +935,9 @@ describe("mock 저음 도착 맞추기 and 방 울림 줄이기 (ADR 0025)", () 
       expect(await edit({ kind: "mode", mode: "linear" })).toMatchObject({ mode: "linear", lf_align: true, mode_decay: true });
       expect(await edit({ kind: "lf_align", on: false })).toMatchObject({ lf_align: false, mode_decay: true });
       expect(await edit({ kind: "mode_decay", on: false })).toMatchObject({ lf_align: false, mode_decay: false });
+      expect(await edit({ kind: "mode", mode: "zero" })).toMatchObject({ mode: "zero" });
+      expect(await edit({ kind: "hf_phase", on: true })).toMatchObject({ mode: "zero", hf_phase: true, lf_align: false });
+      expect(await edit({ kind: "hf_phase", on: false })).toMatchObject({ hf_phase: false });
     } finally { mock.dispose(); }
   });
 });

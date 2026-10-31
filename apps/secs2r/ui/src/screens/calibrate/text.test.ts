@@ -201,7 +201,7 @@ describe("calculation notes", () => {
   });
 });
 
-describe("저음 도착 맞추기 and 방 울림 줄이기 (ADR 0025)", () => {
+describe("저음 도착 맞추기, 방 울림 줄이기 and 고역 위상 맞추기 (ADR 0025, 0030)", () => {
   it("reads every case the service sends as a line per record, in both languages", () => {
     expect(lines("ko", lfNoteCases)).toEqual([
       "저음 도착 맞추기(L): 위상 보정 강도 100 %, 고음과의 도착 시간 차이 +0.4 ms (+는 저음이 늦게 도착)",
@@ -210,6 +210,9 @@ describe("저음 도착 맞추기 and 방 울림 줄이기 (ADR 0025)", () => {
       "방 울림 줄이기(L): 42 Hz 룸 모드의 측정 T60 0.82초, 목표 0.31초, 8.4 dB 컷",
       "방 울림 줄이기(L): 63 Hz 룸 모드의 측정 T60 0.55초, 목표 0.31초, 4.9 dB 컷",
       "방 울림 줄이기(Lrs): 목표 T60 0.31초, 컷을 적용할 룸 모드 없음",
+      "고역 위상 맞추기(L): 상한 위의 위상 회전 +37°를 되돌림",
+      "고역 위상 맞추기(R): 상한 위의 위상 회전 −115°를 되돌림, 지연 한도로 위상 회전이 일부 남음",
+      "고역 위상 맞추기(C): 상한 위에 위상을 맞출 구간이 없어 회전 유지",
     ]);
     expect(lines("en", lfNoteCases)).toEqual([
       "Align bass arrival (L): phase correction strength 100%, bass arrival relative to treble +0.4 ms (+ means bass arrives later)",
@@ -218,6 +221,9 @@ describe("저음 도착 맞추기 and 방 울림 줄이기 (ADR 0025)", () => {
       "Shorten room ringing (L): 42 Hz room mode measured T60 0.82 s, target 0.31 s, 8.4 dB cut",
       "Shorten room ringing (L): 63 Hz room mode measured T60 0.55 s, target 0.31 s, 4.9 dB cut",
       "Shorten room ringing (Lrs): target T60 0.31 s, no room mode eligible for a cut",
+      "Align treble phase (L): unwound a +37° rotation above the upper limit",
+      "Align treble phase (R): unwound a −115° rotation above the upper limit, some rotation remains due to the delay limit",
+      "Align treble phase (C): no range left above the upper limit, so the rotation remains",
     ]);
   });
 
