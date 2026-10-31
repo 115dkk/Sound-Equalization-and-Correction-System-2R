@@ -42,6 +42,9 @@ export const ALLPASS_Q_DEFAULT = 0.71;
  */
 export const mimoIncluded = (settings: Pick<CalibrationSettings, "mimo_on">, positions: number) => settings.mimo_on && positions >= MIMO_MIN_POSITIONS;
 
+/** 'XO 추천 포함' (ADR 0028) as the switches show it: a missing value means on. */
+export const xoRecInclude = (settings: Pick<CalibrationSettings, "xo_rec_include">) => settings.xo_rec_include !== false;
+
 /* ── RC upper limit (ADR 0021) ──────────────────────────────────────────── */
 
 /** The upper limit as the range card offers it: an automatic basis, or 직접 입력 (`rc_hi` set). */

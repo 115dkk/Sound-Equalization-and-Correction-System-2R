@@ -44,6 +44,8 @@ it("walks a non-tutorial sample project through mock measurements, calibration a
     fireEvent.click(ui("frame.rail.calibrate"));
     await waitFor(() => expect(document.querySelector('[data-ui="calibrate.compute"]')).not.toBeNull());
     fireEvent.click(ui("calibrate.compute"));
+    await waitFor(() => expect(mock.calls.some((r) => r.method === "recommend_xo")).toBe(true));
+    await act(async () => { mock.drain(); });
     await waitFor(() => expect(mock.calls.some((r) => r.method === "calibrate")).toBe(true));
     await act(async () => { mock.drain(); });
     await waitFor(() => expect(document.querySelector('[data-ui="calibrate.verdict"]')).not.toBeNull());
@@ -53,8 +55,8 @@ it("walks a non-tutorial sample project through mock measurements, calibration a
     await waitFor(() => expect(mock.calls.some((r) => r.method === "export")).toBe(true));
     await act(async () => { mock.drain(); });
     await waitFor(() => expect(mock.calls.some((r) => r.method === "open_folder")).toBe(true));
-    expect(mock.calls.filter((r) => ["project_new", "measure_position", "calibrate", "export"].includes(r.method)).map((r) => r.method))
-      .toEqual(["project_new", ...methods.mock_positions.map(() => "measure_position"), "calibrate", "export"]);
+    expect(mock.calls.filter((r) => ["project_new", "measure_position", "recommend_xo", "calibrate", "export"].includes(r.method)).map((r) => r.method))
+      .toEqual(["project_new", ...methods.mock_positions.map(() => "measure_position"), "recommend_xo", "calibrate", "export"]);
     expect(mock.calls.some((r) => r.method === "sample_load")).toBe(false);
     expect(mock.calls.find((r) => r.method === "export")).toEqual({ method: "export", params: { kind: "camilla_dsp", folder: "" } });
   } finally { rendered.unmount(); mock.dispose(); }

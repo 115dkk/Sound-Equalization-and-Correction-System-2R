@@ -14,6 +14,14 @@ use crate::rules::CALIBRATION_LIMITS;
 /// The ultra mode's latency budget range (ms).
 const ULTRA_MS: (f64, f64) = CALIBRATION_LIMITS.ultra_ms;
 
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "lowercase")]
 #[ts(export)]
@@ -194,6 +202,14 @@ pub struct CalibrationSettings {
     #[serde(with = "ordered_f64_map")]
     #[ts(as = "BTreeMap<String, f64>")]
     pub xo_rec: Vec<(String, f64)>,
+    /// Fingerprint of the inputs used for the stored XO recommendation.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    #[ts(as = "Option<String>", optional)]
+    pub xo_rec_key: String,
+    /// Recompute the XO recommendation before calibration (ADR 0028).
+    #[serde(default = "default_true", skip_serializing_if = "is_true")]
+    #[ts(as = "Option<bool>", optional)]
+    pub xo_rec_include: bool,
     pub ultra_ms: f64,
     #[serde(with = "ordered_sub_map")]
     #[ts(as = "BTreeMap<String, SubEntry>")]
@@ -234,6 +250,8 @@ impl Default for CalibrationSettings {
             mimo_iir_analytic_derivatives: false,
             xo: Vec::new(),
             xo_rec: Vec::new(),
+            xo_rec_key: String::new(),
+            xo_rec_include: true,
             ultra_ms: 200.0,
             subs_manual: Vec::new(),
             sub_main_delay_ms: 0.0,
@@ -796,6 +814,26 @@ mod tests {
                 serde_json::from_value(serde_json::json!({"kind": kind, "on": true})).unwrap();
             assert_eq!(edit, expected);
         }
+    }
+
+    #[test]
+    fn xo_recommendation_metadata_defaults_on_and_does_not_change_engine_key() {
+        let baseline = CalibrationSettings::default();
+        let key = baseline.engine_key();
+        assert!(baseline.xo_rec_include);
+        assert!(baseline.xo_rec_key.is_empty());
+        let wire = serde_json::to_value(&baseline).unwrap();
+        assert!(wire.get("xo_rec_include").is_none());
+        assert!(wire.get("xo_rec_key").is_none());
+
+        let legacy: CalibrationSettings = serde_json::from_value(wire).unwrap();
+        assert!(legacy.xo_rec_include);
+        let changed = CalibrationSettings {
+            xo_rec_include: false,
+            xo_rec_key: "recommendation".into(),
+            ..legacy
+        };
+        assert_eq!(changed.engine_key(), key);
     }
 
     #[test]

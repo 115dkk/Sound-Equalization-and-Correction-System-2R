@@ -15,6 +15,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
+mod applog;
 mod apply;
 mod host;
 mod icon;
@@ -58,6 +59,15 @@ async fn secs_call(
     let events: Arc<dyn EventSink> = events
         .map(|id| Arc::new(EventChannel(id.channel_on(webview))) as Arc<dyn EventSink>)
         .unwrap_or_else(|| Arc::new(NoEvents));
+    let method = request
+        .as_ref()
+        .and_then(|value| value.get("method"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("<invalid>")
+        .to_owned();
+    let log = app.state::<applog::AppLog>().inner().clone();
+    let join_log = log.clone();
+    let join_method = method.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let service = app.state::<Arc<Service>>();
         let changes_settings = request
@@ -84,10 +94,32 @@ async fn secs_call(
                 settings.local_api,
             );
         }
+        if let Envelope::Err(error) = &envelope {
+            log.line(
+                applog::Level::Error,
+                "request",
+                &format!(
+                    "method={method} error_code={:?} message={}",
+                    error.code,
+                    applog::log_value(&error.detail)
+                ),
+            );
+        }
         envelope
     })
     .await
-    .unwrap_or_else(|error| Envelope::Err(IpcError::new(ErrorCode::Internal, error.to_string())))
+    .unwrap_or_else(|error| {
+        let detail = error.to_string();
+        join_log.line(
+            applog::Level::Error,
+            "request",
+            &format!(
+                "method={join_method} error_code=Internal message={}",
+                applog::log_value(&detail)
+            ),
+        );
+        Envelope::Err(IpcError::new(ErrorCode::Internal, detail))
+    })
 }
 
 fn handle(
@@ -117,8 +149,50 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
             let config_dir = app.path().app_config_dir()?;
+            let log_dir = config_dir.join("logs");
+            let log = applog::AppLog::open(&log_dir);
+            let previous_hook = std::panic::take_hook();
+            let panic_log = log.clone();
+            std::panic::set_hook(Box::new(move |info| {
+                let message = info
+                    .payload()
+                    .downcast_ref::<String>()
+                    .cloned()
+                    .or_else(|| {
+                        info.payload()
+                            .downcast_ref::<&str>()
+                            .map(|value| (*value).to_owned())
+                    })
+                    .unwrap_or_else(|| "non-string panic payload".into());
+                let location = info.location().map_or_else(
+                    || "unknown".into(),
+                    |location| {
+                        format!(
+                            "{}:{}:{}",
+                            location.file(),
+                            location.line(),
+                            location.column()
+                        )
+                    },
+                );
+                panic_log.line(
+                    applog::Level::Error,
+                    "panic",
+                    &format!(
+                        "message={} location={} backtrace={}",
+                        applog::log_value(&message),
+                        location,
+                        std::backtrace::Backtrace::force_capture()
+                    ),
+                );
+                previous_hook(info);
+            }));
             let updates = Arc::new(update::TauriUpdates::new(handle.clone(), &config_dir));
             let hub = secs_local_api::EventHub::default();
+            let observer = Arc::new(applog::FanOut {
+                first: Arc::new(hub.clone()),
+                second: Arc::new(log.clone()),
+            });
             let service = Arc::new(Service::new(Deps {
                 app_version: env!("CARGO_PKG_VERSION").into(),
                 acceleration: Arc::new(secs_gpu::select),
@@ -127,7 +201,7 @@ fn main() {
                 process: Arc::new(secs_sys::process::OsProcessProbe),
                 memory: Arc::new(secs_sys::memory::OsMemoryProbe),
                 host: Arc::new(host::TauriHost::new(handle.clone())),
-                observer: Arc::new(hub.clone()),
+                observer,
                 clock: Arc::new(|| {
                     let now = SystemTime::now();
                     LocalTime::from_system(now, secs_sys::clock::utc_offset_seconds(now))
@@ -137,13 +211,43 @@ fn main() {
                 }),
                 app_settings_path: Some(config_dir.join("settings.json")),
                 app_data_path: config_dir.clone(),
+                log_dir: Some(log_dir),
                 eqapo_install: Arc::new(secs_sys::eqapo_install),
                 apply: Arc::new(apply::NativeApply),
                 managed_host: Arc::new(apply::NativeManagedHost),
                 updates: updates.clone(),
                 ..Deps::default()
             }));
+            let start_service = service.clone();
+            let start_log = log.clone();
+            let _ = std::thread::Builder::new()
+                .name("secs2r-start-log".into())
+                .spawn(move || {
+                    let compute =
+                        match start_service.call(Request::ComputeStatus, Arc::new(NoEvents)) {
+                            Envelope::Ok(response) => match *response {
+                                Response::ComputeStatus(status) => status.device.map_or_else(
+                                    || format!("{:?}", status.selected),
+                                    |device| device.name,
+                                ),
+                                _ => unreachable!("compute_status response matches its request"),
+                            },
+                            Envelope::Err(_) => "unknown".into(),
+                        };
+                    start_log.line(
+                        applog::Level::Info,
+                        "app",
+                        &format!(
+                            "started version={} os={} arch={} compute={}",
+                            env!("CARGO_PKG_VERSION"),
+                            std::env::consts::OS,
+                            std::env::consts::ARCH,
+                            compute
+                        ),
+                    );
+                });
             let local_api = local_api::Manager::new(config_dir, service.clone(), hub, handle);
+            app.manage(log);
             app.manage(service.clone());
             app.manage(local_api);
             app.manage(icon::Shown::default());

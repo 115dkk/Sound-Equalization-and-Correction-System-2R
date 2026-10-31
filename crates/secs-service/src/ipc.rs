@@ -49,7 +49,7 @@ pub(crate) fn dispatch(
         Request::Calibrate(params) => service
             .start_calibration(params, events)
             .map(Response::Calibrate),
-        Request::RecommendXo => service.start_xo(events).map(Response::RecommendXo),
+        Request::RecommendXo => service.start_xo(false, events).map(Response::RecommendXo),
         Request::Mimo(params) => service.start_mimo(params, events).map(Response::Mimo),
         Request::Results => service.results().map(Response::Results),
         Request::Export(params) => service.start_export(params, events).map(Response::Export),

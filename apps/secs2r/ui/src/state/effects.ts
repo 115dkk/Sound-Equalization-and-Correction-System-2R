@@ -35,7 +35,7 @@ const reloads = {
   settings: { mutations: [...settings, ...config, "undo"], finished: ["recommend_xo"] },
   modeSpec: { mutations: settings, finished: [] },
   target: { mutations: target, finished: [] },
-  results: { mutations: [...inputs, "app_settings_set", "project_save", "mic_calibration_attach"], finished: [...recorded, "calibrate", "mimo"] },
+  results: { mutations: [...inputs, "app_settings_set", "project_save", "mic_calibration_attach"], finished: [...recorded, "calibrate", "mimo", "recommend_xo"] },
   resultCurves: { mutations: [...inputs, "app_settings_set", "mic_calibration_attach"], finished: [...recorded, "calibrate", "mimo"] },
   lines: { mutations: [...inputs, "app_settings_set", "mic_calibration_attach"], finished: [...recorded, "calibrate", "mimo"] },
   subWarnings: { mutations: [...settings, ...config, "undo"], finished: ["calibrate"] },
@@ -47,7 +47,9 @@ const reloads = {
 
 export type ResourceKey = keyof typeof reloads;
 export const projectEdits: readonly Request["method"][] = reloads.project.mutations;
-export type EffectContext = Pick<Session, "host" | "stores" | "jobs" | "call" | "configure" | "run"> & {
+export const refreshInputs: readonly Request["method"][] = [...inputs, "mic_calibration_attach"];
+export const refreshMeasurements: readonly JobKind[] = recorded;
+export type EffectContext = Pick<Session, "host" | "stores" | "jobs" | "call" | "configure" | "run" | "canContinueRefresh"> & {
   source:
     | { request: Request; data: unknown }
     | { job: LedgerJob; event: FinishedJob; request: JobRequestContext | null }
@@ -82,7 +84,7 @@ export const RULES: readonly Rule[] = [
       ctx.replaceProject();
       ctx.stores.measurementSettings.set(null);
       ctx.stores.micCalibration.set(null);
-      ctx.host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, applyRuns: {}, mdatScope: "all", designName: "", channel: null, xoGroup: null, xoRecommendation: null, failure: null, rangeRejection: null, opened: ctx.host.getSnapshot().opened + 1 });
+      ctx.host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, applyRuns: {}, mdatScope: "all", designName: "", channel: null, xoGroup: null, xoRecommendation: null, xoRecTurnedOffByEdit: false, failure: null, rangeRejection: null, opened: ctx.host.getSnapshot().opened + 1 });
     },
     // Project replacement reads the stored method; tutorial setup owns writes.
     apply: async ({ call }) => { await call({ method: "measure_config_get" }); },
@@ -172,13 +174,19 @@ export const RULES: readonly Rule[] = [
     },
   },
   {
-    name: "xo.recalibrate", when: (trigger) => "finished" in trigger && trigger.finished === "recommend_xo" && trigger.status === "succeeded",
+    name: "xo.recalibrate", when: (trigger) => "finished" in trigger && trigger.finished === "recommend_xo" && ["succeeded", "failed"].includes(trigger.status),
     // Recommended settings must be reloaded before starting the full calibration.
     // The same MIMO choice 보정 계산 sends (P142): on, with three or more positions.
-    apply: async ({ call, stores }) => {
+    apply: async ({ call, stores, source, canContinueRefresh }) => {
+      if (!("event" in source) || source.event.event !== "finished") return;
+      const request = source.request;
+      // Full correction can use the current XO when scoring fails. The dedicated
+      // recommendation button still stops on failure; cancellation never chains.
+      if (source.event.status === "failed" && !request?.calibrateOnFailure) return;
+      if (request?.autoRefreshRevision !== undefined && !canContinueRefresh(request.autoRefreshRevision)) return;
       const settings = stores.settings.getSnapshot();
-      const mimo = !!settings && mimoIncluded(settings, stores.project.getSnapshot()?.positions.length ?? 0);
-      await call({ method: "calibrate", params: { settings: null, subs_only: false, mimo } });
+      const mimo = request?.mimo ?? (!!settings && mimoIncluded(settings, stores.project.getSnapshot()?.positions.length ?? 0));
+      await call({ method: "calibrate", params: { settings: null, subs_only: false, mimo, ...(request?.background ? { background: true } : {}) } });
     },
   },
   ...(Object.keys(reloads) as ResourceKey[]).map((key): Rule => {

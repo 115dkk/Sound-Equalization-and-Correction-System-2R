@@ -33,6 +33,7 @@ fn settings_edits_and_sub_warnings_replay_upstream_oracle() {
                 tutorial: false,
             }),
         );
+        let mut xo_rec_include = true;
         for (index, (edit, expected)) in fixture["inputs"]["edits"]
             .as_array()
             .unwrap()
@@ -70,6 +71,11 @@ fn settings_edits_and_sub_warnings_replay_upstream_oracle() {
                 expected_settings.rc_lo = settings.rc_lo;
                 expected_settings.rc_hi = settings.rc_hi;
             }
+            if edit["kind"] == "xo" {
+                xo_rec_include = false;
+                assert!(!settings.xo_rec_include);
+            }
+            expected_settings.xo_rec_include = xo_rec_include;
             assert_eq!(
                 serde_json::to_value(&settings).unwrap(),
                 serde_json::to_value(&expected_settings).unwrap(),

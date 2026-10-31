@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 import { translate, type Locale } from "../../i18n";
 import { ipcError } from "../../ipc/mock";
 import { failureText } from "../../screens/export/apply";
-import { JOB_NAME, errorText } from "./jobText";
+import { JOB_NAME, errorText, isVisibleLog } from "./jobText";
+
+it("excludes calibration settings diagnostics without hiding unknown user notices", () => {
+  expect(isVisibleLog("calibration_settings")).toBe(false);
+  expect(isVisibleLog("future_notice")).toBe(true);
+  expect(isVisibleLog("measurement_low_snr")).toBe(true);
+});
 
 const cases = [
   { reason: "measurement_sample_rate", params: { position: "3", role: "Tfl", actual_hz: "44100", expected_hz: "48000" }, required: ["position", "role", "actual_hz", "expected_hz"], shown: ["3", "Ltf", "44,100", "48,000"] },

@@ -6,6 +6,7 @@ import { JobTray } from "../app/jobs/JobTray";
 import { initialLedger, ledgerReducer, type LedgerAction, type LedgerState } from "../state/jobLedger";
 import { LOGOS, SMALL_LOGOS } from "../app/logo";
 import { trayState, useJobs, type JobsApi } from "../app/jobs/useJobs";
+import type { AppOptions } from "../app/appOptions";
 import { ProjectMenu, SettingsButton } from "../app/menus";
 import { SettingsFailed } from "../app/SettingsFailed";
 import { STEP_PRIMARY, type FrameModel, type ProjectSummary, type StepId } from "../app/model";
@@ -30,6 +31,12 @@ export function replay(actions: LedgerAction[]): LedgerState {
 }
 
 export const staticApi = (state: LedgerState, now: number): JobsApi => ({ state: trayState(state), now, cancel: () => {}, clearHistory: () => {} });
+
+/** The settings popover's 낡은 결과 자동 갱신 and log folder, fixed (the path is a sample; the screen shows only the button). */
+const appOptions = (autoRefresh: boolean): AppOptions => ({
+  view: { autoRefresh, saving: false, logDir: "C:\\Users\\sample\\AppData\\Roaming\\io.github.115dkk.secs2r\\logs" },
+  actions: { setAutoRefresh: () => {}, openLogFolder: () => {} },
+});
 
 const busyJobs = replay([
   { type: "event", at: T0, event: { event: "started", job: 7, kind: "calibrate" } },
@@ -440,11 +447,21 @@ export const trayAndMenuSpecimens: SpecimenDef[] = [
   },
   {
     id: "frame.settings",
-    title: "Settings (open)",
+    title: "Settings (open): 낡은 결과 자동 갱신 off (the default) after the display settings, 로그 폴더 열기 last",
     width: 380,
     render: () => (
       <div className="gal-rail-sample">
-        <SettingsButton initiallyOpen inline />
+        <SettingsButton initiallyOpen inline appOptions={appOptions(false)} />
+      </div>
+    ),
+  },
+  {
+    id: "frame.settings.auto-refresh",
+    title: "Settings (open): 낡은 결과 자동 갱신 on, its help open (what it recomputes, when, the CPU share, the fan noise)",
+    width: 520,
+    render: () => (
+      <div className="gal-rail-sample">
+        <SettingsButton initiallyOpen inline appOptions={appOptions(true)} autoRefreshHelpOpen />
       </div>
     ),
   },

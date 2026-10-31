@@ -76,6 +76,8 @@ export type MockService = {
   /** A null answer simulates cancelling the next matching host dialog. */
   queueDialog: (method: DialogMethod, path: string | null) => void;
   tick: () => void;
+  /** Whether a finite job (or a cancellation) is still running; live monitors do not count. */
+  busy: () => boolean;
   /** Drains finite jobs (and cancellation), leaving live monitors running. */
   drain: () => void;
   setResults: (results: ResultsSummary) => void;
@@ -400,7 +402,10 @@ export function createMockService(options: MockOptions = {}): MockService {
       },
     };
   };
-  const dirty = (reason = "settings") => {
+  let inputRevision = 0;
+  const dirty = (reason = "settings", recommendationChanged = true) => {
+    inputRevision++;
+    if (recommendationChanged && Object.keys(settings.xo_rec).length > 0) results = { ...results, xo_rec_stale: true };
     project = { ...needProject(), dirty: true };
     results = {
       ...results,
@@ -567,6 +572,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     }
   };
   const tick = () => { for (const job of [...jobs.values()]) step(job); };
+  const busy = () => [...jobs.values()].some((job) => !monitor(job.kind) || job.cancelRequested);
   /** `then`: stages that follow the kind's own, reached through `phase` (the combined calibrate). */
   const start = (kind: JobKind, complete: () => JobResult, error?: IpcError, then?: { stages: Stage[]; phase: Omit<NonNullable<SimJob["phase"]>, "at"> }) => {
     if ([...jobs.values()].some((job) => jobGroup(job.kind) === jobGroup(kind))) throw new MockError(ipcError("job_busy", `a ${kind} job is running`));
@@ -622,7 +628,8 @@ export function createMockService(options: MockOptions = {}): MockService {
         break;
       }
       case "boost_max": settings.boost_max_db = clamp(edit.db, LIMITS.boost); break;
-      case "xo": settings.xo[edit.group] = Math.round(clamp(edit.hz, LIMITS.xo)); break;
+      case "xo_rec_include": settings.xo_rec_include = edit.on; break;
+      case "xo": settings.xo[edit.group] = Math.round(clamp(edit.hz, LIMITS.xo)); settings.xo_rec_include = false; break;
       case "xo_peq":
         if (edit.on !== undefined) settings.xo_peq_on = edit.on;
         if (edit.lo !== undefined) settings.xo_peq_lo = clamp(edit.lo, LIMITS.xo_peq);
@@ -679,11 +686,11 @@ export function createMockService(options: MockOptions = {}): MockService {
     // MIMO's own settings are not in the correction's key (secs-types `engine_key`, `mimo_key`): they
     // leave the correction current and only MIMO behind, which is what 'MIMO만 계산' is for. Turning
     // MIMO on or off is in neither key.
-    if (edit.kind === "mimo_on") project = { ...needProject(), dirty: true };
+    if (edit.kind === "mimo_on" || edit.kind === "xo_rec_include") project = { ...needProject(), dirty: true };
     else if (MIMO_ONLY_EDITS.has(edit.kind)) {
       project = { ...needProject(), dirty: true };
       results = { ...results, mimo: results.mimo ? { ...results.mimo, stale: true } : null };
-    } else dirty();
+    } else dirty("settings", edit.kind !== "xo");
     return settings;
   };
   const warnings = (): Notice[] => Object.entries(settings.subs_manual).flatMap(([role, sub]) => sub.hp_hz > 0 && sub.lp_hz > 0 && sub.lp_hz < 2 * sub.hp_hz
@@ -767,7 +774,7 @@ export function createMockService(options: MockOptions = {}): MockService {
 
   const answer = (req: Request): Response => {
     switch (req.method) {
-      case "bootstrap": return { method: req.method, data: fx.bootstrapInfo };
+      case "bootstrap": return { method: req.method, data: { ...fx.bootstrapInfo, log_dir: "C:/Users/demo/AppData/Roaming/SECS2R/logs" } };
       case "project_info": return { method: req.method, data: needProject() };
       case "project_new": {
         const p = req.params;
@@ -921,6 +928,7 @@ export function createMockService(options: MockOptions = {}): MockService {
         needProject();
         if (req.params.settings) settings = clone(req.params.settings);
         const captured = clone(settings);
+        const revision = inputRevision;
         const positions = needProject().positions.length;
         const withMimo = !!req.params.mimo && !req.params.subs_only;
         // start_calibration refuses a MIMO it cannot run before the job starts.
@@ -929,6 +937,7 @@ export function createMockService(options: MockOptions = {}): MockService {
         const commit = () => {
           const roles = config.speakers.filter((s) => !s.role.startsWith("SW")).map((s) => s.role);
           const summary = clone(fx.calibrationSummary);
+          if (revision !== inputRevision) { summary.stale = true; summary.stale_reason = results.calibration?.stale_reason ?? "settings"; }
           summary.mode = captured.mode; summary.ultra_ms = captured.ultra_ms;
           const spec = fx.modeSpec(captured.mode);
           summary.latency_ms = spec.max_latency_ms;
@@ -958,7 +967,10 @@ export function createMockService(options: MockOptions = {}): MockService {
         return { method: req.method, data: start("recommend_xo", () => {
           const best: [string, number][] = config.groups.filter((g) => g.id !== "sub").map((g) => [g.key, g.id === "center" || g.id === "top" ? 100 : 80]);
           settings.xo_rec = Object.fromEntries(best); settings.xo = { ...settings.xo, ...settings.xo_rec };
-          dirty(); return { kind: "xo", data: { best, candidates: [60, 80, 100, 120] } };
+          dirty("settings", false);
+          settings.xo_rec_key = `mock-recommendation-${inputRevision}`;
+          results = { ...results, xo_rec_stale: false };
+          return { kind: "xo", data: { best, candidates: [60, 80, 100, 120] } };
         }) };
       case "mimo":
         needProject();
@@ -1327,8 +1339,8 @@ export function createMockService(options: MockOptions = {}): MockService {
     clearFailures: () => failures.clear(), failJobs: (kind, code, detail = "", params = {}) => jobFailures.set(kind, ipcError(code, detail, params)),
     failLevelPlay: (code, detail = "", params = {}) => { playFailure = ipcError(code, detail, params); },
     queueDialog: (method, path) => { const queue = dialogs.get(method) ?? []; queue.push(path); dialogs.set(method, queue); },
-    tick,
-    drain: () => { for (let guard = 0; [...jobs.values()].some((j) => !monitor(j.kind) || j.cancelRequested) && guard < 1000; guard++) tick(); },
+    tick, busy,
+    drain: () => { for (let guard = 0; busy() && guard < 1000; guard++) tick(); },
     setApplyStatus: (next) => { applyStatus = clone(next); },
     setUpdateStatus: (next) => { updateStatus = clone(next); appSettings.updates = next.policy; },
     setResults: (next) => {

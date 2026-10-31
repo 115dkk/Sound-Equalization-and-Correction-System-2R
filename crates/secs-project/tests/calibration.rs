@@ -38,8 +38,19 @@ fn calibration_parse_store_and_saved_bytes_match_oracle() {
             object.remove("mimo_iir_analytic_derivatives"),
             Some(false.into())
         );
+        if settings.xo_rec_include {
+            assert_eq!(object.remove("xo_rec_include"), None);
+        } else {
+            assert_eq!(object.remove("xo_rec_include"), Some(false.into()));
+        }
         assert_eq!(actual, expected["settings"]);
         store_calibration(&mut project, &settings);
+        if !settings.xo_rec_include {
+            assert!(project.save_text().contains("xo_rec_include"));
+            let mut upstream = settings.clone();
+            upstream.xo_rec_include = true;
+            store_calibration(&mut project, &upstream);
+        }
         assert_eq!(project.save_text(), expected["saved"].as_str().unwrap());
         let json: Value = serde_json::from_str(&dumps(&project.to_json())).unwrap();
         assert_eq!(json["keep"], expected["extra_keep"]);
@@ -295,4 +306,49 @@ fn rc_bands_round_trip_filter_sort_trim_and_clear() {
             },
         ]
     );
+}
+
+#[test]
+fn xo_recommendation_metadata_round_trips_and_defaults_are_compatible() {
+    let mut project = Project::from_preset("2.1").unwrap();
+    let mut settings = calibration_from_project(&project);
+    assert!(settings.xo_rec_include);
+    assert!(settings.xo_rec_key.is_empty());
+    store_calibration(&mut project, &settings);
+    let baseline = project.save_text();
+    assert!(!baseline.contains("xo_rec_key"));
+    assert!(!baseline.contains("xo_rec_include"));
+
+    settings.xo_rec = vec![("프론트".into(), 80.0)];
+    settings.xo_rec_key = "measurement|target|config|settings".into();
+    settings.xo_rec_include = false;
+    store_calibration(&mut project, &settings);
+    let saved = project.save_text();
+    let reopened = Project::from_json(loads(&saved).unwrap()).unwrap();
+    let parsed = calibration_from_project(&reopened);
+    assert_eq!(parsed.xo_rec_key, settings.xo_rec_key);
+    assert_eq!(parsed.xo_rec, settings.xo_rec);
+    assert!(!parsed.xo_rec_include);
+
+    let legacy =
+        Project::from_json(loads(r#"{"extra":{"calibration":{"xo_rec":{"프론트":80}}}}"#).unwrap())
+            .unwrap();
+    let legacy = calibration_from_project(&legacy);
+    assert!(legacy.xo_rec_include);
+    assert!(legacy.xo_rec_key.is_empty());
+
+    let matching = Project::from_json(
+        loads(
+            r#"{"extra":{"calibration":{"xo":{"센터":100,"프론트":80},"xo_rec":{"프론트":80,"센터":100}}}}"#,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(calibration_from_project(&matching).xo_rec_include);
+
+    let manual = Project::from_json(
+        loads(r#"{"extra":{"calibration":{"xo":{"프론트":90},"xo_rec":{"프론트":80}}}}"#).unwrap(),
+    )
+    .unwrap();
+    assert!(!calibration_from_project(&manual).xo_rec_include);
 }

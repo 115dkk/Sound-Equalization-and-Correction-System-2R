@@ -1,14 +1,16 @@
 // The project menu (새로 만들기, 열기, 저장, 다른 이름으로 저장) and the
-// settings popover: the display settings (언어, 테마, 스킨, 로고), then the
-// local API (its switch, its state and the 로컬 API dialog), then updates
-// (inside the frame's update scope). Shortcut hints come from the shortcut
-// registry.
+// settings popover: the display settings (언어, 테마, 스킨, 로고), then
+// 낡은 결과 자동 갱신, then the local API (its switch, its state and the
+// 로컬 API dialog), then updates (inside the frame's update scope), and the
+// log folder last. Shortcut hints come from the shortcut registry.
 import { useRef, useState } from "react";
 import { useT } from "../i18n/react";
 import { Icon } from "../ui/Icon";
 import { Menu, Popover } from "../ui/Popover";
 import { Segmented } from "../ui/controls";
 import type { AppIcon } from "../ipc/bindings/AppIcon";
+import { AppLogRow, AutoRefreshRow } from "./AppOptionsRows";
+import { useAppOptions, type AppOptions } from "./appOptions";
 import { LocalApiDialog, LocalApiRow, type LocalApiFocus } from "./LocalApiDialog";
 import { useLocalApi, type LocalApi } from "./localApi";
 import { DEFAULT_LOGO, SMALL_LOGOS } from "./logo";
@@ -85,11 +87,17 @@ export function SettingsButton({
   initiallyOpen = false,
   inline = false,
   localApi,
+  appOptions,
+  autoRefreshHelpOpen,
 }: {
   initiallyOpen?: boolean;
   inline?: boolean;
   /** A fixed local API view and actions (gallery specimens, tests); the app reads the live ones. */
   localApi?: LocalApi;
+  /** A fixed 낡은 결과 자동 갱신 and log folder view and actions (gallery specimens, tests); the app reads the live ones. */
+  appOptions?: AppOptions;
+  /** Gallery: 낡은 결과 자동 갱신's help drawn open. */
+  autoRefreshHelpOpen?: boolean;
 }) {
   const t = useT();
   const prefs = usePrefs();
@@ -100,6 +108,8 @@ export function SettingsButton({
   const [dialog, setDialog] = useState<LocalApiFocus | null>(null);
   const live = useLocalApi(open || dialog !== null);
   const api = localApi ?? live;
+  const liveOptions = useAppOptions();
+  const options = appOptions ?? liveOptions;
   const update = useUpdateApi();
   return (
     <>
@@ -161,6 +171,7 @@ export function SettingsButton({
           }))}
           onChange={(icon) => prefs.set({ icon })}
         />
+        <AutoRefreshRow options={options} helpOpen={autoRefreshHelpOpen} />
         <LocalApiRow
           api={api}
           onOpen={(focus) => {
@@ -169,6 +180,7 @@ export function SettingsButton({
           }}
         />
         {update && <UpdateSettings api={update} />}
+        <AppLogRow options={options} />
       </Popover>
       {dialog && <LocalApiDialog api={api} focus={dialog} onClose={() => setDialog(null)} />}
     </>

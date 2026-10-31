@@ -9,8 +9,8 @@ import { roleCode } from "../../ui/maps/geometry";
 import { Stat } from "./controls";
 import { availableTabs } from "./ResultGraph";
 import { scorecardModel, type ChangeValues, type LatePositions, type ScoreRow } from "./scorecard";
-import { MIMO_MIN_POSITIONS, mimoIncluded } from "./settingsView";
-import { FAILED_TEXT, LOW_PROTECT_NEXT, groupOf, lowProtectFailures, modeName, noteLines, noticeText } from "./text";
+import { MIMO_MIN_POSITIONS, mimoIncluded, xoRecInclude } from "./settingsView";
+import { FAILED_TEXT, LOW_PROTECT_NEXT, groupOf, lowProtectFailures, modeName, noteLines, noticeText, subRoles } from "./text";
 import type { CalibrateActions, CalibrateView, StaleReason } from "./types";
 
 const STALE_TEXT: Record<StaleReason | "unknown", "calibrate.stale.settings" | "calibrate.stale.target" | "calibrate.stale.measurements" | "calibrate.stale.config" | "calibrate.stale.unknown"> = {
@@ -62,7 +62,9 @@ function Change({ before, after, figure }: { before: string; after: string; figu
  * MIMO 함께 계산 (P142): whether 보정 계산 also computes MIMO, right before
  * the button it changes. It is the MIMO card's `mimo_on`, so the two
  * switches move together. Below three measured positions it is off and says
- * why at the end of its own line, so the row keeps its height.
+ * why on its own line under the switch, inside this group, so the reason
+ * reads as the switch's and not as a condition of 보정 계산 beside it. The
+ * buttons stay level with the switch's line (calibrate.css).
  */
 function MimoChoice({ view, actions }: { view: CalibrateView; actions: CalibrateActions }) {
   const t = useT();
@@ -82,24 +84,57 @@ function MimoChoice({ view, actions }: { view: CalibrateView; actions: Calibrate
   );
 }
 
+/** The project has subs, so it has crossovers to recommend (upstream `xo_group_names`). */
+const hasSubs = (view: CalibrateView) => subRoles(view.config).length > 0;
+
+/** The manual-edit line under 'XO 추천 포함': shown while a manual XO edit is what turned it off. */
+const xoRecOffByEdit = (view: CalibrateView) => !!view.xoRecTurnedOffByEdit && !xoRecInclude(view.settings);
+
+/**
+ * XO 추천 포함 (ADR 0028): whether 보정 계산 first recommends the
+ * crossovers and applies them, before MIMO 함께 계산 in the order the run
+ * computes them. It is the crossover card's switch too, so the two move
+ * together. Without subs there is no crossover and the switch is not drawn.
+ * When a manual XO edit turned it off, the reason stands under it, as MIMO's.
+ */
+function XoRecChoice({ view, actions }: { view: CalibrateView; actions: CalibrateActions }) {
+  const t = useT();
+  return (
+    <div className="calibrate-run__xo">
+      <Toggle
+        id="calibrate.run.xo_rec_include"
+        label={t("calibrate.xo_rec_include")}
+        help={t("calibrate.xo_rec_include.help")}
+        hint={xoRecOffByEdit(view) ? t("calibrate.xo_rec_include.off_manual") : undefined}
+        checked={xoRecInclude(view.settings)}
+        onChange={(on) => void actions.changeSetting({ kind: "xo_rec_include", on })}
+      />
+    </div>
+  );
+}
+
 /**
  * The correction run lives in this card (DESIGN.md §1: the button beside
- * what it acts on). Before a result: the plan sentence, MIMO 함께 계산 and
- * 보정 계산 after it; while the correction runs: a spinner and what it
- * computes, in the controls' height; with a result: the figures and, after
- * them, 다시 측정하기, MIMO 함께 계산 and 다시 보정하기, and on a current
- * result 보정값 내보내기 last. The same inputs give the same result here
- * (upstream's runs could differ), so measuring again is the one that can
- * change it and carries the emphasis; the way on to 내보내기 is in the go
- * colour, apart from it (the rail is not where users look for it).
- * `blocked` is the step's blocked state (the header says why).
+ * what it acts on). Before a result: the plan sentence, XO 추천 포함 (with
+ * subs), MIMO 함께 계산 and 보정 계산 after them; while the correction
+ * runs: a spinner and what it computes, in the controls' height; with a
+ * result: the figures and, after them, 다시 측정하기, XO 추천 포함, MIMO
+ * 함께 계산 and 다시 보정하기, and on a current result 보정값 내보내기 last.
+ * The same inputs give the same result here (upstream's runs could differ),
+ * so measuring again is the one that can change it and carries the
+ * emphasis; the way on to 내보내기 is in the go colour, apart from it (the
+ * rail is not where users look for it). `blocked` is the step's blocked
+ * state (the header says why).
  */
 function RunControls({ view, actions, blocked, again, current = false }: { view: CalibrateView; actions: CalibrateActions; blocked: boolean; again: boolean; current?: boolean }) {
   const t = useT();
   const count = view.positions.length;
+  const subs = hasSubs(view);
   if (view.running === "calibrate") {
+    // As tall as the controls it replaces, their reason lines included.
+    const hinted = count < MIMO_MIN_POSITIONS || (subs && xoRecOffByEdit(view));
     return (
-      <p className="calibrate-run__busy" role="status" data-ui="calibrate.verdict.computing">
+      <p className={["calibrate-run__busy", hinted && "calibrate-run__busy--hint"].filter(Boolean).join(" ")} role="status" data-ui="calibrate.verdict.computing">
         <Spinner size={18} />
         <span>{t(view.runningMimo ? "calibrate.verdict.computing.mimo" : "calibrate.verdict.computing", { count })}</span>
       </p>
@@ -108,9 +143,10 @@ function RunControls({ view, actions, blocked, again, current = false }: { view:
   // Another of this screen's jobs runs: the header pill names it, as the step's blocked reason names a block.
   const off = blocked || view.running !== null || count === 0;
   const reason = blocked ? "frame.header.calibrate.blocked" : view.running !== null ? "frame.header.calibrate.status" : undefined;
-  // MIMO 함께 계산 and the button it changes wrap as one.
+  // The run's switches and the button they change wrap as one.
   const compute = (
     <div className="calibrate-run__compute">
+      {subs && <XoRecChoice view={view} actions={actions} />}
       <MimoChoice view={view} actions={actions} />
       <Button variant={again ? "secondary" : "primary"} id="calibrate.compute" data-ui="calibrate.compute" disabled={off} aria-describedby={reason} onClick={actions.calibrate}>
         {t(again ? "calibrate.verdict.recompute" : "frame.step.calibrate.primary")}
@@ -192,7 +228,7 @@ export function Verdict({
         data-ui="calibrate.verdict"
       >
         {failed}
-        <div className="calibrate-run" data-ui="calibrate.verdict.plan">
+        <div className="calibrate-run calibrate-run--plan" data-ui="calibrate.verdict.plan">
           {view.positions.length === 0 ? (
             <p>{t("calibrate.verdict.plan.no_measurements")}</p>
           ) : (

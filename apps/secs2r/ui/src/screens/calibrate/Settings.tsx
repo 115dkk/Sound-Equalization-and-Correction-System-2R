@@ -4,7 +4,8 @@ import { HelpTip } from "../../ui/HelpTip";
 // MIMO. Every change goes through `changeSetting` (calibration_settings_set)
 // and only marks the result stale. Detail sits under 고급; every correction
 // mode is available in the mode selector. MIMO is chosen beside 보정 계산 too
-// (MIMO 함께 계산, P142); its card keeps the details and MIMO만 계산.
+// (MIMO 함께 계산, P142); its card keeps the details and MIMO만 계산. So is
+// XO 추천 포함 (ADR 0028); the crossover card has its switch as well.
 import { ComputeControl, ComputeResult } from "./ComputeControl";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { errorText } from "../../app/jobs/jobText";
@@ -40,6 +41,7 @@ import {
   upperEdits,
   usesSchroeder,
   withBandEdge,
+  xoRecInclude,
   type RejectionPlace,
   type UpperChoice,
 } from "./settingsView";
@@ -546,6 +548,7 @@ function XoSection({ view, actions, onSampleRateSettings }: FailureProps) {
   const rec = s.xo_rec[group];
   const recs = groups.filter((g) => s.xo_rec[g]).map((g) => t("calibrate.xo.rec_item", { group: groupName(t, g), hz: number(s.xo_rec[g]!) }));
   const busy = view.running !== null;
+  const include = xoRecInclude(s);
   return (
     <SettingsCard id="xo" title={t("calibrate.xo.title")} help={t("calibrate.xo.description")}>
       <div className="calibrate-fields">
@@ -568,6 +571,15 @@ function XoSection({ view, actions, onSampleRateSettings }: FailureProps) {
           onChange={(value) => actions.changeSetting({ kind: "xo", group, hz: value })}
         />
       </div>
+      {/* Right under the value it would overwrite: a manual edit turns it off, and the line under it says so. */}
+      <Toggle
+        id="calibrate.xo_rec_include"
+        label={t("calibrate.xo_rec_include")}
+        help={t("calibrate.xo_rec_include.help")}
+        hint={view.xoRecTurnedOffByEdit && !include ? t("calibrate.xo_rec_include.off_manual") : undefined}
+        checked={include}
+        onChange={(on) => actions.changeSetting({ kind: "xo_rec_include", on })}
+      />
       <div className="calibrate-actions">
         <Button
           id="calibrate.xo.recommend"
@@ -585,6 +597,12 @@ function XoSection({ view, actions, onSampleRateSettings }: FailureProps) {
           {t("calibrate.xo.rec_done", { list: recs.join(" · ") })}
           {view.xoRecommendation &&
             ` ${t("calibrate.xo.rec_candidates", { list: view.xoRecommendation.candidates.map((c) => number(c)).join(", ") })}`}
+        </p>
+      )}
+      {/* The values stay; this says they were recommended for inputs that have changed since. */}
+      {recs.length > 0 && view.running !== "recommend_xo" && view.results.xo_rec_stale && (
+        <p className="calibrate-hint calibrate-hint--warning" data-ui="calibrate.xo.rec_stale">
+          {t("calibrate.xo.rec_stale")}
         </p>
       )}
       <Advanced id="calibrate.xo.advanced" count={3}>

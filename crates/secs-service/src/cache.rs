@@ -540,6 +540,7 @@ mod tests {
             calibration: Some(loaded.calibration),
             mimo: loaded.mimo,
             mimo_export: secs_types::ipc::MimoExportDecision::Included,
+            xo_rec_stale: false,
         })
         .unwrap();
         assert!(summary.len() < 4096);

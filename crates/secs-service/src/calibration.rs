@@ -51,6 +51,7 @@ impl Service {
         events: Arc<dyn EventSink>,
     ) -> Result<JobStarted, IpcError> {
         let run_mimo = params.mimo && !params.subs_only;
+        let background = params.background;
         let selection = run_mimo.then(|| self.require_acceleration()).transpose()?;
         let snapshot = self.snapshot(params.settings)?;
         if run_mimo {
@@ -60,8 +61,9 @@ impl Service {
         let session = self.session.clone();
         let memory = self.deps.memory.available_bytes();
         self.jobs.start(JobKind::Calibrate, events, move |job| {
+            job.log(settings_notice(&snapshot.settings, background));
             let prepared = snapshot.load(&job)?;
-            let ctx = compute_context(&job, memory);
+            let ctx = compute_context(&job, memory, background);
             let groups = project_groups(&prepared.project);
             let view = ProjectView {
                 groups: &groups,
@@ -141,17 +143,24 @@ impl Service {
                     prepared.settings,
                     selection,
                     calibration_key,
+                    background,
                 )?;
             }
             Ok(JobResult::Calibration)
         })
     }
 
-    pub(crate) fn start_xo(&self, events: Arc<dyn EventSink>) -> Result<JobStarted, IpcError> {
+    pub(crate) fn start_xo(
+        &self,
+        background: bool,
+        events: Arc<dyn EventSink>,
+    ) -> Result<JobStarted, IpcError> {
         let snapshot = self.snapshot(None)?;
+        let recommendation_key = xo_rec_key(&snapshot.project, &snapshot.settings);
         let memory = self.deps.memory.available_bytes();
         let session = self.session.clone();
         self.jobs.start(JobKind::RecommendXo, events, move |job| {
+            job.log(settings_notice(&snapshot.settings, background));
             let prepared = snapshot.load(&job)?;
             let groups = project_groups(&prepared.project);
             let view = ProjectView {
@@ -159,7 +168,7 @@ impl Service {
                 project_xo: &prepared.project.xo,
                 target: &prepared.project.target,
             };
-            let ctx = compute_context(&job, memory);
+            let ctx = compute_context(&job, memory, background);
             let result = secs_engine::xo::recommend_xo(
                 &view,
                 &prepared.measurements,
@@ -182,6 +191,7 @@ impl Service {
                     }
                 }
                 settings.xo_rec = recommendation.best.clone();
+                settings.xo_rec_key.clone_from(&recommendation_key);
                 store_calibration(open.store.project_mut(), &settings);
                 Ok(((), true))
             })?;
@@ -223,6 +233,7 @@ impl Service {
         let memory = self.deps.memory.available_bytes();
         let session = self.session.clone();
         self.jobs.start(JobKind::Mimo, events, move |job| {
+            job.log(settings_notice(&settings, false));
             compute_and_commit_mimo(
                 &session,
                 ticket,
@@ -232,6 +243,7 @@ impl Service {
                 settings,
                 selection,
                 calibration_key,
+                false,
             )?;
             Ok(JobResult::Mimo)
         })
@@ -296,9 +308,10 @@ fn compute_and_commit_mimo(
     settings: CalibrationSettings,
     selection: secs_engine::mimo::AccelerationSelection,
     calibration_key: String,
+    background: bool,
 ) -> Result<(), IpcError> {
     let compute_key = crate::compute::ComputeIdentity::from(&selection.status);
-    let ctx = compute_context(job, memory);
+    let ctx = compute_context(job, memory, background);
     let run = secs_engine::mimo::compute_with_acceleration(
         &design,
         design.replay.measurements(),
@@ -430,13 +443,53 @@ fn check_rc_agreement(
     Ok(())
 }
 
-pub(crate) fn compute_context(job: &JobContext, available: u64) -> Context {
-    let threads = std::thread::available_parallelism().map_or(1, |value| value.get());
+fn settings_notice(settings: &CalibrationSettings, background: bool) -> Notice {
+    Notice {
+        code: "calibration_settings".into(),
+        params: [
+            ("engine_key".into(), settings.engine_key()),
+            ("background".into(), background.to_string()),
+        ]
+        .into(),
+    }
+}
+
+pub(crate) fn xo_rec_key(project: &Project, settings: &CalibrationSettings) -> String {
+    let mut settings = settings.clone();
+    settings.xo.clear();
+    [
+        signature_key(project),
+        target_key_string(project),
+        config_key(project),
+        settings.engine_key(),
+    ]
+    .join("|")
+}
+
+fn background_threads(available: usize, background: bool) -> (usize, bool) {
+    let available = available.max(1);
+    if !background {
+        (available, false)
+    } else if available == 1 {
+        (1, true)
+    } else {
+        ((available / 2).max(1), false)
+    }
+}
+
+pub(crate) fn compute_context(job: &JobContext, available: u64, background: bool) -> Context {
+    let parallelism = std::thread::available_parallelism().map_or(1, |value| value.get());
+    let (threads, paced) = background_threads(parallelism, background);
+    let cancel = if paced {
+        job.cancel().paced(std::time::Duration::from_millis(50))
+    } else {
+        job.cancel().clone()
+    };
     Context::new(
         threads,
         MemoryBudget::from_probe(&FixedMemory(available), 0.5, 64 * 1024 * 1024),
         job.progress_sink(),
-        job.cancel().clone(),
+        cancel,
     )
 }
 
@@ -1143,6 +1196,19 @@ mod tests {
     use secs_mdat::{CalInfo, SourceInfo};
     use secs_project::{MeasurementResult, MeasurementStore};
     use secs_types::chain::BandType;
+
+    #[test]
+    fn background_thread_selection_halves_parallelism_and_paces_one_cpu() {
+        for (available, expected) in [
+            (1, (1, true)),
+            (2, (1, false)),
+            (3, (1, false)),
+            (8, (4, false)),
+        ] {
+            assert_eq!(background_threads(available, true), expected);
+            assert_eq!(background_threads(available, false), (available, false));
+        }
+    }
 
     #[test]
     fn rc_agreement_counts_measured_mains_and_respects_manual_upper_limit() {

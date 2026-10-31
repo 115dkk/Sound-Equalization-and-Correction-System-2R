@@ -6,6 +6,7 @@ import { groupOf, xoGroups } from "./text";
 import { DESIGN_RATE, countedRate } from "../system/outputRate";
 import { isRangeEdit, mimoIncluded, rangeRejection } from "./settingsView";
 import { IpcFailure } from "../../ipc/client";
+import { startCalibration } from "../../state/calibration";
 
 const withoutStage = ({ stage: _stage, ...params }: Record<string, string>): Record<string, string> => params;
 
@@ -55,13 +56,7 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
         try { await session.writers.app.edit({ compute }); }
         finally { session.host.set({ computeSaving: false }); }
       }),
-      calibrate: () => session.run(() => {
-        // MIMO 함께 계산 (P142): the setting and the measured positions as they are when the button is pressed.
-        const settings = session.stores.settings.getSnapshot();
-        const positions = session.stores.project.getSnapshot()?.positions.length ?? 0;
-        const mimo = !!settings && mimoIncluded(settings, positions);
-        return session.call({ method: "calibrate", params: { settings: null, subs_only: false, mimo } });
-      }),
+      calibrate: () => session.run(() => startCalibration(session)),
       calibrateSubs: () => session.run(() => session.call({ method: "calibrate", params: { settings: null, subs_only: true } })),
       recommendXo: () => session.run(() => session.call({ method: "recommend_xo" })),
       computeMimo: () => session.run(() => session.call({ method: "mimo", params: { settings: null } })),
@@ -124,7 +119,7 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
     results, lines, curves: curves?.curves ?? null, settings, modeSpec, target, config, positions: project.positions,
     measuredRoles: config.speakers.map((speaker) => speaker.role).filter((role) => measuredRoles.has(role)),
     firBudget: dsp?.fields.fir_budget ?? 0, firTaps: dsp?.fields.fir_taps ?? 0, outputRate: dsp ? countedRate(dsp.fields.output_rate) : DESIGN_RATE,
-    xoRecommendation: host.xoRecommendation, running, runningMimo,
+    xoRecommendation: host.xoRecommendation, xoRecTurnedOffByEdit: host.xoRecTurnedOffByEdit, running, runningMimo,
     measuring: jobs.some((job) => ["measure", "sample_load", "mdat_import"].includes(job.kind)),
     failure, targetEdit: host.targetEdit, xoEdit: host.xoEdit,
     staleReason: results.calibration?.stale_reason === "settings" || results.calibration?.stale_reason === "target" || results.calibration?.stale_reason === "measurements" || results.calibration?.stale_reason === "config" ? results.calibration.stale_reason : null,

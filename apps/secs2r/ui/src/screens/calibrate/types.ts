@@ -112,6 +112,13 @@ export type CalibrateView = {
    * such edit is sent, and for a new project.
    */
   rangeRejection: RangeRejection | null;
+  /**
+   * A manual crossover edit turned 'XO 추천 포함' off (ADR 0028): the
+   * settings reply to an `xo` edit came back with `xo_rec_include: false`.
+   * False again once the user turns it on or the project changes. Absent
+   * reads as false.
+   */
+  xoRecTurnedOffByEdit?: boolean | undefined;
 };
 
 /**

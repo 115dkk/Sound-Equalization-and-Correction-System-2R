@@ -68,11 +68,17 @@ const tick = (count: number): TourOp =>
     }
   });
 
-/** Runs every finite job to its end (live monitors keep running). */
+/**
+ * Runs every finite job to its end (live monitors keep running), then the
+ * jobs the screen starts when one ends: with 'XO 추천 포함' on, 보정 계산
+ * runs the XO recommendation first and the correction after it (ADR 0028).
+ */
 const drain: TourOp = page(async ({ mock }) => {
-  advanceClock(5 * TICK_MS);
-  mock.drain();
-  await flush();
+  for (let round = 0; round === 0 || (mock.busy() && round < 5); round++) {
+    advanceClock(5 * TICK_MS);
+    mock.drain();
+    await flush();
+  }
 });
 
 /**
@@ -489,8 +495,9 @@ export const TOUR_SCENES: TourScene[] = [
     title: { ko: "보정과 MIMO 계산 진행 중", en: "Calculating the correction and MIMO" },
     note: { ko: "보정 단계를 마치고 같은 작업에서 MIMO를 계산하는 중입니다.", en: "The correction stages are done and the same job is calculating MIMO." },
     setup: (mock) => withMimo(mock, 3),
-    // 7.1.4: 12 correction ticks, then the two MIMO stages. With MIMO on the MIMO card's compute device block shares the id, so the button is named.
-    ops: [...choosePath("native", "calibrate"), click(`button${ui("calibrate.compute")}`), tick(15)],
+    // 7.1.4: 4 XO recommendation ticks ('XO 추천 포함'), 12 correction ticks, then the two MIMO stages.
+    // With MIMO on the MIMO card's compute device block shares the id, so the button is named.
+    ops: [...choosePath("native", "calibrate"), click(`button${ui("calibrate.compute")}`), tick(19)],
   },
   {
     id: "calibrate.mimo-failed",
@@ -515,7 +522,8 @@ export const TOUR_SCENES: TourScene[] = [
     step: "calibrate",
     title: { ko: "보정 계산 진행 중", en: "Calculating correction" },
     setup: inProgress,
-    ops: [...choosePath("native", "calibrate"), click(ui("calibrate.compute")), tick(4)],
+    // The XO recommendation ('XO 추천 포함') ends on the 4th tick; the correction runs after it.
+    ops: [...choosePath("native", "calibrate"), click(ui("calibrate.compute")), tick(8)],
   },
   {
     id: "calibrate.result",
@@ -751,6 +759,8 @@ export const TOUR_SCENES: TourScene[] = [
     note: { ko: "진행 중인 보정 계산 하나와 완료·실패·취소 기록입니다.", en: "One correction running, with completed, failed and canceled entries." },
     setup: async (mock) => {
       await inProgress(mock);
+      // 보정 계산 alone, so each click leaves one entry; the failed entry comes from 'XO 추천 계산'.
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "xo_rec_include", on: false } } });
       mock.failJobs("recommend_xo", "engine_input", "invalid input: position 1 SW3: sample rate 44100 (expected 48000)", {
         reason: "measurement_sample_rate", position: "1", role: "SW3", actual_hz: "44100", expected_hz: "48000",
       });

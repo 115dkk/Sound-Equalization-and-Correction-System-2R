@@ -684,6 +684,10 @@ pub struct BootstrapInfo {
     pub upstream: UpstreamBase,
     /// The operating-system platform running this build.
     pub platform: Platform,
+    /// App log directory, when the caller supplied application data storage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub log_dir: Option<String>,
 }
 /// The upstream SECS 2 release a build is ported from (`UPSTREAM.toml`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -798,6 +802,20 @@ pub struct CalibrateParams {
     #[serde(default)]
     #[ts(as = "Option<bool>", optional)]
     pub mimo: bool,
+    /// Uses reduced CPU resources for an automatic refresh.
+    #[serde(default)]
+    #[ts(as = "Option<bool>", optional)]
+    pub background: bool,
+}
+/// Optional settings for an XO recommendation run. The raw request may omit
+/// `params`, which is equivalent to this default value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS, Default)]
+#[ts(export)]
+pub struct RecommendXoParams {
+    /// Uses reduced CPU resources for an automatic refresh.
+    #[serde(default)]
+    #[ts(as = "Option<bool>", optional)]
+    pub background: bool,
 }
 /// Optional settings for a MIMO run.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS, Default)]
@@ -983,6 +1001,10 @@ pub struct ResultsSummary {
     pub mimo: Option<MimoSummary>,
     /// Whether the MIMO result goes into an export, and if not, why.
     pub mimo_export: MimoExportDecision,
+    /// Whether a stored XO recommendation no longer matches its inputs.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[ts(as = "Option<bool>", optional)]
+    pub xo_rec_stale: bool,
 }
 /// Whether the MIMO result goes into an export, and if not, why.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -2596,6 +2618,9 @@ pub struct AppSettings {
     /// When to look for and install new releases.
     #[serde(default)]
     pub updates: UpdatePolicy,
+    /// Recompute stale recommendations and calibration after edits (ADR 0029).
+    #[serde(default)]
+    pub auto_refresh: bool,
     /// Recently opened project paths, newest first (at most 10).
     pub recent_projects: Vec<String>,
     /// Last window size in logical pixels.
@@ -2612,6 +2637,7 @@ impl Default for AppSettings {
             local_api: LocalApiSettings::default(),
             apply: ApplySettings::default(),
             updates: UpdatePolicy::Auto,
+            auto_refresh: false,
             recent_projects: Vec::new(),
             last_window_size: None,
         }
@@ -3101,7 +3127,15 @@ mod tests {
         let old: CalibrateParams =
             serde_json::from_str(r#"{"settings":null,"subs_only":false}"#).unwrap();
         assert!(!old.mimo);
+        assert!(!old.background);
         assert_eq!(CalibrateParams::default(), old);
+        let xo: RecommendXoParams = serde_json::from_str("{}").unwrap();
+        assert!(!xo.background);
+        assert!(
+            serde_json::from_str::<RecommendXoParams>(r#"{"background":true}"#)
+                .unwrap()
+                .background
+        );
         let wire = serde_json::to_value(CalibrateParams {
             mimo: true,
             ..Default::default()
@@ -3149,6 +3183,7 @@ mod tests {
                 os: "linux".into(),
                 arch: "x86_64".into(),
             },
+            log_dir: None,
         })));
         let value = serde_json::to_value(ok).unwrap();
         assert_eq!(value["ok"], true);

@@ -26,4 +26,12 @@ peq_analytic_derivatives: boolean,
 /**
  * Experimental: MIMO IIR fits use closed-form derivatives (results leave SECS 2).
  */
-mimo_iir_analytic_derivatives: boolean, xo: { [key in string]: number }, xo_rec: { [key in string]: number }, ultra_ms: number, subs_manual: { [key in string]: SubEntry }, sub_main_delay_ms: number, bundle_layouts: { [key in string]: BundleLayoutEntry }, infra_boost_max_db: number, xo_peq_on: boolean, boost_max_db: number, xo_peq_lo: number, xo_peq_hi: number, };
+mimo_iir_analytic_derivatives: boolean, xo: { [key in string]: number }, xo_rec: { [key in string]: number }, 
+/**
+ * Fingerprint of the inputs used for the stored XO recommendation.
+ */
+xo_rec_key?: string, 
+/**
+ * Recompute the XO recommendation before calibration (ADR 0028).
+ */
+xo_rec_include?: boolean, ultra_ms: number, subs_manual: { [key in string]: SubEntry }, sub_main_delay_ms: number, bundle_layouts: { [key in string]: BundleLayoutEntry }, infra_boost_max_db: number, xo_peq_on: boolean, boost_max_db: number, xo_peq_lo: number, xo_peq_hi: number, };

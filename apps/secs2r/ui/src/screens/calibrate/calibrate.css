@@ -130,57 +130,74 @@
   }
 }
 
-/* The buttons stand beside the figures when the card has room for both, and
-   on the next line under them otherwise (MIMO 함께 계산 made the row too wide
-   to stack beside the figures in the smallest window). */
-.calibrate-run__actions {
-  display: flex;
-  flex: none;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-2);
+/* Before a result the plan sentence reads on the line of the switches and
+   the button after it (a switch and a button are one control tall, from
+   the top of the line): a switch's reason under it does not move them. */
+.calibrate-run--plan {
+  align-items: flex-start;
 }
 
-/* MIMO 함께 계산 and the button it changes (보정 계산, 다시 보정하기, P142):
-   one unit that wraps together, the switch closer to its button than to
-   다시 측정하기 before it. */
+.calibrate-run--plan > p:not(.calibrate-run__busy) {
+  display: flex;
+  align-items: center;
+  min-height: var(--control-h);
+}
+
+/* The buttons stand beside the figures when the card has room for both, and
+   on the next line under them otherwise (MIMO 함께 계산 made the row too wide
+   to stack beside the figures in the smallest window). The buttons and the
+   switches share their first line, from its top (the kit's switch keeps to
+   the top of its line too); a switch's reason hangs under its switch
+   without moving the buttons. On a line of their own they are no wider
+   than the card: with XO 추천 포함 the run is wider than the smallest
+   window's card, and wraps inside it (the run's switches and button as one
+   unit) instead of running past its edge. Three groups (다시 측정하기, the
+   run, 보정값 내보내기) stand apart by a gap, not a margin, so a group that
+   wraps starts at the card's edge. */
+.calibrate-run__actions {
+  display: flex;
+  flex: 0 1 auto;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-2) var(--space-5);
+}
+
+/* XO 추천 포함, MIMO 함께 계산 and the button they change (보정 계산,
+   다시 보정하기, P142, ADR 0028): one unit that wraps together, the switches
+   closer to their button than to 다시 측정하기 before them. */
 .calibrate-run__compute {
   display: flex;
   flex-wrap: wrap;
-  align-items: center;
+  align-items: flex-start;
   gap: var(--space-2) var(--space-1);
 }
 
-.calibrate-run__actions > .calibrate-run__compute {
-  margin-left: var(--space-3);
-}
-
-/* MIMO 함께 계산's reason (fewer than three positions) follows its label on
-   the same line, so the run keeps its height whether the switch can be used
-   or not. */
-.calibrate-run__mimo .ui-toggle-row {
-  flex-direction: row;
-  flex-wrap: wrap;
-  align-items: center;
-  column-gap: var(--space-2);
-}
-
-/* The help button's hit area already spaces the switch from its button;
-   the reason, which is text to its edge, needs that room itself. */
+/* A switch's reason (MIMO below three positions, XO 추천 포함 turned off by
+   a manual XO edit) is its own line under the switch, inside the switch's
+   group, starting under its label (the kit's toggle hint indent). The help
+   button's hit area spaces the switch from the next one; a reason wider
+   than its switch keeps that room itself. */
+.calibrate-run__xo .ui-toggle__hint,
 .calibrate-run__mimo .ui-toggle__hint {
-  margin: 0 var(--space-2) 0 0;
-  padding-left: 0;
+  margin-right: var(--space-2);
 }
 
 /* The spinner line takes the place of the controls at their height (the
-   buttons, and the help button's hit area beside MIMO 함께 계산), so the card
-   does not move when a run starts or ends. */
+   buttons, and the help button's hit area beside the switches), so the card
+   does not move when a run starts or ends; with a switch's reason under the
+   controls, that line too. */
 .calibrate-run__busy {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
   min-height: max(var(--control-h), var(--hit-min));
   margin: 0;
+}
+
+.calibrate-run__busy--hint {
+  align-items: flex-start;
+  min-height: calc(max(var(--control-h), var(--hit-min)) + var(--space-1) + var(--text-ui) * var(--leading-ui));
+  padding-top: calc((var(--control-h) - var(--text-ui) * var(--leading-ui)) / 2);
 }
 
 .calibrate-run__busy .ui-spinner {

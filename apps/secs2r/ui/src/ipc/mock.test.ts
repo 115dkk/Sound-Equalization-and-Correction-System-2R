@@ -11,6 +11,30 @@ import type { Mode } from "./bindings/Mode";
 import type { MimoExportDecision } from "./bindings/MimoExportDecision";
 import { umikFile } from "../screens/connect/fixtures";
 
+describe("recommendation and app options", () => {
+  it("accepts background requests, preserves the include choice and marks old recommendations", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      expect(await mock.request({ method: "bootstrap" })).toMatchObject({ log_dir: expect.stringContaining("logs") });
+      const app = await mock.request({ method: "app_settings_get" });
+      expect(app.auto_refresh).toBe(false);
+      expect(await mock.request({ method: "app_settings_set", params: { settings: { ...app, auto_refresh: true } } })).toMatchObject({ auto_refresh: true });
+      const background = { method: "recommend_xo" as const, params: { background: true } };
+      await mock.request(background); mock.drain();
+      expect(await mock.request({ method: "results" })).toMatchObject({ xo_rec_stale: false });
+      expect(await mock.request({ method: "calibration_settings_get" })).toMatchObject({ xo_rec_key: expect.any(String) });
+      const manual = await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "xo", group: "프론트", hz: 95 } } });
+      expect(manual).toMatchObject({ xo_rec_include: false, xo: { 프론트: 95 } });
+      expect(await mock.request({ method: "results" })).toMatchObject({ xo_rec_stale: false });
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "boost_max", db: 4 } } });
+      expect(await mock.request({ method: "results" })).toMatchObject({ xo_rec_stale: true });
+      await mock.request({ method: "calibrate", params: { settings: null, subs_only: false, background: true } }); mock.drain();
+      expect((await mock.request({ method: "results" })).calibration?.stale).toBe(false);
+      expect((await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "xo_rec_include", on: true } } })).xo_rec_include).toBe(true);
+    } finally { mock.dispose(); }
+  });
+});
+
 describe("mock mic calibration", () => {
   it("selects the fixture with the chosen filename, keeps old attachments and isolates instances", async () => {
     const mock = createMockService({ tickMs: 0, results: resultsSummary });

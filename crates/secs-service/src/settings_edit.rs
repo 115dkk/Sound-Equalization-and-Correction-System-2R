@@ -402,13 +402,18 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
             if groups.iter().any(|(g, _)| *g == "sub")
                 && groups.iter().any(|(g, _)| *g == group && *g != "sub")
             {
-                put(
-                    &mut s.xo,
-                    group,
-                    hz.clamp(LIMITS.xo.0, LIMITS.xo.1).round_ties_even(),
-                );
+                let hz = hz.clamp(LIMITS.xo.0, LIMITS.xo.1).round_ties_even();
+                let changed =
+                    s.xo.iter()
+                        .find(|(stored_group, _)| stored_group == &group)
+                        .is_none_or(|(_, stored_hz)| *stored_hz != hz);
+                put(&mut s.xo, group, hz);
+                if changed {
+                    s.xo_rec_include = false;
+                }
             }
         }
+        SettingEdit::XoRecInclude { on } => s.xo_rec_include = on,
         SettingEdit::XoPeq { on, lo, hi } => {
             if let Some(v) = on {
                 s.xo_peq_on = v;
@@ -609,6 +614,44 @@ mod tests {
             assert_eq!(read(-FAR), lo, "{name} low edge");
             assert_eq!(read(FAR), hi, "{name} high edge");
         }
+    }
+
+    #[test]
+    fn xo_edit_turns_off_recommendation_inclusion_and_toggle_stores_it() {
+        let manual = edited(SettingEdit::Xo {
+            group: "프론트".into(),
+            hz: 80.0,
+        });
+        assert!(!manual.xo_rec_include);
+        let enabled = edited(SettingEdit::XoRecInclude { on: true });
+        assert!(enabled.xo_rec_include);
+        let disabled = edited(SettingEdit::XoRecInclude { on: false });
+        assert!(!disabled.xo_rec_include);
+
+        let project = Project {
+            config: SpeakerConfig::from_preset("2.1", "", false).unwrap(),
+            ..Project::default()
+        };
+        let mut unchanged = calibration_from_project(&project);
+        unchanged.xo = vec![("프론트".into(), 80.0)];
+        apply(
+            &mut unchanged,
+            SettingEdit::Xo {
+                group: "프론트".into(),
+                hz: 80.0,
+            },
+            &project,
+        );
+        assert!(unchanged.xo_rec_include);
+        apply(
+            &mut unchanged,
+            SettingEdit::Xo {
+                group: "프론트".into(),
+                hz: 81.0,
+            },
+            &project,
+        );
+        assert!(!unchanged.xo_rec_include);
     }
 
     #[test]
