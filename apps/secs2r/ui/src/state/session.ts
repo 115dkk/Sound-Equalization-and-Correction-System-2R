@@ -18,7 +18,9 @@ import type { MeasureView } from "../screens/measure/types";
 import { createResource as resource, createStore, type Failure } from "./store";
 import { isActiveJob } from "./jobRetention";
 import { createJobLedger, type FinishedJob, type JobRequestContext, type LedgerJob } from "./jobLedger";
-import { effectsOf, projectEdits, type EffectContext } from "./effects";
+import { effectsOf, projectEdits, refreshInputs, refreshMeasurements, type EffectContext } from "./effects";
+import { createAutoRefresh } from "./autoRefresh";
+import { calibrationMimo, startCalibration } from "./calibration";
 import { createWriter, type Patch, type Writer, type WriterDeps } from "./writers";
 import type { AppSettings } from "../ipc/bindings/AppSettings";
 import type { ApplySettings } from "../ipc/bindings/ApplySettings";
@@ -39,6 +41,7 @@ type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "m
   meter: MeterReading | null; monitor: MonitorState; playing: string | null; playingAll: boolean; masterDbfs: number;
   /** Why the level monitor job failed (the level check shows it); null once the monitor starts again or is switched off. */
   monitorError: import("../ipc/bindings/IpcError").IpcError | null;
+  xoRecTurnedOffByEdit: boolean;
   xoRecommendation: XoRecommendation | null; runs: Partial<Record<ExportKind, ExportRun>>; mdatScope: MdatScope;
   /** 내보내기: the design name field's text (`""` = no name) and the CamillaDSP devices (file placeholders by default). */
   designName: string; camillaDevices: CamillaDevices;
@@ -58,12 +61,22 @@ type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "m
 
 export function createSession(ipc: Ipc) {
   let pending = 0;
+  let autoRefresh: ReturnType<typeof createAutoRefresh> | null = null;
+  let savePromptOpen = false;
+  let saveDialogs = 0;
+  const canContinueRefresh = (revision: number) => {
+    if (!autoRefresh?.canContinue(revision)) return false;
+    if (savePromptOpen || saveDialogs > 0 || jobs.getSnapshot().jobs.some((job) => job.kind !== "status_watch" && isActiveJob(job.status))) {
+      autoRefresh.defer(); return false;
+    }
+    return true;
+  };
   const waiters = new Set<() => void>();
   async function track<T>(work: () => Promise<T>): Promise<T> {
     pending++;
     try { return await work(); }
     finally {
-      if (--pending === 0) { for (const resolve of waiters) resolve(); waiters.clear(); }
+      if (--pending === 0) { autoRefresh?.check(); for (const resolve of waiters) resolve(); waiters.clear(); }
     }
   }
   // Wait for session work already started, not service jobs or future timer/events.
@@ -78,7 +91,7 @@ export function createSession(ipc: Ipc) {
     current: "system", path: null, selected: null, graphHidden: false, plotRange: { x: null, y: null },
     mdat: null, warnings: [], tab: "spl", channel: null, xoGroup: null, previewHz: null, targetEdit: "idle", xoEdit: "idle",
     meter: null, monitor: "off", playing: null, playingAll: false, masterDbfs: -20, monitorError: null,
-    xoRecommendation: null, runs: {}, mdatScope: "all", failure: null, rangeRejection: null,
+    xoRecTurnedOffByEdit: false, xoRecommendation: null, runs: {}, mdatScope: "all", failure: null, rangeRejection: null,
     designName: "", camillaDevices: { capture: { type: "file" }, playback: { type: "file" } }, extraRates: [],
     applyRuns: {}, applyAddressDraft: null, applyChecking: false, applyReverting: false,
     applyExeDraft: null, hostInstalling: false, hostStopping: false, hostFailure: null,
@@ -163,9 +176,15 @@ export function createSession(ipc: Ipc) {
   let pendingProjectEdits = 0;
   const call: RequestFn = (request) => track(async () => {
     let epoch = jobs.epoch;
+    const saveDialog = request.method === "dialog_save_project" || request.method === "dialog_save_file";
+    if (saveDialog) saveDialogs++;
     const projectEdit = request.method !== "project_save" && projectEdits.includes(request.method);
     if (projectEdit) pendingProjectEdits++;
     const pendingStart = jobs.begin(request);
+    if (pendingStart?.context.method === "recommend_xo") pendingStart.context.mimo = calibrationMimo(stores);
+    if (pendingStart?.context.background && autoRefresh) pendingStart.context.autoRefreshRevision = autoRefresh.revision;
+    if (refreshInputs.includes(request.method)) autoRefresh?.changed();
+    const xoWasIncluded = stores.settings.getSnapshot()?.xo_rec_include !== false;
     const edit = request.method === "target_set_points" ? "targetEdit" : request.method === "calibration_settings_edit" && (request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit.kind === "xo" ? "xoEdit" : null;
     if (edit) host.set({ [edit]: "saving" });
     try {
@@ -177,9 +196,14 @@ export function createSession(ipc: Ipc) {
       }
       if (epoch !== jobs.epoch) return data;
       errors.set(null);
+      if (request.method === "calibration_settings_edit" || request.method === "calibration_settings_set") {
+        const settings = data as import("../ipc/bindings/CalibrationSettings").CalibrationSettings;
+        if (settings.xo_rec_include !== false) host.set({ xoRecTurnedOffByEdit: false });
+        else if (edit === "xoEdit" && xoWasIncluded) host.set({ xoRecTurnedOffByEdit: true });
+      }
       const effects = effectsOf({ request: request.method });
-      const ctx: EffectContext = { host, stores, jobs, call, configure, run, source: { request, data },
-        replaceProject: () => { jobs.replaceProject(); epoch = jobs.epoch; curveVersion++; curveState.set(null); tutorialReady.set(false); },
+      const ctx: EffectContext = { host, stores, jobs, call, configure, run, canContinueRefresh, source: { request, data },
+        replaceProject: () => { jobs.replaceProject(); autoRefresh?.changed(); epoch = jobs.epoch; curveVersion++; curveState.set(null); tutorialReady.set(false); },
       };
       for (const rule of effects.rules) rule.beforeReload?.(ctx);
       await reload(effects.reload);
@@ -204,10 +228,22 @@ export function createSession(ipc: Ipc) {
       throw error;
     } finally {
       if (projectEdit) pendingProjectEdits--;
+      if (saveDialog) saveDialogs--;
       jobs.settle(pendingStart);
     }
   });
   const run = (work: () => Promise<unknown>) => { void track(work).catch(() => { /* call reports the typed cause once */ }); };
+  autoRefresh = createAutoRefresh({
+    enabled: () => stores.appSettings.getSnapshot()?.auto_refresh === true,
+    stale: () => stores.results.getSnapshot()?.calibration?.stale === true,
+    blocked: () => pending > 0 || pendingProjectEdits > 0 || savePromptOpen,
+    jobs: () => jobs.getSnapshot().jobs,
+    start: () => run(() => startCalibration({ stores, call }, true)),
+    cancel: (job) => run(() => jobs.cancel(job)),
+  });
+  jobs.subscribe(() => { queueMicrotask(() => autoRefresh?.check()); });
+  stores.appSettings.subscribe(() => autoRefresh?.check());
+  stores.results.subscribe(() => autoRefresh?.check());
   // One ordered writer per settings bundle (A-80, TD-68; see writers.ts). A
   // project bundle's edit counts as a pending project edit from the moment it
   // is queued, and one queued for a project that has since been replaced is
@@ -449,7 +485,7 @@ export function createSession(ipc: Ipc) {
     const job = jobs.getSnapshot().jobs.find((candidate) => candidate.job === event.job);
     if (!job || job.epoch !== jobs.epoch || !isActiveJob(job.status)) return;
     const effects = effectsOf({ log: event.code });
-    const ctx: EffectContext = { host, stores, jobs, call, configure, run, source: { job, event, request: job.request }, replaceProject: () => {} };
+    const ctx: EffectContext = { host, stores, jobs, call, configure, run, canContinueRefresh, source: { job, event, request: job.request }, replaceProject: () => {} };
     run(async () => {
       for (const rule of effects.rules) rule.beforeReload?.(ctx);
       await reload(effects.reload);
@@ -470,12 +506,13 @@ export function createSession(ipc: Ipc) {
     }
     if ((request?.epoch ?? job.epoch) !== jobs.epoch) return;
     const effects = effectsOf({ finished: job.kind, status: event.status });
-    const ctx: EffectContext = { host, stores, jobs, call, configure, run, source: { job, event, request }, replaceProject: () => {} };
+    const ctx: EffectContext = { host, stores, jobs, call, configure, run, canContinueRefresh, source: { job, event, request }, replaceProject: () => {} };
     // A failed/cancelled job may already have committed some measurements.
     run(async () => {
       for (const rule of effects.rules) rule.beforeReload?.(ctx);
       await reload(effects.reload);
       if (job.epoch !== jobs.epoch) return;
+      if (refreshMeasurements.includes(job.kind)) autoRefresh?.changed();
       // External jobs refresh state, but do not repeat the UI's chained writes.
       if (request) for (const rule of effects.rules) if (rule.apply) await rule.apply(ctx);
     });
@@ -488,11 +525,12 @@ export function createSession(ipc: Ipc) {
   async function refreshExternal(methods: readonly string[]) {
     clearTimeout(externalPoll);
     const plans = methods.map(externalRefresh);
+    if (methods.some((method) => refreshInputs.includes(method as Request["method"]))) autoRefresh?.changed();
     if (plans.some((plan) => plan.replaceProject)) {
-      jobs.replaceProject(); curveVersion++; curveState.set(null); tutorialReady.set(false);
+      jobs.replaceProject(); autoRefresh?.changed(); curveVersion++; curveState.set(null); tutorialReady.set(false);
       for (const store of Object.values(stores)) if ("invalidate" in store) store.invalidate();
       stores.measurementSettings.set(null); stores.micCalibration.set(null);
-      host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, applyRuns: {}, mdatScope: "all", channel: null, xoGroup: null, xoRecommendation: null, failure: null, rangeRejection: null, opened: host.getSnapshot().opened + 1 });
+      host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, applyRuns: {}, mdatScope: "all", channel: null, xoGroup: null, xoRecommendation: null, xoRecTurnedOffByEdit: false, failure: null, rangeRejection: null, opened: host.getSnapshot().opened + 1 });
     }
     const keys = [...new Set(plans.flatMap((plan) => plan.resources))];
     await Promise.all([
@@ -512,6 +550,7 @@ export function createSession(ipc: Ipc) {
   let lifecycle = 0;
   async function start() {
     lifecycle++;
+    autoRefresh?.start();
     if (startPromise) return startPromise;
     off = ipc.events.subscribe(event);
     startPromise = track(async () => {
@@ -538,6 +577,7 @@ export function createSession(ipc: Ipc) {
     return startPromise;
   }
   function dispose() {
+    autoRefresh?.dispose();
     const ticket = ++lifecycle;
     // StrictMode's immediate setup/cleanup/setup must not stop the new watch.
     run(async () => {
@@ -555,6 +595,8 @@ export function createSession(ipc: Ipc) {
     });
   }
   return { ipc, stores, host, jobs, errors, ready, tutorialReady, call, run, settled, writers, configure, startTutorial, refreshCurves, ensureSaved, monitor, start, dispose,
+    canContinueRefresh,
+    setSavePromptOpen: (open: boolean) => { savePromptOpen = open; autoRefresh?.check(); },
     hasPendingProjectEdits: () => pendingProjectEdits > 0,
     navigate: (current: StepId) => host.set({ current }) };
 }

@@ -55,7 +55,7 @@
 }
 
 /* ── Popover row ───────────────────────────────────────────────────────── */
-/* A line between the display settings and the local API, which is another
+/* A line between 낡은 결과 자동 갱신 and the local API, which is another
    kind of setting. */
 .local-api-row {
   display: flex;

@@ -46,6 +46,9 @@ describe("useCalibrateScreen", () => {
     await perform(() => result.current.actions.changeSetting({ kind: "xo", group, hz: 95 }));
     expect(mock.calls).toContainEqual({ method: "calibration_settings_edit", params: { edit: { kind: "xo", group: "센터", hz: 95 } } });
     expect(result.current.view?.settings.xo["센터"]).toBe(95);
+    expect(result.current.view?.xoRecTurnedOffByEdit).toBe(true);
+    await perform(() => result.current.actions.changeSetting({ kind: "xo_rec_include", on: true }));
+    expect(result.current.view?.xoRecTurnedOffByEdit).toBe(false);
     await perform(() => result.current.actions.selectChannel("L", null));
     expect(result.current.view?.xoGroup).toBe("프론트");
     await perform(() => result.current.actions.selectTab("spl"));
@@ -154,6 +157,9 @@ describe("useCalibrateScreen", () => {
     expect(result.current.view?.running).toBe("calibrate_subs");
     await perform(mock.drain);
     await perform(a.calibrate);
+    expect(mock.calls).toContainEqual({ method: "recommend_xo" });
+    expect(result.current.view?.running).toBe("recommend_xo");
+    await perform(mock.drain);
     expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false, mimo: false } });
     expect(result.current.view?.running).toBe("calibrate");
     expect(result.current.view?.runningMimo).toBe(false);
@@ -175,6 +181,8 @@ describe("useCalibrateScreen", () => {
     const { result } = renderHook(useCalibrateScreen, { wrapper });
     const a = result.current.actions;
     const calibrateCall = (mimo: boolean) => ({ method: "calibrate", params: { settings: null, subs_only: false, mimo } });
+    // Isolate the MIMO choice from the optional recommendation job.
+    await perform(() => a.changeSetting({ kind: "xo_rec_include", on: false }));
     // On with three positions: one job computes both.
     await perform(() => a.changeSetting({ kind: "mimo_on", on: true }));
     await perform(a.calibrate);
@@ -213,6 +221,7 @@ describe("useCalibrateScreen", () => {
   it("stores the RC upper limit's basis and factor, and reads their evidence after a run (ADR 0021)", async () => {
     const { result } = renderHook(useCalibrateScreen, { wrapper });
     const a = result.current.actions;
+    await perform(() => a.changeSetting({ kind: "xo_rec_include", on: false }));
     await perform(() => a.changeSetting({ kind: "rc_hi_basis", basis: "lenient" }));
     await perform(() => a.changeSetting({ kind: "rc_hi_transition", factor: 2 }));
     expect(result.current.view?.settings).toMatchObject({ rc_hi: null, rc_hi_basis: "lenient", rc_hi_transition: 2 });
@@ -237,6 +246,7 @@ describe("useCalibrateScreen", () => {
 
   it("turns 극저역 보호 on from the range card's switch, then shows each channel's roll-off and the bus warning after runs (ADR 0022)", async () => {
     installFakeCanvas();
+    await session.call({ method: "calibration_settings_edit", params: { edit: { kind: "xo_rec_include", on: false } } });
     function Live() {
       const { view, actions } = useCalibrateScreen();
       return view ? <CalibrateScreen view={view} actions={actions} /> : null;

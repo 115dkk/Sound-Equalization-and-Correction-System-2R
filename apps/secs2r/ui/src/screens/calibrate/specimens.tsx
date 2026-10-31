@@ -223,11 +223,15 @@ export const calibrateSpecimens: SpecimenDef[] = [
   frame("empty", "no result yet: plan, position-1 preview and target", () => <CalibrateFrame view={fx.emptyView} />),
   ...Object.entries(fx.planViews).map(([name, view]) => frame(`plan-${name}`, `calculation plan: ${name}`, () => <CalibrateFrame view={view} />)),
   frame("computing", "first run computing (busy primary, job in the tray)", () => <CalibrateFrame view={fx.computingView} jobs={runningJobs("calibrate", "engine.design", 11)} />),
-  frame("ready-mimo", "before the first run, MIMO on with three positions: MIMO 함께 계산 right before 보정 계산, the plan names MIMO", () => <CalibrateFrame view={fx.readyMimoView} />),
-  frame("ready-mimo-two", "before the first run with two positions: MIMO 함께 계산 off, the reason on its line", () => <CalibrateFrame view={fx.readyMimoTwoView} />),
+  frame("ready-mimo", "before the first run, MIMO on with three positions: XO 추천 포함 and MIMO 함께 계산 right before 보정 계산, the plan names MIMO", () => <CalibrateFrame view={fx.readyMimoView} />),
+  frame("ready-mimo-two", "before the first run with two positions: MIMO 함께 계산 off, its reason on its own line under it; 보정 계산 stays on the switches' line", () => <CalibrateFrame view={fx.readyMimoTwoView} />),
+  frame("ready-reasons", "before the first run with two positions after a manual XO edit: each switch's reason under it, the plan and the button on the switches' line", () => <CalibrateFrame view={fx.readyReasonsView} />),
+  frame("computing-reasons", "first run computing from two positions: the busy line as tall as the controls and their reasons", () => (
+    <CalibrateFrame view={{ ...fx.readyReasonsView, running: "calibrate" }} jobs={runningJobs("calibrate", "engine.design", 11)} />
+  )),
   {
     id: "screen.calibrate.ready-mimo.min",
-    title: "보정 · MIMO 함께 계산 before the first run at the smallest window (1024 × 700)",
+    title: "보정 · XO 추천 포함 and MIMO 함께 계산 before the first run at the smallest window (1024 × 700), MIMO's reason under it",
     width: 1024,
     height: 700,
     render: () => <CalibrateFrame view={fx.readyMimoTwoView} />,
@@ -245,7 +249,22 @@ export const calibrateSpecimens: SpecimenDef[] = [
   frame("mimo-stale-settings", "MIMO behind its own settings on a current correction: MIMO만 계산", () => (
     <CalibrateFrame view={fx.mimoStaleView} scrollTo="calibrate.settings.mimo" />
   )),
-  frame("spl", "current result, SPL with target handles and the RC band", () => <CalibrateFrame view={fx.splView} />),
+  frame("spl", "current result, SPL with target handles and the RC band; XO 추천 포함 and MIMO 함께 계산 before 다시 보정하기", () => <CalibrateFrame view={fx.splView} />),
+  // XO 추천 포함 and the stale recommendation (ADR 0028).
+  frame("xo-rec-manual", "a manual XO edit turned XO 추천 포함 off: the reason under the result card's switch", () => <CalibrateFrame view={fx.xoRecManualOffView} />),
+  frame("xo-rec-manual-card", "a manual XO edit turned XO 추천 포함 off: the crossover card's switch under the value, the reason under it", () => (
+    <CalibrateFrame view={fx.xoRecManualOffView} scrollTo="calibrate.settings.xo" />
+  )),
+  frame("xo-rec-stale", "the recommendation computed for other settings: the values stay, a warning after them", () => (
+    <CalibrateFrame view={fx.xoRecStaleView} scrollTo="calibrate.settings.xo" />
+  )),
+  {
+    id: "screen.calibrate.xo-rec-manual.min",
+    title: "보정 · XO 추천 포함 turned off by a manual edit at the smallest window (1024 × 700): the run wraps as a unit",
+    width: 1024,
+    height: 700,
+    render: () => <CalibrateFrame view={fx.xoRecManualOffView} />,
+  },
   frame("target-menu", "target menu open (presets, 사용자 지정, save, load)", () => <CalibrateFrame view={fx.splView} initial={{ targetMenu: true }} />),
   frame("gd", "current result, GD with the RC band", () => <CalibrateFrame view={fx.gdView} />),
   frame("xo", "current result, XO with the draggable line", () => <CalibrateFrame view={fx.xoView} />),
@@ -299,6 +318,7 @@ export const calibrateSpecimens: SpecimenDef[] = [
   )),
   frame("settings", "settings: mode and correction range", () => <CalibrateFrame view={fx.splView} scrollTo="calibrate.settings" />),
   frame("no-subs", "no subs: the XO section says why", () => <CalibrateFrame view={fx.noSubsView} scrollTo="calibrate.settings.xo" />),
+  frame("no-subs-run", "no subs: no XO 추천 포함 beside 다시 보정하기, only MIMO 함께 계산", () => <CalibrateFrame view={fx.noSubsView} />),
   frame("ba-settings", "BA settings with 고급 open on a fixed sub", () => <CalibrateFrame view={fx.baView} scrollTo="calibrate.settings.ba" initial={{ editSub: "SW2" }} />),
   frame("ba-editor", "BA 고급: values, fixed filters and MIMO support of a fixed sub", () => (
     <CalibrateFrame view={fx.baView} scrollTo="calibrate.ba.values" initial={{ editSub: "SW2" }} />

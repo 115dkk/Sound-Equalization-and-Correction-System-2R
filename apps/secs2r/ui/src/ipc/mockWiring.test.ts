@@ -237,6 +237,7 @@ describe("P33 mock wiring", () => {
       sample_rate_policy: { kind: "sample_rate_policy", policy: "resample" }, low_protect: { kind: "low_protect", on: true },
       lf_align: { kind: "lf_align", on: true }, mode_decay: { kind: "mode_decay", on: true },
       room_volume: { kind: "room_volume", m3: 60 }, room_dims: { kind: "room_dims", dims: [5, 4, 3] }, boost_max: { kind: "boost_max", db: 6 },
+      xo_rec_include: { kind: "xo_rec_include", on: true },
       xo: { kind: "xo", group: "front", hz: 100 }, xo_peq: { kind: "xo_peq", on: false, lo: 30, hi: 150 },
       infra: { kind: "infra", role: "SW1", hz: 40, type: "LR24", subs: ["SW1", "SW2"] }, infra_boost: { kind: "infra_boost", db: 18 },
       sub_mode: { kind: "sub_mode", role: "SW1", mode: "bundle:A" }, sub_layout: { kind: "sub_layout", bundle: "A", layout: "dba" },

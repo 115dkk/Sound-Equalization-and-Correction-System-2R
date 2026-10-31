@@ -721,8 +721,9 @@ describe("MIMO 함께 계산", () => {
     const actions = setup(fx.splView);
     const toggle = must("calibrate.run.mimo");
     const slot = toggle.closest(".calibrate-run__mimo");
-    // One unit with the button it changes, after 다시 측정하기.
-    expect(slot?.previousElementSibling).toBeNull();
+    // One unit with the button it changes, after 다시 측정하기 (and XO 추천 포함, with subs).
+    expect(slot?.previousElementSibling).toBe(must("calibrate.run.xo_rec_include").closest(".calibrate-run__xo"));
+    expect(slot?.previousElementSibling?.previousElementSibling).toBeNull();
     expect(slot?.nextElementSibling).toBe(must("calibrate.compute"));
     expect(slot?.parentElement?.previousElementSibling).toBe(must("calibrate.remeasure"));
     expect(must("calibrate.compute").textContent).toBe("다시 보정하기");
@@ -738,6 +739,8 @@ describe("MIMO 함께 계산", () => {
     const hint = document.getElementById("calibrate.run.mimo-hint");
     expect(hint?.textContent).toBe("측정 위치 3곳 이상 필요");
     expect(hint?.closest(".calibrate-run__mimo")).toBe(toggle.closest(".calibrate-run__mimo"));
+    // On its own line under the switch (user report, 2026-10-31), not at the end of it before 보정 계산.
+    expect(hint?.previousElementSibling).toBe(toggle.closest(".ui-control-help-row"));
     expect(toggle.getAttribute("aria-describedby")).toContain("calibrate.run.mimo-hint");
     expect(must("calibrate.verdict.plan").querySelector("p")?.textContent).toBe("2곳에서 측정한 값으로 보정합니다.");
     fireEvent.click(toggle);
@@ -762,6 +765,11 @@ describe("MIMO 함께 계산", () => {
     await act(async () => { fireEvent.click(must("calibrate.mimo.on")); });
     expect([run(), card()]).toEqual(["false", "false"]);
     expect(actions.changeSetting.mock.calls).toEqual([[{ kind: "mimo_on", on: true }], [{ kind: "mimo_on", on: false }]]);
+  });
+
+  it("keeps the controls' height while 보정 계산 runs when a switch gives its reason", () => {
+    setup({ ...fx.readyMimoTwoView, running: "calibrate" });
+    expect(must("calibrate.verdict.computing").className).toBe("calibrate-run__busy calibrate-run__busy--hint");
   });
 
   it("names MIMO in the busy line and the header pill while 보정 계산 computes it, in the controls' place", () => {
@@ -805,6 +813,67 @@ describe("MIMO 함께 계산", () => {
     setup(fx.mimoBehindCorrectionView);
     expect((must("calibrate.mimo.compute") as HTMLButtonElement).disabled).toBe(true);
     expect(must("calibrate.mimo.state").textContent).toBe("보정 결과부터 다시 계산해야 합니다. '다시 보정하기'를 누르면 MIMO도 함께 계산합니다.");
+  });
+});
+
+/* ── XO 추천 포함 and the stale recommendation (ADR 0028) ───────────────── */
+
+describe("XO 추천 포함", () => {
+  it("sits before MIMO 함께 계산 in the run and in the crossover card, on when the setting is missing, and switches xo_rec_include", () => {
+    const actions = setup(fx.readyMimoView);
+    const run = must("calibrate.run.xo_rec_include") as HTMLButtonElement;
+    const card = must("calibrate.xo_rec_include") as HTMLButtonElement;
+    expect(fx.readyMimoView.settings.xo_rec_include).toBeUndefined();
+    expect([run.getAttribute("aria-checked"), card.getAttribute("aria-checked")]).toEqual(["true", "true"]);
+    expect(run.textContent).toBe("XO 추천 포함");
+    expect(run.closest(".calibrate-run__xo")?.nextElementSibling).toBe(must("calibrate.run.mimo").closest(".calibrate-run__mimo"));
+    expect(card.closest("[data-ui='calibrate.settings.xo']")).not.toBeNull();
+    expect(ui("calibrate.run.xo_rec_include.help")).not.toBeNull();
+    fireEvent.click(run);
+    fireEvent.click(card);
+    expect(actions.changeSetting.mock.calls).toEqual([[{ kind: "xo_rec_include", on: false }], [{ kind: "xo_rec_include", on: false }]]);
+    cleanupAll();
+    // Off as stored: both off, and a click turns it on.
+    const off = setup({ ...fx.splView, settings: { ...fx.splView.settings, xo_rec_include: false } });
+    expect(must("calibrate.run.xo_rec_include").getAttribute("aria-checked")).toBe("false");
+    fireEvent.click(must("calibrate.xo_rec_include"));
+    expect(off.changeSetting).toHaveBeenLastCalledWith({ kind: "xo_rec_include", on: true });
+  });
+
+  it("is not drawn without subs", () => {
+    setup(fx.noSubsView);
+    expect(ui("calibrate.run.xo_rec_include")).toBeNull();
+    expect(ui("calibrate.xo_rec_include")).toBeNull();
+    expect(ui("calibrate.run.mimo")).not.toBeNull();
+  });
+
+  it("says under both switches that a manual XO edit turned it off, and only then", () => {
+    setup(fx.xoRecManualOffView);
+    for (const id of ["calibrate.run.xo_rec_include", "calibrate.xo_rec_include"]) {
+      const hint = document.getElementById(`${id}-hint`);
+      expect(hint?.textContent, id).toBe("XO를 직접 바꿔 꺼짐");
+      expect(must(id).getAttribute("aria-describedby"), id).toContain(`${id}-hint`);
+    }
+    expect(document.getElementById("calibrate.run.xo_rec_include-hint")?.closest(".calibrate-run__xo")).not.toBeNull();
+    cleanupAll();
+    // Turned off by the user, or on again: no reason line.
+    setup({ ...fx.xoRecManualOffView, xoRecTurnedOffByEdit: false });
+    expect(document.getElementById("calibrate.run.xo_rec_include-hint")).toBeNull();
+    cleanupAll();
+    setup({ ...fx.xoRecManualOffView, settings: { ...fx.xoRecManualOffView.settings, xo_rec_include: true } });
+    expect(document.getElementById("calibrate.xo_rec_include-hint")).toBeNull();
+  });
+
+  it("keeps a stale recommendation's values and says to recommend again", () => {
+    setup(fx.xoRecStaleView);
+    expect(must("calibrate.xo.recommended").textContent).toBe("추천 80 Hz");
+    expect(must("calibrate.xo.state").textContent).toContain("추천: 프론트 80 Hz");
+    const stale = must("calibrate.xo.rec_stale");
+    expect(stale.textContent).toBe(translate("ko", "calibrate.xo.rec_stale"));
+    expect(stale.className).toContain("calibrate-hint--warning");
+    cleanupAll();
+    setup(fx.splView);
+    expect(ui("calibrate.xo.rec_stale")).toBeNull();
   });
 });
 

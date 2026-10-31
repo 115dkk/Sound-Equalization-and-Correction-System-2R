@@ -587,6 +587,44 @@ export const noPosition1View: CalibrateView = {
 /** The first tab's curves are on their way and none are here yet. */
 export const loadingEmptyView: CalibrateView = { ...base, curves: null, curvesLoading: true };
 
+/* ── XO 추천 포함 and the stale recommendation (ADR 0028) ─────────────── */
+
+/**
+ * The front crossover typed in by hand (90 Hz, the recommendation 80 Hz):
+ * the edit turned 'XO 추천 포함' off, so both of its switches are off with
+ * the reason under them, and the result waits for 다시 보정하기.
+ */
+export const xoRecManualOffView: CalibrateView = {
+  ...base,
+  results: { calibration: summary(true), mimo: null, mimo_export: "off" },
+  lines: lines({ stale: true }),
+  curves: { ...splResult(), stale: true },
+  settings: { ...baseSettings, xo: { ...XO, 프론트: 90 }, xo_rec_include: false },
+  staleReason: "settings",
+  xoRecTurnedOffByEdit: true,
+};
+
+/** Before the first run with two positions after a manual XO edit: both switches give their reason, each under its own switch. */
+export const readyReasonsView: CalibrateView = {
+  ...readyMimoTwoView,
+  settings: { ...readyMimoTwoView.settings, xo: { ...XO, 프론트: 90 }, xo_rec: XO, xo_rec_include: false },
+  xoRecTurnedOffByEdit: true,
+};
+
+/**
+ * Recommended with 'XO 추천 포함' off, then the boost limit changed: the
+ * crossover card keeps the recommended values and says they were computed
+ * for other inputs (`results.xo_rec_stale`); the result is stale too.
+ */
+export const xoRecStaleView: CalibrateView = {
+  ...base,
+  results: { calibration: summary(true), mimo: null, mimo_export: "off", xo_rec_stale: true },
+  lines: lines({ stale: true }),
+  curves: { ...splResult(), stale: true },
+  settings: { ...baseSettings, boost_max_db: 8, xo_rec_include: false },
+  staleReason: "settings",
+};
+
 /* ── RC upper limit (ADR 0021) ──────────────────────────────────────────── */
 
 const NINE_POSITIONS = [1, 2, 3, 4, 5, 6, 7, 8, 9];

@@ -3,11 +3,43 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createMockService } from "../../ipc/mock";
+import { resultsSummary } from "../../ipc/fixtures";
 import { createSession } from "../../state/session";
 import { SessionProvider } from "../../state/react";
 import { useProjectScreen } from "./useProjectScreen";
 
 afterEach(cleanup);
+it.each(["cancel", "unmount"] as const)("pauses automatic refresh for the unsaved dialog and resumes on %s", async (end) => {
+  vi.useFakeTimers();
+  const mock = createMockService({ tickMs: 0, results: resultsSummary });
+  const session = createSession(mock);
+  await session.start(); await session.settled();
+  const close = vi.fn(async () => {});
+  const hook = renderHook(() => useProjectScreen(close), { wrapper: ({ children }: { children: ReactNode }) => createElement(SessionProvider, { value: session, children }) });
+  const starts = () => mock.calls.filter((request) => request.method === "recommend_xo" || request.method === "calibrate");
+  try {
+    await act(async () => {
+      await session.writers.app.edit({ auto_refresh: true });
+      await session.call({ method: "calibration_settings_edit", params: { edit: { kind: "boost_max", db: 4 } } });
+      await session.settled();
+    });
+    act(() => hook.result.current.requestClose());
+    expect(hook.result.current.view.dialog).toMatchObject({ kind: "unsaved", reason: "close" });
+    await act(async () => { await vi.advanceTimersByTimeAsync(2000); await session.settled(); });
+    expect(starts()).toEqual([]);
+    expect(close).not.toHaveBeenCalled();
+    if (end === "cancel") {
+      act(() => hook.result.current.actions.cancel());
+      expect(hook.result.current.view.dialog).toBeNull();
+    } else hook.unmount();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); await session.settled(); });
+    expect(starts()).toEqual([{ method: "recommend_xo", params: { background: true } }]);
+    expect(close).not.toHaveBeenCalled();
+  } finally {
+    hook.unmount(); session.dispose(); await session.settled(); mock.dispose(); vi.useRealTimers();
+  }
+});
+
 it.each(["open", "close"] as const)("asks about unsaved changes on %s while an edit response is pending", async (action) => {
   const mock = createMockService({ tickMs: 0 });
   let release!: () => void;

@@ -1,5 +1,7 @@
 import type { RequestFn } from "../ipc/context";
 import { IpcFailure } from "../ipc/client";
+import { isBackgroundRequest } from "../ipc/recommendXo";
+import { isVisibleLog } from "../app/jobs/jobText";
 import type { IpcError } from "../ipc/bindings/IpcError";
 import type { JobEvent } from "../ipc/bindings/JobEvent";
 import type { JobId } from "../ipc/bindings/JobId";
@@ -18,7 +20,7 @@ export type JobRequestContext = (
   | { method: "sample_load" | "mdat_import" | "recommend_xo" | "mimo" }
   /** 적용 (ADR 0018): which target the `apply` job pushes to. */
   | { method: "apply_camilla" | "apply_eqapo" }
-) & { epoch: number };
+) & { epoch: number; background?: boolean; autoRefreshRevision?: number; mimo?: boolean };
 export type LedgerJob = JobSnapshot & {
   epoch: number; request: JobRequestContext | null;
   completionHandled: boolean; completionOrder: number | null;
@@ -124,7 +126,7 @@ export function ledgerReducer(state: LedgerState, action: LedgerAction): LedgerS
     } : job) };
   }
   if (event.event === "log") {
-    if (TRAY_HIDDEN.includes(known.kind)) return state;
+    if (TRAY_HIDDEN.includes(known.kind) || !isVisibleLog(event.code)) return state;
     return push({ ...state, observedOrder: order }, { at, job: event.job, kind: known.kind, type: "log", code: event.code, params: event.params });
   }
   if (event.event !== "finished") return state;
@@ -196,6 +198,7 @@ export function createJobLedger(deps: {
     const context = contextFor(request, epoch);
     const kind = kindFor(request);
     if (!context || !kind) return null;
+    if (isBackgroundRequest(request)) context.background = true;
     const item: PendingStart = { context, kind, observation: null, replied: false, afterId: highestSeenId };
     pending.add(item); return item;
   }

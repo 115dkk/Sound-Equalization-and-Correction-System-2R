@@ -164,6 +164,7 @@ export function Toggle({
   onChange,
   hint,
   help,
+  helpOpen,
   disabled,
 }: {
   id: string;
@@ -173,6 +174,8 @@ export function Toggle({
   onChange: (checked: boolean) => void;
   hint?: ReactNode;
   help?: ReactNode;
+  /** Gallery: the help drawn open. */
+  helpOpen?: boolean | undefined;
   disabled?: boolean;
 }) {
   const hid = `${id}-hint`;
@@ -195,7 +198,7 @@ export function Toggle({
         </span>
         <span className="ui-toggle__label" id={`${id}-label`}>{label}</span>
       </button>
-      {help && <HelpTip id={`${id}.help`} labelledBy={`${id}-label`} content={help} />}
+      {help && <HelpTip id={`${id}.help`} labelledBy={`${id}-label`} content={help} open={helpOpen} />}
       </div>
       {hint && (
         <p className="ui-field__hint ui-toggle__hint" id={hid}>

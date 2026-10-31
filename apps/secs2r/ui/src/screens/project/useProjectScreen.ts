@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { RECENT_PROJECTS_MAX } from "../../ipc/bindings/rules";
 import { IpcFailure } from "../../ipc/client";
 import { useResource, useSession } from "../../state/react";
@@ -11,7 +11,11 @@ export function useProjectScreen(close: () => Promise<void>) {
   const [view, setView] = useState<ProjectDialogsView>({ dialog: null, busy: false, error: null });
   const waiting = useRef<(() => Promise<void>) | null>(null);
   const previous = useRef<string | null>(null);
-  const show = (dialog: ProjectDialog | null) => setView({ dialog, busy: false, error: null });
+  useEffect(() => () => session.setSavePromptOpen(false), [session]);
+  const show = (dialog: ProjectDialog | null) => {
+    session.setSavePromptOpen(dialog?.kind === "unsaved");
+    setView({ dialog, busy: false, error: null });
+  };
   const perform = (work: () => Promise<void>) => {
     setView((v) => ({ ...v, busy: true, error: null }));
     void work().then(() => setView((v) => ({ ...v, busy: false }))).catch((error: unknown) => {

@@ -103,6 +103,9 @@ export function stageText(t: Translate, kind: JobKind, stage: string | null): st
   return null;
 }
 
+/** Diagnostic settings belong in the app log, not the user-facing job history. */
+export const isVisibleLog = (code: string): boolean => code !== "calibration_settings";
+
 /** A pushed Log notice as a sentence. */
 export function logText(t: Translate, code: string, params: Record<string, string>): { text: string; known: boolean } {
   const key = `jobs.log.${code}`;

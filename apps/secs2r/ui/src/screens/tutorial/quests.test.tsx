@@ -111,6 +111,7 @@ for (const route of ["action", "auto"] as const) it(`finishes every act through 
       };
       expect(q.blocked!(blocked), q.id).toBeTruthy();
       expect(q.auto!.run(blocked), q.id).toBe(false);
+      const callStart = mock.calls.length;
       await act(async () => {
         if (route === "auto") q.auto!.run(before);
         else switch (q.id) {
@@ -129,7 +130,14 @@ for (const route of ["action", "auto"] as const) it(`finishes every act through 
           case "calibrate.next": actions.goTo("export"); break;
         }
       });
-      await act(async () => { mock.drain(); });
+      if (q.id === "calibrate.compute") {
+        expect(mock.calls.slice(callStart).filter((r) => r.method === "recommend_xo" || r.method === "calibrate")).toEqual([{ method: "recommend_xo" }]);
+        await act(async () => { mock.drain(); await session.settled(); });
+        expect(mock.calls.slice(callStart).map((r) => r.method).filter((method) => ["recommend_xo", "calibration_settings_get", "calibrate"].includes(method)))
+          .toEqual(["recommend_xo", "calibration_settings_get", "calibrate"]);
+        expect(q.done!(view(), base)).toBe(false);
+      }
+      await act(async () => { mock.drain(); await session.settled(); });
       await waitFor(() => expect(q.done!(view(), base), q.id).toBe(true));
     }
     expect(session.errors.getSnapshot()).toBeNull();
@@ -215,10 +223,17 @@ it("walks every quest on the real App hooks, checks every target, and reaches th
       await waitFor(() => {
         for (const target of q.targets.flatMap((target) => typeof target === "string" ? [target] : [...target])) expect(ui(target), `${q.id}: ${target}`).not.toBeNull();
       });
+      const callStart = mock.calls.length;
       fireEvent.click(ui("tutorial.coach.next")!);
       if (q.kind === "act") fireEvent.click(ui("tutorial.coach.next")!);
-      if (["measure.sample", "calibrate.compute", "calibrate.subs"].includes(q.id)) {
-        await waitFor(() => expect(mock.calls.some((r) => q.id === "measure.sample" ? r.method === "sample_load" : r.method === "calibrate" && r.params.subs_only === (q.id === "calibrate.subs"))).toBe(true));
+      if (q.id === "calibrate.compute") {
+        await waitFor(() => expect(mock.calls.slice(callStart).filter((r) => r.method === "recommend_xo" || r.method === "calibrate")).toEqual([{ method: "recommend_xo" }]));
+        await act(async () => { mock.drain(); });
+        await waitFor(() => expect(mock.calls.slice(callStart).some((r) => r.method === "calibrate" && !r.params.subs_only)).toBe(true));
+        expect(mock.calls.slice(callStart).map((r) => r.method).filter((method) => ["recommend_xo", "calibration_settings_get", "calibrate"].includes(method)))
+          .toEqual(["recommend_xo", "calibration_settings_get", "calibrate"]);
+      } else if (["measure.sample", "calibrate.subs"].includes(q.id)) {
+        await waitFor(() => expect(mock.calls.slice(callStart).some((r) => q.id === "measure.sample" ? r.method === "sample_load" : r.method === "calibrate" && r.params.subs_only)).toBe(true));
       }
       await act(async () => { mock.drain(); });
     }
