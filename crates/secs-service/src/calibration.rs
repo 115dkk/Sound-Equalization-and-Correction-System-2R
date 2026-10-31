@@ -870,9 +870,13 @@ pub(crate) fn scalar_notice(note: &secs_engine::Note) -> Notice {
             rolloff_hz,
             hp_hz,
             limited,
+            reduced,
+            cuts,
         } => {
             params.insert("role".into(), role.clone());
             params.insert("rolloff_hz".into(), rolloff_hz.to_string());
+            params.insert("reduced".into(), reduced.to_string());
+            params.insert("cuts".into(), cuts.to_string());
             params.insert("limited".into(), limited.to_string());
             if let Some(hz) = hp_hz {
                 params.insert("hp_hz".into(), hz.to_string());
@@ -1529,11 +1533,13 @@ mod tests {
             rolloff_hz: 28.0,
             hp_hz: Some(20.0),
             limited: true,
+            reduced: 2,
+            cuts: 1,
         };
         assert_eq!(
             serde_json::to_value(notices(&note)).unwrap(),
             serde_json::json!([
-                {"code":"low_protect","params":{"role":"SW1","rolloff_hz":"28","hp_hz":"20","limited":"true"}}
+                {"code":"low_protect","params":{"role":"SW1","rolloff_hz":"28","hp_hz":"20","limited":"true","reduced":"2","cuts":"1"}}
             ])
         );
         let note = Note::LowProtect {
@@ -1541,11 +1547,13 @@ mod tests {
             rolloff_hz: 30.0,
             hp_hz: None,
             limited: false,
+            reduced: 2,
+            cuts: 1,
         };
         assert_eq!(
             serde_json::to_value(notices(&note)).unwrap(),
             serde_json::json!([
-                {"code":"low_protect","params":{"role":"L","rolloff_hz":"30","limited":"false"}}
+                {"code":"low_protect","params":{"role":"L","rolloff_hz":"30","limited":"false","reduced":"2","cuts":"1"}}
             ])
         );
     }
@@ -1685,6 +1693,8 @@ mod tests {
                 rolloff_hz: 28.0,
                 hp_hz: Some(20.0),
                 limited: true,
+                reduced: 2,
+                cuts: 1,
             },
             Note::LiftCapped {
                 from_ms: 2.0,

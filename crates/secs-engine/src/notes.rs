@@ -15,6 +15,8 @@ pub enum Note {
         rolloff_hz: f64,
         hp_hz: Option<f64>,
         limited: bool,
+        reduced: usize,
+        cuts: usize,
     },
     RcLimit {
         hz: f64,

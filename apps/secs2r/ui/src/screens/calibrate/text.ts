@@ -293,14 +293,20 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
       break;
   }
   if (!isMessageKey(key)) return null;
-  const text = t(key, params);
+  let text = t(key, params);
+  if (notice.code === "low_protect") {
+    const changes: string[] = [];
+    if (num(p.reduced) > 0) changes.push(t("notice.low_protect.reduced", { count: f("reduced") }));
+    if (num(p.cuts) > 0) changes.push(t("notice.low_protect.cuts", { count: f("cuts") }));
+    if (changes.length > 0) text = `${text} · ${changes.join(" · ")}`;
+  }
   return after ? `${text}, ${t(after)}` : text;
 }
 
 /**
- * 극저역 보호 notes whose boost could not be held below the roll-off even
- * with every eligible boost removed, so the original fit was kept (ADR 0022,
- * `limited` "false"): a warning with what to do, never a calculation note.
+ * Protection notes whose realized response still exceeds the bound after
+ * the bounded guard (ADR 0022, `limited` "false"): a warning with what to do,
+ * never a calculation note.
  */
 export function lowProtectFailures(notices: readonly Notice[]): Notice[] {
   return notices.filter((n) => n.code === "low_protect" && n.params.limited === "false");

@@ -149,6 +149,7 @@ fn rc_recorded_candidates_and_channel() {
             })
             .collect();
         let input = RcInput {
+            bus_rolloff_hz: None,
             role,
             comb: &comb,
             main_position: case.config.main_position,
@@ -448,6 +449,7 @@ fn rc_channel_stops_at_every_cancellation_check() {
         .collect();
     let positions: Vec<_> = comb.iter().map(|(p, _)| *p).collect();
     let input = RcInput {
+        bus_rolloff_hz: None,
         role,
         comb: &comb,
         main_position: case.config.main_position,
@@ -493,6 +495,7 @@ fn rc_phase_candidates_share_preparation() {
         .collect();
     let positions: Vec<_> = comb.iter().map(|(p, _)| *p).collect();
     let input = RcInput {
+        bus_rolloff_hz: None,
         role,
         comb: &comb,
         main_position: case.config.main_position,

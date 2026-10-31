@@ -1269,7 +1269,7 @@ describe("극저역 보호 (ADR 0022)", () => {
     setup(fx.lowProtectViews.unheld);
     const warning = must("calibrate.verdict.low_protect");
     expect(warning.className).toContain("ui-error--warning");
-    expect(warning.textContent).toContain("극저역 보호(SW1 + SW2): 22 Hz 아래 부스트를 막지 못해 원래 필터를 그대로 썼습니다.");
+    expect(warning.textContent).toContain("극저역 보호: SW1 + SW2 채널의 22 Hz 아래 일부 주파수가 부스트 한도를 넘습니다.");
     expect(warning.textContent).toContain("부스트 상한을 낮추거나 RC 하한을 올린 뒤 '다시 보정하기'를 누르십시오.");
     const lines = [...must("calibrate.verdict.notes").querySelectorAll("li")].map((li) => li.textContent ?? "");
     expect(lines).toContain("극저역 보호(SW1): 22 Hz 아래 부스트 안 함, 16 Hz 하이패스");
