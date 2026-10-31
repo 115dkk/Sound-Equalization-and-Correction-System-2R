@@ -252,10 +252,13 @@ impl CalibrationSettings {
         if self.rc_hi_transition != 1 {
             write!(&mut out, "|rc_hi_transition={}", self.rc_hi_transition).unwrap();
         }
-        // ADR 0024: only a project with extra bands gets a new key.
+        // ADR 0024: only a project with extra bands gets a new key. Sorted, so
+        // a list the service stored and the same list in another order match.
         if !self.rc_bands.is_empty() {
+            let mut bands = self.rc_bands.clone();
+            bands.sort_by(|a, b| a.lo_hz.total_cmp(&b.lo_hz).then(a.hi_hz.total_cmp(&b.hi_hz)));
             out.push_str("|rc_bands=");
-            for (index, band) in self.rc_bands.iter().enumerate() {
+            for (index, band) in bands.iter().enumerate() {
                 if index > 0 {
                     out.push(',');
                 }
