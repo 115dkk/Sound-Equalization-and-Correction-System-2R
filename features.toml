@@ -2071,6 +2071,20 @@ upstream = "new; project set --low-protect on|off"
 tests = ["secs2r-cli::project_set_persists_low_protect_switch"]
 
 [[feature]]
+id = "calibration.hf_phase"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "new; ADR 0030, unwind constant RC FIR phase above the correction bands"
+tests = [
+  "secs-engine::hf_phase_linear_rooms",
+  "secs-engine::hf_phase_mixed_room",
+  "secs-engine::hf_phase_extra_band_starts_above_highest_fade",
+  "secs-engine::hf_phase_unavailable_region_is_bit_identical",
+  "secs-engine::hf_phase_zero_mode_is_bit_identical_without_note",
+]
+
+[[feature]]
 id = "calibration.edit_lf_align"
 kind = "workflow"
 milestone = "M5"
@@ -2087,12 +2101,28 @@ upstream = "new; ADR 0025, calibration_settings_edit ModeDecay"
 tests = ["secs-service::lf_align_and_mode_decay_edits_persist_and_mark_results_stale", "secs-service::mode_decay_notices_expand_modes_and_report_empty_result"]
 
 [[feature]]
+id = "calibration.edit_hf_phase"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "new; ADR 0030, calibration_settings_edit HfPhase"
+tests = ["secs-service::lf_align_and_mode_decay_edits_persist_and_mark_results_stale", "secs-service::hf_phase_notices_include_rotation_or_report_no_unwind_range"]
+
+[[feature]]
 id = "cli.lf_align"
 kind = "workflow"
 milestone = "M5"
 status = "implemented"
 upstream = "new; project set --lf-align on|off and --mode-decay on|off"
 tests = ["secs2r-cli::project_set_persists_lf_align_and_mode_decay_switches"]
+
+[[feature]]
+id = "cli.hf_phase"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "new; project set --hf-phase on|off"
+tests = ["secs2r-cli::project_set_persists_hf_phase_switch"]
 
 [[feature]]
 id = "apply.camilla_ws"

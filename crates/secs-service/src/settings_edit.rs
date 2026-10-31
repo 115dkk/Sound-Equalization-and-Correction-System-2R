@@ -369,6 +369,7 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
         SettingEdit::LowProtect { on } => s.low_protect = on,
         SettingEdit::LfAlign { on } => s.lf_align = on,
         SettingEdit::ModeDecay { on } => s.mode_decay = on,
+        SettingEdit::HfPhase { on } => s.hf_phase = on,
         SettingEdit::RcLo { hz } => s.rc_lo = hz,
         SettingEdit::RcHi { hz } => s.rc_hi = hz,
         SettingEdit::RcHiBasis { basis } => s.rc_hi_basis = basis,

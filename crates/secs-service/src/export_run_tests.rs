@@ -39,9 +39,10 @@ fn live_and_reopened_results_have_equal_descriptions_for_every_export_kind() {
         lo_hz: 15_000.0,
         hi_hz: 20_000.0,
     }];
-    // The cached description must carry the ADR 0025 pieces too.
+    // The cached description must carry the optional correction pieces too.
     settings.lf_align = true;
     settings.mode_decay = true;
+    settings.hf_phase = true;
     let service = Service::new(Deps::default());
     let open = |service: &Service| {
         assert!(matches!(
@@ -94,11 +95,12 @@ fn live_and_reopened_results_have_equal_descriptions_for_every_export_kind() {
         describe(&cached.results, cached.store.project(), &compute, now).unwrap();
     assert_eq!(live_description, cached_description);
     assert_eq!(
-        &live_description.rc_pieces[live_description.rc_pieces.len() - 3..],
+        &live_description.rc_pieces[live_description.rc_pieces.len() - 4..],
         [
             "RC 추가 구간 15000–20000 Hz",
             "저음 도착 맞춤",
-            "방 울림 줄임"
+            "방 울림 줄임",
+            "고역 위상 맞춤"
         ]
     );
     // One ASCII line: both writers print the note as a single `#` comment.

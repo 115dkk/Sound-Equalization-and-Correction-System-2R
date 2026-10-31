@@ -81,6 +81,7 @@ export const baseSettings: CalibrationSettings = {
   low_protect: false,
   lf_align: false,
   mode_decay: false,
+  hf_phase: false,
   rc_lo: 20,
   rc_hi: null,
   rc_hi_basis: "strict",
@@ -753,18 +754,19 @@ export const lowProtectNotes: Notice[] = [
   { code: "low_protect", params: { role: "SW1 + SW2", rolloff_hz: "22", limited: "false" } },
 ];
 
-/* ── 저음 도착 맞추기, 방 울림 줄이기 (ADR 0025) ─────────────────────────── */
+/* ── 저음 도착 맞추기, 고역 위상 맞추기, 방 울림 줄이기 (ADR 0025, 0030) ─────── */
 
 /**
- * What a calculation with the two switches notes for each main, in the
+ * What a calculation with the three switches notes for each main, in the
  * engine's order (secs-service `scalar_notice` and the ModeDecay expansion):
  * lf_align with its phase strength and the bass arrival left against the
  * treble (not in Zero mode, which does not change phase), then a mode_decay
  * record per cut mode, or mode_decay_none where no mode rings long enough
- * (the height speakers here). Mixed mode's short delay cuts the alignment
- * (`limited`).
+ * (the height speakers here), then hf_phase with the rotation unwound above
+ * the band (not in Zero mode either). Mixed mode's short delay cuts the
+ * alignment (`limited`).
  */
-function lfNotes(mode: "zero" | "mixed" | "linear", { align, decay }: { align: boolean; decay: boolean }): Notice[] {
+function lfNotes(mode: "zero" | "mixed" | "linear", { align, decay, phase }: { align: boolean; decay: boolean; phase: boolean }): Notice[] {
   return fx.SAMPLE_MAINS.flatMap((role, i): Notice[] => {
     const notes: Notice[] = [];
     if (align && mode !== "zero") {
@@ -778,6 +780,7 @@ function lfNotes(mode: "zero" | "mixed" | "linear", { align, decay }: { align: b
         if (i < 3) notes.push({ code: "mode_decay", params: { role, hz: "63", t60_s: "0.55", target_s: "0.31", depth_db: "-4.9" } });
       }
     }
+    if (phase && mode !== "zero") notes.push({ code: "hf_phase", params: { role, rotation_deg: String(((i * 67) % 340) - 170), limited: "false" } });
     return notes;
   });
 }
@@ -787,7 +790,7 @@ function lfView(mode: "zero" | "mixed" | "linear", patch: Partial<CalibrationSet
   const settings = { ...baseSettings, mode, ...patch };
   // Zero mode has no FIR, so no phase correction notes.
   const own = mode === "zero" ? NOTES.filter((note) => !["lift_capped", "phase_strength", "phase_band"].includes(note.code)) : NOTES;
-  const notes = [...own, ...lfNotes(mode, { align: settings.lf_align, decay: settings.mode_decay })];
+  const notes = [...own, ...lfNotes(mode, { align: settings.lf_align, decay: settings.mode_decay, phase: settings.hf_phase })];
   return {
     ...base,
     settings,
@@ -799,21 +802,22 @@ function lfView(mode: "zero" | "mixed" | "linear", patch: Partial<CalibrationSet
 }
 
 export const lfViews = {
-  /** Both off (the default): the card between BA and MIMO, the results as before. */
+  /** All off (the default): the card between BA and MIMO, the results as before. */
   off: base,
-  /** Standard (linear) mode with both on: a line per main for each in the notes. */
-  on: lfView("linear", { lf_align: true, mode_decay: true }),
+  /** Standard (linear) mode with all three on: a line per main for each in the notes. */
+  on: lfView("linear", { lf_align: true, mode_decay: true, hf_phase: true }),
   /** Mixed mode with 저음 도착 맞추기 on: it aligns only part of the way, said under the switch and in its notes. */
   mixed: lfView("mixed", { lf_align: true }),
-  /** Zero mode with both stored on: 저음 도착 맞추기 off with the reason, 방 울림 줄이기 still on. */
-  zero: lfView("zero", { lf_align: true, mode_decay: true }),
+  /** Zero mode with all stored on: 저음 도착 맞추기 and 고역 위상 맞추기 off with the reason, 방 울림 줄이기 still on. */
+  zero: lfView("zero", { lf_align: true, mode_decay: true, hf_phase: true }),
 } satisfies Record<string, CalibrateView>;
 
 /**
  * The lines for each case the service sends: a main aligned in full, one
  * held by the pull limit with the bass arriving early, one the engine could
- * not measure at strength 0, two cut modes of one main, and a main with no
- * mode to cut.
+ * not measure at strength 0, two cut modes of one main, a main with no
+ * mode to cut, a rotation unwound in full, one the delay limit kept part of,
+ * and a channel with no room above the band to unwind it.
  */
 export const lfNoteCases: Notice[] = [
   { code: "lf_align", params: { role: "L", strength: "1", arrival_ms: "0.4", limited: "false" } },
@@ -822,6 +826,9 @@ export const lfNoteCases: Notice[] = [
   { code: "mode_decay", params: { role: "L", hz: "42.4", t60_s: "0.82", target_s: "0.31", depth_db: "-8.4" } },
   { code: "mode_decay", params: { role: "L", hz: "63", t60_s: "0.55", target_s: "0.31", depth_db: "-4.9" } },
   { code: "mode_decay_none", params: { role: "Lb", target_s: "0.31" } },
+  { code: "hf_phase", params: { role: "L", rotation_deg: "37.4", limited: "false" } },
+  { code: "hf_phase", params: { role: "R", rotation_deg: "-114.5", limited: "true" } },
+  { code: "hf_phase_none", params: { role: "C" } },
 ];
 
 /**

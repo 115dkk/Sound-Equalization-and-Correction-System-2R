@@ -203,6 +203,9 @@ enum ProjectAction {
         /// Shorten long room-mode ringing with corrective cuts.
         #[arg(long, value_enum)]
         mode_decay: Option<Switch>,
+        /// Unwind the RC FIR's constant phase above the correction band.
+        #[arg(long, value_enum)]
+        hf_phase: Option<Switch>,
         /// MIMO supports as FIR or as IIR (PEQ and all-pass) filters.
         #[arg(long, value_enum)]
         mimo_supports: Option<SupportKind>,
@@ -644,6 +647,7 @@ fn run(action: Action, runner: &mut Runner) {
                 low_protect,
                 lf_align,
                 mode_decay,
+                hf_phase,
                 peq_derivatives,
                 mimo_iir_derivatives,
                 rc_bands,
@@ -681,6 +685,11 @@ fn run(action: Action, runner: &mut Runner) {
                 }
                 if let Some(value) = mode_decay {
                     edits.push(SettingEdit::ModeDecay {
+                        on: matches!(value, Switch::On),
+                    });
+                }
+                if let Some(value) = hf_phase {
+                    edits.push(SettingEdit::HfPhase {
                         on: matches!(value, Switch::On),
                     });
                 }

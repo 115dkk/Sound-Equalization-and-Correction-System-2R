@@ -1296,31 +1296,64 @@ describe("극저역 보호 (ADR 0022)", () => {
 
 /* ── 저음 도착 맞추기, 방 울림 줄이기 (ADR 0025) ─────────────────────────── */
 
-describe("저음 도착 맞추기 and 방 울림 줄이기 (ADR 0025)", () => {
-  it("draws its own card between BA and MIMO, outside any 고급, both off by default, and sends each edit", () => {
+describe("저음 도착 맞추기, 고역 위상 맞추기 and 방 울림 줄이기 (ADR 0025, 0030)", () => {
+  it("draws its own card between BA and MIMO, outside any 고급, all off by default, and sends each edit", () => {
     const actions = setup(fx.lfViews.off);
     const card = must("calibrate.settings.lf");
-    expect(within(card).getByRole("heading").textContent).toBe("저음 도착과 울림");
+    expect(within(card).getByRole("heading").textContent).toBe("도착 시간, 위상, 울림");
     expect(must("calibrate.settings.ba").compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(card.compareDocumentPosition(must("calibrate.settings.mimo")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     // Found without opening any 고급, and not inside one.
     const align = within(card).getByRole("switch", { name: "저음 도착 맞추기" });
     const decay = within(card).getByRole("switch", { name: "방 울림 줄이기" });
+    const phase = within(card).getByRole("switch", { name: "고역 위상 맞추기" });
     expect(align.getAttribute("data-ui")).toBe("calibrate.lf_align");
     expect(decay.getAttribute("data-ui")).toBe("calibrate.mode_decay");
-    for (const toggle of [align, decay]) {
+    expect(phase.getAttribute("data-ui")).toBe("calibrate.hf_phase");
+    // The two phase switches sit together, before 방 울림 줄이기.
+    expect(align.compareDocumentPosition(phase) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(phase.compareDocumentPosition(decay) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    for (const toggle of [align, decay, phase]) {
       expect(toggle.closest(".ui-advanced")).toBeNull();
       expect(toggle.getAttribute("aria-checked")).toBe("false");
       expect((toggle as HTMLButtonElement).disabled).toBe(false);
     }
     expect(ui("calibrate.lf_align.help")).not.toBeNull();
     expect(ui("calibrate.mode_decay.help")).not.toBeNull();
+    expect(ui("calibrate.hf_phase.help")).not.toBeNull();
     expect(ui("calibrate.lf_align.unavailable")).toBeNull();
     expect(ui("calibrate.lf_align.partial")).toBeNull();
+    expect(ui("calibrate.hf_phase.unavailable")).toBeNull();
     fireEvent.click(align);
     expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "lf_align", on: true });
     fireEvent.click(decay);
     expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "mode_decay", on: true });
+    fireEvent.click(phase);
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "hf_phase", on: true });
+  });
+
+  it("turns 고역 위상 맞추기 off in 표준 mode with nothing said under it", () => {
+    const actions = setup(fx.lfViews.on);
+    const phase = must("calibrate.hf_phase");
+    expect(phase.getAttribute("aria-checked")).toBe("true");
+    expect(phase.getAttribute("aria-describedby") ?? "").not.toContain("calibrate.hf_phase-hint");
+    fireEvent.click(phase);
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "hf_phase", on: false });
+  });
+
+  it("in 최소 지연 mode shows 고역 위상 맞추기 off and disabled with the reason whatever is stored", () => {
+    expect(fx.lfViews.zero.settings.hf_phase).toBe(true);
+    const actions = setup(fx.lfViews.zero);
+    const phase = must("calibrate.hf_phase") as HTMLButtonElement;
+    expect(phase.getAttribute("aria-checked")).toBe("false");
+    expect(phase.disabled).toBe(true);
+    expect(phase.getAttribute("aria-describedby")).toContain("calibrate.hf_phase-hint");
+    expect(must("calibrate.hf_phase.unavailable").textContent).toBe("최소 지연 모드는 위상을 바꾸지 않아 쓸 수 없습니다.");
+    fireEvent.click(phase);
+    expect(actions.changeSetting).not.toHaveBeenCalled();
+    cleanupAll();
+    setup(fx.lfViews.zero, { locale: "en" });
+    expect(must("calibrate.hf_phase.unavailable").textContent).toBe("Not available in Minimum latency mode, which does not change phase.");
   });
 
   it("turns both off in 표준 mode, where the alignment is whole and nothing is said under it", () => {
@@ -1369,10 +1402,11 @@ describe("저음 도착 맞추기 and 방 울림 줄이기 (ADR 0025)", () => {
     expect(must("calibrate.lf_align.partial").textContent).toBe("Low latency mode has a short delay, so the bass arrival is aligned only part of the way.");
   });
 
-  it("names both switches by their effect in English, and lists each main's lines in the notes", () => {
+  it("names the switches by their effect in English, and lists each main's lines in the notes", () => {
     setup(fx.lfViews.on, { locale: "en" });
     expect(must("calibrate.lf_align").textContent).toBe("Align bass arrival");
     expect(must("calibrate.mode_decay").textContent).toBe("Shorten room ringing");
+    expect(must("calibrate.hf_phase").textContent).toBe("Align treble phase");
     cleanupAll();
     setup(fx.lfViews.on, { initial: { notesOpen: true } });
     const lines = [...must("calibrate.verdict.notes").querySelectorAll("li")].map((li) => li.textContent ?? "");
@@ -1380,6 +1414,8 @@ describe("저음 도착 맞추기 and 방 울림 줄이기 (ADR 0025)", () => {
     expect(lines).toContain("저음 도착 맞추기(L): 위상 보정 강도 100 %, 고음과의 도착 시간 차이 −0.4 ms (+는 저음이 늦게 도착)");
     expect(lines).toContain("방 울림 줄이기(L): 42 Hz 룸 모드의 측정 T60 0.82초, 목표 0.31초, 8.4 dB 컷");
     expect(lines).toContain("방 울림 줄이기(Ltf): 목표 T60 0.31초, 컷을 적용할 룸 모드 없음");
+    expect(lines.filter((line) => line.startsWith("고역 위상 맞추기"))).toHaveLength(11);
+    expect(lines).toContain("고역 위상 맞추기(L): 상한 위의 위상 회전 −170°를 되돌림");
     cleanupAll();
     // 저지연 mode notes the limit on every main; 최소 지연 mode has no alignment line.
     setup(fx.lfViews.mixed, { initial: { notesOpen: true } });
@@ -1387,6 +1423,7 @@ describe("저음 도착 맞추기 and 방 울림 줄이기 (ADR 0025)", () => {
     cleanupAll();
     setup(fx.lfViews.zero, { initial: { notesOpen: true } });
     expect(must("calibrate.verdict.notes").textContent).not.toContain("저음 도착 맞추기");
+    expect(must("calibrate.verdict.notes").textContent).not.toContain("고역 위상 맞추기");
   });
 });
 

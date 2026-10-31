@@ -173,6 +173,9 @@ pub struct CalibrationSettings {
     /// Shorter long-mode decay through pole-replacing cuts (ADR 0025).
     #[serde(default)]
     pub mode_decay: bool,
+    /// Unwinds the RC FIR's constant phase above the band (ADR 0030).
+    #[serde(default)]
+    pub hf_phase: bool,
     pub rc_lo: f64,
     pub rc_hi: Option<f64>,
     #[serde(default)]
@@ -233,6 +236,7 @@ impl Default for CalibrationSettings {
             low_protect: false,
             lf_align: false,
             mode_decay: false,
+            hf_phase: false,
             rc_lo: 20.0,
             rc_hi: None,
             rc_hi_basis: RcHiBasis::Strict,
@@ -334,6 +338,9 @@ impl CalibrationSettings {
         }
         if self.mode_decay {
             out.push_str("|mode_decay");
+        }
+        if self.hf_phase {
+            out.push_str("|hf_phase");
         }
         if self.peq_analytic_derivatives {
             out.push_str("|peq_analytic_derivatives");
@@ -814,6 +821,28 @@ mod tests {
                 serde_json::from_value(serde_json::json!({"kind": kind, "on": true})).unwrap();
             assert_eq!(edit, expected);
         }
+    }
+
+    #[test]
+    fn hf_phase_defaults_off_and_extends_the_key_only_when_on() {
+        let baseline = CalibrationSettings::default();
+        assert!(!baseline.hf_phase);
+        let key = baseline.engine_key();
+        assert!(!key.contains("hf_phase"));
+        let mut json = serde_json::to_value(&baseline).unwrap();
+        json.as_object_mut().unwrap().remove("hf_phase");
+        let mut legacy: CalibrationSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(legacy, baseline);
+        legacy.hf_phase = true;
+        assert_eq!(legacy.engine_key(), format!("{key}|hf_phase"));
+        legacy.mode_decay = true;
+        assert_eq!(legacy.engine_key(), format!("{key}|mode_decay|hf_phase"));
+        let edit: crate::settings_edit::SettingEdit =
+            serde_json::from_value(serde_json::json!({"kind": "hf_phase", "on": true})).unwrap();
+        assert_eq!(
+            edit,
+            crate::settings_edit::SettingEdit::HfPhase { on: true }
+        );
     }
 
     #[test]

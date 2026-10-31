@@ -35,6 +35,8 @@ pub struct Setup {
     /// ADR 0025 switches; the agreement probe clears both.
     pub lf_align: bool,
     pub mode_decay: bool,
+    /// ADR 0030; the agreement probe also clears this switch.
+    pub hf_phase: bool,
     pub peq_bands: usize,
 }
 
@@ -128,6 +130,7 @@ impl Setup {
             rc_bands: config.rc_bands.clone(),
             lf_align: config.lf_align,
             mode_decay: config.mode_decay,
+            hf_phase: config.hf_phase,
             peq_bands: config.peq_bands.unwrap_or(16),
         }
     }

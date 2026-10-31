@@ -213,6 +213,14 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
     case "mode_decay_none":
       Object.assign(params, { role: code(), target_s: f("target_s", 2) });
       break;
+    case "hf_phase":
+      // One per channel with a FIR (ADR 0030): the constant rotation above the band that was unwound, and the delay limit when it kept part of it.
+      Object.assign(params, { role: code(), rotation: signed("rotation_deg", 0) });
+      if (p.limited === "true") after = "notice.hf_phase.limited";
+      break;
+    case "hf_phase_none":
+      params.role = code();
+      break;
     case "sub_narrow_band":
       Object.assign(params, { code: code(), hp_hz: f("hp_hz"), lp_hz: f("lp_hz") });
       break;

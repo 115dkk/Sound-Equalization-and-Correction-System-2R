@@ -164,6 +164,7 @@ fn lf_align_and_mode_decay_edits_persist_and_mark_results_stale() {
     for edit in [
         SettingEdit::LfAlign { on: true },
         SettingEdit::ModeDecay { on: true },
+        SettingEdit::HfPhase { on: true },
     ] {
         call_ok(
             &initial,
@@ -193,6 +194,7 @@ fn lf_align_and_mode_decay_edits_persist_and_mark_results_stale() {
     };
     assert!(settings.lf_align);
     assert!(settings.mode_decay);
+    assert!(settings.hf_phase);
     assert!(read_results(&reopened).calibration.unwrap().stale);
 
     call_ok(
@@ -207,6 +209,14 @@ fn lf_align_and_mode_decay_edits_persist_and_mark_results_stale() {
         &reopened,
         Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
             edit: SettingEdit::ModeDecay { on: false },
+        }),
+        Arc::new(NoEvents),
+    );
+    assert!(read_results(&reopened).calibration.unwrap().stale);
+    call_ok(
+        &reopened,
+        Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+            edit: SettingEdit::HfPhase { on: false },
         }),
         Arc::new(NoEvents),
     );

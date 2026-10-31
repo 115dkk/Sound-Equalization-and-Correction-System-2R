@@ -187,6 +187,8 @@ pub struct EngineConfig {
     pub lf_align: bool,
     /// Pole-replacing cuts for long modes (ADR 0025), off by default.
     pub mode_decay: bool,
+    /// Unwind constant FIR phase above the correction bands (ADR 0030).
+    pub hf_phase: bool,
     /// Room volume in m³, for the Schroeder frequency.
     pub room_volume_m3: Option<f64>,
     /// Automatic upper-limit evidence; ignored for a manual RC range.

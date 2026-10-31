@@ -227,6 +227,7 @@ pub fn engine_inputs(
             low_protect: settings.low_protect,
             lf_align: settings.lf_align,
             mode_decay: settings.mode_decay,
+            hf_phase: settings.hf_phase,
             room_volume_m3: settings.room_volume_m3,
             rc_hi_basis: settings.rc_hi_basis,
             rc_hi_transition: settings.rc_hi_transition,

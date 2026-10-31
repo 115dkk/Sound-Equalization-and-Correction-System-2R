@@ -53,6 +53,11 @@ pub struct ModeDecayOutcome {
     pub modes: Vec<(f64, f64, f64)>,
 }
 #[derive(Debug, Clone)]
+pub struct HfPhaseOutcome {
+    pub rotation_deg: Option<f64>,
+    pub limited: bool,
+}
+#[derive(Debug, Clone)]
 pub struct RcOutput {
     pub fir: Vec<f64>,
     pub response: Vec<C>,
@@ -63,6 +68,7 @@ pub struct RcOutput {
     pub notes: Vec<Note>,
     pub lf_align: Option<LfAlignOutcome>,
     pub mode_decay: Option<ModeDecayOutcome>,
+    pub hf_phase: Option<HfPhaseOutcome>,
     protection: crate::low_protect::LimitOutcome,
 }
 pub struct ChannelRc {
@@ -594,6 +600,50 @@ fn lf_weight(f: f64, f_lin: f64) -> f64 {
     0.5 * (1.0 - (PI * below).cos()) * 0.5 * (1.0 - (PI * above).cos())
 }
 
+// Keep only scalar bounds and normalization; weights need no extra grid.
+struct HfPhaseRegion {
+    lo: f64,
+    hi: f64,
+    log_width: f64,
+    weight_sum: f64,
+}
+impl HfPhaseRegion {
+    fn new(setup: &Setup, excess: &[f64]) -> Self {
+        let lo = setup
+            .rc_bands
+            .iter()
+            .map(|&(_, hi)| hi * 2_f64.sqrt())
+            .fold(setup.rc_hi * 2_f64.sqrt(), f64::max);
+        debug_assert!(
+            design_freqs()
+                .iter()
+                .zip(excess)
+                .all(|(&f, &e)| f < lo || e == 0.0)
+        );
+        let hi = (8.0 * lo).min(0.45 * SR_F);
+        let mut region = Self {
+            lo,
+            hi,
+            log_width: (hi / lo).ln(),
+            weight_sum: 0.0,
+        };
+        if hi >= 2.0 * lo {
+            for &f in design_freqs() {
+                region.weight_sum += region.weight(f);
+            }
+        }
+        region
+    }
+
+    fn weight(&self, f: f64) -> f64 {
+        if f < self.lo || f > self.hi {
+            return 0.0;
+        }
+        let x = (f / self.lo).ln() / self.log_width;
+        0.5 * (1.0 - (2.0 * PI * x).cos())
+    }
+}
+
 struct Realizer<'a> {
     excess: &'a [f64],
     band: &'a [bool],
@@ -601,24 +651,79 @@ struct Realizer<'a> {
     taps: usize,
     beta: Option<&'a [f64]>,
     protect_dc: bool,
+    hf_phase: Option<HfPhaseRegion>,
 }
 impl Realizer<'_> {
-    fn realize(&self, frac: f64, m: &[C]) -> (Vec<f64>, Vec<C>, f64, f64) {
+    fn realize(&self, frac: f64, m: &[C]) -> (Vec<f64>, Vec<C>, f64, f64, Option<HfPhaseOutcome>) {
+        let mut outcome = self.hf_phase.as_ref().map(|_| HfPhaseOutcome {
+            rotation_deg: None,
+            limited: false,
+        });
         let mut sum = 0.0;
-        let spec: Vec<_> = m
-            .iter()
-            .zip(self.excess)
-            .enumerate()
-            .map(|(i, (&m, &e))| {
-                let applied = if let Some(beta) = self.beta {
+        let spec: Vec<_> = if let Some(region) = &self.hf_phase
+            && region.weight_sum > 0.0
+        {
+            let applied = |i: usize, e: f64| {
+                if let Some(beta) = self.beta {
                     lf_pull(e, self.lift, frac, design_freqs()[i], beta[i])
                 } else {
                     e.clamp(-0.005, self.lift * frac)
-                };
-                sum += self.lift - applied;
-                m * C::from_polar(1.0, -2.0 * PI * sum * design_freqs()[1])
-            })
-            .collect();
+                }
+            };
+            let mut total = 0.0;
+            for (i, &e) in self.excess.iter().enumerate() {
+                total += applied(i, e);
+            }
+            let df = design_freqs()[1];
+            // The phase integral includes the lift at bin zero.
+            let rho = 2.0 * PI * df * (total - self.lift);
+            let wrapped = rho.rem_euclid(2.0 * PI);
+            let rotation = if wrapped > PI {
+                wrapped - 2.0 * PI
+            } else {
+                wrapped
+            };
+            // Always add delay in the region; the note uses the signed angle.
+            let correction = wrapped / (2.0 * PI * df);
+            let mut limited = false;
+            let spec = m
+                .iter()
+                .zip(self.excess)
+                .enumerate()
+                .map(|(i, (&m, &e))| {
+                    let mut value = applied(i, e);
+                    let f = design_freqs()[i];
+                    if f >= region.lo && f <= region.hi {
+                        let requested = value - correction * region.weight(f) / region.weight_sum;
+                        value = requested.clamp(-0.005, self.lift);
+                        limited |= value != requested;
+                    }
+                    sum += self.lift - value;
+                    m * C::from_polar(1.0, -2.0 * PI * sum * df)
+                })
+                .collect();
+            outcome = Some(HfPhaseOutcome {
+                rotation_deg: Some(rotation.to_degrees()),
+                limited,
+            });
+            spec
+        } else {
+            // Preserve the legacy loop and its arithmetic order when off or
+            // when less than an octave remains above the phase fade.
+            m.iter()
+                .zip(self.excess)
+                .enumerate()
+                .map(|(i, (&m, &e))| {
+                    let applied = if let Some(beta) = self.beta {
+                        lf_pull(e, self.lift, frac, design_freqs()[i], beta[i])
+                    } else {
+                        e.clamp(-0.005, self.lift * frac)
+                    };
+                    sum += self.lift - applied;
+                    m * C::from_polar(1.0, -2.0 * PI * sum * design_freqs()[1])
+                })
+                .collect()
+        };
         let (h, f) = truncate(&spec, self.taps, self.protect_dc);
         let err: Vec<_> = f
             .iter()
@@ -629,7 +734,7 @@ impl Realizer<'_> {
             .collect();
         let rms = rms(&err);
         let max = err.iter().map(|v| v.abs()).fold(0.0, f64::max);
-        (h, f, rms, max)
+        (h, f, rms, max, outcome)
     }
 }
 pub fn correction(input: &RcInput<'_>, phase_frac: f64, fitter: &mut Fitter<'_>) -> RcOutput {
@@ -906,6 +1011,7 @@ fn prepare_correction(
             notes,
             lf_align: None,
             mode_decay,
+            hf_phase: None,
             protection,
         }));
     }
@@ -1109,8 +1215,9 @@ fn finish_correction(
         taps: c.taps,
         beta: prepared.lf.as_ref().map(|lf| lf.beta.as_slice()),
         protect_dc: c.low_protect,
+        hf_phase: (s.hf_phase && s.lift_ms > 0.0).then(|| HfPhaseRegion::new(s, &excess)),
     };
-    let (mut h, mut response, rms0, max0) = realizer.realize(0.0, &m);
+    let (mut h, mut response, rms0, max0, mut hf_phase) = realizer.realize(0.0, &m);
     trace.ladder.push((0.0, rms0, max0));
     let mut strength = 0.0;
     if s.lift_ms <= 0.0 {
@@ -1118,11 +1225,12 @@ fn finish_correction(
     } else {
         for fraction in [0.9, 0.7, 0.5, 0.3] {
             check(cancelled)?;
-            let (hh, ff, rms, max) = realizer.realize(fraction, &m);
+            let (hh, ff, rms, max, outcome) = realizer.realize(fraction, &m);
             trace.ladder.push((fraction, rms, max));
             if rms <= 0.5_f64.max(rms0 + 0.3) && max <= 2_f64.max(max0 + 1.0) {
                 h = hh;
                 response = ff;
+                hf_phase = outcome;
                 strength = fraction;
                 break;
             }
@@ -1214,7 +1322,8 @@ fn finish_correction(
                 .collect();
             let m2 = minimum_phase(&mag).expect("magnitude");
             let (h2, f2) = if s.lift_ms > 0.0 {
-                let (h, f, _, _) = realizer.realize(strength, &m2);
+                // The outcome depends on excess and strength, not magnitude.
+                let (h, f, _, _, _) = realizer.realize(strength, &m2);
                 (h, f)
             } else {
                 truncate(&m2, c.taps, c.low_protect)
@@ -1267,6 +1376,7 @@ fn finish_correction(
         notes,
         lf_align,
         mode_decay: prepared.mode_decay.clone(),
+        hf_phase,
         protection,
     })
 }
@@ -1353,6 +1463,13 @@ pub(crate) fn channel_with_cuts(
             role: input.role.to_owned(),
             target_t60_s: mode.target_t60_s,
             modes: mode.modes.clone(),
+        });
+    }
+    if let Some(hf) = &out.hf_phase {
+        out.notes.push(Note::HfPhase {
+            role: input.role.to_owned(),
+            rotation_deg: hf.rotation_deg,
+            limited: hf.limited,
         });
     }
     let gd_cuts = if input.tuning.gd_cuts {

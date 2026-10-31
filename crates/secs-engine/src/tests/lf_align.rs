@@ -71,7 +71,7 @@ pub(super) fn correct(h: Arc<[C]>, config: &EngineConfig, setup: &Setup) -> rc::
     .out
 }
 
-fn synthetic(hz: f64, q: f64) -> Arc<[C]> {
+pub(super) fn synthetic(hz: f64, q: f64) -> Arc<[C]> {
     response::hp2(design_freqs(), 35.0)
         .iter()
         .zip(response::allpass2(design_freqs(), hz, q))
@@ -79,7 +79,7 @@ fn synthetic(hz: f64, q: f64) -> Arc<[C]> {
         .collect()
 }
 
-fn arrival(h: &[C], out: &rc::RcOutput, lo: f64, hi: f64) -> f64 {
+pub(super) fn arrival(h: &[C], out: &rc::RcOutput, lo: f64, hi: f64) -> f64 {
     let corrected: Vec<_> = h.iter().zip(&out.response).map(|(h, r)| h * r).collect();
     let band: Vec<_> = (0..101)
         .map(|i| lo + (hi - lo) * i as f64 / 100.0)
