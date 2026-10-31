@@ -370,7 +370,7 @@ export const calibrateSpecimens: SpecimenDef[] = [
   frame("lf-result", "all on in 표준 mode: the notes open, a 저음 도착 line, the cut modes and the unwound 고역 위상 for each main", () => (
     <CalibrateFrame view={fx.lfViews.on} initial={{ notesOpen: true }} scrollTo="calibrate.verdict.notes" />
   )),
-  { id: "screen.calibrate.lf-lines", title: "보정 · the 저음 도착 맞추기 and 방 울림 줄이기 lines: aligned, held by the limit, not measured, cut modes, nothing to cut", width: 720, render: () => <LfLines /> },
+  { id: "screen.calibrate.lf-lines", title: "보정 · the 저음 도착 맞추기, 방 울림 줄이기 and 고역 위상 맞추기 lines: aligned, held by the limit, not measured, cut modes, nothing to cut, unwound, held by the delay limit, no span to unwind", width: 720, render: () => <LfLines /> },
   frame("tutorial", "tutorial accent", () => (
     <Scoped tutorial>
       <CalibrateFrame view={fx.splView} fileName="튜토리얼.secs" />
