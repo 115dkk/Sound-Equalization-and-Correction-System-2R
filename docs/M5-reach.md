@@ -173,7 +173,7 @@
 | RC 하한 20–200 Hz, 5 단위, 기본 20(직접 입력한 상한 이상이면 거부, 이유는 입력 옆) | `calibrate.range.lower` | D48 | P31b, P148 (ADR 0024) |
 | RC 상한 기준(엄격한·너그러운 슈뢰더, 측정 위치 일치도, 직접 입력), 기본 엄격한 슈뢰더 | `calibrate.range.basis` | 없음 | P140 (ADR 0021) |
 | RC 전이 구간 ×1·×2·×4(슈뢰더 기준일 때), 기본 ×1 | `calibrate.range.transition` | 없음 | P140 (ADR 0021) |
-| RC 상한 100–20000 Hz, 50 단위(직접 입력일 때, 하한 이하이면 거부, 이유는 입력 옆) | `calibrate.range.upper` | 없음 | P31b, P148 (ADR 0024) |
+| RC 상한 100–20000 Hz, 50 단위(직접 입력일 때, 하한 이하이면 거부, 이유는 입력 옆) | `calibrate.range.upper` | D48 | P31b, P148 (ADR 0024) |
 | 보정 구간 추가(추가 구간이 없으면 이 단추만 보임, 4개를 채우면 숨김), 새 구간은 기본 구간과 다른 구간에 겹치지 않는 15000–20000 Hz부터 | `calibrate.range.extra.add` | D48 | P148 (ADR 0024) |
 | 추가 구간 1~4: 하한과 상한 20–20000 Hz(1 kHz 아래 5 단위, 그 위 50 단위), 빼기, 거부된 값은 그 입력 옆에 이유를 보이고 저장된 값은 그대로 | `calibrate.range.extra.<n>`, `calibrate.range.extra.<n>.lower`, `calibrate.range.extra.<n>.upper`, `calibrate.range.extra.<n>.remove` | D48 | P148 (ADR 0024) |
 | 룸 볼륨 0–100000 m³(0 = 없음) | `calibrate.range.volume` | 없음 | P31b |

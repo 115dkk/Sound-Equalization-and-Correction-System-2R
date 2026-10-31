@@ -36,6 +36,18 @@ describe("RC band layout", () => {
     expect(shadeSpans(layout)).toEqual([[-Infinity, 20], [1000, Infinity]]);
   });
 
+  it("keeps an inverted RC band (rc_lo above the automatic upper limit) as the primary band, so its two labels stay", () => {
+    // rc_lo 150 Hz above an automatic upper limit of 126 Hz: the band holds no frequency but is still the RC band.
+    const alone = bandLayout({ lo: 150, hi: 126 });
+    expect(alone).toEqual({ bands: [[150, 126]], primary: 0 });
+    expect(shadeSpans(alone)).toEqual([[-Infinity, 150], [126, Infinity]]);
+    expect(bandEdges(alone)).toEqual([150, 126]);
+    const extra = bandLayout({ lo: 150, hi: 126, extra: [[15000, 20000], [20, 50]] });
+    expect(extra.bands).toEqual([[20, 50], [150, 126], [15000, 20000]]);
+    expect(extra.primary).toBe(1);
+    expect(extra.bands[extra.primary]).toEqual([150, 126]);
+  });
+
   it("keys the band so a changed extra band restyles the graph", () => {
     expect(bandKey(null)).toBe("");
     expect(bandKey({ lo: 20, hi: 310 })).not.toBe(bandKey({ lo: 20, hi: 310, extra: [[15000, 20000]] }));

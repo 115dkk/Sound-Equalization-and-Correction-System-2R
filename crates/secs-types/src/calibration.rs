@@ -58,6 +58,33 @@ pub struct RcBand {
     pub hi_hz: f64,
 }
 
+/// The extra bands a calculation may use: finite, inside
+/// `CALIBRATION_LIMITS.rc_band` with `lo < hi`, sorted by `lo_hz`, at most
+/// `rc_bands_max` (ADR 0024). Settings that did not pass the service's edit
+/// checks (a request carrying its own settings) go through this.
+pub fn valid_rc_bands(bands: &[RcBand]) -> Vec<RcBand> {
+    let limits = crate::rules::CALIBRATION_LIMITS;
+    let edge = limits.rc_band.0..=limits.rc_band.1;
+    let mut kept: Vec<_> = bands
+        .iter()
+        .copied()
+        .filter(|band| {
+            band.lo_hz.is_finite()
+                && band.hi_hz.is_finite()
+                && edge.contains(&band.lo_hz)
+                && edge.contains(&band.hi_hz)
+                && band.lo_hz < band.hi_hz
+        })
+        .collect();
+    kept.sort_by(|a, b| {
+        a.lo_hz
+            .total_cmp(&b.lo_hz)
+            .then(a.hi_hz.total_cmp(&b.hi_hz))
+    });
+    kept.truncate(limits.rc_bands_max.1 as usize);
+    kept
+}
+
 /// How non-48 kHz measurement responses are prepared for calculation.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -256,7 +283,11 @@ impl CalibrationSettings {
         // a list the service stored and the same list in another order match.
         if !self.rc_bands.is_empty() {
             let mut bands = self.rc_bands.clone();
-            bands.sort_by(|a, b| a.lo_hz.total_cmp(&b.lo_hz).then(a.hi_hz.total_cmp(&b.hi_hz)));
+            bands.sort_by(|a, b| {
+                a.lo_hz
+                    .total_cmp(&b.lo_hz)
+                    .then(a.hi_hz.total_cmp(&b.hi_hz))
+            });
             out.push_str("|rc_bands=");
             for (index, band) in bands.iter().enumerate() {
                 if index > 0 {
@@ -595,6 +626,59 @@ ordered_map!(ordered_layout_map, super::BundleLayoutEntry);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn band(lo_hz: f64, hi_hz: f64) -> RcBand {
+        RcBand { lo_hz, hi_hz }
+    }
+
+    #[test]
+    fn valid_rc_bands_drop_broken_bands_sort_and_keep_four() {
+        let kept = valid_rc_bands(&[
+            band(15_000.0, 20_000.0),
+            band(10.0, 30.0),
+            band(f64::NAN, 100.0),
+            band(500.0, 400.0),
+            band(300.0, 300.0),
+            band(19_000.0, 21_000.0),
+            band(1_000.0, 2_000.0),
+            band(30.0, 60.0),
+            band(5_000.0, 6_000.0),
+            band(100.0, 200.0),
+        ]);
+        assert_eq!(
+            kept,
+            [
+                band(30.0, 60.0),
+                band(100.0, 200.0),
+                band(1_000.0, 2_000.0),
+                band(5_000.0, 6_000.0)
+            ]
+        );
+        assert!(valid_rc_bands(&[]).is_empty());
+    }
+
+    #[test]
+    fn engine_key_lists_extra_bands_sorted_and_only_when_present() {
+        let baseline = CalibrationSettings::default();
+        assert!(!baseline.engine_key().contains("rc_bands"));
+        let forward = CalibrationSettings {
+            rc_bands: vec![band(100.0, 200.0), band(15_000.0, 20_000.0)],
+            ..baseline.clone()
+        };
+        let backward = CalibrationSettings {
+            rc_bands: vec![band(15_000.0, 20_000.0), band(100.0, 200.0)],
+            ..baseline
+        };
+        assert_eq!(forward.engine_key(), backward.engine_key());
+        let expected = format!(
+            "|rc_bands={}-{},{}-{}",
+            number(100.0),
+            number(200.0),
+            number(15_000.0),
+            number(20_000.0)
+        );
+        assert!(forward.engine_key().ends_with(&expected));
+    }
 
     #[test]
     fn rc_upper_defaults_and_each_setting_change_engine_key() {

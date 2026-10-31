@@ -16,7 +16,11 @@ export type PlotBand = {
 export type BandLayout = {
   /** The union, sorted and merged where bands overlap or touch; an open primary ends at Infinity. */
   bands: [number, number][];
-  /** The union band that holds the primary band. */
+  /**
+   * The union band the primary band went into. An inverted primary band (`lo`
+   * above an automatic upper limit) holds no frequency; it stays a band of its
+   * own here, so the graph still labels `lo` and `hi` as before.
+   */
   primary: number;
 };
 
@@ -24,12 +28,15 @@ export function bandLayout(band: PlotBand): BandLayout {
   const primary: [number, number] = [band.lo, band.hi ?? Infinity];
   const all = [primary, ...(band.extra ?? []).map(([lo, hi]) => [lo, hi] as [number, number])].sort((a, b) => a[0] - b[0]);
   const bands: [number, number][] = [];
-  for (const [lo, hi] of all) {
+  let primaryIndex = -1;
+  for (const entry of all) {
+    const [lo, hi] = entry;
     const last = bands.at(-1);
     if (last && lo <= last[1]) last[1] = Math.max(last[1], hi);
     else bands.push([lo, hi]);
+    if (entry === primary) primaryIndex = bands.length - 1;
   }
-  return { bands, primary: bands.findIndex(([lo, hi]) => band.lo >= lo && band.lo <= hi) };
+  return { bands, primary: primaryIndex };
 }
 
 /** The spans to shade: below the first band, between bands and above the last one (open ends at ±Infinity). */

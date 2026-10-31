@@ -91,6 +91,64 @@ fn correct(h: Arc<[C]>, config: &EngineConfig) -> rc::RcOutput {
     )
 }
 
+/// One recorded PEQ fit: its interval, the weighting union it was given and its result.
+type RecordedFit = (f64, f64, Option<Vec<(f64, f64)>>, Vec<(f64, f64, f64)>);
+
+/// `correct`, recording every PEQ fit it runs.
+fn recorded_fits(h: Arc<[C]>, config: &EngineConfig) -> Vec<RecordedFit> {
+    let mut fits = Vec::new();
+    rc::correction(
+        &RcInput {
+            role: "L",
+            comb: &[(1, h)],
+            main_position: 1,
+            level_db: 0.0,
+            setup: &Setup::new(config),
+            config,
+            tuning: &Tuning::default(),
+            positions: &[1],
+        },
+        config.phase_frac,
+        &mut |request: &FitRequest<'_>| {
+            let peq = fit::fit_peq(request);
+            fits.push((
+                request.lo,
+                request.hi,
+                request.bands.map(<[_]>::to_vec),
+                peq.clone(),
+            ));
+            peq
+        },
+    );
+    fits
+}
+
+fn peq_bits(peq: &[(f64, f64, f64)]) -> Vec<[u64; 3]> {
+    peq.iter()
+        .map(|&(f, q, gain)| [f.to_bits(), q.to_bits(), gain.to_bits()])
+        .collect()
+}
+
+/// A response whose phase wanders at random between `lo` and `hi`: its
+/// group delay spikes there, as a noisy measurement's does.
+fn noisy_phase(lo: f64, hi: f64) -> Arc<[C]> {
+    let mut state = 0x2545_f491_4f6c_dd1d_u64;
+    design_freqs()
+        .iter()
+        .map(|&f| {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let phase = if (lo..=hi).contains(&f) {
+                (state >> 11) as f64 / (1u64 << 53) as f64 * 2.0 * std::f64::consts::PI
+            } else {
+                0.0
+            };
+            C::from_polar(1.0, phase)
+        })
+        .collect()
+}
+
 fn bin(hz: f64) -> usize {
     (hz / design_freqs()[1]).round() as usize
 }
@@ -195,7 +253,7 @@ fn rc_bands_fir_corrects_high_bump_not_gap_and_retains_boost_cap() {
 fn rc_bands_zero_peq_centres_stay_in_the_union() {
     let h = synthetic(6.0, false);
     let (_, config) = inputs(&h, Mode::Zero, true, 1);
-    let out = correct(h, &config);
+    let out = correct(h.clone(), &config);
     assert!(
         out.peq
             .iter()
@@ -203,15 +261,231 @@ fn rc_bands_zero_peq_centres_stay_in_the_union() {
         "{:?}",
         out.peq
     );
-    assert!(
-        out.peq
-            .iter()
-            .all(|&(f, _, _)| (20.0..=300.0).contains(&f) || (15000.0..=20000.0).contains(&f)),
-        "{:?}",
-        out.peq
-    );
     assert!(db(out.response[bin(16000.0)]) < -3.0);
     assert!(db(out.response[bin(5000.0)]).abs() < 0.5);
+    // The high fit keeps its centres where the primary band and the extra
+    // band reach (up to ×√2 past their edges), out of the gap between them.
+    let fits = recorded_fits(h, &config);
+    let reach = [
+        (400.0, 300.0 * 2_f64.sqrt()),
+        (15000.0 / 2_f64.sqrt(), 20000.0 * 2_f64.sqrt()),
+    ];
+    assert_eq!(fits[1].1, 20000.0);
+    assert_eq!(fits[1].2.as_deref(), Some(&reach[..]));
+    assert!(
+        fits[1].3.iter().all(|&(f, _, _)| rc::in_bands(f, &reach)),
+        "{:?}",
+        fits[1].3
+    );
+}
+
+#[test]
+fn rc_bands_high_extra_leaves_the_low_zero_fit_as_before() {
+    // The primary band 20–300 Hz (an automatic upper limit resolves to the
+    // same value before RC runs); an extra band at 15 kHz must not change
+    // the low fit (15–400 Hz) at all.
+    let h = synthetic(6.0, false);
+    let (_, primary) = inputs(&h, Mode::Zero, false, 1);
+    let (_, multi) = inputs(&h, Mode::Zero, true, 1);
+    let before = recorded_fits(h.clone(), &primary);
+    let after = recorded_fits(h, &multi);
+    assert_eq!((before[0].0, before[0].1), (15.0, 400.0));
+    assert_eq!((after[0].0, after[0].1), (15.0, 400.0));
+    assert_eq!(before[0].2, None);
+    assert_eq!(after[0].2, None, "the low fit keeps its legacy weights");
+    assert!(!after[0].3.is_empty());
+    assert_eq!(peq_bits(&before[0].3), peq_bits(&after[0].3));
+}
+
+#[test]
+fn rc_bands_extra_inside_the_low_zero_fit_keeps_the_gap_out_of_seeds() {
+    // Primary 20–100 Hz (its ramp reaches 141 Hz) and an extra band
+    // 250–400 Hz (its ramp starts at 177 Hz): the low fit weighs both
+    // reaches and leaves the gap between them out.
+    let h = synthetic(6.0, false);
+    let (_, mut config) = inputs(&h, Mode::Zero, false, 1);
+    config.rc_range.1 = Some(100.0);
+    config.rc_bands = vec![(250.0, 400.0)];
+    let sqrt2 = 2_f64.sqrt();
+    let gap = (100.0 * sqrt2, 250.0 / sqrt2);
+    let fits = recorded_fits(h, &config);
+    let (lo, hi, bands, peq) = &fits[0];
+    assert_eq!((*lo, *hi), (15.0, 400.0));
+    let bands = bands.as_deref().expect("an extra band inside the low fit");
+    assert_eq!(bands, [(15.0, gap.0), (gap.1, 400.0 * sqrt2)]);
+    assert!(
+        peq.iter().all(|&(f, _, _)| f <= gap.0 || f >= gap.1),
+        "{peq:?}"
+    );
+    // A correction that asks for a cut only inside the gap seeds nothing,
+    // and one beside it seeds there.
+    let g = [100.0, 160.0, 300.0];
+    let request = FitRequest {
+        g: &g,
+        corr_db: &[0.0, -12.0, 0.0],
+        n: 2,
+        lo: *lo,
+        hi: *hi,
+        boost: 10.0,
+        ring_ms: None,
+        f_max: None,
+        bands: Some(bands),
+    };
+    assert!(fit::seed(&request).bands.is_empty());
+    let seed = fit::seed(&FitRequest {
+        corr_db: &[0.0, -12.0, -6.0],
+        ..request
+    });
+    assert_eq!(seed.bands.len(), 1);
+    assert_eq!(seed.bands[0].0, 300.0);
+}
+
+#[test]
+fn rc_bands_phase_error_band_keeps_the_primary_from_20_hz() {
+    let (_, mut config) = inputs(&synthetic(6.0, false), Mode::Mixed, true, 1);
+    config.rc_range.0 = 40.0;
+    let multi = Setup::new(&config);
+    let mut legacy = multi.clone();
+    legacy.rc_bands.clear();
+    // The mode's own FIR length (lo_fir 35 Hz) and a longer one (lo_fir 9 Hz).
+    for taps in [config.taps, 8192] {
+        let lo_fir = 1.5 * SR_F / taps as f64;
+        let start = 20_f64.max(lo_fir);
+        assert!(start < 40.0);
+        // Without extra bands it is the legacy band at every bin.
+        for &f in design_freqs() {
+            assert_eq!(
+                rc::phase_error_band(f, lo_fir, &legacy),
+                f >= start && f <= 300.0 * 2_f64.sqrt(),
+                "{f}"
+            );
+        }
+        // With one, the primary part is still the legacy band (from 20 Hz
+        // or lo_fir, not from rc_lo) and the extra band adds its own reach.
+        for (f, inside) in [
+            (start - 0.5, false),
+            (start, true),
+            ((start + 40.0) / 2.0, true),
+            (40.0, true),
+            (424.0, true),
+            (425.0, false),
+            (10000.0, false),
+            (15000.0, true),
+            (23000.0, true),
+            (23800.0, false),
+        ] {
+            assert_eq!(
+                rc::phase_error_band(f, lo_fir, &multi),
+                inside,
+                "{taps}: {f}"
+            );
+        }
+    }
+}
+
+#[test]
+fn rc_bands_inverted_primary_grids_skip_it_and_gd_cuts_stay_in_the_bands() {
+    // rc_lo 150 Hz above an automatic upper limit of 126 Hz.
+    let bands = rc::band_set(150.0, 126.0, &[(15000.0, 20000.0)]);
+    assert_eq!(bands, [(150.0, 126.0), (15000.0, 20000.0)]);
+    let h = noisy_phase(100.0, 200.0);
+    let cuts = fit::fit_gd_cuts_bands_until(design_freqs(), &h, &bands, 6, 3.0, &|| false);
+    assert!(
+        cuts.iter()
+            .all(|&(f, _, _)| (15000.0..=20000.0).contains(&f)),
+        "{cuts:?}"
+    );
+
+    // The same through the engine's RC with GD cuts on.
+    let (_, mut config) = inputs(&h, Mode::Zero, true, 1);
+    config.rc_range = (150.0, Some(126.0));
+    let tuning = Tuning {
+        gd_cuts: true,
+        ..Tuning::default()
+    };
+    let out = rc::channel(
+        &RcInput {
+            role: "L",
+            comb: &[(1, h)],
+            main_position: 1,
+            level_db: 0.0,
+            setup: &Setup::new(&config),
+            config: &config,
+            tuning: &tuning,
+            positions: &[1],
+        },
+        &mut fit::fit_peq,
+        &|| false,
+    )
+    .unwrap();
+    assert!(
+        out.gd_cuts
+            .iter()
+            .all(|&(f, _, _)| (15000.0..=20000.0).contains(&f)),
+        "{:?}",
+        out.gd_cuts
+    );
+
+    // The grids leave the inverted primary out ...
+    let grid = rc::band_grid(&bands, 20.0, 1500);
+    assert_eq!(grid.len(), 1500);
+    assert!(grid.iter().all(|&f| rc::in_bands(f, &bands)));
+    // ... but alone it keeps its legacy (falling) grid.
+    let legacy = rc::band_grid(&[(150.0, 126.0)], 20.0, 1200);
+    assert_eq!(
+        (legacy.len(), legacy[0], legacy[1199]),
+        (1200, 150.0, 126.0)
+    );
+}
+
+#[test]
+fn rc_bands_engine_inputs_drop_invalid_extras_sort_and_keep_four() {
+    let h = synthetic(6.0, false);
+    let band = |lo_hz, hi_hz| RcBand { lo_hz, hi_hz };
+    let settings = CalibrationSettings {
+        rc_bands: vec![
+            band(15000.0, 20000.0),
+            band(10.0, 50.0),
+            band(300.0, 200.0),
+            band(400.0, 400.0),
+            band(f64::NAN, 100.0),
+            band(100.0, f64::INFINITY),
+            band(19000.0, 20001.0),
+            band(5000.0, 6000.0),
+            band(30.0, 60.0),
+            band(1000.0, 2000.0),
+            band(500.0, 600.0),
+        ],
+        ..Default::default()
+    };
+    let measurement = Measurement {
+        samples: Samples::F64(fft::irfft(&h, N_FFT).into()),
+        sample_rate: SR,
+        t0: 0.0,
+    };
+    let set = MeasurementSet {
+        positions: [(1, vec![("L".into(), measurement)])].into_iter().collect(),
+    };
+    let config = engine_inputs(
+        &ProjectView {
+            groups: &[("front".into(), vec!["L".into()])],
+            project_xo: &[],
+            target: &TargetCurve::new(vec![(10.0, 0.0), (20000.0, 0.0)]),
+        },
+        &set,
+        &settings,
+    )
+    .unwrap()
+    .config;
+    assert_eq!(
+        config.rc_bands,
+        [
+            (30.0, 60.0),
+            (500.0, 600.0),
+            (1000.0, 2000.0),
+            (5000.0, 6000.0)
+        ]
+    );
 }
 
 #[test]
@@ -332,6 +606,14 @@ fn rc_bands_agreement_probe_ignores_extras_and_reports_merged_bands() {
     assert_eq!(requests.len(), 4);
     assert_eq!(requests[0], (400.0, None));
     assert_eq!(requests[1], (2000.0, None));
-    assert_eq!(requests[2], (400.0, Some(multi.rc_bands.clone())));
-    assert_eq!(requests[3], (20000.0, Some(multi.rc_bands)));
+    // The extra bands lie above the low fit, which keeps its legacy weights;
+    // the high fit weighs where the primary band and the extra bands reach.
+    assert_eq!(requests[2], (400.0, None));
+    let sqrt2 = 2_f64.sqrt();
+    let mut reach = Vec::new();
+    if multi.rc_hi * sqrt2 > 400.0 {
+        reach.push((400.0, multi.rc_hi * sqrt2));
+    }
+    reach.push((15000.0 / sqrt2, 20000.0 * sqrt2));
+    assert_eq!(requests[3], (20000.0, Some(reach)));
 }

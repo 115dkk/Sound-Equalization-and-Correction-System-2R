@@ -492,6 +492,10 @@ fn gd_cuts_on_grid(
 ) -> Vec<Peq> {
     let mut cur = h.to_vec();
     let mut cuts = Vec::new();
+    // Band grids can come out too short when no band holds a frequency.
+    if bands.is_some() && g.len() < 2 {
+        return cuts;
+    }
     for _ in 0..n_max {
         if cancelled() {
             break;
@@ -500,11 +504,22 @@ fn gd_cuts_on_grid(
         let base: Vec<_> = (0..g.len())
             .map(|i| median(&gd[i.saturating_sub(40)..(i + 40).min(g.len())]))
             .collect();
-        let exc: Vec<_> = gd.iter().zip(&base).map(|(g, b)| g - b).collect();
-        let k = argmax(&exc);
-        if exc[k] < 10.0 {
+        let mut exc: Vec<_> = gd.iter().zip(&base).map(|(g, b)| g - b).collect();
+        // With correction bands, skip a peak that lies in no band or leaves
+        // the cut no room to move, and take the next one.
+        let (k, centre) = loop {
+            let k = argmax(&exc);
+            if exc[k] < 10.0 {
+                break (k, None);
+            }
+            match cut_centre_bounds(g[k], bands) {
+                Some(bounds) => break (k, Some(bounds)),
+                None => exc[k] = f64::NEG_INFINITY,
+            }
+        };
+        let Some((centre_lb, centre_ub)) = centre else {
             break;
-        }
+        };
         let f0 = g[k];
         let width = 2_f64.powf(1.0 / 3.0);
         let gw: Vec<_> = g
@@ -543,16 +558,8 @@ fn gd_cuts_on_grid(
                 .collect::<Vec<_>>()
         };
         let x0 = [f0.ln(), 8_f64.ln(), -1.0];
-        let mut lb = [(f0 / 1.1).ln(), 2_f64.ln(), -depth_db];
-        let mut ub = [(f0 * 1.1).ln(), 40_f64.ln(), 0.0];
-        if let Some(bands) = bands {
-            let &(lo, hi) = bands
-                .iter()
-                .find(|&&(lo, hi)| f0 >= lo && f0 <= hi)
-                .expect("GD peak belongs to a correction band");
-            lb[0] = lb[0].max(lo.ln());
-            ub[0] = ub[0].min(hi.ln());
-        }
+        let lb = [centre_lb, 2_f64.ln(), -depth_db];
+        let ub = [centre_ub, 40_f64.ln(), 0.0];
         let sol = optimize::least_squares(
             |x| {
                 if cancelled() {
@@ -584,6 +591,20 @@ fn gd_cuts_on_grid(
         }
     }
     cuts
+}
+
+/// The log-frequency bounds of a GD cut's centre at `f0`: ±10 %, and with
+/// correction bands also inside the band that holds `f0`. `None` when no band
+/// holds it or the bounds leave the centre no room (the solver needs
+/// `lb < ub`).
+fn cut_centre_bounds(f0: f64, bands: Option<&[(f64, f64)]>) -> Option<(f64, f64)> {
+    let (lb, ub) = ((f0 / 1.1).ln(), (f0 * 1.1).ln());
+    let Some(bands) = bands else {
+        return Some((lb, ub));
+    };
+    let &(lo, hi) = bands.iter().find(|&&(lo, hi)| f0 >= lo && f0 <= hi)?;
+    let (lb, ub) = (lb.max(lo.ln()), ub.min(hi.ln()));
+    (lb < ub).then_some((lb, ub))
 }
 
 /// Acoustic XO target before the electrical crossover; position order is

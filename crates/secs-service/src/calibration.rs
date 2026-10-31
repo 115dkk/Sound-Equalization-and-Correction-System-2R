@@ -255,7 +255,10 @@ impl Service {
         let open = session.require().map_err(IpcError::from)?;
         let project = open.store.project().clone();
         let project_settings = calibration_from_project(&project);
-        let settings = override_settings.unwrap_or_else(|| project_settings.clone());
+        let mut settings = override_settings.unwrap_or_else(|| project_settings.clone());
+        // A request may carry settings the edit checks never saw; the run, its
+        // notes and its export use the bands the engine uses (ADR 0024).
+        settings.rc_bands = secs_types::calibration::valid_rc_bands(&settings.rc_bands);
         Ok(Snapshot {
             ticket: session.ticket()?,
             path: open.path.clone(),

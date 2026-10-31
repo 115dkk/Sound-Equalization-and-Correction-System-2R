@@ -108,6 +108,8 @@ pub fn eqapo_note_with_bands(
     )
 }
 
+/// Both writers print the note as one `# ` comment line and drop what is not
+/// ASCII, so the extra bands (ADR 0024) join the same line in ASCII.
 fn note(
     mode: &str,
     latency_ms: f64,
@@ -122,13 +124,13 @@ fn note(
         mimo.as_deref().unwrap_or("no MIMO")
     );
     if !rc_bands.is_empty() {
-        text.push_str("\nRC extra bands ");
+        text.push_str("; RC extra bands ");
         text.push_str(
             &rc_bands
                 .iter()
                 .map(|band| {
                     format!(
-                        "{}–{}",
+                        "{}-{} Hz",
                         format_fixed(band.lo_hz, 0, false),
                         format_fixed(band.hi_hz, 0, false)
                     )
@@ -136,7 +138,6 @@ fn note(
                 .collect::<Vec<_>>()
                 .join(", "),
         );
-        text.push_str(" Hz");
     }
     text
 }
@@ -146,7 +147,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extra_rc_bands_add_one_english_line_only_when_present() {
+    fn extra_rc_bands_join_the_note_line_in_ascii_only_when_present() {
         let baseline = camilla_note(Mode::Mixed, 10.0, 300.0, None);
         assert_eq!(
             baseline,
@@ -169,7 +170,20 @@ mod tests {
                 ],
                 None,
             ),
-            format!("{baseline}\nRC extra bands 1000–2000, 15000–20000 Hz")
+            format!("{baseline}; RC extra bands 1000-2000 Hz, 15000-20000 Hz")
+        );
+        assert_eq!(
+            eqapo_note_with_bands(
+                "ultra200",
+                10.0,
+                300.0,
+                &[RcBand {
+                    lo_hz: 30.0,
+                    hi_hz: 60.0,
+                }],
+                None,
+            ),
+            "mode ultra200, total latency 10.0 ms, RC upper 300 Hz; no MIMO; RC extra bands 30-60 Hz"
         );
     }
 }

@@ -481,14 +481,24 @@ fn result_curves_use_stored_then_run_extra_rc_bands() {
     );
     assert!(graph(&service, ResultTab::Xo, None).rc_bands_hz.is_empty());
 
+    // A request carries its own settings past the edit checks: the run keeps
+    // only the bands the engine uses (ADR 0024).
     run_settings.rc_bands = vec![
         RcBand {
             lo_hz: 10_000.0,
             hi_hz: 12_000.0,
         },
         RcBand {
+            lo_hz: 5.0,
+            hi_hz: 30.0,
+        },
+        RcBand {
             lo_hz: 1_000.0,
             hi_hz: 2_000.0,
+        },
+        RcBand {
+            lo_hz: 3_000.0,
+            hi_hz: 2_500.0,
         },
     ];
     let events = Arc::new(Events::default());

@@ -94,10 +94,13 @@ fn live_and_reopened_results_have_equal_descriptions_for_every_export_kind() {
         live_description.rc_pieces.last().map(String::as_str),
         Some("RC 추가 구간 15000–20000 Hz")
     );
-    assert!(
-        live_description
-            .camilla_note
-            .ends_with("\nRC extra bands 15000–20000 Hz")
-    );
+    // One ASCII line: both writers print the note as a single `#` comment.
+    for note in [
+        &live_description.camilla_note,
+        &live_description.filter_note,
+    ] {
+        assert!(note.ends_with("; RC extra bands 15000-20000 Hz"), "{note}");
+        assert!(note.is_ascii() && !note.contains('\n'), "{note}");
+    }
     std::fs::remove_dir_all(root).unwrap();
 }
