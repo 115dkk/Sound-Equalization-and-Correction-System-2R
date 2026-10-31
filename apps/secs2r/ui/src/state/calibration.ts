@@ -12,6 +12,6 @@ export function calibrationMimo(stores: Session["stores"]): boolean {
 export function startCalibration({ stores, call }: Pick<Session, "stores" | "call">, background = false) {
   const settings = stores.settings.getSnapshot();
   const config = stores.config.getSnapshot();
-  if (settings && config && subRoles(config).length > 0 && xoRecInclude(settings)) return call(recommendXoRequest(background));
+  if (settings && config && subRoles(config).length > 0 && xoRecInclude(settings)) return call(recommendXoRequest(background), { calibrateOnFailure: true });
   return call({ method: "calibrate", params: { settings: null, subs_only: false, mimo: calibrationMimo(stores), ...(background ? { background: true } : {}) } });
 }

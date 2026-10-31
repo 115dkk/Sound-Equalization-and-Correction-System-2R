@@ -174,12 +174,15 @@ export const RULES: readonly Rule[] = [
     },
   },
   {
-    name: "xo.recalibrate", when: (trigger) => "finished" in trigger && trigger.finished === "recommend_xo" && trigger.status === "succeeded",
+    name: "xo.recalibrate", when: (trigger) => "finished" in trigger && trigger.finished === "recommend_xo" && ["succeeded", "failed"].includes(trigger.status),
     // Recommended settings must be reloaded before starting the full calibration.
     // The same MIMO choice 보정 계산 sends (P142): on, with three or more positions.
     apply: async ({ call, stores, source, canContinueRefresh }) => {
-      if (!("event" in source)) return;
+      if (!("event" in source) || source.event.event !== "finished") return;
       const request = source.request;
+      // Full correction can use the current XO when scoring fails. The dedicated
+      // recommendation button still stops on failure; cancellation never chains.
+      if (source.event.status === "failed" && !request?.calibrateOnFailure) return;
       if (request?.autoRefreshRevision !== undefined && !canContinueRefresh(request.autoRefreshRevision)) return;
       const settings = stores.settings.getSnapshot();
       const mimo = request?.mimo ?? (!!settings && mimoIncluded(settings, stores.project.getSnapshot()?.positions.length ?? 0));

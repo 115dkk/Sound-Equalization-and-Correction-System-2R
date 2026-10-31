@@ -9,7 +9,7 @@ import type { Response } from "./bindings/Response";
 export type Envelope = { ok: true; data: Response } | { ok: false; error: IpcError };
 
 /** The response type that belongs to request method `M`. */
-type ResponseOf<M extends Request["method"]> = Extract<Response, { method: M }>["data"];
+export type ResponseOf<M extends Request["method"]> = Extract<Response, { method: M }>["data"];
 
 export type Invoke = (command: string, args: Record<string, unknown>) => Promise<unknown>;
 

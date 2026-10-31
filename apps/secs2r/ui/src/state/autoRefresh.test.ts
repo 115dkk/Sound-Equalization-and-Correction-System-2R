@@ -4,6 +4,7 @@ import { projectInfo, resultsSummary } from "../ipc/fixtures";
 import type { Request } from "../ipc/bindings/Request";
 import { createSession } from "./session";
 import { startCalibration } from "./calibration";
+import { errorCount } from "./jobLedger";
 
 let mock: ReturnType<typeof createMockService>;
 let session: ReturnType<typeof createSession>;
@@ -77,6 +78,46 @@ describe("automatic correction refresh", () => {
     mock.drain(); await session.settled();
     await advance(1499); expect(starts()).toEqual([]);
     await advance(1); expect(starts()).toHaveLength(1);
+  });
+
+  it.each(["measure", "sample_load", "mdat_import", "level_monitor"] as const)("cancels its running recommendation when %s starts and resumes only after it ends", async (kind) => {
+    await enable(); await edit(4); await advance(1500);
+    const own = session.jobs.getSnapshot().jobs.find((job) => job.request?.background)!;
+    // External measurement jobs use the same pushed lifecycle as local ones.
+    mock.events.emit({ event: "started", job: 1000, kind });
+    await advance(0);
+    expect(mock.calls.filter((request) => request.method === "job_cancel")).toEqual([{ method: "job_cancel", params: { job: own.job } }]);
+    mock.drain(); await session.settled();
+    expect(session.jobs.getSnapshot().jobs.find((job) => job.job === own.job)?.status).toBe("cancelled");
+    await advance(3000);
+    expect(starts()).toHaveLength(1);
+    mock.events.emit({ event: "finished", job: 1000, status: "succeeded", result: null, error: null });
+    await session.settled(); await advance(1500);
+    expect(starts()).toEqual([
+      { method: "recommend_xo", params: { background: true } },
+      { method: "recommend_xo", params: { background: true } },
+    ]);
+  });
+
+  it("cancels an automatic calibration when a local measurement starts, not the measurement", async () => {
+    await withoutXo(); await enable(); await edit(4); await advance(1500);
+    const own = session.jobs.getSnapshot().jobs.find((job) => job.request?.background)!;
+    const measurement = await session.call({ method: "measure_position", params: { position: 4 } });
+    await session.settled();
+    expect(mock.calls.filter((request) => request.method === "job_cancel")).toEqual([{ method: "job_cancel", params: { job: own.job } }]);
+    expect(session.jobs.getSnapshot().jobs.find((job) => job.job === measurement.job)?.status).toBe("running");
+    await advance(3000); expect(starts()).toHaveLength(1);
+    mock.drain(); await session.settled(); await advance(1500);
+    expect(starts()).toHaveLength(2);
+    expect(starts()[1]).toMatchObject({ method: "calibrate", params: { background: true } });
+  });
+
+  it("does not cancel a user's calibration when measurement starts", async () => {
+    await withoutXo(); await enable(); await startCalibration(session);
+    await session.call({ method: "measure_position", params: { position: 4 } });
+    await session.settled(); await advance(3000);
+    expect(mock.calls.some((request) => request.method === "job_cancel")).toBe(false);
+    expect(starts()).toHaveLength(1);
   });
 
   it("waits while the save prompt is open", async () => {
@@ -178,6 +219,65 @@ describe("automatic correction refresh", () => {
 });
 
 describe("full correction routing", () => {
+  it.each([false, true])("continues full correction after scoring fails, preserving XO, MIMO and the failed job (background=%s)", async (background) => {
+    await session.call({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+    const xo = structuredClone(session.stores.settings.getSnapshot()!.xo);
+    mock.failJobs("recommend_xo", "engine_input", "position 2 L: missing SW1 for crossover scoring");
+    if (background) { await enable(); await edit(4); await advance(1500); }
+    else await startCalibration(session);
+    const recommendation = session.jobs.getSnapshot().jobs.find((job) => job.kind === "recommend_xo")!;
+    expect(recommendation.request?.calibrateOnFailure).toBe(true);
+    mock.drain(); await session.settled();
+    expect(starts()).toEqual([
+      background ? { method: "recommend_xo", params: { background: true } } : { method: "recommend_xo" },
+      { method: "calibrate", params: { settings: null, subs_only: false, mimo: true, ...(background ? { background: true } : {}) } },
+    ]);
+    expect(session.stores.settings.getSnapshot()!.xo).toEqual(xo);
+    mock.drain(); await session.settled();
+    expect(session.stores.results.getSnapshot()?.calibration?.stale).toBe(false);
+    expect(session.stores.results.getSnapshot()?.mimo?.stale).toBe(false);
+    expect(session.jobs.getSnapshot().jobs.find((job) => job.job === recommendation.job)).toMatchObject({ kind: "recommend_xo", status: "failed", error: { code: "engine_input" } });
+    expect(session.jobs.getSnapshot().history).toContainEqual(expect.objectContaining({ job: recommendation.job, kind: "recommend_xo", type: "finished", status: "failed", error: expect.objectContaining({ code: "engine_input" }) }));
+    expect(errorCount(session.jobs.getSnapshot())).toBe(1);
+    await advance(3000); expect(starts()).toHaveLength(2);
+  });
+
+  it("does not continue a failed recommendation from the dedicated XO button", async () => {
+    mock.failJobs("recommend_xo", "engine_input", "position 2 L: missing SW1 for crossover scoring");
+    await session.call({ method: "recommend_xo" });
+    mock.drain(); await session.settled();
+    expect(starts()).toEqual([{ method: "recommend_xo" }]);
+    expect(session.host.getSnapshot().failure).toMatchObject({ job: "recommend_xo", error: { code: "engine_input" } });
+    expect(errorCount(session.jobs.getSnapshot())).toBe(1);
+  });
+
+  it("does not continue a cancelled recommendation from full correction", async () => {
+    const job = await startCalibration(session);
+    await session.jobs.cancel(job.job);
+    mock.drain(); await session.settled();
+    expect(starts()).toEqual([{ method: "recommend_xo" }]);
+    expect(session.jobs.getSnapshot().jobs.find((entry) => entry.job === job.job)?.status).toBe("cancelled");
+  });
+
+  it("clears the automatic-off notice on undo and leaves it clear when inclusion is then turned off manually", async () => {
+    const undo = await session.call({ method: "position_clear", params: { position: 9 } });
+    await session.call({ method: "calibration_settings_edit", params: { edit: { kind: "xo", group: "프론트", hz: 95 } } });
+    expect(session.host.getSnapshot().xoRecTurnedOffByEdit).toBe(true);
+    await session.call({ method: "undo", params: { token: undo.token } });
+    expect(session.host.getSnapshot().xoRecTurnedOffByEdit).toBe(false);
+    expect(session.stores.settings.getSnapshot()?.xo_rec_include).not.toBe(false);
+    await withoutXo();
+    expect(session.stores.settings.getSnapshot()?.xo_rec_include).toBe(false);
+    expect(session.host.getSnapshot().xoRecTurnedOffByEdit).toBe(false);
+  });
+
+  it("clears the automatic-off notice on an explicit off edit even when already off", async () => {
+    await session.call({ method: "calibration_settings_edit", params: { edit: { kind: "xo", group: "프론트", hz: 95 } } });
+    expect(session.host.getSnapshot().xoRecTurnedOffByEdit).toBe(true);
+    await withoutXo();
+    expect(session.host.getSnapshot().xoRecTurnedOffByEdit).toBe(false);
+  });
+
   it.each([
     { subs: 2, include: undefined, method: "recommend_xo" },
     { subs: 2, include: true, method: "recommend_xo" },

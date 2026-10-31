@@ -1,6 +1,6 @@
 import type { StepId } from "../app/model";
-import { IpcFailure } from "../ipc/client";
-import type { Ipc, RequestFn } from "../ipc/context";
+import { IpcFailure, type ResponseOf } from "../ipc/client";
+import type { Ipc } from "../ipc/context";
 import type { Request } from "../ipc/bindings/Request";
 import type { JobEvent } from "../ipc/bindings/JobEvent";
 import type { MeasureConfigureParams } from "../ipc/bindings/MeasureConfigureParams";
@@ -32,6 +32,11 @@ import { coalesceExternalChanges, externalRefresh } from "./externalChanges";
 /** A DSP edit: a preset to select, or fields over the latest ones (`preset: null`). */
 type DspEdit = DspFields & { preset: string | null };
 type LayoutEdit = Pick<LayoutSetParams, "start_delay" | "timing">;
+/** UI completion policy stays in the job ledger, never in the IPC payload. */
+type SessionCall = <M extends Request["method"]>(
+  request: Extract<Request, { method: M }>,
+  context?: Pick<JobRequestContext, "calibrateOnFailure">,
+) => Promise<ResponseOf<M>>;
 
 type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "mdat" | "warnings"> & {
   computeLoading: boolean; computeSaving: boolean; computeError: import("../ipc/bindings/IpcError").IpcError | null;
@@ -174,14 +179,17 @@ export function createSession(ipc: Ipc) {
     if (job.epoch === jobs.epoch && ["calibrate", "mimo", "recommend_xo"].includes(job.kind)) host.set({ failure: null });
   } });
   let pendingProjectEdits = 0;
-  const call: RequestFn = (request) => track(async () => {
+  const call: SessionCall = (request, context) => track(async () => {
     let epoch = jobs.epoch;
     const saveDialog = request.method === "dialog_save_project" || request.method === "dialog_save_file";
     if (saveDialog) saveDialogs++;
     const projectEdit = request.method !== "project_save" && projectEdits.includes(request.method);
     if (projectEdit) pendingProjectEdits++;
     const pendingStart = jobs.begin(request);
-    if (pendingStart?.context.method === "recommend_xo") pendingStart.context.mimo = calibrationMimo(stores);
+    if (pendingStart?.context.method === "recommend_xo") {
+      pendingStart.context.mimo = calibrationMimo(stores);
+      if (context?.calibrateOnFailure) pendingStart.context.calibrateOnFailure = true;
+    }
     if (pendingStart?.context.background && autoRefresh) pendingStart.context.autoRefreshRevision = autoRefresh.revision;
     if (refreshInputs.includes(request.method)) autoRefresh?.changed();
     const xoWasIncluded = stores.settings.getSnapshot()?.xo_rec_include !== false;
@@ -198,9 +206,12 @@ export function createSession(ipc: Ipc) {
       errors.set(null);
       if (request.method === "calibration_settings_edit" || request.method === "calibration_settings_set") {
         const settings = data as import("../ipc/bindings/CalibrationSettings").CalibrationSettings;
-        if (settings.xo_rec_include !== false) host.set({ xoRecTurnedOffByEdit: false });
+        const includeEdit = request.method === "calibration_settings_edit" && (request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit.kind === "xo_rec_include";
+        if (includeEdit || settings.xo_rec_include !== false) host.set({ xoRecTurnedOffByEdit: false });
         else if (edit === "xoEdit" && xoWasIncluded) host.set({ xoRecTurnedOffByEdit: true });
       }
+      // Undo restores saved settings; the previous manual-edit notice is no longer current.
+      if (["undo", "redo"].includes(request.method)) host.set({ xoRecTurnedOffByEdit: false });
       const effects = effectsOf({ request: request.method });
       const ctx: EffectContext = { host, stores, jobs, call, configure, run, canContinueRefresh, source: { request, data },
         replaceProject: () => { jobs.replaceProject(); autoRefresh?.changed(); epoch = jobs.epoch; curveVersion++; curveState.set(null); tutorialReady.set(false); },

@@ -20,7 +20,7 @@ export type JobRequestContext = (
   | { method: "sample_load" | "mdat_import" | "recommend_xo" | "mimo" }
   /** 적용 (ADR 0018): which target the `apply` job pushes to. */
   | { method: "apply_camilla" | "apply_eqapo" }
-) & { epoch: number; background?: boolean; autoRefreshRevision?: number; mimo?: boolean };
+) & { epoch: number; background?: boolean; autoRefreshRevision?: number; mimo?: boolean; calibrateOnFailure?: boolean };
 export type LedgerJob = JobSnapshot & {
   epoch: number; request: JobRequestContext | null;
   completionHandled: boolean; completionOrder: number | null;

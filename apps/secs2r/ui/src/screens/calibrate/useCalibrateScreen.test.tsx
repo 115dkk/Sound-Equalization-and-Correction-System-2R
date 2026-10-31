@@ -56,6 +56,24 @@ describe("useCalibrateScreen", () => {
     await perform(() => result.current.actions.selectTab("xo"));
     expect(result.current.view?.xoGroup).toBe("센터");
   });
+  it("removes the automatic-off hint after undo and an explicit off choice", async () => {
+    installFakeCanvas();
+    function Live() {
+      const { view, actions } = useCalibrateScreen();
+      return view ? <CalibrateScreen view={view} actions={actions} /> : null;
+    }
+    renderWith(<Live />, { session });
+    let token = "";
+    await perform(async () => { token = (await session.call({ method: "position_clear", params: { position: 9 } })).token; });
+    await perform(() => session.call({ method: "calibration_settings_edit", params: { edit: { kind: "xo", group: "프론트", hz: 95 } } }));
+    expect(document.getElementById("calibrate.xo_rec_include-hint")?.textContent).toBe("XO를 직접 바꿔 꺼짐");
+    await perform(() => session.call({ method: "undo", params: { token } }));
+    expect(document.getElementById("calibrate.xo_rec_include-hint")).toBeNull();
+    await perform(() => session.call({ method: "calibration_settings_edit", params: { edit: { kind: "xo_rec_include", on: false } } }));
+    expect(document.querySelector('[data-ui="calibrate.xo_rec_include"]')?.getAttribute("aria-checked")).toBe("false");
+    expect(document.getElementById("calibrate.xo_rec_include-hint")).toBeNull();
+  });
+
   it("resolves the default preview channel on XO entry and leaves an empty preview without a group", async () => {
     const { result } = renderHook(useCalibrateScreen, { wrapper });
     await perform(() => result.current.actions.selectTab("xo"));
