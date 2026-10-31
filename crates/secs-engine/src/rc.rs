@@ -141,6 +141,123 @@ pub(crate) fn agreement_limit(input: &RcInput<'_>, correction: &[C]) -> f64 {
     limit
 }
 
+/// Sorted union of the resolved primary band and the manually set extra bands.
+/// Keep legacy primary bounds untouched when there are no extras.
+pub(crate) fn band_set(lo: f64, hi: f64, extra: &[(f64, f64)]) -> Vec<(f64, f64)> {
+    let mut bands = vec![(lo, hi)];
+    bands.extend_from_slice(extra);
+    merge(bands)
+}
+
+/// Sort by lower edge and merge intervals that overlap or touch.
+fn merge(mut bands: Vec<(f64, f64)>) -> Vec<(f64, f64)> {
+    bands.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut merged: Vec<(f64, f64)> = Vec::new();
+    for (lo, hi) in bands {
+        if let Some(last) = merged.last_mut()
+            && lo <= last.1
+        {
+            last.1 = last.1.max(hi);
+        } else {
+            merged.push((lo, hi));
+        }
+    }
+    merged
+}
+
+pub(crate) fn in_bands(f: f64, bands: &[(f64, f64)]) -> bool {
+    bands.iter().any(|&(lo, hi)| f >= lo && f <= hi)
+}
+
+/// A geometric grid of `n` points per band, from `max(lo, floor)` to `hi`.
+/// A lone band is the legacy grid as it was, falling when an automatic upper
+/// limit lies below `rc_lo`. With extra bands an interval that holds no
+/// frequency (`max(lo, floor) >= hi`) gets no points, so every point lies in
+/// a band.
+pub(crate) fn band_grid(bands: &[(f64, f64)], floor: f64, n: usize) -> Vec<f64> {
+    if let [(lo, hi)] = bands {
+        return geomspace(lo.max(floor), *hi, n);
+    }
+    bands
+        .iter()
+        .filter(|&&(lo, hi)| lo.max(floor) < hi)
+        .flat_map(|&(lo, hi)| geomspace(lo.max(floor), hi, n))
+        .collect()
+}
+
+/// What a Zero-mode PEQ fit over `lo..hi` weighs (ADR 0024). Without an extra
+/// band inside `lo..hi` the fit keeps its legacy weights (`None`), so an extra
+/// band elsewhere changes nothing in it. With one, the fit weighs where the
+/// magnitude ramps reach: the primary band from `lo` to `rc_hi·√2` and each
+/// extra band from `lo/√2` to `hi·√2`; outside their union it seeds nothing
+/// and weighs 0.15.
+pub(crate) fn fit_reach(setup: &Setup, lo: f64, hi: f64) -> Option<Vec<(f64, f64)>> {
+    if !setup
+        .rc_bands
+        .iter()
+        .any(|&(band_lo, band_hi)| band_lo <= hi && band_hi >= lo)
+    {
+        return None;
+    }
+    let sqrt2 = 2_f64.sqrt();
+    Some(merge(
+        std::iter::once((lo, setup.rc_hi * sqrt2))
+            .chain(
+                setup
+                    .rc_bands
+                    .iter()
+                    .map(|&(band_lo, band_hi)| (band_lo / sqrt2, band_hi * sqrt2)),
+            )
+            .filter(|&(lo, hi)| lo < hi)
+            .collect(),
+    ))
+}
+
+pub(crate) fn magnitude_mask(f: f64, bands: &[(f64, f64)]) -> f64 {
+    let lf = f.max(1e-3).log2();
+    bands
+        .iter()
+        .map(|&(lo, hi)| {
+            let hi_edge = (hi * 2_f64.sqrt()).min(SR_F / 2.0 * 0.99);
+            ((lf - (lo / 2_f64.sqrt()).log2()) / 0.5).clamp(0.0, 1.0)
+                * ((hi_edge.log2() - lf) / (hi_edge / hi).log2().max(1e-3)).clamp(0.0, 1.0)
+        })
+        .fold(0.0, f64::max)
+}
+
+pub(crate) fn phase_fade(f: f64, setup: &Setup, bands: &[(f64, f64)]) -> f64 {
+    let fade_hz = setup.rc_hi * 2_f64.sqrt();
+    let primary = if f < 15.0 {
+        (f / 15.0).clamp(0.0, 1.0)
+    } else {
+        ((fade_hz.log2() - f.max(1e-3).log2()) / 0.5).clamp(0.0, 1.0)
+    };
+    if setup.rc_bands.is_empty() {
+        return primary;
+    }
+    let lf = f.max(1e-3).log2();
+    bands
+        .iter()
+        .map(|&(lo, hi)| {
+            ((lf - (lo / 2_f64.sqrt()).log2()) / 0.5).clamp(0.0, 1.0)
+                * (((hi * 2_f64.sqrt()).log2() - lf) / 0.5).clamp(0.0, 1.0)
+        })
+        .fold(primary, f64::max)
+}
+
+/// Where the realizer measures the FIR's magnitude error when it picks the
+/// phase strength: the primary band from `max(20, lo_fir)` to `rc_hi·√2`, as
+/// without extra bands, and each extra band from its lower edge to its upper
+/// edge ×√2 below Nyquist (ADR 0024).
+pub(crate) fn phase_error_band(f: f64, lo_fir: f64, setup: &Setup) -> bool {
+    f >= 20_f64.max(lo_fir)
+        && (f <= setup.rc_hi * 2_f64.sqrt()
+            || setup
+                .rc_bands
+                .iter()
+                .any(|&(lo, hi)| f >= lo && f <= (hi * 2_f64.sqrt()).min(SR_F / 2.0 * 0.99)))
+}
+
 fn geomspace(lo: f64, hi: f64, n: usize) -> Vec<f64> {
     let start = lo.log10();
     let step = (hi.log10() - start) / (n - 1) as f64;
@@ -163,7 +280,8 @@ fn rms(v: &[f64]) -> f64 {
 
 fn no_boost_mask(input: &RcInput<'_>) -> Vec<bool> {
     let f = design_freqs();
-    let g = geomspace(input.setup.rc_lo.max(20.0), input.setup.rc_hi, 1200);
+    let bands = band_set(input.setup.rc_lo, input.setup.rc_hi, &input.setup.rc_bands);
+    let g = band_grid(&bands, 20.0, 1200);
     let gd =
         response::gd_curve(main_response(input), f, &g, Fraction::Scalar(24.0)).expect("GD grid");
     let mut mask = vec![false; BINS];
@@ -182,9 +300,10 @@ fn no_boost_mask(input: &RcInput<'_>) -> Vec<bool> {
 fn long_mode_mask(input: &RcInput<'_>, notes: &mut Vec<Note>) -> Vec<bool> {
     let f = design_freqs();
     let x = lowrate::to_low(main_response(input), f, 300).expect("low-rate grid");
+    let bands = band_set(input.setup.rc_lo, input.setup.rc_hi, &input.setup.rc_bands);
     let modes: Vec<_> = decay::late_peaks(&[&x], 8)
         .into_iter()
-        .filter(|&p| p >= input.setup.rc_lo && p <= input.setup.rc_hi.min(160.0))
+        .filter(|&p| p <= 160.0 && in_bands(p, &bands))
         .filter_map(|p| {
             decay::mode_t60(&x, 600.0, p, 1.5)
                 .filter(|t| *t != 0.0)
@@ -223,6 +342,9 @@ fn fit_request(
     f_max: Option<f64>,
     fitter: &mut Fitter<'_>,
 ) -> Vec<Peq> {
+    let reach = (input.config.taps == 0)
+        .then(|| fit_reach(input.setup, lo, hi))
+        .flatten();
     fitter(&FitRequest {
         g,
         corr_db: c,
@@ -231,6 +353,7 @@ fn fit_request(
         hi,
         boost: input.config.max_boost_db,
         ring_ms: input.tuning.boost_ring_ms,
+        bands: reach.as_deref(),
         f_max,
     })
 }
@@ -428,7 +551,7 @@ fn prepare_correction(
     check(cancelled)?;
     trace.no_boost = nb.clone();
     trace.long_mode = lm.clone();
-    let hi_edge = (s.rc_hi * 2_f64.sqrt()).min(SR_F / 2.0 * 0.99);
+    let bands = band_set(s.rc_lo, s.rc_hi, &s.rc_bands);
     for i in 0..BINS {
         if nb[i] {
             corr[i] = corr[i].min(0.0);
@@ -436,9 +559,7 @@ fn prepare_correction(
         if lm[i] {
             corr[i] = corr[i].min(t.long_boost_db);
         }
-        let lf = f[i].max(1e-3).log2();
-        corr[i] *= ((lf - (s.rc_lo / 2_f64.sqrt()).log2()) / 0.5).clamp(0.0, 1.0)
-            * ((hi_edge.log2() - lf) / (hi_edge / s.rc_hi).log2().max(1e-3)).clamp(0.0, 1.0);
+        corr[i] *= magnitude_mask(f[i], &bands);
     }
     let design_db = corr.clone();
     let mut peq = Vec::new();
@@ -474,7 +595,7 @@ fn prepare_correction(
             &rest,
             s.peq_bands - s.peq_bands / 2,
             400.0,
-            s.rc_hi.min(20000.0),
+            bands.last().expect("primary band").1.min(20000.0),
             None,
             fitter,
         ));
@@ -609,23 +730,16 @@ fn finish_correction(
         .map(|(_, t)| *t)
         .collect();
     let reference = decay::median(&hf);
-    let fade_hz = s.rc_hi * 2_f64.sqrt();
+    let bands = band_set(s.rc_lo, s.rc_hi, &s.rc_bands);
     let excess: Vec<_> = f
         .iter()
         .zip(&tau)
         .map(|(&f, &tau)| {
-            let fade = if f < 15.0 {
-                (f / 15.0).clamp(0.0, 1.0)
-            } else {
-                ((fade_hz.log2() - f.max(1e-3).log2()) / 0.5).clamp(0.0, 1.0)
-            };
+            let fade = phase_fade(f, s, &bands);
             (tau - reference) * fade
         })
         .collect();
-    let band: Vec<_> = f
-        .iter()
-        .map(|&f| f >= 20_f64.max(lo_fir) && f <= fade_hz)
-        .collect();
+    let band: Vec<_> = f.iter().map(|&f| phase_error_band(f, lo_fir, s)).collect();
     let realizer = Realizer {
         excess: &excess,
         band: &band,
@@ -678,7 +792,7 @@ fn finish_correction(
         p = response::peq_response(f, &peq);
         let rc: Vec<_> = f
             .iter()
-            .map(|&f| f >= s.rc_lo.max(20.0) && f <= s.rc_hi)
+            .map(|&f| f >= 20.0 && in_bands(f, &bands))
             .collect();
         let design_error = |fx: &[C]| {
             let power: Vec<_> = multiply(fx, &p)
@@ -746,7 +860,8 @@ fn finish_correction(
 }
 
 pub(crate) fn phase_score(input: &RcInput<'_>, out: &RcOutput) -> f64 {
-    let g = geomspace(input.setup.rc_lo.max(20.0), input.setup.rc_hi, 1200);
+    let bands = band_set(input.setup.rc_lo, input.setup.rc_hi, &input.setup.rc_bands);
+    let g = band_grid(&bands, 20.0, 1200);
     let gd = response::gd_curve(
         &multiply(main_response(input), &out.response),
         design_freqs(),
@@ -769,10 +884,17 @@ pub fn channel(
     fitter: &mut Fitter<'_>,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<ChannelRc, EngineError> {
+    let bands = band_set(input.setup.rc_lo, input.setup.rc_hi, &input.setup.rc_bands);
     channel_with_cuts(
         input,
         fitter,
-        &mut |h, lo, hi| fit::fit_gd_cuts_until(design_freqs(), h, lo, hi, 6, 3.0, cancelled),
+        &mut |h, lo, hi| {
+            if input.setup.rc_bands.is_empty() {
+                fit::fit_gd_cuts_until(design_freqs(), h, lo, hi, 6, 3.0, cancelled)
+            } else {
+                fit::fit_gd_cuts_bands_until(design_freqs(), h, &bands, 6, 3.0, cancelled)
+            }
+        },
         cancelled,
     )
 }

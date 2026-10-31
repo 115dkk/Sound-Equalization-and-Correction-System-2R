@@ -12,6 +12,7 @@ use secs_filters::{
     write_text_observed,
 };
 use secs_oracle::{Fixture, assert_close, goldens, rtol};
+use secs_types::calibration::RcBand;
 use secs_types::chain::{
     BandType, MainChannel, MimoFilter, MimoPath, MimoPaths, SignalChain, SubChannel,
 };
@@ -1809,6 +1810,63 @@ fn filter_plans_refuse_roles_beyond_letters_and_digits() {
             "{role}: {error}"
         );
     }
+}
+
+// ADR 0024: the extra correction bands join the Equalizer APO note on its one
+// ASCII comment line; every line of the filter file's head stays a comment.
+#[test]
+fn extra_rc_bands_keep_every_eqapo_header_line_a_comment() {
+    let fixture = Fixture::load("filters", "rc_mixed");
+    let rc_chain = chain(&fixture);
+    let run_value = &fixture.inputs()["run"];
+    let (label, rc_pieces, stamp) = run_parts(&fixture);
+    let mode = export_mode(run_value);
+    let note = secs_camilla::note::eqapo_note_with_bands(
+        &mode,
+        number(&run_value["latency_ms"]),
+        number(&run_value["rc_hi_hz"]),
+        &[
+            RcBand {
+                lo_hz: 30.0,
+                hi_hz: 60.0,
+            },
+            RcBand {
+                lo_hz: 15_000.0,
+                hi_hz: 20_000.0,
+            },
+        ],
+        None,
+    );
+    let run = FilterRun {
+        chain: &rc_chain,
+        mimo: None,
+        mode: &mode,
+        note: &note,
+        label: &label,
+        latency_ms: number(&run_value["latency_ms"]),
+        rc_pieces: &rc_pieces,
+        stamp: &stamp,
+    };
+    let root = TempDir::new("rc_bands_note");
+    export_eqapo(&run, &root.0).unwrap();
+    let config = fs::read_to_string(root.0.join("config.txt")).unwrap();
+    let body = fs::read_to_string(root.0.join(eqapo_body_path(&config))).unwrap();
+    let header: Vec<_> = body.lines().take_while(|line| !line.is_empty()).collect();
+    assert!(header.len() >= 3, "{header:#?}");
+    assert!(
+        header.iter().all(|line| line.starts_with('#')),
+        "{header:#?}"
+    );
+    let notes: Vec<_> = header
+        .iter()
+        .filter(|line| line.contains("RC extra bands"))
+        .collect();
+    assert_eq!(notes.len(), 1, "{header:#?}");
+    assert!(
+        notes[0].ends_with("; no MIMO; RC extra bands 30-60 Hz, 15000-20000 Hz"),
+        "{}",
+        notes[0]
+    );
 }
 
 fn export_mode(value: &Value) -> String {

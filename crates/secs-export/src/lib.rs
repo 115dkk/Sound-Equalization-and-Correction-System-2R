@@ -14,7 +14,7 @@ use secs_engine::{
 };
 use secs_mdat::{MdatError, MeasurementInput, SourceInfo, TEMPLATE};
 use secs_types::{
-    calibration::CalibrationSettings,
+    calibration::{CalibrationSettings, RcBand},
     chain::{MimoPaths, SubChannel},
 };
 
@@ -238,12 +238,13 @@ pub fn sub_values_text(run: &ExportRun<'_>) -> String {
 }
 
 pub fn rc_pieces(run: &ExportRun<'_>) -> Vec<String> {
-    rc_pieces_from_values(
+    rc_pieces_from_values_with_bands(
         run.design.rc_hi,
         run.design.rc_auto,
         run.design.schroeder_hz,
         run.settings.room_volume_m3,
         false,
+        &run.settings.rc_bands,
     )
 }
 
@@ -254,6 +255,24 @@ pub fn rc_pieces_from_values(
     schroeder_hz: Option<f64>,
     room_volume_m3: Option<f64>,
     legacy_fallback: bool,
+) -> Vec<String> {
+    rc_pieces_from_values_with_bands(
+        rc_hi,
+        rc_auto,
+        schroeder_hz,
+        room_volume_m3,
+        legacy_fallback,
+        &[],
+    )
+}
+
+pub fn rc_pieces_from_values_with_bands(
+    rc_hi: f64,
+    rc_auto: bool,
+    schroeder_hz: Option<f64>,
+    room_volume_m3: Option<f64>,
+    legacy_fallback: bool,
+    rc_bands: &[RcBand],
 ) -> Vec<String> {
     let hz = format_fixed(rc_hi, 0, false);
     let head = if rc_auto {
@@ -270,20 +289,42 @@ pub fn rc_pieces_from_values(
     } else {
         format!("RC 상한 {hz} Hz (수동)")
     };
-    if !rc_auto {
-        return vec![head];
+    let mut out = vec![head];
+    if rc_auto {
+        match room_volume_m3.filter(|v| *v != 0.0) {
+            Some(volume) => {
+                out.push(format!(
+                    "자동: 룸 볼륨 {} m³",
+                    format_fixed(volume, 0, false)
+                ));
+                if schroeder_hz.is_some_and(|v| v > rc_hi + 0.5) {
+                    out.push(format!("자동 상한 최대 {hz} Hz"));
+                }
+            }
+            None => out.push("자동: 룸 볼륨 없음".into()),
+        }
     }
-    let Some(volume) = room_volume_m3.filter(|v| *v != 0.0) else {
-        return vec![head, "자동: 룸 볼륨 없음".into()];
-    };
-    let mut out = vec![
-        head,
-        format!("자동: 룸 볼륨 {} m³", format_fixed(volume, 0, false)),
-    ];
-    if schroeder_hz.is_some_and(|v| v > rc_hi + 0.5) {
-        out.push(format!("자동 상한 최대 {hz} Hz"));
+    if let Some(piece) = rc_bands_piece(rc_bands) {
+        out.push(piece);
     }
     out
+}
+
+fn rc_bands_piece(rc_bands: &[RcBand]) -> Option<String> {
+    (!rc_bands.is_empty()).then(|| {
+        format!(
+            "RC 추가 구간 {} Hz",
+            rc_bands
+                .iter()
+                .map(|band| format!(
+                    "{}–{}",
+                    format_fixed(band.lo_hz, 0, false),
+                    format_fixed(band.hi_hz, 0, false)
+                ))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    })
 }
 
 pub fn sub_filter_warnings(settings: &CalibrationSettings, roles: &[String]) -> Vec<SubWarning> {
@@ -393,11 +434,14 @@ fn stage_items_with_mimo(
             ));
         }
         add_xo_items(run, &mut items, seq, main.role.as_str(), &prefix, &stages);
+        let rc_bands = rc_bands_piece(&run.settings.rc_bands)
+            .map(|piece| format!(" · {piece}"))
+            .unwrap_or_default();
         items.push(item(
             run.design,
             format!("{seq:02}_{}_3 합 후 보정", main.role),
             format!(
-                "{prefix}2차: 탑+서브 합에 입력 보정({}) · 전체 지연 {} ms(시작 시각에서 뺌) · RC 상한 {} Hz",
+                "{prefix}2차: 탑+서브 합에 입력 보정({}) · 전체 지연 {} ms(시작 시각에서 뺌) · RC 상한 {} Hz{rc_bands}",
                 chain_text(run),
                 format_fixed(run.design.chain.latency_ms, 1, false),
                 format_fixed(run.design.rc_hi, 0, false)
@@ -937,6 +981,29 @@ mod tests {
                 "RC 상한 300 Hz (슈뢰더 420 Hz)",
                 "자동: 룸 볼륨 80 m³",
                 "자동 상한 최대 300 Hz",
+            ]
+        );
+        assert_eq!(
+            rc_pieces_from_values_with_bands(
+                300.0,
+                false,
+                None,
+                None,
+                false,
+                &[
+                    RcBand {
+                        lo_hz: 1_000.0,
+                        hi_hz: 2_000.0,
+                    },
+                    RcBand {
+                        lo_hz: 15_000.0,
+                        hi_hz: 20_000.0,
+                    },
+                ],
+            ),
+            [
+                "RC 상한 300 Hz (수동)",
+                "RC 추가 구간 1000–2000, 15000–20000 Hz"
             ]
         );
     }

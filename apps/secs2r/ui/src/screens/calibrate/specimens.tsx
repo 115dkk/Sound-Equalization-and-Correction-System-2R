@@ -174,6 +174,21 @@ function RcLines() {
   );
 }
 
+/** The merged band set line (ADR 0024) for one extra band, two bands, and a band merged with the RC band. */
+function RcBandsLines() {
+  const t = useT();
+  const number = useNumber();
+  return (
+    <Card title={t("calibrate.verdict.title")} className="calibrate-settings__card">
+      <ul className="calibrate-notes-list" data-ui="calibrate.verdict.rc_bands.lines">
+        {fx.rcBandsNotes.map((note, i) => (
+          <li key={i}>{noticeText(t, number, note)}</li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 /** The 극저역 보호 line for each case: a sub's high-pass, a sub keeping the user's, a main, and the warning. */
 function LowProtectLines() {
   const t = useT();
@@ -283,6 +298,23 @@ export const calibrateSpecimens: SpecimenDef[] = [
     render: () => <CalibrateFrame view={fx.rangeViews.lenientTimes2} scrollTo="calibrate.settings.range" />,
   },
   { id: "screen.calibrate.rc-lines", title: "보정 · the RC line for each kind of evidence, then a missing volume and a note from before the bases", width: 720, render: () => <RcLines /> },
+  // Extra correction bands (ADR 0024).
+  frame("range-extra-none", "extra correction bands: none, only 보정 구간 추가 under the edges", () => (
+    <CalibrateFrame view={fx.extraBandViews.none} scrollTo="calibrate.settings.range" />
+  )),
+  frame("range-extra-two", "two extra bands (2–4 kHz, 15–20 kHz): a row each with its edges and 빼기, then 보정 구간 추가", () => (
+    <CalibrateFrame view={fx.extraBandViews.two} scrollTo="calibrate.settings.range" />
+  )),
+  frame("range-extra-refused", "the second band's upper edge refused (12000 Hz, below its lower edge): the reason at that input, the stored 20000 Hz in it", () => (
+    <CalibrateFrame view={fx.extraBandViews.refused} scrollTo="calibrate.settings.range" />
+  )),
+  frame("range-extra-four", "four extra bands: the add action hidden", () => <CalibrateFrame view={fx.extraBandViews.four} scrollTo="calibrate.range.extra" />),
+  frame("spl-extra-band", "SPL with an extra band at 15–20 kHz: shaded outside the RC band and it, its label left of its edge", () => <CalibrateFrame view={fx.extraBandViews.one} />),
+  frame("spl-extra-bands", "SPL with two extra bands: shaded outside the RC band and both; a label that finds no room is left out", () => <CalibrateFrame view={fx.extraBandViews.two} />),
+  frame("rc-bands-notes", "calculation notes open: the merged band set after an extra-band calculation", () => (
+    <CalibrateFrame view={fx.extraBandViews.two} initial={{ notesOpen: true }} scrollTo="calibrate.verdict.notes" />
+  )),
+  { id: "screen.calibrate.rc-bands-lines", title: "보정 · the band set line for one extra band, two bands, and a band merged with the RC band", width: 720, render: () => <RcBandsLines /> },
   frame("low-protect-off", "극저역 보호 off (the default) beside the boost limit, 고급 open", () => (
     <CalibrateFrame view={fx.lowProtectViews.off} scrollTo="calibrate.settings.range" initial={{ rangeAdvanced: true }} />
   )),

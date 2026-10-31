@@ -26,6 +26,7 @@ fn calibration_parse_store_and_saved_bytes_match_oracle() {
         object.remove("sample_rate_policy");
         assert_eq!(object.remove("rc_hi_basis"), Some("strict".into()));
         assert_eq!(object.remove("rc_hi_transition"), Some(1.into()));
+        assert_eq!(object.remove("rc_bands"), Some(Value::Array(vec![])));
         assert_eq!(object.remove("low_protect"), Some(false.into()));
         assert_eq!(
             object.remove("peq_analytic_derivatives"),
@@ -201,4 +202,66 @@ fn rc_upper_round_trip_and_legacy_unknown_defaults() {
         assert!(!project.save_text().contains("rc_hi_basis"));
         assert!(!project.save_text().contains("rc_hi_transition"));
     }
+}
+
+#[test]
+fn rc_bands_round_trip_filter_sort_trim_and_clear() {
+    use secs_types::calibration::{CalibrationSettings, RcBand};
+
+    let bands = vec![
+        RcBand {
+            lo_hz: 1_000.0,
+            hi_hz: 2_000.0,
+        },
+        RcBand {
+            lo_hz: 15_000.0,
+            hi_hz: 20_000.0,
+        },
+    ];
+    let mut project = Project::from_preset("2.0").unwrap();
+    let settings = CalibrationSettings {
+        rc_bands: bands.clone(),
+        ..Default::default()
+    };
+    store_calibration(&mut project, &settings);
+    let saved = project.save_text();
+    let saved_json: Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(
+        saved_json["calibration"]["rc_bands"],
+        serde_json::json!([[1_000.0, 2_000.0], [15_000.0, 20_000.0]])
+    );
+    let reopened = Project::from_json(loads(&saved).unwrap()).unwrap();
+    assert_eq!(calibration_from_project(&reopened).rc_bands, bands);
+
+    let mut cleared = calibration_from_project(&reopened);
+    cleared.rc_bands.clear();
+    let mut reopened = reopened;
+    store_calibration(&mut reopened, &cleared);
+    assert!(!reopened.save_text().contains("rc_bands"));
+
+    let raw = r#"{"extra":{"calibration":{"rc_lo":15,"rc_bands":[[5000,6000],[10,100],[4000,4500],[3000,3500],[2000,2500],[1000,1500],[9000,8000],[15000,"NaN"],[20,30,40]]}}}"#;
+    let project = Project::from_json(loads(raw).unwrap()).unwrap();
+    let parsed = calibration_from_project(&project);
+    assert_eq!(parsed.rc_lo, 15.0);
+    assert_eq!(
+        parsed.rc_bands,
+        [
+            RcBand {
+                lo_hz: 1_000.0,
+                hi_hz: 1_500.0,
+            },
+            RcBand {
+                lo_hz: 2_000.0,
+                hi_hz: 2_500.0,
+            },
+            RcBand {
+                lo_hz: 3_000.0,
+                hi_hz: 3_500.0,
+            },
+            RcBand {
+                lo_hz: 4_000.0,
+                hi_hz: 4_500.0,
+            },
+        ]
+    );
 }

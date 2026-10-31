@@ -257,11 +257,45 @@ describe("useCalibrateScreen", () => {
     expect(lines()).toContain("극저역 보호(L): 28 Hz 아래 부스트 안 함");
     expect(at("calibrate.verdict.low_protect")).toBeNull();
     // Below the 20 Hz band with the default boost limit the sub bus keeps its fit: a warning, not a note.
-    await perform(() => session.call({ method: "calibration_settings_edit", params: { edit: { kind: "rc_lo", hz: 15 } } }));
+    // An edit refuses 15 Hz (ADR 0024); a project saved by SECS 2 keeps it, as the settings set here.
+    const stored = await mock.request({ method: "calibration_settings_get" });
+    await perform(() => session.call({ method: "calibration_settings_set", params: { settings: { ...stored, rc_lo: 15 } } }));
     await perform(() => fireEvent.click(at("calibrate.compute")!));
     await perform(mock.drain);
     expect(at("calibrate.verdict.low_protect")!.textContent).toContain("극저역 보호(SW1 + SW2): 22 Hz 아래 부스트를 막지 못해 원래 필터를 그대로 썼습니다.");
     expect(lines().some((line) => line.includes("SW1 + SW2"))).toBe(false);
+  });
+
+  it("keeps a refused edge or band in the view instead of a global notice, and drops it with the next range edit (ADR 0024)", async () => {
+    const { result } = renderHook(useCalibrateScreen, { wrapper });
+    const a = result.current.actions;
+    expect(result.current.view?.rangeRejection).toBeNull();
+    let accepted: boolean | undefined;
+    await perform(async () => { accepted = await a.changeSetting({ kind: "rc_bands", bands: [{ lo_hz: 15000, hi_hz: 12000 }] }); });
+    expect(accepted).toBe(false);
+    expect(result.current.view?.rangeRejection).toMatchObject({
+      edit: { kind: "rc_bands" },
+      error: { code: "invalid_request", params: { field: "rc_bands", reason: "rc_band_range", index: "1", lo_hz: "15000", hi_hz: "12000" } },
+    });
+    expect(session.errors.getSnapshot()).toBeNull();
+    expect(result.current.view?.settings.rc_bands).toEqual([]);
+    // A valid list is stored sorted and clears the refusal.
+    await perform(async () => { accepted = await a.changeSetting({ kind: "rc_bands", bands: [{ lo_hz: 15000, hi_hz: 20000 }, { lo_hz: 2000, hi_hz: 4000 }] }); });
+    expect(accepted).toBe(true);
+    expect(result.current.view?.rangeRejection).toBeNull();
+    expect(result.current.view?.settings.rc_bands).toEqual([{ lo_hz: 2000, hi_hz: 4000 }, { lo_hz: 15000, hi_hz: 20000 }]);
+    // The primary lower edge below 20 Hz: its reason with the limits.
+    await perform(() => a.changeSetting({ kind: "rc_lo", hz: 15 }));
+    expect(result.current.view?.rangeRejection?.error.params).toEqual({ field: "rc_lo", reason: "rc_lo_range", min: "20", max: "200" });
+    expect(result.current.view?.settings.rc_lo).toBe(20);
+    expect(session.errors.getSnapshot()).toBeNull();
+    // Another edit's refusal is still a global notice and leaves the card's refusal alone.
+    await perform(() => a.changeSetting({ kind: "rc_hi_transition", factor: 3 }));
+    expect(session.errors.getSnapshot()).not.toBeNull();
+    expect(result.current.view?.rangeRejection?.error.params.reason).toBe("rc_lo_range");
+    // Choosing another basis replaces it.
+    await perform(() => a.changeSetting({ kind: "rc_hi_basis", basis: "lenient" }));
+    expect(result.current.view?.rangeRejection).toBeNull();
   });
 
   it("refreshes exact curve selections and keeps preview out of persisted settings", async () => {

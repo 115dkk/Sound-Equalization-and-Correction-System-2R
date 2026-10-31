@@ -6,13 +6,22 @@
  */
 export type CalibrationLimits = { 
 /**
- * RC low edge (Hz).
+ * RC low edge (Hz) an edit accepts. SECS 2R rejects below 20 Hz (ADR
+ * 0024); a project file is read with `RC_LO_READ` instead.
  */
 rc_lo: [number, number], 
 /**
  * RC high edge (Hz) when it is not automatic.
  */
 rc_hi: [number, number], 
+/**
+ * Either edge of an extra correction band (Hz, ADR 0024).
+ */
+rc_band: [number, number], 
+/**
+ * Number of extra correction bands (ADR 0024).
+ */
+rc_bands_max: [number, number], 
 /**
  * Room volume (m³); a value at or below the low end clears it.
  */

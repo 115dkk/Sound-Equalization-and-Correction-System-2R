@@ -12,6 +12,7 @@ import type { MdatScope } from "../ipc/bindings/MdatScope";
 import type { XoRecommendation } from "../ipc/bindings/XoRecommendation";
 import type { ConnectPath, MeterReading, MicCalibrationView, MonitorState, RewProblem } from "../screens/connect/types";
 import type { CalibrateView } from "../screens/calibrate/types";
+import { rangeRejection } from "../screens/calibrate/settingsView";
 import type { ApplyRun, ApplyTarget, ExportRun, HostFailure } from "../screens/export/types";
 import type { MeasureView } from "../screens/measure/types";
 import { createResource as resource, createStore, type Failure } from "./store";
@@ -47,7 +48,7 @@ type HostState = Pick<MeasureView, "selected" | "graphHidden" | "plotRange" | "m
   applyRuns: Partial<Record<ApplyTarget, ApplyRun>>; applyAddressDraft: string | null; applyChecking: boolean; applyReverting: boolean;
   /** 관리: the CamillaDSP executable field's unsaved text, a host_install or host_stop_managing in flight, and the last of them that failed. */
   applyExeDraft: string | null; hostInstalling: boolean; hostStopping: boolean; hostFailure: HostFailure | null;
-  failure: CalibrateView["failure"]; rewLaunch: "idle" | "checking" | "launching";
+  failure: CalibrateView["failure"]; rangeRejection: CalibrateView["rangeRejection"]; rewLaunch: "idle" | "checking" | "launching";
   rewProblem: RewProblem | null; rewProblemDetail: string | null; readingRew: boolean;
   switchingRewDriver: boolean;
   micCalBusy: MicCalibrationView["busy"]; micCalError: MicCalibrationView["error"];
@@ -77,7 +78,7 @@ export function createSession(ipc: Ipc) {
     current: "system", path: null, selected: null, graphHidden: false, plotRange: { x: null, y: null },
     mdat: null, warnings: [], tab: "spl", channel: null, xoGroup: null, previewHz: null, targetEdit: "idle", xoEdit: "idle",
     meter: null, monitor: "off", playing: null, playingAll: false, masterDbfs: -20, monitorError: null,
-    xoRecommendation: null, runs: {}, mdatScope: "all", failure: null,
+    xoRecommendation: null, runs: {}, mdatScope: "all", failure: null, rangeRejection: null,
     designName: "", camillaDevices: { capture: { type: "file" }, playback: { type: "file" } }, extraRates: [],
     applyRuns: {}, applyAddressDraft: null, applyChecking: false, applyReverting: false,
     applyExeDraft: null, hostInstalling: false, hostStopping: false, hostFailure: null,
@@ -195,7 +196,10 @@ export function createSession(ipc: Ipc) {
           || (request.method === "dialog_open_file" && (request as Extract<Request, { method: "dialog_open_file" }>).params.kind === "mic_calibration");
         // The export screen's service block owns the host actions' typed failures the same way.
         const hostAction = request.method === "host_install" || request.method === "host_uninstall" || request.method === "host_stop_managing";
-        if (!(micCalAction || hostAction) || !(error instanceof IpcFailure)) report(error);
+        // The range card shows a refused edge or extra band at its input (ADR 0024).
+        const rangeEdit = request.method === "calibration_settings_edit" && error instanceof IpcFailure
+          && rangeRejection((request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit, error.error) !== null;
+        if (!(micCalAction || hostAction || rangeEdit) || !(error instanceof IpcFailure)) report(error);
       }
       throw error;
     } finally {
@@ -488,7 +492,7 @@ export function createSession(ipc: Ipc) {
       jobs.replaceProject(); curveVersion++; curveState.set(null); tutorialReady.set(false);
       for (const store of Object.values(stores)) if ("invalidate" in store) store.invalidate();
       stores.measurementSettings.set(null); stores.micCalibration.set(null);
-      host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, applyRuns: {}, mdatScope: "all", channel: null, xoGroup: null, xoRecommendation: null, failure: null, opened: host.getSnapshot().opened + 1 });
+      host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, applyRuns: {}, mdatScope: "all", channel: null, xoGroup: null, xoRecommendation: null, failure: null, rangeRejection: null, opened: host.getSnapshot().opened + 1 });
     }
     const keys = [...new Set(plans.flatMap((plan) => plan.resources))];
     await Promise.all([

@@ -23,7 +23,17 @@ pub struct FitRequest<'a> {
     pub boost: f64,
     pub ring_ms: Option<f64>,
     pub f_max: Option<f64>,
+    /// Optional correction-band union, intersected with `lo..hi` for weights.
+    /// None retains the legacy contiguous fit and unconstrained centres.
+    pub bands: Option<&'a [(f64, f64)]>,
 }
+
+impl FitRequest<'_> {
+    fn in_range(&self, f: f64) -> bool {
+        f >= self.lo && f <= self.hi && self.bands.is_none_or(|bands| crate::rc::in_bands(f, bands))
+    }
+}
+
 /// Production uses `fit_peq`; stage goldens inject recorded decisions here.
 /// Callers may reuse the result of an identical request across candidates.
 pub type Fitter<'f> = dyn FnMut(&FitRequest<'_>) -> Vec<Peq> + 'f;
@@ -79,7 +89,7 @@ pub(crate) fn seed(req: &FitRequest<'_>) -> Seed {
             .zip(req.corr_db)
             .zip(current)
             .map(|((&g, &c), h)| {
-                if g >= req.lo && g <= req.hi {
+                if req.in_range(g) {
                     c - 20.0 * (response::magnitude(h) + 1e-12).log10()
                 } else {
                     0.0
@@ -114,11 +124,30 @@ pub(crate) fn seed(req: &FitRequest<'_>) -> Seed {
     if let Some(ms) = req.ring_ms {
         ring_boxes(&bands, &mut lb, &mut ub, ms);
     }
+    // A multi-band seed must not drift into an uncorrected gap during TRF.
+    // Legacy fits keep their original bounds, including the split-fit overlap.
+    if let Some(regions) = req.bands {
+        for (i, &(f, _, _)) in bands.iter().enumerate() {
+            let &(lo, hi) = regions
+                .iter()
+                .find(|&&(lo, hi)| f >= lo && f <= hi)
+                .expect("seed belongs to a correction band");
+            lb[3 * i] = lb[3 * i].max(lo.ln());
+            ub[3 * i] = ub[3 * i].min(hi.ln());
+        }
+    }
     let x0 = bands
         .iter()
         .flat_map(|&(f, q, g)| [f.ln(), q.ln(), g])
         .enumerate()
-        .map(|(i, x)| x.max(lb[i] + 1e-6).min(ub[i] - 1e-6))
+        .map(|(i, x)| {
+            let margin = if req.bands.is_some() {
+                1e-6_f64.min((ub[i] - lb[i]) / 4.0)
+            } else {
+                1e-6
+            };
+            x.max(lb[i] + margin).min(ub[i] - margin)
+        })
         .collect();
     Seed { bands, x0, lb, ub }
 }
@@ -137,11 +166,7 @@ fn weighted_residual(req: &FitRequest<'_>, h: Vec<C>) -> Vec<f64> {
     h.into_iter()
         .enumerate()
         .map(|(i, h)| {
-            let w = if req.g[i] >= req.lo && req.g[i] <= req.hi {
-                1.0
-            } else {
-                0.15
-            };
+            let w = if req.in_range(req.g[i]) { 1.0 } else { 0.15 };
             w * (20.0 * (response::magnitude(h) + 1e-12).log10() - req.corr_db[i])
         })
         .collect()
@@ -257,11 +282,7 @@ impl AnalyticResidualCache {
             .iter()
             .enumerate()
             .map(|(i, &h)| {
-                let weight = if req.g[i] >= req.lo && req.g[i] <= req.hi {
-                    1.0
-                } else {
-                    0.15
-                };
+                let weight = if req.in_range(req.g[i]) { 1.0 } else { 0.15 };
                 let magnitude = response::magnitude(h);
                 weight * (20.0 / 10_f64.ln()) * magnitude / (magnitude + 1e-12)
             })
@@ -444,21 +465,61 @@ pub fn fit_gd_cuts_until(
     cancelled: &dyn Fn() -> bool,
 ) -> Vec<Peq> {
     let g = geomspace(lo, hi, 1500);
+    gd_cuts_on_grid(f, h, &g, None, n_max, depth_db, cancelled)
+}
+
+pub(crate) fn fit_gd_cuts_bands_until(
+    f: &[f64],
+    h: &[C],
+    bands: &[(f64, f64)],
+    n_max: usize,
+    depth_db: f64,
+    cancelled: &dyn Fn() -> bool,
+) -> Vec<Peq> {
+    let g = crate::rc::band_grid(bands, 20.0, 1500);
+    gd_cuts_on_grid(f, h, &g, Some(bands), n_max, depth_db, cancelled)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn gd_cuts_on_grid(
+    f: &[f64],
+    h: &[C],
+    g: &[f64],
+    bands: Option<&[(f64, f64)]>,
+    n_max: usize,
+    depth_db: f64,
+    cancelled: &dyn Fn() -> bool,
+) -> Vec<Peq> {
     let mut cur = h.to_vec();
     let mut cuts = Vec::new();
+    // Band grids can come out too short when no band holds a frequency.
+    if bands.is_some() && g.len() < 2 {
+        return cuts;
+    }
     for _ in 0..n_max {
         if cancelled() {
             break;
         }
-        let gd = response::gd_curve(&cur, f, &g, Fraction::Scalar(24.0)).expect("valid GD grid");
+        let gd = response::gd_curve(&cur, f, g, Fraction::Scalar(24.0)).expect("valid GD grid");
         let base: Vec<_> = (0..g.len())
             .map(|i| median(&gd[i.saturating_sub(40)..(i + 40).min(g.len())]))
             .collect();
-        let exc: Vec<_> = gd.iter().zip(&base).map(|(g, b)| g - b).collect();
-        let k = argmax(&exc);
-        if exc[k] < 10.0 {
+        let mut exc: Vec<_> = gd.iter().zip(&base).map(|(g, b)| g - b).collect();
+        // With correction bands, skip a peak that lies in no band or leaves
+        // the cut no room to move, and take the next one.
+        let (k, centre) = loop {
+            let k = argmax(&exc);
+            if exc[k] < 10.0 {
+                break (k, None);
+            }
+            match cut_centre_bounds(g[k], bands) {
+                Some(bounds) => break (k, Some(bounds)),
+                None => exc[k] = f64::NEG_INFINITY,
+            }
+        };
+        let Some((centre_lb, centre_ub)) = centre else {
             break;
-        }
+        };
         let f0 = g[k];
         let width = 2_f64.powf(1.0 / 3.0);
         let gw: Vec<_> = g
@@ -488,7 +549,7 @@ pub fn fit_gd_cuts_until(
             let mag: Vec<_> = hp.iter().map(|&h| response::magnitude(h)).collect();
             gd2.iter()
                 .zip(&gw)
-                .map(|(gd, &w)| (gd - interp(w, &g, &base)) / 5.0)
+                .map(|(gd, &w)| (gd - interp(w, g, &base)) / 5.0)
                 .chain(
                     gw.iter()
                         .zip(&mag0)
@@ -497,8 +558,8 @@ pub fn fit_gd_cuts_until(
                 .collect::<Vec<_>>()
         };
         let x0 = [f0.ln(), 8_f64.ln(), -1.0];
-        let lb = [(f0 / 1.1).ln(), 2_f64.ln(), -depth_db];
-        let ub = [(f0 * 1.1).ln(), 40_f64.ln(), 0.0];
+        let lb = [centre_lb, 2_f64.ln(), -depth_db];
+        let ub = [centre_ub, 40_f64.ln(), 0.0];
         let sol = optimize::least_squares(
             |x| {
                 if cancelled() {
@@ -530,6 +591,20 @@ pub fn fit_gd_cuts_until(
         }
     }
     cuts
+}
+
+/// The log-frequency bounds of a GD cut's centre at `f0`: ±10 %, and with
+/// correction bands also inside the band that holds `f0`. `None` when no band
+/// holds it or the bounds leave the centre no room (the solver needs
+/// `lb < ub`).
+fn cut_centre_bounds(f0: f64, bands: Option<&[(f64, f64)]>) -> Option<(f64, f64)> {
+    let (lb, ub) = ((f0 / 1.1).ln(), (f0 * 1.1).ln());
+    let Some(bands) = bands else {
+        return Some((lb, ub));
+    };
+    let &(lo, hi) = bands.iter().find(|&&(lo, hi)| f0 >= lo && f0 <= hi)?;
+    let (lb, ub) = (lb.max(lo.ln()), ub.min(hi.ln()));
+    (lb < ub).then_some((lb, ub))
 }
 
 /// Acoustic XO target before the electrical crossover; position order is
@@ -591,6 +666,7 @@ pub fn xo_target_peq(
         boost,
         ring_ms: None,
         f_max,
+        bands: None,
     })
 }
 
@@ -620,6 +696,7 @@ impl RecordedFit {
             boost: self.boost,
             ring_ms: self.ring_ms,
             f_max: self.f_max,
+            bands: None,
         }
     }
 }
@@ -698,6 +775,7 @@ mod analytic_tests {
             boost: 6.0,
             ring_ms: None,
             f_max: None,
+            bands: None,
         };
         let x = [
             30.0_f64.ln(),
@@ -756,6 +834,7 @@ mod analytic_tests {
             boost: 6.0,
             ring_ms: None,
             f_max: None,
+            bands: None,
         };
         let x = [100.0_f64.ln(), 2.0_f64.ln(), -25.0].repeat(16);
         let mut cache = AnalyticResidualCache::new(&g, 16);

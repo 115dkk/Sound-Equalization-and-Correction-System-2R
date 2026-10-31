@@ -49,6 +49,42 @@ fn default_rc_hi_transition() -> u8 {
     1
 }
 
+/// One extra room-correction band beside `rc_lo..rc_hi`, both edges set by
+/// hand (ADR 0024). `20 <= lo_hz < hi_hz <= 20000`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RcBand {
+    pub lo_hz: f64,
+    pub hi_hz: f64,
+}
+
+/// The extra bands a calculation may use: finite, inside
+/// `CALIBRATION_LIMITS.rc_band` with `lo < hi`, sorted by `lo_hz`, at most
+/// `rc_bands_max` (ADR 0024). Settings that did not pass the service's edit
+/// checks (a request carrying its own settings) go through this.
+pub fn valid_rc_bands(bands: &[RcBand]) -> Vec<RcBand> {
+    let limits = crate::rules::CALIBRATION_LIMITS;
+    let edge = limits.rc_band.0..=limits.rc_band.1;
+    let mut kept: Vec<_> = bands
+        .iter()
+        .copied()
+        .filter(|band| {
+            band.lo_hz.is_finite()
+                && band.hi_hz.is_finite()
+                && edge.contains(&band.lo_hz)
+                && edge.contains(&band.hi_hz)
+                && band.lo_hz < band.hi_hz
+        })
+        .collect();
+    kept.sort_by(|a, b| {
+        a.lo_hz
+            .total_cmp(&b.lo_hz)
+            .then(a.hi_hz.total_cmp(&b.hi_hz))
+    });
+    kept.truncate(limits.rc_bands_max.1 as usize);
+    kept
+}
+
 /// How non-48 kHz measurement responses are prepared for calculation.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -129,6 +165,9 @@ pub struct CalibrationSettings {
     pub rc_hi_basis: RcHiBasis,
     #[serde(default = "default_rc_hi_transition")]
     pub rc_hi_transition: u8,
+    /// Extra correction bands, sorted by `lo_hz`, at most four (ADR 0024).
+    #[serde(default)]
+    pub rc_bands: Vec<RcBand>,
     pub room_volume_m3: Option<f64>,
     pub room_dims_m: Option<[f64; 3]>,
     pub mimo_on: bool,
@@ -174,6 +213,7 @@ impl Default for CalibrationSettings {
             rc_hi: None,
             rc_hi_basis: RcHiBasis::Strict,
             rc_hi_transition: 1,
+            rc_bands: Vec::new(),
             room_volume_m3: None,
             room_dims_m: None,
             mimo_on: false,
@@ -238,6 +278,23 @@ impl CalibrationSettings {
         }
         if self.rc_hi_transition != 1 {
             write!(&mut out, "|rc_hi_transition={}", self.rc_hi_transition).unwrap();
+        }
+        // ADR 0024: only a project with extra bands gets a new key. Sorted, so
+        // a list the service stored and the same list in another order match.
+        if !self.rc_bands.is_empty() {
+            let mut bands = self.rc_bands.clone();
+            bands.sort_by(|a, b| {
+                a.lo_hz
+                    .total_cmp(&b.lo_hz)
+                    .then(a.hi_hz.total_cmp(&b.hi_hz))
+            });
+            out.push_str("|rc_bands=");
+            for (index, band) in bands.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write!(&mut out, "{}-{}", number(band.lo_hz), number(band.hi_hz)).unwrap();
+            }
         }
         // Keep existing cache fingerprints unchanged for the default policy.
         if self.sample_rate_policy == SampleRatePolicy::Resample {
@@ -569,6 +626,59 @@ ordered_map!(ordered_layout_map, super::BundleLayoutEntry);
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn band(lo_hz: f64, hi_hz: f64) -> RcBand {
+        RcBand { lo_hz, hi_hz }
+    }
+
+    #[test]
+    fn valid_rc_bands_drop_broken_bands_sort_and_keep_four() {
+        let kept = valid_rc_bands(&[
+            band(15_000.0, 20_000.0),
+            band(10.0, 30.0),
+            band(f64::NAN, 100.0),
+            band(500.0, 400.0),
+            band(300.0, 300.0),
+            band(19_000.0, 21_000.0),
+            band(1_000.0, 2_000.0),
+            band(30.0, 60.0),
+            band(5_000.0, 6_000.0),
+            band(100.0, 200.0),
+        ]);
+        assert_eq!(
+            kept,
+            [
+                band(30.0, 60.0),
+                band(100.0, 200.0),
+                band(1_000.0, 2_000.0),
+                band(5_000.0, 6_000.0)
+            ]
+        );
+        assert!(valid_rc_bands(&[]).is_empty());
+    }
+
+    #[test]
+    fn engine_key_lists_extra_bands_sorted_and_only_when_present() {
+        let baseline = CalibrationSettings::default();
+        assert!(!baseline.engine_key().contains("rc_bands"));
+        let forward = CalibrationSettings {
+            rc_bands: vec![band(100.0, 200.0), band(15_000.0, 20_000.0)],
+            ..baseline.clone()
+        };
+        let backward = CalibrationSettings {
+            rc_bands: vec![band(15_000.0, 20_000.0), band(100.0, 200.0)],
+            ..baseline
+        };
+        assert_eq!(forward.engine_key(), backward.engine_key());
+        let expected = format!(
+            "|rc_bands={}-{},{}-{}",
+            number(100.0),
+            number(200.0),
+            number(15_000.0),
+            number(20_000.0)
+        );
+        assert!(forward.engine_key().ends_with(&expected));
+    }
 
     #[test]
     fn rc_upper_defaults_and_each_setting_change_engine_key() {

@@ -151,6 +151,57 @@ function rcLines(limit: Notice | undefined, volume: number | null): Notice[] {
 export const mockRcLines = (settings: CalibrationSettings, positions: number): Notice[] => rcLines(rcLimitNote(settings, positions), settings.room_volume_m3);
 
 /**
+ * The correction band set a calibration with extra bands notes (secs-engine
+ * `Note::RcBands`, ADR 0024): the primary band up to its resolved upper
+ * limit and the extra bands, sorted, with overlapping or touching bands
+ * merged, as `"lo-hi,lo-hi"`. Without extra bands there is no note.
+ */
+export function mockRcBandsNotes(settings: CalibrationSettings, positions: number): Notice[] {
+  if (settings.rc_bands.length === 0) return [];
+  const hi = Number(rcLimitNote(settings, positions).params.hz);
+  const all = [[settings.rc_lo, hi], ...settings.rc_bands.map((band) => [band.lo_hz, band.hi_hz])].sort((a, b) => a[0]! - b[0]!);
+  const merged: number[][] = [];
+  for (const [lo, top] of all) {
+    const last = merged.at(-1);
+    if (last && lo! <= last[1]!) last[1] = Math.max(last[1]!, top!);
+    else merged.push([lo!, top!]);
+  }
+  return [{ code: "rc_bands", params: { bands: merged.map(([lo, top]) => `${lo}-${top}`).join(",") } }];
+}
+
+/**
+ * Why the service refuses an edit of the RC edges or the extra bands
+ * (secs-service `calibration_settings_edit`, ADR 0024): an edge outside its
+ * limits, the lower edge at or above a manual upper one (or the reverse), more
+ * than four extra bands, or a band outside 20–20000 Hz or not rising (its
+ * 1-based place in the list sent). Nothing is clamped.
+ */
+export function rcEditRefusal(settings: CalibrationSettings, edit: SettingEdit): IpcError | undefined {
+  const refuse = (field: string, reason: string, params: Record<string, string>) =>
+    ipcError("invalid_request", `${field}: ${reason}`, { field, reason, ...params });
+  const outside = (hz: number, [lo, hi]: readonly [number, number]) => !Number.isFinite(hz) || hz < lo || hz > hi;
+  switch (edit.kind) {
+    case "rc_lo":
+      if (outside(edit.hz, LIMITS.rc_lo)) return refuse("rc_lo", "rc_lo_range", { min: String(LIMITS.rc_lo[0]), max: String(LIMITS.rc_lo[1]) });
+      if (settings.rc_hi !== null && edit.hz >= settings.rc_hi) return refuse("rc_lo", "rc_lo_above_hi", { hi_hz: String(settings.rc_hi) });
+      return undefined;
+    case "rc_hi":
+      if (edit.hz === null) return undefined;
+      if (outside(edit.hz, LIMITS.rc_hi)) return refuse("rc_hi", "rc_hi_range", { min: String(LIMITS.rc_hi[0]), max: String(LIMITS.rc_hi[1]) });
+      if (edit.hz <= settings.rc_lo) return refuse("rc_hi", "rc_hi_below_lo", { lo_hz: String(settings.rc_lo) });
+      return undefined;
+    case "rc_bands": {
+      if (edit.bands.length > LIMITS.rc_bands_max[1]) return refuse("rc_bands", "rc_band_count", { max: String(LIMITS.rc_bands_max[1]) });
+      const index = edit.bands.findIndex((band) => outside(band.lo_hz, LIMITS.rc_band) || outside(band.hi_hz, LIMITS.rc_band) || band.lo_hz >= band.hi_hz);
+      const band = edit.bands[index];
+      return band ? refuse("rc_bands", "rc_band_range", { index: String(index + 1), lo_hz: String(band.lo_hz), hi_hz: String(band.hi_hz) }) : undefined;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/**
  * Zero dB of the measurement graph (secs-service `measurement_reference`,
  * U17): the first main in configuration order, at position 1 when it was
  * measured there and otherwise at its lowest measured position, over
@@ -546,13 +597,16 @@ export function createMockService(options: MockOptions = {}): MockService {
         if (other.mode === "bundle" && other.bundle === entry.bundle) Object.assign(other, clone({ hp_hz: entry.hp_hz, lp_hz: entry.lp_hz, hp_type: entry.hp_type, lp_type: entry.lp_type, peq: entry.peq }));
       }
     };
+    const refusal = rcEditRefusal(settings, edit);
+    if (refusal) throw new MockError(refusal);
     switch (edit.kind) {
       case "mode": settings.mode = edit.mode; break;
       case "sample_rate_policy": settings.sample_rate_policy = edit.policy; break;
       case "low_protect": settings.low_protect = edit.on; break;
       case "ultra_ms": settings.ultra_ms = clamp(edit.ms, LIMITS.ultra_ms); break;
-      case "rc_lo": settings.rc_lo = clamp(edit.hz, LIMITS.rc_lo); break;
-      case "rc_hi": settings.rc_hi = edit.hz === null ? null : clamp(edit.hz, LIMITS.rc_hi); break;
+      case "rc_lo": settings.rc_lo = edit.hz; break;
+      case "rc_hi": settings.rc_hi = edit.hz; break;
+      case "rc_bands": settings.rc_bands = edit.bands.map((band) => ({ ...band })).sort((a, b) => a.lo_hz - b.lo_hz); break;
       case "rc_hi_basis": settings.rc_hi_basis = edit.basis; break;
       case "rc_hi_transition":
         if (edit.factor !== 1 && edit.factor !== 2 && edit.factor !== 4) throw new MockError(ipcError("invalid_request", "RC transition factor must be 1, 2 or 4", { field: "rc_hi_transition" }));
@@ -703,6 +757,8 @@ export function createMockService(options: MockOptions = {}): MockService {
     return { tab: params.tab, grid: [...fx.curveGrid], curves,
       axes: { frequency_hz: [5, params.tab === "ba" ? 300 : params.tab === "xo" ? 500 : 20000], value: params.tab === "gd" ? [-10, 90] : [-30, 15], unit: params.tab === "gd" ? "ms" : "db" },
       stale: results.calibration?.stale ?? false, subs_only: subsOnly, rc_band_hz: [settings.rc_lo, settings.rc_hi],
+      // The extra bands (ADR 0024) where the graph shows the RC band.
+      rc_bands_hz: params.tab === "spl" || params.tab === "gd" ? settings.rc_bands.map((band) => [band.lo_hz, band.hi_hz] as [number, number]) : [],
       xo_hz: params.tab === "xo" ? params.xo_hz ?? settings.xo[params.group ?? fx.GROUP_KEYS[fx.groupOf(role)]!] ?? 80 : null };
   };
 
@@ -874,7 +930,7 @@ export function createMockService(options: MockOptions = {}): MockService {
           const spec = fx.modeSpec(captured.mode);
           summary.latency_ms = spec.max_latency_ms;
           summary.verdict.added_delay_ms = spec.max_latency_ms;
-          summary.notes = [rcLimitNote(captured, positions), ...mockLowProtectNotes(captured, config.speakers.map((s) => s.role))];
+          summary.notes = [rcLimitNote(captured, positions), ...mockRcBandsNotes(captured, positions), ...mockLowProtectNotes(captured, config.speakers.map((s) => s.role))];
           summary.scorecard = roles.map((role) => ({ ...clone(fx.scorecard.find((score) => score.role === role) ?? fx.scorecard[0]!), role }));
           summary.late_energy = fx.lateEnergy(roles, needProject().positions);
           summary.main_roles = roles;

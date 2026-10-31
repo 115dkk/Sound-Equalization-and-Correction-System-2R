@@ -454,6 +454,77 @@ fn measurement_curves_use_the_corrected_ir() {
 }
 
 #[test]
+fn result_curves_use_stored_then_run_extra_rc_bands() {
+    use secs_types::calibration::RcBand;
+
+    let root = root("rc-bands");
+    let (path, mut run_settings) = case_project::write(&root, "room");
+    let service = Service::new(Deps::default());
+    open(&service, &path);
+
+    let Response::CalibrationSettingsGet(mut stored) =
+        call(&service, Request::CalibrationSettingsGet)
+    else {
+        panic!()
+    };
+    stored.rc_bands = vec![RcBand {
+        lo_hz: 15_000.0,
+        hi_hz: 20_000.0,
+    }];
+    call(
+        &service,
+        Request::CalibrationSettingsSet(CalibrationSettingsParams { settings: stored }),
+    );
+    assert_eq!(
+        graph(&service, ResultTab::Spl, None).rc_bands_hz,
+        [(15_000.0, 20_000.0)]
+    );
+    assert!(graph(&service, ResultTab::Xo, None).rc_bands_hz.is_empty());
+
+    // A request carries its own settings past the edit checks: the run keeps
+    // only the bands the engine uses (ADR 0024).
+    run_settings.rc_bands = vec![
+        RcBand {
+            lo_hz: 10_000.0,
+            hi_hz: 12_000.0,
+        },
+        RcBand {
+            lo_hz: 5.0,
+            hi_hz: 30.0,
+        },
+        RcBand {
+            lo_hz: 1_000.0,
+            hi_hz: 2_000.0,
+        },
+        RcBand {
+            lo_hz: 3_000.0,
+            hi_hz: 2_500.0,
+        },
+    ];
+    let events = Arc::new(Events::default());
+    let Envelope::Ok(response) = service.call(
+        Request::Calibrate(CalibrateParams {
+            settings: Some(run_settings),
+            ..Default::default()
+        }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    let Response::Calibrate(started) = *response else {
+        panic!()
+    };
+    events.wait(started.job);
+    for tab in [ResultTab::Spl, ResultTab::Gd] {
+        assert_eq!(
+            graph(&service, tab, None).rc_bands_hz,
+            [(1_000.0, 2_000.0), (10_000.0, 12_000.0)]
+        );
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn result_curves_lines_take_values_and_staleness() {
     let name = "room_dba";
     let root = root("results");
