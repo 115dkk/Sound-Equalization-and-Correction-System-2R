@@ -1940,6 +1940,22 @@ status = "implemented"
 tests = ["secs-service::stored_export_folder_survives_save_and_open"]
 
 [[feature]]
+id = "engine.lf_align"
+kind = "engine"
+milestone = "M5"
+status = "implemented"
+upstream = "none (ADR 0025)"
+tests = ["secs-engine::lf_align_aligns_lf_total_gd_to_hf", "secs-engine::lf_align_common_arrival_across_mains", "secs-engine::lf_align_pull_limit_holds", "secs-engine::lf_align_zero_mode_and_off_are_unchanged", "secs-engine::lf_align_mixed_mode_reports_limited", "secs-engine::lf_align_empty_band_reports_limited_without_arrival"]
+
+[[feature]]
+id = "engine.mode_decay"
+kind = "engine"
+milestone = "M5"
+status = "implemented"
+upstream = "none (ADR 0025)"
+tests = ["secs-engine::mode_decay_refines_frequency_and_decay_and_rejects_sidelobes", "secs-engine::mode_decay_cut_matches_pole_replacement", "secs-engine::mode_decay_shortens_a_long_mode", "secs-engine::mode_decay_survives_a_misplaced_estimate", "secs-engine::mode_decay_zero_mode_carries_the_cut", "secs-engine::mode_decay_off_is_unchanged", "secs-engine::mode_decay_empty_modes_still_reports_target"]
+
+[[feature]]
 id = "engine.rc_bands"
 kind = "engine"
 milestone = "M5"
@@ -2027,6 +2043,30 @@ milestone = "M5"
 status = "implemented"
 upstream = "new; project set --low-protect on|off"
 tests = ["secs2r-cli::project_set_persists_low_protect_switch"]
+
+[[feature]]
+id = "calibration.edit_lf_align"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "new; ADR 0025, calibration_settings_edit LfAlign"
+tests = ["secs-service::lf_align_and_mode_decay_edits_persist_and_mark_results_stale", "secs-service::lf_align_notices_include_outcome_and_optional_arrival"]
+
+[[feature]]
+id = "calibration.edit_mode_decay"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "new; ADR 0025, calibration_settings_edit ModeDecay"
+tests = ["secs-service::lf_align_and_mode_decay_edits_persist_and_mark_results_stale", "secs-service::mode_decay_notices_expand_modes_and_report_empty_result"]
+
+[[feature]]
+id = "cli.lf_align"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "new; project set --lf-align on|off and --mode-decay on|off"
+tests = ["secs2r-cli::project_set_persists_lf_align_and_mode_decay_switches"]
 
 [[feature]]
 id = "apply.camilla_ws"

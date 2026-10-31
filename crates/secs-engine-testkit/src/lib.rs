@@ -150,6 +150,8 @@ pub fn load_fixture(fx: &Fixture) -> Case {
         rc_hi_basis: secs_types::calibration::RcHiBasis::Strict,
         rc_hi_transition: 1,
         low_protect: false,
+        lf_align: false,
+        mode_decay: false,
         phase_frac: number(&v["phase_frac"]),
         sub_manual: pairs(&v["sub_manual"])
             .map(|(r, m)| (r.to_owned(), manual(m)))

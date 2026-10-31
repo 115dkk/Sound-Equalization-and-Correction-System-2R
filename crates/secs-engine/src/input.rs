@@ -183,6 +183,10 @@ pub struct EngineConfig {
     pub rc_bands: Vec<(f64, f64)>,
     /// Protect measured low-frequency rolloff (ADR 0022), off by default.
     pub low_protect: bool,
+    /// Common LF arrival for the mains (ADR 0025), off by default.
+    pub lf_align: bool,
+    /// Pole-replacing cuts for long modes (ADR 0025), off by default.
+    pub mode_decay: bool,
     /// Room volume in m³, for the Schroeder frequency.
     pub room_volume_m3: Option<f64>,
     /// Automatic upper-limit evidence; ignored for a manual RC range.

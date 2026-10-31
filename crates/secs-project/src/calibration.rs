@@ -24,6 +24,8 @@ pub(crate) static CALIBRATION_SHAPE: Shape = Shape::Record {
     optional: &[
         "sample_rate_policy",
         "low_protect",
+        "lf_align",
+        "mode_decay",
         "rc_hi_basis",
         "rc_hi_transition",
         "rc_bands",
@@ -64,6 +66,8 @@ pub fn calibration_from_project(project: &Project) -> CalibrationSettings {
         _ => SampleRatePolicy::Reject,
     };
     out.low_protect = get("low_protect").is_some_and(PyJson::is_truthy);
+    out.lf_align = get("lf_align").is_some_and(PyJson::is_truthy);
+    out.mode_decay = get("mode_decay").is_some_and(PyJson::is_truthy);
     out.rc_lo = num(get("rc_lo"), RC_LO_READ.0, RC_LO_READ.1).unwrap_or(20.0);
     out.rc_hi = num(
         get("rc_hi"),
@@ -227,6 +231,12 @@ fn calibration_json(settings: &CalibrationSettings) -> PyJson {
     }
     if settings.low_protect {
         values.push(("low_protect".into(), PyJson::Bool(true)));
+    }
+    if settings.lf_align {
+        values.push(("lf_align".into(), PyJson::Bool(true)));
+    }
+    if settings.mode_decay {
+        values.push(("mode_decay".into(), PyJson::Bool(true)));
     }
     if settings.rc_hi_basis != RcHiBasis::Strict {
         values.push((

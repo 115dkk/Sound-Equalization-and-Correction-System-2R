@@ -131,6 +131,9 @@ const STATES: Record<string, CalibrateView> = {
   mimoBehindCorrection: fx.mimoBehindCorrectionView,
   lowProtect: fx.lowProtectViews.on,
   lowProtectUnheld: fx.lowProtectViews.unheld,
+  lfOn: fx.lfViews.on,
+  lfMixed: fx.lfViews.mixed,
+  lfZero: fx.lfViews.zero,
 };
 
 describe("보정 screen", () => {
@@ -1219,6 +1222,102 @@ describe("극저역 보호 (ADR 0022)", () => {
     setup(fx.lowProtectViews.off, { initial: { rangeAdvanced: true, notesOpen: true } });
     expect(must("calibrate.range.low_protect").getAttribute("aria-checked")).toBe("false");
     expect((must("calibrate.verdict.notes") as HTMLDetailsElement).open).toBe(true);
+  });
+});
+
+/* ── 저음 도착 맞추기, 방 울림 줄이기 (ADR 0025) ─────────────────────────── */
+
+describe("저음 도착 맞추기 and 방 울림 줄이기 (ADR 0025)", () => {
+  it("draws its own card between BA and MIMO, outside any 고급, both off by default, and sends each edit", () => {
+    const actions = setup(fx.lfViews.off);
+    const card = must("calibrate.settings.lf");
+    expect(within(card).getByRole("heading").textContent).toBe("저음 도착과 울림");
+    expect(must("calibrate.settings.ba").compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(card.compareDocumentPosition(must("calibrate.settings.mimo")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Found without opening any 고급, and not inside one.
+    const align = within(card).getByRole("switch", { name: "저음 도착 맞추기" });
+    const decay = within(card).getByRole("switch", { name: "방 울림 줄이기" });
+    expect(align.getAttribute("data-ui")).toBe("calibrate.lf_align");
+    expect(decay.getAttribute("data-ui")).toBe("calibrate.mode_decay");
+    for (const toggle of [align, decay]) {
+      expect(toggle.closest(".ui-advanced")).toBeNull();
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
+      expect((toggle as HTMLButtonElement).disabled).toBe(false);
+    }
+    expect(ui("calibrate.lf_align.help")).not.toBeNull();
+    expect(ui("calibrate.mode_decay.help")).not.toBeNull();
+    expect(ui("calibrate.lf_align.unavailable")).toBeNull();
+    expect(ui("calibrate.lf_align.partial")).toBeNull();
+    fireEvent.click(align);
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "lf_align", on: true });
+    fireEvent.click(decay);
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "mode_decay", on: true });
+  });
+
+  it("turns both off in 표준 mode, where the alignment is whole and nothing is said under it", () => {
+    const actions = setup(fx.lfViews.on);
+    const align = must("calibrate.lf_align");
+    expect(align.getAttribute("aria-checked")).toBe("true");
+    expect(must("calibrate.mode_decay").getAttribute("aria-checked")).toBe("true");
+    expect(align.getAttribute("aria-describedby") ?? "").not.toContain("calibrate.lf_align-hint");
+    fireEvent.click(align);
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "lf_align", on: false });
+    fireEvent.click(must("calibrate.mode_decay"));
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "mode_decay", on: false });
+  });
+
+  it("in 최소 지연 mode shows 저음 도착 맞추기 off and disabled with the reason whatever is stored, and keeps 방 울림 줄이기", () => {
+    expect(fx.lfViews.zero.settings.lf_align).toBe(true);
+    const actions = setup(fx.lfViews.zero);
+    const align = must("calibrate.lf_align") as HTMLButtonElement;
+    expect(align.getAttribute("aria-checked")).toBe("false");
+    expect(align.disabled).toBe(true);
+    expect(align.getAttribute("aria-describedby")).toContain("calibrate.lf_align-hint");
+    expect(must("calibrate.lf_align.unavailable").textContent).toBe("최소 지연 모드는 위상을 바꾸지 않아 쓸 수 없습니다.");
+    fireEvent.click(align);
+    expect(actions.changeSetting).not.toHaveBeenCalled();
+    const decay = must("calibrate.mode_decay") as HTMLButtonElement;
+    expect(decay.disabled).toBe(false);
+    expect(decay.getAttribute("aria-checked")).toBe("true");
+    cleanupAll();
+    setup(fx.lfViews.zero, { locale: "en" });
+    expect(must("calibrate.lf_align.unavailable").textContent).toBe("Not available in Minimum latency mode, which does not change phase.");
+  });
+
+  it("in 저지연 mode says under the switch, as a hint and not a warning, that it aligns only part of the way", () => {
+    setup(fx.lfViews.mixed);
+    expect(must("calibrate.lf_align").getAttribute("aria-checked")).toBe("true");
+    const hint = must("calibrate.lf_align.partial");
+    expect(hint.textContent).toBe("저지연 모드는 지연이 짧아 저음 도착을 일부만 맞춥니다.");
+    expect(hint.closest(".ui-field__hint")).not.toBeNull();
+    expect(hint.closest(".calibrate-hint--warning")).toBeNull();
+    cleanupAll();
+    // Off in 저지연 mode: nothing to say.
+    setup({ ...fx.lfViews.mixed, settings: { ...fx.lfViews.mixed.settings, lf_align: false } });
+    expect(ui("calibrate.lf_align.partial")).toBeNull();
+    cleanupAll();
+    setup(fx.lfViews.mixed, { locale: "en" });
+    expect(must("calibrate.lf_align.partial").textContent).toBe("Low latency mode has a short delay, so the bass arrival is aligned only part of the way.");
+  });
+
+  it("names both switches by their effect in English, and lists each main's lines in the notes", () => {
+    setup(fx.lfViews.on, { locale: "en" });
+    expect(must("calibrate.lf_align").textContent).toBe("Align bass arrival");
+    expect(must("calibrate.mode_decay").textContent).toBe("Shorten room ringing");
+    cleanupAll();
+    setup(fx.lfViews.on, { initial: { notesOpen: true } });
+    const lines = [...must("calibrate.verdict.notes").querySelectorAll("li")].map((li) => li.textContent ?? "");
+    expect(lines.filter((line) => line.startsWith("저음 도착 맞추기"))).toHaveLength(11);
+    expect(lines).toContain("저음 도착 맞추기(L): 위상 보정 강도 100 %, 고음과의 도착 시간 차이 −0.4 ms (+는 저음이 늦게 도착)");
+    expect(lines).toContain("방 울림 줄이기(L): 42 Hz 룸 모드의 측정 T60 0.82초, 목표 0.31초, 8.4 dB 컷");
+    expect(lines).toContain("방 울림 줄이기(Ltf): 목표 T60 0.31초, 컷을 적용할 룸 모드 없음");
+    cleanupAll();
+    // 저지연 mode notes the limit on every main; 최소 지연 mode has no alignment line.
+    setup(fx.lfViews.mixed, { initial: { notesOpen: true } });
+    expect(must("calibrate.verdict.notes").textContent).toContain("저음 도착 맞추기(L): 위상 보정 강도 50 %, 고음과의 도착 시간 차이 +2.4 ms (+는 저음이 늦게 도착), 지연·앞울림 한도로 도착을 완전히 맞추지 못함");
+    cleanupAll();
+    setup(fx.lfViews.zero, { initial: { notesOpen: true } });
+    expect(must("calibrate.verdict.notes").textContent).not.toContain("저음 도착 맞추기");
   });
 });
 

@@ -204,6 +204,21 @@ function LowProtectLines() {
   );
 }
 
+/** The 저음 도착 맞추기 and 방 울림 줄이기 lines for each case (ADR 0025). */
+function LfLines() {
+  const t = useT();
+  const number = useNumber();
+  return (
+    <Card title={t("calibrate.verdict.title")} className="calibrate-settings__card">
+      <ul className="calibrate-notes-list" data-ui="calibrate.verdict.lf.lines">
+        {fx.lfNoteCases.map((note, i) => (
+          <li key={i}>{noticeText(t, number, note)}</li>
+        ))}
+      </ul>
+    </Card>
+  );
+}
+
 export const calibrateSpecimens: SpecimenDef[] = [
   frame("empty", "no result yet: plan, position-1 preview and target", () => <CalibrateFrame view={fx.emptyView} />),
   ...Object.entries(fx.planViews).map(([name, view]) => frame(`plan-${name}`, `calculation plan: ${name}`, () => <CalibrateFrame view={view} />)),
@@ -323,6 +338,19 @@ export const calibrateSpecimens: SpecimenDef[] = [
     <CalibrateFrame view={fx.lowProtectViews.unheld} initial={{ notesOpen: true }} />
   )),
   { id: "screen.calibrate.low-protect-lines", title: "보정 · the 극저역 보호 line for a sub's high-pass, a sub keeping the user's, a main, and the bus warning", width: 720, render: () => <LowProtectLines /> },
+  // 저음 도착 맞추기 and 방 울림 줄이기 (ADR 0025): a card of their own between BA and MIMO, never under 고급.
+  frame("lf-off", "저음 도착과 울림 off (the default): its card between BA and MIMO", () => <CalibrateFrame view={fx.lfViews.off} scrollTo="calibrate.settings.lf" />),
+  frame("lf-on", "저음 도착 맞추기 and 방 울림 줄이기 on in 표준 mode", () => <CalibrateFrame view={fx.lfViews.on} scrollTo="calibrate.settings.lf" />),
+  frame("lf-mixed", "저음 도착 맞추기 on in 저지연 mode: it aligns only part of the way, said under the switch", () => (
+    <CalibrateFrame view={fx.lfViews.mixed} scrollTo="calibrate.settings.lf" />
+  )),
+  frame("lf-zero", "최소 지연 mode with both stored on: 저음 도착 맞추기 off with the reason, 방 울림 줄이기 still on", () => (
+    <CalibrateFrame view={fx.lfViews.zero} scrollTo="calibrate.settings.lf" />
+  )),
+  frame("lf-result", "both on in 표준 mode: the notes open, a 저음 도착 line and the cut modes for each main", () => (
+    <CalibrateFrame view={fx.lfViews.on} initial={{ notesOpen: true }} scrollTo="calibrate.verdict.notes" />
+  )),
+  { id: "screen.calibrate.lf-lines", title: "보정 · the 저음 도착 맞추기 and 방 울림 줄이기 lines: aligned, held by the limit, not measured, cut modes, nothing to cut", width: 720, render: () => <LfLines /> },
   frame("tutorial", "tutorial accent", () => (
     <Scoped tutorial>
       <CalibrateFrame view={fx.splView} fileName="튜토리얼.secs" />

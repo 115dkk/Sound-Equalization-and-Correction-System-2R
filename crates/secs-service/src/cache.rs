@@ -19,6 +19,11 @@ pub(crate) struct CachedRunLabels {
     pub rc_hi_hz: f64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rc_bands: Vec<RcBand>,
+    /// The run's ADR 0025 switches, for the export text of a reopened result.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub lf_align: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub mode_decay: bool,
     pub mimo_max_supports: usize,
 }
 // New FIR runs retain only their design-rate coefficients. Keep the historical
@@ -285,6 +290,8 @@ mod tests {
                 latency_ms: 4.0,
                 rc_hi_hz: 300.0,
                 rc_bands: Vec::new(),
+                lf_align: false,
+                mode_decay: false,
                 mimo_max_supports: 0,
             },
             mimo_paths: None,

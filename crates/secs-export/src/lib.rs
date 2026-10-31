@@ -14,7 +14,7 @@ use secs_engine::{
 };
 use secs_mdat::{MdatError, MeasurementInput, SourceInfo, TEMPLATE};
 use secs_types::{
-    calibration::{CalibrationSettings, RcBand},
+    calibration::{CalibrationSettings, Mode, RcBand},
     chain::{MimoPaths, SubChannel},
 };
 
@@ -106,6 +106,13 @@ pub enum ExportError {
 
 fn chain_text(run: &ExportRun<'_>) -> String {
     let peq = run.design.replay.config().peq_bands.unwrap_or(16);
+    // The fitted budget; mode_decay puts its cuts beside it (ADR 0025), so
+    // the per-channel count printed later can be larger.
+    let peq = if run.design.replay.config().mode_decay {
+        format!("{peq} + 울림 컷")
+    } else {
+        peq.to_string()
+    };
     if run.design.replay.config().taps > 0 {
         format!(
             "PEQ {peq} + FIR {}",
@@ -238,14 +245,16 @@ pub fn sub_values_text(run: &ExportRun<'_>) -> String {
 }
 
 pub fn rc_pieces(run: &ExportRun<'_>) -> Vec<String> {
-    rc_pieces_from_values_with_bands(
+    let mut pieces = rc_pieces_from_values_with_bands(
         run.design.rc_hi,
         run.design.rc_auto,
         run.design.schroeder_hz,
         run.settings.room_volume_m3,
         false,
         &run.settings.rc_bands,
-    )
+    );
+    pieces.extend(lf_correction_pieces(run.settings));
+    pieces
 }
 
 /// Builds the upstream RC note fragments from cached scalar values.
@@ -325,6 +334,19 @@ fn rc_bands_piece(rc_bands: &[RcBand]) -> Option<String> {
                 .join(", ")
         )
     })
+}
+
+/// Export-text pieces for the ADR 0025 switches. Zero mode has no FIR, so
+/// the engine skips `lf_align` there and the text does too.
+pub fn lf_correction_pieces(settings: &CalibrationSettings) -> Vec<String> {
+    let mut pieces = Vec::new();
+    if settings.lf_align && settings.mode != Mode::Zero {
+        pieces.push("저음 도착 맞춤".into());
+    }
+    if settings.mode_decay {
+        pieces.push("방 울림 줄임".into());
+    }
+    pieces
 }
 
 pub fn sub_filter_warnings(settings: &CalibrationSettings, roles: &[String]) -> Vec<SubWarning> {
@@ -434,14 +456,20 @@ fn stage_items_with_mimo(
             ));
         }
         add_xo_items(run, &mut items, seq, main.role.as_str(), &prefix, &stages);
-        let rc_bands = rc_bands_piece(&run.settings.rc_bands)
-            .map(|piece| format!(" · {piece}"))
-            .unwrap_or_default();
+        let mut correction_pieces = lf_correction_pieces(run.settings);
+        if let Some(piece) = rc_bands_piece(&run.settings.rc_bands) {
+            correction_pieces.insert(0, piece);
+        }
+        let correction_pieces = if correction_pieces.is_empty() {
+            String::new()
+        } else {
+            format!(" · {}", correction_pieces.join(" · "))
+        };
         items.push(item(
             run.design,
             format!("{seq:02}_{}_3 합 후 보정", main.role),
             format!(
-                "{prefix}2차: 탑+서브 합에 입력 보정({}) · 전체 지연 {} ms(시작 시각에서 뺌) · RC 상한 {} Hz{rc_bands}",
+                "{prefix}2차: 탑+서브 합에 입력 보정({}) · 전체 지연 {} ms(시작 시각에서 뺌) · RC 상한 {} Hz{correction_pieces}",
                 chain_text(run),
                 format_fixed(run.design.chain.latency_ms, 1, false),
                 format_fixed(run.design.rc_hi, 0, false)
@@ -1006,6 +1034,20 @@ mod tests {
                 "RC 추가 구간 1000–2000, 15000–20000 Hz"
             ]
         );
+        let settings = CalibrationSettings {
+            lf_align: true,
+            mode_decay: true,
+            ..Default::default()
+        };
+        assert_eq!(
+            lf_correction_pieces(&settings),
+            ["저음 도착 맞춤", "방 울림 줄임"]
+        );
+        let zero = CalibrationSettings {
+            mode: Mode::Zero,
+            ..settings
+        };
+        assert_eq!(lf_correction_pieces(&zero), ["방 울림 줄임"]);
     }
 
     #[test]

@@ -197,6 +197,12 @@ enum ProjectAction {
         /// Prevent boosts below measured rolloff and protect sub outputs.
         #[arg(long, value_enum)]
         low_protect: Option<Switch>,
+        /// Align bass arrival across main channels.
+        #[arg(long, value_enum)]
+        lf_align: Option<Switch>,
+        /// Shorten long room-mode ringing with corrective cuts.
+        #[arg(long, value_enum)]
+        mode_decay: Option<Switch>,
         /// MIMO supports as FIR or as IIR (PEQ and all-pass) filters.
         #[arg(long, value_enum)]
         mimo_supports: Option<SupportKind>,
@@ -636,6 +642,8 @@ fn run(action: Action, runner: &mut Runner) {
                 mimo,
                 mimo_supports,
                 low_protect,
+                lf_align,
+                mode_decay,
                 peq_derivatives,
                 mimo_iir_derivatives,
                 rc_bands,
@@ -663,6 +671,16 @@ fn run(action: Action, runner: &mut Runner) {
                 }
                 if let Some(value) = low_protect {
                     edits.push(SettingEdit::LowProtect {
+                        on: matches!(value, Switch::On),
+                    });
+                }
+                if let Some(value) = lf_align {
+                    edits.push(SettingEdit::LfAlign {
+                        on: matches!(value, Switch::On),
+                    });
+                }
+                if let Some(value) = mode_decay {
+                    edits.push(SettingEdit::ModeDecay {
                         on: matches!(value, Switch::On),
                     });
                 }

@@ -367,6 +367,8 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
         SettingEdit::SampleRatePolicy { policy } => s.sample_rate_policy = policy,
         SettingEdit::UltraMs { ms } => s.ultra_ms = ms.clamp(LIMITS.ultra_ms.0, LIMITS.ultra_ms.1),
         SettingEdit::LowProtect { on } => s.low_protect = on,
+        SettingEdit::LfAlign { on } => s.lf_align = on,
+        SettingEdit::ModeDecay { on } => s.mode_decay = on,
         SettingEdit::RcLo { hz } => s.rc_lo = hz,
         SettingEdit::RcHi { hz } => s.rc_hi = hz,
         SettingEdit::RcHiBasis { basis } => s.rc_hi_basis = basis,

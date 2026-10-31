@@ -165,6 +165,8 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
   const hz = (value: string | undefined) => `${number(num(value))} Hz`;
   const params: MessageParams = {};
   let key: string = `notice.${notice.code}`;
+  /** A phrase that follows the note's own after a comma (lf_align's pull limit). */
+  let after: MessageKey | null = null;
   switch (notice.code) {
     case "measurement_resampled":
       if (num(p.count) === 1) key = "notice.measurement_resampled.one";
@@ -186,6 +188,31 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
       params.bands = valid ? bands.map(([lo, hi]) => t("notice.rc_bands.band", { lo: number(lo!), hi: number(hi!) })).join(", ") : (p.bands ?? "");
       break;
     }
+    case "lf_align": {
+      // One per main (ADR 0025): the phase correction strength (0–1) as a percentage, the bass arrival left
+      // against the treble when the engine could measure it (positive is later), and the pull limit when it cut the correction.
+      const strength = num(p.strength);
+      Object.assign(params, { role: code(), strength: Number.isFinite(strength) ? t("calibrate.unit.percent", { value: number(strength * 100) }) : (p.strength ?? "") });
+      if (p.arrival_ms !== undefined) params.arrival = signed("arrival_ms", 1);
+      else key = "notice.lf_align.no_arrival";
+      if (p.limited === "true") after = "notice.lf_align.limited";
+      break;
+    }
+    case "mode_decay": {
+      // One per cut mode (ADR 0025). The depth reads as a size: the sentence says it is a cut.
+      const depth = num(p.depth_db);
+      Object.assign(params, {
+        role: code(),
+        hz: f("hz"),
+        t60_s: f("t60_s", 2),
+        target_s: f("target_s", 2),
+        depth_db: Number.isFinite(depth) ? number(Math.abs(depth), 1) : (p.depth_db ?? ""),
+      });
+      break;
+    }
+    case "mode_decay_none":
+      Object.assign(params, { role: code(), target_s: f("target_s", 2) });
+      break;
     case "sub_narrow_band":
       Object.assign(params, { code: code(), hp_hz: f("hp_hz"), lp_hz: f("lp_hz") });
       break;
@@ -265,7 +292,9 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
       } else key = "notice.low_protect";
       break;
   }
-  return isMessageKey(key) ? t(key, params) : null;
+  if (!isMessageKey(key)) return null;
+  const text = t(key, params);
+  return after ? `${text}, ${t(after)}` : text;
 }
 
 /**

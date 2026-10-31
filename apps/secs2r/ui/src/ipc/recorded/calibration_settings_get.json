@@ -5,6 +5,8 @@
       "mode": "mixed",
       "sample_rate_policy": "reject",
       "low_protect": false,
+      "lf_align": false,
+      "mode_decay": false,
       "rc_lo": 20.0,
       "rc_hi": null,
       "rc_hi_basis": "strict",
