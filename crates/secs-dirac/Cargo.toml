@@ -1,7 +1,7 @@
 [package]
 name = "secs-dirac"
 description = "Bounded reader for measured impulse responses in Dirac Live projects."
-version = "0.11.0"
+version = "0.11.1"
 edition.workspace = true
 rust-version.workspace = true
 license = "AGPL-3.0-only"
