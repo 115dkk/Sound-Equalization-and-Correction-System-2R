@@ -30,6 +30,18 @@ pub struct RcInput<'a> {
     pub positions: &'a [u32],
 }
 #[derive(Debug, Clone)]
+pub struct LfAlignOutcome {
+    pub f_lin: f64,
+    pub strength: f64,
+    pub arrival_ms: Option<f64>,
+    pub limited: bool,
+}
+#[derive(Debug, Clone)]
+pub struct ModeDecayOutcome {
+    pub target_t60_s: f64,
+    pub modes: Vec<(f64, f64, f64)>,
+}
+#[derive(Debug, Clone)]
 pub struct RcOutput {
     pub fir: Vec<f64>,
     pub response: Vec<C>,
@@ -38,6 +50,8 @@ pub struct RcOutput {
     pub phase_band: Option<f64>,
     pub design_db: Vec<f64>,
     pub notes: Vec<Note>,
+    pub lf_align: Option<LfAlignOutcome>,
+    pub mode_decay: Option<ModeDecayOutcome>,
 }
 pub struct ChannelRc {
     pub out: RcOutput,
@@ -297,11 +311,11 @@ fn no_boost_mask(input: &RcInput<'_>) -> Vec<bool> {
     }
     mask
 }
-fn long_mode_mask(input: &RcInput<'_>, notes: &mut Vec<Note>) -> Vec<bool> {
+fn long_modes(input: &RcInput<'_>) -> Vec<(f64, f64)> {
     let f = design_freqs();
     let x = lowrate::to_low(main_response(input), f, 300).expect("low-rate grid");
     let bands = band_set(input.setup.rc_lo, input.setup.rc_hi, &input.setup.rc_bands);
-    let modes: Vec<_> = decay::late_peaks(&[&x], 8)
+    decay::late_peaks(&[&x], 8)
         .into_iter()
         .filter(|&p| p <= 160.0 && in_bands(p, &bands))
         .filter_map(|p| {
@@ -309,13 +323,16 @@ fn long_mode_mask(input: &RcInput<'_>, notes: &mut Vec<Note>) -> Vec<bool> {
                 .filter(|t| *t != 0.0)
                 .map(|t| (p, t))
         })
-        .collect();
+        .collect()
+}
+fn long_mode_mask(modes: &[(f64, f64)], notes: &mut Vec<Note>, cap_db: f64) -> Vec<bool> {
+    let f = design_freqs();
     let mut mask = vec![false; BINS];
     if modes.len() < 2 {
         return mask;
     }
     let threshold = (1.3 * decay::median(&modes.iter().map(|v| v.1).collect::<Vec<_>>())).max(0.3);
-    let mut selected: Vec<_> = modes.into_iter().filter(|v| v.1 >= threshold).collect();
+    let mut selected: Vec<_> = modes.iter().copied().filter(|v| v.1 >= threshold).collect();
     let width = 2_f64.powf(1.0 / 24.0);
     for &(p, _) in &selected {
         for (m, &f) in mask.iter_mut().zip(f) {
@@ -325,7 +342,7 @@ fn long_mode_mask(input: &RcInput<'_>, notes: &mut Vec<Note>) -> Vec<bool> {
     if mask.iter().any(|m| *m) {
         selected.sort_by(|a, b| a.0.total_cmp(&b.0));
         notes.push(Note::LongModeBoost {
-            cap_db: input.tuning.long_boost_db,
+            cap_db,
             modes: selected,
         });
     }
@@ -415,11 +432,141 @@ fn truncate(spec: &[C], taps: usize) -> (Vec<f64>, Vec<C>) {
     let f = measurement::spectrum(&h);
     (h, f)
 }
+/// ADR 0025 pole replacement in the engine's RBJ peaking form.
+pub(crate) fn decay_cut(
+    f0: f64,
+    t60_m: f64,
+    t60_t: f64,
+    height_db: f64,
+    long_boost_db: f64,
+) -> Option<Peq> {
+    if ![f0, t60_m, t60_t, height_db, long_boost_db]
+        .iter()
+        .all(|v| v.is_finite())
+        || f0 <= 0.0
+        || t60_t <= 0.0
+        || t60_m <= 1.5 * t60_t
+    {
+        return None;
+    }
+    let depth = 12_f64
+        .min(20.0 * (t60_m / t60_t).log10())
+        .min(height_db.max(0.0) + long_boost_db);
+    (depth >= 1.0).then(|| {
+        (
+            f0,
+            10_f64.powf(-depth / 40.0) * PI * f0 * t60_m / 6.91,
+            -depth,
+        )
+    })
+}
+
+/// Refine a low-rate peak without changing the legacy long-mode mask.
+pub(crate) fn refine_mode(main: &[C], p: f64) -> Option<(f64, f64)> {
+    let f = design_freqs();
+    let lo = f.partition_point(|&f| f < p - 3.0);
+    let hi = f.partition_point(|&f| f <= p + 3.0);
+    if hi <= lo + 2 || main.len() != f.len() {
+        return None;
+    }
+    let power: Vec<_> = main[lo..hi].iter().map(|&h| magnitude(h)).collect();
+    let peak = lo + decay::first_max(&power);
+    if peak == lo || peak + 1 == hi {
+        return None;
+    }
+    let [left, middle, right] = [main[peak - 1], main[peak], main[peak + 1]].map(db);
+    let curvature = left - 2.0 * middle + right;
+    if !curvature.is_finite() || curvature >= 0.0 || middle <= left || middle <= right {
+        return None;
+    }
+    let offset = 0.5 * (left - right) / curvature;
+    let hz = f[peak] + offset * (f[peak + 1] - f[peak]);
+    let low = lowrate::to_low(main, f, 1200).ok()?;
+    let t60 = decay::mode_t60(&low, 600.0, hz, 1.5)?;
+    (t60.is_finite() && t60 > 0.0).then_some((hz, t60))
+}
+
+fn mode_decay_cuts(
+    input: &RcInput<'_>,
+    modes: &[(f64, f64)],
+    sm: &[f64],
+    target: &[f64],
+) -> (Vec<Peq>, ModeDecayOutcome) {
+    let ir = fft::irfft(main_response(input), N_FFT);
+    let times: Vec<_> = [200.0, 250.0, 315.0, 400.0, 500.0]
+        .into_iter()
+        .filter_map(|fc| decay::mode_t60(&ir, SR_F, fc, 0.115 * fc))
+        .collect();
+    let target_t60_s = if times.is_empty() {
+        0.25
+    } else {
+        decay::median(&times).max(0.25)
+    };
+    let mut refined: Vec<_> = modes
+        .iter()
+        .filter_map(|&(hz, _)| refine_mode(main_response(input), hz))
+        .collect();
+    refined.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut modes: Vec<(f64, f64)> = Vec::new();
+    let mut previous = f64::NEG_INFINITY;
+    for mode in refined {
+        if mode.0 - previous <= 1.5 {
+            let last = modes.last_mut().expect("preceding refined mode");
+            if mode.1 > last.1 {
+                *last = mode;
+            }
+        } else {
+            modes.push(mode);
+        }
+        previous = mode.0;
+    }
+    modes.sort_by(|a, b| b.1.total_cmp(&a.1));
+    let mut selected = Vec::new();
+    let cuts = modes
+        .into_iter()
+        .filter_map(|(hz, t60)| {
+            let height = interp(hz, design_freqs(), sm)
+                - interp(hz, design_freqs(), target)
+                - input.level_db;
+            let cut = decay_cut(hz, t60, target_t60_s, height, input.tuning.long_boost_db)?;
+            selected.push((hz, t60, -cut.2));
+            Some(cut)
+        })
+        .take(4)
+        .collect();
+    (
+        cuts,
+        ModeDecayOutcome {
+            target_t60_s,
+            modes: selected,
+        },
+    )
+}
+
+pub(crate) fn lf_pull(e: f64, lift: f64, frac: f64, f: f64, b: f64) -> f64 {
+    let upper = if f > 0.0 {
+        (1.0 - b) * lift * frac + b * (lift * frac).min(1.5 / f)
+    } else {
+        lift * frac
+    };
+    e.clamp(-0.005, upper)
+}
+
+fn lf_weight(f: f64, f_lin: f64) -> f64 {
+    if f_lin >= 200.0 || f <= 0.0 {
+        return 0.0;
+    }
+    let below = (2.0 * (f / f_lin).log2() + 1.0).clamp(0.0, 1.0);
+    let above = (1.0 - 2.0 * (f / 200.0).log2()).clamp(0.0, 1.0);
+    0.5 * (1.0 - (PI * below).cos()) * 0.5 * (1.0 - (PI * above).cos())
+}
+
 struct Realizer<'a> {
     excess: &'a [f64],
     band: &'a [bool],
     lift: f64,
     taps: usize,
+    beta: Option<&'a [f64]>,
 }
 impl Realizer<'_> {
     fn realize(&self, frac: f64, m: &[C]) -> (Vec<f64>, Vec<C>, f64, f64) {
@@ -427,8 +574,14 @@ impl Realizer<'_> {
         let spec: Vec<_> = m
             .iter()
             .zip(self.excess)
-            .map(|(&m, &e)| {
-                sum += self.lift - e.clamp(-0.005, self.lift * frac);
+            .enumerate()
+            .map(|(i, (&m, &e))| {
+                let applied = if let Some(beta) = self.beta {
+                    lf_pull(e, self.lift, frac, design_freqs()[i], beta[i])
+                } else {
+                    e.clamp(-0.005, self.lift * frac)
+                };
+                sum += self.lift - applied;
                 m * C::from_polar(1.0, -2.0 * PI * sum * design_freqs()[1])
             })
             .collect();
@@ -472,6 +625,18 @@ struct FirPreparation {
     lo_fir: f64,
     design_db: Vec<f64>,
     notes: Vec<Note>,
+    lf: Option<LfPreparation>,
+    cuts: Vec<Peq>,
+    dr: Option<Vec<C>>,
+    mode_decay: Option<ModeDecayOutcome>,
+}
+
+struct LfPreparation {
+    ut: Vec<C>,
+    lm: Vec<bool>,
+    beta: Vec<f64>,
+    target: Vec<f64>,
+    f_lin: f64,
 }
 
 enum RcPreparation {
@@ -518,10 +683,39 @@ fn prepare_correction(
     for (p, w) in power.iter_mut().zip(total) {
         *p /= w;
     }
-    let sm = smoothed_db(&power);
+    let mut sm = smoothed_db(&power);
+    let modes = long_modes(input);
     let target = c
         .target
         .sample(&f.iter().map(|v| v.max(1.0)).collect::<Vec<_>>());
+    let (cuts, mode_decay) = if s.mode_decay {
+        let (cuts, outcome) = mode_decay_cuts(input, &modes, &sm, &target);
+        (cuts, Some(outcome))
+    } else {
+        (Vec::new(), None)
+    };
+    let dr = s.mode_decay.then(|| response::peq_response(f, &cuts));
+    if let Some(dr) = &dr {
+        // Apply the cut before each position's weighted power sum.
+        power.fill(0.0);
+        let mut total = vec![0.0; BINS];
+        for (pos, h) in input.comb {
+            let w = &weights[input
+                .positions
+                .iter()
+                .position(|p| p == pos)
+                .expect("engine position")];
+            for i in 0..BINS {
+                let m = magnitude(h[i] * dr[i]);
+                power[i] += w[i] * (m * m);
+                total[i] += w[i];
+            }
+        }
+        for (p, w) in power.iter_mut().zip(total) {
+            *p /= w;
+        }
+        sm = smoothed_db(&power);
+    }
     let mut corr: Vec<_> = (0..BINS)
         .map(|i| {
             let sm = sm[i];
@@ -547,7 +741,7 @@ fn prepare_correction(
             *masked |= f < hz;
         }
     }
-    let lm = long_mode_mask(input, &mut notes);
+    let lm = long_mode_mask(&modes, &mut notes, t.long_boost_db);
     check(cancelled)?;
     trace.no_boost = nb.clone();
     trace.long_mode = lm.clone();
@@ -556,12 +750,63 @@ fn prepare_correction(
         if nb[i] {
             corr[i] = corr[i].min(0.0);
         }
-        if lm[i] {
+        if lm[i]
+            || cuts.iter().any(|&(hz, _, _)| {
+                let width = 2_f64.powf(1.0 / 24.0);
+                f[i] >= hz / width && f[i] <= hz * width
+            })
+        {
             corr[i] = corr[i].min(t.long_boost_db);
         }
         corr[i] *= magnitude_mask(f[i], &bands);
     }
     let design_db = corr.clone();
+    let mut lf = (s.lf_align && c.taps > 0).then(|| {
+        let f_lin = crate::low_protect::rolloff(input.comb, input.main_position, None)
+            .map_or(s.rc_lo, |hz| (1.5 * hz).max(s.rc_lo));
+        let beta: Vec<_> = f
+            .iter()
+            .enumerate()
+            .map(|(i, &f)| {
+                if nb[i] || lm[i] {
+                    0.0
+                } else {
+                    lf_weight(f, f_lin)
+                }
+            })
+            .collect();
+        let beta = smooth(&beta, 6.0)
+            .into_iter()
+            .map(|b| b.clamp(0.0, 1.0))
+            .collect();
+        let predicted = minimum_phase(
+            &sm.iter()
+                .zip(&corr)
+                .map(|(s, c)| 10_f64.powf((s + c) / 20.0))
+                .collect::<Vec<_>>(),
+        )
+        .expect("magnitude");
+        let tau = smooth(&gradient(&unwrap(&predicted)), 3.0);
+        let at_lin = interp(f_lin, f, &tau);
+        let target = f
+            .iter()
+            .zip(tau)
+            .map(|(&f, tau)| {
+                if f < f_lin {
+                    (tau - at_lin).max(0.0)
+                } else {
+                    0.0
+                }
+            })
+            .collect();
+        LfPreparation {
+            ut: vec![C::new(0.0, 0.0); BINS],
+            lm: lm.clone(),
+            beta,
+            target,
+            f_lin,
+        }
+    });
     let mut peq = Vec::new();
     let mut p = vec![C::new(1.0, 0.0); BINS];
     if c.taps == 0 {
@@ -603,6 +848,13 @@ fn prepare_correction(
         if let Some(hz) = rolloff {
             crate::low_protect::clamp_centres(&mut peq, hz);
         }
+        let mut design_db = design_db;
+        if let Some(dr) = &dr {
+            for (d, &h) in design_db.iter_mut().zip(dr) {
+                *d += db(h);
+            }
+            peq.splice(0..0, cuts);
+        }
         return Ok(RcPreparation::Complete(RcOutput {
             fir: vec![1.0],
             response: response::peq_response(f, &peq),
@@ -611,6 +863,8 @@ fn prepare_correction(
             phase_band: None,
             design_db,
             notes,
+            lf_align: None,
+            mode_decay,
         }));
     }
     let g = geomspace(15.0, 20000.0, 700);
@@ -655,7 +909,11 @@ fn prepare_correction(
         check(cancelled)?;
         let w = weights[input.positions.iter().position(|p| p == pos).unwrap()];
         total += w;
-        let mut reference = multiply(&multiply(h, &p), &m);
+        let mut reference = if let Some(dr) = &dr {
+            multiply(&multiply(&multiply(h, dr), &p), &m)
+        } else {
+            multiply(&multiply(h, &p), &m)
+        };
         let ir = fft::irfft(&reference, N_FFT);
         let peak = decay::first_max(&ir.iter().map(|v| v.abs()).collect::<Vec<_>>());
         trace.peaks.push((*pos, peak));
@@ -674,12 +932,23 @@ fn prepare_correction(
         let mp = minimum_phase(&sm.iter().map(|v| v.sqrt() + 1e-12).collect::<Vec<_>>())
             .expect("magnitude");
         for i in 0..BINS {
+            if let Some(lf) = &mut lf {
+                lf.ut[i] += divide(
+                    C::new(w, 0.0) * reference[i],
+                    C::new(magnitude(reference[i]) + 1e-30, 0.0),
+                );
+            }
             let ex = divide(reference[i], mp[i] + C::new(1e-30, 0.0));
             u[i] += divide(C::new(w, 0.0) * ex, C::new(magnitude(ex) + 1e-30, 0.0));
         }
     }
     for u in &mut u {
         *u = divide(*u, C::new(total, 0.0));
+    }
+    if let Some(lf) = &mut lf {
+        for u in &mut lf.ut {
+            *u = divide(*u, C::new(total, 0.0));
+        }
     }
     Ok(RcPreparation::Fir(FirPreparation {
         peq,
@@ -691,6 +960,10 @@ fn prepare_correction(
         lo_fir,
         design_db,
         notes,
+        lf,
+        cuts,
+        dr,
+        mode_decay,
     }))
 }
 
@@ -731,11 +1004,49 @@ fn finish_correction(
         .collect();
     let reference = decay::median(&hf);
     let bands = band_set(s.rc_lo, s.rc_hi, &s.rc_bands);
+    let total_error = prepared.lf.as_ref().map(|lf| {
+        debug_assert_eq!(lf.lm.len(), BINS);
+        let total =
+            smooth::smooth_complex(f, &lf.ut, Fraction::Scalar(phase_frac)).expect("design grid");
+        let phase = unwrap(&total);
+        let tau = smooth(&gradient(&phase), 3.0);
+        let reference = decay::median(
+            &f.iter()
+                .zip(&tau)
+                .filter(|(f, _)| (3000.0..=6000.0).contains(*f))
+                .map(|(_, &t)| t)
+                .collect::<Vec<_>>(),
+        );
+        tau.iter()
+            .zip(&lf.target)
+            .enumerate()
+            .map(|(i, (t, target))| {
+                // Legacy unwrap cleans non-finite complex inputs. Preserve
+                // their invalidity here so the new term falls back instead.
+                if [lf.ut[i].re, lf.ut[i].im, total[i].re, total[i].im]
+                    .iter()
+                    .all(|v| v.is_finite())
+                {
+                    t - reference - target
+                } else {
+                    f64::NAN
+                }
+            })
+            .collect::<Vec<_>>()
+    });
     let excess: Vec<_> = f
         .iter()
         .zip(&tau)
-        .map(|(&f, &tau)| {
+        .enumerate()
+        .map(|(i, (&f, &tau))| {
             let fade = phase_fade(f, s, &bands);
+            if let (Some(lf), Some(total)) = (&prepared.lf, &total_error) {
+                let b = lf.beta[i];
+                let e = fade * ((1.0 - b) * (tau - reference) + b * total[i]);
+                if total[i].is_finite() && b.is_finite() && e.is_finite() {
+                    return e;
+                }
+            }
             (tau - reference) * fade
         })
         .collect();
@@ -745,6 +1056,7 @@ fn finish_correction(
         band: &band,
         lift: s.lift_ms / 1000.0,
         taps: c.taps,
+        beta: prepared.lf.as_ref().map(|lf| lf.beta.as_slice()),
     };
     let (mut h, mut response, rms0, max0) = realizer.realize(0.0, &m);
     trace.ladder.push((0.0, rms0, max0));
@@ -848,14 +1160,41 @@ fn finish_correction(
             m = m2;
         }
     }
+    let lf_align = prepared.lf.as_ref().map(|lf| {
+        let mut limited = lf.f_lin >= 200.0 || strength == 0.0;
+        for i in 0..BINS {
+            if lf.beta[i] >= 0.5 {
+                let applied = lf_pull(excess[i], realizer.lift, strength, f[i], lf.beta[i]);
+                limited |= excess[i] - applied > 0.001;
+            }
+        }
+        LfAlignOutcome {
+            f_lin: lf.f_lin,
+            strength,
+            // The selected channel response supplies the measured arrival.
+            arrival_ms: None,
+            limited,
+        }
+    });
+    let mut response = multiply(&response, &p);
+    let mut design_db = design_db;
+    if let Some(dr) = &prepared.dr {
+        response = multiply(&response, dr);
+        for (d, &h) in design_db.iter_mut().zip(dr) {
+            *d += db(h);
+        }
+        peq.splice(0..0, prepared.cuts.iter().copied());
+    }
     Ok(RcOutput {
         fir: h,
-        response: multiply(&response, &p),
+        response,
         peq,
         phase_strength: strength,
         phase_band: Some(strength),
         design_db,
         notes,
+        lf_align,
+        mode_decay: prepared.mode_decay.clone(),
     })
 }
 
@@ -936,6 +1275,13 @@ pub(crate) fn channel_with_cuts(
         }
         out.notes = notes;
     }
+    if let Some(mode) = &out.mode_decay {
+        out.notes.push(Note::ModeDecay {
+            role: input.role.to_owned(),
+            target_t60_s: mode.target_t60_s,
+            modes: mode.modes.clone(),
+        });
+    }
     let gd_cuts = if input.tuning.gd_cuts {
         let cuts = cuts(
             &multiply(main_response(input), &out.response),
@@ -962,6 +1308,30 @@ pub(crate) fn channel_with_cuts(
             rolloff_hz: hz,
             hp_hz: None,
             limited,
+        });
+    }
+    if let Some(lf) = &mut out.lf_align {
+        let tau = smooth(
+            &gradient(&unwrap(&multiply(main_response(input), &out.response))),
+            3.0,
+        );
+        let median = |lo: f64, hi: f64| {
+            let values: Vec<_> = design_freqs()
+                .iter()
+                .zip(&tau)
+                .filter(|(f, t)| **f >= lo && **f <= hi && t.is_finite())
+                .map(|(_, &t)| t)
+                .collect();
+            (!values.is_empty()).then(|| decay::median(&values))
+        };
+        lf.arrival_ms = median(lf.f_lin.max(40.0), 150.0)
+            .zip(median(3000.0, 6000.0))
+            .map(|(low, high)| 1000.0 * (low - high));
+        out.notes.push(Note::LfAlign {
+            role: input.role.to_owned(),
+            strength: lf.strength,
+            arrival_ms: lf.arrival_ms,
+            limited: lf.limited,
         });
     }
     let response = if gd_cuts.is_empty() {
