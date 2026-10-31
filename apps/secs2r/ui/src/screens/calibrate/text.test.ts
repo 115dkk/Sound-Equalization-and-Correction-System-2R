@@ -3,7 +3,7 @@ import { translate, type Locale } from "../../i18n";
 import type { Translate } from "../../i18n/react";
 import type { Notice } from "../../ipc/bindings/Notice";
 import { ipcError } from "../../ipc/mock";
-import { baseSettings, lowProtectNotes, rcBandsNotes, rcLimitNotes, refusedBandEdit } from "./fixtures";
+import { baseSettings, lfNoteCases, lowProtectNotes, rcBandsNotes, rcLimitNotes, refusedBandEdit } from "./fixtures";
 import { rejectionPlace, type RangeRejection } from "./settingsView";
 import { LOW_PROTECT_NEXT, lowProtectFailures, noteLines, noticeText, rangeNotices, rangeRejectionText, type FormatNumber } from "./text";
 
@@ -176,6 +176,38 @@ describe("calculation notes", () => {
     const { t } = words("ko");
     expect(t(LOW_PROTECT_NEXT)).toBe("부스트 상한을 낮추거나 RC 하한을 올린 뒤 '다시 보정하기'를 누르십시오.");
     expect(words("en").t(LOW_PROTECT_NEXT)).toBe("Lower the boost limit or raise the RC lower limit, then press 'Correct again'.");
+  });
+});
+
+describe("저음 도착 맞추기 and 방 울림 줄이기 (ADR 0025)", () => {
+  it("reads every case the service sends as a line per record, in both languages", () => {
+    expect(lines("ko", lfNoteCases)).toEqual([
+      "저음 도착 맞추기(L): 위상 보정 강도 100 %, 고음과의 도착 시간 차이 +0.4 ms (+는 저음이 늦게 도착)",
+      "저음 도착 맞추기(Ltf): 위상 보정 강도 75 %, 고음과의 도착 시간 차이 −1.2 ms (+는 저음이 늦게 도착), 지연·앞울림 한도로 도착을 완전히 맞추지 못함",
+      "저음 도착 맞추기(C): 위상 보정 강도 0 %, 지연·앞울림 한도로 도착을 완전히 맞추지 못함",
+      "방 울림 줄이기(L): 42 Hz 룸 모드의 측정 T60 0.82초, 목표 0.31초, 8.4 dB 컷",
+      "방 울림 줄이기(L): 63 Hz 룸 모드의 측정 T60 0.55초, 목표 0.31초, 4.9 dB 컷",
+      "방 울림 줄이기(Lrs): 목표 T60 0.31초, 컷을 적용할 룸 모드 없음",
+    ]);
+    expect(lines("en", lfNoteCases)).toEqual([
+      "Align bass arrival (L): phase correction strength 100%, bass arrival relative to treble +0.4 ms (+ means bass arrives later)",
+      "Align bass arrival (Ltf): phase correction strength 75%, bass arrival relative to treble −1.2 ms (+ means bass arrives later), partial alignment due to delay and pre-ringing limits",
+      "Align bass arrival (C): phase correction strength 0%, partial alignment due to delay and pre-ringing limits",
+      "Shorten room ringing (L): 42 Hz room mode measured T60 0.82 s, target 0.31 s, 8.4 dB cut",
+      "Shorten room ringing (L): 63 Hz room mode measured T60 0.55 s, target 0.31 s, 4.9 dB cut",
+      "Shorten room ringing (Lrs): target T60 0.31 s, no room mode eligible for a cut",
+    ]);
+  });
+
+  it("rounds the engine's unrounded values and reads a cut depth by its size whatever its sign", () => {
+    expect(lines("ko", [n("lf_align", { role: "R", strength: "0.6666666666666666", arrival_ms: "2.4999999999999996", limited: "false" })])).toEqual([
+      "저음 도착 맞추기(R): 위상 보정 강도 67 %, 고음과의 도착 시간 차이 +2.5 ms (+는 저음이 늦게 도착)",
+    ]);
+    // `limited` other than "true" adds nothing; a strength it cannot read is shown as sent.
+    expect(lines("en", [n("lf_align", { role: "R", strength: "x", limited: "false" })])).toEqual(["Align bass arrival (R): phase correction strength x"]);
+    expect(lines("ko", [n("mode_decay", { role: "C", hz: "51.8", t60_s: "0.6123", target_s: "0.25", depth_db: "6" })])).toEqual([
+      "방 울림 줄이기(C): 52 Hz 룸 모드의 측정 T60 0.61초, 목표 0.25초, 6.0 dB 컷",
+    ]);
   });
 });
 

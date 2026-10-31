@@ -1,9 +1,9 @@
 import { HelpTip } from "../../ui/HelpTip";
-// The settings that change the correction, in five sections grouped by what
-// they change: 모드, 보정 범위, 크로스오버, 서브 정렬 (BA), MIMO. Every
-// change goes through `changeSetting` (calibration_settings_set) and only
-// marks the result stale. Detail sits under 고급; every correction mode is
-// available in the mode selector. MIMO is chosen beside 보정 계산 too
+// The settings that change the correction, in sections grouped by what they
+// change: 모드, 보정 범위, 크로스오버, 서브 정렬 (BA), 저음 도착과 울림,
+// MIMO. Every change goes through `changeSetting` (calibration_settings_set)
+// and only marks the result stale. Detail sits under 고급; every correction
+// mode is available in the mode selector. MIMO is chosen beside 보정 계산 too
 // (MIMO 함께 계산, P142); its card keeps the details and MIMO만 계산.
 import { ComputeControl, ComputeResult } from "./ComputeControl";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
@@ -973,6 +973,47 @@ function BaSection({ view, actions, onSampleRateSettings, editSub }: FailureProp
   );
 }
 
+/* ── 저음 도착과 울림 (ADR 0025) ────────────────────────────────────────── */
+
+/**
+ * Two official alternatives on the main screen, both off by default. Zero
+ * mode does not change phase, so 저음 도착 맞추기 is off there with the
+ * reason; the stored choice is kept and comes back with another mode. In
+ * Mixed mode its short delay aligns only part of the way, which the switch
+ * says while it is on.
+ */
+function LfSection({ view, actions }: Props) {
+  const t = useT();
+  const s = view.settings;
+  const zero = s.mode === "zero";
+  const align = !zero && s.lf_align;
+  const alignHint = zero ? (
+    <span data-ui="calibrate.lf_align.unavailable">{t("calibrate.lf_align.unavailable_zero", { mode: t(MODE_NAME.zero) })}</span>
+  ) : align && s.mode === "mixed" ? (
+    <span data-ui="calibrate.lf_align.partial">{t("calibrate.lf_align.mixed", { mode: t(MODE_NAME.mixed) })}</span>
+  ) : undefined;
+  return (
+    <SettingsCard id="lf" title={t("calibrate.lf.title")} help={t("calibrate.lf.description")}>
+      <Toggle
+        id="calibrate.lf_align"
+        label={t("calibrate.lf_align")}
+        help={t("calibrate.lf_align.help")}
+        hint={alignHint}
+        checked={align}
+        disabled={zero}
+        onChange={(on) => actions.changeSetting({ kind: "lf_align", on })}
+      />
+      <Toggle
+        id="calibrate.mode_decay"
+        label={t("calibrate.mode_decay")}
+        help={t("calibrate.mode_decay.help")}
+        checked={s.mode_decay}
+        onChange={(on) => actions.changeSetting({ kind: "mode_decay", on })}
+      />
+    </SettingsCard>
+  );
+}
+
 /* ── MIMO ───────────────────────────────────────────────────────────────── */
 
 function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
@@ -1122,6 +1163,7 @@ export function Settings({
       <RangeSection view={view} actions={actions} advancedOpen={rangeAdvanced} />
       <XoSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} />
       <BaSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} editSub={editSub} />
+      <LfSection view={view} actions={actions} />
       <MimoSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} />
     </section>
   );

@@ -603,6 +603,9 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "mode": settings.mode = edit.mode; break;
       case "sample_rate_policy": settings.sample_rate_policy = edit.policy; break;
       case "low_protect": settings.low_protect = edit.on; break;
+      // Taken in every mode, Zero included: the engine leaves lf_align out there, and the screen says why (ADR 0025).
+      case "lf_align": settings.lf_align = edit.on; break;
+      case "mode_decay": settings.mode_decay = edit.on; break;
       case "ultra_ms": settings.ultra_ms = clamp(edit.ms, LIMITS.ultra_ms); break;
       case "rc_lo": settings.rc_lo = edit.hz; break;
       case "rc_hi": settings.rc_hi = edit.hz; break;

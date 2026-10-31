@@ -79,6 +79,8 @@ export const baseSettings: CalibrationSettings = {
   sample_rate_policy: "reject",
   mode: "mixed",
   low_protect: false,
+  lf_align: false,
+  mode_decay: false,
   rc_lo: 20,
   rc_hi: null,
   rc_hi_basis: "strict",
@@ -711,6 +713,77 @@ export const lowProtectNotes: Notice[] = [
   { code: "low_protect", params: { role: "SW2", rolloff_hz: "28", hp_hz: "25", limited: "true" } },
   { code: "low_protect", params: { role: "L", rolloff_hz: "30", limited: "true" } },
   { code: "low_protect", params: { role: "SW1 + SW2", rolloff_hz: "22", limited: "false" } },
+];
+
+/* ── 저음 도착 맞추기, 방 울림 줄이기 (ADR 0025) ─────────────────────────── */
+
+/**
+ * What a calculation with the two switches notes for each main, in the
+ * engine's order (secs-service `scalar_notice` and the ModeDecay expansion):
+ * lf_align with its phase strength and the bass arrival left against the
+ * treble (not in Zero mode, which does not change phase), then a mode_decay
+ * record per cut mode, or mode_decay_none where no mode rings long enough
+ * (the height speakers here). Mixed mode's short delay cuts the alignment
+ * (`limited`).
+ */
+function lfNotes(mode: "zero" | "mixed" | "linear", { align, decay }: { align: boolean; decay: boolean }): Notice[] {
+  return fx.SAMPLE_MAINS.flatMap((role, i): Notice[] => {
+    const notes: Notice[] = [];
+    if (align && mode !== "zero") {
+      const arrival = mode === "mixed" ? 2.4 + (i % 3) * 0.3 : (((i * 7) % 9) - 4) / 10;
+      notes.push({ code: "lf_align", params: { role, strength: mode === "mixed" ? "0.5" : role.startsWith("T") ? "0.75" : "1", arrival_ms: String(Math.round(arrival * 10) / 10), limited: String(mode === "mixed") } });
+    }
+    if (decay) {
+      if (role.startsWith("T")) notes.push({ code: "mode_decay_none", params: { role, target_s: "0.31" } });
+      else {
+        notes.push({ code: "mode_decay", params: { role, hz: String(42 + (i % 2)), t60_s: "0.82", target_s: "0.31", depth_db: "-8.4" } });
+        if (i < 3) notes.push({ code: "mode_decay", params: { role, hz: "63", t60_s: "0.55", target_s: "0.31", depth_db: "-4.9" } });
+      }
+    }
+    return notes;
+  });
+}
+
+/** A current result calculated in `mode` with these switches, its notes after the phase notes as the engine leaves them. */
+function lfView(mode: "zero" | "mixed" | "linear", patch: Partial<CalibrationSettings>): CalibrateView {
+  const settings = { ...baseSettings, mode, ...patch };
+  // Zero mode has no FIR, so no phase correction notes.
+  const own = mode === "zero" ? NOTES.filter((note) => !["lift_capped", "phase_strength", "phase_band"].includes(note.code)) : NOTES;
+  const notes = [...own, ...lfNotes(mode, { align: settings.lf_align, decay: settings.mode_decay })];
+  return {
+    ...base,
+    settings,
+    modeSpec: modeSpecs[mode],
+    resultMode: { mode, ultra_ms: settings.ultra_ms },
+    results: { calibration: summary(false, notes), mimo: null, mimo_export: "off" },
+    lines: { ...lines(), notes },
+  };
+}
+
+export const lfViews = {
+  /** Both off (the default): the card between BA and MIMO, the results as before. */
+  off: base,
+  /** Standard (linear) mode with both on: a line per main for each in the notes. */
+  on: lfView("linear", { lf_align: true, mode_decay: true }),
+  /** Mixed mode with 저음 도착 맞추기 on: it aligns only part of the way, said under the switch and in its notes. */
+  mixed: lfView("mixed", { lf_align: true }),
+  /** Zero mode with both stored on: 저음 도착 맞추기 off with the reason, 방 울림 줄이기 still on. */
+  zero: lfView("zero", { lf_align: true, mode_decay: true }),
+} satisfies Record<string, CalibrateView>;
+
+/**
+ * The lines for each case the service sends: a main aligned in full, one
+ * held by the pull limit with the bass arriving early, one the engine could
+ * not measure at strength 0, two cut modes of one main, and a main with no
+ * mode to cut.
+ */
+export const lfNoteCases: Notice[] = [
+  { code: "lf_align", params: { role: "L", strength: "1", arrival_ms: "0.4", limited: "false" } },
+  { code: "lf_align", params: { role: "Tfl", strength: "0.75", arrival_ms: "-1.2", limited: "true" } },
+  { code: "lf_align", params: { role: "C", strength: "0", limited: "true" } },
+  { code: "mode_decay", params: { role: "L", hz: "42.4", t60_s: "0.82", target_s: "0.31", depth_db: "-8.4" } },
+  { code: "mode_decay", params: { role: "L", hz: "63", t60_s: "0.55", target_s: "0.31", depth_db: "-4.9" } },
+  { code: "mode_decay_none", params: { role: "Lb", target_s: "0.31" } },
 ];
 
 /**

@@ -898,6 +898,23 @@ describe("mock 극저역 보호 (ADR 0022)", () => {
   });
 });
 
+describe("mock 저음 도착 맞추기 and 방 울림 줄이기 (ADR 0025)", () => {
+  it("applies each switch in every mode, Zero included, and marks the result stale", async () => {
+    const mock = createMockService({ tickMs: 0, results: resultsSummary });
+    const edit = (edit: import("./bindings/SettingEdit").SettingEdit) => mock.request({ method: "calibration_settings_edit", params: { edit } });
+    try {
+      await edit({ kind: "mode", mode: "zero" });
+      expect(await edit({ kind: "lf_align", on: true })).toMatchObject({ mode: "zero", lf_align: true });
+      expect((await mock.request({ method: "results" })).calibration).toMatchObject({ stale: true, stale_reason: "settings" });
+      expect(await edit({ kind: "mode_decay", on: true })).toMatchObject({ lf_align: true, mode_decay: true });
+      // Switching modes keeps the stored choice.
+      expect(await edit({ kind: "mode", mode: "linear" })).toMatchObject({ mode: "linear", lf_align: true, mode_decay: true });
+      expect(await edit({ kind: "lf_align", on: false })).toMatchObject({ lf_align: false, mode_decay: true });
+      expect(await edit({ kind: "mode_decay", on: false })).toMatchObject({ lf_align: false, mode_decay: false });
+    } finally { mock.dispose(); }
+  });
+});
+
 describe("mock extra correction bands (ADR 0024)", () => {
   type Edit = import("./bindings/SettingEdit").SettingEdit;
   const refusal = (mock: ReturnType<typeof createMockService>, edit: Edit) =>
