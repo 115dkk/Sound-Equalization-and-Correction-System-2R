@@ -1,8 +1,8 @@
 // LogPlot: frequency response graphs on uPlot (MIT). Log-frequency x axis
 // with fixed ticks 5 … 20k, colours and line rules from the tokens, an
-// optional shaded band outside a range (the RC band; the upper edge may be
-// open), a cursor readout, and an overlay slot for editable things (target
-// points, the XO line) that gets the scale mapping. Dozens of curves of a few thousand points draw in one
+// optional shaded band outside a range (the RC band with its extra bands;
+// the upper edge may be open), a cursor readout, and an overlay slot for
+// editable things (target points, the XO line) that gets the scale mapping. Dozens of curves of a few thousand points draw in one
 // pass; hover highlight restyles the same instance, while a theme, accent or
 // skin change rebuilds it so the tokens (colours and the axis font) are read again.
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -10,6 +10,7 @@ import { createPortal } from "react-dom";
 import uPlot from "uplot";
 import "uplot/dist/uPlot.min.css";
 import { useNumber, useT } from "../../i18n/react";
+import { bandEdges, bandKey, bandLayout, shadeSpans, type PlotBand } from "./bands";
 import { readColor, readNumber, rgbaString, type Rgba } from "./color";
 import { DEFAULT_RULES, NO_SCOPE, afterglowIds, colorTokens, glows, lineStyle, traceSegments, type Curve, type Highlight, type LineRules, type ScopeRules } from "./series";
 import { FREQ_RANGE, formatHz, freqTicksIn } from "./ticks";
@@ -44,11 +45,12 @@ export type LogPlotProps = {
   yUnit?: string | undefined;
   height?: number | undefined;
   /**
-   * Shade outside [lo, hi] (the RC band) and mark its edges. Without `hi`
-   * (the automatic upper limit is not known yet) only the part below `lo`
-   * is shaded and only that edge is marked.
+   * Shade outside [lo, hi] (the RC band) and the `extra` bands together, and
+   * mark the edges of their union. Without `hi` (the automatic upper limit is
+   * not known yet) the band is open upwards: only the part below `lo` (and
+   * between extra bands below it) is shaded.
    */
-  band?: { lo: number; hi?: number | null | undefined } | null | undefined;
+  band?: PlotBand | null | undefined;
   /** A double click on empty graph space (not on an overlay control such as a target point). */
   onDoubleClick?: ((point: { hz: number; value: number }) => void) | undefined;
   overlay?: ((scale: PlotScale) => ReactNode) | undefined;
@@ -367,17 +369,20 @@ export function LogPlot({
             if (!range || !palette) return;
             const { ctx } = u;
             const { left, top, width, height: h } = u.bbox;
-            const clampX = (hz: number) => Math.max(left, Math.min(left + width, u.valToPos(hz, "x", true)));
-            const xLo = clampX(range.lo);
-            const xHi = range.hi === null || range.hi === undefined ? null : clampX(range.hi);
+            const clampX = (hz: number) =>
+              hz === -Infinity ? left : hz === Infinity ? left + width : Math.max(left, Math.min(left + width, u.valToPos(hz, "x", true)));
+            // Outside the union of the primary band and the extra bands; one dashed line per edge of the union.
+            const layout = bandLayout(range);
             ctx.save();
             ctx.fillStyle = rgbaString(palette.shade);
-            ctx.fillRect(left, top, xLo - left, h);
-            if (xHi !== null) ctx.fillRect(xHi, top, left + width - xHi, h);
+            for (const [from, to] of shadeSpans(layout)) {
+              const x0 = clampX(from);
+              ctx.fillRect(x0, top, Math.max(0, clampX(to) - x0), h);
+            }
             ctx.strokeStyle = rgbaString(palette.axis);
             ctx.lineWidth = Math.max(1, devicePixelRatio);
             ctx.setLineDash([4 * devicePixelRatio, 3 * devicePixelRatio]);
-            for (const x of xHi === null ? [xLo] : [xLo, xHi]) {
+            for (const x of bandEdges(layout).map(clampX)) {
               ctx.beginPath();
               ctx.moveTo(Math.round(x) + 0.5, top);
               ctx.lineTo(Math.round(x) + 0.5, top + h);
@@ -478,7 +483,8 @@ export function LogPlot({
   }, [xRange[0], xRange[1], yRange?.[0], yRange?.[1]]);
 
   // Highlight, staleness and band: restyle in place.
-  useEffect(() => applyStyles(), [highlight, stale, band?.lo, band?.hi]);
+  const bandChange = bandKey(band);
+  useEffect(() => applyStyles(), [highlight, stale, bandChange]);
 
   // Width follows the container.
   useEffect(() => {

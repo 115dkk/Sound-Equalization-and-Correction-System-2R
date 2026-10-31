@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { translate, type Locale } from "../../i18n";
 import type { Translate } from "../../i18n/react";
 import type { Notice } from "../../ipc/bindings/Notice";
-import { lowProtectNotes, rcLimitNotes } from "./fixtures";
-import { LOW_PROTECT_NEXT, lowProtectFailures, noteLines, noticeText, rangeNotices, type FormatNumber } from "./text";
+import { ipcError } from "../../ipc/mock";
+import { baseSettings, lowProtectNotes, rcBandsNotes, rcLimitNotes, refusedBandEdit } from "./fixtures";
+import { rejectionPlace, type RangeRejection } from "./settingsView";
+import { LOW_PROTECT_NEXT, lowProtectFailures, noteLines, noticeText, rangeNotices, rangeRejectionText, type FormatNumber } from "./text";
 
 // The calculation notes as secs-service sends them (calibration.rs `notices`:
 // one record per role, filter or mode, scalar string params), turned into the
@@ -174,5 +176,41 @@ describe("calculation notes", () => {
     const { t } = words("ko");
     expect(t(LOW_PROTECT_NEXT)).toBe("부스트 상한을 낮추거나 RC 하한을 올린 뒤 '다시 보정하기'를 누르십시오.");
     expect(words("en").t(LOW_PROTECT_NEXT)).toBe("Lower the boost limit or raise the RC lower limit, then press 'Correct again'.");
+  });
+});
+
+describe("extra correction bands (ADR 0024)", () => {
+  it("rc_bands: every band of the merged set after the calculation, in both languages", () => {
+    const [one, two, merged] = rcBandsNotes;
+    expect(one!.params.bands).toBe("20-310.42,15000-20000");
+    expect(lines("ko", [one!])).toEqual(["RC 보정 구간 20~310 Hz, 15,000~20,000 Hz"]);
+    expect(lines("en", [one!])).toEqual(["RC correction bands 20–310 Hz, 15,000–20,000 Hz"]);
+    expect(lines("ko", [two!])).toEqual(["RC 보정 구간 20~310 Hz, 2,000~4,000 Hz, 15,000~20,000 Hz"]);
+    // A band overlapping the RC band is merged into it by the engine: one band.
+    expect(lines("ko", [merged!])).toEqual(["RC 보정 구간 20~800 Hz"]);
+    // A list it cannot read is shown as sent.
+    expect(lines("en", [n("rc_bands", { bands: "garbled" })])).toEqual(["RC correction bands garbled"]);
+  });
+
+  it("says at the refused input what to enter instead, for each reason the service gives", () => {
+    const two = { ...baseSettings, rc_bands: [{ lo_hz: 2000, hi_hz: 4000 }, { lo_hz: 15000, hi_hz: 20000 }] };
+    const text = (locale: Locale, rejection: RangeRejection, settings = two) => {
+      const { t, number } = words(locale);
+      return rangeRejectionText(t, number, rejection, rejectionPlace(rejection, settings));
+    };
+    const refusal = (edit: RangeRejection["edit"], params: Record<string, string>): RangeRejection => ({ edit, error: ipcError("invalid_request", "", { field: edit.kind, ...params }) });
+    expect(text("ko", refusal({ kind: "rc_lo", hz: 15 }, { reason: "rc_lo_range", min: "20", max: "200" }))).toBe("20–200 Hz 사이의 값을 넣으십시오.");
+    expect(text("en", refusal({ kind: "rc_lo", hz: 15 }, { reason: "rc_lo_range", min: "20", max: "200" }))).toBe("Enter a value in 20–200 Hz.");
+    expect(text("ko", refusal({ kind: "rc_lo", hz: 160 }, { reason: "rc_lo_above_hi", hi_hz: "150" }))).toBe("상한 150 Hz보다 낮은 값을 넣으십시오.");
+    expect(text("ko", refusal({ kind: "rc_hi", hz: 120 }, { reason: "rc_hi_below_lo", lo_hz: "150" }))).toBe("하한 150 Hz보다 높은 값을 넣으십시오.");
+    expect(text("en", refusal({ kind: "rc_hi", hz: 120 }, { reason: "rc_hi_below_lo", lo_hz: "150" }))).toBe("Enter a value above the lower limit, 150 Hz.");
+    expect(text("ko", refusal({ kind: "rc_hi", hz: 30000 }, { reason: "rc_hi_range", min: "100", max: "20000" }))).toBe("100–20000 Hz 사이의 값을 넣으십시오.");
+    expect(text("ko", refusal({ kind: "rc_bands", bands: [] }, { reason: "rc_band_count", max: "4" }))).toBe("추가 구간은 4개까지 둘 수 있습니다.");
+    // A band: the upper edge set below the lower one says to stay above it; the lower edge set above the upper one, below it.
+    expect(text("ko", refusedBandEdit)).toBe("하한 15,000 Hz보다 높은 값을 넣으십시오.");
+    expect(text("en", refusedBandEdit)).toBe("Enter a value above the lower limit, 15,000 Hz.");
+    expect(text("ko", refusal({ kind: "rc_bands", bands: [] }, { reason: "rc_band_range", index: "1", lo_hz: "5000", hi_hz: "4000" }))).toBe("상한 4,000 Hz보다 낮은 값을 넣으십시오.");
+    expect(text("ko", refusal({ kind: "rc_bands", bands: [] }, { reason: "rc_band_range", index: "2", lo_hz: "15000", hi_hz: "25000" }))).toBe("20–20000 Hz 사이의 값을 넣으십시오.");
+    expect(text("ko", refusal({ kind: "rc_bands", bands: [] }, { reason: "rc_band_range", index: "3", lo_hz: "10", hi_hz: "50" }))).toBe("하한이 상한보다 낮고 20–20000 Hz 안에 드는 구간을 넣으십시오.");
   });
 });

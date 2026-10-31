@@ -31,6 +31,7 @@ pub struct Setup {
     pub rc_lo: f64,
     pub rc_hi_manual: Option<f64>,
     pub rc_hi: f64,
+    pub rc_bands: Vec<(f64, f64)>,
     pub peq_bands: usize,
 }
 
@@ -121,6 +122,7 @@ impl Setup {
             rc_lo: config.rc_range.0,
             rc_hi_manual: config.rc_range.1,
             rc_hi: config.rc_range.1.filter(|v| *v != 0.0).unwrap_or(500.0),
+            rc_bands: config.rc_bands.clone(),
             peq_bands: config.peq_bands.unwrap_or(16),
         }
     }

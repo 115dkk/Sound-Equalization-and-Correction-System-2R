@@ -170,10 +170,12 @@
 
 | 항목 | id | 편차 | 작업서 |
 |---|---|---|---|
-| RC 하한 10–200 Hz, 5 단위, 기본 20 | `calibrate.range.lower` | 없음 | P31b |
+| RC 하한 20–200 Hz, 5 단위, 기본 20(직접 입력한 상한 이상이면 거부, 이유는 입력 옆) | `calibrate.range.lower` | D48 | P31b, P148 (ADR 0024) |
 | RC 상한 기준(엄격한·너그러운 슈뢰더, 측정 위치 일치도, 직접 입력), 기본 엄격한 슈뢰더 | `calibrate.range.basis` | 없음 | P140 (ADR 0021) |
 | RC 전이 구간 ×1·×2·×4(슈뢰더 기준일 때), 기본 ×1 | `calibrate.range.transition` | 없음 | P140 (ADR 0021) |
-| RC 상한 100–20000 Hz, 50 단위(직접 입력일 때) | `calibrate.range.upper` | 없음 | P31b |
+| RC 상한 100–20000 Hz, 50 단위(직접 입력일 때, 하한 이하이면 거부, 이유는 입력 옆) | `calibrate.range.upper` | D48 | P31b, P148 (ADR 0024) |
+| 보정 구간 추가(추가 구간이 없으면 이 단추만 보임, 4개를 채우면 숨김), 새 구간은 기본 구간과 다른 구간에 겹치지 않는 15000–20000 Hz부터 | `calibrate.range.extra.add` | D48 | P148 (ADR 0024) |
+| 추가 구간 1~4: 하한과 상한 20–20000 Hz(1 kHz 아래 5 단위, 그 위 50 단위), 빼기, 거부된 값은 그 입력 옆에 이유를 보이고 저장된 값은 그대로 | `calibrate.range.extra.<n>`, `calibrate.range.extra.<n>.lower`, `calibrate.range.extra.<n>.upper`, `calibrate.range.extra.<n>.remove` | D48 | P148 (ADR 0024) |
 | 룸 볼륨 0–100000 m³(0 = 없음) | `calibrate.range.volume` | 없음 | P31b |
 | 방 치수 가로 × 세로 × 높이 0–100 m, 0.1 단위(셋 다 넣으면 볼륨) | `calibrate.range.dims.w`, `calibrate.range.dims.d`, `calibrate.range.dims.h` | 없음 | P31b |
 | 부스트 상한 0–10 dB, 기본 10 | `calibrate.range.boost` | 없음 | P31b |
@@ -222,6 +224,7 @@
 | BA: 5–300 Hz, 타겟 기준 dB(−40/+6), 서브별 정렬 전(점선)·후, 서브 합 전·후, 타겟 | `calibrate.tab.ba`, `calibrate.plot.legend.align_before`, `calibrate.plot.legend.align_after`, `calibrate.plot.legend.sub_sum` | 없음 | P31b |
 | SPL: 타겟이 0 dB에 오도록 레벨 이동, 타겟 손잡이, RC 하한·상한 선과 라벨과 바깥 음영, 계산 전 위치 1 측정과 타겟, 표시 평활 1/24 옥타브 | `calibrate.target.point.<n>`, `calibrate.plot.band.lower`, `calibrate.plot.band.upper`, `calibrate.plot.preview`, `calibrate.plot.legend.measured` | 없음 | P31b |
 | GD도 RC 선을 같이 씀, XO 평활 1/12 옥타브 | `calibrate.plot.band.lower`, `calibrate.plot.band.upper`, `calibrate.xo.line.handle` | 없음 | P31b |
+| SPL과 GD: 추가 구간까지 합친 범위 밖 음영과 경계 점선, 추가 구간마다 라벨, 계산 메모의 보정 구간 집합(`rc_bands`) | `calibrate.plot.band.extra.<n>`, `calibrate.verdict.notes` | D48 | P148 (ADR 0024) |
 | BA 곡선은 `cal.sub_combine(sub_run or run)`, 표와 같은 8색 순환 | `calibrate.ba.table`, `calibrate.ba.subs_only` | 없음 | P31b |
 
 ## 9. 내보내기 (screen 8) — P32

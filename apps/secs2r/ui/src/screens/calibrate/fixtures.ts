@@ -10,6 +10,7 @@ import type { ConfigResult } from "../../ipc/bindings/ConfigResult";
 import type { MimoSummary } from "../../ipc/bindings/MimoSummary";
 import type { ModeSpecResult } from "../../ipc/bindings/ModeSpecResult";
 import type { Notice } from "../../ipc/bindings/Notice";
+import type { RcBand } from "../../ipc/bindings/RcBand";
 import type { ResultCurve } from "../../ipc/bindings/ResultCurve";
 import type { ResultCurvesResult } from "../../ipc/bindings/ResultCurvesResult";
 import type { ResultLinesResult } from "../../ipc/bindings/ResultLinesResult";
@@ -17,7 +18,9 @@ import type { SubResultLines } from "../../ipc/bindings/SubResultLines";
 import type { TargetResult } from "../../ipc/bindings/TargetResult";
 import * as fx from "../../ipc/fixtures";
 import { ipcError, mockLowProtectNotes, mockRcLines } from "../../ipc/mock";
+import { bandLayout } from "../../ui/plot/bands";
 import { targetAt } from "../../ui/plot/targetEdit";
+import type { RangeRejection } from "./settingsView";
 import type { CalibrateView } from "./types";
 
 /* ── Project ────────────────────────────────────────────────────────────── */
@@ -80,6 +83,7 @@ export const baseSettings: CalibrationSettings = {
   rc_hi: null,
   rc_hi_basis: "strict",
   rc_hi_transition: 1,
+  rc_bands: [],
   room_volume_m3: 62.6,
   room_dims_m: [5.2, 4.3, 2.8],
   mimo_on: false,
@@ -159,7 +163,7 @@ function curvesResult(tab: ResultCurvesResult["tab"], grid: Float64Array, curves
     xo: { frequency_hz: [5, 500] as [number, number], value: [-29, 13] as [number, number], unit: "db" },
     ba: { frequency_hz: [5, 300] as [number, number], value: [-31, 15] as [number, number], unit: "db" },
   }[tab];
-  return { tab, grid: arr(grid), curves, axes, stale: false, subs_only: false, rc_band_hz: tab === "spl" || tab === "gd" ? [RC[0], RC[1]] : null, xo_hz: null, ...extra };
+  return { tab, grid: arr(grid), curves, axes, stale: false, subs_only: false, rc_band_hz: tab === "spl" || tab === "gd" ? [RC[0], RC[1]] : null, rc_bands_hz: [], xo_hz: null, ...extra };
 }
 
 function splResult(role = "L", options: { mimo?: boolean } = {}): ResultCurvesResult {
@@ -418,6 +422,7 @@ const base: CalibrateView = {
   tab: "spl",
   channel: "L",
   xoGroup: "프론트",
+  rangeRejection: null,
 };
 
 /** Before the first run: the plan, the position-1 preview and the target. */
@@ -608,6 +613,72 @@ export const rangeViews = {
   manual: rangeView({ rc_hi: 300, rc_hi_basis: "lenient" }),
   noVolume: rangeView({ room_volume_m3: null, room_dims_m: null }),
 } satisfies Record<string, CalibrateView>;
+
+/* ── Extra correction bands (ADR 0024) ──────────────────────────────────── */
+
+const TWO_BANDS: RcBand[] = [
+  { lo_hz: 2000, hi_hz: 4000 },
+  { lo_hz: 15000, hi_hz: 20000 },
+];
+const FOUR_BANDS: RcBand[] = [
+  { lo_hz: 1000, hi_hz: 2000 },
+  { lo_hz: 3000, hi_hz: 5000 },
+  { lo_hz: 8000, hi_hz: 10000 },
+  { lo_hz: 15000, hi_hz: 20000 },
+];
+
+/** The merged band set a calculation with these extra bands notes (`rc_bands`, "lo-hi,lo-hi"), the RC band of these views included. */
+export function rcBandsNote(bands: readonly RcBand[], hi = 310.42): Notice {
+  const merged = bandLayout({ lo: RC[0], hi, extra: bands.map((band) => [band.lo_hz, band.hi_hz] as const) }).bands;
+  return { code: "rc_bands", params: { bands: merged.map(([lo, top]) => `${lo}-${top}`).join(",") } };
+}
+
+/**
+ * A current result calculated with these extra bands: SPL shades outside
+ * their union with the RC band (`rc_bands_hz`), and the calculation notes
+ * carry the merged band set after the RC limit.
+ */
+function extraBandsView(bands: RcBand[], patch: Partial<CalibrateView> = {}): CalibrateView {
+  const notes = [NOTES[0]!, NOTES[1]!, rcBandsNote(bands), ...NOTES.slice(2)];
+  return {
+    ...base,
+    settings: { ...baseSettings, rc_bands: bands },
+    curves: { ...splResult(), rc_bands_hz: bands.map((band) => [band.lo_hz, band.hi_hz]) },
+    results: { calibration: summary(false, notes), mimo: null, mimo_export: "off" },
+    lines: { ...lines(), notes },
+    ...patch,
+  };
+}
+
+/**
+ * The second band's upper edge set to 12000 Hz, below its lower edge: the
+ * service refuses the list (`rc_band_range`, 1-based index) and the stored
+ * bands stay.
+ */
+export const refusedBandEdit: RangeRejection = {
+  edit: { kind: "rc_bands", bands: [{ ...TWO_BANDS[0]! }, { lo_hz: 15000, hi_hz: 12000 }] },
+  error: ipcError("invalid_request", "rc_bands: rc_band_range", { field: "rc_bands", reason: "rc_band_range", index: "2", lo_hz: "15000", hi_hz: "12000" }),
+};
+
+export const extraBandViews = {
+  /** None (the default): only 보정 구간 추가 under the edges. */
+  none: base,
+  /** 15–20 kHz: one row, the graph shaded between the RC band and it. */
+  one: extraBandsView([{ lo_hz: 15000, hi_hz: 20000 }]),
+  /** 2–4 kHz and 15–20 kHz: two rows, the graph shaded outside the three bands, the band set in the notes. */
+  two: extraBandsView(TWO_BANDS),
+  /** The second band's upper edge refused: the reason at that input, the stored 20000 Hz in it. */
+  refused: extraBandsView(TWO_BANDS, { rangeRejection: refusedBandEdit }),
+  /** Four bands: no add action. */
+  four: extraBandsView(FOUR_BANDS),
+} satisfies Record<string, CalibrateView>;
+
+/** The `rc_bands` line for one extra band, two bands, and a band that merges with the RC band. */
+export const rcBandsNotes: Notice[] = [
+  rcBandsNote([{ lo_hz: 15000, hi_hz: 20000 }]),
+  rcBandsNote(TWO_BANDS),
+  rcBandsNote([{ lo_hz: 250, hi_hz: 800 }]),
+];
 
 /* ── 극저역 보호 (ADR 0022) ─────────────────────────────────────────────── */
 

@@ -3,8 +3,9 @@
 use std::collections::BTreeSet;
 
 use secs_types::{
-    calibration::{CalibrationSettings, SubEntry, mode_params},
+    calibration::{CalibrationSettings, RcBand, SubEntry, mode_params},
     chain::BandType,
+    rules::CALIBRATION_LIMITS,
     target::TargetCurve,
 };
 
@@ -222,6 +223,7 @@ pub fn engine_inputs(
             peq_bands: mode.peq_bands,
             max_latency_ms: Some(mode.max_latency_ms),
             rc_range: (settings.rc_lo, settings.rc_hi),
+            rc_bands: rc_bands(&settings.rc_bands),
             low_protect: settings.low_protect,
             room_volume_m3: settings.room_volume_m3,
             rc_hi_basis: settings.rc_hi_basis,
@@ -237,6 +239,28 @@ pub fn engine_inputs(
         },
         notes,
     })
+}
+
+/// The extra bands a calculation uses (ADR 0024). Settings a request carries
+/// reach here unchecked, so this applies the project reader's rule: a band
+/// must be finite with `20 <= lo < hi <= 20000`, the rest are dropped, and the
+/// first four by lower edge are kept.
+fn rc_bands(bands: &[RcBand]) -> Vec<(f64, f64)> {
+    let limits = CALIBRATION_LIMITS.rc_band.0..=CALIBRATION_LIMITS.rc_band.1;
+    let mut bands: Vec<_> = bands
+        .iter()
+        .filter(|band| {
+            band.lo_hz.is_finite()
+                && band.hi_hz.is_finite()
+                && limits.contains(&band.lo_hz)
+                && limits.contains(&band.hi_hz)
+                && band.lo_hz < band.hi_hz
+        })
+        .map(|band| (band.lo_hz, band.hi_hz))
+        .collect();
+    bands.sort_by(|left, right| left.0.total_cmp(&right.0));
+    bands.truncate(CALIBRATION_LIMITS.rc_bands_max.1 as usize);
+    bands
 }
 
 pub(crate) fn resolve_xo(

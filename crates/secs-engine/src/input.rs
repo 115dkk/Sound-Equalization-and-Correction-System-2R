@@ -179,6 +179,8 @@ pub struct EngineConfig {
     /// RC range `(low Hz, high Hz)`; a missing high bound means automatic
     /// (Schroeder frequency, at most 500 Hz).
     pub rc_range: (f64, Option<f64>),
+    /// Additional manually bounded correction bands (ADR 0024).
+    pub rc_bands: Vec<(f64, f64)>,
     /// Protect measured low-frequency rolloff (ADR 0022), off by default.
     pub low_protect: bool,
     /// Room volume in m³, for the Schroeder frequency.

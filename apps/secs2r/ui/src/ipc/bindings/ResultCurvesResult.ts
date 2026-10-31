@@ -36,6 +36,12 @@ subs_only: boolean,
  */
 rc_band_hz: [number, number | null] | null, 
 /**
+ * Extra correction bands (ADR 0024), `(lo, hi)` in Hz, sorted; the
+ * graph shades outside `rc_band_hz` and these together. Empty when
+ * there are none or the tab shows no RC band.
+ */
+rc_bands_hz: Array<[number, number]>, 
+/**
  * Selected crossover frequency for the draggable line.
  */
 xo_hz: number | null, };

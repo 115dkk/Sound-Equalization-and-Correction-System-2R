@@ -50,6 +50,16 @@ fn band_values(grid: &[f64], values: &[f64], lo: f64, hi: f64) -> Vec<f64> {
         .map(|(_, v)| *v)
         .collect()
 }
+
+fn extra_bands(settings: &CalibrationSettings) -> Vec<(f64, f64)> {
+    let mut bands: Vec<_> = settings
+        .rc_bands
+        .iter()
+        .map(|band| (band.lo_hz, band.hi_hz))
+        .collect();
+    bands.sort_by(|left, right| left.0.total_cmp(&right.0));
+    bands
+}
 fn offset(design: &Design) -> f64 {
     let target = design.target.sample(&display::spl_grid());
     display::percentile(
@@ -231,6 +241,11 @@ impl Service {
                     (r.settings.rc_lo, Some(r.design().rc_hi))
                 })
             }),
+            rc_bands_hz: if matches!(params.tab, ResultTab::Spl | ResultTab::Gd) {
+                run.map_or_else(|| extra_bands(&settings), |run| extra_bands(&run.settings))
+            } else {
+                Vec::new()
+            },
             xo_hz: None,
         };
         let Some(run) = run else {

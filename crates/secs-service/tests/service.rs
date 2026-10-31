@@ -148,6 +148,68 @@ fn low_protect_edits_persist_and_mark_results_stale() {
 }
 
 #[test]
+fn rc_band_edits_store_sorted_clear_change_keys_and_mark_results_stale() {
+    use secs_types::{calibration::RcBand, settings_edit::SettingEdit};
+
+    let root = temp_root("rc-bands-edit");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room");
+    let service = service();
+    open(&service, &path);
+    let events = Arc::new(Events::default());
+    let job = start_calibration(&service, events.clone(), settings.clone());
+    finished_result(events.wait(job, Duration::from_secs(120)));
+    let baseline_key = settings.engine_key();
+
+    let Response::CalibrationSettingsEdit(edited) = call_ok(
+        &service,
+        Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+            edit: SettingEdit::RcBands {
+                bands: vec![
+                    RcBand {
+                        lo_hz: 15_000.0,
+                        hi_hz: 20_000.0,
+                    },
+                    RcBand {
+                        lo_hz: 1_000.0,
+                        hi_hz: 2_000.0,
+                    },
+                ],
+            },
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!()
+    };
+    assert_eq!(
+        edited
+            .rc_bands
+            .iter()
+            .map(|band| band.lo_hz)
+            .collect::<Vec<_>>(),
+        [1_000.0, 15_000.0]
+    );
+    assert_ne!(edited.engine_key(), baseline_key);
+    let summary = read_results(&service).calibration.unwrap();
+    assert!(summary.stale);
+    assert_eq!(summary.stale_reason.as_deref(), Some("settings"));
+
+    let Response::CalibrationSettingsEdit(cleared) = call_ok(
+        &service,
+        Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+            edit: SettingEdit::RcBands { bands: Vec::new() },
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!()
+    };
+    assert!(cleared.rc_bands.is_empty());
+    assert_eq!(cleared.engine_key(), baseline_key);
+    assert!(!read_results(&service).calibration.unwrap().stale);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn analytic_derivative_edits_persist_and_mark_results_stale() {
     use secs_types::settings_edit::SettingEdit;
 

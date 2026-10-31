@@ -8,7 +8,9 @@ import type { ConfigResult } from "../../ipc/bindings/ConfigResult";
 import type { Mode } from "../../ipc/bindings/Mode";
 import type { ModeSpecResult } from "../../ipc/bindings/ModeSpecResult";
 import type { Notice } from "../../ipc/bindings/Notice";
+import { CALIBRATION_LIMITS } from "../../ipc/bindings/rules";
 import { roleCode } from "../../ui/maps/geometry";
+import type { RangeRejection, RejectionPlace } from "./settingsView";
 import type { CalibrateJob } from "./types";
 
 export type FormatNumber = (value: number, digits?: number) => string;
@@ -177,6 +179,13 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
     case "rc_auto_cap":
       params.hz = f("hz");
       break;
+    case "rc_bands": {
+      // The merged correction band set after the calculation (ADR 0024), "lo-hi,lo-hi": every band of it, the primary's included.
+      const bands = (p.bands ?? "").split(",").map((band) => band.split("-").map(num));
+      const valid = bands.length > 0 && bands.every((band) => band.length === 2 && band.every(Number.isFinite));
+      params.bands = valid ? bands.map(([lo, hi]) => t("notice.rc_bands.band", { lo: number(lo!), hi: number(hi!) })).join(", ") : (p.bands ?? "");
+      break;
+    }
     case "sub_narrow_band":
       Object.assign(params, { code: code(), hp_hz: f("hp_hz"), lp_hz: f("lp_hz") });
       break;
@@ -313,6 +322,43 @@ function rcLimit(p: Notice["params"], params: MessageParams, f: (key: string, di
   if (p.basis === "lenient") return times ? "notice.rc_limit.lenient_strict.factor" : "notice.rc_limit.lenient_strict";
   if (p.basis === "strict") return times ? "notice.rc_limit.strict.factor" : "notice.rc_limit.strict";
   return "notice.rc_limit.schroeder";
+}
+
+/* ── Range edits the service refused (ADR 0024) ─────────────────────────── */
+
+/**
+ * Why the service refused an edge or an extra band, as the instruction shown
+ * at that input: the range to stay in, the other edge to stay below or
+ * above, or how many extra bands there can be.
+ */
+export function rangeRejectionText(t: Translate, number: FormatNumber, { error }: RangeRejection, place: RejectionPlace): string {
+  const p = error.params;
+  const plain = (value: string | number | undefined) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? number(n).replace(/,/g, "") : String(value ?? "");
+  };
+  const range = (min: string | number | undefined, max: string | number | undefined) => t("ui.number.range", { min: plain(min), max: plain(max), unit: "Hz" }).trim();
+  const outside = (min: string | number | undefined, max: string | number | undefined) => t("ui.number.out_of_range", { range: range(min, max) });
+  const hz = (key: string) => number(num(p[key]));
+  switch (p.reason) {
+    case "rc_lo_range":
+    case "rc_hi_range":
+      return outside(p.min, p.max);
+    case "rc_lo_above_hi":
+      return t("calibrate.range.rejected.below", { hz: hz("hi_hz") });
+    case "rc_hi_below_lo":
+      return t("calibrate.range.rejected.above", { hz: hz("lo_hz") });
+    case "rc_band_count":
+      return t("calibrate.range.rejected.count", { max: p.max ?? String(CALIBRATION_LIMITS.rc_bands_max[1]) });
+    default: {
+      // rc_band_range: the refused edge outside 20–20000 Hz, or not below (above) the band's other edge.
+      const [min, max] = CALIBRATION_LIMITS.rc_band;
+      if (place.at !== "band") return t("calibrate.range.rejected.band", { range: range(min, max) });
+      const value = num(place.edge === "lower" ? p.lo_hz : p.hi_hz);
+      if (!(value >= min && value <= max)) return outside(min, max);
+      return place.edge === "lower" ? t("calibrate.range.rejected.below", { hz: hz("hi_hz") }) : t("calibrate.range.rejected.above", { hz: hz("lo_hz") });
+    }
+  }
 }
 
 /* ── Subs ───────────────────────────────────────────────────────────────── */

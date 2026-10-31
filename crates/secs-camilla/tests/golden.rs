@@ -10,6 +10,7 @@ use secs_camilla::{
     write_config_observed,
 };
 use secs_oracle::{Fixture, goldens};
+use secs_types::calibration::RcBand;
 use secs_types::chain::{
     BandType, MainChannel, MimoFilter, MimoPath, MimoPaths, SignalChain, SubChannel,
 };
@@ -869,6 +870,118 @@ fn mimo_note_names_the_support_cap() {
             "cap {cap}"
         );
     }
+}
+
+/// Read the YAML this crate writes, and nothing else: comment and blank lines,
+/// top-level `key:` sections and `key: <value>` entries, and indented
+/// `key: <value>` entries and `- <value>` items under a section, each value one
+/// JSON flow value (which YAML reads the same). Any other line fails. Returns
+/// the comment lines before the first key and the top-level keys.
+fn read_camilla_yaml(yaml: &str) -> (Vec<&str>, Vec<&str>) {
+    let key = |key: &str| {
+        !key.is_empty()
+            && key
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'))
+    };
+    let value = |number: usize, text: &str| {
+        serde_json::from_str::<Value>(text)
+            .unwrap_or_else(|error| panic!("line {number}: {error}: {text:?}"));
+    };
+    let mut header = Vec::new();
+    let mut keys = Vec::new();
+    let mut section = false;
+    for (index, line) in yaml.lines().enumerate() {
+        let number = index + 1;
+        if line.trim().is_empty() {
+            continue;
+        }
+        if line.starts_with('#') {
+            if keys.is_empty() {
+                header.push(line);
+            }
+        } else if let Some(item) = line.strip_prefix("  - ") {
+            assert!(section, "line {number}: an item outside a section");
+            value(number, item);
+        } else if let Some(entry) = line.strip_prefix("  ") {
+            let (name, text) = entry
+                .split_once(": ")
+                .unwrap_or_else(|| panic!("line {number}: not YAML: {line:?}"));
+            assert!(section && key(name), "line {number}: {line:?}");
+            value(number, text);
+        } else if let Some(name) = line.strip_suffix(':') {
+            assert!(key(name), "line {number}: {line:?}");
+            section = true;
+            keys.push(name);
+        } else {
+            let (name, text) = line
+                .split_once(": ")
+                .unwrap_or_else(|| panic!("line {number}: not YAML: {line:?}"));
+            assert!(key(name), "line {number}: {line:?}");
+            value(number, text);
+            section = false;
+            keys.push(name);
+        }
+    }
+    (header, keys)
+}
+
+// ADR 0024: the extra correction bands join the head note on its one ASCII
+// comment line, so the configuration still parses as YAML.
+#[test]
+fn extra_rc_bands_stay_on_the_note_comment_line() {
+    let fixture = Fixture::all("camilla", "")
+        .into_iter()
+        .find(|fixture| {
+            !fixture.id.contains("/direct_")
+                && !fixture.id.ends_with("/pyfmt")
+                && !fixture.id.ends_with("/write_name_nonascii")
+        })
+        .expect("camilla export fixture");
+    let values = &fixture.inputs()["labels"];
+    let mut labels = labels(&fixture);
+    labels.note = note::camilla_note_with_bands(
+        serde_json::from_value(values["mode"].clone()).unwrap(),
+        number(&values["latency_ms"]),
+        number(&values["rc_hi_hz"]),
+        &[
+            RcBand {
+                lo_hz: 30.0,
+                hi_hz: 60.0,
+            },
+            RcBand {
+                lo_hz: 15_000.0,
+                hi_hz: 20_000.0,
+            },
+        ],
+        None,
+    );
+    let temp = TempDir::new("rc_bands_note");
+    let written = export(&chain(&fixture), &temp.0, &labels, None).unwrap();
+    let yaml = fs::read_to_string(&written[0]).unwrap();
+    let (header, keys) = read_camilla_yaml(&yaml);
+    assert_eq!(
+        keys,
+        [
+            "title",
+            "description",
+            "devices",
+            "filters",
+            "mixers",
+            "pipeline"
+        ]
+    );
+    let notes: Vec<_> = header
+        .iter()
+        .filter(|line| line.contains("RC extra bands"))
+        .collect();
+    assert_eq!(notes.len(), 1, "{header:#?}");
+    assert!(
+        notes[0].starts_with("# mode ")
+            && notes[0].ends_with("; no MIMO; RC extra bands 30-60 Hz, 15000-20000 Hz"),
+        "{}",
+        notes[0]
+    );
 }
 
 #[test]

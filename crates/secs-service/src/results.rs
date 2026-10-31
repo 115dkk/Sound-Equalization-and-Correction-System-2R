@@ -355,6 +355,7 @@ impl ResultBook {
                 ultra_ms: calibration.settings.ultra_ms,
                 latency_ms: calibration.design().chain.latency_ms,
                 rc_hi_hz: calibration.design().rc_hi,
+                rc_bands: calibration.settings.rc_bands.clone(),
                 mimo_max_supports: calibration.settings.mimo_max_supports.max(0) as usize,
             },
             mimo_paths: self.mimo.as_ref().map(|result| result.run.paths.clone()),

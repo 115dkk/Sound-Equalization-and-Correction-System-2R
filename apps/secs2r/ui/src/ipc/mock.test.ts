@@ -883,7 +883,9 @@ describe("mock 극저역 보호 (ADR 0022)", () => {
     try {
       await edit({ kind: "low_protect", on: true });
       expect((await calibrate(mock)).some((note) => note.params.limited === "false")).toBe(false);
-      await edit({ kind: "rc_lo", hz: 15 });
+      // An edit refuses 15 Hz (ADR 0024); a project saved by SECS 2 keeps it, as the settings set here.
+      const stored = await mock.request({ method: "calibration_settings_get" });
+      await mock.request({ method: "calibration_settings_set", params: { settings: { ...stored, rc_lo: 15 } } });
       expect((await calibrate(mock)).filter((note) => note.params.limited === "false")).toEqual([
         { code: "low_protect", params: { role: "SW1 + SW2", rolloff_hz: "22", limited: "false" } },
       ]);
@@ -892,6 +894,71 @@ describe("mock 극저역 보호 (ADR 0022)", () => {
       await edit({ kind: "boost_max", db: 10 });
       await edit({ kind: "rc_lo", hz: 20 });
       expect((await calibrate(mock)).some((note) => note.params.limited === "false")).toBe(false);
+    } finally { mock.dispose(); }
+  });
+});
+
+describe("mock extra correction bands (ADR 0024)", () => {
+  type Edit = import("./bindings/SettingEdit").SettingEdit;
+  const refusal = (mock: ReturnType<typeof createMockService>, edit: Edit) =>
+    mock.request({ method: "calibration_settings_edit", params: { edit } }).then(() => null, (failure: { error: { code: string; params: Record<string, string> } }) => failure.error);
+
+  it("refuses the edges and bands the service refuses, with its params, and stores nothing", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      const before = await mock.request({ method: "calibration_settings_get" });
+      expect(await refusal(mock, { kind: "rc_lo", hz: 15 })).toMatchObject({ code: "invalid_request", params: { field: "rc_lo", reason: "rc_lo_range", min: "20", max: "200" } });
+      expect(await refusal(mock, { kind: "rc_lo", hz: 250 })).toMatchObject({ params: { field: "rc_lo", reason: "rc_lo_range" } });
+      expect(await refusal(mock, { kind: "rc_hi", hz: 50 })).toMatchObject({ params: { field: "rc_hi", reason: "rc_hi_range", min: "100", max: "20000" } });
+      expect(await refusal(mock, { kind: "rc_lo", hz: 150 })).toBeNull();
+      expect(await refusal(mock, { kind: "rc_hi", hz: 150 })).toMatchObject({ params: { field: "rc_hi", reason: "rc_hi_below_lo", lo_hz: "150" } });
+      expect(await refusal(mock, { kind: "rc_hi", hz: 300 })).toBeNull();
+      expect(await refusal(mock, { kind: "rc_lo", hz: 200 })).toBeNull();
+      expect(await refusal(mock, { kind: "rc_hi", hz: 200 })).toMatchObject({ params: { reason: "rc_hi_below_lo", lo_hz: "200" } });
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_hi", hz: 250 } } });
+      expect(await refusal(mock, { kind: "rc_lo", hz: 200 })).toBeNull();
+      // A lower edge at or above a manual upper one; an automatic upper one never refuses it.
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_lo", hz: 100 } } });
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_hi", hz: 150 } } });
+      expect(await refusal(mock, { kind: "rc_lo", hz: 150 })).toMatchObject({ params: { field: "rc_lo", reason: "rc_lo_above_hi", hi_hz: "150" } });
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_hi", hz: null } } });
+      expect(await refusal(mock, { kind: "rc_lo", hz: 200 })).toBeNull();
+      // Bands: more than four, or one outside 20–20000 Hz or not rising, named by its 1-based place in the list sent.
+      const band = (lo_hz: number, hi_hz: number) => ({ lo_hz, hi_hz });
+      expect(await refusal(mock, { kind: "rc_bands", bands: [band(20, 50), band(100, 200), band(300, 400), band(500, 600), band(700, 800)] }))
+        .toMatchObject({ params: { field: "rc_bands", reason: "rc_band_count", max: "4" } });
+      expect(await refusal(mock, { kind: "rc_bands", bands: [band(15000, 20000), band(19, 50)] }))
+        .toMatchObject({ params: { field: "rc_bands", reason: "rc_band_range", index: "2", lo_hz: "19", hi_hz: "50" } });
+      expect(await refusal(mock, { kind: "rc_bands", bands: [band(15000, 20001)] })).toMatchObject({ params: { reason: "rc_band_range", index: "1", hi_hz: "20001" } });
+      expect(await refusal(mock, { kind: "rc_bands", bands: [band(4000, 4000)] })).toMatchObject({ params: { reason: "rc_band_range", index: "1", lo_hz: "4000", hi_hz: "4000" } });
+      expect((await mock.request({ method: "calibration_settings_get" })).rc_bands).toEqual(before.rc_bands);
+      // A valid list is stored sorted; an empty one clears it.
+      const stored = await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_bands", bands: [band(15000, 20000), band(2000, 4000)] } } });
+      expect(stored.rc_bands).toEqual([band(2000, 4000), band(15000, 20000)]);
+      expect((await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_bands", bands: [] } } })).rc_bands).toEqual([]);
+    } finally { mock.dispose(); }
+  });
+
+  it("hands the graph the bands on SPL and GD, and notes the merged band set after a calibration with them", async () => {
+    const mock = createMockService({ tickMs: 0, results: resultsSummary });
+    const curves = (tab: "spl" | "gd" | "xo") => mock.request({ method: "result_curves", params: { tab, channel: null, group: null, xo_hz: null, corrected: null } });
+    const notes = async () => {
+      await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } });
+      mock.drain();
+      return (await mock.request({ method: "results" })).calibration!.notes.filter((note) => note.code === "rc_bands");
+    };
+    try {
+      expect((await curves("spl")).rc_bands_hz).toEqual([]);
+      expect(await notes()).toEqual([]);
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_bands", bands: [{ lo_hz: 15000, hi_hz: 20000 }, { lo_hz: 300, hi_hz: 800 }] } } });
+      expect((await curves("spl")).rc_bands_hz).toEqual([[300, 800], [15000, 20000]]);
+      expect((await curves("gd")).rc_bands_hz).toEqual([[300, 800], [15000, 20000]]);
+      expect((await curves("xo")).rc_bands_hz).toEqual([]);
+      // The sample room's strict Schroeder limit is 154 Hz: 20–154 Hz, then the two bands.
+      expect(await notes()).toEqual([{ code: "rc_bands", params: { bands: "20-154,300-800,15000-20000" } }]);
+      // A band reaching into the RC band merges with it.
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "rc_bands", bands: [{ lo_hz: 100, hi_hz: 400 }] } } });
+      expect(await notes()).toEqual([{ code: "rc_bands", params: { bands: "20-400" } }]);
     } finally { mock.dispose(); }
   });
 });

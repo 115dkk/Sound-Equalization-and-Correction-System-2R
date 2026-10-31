@@ -26,6 +26,9 @@ pub enum Note {
         band_t60_s: Option<f64>,
         positions: Option<usize>,
     },
+    RcBands {
+        bands: Vec<(f64, f64)>,
+    },
     Latency {
         latency_ms: f64,
         lift_ms: f64,

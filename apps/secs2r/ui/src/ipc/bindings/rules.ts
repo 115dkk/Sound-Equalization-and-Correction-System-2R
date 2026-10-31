@@ -2,8 +2,10 @@
 import type { CalibrationLimits } from "./CalibrationLimits";
 
 export const CALIBRATION_LIMITS: CalibrationLimits = {
-  rc_lo: [10, 200],
+  rc_lo: [20, 200],
   rc_hi: [100, 20000],
+  rc_band: [20, 20000],
+  rc_bands_max: [0, 4],
   volume: [0, 100000],
   dim: [0, 100],
   dim_valid: [0.5, 100],

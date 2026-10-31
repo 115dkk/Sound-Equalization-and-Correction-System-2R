@@ -246,7 +246,7 @@ describe("LogPlot", () => {
   });
 
   it("shades only below the lower edge while the upper edge is open", async () => {
-    const draw = async (band: { lo: number; hi?: number | null }) => {
+    const draw = async (band: { lo: number; hi?: number | null; extra?: [number, number][] }) => {
       calls().length = 0;
       const view = renderWith(<LogPlot id="b" label="graph" freqs={FREQS} curves={CURVES} roleOrder={["L"]} isSub={isSub} band={band} />);
       await act(async () => {
@@ -262,6 +262,10 @@ describe("LogPlot", () => {
     expect(open).toBeGreaterThan(0);
     expect(closed).toBe(2 * open);
     expect(await draw({ lo: 20 })).toBe(open);
+    // No extra bands (ADR 0024) draws as before; one above the RC band adds the gap below it.
+    expect(await draw({ lo: 20, hi: 300, extra: [] })).toBe(closed);
+    expect(await draw({ lo: 20, hi: 300, extra: [[15000, 20000]] })).toBe(3 * open);
+    expect(await draw({ lo: 20, hi: null, extra: [[15000, 20000]] })).toBe(open);
   });
 });
 

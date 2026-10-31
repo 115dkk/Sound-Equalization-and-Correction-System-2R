@@ -3,7 +3,7 @@ use secs_camilla::note::{self, MimoNote};
 use secs_export::{ExportRun, MimoKind, MimoResponses};
 use secs_filters::FilterRun;
 use secs_project::Project;
-use secs_types::calibration::{Mode, mode_label, mode_tag};
+use secs_types::calibration::{Mode, RcBand, mode_label, mode_tag};
 use secs_types::chain::{MimoPaths, SignalChain};
 use secs_types::ipc::{ErrorCode, IpcError};
 
@@ -26,6 +26,7 @@ pub(crate) struct ExportDescription {
     label: String,
     latency_ms: f64,
     rc_hi_hz: f64,
+    rc_bands: Vec<RcBand>,
     rc_pieces: Vec<String>,
     max_supports: usize,
     mimo: Option<MimoDescription>,
@@ -63,6 +64,7 @@ pub(crate) fn describe(
                 label: mode_label(run.settings.mode, Some(run.settings.ultra_ms)),
                 latency_ms: design.chain.latency_ms,
                 rc_hi_hz: design.rc_hi,
+                rc_bands: run.settings.rc_bands.clone(),
                 rc_pieces: secs_export::rc_pieces(&ExportRun {
                     design,
                     settings: &run.settings,
@@ -101,12 +103,14 @@ pub(crate) fn describe(
                 label: mode_label(cache.calibration.mode, Some(cache.calibration.ultra_ms)),
                 latency_ms: cache.labels.latency_ms,
                 rc_hi_hz,
-                rc_pieces: secs_export::rc_pieces_from_values(
+                rc_bands: cache.labels.rc_bands.clone(),
+                rc_pieces: secs_export::rc_pieces_from_values_with_bands(
                     rc_hi_hz,
                     rc_auto,
                     schroeder_hz,
                     settings.room_volume_m3,
                     legacy_fallback,
+                    &cache.labels.rc_bands,
                 ),
                 max_supports: cache.labels.mimo_max_supports,
                 mimo: None,
@@ -149,16 +153,18 @@ pub(crate) fn describe(
     });
     description.mode_name = note::mode_name(description.mode, description.ultra_ms);
     let mimo_note = description.mimo.as_ref().map(|mimo| &mimo.note);
-    description.camilla_note = note::camilla_note(
+    description.camilla_note = note::camilla_note_with_bands(
         description.mode,
         description.latency_ms,
         description.rc_hi_hz,
+        &description.rc_bands,
         mimo_note,
     );
-    description.filter_note = note::eqapo_note(
+    description.filter_note = note::eqapo_note_with_bands(
         &description.mode_name,
         description.latency_ms,
         description.rc_hi_hz,
+        &description.rc_bands,
         mimo_note,
     );
     Ok(description)
