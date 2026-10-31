@@ -1,15 +1,21 @@
 # Screen gallery review.
 #
+#   changes  whether the pull request touches the screen or this workflow
 #   shots    the screen tour (scripts/screen-tour.mjs: every step and state
 #            of the real app on the mock service, light and dark, Korean and
 #            English) and the specimen gallery (scripts/gallery-shots.mjs),
 #            kept as a run artifact
 #   publish  the PNGs on the ui-gallery branch and a review issue that shows
 #            them, one per pull request, updated by comment on later runs
+#   result   the required check 'Screen tour'
 #
 # The issue lets the screens be reviewed without running the app, including
-# states that need hardware to reach. It never blocks a merge; ci.yml's
-# gallery job is the gate for the specimens.
+# states that need hardware to reach. The review itself never blocks a merge,
+# but a tour that breaks does: the maintainer made 'Screen tour' a required
+# check (2026-10-31). The workflow therefore runs on every pull request and
+# skips the shots when nothing on screen changed; a path filter on the
+# trigger would leave the required check missing. ci.yml's gallery job stays
+# the gate for the specimens.
 #
 # The ui-gallery branch is one orphan commit holding the last KEEP runs: every
 # scene of the tour and the specimens in Korean and light (what the issue
@@ -25,10 +31,6 @@ name: ui-gallery
 on:
   workflow_dispatch:
   pull_request:
-    paths:
-      - apps/secs2r/ui/**
-      - .github/workflows/ui-gallery.yml
-      - .github/scripts/gallery_issue.py
 
 concurrency:
   group: ui-gallery-${{ github.event.pull_request.number || github.ref }}
@@ -42,9 +44,35 @@ env:
   KEEP: "4"
 
 jobs:
+  changes:
+    name: screen changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      ui: ${{ steps.filter.outputs.ui }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            ui:
+              - 'apps/secs2r/ui/**'
+              - '.github/workflows/ui-gallery.yml'
+              - '.github/scripts/gallery_issue.py'
+
   shots:
     name: screen tour and specimens
-    if: github.event_name == 'workflow_dispatch' || github.event.pull_request.head.repo.full_name == github.repository
+    needs: changes
+    # changes is skipped on workflow_dispatch, so the condition must not
+    # inherit that skip.
+    if: >-
+      !cancelled() &&
+      (github.event_name == 'workflow_dispatch' ||
+       (needs.changes.result == 'success' &&
+        needs.changes.outputs.ui == 'true' &&
+        github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -186,3 +214,24 @@ jobs:
           link="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/issues/${number}"
           echo "Review issue: $link"
           echo "Screen gallery review: [#${number}](${link})" >> "$GITHUB_STEP_SUMMARY"
+
+  result:
+    name: Screen tour
+    needs: [changes, shots]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the change detection and the tour
+        env:
+          EVENT: ${{ github.event_name }}
+          CHANGES: ${{ needs.changes.result }}
+          SHOTS: ${{ needs.shots.result }}
+        run: |
+          echo "event: $EVENT, change detection: $CHANGES, shots: $SHOTS"
+          if [ "$EVENT" = pull_request ] && [ "$CHANGES" != success ]; then
+            echo "::error::change detection ended with $CHANGES"; exit 1
+          fi
+          case "$SHOTS" in
+            success|skipped) ;;
+            *) echo "::error::the screen tour ended with $SHOTS"; exit 1 ;;
+          esac
