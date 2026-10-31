@@ -38,8 +38,19 @@ fn calibration_parse_store_and_saved_bytes_match_oracle() {
             object.remove("mimo_iir_analytic_derivatives"),
             Some(false.into())
         );
+        if settings.xo_rec_include {
+            assert_eq!(object.remove("xo_rec_include"), None);
+        } else {
+            assert_eq!(object.remove("xo_rec_include"), Some(false.into()));
+        }
         assert_eq!(actual, expected["settings"]);
         store_calibration(&mut project, &settings);
+        if !settings.xo_rec_include {
+            assert!(project.save_text().contains("xo_rec_include"));
+            let mut upstream = settings.clone();
+            upstream.xo_rec_include = true;
+            store_calibration(&mut project, &upstream);
+        }
         assert_eq!(project.save_text(), expected["saved"].as_str().unwrap());
         let json: Value = serde_json::from_str(&dumps(&project.to_json())).unwrap();
         assert_eq!(json["keep"], expected["extra_keep"]);
@@ -325,4 +336,19 @@ fn xo_recommendation_metadata_round_trips_and_defaults_are_compatible() {
     let legacy = calibration_from_project(&legacy);
     assert!(legacy.xo_rec_include);
     assert!(legacy.xo_rec_key.is_empty());
+
+    let matching = Project::from_json(
+        loads(
+            r#"{"extra":{"calibration":{"xo":{"센터":100,"프론트":80},"xo_rec":{"프론트":80,"센터":100}}}}"#,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert!(calibration_from_project(&matching).xo_rec_include);
+
+    let manual = Project::from_json(
+        loads(r#"{"extra":{"calibration":{"xo":{"프론트":90},"xo_rec":{"프론트":80}}}}"#).unwrap(),
+    )
+    .unwrap();
+    assert!(!calibration_from_project(&manual).xo_rec_include);
 }

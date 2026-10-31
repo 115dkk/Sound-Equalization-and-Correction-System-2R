@@ -218,8 +218,9 @@ impl ResultBook {
             summary
         });
         let settings = calibration_from_project(project);
-        let xo_rec_stale =
-            !settings.xo_rec.is_empty() && settings.xo_rec_key != xo_rec_key(project, &settings);
+        let xo_rec_stale = !settings.xo_rec.is_empty()
+            && !settings.xo_rec_key.is_empty()
+            && settings.xo_rec_key != xo_rec_key(project, &settings);
         ResultsSummary {
             calibration,
             mimo,

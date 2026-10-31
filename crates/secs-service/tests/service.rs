@@ -854,13 +854,38 @@ fn bootstrap_reports_version_and_upstream_base() {
     assert!(!info.prerelease);
     assert_eq!(info.upstream.commit.len(), 40);
     assert_eq!(info.log_dir, None);
+
+    let root = temp_root("bootstrap-log-dir");
+    let settings_path = root.join("settings.json");
+    let settings_only = Service::new(Deps {
+        app_settings_path: Some(settings_path.clone()),
+        ..Deps::default()
+    });
+    let Response::Bootstrap(info) = call_ok(&settings_only, Request::Bootstrap, Arc::new(NoEvents))
+    else {
+        panic!("bootstrap response must match the request");
+    };
+    assert_eq!(info.log_dir, None);
+
+    let log_dir = root.join("actual-logs");
+    let service = Service::new(Deps {
+        app_settings_path: Some(settings_path),
+        log_dir: Some(log_dir.clone()),
+        ..Deps::default()
+    });
+    let Response::Bootstrap(info) = call_ok(&service, Request::Bootstrap, Arc::new(NoEvents))
+    else {
+        panic!("bootstrap response must match the request");
+    };
+    assert_eq!(info.log_dir, Some(log_dir.to_string_lossy().into_owned()));
 }
 
 #[test]
-fn recommend_xo_accepts_absent_and_background_params() {
+fn recommend_xo_accepts_absent_null_and_background_params() {
     let service = service();
     for request in [
         serde_json::json!({"method": "recommend_xo"}),
+        serde_json::json!({"method": "recommend_xo", "params": null}),
         serde_json::json!({"method": "recommend_xo", "params": {"background": true}}),
     ] {
         let Envelope::Err(error) = service.call_value(request, Arc::new(NoEvents)) else {

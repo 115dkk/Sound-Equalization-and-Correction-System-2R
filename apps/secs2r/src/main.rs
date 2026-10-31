@@ -100,7 +100,8 @@ async fn secs_call(
                 "request",
                 &format!(
                     "method={method} error_code={:?} message={}",
-                    error.code, error.detail
+                    error.code,
+                    applog::log_value(&error.detail)
                 ),
             );
         }
@@ -112,7 +113,10 @@ async fn secs_call(
         join_log.line(
             applog::Level::Error,
             "request",
-            &format!("method={join_method} error_code=Internal message={detail}"),
+            &format!(
+                "method={join_method} error_code=Internal message={}",
+                applog::log_value(&detail)
+            ),
         );
         Envelope::Err(IpcError::new(ErrorCode::Internal, detail))
     })
@@ -145,7 +149,8 @@ fn main() {
         .setup(|app| {
             let handle = app.handle().clone();
             let config_dir = app.path().app_config_dir()?;
-            let log = applog::AppLog::open(&config_dir.join("logs"));
+            let log_dir = config_dir.join("logs");
+            let log = applog::AppLog::open(&log_dir);
             let previous_hook = std::panic::take_hook();
             let panic_log = log.clone();
             std::panic::set_hook(Box::new(move |info| {
@@ -175,7 +180,7 @@ fn main() {
                     "panic",
                     &format!(
                         "message={} location={} backtrace={}",
-                        message,
+                        applog::log_value(&message),
                         location,
                         std::backtrace::Backtrace::force_capture()
                     ),
@@ -206,32 +211,41 @@ fn main() {
                 }),
                 app_settings_path: Some(config_dir.join("settings.json")),
                 app_data_path: config_dir.clone(),
+                log_dir: Some(log_dir),
                 eqapo_install: Arc::new(secs_sys::eqapo_install),
                 apply: Arc::new(apply::NativeApply),
                 managed_host: Arc::new(apply::NativeManagedHost),
                 updates: updates.clone(),
                 ..Deps::default()
             }));
-            let compute = match service.call(Request::ComputeStatus, Arc::new(NoEvents)) {
-                Envelope::Ok(response) => match *response {
-                    Response::ComputeStatus(status) => status
-                        .device
-                        .map_or_else(|| format!("{:?}", status.selected), |device| device.name),
-                    _ => unreachable!("compute_status response matches its request"),
-                },
-                Envelope::Err(_) => "unknown".into(),
-            };
-            log.line(
-                applog::Level::Info,
-                "app",
-                &format!(
-                    "started version={} os={} arch={} compute={}",
-                    env!("CARGO_PKG_VERSION"),
-                    std::env::consts::OS,
-                    std::env::consts::ARCH,
-                    compute
-                ),
-            );
+            let start_service = service.clone();
+            let start_log = log.clone();
+            let _ = std::thread::Builder::new()
+                .name("secs2r-start-log".into())
+                .spawn(move || {
+                    let compute =
+                        match start_service.call(Request::ComputeStatus, Arc::new(NoEvents)) {
+                            Envelope::Ok(response) => match *response {
+                                Response::ComputeStatus(status) => status.device.map_or_else(
+                                    || format!("{:?}", status.selected),
+                                    |device| device.name,
+                                ),
+                                _ => unreachable!("compute_status response matches its request"),
+                            },
+                            Envelope::Err(_) => "unknown".into(),
+                        };
+                    start_log.line(
+                        applog::Level::Info,
+                        "app",
+                        &format!(
+                            "started version={} os={} arch={} compute={}",
+                            env!("CARGO_PKG_VERSION"),
+                            std::env::consts::OS,
+                            std::env::consts::ARCH,
+                            compute
+                        ),
+                    );
+                });
             let local_api = local_api::Manager::new(config_dir, service.clone(), hub, handle);
             app.manage(log);
             app.manage(service.clone());

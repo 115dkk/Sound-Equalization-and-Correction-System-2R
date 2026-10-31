@@ -468,7 +468,8 @@ fn xo_recommendation_staleness_ignores_xo_and_clears_after_recommendation() {
     store_calibration(&mut project, &settings);
     let book = ResultBook::default();
     assert!(
-        book.summary(&project, &ComputeIdentity::default())
+        !book
+            .summary(&project, &ComputeIdentity::default())
             .xo_rec_stale
     );
 

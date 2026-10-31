@@ -113,8 +113,11 @@ impl CancelToken {
         };
         let mut last_rest = lock_unpoisoned(&pacing.last_rest);
         let now = pacing.clock.now();
-        if !pacing.slice.is_zero() && now.saturating_sub(*last_rest) >= pacing.slice {
-            pacing.clock.rest(pacing.slice);
+        let worked = now.saturating_sub(*last_rest);
+        if !pacing.slice.is_zero() && worked >= pacing.slice {
+            pacing
+                .clock
+                .rest(worked.min(pacing.slice.saturating_mul(4)));
             *last_rest = pacing.clock.now();
         }
     }
@@ -649,6 +652,20 @@ mod tests {
         assert!((450..=550).contains(&rested), "rested {rested} ms");
         token.cancel();
         assert!(token.clone().is_cancelled());
+    }
+
+    #[test]
+    fn paced_token_caps_rest_after_long_gaps_between_checks() {
+        let clock = Arc::new(FakePaceClock::default());
+        let token = CancelToken::new().paced_with_clock(Duration::from_millis(50), clock.clone());
+
+        clock.work(Duration::from_millis(300));
+        assert!(!token.is_cancelled());
+        assert_eq!(clock.rested_ms.load(Ordering::SeqCst), 200);
+
+        clock.work(Duration::from_millis(300));
+        assert!(!token.is_cancelled());
+        assert_eq!(clock.rested_ms.load(Ordering::SeqCst), 400);
     }
 
     #[test]

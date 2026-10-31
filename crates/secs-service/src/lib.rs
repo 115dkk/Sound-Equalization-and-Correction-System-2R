@@ -380,6 +380,8 @@ pub struct Deps {
     pub app_settings_path: Option<PathBuf>,
     /// Application-owned data directory used for applied bundles.
     pub app_data_path: PathBuf,
+    /// App log directory exposed through bootstrap, or none when the embedder keeps no app log.
+    pub log_dir: Option<PathBuf>,
     /// Detects the machine-wide Equalizer APO installation.
     pub eqapo_install: Arc<dyn Fn() -> Option<secs_types::ipc::EqApoInstall> + Send + Sync>,
     /// Connects the service to the unpublished application protocol crate.
@@ -413,6 +415,7 @@ impl Debug for Deps {
             .field("uuid", &"source")
             .field("app_settings_path", &self.app_settings_path)
             .field("app_data_path", &self.app_data_path)
+            .field("log_dir", &self.log_dir)
             .field("eqapo_install", &"detector")
             .field("apply", &self.apply)
             .field("managed_host", &self.managed_host)
@@ -480,6 +483,7 @@ impl Default for Deps {
             uuid: Arc::new(Mutex::new(Box::new(random_uuid))),
             app_settings_path: None,
             app_data_path: std::env::temp_dir().join("secs2r"),
+            log_dir: None,
             eqapo_install: Arc::new(|| None),
             apply: Arc::new(NoApplyAdapter),
             managed_host: Arc::new(NoManagedHost),
@@ -610,10 +614,12 @@ impl Service {
     pub fn call_value(&self, request: serde_json::Value, events: Arc<dyn EventSink>) -> Envelope {
         if request.get("method").and_then(serde_json::Value::as_str) == Some("recommend_xo") {
             let params = match request.get("params") {
+                None | Some(serde_json::Value::Null) => {
+                    Ok(secs_types::ipc::RecommendXoParams::default())
+                }
                 Some(value) => {
                     serde_json::from_value::<secs_types::ipc::RecommendXoParams>(value.clone())
                 }
-                None => Ok(secs_types::ipc::RecommendXoParams::default()),
             };
             return match params {
                 Ok(params) => {
@@ -651,13 +657,11 @@ impl Service {
                 os: std::env::consts::OS.to_owned(),
                 arch: std::env::consts::ARCH.to_owned(),
             },
-            log_dir: self.deps.app_settings_path.as_ref().map(|_| {
-                self.deps
-                    .app_data_path
-                    .join("logs")
-                    .to_string_lossy()
-                    .into_owned()
-            }),
+            log_dir: self
+                .deps
+                .log_dir
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned()),
         }
     }
 }
