@@ -811,7 +811,10 @@ fn service_config_oracle_replays_values_and_saved_project_bytes() {
                 object.remove("sample_rate_policy");
                 assert_eq!(object.remove("rc_hi_basis"), Some("strict".into()));
                 assert_eq!(object.remove("rc_hi_transition"), Some(1.into()));
+                assert_eq!(object.remove("rc_bands"), Some(serde_json::json!([])));
                 assert_eq!(object.remove("low_protect"), Some(false.into()));
+                assert_eq!(object.remove("lf_align"), Some(false.into()));
+                assert_eq!(object.remove("mode_decay"), Some(false.into()));
                 assert_eq!(
                     object.remove("peq_analytic_derivatives"),
                     Some(false.into())

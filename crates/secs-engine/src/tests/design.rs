@@ -59,6 +59,20 @@ fn note_value(note: &crate::notes::Note) -> Value {
             schroeder_hz,
             ..
         } => json!({"RcLimit": {"hz": hz, "auto": auto, "schroeder_hz": schroeder_hz}}),
+        Note::RcBands { bands } => json!({"RcBands": {"bands": bands}}),
+        Note::LfAlign {
+            role,
+            strength,
+            arrival_ms,
+            limited,
+        } => {
+            json!({"LfAlign": {"role": role, "strength": strength, "arrival_ms": arrival_ms, "limited": limited}})
+        }
+        Note::ModeDecay {
+            role,
+            target_t60_s,
+            modes,
+        } => json!({"ModeDecay": {"role": role, "target_t60_s": target_t60_s, "modes": modes}}),
         Note::Latency {
             latency_ms,
             lift_ms,
@@ -586,6 +600,9 @@ fn design_matches_recorded_stages() {
                 crate::notes::Note::LiftCapped { .. } => "LiftCapped",
                 crate::notes::Note::SubFilters(_) => "SubFilters",
                 crate::notes::Note::RcLimit { .. } => "RcLimit",
+                crate::notes::Note::RcBands { .. } => "RcBands",
+                crate::notes::Note::LfAlign { .. } => "LfAlign",
+                crate::notes::Note::ModeDecay { .. } => "ModeDecay",
                 crate::notes::Note::Latency { .. } => "Latency",
                 crate::notes::Note::PhaseStrength(_) => "PhaseStrength",
                 crate::notes::Note::PhaseBand(_) => "PhaseBand",

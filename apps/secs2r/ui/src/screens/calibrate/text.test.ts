@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { translate, type Locale } from "../../i18n";
 import type { Translate } from "../../i18n/react";
 import type { Notice } from "../../ipc/bindings/Notice";
-import { lowProtectNotes, rcLimitNotes } from "./fixtures";
-import { LOW_PROTECT_NEXT, lowProtectFailures, noteLines, noticeText, rangeNotices, type FormatNumber } from "./text";
+import { ipcError } from "../../ipc/mock";
+import { baseSettings, lfNoteCases, lowProtectNotes, rcBandsNotes, rcLimitNotes, refusedBandEdit } from "./fixtures";
+import { rejectionPlace, type RangeRejection } from "./settingsView";
+import { LOW_PROTECT_NEXT, lowProtectFailures, noteLines, noticeText, rangeNotices, rangeRejectionText, type FormatNumber } from "./text";
 
 // The calculation notes as secs-service sends them (calibration.rs `notices`:
 // one record per role, filter or mode, scalar string params), turned into the
@@ -174,5 +176,73 @@ describe("calculation notes", () => {
     const { t } = words("ko");
     expect(t(LOW_PROTECT_NEXT)).toBe("부스트 상한을 낮추거나 RC 하한을 올린 뒤 '다시 보정하기'를 누르십시오.");
     expect(words("en").t(LOW_PROTECT_NEXT)).toBe("Lower the boost limit or raise the RC lower limit, then press 'Correct again'.");
+  });
+});
+
+describe("저음 도착 맞추기 and 방 울림 줄이기 (ADR 0025)", () => {
+  it("reads every case the service sends as a line per record, in both languages", () => {
+    expect(lines("ko", lfNoteCases)).toEqual([
+      "저음 도착 맞추기(L): 위상 보정 강도 100 %, 고음과의 도착 시간 차이 +0.4 ms (+는 저음이 늦게 도착)",
+      "저음 도착 맞추기(Ltf): 위상 보정 강도 75 %, 고음과의 도착 시간 차이 −1.2 ms (+는 저음이 늦게 도착), 지연·앞울림 한도로 도착을 완전히 맞추지 못함",
+      "저음 도착 맞추기(C): 위상 보정 강도 0 %, 지연·앞울림 한도로 도착을 완전히 맞추지 못함",
+      "방 울림 줄이기(L): 42 Hz 룸 모드의 측정 T60 0.82초, 목표 0.31초, 8.4 dB 컷",
+      "방 울림 줄이기(L): 63 Hz 룸 모드의 측정 T60 0.55초, 목표 0.31초, 4.9 dB 컷",
+      "방 울림 줄이기(Lrs): 목표 T60 0.31초, 컷을 적용할 룸 모드 없음",
+    ]);
+    expect(lines("en", lfNoteCases)).toEqual([
+      "Align bass arrival (L): phase correction strength 100%, bass arrival relative to treble +0.4 ms (+ means bass arrives later)",
+      "Align bass arrival (Ltf): phase correction strength 75%, bass arrival relative to treble −1.2 ms (+ means bass arrives later), partial alignment due to delay and pre-ringing limits",
+      "Align bass arrival (C): phase correction strength 0%, partial alignment due to delay and pre-ringing limits",
+      "Shorten room ringing (L): 42 Hz room mode measured T60 0.82 s, target 0.31 s, 8.4 dB cut",
+      "Shorten room ringing (L): 63 Hz room mode measured T60 0.55 s, target 0.31 s, 4.9 dB cut",
+      "Shorten room ringing (Lrs): target T60 0.31 s, no room mode eligible for a cut",
+    ]);
+  });
+
+  it("rounds the engine's unrounded values and reads a cut depth by its size whatever its sign", () => {
+    expect(lines("ko", [n("lf_align", { role: "R", strength: "0.6666666666666666", arrival_ms: "2.4999999999999996", limited: "false" })])).toEqual([
+      "저음 도착 맞추기(R): 위상 보정 강도 67 %, 고음과의 도착 시간 차이 +2.5 ms (+는 저음이 늦게 도착)",
+    ]);
+    // `limited` other than "true" adds nothing; a strength it cannot read is shown as sent.
+    expect(lines("en", [n("lf_align", { role: "R", strength: "x", limited: "false" })])).toEqual(["Align bass arrival (R): phase correction strength x"]);
+    expect(lines("ko", [n("mode_decay", { role: "C", hz: "51.8", t60_s: "0.6123", target_s: "0.25", depth_db: "6" })])).toEqual([
+      "방 울림 줄이기(C): 52 Hz 룸 모드의 측정 T60 0.61초, 목표 0.25초, 6.0 dB 컷",
+    ]);
+  });
+});
+
+describe("extra correction bands (ADR 0024)", () => {
+  it("rc_bands: every band of the merged set after the calculation, in both languages", () => {
+    const [one, two, merged] = rcBandsNotes;
+    expect(one!.params.bands).toBe("20-310.42,15000-20000");
+    expect(lines("ko", [one!])).toEqual(["RC 보정 구간 20~310 Hz, 15,000~20,000 Hz"]);
+    expect(lines("en", [one!])).toEqual(["RC correction bands 20–310 Hz, 15,000–20,000 Hz"]);
+    expect(lines("ko", [two!])).toEqual(["RC 보정 구간 20~310 Hz, 2,000~4,000 Hz, 15,000~20,000 Hz"]);
+    // A band overlapping the RC band is merged into it by the engine: one band.
+    expect(lines("ko", [merged!])).toEqual(["RC 보정 구간 20~800 Hz"]);
+    // A list it cannot read is shown as sent.
+    expect(lines("en", [n("rc_bands", { bands: "garbled" })])).toEqual(["RC correction bands garbled"]);
+  });
+
+  it("says at the refused input what to enter instead, for each reason the service gives", () => {
+    const two = { ...baseSettings, rc_bands: [{ lo_hz: 2000, hi_hz: 4000 }, { lo_hz: 15000, hi_hz: 20000 }] };
+    const text = (locale: Locale, rejection: RangeRejection, settings = two) => {
+      const { t, number } = words(locale);
+      return rangeRejectionText(t, number, rejection, rejectionPlace(rejection, settings));
+    };
+    const refusal = (edit: RangeRejection["edit"], params: Record<string, string>): RangeRejection => ({ edit, error: ipcError("invalid_request", "", { field: edit.kind, ...params }) });
+    expect(text("ko", refusal({ kind: "rc_lo", hz: 15 }, { reason: "rc_lo_range", min: "20", max: "200" }))).toBe("20–200 Hz 사이의 값을 넣으십시오.");
+    expect(text("en", refusal({ kind: "rc_lo", hz: 15 }, { reason: "rc_lo_range", min: "20", max: "200" }))).toBe("Enter a value in 20–200 Hz.");
+    expect(text("ko", refusal({ kind: "rc_lo", hz: 160 }, { reason: "rc_lo_above_hi", hi_hz: "150" }))).toBe("상한 150 Hz보다 낮은 값을 넣으십시오.");
+    expect(text("ko", refusal({ kind: "rc_hi", hz: 120 }, { reason: "rc_hi_below_lo", lo_hz: "150" }))).toBe("하한 150 Hz보다 높은 값을 넣으십시오.");
+    expect(text("en", refusal({ kind: "rc_hi", hz: 120 }, { reason: "rc_hi_below_lo", lo_hz: "150" }))).toBe("Enter a value above the lower limit, 150 Hz.");
+    expect(text("ko", refusal({ kind: "rc_hi", hz: 30000 }, { reason: "rc_hi_range", min: "100", max: "20000" }))).toBe("100–20000 Hz 사이의 값을 넣으십시오.");
+    expect(text("ko", refusal({ kind: "rc_bands", bands: [] }, { reason: "rc_band_count", max: "4" }))).toBe("추가 구간은 4개까지 둘 수 있습니다.");
+    // A band: the upper edge set below the lower one says to stay above it; the lower edge set above the upper one, below it.
+    expect(text("ko", refusedBandEdit)).toBe("하한 15,000 Hz보다 높은 값을 넣으십시오.");
+    expect(text("en", refusedBandEdit)).toBe("Enter a value above the lower limit, 15,000 Hz.");
+    expect(text("ko", refusal({ kind: "rc_bands", bands: [] }, { reason: "rc_band_range", index: "1", lo_hz: "5000", hi_hz: "4000" }))).toBe("상한 4,000 Hz보다 낮은 값을 넣으십시오.");
+    expect(text("ko", refusal({ kind: "rc_bands", bands: [] }, { reason: "rc_band_range", index: "2", lo_hz: "15000", hi_hz: "25000" }))).toBe("20–20000 Hz 사이의 값을 넣으십시오.");
+    expect(text("ko", refusal({ kind: "rc_bands", bands: [] }, { reason: "rc_band_range", index: "3", lo_hz: "10", hi_hz: "50" }))).toBe("하한이 상한보다 낮고 20–20000 Hz 안에 드는 구간을 넣으십시오.");
   });
 });

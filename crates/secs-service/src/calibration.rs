@@ -255,7 +255,10 @@ impl Service {
         let open = session.require().map_err(IpcError::from)?;
         let project = open.store.project().clone();
         let project_settings = calibration_from_project(&project);
-        let settings = override_settings.unwrap_or_else(|| project_settings.clone());
+        let mut settings = override_settings.unwrap_or_else(|| project_settings.clone());
+        // A request may carry settings the edit checks never saw; the run, its
+        // notes and its export use the bands the engine uses (ADR 0024).
+        settings.rc_bands = secs_types::calibration::valid_rc_bands(&settings.rc_bands);
         Ok(Snapshot {
             ticket: session.ticket()?,
             path: open.path.clone(),
@@ -692,6 +695,36 @@ fn notices(note: &secs_engine::Note) -> Vec<Notice> {
                 )
             })
             .collect(),
+        Note::ModeDecay {
+            role,
+            target_t60_s,
+            modes,
+        } if modes.is_empty() => vec![record(
+            "mode_decay_none",
+            vec![
+                ("role", role.clone()),
+                ("target_s", target_t60_s.to_string()),
+            ],
+        )],
+        Note::ModeDecay {
+            role,
+            target_t60_s,
+            modes,
+        } => modes
+            .iter()
+            .map(|(hz, t60_s, depth_db)| {
+                record(
+                    "mode_decay",
+                    vec![
+                        ("role", role.clone()),
+                        ("hz", hz.to_string()),
+                        ("t60_s", t60_s.to_string()),
+                        ("target_s", target_t60_s.to_string()),
+                        ("depth_db", depth_db.to_string()),
+                    ],
+                )
+            })
+            .collect(),
         Note::GdCuts { role, cuts } => cuts
             .iter()
             .enumerate()
@@ -793,6 +826,20 @@ pub(crate) fn scalar_notice(note: &secs_engine::Note) -> Notice {
             }
             "low_protect"
         }
+        Note::LfAlign {
+            role,
+            strength,
+            arrival_ms,
+            limited,
+        } => {
+            params.insert("role".into(), role.clone());
+            params.insert("strength".into(), strength.to_string());
+            params.insert("limited".into(), limited.to_string());
+            if let Some(value) = arrival_ms {
+                params.insert("arrival_ms".into(), value.to_string());
+            }
+            "lf_align"
+        }
         Note::LiftCapped {
             from_ms,
             taps,
@@ -830,6 +877,17 @@ pub(crate) fn scalar_notice(note: &secs_engine::Note) -> Notice {
                 params.insert("positions".into(), value.to_string());
             }
             "rc_limit"
+        }
+        Note::RcBands { bands } => {
+            params.insert(
+                "bands".into(),
+                bands
+                    .iter()
+                    .map(|(lo_hz, hi_hz)| format!("{lo_hz}-{hi_hz}"))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+            "rc_bands"
         }
         Note::Latency {
             latency_ms,
@@ -872,6 +930,7 @@ pub(crate) fn scalar_notice(note: &secs_engine::Note) -> Notice {
         | Note::PhaseStrength(_)
         | Note::PhaseBand(_)
         | Note::LongModeBoost { .. }
+        | Note::ModeDecay { .. }
         | Note::GdCuts { .. }
         | Note::TwoWay { .. }
         | Note::Mimo(_) => unreachable!("collection notes expand in notices"),
@@ -1148,6 +1207,15 @@ mod tests {
         assert!(!note.params.contains_key("band_hz"));
     }
 
+    #[test]
+    fn rc_bands_notice_formats_the_merged_band_set() {
+        let note = scalar_notice(&Note::RcBands {
+            bands: vec![(20.0, 300.0), (15_000.5, 20_000.0)],
+        });
+        assert_eq!(note.code, "rc_bands");
+        assert_eq!(note.params["bands"], "20-300,15000.5-20000");
+    }
+
     fn response_source(frequencies: Vec<f32>, gains: Vec<f32>) -> SourceInfo {
         SourceInfo {
             cal: vec![(
@@ -1417,6 +1485,61 @@ mod tests {
     }
 
     #[test]
+    fn lf_align_notices_include_outcome_and_optional_arrival() {
+        let note = Note::LfAlign {
+            role: "L".into(),
+            strength: 0.75,
+            arrival_ms: Some(2.5),
+            limited: true,
+        };
+        assert_eq!(
+            serde_json::to_value(notices(&note)).unwrap(),
+            serde_json::json!([
+                {"code":"lf_align","params":{"role":"L","strength":"0.75","arrival_ms":"2.5","limited":"true"}}
+            ])
+        );
+        let note = Note::LfAlign {
+            role: "R".into(),
+            strength: 0.0,
+            arrival_ms: None,
+            limited: false,
+        };
+        assert_eq!(
+            serde_json::to_value(notices(&note)).unwrap(),
+            serde_json::json!([
+                {"code":"lf_align","params":{"role":"R","strength":"0","limited":"false"}}
+            ])
+        );
+    }
+
+    #[test]
+    fn mode_decay_notices_expand_modes_and_report_empty_result() {
+        let note = Note::ModeDecay {
+            role: "L".into(),
+            target_t60_s: 0.25,
+            modes: vec![(63.0, 0.8, -6.5), (125.0, 0.5, -3.0)],
+        };
+        assert_eq!(
+            serde_json::to_value(notices(&note)).unwrap(),
+            serde_json::json!([
+                {"code":"mode_decay","params":{"role":"L","hz":"63","t60_s":"0.8","target_s":"0.25","depth_db":"-6.5"}},
+                {"code":"mode_decay","params":{"role":"L","hz":"125","t60_s":"0.5","target_s":"0.25","depth_db":"-3"}}
+            ])
+        );
+        let note = Note::ModeDecay {
+            role: "R".into(),
+            target_t60_s: 0.3,
+            modes: Vec::new(),
+        };
+        assert_eq!(
+            serde_json::to_value(notices(&note)).unwrap(),
+            serde_json::json!([
+                {"code":"mode_decay_none","params":{"role":"R","target_s":"0.3"}}
+            ])
+        );
+    }
+
+    #[test]
     fn flat_notice_schemas_preserve_scalar_values_and_order() {
         use secs_engine::MimoNote;
         use serde_json::json;
@@ -1522,6 +1645,9 @@ mod tests {
                 band_t60_s: None,
                 positions: None,
             },
+            Note::RcBands {
+                bands: vec![(20.0, 300.0), (15_000.0, 20_000.0)],
+            },
             Note::Latency {
                 latency_ms: 10.0,
                 lift_ms: 2.0,
@@ -1552,6 +1678,17 @@ mod tests {
                 xo_hz: 50.0,
             },
             Note::BusGainAnchored(-2.0),
+            Note::LfAlign {
+                role: "L".into(),
+                strength: 0.75,
+                arrival_ms: Some(2.5),
+                limited: false,
+            },
+            Note::ModeDecay {
+                role: "L".into(),
+                target_t60_s: 0.25,
+                modes: vec![(63.0, 0.8, -6.5)],
+            },
             Note::Mimo(secs_engine::MimoNote::SupportLimit { max_supports: 2 }),
         ];
         let codes: Vec<_> = notes
@@ -1567,6 +1704,7 @@ mod tests {
                 "sub_filters",
                 "sub_filter_peq",
                 "rc_limit",
+                "rc_bands",
                 "latency",
                 "phase_strength",
                 "phase_band",
@@ -1580,10 +1718,12 @@ mod tests {
                 "two_way",
                 "two_way",
                 "bus_gain_anchored",
+                "lf_align",
+                "mode_decay",
                 "mimo_support_limit",
             ]
         );
         assert_eq!(notices(&notes[1])[0].params["from_ms"], "2");
-        assert_eq!(notices(&notes[14])[0].params["role"], "SW1");
+        assert_eq!(notices(&notes[15])[0].params["role"], "SW1");
     }
 }

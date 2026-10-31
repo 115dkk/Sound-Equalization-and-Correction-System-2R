@@ -1,9 +1,9 @@
 import { HelpTip } from "../../ui/HelpTip";
-// The settings that change the correction, in five sections grouped by what
-// they change: 모드, 보정 범위, 크로스오버, 서브 정렬 (BA), MIMO. Every
-// change goes through `changeSetting` (calibration_settings_set) and only
-// marks the result stale. Detail sits under 고급; every correction mode is
-// available in the mode selector. MIMO is chosen beside 보정 계산 too
+// The settings that change the correction, in sections grouped by what they
+// change: 모드, 보정 범위, 크로스오버, 서브 정렬 (BA), 저음 도착과 울림,
+// MIMO. Every change goes through `changeSetting` (calibration_settings_set)
+// and only marks the result stale. Detail sits under 고급; every correction
+// mode is available in the mode selector. MIMO is chosen beside 보정 계산 too
 // (MIMO 함께 계산, P142); its card keeps the details and MIMO만 계산.
 import { ComputeControl, ComputeResult } from "./ComputeControl";
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
@@ -11,8 +11,9 @@ import { errorText } from "../../app/jobs/jobText";
 import { useNumber, useT } from "../../i18n/react";
 import type { BandType } from "../../ipc/bindings/BandType";
 import type { CalibrationSettings } from "../../ipc/bindings/CalibrationSettings";
+import type { RcBand } from "../../ipc/bindings/RcBand";
 import type { SampleRatePolicy } from "../../ipc/bindings/SampleRatePolicy";
-import { Advanced, Button, Card, ErrorNotice, NumberField, Segmented, Select, Toggle, type Option } from "../../ui";
+import { Advanced, Button, Card, ErrorNotice, IconButton, NumberField, Segmented, Select, Toggle, type Option } from "../../ui";
 import { Icon } from "../../ui/Icon";
 import { roleCode } from "../../ui/maps/geometry";
 import { colorTokens } from "../../ui/plot/series";
@@ -21,6 +22,7 @@ import {
   BAND_TYPES,
   INFRA_DEFAULT_HZ,
   LIMITS,
+  MAX_EXTRA_BANDS,
   SUB_LIMITS,
   MIMO_MIN_POSITIONS,
   ALLPASS_Q_DEFAULT,
@@ -28,6 +30,8 @@ import {
   UPPER_CHOICES,
   infraState,
   layoutOf,
+  nextBand,
+  rejectionPlace,
   roomVolume,
   subModeChoice,
   subOf,
@@ -35,9 +39,11 @@ import {
   upperChoice,
   upperEdits,
   usesSchroeder,
+  withBandEdge,
+  type RejectionPlace,
   type UpperChoice,
 } from "./settingsView";
-import { FAILED_TEXT, MODES, MODE_EFFECT, MODE_NAME, bandTypeText, filterSpec, groupName, modeSpecText, noticeText, rangeNotices, subRoles, xoGroups } from "./text";
+import { FAILED_TEXT, MODES, MODE_EFFECT, MODE_NAME, bandTypeText, filterSpec, groupName, modeSpecText, noticeText, rangeNotices, rangeRejectionText, subRoles, xoGroups } from "./text";
 import { DESIGN_RATE, rateText, tapsAt } from "../system/outputRate";
 import type { BandTypeChoice, CalibrateActions, CalibrateJob, CalibrateView, SettingEdit, SubLayout, SubModeChoice } from "./types";
 
@@ -261,6 +267,97 @@ function UpperPanel({ shown, id, children }: { shown: boolean; id: string; child
   );
 }
 
+/** An edge's arrow-key step: 5 Hz below 1 kHz, 50 Hz from there up. */
+const bandStep = (hz: number) => (hz < 1000 ? 5 : 50);
+
+/** A refusal of a range edit and the input it concerns, as the card shows it. */
+type ShownRejection = { place: RejectionPlace; text: string };
+
+/**
+ * The extra correction bands (ADR 0024) under the primary edges and their RC
+ * lines: a row per band with its two edges and 빼기, then 보정 구간 추가
+ * while there are fewer than four. Each change sends the whole list; the
+ * service answers it sorted. Focus follows a band just added to its lower
+ * edge, and goes to the add action after a removal.
+ */
+function ExtraBands({ settings, primaryHi, rejection, change }: { settings: CalibrationSettings; primaryHi: number; rejection: ShownRejection | null; change: (edit: SettingEdit) => Promise<boolean> }) {
+  const t = useT();
+  const bands = settings.rc_bands;
+  const root = useRef<HTMLDivElement>(null);
+  const [focus, setFocus] = useState<RcBand | "add" | null>(null);
+  useEffect(() => {
+    if (focus === null) return;
+    const index = focus === "add" ? -1 : bands.findIndex((band) => band.lo_hz === focus.lo_hz && band.hi_hz === focus.hi_hz);
+    const target = focus === "add" ? "calibrate.range.extra.add" : index >= 0 ? `calibrate.range.extra.${index + 1}.lower` : null;
+    const element = target ? root.current?.querySelector<HTMLElement>(`[data-ui="${target}"]`) : null;
+    if (element) {
+      element.focus();
+      setFocus(null);
+    }
+  }, [bands, focus]);
+  const add = async () => {
+    const band = nextBand(settings, primaryHi);
+    if (await change({ kind: "rc_bands", bands: [...bands.map((b) => ({ ...b })), band] })) setFocus(band);
+  };
+  const remove = async (index: number) => {
+    if (await change({ kind: "rc_bands", bands: bands.filter((_, i) => i !== index).map((b) => ({ ...b })) })) setFocus("add");
+  };
+  const refused = (index: number, edge: "lower" | "upper") =>
+    rejection?.place.at === "band" && rejection.place.index === index && rejection.place.edge === edge ? rejection.text : undefined;
+  return (
+    <div ref={root} className="calibrate-extra" data-ui="calibrate.range.extra">
+      {bands.map((band, index) => {
+        const id = `calibrate.range.extra.${index + 1}`;
+        return (
+          <div key={index} role="group" aria-labelledby={`${id}.label`} className="calibrate-extra__band" data-ui={id}>
+            <div className="calibrate-extra__head">
+              <span id={`${id}.label`} className="calibrate-extra__name">
+                {t("calibrate.range.extra.band", { n: index + 1 })}
+              </span>
+              <IconButton icon="close" size="sm" label={t("calibrate.range.extra.remove", { n: index + 1 })} data-ui={`${id}.remove`} onClick={() => void remove(index)} />
+            </div>
+            <div className="calibrate-fields calibrate-fields--tight">
+              {(["lower", "upper"] as const).map((edge) => {
+                const hz = edge === "lower" ? band.lo_hz : band.hi_hz;
+                return (
+                  <NumberField
+                    key={edge}
+                    id={`${id}.${edge}`}
+                    label={t(edge === "lower" ? "calibrate.range.lower" : "calibrate.range.upper")}
+                    value={hz}
+                    min={LIMITS.rc_band[0]}
+                    max={LIMITS.rc_band[1]}
+                    step={bandStep(hz)}
+                    unit="Hz"
+                    rejected={refused(index, edge)}
+                    onChange={(value) => void change({ kind: "rc_bands", bands: withBandEdge(bands, index, edge, value) })}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+      {bands.length < MAX_EXTRA_BANDS && (
+        <div className="calibrate-actions">
+          <span className="ui-heading-help">
+            <Button icon="plus" id="calibrate.range.extra.add" data-ui="calibrate.range.extra.add" onClick={() => void add()}>
+              {t("calibrate.range.extra.add")}
+            </Button>
+            <HelpTip id="calibrate.range.extra.help" labelledBy="calibrate.range.extra.add" content={t("calibrate.range.extra.help")} />
+          </span>
+        </div>
+      )}
+      {rejection?.place.at === "add" && (
+        <p className="ui-field__error" data-ui="calibrate.range.extra.rejected">
+          <Icon name="error" size={16} />
+          <span>{rejection.text}</span>
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** `advancedOpen`: gallery and tests start with 고급 open. */
 function RangeSection({ view, actions, advancedOpen = false }: Props & { advancedOpen?: boolean | undefined }) {
   const t = useT();
@@ -279,6 +376,15 @@ function RangeSection({ view, actions, advancedOpen = false }: Props & { advance
     for (const edit of upperEdits(s, next, shownHi)) if (!(await actions.changeSetting(edit))) return;
   };
   const shortText = { count, min: AGREEMENT_MIN_POSITIONS };
+  // A refused edge or band (ADR 0024): its reason at the input it concerns; the input keeps the stored value.
+  const rejection: ShownRejection | null = view.rangeRejection
+    ? (() => {
+        const place = rejectionPlace(view.rangeRejection, s);
+        return { place, text: rangeRejectionText(t, number, view.rangeRejection, place) };
+      })()
+    : null;
+  const refusedAt = (at: "lower" | "upper" | "basis") => (rejection?.place.at === at ? rejection.text : undefined);
+  const basisRefused = refusedAt("basis");
   return (
     <SettingsCard id="range" title={t("calibrate.range.title")} help={t("calibrate.range.description")}>
       <div className="calibrate-fields">
@@ -291,6 +397,7 @@ function RangeSection({ view, actions, advancedOpen = false }: Props & { advance
           step={5}
           unit="Hz"
           showRange
+          rejected={refusedAt("lower")}
           onChange={(hz) => actions.changeSetting({ kind: "rc_lo", hz })}
         />
         <Segmented<UpperChoice>
@@ -298,8 +405,14 @@ function RangeSection({ view, actions, advancedOpen = false }: Props & { advance
           label={t("calibrate.range.basis")}
           help={<BasisHelp />}
           // A chosen agreement stays selectable (one tab stop) and says what to do; otherwise it is off with the reason.
+          // A refused 직접 입력 (its starting value not above the lower edge) gives the reason as a field error.
           hint={
-            !short ? undefined : choice === "agreement" ? (
+            basisRefused ? (
+              <span className="ui-field__error" data-ui="calibrate.range.basis.rejected">
+                <Icon name="error" size={16} />
+                <span>{basisRefused}</span>
+              </span>
+            ) : !short ? undefined : choice === "agreement" ? (
               <span className="calibrate-hint--warning calibrate-fir-over">
                 <Icon name="warning" size={16} className="calibrate-fir-over__icon" />
                 <span>{t("calibrate.range.basis.agreement_short", shortText)}</span>
@@ -357,11 +470,13 @@ function RangeSection({ view, actions, advancedOpen = false }: Props & { advance
               step={50}
               unit="Hz"
               showRange
+              rejected={refusedAt("upper")}
               onChange={(hz) => actions.changeSetting({ kind: "rc_hi", hz })}
             />
           </div>
         </UpperPanel>
       </div>
+      {/* The RC lines say how the upper limit above was set, so they stay right under it. */}
       {notes.length > 0 && (
         <ul className="calibrate-notes-list" data-ui="calibrate.range.notes">
           {notes.map((note) => (
@@ -369,6 +484,7 @@ function RangeSection({ view, actions, advancedOpen = false }: Props & { advance
           ))}
         </ul>
       )}
+      <ExtraBands settings={s} primaryHi={shownHi} rejection={rejection} change={actions.changeSetting} />
       {/* An experiment or the low-end protection left on stays in view: the section opens with it. */}
       <Advanced id="calibrate.range.advanced" count={3} defaultOpen={advancedOpen || analytic !== "off" || s.low_protect}>
         <div className="calibrate-fields">
@@ -857,6 +973,47 @@ function BaSection({ view, actions, onSampleRateSettings, editSub }: FailureProp
   );
 }
 
+/* ── 저음 도착과 울림 (ADR 0025) ────────────────────────────────────────── */
+
+/**
+ * Two official alternatives on the main screen, both off by default. Zero
+ * mode does not change phase, so 저음 도착 맞추기 is off there with the
+ * reason; the stored choice is kept and comes back with another mode. In
+ * Mixed mode its short delay aligns only part of the way, which the switch
+ * says while it is on.
+ */
+function LfSection({ view, actions }: Props) {
+  const t = useT();
+  const s = view.settings;
+  const zero = s.mode === "zero";
+  const align = !zero && s.lf_align;
+  const alignHint = zero ? (
+    <span data-ui="calibrate.lf_align.unavailable">{t("calibrate.lf_align.unavailable_zero", { mode: t(MODE_NAME.zero) })}</span>
+  ) : align && s.mode === "mixed" ? (
+    <span data-ui="calibrate.lf_align.partial">{t("calibrate.lf_align.mixed", { mode: t(MODE_NAME.mixed) })}</span>
+  ) : undefined;
+  return (
+    <SettingsCard id="lf" title={t("calibrate.lf.title")} help={t("calibrate.lf.description")}>
+      <Toggle
+        id="calibrate.lf_align"
+        label={t("calibrate.lf_align")}
+        help={t("calibrate.lf_align.help")}
+        hint={alignHint}
+        checked={align}
+        disabled={zero}
+        onChange={(on) => actions.changeSetting({ kind: "lf_align", on })}
+      />
+      <Toggle
+        id="calibrate.mode_decay"
+        label={t("calibrate.mode_decay")}
+        help={t("calibrate.mode_decay.help")}
+        checked={s.mode_decay}
+        onChange={(on) => actions.changeSetting({ kind: "mode_decay", on })}
+      />
+    </SettingsCard>
+  );
+}
+
 /* ── MIMO ───────────────────────────────────────────────────────────────── */
 
 function MimoSection({ view, actions, onSampleRateSettings }: FailureProps) {
@@ -1006,6 +1163,7 @@ export function Settings({
       <RangeSection view={view} actions={actions} advancedOpen={rangeAdvanced} />
       <XoSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} />
       <BaSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} editSub={editSub} />
+      <LfSection view={view} actions={actions} />
       <MimoSection view={view} actions={actions} onSampleRateSettings={onSampleRateSettings} />
     </section>
   );

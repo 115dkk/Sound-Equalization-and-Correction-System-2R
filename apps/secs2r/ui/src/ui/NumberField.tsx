@@ -52,6 +52,11 @@ type NumberFieldProps = {
    * on mount): false while a typed draft is not a number or is out of range.
    */
   onDraftValidity?: (valid: boolean) => void;
+  /**
+   * Why the last committed value was refused elsewhere (the service): shown
+   * as the field's error, beside the stored value, until a new draft is typed.
+   */
+  rejected?: ReactNode;
 };
 
 export function NumberField({
@@ -70,6 +75,7 @@ export function NumberField({
   disabled,
   size = 7,
   onDraftValidity,
+  rejected,
 }: NumberFieldProps) {
   const t = useT();
   const number = useNumber();
@@ -89,7 +95,8 @@ export function NumberField({
   const valid = !touched || check.ok;
   useLayoutEffect(() => validity.current?.(valid), [valid]);
   const range = t("ui.number.range", { min: shown(min), max: shown(max), unit: unit ?? "" }).trim();
-  const error = touched && !check.ok ? (check.reason === "nan" || check.reason === "empty" ? t("ui.number.nan", { range }) : t("ui.number.out_of_range", { range })) : null;
+  const draftError = touched && !check.ok ? (check.reason === "nan" || check.reason === "empty" ? t("ui.number.nan", { range }) : t("ui.number.out_of_range", { range })) : null;
+  const error = draftError ?? (!touched && rejected ? rejected : null);
   const inlineHint = hint ?? (showRange ? range : undefined);
 
   const commit = () => {

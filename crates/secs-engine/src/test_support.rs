@@ -143,10 +143,13 @@ pub fn load_fixture(fx: &Fixture) -> Case {
         peq_bands: (!v["peq_bands"].is_null()).then(|| integer(&v["peq_bands"]) as usize),
         max_latency_ms: optional(&v["max_latency_ms"]),
         rc_range: (number(&v["rc_range"][0]), optional(&v["rc_range"][1])),
+        rc_bands: Vec::new(),
         room_volume_m3: optional(&v["room_volume_m3"]),
         rc_hi_basis: secs_types::calibration::RcHiBasis::Strict,
         rc_hi_transition: 1,
         low_protect: false,
+        lf_align: false,
+        mode_decay: false,
         phase_frac: number(&v["phase_frac"]),
         sub_manual: pairs(&v["sub_manual"])
             .map(|(r, m)| (r.to_owned(), manual(m)))

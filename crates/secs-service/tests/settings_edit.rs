@@ -44,11 +44,32 @@ fn settings_edits_and_sub_warnings_replay_upstream_oracle() {
                 "method": "calibration_settings_edit", "params": {"edit": edit}
             }))
             .unwrap();
-            let Response::CalibrationSettingsEdit(settings) = call(&service, request) else {
-                panic!()
+            let rejects_rc_clamp = name == "limits" && (3..=8).contains(&index);
+            let settings = if rejects_rc_clamp {
+                assert!(matches!(
+                    service.call(request, Arc::new(NoEvents)),
+                    Envelope::Err(error) if error.code == ErrorCode::InvalidRequest
+                ));
+                let Response::CalibrationSettingsGet(settings) =
+                    call(&service, Request::CalibrationSettingsGet)
+                else {
+                    panic!()
+                };
+                settings
+            } else {
+                let Response::CalibrationSettingsEdit(settings) = call(&service, request) else {
+                    panic!()
+                };
+                settings
             };
-            let expected_settings: CalibrationSettings =
+            let mut expected_settings: CalibrationSettings =
                 serde_json::from_value(expected["settings"].clone()).unwrap();
+            if name == "limits" && index >= 3 {
+                assert_eq!(settings.rc_lo, 20.0);
+                assert_eq!(settings.rc_hi, None);
+                expected_settings.rc_lo = settings.rc_lo;
+                expected_settings.rc_hi = settings.rc_hi;
+            }
             assert_eq!(
                 serde_json::to_value(&settings).unwrap(),
                 serde_json::to_value(&expected_settings).unwrap(),

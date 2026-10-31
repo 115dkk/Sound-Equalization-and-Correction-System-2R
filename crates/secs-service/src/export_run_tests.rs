@@ -34,7 +34,14 @@ fn live_and_reopened_results_have_equal_descriptions_for_every_export_kind() {
     // Same persisted oracle project and reopening path as tests/service.rs.
     let root = std::env::temp_dir().join(format!("secs-export-description-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
-    let (path, settings) = case_project::write(&root, "dolby");
+    let (path, mut settings) = case_project::write(&root, "dolby");
+    settings.rc_bands = vec![secs_types::calibration::RcBand {
+        lo_hz: 15_000.0,
+        hi_hz: 20_000.0,
+    }];
+    // The cached description must carry the ADR 0025 pieces too.
+    settings.lf_align = true;
+    settings.mode_decay = true;
     let service = Service::new(Deps::default());
     let open = |service: &Service| {
         assert!(matches!(
@@ -50,7 +57,7 @@ fn live_and_reopened_results_have_equal_descriptions_for_every_export_kind() {
     open(&service);
     let completion = Arc::new(Completion::default());
     assert!(
-        matches!(service.call(Request::Calibrate(CalibrateParams { settings: Some(settings), ..Default::default() }), completion.clone()), Envelope::Ok(response) if matches!(*response, Response::Calibrate(_)))
+        matches!(service.call(Request::Calibrate(CalibrateParams { settings: Some(settings.clone()), ..Default::default() }), completion.clone()), Envelope::Ok(response) if matches!(*response, Response::Calibrate(_)))
     );
     let (event, wait) = completion
         .ready
@@ -82,9 +89,25 @@ fn live_and_reopened_results_have_equal_descriptions_for_every_export_kind() {
     let cached = lock(&reopened.session);
     let cached = cached.require().unwrap();
     // One description serves every export kind of a result.
+    let live_description = describe(&live.results, live.store.project(), &compute, now).unwrap();
+    let cached_description =
+        describe(&cached.results, cached.store.project(), &compute, now).unwrap();
+    assert_eq!(live_description, cached_description);
     assert_eq!(
-        describe(&live.results, live.store.project(), &compute, now).unwrap(),
-        describe(&cached.results, cached.store.project(), &compute, now).unwrap(),
+        &live_description.rc_pieces[live_description.rc_pieces.len() - 3..],
+        [
+            "RC 추가 구간 15000–20000 Hz",
+            "저음 도착 맞춤",
+            "방 울림 줄임"
+        ]
     );
+    // One ASCII line: both writers print the note as a single `#` comment.
+    for note in [
+        &live_description.camilla_note,
+        &live_description.filter_note,
+    ] {
+        assert!(note.ends_with("; RC extra bands 15000-20000 Hz"), "{note}");
+        assert!(note.is_ascii() && !note.contains('\n'), "{note}");
+    }
     std::fs::remove_dir_all(root).unwrap();
 }

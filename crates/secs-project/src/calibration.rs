@@ -1,8 +1,9 @@
 //! Read and write the calibration half of an upstream-compatible `.secs` file.
 
 use secs_types::calibration::{
-    BundleLayoutEntry, CalibrationSettings, Mode, RcHiBasis, SampleRatePolicy, SubEntry,
+    BundleLayoutEntry, CalibrationSettings, Mode, RcBand, RcHiBasis, SampleRatePolicy, SubEntry,
 };
+use secs_types::rules::{CALIBRATION_LIMITS, RC_LO_READ};
 
 use crate::pyjson::Shape;
 use crate::{Project, PyJson};
@@ -23,8 +24,11 @@ pub(crate) static CALIBRATION_SHAPE: Shape = Shape::Record {
     optional: &[
         "sample_rate_policy",
         "low_protect",
+        "lf_align",
+        "mode_decay",
         "rc_hi_basis",
         "rc_hi_transition",
+        "rc_bands",
         "peq_analytic_derivatives",
         "mimo_iir_analytic_derivatives",
     ],
@@ -62,8 +66,14 @@ pub fn calibration_from_project(project: &Project) -> CalibrationSettings {
         _ => SampleRatePolicy::Reject,
     };
     out.low_protect = get("low_protect").is_some_and(PyJson::is_truthy);
-    out.rc_lo = num(get("rc_lo"), 10.0, 200.0).unwrap_or(20.0);
-    out.rc_hi = num(get("rc_hi"), 100.0, 20_000.0);
+    out.lf_align = get("lf_align").is_some_and(PyJson::is_truthy);
+    out.mode_decay = get("mode_decay").is_some_and(PyJson::is_truthy);
+    out.rc_lo = num(get("rc_lo"), RC_LO_READ.0, RC_LO_READ.1).unwrap_or(20.0);
+    out.rc_hi = num(
+        get("rc_hi"),
+        CALIBRATION_LIMITS.rc_hi.0,
+        CALIBRATION_LIMITS.rc_hi.1,
+    );
     out.rc_hi_basis = match get("rc_hi_basis").and_then(PyJson::str) {
         Some("lenient") => RcHiBasis::Lenient,
         Some("agreement") => RcHiBasis::Agreement,
@@ -78,6 +88,7 @@ pub fn calibration_from_project(project: &Project) -> CalibrationSettings {
     }
     .filter(|value| matches!(value, 1 | 2 | 4))
     .unwrap_or(1);
+    out.rc_bands = rc_bands(get("rc_bands"));
     out.room_volume_m3 = num(get("room_volume_m3"), 5.0, 100_000.0);
     out.room_dims_m = room_dims(get("room_dims_m"));
     out.mimo_on = get("mimo_on").is_some_and(PyJson::is_truthy);
@@ -204,8 +215,28 @@ fn calibration_json(settings: &CalibrationSettings) -> PyJson {
         ("xo_peq_hi".into(), PyJson::Float(settings.xo_peq_hi)),
     ];
     // Omit defaults to preserve the upstream saved-byte goldens.
+    if !settings.rc_bands.is_empty() {
+        values.push((
+            "rc_bands".into(),
+            PyJson::Array(
+                settings
+                    .rc_bands
+                    .iter()
+                    .map(|band| {
+                        PyJson::Array(vec![PyJson::Float(band.lo_hz), PyJson::Float(band.hi_hz)])
+                    })
+                    .collect(),
+            ),
+        ));
+    }
     if settings.low_protect {
         values.push(("low_protect".into(), PyJson::Bool(true)));
+    }
+    if settings.lf_align {
+        values.push(("lf_align".into(), PyJson::Bool(true)));
+    }
+    if settings.mode_decay {
+        values.push(("mode_decay".into(), PyJson::Bool(true)));
     }
     if settings.rc_hi_basis != RcHiBasis::Strict {
         values.push((
@@ -374,6 +405,31 @@ fn bundle_layout_entry(value: &[(String, PyJson)]) -> BundleLayoutEntry {
             .into(),
         rear_trim_ms: num(get("rear_trim_ms"), -20.0, 20.0).unwrap_or(0.0),
     }
+}
+
+fn rc_bands(value: Option<&PyJson>) -> Vec<RcBand> {
+    let mut bands: Vec<_> = value
+        .and_then(PyJson::array)
+        .into_iter()
+        .flatten()
+        .filter_map(|value| {
+            let edges = value.array()?;
+            if edges.len() != 2 {
+                return None;
+            }
+            let lo_hz = as_float(&edges[0])?;
+            let hi_hz = as_float(&edges[1])?;
+            (lo_hz.is_finite()
+                && hi_hz.is_finite()
+                && (CALIBRATION_LIMITS.rc_band.0..=CALIBRATION_LIMITS.rc_band.1).contains(&lo_hz)
+                && (CALIBRATION_LIMITS.rc_band.0..=CALIBRATION_LIMITS.rc_band.1).contains(&hi_hz)
+                && lo_hz < hi_hz)
+                .then_some(RcBand { lo_hz, hi_hz })
+        })
+        .collect();
+    bands.sort_by(|left, right| left.lo_hz.total_cmp(&right.lo_hz));
+    bands.truncate(CALIBRATION_LIMITS.rc_bands_max.1 as usize);
+    bands
 }
 
 fn num(value: Option<&PyJson>, low: f64, high: f64) -> Option<f64> {

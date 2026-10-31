@@ -7,13 +7,15 @@ import { JobTray } from "../../app/jobs/JobTray";
 import { PrefsScope } from "../../app/prefs";
 import { T0, replay, staticApi } from "../../gallery/frameSpecimens";
 import { translate } from "../../i18n";
-import { ipcError } from "../../ipc/mock";
+import { ipcError, rcEditRefusal } from "../../ipc/mock";
+import type { RcBand } from "../../ipc/bindings/RcBand";
 import type { Translate } from "../../i18n/react";
 import { renderWith } from "../../test/render";
 import type { PlotScale } from "../../ui";
 import { CalibrateScreen, calibrateHeader } from "./CalibrateScreen";
 import { LOADING_DELAY_MS } from "./ResultGraph";
 import * as fx from "./fixtures";
+import { rangeRejection, type RangeRejection } from "./settingsView";
 import { calibrateStepState, type CalibrateActions, type CalibrateView } from "./types";
 
 // uPlot needs a canvas; a stub draws the figure, its toolbar and the overlay
@@ -27,6 +29,7 @@ vi.mock("../../ui/plot/LogPlot", () => ({
     overlay?: (scale: PlotScale) => ReactNode;
     toolbar?: ReactNode;
     stale?: boolean;
+    band?: unknown;
     onDoubleClick?: (point: { hz: number; value: number }) => void;
   }) => {
     const scale: PlotScale = {
@@ -40,7 +43,7 @@ vi.mock("../../ui/plot/LogPlot", () => ({
       y: [-30, 15],
     };
     return (
-      <figure data-ui={props.id} aria-label={props.label} className={props.stale ? "plot plot--stale" : "plot"} data-curves={props.curves.map((c) => c.id).join(",")}>
+      <figure data-ui={props.id} aria-label={props.label} className={props.stale ? "plot plot--stale" : "plot"} data-curves={props.curves.map((c) => c.id).join(",")} data-band={JSON.stringify(props.band ?? null)}>
         {props.toolbar}
         <div className="u-over" data-testid="plot-area" onDoubleClick={() => props.onDoubleClick?.({ hz: 300, value: 2 })}>
           {props.overlay?.(scale)}
@@ -128,6 +131,9 @@ const STATES: Record<string, CalibrateView> = {
   mimoBehindCorrection: fx.mimoBehindCorrectionView,
   lowProtect: fx.lowProtectViews.on,
   lowProtectUnheld: fx.lowProtectViews.unheld,
+  lfOn: fx.lfViews.on,
+  lfMixed: fx.lfViews.mixed,
+  lfZero: fx.lfViews.zero,
 };
 
 describe("보정 screen", () => {
@@ -1064,6 +1070,7 @@ const REACH_IDS = [
   "calibrate.plot.filters",
   "calibrate.plot.band.lower",
   "calibrate.plot.band.upper",
+  "calibrate.plot.band.extra.1",
   ...["before", "after", "target", "mimo", "measured", "main", "sub", "sum", "align_before", "align_after", "sub_sum"].map((key) => `calibrate.plot.legend.${key}`),
   "calibrate.target.point.1",
   "calibrate.target.menu",
@@ -1095,6 +1102,8 @@ const REACH_IDS = [
   "calibrate.range.dims.h",
   "calibrate.range.boost",
   "calibrate.range.notes",
+  "calibrate.range.extra.add",
+  ...["", ".lower", ".upper", ".remove"].map((part) => `calibrate.range.extra.1${part}`),
   "calibrate.xo.group",
   "calibrate.xo.hz",
   "calibrate.xo.recommended",
@@ -1216,6 +1225,303 @@ describe("극저역 보호 (ADR 0022)", () => {
   });
 });
 
+/* ── 저음 도착 맞추기, 방 울림 줄이기 (ADR 0025) ─────────────────────────── */
+
+describe("저음 도착 맞추기 and 방 울림 줄이기 (ADR 0025)", () => {
+  it("draws its own card between BA and MIMO, outside any 고급, both off by default, and sends each edit", () => {
+    const actions = setup(fx.lfViews.off);
+    const card = must("calibrate.settings.lf");
+    expect(within(card).getByRole("heading").textContent).toBe("저음 도착과 울림");
+    expect(must("calibrate.settings.ba").compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(card.compareDocumentPosition(must("calibrate.settings.mimo")) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Found without opening any 고급, and not inside one.
+    const align = within(card).getByRole("switch", { name: "저음 도착 맞추기" });
+    const decay = within(card).getByRole("switch", { name: "방 울림 줄이기" });
+    expect(align.getAttribute("data-ui")).toBe("calibrate.lf_align");
+    expect(decay.getAttribute("data-ui")).toBe("calibrate.mode_decay");
+    for (const toggle of [align, decay]) {
+      expect(toggle.closest(".ui-advanced")).toBeNull();
+      expect(toggle.getAttribute("aria-checked")).toBe("false");
+      expect((toggle as HTMLButtonElement).disabled).toBe(false);
+    }
+    expect(ui("calibrate.lf_align.help")).not.toBeNull();
+    expect(ui("calibrate.mode_decay.help")).not.toBeNull();
+    expect(ui("calibrate.lf_align.unavailable")).toBeNull();
+    expect(ui("calibrate.lf_align.partial")).toBeNull();
+    fireEvent.click(align);
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "lf_align", on: true });
+    fireEvent.click(decay);
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "mode_decay", on: true });
+  });
+
+  it("turns both off in 표준 mode, where the alignment is whole and nothing is said under it", () => {
+    const actions = setup(fx.lfViews.on);
+    const align = must("calibrate.lf_align");
+    expect(align.getAttribute("aria-checked")).toBe("true");
+    expect(must("calibrate.mode_decay").getAttribute("aria-checked")).toBe("true");
+    expect(align.getAttribute("aria-describedby") ?? "").not.toContain("calibrate.lf_align-hint");
+    fireEvent.click(align);
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "lf_align", on: false });
+    fireEvent.click(must("calibrate.mode_decay"));
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "mode_decay", on: false });
+  });
+
+  it("in 최소 지연 mode shows 저음 도착 맞추기 off and disabled with the reason whatever is stored, and keeps 방 울림 줄이기", () => {
+    expect(fx.lfViews.zero.settings.lf_align).toBe(true);
+    const actions = setup(fx.lfViews.zero);
+    const align = must("calibrate.lf_align") as HTMLButtonElement;
+    expect(align.getAttribute("aria-checked")).toBe("false");
+    expect(align.disabled).toBe(true);
+    expect(align.getAttribute("aria-describedby")).toContain("calibrate.lf_align-hint");
+    expect(must("calibrate.lf_align.unavailable").textContent).toBe("최소 지연 모드는 위상을 바꾸지 않아 쓸 수 없습니다.");
+    fireEvent.click(align);
+    expect(actions.changeSetting).not.toHaveBeenCalled();
+    const decay = must("calibrate.mode_decay") as HTMLButtonElement;
+    expect(decay.disabled).toBe(false);
+    expect(decay.getAttribute("aria-checked")).toBe("true");
+    cleanupAll();
+    setup(fx.lfViews.zero, { locale: "en" });
+    expect(must("calibrate.lf_align.unavailable").textContent).toBe("Not available in Minimum latency mode, which does not change phase.");
+  });
+
+  it("in 저지연 mode says under the switch, as a hint and not a warning, that it aligns only part of the way", () => {
+    setup(fx.lfViews.mixed);
+    expect(must("calibrate.lf_align").getAttribute("aria-checked")).toBe("true");
+    const hint = must("calibrate.lf_align.partial");
+    expect(hint.textContent).toBe("저지연 모드는 지연이 짧아 저음 도착을 일부만 맞춥니다.");
+    expect(hint.closest(".ui-field__hint")).not.toBeNull();
+    expect(hint.closest(".calibrate-hint--warning")).toBeNull();
+    cleanupAll();
+    // Off in 저지연 mode: nothing to say.
+    setup({ ...fx.lfViews.mixed, settings: { ...fx.lfViews.mixed.settings, lf_align: false } });
+    expect(ui("calibrate.lf_align.partial")).toBeNull();
+    cleanupAll();
+    setup(fx.lfViews.mixed, { locale: "en" });
+    expect(must("calibrate.lf_align.partial").textContent).toBe("Low latency mode has a short delay, so the bass arrival is aligned only part of the way.");
+  });
+
+  it("names both switches by their effect in English, and lists each main's lines in the notes", () => {
+    setup(fx.lfViews.on, { locale: "en" });
+    expect(must("calibrate.lf_align").textContent).toBe("Align bass arrival");
+    expect(must("calibrate.mode_decay").textContent).toBe("Shorten room ringing");
+    cleanupAll();
+    setup(fx.lfViews.on, { initial: { notesOpen: true } });
+    const lines = [...must("calibrate.verdict.notes").querySelectorAll("li")].map((li) => li.textContent ?? "");
+    expect(lines.filter((line) => line.startsWith("저음 도착 맞추기"))).toHaveLength(11);
+    expect(lines).toContain("저음 도착 맞추기(L): 위상 보정 강도 100 %, 고음과의 도착 시간 차이 −0.4 ms (+는 저음이 늦게 도착)");
+    expect(lines).toContain("방 울림 줄이기(L): 42 Hz 룸 모드의 측정 T60 0.82초, 목표 0.31초, 8.4 dB 컷");
+    expect(lines).toContain("방 울림 줄이기(Ltf): 목표 T60 0.31초, 컷을 적용할 룸 모드 없음");
+    cleanupAll();
+    // 저지연 mode notes the limit on every main; 최소 지연 mode has no alignment line.
+    setup(fx.lfViews.mixed, { initial: { notesOpen: true } });
+    expect(must("calibrate.verdict.notes").textContent).toContain("저음 도착 맞추기(L): 위상 보정 강도 50 %, 고음과의 도착 시간 차이 +2.4 ms (+는 저음이 늦게 도착), 지연·앞울림 한도로 도착을 완전히 맞추지 못함");
+    cleanupAll();
+    setup(fx.lfViews.zero, { initial: { notesOpen: true } });
+    expect(must("calibrate.verdict.notes").textContent).not.toContain("저음 도착 맞추기");
+  });
+});
+
+/* ── Extra correction bands (ADR 0024) ──────────────────────────────────── */
+
+/** The screen with its settings held in state, as the service answers them: an rc_bands list stored sorted, a refusal kept in the view. */
+function BandsHarness({ initial, actions }: { initial: CalibrateView; actions: MockActions }) {
+  const [view, setView] = useState(initial);
+  const changeSetting: CalibrateActions["changeSetting"] = async (edit) => {
+    await actions.changeSetting(edit);
+    const refusal = rcEditRefusal(view.settings, edit);
+    if (refusal) {
+      setView((v) => ({ ...v, rangeRejection: rangeRejection(edit, refusal) }));
+      return false;
+    }
+    if (edit.kind === "rc_bands") {
+      const bands = [...edit.bands].sort((a, b) => a.lo_hz - b.lo_hz);
+      setView((v) => ({ ...v, rangeRejection: null, settings: { ...v.settings, rc_bands: bands } }));
+    }
+    return true;
+  };
+  return <CalibrateScreen view={view} actions={{ ...actions, changeSetting }} />;
+}
+
+const band = (lo_hz: number, hi_hz: number): RcBand => ({ lo_hz, hi_hz });
+const errorOf = (id: string) => document.getElementById(`${id}-error`)?.textContent ?? null;
+
+describe("extra correction bands (ADR 0024)", () => {
+  it("shows only 보정 구간 추가 without extra bands, and adding sends one rc_bands edit that starts clear of the RC band", () => {
+    const actions = setup(fx.extraBandViews.none);
+    expect(ui("calibrate.range.extra.1")).toBeNull();
+    const add = must("calibrate.range.extra.add");
+    expect(add.textContent).toBe("보정 구간 추가");
+    // Under the primary edges, with its help beside it.
+    expect(must("calibrate.range.lower").compareDocumentPosition(add) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(ui("calibrate.range.extra.help")).not.toBeNull();
+    fireEvent.click(add);
+    expect(actions.changeSetting).toHaveBeenCalledTimes(1);
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "rc_bands", bands: [band(15000, 20000)] });
+    cleanupAll();
+    // 15–20 kHz taken: the next span with a gap to every band (2–4 kHz, 15–20 kHz).
+    const two = setup(fx.extraBandViews.two);
+    fireEvent.click(must("calibrate.range.extra.add"));
+    expect(two.changeSetting).toHaveBeenCalledTimes(1);
+    expect(two.changeSetting).toHaveBeenCalledWith({ kind: "rc_bands", bands: [band(2000, 4000), band(15000, 20000), band(5000, 10000)] });
+  });
+
+  it("draws a row per band with its edges and 빼기; removing or editing an edge sends the whole list", () => {
+    const actions = setup(fx.extraBandViews.two);
+    const row = must("calibrate.range.extra.2");
+    expect(row.getAttribute("role")).toBe("group");
+    expect(screen.getByRole("group", { name: "추가 구간 2" })).toBe(row);
+    expect((must("calibrate.range.extra.2.lower") as HTMLInputElement).value).toBe("15000");
+    expect((must("calibrate.range.extra.2.upper") as HTMLInputElement).value).toBe("20000");
+    expect(must("calibrate.range.extra.2.lower").getAttribute("aria-valuemin")).toBe("20");
+    expect(must("calibrate.range.extra.2.upper").getAttribute("aria-valuemax")).toBe("20000");
+    expect(must("calibrate.range.extra.1.remove").getAttribute("aria-label")).toBe("추가 구간 1 빼기");
+    fireEvent.click(must("calibrate.range.extra.1.remove"));
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_bands", bands: [band(15000, 20000)] });
+    commitNumber("calibrate.range.extra.2.lower", "12000");
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_bands", bands: [band(2000, 4000), band(12000, 20000)] });
+    // Arrow keys: 50 Hz from 1 kHz up, 5 Hz below it.
+    fireEvent.keyDown(must("calibrate.range.extra.1.upper"), { key: "ArrowUp" });
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_bands", bands: [band(2000, 4050), band(15000, 20000)] });
+    cleanupAll();
+    const low = setup({ ...fx.extraBandViews.two, settings: { ...fx.extraBandViews.two.settings, rc_bands: [band(250, 800)] } });
+    fireEvent.keyDown(must("calibrate.range.extra.1.lower"), { key: "ArrowUp" });
+    expect(low.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_bands", bands: [band(255, 800)] });
+  });
+
+  it("hides the add action at four bands", () => {
+    setup(fx.extraBandViews.four);
+    for (const n of [1, 2, 3, 4]) expect(ui(`calibrate.range.extra.${n}`)).not.toBeNull();
+    expect(ui("calibrate.range.extra.5")).toBeNull();
+    expect(ui("calibrate.range.extra.add")).toBeNull();
+  });
+
+  it("moves focus to a band just added, and to the add action after a removal", async () => {
+    const actions = mockActions();
+    renderWith(<BandsHarness initial={fx.extraBandViews.none} actions={actions} />, { locale: "ko" });
+    await act(async () => {
+      fireEvent.click(must("calibrate.range.extra.add"));
+    });
+    expect(document.activeElement).toBe(must("calibrate.range.extra.1.lower"));
+    await act(async () => {
+      fireEvent.click(must("calibrate.range.extra.add"));
+    });
+    // 5–10 kHz sorts before 15–20 kHz: the new band is the first row.
+    expect((must("calibrate.range.extra.1.lower") as HTMLInputElement).value).toBe("5000");
+    expect(document.activeElement).toBe(must("calibrate.range.extra.1.lower"));
+    await act(async () => {
+      fireEvent.click(must("calibrate.range.extra.2.remove"));
+    });
+    expect(ui("calibrate.range.extra.2")).toBeNull();
+    expect(document.activeElement).toBe(must("calibrate.range.extra.add"));
+  });
+
+  it("shows a refused band edge's reason at that input, keeps the stored value there, and drops the reason on the next draft", async () => {
+    const actions = mockActions();
+    renderWith(<BandsHarness initial={fx.extraBandViews.two} actions={actions} />, { locale: "ko" });
+    await act(async () => {
+      commitNumber("calibrate.range.extra.2.upper", "12000");
+    });
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "rc_bands", bands: [band(2000, 4000), band(15000, 12000)] });
+    const input = must("calibrate.range.extra.2.upper") as HTMLInputElement;
+    expect(errorOf("calibrate.range.extra.2.upper")).toBe("하한 15,000 Hz보다 높은 값을 넣으십시오.");
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(input.value).toBe("20000");
+    expect(input.getAttribute("aria-valuenow")).toBe("20000");
+    expect(errorOf("calibrate.range.extra.2.lower")).toBeNull();
+    expect(errorOf("calibrate.range.extra.1.upper")).toBeNull();
+    // A lower edge raised past its upper edge: the reason moves to that input.
+    await act(async () => {
+      commitNumber("calibrate.range.extra.1.lower", "4500");
+    });
+    expect(errorOf("calibrate.range.extra.1.lower")).toBe("상한 4,000 Hz보다 낮은 값을 넣으십시오.");
+    expect(errorOf("calibrate.range.extra.2.upper")).toBeNull();
+    expect((must("calibrate.range.extra.1.lower") as HTMLInputElement).value).toBe("2000");
+    fireEvent.change(must("calibrate.range.extra.1.lower"), { target: { value: "2500" } });
+    expect(errorOf("calibrate.range.extra.1.lower")).toBeNull();
+  });
+
+  it("shows each refusal of the primary edges at its input, the stored value kept", () => {
+    const refused = (view: CalibrateView, edit: RangeRejection["edit"], params: Record<string, string>): CalibrateView => ({
+      ...view,
+      rangeRejection: { edit, error: ipcError("invalid_request", "", { field: edit.kind, ...params }) },
+    });
+    const manual = fx.rangeViews.manual;
+    setup(refused(manual, { kind: "rc_lo", hz: 300 }, { reason: "rc_lo_above_hi", hi_hz: "300" }));
+    expect(errorOf("calibrate.range.lower")).toBe("상한 300 Hz보다 낮은 값을 넣으십시오.");
+    expect((must("calibrate.range.lower") as HTMLInputElement).value).toBe("20");
+    expect(errorOf("calibrate.range.upper")).toBeNull();
+    cleanupAll();
+    setup(refused(manual, { kind: "rc_lo", hz: 10 }, { reason: "rc_lo_range", min: "20", max: "200" }));
+    expect(errorOf("calibrate.range.lower")).toBe("20–200 Hz 사이의 값을 넣으십시오.");
+    cleanupAll();
+    setup(refused(manual, { kind: "rc_hi", hz: 20 }, { reason: "rc_hi_below_lo", lo_hz: "20" }));
+    expect(errorOf("calibrate.range.upper")).toBe("하한 20 Hz보다 높은 값을 넣으십시오.");
+    expect((must("calibrate.range.upper") as HTMLInputElement).value).toBe("300");
+    cleanupAll();
+    setup(refused(manual, { kind: "rc_hi", hz: 30000 }, { reason: "rc_hi_range", min: "100", max: "20000" }));
+    expect(errorOf("calibrate.range.upper")).toBe("100–20000 Hz 사이의 값을 넣으십시오.");
+    cleanupAll();
+    // 직접 입력 refused while the limit is automatic: the reason under the basis choice.
+    setup(refused(fx.splView, { kind: "rc_hi", hz: 150 }, { reason: "rc_hi_below_lo", lo_hz: "200" }));
+    expect(must("calibrate.range.basis.rejected").textContent).toBe("하한 200 Hz보다 높은 값을 넣으십시오.");
+    cleanupAll();
+    // Too many bands: under the add action.
+    setup(refused(fx.extraBandViews.two, { kind: "rc_bands", bands: [] }, { reason: "rc_band_count", max: "4" }));
+    expect(must("calibrate.range.extra.rejected").textContent).toBe("추가 구간은 4개까지 둘 수 있습니다.");
+  });
+
+  it("refuses a primary lower edge below 20 Hz with its reason and sends nothing", () => {
+    const actions = setup(fx.splView);
+    expect(must("calibrate.range.lower").getAttribute("aria-valuemin")).toBe("20");
+    commitNumber("calibrate.range.lower", "15");
+    expect(actions.changeSetting).not.toHaveBeenCalled();
+    expect(errorOf("calibrate.range.lower")).toBe("20–200 Hz 사이의 값을 넣으십시오.");
+  });
+
+  it("hands the graph the extra bands and labels each one where it fits, and leaves the band as before without them", () => {
+    setup(fx.extraBandViews.one);
+    expect(JSON.parse(must("calibrate.plot").getAttribute("data-band")!)).toEqual({ lo: 20, hi: 310, extra: [[15000, 20000]] });
+    expect(must("calibrate.plot.band.lower").textContent).toBe("RC 하한 20 Hz");
+    expect(must("calibrate.plot.band.upper").textContent).toBe("RC 상한 310 Hz");
+    const extra = must("calibrate.plot.band.extra.1");
+    expect(extra.textContent).toBe("추가 구간 15k~20k Hz");
+    // Near the right side a label sits left of its edge, so it stays inside the plot; the RC band's stay as before.
+    expect(extra.style.right).not.toBe("");
+    expect(extra.className).not.toContain("--upper");
+    expect(parseFloat(must("calibrate.plot.band.lower").style.left)).toBeCloseTo(Math.log10(20) * 100 + 4, 2);
+    expect(parseFloat(must("calibrate.plot.band.upper").style.left)).toBeCloseTo(Math.log10(310) * 100 + 4, 2);
+    cleanupAll();
+    // Two bands on a 500 px plot: 2–4 kHz fits beside the lower label; 15–20 kHz covers a label on either row, so it is left out.
+    setup(fx.extraBandViews.two);
+    expect(JSON.parse(must("calibrate.plot").getAttribute("data-band")!)).toEqual({ lo: 20, hi: 310, extra: [[2000, 4000], [15000, 20000]] });
+    expect(must("calibrate.plot.band.extra.1").textContent).toBe("추가 구간 2k~4k Hz");
+    expect(ui("calibrate.plot.band.extra.2")).toBeNull();
+    cleanupAll();
+    setup(fx.splView);
+    expect(JSON.parse(must("calibrate.plot").getAttribute("data-band")!)).toEqual({ lo: 20, hi: 310, extra: [] });
+    expect(ui("calibrate.plot.band.extra.1")).toBeNull();
+    expect(must("calibrate.plot.band.upper").textContent).toBe("RC 상한 310 Hz");
+    cleanupAll();
+    // XO shows no RC band.
+    setup({ ...fx.extraBandViews.two, tab: "xo", curves: fx.xoView.curves });
+    expect(JSON.parse(must("calibrate.plot").getAttribute("data-band")!)).toBeNull();
+  });
+
+  it("lists the merged band set in the calculation notes, in Korean and English", () => {
+    setup(fx.extraBandViews.two, { initial: { notesOpen: true } });
+    const lines = () => [...must("calibrate.verdict.notes").querySelectorAll("li")].map((li) => li.textContent ?? "");
+    expect(lines()).toContain("RC 보정 구간 20~310 Hz, 2,000~4,000 Hz, 15,000~20,000 Hz");
+    cleanupAll();
+    setup(fx.extraBandViews.two, { locale: "en", initial: { notesOpen: true } });
+    expect(lines()).toContain("RC correction bands 20–310 Hz, 2,000–4,000 Hz, 15,000–20,000 Hz");
+    expect(must("calibrate.range.extra.add").textContent).toBe("Add correction band");
+    cleanupAll();
+    // Without extra bands there is no such note.
+    setup(fx.splView, { initial: { notesOpen: true } });
+    expect(lines().some((line) => line.startsWith("RC 보정 구간"))).toBe(false);
+  });
+});
+
 describe("reach table", () => {
   it("draws every id the P31b reach rows cite in at least one state", () => {
     const seen = new Set<string>();
@@ -1228,6 +1534,8 @@ describe("reach table", () => {
     add(idsOf(screenOf(fx.subsOnlyView, "SW2")));
     add(idsOf(screenOf(fx.baView, "SW2")));
     add(idsOf(screenOf({ ...fx.emptyView, settings: { ...fx.emptyView.settings, mimo_on: true } })));
+    // Extra correction bands (ADR 0024): their rows and the graph's labels.
+    add(idsOf(screenOf(fx.extraBandViews.two)));
     // The header's pills, and the job tray's cancels and history (U8).
     for (const view of [fx.splView, fx.staleView, fx.runningMimoView]) add(idsOf(<>{calibrateHeader(view, t).status}</>));
     const jobs = (["calibrate", "recommend_xo", "mimo"] as const).map((kind, i) => ({ type: "event" as const, at: T0 + i, event: { event: "started" as const, job: i + 1, kind } }));

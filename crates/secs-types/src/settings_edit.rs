@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::{
-    calibration::{Mode, RcHiBasis, SampleRatePolicy},
+    calibration::{Mode, RcBand, RcHiBasis, SampleRatePolicy},
     chain::BandType,
 };
 
@@ -108,6 +108,12 @@ pub enum SettingEdit {
     LowProtect {
         on: bool,
     },
+    LfAlign {
+        on: bool,
+    },
+    ModeDecay {
+        on: bool,
+    },
     RcLo {
         hz: f64,
     },
@@ -119,6 +125,12 @@ pub enum SettingEdit {
     },
     RcHiTransition {
         factor: u8,
+    },
+    /// Replaces the whole list of extra correction bands (ADR 0024); an
+    /// empty list removes them. Rejected, not clamped, when a band breaks
+    /// `CALIBRATION_LIMITS.rc_band` or the list is longer than `rc_bands_max`.
+    RcBands {
+        bands: Vec<RcBand>,
     },
     RoomVolume {
         m3: f64,

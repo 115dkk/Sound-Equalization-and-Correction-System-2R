@@ -102,6 +102,92 @@ fn project_set_persists_low_protect_switch() {
 }
 
 #[test]
+fn project_set_persists_lf_align_and_mode_decay_switches() {
+    let root = root("lf-align-mode-decay");
+    let project = root.join("room.secs");
+    let path = project.to_string_lossy();
+    assert_success(&run(&["project", "new", &path, "--preset", "2.1"]).0);
+
+    for (value, expected) in [("on", true), ("off", false)] {
+        let result = assert_success(
+            &run(&[
+                "project",
+                "set",
+                &path,
+                "--lf-align",
+                value,
+                "--mode-decay",
+                value,
+            ])
+            .0,
+        );
+        let settings = result
+            .iter()
+            .find(|item| item["reply"]["data"]["method"] == "calibration_settings_get")
+            .unwrap();
+        assert_eq!(settings["reply"]["data"]["data"]["lf_align"], expected);
+        assert_eq!(settings["reply"]["data"]["data"]["mode_decay"], expected);
+        let saved: Value = serde_json::from_slice(&fs::read(&project).unwrap()).unwrap();
+        assert_eq!(
+            saved["calibration"].get("lf_align"),
+            expected.then_some(&Value::Bool(true))
+        );
+        assert_eq!(
+            saved["calibration"].get("mode_decay"),
+            expected.then_some(&Value::Bool(true))
+        );
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn project_set_persists_and_clears_rc_bands() {
+    let root = root("rc-bands");
+    let project = root.join("room.secs");
+    let path = project.to_string_lossy();
+    assert_success(&run(&["project", "new", &path, "--preset", "2.1"]).0);
+
+    let result = assert_success(
+        &run(&[
+            "project",
+            "set",
+            &path,
+            "--rc-bands",
+            "15000-20000,1000-2000",
+        ])
+        .0,
+    );
+    let settings = result
+        .iter()
+        .find(|value| value["reply"]["data"]["method"] == "calibration_settings_get")
+        .unwrap();
+    assert_eq!(
+        settings["reply"]["data"]["data"]["rc_bands"],
+        serde_json::json!([
+            {"lo_hz": 1000.0, "hi_hz": 2000.0},
+            {"lo_hz": 15000.0, "hi_hz": 20000.0},
+        ])
+    );
+
+    let result = assert_success(&run(&["project", "set", &path, "--rc-bands", "none"]).0);
+    let settings = result
+        .iter()
+        .find(|value| value["reply"]["data"]["method"] == "calibration_settings_get")
+        .unwrap();
+    assert_eq!(
+        settings["reply"]["data"]["data"]["rc_bands"],
+        serde_json::json!([])
+    );
+    let saved: Value = serde_json::from_slice(&fs::read(&project).unwrap()).unwrap();
+    assert!(saved["calibration"].get("rc_bands").is_none());
+
+    let syntax = run(&["project", "set", &path, "--rc-bands", "broken"]).0;
+    assert!(!syntax.status.success());
+    assert!(String::from_utf8_lossy(&syntax.stderr).contains("expected LO-HI"));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn bootstrap_and_check_are_json_lines() {
     let (bootstrap, bootstrap_time) = run(&["bootstrap"]);
     let bootstrap = assert_success(&bootstrap);

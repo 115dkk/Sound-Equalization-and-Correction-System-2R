@@ -6,6 +6,8 @@
 // (`calibration_settings_edit`), which applies upstream's rules.
 import type { BandType } from "../../ipc/bindings/BandType";
 import type { CalibrationSettings } from "../../ipc/bindings/CalibrationSettings";
+import type { IpcError } from "../../ipc/bindings/IpcError";
+import type { RcBand } from "../../ipc/bindings/RcBand";
 import type { RcHiBasis } from "../../ipc/bindings/RcHiBasis";
 import type { SubEntry } from "../../ipc/bindings/SubEntry";
 import { CALIBRATION_LIMITS } from "../../ipc/bindings/rules";
@@ -59,18 +61,88 @@ export const usesSchroeder = (choice: UpperChoice) => choice === "strict" || cho
 
 /**
  * The edits that choose `choice`, in the order to send them. 직접 입력 starts
- * from the limit in force (`shownHi`); leaving it stores the basis first, so
- * the card never shows the old basis in between, then clears `rc_hi`. The
- * current choice needs none.
+ * from the limit in force (`shownHi`), or from the first 50 Hz step above the
+ * lower edge when that limit is not above it (the service refuses an upper
+ * edge at or below the lower one, ADR 0024); leaving it stores the basis
+ * first, so the card never shows the old basis in between, then clears
+ * `rc_hi`. The current choice needs none.
  */
 export function upperEdits(settings: CalibrationSettings, choice: UpperChoice, shownHi: number): SettingEdit[] {
   if (choice === upperChoice(settings)) return [];
-  if (choice === "manual") return [{ kind: "rc_hi", hz: shownHi }];
+  if (choice === "manual") return [{ kind: "rc_hi", hz: Math.max(shownHi, LIMITS.rc_hi[0], (Math.floor(settings.rc_lo / 50) + 1) * 50) }];
   if (settings.rc_hi === null) return [{ kind: "rc_hi_basis", basis: choice }];
   return [
     { kind: "rc_hi_basis", basis: choice },
     { kind: "rc_hi", hz: null },
   ];
+}
+
+/* ── Extra correction bands (ADR 0024) ──────────────────────────────────── */
+
+/** Extra bands the range card holds (`rc_bands_max`). */
+export const MAX_EXTRA_BANDS = CALIBRATION_LIMITS.rc_bands_max[1];
+
+/** Round spans a new extra band starts at, the highest first. */
+const BAND_LADDER: readonly (readonly [number, number])[] = [
+  [15000, 20000], [10000, 15000], [5000, 10000], [2000, 5000], [1000, 2000], [500, 1000], [200, 500], [100, 200], [50, 100], [20, 50],
+];
+
+/**
+ * Where a new extra band starts: the first span of the ladder that keeps a
+ * gap to the primary band (`rc_lo` to the manual upper limit, or `primaryHi`,
+ * the limit in force) and to every band already there. Each span is a valid
+ * band, so adding one never draws a rejection; when none is clear it starts
+ * at 15–20 kHz, which the engine merges with what covers it.
+ */
+export function nextBand(settings: CalibrationSettings, primaryHi: number): RcBand {
+  const taken: (readonly [number, number])[] = [[settings.rc_lo, settings.rc_hi ?? primaryHi], ...settings.rc_bands.map((band) => [band.lo_hz, band.hi_hz] as const)];
+  const clear = ([lo, hi]: readonly [number, number]) => taken.every(([a, b]) => hi < a || lo > b);
+  const [lo_hz, hi_hz] = BAND_LADDER.find(clear) ?? BAND_LADDER[0]!;
+  return { lo_hz, hi_hz };
+}
+
+/** The extra bands with one edge of band `index` changed: the whole list the `rc_bands` edit sends. */
+export function withBandEdge(bands: readonly RcBand[], index: number, edge: "lower" | "upper", hz: number): RcBand[] {
+  return bands.map((band, i) => (i !== index ? { ...band } : edge === "lower" ? { ...band, lo_hz: hz } : { ...band, hi_hz: hz }));
+}
+
+/** The edits whose refusal the range card shows at the input it concerns. */
+export type RangeEdit = Extract<SettingEdit, { kind: "rc_lo" | "rc_hi" | "rc_bands" }>;
+export const isRangeEdit = (edit: SettingEdit): edit is RangeEdit => edit.kind === "rc_lo" || edit.kind === "rc_hi" || edit.kind === "rc_bands";
+
+/** The reasons the service gives when it refuses a range edit (`invalid_request` params, ADR 0024). */
+const RANGE_REASONS: ReadonlySet<string> = new Set(["rc_lo_range", "rc_lo_above_hi", "rc_hi_range", "rc_hi_below_lo", "rc_band_range", "rc_band_count"]);
+
+/** A range edit the service refused, with its reason; the range card shows it in place of a global notice. */
+export type RangeRejection = { edit: RangeEdit; error: IpcError };
+
+/** The refusal of `edit` as the range card shows it, or null when it is not one (another edit, field or reason). */
+export function rangeRejection(edit: SettingEdit, error: IpcError): RangeRejection | null {
+  if (!isRangeEdit(edit) || error.code !== "invalid_request") return null;
+  if (error.params.field !== edit.kind || !RANGE_REASONS.has(error.params.reason ?? "")) return null;
+  return { edit, error };
+}
+
+/**
+ * The input a refusal concerns: the primary lower or upper edge (the basis
+ * choice while the upper edge is automatic, as when 직접 입력 is chosen), an
+ * edge of an extra band's row, or the add action. A band the service names
+ * by its 1-based `index` is the row at that place, since the card sends the
+ * stored list with one edge changed; an edge outside 20–20000 Hz is the one
+ * refused, otherwise the edge that differs from the stored band.
+ */
+export type RejectionPlace = { at: "lower" | "upper" | "basis" | "add" } | { at: "band"; index: number; edge: "lower" | "upper" };
+
+export function rejectionPlace({ edit, error }: RangeRejection, settings: CalibrationSettings): RejectionPlace {
+  if (edit.kind === "rc_lo") return { at: "lower" };
+  if (edit.kind === "rc_hi") return { at: upperChoice(settings) === "manual" ? "upper" : "basis" };
+  const index = Number(error.params.index) - 1;
+  if (error.params.reason !== "rc_band_range" || !Number.isInteger(index) || index < 0 || index >= settings.rc_bands.length) return { at: "add" };
+  const lo = Number(error.params.lo_hz);
+  const hi = Number(error.params.hi_hz);
+  const inside = (hz: number) => hz >= LIMITS.rc_band[0] && hz <= LIMITS.rc_band[1];
+  const edge = !inside(lo) ? "lower" : !inside(hi) ? "upper" : settings.rc_bands[index]!.lo_hz === lo ? "upper" : "lower";
+  return { at: "band", index, edge };
 }
 
 

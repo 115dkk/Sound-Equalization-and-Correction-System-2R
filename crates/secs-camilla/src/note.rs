@@ -3,7 +3,7 @@
 //! #92 C2). Upstream builds them in `calibration.py` (`export_camilladsp`,
 //! `_filter_plan`, `export_eqapo`).
 
-use secs_types::calibration::{Mode, mode_tag};
+use secs_types::calibration::{Mode, RcBand, mode_tag};
 use secs_types::chain::MimoPaths;
 
 use crate::pyfmt::{format_fixed, format_g};
@@ -62,10 +62,21 @@ impl MimoNote {
 
 /// CamillaDSP's note names the plain mode tag and the per-input support cap.
 pub fn camilla_note(mode: Mode, latency_ms: f64, rc_hi_hz: f64, mimo: Option<&MimoNote>) -> String {
+    camilla_note_with_bands(mode, latency_ms, rc_hi_hz, &[], mimo)
+}
+
+pub fn camilla_note_with_bands(
+    mode: Mode,
+    latency_ms: f64,
+    rc_hi_hz: f64,
+    rc_bands: &[RcBand],
+    mimo: Option<&MimoNote>,
+) -> String {
     note(
         mode_tag(mode),
         latency_ms,
         rc_hi_hz,
+        rc_bands,
         mimo.map(|mimo| mimo.text(true)),
     )
 }
@@ -78,19 +89,101 @@ pub fn eqapo_note(
     rc_hi_hz: f64,
     mimo: Option<&MimoNote>,
 ) -> String {
+    eqapo_note_with_bands(mode_name, latency_ms, rc_hi_hz, &[], mimo)
+}
+
+pub fn eqapo_note_with_bands(
+    mode_name: &str,
+    latency_ms: f64,
+    rc_hi_hz: f64,
+    rc_bands: &[RcBand],
+    mimo: Option<&MimoNote>,
+) -> String {
     note(
         mode_name,
         latency_ms,
         rc_hi_hz,
+        rc_bands,
         mimo.map(|mimo| mimo.text(false)),
     )
 }
 
-fn note(mode: &str, latency_ms: f64, rc_hi_hz: f64, mimo: Option<String>) -> String {
-    format!(
+/// Both writers print the note as one `# ` comment line and drop what is not
+/// ASCII, so the extra bands (ADR 0024) join the same line in ASCII.
+fn note(
+    mode: &str,
+    latency_ms: f64,
+    rc_hi_hz: f64,
+    rc_bands: &[RcBand],
+    mimo: Option<String>,
+) -> String {
+    let mut text = format!(
         "mode {mode}, total latency {} ms, RC upper {} Hz; {}",
         format_fixed(latency_ms, 1, false),
         format_fixed(rc_hi_hz, 0, false),
         mimo.as_deref().unwrap_or("no MIMO")
-    )
+    );
+    if !rc_bands.is_empty() {
+        text.push_str("; RC extra bands ");
+        text.push_str(
+            &rc_bands
+                .iter()
+                .map(|band| {
+                    format!(
+                        "{}-{} Hz",
+                        format_fixed(band.lo_hz, 0, false),
+                        format_fixed(band.hi_hz, 0, false)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+    }
+    text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extra_rc_bands_join_the_note_line_in_ascii_only_when_present() {
+        let baseline = camilla_note(Mode::Mixed, 10.0, 300.0, None);
+        assert_eq!(
+            baseline,
+            "mode mixed, total latency 10.0 ms, RC upper 300 Hz; no MIMO"
+        );
+        assert_eq!(
+            camilla_note_with_bands(
+                Mode::Mixed,
+                10.0,
+                300.0,
+                &[
+                    RcBand {
+                        lo_hz: 1_000.0,
+                        hi_hz: 2_000.0,
+                    },
+                    RcBand {
+                        lo_hz: 15_000.0,
+                        hi_hz: 20_000.0,
+                    },
+                ],
+                None,
+            ),
+            format!("{baseline}; RC extra bands 1000-2000 Hz, 15000-20000 Hz")
+        );
+        assert_eq!(
+            eqapo_note_with_bands(
+                "ultra200",
+                10.0,
+                300.0,
+                &[RcBand {
+                    lo_hz: 30.0,
+                    hi_hz: 60.0,
+                }],
+                None,
+            ),
+            "mode ultra200, total latency 10.0 ms, RC upper 300 Hz; no MIMO; RC extra bands 30-60 Hz"
+        );
+    }
 }

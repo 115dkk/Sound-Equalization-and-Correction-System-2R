@@ -71,6 +71,8 @@ pub struct Design {
     pub subs: Option<SubDesign>,
     pub ref_level: f64,
     pub rc_hi: f64,
+    /// Merged correction bands; empty when no extra bands were requested.
+    pub rc_bands: Vec<(f64, f64)>,
     pub rc_auto: bool,
     pub schroeder_hz: Option<f64>,
     pub target_db: Arc<[f64]>,
@@ -211,6 +213,11 @@ pub(crate) fn check_taps(config: &EngineConfig) -> Result<(), EngineError> {
 /// realized `spec`/`h`/`response`, the residual grids and, for a second phase
 /// candidate, the first `RcOutput`. About 350 bytes per bin, rounded up.
 const RC_SCRATCH_SPECTRA: u64 = 24;
+/// What `lf_align` and `mode_decay` (ADR 0025) keep beside that: the total
+/// phase vector, the cut response, β and `τ_T` in the preparation, and the
+/// smoothed total phase, its GD and the total-GD error in
+/// `finish_correction`. About 90 bytes per bin, rounded up.
+const RC_ADR0025_SPECTRA: u64 = 6;
 
 /// What one design reserves beyond the prepared spectra (TD-24). `retained`
 /// is alive from BA to the end of the design; `channel` is one RC channel (or
@@ -267,7 +274,12 @@ impl DesignBytes {
             channel: if mains == 0 {
                 0
             } else {
-                spectra(positions + 4 + RC_SCRATCH_SPECTRA)
+                let extra = if setup.lf_align || setup.mode_decay {
+                    RC_ADR0025_SPECTRA
+                } else {
+                    0
+                };
+                spectra(positions + 4 + RC_SCRATCH_SPECTRA + extra)
             },
         }
     }
@@ -502,6 +514,11 @@ fn design_pass(
     check_taps(req.config)?;
     let config = req.config;
     let mut setup = Setup::new(config);
+    if matches!(pass, RcPass::Probe) {
+        setup.rc_bands.clear();
+        setup.lf_align = false;
+        setup.mode_decay = false;
+    }
     let positions = prepared.h.positions().to_vec();
     let progress = ctx.stage("engine.design", 1 + config.mains.len() as u64);
     let mut notes = Vec::new();
@@ -547,6 +564,15 @@ fn design_pass(
         positions: (rc_auto && config.rc_hi_basis == RcHiBasis::Agreement)
             .then(|| agreement_positions(req.measurements, config)),
     });
+    let rc_bands = if setup.rc_bands.is_empty() {
+        Vec::new()
+    } else {
+        let bands = rc::band_set(setup.rc_lo, setup.rc_hi, &setup.rc_bands);
+        notes.push(Note::RcBands {
+            bands: bands.clone(),
+        });
+        bands
+    };
     let xo_of: Vec<_> = config
         .groups
         .iter()
@@ -1011,6 +1037,7 @@ fn design_pass(
             subs: sub,
             ref_level,
             rc_hi: setup.rc_hi,
+            rc_bands,
             rc_auto,
             schroeder_hz,
             target_display: spl_grid.iter().map(|&g| interp(g, f, &target_db)).collect(),

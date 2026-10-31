@@ -197,6 +197,12 @@ enum ProjectAction {
         /// Prevent boosts below measured rolloff and protect sub outputs.
         #[arg(long, value_enum)]
         low_protect: Option<Switch>,
+        /// Align bass arrival across main channels.
+        #[arg(long, value_enum)]
+        lf_align: Option<Switch>,
+        /// Shorten long room-mode ringing with corrective cuts.
+        #[arg(long, value_enum)]
+        mode_decay: Option<Switch>,
         /// MIMO supports as FIR or as IIR (PEQ and all-pass) filters.
         #[arg(long, value_enum)]
         mimo_supports: Option<SupportKind>,
@@ -206,7 +212,46 @@ enum ProjectAction {
         /// MIMO IIR derivative method (experimental analytic results differ from SECS 2).
         #[arg(long, value_enum)]
         mimo_iir_derivatives: Option<MimoIirDerivativeChoice>,
+        /// Extra RC bands as LO-HI pairs separated by commas, or none to clear them.
+        #[arg(long)]
+        rc_bands: Option<RcBandsArg>,
     },
+}
+
+#[derive(Debug, Clone)]
+struct RcBandsArg(Vec<secs_types::calibration::RcBand>);
+
+impl std::str::FromStr for RcBandsArg {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value == "none" {
+            return Ok(Self(Vec::new()));
+        }
+        if value.is_empty() {
+            return Err("RC bands must be LO-HI pairs or none".into());
+        }
+        let bands = value
+            .split(',')
+            .map(|band| {
+                let (lo_hz, hi_hz) = band
+                    .split_once('-')
+                    .ok_or_else(|| format!("invalid RC band {band:?}; expected LO-HI"))?;
+                if lo_hz.is_empty() || hi_hz.is_empty() || hi_hz.contains('-') {
+                    return Err(format!("invalid RC band {band:?}; expected LO-HI"));
+                }
+                Ok(secs_types::calibration::RcBand {
+                    lo_hz: lo_hz
+                        .parse()
+                        .map_err(|_| format!("invalid RC lower edge {lo_hz:?}"))?,
+                    hi_hz: hi_hz
+                        .parse()
+                        .map_err(|_| format!("invalid RC upper edge {hi_hz:?}"))?,
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        Ok(Self(bands))
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -597,8 +642,11 @@ fn run(action: Action, runner: &mut Runner) {
                 mimo,
                 mimo_supports,
                 low_protect,
+                lf_align,
+                mode_decay,
                 peq_derivatives,
                 mimo_iir_derivatives,
+                rc_bands,
             } => {
                 use secs_types::settings_edit::SettingEdit;
                 runner.open(&path);
@@ -625,6 +673,19 @@ fn run(action: Action, runner: &mut Runner) {
                     edits.push(SettingEdit::LowProtect {
                         on: matches!(value, Switch::On),
                     });
+                }
+                if let Some(value) = lf_align {
+                    edits.push(SettingEdit::LfAlign {
+                        on: matches!(value, Switch::On),
+                    });
+                }
+                if let Some(value) = mode_decay {
+                    edits.push(SettingEdit::ModeDecay {
+                        on: matches!(value, Switch::On),
+                    });
+                }
+                if let Some(RcBandsArg(bands)) = rc_bands {
+                    edits.push(SettingEdit::RcBands { bands });
                 }
                 let changed = !edits.is_empty();
                 for edit in edits {

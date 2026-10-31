@@ -669,6 +669,7 @@ fn main() {
                 boost: secs_oracle::number(&i["boost"]),
                 ring_ms: optional(&i["ring_ms"]),
                 f_max: optional(&i["f_max"]),
+                bands: None,
             };
             if op == "profile_fit" {
                 let seed = fit::seed(&request);

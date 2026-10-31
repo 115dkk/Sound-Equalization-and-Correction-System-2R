@@ -676,6 +676,31 @@
   visibility: hidden;
 }
 
+/* Extra correction bands (ADR 0024): a row per band, its name with 빼기
+   right beside it, then its two edges; the add action closes the list. */
+.calibrate-extra {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.calibrate-extra__band {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1-5);
+  min-width: 0;
+}
+
+.calibrate-extra__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.calibrate-extra__name {
+  font-weight: var(--weight-semibold);
+}
+
 .calibrate-sub-modes {
   display: flex;
   flex-wrap: wrap;
