@@ -76,6 +76,8 @@ export type MockService = {
   /** A null answer simulates cancelling the next matching host dialog. */
   queueDialog: (method: DialogMethod, path: string | null) => void;
   tick: () => void;
+  /** Whether a finite job (or a cancellation) is still running; live monitors do not count. */
+  busy: () => boolean;
   /** Drains finite jobs (and cancellation), leaving live monitors running. */
   drain: () => void;
   setResults: (results: ResultsSummary) => void;
@@ -570,6 +572,7 @@ export function createMockService(options: MockOptions = {}): MockService {
     }
   };
   const tick = () => { for (const job of [...jobs.values()]) step(job); };
+  const busy = () => [...jobs.values()].some((job) => !monitor(job.kind) || job.cancelRequested);
   /** `then`: stages that follow the kind's own, reached through `phase` (the combined calibrate). */
   const start = (kind: JobKind, complete: () => JobResult, error?: IpcError, then?: { stages: Stage[]; phase: Omit<NonNullable<SimJob["phase"]>, "at"> }) => {
     if ([...jobs.values()].some((job) => jobGroup(job.kind) === jobGroup(kind))) throw new MockError(ipcError("job_busy", `a ${kind} job is running`));
@@ -1336,8 +1339,8 @@ export function createMockService(options: MockOptions = {}): MockService {
     clearFailures: () => failures.clear(), failJobs: (kind, code, detail = "", params = {}) => jobFailures.set(kind, ipcError(code, detail, params)),
     failLevelPlay: (code, detail = "", params = {}) => { playFailure = ipcError(code, detail, params); },
     queueDialog: (method, path) => { const queue = dialogs.get(method) ?? []; queue.push(path); dialogs.set(method, queue); },
-    tick,
-    drain: () => { for (let guard = 0; [...jobs.values()].some((j) => !monitor(j.kind) || j.cancelRequested) && guard < 1000; guard++) tick(); },
+    tick, busy,
+    drain: () => { for (let guard = 0; busy() && guard < 1000; guard++) tick(); },
     setApplyStatus: (next) => { applyStatus = clone(next); },
     setUpdateStatus: (next) => { updateStatus = clone(next); appSettings.updates = next.policy; },
     setResults: (next) => {
