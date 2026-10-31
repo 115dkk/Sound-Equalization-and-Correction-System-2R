@@ -14,7 +14,7 @@ use secs_engine::{
 };
 use secs_mdat::{MdatError, MeasurementInput, SourceInfo, TEMPLATE};
 use secs_types::{
-    calibration::{CalibrationSettings, RcBand},
+    calibration::{CalibrationSettings, Mode, RcBand},
     chain::{MimoPaths, SubChannel},
 };
 
@@ -106,6 +106,13 @@ pub enum ExportError {
 
 fn chain_text(run: &ExportRun<'_>) -> String {
     let peq = run.design.replay.config().peq_bands.unwrap_or(16);
+    // The fitted budget; mode_decay puts its cuts beside it (ADR 0025), so
+    // the per-channel count printed later can be larger.
+    let peq = if run.design.replay.config().mode_decay {
+        format!("{peq} + 울림 컷")
+    } else {
+        peq.to_string()
+    };
     if run.design.replay.config().taps > 0 {
         format!(
             "PEQ {peq} + FIR {}",
@@ -329,9 +336,11 @@ fn rc_bands_piece(rc_bands: &[RcBand]) -> Option<String> {
     })
 }
 
-fn lf_correction_pieces(settings: &CalibrationSettings) -> Vec<String> {
+/// Export-text pieces for the ADR 0025 switches. Zero mode has no FIR, so
+/// the engine skips `lf_align` there and the text does too.
+pub fn lf_correction_pieces(settings: &CalibrationSettings) -> Vec<String> {
     let mut pieces = Vec::new();
-    if settings.lf_align {
+    if settings.lf_align && settings.mode != Mode::Zero {
         pieces.push("저음 도착 맞춤".into());
     }
     if settings.mode_decay {
@@ -1034,6 +1043,11 @@ mod tests {
             lf_correction_pieces(&settings),
             ["저음 도착 맞춤", "방 울림 줄임"]
         );
+        let zero = CalibrationSettings {
+            mode: Mode::Zero,
+            ..settings
+        };
+        assert_eq!(lf_correction_pieces(&zero), ["방 울림 줄임"]);
     }
 
     #[test]

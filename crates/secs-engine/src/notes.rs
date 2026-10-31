@@ -40,8 +40,8 @@ pub enum Note {
         limited: bool,
     },
     /// ADR 0025, one per main when `mode_decay` is on. Each mode is
-    /// `(hz, measured T60 s, cut depth dB)`; an empty list means no mode
-    /// qualified.
+    /// `(hz, measured T60 s, cut depth dB)` with the depth positive; an empty
+    /// list means no mode qualified.
     ModeDecay {
         role: String,
         target_t60_s: f64,

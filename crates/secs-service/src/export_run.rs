@@ -3,7 +3,7 @@ use secs_camilla::note::{self, MimoNote};
 use secs_export::{ExportRun, MimoKind, MimoResponses};
 use secs_filters::FilterRun;
 use secs_project::Project;
-use secs_types::calibration::{Mode, RcBand, mode_label, mode_tag};
+use secs_types::calibration::{CalibrationSettings, Mode, RcBand, mode_label, mode_tag};
 use secs_types::chain::{MimoPaths, SignalChain};
 use secs_types::ipc::{ErrorCode, IpcError};
 
@@ -104,14 +104,25 @@ pub(crate) fn describe(
                 latency_ms: cache.labels.latency_ms,
                 rc_hi_hz,
                 rc_bands: cache.labels.rc_bands.clone(),
-                rc_pieces: secs_export::rc_pieces_from_values_with_bands(
-                    rc_hi_hz,
-                    rc_auto,
-                    schroeder_hz,
-                    settings.room_volume_m3,
-                    legacy_fallback,
-                    &cache.labels.rc_bands,
-                ),
+                rc_pieces: {
+                    // The run's ADR 0025 switches come from the cache labels:
+                    // the stored settings may have changed since the run.
+                    let mut pieces = secs_export::rc_pieces_from_values_with_bands(
+                        rc_hi_hz,
+                        rc_auto,
+                        schroeder_hz,
+                        settings.room_volume_m3,
+                        legacy_fallback,
+                        &cache.labels.rc_bands,
+                    );
+                    pieces.extend(secs_export::lf_correction_pieces(&CalibrationSettings {
+                        mode: cache.calibration.mode,
+                        lf_align: cache.labels.lf_align,
+                        mode_decay: cache.labels.mode_decay,
+                        ..CalibrationSettings::default()
+                    }));
+                    pieces
+                },
                 max_supports: cache.labels.mimo_max_supports,
                 mimo: None,
                 stamp: now.minute_stamp(),

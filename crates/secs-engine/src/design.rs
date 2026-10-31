@@ -213,6 +213,11 @@ pub(crate) fn check_taps(config: &EngineConfig) -> Result<(), EngineError> {
 /// realized `spec`/`h`/`response`, the residual grids and, for a second phase
 /// candidate, the first `RcOutput`. About 350 bytes per bin, rounded up.
 const RC_SCRATCH_SPECTRA: u64 = 24;
+/// What `lf_align` and `mode_decay` (ADR 0025) keep beside that: the total
+/// phase vector, the cut response, β and `τ_T` in the preparation, and the
+/// smoothed total phase, its GD and the total-GD error in
+/// `finish_correction`. About 90 bytes per bin, rounded up.
+const RC_ADR0025_SPECTRA: u64 = 6;
 
 /// What one design reserves beyond the prepared spectra (TD-24). `retained`
 /// is alive from BA to the end of the design; `channel` is one RC channel (or
@@ -269,7 +274,12 @@ impl DesignBytes {
             channel: if mains == 0 {
                 0
             } else {
-                spectra(positions + 4 + RC_SCRATCH_SPECTRA)
+                let extra = if setup.lf_align || setup.mode_decay {
+                    RC_ADR0025_SPECTRA
+                } else {
+                    0
+                };
+                spectra(positions + 4 + RC_SCRATCH_SPECTRA + extra)
             },
         }
     }
