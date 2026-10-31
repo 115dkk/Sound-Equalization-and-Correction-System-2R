@@ -104,51 +104,123 @@ pub(crate) fn clamp_centres(peq: &mut [Peq], rolloff: f64) {
     }
 }
 
-/// `fixed` is the FIR (and any unmodified cuts), or unity for a PEQ-only set.
-/// False means even removing every eligible boost cannot meet +0.5 dB; in that
-/// case preserve the original fit, as specified by the ADR. Exactly 40 steps
-/// keep results deterministic and return the feasible side of the bracket.
-pub(crate) fn limit(peq: &mut [Peq], fixed: &[C], rolloff: f64) -> bool {
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct LimitOutcome {
+    pub reduced: usize,
+    pub cuts: usize,
+}
+
+fn db(h: C) -> f64 {
+    let magnitude = magnitude(h);
+    if magnitude.is_finite() {
+        20.0 * magnitude.max(1e-30).log10()
+    } else {
+        f64::INFINITY
+    }
+}
+
+fn worst(
+    peq: &[Peq],
+    fixed: &[C],
+    rolloff: f64,
+    floor: f64,
+    eligible: Option<&[bool]>,
+) -> Option<(usize, f64)> {
     let n = design_freqs().partition_point(|&f| f < rolloff);
-    let f = &design_freqs()[..n];
-    let original = peq.to_vec();
-    let scaled = |k: f64| -> Vec<Peq> {
-        original
-            .iter()
-            .map(|&(hz, q, gain)| {
-                (
-                    hz,
-                    q,
-                    if gain > 0.0 && hz < 4.0 * rolloff {
-                        gain * k
-                    } else {
-                        gain
-                    },
-                )
-            })
-            .collect()
-    };
-    let acceptable = |bands: &[Peq]| {
-        peq_response(f, bands)
-            .iter()
-            .zip(fixed)
-            .all(|(&p, &h)| 20.0 * magnitude(p * h).max(1e-30).log10() <= 0.5)
-    };
-    if acceptable(&original) {
-        return true;
-    }
-    if !acceptable(&scaled(0.0)) {
-        return false;
-    }
-    let (mut lo, mut hi) = (0.0, 1.0);
-    for _ in 0..40 {
-        let mid = (lo + hi) / 2.0;
-        if acceptable(&scaled(mid)) {
-            lo = mid;
-        } else {
-            hi = mid;
+    let mut worst = None;
+    for (i, (p, &h)) in peq_response(&design_freqs()[..n], peq)
+        .into_iter()
+        .zip(fixed)
+        .enumerate()
+    {
+        if design_freqs()[i] < floor || eligible.is_some_and(|mask| !mask[i]) {
+            continue;
+        }
+        let excess = db(p * h) - 0.5;
+        if excess > 0.0 && worst.is_none_or(|(_, previous)| excess > previous) {
+            worst = Some((i, excess));
         }
     }
-    peq.copy_from_slice(&scaled(lo));
-    true
+    worst
+}
+
+pub(crate) fn limited(peq: &[Peq], fixed: &[C], rolloff: f64) -> bool {
+    worst(peq, fixed, rolloff, 10.0, None).is_none()
+}
+
+/// Reduce only the boost contributing most at the worst protected bin, then
+/// add cuts for fixed-response leakage. Never restore the unprotected fit.
+/// `fixed` is the FIR (and unmodified cuts), or unity for a PEQ-only set.
+pub(crate) fn limit(peq: &mut Vec<Peq>, fixed: &[C], rolloff: f64) -> LimitOutcome {
+    let mut outcome = LimitOutcome::default();
+    let mut reduced = vec![false; peq.len()];
+    for _ in 0..4 * peq.len() + 8 {
+        let n = design_freqs().partition_point(|&f| f < rolloff);
+        let mut eligible = vec![false; n];
+        for band in peq.iter().filter(|band| band.2 > 0.0) {
+            for (allow, h) in eligible
+                .iter_mut()
+                .zip(peq_response(&design_freqs()[..n], &[*band]))
+            {
+                *allow |= db(h) > 0.05;
+            }
+        }
+        let Some((i, _)) = worst(peq, fixed, rolloff, 0.0, Some(&eligible)) else {
+            break;
+        };
+        let f = [design_freqs()[i]];
+        let mut candidate = None;
+        for (band, &(_, _, gain)) in peq.iter().enumerate() {
+            if gain > 0.0 {
+                let contribution = db(peq_response(&f, &peq[band..=band])[0]);
+                if contribution > 0.05
+                    && candidate.is_none_or(|(_, previous)| contribution > previous)
+                {
+                    candidate = Some((band, contribution));
+                }
+            }
+        }
+        let Some((band, _)) = candidate else {
+            break;
+        };
+        let (mut lo, mut hi) = (0.0, peq[band].2);
+        peq[band].2 = 0.0;
+        if db(peq_response(&f, peq)[0] * fixed[i]) <= 0.5 {
+            for _ in 0..40 {
+                let mid = (lo + hi) / 2.0;
+                peq[band].2 = mid;
+                if db(peq_response(&f, peq)[0] * fixed[i]) <= 0.5 {
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+        }
+        peq[band].2 = lo;
+        if !reduced[band] {
+            reduced[band] = true;
+            outcome.reduced += 1;
+        }
+    }
+    for _ in 0..4 {
+        let Some((i, excess)) = worst(peq, fixed, rolloff, 10.0, None) else {
+            return outcome;
+        };
+        // DC/subsonic gain is corrected in the FIR, not with peaking cuts.
+        if !excess.is_finite() {
+            return outcome;
+        }
+        peq.push((design_freqs()[i], 1.4, -(excess + 0.1)));
+        outcome.cuts += 1;
+    }
+    for _ in 0..8 {
+        let Some((_, excess)) = worst(peq, fixed, rolloff, 10.0, None) else {
+            break;
+        };
+        if !excess.is_finite() {
+            break;
+        }
+        peq.last_mut().expect("protective cuts appended").2 -= excess;
+    }
+    outcome
 }

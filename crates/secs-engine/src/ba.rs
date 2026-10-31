@@ -62,6 +62,7 @@ pub struct SubAlignment {
     pub sub_level_db: Option<f64>,
     pub bus_gain: f64,
     pub bus_peq: Vec<Peq>,
+    pub bus_rolloff_hz: Option<f64>,
     pub sub_sum_by_pos: Vec<(u32, Arc<[C]>)>,
     pub plan: Option<ManualPlan>,
     pub notes: Vec<Note>,
@@ -765,7 +766,7 @@ fn target_peq(
     boost: f64,
     fmax: Option<f64>,
     fitter: &mut Fitter<'_>,
-) -> (Vec<Peq>, Option<f64>) {
+) -> (Vec<Peq>, Option<f64>, crate::low_protect::LimitOutcome) {
     let rolloff = input
         .config
         .low_protect
@@ -786,17 +787,25 @@ fn target_peq(
         fmax,
         fitter,
     );
-    let failed = rolloff
-        .filter(|&hz| !crate::low_protect::limit(&mut peq, &vec![C::new(1.0, 0.0); BINS], hz));
-    (peq, failed)
+    let outcome = rolloff.map_or_else(Default::default, |hz| {
+        crate::low_protect::limit(&mut peq, &vec![C::new(1.0, 0.0); BINS], hz)
+    });
+    (peq, rolloff, outcome)
 }
 fn bus_fit(
     input: &BaInput<'_>,
     by_pos: &[(u32, Arc<[C]>)],
     fitter: &mut Fitter<'_>,
-) -> (Vec<Peq>, Option<f64>) {
+) -> (Vec<Peq>, Option<f64>, crate::low_protect::LimitOutcome) {
     if !input.tuning.xo_stage || input.xo_of.is_empty() {
-        return (vec![], None);
+        let rolloff = input
+            .config
+            .low_protect
+            .then(|| {
+                crate::low_protect::rolloff(by_pos, input.config.main_position, Some((0.0, 0.0)))
+            })
+            .flatten();
+        return (vec![], rolloff, Default::default());
     }
     let xo: Vec<_> = input.xo_of.iter().map(|(_, v)| *v).collect();
     let hi = if input.tuning.sub_bus_fix {
@@ -842,7 +851,7 @@ fn bus_response(
             *h = h.iter().map(|v| *v * C::new(gain, 0.0)).collect();
         }
     }
-    let (peq, _) = bus_fit(input, &by_pos, fitter);
+    let (peq, _, _) = bus_fit(input, &by_pos, fitter);
     check(input)?;
     Ok((!peq.is_empty()).then(|| response::peq_response(design_freqs(), &peq)))
 }
@@ -1045,7 +1054,7 @@ fn layout_stage(
             &(0..BINS).collect::<Vec<_>>(),
             &positions,
         );
-        let (peq, failed) = target_peq(
+        let (peq, rolloff, outcome) = target_peq(
             input,
             &by_pos,
             level(input, &by_pos),
@@ -1056,12 +1065,14 @@ fn layout_stage(
             fitter,
         );
         check(input)?;
-        if let Some(hz) = failed {
+        if let Some(hz) = rolloff.filter(|_| outcome.reduced + outcome.cuts > 0) {
             out.notes.push(Note::LowProtect {
                 role: lay.members.join(" + "),
                 rolloff_hz: hz,
                 hp_hz: None,
-                limited: false,
+                limited: crate::low_protect::limited(&peq, &vec![C::new(1.0, 0.0); BINS], hz),
+                reduced: outcome.reduced,
+                cuts: outcome.cuts,
             });
         }
         if !peq.is_empty() {
@@ -1237,6 +1248,7 @@ fn align_with(
         sub_level_db: None,
         bus_gain: 1.0,
         bus_peq: vec![],
+        bus_rolloff_hz: None,
         sub_sum_by_pos: vec![],
         plan: manual_plan(input),
         notes: vec![],
@@ -1348,14 +1360,17 @@ fn align_with(
     for (_, h) in &mut out.sub_sum_by_pos {
         *h = h.iter().map(|v| *v * C::new(out.bus_gain, 0.0)).collect();
     }
-    let (peq, failed) = bus_fit(input, &out.sub_sum_by_pos, fitter);
+    let (peq, rolloff, outcome) = bus_fit(input, &out.sub_sum_by_pos, fitter);
     out.bus_peq = peq;
-    if let Some(hz) = failed {
+    out.bus_rolloff_hz = rolloff;
+    if let Some(hz) = rolloff.filter(|_| outcome.reduced + outcome.cuts > 0) {
         out.notes.push(Note::LowProtect {
             role: input.config.subs.join(" + "),
             rolloff_hz: hz,
             hp_hz: None,
-            limited: false,
+            limited: crate::low_protect::limited(&out.bus_peq, &vec![C::new(1.0, 0.0); BINS], hz),
+            reduced: outcome.reduced,
+            cuts: outcome.cuts,
         });
     }
     check(input)?;

@@ -2019,7 +2019,12 @@ status = "implemented"
 upstream = "new; ADR 0022 (D47), correction_engine.py RC and sub PEQ"
 tests = [
   "secs-engine::low_protect_rolloff_uses_weighted_power_and_filtered_passband",
-  "secs-engine::low_protect_realized_guard_scales_leaking_boosts_and_reports_infeasible",
+  "secs-engine::low_protect_realized_guard_reduces_boosts_and_cuts_fixed_leakage",
+  "secs-engine::low_protect_keeps_boosts_that_do_not_leak",
+  "secs-engine::low_protect_dc_does_not_stop_leaking_boost_reduction",
+  "secs-engine::low_protect_room_bass_survives",
+  "secs-engine::low_protect_mains_use_the_bus_rolloff",
+  "secs-engine::low_protect_main_fit_floor_uses_the_protection_rolloff",
   "secs-engine::low_protect_rc_realized_response_in_peq_and_fir_modes",
   "secs-engine::low_protect_sub_export_bus_bundle_and_user_highpass",
   "secs-engine::low_protect_flat_channels_leave_the_design_unchanged",

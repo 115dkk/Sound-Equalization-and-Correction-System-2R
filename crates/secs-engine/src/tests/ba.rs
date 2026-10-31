@@ -42,6 +42,7 @@ fn empty(input: &BaInput<'_>) -> SubAlignment {
         sub_level_db: None,
         bus_gain: 1.0,
         bus_peq: vec![],
+        bus_rolloff_hz: None,
         sub_sum_by_pos: vec![],
         plan: manual_plan(input),
         notes: vec![],

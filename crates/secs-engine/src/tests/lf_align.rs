@@ -53,6 +53,7 @@ pub(super) fn config(h: &[C], mode: Mode) -> EngineConfig {
 pub(super) fn correct(h: Arc<[C]>, config: &EngineConfig, setup: &Setup) -> rc::RcOutput {
     rc::channel_with_cuts(
         &RcInput {
+            bus_rolloff_hz: None,
             role: "L",
             comb: &[(1, h)],
             main_position: 1,

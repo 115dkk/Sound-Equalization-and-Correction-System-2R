@@ -28,6 +28,17 @@ pub struct RcInput<'a> {
     pub config: &'a EngineConfig,
     pub tuning: &'a Tuning,
     pub positions: &'a [u32],
+    pub bus_rolloff_hz: Option<f64>,
+}
+
+fn protection_rolloff(input: &RcInput<'_>) -> Option<f64> {
+    if !input.config.low_protect {
+        return None;
+    }
+    crate::low_protect::rolloff(input.comb, input.main_position, None)
+        .into_iter()
+        .chain(input.bus_rolloff_hz)
+        .reduce(f64::max)
 }
 #[derive(Debug, Clone)]
 pub struct LfAlignOutcome {
@@ -52,6 +63,7 @@ pub struct RcOutput {
     pub notes: Vec<Note>,
     pub lf_align: Option<LfAlignOutcome>,
     pub mode_decay: Option<ModeDecayOutcome>,
+    protection: crate::low_protect::LimitOutcome,
 }
 pub struct ChannelRc {
     pub out: RcOutput,
@@ -422,14 +434,33 @@ fn gradient(phase: &[f64]) -> Vec<f64> {
     }
     tau
 }
-fn truncate(spec: &[C], taps: usize) -> (Vec<f64>, Vec<C>) {
+fn truncate(spec: &[C], taps: usize, protect_dc: bool) -> (Vec<f64>, Vec<C>) {
     let mut h = fft::irfft(spec, N_FFT);
     h.truncate(taps);
     let k = (taps as f64 * 0.1) as usize;
     for (i, v) in h[taps - k..].iter_mut().enumerate() {
         *v *= 0.5 * (1.0 + (PI * i as f64 / k as f64).cos());
     }
-    let f = measurement::spectrum(&h);
+    let mut f = measurement::spectrum(&h);
+    // Truncation can turn a near-unity full-length DC gain into a large
+    // subsonic boost. Remove its signed excess with a normalized Hann;
+    // unlike scaling the FIR, this leaves the higher bands alone.
+    if protect_dc
+        && f.iter()
+            .zip(design_freqs())
+            .take_while(|(_, hz)| **hz < 10.0)
+            .any(|(&h, _)| 20.0 * magnitude(h).max(1e-30).log10() > 0.5)
+    {
+        let excess = h.iter().sum::<f64>() - 1.0;
+        let window: Vec<_> = (0..h.len())
+            .map(|i| 0.5 * (1.0 - (2.0 * PI * i as f64 / (h.len() - 1) as f64).cos()))
+            .collect();
+        let norm = window.iter().sum::<f64>();
+        for (sample, weight) in h.iter_mut().zip(window) {
+            *sample -= excess * weight / norm;
+        }
+        f = measurement::spectrum(&h);
+    }
     (h, f)
 }
 /// ADR 0025 pole replacement in the engine's RBJ peaking form.
@@ -567,6 +598,7 @@ struct Realizer<'a> {
     lift: f64,
     taps: usize,
     beta: Option<&'a [f64]>,
+    protect_dc: bool,
 }
 impl Realizer<'_> {
     fn realize(&self, frac: f64, m: &[C]) -> (Vec<f64>, Vec<C>, f64, f64) {
@@ -585,7 +617,7 @@ impl Realizer<'_> {
                 m * C::from_polar(1.0, -2.0 * PI * sum * design_freqs()[1])
             })
             .collect();
-        let (h, f) = truncate(&spec, self.taps);
+        let (h, f) = truncate(&spec, self.taps, self.protect_dc);
         let err: Vec<_> = f
             .iter()
             .zip(m)
@@ -623,6 +655,8 @@ struct FirPreparation {
     nb: Vec<bool>,
     g: Vec<f64>,
     lo_fir: f64,
+    rolloff: Option<f64>,
+    protection: crate::low_protect::LimitOutcome,
     design_db: Vec<f64>,
     notes: Vec<Note>,
     lf: Option<LfPreparation>,
@@ -731,11 +765,7 @@ fn prepare_correction(
         .collect();
     let mut notes = Vec::new();
     let mut nb = no_boost_mask(input);
-    let rolloff = input
-        .config
-        .low_protect
-        .then(|| crate::low_protect::rolloff(input.comb, input.main_position, None))
-        .flatten();
+    let rolloff = protection_rolloff(input);
     if let Some(hz) = rolloff {
         for (masked, &f) in nb.iter_mut().zip(f) {
             *masked |= f < hz;
@@ -749,6 +779,12 @@ fn prepare_correction(
     for i in 0..BINS {
         if nb[i] {
             corr[i] = corr[i].min(0.0);
+        }
+        if let Some(hz) = rolloff
+            && f[i] >= hz
+            && f[i] < 2.0 * hz
+        {
+            corr[i] = corr[i].min(c.max_boost_db * (f[i] / hz).log2());
         }
         if lm[i]
             || cuts.iter().any(|&(hz, _, _)| {
@@ -808,6 +844,7 @@ fn prepare_correction(
         }
     });
     let mut peq = Vec::new();
+    let mut protection = crate::low_protect::LimitOutcome::default();
     let mut p = vec![C::new(1.0, 0.0); BINS];
     if c.taps == 0 {
         let g = geomspace(15.0, 20000.0, 900);
@@ -822,7 +859,9 @@ fn prepare_correction(
             &g,
             &low,
             s.peq_bands / 2,
-            15.0_f64.max(s.rc_lo / 1.4),
+            rolloff.map_or(15.0_f64.max(s.rc_lo / 1.4), |hz| {
+                hz.max(15.0).max(s.rc_lo / 1.4)
+            }),
             400.0,
             None,
             fitter,
@@ -865,6 +904,7 @@ fn prepare_correction(
             notes,
             lf_align: None,
             mode_decay,
+            protection,
         }));
     }
     let g = geomspace(15.0, 20000.0, 700);
@@ -876,7 +916,7 @@ fn prepare_correction(
             &g,
             &cg,
             s.peq_bands,
-            20.0,
+            rolloff.map_or(20.0, |hz| hz.max(20.0)),
             500.0,
             Some(s.rc_hi),
             fitter,
@@ -884,6 +924,9 @@ fn prepare_correction(
         check(cancelled)?;
         if let Some(hz) = rolloff {
             crate::low_protect::clamp_centres(&mut peq, hz);
+            let outcome = crate::low_protect::limit(&mut peq, &vec![C::new(1.0, 0.0); BINS], hz);
+            protection.reduced += outcome.reduced;
+            protection.cuts += outcome.cuts;
         }
         p = response::peq_response(f, &peq);
         for i in 0..BINS {
@@ -958,6 +1001,8 @@ fn prepare_correction(
         nb,
         g,
         lo_fir,
+        rolloff,
+        protection,
         design_db,
         notes,
         lf,
@@ -984,6 +1029,7 @@ fn finish_correction(
     };
     let f = design_freqs();
     let (s, c) = (input.setup, input.config);
+    let mut protection = prepared.protection;
     let mut peq = prepared.peq.clone();
     let mut p = prepared.p.clone();
     let mut m = prepared.m.clone();
@@ -1057,12 +1103,13 @@ fn finish_correction(
         lift: s.lift_ms / 1000.0,
         taps: c.taps,
         beta: prepared.lf.as_ref().map(|lf| lf.beta.as_slice()),
+        protect_dc: c.low_protect,
     };
     let (mut h, mut response, rms0, max0) = realizer.realize(0.0, &m);
     trace.ladder.push((0.0, rms0, max0));
     let mut strength = 0.0;
     if s.lift_ms <= 0.0 {
-        (h, response) = truncate(&m, c.taps);
+        (h, response) = truncate(&m, c.taps, c.low_protect);
     } else {
         for fraction in [0.9, 0.7, 0.5, 0.3] {
             check(cancelled)?;
@@ -1089,7 +1136,7 @@ fn finish_correction(
             g,
             &cg,
             s.peq_bands,
-            20.0,
+            prepared.rolloff.map_or(20.0, |hz| hz.max(20.0)),
             500.0,
             Some(s.rc_hi),
             fitter,
@@ -1100,6 +1147,11 @@ fn finish_correction(
             if interp(*hz, f, &nb_float) > 0.5 {
                 *gain = gain.min(0.0);
             }
+        }
+        if let Some(hz) = prepared.rolloff {
+            let outcome = crate::low_protect::limit(&mut peq, &vec![C::new(1.0, 0.0); BINS], hz);
+            protection.reduced += outcome.reduced;
+            protection.cuts += outcome.cuts;
         }
         p = response::peq_response(f, &peq);
         let rc: Vec<_> = f
@@ -1134,7 +1186,14 @@ fn finish_correction(
                     }
                 })
                 .collect();
-            let broad = smooth(&residual, 3.0);
+            let mut broad = smooth(&residual, 3.0);
+            if let Some(hz) = prepared.rolloff {
+                for (value, &f) in broad.iter_mut().zip(f) {
+                    if f < hz {
+                        *value = value.min(0.0);
+                    }
+                }
+            }
             let mag: Vec<_> = (0..BINS)
                 .map(|i| {
                     let fade = if rc[i] {
@@ -1150,7 +1209,7 @@ fn finish_correction(
                 let (h, f, _, _) = realizer.realize(strength, &m2);
                 (h, f)
             } else {
-                truncate(&m2, c.taps)
+                truncate(&m2, c.taps, c.low_protect)
             };
             if design_error(&f2) >= design_error(&response) {
                 break;
@@ -1195,6 +1254,7 @@ fn finish_correction(
         notes,
         lf_align,
         mode_decay: prepared.mode_decay.clone(),
+        protection,
     })
 }
 
@@ -1294,20 +1354,21 @@ pub(crate) fn channel_with_cuts(
     } else {
         Vec::new()
     };
-    if input.config.low_protect
-        && let Some(hz) = crate::low_protect::rolloff(input.comb, input.main_position, None)
-    {
+    if let Some(hz) = protection_rolloff(input) {
         let mut padded = out.fir.clone();
         padded.resize(N_FFT, 0.0);
         let fir = fft::rfft(&padded);
         let fixed = multiply(&fir, &response::peq_response(design_freqs(), &gd_cuts));
-        let limited = crate::low_protect::limit(&mut out.peq, &fixed, hz);
+        let outcome = crate::low_protect::limit(&mut out.peq, &fixed, hz);
+        let limited = crate::low_protect::limited(&out.peq, &fixed, hz);
         out.response = multiply(&fir, &response::peq_response(design_freqs(), &out.peq));
         out.notes.push(Note::LowProtect {
             role: input.role.to_owned(),
             rolloff_hz: hz,
             hp_hz: None,
             limited,
+            reduced: out.protection.reduced + outcome.reduced,
+            cuts: out.protection.cuts + outcome.cuts,
         });
     }
     if let Some(lf) = &mut out.lf_align {
