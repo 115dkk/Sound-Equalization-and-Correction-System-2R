@@ -556,6 +556,11 @@ pub struct ResultCurvesResult {
     pub subs_only: bool,
     /// RC lower and upper bounds, with an unknown auto upper bound represented as null.
     pub rc_band_hz: Option<(f64, Option<f64>)>,
+    /// Extra correction bands (ADR 0024), `(lo, hi)` in Hz, sorted; the
+    /// graph shades outside `rc_band_hz` and these together. Empty when
+    /// there are none or the tab shows no RC band.
+    #[serde(default)]
+    pub rc_bands_hz: Vec<(f64, f64)>,
     /// Selected crossover frequency for the draggable line.
     pub xo_hz: Option<f64>,
 }

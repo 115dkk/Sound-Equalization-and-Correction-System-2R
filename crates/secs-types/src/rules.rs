@@ -15,10 +15,15 @@ use crate::role::{HEIGHT_GROUP, TOP_GROUP};
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, TS)]
 #[ts(export)]
 pub struct CalibrationLimits {
-    /// RC low edge (Hz).
+    /// RC low edge (Hz) an edit accepts. SECS 2R rejects below 20 Hz (ADR
+    /// 0024); a project file is read with `RC_LO_READ` instead.
     pub rc_lo: (f64, f64),
     /// RC high edge (Hz) when it is not automatic.
     pub rc_hi: (f64, f64),
+    /// Either edge of an extra correction band (Hz, ADR 0024).
+    pub rc_band: (f64, f64),
+    /// Number of extra correction bands (ADR 0024).
+    pub rc_bands_max: (f64, f64),
     /// Room volume (m³); a value at or below the low end clears it.
     pub volume: (f64, f64),
     /// One room dimension (m) as entered.
@@ -49,9 +54,15 @@ pub struct CalibrationLimits {
     pub mimo_max: (f64, f64),
 }
 
+/// Upstream's clamp of a stored RC low edge (calibration.py), kept for reading
+/// project files so a stored 10–19 Hz still computes as before (ADR 0024, D48).
+pub const RC_LO_READ: (f64, f64) = (10.0, 200.0);
+
 pub const CALIBRATION_LIMITS: CalibrationLimits = CalibrationLimits {
-    rc_lo: (10.0, 200.0),
+    rc_lo: (20.0, 200.0),
     rc_hi: (100.0, 20000.0),
+    rc_band: (20.0, 20000.0),
+    rc_bands_max: (0.0, 4.0),
     volume: (0.0, 100000.0),
     dim: (0.0, 100.0),
     dim_valid: (0.5, 100.0),
@@ -194,7 +205,7 @@ mod tests {
         let limits = constant("LIMITS", Some("CalibrationLimits"), &CALIBRATION_LIMITS);
         assert!(
             limits.starts_with(
-                "export const LIMITS: CalibrationLimits = {\n  rc_lo: [10, 200],\n  rc_hi: [100, 20000],\n"
+                "export const LIMITS: CalibrationLimits = {\n  rc_lo: [20, 200],\n  rc_hi: [100, 20000],\n  rc_band: [20, 20000],\n  rc_bands_max: [0, 4],\n"
             ),
             "{limits}"
         );

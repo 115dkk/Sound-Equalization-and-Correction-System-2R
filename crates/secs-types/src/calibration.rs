@@ -49,6 +49,15 @@ fn default_rc_hi_transition() -> u8 {
     1
 }
 
+/// One extra room-correction band beside `rc_lo..rc_hi`, both edges set by
+/// hand (ADR 0024). `20 <= lo_hz < hi_hz <= 20000`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct RcBand {
+    pub lo_hz: f64,
+    pub hi_hz: f64,
+}
+
 /// How non-48 kHz measurement responses are prepared for calculation.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
@@ -129,6 +138,9 @@ pub struct CalibrationSettings {
     pub rc_hi_basis: RcHiBasis,
     #[serde(default = "default_rc_hi_transition")]
     pub rc_hi_transition: u8,
+    /// Extra correction bands, sorted by `lo_hz`, at most four (ADR 0024).
+    #[serde(default)]
+    pub rc_bands: Vec<RcBand>,
     pub room_volume_m3: Option<f64>,
     pub room_dims_m: Option<[f64; 3]>,
     pub mimo_on: bool,
@@ -174,6 +186,7 @@ impl Default for CalibrationSettings {
             rc_hi: None,
             rc_hi_basis: RcHiBasis::Strict,
             rc_hi_transition: 1,
+            rc_bands: Vec::new(),
             room_volume_m3: None,
             room_dims_m: None,
             mimo_on: false,
@@ -238,6 +251,16 @@ impl CalibrationSettings {
         }
         if self.rc_hi_transition != 1 {
             write!(&mut out, "|rc_hi_transition={}", self.rc_hi_transition).unwrap();
+        }
+        // ADR 0024: only a project with extra bands gets a new key.
+        if !self.rc_bands.is_empty() {
+            out.push_str("|rc_bands=");
+            for (index, band) in self.rc_bands.iter().enumerate() {
+                if index > 0 {
+                    out.push(',');
+                }
+                write!(&mut out, "{}-{}", number(band.lo_hz), number(band.hi_hz)).unwrap();
+            }
         }
         // Keep existing cache fingerprints unchanged for the default policy.
         if self.sample_rate_policy == SampleRatePolicy::Resample {
