@@ -159,6 +159,12 @@ pub struct CalibrationSettings {
     pub sample_rate_policy: SampleRatePolicy,
     #[serde(default)]
     pub low_protect: bool,
+    /// Common LF arrival for the mains (ADR 0025); off keeps upstream phase.
+    #[serde(default)]
+    pub lf_align: bool,
+    /// Shorter long-mode decay through pole-replacing cuts (ADR 0025).
+    #[serde(default)]
+    pub mode_decay: bool,
     pub rc_lo: f64,
     pub rc_hi: Option<f64>,
     #[serde(default)]
@@ -209,6 +215,8 @@ impl Default for CalibrationSettings {
             mode: Mode::Mixed,
             sample_rate_policy: SampleRatePolicy::Reject,
             low_protect: false,
+            lf_align: false,
+            mode_decay: false,
             rc_lo: 20.0,
             rc_hi: None,
             rc_hi_basis: RcHiBasis::Strict,
@@ -302,6 +310,12 @@ impl CalibrationSettings {
         }
         if self.low_protect {
             out.push_str("|low_protect");
+        }
+        if self.lf_align {
+            out.push_str("|lf_align");
+        }
+        if self.mode_decay {
+            out.push_str("|mode_decay");
         }
         if self.peq_analytic_derivatives {
             out.push_str("|peq_analytic_derivatives");
@@ -749,6 +763,39 @@ mod tests {
             edit,
             crate::settings_edit::SettingEdit::LowProtect { on: true }
         );
+    }
+
+    #[test]
+    fn lf_align_and_mode_decay_default_off_and_extend_the_key_only_when_on() {
+        let baseline = CalibrationSettings::default();
+        assert!(!baseline.lf_align && !baseline.mode_decay);
+        let key = baseline.engine_key();
+        assert!(!key.contains("lf_align") && !key.contains("mode_decay"));
+        let mut json = serde_json::to_value(&baseline).unwrap();
+        json.as_object_mut().unwrap().remove("lf_align");
+        json.as_object_mut().unwrap().remove("mode_decay");
+        let mut legacy: CalibrationSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(legacy, baseline);
+        legacy.lf_align = true;
+        assert_eq!(legacy.engine_key(), format!("{key}|lf_align"));
+        legacy.mode_decay = true;
+        assert_eq!(legacy.engine_key(), format!("{key}|lf_align|mode_decay"));
+        legacy.lf_align = false;
+        assert_eq!(legacy.engine_key(), format!("{key}|mode_decay"));
+        for (kind, expected) in [
+            (
+                "lf_align",
+                crate::settings_edit::SettingEdit::LfAlign { on: true },
+            ),
+            (
+                "mode_decay",
+                crate::settings_edit::SettingEdit::ModeDecay { on: true },
+            ),
+        ] {
+            let edit: crate::settings_edit::SettingEdit =
+                serde_json::from_value(serde_json::json!({"kind": kind, "on": true})).unwrap();
+            assert_eq!(edit, expected);
+        }
     }
 
     #[test]

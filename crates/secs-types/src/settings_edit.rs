@@ -108,6 +108,12 @@ pub enum SettingEdit {
     LowProtect {
         on: bool,
     },
+    LfAlign {
+        on: bool,
+    },
+    ModeDecay {
+        on: bool,
+    },
     RcLo {
         hz: f64,
     },
