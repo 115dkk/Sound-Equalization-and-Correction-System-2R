@@ -286,6 +286,28 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  # The required check for the wheels. A matrix job skipped by its `if`
+  # reports under its unexpanded name, so the ruleset names this job
+  # instead: it passes when the wheels passed or were not needed, and fails
+  # when the change detection or any wheel failed or was cancelled.
+  python-wheels-result:
+    name: Python wheels
+    needs: [python-changes, python-wheels]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the change detection and the wheel jobs
+        env:
+          CHANGES: ${{ needs.python-changes.result }}
+          WHEELS: ${{ needs.python-wheels.result }}
+        run: |
+          echo "change detection: $CHANGES, wheels: $WHEELS"
+          [ "$CHANGES" = success ] || { echo "::error::change detection ended with $CHANGES"; exit 1; }
+          case "$WHEELS" in
+            success|skipped) ;;
+            *) echo "::error::Python wheel jobs ended with $WHEELS"; exit 1 ;;
+          esac
+
   integrity:
     name: integrity (${{ matrix.os }}, 1 / default / 7 threads)
     needs: lint
