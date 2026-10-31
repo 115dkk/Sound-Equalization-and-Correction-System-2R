@@ -506,6 +506,8 @@ fn design_pass(
     let mut setup = Setup::new(config);
     if matches!(pass, RcPass::Probe) {
         setup.rc_bands.clear();
+        setup.lf_align = false;
+        setup.mode_decay = false;
     }
     let positions = prepared.h.positions().to_vec();
     let progress = ctx.stage("engine.design", 1 + config.mains.len() as u64);

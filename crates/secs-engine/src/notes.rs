@@ -29,6 +29,24 @@ pub enum Note {
     RcBands {
         bands: Vec<(f64, f64)>,
     },
+    /// ADR 0025, one per main when `lf_align` is on and the mode has FIR
+    /// taps. `arrival_ms` is the median LF arrival left after correction
+    /// (positive = later than HF); `limited` means the pull clamp cut the
+    /// requested correction by more than 1 ms somewhere in the band.
+    LfAlign {
+        role: String,
+        strength: f64,
+        arrival_ms: Option<f64>,
+        limited: bool,
+    },
+    /// ADR 0025, one per main when `mode_decay` is on. Each mode is
+    /// `(hz, measured T60 s, cut depth dB)`; an empty list means no mode
+    /// qualified.
+    ModeDecay {
+        role: String,
+        target_t60_s: f64,
+        modes: Vec<(f64, f64, f64)>,
+    },
     Latency {
         latency_ms: f64,
         lift_ms: f64,
