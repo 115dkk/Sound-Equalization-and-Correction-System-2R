@@ -122,11 +122,11 @@ fn low_protect_realized_guard_reduces_boosts_and_cuts_fixed_leakage() {
     let mut peq = vec![(30.0, 1.0, 6.0)];
     let before = max_below(&response::peq_response(design_freqs(), &peq), 25.0);
     assert!(before > 5.0);
-    let outcome = low_protect::limit(&mut peq, &unity, 25.0);
+    let outcome = low_protect::limit(&mut peq, &unity, 25.0, Default::default());
     assert_eq!(
         outcome,
         low_protect::LimitOutcome {
-            reduced: 1,
+            reduced: [0].into(),
             cuts: 0
         }
     );
@@ -148,7 +148,7 @@ fn low_protect_realized_guard_reduces_boosts_and_cuts_fixed_leakage() {
     };
     let before = max_below(&combined(&original), 25.0);
     let mut guarded = original.clone();
-    let outcome = low_protect::limit(&mut guarded, &fixed, 25.0);
+    let outcome = low_protect::limit(&mut guarded, &fixed, 25.0, Default::default());
     let maximum = max_below(&combined(&guarded), 25.0);
     let limited = low_protect::limited(&guarded, &fixed, 25.0);
     eprintln!(
@@ -169,7 +169,12 @@ fn low_protect_keeps_boosts_that_do_not_leak() {
     let rolloff = 21.0;
     let leakage = max_below(&response::peq_response(design_freqs(), &peq[1..]), rolloff);
     assert!(leakage < 0.05, "{leakage}");
-    let outcome = low_protect::limit(&mut peq, &vec![C::new(1.0, 0.0); BINS], rolloff);
+    let outcome = low_protect::limit(
+        &mut peq,
+        &vec![C::new(1.0, 0.0); BINS],
+        rolloff,
+        Default::default(),
+    );
     let maximum = max_below(&response::peq_response(design_freqs(), &peq), rolloff);
     eprintln!(
         "targeted reduction: before={original:?}, after={peq:?}, 60 Hz leakage={leakage:.9}, max={maximum:.9}, {outcome:?}"
@@ -177,7 +182,7 @@ fn low_protect_keeps_boosts_that_do_not_leak() {
     assert_eq!(
         outcome,
         low_protect::LimitOutcome {
-            reduced: 1,
+            reduced: [0].into(),
             cuts: 0
         }
     );
@@ -193,8 +198,8 @@ fn low_protect_dc_does_not_stop_leaking_boost_reduction() {
     let mut fixed = vec![C::new(1.0, 0.0); BINS];
     fixed[0] = C::new(10.0, 0.0);
     let mut peq = vec![(30.0, 1.0, 6.0)];
-    let outcome = low_protect::limit(&mut peq, &fixed, 25.0);
-    assert_eq!(outcome.reduced, 1);
+    let outcome = low_protect::limit(&mut peq, &fixed, 25.0, Default::default());
+    assert_eq!(outcome.reduced.len(), 1);
     assert_eq!(outcome.cuts, 0);
     assert!(low_protect::limited(&peq, &fixed, 25.0));
     assert!(peq[0].2 > 0.0 && peq[0].2 < 6.0);
@@ -500,8 +505,8 @@ fn low_protect_mains_use_the_bus_rolloff() {
             .notes
             .iter()
             .any(|n| matches!(n, Note::LowProtect {
-        role, rolloff_hz, limited: true, reduced, ..
-    } if role == "L" && *rolloff_hz == bus && *reduced > 0))
+        role, rolloff_hz, limited: true, reduced, cuts, ..
+    } if role == "L" && *rolloff_hz == bus && *reduced + *cuts > 0))
     );
 }
 
@@ -761,4 +766,231 @@ fn low_protect_main_fit_floor_uses_the_protection_rolloff() {
             }
         }
     }
+}
+
+#[test]
+fn low_protect_preserves_fills_when_fixed_leakage_needs_a_cut() {
+    let original = (30.0, 1.0, 6.0);
+    let fixed = response::peq_response(design_freqs(), &[(12.0, 1.0, 1.0)]);
+    let mut peq = vec![original];
+    let outcome = low_protect::limit(&mut peq, &fixed, 13.0, Default::default());
+    let contribution =
+        20.0 * response::magnitude(response::peq_response(&[12.0], &[original])[0]).log10();
+    eprintln!(
+        "fixed 12 Hz +1 dB: 30 Hz band contribution={contribution:.9}, {outcome:?}, peq={peq:?}"
+    );
+    assert_eq!(peq[0], original);
+    assert!(outcome.reduced.is_empty());
+    assert!(outcome.cuts > 0);
+    assert!(low_protect::limited(&peq, &fixed, 13.0));
+
+    let mut peq = vec![original];
+    let fixed = response::peq_response(design_freqs(), &[(6.0, 1.0, 12.0)]);
+    let outcome = low_protect::limit(&mut peq, &fixed, 10.0, Default::default());
+    assert_eq!(peq, [original]);
+    assert_eq!(outcome, Default::default());
+}
+
+#[test]
+fn low_protect_deepens_the_cut_covering_each_separated_peak() {
+    let fixed = response::peq_response(design_freqs(), &[(12.0, 6.0, 12.0), (80.0, 6.0, 10.0)]);
+    let mut peq = vec![
+        (12.0, 1.4, -2.0),
+        (20.0, 1.4, -2.0),
+        (45.0, 1.4, -2.0),
+        (80.0, 1.4, -2.0),
+    ];
+    let state = low_protect::LimitOutcome {
+        reduced: Default::default(),
+        cuts: 4,
+    };
+    let outcome = low_protect::limit(&mut peq, &fixed, 90.0, state);
+    eprintln!(
+        "separated peaks: {peq:?}, {outcome:?}, limited={}",
+        low_protect::limited(&peq, &fixed, 90.0)
+    );
+    assert_eq!(outcome.cuts, 4);
+    assert_eq!(peq.len(), 4);
+    assert!(peq[0].2 < -2.0 && peq[3].2 < -2.0);
+    assert_eq!(peq[1].2, -2.0);
+    assert_eq!(peq[2].2, -2.0);
+    assert!(low_protect::limited(&peq, &fixed, 90.0));
+    let original = peq.clone();
+    let outcome = low_protect::limit(&mut peq, &fixed, 90.0, outcome);
+    assert_eq!(peq, original);
+    assert_eq!(outcome.cuts, 4);
+
+    let mut uncovered = vec![(1000.0, 1.4, -2.0); 4];
+    let original = uncovered.clone();
+    low_protect::limit(&mut uncovered, &fixed, 90.0, outcome);
+    assert_eq!(uncovered, original);
+}
+
+#[test]
+fn low_protect_counts_unique_output_bands_across_passes() {
+    let mut peq = vec![(30.0, 1.0, 6.0)];
+    let mut state = low_protect::LimitOutcome::default();
+    let mut previous = peq[0].2;
+    for gain in [0.0, 0.1, 0.2] {
+        let fixed = vec![C::new(10_f64.powf(gain / 20.0), 0.0); BINS];
+        state = low_protect::limit(&mut peq, &fixed, 25.0, state);
+        assert!(peq[0].2 < previous);
+        previous = peq[0].2;
+        assert_eq!(state.reduced, [0].into());
+        assert_eq!(state.cuts, 0);
+    }
+    let settings = CalibrationSettings {
+        low_protect: true,
+        mode: Mode::Linear,
+        rc_hi: Some(500.0),
+        ..Default::default()
+    };
+    let (_, mut config) = inputs(30.0, None, &settings);
+    config.peq_bands = Some(2);
+    config.phase_frac = 6.0;
+    let setup = Setup::new(&config);
+    let tuning = Tuning {
+        gd_cuts: false,
+        ..Default::default()
+    };
+    let comb = [(1, spectrum(30.0))];
+    let mut calls = 0;
+    let out = rc::channel(
+        &RcInput {
+            bus_rolloff_hz: None,
+            role: "L",
+            comb: &comb,
+            main_position: 1,
+            level_db: 0.0,
+            setup: &setup,
+            config: &config,
+            tuning: &tuning,
+            positions: &[1],
+        },
+        &mut |_| {
+            calls += 1;
+            if calls == 1 {
+                vec![(30.0, 1.0, 6.0), (40.0, 1.0, 6.0)]
+            } else {
+                vec![(30.0, 1.0, 6.0)]
+            }
+        },
+        &|| false,
+    )
+    .unwrap();
+    assert_eq!(calls, 2);
+    let (reduced, cuts) = out
+        .out
+        .notes
+        .iter()
+        .find_map(|n| match n {
+            Note::LowProtect { reduced, cuts, .. } => Some((*reduced, *cuts)),
+            _ => None,
+        })
+        .unwrap();
+    eprintln!(
+        "refit output count: reduced={reduced}, cuts={cuts}, peq={:?}",
+        out.out.peq
+    );
+    assert_eq!(reduced, 1);
+    assert_eq!(cuts, out.out.peq.len() - 1);
+    assert!(cuts <= 4);
+}
+
+#[test]
+fn low_protect_dc_correction_uses_dc_and_handles_short_firs() {
+    let dc = 10_f64.powf(-6.0 / 20.0);
+    let peak = 10_f64.powf(1.0 / 20.0);
+    let mut h = vec![0.0; 8192];
+    h[0] = (dc + peak) / 2.0;
+    h[4096] = (dc - peak) / 2.0;
+    let spectrum = crate::measurement::spectrum(&h);
+    let bin = design_freqs()
+        .iter()
+        .position(|&f| f == SR_F / 8192.0)
+        .unwrap();
+    let db = |h| 20.0 * response::magnitude(h).log10();
+    eprintln!(
+        "no DC correction: DC={:.9} dB, {:.9} Hz={:.9} dB",
+        db(spectrum[0]),
+        design_freqs()[bin],
+        db(spectrum[bin])
+    );
+    assert!((db(spectrum[0]) + 6.0).abs() < 1e-10);
+    assert!((db(spectrum[bin]) - 1.0).abs() < 1e-10);
+    let original = h.clone();
+    assert!(!rc::correct_dc(&mut h));
+    assert_eq!(h, original);
+    for mut h in [vec![2.0], vec![1.0, 1.0]] {
+        let original = h.clone();
+        assert!(!rc::correct_dc(&mut h));
+        assert_eq!(h, original);
+        assert!(h.iter().all(|v| v.is_finite()));
+    }
+}
+
+#[test]
+fn low_protect_small_dc_correction_preserves_main_rolloff_band() {
+    let settings = CalibrationSettings {
+        mode: Mode::Linear,
+        low_protect: false,
+        rc_hi: Some(500.0),
+        ..Default::default()
+    };
+    let (_, mut config) = inputs(30.0, None, &settings);
+    config.peq_bands = Some(2);
+    config.taps = 1024;
+    let setup = Setup::new(&config);
+    let tuning = Tuning {
+        gd_cuts: false,
+        ..Default::default()
+    };
+    let comb = [(1, spectrum(30.0))];
+    let rolloff = low_protect::rolloff(&comb, 1, None).unwrap();
+    let out = rc::channel(
+        &RcInput {
+            bus_rolloff_hz: None,
+            role: "L",
+            comb: &comb,
+            main_position: 1,
+            level_db: 0.0,
+            setup: &setup,
+            config: &config,
+            tuning: &tuning,
+            positions: &[1],
+        },
+        &mut crate::fit::fit_peq,
+        &|| false,
+    )
+    .unwrap();
+    let mut h = out.out.fir;
+    let dc_db = 20.0 * h.iter().sum::<f64>().log10();
+    eprintln!(
+        "standalone main original DC={dc_db:.9} dB, taps={}",
+        h.len()
+    );
+    assert!(dc_db > 0.5 && dc_db <= 1.0, "{dc_db}");
+    let before = crate::measurement::spectrum(&h);
+    assert!(rc::correct_dc(&mut h));
+    let after = crate::measurement::spectrum(&h);
+    let hi = 2.0 * SR_F / h.len() as f64;
+    assert!(rolloff < hi);
+    let (hz, change) = design_freqs()
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| **f >= rolloff && **f <= hi)
+        .map(|(i, &f)| {
+            (
+                f,
+                (20.0 * (response::magnitude(after[i]) / response::magnitude(before[i])).log10())
+                    .abs(),
+            )
+        })
+        .max_by(|a, b| a.1.total_cmp(&b.1))
+        .unwrap();
+    eprintln!(
+        "Hann alone: DC={dc_db:.9} dB, band=[{rolloff:.9},{hi:.9}] Hz, max change={change:.9} dB at {hz:.9} Hz"
+    );
+    assert!(change <= 0.5, "{change}");
+    assert!((h.iter().sum::<f64>() - 1.0).abs() < 1e-12);
 }

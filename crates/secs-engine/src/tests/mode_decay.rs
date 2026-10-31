@@ -184,8 +184,9 @@ fn mode_decay_zero_mode_carries_the_cut() {
         &mut protected,
         &vec![C::new(1.0, 0.0); design_freqs().len()],
         40.0,
+        Default::default(),
     );
-    assert_eq!(outcome.reduced, 1);
+    assert_eq!(outcome.reduced.len(), 1);
     assert_eq!(protected[0], cut);
     assert!(protected[1].2 < 15.0);
 }

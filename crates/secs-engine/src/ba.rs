@@ -788,7 +788,12 @@ fn target_peq(
         fitter,
     );
     let outcome = rolloff.map_or_else(Default::default, |hz| {
-        crate::low_protect::limit(&mut peq, &vec![C::new(1.0, 0.0); BINS], hz)
+        crate::low_protect::limit(
+            &mut peq,
+            &vec![C::new(1.0, 0.0); BINS],
+            hz,
+            Default::default(),
+        )
     });
     (peq, rolloff, outcome)
 }
@@ -1065,13 +1070,13 @@ fn layout_stage(
             fitter,
         );
         check(input)?;
-        if let Some(hz) = rolloff.filter(|_| outcome.reduced + outcome.cuts > 0) {
+        if let Some(hz) = rolloff.filter(|_| outcome.reduced.len() + outcome.cuts > 0) {
             out.notes.push(Note::LowProtect {
                 role: lay.members.join(" + "),
                 rolloff_hz: hz,
                 hp_hz: None,
                 limited: crate::low_protect::limited(&peq, &vec![C::new(1.0, 0.0); BINS], hz),
-                reduced: outcome.reduced,
+                reduced: outcome.reduced.len(),
                 cuts: outcome.cuts,
             });
         }
@@ -1363,13 +1368,13 @@ fn align_with(
     let (peq, rolloff, outcome) = bus_fit(input, &out.sub_sum_by_pos, fitter);
     out.bus_peq = peq;
     out.bus_rolloff_hz = rolloff;
-    if let Some(hz) = rolloff.filter(|_| outcome.reduced + outcome.cuts > 0) {
+    if let Some(hz) = rolloff.filter(|_| outcome.reduced.len() + outcome.cuts > 0) {
         out.notes.push(Note::LowProtect {
             role: input.config.subs.join(" + "),
             rolloff_hz: hz,
             hp_hz: None,
             limited: crate::low_protect::limited(&out.bus_peq, &vec![C::new(1.0, 0.0); BINS], hz),
-            reduced: outcome.reduced,
+            reduced: outcome.reduced.len(),
             cuts: outcome.cuts,
         });
     }

@@ -1,6 +1,6 @@
 //! Measured rolloff and realized-response protection (ADR 0022).
 
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 
 use secs_dsp::{
     interp,
@@ -104,9 +104,9 @@ pub(crate) fn clamp_centres(peq: &mut [Peq], rolloff: f64) {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub(crate) struct LimitOutcome {
-    pub reduced: usize,
+    pub reduced: BTreeSet<usize>,
     pub cuts: usize,
 }
 
@@ -151,11 +151,18 @@ pub(crate) fn limited(peq: &[Peq], fixed: &[C], rolloff: f64) -> bool {
 /// Reduce only the boost contributing most at the worst protected bin, then
 /// add cuts for fixed-response leakage. Never restore the unprotected fit.
 /// `fixed` is the FIR (and unmodified cuts), or unity for a PEQ-only set.
-pub(crate) fn limit(peq: &mut Vec<Peq>, fixed: &[C], rolloff: f64) -> LimitOutcome {
-    let mut outcome = LimitOutcome::default();
-    let mut reduced = vec![false; peq.len()];
+pub(crate) fn limit(
+    peq: &mut Vec<Peq>,
+    fixed: &[C],
+    rolloff: f64,
+    mut outcome: LimitOutcome,
+) -> LimitOutcome {
+    // The state belongs to this PEQ list; discard it when a refit replaces it.
+    // Protective cuts are appended, so their indices remain the trailing range.
+    let cut_start = peq.len() - outcome.cuts;
+    let n = design_freqs().partition_point(|&f| f < rolloff);
+    let mut excluded = vec![false; n];
     for _ in 0..4 * peq.len() + 8 {
-        let n = design_freqs().partition_point(|&f| f < rolloff);
         let mut eligible = vec![false; n];
         for band in peq.iter().filter(|band| band.2 > 0.0) {
             for (allow, h) in eligible
@@ -165,7 +172,10 @@ pub(crate) fn limit(peq: &mut Vec<Peq>, fixed: &[C], rolloff: f64) -> LimitOutco
                 *allow |= db(h) > 0.05;
             }
         }
-        let Some((i, _)) = worst(peq, fixed, rolloff, 0.0, Some(&eligible)) else {
+        for (allow, &skip) in eligible.iter_mut().zip(&excluded) {
+            *allow &= !skip;
+        }
+        let Some((i, _)) = worst(peq, fixed, rolloff, 10.0, Some(&eligible)) else {
             break;
         };
         let f = [design_freqs()[i]];
@@ -185,24 +195,26 @@ pub(crate) fn limit(peq: &mut Vec<Peq>, fixed: &[C], rolloff: f64) -> LimitOutco
         };
         let (mut lo, mut hi) = (0.0, peq[band].2);
         peq[band].2 = 0.0;
-        if db(peq_response(&f, peq)[0] * fixed[i]) <= 0.5 {
-            for _ in 0..40 {
-                let mid = (lo + hi) / 2.0;
-                peq[band].2 = mid;
-                if db(peq_response(&f, peq)[0] * fixed[i]) <= 0.5 {
-                    lo = mid;
-                } else {
-                    hi = mid;
-                }
+        if db(peq_response(&f, peq)[0] * fixed[i]) > 0.5 {
+            // This boost alone cannot fix the bin. Preserve its useful fill;
+            // leave this bin to the protective-cut stage instead.
+            peq[band].2 = hi;
+            excluded[i] = true;
+            continue;
+        }
+        for _ in 0..40 {
+            let mid = (lo + hi) / 2.0;
+            peq[band].2 = mid;
+            if db(peq_response(&f, peq)[0] * fixed[i]) <= 0.5 {
+                lo = mid;
+            } else {
+                hi = mid;
             }
         }
         peq[band].2 = lo;
-        if !reduced[band] {
-            reduced[band] = true;
-            outcome.reduced += 1;
-        }
+        outcome.reduced.insert(band);
     }
-    for _ in 0..4 {
+    for _ in outcome.cuts..4 {
         let Some((i, excess)) = worst(peq, fixed, rolloff, 10.0, None) else {
             return outcome;
         };
@@ -214,13 +226,25 @@ pub(crate) fn limit(peq: &mut Vec<Peq>, fixed: &[C], rolloff: f64) -> LimitOutco
         outcome.cuts += 1;
     }
     for _ in 0..8 {
-        let Some((_, excess)) = worst(peq, fixed, rolloff, 10.0, None) else {
+        let Some((i, excess)) = worst(peq, fixed, rolloff, 10.0, None) else {
             break;
         };
         if !excess.is_finite() {
             break;
         }
-        peq.last_mut().expect("protective cuts appended").2 -= excess;
+        let f = [design_freqs()[i]];
+        let strongest = peq[cut_start..]
+            .iter()
+            .enumerate()
+            .map(|(index, &cut)| (cut_start + index, -db(peq_response(&f, &[cut])[0])))
+            .filter(|(_, attenuation)| attenuation.is_finite() && *attenuation >= 1.0)
+            .max_by(|a, b| a.1.total_cmp(&b.1));
+        let Some((index, attenuation)) = strongest else {
+            break;
+        };
+        let relative = attenuation / -peq[index].2;
+        // Limit each step to 12 dB rather than magnifying a weak tail without bound.
+        peq[index].2 -= (excess / relative).min(12.0);
     }
     outcome
 }
