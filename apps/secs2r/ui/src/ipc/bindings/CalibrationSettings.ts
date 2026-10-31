@@ -14,7 +14,11 @@ lf_align: boolean,
 /**
  * Shorter long-mode decay through pole-replacing cuts (ADR 0025).
  */
-mode_decay: boolean, rc_lo: number, rc_hi: number | null, rc_hi_basis: RcHiBasis, rc_hi_transition: number, 
+mode_decay: boolean, 
+/**
+ * Unwinds the RC FIR's constant phase above the band (ADR 0030).
+ */
+hf_phase: boolean, rc_lo: number, rc_hi: number | null, rc_hi_basis: RcHiBasis, rc_hi_transition: number, 
 /**
  * Extra correction bands, sorted by `lo_hz`, at most four (ADR 0024).
  */

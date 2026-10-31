@@ -11,6 +11,7 @@ mod decay;
 mod design;
 mod e2e;
 pub(crate) mod fit;
+mod hf_phase;
 mod lf_align;
 mod low_protect;
 mod mimo;

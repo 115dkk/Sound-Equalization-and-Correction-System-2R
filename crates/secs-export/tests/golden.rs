@@ -331,14 +331,15 @@ fn export_items_and_source_environments_match_oracle() {
             let mut enabled = settings.clone();
             enabled.lf_align = true;
             enabled.mode_decay = true;
+            enabled.hf_phase = true;
             let enabled_run = ExportRun {
                 design: &case.design,
                 settings: &enabled,
             };
             let pieces = rc_pieces(&enabled_run);
             assert_eq!(
-                &pieces[pieces.len() - 2..],
-                ["저음 도착 맞춤", "방 울림 줄임"]
+                &pieces[pieces.len() - 3..],
+                ["저음 도착 맞춤", "방 울림 줄임", "고역 위상 맞춤"]
             );
         }
         check(

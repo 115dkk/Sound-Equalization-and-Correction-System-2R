@@ -134,6 +134,7 @@ fn cache(project: &Project, supports: usize, compute: ComputeIdentity) -> Cached
             rc_bands: Vec::new(),
             lf_align: false,
             mode_decay: false,
+            hf_phase: false,
             mimo_max_supports: 0,
         },
         mimo_paths: Some(paths(supports)),

@@ -49,6 +49,15 @@ pub enum Note {
         target_t60_s: f64,
         modes: Vec<(f64, f64, f64)>,
     },
+    /// ADR 0030, one per channel whose FIR realizes excess phase when
+    /// `hf_phase` is on. `rotation_deg` is the wrapped rotation unwound above
+    /// the band, `None` when less than an octave is left below 0.45·SR;
+    /// `limited` means the `[−5 ms, lift]` clamp kept part of it.
+    HfPhase {
+        role: String,
+        rotation_deg: Option<f64>,
+        limited: bool,
+    },
     Latency {
         latency_ms: f64,
         lift_ms: f64,

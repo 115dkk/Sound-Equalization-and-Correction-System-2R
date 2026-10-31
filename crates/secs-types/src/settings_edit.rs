@@ -114,6 +114,9 @@ pub enum SettingEdit {
     ModeDecay {
         on: bool,
     },
+    HfPhase {
+        on: bool,
+    },
     RcLo {
         hz: f64,
     },

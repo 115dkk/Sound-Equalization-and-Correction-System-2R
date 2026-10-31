@@ -150,6 +150,7 @@ pub fn load_fixture(fx: &Fixture) -> Case {
         low_protect: false,
         lf_align: false,
         mode_decay: false,
+        hf_phase: false,
         phase_frac: number(&v["phase_frac"]),
         sub_manual: pairs(&v["sub_manual"])
             .map(|(r, m)| (r.to_owned(), manual(m)))

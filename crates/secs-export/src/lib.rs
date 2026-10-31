@@ -336,8 +336,8 @@ fn rc_bands_piece(rc_bands: &[RcBand]) -> Option<String> {
     })
 }
 
-/// Export-text pieces for the ADR 0025 switches. Zero mode has no FIR, so
-/// the engine skips `lf_align` there and the text does too.
+/// Export-text pieces for the optional LF and HF corrections. Zero mode has
+/// no FIR, so the engine skips `lf_align` and `hf_phase` there and the text does too.
 pub fn lf_correction_pieces(settings: &CalibrationSettings) -> Vec<String> {
     let mut pieces = Vec::new();
     if settings.lf_align && settings.mode != Mode::Zero {
@@ -345,6 +345,9 @@ pub fn lf_correction_pieces(settings: &CalibrationSettings) -> Vec<String> {
     }
     if settings.mode_decay {
         pieces.push("방 울림 줄임".into());
+    }
+    if settings.hf_phase && settings.mode != Mode::Zero {
+        pieces.push("고역 위상 맞춤".into());
     }
     pieces
 }
@@ -1037,11 +1040,12 @@ mod tests {
         let settings = CalibrationSettings {
             lf_align: true,
             mode_decay: true,
+            hf_phase: true,
             ..Default::default()
         };
         assert_eq!(
             lf_correction_pieces(&settings),
-            ["저음 도착 맞춤", "방 울림 줄임"]
+            ["저음 도착 맞춤", "방 울림 줄임", "고역 위상 맞춤"]
         );
         let zero = CalibrationSettings {
             mode: Mode::Zero,

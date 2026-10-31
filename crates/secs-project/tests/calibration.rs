@@ -30,6 +30,7 @@ fn calibration_parse_store_and_saved_bytes_match_oracle() {
         assert_eq!(object.remove("low_protect"), Some(false.into()));
         assert_eq!(object.remove("lf_align"), Some(false.into()));
         assert_eq!(object.remove("mode_decay"), Some(false.into()));
+        assert_eq!(object.remove("hf_phase"), Some(false.into()));
         assert_eq!(
             object.remove("peq_analytic_derivatives"),
             Some(false.into())
@@ -100,6 +101,29 @@ fn lf_align_and_mode_decay_round_trip_and_legacy_default() {
 
     parsed.lf_align = false;
     parsed.mode_decay = false;
+    store_calibration(&mut reopened, &parsed);
+    assert_eq!(reopened.save_text(), baseline);
+}
+
+#[test]
+fn hf_phase_round_trip_and_legacy_default() {
+    let mut project = Project::from_preset("2.1").unwrap();
+    let mut settings = calibration_from_project(&project);
+    assert!(!settings.hf_phase);
+    store_calibration(&mut project, &settings);
+    let baseline = project.save_text();
+    assert!(!baseline.contains("hf_phase"));
+
+    settings.hf_phase = true;
+    store_calibration(&mut project, &settings);
+    let saved = project.save_text();
+    let saved_json: Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(saved_json["calibration"]["hf_phase"], true);
+    let mut reopened = Project::from_json(loads(&saved).unwrap()).unwrap();
+    let mut parsed = calibration_from_project(&reopened);
+    assert!(parsed.hf_phase);
+
+    parsed.hf_phase = false;
     store_calibration(&mut reopened, &parsed);
     assert_eq!(reopened.save_text(), baseline);
 }

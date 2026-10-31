@@ -897,6 +897,20 @@ pub(crate) fn scalar_notice(note: &secs_engine::Note) -> Notice {
             }
             "lf_align"
         }
+        Note::HfPhase {
+            role,
+            rotation_deg,
+            limited,
+        } => {
+            params.insert("role".into(), role.clone());
+            if let Some(value) = rotation_deg {
+                params.insert("rotation_deg".into(), value.to_string());
+                params.insert("limited".into(), limited.to_string());
+                "hf_phase"
+            } else {
+                "hf_phase_none"
+            }
+        }
         Note::LiftCapped {
             from_ms,
             taps,
@@ -1587,6 +1601,32 @@ mod tests {
     }
 
     #[test]
+    fn hf_phase_notices_include_rotation_or_report_no_unwind_range() {
+        let note = Note::HfPhase {
+            role: "L".into(),
+            rotation_deg: Some(-114.5),
+            limited: true,
+        };
+        assert_eq!(
+            serde_json::to_value(notices(&note)).unwrap(),
+            serde_json::json!([
+                {"code":"hf_phase","params":{"role":"L","rotation_deg":"-114.5","limited":"true"}}
+            ])
+        );
+        let note = Note::HfPhase {
+            role: "R".into(),
+            rotation_deg: None,
+            limited: false,
+        };
+        assert_eq!(
+            serde_json::to_value(notices(&note)).unwrap(),
+            serde_json::json!([
+                {"code":"hf_phase_none","params":{"role":"R"}}
+            ])
+        );
+    }
+
+    #[test]
     fn mode_decay_notices_expand_modes_and_report_empty_result() {
         let note = Note::ModeDecay {
             role: "L".into(),
@@ -1760,6 +1800,16 @@ mod tests {
                 arrival_ms: Some(2.5),
                 limited: false,
             },
+            Note::HfPhase {
+                role: "L".into(),
+                rotation_deg: Some(-114.5),
+                limited: false,
+            },
+            Note::HfPhase {
+                role: "R".into(),
+                rotation_deg: None,
+                limited: false,
+            },
             Note::ModeDecay {
                 role: "L".into(),
                 target_t60_s: 0.25,
@@ -1795,6 +1845,8 @@ mod tests {
                 "two_way",
                 "bus_gain_anchored",
                 "lf_align",
+                "hf_phase",
+                "hf_phase_none",
                 "mode_decay",
                 "mimo_support_limit",
             ]

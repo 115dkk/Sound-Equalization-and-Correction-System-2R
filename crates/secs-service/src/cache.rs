@@ -19,11 +19,13 @@ pub(crate) struct CachedRunLabels {
     pub rc_hi_hz: f64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub rc_bands: Vec<RcBand>,
-    /// The run's ADR 0025 switches, for the export text of a reopened result.
+    /// The run's optional correction switches, for a reopened result's export text.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub lf_align: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub mode_decay: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hf_phase: bool,
     pub mimo_max_supports: usize,
 }
 // New FIR runs retain only their design-rate coefficients. Keep the historical
@@ -292,6 +294,7 @@ mod tests {
                 rc_bands: Vec::new(),
                 lf_align: false,
                 mode_decay: false,
+                hf_phase: false,
                 mimo_max_supports: 0,
             },
             mimo_paths: None,
@@ -379,6 +382,37 @@ mod tests {
                 SampleRatePolicy::Reject
             );
         }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn correction_switch_labels_round_trip_and_missing_fields_default_off() {
+        let root = std::env::temp_dir().join(format!(
+            "secs-cache-correction-switches-{}",
+            std::process::id()
+        ));
+        let project = root.join("project.secs");
+        let mut run = sample();
+        run.labels.lf_align = true;
+        run.labels.mode_decay = true;
+        run.labels.hf_phase = true;
+        save(&project, &run).unwrap();
+        let labels = load(&project).unwrap().labels;
+        assert!(labels.lf_align);
+        assert!(labels.mode_decay);
+        assert!(labels.hf_phase);
+
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&fs::read(path(&project)).unwrap()).unwrap();
+        let labels = value["results"]["labels"].as_object_mut().unwrap();
+        labels.remove("lf_align");
+        labels.remove("mode_decay");
+        labels.remove("hf_phase");
+        fs::write(path(&project), serde_json::to_vec(&value).unwrap()).unwrap();
+        let labels = load(&project).unwrap().labels;
+        assert!(!labels.lf_align);
+        assert!(!labels.mode_decay);
+        assert!(!labels.hf_phase);
         fs::remove_dir_all(root).unwrap();
     }
 

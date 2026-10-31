@@ -363,6 +363,7 @@ impl ResultBook {
                 rc_bands: calibration.settings.rc_bands.clone(),
                 lf_align: calibration.settings.lf_align,
                 mode_decay: calibration.settings.mode_decay,
+                hf_phase: calibration.settings.hf_phase,
                 mimo_max_supports: calibration.settings.mimo_max_supports.max(0) as usize,
             },
             mimo_paths: self.mimo.as_ref().map(|result| result.run.paths.clone()),

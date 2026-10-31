@@ -518,6 +518,7 @@ fn design_pass(
         setup.rc_bands.clear();
         setup.lf_align = false;
         setup.mode_decay = false;
+        setup.hf_phase = false;
     }
     let positions = prepared.h.positions().to_vec();
     let progress = ctx.stage("engine.design", 1 + config.mains.len() as u64);

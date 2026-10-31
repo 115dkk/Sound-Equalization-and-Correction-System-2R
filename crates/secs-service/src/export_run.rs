@@ -105,7 +105,7 @@ pub(crate) fn describe(
                 rc_hi_hz,
                 rc_bands: cache.labels.rc_bands.clone(),
                 rc_pieces: {
-                    // The run's ADR 0025 switches come from the cache labels:
+                    // The run's optional correction switches come from the cache labels:
                     // the stored settings may have changed since the run.
                     let mut pieces = secs_export::rc_pieces_from_values_with_bands(
                         rc_hi_hz,
@@ -119,6 +119,7 @@ pub(crate) fn describe(
                         mode: cache.calibration.mode,
                         lf_align: cache.labels.lf_align,
                         mode_decay: cache.labels.mode_decay,
+                        hf_phase: cache.labels.hf_phase,
                         ..CalibrationSettings::default()
                     }));
                     pieces

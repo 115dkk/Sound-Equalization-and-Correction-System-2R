@@ -75,6 +75,11 @@ fn note_value(note: &crate::notes::Note) -> Value {
             target_t60_s,
             modes,
         } => json!({"ModeDecay": {"role": role, "target_t60_s": target_t60_s, "modes": modes}}),
+        Note::HfPhase {
+            role,
+            rotation_deg,
+            limited,
+        } => json!({"HfPhase": {"role": role, "rotation_deg": rotation_deg, "limited": limited}}),
         Note::Latency {
             latency_ms,
             lift_ms,
@@ -605,6 +610,7 @@ fn design_matches_recorded_stages() {
                 crate::notes::Note::RcBands { .. } => "RcBands",
                 crate::notes::Note::LfAlign { .. } => "LfAlign",
                 crate::notes::Note::ModeDecay { .. } => "ModeDecay",
+                crate::notes::Note::HfPhase { .. } => "HfPhase",
                 crate::notes::Note::Latency { .. } => "Latency",
                 crate::notes::Note::PhaseStrength(_) => "PhaseStrength",
                 crate::notes::Note::PhaseBand(_) => "PhaseBand",
