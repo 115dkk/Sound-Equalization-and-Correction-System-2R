@@ -19,3 +19,7 @@ apps/secs2r/gen/schemas/
 
 # Superloopy 루프 상태(실행 중 증거)
 .superloopy/
+
+# 월간 감사의 1부 산출물(감사 이슈에 싣고 커밋하지 않습니다). TECH_DEBT_AUDIT.md는
+# 다음 감사의 기준 결과로 커밋하므로 넣지 않습니다(monthly-audit.yml).
+ARCHITECTURE_AUDIT.md

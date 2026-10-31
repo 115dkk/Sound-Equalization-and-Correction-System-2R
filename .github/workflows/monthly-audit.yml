@@ -1,0 +1,673 @@
+name: Monthly audit
+
+# Runs /115dkk-skills:improve-codebase-architecture and
+# /115dkk-skills:tech-debt-audit against main in one Claude Code session and
+# files the two deliverables as a GitHub issue. A scheduled run is skipped
+# when no code changed since the last audit tag. Modelled on
+# 115dkk/mactype_tauri's alpha-audit.yml (Workload Identity Federation) and
+# 115dkk/Impulcifer-pip313's monthly-audit.yml (baseline commit).
+#
+# Requirements:
+#   1. A Claude Console federation rule for GitHub Actions (Settings >
+#      Workload identity > Connect workload). The session pays from Claude
+#      API credit through Workload Identity Federation: this run's GitHub
+#      OIDC token is exchanged for a short-lived Anthropic token, so no key
+#      is stored. Match the rule to this file and nothing wider:
+#        subject   repo:115dkk/Sound-Equalization-and-Correction-System-2R:ref:refs/heads/main
+#        claims    ref = refs/heads/main
+#                  workflow_ref = 115dkk/Sound-Equalization-and-Correction-System-2R/.github/workflows/monthly-audit.yml@refs/heads/main
+#                  repository_owner = 115dkk
+#                  repository = 115dkk/Sound-Equalization-and-Correction-System-2R
+#                  repository_owner_id = 33408534
+#        audience  left empty (https://api.anthropic.com)
+#        CEL       claims.event_name in ["schedule", "workflow_dispatch"]
+#      Leave the token lifetime at its default: the GitHub token lives about
+#      five minutes and Anthropic caps its own token at twice that, which is
+#      why the audit step keeps rewriting the token file.
+#   2. Repository Actions variables (identifiers, not secrets):
+#      ANTHROPIC_FEDERATION_RULE_ID (fdrl_...), ANTHROPIC_ORGANIZATION_ID
+#      (the organization UUID) and ANTHROPIC_SERVICE_ACCOUNT_ID (svac_...).
+#      ANTHROPIC_WORKSPACE_ID only when the rule covers more than one
+#      workspace. AUDIT_MODEL only to replace the default claude-fable-5-1:
+#      the organization's API answered 404 for claude-mythos-5-1
+#      (mactype_tauri, 2026-10-16).
+#   3. RELEASE_DEPLOY_KEY, the write deploy key release.yml already uses.
+#      The commit-baseline job pushes the audit tag and TECH_DEBT_AUDIT.md to
+#      main with it: main's 'Required checks' ruleset lets only the deploy
+#      key through, and this commit has no checks of its own. The audit job,
+#      where the Claude session has a shell, gets neither the key nor a token
+#      that can write to the repository.
+#   4. Nothing vendored for the skills. Each run installs the 115dkk-skills
+#      plugin from the default branch of its marketplace, 115dkk/agent-skills
+#      (public, so no token), and the prompt calls both skills. It is
+#      deliberately unpinned (the plugin manifest pins no version either), so
+#      the audit runs what the maintainer uses; the issue body records the
+#      commit it ran.
+#
+# The schedule is the 5th, the day after the API credit resets, and off the
+# hour.
+
+on:
+  schedule:
+    - cron: "23 9 5 * *"
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: Run even if no code changed since the last audit
+        type: boolean
+        default: false
+
+concurrency:
+  group: monthly-audit
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: "0"
+  # Tauri's Linux stack (WebKitGTK 4.1) and ALSA for cpal, as in ci.yml.
+  LINUX_DEPS: >-
+    libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev
+    librsvg2-dev libsoup-3.0-dev libasound2-dev patchelf
+
+jobs:
+  check-changes:
+    name: Code changed since the last audit
+    runs-on: ubuntu-latest
+    outputs:
+      should_audit: ${{ steps.detect.outputs.should_audit }}
+      last_audit_ref: ${{ steps.detect.outputs.last_audit_ref }}
+      changed_files_count: ${{ steps.detect.outputs.changed_files_count }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Detect code changes since the last audit
+        id: detect
+        env:
+          FORCE_RUN: ${{ inputs.force_run }}
+        run: |
+          set -euo pipefail
+          # What counts as code: everything but documents, one pathspec a line.
+          mapfile -t code_pathspecs < .github/audit-pathspecs.txt
+
+          if [ "${FORCE_RUN:-false}" = "true" ]; then
+            echo "Force run requested."
+            {
+              echo "should_audit=true"
+              echo "last_audit_ref="
+              echo "changed_files_count=forced"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          last=$(git tag -l 'audit/*' --sort=-creatordate | head -n 1)
+          if [ -z "$last" ]; then
+            echo "Initial audit."
+            {
+              echo "should_audit=true"
+              echo "last_audit_ref="
+              echo "changed_files_count=initial"
+            } >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "Last audit: $last"
+          changed=$(git diff --name-only "$last"..HEAD -- "${code_pathspecs[@]}" | wc -l | tr -d ' ')
+          echo "Code files changed: $changed"
+          {
+            echo "last_audit_ref=$last"
+            echo "changed_files_count=$changed"
+            if [ "$changed" -eq 0 ]; then echo "should_audit=false"; else echo "should_audit=true"; fi
+          } >> "$GITHUB_OUTPUT"
+
+  audit:
+    name: Architecture and tech debt audit
+    needs: check-changes
+    if: needs.check-changes.outputs.should_audit == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    # Only this job asks GitHub for an OIDC token. It reads the repository
+    # and files the issue; it cannot push.
+    permissions:
+      contents: read
+      issues: write
+      id-token: write
+    outputs:
+      head_sha: ${{ steps.head.outputs.sha }}
+    env:
+      ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+      ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+      ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+      ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+      AUDIT_MODEL: ${{ vars.AUDIT_MODEL || 'claude-fable-5-1' }}
+    steps:
+      # Ahead of the provisioning below, so a missing variable, a rule that
+      # does not match this run or a model the organization cannot use fails
+      # in seconds. Its exchange also passes the Console's connection test.
+      - name: Verify workload identity federation
+        run: |
+          set -euo pipefail
+
+          for name in ANTHROPIC_FEDERATION_RULE_ID ANTHROPIC_ORGANIZATION_ID ANTHROPIC_SERVICE_ACCOUNT_ID; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Repository variable $name is not set. See Requirements at the top of monthly-audit.yml."
+              exit 1
+            fi
+          done
+
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::GitHub offered no OIDC token. The audit job needs the id-token: write permission."
+            exit 1
+          fi
+
+          # Only ever applied to a JWT and an opaque access token, neither of
+          # which can hold a quote or an escape.
+          json_string() {
+            tr -d '\r\n' | sed -n "s/.*\"$1\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p"
+          }
+
+          identity_token=$(curl -fsS --retry 3 \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" | json_string value)
+          if [ -z "$identity_token" ]; then
+            echo "::error::GitHub's OIDC response carried no token."
+            exit 1
+          fi
+          echo "::add-mask::$identity_token"
+
+          workspace_field=""
+          if [ -n "${ANTHROPIC_WORKSPACE_ID:-}" ]; then
+            workspace_field=$(printf ', "workspace_id": "%s"' "$ANTHROPIC_WORKSPACE_ID")
+          fi
+          response=$(mktemp)
+          status=$(curl -sS -o "$response" -w '%{http_code}' https://api.anthropic.com/v1/oauth/token \
+            -H "content-type: application/json" \
+            -d "$(printf '{"grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer", "assertion": "%s", "federation_rule_id": "%s", "organization_id": "%s", "service_account_id": "%s"%s}' \
+              "$identity_token" "$ANTHROPIC_FEDERATION_RULE_ID" "$ANTHROPIC_ORGANIZATION_ID" \
+              "$ANTHROPIC_SERVICE_ACCOUNT_ID" "$workspace_field")")
+          access_token=$(json_string access_token < "$response")
+          if [ "$status" != 200 ] || [ -z "$access_token" ]; then
+            echo "::error::The federation exchange was refused (HTTP $status). The Console records the reason under Workload identity > Authentication events."
+            cat "$response"
+            exit 1
+          fi
+          echo "::add-mask::$access_token"
+
+          # A one-line request on the audit model, so an organization that
+          # cannot use it finds out now. Costs a fraction of a cent.
+          status=$(curl -sS -o "$response" -w '%{http_code}' https://api.anthropic.com/v1/messages \
+            -H "authorization: Bearer $access_token" \
+            -H "anthropic-version: 2023-06-01" \
+            -H "content-type: application/json" \
+            -d "$(printf '{"model": "%s", "max_tokens": 128, "output_config": {"effort": "low"}, "messages": [{"role": "user", "content": "Reply with OK."}]}' "$AUDIT_MODEL")")
+          if [ "$status" != 200 ]; then
+            echo "::error::$AUDIT_MODEL refused a one-line request (HTTP $status). If the organization cannot use it, set the AUDIT_MODEL repository variable."
+            cat "$response"
+            exit 1
+          fi
+          rm -f "$response"
+          echo "Federation exchange succeeded and $AUDIT_MODEL answered."
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          # The session has a shell; leave no git credential in the checkout.
+          persist-credentials: false
+
+      - name: Record the audited commit
+        id: head
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # The same build surface as ci.yml's lint and test jobs, so the session
+      # can check a finding with cargo or npm instead of only reading.
+      - name: Linux packages for Tauri and ALSA
+        run: |
+          # LINUX_DEPS is a space-separated package list, split on purpose.
+          # shellcheck disable=SC2086
+          sudo apt-get update -qq && sudo apt-get install -y -qq $LINUX_DEPS
+
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: |
+          rustup toolchain install
+          rustup target add x86_64-pc-windows-msvc
+          rustup show active-toolchain
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          # Reuses ci.yml's Linux test cache without writing a cache of its own.
+          shared-key: test
+          save-if: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: apps/secs2r/ui/package-lock.json
+
+      - name: Install screen dependencies
+        working-directory: apps/secs2r/ui
+        run: npm ci --no-audit --no-fund
+
+      - name: Install Claude Code
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Install audit skills
+        id: skills
+        run: |
+          set -euo pipefail
+
+          # Both audit skills come from the 115dkk-skills plugin, fetched
+          # fresh on every run (requirement 4 in the header).
+          claude plugin marketplace add 115dkk/agent-skills
+          claude plugin install 115dkk-skills@115dkk
+          plugin_path=$(claude plugin list --json | jq -er '.[] | select(.id == "115dkk-skills@115dkk" and .enabled) | .installPath')
+
+          # The prompt tells the model to run both skills, and it can only do
+          # that through the Skill tool. A disable-model-invocation line
+          # arriving with a plugin update would leave that part improvising
+          # without its skill, so stop here instead.
+          for skill in improve-codebase-architecture tech-debt-audit; do
+            skill_md="$plugin_path/skills/$skill/SKILL.md"
+            test -f "$skill_md"
+            if grep -q "^disable-model-invocation:" "$skill_md"; then
+              echo "::error::115dkk-skills:$skill carries disable-model-invocation, so the audit cannot invoke it."
+              exit 1
+            fi
+          done
+
+          plugin_sha=$(jq -r '.plugins["115dkk-skills@115dkk"][0].gitCommitSha // "unknown"' \
+            "$HOME/.claude/plugins/installed_plugins.json" 2>/dev/null || echo unknown)
+          echo "plugin_ref=115dkk/agent-skills@${plugin_sha:0:12}" >> "$GITHUB_OUTPUT"
+          echo "Installed audit skills from 115dkk/agent-skills@${plugin_sha}:"
+          find "$plugin_path/skills" -maxdepth 2 -name SKILL.md -print
+
+      # The workflow's own files go to $RUNNER_TEMP/audit: left in the
+      # checkout, the session would take them for untracked files of the
+      # repository. The two deliverables stay in the repository root, where
+      # the skills write them; .gitignore keeps ARCHITECTURE_AUDIT.md out of
+      # commits, and TECH_DEBT_AUDIT.md is the committed baseline.
+      - name: Generate change summary
+        env:
+          LAST_REF: ${{ needs.check-changes.outputs.last_audit_ref }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/audit"
+          summary="$RUNNER_TEMP/audit/change-summary.txt"
+          mapfile -t code_pathspecs < .github/audit-pathspecs.txt
+          if [ -n "$LAST_REF" ]; then
+            {
+              echo "## Changed files since $LAST_REF"
+              echo ""
+              git diff --stat "$LAST_REF"..HEAD -- "${code_pathspecs[@]}" || true
+            } > "$summary"
+          else
+            echo "Initial or forced audit run." > "$summary"
+          fi
+
+      - name: Run combined audit
+        run: |
+          report="$RUNNER_TEMP/audit/combined-audit-report.md"
+
+          # TECH_DEBT_AUDIT.md in the checkout is the previous audit, which
+          # the commit-baseline job committed (requirement 3). The skill reads
+          # it as its baseline and overwrites it, so remember its blob: a
+          # session that never writes a new report must not pass on the old
+          # file.
+          baseline_blob=$(git hash-object TECH_DEBT_AUDIT.md 2>/dev/null || echo none)
+
+          # Any of these outranks federation in the CLI and would bill
+          # something other than the federated service account.
+          unset ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN CLAUDE_CODE_OAUTH_TOKEN
+
+          # The CLI exchanges the GitHub OIDC token in this file itself and
+          # re-reads the file whenever it refreshes its Anthropic token, at
+          # most ten minutes later. A GitHub token lives about five minutes
+          # and is accepted once, so a background loop writes a fresh one
+          # every three minutes for as long as the session runs. The loop's
+          # output goes to a file rather than this step's log pipe, which a
+          # leftover sleep would otherwise hold open.
+          token_dir="$RUNNER_TEMP/anthropic-wif"
+          mkdir -p "$token_dir"
+          export ANTHROPIC_IDENTITY_TOKEN_FILE="$token_dir/identity-token"
+
+          write_identity_token() {
+            curl -fsS --retry 3 \
+              -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
+              | tr -d '\r\n' \
+              | sed -n 's/.*"value"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' \
+              > "$token_dir/identity-token.next" || return 1
+            [ -s "$token_dir/identity-token.next" ] || return 1
+            mv -f "$token_dir/identity-token.next" "$token_dir/identity-token"
+          }
+
+          write_identity_token
+          (
+            while sleep 180; do
+              write_identity_token ||
+                echo "::warning::Could not refresh the GitHub OIDC token; the next attempt is in three minutes."
+            done
+          ) > "$token_dir/refresh.log" 2>&1 &
+          refresh_pid=$!
+          stop_identity_refresh() {
+            kill "$refresh_pid" 2>/dev/null || true
+            cat "$token_dir/refresh.log" 2>/dev/null || true
+          }
+          trap stop_identity_refresh EXIT
+
+          # availableModels names only the audit model, so the session can
+          # never drift to another one: anything that would switch models
+          # ends with an explicit error instead. The refresh loop above keeps
+          # the OIDC request variables; the session itself does not get them.
+          # 200 turns, because the codebase keeps growing (maintainer,
+          # 2026-10-31).
+          set +e
+          env -u ACTIONS_ID_TOKEN_REQUEST_TOKEN -u ACTIONS_ID_TOKEN_REQUEST_URL \
+          claude \
+            --model "$AUDIT_MODEL" \
+            --effort xhigh \
+            --settings "{\"availableModels\": [\"$AUDIT_MODEL\"]}" \
+            --permission-mode auto \
+            --max-turns 200 \
+            -p "
+          You will perform two analyses in sequence within this single
+          session. Each part writes its deliverable to its own Markdown file
+          in the repository root (do not commit them). Print only a short
+          completion summary to stdout: in this non-interactive session only
+          the final message reaches stdout, so anything not written to a
+          file is lost.
+
+          ENVIRONMENT:
+          - This checkout is main of 115dkk/Sound-Equalization-and-Correction-System-2R
+            (SECS 2R), a Rust and Tauri port of the Python room-correction
+            program SECS 2. Read CLAUDE.md, CONTEXT.md, docs/ARCHITECTURE.md,
+            docs/adr/ and docs/DEVIATIONS.md before judging a design: they
+            record why things are the way they are.
+          - You are on an Ubuntu runner. The pinned Rust toolchain
+            (rust-toolchain.toml) with clippy and rustfmt, the
+            x86_64-pc-windows-msvc target for type-checking, Tauri's Linux
+            packages, Node 24 and the screen's npm dependencies
+            (apps/secs2r/ui) are installed.
+          - You MAY build and test anything here to check a finding, using
+            the commands in CLAUDE.md's 검사 section: cargo clippy and cargo
+            test for the workspace, cargo clippy --target
+            x86_64-pc-windows-msvc for the Windows-only code (it type-checks
+            but cannot link or run here), python3 -m unittest for
+            .github/scripts, and npm run typecheck and npm test in
+            apps/secs2r/ui. Windows services, audio devices and the GUI
+            cannot run on this runner.
+          - Say plainly when a finding is unverified. Do not imply you ran
+            something you did not.
+
+          GLOBAL RULES:
+          - The upstream Python tree (src/, tests/, tools/,
+            docs/STRUCTURE.md, 배포/, run_secs.py, SECS.spec, build_exe.ps1,
+            requirements*.txt, LICENSE, THIRD_PARTY_NOTICES.md) is a copy of
+            upstream SECS 2 that CI compares byte for byte with
+            UPSTREAM.toml's commit (docs/adr/0001). It is the reference the
+            Rust code ports; read it, but a change to it is never a
+            recommendation. Where the Rust code behaves differently on
+            purpose, docs/DEVIATIONS.md says so.
+          - Generated files come from a generator: the TypeScript IPC
+            bindings in apps/secs2r/ui/src/ipc/bindings (ts-rs, from
+            crates/secs-types), the Tauri schemas under apps/*/gen, and the
+            lockfiles. Report the generator, not its output.
+          - Interface ids are never renamed: data-ui ids (the GUI checks and
+            screenshots select by them), IPC method names, features.toml ids
+            and the crates.io crate names. Domain terms are frozen in
+            CONTEXT.md. Do not propose renaming either.
+          - The LICENSE, UPSTREAM.toml and template_1.mdat copies inside the
+            crates.io crates are required copies: a published crate may not
+            read outside its directory (docs/adr/0016), and secs-policy
+            checks that each copy matches its original.
+          - Cite file paths for every finding.
+          - Do not suggest full rewrites.
+          - Do not pad categories with filler findings.
+          - Write both deliverables in Korean, as the rest of this
+            repository's documents are written (하십시오체, no em-dash),
+            keeping the skills' glossary terms and the code identifiers in
+            English.
+
+          PART 1: Architecture Analysis
+          Run /115dkk-skills:improve-codebase-architecture.
+          This is an existing codebase, so use its review report, not the
+          foundation or stack report. The skill carries its own glossary
+          (module, interface, depth, seam, adapter, leverage, locality) and
+          the deletion test in its LANGUAGE.md. Phrase every candidate in
+          those exact terms rather than drifting into component, service,
+          API, or boundary.
+          Identify specific consolidation and deepening opportunities.
+          Instead of the skill's HTML report, write the full deliverable as
+          Markdown to ARCHITECTURE_AUDIT.md in the repository root: every
+          candidate with files, problem, solution, benefits, and
+          recommendation strength, plus the closing top recommendation. Do
+          not write to the OS temp directory and do not open a browser.
+          Stop there. The skill's step 3 is a grilling loop that asks the
+          user which candidate to pursue, and this session has no user, so
+          do not ask and do not let that step's side effects happen: leave
+          CONTEXT.md and docs/adr/ untouched.
+          When the file is complete, proceed immediately to Part 2.
+
+          PART 2: Tech Debt Audit
+          Run /115dkk-skills:tech-debt-audit.
+          TECH_DEBT_AUDIT.md in the repository root, when present, is the
+          previous audit, committed by this workflow: read it as the
+          skill's baseline. Write the new deliverable over it as the skill
+          specifies, with severity, effort estimates, and its 'looks bad but
+          is fine' section.
+          " > "$report" 2>&1
+          claude_exit=$?
+          set -e
+
+          if [ ! -s "$report" ]; then
+            echo "Audit produced no output." > "$report"
+            cat "$report"
+            exit 1
+          fi
+
+          if [ "$claude_exit" -ne 0 ]; then
+            echo "Claude audit failed with exit code $claude_exit."
+            cat "$report"
+            exit "$claude_exit"
+          fi
+
+          # -p prints only the session's final message, so any part not
+          # written to its own file never reaches the issue. Both
+          # deliverables are therefore files, and a missing one is a hard
+          # failure rather than a quiet gap.
+          for deliverable in ARCHITECTURE_AUDIT.md TECH_DEBT_AUDIT.md; do
+            if [ ! -s "$deliverable" ]; then
+              echo "::error::The audit session did not produce ${deliverable}."
+              cat "$report"
+              exit 1
+            fi
+          done
+
+          if [ "$(git hash-object TECH_DEBT_AUDIT.md)" = "$baseline_blob" ]; then
+            echo "::error::The audit session left the baseline TECH_DEBT_AUDIT.md unchanged."
+            cat "$report"
+            exit 1
+          fi
+
+      - name: Open the audit issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANGED: ${{ needs.check-changes.outputs.changed_files_count }}
+          PLUGIN_REF: ${{ steps.skills.outputs.plugin_ref }}
+          HEAD_SHA: ${{ steps.head.outputs.sha }}
+        run: |
+          set -euo pipefail
+          date=$(date -u +%Y-%m-%d)
+          body="$RUNNER_TEMP/audit/issue-body.md"
+          {
+            echo "# Monthly Audit: ${date}"
+            echo ""
+            echo "감사한 커밋: \`${HEAD_SHA}\` (main)"
+            echo "바뀐 코드 파일: **${CHANGED}**"
+            echo "모델: \`${AUDIT_MODEL}\` · effort xhigh"
+            echo "감사 스킬: 115dkk-skills (${PLUGIN_REF})"
+            echo ""
+            echo "산출물은 아래 댓글에 파일별로 전부 싣습니다."
+            echo "- \`change-summary.txt\`: 바뀐 파일"
+            echo "- \`ARCHITECTURE_AUDIT.md\`: 1부, 아키텍처"
+            echo "- \`TECH_DEBT_AUDIT.md\`: 2부, 기술 부채(다음 감사의 기준 결과로 main에 커밋합니다)"
+            echo "- \`combined-audit-report.md\`: 세션 기록"
+          } > "$body"
+
+          post_file_comments() {
+            local issue_number="$1" file_path="$2" title="$3"
+            if [ ! -s "$file_path" ]; then
+              echo "Skipping empty or missing file: $file_path"
+              return 0
+            fi
+            local comment_dir
+            comment_dir=$(mktemp -d)
+            awk -v prefix="$comment_dir/part-" -v limit=18000 '
+              BEGIN { part = 0; size = 0; file = sprintf("%s%04d", prefix, part) }
+              {
+                line = $0 ORS
+                if (size > 0 && size + length(line) > limit) {
+                  close(file); part++; file = sprintf("%s%04d", prefix, part); size = 0
+                }
+                printf "%s", line >> file
+                size += length(line)
+              }
+            ' "$file_path"
+            local total index=1
+            total=$(find "$comment_dir" -type f -name 'part-*' | wc -l | tr -d ' ')
+            for part in "$comment_dir"/part-*; do
+              {
+                echo "## ${title} (${index}/${total})"
+                echo ""
+                echo "Source file: \`$(basename "$file_path")\`"
+                echo ""
+                echo '````markdown'
+                cat "$part"
+                echo ""
+                echo '````'
+              } > "$comment_dir/comment.md"
+              gh issue comment "$issue_number" --repo "$GITHUB_REPOSITORY" --body-file "$comment_dir/comment.md"
+              index=$((index + 1))
+            done
+          }
+
+          gh label create audit --repo "$GITHUB_REPOSITORY" --color 5319e7 \
+            --description "Architecture and tech debt audit" >/dev/null 2>&1 || true
+
+          set +e
+          issue_error=$(mktemp)
+          issue_url=$(gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "Monthly Audit: ${date}" --body-file "$body" --label audit 2>"$issue_error")
+          issue_exit=$?
+          set -e
+
+          if [ "$issue_exit" -eq 0 ]; then
+            echo "Created issue: $issue_url"
+            issue_number="${issue_url##*/}"
+            post_file_comments "$issue_number" "$RUNNER_TEMP/audit/change-summary.txt" "Change summary"
+            post_file_comments "$issue_number" ARCHITECTURE_AUDIT.md "Architecture audit"
+            post_file_comments "$issue_number" TECH_DEBT_AUDIT.md "Tech debt audit"
+            post_file_comments "$issue_number" "$RUNNER_TEMP/audit/combined-audit-report.md" "Audit session log"
+          else
+            echo "::warning::Could not create a GitHub issue. Writing the audit body to the job summary instead."
+            cat "$issue_error"
+            {
+              echo "## Monthly audit report"
+              echo ""
+              echo "GitHub issue creation failed:"
+              echo '```'
+              cat "$issue_error"
+              echo '```'
+              echo ""
+              cat "$body"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Collect report artifacts
+        if: always()
+        run: cp ARCHITECTURE_AUDIT.md TECH_DEBT_AUDIT.md "$RUNNER_TEMP/audit/" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: monthly-audit-${{ github.run_id }}
+          path: ${{ runner.temp }}/audit/
+          if-no-files-found: ignore
+          retention-days: 90
+
+  commit-baseline:
+    name: Tag the audit and commit the baseline
+    # Tags the audited commit and commits this run's TECH_DEBT_AUDIT.md to
+    # main as the next audit's baseline (requirement 3). It runs only after
+    # the audit job checked its deliverables and filed the issue. A run
+    # dispatched from another branch audits that branch but neither tags nor
+    # commits: main's baseline and change detection follow main alone.
+    needs: audit
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # Both pushes go over SSH with RELEASE_DEPLOY_KEY; the token only reads.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          # Full history, so the rebase onto a main that moved meanwhile has
+          # its merge base.
+          fetch-depth: 0
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
+          persist-credentials: true
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: monthly-audit-${{ github.run_id }}
+          path: ${{ runner.temp }}/audit-report
+
+      - name: Tag the audited commit
+        env:
+          HEAD_SHA: ${{ needs.audit.outputs.head_sha }}
+        run: |
+          set -euo pipefail
+          tag="audit/$(date -u +%Y%m%d-%H%M%S)"
+          git tag "$tag" "$HEAD_SHA"
+          git push origin "refs/tags/$tag"
+          echo "Tagged $HEAD_SHA as $tag."
+
+      - name: Commit TECH_DEBT_AUDIT.md as the next baseline
+        run: |
+          set -euo pipefail
+          cp "$RUNNER_TEMP/audit-report/TECH_DEBT_AUDIT.md" TECH_DEBT_AUDIT.md
+          if git ls-files --error-unmatch TECH_DEBT_AUDIT.md >/dev/null 2>&1 \
+            && git diff --quiet -- TECH_DEBT_AUDIT.md; then
+            echo "TECH_DEBT_AUDIT.md is unchanged; nothing to commit."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add TECH_DEBT_AUDIT.md
+          # [skip ci] keeps this push from starting workflows on a commit that
+          # only touches this report. The audit's change detection ignores
+          # *.md and the release gate does not ship it, so it starts neither
+          # the next audit nor a release.
+          git commit -m "docs(audit): 기술 부채 감사의 기준 결과를 갱신합니다 [skip ci]" \
+            -m "월간 감사(실행 ${GITHUB_RUN_ID})의 TECH_DEBT_AUDIT.md를 다음 감사의 기준 결과로 커밋합니다."
+
+          for attempt in 1 2 3; do
+            git fetch origin main
+            if git rebase FETCH_HEAD && git push origin HEAD:main; then
+              echo "Committed the baseline as $(git rev-parse HEAD)."
+              exit 0
+            fi
+            git rebase --abort 2>/dev/null || true
+            echo "::warning::Baseline push attempt ${attempt} failed; retrying."
+            sleep 5
+          done
+          echo "::error::Could not push TECH_DEBT_AUDIT.md to main after 3 attempts."
+          exit 1
