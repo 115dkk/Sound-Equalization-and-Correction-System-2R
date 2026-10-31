@@ -327,6 +327,20 @@ fn export_items_and_source_environments_match_oracle() {
             rc_pieces(&run),
             serde_json::from_value::<Vec<String>>(output["rc_pieces"].clone()).unwrap()
         );
+        if name == CASES[0] {
+            let mut enabled = settings.clone();
+            enabled.lf_align = true;
+            enabled.mode_decay = true;
+            let enabled_run = ExportRun {
+                design: &case.design,
+                settings: &enabled,
+            };
+            let pieces = rc_pieces(&enabled_run);
+            assert_eq!(
+                &pieces[pieces.len() - 2..],
+                ["저음 도착 맞춤", "방 울림 줄임"]
+            );
+        }
         check(
             name,
             "layout_lines",

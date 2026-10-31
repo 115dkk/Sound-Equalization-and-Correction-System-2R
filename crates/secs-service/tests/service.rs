@@ -148,6 +148,73 @@ fn low_protect_edits_persist_and_mark_results_stale() {
 }
 
 #[test]
+fn lf_align_and_mode_decay_edits_persist_and_mark_results_stale() {
+    use secs_types::settings_edit::SettingEdit;
+
+    let root = temp_root("lf-align-mode-decay");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room");
+    let initial = service();
+    open(&initial, &path);
+    let events = Arc::new(Events::default());
+    let job = start_calibration(&initial, events.clone(), settings);
+    finished_result(events.wait(job, Duration::from_secs(120)));
+    assert!(!read_results(&initial).calibration.unwrap().stale);
+
+    for edit in [
+        SettingEdit::LfAlign { on: true },
+        SettingEdit::ModeDecay { on: true },
+    ] {
+        call_ok(
+            &initial,
+            Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+                edit,
+            }),
+            Arc::new(NoEvents),
+        );
+    }
+    let summary = read_results(&initial).calibration.unwrap();
+    assert!(summary.stale);
+    assert_eq!(summary.stale_reason.as_deref(), Some("settings"));
+    call_ok(
+        &initial,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+        Arc::new(NoEvents),
+    );
+
+    let reopened = service();
+    open(&reopened, &path);
+    let Response::CalibrationSettingsGet(settings) = call_ok(
+        &reopened,
+        Request::CalibrationSettingsGet,
+        Arc::new(NoEvents),
+    ) else {
+        panic!()
+    };
+    assert!(settings.lf_align);
+    assert!(settings.mode_decay);
+    assert!(read_results(&reopened).calibration.unwrap().stale);
+
+    call_ok(
+        &reopened,
+        Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+            edit: SettingEdit::LfAlign { on: false },
+        }),
+        Arc::new(NoEvents),
+    );
+    assert!(read_results(&reopened).calibration.unwrap().stale);
+    call_ok(
+        &reopened,
+        Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+            edit: SettingEdit::ModeDecay { on: false },
+        }),
+        Arc::new(NoEvents),
+    );
+    assert!(!read_results(&reopened).calibration.unwrap().stale);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn rc_band_edits_store_sorted_clear_change_keys_and_mark_results_stale() {
     use secs_types::{calibration::RcBand, settings_edit::SettingEdit};
 

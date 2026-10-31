@@ -28,6 +28,8 @@ fn calibration_parse_store_and_saved_bytes_match_oracle() {
         assert_eq!(object.remove("rc_hi_transition"), Some(1.into()));
         assert_eq!(object.remove("rc_bands"), Some(Value::Array(vec![])));
         assert_eq!(object.remove("low_protect"), Some(false.into()));
+        assert_eq!(object.remove("lf_align"), Some(false.into()));
+        assert_eq!(object.remove("mode_decay"), Some(false.into()));
         assert_eq!(
             object.remove("peq_analytic_derivatives"),
             Some(false.into())
@@ -58,6 +60,35 @@ fn low_protect_round_trip_and_legacy_default() {
     let mut parsed = calibration_from_project(&reopened);
     assert!(parsed.low_protect);
     parsed.low_protect = false;
+    store_calibration(&mut reopened, &parsed);
+    assert_eq!(reopened.save_text(), baseline);
+}
+
+#[test]
+fn lf_align_and_mode_decay_round_trip_and_legacy_default() {
+    let mut project = Project::from_preset("2.1").unwrap();
+    let mut settings = calibration_from_project(&project);
+    assert!(!settings.lf_align);
+    assert!(!settings.mode_decay);
+    store_calibration(&mut project, &settings);
+    let baseline = project.save_text();
+    assert!(!baseline.contains("lf_align"));
+    assert!(!baseline.contains("mode_decay"));
+
+    settings.lf_align = true;
+    settings.mode_decay = true;
+    store_calibration(&mut project, &settings);
+    let saved = project.save_text();
+    let saved_json: Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(saved_json["calibration"]["lf_align"], true);
+    assert_eq!(saved_json["calibration"]["mode_decay"], true);
+    let mut reopened = Project::from_json(loads(&saved).unwrap()).unwrap();
+    let mut parsed = calibration_from_project(&reopened);
+    assert!(parsed.lf_align);
+    assert!(parsed.mode_decay);
+
+    parsed.lf_align = false;
+    parsed.mode_decay = false;
     store_calibration(&mut reopened, &parsed);
     assert_eq!(reopened.save_text(), baseline);
 }
