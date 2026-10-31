@@ -406,20 +406,14 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
             manylinux: ""
-            args: --release --locked --out dist
           - name: macos
             os: macos-15
             target: universal2-apple-darwin
             manylinux: ""
-            args: --release --locked --out dist
-          # The sdist is built in the same manylinux container as the wheel.
-          # A separate sdist step outside it could not write to dist/, which
-          # the container creates as root (run 41145487141).
           - name: linux
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             manylinux: "2_17"
-            args: --release --locked --out dist --sdist
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -427,10 +421,25 @@ jobs:
           # A dispatch has no gate, so it builds the commit it was run on.
           ref: ${{ needs.gate.outputs.release_sha || github.sha }}
 
+      # Before the wheel: the manylinux container runs as root, and a dist/ it
+      # created first is not writable by this runner-user step (run
+      # 41145487141). maturin build --sdist is no way out either: it rebuilds
+      # the wheel from the sdist, whose trimmed workspace no longer matches
+      # Cargo.lock, which --locked refuses.
+      - name: Build the source distribution
+        if: matrix.name == 'linux'
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          command: sdist
+          args: --out dist
+          maturin-version: v1.15.0
+          rust-toolchain: "1.99.0"
+          working-directory: bindings/python
+
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           command: build
-          args: ${{ matrix.args }}
+          args: --release --locked --out dist
           maturin-version: v1.15.0
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
