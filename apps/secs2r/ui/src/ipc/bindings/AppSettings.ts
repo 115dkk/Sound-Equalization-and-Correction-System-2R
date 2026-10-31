@@ -44,6 +44,10 @@ apply: ApplySettings,
  */
 updates: UpdatePolicy, 
 /**
+ * Recompute stale recommendations and calibration after edits (ADR 0029).
+ */
+auto_refresh: boolean, 
+/**
  * Recently opened project paths, newest first (at most 10).
  */
 recent_projects: Array<string>, 

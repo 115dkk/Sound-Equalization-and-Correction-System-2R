@@ -566,10 +566,20 @@ fn start_calibration(
     events: Arc<dyn EventSink>,
     settings: CalibrationSettings,
 ) -> JobId {
+    start_calibration_in_mode(service, events, settings, false)
+}
+
+fn start_calibration_in_mode(
+    service: &Service,
+    events: Arc<dyn EventSink>,
+    settings: CalibrationSettings,
+    background: bool,
+) -> JobId {
     let Response::Calibrate(started) = call_ok(
         service,
         Request::Calibrate(CalibrateParams {
             settings: Some(settings),
+            background,
             ..Default::default()
         }),
         events,
@@ -577,6 +587,33 @@ fn start_calibration(
         panic!("calibration must start");
     };
     started.job
+}
+
+#[test]
+fn background_and_foreground_calibration_summaries_are_bit_identical() {
+    let root = temp_root("background-determinism");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room");
+    let service = deterministic_service();
+    open(&service, &path);
+
+    let foreground_events = Arc::new(Events::default());
+    let foreground_job =
+        start_calibration_in_mode(&service, foreground_events.clone(), settings.clone(), false);
+    finished_result(foreground_events.wait(foreground_job, Duration::from_secs(120)));
+    let foreground = read_results(&service);
+
+    let background_events = Arc::new(Events::default());
+    let background_job =
+        start_calibration_in_mode(&service, background_events.clone(), settings, true);
+    finished_result(background_events.wait(background_job, Duration::from_secs(120)));
+    let background = read_results(&service);
+
+    assert_eq!(
+        serde_json::to_vec(&background).unwrap(),
+        serde_json::to_vec(&foreground).unwrap()
+    );
+    fs::remove_dir_all(root).unwrap();
 }
 
 fn snapshot_relative_files(root: &Path, files: &[String]) -> Vec<(PathBuf, Vec<u8>)> {
@@ -816,6 +853,21 @@ fn bootstrap_reports_version_and_upstream_base() {
     assert_eq!(info.version, "42.0.0");
     assert!(!info.prerelease);
     assert_eq!(info.upstream.commit.len(), 40);
+    assert_eq!(info.log_dir, None);
+}
+
+#[test]
+fn recommend_xo_accepts_absent_and_background_params() {
+    let service = service();
+    for request in [
+        serde_json::json!({"method": "recommend_xo"}),
+        serde_json::json!({"method": "recommend_xo", "params": {"background": true}}),
+    ] {
+        let Envelope::Err(error) = service.call_value(request, Arc::new(NoEvents)) else {
+            panic!("recommend_xo without a project must fail");
+        };
+        assert_eq!(error.code, ErrorCode::ProjectNotOpen);
+    }
 }
 
 #[test]

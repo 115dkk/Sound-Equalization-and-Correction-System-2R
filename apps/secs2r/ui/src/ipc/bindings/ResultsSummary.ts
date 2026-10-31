@@ -18,4 +18,8 @@ mimo: MimoSummary | null,
 /**
  * Whether the MIMO result goes into an export, and if not, why.
  */
-mimo_export: MimoExportDecision, };
+mimo_export: MimoExportDecision, 
+/**
+ * Whether a stored XO recommendation no longer matches its inputs.
+ */
+xo_rec_stale?: boolean, };

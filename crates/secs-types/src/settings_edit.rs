@@ -145,6 +145,9 @@ pub enum SettingEdit {
         group: String,
         hz: f64,
     },
+    XoRecInclude {
+        on: bool,
+    },
     XoPeq {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[ts(optional)]

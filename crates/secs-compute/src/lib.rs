@@ -28,10 +28,47 @@ use rayon::{ThreadPool, ThreadPoolBuilder};
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 const CANCEL_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
+trait PaceClock: Send + Sync + Debug {
+    fn now(&self) -> Duration;
+    fn rest(&self, duration: Duration);
+}
+
+#[derive(Debug)]
+struct RealPaceClock {
+    started: Instant,
+}
+
+impl PaceClock for RealPaceClock {
+    fn now(&self) -> Duration {
+        self.started.elapsed()
+    }
+
+    fn rest(&self, duration: Duration) {
+        std::thread::sleep(duration);
+    }
+}
+
+#[derive(Debug)]
+struct Pacing {
+    slice: Duration,
+    last_rest: Mutex<Duration>,
+    clock: Arc<dyn PaceClock>,
+}
+
 /// Cooperative cancellation shared by a job and everything it starts.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct CancelToken {
     cancelled: Arc<AtomicBool>,
+    pacing: Option<Arc<Pacing>>,
+}
+
+impl Default for CancelToken {
+    fn default() -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            pacing: None,
+        }
+    }
 }
 
 impl CancelToken {
@@ -46,9 +83,47 @@ impl CancelToken {
         self.cancelled.store(true, Ordering::Release);
     }
 
-    /// Returns whether this token has been cancelled.
+    /// Returns a token that shares cancellation and rests after each sustained
+    /// `slice` of work. Clones of the returned token share the pacing state.
+    #[must_use]
+    pub fn paced(&self, slice: Duration) -> CancelToken {
+        self.paced_with_clock(
+            slice,
+            Arc::new(RealPaceClock {
+                started: Instant::now(),
+            }),
+        )
+    }
+
+    fn paced_with_clock(&self, slice: Duration, clock: Arc<dyn PaceClock>) -> CancelToken {
+        let now = clock.now();
+        CancelToken {
+            cancelled: Arc::clone(&self.cancelled),
+            pacing: Some(Arc::new(Pacing {
+                slice,
+                last_rest: Mutex::new(now),
+                clock,
+            })),
+        }
+    }
+
+    fn pace(&self) {
+        let Some(pacing) = &self.pacing else {
+            return;
+        };
+        let mut last_rest = lock_unpoisoned(&pacing.last_rest);
+        let now = pacing.clock.now();
+        if !pacing.slice.is_zero() && now.saturating_sub(*last_rest) >= pacing.slice {
+            pacing.clock.rest(pacing.slice);
+            *last_rest = pacing.clock.now();
+        }
+    }
+
+    /// Returns whether this token has been cancelled. Paced tokens may rest
+    /// before reading the shared flag.
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
+        self.pace();
         self.cancelled.load(Ordering::Acquire)
     }
 
@@ -520,7 +595,7 @@ pub enum MapError<E> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::sync::mpsc;
     use std::thread;
 
@@ -533,6 +608,47 @@ mod tests {
             Arc::new(NoProgress),
             cancel,
         )
+    }
+
+    #[derive(Debug, Default)]
+    struct FakePaceClock {
+        now_ms: AtomicU64,
+        rested_ms: AtomicU64,
+    }
+
+    impl FakePaceClock {
+        fn work(&self, duration: Duration) {
+            self.now_ms.fetch_add(
+                u64::try_from(duration.as_millis()).unwrap(),
+                Ordering::SeqCst,
+            );
+        }
+    }
+
+    impl PaceClock for FakePaceClock {
+        fn now(&self) -> Duration {
+            Duration::from_millis(self.now_ms.load(Ordering::SeqCst))
+        }
+
+        fn rest(&self, duration: Duration) {
+            let millis = u64::try_from(duration.as_millis()).unwrap();
+            self.rested_ms.fetch_add(millis, Ordering::SeqCst);
+            self.now_ms.fetch_add(millis, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn paced_token_rests_for_about_half_of_simulated_time() {
+        let clock = Arc::new(FakePaceClock::default());
+        let token = CancelToken::new().paced_with_clock(Duration::from_millis(50), clock.clone());
+        while clock.now() < Duration::from_secs(1) {
+            clock.work(Duration::from_millis(5));
+            assert!(!token.is_cancelled());
+        }
+        let rested = clock.rested_ms.load(Ordering::SeqCst);
+        assert!((450..=550).contains(&rested), "rested {rested} ms");
+        token.cancel();
+        assert!(token.clone().is_cancelled());
     }
 
     #[test]

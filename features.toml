@@ -369,6 +369,14 @@ tests = [
 upstream = "wizard/branding.py, window.py _sidebar, SECS.spec icon="
 note = "upstream's confirmed logo (logo_b8, 'expert mode') is the program icon and the default rail mark; the app settings may pick SECS 2R's own 'civilian mode' logo (apps/secs2r/icons/logo) for the rail and the window icon (docs/DEVIATIONS.md U12). apps/secs2r/ui src/state/flow.test.tsx and src/app/logo.test.ts pin the rail and the choice."
 
+[[feature]]
+id = "app.log"
+kind = "app"
+milestone = "M5"
+status = "implemented"
+tests = ["secs2r::rotation_keeps_five_files_and_newest_line_in_current", "secs2r::event_sink_writes_started_log_finished_and_skips_progress"]
+note = "ADR 0027: a bounded local app log records starts, job events, request failures, and panics without stopping the app on I/O errors"
+
 # ---- Oracle (M1) ----
 
 [[feature]]
@@ -1766,6 +1774,14 @@ milestone = "M5"
 status = "implemented"
 tests = ["secs-service::app_settings_are_versioned_bounded_and_capped", "secs-service::legacy_expert_preference_is_ignored_without_resetting_other_settings"]
 note = "versioned bounded data-only JSON, injected path or in-memory storage"
+
+[[feature]]
+id = "calibration.xo_rec_stale"
+kind = "service"
+milestone = "M5"
+status = "implemented"
+tests = ["secs-project::xo_recommendation_metadata_round_trips_and_defaults_are_compatible", "secs-service::xo_recommendation_staleness_ignores_xo_and_clears_after_recommendation"]
+note = "D50: a recommendation fingerprint marks stored XO recommendations stale after measurement, target, configuration, or relevant settings changes"
 
 [[feature]]
 id = "ipc.measurement_curves"

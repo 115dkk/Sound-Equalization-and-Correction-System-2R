@@ -869,6 +869,7 @@ fn app_settings_are_versioned_bounded_and_capped() {
         local_api: LocalApiSettings::default(),
         apply: ApplySettings::default(),
         updates: UpdatePolicy::Notify,
+        auto_refresh: true,
         recent_projects: (0..12).map(|index| format!("{index}.secs")).collect(),
         last_window_size: Some((1280, 720)),
     };
@@ -888,6 +889,7 @@ fn app_settings_are_versioned_bounded_and_capped() {
     };
     assert_eq!(loaded, saved);
     assert_eq!(loaded.skin, AppSkin::Rack);
+    assert!(loaded.auto_refresh);
 
     fs::write(
         &path,
@@ -908,6 +910,7 @@ fn app_settings_are_versioned_bounded_and_capped() {
     assert_eq!(old_settings.theme, AppTheme::System);
     assert_eq!(old_settings.icon, AppIcon::Expert);
     assert_eq!(old_settings.skin, AppSkin::Default);
+    assert!(!old_settings.auto_refresh);
 
     fs::write(&path, b"not json").unwrap();
     let broken = Service::new(Deps {
@@ -971,6 +974,7 @@ fn legacy_expert_preference_is_ignored_without_resetting_other_settings() {
                 local_api: LocalApiSettings::default(),
                 apply: ApplySettings::default(),
                 updates: UpdatePolicy::Auto,
+                auto_refresh: false,
                 recent_projects: vec!["living-room.secs".into(), "studio.secs".into()],
                 last_window_size: Some((1440, 900)),
             };

@@ -549,7 +549,7 @@ impl Service {
                                     super::calibration::load_measurements(&mut open.store)?;
                                 Ok(((project, settings, measurements), false))
                             })?;
-                        let ctx = super::calibration::compute_context(&job, memory);
+                        let ctx = super::calibration::compute_context(&job, memory, false);
                         let groups = super::calibration::project_groups(&project);
                         let view = secs_engine::ProjectView {
                             groups: &groups,

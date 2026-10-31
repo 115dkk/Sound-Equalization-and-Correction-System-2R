@@ -459,3 +459,47 @@ fn stale_reasons_prioritize_measurements_then_config_settings_and_target() {
         None
     );
 }
+
+#[test]
+fn xo_recommendation_staleness_ignores_xo_and_clears_after_recommendation() {
+    let mut project = Project::from_preset("2.1").unwrap();
+    let mut settings = calibration_from_project(&project);
+    settings.xo_rec = vec![("프론트".into(), 80.0)];
+    store_calibration(&mut project, &settings);
+    let book = ResultBook::default();
+    assert!(
+        book.summary(&project, &ComputeIdentity::default())
+            .xo_rec_stale
+    );
+
+    settings.xo_rec_key = xo_rec_key(&project, &settings);
+    store_calibration(&mut project, &settings);
+    assert!(
+        !book
+            .summary(&project, &ComputeIdentity::default())
+            .xo_rec_stale
+    );
+
+    settings.xo = vec![("프론트".into(), 100.0)];
+    store_calibration(&mut project, &settings);
+    assert!(
+        !book
+            .summary(&project, &ComputeIdentity::default())
+            .xo_rec_stale
+    );
+
+    settings.boost_max_db = 6.0;
+    store_calibration(&mut project, &settings);
+    assert!(
+        book.summary(&project, &ComputeIdentity::default())
+            .xo_rec_stale
+    );
+
+    settings.xo_rec_key = xo_rec_key(&project, &settings);
+    store_calibration(&mut project, &settings);
+    assert!(
+        !book
+            .summary(&project, &ComputeIdentity::default())
+            .xo_rec_stale
+    );
+}

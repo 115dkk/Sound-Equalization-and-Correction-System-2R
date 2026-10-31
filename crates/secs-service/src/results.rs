@@ -8,7 +8,7 @@ use secs_types::ipc::{
 };
 
 use crate::cache::CachedResults;
-use crate::calibration::{config_key, signature_key, target_key_string};
+use crate::calibration::{config_key, signature_key, target_key_string, xo_rec_key};
 use crate::compute::ComputeIdentity;
 
 #[cfg(test)]
@@ -217,10 +217,14 @@ impl ResultBook {
             summary.stale = verdict.stale;
             summary
         });
+        let settings = calibration_from_project(project);
+        let xo_rec_stale =
+            !settings.xo_rec.is_empty() && settings.xo_rec_key != xo_rec_key(project, &settings);
         ResultsSummary {
             calibration,
             mimo,
             mimo_export: verdict.decision,
+            xo_rec_stale,
         }
     }
 

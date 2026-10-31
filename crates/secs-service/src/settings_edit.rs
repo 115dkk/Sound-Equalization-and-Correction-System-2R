@@ -407,8 +407,10 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
                     group,
                     hz.clamp(LIMITS.xo.0, LIMITS.xo.1).round_ties_even(),
                 );
+                s.xo_rec_include = false;
             }
         }
+        SettingEdit::XoRecInclude { on } => s.xo_rec_include = on,
         SettingEdit::XoPeq { on, lo, hi } => {
             if let Some(v) = on {
                 s.xo_peq_on = v;
@@ -609,6 +611,19 @@ mod tests {
             assert_eq!(read(-FAR), lo, "{name} low edge");
             assert_eq!(read(FAR), hi, "{name} high edge");
         }
+    }
+
+    #[test]
+    fn xo_edit_turns_off_recommendation_inclusion_and_toggle_stores_it() {
+        let manual = edited(SettingEdit::Xo {
+            group: "프론트".into(),
+            hz: 80.0,
+        });
+        assert!(!manual.xo_rec_include);
+        let enabled = edited(SettingEdit::XoRecInclude { on: true });
+        assert!(enabled.xo_rec_include);
+        let disabled = edited(SettingEdit::XoRecInclude { on: false });
+        assert!(!disabled.xo_rec_include);
     }
 
     #[test]

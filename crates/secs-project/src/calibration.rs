@@ -31,6 +31,8 @@ pub(crate) static CALIBRATION_SHAPE: Shape = Shape::Record {
         "rc_bands",
         "peq_analytic_derivatives",
         "mimo_iir_analytic_derivatives",
+        "xo_rec_key",
+        "xo_rec_include",
     ],
     nested: &[
         ("subs_manual", Shape::Map(&SUB_ENTRY_SHAPE)),
@@ -104,6 +106,11 @@ pub fn calibration_from_project(project: &Project) -> CalibrationSettings {
         get("mimo_iir_analytic_derivatives").is_some_and(PyJson::is_truthy);
     out.xo = xo_map(get("xo"));
     out.xo_rec = xo_map(get("xo_rec"));
+    out.xo_rec_key = get("xo_rec_key")
+        .and_then(PyJson::str)
+        .unwrap_or_default()
+        .to_owned();
+    out.xo_rec_include = get("xo_rec_include").is_none_or(PyJson::is_truthy);
     out.ultra_ms = num(get("ultra_ms"), 30.0, 200.0).unwrap_or(200.0);
     if let Some(manual) = get("subs_manual").and_then(PyJson::object) {
         out.subs_manual = manual
@@ -258,6 +265,15 @@ fn calibration_json(settings: &CalibrationSettings) -> PyJson {
     }
     if settings.mimo_iir_analytic_derivatives {
         values.push(("mimo_iir_analytic_derivatives".into(), PyJson::Bool(true)));
+    }
+    if !settings.xo_rec_key.is_empty() {
+        values.push((
+            "xo_rec_key".into(),
+            PyJson::Str(settings.xo_rec_key.clone()),
+        ));
+    }
+    if !settings.xo_rec_include {
+        values.push(("xo_rec_include".into(), PyJson::Bool(false)));
     }
     PyJson::Object(values)
 }

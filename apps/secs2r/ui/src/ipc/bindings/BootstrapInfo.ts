@@ -25,4 +25,8 @@ upstream: UpstreamBase,
 /**
  * The operating-system platform running this build.
  */
-platform: Platform, };
+platform: Platform, 
+/**
+ * App log directory, when the caller supplied application data storage.
+ */
+log_dir?: string, };
