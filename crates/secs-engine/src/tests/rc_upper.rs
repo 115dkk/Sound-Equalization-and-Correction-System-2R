@@ -149,6 +149,7 @@ fn rc_agreement_stops_at_first_non_improving_band_and_weights_positions() {
         |db: f64| -> Arc<[C]> { vec![C::new(10.0_f64.powf(db / 20.0), 0.0); BINS].into() };
     let comb = vec![(1, response(4.0)), (2, response(-4.0)), (3, response(-4.0))];
     let input = RcInput {
+        bus_rolloff_hz: None,
         role: "L",
         comb: &comb,
         main_position: 1,
@@ -173,6 +174,7 @@ fn rc_agreement_stops_at_first_non_improving_band_and_weights_positions() {
         .collect();
     assert_eq!(rc::agreement_limit(&input, &correction), 200.0 * width);
     let other_reference = RcInput {
+        bus_rolloff_hz: None,
         main_position: 2,
         ..input
     };

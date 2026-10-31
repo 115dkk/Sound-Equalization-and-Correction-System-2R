@@ -804,6 +804,11 @@ fn design_pass(
                 config,
                 tuning: req.tuning,
                 positions: &positions,
+                bus_rolloff_hz: if config.low_protect && xo_hz.is_some_and(|hz| hz != 0.0) {
+                    alignment.bus_rolloff_hz
+                } else {
+                    None
+                },
             };
             let result = rc::channel(&rc_input, &mut *fitter, &|| ctx.cancel().is_cancelled())?;
             check(ctx)?;
@@ -935,6 +940,8 @@ fn design_pass(
                     rolloff_hz: hz,
                     hp_hz: Some(sub.hp_hz),
                     limited: true,
+                    reduced: 0,
+                    cuts: 0,
                 });
             }
         }

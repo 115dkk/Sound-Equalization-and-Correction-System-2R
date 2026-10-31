@@ -41,8 +41,10 @@ fn note_value(note: &crate::notes::Note) -> Value {
             rolloff_hz,
             hp_hz,
             limited,
+            reduced,
+            cuts,
         } => {
-            json!({"LowProtect": {"role":role,"rolloff_hz":rolloff_hz,"hp_hz":hp_hz,"limited":limited}})
+            json!({"LowProtect": {"role":role,"rolloff_hz":rolloff_hz,"hp_hz":hp_hz,"limited":limited,"reduced":reduced,"cuts":cuts}})
         }
         Note::LiftCapped {
             from_ms,

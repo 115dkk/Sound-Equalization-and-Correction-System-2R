@@ -77,6 +77,7 @@ fn inputs(h: &[C], mode: Mode, extras: bool, positions: u32) -> (MeasurementSet,
 fn correct(h: Arc<[C]>, config: &EngineConfig) -> rc::RcOutput {
     rc::correction(
         &RcInput {
+            bus_rolloff_hz: None,
             role: "L",
             comb: &[(1, h)],
             main_position: 1,
@@ -99,6 +100,7 @@ fn recorded_fits(h: Arc<[C]>, config: &EngineConfig) -> Vec<RecordedFit> {
     let mut fits = Vec::new();
     rc::correction(
         &RcInput {
+            bus_rolloff_hz: None,
             role: "L",
             comb: &[(1, h)],
             main_position: 1,
@@ -405,6 +407,7 @@ fn rc_bands_inverted_primary_grids_skip_it_and_gd_cuts_stay_in_the_bands() {
     };
     let out = rc::channel(
         &RcInput {
+            bus_rolloff_hz: None,
             role: "L",
             comb: &[(1, h)],
             main_position: 1,

@@ -256,13 +256,13 @@ describe("useCalibrateScreen", () => {
     expect(lines()).toContain("극저역 보호(SW1): 22 Hz 아래 부스트 안 함, 16 Hz 하이패스");
     expect(lines()).toContain("극저역 보호(L): 28 Hz 아래 부스트 안 함");
     expect(at("calibrate.verdict.low_protect")).toBeNull();
-    // Below the 20 Hz band with the default boost limit the sub bus keeps its fit: a warning, not a note.
+    // A stored result with an unheld sub-bus bound is a warning, not a note.
     // An edit refuses 15 Hz (ADR 0024); a project saved by SECS 2 keeps it, as the settings set here.
     const stored = await mock.request({ method: "calibration_settings_get" });
     await perform(() => session.call({ method: "calibration_settings_set", params: { settings: { ...stored, rc_lo: 15 } } }));
     await perform(() => fireEvent.click(at("calibrate.compute")!));
     await perform(mock.drain);
-    expect(at("calibrate.verdict.low_protect")!.textContent).toContain("극저역 보호(SW1 + SW2): 22 Hz 아래 부스트를 막지 못해 원래 필터를 그대로 썼습니다.");
+    expect(at("calibrate.verdict.low_protect")!.textContent).toContain("극저역 보호: SW1 + SW2 채널의 22 Hz 아래 일부 주파수가 부스트 한도를 넘습니다.");
     expect(lines().some((line) => line.includes("SW1 + SW2"))).toBe(false);
   });
 
