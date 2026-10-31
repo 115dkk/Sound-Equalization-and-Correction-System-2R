@@ -29,7 +29,12 @@ name: Release
 #            from GitHub's OIDC; the repository keeps no crates.io token),
 #            then the api-v<version> tag on release_sha
 #   pypi     after crates, build the abi3 wheels and sdist for secs2r and
-#            publish through the PyPI trusted publisher (docs/adr/0019)
+#            publish through the PyPI trusted publisher (docs/adr/0019).
+#            A workflow_dispatch on main with pypi_only runs this part alone,
+#            for a version whose release already published its crates and
+#            tagged api-v<version> but whose PyPI upload failed; the gate and
+#            every other job are skipped, and versions already on PyPI are
+#            skipped too, so a repeated dispatch publishes nothing twice
 #
 # Every job checks out release_sha, the commit the gate decided on (the bump
 # commit when it bumped), so a push that lands meanwhile cannot slip in. The
@@ -46,6 +51,12 @@ name: Release
 on:
   push:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      pypi_only:
+        description: Build and publish only the secs2r Python package of main's current version
+        type: boolean
+        default: false
 
 concurrency:
   group: release
@@ -64,7 +75,7 @@ env:
 jobs:
   gate:
     name: Release gate
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     # The bump push authenticates with the deploy key, not the workflow token.
     permissions:
@@ -375,7 +386,18 @@ jobs:
   pypi-build:
     name: Build PyPI distributions (${{ matrix.name }})
     needs: [gate, build, crates]
-    if: needs.gate.outputs.should_release == 'true' && needs.gate.outputs.api_publish == 'true'
+    # !cancelled() lets the dispatch path run with the gate skipped; it also
+    # drops the implicit "every need succeeded", so the push path states it.
+    if: >-
+      ${{ !cancelled() && (
+        (github.event_name == 'push'
+          && needs.gate.outputs.should_release == 'true'
+          && needs.gate.outputs.api_publish == 'true'
+          && needs.build.result == 'success'
+          && needs.crates.result == 'success')
+        || (github.event_name == 'workflow_dispatch'
+          && github.ref == 'refs/heads/main'
+          && inputs.pypi_only)) }}
     strategy:
       fail-fast: false
       matrix:
@@ -384,37 +406,34 @@ jobs:
             os: windows-latest
             target: x86_64-pc-windows-msvc
             manylinux: ""
+            args: --release --locked --out dist
           - name: macos
             os: macos-15
             target: universal2-apple-darwin
             manylinux: ""
+            args: --release --locked --out dist
+          # The sdist is built in the same manylinux container as the wheel.
+          # A separate sdist step outside it could not write to dist/, which
+          # the container creates as root (run 41145487141).
           - name: linux
             os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             manylinux: "2_17"
+            args: --release --locked --out dist --sdist
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ needs.gate.outputs.release_sha }}
+          # A dispatch has no gate, so it builds the commit it was run on.
+          ref: ${{ needs.gate.outputs.release_sha || github.sha }}
 
       - uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
         with:
           command: build
-          args: --release --locked --out dist
+          args: ${{ matrix.args }}
           maturin-version: v1.15.0
           target: ${{ matrix.target }}
           manylinux: ${{ matrix.manylinux }}
-          rust-toolchain: "1.99.0"
-          working-directory: bindings/python
-
-      - name: Build the source distribution
-        if: matrix.name == 'linux'
-        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
-        with:
-          command: sdist
-          args: --out dist
-          maturin-version: v1.15.0
           rust-toolchain: "1.99.0"
           working-directory: bindings/python
 
@@ -428,7 +447,7 @@ jobs:
   pypi:
     name: Publish secs2r to PyPI
     needs: [gate, pypi-build]
-    if: needs.gate.outputs.should_release == 'true' && needs.gate.outputs.api_publish == 'true'
+    if: ${{ !cancelled() && needs.pypi-build.result == 'success' }}
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -440,6 +459,24 @@ jobs:
           pattern: secs2r-pypi-*
           path: dist
           merge-multiple: true
+
+      # PyPI gets only a version the release published to crates.io and
+      # tagged api-v<version>. On a push the crates job made the tag; on a
+      # dispatch this refuses a version main has not released.
+      - name: Require the api tag of the version being published
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          sdist=$(ls dist/secs2r-*.tar.gz)
+          version=${sdist#dist/secs2r-}
+          version=${version%.tar.gz}
+          if ! git ls-remote --exit-code --tags "https://github.com/$REPOSITORY" "refs/tags/api-v$version" >/dev/null; then
+            echo "::error::api-v$version is not tagged; the release has not published this version."
+            exit 1
+          fi
+          echo "Publishing secs2r $version (api-v$version is tagged):"
+          ls dist
 
       - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
         with:
