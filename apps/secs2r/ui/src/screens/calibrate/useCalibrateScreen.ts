@@ -4,7 +4,8 @@ import { useJobLedger } from "../../state/useJobLedger";
 import type { CalibrateActions, CalibrateJob, CalibrateView } from "./types";
 import { groupOf, xoGroups } from "./text";
 import { DESIGN_RATE, countedRate } from "../system/outputRate";
-import { mimoIncluded } from "./settingsView";
+import { isRangeEdit, mimoIncluded, rangeRejection } from "./settingsView";
+import { IpcFailure } from "../../ipc/client";
 
 const withoutStage = ({ stage: _stage, ...params }: Record<string, string>): Record<string, string> => params;
 
@@ -75,9 +76,17 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
       selectXoGroup: (xoGroup) => { session.host.set({ xoGroup, previewHz: null }); refresh(); },
       previewXo: (xoGroup, previewHz) => { session.host.set({ tab: "xo", xoGroup, previewHz }); refresh(); },
       changeSetting: async (edit) => {
-        session.host.set({ previewHz: null });
+        // A range edit (or another upper-limit basis) replaces the refusal the card shows; a refusal of
+        // a range edit is shown at its input (session.call keeps it out of the global notice).
+        const range = isRangeEdit(edit);
+        session.host.set({ previewHz: null, ...(range || edit.kind === "rc_hi_basis" ? { rangeRejection: null } : {}) });
+        const epoch = session.jobs.epoch;
         try { await session.call({ method: "calibration_settings_edit", params: { edit } }); return true; }
-        catch { return false; }
+        catch (error) {
+          const rejected = range && error instanceof IpcFailure ? rangeRejection(edit, error.error) : null;
+          if (rejected && epoch === session.jobs.epoch) session.host.set({ rangeRejection: rejected });
+          return false;
+        }
       },
       takeSubValues: () => session.run(() => session.call({ method: "sub_take_values" })),
       setTargetPoints: async (points) => {
@@ -120,7 +129,7 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
     failure, targetEdit: host.targetEdit, xoEdit: host.xoEdit,
     staleReason: results.calibration?.stale_reason === "settings" || results.calibration?.stale_reason === "target" || results.calibration?.stale_reason === "measurements" || results.calibration?.stale_reason === "config" ? results.calibration.stale_reason : null,
     resultMode: results.calibration ? { mode: results.calibration.mode, ultra_ms: results.calibration.ultra_ms } : null,
-    tab: host.tab, channel: host.channel, xoGroup: host.xoGroup, subWarnings: subWarnings ?? [],
+    tab: host.tab, channel: host.channel, xoGroup: host.xoGroup, subWarnings: subWarnings ?? [], rangeRejection: host.rangeRejection,
     curvesLoading: curves?.pending != null && curves.pending.tab === host.tab && curves.pending.channel === host.channel && curves.pending.group === host.xoGroup,
   } : null, actions };
 }

@@ -831,6 +831,17 @@ pub(crate) fn scalar_notice(note: &secs_engine::Note) -> Notice {
             }
             "rc_limit"
         }
+        Note::RcBands { bands } => {
+            params.insert(
+                "bands".into(),
+                bands
+                    .iter()
+                    .map(|(lo_hz, hi_hz)| format!("{lo_hz}-{hi_hz}"))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            );
+            "rc_bands"
+        }
         Note::Latency {
             latency_ms,
             lift_ms,
@@ -1146,6 +1157,15 @@ mod tests {
         assert_eq!(note.params["basis"], "agreement");
         assert_eq!(note.params["positions"], "9");
         assert!(!note.params.contains_key("band_hz"));
+    }
+
+    #[test]
+    fn rc_bands_notice_formats_the_merged_band_set() {
+        let note = scalar_notice(&Note::RcBands {
+            bands: vec![(20.0, 300.0), (15_000.5, 20_000.0)],
+        });
+        assert_eq!(note.code, "rc_bands");
+        assert_eq!(note.params["bands"], "20-300,15000.5-20000");
     }
 
     fn response_source(frequencies: Vec<f32>, gains: Vec<f32>) -> SourceInfo {
@@ -1522,6 +1542,9 @@ mod tests {
                 band_t60_s: None,
                 positions: None,
             },
+            Note::RcBands {
+                bands: vec![(20.0, 300.0), (15_000.0, 20_000.0)],
+            },
             Note::Latency {
                 latency_ms: 10.0,
                 lift_ms: 2.0,
@@ -1567,6 +1590,7 @@ mod tests {
                 "sub_filters",
                 "sub_filter_peq",
                 "rc_limit",
+                "rc_bands",
                 "latency",
                 "phase_strength",
                 "phase_band",
@@ -1584,6 +1608,6 @@ mod tests {
             ]
         );
         assert_eq!(notices(&notes[1])[0].params["from_ms"], "2");
-        assert_eq!(notices(&notes[14])[0].params["role"], "SW1");
+        assert_eq!(notices(&notes[15])[0].params["role"], "SW1");
     }
 }

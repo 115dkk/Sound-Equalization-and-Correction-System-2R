@@ -222,6 +222,11 @@ pub fn engine_inputs(
             peq_bands: mode.peq_bands,
             max_latency_ms: Some(mode.max_latency_ms),
             rc_range: (settings.rc_lo, settings.rc_hi),
+            rc_bands: settings
+                .rc_bands
+                .iter()
+                .map(|b| (b.lo_hz, b.hi_hz))
+                .collect(),
             low_protect: settings.low_protect,
             room_volume_m3: settings.room_volume_m3,
             rc_hi_basis: settings.rc_hi_basis,

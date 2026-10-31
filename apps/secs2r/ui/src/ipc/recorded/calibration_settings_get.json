@@ -9,6 +9,7 @@
       "rc_hi": null,
       "rc_hi_basis": "strict",
       "rc_hi_transition": 1,
+      "rc_bands": [],
       "room_volume_m3": null,
       "room_dims_m": null,
       "mimo_on": false,

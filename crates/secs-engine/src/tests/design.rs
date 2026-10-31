@@ -59,6 +59,7 @@ fn note_value(note: &crate::notes::Note) -> Value {
             schroeder_hz,
             ..
         } => json!({"RcLimit": {"hz": hz, "auto": auto, "schroeder_hz": schroeder_hz}}),
+        Note::RcBands { bands } => json!({"RcBands": {"bands": bands}}),
         Note::Latency {
             latency_ms,
             lift_ms,
@@ -586,6 +587,7 @@ fn design_matches_recorded_stages() {
                 crate::notes::Note::LiftCapped { .. } => "LiftCapped",
                 crate::notes::Note::SubFilters(_) => "SubFilters",
                 crate::notes::Note::RcLimit { .. } => "RcLimit",
+                crate::notes::Note::RcBands { .. } => "RcBands",
                 crate::notes::Note::Latency { .. } => "Latency",
                 crate::notes::Note::PhaseStrength(_) => "PhaseStrength",
                 crate::notes::Note::PhaseBand(_) => "PhaseBand",

@@ -34,7 +34,11 @@ fn live_and_reopened_results_have_equal_descriptions_for_every_export_kind() {
     // Same persisted oracle project and reopening path as tests/service.rs.
     let root = std::env::temp_dir().join(format!("secs-export-description-{}", std::process::id()));
     std::fs::create_dir_all(&root).unwrap();
-    let (path, settings) = case_project::write(&root, "dolby");
+    let (path, mut settings) = case_project::write(&root, "dolby");
+    settings.rc_bands = vec![secs_types::calibration::RcBand {
+        lo_hz: 15_000.0,
+        hi_hz: 20_000.0,
+    }];
     let service = Service::new(Deps::default());
     let open = |service: &Service| {
         assert!(matches!(
@@ -50,7 +54,7 @@ fn live_and_reopened_results_have_equal_descriptions_for_every_export_kind() {
     open(&service);
     let completion = Arc::new(Completion::default());
     assert!(
-        matches!(service.call(Request::Calibrate(CalibrateParams { settings: Some(settings), ..Default::default() }), completion.clone()), Envelope::Ok(response) if matches!(*response, Response::Calibrate(_)))
+        matches!(service.call(Request::Calibrate(CalibrateParams { settings: Some(settings.clone()), ..Default::default() }), completion.clone()), Envelope::Ok(response) if matches!(*response, Response::Calibrate(_)))
     );
     let (event, wait) = completion
         .ready
@@ -82,9 +86,18 @@ fn live_and_reopened_results_have_equal_descriptions_for_every_export_kind() {
     let cached = lock(&reopened.session);
     let cached = cached.require().unwrap();
     // One description serves every export kind of a result.
+    let live_description = describe(&live.results, live.store.project(), &compute, now).unwrap();
+    let cached_description =
+        describe(&cached.results, cached.store.project(), &compute, now).unwrap();
+    assert_eq!(live_description, cached_description);
     assert_eq!(
-        describe(&live.results, live.store.project(), &compute, now).unwrap(),
-        describe(&cached.results, cached.store.project(), &compute, now).unwrap(),
+        live_description.rc_pieces.last().map(String::as_str),
+        Some("RC 추가 구간 15000–20000 Hz")
+    );
+    assert!(
+        live_description
+            .camilla_note
+            .ends_with("\nRC extra bands 15000–20000 Hz")
     );
     std::fs::remove_dir_all(root).unwrap();
 }

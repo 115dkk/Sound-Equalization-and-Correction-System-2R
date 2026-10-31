@@ -2,6 +2,7 @@ use std::fs;
 use std::io::{BufWriter, Read, Write};
 use std::path::{Path, PathBuf};
 
+use secs_types::calibration::RcBand;
 use secs_types::chain::{MimoPaths, SignalChain};
 use secs_types::ipc::{CalibrationSummary, MimoSummary};
 use serde::{Deserialize, Serialize};
@@ -16,6 +17,8 @@ pub(crate) struct CachedRunLabels {
     pub ultra_ms: f64,
     pub latency_ms: f64,
     pub rc_hi_hz: f64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rc_bands: Vec<RcBand>,
     pub mimo_max_supports: usize,
 }
 // New FIR runs retain only their design-rate coefficients. Keep the historical
@@ -281,6 +284,7 @@ mod tests {
                 ultra_ms: 100.0,
                 latency_ms: 4.0,
                 rc_hi_hz: 300.0,
+                rc_bands: Vec::new(),
                 mimo_max_supports: 0,
             },
             mimo_paths: None,

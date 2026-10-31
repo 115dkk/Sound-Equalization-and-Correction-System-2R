@@ -20,6 +20,7 @@ import type { ResultsSummary } from "../../ipc/bindings/ResultsSummary";
 import type { SubEntry } from "../../ipc/bindings/SubEntry";
 import type { TargetResult } from "../../ipc/bindings/TargetResult";
 import type { XoRecommendation } from "../../ipc/bindings/XoRecommendation";
+import type { RangeRejection } from "./settingsView";
 
 /**
  * This screen's long jobs. They never run side by side (upstream ran one at
@@ -105,6 +106,12 @@ export type CalibrateView = {
   xoGroup: string | null;
   /** sub_warnings: the subs' filter warnings for the current settings (upstream `sub_filter_warnings`, shown before a run). */
   subWarnings: Notice[];
+  /**
+   * The last edit of the range card's edges or extra bands the service
+   * refused (ADR 0024), shown at the input it concerns; null after the next
+   * such edit is sent, and for a new project.
+   */
+  rangeRejection: RangeRejection | null;
 };
 
 /**

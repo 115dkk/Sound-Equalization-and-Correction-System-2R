@@ -1940,6 +1940,30 @@ status = "implemented"
 tests = ["secs-service::stored_export_folder_survives_save_and_open"]
 
 [[feature]]
+id = "engine.rc_bands"
+kind = "engine"
+milestone = "M5"
+status = "implemented"
+upstream = "new; ADR 0024 (D48)"
+tests = ["secs-engine::rc_band_set_sorts_merges_overlaps_and_touching_edges", "secs-engine::rc_bands_empty_masks_are_bit_identical_and_extra_ramps_use_max", "secs-engine::rc_bands_fir_corrects_high_bump_not_gap_and_retains_boost_cap", "secs-engine::rc_bands_zero_peq_centres_stay_in_the_union", "secs-engine::rc_bands_fir_excess_phase_moves_high_gd_toward_reference", "secs-project::rc_bands_round_trip_filter_sort_trim_and_clear", "secs-service::result_curves_use_stored_then_run_extra_rc_bands"]
+
+[[feature]]
+id = "calibration.edit_rc_bands"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "new; ADR 0024, calibration_settings_edit RcBands"
+tests = ["secs-service::rc_band_edits_reject_invalid_values_and_sort_valid_bands", "secs-service::rc_primary_band_edits_reject_crossed_manual_edges", "secs-service::rc_band_edits_store_sorted_clear_change_keys_and_mark_results_stale"]
+
+[[feature]]
+id = "cli.rc_bands"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "new; project set --rc-bands LO-HI[,LO-HI...]|none"
+tests = ["secs2r-cli::project_set_persists_and_clears_rc_bands"]
+
+[[feature]]
 id = "engine.rc_hi_basis"
 kind = "engine"
 milestone = "M5"

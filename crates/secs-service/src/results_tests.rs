@@ -131,6 +131,7 @@ fn cache(project: &Project, supports: usize, compute: ComputeIdentity) -> Cached
             ultra_ms: 100.0,
             latency_ms: 0.0,
             rc_hi_hz: 500.0,
+            rc_bands: Vec::new(),
             mimo_max_supports: 0,
         },
         mimo_paths: Some(paths(supports)),

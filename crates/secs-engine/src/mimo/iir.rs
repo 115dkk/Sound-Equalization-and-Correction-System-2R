@@ -264,6 +264,7 @@ pub(crate) fn fit_one(
             boost: t.mimo_band_db,
             ring_ms: None,
             f_max: None,
+            bands: None,
         },
         &|| ctx.cancel().is_cancelled(),
         seed_peq_derivatives,

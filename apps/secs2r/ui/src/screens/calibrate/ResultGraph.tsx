@@ -1,11 +1,11 @@
 // The result graph (upstream step_calibration.py result card): tabs SPL /
 // GD / XO / BA, the channel, the curves exactly as `result_curves` gives
-// them, a legend per tab, the RC band on SPL and GD, target editing on SPL
+// them, a legend per tab, the RC band (with its extra bands) on SPL and GD, target editing on SPL
 // (drag, double-click adds, right-click or Delete removes, right-click on
 // empty space opens the target menu) and the XO line on XO. The BA tab adds
 // the alignment lines and table under the graph. While new curves load, the
 // last ones stay, dimmed like a stale result, with a short status.
-import { useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { useNumber, useT, type Translate } from "../../i18n/react";
 import type { ResultCurvesResult } from "../../ipc/bindings/ResultCurvesResult";
 import type { ResultTab } from "../../ipc/bindings/ResultTab";
@@ -13,11 +13,47 @@ import type { SubResultLines } from "../../ipc/bindings/SubResultLines";
 import { AxisRangeButton, Button, Card, DataTable, LogPlot, Menu, Segmented, Select, StatusPill, TargetHandles, XoLine, formatHz, target as targetEdit, type AxisRangeValue, type Column, type Curve, type MenuItem, type PlotScale } from "../../ui";
 import { Icon } from "../../ui/Icon";
 import { roleCode } from "../../ui/maps/geometry";
+import { bandLayout, type PlotBand } from "../../ui/plot/bands";
 import { colorTokens } from "../../ui/plot/series";
 import { filterSpec, groupName, groupOf, noticeText, signedNumber, subModeText, subRoles, xoGroups, type FormatNumber } from "./text";
 import type { CalibrateActions, CalibrateView } from "./types";
 
 const PLOT_HEIGHT = 300;
+
+/* ── RC band labels ─────────────────────────────────────────────────────── */
+
+/** About the width of a band label in CSS px: caption text (13 px, Hangul wider than Latin) and 4 px padding on each side. */
+const labelWidth = (text: string) => 8 + [...text].reduce((width, ch) => width + (/[ᄀ-ᇿ㄰-㆏가-힯]/.test(ch) ? 13 : 7.5), 0);
+/** Space kept between two labels on one row. */
+const LABEL_GAP = 6;
+
+type BandLabel = { id: string; text: string; hz: number; rows: readonly ("top" | "bottom")[] };
+type PlacedLabel = { id: string; text: string; row: "top" | "bottom"; style: CSSProperties };
+
+/**
+ * The band labels beside their edges inside the plot: right of the edge, or
+ * left of it where the plot ends first; each on the first of its rows where
+ * it does not cover a label placed before it. The RC band's two labels go
+ * first on rows of their own, as before; an extra band's label that fits on
+ * neither row is left out (its band stays shaded and dashed, and the range
+ * card lists it).
+ */
+function placeLabels(scale: PlotScale, labels: readonly BandLabel[]): PlacedLabel[] {
+  const taken: { row: "top" | "bottom"; from: number; to: number }[] = [];
+  const placed: PlacedLabel[] = [];
+  for (const label of labels) {
+    const x = scale.xToPx(label.hz);
+    const width = labelWidth(label.text);
+    const right = !(scale.width > 0 && scale.width - x < width + 4);
+    const from = right ? x + 4 : x - 4 - width;
+    const to = from + width;
+    const row = label.rows.find((r) => !taken.some((t) => t.row === r && from < t.to + LABEL_GAP && to > t.from - LABEL_GAP));
+    if (row === undefined) continue;
+    taken.push({ row, from, to });
+    placed.push({ id: label.id, text: label.text, row, style: right ? { left: x + 4 } : { right: scale.width - x + 4 } });
+  }
+  return placed;
+}
 /** A reply quicker than this never shows the loading look (no flash). */
 export const LOADING_DELAY_MS = 150;
 const TAB_LABEL: Record<ResultTab, "calibrate.tab.spl" | "calibrate.tab.gd" | "calibrate.tab.xo" | "calibrate.tab.ba"> = {
@@ -392,22 +428,29 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
   };
 
   const selected = computed ? view.lines.channels.find((c) => c.role === channel) : undefined;
-  const band = curves?.rc_band_hz ?? null;
+  // The RC band with the extra bands (ADR 0024) on SPL and GD: shaded outside their union, its edges labelled.
+  const band: PlotBand | null =
+    curves?.rc_band_hz && (tab === "spl" || tab === "gd") ? { lo: curves.rc_band_hz[0], hi: curves.rc_band_hz[1], extra: curves.rc_bands_hz ?? [] } : null;
+  const layout = band ? bandLayout(band) : null;
+  const primary = layout?.bands[layout.primary];
+  // The RC band's lower edge at the bottom and its upper edge at the top, as before; one label per extra band at its lower edge.
+  const bandLabels: BandLabel[] = primary
+    ? [
+        { id: "calibrate.plot.band.lower", text: t("plot.band.lower", { hz: formatHz(primary[0]) }), hz: primary[0], rows: ["bottom"] },
+        ...(Number.isFinite(primary[1]) ? [{ id: "calibrate.plot.band.upper", text: t("plot.band.upper", { hz: formatHz(primary[1]) }), hz: primary[1], rows: ["top"] } satisfies BandLabel] : []),
+        ...layout!.bands
+          .filter((_, i) => i !== layout!.primary)
+          .map(([lo, hi], i): BandLabel => ({ id: `calibrate.plot.band.extra.${i + 1}`, text: t("plot.band.extra", { lo: formatHz(lo), hi: formatHz(hi) }), hz: lo, rows: ["bottom", "top"] })),
+      ]
+    : [];
 
   const overlay = (scale: PlotScale): ReactNode => (
     <>
-      {band && (tab === "spl" || tab === "gd") && (
-        <>
-          <span className="plot-band-label" data-ui="calibrate.plot.band.lower" style={{ left: scale.xToPx(band[0]) + 4 }}>
-            {t("plot.band.lower", { hz: formatHz(band[0]) })}
-          </span>
-          {band[1] !== null && (
-            <span className="plot-band-label calibrate-band-label--upper" data-ui="calibrate.plot.band.upper" style={{ left: scale.xToPx(band[1]) + 4 }}>
-              {t("plot.band.upper", { hz: formatHz(band[1]) })}
-            </span>
-          )}
-        </>
-      )}
+      {placeLabels(scale, bandLabels).map((label) => (
+        <span key={label.id} className={label.row === "top" ? "plot-band-label calibrate-band-label--upper" : "plot-band-label"} data-ui={label.id} style={label.style}>
+          {label.text}
+        </span>
+      ))}
       {tab === "spl" && <TargetHandles id="calibrate.target" points={points} scale={scale} onChange={setDraft} onCommit={commit} />}
       {tab === "xo" && xoGroup && xoHz !== null && curves && curves.curves.length > 0 && (
         <XoLine
@@ -524,7 +567,7 @@ export function ResultGraph({ view, actions, menuOpen = false }: { view: Calibra
               yRange={range.y ?? yRange}
               yUnit={unit}
               height={PLOT_HEIGHT}
-              band={band && (tab === "spl" || tab === "gd") ? { lo: band[0], hi: band[1] } : null}
+              band={band}
               stale={curves.stale || slow}
               onDoubleClick={tab === "spl" ? ({ hz, value }) => commit(targetEdit.addPoint(points, { hz, db: value }).points) : undefined}
               overlay={overlay}

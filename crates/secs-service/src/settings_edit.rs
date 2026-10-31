@@ -2,30 +2,126 @@
 //! (upstream SECS 2, GPL-3.0-only). The project adapter owns normalization.
 use secs_project::{Project, calibration_from_project, store_calibration};
 use secs_types::calibration::{BundleLayoutEntry, CalibrationSettings, SubEntry};
-use secs_types::ipc::{CalibrationSettingsEditParams, IpcError};
+use secs_types::ipc::{CalibrationSettingsEditParams, ErrorCode, IpcError};
 use secs_types::rules::CALIBRATION_LIMITS as LIMITS;
 use secs_types::settings_edit::*;
 
 use crate::{Service, lock};
+
+fn invalid(detail: &str, params: impl IntoIterator<Item = (&'static str, String)>) -> IpcError {
+    params.into_iter().fold(
+        IpcError::new(ErrorCode::InvalidRequest, detail),
+        |error, (key, value)| error.with_param(key, value),
+    )
+}
+
+fn validate_edit(edit: SettingEdit) -> Result<SettingEdit, IpcError> {
+    match edit {
+        SettingEdit::RcHiTransition { factor } if !matches!(factor, 1 | 2 | 4) => {
+            Err(IpcError::new(
+                ErrorCode::InvalidRequest,
+                "RC transition factor must be 1, 2 or 4",
+            )
+            .with_param("field", "rc_hi_transition"))
+        }
+        SettingEdit::RcLo { hz }
+            if !hz.is_finite() || !(LIMITS.rc_lo.0..=LIMITS.rc_lo.1).contains(&hz) =>
+        {
+            Err(invalid(
+                "RC lower limit is outside its range",
+                [
+                    ("field", "rc_lo".into()),
+                    ("reason", "rc_lo_range".into()),
+                    ("min", LIMITS.rc_lo.0.to_string()),
+                    ("max", LIMITS.rc_lo.1.to_string()),
+                ],
+            ))
+        }
+        SettingEdit::RcHi { hz: Some(hz) }
+            if !hz.is_finite() || !(LIMITS.rc_hi.0..=LIMITS.rc_hi.1).contains(&hz) =>
+        {
+            Err(invalid(
+                "RC upper limit is outside its range",
+                [
+                    ("field", "rc_hi".into()),
+                    ("reason", "rc_hi_range".into()),
+                    ("min", LIMITS.rc_hi.0.to_string()),
+                    ("max", LIMITS.rc_hi.1.to_string()),
+                ],
+            ))
+        }
+        SettingEdit::RcBands { bands } if bands.len() > LIMITS.rc_bands_max.1 as usize => {
+            Err(invalid(
+                "too many extra RC bands",
+                [
+                    ("field", "rc_bands".into()),
+                    ("reason", "rc_band_count".into()),
+                    ("max", LIMITS.rc_bands_max.1.to_string()),
+                ],
+            ))
+        }
+        SettingEdit::RcBands { mut bands } => {
+            if let Some((index, band)) = bands.iter().enumerate().find(|(_, band)| {
+                !band.lo_hz.is_finite()
+                    || !band.hi_hz.is_finite()
+                    || !(LIMITS.rc_band.0..=LIMITS.rc_band.1).contains(&band.lo_hz)
+                    || !(LIMITS.rc_band.0..=LIMITS.rc_band.1).contains(&band.hi_hz)
+                    || band.lo_hz >= band.hi_hz
+            }) {
+                return Err(invalid(
+                    "an extra RC band is outside its range",
+                    [
+                        ("field", "rc_bands".into()),
+                        ("reason", "rc_band_range".into()),
+                        ("index", (index + 1).to_string()),
+                        ("lo_hz", band.lo_hz.to_string()),
+                        ("hi_hz", band.hi_hz.to_string()),
+                    ],
+                ));
+            }
+            bands.sort_by(|left, right| left.lo_hz.total_cmp(&right.lo_hz));
+            Ok(SettingEdit::RcBands { bands })
+        }
+        edit => Ok(edit),
+    }
+}
+
+fn validate_against_settings(
+    settings: &CalibrationSettings,
+    edit: &SettingEdit,
+) -> Result<(), IpcError> {
+    match edit {
+        SettingEdit::RcLo { hz } if settings.rc_hi.is_some_and(|hi| *hz >= hi) => Err(invalid(
+            "RC lower limit must be below its manual upper limit",
+            [
+                ("field", "rc_lo".into()),
+                ("reason", "rc_lo_above_hi".into()),
+                ("hi_hz", settings.rc_hi.unwrap().to_string()),
+            ],
+        )),
+        SettingEdit::RcHi { hz: Some(hz) } if *hz <= settings.rc_lo => Err(invalid(
+            "RC upper limit must be above its lower limit",
+            [
+                ("field", "rc_hi".into()),
+                ("reason", "rc_hi_below_lo".into()),
+                ("lo_hz", settings.rc_lo.to_string()),
+            ],
+        )),
+        _ => Ok(()),
+    }
+}
 
 impl Service {
     pub(crate) fn calibration_settings_edit(
         &self,
         params: CalibrationSettingsEditParams,
     ) -> Result<CalibrationSettings, IpcError> {
-        if let SettingEdit::RcHiTransition { factor } = params.edit
-            && !matches!(factor, 1 | 2 | 4)
-        {
-            return Err(IpcError::new(
-                secs_types::ipc::ErrorCode::InvalidRequest,
-                "RC transition factor must be 1, 2 or 4",
-            )
-            .with_param("field", "rc_hi_transition"));
-        }
+        let edit = validate_edit(params.edit)?;
         let mut session = lock(&self.session);
         let open = session.require_mut()?;
         let mut settings = calibration_from_project(open.store.project());
-        apply(&mut settings, params.edit, open.store.project());
+        validate_against_settings(&settings, &edit)?;
+        apply(&mut settings, edit, open.store.project());
         store_calibration(open.store.project_mut(), &settings);
         open.dirty = true;
         Ok(calibration_from_project(open.store.project()))
@@ -271,10 +367,11 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
         SettingEdit::SampleRatePolicy { policy } => s.sample_rate_policy = policy,
         SettingEdit::UltraMs { ms } => s.ultra_ms = ms.clamp(LIMITS.ultra_ms.0, LIMITS.ultra_ms.1),
         SettingEdit::LowProtect { on } => s.low_protect = on,
-        SettingEdit::RcLo { hz } => s.rc_lo = hz.clamp(LIMITS.rc_lo.0, LIMITS.rc_lo.1),
-        SettingEdit::RcHi { hz } => s.rc_hi = hz.map(|v| v.clamp(LIMITS.rc_hi.0, LIMITS.rc_hi.1)),
+        SettingEdit::RcLo { hz } => s.rc_lo = hz,
+        SettingEdit::RcHi { hz } => s.rc_hi = hz,
         SettingEdit::RcHiBasis { basis } => s.rc_hi_basis = basis,
         SettingEdit::RcHiTransition { factor } => s.rc_hi_transition = factor,
+        SettingEdit::RcBands { bands } => s.rc_bands = bands,
         SettingEdit::RoomVolume { m3 } => {
             s.room_volume_m3 = (m3 > LIMITS.volume.0).then_some(m3.min(LIMITS.volume.1));
             if !volume(s.room_dims_m)
@@ -432,15 +529,9 @@ mod tests {
     /// Every clamp lands on the rule constant at both edges.
     #[test]
     fn clamps_land_on_the_rule_limits() {
-        let edges: [(&str, (f64, f64), Read); 16] = [
+        let edges: [(&str, (f64, f64), Read); 14] = [
             ("ultra_ms", LIMITS.ultra_ms, |v| {
                 edited(SettingEdit::UltraMs { ms: v }).ultra_ms
-            }),
-            ("rc_lo", LIMITS.rc_lo, |v| {
-                edited(SettingEdit::RcLo { hz: v }).rc_lo
-            }),
-            ("rc_hi", LIMITS.rc_hi, |v| {
-                edited(SettingEdit::RcHi { hz: Some(v) }).rc_hi.unwrap()
             }),
             ("boost", LIMITS.boost, |v| {
                 edited(SettingEdit::BoostMax { db: v }).boost_max_db
@@ -530,5 +621,107 @@ mod tests {
             m3: LIMITS.volume.0,
         });
         assert_eq!(cleared.room_volume_m3, None);
+    }
+
+    fn assert_invalid(error: IpcError, expected: serde_json::Value) {
+        assert_eq!(error.code, ErrorCode::InvalidRequest);
+        assert_eq!(serde_json::to_value(error.params).unwrap(), expected);
+    }
+
+    #[test]
+    fn rc_band_edits_reject_invalid_values_and_sort_valid_bands() {
+        use secs_types::calibration::RcBand;
+
+        for (edit, expected) in [
+            (
+                SettingEdit::RcLo { hz: 19.0 },
+                serde_json::json!({"field":"rc_lo","reason":"rc_lo_range","min":"20","max":"200"}),
+            ),
+            (
+                SettingEdit::RcHi { hz: Some(20_001.0) },
+                serde_json::json!({"field":"rc_hi","reason":"rc_hi_range","min":"100","max":"20000"}),
+            ),
+            (
+                SettingEdit::RcBands {
+                    bands: vec![
+                        RcBand {
+                            lo_hz: 20.0,
+                            hi_hz: 30.0
+                        };
+                        5
+                    ],
+                },
+                serde_json::json!({"field":"rc_bands","reason":"rc_band_count","max":"4"}),
+            ),
+            (
+                SettingEdit::RcBands {
+                    bands: vec![
+                        RcBand {
+                            lo_hz: 20.0,
+                            hi_hz: 30.0,
+                        },
+                        RcBand {
+                            lo_hz: f64::NAN,
+                            hi_hz: 100.0,
+                        },
+                    ],
+                },
+                serde_json::json!({"field":"rc_bands","reason":"rc_band_range","index":"2","lo_hz":"NaN","hi_hz":"100"}),
+            ),
+            (
+                SettingEdit::RcBands {
+                    bands: vec![RcBand {
+                        lo_hz: 100.0,
+                        hi_hz: 100.0,
+                    }],
+                },
+                serde_json::json!({"field":"rc_bands","reason":"rc_band_range","index":"1","lo_hz":"100","hi_hz":"100"}),
+            ),
+        ] {
+            assert_invalid(validate_edit(edit).unwrap_err(), expected);
+        }
+
+        let edit = validate_edit(SettingEdit::RcBands {
+            bands: vec![
+                RcBand {
+                    lo_hz: 15_000.0,
+                    hi_hz: 20_000.0,
+                },
+                RcBand {
+                    lo_hz: 1_000.0,
+                    hi_hz: 2_000.0,
+                },
+            ],
+        })
+        .unwrap();
+        let SettingEdit::RcBands { bands } = edit else {
+            panic!()
+        };
+        assert_eq!(
+            bands.iter().map(|band| band.lo_hz).collect::<Vec<_>>(),
+            [1_000.0, 15_000.0]
+        );
+        assert!(matches!(
+            validate_edit(SettingEdit::RcBands { bands: vec![] }).unwrap(),
+            SettingEdit::RcBands { bands } if bands.is_empty()
+        ));
+    }
+
+    #[test]
+    fn rc_primary_band_edits_reject_crossed_manual_edges() {
+        let settings = CalibrationSettings {
+            rc_lo: 120.0,
+            rc_hi: Some(150.0),
+            ..Default::default()
+        };
+        assert_invalid(
+            validate_against_settings(&settings, &SettingEdit::RcLo { hz: 150.0 }).unwrap_err(),
+            serde_json::json!({"field":"rc_lo","reason":"rc_lo_above_hi","hi_hz":"150"}),
+        );
+        assert_invalid(
+            validate_against_settings(&settings, &SettingEdit::RcHi { hz: Some(120.0) })
+                .unwrap_err(),
+            serde_json::json!({"field":"rc_hi","reason":"rc_hi_below_lo","lo_hz":"120"}),
+        );
     }
 }
