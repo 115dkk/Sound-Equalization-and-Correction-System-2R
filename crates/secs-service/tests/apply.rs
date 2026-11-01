@@ -1001,6 +1001,53 @@ fn apply_eqapo_installs_reapplies_repairs_once_and_removes_stale_files() {
 }
 
 #[test]
+fn apply_eqapo_prunes_a_link_without_touching_its_target() {
+    let root = root("eqapo-linked-stale");
+    let config_root = root.join("EqualizerAPO/config");
+    let outside = root.join("outside");
+    fs::create_dir_all(config_root.join("SECS2R")).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    fs::write(config_root.join("config.txt"), "Preamp: -3 dB\n").unwrap();
+    fs::write(outside.join("sentinel.txt"), b"outside").unwrap();
+    let link = config_root.join("SECS2R/linked");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    #[cfg(windows)]
+    if let Err(error) = std::os::windows::fs::symlink_dir(&outside, &link) {
+        eprintln!("skipping Windows link half: {error}");
+        fs::remove_dir_all(root).unwrap();
+        return;
+    }
+
+    let install = EqApoInstall {
+        config_path: config_root.to_string_lossy().into_owned(),
+        install_path: "EqualizerAPO-XT/current".into(),
+        variant: EqApoVariant::Xt,
+    };
+    let service = calibrated_service(
+        &root,
+        Deps {
+            eqapo_install: Arc::new(move || Some(install.clone())),
+            ..Deps::default()
+        },
+    );
+    set_apply(
+        &service,
+        CamillaApply::default(),
+        EqApoApply {
+            level: ApplyLevel::Apply,
+        },
+    );
+    let events = Arc::new(Events::default());
+    let job = started(&service, Request::ApplyEqapo, events.clone());
+    succeeded(events.wait(job.job));
+
+    assert_eq!(fs::read(outside.join("sentinel.txt")).unwrap(), b"outside");
+    assert!(!link.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn failed_eqapo_switch_keeps_the_previous_entry_and_generation() {
     let root = root("eqapo-switch-failure");
     let config_root = root.join("EqualizerAPO/config");

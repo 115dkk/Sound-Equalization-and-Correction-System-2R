@@ -45,7 +45,10 @@ pub(crate) fn prune(root: &Path, keep: &[&str]) -> Result<(), IpcError> {
             continue;
         }
         let path = entry.path();
-        if path.is_dir() {
+        let metadata = fs::symlink_metadata(&path).map_err(|error| io_error(&path, error))?;
+        if metadata.file_type().is_symlink() {
+            remove_link(&path)?;
+        } else if metadata.is_dir() {
             fs::remove_dir_all(&path).map_err(|error| io_error(&path, error))?;
         } else {
             fs::remove_file(&path).map_err(|error| io_error(&path, error))?;
@@ -71,6 +74,16 @@ fn refuse_link(path: &Path) -> Result<(), IpcError> {
         Ok(_) => Ok(()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(io_error(path, error)),
+    }
+}
+
+fn remove_link(path: &Path) -> Result<(), IpcError> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(file_error) => match fs::remove_dir(path) {
+            Ok(()) => Ok(()),
+            Err(_) => Err(io_error(path, file_error)),
+        },
     }
 }
 
