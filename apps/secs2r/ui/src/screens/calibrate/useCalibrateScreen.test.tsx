@@ -188,6 +188,7 @@ describe("useCalibrateScreen", () => {
     expect(mock.calls).toContainEqual({ method: "recommend_xo" });
     expect(result.current.view?.running).toBe("recommend_xo");
     await perform(mock.drain);
+    await perform(mock.drain);
     mock.failJobs("mimo", "internal");
     await perform(a.computeMimo);
     expect(mock.calls).toContainEqual({ method: "mimo", params: { settings: null } });

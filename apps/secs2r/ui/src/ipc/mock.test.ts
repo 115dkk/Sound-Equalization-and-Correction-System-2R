@@ -11,6 +11,31 @@ import type { Mode } from "./bindings/Mode";
 import type { MimoExportDecision } from "./bindings/MimoExportDecision";
 import { umikFile } from "../screens/connect/fixtures";
 
+describe("mock job groups", () => {
+  it.each([
+    [{ method: "calibrate", params: { settings: null, subs_only: false } }, { method: "recommend_xo" }],
+    [{ method: "recommend_xo" }, { method: "mimo", params: { settings: null } }],
+    [{ method: "mimo", params: { settings: null } }, { method: "calibrate", params: { settings: null, subs_only: false } }],
+    [{ method: "sample_load", params: { positions: 1 } }, { method: "mdat_import", params: { path: "/room.mdat", position: 1, assignments: [] } }],
+    [{ method: "mdat_import", params: { path: "/room.mdat", position: 1, assignments: [] } }, { method: "level_monitor_start", params: { role: null } }],
+    [{ method: "level_monitor_start", params: { role: null } }, { method: "measure_position", params: { position: 1 } }],
+    [{ method: "measure_position", params: { position: 1 } }, { method: "sample_load", params: { positions: 1 } }],
+    [{ method: "export", params: { kind: "camilla_dsp", folder: "" } }, { method: "apply_camilla", params: {} }],
+    [{ method: "apply_camilla", params: {} }, { method: "export", params: { kind: "camilla_dsp", folder: "" } }],
+  ] satisfies [import("./bindings/Request").Request, import("./bindings/Request").Request][]) ("refuses a different job in the same group: %j then %j", async (first, second) => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+      await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
+      const app = await mock.request({ method: "app_settings_get" });
+      await mock.request({ method: "apply_settings_set", params: { ...app.apply, camilla: { ...app.apply.camilla, level: "apply" } } });
+      const started = await mock.request(first);
+      await expect(mock.request(second)).rejects.toMatchObject({ error: { code: "job_busy" } });
+      expect(await mock.request({ method: "jobs" })).toEqual([expect.objectContaining(started)]);
+    } finally { mock.dispose(); }
+  });
+});
+
 describe("recommendation and app options", () => {
   it("accepts background requests, preserves the include choice and marks old recommendations", async () => {
     const mock = createMockService({ tickMs: 0 });

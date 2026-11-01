@@ -104,8 +104,13 @@ class MockError extends Error {
 const clone = <T,>(value: T): T => structuredClone(value);
 const clamp = (value: number, [lo, hi]: readonly [number, number]) => Math.min(hi, Math.max(lo, value));
 const monitor = (kind: JobKind) => kind === "level_monitor" || kind === "status_watch";
-/** `JobGroup::Export` (jobs.rs): an apply job is an export job too, one at a time. */
-const jobGroup = (kind: JobKind): JobKind => kind === "apply" ? "export" : kind;
+/** Service jobs.rs groups, not individual kinds, own exclusivity (audit #155 TD-124). */
+const JOB_GROUPS = {
+  measure: "device", sample_load: "device", mdat_import: "device", level_monitor: "device",
+  calibrate: "compute", recommend_xo: "compute", mimo: "compute",
+  export: "export", apply: "export", status_watch: "status_watch",
+} as const satisfies Record<JobKind, string>;
+const jobGroup = (kind: JobKind) => JOB_GROUPS[kind];
 /** Where the service writes what it applies to CamillaDSP (`app_data_path/applied/camilladsp`). */
 const APPLIED_CAMILLA = "C:/Users/demo/AppData/Roaming/SECS2R/applied/camilladsp";
 const basename = (path: string) => path.split(/[\\/]/).at(-1) ?? path;
