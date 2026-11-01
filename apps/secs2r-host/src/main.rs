@@ -434,11 +434,29 @@ fn service_loop(
             session,
         )?;
     }
-    if let Some(session) = active_session {
-        repair_eqapo(&mut core, paths, session)?;
-    }
     let mut transition_state =
         TransitionState::new(core.managed.clone(), child.as_ref().and(active_session));
+    if active_session.is_some() {
+        let (next, effects) = transitions::decide(
+            &transition_state,
+            TransitionInput::ConfigChanged {
+                owner_session: active_session,
+            },
+        );
+        transition_state = next;
+        drive_transition(
+            &mut transition_state,
+            effects,
+            &mut core,
+            &mut child,
+            &mut process_rules,
+            &mut watcher,
+            &mut restart_at,
+            &config_sender,
+            paths,
+        )?;
+    }
+    let mut repair_retry_at = None;
 
     let mut stop_after_response = false;
     loop {
@@ -472,7 +490,24 @@ fn service_loop(
                                 session,
                             )?;
                         }
-                        repair_eqapo(&mut core, paths, session)?;
+                        let (next, effects) = transitions::decide(
+                            &transition_state,
+                            TransitionInput::ConfigChanged {
+                                owner_session: Some(session),
+                            },
+                        );
+                        transition_state = next;
+                        drive_transition(
+                            &mut transition_state,
+                            effects,
+                            &mut core,
+                            &mut child,
+                            &mut process_rules,
+                            &mut watcher,
+                            &mut restart_at,
+                            &config_sender,
+                            paths,
+                        )?;
                     } else {
                         if process_rules.apply(ProcessEvent::Logoff, Instant::now())
                             == ProcessAction::Stop
@@ -506,9 +541,46 @@ fn service_loop(
         }
 
         while config_events.try_recv().is_ok() {
-            if let Some(session) = managing_session(&core)? {
-                repair_eqapo(&mut core, paths, session)?;
-            }
+            let owner_session = managing_session(&core)?;
+            let (next, effects) = transitions::decide(
+                &transition_state,
+                TransitionInput::ConfigChanged { owner_session },
+            );
+            transition_state = next;
+            drive_transition(
+                &mut transition_state,
+                effects,
+                &mut core,
+                &mut child,
+                &mut process_rules,
+                &mut watcher,
+                &mut restart_at,
+                &config_sender,
+                paths,
+            )?;
+        }
+
+        if repair_retry_at.is_none()
+            && let Some(delay) = transition_state.take_repair_retry()
+        {
+            repair_retry_at = Some(Instant::now() + delay);
+        }
+        if repair_retry_at.is_some_and(|deadline| Instant::now() >= deadline) {
+            repair_retry_at = None;
+            let (next, effects) =
+                transitions::decide(&transition_state, TransitionInput::RepairRetry);
+            transition_state = next;
+            drive_transition(
+                &mut transition_state,
+                effects,
+                &mut core,
+                &mut child,
+                &mut process_rules,
+                &mut watcher,
+                &mut restart_at,
+                &config_sender,
+                paths,
+            )?;
         }
 
         if let Some(running) = child.as_ref()
@@ -671,6 +743,36 @@ impl TransitionPlatform for RealTransitionPlatform<'_> {
 
 #[cfg(target_os = "windows")]
 #[allow(clippy::too_many_arguments)]
+fn drive_transition(
+    state: &mut TransitionState,
+    effects: Vec<transitions::Effect>,
+    core: &mut Core,
+    child: &mut Option<secs_sys::host::ManagedChild>,
+    process_rules: &mut ProcessRules,
+    watcher: &mut Option<secs_sys::host::ConfigWatcher>,
+    restart_at: &mut Option<Instant>,
+    config_sender: &mpsc::Sender<()>,
+    paths: &Paths,
+) -> Result<(), IpcError> {
+    core.managed = state.managed.clone();
+    let mut platform = RealTransitionPlatform {
+        core,
+        child,
+        process_rules,
+        watcher,
+        restart_at,
+        config_sender,
+        paths,
+    };
+    transitions::drive(state, effects, &mut platform)?;
+    if state.eqapo_error.is_some() {
+        platform.core.eqapo_include = IncludeState::Damaged;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+#[allow(clippy::too_many_arguments)]
 fn handle_request(
     identity: secs_sys::host::PipeClientIdentity,
     request: HostRequest,
@@ -700,8 +802,9 @@ fn handle_request(
                 },
             );
             *transition_state = next;
-            core.managed = transition_state.managed.clone();
-            let mut platform = RealTransitionPlatform {
+            drive_transition(
+                transition_state,
+                effects,
                 core,
                 child,
                 process_rules,
@@ -709,8 +812,7 @@ fn handle_request(
                 restart_at,
                 config_sender,
                 paths,
-            };
-            transitions::drive(transition_state, effects, &mut platform)?;
+            )?;
             Ok(HostResponse::Ok)
         }
         HostRequest::StopManaging => {
@@ -718,10 +820,11 @@ fn handle_request(
             let (next, effects) =
                 transitions::decide(transition_state, TransitionInput::StopManaging);
             *transition_state = next;
-            core.managed = transition_state.managed.clone();
             core.camilla = Default::default();
             core.eqapo_include = IncludeState::Absent;
-            let mut platform = RealTransitionPlatform {
+            drive_transition(
+                transition_state,
+                effects,
                 core,
                 child,
                 process_rules,
@@ -729,8 +832,7 @@ fn handle_request(
                 restart_at,
                 config_sender,
                 paths,
-            };
-            transitions::drive(transition_state, effects, &mut platform)?;
+            )?;
             Ok(HostResponse::Ok)
         }
         HostRequest::UpdateSelf { from_dir } => {

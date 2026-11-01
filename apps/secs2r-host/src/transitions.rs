@@ -1,6 +1,11 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
+use std::time::Duration;
 
 use secs_types::ipc::{HostLogLine, HostManaged, IpcError, ManagedCamilla, ManagedEqApo};
+
+const MAX_REPAIR_ATTEMPTS: u8 = 3;
+const REPAIR_DELAYS: [Duration; MAX_REPAIR_ATTEMPTS as usize - 1] =
+    [Duration::from_secs(1), Duration::from_secs(2)];
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,6 +55,9 @@ pub struct State {
     pub managed: HostManaged,
     pub running_child_session: Option<u32>,
     pub restart_scheduled: bool,
+    pub eqapo_error: Option<String>,
+    repair_attempts: u8,
+    repair_retry_after: Option<Duration>,
 }
 
 impl State {
@@ -58,7 +66,14 @@ impl State {
             managed,
             running_child_session,
             restart_scheduled: false,
+            eqapo_error: None,
+            repair_attempts: 0,
+            repair_retry_after: None,
         }
+    }
+
+    pub fn take_repair_retry(&mut self) -> Option<Duration> {
+        self.repair_retry_after.take()
     }
 }
 
@@ -93,6 +108,9 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
             }
             next.managed.owner_session_id = Some(requester_session);
             next.managed.owner_user_sid = Some(requester_sid);
+            next.eqapo_error = None;
+            next.repair_attempts = 0;
+            next.repair_retry_after = None;
             effects.push(Effect::SaveState(next.managed.clone()));
             effects.push(Effect::ReplaceWatcher(next.managed.eqapo.clone()));
             if next.managed.eqapo.is_some() {
@@ -116,6 +134,9 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
         Input::StopManaging => {
             next.managed = HostManaged::default();
             next.restart_scheduled = false;
+            next.eqapo_error = None;
+            next.repair_attempts = 0;
+            next.repair_retry_after = None;
             effects.push(Effect::SaveState(next.managed.clone()));
             effects.push(Effect::ReplaceWatcher(None));
             if next.running_child_session.is_some() {
@@ -157,6 +178,8 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
             }
         },
         Input::ConfigChanged { owner_session } => {
+            next.repair_attempts = 0;
+            next.repair_retry_after = None;
             if next.managed.eqapo.is_some()
                 && let Some(session) = owner_session
             {
@@ -174,6 +197,17 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
     (next, effects)
 }
 
+fn repair_failed_line(error: &IpcError, attempt: u8) -> HostLogLine {
+    HostLogLine {
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        event: "repair_failed".into(),
+        fields: BTreeMap::from([
+            ("attempt".into(), attempt.to_string()),
+            ("detail".into(), error.detail.clone()),
+        ]),
+    }
+}
+
 pub fn drive(
     state: &mut State,
     effects: Vec<Effect>,
@@ -184,7 +218,23 @@ pub fn drive(
         match effect {
             Effect::SaveState(managed) => platform.save_state(&managed)?,
             Effect::ReplaceWatcher(target) => platform.replace_watcher(target.as_ref())?,
-            Effect::RepairEqapo { session } => platform.repair_eqapo(session)?,
+            Effect::RepairEqapo { session } => match platform.repair_eqapo(session) {
+                Ok(()) => {
+                    state.eqapo_error = None;
+                    state.repair_attempts = 0;
+                    state.repair_retry_after = None;
+                }
+                Err(error) => {
+                    state.repair_attempts = state.repair_attempts.saturating_add(1);
+                    state.eqapo_error = Some(error.detail.clone());
+                    let _ = platform.log(&repair_failed_line(&error, state.repair_attempts));
+                    state.repair_retry_after = if state.repair_attempts < MAX_REPAIR_ATTEMPTS {
+                        Some(REPAIR_DELAYS[usize::from(state.repair_attempts - 1)])
+                    } else {
+                        None
+                    };
+                }
+            },
             Effect::StopChild => {
                 platform.stop_child()?;
                 state.running_child_session = None;
@@ -208,6 +258,9 @@ mod tests {
     #[derive(Default)]
     struct FakePlatform {
         launches: Vec<(u32, String)>,
+        repair_calls: usize,
+        fail_repairs: bool,
+        stops: usize,
     }
 
     impl Platform for FakePlatform {
@@ -220,10 +273,16 @@ mod tests {
         }
 
         fn repair_eqapo(&mut self, _session: u32) -> Result<(), IpcError> {
-            Ok(())
+            self.repair_calls += 1;
+            if self.fail_repairs {
+                Err(IpcError::new(ErrorCode::ApplyFailed, "repair failed"))
+            } else {
+                Ok(())
+            }
         }
 
         fn stop_child(&mut self) -> Result<(), IpcError> {
+            self.stops += 1;
             Ok(())
         }
 
@@ -322,8 +381,38 @@ mod tests {
     }
 
     #[test]
-    fn fake_error_type_is_available_for_later_driver_tests() {
-        let error = IpcError::new(ErrorCode::ApplyFailed, "repair failed");
-        assert_eq!(error.code, ErrorCode::ApplyFailed);
+    fn failed_eqapo_repair_does_not_stop_camilla_or_the_driver() {
+        let mut state = State::new(
+            HostManaged {
+                camilla: Some(camilla("camilladsp.exe")),
+                eqapo: Some(eqapo()),
+                owner_session_id: Some(7),
+                owner_user_sid: Some("sid-a".into()),
+            },
+            Some(7),
+        );
+        let mut platform = FakePlatform {
+            fail_repairs: true,
+            ..FakePlatform::default()
+        };
+        let (next, effects) = decide(
+            &state,
+            Input::ConfigChanged {
+                owner_session: Some(7),
+            },
+        );
+        state = next;
+
+        assert!(drive(&mut state, effects, &mut platform).is_ok());
+        while state.take_repair_retry().is_some() {
+            let (next, effects) = decide(&state, Input::RepairRetry);
+            state = next;
+            drive(&mut state, effects, &mut platform).unwrap();
+        }
+
+        assert_eq!(state.running_child_session, Some(7));
+        assert_eq!(state.eqapo_error.as_deref(), Some("repair failed"));
+        assert_eq!(platform.repair_calls, 3);
+        assert_eq!(platform.stops, 0);
     }
 }
