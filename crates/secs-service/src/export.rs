@@ -768,7 +768,7 @@ fn write_compute_provenance(
         report.filter(|report| report.accelerated_systems > 0 || report.fallbacks > 0)
     {
         let bytes = serde_json::to_vec_pretty(report).map_err(export_error)?;
-        std::fs::write(&path, bytes).map_err(export_error)?;
+        secs_types::fs::write_atomic_bytes(&path, &bytes).map_err(export_error)?;
         Ok(Some(path))
     } else {
         // Reusing an export directory must not retain an earlier GPU run's metadata.
