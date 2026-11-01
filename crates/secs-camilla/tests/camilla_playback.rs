@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use secs_apply::camilla::{Camilla, WsTransport};
 use secs_camilla::pyfmt::round_ndigits;
 use secs_camilla::{DesignLabels, Device, DeviceValue, Options, round_ties_even_i64, write_config};
 use secs_dsp::Complex64;
@@ -12,8 +13,9 @@ use secs_types::chain::{
 use serde_json::Value;
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -363,6 +365,49 @@ fn read_raw(path: &Path) -> Result<Vec<f32>, String> {
         .iter()
         .map(|bytes| f32::from_le_bytes(*bytes))
         .collect())
+}
+
+struct RunningEngine(Child);
+
+impl Drop for RunningEngine {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+fn connect_engine(address: &str) -> Camilla<WsTransport> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match WsTransport::connect(address, Duration::from_millis(500)) {
+            Ok(transport) => return Camilla::new(transport),
+            Err(error) if Instant::now() < deadline => {
+                eprintln!("waiting for CamillaDSP websocket: {error}");
+                thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => panic!("CamillaDSP websocket did not start: {error}"),
+        }
+    }
+}
+
+fn wait_for_file_playback(client: &mut Camilla<WsTransport>, output: &Path) {
+    let deadline = Instant::now() + RUN_TIMEOUT;
+    loop {
+        if output.is_file()
+            && fs::metadata(output).is_ok_and(|metadata| metadata.len() > 0)
+            && client.status().is_ok_and(|status| {
+                status.state == "Inactive" && status.stop_reason.as_deref() == Some("Done")
+            })
+        {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "CamillaDSP did not finish writing {}",
+            output.display()
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
 }
 
 fn run_engine(engine: &Path, config: &Path, log: &Path) -> Result<(), String> {
@@ -836,6 +881,104 @@ fn camilla_exports_play_as_designed() {
         failures.len(),
         failures.join("\n")
     );
+}
+
+#[test]
+#[ignore = "CamillaDSP 4.1.3 binary is required; the camilla-playback CI job runs this test"]
+fn one_process_applies_two_generations_and_changes_file_output() {
+    let Some(engine) = std::env::var_os("SECS_CAMILLADSP") else {
+        println!("skipped: SECS_CAMILLADSP is unset; set it to the CamillaDSP 4.1.3 binary");
+        return;
+    };
+    let engine = PathBuf::from(engine)
+        .canonicalize()
+        .expect("SECS_CAMILLADSP must name an existing CamillaDSP binary");
+    let root = TempDir::new("generation_reload");
+    let fixture = Fixture::load("filters", "computed_dolby");
+    let first_chain = chain(&fixture);
+    let plan = make_plan(&first_chain, None).unwrap();
+    let input = root.0.join("excitation.f32le");
+    write_excitation(&input, plan.inputs.len(), 1, FFT_LEN);
+
+    let write_generation =
+        |chain: &SignalChain, folder: &Path, output: &Path, design_name: &str| {
+            let plan = make_plan(chain, None).unwrap();
+            let options = Options {
+                capture: Some(raw_device("RawFile", &input, plan.inputs.len(), true)),
+                playback: Some(raw_device("File", output, plan.outputs.len(), false)),
+                design: Some(DesignLabels {
+                    project_name: Some("CamillaDSP generation check".into()),
+                    design_name: design_name.into(),
+                    design_id: design_name.repeat(8),
+                    bypass: false,
+                }),
+                headroom: true,
+                labels: true,
+                bypass: false,
+                ..Options::default()
+            };
+            write_config(chain, folder, "playback", &options, None).unwrap();
+            folder.join("configs/playback.yml")
+        };
+
+    let first_output = root.0.join("first-output.f32le");
+    let first_folder = root.0.join("generation-1");
+    let first_config =
+        write_generation(&first_chain, &first_folder, &first_output, "generation-one");
+    let mut second_chain = first_chain.clone();
+    second_chain.mains[0]
+        .fir
+        .iter_mut()
+        .for_each(|tap| *tap *= 0.5);
+    let second_output = root.0.join("second-output.f32le");
+    let second_folder = root.0.join("generation-2");
+    let second_config = write_generation(
+        &second_chain,
+        &second_folder,
+        &second_output,
+        "generation-two",
+    );
+
+    let probe = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = probe.local_addr().unwrap().port();
+    drop(probe);
+    let log = File::create(root.0.join("camilladsp.log")).unwrap();
+    let stderr = log.try_clone().unwrap();
+    let child = Command::new(&engine)
+        .args(["--port", &port.to_string(), "--wait"])
+        .stdout(Stdio::from(log))
+        .stderr(Stdio::from(stderr))
+        .spawn()
+        .expect("start CamillaDSP in websocket wait mode");
+    let mut process = RunningEngine(child);
+    let address = format!("127.0.0.1:{port}");
+    let mut client = connect_engine(&address);
+
+    let first_text = fs::read_to_string(&first_config).unwrap();
+    assert!(matches!(
+        client.apply(first_config.to_str().expect("UTF-8 test path"), &first_text),
+        Ok(secs_apply::camilla::ApplyOutcome::Applied { .. })
+    ));
+    wait_for_file_playback(&mut client, &first_output);
+
+    let second_text = fs::read_to_string(&second_config).unwrap();
+    assert!(matches!(
+        client.apply(
+            second_config.to_str().expect("UTF-8 test path"),
+            &second_text
+        ),
+        Ok(secs_apply::camilla::ApplyOutcome::Applied { .. })
+    ));
+    wait_for_file_playback(&mut client, &second_output);
+
+    assert_ne!(
+        fs::read(first_output).unwrap(),
+        fs::read(second_output).unwrap(),
+        "the second generation must change output from the same process"
+    );
+    client.exit().unwrap();
+    let status = process.0.wait().unwrap();
+    assert!(status.success());
 }
 
 #[test]

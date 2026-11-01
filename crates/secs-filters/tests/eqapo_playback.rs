@@ -1005,6 +1005,109 @@ fn exported_configs_play_as_designed() {
 }
 
 #[test]
+#[ignore = "Equalizer APO Benchmark.exe가 필요합니다. ci.yml의 eqapo-playback 작업에서 실행합니다."]
+fn generation_entry_plays_from_unrelated_working_directory_across_two_applies() {
+    let benchmark = PathBuf::from(
+        std::env::var_os("SECS_EQAPO_BENCHMARK")
+            .expect("SECS_EQAPO_BENCHMARK must name Equalizer APO Benchmark.exe"),
+    )
+    .canonicalize()
+    .expect("SECS_EQAPO_BENCHMARK must exist");
+    let root = TempDir::new("generation_entry");
+    let config_root = root.0.join("EqualizerAPO/config");
+    let bundle = config_root.join("SECS2R");
+    let unrelated = root.0.join("unrelated-working-directory");
+    fs::create_dir_all(&bundle).unwrap();
+    fs::create_dir_all(&unrelated).unwrap();
+    fs::write(config_root.join("config.txt"), "Include: SECS2R/SECS.txt\n").unwrap();
+
+    let fixture = Fixture::load("filters", "computed_dolby");
+    let first_chain = chain(&fixture);
+    let first_run = FilterRun {
+        chain: &first_chain,
+        mimo: None,
+        mode: "mixed",
+        note: "generation one",
+        label: "generation one",
+        latency_ms: first_chain.latency_ms,
+        rc_pieces: &[],
+        stamp: "2026-11-02 00:00",
+    };
+    // Reproduce the pre-generation flat layout before the first apply.
+    export_eqapo(&first_run, &bundle).unwrap();
+    let first_generation = bundle.join("design-1");
+    export_eqapo(&first_run, &first_generation).unwrap();
+    fs::write(bundle.join("SECS.txt"), "Include: design-1/config.txt\n").unwrap();
+
+    let plan = make_plan(&first_chain, None).unwrap();
+    let (inputs, outputs) = windows_channels(&plan);
+    let channels = inputs
+        .iter()
+        .chain(outputs.iter())
+        .map(|(_, channel)| *channel)
+        .max()
+        .unwrap();
+    let mut samples = vec![0.0_f32; channels * 8192];
+    samples[0] = 0.25;
+    let input = root.0.join("input.wav");
+    write_float_wav(&input, channels, &samples);
+
+    let run_benchmark = |output: &Path| {
+        let result = Command::new(&benchmark)
+            .current_dir(&unrelated)
+            .args(["--nopause", "--verbose", "--batchsize", "512", "-i"])
+            .arg(&input)
+            .arg("-o")
+            .arg(output)
+            .arg("--config-path")
+            .arg(&config_root)
+            .output()
+            .expect("run Equalizer APO Benchmark.exe");
+        let stdout = String::from_utf8_lossy(&result.stdout);
+        let stderr = String::from_utf8_lossy(&result.stderr);
+        assert!(
+            result.status.success() && engine_error(&stdout, &stderr).is_none(),
+            "Benchmark failed: stdout={stdout}\nstderr={stderr}"
+        );
+    };
+    let first_output = root.0.join("first-output.wav");
+    run_benchmark(&first_output);
+
+    let mut second_chain = first_chain.clone();
+    let fir = &mut second_chain.mains[0].fir;
+    fir.iter_mut().for_each(|tap| *tap *= 0.5);
+    let second_run = FilterRun {
+        chain: &second_chain,
+        mimo: None,
+        mode: "mixed",
+        note: "generation two",
+        label: "generation two",
+        latency_ms: second_chain.latency_ms,
+        rc_pieces: &[],
+        stamp: "2026-11-02 00:01",
+    };
+    let second_generation = bundle.join("design-2");
+    export_eqapo(&second_run, &second_generation).unwrap();
+    fs::write(bundle.join("SECS.txt"), "Include: design-2/config.txt\n").unwrap();
+    for entry in fs::read_dir(&bundle).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_file() && path.file_name().and_then(|name| name.to_str()) != Some("SECS.txt") {
+            fs::remove_file(path).unwrap();
+        }
+    }
+    let second_output = root.0.join("second-output.wav");
+    run_benchmark(&second_output);
+
+    assert!(first_generation.is_dir());
+    assert!(second_generation.is_dir());
+    assert_ne!(
+        fs::read(first_output).unwrap(),
+        fs::read(second_output).unwrap(),
+        "the second generation must change real Benchmark output"
+    );
+}
+
+#[test]
 fn engine_errors_are_lines_without_a_trace_mark() {
     let trace =
         "(TRACE) Registry ConfigPath unavailable (Error while opening registry key X); proceeding";

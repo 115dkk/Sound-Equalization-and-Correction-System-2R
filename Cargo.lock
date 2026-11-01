@@ -4330,6 +4330,7 @@ dependencies = [
  "num-integer",
  "num-traits",
  "ryu",
+ "secs-apply",
  "secs-dsp",
  "secs-filters",
  "secs-graph",
