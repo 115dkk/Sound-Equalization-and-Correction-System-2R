@@ -354,6 +354,73 @@ fn stop_frees_the_port_and_busy_port_is_typed() {
     second.stop();
 }
 
+fn read_status(stream: &mut TcpStream) -> u16 {
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+    let split = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("HTTP response header");
+    std::str::from_utf8(&response[..split])
+        .unwrap()
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .parse()
+        .unwrap()
+}
+
+#[test]
+fn progressing_near_limit_upload_is_not_timed_out_td126() {
+    let (service, hub) = service_with(Arc::new(secs_service::NullHost));
+    let server = running(service, hub);
+    let port = server.port();
+    let padding = "x".repeat(1024 * 1024 - 128);
+    let body = format!(r#"{{"method":"bootstrap","padding":"{padding}"}}"#).into_bytes();
+    assert!(body.len() < 1024 * 1024);
+    assert!(body.len() > 1024 * 1024 - 256);
+
+    let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    write!(
+        client,
+        "POST /v1/call HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {TOKEN}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    )
+    .unwrap();
+    for (index, chunk) in body.chunks(body.len().div_ceil(5)).enumerate() {
+        client.write_all(chunk).unwrap();
+        client.flush().unwrap();
+        if index < 4 {
+            std::thread::sleep(Duration::from_millis(600));
+        }
+    }
+    assert_eq!(read_status(&mut client), 200);
+    server.stop();
+}
+
+#[test]
+fn idle_request_body_returns_request_timeout_td126() {
+    let (service, hub) = service_with(Arc::new(secs_service::NullHost));
+    let server = running(service, hub);
+    let port = server.port();
+    let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    write!(
+        client,
+        "POST /v1/call HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {TOKEN}\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{{"
+    )
+    .unwrap();
+    client.flush().unwrap();
+
+    assert_eq!(read_status(&mut client), 408);
+    server.stop();
+}
+
 #[test]
 fn stop_finishes_while_a_client_stalls_mid_body_td126() {
     let (service, hub) = service_with(Arc::new(secs_service::NullHost));

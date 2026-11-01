@@ -28,7 +28,7 @@ use secs_types::local_api::{self, ServerEvent};
 use tokio::sync::{broadcast, oneshot};
 
 const MAX_BODY: usize = 1024 * 1024;
-const BODY_READ_TIMEOUT: Duration = Duration::from_secs(2);
+const BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
 const EVENT_CAPACITY: usize = 256;
 
 /// Broadcast event sink shared by the app service and the local API server.
@@ -298,10 +298,10 @@ async fn authenticate(
             ErrorCode::InvalidRequest,
             "request body exceeds 1 MiB",
         ),
-        Err(ReadBodyError::Deadline) => envelope_error(
+        Err(ReadBodyError::IdleTimeout) => envelope_error(
             StatusCode::REQUEST_TIMEOUT,
             ErrorCode::InvalidRequest,
-            "request body read deadline exceeded",
+            "request body was idle for 2 seconds",
         ),
         Err(ReadBodyError::Read(error)) => {
             envelope_error(StatusCode::BAD_REQUEST, ErrorCode::InvalidRequest, &error)
@@ -312,22 +312,23 @@ async fn authenticate(
 #[derive(Debug)]
 enum ReadBodyError {
     TooLarge,
-    Deadline,
+    IdleTimeout,
     Read(String),
 }
 
-async fn read_body(body: Body) -> Result<Vec<u8>, ReadBodyError> {
-    tokio::time::timeout(BODY_READ_TIMEOUT, read_body_until_end(body))
-        .await
-        .map_err(|_| ReadBodyError::Deadline)?
-}
-
-async fn read_body_until_end(mut body: Body) -> Result<Vec<u8>, ReadBodyError> {
+async fn read_body(mut body: Body) -> Result<Vec<u8>, ReadBodyError> {
     let mut bytes = Vec::new();
     let mut too_large = false;
-    while let Some(frame) =
-        std::future::poll_fn(|context| std::pin::Pin::new(&mut body).poll_frame(context)).await
-    {
+    loop {
+        let frame = tokio::time::timeout(
+            BODY_IDLE_TIMEOUT,
+            std::future::poll_fn(|context| std::pin::Pin::new(&mut body).poll_frame(context)),
+        )
+        .await
+        .map_err(|_| ReadBodyError::IdleTimeout)?;
+        let Some(frame) = frame else {
+            break;
+        };
         let frame = frame.map_err(|error| ReadBodyError::Read(error.to_string()))?;
         if let Ok(data) = frame.into_data() {
             if bytes.len().saturating_add(data.len()) > MAX_BODY {
