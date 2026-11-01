@@ -1513,6 +1513,7 @@ mod source_budget_tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore = "uses temporary files")]
     fn distinct_large_sidecars_stop_parsing_at_the_project_budget_td112() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
