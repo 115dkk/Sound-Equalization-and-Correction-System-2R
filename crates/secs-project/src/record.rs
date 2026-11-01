@@ -3,13 +3,15 @@ use crate::{
     read_mono_float_wav, save_ir,
 };
 use secs_mdat::{Boxed, CalInfo, SourceDate, SourceInfo};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use std::time::UNIX_EPOCH;
 
 pub const IR_CACHE_LIMIT_BYTES: usize = 256 * 1024 * 1024;
 pub const MAX_PROJECT_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_SOURCE_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Calibration curves a measurement source sidecar attaches (ADR 0015).
 /// `meterCal` precedes every `scCal`; only entries with equal `freq` and
@@ -210,7 +212,7 @@ impl MeasurementStore {
             ProjectError::Invalid(format!("project {} is not UTF-8: {error}", path.display()))
         })?;
         let (mut project, warnings) = Project::from_json_with_warnings(loads(&text)?)?;
-        for (pos, roles) in load_project_sources(&project, &path) {
+        for (pos, roles) in try_load_project_sources(&project, &path)? {
             for (role, info) in roles {
                 if let Some(fingerprint) = calibration_fingerprint(&info) {
                     project
@@ -656,16 +658,40 @@ pub fn save_source(wav: &Path, info: Option<&SourceInfo>) -> Result<(), ProjectE
 }
 
 pub fn load_source(wav: &Path) -> Option<SourceInfo> {
-    let text = fs::read_to_string(source_path(wav)).ok()?;
-    let value = loads(&text).ok()?;
-    source_from_json(&value)
+    load_source_checked(wav).ok().flatten()
+}
+
+fn load_source_checked(wav: &Path) -> Result<Option<SourceInfo>, ProjectError> {
+    let path = source_path(wav);
+    let bytes = match crate::irs::read_bounded(&path, MAX_SOURCE_BYTES, "measurement source") {
+        Ok(bytes) => bytes,
+        Err(error @ ProjectError::Invalid(_)) => return Err(error),
+        Err(_) => return Ok(None),
+    };
+    let text = match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(_) => return Ok(None),
+    };
+    let value = match loads(&text) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    Ok(source_from_json(&value))
 }
 
 pub fn load_project_sources(
     project: &Project,
     project_path: &Path,
 ) -> BTreeMap<u32, BTreeMap<String, SourceInfo>> {
+    try_load_project_sources(project, project_path).unwrap_or_default()
+}
+
+fn try_load_project_sources(
+    project: &Project,
+    project_path: &Path,
+) -> Result<BTreeMap<u32, BTreeMap<String, SourceInfo>>, ProjectError> {
     let base = project_path.parent().unwrap_or_else(|| Path::new("."));
+    let mut loaded: HashMap<PathBuf, Option<Arc<SourceInfo>>> = HashMap::new();
     let mut out = BTreeMap::new();
     for record in measurement_values(project)
         .iter()
@@ -684,21 +710,30 @@ pub fn load_project_sources(
             } else {
                 base.join(path)
             };
+            let sidecar = source_path(&path);
             // F5: neither the IR nor its sidecar may lead outside the `.irs`.
             if !path.is_file()
                 || confined_ir_path(project_path, &path).is_err()
-                || confined_ir_path(project_path, &source_path(&path)).is_err()
+                || confined_ir_path(project_path, &sidecar).is_err()
             {
                 continue;
             }
-            if let Some(info) = load_source(&path) {
+            let info = match loaded.get(&sidecar) {
+                Some(info) => info.clone(),
+                None => {
+                    let info = load_source_checked(&path)?.map(Arc::new);
+                    loaded.insert(sidecar, info.clone());
+                    info
+                }
+            };
+            if let Some(info) = info {
                 out.entry(pos)
                     .or_insert_with(BTreeMap::new)
-                    .insert(role, info);
+                    .insert(role, info.as_ref().clone());
             }
         }
     }
-    out
+    Ok(out)
 }
 
 pub fn load_project_irs(

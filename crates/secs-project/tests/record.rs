@@ -917,6 +917,35 @@ fn ir_writes_reject_symlinked_store_and_destination_td16() {
 }
 
 #[test]
+fn oversized_measurement_source_sidecar_is_rejected_td112() {
+    const SIDECAR_LIMIT: u64 = 16 * 1024 * 1024;
+
+    let directory = TempDir::new();
+    let project_path = directory.0.join("oversized-source.secs");
+    let irs = project_path.with_extension("irs");
+    fs::create_dir_all(&irs).unwrap();
+    let wav = irs.join("shared.wav");
+    fs::write(&wav, write_wav_float32(&[0.25], 48_000)).unwrap();
+    let source = source_path(&wav);
+    fs::File::create(&source)
+        .unwrap()
+        .set_len(SIDECAR_LIMIT + 1)
+        .unwrap();
+
+    let mut project = Project::from_preset("2.0").unwrap();
+    project.measurements = PyJson::Array(vec![
+        entry_at(1, "oversized-source.irs/shared.wav"),
+        entry_at(2, "oversized-source.irs/shared.wav"),
+    ]);
+    fs::write(&project_path, project.save_text()).unwrap();
+
+    let error = MeasurementStore::open(&project_path).unwrap_err();
+    let message = error.to_string();
+    assert!(message.contains("shared.src.json"), "{message}");
+    assert!(message.contains(&SIDECAR_LIMIT.to_string()), "{message}");
+}
+
+#[test]
 fn oversized_project_and_wav_reads_are_rejected_td19() {
     let directory = TempDir::new();
     let project_path = directory.0.join("oversized.secs");
