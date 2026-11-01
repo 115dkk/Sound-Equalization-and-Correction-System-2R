@@ -78,7 +78,7 @@ pub use mimo::{
     IirSupport, MimoDesign, MimoIir, MimoKey, MimoRequest, design_mimo, design_mimo_iir,
 };
 pub use normalize::normalize_measurements;
-pub use notes::{MimoNote, Note};
+pub use notes::{GuardCause, MimoNote, Note};
 pub use replay::{DesignReplay, ExportAxis};
 pub use setup::SubFilter;
 pub type C = secs_dsp::Complex64;

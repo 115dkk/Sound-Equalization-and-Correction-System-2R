@@ -2,6 +2,19 @@
 
 SECS 2R의 변경 기록입니다. 번호는 major.minor.patch이고, 0.x는 모두 사전 출시판이며 정식 출시는 1.0.0부터입니다(docs/adr/0006). 각 절의 내용이 그 버전의 릴리스 본문이 됩니다. 업스트림 SECS 2의 변경 기록은 [`docs/upstream/CHANGELOG.md`](docs/upstream/CHANGELOG.md)에 있습니다.
 
+## 0.45.0 - 2026-11-01
+
+MIMO 계산 메모와 CLI 내보내기를 고친 판입니다. 보정과 MIMO의 계산 결과는 0.44.0과 같습니다.
+
+### 바뀐 것
+
+- MIMO 가드가 서포트를 줄이거나 끈 메모(`mimo_guard_reduced`, `mimo_guard_disabled`)에 원인을 추가했습니다. 메모에는 마지막으로 거부된 서포트 레벨(`rejected_db`)과, 그 레벨에서 1 dB 한도를 넘은 가드의 값이 들어갑니다. 늦은 에너지가 늘어난 대역이면 `band_lo_hz`, `band_hi_hz`, `band_db`가, 모드의 꼬리가 늘어났으면 `mode_hz`, `tail_db`가 들어갑니다. 이 메모는 CLI와 로컬 API의 결과에서 볼 수 있습니다.
+- 라이브러리: `secs_engine::MimoNote`의 `GuardReduced`와 `GuardDisabled`에 `cause: GuardCause` 필드를 추가했습니다. 이 두 변형을 직접 만들거나 필드를 모두 나열해 맞추는 코드는 고쳐야 합니다.
+
+### 고친 것
+
+- 프로젝트에 내보내기 폴더가 없을 때 CLI의 `export --out <폴더> --design-name <이름>`이 'home directory is not implemented' 오류로 실패하던 결함을 고쳤습니다. 이름 붙인 설계는 `--out`의 폴더를 기준 폴더로 쓰므로, 이제 홈 폴더를 읽지 않습니다.
+
 ## 0.44.0 - 2026-11-01
 
 보정 설정에 '고역 위상 맞추기'를 추가한 판입니다. 이 설정을 끈 계산은 0.43.0과 같습니다.
