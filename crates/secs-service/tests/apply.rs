@@ -51,18 +51,35 @@ impl ApplyAdapter for NativeApply {
         config_text: &str,
         timeout: Duration,
     ) -> Result<ApplyOutcome, IpcError> {
+        self.camilla_apply_report(address, config_path, config_text, timeout)
+            .map(|(outcome, _previous_path)| outcome)
+    }
+
+    fn camilla_apply_report(
+        &self,
+        address: &str,
+        config_path: &Path,
+        config_text: &str,
+        timeout: Duration,
+    ) -> Result<(ApplyOutcome, Option<String>), IpcError> {
         let transport =
             secs_apply::camilla::WsTransport::connect(address, timeout).map_err(camilla_error)?;
         match secs_apply::camilla::Camilla::new(transport)
             .apply(&config_path.to_string_lossy(), config_text)
             .map_err(camilla_error)?
         {
-            secs_apply::camilla::ApplyOutcome::Applied { .. } => Ok(ApplyOutcome::Applied),
-            secs_apply::camilla::ApplyOutcome::RolledBack { error, .. } => {
-                Ok(ApplyOutcome::RolledBack {
-                    error: IpcError::new(ErrorCode::ApplyFailed, error),
-                })
+            secs_apply::camilla::ApplyOutcome::Applied { previous_path } => {
+                Ok((ApplyOutcome::Applied, previous_path))
             }
+            secs_apply::camilla::ApplyOutcome::RolledBack {
+                error,
+                previous_path,
+            } => Ok((
+                ApplyOutcome::RolledBack {
+                    error: IpcError::new(ErrorCode::ApplyFailed, error),
+                },
+                previous_path,
+            )),
         }
     }
 
@@ -108,6 +125,60 @@ impl ApplyAdapter for FixedApply {
         _timeout: Duration,
     ) -> Result<ApplyOutcome, IpcError> {
         self.result.clone()
+    }
+
+    fn eqapo_include_state(&self, config_text: &str) -> IncludeState {
+        NativeApply.eqapo_include_state(config_text)
+    }
+
+    fn eqapo_with_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
+        NativeApply.eqapo_with_include(config_text)
+    }
+
+    fn eqapo_without_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
+        NativeApply.eqapo_without_include(config_text)
+    }
+}
+
+#[derive(Debug)]
+struct FailingCamillaMarker {
+    fail: Arc<AtomicBool>,
+}
+
+impl ApplyAdapter for FailingCamillaMarker {
+    fn camilla_status(&self, address: &str, timeout: Duration) -> Result<CamillaStatus, IpcError> {
+        NativeApply.camilla_status(address, timeout)
+    }
+
+    fn camilla_apply(
+        &self,
+        address: &str,
+        config_path: &Path,
+        config_text: &str,
+        timeout: Duration,
+    ) -> Result<ApplyOutcome, IpcError> {
+        NativeApply.camilla_apply(address, config_path, config_text, timeout)
+    }
+
+    fn camilla_apply_report(
+        &self,
+        address: &str,
+        config_path: &Path,
+        config_text: &str,
+        timeout: Duration,
+    ) -> Result<(ApplyOutcome, Option<String>), IpcError> {
+        NativeApply.camilla_apply_report(address, config_path, config_text, timeout)
+    }
+
+    fn before_camilla_marker_write(&self, _path: &Path) -> Result<(), IpcError> {
+        if self.fail.load(Ordering::SeqCst) {
+            Err(IpcError::new(
+                ErrorCode::ApplyFailed,
+                "injected CamillaDSP marker write failure",
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     fn eqapo_include_state(&self, config_text: &str) -> IncludeState {
@@ -1221,6 +1292,75 @@ fn failed_camilla_rollback_keeps_both_possible_active_generations() {
 }
 
 #[test]
+fn camilla_pruning_uses_the_reported_previous_path_after_a_marker_write_fails() {
+    let root = root("camilla-stale-marker");
+    let fail_marker = Arc::new(AtomicBool::new(false));
+    let service = calibrated_service_with_apply(
+        &root,
+        Deps::default(),
+        Arc::new(FailingCamillaMarker {
+            fail: fail_marker.clone(),
+        }),
+    );
+    let marker = root.join("app-data/applied/camilladsp-current.txt");
+    let apply_once = |previous_path: &str| {
+        let (address, server) = ws_server(vec![
+            reply("ValidateConfig", serde_json::json!("validated")),
+            reply("GetConfigFilePath", serde_json::json!(previous_path)),
+            reply_ok("SetConfigFilePath"),
+            reply_ok("Reload"),
+        ]);
+        set_apply(
+            &service,
+            CamillaApply {
+                level: ApplyLevel::Apply,
+                address,
+                exe_path: None,
+            },
+            EqApoApply::default(),
+        );
+        let events = Arc::new(Events::default());
+        let job = apply_camilla(&service, events.clone());
+        let JobResult::Apply(result) = succeeded(events.wait(job.job)) else {
+            panic!("apply result is absent")
+        };
+        server.join().unwrap();
+        result
+    };
+    let main_config = |folder: &str| {
+        fs::read_dir(Path::new(folder).join("configs"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.extension().and_then(|value| value.to_str()) == Some("yml")
+                    && !path
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .ends_with("_bypass.yml")
+            })
+            .unwrap()
+    };
+
+    let first = apply_once("before.yml");
+    let first_config = main_config(&first.folder);
+    let first_name = Path::new(&first.folder).file_name().unwrap().to_owned();
+    assert_eq!(fs::read(&marker).unwrap(), first_name.as_encoded_bytes());
+
+    fail_marker.store(true, Ordering::SeqCst);
+    let second = apply_once(&first_config.to_string_lossy());
+    let second_config = main_config(&second.folder);
+    assert_eq!(fs::read(&marker).unwrap(), first_name.as_encoded_bytes());
+
+    fail_marker.store(false, Ordering::SeqCst);
+    let third = apply_once(&second_config.to_string_lossy());
+    assert!(Path::new(&second.folder).exists());
+    assert!(!Path::new(&first.folder).exists());
+    assert!(Path::new(&third.folder).exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn apply_camilla_gives_each_design_its_own_folder_so_reload_reads_its_firs() {
     // CamillaDSP's Reload rebuilds only filters whose definition changed, and a
     // Conv filter's definition is its absolute file name. A new design must
@@ -1231,10 +1371,13 @@ fn apply_camilla_gives_each_design_its_own_folder_so_reload_reads_its_firs() {
     // Older releases applied every design into this folder itself.
     fs::create_dir_all(applied.join("configs")).unwrap();
     fs::write(applied.join("configs/secs_linear.yml"), b"old").unwrap();
-    let apply_once = |service: &Service| {
+    let apply_once = |service: &Service, previous: &Path| {
         let (address, server) = ws_server(vec![
             reply("ValidateConfig", serde_json::json!("validated")),
-            reply("GetConfigFilePath", serde_json::json!("old.yml")),
+            reply(
+                "GetConfigFilePath",
+                serde_json::json!(previous.to_string_lossy()),
+            ),
             reply_ok("SetConfigFilePath"),
             reply_ok("Reload"),
         ]);
@@ -1255,8 +1398,23 @@ fn apply_camilla_gives_each_design_its_own_folder_so_reload_reads_its_firs() {
         assert!(matches!(result.outcome, ApplyOutcome::Applied));
         (result, server.join().unwrap())
     };
+    let main_config = |folder: &str| {
+        fs::read_dir(Path::new(folder).join("configs"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.extension().and_then(|value| value.to_str()) == Some("yml")
+                    && !path
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .ends_with("_bypass.yml")
+            })
+            .unwrap()
+    };
 
-    let (first, requests) = apply_once(&service);
+    let old_config = applied.join("configs/secs_linear.yml");
+    let (first, requests) = apply_once(&service, &old_config);
     assert_eq!(
         PathBuf::from(&first.folder),
         applied.join(format!("{}-1", &first.design_id[..16]))
@@ -1264,7 +1422,8 @@ fn apply_camilla_gives_each_design_its_own_folder_so_reload_reads_its_firs() {
     assert!(requests[2].contains("SetConfigFilePath"));
     assert!(requests[2].contains(&first.design_id[..16]));
     assert!(applied.join("configs").exists());
-    let (again, _) = apply_once(&service);
+    let first_config = main_config(&first.folder);
+    let (again, _) = apply_once(&service, &first_config);
     assert_ne!(again.folder, first.folder);
     assert!(Path::new(&first.folder).exists());
     assert!(!applied.join("configs").exists());
@@ -1283,7 +1442,8 @@ fn apply_camilla_gives_each_design_its_own_folder_so_reload_reads_its_firs() {
         events.clone(),
     );
     succeeded(events.wait(calibration.job));
-    let (second, requests) = apply_once(&service);
+    let again_config = main_config(&again.folder);
+    let (second, requests) = apply_once(&service, &again_config);
     assert_ne!(second.design_id, first.design_id);
     assert_ne!(second.folder, first.folder);
     assert!(requests[2].contains(&second.design_id[..16]));

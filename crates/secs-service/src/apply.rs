@@ -12,13 +12,6 @@ const EQAPO_FOLDER: &str = "SECS2R";
 const EQAPO_BACKUP: &str = "config.txt.secs2r-backup";
 const CAMILLA_CURRENT: &str = "camilladsp-current.txt";
 
-#[derive(Debug)]
-enum GenerationState {
-    Known(String),
-    Uncertain,
-    Missing,
-}
-
 impl Service {
     pub(crate) fn apply_status(&self) -> ApplyStatus {
         let current = self.current_design_identity();
@@ -140,7 +133,6 @@ impl Service {
                 // CamillaDSP identifies a convolution filter by its absolute file
                 // name, so every attempt gets another generation even when the
                 // design id is unchanged.
-                let previous = generation_state(&current_marker);
                 if let Err(error) = apply.before_generation_install(&final_for_job, &stage) {
                     let _ = remove_stage(&stage);
                     return Err(error);
@@ -148,39 +140,42 @@ impl Service {
                 let generation =
                     crate::deploy::install(&final_for_job, design_folder(&design_id), &stage)?;
                 let config = generation.dir.join(relative);
-                let outcome = match apply.camilla_apply(&address, &config, &text, TIMEOUT) {
-                    Ok(outcome) => outcome,
-                    Err(error)
-                        if managed_exe.is_some()
-                            && error
-                                .params
-                                .get("reason")
-                                .is_some_and(|reason| reason == "connection_refused") =>
-                    {
-                        ApplyOutcome::HandedOver
-                    }
-                    Err(error) => {
-                        mark_generation_uncertain(&current_marker, &generation.name);
-                        return Err(error);
-                    }
-                };
+                let (outcome, reported_previous) =
+                    match apply.camilla_apply_report(&address, &config, &text, TIMEOUT) {
+                        Ok(result) => result,
+                        Err(error)
+                            if managed_exe.is_some()
+                                && error
+                                    .params
+                                    .get("reason")
+                                    .is_some_and(|reason| reason == "connection_refused") =>
+                        {
+                            (ApplyOutcome::HandedOver, None)
+                        }
+                        Err(error) => {
+                            mark_generation_uncertain(&current_marker, &generation.name);
+                            return Err(error);
+                        }
+                    };
                 if matches!(&outcome, ApplyOutcome::RolledBack { .. }) {
                     fs::remove_dir_all(&generation.dir)
                         .map_err(|error| io_error(&generation.dir, error))?;
                 } else {
-                    let marker_written = match crate::deploy::write_entry(
-                        &current_marker,
-                        generation.name.as_bytes(),
-                    ) {
-                        Ok(()) => true,
-                        Err(error) => {
-                            eprintln!(
-                                "could not record active CamillaDSP generation: {}",
-                                error.detail
-                            );
-                            false
-                        }
-                    };
+                    if let Err(error) =
+                        apply
+                            .before_camilla_marker_write(&current_marker)
+                            .and_then(|()| {
+                                crate::deploy::write_entry(
+                                    &current_marker,
+                                    generation.name.as_bytes(),
+                                )
+                            })
+                    {
+                        eprintln!(
+                            "could not record active CamillaDSP generation: {}",
+                            error.detail
+                        );
+                    }
                     if let Some(exe_path) = managed_exe
                         && let Err(error) = managed_host
                             .call(&HostRequest::SetManaged(HostManaged {
@@ -197,7 +192,12 @@ impl Service {
                     {
                         return Err(error);
                     }
-                    if marker_written && let GenerationState::Known(previous) = &previous {
+                    // The marker is diagnostic only. Retirement follows the path
+                    // CamillaDSP reported during this apply (audit #155 TD-108).
+                    if let Some(previous) = reported_previous
+                        .as_deref()
+                        .and_then(|path| applied_generation(&final_for_job, Path::new(path)))
+                    {
                         prune_best_effort(
                             &final_for_job,
                             &[generation.name.as_str(), previous.as_str()],
@@ -518,17 +518,27 @@ fn entry_generation(bytes: &[u8]) -> Option<String> {
     include.split(['\\', '/']).next().map(str::to_owned)
 }
 
-fn generation_state(path: &Path) -> GenerationState {
-    let Ok(value) = fs::read_to_string(path) else {
-        return GenerationState::Missing;
+fn applied_generation(root: &Path, config: &Path) -> Option<String> {
+    let relative = config.strip_prefix(root).ok()?;
+    let mut components = relative.components();
+    let std::path::Component::Normal(name) = components.next()? else {
+        return None;
     };
-    if value.starts_with('?') {
-        GenerationState::Uncertain
-    } else if value.is_empty() {
-        GenerationState::Missing
-    } else {
-        GenerationState::Known(value)
+    if !matches!(components.next(), Some(std::path::Component::Normal(_)))
+        || !components.all(|component| matches!(component, std::path::Component::Normal(_)))
+    {
+        return None;
     }
+    let generation = root.join(name);
+    let metadata = fs::symlink_metadata(&generation).ok()?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return None;
+    }
+    let manifest = fs::symlink_metadata(generation.join("secs-design.json")).ok()?;
+    if manifest.file_type().is_symlink() || !manifest.is_file() {
+        return None;
+    }
+    name.to_str().map(str::to_owned)
 }
 
 fn mark_generation_uncertain(path: &Path, generation: &str) {

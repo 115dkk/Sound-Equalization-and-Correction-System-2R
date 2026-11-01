@@ -102,17 +102,35 @@ pub fn camilla_apply(
     config_text: &str,
     timeout: Duration,
 ) -> Result<ApplyOutcome, IpcError> {
+    camilla_apply_report(address, config_path, config_text, timeout)
+        .map(|(outcome, _previous_path)| outcome)
+}
+
+/// Validates, selects, and reloads one CamillaDSP configuration, retaining the
+/// path CamillaDSP reported before the attempt.
+pub fn camilla_apply_report(
+    address: &str,
+    config_path: &Path,
+    config_text: &str,
+    timeout: Duration,
+) -> Result<(ApplyOutcome, Option<String>), IpcError> {
     let transport = camilla_connect(address, timeout)?;
     match secs_apply::camilla::Camilla::new(transport)
         .apply(&config_path.to_string_lossy(), config_text)
         .map_err(camilla_error)?
     {
-        secs_apply::camilla::ApplyOutcome::Applied { .. } => Ok(ApplyOutcome::Applied),
-        secs_apply::camilla::ApplyOutcome::RolledBack { error, .. } => {
-            Ok(ApplyOutcome::RolledBack {
-                error: IpcError::new(ErrorCode::ApplyFailed, error),
-            })
+        secs_apply::camilla::ApplyOutcome::Applied { previous_path } => {
+            Ok((ApplyOutcome::Applied, previous_path))
         }
+        secs_apply::camilla::ApplyOutcome::RolledBack {
+            error,
+            previous_path,
+        } => Ok((
+            ApplyOutcome::RolledBack {
+                error: IpcError::new(ErrorCode::ApplyFailed, error),
+            },
+            previous_path,
+        )),
     }
 }
 
