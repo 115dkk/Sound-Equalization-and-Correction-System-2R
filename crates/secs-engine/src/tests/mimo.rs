@@ -280,15 +280,57 @@ fn mimo_guard_baselines_and_applied_response_preserve_bits() {
                 x.iter().zip(add).map(|(x, a)| x + a).collect()
             })
             .collect();
+        let (band_db, band) = band_guard.evaluate_band(&ys);
         assert_eq!(
-            band_guard.evaluate(&ys).to_bits(),
+            band_db.to_bits(),
             worst_band_db(&xs, &paths, &trial, 150.0).to_bits()
         );
+        assert!(band.is_some_and(|(lo, hi)| lo < hi));
+        let (tail, mode) = tail_guard.evaluate_mode(&ys).unwrap();
         assert_eq!(
-            tail_guard.evaluate(&ys).unwrap().to_bits(),
+            tail.to_bits(),
             worst_t60_change_before(&xs, &ys, 6).unwrap().to_bits()
         );
+        assert!(mode.is_some());
     }
+}
+
+#[test]
+fn mimo_guard_cause_names_the_last_rejected_level_and_its_guards() {
+    use crate::mimo::design::{GuardStep, guard_cause};
+    let step = |scale: f64, band_db, t60_change| GuardStep {
+        scale,
+        band_db,
+        t60_change,
+        band_hz: Some((40.0, 50.4)),
+        mode_hz: Some(47.5),
+    };
+    let down = 10f64.powf(-3.0 / 20.0);
+    assert_eq!(guard_cause(&[step(1.0, 0.5, 0.1)]), None);
+    // The band guard failed at full level, the tail guard at −3 dB, and −6 dB passed.
+    let cause = guard_cause(&[
+        step(1.0, 2.0, 0.1),
+        step(down, 0.8, 0.3),
+        step(down * down, 0.5, 0.1),
+    ])
+    .unwrap();
+    assert!((cause.rejected_db + 3.0).abs() < 1e-12);
+    assert_eq!(cause.band, None);
+    let (hz, tail_db) = cause.tail.unwrap();
+    assert_eq!(hz, 47.5);
+    assert!((tail_db - 2.0).abs() < 1e-12);
+    // Every level failed: the cause is the last, −12 dB trial, with both guards.
+    let cause = guard_cause(&[
+        step(1.0, 3.0, 0.4),
+        step(down, 3.0, 0.4),
+        step(down.powi(2), 3.0, 0.4),
+        step(down.powi(3), 3.0, 0.4),
+        step(down.powi(4), 1.5, 0.2),
+    ])
+    .unwrap();
+    assert!((cause.rejected_db + 12.0).abs() < 1e-12);
+    assert_eq!(cause.band, Some((40.0, 50.4, 1.5)));
+    assert!(cause.tail.is_some());
 }
 
 #[derive(Default)]

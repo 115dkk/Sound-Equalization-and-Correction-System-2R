@@ -833,12 +833,19 @@ fn notices(note: &secs_engine::Note) -> Vec<Notice> {
                     record("mimo_support_range", params)
                 })
                 .collect(),
-            MimoNote::GuardReduced { role, gain_db } => vec![record(
-                "mimo_guard_reduced",
-                vec![("role", role.clone()), ("gain_db", gain_db.to_string())],
-            )],
-            MimoNote::GuardDisabled { role } => {
-                vec![record("mimo_guard_disabled", vec![("role", role.clone())])]
+            MimoNote::GuardReduced {
+                role,
+                gain_db,
+                cause,
+            } => {
+                let mut params = vec![("role", role.clone()), ("gain_db", gain_db.to_string())];
+                params.extend(guard_cause_params(cause));
+                vec![record("mimo_guard_reduced", params)]
+            }
+            MimoNote::GuardDisabled { role, cause } => {
+                let mut params = vec![("role", role.clone())];
+                params.extend(guard_cause_params(cause));
+                vec![record("mimo_guard_disabled", params)]
             }
             MimoNote::SupportLimit { max_supports } => vec![record(
                 "mimo_support_limit",
@@ -858,6 +865,23 @@ fn notices(note: &secs_engine::Note) -> Vec<Notice> {
         },
         _ => vec![scalar_notice(note)],
     }
+}
+
+/// The MIMO guard's last rejected level and the guards that broke their limit
+/// there; a band or tail key is present only for a guard that did.
+fn guard_cause_params(cause: &secs_engine::GuardCause) -> Vec<(&'static str, String)> {
+    let mut params = vec![("rejected_db", cause.rejected_db.to_string())];
+    if let Some((lo, hi, db)) = cause.band {
+        params.extend([
+            ("band_lo_hz", lo.to_string()),
+            ("band_hi_hz", hi.to_string()),
+            ("band_db", db.to_string()),
+        ]);
+    }
+    if let Some((hz, db)) = cause.tail {
+        params.extend([("mode_hz", hz.to_string()), ("tail_db", db.to_string())]);
+    }
+    params
 }
 
 pub(crate) fn scalar_notice(note: &secs_engine::Note) -> Notice {
@@ -1692,8 +1716,20 @@ mod tests {
             Note::Mimo(MimoNote::GuardReduced {
                 role: "L".into(),
                 gain_db: -6.25,
+                cause: secs_engine::GuardCause {
+                    rejected_db: -3.25,
+                    band: Some((40.0, 50.5, 1.5)),
+                    tail: None,
+                },
             }),
-            Note::Mimo(MimoNote::GuardDisabled { role: "R".into() }),
+            Note::Mimo(MimoNote::GuardDisabled {
+                role: "R".into(),
+                cause: secs_engine::GuardCause {
+                    rejected_db: -12.0,
+                    band: Some((46.5, 49.5, 2.0)),
+                    tail: Some((48.0, 1.25)),
+                },
+            }),
             Note::Mimo(MimoNote::SupportLimit { max_supports: 2 }),
             Note::Mimo(MimoNote::FirBudget {
                 support_count: 2,
@@ -1717,8 +1753,8 @@ mod tests {
                 {"code":"mimo_support_excluded","params":{"role":"SW2"}},
                 {"code":"mimo_support_range","params":{"role":"L","enabled":"true","lo_hz":"50.25","hi_hz":"150"}},
                 {"code":"mimo_support_range","params":{"role":"R","enabled":"false"}},
-                {"code":"mimo_guard_reduced","params":{"role":"L","gain_db":"-6.25"}},
-                {"code":"mimo_guard_disabled","params":{"role":"R"}},
+                {"code":"mimo_guard_reduced","params":{"role":"L","gain_db":"-6.25","rejected_db":"-3.25","band_lo_hz":"40","band_hi_hz":"50.5","band_db":"1.5"}},
+                {"code":"mimo_guard_disabled","params":{"role":"R","rejected_db":"-12","band_lo_hz":"46.5","band_hi_hz":"49.5","band_db":"2","mode_hz":"48","tail_db":"1.25"}},
                 {"code":"mimo_support_limit","params":{"max_supports":"2"}},
                 {"code":"mimo_fir_budget","params":{"support_count":"2","taps_total":"16000","sample_rate_hz":"48000"}}
             ])

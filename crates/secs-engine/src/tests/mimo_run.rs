@@ -69,10 +69,19 @@ fn ideal(fx: &Fixture) -> MimoDesign {
                     )
                 } else {
                     // The recorded-support fixture carries only rounded legacy
-                    // guard text; this adapter is test-only, never service code.
+                    // guard text and no cause; this adapter is test-only, never
+                    // service code, and the run compares the legacy text alone.
                     let (role, text) = text.split_once(": ").unwrap();
+                    let cause = crate::GuardCause {
+                        rejected_db: 0.0,
+                        band: None,
+                        tail: None,
+                    };
                     if text == "MIMO 끔(악화)" {
-                        crate::MimoNote::GuardDisabled { role: role.into() }
+                        crate::MimoNote::GuardDisabled {
+                            role: role.into(),
+                            cause,
+                        }
                     } else {
                         let gain_db = text
                             .strip_prefix("대역 늦은 에너지 악화로 서포트 ")
@@ -84,6 +93,7 @@ fn ideal(fx: &Fixture) -> MimoDesign {
                         crate::MimoNote::GuardReduced {
                             role: role.into(),
                             gain_db,
+                            cause,
                         }
                     }
                 };

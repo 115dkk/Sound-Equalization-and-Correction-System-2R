@@ -104,9 +104,11 @@ pub enum MimoNote {
     GuardReduced {
         role: String,
         gain_db: f64,
+        cause: GuardCause,
     },
     GuardDisabled {
         role: String,
+        cause: GuardCause,
     },
     SupportLimit {
         max_supports: usize,
@@ -115,6 +117,19 @@ pub enum MimoNote {
         support_count: usize,
         taps_total: usize,
     },
+}
+
+/// What the MIMO guard rejected last: the support level of that trial
+/// (3 dB above `GuardReduced::gain_db`, or −12 dB before `GuardDisabled`)
+/// and the guard values there that broke their 1 dB limits.
+#[derive(Debug, Clone, PartialEq)]
+pub struct GuardCause {
+    pub rejected_db: f64,
+    /// Late energy rise over every position, `(lo Hz, hi Hz, dB)`: a
+    /// third-octave band or a ±1.5 Hz band around a late mode.
+    pub band: Option<(f64, f64, f64)>,
+    /// Modal tail energy rise over every position, `(mode Hz, dB)`.
+    pub tail: Option<(f64, f64)>,
 }
 
 #[cfg(test)]
@@ -137,10 +152,10 @@ impl MimoNote {
                     .collect::<Vec<_>>()
                     .join(", ")
             ),
-            Self::GuardReduced { role, gain_db } => {
+            Self::GuardReduced { role, gain_db, .. } => {
                 format!("{role}: 대역 늦은 에너지 악화로 서포트 {gain_db:.0} dB")
             }
-            Self::GuardDisabled { role } => format!("{role}: MIMO 끔(악화)"),
+            Self::GuardDisabled { role, .. } => format!("{role}: MIMO 끔(악화)"),
             Self::SupportLimit { max_supports } => format!("입력당 서포트 ≤ {max_supports}"),
             Self::FirBudget {
                 support_count,

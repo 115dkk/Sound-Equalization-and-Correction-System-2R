@@ -430,6 +430,7 @@ pub(crate) fn third_octave_bands(fsiso: f64) -> Vec<(f64, f64)> {
 pub(crate) struct BandGuard {
     n: usize,
     starts: Vec<usize>,
+    hz: Vec<(f64, f64)>,
     bands: Vec<(usize, usize)>,
     before: Vec<f64>,
 }
@@ -439,14 +440,17 @@ impl BandGuard {
         let n = xs[0].len();
         let bins = secs_dsp::grid::freqs(2 * n, FS_LOW).expect("MIMO grid");
         let refs: Vec<_> = xs.iter().map(Vec::as_slice).collect();
-        let bands = third_octave_bands(fsiso)
+        let hz: Vec<_> = third_octave_bands(fsiso)
             .into_iter()
             .chain(
                 decay::late_peaks(&refs, 6)
                     .into_iter()
                     .map(|f| (f - 1.5, f + 1.5)),
             )
-            .map(|(lo, hi)| {
+            .collect();
+        let bands = hz
+            .iter()
+            .map(|&(lo, hi)| {
                 (
                     bins.partition_point(|&f| f < lo),
                     bins.partition_point(|&f| f < hi),
@@ -456,6 +460,7 @@ impl BandGuard {
         let mut guard = Self {
             n,
             starts: xs.iter().map(|x| (onset(x) + EARLY).min(n)).collect(),
+            hz,
             bands,
             before: Vec::new(),
         };
@@ -490,13 +495,28 @@ impl BandGuard {
     }
 
     pub(crate) fn evaluate(&self, ys: &[Vec<f64>]) -> f64 {
-        self.before
+        self.evaluate_band(ys).0
+    }
+
+    /// The worst late-energy change in dB and its band `(lo, hi)` in Hz.
+    pub(crate) fn evaluate_band(&self, ys: &[Vec<f64>]) -> (f64, Option<(f64, f64)>) {
+        let changes: Vec<_> = self
+            .before
             .iter()
             .zip(self.energies(ys, false))
-            .filter(|(a, _)| **a > 0.0)
-            .map(|(a, b)| 10.0 * ((b + 1e-30) / a).log10())
+            .map(|(a, b)| (*a > 0.0).then(|| 10.0 * ((b + 1e-30) / a).log10()))
+            .collect();
+        let worst = changes
+            .iter()
+            .flatten()
+            .copied()
             .reduce(f64::max)
-            .unwrap_or(-99.0)
+            .unwrap_or(-99.0);
+        let band = changes
+            .iter()
+            .position(|change| *change == Some(worst))
+            .map(|k| self.hz[k]);
+        (worst, band)
     }
 }
 
@@ -545,6 +565,14 @@ impl<'a> T60Guard<'a> {
     }
 
     pub(crate) fn evaluate(&mut self, ys: &[Vec<f64>]) -> Result<f64, EngineError> {
+        Ok(self.evaluate_mode(ys)?.0)
+    }
+
+    /// The worst tail change in the 0.15 scale and the mode it is at, Hz.
+    pub(crate) fn evaluate_mode(
+        &mut self,
+        ys: &[Vec<f64>],
+    ) -> Result<(f64, Option<f64>), EngineError> {
         let mut modes: Vec<_> = self
             .original_modes
             .iter()
@@ -587,16 +615,21 @@ impl<'a> T60Guard<'a> {
                 let yf = sosfilt(&baseline.sos, y)?;
                 after += decay::energy(&yf[t.min(yf.len())..]);
             }
-            tails.push((baseline.energy, after));
+            tails.push((fm, baseline.energy, after));
         }
-        let top = tails.iter().map(|&(a, _)| a).fold(0.0, f64::max);
+        let top = tails.iter().map(|&(_, a, _)| a).fold(0.0, f64::max);
         let mut worst: f64 = -99.0;
-        for (a, b) in tails {
+        let mut mode = None;
+        for (fm, a, b) in tails {
             if a > 0.0 && a >= top * 10f64.powf(-20.0 / 10.0) {
-                worst = worst.max(10.0 * ((b + 1e-30) / a).log10());
+                let change = 10.0 * ((b + 1e-30) / a).log10();
+                if change > worst {
+                    mode = Some(fm);
+                }
+                worst = worst.max(change);
             }
         }
-        Ok(worst * 0.15)
+        Ok((worst * 0.15, mode))
     }
 }
 
@@ -649,6 +682,33 @@ pub(crate) struct GuardStep {
     pub scale: f64,
     pub band_db: f64,
     pub t60_change: f64,
+    /// Where `band_db` and `t60_change` were found (`BandGuard::evaluate_band`,
+    /// `T60Guard::evaluate_mode`).
+    pub band_hz: Option<(f64, f64)>,
+    pub mode_hz: Option<f64>,
+}
+
+impl GuardStep {
+    fn passes(&self) -> bool {
+        self.band_db <= 1.0 && self.t60_change <= 0.15
+    }
+}
+
+/// The last rejected guard step as a note's cause; `None` when every step
+/// passed (no reduction).
+pub(crate) fn guard_cause(guards: &[GuardStep]) -> Option<crate::notes::GuardCause> {
+    let step = guards.iter().rev().find(|step| !step.passes())?;
+    Some(crate::notes::GuardCause {
+        rejected_db: 20.0 * step.scale.max(1e-9).log10(),
+        band: (step.band_db > 1.0)
+            .then_some(step.band_hz)
+            .flatten()
+            .map(|(lo, hi)| (lo, hi, step.band_db)),
+        tail: (step.t60_change > 0.15)
+            .then_some(step.mode_hz)
+            .flatten()
+            .map(|hz| (hz, step.t60_change / 0.15)),
+    })
 }
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct InputTrace {
@@ -968,14 +1028,18 @@ fn design_selected(
                 x.iter().zip(add).map(|(x, a)| x + a).collect()
             })
             .collect();
-        let band_db = band_guard.evaluate(&ys);
-        let t60_change = tail_guard.evaluate(&ys)?;
-        guards.push(GuardStep {
+        let (band_db, band_hz) = band_guard.evaluate_band(&ys);
+        let (t60_change, mode_hz) = tail_guard.evaluate_mode(&ys)?;
+        let guard = GuardStep {
             scale,
             band_db,
             t60_change,
-        });
-        if band_db <= 1.0 && t60_change <= 0.15 {
+            band_hz,
+            mode_hz,
+        };
+        let passes = guard.passes();
+        guards.push(guard);
+        if passes {
             break;
         }
         scale = if step == 4 {
@@ -1258,14 +1322,18 @@ pub(crate) fn design_mimo_prepared_accelerated(
     let mut traces = Vec::new();
     for (role, result) in results {
         let scale = result.trace.guard_scale;
-        if scale < 1.0 {
+        if let Some(cause) = guard_cause(&result.trace.guards) {
             out.notes.push(Note::Mimo(if scale > 0.0 {
                 crate::notes::MimoNote::GuardReduced {
                     role: role.clone(),
                     gain_db: 20.0 * scale.max(1e-9).log10(),
+                    cause,
                 }
             } else {
-                crate::notes::MimoNote::GuardDisabled { role: role.clone() }
+                crate::notes::MimoNote::GuardDisabled {
+                    role: role.clone(),
+                    cause,
+                }
             }));
         }
         out.supports.push((role.clone(), result.supports));
@@ -1434,14 +1502,18 @@ pub(crate) fn design_mimo_before(
     let mut traces = Vec::new();
     for (role, result) in results {
         let scale = result.trace.guard_scale;
-        if scale < 1.0 {
+        if let Some(cause) = guard_cause(&result.trace.guards) {
             out.notes.push(Note::Mimo(if scale > 0.0 {
                 crate::notes::MimoNote::GuardReduced {
                     role: role.clone(),
                     gain_db: 20.0 * scale.max(1e-9).log10(),
+                    cause,
                 }
             } else {
-                crate::notes::MimoNote::GuardDisabled { role: role.clone() }
+                crate::notes::MimoNote::GuardDisabled {
+                    role: role.clone(),
+                    cause,
+                }
             }));
         }
         out.supports.push((role.clone(), result.supports));
