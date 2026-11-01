@@ -1069,7 +1069,7 @@ id = "export.camilladsp"
 kind = "export"
 milestone = "M4"
 status = "implemented"
-tests = ["secs-camilla::export_camilladsp_matches_oracle", "secs-camilla::invalid_values_write_nothing", "secs-camilla::fir_taps_that_overflow_f32_write_nothing_td45", "secs-camilla::duplicate_or_reserved_roles_write_nothing_td46", "secs-camilla::negative_delays_write_nothing_td94", "secs-camilla::controller_metadata_headroom_bypass_labels_and_devices_follow_v4_schema", "secs-camilla::camilla_exports_play_as_designed"]
+tests = ["secs-camilla::export_camilladsp_matches_oracle", "secs-camilla::invalid_values_write_nothing", "secs-camilla::fir_taps_that_overflow_f32_write_nothing_td45", "secs-camilla::duplicate_or_reserved_roles_write_nothing_td46", "secs-camilla::negative_delays_write_nothing_td94", "secs-camilla::controller_metadata_headroom_bypass_labels_and_devices_follow_v4_schema", "secs-camilla::camilla_exports_play_as_designed", "secs-camilla::failed_install_restores_the_previous_camilla_bundle_td22"]
 upstream = "calibration.py export_camilladsp"
 note = "The default writer remains byte-compatible with upstream. Service exports add design identity, capture labels, rounded headroom and controller-addressable correction/MIMO descriptions; these are new deviations from upstream."
 
@@ -1079,7 +1079,7 @@ kind = "export"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-graph::design_id_is_stable_and_changes_with_taps_delays_and_mimo", "secs-service::named_design_manifest_replaces_bundle_hashes_files_and_rebuilds_index", "secs-service::invalid_design_names_are_rejected_before_a_folder_is_chosen", "secs-service::named_filter_bundles_replace_heal_index_hash_every_file_and_share_design_id"]
+tests = ["secs-graph::design_id_is_stable_and_changes_with_taps_delays_and_mimo", "secs-service::named_design_manifest_replaces_bundle_hashes_files_and_rebuilds_index", "secs-service::invalid_design_names_are_rejected_before_a_folder_is_chosen", "secs-service::named_filter_bundles_replace_heal_index_hash_every_file_and_share_design_id", "secs-service::explicit_unnamed_export_merges_the_chosen_folder_into_valid_existing_index", "secs-service::index_scan_reaches_a_named_design_below_four_container_folders", "secs-service::index_scan_does_not_follow_a_manifest_file_link", "secs-service::selected_rebuild_preserves_an_unreadable_existing_entry", "secs-service::selected_rebuild_skips_an_indexed_path_with_an_intermediate_link", "secs-service::full_index_scan_skips_an_unreadable_sibling_manifest"]
 note = "New deviation from upstream: every filter bundle has a stable SHA-256 design identity, a hashed manifest and a rebuilt base-folder index; named bundles replace their prior contents. An explicit folder is the base of a named bundle, so the default export base is not read."
 
 [[feature]]
@@ -1113,7 +1113,7 @@ id = "export.eqapo"
 kind = "export"
 milestone = "M5"
 status = "implemented"
-tests = ["secs-filters::equalizer_apo_files_match_oracle_bytes", "secs-filters::public_wrappers_match_oracle_and_eqapo_carries_mimo_f12", "secs-filters::computed_public_wrappers_match_oracle_files", "secs-filters::eqapo_public_exports_use_single_assignments_f11", "secs-filters::eqapo_disabled_and_case_sensitive_mapping_f11", "secs-filters::exported_configs_play_as_designed", "secs-filters::fir_taps_that_overflow_f32_write_nothing_td45", "secs-filters::negative_delays_write_nothing_td94", "secs-filters::fir_responses_require_the_rfft_grid_td94"]
+tests = ["secs-filters::equalizer_apo_files_match_oracle_bytes", "secs-filters::public_wrappers_match_oracle_and_eqapo_carries_mimo_f12", "secs-filters::computed_public_wrappers_match_oracle_files", "secs-filters::eqapo_public_exports_use_single_assignments_f11", "secs-filters::eqapo_disabled_and_case_sensitive_mapping_f11", "secs-filters::exported_configs_play_as_designed", "secs-filters::fir_taps_that_overflow_f32_write_nothing_td45", "secs-filters::negative_delays_write_nothing_td94", "secs-filters::fir_responses_require_the_rfft_grid_td94", "secs-filters::uses_a_relative_nested_include_with_crlf", "secs-filters::generation_entry_plays_from_unrelated_working_directory_across_two_applies"]
 upstream = "calibration.py export_eqapo; export_filters.py"
 
 [[feature]]
@@ -1127,6 +1127,8 @@ tests = [
   "secs-filters::renderer_applies_every_operation_in_time_domain",
   "secs-filters::convolution_bundle_contains_complete_paths_and_is_atomic",
   "secs-service::convolution_export_with_subs_and_mimo_reopens_byte_identically",
+  "secs-service::cancelled_convolution_compute_installs_no_files",
+  "secs-filters::convolution_cancel_inside_the_first_rate_finishes_before_rate_progress",
 ]
 note = "New: complete f32 convolution IRs fold FIR, PEQ, crossovers, all-pass, gain, polarity and delay into one WAV and exact-DTFT CSV per reachable input/output pair, with routing metadata and shared headroom. Additional output rates are written into rate-named subfolders."
 
@@ -1161,6 +1163,7 @@ tests = [
   "secs-filters::reaper_plays_convolution_bundles_as_written",
   "secs-filters::convolution_bundle_contains_complete_paths_and_is_atomic",
   "secs-service::convolution_export_with_subs_and_mimo_reopens_byte_identically",
+  "secs-filters::reaper_script_uses_routing_sample_rate_in_success_text",
 ]
 note = "New: a relocatable ReaScript builds mono per-path ReaVerb tracks and an output bus, replaces its previous tagged tracks, and disables the source master send. No extensions required."
 
@@ -1194,7 +1197,7 @@ kind = "ipc"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-service::apply_camilla_covers_success_rejection_rollback_folder_and_design_matches", "secs-service::apply_camilla_gives_each_design_its_own_folder_so_reload_reads_its_firs", "secs-apply::failed_rollback_carries_both_reload_errors"]
+tests = ["secs-service::apply_camilla_covers_success_rejection_rollback_folder_and_design_matches", "secs-service::apply_camilla_gives_each_design_its_own_folder_so_reload_reads_its_firs", "secs-apply::failed_rollback_carries_both_reload_errors", "secs-service::rejected_camilla_generation_keeps_previous_bytes_and_restores_its_path", "secs-service::failed_camilla_rollback_keeps_both_possible_active_generations", "secs-service::camilla_pruning_uses_the_reported_previous_path_after_a_marker_write_fails", "secs-service::unknown_camilla_previous_path_keeps_every_generation_and_retained_record", "secs-service::failed_camilla_apply_retains_the_reported_previous_path_without_a_marker", "secs-sys::rollback_failure_error_keeps_the_previous_config_path", "secs-camilla::one_running_pipeline_switches_generation_firs_by_unique_paths", "secs-apply::unanswered_selection_restores_and_reports_the_previous_path"]
 
 [[feature]]
 id = "ipc.apply_eqapo"
@@ -1202,7 +1205,7 @@ kind = "ipc"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-service::apply_eqapo_installs_reapplies_repairs_once_and_removes_stale_files"]
+tests = ["secs-service::apply_eqapo_installs_reapplies_repairs_once_and_removes_stale_files", "secs-service::failed_eqapo_generation_install_preserves_every_previous_byte", "secs-service::failed_eqapo_include_repair_keeps_every_generation_the_entry_has_referenced", "secs-service::apply_eqapo_prunes_a_link_without_touching_its_target", "secs-service::applied_eqapo_manifest_names_every_installed_file_with_size_and_hash", "secs2r-cli::apply_eqapo_opens_the_project_and_uses_the_injected_install"]
 
 [[feature]]
 id = "ipc.revert_eqapo"
@@ -2160,7 +2163,7 @@ kind = "apply"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-apply::camilla_ws"]
+tests = ["secs-apply::camilla_ws", "secs-apply::websocket_ping_frames_do_not_extend_request_deadline", "secs-apply::incomplete_fragment_stream_does_not_extend_request_deadline"]
 
 [[feature]]
 id = "apply.eqapo_config"
@@ -2168,7 +2171,7 @@ kind = "apply"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-apply::eqapo_config"]
+tests = ["secs-apply::eqapo_config", "secs-apply::trailing_spaces_are_managed_and_repair_revert_count_real_includes"]
 
 [[feature]]
 id = "apply.supervise"
