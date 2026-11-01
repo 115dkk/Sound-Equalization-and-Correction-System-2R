@@ -14,6 +14,9 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 pub const LOG_LIMIT: u64 = 256 * 1024;
+const MEMORY_LOG_LIMIT: usize = 1_000;
+// Leave 64 KiB for the pipe frame and future response fields below its 1 MiB cap.
+const LOG_RESPONSE_LIMIT: usize = 960 * 1024;
 pub const INSTALLED_HOST_DIRECTORY: &str = "SECS 2R Host";
 pub const INSTALLED_HOST_EXECUTABLE: &str = "secs2r-host.exe";
 pub const STAGED_HOST_EXECUTABLE: &str = ".secs2r-host.exe.tmp";
@@ -485,6 +488,29 @@ pub struct Core {
     logs: Vec<HostLogLine>,
 }
 
+fn bounded_log_response(mut lines: Vec<HostLogLine>) -> HostResponse {
+    let encoded_len = |start: usize| {
+        serde_json::to_vec(&HostResponse::Log(lines[start..].to_vec()))
+            .map_or(usize::MAX, |encoded| encoded.len())
+    };
+    if encoded_len(0) <= LOG_RESPONSE_LIMIT {
+        return HostResponse::Log(lines);
+    }
+
+    let mut low = 0;
+    let mut high = lines.len();
+    while low < high {
+        let middle = low + (high - low) / 2;
+        if encoded_len(middle) <= LOG_RESPONSE_LIMIT {
+            high = middle;
+        } else {
+            low = middle + 1;
+        }
+    }
+    lines.drain(..low);
+    HostResponse::Log(lines)
+}
+
 impl Core {
     pub fn new(version: impl Into<String>, managed: HostManaged) -> Self {
         Self {
@@ -534,7 +560,7 @@ impl Core {
             HostRequest::Log { lines } => {
                 let keep = usize::try_from(lines).unwrap_or(usize::MAX);
                 let start = self.logs.len().saturating_sub(keep);
-                HostResponse::Log(self.logs[start..].to_vec())
+                bounded_log_response(self.logs[start..].to_vec())
             }
             // Replacing the executable is the pipe handler's job (P133).
             HostRequest::UpdateSelf { .. } => HostResponse::Error(IpcError::new(
@@ -546,6 +572,9 @@ impl Core {
 
     pub fn record(&mut self, line: HostLogLine) {
         self.logs.push(line);
+        if self.logs.len() > MEMORY_LOG_LIMIT {
+            self.logs.drain(..self.logs.len() - MEMORY_LOG_LIMIT);
+        }
     }
 }
 
@@ -1265,6 +1294,35 @@ mod tests {
             line.fields.get("reason").map(String::as_str),
             Some("port_busy")
         );
+    }
+
+    #[test]
+    fn core_keeps_one_thousand_logs_and_bounds_the_serialized_response() {
+        let mut core = Core::new("1", HostManaged::default());
+        for index in 0..1_005 {
+            core.record(log_line(&index.to_string(), []));
+        }
+        let HostResponse::Log(lines) = core.handle(HostRequest::Log { lines: 2_000 }) else {
+            panic!("expected log response");
+        };
+        assert_eq!(lines.len(), 1_000);
+        assert_eq!(lines.first().map(|line| line.event.as_str()), Some("5"));
+        assert_eq!(lines.last().map(|line| line.event.as_str()), Some("1004"));
+
+        let large = "x".repeat(2_000);
+        for index in 0..1_000 {
+            core.record(log_line(
+                &index.to_string(),
+                [("detail".to_owned(), large.clone())],
+            ));
+        }
+        let response = core.handle(HostRequest::Log { lines: 2_000 });
+        let encoded = serde_json::to_vec(&response).unwrap();
+        assert!(encoded.len() <= 960 * 1024, "{} bytes", encoded.len());
+        let HostResponse::Log(lines) = response else {
+            panic!("expected log response");
+        };
+        assert_eq!(lines.last().map(|line| line.event.as_str()), Some("999"));
     }
 
     #[test]
