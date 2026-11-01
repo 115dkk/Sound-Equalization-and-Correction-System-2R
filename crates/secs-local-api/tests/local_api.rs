@@ -5,7 +5,7 @@ use std::net::TcpStream;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use secs_local_api::{EventHub, LocalApiError, ServerConfig, ServerHandle};
@@ -352,6 +352,137 @@ fn stop_frees_the_port_and_busy_port_is_typed() {
     .unwrap();
     assert_eq!(second.port(), port);
     second.stop();
+}
+
+fn read_status(stream: &mut TcpStream) -> u16 {
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).unwrap();
+    let split = response
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("HTTP response header");
+    std::str::from_utf8(&response[..split])
+        .unwrap()
+        .split_whitespace()
+        .nth(1)
+        .unwrap()
+        .parse()
+        .unwrap()
+}
+
+#[test]
+fn progressing_near_limit_upload_is_not_timed_out_td126() {
+    let (service, hub) = service_with(Arc::new(secs_service::NullHost));
+    let server = running(service, hub);
+    let port = server.port();
+    let padding = "x".repeat(1024 * 1024 - 128);
+    let body = format!(r#"{{"method":"bootstrap","padding":"{padding}"}}"#).into_bytes();
+    assert!(body.len() < 1024 * 1024);
+    assert!(body.len() > 1024 * 1024 - 256);
+
+    let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    write!(
+        client,
+        "POST /v1/call HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {TOKEN}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    )
+    .unwrap();
+    for (index, chunk) in body.chunks(body.len().div_ceil(5)).enumerate() {
+        client.write_all(chunk).unwrap();
+        client.flush().unwrap();
+        if index < 4 {
+            std::thread::sleep(Duration::from_millis(600));
+        }
+    }
+    assert_eq!(read_status(&mut client), 200);
+    server.stop();
+}
+
+#[test]
+fn idle_request_body_returns_request_timeout_td126() {
+    let (service, hub) = service_with(Arc::new(secs_service::NullHost));
+    let server = running(service, hub);
+    let port = server.port();
+    let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    write!(
+        client,
+        "POST /v1/call HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {TOKEN}\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{{"
+    )
+    .unwrap();
+    client.flush().unwrap();
+
+    assert_eq!(read_status(&mut client), 408);
+    server.stop();
+}
+
+#[test]
+fn stop_finishes_while_authenticated_chunked_body_keeps_trickling_td126() {
+    let (service, hub) = service_with(Arc::new(secs_service::NullHost));
+    let server = running(service, hub);
+    let port = server.port();
+    let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(
+        client,
+        "POST /v1/call HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {TOKEN}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n1\r\n{{\r\n"
+    )
+    .unwrap();
+    client.flush().unwrap();
+    let writer = std::thread::spawn(move || {
+        for _ in 0..5 {
+            std::thread::sleep(Duration::from_secs(1));
+            if client.write_all(b"1\r\n \r\n").is_err() || client.flush().is_err() {
+                break;
+            }
+        }
+    });
+    std::thread::sleep(Duration::from_millis(100));
+
+    let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+    let started = Instant::now();
+    std::thread::spawn(move || {
+        server.stop();
+        let _ = finished_tx.send(());
+    });
+    assert!(
+        finished_rx.recv_timeout(Duration::from_secs(3)).is_ok(),
+        "server stop waited for a trickling authenticated request body"
+    );
+    assert!(started.elapsed() < Duration::from_secs(3));
+    writer.join().unwrap();
+}
+
+#[test]
+fn stop_finishes_while_a_client_stalls_mid_body_td126() {
+    let (service, hub) = service_with(Arc::new(secs_service::NullHost));
+    let server = running(service, hub);
+    let port = server.port();
+    let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(
+        client,
+        "POST /v1/call HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {TOKEN}\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{{"
+    )
+    .unwrap();
+    client.flush().unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+
+    let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+    let started = Instant::now();
+    std::thread::spawn(move || {
+        server.stop();
+        let _ = finished_tx.send(());
+    });
+    assert!(
+        finished_rx.recv_timeout(Duration::from_secs(4)).is_ok(),
+        "server stop waited for an incomplete request body"
+    );
+    assert!(started.elapsed() < Duration::from_secs(4));
+    drop(client);
 }
 
 #[test]

@@ -12,7 +12,7 @@
 //! unless `SECS2R_SELF_TEST` armed one.
 
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 mod applog;
@@ -23,7 +23,7 @@ mod local_api;
 mod self_test;
 mod update;
 
-use secs_service::{Deps, EventSink, LocalTime, NoEvents, Service};
+use secs_service::{AppEffects, Deps, EventSink, LocalTime, NoEvents, Service};
 use secs_types::ipc::{Envelope, ErrorCode, IpcError, JobEvent, Request, Response};
 use tauri::{AppHandle, Manager, Webview, ipc::JavaScriptChannelId};
 
@@ -70,29 +70,13 @@ async fn secs_call(
     let join_method = method.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let service = app.state::<Arc<Service>>();
-        let changes_settings = request
-            .as_ref()
-            .and_then(|value| value.get("method"))
-            .and_then(serde_json::Value::as_str)
-            == Some("app_settings_set");
-        let old_local_api = changes_settings.then(|| {
-            match service.call(Request::AppSettingsGet, Arc::new(NoEvents)) {
-                Envelope::Ok(response) => match *response {
-                    Response::AppSettingsGet(settings) => settings.local_api,
-                    _ => unreachable!("app_settings_get response matches its request"),
-                },
-                Envelope::Err(_) => unreachable!("app_settings_get cannot fail"),
-            }
-        });
         let envelope = handle(service.as_ref(), request, events);
         if let Envelope::Ok(response) = &envelope
-            && let Response::AppSettingsSet(settings) = response.as_ref()
+            && matches!(response.as_ref(), Response::AppSettingsSet(_))
         {
-            icon::show(&app, settings.icon);
-            app.state::<local_api::Manager>().apply_settings(
-                old_local_api.expect("settings request captured its old value"),
-                settings.local_api,
-            );
+            let revised = service.revised_app_settings();
+            app.state::<local_api::Manager>()
+                .apply_revision(app.state::<Mutex<AppEffects>>().inner(), revised);
         }
         if let Envelope::Err(error) = &envelope {
             log.line(
@@ -249,12 +233,17 @@ fn main() {
             let local_api = local_api::Manager::new(config_dir, service.clone(), hub, handle);
             app.manage(log);
             app.manage(service.clone());
+            app.manage(Mutex::new(AppEffects::default()));
             app.manage(local_api);
             app.manage(icon::Shown::default());
             if let Envelope::Ok(response) =
                 service.call(Request::AppSettingsGet, Arc::new(NoEvents))
                 && let Response::AppSettingsGet(settings) = *response
             {
+                *app.state::<Mutex<AppEffects>>()
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                    AppEffects::new(1, settings.clone());
                 updates.start(settings.updates);
                 icon::show(app.handle(), settings.icon);
                 app.state::<local_api::Manager>()

@@ -18,11 +18,11 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
-use secs_project::MeasurementResult;
+use secs_project::{MeasurementResult, MeasurementStore, Project};
 use secs_types::calibration::CalibrationSettings;
 use secs_types::ipc::{
     CalibrateParams, DspSetParams, ExportKind, ExportParams, JobCancelParams, JobId, JobResult,
-    JobStatus, MdatScope, MimoParams, OutputRateChoice, Response,
+    JobStatus, MdatScope, MimoParams, OutputRateChoice, Response, TargetPresetParams,
 };
 
 static TEMP: AtomicU64 = AtomicU64::new(0);
@@ -2132,6 +2132,7 @@ fn save_as_failure_and_nested_destination_leave_projects_untouched() {
     let root = temp_root("save-as-stage");
     fs::create_dir_all(&root).unwrap();
     let source = root.join("source.secs");
+    let reverse_service = service();
     let service = service();
     call_ok(
         &service,
@@ -2165,6 +2166,42 @@ fn save_as_failure_and_nested_destination_leave_projects_untouched() {
     assert!(!nested.exists());
     assert!(!nested.with_extension("irs").exists());
 
+    let reverse_root = root.join("case.irs");
+    fs::create_dir(&reverse_root).unwrap();
+    let reverse_source = reverse_root.join("room.secs");
+    call_ok(
+        &reverse_service,
+        Request::ProjectNew(ProjectNewParams {
+            path: reverse_source.to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    let reverse_source_irs = reverse_source.with_extension("irs");
+    fs::create_dir_all(&reverse_source_irs).unwrap();
+    fs::write(reverse_root.join("keep.txt"), b"keep").unwrap();
+    fs::write(reverse_source_irs.join("marker"), b"reverse").unwrap();
+    let reverse_destination = root.join("case.secs");
+    let Envelope::Err(error) = reverse_service.call(
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams {
+            path: Some(reverse_destination.to_string_lossy().into_owned()),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("save as whose measurement folder contains the source must fail");
+    };
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert!(reverse_source.is_file());
+    assert_eq!(fs::read(reverse_root.join("keep.txt")).unwrap(), b"keep");
+    assert_eq!(
+        fs::read(reverse_source_irs.join("marker")).unwrap(),
+        b"reverse"
+    );
+    assert!(!reverse_destination.exists());
+
     let target = root.join("target.secs");
     fs::create_dir(&target).unwrap();
     let target_irs = target.with_extension("irs");
@@ -2194,6 +2231,42 @@ fn save_as_failure_and_nested_destination_leave_projects_untouched() {
             .count(),
         0
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn extension_only_save_as_without_a_source_measurement_folder_succeeds_td04() {
+    let root = temp_root("save-as-extension-only");
+    fs::create_dir_all(&root).unwrap();
+    let source = root.join("room.secs");
+    let destination = root.join("room.backup");
+    let service = service();
+    call_ok(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: source.to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    assert!(!source.with_extension("irs").exists());
+
+    let Response::ProjectSave(info) = call_ok(
+        &service,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams {
+            path: Some(destination.to_string_lossy().into_owned()),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!();
+    };
+    assert_eq!(info.path, destination.to_string_lossy());
+    assert!(source.is_file());
+    assert!(destination.is_file());
+
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -3445,6 +3518,35 @@ impl EventSink for PausedProgress {
         self.events.send(event);
     }
 }
+#[derive(Debug, Default)]
+struct PausedReadProgress(PausedProgress);
+
+impl EventSink for PausedReadProgress {
+    fn send(&self, event: JobEvent) {
+        if matches!(&event, JobEvent::Progress { stage, .. } if stage == "read_measurements") {
+            let mut gate = lock(&self.0.gate);
+            if !gate.0 {
+                gate.0 = true;
+                self.0.changed.notify_all();
+                while !gate.1 {
+                    gate = self.0.changed.wait(gate).unwrap();
+                }
+            }
+        }
+        self.0.events.send(event);
+    }
+}
+
+impl PausedReadProgress {
+    fn wait_until_paused(&self) {
+        self.0.wait_until_paused();
+    }
+
+    fn release(&self) {
+        self.0.release();
+    }
+}
+
 impl PausedProgress {
     fn wait_until_paused(&self) {
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -3511,6 +3613,78 @@ fn mimo_notes(files: &[String]) -> Vec<String> {
         .filter(|measurement| measurement.title.contains("MIMO"))
         .map(|measurement| measurement.notes)
         .collect()
+}
+
+#[test]
+fn recommend_xo_preserves_xo_edits_made_while_the_job_runs() {
+    for (case, edit) in [
+        (
+            "xo",
+            secs_types::settings_edit::SettingEdit::Xo {
+                group: "프론트".into(),
+                hz: 177.0,
+            },
+        ),
+        (
+            "include",
+            secs_types::settings_edit::SettingEdit::XoRecInclude { on: false },
+        ),
+    ] {
+        let root = temp_root(&format!("xo-settings-race-{case}"));
+        fs::create_dir_all(&root).unwrap();
+        let (path, _) = write_case(&root, "room_dba");
+        let service = service();
+        open(&service, &path);
+        let events = Arc::new(PausedProgress::default());
+        let Response::RecommendXo(started) =
+            call_ok(&service, Request::RecommendXo, events.clone())
+        else {
+            panic!("XO recommendation must start");
+        };
+        events.wait_until_paused();
+        call_ok(
+            &service,
+            Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+                edit,
+            }),
+            Arc::new(NoEvents),
+        );
+        let Response::CalibrationSettingsGet(edited) = call_ok(
+            &service,
+            Request::CalibrationSettingsGet,
+            Arc::new(NoEvents),
+        ) else {
+            panic!()
+        };
+        events.release();
+        assert!(matches!(
+            finished_result(events.events.wait(started.job, Duration::from_secs(120))),
+            JobResult::Xo(_)
+        ));
+        let Response::CalibrationSettingsGet(current) = call_ok(
+            &service,
+            Request::CalibrationSettingsGet,
+            Arc::new(NoEvents),
+        ) else {
+            panic!()
+        };
+        assert_eq!(current.xo, edited.xo, "{case}");
+        assert_eq!(current.xo_rec_include, edited.xo_rec_include, "{case}");
+        match case {
+            "xo" => assert_eq!(
+                current
+                    .xo
+                    .iter()
+                    .find(|(group, _)| group == "프론트")
+                    .map(|(_, hz)| *hz),
+                Some(177.0)
+            ),
+            "include" => assert!(!current.xo_rec_include),
+            _ => unreachable!(),
+        }
+        assert!(!current.xo_rec.is_empty(), "{case}");
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 #[test]
@@ -3733,6 +3907,256 @@ fn reopened_stale_cache_blocks_mdat_but_allows_camilla() {
 }
 
 #[test]
+fn measurement_mdat_reads_outside_session_lock_and_cancels_during_read() {
+    let root = temp_root("measurement-export-read");
+    fs::create_dir_all(&root).unwrap();
+    let (source, _) = write_case(&root, "dolby");
+    let service = service();
+    open(&service, &source);
+    let folder = root.join("measurement-export");
+    let events = Arc::new(PausedProgress::default());
+    let Response::Export(started) = call_ok(
+        &service,
+        Request::Export(ExportParams {
+            kind: ExportKind::BeforeAfterMdat,
+            folder: folder.to_string_lossy().into_owned(),
+            mdat_scope: Some(MdatScope::Measurements),
+            design_name: None,
+            camilla_devices: None,
+            extra_rates: Vec::new(),
+        }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    events.wait_until_paused();
+    let Response::ProjectInfo(info) = call_ok(&service, Request::ProjectInfo, Arc::new(NoEvents))
+    else {
+        panic!()
+    };
+    assert_eq!(info.path, source.to_string_lossy());
+    call_ok(
+        &service,
+        Request::JobCancel(JobCancelParams { job: started.job }),
+        Arc::new(NoEvents),
+    );
+    events.release();
+    let finished = events.events.wait(started.job, Duration::from_secs(120));
+    assert!(matches!(
+        finished,
+        JobEvent::Finished {
+            status: JobStatus::Cancelled,
+            ..
+        }
+    ));
+    assert!(!folder.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn measurement_mdat_rejects_all_originals_that_exceed_one_budget_td130() {
+    let root = temp_root("measurement-export-budget");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("large.secs");
+    let mut store = MeasurementStore::new(&path, Project::from_preset("2.0").unwrap());
+    for (role, position) in [("L", 1), ("R", 2)] {
+        store
+            .record(
+                MeasurementResult {
+                    role: role.into(),
+                    pos: position,
+                    ir: vec![0.0; 786_432],
+                    sample_rate: 48_000,
+                    t0_s: 0.0,
+                    spl_db: None,
+                    spl_offset_db: None,
+                    snr_db: None,
+                    uuid: None,
+                    source: Some("test".into()),
+                    source_info: None,
+                },
+                None,
+            )
+            .unwrap();
+    }
+    store.save().unwrap();
+
+    let service = Service::new(Deps {
+        memory: Arc::new(secs_compute::FixedMemory(64 * 1024 * 1024)),
+        ..Deps::default()
+    });
+    open(&service, &path);
+    let events = Arc::new(Events::default());
+    let Response::Export(started) = call_ok(
+        &service,
+        Request::Export(ExportParams {
+            kind: ExportKind::BeforeAfterMdat,
+            folder: root.join("export").to_string_lossy().into_owned(),
+            mdat_scope: Some(MdatScope::Measurements),
+            design_name: None,
+            camilla_devices: None,
+            extra_rates: Vec::new(),
+        }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    let first = events.try_wait(started.job, Duration::from_secs(1));
+    if first.is_none() {
+        call_ok(
+            &service,
+            Request::JobCancel(JobCancelParams { job: started.job }),
+            Arc::new(NoEvents),
+        );
+        let _ = events.wait(started.job, Duration::from_secs(10));
+    }
+    assert!(matches!(
+        first,
+        Some(JobEvent::Finished {
+            status: JobStatus::Failed,
+            error: Some(ref error),
+            ..
+        }) if error.params.get("reason").map(String::as_str) == Some("memory_budget")
+    ));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cached_resample_replay_releases_read_memory_before_calibrating_td130() {
+    let root = temp_root("cached-resample-memory");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("resample.secs");
+    let mut project = Project::from_preset("2.0").unwrap();
+    let mut settings = secs_project::calibration_from_project(&project);
+    settings.sample_rate_policy = secs_types::calibration::SampleRatePolicy::Resample;
+    secs_project::store_calibration(&mut project, &settings);
+    let mut store = MeasurementStore::new(&path, project);
+    for role in ["L", "R"] {
+        let mut ir = vec![0.0; 8192];
+        ir[100] = 1.0;
+        store
+            .record(
+                MeasurementResult {
+                    role: role.into(),
+                    pos: 1,
+                    ir,
+                    sample_rate: 44_100,
+                    t0_s: 0.0,
+                    spl_db: None,
+                    spl_offset_db: None,
+                    snr_db: None,
+                    uuid: None,
+                    source: Some("test".into()),
+                    source_info: None,
+                },
+                None,
+            )
+            .unwrap();
+    }
+    store.save().unwrap();
+
+    let running = service();
+    open(&running, &path);
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&running, calibration_events.clone(), settings);
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+
+    let large_samples = vec![0.0_f32; 5 * 1024 * 1024 / std::mem::size_of::<f32>()];
+    fs::write(
+        secs_project::ir_file(&path, "L", 1),
+        secs_project::write_wav_float32(&large_samples, 44_100),
+    )
+    .unwrap();
+
+    let replay = Service::new(Deps {
+        memory: Arc::new(secs_compute::FixedMemory(64 * 1024 * 1024)),
+        ..Deps::default()
+    });
+    open(&replay, &path);
+    let events = Arc::new(Events::default());
+    let Response::Export(started) = call_ok(
+        &replay,
+        Request::Export(ExportParams {
+            kind: ExportKind::StagedMdat,
+            folder: root.join("export").to_string_lossy().into_owned(),
+            mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
+            extra_rates: Vec::new(),
+        }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    let Some(finished) = events.try_wait(started.job, Duration::from_secs(5)) else {
+        call_ok(
+            &replay,
+            Request::JobCancel(JobCancelParams { job: started.job }),
+            Arc::new(NoEvents),
+        );
+        let _ = events.wait(started.job, Duration::from_secs(10));
+        panic!("cached resample replay kept the read permit while calibrating");
+    };
+    assert!(matches!(
+        finished,
+        JobEvent::Finished {
+            status: JobStatus::Succeeded,
+            ..
+        }
+    ));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cached_mdat_cancel_after_a_real_read_finishes_cancelled_td130() {
+    let root = temp_root("cancel-cached-read");
+    fs::create_dir_all(&root).unwrap();
+    let (source, settings) = write_case(&root, "dolby");
+    let running = service();
+    open(&running, &source);
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&running, calibration_events.clone(), settings);
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+
+    let reopened = service();
+    open(&reopened, &source);
+    let events = Arc::new(PausedReadProgress::default());
+    let Response::Export(started) = call_ok(
+        &reopened,
+        Request::Export(ExportParams {
+            kind: ExportKind::StagedMdat,
+            folder: root.join("cancelled-export").to_string_lossy().into_owned(),
+            mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
+            extra_rates: Vec::new(),
+        }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    events.wait_until_paused();
+    // The progress point is after the snapshot read. Removing a source now
+    // proves cancellation does not begin before the real WAV read.
+    fs::remove_file(secs_project::ir_file(&source, "L", 1)).unwrap();
+    call_ok(
+        &reopened,
+        Request::JobCancel(JobCancelParams { job: started.job }),
+        Arc::new(NoEvents),
+    );
+    events.release();
+    let finished = events.0.events.wait(started.job, Duration::from_secs(120));
+    assert!(matches!(
+        finished,
+        JobEvent::Finished {
+            status: JobStatus::Cancelled,
+            ..
+        }
+    ));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn cached_mdat_export_rejects_project_replacement_before_writing() {
     let root = temp_root("replace-cached-export");
     fs::create_dir_all(&root).unwrap();
@@ -3779,6 +4203,106 @@ fn cached_mdat_export_rejects_project_replacement_before_writing() {
         matches!(finished, JobEvent::Finished { status: JobStatus::Failed, error: Some(ref error), .. }
             if error.code == ErrorCode::StaleInputs && error.detail == "project changed while computing")
     );
+    assert!(!folder.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cached_mdat_export_rejects_changed_calibration_inputs_before_writing() {
+    let root = temp_root("edit-cached-export");
+    fs::create_dir_all(&root).unwrap();
+    let (source, settings) = write_case(&root, "dolby");
+    let running = service();
+    open(&running, &source);
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&running, calibration_events.clone(), settings);
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+
+    let reopened = service();
+    open(&reopened, &source);
+    let folder = root.join("export-edited");
+    let events = Arc::new(PausedProgress::default());
+    let Response::Export(started) = call_ok(
+        &reopened,
+        Request::Export(ExportParams {
+            kind: ExportKind::StagedMdat,
+            folder: folder.to_string_lossy().into_owned(),
+            mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
+            extra_rates: Vec::new(),
+        }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    events.wait_until_paused();
+    call_ok(
+        &reopened,
+        Request::TargetApplyPreset(TargetPresetParams {
+            preset: "harman".into(),
+        }),
+        Arc::new(NoEvents),
+    );
+    events.release();
+    let finished = events.events.wait(started.job, Duration::from_secs(120));
+    assert!(
+        matches!(finished, JobEvent::Finished { status: JobStatus::Failed, error: Some(ref error), .. }
+            if error.code == ErrorCode::StaleInputs && error.detail == "project changed while computing")
+    );
+    assert!(!folder.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cached_mdat_export_rejects_changed_sample_rate_policy_td116() {
+    let root = temp_root("policy-cached-export");
+    fs::create_dir_all(&root).unwrap();
+    let (source, settings) = write_case(&root, "dolby");
+    let running = service();
+    open(&running, &source);
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&running, calibration_events.clone(), settings);
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+
+    let reopened = service();
+    open(&reopened, &source);
+    let folder = root.join("export-policy-edited");
+    let events = Arc::new(PausedProgress::default());
+    let Response::Export(started) = call_ok(
+        &reopened,
+        Request::Export(ExportParams {
+            kind: ExportKind::StagedMdat,
+            folder: folder.to_string_lossy().into_owned(),
+            mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
+            extra_rates: Vec::new(),
+        }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    events.wait_until_paused();
+    call_ok(
+        &reopened,
+        Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+            edit: secs_types::settings_edit::SettingEdit::SampleRatePolicy {
+                policy: secs_types::calibration::SampleRatePolicy::Resample,
+            },
+        }),
+        Arc::new(NoEvents),
+    );
+    events.release();
+    let finished = events.events.wait(started.job, Duration::from_secs(120));
+    assert!(matches!(
+        finished,
+        JobEvent::Finished {
+            status: JobStatus::Failed,
+            error: Some(ref error),
+            ..
+        } if error.code == ErrorCode::StaleInputs
+    ));
     assert!(!folder.exists());
     fs::remove_dir_all(root).unwrap();
 }

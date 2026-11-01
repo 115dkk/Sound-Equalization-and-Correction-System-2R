@@ -184,10 +184,14 @@ impl Service {
             };
             session::commit(&session, prepared.ticket, &job, |open| {
                 let mut settings = calibration_from_project(open.store.project());
-                for (group, hz) in &recommendation.best {
-                    match settings.xo.iter_mut().find(|(name, _)| name == group) {
-                        Some((_, current)) => *current = *hz,
-                        None => settings.xo.push((group.clone(), *hz)),
+                let xo_unchanged = settings.xo == prepared.settings.xo
+                    && settings.xo_rec_include == prepared.settings.xo_rec_include;
+                if xo_unchanged {
+                    for (group, hz) in &recommendation.best {
+                        match settings.xo.iter_mut().find(|(name, _)| name == group) {
+                            Some((_, current)) => *current = *hz,
+                            None => settings.xo.push((group.clone(), *hz)),
+                        }
                     }
                 }
                 settings.xo_rec = recommendation.best.clone();
@@ -510,12 +514,6 @@ pub(crate) fn project_groups(project: &Project) -> Vec<(String, Vec<String>)> {
         .collect()
 }
 
-pub(crate) fn load_measurements(
-    store: &mut secs_project::MeasurementStore,
-) -> Result<MeasurementSet, IpcError> {
-    load_measurements_cancellable(store, &secs_compute::CancelToken::new())
-}
-
 fn mic_curve(cal: &secs_mdat::CalInfo) -> Option<secs_audio::MicCalibration> {
     let frequencies = cal.freq.as_ref()?;
     let gains = cal.gain.as_ref()?;
@@ -567,7 +565,7 @@ pub(crate) fn measured_ir(
     Ok((corrected, sample_rate))
 }
 
-fn load_measurements_cancellable(
+pub(crate) fn load_measurements_cancellable(
     store: &mut secs_project::MeasurementStore,
     cancel: &secs_compute::CancelToken,
 ) -> Result<MeasurementSet, IpcError> {
@@ -578,6 +576,8 @@ fn load_measurements_cancellable(
         }
         let mut roles = Vec::new();
         for role in record.ir.keys() {
+            // The project reader bounds each WAV to MAX_IR_BYTES but reads it in
+            // one call, so cancellation is checked between files.
             if cancel.is_cancelled() {
                 return Err(IpcError::new(ErrorCode::Cancelled, "cancelled"));
             }

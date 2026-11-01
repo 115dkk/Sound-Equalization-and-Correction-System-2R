@@ -3,13 +3,20 @@ use crate::{
     read_mono_float_wav, save_ir,
 };
 use secs_mdat::{Boxed, CalInfo, SourceDate, SourceInfo};
-use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::UNIX_EPOCH;
+
+#[cfg(test)]
+static SOURCE_PARSE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 pub const IR_CACHE_LIMIT_BYTES: usize = 256 * 1024 * 1024;
 pub const MAX_PROJECT_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_SOURCE_BYTES: u64 = 16 * 1024 * 1024;
 
 /// Calibration curves a measurement source sidecar attaches (ADR 0015).
 /// `meterCal` precedes every `scCal`; only entries with equal `freq` and
@@ -656,9 +663,70 @@ pub fn save_source(wav: &Path, info: Option<&SourceInfo>) -> Result<(), ProjectE
 }
 
 pub fn load_source(wav: &Path) -> Option<SourceInfo> {
-    let text = fs::read_to_string(source_path(wav)).ok()?;
-    let value = loads(&text).ok()?;
-    source_from_json(&value)
+    load_source_checked(wav).ok().flatten()
+}
+
+fn load_source_checked(wav: &Path) -> Result<Option<SourceInfo>, ProjectError> {
+    #[cfg(test)]
+    SOURCE_PARSE_COUNT.fetch_add(1, Ordering::Relaxed);
+    let path = source_path(wav);
+    let bytes = match crate::irs::read_bounded(&path, MAX_SOURCE_BYTES, "measurement source") {
+        Ok(bytes) => bytes,
+        Err(error @ ProjectError::Invalid(_)) => return Err(error),
+        Err(_) => return Ok(None),
+    };
+    let text = match String::from_utf8(bytes) {
+        Ok(text) => text,
+        Err(_) => return Ok(None),
+    };
+    let value = match loads(&text) {
+        Ok(value) => value,
+        Err(_) => return Ok(None),
+    };
+    Ok(source_from_json(&value))
+}
+
+const MAX_PROJECT_SOURCE_BYTES: usize = 64 * 1024 * 1024;
+
+fn source_info_bytes(info: &SourceInfo) -> usize {
+    let mut bytes = std::mem::size_of::<SourceInfo>();
+    bytes = bytes.saturating_add(
+        info.strings
+            .iter()
+            .map(|(key, value)| std::mem::size_of::<(String, String)>() + key.len() + value.len())
+            .sum::<usize>(),
+    );
+    bytes = bytes.saturating_add(
+        info.boxed
+            .iter()
+            .map(|(key, _)| std::mem::size_of::<(String, Boxed)>() + key.len())
+            .sum::<usize>(),
+    );
+    for (key, cal) in &info.cal {
+        bytes = bytes
+            .saturating_add(std::mem::size_of::<(String, CalInfo)>())
+            .saturating_add(key.len())
+            .saturating_add(cal.source_name.len())
+            .saturating_add(cal.source_path.len())
+            .saturating_add(cal.freq.as_ref().map_or(0, |values| {
+                values.len().saturating_mul(std::mem::size_of::<f32>())
+            }))
+            .saturating_add(cal.gain.as_ref().map_or(0, |values| {
+                values.len().saturating_mul(std::mem::size_of::<f32>())
+            }))
+            .saturating_add(cal.phase.as_ref().map_or(0, |values| {
+                values.len().saturating_mul(std::mem::size_of::<f32>())
+            }))
+            .saturating_add(
+                cal.boxed
+                    .iter()
+                    .map(|(name, _)| std::mem::size_of::<(String, Boxed)>() + name.len())
+                    .sum::<usize>(),
+            );
+    }
+    bytes
+        .saturating_add(info.notes.as_ref().map_or(0, String::len))
+        .saturating_add(info.format.as_ref().map_or(0, String::len))
 }
 
 pub fn load_project_sources(
@@ -666,6 +734,9 @@ pub fn load_project_sources(
     project_path: &Path,
 ) -> BTreeMap<u32, BTreeMap<String, SourceInfo>> {
     let base = project_path.parent().unwrap_or_else(|| Path::new("."));
+    let mut loaded: HashMap<PathBuf, Option<(Arc<SourceInfo>, usize)>> = HashMap::new();
+    let mut remaining = MAX_PROJECT_SOURCE_BYTES;
+    let mut exhausted = false;
     let mut out = BTreeMap::new();
     for record in measurement_values(project)
         .iter()
@@ -675,7 +746,7 @@ pub fn load_project_sources(
             continue;
         };
         for (role, raw) in record.ir {
-            if raw.is_empty() {
+            if raw.is_empty() || exhausted {
                 continue;
             }
             let path = PathBuf::from(raw);
@@ -684,17 +755,41 @@ pub fn load_project_sources(
             } else {
                 base.join(path)
             };
+            let sidecar = source_path(&path);
             // F5: neither the IR nor its sidecar may lead outside the `.irs`.
             if !path.is_file()
                 || confined_ir_path(project_path, &path).is_err()
-                || confined_ir_path(project_path, &source_path(&path)).is_err()
+                || confined_ir_path(project_path, &sidecar).is_err()
             {
                 continue;
             }
-            if let Some(info) = load_source(&path) {
+            let key = sidecar.canonicalize().unwrap_or_else(|_| sidecar.clone());
+            let info = match loaded.get(&key) {
+                Some(info) => info.clone(),
+                None => {
+                    let info = load_source_checked(&path).ok().flatten().and_then(|info| {
+                        let bytes = source_info_bytes(&info);
+                        if bytes > remaining {
+                            exhausted = true;
+                            None
+                        } else {
+                            remaining -= bytes;
+                            Some((Arc::new(info), bytes))
+                        }
+                    });
+                    loaded.insert(key, info.clone());
+                    info
+                }
+            };
+            if let Some((info, bytes)) = info {
+                if bytes > remaining {
+                    exhausted = true;
+                    continue;
+                }
+                remaining -= bytes;
                 out.entry(pos)
                     .or_insert_with(BTreeMap::new)
-                    .insert(role, info);
+                    .insert(role, info.as_ref().clone());
             }
         }
     }
@@ -1400,4 +1495,62 @@ fn optional_float_map(value: Option<&PyJson>) -> BTreeMap<String, Option<f64>> {
                 })
                 .collect()
         })
+}
+
+#[cfg(test)]
+mod source_budget_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn entry(position: usize, path: String) -> PyJson {
+        PyJson::Object(vec![
+            ("pos".into(), PyJson::Int(position.to_string())),
+            (
+                "ir".into(),
+                PyJson::Object(vec![("L".into(), PyJson::Str(path))]),
+            ),
+        ])
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "uses temporary files")]
+    fn distinct_large_sidecars_stop_parsing_at_the_project_budget_td112() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "secs-project-sidecar-budget-{}-{unique}",
+            std::process::id()
+        ));
+        let project_path = root.join("many.secs");
+        let irs = project_path.with_extension("irs");
+        fs::create_dir_all(&irs).unwrap();
+        let info = SourceInfo {
+            notes: Some("x".repeat(8 * 1024 * 1024)),
+            ..SourceInfo::default()
+        };
+        let mut entries = Vec::new();
+        for position in 1..=10 {
+            let wav = irs.join(format!("{position}.wav"));
+            fs::write(&wav, []).unwrap();
+            save_source(&wav, Some(&info)).unwrap();
+            entries.push(entry(position, format!("many.irs/{position}.wav")));
+        }
+        let mut project = Project::from_preset("2.0").unwrap();
+        project.measurements = PyJson::Array(entries);
+
+        SOURCE_PARSE_COUNT.store(0, Ordering::Relaxed);
+        let sources = load_project_sources(&project, &project_path);
+        let parsed = SOURCE_PARSE_COUNT.load(Ordering::Relaxed);
+        assert!(parsed > 0);
+        assert!(
+            parsed < 10,
+            "parsed {parsed} sidecars after exhausting the budget"
+        );
+        assert!(sources.contains_key(&1));
+        assert!(!sources.contains_key(&10));
+
+        fs::remove_dir_all(root).unwrap();
+    }
 }

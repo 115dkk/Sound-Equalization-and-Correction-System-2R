@@ -10,7 +10,7 @@ use secs_types::ipc::{
 
 use crate::measure::json::JsonExt;
 use crate::measure::store_devices;
-use crate::{Service, lock};
+use crate::{Service, lock, session};
 
 const MAX_CALIBRATION_BYTES: u64 = 4 * 1024 * 1024;
 
@@ -185,7 +185,44 @@ fn decode_text(bytes: &[u8]) -> Result<String, String> {
     }
 }
 
+#[cfg(test)]
+#[derive(Clone)]
+struct ReadGate {
+    path: String,
+    entered: std::sync::Arc<std::sync::Barrier>,
+    release: std::sync::Arc<std::sync::Barrier>,
+}
+
+#[cfg(test)]
+static READ_GATE: std::sync::OnceLock<std::sync::Mutex<Option<ReadGate>>> =
+    std::sync::OnceLock::new();
+
+#[cfg(test)]
+fn pause_read_for_test(path: &str) {
+    let gate = READ_GATE
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .unwrap()
+        .as_ref()
+        .filter(|gate| gate.path == path)
+        .cloned();
+    if let Some(gate) = gate {
+        gate.entered.wait();
+        gate.release.wait();
+    }
+}
+
+#[cfg(test)]
+fn install_read_gate(gate: ReadGate) {
+    *READ_GATE
+        .get_or_init(|| std::sync::Mutex::new(None))
+        .lock()
+        .unwrap() = Some(gate);
+}
+
 fn read_selected(path: &str) -> Result<SelectedCalibration, IpcError> {
+    #[cfg(test)]
+    pause_read_for_test(path);
     let name = path_file_name(path);
     let mut file = File::open(path)
         .map_err(|error| input_error(&name, "unreadable", error.to_string(), None))?;
@@ -254,30 +291,29 @@ impl Service {
         &self,
         params: MicCalibrationSetParams,
     ) -> Result<MicCalibrationStatus, IpcError> {
-        {
+        let ticket = {
             let session = lock(&self.session);
-            session.require()?;
-        }
+            session.ticket()?
+        };
         self.refuse_while_measuring()?;
         let selected = read_selected(&params.path)?;
-        let mut session = lock(&self.session);
-        let open = session.require_mut()?;
-        store_devices(
-            open.store.project_mut(),
-            vec![
-                ("mic_calibration".into(), PyJson::Str(selected.text.clone())),
-                (
-                    "mic_calibration_name".into(),
-                    PyJson::Str(selected.name.clone()),
-                ),
-                (
-                    "mic_calibration_path".into(),
-                    PyJson::Str(selected.path.clone()),
-                ),
-            ],
-        );
-        open.dirty = true;
-        Ok(status(&mut open.store, Some(&selected)))
+        session::apply(&self.session, ticket, |open| {
+            store_devices(
+                open.store.project_mut(),
+                vec![
+                    ("mic_calibration".into(), PyJson::Str(selected.text.clone())),
+                    (
+                        "mic_calibration_name".into(),
+                        PyJson::Str(selected.name.clone()),
+                    ),
+                    (
+                        "mic_calibration_path".into(),
+                        PyJson::Str(selected.path.clone()),
+                    ),
+                ],
+            );
+            Ok((status(&mut open.store, Some(&selected)), true))
+        })
     }
 
     pub(crate) fn mic_calibration_clear(&self) -> Result<MicCalibrationStatus, IpcError> {
@@ -562,6 +598,51 @@ mod tests {
         .unwrap()
         .to_owned();
         assert_eq!(stored, UMIK_90);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn mic_calibration_file_read_cannot_modify_a_replacement_project_td128() {
+        let (service, root) = service_with_project("replacement");
+        let service = Arc::new(service);
+        let file = root.join("selected.cal");
+        std::fs::write(&file, UMIK_90.as_bytes()).unwrap();
+        let entered = Arc::new(std::sync::Barrier::new(2));
+        let release = Arc::new(std::sync::Barrier::new(2));
+        install_read_gate(ReadGate {
+            path: file.to_string_lossy().into_owned(),
+            entered: entered.clone(),
+            release: release.clone(),
+        });
+
+        let worker_service = service.clone();
+        let worker_path = file.to_string_lossy().into_owned();
+        let worker = std::thread::spawn(move || {
+            worker_service.mic_calibration_set(MicCalibrationSetParams { path: worker_path })
+        });
+        entered.wait();
+        let replacement = root.join("replacement.secs");
+        let response = service.call(
+            Request::ProjectNew(ProjectNewParams {
+                path: replacement.to_string_lossy().into_owned(),
+                preset: "2.0".into(),
+                sub_count: 0,
+                sample: false,
+                tutorial: false,
+            }),
+            Arc::new(crate::NoEvents),
+        );
+        assert!(matches!(response, secs_types::ipc::Envelope::Ok(_)));
+        release.wait();
+
+        let error = worker.join().unwrap().unwrap_err();
+        assert_eq!(error.code, ErrorCode::StaleInputs);
+        let session = lock(&service.session);
+        let open = session.require().unwrap();
+        assert_eq!(open.path, replacement);
+        assert!(!open.dirty);
+        assert!(device_value(open.store.project(), "mic_calibration").is_none());
+        drop(session);
         std::fs::remove_dir_all(root).unwrap();
     }
 

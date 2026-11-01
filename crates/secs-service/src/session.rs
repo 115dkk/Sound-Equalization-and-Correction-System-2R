@@ -381,7 +381,7 @@ impl PreparedSaveAs {
 fn prepare_save_as(open: &OpenProject, destination: &Path) -> Result<PreparedSaveAs, ServiceError> {
     let source_irs = open.path.with_extension("irs");
     let destination_irs = destination.with_extension("irs");
-    reject_nested_irs(&source_irs, &destination_irs)?;
+    reject_nested_irs(&open.path, &source_irs, &destination_irs)?;
     if destination.exists() && !destination.is_file() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::IsADirectory,
@@ -435,14 +435,31 @@ fn prepare_save_as(open: &OpenProject, destination: &Path) -> Result<PreparedSav
     result
 }
 
-fn reject_nested_irs(source: &Path, destination: &Path) -> Result<(), ServiceError> {
-    if !source.is_dir() {
-        return Ok(());
+fn reject_nested_irs(
+    project: &Path,
+    source: &Path,
+    destination: &Path,
+) -> Result<(), ServiceError> {
+    let source_exists = source.is_dir();
+    let project = normalised_path(project)?;
+    let source = normalised_path(source)?;
+    let destination = normalised_path(destination)?;
+    if (destination == source && source_exists)
+        || destination.starts_with(&source) && destination != source
+        || source.starts_with(&destination) && source != destination
+        || project.starts_with(&destination)
+    {
+        return Err(ServiceError::InvalidRequest(
+            "cannot save a project inside its own measurement folder".into(),
+        ));
     }
-    let source = source.canonicalize()?;
-    // The destination folder may not exist yet (it is created after this
-    // check): resolve its deepest existing ancestor and keep the rest as written.
-    let mut existing = destination;
+    Ok(())
+}
+
+fn normalised_path(path: &Path) -> Result<PathBuf, ServiceError> {
+    // A save destination may not exist yet. Resolve its deepest existing
+    // ancestor, then append the missing components without following links.
+    let mut existing = path;
     let mut rest = Vec::new();
     let resolved =
         loop {
@@ -454,22 +471,16 @@ fn reject_nested_irs(source: &Path, destination: &Path) -> Result<(), ServiceErr
                     })?);
                     existing = existing
                         .parent()
-                        .filter(|p| !p.as_os_str().is_empty())
+                        .filter(|parent| !parent.as_os_str().is_empty())
                         .unwrap_or(Path::new("."));
                 }
                 Err(error) => return Err(error.into()),
             }
         };
-    let destination = rest
+    Ok(rest
         .iter()
         .rev()
-        .fold(resolved, |path, part| path.join(part));
-    if destination == source || destination.starts_with(&source) {
-        return Err(ServiceError::InvalidRequest(
-            "cannot save a project inside its own measurement folder".into(),
-        ));
-    }
-    Ok(())
+        .fold(resolved, |resolved, part| resolved.join(part)))
 }
 
 fn unique_sibling(path: &Path, kind: &str) -> Result<PathBuf, std::io::Error> {
@@ -533,6 +544,183 @@ fn copy_tree_contents(source: &Path, destination: &Path) -> Result<(), std::io::
         }
     }
     Ok(())
+}
+
+#[derive(Debug)]
+pub(crate) struct OriginalSnapshot {
+    path: PathBuf,
+    project: Project,
+}
+
+pub(crate) struct LoadedOriginals<'a> {
+    pub values: Vec<secs_export::Original>,
+    _permit: secs_compute::MemoryPermit<'a>,
+}
+
+#[derive(Debug)]
+pub(crate) struct MeasurementSnapshot {
+    path: PathBuf,
+    project: Project,
+}
+
+pub(crate) struct LoadedMeasurements {
+    pub project: Project,
+    pub values: secs_engine::MeasurementSet,
+}
+
+pub(crate) fn original_snapshot(open: &OpenProject) -> OriginalSnapshot {
+    OriginalSnapshot {
+        path: open.path.clone(),
+        project: open.store.project().clone(),
+    }
+}
+
+pub(crate) fn measurement_snapshot(open: &OpenProject) -> MeasurementSnapshot {
+    MeasurementSnapshot {
+        path: open.path.clone(),
+        project: open.store.project().clone(),
+    }
+}
+
+fn measurement_bytes(path: &Path, project: &Project) -> Result<u64, IpcError> {
+    let base = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut bytes = 0_u64;
+    let store = MeasurementStore::new(path, project.clone());
+    for record in store.records() {
+        for raw in record.ir.values().filter(|raw| !raw.is_empty()) {
+            let wav = PathBuf::from(raw);
+            let wav = if wav.is_absolute() {
+                wav
+            } else {
+                base.join(wav)
+            };
+            let file_bytes = fs::metadata(&wav)
+                .map_err(ServiceError::from)
+                .map_err(IpcError::from)?
+                .len()
+                .saturating_mul(12);
+            bytes = bytes.saturating_add(file_bytes);
+        }
+    }
+    Ok(bytes)
+}
+
+fn reserve_measurements<'a>(
+    path: &Path,
+    project: &Project,
+    job: &JobContext,
+    budget: &'a secs_compute::MemoryBudget,
+) -> Result<secs_compute::MemoryPermit<'a>, IpcError> {
+    budget
+        .acquire(measurement_bytes(path, project)?, job.cancel())
+        .map_err(|error| match error {
+            secs_compute::MemoryError::Cancelled => {
+                IpcError::new(ErrorCode::Cancelled, "cancelled")
+            }
+            secs_compute::MemoryError::TooLarge { .. } => {
+                IpcError::new(ErrorCode::EngineInput, error.to_string())
+                    .with_param("reason", "memory_budget")
+            }
+        })
+}
+
+impl MeasurementSnapshot {
+    pub(crate) fn load(
+        self,
+        job: &JobContext,
+        budget: &secs_compute::MemoryBudget,
+    ) -> Result<LoadedMeasurements, IpcError> {
+        let permit = reserve_measurements(&self.path, &self.project, job, budget)?;
+        let mut store = MeasurementStore::new(&self.path, self.project.clone());
+        let values = super::calibration::load_measurements_cancellable(&mut store, job.cancel())?;
+        drop(permit);
+        Ok(LoadedMeasurements {
+            project: self.project,
+            values,
+        })
+    }
+}
+
+impl OriginalSnapshot {
+    pub(crate) fn load<'a>(
+        self,
+        job: &JobContext,
+        budget: &'a secs_compute::MemoryBudget,
+    ) -> Result<LoadedOriginals<'a>, IpcError> {
+        let mut store = MeasurementStore::new(&self.path, self.project);
+        let mut records = store.records();
+        records.sort_by_key(|record| record.pos);
+        let project = store.project().clone();
+        let plan_roles = plan_from_project(&project, std::iter::empty()).roles;
+        let sources = load_project_sources(&project, &self.path);
+        let total = records
+            .iter()
+            .map(|record| record.ir.values().filter(|path| !path.is_empty()).count())
+            .sum::<usize>();
+        let permit = reserve_measurements(&self.path, &project, job, budget)?;
+        let mut originals = Vec::with_capacity(total);
+        for record in records {
+            let position = u32::try_from(record.pos).map_err(|_| {
+                IpcError::new(
+                    ErrorCode::ProjectIo,
+                    format!("invalid measurement position {}", record.pos),
+                )
+            })?;
+            let mut roles = record.ir.keys().cloned().collect::<Vec<_>>();
+            roles.sort_by_key(|role| {
+                plan_roles
+                    .iter()
+                    .position(|planned| planned == role)
+                    .unwrap_or(plan_roles.len())
+            });
+            for role in roles {
+                job.cancel()
+                    .check()
+                    .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
+                let raw = record.ir.get(&role).cloned().unwrap_or_default();
+                if raw.is_empty() {
+                    continue;
+                }
+                let (samples, sample_rate) = store
+                    .ir_of(&role, record.pos)
+                    .map_err(ServiceError::from)
+                    .map_err(IpcError::from)?;
+                // The bounded WAV reader consumes one whole file. Check on both
+                // sides of every file, so cancellation is delayed by at most one
+                // MAX_IR_BYTES read rather than by the whole measurement set.
+                job.report_progress(
+                    "read_measurements",
+                    originals.len() as u64 + 1,
+                    total as u64,
+                );
+                job.cancel()
+                    .check()
+                    .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
+                let source_info = sources
+                    .get(&position)
+                    .and_then(|by_role| by_role.get(&role))
+                    .cloned();
+                originals.push(secs_export::Original {
+                    position,
+                    role: role.clone(),
+                    item: secs_mdat::MeasurementInput {
+                        title: format!("{role}_P{}", record.pos),
+                        notes: format!("SECS · 위치 {} · 원 측정", record.pos),
+                        sample_rate_hz: sample_rate,
+                        samples: samples.into_iter().map(f64::from).collect(),
+                        start_time_s: record.t0.get(&role).copied().unwrap_or(0.0),
+                        spl_offset_db: record.spl_offset.get(&role).copied(),
+                        source_info,
+                        computed: false,
+                    },
+                });
+            }
+        }
+        Ok(LoadedOriginals {
+            values: originals,
+            _permit: permit,
+        })
+    }
 }
 
 pub(crate) fn original_measurements(

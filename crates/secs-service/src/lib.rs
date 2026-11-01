@@ -35,6 +35,7 @@ mod watch;
 use std::borrow::Cow;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, SystemTime};
 
@@ -547,12 +548,80 @@ impl EventSink for ObservedEvents {
     }
 }
 
+/// Rejects application-setting effects that belong to an older save.
+#[derive(Debug, Default)]
+pub struct AppEffects {
+    last: u64,
+    settings: Option<secs_types::ipc::AppSettings>,
+}
+
+impl AppEffects {
+    /// Starts effect ordering from settings already applied by the app.
+    #[must_use]
+    pub fn new(revision: u64, settings: secs_types::ipc::AppSettings) -> Self {
+        Self {
+            last: revision,
+            settings: Some(settings),
+        }
+    }
+
+    /// Accepts a newer revision and returns the settings whose effects are active.
+    pub fn accept(
+        &mut self,
+        revision: u64,
+        settings: &secs_types::ipc::AppSettings,
+    ) -> Option<secs_types::ipc::AppSettings> {
+        if revision <= self.last {
+            return None;
+        }
+        self.last = revision;
+        Some(self.settings.replace(settings.clone()).unwrap_or_default())
+    }
+}
+
+#[cfg(test)]
+mod app_effect_tests {
+    use super::AppEffects;
+
+    #[test]
+    fn effects_compare_with_the_last_applied_settings_td115() {
+        let mut applied = secs_types::ipc::AppSettings {
+            updates: secs_types::ipc::UpdatePolicy::Notify,
+            ..Default::default()
+        };
+        let mut revision_two = applied.clone();
+        revision_two.updates = secs_types::ipc::UpdatePolicy::Off;
+        let mut revision_three = revision_two.clone();
+        revision_three.theme = secs_types::ipc::AppTheme::Dark;
+
+        let mut effects = AppEffects::new(1, applied.clone());
+        let previous = effects.accept(3, &revision_three).unwrap();
+        assert_eq!(previous.updates, secs_types::ipc::UpdatePolicy::Notify);
+        assert_ne!(previous.updates, revision_three.updates);
+        assert!(effects.accept(2, &revision_two).is_none());
+
+        applied.theme = secs_types::ipc::AppTheme::Light;
+        assert_eq!(effects.accept(4, &applied).unwrap(), revision_three);
+    }
+}
+
+/// One coherent application-settings snapshot and its save revision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevisedAppSettings {
+    /// Monotonically increasing within one service process.
+    pub revision: u64,
+    /// Settings stored by that revision.
+    pub settings: secs_types::ipc::AppSettings,
+}
+
 /// The application service. One instance lives as long as the app.
 #[derive(Debug)]
 pub struct Service {
     deps: Deps,
     session: Arc<Mutex<Session>>,
     app_settings: Arc<Mutex<secs_types::ipc::AppSettings>>,
+    app_settings_revision: AtomicU64,
+    app_effects: Mutex<AppEffects>,
     jobs: JobRegistry,
     level: monitor::LevelState,
     status_watch: watch::WatchState,
@@ -563,11 +632,14 @@ impl Service {
     /// Creates a service from platform dependency factories.
     pub fn new(deps: Deps) -> Self {
         let app_settings = project_edit::load_app_settings(deps.app_settings_path.as_deref());
+        let app_effects = AppEffects::new(1, app_settings.clone());
         let rew = measure::RewLink::new(&deps);
         Self {
             deps,
             session: Arc::new(Mutex::new(Session::default())),
             app_settings: Arc::new(Mutex::new(app_settings)),
+            app_settings_revision: AtomicU64::new(1),
+            app_effects: Mutex::new(app_effects),
             jobs: JobRegistry::default(),
             level: monitor::LevelState::default(),
             status_watch: watch::WatchState::default(),
