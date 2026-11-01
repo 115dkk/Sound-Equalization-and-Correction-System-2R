@@ -34,6 +34,7 @@ export function useProjectScreen(close: () => Promise<void>) {
     await session.writers.app.edit((latest) => ({ recent_projects: [path, ...latest.recent_projects.filter((p) => p !== path)].slice(0, RECENT_PROJECTS_MAX) }));
   }
   async function save(as = false): Promise<boolean> {
+    if (!await session.projectEditsSettled()) return false;
     let path = as ? "" : session.stores.project.getSnapshot()?.path;
     if (!path) path = await session.call({ method: "dialog_save_project", params: { suggested: project?.path ?? "" } }) ?? "";
     if (!path) return false;

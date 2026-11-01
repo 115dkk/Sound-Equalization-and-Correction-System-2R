@@ -179,70 +179,92 @@ export function createSession(ipc: Ipc) {
     if (job.epoch === jobs.epoch && ["calibrate", "mimo", "recommend_xo"].includes(job.kind)) host.set({ failure: null });
   } });
   let pendingProjectEdits = 0;
-  const call: SessionCall = (request, context) => track(async () => {
-    let epoch = jobs.epoch;
-    const saveDialog = request.method === "dialog_save_project" || request.method === "dialog_save_file";
-    if (saveDialog) saveDialogs++;
-    const projectEdit = request.method !== "project_save" && projectEdits.includes(request.method);
-    if (projectEdit) pendingProjectEdits++;
-    const pendingStart = jobs.begin(request);
-    if (pendingStart?.context.method === "recommend_xo") {
-      pendingStart.context.mimo = calibrationMimo(stores);
-      if (context?.calibrateOnFailure) pendingStart.context.calibrateOnFailure = true;
+  const projectWork = new Map<Promise<boolean>, number>();
+  function trackProjectEdit<T>(work: Promise<T>, epoch: number): Promise<T> {
+    const done = work.then((value) => value !== false, () => false);
+    projectWork.set(done, epoch);
+    void done.then(() => projectWork.delete(done));
+    return work;
+  }
+  async function projectEditsSettled(): Promise<boolean> {
+    const epoch = jobs.epoch;
+    let succeeded = true;
+    while (epoch === jobs.epoch) {
+      const edits = [...projectWork].filter(([, owner]) => owner === epoch).map(([work]) => work);
+      if (!edits.length) return succeeded;
+      const results = await Promise.all(edits);
+      succeeded = results.every(Boolean) && succeeded;
     }
-    if (pendingStart?.context.background && autoRefresh) pendingStart.context.autoRefreshRevision = autoRefresh.revision;
-    if (refreshInputs.includes(request.method)) autoRefresh?.changed();
-    const xoWasIncluded = stores.settings.getSnapshot()?.xo_rec_include !== false;
-    const edit = request.method === "target_set_points" ? "targetEdit" : request.method === "calibration_settings_edit" && (request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit.kind === "xo" ? "xoEdit" : null;
-    if (edit) host.set({ [edit]: "saving" });
-    try {
-      // A monitor that cannot be stopped must not keep the next project from opening.
-      if (request.method === "project_new" || request.method === "project_open") await monitor(false).catch(() => {});
-      const data = await ipc.request(request);
-      if (pendingStart) {
-        jobs.reply(pendingStart, data as import("../ipc/bindings/JobStarted").JobStarted);
+    return false;
+  }
+  const call: SessionCall = (request, context) => {
+    const owner = jobs.epoch;
+    const work = track(async () => {
+      let epoch = jobs.epoch;
+      const saveDialog = request.method === "dialog_save_project" || request.method === "dialog_save_file";
+      if (saveDialog) saveDialogs++;
+      const projectEdit = request.method !== "project_save" && projectEdits.includes(request.method);
+      if (projectEdit) pendingProjectEdits++;
+      const pendingStart = jobs.begin(request);
+      if (pendingStart?.context.method === "recommend_xo") {
+        pendingStart.context.mimo = calibrationMimo(stores);
+        if (context?.calibrateOnFailure) pendingStart.context.calibrateOnFailure = true;
       }
-      if (epoch !== jobs.epoch) return data;
-      errors.set(null);
-      if (request.method === "calibration_settings_edit" || request.method === "calibration_settings_set") {
-        const settings = data as import("../ipc/bindings/CalibrationSettings").CalibrationSettings;
-        const includeEdit = request.method === "calibration_settings_edit" && (request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit.kind === "xo_rec_include";
-        if (includeEdit || settings.xo_rec_include !== false) host.set({ xoRecTurnedOffByEdit: false });
-        else if (edit === "xoEdit" && xoWasIncluded) host.set({ xoRecTurnedOffByEdit: true });
+      if (pendingStart?.context.background && autoRefresh) pendingStart.context.autoRefreshRevision = autoRefresh.revision;
+      if (refreshInputs.includes(request.method)) autoRefresh?.changed();
+      const xoWasIncluded = stores.settings.getSnapshot()?.xo_rec_include !== false;
+      const edit = request.method === "target_set_points" ? "targetEdit" : request.method === "calibration_settings_edit" && (request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit.kind === "xo" ? "xoEdit" : null;
+      if (edit) host.set({ [edit]: "saving" });
+      try {
+        // A monitor that cannot be stopped must not keep the next project from opening.
+        if (request.method === "project_new" || request.method === "project_open") await monitor(false).catch(() => {});
+        const data = await ipc.request(request);
+        if (pendingStart) {
+          jobs.reply(pendingStart, data as import("../ipc/bindings/JobStarted").JobStarted);
+        }
+        if (epoch !== jobs.epoch) return data;
+        errors.set(null);
+        if (request.method === "calibration_settings_edit" || request.method === "calibration_settings_set") {
+          const settings = data as import("../ipc/bindings/CalibrationSettings").CalibrationSettings;
+          const includeEdit = request.method === "calibration_settings_edit" && (request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit.kind === "xo_rec_include";
+          if (includeEdit || settings.xo_rec_include !== false) host.set({ xoRecTurnedOffByEdit: false });
+          else if (edit === "xoEdit" && xoWasIncluded) host.set({ xoRecTurnedOffByEdit: true });
+        }
+        // Undo restores saved settings; the previous manual-edit notice is no longer current.
+        if (["undo", "redo"].includes(request.method)) host.set({ xoRecTurnedOffByEdit: false });
+        const effects = effectsOf({ request: request.method });
+        const ctx: EffectContext = { host, stores, jobs, call, configure, run, canContinueRefresh, source: { request, data },
+          replaceProject: () => { jobs.replaceProject(); autoRefresh?.changed(); epoch = jobs.epoch; curveVersion++; curveState.set(null); tutorialReady.set(false); },
+        };
+        for (const rule of effects.rules) rule.beforeReload?.(ctx);
+        await reload(effects.reload);
+        if (epoch !== jobs.epoch) return data;
+        for (const rule of effects.rules) if (rule.apply) await rule.apply(ctx);
+        if (edit && epoch === jobs.epoch) host.set({ [edit]: "idle" });
+        return data;
+      } catch (error) {
+        if (epoch === jobs.epoch) {
+          if (edit) host.set({ [edit]: "failed" });
+          // The mic calibration field owns typed action failures, including its
+          // file dialog. Do not publish a second copy as a global notice.
+          const micCalAction = request.method === "mic_calibration_set" || request.method === "mic_calibration_clear" || request.method === "mic_calibration_attach"
+            || (request.method === "dialog_open_file" && (request as Extract<Request, { method: "dialog_open_file" }>).params.kind === "mic_calibration");
+          // The export screen's service block owns the host actions' typed failures the same way.
+          const hostAction = request.method === "host_install" || request.method === "host_uninstall" || request.method === "host_stop_managing";
+          // The range card shows a refused edge or extra band at its input (ADR 0024).
+          const rangeEdit = request.method === "calibration_settings_edit" && error instanceof IpcFailure
+            && rangeRejection((request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit, error.error) !== null;
+          if (!(micCalAction || hostAction || rangeEdit) || !(error instanceof IpcFailure)) report(error);
+        }
+        throw error;
+      } finally {
+        if (projectEdit) pendingProjectEdits--;
+        if (saveDialog) saveDialogs--;
+        jobs.settle(pendingStart);
       }
-      // Undo restores saved settings; the previous manual-edit notice is no longer current.
-      if (["undo", "redo"].includes(request.method)) host.set({ xoRecTurnedOffByEdit: false });
-      const effects = effectsOf({ request: request.method });
-      const ctx: EffectContext = { host, stores, jobs, call, configure, run, canContinueRefresh, source: { request, data },
-        replaceProject: () => { jobs.replaceProject(); autoRefresh?.changed(); epoch = jobs.epoch; curveVersion++; curveState.set(null); tutorialReady.set(false); },
-      };
-      for (const rule of effects.rules) rule.beforeReload?.(ctx);
-      await reload(effects.reload);
-      if (epoch !== jobs.epoch) return data;
-      for (const rule of effects.rules) if (rule.apply) await rule.apply(ctx);
-      if (edit && epoch === jobs.epoch) host.set({ [edit]: "idle" });
-      return data;
-    } catch (error) {
-      if (epoch === jobs.epoch) {
-        if (edit) host.set({ [edit]: "failed" });
-        // The mic calibration field owns typed action failures, including its
-        // file dialog. Do not publish a second copy as a global notice.
-        const micCalAction = request.method === "mic_calibration_set" || request.method === "mic_calibration_clear" || request.method === "mic_calibration_attach"
-          || (request.method === "dialog_open_file" && (request as Extract<Request, { method: "dialog_open_file" }>).params.kind === "mic_calibration");
-        // The export screen's service block owns the host actions' typed failures the same way.
-        const hostAction = request.method === "host_install" || request.method === "host_uninstall" || request.method === "host_stop_managing";
-        // The range card shows a refused edge or extra band at its input (ADR 0024).
-        const rangeEdit = request.method === "calibration_settings_edit" && error instanceof IpcFailure
-          && rangeRejection((request as Extract<Request, { method: "calibration_settings_edit" }>).params.edit, error.error) !== null;
-        if (!(micCalAction || hostAction || rangeEdit) || !(error instanceof IpcFailure)) report(error);
-      }
-      throw error;
-    } finally {
-      if (projectEdit) pendingProjectEdits--;
-      if (saveDialog) saveDialogs--;
-      jobs.settle(pendingStart);
-    }
-  });
+    });
+    return request.method !== "project_save" && projectEdits.includes(request.method) ? trackProjectEdit(work, owner) : work;
+  };
   const run = (work: () => Promise<unknown>) => { void track(work).catch(() => { /* call reports the typed cause once */ }); };
   autoRefresh = createAutoRefresh({
     enabled: () => stores.appSettings.getSnapshot()?.auto_refresh === true,
@@ -265,7 +287,7 @@ export function createSession(ipc: Ipc) {
       edit(patch) {
         const epoch = jobs.epoch;
         if (projectBundle) pendingProjectEdits++;
-        return track(async () => {
+        const work = track(async () => {
           try {
             return await ordered.edit((latest) => {
               if (projectBundle && epoch !== jobs.epoch) throw new Error("the project was replaced before this edit was sent");
@@ -273,6 +295,7 @@ export function createSession(ipc: Ipc) {
             });
           } finally { if (projectBundle) pendingProjectEdits--; }
         });
+        return projectBundle ? trackProjectEdit(work, epoch) : work;
       },
     };
   }
@@ -606,7 +629,7 @@ export function createSession(ipc: Ipc) {
     });
   }
   return { ipc, stores, host, jobs, errors, ready, tutorialReady, call, run, settled, writers, configure, startTutorial, refreshCurves, ensureSaved, monitor, start, dispose,
-    canContinueRefresh,
+    canContinueRefresh, projectEditsSettled,
     setSavePromptOpen: (open: boolean) => { savePromptOpen = open; autoRefresh?.check(); },
     hasPendingProjectEdits: () => pendingProjectEdits > 0,
     navigate: (current: StepId) => host.set({ current }) };
