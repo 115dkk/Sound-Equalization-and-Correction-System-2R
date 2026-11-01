@@ -18,6 +18,7 @@ milestone = "M6"
 status = "implemented"
 upstream = "new; ADR 0020"
 tests = ["secs2r::update_policy_and_portable_decisions", "secs2r::update_endpoint_override_preserves_nonempty_address", "secs2r::update_notice_matches_running_version_and_tracks_skipped_releases", "secs2r::update_actions_reject_wrong_phases", "secs2r::updater_config_requires_signed_version"]
+note = "The managed service refuses an update source that is a link or junction (audit #155 TD-135); apps/secs2r-host/src/rules.rs pins it with Windows-only tests, update_source_refuses_an_existing_system_junction and update_source_refuses_an_existing_directory_symlink, that the Linux registry check cannot list."
 
 [[feature]]
 id = "ipc.update_status"
@@ -1244,7 +1245,7 @@ kind = "service"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs2r-host::state_file_round_trip_missing_and_corrupt_handling", "secs2r-host::exit_logon_and_logoff_choose_supervision_actions", "secs2r-host::file_change_repairs_only_absent_or_damaged_pairs", "secs2r-host::log_rotates_once_at_the_size_cap"]
+tests = ["secs2r-host::state_file_round_trip_missing_and_corrupt_handling", "secs2r-host::exit_logon_and_logoff_choose_supervision_actions", "secs2r-host::file_change_repairs_only_absent_or_damaged_pairs", "secs2r-host::log_rotates_once_at_the_size_cap", "secs2r-host::changing_owner_discards_the_previous_users_targets", "secs2r-host::same_owner_keeps_targets_omitted_from_an_update", "secs2r-host::failed_eqapo_repair_does_not_stop_camilla_or_the_driver", "secs2r-host::logoff_only_stops_a_child_running_in_that_session", "secs2r-host::core_keeps_one_thousand_logs_and_bounds_the_serialized_response"]
 
 [[feature]]
 id = "host.shell"
@@ -1267,7 +1268,7 @@ kind = "ui"
 milestone = "M5"
 status = "partial"
 tests = []
-note = "five-stage flow, results first, three disclosure levels (docs/ARCHITECTURE.md, Screens). P29 landed the foundation: tokens, the frame with the step rail and status, the job tray, the component kit, the uPlot graphs, the SVG maps, the mock service and the gallery (docs/DESIGN.md). Its vitest tests live in apps/secs2r/ui, which this registry cannot reference (it lists cargo tests). P33 connects the P30-P32 screens through typed stores, explicit mutation/job invalidation, per-call Tauri channels, project/close dialogs and lifecycle hooks. src/state/flow.test.tsx walks a non-tutorial sample project through mock measure_position jobs, calibration and CamillaDSP export; per-screen hook tests pin action IPC params. app.live exercises the full mock app. P35 supplies the complete tutorial quests. P55 moves static setting explanations into contextual help while retaining live state, recommendations and recovery inline; labels and both locales are revised, with pointer/keyboard/touch and disabled-control coverage in the UI tests."
+note = "five-stage flow, results first, three disclosure levels (docs/ARCHITECTURE.md, Screens). P29 landed the foundation: tokens, the frame with the step rail and status, the job tray, the component kit, the uPlot graphs, the SVG maps, the mock service and the gallery (docs/DESIGN.md). Its vitest tests live in apps/secs2r/ui, which this registry cannot reference (it lists cargo tests). P33 connects the P30-P32 screens through typed stores, explicit mutation/job invalidation, per-call Tauri channels, project/close dialogs and lifecycle hooks. src/state/flow.test.tsx walks a non-tutorial sample project through mock measure_position jobs, calibration and CamillaDSP export; per-screen hook tests pin action IPC params. app.live exercises the full mock app. P35 supplies the complete tutorial quests. P55 moves static setting explanations into contextual help while retaining live state, recommendations and recovery inline; labels and both locales are revised, with pointer/keyboard/touch and disabled-control coverage in the UI tests. Audit #155 (A5 and A4, TD-118 to TD-125, TD-68) adds the project session's ordering tests: src/state/session.test.ts and projectFollowUps.test.tsx pin the edit barrier before save, the epoch that drops follow-ups after a project switch and the resource reset on replacement; writers.test.ts serializes the app and apply settings writers; screens/project/useProjectScreen.test.ts, screens/calibrate/{CalibrateScreen,useCalibrateScreen}.test.tsx and screens/export/useExportScreen.test.tsx pin the save-before-apply rule, the extra-band edit queue, the room-size draft reset and the export recalibration arguments; ipc/mock.test.ts and mockWiring.test.ts keep the mock service's job groups and MIMO checks in line with the service."
 
 [[feature]]
 id = "ui.output_rate"
@@ -2001,7 +2002,7 @@ kind = "engine"
 milestone = "M5"
 status = "implemented"
 upstream = "correction_engine.py schroeder_hz; ADR 0021 (D46)"
-tests = ["secs-engine::rc_lenient_synthetic_decay_bands_follow_room_treatment", "secs-engine::rc_lenient_uses_every_main_and_position_without_reference_weighting", "secs-engine::rc_agreement_stops_at_first_non_improving_band_and_weights_positions", "secs-engine::rc_agreement_design_runs_two_passes_and_preserves_manual_override", "secs-project::rc_upper_round_trip_and_legacy_unknown_defaults", "secs-service::rc_agreement_calibration_fails_with_typed_position_reason", "secs-service::rc_limit_notices_keep_legacy_fields_and_add_basis_evidence"]
+tests = ["secs-engine::rc_lenient_synthetic_decay_bands_follow_room_treatment", "secs-engine::rc_lenient_uses_every_main_and_position_without_reference_weighting", "secs-engine::rc_agreement_stops_at_first_non_improving_band_and_weights_positions", "secs-engine::rc_agreement_design_runs_two_passes_and_preserves_manual_override", "secs-project::rc_upper_round_trip_and_legacy_unknown_defaults", "secs-service::rc_agreement_calibration_fails_with_typed_position_reason", "secs-service::rc_limit_notices_keep_legacy_fields_and_add_basis_evidence", "secs-engine::schroeder_reserves_the_actual_ir_length_before_analysis", "secs-engine::schroeder_cancels_during_sample_processing", "secs-engine::schroeder_chunked_filter_preserves_sosfilt_bits"]
 
 [[feature]]
 id = "engine.rc_hi_transition"
@@ -2082,6 +2083,7 @@ tests = [
   "secs-engine::hf_phase_extra_band_starts_above_highest_fade",
   "secs-engine::hf_phase_unavailable_region_is_bit_identical",
   "secs-engine::hf_phase_zero_mode_is_bit_identical_without_note",
+  "secs-engine::hf_phase_error_does_not_swallow_nan_between_finite_values",
 ]
 
 [[feature]]
