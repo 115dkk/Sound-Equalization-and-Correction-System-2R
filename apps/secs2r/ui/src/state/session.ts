@@ -186,6 +186,10 @@ export function createSession(ipc: Ipc) {
     void done.then(() => projectWork.delete(done));
     return work;
   }
+  function projectGuard() {
+    const epoch = jobs.epoch;
+    return { alive: () => epoch === jobs.epoch };
+  }
   async function projectEditsSettled(): Promise<boolean> {
     const epoch = jobs.epoch;
     let succeeded = true;
@@ -400,9 +404,10 @@ export function createSession(ipc: Ipc) {
     return tutorialStart;
   }
   function ensureSaved() { return track(async () => {
+    const guard = projectGuard();
     if (stores.project.getSnapshot()?.path) return true;
     const path = await call({ method: "dialog_save_project", params: { suggested: "" } });
-    if (!path) return false;
+    if (!path || !guard.alive()) return false;
     await call({ method: "project_save", params: { path } }); return true;
   }); }
   function refreshCurves(params: ResultCurvesParams) { return track(async () => {
@@ -629,7 +634,7 @@ export function createSession(ipc: Ipc) {
     });
   }
   return { ipc, stores, host, jobs, errors, ready, tutorialReady, call, run, settled, writers, configure, startTutorial, refreshCurves, ensureSaved, monitor, start, dispose,
-    canContinueRefresh, projectEditsSettled,
+    canContinueRefresh, projectEditsSettled, projectGuard,
     setSavePromptOpen: (open: boolean) => { savePromptOpen = open; autoRefresh?.check(); },
     hasPendingProjectEdits: () => pendingProjectEdits > 0,
     navigate: (current: StepId) => host.set({ current }) };

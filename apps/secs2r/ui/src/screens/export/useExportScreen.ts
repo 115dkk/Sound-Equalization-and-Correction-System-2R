@@ -148,8 +148,9 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
       setExtraRates: (rates) => session.host.set({ extraRates: rates }),
       refreshDevices: () => void session.stores.methods.load(),
       changeFolder: () => session.run(async () => {
+        const guard = session.projectGuard();
         const selected = await session.call({ method: "dialog_pick_folder", params: { start: session.stores.folder.getSnapshot()?.folder ?? null } });
-        if (selected !== null) await session.call({ method: "export_folder_set", params: { folder: selected } });
+        if (selected !== null && guard.alive()) await session.call({ method: "export_folder_set", params: { folder: selected } });
       }),
       openFolder: (path) => session.run(() => session.call({ method: "open_folder", params: { path } })),
       goToCalibrate: () => session.navigate("calibrate"),

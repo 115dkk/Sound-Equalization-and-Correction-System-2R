@@ -90,12 +90,14 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
       },
       applyTargetPreset: (preset) => session.run(() => session.call({ method: "target_apply_preset", params: { preset } })),
       saveTarget: () => session.run(async () => {
+        const guard = session.projectGuard();
         const path = await session.call({ method: "dialog_save_file", params: { kind: "target", suggested: "타겟.json" } });
-        if (path !== null) await session.call({ method: "target_save", params: { path } });
+        if (path !== null && guard.alive()) await session.call({ method: "target_save", params: { path } });
       }),
       loadTarget: () => session.run(async () => {
+        const guard = session.projectGuard();
         const path = await session.call({ method: "dialog_open_file", params: { kind: "target" } });
-        if (path !== null) await session.call({ method: "target_load", params: { path } });
+        if (path !== null && guard.alive()) await session.call({ method: "target_load", params: { path } });
       }),
     };
   }, [session, goToMeasurements]);
