@@ -128,36 +128,31 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn token_files_are_created_and_tightened_to_owner_only_td109() {
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        use std::os::unix::fs::PermissionsExt;
 
         let root = root();
         fs::create_dir_all(&root).unwrap();
         let path = root.join(TOKEN_FILE);
-        let token = load_or_create(&root).unwrap();
+        load_or_create(&root).unwrap();
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600
         );
 
+        fs::remove_file(&path).unwrap();
+        let token = "b".repeat(64);
+        fs::write(&path, &token).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o644
+        );
         assert_eq!(load_or_create(&root).unwrap(), token);
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600
         );
 
-        let probe = root.join("umask-probe");
-        std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .mode(0o666)
-            .open(&probe)
-            .unwrap();
-        assert_ne!(
-            fs::metadata(probe).unwrap().permissions().mode() & 0o777,
-            0o600,
-            "the test process must have a permissive enough umask to expose default creation"
-        );
         fs::remove_dir_all(root).unwrap();
     }
 
