@@ -126,10 +126,11 @@ class ReviewTests(unittest.TestCase):
     def test_full_context_over_budget_falls_back_to_the_diff(self):
         # Audit #155 TD-141: a PR whose changed files are too big to send whole
         # is still reviewed from its patches and manifests, and says so.
-        big = review.base64.b64encode(b"x" * 200_000).decode()
+        size = review.MAX_INPUT_BYTES // 2 + 1  # both sides together exceed the budget
+        big = review.base64.b64encode(b"x" * size).decode()
         def request(path, data=None):
             if "/contents/file.rs" in path:
-                return {"type": "file", "encoding": "base64", "content": big, "size": 200_000}
+                return {"type": "file", "encoding": "base64", "content": big, "size": size}
             return self.request(path, data)
         review.prepare(self.event, self.directory, "policy", request)
         meta = json.loads((self.directory / "metadata.json").read_text())
