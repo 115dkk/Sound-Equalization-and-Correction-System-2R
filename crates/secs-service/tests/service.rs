@@ -3670,6 +3670,18 @@ fn recommend_xo_preserves_xo_edits_made_while_the_job_runs() {
         };
         assert_eq!(current.xo, edited.xo, "{case}");
         assert_eq!(current.xo_rec_include, edited.xo_rec_include, "{case}");
+        match case {
+            "xo" => assert_eq!(
+                current
+                    .xo
+                    .iter()
+                    .find(|(group, _)| group == "프론트")
+                    .map(|(_, hz)| *hz),
+                Some(177.0)
+            ),
+            "include" => assert!(!current.xo_rec_include),
+            _ => unreachable!(),
+        }
         assert!(!current.xo_rec.is_empty(), "{case}");
         fs::remove_dir_all(root).unwrap();
     }
