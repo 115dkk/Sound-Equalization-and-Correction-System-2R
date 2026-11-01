@@ -7,14 +7,12 @@ const MAX_REPAIR_ATTEMPTS: u8 = 3;
 const REPAIR_DELAYS: [Duration; MAX_REPAIR_ATTEMPTS as usize - 1] =
     [Duration::from_secs(1), Duration::from_secs(2)];
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionEvent {
     Logon,
     Logoff,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum Input {
     SetManaged {
@@ -31,10 +29,12 @@ pub enum Input {
     ConfigChanged {
         owner_session: Option<u32>,
     },
+    RestartTick {
+        owner_session: Option<u32>,
+    },
     RepairRetry,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum Effect {
     SaveState(HostManaged),
@@ -147,36 +147,47 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
             event,
             session_id,
             owner_matches,
-        } => match event {
-            SessionEvent::Logon if owner_matches => {
-                next.managed.owner_session_id = Some(session_id);
-                if let Some(target) = next.managed.camilla.clone()
-                    && next.running_child_session.is_none()
-                {
-                    effects.push(Effect::LaunchChild {
-                        session: session_id,
-                        target,
-                    });
+        } => {
+            effects.push(Effect::Log(HostLogLine {
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                event: match event {
+                    SessionEvent::Logon => "session_logon",
+                    SessionEvent::Logoff => "session_logoff",
                 }
-                if next.managed.eqapo.is_some() {
-                    effects.push(Effect::RepairEqapo {
-                        session: session_id,
-                    });
+                .into(),
+                fields: BTreeMap::from([("session".into(), session_id.to_string())]),
+            }));
+            match event {
+                SessionEvent::Logon if owner_matches => {
+                    next.managed.owner_session_id = Some(session_id);
+                    if let Some(target) = next.managed.camilla.clone()
+                        && next.running_child_session.is_none()
+                    {
+                        effects.push(Effect::LaunchChild {
+                            session: session_id,
+                            target,
+                        });
+                    }
+                    if next.managed.eqapo.is_some() {
+                        effects.push(Effect::RepairEqapo {
+                            session: session_id,
+                        });
+                    }
                 }
-            }
-            SessionEvent::Logon => {
-                if next.running_child_session.is_some() {
-                    effects.push(Effect::StopChild);
-                }
-                next.restart_scheduled = false;
-            }
-            SessionEvent::Logoff => {
-                if next.running_child_session == Some(session_id) {
-                    effects.push(Effect::StopChild);
+                SessionEvent::Logon => {
+                    if next.running_child_session.is_some() {
+                        effects.push(Effect::StopChild);
+                    }
                     next.restart_scheduled = false;
                 }
+                SessionEvent::Logoff => {
+                    if next.running_child_session == Some(session_id) {
+                        effects.push(Effect::StopChild);
+                        next.restart_scheduled = false;
+                    }
+                }
             }
-        },
+        }
         Input::ConfigChanged { owner_session } => {
             next.repair_attempts = 0;
             next.repair_retry_after = None;
@@ -184,6 +195,12 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
                 && let Some(session) = owner_session
             {
                 effects.push(Effect::RepairEqapo { session });
+            }
+        }
+        Input::RestartTick { owner_session } => {
+            next.restart_scheduled = false;
+            if let (Some(session), Some(target)) = (owner_session, next.managed.camilla.clone()) {
+                effects.push(Effect::LaunchChild { session, target });
             }
         }
         Input::RepairRetry => {
@@ -378,6 +395,50 @@ mod tests {
 
         assert_eq!(next.managed.camilla, Some(target));
         assert_eq!(next.managed.eqapo, Some(eqapo()));
+    }
+
+    #[test]
+    fn logoff_only_stops_a_child_running_in_that_session() {
+        let mut state = State::new(
+            HostManaged {
+                camilla: Some(camilla("camilladsp.exe")),
+                owner_session_id: Some(7),
+                owner_user_sid: Some("sid-a".into()),
+                ..HostManaged::default()
+            },
+            Some(7),
+        );
+        state.restart_scheduled = true;
+        let mut platform = FakePlatform::default();
+
+        let (next, effects) = decide(
+            &state,
+            Input::Session {
+                event: SessionEvent::Logoff,
+                session_id: 8,
+                owner_matches: false,
+            },
+        );
+        state = next;
+        drive(&mut state, effects, &mut platform).unwrap();
+
+        assert_eq!(state.running_child_session, Some(7));
+        assert!(state.restart_scheduled);
+        assert_eq!(platform.stops, 0);
+
+        let (next, effects) = decide(
+            &state,
+            Input::Session {
+                event: SessionEvent::Logoff,
+                session_id: 7,
+                owner_matches: true,
+            },
+        );
+        state = next;
+        drive(&mut state, effects, &mut platform).unwrap();
+        assert_eq!(state.running_child_session, None);
+        assert!(!state.restart_scheduled);
+        assert_eq!(platform.stops, 1);
     }
 
     #[test]

@@ -28,7 +28,8 @@ use secs_types::ipc::{
 };
 #[cfg(target_os = "windows")]
 use transitions::{
-    Input as TransitionInput, Platform as TransitionPlatform, State as TransitionState,
+    Input as TransitionInput, Platform as TransitionPlatform,
+    SessionEvent as TransitionSessionEvent, State as TransitionState,
 };
 
 #[derive(Debug, Parser)]
@@ -469,73 +470,72 @@ fn service_loop(
                     return Ok(());
                 }
                 secs_sys::host::ServiceEvent::SessionLogon(session) => {
-                    record(
+                    let owner_matches = managing_session(&core)? == Some(session);
+                    let process_action = process_rules.apply(
+                        if owner_matches {
+                            ProcessEvent::Logon
+                        } else {
+                            ProcessEvent::Logoff
+                        },
+                        Instant::now(),
+                    );
+                    if process_action == ProcessAction::Launch {
+                        transition_state.running_child_session = None;
+                    }
+                    let (next, effects) = transitions::decide(
+                        &transition_state,
+                        TransitionInput::Session {
+                            event: TransitionSessionEvent::Logon,
+                            session_id: session,
+                            owner_matches,
+                        },
+                    );
+                    transition_state = next;
+                    drive_transition(
+                        &mut transition_state,
+                        effects,
                         &mut core,
+                        &mut child,
+                        &mut process_rules,
+                        &mut watcher,
+                        &mut restart_at,
+                        &config_sender,
                         paths,
-                        rules::log_line(
-                            "session_logon",
-                            [("session".to_owned(), session.to_string())],
-                        ),
                     )?;
-                    if managing_session(&core)? == Some(session) {
-                        if process_rules.apply(ProcessEvent::Logon, Instant::now())
-                            == ProcessAction::Launch
-                        {
-                            launch(
-                                &mut core,
-                                &mut child,
-                                &mut process_rules,
-                                &mut restart_at,
-                                paths,
-                                session,
-                            )?;
-                        }
-                        let (next, effects) = transitions::decide(
-                            &transition_state,
-                            TransitionInput::ConfigChanged {
-                                owner_session: Some(session),
-                            },
-                        );
-                        transition_state = next;
-                        drive_transition(
-                            &mut transition_state,
-                            effects,
-                            &mut core,
-                            &mut child,
-                            &mut process_rules,
-                            &mut watcher,
-                            &mut restart_at,
-                            &config_sender,
-                            paths,
-                        )?;
-                    } else {
-                        if process_rules.apply(ProcessEvent::Logoff, Instant::now())
-                            == ProcessAction::Stop
-                            && let Some(running) = child.take()
-                        {
-                            running.stop()?;
-                        }
+                    if !owner_matches {
                         mark_other_user(&mut core, paths, session)?;
                     }
                 }
                 secs_sys::host::ServiceEvent::SessionLogoff(session) => {
-                    record(
-                        &mut core,
-                        paths,
-                        rules::log_line(
-                            "session_logoff",
-                            [("session".to_owned(), session.to_string())],
-                        ),
-                    )?;
-                    if process_rules.apply(ProcessEvent::Logoff, Instant::now())
-                        == ProcessAction::Stop
-                        && let Some(running) = child.take()
-                    {
-                        running.stop()?;
+                    let child_session_ended =
+                        transition_state.running_child_session == Some(session);
+                    if child_session_ended {
+                        let _ = process_rules.apply(ProcessEvent::Logoff, Instant::now());
                     }
-                    core.camilla.state = ManagedProcessState::NoSession;
-                    core.camilla.pid = None;
-                    restart_at = None;
+                    let (next, effects) = transitions::decide(
+                        &transition_state,
+                        TransitionInput::Session {
+                            event: TransitionSessionEvent::Logoff,
+                            session_id: session,
+                            owner_matches: child_session_ended,
+                        },
+                    );
+                    transition_state = next;
+                    drive_transition(
+                        &mut transition_state,
+                        effects,
+                        &mut core,
+                        &mut child,
+                        &mut process_rules,
+                        &mut watcher,
+                        &mut restart_at,
+                        &config_sender,
+                        paths,
+                    )?;
+                    if child_session_ended {
+                        core.camilla.state = ManagedProcessState::NoSession;
+                        core.camilla.pid = None;
+                    }
                 }
             }
         }
@@ -588,6 +588,7 @@ fn service_loop(
         {
             let pid = core.camilla.pid.take();
             child = None;
+            transition_state.running_child_session = None;
             record(
                 &mut core,
                 paths,
@@ -606,6 +607,7 @@ fn service_loop(
                 ProcessAction::RestartAfter(delay) => {
                     let deadline = Instant::now() + delay;
                     restart_at = Some(deadline);
+                    transition_state.restart_scheduled = true;
                     core.camilla.restarts_in_window += 1;
                     core.camilla.state = ManagedProcessState::BackingOff {
                         until: (chrono::Utc::now()
@@ -622,6 +624,7 @@ fn service_loop(
                     )?;
                 }
                 ProcessAction::GiveUp => {
+                    transition_state.restart_scheduled = false;
                     let reason = "five exits within five minutes";
                     core.camilla.state = ManagedProcessState::GivenUp {
                         reason: reason.into(),
@@ -634,16 +637,23 @@ fn service_loop(
 
         if restart_at.is_some_and(|deadline| Instant::now() >= deadline) {
             restart_at = None;
-            if let Some(session) = managing_session(&core)? {
-                launch(
-                    &mut core,
-                    &mut child,
-                    &mut process_rules,
-                    &mut restart_at,
-                    paths,
-                    session,
-                )?;
-            }
+            let owner_session = managing_session(&core)?;
+            let (next, effects) = transitions::decide(
+                &transition_state,
+                TransitionInput::RestartTick { owner_session },
+            );
+            transition_state = next;
+            drive_transition(
+                &mut transition_state,
+                effects,
+                &mut core,
+                &mut child,
+                &mut process_rules,
+                &mut watcher,
+                &mut restart_at,
+                &config_sender,
+                paths,
+            )?;
         }
 
         let served = secs_sys::host::pipe_server(
