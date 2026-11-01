@@ -115,6 +115,43 @@ describe("mock mic calibration", () => {
   });
 });
 
+describe("standalone mock MIMO preconditions", () => {
+  it.each(["disabled", "too few positions", "missing calibration", "cached calibration", "stale calibration", "mismatched settings"] as const)("refuses %s before starting MIMO", async (condition) => {
+    const mock = createMockService({ tickMs: 0, project: { ...projectInfo, positions: condition === "too few positions" ? [1, 2] : [1, 2, 3] } });
+    const events: JobEvent[] = [];
+    mock.events.subscribe((event) => events.push(event));
+    try {
+      if (condition !== "disabled") await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+      if (condition !== "missing calibration") {
+        await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
+      }
+      if (condition === "cached calibration") {
+        await mock.request({ method: "project_save", params: { path: "/cached.secs" } });
+        await mock.request({ method: "project_open", params: { path: "/cached.secs" } });
+      }
+      if (condition === "stale calibration") await mock.request({ method: "target_apply_preset", params: { preset: "flat" } });
+      const settings = await mock.request({ method: "calibration_settings_get" });
+      events.length = 0;
+      await expect(mock.request({ method: "mimo", params: { settings: condition === "mismatched settings" ? { ...settings, boost_max_db: 4 } : null } })).rejects.toMatchObject({ error: { code: condition === "stale calibration" || condition === "mismatched settings" ? "stale_inputs" : "engine_input" } });
+      expect(events).toEqual([]);
+      expect(await mock.request({ method: "jobs" })).toEqual([]);
+      expect(await mock.request({ method: "calibration_settings_get" })).toEqual(settings);
+    } finally { mock.dispose(); }
+  });
+
+  it("accepts MIMO-only overrides without changing stored calibration settings", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+      await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
+      const settings = await mock.request({ method: "calibration_settings_get" });
+      await mock.request({ method: "mimo", params: { settings: { ...settings, fsiso: 100 } } }); mock.drain();
+      expect((await mock.request({ method: "results" })).mimo?.fsiso).toBe(100);
+      expect(await mock.request({ method: "calibration_settings_get" })).toEqual(settings);
+    } finally { mock.dispose(); }
+  });
+});
+
 describe("mock MIMO export decisions", () => {
   it.each([
     ["off", false, 2, false, true, 0],
@@ -582,6 +619,7 @@ describe("mock service", () => {
       const calibration = (await mock.request({ method: "results" })).calibration!;
       expect(calibration).not.toHaveProperty("chain");
       expect(calibration.main_roles).toEqual(calibration.scorecard.map((score) => score.role));
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
       await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_fir", on: true } } });
       await mock.request({ method: "mimo", params: { settings: null } }); mock.drain();
       expect(events.at(-1)).toMatchObject({ result: { kind: "mimo" } });
@@ -598,10 +636,12 @@ describe("mock service", () => {
     try {
       const settings = await mock.request({ method: "app_settings_get" });
       await mock.request({ method: "app_settings_set", params: { settings: { ...settings, compute: "gpu" } } });
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
       await mock.request({ method: "mimo", params: { settings: null } }); mock.drain();
       expect((await mock.request({ method: "results" })).mimo?.compute).toMatchObject({
         requested: "gpu", backend: "cpu", stage: null, reason: "iir_reference", accelerated_systems: 0,
       });
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
       await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_fir", on: true } } });
       await mock.request({ method: "mimo", params: { settings: null } }); mock.drain();
       expect((await mock.request({ method: "results" })).mimo?.compute).toMatchObject({

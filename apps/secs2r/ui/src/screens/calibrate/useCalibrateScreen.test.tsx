@@ -131,6 +131,9 @@ describe("useCalibrateScreen", () => {
     await perform(() => result.current.actions.changeCompute("cpu"));
     expect(result.current.view?.compute).toMatchObject({ preference: "auto", saving: false });
     expect(session.errors.getSnapshot()?.error.code).toBe("project_io");
+    await perform(() => result.current.actions.changeSetting({ kind: "mimo_on", on: true }));
+    await perform(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } }));
+    await perform(mock.drain);
     await perform(result.current.actions.computeMimo);
     mock.calls.length = 0;
     await perform(() => result.current.actions.changeCompute("cpu"));
@@ -189,6 +192,7 @@ describe("useCalibrateScreen", () => {
     expect(result.current.view?.running).toBe("recommend_xo");
     await perform(mock.drain);
     await perform(mock.drain);
+    await perform(() => a.changeSetting({ kind: "mimo_on", on: true }));
     mock.failJobs("mimo", "internal");
     await perform(a.computeMimo);
     expect(mock.calls).toContainEqual({ method: "mimo", params: { settings: null } });
