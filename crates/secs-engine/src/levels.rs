@@ -97,6 +97,43 @@ pub fn band_level(
     )
 }
 
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Schroeder {
+    pub strict: Option<f64>,
+    pub lenient: Option<(f64, f64, f64)>,
+}
+
+impl Schroeder {
+    pub(crate) fn analyze(
+        set: &MeasurementSet,
+        config: &EngineConfig,
+        ctx: &secs_compute::Context,
+    ) -> Result<Self, crate::EngineError> {
+        if config.rc_range.1.is_some() || config.room_volume_m3.is_none_or(|v| v == 0.0) {
+            return Ok(Self::default());
+        }
+        let lenient = config.rc_hi_basis == secs_types::calibration::RcHiBasis::Lenient;
+        let longest = set
+            .positions
+            .iter()
+            .filter(|(position, _)| lenient || *position == config.main_position)
+            .flat_map(|(_, roles)| roles)
+            .filter(|(role, _)| config.mains.contains(role))
+            .map(|(_, m)| m.samples.len())
+            .max()
+            .unwrap_or(0);
+        // Sequential analysis: input, filtered samples, reverse energy and dB.
+        // This permit ends before design/XO reserve their own working arrays.
+        let _permit = crate::memory::reserve(ctx, (longest as u64).saturating_mul(4 * 8), 0)?;
+        Ok(Self {
+            strict: schroeder_hz(set, config),
+            lenient: (config.rc_hi_basis == secs_types::calibration::RcHiBasis::Lenient)
+                .then(|| lenient_schroeder_hz(set, config))
+                .flatten(),
+        })
+    }
+}
+
 pub fn schroeder_hz(set: &MeasurementSet, config: &EngineConfig) -> Option<f64> {
     let volume = config.room_volume_m3?;
     if volume == 0.0 {

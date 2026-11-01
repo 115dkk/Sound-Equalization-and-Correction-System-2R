@@ -66,6 +66,43 @@ fn room(low: f64, high: f64, count: u32) -> MeasurementSet {
 }
 
 #[test]
+fn schroeder_reserves_the_actual_ir_length_before_analysis() {
+    use secs_compute::{CancelToken, MemoryBudget, NoProgress};
+    let ctx = Context::new(
+        1,
+        MemoryBudget::new(131_072),
+        Arc::new(NoProgress),
+        CancelToken::new(),
+    );
+    for basis in [RcHiBasis::Strict, RcHiBasis::Lenient] {
+        let mut set = room(0.8, 0.12, 2);
+        let mut config = config(&set);
+        config.rc_hi_basis = basis;
+        let result = levels::Schroeder::analyze(&set, &config, &ctx);
+        assert!(
+            matches!(result, Err(EngineError::Input(ref message)) if message.contains("3072000") && message.contains("131072")),
+            "{basis:?}: long IR must exceed the analysis budget, got {:?}",
+            result.err()
+        );
+        for (_, roles) in &mut set.positions {
+            for (_, m) in roles {
+                m.samples = Samples::F64(
+                    (0..4096)
+                        .map(|i| m.samples.at(i))
+                        .collect::<Vec<_>>()
+                        .into(),
+                );
+            }
+        }
+        let result = levels::Schroeder::analyze(&set, &config, &ctx).unwrap();
+        assert!(
+            result.strict.is_some(),
+            "short IR must complete the analysis"
+        );
+    }
+}
+
+#[test]
 fn rc_lenient_synthetic_decay_bands_follow_room_treatment() {
     for (low, high, expected_band, increases) in [
         (0.64, 0.64, 200.0, false),
