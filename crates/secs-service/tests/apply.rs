@@ -1171,7 +1171,15 @@ fn rejected_camilla_generation_keeps_previous_bytes_and_restores_its_path() {
     assert!(requests[4].contains(&first_config.to_string_lossy().replace('\\', "\\\\")));
     assert_eq!(fs::read(&first_config).unwrap(), first_bytes);
     assert!(first_folder.is_dir());
-    assert_eq!(fs::read_dir(&applied).unwrap().count(), 1);
+    let rolled_back_folder = PathBuf::from(&rolled_back.folder);
+    assert!(rolled_back_folder.is_dir());
+    assert_eq!(
+        fs::read_to_string(applied.join("secs-retained-generations.txt")).unwrap(),
+        format!(
+            "{}\n",
+            rolled_back_folder.file_name().unwrap().to_string_lossy()
+        )
+    );
 
     let (address, server) = ws_server(vec![
         reply("ValidateConfig", serde_json::json!("validated")),
@@ -1199,7 +1207,9 @@ fn rejected_camilla_generation_keeps_previous_bytes_and_restores_its_path() {
     server.join().unwrap();
     assert_ne!(second.folder, first.folder);
     assert!(first_folder.exists());
+    assert!(rolled_back_folder.exists());
     assert!(Path::new(&second.folder).is_dir());
+    assert!(!applied.join("secs-retained-generations.txt").exists());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1288,6 +1298,81 @@ fn failed_camilla_rollback_keeps_both_possible_active_generations() {
             .iter()
             .all(|generation| generation.join("secs-design.json").is_file())
     );
+    let failed_folder = generations
+        .iter()
+        .find(|generation| *generation != &first_folder)
+        .unwrap()
+        .clone();
+    let mut retained_names = [
+        first_folder
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+        failed_folder
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned(),
+    ];
+    retained_names.sort();
+    assert_eq!(
+        fs::read_to_string(applied.join("secs-retained-generations.txt")).unwrap(),
+        format!("{}\n", retained_names.join("\n"))
+    );
+    let main_config = |folder: &Path| {
+        fs::read_dir(folder.join("configs"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.extension().and_then(|value| value.to_str()) == Some("yml")
+                    && !path
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .ends_with("_bypass.yml")
+            })
+            .unwrap()
+    };
+    let apply_success = |previous: &Path| {
+        let (address, server) = ws_server(vec![
+            reply("ValidateConfig", serde_json::json!("validated")),
+            reply(
+                "GetConfigFilePath",
+                serde_json::json!(previous.to_string_lossy()),
+            ),
+            reply_ok("SetConfigFilePath"),
+            reply_ok("Reload"),
+        ]);
+        set_apply(
+            &service,
+            CamillaApply {
+                level: ApplyLevel::Apply,
+                address,
+                exe_path: None,
+            },
+            EqApoApply::default(),
+        );
+        let events = Arc::new(Events::default());
+        let job = apply_camilla(&service, events.clone());
+        let JobResult::Apply(result) = succeeded(events.wait(job.job)) else {
+            panic!("apply result is absent")
+        };
+        server.join().unwrap();
+        result
+    };
+
+    let third = apply_success(&main_config(&failed_folder));
+    assert!(first_folder.exists());
+    assert!(failed_folder.exists());
+    assert!(Path::new(&third.folder).exists());
+    assert!(!applied.join("secs-retained-generations.txt").exists());
+
+    let fourth = apply_success(&main_config(Path::new(&third.folder)));
+    assert!(!first_folder.exists());
+    assert!(!failed_folder.exists());
+    assert!(Path::new(&third.folder).exists());
+    assert!(Path::new(&fourth.folder).exists());
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1721,13 +1806,38 @@ fn failed_eqapo_include_repair_keeps_every_generation_the_entry_has_referenced()
         .filter(|path| path.is_dir())
         .collect();
     generations.sort();
+    let failed = applied.join(format!("{}-2", &first.design_id[..16]));
+    assert_eq!(generations, [previous.clone(), failed.clone()]);
+    let mut retained_names = [
+        previous.file_name().unwrap().to_string_lossy().into_owned(),
+        failed.file_name().unwrap().to_string_lossy().into_owned(),
+    ];
+    retained_names.sort();
     assert_eq!(
-        generations,
-        [
-            previous,
-            applied.join(format!("{}-2", &first.design_id[..16])),
-        ]
+        fs::read_to_string(applied.join("secs-retained-generations.txt")).unwrap(),
+        format!("{}\n", retained_names.join("\n"))
     );
+
+    fail.store(false, Ordering::SeqCst);
+    let events = Arc::new(Events::default());
+    let third_job = started(&service, Request::ApplyEqapo, events.clone());
+    let JobResult::Apply(third) = succeeded(events.wait(third_job.job)) else {
+        panic!("apply result is absent")
+    };
+    assert!(previous.exists());
+    assert!(failed.exists());
+    assert!(Path::new(&third.folder).exists());
+    assert!(!applied.join("secs-retained-generations.txt").exists());
+
+    let events = Arc::new(Events::default());
+    let fourth_job = started(&service, Request::ApplyEqapo, events.clone());
+    let JobResult::Apply(fourth) = succeeded(events.wait(fourth_job.job)) else {
+        panic!("apply result is absent")
+    };
+    assert!(!previous.exists());
+    assert!(!failed.exists());
+    assert!(Path::new(&third.folder).exists());
+    assert!(Path::new(&fourth.folder).exists());
     fs::remove_dir_all(root).unwrap();
 }
 

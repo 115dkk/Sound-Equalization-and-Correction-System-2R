@@ -11,6 +11,7 @@ const TIMEOUT: Duration = Duration::from_secs(2);
 const EQAPO_FOLDER: &str = "SECS2R";
 const EQAPO_BACKUP: &str = "config.txt.secs2r-backup";
 const CAMILLA_CURRENT: &str = "camilladsp-current.txt";
+const RETAINED_GENERATIONS: &str = "secs-retained-generations.txt";
 
 impl Service {
     pub(crate) fn apply_status(&self) -> ApplyStatus {
@@ -140,6 +141,7 @@ impl Service {
                 let generation =
                     crate::deploy::install(&final_for_job, design_folder(&design_id), &stage)?;
                 let config = generation.dir.join(relative);
+                let marker_before = marker_generation(&final_for_job, &current_marker);
                 let (outcome, reported_previous) =
                     match apply.camilla_apply_report(&address, &config, &text, TIMEOUT) {
                         Ok(result) => result,
@@ -153,13 +155,22 @@ impl Service {
                             (ApplyOutcome::HandedOver, None)
                         }
                         Err(error) => {
+                            let mut retained = vec![generation.name.as_str()];
+                            if let Some(previous) = marker_before.as_deref() {
+                                retained.push(previous);
+                            }
+                            remember_retained(&final_for_job, &retained);
                             mark_generation_uncertain(&current_marker, &generation.name);
                             return Err(error);
                         }
                     };
+                let reported_generation = reported_previous
+                    .as_deref()
+                    .and_then(|path| applied_generation(&final_for_job, Path::new(path)));
                 if matches!(&outcome, ApplyOutcome::RolledBack { .. }) {
-                    fs::remove_dir_all(&generation.dir)
-                        .map_err(|error| io_error(&generation.dir, error))?;
+                    // Reload may have opened this generation before the old path was
+                    // restored. Keep it through the next successful apply.
+                    remember_retained(&final_for_job, &[generation.name.as_str()]);
                 } else {
                     if let Err(error) =
                         apply
@@ -190,19 +201,20 @@ impl Service {
                             }))
                             .and_then(expect_host_ok)
                     {
+                        let mut retained = Vec::new();
+                        if let Some(previous) = reported_generation.as_deref() {
+                            retained.push(previous);
+                        }
+                        remember_retained(&final_for_job, &retained);
                         return Err(error);
                     }
                     // The marker is diagnostic only. Retirement follows the path
                     // CamillaDSP reported during this apply (audit #155 TD-108).
-                    if let Some(previous) = reported_previous
-                        .as_deref()
-                        .and_then(|path| applied_generation(&final_for_job, Path::new(path)))
-                    {
-                        prune_best_effort(
-                            &final_for_job,
-                            &[generation.name.as_str(), previous.as_str()],
-                        );
+                    let mut keep = vec![generation.name.as_str()];
+                    if let Some(previous) = reported_generation.as_deref() {
+                        keep.push(previous);
                     }
+                    retire_after_success(&final_for_job, &keep, reported_generation.is_some());
                 }
                 Ok(JobResult::Apply(ApplyResult {
                     outcome,
@@ -276,6 +288,11 @@ impl Service {
                             Err(remove) => Err(io_error(&entry, remove)),
                         },
                     };
+                    let mut retained = vec![generation.name.as_str()];
+                    if let Some(previous) = previous_generation.as_deref() {
+                        retained.push(previous);
+                    }
+                    remember_retained(&final_for_job, &retained);
                     if let Err(rollback) = restore {
                         return Err(IpcError::new(
                             ErrorCode::ApplyFailed,
@@ -290,12 +307,11 @@ impl Service {
                     // (audit #155 TD-105).
                     return Err(error);
                 }
+                let mut keep = vec!["SECS.txt", generation.name.as_str()];
                 if let Some(previous) = previous_generation.as_deref() {
-                    prune_best_effort(
-                        &final_for_job,
-                        &["SECS.txt", generation.name.as_str(), previous],
-                    );
+                    keep.push(previous);
                 }
+                retire_after_success(&final_for_job, &keep, previous_generation.is_some());
                 if managed {
                     expect_host_ok(managed_host.call(&HostRequest::SetManaged(HostManaged {
                         camilla: None,
@@ -550,9 +566,120 @@ fn mark_generation_uncertain(path: &Path, generation: &str) {
     }
 }
 
-fn prune_best_effort(root: &Path, keep: &[&str]) {
-    if let Err(error) = crate::deploy::prune(root, keep) {
+fn marker_generation(root: &Path, marker: &Path) -> Option<String> {
+    let value = fs::read_to_string(marker).ok()?;
+    let name = value.trim().strip_prefix('?').unwrap_or(value.trim());
+    if !valid_generation_name(name) {
+        return None;
+    }
+    let folder = root.join(name);
+    let metadata = fs::symlink_metadata(&folder).ok()?;
+    let manifest = fs::symlink_metadata(folder.join("secs-design.json")).ok()?;
+    (!metadata.file_type().is_symlink()
+        && metadata.is_dir()
+        && !manifest.file_type().is_symlink()
+        && manifest.is_file())
+    .then(|| name.to_owned())
+}
+
+fn valid_generation_name(name: &str) -> bool {
+    let mut components = Path::new(name).components();
+    matches!(components.next(), Some(std::path::Component::Normal(_)))
+        && components.next().is_none()
+}
+
+fn read_retained(root: &Path) -> Result<Vec<String>, IpcError> {
+    let path = root.join(RETAINED_GENERATIONS);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(io_error(&path, error)),
+    };
+    let text = std::str::from_utf8(&bytes).map_err(|error| io_error(&path, error))?;
+    let mut names = Vec::new();
+    for name in text.lines() {
+        if name.is_empty() || !valid_generation_name(name) {
+            return Err(IpcError::new(
+                ErrorCode::ApplyFailed,
+                "retained generation record contains an invalid folder name",
+            )
+            .with_param("path", path.to_string_lossy()));
+        }
+        names.push(name.to_owned());
+    }
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+fn remember_retained(root: &Path, names: &[&str]) {
+    if names.is_empty() {
+        return;
+    }
+    let mut retained = match read_retained(root) {
+        Ok(retained) => retained,
+        Err(error) => {
+            eprintln!(
+                "could not read retained applied generations; keeping the existing record: {}",
+                error.detail
+            );
+            return;
+        }
+    };
+    retained.extend(
+        names
+            .iter()
+            .filter(|name| valid_generation_name(name))
+            .map(|name| (*name).to_owned()),
+    );
+    retained.sort();
+    retained.dedup();
+    let mut bytes = retained.join("\n").into_bytes();
+    bytes.push(b'\n');
+    let path = root.join(RETAINED_GENERATIONS);
+    if let Err(error) = crate::deploy::write_entry(&path, &bytes) {
+        eprintln!(
+            "could not record retained applied generations: {}",
+            error.detail
+        );
+    }
+}
+
+fn retire_after_success(root: &Path, keep: &[&str], has_previous: bool) {
+    let retained = match read_retained(root) {
+        Ok(retained) => retained,
+        Err(error) => {
+            eprintln!(
+                "could not read retained applied generations; skipping retirement: {}",
+                error.detail
+            );
+            return;
+        }
+    };
+    if !has_previous && retained.is_empty() {
+        return;
+    }
+    let mut keep = keep
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect::<Vec<_>>();
+    keep.extend(retained);
+    keep.push(RETAINED_GENERATIONS.to_owned());
+    keep.sort();
+    keep.dedup();
+    let keep_refs = keep.iter().map(String::as_str).collect::<Vec<_>>();
+    if let Err(error) = crate::deploy::prune(root, &keep_refs) {
         eprintln!("could not retire old applied generations: {}", error.detail);
+        return;
+    }
+    let path = root.join(RETAINED_GENERATIONS);
+    match fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => eprintln!(
+            "could not clear retained applied generations: {}",
+            io_error(&path, error).detail
+        ),
     }
 }
 
