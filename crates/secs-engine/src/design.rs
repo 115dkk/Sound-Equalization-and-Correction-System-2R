@@ -206,6 +206,19 @@ pub(crate) fn check_taps(config: &EngineConfig) -> Result<(), EngineError> {
     Ok(())
 }
 
+/// The input cut's frequency stays inside the settings limits even when a
+/// caller builds the config without the settings edit (ADR 0031): 0 would
+/// make every export response non-finite.
+pub(crate) fn check_input_hp(config: &EngineConfig) -> Result<(), EngineError> {
+    let (lo, hi) = secs_types::rules::CALIBRATION_LIMITS.input_hp;
+    match config.input_hp_hz {
+        Some(hz) if !(hz.is_finite() && (lo..=hi).contains(&hz)) => Err(EngineError::Input(
+            format!("input high-pass {hz} Hz outside {lo}..={hi} Hz"),
+        )),
+        _ => Ok(()),
+    }
+}
+
 /// Full-grid arrays one `rc::channel` keeps alive at once, in spectra (16
 /// bytes per bin). `prepare_correction` holds `p`, `m`, `u`, `reference`, `mp`
 /// and the minimum-phase buffers (`logm`, `cep`, FFT output) beside the f64
@@ -331,6 +344,7 @@ pub(crate) fn design_observed(
 ) -> Result<Design, EngineError> {
     check(ctx)?;
     check_taps(req.config)?;
+    check_input_hp(req.config)?;
     let prep_started = std::time::Instant::now();
     let config = req.config;
     let setup = Setup::new(config);
@@ -514,6 +528,7 @@ fn design_pass(
 ) -> Result<(Design, Vec<f64>), EngineError> {
     check(ctx)?;
     check_taps(req.config)?;
+    check_input_hp(req.config)?;
     let config = req.config;
     let mut setup = Setup::new(config);
     if matches!(pass, RcPass::Probe) {
