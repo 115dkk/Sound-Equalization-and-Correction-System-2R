@@ -545,6 +545,123 @@ fn copy_tree_contents(source: &Path, destination: &Path) -> Result<(), std::io::
     Ok(())
 }
 
+#[derive(Debug)]
+pub(crate) struct OriginalSnapshot {
+    path: PathBuf,
+    project: Project,
+}
+
+pub(crate) struct LoadedOriginals<'a> {
+    pub values: Vec<secs_export::Original>,
+    _permits: Vec<secs_compute::MemoryPermit<'a>>,
+}
+
+pub(crate) fn original_snapshot(open: &OpenProject) -> OriginalSnapshot {
+    OriginalSnapshot {
+        path: open.path.clone(),
+        project: open.store.project().clone(),
+    }
+}
+
+impl OriginalSnapshot {
+    pub(crate) fn load<'a>(
+        self,
+        job: &JobContext,
+        budget: &'a secs_compute::MemoryBudget,
+    ) -> Result<LoadedOriginals<'a>, IpcError> {
+        let mut store = MeasurementStore::new(&self.path, self.project);
+        let mut records = store.records();
+        records.sort_by_key(|record| record.pos);
+        let project = store.project().clone();
+        let plan_roles = plan_from_project(&project, std::iter::empty()).roles;
+        let sources = load_project_sources(&project, &self.path);
+        let total = records
+            .iter()
+            .map(|record| record.ir.values().filter(|path| !path.is_empty()).count())
+            .sum::<usize>();
+        let mut originals = Vec::with_capacity(total);
+        let mut permits = Vec::with_capacity(total);
+        for record in records {
+            let position = u32::try_from(record.pos).map_err(|_| {
+                IpcError::new(
+                    ErrorCode::ProjectIo,
+                    format!("invalid measurement position {}", record.pos),
+                )
+            })?;
+            let mut roles = record.ir.keys().cloned().collect::<Vec<_>>();
+            roles.sort_by_key(|role| {
+                plan_roles
+                    .iter()
+                    .position(|planned| planned == role)
+                    .unwrap_or(plan_roles.len())
+            });
+            for role in roles {
+                job.report_progress("read_measurements", originals.len() as u64, total as u64);
+                job.cancel()
+                    .check()
+                    .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
+                let raw = record.ir.get(&role).cloned().unwrap_or_default();
+                if raw.is_empty() {
+                    continue;
+                }
+                let wav = PathBuf::from(raw);
+                let wav = if wav.is_absolute() {
+                    wav
+                } else {
+                    self.path
+                        .parent()
+                        .unwrap_or_else(|| Path::new("."))
+                        .join(wav)
+                };
+                let bytes = fs::metadata(&wav)
+                    .map_err(ServiceError::from)
+                    .map_err(IpcError::from)?
+                    .len()
+                    .saturating_mul(12);
+                let permit = budget
+                    .acquire(bytes, job.cancel())
+                    .map_err(|error| match error {
+                        secs_compute::MemoryError::Cancelled => {
+                            IpcError::new(ErrorCode::Cancelled, "cancelled")
+                        }
+                        secs_compute::MemoryError::TooLarge { .. } => {
+                            IpcError::new(ErrorCode::EngineInput, error.to_string())
+                                .with_param("reason", "memory_budget")
+                        }
+                    })?;
+                let (samples, sample_rate) = store
+                    .ir_of(&role, record.pos)
+                    .map_err(ServiceError::from)
+                    .map_err(IpcError::from)?;
+                let source_info = sources
+                    .get(&position)
+                    .and_then(|by_role| by_role.get(&role))
+                    .cloned();
+                originals.push(secs_export::Original {
+                    position,
+                    role: role.clone(),
+                    item: secs_mdat::MeasurementInput {
+                        title: format!("{role}_P{}", record.pos),
+                        notes: format!("SECS · 위치 {} · 원 측정", record.pos),
+                        sample_rate_hz: sample_rate,
+                        samples: samples.into_iter().map(f64::from).collect(),
+                        start_time_s: record.t0.get(&role).copied().unwrap_or(0.0),
+                        spl_offset_db: record.spl_offset.get(&role).copied(),
+                        source_info,
+                        computed: false,
+                    },
+                });
+                permits.push(permit);
+            }
+        }
+        job.report_progress("read_measurements", total as u64, total as u64);
+        Ok(LoadedOriginals {
+            values: originals,
+            _permits: permits,
+        })
+    }
+}
+
 pub(crate) fn original_measurements(
     open: &mut OpenProject,
 ) -> Result<Vec<secs_export::Original>, ServiceError> {

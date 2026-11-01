@@ -3770,6 +3770,53 @@ fn reopened_stale_cache_blocks_mdat_but_allows_camilla() {
 }
 
 #[test]
+fn measurement_mdat_reads_outside_session_lock_and_cancels_during_read() {
+    let root = temp_root("measurement-export-read");
+    fs::create_dir_all(&root).unwrap();
+    let (source, _) = write_case(&root, "dolby");
+    let service = service();
+    open(&service, &source);
+    let folder = root.join("measurement-export");
+    let events = Arc::new(PausedProgress::default());
+    let Response::Export(started) = call_ok(
+        &service,
+        Request::Export(ExportParams {
+            kind: ExportKind::BeforeAfterMdat,
+            folder: folder.to_string_lossy().into_owned(),
+            mdat_scope: Some(MdatScope::Measurements),
+            design_name: None,
+            camilla_devices: None,
+            extra_rates: Vec::new(),
+        }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    events.wait_until_paused();
+    let Response::ProjectInfo(info) = call_ok(&service, Request::ProjectInfo, Arc::new(NoEvents))
+    else {
+        panic!()
+    };
+    assert_eq!(info.path, source.to_string_lossy());
+    call_ok(
+        &service,
+        Request::JobCancel(JobCancelParams { job: started.job }),
+        Arc::new(NoEvents),
+    );
+    events.release();
+    let finished = events.events.wait(started.job, Duration::from_secs(120));
+    assert!(matches!(
+        finished,
+        JobEvent::Finished {
+            status: JobStatus::Cancelled,
+            ..
+        }
+    ));
+    assert!(!folder.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn cached_mdat_export_rejects_project_replacement_before_writing() {
     let root = temp_root("replace-cached-export");
     fs::create_dir_all(&root).unwrap();

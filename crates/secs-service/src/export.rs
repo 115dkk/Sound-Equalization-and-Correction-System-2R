@@ -199,17 +199,23 @@ impl Service {
         };
         let mut params = params;
         params.extra_rates = extra_rates_for(&params.extra_rates, output_rate, output_rate_auto)?;
+        let memory = self.deps.memory.available_bytes();
         if params.kind == ExportKind::BeforeAfterMdat
             && mdat_scope == secs_export::MdatScope::Measurements
         {
-            let originals = session::original_measurements(open).map_err(IpcError::from)?;
-            if originals.is_empty() {
+            if open
+                .store
+                .records()
+                .iter()
+                .all(|record| record.ir.values().all(String::is_empty))
+            {
                 return Err(IpcError::new(
                     ErrorCode::EngineInput,
                     "there are no measurements to export",
                 )
                 .with_param("reason", "no_measurements"));
             }
+            let originals = session::original_snapshot(open);
             let uuid = self.deps.uuid.clone();
             let now_ms = (self.deps.unix_ms)();
             let export_session = self.session.clone();
@@ -222,16 +228,22 @@ impl Service {
                 Path::new(&params.folder).to_path_buf()
             };
             return self.jobs.start(JobKind::Export, events, move |job| {
-                job.cancel()
-                    .check()
-                    .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
+                let ctx = super::calibration::compute_context(&job, memory, false);
+                let originals = originals.load(&job, ctx.budget())?;
+                if originals.values.is_empty() {
+                    return Err(IpcError::new(
+                        ErrorCode::EngineInput,
+                        "there are no measurements to export",
+                    )
+                    .with_param("reason", "no_measurements"));
+                }
                 job.begin_commit()?;
                 let folder = destination.as_path();
                 let mut uuid = lock(&uuid);
                 let destination = secs_export::export_rew_mdat_using(
                     None,
                     mdat_scope,
-                    &originals,
+                    &originals.values,
                     folder,
                     None,
                     None,
@@ -278,13 +290,9 @@ impl Service {
             }
             calibration.is_some_and(crate::results::RunView::stale)
         };
-        let originals = if params.kind == ExportKind::BeforeAfterMdat
-            && mdat_scope == secs_export::MdatScope::All
-        {
-            session::original_measurements(open).map_err(IpcError::from)?
-        } else {
-            Vec::new()
-        };
+        let originals = (params.kind == ExportKind::BeforeAfterMdat
+            && mdat_scope == secs_export::MdatScope::All)
+            .then(|| session::original_snapshot(open));
         let project = open.store.project();
         let project_name =
             (!project.name.trim().is_empty()).then(|| project.name.trim().to_owned());
@@ -335,7 +343,6 @@ impl Service {
         let session_for_design = self.session.clone();
         let completion_clock = self.deps.clock.clone();
         let completion_offset = self.deps.clock_offset_seconds.clone();
-        let memory = self.deps.memory.available_bytes();
         let mode_name = description.mode();
         let mut mimo = live_mimo.filter(|_| mdat).map(|result| {
             description.mimo_responses(result.run.paths.clone(), result.run.applied.clone())
@@ -476,6 +483,13 @@ impl Service {
             job.cancel()
                 .check()
                 .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
+            let ctx = super::calibration::compute_context(&job, memory, false);
+            let originals = originals
+                .map(|snapshot| snapshot.load(&job, ctx.budget()))
+                .transpose()?;
+            let original_values = originals
+                .as_ref()
+                .map_or(&[][..], |loaded| loaded.values.as_slice());
             let folder = destination.as_path();
             let mut paths = match params.kind {
                 ExportKind::CamillaDsp => {
@@ -575,7 +589,6 @@ impl Service {
                                     super::calibration::load_measurements(&mut open.store)?;
                                 Ok(((project, settings, measurements), false))
                             })?;
-                        let ctx = super::calibration::compute_context(&job, memory, false);
                         let groups = super::calibration::project_groups(&project);
                         let view = secs_engine::ProjectView {
                             groups: &groups,
@@ -627,7 +640,7 @@ impl Service {
                         secs_export::export_rew_mdat_using(
                             Some(&run),
                             mdat_scope,
-                            &originals,
+                            original_values,
                             folder,
                             mimo.as_ref(),
                             Some(&sources),
