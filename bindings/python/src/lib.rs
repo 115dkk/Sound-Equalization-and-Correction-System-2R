@@ -1,14 +1,16 @@
 #![forbid(unsafe_code)]
 
 use std::path::PathBuf;
-use std::sync::{Mutex, mpsc};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use pyo3::create_exception;
 use pyo3::exceptions::{PyException, PyValueError};
 use pyo3::prelude::*;
-use secs::types::ipc::{Envelope, JobEvent, JobId};
-use secs::{Client as RustClient, Engine as RustEngine, EngineBuilder, Error as RustError};
+use secs::types::ipc::{Envelope, JobId};
+use secs::{
+    Client as RustClient, Engine as RustEngine, EngineBuilder, Error as RustError, Subscription,
+};
 use serde_json::Value;
 
 macro_rules! rust_to_python {
@@ -66,13 +68,20 @@ impl Engine {
 
 #[pyclass(name = "_EngineEvents", module = "secs2r._secs2r")]
 struct EngineEvents {
-    receiver: Mutex<mpsc::Receiver<JobEvent>>,
+    receiver: Mutex<Subscription>,
 }
 
 #[pymethods]
 impl EngineEvents {
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf
+    }
+
+    fn dropped_events(&self) -> u64 {
+        self.receiver
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .dropped_events()
     }
 
     fn __next__(&self, py: Python<'_>) -> PyResult<Option<Py<PyAny>>> {
