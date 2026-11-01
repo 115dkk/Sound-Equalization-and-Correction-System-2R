@@ -195,6 +195,43 @@ impl ApplyAdapter for FailingCamillaMarker {
 }
 
 #[derive(Debug)]
+struct DefaultReportApply {
+    outcomes: Mutex<Vec<ApplyOutcome>>,
+}
+
+impl ApplyAdapter for DefaultReportApply {
+    fn camilla_status(
+        &self,
+        _address: &str,
+        _timeout: Duration,
+    ) -> Result<CamillaStatus, IpcError> {
+        Err(IpcError::new(ErrorCode::NotImplemented, "unused status"))
+    }
+
+    fn camilla_apply(
+        &self,
+        _address: &str,
+        _config_path: &Path,
+        _config_text: &str,
+        _timeout: Duration,
+    ) -> Result<ApplyOutcome, IpcError> {
+        Ok(self.outcomes.lock().unwrap().remove(0))
+    }
+
+    fn eqapo_include_state(&self, config_text: &str) -> IncludeState {
+        NativeApply.eqapo_include_state(config_text)
+    }
+
+    fn eqapo_with_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
+        NativeApply.eqapo_with_include(config_text)
+    }
+
+    fn eqapo_without_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
+        NativeApply.eqapo_without_include(config_text)
+    }
+}
+
+#[derive(Debug)]
 struct FailingEqapoSwitch {
     fail: Arc<AtomicBool>,
     break_restore: Option<PathBuf>,
@@ -1210,6 +1247,60 @@ fn rejected_camilla_generation_keeps_previous_bytes_and_restores_its_path() {
     assert!(rolled_back_folder.exists());
     assert!(Path::new(&second.folder).is_dir());
     assert!(!applied.join("secs-retained-generations.txt").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn unknown_camilla_previous_path_keeps_every_generation_and_retained_record() {
+    let root = root("camilla-unknown-previous");
+    let service = calibrated_service_with_apply(
+        &root,
+        Deps::default(),
+        Arc::new(DefaultReportApply {
+            outcomes: Mutex::new(vec![
+                ApplyOutcome::Applied,
+                ApplyOutcome::RolledBack {
+                    error: IpcError::new(ErrorCode::ApplyFailed, "reload rejected"),
+                },
+                ApplyOutcome::Applied,
+            ]),
+        }),
+    );
+    set_apply(
+        &service,
+        CamillaApply {
+            level: ApplyLevel::Apply,
+            address: "unused:1".into(),
+            exe_path: None,
+        },
+        EqApoApply::default(),
+    );
+    let apply_once = || {
+        let events = Arc::new(Events::default());
+        let job = apply_camilla(&service, events.clone());
+        let JobResult::Apply(result) = succeeded(events.wait(job.job)) else {
+            panic!("apply result is absent")
+        };
+        result
+    };
+
+    let first = apply_once();
+    let second = apply_once();
+    let third = apply_once();
+    assert!(Path::new(&first.folder).exists());
+    assert!(Path::new(&second.folder).exists());
+    assert!(Path::new(&third.folder).exists());
+    assert_eq!(
+        fs::read_to_string(root.join("app-data/applied/camilladsp/secs-retained-generations.txt"))
+            .unwrap(),
+        format!(
+            "{}\n",
+            Path::new(&second.folder)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+        )
+    );
     fs::remove_dir_all(root).unwrap();
 }
 

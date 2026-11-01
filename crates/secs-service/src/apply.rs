@@ -616,11 +616,12 @@ fn remember_retained(root: &Path, names: &[&str]) {
     if names.is_empty() {
         return;
     }
+    let requested = names.join(", ");
     let mut retained = match read_retained(root) {
         Ok(retained) => retained,
         Err(error) => {
             eprintln!(
-                "could not read retained applied generations; keeping the existing record: {}",
+                "could not retain applied generations [{requested}]; keeping the unreadable record: {}",
                 error.detail
             );
             return;
@@ -639,13 +640,17 @@ fn remember_retained(root: &Path, names: &[&str]) {
     let path = root.join(RETAINED_GENERATIONS);
     if let Err(error) = crate::deploy::write_entry(&path, &bytes) {
         eprintln!(
-            "could not record retained applied generations: {}",
+            "could not record retained applied generations [{}]: {}",
+            retained.join(", "),
             error.detail
         );
     }
 }
 
 fn retire_after_success(root: &Path, keep: &[&str], has_previous: bool) {
+    if !has_previous {
+        return;
+    }
     let retained = match read_retained(root) {
         Ok(retained) => retained,
         Err(error) => {
@@ -656,9 +661,6 @@ fn retire_after_success(root: &Path, keep: &[&str], has_previous: bool) {
             return;
         }
     };
-    if !has_previous && retained.is_empty() {
-        return;
-    }
     let mut keep = keep
         .iter()
         .map(|name| (*name).to_owned())
