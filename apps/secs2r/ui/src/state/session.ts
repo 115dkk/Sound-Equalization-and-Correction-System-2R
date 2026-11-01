@@ -200,6 +200,7 @@ export function createSession(ipc: Ipc) {
     return work;
   }
   let projectVersion = 0;
+  let pendingProjectReplacement = false;
   function invalidateProjectFollowUps() {
     projectVersion++;
     for (const replaced of projectReplacements) replaced();
@@ -207,7 +208,8 @@ export function createSession(ipc: Ipc) {
   function projectGuard() {
     const epoch = jobs.epoch;
     const version = projectVersion;
-    return { alive: () => epoch === jobs.epoch && version === projectVersion };
+    const pending = pendingProjectReplacement;
+    return { alive: () => !pending && !pendingProjectReplacement && epoch === jobs.epoch && version === projectVersion };
   }
   async function projectEditsSettled(): Promise<boolean> {
     const epoch = jobs.epoch;
@@ -630,18 +632,21 @@ export function createSession(ipc: Ipc) {
     clearTimeout(externalPoll);
     const plans = methods.map(externalRefresh);
     if (methods.some((method) => refreshInputs.includes(method as Request["method"]))) autoRefresh?.changed();
-    if (plans.some((plan) => plan.replaceProject)) {
+    const replacesProject = plans.some((plan) => plan.replaceProject);
+    if (replacesProject) {
       jobs.replaceProject(); clearProjectResources(); autoRefresh?.changed(); curveVersion++; curveState.set(null); tutorialReady.set(false);
       for (const store of Object.values(stores)) if ("invalidate" in store) store.invalidate();
       stores.measurementSettings.set(null); stores.micCalibration.set(null);
       host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, applyRuns: {}, mdatScope: "all", channel: null, xoGroup: null, xoRecommendation: null, xoRecTurnedOffByEdit: false, failure: null, rangeRejection: null, opened: host.getSnapshot().opened + 1 });
     }
+    const replacementVersion = projectVersion;
     const keys = [...new Set(plans.flatMap((plan) => plan.resources))];
     await Promise.all([
       reload(keys),
       call({ method: "measure_config_get" }).catch(() => {}),
       jobs.readSnapshots({ external: true }).catch(report),
     ]);
+    if (replacesProject && replacementVersion === projectVersion) pendingProjectReplacement = false;
     // The shell sends external mutations, but external jobs have no UI
     // Channel. Poll only while such jobs run, to recover their final results.
     if (externalBatch && hasExternalJobs()) {
@@ -661,7 +666,10 @@ export function createSession(ipc: Ipc) {
       if (ipc.externalChanges) {
         externalBatch = coalesceExternalChanges((methods) => track(() => refreshExternal(methods)), report);
         try { offExternal = await ipc.externalChanges.subscribe((method) => {
-          if (externalRefresh(method).replaceProject) invalidateProjectFollowUps();
+          if (externalRefresh(method).replaceProject) {
+            pendingProjectReplacement = true;
+            invalidateProjectFollowUps();
+          }
           externalBatch?.push(method);
         }); }
         catch (error) { report(error); }

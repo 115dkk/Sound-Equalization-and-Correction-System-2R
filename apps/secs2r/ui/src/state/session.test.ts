@@ -63,6 +63,40 @@ it.each([false, true])("releases an edit barrier on replacement without waiting 
   } finally { release(); await edit; session.dispose(); await session.settled(); mock.dispose(); }
 });
 
+it("keeps guards dead until the latest external replacement refresh finishes", async () => {
+  vi.useFakeTimers();
+  const mock = createMockService({ tickMs: 0 });
+  let emit!: (method: string) => void;
+  let release!: () => void;
+  const delayed = new Promise<void>((resolve) => { release = resolve; });
+  let delayRead = false;
+  const session = createSession({ ...mock,
+    externalChanges: { subscribe: async (next) => { emit = next; return () => {}; } },
+    request: async (request) => {
+      const reply = await mock.request(request);
+      if (delayRead && request.method === "project_info") await delayed;
+      return reply;
+    },
+  });
+  try {
+    await session.start(); await session.settled();
+    delayRead = true;
+    await mock.request({ method: "project_open", params: { path: "/B.secs" } });
+    emit("project_open");
+    await vi.advanceTimersByTimeAsync(25);
+    const duringRead = session.projectGuard();
+    expect(duringRead.alive()).toBe(false);
+    await mock.request({ method: "project_open", params: { path: "/C.secs" } });
+    emit("project_open");
+    release(); await session.settled();
+    expect(session.projectGuard().alive()).toBe(false);
+    await vi.advanceTimersByTimeAsync(25); await session.settled();
+    expect(session.stores.project.getSnapshot()?.path).toBe("/C.secs");
+    expect(duringRead.alive()).toBe(false);
+    expect(session.projectGuard().alive()).toBe(true);
+  } finally { release(); session.dispose(); await session.settled(); mock.dispose(); vi.useRealTimers(); }
+});
+
 describe("resource generations", () => {
   it("does not let an older read overwrite a mutation", async () => {
     let resolve!: (value: number) => void;
