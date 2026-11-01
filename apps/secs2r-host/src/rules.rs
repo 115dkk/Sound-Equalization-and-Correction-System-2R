@@ -15,6 +15,8 @@ use sha2::{Digest, Sha256};
 
 pub const LOG_LIMIT: u64 = 256 * 1024;
 const MEMORY_LOG_LIMIT: usize = 1_000;
+const LOG_FIELD_VALUE_LIMIT: usize = 4 * 1024;
+const LOG_TRUNCATION_SUFFIX: &str = " … [truncated]";
 // Leave 64 KiB for the pipe frame and future response fields below its 1 MiB cap.
 const LOG_RESPONSE_LIMIT: usize = 960 * 1024;
 pub const INSTALLED_HOST_DIRECTORY: &str = "SECS 2R Host";
@@ -488,6 +490,18 @@ pub struct Core {
     logs: Vec<HostLogLine>,
 }
 
+fn truncate_log_field_value(value: &mut String) {
+    if value.len() <= LOG_FIELD_VALUE_LIMIT {
+        return;
+    }
+    let mut keep = LOG_FIELD_VALUE_LIMIT - LOG_TRUNCATION_SUFFIX.len();
+    while !value.is_char_boundary(keep) {
+        keep -= 1;
+    }
+    value.truncate(keep);
+    value.push_str(LOG_TRUNCATION_SUFFIX);
+}
+
 fn bounded_log_response(mut lines: Vec<HostLogLine>) -> HostResponse {
     let encoded_len = |start: usize| {
         serde_json::to_vec(&HostResponse::Log(lines[start..].to_vec()))
@@ -570,7 +584,10 @@ impl Core {
         }
     }
 
-    pub fn record(&mut self, line: HostLogLine) {
+    pub fn record(&mut self, mut line: HostLogLine) {
+        for value in line.fields.values_mut() {
+            truncate_log_field_value(value);
+        }
         self.logs.push(line);
         if self.logs.len() > MEMORY_LOG_LIMIT {
             self.logs.drain(..self.logs.len() - MEMORY_LOG_LIMIT);
@@ -1323,6 +1340,26 @@ mod tests {
             panic!("expected log response");
         };
         assert_eq!(lines.last().map(|line| line.event.as_str()), Some("999"));
+    }
+
+    #[test]
+    fn oversized_latest_log_is_truncated_instead_of_omitted() {
+        let mut core = Core::new("1", HostManaged::default());
+        core.record(log_line(
+            "latest",
+            [("detail".to_owned(), "🙂".repeat(524_289))],
+        ));
+
+        let response = core.handle(HostRequest::Log { lines: 1 });
+        let encoded = serde_json::to_vec(&response).unwrap();
+        assert!(encoded.len() <= 960 * 1024, "{} bytes", encoded.len());
+        let HostResponse::Log(lines) = response else {
+            panic!("expected log response");
+        };
+        assert_eq!(lines.len(), 1);
+        let detail = &lines[0].fields["detail"];
+        assert!(detail.len() <= 4 * 1024, "{} bytes", detail.len());
+        assert!(detail.ends_with("[truncated]"));
     }
 
     #[test]
