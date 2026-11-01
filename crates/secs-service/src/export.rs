@@ -291,12 +291,24 @@ impl Service {
         let app_version = self.deps.app_version.to_string();
         let live = open.results.live_calibration();
         let cached = open.results.cached();
-        let cached_sample_rate_policy = cached.map(|cache| cache.labels.sample_rate_policy);
-        let description = crate::export_run::describe(&open.results, project, &compute_key, now)?;
         let mdat = matches!(
             params.kind,
             ExportKind::BeforeAfterMdat | ExportKind::StagedMdat
         );
+        let cached_sample_rate_policy = cached.map(|cache| cache.labels.sample_rate_policy);
+        let expected_mdat_input_key = (mdat && live.is_none()).then(|| {
+            let mut settings = secs_project::calibration_from_project(project);
+            if let Some(policy) = cached_sample_rate_policy {
+                settings.sample_rate_policy = policy;
+            }
+            super::calibration::run_key(
+                &super::calibration::signature_key(project),
+                &super::calibration::target_key_string(project),
+                &settings.engine_key(),
+                &super::calibration::config_key(project),
+            )
+        });
+        let description = crate::export_run::describe(&open.results, project, &compute_key, now)?;
         let (live_mimo, cached_mimo) = match open.results.mimo(project, &compute_key).exported() {
             Some(MimoView::Live(result)) => (Some(result), None),
             Some(MimoView::Cached(cache)) => (None, cache.mimo_paths.as_ref()),
@@ -546,6 +558,18 @@ impl Service {
                                 let mut settings = secs_project::calibration_from_project(&project);
                                 if let Some(policy) = cached_sample_rate_policy {
                                     settings.sample_rate_policy = policy;
+                                }
+                                let current_input_key = super::calibration::run_key(
+                                    &super::calibration::signature_key(&project),
+                                    &super::calibration::target_key_string(&project),
+                                    &settings.engine_key(),
+                                    &super::calibration::config_key(&project),
+                                );
+                                if expected_mdat_input_key.as_ref() != Some(&current_input_key) {
+                                    return Err(IpcError::new(
+                                        ErrorCode::StaleInputs,
+                                        "project changed while computing",
+                                    ));
                                 }
                                 let measurements =
                                     super::calibration::load_measurements(&mut open.store)?;
