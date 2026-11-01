@@ -1,0 +1,79 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "head_sha": {
+      "type": "string"
+    },
+    "base_sha": {
+      "type": "string"
+    },
+    "complete": {
+      "type": "boolean"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "minor",
+              "blocking"
+            ]
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "security",
+              "data_loss",
+              "build",
+              "invariant",
+              "behavior",
+              "other"
+            ]
+          },
+          "path": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer"
+          },
+          "title": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "category",
+          "path",
+          "line",
+          "title",
+          "evidence"
+        ]
+      }
+    },
+    "reviewed_files": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "head_sha",
+    "base_sha",
+    "complete",
+    "summary",
+    "findings",
+    "reviewed_files"
+  ]
+}
