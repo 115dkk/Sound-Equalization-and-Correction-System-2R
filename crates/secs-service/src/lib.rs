@@ -35,6 +35,7 @@ mod watch;
 use std::borrow::Cow;
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, SystemTime};
 
@@ -547,12 +548,54 @@ impl EventSink for ObservedEvents {
     }
 }
 
+/// Rejects application-setting effects that belong to an older save.
+#[derive(Debug, Default)]
+pub struct AppEffects {
+    last: u64,
+}
+
+impl AppEffects {
+    /// Returns true once for each revision newer than every accepted revision.
+    pub fn accept(&mut self, revision: u64) -> bool {
+        if revision <= self.last {
+            return false;
+        }
+        self.last = revision;
+        true
+    }
+}
+
+#[cfg(test)]
+mod app_effect_tests {
+    use super::AppEffects;
+
+    #[test]
+    fn effects_accept_only_a_newer_revision_td115() {
+        let mut effects = AppEffects::default();
+        assert!(effects.accept(2));
+        assert!(!effects.accept(1));
+        assert!(!effects.accept(2));
+        assert!(effects.accept(3));
+    }
+}
+
+/// One coherent application-settings snapshot and its save revision.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RevisedAppSettings {
+    /// Monotonically increasing within one service process.
+    pub revision: u64,
+    /// Settings stored by that revision.
+    pub settings: secs_types::ipc::AppSettings,
+}
+
 /// The application service. One instance lives as long as the app.
 #[derive(Debug)]
 pub struct Service {
     deps: Deps,
     session: Arc<Mutex<Session>>,
     app_settings: Arc<Mutex<secs_types::ipc::AppSettings>>,
+    app_settings_revision: AtomicU64,
+    app_effects: Mutex<AppEffects>,
     jobs: JobRegistry,
     level: monitor::LevelState,
     status_watch: watch::WatchState,
@@ -568,6 +611,8 @@ impl Service {
             deps,
             session: Arc::new(Mutex::new(Session::default())),
             app_settings: Arc::new(Mutex::new(app_settings)),
+            app_settings_revision: AtomicU64::new(1),
+            app_effects: Mutex::new(AppEffects::default()),
             jobs: JobRegistry::default(),
             level: monitor::LevelState::default(),
             status_watch: watch::WatchState::default(),

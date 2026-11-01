@@ -763,6 +763,17 @@ impl Service {
         lock(&self.app_settings).clone()
     }
 
+    /// Returns settings and the revision assigned to their successful save.
+    pub fn revised_app_settings(&self) -> crate::RevisedAppSettings {
+        let settings = lock(&self.app_settings);
+        crate::RevisedAppSettings {
+            revision: self
+                .app_settings_revision
+                .load(std::sync::atomic::Ordering::SeqCst),
+            settings: settings.clone(),
+        }
+    }
+
     pub(crate) fn app_settings_set(
         &self,
         mut params: AppSettingsParams,
@@ -791,13 +802,23 @@ impl Service {
         // One critical section for the file and memory, so what is read now
         // is what a restart restores even when requests run in parallel (TD-39).
         let mut current = lock(&self.app_settings);
+        let revision = self
+            .app_settings_revision
+            .try_update(
+                std::sync::atomic::Ordering::SeqCst,
+                std::sync::atomic::Ordering::SeqCst,
+                |revision| revision.checked_add(1),
+            )
+            .map(|revision| revision + 1)
+            .map_err(|_| IpcError::new(ErrorCode::Internal, "app settings revision exhausted"))?;
         if let Some(path) = self.deps.app_settings_path.as_deref() {
             atomic_write(path, &bytes)?;
         }
         let policy_changed = current.updates != params.settings.updates;
         *current = params.settings.clone();
         drop(current);
-        if policy_changed {
+        let mut effects = lock(&self.app_effects);
+        if effects.accept(revision) && policy_changed {
             self.deps.updates.set_policy(params.settings.updates);
         }
         Ok(params.settings)

@@ -2,10 +2,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use secs_local_api::{EventHub, ServerConfig, ServerHandle};
-use secs_service::{NoEvents, Service};
-use secs_types::ipc::{
-    Envelope, ErrorCode, IpcError, LocalApiSettings, LocalApiStatus, Request, Response,
-};
+use secs_service::{AppEffects, RevisedAppSettings, Service};
+use secs_types::ipc::{ErrorCode, IpcError, LocalApiSettings, LocalApiStatus};
 use tauri::{AppHandle, Emitter, Manager as TauriManager};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,7 +79,7 @@ impl Manager {
         }
     }
 
-    pub(crate) fn apply_settings(&self, old: LocalApiSettings, new: LocalApiSettings) {
+    fn apply_settings(&self, old: LocalApiSettings, new: LocalApiSettings) {
         let mut inner = lock(&self.inner);
         inner.settings = new;
         match lifecycle(old, new) {
@@ -98,6 +96,15 @@ impl Manager {
     fn reconcile(&self, settings: LocalApiSettings) {
         let old = lock(&self.inner).settings;
         self.apply_settings(old, settings);
+    }
+
+    pub(crate) fn apply_revision(&self, effects: &Mutex<AppEffects>, revised: RevisedAppSettings) {
+        let mut effects = lock(effects);
+        if !effects.accept(revised.revision) {
+            return;
+        }
+        crate::icon::show(&self.app, revised.settings.icon);
+        self.reconcile(revised.settings.local_api);
     }
 
     pub(crate) fn status(&self) -> Result<LocalApiStatus, IpcError> {
@@ -142,12 +149,9 @@ impl Manager {
                     .name("secs-local-api-settings".into())
                     .spawn(move || {
                         let service = app.state::<Arc<Service>>();
-                        if let Envelope::Ok(response) =
-                            service.call(Request::AppSettingsGet, Arc::new(NoEvents))
-                            && let Response::AppSettingsGet(settings) = *response
-                        {
-                            app.state::<Manager>().reconcile(settings.local_api);
-                        }
+                        let revised = service.revised_app_settings();
+                        app.state::<Manager>()
+                            .apply_revision(app.state::<Mutex<AppEffects>>().inner(), revised);
                     });
             }
         });
