@@ -11,8 +11,9 @@ import type { ExportKind } from "../ipc/bindings/ExportKind";
 import type { MdatScope } from "../ipc/bindings/MdatScope";
 import type { XoRecommendation } from "../ipc/bindings/XoRecommendation";
 import type { ConnectPath, MeterReading, MicCalibrationView, MonitorState, RewProblem } from "../screens/connect/types";
-import type { CalibrateView } from "../screens/calibrate/types";
-import { rangeRejection } from "../screens/calibrate/settingsView";
+import type { CalibrateActions, CalibrateView } from "../screens/calibrate/types";
+import { isRangeEdit, rangeRejection } from "../screens/calibrate/settingsView";
+import { createBandTargets, settingEdit } from "./settingsEdits";
 import type { ApplyRun, ApplyTarget, ExportRun, HostFailure } from "../screens/export/types";
 import type { MeasureView } from "../screens/measure/types";
 import { createResource as resource, createStore, type Failure } from "./store";
@@ -380,6 +381,40 @@ export function createSession(ipc: Ipc) {
       },
     }, true),
   };
+  const settingsQueue = createWriterQueue();
+  const bandTargets = createBandTargets();
+  const editSetting: CalibrateActions["changeSetting"] = (change, accepted) => {
+    const epoch = jobs.epoch;
+    const guard = projectGuard();
+    const target = change.kind === "rc_band_edge" || change.kind === "rc_band_remove" ? bandTargets.get(change.band) : null;
+    pendingProjectEdits++;
+    const work = track(async () => {
+      try {
+        return await settingsQueue.enqueue(async () => {
+          const latest = stores.settings.getSnapshot();
+          if (!guard.alive() || !latest) return false;
+          const index = target ? bandTargets.index(latest.rc_bands, target) : -1;
+          const edit = settingEdit(change, latest, index);
+          if (!edit) return false;
+          const range = isRangeEdit(edit);
+          host.set({ previewHz: null, ...(range || edit.kind === "rc_hi_basis" ? { rangeRejection: null } : {}) });
+          try {
+            const settings = await call({ method: "calibration_settings_edit", params: { edit } });
+            if (!guard.alive()) return false;
+            bandTargets.commit(latest.rc_bands, edit, change, index, settings.rc_bands);
+            stores.settings.set(settings);
+            accepted?.(edit);
+            return true;
+          } catch (error) {
+            const rejected = range && error instanceof IpcFailure ? rangeRejection(edit, error.error) : null;
+            if (rejected && guard.alive()) host.set({ rangeRejection: rejected });
+            return false;
+          }
+        });
+      } finally { pendingProjectEdits--; }
+    });
+    return trackProjectEdit(work, epoch);
+  };
   /** The measurement writer's edit, under the name its many callers use. */
   function configure(patch: Patch<MeasureConfigureParams>) { return writers.measurement.edit(patch); }
   function startTutorial({ quest }: { quest?: string } = {}): Promise<void> {
@@ -641,7 +676,7 @@ export function createSession(ipc: Ipc) {
     });
   }
   return { ipc, stores, host, jobs, errors, ready, tutorialReady, call, run, settled, writers, configure, startTutorial, refreshCurves, ensureSaved, monitor, start, dispose,
-    canContinueRefresh, projectEditsSettled, projectGuard,
+    canContinueRefresh, projectEditsSettled, projectGuard, editSetting,
     setSavePromptOpen: (open: boolean) => { savePromptOpen = open; autoRefresh?.check(); },
     hasPendingProjectEdits: () => pendingProjectEdits > 0,
     navigate: (current: StepId) => host.set({ current }) };

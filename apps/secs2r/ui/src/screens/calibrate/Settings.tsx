@@ -31,7 +31,6 @@ import {
   UPPER_CHOICES,
   infraState,
   layoutOf,
-  nextBand,
   rejectionPlace,
   roomVolume,
   subModeChoice,
@@ -40,7 +39,6 @@ import {
   upperChoice,
   upperEdits,
   usesSchroeder,
-  withBandEdge,
   xoRecInclude,
   type RejectionPlace,
   type UpperChoice,
@@ -282,7 +280,7 @@ type ShownRejection = { place: RejectionPlace; text: string };
  * service answers it sorted. Focus follows a band just added to its lower
  * edge, and goes to the add action after a removal.
  */
-function ExtraBands({ settings, primaryHi, rejection, change }: { settings: CalibrationSettings; primaryHi: number; rejection: ShownRejection | null; change: (edit: SettingEdit) => Promise<boolean> }) {
+function ExtraBands({ settings, primaryHi, rejection, change }: { settings: CalibrationSettings; primaryHi: number; rejection: ShownRejection | null; change: CalibrateActions["changeSetting"] }) {
   const t = useT();
   const bands = settings.rc_bands;
   const root = useRef<HTMLDivElement>(null);
@@ -298,11 +296,12 @@ function ExtraBands({ settings, primaryHi, rejection, change }: { settings: Cali
     }
   }, [bands, focus]);
   const add = async () => {
-    const band = nextBand(settings, primaryHi);
-    if (await change({ kind: "rc_bands", bands: [...bands.map((b) => ({ ...b })), band] })) setFocus(band);
+    await change({ kind: "rc_band_add", primaryHi }, (edit) => {
+      if (edit.kind === "rc_bands") setFocus(edit.bands.at(-1) ?? null);
+    });
   };
   const remove = async (index: number) => {
-    if (await change({ kind: "rc_bands", bands: bands.filter((_, i) => i !== index).map((b) => ({ ...b })) })) setFocus("add");
+    if (await change({ kind: "rc_band_remove", band: bands[index]! })) setFocus("add");
   };
   const refused = (index: number, edge: "lower" | "upper") =>
     rejection?.place.at === "band" && rejection.place.index === index && rejection.place.edge === edge ? rejection.text : undefined;
@@ -332,7 +331,7 @@ function ExtraBands({ settings, primaryHi, rejection, change }: { settings: Cali
                     step={bandStep(hz)}
                     unit="Hz"
                     rejected={refused(index, edge)}
-                    onChange={(value) => void change({ kind: "rc_bands", bands: withBandEdge(bands, index, edge, value) })}
+                    onChange={(value) => void change({ kind: "rc_band_edge", band, edge, hz: value })}
                   />
                 );
               })}

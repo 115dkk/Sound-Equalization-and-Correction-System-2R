@@ -4,8 +4,7 @@ import { useJobLedger } from "../../state/useJobLedger";
 import type { CalibrateActions, CalibrateJob, CalibrateView } from "./types";
 import { groupOf, xoGroups } from "./text";
 import { DESIGN_RATE, countedRate } from "../system/outputRate";
-import { isRangeEdit, mimoIncluded, rangeRejection } from "./settingsView";
-import { IpcFailure } from "../../ipc/client";
+import { mimoIncluded } from "./settingsView";
 import { startCalibration } from "../../state/calibration";
 
 const withoutStage = ({ stage: _stage, ...params }: Record<string, string>): Record<string, string> => params;
@@ -70,19 +69,7 @@ export function useCalibrateScreen(goToMeasurements?: () => void): { view: Calib
       },
       selectXoGroup: (xoGroup) => { session.host.set({ xoGroup, previewHz: null }); refresh(); },
       previewXo: (xoGroup, previewHz) => { session.host.set({ tab: "xo", xoGroup, previewHz }); refresh(); },
-      changeSetting: async (edit) => {
-        // A range edit (or another upper-limit basis) replaces the refusal the card shows; a refusal of
-        // a range edit is shown at its input (session.call keeps it out of the global notice).
-        const range = isRangeEdit(edit);
-        session.host.set({ previewHz: null, ...(range || edit.kind === "rc_hi_basis" ? { rangeRejection: null } : {}) });
-        const epoch = session.jobs.epoch;
-        try { await session.call({ method: "calibration_settings_edit", params: { edit } }); return true; }
-        catch (error) {
-          const rejected = range && error instanceof IpcFailure ? rangeRejection(edit, error.error) : null;
-          if (rejected && epoch === session.jobs.epoch) session.host.set({ rangeRejection: rejected });
-          return false;
-        }
-      },
+      changeSetting: session.editSetting,
       takeSubValues: () => session.run(() => session.call({ method: "sub_take_values" })),
       setTargetPoints: async (points) => {
         try { await session.call({ method: "target_set_points", params: { points } }); return true; }

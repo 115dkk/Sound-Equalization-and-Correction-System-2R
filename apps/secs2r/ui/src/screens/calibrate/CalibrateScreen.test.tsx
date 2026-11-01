@@ -11,6 +11,7 @@ import { ipcError, rcEditRefusal } from "../../ipc/mock";
 import type { RcBand } from "../../ipc/bindings/RcBand";
 import type { Translate } from "../../i18n/react";
 import { renderWith } from "../../test/render";
+import { settingEdit } from "../../state/settingsEdits";
 import type { PlotScale } from "../../ui";
 import { CalibrateScreen, calibrateHeader } from "./CalibrateScreen";
 import { LOADING_DELAY_MS } from "./ResultGraph";
@@ -89,7 +90,13 @@ const must = (id: string) => {
 
 function setup(view: CalibrateView, options: { locale?: "ko" | "en"; initial?: { targetMenu?: boolean; editSub?: string; latePositions?: boolean; rangeAdvanced?: boolean; notesOpen?: boolean } } = {}) {
   const actions = mockActions();
-  renderWith(<CalibrateScreen view={view} actions={actions} initial={options.initial} />, { locale: options.locale ?? "ko" });
+  const changeSetting: CalibrateActions["changeSetting"] = async (change, accepted) => {
+    const edit = settingEdit(change, view.settings);
+    if (!edit || !await actions.changeSetting(edit)) return false;
+    accepted?.(edit);
+    return true;
+  };
+  renderWith(<CalibrateScreen view={view} actions={{ ...actions, changeSetting }} initial={options.initial} />, { locale: options.locale ?? "ko" });
   return actions;
 }
 
@@ -1465,7 +1472,9 @@ describe("저음 도착 맞추기, 고역 위상 맞추기 and 방 울림 줄이
 /** The screen with its settings held in state, as the service answers them: an rc_bands list stored sorted, a refusal kept in the view. */
 function BandsHarness({ initial, actions }: { initial: CalibrateView; actions: MockActions }) {
   const [view, setView] = useState(initial);
-  const changeSetting: CalibrateActions["changeSetting"] = async (edit) => {
+  const changeSetting: CalibrateActions["changeSetting"] = async (change, accepted) => {
+    const edit = settingEdit(change, view.settings);
+    if (!edit) return false;
     await actions.changeSetting(edit);
     const refusal = rcEditRefusal(view.settings, edit);
     if (refusal) {
@@ -1476,6 +1485,7 @@ function BandsHarness({ initial, actions }: { initial: CalibrateView; actions: M
       const bands = [...edit.bands].sort((a, b) => a.lo_hz - b.lo_hz);
       setView((v) => ({ ...v, rangeRejection: null, settings: { ...v.settings, rc_bands: bands } }));
     }
+    accepted?.(edit);
     return true;
   };
   return <CalibrateScreen view={view} actions={{ ...actions, changeSetting }} />;
