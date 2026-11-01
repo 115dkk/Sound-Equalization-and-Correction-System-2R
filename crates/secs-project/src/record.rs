@@ -679,19 +679,71 @@ fn load_source_checked(wav: &Path) -> Result<Option<SourceInfo>, ProjectError> {
     Ok(source_from_json(&value))
 }
 
+const MAX_PROJECT_SOURCE_BYTES: usize = 64 * 1024 * 1024;
+
+fn source_info_bytes(info: &SourceInfo) -> usize {
+    let mut bytes = std::mem::size_of::<SourceInfo>();
+    bytes = bytes.saturating_add(
+        info.strings
+            .iter()
+            .map(|(key, value)| std::mem::size_of::<(String, String)>() + key.len() + value.len())
+            .sum::<usize>(),
+    );
+    bytes = bytes.saturating_add(
+        info.boxed
+            .iter()
+            .map(|(key, _)| std::mem::size_of::<(String, Boxed)>() + key.len())
+            .sum::<usize>(),
+    );
+    for (key, cal) in &info.cal {
+        bytes = bytes
+            .saturating_add(std::mem::size_of::<(String, CalInfo)>())
+            .saturating_add(key.len())
+            .saturating_add(cal.source_name.len())
+            .saturating_add(cal.source_path.len())
+            .saturating_add(cal.freq.as_ref().map_or(0, |values| {
+                values.len().saturating_mul(std::mem::size_of::<f32>())
+            }))
+            .saturating_add(cal.gain.as_ref().map_or(0, |values| {
+                values.len().saturating_mul(std::mem::size_of::<f32>())
+            }))
+            .saturating_add(cal.phase.as_ref().map_or(0, |values| {
+                values.len().saturating_mul(std::mem::size_of::<f32>())
+            }))
+            .saturating_add(
+                cal.boxed
+                    .iter()
+                    .map(|(name, _)| std::mem::size_of::<(String, Boxed)>() + name.len())
+                    .sum::<usize>(),
+            );
+    }
+    bytes
+        .saturating_add(info.notes.as_ref().map_or(0, String::len))
+        .saturating_add(info.format.as_ref().map_or(0, String::len))
+}
+
 pub fn load_project_sources(
     project: &Project,
     project_path: &Path,
 ) -> BTreeMap<u32, BTreeMap<String, SourceInfo>> {
-    try_load_project_sources(project, project_path).unwrap_or_default()
+    load_project_sources_inner(project, project_path, false).unwrap_or_default()
 }
 
 fn try_load_project_sources(
     project: &Project,
     project_path: &Path,
 ) -> Result<BTreeMap<u32, BTreeMap<String, SourceInfo>>, ProjectError> {
+    load_project_sources_inner(project, project_path, true)
+}
+
+fn load_project_sources_inner(
+    project: &Project,
+    project_path: &Path,
+    checked: bool,
+) -> Result<BTreeMap<u32, BTreeMap<String, SourceInfo>>, ProjectError> {
     let base = project_path.parent().unwrap_or_else(|| Path::new("."));
-    let mut loaded: HashMap<PathBuf, Option<Arc<SourceInfo>>> = HashMap::new();
+    let mut loaded: HashMap<PathBuf, Option<(Arc<SourceInfo>, usize)>> = HashMap::new();
+    let mut materialised = 0_usize;
     let mut out = BTreeMap::new();
     for record in measurement_values(project)
         .iter()
@@ -718,15 +770,41 @@ fn try_load_project_sources(
             {
                 continue;
             }
-            let info = match loaded.get(&sidecar) {
+            let key = sidecar.canonicalize().unwrap_or_else(|_| sidecar.clone());
+            let info = match loaded.get(&key) {
                 Some(info) => info.clone(),
                 None => {
-                    let info = load_source_checked(&path)?.map(Arc::new);
-                    loaded.insert(sidecar, info.clone());
+                    let loaded_info = match load_source_checked(&path) {
+                        Ok(info) => info,
+                        Err(error) if checked => return Err(error),
+                        Err(_) => None,
+                    };
+                    let info = loaded_info.map(|info| {
+                        let bytes = source_info_bytes(&info);
+                        (Arc::new(info), bytes)
+                    });
+                    loaded.insert(key, info.clone());
                     info
                 }
             };
-            if let Some(info) = info {
+            if let Some((info, bytes)) = info {
+                let Some(next) = materialised.checked_add(bytes) else {
+                    if checked {
+                        return Err(ProjectError::Invalid(
+                            "project source info exceeds 67108864 bytes".into(),
+                        ));
+                    }
+                    continue;
+                };
+                if next > MAX_PROJECT_SOURCE_BYTES {
+                    if checked {
+                        return Err(ProjectError::Invalid(format!(
+                            "project source info exceeds {MAX_PROJECT_SOURCE_BYTES} bytes"
+                        )));
+                    }
+                    continue;
+                }
+                materialised = next;
                 out.entry(pos)
                     .or_insert_with(BTreeMap::new)
                     .insert(role, info.as_ref().clone());

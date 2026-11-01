@@ -946,6 +946,63 @@ fn oversized_measurement_source_sidecar_is_rejected_td112() {
 }
 
 #[test]
+fn shared_source_materialisation_is_capped_td112() {
+    let directory = TempDir::new();
+    let project_path = directory.0.join("shared-source-budget.secs");
+    let irs = project_path.with_extension("irs");
+    fs::create_dir_all(&irs).unwrap();
+    let wav = irs.join("shared.wav");
+    fs::write(&wav, write_wav_float32(&[0.25], 48_000)).unwrap();
+    let info = SourceInfo {
+        notes: Some("x".repeat(8 * 1024 * 1024)),
+        ..SourceInfo::default()
+    };
+    save_source(&wav, Some(&info)).unwrap();
+
+    let mut project = Project::from_preset("2.0").unwrap();
+    project.measurements = PyJson::Array(
+        (1..=9)
+            .map(|position| entry_at(position, "shared-source-budget.irs/shared.wav"))
+            .collect(),
+    );
+    fs::write(&project_path, project.save_text()).unwrap();
+
+    let error = MeasurementStore::open(&project_path).unwrap_err();
+    assert!(error.to_string().contains("source info"), "{error}");
+}
+
+#[test]
+fn load_project_sources_skips_only_the_bad_sidecar_td112() {
+    let directory = TempDir::new();
+    let project_path = directory.0.join("source-skip.secs");
+    let irs = project_path.with_extension("irs");
+    fs::create_dir_all(&irs).unwrap();
+    let good = irs.join("good.wav");
+    let bad = irs.join("bad.wav");
+    fs::write(&good, write_wav_float32(&[0.25], 48_000)).unwrap();
+    fs::write(&bad, write_wav_float32(&[0.5], 48_000)).unwrap();
+    let info = SourceInfo {
+        notes: Some("kept".into()),
+        ..SourceInfo::default()
+    };
+    save_source(&good, Some(&info)).unwrap();
+    fs::File::create(source_path(&bad))
+        .unwrap()
+        .set_len(16 * 1024 * 1024 + 1)
+        .unwrap();
+
+    let mut project = Project::from_preset("2.0").unwrap();
+    project.measurements = PyJson::Array(vec![
+        entry_at(1, "source-skip.irs/good.wav"),
+        entry_at(2, "source-skip.irs/bad.wav"),
+    ]);
+
+    let sources = load_project_sources(&project, &project_path);
+    assert_eq!(sources.len(), 1);
+    assert_eq!(sources[&1]["L"], info);
+}
+
+#[test]
 fn oversized_project_and_wav_reads_are_rejected_td19() {
     let directory = TempDir::new();
     let project_path = directory.0.join("oversized.secs");
