@@ -21,18 +21,26 @@ export type Writer<T> = {
   edit(patch: Patch<T>): Promise<boolean>;
 };
 
-export function createWriter<T>(deps: WriterDeps<T>): Writer<T> {
+export function createWriterQueue() {
   let queue: Promise<unknown> = Promise.resolve();
   return {
+    enqueue(work: () => Promise<boolean>): Promise<boolean> {
+      const done = queue.then(work).catch(() => false);
+      queue = done;
+      return done;
+    },
+  };
+}
+
+export function createWriter<T>(deps: WriterDeps<T>, queue = createWriterQueue()): Writer<T> {
+  return {
     edit(patch) {
-      const done = queue.then(async () => {
+      return queue.enqueue(async () => {
         const latest = await deps.latest();
         if (latest === null) return false;
         await deps.write({ ...latest, ...(typeof patch === "function" ? patch(latest) : patch) });
         return true;
-      }).catch(() => false);
-      queue = done;
-      return done;
+      });
     },
   };
 }

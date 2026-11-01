@@ -21,7 +21,7 @@ import { createJobLedger, type FinishedJob, type JobRequestContext, type LedgerJ
 import { effectsOf, projectEdits, refreshInputs, refreshMeasurements, type EffectContext } from "./effects";
 import { createAutoRefresh } from "./autoRefresh";
 import { calibrationMimo, startCalibration } from "./calibration";
-import { createWriter, type Patch, type Writer, type WriterDeps } from "./writers";
+import { createWriter, createWriterQueue, type Patch, type Writer, type WriterDeps } from "./writers";
 import type { AppSettings } from "../ipc/bindings/AppSettings";
 import type { ApplySettings } from "../ipc/bindings/ApplySettings";
 import type { DspFields } from "../ipc/bindings/DspFields";
@@ -290,8 +290,8 @@ export function createSession(ipc: Ipc) {
   // project bundle's edit counts as a pending project edit from the moment it
   // is queued, and one queued for a project that has since been replaced is
   // dropped (it resolves false) instead of landing in the new project.
-  function writer<T>(deps: WriterDeps<T>, projectBundle: boolean): Writer<T> {
-    const ordered = createWriter(deps);
+  function writer<T>(deps: WriterDeps<T>, projectBundle: boolean, queue?: ReturnType<typeof createWriterQueue>): Writer<T> {
+    const ordered = createWriter(deps, queue);
     return {
       edit(patch) {
         const epoch = jobs.epoch;
@@ -316,6 +316,8 @@ export function createSession(ipc: Ipc) {
     loopback_input_channel: null, timing_ref_output: null, share_mode: null,
   });
   const layoutParams = (): LayoutEdit => ({ start_delay: null, timing: null });
+  // AppSettings.apply and the whole AppSettings object share one read/write queue.
+  const appQueue = createWriterQueue();
   const writers = {
     /** app_settings_set replaces the whole object, which the compute choice, display settings and recent projects share. */
     app: writer<AppSettings>({
@@ -332,7 +334,7 @@ export function createSession(ipc: Ipc) {
         stores.appSettings.set(accepted);
         return accepted;
       },
-    }, false),
+    }, false, appQueue),
     /** apply_settings_set replaces AppSettings.apply as a whole: levels and the CamillaDSP address, built from the latest stored value. */
     apply: writer<ApplySettings>({
       latest: async () => {
@@ -347,7 +349,7 @@ export function createSession(ipc: Ipc) {
         if (current) stores.appSettings.set({ ...current, apply: accepted });
         return accepted;
       },
-    }, false),
+    }, false, appQueue),
     /** dsp_set takes a preset or the complete fields: `{ preset }` selects one, a field edit applies to the latest fields. */
     dsp: writer<DspEdit>({
       latest: () => {

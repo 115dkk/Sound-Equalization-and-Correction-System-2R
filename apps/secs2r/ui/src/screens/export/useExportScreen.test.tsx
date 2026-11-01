@@ -30,14 +30,14 @@ describe("useExportScreen", () => {
     mock.failNext("apply_settings_set", "project_io");
     await perform(() => {
       const actions = result.current.actions;
-      if (field === "address") actions.setCamillaAddress("ws://127.0.0.1:4321");
+      if (field === "address") actions.setCamillaAddress("127.0.0.1:4321");
       else if (field === "executable") actions.setCamillaExe("C:/new/camilladsp.exe");
       else actions.setApplyLevel(field === "eqapo level" ? "eqapo" : "camilla", "apply");
       if (field === "eqapo level") actions.applyEqapo();
       else actions.applyCamilla();
     });
     expect(mock.calls.filter((r) => r.method === "apply_camilla" || r.method === "apply_eqapo")).toEqual([]);
-    if (field === "address") expect(session.host.getSnapshot().applyAddressDraft).toBe("ws://127.0.0.1:4321");
+    if (field === "address") expect(session.host.getSnapshot().applyAddressDraft).toBe("127.0.0.1:4321");
     if (field === "executable") expect(session.host.getSnapshot().applyExeDraft).toBe("C:/new/camilladsp.exe");
   });
   it("waits for settings and does no I/O for tutorial exports", async () => {
