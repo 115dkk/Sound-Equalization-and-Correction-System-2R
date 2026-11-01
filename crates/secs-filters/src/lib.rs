@@ -1303,7 +1303,7 @@ fn write_text_observed_at(
         .map(|(name, bytes)| (PathBuf::from(name), bytes.clone()))
         .collect::<Vec<_>>();
     bundle.push((entry.clone(), text));
-    write_bundle_observed(out, &bundle, &entry, after_stage_write)?;
+    write_bundle_observed(out, &bundle, &entry, after_stage_write, &|_, _| Ok(()))?;
     let path = out.join(file_name);
     let mut written = vec![path];
     written.extend(wavs.into_iter().map(|(name, _)| out.join(name)));
@@ -1404,7 +1404,13 @@ fn write_eqapo_observed_at(
         (guide_relative.clone(), guide),
         (config_relative.clone(), config),
     ]);
-    write_bundle_observed(out, &bundle, &config_relative, after_stage_write)?;
+    write_bundle_observed(
+        out,
+        &bundle,
+        &config_relative,
+        after_stage_write,
+        &|_, _| Ok(()),
+    )?;
     let config_path = out.join(&config_relative);
     let body_path = out.join(&body_relative);
     let guide_path = out.join(&guide_relative);
@@ -1805,7 +1811,7 @@ pub fn export_convolution_named_with_options(
         files.push((entry, routing_bytes));
     }
     let entry = PathBuf::from("routing.json");
-    write_bundle_observed(folder, &files, &entry, &|_, _| Ok(()))?;
+    write_bundle_observed(folder, &files, &entry, &|_, _| Ok(()), &|_, _| Ok(()))?;
     Ok(files
         .into_iter()
         .map(|(relative, _)| folder.join(relative))

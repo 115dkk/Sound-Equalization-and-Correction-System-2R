@@ -73,6 +73,7 @@ pub fn write_bundle_observed(
     files: &[(PathBuf, Vec<u8>)],
     entry: &Path,
     after_stage_write: &dyn Fn(usize, &Path) -> std::io::Result<()>,
+    before_install: &dyn Fn(usize, &Path) -> std::io::Result<()>,
 ) -> Result<(), std::io::Error> {
     if !safe_bundle_path(entry)
         || !files.iter().any(|(path, _)| path == entry)
@@ -131,19 +132,133 @@ pub fn write_bundle_observed(
     }
 
     fs::create_dir_all(root)?;
-    let install = |relative: &Path| -> Result<(), std::io::Error> {
-        let destination = root.join(relative);
-        if let Some(parent) = destination.parent() {
-            fs::create_dir_all(parent)?;
+    let mut backup = None;
+    for _ in 0..100 {
+        let serial = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let candidate = parent.join(format!(".{folder}.backup-{}-{serial}", std::process::id()));
+        match fs::create_dir(&candidate) {
+            Ok(()) => {
+                backup = Some(candidate);
+                break;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                let _ = fs::remove_dir_all(&staging);
+                return Err(error);
+            }
         }
-        fs::rename(staging.join(relative), destination)
+    }
+    let Some(backup) = backup else {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "could not create export backup directory",
+        ));
     };
+
+    let mut moved = Vec::<(PathBuf, bool, bool)>::new();
+    let install_order = files
+        .iter()
+        .filter(|(path, _)| path != entry)
+        .map(|(path, _)| path.as_path())
+        .chain(std::iter::once(entry));
     let result = (|| {
-        for (relative, _) in files.iter().filter(|(path, _)| path != entry) {
-            install(relative)?;
+        for (index, relative) in install_order.enumerate() {
+            let destination = root.join(relative);
+            if let Some(parent) = destination.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let backup_path = backup.join(relative);
+            let had_old = fs::symlink_metadata(&destination).is_ok();
+            if had_old {
+                if let Some(parent) = backup_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::rename(&destination, &backup_path)?;
+            }
+            moved.push((relative.to_path_buf(), had_old, false));
+            before_install(index, &destination)?;
+            fs::rename(staging.join(relative), &destination)?;
+            moved.last_mut().expect("just pushed").2 = true;
         }
-        install(entry)
+        Ok::<(), std::io::Error>(())
     })();
+
+    if let Err(error) = result {
+        let rollback = (|| {
+            for (relative, had_old, installed) in moved.iter().rev() {
+                let destination = root.join(relative);
+                if *installed {
+                    fs::remove_file(&destination)?;
+                }
+                if *had_old {
+                    fs::rename(backup.join(relative), &destination)?;
+                }
+            }
+            Ok::<(), std::io::Error>(())
+        })();
+        let _ = fs::remove_dir_all(&staging);
+        let _ = fs::remove_dir_all(&backup);
+        return match rollback {
+            Ok(()) => Err(error),
+            Err(rollback) => Err(std::io::Error::new(
+                rollback.kind(),
+                format!("install failed ({error}); rollback failed ({rollback})"),
+            )),
+        };
+    }
+
     let _ = fs::remove_dir_all(&staging);
-    result
+    fs::remove_dir_all(&backup)?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let serial = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!("secs-graph-{name}-{}-{serial}", std::process::id()))
+    }
+
+    #[test]
+    fn failed_second_install_restores_every_old_file() {
+        let parent = temp_dir("install-rollback");
+        let root = parent.join("bundle");
+        fs::create_dir_all(root.join("coeffs")).unwrap();
+        fs::write(root.join("coeffs/L.wav"), b"old coefficient").unwrap();
+        fs::write(root.join("config.txt"), b"old config").unwrap();
+        let files = vec![
+            (PathBuf::from("coeffs/L.wav"), b"new coefficient".to_vec()),
+            (PathBuf::from("config.txt"), b"new config".to_vec()),
+        ];
+
+        let error = write_bundle_observed(
+            &root,
+            &files,
+            Path::new("config.txt"),
+            &|_, _| Ok(()),
+            &|index, _| {
+                if index == 1 {
+                    Err(std::io::Error::other("injected second install failure"))
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("injected second install failure")
+        );
+        assert_eq!(
+            fs::read(root.join("coeffs/L.wav")).unwrap(),
+            b"old coefficient"
+        );
+        assert_eq!(fs::read(root.join("config.txt")).unwrap(), b"old config");
+        fs::remove_dir_all(parent).unwrap();
+    }
 }
