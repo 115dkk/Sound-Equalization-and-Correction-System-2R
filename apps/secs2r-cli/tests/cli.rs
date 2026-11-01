@@ -147,17 +147,41 @@ fn project_set_persists_hf_phase_switch() {
     let path = project.to_string_lossy();
     assert_success(&run(&["project", "new", &path, "--preset", "2.1"]).0);
 
-    for (value, expected) in [("on", true), ("off", false)] {
-        let result = assert_success(&run(&["project", "set", &path, "--hf-phase", value]).0);
+    for (phase, input_hp, expected_phase, expected_hp) in
+        [("on", "27", true, Some(27.0)), ("off", "off", false, None)]
+    {
+        let result = assert_success(
+            &run(&[
+                "project",
+                "set",
+                &path,
+                "--hf-phase",
+                phase,
+                "--input-hp",
+                input_hp,
+            ])
+            .0,
+        );
         let settings = result
             .iter()
             .find(|item| item["reply"]["data"]["method"] == "calibration_settings_get")
             .unwrap();
-        assert_eq!(settings["reply"]["data"]["data"]["hf_phase"], expected);
+        assert_eq!(
+            settings["reply"]["data"]["data"]["hf_phase"],
+            expected_phase
+        );
+        assert_eq!(
+            settings["reply"]["data"]["data"]["input_hp_hz"],
+            expected_hp.map_or(Value::Null, Value::from)
+        );
         let saved: Value = serde_json::from_slice(&fs::read(&project).unwrap()).unwrap();
         assert_eq!(
             saved["calibration"].get("hf_phase"),
-            expected.then_some(&Value::Bool(true))
+            expected_phase.then_some(&Value::Bool(true))
+        );
+        assert_eq!(
+            saved["calibration"].get("input_hp_hz"),
+            expected_hp.map(Value::from).as_ref()
         );
     }
     fs::remove_dir_all(root).unwrap();

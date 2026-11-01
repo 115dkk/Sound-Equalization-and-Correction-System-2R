@@ -176,6 +176,10 @@ pub struct CalibrationSettings {
     /// Unwinds the RC FIR's constant phase above the band (ADR 0030).
     #[serde(default)]
     pub hf_phase: bool,
+    /// Common 8th-order Butterworth high-pass on every input before the MIMO
+    /// fork, in Hz; `None` is off (ADR 0031).
+    #[serde(default)]
+    pub input_hp_hz: Option<f64>,
     pub rc_lo: f64,
     pub rc_hi: Option<f64>,
     #[serde(default)]
@@ -237,6 +241,7 @@ impl Default for CalibrationSettings {
             lf_align: false,
             mode_decay: false,
             hf_phase: false,
+            input_hp_hz: None,
             rc_lo: 20.0,
             rc_hi: None,
             rc_hi_basis: RcHiBasis::Strict,
@@ -341,6 +346,10 @@ impl CalibrationSettings {
         }
         if self.hf_phase {
             out.push_str("|hf_phase");
+        }
+        // ADR 0031: the chain is a calibration output, so the cut joins this key.
+        if let Some(hz) = self.input_hp_hz {
+            write!(&mut out, "|input_hp={}", number(hz)).unwrap();
         }
         if self.peq_analytic_derivatives {
             out.push_str("|peq_analytic_derivatives");
@@ -843,6 +852,39 @@ mod tests {
             edit,
             crate::settings_edit::SettingEdit::HfPhase { on: true }
         );
+    }
+
+    #[test]
+    fn input_hp_defaults_off_and_extends_the_key_only_when_set() {
+        let baseline = CalibrationSettings::default();
+        assert_eq!(baseline.input_hp_hz, None);
+        let key = baseline.engine_key();
+        assert!(!key.contains("input_hp"));
+        let mut json = serde_json::to_value(&baseline).unwrap();
+        json.as_object_mut().unwrap().remove("input_hp_hz");
+        let mut legacy: CalibrationSettings = serde_json::from_value(json).unwrap();
+        assert_eq!(legacy, baseline);
+        legacy.input_hp_hz = Some(27.0);
+        assert_eq!(
+            legacy.engine_key(),
+            format!("{key}|input_hp={}", number(27.0))
+        );
+        legacy.input_hp_hz = Some(27.5);
+        assert_ne!(
+            legacy.engine_key(),
+            format!("{key}|input_hp={}", number(27.0))
+        );
+        for (hz, expected) in [
+            (serde_json::json!(25), Some(25.0)),
+            (serde_json::json!(null), None),
+        ] {
+            let edit: crate::settings_edit::SettingEdit =
+                serde_json::from_value(serde_json::json!({"kind": "input_hp", "hz": hz})).unwrap();
+            assert_eq!(
+                edit,
+                crate::settings_edit::SettingEdit::InputHp { hz: expected }
+            );
+        }
     }
 
     #[test]

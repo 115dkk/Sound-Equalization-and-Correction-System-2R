@@ -36,6 +36,10 @@ pub enum BandType {
     /// Butterworth 24 dB/oct.
     #[serde(rename = "BW24")]
     Bw24,
+    /// Butterworth 48 dB/oct, only the common input high-pass (ADR 0031):
+    /// `from_name` never yields it, so no project or sub filter selects it.
+    #[serde(rename = "BW48")]
+    Bw48,
 }
 
 impl BandType {
@@ -47,6 +51,7 @@ impl BandType {
             Self::Lr48 => "LR48",
             Self::Bw12 => "BW12",
             Self::Bw24 => "BW24",
+            Self::Bw48 => "BW48",
         }
     }
 
@@ -134,6 +139,12 @@ pub struct SignalChain {
     pub lift_ms: f64,
     /// Total filter latency in ms: lift plus `main_extra_ms`.
     pub latency_ms: f64,
+    /// Common 8th-order Butterworth high-pass in Hz on every input, LFE
+    /// included, before input correction and the MIMO fork (ADR 0031).
+    /// Absent when off, so an off chain serializes and hashes as before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub input_hp_hz: Option<f64>,
 }
 
 /// What a MIMO support path filters with (upstream `mimo_paths`' filter slot).
@@ -220,4 +231,30 @@ pub struct MimoPaths {
     pub fsiso: f64,
     /// The paths.
     pub paths: Vec<MimoPath>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn input_hp_is_absent_from_an_off_chain_and_round_trips_when_set() {
+        let mut chain = SignalChain {
+            sample_rate: 48_000,
+            mains: Vec::new(),
+            subs: Vec::new(),
+            sub_bus_peq: Vec::new(),
+            main_extra_ms: 0.0,
+            lift_ms: 0.0,
+            latency_ms: 0.0,
+            input_hp_hz: None,
+        };
+        let off = serde_json::to_value(&chain).unwrap();
+        assert!(off.get("input_hp_hz").is_none());
+        assert_eq!(serde_json::from_value::<SignalChain>(off).unwrap(), chain);
+        chain.input_hp_hz = Some(27.0);
+        let on = serde_json::to_value(&chain).unwrap();
+        assert_eq!(on["input_hp_hz"], 27.0);
+        assert_eq!(serde_json::from_value::<SignalChain>(on).unwrap(), chain);
+    }
 }

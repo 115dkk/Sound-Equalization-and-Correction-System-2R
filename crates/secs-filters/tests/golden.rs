@@ -97,6 +97,7 @@ fn band(value: &Value) -> BandType {
 fn chain(fixture: &Fixture) -> SignalChain {
     let value = &fixture.inputs()["chain"];
     SignalChain {
+        input_hp_hz: None,
         sample_rate: value["sample_rate"].as_u64().unwrap() as u32,
         mains: value["mains"]
             .as_array()
@@ -2126,6 +2127,7 @@ fn renderer_applies_every_operation_in_time_domain() {
         },
     ];
     let plan = FilterPlan {
+        pre_ops: Vec::new(),
         inputs: vec!["X".into()],
         outputs: vec!["X".into()],
         input_ops: vec![("X".into(), ops.clone())],
@@ -2596,6 +2598,7 @@ fn output_rate_long_fir_conversion_timing() {
 #[test]
 fn output_rate_renderer_rounds_delays_and_scales_bounds() {
     let plan = FilterPlan {
+        pre_ops: Vec::new(),
         inputs: vec!["L".into()],
         outputs: vec!["L".into()],
         input_ops: vec![("L".into(), vec![])],

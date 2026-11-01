@@ -80,6 +80,7 @@ fn note_value(note: &crate::notes::Note) -> Value {
             rotation_deg,
             limited,
         } => json!({"HfPhase": {"role": role, "rotation_deg": rotation_deg, "limited": limited}}),
+        Note::InputHp { hz } => json!({"InputHp": {"hz": hz}}),
         Note::Latency {
             latency_ms,
             lift_ms,
@@ -415,6 +416,39 @@ fn design_rejects_taps_beyond_the_design_fft() {
 }
 
 #[test]
+fn design_rejects_an_input_cut_outside_its_limits() {
+    // ADR 0031: a config built without the settings edit (a calculation
+    // override, the public engine) keeps the cut inside 10–50 Hz too; 0 Hz
+    // used to make every export response non-finite.
+    let mut c = cases::load("room");
+    for hz in [0.0, -25.0, 9.9, 50.1, f64::NAN, f64::INFINITY] {
+        c.config.input_hp_hz = Some(hz);
+        let context = Context::serial();
+        let result = design::design(
+            &DesignRequest {
+                measurements: &c.measurements,
+                config: &c.config,
+                tuning: &c.tuning,
+                subs_only: false,
+                adapter_notes: &[],
+            },
+            &context,
+            &*design::production_fitters(context.cancel()),
+        );
+        assert!(
+            matches!(&result, Err(crate::EngineError::Input(message))
+                if message.starts_with("input high-pass ")),
+            "{hz}: {:?}",
+            result.err()
+        );
+    }
+    for hz in [None, Some(10.0), Some(27.0), Some(50.0)] {
+        c.config.input_hp_hz = hz;
+        assert!(design::check_input_hp(&c.config).is_ok(), "{hz:?}");
+    }
+}
+
+#[test]
 fn design_cancellation_returns_within_one_second() {
     use secs_compute::{CancelToken, MemoryBudget, NoProgress};
     use std::{
@@ -611,6 +645,7 @@ fn design_matches_recorded_stages() {
                 crate::notes::Note::LfAlign { .. } => "LfAlign",
                 crate::notes::Note::ModeDecay { .. } => "ModeDecay",
                 crate::notes::Note::HfPhase { .. } => "HfPhase",
+                crate::notes::Note::InputHp { .. } => "InputHp",
                 crate::notes::Note::Latency { .. } => "Latency",
                 crate::notes::Note::PhaseStrength(_) => "PhaseStrength",
                 crate::notes::Note::PhaseBand(_) => "PhaseBand",

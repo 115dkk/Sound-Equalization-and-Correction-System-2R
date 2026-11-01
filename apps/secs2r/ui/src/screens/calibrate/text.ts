@@ -221,6 +221,10 @@ export function noticeText(t: Translate, number: FormatNumber, notice: Notice, r
     case "hf_phase_none":
       params.role = code();
       break;
+    case "input_hp":
+      // Once per result (ADR 0031): the common cut on every input; its order is fixed at 8 (48 dB/oct).
+      params.hz = f("hz");
+      break;
     case "sub_narrow_band":
       Object.assign(params, { code: code(), hp_hz: f("hp_hz"), lp_hz: f("lp_hz") });
       break;

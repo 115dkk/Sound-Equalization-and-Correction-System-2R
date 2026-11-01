@@ -37,12 +37,14 @@ pub const CONVOLUTION_MAX_LEN: usize = 1 << 20;
 
 /// Band-filter family and the Q values of its second-order sections.
 #[allow(clippy::approx_constant)] // Upstream deliberately rounds these Q values to five decimals.
-pub const SECTION_Q: [(&str, &[f64]); 5] = [
+pub const SECTION_Q: [(&str, &[f64]); 6] = [
     ("LR12", &[0.5]),
     ("LR24", &[0.70711, 0.70711]),
     ("LR48", &[0.5412, 1.30656, 0.5412, 1.30656]),
     ("BW12", &[0.70711]),
     ("BW24", &[0.5412, 1.30656]),
+    // 1 / (2·cos((2k − 1)·π/16)), the common input high-pass (ADR 0031).
+    ("BW48", &[0.5098, 0.60134, 0.89998, 2.56292]),
 ];
 
 const WINDOWS_POSITION: [(&str, usize); 14] = [
@@ -406,6 +408,17 @@ pub fn eqapo_filters(plan: &FilterPlan, firs: &[(String, String)], note: &str) -
             "# {}",
             note.chars().filter(char::is_ascii).collect::<String>()
         ));
+    }
+    if !plan.pre_ops.is_empty() {
+        lines.extend([
+            String::new(),
+            "# Common input high-pass (before MIMO copies)".into(),
+        ]);
+        for role in &plan.inputs {
+            let channel = input_channel(role);
+            lines.push(format!("Channel: {channel}"));
+            lines.extend(eqapo_ops(&plan.pre_ops, &channel, firs));
+        }
     }
     if !plan.mimo.is_empty() {
         lines.extend([
@@ -1094,6 +1107,14 @@ fn filter_text_at(
             "  MIMO 서포트: 입력 원신호(입력 보정 전) → 경로 필터 → 서포트 스피커 출력에 더함"
                 .into(),
         );
+    }
+    for op in &plan.pre_ops {
+        if let Op::Hp { frequency, .. } = op {
+            lines.push(format!(
+                "  극저역 보호(수동, 모든 입력, LFE 포함)  {} Hz · 버터워스 48 dB/oct",
+                format_fixed(*frequency, 2, false)
+            ));
+        }
     }
     let rc_only = plan.send_ops.is_empty() && plan.subs.is_empty() && plan.mimo.is_empty();
     for (role, input) in &plan.input_ops {

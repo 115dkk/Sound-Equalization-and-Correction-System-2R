@@ -300,6 +300,72 @@ fn mimo_run_assemble_recorded_supports_matches_oracle() {
 }
 
 #[test]
+fn input_hp_leaves_the_mimo_scorecard_as_without_it() {
+    // ADR 0031: with the same supports, the MIMO scorecard scores the applied
+    // response with the common input cut divided back out, so the cut never
+    // changes a verdict; the applied responses themselves keep the cut.
+    let name = "room_dba";
+    let case = cases::load(name);
+    let off = design::replay(name);
+    let mut config = case.config.clone();
+    config.input_hp_hz = Some(27.0);
+    let replay = cases::Replay::for_case(name);
+    let on = crate::design(
+        &crate::DesignRequest {
+            measurements: &case.measurements,
+            config: &config,
+            tuning: &case.tuning,
+            subs_only: false,
+            adapter_notes: &[],
+        },
+        &Context::serial(),
+        &*replay.factory(),
+    )
+    .unwrap();
+    replay.finish();
+    let fixture = Fixture::load("engine_mimo_run", "room_dba_iir");
+    let ideal = ideal(&fixture);
+    let assemble = |design: &crate::design::Design, config: &crate::EngineConfig| {
+        run::assemble(
+            design,
+            &case.measurements,
+            config,
+            &ideal,
+            supports(&fixture, &ideal),
+            mimo::MimoKey::from_settings(&settings(false)),
+            &Context::serial(),
+        )
+        .unwrap()
+    };
+    let without = assemble(&off, &case.config);
+    let with = assemble(&on, &config);
+    assert_ne!(
+        without.applied, with.applied,
+        "the applied responses keep the cut"
+    );
+    let mut worst = 0.0_f64;
+    for (a, b) in without.scorecard.iter().zip(&with.scorecard) {
+        assert_eq!(a.role, b.role);
+        for ((metric, x), (_, y)) in design::metrics(&a.after_mimo)
+            .iter()
+            .zip(&design::metrics(&b.after_mimo))
+        {
+            if *metric == "pre_db" {
+                // The cut is exactly zero at DC, so that one bin cannot be
+                // divided back; the inverse FFT behind the pre-ringing window
+                // moves by about 0.0005 dB here.
+                assert!((x - y).abs() < 1e-3, "{} pre_db: {x} / {y}", a.role);
+                continue;
+            }
+            let error = (x - y).abs() / x.abs().max(1.0);
+            assert!(error < 1e-12, "{} {metric}: {x} / {y}", a.role);
+            worst = worst.max(error);
+        }
+    }
+    eprintln!("input_hp MIMO scorecard worst relative difference {worst:.3e}");
+}
+
+#[test]
 fn mimo_scorecard_matches_applied_response_and_reports_late_energy() {
     let name = "room_dba";
     let case = cases::load(name);

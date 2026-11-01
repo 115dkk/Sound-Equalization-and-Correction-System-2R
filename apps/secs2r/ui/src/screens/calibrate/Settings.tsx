@@ -487,8 +487,9 @@ function RangeSection({ view, actions, advancedOpen = false }: Props & { advance
         </ul>
       )}
       <ExtraBands settings={s} primaryHi={shownHi} rejection={rejection} change={actions.changeSetting} />
-      {/* An experiment or the low-end protection left on stays in view: the section opens with it. */}
-      <Advanced id="calibrate.range.advanced" count={3} defaultOpen={advancedOpen || analytic !== "off" || s.low_protect}>
+      <LowEnd settings={s} change={actions.changeSetting} />
+      {/* An experiment left on stays in view: the section opens with it. */}
+      <Advanced id="calibrate.range.advanced" count={2} defaultOpen={advancedOpen || analytic !== "off"}>
         <div className="calibrate-fields">
           <NumberField
             id="calibrate.range.boost"
@@ -503,14 +504,6 @@ function RangeSection({ view, actions, advancedOpen = false }: Props & { advance
             onChange={(db) => actions.changeSetting({ kind: "boost_max", db })}
           />
         </div>
-        {/* 극저역 보호 (ADR 0022): beside the boost limit it holds below each channel's roll-off. */}
-        <Toggle
-          id="calibrate.range.low_protect"
-          label={t("calibrate.range.low_protect")}
-          help={t("calibrate.range.low_protect.help")}
-          checked={s.low_protect}
-          onChange={(on) => actions.changeSetting({ kind: "low_protect", on })}
-        />
         <Segmented<AnalyticScope>
           id="calibrate.analytic"
           label={t("calibrate.analytic.title")}
@@ -524,6 +517,59 @@ function RangeSection({ view, actions, advancedOpen = false }: Props & { advance
         />
       </Advanced>
     </SettingsCard>
+  );
+}
+
+/** The input cut's first value: the default target's first point (ADR 0031). */
+const INPUT_HP_START = 25;
+
+/**
+ * 극저역 보호 in the range card, out of 고급 (the maintainer's 2026-10-31 rule
+ * for this family), as one group with two settings (the maintainer's
+ * 2026-11-01 framing): 자동 설정 holds boosts below each measured roll-off
+ * (ADR 0022); 수동 설정 is the input cut, one high-pass at the user's
+ * frequency on every input before the MIMO fork (ADR 0031), its frequency
+ * shown while on. They are stored apart, so each switches on its own.
+ */
+function LowEnd({ settings: s, change }: { settings: CalibrationSettings; change: (edit: SettingEdit) => Promise<boolean> }) {
+  const t = useT();
+  const cut = s.input_hp_hz;
+  return (
+    <div role="group" aria-labelledby="calibrate.range.low_end.label" className="calibrate-low-end" data-ui="calibrate.range.low_end">
+      <span id="calibrate.range.low_end.label" className="calibrate-low-end__name" data-ui="calibrate.range.low_end.label">
+        {t("calibrate.range.low_end")}
+      </span>
+      <Toggle
+        id="calibrate.range.low_protect"
+        label={t("calibrate.range.low_protect")}
+        help={t("calibrate.range.low_protect.help")}
+        checked={s.low_protect}
+        onChange={(on) => void change({ kind: "low_protect", on })}
+      />
+      <Toggle
+        id="calibrate.range.input_hp"
+        label={t("calibrate.range.input_hp")}
+        help={t("calibrate.range.input_hp.help")}
+        checked={cut !== null}
+        onChange={(on) => void change({ kind: "input_hp", hz: on ? INPUT_HP_START : null })}
+      />
+      {cut !== null && (
+        <div className="calibrate-fields">
+          <NumberField
+            id="calibrate.range.input_hp.hz"
+            label={t("calibrate.range.input_hp.hz")}
+            value={cut}
+            min={LIMITS.input_hp[0]}
+            max={LIMITS.input_hp[1]}
+            step={1}
+            unit="Hz"
+            showRange
+            help={t("calibrate.range.input_hp.hz.hint")}
+            onChange={(hz) => void change({ kind: "input_hp", hz })}
+          />
+        </div>
+      )}
+    </div>
   );
 }
 

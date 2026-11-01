@@ -500,12 +500,12 @@ fn validate_options(options: &Options) -> Result<(), CamillaError> {
 fn band_name(kind: BandType, highpass: bool) -> (&'static str, i64) {
     let prefix = match kind {
         BandType::Lr12 | BandType::Lr24 | BandType::Lr48 => "LinkwitzRiley",
-        BandType::Bw12 | BandType::Bw24 => "Butterworth",
+        BandType::Bw12 | BandType::Bw24 | BandType::Bw48 => "Butterworth",
     };
     let order = match kind {
         BandType::Lr12 | BandType::Bw12 => 2,
         BandType::Lr24 | BandType::Bw24 => 4,
-        BandType::Lr48 => 8,
+        BandType::Lr48 | BandType::Bw48 => 8,
     };
     (
         if highpass {
@@ -766,6 +766,10 @@ pub fn make_config_observed(
         pipeline.push(pipeline_all_filter("secs_headroom", "secs:headroom", n_in));
     }
     pipeline.push(pipeline_mixer("route_in"));
+    if let Some(hz) = chain.input_hp_hz {
+        filters.push(("input_hp".into(), combo("ButterworthHighpass", hz, 8)));
+        pipeline.push(pipeline_all_filter("input_hp", "secs:input_hp", n_in));
+    }
     let mut coeffs = Vec::new();
     let coeff_dir = out.join(COEFF_DIR);
     let fork = if paths.is_empty() {

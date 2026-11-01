@@ -194,7 +194,7 @@ enum ProjectAction {
         /// Compute MIMO support paths after calibrating.
         #[arg(long, value_enum)]
         mimo: Option<Switch>,
-        /// Prevent boosts below measured rolloff and protect sub outputs.
+        /// Low-end protection, automatic: prevent boosts below measured rolloff and protect sub outputs.
         #[arg(long, value_enum)]
         low_protect: Option<Switch>,
         /// Align bass arrival across main channels.
@@ -206,6 +206,9 @@ enum ProjectAction {
         /// Unwind the RC FIR's constant phase above the correction band.
         #[arg(long, value_enum)]
         hf_phase: Option<Switch>,
+        /// Low-end protection, manual: one high-pass on every input (ADR 0031), in Hz, or off.
+        #[arg(long, value_name = "Hz|off")]
+        input_hp: Option<InputHpArg>,
         /// MIMO supports as FIR or as IIR (PEQ and all-pass) filters.
         #[arg(long, value_enum)]
         mimo_supports: Option<SupportKind>,
@@ -219,6 +222,23 @@ enum ProjectAction {
         #[arg(long)]
         rc_bands: Option<RcBandsArg>,
     },
+}
+
+#[derive(Debug, Clone, Copy)]
+struct InputHpArg(Option<f64>);
+
+impl std::str::FromStr for InputHpArg {
+    type Err = String;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        if value == "off" {
+            return Ok(Self(None));
+        }
+        value
+            .parse::<f64>()
+            .map(|hz| Self(Some(hz)))
+            .map_err(|_| "input high-pass must be a frequency in Hz or off".into())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -648,6 +668,7 @@ fn run(action: Action, runner: &mut Runner) {
                 lf_align,
                 mode_decay,
                 hf_phase,
+                input_hp,
                 peq_derivatives,
                 mimo_iir_derivatives,
                 rc_bands,
@@ -692,6 +713,9 @@ fn run(action: Action, runner: &mut Runner) {
                     edits.push(SettingEdit::HfPhase {
                         on: matches!(value, Switch::On),
                     });
+                }
+                if let Some(InputHpArg(hz)) = input_hp {
+                    edits.push(SettingEdit::InputHp { hz });
                 }
                 if let Some(RcBandsArg(bands)) = rc_bands {
                     edits.push(SettingEdit::RcBands { bands });

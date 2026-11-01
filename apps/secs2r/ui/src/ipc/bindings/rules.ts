@@ -10,6 +10,7 @@ export const CALIBRATION_LIMITS: CalibrationLimits = {
   dim: [0, 100],
   dim_valid: [0.5, 100],
   boost: [0, 10],
+  input_hp: [10, 50],
   ultra_ms: [30, 200],
   xo: [40, 200],
   xo_peq: [0, 1000],

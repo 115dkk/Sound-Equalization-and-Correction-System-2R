@@ -525,6 +525,95 @@ fn result_curves_use_stored_then_run_extra_rc_bands() {
 }
 
 #[test]
+fn input_hp_result_curves_show_the_cut_without_changing_the_verdict() {
+    let root = root("input-hp");
+    let (path, mut settings) = case_project::write(&root, "room");
+    let service = Service::new(Deps::default());
+    open(&service, &path);
+
+    let calibrate = |settings| {
+        let events = Arc::new(Events::default());
+        let Envelope::Ok(response) = service.call(
+            Request::Calibrate(CalibrateParams {
+                settings: Some(settings),
+                ..Default::default()
+            }),
+            events.clone(),
+        ) else {
+            panic!()
+        };
+        let Response::Calibrate(started) = *response else {
+            panic!()
+        };
+        events.wait(started.job);
+    };
+    let verdict = || {
+        let Response::Results(results) = call(&service, Request::Results) else {
+            panic!()
+        };
+        results.calibration.unwrap().verdict
+    };
+    let values = |result: &ResultCurvesResult, kind: &str| {
+        result
+            .curves
+            .iter()
+            .find(|curve| curve.kind == kind)
+            .unwrap()
+            .values
+            .clone()
+    };
+
+    calibrate(settings.clone());
+    let off_spl = graph(&service, ResultTab::Spl, Some("L"));
+    let off_gd = graph(&service, ResultTab::Gd, Some("L"));
+    let off_ba = graph(&service, ResultTab::Ba, Some("L"));
+    let off_verdict = verdict();
+
+    settings.input_hp_hz = Some(27.0);
+    calibrate(settings);
+    let on_spl = graph(&service, ResultTab::Spl, Some("L"));
+    let on_gd = graph(&service, ResultTab::Gd, Some("L"));
+    let on_ba = graph(&service, ResultTab::Ba, Some("L"));
+    assert_eq!(verdict(), off_verdict);
+    assert_eq!(values(&on_spl, "before"), values(&off_spl, "before"));
+    assert_eq!(values(&on_gd, "before"), values(&off_gd, "before"));
+
+    for kind in ["after", "target"] {
+        let off = values(&off_spl, kind);
+        let on = values(&on_spl, kind);
+        let at_cut =
+            value_on_grid(&on_spl.grid, &on, 27.0) - value_on_grid(&off_spl.grid, &off, 27.0);
+        let at_200 =
+            value_on_grid(&on_spl.grid, &on, 200.0) - value_on_grid(&off_spl.grid, &off, 200.0);
+        assert!((at_cut + 3.0103).abs() < 0.1, "{kind} at 27 Hz: {at_cut}");
+        assert!(at_200.abs() < 0.01, "{kind} at 200 Hz: {at_200}");
+    }
+    let gd_added = value_on_grid(&on_gd.grid, &values(&on_gd, "after"), 27.0)
+        - value_on_grid(&off_gd.grid, &values(&off_gd, "after"), 27.0);
+    assert!(gd_added > 1.0, "group delay at 27 Hz: {gd_added}");
+
+    for on in &on_ba.curves {
+        let off = off_ba
+            .curves
+            .iter()
+            .find(|off| off.kind == on.kind && off.role == on.role)
+            .unwrap();
+        if matches!(on.kind.as_str(), "target" | "after" | "sum_after") {
+            let at_cut = value_on_grid(&on_ba.grid, &on.values, 27.0)
+                - value_on_grid(&off_ba.grid, &off.values, 27.0);
+            assert!(
+                (at_cut + 3.0103).abs() < 0.1,
+                "{} at 27 Hz: {at_cut}",
+                on.kind
+            );
+        } else {
+            assert_eq!(on.values, off.values, "{} must stay measured", on.kind);
+        }
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn result_curves_lines_take_values_and_staleness() {
     let name = "room_dba";
     let root = root("results");

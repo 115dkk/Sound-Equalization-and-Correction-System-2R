@@ -19,6 +19,7 @@ fn chain() -> SignalChain {
         align_delay_ms: 1.0,
     };
     SignalChain {
+        input_hp_hz: None,
         sample_rate: 48_000,
         mains: vec![main("L"), main("R")],
         subs: vec![SubChannel {
@@ -392,4 +393,66 @@ fn roles_with_underscores_and_hyphens_build() {
     chain.subs[0].role = "SW-1".into();
     let graph = ExportGraph::build(&chain, None, LfeChoice::Omit).unwrap();
     assert!(graph.plan().outputs.iter().any(|role| role == "SW-1"));
+}
+
+#[test]
+fn input_hp_plan_cuts_every_input_and_mimo_once() {
+    let mut chain = chain();
+    let mut second = chain.subs[0].clone();
+    second.role = "SW2".into();
+    second.polarity = -1;
+    chain.subs.push(second);
+    let mimo = mimo();
+    let off = ExportGraph::build(&chain, Some(&mimo), LfeChoice::DOLBY).unwrap();
+    assert!(off.plan().pre_ops.is_empty());
+    chain.input_hp_hz = Some(27.0);
+    let on = ExportGraph::build(&chain, Some(&mimo), LfeChoice::DOLBY).unwrap();
+    assert_eq!(
+        on.plan().pre_ops,
+        [secs_graph::Op::Hp {
+            frequency: 27.0,
+            kind: BandType::Bw48,
+            fixed: false,
+        }]
+    );
+    let f: Vec<_> = (0..=65536).map(|k| k as f64 * 48000.0 / 131072.0).collect();
+    let hp = secs_dsp::response::band_filter(&f, 27.0, "HP", "BW48").unwrap();
+    for skip_fixed in [false, true] {
+        for input in &on.plan().inputs {
+            let a = secs_graph::plan_responses(off.plan(), &f, input, skip_fixed).unwrap();
+            let b = secs_graph::plan_responses(on.plan(), &f, input, skip_fixed).unwrap();
+            assert_eq!(a.len(), b.len());
+            for ((role, a), (other, b)) in a.iter().zip(&b) {
+                assert_eq!(role, other);
+                let (mut db, mut deg) = (0.0_f64, 0.0_f64);
+                for (i, &f) in f
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, f)| (10.0..=20000.0).contains(*f))
+                {
+                    let ratio = b[i] / (a[i] * hp[i]);
+                    assert!(
+                        ratio.re.is_finite() && ratio.im.is_finite(),
+                        "{input}/{role}/{f}"
+                    );
+                    db = db.max((20.0 * ratio.norm().log10()).abs());
+                    deg = deg.max(ratio.arg().to_degrees().abs());
+                }
+                eprintln!(
+                    "input_hp plan {input}->{role} skip_fixed={skip_fixed}: max_db={db:.12e} max_deg={deg:.12e}"
+                );
+                assert!(db < 0.01 && deg < 0.1);
+            }
+        }
+    }
+    assert!(
+        secs_graph::headroom_db(on.plan()).unwrap() <= secs_graph::headroom_db(off.plan()).unwrap()
+    );
+    chain.input_hp_hz = Some(f64::NAN);
+    assert!(
+        ExportGraph::build(&chain, None, LfeChoice::Omit)
+            .unwrap_err()
+            .to_string()
+            .contains("input_hp_hz")
+    );
 }

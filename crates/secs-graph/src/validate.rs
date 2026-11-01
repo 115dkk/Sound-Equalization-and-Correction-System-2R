@@ -102,6 +102,9 @@ pub(crate) fn graph(
     finite("chain.main_extra_ms", chain.main_extra_ms)?;
     finite("chain.lift_ms", chain.lift_ms)?;
     finite("chain.latency_ms", chain.latency_ms)?;
+    if let Some(hz) = chain.input_hp_hz {
+        finite("chain.input_hp_hz", hz)?;
+    }
     for (
         index,
         MainChannel {

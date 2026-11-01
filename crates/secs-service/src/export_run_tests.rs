@@ -43,6 +43,7 @@ fn live_and_reopened_results_have_equal_descriptions_for_every_export_kind() {
     settings.lf_align = true;
     settings.mode_decay = true;
     settings.hf_phase = true;
+    settings.input_hp_hz = Some(27.0);
     let service = Service::new(Deps::default());
     let open = |service: &Service| {
         assert!(matches!(
@@ -95,9 +96,10 @@ fn live_and_reopened_results_have_equal_descriptions_for_every_export_kind() {
         describe(&cached.results, cached.store.project(), &compute, now).unwrap();
     assert_eq!(live_description, cached_description);
     assert_eq!(
-        &live_description.rc_pieces[live_description.rc_pieces.len() - 4..],
+        &live_description.rc_pieces[live_description.rc_pieces.len() - 5..],
         [
             "RC 추가 구간 15000–20000 Hz",
+            "극저역 보호(수동) 27 Hz",
             "저음 도착 맞춤",
             "방 울림 줄임",
             "고역 위상 맞춤"

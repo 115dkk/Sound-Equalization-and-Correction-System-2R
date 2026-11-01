@@ -91,7 +91,8 @@ pub struct MimoRun {
     pub final_resp: Vec<(String, Vec<C>)>,
     /// Main-position responses consumed by the `보정 후 + MIMO` mdat items.
     pub applied: Vec<(String, Vec<C>)>,
-    /// Scorecard metrics computed from those exact main-position responses.
+    /// Scorecard metrics computed from those exact main-position responses,
+    /// with the common input cut divided back out (ADR 0031).
     pub scorecard: Vec<MimoRoleScore>,
     /// Late energy after MIMO, position-major and in main-chain order.
     pub late_energy: Vec<MimoRoleLateEnergy>,
@@ -385,6 +386,25 @@ pub(crate) fn assemble(
     assemble_prepared(design, &prepared, ideal, supports, key, ctx)
 }
 
+/// `response` without the common input cut, for the scorecard: ADR 0031 keeps
+/// every verdict as it is without the cut, and the cut multiplies every path
+/// alike, so dividing it back out leaves the response the verdict scores
+/// without it. Late energy and the SPL curves keep the cut. The cut is zero
+/// only at DC, where every path is zero too, so that bin stays as it is.
+pub(crate) fn without_input_cut<'a>(
+    response: &'a [C],
+    cut: Option<&[C]>,
+) -> std::borrow::Cow<'a, [C]> {
+    match cut {
+        None => std::borrow::Cow::Borrowed(response),
+        Some(cut) => response
+            .iter()
+            .zip(cut)
+            .map(|(r, h)| if h.norm_sqr() == 0.0 { *r } else { r / h })
+            .collect(),
+    }
+}
+
 struct ResponseAt<'a> {
     role: &'a str,
     position: u32,
@@ -513,6 +533,11 @@ pub(crate) fn assemble_prepared(
             .map(|frequency| frequency.max(1.0))
             .collect::<Vec<_>>(),
     );
+    let input_cut = design
+        .chain
+        .input_hp_hz
+        .map(|hz| secs_dsp::response::band_filter(f, hz, "HP", "BW48"))
+        .transpose()?;
     let mut final_resp = Vec::new();
     let mut applied = Vec::new();
     let mut scorecard = Vec::new();
@@ -538,7 +563,12 @@ pub(crate) fn assemble_prepared(
             if position == design.spectra.main_position {
                 scorecard.push(MimoRoleScore {
                     role: role.clone(),
-                    after_mimo: crate::scorecard::metrics(&sum, f, &target, (100.0, 400.0)),
+                    after_mimo: crate::scorecard::metrics(
+                        &without_input_cut(&sum, input_cut.as_deref()),
+                        f,
+                        &target,
+                        (100.0, 400.0),
+                    ),
                 });
                 spl_mimo.push((role.clone(), crate::design::spl_db(&sum, &spl_grid)));
                 final_resp.push((role.clone(), base));

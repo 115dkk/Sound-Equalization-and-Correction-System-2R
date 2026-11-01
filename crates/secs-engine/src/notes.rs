@@ -58,6 +58,11 @@ pub enum Note {
         rotation_deg: Option<f64>,
         limited: bool,
     },
+    /// ADR 0031, once when `input_hp_hz` is set: the common input high-pass,
+    /// 8th-order Butterworth, at `hz`.
+    InputHp {
+        hz: f64,
+    },
     Latency {
         latency_ms: f64,
         lift_ms: f64,

@@ -32,6 +32,8 @@ pub struct CalibrationLimits {
     pub dim_valid: (f64, f64),
     /// Maximum boost (dB).
     pub boost: (f64, f64),
+    /// Common input high-pass (Hz) when it is on (ADR 0031).
+    pub input_hp: (f64, f64),
     /// Latency budget of the ultra mode (ms).
     pub ultra_ms: (f64, f64),
     /// Crossover of one group (Hz).
@@ -67,6 +69,7 @@ pub const CALIBRATION_LIMITS: CalibrationLimits = CalibrationLimits {
     dim: (0.0, 100.0),
     dim_valid: (0.5, 100.0),
     boost: (0.0, 10.0),
+    input_hp: (10.0, 50.0),
     ultra_ms: (30.0, 200.0),
     xo: (40.0, 200.0),
     xo_peq: (0.0, 1000.0),

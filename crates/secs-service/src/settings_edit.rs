@@ -50,6 +50,19 @@ fn validate_edit(edit: SettingEdit) -> Result<SettingEdit, IpcError> {
                 ],
             ))
         }
+        SettingEdit::InputHp { hz: Some(hz) }
+            if !hz.is_finite() || !(LIMITS.input_hp.0..=LIMITS.input_hp.1).contains(&hz) =>
+        {
+            Err(invalid(
+                "input high-pass is outside its range",
+                [
+                    ("field", "input_hp".into()),
+                    ("reason", "input_hp_range".into()),
+                    ("min", LIMITS.input_hp.0.to_string()),
+                    ("max", LIMITS.input_hp.1.to_string()),
+                ],
+            ))
+        }
         SettingEdit::RcBands { bands } if bands.len() > LIMITS.rc_bands_max.1 as usize => {
             Err(invalid(
                 "too many extra RC bands",
@@ -370,6 +383,7 @@ fn apply(s: &mut CalibrationSettings, edit: SettingEdit, project: &Project) {
         SettingEdit::LfAlign { on } => s.lf_align = on,
         SettingEdit::ModeDecay { on } => s.mode_decay = on,
         SettingEdit::HfPhase { on } => s.hf_phase = on,
+        SettingEdit::InputHp { hz } => s.input_hp_hz = hz,
         SettingEdit::RcLo { hz } => s.rc_lo = hz,
         SettingEdit::RcHi { hz } => s.rc_hi = hz,
         SettingEdit::RcHiBasis { basis } => s.rc_hi_basis = basis,
@@ -675,6 +689,14 @@ mod tests {
     }
 
     #[test]
+    fn input_hp_edits_store_valid_values_and_accept_off() {
+        let enabled = validate_edit(SettingEdit::InputHp { hz: Some(27.0) }).unwrap();
+        assert_eq!(edited(enabled).input_hp_hz, Some(27.0));
+        let disabled = validate_edit(SettingEdit::InputHp { hz: None }).unwrap();
+        assert_eq!(edited(disabled).input_hp_hz, None);
+    }
+
+    #[test]
     fn rc_band_edits_reject_invalid_values_and_sort_valid_bands() {
         use secs_types::calibration::RcBand;
 
@@ -682,6 +704,18 @@ mod tests {
             (
                 SettingEdit::RcLo { hz: 19.0 },
                 serde_json::json!({"field":"rc_lo","reason":"rc_lo_range","min":"20","max":"200"}),
+            ),
+            (
+                SettingEdit::InputHp { hz: Some(9.9) },
+                serde_json::json!({"field":"input_hp","reason":"input_hp_range","min":"10","max":"50"}),
+            ),
+            (
+                SettingEdit::InputHp { hz: Some(50.1) },
+                serde_json::json!({"field":"input_hp","reason":"input_hp_range","min":"10","max":"50"}),
+            ),
+            (
+                SettingEdit::InputHp { hz: Some(f64::NAN) },
+                serde_json::json!({"field":"input_hp","reason":"input_hp_range","min":"10","max":"50"}),
             ),
             (
                 SettingEdit::RcHi { hz: Some(20_001.0) },

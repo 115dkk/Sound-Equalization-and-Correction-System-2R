@@ -225,6 +225,7 @@ pub fn engine_inputs(
             rc_range: (settings.rc_lo, settings.rc_hi),
             rc_bands: rc_bands(&settings.rc_bands),
             low_protect: settings.low_protect,
+            input_hp_hz: settings.input_hp_hz,
             lf_align: settings.lf_align,
             mode_decay: settings.mode_decay,
             hf_phase: settings.hf_phase,

@@ -350,10 +350,16 @@ export const calibrateSpecimens: SpecimenDef[] = [
     <CalibrateFrame view={fx.extraBandViews.two} initial={{ notesOpen: true }} scrollTo="calibrate.verdict.notes" />
   )),
   { id: "screen.calibrate.rc-bands-lines", title: "보정 · the band set line for one extra band, two bands, and a band merged with the RC band", width: 720, render: () => <RcBandsLines /> },
-  frame("low-protect-off", "극저역 보호 off (the default) beside the boost limit, 고급 open", () => (
-    <CalibrateFrame view={fx.lowProtectViews.off} scrollTo="calibrate.settings.range" initial={{ rangeAdvanced: true }} />
+  // 극저역 보호, 자동 설정 (ADR 0022) and 수동 설정 (the input cut, ADR 0031): one group in the range card's body, never under 고급.
+  frame("low-protect-off", "극저역 보호 자동 and 수동 설정 off (the default) in the range card's body", () => (
+    <CalibrateFrame view={fx.lowProtectViews.off} scrollTo="calibrate.range.low_end" />
   )),
-  frame("low-protect-on", "극저역 보호 on: 고급 opens with it", () => <CalibrateFrame view={fx.lowProtectViews.on} scrollTo="calibrate.settings.range" />),
+  frame("low-protect-on", "극저역 보호 자동 설정 on, 고급 stays folded", () => <CalibrateFrame view={fx.lowProtectViews.on} scrollTo="calibrate.range.low_end" />),
+  frame("input-hp-on", "극저역 보호 수동 설정 on at 27 Hz: its frequency under the switch", () => <CalibrateFrame view={fx.inputHpViews.on} scrollTo="calibrate.range.low_end" />),
+  frame("input-hp-both", "극저역 보호 자동 and 수동 설정 both on", () => <CalibrateFrame view={fx.inputHpViews.both} scrollTo="calibrate.range.low_end" />),
+  frame("input-hp-notes", "calculation notes open: the 수동 설정 line", () => (
+    <CalibrateFrame view={fx.inputHpViews.on} initial={{ notesOpen: true }} scrollTo="calibrate.verdict.notes" />
+  )),
   frame("low-protect-result", "극저역 보호 on with the RC lower limit at 15 Hz: the sub bus warning and the notes open, a line per channel", () => (
     <CalibrateFrame view={fx.lowProtectViews.unheld} initial={{ notesOpen: true }} />
   )),

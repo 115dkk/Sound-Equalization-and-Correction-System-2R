@@ -34,4 +34,10 @@ lift_ms: number,
 /**
  * Total filter latency in ms: lift plus `main_extra_ms`.
  */
-latency_ms: number, };
+latency_ms: number, 
+/**
+ * Common 8th-order Butterworth high-pass in Hz on every input, LFE
+ * included, before input correction and the MIMO fork (ADR 0031).
+ * Absent when off, so an off chain serializes and hashes as before.
+ */
+input_hp_hz?: number, };

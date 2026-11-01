@@ -179,7 +179,7 @@
 | 룸 볼륨 0–100000 m³(0 = 없음) | `calibrate.range.volume` | 없음 | P31b |
 | 방 치수 가로 × 세로 × 높이 0–100 m, 0.1 단위(셋 다 넣으면 볼륨) | `calibrate.range.dims.w`, `calibrate.range.dims.d`, `calibrate.range.dims.h` | 없음 | P31b |
 | 부스트 상한 0–10 dB, 기본 10 | `calibrate.range.boost` | 없음 | P31b |
-| 롤오프 아래 부스트 막기(극저역 보호), 기본 꺼짐 | `calibrate.range.low_protect`, 근거 줄은 계산 메모, 막지 못한 채널은 `calibrate.verdict.low_protect` 경고 | 없음 | P145 (ADR 0022) |
+| 극저역 보호의 자동 설정(롤오프 아래 부스트 막기), 기본 꺼짐 | `calibrate.range.low_protect`, 근거 줄은 계산 메모, 막지 못한 채널은 `calibrate.verdict.low_protect` 경고 | 없음 | P145 (ADR 0022) |
 | RC 상한이 정해진 방법(엔진 메모와 룸 볼륨) | `calibrate.range.notes` | 없음 | P31b |
 | XO 그룹 | `calibrate.xo.group` | 없음 | P31b |
 | XO 40–200 Hz, 5 단위, 기본 80 | `calibrate.xo.hz` | 없음 | P31b |

@@ -17,7 +17,7 @@ import type { ResultLinesResult } from "../../ipc/bindings/ResultLinesResult";
 import type { SubResultLines } from "../../ipc/bindings/SubResultLines";
 import type { TargetResult } from "../../ipc/bindings/TargetResult";
 import * as fx from "../../ipc/fixtures";
-import { ipcError, mockLowProtectNotes, mockRcLines } from "../../ipc/mock";
+import { ipcError, mockInputHpNotes, mockLowProtectNotes, mockRcLines } from "../../ipc/mock";
 import { bandLayout } from "../../ui/plot/bands";
 import { targetAt } from "../../ui/plot/targetEdit";
 import type { RangeRejection } from "./settingsView";
@@ -82,6 +82,7 @@ export const baseSettings: CalibrationSettings = {
   lf_align: false,
   mode_decay: false,
   hf_phase: false,
+  input_hp_hz: null,
   rc_lo: 20,
   rc_hi: null,
   rc_hi_basis: "strict",
@@ -753,6 +754,22 @@ export const lowProtectNotes: Notice[] = [
   { code: "low_protect", params: { role: "L", rolloff_hz: "30", limited: "true" } },
   { code: "low_protect", params: { role: "SW1 + SW2", rolloff_hz: "22", limited: "false" } },
 ];
+
+/* ── 입력 저역 컷 (ADR 0031) ────────────────────────────────────────────── */
+
+/** A current result calculated with the input cut, its note as the mock service leaves it (`mockInputHpNotes`). */
+function inputHpView(patch: Partial<CalibrationSettings>): CalibrateView {
+  const settings = { ...baseSettings, ...patch };
+  const notes = [...NOTES, ...mockLowProtectNotes(settings, fx.SAMPLE_ROLES), ...mockInputHpNotes(settings)];
+  return { ...base, settings, results: { calibration: summary(false, notes), mimo: null, mimo_export: "off" }, lines: { ...lines(), notes } };
+}
+
+export const inputHpViews = {
+  /** On at 27 Hz: its frequency field under the switch, and one calculation note. */
+  on: inputHpView({ input_hp_hz: 27 }),
+  /** Both protections on, side by side. */
+  both: inputHpView({ input_hp_hz: 27, low_protect: true }),
+} satisfies Record<string, CalibrateView>;
 
 /* ── 저음 도착 맞추기, 고역 위상 맞추기, 방 울림 줄이기 (ADR 0025, 0030) ─────── */
 

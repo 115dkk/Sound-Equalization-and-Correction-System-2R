@@ -347,7 +347,7 @@ fn collect_routes(
                     add(
                         input_index,
                         output,
-                        &[&plan.lfe_ops, &feed.ops],
+                        &[&plan.pre_ops, &plan.lfe_ops, &feed.ops],
                         f64::from(feed.polarity) * 10_f64.powf(feed.gain_db / 20.0),
                     )?;
                 }
@@ -357,14 +357,19 @@ fn collect_routes(
                 .ok_or_else(|| FiltersError::Invalid(format!("unknown input {input}")))?;
             let main_ops = find_ops(&plan.main_ops, input)
                 .ok_or_else(|| FiltersError::Invalid(format!("missing main path {input}")))?;
-            add(input_index, input, &[input_ops, main_ops], 1.0)?;
+            add(
+                input_index,
+                input,
+                &[&plan.pre_ops, input_ops, main_ops],
+                1.0,
+            )?;
             if let Some(send_ops) = find_ops(&plan.send_ops, input) {
                 for (output, feed) in &plan.subs {
                     if feed.sources.iter().any(|source| source == input) {
                         add(
                             input_index,
                             output,
-                            &[input_ops, send_ops, &feed.ops],
+                            &[&plan.pre_ops, input_ops, send_ops, &feed.ops],
                             f64::from(feed.polarity) * 10_f64.powf(feed.gain_db / 20.0),
                         )?;
                     }
@@ -372,7 +377,7 @@ fn collect_routes(
             }
         }
         for feed in plan.mimo.iter().filter(|feed| feed.input == *input) {
-            add(input_index, &feed.support, &[&feed.ops], 1.0)?;
+            add(input_index, &feed.support, &[&plan.pre_ops, &feed.ops], 1.0)?;
         }
     }
     Ok(pairs)
@@ -506,5 +511,99 @@ pub fn render_paths_at(
             paths,
             length,
         });
+    }
+}
+
+#[cfg(test)]
+mod input_hp_tests {
+    use super::*;
+    use secs_dsp::Complex64 as C;
+
+    fn response(route: &Route, f: f64) -> C {
+        let z = C::from_polar(1.0, -2.0 * PI * f / 48000.0);
+        let fir: C = route
+            .fir
+            .iter()
+            .enumerate()
+            .map(|(i, h)| h * z.powu(i as u32))
+            .sum();
+        route.biquads.iter().fold(
+            fir * route.gain * z.powu(route.delay_samples as u32),
+            |h, b| h * (b.b0 + b.b1 * z + b.b2 * z * z) / (1.0 + b.a1 * z + b.a2 * z * z),
+        )
+    }
+
+    #[test]
+    fn input_hp_render_collector_prefixes_every_route() {
+        let (mut chain, mimo) = crate::optimization_tests::sample();
+        let off = crate::make_plan(&chain, Some(&mimo)).unwrap();
+        chain.input_hp_hz = Some(27.0);
+        let on = crate::make_plan(&chain, Some(&mimo)).unwrap();
+        let before = collect_routes(&off, 1 << 18, 48000).unwrap();
+        let after = collect_routes(&on, 1 << 18, 48000).unwrap();
+        let hp = Route::from_parts(&[&on.pre_ops], 1.0, "L", "L", 1 << 18, 48000).unwrap();
+        let f: Vec<_> = (0..=400)
+            .map(|i| 10.0 * 2000.0_f64.powf(i as f64 / 400.0))
+            .collect();
+        let analog = secs_dsp::response::band_filter(&f, 27.0, "HP", "BW48").unwrap();
+        for (a, b) in before.iter().zip(&after) {
+            assert_eq!(a.routes.len(), b.routes.len());
+            for (route_index, (a_route, b_route)) in a.routes.iter().zip(&b.routes).enumerate() {
+                assert_eq!(b_route.biquads.len(), a_route.biquads.len() + 4);
+                for (got, expected) in b_route.biquads.iter().zip(&hp.biquads) {
+                    assert_eq!(
+                        [got.b0, got.b1, got.b2, got.a1, got.a2],
+                        [
+                            expected.b0,
+                            expected.b1,
+                            expected.b2,
+                            expected.a1,
+                            expected.a2
+                        ]
+                    );
+                }
+                let (mut db, mut deg, mut analog_db, mut analog_deg) =
+                    (0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64);
+                for (&f, analog) in f.iter().zip(&analog) {
+                    let before = response(a_route, f);
+                    let after = response(b_route, f);
+                    let ratio = after / (before * response(&hp, f));
+                    let against_analog = after / (before * analog);
+                    assert!(ratio.re.is_finite() && ratio.im.is_finite());
+                    db = db.max((20.0 * ratio.norm().log10()).abs());
+                    deg = deg.max(ratio.arg().to_degrees().abs());
+                    analog_db = analog_db.max((20.0 * against_analog.norm().log10()).abs());
+                    analog_deg = analog_deg.max(against_analog.arg().to_degrees().abs());
+                }
+                eprintln!(
+                    "input_hp render {}->{} route={route_index}: digital max_db={db:.12e} max_deg={deg:.12e}; analog max_db={analog_db:.12e} max_deg={analog_deg:.12e}",
+                    a.input, a.output
+                );
+                assert!(db < 0.01 && deg < 0.1);
+                assert!(analog_db < 0.01);
+                // Analog simulation versus bilinear-transform playback: 0.26° at
+                // 20 kHz, within ADR 0031's 0.5°.
+                assert!(analog_deg < 0.5);
+            }
+        }
+        // Actual convolution IRs (routing.json and REAPER share this renderer).
+        let before = render_paths(&off, 1 << 18).unwrap();
+        let after = render_paths(&on, 1 << 18).unwrap();
+        assert_eq!(before.paths.len(), after.paths.len());
+        let mut max_abs = 0.0_f64;
+        for (a, b) in before.paths.iter().zip(&after.paths) {
+            assert_eq!((&a.input, &a.output), (&b.input, &b.output));
+            let mut expected = a.response.clone();
+            expected.resize(before.length.max(after.length), 0.0);
+            for section in &hp.biquads {
+                section.apply(&mut expected);
+            }
+            for (i, expected) in expected.iter().enumerate() {
+                let got = b.response.get(i).copied().unwrap_or(0.0);
+                max_abs = max_abs.max((got - expected).abs());
+            }
+        }
+        eprintln!("input_hp convolution IR max_abs={max_abs:.12e}");
+        assert!(max_abs < 1e-5);
     }
 }

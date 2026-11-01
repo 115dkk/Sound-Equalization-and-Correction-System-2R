@@ -3,4 +3,4 @@
 /**
  * Crossover filter family (upstream `BAND_TYPES`).
  */
-export type BandType = "LR12" | "LR24" | "LR48" | "BW12" | "BW24";
+export type BandType = "LR12" | "LR24" | "LR48" | "BW12" | "BW24" | "BW48";

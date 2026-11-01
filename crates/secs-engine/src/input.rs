@@ -183,6 +183,8 @@ pub struct EngineConfig {
     pub rc_bands: Vec<(f64, f64)>,
     /// Protect measured low-frequency rolloff (ADR 0022), off by default.
     pub low_protect: bool,
+    /// Common input high-pass in Hz, applied only after design (ADR 0031).
+    pub input_hp_hz: Option<f64>,
     /// Common LF arrival for the mains (ADR 0025), off by default.
     pub lf_align: bool,
     /// Pole-replacing cuts for long modes (ADR 0025), off by default.

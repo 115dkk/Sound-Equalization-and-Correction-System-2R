@@ -176,7 +176,8 @@ export function mockRcBandsNotes(settings: CalibrationSettings, positions: numbe
  * (secs-service `calibration_settings_edit`, ADR 0024): an edge outside its
  * limits, the lower edge at or above a manual upper one (or the reverse), more
  * than four extra bands, or a band outside 20–20000 Hz or not rising (its
- * 1-based place in the list sent). Nothing is clamped.
+ * 1-based place in the list sent); also an input cut outside 10–50 Hz
+ * (ADR 0031). Nothing is clamped.
  */
 export function rcEditRefusal(settings: CalibrationSettings, edit: SettingEdit): IpcError | undefined {
   const refuse = (field: string, reason: string, params: Record<string, string>) =>
@@ -191,6 +192,10 @@ export function rcEditRefusal(settings: CalibrationSettings, edit: SettingEdit):
       if (edit.hz === null) return undefined;
       if (outside(edit.hz, LIMITS.rc_hi)) return refuse("rc_hi", "rc_hi_range", { min: String(LIMITS.rc_hi[0]), max: String(LIMITS.rc_hi[1]) });
       if (edit.hz <= settings.rc_lo) return refuse("rc_hi", "rc_hi_below_lo", { lo_hz: String(settings.rc_lo) });
+      return undefined;
+    case "input_hp":
+      // ADR 0031: off is null; a cut outside 10–50 Hz is refused like an RC edge.
+      if (edit.hz !== null && outside(edit.hz, LIMITS.input_hp)) return refuse("input_hp", "input_hp_range", { min: String(LIMITS.input_hp[0]), max: String(LIMITS.input_hp[1]) });
       return undefined;
     case "rc_bands": {
       if (edit.bands.length > LIMITS.rc_bands_max[1]) return refuse("rc_bands", "rc_band_count", { max: String(LIMITS.rc_bands_max[1]) });
@@ -284,6 +289,11 @@ export function mockLowProtectNotes(settings: CalibrationSettings, roles: readon
     notes.push({ code: "low_protect", params: { role: subs.join(" + "), rolloff_hz: "22", limited: "false" } });
   }
   return notes;
+}
+
+/** The 입력 저역 컷 note a calibration with `input_hp_hz` leaves (ADR 0031, secs-service `scalar_notice`). */
+export function mockInputHpNotes(settings: CalibrationSettings): Notice[] {
+  return settings.input_hp_hz === null ? [] : [{ code: "input_hp", params: { hz: String(settings.input_hp_hz), order: "8" } }];
 }
 
 /** Settings edits that change only the MIMO result (secs-types `mimo_key`). */
@@ -613,6 +623,7 @@ export function createMockService(options: MockOptions = {}): MockService {
       case "lf_align": settings.lf_align = edit.on; break;
       case "mode_decay": settings.mode_decay = edit.on; break;
       case "hf_phase": settings.hf_phase = edit.on; break;
+      case "input_hp": settings.input_hp_hz = edit.hz; break;
       case "ultra_ms": settings.ultra_ms = clamp(edit.ms, LIMITS.ultra_ms); break;
       case "rc_lo": settings.rc_lo = edit.hz; break;
       case "rc_hi": settings.rc_hi = edit.hz; break;
@@ -943,7 +954,7 @@ export function createMockService(options: MockOptions = {}): MockService {
           const spec = fx.modeSpec(captured.mode);
           summary.latency_ms = spec.max_latency_ms;
           summary.verdict.added_delay_ms = spec.max_latency_ms;
-          summary.notes = [rcLimitNote(captured, positions), ...mockRcBandsNotes(captured, positions), ...mockLowProtectNotes(captured, config.speakers.map((s) => s.role))];
+          summary.notes = [rcLimitNote(captured, positions), ...mockRcBandsNotes(captured, positions), ...mockLowProtectNotes(captured, config.speakers.map((s) => s.role)), ...mockInputHpNotes(captured)];
           summary.scorecard = roles.map((role) => ({ ...clone(fx.scorecard.find((score) => score.role === role) ?? fx.scorecard[0]!), role }));
           summary.late_energy = fx.lateEnergy(roles, needProject().positions);
           summary.main_roles = roles;

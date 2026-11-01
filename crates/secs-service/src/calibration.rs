@@ -935,6 +935,11 @@ pub(crate) fn scalar_notice(note: &secs_engine::Note) -> Notice {
                 "hf_phase_none"
             }
         }
+        Note::InputHp { hz } => {
+            params.insert("hz".into(), hz.to_string());
+            params.insert("order".into(), "8".into());
+            "input_hp"
+        }
         Note::LiftCapped {
             from_ms,
             taps,
@@ -1646,6 +1651,12 @@ mod tests {
             serde_json::to_value(notices(&note)).unwrap(),
             serde_json::json!([
                 {"code":"hf_phase_none","params":{"role":"R"}}
+            ])
+        );
+        assert_eq!(
+            serde_json::to_value(notices(&Note::InputHp { hz: 27.0 })).unwrap(),
+            serde_json::json!([
+                {"code":"input_hp","params":{"hz":"27","order":"8"}}
             ])
         );
     }
