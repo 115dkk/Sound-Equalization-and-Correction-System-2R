@@ -212,7 +212,10 @@ fn camilla_error(error: secs_apply::ApplyError) -> IpcError {
         }
     );
     let previous_path = match &error {
-        secs_apply::ApplyError::RollbackFailed { previous_path, .. } => Some(previous_path.clone()),
+        secs_apply::ApplyError::RollbackFailed { previous_path, .. }
+        | secs_apply::ApplyError::SelectionUncertain { previous_path, .. } => {
+            Some(previous_path.clone())
+        }
         _ => None,
     };
     let mut ipc = IpcError::new(ErrorCode::ApplyFailed, error.to_string());

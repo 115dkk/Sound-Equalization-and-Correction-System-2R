@@ -421,7 +421,27 @@ impl<T: Transport> Camilla<T> {
         )))?;
         let previous_value = self.command(&Command::GetConfigFilePath)?;
         let previous_path = value_as_optional_string(previous_value, &Command::GetConfigFilePath)?;
-        self.command(&Command::SetConfigFilePath(config_path.to_owned()))?;
+        if let Err(select_error) = self.command(&Command::SetConfigFilePath(config_path.to_owned()))
+        {
+            // A reply that never came may still have changed the selection, so
+            // put the previous path back and report it either way: the caller
+            // keeps that generation (audit #155 TD-108).
+            let Some(path) = previous_path else {
+                return Err(select_error);
+            };
+            let restore = self.command(&Command::SetConfigFilePath(path.clone()));
+            return Err(ApplyError::SelectionUncertain {
+                message: match restore {
+                    Ok(_) => format!("{select_error}; previous path restored"),
+                    Err(restore_error) => {
+                        format!(
+                            "{select_error}; restoring the previous path failed: {restore_error}"
+                        )
+                    }
+                },
+                previous_path: path,
+            });
+        }
 
         match self.command(&Command::Reload) {
             Ok(_) => Ok(ApplyOutcome::Applied { previous_path }),
@@ -825,6 +845,32 @@ mod tests {
                 && message.contains("rollback failed")
                 && message.contains("cannot restore")
         ));
+    }
+
+    #[test]
+    fn unanswered_selection_restores_and_reports_the_previous_path() {
+        let mut transport = FakeTransport::from_replies([
+            ok("ValidateConfig", serde_json::json!("validated")),
+            ok("GetConfigFilePath", serde_json::json!("old.yml")),
+        ]);
+        transport
+            .replies
+            .push_back(Err(ApplyError::Transport("request timed out".into())));
+        transport
+            .replies
+            .push_back(Ok(ok_without_value("SetConfigFilePath")));
+        let mut camilla = Camilla::new(transport);
+        assert!(matches!(
+            camilla.apply("new.yml", "title: new"),
+            Err(ApplyError::SelectionUncertain {
+                message,
+                previous_path,
+            }) if previous_path == "old.yml"
+                && message.contains("request timed out")
+                && message.contains("previous path restored")
+        ));
+        assert_eq!(camilla.transport.sent.len(), 4);
+        assert!(camilla.transport.sent[3].contains("old.yml"));
     }
 
     #[test]

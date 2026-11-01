@@ -24,6 +24,14 @@ pub enum ApplyError {
         message: String,
         previous_path: String,
     },
+    /// Selecting the new config path failed without a clear answer, so the
+    /// selection may have changed; the previous path was restored when it
+    /// could be, and is reported either way.
+    #[error("SetConfigFilePath: {message}")]
+    SelectionUncertain {
+        message: String,
+        previous_path: String,
+    },
     #[error("{command}: unexpected reply {reply}")]
     Reply { command: String, reply: String },
     #[error("{command}: not supported by this CamillaDSP")]
