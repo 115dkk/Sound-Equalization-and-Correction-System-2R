@@ -93,18 +93,17 @@ impl Manager {
         }
     }
 
-    fn reconcile(&self, settings: LocalApiSettings) {
-        let old = lock(&self.inner).settings;
-        self.apply_settings(old, settings);
-    }
-
     pub(crate) fn apply_revision(&self, effects: &Mutex<AppEffects>, revised: RevisedAppSettings) {
         let mut effects = lock(effects);
-        if !effects.accept(revised.revision) {
+        let Some(previous) = effects.accept(revised.revision, &revised.settings) else {
             return;
+        };
+        if previous.icon != revised.settings.icon {
+            crate::icon::show(&self.app, revised.settings.icon);
         }
-        crate::icon::show(&self.app, revised.settings.icon);
-        self.reconcile(revised.settings.local_api);
+        if previous.local_api != revised.settings.local_api {
+            self.apply_settings(previous.local_api, revised.settings.local_api);
+        }
     }
 
     pub(crate) fn status(&self) -> Result<LocalApiStatus, IpcError> {

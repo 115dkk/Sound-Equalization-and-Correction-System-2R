@@ -552,16 +552,30 @@ impl EventSink for ObservedEvents {
 #[derive(Debug, Default)]
 pub struct AppEffects {
     last: u64,
+    settings: Option<secs_types::ipc::AppSettings>,
 }
 
 impl AppEffects {
-    /// Returns true once for each revision newer than every accepted revision.
-    pub fn accept(&mut self, revision: u64) -> bool {
+    /// Starts effect ordering from settings already applied by the app.
+    #[must_use]
+    pub fn new(revision: u64, settings: secs_types::ipc::AppSettings) -> Self {
+        Self {
+            last: revision,
+            settings: Some(settings),
+        }
+    }
+
+    /// Accepts a newer revision and returns the settings whose effects are active.
+    pub fn accept(
+        &mut self,
+        revision: u64,
+        settings: &secs_types::ipc::AppSettings,
+    ) -> Option<secs_types::ipc::AppSettings> {
         if revision <= self.last {
-            return false;
+            return None;
         }
         self.last = revision;
-        true
+        Some(self.settings.replace(settings.clone()).unwrap_or_default())
     }
 }
 
@@ -570,12 +584,24 @@ mod app_effect_tests {
     use super::AppEffects;
 
     #[test]
-    fn effects_accept_only_a_newer_revision_td115() {
-        let mut effects = AppEffects::default();
-        assert!(effects.accept(2));
-        assert!(!effects.accept(1));
-        assert!(!effects.accept(2));
-        assert!(effects.accept(3));
+    fn effects_compare_with_the_last_applied_settings_td115() {
+        let mut applied = secs_types::ipc::AppSettings {
+            updates: secs_types::ipc::UpdatePolicy::Notify,
+            ..Default::default()
+        };
+        let mut revision_two = applied.clone();
+        revision_two.updates = secs_types::ipc::UpdatePolicy::Off;
+        let mut revision_three = revision_two.clone();
+        revision_three.theme = secs_types::ipc::AppTheme::Dark;
+
+        let mut effects = AppEffects::new(1, applied.clone());
+        let previous = effects.accept(3, &revision_three).unwrap();
+        assert_eq!(previous.updates, secs_types::ipc::UpdatePolicy::Notify);
+        assert_ne!(previous.updates, revision_three.updates);
+        assert!(effects.accept(2, &revision_two).is_none());
+
+        applied.theme = secs_types::ipc::AppTheme::Light;
+        assert_eq!(effects.accept(4, &applied).unwrap(), revision_three);
     }
 }
 
@@ -606,13 +632,14 @@ impl Service {
     /// Creates a service from platform dependency factories.
     pub fn new(deps: Deps) -> Self {
         let app_settings = project_edit::load_app_settings(deps.app_settings_path.as_deref());
+        let app_effects = AppEffects::new(1, app_settings.clone());
         let rew = measure::RewLink::new(&deps);
         Self {
             deps,
             session: Arc::new(Mutex::new(Session::default())),
             app_settings: Arc::new(Mutex::new(app_settings)),
             app_settings_revision: AtomicU64::new(1),
-            app_effects: Mutex::new(AppEffects::default()),
+            app_effects: Mutex::new(app_effects),
             jobs: JobRegistry::default(),
             level: monitor::LevelState::default(),
             status_watch: watch::WatchState::default(),

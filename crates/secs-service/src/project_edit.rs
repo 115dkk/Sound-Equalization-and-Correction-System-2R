@@ -814,11 +814,12 @@ impl Service {
         if let Some(path) = self.deps.app_settings_path.as_deref() {
             atomic_write(path, &bytes)?;
         }
-        let policy_changed = current.updates != params.settings.updates;
         *current = params.settings.clone();
         drop(current);
         let mut effects = lock(&self.app_effects);
-        if effects.accept(revision) && policy_changed {
+        if let Some(previous) = effects.accept(revision, &params.settings)
+            && previous.updates != params.settings.updates
+        {
             self.deps.updates.set_policy(params.settings.updates);
         }
         Ok(params.settings)

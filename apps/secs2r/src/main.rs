@@ -240,6 +240,10 @@ fn main() {
                 service.call(Request::AppSettingsGet, Arc::new(NoEvents))
                 && let Response::AppSettingsGet(settings) = *response
             {
+                *app.state::<Mutex<AppEffects>>()
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) =
+                    AppEffects::new(1, settings.clone());
                 updates.start(settings.updates);
                 icon::show(app.handle(), settings.icon);
                 app.state::<local_api::Manager>()
