@@ -311,7 +311,7 @@ fn cancelled_convolution_compute_installs_no_files() {
 }
 
 #[test]
-fn explicit_unnamed_export_indexes_only_the_chosen_folder() {
+fn explicit_unnamed_export_merges_the_chosen_folder_into_valid_existing_index() {
     let root = root();
     let parent = root.join("parent");
     let out = parent.join("out");
@@ -327,6 +327,16 @@ fn explicit_unnamed_export_indexes_only_the_chosen_folder() {
     }"#;
     fs::write(sibling.join("secs-design.json"), foreign_manifest).unwrap();
     fs::write(outside.join("secs-design.json"), foreign_manifest).unwrap();
+    fs::write(
+        parent.join("designs.json"),
+        br#"[
+            {"design_name":"foreign","design_id":"outside","export_kind":"filter_text",
+             "folder":"sibling","created_utc":"2024-01-01T00:00:00.000Z","mode":"mixed","mimo":"none"},
+            {"design_name":"stale","design_id":"gone","export_kind":"filter_text",
+             "folder":"gone","created_utc":"2023-01-01T00:00:00.000Z","mode":"mixed","mimo":"none"}
+        ]"#,
+    )
+    .unwrap();
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
@@ -369,8 +379,14 @@ fn explicit_unnamed_export_indexes_only_the_chosen_folder() {
     let index: serde_json::Value =
         serde_json::from_slice(&fs::read(parent.join("designs.json")).unwrap()).unwrap();
     let entries = index.as_array().unwrap();
-    assert_eq!(entries.len(), 1);
-    assert_eq!(entries[0]["folder"], "out");
+    assert_eq!(entries.len(), 2);
+    let folders = entries
+        .iter()
+        .map(|entry| entry["folder"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert!(folders.contains(&"out"));
+    assert!(folders.contains(&"sibling"));
+    assert!(!folders.contains(&"gone"));
     assert_eq!(
         fs::read(outside.join("secs-design.json")).unwrap(),
         foreign_manifest

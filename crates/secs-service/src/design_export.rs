@@ -328,7 +328,49 @@ pub(crate) fn rebuild_index_selected(
 }
 
 fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, DesignExportError> {
-    const MAX_DEPTH: usize = 3;
+    const MAX_DEPTH: usize = 4;
+
+    fn manifest_entry(
+        base: &Path,
+        at: &Path,
+    ) -> Result<Option<DesignIndexEntry>, DesignExportError> {
+        let metadata = match fs::symlink_metadata(at) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Ok(None);
+        }
+        let manifest = at.join(MANIFEST_NAME);
+        let metadata = match fs::symlink_metadata(&manifest) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Ok(None);
+        }
+        let bytes = fs::read(&manifest)?;
+        let Ok(fields) = serde_json::from_slice::<ManifestIndexFields>(&bytes) else {
+            return Ok(None);
+        };
+        let folder = at.strip_prefix(base).map_err(|_| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "selected index folder is outside its base",
+            )
+        })?;
+        Ok(Some(DesignIndexEntry {
+            design_name: fields.design_name,
+            design_id: fields.design_id,
+            export_kind: fields.export_kind,
+            folder: folder.to_string_lossy().replace('\\', "/"),
+            created_utc: fields.created_utc,
+            mode: fields.mode,
+            mimo: fields.stages.mimo,
+        }))
+    }
 
     fn scan(
         base: &Path,
@@ -344,23 +386,8 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
         if metadata.file_type().is_symlink() || !metadata.is_dir() {
             return Ok(());
         }
-        let manifest = at.join(MANIFEST_NAME);
-        if let Ok(bytes) = fs::read(&manifest)
-            && let Ok(fields) = serde_json::from_slice::<ManifestIndexFields>(&bytes)
-        {
-            out.push(DesignIndexEntry {
-                design_name: fields.design_name,
-                design_id: fields.design_id,
-                export_kind: fields.export_kind,
-                folder: at
-                    .strip_prefix(base)
-                    .expect("selected index folder is under its base")
-                    .to_string_lossy()
-                    .replace('\\', "/"),
-                created_utc: fields.created_utc,
-                mode: fields.mode,
-                mimo: fields.stages.mimo,
-            });
+        if let Some(entry) = manifest_entry(base, at)? {
+            out.push(entry);
             return Ok(());
         }
         if depth >= MAX_DEPTH {
@@ -385,10 +412,34 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
         Ok(())
     }
 
+    fn safe_relative_folder(folder: &str) -> bool {
+        let path = Path::new(folder);
+        !path.as_os_str().is_empty()
+            && path
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_)))
+    }
+
     fs::create_dir_all(base)?;
     let mut entries = Vec::new();
     if let Some(selected) = selected {
-        scan(base, selected, 0, &mut entries)?;
+        if let Ok(bytes) = fs::read(base.join(INDEX_NAME))
+            && let Ok(existing) = serde_json::from_slice::<Vec<DesignIndexEntry>>(&bytes)
+        {
+            for entry in existing {
+                if safe_relative_folder(&entry.folder)
+                    && let Some(current) = manifest_entry(base, &base.join(&entry.folder))?
+                {
+                    entries.push(current);
+                }
+            }
+        }
+        let mut selected_entries = Vec::new();
+        scan(base, selected, 0, &mut selected_entries)?;
+        for selected in selected_entries {
+            entries.retain(|entry| entry.folder != selected.folder);
+            entries.push(selected);
+        }
     } else {
         scan(base, base, 0, &mut entries)?;
     }
@@ -490,6 +541,70 @@ mod tests {
         assert_eq!(index.len(), 1);
         assert_eq!(index[0].design_name, "Cinema");
         assert_eq!(index[0].design_id, second_id);
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn index_scan_reaches_a_named_design_below_four_container_folders() {
+        let base = std::env::temp_dir().join(format!(
+            "secs-design-index-depth-{}-{}",
+            std::process::id(),
+            TEMP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let destination = base.join("exports/equalizer/room/current");
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(
+            destination.join(MANIFEST_NAME),
+            br#"{
+                "design_name":"Cinema","design_id":"depth","export_kind":"equalizer_apo",
+                "created_utc":"2024-01-01T00:00:00.000Z","mode":"mixed","stages":{"mimo":"none"}
+            }"#,
+        )
+        .unwrap();
+
+        rebuild_index(&base).unwrap();
+        let index: Vec<DesignIndexEntry> =
+            serde_json::from_slice(&fs::read(base.join(INDEX_NAME)).unwrap()).unwrap();
+        assert_eq!(index.len(), 1);
+        assert_eq!(index[0].folder, "exports/equalizer/room/current");
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn index_scan_does_not_follow_a_manifest_file_link() {
+        let base = std::env::temp_dir().join(format!(
+            "secs-design-index-manifest-link-{}-{}",
+            std::process::id(),
+            TEMP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let destination = base.join("linked-manifest");
+        let outside = base.with_extension("outside.json");
+        fs::create_dir_all(&destination).unwrap();
+        fs::write(
+            &outside,
+            br#"{
+                "design_name":"Foreign","design_id":"outside","export_kind":"filter_text",
+                "created_utc":"2024-01-01T00:00:00.000Z","mode":"mixed","stages":{"mimo":"none"}
+            }"#,
+        )
+        .unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, destination.join(MANIFEST_NAME)).unwrap();
+        #[cfg(windows)]
+        if let Err(error) =
+            std::os::windows::fs::symlink_file(&outside, destination.join(MANIFEST_NAME))
+        {
+            eprintln!("skipping Windows manifest link test: {error}");
+            fs::remove_file(outside).unwrap();
+            fs::remove_dir_all(base).unwrap();
+            return;
+        }
+
+        rebuild_index(&base).unwrap();
+        let index: Vec<DesignIndexEntry> =
+            serde_json::from_slice(&fs::read(base.join(INDEX_NAME)).unwrap()).unwrap();
+        assert!(index.is_empty());
+        fs::remove_file(outside).unwrap();
         fs::remove_dir_all(base).unwrap();
     }
 
