@@ -426,11 +426,17 @@ fn yaml_string(text: &str, key: &str) -> String {
 }
 
 fn apply_camilla(service: &Service, events: Arc<Events>) -> JobStarted {
+    apply_camilla_with(service, None, events)
+}
+
+fn apply_camilla_with(
+    service: &Service,
+    camilla_devices: Option<CamillaDevices>,
+    events: Arc<Events>,
+) -> JobStarted {
     started(
         service,
-        Request::ApplyCamilla(ApplyCamillaParams {
-            camilla_devices: None,
-        }),
+        Request::ApplyCamilla(ApplyCamillaParams { camilla_devices }),
         events,
     )
 }
@@ -712,7 +718,7 @@ fn apply_camilla_covers_success_rejection_rollback_folder_and_design_matches() {
     assert!(!first.stale);
     assert_eq!(
         PathBuf::from(&first.folder),
-        applied.join(&first.design_id[..16])
+        applied.join(format!("{}-1", &first.design_id[..16]))
     );
     assert!(!applied.join("obsolete.txt").exists());
     let requests = server.join().unwrap();
@@ -832,6 +838,119 @@ fn apply_camilla_covers_success_rejection_rollback_folder_and_design_matches() {
 }
 
 #[test]
+fn rejected_camilla_generation_keeps_previous_bytes_and_restores_its_path() {
+    let root = root("camilla-generation-rollback");
+    let service = calibrated_service(&root, Deps::default());
+    let applied = root.join("app-data/applied/camilladsp");
+
+    let (address, server) = ws_server(vec![
+        reply("ValidateConfig", serde_json::json!("validated")),
+        reply("GetConfigFilePath", serde_json::json!("before.yml")),
+        reply_ok("SetConfigFilePath"),
+        reply_ok("Reload"),
+    ]);
+    set_apply(
+        &service,
+        CamillaApply {
+            level: ApplyLevel::Apply,
+            address,
+            exe_path: None,
+        },
+        EqApoApply::default(),
+    );
+    let events = Arc::new(Events::default());
+    let first_job = apply_camilla(&service, events.clone());
+    let JobResult::Apply(first) = succeeded(events.wait(first_job.job)) else {
+        panic!("apply result is absent")
+    };
+    server.join().unwrap();
+    let first_folder = PathBuf::from(&first.folder);
+    let first_config = fs::read_dir(first_folder.join("configs"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension().and_then(|value| value.to_str()) == Some("yml")
+                && !path
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .ends_with("_bypass.yml")
+        })
+        .unwrap();
+    let first_bytes = fs::read(&first_config).unwrap();
+
+    let devices = CamillaDevices {
+        capture: CamillaCaptureDevice::Asio {
+            device: "capture-device".into(),
+        },
+        playback: CamillaPlaybackDevice::Asio {
+            device: "playback-device".into(),
+        },
+    };
+    let previous_path = first_config.to_string_lossy().into_owned();
+    let (address, server) = ws_server(vec![
+        reply("ValidateConfig", serde_json::json!("validated")),
+        reply("GetConfigFilePath", serde_json::json!(previous_path)),
+        reply_ok("SetConfigFilePath"),
+        rejected("Reload", "cannot start"),
+        reply_ok("SetConfigFilePath"),
+        reply_ok("Reload"),
+    ]);
+    set_apply(
+        &service,
+        CamillaApply {
+            level: ApplyLevel::Apply,
+            address,
+            exe_path: None,
+        },
+        EqApoApply::default(),
+    );
+    let events = Arc::new(Events::default());
+    let failed_job = apply_camilla_with(&service, Some(devices.clone()), events.clone());
+    let JobResult::Apply(rolled_back) = succeeded(events.wait(failed_job.job)) else {
+        panic!("apply result is absent")
+    };
+    assert!(matches!(
+        rolled_back.outcome,
+        ApplyOutcome::RolledBack { .. }
+    ));
+    let requests = server.join().unwrap();
+    assert!(requests[4].contains(&first_config.to_string_lossy().replace('\\', "\\\\")));
+    assert_eq!(fs::read(&first_config).unwrap(), first_bytes);
+    assert!(first_folder.is_dir());
+    assert_eq!(fs::read_dir(&applied).unwrap().count(), 1);
+
+    let (address, server) = ws_server(vec![
+        reply("ValidateConfig", serde_json::json!("validated")),
+        reply(
+            "GetConfigFilePath",
+            serde_json::json!(first_config.to_string_lossy()),
+        ),
+        reply_ok("SetConfigFilePath"),
+        reply_ok("Reload"),
+    ]);
+    set_apply(
+        &service,
+        CamillaApply {
+            level: ApplyLevel::Apply,
+            address,
+            exe_path: None,
+        },
+        EqApoApply::default(),
+    );
+    let events = Arc::new(Events::default());
+    let success_job = apply_camilla_with(&service, Some(devices), events.clone());
+    let JobResult::Apply(second) = succeeded(events.wait(success_job.job)) else {
+        panic!("apply result is absent")
+    };
+    server.join().unwrap();
+    assert_ne!(second.folder, first.folder);
+    assert!(!first_folder.exists());
+    assert!(Path::new(&second.folder).is_dir());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn apply_camilla_gives_each_design_its_own_folder_so_reload_reads_its_firs() {
     // CamillaDSP's Reload rebuilds only filters whose definition changed, and a
     // Conv filter's definition is its absolute file name. A new design must
@@ -870,13 +989,14 @@ fn apply_camilla_gives_each_design_its_own_folder_so_reload_reads_its_firs() {
     let (first, requests) = apply_once(&service);
     assert_eq!(
         PathBuf::from(&first.folder),
-        applied.join(&first.design_id[..16])
+        applied.join(format!("{}-1", &first.design_id[..16]))
     );
     assert!(requests[2].contains("SetConfigFilePath"));
     assert!(requests[2].contains(&first.design_id[..16]));
     assert!(!applied.join("configs").exists());
     let (again, _) = apply_once(&service);
-    assert_eq!(again.folder, first.folder);
+    assert_ne!(again.folder, first.folder);
+    assert!(!Path::new(&first.folder).exists());
 
     // A setting that changes only the FIRs: a new design and a new folder.
     ok(
