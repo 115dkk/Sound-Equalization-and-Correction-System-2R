@@ -4022,6 +4022,92 @@ fn measurement_mdat_rejects_all_originals_that_exceed_one_budget_td130() {
 }
 
 #[test]
+fn cached_resample_replay_releases_read_memory_before_calibrating_td130() {
+    let root = temp_root("cached-resample-memory");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("resample.secs");
+    let mut project = Project::from_preset("2.0").unwrap();
+    let mut settings = secs_project::calibration_from_project(&project);
+    settings.sample_rate_policy = secs_types::calibration::SampleRatePolicy::Resample;
+    secs_project::store_calibration(&mut project, &settings);
+    let mut store = MeasurementStore::new(&path, project);
+    for role in ["L", "R"] {
+        let mut ir = vec![0.0; 8192];
+        ir[100] = 1.0;
+        store
+            .record(
+                MeasurementResult {
+                    role: role.into(),
+                    pos: 1,
+                    ir,
+                    sample_rate: 44_100,
+                    t0_s: 0.0,
+                    spl_db: None,
+                    spl_offset_db: None,
+                    snr_db: None,
+                    uuid: None,
+                    source: Some("test".into()),
+                    source_info: None,
+                },
+                None,
+            )
+            .unwrap();
+    }
+    store.save().unwrap();
+
+    let running = service();
+    open(&running, &path);
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&running, calibration_events.clone(), settings);
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+
+    let large_samples = vec![0.0_f32; 5 * 1024 * 1024 / std::mem::size_of::<f32>()];
+    fs::write(
+        secs_project::ir_file(&path, "L", 1),
+        secs_project::write_wav_float32(&large_samples, 44_100),
+    )
+    .unwrap();
+
+    let replay = Service::new(Deps {
+        memory: Arc::new(secs_compute::FixedMemory(64 * 1024 * 1024)),
+        ..Deps::default()
+    });
+    open(&replay, &path);
+    let events = Arc::new(Events::default());
+    let Response::Export(started) = call_ok(
+        &replay,
+        Request::Export(ExportParams {
+            kind: ExportKind::StagedMdat,
+            folder: root.join("export").to_string_lossy().into_owned(),
+            mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
+            extra_rates: Vec::new(),
+        }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    let Some(finished) = events.try_wait(started.job, Duration::from_secs(5)) else {
+        call_ok(
+            &replay,
+            Request::JobCancel(JobCancelParams { job: started.job }),
+            Arc::new(NoEvents),
+        );
+        let _ = events.wait(started.job, Duration::from_secs(10));
+        panic!("cached resample replay kept the read permit while calibrating");
+    };
+    assert!(matches!(
+        finished,
+        JobEvent::Finished {
+            status: JobStatus::Succeeded,
+            ..
+        }
+    ));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn cached_mdat_cancel_after_a_real_read_finishes_cancelled_td130() {
     let root = temp_root("cancel-cached-read");
     fs::create_dir_all(&root).unwrap();

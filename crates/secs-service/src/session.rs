@@ -563,10 +563,9 @@ pub(crate) struct MeasurementSnapshot {
     project: Project,
 }
 
-pub(crate) struct LoadedMeasurements<'a> {
+pub(crate) struct LoadedMeasurements {
     pub project: Project,
     pub values: secs_engine::MeasurementSet,
-    _permit: secs_compute::MemoryPermit<'a>,
 }
 
 pub(crate) fn original_snapshot(open: &OpenProject) -> OriginalSnapshot {
@@ -626,18 +625,18 @@ fn reserve_measurements<'a>(
 }
 
 impl MeasurementSnapshot {
-    pub(crate) fn load<'a>(
+    pub(crate) fn load(
         self,
         job: &JobContext,
-        budget: &'a secs_compute::MemoryBudget,
-    ) -> Result<LoadedMeasurements<'a>, IpcError> {
+        budget: &secs_compute::MemoryBudget,
+    ) -> Result<LoadedMeasurements, IpcError> {
         let permit = reserve_measurements(&self.path, &self.project, job, budget)?;
         let mut store = MeasurementStore::new(&self.path, self.project.clone());
         let values = super::calibration::load_measurements_cancellable(&mut store, job.cancel())?;
+        drop(permit);
         Ok(LoadedMeasurements {
             project: self.project,
             values,
-            _permit: permit,
         })
     }
 }
