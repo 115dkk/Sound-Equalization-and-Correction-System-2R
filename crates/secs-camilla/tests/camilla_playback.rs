@@ -17,6 +17,7 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver, SyncSender};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -410,6 +411,77 @@ fn wait_for_file_playback(client: &mut Camilla<WsTransport>, output: &Path) {
     }
 }
 
+fn wait_for_running_frames(
+    client: &mut Camilla<WsTransport>,
+    output: &Path,
+    channels: usize,
+    frames: usize,
+) {
+    let required_bytes = (frames * channels * size_of::<f32>()) as u64;
+    let deadline = Instant::now() + RUN_TIMEOUT;
+    loop {
+        let enough_output =
+            fs::metadata(output).is_ok_and(|metadata| metadata.len() >= required_bytes);
+        let running = client
+            .status()
+            .is_ok_and(|status| status.state == "Running");
+        if enough_output && running {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "CamillaDSP did not write {frames} running frames to {}",
+            output.display()
+        );
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn write_paced_impulse_train(
+    input: &Path,
+    channels: usize,
+    phase_ready: SyncSender<usize>,
+    resume: Receiver<()>,
+) -> Result<(), String> {
+    const SLOTS: usize = 6;
+    const BLOCK_FRAMES: usize = 480;
+
+    let file = File::create(input).map_err(|error| error.to_string())?;
+    let mut writer = BufWriter::new(file);
+    let zero = 0.0_f32.to_le_bytes();
+    let impulse = IMPULSE.to_le_bytes();
+    for slot in 0..SLOTS {
+        let mut slot_frame = 0;
+        while slot_frame < FFT_LEN {
+            let block_frames = (FFT_LEN - slot_frame).min(BLOCK_FRAMES);
+            for frame in 0..block_frames {
+                for channel in 0..channels {
+                    let sample = if slot_frame == 0 && frame == 0 && channel == 0 {
+                        &impulse
+                    } else {
+                        &zero
+                    };
+                    writer
+                        .write_all(sample)
+                        .map_err(|error| error.to_string())?;
+                }
+            }
+            writer.flush().map_err(|error| error.to_string())?;
+            slot_frame += block_frames;
+            thread::sleep(Duration::from_secs_f64(
+                block_frames as f64 / f64::from(SAMPLE_RATE),
+            ));
+        }
+        if slot == 1 || slot == 3 {
+            phase_ready
+                .send(slot + 1)
+                .map_err(|error| error.to_string())?;
+            resume.recv().map_err(|error| error.to_string())?;
+        }
+    }
+    writer.flush().map_err(|error| error.to_string())
+}
+
 fn run_engine(engine: &Path, config: &Path, log: &Path) -> Result<(), String> {
     let stdout = File::create(log).map_err(|error| error.to_string())?;
     let stderr = stdout.try_clone().map_err(|error| error.to_string())?;
@@ -527,6 +599,95 @@ impl Default for Worst {
             frequency: 0.0,
         }
     }
+}
+
+struct LiveExpectation<'a> {
+    label: &'a str,
+    slot: usize,
+    plan: &'a FilterPlan,
+    gain: f64,
+}
+
+fn assert_live_slot_matches(samples: &[f32], expected: LiveExpectation<'_>) {
+    let frequencies = (0..=FFT_LEN / 2)
+        .map(|index| index as f64 * SAMPLE_RATE as f64 / FFT_LEN as f64)
+        .collect::<Vec<_>>();
+    let input = &expected.plan.inputs[0];
+    let responses = plan_responses(expected.plan, &frequencies, input, false).unwrap();
+    let analog_peak = responses
+        .iter()
+        .flat_map(|(_, response)| response)
+        .map(|value| value.norm() * expected.gain)
+        .fold(0.0_f64, f64::max);
+    let frame_start = expected.slot * FFT_LEN;
+    let required_frames = frame_start + FFT_LEN;
+    let frames = samples.len() / expected.plan.outputs.len();
+    assert_eq!(
+        samples.len() % expected.plan.outputs.len(),
+        0,
+        "{}: partial output frame",
+        expected.label
+    );
+    assert!(
+        frames >= required_frames,
+        "{}: output has {frames} frames, expected at least {required_frames}",
+        expected.label
+    );
+
+    let mut worst = Worst::default();
+    for (output_index, output) in expected.plan.outputs.iter().enumerate() {
+        let measured_time = (0..FFT_LEN)
+            .map(|offset| {
+                let frame = frame_start + offset;
+                f64::from(samples[frame * expected.plan.outputs.len() + output_index])
+                    / f64::from(IMPULSE)
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            measured_time.iter().all(|sample| sample.is_finite()),
+            "{}/{input}->{output}: non-finite output",
+            expected.label
+        );
+        let measured = rfft(&measured_time);
+        let reference = response_for(&responses, output, measured.len());
+        for (index, (got, reference)) in measured.iter().zip(reference).enumerate() {
+            let frequency = frequencies[index];
+            if !(10.0..=20_000.0).contains(&frequency) {
+                continue;
+            }
+            let reference = reference * expected.gain;
+            let error = (*got - reference).norm();
+            let bound = REL * reference.norm() + ABS * analog_peak;
+            let ratio = if bound > 0.0 {
+                error / bound
+            } else if error == 0.0 {
+                0.0
+            } else {
+                f64::INFINITY
+            };
+            if ratio > worst.value {
+                worst = Worst {
+                    value: ratio,
+                    error,
+                    bound,
+                    input: input.clone(),
+                    output: output.clone(),
+                    frequency,
+                };
+            }
+        }
+    }
+    assert!(
+        worst.value <= 1.0,
+        "{} / {} -> {}: response error {:.6e} exceeds bound {:.6e} ({:.6}x) at {:.3} Hz",
+        expected.label,
+        worst.input,
+        worst.output,
+        worst.error,
+        worst.bound,
+        worst.value,
+        worst.frequency
+    );
 }
 
 struct ReportRow {
@@ -885,7 +1046,11 @@ fn camilla_exports_play_as_designed() {
 
 #[test]
 #[ignore = "CamillaDSP 4.1.3 binary is required; the camilla-playback CI job runs this test"]
-fn one_process_applies_two_generations_and_changes_file_output() {
+fn one_running_pipeline_switches_generation_firs_by_unique_paths() {
+    if !cfg!(target_os = "linux") {
+        println!("skipped: the paced RawFile test uses a Linux FIFO");
+        return;
+    }
     let Some(engine) = std::env::var_os("SECS_CAMILLADSP") else {
         println!("skipped: SECS_CAMILLADSP is unset; set it to the CamillaDSP 4.1.3 binary");
         return;
@@ -896,48 +1061,49 @@ fn one_process_applies_two_generations_and_changes_file_output() {
     let root = TempDir::new("generation_reload");
     let fixture = Fixture::load("filters", "computed_dolby");
     let first_chain = chain(&fixture);
-    let plan = make_plan(&first_chain, None).unwrap();
-    let input = root.0.join("excitation.f32le");
-    write_excitation(&input, plan.inputs.len(), 1, FFT_LEN);
-
-    let write_generation =
-        |chain: &SignalChain, folder: &Path, output: &Path, design_name: &str| {
-            let plan = make_plan(chain, None).unwrap();
-            let options = Options {
-                capture: Some(raw_device("RawFile", &input, plan.inputs.len(), true)),
-                playback: Some(raw_device("File", output, plan.outputs.len(), false)),
-                design: Some(DesignLabels {
-                    project_name: Some("CamillaDSP generation check".into()),
-                    design_name: design_name.into(),
-                    design_id: design_name.repeat(8),
-                    bypass: false,
-                }),
-                headroom: true,
-                labels: true,
-                bypass: false,
-                ..Options::default()
-            };
-            write_config(chain, folder, "playback", &options, None).unwrap();
-            folder.join("configs/playback.yml")
-        };
-
-    let first_output = root.0.join("first-output.f32le");
-    let first_folder = root.0.join("generation-1");
-    let first_config =
-        write_generation(&first_chain, &first_folder, &first_output, "generation-one");
+    let first_plan = make_plan(&first_chain, None).unwrap();
+    let first_written = as_written(&first_plan);
+    let first_gain = headroom_gain(&first_plan);
     let mut second_chain = first_chain.clone();
     second_chain.mains[0]
         .fir
         .iter_mut()
         .for_each(|tap| *tap *= 0.5);
-    let second_output = root.0.join("second-output.f32le");
+    let second_plan = make_plan(&second_chain, None).unwrap();
+    let second_written = as_written(&second_plan);
+    let second_gain = headroom_gain(&second_plan);
+    assert_eq!(first_plan.inputs, second_plan.inputs);
+    assert_eq!(first_plan.outputs, second_plan.outputs);
+
+    let input = root.0.join("paced-input.f32le");
+    let output = root.0.join("continuous-output.f32le");
+    let status = Command::new("mkfifo")
+        .arg(&input)
+        .status()
+        .expect("run mkfifo for the paced RawFile input");
+    assert!(status.success(), "mkfifo exited with {status}");
+    let write_generation = |chain: &SignalChain, folder: &Path, design_name: &str| {
+        let options = Options {
+            capture: Some(raw_device("RawFile", &input, first_plan.inputs.len(), true)),
+            playback: Some(raw_device("File", &output, first_plan.outputs.len(), false)),
+            design: Some(DesignLabels {
+                project_name: Some("CamillaDSP generation check".into()),
+                design_name: design_name.into(),
+                design_id: design_name.repeat(8),
+                bypass: false,
+            }),
+            headroom: true,
+            labels: true,
+            bypass: false,
+            ..Options::default()
+        };
+        write_config(chain, folder, "playback", &options, None).unwrap();
+        folder.join("configs/playback.yml")
+    };
+    let first_folder = root.0.join("generation-1");
+    let first_config = write_generation(&first_chain, &first_folder, "generation-one");
     let second_folder = root.0.join("generation-2");
-    let second_config = write_generation(
-        &second_chain,
-        &second_folder,
-        &second_output,
-        "generation-two",
-    );
+    let second_config = write_generation(&second_chain, &second_folder, "generation-two");
 
     let probe = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = probe.local_addr().unwrap().port();
@@ -954,12 +1120,38 @@ fn one_process_applies_two_generations_and_changes_file_output() {
     let address = format!("127.0.0.1:{port}");
     let mut client = connect_engine(&address);
 
+    let (phase_ready_tx, phase_ready_rx) = std::sync::mpsc::sync_channel(0);
+    let (resume_tx, resume_rx) = std::sync::mpsc::sync_channel(0);
+    let writer_input = input.clone();
+    let input_channels = first_plan.inputs.len();
+    let writer = thread::spawn(move || {
+        write_paced_impulse_train(&writer_input, input_channels, phase_ready_tx, resume_rx)
+    });
+
     let first_text = fs::read_to_string(&first_config).unwrap();
     assert!(matches!(
         client.apply(first_config.to_str().expect("UTF-8 test path"), &first_text),
         Ok(secs_apply::camilla::ApplyOutcome::Applied { .. })
     ));
-    wait_for_file_playback(&mut client, &first_output);
+    assert_eq!(
+        phase_ready_rx.recv_timeout(RUN_TIMEOUT).unwrap(),
+        2,
+        "writer paused after the first two impulses"
+    );
+    wait_for_running_frames(&mut client, &output, first_plan.outputs.len(), 2 * FFT_LEN);
+
+    copy_dir(&second_folder.join("coeffs"), &first_folder.join("coeffs"));
+    assert!(matches!(
+        client.apply(first_config.to_str().expect("UTF-8 test path"), &first_text),
+        Ok(secs_apply::camilla::ApplyOutcome::Applied { .. })
+    ));
+    resume_tx.send(()).unwrap();
+    assert_eq!(
+        phase_ready_rx.recv_timeout(RUN_TIMEOUT).unwrap(),
+        4,
+        "writer paused after two same-path control impulses"
+    );
+    wait_for_running_frames(&mut client, &output, first_plan.outputs.len(), 4 * FFT_LEN);
 
     let second_text = fs::read_to_string(&second_config).unwrap();
     assert!(matches!(
@@ -969,13 +1161,42 @@ fn one_process_applies_two_generations_and_changes_file_output() {
         ),
         Ok(secs_apply::camilla::ApplyOutcome::Applied { .. })
     ));
-    wait_for_file_playback(&mut client, &second_output);
+    resume_tx.send(()).unwrap();
+    writer
+        .join()
+        .expect("paced input writer panicked")
+        .expect("paced input writer failed");
+    wait_for_file_playback(&mut client, &output);
 
-    assert_ne!(
-        fs::read(first_output).unwrap(),
-        fs::read(second_output).unwrap(),
-        "the second generation must change output from the same process"
+    let samples = read_raw(&output).unwrap();
+    assert_live_slot_matches(
+        &samples,
+        LiveExpectation {
+            label: "generation 1 before reload",
+            slot: 1,
+            plan: &first_written,
+            gain: first_gain,
+        },
     );
+    assert_live_slot_matches(
+        &samples,
+        LiveExpectation {
+            label: "same Conv paths after coefficient replacement",
+            slot: 3,
+            plan: &first_written,
+            gain: first_gain,
+        },
+    );
+    assert_live_slot_matches(
+        &samples,
+        LiveExpectation {
+            label: "generation 2 at unique Conv paths",
+            slot: 5,
+            plan: &second_written,
+            gain: second_gain,
+        },
+    );
+
     client.exit().unwrap();
     let status = process.0.wait().unwrap();
     assert!(status.success());
