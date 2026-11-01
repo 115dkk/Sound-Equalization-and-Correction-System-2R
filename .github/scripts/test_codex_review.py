@@ -196,6 +196,13 @@ class ReviewTests(unittest.TestCase):
                 self.assertEqual(self.writes[-1]["event"], "COMMENT")
                 self.assertIn("코드 결함 판정", self.writes[-1]["body"])
 
+    def test_non_object_metadata_publishes_schema_notice(self):
+        for value in (None, [], 3, "invalid"):
+            with self.subTest(value=value):
+                (self.directory / "metadata.json").write_text(json.dumps(value))
+                self.assertEqual(review.publish(self.event, self.directory, True, self.request), "COMMENT")
+                self.assertIn("Invalid metadata object", self.writes[-1]["body"])
+
     def test_preparation_failure_with_no_metadata_posts_reason(self):
         (self.directory / "failure.json").write_text(json.dumps({"stage": "prepare", "reason": "Truncated patch"}))
         self.assertEqual(review.publish(self.event, self.directory, True, self.request), "COMMENT")

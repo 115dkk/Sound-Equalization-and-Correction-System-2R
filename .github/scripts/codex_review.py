@@ -194,6 +194,7 @@ def publish(event, directory, enabled=False, request=api):
         metadata = (directory / "metadata.json").read_bytes()
         require(len(metadata) <= MAX_RESULT_BYTES, "Oversized metadata")
         meta = strict_json(metadata)
+        require(isinstance(meta, dict), "Invalid metadata object")
         require(all(meta.get(k) == v for k, v in expected.items()), "Artifact identity mismatch")
         if not (directory / "result.json").exists():
             raise ValueError(failure_notice(directory))
