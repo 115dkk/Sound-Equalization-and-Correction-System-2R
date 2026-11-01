@@ -25,6 +25,7 @@ QUOTA_NOTICE = ("[API 고갈] OpenAI API 크레딧이 바닥나 이번 커밋은
                 "크레딧을 충전한 뒤 이 워크플로를 다시 실행하면 리뷰합니다.")
 APPROVAL_REFUSED = ("\n\n저장소 설정에서 GitHub Actions의 PR 승인이 꺼져 있어 Approval 대신 이 댓글로 남깁니다. "
                     "Settings → Actions → General의 'Allow GitHub Actions to create and approve pull requests'를 켜면 Approval로 게시합니다.")
+DIFF_ONLY_NOTE = "바뀐 파일 전체가 입력 한도를 넘어 diff와 매니페스트만 보고 검토했습니다.\n\n"
 
 
 def strict_json(raw):
@@ -153,8 +154,13 @@ def prepare(event, output, policy, request=api):
             if side == "head" or item["status"] == "removed":
                 line_limits[item["filename"]] = len(text.splitlines())
             context_bytes += len(text.encode())
-            require(context_bytes <= MAX_INPUT_BYTES, "Full file context exceeds input budget")
             context.append({"side": side, "path": path, "content": text})
+    # Too big to send whole: review from the patches and manifests alone, which
+    # the policy and the published body both name (audit #155 TD-141). The
+    # files were still read, so line numbers are checked against them.
+    context_mode = "full"
+    if context_bytes > MAX_INPUT_BYTES:
+        context_mode, context, context_bytes = "diff", [], 0
     # Dependency/type context is selected deterministically, never by executing PR text.
     candidates = {"Cargo.toml"}
     for item in files:
@@ -180,7 +186,7 @@ def prepare(event, output, policy, request=api):
         context_bytes += len(text.encode())
         require(context_bytes <= MAX_INPUT_BYTES, "Context exceeds input budget")
         context.append({"side": "head", "path": path, "content": text})
-    payload = {"identity": meta, "files": [{k: f.get(k) for k in
+    payload = {"identity": meta, "context_mode": context_mode, "files": [{k: f.get(k) for k in
                ("filename", "previous_filename", "status", "patch")} for f in files],
                "context": context, "absent_optional_manifests": missing_context}
     encoded = json.dumps(payload, ensure_ascii=False)
@@ -189,6 +195,7 @@ def prepare(event, output, policy, request=api):
     check_current(meta, request(root))
     output.mkdir(parents=True, exist_ok=True)
     meta["files"] = [f["filename"] for f in files]
+    meta["context_mode"] = context_mode
     meta["line_limits"] = line_limits
     meta["changed_lines"] = {f["filename"]: changed_ranges(f["patch"], f["status"] == "removed") for f in files}
     meta["input_sha256"] = hashlib.sha256(prompt.encode()).hexdigest()
@@ -314,6 +321,8 @@ def publish(event, directory, enabled=False, request=api):
         if kind in ("notice", "stale"):
             body += "\n이는 코드 결함 판정이나 병합 차단 요청이 아닙니다."
     else:
+        if meta.get("context_mode") == "diff":
+            body += DIFF_ONLY_NOTE
         body += result["summary"]
         if not result["findings"]:
             body += "\n\n지적사항이 없습니다."

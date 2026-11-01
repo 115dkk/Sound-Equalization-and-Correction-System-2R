@@ -16,6 +16,9 @@ line this PR adds or changes, and only with causal evidence a reader can verify 
 supplied data. Everything else, behavior included, is minor; say plainly how serious it is.
 Include a changed path, line and causal evidence for every finding.
 If no findings exist and review is complete, return an empty findings array.
+context_mode says what you received: full means both sides of every changed file are in
+context; diff means the changed files were too large to send, so you see the patches and
+nearby manifests only. In diff mode judge only what the patches show.
 If the diff lacks context needed to assess correctness, exceeds your capacity, or review is
 interrupted, set complete=false; never claim a complete clean review of a partial input.
 Echo the exact base_sha and head_sha from identity. Return only the schema JSON.
