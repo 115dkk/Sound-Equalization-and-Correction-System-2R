@@ -7,6 +7,9 @@
 // rules' unit tests use this module.
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 mod rules;
+#[cfg(any(target_os = "windows", test))]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+mod transitions;
 
 #[cfg(target_os = "windows")]
 use std::path::{Path, PathBuf};
@@ -22,6 +25,10 @@ use rules::{Core, ProcessAction, ProcessEvent, ProcessRules};
 #[cfg(target_os = "windows")]
 use secs_types::ipc::{
     ErrorCode, HostManaged, HostRequest, HostResponse, IncludeState, IpcError, ManagedProcessState,
+};
+#[cfg(target_os = "windows")]
+use transitions::{
+    Input as TransitionInput, Platform as TransitionPlatform, State as TransitionState,
 };
 
 #[derive(Debug, Parser)]
@@ -430,6 +437,8 @@ fn service_loop(
     if let Some(session) = active_session {
         repair_eqapo(&mut core, paths, session)?;
     }
+    let mut transition_state =
+        TransitionState::new(core.managed.clone(), child.as_ref().and(active_session));
 
     let mut stop_after_response = false;
     loop {
@@ -573,6 +582,7 @@ fn service_loop(
                     identity,
                     request,
                     &mut core,
+                    &mut transition_state,
                     &mut child,
                     &mut process_rules,
                     &mut watcher,
@@ -602,11 +612,70 @@ fn service_loop(
 }
 
 #[cfg(target_os = "windows")]
+struct RealTransitionPlatform<'a> {
+    core: &'a mut Core,
+    child: &'a mut Option<secs_sys::host::ManagedChild>,
+    process_rules: &'a mut ProcessRules,
+    watcher: &'a mut Option<secs_sys::host::ConfigWatcher>,
+    restart_at: &'a mut Option<Instant>,
+    config_sender: &'a mpsc::Sender<()>,
+    paths: &'a Paths,
+}
+
+#[cfg(target_os = "windows")]
+impl TransitionPlatform for RealTransitionPlatform<'_> {
+    fn save_state(&mut self, managed: &HostManaged) -> Result<(), IpcError> {
+        rules::save_state(&self.paths.state, managed)
+    }
+
+    fn replace_watcher(
+        &mut self,
+        _target: Option<&secs_types::ipc::ManagedEqApo>,
+    ) -> Result<(), IpcError> {
+        *self.watcher = configure_watcher(self.core, self.config_sender)?;
+        Ok(())
+    }
+
+    fn repair_eqapo(&mut self, session: u32) -> Result<(), IpcError> {
+        repair_eqapo(self.core, self.paths, session)
+    }
+
+    fn stop_child(&mut self) -> Result<(), IpcError> {
+        *self.restart_at = None;
+        if let Some(running) = self.child.take() {
+            running.stop()?;
+        }
+        Ok(())
+    }
+
+    fn launch_child(
+        &mut self,
+        session: u32,
+        _target: &secs_types::ipc::ManagedCamilla,
+    ) -> Result<(), IpcError> {
+        *self.restart_at = None;
+        launch(
+            self.core,
+            self.child,
+            self.process_rules,
+            self.restart_at,
+            self.paths,
+            session,
+        )
+    }
+
+    fn log(&mut self, line: &secs_types::ipc::HostLogLine) -> Result<(), IpcError> {
+        record(self.core, self.paths, line.clone())
+    }
+}
+
+#[cfg(target_os = "windows")]
 #[allow(clippy::too_many_arguments)]
 fn handle_request(
     identity: secs_sys::host::PipeClientIdentity,
     request: HostRequest,
     core: &mut Core,
+    transition_state: &mut TransitionState,
     child: &mut Option<secs_sys::host::ManagedChild>,
     process_rules: &mut ProcessRules,
     watcher: &mut Option<secs_sys::host::ConfigWatcher>,
@@ -616,46 +685,53 @@ fn handle_request(
     stop_after_response: &mut bool,
 ) -> Result<HostResponse, IpcError> {
     match request {
-        HostRequest::SetManaged(mut update) => {
+        HostRequest::SetManaged(update) => {
             authorize_mutation(identity)?;
             if let Some(eqapo) = &update.eqapo {
                 validate_eqapo_path(Path::new(&eqapo.config_path))?;
             }
-            update.owner_session_id = Some(identity.session_id);
-            update.owner_user_sid =
-                Some(secs_sys::host::session_user_identity(identity.session_id)?);
-            let previous_camilla = core.managed.camilla.clone();
-            let response = core.handle(HostRequest::SetManaged(update));
-            rules::save_state(&paths.state, &core.managed)?;
-            *watcher = configure_watcher(core, config_sender)?;
-            if let Some(session) = managing_session(core)? {
-                repair_eqapo(core, paths, session)?;
-            }
-            if previous_camilla != core.managed.camilla {
-                *restart_at = None;
-                if let Some(running) = child.take() {
-                    running.stop()?;
-                }
-            }
-            if child.is_none()
-                && core.managed.camilla.is_some()
-                && let Some(session) = managing_session(core)?
-            {
-                *restart_at = None;
-                launch(core, child, process_rules, restart_at, paths, session)?;
-            }
-            Ok(response)
+            let requester_sid = secs_sys::host::session_user_identity(identity.session_id)?;
+            let (next, effects) = transitions::decide(
+                transition_state,
+                TransitionInput::SetManaged {
+                    update,
+                    requester_session: identity.session_id,
+                    requester_sid,
+                },
+            );
+            *transition_state = next;
+            core.managed = transition_state.managed.clone();
+            let mut platform = RealTransitionPlatform {
+                core,
+                child,
+                process_rules,
+                watcher,
+                restart_at,
+                config_sender,
+                paths,
+            };
+            transitions::drive(transition_state, effects, &mut platform)?;
+            Ok(HostResponse::Ok)
         }
         HostRequest::StopManaging => {
             authorize_mutation(identity)?;
-            let response = core.handle(HostRequest::StopManaging);
-            rules::save_state(&paths.state, &core.managed)?;
-            *watcher = None;
-            *restart_at = None;
-            if let Some(running) = child.take() {
-                running.stop()?;
-            }
-            Ok(response)
+            let (next, effects) =
+                transitions::decide(transition_state, TransitionInput::StopManaging);
+            *transition_state = next;
+            core.managed = transition_state.managed.clone();
+            core.camilla = Default::default();
+            core.eqapo_include = IncludeState::Absent;
+            let mut platform = RealTransitionPlatform {
+                core,
+                child,
+                process_rules,
+                watcher,
+                restart_at,
+                config_sender,
+                paths,
+            };
+            transitions::drive(transition_state, effects, &mut platform)?;
+            Ok(HostResponse::Ok)
         }
         HostRequest::UpdateSelf { from_dir } => {
             authorize_mutation(identity)?;
