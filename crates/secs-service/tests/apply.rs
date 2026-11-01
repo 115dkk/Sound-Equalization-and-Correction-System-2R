@@ -15,6 +15,7 @@ use secs_service::{
     ApplyAdapter, Deps, EventSink, LocalTime, ManagedHostAdapter, NoEvents, Service,
 };
 use secs_types::ipc::*;
+use sha2::{Digest, Sha256};
 use tungstenite::Message;
 
 static TEMP: AtomicU64 = AtomicU64::new(0);
@@ -997,6 +998,54 @@ fn apply_eqapo_installs_reapplies_repairs_once_and_removes_stale_files() {
         "the first backup was replaced"
     );
 
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn applied_eqapo_manifest_names_every_installed_file_with_size_and_hash() {
+    let root = root("eqapo-manifest");
+    let config_root = root.join("EqualizerAPO/config");
+    fs::create_dir_all(&config_root).unwrap();
+    fs::write(config_root.join("config.txt"), "Preamp: -3 dB\n").unwrap();
+    let install = EqApoInstall {
+        config_path: config_root.to_string_lossy().into_owned(),
+        install_path: "EqualizerAPO-XT/current".into(),
+        variant: EqApoVariant::Xt,
+    };
+    let service = calibrated_service(
+        &root,
+        Deps {
+            eqapo_install: Arc::new(move || Some(install.clone())),
+            ..Deps::default()
+        },
+    );
+    set_apply(
+        &service,
+        CamillaApply::default(),
+        EqApoApply {
+            level: ApplyLevel::Apply,
+        },
+    );
+    let events = Arc::new(Events::default());
+    let job = started(&service, Request::ApplyEqapo, events.clone());
+    let JobResult::Apply(result) = succeeded(events.wait(job.job)) else {
+        panic!("apply result is absent")
+    };
+    let generation = PathBuf::from(result.folder);
+    let manifest: serde_json::Value =
+        serde_json::from_slice(&fs::read(generation.join("secs-design.json")).unwrap()).unwrap();
+    let files = manifest["files"].as_array().unwrap();
+    assert!(!files.is_empty());
+    for record in files {
+        let path = generation.join(record["path"].as_str().unwrap());
+        let bytes = fs::read(&path).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+        assert_eq!(record["bytes"].as_u64().unwrap(), bytes.len() as u64);
+        let digest = Sha256::digest(&bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        assert_eq!(record["sha256"].as_str().unwrap(), digest);
+    }
     fs::remove_dir_all(root).unwrap();
 }
 
