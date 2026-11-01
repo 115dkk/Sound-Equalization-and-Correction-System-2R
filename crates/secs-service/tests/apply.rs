@@ -665,11 +665,15 @@ fn apply_camilla_covers_success_rejection_rollback_folder_and_design_matches() {
     };
     assert!(matches!(first.outcome, ApplyOutcome::Applied));
     assert!(!first.stale);
+    assert_eq!(
+        PathBuf::from(&first.folder),
+        applied.join(&first.design_id[..16])
+    );
     assert!(!applied.join("obsolete.txt").exists());
     let requests = server.join().unwrap();
     assert_eq!(requests.len(), 4);
 
-    let yml = fs::read_dir(applied.join("configs"))
+    let yml = fs::read_dir(PathBuf::from(&first.folder).join("configs"))
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .find(|path| {
@@ -778,6 +782,82 @@ fn apply_camilla_covers_success_rejection_rollback_folder_and_design_matches() {
         assert_eq!(status.camilla.design, expected);
         assert_eq!(server.join().unwrap().len(), 10);
     }
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn apply_camilla_gives_each_design_its_own_folder_so_reload_reads_its_firs() {
+    // CamillaDSP's Reload rebuilds only filters whose definition changed, and a
+    // Conv filter's definition is its absolute file name. A new design must
+    // therefore name its FIRs in another folder, or the old ones keep playing.
+    let root = root("camilla-designs");
+    let service = calibrated_service(&root, Deps::default());
+    let applied = root.join("app-data/applied/camilladsp");
+    // Older releases applied every design into this folder itself.
+    fs::create_dir_all(applied.join("configs")).unwrap();
+    fs::write(applied.join("configs/secs_linear.yml"), b"old").unwrap();
+    let apply_once = |service: &Service| {
+        let (address, server) = ws_server(vec![
+            reply("ValidateConfig", serde_json::json!("validated")),
+            reply("GetConfigFilePath", serde_json::json!("old.yml")),
+            reply_ok("SetConfigFilePath"),
+            reply_ok("Reload"),
+        ]);
+        set_apply(
+            service,
+            CamillaApply {
+                level: ApplyLevel::Apply,
+                address,
+                exe_path: None,
+            },
+            EqApoApply::default(),
+        );
+        let events = Arc::new(Events::default());
+        let started = apply_camilla(service, events.clone());
+        let JobResult::Apply(result) = succeeded(events.wait(started.job)) else {
+            panic!("apply result is absent")
+        };
+        assert!(matches!(result.outcome, ApplyOutcome::Applied));
+        (result, server.join().unwrap())
+    };
+
+    let (first, requests) = apply_once(&service);
+    assert_eq!(
+        PathBuf::from(&first.folder),
+        applied.join(&first.design_id[..16])
+    );
+    assert!(requests[2].contains("SetConfigFilePath"));
+    assert!(requests[2].contains(&first.design_id[..16]));
+    assert!(!applied.join("configs").exists());
+    let (again, _) = apply_once(&service);
+    assert_eq!(again.folder, first.folder);
+
+    // A setting that changes only the FIRs: a new design and a new folder.
+    ok(
+        &service,
+        Request::CalibrationSettingsEdit(CalibrationSettingsEditParams {
+            edit: secs_types::settings_edit::SettingEdit::HfPhase { on: true },
+        }),
+    );
+    let events = Arc::new(Events::default());
+    let calibration = started(
+        &service,
+        Request::Calibrate(CalibrateParams::default()),
+        events.clone(),
+    );
+    succeeded(events.wait(calibration.job));
+    let (second, requests) = apply_once(&service);
+    assert_ne!(second.design_id, first.design_id);
+    assert_ne!(second.folder, first.folder);
+    assert!(requests[2].contains(&second.design_id[..16]));
+    assert!(PathBuf::from(&second.folder).join("coeffs").is_dir());
+    assert!(!Path::new(&first.folder).exists());
+    let left: Vec<_> = fs::read_dir(&applied)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    assert_eq!(left, [PathBuf::from(&second.folder)]);
 
     fs::remove_dir_all(root).unwrap();
 }
