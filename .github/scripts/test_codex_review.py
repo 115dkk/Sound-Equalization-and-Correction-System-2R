@@ -126,13 +126,13 @@ class ReviewTests(unittest.TestCase):
             review.prepare(self.event, self.directory, "policy", self.request)
 
     def test_dry_run_does_not_submit(self):
-        self.assertEqual(self.publish(), "dry-run: APPROVE")
+        self.assertEqual(self.publish(), "dry-run: COMMENT")
         self.assertFalse(self.writes)
 
     def test_approval_publication_guard(self):
-        with self.assertRaises(ValueError):
-            self.publish(enabled=True)
-        self.assertFalse(self.writes)
+        self.assertEqual(self.publish(enabled=True), "COMMENT")
+        self.assertEqual(self.writes[0]["event"], "COMMENT")
+        self.assertIn("Approval이 아닙니다", self.writes[0]["body"])
 
     def test_comment_and_rc_payload_exact_sha(self):
         for severity, expected in (("minor", "COMMENT"), ("blocking", "REQUEST_CHANGES")):
@@ -142,14 +142,14 @@ class ReviewTests(unittest.TestCase):
             self.assertEqual(self.writes[-1]["event"], expected)
 
     def test_duplicate_only_trusted_bot_and_sha(self):
-        marker = f'<!-- secs-codex-v1:{self.meta["base_sha"]}:{self.meta["head_sha"]} -->'
+        marker = f'<!-- secs-sol-v2:{self.meta["base_sha"]}:{self.meta["head_sha"]}:{self.meta["head_sha"]}:review -->'
         record = {"user": {"login": "github-actions[bot]"}, "commit_id": self.meta["head_sha"], "body": marker, "state": "COMMENTED"}
         self.reviews = [record]
         self.assertEqual(self.publish(), "duplicate")
         self.reviews = [record | {"user": {"login": "attacker"}}]
-        self.assertEqual(self.publish(), "dry-run: APPROVE")
+        self.assertEqual(self.publish(), "dry-run: COMMENT")
         self.reviews = [record | {"commit_id": "c" * 40}]
-        self.assertEqual(self.publish(), "dry-run: APPROVE")
+        self.assertEqual(self.publish(), "dry-run: COMMENT")
 
     def test_final_sha_check_catches_race(self):
         self.result["findings"] = [finding()]
@@ -164,9 +164,10 @@ class ReviewTests(unittest.TestCase):
                     value = copy.deepcopy(value)
                     value["head"]["sha"] = "c" * 40
             return value
-        with patch.object(self, "request", request), self.assertRaises(ValueError):
-            self.publish(enabled=True)
-        self.assertFalse(self.writes)
+        with patch.object(self, "request", request):
+            self.assertEqual(self.publish(enabled=True), "COMMENT")
+        self.assertEqual(self.writes[0]["event"], "COMMENT")
+        self.assertIn("SHA", self.writes[0]["body"])
 
     def test_coverage_and_duplicate_json_fail_closed(self):
         for paths in ([], ["other.rs"], ["file.rs", "file.rs"]):
@@ -182,9 +183,57 @@ class ReviewTests(unittest.TestCase):
 
     def test_missing_timeout_output_fails(self):
         (self.directory / "metadata.json").write_text(json.dumps(self.meta))
-        with self.assertRaises(FileNotFoundError):
-            review.publish(self.event, self.directory, True, self.request)
-        self.assertFalse(self.writes)
+        self.assertEqual(review.publish(self.event, self.directory, True, self.request), "COMMENT")
+        self.assertIn("완료하지 못했습니다", self.writes[0]["body"])
+
+    def test_incomplete_schema_and_context_errors_publish_notice_not_rc(self):
+        cases = [self.result | {"complete": False}, self.result | {"findings": [finding("blocking")], "complete": False},
+                 self.result | {"unexpected": "bad schema"}]
+        for result in cases:
+            with self.subTest(result=result):
+                self.result = result
+                self.assertEqual(self.publish(enabled=True), "COMMENT")
+                self.assertEqual(self.writes[-1]["event"], "COMMENT")
+                self.assertIn("코드 결함 판정", self.writes[-1]["body"])
+
+    def test_preparation_failure_with_no_metadata_posts_reason(self):
+        (self.directory / "failure.json").write_text(json.dumps({"stage": "prepare", "reason": "Truncated patch"}))
+        self.assertEqual(review.publish(self.event, self.directory, True, self.request), "COMMENT")
+        self.assertIn("Truncated patch", self.writes[0]["body"])
+
+    def test_stale_blocking_finding_becomes_comment(self):
+        self.result["findings"] = [finding("blocking")]
+        original = self.request
+        def request(path, data=None):
+            value = original(path, data)
+            if path.endswith("/7"):
+                value = copy.deepcopy(value)
+                value["head"]["sha"] = "c" * 40
+            return value
+        with patch.object(self, "request", request):
+            self.assertEqual(self.publish(enabled=True), "COMMENT")
+        self.assertEqual(self.writes[0]["commit_id"], "c" * 40)
+        self.assertNotIn("Concrete defect", self.writes[0]["body"])
+
+    def test_notice_does_not_suppress_later_completed_review(self):
+        marker = f'<!-- secs-sol-v2:{self.meta["base_sha"]}:{self.meta["head_sha"]}:{self.meta["head_sha"]}:notice -->'
+        self.reviews = [{"user": {"login": "github-actions[bot]"}, "commit_id": self.meta["head_sha"], "body": marker, "state": "COMMENTED"}]
+        self.result["findings"] = [finding("blocking")]
+        self.assertEqual(self.publish(enabled=True), "REQUEST_CHANGES")
+
+    def test_post_failure_is_not_retried_or_replaced(self):
+        original = self.request
+        attempts = []
+        def request(path, data=None):
+            if data is not None:
+                attempts.append(data)
+                raise TimeoutError("response lost")
+            return original(path)
+        self.result["complete"] = False
+        with patch.object(self, "request", request), self.assertRaises(TimeoutError):
+            self.publish(enabled=True)
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(attempts[0]["event"], "COMMENT")
 
     def test_api_error_does_not_submit(self):
         with patch.object(self, "request", side_effect=TimeoutError), self.assertRaises(TimeoutError):

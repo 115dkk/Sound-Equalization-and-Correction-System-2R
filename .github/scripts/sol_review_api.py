@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import urllib.request
+import urllib.error
 
 MAX_INPUT_BYTES = 300_000
 MAX_RESPONSE_BYTES = 2_000_000
@@ -109,8 +110,11 @@ def main():
     try:
         run(args.directory, args.policy.read_text(), json.loads(args.schema.read_text()))
     except Exception as error:
+        args.directory.mkdir(parents=True, exist_ok=True)
+        detail = f"HTTP {error.code}" if isinstance(error, urllib.error.HTTPError) else f"{type(error).__name__}: {str(error)[:300]}" if isinstance(error, ValueError) else type(error).__name__
+        (args.directory / "failure.json").write_text(json.dumps({"stage": "api", "reason": detail}))
         # No response body, model output or key is logged.
-        raise SystemExit(f"Review API failed ({type(error).__name__}); no review result published") from None
+        raise SystemExit(f"Review API failed ({type(error).__name__}); publisher will submit a COMMENT notice") from None
 
 
 if __name__ == "__main__":

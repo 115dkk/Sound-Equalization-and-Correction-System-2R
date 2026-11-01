@@ -79,15 +79,25 @@ class ApiTests(unittest.TestCase):
             self.assertNotIn("tools", calls[0])
             self.assertTrue((directory / "result.json").is_file())
 
+    def test_default_enabled_and_explicit_opt_out(self):
+        # GitHub variables are strings; absent variables evaluate as empty strings.
+        for configured, expected in (("", True), ("true", True), ("false", False)):
+            self.assertEqual(configured != "false", expected)
+        workflow = (Path(__file__).parents[1] / "workflows/sol-review.yml").read_text()
+        self.assertIn("vars.SOL_REVIEW_ENABLED != 'false'", workflow)
+        self.assertIn("vars.SOL_REVIEW_PUBLISH != 'false'", workflow)
+
     def test_workflow_separates_credentials_and_pins_base(self):
         workflow = (Path(__file__).parents[1] / "workflows/sol-review.yml").read_text()
         model_job, publisher = workflow.split("  publish:\n")
-        self.assertIn("SOL_REVIEW_ENABLED == 'true'", model_job)
+        self.assertIn("SOL_REVIEW_ENABLED != 'false'", model_job)
         self.assertIn("head.repo.full_name == github.repository", model_job)
         self.assertNotIn("pull-requests: write", model_job)
         self.assertIn("pull-requests: write", publisher)
         self.assertNotIn("OPENAI_API_KEY", publisher)
-        self.assertIn("REVIEW_PUBLISH: 'false'", publisher)
+        self.assertIn("REVIEW_PUBLISH: ${{ vars.SOL_REVIEW_PUBLISH != 'false' }}", publisher)
+        self.assertIn("always() && needs.review.result != 'skipped'", publisher)
+        self.assertIn("continue-on-error: true", publisher)
         self.assertEqual(workflow.count("ref: ${{ github.event.pull_request.base.sha }}"), 2)
         self.assertNotIn("openai/codex-action", workflow)
 

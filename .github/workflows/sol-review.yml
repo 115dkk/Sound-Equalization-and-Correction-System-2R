@@ -1,6 +1,6 @@
 name: Sol PR review
 
-# Disabled until API credentials, spending limits and publication are reviewed.
+# Enabled by default; set SOL_REVIEW_ENABLED=false to opt out.
 # Only trusted main policy is checked out. Never checkout or execute PR code here.
 on:
   pull_request_target:
@@ -15,7 +15,7 @@ concurrency:
 jobs:
   review:
     if: >-
-      vars.SOL_REVIEW_ENABLED == 'true' &&
+      vars.SOL_REVIEW_ENABLED != 'false' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       !github.event.pull_request.draft
     runs-on: ubuntu-latest
@@ -30,12 +30,16 @@ jobs:
           persist-credentials: false
           path: trusted
       - name: Prepare bounded review input
+        id: prepare
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
           python3 -I trusted/.github/scripts/codex_review.py prepare
           --directory review-data --policy trusted/.github/codex/policy.txt
       - name: Review with Sol through Responses API
+        if: steps.prepare.outcome == 'success'
+        continue-on-error: true
         timeout-minutes: 16
         env:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -47,16 +51,19 @@ jobs:
           python3 -I trusted/.github/scripts/sol_review_api.py --directory review-data
           --policy trusted/.github/codex/policy.txt --schema trusted/.github/codex/result.schema.json
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
         with:
           name: codex-review-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             review-data/metadata.json
             review-data/result.json
-          if-no-files-found: error
+            review-data/failure.json
+          if-no-files-found: warn
           retention-days: 3
 
   publish:
     needs: review
+    if: ${{ always() && needs.review.result != 'skipped' && needs.review.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -70,12 +77,13 @@ jobs:
           persist-credentials: false
           path: trusted
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        continue-on-error: true
         with:
           name: codex-review-${{ github.run_id }}-${{ github.run_attempt }}
           path: review-data
-      - name: Validate and preview review decision
+      - name: Validate and publish review or completion notice
         env:
           GH_TOKEN: ${{ github.token }}
-          # Deliberately literal. Enabling API review never enables publication.
-          REVIEW_PUBLISH: 'false'
+          # Explicit false permits dry-run; normal enabled operation publishes COMMENT/RC.
+          REVIEW_PUBLISH: ${{ vars.SOL_REVIEW_PUBLISH != 'false' }}
         run: python3 -I trusted/.github/scripts/codex_review.py publish --directory review-data
