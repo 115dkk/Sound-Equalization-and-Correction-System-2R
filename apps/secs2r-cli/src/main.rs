@@ -1171,8 +1171,14 @@ mod tests {
             &mut runner,
         );
         assert!(runner.ok);
-        assert!(config.join("SECS2R/SECS.txt").is_file());
-        assert!(config.join("SECS2R/secs-design.json").is_file());
+        let entry = fs::read_to_string(config.join("SECS2R/SECS.txt")).unwrap();
+        let generation = entry
+            .strip_prefix("Include: ")
+            .and_then(|value| value.strip_suffix("\\config.txt\r\n"))
+            .expect("SECS.txt must contain one generation include");
+        let generation = config.join("SECS2R").join(generation);
+        assert!(generation.join("config.txt").is_file());
+        assert!(generation.join("secs-design.json").is_file());
         assert!(
             fs::read_to_string(config.join("config.txt"))
                 .unwrap()
