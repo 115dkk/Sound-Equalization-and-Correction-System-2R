@@ -333,10 +333,18 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
     fn manifest_entry(
         base: &Path,
         at: &Path,
+        skip_unreadable: bool,
     ) -> Result<Option<DesignIndexEntry>, DesignExportError> {
         let metadata = match fs::symlink_metadata(at) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) if skip_unreadable => {
+                eprintln!(
+                    "could not inspect design index folder {}; skipping it: {error}",
+                    at.display()
+                );
+                return Ok(None);
+            }
             Err(error) => return Err(error.into()),
         };
         if is_link_or_junction(&metadata) || !metadata.is_dir() {
@@ -346,14 +354,38 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
         let metadata = match fs::symlink_metadata(&manifest) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) if skip_unreadable => {
+                eprintln!(
+                    "could not inspect design manifest {}; skipping it: {error}",
+                    manifest.display()
+                );
+                return Ok(None);
+            }
             Err(error) => return Err(error.into()),
         };
         if is_link_or_junction(&metadata) || !metadata.is_file() {
             return Ok(None);
         }
-        let bytes = fs::read(&manifest)?;
-        let Ok(fields) = serde_json::from_slice::<ManifestIndexFields>(&bytes) else {
-            return Ok(None);
+        let bytes = match fs::read(&manifest) {
+            Ok(bytes) => bytes,
+            Err(error) if skip_unreadable => {
+                eprintln!(
+                    "could not read design manifest {}; skipping it: {error}",
+                    manifest.display()
+                );
+                return Ok(None);
+            }
+            Err(error) => return Err(error.into()),
+        };
+        let fields = match serde_json::from_slice::<ManifestIndexFields>(&bytes) {
+            Ok(fields) => fields,
+            Err(error) => {
+                eprintln!(
+                    "could not parse design manifest {}; skipping it: {error}",
+                    manifest.display()
+                );
+                return Ok(None);
+            }
         };
         let folder = at.strip_prefix(base).map_err(|_| {
             std::io::Error::new(
@@ -377,16 +409,24 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
         at: &Path,
         depth: usize,
         out: &mut Vec<DesignIndexEntry>,
+        skip_unreadable: bool,
     ) -> Result<(), DesignExportError> {
         let metadata = match fs::symlink_metadata(at) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) if skip_unreadable => {
+                eprintln!(
+                    "could not inspect design index folder {}; skipping it: {error}",
+                    at.display()
+                );
+                return Ok(());
+            }
             Err(error) => return Err(error.into()),
         };
         if is_link_or_junction(&metadata) || !metadata.is_dir() {
             return Ok(());
         }
-        if let Some(entry) = manifest_entry(base, at)? {
+        if let Some(entry) = manifest_entry(base, at, skip_unreadable)? {
             out.push(entry);
             return Ok(());
         }
@@ -395,10 +435,27 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
         }
         let children = match fs::read_dir(at) {
             Ok(children) => children,
-            Err(_) => return Ok(()),
+            Err(error) if skip_unreadable => {
+                eprintln!(
+                    "could not read design index folder {}; skipping it: {error}",
+                    at.display()
+                );
+                return Ok(());
+            }
+            Err(error) => return Err(error.into()),
         };
         for child in children {
-            let Ok(child) = child else { continue };
+            let child = match child {
+                Ok(child) => child,
+                Err(error) if skip_unreadable => {
+                    eprintln!(
+                        "could not read an entry under {}; skipping it: {error}",
+                        at.display()
+                    );
+                    continue;
+                }
+                Err(error) => return Err(error.into()),
+            };
             let path = child.path();
             if path
                 .file_name()
@@ -407,7 +464,7 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
             {
                 continue;
             }
-            scan(base, &path, depth + 1, out)?;
+            scan(base, &path, depth + 1, out, skip_unreadable)?;
         }
         Ok(())
     }
@@ -539,13 +596,13 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
             }
         }
         let mut selected_entries = Vec::new();
-        scan(base, selected, 0, &mut selected_entries)?;
+        scan(base, selected, 0, &mut selected_entries, false)?;
         for selected in selected_entries {
             entries.retain(|entry| entry.folder != selected.folder);
             entries.push(selected);
         }
     } else {
-        scan(base, base, 0, &mut entries)?;
+        scan(base, base, 0, &mut entries, true)?;
     }
     entries.sort_by(|left, right| {
         right
@@ -671,6 +728,58 @@ mod tests {
             serde_json::from_slice(&fs::read(base.join(INDEX_NAME)).unwrap()).unwrap();
         assert_eq!(index.len(), 1);
         assert_eq!(index[0].folder, "exports/equalizer/room/current");
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn full_index_scan_skips_an_unreadable_sibling_manifest() {
+        let base = std::env::temp_dir().join(format!(
+            "secs-design-index-unreadable-full-{}-{}",
+            std::process::id(),
+            TEMP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let readable = base.join("readable");
+        let blocked = base.join("blocked");
+        fs::create_dir_all(&readable).unwrap();
+        fs::create_dir_all(&blocked).unwrap();
+        let manifest = br#"{
+            "design_name":"Cinema","design_id":"readable","export_kind":"equalizer_apo",
+            "created_utc":"2024-01-01T00:00:00.000Z","mode":"mixed","stages":{"mimo":"none"}
+        }"#;
+        fs::write(readable.join(MANIFEST_NAME), manifest).unwrap();
+        let blocked_manifest = blocked.join(MANIFEST_NAME);
+        fs::write(&blocked_manifest, manifest).unwrap();
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&blocked_manifest, fs::Permissions::from_mode(0)).unwrap();
+        }
+        #[cfg(windows)]
+        let locked = {
+            use std::os::windows::fs::OpenOptionsExt as _;
+            std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .share_mode(0)
+                .open(&blocked_manifest)
+                .unwrap()
+        };
+
+        let rebuilt = rebuild_index(&base);
+
+        #[cfg(windows)]
+        drop(locked);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&blocked_manifest, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        rebuilt.unwrap();
+        let index: Vec<DesignIndexEntry> =
+            serde_json::from_slice(&fs::read(base.join(INDEX_NAME)).unwrap()).unwrap();
+        assert_eq!(index.len(), 1);
+        assert_eq!(index[0].folder, "readable");
         fs::remove_dir_all(base).unwrap();
     }
 
