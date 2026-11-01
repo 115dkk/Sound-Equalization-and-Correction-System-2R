@@ -1,6 +1,6 @@
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 use tungstenite::{Message, WebSocket};
@@ -136,6 +136,7 @@ pub trait Transport {
 #[derive(Debug)]
 pub struct WsTransport {
     socket: WebSocket<TcpStream>,
+    timeout: Duration,
 }
 
 impl WsTransport {
@@ -186,16 +187,25 @@ impl WsTransport {
                 connection_refused: false,
             }
         })?;
-        Ok(Self { socket })
+        Ok(Self { socket, timeout })
     }
 }
 
 impl Transport for WsTransport {
     fn request(&mut self, message: &str) -> Result<String, ApplyError> {
+        let deadline = Instant::now() + self.timeout;
+        self.socket
+            .get_mut()
+            .set_write_timeout(Some(remaining(deadline)?))
+            .map_err(|error| ApplyError::Transport(error.to_string()))?;
         self.socket
             .send(Message::Text(message.to_owned().into()))
             .map_err(|error| ApplyError::Transport(error.to_string()))?;
         loop {
+            self.socket
+                .get_mut()
+                .set_read_timeout(Some(remaining(deadline)?))
+                .map_err(|error| ApplyError::Transport(error.to_string()))?;
             match self
                 .socket
                 .read()
@@ -216,6 +226,13 @@ impl Transport for WsTransport {
             }
         }
     }
+}
+
+fn remaining(deadline: Instant) -> Result<Duration, ApplyError> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or_else(|| ApplyError::Transport("request timed out".to_owned()))
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -795,6 +812,34 @@ mod tests {
             transport.request(r#""GetState""#).unwrap(),
             r#"{"GetState":{"result":"Ok","value":"Running"}}"#
         );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn websocket_ping_frames_do_not_extend_request_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut socket = tungstenite::accept(stream).unwrap();
+            let _ = socket.read().unwrap();
+            let deadline = Instant::now() + Duration::from_millis(400);
+            while Instant::now() < deadline {
+                if socket.send(Message::Ping(Vec::new().into())).is_err() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+        });
+
+        let mut transport =
+            WsTransport::connect(&addr.to_string(), Duration::from_millis(100)).unwrap();
+        let started = Instant::now();
+        assert!(matches!(
+            transport.request(r#""GetState""#),
+            Err(ApplyError::Transport(_))
+        ));
+        assert!(started.elapsed() < Duration::from_millis(300));
         server.join().unwrap();
     }
 
