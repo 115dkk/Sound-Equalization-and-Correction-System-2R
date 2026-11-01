@@ -94,6 +94,32 @@ describe("ordered writer", () => {
 });
 
 describe("session writers", () => {
+  it.each(["app", "apply"] as const)("serializes app and apply read-modify-writes when %s reads first", async (firstWriter) => {
+    const mock = createMockService({ tickMs: 0 });
+    const answer = deferred();
+    const reached = deferred();
+    let armed = false;
+    let reads = 0;
+    const session = createSession({ ...mock, request: async (request) => {
+      const data = await mock.request(request);
+      if (armed && request.method === "app_settings_get" && ++reads === 1) { reached.resolve(); await answer.promise; }
+      return data;
+    } });
+    try {
+      await session.start(); await session.settled();
+      armed = true;
+      const app = () => session.writers.app.edit({ theme: "dark" });
+      const apply = () => session.writers.apply.edit((latest) => ({ camilla: { ...latest.camilla, address: "127.0.0.1:4321" } }));
+      const first = firstWriter === "app" ? app() : apply();
+      await reached.promise;
+      const second = firstWriter === "app" ? apply() : app();
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(reads).toBe(1);
+      answer.resolve();
+      expect(await Promise.all([first, second])).toEqual([true, true]);
+      expect(await mock.request({ method: "app_settings_get" })).toMatchObject({ theme: "dark", apply: { camilla: { address: "127.0.0.1:4321" } } });
+    } finally { answer.resolve(); session.dispose(); await session.settled(); mock.dispose(); }
+  });
   it("app: keeps the compute choice when the theme changes while its save is unanswered (TD-68)", async () => {
     const { mock, session, sent, reached, release } = slowAnswer("app_settings_set");
     try {
