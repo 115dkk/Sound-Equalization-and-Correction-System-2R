@@ -15,9 +15,13 @@ def event():
         "head": {"sha": "b" * 40, "repo": repo}}}
 
 
-def finding(severity="minor"):
-    return {"severity": severity, "path": "file.rs", "line": 2,
+def finding(severity="minor", category="security", line=2):
+    return {"severity": severity, "category": category, "path": "file.rs", "line": line,
             "title": "Concrete defect", "evidence": "Trigger and causal evidence"}
+
+
+def http_error(code):
+    return review.urllib.error.HTTPError("https://api.github.com", code, "refused", None, None)
 
 
 class ReviewTests(unittest.TestCase):
@@ -26,7 +30,8 @@ class ReviewTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.directory = Path(self.temp.name)
         self.event = event()
-        self.meta = review.identity(self.event) | {"files": ["file.rs"], "line_limits": {"file.rs": 2}}
+        self.meta = review.identity(self.event) | {"files": ["file.rs"], "line_limits": {"file.rs": 2},
+                                                   "changed_lines": {"file.rs": [[2, 2]]}}
         self.result = {"head_sha": "b" * 40, "base_sha": "a" * 40,
                        "complete": True, "reviewed_files": ["file.rs"], "summary": "검토 완료", "findings": []}
         self.writes = []
@@ -50,12 +55,36 @@ class ReviewTests(unittest.TestCase):
         (self.directory / "result.json").write_text(json.dumps(self.result))
         return review.publish(self.event, self.directory, enabled, self.request)
 
-    def test_three_verdicts(self):
+    def test_verdicts_approve_unless_a_finding_blocks(self):
         self.assertEqual(review.verdict(self.result, self.meta), "APPROVE")
+        # Opinions alone still approve; they stay in the review body.
         self.result["findings"] = [finding()]
-        self.assertEqual(review.verdict(self.result, self.meta), "COMMENT")
+        self.assertEqual(review.verdict(self.result, self.meta), "APPROVE")
         self.result["findings"].append(finding("blocking"))
         self.assertEqual(review.verdict(self.result, self.meta), "REQUEST_CHANGES")
+
+    def test_request_changes_only_in_narrow_categories_on_changed_lines(self):
+        for category in review.RC_CATEGORIES:
+            with self.subTest(category=category):
+                self.result["findings"] = [finding("blocking", category)]
+                self.assertEqual(review.verdict(self.result, self.meta), "REQUEST_CHANGES")
+        for category in ("behavior", "other"):
+            with self.subTest(category=category):
+                self.result["findings"] = [finding("blocking", category)]
+                self.assertEqual(review.verdict(self.result, self.meta), "APPROVE")
+        # A line the PR did not add or change never blocks.
+        self.result["findings"] = [finding("blocking", "security", line=1)]
+        self.assertEqual(review.verdict(self.result, self.meta), "APPROVE")
+        self.assertEqual(self.publish(enabled=True), "APPROVE")
+        self.assertIn("병합 차단 범위 밖", self.writes[-1]["body"])
+
+    def test_changed_ranges_follow_hunks(self):
+        patch_text = "@@ -1,4 +1,5 @@\n keep\n-old\n+new\n+added\n keep\n\\ No newline at end of file\n@@ -10,2 +11,2 @@\n x\n+y\n-z"
+        self.assertEqual(review.changed_ranges(patch_text, removed=False), [[2, 3], [12, 12]])
+        self.assertEqual(review.changed_ranges("@@ -1,2 +0,0 @@\n-a\n-b", removed=True), [[1, 2]])
+        review.prepare(self.event, self.directory, "policy", self.request)
+        meta = json.loads((self.directory / "metadata.json").read_text())
+        self.assertEqual(meta["changed_lines"], {"file.rs": [[1, 1]]})
 
     def test_partial_and_wrong_sha_fail(self):
         for key, value in (("complete", False), ("complete", "true"), ("head_sha", "c" * 40), ("base_sha", "d" * 40)):
@@ -63,7 +92,7 @@ class ReviewTests(unittest.TestCase):
                 review.verdict(self.result | {key: value}, self.meta)
 
     def test_malformed_findings_fail(self):
-        for update in ({"severity": "critical"}, {"path": "other.rs"}, {"evidence": ""}, {"line": True}, {"line": 999}, {"evidence": "   "}, {"extra": "execute this"}):
+        for update in ({"severity": "critical"}, {"category": "style"}, {"path": "other.rs"}, {"evidence": ""}, {"line": True}, {"line": 999}, {"evidence": "   "}, {"extra": "execute this"}):
             with self.subTest(update=update), self.assertRaises(ValueError):
                 review.verdict(self.result | {"findings": [finding() | update]}, self.meta)
 
@@ -126,16 +155,34 @@ class ReviewTests(unittest.TestCase):
             review.prepare(self.event, self.directory, "policy", self.request)
 
     def test_dry_run_does_not_submit(self):
-        self.assertEqual(self.publish(), "dry-run: COMMENT")
+        self.assertEqual(self.publish(), "dry-run: APPROVE")
         self.assertFalse(self.writes)
 
-    def test_approval_publication_guard(self):
-        self.assertEqual(self.publish(enabled=True), "COMMENT")
-        self.assertEqual(self.writes[0]["event"], "COMMENT")
-        self.assertIn("Approval이 아닙니다", self.writes[0]["body"])
+    def test_clean_review_approves_and_refused_approval_becomes_one_comment(self):
+        self.assertEqual(self.publish(enabled=True), "APPROVE")
+        self.assertEqual(self.writes[0]["event"], "APPROVE")
+        self.assertIn("지적사항이 없습니다", self.writes[0]["body"])
+        # Actions may not approve until the repository allows it: GitHub answers 422.
+        self.writes.clear()
+        original = self.request
+        def request(path, data=None):
+            if data is not None and data["event"] == "APPROVE":
+                raise http_error(422)
+            return original(path, data)
+        with patch.object(self, "request", request):
+            self.assertEqual(self.publish(enabled=True), "COMMENT")
+        self.assertEqual([w["event"] for w in self.writes], ["COMMENT"])
+        self.assertIn("Allow GitHub Actions to create and approve pull requests", self.writes[0]["body"])
+        # Any other refusal is not hidden behind a comment.
+        def failing(path, data=None):
+            if data is not None:
+                raise http_error(403)
+            return original(path, data)
+        with patch.object(self, "request", failing), self.assertRaises(review.urllib.error.HTTPError):
+            self.publish(enabled=True)
 
     def test_comment_and_rc_payload_exact_sha(self):
-        for severity, expected in (("minor", "COMMENT"), ("blocking", "REQUEST_CHANGES")):
+        for severity, expected in (("minor", "APPROVE"), ("blocking", "REQUEST_CHANGES")):
             self.result["findings"] = [finding(severity)]
             self.assertEqual(self.publish(enabled=True), expected)
             self.assertEqual(self.writes[-1]["commit_id"], self.meta["head_sha"])
@@ -147,9 +194,9 @@ class ReviewTests(unittest.TestCase):
         self.reviews = [record]
         self.assertEqual(self.publish(), "duplicate")
         self.reviews = [record | {"user": {"login": "attacker"}}]
-        self.assertEqual(self.publish(), "dry-run: COMMENT")
+        self.assertEqual(self.publish(), "dry-run: APPROVE")
         self.reviews = [record | {"commit_id": "c" * 40}]
-        self.assertEqual(self.publish(), "dry-run: COMMENT")
+        self.assertEqual(self.publish(), "dry-run: APPROVE")
 
     def test_final_sha_check_catches_race(self):
         self.result["findings"] = [finding()]

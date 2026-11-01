@@ -6,15 +6,18 @@
 
 ## 판정과 실제 게시
 
-- 완료된 리뷰의 사소한 결함: `COMMENT`.
-- 근거가 확인된 보안 경계 위반, 데이터 손실, 핵심 동작/계산 오류 등 병합 차단 결함: `REQUEST_CHANGES`.
+- 완료된 리뷰는 막는 지적이 없으면 `APPROVE`입니다. 지적이 없으면 그렇다고 적고, 의견이 있으면 본문에 모두 적어 함께 Approve합니다.
+- `REQUEST_CHANGES`는 좁은 경우에만 냅니다. 지적마다 분류(`security`, `data_loss`, `build`, `invariant`, `behavior`, `other`)가 있고,
+  `blocking`이면서 분류가 `security`, `data_loss`, `build`, `invariant` 가운데 하나이고 이 PR이 추가하거나 바꾼 줄을 가리킬 때만 막습니다.
+  그 밖의 `blocking`은 '병합 차단 범위 밖'이라고 적어 의견으로 남깁니다. 이 규칙은 정책 문장뿐 아니라 게시 코드가 강제합니다.
 - 부분 리뷰, 출력 누락, 문맥 누락/잘림, 시간 초과, API 오류, 잘못된 스키마: 이유를 설명하는 `COMMENT`.
-  검토 인프라 문제는 코드 결함이나 병합 차단 요청으로 바꾸지 않습니다.
+  검토 인프라 문제는 코드 결함이나 병합 차단 요청으로 바꾸지 않고, 끝나지 않은 리뷰는 Approve하지 않습니다.
 - SHA 변경: 이전 결함 결과를 적용하지 않고 최신 커밋 재검토가 필요하다는 `COMMENT`.
-- 지적 없는 완료 결과는 내부적으로 `APPROVE`로 분류하지만 **자동 APPROVE 제출은 차단되어 있습니다**.
-  실제로는 지적이 없고 Approval이 아니라는 설명을 `COMMENT`로 게시합니다. 요청된 완전 자동 승인과 다른 부분입니다.
+- GitHub Actions의 PR 승인은 저장소 설정(Settings → Actions → General → Workflow permissions의
+  'Allow GitHub Actions to create and approve pull requests')이 켜져 있어야 합니다. 꺼져 있으면 GitHub가 422로 거부하고,
+  봇은 같은 본문에 그 사실을 덧붙여 `COMMENT`로 한 번 남깁니다. 다른 오류는 숨기지 않습니다.
 
-COMMENT/REQUEST_CHANGES 제출은 기본 켜짐입니다. `SOL_REVIEW_PUBLISH=false`는 명시적인 dry-run 옵션입니다.
+APPROVE/COMMENT/REQUEST_CHANGES 제출은 기본 켜짐입니다. `SOL_REVIEW_PUBLISH=false`는 명시적인 dry-run 옵션입니다.
 준비/API 단계 실패 후에도 게시 잡이 실행되고, 누락된 결과 아티팩트도 미완료 안내로 처리합니다.
 GitHub API 접근이나 게시 잡 자체가 실패하면 안내조차 게시되지 않을 수 있습니다. 이때 실행 로그에
 게시 미확인 상태를 남기며 RC/Approval로 바꾸지 않습니다. 닫히거나 draft로 바뀐 PR에는 게시하지 않습니다.
@@ -65,7 +68,7 @@ OIDC 계정/연결, secret 등록, 보안 규칙 변경은 이 코드의 작업�
 python3 -m unittest discover -s .github/scripts -p 'test_*review*.py' -v
 ```
 
-오프라인 테스트는 판정, 미완료 COMMENT, 실제 blocking RC, stale 결과, 게시 오류,
+오프라인 테스트는 판정, 좁은 RC 범위와 바뀐 줄 계산, Approve와 거부 시 COMMENT, 미완료 COMMENT, stale 결과, 게시 오류,
 문맥/JSON 검증, 중복, 기본 활성화/opt-out, 자격 증명 분리를 검사합니다.
 실제 모델 품질·인증·과금·리뷰 제출은 오프라인 테스트로 검증되지 않습니다.
 

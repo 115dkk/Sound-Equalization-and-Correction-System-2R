@@ -27,6 +27,17 @@
               "blocking"
             ]
           },
+          "category": {
+            "type": "string",
+            "enum": [
+              "security",
+              "data_loss",
+              "build",
+              "invariant",
+              "behavior",
+              "other"
+            ]
+          },
           "path": {
             "type": "string"
           },
@@ -42,6 +53,7 @@
         },
         "required": [
           "severity",
+          "category",
           "path",
           "line",
           "title",

@@ -12,8 +12,17 @@ from urllib.parse import quote
 
 MAX_INPUT_BYTES = 300_000
 MAX_RESULT_BYTES = 60_000
+MAX_METADATA_BYTES = 200_000
 MAX_FILES = 100
 SHA = re.compile(r"[0-9a-f]{40}")
+HUNK = re.compile(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+# Only these may request changes, and only on a line the PR changed; every other
+# finding is an opinion in an approving review, so a speculative or out-of-scope
+# concern never blocks.
+RC_CATEGORIES = ("security", "data_loss", "build", "invariant")
+CATEGORIES = RC_CATEGORIES + ("behavior", "other")
+APPROVAL_REFUSED = ("\n\n저장소 설정에서 GitHub Actions의 PR 승인이 꺼져 있어 Approval 대신 이 댓글로 남깁니다. "
+                    "Settings → Actions → General의 'Allow GitHub Actions to create and approve pull requests'를 켜면 Approval로 게시합니다.")
 
 
 def strict_json(raw):
@@ -71,6 +80,36 @@ def check_current(meta, pr):
             and pr["base"]["ref"] == "main", "PR identity changed")
     require(pr["head"]["sha"] == meta["head_sha"] and pr["base"]["sha"] == meta["base_sha"],
             "PR changed during review; rerun required")
+
+
+def changed_ranges(patch, removed):
+    """Line ranges the patch adds or changes, as sorted [start, end] pairs: head
+    lines, or base lines for a removed file. Unchanged context lines are left out."""
+    ranges = []
+    old = new = 0
+
+    def add(number):
+        if ranges and ranges[-1][1] == number - 1:
+            ranges[-1][1] = number
+        else:
+            ranges.append([number, number])
+
+    for line in patch.splitlines():
+        match = HUNK.match(line)
+        if match:
+            old, new = int(match.group(1)), int(match.group(2))
+        elif line.startswith("+"):
+            if not removed:
+                add(new)
+            new += 1
+        elif line.startswith("-"):
+            if removed:
+                add(old)
+            old += 1
+        elif not line.startswith("\\"):
+            old += 1
+            new += 1
+    return ranges
 
 
 def decode_file(value):
@@ -149,6 +188,7 @@ def prepare(event, output, policy, request=api):
     output.mkdir(parents=True, exist_ok=True)
     meta["files"] = [f["filename"] for f in files]
     meta["line_limits"] = line_limits
+    meta["changed_lines"] = {f["filename"]: changed_ranges(f["patch"], f["status"] == "removed") for f in files}
     meta["input_sha256"] = hashlib.sha256(prompt.encode()).hexdigest()
     (output / "metadata.json").write_text(json.dumps(meta))
     (output / "prompt.txt").write_text(prompt)
@@ -165,13 +205,22 @@ def verdict(result, meta):
     findings = result["findings"]
     require(isinstance(findings, list) and len(findings) <= 30, "Invalid findings")
     for f in findings:
-        require(isinstance(f, dict) and set(f) == {"severity", "path", "line", "title", "evidence"}, "Invalid finding")
+        require(isinstance(f, dict) and set(f) == {"severity", "category", "path", "line", "title", "evidence"}, "Invalid finding")
         require(f["severity"] in ("minor", "blocking"), "Unknown severity")
+        require(f["category"] in CATEGORIES, "Unknown category")
         require(f["path"] in meta["files"], "Finding outside changed files")
         require(type(f["line"]) is int and 0 < f["line"] <= meta["line_limits"][f["path"]], "Invalid line")
         for key in ("title", "evidence"):
             require(isinstance(f[key], str) and 0 < len(f[key].strip()) and len(f[key]) <= 2000, "Missing or oversized evidence")
-    return "REQUEST_CHANGES" if any(f["severity"] == "blocking" for f in findings) else "COMMENT" if findings else "APPROVE"
+    # A completed review approves unless a finding blocks; its comments stay in the body.
+    return "REQUEST_CHANGES" if any(blocks(f, meta) for f in findings) else "APPROVE"
+
+
+def blocks(finding, meta):
+    """Whether a finding may request changes: blocking, in a narrow category,
+    and on a line this PR adds or changes."""
+    return (finding["severity"] == "blocking" and finding["category"] in RC_CATEGORIES
+            and any(start <= finding["line"] <= end for start, end in meta["changed_lines"].get(finding["path"], [])))
 
 
 def failure_notice(directory):
@@ -192,7 +241,7 @@ def publish(event, directory, enabled=False, request=api):
     decision, kind, reason, result = "COMMENT", "notice", None, None
     try:
         metadata = (directory / "metadata.json").read_bytes()
-        require(len(metadata) <= MAX_RESULT_BYTES, "Oversized metadata")
+        require(len(metadata) <= MAX_METADATA_BYTES, "Oversized metadata")
         meta = strict_json(metadata)
         require(isinstance(meta, dict), "Invalid metadata object")
         require(all(meta.get(k) == v for k, v in expected.items()), "Artifact identity mismatch")
@@ -226,10 +275,6 @@ def publish(event, directory, enabled=False, request=api):
         reason = "검토 중 PR의 base/head SHA가 바뀌었습니다. 이전 결과는 적용하지 않으며 최신 커밋 재검토가 필요합니다."
     elif reason is not None:
         decision, kind = "COMMENT", "notice"
-    elif decision == "APPROVE":
-        # Deliberate guard: never call GitHub with event=APPROVE.
-        decision = "COMMENT"
-        reason = "검토를 완료했고 지적사항은 없습니다. 자동 Approval 제출은 비활성 상태이므로 이 댓글은 Approval이 아닙니다."
 
     # Final refresh before selecting a marker/payload. Stale results can only be a notice.
     latest = current_pr()
@@ -263,15 +308,27 @@ def publish(event, directory, enabled=False, request=api):
             body += "\n이는 코드 결함 판정이나 병합 차단 요청이 아닙니다."
     else:
         body += result["summary"]
+        if not result["findings"]:
+            body += "\n\n지적사항이 없습니다."
         for f in result["findings"]:
-            body += f'\n\n[{f["severity"]}] {f["path"]}:{f["line"]} — {f["title"]}\n{f["evidence"]}'
+            note = " (병합 차단 범위 밖이라 의견으로 남깁니다)" if f["severity"] == "blocking" and not blocks(f, meta) else ""
+            body += f'\n\n[{f["severity"]}/{f["category"]}] {f["path"]}:{f["line"]}: {f["title"]}{note}\n{f["evidence"]}'
     if len(body.encode()) > MAX_RESULT_BYTES:
         decision = "COMMENT"
         body = marker + "\n리뷰 결과가 게시 크기 한도를 초과하여 완료 결과를 적용하지 않았습니다. 수동 검토가 필요합니다. 코드 결함 판정이 아닙니다."
-    require(decision in ("COMMENT", "REQUEST_CHANGES"), "Approval submission prohibited")
+    require(decision in ("APPROVE", "COMMENT", "REQUEST_CHANGES"), "Unknown review event")
     if enabled:
-        # API errors propagate. A failed notice is never transformed into RC or Approval.
-        request(root + "/reviews", {"commit_id": current["head"]["sha"], "event": decision, "body": body})
+        payload = {"commit_id": current["head"]["sha"], "event": decision, "body": body}
+        try:
+            # API errors propagate. A failed notice is never transformed into RC or Approval.
+            request(root + "/reviews", payload)
+        except urllib.error.HTTPError as error:
+            # GitHub answers 422 and creates nothing when Actions may not approve;
+            # the completed review is then left as a COMMENT. Anything else propagates.
+            if decision != "APPROVE" or error.code != 422:
+                raise
+            decision = "COMMENT"
+            request(root + "/reviews", payload | {"event": decision, "body": body + APPROVAL_REFUSED})
     return decision if enabled else "dry-run: " + decision
 
 
