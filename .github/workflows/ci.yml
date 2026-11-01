@@ -415,7 +415,9 @@ jobs:
         env:
           SECS_EQAPO_REPORT: ${{ runner.temp }}\eqapo-report.md
           SECS_EQAPO_ARTIFACTS: ${{ runner.temp }}\eqapo-artifacts
-        run: cargo test -p secs-filters --test eqapo_playback --locked -- --ignored --nocapture
+        # One test at a time: with --register the original engine reads one
+        # registered config folder, which every test clears and fills.
+        run: cargo test -p secs-filters --test eqapo_playback --locked -- --ignored --nocapture --test-threads=1
 
       # The exported folders and every engine log, to read a failure from.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -455,7 +457,9 @@ jobs:
         env:
           SECS_CAMILLA_REPORT: ${{ runner.temp }}/camilla-report.md
           SECS_CAMILLA_ARTIFACTS: ${{ runner.temp }}/camilla-artifacts
-        run: cargo test -p secs-camilla --test camilla_playback --locked -- --ignored --nocapture
+        # One test at a time: each test feeds CamillaDSP in real time, and two
+        # pipelines at once compete for the runner's CPU.
+        run: cargo test -p secs-camilla --test camilla_playback --locked -- --ignored --nocapture --test-threads=1
 
       # The configs, excitation, output and CamillaDSP log of every case.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
