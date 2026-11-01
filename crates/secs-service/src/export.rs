@@ -422,6 +422,7 @@ impl Service {
             .transpose()?;
         let camilla_devices = params.camilla_devices.clone();
         let explicit = (!params.folder.is_empty()).then(|| Path::new(&params.folder).to_path_buf());
+        let explicit_unnamed = explicit.is_some() && requested_design_name.is_none();
         drop(session);
         // An explicit folder is the base of a named bundle too, so the default
         // base (and the host's home directory behind it) is only read without one.
@@ -531,21 +532,28 @@ impl Service {
                         output_rate,
                         extra_rates: params.extra_rates.clone(),
                     };
-                    job.begin_commit()?;
                     match params.kind {
                         ExportKind::FilterText => {
+                            job.begin_commit()?;
                             secs_filters::export_filter_text_with_options(&run, folder, &options)
                         }
                         ExportKind::EqualizerApo => {
+                            job.begin_commit()?;
                             secs_filters::export_eqapo_with_options(&run, folder, &options)
                         }
                         ExportKind::Convolution => {
-                            secs_filters::export_convolution_named_with_options(
+                            let prepared = secs_filters::prepare_convolution_named_with_options(
                                 &run,
-                                folder,
                                 &options,
                                 requested_design_name.as_deref(),
+                                &|| job.cancel().is_cancelled(),
+                                &|done, total| {
+                                    job.report_progress("export.convolution", done, total);
+                                },
                             )
+                            .map_err(filter_error)?;
+                            job.begin_commit()?;
+                            prepared.install(folder)
                         }
                         _ => unreachable!(),
                     }
@@ -692,7 +700,12 @@ impl Service {
                 }
             }
             if let Some(base) = &registry_base {
-                crate::design_export::rebuild_index(base).map_err(export_error)?;
+                if explicit_unnamed {
+                    crate::design_export::rebuild_index_selected(base, &final_destination)
+                        .map_err(export_error)?;
+                } else {
+                    crate::design_export::rebuild_index(base).map_err(export_error)?;
+                }
             }
             let result = ExportResult {
                 files: paths
@@ -796,7 +809,7 @@ fn write_compute_provenance(
         report.filter(|report| report.accelerated_systems > 0 || report.fallbacks > 0)
     {
         let bytes = serde_json::to_vec_pretty(report).map_err(export_error)?;
-        std::fs::write(&path, bytes).map_err(export_error)?;
+        secs_types::fs::write_atomic_bytes(&path, &bytes).map_err(export_error)?;
         Ok(Some(path))
     } else {
         // Reusing an export directory must not retain an earlier GPU run's metadata.
@@ -831,6 +844,7 @@ fn filter_error(error: FiltersError) -> IpcError {
     match error {
         FiltersError::Scope(block) => IpcError::new(ErrorCode::ExportScope, error.to_string())
             .with_param("reason", block.name()),
+        FiltersError::Cancelled => IpcError::new(ErrorCode::Cancelled, "cancelled"),
         _ => export_error(error),
     }
 }

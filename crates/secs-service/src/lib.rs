@@ -12,6 +12,7 @@ mod calibration;
 mod clock;
 mod compute;
 mod curves;
+mod deploy;
 mod design_export;
 pub mod dirac_import;
 mod export;
@@ -191,6 +192,30 @@ pub trait ApplyAdapter: Send + Sync + Debug {
         config_text: &str,
         timeout: Duration,
     ) -> Result<ApplyOutcome, IpcError>;
+    /// Applies a configuration and reports the path CamillaDSP previously used.
+    ///
+    /// Adapters that cannot obtain a trustworthy previous path use the default;
+    /// the service then skips retirement for this apply.
+    fn camilla_apply_report(
+        &self,
+        address: &str,
+        config_path: &Path,
+        config_text: &str,
+        timeout: Duration,
+    ) -> Result<(ApplyOutcome, Option<String>), IpcError> {
+        self.camilla_apply(address, config_path, config_text, timeout)
+            .map(|outcome| (outcome, None))
+    }
+    /// Test seam immediately before the CamillaDSP current marker is written.
+    #[doc(hidden)]
+    fn before_camilla_marker_write(&self, _path: &Path) -> Result<(), IpcError> {
+        Ok(())
+    }
+    /// Test seam immediately before a staged generation is installed.
+    #[doc(hidden)]
+    fn before_generation_install(&self, _root: &Path, _stage: &Path) -> Result<(), IpcError> {
+        Ok(())
+    }
     /// Classifies SECS 2R's managed Equalizer APO lines.
     fn eqapo_include_state(&self, config_text: &str) -> IncludeState;
     /// Adds or repairs SECS 2R's managed Equalizer APO lines.

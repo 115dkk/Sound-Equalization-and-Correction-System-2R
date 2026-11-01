@@ -8,8 +8,8 @@ use secs_filters::{
     SubFeed, eqapo_config, eqapo_filters, eqapo_guide, export_convolution,
     export_convolution_with_options, export_eqapo, export_eqapo_with_options, export_filter_text,
     export_filter_text_with_options, filter_text, headroom_db, make_plan, make_plan_with_lfe,
-    plan_responses, render_paths, windows_channels, write_eqapo, write_eqapo_observed, write_text,
-    write_text_observed,
+    plan_responses, prepare_convolution_named_with_options, render_paths, windows_channels,
+    write_eqapo, write_eqapo_observed, write_text, write_text_observed,
 };
 use secs_oracle::{Fixture, assert_close, goldens, rtol};
 use secs_types::calibration::RcBand;
@@ -18,6 +18,7 @@ use secs_types::chain::{
 };
 use secs_types::ipc::ExportBlock;
 use serde_json::Value;
+use std::cell::Cell;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1071,6 +1072,50 @@ fn output_rates_change_eqapo_text_and_convolution_bundles() {
     let guide = fs::read_to_string(convolution.join(CONVOLUTION_GUIDE)).unwrap();
     assert!(guide.contains("추가 샘플레이트 폴더: 44100Hz/"));
 
+    // Recorded at a48805dd. WAV and CSV are the DSP contract; generated
+    // REAPER scripts are excluded because their 48 kHz guidance changed later.
+    let baseline = [
+        (
+            "44100Hz/L_to_L.csv",
+            "f42dd4effd7b27a6f8860c852697b385d29fcf88bb2028c3578d3da1c7b29d0f",
+        ),
+        (
+            "44100Hz/L_to_L.wav",
+            "e4622e6a875659d2bc116dcd03bdb8033c460f5ef994cc65a199cafa5a1e5bb1",
+        ),
+        (
+            "44100Hz/R_to_R.csv",
+            "edbc6054102884694d01ca2682c853d72c7be67644c8b1b25a98c8aac6a1b941",
+        ),
+        (
+            "44100Hz/R_to_R.wav",
+            "a7444cb34d56007c5552e8de9a4229eff7488b482c94c32ba2223d0ff28caa2d",
+        ),
+        (
+            "L_to_L.csv",
+            "ba94b269bd106e1f6921870e0d9800c67e475b612b7e4a8531ae2708b5353b07",
+        ),
+        (
+            "L_to_L.wav",
+            "aa2dc704cf18dc077c6d4c3e2f2a8884854b402f64197f9226988a0a4b0d722f",
+        ),
+        (
+            "R_to_R.csv",
+            "57b5bc0c14948cca85ad95f79cdc615d4b6538bd51be32c90fb6a4bdd879b398",
+        ),
+        (
+            "R_to_R.wav",
+            "32b44c7589d585f851360940ac5fbe4dfa319763e91500e6b1e0000d4d99f895",
+        ),
+    ];
+    for (relative, expected) in baseline {
+        assert_eq!(
+            sha256_hex(&fs::read(convolution.join(relative)).unwrap()),
+            expected,
+            "a48805dd convolution baseline changed for {relative}"
+        );
+    }
+
     for invalid in [
         Options {
             output_rate: 96_000,
@@ -1087,6 +1132,41 @@ fn output_rates_change_eqapo_text_and_convolution_bundles() {
     ] {
         assert!(export_convolution_with_options(&run, &root.0.join("invalid"), &invalid).is_err());
     }
+}
+
+#[test]
+fn convolution_cancel_inside_the_first_rate_finishes_before_rate_progress() {
+    let chain = f11_synthetic_chain(true, true, false);
+    let run = FilterRun {
+        chain: &chain,
+        mimo: None,
+        mode: "mixed",
+        note: "cancel inside rate",
+        label: "cancel inside rate",
+        latency_ms: chain.latency_ms,
+        rc_pieces: &[],
+        stamp: "2026-11-02 00:00",
+    };
+    let options = Options {
+        output_rate: 96_000,
+        extra_rates: vec![44_100],
+    };
+    let checks = Cell::new(0_u64);
+    let completed = Cell::new(u64::MAX);
+    let result = prepare_convolution_named_with_options(
+        &run,
+        &options,
+        None,
+        &|| {
+            let current = checks.get() + 1;
+            checks.set(current);
+            current == 8
+        },
+        &|done, _| completed.set(done),
+    );
+    assert!(matches!(result, Err(FiltersError::Cancelled)));
+    assert_eq!(checks.get(), 8);
+    assert_eq!(completed.get(), 0, "no sample-rate bundle completed");
 }
 
 #[test]

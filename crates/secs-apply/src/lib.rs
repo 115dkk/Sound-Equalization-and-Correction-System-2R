@@ -18,6 +18,12 @@ pub enum ApplyError {
     Transport(String),
     #[error("{command}: {message}")]
     Rejected { command: String, message: String },
+    #[error("{command}: {message}")]
+    RollbackFailed {
+        command: String,
+        message: String,
+        previous_path: String,
+    },
     #[error("{command}: unexpected reply {reply}")]
     Reply { command: String, reply: String },
     #[error("{command}: not supported by this CamillaDSP")]

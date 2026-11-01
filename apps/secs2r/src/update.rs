@@ -1,6 +1,5 @@
 //! Rust-only application updater (ADR 0020). No updater command is exposed to the webview.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime};
@@ -127,18 +126,7 @@ fn atomic_pending(path: &Path, pending: &PendingUpdate) -> std::io::Result<()> {
     let bytes = serde_json::to_vec(pending)?;
     let parent = path.parent().expect("update.json has a config directory");
     std::fs::create_dir_all(parent)?;
-    let temp = parent.join(format!("update-{}.tmp", std::process::id()));
-    let result = (|| {
-        let mut file = std::fs::File::create(&temp)?;
-        file.write_all(&bytes)?;
-        file.sync_all()?;
-        drop(file);
-        std::fs::rename(&temp, path)
-    })();
-    if result.is_err() {
-        let _ = std::fs::remove_file(&temp);
-    }
-    result
+    secs_types::fs::write_atomic_bytes(path, &bytes)
 }
 
 fn remove_pending(path: &Path) -> std::io::Result<()> {

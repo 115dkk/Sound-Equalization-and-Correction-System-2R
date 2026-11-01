@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -11,6 +10,8 @@ use crate::{ApplyAdapter, EventSink, Service, lock, results::MimoView};
 const TIMEOUT: Duration = Duration::from_secs(2);
 const EQAPO_FOLDER: &str = "SECS2R";
 const EQAPO_BACKUP: &str = "config.txt.secs2r-backup";
+const CAMILLA_CURRENT: &str = "camilladsp-current.txt";
+const RETAINED_GENERATIONS: &str = "secs-retained-generations.txt";
 
 impl Service {
     pub(crate) fn apply_status(&self) -> ApplyStatus {
@@ -93,6 +94,7 @@ impl Service {
         remove_stage(&stage)?;
         let address = settings.address;
         let final_for_job = final_folder.clone();
+        let current_marker = final_folder.with_file_name(CAMILLA_CURRENT);
         let apply = self.deps.apply.clone();
         let managed_host = self.deps.managed_host.clone();
         self.start_export_with(
@@ -129,52 +131,102 @@ impl Service {
                     })?;
                 let text = fs::read_to_string(stage.join(&relative))
                     .map_err(|error| io_error(stage.join(&relative), error))?;
-                // CamillaDSP's Reload rebuilds only the filters whose definition
-                // changed, and a Conv filter's definition is its absolute file
-                // name: in one shared folder a new design kept every FIR of the
-                // first one applied. Each design gets its own folder; applying
-                // the same design again reuses it.
-                let destination = final_for_job.join(design_folder(&design_id));
-                fs::create_dir_all(&final_for_job)
-                    .map_err(|error| io_error(final_for_job.clone(), error))?;
-                crate::design_export::replace_folder(&stage, &destination)
-                    .map_err(|error| io_error(destination.clone(), error))?;
-                let config = destination.join(relative);
-                let outcome = match apply.camilla_apply(&address, &config, &text, TIMEOUT) {
-                    Ok(outcome) => outcome,
-                    Err(error)
-                        if managed_exe.is_some()
-                            && error
-                                .params
-                                .get("reason")
-                                .is_some_and(|reason| reason == "connection_refused") =>
-                    {
-                        ApplyOutcome::HandedOver
-                    }
-                    Err(error) => return Err(error),
-                };
-                if matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::HandedOver) {
-                    // A rolled-back apply keeps the folder CamillaDSP still reads.
-                    prune_applied(&final_for_job, &destination);
+                // CamillaDSP identifies a convolution filter by its absolute file
+                // name, so every attempt gets another generation even when the
+                // design id is unchanged.
+                if let Err(error) = apply.before_generation_install(&final_for_job, &stage) {
+                    let _ = remove_stage(&stage);
+                    return Err(error);
                 }
-                if matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::HandedOver)
-                    && let Some(exe_path) = managed_exe
-                {
-                    expect_host_ok(managed_host.call(&HostRequest::SetManaged(HostManaged {
-                        camilla: Some(ManagedCamilla {
-                            exe_path,
-                            config_path: config.to_string_lossy().into_owned(),
-                            port: managed_port,
-                            design_id: design_id.clone(),
-                        }),
-                        eqapo: None,
-                        ..HostManaged::default()
-                    }))?)?;
+                let generation =
+                    crate::deploy::install(&final_for_job, design_folder(&design_id), &stage)?;
+                let config = generation.dir.join(relative);
+                let marker_before = marker_generation(&final_for_job, &current_marker);
+                let (outcome, reported_previous) =
+                    match apply.camilla_apply_report(&address, &config, &text, TIMEOUT) {
+                        Ok(result) => result,
+                        Err(error)
+                            if managed_exe.is_some()
+                                && error
+                                    .params
+                                    .get("reason")
+                                    .is_some_and(|reason| reason == "connection_refused") =>
+                        {
+                            (ApplyOutcome::HandedOver, None)
+                        }
+                        Err(error) => {
+                            let reported_previous =
+                                error.params.get("previous_path").and_then(|path| {
+                                    applied_generation(&final_for_job, Path::new(path))
+                                });
+                            let mut retained = vec![generation.name.as_str()];
+                            if let Some(previous) = marker_before.as_deref() {
+                                retained.push(previous);
+                            }
+                            if let Some(previous) = reported_previous.as_deref() {
+                                retained.push(previous);
+                            }
+                            remember_retained(&final_for_job, &retained);
+                            mark_generation_uncertain(&current_marker, &generation.name);
+                            return Err(error);
+                        }
+                    };
+                let reported_generation = reported_previous
+                    .as_deref()
+                    .and_then(|path| applied_generation(&final_for_job, Path::new(path)));
+                if matches!(&outcome, ApplyOutcome::RolledBack { .. }) {
+                    // Reload may have opened this generation before the old path was
+                    // restored. Keep it through the next successful apply.
+                    remember_retained(&final_for_job, &[generation.name.as_str()]);
+                } else {
+                    if let Err(error) =
+                        apply
+                            .before_camilla_marker_write(&current_marker)
+                            .and_then(|()| {
+                                crate::deploy::write_entry(
+                                    &current_marker,
+                                    generation.name.as_bytes(),
+                                )
+                            })
+                    {
+                        eprintln!(
+                            "could not record active CamillaDSP generation: {}",
+                            error.detail
+                        );
+                    }
+                    if let Some(exe_path) = managed_exe
+                        && let Err(error) = managed_host
+                            .call(&HostRequest::SetManaged(HostManaged {
+                                camilla: Some(ManagedCamilla {
+                                    exe_path,
+                                    config_path: config.to_string_lossy().into_owned(),
+                                    port: managed_port,
+                                    design_id: design_id.clone(),
+                                }),
+                                eqapo: None,
+                                ..HostManaged::default()
+                            }))
+                            .and_then(expect_host_ok)
+                    {
+                        let mut retained = Vec::new();
+                        if let Some(previous) = reported_generation.as_deref() {
+                            retained.push(previous);
+                        }
+                        remember_retained(&final_for_job, &retained);
+                        return Err(error);
+                    }
+                    // The marker is diagnostic only. Retirement follows the path
+                    // CamillaDSP reported during this apply (audit #155 TD-108).
+                    let mut keep = vec![generation.name.as_str()];
+                    if let Some(previous) = reported_generation.as_deref() {
+                        keep.push(previous);
+                    }
+                    retire_after_success(&final_for_job, &keep, reported_generation.is_some());
                 }
                 Ok(JobResult::Apply(ApplyResult {
                     outcome,
                     design_id,
-                    folder: destination.to_string_lossy().into_owned(),
+                    folder: generation.dir.to_string_lossy().into_owned(),
                     stale: result.stale,
                 }))
             },
@@ -217,9 +269,56 @@ impl Service {
                     IpcError::new(ErrorCode::Internal, "Equalizer APO export has no design id")
                 })?;
                 let stage = PathBuf::from(&result.folder);
-                deploy_eqapo_bundle(&stage, &final_for_job)?;
+                let entry = final_for_job.join("SECS.txt");
+                let previous_entry = match fs::read(&entry) {
+                    Ok(bytes) => Some(bytes),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(error) => return Err(io_error(&entry, error)),
+                };
+                let previous_generation = previous_entry.as_deref().and_then(entry_generation);
+                if let Err(error) = apply.before_generation_install(&final_for_job, &stage) {
+                    let _ = remove_stage(&stage);
+                    return Err(error);
+                }
+                let generation =
+                    crate::deploy::install(&final_for_job, design_folder(&design_id), &stage)?;
+                let entry_text = secs_filters::generation_entry(&generation.name);
                 let config = config_root.join("config.txt");
-                ensure_eqapo_include(&config, apply.as_ref())?;
+                let switched = crate::deploy::write_entry(&entry, entry_text.as_bytes())
+                    .and_then(|()| ensure_eqapo_include(&config, apply.as_ref()));
+                if let Err(error) = switched {
+                    let restore = match previous_entry {
+                        Some(bytes) => crate::deploy::write_entry(&entry, &bytes),
+                        None => match fs::remove_file(&entry) {
+                            Ok(()) => Ok(()),
+                            Err(remove) if remove.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                            Err(remove) => Err(io_error(&entry, remove)),
+                        },
+                    };
+                    let mut retained = vec![generation.name.as_str()];
+                    if let Some(previous) = previous_generation.as_deref() {
+                        retained.push(previous);
+                    }
+                    remember_retained(&final_for_job, &retained);
+                    if let Err(rollback) = restore {
+                        return Err(IpcError::new(
+                            ErrorCode::ApplyFailed,
+                            format!(
+                                "entry switch failed ({}); rollback failed ({})",
+                                error.detail, rollback.detail
+                            ),
+                        ));
+                    }
+                    // SECS.txt may already have pointed at this generation. A reader that
+                    // opened it before the rollback can still resolve the nested include
+                    // (audit #155 TD-105).
+                    return Err(error);
+                }
+                let mut keep = vec!["SECS.txt", generation.name.as_str()];
+                if let Some(previous) = previous_generation.as_deref() {
+                    keep.push(previous);
+                }
+                retire_after_success(&final_for_job, &keep, previous_generation.is_some());
                 if managed {
                     expect_host_ok(managed_host.call(&HostRequest::SetManaged(HostManaged {
                         camilla: None,
@@ -230,11 +329,10 @@ impl Service {
                         ..HostManaged::default()
                     }))?)?;
                 }
-                fs::remove_dir_all(&stage).map_err(|error| io_error(stage.clone(), error))?;
                 Ok(JobResult::Apply(ApplyResult {
                     outcome: ApplyOutcome::Applied,
                     design_id,
-                    folder: final_for_job.to_string_lossy().into_owned(),
+                    folder: generation.dir.to_string_lossy().into_owned(),
                     stale: result.stale,
                 }))
             },
@@ -297,8 +395,15 @@ impl Service {
             .map_or(IncludeState::Absent, |text| {
                 self.deps.apply.eqapo_include_state(&text)
             });
-        let applied_design_id = fs::read(root.join(EQAPO_FOLDER).join("secs-design.json"))
+        let bundle = root.join(EQAPO_FOLDER);
+        let applied_manifest = fs::read_to_string(bundle.join("SECS.txt"))
             .ok()
+            .and_then(|entry| {
+                let generation = entry_generation(entry.as_bytes())?;
+                fs::read(bundle.join(generation).join("secs-design.json")).ok()
+            })
+            .or_else(|| fs::read(bundle.join("secs-design.json")).ok());
+        let applied_design_id = applied_manifest
             .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
             .and_then(|value| value.get("design_id")?.as_str().map(str::to_owned));
         EqApoApplyStatus {
@@ -427,22 +532,163 @@ fn design_folder(design_id: &str) -> &str {
     design_id.get(..16).unwrap_or(design_id)
 }
 
-/// Removes everything under the CamillaDSP apply root except `keep`: earlier
-/// designs and the shared folder of older releases. Best effort: a folder left
-/// behind is removed by the next apply.
-fn prune_applied(root: &Path, keep: &Path) {
-    let Ok(entries) = fs::read_dir(root) else {
-        return;
+fn entry_generation(bytes: &[u8]) -> Option<String> {
+    let entry = std::str::from_utf8(bytes).ok()?;
+    let include = entry
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Include: "))?;
+    include.split(['\\', '/']).next().map(str::to_owned)
+}
+
+fn applied_generation(root: &Path, config: &Path) -> Option<String> {
+    let relative = config.strip_prefix(root).ok()?;
+    let mut components = relative.components();
+    let std::path::Component::Normal(name) = components.next()? else {
+        return None;
     };
-    for path in entries.flatten().map(|entry| entry.path()) {
-        if path == keep {
-            continue;
+    if !matches!(components.next(), Some(std::path::Component::Normal(_)))
+        || !components.all(|component| matches!(component, std::path::Component::Normal(_)))
+    {
+        return None;
+    }
+    let generation = root.join(name);
+    let metadata = fs::symlink_metadata(&generation).ok()?;
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return None;
+    }
+    let manifest = fs::symlink_metadata(generation.join("secs-design.json")).ok()?;
+    if manifest.file_type().is_symlink() || !manifest.is_file() {
+        return None;
+    }
+    name.to_str().map(str::to_owned)
+}
+
+fn mark_generation_uncertain(path: &Path, generation: &str) {
+    let value = format!("?{generation}");
+    if let Err(error) = crate::deploy::write_entry(path, value.as_bytes()) {
+        eprintln!(
+            "could not record uncertain CamillaDSP generation: {}",
+            error.detail
+        );
+    }
+}
+
+fn marker_generation(root: &Path, marker: &Path) -> Option<String> {
+    let value = fs::read_to_string(marker).ok()?;
+    let name = value.trim().strip_prefix('?').unwrap_or(value.trim());
+    if !valid_generation_name(name) {
+        return None;
+    }
+    let folder = root.join(name);
+    let metadata = fs::symlink_metadata(&folder).ok()?;
+    let manifest = fs::symlink_metadata(folder.join("secs-design.json")).ok()?;
+    (!metadata.file_type().is_symlink()
+        && metadata.is_dir()
+        && !manifest.file_type().is_symlink()
+        && manifest.is_file())
+    .then(|| name.to_owned())
+}
+
+fn valid_generation_name(name: &str) -> bool {
+    let mut components = Path::new(name).components();
+    matches!(components.next(), Some(std::path::Component::Normal(_)))
+        && components.next().is_none()
+}
+
+fn read_retained(root: &Path) -> Result<Vec<String>, IpcError> {
+    let path = root.join(RETAINED_GENERATIONS);
+    let bytes = match fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(io_error(&path, error)),
+    };
+    let text = std::str::from_utf8(&bytes).map_err(|error| io_error(&path, error))?;
+    let mut names = Vec::new();
+    for name in text.lines() {
+        if name.is_empty() || !valid_generation_name(name) {
+            return Err(IpcError::new(
+                ErrorCode::ApplyFailed,
+                "retained generation record contains an invalid folder name",
+            )
+            .with_param("path", path.to_string_lossy()));
         }
-        let _ = if path.is_dir() {
-            fs::remove_dir_all(&path)
-        } else {
-            fs::remove_file(&path)
-        };
+        names.push(name.to_owned());
+    }
+    names.sort();
+    names.dedup();
+    Ok(names)
+}
+
+fn remember_retained(root: &Path, names: &[&str]) {
+    if names.is_empty() {
+        return;
+    }
+    let requested = names.join(", ");
+    let mut retained = match read_retained(root) {
+        Ok(retained) => retained,
+        Err(error) => {
+            eprintln!(
+                "could not retain applied generations [{requested}]; keeping the unreadable record: {}",
+                error.detail
+            );
+            return;
+        }
+    };
+    retained.extend(
+        names
+            .iter()
+            .filter(|name| valid_generation_name(name))
+            .map(|name| (*name).to_owned()),
+    );
+    retained.sort();
+    retained.dedup();
+    let mut bytes = retained.join("\n").into_bytes();
+    bytes.push(b'\n');
+    let path = root.join(RETAINED_GENERATIONS);
+    if let Err(error) = crate::deploy::write_entry(&path, &bytes) {
+        eprintln!(
+            "could not record retained applied generations [{}]: {}",
+            retained.join(", "),
+            error.detail
+        );
+    }
+}
+
+fn retire_after_success(root: &Path, keep: &[&str], has_previous: bool) {
+    if !has_previous {
+        return;
+    }
+    let retained = match read_retained(root) {
+        Ok(retained) => retained,
+        Err(error) => {
+            eprintln!(
+                "could not read retained applied generations; skipping retirement: {}",
+                error.detail
+            );
+            return;
+        }
+    };
+    let mut keep = keep
+        .iter()
+        .map(|name| (*name).to_owned())
+        .collect::<Vec<_>>();
+    keep.extend(retained);
+    keep.push(RETAINED_GENERATIONS.to_owned());
+    keep.sort();
+    keep.dedup();
+    let keep_refs = keep.iter().map(String::as_str).collect::<Vec<_>>();
+    if let Err(error) = crate::deploy::prune(root, &keep_refs) {
+        eprintln!("could not retire old applied generations: {}", error.detail);
+        return;
+    }
+    let path = root.join(RETAINED_GENERATIONS);
+    match fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => eprintln!(
+            "could not clear retained applied generations: {}",
+            io_error(&path, error).detail
+        ),
     }
 }
 
@@ -452,79 +698,6 @@ fn remove_stage(path: &Path) -> Result<(), IpcError> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(io_error(path, error)),
     }
-}
-
-fn collect_files(root: &Path) -> Result<Vec<PathBuf>, IpcError> {
-    fn visit(root: &Path, at: &Path, out: &mut Vec<PathBuf>) -> Result<(), IpcError> {
-        for entry in fs::read_dir(at).map_err(|error| io_error(at, error))? {
-            let path = entry.map_err(|error| io_error(at, error))?.path();
-            if path.is_dir() {
-                visit(root, &path, out)?;
-            } else {
-                out.push(path.strip_prefix(root).expect("descendant").to_owned());
-            }
-        }
-        Ok(())
-    }
-    let mut files = Vec::new();
-    visit(root, root, &mut files)?;
-    Ok(files)
-}
-
-fn mapped_eqapo_path(relative: &Path) -> PathBuf {
-    if relative == Path::new("config.txt") {
-        PathBuf::from("SECS.txt")
-    } else {
-        relative.to_owned()
-    }
-}
-
-fn deploy_eqapo_bundle(stage: &Path, destination: &Path) -> Result<(), IpcError> {
-    fs::create_dir_all(destination).map_err(|error| io_error(destination, error))?;
-    let source_files = collect_files(stage)?;
-    let wanted = source_files
-        .iter()
-        .map(|path| mapped_eqapo_path(path))
-        .collect::<BTreeSet<_>>();
-    for relative in &source_files {
-        let target = destination.join(mapped_eqapo_path(relative));
-        let bytes = fs::read(stage.join(relative))
-            .map_err(|error| io_error(stage.join(relative), error))?;
-        write_changed(&target, &bytes)?;
-    }
-    for relative in collect_files(destination)? {
-        if !wanted.contains(&relative) {
-            let path = destination.join(relative);
-            fs::remove_file(&path).map_err(|error| io_error(path, error))?;
-        }
-    }
-    remove_empty_dirs(destination)?;
-    Ok(())
-}
-
-fn remove_empty_dirs(root: &Path) -> Result<(), IpcError> {
-    let mut dirs = Vec::new();
-    fn visit(at: &Path, dirs: &mut Vec<PathBuf>) -> Result<(), IpcError> {
-        for entry in fs::read_dir(at).map_err(|error| io_error(at, error))? {
-            let path = entry.map_err(|error| io_error(at, error))?.path();
-            if path.is_dir() {
-                visit(&path, dirs)?;
-                dirs.push(path);
-            }
-        }
-        Ok(())
-    }
-    visit(root, &mut dirs)?;
-    for path in dirs {
-        if fs::read_dir(&path)
-            .map_err(|error| io_error(&path, error))?
-            .next()
-            .is_none()
-        {
-            fs::remove_dir(&path).map_err(|error| io_error(path, error))?;
-        }
-    }
-    Ok(())
 }
 
 fn ensure_eqapo_include(config: &Path, apply: &dyn ApplyAdapter) -> Result<(), IpcError> {
