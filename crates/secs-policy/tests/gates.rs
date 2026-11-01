@@ -58,26 +58,59 @@ fn relative_path(path: &Path) -> String {
         .replace('\\', "/")
 }
 
+fn workspace_member_dirs() -> Vec<PathBuf> {
+    let root = repo_root();
+    let workspace = read_toml(&root.join("Cargo.toml"));
+    let members = workspace
+        .get("workspace")
+        .and_then(|workspace| workspace.get("members"))
+        .and_then(toml::Value::as_array)
+        .expect("root Cargo.toml must declare [workspace].members");
+    let mut directories = Vec::new();
+
+    for member in members {
+        let pattern = member
+            .as_str()
+            .unwrap_or_else(|| panic!("workspace member must be a string: {member}"));
+        if let Some(parent) = pattern.strip_suffix("/*") {
+            let parent = root.join(parent);
+            let entries = fs::read_dir(&parent)
+                .unwrap_or_else(|error| panic!("{}: {error}", parent.display()));
+            for entry in entries {
+                let directory = entry
+                    .unwrap_or_else(|error| {
+                        panic!("{}: failed to read member: {error}", parent.display())
+                    })
+                    .path();
+                if directory.join("Cargo.toml").is_file() {
+                    directories.push(directory);
+                }
+            }
+        } else {
+            assert!(
+                !pattern.contains(['*', '?', '[', ']']),
+                "unsupported workspace member pattern: {pattern}"
+            );
+            let directory = root.join(pattern);
+            assert!(
+                directory.join("Cargo.toml").is_file(),
+                "workspace member has no Cargo.toml: {pattern}"
+            );
+            directories.push(directory);
+        }
+    }
+
+    directories.sort();
+    directories.dedup();
+    directories
+}
+
 fn first_party_crates() -> Vec<FirstPartyCrate> {
     let root = repo_root();
-    let mut crates = Vec::new();
-
-    for parent in ["crates", "apps"] {
-        let parent_dir = root.join(parent);
-        let entries = fs::read_dir(&parent_dir)
-            .unwrap_or_else(|error| panic!("{}: {error}", parent_dir.display()));
-        for entry in entries {
-            let entry = entry.unwrap_or_else(|error| {
-                panic!(
-                    "{}: failed to read directory entry: {error}",
-                    parent_dir.display()
-                )
-            });
-            let dir = entry.path();
+    let mut crates = workspace_member_dirs()
+        .into_iter()
+        .map(|dir| {
             let manifest = dir.join("Cargo.toml");
-            if !manifest.is_file() {
-                continue;
-            }
             let parsed = read_toml(&manifest);
             let name = parsed
                 .get("package")
@@ -85,21 +118,46 @@ fn first_party_crates() -> Vec<FirstPartyCrate> {
                 .and_then(toml::Value::as_str)
                 .unwrap_or_else(|| panic!("{}: missing [package] name", manifest.display()))
                 .to_owned();
-            crates.push(FirstPartyCrate {
+            let is_app = dir
+                .strip_prefix(&root)
+                .ok()
+                .and_then(|relative| relative.components().next())
+                .is_some_and(|component| component.as_os_str() == "apps");
+            FirstPartyCrate {
                 name,
                 dir,
                 manifest,
-                is_app: parent == "apps",
-            });
-        }
-    }
+                is_app,
+            }
+        })
+        .collect::<Vec<_>>();
 
     crates.sort_by(|left, right| left.name.cmp(&right.name));
-    assert!(
-        !crates.is_empty(),
-        "no first-party crates found under crates/ or apps/"
-    );
+    assert!(!crates.is_empty(), "workspace has no first-party crates");
     crates
+}
+
+#[test]
+fn workspace_members_are_all_covered_by_policy_gates() {
+    let declared = workspace_member_dirs()
+        .into_iter()
+        .map(|directory| directory.join("Cargo.toml"))
+        .collect::<BTreeSet<_>>();
+    let covered = first_party_crates()
+        .into_iter()
+        .map(|krate| krate.manifest)
+        .collect::<BTreeSet<_>>();
+
+    assert_eq!(
+        covered, declared,
+        "a workspace member is outside policy gates"
+    );
+    assert!(
+        first_party_crates()
+            .iter()
+            .any(|krate| krate.name == "secs-py"),
+        "bindings/python must be covered by policy gates"
+    );
 }
 
 fn rust_files(dir: &Path) -> Vec<PathBuf> {
