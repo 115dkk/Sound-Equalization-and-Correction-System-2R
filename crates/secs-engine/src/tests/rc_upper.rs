@@ -103,6 +103,58 @@ fn schroeder_reserves_the_actual_ir_length_before_analysis() {
 }
 
 #[test]
+fn schroeder_cancels_during_sample_processing() {
+    use std::cell::Cell;
+    let set = room(0.8, 0.12, 2);
+    let ctx = Context::serial();
+    for basis in [RcHiBasis::Strict, RcHiBasis::Lenient] {
+        let mut config = config(&set);
+        config.rc_hi_basis = basis;
+        let polls = Cell::new(0);
+        let result = levels::Schroeder::analyze_until(&set, &config, &ctx, &|| {
+            let n = polls.get();
+            polls.set(n + 1);
+            n >= 10
+        });
+        assert!(
+            matches!(result, Err(EngineError::Cancelled)),
+            "{basis:?}: analysis finished instead of cancelling during samples ({} polls)",
+            polls.get()
+        );
+        assert_eq!(polls.get(), 11, "must return at the first cancelled poll");
+        super::cancel::assert_cancels("Schroeder", 1, |cancelled| {
+            levels::Schroeder::analyze_until(&set, &config, &ctx, cancelled)
+        });
+    }
+}
+
+#[test]
+fn schroeder_chunked_filter_preserves_sosfilt_bits() {
+    use secs_dsp::iir::{BType, butter, sosfilt};
+    let measurement = decay_ir(0.8, 0.12);
+    let samples: Vec<_> = (0..measurement.samples.len())
+        .map(|i| measurement.samples.at(i))
+        .collect();
+    let bands = [(500.0, 2.0_f64.sqrt()), (1000.0, 2.0_f64.sqrt())]
+        .into_iter()
+        .chain(
+            levels::RC_BAND_CENTRES
+                .into_iter()
+                .take(8)
+                .map(|fc| (fc, 2.0_f64.powf(1.0 / 6.0))),
+        );
+    for (fc, width) in bands {
+        let sos = butter(4, &[fc / width, fc * width], BType::Bandpass, SR_F).unwrap();
+        let original = sosfilt(&sos, &samples).unwrap();
+        let chunked = levels::filter_band(&samples, &sos, &|| false).unwrap();
+        assert_eq!(original.len(), chunked.len());
+        for (i, (original, chunked)) in original.iter().zip(chunked).enumerate() {
+            assert_eq!(original.to_bits(), chunked.to_bits(), "{fc} Hz sample {i}");
+        }
+    }
+}
+
+#[test]
 fn rc_lenient_synthetic_decay_bands_follow_room_treatment() {
     for (low, high, expected_band, increases) in [
         (0.64, 0.64, 200.0, false),

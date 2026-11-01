@@ -3,7 +3,7 @@
 
 use crate::grid::{BINS, SR_F, design_freqs};
 use crate::measurement::Spectra;
-use crate::{EngineConfig, MeasurementSet};
+use crate::{EngineConfig, EngineError, MeasurementSet, Samples};
 use secs_dsp::iir::{self, BType};
 use secs_types::target::TargetCurve;
 use std::sync::Arc;
@@ -109,6 +109,16 @@ impl Schroeder {
         config: &EngineConfig,
         ctx: &secs_compute::Context,
     ) -> Result<Self, crate::EngineError> {
+        Self::analyze_until(set, config, ctx, &|| ctx.cancel().is_cancelled())
+    }
+
+    pub(crate) fn analyze_until(
+        set: &MeasurementSet,
+        config: &EngineConfig,
+        ctx: &secs_compute::Context,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Self, crate::EngineError> {
+        check_analysis(cancelled)?;
         if config.rc_range.1.is_some() || config.room_volume_m3.is_none_or(|v| v == 0.0) {
             return Ok(Self::default());
         }
@@ -126,60 +136,58 @@ impl Schroeder {
         // This permit ends before design/XO reserve their own working arrays.
         let _permit = crate::memory::reserve(ctx, (longest as u64).saturating_mul(4 * 8), 0)?;
         Ok(Self {
-            strict: schroeder_hz(set, config),
-            lenient: (config.rc_hi_basis == secs_types::calibration::RcHiBasis::Lenient)
-                .then(|| lenient_schroeder_hz(set, config))
-                .flatten(),
+            strict: strict_until(set, config, cancelled)?,
+            lenient: if lenient {
+                lenient_until(set, config, cancelled)?
+            } else {
+                None
+            },
         })
     }
 }
 
+#[cfg(test)]
 pub fn schroeder_hz(set: &MeasurementSet, config: &EngineConfig) -> Option<f64> {
-    let volume = config.room_volume_m3?;
-    if volume == 0.0 {
-        return None;
-    }
+    strict_until(set, config, &|| false).unwrap()
+}
+
+fn strict_until(
+    set: &MeasurementSet,
+    config: &EngineConfig,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<f64>, EngineError> {
+    let Some(volume) = config.room_volume_m3.filter(|v| *v != 0.0) else {
+        return Ok(None);
+    };
     let mut t60s = Vec::new();
     for role in &config.mains {
-        let Some(m) = set.get(config.main_position, role) else {
+        check_analysis(cancelled)?;
+        let Some(m) = set
+            .get(config.main_position, role)
+            .filter(|m| !m.samples.is_empty())
+        else {
             continue;
         };
-        if m.samples.is_empty() {
-            continue;
-        }
-        let ir: Vec<_> = (0..m.samples.len()).map(|i| m.samples.at(i)).collect();
         for fc in [500.0, 1000.0] {
-            let sos = iir::butter(
+            check_analysis(cancelled)?;
+            let Ok(sos) = iir::butter(
                 4,
                 &[fc / 2.0_f64.sqrt(), fc * 2.0_f64.sqrt()],
                 BType::Bandpass,
                 SR_F,
-            )
-            .ok()?;
-            let y = iir::sosfilt(&sos, &ir).ok()?;
-            let mut e = vec![0.0; y.len()];
-            let mut sum = 0.0;
-            for (e, y) in e.iter_mut().zip(&y).rev() {
-                sum += y * y;
-                *e = sum;
-            }
-            let origin = e[0] + 1e-30;
-            let db: Vec<_> = e
-                .iter()
-                .map(|e| 10.0 * (e / origin + 1e-30).log10())
-                .collect();
-            let i5 = db.iter().position(|v| *v < -5.0).unwrap_or(0);
-            let i25 = db.iter().position(|v| *v < -25.0).unwrap_or(0);
-            if i25 > i5 && i5 > 0 {
-                t60s.push(3.0 * (i25 - i5) as f64 / SR_F);
+            ) else {
+                return Ok(None);
+            };
+            if let Some(t60) = band_t60(&m.samples, &sos, cancelled)? {
+                t60s.push(t60);
             }
         }
     }
-    if t60s.is_empty() {
+    Ok(if t60s.is_empty() {
         None
     } else {
         Some(2000.0 * (median(t60s) / volume).sqrt())
-    }
+    })
 }
 
 /// Nominal base-10 third-octave centres used by ADR 0021.
@@ -190,40 +198,38 @@ pub(crate) const RC_BAND_CENTRES: [f64; 14] = [
 
 /// Highest low-frequency band whose local Schroeder estimate reaches its centre.
 /// Evidence is (band centre Hz, median T60 s, local Schroeder Hz).
+#[cfg(test)]
 pub fn lenient_schroeder_hz(
     set: &MeasurementSet,
     config: &EngineConfig,
 ) -> Option<(f64, f64, f64)> {
-    let volume = config
-        .room_volume_m3
-        .filter(|v| v.is_finite() && *v > 0.0)?;
+    lenient_until(set, config, &|| false).unwrap()
+}
+
+fn lenient_until(
+    set: &MeasurementSet,
+    config: &EngineConfig,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<(f64, f64, f64)>, EngineError> {
+    let Some(volume) = config.room_volume_m3.filter(|v| v.is_finite() && *v > 0.0) else {
+        return Ok(None);
+    };
     let width = 2.0_f64.powf(1.0 / 6.0);
     let mut chosen = None;
     for fc in RC_BAND_CENTRES.into_iter().take(8) {
-        let sos = iir::butter(4, &[fc / width, fc * width], BType::Bandpass, SR_F).ok()?;
+        check_analysis(cancelled)?;
+        let Ok(sos) = iir::butter(4, &[fc / width, fc * width], BType::Bandpass, SR_F) else {
+            return Ok(None);
+        };
         let mut t60s = Vec::new();
         for (position, _) in &set.positions {
             for role in &config.mains {
+                check_analysis(cancelled)?;
                 let Some(m) = set.get(*position, role).filter(|m| !m.samples.is_empty()) else {
                     continue;
                 };
-                let ir: Vec<_> = (0..m.samples.len()).map(|i| m.samples.at(i)).collect();
-                let y = iir::sosfilt(&sos, &ir).ok()?;
-                let mut energy = vec![0.0; y.len()];
-                let mut sum = 0.0;
-                for (e, y) in energy.iter_mut().zip(&y).rev() {
-                    sum += y * y;
-                    *e = sum;
-                }
-                let origin = energy[0] + 1e-30;
-                let db: Vec<_> = energy
-                    .iter()
-                    .map(|e| 10.0 * (e / origin + 1e-30).log10())
-                    .collect();
-                let i5 = db.iter().position(|v| *v < -5.0).unwrap_or(0);
-                let i25 = db.iter().position(|v| *v < -25.0).unwrap_or(0);
-                if i25 > i5 && i5 > 0 {
-                    t60s.push(3.0 * (i25 - i5) as f64 / SR_F);
+                if let Some(t60) = band_t60(&m.samples, &sos, cancelled)? {
+                    t60s.push(t60);
                 }
             }
         }
@@ -235,7 +241,84 @@ pub fn lenient_schroeder_hz(
             }
         }
     }
-    chosen
+    Ok(chosen)
+}
+
+const ANALYSIS_CHUNK: usize = 4096;
+
+fn check_analysis(cancelled: &dyn Fn() -> bool) -> Result<(), EngineError> {
+    if cancelled() {
+        Err(EngineError::Cancelled)
+    } else {
+        Ok(())
+    }
+}
+
+// Both estimates keep the same sample, SOS-section and reverse-sum order.
+fn band_t60(
+    samples: &Samples,
+    sos: &iir::Sos,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<f64>, EngineError> {
+    let mut ir = Vec::with_capacity(samples.len());
+    for start in (0..samples.len()).step_by(ANALYSIS_CHUNK) {
+        check_analysis(cancelled)?;
+        ir.extend((start..(start + ANALYSIS_CHUNK).min(samples.len())).map(|i| samples.at(i)));
+    }
+    let y = filter_band(&ir, sos, cancelled)?;
+    let mut energy = vec![0.0; y.len()];
+    let mut sum = 0.0;
+    for (i, (e, y)) in energy.iter_mut().zip(&y).rev().enumerate() {
+        if i.is_multiple_of(ANALYSIS_CHUNK) {
+            check_analysis(cancelled)?;
+        }
+        sum += y * y;
+        *e = sum;
+    }
+    let origin = energy[0] + 1e-30;
+    let mut db = Vec::with_capacity(energy.len());
+    for chunk in energy.chunks(ANALYSIS_CHUNK) {
+        check_analysis(cancelled)?;
+        db.extend(chunk.iter().map(|e| 10.0 * (e / origin + 1e-30).log10()));
+    }
+    let crossing = |threshold| -> Result<usize, EngineError> {
+        for (i, chunk) in db.chunks(ANALYSIS_CHUNK).enumerate() {
+            check_analysis(cancelled)?;
+            if let Some(j) = chunk.iter().position(|v| *v < threshold) {
+                return Ok(i * ANALYSIS_CHUNK + j);
+            }
+        }
+        Ok(0)
+    };
+    let i5 = crossing(-5.0)?;
+    let i25 = crossing(-25.0)?;
+    Ok((i25 > i5 && i5 > 0).then(|| 3.0 * (i25 - i5) as f64 / SR_F))
+}
+
+// Fourth-order bandpass has exactly four sections. This is sosfilt's grouped
+// DF-II transposed arithmetic, with state retained across cancellation chunks.
+pub(crate) fn filter_band(
+    ir: &[f64],
+    sos: &iir::Sos,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Vec<f64>, EngineError> {
+    assert_eq!(sos.0.len(), 4);
+    let mut output = Vec::with_capacity(ir.len());
+    let mut state = [[0.0; 2]; 4];
+    for chunk in ir.chunks(ANALYSIS_CHUNK) {
+        check_analysis(cancelled)?;
+        for &sample in chunk {
+            let mut value = sample;
+            for (s, z) in sos.0.iter().zip(&mut state) {
+                let y = s[0] * value + z[0];
+                z[0] = s[1] * value - s[4] * y + z[1];
+                z[1] = s[2] * value - s[5] * y;
+                value = y;
+            }
+            output.push(value);
+        }
+    }
+    Ok(output)
 }
 
 pub(crate) fn schroeder_limit(strict: Option<f64>, band: Option<f64>, factor: u8) -> f64 {
