@@ -1809,6 +1809,33 @@ fn named_filter_bundles_replace_heal_index_hash_every_file_and_share_design_id()
         CalibrationSettings::default(),
     );
     finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+
+    // An explicit folder is the named bundle's base: neither the project's
+    // export folder nor the host's home directory (not implemented here) is read.
+    let explicit = root.join("explicit");
+    let events = Arc::new(Events::default());
+    let Response::Export(started) = call_ok(
+        &service,
+        Request::Export(ExportParams {
+            kind: ExportKind::CamillaDsp,
+            folder: explicit.to_string_lossy().into_owned(),
+            mdat_scope: None,
+            design_name: Some("Cinema".into()),
+            camilla_devices: None,
+            extra_rates: Vec::new(),
+        }),
+        events.clone(),
+    ) else {
+        panic!("a named export into an explicit folder must start");
+    };
+    let JobResult::Export(result) =
+        finished_result(events.wait(started.job, Duration::from_secs(120)))
+    else {
+        panic!("a named export into an explicit folder must finish");
+    };
+    assert_eq!(Path::new(&result.folder).parent(), Some(explicit.as_path()));
+    assert!(explicit.join("designs.json").is_file());
+
     call_ok(
         &service,
         Request::ExportFolderSet(secs_types::ipc::ExportFolderSetParams {

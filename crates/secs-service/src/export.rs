@@ -406,7 +406,9 @@ impl Service {
         let camilla_devices = params.camilla_devices.clone();
         let explicit = (!params.folder.is_empty()).then(|| Path::new(&params.folder).to_path_buf());
         drop(session);
-        let default_base = if explicit.is_none() || requested_design_name.is_some() {
+        // An explicit folder is the base of a named bundle too, so the default
+        // base (and the host's home directory behind it) is only read without one.
+        let default_base = if explicit.is_none() {
             Some(self.resolved_export_base()?)
         } else {
             None
