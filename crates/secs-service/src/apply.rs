@@ -286,15 +286,9 @@ impl Service {
                             ),
                         ));
                     }
-                    if let Err(remove) = fs::remove_dir_all(&generation.dir) {
-                        return Err(IpcError::new(
-                            ErrorCode::ApplyFailed,
-                            format!(
-                                "entry switch failed ({}); rollback cleanup failed ({remove})",
-                                error.detail
-                            ),
-                        ));
-                    }
+                    // SECS.txt may already have pointed at this generation. A reader that
+                    // opened it before the rollback can still resolve the nested include
+                    // (audit #155 TD-105).
                     return Err(error);
                 }
                 if let Some(previous) = previous_generation.as_deref() {

@@ -1499,7 +1499,7 @@ fn apply_eqapo_prunes_a_link_without_touching_its_target() {
 }
 
 #[test]
-fn failed_eqapo_switch_keeps_the_previous_entry_and_generation() {
+fn failed_eqapo_include_repair_keeps_every_generation_the_entry_has_referenced() {
     let root = root("eqapo-switch-failure");
     let config_root = root.join("EqualizerAPO/config");
     fs::create_dir_all(&config_root).unwrap();
@@ -1555,12 +1555,19 @@ fn failed_eqapo_switch_keeps_the_previous_entry_and_generation() {
     ));
     assert_eq!(fs::read(applied.join("SECS.txt")).unwrap(), entry_before);
     assert!(previous.join("config.txt").is_file());
-    let generations: Vec<_> = fs::read_dir(&applied)
+    let mut generations: Vec<_> = fs::read_dir(&applied)
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .filter(|path| path.is_dir())
         .collect();
-    assert_eq!(generations, [previous]);
+    generations.sort();
+    assert_eq!(
+        generations,
+        [
+            previous,
+            applied.join(format!("{}-2", &first.design_id[..16])),
+        ]
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
