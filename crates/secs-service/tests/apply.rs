@@ -126,6 +126,7 @@ impl ApplyAdapter for FixedApply {
 #[derive(Debug)]
 struct FailingEqapoSwitch {
     fail: Arc<AtomicBool>,
+    break_restore: Option<PathBuf>,
 }
 
 impl ApplyAdapter for FailingEqapoSwitch {
@@ -153,6 +154,11 @@ impl ApplyAdapter for FailingEqapoSwitch {
 
     fn eqapo_with_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
         if self.fail.load(Ordering::SeqCst) {
+            if let Some(entry) = &self.break_restore {
+                fs::remove_file(entry).unwrap();
+                fs::create_dir(entry).unwrap();
+                fs::write(entry.join("held"), b"held").unwrap();
+            }
             Err(IpcError::new(
                 ErrorCode::ApplyFailed,
                 "injected entry switch failure",
@@ -160,6 +166,54 @@ impl ApplyAdapter for FailingEqapoSwitch {
         } else {
             NativeApply.eqapo_with_include(config_text)
         }
+    }
+
+    fn eqapo_without_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
+        NativeApply.eqapo_without_include(config_text)
+    }
+}
+
+#[derive(Debug)]
+struct FailingGenerationInstall {
+    fail: Arc<AtomicBool>,
+}
+
+impl ApplyAdapter for FailingGenerationInstall {
+    fn camilla_status(
+        &self,
+        _address: &str,
+        _timeout: Duration,
+    ) -> Result<CamillaStatus, IpcError> {
+        Err(IpcError::new(ErrorCode::NotImplemented, "unused status"))
+    }
+
+    fn camilla_apply(
+        &self,
+        _address: &str,
+        _config_path: &Path,
+        _config_text: &str,
+        _timeout: Duration,
+    ) -> Result<ApplyOutcome, IpcError> {
+        Err(IpcError::new(ErrorCode::NotImplemented, "unused apply"))
+    }
+
+    fn before_generation_install(&self, _root: &Path, _stage: &Path) -> Result<(), IpcError> {
+        if self.fail.load(Ordering::SeqCst) {
+            Err(IpcError::new(
+                ErrorCode::ApplyFailed,
+                "injected generation install failure",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn eqapo_include_state(&self, config_text: &str) -> IncludeState {
+        NativeApply.eqapo_include_state(config_text)
+    }
+
+    fn eqapo_with_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
+        NativeApply.eqapo_with_include(config_text)
     }
 
     fn eqapo_without_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
@@ -186,6 +240,35 @@ impl ManagedHostAdapter for RecordingManagedHost {
             HostRequest::SetManaged(_)
             | HostRequest::StopManaging
             | HostRequest::UpdateSelf { .. } => Ok(HostResponse::Ok),
+            HostRequest::Log { .. } => Ok(HostResponse::Log(Vec::new())),
+        }
+    }
+
+    fn install(&self) -> Result<(), IpcError> {
+        Ok(())
+    }
+
+    fn uninstall(&self) -> Result<(), IpcError> {
+        Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct RejectingManagedHost;
+
+impl ManagedHostAdapter for RejectingManagedHost {
+    fn service_state(&self) -> ServiceState {
+        ServiceState::Running
+    }
+
+    fn call(&self, request: &HostRequest) -> Result<HostResponse, IpcError> {
+        match request {
+            HostRequest::SetManaged(_) => Err(IpcError::new(
+                ErrorCode::ApplyFailed,
+                "injected SetManaged failure",
+            )),
+            HostRequest::Status => Ok(HostResponse::Status(Box::new(host_status()))),
+            HostRequest::StopManaging | HostRequest::UpdateSelf { .. } => Ok(HostResponse::Ok),
             HostRequest::Log { .. } => Ok(HostResponse::Log(Vec::new())),
         }
     }
@@ -243,6 +326,26 @@ fn root(name: &str) -> PathBuf {
     ));
     fs::create_dir_all(&path).unwrap();
     path
+}
+
+fn snapshot_files(root: &Path) -> Vec<(PathBuf, Vec<u8>)> {
+    fn visit(root: &Path, at: &Path, out: &mut Vec<(PathBuf, Vec<u8>)>) {
+        for entry in fs::read_dir(at).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                visit(root, &path, out);
+            } else {
+                out.push((
+                    path.strip_prefix(root).unwrap().to_owned(),
+                    fs::read(path).unwrap(),
+                ));
+            }
+        }
+    }
+    let mut out = Vec::new();
+    visit(root, root, &mut out);
+    out.sort_by(|left, right| left.0.cmp(&right.0));
+    out
 }
 
 fn ok(service: &Service, request: Request) -> Response {
@@ -607,6 +710,85 @@ fn manage_camilla_sends_the_applied_target_to_the_host() {
 
 #[cfg(target_os = "windows")]
 #[test]
+fn failed_set_managed_keeps_the_generation_camilla_already_accepted() {
+    let root = root("managed-camilla-host-failure");
+    let service = calibrated_service(
+        &root,
+        Deps {
+            managed_host: Arc::new(RejectingManagedHost),
+            ..Deps::default()
+        },
+    );
+    let applied = root.join("app-data/applied/camilladsp");
+    let (address, server) = ws_server(vec![
+        reply("ValidateConfig", serde_json::json!("validated")),
+        reply("GetConfigFilePath", serde_json::json!("before.yml")),
+        reply_ok("SetConfigFilePath"),
+        reply_ok("Reload"),
+    ]);
+    set_apply(
+        &service,
+        CamillaApply {
+            level: ApplyLevel::Apply,
+            address,
+            exe_path: None,
+        },
+        EqApoApply::default(),
+    );
+    let events = Arc::new(Events::default());
+    let first_job = apply_camilla(&service, events.clone());
+    let JobResult::Apply(first) = succeeded(events.wait(first_job.job)) else {
+        panic!("apply result is absent")
+    };
+    server.join().unwrap();
+
+    let (address, server) = ws_server(vec![
+        reply("ValidateConfig", serde_json::json!("validated")),
+        reply("GetConfigFilePath", serde_json::json!("before.yml")),
+        reply_ok("SetConfigFilePath"),
+        reply_ok("Reload"),
+    ]);
+    set_apply(
+        &service,
+        CamillaApply {
+            level: ApplyLevel::Manage,
+            address,
+            exe_path: Some(r"C:\CamillaDSP\camilladsp.exe".into()),
+        },
+        EqApoApply::default(),
+    );
+    let events = Arc::new(Events::default());
+    let failed_job = apply_camilla(&service, events.clone());
+    let JobEvent::Finished {
+        status: JobStatus::Failed,
+        error: Some(error),
+        ..
+    } = events.wait(failed_job.job)
+    else {
+        panic!("host handoff must fail")
+    };
+    assert_eq!(error.detail, "injected SetManaged failure");
+    server.join().unwrap();
+
+    let generations = fs::read_dir(&applied)
+        .unwrap()
+        .filter_map(|entry| {
+            let path = entry.unwrap().path();
+            path.is_dir().then_some(path)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(generations.len(), 2);
+    assert!(Path::new(&first.folder).is_dir());
+    assert!(
+        generations
+            .iter()
+            .all(|generation| generation.join("secs-design.json").is_file())
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_os = "windows")]
+#[test]
 fn managed_camilla_hands_over_only_when_nothing_is_listening() {
     let root = root("managed-handover");
     let requests = Arc::new(Mutex::new(Vec::new()));
@@ -720,7 +902,7 @@ fn apply_camilla_covers_success_rejection_rollback_folder_and_design_matches() {
         PathBuf::from(&first.folder),
         applied.join(format!("{}-1", &first.design_id[..16]))
     );
-    assert!(!applied.join("obsolete.txt").exists());
+    assert!(applied.join("obsolete.txt").exists());
     let requests = server.join().unwrap();
     assert_eq!(requests.len(), 4);
 
@@ -945,8 +1127,96 @@ fn rejected_camilla_generation_keeps_previous_bytes_and_restores_its_path() {
     };
     server.join().unwrap();
     assert_ne!(second.folder, first.folder);
-    assert!(!first_folder.exists());
+    assert!(first_folder.exists());
     assert!(Path::new(&second.folder).is_dir());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn failed_camilla_rollback_keeps_both_possible_active_generations() {
+    let root = root("camilla-rollback-failed");
+    let service = calibrated_service(&root, Deps::default());
+    let applied = root.join("app-data/applied/camilladsp");
+    let (address, server) = ws_server(vec![
+        reply("ValidateConfig", serde_json::json!("validated")),
+        reply("GetConfigFilePath", serde_json::json!("before.yml")),
+        reply_ok("SetConfigFilePath"),
+        reply_ok("Reload"),
+    ]);
+    set_apply(
+        &service,
+        CamillaApply {
+            level: ApplyLevel::Apply,
+            address,
+            exe_path: None,
+        },
+        EqApoApply::default(),
+    );
+    let events = Arc::new(Events::default());
+    let first_job = apply_camilla(&service, events.clone());
+    let JobResult::Apply(first) = succeeded(events.wait(first_job.job)) else {
+        panic!("apply result is absent")
+    };
+    server.join().unwrap();
+    let first_folder = PathBuf::from(first.folder);
+    let first_config = fs::read_dir(first_folder.join("configs"))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| {
+            path.extension().and_then(|value| value.to_str()) == Some("yml")
+                && !path
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .ends_with("_bypass.yml")
+        })
+        .unwrap();
+
+    let (address, server) = ws_server(vec![
+        reply("ValidateConfig", serde_json::json!("validated")),
+        reply(
+            "GetConfigFilePath",
+            serde_json::json!(first_config.to_string_lossy()),
+        ),
+        reply_ok("SetConfigFilePath"),
+        rejected("Reload", "cannot start"),
+        rejected("SetConfigFilePath", "cannot restore"),
+    ]);
+    set_apply(
+        &service,
+        CamillaApply {
+            level: ApplyLevel::Apply,
+            address,
+            exe_path: None,
+        },
+        EqApoApply::default(),
+    );
+    let events = Arc::new(Events::default());
+    let failed_job = apply_camilla(&service, events.clone());
+    let JobEvent::Finished {
+        status: JobStatus::Failed,
+        error: Some(error),
+        ..
+    } = events.wait(failed_job.job)
+    else {
+        panic!("apply must fail")
+    };
+    assert!(error.detail.contains("rollback failed"));
+    server.join().unwrap();
+    let generations = fs::read_dir(&applied)
+        .unwrap()
+        .filter_map(|entry| {
+            let path = entry.unwrap().path();
+            path.is_dir().then_some(path)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(generations.len(), 2);
+    assert!(first_folder.exists());
+    assert!(
+        generations
+            .iter()
+            .all(|generation| generation.join("secs-design.json").is_file())
+    );
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -993,10 +1263,11 @@ fn apply_camilla_gives_each_design_its_own_folder_so_reload_reads_its_firs() {
     );
     assert!(requests[2].contains("SetConfigFilePath"));
     assert!(requests[2].contains(&first.design_id[..16]));
-    assert!(!applied.join("configs").exists());
+    assert!(applied.join("configs").exists());
     let (again, _) = apply_once(&service);
     assert_ne!(again.folder, first.folder);
-    assert!(!Path::new(&first.folder).exists());
+    assert!(Path::new(&first.folder).exists());
+    assert!(!applied.join("configs").exists());
 
     // A setting that changes only the FIRs: a new design and a new folder.
     ok(
@@ -1018,11 +1289,15 @@ fn apply_camilla_gives_each_design_its_own_folder_so_reload_reads_its_firs() {
     assert!(requests[2].contains(&second.design_id[..16]));
     assert!(PathBuf::from(&second.folder).join("coeffs").is_dir());
     assert!(!Path::new(&first.folder).exists());
-    let left: Vec<_> = fs::read_dir(&applied)
+    assert!(Path::new(&again.folder).exists());
+    let mut left: Vec<_> = fs::read_dir(&applied)
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .collect();
-    assert_eq!(left, [PathBuf::from(&second.folder)]);
+    left.sort();
+    let mut expected = vec![PathBuf::from(&again.folder), PathBuf::from(&second.folder)];
+    expected.sort();
+    assert_eq!(left, expected);
 
     fs::remove_dir_all(root).unwrap();
 }
@@ -1072,8 +1347,8 @@ fn apply_eqapo_installs_reapplies_repairs_once_and_removes_stale_files() {
     );
     assert!(first_generation.join("config.txt").is_file());
     assert!(first_generation.join("secs-design.json").is_file());
-    assert!(!bundle.join("stale.txt").exists());
-    assert!(!bundle.join("old").exists());
+    assert!(bundle.join("stale.txt").exists());
+    assert!(bundle.join("old").exists());
     assert_eq!(
         fs::read_to_string(config_root.join("config.txt.secs2r-backup")).unwrap(),
         original
@@ -1095,8 +1370,10 @@ fn apply_eqapo_installs_reapplies_repairs_once_and_removes_stale_files() {
         fs::read_to_string(bundle.join("SECS.txt")).unwrap(),
         format!("Include: {second_name}\\config.txt\r\n")
     );
-    assert!(!first_generation.exists());
-    assert!(bundle.join(second_name).join("config.txt").is_file());
+    assert!(first_generation.exists());
+    assert!(bundle.join(&second_name).join("config.txt").is_file());
+    assert!(!bundle.join("stale.txt").exists());
+    assert!(!bundle.join("old").exists());
 
     fs::write(
         config_root.join("config.txt"),
@@ -1105,7 +1382,12 @@ fn apply_eqapo_installs_reapplies_repairs_once_and_removes_stale_files() {
     .unwrap();
     let events = Arc::new(Events::default());
     let repair_job = started(&service, Request::ApplyEqapo, events.clone());
-    succeeded(events.wait(repair_job.job));
+    let JobResult::Apply(third) = succeeded(events.wait(repair_job.job)) else {
+        panic!("apply result is absent")
+    };
+    assert!(!first_generation.exists());
+    assert!(bundle.join(&second_name).exists());
+    assert!(Path::new(&third.folder).exists());
     assert_eq!(
         secs_apply::eqapo::include_state(
             &fs::read_to_string(config_root.join("config.txt")).unwrap()
@@ -1234,7 +1516,10 @@ fn failed_eqapo_switch_keeps_the_previous_entry_and_generation() {
             eqapo_install: Arc::new(move || Some(install.clone())),
             ..Deps::default()
         },
-        Arc::new(FailingEqapoSwitch { fail: fail.clone() }),
+        Arc::new(FailingEqapoSwitch {
+            fail: fail.clone(),
+            break_restore: None,
+        }),
     );
     set_apply(
         &service,
@@ -1280,6 +1565,130 @@ fn failed_eqapo_switch_keeps_the_previous_entry_and_generation() {
 }
 
 #[test]
+fn failed_eqapo_generation_install_preserves_every_previous_byte() {
+    let root = root("eqapo-generation-install-failure");
+    let config_root = root.join("EqualizerAPO/config");
+    fs::create_dir_all(&config_root).unwrap();
+    fs::write(config_root.join("config.txt"), "Preamp: -3 dB\n").unwrap();
+    let install = EqApoInstall {
+        config_path: config_root.to_string_lossy().into_owned(),
+        install_path: "EqualizerAPO-XT/current".into(),
+        variant: EqApoVariant::Xt,
+    };
+    let fail = Arc::new(AtomicBool::new(false));
+    let service = calibrated_service_with_apply(
+        &root,
+        Deps {
+            eqapo_install: Arc::new(move || Some(install.clone())),
+            ..Deps::default()
+        },
+        Arc::new(FailingGenerationInstall { fail: fail.clone() }),
+    );
+    set_apply(
+        &service,
+        CamillaApply::default(),
+        EqApoApply {
+            level: ApplyLevel::Apply,
+        },
+    );
+    let events = Arc::new(Events::default());
+    let first_job = started(&service, Request::ApplyEqapo, events.clone());
+    succeeded(events.wait(first_job.job));
+    let applied = config_root.join("SECS2R");
+    let before = snapshot_files(&applied);
+
+    fail.store(true, Ordering::SeqCst);
+    let events = Arc::new(Events::default());
+    let failed_job = started(&service, Request::ApplyEqapo, events.clone());
+    assert!(matches!(
+        events.wait(failed_job.job),
+        JobEvent::Finished {
+            status: JobStatus::Failed,
+            error: Some(IpcError {
+                code: ErrorCode::ApplyFailed,
+                ..
+            }),
+            ..
+        }
+    ));
+    assert_eq!(snapshot_files(&applied), before);
+    let generations = fs::read_dir(&applied)
+        .unwrap()
+        .filter_map(|entry| {
+            let path = entry.unwrap().path();
+            path.is_dir().then_some(path)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(generations.len(), 1);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn failed_eqapo_restore_keeps_the_generation_the_entry_may_reference() {
+    let root = root("eqapo-restore-failure");
+    let config_root = root.join("EqualizerAPO/config");
+    fs::create_dir_all(&config_root).unwrap();
+    fs::write(config_root.join("config.txt"), "Preamp: -3 dB\n").unwrap();
+    let install = EqApoInstall {
+        config_path: config_root.to_string_lossy().into_owned(),
+        install_path: "EqualizerAPO-XT/current".into(),
+        variant: EqApoVariant::Xt,
+    };
+    let fail = Arc::new(AtomicBool::new(false));
+    let entry = config_root.join("SECS2R/SECS.txt");
+    let service = calibrated_service_with_apply(
+        &root,
+        Deps {
+            eqapo_install: Arc::new(move || Some(install.clone())),
+            ..Deps::default()
+        },
+        Arc::new(FailingEqapoSwitch {
+            fail: fail.clone(),
+            break_restore: Some(entry.clone()),
+        }),
+    );
+    set_apply(
+        &service,
+        CamillaApply::default(),
+        EqApoApply {
+            level: ApplyLevel::Apply,
+        },
+    );
+    let events = Arc::new(Events::default());
+    let first_job = started(&service, Request::ApplyEqapo, events.clone());
+    succeeded(events.wait(first_job.job));
+
+    fail.store(true, Ordering::SeqCst);
+    let events = Arc::new(Events::default());
+    let failed_job = started(&service, Request::ApplyEqapo, events.clone());
+    let JobEvent::Finished {
+        status: JobStatus::Failed,
+        error: Some(error),
+        ..
+    } = events.wait(failed_job.job)
+    else {
+        panic!("apply must fail")
+    };
+    assert!(error.detail.contains("rollback failed"));
+    let generations = fs::read_dir(config_root.join("SECS2R"))
+        .unwrap()
+        .filter_map(|entry| {
+            let path = entry.unwrap().path();
+            path.is_dir()
+                .then_some(path)
+                .filter(|path| path.file_name().unwrap() != "SECS.txt")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(generations.len(), 2);
+    assert!(
+        generations
+            .iter()
+            .all(|generation| generation.join("config.txt").is_file())
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn eqapo_status_reads_injected_install_and_applied_manifest() {
     let root = root("status");
     fs::write(
@@ -1319,6 +1728,17 @@ fn eqapo_status_reads_injected_install_and_applied_manifest() {
     assert_eq!(status.eqapo.variant, EqApoVariant::Xt);
     assert_eq!(status.eqapo.include, IncludeState::Present);
     assert_eq!(status.eqapo.applied_design_id.as_deref(), Some("abc"));
+
+    fs::remove_file(root.join("SECS2R/SECS.txt")).unwrap();
+    fs::write(
+        root.join("SECS2R/secs-design.json"),
+        br#"{"design_id":"flat"}"#,
+    )
+    .unwrap();
+    let Response::ApplyStatus(status) = ok(&service, Request::ApplyStatus) else {
+        panic!()
+    };
+    assert_eq!(status.eqapo.applied_design_id.as_deref(), Some("flat"));
     fs::remove_dir_all(root).unwrap();
 }
 

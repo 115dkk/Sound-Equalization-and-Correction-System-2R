@@ -191,6 +191,11 @@ pub trait ApplyAdapter: Send + Sync + Debug {
         config_text: &str,
         timeout: Duration,
     ) -> Result<ApplyOutcome, IpcError>;
+    /// Test seam immediately before a staged generation is installed.
+    #[doc(hidden)]
+    fn before_generation_install(&self, _root: &Path, _stage: &Path) -> Result<(), IpcError> {
+        Ok(())
+    }
     /// Classifies SECS 2R's managed Equalizer APO lines.
     fn eqapo_include_state(&self, config_text: &str) -> IncludeState;
     /// Adds or repairs SECS 2R's managed Equalizer APO lines.

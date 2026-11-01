@@ -10,6 +10,14 @@ use crate::{ApplyAdapter, EventSink, Service, lock, results::MimoView};
 const TIMEOUT: Duration = Duration::from_secs(2);
 const EQAPO_FOLDER: &str = "SECS2R";
 const EQAPO_BACKUP: &str = "config.txt.secs2r-backup";
+const CAMILLA_CURRENT: &str = "camilladsp-current.txt";
+
+#[derive(Debug)]
+enum GenerationState {
+    Known(String),
+    Uncertain,
+    Missing,
+}
 
 impl Service {
     pub(crate) fn apply_status(&self) -> ApplyStatus {
@@ -92,6 +100,7 @@ impl Service {
         remove_stage(&stage)?;
         let address = settings.address;
         let final_for_job = final_folder.clone();
+        let current_marker = final_folder.with_file_name(CAMILLA_CURRENT);
         let apply = self.deps.apply.clone();
         let managed_host = self.deps.managed_host.clone();
         self.start_export_with(
@@ -131,6 +140,11 @@ impl Service {
                 // CamillaDSP identifies a convolution filter by its absolute file
                 // name, so every attempt gets another generation even when the
                 // design id is unchanged.
+                let previous = generation_state(&current_marker);
+                if let Err(error) = apply.before_generation_install(&final_for_job, &stage) {
+                    let _ = remove_stage(&stage);
+                    return Err(error);
+                }
                 let generation =
                     crate::deploy::install(&final_for_job, design_folder(&design_id), &stage)?;
                 let config = generation.dir.join(relative);
@@ -146,33 +160,49 @@ impl Service {
                         ApplyOutcome::HandedOver
                     }
                     Err(error) => {
-                        let _ = fs::remove_dir_all(&generation.dir);
+                        mark_generation_uncertain(&current_marker, &generation.name);
                         return Err(error);
                     }
                 };
-                if matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::HandedOver)
-                    && let Some(exe_path) = managed_exe
-                    && let Err(error) = managed_host
-                        .call(&HostRequest::SetManaged(HostManaged {
-                            camilla: Some(ManagedCamilla {
-                                exe_path,
-                                config_path: config.to_string_lossy().into_owned(),
-                                port: managed_port,
-                                design_id: design_id.clone(),
-                            }),
-                            eqapo: None,
-                            ..HostManaged::default()
-                        }))
-                        .and_then(expect_host_ok)
-                {
-                    let _ = fs::remove_dir_all(&generation.dir);
-                    return Err(error);
-                }
-                if matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::HandedOver) {
-                    crate::deploy::prune(&final_for_job, &[&generation.name])?;
-                } else {
+                if matches!(&outcome, ApplyOutcome::RolledBack { .. }) {
                     fs::remove_dir_all(&generation.dir)
                         .map_err(|error| io_error(&generation.dir, error))?;
+                } else {
+                    let marker_written = match crate::deploy::write_entry(
+                        &current_marker,
+                        generation.name.as_bytes(),
+                    ) {
+                        Ok(()) => true,
+                        Err(error) => {
+                            eprintln!(
+                                "could not record active CamillaDSP generation: {}",
+                                error.detail
+                            );
+                            false
+                        }
+                    };
+                    if let Some(exe_path) = managed_exe
+                        && let Err(error) = managed_host
+                            .call(&HostRequest::SetManaged(HostManaged {
+                                camilla: Some(ManagedCamilla {
+                                    exe_path,
+                                    config_path: config.to_string_lossy().into_owned(),
+                                    port: managed_port,
+                                    design_id: design_id.clone(),
+                                }),
+                                eqapo: None,
+                                ..HostManaged::default()
+                            }))
+                            .and_then(expect_host_ok)
+                    {
+                        return Err(error);
+                    }
+                    if marker_written && let GenerationState::Known(previous) = &previous {
+                        prune_best_effort(
+                            &final_for_job,
+                            &[generation.name.as_str(), previous.as_str()],
+                        );
+                    }
                 }
                 Ok(JobResult::Apply(ApplyResult {
                     outcome,
@@ -226,6 +256,11 @@ impl Service {
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                     Err(error) => return Err(io_error(&entry, error)),
                 };
+                let previous_generation = previous_entry.as_deref().and_then(entry_generation);
+                if let Err(error) = apply.before_generation_install(&final_for_job, &stage) {
+                    let _ = remove_stage(&stage);
+                    return Err(error);
+                }
                 let generation =
                     crate::deploy::install(&final_for_job, design_folder(&design_id), &stage)?;
                 let entry_bytes =
@@ -242,9 +277,7 @@ impl Service {
                             Err(remove) => Err(io_error(&entry, remove)),
                         },
                     };
-                    let remove = fs::remove_dir_all(&generation.dir)
-                        .map_err(|remove| io_error(&generation.dir, remove));
-                    if let Err(rollback) = restore.and(remove) {
+                    if let Err(rollback) = restore {
                         return Err(IpcError::new(
                             ErrorCode::ApplyFailed,
                             format!(
@@ -253,9 +286,23 @@ impl Service {
                             ),
                         ));
                     }
+                    if let Err(remove) = fs::remove_dir_all(&generation.dir) {
+                        return Err(IpcError::new(
+                            ErrorCode::ApplyFailed,
+                            format!(
+                                "entry switch failed ({}); rollback cleanup failed ({remove})",
+                                error.detail
+                            ),
+                        ));
+                    }
                     return Err(error);
                 }
-                crate::deploy::prune(&final_for_job, &["SECS.txt", &generation.name])?;
+                if let Some(previous) = previous_generation.as_deref() {
+                    prune_best_effort(
+                        &final_for_job,
+                        &["SECS.txt", generation.name.as_str(), previous],
+                    );
+                }
                 if managed {
                     expect_host_ok(managed_host.call(&HostRequest::SetManaged(HostManaged {
                         camilla: None,
@@ -332,20 +379,15 @@ impl Service {
             .map_or(IncludeState::Absent, |text| {
                 self.deps.apply.eqapo_include_state(&text)
             });
-        let applied_design_id = fs::read_to_string(root.join(EQAPO_FOLDER).join("SECS.txt"))
+        let bundle = root.join(EQAPO_FOLDER);
+        let applied_manifest = fs::read_to_string(bundle.join("SECS.txt"))
             .ok()
             .and_then(|entry| {
-                let include = entry
-                    .lines()
-                    .find_map(|line| line.trim().strip_prefix("Include: "))?;
-                let generation = include.split(['\\', '/']).next()?;
-                fs::read(
-                    root.join(EQAPO_FOLDER)
-                        .join(generation)
-                        .join("secs-design.json"),
-                )
-                .ok()
+                let generation = entry_generation(entry.as_bytes())?;
+                fs::read(bundle.join(generation).join("secs-design.json")).ok()
             })
+            .or_else(|| fs::read(bundle.join("secs-design.json")).ok());
+        let applied_design_id = applied_manifest
             .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
             .and_then(|value| value.get("design_id")?.as_str().map(str::to_owned));
         EqApoApplyStatus {
@@ -472,6 +514,43 @@ fn io_error(path: impl AsRef<Path>, error: impl std::fmt::Display) -> IpcError {
 /// Windows paths and unique among the designs a user applies.
 fn design_folder(design_id: &str) -> &str {
     design_id.get(..16).unwrap_or(design_id)
+}
+
+fn entry_generation(bytes: &[u8]) -> Option<String> {
+    let entry = std::str::from_utf8(bytes).ok()?;
+    let include = entry
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Include: "))?;
+    include.split(['\\', '/']).next().map(str::to_owned)
+}
+
+fn generation_state(path: &Path) -> GenerationState {
+    let Ok(value) = fs::read_to_string(path) else {
+        return GenerationState::Missing;
+    };
+    if value.starts_with('?') {
+        GenerationState::Uncertain
+    } else if value.is_empty() {
+        GenerationState::Missing
+    } else {
+        GenerationState::Known(value)
+    }
+}
+
+fn mark_generation_uncertain(path: &Path, generation: &str) {
+    let value = format!("?{generation}");
+    if let Err(error) = crate::deploy::write_entry(path, value.as_bytes()) {
+        eprintln!(
+            "could not record uncertain CamillaDSP generation: {}",
+            error.detail
+        );
+    }
+}
+
+fn prune_best_effort(root: &Path, keep: &[&str]) {
+    if let Err(error) = crate::deploy::prune(root, keep) {
+        eprintln!("could not retire old applied generations: {}", error.detail);
+    }
 }
 
 fn remove_stage(path: &Path) -> Result<(), IpcError> {
