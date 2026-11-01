@@ -10,7 +10,9 @@ import urllib.request
 import urllib.error
 from urllib.parse import quote
 
-MAX_INPUT_BYTES = 300_000
+# gpt-6.1-sol takes a 922,000-token prompt; 1.5 MB stays under it even at
+# two bytes per token (maintainer request 2026-11-02: review bigger PRs whole).
+MAX_INPUT_BYTES = 1_500_000
 MAX_RESULT_BYTES = 60_000
 MAX_METADATA_BYTES = 200_000
 MAX_FILES = 100

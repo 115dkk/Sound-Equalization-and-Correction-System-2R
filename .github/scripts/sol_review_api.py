@@ -6,9 +6,9 @@ from pathlib import Path
 import urllib.request
 import urllib.error
 
-MAX_INPUT_BYTES = 300_000
+MAX_INPUT_BYTES = 1_500_000
 MAX_RESPONSE_BYTES = 2_000_000
-MAX_OUTPUT_TOKENS = 32_000
+MAX_OUTPUT_TOKENS = 128_000
 # Error codes OpenAI sends when the account has no usable credit or quota left.
 QUOTA_CODES = {"insufficient_quota", "billing_hard_limit_reached", "billing_not_active"}
 
@@ -82,9 +82,9 @@ def run(directory, policy, schema, transport=None):
         (directory / "prompt.txt").read_text(), policy, schema,
         os.environ.get("REVIEW_MODEL", "gpt-6.1-sol"),
         os.environ.get("REVIEW_EFFORT", "high"),
-        os.environ.get("REVIEW_MAX_OUTPUT_TOKENS", "16000"),
+        os.environ.get("REVIEW_MAX_OUTPUT_TOKENS", "64000"),
     )
-    timeout = bounded_int(os.environ.get("REVIEW_TIMEOUT_SECONDS", "600"), 30, 900)
+    timeout = bounded_int(os.environ.get("REVIEW_TIMEOUT_SECONDS", "1200"), 30, 1800)
     if transport is None:
         request = urllib.request.Request(
             "https://api.openai.com/v1/responses", data=json.dumps(body).encode(),
