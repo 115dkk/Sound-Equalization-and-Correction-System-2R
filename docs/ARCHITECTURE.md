@@ -36,6 +36,7 @@ crates/
   secs-graph/             내보내기 그래프: 신호 사슬과 MIMO 경로의 유일한 검증, 작성기가 함께 읽는 계획과 서포트 묶음
   secs-camilla/           CamillaDSP v4 설정과 FIR
   secs-filters/           필터 값 텍스트와 Equalizer APO 설정
+  secs-apply/             CamillaDSP WebSocket 클라이언트와 Equalizer APO config.txt 편집 (게시하지 않음, ADR 0018)
   secs-service/           애플리케이션 서비스 (깊은 모듈)
   secs-local-api/         127.0.0.1 로컬 HTTP·WebSocket API 서버 (앱이 띄움, ADR 0016)
   secs-api/               공개 크레이트 sound-equalization-and-correction-system-rust-api: Engine과 로컬 API Client (ADR 0016)
@@ -47,6 +48,9 @@ apps/
   secs2r/                 Tauri 2 셸 (커맨드 하나)
   secs2r/ui/              React 19 + TypeScript + Vite 화면
   secs2r-cli/             헤드리스 CLI
+  secs2r-host/            Windows 관리 서비스: 사용자 세션으로 CamillaDSP를 띄우고 Equalizer APO Include를 지킴 (ADR 0018)
+  secs2r-host-shell/      관리 서비스의 트레이 셸 (Tauri 2)
+bindings/python/          PyPI 패키지 secs2r (pyo3로 공개 Rust API를 감쌈, ADR 0019)
 src/, tests/, tools/      업스트림 SECS 2 (파이썬, 오라클, 고치지 않음)
 oracle/                   골든 내보내기 스크립트와 골든 (oracle/README.md)
 ```
@@ -73,13 +77,17 @@ ui ──IPC──> secs2r ─┬─> secs-service ─┬─> secs-engine ─┬
                     ├─> secs-gpu ─────> secs-engine (RidgeBackend seam), secs-compute, secs-types
                     │        └───────> secs-cuda-sys (선택적 네이티브 라이브러리)
                     ├─> secs-sys ─────> wasapi, cpal, OS 조회 크레이트
-                    │        └───────> secs-audio, secs-rew, secs-compute (어댑터가 구현하는 seam)
+                    │        └───────> secs-apply, secs-audio, secs-rew, secs-compute (어댑터가 구현하는 seam)
                     ├─> secs-local-api ─> secs-service, secs-types, axum, tokio
                     └─> secs-rew, secs-types
 secs2r-cli ─────────> secs-service, secs-sys, secs-gpu, secs-rew, secs-compute, secs-types
 secs-api ───────────> secs-types; engine 기능: secs-service, secs-audio, secs-rew;
                       client 기능: ureq, tungstenite
 secs-graph ─────────> secs-dsp, secs-types (작성기를 의존하지 않음)
+secs-apply ─────────> tungstenite (서비스는 시험에서만 의존)
+secs2r-host ────────> secs-sys, secs-apply, secs-types
+secs2r-host-shell ──> secs-sys, secs-types, tauri
+bindings/python ────> secs-api (engine, client 기능), pyo3
 secs-policy ────────> (파일 시스템만 읽음; 테스트가 IPC 메서드 목록 때문에 secs-types)
 secs-engine-testkit ─> secs-engine, secs-oracle (테스트와 예제만 의존; 출하하지 않음)
 ```
