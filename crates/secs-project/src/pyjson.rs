@@ -763,7 +763,7 @@ mod tests {
     }
 
     #[test]
-    fn allocation_budget_rejects_a_large_string_before_allocating_td113() {
+    fn allocation_budget_rejects_a_large_string_before_allocating_td19() {
         let document = format!("\"{}\"", "x".repeat(2 * 1024 * 1024));
         let error = loads_with_budget(&document, 64).unwrap_err();
         assert_eq!(error.offset, 0);
