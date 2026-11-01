@@ -165,6 +165,7 @@ export function createSession(ipc: Ipc) {
     }, (error) => { report(error); appSettingsFailure = errors.getSnapshot()?.id ?? null; }),
   };
   function clearProjectResources() {
+    projectFailures.clear();
     for (const key of ["project", "config", "notices", "dsp", "layout", "estimate", "measurementSettings", "records", "curves", "levels", "settings", "micCalibration", "modeSpec", "target", "results", "lines", "subWarnings", "folder", "applyStatus"] as const) {
       stores[key].set(null);
     }
@@ -186,10 +187,14 @@ export function createSession(ipc: Ipc) {
   } });
   let pendingProjectEdits = 0;
   const projectWork = new Map<Promise<boolean>, number>();
+  const projectFailures = new Set<number>();
   function trackProjectEdit<T>(work: Promise<T>, epoch: number): Promise<T> {
     const done = work.then((value) => value !== false, () => false);
     projectWork.set(done, epoch);
-    void done.then(() => projectWork.delete(done));
+    void done.then((ok) => {
+      projectWork.delete(done);
+      if (!ok && epoch === jobs.epoch) projectFailures.add(epoch);
+    });
     return work;
   }
   function projectGuard() {
@@ -201,7 +206,10 @@ export function createSession(ipc: Ipc) {
     let succeeded = true;
     while (epoch === jobs.epoch) {
       const edits = [...projectWork].filter(([, owner]) => owner === epoch).map(([work]) => work);
-      if (!edits.length) return succeeded;
+      if (!edits.length) {
+        const failed = projectFailures.delete(epoch);
+        return succeeded && !failed;
+      }
       const results = await Promise.all(edits);
       succeeded = results.every(Boolean) && succeeded;
     }
