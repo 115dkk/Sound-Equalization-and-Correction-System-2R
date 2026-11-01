@@ -166,22 +166,59 @@ pub fn accept_update(
     Ok(())
 }
 
+fn metadata_is_link_or_reparse(metadata: &fs::Metadata) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::fs::MetadataExt;
+
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        metadata.file_type().is_symlink()
+            || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        metadata.file_type().is_symlink()
+    }
+}
+
 /// Checks the folder a caller names for `update_self`: a local folder on a
-/// drive, never a UNC share or a device path, which the service (SYSTEM) would
-/// otherwise open on the caller's behalf.
-pub fn validate_update_source(from_dir: &str) -> Result<(), UpdateReject> {
-    let bytes = from_dir.as_bytes();
+/// drive, never a UNC share, device path, link, or junction which the service
+/// (SYSTEM) would otherwise open on the caller's behalf.
+pub fn validate_update_source(from_dir: &Path) -> Result<(), UpdateReject> {
+    let text = from_dir.to_string_lossy();
+    let bytes = text.as_bytes();
     let drive_absolute = bytes.len() >= 3
         && bytes[0].is_ascii_alphabetic()
         && bytes[1] == b':'
         && matches!(bytes[2], b'\\' | b'/');
-    if drive_absolute {
-        Ok(())
-    } else {
-        Err(UpdateReject::Io(format!(
-            "the update folder must be a local absolute path: {from_dir}"
-        )))
+    if !drive_absolute {
+        return Err(UpdateReject::Io(format!(
+            "the update folder must be a local absolute path: {text}"
+        )));
     }
+
+    for component in from_dir.ancestors().collect::<Vec<_>>().into_iter().rev() {
+        match fs::symlink_metadata(component) {
+            Ok(metadata) if metadata_is_link_or_reparse(&metadata) => {
+                return Err(UpdateReject::Io(format!(
+                    "the update folder must not contain a link or junction: {}",
+                    component.display()
+                )));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(UpdateReject::Io(format!(
+                    "inspect update folder component {}: {error}",
+                    component.display()
+                )));
+            }
+        }
+    }
+    // This check and the later opens are not atomic. The active console user
+    // can replace a component between them, but every installed executable is
+    // still covered by the signed manifest and verified hash (audit #155 TD-135).
+    Ok(())
 }
 
 /// Reads a regular file of at most `limit` bytes. The service reads these for
@@ -924,7 +961,11 @@ mod tests {
     #[test]
     fn update_source_must_be_a_local_drive_folder() {
         for accepted in [r"C:\Users\a\AppData\Local\SECS 2R", "D:/apps/SECS 2R"] {
-            assert_eq!(validate_update_source(accepted), Ok(()), "{accepted}");
+            assert_eq!(
+                validate_update_source(Path::new(accepted)),
+                Ok(()),
+                "{accepted}"
+            );
         }
         for refused in [
             r"\\server\share\SECS 2R",
@@ -935,10 +976,64 @@ mod tests {
             "",
         ] {
             assert!(
-                matches!(validate_update_source(refused), Err(UpdateReject::Io(_))),
+                matches!(
+                    validate_update_source(Path::new(refused)),
+                    Err(UpdateReject::Io(_))
+                ),
                 "{refused}"
             );
         }
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn update_source_refuses_an_existing_system_junction() {
+        use std::os::windows::fs::MetadataExt;
+
+        let junction = Path::new(r"C:\Documents and Settings");
+        let Ok(metadata) = fs::symlink_metadata(junction) else {
+            eprintln!(
+                "skipping system junction test: {} is absent",
+                junction.display()
+            );
+            return;
+        };
+        if metadata.file_attributes() & 0x400 == 0 {
+            eprintln!(
+                "skipping system junction test: {} is not a reparse point",
+                junction.display()
+            );
+            return;
+        }
+        assert!(matches!(
+            validate_update_source(&junction.join("bundle")),
+            Err(UpdateReject::Io(_))
+        ));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn update_source_refuses_an_existing_directory_symlink() {
+        use std::os::windows::fs::symlink_dir;
+
+        let root = root("update-source-link");
+        let target = root.join("real");
+        let link = root.join("linked");
+        fs::create_dir(&target).unwrap();
+        if let Err(error) = symlink_dir(&target, &link) {
+            eprintln!("skipping directory symlink test: {error}");
+            fs::remove_dir_all(root).unwrap();
+            return;
+        }
+        let source = link.join("bundle");
+
+        assert!(matches!(
+            validate_update_source(&source),
+            Err(UpdateReject::Io(_))
+        ));
+
+        fs::remove_dir(&link).unwrap();
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

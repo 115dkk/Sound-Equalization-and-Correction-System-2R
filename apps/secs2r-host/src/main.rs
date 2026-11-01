@@ -881,7 +881,7 @@ fn stage_host_update(
     from_dir: &Path,
     staged_executable: &Path,
 ) -> Result<rules::HostManifest, rules::UpdateReject> {
-    rules::validate_update_source(&from_dir.to_string_lossy())?;
+    rules::validate_update_source(from_dir)?;
     let manifest_bytes = rules::read_bounded(
         &from_dir.join(rules::UPDATE_MANIFEST),
         rules::MANIFEST_LIMIT,
