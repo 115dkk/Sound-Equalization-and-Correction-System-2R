@@ -733,9 +733,17 @@ pub fn load_project_sources(
     project: &Project,
     project_path: &Path,
 ) -> BTreeMap<u32, BTreeMap<String, SourceInfo>> {
+    load_project_sources_within(project, project_path, MAX_PROJECT_SOURCE_BYTES)
+}
+
+fn load_project_sources_within(
+    project: &Project,
+    project_path: &Path,
+    budget: usize,
+) -> BTreeMap<u32, BTreeMap<String, SourceInfo>> {
     let base = project_path.parent().unwrap_or_else(|| Path::new("."));
     let mut loaded: HashMap<PathBuf, Option<(Arc<SourceInfo>, usize)>> = HashMap::new();
-    let mut remaining = MAX_PROJECT_SOURCE_BYTES;
+    let mut remaining = budget;
     let mut exhausted = false;
     let mut out = BTreeMap::new();
     for record in measurement_values(project)
@@ -767,6 +775,17 @@ pub fn load_project_sources(
             let info = match loaded.get(&key) {
                 Some(info) => info.clone(),
                 None => {
+                    // The cache slot and its key spend the budget too, so
+                    // sidecars that hold no source info cannot grow the cache
+                    // past it (audit #155 TD-112).
+                    let entry_bytes =
+                        std::mem::size_of::<(PathBuf, Option<(Arc<SourceInfo>, usize)>)>()
+                            .saturating_add(key.as_os_str().len());
+                    if entry_bytes > remaining {
+                        exhausted = true;
+                        continue;
+                    }
+                    remaining -= entry_bytes;
                     let info = load_source_checked(&path).ok().flatten().and_then(|info| {
                         let bytes = source_info_bytes(&info);
                         if bytes > remaining {
@@ -1550,6 +1569,43 @@ mod source_budget_tests {
         );
         assert!(sources.contains_key(&1));
         assert!(!sources.contains_key(&10));
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore = "uses temporary files")]
+    fn sidecars_without_source_info_still_spend_the_cache_budget_td112() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "secs-project-empty-sidecars-{}-{unique}",
+            std::process::id()
+        ));
+        let project_path = root.join("empty.secs");
+        let irs = project_path.with_extension("irs");
+        fs::create_dir_all(&irs).unwrap();
+        let mut entries = Vec::new();
+        for position in 1..=50 {
+            let wav = irs.join(format!("{position}.wav"));
+            fs::write(&wav, []).unwrap();
+            fs::write(source_path(&wav), "[]").unwrap();
+            entries.push(entry(position, format!("empty.irs/{position}.wav")));
+        }
+        let mut project = Project::from_preset("2.0").unwrap();
+        project.measurements = PyJson::Array(entries);
+
+        SOURCE_PARSE_COUNT.store(0, Ordering::Relaxed);
+        let sources = load_project_sources_within(&project, &project_path, 4096);
+        let parsed = SOURCE_PARSE_COUNT.load(Ordering::Relaxed);
+        assert!(sources.is_empty());
+        assert!(parsed > 0);
+        assert!(
+            parsed < 50,
+            "parsed {parsed} empty sidecars with a 4 KiB cache budget"
+        );
 
         fs::remove_dir_all(root).unwrap();
     }
