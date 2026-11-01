@@ -560,15 +560,14 @@ fn service_loop(
             )?;
         }
 
-        if repair_retry_at.is_none()
-            && let Some(delay) = transition_state.take_repair_retry()
-        {
-            repair_retry_at = Some(Instant::now() + delay);
-        }
+        transition_state.sync_repair_retry_deadline(&mut repair_retry_at, Instant::now());
         if repair_retry_at.is_some_and(|deadline| Instant::now() >= deadline) {
             repair_retry_at = None;
-            let (next, effects) =
-                transitions::decide(&transition_state, TransitionInput::RepairRetry);
+            let managing_session = managing_session(&core)?;
+            let (next, effects) = transitions::decide(
+                &transition_state,
+                TransitionInput::RepairRetry { managing_session },
+            );
             transition_state = next;
             drive_transition(
                 &mut transition_state,
@@ -772,7 +771,7 @@ fn drive_transition(
     restart_at: &mut Option<Instant>,
     config_sender: &mpsc::Sender<()>,
     paths: &Paths,
-) -> Result<(), IpcError> {
+) -> Result<transitions::DriveOutcome, IpcError> {
     core.managed = state.managed.clone();
     let mut platform = RealTransitionPlatform {
         core,
@@ -783,11 +782,11 @@ fn drive_transition(
         config_sender,
         paths,
     };
-    transitions::drive(state, effects, &mut platform)?;
+    let outcome = transitions::drive(state, effects, &mut platform)?;
     if state.eqapo_error.is_some() {
         platform.core.eqapo_include = IncludeState::Damaged;
     }
-    Ok(())
+    Ok(outcome)
 }
 
 #[cfg(target_os = "windows")]
@@ -829,7 +828,7 @@ fn handle_request(
                 },
             );
             *transition_state = next;
-            drive_transition(
+            let outcome = drive_transition(
                 transition_state,
                 effects,
                 core,
@@ -840,7 +839,9 @@ fn handle_request(
                 config_sender,
                 paths,
             )?;
-            Ok(HostResponse::Ok)
+            Ok(outcome
+                .repair_error
+                .map_or(HostResponse::Ok, HostResponse::Error))
         }
         HostRequest::StopManaging => {
             authorize_mutation(identity)?;
