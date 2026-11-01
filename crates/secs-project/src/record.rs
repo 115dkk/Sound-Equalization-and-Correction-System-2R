@@ -7,7 +7,12 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::UNIX_EPOCH;
+
+#[cfg(test)]
+static SOURCE_PARSE_COUNT: AtomicUsize = AtomicUsize::new(0);
 
 pub const IR_CACHE_LIMIT_BYTES: usize = 256 * 1024 * 1024;
 pub const MAX_PROJECT_BYTES: u64 = 64 * 1024 * 1024;
@@ -212,7 +217,7 @@ impl MeasurementStore {
             ProjectError::Invalid(format!("project {} is not UTF-8: {error}", path.display()))
         })?;
         let (mut project, warnings) = Project::from_json_with_warnings(loads(&text)?)?;
-        for (pos, roles) in try_load_project_sources(&project, &path)? {
+        for (pos, roles) in load_project_sources(&project, &path) {
             for (role, info) in roles {
                 if let Some(fingerprint) = calibration_fingerprint(&info) {
                     project
@@ -662,6 +667,8 @@ pub fn load_source(wav: &Path) -> Option<SourceInfo> {
 }
 
 fn load_source_checked(wav: &Path) -> Result<Option<SourceInfo>, ProjectError> {
+    #[cfg(test)]
+    SOURCE_PARSE_COUNT.fetch_add(1, Ordering::Relaxed);
     let path = source_path(wav);
     let bytes = match crate::irs::read_bounded(&path, MAX_SOURCE_BYTES, "measurement source") {
         Ok(bytes) => bytes,
@@ -726,24 +733,10 @@ pub fn load_project_sources(
     project: &Project,
     project_path: &Path,
 ) -> BTreeMap<u32, BTreeMap<String, SourceInfo>> {
-    load_project_sources_inner(project, project_path, false).unwrap_or_default()
-}
-
-fn try_load_project_sources(
-    project: &Project,
-    project_path: &Path,
-) -> Result<BTreeMap<u32, BTreeMap<String, SourceInfo>>, ProjectError> {
-    load_project_sources_inner(project, project_path, true)
-}
-
-fn load_project_sources_inner(
-    project: &Project,
-    project_path: &Path,
-    checked: bool,
-) -> Result<BTreeMap<u32, BTreeMap<String, SourceInfo>>, ProjectError> {
     let base = project_path.parent().unwrap_or_else(|| Path::new("."));
     let mut loaded: HashMap<PathBuf, Option<(Arc<SourceInfo>, usize)>> = HashMap::new();
-    let mut materialised = 0_usize;
+    let mut remaining = MAX_PROJECT_SOURCE_BYTES;
+    let mut exhausted = false;
     let mut out = BTreeMap::new();
     for record in measurement_values(project)
         .iter()
@@ -753,7 +746,7 @@ fn load_project_sources_inner(
             continue;
         };
         for (role, raw) in record.ir {
-            if raw.is_empty() {
+            if raw.is_empty() || exhausted {
                 continue;
             }
             let path = PathBuf::from(raw);
@@ -774,44 +767,33 @@ fn load_project_sources_inner(
             let info = match loaded.get(&key) {
                 Some(info) => info.clone(),
                 None => {
-                    let loaded_info = match load_source_checked(&path) {
-                        Ok(info) => info,
-                        Err(error) if checked => return Err(error),
-                        Err(_) => None,
-                    };
-                    let info = loaded_info.map(|info| {
+                    let info = load_source_checked(&path).ok().flatten().and_then(|info| {
                         let bytes = source_info_bytes(&info);
-                        (Arc::new(info), bytes)
+                        if bytes > remaining {
+                            exhausted = true;
+                            None
+                        } else {
+                            remaining -= bytes;
+                            Some((Arc::new(info), bytes))
+                        }
                     });
                     loaded.insert(key, info.clone());
                     info
                 }
             };
             if let Some((info, bytes)) = info {
-                let Some(next) = materialised.checked_add(bytes) else {
-                    if checked {
-                        return Err(ProjectError::Invalid(
-                            "project source info exceeds 67108864 bytes".into(),
-                        ));
-                    }
-                    continue;
-                };
-                if next > MAX_PROJECT_SOURCE_BYTES {
-                    if checked {
-                        return Err(ProjectError::Invalid(format!(
-                            "project source info exceeds {MAX_PROJECT_SOURCE_BYTES} bytes"
-                        )));
-                    }
+                if bytes > remaining {
+                    exhausted = true;
                     continue;
                 }
-                materialised = next;
+                remaining -= bytes;
                 out.entry(pos)
                     .or_insert_with(BTreeMap::new)
                     .insert(role, info.as_ref().clone());
             }
         }
     }
-    Ok(out)
+    out
 }
 
 pub fn load_project_irs(
@@ -1513,4 +1495,61 @@ fn optional_float_map(value: Option<&PyJson>) -> BTreeMap<String, Option<f64>> {
                 })
                 .collect()
         })
+}
+
+#[cfg(test)]
+mod source_budget_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn entry(position: usize, path: String) -> PyJson {
+        PyJson::Object(vec![
+            ("pos".into(), PyJson::Int(position.to_string())),
+            (
+                "ir".into(),
+                PyJson::Object(vec![("L".into(), PyJson::Str(path))]),
+            ),
+        ])
+    }
+
+    #[test]
+    fn distinct_large_sidecars_stop_parsing_at_the_project_budget_td112() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "secs-project-sidecar-budget-{}-{unique}",
+            std::process::id()
+        ));
+        let project_path = root.join("many.secs");
+        let irs = project_path.with_extension("irs");
+        fs::create_dir_all(&irs).unwrap();
+        let info = SourceInfo {
+            notes: Some("x".repeat(8 * 1024 * 1024)),
+            ..SourceInfo::default()
+        };
+        let mut entries = Vec::new();
+        for position in 1..=10 {
+            let wav = irs.join(format!("{position}.wav"));
+            fs::write(&wav, []).unwrap();
+            save_source(&wav, Some(&info)).unwrap();
+            entries.push(entry(position, format!("many.irs/{position}.wav")));
+        }
+        let mut project = Project::from_preset("2.0").unwrap();
+        project.measurements = PyJson::Array(entries);
+
+        SOURCE_PARSE_COUNT.store(0, Ordering::Relaxed);
+        let sources = load_project_sources(&project, &project_path);
+        let parsed = SOURCE_PARSE_COUNT.load(Ordering::Relaxed);
+        assert!(parsed > 0);
+        assert!(
+            parsed < 10,
+            "parsed {parsed} sidecars after exhausting the budget"
+        );
+        assert!(sources.contains_key(&1));
+        assert!(!sources.contains_key(&10));
+
+        fs::remove_dir_all(root).unwrap();
+    }
 }

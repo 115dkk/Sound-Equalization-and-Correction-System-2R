@@ -917,7 +917,7 @@ fn ir_writes_reject_symlinked_store_and_destination_td16() {
 }
 
 #[test]
-fn oversized_measurement_source_sidecar_is_rejected_td112() {
+fn oversized_measurement_source_sidecar_is_absent_on_open_td112() {
     const SIDECAR_LIMIT: u64 = 16 * 1024 * 1024;
 
     let directory = TempDir::new();
@@ -939,14 +939,12 @@ fn oversized_measurement_source_sidecar_is_rejected_td112() {
     ]);
     fs::write(&project_path, project.save_text()).unwrap();
 
-    let error = MeasurementStore::open(&project_path).unwrap_err();
-    let message = error.to_string();
-    assert!(message.contains("shared.src.json"), "{message}");
-    assert!(message.contains(&SIDECAR_LIMIT.to_string()), "{message}");
+    let store = MeasurementStore::open(&project_path).unwrap();
+    assert!(load_project_sources(store.project(), &project_path).is_empty());
 }
 
 #[test]
-fn shared_source_materialisation_is_capped_td112() {
+fn shared_source_materialisation_keeps_only_entries_within_budget_td112() {
     let directory = TempDir::new();
     let project_path = directory.0.join("shared-source-budget.secs");
     let irs = project_path.with_extension("irs");
@@ -967,8 +965,12 @@ fn shared_source_materialisation_is_capped_td112() {
     );
     fs::write(&project_path, project.save_text()).unwrap();
 
-    let error = MeasurementStore::open(&project_path).unwrap_err();
-    assert!(error.to_string().contains("source info"), "{error}");
+    let store = MeasurementStore::open(&project_path).unwrap();
+    let sources = load_project_sources(store.project(), &project_path);
+    assert!(!sources.is_empty());
+    assert!(sources.len() < 9);
+    assert!(sources.contains_key(&1));
+    assert!(!sources.contains_key(&9));
 }
 
 #[test]
