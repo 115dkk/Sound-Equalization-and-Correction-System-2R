@@ -381,7 +381,7 @@ impl PreparedSaveAs {
 fn prepare_save_as(open: &OpenProject, destination: &Path) -> Result<PreparedSaveAs, ServiceError> {
     let source_irs = open.path.with_extension("irs");
     let destination_irs = destination.with_extension("irs");
-    reject_nested_irs(&source_irs, &destination_irs)?;
+    reject_nested_irs(&open.path, &source_irs, &destination_irs)?;
     if destination.exists() && !destination.is_file() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::IsADirectory,
@@ -435,14 +435,30 @@ fn prepare_save_as(open: &OpenProject, destination: &Path) -> Result<PreparedSav
     result
 }
 
-fn reject_nested_irs(source: &Path, destination: &Path) -> Result<(), ServiceError> {
-    if !source.is_dir() {
-        return Ok(());
+fn reject_nested_irs(
+    project: &Path,
+    source: &Path,
+    destination: &Path,
+) -> Result<(), ServiceError> {
+    let project = normalised_path(project)?;
+    let source = normalised_path(source)?;
+    let destination = normalised_path(destination)?;
+    if destination == source
+        || destination.starts_with(&source)
+        || source.starts_with(&destination)
+        || project.starts_with(&destination)
+    {
+        return Err(ServiceError::InvalidRequest(
+            "cannot save a project inside its own measurement folder".into(),
+        ));
     }
-    let source = source.canonicalize()?;
-    // The destination folder may not exist yet (it is created after this
-    // check): resolve its deepest existing ancestor and keep the rest as written.
-    let mut existing = destination;
+    Ok(())
+}
+
+fn normalised_path(path: &Path) -> Result<PathBuf, ServiceError> {
+    // A save destination may not exist yet. Resolve its deepest existing
+    // ancestor, then append the missing components without following links.
+    let mut existing = path;
     let mut rest = Vec::new();
     let resolved =
         loop {
@@ -454,22 +470,16 @@ fn reject_nested_irs(source: &Path, destination: &Path) -> Result<(), ServiceErr
                     })?);
                     existing = existing
                         .parent()
-                        .filter(|p| !p.as_os_str().is_empty())
+                        .filter(|parent| !parent.as_os_str().is_empty())
                         .unwrap_or(Path::new("."));
                 }
                 Err(error) => return Err(error.into()),
             }
         };
-    let destination = rest
+    Ok(rest
         .iter()
         .rev()
-        .fold(resolved, |path, part| path.join(part));
-    if destination == source || destination.starts_with(&source) {
-        return Err(ServiceError::InvalidRequest(
-            "cannot save a project inside its own measurement folder".into(),
-        ));
-    }
-    Ok(())
+        .fold(resolved, |resolved, part| resolved.join(part)))
 }
 
 fn unique_sibling(path: &Path, kind: &str) -> Result<PathBuf, std::io::Error> {

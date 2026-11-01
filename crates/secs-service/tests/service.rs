@@ -2132,6 +2132,7 @@ fn save_as_failure_and_nested_destination_leave_projects_untouched() {
     let root = temp_root("save-as-stage");
     fs::create_dir_all(&root).unwrap();
     let source = root.join("source.secs");
+    let reverse_service = service();
     let service = service();
     call_ok(
         &service,
@@ -2164,6 +2165,42 @@ fn save_as_failure_and_nested_destination_leave_projects_untouched() {
     );
     assert!(!nested.exists());
     assert!(!nested.with_extension("irs").exists());
+
+    let reverse_root = root.join("case.irs");
+    fs::create_dir(&reverse_root).unwrap();
+    let reverse_source = reverse_root.join("room.secs");
+    call_ok(
+        &reverse_service,
+        Request::ProjectNew(ProjectNewParams {
+            path: reverse_source.to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    let reverse_source_irs = reverse_source.with_extension("irs");
+    fs::create_dir_all(&reverse_source_irs).unwrap();
+    fs::write(reverse_root.join("keep.txt"), b"keep").unwrap();
+    fs::write(reverse_source_irs.join("marker"), b"reverse").unwrap();
+    let reverse_destination = root.join("case.secs");
+    let Envelope::Err(error) = reverse_service.call(
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams {
+            path: Some(reverse_destination.to_string_lossy().into_owned()),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!("save as whose measurement folder contains the source must fail");
+    };
+    assert_eq!(error.code, ErrorCode::InvalidRequest);
+    assert!(reverse_source.is_file());
+    assert_eq!(fs::read(reverse_root.join("keep.txt")).unwrap(), b"keep");
+    assert_eq!(
+        fs::read(reverse_source_irs.join("marker")).unwrap(),
+        b"reverse"
+    );
+    assert!(!reverse_destination.exists());
 
     let target = root.join("target.secs");
     fs::create_dir(&target).unwrap();
