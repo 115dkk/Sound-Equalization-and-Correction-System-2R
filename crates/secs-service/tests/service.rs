@@ -3551,6 +3551,66 @@ fn mimo_notes(files: &[String]) -> Vec<String> {
 }
 
 #[test]
+fn recommend_xo_preserves_xo_edits_made_while_the_job_runs() {
+    for (case, edit) in [
+        (
+            "xo",
+            secs_types::settings_edit::SettingEdit::Xo {
+                group: "프론트".into(),
+                hz: 177.0,
+            },
+        ),
+        (
+            "include",
+            secs_types::settings_edit::SettingEdit::XoRecInclude { on: false },
+        ),
+    ] {
+        let root = temp_root(&format!("xo-settings-race-{case}"));
+        fs::create_dir_all(&root).unwrap();
+        let (path, _) = write_case(&root, "room_dba");
+        let service = service();
+        open(&service, &path);
+        let events = Arc::new(PausedProgress::default());
+        let Response::RecommendXo(started) =
+            call_ok(&service, Request::RecommendXo, events.clone())
+        else {
+            panic!("XO recommendation must start");
+        };
+        events.wait_until_paused();
+        call_ok(
+            &service,
+            Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+                edit,
+            }),
+            Arc::new(NoEvents),
+        );
+        let Response::CalibrationSettingsGet(edited) = call_ok(
+            &service,
+            Request::CalibrationSettingsGet,
+            Arc::new(NoEvents),
+        ) else {
+            panic!()
+        };
+        events.release();
+        assert!(matches!(
+            finished_result(events.events.wait(started.job, Duration::from_secs(120))),
+            JobResult::Xo(_)
+        ));
+        let Response::CalibrationSettingsGet(current) = call_ok(
+            &service,
+            Request::CalibrationSettingsGet,
+            Arc::new(NoEvents),
+        ) else {
+            panic!()
+        };
+        assert_eq!(current.xo, edited.xo, "{case}");
+        assert_eq!(current.xo_rec_include, edited.xo_rec_include, "{case}");
+        assert!(!current.xo_rec.is_empty(), "{case}");
+        fs::remove_dir_all(root).unwrap();
+    }
+}
+
+#[test]
 fn staged_mdat_states_the_mimo_support_cap_like_upstream_live_and_cached() {
     let root = temp_root("mimo-cap-text");
     fs::create_dir_all(&root).unwrap();

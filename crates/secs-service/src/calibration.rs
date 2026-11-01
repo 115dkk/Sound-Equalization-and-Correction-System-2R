@@ -184,10 +184,14 @@ impl Service {
             };
             session::commit(&session, prepared.ticket, &job, |open| {
                 let mut settings = calibration_from_project(open.store.project());
-                for (group, hz) in &recommendation.best {
-                    match settings.xo.iter_mut().find(|(name, _)| name == group) {
-                        Some((_, current)) => *current = *hz,
-                        None => settings.xo.push((group.clone(), *hz)),
+                let xo_unchanged = settings.xo == prepared.settings.xo
+                    && settings.xo_rec_include == prepared.settings.xo_rec_include;
+                if xo_unchanged {
+                    for (group, hz) in &recommendation.best {
+                        match settings.xo.iter_mut().find(|(name, _)| name == group) {
+                            Some((_, current)) => *current = *hz,
+                            None => settings.xo.push((group.clone(), *hz)),
+                        }
                     }
                 }
                 settings.xo_rec = recommendation.best.clone();
