@@ -1,4 +1,3 @@
-use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -217,9 +216,42 @@ impl Service {
                     IpcError::new(ErrorCode::Internal, "Equalizer APO export has no design id")
                 })?;
                 let stage = PathBuf::from(&result.folder);
-                deploy_eqapo_bundle(&stage, &final_for_job)?;
+                let entry = final_for_job.join("SECS.txt");
+                let previous_entry = match fs::read(&entry) {
+                    Ok(bytes) => Some(bytes),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(error) => return Err(io_error(&entry, error)),
+                };
+                let generation =
+                    crate::deploy::install(&final_for_job, design_folder(&design_id), &stage)?;
+                let entry_bytes =
+                    format!("Include: {}\\config.txt\r\n", generation.name).into_bytes();
                 let config = config_root.join("config.txt");
-                ensure_eqapo_include(&config, apply.as_ref())?;
+                let switched = crate::deploy::write_entry(&entry, &entry_bytes)
+                    .and_then(|()| ensure_eqapo_include(&config, apply.as_ref()));
+                if let Err(error) = switched {
+                    let restore = match previous_entry {
+                        Some(bytes) => crate::deploy::write_entry(&entry, &bytes),
+                        None => match fs::remove_file(&entry) {
+                            Ok(()) => Ok(()),
+                            Err(remove) if remove.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                            Err(remove) => Err(io_error(&entry, remove)),
+                        },
+                    };
+                    let remove = fs::remove_dir_all(&generation.dir)
+                        .map_err(|remove| io_error(&generation.dir, remove));
+                    if let Err(rollback) = restore.and(remove) {
+                        return Err(IpcError::new(
+                            ErrorCode::ApplyFailed,
+                            format!(
+                                "entry switch failed ({}); rollback failed ({})",
+                                error.detail, rollback.detail
+                            ),
+                        ));
+                    }
+                    return Err(error);
+                }
+                crate::deploy::prune(&final_for_job, &["SECS.txt", &generation.name])?;
                 if managed {
                     expect_host_ok(managed_host.call(&HostRequest::SetManaged(HostManaged {
                         camilla: None,
@@ -230,11 +262,10 @@ impl Service {
                         ..HostManaged::default()
                     }))?)?;
                 }
-                fs::remove_dir_all(&stage).map_err(|error| io_error(stage.clone(), error))?;
                 Ok(JobResult::Apply(ApplyResult {
                     outcome: ApplyOutcome::Applied,
                     design_id,
-                    folder: final_for_job.to_string_lossy().into_owned(),
+                    folder: generation.dir.to_string_lossy().into_owned(),
                     stale: result.stale,
                 }))
             },
@@ -297,8 +328,20 @@ impl Service {
             .map_or(IncludeState::Absent, |text| {
                 self.deps.apply.eqapo_include_state(&text)
             });
-        let applied_design_id = fs::read(root.join(EQAPO_FOLDER).join("secs-design.json"))
+        let applied_design_id = fs::read_to_string(root.join(EQAPO_FOLDER).join("SECS.txt"))
             .ok()
+            .and_then(|entry| {
+                let include = entry
+                    .lines()
+                    .find_map(|line| line.trim().strip_prefix("Include: "))?;
+                let generation = include.split(['\\', '/']).next()?;
+                fs::read(
+                    root.join(EQAPO_FOLDER)
+                        .join(generation)
+                        .join("secs-design.json"),
+                )
+                .ok()
+            })
             .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
             .and_then(|value| value.get("design_id")?.as_str().map(str::to_owned));
         EqApoApplyStatus {
@@ -452,79 +495,6 @@ fn remove_stage(path: &Path) -> Result<(), IpcError> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(error) => Err(io_error(path, error)),
     }
-}
-
-fn collect_files(root: &Path) -> Result<Vec<PathBuf>, IpcError> {
-    fn visit(root: &Path, at: &Path, out: &mut Vec<PathBuf>) -> Result<(), IpcError> {
-        for entry in fs::read_dir(at).map_err(|error| io_error(at, error))? {
-            let path = entry.map_err(|error| io_error(at, error))?.path();
-            if path.is_dir() {
-                visit(root, &path, out)?;
-            } else {
-                out.push(path.strip_prefix(root).expect("descendant").to_owned());
-            }
-        }
-        Ok(())
-    }
-    let mut files = Vec::new();
-    visit(root, root, &mut files)?;
-    Ok(files)
-}
-
-fn mapped_eqapo_path(relative: &Path) -> PathBuf {
-    if relative == Path::new("config.txt") {
-        PathBuf::from("SECS.txt")
-    } else {
-        relative.to_owned()
-    }
-}
-
-fn deploy_eqapo_bundle(stage: &Path, destination: &Path) -> Result<(), IpcError> {
-    fs::create_dir_all(destination).map_err(|error| io_error(destination, error))?;
-    let source_files = collect_files(stage)?;
-    let wanted = source_files
-        .iter()
-        .map(|path| mapped_eqapo_path(path))
-        .collect::<BTreeSet<_>>();
-    for relative in &source_files {
-        let target = destination.join(mapped_eqapo_path(relative));
-        let bytes = fs::read(stage.join(relative))
-            .map_err(|error| io_error(stage.join(relative), error))?;
-        write_changed(&target, &bytes)?;
-    }
-    for relative in collect_files(destination)? {
-        if !wanted.contains(&relative) {
-            let path = destination.join(relative);
-            fs::remove_file(&path).map_err(|error| io_error(path, error))?;
-        }
-    }
-    remove_empty_dirs(destination)?;
-    Ok(())
-}
-
-fn remove_empty_dirs(root: &Path) -> Result<(), IpcError> {
-    let mut dirs = Vec::new();
-    fn visit(at: &Path, dirs: &mut Vec<PathBuf>) -> Result<(), IpcError> {
-        for entry in fs::read_dir(at).map_err(|error| io_error(at, error))? {
-            let path = entry.map_err(|error| io_error(at, error))?.path();
-            if path.is_dir() {
-                visit(&path, dirs)?;
-                dirs.push(path);
-            }
-        }
-        Ok(())
-    }
-    visit(root, &mut dirs)?;
-    for path in dirs {
-        if fs::read_dir(&path)
-            .map_err(|error| io_error(&path, error))?
-            .next()
-            .is_none()
-        {
-            fs::remove_dir(&path).map_err(|error| io_error(path, error))?;
-        }
-    }
-    Ok(())
 }
 
 fn ensure_eqapo_include(config: &Path, apply: &dyn ApplyAdapter) -> Result<(), IpcError> {

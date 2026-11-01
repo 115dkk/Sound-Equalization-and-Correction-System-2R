@@ -12,6 +12,7 @@ mod calibration;
 mod clock;
 mod compute;
 mod curves;
+mod deploy;
 mod design_export;
 pub mod dirac_import;
 mod export;

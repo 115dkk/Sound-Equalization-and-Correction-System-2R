@@ -6,7 +6,7 @@ mod case_project;
 use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
@@ -115,6 +115,50 @@ impl ApplyAdapter for FixedApply {
 
     fn eqapo_with_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
         NativeApply.eqapo_with_include(config_text)
+    }
+
+    fn eqapo_without_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
+        NativeApply.eqapo_without_include(config_text)
+    }
+}
+
+#[derive(Debug)]
+struct FailingEqapoSwitch {
+    fail: Arc<AtomicBool>,
+}
+
+impl ApplyAdapter for FailingEqapoSwitch {
+    fn camilla_status(
+        &self,
+        _address: &str,
+        _timeout: Duration,
+    ) -> Result<CamillaStatus, IpcError> {
+        Err(IpcError::new(ErrorCode::NotImplemented, "unused status"))
+    }
+
+    fn camilla_apply(
+        &self,
+        _address: &str,
+        _config_path: &Path,
+        _config_text: &str,
+        _timeout: Duration,
+    ) -> Result<ApplyOutcome, IpcError> {
+        Err(IpcError::new(ErrorCode::NotImplemented, "unused apply"))
+    }
+
+    fn eqapo_include_state(&self, config_text: &str) -> IncludeState {
+        NativeApply.eqapo_include_state(config_text)
+    }
+
+    fn eqapo_with_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
+        if self.fail.load(Ordering::SeqCst) {
+            Err(IpcError::new(
+                ErrorCode::ApplyFailed,
+                "injected entry switch failure",
+            ))
+        } else {
+            NativeApply.eqapo_with_include(config_text)
+        }
     }
 
     fn eqapo_without_include(&self, config_text: &str) -> Result<Option<String>, IpcError> {
@@ -899,9 +943,14 @@ fn apply_eqapo_installs_reapplies_repairs_once_and_removes_stale_files() {
     };
     assert!(matches!(first.outcome, ApplyOutcome::Applied));
     let bundle = config_root.join("SECS2R");
-    assert!(bundle.join("SECS.txt").is_file());
-    assert!(!bundle.join("config.txt").exists());
-    assert!(bundle.join("secs-design.json").is_file());
+    let first_name = format!("{}-1", &first.design_id[..16]);
+    let first_generation = bundle.join(&first_name);
+    assert_eq!(
+        fs::read_to_string(bundle.join("SECS.txt")).unwrap(),
+        format!("Include: {first_name}\\config.txt\r\n")
+    );
+    assert!(first_generation.join("config.txt").is_file());
+    assert!(first_generation.join("secs-design.json").is_file());
     assert!(!bundle.join("stale.txt").exists());
     assert!(!bundle.join("old").exists());
     assert_eq!(
@@ -915,19 +964,18 @@ fn apply_eqapo_installs_reapplies_repairs_once_and_removes_stale_files() {
         secs_apply::eqapo::IncludeState::Present
     );
 
-    let before = fs::metadata(bundle.join("SECS.txt"))
-        .unwrap()
-        .modified()
-        .unwrap();
-    thread::sleep(Duration::from_millis(1100));
     let events = Arc::new(Events::default());
     let second_job = started(&service, Request::ApplyEqapo, events.clone());
-    succeeded(events.wait(second_job.job));
-    let after = fs::metadata(bundle.join("SECS.txt"))
-        .unwrap()
-        .modified()
-        .unwrap();
-    assert_eq!(before, after, "unchanged bundle file was rewritten");
+    let JobResult::Apply(second) = succeeded(events.wait(second_job.job)) else {
+        panic!("apply result is absent")
+    };
+    let second_name = format!("{}-2", &second.design_id[..16]);
+    assert_eq!(
+        fs::read_to_string(bundle.join("SECS.txt")).unwrap(),
+        format!("Include: {second_name}\\config.txt\r\n")
+    );
+    assert!(!first_generation.exists());
+    assert!(bundle.join(second_name).join("config.txt").is_file());
 
     fs::write(
         config_root.join("config.txt"),
@@ -953,6 +1001,69 @@ fn apply_eqapo_installs_reapplies_repairs_once_and_removes_stale_files() {
 }
 
 #[test]
+fn failed_eqapo_switch_keeps_the_previous_entry_and_generation() {
+    let root = root("eqapo-switch-failure");
+    let config_root = root.join("EqualizerAPO/config");
+    fs::create_dir_all(&config_root).unwrap();
+    fs::write(config_root.join("config.txt"), "Preamp: -3 dB\n").unwrap();
+    let install = EqApoInstall {
+        config_path: config_root.to_string_lossy().into_owned(),
+        install_path: "EqualizerAPO-XT/current".into(),
+        variant: EqApoVariant::Xt,
+    };
+    let fail = Arc::new(AtomicBool::new(false));
+    let service = calibrated_service_with_apply(
+        &root,
+        Deps {
+            eqapo_install: Arc::new(move || Some(install.clone())),
+            ..Deps::default()
+        },
+        Arc::new(FailingEqapoSwitch { fail: fail.clone() }),
+    );
+    set_apply(
+        &service,
+        CamillaApply::default(),
+        EqApoApply {
+            level: ApplyLevel::Apply,
+        },
+    );
+
+    let events = Arc::new(Events::default());
+    let first_job = started(&service, Request::ApplyEqapo, events.clone());
+    let JobResult::Apply(first) = succeeded(events.wait(first_job.job)) else {
+        panic!("apply result is absent")
+    };
+    let applied = config_root.join("SECS2R");
+    let entry_before = fs::read(applied.join("SECS.txt")).unwrap();
+    let previous = applied.join(format!("{}-1", &first.design_id[..16]));
+    assert!(previous.join("config.txt").is_file());
+
+    fail.store(true, Ordering::SeqCst);
+    let events = Arc::new(Events::default());
+    let failed_job = started(&service, Request::ApplyEqapo, events.clone());
+    assert!(matches!(
+        events.wait(failed_job.job),
+        JobEvent::Finished {
+            status: JobStatus::Failed,
+            error: Some(IpcError {
+                code: ErrorCode::ApplyFailed,
+                ..
+            }),
+            ..
+        }
+    ));
+    assert_eq!(fs::read(applied.join("SECS.txt")).unwrap(), entry_before);
+    assert!(previous.join("config.txt").is_file());
+    let generations: Vec<_> = fs::read_dir(&applied)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.is_dir())
+        .collect();
+    assert_eq!(generations, [previous]);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn eqapo_status_reads_injected_install_and_applied_manifest() {
     let root = root("status");
     fs::write(
@@ -964,9 +1075,14 @@ fn eqapo_status_reads_injected_install_and_applied_manifest() {
         ),
     )
     .unwrap();
-    fs::create_dir_all(root.join("SECS2R")).unwrap();
+    fs::create_dir_all(root.join("SECS2R/abc-1")).unwrap();
     fs::write(
-        root.join("SECS2R/secs-design.json"),
+        root.join("SECS2R/SECS.txt"),
+        "Include: abc-1\\config.txt\r\n",
+    )
+    .unwrap();
+    fs::write(
+        root.join("SECS2R/abc-1/secs-design.json"),
         br#"{"design_id":"abc"}"#,
     )
     .unwrap();
