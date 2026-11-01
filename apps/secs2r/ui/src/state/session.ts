@@ -163,6 +163,11 @@ export function createSession(ipc: Ipc) {
       return value;
     }, (error) => { report(error); appSettingsFailure = errors.getSnapshot()?.id ?? null; }),
   };
+  function clearProjectResources() {
+    for (const key of ["project", "config", "notices", "dsp", "layout", "estimate", "measurementSettings", "records", "curves", "levels", "settings", "micCalibration", "modeSpec", "target", "results", "lines", "subWarnings", "folder", "applyStatus"] as const) {
+      stores[key].set(null);
+    }
+  }
   function curveParams(): ResultCurvesParams {
     const h = host.getSnapshot();
     return { tab: h.tab, channel: h.channel, group: h.xoGroup, xo_hz: h.previewHz, corrected: null };
@@ -238,7 +243,7 @@ export function createSession(ipc: Ipc) {
         if (["undo", "redo"].includes(request.method)) host.set({ xoRecTurnedOffByEdit: false });
         const effects = effectsOf({ request: request.method });
         const ctx: EffectContext = { host, stores, jobs, call, configure, run, canContinueRefresh, source: { request, data },
-          replaceProject: () => { jobs.replaceProject(); autoRefresh?.changed(); epoch = jobs.epoch; curveVersion++; curveState.set(null); tutorialReady.set(false); },
+          replaceProject: () => { jobs.replaceProject(); clearProjectResources(); autoRefresh?.changed(); epoch = jobs.epoch; curveVersion++; curveState.set(null); tutorialReady.set(false); },
         };
         for (const rule of effects.rules) rule.beforeReload?.(ctx);
         await reload(effects.reload);
@@ -566,7 +571,7 @@ export function createSession(ipc: Ipc) {
     const plans = methods.map(externalRefresh);
     if (methods.some((method) => refreshInputs.includes(method as Request["method"]))) autoRefresh?.changed();
     if (plans.some((plan) => plan.replaceProject)) {
-      jobs.replaceProject(); autoRefresh?.changed(); curveVersion++; curveState.set(null); tutorialReady.set(false);
+      jobs.replaceProject(); clearProjectResources(); autoRefresh?.changed(); curveVersion++; curveState.set(null); tutorialReady.set(false);
       for (const store of Object.values(stores)) if ("invalidate" in store) store.invalidate();
       stores.measurementSettings.set(null); stores.micCalibration.set(null);
       host.set({ micCalBusy: null, micCalError: null, path: null, selected: null, mdat: null, warnings: [], runs: {}, applyRuns: {}, mdatScope: "all", channel: null, xoGroup: null, xoRecommendation: null, xoRecTurnedOffByEdit: false, failure: null, rangeRejection: null, opened: host.getSnapshot().opened + 1 });

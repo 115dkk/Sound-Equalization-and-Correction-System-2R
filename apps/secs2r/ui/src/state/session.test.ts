@@ -4,6 +4,36 @@ import { IpcFailure } from "../ipc/client";
 import { createSession } from "./session";
 import { createResource } from "./store";
 
+it.each([false, true])("clears the previous project's resources before failed replacement reads (external=%s)", async (external) => {
+  vi.useFakeTimers();
+  const mock = createMockService({ tickMs: 0 });
+  let emit!: (method: string) => void;
+  const session = createSession({ ...mock, externalChanges: { subscribe: async (next) => { emit = next; return () => {}; } } });
+  try {
+    await session.start(); await session.settled();
+    await session.writers.dsp.edit({ fir_taps: 4096 });
+    const previous = session.stores.dsp.getSnapshot();
+    mock.failNext("dsp_get", "project_io");
+    await session.stores.dsp.load();
+    expect(session.stores.dsp.getSnapshot()).toEqual(previous);
+    mock.failNext("dsp_get", "project_io");
+    mock.failNext("calibration_settings_get", "project_io");
+    if (external) {
+      await mock.request({ method: "project_open", params: { path: "/B.secs" } });
+      emit("project_open"); await vi.advanceTimersByTimeAsync(25); await session.settled();
+    } else await session.call({ method: "project_open", params: { path: "/B.secs" } });
+    expect(session.stores.project.getSnapshot()?.path).toBe("/B.secs");
+    expect(session.stores.dsp.getSnapshot()).toBeNull();
+    expect(session.stores.settings.getSnapshot()).toBeNull();
+    expect(session.stores.modeSpec.getSnapshot()).toBeNull();
+    expect(session.stores.dsp.loadState.getSnapshot().status).toBe("failed");
+    expect(session.stores.settings.loadState.getSnapshot().status).toBe("failed");
+    mock.calls.length = 0;
+    expect(await session.writers.dsp.edit({ fir_budget: 12345 })).toBe(false);
+    expect(mock.calls.some((r) => r.method === "dsp_set")).toBe(false);
+  } finally { session.dispose(); await session.settled(); mock.dispose(); vi.useRealTimers(); }
+});
+
 describe("resource generations", () => {
   it("does not let an older read overwrite a mutation", async () => {
     let resolve!: (value: number) => void;
