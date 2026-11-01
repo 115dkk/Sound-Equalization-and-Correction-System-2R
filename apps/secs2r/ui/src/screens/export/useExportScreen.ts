@@ -4,6 +4,7 @@ import { IpcFailure } from "../../ipc/client";
 import { useHost, useResource, useSession } from "../../state/react";
 import { useJobLedger } from "../../state/useJobLedger";
 import type { Patch } from "../../state/writers";
+import { startCalibration } from "../../state/calibration";
 import { DESIGN_RATE, countedRate, extraRatesFor } from "../system/outputRate";
 import { CAMILLA_EXE_FILE, DEFAULT_APPLY, addressProblem, applyWanted, designNameFor, isFilterKind, mdatScopeFor, withExePath, type ApplyTarget, type ExportActions, type ExportView, type HostFailure } from "./types";
 
@@ -158,7 +159,7 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
       openFolder: (path) => session.run(() => session.call({ method: "open_folder", params: { path } })),
       goToCalibrate: () => session.navigate("calibrate"),
       goToSystem: () => session.navigate("system"),
-      recalibrate: () => session.run(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } })),
+      recalibrate: () => session.run(() => startCalibration(session)),
       setApplyLevel: (target, level) => {
         void editApply((latest) => (target === "camilla" ? { camilla: { ...latest.camilla, level } } : { eqapo: { ...latest.eqapo, level } }));
       },
@@ -216,7 +217,7 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
     };
   }, [session]);
   const jobs = ledger.jobs.filter((job) => job.status === "running" || job.status === "cancel_requested");
-  const recalibrating = jobs.some((job) => job.kind === "calibrate");
+  const recalibrating = jobs.some((job) => ["calibrate", "recommend_xo", "mimo"].includes(job.kind));
   const exporting = jobs.find((job) => job.kind === "export");
   const request = exporting?.request;
   const applyRequest = jobs.find((job) => job.kind === "apply")?.request;

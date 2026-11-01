@@ -268,6 +268,17 @@ describe("useExportScreen", () => {
     expect(result.current.view?.runs).toEqual({});
   });
 
+  it.each([[false, false], [false, true], [true, false], [true, true]])("mdat recalibration follows XO include=%s and MIMO=%s", async (include, mimo) => {
+    await perform(() => session.call({ method: "calibration_settings_edit", params: { edit: { kind: "xo_rec_include", on: include } } }));
+    await perform(() => session.call({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: mimo } } }));
+    const { result } = renderHook(useExportScreen, { wrapper });
+    mock.calls.length = 0;
+    await perform(result.current.actions.recalibrate);
+    expect(mock.calls.filter((r) => r.method === "recommend_xo")).toHaveLength(include ? 1 : 0);
+    if (include) await perform(mock.drain);
+    expect(mock.calls.filter((r) => r.method === "calibrate")).toEqual([{ method: "calibrate", params: { settings: null, subs_only: false, mimo } }]);
+  });
+
   it("recalibrates a reopened stale cache and unblocks both mdat formats", async () => {
     await perform(() => session.call({ method: "calibrate", params: { settings: null, subs_only: false } }));
     await perform(mock.drain);
@@ -287,7 +298,9 @@ describe("useExportScreen", () => {
 
     mock.calls.length = 0;
     await perform(result.current.actions.recalibrate);
-    expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false } });
+    expect(mock.calls).toContainEqual({ method: "recommend_xo" });
+    await perform(mock.drain);
+    expect(mock.calls).toContainEqual({ method: "calibrate", params: { settings: null, subs_only: false, mimo: false } });
     expect(result.current.view?.recalibrating).toBe(true);
     expect(result.current.view?.computing).toBe(true);
     for (const kind of mdatKinds) expect(exportBlock(result.current.view!, kind)).toBe("stale_cache");
@@ -311,6 +324,7 @@ describe("useExportScreen", () => {
     await perform(() => session.call({ method: "project_open", params: { path: "/projects/cached.secs" } }));
     await perform(() => session.call({ method: "calibration_settings_edit", params: { edit: { kind: "mode", mode: "linear" } } }));
     const { result } = renderHook(useExportScreen, { wrapper });
+    await perform(() => session.call({ method: "calibration_settings_edit", params: { edit: { kind: "xo_rec_include", on: false } } }));
     if (status === "failed") mock.failJobs("calibrate", "engine_input");
     await perform(result.current.actions.recalibrate);
     expect(result.current.view?.recalibrating).toBe(true);
