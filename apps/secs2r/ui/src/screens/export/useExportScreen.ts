@@ -67,28 +67,31 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
   }, [session, managing]);
   const actions = useMemo<ExportActions>(() => {
     // The last ApplySettings save: an apply waits for it, so the service applies with the level and address on screen.
-    let saving: Promise<unknown> = Promise.resolve();
+    let saving: Promise<boolean> = Promise.resolve(true);
     const editApply = (patch: Patch<ApplySettings>): Promise<boolean> => {
       const edit = session.writers.apply.edit(patch);
       saving = edit;
       return edit;
     };
     const storedAddress = () => session.stores.appSettings.getSnapshot()?.apply.camilla.address ?? DEFAULT_APPLY.camilla.address;
-    const saveAddress = async (): Promise<void> => {
+    const saveAddress = async (): Promise<boolean> => {
       const draft = session.host.getSnapshot().applyAddressDraft;
-      if (draft === null || addressProblem(draft)) return;
+      if (draft === null) return true;
+      if (addressProblem(draft)) return false;
       const address = draft.trim();
-      if (address !== storedAddress() && !(await editApply((latest) => ({ camilla: { ...latest.camilla, address } })))) return;
+      if (address !== storedAddress() && !(await editApply((latest) => ({ camilla: { ...latest.camilla, address } })))) return false;
       if (session.host.getSnapshot().applyAddressDraft === draft) session.host.set({ applyAddressDraft: null });
+      return true;
     };
     const storedExe = () => session.stores.appSettings.getSnapshot()?.apply.camilla.exe_path ?? "";
     // 관리's executable: typed freely, stored trimmed (an empty field stores none); any text is a path to the service.
-    const saveExe = async (): Promise<void> => {
+    const saveExe = async (): Promise<boolean> => {
       const draft = session.host.getSnapshot().applyExeDraft;
-      if (draft === null) return;
+      if (draft === null) return true;
       const path = draft.trim();
-      if (path !== storedExe() && !(await editApply((latest) => ({ camilla: withExePath(latest.camilla, path) })))) return;
+      if (path !== storedExe() && !(await editApply((latest) => ({ camilla: withExePath(latest.camilla, path) })))) return false;
       if (session.host.getSnapshot().applyExeDraft === draft) session.host.set({ applyExeDraft: null });
+      return true;
     };
     // A host action in flight, and its typed failure kept for the row it was started from (session.call does not raise the global notice for it).
     // The button stays busy until the status has been read again, so the row never shows the state from before the action.
@@ -165,9 +168,8 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
       applyCamilla: () => session.run(async () => {
         const epoch = session.jobs.epoch;
         // Leaving the address or executable field for this button already saves it; Enter-less keyboard paths save here.
-        await saveAddress();
-        await saveExe();
-        await saving;
+        const guard = session.projectGuard();
+        if (!await saving || !await saveAddress() || !await saveExe() || !await saving || !guard.alive()) return;
         const devices = session.host.getSnapshot().camillaDevices;
         try {
           await session.call({ method: "apply_camilla", params: devices.capture.type !== "file" || devices.playback.type !== "file" ? { camilla_devices: devices } : {} });
@@ -178,7 +180,8 @@ export function useExportScreen(): { view: ExportView | null; actions: ExportAct
       }),
       applyEqapo: () => session.run(async () => {
         const epoch = session.jobs.epoch;
-        await saving;
+        const guard = session.projectGuard();
+        if (!await saving || !guard.alive()) return;
         try {
           await session.call({ method: "apply_eqapo" });
         } catch (error) {
