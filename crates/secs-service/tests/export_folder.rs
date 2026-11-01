@@ -340,7 +340,7 @@ fn explicit_unnamed_export_merges_the_chosen_folder_into_valid_existing_index() 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        fs::set_permissions(&locked, fs::Permissions::from_mode(0)).unwrap();
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o000)).unwrap();
     }
     let linked = parent.join("linked");
     #[cfg(unix)]

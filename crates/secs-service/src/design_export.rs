@@ -753,7 +753,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
-            fs::set_permissions(&blocked_manifest, fs::Permissions::from_mode(0)).unwrap();
+            fs::set_permissions(&blocked_manifest, fs::Permissions::from_mode(0o000)).unwrap();
         }
         #[cfg(windows)]
         let locked = {
@@ -866,7 +866,7 @@ mod tests {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
-            fs::set_permissions(&old_manifest, fs::Permissions::from_mode(0)).unwrap();
+            fs::set_permissions(&old_manifest, fs::Permissions::from_mode(0o000)).unwrap();
         }
         #[cfg(windows)]
         {

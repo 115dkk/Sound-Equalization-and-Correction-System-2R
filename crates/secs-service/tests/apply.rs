@@ -361,9 +361,12 @@ impl ManagedHostAdapter for RecordingManagedHost {
     }
 }
 
+// Only the Windows-only managed apply test uses it.
+#[cfg(target_os = "windows")]
 #[derive(Debug)]
 struct RejectingManagedHost;
 
+#[cfg(target_os = "windows")]
 impl ManagedHostAdapter for RejectingManagedHost {
     fn service_state(&self) -> ServiceState {
         ServiceState::Running
