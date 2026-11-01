@@ -1,12 +1,15 @@
 #![forbid(unsafe_code)]
 
+#[path = "../examples/support/case_project.rs"]
+mod case_project;
+
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, UNIX_EPOCH};
+use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
-use secs_service::{Deps, Host, LocalTime, NoEvents, Service};
+use secs_service::{Deps, EventSink, Host, LocalTime, NoEvents, Service};
 use secs_types::ipc::*;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -47,6 +50,78 @@ fn root() -> PathBuf {
     ));
     fs::create_dir_all(&path).unwrap();
     path
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+#[derive(Debug, Default)]
+struct Events {
+    values: Mutex<Vec<JobEvent>>,
+    changed: Condvar,
+}
+
+impl EventSink for Events {
+    fn send(&self, event: JobEvent) {
+        lock(&self.values).push(event);
+        self.changed.notify_all();
+    }
+}
+
+impl Events {
+    fn wait(&self, job: JobId) -> JobEvent {
+        let deadline = Instant::now() + Duration::from_secs(180);
+        let mut values = lock(&self.values);
+        loop {
+            if let Some(event) = values
+                .iter()
+                .find(|event| matches!(event, JobEvent::Finished { job: id, .. } if *id == job))
+            {
+                return event.clone();
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "job {job:?} did not finish");
+            values = self.changed.wait_timeout(values, remaining).unwrap().0;
+        }
+    }
+}
+
+fn calibrated(root: &Path) -> Service {
+    let mut dependencies = deps(root.join("home"));
+    dependencies.unix_ms = Arc::new(|| 1_704_164_645_000);
+    let (project, settings) = case_project::write(root, "room");
+    let service = Service::new(dependencies);
+    call(
+        &service,
+        Request::ProjectOpen(ProjectPathParams {
+            path: project.to_string_lossy().into_owned(),
+        }),
+    )
+    .unwrap();
+    let events = Arc::new(Events::default());
+    let Envelope::Ok(response) = service.call(
+        Request::Calibrate(CalibrateParams {
+            settings: Some(settings),
+            ..Default::default()
+        }),
+        events.clone(),
+    ) else {
+        panic!("calibration must start")
+    };
+    let Response::Calibrate(started) = *response else {
+        panic!("calibration response is wrong")
+    };
+    assert!(matches!(
+        events.wait(started.job),
+        JobEvent::Finished {
+            status: JobStatus::Succeeded,
+            ..
+        }
+    ));
+    service
 }
 
 #[test]
@@ -157,5 +232,79 @@ fn stored_export_folder_survives_save_and_open() {
     };
     assert!(result.stored);
     assert_eq!(PathBuf::from(result.folder), stored);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn explicit_unnamed_export_indexes_only_the_chosen_folder() {
+    let root = root();
+    let parent = root.join("parent");
+    let out = parent.join("out");
+    let sibling = parent.join("sibling");
+    let locked = parent.join("locked");
+    let outside = root.join("outside");
+    fs::create_dir_all(&sibling).unwrap();
+    fs::create_dir_all(&locked).unwrap();
+    fs::create_dir_all(&outside).unwrap();
+    let foreign_manifest = br#"{
+        "design_name":"foreign","design_id":"outside","export_kind":"filter_text",
+        "created_utc":"2024-01-01T00:00:00.000Z","mode":"mixed","stages":{"mimo":"none"}
+    }"#;
+    fs::write(sibling.join("secs-design.json"), foreign_manifest).unwrap();
+    fs::write(outside.join("secs-design.json"), foreign_manifest).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0)).unwrap();
+    }
+    let linked = parent.join("linked");
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&outside, &linked).unwrap();
+    #[cfg(windows)]
+    if let Err(error) = std::os::windows::fs::symlink_dir(&outside, &linked) {
+        eprintln!("skipping Windows link half: {error}");
+    }
+
+    let service = calibrated(&root);
+    let events = Arc::new(Events::default());
+    let response = service.call(
+        Request::Export(ExportParams {
+            kind: ExportKind::EqualizerApo,
+            folder: out.to_string_lossy().into_owned(),
+            mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
+            extra_rates: Vec::new(),
+        }),
+        events.clone(),
+    );
+    let Envelope::Ok(response) = response else {
+        panic!("export must start: {response:?}")
+    };
+    let Response::Export(started) = *response else {
+        panic!("export response is wrong")
+    };
+    assert!(matches!(
+        events.wait(started.job),
+        JobEvent::Finished {
+            status: JobStatus::Succeeded,
+            ..
+        }
+    ));
+    let index: serde_json::Value =
+        serde_json::from_slice(&fs::read(parent.join("designs.json")).unwrap()).unwrap();
+    let entries = index.as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["folder"], "out");
+    assert_eq!(
+        fs::read(outside.join("secs-design.json")).unwrap(),
+        foreign_manifest
+    );
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
+    }
     fs::remove_dir_all(root).unwrap();
 }

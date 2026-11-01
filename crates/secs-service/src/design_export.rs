@@ -317,46 +317,81 @@ fn collect_files(folder: &Path) -> Result<Vec<FileRecord>, DesignExportError> {
 }
 
 pub(crate) fn rebuild_index(base: &Path) -> Result<PathBuf, DesignExportError> {
+    rebuild_index_from(base, None)
+}
+
+pub(crate) fn rebuild_index_selected(
+    base: &Path,
+    selected: &Path,
+) -> Result<PathBuf, DesignExportError> {
+    rebuild_index_from(base, Some(selected))
+}
+
+fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, DesignExportError> {
+    const MAX_DEPTH: usize = 3;
+
     fn scan(
         base: &Path,
         at: &Path,
+        depth: usize,
         out: &mut Vec<DesignIndexEntry>,
     ) -> Result<(), DesignExportError> {
-        for entry in fs::read_dir(at)? {
-            let path = entry?.path();
-            if !path.is_dir()
-                || path
-                    .file_name()
-                    .and_then(|value| value.to_str())
-                    .is_some_and(|name| name.starts_with('.'))
+        let metadata = match fs::symlink_metadata(at) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+            return Ok(());
+        }
+        let manifest = at.join(MANIFEST_NAME);
+        if let Ok(bytes) = fs::read(&manifest)
+            && let Ok(fields) = serde_json::from_slice::<ManifestIndexFields>(&bytes)
+        {
+            out.push(DesignIndexEntry {
+                design_name: fields.design_name,
+                design_id: fields.design_id,
+                export_kind: fields.export_kind,
+                folder: at
+                    .strip_prefix(base)
+                    .expect("selected index folder is under its base")
+                    .to_string_lossy()
+                    .replace('\\', "/"),
+                created_utc: fields.created_utc,
+                mode: fields.mode,
+                mimo: fields.stages.mimo,
+            });
+            return Ok(());
+        }
+        if depth >= MAX_DEPTH {
+            return Ok(());
+        }
+        let children = match fs::read_dir(at) {
+            Ok(children) => children,
+            Err(_) => return Ok(()),
+        };
+        for child in children {
+            let Ok(child) = child else { continue };
+            let path = child.path();
+            if path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .is_some_and(|name| name.starts_with('.'))
             {
                 continue;
             }
-            let manifest = path.join(MANIFEST_NAME);
-            if let Ok(bytes) = fs::read(&manifest)
-                && let Ok(fields) = serde_json::from_slice::<ManifestIndexFields>(&bytes)
-            {
-                out.push(DesignIndexEntry {
-                    design_name: fields.design_name,
-                    design_id: fields.design_id,
-                    export_kind: fields.export_kind,
-                    folder: path
-                        .strip_prefix(base)
-                        .expect("descendant")
-                        .to_string_lossy()
-                        .replace('\\', "/"),
-                    created_utc: fields.created_utc,
-                    mode: fields.mode,
-                    mimo: fields.stages.mimo,
-                });
-            }
-            scan(base, &path, out)?;
+            scan(base, &path, depth + 1, out)?;
         }
         Ok(())
     }
+
     fs::create_dir_all(base)?;
     let mut entries = Vec::new();
-    scan(base, base, &mut entries)?;
+    if let Some(selected) = selected {
+        scan(base, selected, 0, &mut entries)?;
+    } else {
+        scan(base, base, 0, &mut entries)?;
+    }
     entries.sort_by(|left, right| {
         right
             .created_utc

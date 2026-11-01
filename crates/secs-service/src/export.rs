@@ -405,6 +405,7 @@ impl Service {
             .transpose()?;
         let camilla_devices = params.camilla_devices.clone();
         let explicit = (!params.folder.is_empty()).then(|| Path::new(&params.folder).to_path_buf());
+        let explicit_unnamed = explicit.is_some() && requested_design_name.is_none();
         drop(session);
         // An explicit folder is the base of a named bundle too, so the default
         // base (and the host's home directory behind it) is only read without one.
@@ -651,7 +652,12 @@ impl Service {
                 }
             }
             if let Some(base) = &registry_base {
-                crate::design_export::rebuild_index(base).map_err(export_error)?;
+                if explicit_unnamed {
+                    crate::design_export::rebuild_index_selected(base, &final_destination)
+                        .map_err(export_error)?;
+                } else {
+                    crate::design_export::rebuild_index(base).map_err(export_error)?;
+                }
             }
             let result = ExportResult {
                 files: paths
