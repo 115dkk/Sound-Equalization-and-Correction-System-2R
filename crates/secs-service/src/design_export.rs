@@ -339,7 +339,7 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         };
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        if is_link_or_junction(&metadata) || !metadata.is_dir() {
             return Ok(None);
         }
         let manifest = at.join(MANIFEST_NAME);
@@ -348,7 +348,7 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(error.into()),
         };
-        if metadata.file_type().is_symlink() || !metadata.is_file() {
+        if is_link_or_junction(&metadata) || !metadata.is_file() {
             return Ok(None);
         }
         let bytes = fs::read(&manifest)?;
@@ -383,7 +383,7 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error.into()),
         };
-        if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        if is_link_or_junction(&metadata) || !metadata.is_dir() {
             return Ok(());
         }
         if let Some(entry) = manifest_entry(base, at)? {
@@ -412,12 +412,110 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
         Ok(())
     }
 
-    fn safe_relative_folder(folder: &str) -> bool {
-        let path = Path::new(folder);
-        !path.as_os_str().is_empty()
-            && path
+    fn is_link_or_junction(metadata: &fs::Metadata) -> bool {
+        if metadata.file_type().is_symlink() {
+            return true;
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::MetadataExt as _;
+            // Win32 FILE_ATTRIBUTE_REPARSE_POINT (audit #155 TD-110).
+            const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+            metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
+    }
+
+    enum IndexedManifest {
+        Current(DesignIndexEntry),
+        Missing,
+        Unsafe,
+        Unreadable(String),
+    }
+
+    fn indexed_manifest(base: &Path, folder: &str) -> IndexedManifest {
+        let relative = Path::new(folder);
+        if relative.as_os_str().is_empty()
+            || !relative
                 .components()
                 .all(|component| matches!(component, std::path::Component::Normal(_)))
+        {
+            return IndexedManifest::Unsafe;
+        }
+        let mut at = base.to_owned();
+        for component in relative.components() {
+            let std::path::Component::Normal(component) = component else {
+                return IndexedManifest::Unsafe;
+            };
+            at.push(component);
+            let metadata = match fs::symlink_metadata(&at) {
+                Ok(metadata) => metadata,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    return IndexedManifest::Missing;
+                }
+                Err(error) => {
+                    return IndexedManifest::Unreadable(format!(
+                        "cannot inspect {}: {error}",
+                        at.display()
+                    ));
+                }
+            };
+            if is_link_or_junction(&metadata) || !metadata.is_dir() {
+                return IndexedManifest::Unsafe;
+            }
+        }
+        let manifest = at.join(MANIFEST_NAME);
+        let metadata = match fs::symlink_metadata(&manifest) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return IndexedManifest::Missing;
+            }
+            Err(error) => {
+                return IndexedManifest::Unreadable(format!(
+                    "cannot inspect {}: {error}",
+                    manifest.display()
+                ));
+            }
+        };
+        if is_link_or_junction(&metadata) {
+            return IndexedManifest::Unsafe;
+        }
+        if !metadata.is_file() {
+            return IndexedManifest::Unreadable(format!(
+                "manifest is not a regular file: {}",
+                manifest.display()
+            ));
+        }
+        let bytes = match fs::read(&manifest) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                return IndexedManifest::Unreadable(format!(
+                    "cannot read {}: {error}",
+                    manifest.display()
+                ));
+            }
+        };
+        let fields = match serde_json::from_slice::<ManifestIndexFields>(&bytes) {
+            Ok(fields) => fields,
+            Err(error) => {
+                return IndexedManifest::Unreadable(format!(
+                    "cannot parse {}: {error}",
+                    manifest.display()
+                ));
+            }
+        };
+        IndexedManifest::Current(DesignIndexEntry {
+            design_name: fields.design_name,
+            design_id: fields.design_id,
+            export_kind: fields.export_kind,
+            folder: folder.replace('\\', "/"),
+            created_utc: fields.created_utc,
+            mode: fields.mode,
+            mimo: fields.stages.mimo,
+        })
     }
 
     fs::create_dir_all(base)?;
@@ -427,10 +525,16 @@ fn rebuild_index_from(base: &Path, selected: Option<&Path>) -> Result<PathBuf, D
             && let Ok(existing) = serde_json::from_slice::<Vec<DesignIndexEntry>>(&bytes)
         {
             for entry in existing {
-                if safe_relative_folder(&entry.folder)
-                    && let Some(current) = manifest_entry(base, &base.join(&entry.folder))?
-                {
-                    entries.push(current);
+                match indexed_manifest(base, &entry.folder) {
+                    IndexedManifest::Current(current) => entries.push(current),
+                    IndexedManifest::Unreadable(error) => {
+                        eprintln!(
+                            "could not refresh indexed design {}; keeping its existing entry: {error}",
+                            entry.folder
+                        );
+                        entries.push(entry);
+                    }
+                    IndexedManifest::Missing | IndexedManifest::Unsafe => {}
                 }
             }
         }
@@ -606,6 +710,135 @@ mod tests {
         assert!(index.is_empty());
         fs::remove_file(outside).unwrap();
         fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn selected_rebuild_preserves_an_unreadable_existing_entry() {
+        let base = std::env::temp_dir().join(format!(
+            "secs-design-index-unreadable-{}-{}",
+            std::process::id(),
+            TEMP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let old = base.join("old");
+        let selected = base.join("selected");
+        fs::create_dir_all(&old).unwrap();
+        fs::create_dir_all(&selected).unwrap();
+        let old_manifest = old.join(MANIFEST_NAME);
+        fs::write(
+            &old_manifest,
+            br#"{
+                "design_name":"Changed","design_id":"new","export_kind":"filter_text",
+                "created_utc":"2025-01-01T00:00:00.000Z","mode":"changed","stages":{"mimo":"changed"}
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            selected.join(MANIFEST_NAME),
+            br#"{
+                "design_name":"Selected","design_id":"selected","export_kind":"filter_text",
+                "created_utc":"2025-02-01T00:00:00.000Z","mode":"mixed","stages":{"mimo":"none"}
+            }"#,
+        )
+        .unwrap();
+        let indexed = DesignIndexEntry {
+            design_name: "Original".into(),
+            design_id: "original".into(),
+            export_kind: "filter_text".into(),
+            folder: "old".into(),
+            created_utc: "2024-01-01T00:00:00.000Z".into(),
+            mode: "mixed".into(),
+            mimo: "none".into(),
+        };
+        fs::write(
+            base.join(INDEX_NAME),
+            serde_json::to_vec(&vec![indexed.clone()]).unwrap(),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&old_manifest, fs::Permissions::from_mode(0)).unwrap();
+        }
+        #[cfg(windows)]
+        {
+            fs::remove_file(&old_manifest).unwrap();
+            fs::create_dir(&old_manifest).unwrap();
+            eprintln!(
+                "Windows uses an unopenable manifest directory because mode bits are unavailable"
+            );
+        }
+
+        let rebuilt = rebuild_index_selected(&base, &selected);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            fs::set_permissions(&old_manifest, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let path = rebuilt.unwrap();
+        let entries: Vec<DesignIndexEntry> =
+            serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(
+            entries.iter().find(|entry| entry.folder == "old").unwrap(),
+            &indexed
+        );
+        fs::remove_dir_all(base).unwrap();
+    }
+
+    #[test]
+    fn selected_rebuild_skips_an_indexed_path_with_an_intermediate_link() {
+        let base = std::env::temp_dir().join(format!(
+            "secs-design-index-intermediate-link-{}-{}",
+            std::process::id(),
+            TEMP_ID.fetch_add(1, Ordering::Relaxed)
+        ));
+        let outside = base.with_extension("outside");
+        let outside_design = outside.join("design");
+        let selected = base.join("selected");
+        fs::create_dir_all(&outside_design).unwrap();
+        fs::create_dir_all(&selected).unwrap();
+        fs::write(
+            outside_design.join(MANIFEST_NAME),
+            br#"{
+                "design_name":"Outside","design_id":"outside","export_kind":"filter_text",
+                "created_utc":"2024-01-01T00:00:00.000Z","mode":"mixed","stages":{"mimo":"none"}
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            selected.join(MANIFEST_NAME),
+            br#"{
+                "design_name":"Selected","design_id":"selected","export_kind":"filter_text",
+                "created_utc":"2025-01-01T00:00:00.000Z","mode":"mixed","stages":{"mimo":"none"}
+            }"#,
+        )
+        .unwrap();
+        fs::write(
+            base.join(INDEX_NAME),
+            br#"[{
+                "design_name":"Outside","design_id":"outside","export_kind":"filter_text",
+                "folder":"linked/design","created_utc":"2024-01-01T00:00:00.000Z",
+                "mode":"mixed","mimo":"none"
+            }]"#,
+        )
+        .unwrap();
+        let link = base.join("linked");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        #[cfg(windows)]
+        if let Err(error) = std::os::windows::fs::symlink_dir(&outside, &link) {
+            eprintln!("skipping Windows intermediate-link test: {error}");
+            fs::remove_dir_all(base).unwrap();
+            fs::remove_dir_all(outside).unwrap();
+            return;
+        }
+
+        let path = rebuild_index_selected(&base, &selected).unwrap();
+        let entries: Vec<DesignIndexEntry> =
+            serde_json::from_slice(&fs::read(path).unwrap()).unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].folder, "selected");
+        fs::remove_dir_all(base).unwrap();
+        fs::remove_dir_all(outside).unwrap();
     }
 
     #[test]
