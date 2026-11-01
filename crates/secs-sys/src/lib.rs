@@ -211,6 +211,10 @@ fn camilla_error(error: secs_apply::ApplyError) -> IpcError {
             ..
         }
     );
+    let previous_path = match &error {
+        secs_apply::ApplyError::RollbackFailed { previous_path, .. } => Some(previous_path.clone()),
+        _ => None,
+    };
     let mut ipc = IpcError::new(ErrorCode::ApplyFailed, error.to_string());
     ipc.retryable = matches!(
         error,
@@ -219,6 +223,9 @@ fn camilla_error(error: secs_apply::ApplyError) -> IpcError {
     if connection_refused {
         ipc.params
             .insert("reason".to_owned(), "connection_refused".to_owned());
+    }
+    if let Some(previous_path) = previous_path {
+        ipc.params.insert("previous_path".to_owned(), previous_path);
     }
     ipc
 }
@@ -333,6 +340,19 @@ mod tests {
             EqApoVariant::Official
         );
         assert_eq!(eqapo_variant(r"D:\Audio\APO"), EqApoVariant::Unknown);
+    }
+
+    #[test]
+    fn rollback_failure_error_keeps_the_previous_config_path() {
+        let error = camilla_error(secs_apply::ApplyError::RollbackFailed {
+            command: "Reload".into(),
+            message: "reload and rollback failed".into(),
+            previous_path: "generation-a/configs/main.yml".into(),
+        });
+        assert_eq!(
+            error.params.get("previous_path").map(String::as_str),
+            Some("generation-a/configs/main.yml")
+        );
     }
 
     #[test]

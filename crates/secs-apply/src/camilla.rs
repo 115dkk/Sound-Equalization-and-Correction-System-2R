@@ -432,9 +432,10 @@ impl<T: Transport> Camilla<T> {
                         .command(&Command::SetConfigFilePath(path.clone()))
                         .and_then(|_| self.command(&Command::Reload));
                     if let Err(rollback_error) = rollback {
-                        return Err(ApplyError::Rejected {
+                        return Err(ApplyError::RollbackFailed {
                             command: "Reload".into(),
                             message: format!("{error}; rollback failed: {rollback_error}"),
+                            previous_path: path.clone(),
                         });
                     }
                 }
@@ -814,11 +815,15 @@ mod tests {
         let mut camilla = Camilla::new(FakeTransport::from_replies(replies));
         assert!(matches!(
             camilla.apply("new.yml", "title: new"),
-            Err(ApplyError::Rejected { command, message })
-                if command == "Reload"
-                    && message.contains("cannot start")
-                    && message.contains("rollback failed")
-                    && message.contains("cannot restore")
+            Err(ApplyError::RollbackFailed {
+                command,
+                message,
+                previous_path,
+            }) if command == "Reload"
+                && previous_path == "old.yml"
+                && message.contains("cannot start")
+                && message.contains("rollback failed")
+                && message.contains("cannot restore")
         ));
     }
 

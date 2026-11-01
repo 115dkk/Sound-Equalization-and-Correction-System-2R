@@ -155,8 +155,15 @@ impl Service {
                             (ApplyOutcome::HandedOver, None)
                         }
                         Err(error) => {
+                            let reported_previous =
+                                error.params.get("previous_path").and_then(|path| {
+                                    applied_generation(&final_for_job, Path::new(path))
+                                });
                             let mut retained = vec![generation.name.as_str()];
                             if let Some(previous) = marker_before.as_deref() {
+                                retained.push(previous);
+                            }
+                            if let Some(previous) = reported_previous.as_deref() {
                                 retained.push(previous);
                             }
                             remember_retained(&final_for_job, &retained);

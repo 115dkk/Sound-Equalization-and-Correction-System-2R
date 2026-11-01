@@ -408,6 +408,10 @@ fn camilla_error(error: secs_apply::ApplyError) -> IpcError {
             ..
         }
     );
+    let previous_path = match &error {
+        secs_apply::ApplyError::RollbackFailed { previous_path, .. } => Some(previous_path.clone()),
+        _ => None,
+    };
     let mut ipc = IpcError::new(ErrorCode::ApplyFailed, error.to_string());
     ipc.retryable = matches!(
         error,
@@ -416,6 +420,9 @@ fn camilla_error(error: secs_apply::ApplyError) -> IpcError {
     if connection_refused {
         ipc.params
             .insert("reason".to_owned(), "connection_refused".to_owned());
+    }
+    if let Some(previous_path) = previous_path {
+        ipc.params.insert("previous_path".to_owned(), previous_path);
     }
     ipc
 }
@@ -1458,6 +1465,119 @@ fn failed_camilla_rollback_keeps_both_possible_active_generations() {
     assert!(failed_folder.exists());
     assert!(Path::new(&third.folder).exists());
     assert!(!applied.join("secs-retained-generations.txt").exists());
+
+    let fourth = apply_success(&main_config(Path::new(&third.folder)));
+    assert!(!first_folder.exists());
+    assert!(!failed_folder.exists());
+    assert!(Path::new(&third.folder).exists());
+    assert!(Path::new(&fourth.folder).exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn failed_camilla_apply_retains_the_reported_previous_path_without_a_marker() {
+    let root = root("camilla-failed-reported-previous");
+    let fail_marker = Arc::new(AtomicBool::new(true));
+    let service = calibrated_service_with_apply(
+        &root,
+        Deps::default(),
+        Arc::new(FailingCamillaMarker {
+            fail: fail_marker.clone(),
+        }),
+    );
+    let applied = root.join("app-data/applied/camilladsp");
+    let main_config = |folder: &Path| {
+        fs::read_dir(folder.join("configs"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.extension().and_then(|value| value.to_str()) == Some("yml")
+                    && !path
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .ends_with("_bypass.yml")
+            })
+            .unwrap()
+    };
+    let apply_success = |previous: &Path| {
+        let (address, server) = ws_server(vec![
+            reply("ValidateConfig", serde_json::json!("validated")),
+            reply(
+                "GetConfigFilePath",
+                serde_json::json!(previous.to_string_lossy()),
+            ),
+            reply_ok("SetConfigFilePath"),
+            reply_ok("Reload"),
+        ]);
+        set_apply(
+            &service,
+            CamillaApply {
+                level: ApplyLevel::Apply,
+                address,
+                exe_path: None,
+            },
+            EqApoApply::default(),
+        );
+        let events = Arc::new(Events::default());
+        let job = apply_camilla(&service, events.clone());
+        let JobResult::Apply(result) = succeeded(events.wait(job.job)) else {
+            panic!("apply result is absent")
+        };
+        server.join().unwrap();
+        result
+    };
+
+    let first = apply_success(Path::new("before.yml"));
+    let first_folder = PathBuf::from(&first.folder);
+    let first_config = main_config(&first_folder);
+    assert!(
+        !root
+            .join("app-data/applied/camilladsp-current.txt")
+            .exists()
+    );
+
+    let (address, server) = ws_server(vec![
+        reply("ValidateConfig", serde_json::json!("validated")),
+        reply(
+            "GetConfigFilePath",
+            serde_json::json!(first_config.to_string_lossy()),
+        ),
+        reply_ok("SetConfigFilePath"),
+        rejected("Reload", "cannot start"),
+        rejected("SetConfigFilePath", "cannot restore"),
+    ]);
+    set_apply(
+        &service,
+        CamillaApply {
+            level: ApplyLevel::Apply,
+            address,
+            exe_path: None,
+        },
+        EqApoApply::default(),
+    );
+    let events = Arc::new(Events::default());
+    let failed = apply_camilla(&service, events.clone());
+    assert!(matches!(
+        events.wait(failed.job),
+        JobEvent::Finished {
+            status: JobStatus::Failed,
+            ..
+        }
+    ));
+    server.join().unwrap();
+    let failed_folder = fs::read_dir(&applied)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.is_dir() && path != &first_folder)
+        .unwrap();
+    let failed_config = main_config(&failed_folder);
+
+    fail_marker.store(false, Ordering::SeqCst);
+    let third = apply_success(&failed_config);
+    assert!(first_folder.exists());
+    assert!(failed_folder.exists());
+    assert!(Path::new(&third.folder).exists());
 
     let fourth = apply_success(&main_config(Path::new(&third.folder)));
     assert!(!first_folder.exists());
