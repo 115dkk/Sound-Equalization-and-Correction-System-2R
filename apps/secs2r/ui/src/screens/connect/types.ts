@@ -59,11 +59,11 @@ export type MicCalibrationView = {
   error: IpcError | null;
 };
 
-/** Why the last REW launch did not end with REW answering (service gap: rew_launch does not tell these apart yet). */
+/** The last rew_launch failure's typed reason, with launch_failed for unclassified errors. */
 export type RewProblem = "exe_not_found" | "cannot_launch" | "timed_out" | "launch_failed";
 
 export type ConnectView = {
-  /** The chosen path; null until the user chooses. "mdat" skips the step (service gap: the choice is not stored yet). */
+  /** The stored measurement method; `none` is shown as null and `mdat` skips this step. */
   path: ConnectPath | null;
   /** measure_methods, refreshed by MeasureStatus events while status_watch runs; null before the first answer. */
   methods: MeasureMethodsResult | null;
@@ -71,7 +71,7 @@ export type ConnectView = {
   settings: MeasureConfigResult | null;
   /** config_get: the channels to check, in role order (upstream ordered_speakers). */
   config: ConfigResult;
-  /** Sample rate in Hz, shown read-only (`extra['devices']['sample_rate']`, 48000 by default; service gap). */
+  /** Sample rate in Hz from MeasureConfigResult.sample_rate, shown read-only. */
   sampleRate: number;
   rew: {
     /** checking: rew_launch is asking REW; launching: REW was started and is not answering yet. */
@@ -86,7 +86,7 @@ export type ConnectView = {
     details: RewDetails;
   };
   micCalibration: MicCalibrationView;
-  /** Stored level per role in dBFS (`extra['levels']`), pre-filling the rows (service gap: no method returns them). */
+  /** Stored level per role in dBFS from levels_get, pre-filling the rows. */
   levels: Readonly<Record<string, number>>;
   level: {
     monitor: MonitorState;
