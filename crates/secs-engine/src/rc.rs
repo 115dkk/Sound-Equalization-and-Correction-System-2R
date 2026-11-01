@@ -455,6 +455,10 @@ fn truncate(spec: &[C], taps: usize, protect_dc: bool) -> (Vec<f64>, Vec<C>) {
 }
 
 pub(crate) fn correct_dc(h: &mut [f64]) -> bool {
+    // audit #155 Q8: every recorded low-protection case had positive DC sums
+    // before and after this guard. For that RC polarity, sum(h) is the DC
+    // magnitude, so signed sum(h) - 1 detects the boost in ADR 0022. This is
+    // not a magnitude normalizer for arbitrary polarity-inverted FIRs.
     // Truncation can boost DC. Subtract its signed excess with a normalized
     // Hann. Its main lobe extends to about 2 * fs / taps (47 Hz at 2048 taps);
     // only above that range is the effect small, not identically zero.

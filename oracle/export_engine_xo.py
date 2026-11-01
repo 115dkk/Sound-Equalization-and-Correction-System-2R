@@ -34,6 +34,10 @@ def cache_fingerprint(label):
     return {
         'upstream': upstream,
         'exporter_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        'inputs_sha256': {
+            name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
+            for name in ('engine_cases.py', 'export_engine_e2e.py')
+        },
         'case': label,
         'numpy': np.__version__,
         'scipy': scipy.__version__,
