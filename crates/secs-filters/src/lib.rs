@@ -34,6 +34,12 @@ use std::path::{Path, PathBuf};
 pub const EQAPO_GUIDE: &str = "EqAPO 적용 방법.txt";
 /// Complete convolution bundle application guide filename.
 pub const CONVOLUTION_GUIDE: &str = "컨볼루션 적용 방법.txt";
+
+/// Returns the Equalizer APO entry file for one applied generation.
+#[must_use]
+pub fn generation_entry(name: &str) -> String {
+    format!("Include: {name}\\config.txt\r\n")
+}
 /// Maximum impulse-response length of a convolution export.
 pub const CONVOLUTION_MAX_LEN: usize = 1 << 20;
 
@@ -1976,6 +1982,17 @@ fn validate_run(run: &FilterRun<'_>) -> Result<(), FiltersError> {
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod generation_entry_tests {
+    #[test]
+    fn uses_a_relative_nested_include_with_crlf() {
+        assert_eq!(
+            super::generation_entry("design-2"),
+            "Include: design-2\\config.txt\r\n"
+        );
+    }
 }
 
 #[cfg(test)]

@@ -263,10 +263,9 @@ impl Service {
                 }
                 let generation =
                     crate::deploy::install(&final_for_job, design_folder(&design_id), &stage)?;
-                let entry_bytes =
-                    format!("Include: {}\\config.txt\r\n", generation.name).into_bytes();
+                let entry_text = secs_filters::generation_entry(&generation.name);
                 let config = config_root.join("config.txt");
-                let switched = crate::deploy::write_entry(&entry, &entry_bytes)
+                let switched = crate::deploy::write_entry(&entry, entry_text.as_bytes())
                     .and_then(|()| ensure_eqapo_include(&config, apply.as_ref()));
                 if let Err(error) = switched {
                     let restore = match previous_entry {

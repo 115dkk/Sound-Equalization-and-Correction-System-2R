@@ -702,6 +702,205 @@ struct ReportRow {
     resolved: bool,
 }
 
+struct PlaybackComparison<'a> {
+    case: &'a str,
+    input: &'a str,
+    outputs: &'a [(String, usize)],
+    expected: &'a [(String, Vec<Complex64>)],
+    excitation: &'a [f32],
+    amplitudes: &'a [f64],
+    frequencies: &'a [f64],
+    preamp: f64,
+}
+
+fn compare_playback(
+    wav: &Wav,
+    comparison: PlaybackComparison<'_>,
+) -> (Vec<ReportRow>, Vec<String>) {
+    let PlaybackComparison {
+        case,
+        input,
+        outputs,
+        expected,
+        excitation,
+        amplitudes,
+        frequencies,
+        preamp,
+    } = comparison;
+    let peak = expected
+        .iter()
+        .flat_map(|(_, response)| response.iter())
+        .map(|value| value.norm() * preamp)
+        .fold(0.0_f64, f64::max);
+    assert!(peak > 0.0, "{case} / {input}: zero reference");
+    let mut rows = Vec::new();
+    let mut failures = Vec::new();
+    for (output_role, output_number) in outputs {
+        let output_samples = output_channel(wav, output_number - 1, PERIOD, PERIOD);
+        let measured = estimate_response(excitation, &output_samples);
+        let reference = expected
+            .iter()
+            .find(|(role, _)| role == output_role)
+            .map(|(_, response)| response.clone())
+            .unwrap_or_else(|| vec![Complex64::new(0.0, 0.0); measured.len()]);
+        let reference = reference
+            .into_iter()
+            .map(|value| value * preamp)
+            .collect::<Vec<_>>();
+        let predicted = predicted_rms(amplitudes, &reference);
+        let resolved = predicted == 0.0 || predicted >= RESOLVABLE_QUANTA * wav.quantum;
+        let mut worst = (0.0_f64, 0_usize, 0.0_f64);
+        for (index, (got, expected)) in measured.iter().zip(&reference).enumerate() {
+            let frequency = frequencies[index];
+            if !(10.0..=20_000.0).contains(&frequency) {
+                continue;
+            }
+            let error = (*got - *expected).norm();
+            let floor = resolution_floor(wav.quantum, amplitudes[index]);
+            let bound = REL * expected.norm() + ABS * peak + floor;
+            let ratio = error / bound;
+            if ratio > worst.0 {
+                worst = (ratio, index, error);
+            }
+        }
+        let index = worst.1;
+        let row = ReportRow {
+            case: case.into(),
+            input: input.into(),
+            output: output_role.clone(),
+            output_number: *output_number,
+            ratio: worst.0,
+            frequency: frequencies[index],
+            error_db: db(worst.2 / peak),
+            measured_db: db(measured[index].norm()),
+            reference_db: db(reference[index].norm()),
+            phase_deg: phase_error(measured[index], reference[index]),
+            residual_samples: residual_delay(&measured, &reference, peak),
+            predicted_dbfs: db(predicted),
+            resolved,
+        };
+        let measured_rms = (output_samples
+            .iter()
+            .map(|value| value * value)
+            .sum::<f64>()
+            / output_samples.len() as f64)
+            .sqrt();
+        let leak_limit = (4.0 * predicted).max(RESOLVABLE_QUANTA * wav.quantum);
+        if !resolved && measured_rms > leak_limit {
+            failures.push(format!(
+                "{} / {} -> {} ({}): output RMS {:.1} dBFS where the export predicts {:.1} dBFS",
+                row.case,
+                row.input,
+                row.output,
+                row.output_number,
+                db(measured_rms),
+                row.predicted_dbfs
+            ));
+        } else if resolved && row.ratio > 1.0 {
+            failures.push(format!(
+                "{} / {} -> {} ({}): err/bound {:.6} at {:.3} Hz",
+                row.case, row.input, row.output, row.output_number, row.ratio, row.frequency
+            ));
+        }
+        rows.push(row);
+    }
+    (rows, failures)
+}
+
+fn assert_benchmark_matches_plan(
+    benchmark: &Path,
+    working_directory: &Path,
+    config_path: Option<&Path>,
+    work: &Path,
+    case: &str,
+    chain: &SignalChain,
+    generation_config: &Path,
+) {
+    let preamp = preamp_gain(generation_config);
+    let plan = make_plan(chain, None).unwrap();
+    let reference_plan = as_written(&plan);
+    let (inputs, outputs) = windows_channels(&plan);
+    let channels = inputs
+        .iter()
+        .chain(&outputs)
+        .map(|(_, number)| *number)
+        .max()
+        .unwrap();
+    let frequencies = (0..=PERIOD / 2)
+        .map(|index| index as f64 * SAMPLE_RATE as f64 / PERIOD as f64)
+        .collect::<Vec<_>>();
+    for (input_index, (input, input_number)) in inputs.iter().enumerate() {
+        let expected = plan_responses(&reference_plan, &frequencies, input, false).unwrap();
+        let base = bin_amplitudes(&excitation(input_index, EXCITATION_RMS));
+        let loudest = expected
+            .iter()
+            .map(|(_, response)| {
+                let scaled = response
+                    .iter()
+                    .map(|value| value * preamp)
+                    .collect::<Vec<_>>();
+                predicted_rms(&base, &scaled)
+            })
+            .fold(0.0_f64, f64::max);
+        let excitation = excitation(input_index, fitted_rms(loudest));
+        let amplitudes = bin_amplitudes(&excitation);
+        let mut input_samples = vec![0.0_f32; 2 * PERIOD * channels];
+        for frame in 0..2 * PERIOD {
+            input_samples[frame * channels + input_number - 1] = excitation[frame % PERIOD];
+        }
+        let input_path = work.join(format!("{case}-input-{input}.wav"));
+        let output_path = work.join(format!("{case}-output-{input}.wav"));
+        write_float_wav(&input_path, channels, &input_samples);
+        let mut command = Command::new(benchmark);
+        command
+            .current_dir(working_directory)
+            .args(["--nopause", "--verbose", "--batchsize", "512", "-i"])
+            .arg(&input_path)
+            .arg("-o")
+            .arg(&output_path);
+        if let Some(config_path) = config_path {
+            command.arg("--config-path").arg(config_path);
+        }
+        let output = command.output().expect("run Equalizer APO Benchmark.exe");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success() && engine_error(&stdout, &stderr).is_none(),
+            "{case} / {input}: Benchmark failed: stdout={stdout}\nstderr={stderr}"
+        );
+        let wav = read_wav(&output_path).unwrap();
+        assert_eq!(wav.channels, channels, "{case} / {input}: channel count");
+        assert_eq!(wav.rate, SAMPLE_RATE, "{case} / {input}: sample rate");
+        assert!(
+            wav.samples.len() / channels >= 2 * PERIOD,
+            "{case} / {input}: output shorter than two periods"
+        );
+        assert!(
+            wav.samples.iter().all(|sample| sample.abs() < 0.9999),
+            "{case} / {input}: output clipped"
+        );
+        let (rows, failures) = compare_playback(
+            &wav,
+            PlaybackComparison {
+                case,
+                input,
+                outputs: &outputs,
+                expected: &expected,
+                excitation: &excitation,
+                amplitudes: &amplitudes,
+                frequencies: &frequencies,
+                preamp,
+            },
+        );
+        assert!(!rows.is_empty(), "{case} / {input}: no output paths");
+        assert!(
+            failures.is_empty(),
+            "{case} / {input}: response differs from the plan:\n{}",
+            failures.join("\n")
+        );
+    }
+}
+
 fn markdown_report(engine: &str, quantum: Option<f64>, rows: &[ReportRow]) -> String {
     let output = match quantum {
         Some(q) if q > 0.0 => format!(
@@ -889,89 +1088,22 @@ fn exported_configs_play_as_designed() {
                 failures.push(format!("{} / {input}: {problem}", case.name));
                 continue;
             }
-            let peak = expected
-                .iter()
-                .flat_map(|(_, response)| response.iter())
-                .map(|value| value.norm() * preamp)
-                .fold(0.0_f64, f64::max);
-            assert!(peak > 0.0, "{} / {input}: zero reference", case.name);
             quantum = Some(wav.quantum);
-            for (output_role, output_number) in &outputs {
-                let output_samples = output_channel(&wav, output_number - 1, PERIOD, PERIOD);
-                let measured = estimate_response(&excitation, &output_samples);
-                let reference = expected
-                    .iter()
-                    .find(|(role, _)| role == output_role)
-                    .map(|(_, response)| response.clone())
-                    .unwrap_or_else(|| vec![Complex64::new(0.0, 0.0); measured.len()]);
-                let reference = reference
-                    .into_iter()
-                    .map(|value| value * preamp)
-                    .collect::<Vec<_>>();
-                let predicted = predicted_rms(&amplitudes, &reference);
-                let resolved = predicted == 0.0 || predicted >= RESOLVABLE_QUANTA * wav.quantum;
-                let mut worst = (0.0_f64, 0_usize, 0.0_f64);
-                for (index, (got, expected)) in measured.iter().zip(&reference).enumerate() {
-                    let frequency = frequencies[index];
-                    if !(10.0..=20_000.0).contains(&frequency) {
-                        continue;
-                    }
-                    let error = (*got - *expected).norm();
-                    let floor = resolution_floor(wav.quantum, amplitudes[index]);
-                    let bound = REL * expected.norm() + ABS * peak + floor;
-                    let ratio = error / bound;
-                    if ratio > worst.0 {
-                        worst = (ratio, index, error);
-                    }
-                }
-                let index = worst.1;
-                let row = ReportRow {
-                    case: case.name.into(),
-                    input: input.clone(),
-                    output: output_role.clone(),
-                    output_number: *output_number,
-                    ratio: worst.0,
-                    frequency: frequencies[index],
-                    error_db: db(worst.2 / peak),
-                    measured_db: db(measured[index].norm()),
-                    reference_db: db(reference[index].norm()),
-                    phase_deg: phase_error(measured[index], reference[index]),
-                    residual_samples: residual_delay(&measured, &reference, peak),
-                    predicted_dbfs: db(predicted),
-                    resolved,
-                };
-                // Below the resolution only a leak can be seen: an output well
-                // above what the export predicts for this path.
-                let measured_rms = (output_samples
-                    .iter()
-                    .map(|value| value * value)
-                    .sum::<f64>()
-                    / output_samples.len() as f64)
-                    .sqrt();
-                let leak_limit = (4.0 * predicted).max(RESOLVABLE_QUANTA * wav.quantum);
-                if !resolved && measured_rms > leak_limit {
-                    failures.push(format!(
-                        "{} / {} -> {} ({}): output RMS {:.1} dBFS where the export predicts {:.1} dBFS",
-                        row.case,
-                        row.input,
-                        row.output,
-                        row.output_number,
-                        db(measured_rms),
-                        row.predicted_dbfs
-                    ));
-                } else if resolved && row.ratio > 1.0 {
-                    failures.push(format!(
-                        "{} / {} -> {} ({}): err/bound {:.6} at {:.3} Hz",
-                        row.case,
-                        row.input,
-                        row.output,
-                        row.output_number,
-                        row.ratio,
-                        row.frequency
-                    ));
-                }
-                rows.push(row);
-            }
+            let (compared, comparison_failures) = compare_playback(
+                &wav,
+                PlaybackComparison {
+                    case: case.name,
+                    input,
+                    outputs: &outputs,
+                    expected: &expected,
+                    excitation: &excitation,
+                    amplitudes: &amplitudes,
+                    frequencies: &frequencies,
+                    preamp,
+                },
+            );
+            rows.extend(compared);
+            failures.extend(comparison_failures);
         }
     }
     let mut report = markdown_report(&engine, quantum, &rows);
@@ -1013,13 +1145,21 @@ fn generation_entry_plays_from_unrelated_working_directory_across_two_applies() 
     )
     .canonicalize()
     .expect("SECS_EQAPO_BENCHMARK must exist");
+    let external_config = std::env::var_os("SECS_EQAPO_CONFIG_DIR").map(PathBuf::from);
     let root = TempDir::new("generation_entry");
-    let config_root = root.0.join("EqualizerAPO/config");
+    let config_root = external_config
+        .clone()
+        .unwrap_or_else(|| root.0.join("EqualizerAPO/config"));
+    clear_folder(&config_root);
     let bundle = config_root.join("SECS2R");
     let unrelated = root.0.join("unrelated-working-directory");
     fs::create_dir_all(&bundle).unwrap();
     fs::create_dir_all(&unrelated).unwrap();
-    fs::write(config_root.join("config.txt"), "Include: SECS2R/SECS.txt\n").unwrap();
+    fs::write(
+        config_root.join("config.txt"),
+        "Include: SECS2R\\SECS.txt\r\n",
+    )
+    .unwrap();
 
     let fixture = Fixture::load("filters", "computed_dolby");
     let first_chain = chain(&fixture);
@@ -1037,41 +1177,20 @@ fn generation_entry_plays_from_unrelated_working_directory_across_two_applies() 
     export_eqapo(&first_run, &bundle).unwrap();
     let first_generation = bundle.join("design-1");
     export_eqapo(&first_run, &first_generation).unwrap();
-    fs::write(bundle.join("SECS.txt"), "Include: design-1/config.txt\n").unwrap();
-
-    let plan = make_plan(&first_chain, None).unwrap();
-    let (inputs, outputs) = windows_channels(&plan);
-    let channels = inputs
-        .iter()
-        .chain(outputs.iter())
-        .map(|(_, channel)| *channel)
-        .max()
-        .unwrap();
-    let mut samples = vec![0.0_f32; channels * 8192];
-    samples[0] = 0.25;
-    let input = root.0.join("input.wav");
-    write_float_wav(&input, channels, &samples);
-
-    let run_benchmark = |output: &Path| {
-        let result = Command::new(&benchmark)
-            .current_dir(&unrelated)
-            .args(["--nopause", "--verbose", "--batchsize", "512", "-i"])
-            .arg(&input)
-            .arg("-o")
-            .arg(output)
-            .arg("--config-path")
-            .arg(&config_root)
-            .output()
-            .expect("run Equalizer APO Benchmark.exe");
-        let stdout = String::from_utf8_lossy(&result.stdout);
-        let stderr = String::from_utf8_lossy(&result.stderr);
-        assert!(
-            result.status.success() && engine_error(&stdout, &stderr).is_none(),
-            "Benchmark failed: stdout={stdout}\nstderr={stderr}"
-        );
-    };
-    let first_output = root.0.join("first-output.wav");
-    run_benchmark(&first_output);
+    fs::write(
+        bundle.join("SECS.txt"),
+        secs_filters::generation_entry("design-1"),
+    )
+    .unwrap();
+    assert_benchmark_matches_plan(
+        &benchmark,
+        &unrelated,
+        external_config.is_none().then_some(config_root.as_path()),
+        &root.0,
+        "generation-one",
+        &first_chain,
+        &first_generation.join("config.txt"),
+    );
 
     let mut second_chain = first_chain.clone();
     let fir = &mut second_chain.mains[0].fir;
@@ -1088,23 +1207,29 @@ fn generation_entry_plays_from_unrelated_working_directory_across_two_applies() 
     };
     let second_generation = bundle.join("design-2");
     export_eqapo(&second_run, &second_generation).unwrap();
-    fs::write(bundle.join("SECS.txt"), "Include: design-2/config.txt\n").unwrap();
+    fs::write(
+        bundle.join("SECS.txt"),
+        secs_filters::generation_entry("design-2"),
+    )
+    .unwrap();
     for entry in fs::read_dir(&bundle).unwrap() {
         let path = entry.unwrap().path();
         if path.is_file() && path.file_name().and_then(|name| name.to_str()) != Some("SECS.txt") {
             fs::remove_file(path).unwrap();
         }
     }
-    let second_output = root.0.join("second-output.wav");
-    run_benchmark(&second_output);
+    assert_benchmark_matches_plan(
+        &benchmark,
+        &unrelated,
+        external_config.is_none().then_some(config_root.as_path()),
+        &root.0,
+        "generation-two",
+        &second_chain,
+        &second_generation.join("config.txt"),
+    );
 
     assert!(first_generation.is_dir());
     assert!(second_generation.is_dir());
-    assert_ne!(
-        fs::read(first_output).unwrap(),
-        fs::read(second_output).unwrap(),
-        "the second generation must change real Benchmark output"
-    );
 }
 
 #[test]
