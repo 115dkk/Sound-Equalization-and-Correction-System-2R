@@ -8,6 +8,7 @@
 pub mod token;
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -17,7 +18,7 @@ use axum::Router;
 use axum::body::{Body, Bytes, HttpBody};
 use axum::extract::State;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
-use axum::http::header::{AUTHORIZATION, HOST, ORIGIN, WWW_AUTHENTICATE};
+use axum::http::header::{AUTHORIZATION, CONNECTION, HOST, ORIGIN, WWW_AUTHENTICATE};
 use axum::http::{HeaderValue, Request as HttpRequest, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response as HttpResponse};
@@ -29,6 +30,8 @@ use tokio::sync::{broadcast, oneshot};
 
 const MAX_BODY: usize = 1024 * 1024;
 const BODY_IDLE_TIMEOUT: Duration = Duration::from_secs(2);
+const BODY_SHUTDOWN_POLL: Duration = Duration::from_millis(250);
+const OVERSIZE_CLOSE_GRACE: Duration = Duration::from_millis(50);
 const EVENT_CAPACITY: usize = 256;
 
 /// Broadcast event sink shared by the app service and the local API server.
@@ -121,6 +124,7 @@ pub enum LocalApiError {
 /// Running server. Dropping it performs a blocking graceful stop.
 pub struct ServerHandle {
     port: u16,
+    shutdown_requested: Arc<AtomicBool>,
     shutdown: Mutex<Option<oneshot::Sender<()>>>,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
@@ -141,6 +145,7 @@ impl ServerHandle {
 
     /// Stops accepting connections and waits for the listener thread to exit.
     pub fn stop(&self) {
+        self.shutdown_requested.store(true, Ordering::Release);
         if let Some(shutdown) = lock(&self.shutdown).take() {
             let _ = shutdown.send(());
         }
@@ -160,6 +165,7 @@ impl Drop for ServerHandle {
 struct AppState {
     port: u16,
     token: Arc<str>,
+    shutdown_requested: Arc<AtomicBool>,
     service: Arc<Service>,
     hub: EventHub,
     on_change: Arc<dyn Fn(&str) + Send + Sync>,
@@ -204,9 +210,11 @@ pub fn start(config: ServerConfig) -> Result<ServerHandle, LocalApiError> {
             source,
         })?
     };
+    let shutdown_requested = Arc::new(AtomicBool::new(false));
     let state = AppState {
         port,
         token: config.token.into(),
+        shutdown_requested: shutdown_requested.clone(),
         service: config.service,
         hub: config.hub,
         on_change: config.on_change,
@@ -237,6 +245,7 @@ pub fn start(config: ServerConfig) -> Result<ServerHandle, LocalApiError> {
         .map_err(LocalApiError::Thread)?;
     Ok(ServerHandle {
         port,
+        shutdown_requested,
         shutdown: Mutex::new(Some(shutdown_tx)),
         thread: Mutex::new(Some(thread)),
     })
@@ -288,7 +297,7 @@ async fn authenticate(
         return response;
     }
     let (parts, body) = request.into_parts();
-    match read_body(body).await {
+    match read_body(body, &state.shutdown_requested).await {
         Ok(body) => {
             next.run(HttpRequest::from_parts(parts, Body::from(body)))
                 .await
@@ -303,45 +312,88 @@ async fn authenticate(
             ErrorCode::InvalidRequest,
             "request body was idle for 2 seconds",
         ),
+        Err(ReadBodyError::Shutdown) => close_response(StatusCode::NO_CONTENT.into_response()),
         Err(ReadBodyError::Read(error)) => {
             envelope_error(StatusCode::BAD_REQUEST, ErrorCode::InvalidRequest, &error)
         }
     }
 }
 
+fn close_response(mut response: HttpResponse) -> HttpResponse {
+    response
+        .headers_mut()
+        .insert(CONNECTION, HeaderValue::from_static("close"));
+    response
+}
+
 #[derive(Debug)]
 enum ReadBodyError {
     TooLarge,
     IdleTimeout,
+    Shutdown,
     Read(String),
 }
 
-async fn read_body(mut body: Body) -> Result<Vec<u8>, ReadBodyError> {
+async fn read_body(
+    mut body: Body,
+    shutdown_requested: &AtomicBool,
+) -> Result<Vec<u8>, ReadBodyError> {
     let mut bytes = Vec::new();
-    let mut too_large = false;
+    let mut last_progress = tokio::time::Instant::now();
     loop {
-        let frame = tokio::time::timeout(
-            BODY_IDLE_TIMEOUT,
+        if shutdown_requested.load(Ordering::Acquire) {
+            return Err(ReadBodyError::Shutdown);
+        }
+        let idle_remaining = BODY_IDLE_TIMEOUT.saturating_sub(last_progress.elapsed());
+        if idle_remaining.is_zero() {
+            return Err(ReadBodyError::IdleTimeout);
+        }
+        let frame = match tokio::time::timeout(
+            idle_remaining.min(BODY_SHUTDOWN_POLL),
             std::future::poll_fn(|context| std::pin::Pin::new(&mut body).poll_frame(context)),
         )
         .await
-        .map_err(|_| ReadBodyError::IdleTimeout)?;
+        {
+            Ok(frame) => frame,
+            Err(_) => continue,
+        };
         let Some(frame) = frame else {
             break;
         };
         let frame = frame.map_err(|error| ReadBodyError::Read(error.to_string()))?;
-        if let Ok(data) = frame.into_data() {
+        if let Ok(data) = frame.into_data()
+            && !data.is_empty()
+        {
             if bytes.len().saturating_add(data.len()) > MAX_BODY {
-                too_large = true;
-            } else if !too_large {
-                bytes.extend_from_slice(&data);
+                discard_ready_frames(&mut body).await;
+                return Err(ReadBodyError::TooLarge);
             }
+            bytes.extend_from_slice(&data);
+            last_progress = tokio::time::Instant::now();
         }
     }
-    if too_large {
-        Err(ReadBodyError::TooLarge)
-    } else {
-        Ok(bytes)
+    Ok(bytes)
+}
+
+async fn discard_ready_frames(body: &mut Body) {
+    // Hyper cannot send a clean HTTP/1 response on Windows if unread bytes that
+    // already reached the socket are reset. Discard only frames available during
+    // this short fixed grace; never wait for a slow oversized sender.
+    let deadline = tokio::time::Instant::now() + OVERSIZE_CLOSE_GRACE;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match tokio::time::timeout(
+            remaining,
+            std::future::poll_fn(|context| std::pin::Pin::new(&mut *body).poll_frame(context)),
+        )
+        .await
+        {
+            Ok(Some(Ok(_))) => {}
+            _ => break,
+        }
     }
 }
 

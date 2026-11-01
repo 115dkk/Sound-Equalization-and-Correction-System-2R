@@ -422,6 +422,42 @@ fn idle_request_body_returns_request_timeout_td126() {
 }
 
 #[test]
+fn stop_finishes_while_authenticated_chunked_body_keeps_trickling_td126() {
+    let (service, hub) = service_with(Arc::new(secs_service::NullHost));
+    let server = running(service, hub);
+    let port = server.port();
+    let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(
+        client,
+        "POST /v1/call HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {TOKEN}\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n1\r\n{{\r\n"
+    )
+    .unwrap();
+    client.flush().unwrap();
+    let writer = std::thread::spawn(move || {
+        for _ in 0..5 {
+            std::thread::sleep(Duration::from_secs(1));
+            if client.write_all(b"1\r\n \r\n").is_err() || client.flush().is_err() {
+                break;
+            }
+        }
+    });
+    std::thread::sleep(Duration::from_millis(100));
+
+    let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+    let started = Instant::now();
+    std::thread::spawn(move || {
+        server.stop();
+        let _ = finished_tx.send(());
+    });
+    assert!(
+        finished_rx.recv_timeout(Duration::from_secs(3)).is_ok(),
+        "server stop waited for a trickling authenticated request body"
+    );
+    assert!(started.elapsed() < Duration::from_secs(3));
+    writer.join().unwrap();
+}
+
+#[test]
 fn stop_finishes_while_a_client_stalls_mid_body_td126() {
     let (service, hub) = service_with(Arc::new(secs_service::NullHost));
     let server = running(service, hub);
