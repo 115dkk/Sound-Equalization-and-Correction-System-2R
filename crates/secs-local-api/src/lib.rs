@@ -10,6 +10,7 @@ pub mod token;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use axum::Json;
 use axum::Router;
@@ -27,6 +28,7 @@ use secs_types::local_api::{self, ServerEvent};
 use tokio::sync::{broadcast, oneshot};
 
 const MAX_BODY: usize = 1024 * 1024;
+const BODY_READ_TIMEOUT: Duration = Duration::from_secs(2);
 const EVENT_CAPACITY: usize = 256;
 
 /// Broadcast event sink shared by the app service and the local API server.
@@ -192,6 +194,7 @@ pub fn start(config: ServerConfig) -> Result<ServerHandle, LocalApiError> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_io()
+        .enable_time()
         .build()
         .map_err(LocalApiError::Runtime)?;
     let listener = {
@@ -295,6 +298,11 @@ async fn authenticate(
             ErrorCode::InvalidRequest,
             "request body exceeds 1 MiB",
         ),
+        Err(ReadBodyError::Deadline) => envelope_error(
+            StatusCode::REQUEST_TIMEOUT,
+            ErrorCode::InvalidRequest,
+            "request body read deadline exceeded",
+        ),
         Err(ReadBodyError::Read(error)) => {
             envelope_error(StatusCode::BAD_REQUEST, ErrorCode::InvalidRequest, &error)
         }
@@ -304,10 +312,17 @@ async fn authenticate(
 #[derive(Debug)]
 enum ReadBodyError {
     TooLarge,
+    Deadline,
     Read(String),
 }
 
-async fn read_body(mut body: Body) -> Result<Vec<u8>, ReadBodyError> {
+async fn read_body(body: Body) -> Result<Vec<u8>, ReadBodyError> {
+    tokio::time::timeout(BODY_READ_TIMEOUT, read_body_until_end(body))
+        .await
+        .map_err(|_| ReadBodyError::Deadline)?
+}
+
+async fn read_body_until_end(mut body: Body) -> Result<Vec<u8>, ReadBodyError> {
     let mut bytes = Vec::new();
     let mut too_large = false;
     while let Some(frame) =

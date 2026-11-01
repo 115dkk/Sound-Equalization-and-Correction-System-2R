@@ -5,7 +5,7 @@ use std::net::TcpStream;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use secs_local_api::{EventHub, LocalApiError, ServerConfig, ServerHandle};
@@ -352,6 +352,34 @@ fn stop_frees_the_port_and_busy_port_is_typed() {
     .unwrap();
     assert_eq!(second.port(), port);
     second.stop();
+}
+
+#[test]
+fn stop_finishes_while_a_client_stalls_mid_body_td126() {
+    let (service, hub) = service_with(Arc::new(secs_service::NullHost));
+    let server = running(service, hub);
+    let port = server.port();
+    let mut client = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    write!(
+        client,
+        "POST /v1/call HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nAuthorization: Bearer {TOKEN}\r\nContent-Length: 100\r\nConnection: close\r\n\r\n{{"
+    )
+    .unwrap();
+    client.flush().unwrap();
+    std::thread::sleep(Duration::from_millis(100));
+
+    let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+    let started = Instant::now();
+    std::thread::spawn(move || {
+        server.stop();
+        let _ = finished_tx.send(());
+    });
+    assert!(
+        finished_rx.recv_timeout(Duration::from_secs(4)).is_ok(),
+        "server stop waited for an incomplete request body"
+    );
+    assert!(started.elapsed() < Duration::from_secs(4));
+    drop(client);
 }
 
 #[test]
