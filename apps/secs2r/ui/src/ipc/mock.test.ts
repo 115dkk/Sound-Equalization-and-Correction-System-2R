@@ -139,6 +139,43 @@ describe("standalone mock MIMO preconditions", () => {
     } finally { mock.dispose(); }
   });
 
+  it.each(["output channels", "output device", "unchanged wiring", "measurement only", "empty output device"] as const)("uses service config freshness after measure_configure: %s", async (change) => {
+    const mock = createMockService({ tickMs: 0 });
+    try {
+      await mock.request({ method: "calibration_settings_edit", params: { edit: { kind: "mimo_on", on: true } } });
+      await mock.request({ method: "calibrate", params: { settings: null, subs_only: false } }); mock.drain();
+      const measurement = await mock.request({ method: "measure_config_get" });
+      await mock.request({ method: "measure_configure", params: { ...measurement,
+        output_channels: change === "output channels" ? measurement.output_channels.map((out) => out + 1) : measurement.output_channels,
+        output_device: change === "output device" ? "changed output" : change === "empty output device" ? "" : null,
+        input_device: change === "measurement only" ? "changed input" : null,
+        sweep_level_dbfs: change === "measurement only" ? -30 : measurement.sweep_level_dbfs,
+      } });
+      const stale = change === "output channels" || change === "output device";
+      const mimo = mock.request({ method: "mimo", params: { settings: null } });
+      if (stale) await expect(mimo).rejects.toMatchObject({ error: { code: "stale_inputs" } });
+      else { await expect(mimo).resolves.toMatchObject({ kind: "mimo" }); mock.drain(); }
+      expect((await mock.request({ method: "results" })).calibration).toMatchObject(stale ? { stale: true, stale_reason: "config" } : { stale: false });
+    } finally { mock.dispose(); }
+  });
+
+  it.each([false, true])("compares normalized RC bands for standalone MIMO (raw calibration=%s)", async (rawCalibration) => {
+    const mock = createMockService({ tickMs: 0 });
+    const valid = [{ lo_hz: 20, hi_hz: 100 }, { lo_hz: 1000, hi_hz: 2000 }, { lo_hz: 1000, hi_hz: 3000 }, { lo_hz: 19000, hi_hz: 20000 }];
+    const raw = [valid[3]!, { lo_hz: 19500, hi_hz: 19900 }, valid[2]!, valid[0]!, valid[1]!,
+      { lo_hz: 10, hi_hz: 100 }, { lo_hz: 100, hi_hz: 20001 }, { lo_hz: 200, hi_hz: 100 },
+      { lo_hz: NaN, hi_hz: 500 }, { lo_hz: 500, hi_hz: Infinity }];
+    try {
+      const base = { ...await mock.request({ method: "calibration_settings_get" }), mimo_on: true };
+      await mock.request({ method: "calibrate", params: { settings: { ...base, rc_bands: rawCalibration ? raw : valid }, subs_only: false } }); mock.drain();
+      const stored = await mock.request({ method: "calibration_settings_get" });
+      await expect(mock.request({ method: "mimo", params: { settings: { ...base, rc_bands: rawCalibration ? valid : raw } } })).resolves.toMatchObject({ kind: "mimo" });
+      mock.drain();
+      expect((await mock.request({ method: "results" })).mimo?.stale).toBe(false);
+      expect(await mock.request({ method: "calibration_settings_get" })).toEqual(stored);
+    } finally { mock.dispose(); }
+  });
+
   it("accepts MIMO-only overrides without changing stored calibration settings", async () => {
     const mock = createMockService({ tickMs: 0 });
     try {
