@@ -303,6 +303,7 @@ impl Service {
             params.kind,
             ExportKind::BeforeAfterMdat | ExportKind::StagedMdat
         );
+        let replay_snapshot = (mdat && live.is_none()).then(|| session::measurement_snapshot(open));
         let cached_sample_rate_policy = cached.map(|cache| cache.labels.sample_rate_policy);
         let expected_mdat_input_key = (mdat && live.is_none()).then(|| {
             let mut settings = secs_project::calibration_from_project(project);
@@ -484,12 +485,6 @@ impl Service {
                 .check()
                 .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
             let ctx = super::calibration::compute_context(&job, memory, false);
-            let originals = originals
-                .map(|snapshot| snapshot.load(&job, ctx.budget()))
-                .transpose()?;
-            let original_values = originals
-                .as_ref()
-                .map_or(&[][..], |loaded| loaded.values.as_slice());
             let folder = destination.as_path();
             let mut paths = match params.kind {
                 ExportKind::CamillaDsp => {
@@ -564,41 +559,49 @@ impl Service {
                         values
                     } else {
                         job.report_progress("design", 0, 1);
-                        // Reads the measurements of the project the export
-                        // started from; the job stays cancellable.
-                        let (project, settings, measurements) =
-                            session::apply(&session_for_design, ticket, |open| {
-                                let project = open.store.project().clone();
-                                let mut settings = secs_project::calibration_from_project(&project);
-                                if let Some(policy) = cached_sample_rate_policy {
-                                    settings.sample_rate_policy = policy;
-                                }
-                                let current_input_key = super::calibration::run_key(
-                                    &super::calibration::signature_key(&project),
-                                    &super::calibration::target_key_string(&project),
-                                    &settings.engine_key(),
-                                    &super::calibration::config_key(&project),
-                                );
-                                if expected_mdat_input_key.as_ref() != Some(&current_input_key) {
-                                    return Err(IpcError::new(
-                                        ErrorCode::StaleInputs,
-                                        "project changed while computing",
-                                    ));
-                                }
-                                let measurements =
-                                    super::calibration::load_measurements(&mut open.store)?;
-                                Ok(((project, settings, measurements), false))
-                            })?;
-                        let groups = super::calibration::project_groups(&project);
+                        let loaded = replay_snapshot
+                            .ok_or_else(|| {
+                                IpcError::new(ErrorCode::Internal, "replay snapshot disappeared")
+                            })?
+                            .load(&job, ctx.budget())?;
+                        job.report_progress("read_measurements", 1, 1);
+                        job.cancel()
+                            .check()
+                            .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
+                        session::apply(&session_for_design, ticket, |open| {
+                            let project = open.store.project();
+                            let mut settings = secs_project::calibration_from_project(project);
+                            if let Some(policy) = cached_sample_rate_policy {
+                                settings.sample_rate_policy = policy;
+                            }
+                            let current_input_key = super::calibration::run_key(
+                                &super::calibration::signature_key(project),
+                                &super::calibration::target_key_string(project),
+                                &settings.engine_key(),
+                                &super::calibration::config_key(project),
+                            );
+                            if expected_mdat_input_key.as_ref() != Some(&current_input_key) {
+                                return Err(IpcError::new(
+                                    ErrorCode::StaleInputs,
+                                    "project changed while computing",
+                                ));
+                            }
+                            Ok(((), false))
+                        })?;
+                        let mut settings = secs_project::calibration_from_project(&loaded.project);
+                        if let Some(policy) = cached_sample_rate_policy {
+                            settings.sample_rate_policy = policy;
+                        }
+                        let groups = super::calibration::project_groups(&loaded.project);
                         let view = secs_engine::ProjectView {
                             groups: &groups,
-                            project_xo: &project.xo,
-                            target: &project.target,
+                            project_xo: &loaded.project.xo,
+                            target: &loaded.project.target,
                         };
                         let calibration = secs_engine::calibrate(
                             &secs_engine::CalibrationRequest {
                                 view: &view,
-                                irs: &measurements,
+                                irs: &loaded.values,
                                 settings: &settings,
                                 subs_only: false,
                             },
@@ -606,6 +609,7 @@ impl Service {
                         )
                         .map_err(super::calibration::engine_error)?;
                         let design = calibration.design;
+                        drop(loaded);
                         job.report_progress("design", 1, 1);
                         if let Some(paths) = cached_mimo_paths.as_ref() {
                             mimo = Some(
@@ -620,6 +624,12 @@ impl Service {
                         }
                         (Arc::new(design), settings)
                     };
+                    let originals = originals
+                        .map(|snapshot| snapshot.load(&job, ctx.budget()))
+                        .transpose()?;
+                    let original_values = originals
+                        .as_ref()
+                        .map_or(&[][..], |loaded| loaded.values.as_slice());
                     job.begin_commit()?;
                     let run = ExportRun {
                         design: &design,

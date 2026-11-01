@@ -553,13 +553,91 @@ pub(crate) struct OriginalSnapshot {
 
 pub(crate) struct LoadedOriginals<'a> {
     pub values: Vec<secs_export::Original>,
-    _permits: Vec<secs_compute::MemoryPermit<'a>>,
+    _permit: secs_compute::MemoryPermit<'a>,
+}
+
+#[derive(Debug)]
+pub(crate) struct MeasurementSnapshot {
+    path: PathBuf,
+    project: Project,
+}
+
+pub(crate) struct LoadedMeasurements<'a> {
+    pub project: Project,
+    pub values: secs_engine::MeasurementSet,
+    _permit: secs_compute::MemoryPermit<'a>,
 }
 
 pub(crate) fn original_snapshot(open: &OpenProject) -> OriginalSnapshot {
     OriginalSnapshot {
         path: open.path.clone(),
         project: open.store.project().clone(),
+    }
+}
+
+pub(crate) fn measurement_snapshot(open: &OpenProject) -> MeasurementSnapshot {
+    MeasurementSnapshot {
+        path: open.path.clone(),
+        project: open.store.project().clone(),
+    }
+}
+
+fn measurement_bytes(path: &Path, project: &Project) -> Result<u64, IpcError> {
+    let base = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut bytes = 0_u64;
+    let store = MeasurementStore::new(path, project.clone());
+    for record in store.records() {
+        for raw in record.ir.values().filter(|raw| !raw.is_empty()) {
+            let wav = PathBuf::from(raw);
+            let wav = if wav.is_absolute() {
+                wav
+            } else {
+                base.join(wav)
+            };
+            let file_bytes = fs::metadata(&wav)
+                .map_err(ServiceError::from)
+                .map_err(IpcError::from)?
+                .len()
+                .saturating_mul(12);
+            bytes = bytes.saturating_add(file_bytes);
+        }
+    }
+    Ok(bytes)
+}
+
+fn reserve_measurements<'a>(
+    path: &Path,
+    project: &Project,
+    job: &JobContext,
+    budget: &'a secs_compute::MemoryBudget,
+) -> Result<secs_compute::MemoryPermit<'a>, IpcError> {
+    budget
+        .acquire(measurement_bytes(path, project)?, job.cancel())
+        .map_err(|error| match error {
+            secs_compute::MemoryError::Cancelled => {
+                IpcError::new(ErrorCode::Cancelled, "cancelled")
+            }
+            secs_compute::MemoryError::TooLarge { .. } => {
+                IpcError::new(ErrorCode::EngineInput, error.to_string())
+                    .with_param("reason", "memory_budget")
+            }
+        })
+}
+
+impl MeasurementSnapshot {
+    pub(crate) fn load<'a>(
+        self,
+        job: &JobContext,
+        budget: &'a secs_compute::MemoryBudget,
+    ) -> Result<LoadedMeasurements<'a>, IpcError> {
+        let permit = reserve_measurements(&self.path, &self.project, job, budget)?;
+        let mut store = MeasurementStore::new(&self.path, self.project.clone());
+        let values = super::calibration::load_measurements_cancellable(&mut store, job.cancel())?;
+        Ok(LoadedMeasurements {
+            project: self.project,
+            values,
+            _permit: permit,
+        })
     }
 }
 
@@ -579,8 +657,8 @@ impl OriginalSnapshot {
             .iter()
             .map(|record| record.ir.values().filter(|path| !path.is_empty()).count())
             .sum::<usize>();
+        let permit = reserve_measurements(&self.path, &project, job, budget)?;
         let mut originals = Vec::with_capacity(total);
-        let mut permits = Vec::with_capacity(total);
         for record in records {
             let position = u32::try_from(record.pos).map_err(|_| {
                 IpcError::new(
@@ -596,7 +674,6 @@ impl OriginalSnapshot {
                     .unwrap_or(plan_roles.len())
             });
             for role in roles {
-                job.report_progress("read_measurements", originals.len() as u64, total as u64);
                 job.cancel()
                     .check()
                     .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
@@ -604,35 +681,21 @@ impl OriginalSnapshot {
                 if raw.is_empty() {
                     continue;
                 }
-                let wav = PathBuf::from(raw);
-                let wav = if wav.is_absolute() {
-                    wav
-                } else {
-                    self.path
-                        .parent()
-                        .unwrap_or_else(|| Path::new("."))
-                        .join(wav)
-                };
-                let bytes = fs::metadata(&wav)
-                    .map_err(ServiceError::from)
-                    .map_err(IpcError::from)?
-                    .len()
-                    .saturating_mul(12);
-                let permit = budget
-                    .acquire(bytes, job.cancel())
-                    .map_err(|error| match error {
-                        secs_compute::MemoryError::Cancelled => {
-                            IpcError::new(ErrorCode::Cancelled, "cancelled")
-                        }
-                        secs_compute::MemoryError::TooLarge { .. } => {
-                            IpcError::new(ErrorCode::EngineInput, error.to_string())
-                                .with_param("reason", "memory_budget")
-                        }
-                    })?;
                 let (samples, sample_rate) = store
                     .ir_of(&role, record.pos)
                     .map_err(ServiceError::from)
                     .map_err(IpcError::from)?;
+                // The bounded WAV reader consumes one whole file. Check on both
+                // sides of every file, so cancellation is delayed by at most one
+                // MAX_IR_BYTES read rather than by the whole measurement set.
+                job.report_progress(
+                    "read_measurements",
+                    originals.len() as u64 + 1,
+                    total as u64,
+                );
+                job.cancel()
+                    .check()
+                    .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
                 let source_info = sources
                     .get(&position)
                     .and_then(|by_role| by_role.get(&role))
@@ -651,13 +714,11 @@ impl OriginalSnapshot {
                         computed: false,
                     },
                 });
-                permits.push(permit);
             }
         }
-        job.report_progress("read_measurements", total as u64, total as u64);
         Ok(LoadedOriginals {
             values: originals,
-            _permits: permits,
+            _permit: permit,
         })
     }
 }

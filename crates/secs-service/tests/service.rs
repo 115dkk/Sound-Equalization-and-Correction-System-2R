@@ -18,7 +18,7 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
-use secs_project::MeasurementResult;
+use secs_project::{MeasurementResult, MeasurementStore, Project};
 use secs_types::calibration::CalibrationSettings;
 use secs_types::ipc::{
     CalibrateParams, DspSetParams, ExportKind, ExportParams, JobCancelParams, JobId, JobResult,
@@ -3482,6 +3482,35 @@ impl EventSink for PausedProgress {
         self.events.send(event);
     }
 }
+#[derive(Debug, Default)]
+struct PausedReadProgress(PausedProgress);
+
+impl EventSink for PausedReadProgress {
+    fn send(&self, event: JobEvent) {
+        if matches!(&event, JobEvent::Progress { stage, .. } if stage == "read_measurements") {
+            let mut gate = lock(&self.0.gate);
+            if !gate.0 {
+                gate.0 = true;
+                self.0.changed.notify_all();
+                while !gate.1 {
+                    gate = self.0.changed.wait(gate).unwrap();
+                }
+            }
+        }
+        self.0.events.send(event);
+    }
+}
+
+impl PausedReadProgress {
+    fn wait_until_paused(&self) {
+        self.0.wait_until_paused();
+    }
+
+    fn release(&self) {
+        self.0.release();
+    }
+}
+
 impl PausedProgress {
     fn wait_until_paused(&self) {
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -3873,6 +3902,123 @@ fn measurement_mdat_reads_outside_session_lock_and_cancels_during_read() {
         }
     ));
     assert!(!folder.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn measurement_mdat_rejects_all_originals_that_exceed_one_budget_td130() {
+    let root = temp_root("measurement-export-budget");
+    fs::create_dir_all(&root).unwrap();
+    let path = root.join("large.secs");
+    let mut store = MeasurementStore::new(&path, Project::from_preset("2.0").unwrap());
+    for (role, position) in [("L", 1), ("R", 2)] {
+        store
+            .record(
+                MeasurementResult {
+                    role: role.into(),
+                    pos: position,
+                    ir: vec![0.0; 786_432],
+                    sample_rate: 48_000,
+                    t0_s: 0.0,
+                    spl_db: None,
+                    spl_offset_db: None,
+                    snr_db: None,
+                    uuid: None,
+                    source: Some("test".into()),
+                    source_info: None,
+                },
+                None,
+            )
+            .unwrap();
+    }
+    store.save().unwrap();
+
+    let service = Service::new(Deps {
+        memory: Arc::new(secs_compute::FixedMemory(64 * 1024 * 1024)),
+        ..Deps::default()
+    });
+    open(&service, &path);
+    let events = Arc::new(Events::default());
+    let Response::Export(started) = call_ok(
+        &service,
+        Request::Export(ExportParams {
+            kind: ExportKind::BeforeAfterMdat,
+            folder: root.join("export").to_string_lossy().into_owned(),
+            mdat_scope: Some(MdatScope::Measurements),
+            design_name: None,
+            camilla_devices: None,
+            extra_rates: Vec::new(),
+        }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    let first = events.try_wait(started.job, Duration::from_secs(1));
+    if first.is_none() {
+        call_ok(
+            &service,
+            Request::JobCancel(JobCancelParams { job: started.job }),
+            Arc::new(NoEvents),
+        );
+        let _ = events.wait(started.job, Duration::from_secs(10));
+    }
+    assert!(matches!(
+        first,
+        Some(JobEvent::Finished {
+            status: JobStatus::Failed,
+            error: Some(ref error),
+            ..
+        }) if error.params.get("reason").map(String::as_str) == Some("memory_budget")
+    ));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn cached_mdat_cancel_after_a_real_read_finishes_cancelled_td130() {
+    let root = temp_root("cancel-cached-read");
+    fs::create_dir_all(&root).unwrap();
+    let (source, settings) = write_case(&root, "dolby");
+    let running = service();
+    open(&running, &source);
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&running, calibration_events.clone(), settings);
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+
+    let reopened = service();
+    open(&reopened, &source);
+    let events = Arc::new(PausedReadProgress::default());
+    let Response::Export(started) = call_ok(
+        &reopened,
+        Request::Export(ExportParams {
+            kind: ExportKind::StagedMdat,
+            folder: root.join("cancelled-export").to_string_lossy().into_owned(),
+            mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
+            extra_rates: Vec::new(),
+        }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    events.wait_until_paused();
+    // The progress point is after the snapshot read. Removing a source now
+    // proves cancellation does not begin before the real WAV read.
+    fs::remove_file(secs_project::ir_file(&source, "L", 1)).unwrap();
+    call_ok(
+        &reopened,
+        Request::JobCancel(JobCancelParams { job: started.job }),
+        Arc::new(NoEvents),
+    );
+    events.release();
+    let finished = events.0.events.wait(started.job, Duration::from_secs(120));
+    assert!(matches!(
+        finished,
+        JobEvent::Finished {
+            status: JobStatus::Cancelled,
+            ..
+        }
+    ));
     fs::remove_dir_all(root).unwrap();
 }
 
