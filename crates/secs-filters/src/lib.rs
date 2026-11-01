@@ -12,7 +12,9 @@
 pub mod playback;
 pub mod render;
 
-pub use render::{RenderedPath, RenderedPaths, render_paths, render_paths_at};
+pub use render::{
+    RenderedPath, RenderedPaths, render_paths, render_paths_at, render_paths_at_cancellable,
+};
 
 use secs_camilla::pyfmt::{format_fixed, round_ndigits};
 use secs_dsp::Complex64;
@@ -116,6 +118,9 @@ pub enum FiltersError {
     /// Validation failed before any filesystem change.
     #[error("invalid filter export: {0}")]
     Invalid(String),
+    /// The caller cancelled a long-running calculation before installation.
+    #[error("filter export cancelled")]
+    Cancelled,
     /// Filesystem operation failed.
     #[error(transparent)]
     Io(#[from] std::io::Error),
@@ -1540,24 +1545,37 @@ fn convolution_grid(rate: u32) -> Vec<f64> {
     frequencies
 }
 
-fn exact_dtft(samples: &[f64], frequency: f64, rate: u32) -> Complex64 {
+fn exact_dtft_cancellable(
+    samples: &[f64],
+    frequency: f64,
+    rate: u32,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Complex64, FiltersError> {
     let step = Complex64::from_polar(
         1.0,
         -2.0 * std::f64::consts::PI * frequency / f64::from(rate),
     );
     let mut phase = Complex64::new(1.0, 0.0);
     let mut response = Complex64::new(0.0, 0.0);
-    for &sample in samples {
+    for (index, &sample) in samples.iter().enumerate() {
+        if index.is_multiple_of(4096) && cancelled() {
+            return Err(FiltersError::Cancelled);
+        }
         response += phase * sample;
         phase *= step;
     }
-    response
+    Ok(response)
 }
 
-fn convolution_csv(samples: &[f64], frequencies: &[f64], rate: u32) -> String {
+fn convolution_csv(
+    samples: &[f64],
+    frequencies: &[f64],
+    rate: u32,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<String, FiltersError> {
     let mut text = String::from("frequency_hz,magnitude_db,phase_deg\n");
     for &frequency in frequencies {
-        let response = exact_dtft(samples, frequency, rate);
+        let response = exact_dtft_cancellable(samples, frequency, rate, cancelled)?;
         let magnitude = response.norm();
         let magnitude_db = if magnitude == 0.0 {
             -200.0
@@ -1577,7 +1595,7 @@ fn convolution_csv(samples: &[f64], frequencies: &[f64], rate: u32) -> String {
             phase + 0.0
         ));
     }
-    text
+    Ok(text)
 }
 
 fn convolution_guide(
@@ -1712,14 +1730,37 @@ pub fn export_convolution_with_options(
     export_convolution_named_with_options(run, folder, options, None)
 }
 
-/// Export convolution bundles at the main and additional output rates, each
-/// rate folder with its own REAPER script named after `design_name`.
-pub fn export_convolution_named_with_options(
+/// A complete convolution bundle held in memory until its caller starts the
+/// non-cancellable installation phase.
+#[derive(Debug)]
+pub struct PreparedConvolution {
+    files: Vec<(PathBuf, Vec<u8>)>,
+}
+
+impl PreparedConvolution {
+    /// Install every prepared file, switching `routing.json` last.
+    pub fn install(self, folder: &Path) -> Result<Vec<PathBuf>, FiltersError> {
+        let entry = PathBuf::from("routing.json");
+        write_bundle_observed(folder, &self.files, &entry, &|_, _| Ok(()), &|_, _| Ok(()))?;
+        Ok(self
+            .files
+            .into_iter()
+            .map(|(relative, _)| folder.join(relative))
+            .collect())
+    }
+}
+
+/// Compute convolution bundles without changing the filesystem.
+///
+/// `cancelled` is checked inside rendering and DTFT loops. `progress` reports
+/// completed sample-rate bundles out of the main rate plus all extra rates.
+pub fn prepare_convolution_named_with_options(
     run: &FilterRun<'_>,
-    folder: &Path,
     options: &Options,
     design_name: Option<&str>,
-) -> Result<Vec<PathBuf>, FiltersError> {
+    cancelled: &dyn Fn() -> bool,
+    progress: &dyn Fn(u64, u64),
+) -> Result<PreparedConvolution, FiltersError> {
     validate_options(options, true)?;
     if let Some(block) = filter_export_block(
         ExportKind::Convolution,
@@ -1733,17 +1774,28 @@ pub fn export_convolution_named_with_options(
     let plan = graph.plan();
     let headroom_db = (headroom_db(plan)? * 2.0).ceil() / 2.0;
     let attenuation = 10_f64.powf(-headroom_db / 20.0);
+    let total = 1 + options.extra_rates.len() as u64;
+    progress(0, total);
+    if cancelled() {
+        return Err(FiltersError::Cancelled);
+    }
     let mut files = Vec::new();
-    for (rate, prefix) in std::iter::once((options.output_rate, PathBuf::new())).chain(
-        options
-            .extra_rates
-            .iter()
-            .map(|&rate| (rate, PathBuf::from(format!("{rate}Hz")))),
-    ) {
-        let rendered = render_paths_at(plan, CONVOLUTION_MAX_LEN, rate)?;
+    for (rate_index, (rate, prefix)) in std::iter::once((options.output_rate, PathBuf::new()))
+        .chain(
+            options
+                .extra_rates
+                .iter()
+                .map(|&rate| (rate, PathBuf::from(format!("{rate}Hz")))),
+        )
+        .enumerate()
+    {
+        let rendered = render_paths_at_cancellable(plan, CONVOLUTION_MAX_LEN, rate, cancelled)?;
         let frequencies = convolution_grid(rate);
         let mut routes = Vec::with_capacity(rendered.paths.len());
         for path in &rendered.paths {
+            if cancelled() {
+                return Err(FiltersError::Cancelled);
+            }
             let stem = format!("{}_to_{}", path.input, path.output);
             let wav = format!("{stem}.wav");
             let csv = format!("{stem}.csv");
@@ -1752,11 +1804,15 @@ pub fn export_convolution_named_with_options(
                 .iter()
                 .map(|sample| f64::from((*sample * attenuation) as f32))
                 .collect::<Vec<_>>();
-            let peak = frequencies
+            let mut peak = 0.0_f64;
+            for &frequency in frequencies
                 .iter()
                 .filter(|&&frequency| (20.0..=20_000.0).contains(&frequency))
-                .map(|frequency| exact_dtft(&path.response, *frequency, rate).norm())
-                .fold(0.0_f64, f64::max);
+            {
+                peak = peak.max(
+                    exact_dtft_cancellable(&path.response, frequency, rate, cancelled)?.norm(),
+                );
+            }
             let peak_gain_db = if peak == 0.0 {
                 -200.0
             } else {
@@ -1769,7 +1825,7 @@ pub fn export_convolution_named_with_options(
             ));
             files.push((
                 prefix.join(&csv),
-                convolution_csv(&written, &frequencies, rate).into_bytes(),
+                convolution_csv(&written, &frequencies, rate, cancelled)?.into_bytes(),
             ));
             routes.push(ConvolutionRoute {
                 input: path.input.clone(),
@@ -1809,13 +1865,21 @@ pub fn export_convolution_named_with_options(
             .map_err(|error| FiltersError::Invalid(format!("routing.json: {error}")))?;
         routing_bytes.push(b'\n');
         files.push((entry, routing_bytes));
+        progress(rate_index as u64 + 1, total);
     }
-    let entry = PathBuf::from("routing.json");
-    write_bundle_observed(folder, &files, &entry, &|_, _| Ok(()), &|_, _| Ok(()))?;
-    Ok(files
-        .into_iter()
-        .map(|(relative, _)| folder.join(relative))
-        .collect())
+    Ok(PreparedConvolution { files })
+}
+
+/// Export convolution bundles at the main and additional output rates, each
+/// rate folder with its own REAPER script named after `design_name`.
+pub fn export_convolution_named_with_options(
+    run: &FilterRun<'_>,
+    folder: &Path,
+    options: &Options,
+    design_name: Option<&str>,
+) -> Result<Vec<PathBuf>, FiltersError> {
+    prepare_convolution_named_with_options(run, options, design_name, &|| false, &|_, _| {})?
+        .install(folder)
 }
 
 fn finite(name: &str, value: f64) -> Result<(), FiltersError> {

@@ -235,6 +235,81 @@ fn stored_export_folder_survives_save_and_open() {
     fs::remove_dir_all(root).unwrap();
 }
 
+#[derive(Debug)]
+struct CancelConvolution {
+    service: Arc<Service>,
+    events: Events,
+    requested: std::sync::atomic::AtomicBool,
+}
+
+impl EventSink for CancelConvolution {
+    fn send(&self, event: JobEvent) {
+        self.events.send(event.clone());
+        if matches!(&event, JobEvent::Progress { stage, done: 1, .. } if stage == "export.convolution")
+            && !self.requested.swap(true, Ordering::SeqCst)
+        {
+            let job = match event {
+                JobEvent::Progress { job, .. } => job,
+                _ => unreachable!(),
+            };
+            assert!(matches!(
+                self.service.call(
+                    Request::JobCancel(JobCancelParams { job }),
+                    Arc::new(NoEvents),
+                ),
+                Envelope::Ok(_)
+            ));
+        }
+    }
+}
+
+#[test]
+fn cancelled_convolution_compute_installs_no_files() {
+    let root = root();
+    let destination = root.join("convolution");
+    fs::create_dir_all(&destination).unwrap();
+    fs::write(destination.join("existing.txt"), b"keep").unwrap();
+    let service = Arc::new(calibrated(&root));
+    let events = Arc::new(CancelConvolution {
+        service: service.clone(),
+        events: Events::default(),
+        requested: std::sync::atomic::AtomicBool::new(false),
+    });
+    let response = service.call(
+        Request::Export(ExportParams {
+            kind: ExportKind::Convolution,
+            folder: destination.to_string_lossy().into_owned(),
+            mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
+            extra_rates: vec![96_000],
+        }),
+        events.clone(),
+    );
+    let Envelope::Ok(response) = response else {
+        panic!("export must start: {response:?}")
+    };
+    let Response::Export(started) = *response else {
+        panic!("export response is wrong")
+    };
+    assert!(matches!(
+        events.events.wait(started.job),
+        JobEvent::Finished {
+            status: JobStatus::Cancelled,
+            ..
+        }
+    ));
+    assert!(events.requested.load(Ordering::SeqCst));
+    let mut installed = fs::read_dir(&destination)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect::<Vec<_>>();
+    installed.sort();
+    assert_eq!(installed, ["existing.txt"]);
+    assert_eq!(fs::read(destination.join("existing.txt")).unwrap(), b"keep");
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn explicit_unnamed_export_indexes_only_the_chosen_folder() {
     let root = root();

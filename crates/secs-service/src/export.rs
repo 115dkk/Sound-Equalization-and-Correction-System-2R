@@ -514,21 +514,28 @@ impl Service {
                         output_rate,
                         extra_rates: params.extra_rates.clone(),
                     };
-                    job.begin_commit()?;
                     match params.kind {
                         ExportKind::FilterText => {
+                            job.begin_commit()?;
                             secs_filters::export_filter_text_with_options(&run, folder, &options)
                         }
                         ExportKind::EqualizerApo => {
+                            job.begin_commit()?;
                             secs_filters::export_eqapo_with_options(&run, folder, &options)
                         }
                         ExportKind::Convolution => {
-                            secs_filters::export_convolution_named_with_options(
+                            let prepared = secs_filters::prepare_convolution_named_with_options(
                                 &run,
-                                folder,
                                 &options,
                                 requested_design_name.as_deref(),
+                                &|| job.cancel().is_cancelled(),
+                                &|done, total| {
+                                    job.report_progress("export.convolution", done, total);
+                                },
                             )
+                            .map_err(filter_error)?;
+                            job.begin_commit()?;
+                            prepared.install(folder)
                         }
                         _ => unreachable!(),
                     }
@@ -796,6 +803,7 @@ fn filter_error(error: FiltersError) -> IpcError {
     match error {
         FiltersError::Scope(block) => IpcError::new(ErrorCode::ExportScope, error.to_string())
             .with_param("reason", block.name()),
+        FiltersError::Cancelled => IpcError::new(ErrorCode::Cancelled, "cancelled"),
         _ => export_error(error),
     }
 }
