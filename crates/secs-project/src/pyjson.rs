@@ -271,8 +271,7 @@ impl Parser<'_> {
             }
             Some(b'"') => {
                 let string = self.string()?;
-                let bytes = string.len();
-                self.node(PyJson::Str(string), bytes)
+                self.node(PyJson::Str(string), 0)
             }
             Some(b'[') => self.array_value(depth),
             Some(b'{') => self.object_value(depth),
@@ -347,7 +346,6 @@ impl Parser<'_> {
                 return Err(self.error("expecting property name"));
             }
             let key = self.string()?;
-            self.charge(key.len())?;
             self.whitespace();
             if self.bytes.get(self.pos) != Some(&b':') {
                 return Err(self.error("expecting ':'"));
@@ -365,8 +363,10 @@ impl Parser<'_> {
                             .len()
                             .saturating_add(size_of::<(String, usize)>()),
                     )?;
+                    let cloned_key = slot.key().clone();
+                    self.charge(cloned_key.capacity().saturating_sub(slot.key().len()))?;
                     self.reserve_for_push(&mut values)?;
-                    values.push((slot.key().clone(), value));
+                    values.push((cloned_key, value));
                     slot.insert(values.len() - 1);
                 }
             }
@@ -385,9 +385,36 @@ impl Parser<'_> {
         }
     }
 
+    fn string_capacity(&self) -> Result<usize, PyJsonError> {
+        let start = self.pos.saturating_add(1);
+        let mut cursor = start;
+        while let Some(&byte) = self.bytes.get(cursor) {
+            match byte {
+                b'"' => return Ok(cursor - start),
+                b'\\' => {
+                    cursor += 1;
+                    if self.bytes.get(cursor).is_none() {
+                        return Err(PyJsonError::new(cursor, "unterminated string"));
+                    }
+                    cursor += 1;
+                }
+                0..=0x1f => {
+                    return Err(PyJsonError::new(cursor, "invalid control character"));
+                }
+                _ => cursor += 1,
+            }
+        }
+        Err(PyJsonError::new(cursor, "unterminated string"))
+    }
+
     fn string(&mut self) -> Result<String, PyJsonError> {
-        self.pos += 1;
+        let requested = self.string_capacity()?;
+        self.charge(requested)?;
         let mut out = String::new();
+        out.try_reserve_exact(requested)
+            .map_err(|_| self.error("JSON allocation failed"))?;
+        self.charge(out.capacity().saturating_sub(requested))?;
+        self.pos += 1;
         let mut raw_start = self.pos;
         while let Some(&byte) = self.bytes.get(self.pos) {
             match byte {
@@ -519,12 +546,19 @@ impl Parser<'_> {
                 .parse::<f64>()
                 .map_err(|_| self.error("invalid number"))?;
             self.node(PyJson::Float(value), 0)
-        } else if raw == "-0" {
-            self.node(PyJson::Int("0".into()), 1)
         } else {
-            let value = raw.to_owned();
-            let bytes = value.len();
-            self.node(PyJson::Int(value), bytes)
+            let (text_start, bytes) = if raw == "-0" {
+                (None, 1)
+            } else {
+                (Some(start), raw.len())
+            };
+            self.charge(bytes)?;
+            let value = text_start.map_or_else(
+                || "0".to_owned(),
+                |start| self.text[start..self.pos].to_owned(),
+            );
+            self.charge(value.capacity().saturating_sub(bytes))?;
+            self.node(PyJson::Int(value), 0)
         }
     }
 }
@@ -726,5 +760,13 @@ mod tests {
         let error = loads_with_budget(&document, budget).unwrap_err();
         assert!(error.to_string().contains("allocation budget"));
         assert!(loads(&document).is_ok());
+    }
+
+    #[test]
+    fn allocation_budget_rejects_a_large_string_before_allocating_td113() {
+        let document = format!("\"{}\"", "x".repeat(2 * 1024 * 1024));
+        let error = loads_with_budget(&document, 64).unwrap_err();
+        assert_eq!(error.offset, 0);
+        assert!(error.to_string().contains("allocation budget"));
     }
 }
