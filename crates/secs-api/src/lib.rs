@@ -183,7 +183,7 @@ mod engine {
 
     struct Subscriber {
         sender: mpsc::SyncSender<JobEvent>,
-        dropped: Arc<AtomicU64>,
+        dropped: DroppedEventCount,
     }
 
     #[derive(Default)]
@@ -221,7 +221,7 @@ mod engine {
                 match subscriber.sender.try_send(event.clone()) {
                     Ok(()) => true,
                     Err(mpsc::TrySendError::Full(_)) => {
-                        subscriber.dropped.fetch_add(1, Ordering::Relaxed);
+                        subscriber.dropped.0.fetch_add(1, Ordering::Relaxed);
                         true
                     }
                     Err(mpsc::TrySendError::Disconnected(_)) => false,
@@ -245,38 +245,15 @@ mod engine {
         }
     }
 
-    /// A bounded stream of embedded-engine job events.
-    ///
-    /// It dereferences to the standard receiver for `recv`, `recv_timeout`, and
-    /// iterator access. When its queue is full, the engine keeps running and
-    /// counts the event instead of blocking.
-    pub struct Subscription {
-        receiver: mpsc::Receiver<JobEvent>,
-        dropped: Arc<AtomicU64>,
-    }
+    /// A shared count of events dropped from one bounded subscription queue.
+    #[derive(Clone, Debug, Default)]
+    pub struct DroppedEventCount(Arc<AtomicU64>);
 
-    impl Subscription {
-        /// Returns how many events were dropped because this queue was full.
+    impl DroppedEventCount {
+        /// Returns how many events were dropped because the queue was full.
         #[must_use]
-        pub fn dropped_events(&self) -> u64 {
-            self.dropped.load(Ordering::Relaxed)
-        }
-    }
-
-    impl std::ops::Deref for Subscription {
-        type Target = mpsc::Receiver<JobEvent>;
-
-        fn deref(&self) -> &Self::Target {
-            &self.receiver
-        }
-    }
-
-    impl fmt::Debug for Subscription {
-        fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-            formatter
-                .debug_struct("Subscription")
-                .field("dropped_events", &self.dropped_events())
-                .finish_non_exhaustive()
+        pub fn get(&self) -> u64 {
+            self.0.load(Ordering::Relaxed)
         }
     }
 
@@ -418,17 +395,26 @@ mod engine {
         /// Subscribes to job events emitted after this call.
         ///
         /// The queue holds 1024 events. A full queue drops the incoming event
-        /// and records it in [`Subscription::dropped_events`] without blocking
-        /// the service.
+        /// without blocking the service. Use [`Self::subscribe_with_drop_count`]
+        /// when the dropped-event count is needed.
         #[must_use]
-        pub fn subscribe(&self) -> Subscription {
+        pub fn subscribe(&self) -> mpsc::Receiver<JobEvent> {
+            self.subscribe_with_drop_count().0
+        }
+
+        /// Subscribes to job events and returns a shared dropped-event count.
+        ///
+        /// This additive API keeps [`Self::subscribe`] compatible with its
+        /// original standard-library receiver return type.
+        #[must_use]
+        pub fn subscribe_with_drop_count(&self) -> (mpsc::Receiver<JobEvent>, DroppedEventCount) {
             let (sender, receiver) = mpsc::sync_channel(SUBSCRIPTION_CAPACITY);
-            let dropped = Arc::new(AtomicU64::new(0));
+            let dropped = DroppedEventCount::default();
             lock(&self.observer.state).subscribers.push(Subscriber {
                 sender,
                 dropped: dropped.clone(),
             });
-            Subscription { receiver, dropped }
+            (receiver, dropped)
         }
 
         /// Waits for the terminal event of `job_id` until `timeout` expires.
@@ -491,21 +477,20 @@ mod engine {
                 changed: Condvar::new(),
                 external: None,
             };
-            let (sender, receiver) = mpsc::sync_channel(SUBSCRIPTION_CAPACITY);
-            let dropped = Arc::new(AtomicU64::new(0));
+            let (sender, receiver) = mpsc::sync_channel(1024);
+            let dropped = DroppedEventCount::default();
             lock(&observer.state).subscribers.push(Subscriber {
                 sender,
                 dropped: dropped.clone(),
             });
-            let subscription = Subscription { receiver, dropped };
-            for id in 0..=SUBSCRIPTION_CAPACITY {
+            for id in 0..=1024 {
                 observer.send(JobEvent::Started {
                     job: JobId(u64::try_from(id).unwrap()),
                     kind: secs_types::ipc::JobKind::Export,
                 });
             }
-            assert_eq!(subscription.dropped_events(), 1);
-            assert_eq!(subscription.try_iter().count(), SUBSCRIPTION_CAPACITY);
+            assert_eq!(dropped.get(), 1);
+            assert_eq!(receiver.try_iter().count(), 1024);
         }
 
         #[test]
@@ -533,7 +518,7 @@ mod engine {
 }
 
 #[cfg(feature = "engine")]
-pub use engine::{Engine, EngineBuilder, Subscription};
+pub use engine::{DroppedEventCount, Engine, EngineBuilder};
 
 #[cfg(feature = "client")]
 mod client {
