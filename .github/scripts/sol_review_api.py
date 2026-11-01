@@ -9,6 +9,8 @@ import urllib.error
 MAX_INPUT_BYTES = 300_000
 MAX_RESPONSE_BYTES = 2_000_000
 MAX_OUTPUT_TOKENS = 32_000
+# Error codes OpenAI sends when the account has no usable credit or quota left.
+QUOTA_CODES = {"insufficient_quota", "billing_hard_limit_reached", "billing_not_active"}
 
 
 def strict_json(raw):
@@ -101,6 +103,32 @@ def run(directory, policy, schema, transport=None):
     output.write_text(json.dumps(value, ensure_ascii=False))
 
 
+def quota_code(error):
+    """The quota code of a refused API call, or None. Only the code is read from
+    the error body; the body itself is never logged or stored."""
+    if not isinstance(error, urllib.error.HTTPError) or error.fp is None:
+        return None
+    try:
+        value = strict_json(error.read(4096))
+    except (ValueError, OSError):
+        return None
+    detail = value.get("error") if isinstance(value, dict) else None
+    if not isinstance(detail, dict):
+        return None
+    code = detail.get("code") or detail.get("type")
+    return code if code in QUOTA_CODES else None
+
+
+def failure_record(error):
+    """What failure.json says about an API failure: exhausted quota on its own,
+    every other failure as the HTTP status or error type."""
+    code = quota_code(error)
+    if code is not None:
+        return {"stage": "quota", "reason": code}
+    detail = f"HTTP {error.code}" if isinstance(error, urllib.error.HTTPError) else f"{type(error).__name__}: {str(error)[:300]}" if isinstance(error, ValueError) else type(error).__name__
+    return {"stage": "api", "reason": detail}
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--directory", type=Path, required=True)
@@ -111,8 +139,7 @@ def main():
         run(args.directory, args.policy.read_text(), json.loads(args.schema.read_text()))
     except Exception as error:
         args.directory.mkdir(parents=True, exist_ok=True)
-        detail = f"HTTP {error.code}" if isinstance(error, urllib.error.HTTPError) else f"{type(error).__name__}: {str(error)[:300]}" if isinstance(error, ValueError) else type(error).__name__
-        (args.directory / "failure.json").write_text(json.dumps({"stage": "api", "reason": detail}))
+        (args.directory / "failure.json").write_text(json.dumps(failure_record(error)))
         # No response body, model output or key is logged.
         raise SystemExit(f"Review API failed ({type(error).__name__}); publisher will submit a COMMENT notice") from None
 

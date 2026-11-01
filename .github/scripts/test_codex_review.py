@@ -250,6 +250,16 @@ class ReviewTests(unittest.TestCase):
                 self.assertEqual(review.publish(self.event, self.directory, True, self.request), "COMMENT")
                 self.assertIn("Invalid metadata object", self.writes[-1]["body"])
 
+    def test_exhausted_api_credit_posts_one_line_comment(self):
+        (self.directory / "metadata.json").write_text(json.dumps(self.meta))
+        (self.directory / "failure.json").write_text(json.dumps({"stage": "quota", "reason": "insufficient_quota"}))
+        self.assertEqual(review.publish(self.event, self.directory, True, self.request), "COMMENT")
+        body = self.writes[0]["body"]
+        self.assertEqual(self.writes[0]["event"], "COMMENT")
+        self.assertTrue(body.endswith(review.QUOTA_NOTICE))
+        self.assertIn("[API 고갈]", body)
+        self.assertNotIn("리뷰 상태 안내", body)
+
     def test_preparation_failure_with_no_metadata_posts_reason(self):
         (self.directory / "failure.json").write_text(json.dumps({"stage": "prepare", "reason": "Truncated patch"}))
         self.assertEqual(review.publish(self.event, self.directory, True, self.request), "COMMENT")

@@ -1,3 +1,4 @@
+import io
 import json
 import os
 from pathlib import Path
@@ -62,6 +63,21 @@ class ApiTests(unittest.TestCase):
                 api.run(directory, "trusted", {}, transport)
             self.assertEqual(len(calls), 1)
             self.assertFalse((directory / "result.json").exists())
+
+    def test_exhausted_quota_is_its_own_failure_stage(self):
+        def refused(status, body):
+            return api.urllib.error.HTTPError("https://api.openai.com/v1/responses", status, "refused", None, io.BytesIO(body))
+        quota = json.dumps({"error": {"type": "insufficient_quota", "code": "insufficient_quota", "message": "secret input echo"}}).encode()
+        self.assertEqual(api.failure_record(refused(429, quota)), {"stage": "quota", "reason": "insufficient_quota"})
+        billing = json.dumps({"error": {"code": "billing_hard_limit_reached"}}).encode()
+        self.assertEqual(api.failure_record(refused(400, billing)), {"stage": "quota", "reason": "billing_hard_limit_reached"})
+        # A plain rate limit, an unreadable body or another error stays a generic API failure.
+        rate = json.dumps({"error": {"code": "rate_limit_exceeded"}}).encode()
+        self.assertEqual(api.failure_record(refused(429, rate)), {"stage": "api", "reason": "HTTP 429"})
+        self.assertEqual(api.failure_record(refused(429, b"not json")), {"stage": "api", "reason": "HTTP 429"})
+        self.assertEqual(api.failure_record(TimeoutError()), {"stage": "api", "reason": "TimeoutError"})
+        # Nothing but the code leaves the error body.
+        self.assertNotIn("secret", json.dumps(api.failure_record(refused(429, quota))))
 
     def test_transport_never_executes_input(self):
         with tempfile.TemporaryDirectory() as tmp:

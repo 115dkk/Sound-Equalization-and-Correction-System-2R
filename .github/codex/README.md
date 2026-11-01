@@ -13,6 +13,8 @@
 - 부분 리뷰, 출력 누락, 문맥 누락/잘림, 시간 초과, API 오류, 잘못된 스키마: 이유를 설명하는 `COMMENT`.
   검토 인프라 문제는 코드 결함이나 병합 차단 요청으로 바꾸지 않고, 끝나지 않은 리뷰는 Approve하지 않습니다.
 - SHA 변경: 이전 결함 결과를 적용하지 않고 최신 커밋 재검토가 필요하다는 `COMMENT`.
+- API 크레딧 고갈: OpenAI가 `insufficient_quota`, `billing_hard_limit_reached`, `billing_not_active`로 거부하면
+  '[API 고갈]'로 시작하는 한 줄 `COMMENT`만 남깁니다. 오류 본문에서는 이 코드만 읽고, 본문 자체는 기록하지 않습니다.
 - GitHub Actions의 PR 승인은 저장소 설정(Settings → Actions → General → Workflow permissions의
   'Allow GitHub Actions to create and approve pull requests')이 켜져 있어야 합니다. 꺼져 있으면 GitHub가 422로 거부하고,
   봇은 같은 본문에 그 사실을 덧붙여 `COMMENT`로 한 번 남깁니다. 다른 오류는 숨기지 않습니다.

@@ -21,6 +21,8 @@ HUNK = re.compile(r"@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 # concern never blocks.
 RC_CATEGORIES = ("security", "data_loss", "build", "invariant")
 CATEGORIES = RC_CATEGORIES + ("behavior", "other")
+QUOTA_NOTICE = ("[API 고갈] OpenAI API 크레딧이 바닥나 이번 커밋은 리뷰하지 못했습니다. "
+                "크레딧을 충전한 뒤 이 워크플로를 다시 실행하면 리뷰합니다.")
 APPROVAL_REFUSED = ("\n\n저장소 설정에서 GitHub Actions의 PR 승인이 꺼져 있어 Approval 대신 이 댓글로 남깁니다. "
                     "Settings → Actions → General의 'Allow GitHub Actions to create and approve pull requests'를 켜면 Approval로 게시합니다.")
 
@@ -230,8 +232,10 @@ def failure_notice(directory):
     raw = path.read_bytes()
     require(len(raw) <= 4000, "Oversized failure record")
     failure = strict_json(raw)
-    require(set(failure) == {"stage", "reason"} and failure["stage"] in ("prepare", "api"), "Invalid failure record")
+    require(set(failure) == {"stage", "reason"} and failure["stage"] in ("prepare", "api", "quota"), "Invalid failure record")
     require(isinstance(failure["reason"], str) and len(failure["reason"]) <= 1000, "Invalid failure reason")
+    if failure["stage"] == "quota":
+        return QUOTA_NOTICE
     return f'{failure["stage"]} 단계에서 검토를 완료하지 못했습니다: {failure["reason"]}'
 
 
@@ -302,7 +306,10 @@ def publish(event, directory, enabled=False, request=api):
         marker = f'<!-- secs-sol-v2:{expected["base_sha"]}:{expected["head_sha"]}:{latest["head"]["sha"]}:stale -->'
         current = latest
     body = marker + f'\n검토 대상: `{expected["head_sha"]}` (base `{expected["base_sha"]}`)\n\n'
-    if reason is not None:
+    if reason == QUOTA_NOTICE:
+        # Exhausted API credit is one line: nothing was reviewed, nothing more to say.
+        body += reason
+    elif reason is not None:
         body += "### 리뷰 상태 안내\n" + reason
         if kind in ("notice", "stale"):
             body += "\n이는 코드 결함 판정이나 병합 차단 요청이 아닙니다."
