@@ -129,9 +129,17 @@ impl Service {
                     })?;
                 let text = fs::read_to_string(stage.join(&relative))
                     .map_err(|error| io_error(stage.join(&relative), error))?;
-                crate::design_export::replace_folder(&stage, &final_for_job)
+                // CamillaDSP's Reload rebuilds only the filters whose definition
+                // changed, and a Conv filter's definition is its absolute file
+                // name: in one shared folder a new design kept every FIR of the
+                // first one applied. Each design gets its own folder; applying
+                // the same design again reuses it.
+                let destination = final_for_job.join(design_folder(&design_id));
+                fs::create_dir_all(&final_for_job)
                     .map_err(|error| io_error(final_for_job.clone(), error))?;
-                let config = final_for_job.join(relative);
+                crate::design_export::replace_folder(&stage, &destination)
+                    .map_err(|error| io_error(destination.clone(), error))?;
+                let config = destination.join(relative);
                 let outcome = match apply.camilla_apply(&address, &config, &text, TIMEOUT) {
                     Ok(outcome) => outcome,
                     Err(error)
@@ -145,6 +153,10 @@ impl Service {
                     }
                     Err(error) => return Err(error),
                 };
+                if matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::HandedOver) {
+                    // A rolled-back apply keeps the folder CamillaDSP still reads.
+                    prune_applied(&final_for_job, &destination);
+                }
                 if matches!(outcome, ApplyOutcome::Applied | ApplyOutcome::HandedOver)
                     && let Some(exe_path) = managed_exe
                 {
@@ -162,7 +174,7 @@ impl Service {
                 Ok(JobResult::Apply(ApplyResult {
                     outcome,
                     design_id,
-                    folder: final_for_job.to_string_lossy().into_owned(),
+                    folder: destination.to_string_lossy().into_owned(),
                     stale: result.stale,
                 }))
             },
@@ -407,6 +419,31 @@ fn io_error(path: impl AsRef<Path>, error: impl std::fmt::Display) -> IpcError {
         detail,
     )
     .with_param("path", path.as_ref().to_string_lossy())
+}
+
+/// The applied folder of one design: the start of its id, short enough for
+/// Windows paths and unique among the designs a user applies.
+fn design_folder(design_id: &str) -> &str {
+    design_id.get(..16).unwrap_or(design_id)
+}
+
+/// Removes everything under the CamillaDSP apply root except `keep`: earlier
+/// designs and the shared folder of older releases. Best effort: a folder left
+/// behind is removed by the next apply.
+fn prune_applied(root: &Path, keep: &Path) {
+    let Ok(entries) = fs::read_dir(root) else {
+        return;
+    };
+    for path in entries.flatten().map(|entry| entry.path()) {
+        if path == keep {
+            continue;
+        }
+        let _ = if path.is_dir() {
+            fs::remove_dir_all(&path)
+        } else {
+            fs::remove_file(&path)
+        };
+    }
 }
 
 fn remove_stage(path: &Path) -> Result<(), IpcError> {

@@ -1188,7 +1188,7 @@ kind = "ipc"
 milestone = "M6"
 status = "implemented"
 upstream = "new"
-tests = ["secs-service::apply_camilla_covers_success_rejection_rollback_folder_and_design_matches", "secs-apply::failed_rollback_carries_both_reload_errors"]
+tests = ["secs-service::apply_camilla_covers_success_rejection_rollback_folder_and_design_matches", "secs-service::apply_camilla_gives_each_design_its_own_folder_so_reload_reads_its_firs", "secs-apply::failed_rollback_carries_both_reload_errors"]
 
 [[feature]]
 id = "ipc.apply_eqapo"
