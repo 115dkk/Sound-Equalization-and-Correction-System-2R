@@ -1223,8 +1223,10 @@ pub enum ExportKind {
     /// and FIR WAV files (upstream `calibration.export_eqapo`). RC, BA and
     /// MIMO support paths, which upstream refuses (docs/DEVIATIONS.md F12).
     EqualizerApo,
-    /// One complete 48 kHz impulse response and response CSV per reachable
-    /// input-to-output path, including RC, BA, LFE and MIMO operations.
+    /// One complete impulse response and response CSV per reachable
+    /// input-to-output path, including RC, BA, LFE and MIMO operations. The
+    /// design runs at 48 kHz; the files are written at the project's output
+    /// rate and at each extra rate asked for (ADR 0017, audit #155 TD-143).
     Convolution,
 }
 
