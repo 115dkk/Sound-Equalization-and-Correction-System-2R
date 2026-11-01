@@ -1673,8 +1673,9 @@ fn convolution_reaper(routing: &ConvolutionRouting<'_>, design_name: Option<&str
         .filter(|name| !name.trim().is_empty())
         .unwrap_or("보정");
     let mut script = format!(
-        "local design_name = {}\nlocal input_channels = {}\nlocal output_channels = {}\nlocal paths = {{\n",
+        "local design_name = {}\nlocal sample_rate = {}\nlocal input_channels = {}\nlocal output_channels = {}\nlocal paths = {{\n",
         lua_string(name),
+        routing.sample_rate,
         routing.inputs.len().max(2).next_multiple_of(2),
         routing.outputs.len().max(2).next_multiple_of(2),
     );
