@@ -1,3 +1,4 @@
+use std::io::{self, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::Path;
 use std::time::{Duration, Instant};
@@ -134,8 +135,73 @@ pub trait Transport {
 }
 
 #[derive(Debug)]
+struct DeadlineStream {
+    stream: TcpStream,
+    deadline: Instant,
+}
+
+impl DeadlineStream {
+    fn new(stream: TcpStream, timeout: Duration) -> Self {
+        Self {
+            stream,
+            deadline: Instant::now() + timeout,
+        }
+    }
+
+    fn set_deadline(&mut self, deadline: Instant) {
+        self.deadline = deadline;
+    }
+
+    fn remaining(&self) -> io::Result<Duration> {
+        self.deadline
+            .checked_duration_since(Instant::now())
+            .filter(|remaining| !remaining.is_zero())
+            .ok_or_else(timed_out)
+    }
+
+    fn map_timeout(&self, error: io::Error) -> io::Error {
+        if matches!(
+            error.kind(),
+            io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+        ) && Instant::now() >= self.deadline
+        {
+            timed_out()
+        } else {
+            error
+        }
+    }
+}
+
+impl Read for DeadlineStream {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        self.stream.set_read_timeout(Some(self.remaining()?))?;
+        self.stream
+            .read(buffer)
+            .map_err(|error| self.map_timeout(error))
+    }
+}
+
+impl Write for DeadlineStream {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        self.stream.set_write_timeout(Some(self.remaining()?))?;
+        self.stream
+            .write(buffer)
+            .map_err(|error| self.map_timeout(error))
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.stream.set_write_timeout(Some(self.remaining()?))?;
+        self.stream.flush().map_err(|error| self.map_timeout(error))
+    }
+}
+
+fn timed_out() -> io::Error {
+    io::Error::new(io::ErrorKind::TimedOut, "websocket request timed out")
+}
+
+#[derive(Debug)]
 pub struct WsTransport {
-    socket: WebSocket<TcpStream>,
+    socket: WebSocket<DeadlineStream>,
     timeout: Duration,
 }
 
@@ -172,14 +238,7 @@ impl WsTransport {
             ),
             connection_refused,
         })?;
-        stream
-            .set_read_timeout(Some(timeout))
-            .and_then(|()| stream.set_write_timeout(Some(timeout)))
-            .map_err(|error| ApplyError::Connect {
-                addr: addr.to_owned(),
-                message: error.to_string(),
-                connection_refused: false,
-            })?;
+        let stream = DeadlineStream::new(stream, timeout);
         let (socket, _) = tungstenite::client(format!("ws://{addr}"), stream).map_err(|error| {
             ApplyError::Connect {
                 addr: addr.to_owned(),
@@ -194,18 +253,11 @@ impl WsTransport {
 impl Transport for WsTransport {
     fn request(&mut self, message: &str) -> Result<String, ApplyError> {
         let deadline = Instant::now() + self.timeout;
-        self.socket
-            .get_mut()
-            .set_write_timeout(Some(remaining(deadline)?))
-            .map_err(|error| ApplyError::Transport(error.to_string()))?;
+        self.socket.get_mut().set_deadline(deadline);
         self.socket
             .send(Message::Text(message.to_owned().into()))
             .map_err(|error| ApplyError::Transport(error.to_string()))?;
         loop {
-            self.socket
-                .get_mut()
-                .set_read_timeout(Some(remaining(deadline)?))
-                .map_err(|error| ApplyError::Transport(error.to_string()))?;
             match self
                 .socket
                 .read()
@@ -226,13 +278,6 @@ impl Transport for WsTransport {
             }
         }
     }
-}
-
-fn remaining(deadline: Instant) -> Result<Duration, ApplyError> {
-    deadline
-        .checked_duration_since(Instant::now())
-        .filter(|remaining| !remaining.is_zero())
-        .ok_or_else(|| ApplyError::Transport("request timed out".to_owned()))
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -515,6 +560,11 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
     use std::time::{Duration, Instant};
+
+    use tungstenite::protocol::frame::{
+        Frame,
+        coding::{Data, OpCode},
+    };
 
     use super::*;
 
@@ -833,7 +883,54 @@ mod tests {
         });
 
         let mut transport =
-            WsTransport::connect(&addr.to_string(), Duration::from_millis(100)).unwrap();
+            WsTransport::connect(&addr.to_string(), Duration::from_secs(2)).unwrap();
+        transport.timeout = Duration::from_millis(100);
+        let started = Instant::now();
+        assert!(matches!(
+            transport.request(r#""GetState""#),
+            Err(ApplyError::Transport(_))
+        ));
+        assert!(started.elapsed() < Duration::from_millis(300));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn incomplete_fragment_stream_does_not_extend_request_deadline() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut socket = tungstenite::accept(stream).unwrap();
+            let _ = socket.read().unwrap();
+            if socket
+                .send(Message::Frame(Frame::message(
+                    b"{".as_slice(),
+                    OpCode::Data(Data::Text),
+                    false,
+                )))
+                .is_err()
+            {
+                return;
+            }
+            let deadline = Instant::now() + Duration::from_millis(400);
+            while Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(20));
+                if socket
+                    .send(Message::Frame(Frame::message(
+                        b" ".as_slice(),
+                        OpCode::Data(Data::Continue),
+                        false,
+                    )))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        });
+
+        let mut transport =
+            WsTransport::connect(&addr.to_string(), Duration::from_secs(2)).unwrap();
+        transport.timeout = Duration::from_millis(100);
         let started = Instant::now();
         assert!(matches!(
             transport.request(r#""GetState""#),
@@ -855,7 +952,8 @@ mod tests {
         });
 
         let mut transport =
-            WsTransport::connect(&addr.to_string(), Duration::from_millis(100)).unwrap();
+            WsTransport::connect(&addr.to_string(), Duration::from_secs(2)).unwrap();
+        transport.timeout = Duration::from_millis(100);
         let started = Instant::now();
         assert!(matches!(
             transport.request(r#""GetState""#),
