@@ -265,10 +265,86 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  update-check:
+    name: Update from the previous release (Windows)
+    # ADR 0020: before publishing, install the previous real release and let
+    # it update itself to this signed build, the managed service included
+    # (audit #155 TD-139). The previous release accepts HTTPS only, so the
+    # runner serves the new build over TLS with a throwaway certificate that
+    # this runner trusts for this run alone (maintainer decision 2026-11-02).
+    needs: [gate, build]
+    if: needs.gate.outputs.should_release == 'true' && needs.gate.outputs.previous_tag != ''
+    # The same WebView2 runtime limit of msedgedriver as ci.yml's update e2e.
+    runs-on: windows-2022
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PREVIOUS: ${{ needs.gate.outputs.previous_tag }}
+      VERSION: ${{ needs.gate.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.gate.outputs.release_sha }}
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.13"
+
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: |
+          rustup toolchain install
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-windows
+          path: ${{ runner.temp }}/update-new
+
+      - name: Download the previous release's Windows installer
+        run: |
+          $old = $env:PREVIOUS.TrimStart('v')
+          gh release download $env:PREVIOUS --repo $env:GITHUB_REPOSITORY --pattern "SECS2R-$old-windows-x64-setup.exe" --dir "$env:RUNNER_TEMP\update-old"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "OLD_VERSION=$old" >> $env:GITHUB_ENV
+
+      - name: Require an interactive console and report the environment
+        run: python -I .github/scripts/manage_e2e.py env --no-audio --artifacts "$env:RUNNER_TEMP\update-e2e" --report "$env:RUNNER_TEMP\update-env.md"
+
+      - name: Install tauri-driver 2.1.0 and a signed matching Edge driver
+        run: |
+          cargo install tauri-driver --locked --version 2.1.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -I -c "import runpy,sys; runpy.run_path(sys.argv[1])['prepare_edge'](sys.argv[2],sys.argv[3])" "$env:GITHUB_WORKSPACE\.github\scripts\manage_e2e.py" "$env:RUNNER_TEMP\update-edge" "$env:RUNNER_TEMP\update-e2e"
+
+      - name: Install the previous release and let it update itself
+        run: python -I .github/scripts/update_e2e.py run --old "$env:RUNNER_TEMP\update-old" --old-version "$env:OLD_VERSION" --new "$env:RUNNER_TEMP\update-new" --version "$env:VERSION" --asset-version "$env:VERSION" --tls --tauri-driver "$env:USERPROFILE\.cargo\bin\tauri-driver.exe" --msedgedriver "$env:SECS_MSEDGEDRIVER" --artifacts "$env:RUNNER_TEMP\update-e2e" --report "$env:RUNNER_TEMP\update-e2e-report.md"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: update-check-windows
+          path: ${{ runner.temp }}/update-e2e
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Report
+        if: always()
+        run: |
+          if (Test-Path "$env:RUNNER_TEMP\update-e2e-report.md") { Get-Content "$env:RUNNER_TEMP\update-e2e-report.md" >> $env:GITHUB_STEP_SUMMARY }
+
   publish:
     name: Publish the release
-    needs: [gate, build]
-    if: needs.gate.outputs.should_release == 'true'
+    needs: [gate, build, update-check]
+    # The update check is skipped only when there is no previous release.
+    if: >-
+      ${{ !cancelled() && needs.gate.outputs.should_release == 'true'
+        && needs.build.result == 'success'
+        && (needs.update-check.result == 'success' || needs.update-check.result == 'skipped') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
