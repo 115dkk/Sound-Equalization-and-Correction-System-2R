@@ -1,4 +1,5 @@
 import { HelpTip } from "../../ui/HelpTip";
+import { useProjectIdentity } from "../../state/react";
 // The settings that change the correction, in sections grouped by what they
 // change: 모드, 보정 범위, 크로스오버, 서브 정렬 (BA), 저음 도착과 울림,
 // MIMO. Every change goes through `changeSetting` (calibration_settings_set)
@@ -179,10 +180,14 @@ function RoomDims({ settings, change }: { settings: CalibrationSettings; change:
   const t = useT();
   // Partial dimensions are an edit in progress: only all three set the volume.
   const [dims, setDims] = useState<[number, number, number]>(() => settings.room_dims_m ?? [0, 0, 0]);
-  useEffect(() => {
-    if (settings.room_dims_m) setDims(settings.room_dims_m);
+  const project = useProjectIdentity();
+  const owner = useRef(project);
+  useLayoutEffect(() => {
+    if (owner.current !== project) setDims(settings.room_dims_m ?? [0, 0, 0]);
+    else if (settings.room_dims_m) setDims(settings.room_dims_m);
     else setDims((d) => (d.every((v) => v > 0) ? [0, 0, 0] : d));
-  }, [settings.room_dims_m]);
+    owner.current = project;
+  }, [project, settings.room_dims_m]);
   const set = (index: number, value: number) => {
     const next: [number, number, number] = [...dims];
     next[index] = value;

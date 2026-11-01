@@ -7,7 +7,8 @@ import { JobTray } from "../../app/jobs/JobTray";
 import { PrefsScope } from "../../app/prefs";
 import { T0, replay, staticApi } from "../../gallery/frameSpecimens";
 import { translate } from "../../i18n";
-import { ipcError, rcEditRefusal } from "../../ipc/mock";
+import { createMockService, ipcError, rcEditRefusal } from "../../ipc/mock";
+import { createSession } from "../../state/session";
 import type { RcBand } from "../../ipc/bindings/RcBand";
 import type { Translate } from "../../i18n/react";
 import { renderWith } from "../../test/render";
@@ -473,6 +474,26 @@ describe("보정 screen", () => {
     expect(actions.previewXo).toHaveBeenLastCalledWith("프론트", 85);
     expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "xo", group: "프론트", hz: 85 });
     expect(handle().getAttribute("aria-valuenow")).toBe("85");
+  });
+
+  it("clears partial room dimensions on a null-to-null project replacement", async () => {
+    const mock = createMockService({ tickMs: 0 });
+    const session = createSession(mock);
+    const actions = mockActions();
+    try {
+      await session.start(); await session.settled();
+      // Keep the screen mounted: both projects supply the same null dimensions.
+      renderWith(<CalibrateScreen view={fx.rangeViews.noVolume} actions={actions} />, { session });
+      commitNumber("calibrate.range.dims.w", "5");
+      expect(actions.changeSetting).not.toHaveBeenCalled();
+      await act(async () => { await session.call({ method: "project_open", params: { path: "/B.secs" } }); });
+      expect(Number((must("calibrate.range.dims.w") as HTMLInputElement).value)).toBe(0);
+      commitNumber("calibrate.range.dims.d", "4");
+      commitNumber("calibrate.range.dims.h", "3");
+      expect(actions.changeSetting).not.toHaveBeenCalled();
+      commitNumber("calibrate.range.dims.w", "6");
+      expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "room_dims", dims: [6, 4, 3] });
+    } finally { cleanup(); session.dispose(); await session.settled(); mock.dispose(); }
   });
 
   it("sends every setting through changeSetting", () => {

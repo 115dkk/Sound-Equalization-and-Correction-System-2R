@@ -8,6 +8,11 @@ export function SessionProvider({ value, children }: { value: Session; children:
 export function useOptionalSession() {
   return useContext(Context);
 }
+const noSubscription = () => () => {};
+export function useProjectIdentity() {
+  const session = useOptionalSession();
+  return useSyncExternalStore(session?.host.subscribe ?? noSubscription, () => session?.host.getSnapshot().opened ?? 0);
+}
 export function useSession() {
   const session = useOptionalSession();
   if (!session) throw new Error("useSession requires SessionProvider");
