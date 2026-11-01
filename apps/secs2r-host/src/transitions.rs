@@ -202,7 +202,10 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
             }));
             match event {
                 SessionEvent::Logon if owner_matches => {
-                    next.managed.owner_session_id = Some(session_id);
+                    if next.managed.owner_session_id != Some(session_id) {
+                        next.managed.owner_session_id = Some(session_id);
+                        effects.push(Effect::SaveState(next.managed.clone()));
+                    }
                     if let Some(target) = next.managed.camilla.clone()
                         && next.running_child_session.is_none()
                     {
@@ -219,6 +222,12 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
                 }
                 SessionEvent::Logon => {
                     if next.running_child_session.is_some() {
+                        effects.push(Effect::StopChild);
+                    }
+                    next.restart_scheduled = false;
+                }
+                SessionEvent::Logoff if owner_matches => {
+                    if next.running_child_session.is_some() || next.restart_scheduled {
                         effects.push(Effect::StopChild);
                     }
                     next.restart_scheduled = false;
@@ -329,6 +338,7 @@ mod tests {
     use super::*;
 
     struct FakePlatform {
+        saved_states: Vec<HostManaged>,
         launches: Vec<(u32, String)>,
         launch_starts_child: bool,
         repair_calls: usize,
@@ -343,6 +353,7 @@ mod tests {
     impl Default for FakePlatform {
         fn default() -> Self {
             Self {
+                saved_states: Vec::new(),
                 launches: Vec::new(),
                 launch_starts_child: true,
                 repair_calls: 0,
@@ -357,7 +368,8 @@ mod tests {
     }
 
     impl Platform for FakePlatform {
-        fn save_state(&mut self, _managed: &HostManaged) -> Result<(), IpcError> {
+        fn save_state(&mut self, managed: &HostManaged) -> Result<(), IpcError> {
+            self.saved_states.push(managed.clone());
             Ok(())
         }
 
@@ -647,6 +659,63 @@ mod tests {
         assert_eq!(state.running_child_session, None);
         assert!(!state.restart_scheduled);
         assert_eq!(platform.stops, 1);
+    }
+
+    #[test]
+    fn owner_logoff_cancels_backoff_without_a_running_child() {
+        let mut state = State::new(
+            HostManaged {
+                camilla: Some(camilla("camilladsp.exe")),
+                owner_session_id: Some(7),
+                owner_user_sid: Some("sid-a".into()),
+                ..HostManaged::default()
+            },
+            None,
+        );
+        state.restart_scheduled = true;
+        let mut platform = FakePlatform::default();
+
+        let (next, effects) = decide(
+            &state,
+            Input::Session {
+                event: SessionEvent::Logoff,
+                session_id: 7,
+                owner_matches: true,
+            },
+        );
+        state = next;
+        drive(&mut state, effects, &mut platform).unwrap();
+
+        assert!(!state.restart_scheduled);
+        assert_eq!(platform.stops, 1);
+    }
+
+    #[test]
+    fn owner_logon_persists_a_changed_session_id() {
+        let mut state = State::new(
+            HostManaged {
+                owner_session_id: Some(7),
+                owner_user_sid: Some("sid-a".into()),
+                ..HostManaged::default()
+            },
+            None,
+        );
+        let mut platform = FakePlatform::default();
+
+        let (next, effects) = decide(
+            &state,
+            Input::Session {
+                event: SessionEvent::Logon,
+                session_id: 9,
+                owner_matches: true,
+            },
+        );
+        state = next;
+        drive(&mut state, effects, &mut platform).unwrap();
+
+        assert_eq!(state.managed.owner_session_id, Some(9));
+        assert_eq!(platform.saved_states.len(), 1);
+        assert_eq!(platform.saved_states[0].owner_session_id, Some(9));
     }
 
     #[test]

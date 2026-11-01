@@ -509,7 +509,9 @@ fn service_loop(
                 secs_sys::host::ServiceEvent::SessionLogoff(session) => {
                     let child_session_ended =
                         transition_state.running_child_session == Some(session);
-                    if child_session_ended {
+                    let owner_session_ended =
+                        transition_state.managed.owner_session_id == Some(session);
+                    if child_session_ended || owner_session_ended {
                         let _ = process_rules.apply(ProcessEvent::Logoff, Instant::now());
                     }
                     let (next, effects) = transitions::decide(
@@ -517,7 +519,7 @@ fn service_loop(
                         TransitionInput::Session {
                             event: TransitionSessionEvent::Logoff,
                             session_id: session,
-                            owner_matches: child_session_ended,
+                            owner_matches: owner_session_ended,
                         },
                     );
                     transition_state = next;
@@ -532,7 +534,7 @@ fn service_loop(
                         &config_sender,
                         paths,
                     )?;
-                    if child_session_ended {
+                    if child_session_ended || owner_session_ended {
                         core.camilla.state = ManagedProcessState::NoSession;
                         core.camilla.pid = None;
                     }
