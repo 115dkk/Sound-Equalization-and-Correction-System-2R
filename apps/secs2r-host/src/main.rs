@@ -730,11 +730,19 @@ impl TransitionPlatform for RealTransitionPlatform<'_> {
         Ok(())
     }
 
+    fn clear_camilla_status(&mut self) {
+        self.core.camilla = Default::default();
+    }
+
+    fn clear_eqapo_status(&mut self) {
+        self.core.eqapo_include = IncludeState::Absent;
+    }
+
     fn launch_child(
         &mut self,
         session: u32,
         _target: &secs_types::ipc::ManagedCamilla,
-    ) -> Result<(), IpcError> {
+    ) -> Result<bool, IpcError> {
         *self.restart_at = None;
         launch(
             self.core,
@@ -743,7 +751,8 @@ impl TransitionPlatform for RealTransitionPlatform<'_> {
             self.restart_at,
             self.paths,
             session,
-        )
+        )?;
+        Ok(self.child.is_some())
     }
 
     fn log(&mut self, line: &secs_types::ipc::HostLogLine) -> Result<(), IpcError> {
@@ -803,12 +812,20 @@ fn handle_request(
                 validate_eqapo_path(Path::new(&eqapo.config_path))?;
             }
             let requester_sid = secs_sys::host::session_user_identity(identity.session_id)?;
+            let prospective = transitions::managed_after_update(
+                transition_state,
+                &update,
+                identity.session_id,
+                &requester_sid,
+            );
+            let managing_session = managing_session_for(&prospective)?;
             let (next, effects) = transitions::decide(
                 transition_state,
                 TransitionInput::SetManaged {
                     update,
                     requester_session: identity.session_id,
                     requester_sid,
+                    managing_session,
                 },
             );
             *transition_state = next;
@@ -943,12 +960,17 @@ fn authorize_mutation(identity: secs_sys::host::PipeClientIdentity) -> Result<()
 }
 
 #[cfg(target_os = "windows")]
-fn managing_session(core: &Core) -> Result<Option<u32>, IpcError> {
+fn managing_session_for(managed: &HostManaged) -> Result<Option<u32>, IpcError> {
     let Some(active) = secs_sys::host::active_console_session() else {
         return Ok(None);
     };
     let sid = secs_sys::host::session_user_identity(active)?;
-    Ok(rules::managed_user_allowed(core.managed.owner_user_sid.as_deref(), &sid).then_some(active))
+    Ok(rules::managed_user_allowed(managed.owner_user_sid.as_deref(), &sid).then_some(active))
+}
+
+#[cfg(target_os = "windows")]
+fn managing_session(core: &Core) -> Result<Option<u32>, IpcError> {
+    managing_session_for(&core.managed)
 }
 
 #[cfg(target_os = "windows")]

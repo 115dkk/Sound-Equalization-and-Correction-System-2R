@@ -19,6 +19,7 @@ pub enum Input {
         update: HostManaged,
         requester_session: u32,
         requester_sid: String,
+        managing_session: Option<u32>,
     },
     StopManaging,
     Session {
@@ -43,6 +44,8 @@ pub enum Effect {
         session: u32,
     },
     StopChild,
+    ClearCamillaStatus,
+    ClearEqapoStatus,
     LaunchChild {
         session: u32,
         target: ManagedCamilla,
@@ -82,8 +85,33 @@ pub trait Platform {
     fn replace_watcher(&mut self, target: Option<&ManagedEqApo>) -> Result<(), IpcError>;
     fn repair_eqapo(&mut self, session: u32) -> Result<(), IpcError>;
     fn stop_child(&mut self) -> Result<(), IpcError>;
-    fn launch_child(&mut self, session: u32, target: &ManagedCamilla) -> Result<(), IpcError>;
+    fn clear_camilla_status(&mut self);
+    fn clear_eqapo_status(&mut self);
+    fn launch_child(&mut self, session: u32, target: &ManagedCamilla) -> Result<bool, IpcError>;
     fn log(&mut self, line: &HostLogLine) -> Result<(), IpcError>;
+}
+
+pub fn managed_after_update(
+    state: &State,
+    update: &HostManaged,
+    requester_session: u32,
+    requester_sid: &str,
+) -> HostManaged {
+    let owner_changed = state.managed.owner_user_sid.as_deref() != Some(requester_sid);
+    let mut managed = if owner_changed {
+        HostManaged::default()
+    } else {
+        state.managed.clone()
+    };
+    if update.camilla.is_some() {
+        managed.camilla.clone_from(&update.camilla);
+    }
+    if update.eqapo.is_some() {
+        managed.eqapo.clone_from(&update.eqapo);
+    }
+    managed.owner_session_id = Some(requester_session);
+    managed.owner_user_sid = Some(requester_sid.to_owned());
+    managed
 }
 
 pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
@@ -94,26 +122,23 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
             update,
             requester_session,
             requester_sid,
+            managing_session,
         } => {
             let previous_camilla = next.managed.camilla.clone();
-            let owner_changed = next.managed.owner_user_sid.as_deref() != Some(&requester_sid);
-            if owner_changed {
-                next.managed = HostManaged::default();
-            }
-            if update.camilla.is_some() {
-                next.managed.camilla = update.camilla;
-            }
-            if update.eqapo.is_some() {
-                next.managed.eqapo = update.eqapo;
-            }
-            next.managed.owner_session_id = Some(requester_session);
-            next.managed.owner_user_sid = Some(requester_sid);
+            let previous_eqapo = next.managed.eqapo.clone();
+            next.managed = managed_after_update(state, &update, requester_session, &requester_sid);
             next.eqapo_error = None;
             next.repair_attempts = 0;
             next.repair_retry_after = None;
             effects.push(Effect::SaveState(next.managed.clone()));
             effects.push(Effect::ReplaceWatcher(next.managed.eqapo.clone()));
-            if next.managed.eqapo.is_some() {
+            if previous_camilla.is_some() && next.managed.camilla.is_none() {
+                effects.push(Effect::ClearCamillaStatus);
+            }
+            if previous_eqapo.is_some() && next.managed.eqapo.is_none() {
+                effects.push(Effect::ClearEqapoStatus);
+            }
+            if managing_session == Some(requester_session) && next.managed.eqapo.is_some() {
                 effects.push(Effect::RepairEqapo {
                     session: requester_session,
                 });
@@ -121,7 +146,8 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
             if previous_camilla != next.managed.camilla && next.running_child_session.is_some() {
                 effects.push(Effect::StopChild);
             }
-            if let Some(target) = next.managed.camilla.clone()
+            if managing_session == Some(requester_session)
+                && let Some(target) = next.managed.camilla.clone()
                 && (next.running_child_session.is_none()
                     || previous_camilla != next.managed.camilla)
             {
@@ -139,9 +165,11 @@ pub fn decide(state: &State, input: Input) -> (State, Vec<Effect>) {
             next.repair_retry_after = None;
             effects.push(Effect::SaveState(next.managed.clone()));
             effects.push(Effect::ReplaceWatcher(None));
-            if next.running_child_session.is_some() {
-                effects.push(Effect::StopChild);
-            }
+            effects.push(Effect::ClearCamillaStatus);
+            effects.push(Effect::ClearEqapoStatus);
+            // The platform stop also cancels a pending real restart deadline,
+            // even when no child is currently tracked.
+            effects.push(Effect::StopChild);
         }
         Input::Session {
             event,
@@ -253,12 +281,16 @@ pub fn drive(
                 }
             },
             Effect::StopChild => {
-                platform.stop_child()?;
+                // The real adapter takes ownership of the child before stop can
+                // fail, so the transition must forget it on both outcomes.
                 state.running_child_session = None;
+                platform.stop_child()?;
             }
+            Effect::ClearCamillaStatus => platform.clear_camilla_status(),
+            Effect::ClearEqapoStatus => platform.clear_eqapo_status(),
             Effect::LaunchChild { session, target } => {
-                platform.launch_child(session, &target)?;
-                state.running_child_session = Some(session);
+                state.running_child_session =
+                    platform.launch_child(session, &target)?.then_some(session);
             }
             Effect::Log(line) => platform.log(&line)?,
         }
@@ -272,12 +304,30 @@ mod tests {
 
     use super::*;
 
-    #[derive(Default)]
     struct FakePlatform {
         launches: Vec<(u32, String)>,
+        launch_starts_child: bool,
         repair_calls: usize,
         fail_repairs: bool,
         stops: usize,
+        fail_stop: bool,
+        camilla_status_clears: usize,
+        eqapo_status_clears: usize,
+    }
+
+    impl Default for FakePlatform {
+        fn default() -> Self {
+            Self {
+                launches: Vec::new(),
+                launch_starts_child: true,
+                repair_calls: 0,
+                fail_repairs: false,
+                stops: 0,
+                fail_stop: false,
+                camilla_status_clears: 0,
+                eqapo_status_clears: 0,
+            }
+        }
     }
 
     impl Platform for FakePlatform {
@@ -300,12 +350,28 @@ mod tests {
 
         fn stop_child(&mut self) -> Result<(), IpcError> {
             self.stops += 1;
-            Ok(())
+            if self.fail_stop {
+                Err(IpcError::new(ErrorCode::ApplyFailed, "stop failed"))
+            } else {
+                Ok(())
+            }
         }
 
-        fn launch_child(&mut self, session: u32, target: &ManagedCamilla) -> Result<(), IpcError> {
+        fn clear_camilla_status(&mut self) {
+            self.camilla_status_clears += 1;
+        }
+
+        fn clear_eqapo_status(&mut self) {
+            self.eqapo_status_clears += 1;
+        }
+
+        fn launch_child(
+            &mut self,
+            session: u32,
+            target: &ManagedCamilla,
+        ) -> Result<bool, IpcError> {
             self.launches.push((session, target.exe_path.clone()));
-            Ok(())
+            Ok(self.launch_starts_child)
         }
 
         fn log(&mut self, _line: &HostLogLine) -> Result<(), IpcError> {
@@ -342,6 +408,7 @@ mod tests {
                 },
                 requester_session: 7,
                 requester_sid: "sid-a".into(),
+                managing_session: Some(7),
             },
         );
         state = next;
@@ -358,6 +425,7 @@ mod tests {
                 },
                 requester_session: 8,
                 requester_sid: "sid-b".into(),
+                managing_session: Some(8),
             },
         );
         state = next;
@@ -390,11 +458,124 @@ mod tests {
                 },
                 requester_session: 9,
                 requester_sid: "sid-a".into(),
+                managing_session: Some(9),
             },
         );
 
         assert_eq!(next.managed.camilla, Some(target));
         assert_eq!(next.managed.eqapo, Some(eqapo()));
+    }
+
+    #[test]
+    fn owner_change_clears_status_for_every_dropped_target() {
+        let mut state = State::new(
+            HostManaged {
+                camilla: Some(camilla("A-camilladsp.exe")),
+                eqapo: Some(eqapo()),
+                owner_session_id: Some(7),
+                owner_user_sid: Some("sid-a".into()),
+            },
+            None,
+        );
+        let mut platform = FakePlatform::default();
+        let (next, effects) = decide(
+            &state,
+            Input::SetManaged {
+                update: HostManaged::default(),
+                requester_session: 8,
+                requester_sid: "sid-b".into(),
+                managing_session: Some(8),
+            },
+        );
+        state = next;
+
+        drive(&mut state, effects, &mut platform).unwrap();
+
+        assert_eq!(platform.camilla_status_clears, 1);
+        assert_eq!(platform.eqapo_status_clears, 1);
+    }
+
+    #[test]
+    fn set_managed_does_not_launch_or_repair_without_a_managing_session() {
+        let mut state = State::new(
+            HostManaged {
+                camilla: Some(camilla("camilladsp.exe")),
+                eqapo: Some(eqapo()),
+                owner_session_id: Some(7),
+                owner_user_sid: Some("sid-a".into()),
+            },
+            None,
+        );
+        let mut platform = FakePlatform::default();
+        let (next, effects) = decide(
+            &state,
+            Input::SetManaged {
+                update: HostManaged::default(),
+                requester_session: 7,
+                requester_sid: "sid-a".into(),
+                managing_session: None,
+            },
+        );
+        state = next;
+
+        drive(&mut state, effects, &mut platform).unwrap();
+
+        assert!(platform.launches.is_empty());
+        assert_eq!(platform.repair_calls, 0);
+    }
+
+    #[test]
+    fn stop_managing_calls_platform_stop_without_a_tracked_child() {
+        let mut state = State::new(HostManaged::default(), None);
+        let mut platform = FakePlatform::default();
+        let (next, effects) = decide(&state, Input::StopManaging);
+        state = next;
+
+        drive(&mut state, effects, &mut platform).unwrap();
+
+        assert_eq!(platform.stops, 1);
+    }
+
+    #[test]
+    fn launch_that_does_not_create_a_child_is_not_recorded_as_running() {
+        let mut state = State::new(
+            HostManaged {
+                camilla: Some(camilla("camilladsp.exe")),
+                owner_session_id: Some(7),
+                owner_user_sid: Some("sid-a".into()),
+                ..HostManaged::default()
+            },
+            None,
+        );
+        let mut platform = FakePlatform {
+            launch_starts_child: false,
+            ..FakePlatform::default()
+        };
+        let (next, effects) = decide(
+            &state,
+            Input::RestartTick {
+                owner_session: Some(7),
+            },
+        );
+        state = next;
+
+        drive(&mut state, effects, &mut platform).unwrap();
+
+        assert_eq!(state.running_child_session, None);
+    }
+
+    #[test]
+    fn failed_stop_still_clears_the_tracked_child() {
+        let mut state = State::new(HostManaged::default(), Some(7));
+        let mut platform = FakePlatform {
+            fail_stop: true,
+            ..FakePlatform::default()
+        };
+        let (next, effects) = decide(&state, Input::StopManaging);
+        state = next;
+
+        assert!(drive(&mut state, effects, &mut platform).is_err());
+        assert_eq!(state.running_child_session, None);
     }
 
     #[test]
