@@ -166,7 +166,7 @@ export function createSession(ipc: Ipc) {
   };
   function clearProjectResources() {
     projectFailures.clear();
-    for (const replaced of projectReplacements) replaced();
+    invalidateProjectFollowUps();
     for (const key of ["project", "config", "notices", "dsp", "layout", "estimate", "measurementSettings", "records", "curves", "levels", "settings", "micCalibration", "modeSpec", "target", "results", "lines", "subWarnings", "folder", "applyStatus"] as const) {
       stores[key].set(null);
     }
@@ -199,18 +199,25 @@ export function createSession(ipc: Ipc) {
     });
     return work;
   }
+  let projectVersion = 0;
+  function invalidateProjectFollowUps() {
+    projectVersion++;
+    for (const replaced of projectReplacements) replaced();
+  }
   function projectGuard() {
     const epoch = jobs.epoch;
-    return { alive: () => epoch === jobs.epoch };
+    const version = projectVersion;
+    return { alive: () => epoch === jobs.epoch && version === projectVersion };
   }
   async function projectEditsSettled(): Promise<boolean> {
     const epoch = jobs.epoch;
+    const guard = projectGuard();
     let replaced!: () => void;
     const replacement = new Promise<null>((resolve) => { replaced = () => resolve(null); });
     projectReplacements.add(replaced);
     let succeeded = true;
     try {
-      while (epoch === jobs.epoch) {
+      while (guard.alive()) {
         const edits = [...projectWork].filter(([, owner]) => owner === epoch).map(([work]) => work);
         if (!edits.length) {
           const failed = projectFailures.delete(epoch);
@@ -653,7 +660,10 @@ export function createSession(ipc: Ipc) {
     startPromise = track(async () => {
       if (ipc.externalChanges) {
         externalBatch = coalesceExternalChanges((methods) => track(() => refreshExternal(methods)), report);
-        try { offExternal = await ipc.externalChanges.subscribe((method) => externalBatch?.push(method)); }
+        try { offExternal = await ipc.externalChanges.subscribe((method) => {
+          if (externalRefresh(method).replaceProject) invalidateProjectFollowUps();
+          externalBatch?.push(method);
+        }); }
         catch (error) { report(error); }
       }
       await Promise.all([stores.bootstrap.load(), stores.appSettings.load(), stores.computeStatus.load(), stores.methods.load(),

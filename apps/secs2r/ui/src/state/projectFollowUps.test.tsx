@@ -11,7 +11,8 @@ import { createSession } from "./session";
 
 afterEach(() => { cleanup(); vi.useRealTimers(); });
 
-it.each(["mdat_scan", "dialog_pick_mdat", "dialog_open_file", "dialog_save_file", "dialog_pick_folder"] as const)("drops %s follow-up after an external project switch", async (method) => {
+it.each((["mdat_scan", "dialog_pick_mdat", "dialog_open_file", "dialog_save_file", "dialog_pick_folder"] as const)
+  .flatMap((method) => [0, 25].map((delay) => ({ method, delay }))))("drops $method follow-up $delay ms after an external project switch", async ({ method, delay }) => {
   vi.useFakeTimers();
   const mock = createMockService({ tickMs: 0 });
   let release!: () => void;
@@ -40,9 +41,9 @@ it.each(["mdat_scan", "dialog_pick_mdat", "dialog_open_file", "dialog_save_file"
     await act(async () => {
       await mock.request({ method: "project_new", params: { path: "/B.secs", preset: "2.0", sub_count: 0, sample: false, tutorial: false } });
       emit("project_new");
-      await vi.advanceTimersByTimeAsync(25);
+      if (delay) await vi.advanceTimersByTimeAsync(delay);
     });
-    expect(session.stores.project.getSnapshot()?.path).toBe("/B.secs");
+    if (delay) expect(session.stores.project.getSnapshot()?.path).toBe("/B.secs");
     mock.calls.length = 0;
     await act(async () => { release(); await session.settled(); });
     expect(session.host.getSnapshot().mdat).toBeNull();
