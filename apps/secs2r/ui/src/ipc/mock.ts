@@ -132,7 +132,7 @@ function correctionSettings(s: CalibrationSettings): string {
     s.mode === "ultra" ? s.ultra_ms : null, manual,
     Object.values(s.subs_manual).some((entry) => entry.mode === "fixed") ? s.sub_main_delay_ms : null,
     s.infra_boost_max_db, s.xo_peq_on, s.xo_peq_lo, s.xo_peq_hi, s.boost_max_db,
-    s.rc_hi_basis, s.rc_hi_transition, validRcBands(s.rc_bands).map((band) => [band.lo_hz, band.hi_hz]),
+    s.rc_hi_basis, s.rc_hi_transition, [...s.rc_bands].sort((a, b) => a.lo_hz - b.lo_hz || a.hi_hz - b.hi_hz).map((band) => [band.lo_hz, band.hi_hz]),
     s.sample_rate_policy, s.low_protect, s.lf_align, s.mode_decay, s.hf_phase, s.input_hp_hz, s.peq_analytic_derivatives,
   ]);
 }
@@ -1022,8 +1022,8 @@ export function createMockService(options: MockOptions = {}): MockService {
         }) };
       case "mimo": {
         const project = needProject();
+        // start_mimo compares raw engine keys; only calibration snapshots normalize bands.
         const captured = clone(req.params.settings ?? settings);
-        captured.rc_bands = validRcBands(captured.rc_bands);
         const refusal = mimoRefusal(captured, project.positions.length);
         if (refusal) throw new MockError(refusal);
         if (!results.calibration || results.calibration.cached || calibrationSettings === null) throw new MockError(ipcError("engine_input", "calibration must run before MIMO"));

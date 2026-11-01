@@ -159,7 +159,7 @@ describe("standalone mock MIMO preconditions", () => {
     } finally { mock.dispose(); }
   });
 
-  it.each([false, true])("compares normalized RC bands for standalone MIMO (raw calibration=%s)", async (rawCalibration) => {
+  it.each([false, true])("compares raw MIMO bands against normalized calibration (raw calibration=%s)", async (rawCalibration) => {
     const mock = createMockService({ tickMs: 0 });
     const valid = [{ lo_hz: 20, hi_hz: 100 }, { lo_hz: 1000, hi_hz: 2000 }, { lo_hz: 1000, hi_hz: 3000 }, { lo_hz: 19000, hi_hz: 20000 }];
     const raw = [valid[3]!, { lo_hz: 19500, hi_hz: 19900 }, valid[2]!, valid[0]!, valid[1]!,
@@ -169,7 +169,12 @@ describe("standalone mock MIMO preconditions", () => {
       const base = { ...await mock.request({ method: "calibration_settings_get" }), mimo_on: true };
       await mock.request({ method: "calibrate", params: { settings: { ...base, rc_bands: rawCalibration ? raw : valid }, subs_only: false } }); mock.drain();
       const stored = await mock.request({ method: "calibration_settings_get" });
-      await expect(mock.request({ method: "mimo", params: { settings: { ...base, rc_bands: rawCalibration ? valid : raw } } })).resolves.toMatchObject({ kind: "mimo" });
+      for (const bands of [[...valid, { lo_hz: 10, hi_hz: 100 }], [...valid, { lo_hz: 19500, hi_hz: 19900 }], raw]) {
+        await expect(mock.request({ method: "mimo", params: { settings: { ...base, rc_bands: bands } } })).rejects.toMatchObject({ error: { code: "stale_inputs" } });
+        expect(await mock.request({ method: "jobs" })).toEqual([]);
+      }
+      // engine_key sorts but does not filter or truncate explicit MIMO bands.
+      await expect(mock.request({ method: "mimo", params: { settings: { ...base, rc_bands: [...valid].reverse() } } })).resolves.toMatchObject({ kind: "mimo" });
       mock.drain();
       expect((await mock.request({ method: "results" })).mimo?.stale).toBe(false);
       expect(await mock.request({ method: "calibration_settings_get" })).toEqual(stored);
