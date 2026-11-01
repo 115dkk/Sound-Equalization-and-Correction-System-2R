@@ -2085,6 +2085,22 @@ tests = [
 ]
 
 [[feature]]
+id = "calibration.input_hp"
+kind = "workflow"
+milestone = "M5"
+status = "implemented"
+upstream = "new; ADR 0031, project input_hp_hz and project set --input-hp Hz|off"
+tests = [
+  "secs-service::rc_band_edits_reject_invalid_values_and_sort_valid_bands",
+  "secs-service::input_hp_edits_store_valid_values_and_accept_off",
+  "secs-service::input_hp_edits_validate_persist_and_mark_results_stale",
+  "secs-service::input_hp_result_curves_show_the_cut_without_changing_the_verdict",
+  "secs-project::input_hp_round_trip_clamps_and_legacy_default",
+  "secs2r-cli::project_set_persists_hf_phase_switch",
+]
+note = "ADR 0031 (D53): 10–50 Hz edit check, input_hp_hz stored only when on, result curves show the cut while the verdict stays, export summary and CLI flag."
+
+[[feature]]
 id = "calibration.edit_lf_align"
 kind = "workflow"
 milestone = "M5"
@@ -2147,3 +2163,12 @@ milestone = "M6"
 status = "implemented"
 upstream = "new"
 tests = ["secs-apply::supervise"]
+
+[[feature]]
+id = "engine.input_hp"
+kind = "engine"
+milestone = "M5"
+status = "implemented"
+upstream = "new"
+note = "ADR 0031: common BW48 input high-pass after RC/BA design, before input correction and the MIMO fork in every export."
+tests = ["secs-engine::input_hp_keeps_rc_ba_bits_and_filters_export_and_mimo_once", "secs-engine::input_hp_setting_reaches_engine_without_changing_other_fields", "secs-graph::input_hp_plan_cuts_every_input_and_mimo_once", "secs-filters::input_hp_render_collector_prefixes_every_route", "secs-filters::input_hp_eqapo_precedes_raw_copies_and_cuts_every_input", "secs-filters::input_hp_playback_filters_raw_inputs_before_full_and_lowrate_support", "secs-camilla::input_hp_camilla_is_one_all_input_step_before_mimo_fork"]

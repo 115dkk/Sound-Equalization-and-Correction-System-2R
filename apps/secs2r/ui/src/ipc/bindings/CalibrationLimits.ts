@@ -39,6 +39,10 @@ dim_valid: [number, number],
  */
 boost: [number, number], 
 /**
+ * Common input high-pass (Hz) when it is on (ADR 0031).
+ */
+input_hp: [number, number], 
+/**
  * Latency budget of the ultra mode (ms).
  */
 ultra_ms: [number, number], 

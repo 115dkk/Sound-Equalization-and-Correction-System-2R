@@ -120,6 +120,7 @@ pub(crate) fn describe(
                         lf_align: cache.labels.lf_align,
                         mode_decay: cache.labels.mode_decay,
                         hf_phase: cache.labels.hf_phase,
+                        input_hp_hz: cache.calibration_chain.input_hp_hz,
                         ..CalibrationSettings::default()
                     }));
                     pieces

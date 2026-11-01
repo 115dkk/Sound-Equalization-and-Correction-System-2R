@@ -1237,32 +1237,34 @@ function idsOf(node: ReactNode): Set<string> {
   return ids;
 }
 
-describe("극저역 보호 (ADR 0022)", () => {
-  it("sits beside the boost limit in the range card's 고급, off by default, and sends its edit", () => {
+describe("극저역 보호 자동 설정 (ADR 0022)", () => {
+  it("sits in the 극저역 보호 group in the range card's body with 고급 folded, off by default, and sends its edit", () => {
     const actions = setup(fx.lowProtectViews.off);
-    // Off, 고급 stays folded as before; opened, the switch follows the boost limit.
-    expect(ui("calibrate.range.low_protect")).toBeNull();
-    openAdvanced();
+    // The maintainer's 2026-10-31 rule: this family is never under 고급.
+    expect(must("calibrate.range.advanced").getAttribute("aria-expanded")).toBe("false");
     const range = must("calibrate.settings.range");
-    const toggle = within(range).getByRole("switch", { name: "롤오프 아래 부스트 막기" });
+    const group = within(range).getByRole("group", { name: "극저역 보호" });
+    expect(group.getAttribute("data-ui")).toBe("calibrate.range.low_end");
+    const toggle = within(group).getByRole("switch", { name: "자동 설정" });
     expect(toggle.getAttribute("data-ui")).toBe("calibrate.range.low_protect");
     expect(toggle.getAttribute("aria-checked")).toBe("false");
-    expect(must("calibrate.range.boost").compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(toggle.closest('[data-ui="calibrate.range.advanced"]')).toBeNull();
     expect(ui("calibrate.range.low_protect.help")).not.toBeNull();
     fireEvent.click(toggle);
     expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "low_protect", on: true });
   });
 
-  it("opens 고급 with the switch on, so a protected result's cause stays in view, and turns it off", () => {
+  it("stays in view when on without opening 고급, and turns it off", () => {
     const actions = setup(fx.lowProtectViews.on);
+    expect(must("calibrate.range.advanced").getAttribute("aria-expanded")).toBe("false");
     const toggle = must("calibrate.range.low_protect");
     expect(toggle.getAttribute("aria-checked")).toBe("true");
     fireEvent.click(toggle);
     expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "low_protect", on: false });
     cleanupAll();
     setup(fx.lowProtectViews.off, { locale: "en" });
-    openAdvanced();
-    expect(must("calibrate.range.low_protect").textContent).toBe("Block boost below roll-off");
+    expect(must("calibrate.range.low_protect").textContent).toBe("Automatic");
+    expect(must("calibrate.range.low_end.label").textContent).toBe("Low-end protection");
   });
 
   it("lists each protected channel in the collapsed notes, and puts the bus that could not hold in a warning with what to do", () => {
@@ -1291,6 +1293,37 @@ describe("극저역 보호 (ADR 0022)", () => {
     setup(fx.lowProtectViews.off, { initial: { rangeAdvanced: true, notesOpen: true } });
     expect(must("calibrate.range.low_protect").getAttribute("aria-checked")).toBe("false");
     expect((must("calibrate.verdict.notes") as HTMLDetailsElement).open).toBe(true);
+  });
+});
+
+describe("극저역 보호 수동 설정, the input cut (ADR 0031)", () => {
+  it("follows 자동 설정 in the same group, off by default, and turns on at 25 Hz", () => {
+    const actions = setup(fx.lowProtectViews.off);
+    const group = within(must("calibrate.settings.range")).getByRole("group", { name: "극저역 보호" });
+    const toggle = within(group).getByRole("switch", { name: "수동 설정" });
+    expect(toggle.getAttribute("data-ui")).toBe("calibrate.range.input_hp");
+    expect(toggle.getAttribute("aria-checked")).toBe("false");
+    expect(must("calibrate.range.low_protect").compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(toggle.closest('[data-ui="calibrate.range.advanced"]')).toBeNull();
+    expect(ui("calibrate.range.input_hp.hz")).toBeNull();
+    fireEvent.click(toggle);
+    expect(actions.changeSetting).toHaveBeenCalledWith({ kind: "input_hp", hz: 25 });
+  });
+
+  it("shows its frequency while on, sends a new one, and turns off", () => {
+    const actions = setup(fx.inputHpViews.on);
+    expect(must("calibrate.range.input_hp").getAttribute("aria-checked")).toBe("true");
+    expect((must("calibrate.range.input_hp.hz") as HTMLInputElement).value).toBe("27");
+    commitNumber("calibrate.range.input_hp.hz", "30");
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "input_hp", hz: 30 });
+    fireEvent.click(must("calibrate.range.input_hp"));
+    expect(actions.changeSetting).toHaveBeenLastCalledWith({ kind: "input_hp", hz: null });
+  });
+
+  it("lists the cut once in the calculation notes", () => {
+    setup(fx.inputHpViews.on, { initial: { notesOpen: true } });
+    const lines = [...must("calibrate.verdict.notes").querySelectorAll("li")].map((li) => li.textContent ?? "");
+    expect(lines.filter((line) => line === t("notice.input_hp", { hz: "27" }))).toHaveLength(1);
   });
 });
 

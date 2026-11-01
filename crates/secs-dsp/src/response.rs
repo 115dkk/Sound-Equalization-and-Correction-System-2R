@@ -9,12 +9,14 @@ use crate::{
 };
 use std::f64::consts::PI;
 
-pub const BAND_TYPES: [(&str, (&str, usize)); 5] = [
+pub const BAND_TYPES: [(&str, (&str, usize)); 6] = [
     ("LR24", ("LR", 4)),
     ("LR12", ("LR", 2)),
     ("LR48", ("LR", 8)),
     ("BW12", ("BW", 2)),
     ("BW24", ("BW", 4)),
+    // The common input high-pass only (ADR 0031).
+    ("BW48", ("BW", 8)),
 ];
 
 /// As upstream, every kind other than "LP" selects high-pass.

@@ -92,6 +92,7 @@ impl Biquads {
             BandType::Lr48 => (4, 2),
             BandType::Bw12 => (2, 1),
             BandType::Bw24 => (4, 1),
+            BandType::Bw48 => (8, 1),
         };
         let sos = butter(
             order,
@@ -171,7 +172,11 @@ enum Kernel {
     Low(MultirateMatrixConvolver),
 }
 impl Kernel {
-    fn process(&mut self, input: &[&[f64]], output: &mut [Vec<f64>]) -> Result<(), DspError> {
+    fn process<I: AsRef<[f64]>>(
+        &mut self,
+        input: &[I],
+        output: &mut [Vec<f64>],
+    ) -> Result<(), DspError> {
         match self {
             Self::Empty { .. } => Ok(()),
             Self::Full(kernel) => kernel.process_buffers(input, output),
@@ -224,6 +229,8 @@ pub struct MimoFirPlayback {
     inputs: Vec<String>,
     outputs: Vec<String>,
     kernel: Kernel,
+    pre: Vec<Biquads>,
+    input_buffers: Vec<Vec<f64>>,
     groups: Vec<Group>,
     group_buffers: Vec<Vec<f64>>,
     fixed: Vec<Biquads>,
@@ -374,7 +381,18 @@ impl MimoFirPlayback {
                 filter.peq(frequency, q, gain)?;
             }
         }
+        let mut pre = Vec::new();
+        if let Some(hz) = chain.input_hp_hz {
+            for _ in &inputs {
+                let mut filter = Biquads::default();
+                filter.band(hz, BandType::Bw48, true)?;
+                pre.push(filter);
+            }
+        }
+        let input_buffers = vec![vec![0.0; block_size]; pre.len()];
         Ok(Self {
+            pre,
+            input_buffers,
             inputs,
             outputs,
             kernel,
@@ -434,7 +452,18 @@ impl MimoFirPlayback {
         inputs: &[&[f64]],
         outputs: &mut [&mut [f64]],
     ) -> Result<(), DspError> {
-        self.kernel.process(inputs, &mut self.group_buffers)?;
+        if self.pre.is_empty() {
+            self.kernel.process(inputs, &mut self.group_buffers)?;
+        } else {
+            for ((filter, buffer), input) in
+                self.pre.iter_mut().zip(&mut self.input_buffers).zip(inputs)
+            {
+                buffer.copy_from_slice(input);
+                filter.process(buffer);
+            }
+            self.kernel
+                .process(&self.input_buffers, &mut self.group_buffers)?;
+        }
         for output in outputs.iter_mut() {
             output.fill(0.0);
         }
@@ -466,7 +495,9 @@ impl MimoFirPlayback {
     }
 
     /// Add to base outputs already rendered at 48 kHz, in `output_roles` order,
-    /// including their ordinary fixed sub filters. Only the extra multirate
+    /// including the common input high-pass and ordinary fixed sub filters.
+    /// The base renderer must apply the cut itself, before input correction.
+    /// Only the extra multirate
     /// delay is added to the base; its existing design latency is retained.
     pub fn process_with_base(
         &mut self,
@@ -494,6 +525,12 @@ impl MimoFirPlayback {
     /// Reset convolution, rate-converter, biquad and delay state.
     pub fn reset(&mut self) {
         self.kernel.reset();
+        for filter in &mut self.pre {
+            filter.reset();
+        }
+        for buffer in &mut self.input_buffers {
+            buffer.fill(0.0);
+        }
         for group in &mut self.groups {
             group.highpass.reset();
             group.delay.reset();
@@ -518,6 +555,7 @@ mod tests {
 
     fn chain() -> SignalChain {
         SignalChain {
+            input_hp_hz: None,
             sample_rate: 48_000,
             mains: ["L", "R"]
                 .iter()
@@ -561,6 +599,87 @@ mod tests {
                     .sum()
             })
             .collect()
+    }
+
+    #[test]
+    fn input_hp_playback_filters_raw_inputs_before_full_and_lowrate_support() {
+        let off = chain();
+        let mut on = off.clone();
+        on.input_hp_hz = Some(27.0);
+        let paths = MimoPaths {
+            fsiso: 150.0,
+            paths: ["L", "R"]
+                .iter()
+                .map(|input| MimoPath {
+                    input: (*input).into(),
+                    support: "SW1".into(),
+                    low_hz: 30.0,
+                    delay_ms: 1.0,
+                    filter: MimoFilter::FirLowRate {
+                        taps_low: vec![0.3, -0.1, 0.02],
+                        fs_low: 600.0,
+                    },
+                })
+                .collect(),
+        };
+        let inputs: Vec<Vec<_>> = (0..2)
+            .map(|c| {
+                (0..10240)
+                    .map(|i| ((i * (c + 1)) as f64 / 130.0).sin())
+                    .collect()
+            })
+            .collect();
+        let hp = butter(8, &[27.0], BType::Highpass, SAMPLE_RATE).unwrap();
+        let filtered: Vec<_> = inputs
+            .iter()
+            .map(|input| sosfilt(&hp, input).unwrap())
+            .collect();
+        for mode in [
+            PlaybackMode::FullRate { block_size: 80 },
+            PlaybackMode::Multirate {
+                low_block_size: 1,
+                factor: 80,
+            },
+        ] {
+            let mut actual = MimoFirPlayback::new(&on, &paths, mode).unwrap();
+            let mut reference = MimoFirPlayback::new(&off, &paths, mode).unwrap();
+            let mut max_abs = 0.0_f64;
+            let mut previous = Vec::new();
+            for pass in 0..2 {
+                let mut rendered = Vec::new();
+                for i in (0..10240).step_by(80) {
+                    let input: Vec<_> = inputs.iter().map(|x| &x[i..i + 80]).collect();
+                    let expected_input: Vec<_> = filtered.iter().map(|x| &x[i..i + 80]).collect();
+                    let mut a = vec![vec![0.0; 80]; 3];
+                    let mut b = a.clone();
+                    actual
+                        .process(
+                            &input,
+                            &mut a.iter_mut().map(Vec::as_mut_slice).collect::<Vec<_>>(),
+                        )
+                        .unwrap();
+                    reference
+                        .process(
+                            &expected_input,
+                            &mut b.iter_mut().map(Vec::as_mut_slice).collect::<Vec<_>>(),
+                        )
+                        .unwrap();
+                    for (a, b) in a.iter().flatten().zip(b.iter().flatten()) {
+                        max_abs = max_abs.max((a - b).abs());
+                    }
+                    rendered.extend_from_slice(&a[2]);
+                }
+                if pass == 0 {
+                    previous = rendered;
+                } else {
+                    assert_eq!(previous, rendered);
+                }
+                actual.reset();
+                reference.reset();
+            }
+            eprintln!("input_hp playback {mode:?} max_abs={max_abs:.12e}");
+            assert!(max_abs < 2e-12);
+        }
     }
 
     #[test]

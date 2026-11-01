@@ -145,6 +145,7 @@ fn chain(fixture: &Fixture) -> SignalChain {
         })
         .collect();
     SignalChain {
+        input_hp_hz: None,
         sample_rate: value["sample_rate"].as_u64().unwrap() as u32,
         mains,
         subs,
@@ -1383,4 +1384,57 @@ fn negative_delays_write_nothing_td94() {
         Some(&mimo),
         "mimo.paths[0].filter_delay_ms",
     );
+}
+
+#[test]
+fn input_hp_camilla_is_one_all_input_step_before_mimo_fork() {
+    let fixture = Fixture::load("export_mimo", "room_dba_fir");
+    let mut chain = chain(&fixture);
+    let mimo = mimo_paths(&fixture);
+    let temp = TempDir::new("input_hp");
+    for paths in [None, Some(&mimo)] {
+        for lfe_gain_db in [None, Some(10.0)] {
+            let options = Options {
+                lfe_gain_db,
+                ..Options::default()
+            };
+            chain.input_hp_hz = None;
+            let off = make_config(&chain, &temp.0, &temp.0, "", &options, paths).unwrap();
+            assert!(!yaml_filters(&off.yaml).contains_key("input_hp"));
+            chain.input_hp_hz = Some(27.0);
+            let on = make_config(&chain, &temp.0, &temp.0, "", &options, paths).unwrap();
+            let filters = yaml_filters(&on.yaml);
+            assert_eq!(
+                filters
+                    .keys()
+                    .filter(|name| name.as_str() == "input_hp")
+                    .count(),
+                1
+            );
+            assert_eq!(
+                filters["input_hp"],
+                serde_json::json!({"type": "BiquadCombo", "parameters": {"type": "ButterworthHighpass", "freq": 27.0, "order": 8}})
+            );
+            let pipeline = yaml_pipeline(&on.yaml);
+            let indices: Vec<_> = pipeline
+                .iter()
+                .enumerate()
+                .filter(|(_, step)| step["names"] == serde_json::json!(["input_hp"]))
+                .map(|(i, _)| i)
+                .collect();
+            assert_eq!(indices.len(), 1);
+            let index = indices[0];
+            assert_eq!(pipeline[index - 1]["name"], "route_in");
+            let n =
+                chain.mains.len() + usize::from(lfe_gain_db.is_some() && !chain.subs.is_empty());
+            assert_eq!(
+                pipeline[index]["channels"],
+                serde_json::json!((0..n).collect::<Vec<_>>())
+            );
+            if paths.is_some() {
+                assert_eq!(pipeline[index + 1]["name"], "mimo_fork");
+            }
+            assert_eq!(on.coeffs, off.coeffs);
+        }
+    }
 }

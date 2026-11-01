@@ -693,6 +693,18 @@
   visibility: hidden;
 }
 
+/* 극저역 보호 (ADR 0022, ADR 0031) keeps the card body's rhythm inside its
+   group: its name, the 자동 and 수동 switches, then the cut's frequency. */
+.calibrate-low-end {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+.calibrate-low-end__name {
+  font-weight: var(--weight-semibold);
+}
+
 /* Extra correction bands (ADR 0024): a row per band, its name with 빼기
    right beside it, then its two edges; the add action closes the list. */
 .calibrate-extra {

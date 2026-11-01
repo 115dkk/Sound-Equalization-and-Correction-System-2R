@@ -117,6 +117,10 @@ pub enum SettingEdit {
     HfPhase {
         on: bool,
     },
+    /// The common input high-pass in Hz, `None` to turn it off (ADR 0031).
+    InputHp {
+        hz: Option<f64>,
+    },
     RcLo {
         hz: f64,
     },

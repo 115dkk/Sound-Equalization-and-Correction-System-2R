@@ -85,6 +85,7 @@ fn band(value: &Value) -> BandType {
 
 fn chain_value(fixture: &Fixture, value: &Value) -> SignalChain {
     SignalChain {
+        input_hp_hz: None,
         sample_rate: value["sample_rate"].as_u64().unwrap() as u32,
         mains: value["mains"]
             .as_array()

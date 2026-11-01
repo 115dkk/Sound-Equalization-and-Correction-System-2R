@@ -142,6 +142,8 @@ pub struct FilterPlan {
     pub inputs: Vec<String>,
     /// Main roles followed by sub roles.
     pub outputs: Vec<String>,
+    /// Common operations before input correction and the MIMO fork, including LFE.
+    pub pre_ops: Vec<Op>,
     /// Input-correction operations by role.
     pub input_ops: Vec<(String, Vec<Op>)>,
     /// Main-path operations by role.
@@ -292,6 +294,15 @@ pub(crate) fn make(
             .iter()
             .map(|main| main.role.clone())
             .chain(chain.subs.iter().map(|sub| sub.role.clone()))
+            .collect(),
+        pre_ops: chain
+            .input_hp_hz
+            .into_iter()
+            .map(|frequency| Op::Hp {
+                frequency,
+                kind: BandType::Bw48,
+                fixed: false,
+            })
             .collect(),
         input_ops: Vec::new(),
         main_ops: Vec::new(),
@@ -670,6 +681,14 @@ fn plan_responses_prepared(
                 &path.support,
                 response_chain(&path.ops, f, skip_fixed)?,
             );
+        }
+    }
+    // Every route starts at the same input. Factor its common response out
+    // of the sum so base and MIMO contributions receive it exactly once.
+    if !plan.pre_ops.is_empty() {
+        let common = response_chain(&plan.pre_ops, f, false)?;
+        for (_, response) in &mut out {
+            multiply(response, common.iter().copied());
         }
     }
     Ok(out)

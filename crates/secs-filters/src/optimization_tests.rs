@@ -5,8 +5,9 @@ use std::f64::consts::PI;
 
 type C = Complex64;
 
-fn sample() -> (SignalChain, MimoPaths) {
+pub(crate) fn sample() -> (SignalChain, MimoPaths) {
     let chain = SignalChain {
+        input_hp_hz: None,
         sample_rate: SAMPLE_RATE,
         main_extra_ms: 2.0,
         lift_ms: 0.0,
@@ -300,4 +301,83 @@ fn prepared_sub_responses_leave_headroom_bits_unchanged() {
     }
     let reference = (20.0 * peak.log10()).max(0.0);
     assert_eq!(headroom_db(&plan).unwrap().to_bits(), reference.to_bits());
+}
+
+#[test]
+fn input_hp_eqapo_precedes_raw_copies_and_cuts_every_input() {
+    let (mut chain, mimo) = sample();
+    let off = make_plan(&chain, Some(&mimo)).unwrap();
+    chain.input_hp_hz = Some(27.0);
+    let on = make_plan(&chain, Some(&mimo)).unwrap();
+    let names: Vec<_> = on
+        .firs()
+        .iter()
+        .map(|(name, _)| (name.to_string(), format!("{name}.wav")))
+        .collect();
+    let taps = on
+        .firs()
+        .into_iter()
+        .map(|(name, taps)| (format!("{name}.wav"), taps.materialize().into_owned()))
+        .collect();
+    let off_text = eqapo_filters(&off, &names, "");
+    let on_text = eqapo_filters(&on, &names, "");
+    let before_fork = on_text.split("# Raw input copies").next().unwrap();
+    let qs = q_values(BandType::Bw48);
+    assert_eq!(
+        before_fork.matches("Filter: ON HPQ Fc 27.00 Hz").count(),
+        4 * on.inputs.len()
+    );
+    for input in &on.inputs {
+        let start = before_fork
+            .find(&format!("Channel: {}\n", input_channel(input)))
+            .unwrap();
+        let section = &before_fork[start..];
+        for q in qs {
+            assert!(section.contains(&format!(
+                "Filter: ON HPQ Fc 27.00 Hz Q {}",
+                format_fixed(*q, 4, false)
+            )));
+        }
+    }
+    let frequencies: Vec<_> = (0..=400)
+        .map(|i| 10.0 * 2000.0_f64.powf(i as f64 / 400.0))
+        .collect();
+    let hp = secs_dsp::response::band_filter(&frequencies, 27.0, "HP", "BW48").unwrap();
+    for input in &on.inputs {
+        let (mut db, mut deg) = (0.0_f64, 0.0_f64);
+        for (&f, hp) in frequencies.iter().zip(&hp) {
+            let a = interpret(&off_text, input, f, &off, &taps);
+            let b = interpret(&on_text, input, f, &on, &taps);
+            for role in &on.outputs {
+                let channel = virtual_channel(
+                    if on.subs.iter().any(|(r, _)| r == role) {
+                        "sub"
+                    } else {
+                        "main"
+                    },
+                    role,
+                );
+                if a.get(&channel).is_none_or(|v| v.norm() == 0.0) {
+                    continue;
+                }
+                let ratio = b[&channel] / (a[&channel] * hp);
+                assert!(ratio.re.is_finite() && ratio.im.is_finite());
+                db = db.max((20.0 * ratio.norm().log10()).abs());
+                deg = deg.max(ratio.arg().to_degrees().abs());
+            }
+        }
+        eprintln!("input_hp EAPO {input}: max_db={db:.12e} max_deg={deg:.12e} (analog reference)");
+        assert!(db < 0.05);
+        // The digital sections leave the analog prototype by 0.26° at 20 kHz,
+        // as every exported crossover does; ADR 0031 allows 0.5°.
+        assert!(deg < 0.5);
+    }
+    let text = filter_text(&on, &names, "test", &[]);
+    let hp_line = text.find("극저역 보호(수동, 모든 입력").unwrap();
+    assert!(
+        text[hp_line..]
+            .starts_with("극저역 보호(수동, 모든 입력, LFE 포함)  27.00 Hz · 버터워스 48 dB/oct")
+    );
+    assert!(hp_line < text.find("== 메인").unwrap());
+    assert!(!filter_text(&off, &names, "test", &[]).contains("극저역 보호(수동, 모든 입력"));
 }

@@ -43,6 +43,12 @@ fn band(f: f64, frequency: f64, high: bool, kind: BandType) -> C {
         ],
         BandType::Bw12 => &[std::f64::consts::FRAC_1_SQRT_2],
         BandType::Bw24 => &[0.541196100146197, 1.306562964876377],
+        BandType::Bw48 => &[
+            0.5097955791041592,
+            0.6013448869350453,
+            0.8999762231364156,
+            2.5629154477415055,
+        ],
     };
     let w = 2.0 * PI * frequency / SAMPLE_RATE;
     q.iter()

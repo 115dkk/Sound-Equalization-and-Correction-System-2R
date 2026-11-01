@@ -340,6 +340,9 @@ fn rc_bands_piece(rc_bands: &[RcBand]) -> Option<String> {
 /// no FIR, so the engine skips `lf_align` and `hf_phase` there and the text does too.
 pub fn lf_correction_pieces(settings: &CalibrationSettings) -> Vec<String> {
     let mut pieces = Vec::new();
+    if let Some(hz) = settings.input_hp_hz {
+        pieces.push(format!("극저역 보호(수동) {hz} Hz"));
+    }
     if settings.lf_align && settings.mode != Mode::Zero {
         pieces.push("저음 도착 맞춤".into());
     }
@@ -1041,17 +1044,26 @@ mod tests {
             lf_align: true,
             mode_decay: true,
             hf_phase: true,
+            input_hp_hz: Some(27.0),
             ..Default::default()
         };
         assert_eq!(
             lf_correction_pieces(&settings),
-            ["저음 도착 맞춤", "방 울림 줄임", "고역 위상 맞춤"]
+            [
+                "극저역 보호(수동) 27 Hz",
+                "저음 도착 맞춤",
+                "방 울림 줄임",
+                "고역 위상 맞춤"
+            ]
         );
         let zero = CalibrationSettings {
             mode: Mode::Zero,
             ..settings
         };
-        assert_eq!(lf_correction_pieces(&zero), ["방 울림 줄임"]);
+        assert_eq!(
+            lf_correction_pieces(&zero),
+            ["극저역 보호(수동) 27 Hz", "방 울림 줄임"]
+        );
     }
 
     #[test]

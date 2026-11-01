@@ -52,11 +52,31 @@ pub(crate) fn export_view_prepared(
             )
         })
         .collect();
-    let spectra =
+    let mut spectra =
         measurement::long_spectra_until(measurements, prepared, &sub_filters, 2000.0, cancelled)?;
+    if let Some(hz) = design.chain.input_hp_hz {
+        let highpass =
+            secs_dsp::response::band_filter(crate::grid::design_freqs(), hz, "HP", "BW48")?;
+        for position in spectra.positions().to_vec() {
+            let roles: Vec<_> = spectra.roles_at(position).map(str::to_owned).collect();
+            for role in roles {
+                if cancelled() {
+                    return Err(EngineError::Cancelled);
+                }
+                let response = spectra.get(position, &role).expect("spectrum role");
+                let filtered = response
+                    .iter()
+                    .zip(&highpass)
+                    .map(|(h, hp)| h * hp)
+                    .collect();
+                spectra.set(position, &role, filtered);
+            }
+        }
+    }
     Ok(ExportView {
         spectra,
         base_s: prepared.base_s,
-        has_sub_filters: !sub_filters.is_empty(),
+        // The export tail must not reuse unfiltered design spectra (ADR 0031).
+        has_sub_filters: !sub_filters.is_empty() || design.chain.input_hp_hz.is_some(),
     })
 }

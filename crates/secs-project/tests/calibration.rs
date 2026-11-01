@@ -31,6 +31,7 @@ fn calibration_parse_store_and_saved_bytes_match_oracle() {
         assert_eq!(object.remove("lf_align"), Some(false.into()));
         assert_eq!(object.remove("mode_decay"), Some(false.into()));
         assert_eq!(object.remove("hf_phase"), Some(false.into()));
+        assert_eq!(object.remove("input_hp_hz"), Some(Value::Null));
         assert_eq!(
             object.remove("peq_analytic_derivatives"),
             Some(false.into())
@@ -126,6 +127,40 @@ fn hf_phase_round_trip_and_legacy_default() {
     parsed.hf_phase = false;
     store_calibration(&mut reopened, &parsed);
     assert_eq!(reopened.save_text(), baseline);
+}
+
+#[test]
+fn input_hp_round_trip_clamps_and_legacy_default() {
+    let mut project = Project::from_preset("2.1").unwrap();
+    let mut settings = calibration_from_project(&project);
+    assert_eq!(settings.input_hp_hz, None);
+    store_calibration(&mut project, &settings);
+    let baseline = project.save_text();
+    assert!(!baseline.contains("input_hp_hz"));
+
+    settings.input_hp_hz = Some(27.0);
+    store_calibration(&mut project, &settings);
+    let saved = project.save_text();
+    let saved_json: Value = serde_json::from_str(&saved).unwrap();
+    assert_eq!(saved_json["calibration"]["input_hp_hz"], 27.0);
+    let mut reopened = Project::from_json(loads(&saved).unwrap()).unwrap();
+    let mut parsed = calibration_from_project(&reopened);
+    assert_eq!(parsed.input_hp_hz, Some(27.0));
+
+    parsed.input_hp_hz = None;
+    store_calibration(&mut reopened, &parsed);
+    assert_eq!(reopened.save_text(), baseline);
+
+    for (raw, expected) in [
+        (r#"9.9"#, Some(10.0)),
+        (r#"50.1"#, Some(50.0)),
+        (r#""NaN""#, None),
+        ("null", None),
+    ] {
+        let json = format!(r#"{{"extra":{{"calibration":{{"input_hp_hz":{raw}}}}}}}"#);
+        let project = Project::from_json(loads(&json).unwrap()).unwrap();
+        assert_eq!(calibration_from_project(&project).input_hp_hz, expected);
+    }
 }
 
 #[test]

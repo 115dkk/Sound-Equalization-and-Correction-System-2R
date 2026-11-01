@@ -8,6 +8,7 @@
       "lf_align": false,
       "mode_decay": false,
       "hf_phase": false,
+      "input_hp_hz": null,
       "rc_lo": 20.0,
       "rc_hi": null,
       "rc_hi_basis": "strict",

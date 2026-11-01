@@ -18,7 +18,12 @@ mode_decay: boolean,
 /**
  * Unwinds the RC FIR's constant phase above the band (ADR 0030).
  */
-hf_phase: boolean, rc_lo: number, rc_hi: number | null, rc_hi_basis: RcHiBasis, rc_hi_transition: number, 
+hf_phase: boolean, 
+/**
+ * Common 8th-order Butterworth high-pass on every input before the MIMO
+ * fork, in Hz; `None` is off (ADR 0031).
+ */
+input_hp_hz: number | null, rc_lo: number, rc_hi: number | null, rc_hi_basis: RcHiBasis, rc_hi_transition: number, 
 /**
  * Extra correction bands, sorted by `lo_hz`, at most four (ADR 0024).
  */

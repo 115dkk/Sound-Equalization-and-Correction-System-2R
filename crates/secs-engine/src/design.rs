@@ -153,7 +153,9 @@ pub fn late_energy(design: &Design) -> Result<Vec<RoleLateEnergy>, EngineError> 
     let mut rows = Vec::new();
     for &position in &design.spectra.positions {
         for channel in &design.chain.mains {
-            let (before_db, after_db) = if position == design.spectra.main_position {
+            let (before_db, after_db) = if position == design.spectra.main_position
+                && design.chain.input_hp_hz.is_none()
+            {
                 let Some(main) = design.mains.iter().find(|main| main.role == channel.role) else {
                     continue;
                 };
@@ -1029,10 +1031,14 @@ fn design_pass(
             .map(|m| (m.role.clone(), m.phase_band))
             .collect(),
     ));
+    if let Some(hz) = setup.input_hp_hz {
+        notes.push(Note::InputHp { hz });
+    }
     check(ctx)?;
     Ok((
         Design {
             chain: SignalChain {
+                input_hp_hz: setup.input_hp_hz,
                 sample_rate: SR,
                 mains: channels,
                 subs,

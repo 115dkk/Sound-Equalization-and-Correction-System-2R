@@ -269,6 +269,7 @@ mod tests {
                 sub_roles: vec![],
             },
             calibration_chain: SignalChain {
+                input_hp_hz: None,
                 sample_rate: 48_000,
                 mains: vec![],
                 subs: vec![],

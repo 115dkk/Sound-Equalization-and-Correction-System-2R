@@ -80,6 +80,7 @@ fn note_value(note: &crate::notes::Note) -> Value {
             rotation_deg,
             limited,
         } => json!({"HfPhase": {"role": role, "rotation_deg": rotation_deg, "limited": limited}}),
+        Note::InputHp { hz } => json!({"InputHp": {"hz": hz}}),
         Note::Latency {
             latency_ms,
             lift_ms,
@@ -611,6 +612,7 @@ fn design_matches_recorded_stages() {
                 crate::notes::Note::LfAlign { .. } => "LfAlign",
                 crate::notes::Note::ModeDecay { .. } => "ModeDecay",
                 crate::notes::Note::HfPhase { .. } => "HfPhase",
+                crate::notes::Note::InputHp { .. } => "InputHp",
                 crate::notes::Note::Latency { .. } => "Latency",
                 crate::notes::Note::PhaseStrength(_) => "PhaseStrength",
                 crate::notes::Note::PhaseBand(_) => "PhaseBand",

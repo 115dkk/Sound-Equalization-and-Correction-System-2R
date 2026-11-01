@@ -225,6 +225,67 @@ fn lf_align_and_mode_decay_edits_persist_and_mark_results_stale() {
 }
 
 #[test]
+fn input_hp_edits_validate_persist_and_mark_results_stale() {
+    use secs_types::settings_edit::SettingEdit;
+
+    let root = temp_root("input-hp");
+    fs::create_dir_all(&root).unwrap();
+    let (path, settings) = write_case(&root, "room");
+    let initial = service();
+    open(&initial, &path);
+    let events = Arc::new(Events::default());
+    let job = start_calibration(&initial, events.clone(), settings.clone());
+    finished_result(events.wait(job, Duration::from_secs(120)));
+    assert!(!read_results(&initial).calibration.unwrap().stale);
+
+    let Response::CalibrationSettingsEdit(enabled) = call_ok(
+        &initial,
+        Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+            edit: SettingEdit::InputHp { hz: Some(27.0) },
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!()
+    };
+    assert_eq!(enabled.input_hp_hz, Some(27.0));
+    assert_ne!(enabled.engine_key(), settings.engine_key());
+    let summary = read_results(&initial).calibration.unwrap();
+    assert!(summary.stale);
+    assert_eq!(summary.stale_reason.as_deref(), Some("settings"));
+    call_ok(
+        &initial,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams { path: None }),
+        Arc::new(NoEvents),
+    );
+
+    let reopened = service();
+    open(&reopened, &path);
+    let Response::CalibrationSettingsGet(stored) = call_ok(
+        &reopened,
+        Request::CalibrationSettingsGet,
+        Arc::new(NoEvents),
+    ) else {
+        panic!()
+    };
+    assert_eq!(stored.input_hp_hz, Some(27.0));
+    assert!(read_results(&reopened).calibration.unwrap().stale);
+
+    let Response::CalibrationSettingsEdit(disabled) = call_ok(
+        &reopened,
+        Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+            edit: SettingEdit::InputHp { hz: None },
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!()
+    };
+    assert_eq!(disabled.input_hp_hz, None);
+    assert_eq!(disabled.engine_key(), settings.engine_key());
+    assert!(!read_results(&reopened).calibration.unwrap().stale);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn rc_band_edits_store_sorted_clear_change_keys_and_mark_results_stale() {
     use secs_types::{calibration::RcBand, settings_edit::SettingEdit};
 

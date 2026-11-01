@@ -51,6 +51,51 @@ fn band_values(grid: &[f64], values: &[f64], lo: f64, hi: f64) -> Vec<f64> {
         .collect()
 }
 
+fn input_hp_spl(grid: &[f64], hz: f64) -> Vec<f64> {
+    secs_dsp::response::band_filter(grid, hz, "HP", "BW48")
+        .expect("BW48 is a fixed input high-pass type")
+        .into_iter()
+        .map(|value| 20.0 * secs_dsp::response::magnitude(value).log10())
+        .collect()
+}
+
+fn input_hp_group_delay(grid: &[f64], hz: f64) -> Vec<f64> {
+    use std::f64::consts::PI;
+
+    let response = secs_dsp::response::band_filter(grid, hz, "HP", "BW48")
+        .expect("BW48 is a fixed input high-pass type");
+    let mut phase: Vec<_> = response.into_iter().map(|value| value.arg()).collect();
+    for index in 1..phase.len() {
+        let delta = phase[index] - phase[index - 1];
+        phase[index] -= ((delta + PI) / (2.0 * PI)).floor() * 2.0 * PI;
+    }
+    let omega: Vec<_> = grid.iter().map(|frequency| 2.0 * PI * frequency).collect();
+    let mut delay = vec![0.0; grid.len()];
+    delay[0] = -(phase[1] - phase[0]) / (omega[1] - omega[0]) * 1000.0;
+    let last = grid.len() - 1;
+    delay[last] = -(phase[last] - phase[last - 1]) / (omega[last] - omega[last - 1]) * 1000.0;
+    for index in 1..last {
+        let left = omega[index] - omega[index - 1];
+        let right = omega[index + 1] - omega[index];
+        let derivative = -right / (left * (left + right)) * phase[index - 1]
+            + (right - left) / (left * right) * phase[index]
+            + left / (right * (left + right)) * phase[index + 1];
+        delay[index] = -derivative * 1000.0;
+    }
+    delay
+}
+
+fn add_adjustment(curves: &mut [ResultCurve], kinds: &[&str], adjustment: &[f64]) {
+    for curve in curves
+        .iter_mut()
+        .filter(|curve| kinds.contains(&curve.kind.as_str()))
+    {
+        for (value, add) in curve.values.iter_mut().zip(adjustment) {
+            *value += add;
+        }
+    }
+}
+
 fn extra_bands(settings: &CalibrationSettings) -> Vec<(f64, f64)> {
     let mut bands: Vec<_> = settings
         .rc_bands
@@ -426,6 +471,23 @@ impl Service {
                         - offset;
                     result.axes.value = [top - 40.0, top + 6.0];
                 }
+            }
+        }
+        if let Some(hz) = design.chain.input_hp_hz {
+            match params.tab {
+                ResultTab::Spl | ResultTab::Ba => {
+                    let adjustment = input_hp_spl(&result.grid, hz);
+                    add_adjustment(
+                        &mut result.curves,
+                        &["after", "target", "sum_after"],
+                        &adjustment,
+                    );
+                }
+                ResultTab::Gd => {
+                    let adjustment = input_hp_group_delay(&result.grid, hz);
+                    add_adjustment(&mut result.curves, &["after"], &adjustment);
+                }
+                ResultTab::Xo => {}
             }
         }
         Ok(result)

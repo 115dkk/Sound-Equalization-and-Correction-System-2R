@@ -332,14 +332,25 @@ fn export_items_and_source_environments_match_oracle() {
             enabled.lf_align = true;
             enabled.mode_decay = true;
             enabled.hf_phase = true;
+            enabled.input_hp_hz = Some(27.0);
             let enabled_run = ExportRun {
                 design: &case.design,
                 settings: &enabled,
             };
             let pieces = rc_pieces(&enabled_run);
             assert_eq!(
-                &pieces[pieces.len() - 3..],
-                ["저음 도착 맞춤", "방 울림 줄임", "고역 위상 맞춤"]
+                &pieces[pieces.len() - 4..],
+                [
+                    "극저역 보호(수동) 27 Hz",
+                    "저음 도착 맞춤",
+                    "방 울림 줄임",
+                    "고역 위상 맞춤"
+                ]
+            );
+            assert!(
+                stage_items(&enabled_run, None)
+                    .iter()
+                    .any(|item| item.notes.contains("극저역 보호(수동) 27 Hz"))
             );
         }
         check(

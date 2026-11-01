@@ -51,6 +51,7 @@ mod tests {
 
     fn chain() -> SignalChain {
         SignalChain {
+            input_hp_hz: None,
             sample_rate: SAMPLE_RATE,
             mains: vec![MainChannel {
                 role: "L".into(),
