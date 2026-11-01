@@ -306,10 +306,7 @@ impl Service {
         let replay_snapshot = (mdat && live.is_none()).then(|| session::measurement_snapshot(open));
         let cached_sample_rate_policy = cached.map(|cache| cache.labels.sample_rate_policy);
         let expected_mdat_input_key = (mdat && live.is_none()).then(|| {
-            let mut settings = secs_project::calibration_from_project(project);
-            if let Some(policy) = cached_sample_rate_policy {
-                settings.sample_rate_policy = policy;
-            }
+            let settings = secs_project::calibration_from_project(project);
             super::calibration::run_key(
                 &super::calibration::signature_key(project),
                 &super::calibration::target_key_string(project),
@@ -570,10 +567,7 @@ impl Service {
                             .map_err(|_| IpcError::new(ErrorCode::Cancelled, "cancelled"))?;
                         session::apply(&session_for_design, ticket, |open| {
                             let project = open.store.project();
-                            let mut settings = secs_project::calibration_from_project(project);
-                            if let Some(policy) = cached_sample_rate_policy {
-                                settings.sample_rate_policy = policy;
-                            }
+                            let settings = secs_project::calibration_from_project(project);
                             let current_input_key = super::calibration::run_key(
                                 &super::calibration::signature_key(project),
                                 &super::calibration::target_key_string(project),

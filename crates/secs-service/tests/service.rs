@@ -4121,6 +4121,59 @@ fn cached_mdat_export_rejects_changed_calibration_inputs_before_writing() {
 }
 
 #[test]
+fn cached_mdat_export_rejects_changed_sample_rate_policy_td116() {
+    let root = temp_root("policy-cached-export");
+    fs::create_dir_all(&root).unwrap();
+    let (source, settings) = write_case(&root, "dolby");
+    let running = service();
+    open(&running, &source);
+    let calibration_events = Arc::new(Events::default());
+    let calibration = start_calibration(&running, calibration_events.clone(), settings);
+    finished_result(calibration_events.wait(calibration, Duration::from_secs(120)));
+
+    let reopened = service();
+    open(&reopened, &source);
+    let folder = root.join("export-policy-edited");
+    let events = Arc::new(PausedProgress::default());
+    let Response::Export(started) = call_ok(
+        &reopened,
+        Request::Export(ExportParams {
+            kind: ExportKind::StagedMdat,
+            folder: folder.to_string_lossy().into_owned(),
+            mdat_scope: None,
+            design_name: None,
+            camilla_devices: None,
+            extra_rates: Vec::new(),
+        }),
+        events.clone(),
+    ) else {
+        panic!()
+    };
+    events.wait_until_paused();
+    call_ok(
+        &reopened,
+        Request::CalibrationSettingsEdit(secs_types::ipc::CalibrationSettingsEditParams {
+            edit: secs_types::settings_edit::SettingEdit::SampleRatePolicy {
+                policy: secs_types::calibration::SampleRatePolicy::Resample,
+            },
+        }),
+        Arc::new(NoEvents),
+    );
+    events.release();
+    let finished = events.events.wait(started.job, Duration::from_secs(120));
+    assert!(matches!(
+        finished,
+        JobEvent::Finished {
+            status: JobStatus::Failed,
+            error: Some(ref error),
+            ..
+        } if error.code == ErrorCode::StaleInputs
+    ));
+    assert!(!folder.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn project_replacement_rejects_old_compute_commit_and_preserves_completion() {
     for mimo in [false, true] {
         let root = temp_root(if mimo {
