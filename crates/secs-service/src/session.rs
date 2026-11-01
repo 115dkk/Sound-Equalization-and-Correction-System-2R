@@ -440,12 +440,13 @@ fn reject_nested_irs(
     source: &Path,
     destination: &Path,
 ) -> Result<(), ServiceError> {
+    let source_exists = source.is_dir();
     let project = normalised_path(project)?;
     let source = normalised_path(source)?;
     let destination = normalised_path(destination)?;
-    if destination == source
-        || destination.starts_with(&source)
-        || source.starts_with(&destination)
+    if (destination == source && source_exists)
+        || destination.starts_with(&source) && destination != source
+        || source.starts_with(&destination) && source != destination
         || project.starts_with(&destination)
     {
         return Err(ServiceError::InvalidRequest(

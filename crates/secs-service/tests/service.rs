@@ -2235,6 +2235,42 @@ fn save_as_failure_and_nested_destination_leave_projects_untouched() {
 }
 
 #[test]
+fn extension_only_save_as_without_a_source_measurement_folder_succeeds_td04() {
+    let root = temp_root("save-as-extension-only");
+    fs::create_dir_all(&root).unwrap();
+    let source = root.join("room.secs");
+    let destination = root.join("room.backup");
+    let service = service();
+    call_ok(
+        &service,
+        Request::ProjectNew(ProjectNewParams {
+            path: source.to_string_lossy().into_owned(),
+            preset: "2.0".into(),
+            sub_count: 0,
+            sample: false,
+            tutorial: false,
+        }),
+        Arc::new(NoEvents),
+    );
+    assert!(!source.with_extension("irs").exists());
+
+    let Response::ProjectSave(info) = call_ok(
+        &service,
+        Request::ProjectSave(secs_types::ipc::ProjectSaveParams {
+            path: Some(destination.to_string_lossy().into_owned()),
+        }),
+        Arc::new(NoEvents),
+    ) else {
+        panic!();
+    };
+    assert_eq!(info.path, destination.to_string_lossy());
+    assert!(source.is_file());
+    assert!(destination.is_file());
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn save_as_preserves_reopened_cached_results_and_export() {
     let root = temp_root("save-as-cache");
     fs::create_dir_all(&root).unwrap();
