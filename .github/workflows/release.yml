@@ -32,7 +32,8 @@ name: Release
 #            publish through the PyPI trusted publisher (docs/adr/0019).
 #            A workflow_dispatch on main with pypi_only runs this part alone,
 #            for a version whose release already published its crates and
-#            tagged api-v<version> but whose PyPI upload failed; the gate and
+#            tagged api-v<version> but whose PyPI upload failed. It builds
+#            the commit that tag points at, never main as it is now; the gate and
 #            every other job are skipped, and versions already on PyPI are
 #            skipped too, so a repeated dispatch publishes nothing twice
 #
@@ -383,9 +384,43 @@ jobs:
             gh api "repos/${GITHUB_REPOSITORY}/git/refs" -f ref="refs/tags/${API_TAG}" -f sha="${RELEASE_SHA}"
           fi
 
+  pypi-ref:
+    name: Resolve the api tag to re-publish
+    # A dispatch re-publishes the commit the release tagged api-v<version>,
+    # not main as it is now: main may have moved on at the same API version,
+    # and PyPI must get the code crates.io got (audit #155 TD-137).
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.pypi_only
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      sha: ${{ steps.tag.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: bindings/python/Cargo.toml
+          sparse-checkout-cone-mode: false
+      - id: tag
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^version = "\(.*\)"$/\1/p' bindings/python/Cargo.toml | head -n 1)
+          # The release creates api-v<version> as a lightweight tag on its
+          # release commit; an annotated tag would also list its commit as ^{}.
+          refs=$(git ls-remote "https://github.com/$REPOSITORY" "refs/tags/api-v$version" "refs/tags/api-v$version^{}")
+          sha=$(printf '%s\n' "$refs" | awk '$2 ~ /\^\{\}$/ {print $1}' | head -n 1)
+          [ -n "$sha" ] || sha=$(printf '%s\n' "$refs" | awk 'NF {print $1}' | head -n 1)
+          if [ -z "$sha" ]; then
+            echo "::error::api-v$version is not tagged; the release has not published this version."
+            exit 1
+          fi
+          echo "Re-publishing secs2r $version from api-v$version ($sha)."
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
   pypi-build:
     name: Build PyPI distributions (${{ matrix.name }})
-    needs: [gate, build, crates]
+    needs: [gate, build, crates, pypi-ref]
     # !cancelled() lets the dispatch path run with the gate skipped; it also
     # drops the implicit "every need succeeded", so the push path states it.
     if: >-
@@ -397,7 +432,8 @@ jobs:
           && needs.crates.result == 'success')
         || (github.event_name == 'workflow_dispatch'
           && github.ref == 'refs/heads/main'
-          && inputs.pypi_only)) }}
+          && inputs.pypi_only
+          && needs.pypi-ref.result == 'success')) }}
     strategy:
       fail-fast: false
       matrix:
@@ -418,8 +454,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # A dispatch has no gate, so it builds the commit it was run on.
-          ref: ${{ needs.gate.outputs.release_sha || github.sha }}
+          # A dispatch has no gate; it builds the commit api-v<version> tags.
+          ref: ${{ needs.gate.outputs.release_sha || needs.pypi-ref.outputs.sha }}
 
       # Before the wheel: the manylinux container runs as root, and a dist/ it
       # created first is not writable by this runner-user step (run
