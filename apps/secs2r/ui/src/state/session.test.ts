@@ -34,6 +34,35 @@ it.each([false, true])("clears the previous project's resources before failed re
   } finally { session.dispose(); await session.settled(); mock.dispose(); vi.useRealTimers(); }
 });
 
+it.each([false, true])("releases an edit barrier on replacement without waiting for the old edit (external=%s)", async (external) => {
+  const mock = createMockService({ tickMs: 0 });
+  let release!: () => void;
+  const delayed = new Promise<void>((resolve) => { release = resolve; });
+  let emit!: (method: string) => void;
+  const session = createSession({ ...mock,
+    externalChanges: { subscribe: async (next) => { emit = next; return () => {}; } },
+    request: async (request) => {
+      const reply = await mock.request(request);
+      if (request.method === "dsp_set") await delayed;
+      return reply;
+    },
+  });
+  let edit: Promise<boolean> | undefined;
+  try {
+    await session.start(); await session.settled();
+    edit = session.writers.dsp.edit({ fir_taps: 4096 });
+    await vi.waitFor(() => expect(mock.calls.some((r) => r.method === "dsp_set")).toBe(true));
+    const finished = vi.fn();
+    void session.projectEditsSettled().then(finished);
+    expect(finished).not.toHaveBeenCalled();
+    if (external) {
+      await mock.request({ method: "project_open", params: { path: "/B.secs" } });
+      emit("project_open");
+    } else await session.call({ method: "project_open", params: { path: "/B.secs" } });
+    await vi.waitFor(() => expect(finished).toHaveBeenCalledWith(false));
+  } finally { release(); await edit; session.dispose(); await session.settled(); mock.dispose(); }
+});
+
 describe("resource generations", () => {
   it("does not let an older read overwrite a mutation", async () => {
     let resolve!: (value: number) => void;

@@ -166,6 +166,7 @@ export function createSession(ipc: Ipc) {
   };
   function clearProjectResources() {
     projectFailures.clear();
+    for (const replaced of projectReplacements) replaced();
     for (const key of ["project", "config", "notices", "dsp", "layout", "estimate", "measurementSettings", "records", "curves", "levels", "settings", "micCalibration", "modeSpec", "target", "results", "lines", "subWarnings", "folder", "applyStatus"] as const) {
       stores[key].set(null);
     }
@@ -188,6 +189,7 @@ export function createSession(ipc: Ipc) {
   let pendingProjectEdits = 0;
   const projectWork = new Map<Promise<boolean>, number>();
   const projectFailures = new Set<number>();
+  const projectReplacements = new Set<() => void>();
   function trackProjectEdit<T>(work: Promise<T>, epoch: number): Promise<T> {
     const done = work.then((value) => value !== false, () => false);
     projectWork.set(done, epoch);
@@ -203,17 +205,23 @@ export function createSession(ipc: Ipc) {
   }
   async function projectEditsSettled(): Promise<boolean> {
     const epoch = jobs.epoch;
+    let replaced!: () => void;
+    const replacement = new Promise<null>((resolve) => { replaced = () => resolve(null); });
+    projectReplacements.add(replaced);
     let succeeded = true;
-    while (epoch === jobs.epoch) {
-      const edits = [...projectWork].filter(([, owner]) => owner === epoch).map(([work]) => work);
-      if (!edits.length) {
-        const failed = projectFailures.delete(epoch);
-        return succeeded && !failed;
+    try {
+      while (epoch === jobs.epoch) {
+        const edits = [...projectWork].filter(([, owner]) => owner === epoch).map(([work]) => work);
+        if (!edits.length) {
+          const failed = projectFailures.delete(epoch);
+          return succeeded && !failed;
+        }
+        const results = await Promise.race([Promise.all(edits), replacement]);
+        if (results === null) return false;
+        succeeded = results.every(Boolean) && succeeded;
       }
-      const results = await Promise.all(edits);
-      succeeded = results.every(Boolean) && succeeded;
-    }
-    return false;
+      return false;
+    } finally { projectReplacements.delete(replaced); }
   }
   const call: SessionCall = (request, context) => {
     const owner = jobs.epoch;
