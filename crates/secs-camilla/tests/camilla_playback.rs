@@ -1082,28 +1082,29 @@ fn one_running_pipeline_switches_generation_firs_by_unique_paths() {
         .status()
         .expect("run mkfifo for the paced RawFile input");
     assert!(status.success(), "mkfifo exited with {status}");
-    let write_generation = |chain: &SignalChain, folder: &Path, design_name: &str| {
-        let options = Options {
-            capture: Some(raw_device("RawFile", &input, first_plan.inputs.len(), true)),
-            playback: Some(raw_device("File", &output, first_plan.outputs.len(), false)),
-            design: Some(DesignLabels {
-                project_name: Some("CamillaDSP generation check".into()),
-                design_name: design_name.into(),
-                design_id: design_name.repeat(8),
+    let write_generation =
+        |chain: &SignalChain, folder: &Path, design_name: &str, id_digit: char| {
+            let options = Options {
+                capture: Some(raw_device("RawFile", &input, first_plan.inputs.len(), true)),
+                playback: Some(raw_device("File", &output, first_plan.outputs.len(), false)),
+                design: Some(DesignLabels {
+                    project_name: Some("CamillaDSP generation check".into()),
+                    design_name: design_name.into(),
+                    design_id: id_digit.to_string().repeat(64),
+                    bypass: false,
+                }),
+                headroom: true,
+                labels: true,
                 bypass: false,
-            }),
-            headroom: true,
-            labels: true,
-            bypass: false,
-            ..Options::default()
+                ..Options::default()
+            };
+            write_config(chain, folder, "playback", &options, None).unwrap();
+            folder.join("configs/playback.yml")
         };
-        write_config(chain, folder, "playback", &options, None).unwrap();
-        folder.join("configs/playback.yml")
-    };
     let first_folder = root.0.join("generation-1");
-    let first_config = write_generation(&first_chain, &first_folder, "generation-one");
+    let first_config = write_generation(&first_chain, &first_folder, "generation-one", '1');
     let second_folder = root.0.join("generation-2");
-    let second_config = write_generation(&second_chain, &second_folder, "generation-two");
+    let second_config = write_generation(&second_chain, &second_folder, "generation-two", '2');
 
     let probe = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = probe.local_addr().unwrap().port();
